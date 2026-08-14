@@ -58,11 +58,14 @@
  * `it("pins the parameterized fold")` asserts it returns
  * `estimateEscapeDistance`'s value TO THE BIT at shipped parameters over
  * 24k queries, so a reconstruction error cannot pass as a measurement.
- * Single-link, unsymmetrised systems only (it throws otherwise): fr-s04t's
- * chain cycle is the identity at one link, and the question here is the
- * fold's own parameters, not the chain's.
+ * fr-77oy lifted its two original restrictions: it takes ONE parameter
+ * record per LINK (broadcast from one, which is how the four original arms
+ * still read) and cycles `links[step % n]` like the shipped orbit, and it
+ * applies the kaleidoscope's query-space wedge by calling the estimator's
+ * OWN `foldQueryIntoSector`. Both lifts are pinned the same way, over a
+ * 2-link chain, a 3-link chain, an order-5 chain and an order-3 single map.
  *
- * FOUR SHEETS, because the parameter would land in two very different
+ * SEVEN SHEETS, because the parameter would land in several very different
  * roles and they can disagree:
  *   1. `spherefold-magnification.png` — `fR²/mR²` (the ×4 inner
  *      inflation), the ratio no conjugation reaches. `mR = fR` is the
@@ -82,6 +85,19 @@
  *      a lens applied once may not, and the document parameter would be
  *      the same field for both. No preset carries a pure-fold FINAL, so
  *      the base system is authored here rather than loaded.
+ * And the three fr-77oy added, which ask where the first four stopped:
+ *   5. `spherefold-chain-links.png` — the SAME map alone, as link 0 of a
+ *      three-link chain, as link 1, and both links moved together. A
+ *      per-link parameter gives a six-link chain twelve new ratios, so the
+ *      question is whether those twelve are twelve degrees of freedom.
+ *   6. `spherefold-bare-lens.png` — the bare `spherefold` against the
+ *      `mandelbox` composition through the same lens on the same attractor,
+ *      which is the box-wall CONTROL: without a box there is only one ratio
+ *      left. (The escape-time half of that arm renders no sheet, because it
+ *      found nothing to render — see the verdict.)
+ *   7. `spherefold-kaleidoscope.png` — `foldChain` against
+ *      `foldChainFlower`, the same chain with a five-fold query-space wedge
+ *      on and off, swept identically.
  *
  * A BLANK ARM IS A FINDING, not a failure: a parameter value that empties
  * the set is exactly what this sheet is looking for. Only the SHIPPED
@@ -131,25 +147,137 @@
  * needs nothing: `GpuMap`'s `p1` lane and `GpuMap4`'s carry two free f32
  * each, so a packed `(mR², fR²)` pair fits inside the frozen strides.
  *
+ * THE FR-77OY VERDICT (four more arms, same instrument):
+ *
+ * A CHAIN DAMPS ITS OWN LINKS, which is fr-za0n's bound-quality result
+ * showing up in the picture. `mandelboxClassic` and `foldChainBoulder`'s
+ * link 0 are the SAME map (mandelbox at weight 2, unrotated), so the
+ * comparison is like-for-like: moving that map's magnification displaces
+ * the object by 1 − IoU = 0.309/0.222/0.168/0.126/0.157 across the `mR`
+ * arms when it is alone, and 0.081/0.057/0.039/0.024/0.025 when it is one
+ * link of three — 3.8x to 6.4x QUIETER, monotonically more so the further
+ * the ratio moves. So a six-link chain's twelve ratios are twelve weak
+ * knobs, not twelve strong ones.
+ *
+ * AND THEY BARELY INTERACT. Link 1's own displacement measured with link 0
+ * at the shipped ratio, against the same displacement measured after link 0
+ * has already moved to that ratio, runs 0.72x-0.91x at four of five arms
+ * (1.71x at `mR = fR`, the identity end where link 0's fold has vanished
+ * and the comparison is between two nearly-equal small numbers). Roughly
+ * separable, then: each link's contribution does not depend much on what
+ * the others are set to. One structural note the same fixture makes
+ * plainly: a BOX-FOLD link's `mR`/`fR` are inert, so a per-variation
+ * schema hands `boxfold` two fields it cannot use.
+ *
+ * THE BARE SPHERE FOLD HAS NO ESCAPE-TIME OBJECT AT ALL — a negative
+ * result, and structural rather than a bad choice of weight. The sphere
+ * fold only ever moves points OUTWARD in radius (inner scales by
+ * `fR²/mR²`, mid sends `[mR, fR]` out to `[fR, fR²/mR]`, outer is the
+ * identity), so with no box fold to bring them back the orbit splits on
+ * `|w|` and neither half is a fractal: at `|w| >= 1.2` nothing is captured
+ * and the set measures EMPTY at every affine part and offset tried (0.00%
+ * fill, 8 of 8 weights x 4 fixtures), while at `|w| < 1` the outer branch
+ * alone contracts to a fixed point and the set is a smooth SOLID (0.8% to
+ * 100% fill) whose boundary is not a `dr` blow-up — so the Buddhi/Rrrola
+ * heuristic cannot see it, and a ray marching inward accepts only at the
+ * origin (measured radius 0.000 at every CONFORMAL affine part; anisotropy
+ * is the only thing that gives the heuristic a surface, and it finds a
+ * blob). This is why fr-qi9c's mandelbox rows are not a confound to be
+ * controlled away: in the escape-time family, the box fold is what makes
+ * an object exist for the sphere fold's ratios to shape.
+ *
+ * SO THE CONTROL RUNS THROUGH THE LENS instead, where a bare sphere fold IS
+ * well-defined — and it needs a pre-scale to mean anything. At the lens's
+ * own scale the attractor lies entirely INSIDE the box wall, so the box
+ * fold is the identity on every plotted point and the bare and boxed rows
+ * come out at occupancy IoU exactly 1.000: a perfect agreement that says
+ * nothing, and a reminder that `fR/wall` does nothing to a cloud that never
+ * reaches the wall. Pre-scaled 2x so the cloud straddles it, the bare
+ * sphere fold alone moves the cloud 0.666/0.468/0.301/0.305/0.317 and the
+ * composition 0.713/0.581/0.414/0.395/0.408 — a box contribution of
+ * 1.07x-1.38x. The magnification ratio is therefore REAL ON THE BALL
+ * ALONE; the box amplifies it by a third at most.
+ *
+ * THE KALEIDOSCOPE IS ORTHOGONAL, as the algebra suggests it should be: the
+ * wedge fold is angular and an isometry per sector, the sphere fold is
+ * radial. `foldChain` displaces 0.144/0.085/0.049/0.026/0.027 across the
+ * arms and `foldChainFlower` — the same chain, five-fold wedge on —
+ * 0.137/0.093/0.098/0.011/0.012, i.e. 0.42x-1.98x with no direction to it
+ * and both small. No amplification, no damping, nothing a per-link
+ * parameter has to account for.
+ *
+ * THE ELIGIBILITY SEAM IS REACHED BY EXACTLY ONE SHIPPED SYSTEM, which is
+ * the number fr-3pcu's UI question turns on. `SPHEREFOLD_LIPSCHITZ` IS the
+ * magnification ratio (asserted, not assumed: `fR²/mR² = 4` at the shipped
+ * lengths), and it multiplies into `analyzeSurfaceSystem`'s contraction
+ * gate and — as the deliberate complement — into `analyzeEscapeSystem`'s
+ * admits-when-something-expands test, so both gates pivot on the same
+ * threshold `rho_crit = min_i CONTRACTION_LIMIT / (|w_i|·sigma_max(M_i))`
+ * over the SPHERE-FAMILY maps. Tabulated over every shipped fold system,
+ * within the schema's own domain `mR <= fR` (i.e. `rho >= 1`):
+ *   - `mandelboxKifs` CROSSES, and it is not far: `rho_crit` 4.382 against
+ *     the shipped 4.0, a 9% margin — `mR` 0.478 instead of 0.500 at
+ *     `fR = 1`, bound by map 1 (|w| 1.20 x sigma_max 0.190). A 4.4% edit
+ *     to one field moves the app's flagship fold preset from the Surface
+ *     descent to the escape-time renderer.
+ *   - the three single-map escape presets would need `rho` 0.333-0.666,
+ *     i.e. `mR` 1.2-1.7 at `fR = 1`, which is `mR > fR` and outside the
+ *     domain. UNREACHABLE.
+ *   - all three CHAINS are unreachable at any ratio, and for a reason no
+ *     tuning changes: each contains a box-fold link whose Lipschitz bound
+ *     is 1 at every ratio and which already expands, so something in the
+ *     chain expands whatever the knob does.
+ *   - `mandelboxLattice` has no PURE-fold map (its `mandelbox` is blended
+ *     with `linear`), so neither gate's fold path applies to it at all.
+ * Two scope facts bound the problem further. The box wall NEVER enters
+ * either gate — box branches are reflection isometries at any wall — so
+ * the ratio this sheet measured as the STRONGER of the two is gate-free.
+ * And the FINAL-transform lens has no contraction gate at all
+ * (`surface-de.ts`'s `descendLens`, fr-g58b: an un-iterated lens needs
+ * none), so the ROLE this sheet measured as the most sensitive is gate-free
+ * too. The design problem is one system and one ratio wide.
+ *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
  *        scripts/spherefold-radius-sweep.harness.ts
  * Writes: `scripts/out/spherefold-*.png`
  */
 import {
+  analyzeEscapeSystem,
   buildEscapeDE,
   estimateEscapeDistance,
+  foldQueryIntoSector,
+  probeEscapeFill,
   ESCAPE_STEP_SCALE,
   ESCAPE_TIME_ITERATIONS,
   ESCAPE_TIME_RADIUS,
 } from "../src/fractal/escape-de";
 import type { EscapeDE } from "../src/fractal/escape-de";
 import {
+  analyzeSurfaceSystem,
+  transformSigmas,
+  CONTRACTION_LIMIT,
+  SPHEREFOLD_LIPSCHITZ,
   SURFACE_FOLD_BOXFOLD,
   SURFACE_FOLD_SPHEREFOLD,
 } from "../src/fractal/surface-de";
+import {
+  foldChain,
+  foldChainBoulder,
+  foldChainFlower,
+  mandelboxClassic,
+  mandelboxCube,
+  mandelboxKifs,
+  mandelboxLattice,
+  mandelboxRings,
+  PRESET_SYMMETRIES,
+} from "../src/fractal/presets";
 import { runChaosGame } from "../src/fractal/chaos-game";
 import { mulberry32 } from "../src/fractal/rng";
-import type { Transform } from "../src/fractal/types";
+import type {
+  SymmetryParams,
+  Transform,
+  Variation,
+} from "../src/fractal/types";
 import { renderPreview, writeContactSheet, PREVIEW_HIT } from "./de-preview";
 import type { DistanceEstimator, PanelStats, Vec3 } from "./de-preview";
 
@@ -185,16 +313,65 @@ const SHIPPED: FoldParams = {
 const magnification = (fp: FoldParams) => (fp.fR * fp.fR) / (fp.mR * fp.mR);
 const ballOverBox = (fp: FoldParams) => fp.fR / fp.wall;
 
+/** `foldChainFlower`'s five-fold wedge, read off the shipped side table
+ * rather than re-typed — the preset IS its kaleidoscope (presets.ts), and
+ * fr-77oy arm 3 exists to sweep exactly that pairing. */
+const FLOWER_SYMMETRY: SymmetryParams = PRESET_SYMMETRIES.foldChainFlower!;
+
+/** One chain's worth of parameters with a single link overridden — the
+ * per-link sweep's only move. `link` indexes the DOCUMENT's active maps, in
+ * order, which is the order `buildEscapeDE` builds `links` in. */
+function perLink(n: number, link: number, override: Partial<FoldParams>) {
+  return Array.from({ length: n }, (_, i) =>
+    i === link ? { ...SHIPPED, ...override } : { ...SHIPPED },
+  );
+}
+
 /** A single pure-fold map — the shape `analyzeEscapeSystem` admits, and
- * `presets.ts`'s `escapeMandelbox` recipe verbatim. */
-function foldSystem(weight: number, position: Vec3): Transform {
+ * `presets.ts`'s `escapeMandelbox` recipe verbatim. `preScale` is the map's
+ * own affine part, left at the preset's 1 everywhere except the lens control
+ * (arm 2), which needs the cloud to reach past the box wall. */
+function foldSystem(weight: number, position: Vec3, preScale = 1): Transform {
   return {
     id: 1,
     position,
     rotation: [0, 0, 0],
-    scale: [1, 1, 1],
+    scale: [preScale, preScale, preScale],
     variations: [{ type: "mandelbox", weight }],
   };
+}
+
+/** The same recipe with the BARE sphere fold — no box wall in the map at
+ * all, which is what makes arm 2 a one-ratio control (module doc). */
+function sphereFoldSystem(
+  weight: number,
+  position: Vec3,
+  preScale = 1,
+): Transform {
+  return {
+    id: 1,
+    position,
+    rotation: [0, 0, 0],
+    scale: [preScale, preScale, preScale],
+    variations: [{ type: "spherefold", weight }],
+  };
+}
+
+/** `surface-de.ts`'s `pureFoldVariation` predicate, which is module-private
+ * there: the single active fold-family entry a map's variation list must be
+ * for either gate to admit it. Arm 4 re-derives the gate's own arithmetic,
+ * so it needs the gate's own notion of which variation carries it. */
+function soleFoldVariation(t: Transform): Variation | null {
+  const active = (t.variations ?? []).filter(
+    (v) => Number.isFinite(v.weight) && v.weight !== 0,
+  );
+  if (active.length !== 1) return null;
+  const v = active[0];
+  return v.type === "boxfold" ||
+    v.type === "spherefold" ||
+    v.type === "mandelbox"
+    ? v
+    : null;
 }
 
 /**
@@ -206,80 +383,178 @@ function foldSystem(weight: number, position: Vec3): Transform {
  * contribution rides the per-step `localL`, and that picks up the new
  * parameters on its own.
  *
+ * CHAINS (fr-77oy arm 1). `fp` is either ONE record broadcast to every
+ * link, or one PER LINK in document order — the shape a document field
+ * would actually have, since the lengths would live on the `Variation` and
+ * fr-s04t's chain carries one fold variation per link. The orbit cycles
+ * `links[step % n]` for `ESCAPE_TIME_ITERATIONS * n` single-link steps,
+ * which is `runEscapeOrbit` verbatim ("THE LIST IS THE SEQUENCE"). The
+ * BAILOUT is the orbit's and not a link's, so an array must agree on it —
+ * it rides the same record only because the conjugation control has to
+ * scale it with the lengths.
+ *
+ * KALEIDOSCOPE (fr-77oy arm 3). The wedge fold is applied ONCE, before the
+ * orbit, and the folded point seeds AND offsets it — `foldQueryIntoSector`
+ * imported from the estimator itself rather than re-derived, so the one
+ * thing this copy must not get wrong it cannot get wrong.
+ *
  * Pinned bit-exact against the shipped estimator at {@link SHIPPED} by the
- * first `it` below, so nothing here rests on the copy being faithful by
- * inspection.
+ * first two `it`s below — single link, chain, and kaleidoscope — so nothing
+ * here rests on the copy being faithful by inspection.
  */
-function paramEscapeDE(de: EscapeDE, fp: FoldParams): DistanceEstimator {
-  if (de.links.length !== 1) {
-    throw new Error("paramEscapeDE: single-link systems only (see module doc)");
+function paramEscapeDE(
+  de: EscapeDE,
+  fp: FoldParams | FoldParams[],
+): DistanceEstimator {
+  const links = de.links;
+  const n = links.length;
+  const per = Array.isArray(fp) ? fp : links.map(() => fp);
+  if (per.length !== n) {
+    throw new Error(
+      `paramEscapeDE: ${per.length} parameter records for ${n} links`,
+    );
   }
-  if (de.symmetryOrder > 1) {
-    // The shipped orbit seeds AND offsets from the wedge-folded query; this
-    // copy does neither, so a kaleidoscope would silently render a
-    // different object than the pin certifies.
-    throw new Error("paramEscapeDE: unsymmetrised systems only");
+  const bailout = per[0].bailout;
+  if (per.some((f) => f.bailout !== bailout)) {
+    throw new Error("paramEscapeDE: the bailout is the orbit's, not a link's");
   }
-  const m = de.m;
-  const { mR, fR, wall, bailout } = fp;
-  const mR2 = mR * mR;
-  const fR2 = fR * fR;
-  const foldAxis = (t: number) => 2 * Math.max(-wall, Math.min(wall, t)) - t;
+  // Hoisted per-link scratch: this estimator runs ~1e6 times per panel.
+  const mR2 = per.map((f) => f.mR * f.mR);
+  const fR2 = per.map((f) => f.fR * f.fR);
+  const walls = per.map((f) => f.wall);
+  const order = de.symmetryOrder;
+  const plane = de.symmetryPlane;
+  const folded: Vec3 = [0, 0, 0];
+  const maxSteps = ESCAPE_TIME_ITERATIONS * n;
   return (p) => {
-    const [qx, qy, qz] = p;
+    const q = order > 1 ? foldQueryIntoSector(p, order, plane, folded) : p;
+    const qx = q[0];
+    const qy = q[1];
+    const qz = q[2];
     let vx = qx;
     let vy = qy;
     let vz = qz;
     let dr = 1;
     let r = Math.sqrt(vx * vx + vy * vy + vz * vz);
-    for (let step = 0; step < ESCAPE_TIME_ITERATIONS && r <= bailout; step++) {
-      let yx = m[0] * vx + m[1] * vy + m[2] * vz + de.t[0];
-      let yy = m[3] * vx + m[4] * vy + m[5] * vz + de.t[1];
-      let yz = m[6] * vx + m[7] * vy + m[8] * vz + de.t[2];
+    for (let step = 0; step < maxSteps && r <= bailout; step++) {
+      const li = step % n;
+      const link = links[li];
+      const m = link.m;
+      let yx = m[0] * vx + m[1] * vy + m[2] * vz + link.t[0];
+      let yy = m[3] * vx + m[4] * vy + m[5] * vz + link.t[1];
+      let yz = m[6] * vx + m[7] * vy + m[8] * vz + link.t[2];
       let localL = 1;
-      if (de.foldKind !== SURFACE_FOLD_SPHEREFOLD) {
-        yx = foldAxis(yx);
-        yy = foldAxis(yy);
-        yz = foldAxis(yz);
+      if (link.foldKind !== SURFACE_FOLD_SPHEREFOLD) {
+        const wall = walls[li];
+        yx = 2 * Math.max(-wall, Math.min(wall, yx)) - yx;
+        yy = 2 * Math.max(-wall, Math.min(wall, yy)) - yy;
+        yz = 2 * Math.max(-wall, Math.min(wall, yz)) - yz;
       }
-      if (de.foldKind !== SURFACE_FOLD_BOXFOLD) {
+      if (link.foldKind !== SURFACE_FOLD_BOXFOLD) {
         const f =
-          fR2 / Math.max(mR2, Math.min(fR2, yx * yx + yy * yy + yz * yz));
+          fR2[li] /
+          Math.max(mR2[li], Math.min(fR2[li], yx * yx + yy * yy + yz * yz));
         yx *= f;
         yy *= f;
         yz *= f;
         localL = f;
       }
-      vx = de.w * yx + qx;
-      vy = de.w * yy + qy;
-      vz = de.w * yz + qz;
-      dr = de.derivGrowth * localL * dr + 1;
+      vx = link.w * yx + qx;
+      vy = link.w * yy + qy;
+      vz = link.w * yz + qz;
+      dr = link.derivGrowth * localL * dr + 1;
       r = Math.sqrt(vx * vx + vy * vy + vz * vz);
     }
     return r / dr;
   };
 }
 
-/** The same fold applied ONCE — a `mandelbox` FINAL transform's plot-time
+/** The same fold applied ONCE — a pure-fold FINAL transform's plot-time
  * lens `w·V(M p + t)`, which is what `chaos-game.ts`'s `plotPoint` does to
  * every plotted point. The `EscapeDE` is used purely as a carrier for the
- * `composeAffine` the app itself would build. */
+ * `composeAffine` the app itself would build, and `foldKind` picks which
+ * fold is applied exactly as {@link paramEscapeDE} does — so a `spherefold`
+ * lens (fr-77oy arm 2) and a `mandelbox` one run the same code path. */
 function paramFoldOnce(de: EscapeDE, fp: FoldParams, p: Vec3, out: Vec3): void {
   const m = de.m;
   const mR2 = fp.mR * fp.mR;
   const fR2 = fp.fR * fp.fR;
   const wall = fp.wall;
-  const fold = (t: number) => 2 * Math.max(-wall, Math.min(wall, t)) - t;
-  let x = fold(m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + de.t[0]);
-  let y = fold(m[3] * p[0] + m[4] * p[1] + m[5] * p[2] + de.t[1]);
-  let z = fold(m[6] * p[0] + m[7] * p[1] + m[8] * p[2] + de.t[2]);
-  const f = fR2 / Math.max(mR2, Math.min(fR2, x * x + y * y + z * z));
-  x *= f;
-  y *= f;
-  z *= f;
+  let x = m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + de.t[0];
+  let y = m[3] * p[0] + m[4] * p[1] + m[5] * p[2] + de.t[1];
+  let z = m[6] * p[0] + m[7] * p[1] + m[8] * p[2] + de.t[2];
+  if (de.foldKind !== SURFACE_FOLD_SPHEREFOLD) {
+    x = 2 * Math.max(-wall, Math.min(wall, x)) - x;
+    y = 2 * Math.max(-wall, Math.min(wall, y)) - y;
+    z = 2 * Math.max(-wall, Math.min(wall, z)) - z;
+  }
+  if (de.foldKind !== SURFACE_FOLD_BOXFOLD) {
+    const f = fR2 / Math.max(mR2, Math.min(fR2, x * x + y * y + z * z));
+    x *= f;
+    y *= f;
+    z *= f;
+  }
   out[0] = de.w * x;
   out[1] = de.w * y;
   out[2] = de.w * z;
+}
+
+/** The affine attractor both lens arms bend. Hand-authored rather than
+ * loaded, because no preset ships a pure-fold FINAL — and SHARED, so the
+ * `mandelbox` lens row and the bare `spherefold` one differ in exactly one
+ * thing: whether a box fold is in the map. That is what makes arm 2 a
+ * control for the box-wall confound rather than a second unrelated sheet. */
+const LENS_BASE: Transform[] = [
+  {
+    id: 1,
+    position: [0.4, 0.35, 0.1],
+    rotation: [0.2, 0.5, 0],
+    scale: [0.52, 0.52, 0.52],
+  },
+  {
+    id: 2,
+    position: [-0.45, 0.2, -0.3],
+    rotation: [0, -0.7, 0.3],
+    scale: [0.5, 0.5, 0.5],
+  },
+  {
+    id: 3,
+    position: [0.1, -0.5, 0.35],
+    rotation: [0.9, 0, -0.4],
+    scale: [0.48, 0.48, 0.48],
+  },
+  {
+    id: 4,
+    position: [-0.15, -0.3, -0.45],
+    rotation: [-0.3, 0.25, 0.8],
+    scale: [0.5, 0.5, 0.5],
+  },
+];
+
+/** Every point of `cloud` through the one-shot lens, scale-normalized. */
+function bendCloud(
+  lens: EscapeDE,
+  fp: FoldParams,
+  cloud: { positions: Float32Array; count: number },
+): { points: Float32Array; rms: number } {
+  const out = new Float32Array(cloud.count * 3);
+  const q: Vec3 = [0, 0, 0];
+  for (let i = 0; i < cloud.count; i++) {
+    paramFoldOnce(
+      lens,
+      fp,
+      [
+        cloud.positions[i * 3],
+        cloud.positions[i * 3 + 1],
+        cloud.positions[i * 3 + 2],
+      ],
+      q,
+    );
+    out[i * 3] = q[0];
+    out[i * 3 + 1] = q[1];
+    out[i * 3 + 2] = q[2];
+  }
+  return normalizeCloud(out, cloud.count);
 }
 
 /** 256 near-uniform directions (Fibonacci sphere) — deterministic, and the
@@ -433,6 +708,50 @@ describe("fr-qi9c spherefold radius sweep", () => {
     }
   });
 
+  it("pins the parameterized fold on a CHAIN and under a kaleidoscope", () => {
+    // fr-77oy arms 1 and 3 lift the two restrictions the fr-qi9c copy threw
+    // on. Both were guarding a real hazard — a chain that ignored
+    // `links[step % n]` and a kaleidoscope that skipped `foldQueryIntoSector`
+    // would each render a DIFFERENT object while every IoU column below still
+    // looked plausible — so the lift is worth exactly as much as this pin.
+    const rng = mulberry32(0x5f02e);
+    const cases: [string, Transform[], SymmetryParams][] = [
+      ["foldChain (2 links)", foldChain(), { order: 1, plane: "xz" }],
+      [
+        "foldChainBoulder (3 links)",
+        foldChainBoulder(),
+        { order: 1, plane: "xz" },
+      ],
+      [
+        "foldChainFlower (2 links, order 5)",
+        foldChainFlower(),
+        FLOWER_SYMMETRY,
+      ],
+      [
+        "mandelboxClassic (1 link)",
+        mandelboxClassic(),
+        { order: 1, plane: "xz" },
+      ],
+      // A kaleidoscope over ONE link: the wedge fold and the chain cycle are
+      // independent lifts, so the pin has to cross them.
+      [
+        "mandelboxClassic under order 3",
+        mandelboxClassic(),
+        { order: 3, plane: "xy" },
+      ],
+    ];
+    for (const [label, transforms, symmetry] of cases) {
+      const de = buildEscapeDE(transforms, null, symmetry);
+      const local = paramEscapeDE(de, SHIPPED);
+      for (let i = 0; i < 4000; i++) {
+        const p: Vec3 = [rng() * 12 - 6, rng() * 12 - 6, rng() * 12 - 6];
+        expect(local(p), `${label} p=[${p.join(", ")}]`).toBe(
+          estimateEscapeDistance(de, p),
+        );
+      }
+    }
+  });
+
   it("sweeps the magnification ratio fR²/mR²", () => {
     const arms = [1.0, 0.8, 0.65, 0.5, 0.35, 0.25];
     const shippedAt = arms.indexOf(SHIPPED.mR);
@@ -558,60 +877,13 @@ describe("fr-qi9c spherefold radius sweep", () => {
 
   it("sweeps the magnification ratio through a ONE-SHOT lens", () => {
     // The FINAL-transform case: the fold applied once to every plotted point
-    // of an ordinary affine attractor, never fed back. Hand-authored rather
-    // than loaded, because no preset ships a pure-fold final.
-    const base: Transform[] = [
-      {
-        id: 1,
-        position: [0.4, 0.35, 0.1],
-        rotation: [0.2, 0.5, 0],
-        scale: [0.52, 0.52, 0.52],
-      },
-      {
-        id: 2,
-        position: [-0.45, 0.2, -0.3],
-        rotation: [0, -0.7, 0.3],
-        scale: [0.5, 0.5, 0.5],
-      },
-      {
-        id: 3,
-        position: [0.1, -0.5, 0.35],
-        rotation: [0.9, 0, -0.4],
-        scale: [0.48, 0.48, 0.48],
-      },
-      {
-        id: 4,
-        position: [-0.15, -0.3, -0.45],
-        rotation: [-0.3, 0.25, 0.8],
-        scale: [0.5, 0.5, 0.5],
-      },
-    ];
-    const cloud = runChaosGame(base, 150_000, mulberry32(0xc10d));
+    // of an ordinary affine attractor ({@link LENS_BASE}), never fed back.
+    const cloud = runChaosGame(LENS_BASE, 150_000, mulberry32(0xc10d));
     const lens = buildEscapeDE([foldSystem(2, [0, 0, 0])]);
 
     const arms = [1.0, 0.8, 0.65, 0.5, 0.35, 0.25];
     const shippedAt = arms.indexOf(SHIPPED.mR);
-    const bent = arms.map((mR) => {
-      const fp = { ...SHIPPED, mR };
-      const out = new Float32Array(cloud.count * 3);
-      const q: Vec3 = [0, 0, 0];
-      for (let i = 0; i < cloud.count; i++) {
-        paramFoldOnce(
-          lens,
-          fp,
-          [
-            cloud.positions[i * 3],
-            cloud.positions[i * 3 + 1],
-            cloud.positions[i * 3 + 2],
-          ],
-          q,
-        );
-        out[i * 3] = q[0];
-        out[i * 3 + 1] = q[1];
-        out[i * 3 + 2] = q[2];
-      }
-      return normalizeCloud(out, cloud.count);
-    });
+    const bent = arms.map((mR) => bendCloud(lens, { ...SHIPPED, mR }, cloud));
 
     // The un-lensed attractor, normalized the same way: the "the lens did
     // nothing recognisable" baseline the arms are read against.
@@ -635,6 +907,467 @@ describe("fr-qi9c spherefold radius sweep", () => {
     console.log(
       `  wrote ${writeContactSheet(panels, arms.length, "spherefold-lens.png")}`,
     );
+  });
+
+  /* ---- fr-77oy: where fr-qi9c's sheet stopped -------------------- */
+
+  it("sweeps magnification PER LINK along a chain", () => {
+    // ARM 1. A per-link parameter gives a six-link chain twelve new ratios,
+    // so the question is not "does the ratio matter" (arms above answer that)
+    // but whether the links' responses INTERACT. fr-za0n measured composition
+    // IMPROVING bound quality — violation rates 13.4% at one link down to
+    // 1.5% at six — which predicts a chain is LESS sensitive per link.
+    //
+    // `foldChainBoulder` is the fixture because it is the only shipped chain
+    // with TWO sphere-family links (mandelbox 2, mandelbox -1.5, boxfold
+    // 1.6@20°); the box-fold link's mR/fR are inert by construction, which is
+    // itself part of the answer — a per-link schema hands a box fold two
+    // fields it cannot use.
+    const arms = [1.0, 0.8, 0.65, 0.5, 0.35, 0.25];
+    const shippedAt = arms.indexOf(SHIPPED.mR);
+    const chain = buildEscapeDE(foldChainBoulder());
+    const n = chain.links.length;
+    const single = buildEscapeDE(mandelboxClassic());
+
+    // Four rows over one arms list: the same map alone, that map as link 0 of
+    // the chain, link 1 alone, and both links moved together.
+    const rowSingle = arms.map((mR) =>
+      armPanel(paramEscapeDE(single, { ...SHIPPED, mR }), SHIPPED.bailout),
+    );
+    const row0 = arms.map((mR) =>
+      armPanel(paramEscapeDE(chain, perLink(n, 0, { mR })), SHIPPED.bailout),
+    );
+    const row1 = arms.map((mR) =>
+      armPanel(paramEscapeDE(chain, perLink(n, 1, { mR })), SHIPPED.bailout),
+    );
+    const rowBoth = arms.map((mR) =>
+      armPanel(
+        paramEscapeDE(
+          chain,
+          Array.from({ length: n }, (_, i) =>
+            i <= 1 ? { ...SHIPPED, mR } : { ...SHIPPED },
+          ),
+        ),
+        SHIPPED.bailout,
+      ),
+    );
+
+    const rows: [string, Arm[]][] = [
+      ["single map ", rowSingle],
+      ["chain link0", row0],
+      ["chain link1", row1],
+      ["chain both ", rowBoth],
+    ];
+    for (const [label, row] of rows) {
+      const ref = row[shippedAt];
+      row.forEach((arm, i) => {
+        const fp = { ...SHIPPED, mR: arms[i] };
+        console.log(
+          `  ${label}  mR ${arms[i].toFixed(2)}  ` +
+            `magnification ${magnification(fp).toFixed(2)}x  ` +
+            `radius ${arm.radius.toFixed(3)}  hits ${hitPct(arm.panel)}%  ` +
+            `IoU ${maskIoU(arm.panel, ref.panel).toFixed(3)}  ` +
+            reliefCol(arm, ref) +
+            (i === shippedAt ? "  <- ships" : ""),
+        );
+      });
+      expect(
+        ref.panel.hits,
+        `${label}: the shipped reference panel is blank`,
+      ).toBeGreaterThan(0.005 * SIZE * SIZE);
+    }
+
+    // THE HEADLINE, and it is a like-for-like comparison: `mandelboxClassic`
+    // and `foldChainBoulder`'s link 0 are the SAME map (mandelbox at weight 2,
+    // no rotation), so this row pair isolates "alone" against "one link of
+    // three" with nothing else moving.
+    arms.forEach((mR, i) => {
+      if (i === shippedAt) return;
+      const alone = 1 - maskIoU(rowSingle[i].panel, rowSingle[shippedAt].panel);
+      const inChain = 1 - maskIoU(row0[i].panel, row0[shippedAt].panel);
+      console.log(
+        `  per-link damping  mR ${mR.toFixed(2)}  ` +
+          `displacement alone ${alone.toFixed(3)}  ` +
+          `as link 0 of 3 ${inChain.toFixed(3)}  ` +
+          `${(alone / (inChain || 1)).toFixed(1)}x quieter in the chain`,
+      );
+    });
+
+    // SEPARABILITY, asked as one comparison per arm: how far does link 1 move
+    // the object when link 0 is at the shipped ratio, versus when link 0 has
+    // already moved to the same ratio? Identical displacements = the links'
+    // responses do not interact and a per-link schema buys independent knobs;
+    // divergent = the chain's ratios are coupled and the twelve numbers are
+    // not twelve degrees of freedom.
+    arms.forEach((mR, i) => {
+      if (i === shippedAt) return;
+      const alone = 1 - maskIoU(row1[i].panel, row1[shippedAt].panel);
+      const after = 1 - maskIoU(rowBoth[i].panel, row0[i].panel);
+      console.log(
+        `  separability  mR ${mR.toFixed(2)}  ` +
+          `link1 displacement alone ${alone.toFixed(3)}  ` +
+          `after link0 moved ${after.toFixed(3)}  ` +
+          `ratio ${(after / (alone || 1)).toFixed(2)}x`,
+      );
+    });
+    console.log(
+      `  wrote ${writeContactSheet(
+        [...rowSingle, ...row0, ...row1, ...rowBoth].map((a) => a.panel),
+        arms.length,
+        "spherefold-chain-links.png",
+      )}`,
+    );
+  });
+
+  it("finds the bare sphere fold has no escape-time object to sweep", () => {
+    // ARM 2, part 1, and it is a NEGATIVE result reached by measurement.
+    //
+    // Every escape arm above sweeps the `mandelbox` composition, where the box
+    // wall is a second length in the same map — so a magnification row there
+    // is "the ball against a fixed box". The bare `spherefold` was supposed to
+    // be the control: no box, so `fR/wall` is vacuous and the magnification
+    // axis stands alone. It is not a control, because in the escape-time role
+    // it has nothing to render, and the reason is structural rather than a bad
+    // choice of weight.
+    //
+    // The sphere fold is purely EXPANDING in radius — inner scales by
+    // `fR²/mR²`, mid sends the shell `[mR, fR]` outward to `[fR, fR²/mR]`,
+    // outer is the identity — so with no box fold to bring points back in, the
+    // orbit `v <- w·S(Mv + t) + p` splits on `|w|` and neither side is a
+    // fractal:
+    //   |w| >= ~1  nothing is captured. The set is EMPTY (the finding
+    //              `escape-form-sweep.harness.ts` recorded for w=2, t=0).
+    //   |w| <  1   the outer branch alone contracts to the fixed point
+    //              `(I - wM)⁻¹p`, so a large region never escapes and the set
+    //              is a smooth SOLID. Its boundary is not a `dr` blow-up, so
+    //              the Buddhi/Rrrola heuristic cannot see it: the estimate
+    //              reads ~|p| everywhere inside and the marcher walks to the
+    //              origin.
+    // Two columns tell the two apart: FILL is the measured volume fraction of
+    // the bailout ball (`probeEscapeFill`), RADIUS is where a ray marching
+    // inward first accepts. Empty reads (0, 0); an invisible solid reads
+    // (large, ~0).
+    const weights = [0.3, 0.5, 0.8, 1.2, 2, 3, -0.5, -1.5];
+    const affines: [string, Vec3, Vec3][] = [
+      ["conformal", [0, 0, 0], [1, 1, 1]],
+      // Anisotropy is the only thing that gives the heuristic any surface to
+      // find here, and it finds a blob rather than a fractal — reported so the
+      // negative result is not resting on one affine part.
+      ["anisotropic", [0.3, 0.5, 0.2], [1.2, 0.9, 1.0]],
+    ];
+    const offsets: [string, Vec3][] = [
+      ["t=0    ", [0, 0, 0]],
+      ["t=[1,0,0]", [1, 0, 0]],
+    ];
+    let renderable = 0;
+    for (const [aLabel, rotation, scale] of affines) {
+      for (const [tLabel, position] of offsets) {
+        for (const w of weights) {
+          const de = buildEscapeDE([
+            {
+              id: 1,
+              position,
+              rotation,
+              scale,
+              variations: [{ type: "spherefold", weight: w }],
+            },
+          ]);
+          const fill = probeEscapeFill(de, 4096);
+          const radius = objectRadius(
+            paramEscapeDE(de, SHIPPED),
+            SHIPPED.bailout,
+          );
+          // "Renderable" = a surface far enough out to frame: not empty, and
+          // not a solid whose only accepted point is the origin.
+          const ok = fill > 0.0005 && radius > 0.25 * SHIPPED.bailout;
+          if (ok) renderable++;
+          console.log(
+            `  bare sphere  ${aLabel.padEnd(11)} ${tLabel}  ` +
+              `w ${w.toFixed(1).padStart(4)}  ` +
+              `fill ${(100 * fill).toFixed(2).padStart(6)}%  ` +
+              `radius ${radius.toFixed(3)}  ` +
+              (fill <= 0.0005
+                ? "EMPTY"
+                : radius <= 0.25 * SHIPPED.bailout
+                  ? "solid, no visible boundary"
+                  : "renderable"),
+          );
+        }
+      }
+    }
+    console.log(
+      `  verdict: ${renderable} of ${weights.length * affines.length * offsets.length} ` +
+        `bare sphere folds are renderable — the magnification axis has no ` +
+        `escape-time fixture, so it is swept through the LENS below instead`,
+    );
+    // Not an assertion that the count is zero: the point is the measurement,
+    // and a future estimator that could see a smooth boundary would raise it.
+    // What must hold is that the survey ran on systems the gate admits.
+    expect(renderable).toBeLessThan(
+      weights.length * affines.length * offsets.length,
+    );
+  });
+
+  it("isolates the magnification axis through a BARE sphere-fold lens", () => {
+    // ARM 2, part 2. The one-shot lens is where a bare sphere fold IS
+    // well-defined — `chaos-game.ts` bends each plotted point once and never
+    // feeds it back, so none of the escape orbit's expansion dichotomy
+    // applies — and it is the role fr-qi9c measured as the most sensitive of
+    // the three. Both rows below bend the SAME attractor ({@link LENS_BASE})
+    // with the same weight, differing only in whether a box fold precedes the
+    // sphere fold, which is the box-wall control arm 2 was asked for.
+    const cloud = runChaosGame(LENS_BASE, 150_000, mulberry32(0xc10d));
+    const arms = [1.0, 0.8, 0.65, 0.5, 0.35, 0.25];
+    const shippedAt = arms.indexOf(SHIPPED.mR);
+    const raw = normalizeCloud(
+      cloud.positions.slice(0, cloud.count * 3),
+      cloud.count,
+    );
+    // THE BOX HAS TO BITE, or the control is vacuous. Measured first, because
+    // the obvious fixture fails silently: at the lens's shipped pre-scale of 1
+    // the attractor lies entirely INSIDE the wall, so the box fold is the
+    // identity on every plotted point and the two rows come out bit-identical
+    // — a perfect agreement that says nothing about the wall. So the control
+    // runs at pre-scale 2, where the cloud straddles the wall, and the
+    // pre-scale-1 degeneracy is recorded here as its own small finding: the
+    // second ratio `fR/wall` has NO effect whatever on a lens whose cloud
+    // never reaches the wall.
+    const inertBox = occupancyIoU(
+      bendCloud(buildEscapeDE([sphereFoldSystem(2, [0, 0, 0])]), SHIPPED, cloud)
+        .points,
+      bendCloud(buildEscapeDE([foldSystem(2, [0, 0, 0])]), SHIPPED, cloud)
+        .points,
+    );
+    console.log(
+      `  pre-scale 1 (cloud inside the wall): bare vs boxed lens IoU ` +
+        `${inertBox.toFixed(3)} — the box fold is inert, so the control is ` +
+        `run at pre-scale 2 below`,
+    );
+    expect(inertBox).toBe(1);
+
+    const lenses: [string, EscapeDE][] = [
+      ["bare sphere ", buildEscapeDE([sphereFoldSystem(2, [0, 0, 0], 2)])],
+      ["with the box", buildEscapeDE([foldSystem(2, [0, 0, 0], 2)])],
+    ];
+    const panels: PanelStats[] = [];
+    const rows = lenses.map(([label, lens]) => {
+      const row = arms.map((mR) => bendCloud(lens, { ...SHIPPED, mR }, cloud));
+      const ref = row[shippedAt];
+      row.forEach((c, i) => {
+        const fp = { ...SHIPPED, mR: arms[i] };
+        console.log(
+          `  lens ${label}  mR ${arms[i].toFixed(2)}  ` +
+            `magnification ${magnification(fp).toFixed(2)}x  ` +
+            `rms ${c.rms.toFixed(3)}  ` +
+            `IoU-vs-shipped ${occupancyIoU(c.points, ref.points).toFixed(3)}  ` +
+            `IoU-vs-unlensed ${occupancyIoU(c.points, raw.points).toFixed(3)}` +
+            (i === shippedAt ? "  <- ships" : ""),
+        );
+      });
+      panels.push(...row.map((c) => splatPanel(c.points)));
+      return row;
+    });
+    // The isolation the arm exists for: with the box present the magnification
+    // row is "the ball against a fixed wall", without it the ball alone. Same
+    // attractor, same weight, same normalization — so the gap between the two
+    // displacement columns is the box's whole contribution.
+    arms.forEach((mR, i) => {
+      if (i === shippedAt) return;
+      const bare =
+        1 - occupancyIoU(rows[0][i].points, rows[0][shippedAt].points);
+      const boxed =
+        1 - occupancyIoU(rows[1][i].points, rows[1][shippedAt].points);
+      console.log(
+        `  box contribution  mR ${mR.toFixed(2)}  ` +
+          `displacement bare ${bare.toFixed(3)}  ` +
+          `with the box ${boxed.toFixed(3)}  ` +
+          `ratio ${(boxed / (bare || 1)).toFixed(2)}x`,
+      );
+    });
+    console.log(
+      `  wrote ${writeContactSheet(panels, arms.length, "spherefold-bare-lens.png")}`,
+    );
+  });
+
+  it("sweeps magnification under a five-fold kaleidoscope", () => {
+    // ARM 3. `foldChainFlower` is `foldChain` under an order-5 query-space
+    // wedge fold (`foldQueryIntoSector` — 1-Lipschitz, an isometry per
+    // sector, applied ONCE before the orbit). A wedge is angular and the
+    // sphere fold is radial, so they act on orthogonal parts of the query and
+    // the naive prediction is that the wedge changes nothing about the
+    // ratio's effect. The two rows here are the same chain with the fold on
+    // and off, swept identically, which is what makes that prediction
+    // falsifiable rather than plausible.
+    const arms = [1.0, 0.8, 0.65, 0.5, 0.35, 0.25];
+    const shippedAt = arms.indexOf(SHIPPED.mR);
+    const plain = buildEscapeDE(foldChain());
+    const flower = buildEscapeDE(foldChainFlower(), null, FLOWER_SYMMETRY);
+    const n = plain.links.length;
+
+    const rows: [string, Arm[]][] = [
+      [
+        "chain      ",
+        arms.map((mR) =>
+          armPanel(
+            paramEscapeDE(plain, perLink(n, 0, { mR })),
+            SHIPPED.bailout,
+          ),
+        ),
+      ],
+      [
+        "flower (x5)",
+        arms.map((mR) =>
+          armPanel(
+            paramEscapeDE(flower, perLink(n, 0, { mR })),
+            SHIPPED.bailout,
+          ),
+        ),
+      ],
+    ];
+    const panels: PanelStats[] = [];
+    const displacement: Record<string, number[]> = {};
+    for (const [label, row] of rows) {
+      const ref = row[shippedAt];
+      displacement[label] = row.map((a) => 1 - maskIoU(a.panel, ref.panel));
+      row.forEach((arm, i) => {
+        const fp = { ...SHIPPED, mR: arms[i] };
+        console.log(
+          `  ${label}  mR ${arms[i].toFixed(2)}  ` +
+            `magnification ${magnification(fp).toFixed(2)}x  ` +
+            `radius ${arm.radius.toFixed(3)}  hits ${hitPct(arm.panel)}%  ` +
+            `IoU ${maskIoU(arm.panel, ref.panel).toFixed(3)}  ` +
+            reliefCol(arm, ref) +
+            (i === shippedAt ? "  <- ships" : ""),
+        );
+      });
+      expect(
+        ref.panel.hits,
+        `${label}: the shipped reference panel is blank`,
+      ).toBeGreaterThan(0.005 * SIZE * SIZE);
+      panels.push(...row.map((a) => a.panel));
+    }
+    arms.forEach((mR, i) => {
+      if (i === shippedAt) return;
+      const bare = displacement["chain      "][i];
+      const wedged = displacement["flower (x5)"][i];
+      console.log(
+        `  wedge effect  mR ${mR.toFixed(2)}  ` +
+          `displacement bare ${bare.toFixed(3)}  ` +
+          `under wedge ${wedged.toFixed(3)}  ` +
+          `ratio ${(wedged / (bare || 1)).toFixed(2)}x`,
+      );
+    });
+    console.log(
+      `  wrote ${writeContactSheet(panels, arms.length, "spherefold-kaleidoscope.png")}`,
+    );
+  });
+
+  it("tabulates how much of the ratio's range crosses the eligibility gate", () => {
+    // ARM 4, the arm with a decision riding on it (fr-3pcu's UI question).
+    //
+    // `SPHEREFOLD_LIPSCHITZ` becomes `fR²/mR²` — the magnification ratio
+    // exactly — and it multiplies into BOTH gates: `analyzeSurfaceSystem`
+    // admits a pure-fold map when `|w|·L·sigma_max < CONTRACTION_LIMIT`, and
+    // `analyzeEscapeSystem` is its deliberate complement, admitting when some
+    // map does NOT contract. So one threshold governs both sides:
+    //
+    //     rho*_i = CONTRACTION_LIMIT / (|w_i| · sigma_max(M_i))
+    //
+    // is the magnification at which map `i` stops contracting, and the SEAM a
+    // system sits on is `rho_crit = min over sphere-family maps of rho*_i`.
+    // A system whose maps all contract today stays on the surface side while
+    // `rho < rho_crit`; an escape system falls off the escape side when
+    // `rho < rho_crit` — UNLESS one of its expanding maps is a box fold,
+    // whose Lipschitz bound is 1 at every ratio, in which case no value of
+    // the knob can move it and the crossing is unreachable.
+    //
+    // Note what is NOT here: the box wall. `fR/wall` — the ratio fr-qi9c
+    // measured as the STRONGER shape parameter — never enters either gate,
+    // because the box fold's branches are reflection isometries whatever the
+    // wall is. And the FINAL-transform lens has no contraction gate at all
+    // (surface-de.ts's `descendLens`; fr-g58b: an un-iterated lens needs
+    // none), so the role fr-qi9c measured as MOST sensitive is likewise
+    // untouched. This arm concerns ITERATED BASE MAPS only.
+    const shippedRho = magnification(SHIPPED);
+    // The whole arm rests on `SPHEREFOLD_LIPSCHITZ` being exactly the
+    // magnification ratio at the shipped lengths — that identity is what makes
+    // a per-variation radius a parameter of the ELIGIBILITY GATE and not only
+    // of the picture. Assert it rather than assume it.
+    expect(shippedRho).toBe(SPHEREFOLD_LIPSCHITZ);
+    const systems: [string, Transform[], SymmetryParams | null][] = [
+      ["mandelboxKifs      ", mandelboxKifs(), null],
+      ["mandelboxLattice   ", mandelboxLattice(), null],
+      ["mandelboxClassic w2", mandelboxClassic(), null],
+      ["mandelboxRings   w3", mandelboxRings(), null],
+      ["mandelboxCube  w-1.5", mandelboxCube(), null],
+      ["foldChain          ", foldChain(), null],
+      ["foldChainBoulder   ", foldChainBoulder(), null],
+      ["foldChainFlower    ", foldChainFlower(), FLOWER_SYMMETRY],
+    ];
+    for (const [label, transforms, symmetry] of systems) {
+      const surface = analyzeSurfaceSystem(transforms, null).status;
+      const escape = analyzeEscapeSystem(
+        transforms,
+        null,
+        symmetry ?? undefined,
+      ).status;
+      const today = escape === "eligible" ? "escape" : surface;
+
+      // Per-map critical ratios. A box-fold map's bound is |w|·sigma_max at
+      // every ratio, so it is a CONSTANT term in both gates.
+      let rhoCrit = Infinity;
+      let binding = "";
+      const fixedExpanders: string[] = [];
+      transforms.forEach((t, i) => {
+        if ((t.weight ?? 1) <= 0) return;
+        const fold = soleFoldVariation(t);
+        if (!fold) return;
+        const sigmaMax = transformSigmas(t).max;
+        const base = Math.abs(fold.weight) * sigmaMax;
+        if (fold.type === "boxfold") {
+          if (base >= CONTRACTION_LIMIT) fixedExpanders.push(`map ${i + 1}`);
+          return;
+        }
+        const rho = CONTRACTION_LIMIT / base;
+        if (rho < rhoCrit) {
+          rhoCrit = rho;
+          binding = `map ${i + 1}, |w| ${Math.abs(fold.weight).toFixed(2)} x sigma_max ${sigmaMax.toFixed(3)}`;
+        }
+      });
+
+      // The algebra must reproduce today's gate at the shipped ratio, or the
+      // table below is describing some other seam than the one that ships.
+      const fixedExpander = fixedExpanders[0];
+      if (Number.isFinite(rhoCrit) || fixedExpander) {
+        const predicted =
+          fixedExpander || shippedRho >= rhoCrit ? "escape" : "surface";
+        expect(
+          predicted === "escape",
+          `${label}: the reachability algebra disagrees with the shipped gate ` +
+            `(predicted ${predicted}, gates say ${today})`,
+        ).toBe(escape === "eligible");
+      }
+
+      // AUTHORABLE RANGE. `mR <= fR` is the schema's own invariant (mR > fR
+      // inverts the shell and is not a fold anyone would author; fr-s9ll's
+      // morph rule requires it at every t), so the reachable magnification is
+      // `rho >= 1`, with `rho = 1` the identity end where the fold vanishes. A
+      // threshold at or below 1 is therefore outside the range entirely.
+      const where = !Number.isFinite(rhoCrit)
+        ? "no PURE-fold map — neither gate's fold path applies here"
+        : fixedExpander
+          ? `UNREACHABLE (${fixedExpander} is a box fold that expands at ` +
+            `every ratio, so the knob cannot move this system)`
+          : rhoCrit <= 1
+            ? `UNREACHABLE (would need rho ${rhoCrit.toFixed(3)}, i.e. ` +
+              `mR ${(1 / Math.sqrt(rhoCrit)).toFixed(3)} > fR, outside mR <= fR)`
+            : `CROSSES at rho ${rhoCrit.toFixed(3)} ` +
+              `(mR ${(1 / Math.sqrt(rhoCrit)).toFixed(3)} at fR=1) — ` +
+              `shipped rho ${shippedRho.toFixed(1)} is ` +
+              `${(100 * Math.abs(shippedRho / rhoCrit - 1)).toFixed(0)}% away; ` +
+              `bound by ${binding}`;
+      console.log(`  ${label}  today ${today.padEnd(11)}  ${where}`);
+    }
   });
 });
 
