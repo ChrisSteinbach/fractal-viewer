@@ -49,6 +49,176 @@ const foldAxis = (t: number) => 2 * clamp(t, -1, 1) - t;
  */
 const sphereFoldFactor = (r2: number) => 1 / clamp(r2, 0.25, 1);
 
+/* ---- the fold's three lengths (fr-s9ll) --------------------------- */
+
+/** The sphere fold's classic minimum radius `mR`. An absent
+ * {@link Variation.minRadius} is exactly this. */
+export const SPHERE_FOLD_MIN_RADIUS = 0.5;
+
+/** The sphere fold's classic fixed radius `fR`. An absent
+ * {@link Variation.fixedRadius} is exactly this. */
+export const SPHERE_FOLD_FIXED_RADIUS = 1;
+
+/** The box fold's classic reflection plane. An absent
+ * {@link Variation.boxLimit} is exactly this. */
+export const BOX_FOLD_LIMIT = 1;
+
+/**
+ * Smallest `fixedRadius` (and `boxLimit`) the fold arithmetic will work in.
+ * Anything below it — including 0 and every non-finite value — resolves to
+ * the classic length instead, which is what keeps `fR² > 0` and so keeps the
+ * sphere fold's division total (this module's stated guarantee).
+ */
+const FOLD_MIN_LENGTH = 1e-6;
+
+/**
+ * Floor on `minRadius / fixedRadius`, i.e. a ceiling of `1e12` on the
+ * magnification `fR²/mR²`. RELATIVE and not absolute on purpose: the whole
+ * fold family is equivariant under a uniform rescale of its three lengths
+ * (fr-qi9c), and an absolute floor would break that equivariance for small
+ * apparatus sizes — a rescaled system would stop being the same shape.
+ */
+const FOLD_MIN_RADIUS_RATIO = 1e-6;
+
+/** A fold's three lengths, resolved: never absent, never non-finite, and
+ * always ordered `0 < minRadius <= fixedRadius`. */
+export interface FoldRadii {
+  /** `mR` — the sphere fold's minimum radius. */
+  minRadius: number;
+  /** `fR` — the sphere fold's fixed radius. */
+  fixedRadius: number;
+  /** The box fold's reflection plane, `|t| = boxLimit`. */
+  boxLimit: number;
+}
+
+/** The classic Mandelbox lengths, shared so a caller can compare against the
+ * default set by identity rather than by re-typing three numbers. */
+export const CLASSIC_FOLD_RADII: FoldRadii = {
+  minRadius: SPHERE_FOLD_MIN_RADIUS,
+  fixedRadius: SPHERE_FOLD_FIXED_RADIUS,
+  boxLimit: BOX_FOLD_LIMIT,
+};
+
+/**
+ * A variation's fold lengths, with absent and out-of-domain values resolved —
+ * THE ONE PLACE the "absent means classic" rule from {@link Variation} is
+ * written down. Every forward fold, every inverse-branch estimator and every
+ * eligibility gate reads its lengths from here, so none of them can disagree
+ * about what an under-specified document means.
+ *
+ * The domain it enforces, and why each part is not merely defensive:
+ * - `fixedRadius` below {@link FOLD_MIN_LENGTH} (0, negative, NaN, absent)
+ *   falls back to the classic length. `fR² = 0` would make the sphere fold's
+ *   divisor zero, and this module promises totality on finite input.
+ * - `minRadius` is clamped into `[fixedRadius · FOLD_MIN_RADIUS_RATIO,
+ *   fixedRadius]`. The upper end is the fold's own domain: at `mR = fR` the
+ *   mid shell closes and the fold is exactly the identity, and past it the
+ *   inversion would run backwards. The lower end keeps the magnification —
+ *   which is the sphere fold's Lipschitz bound, and therefore an input to
+ *   `surface-de.ts`'s contraction gate — finite.
+ * - `boxLimit` below zero or non-finite falls back to the classic length.
+ *   Zero itself is kept: `2·clamp(t, 0, 0) − t = −t` is a point reflection,
+ *   total and a legitimate (if extreme) authored fold.
+ *
+ * Clamping rather than rejecting is what keeps a MORPH continuous: `mR` and
+ * `fR` interpolate independently, and a path that would cross `mR = fR`
+ * arrives at the identity fold and stays there, with no jump in the rendered
+ * point.
+ */
+export function resolveFoldRadii(v: Variation): FoldRadii {
+  const fixedRadius =
+    Number.isFinite(v.fixedRadius) &&
+    (v.fixedRadius as number) >= FOLD_MIN_LENGTH
+      ? (v.fixedRadius as number)
+      : SPHERE_FOLD_FIXED_RADIUS;
+  const minRadius = Number.isFinite(v.minRadius)
+    ? clamp(
+        v.minRadius as number,
+        fixedRadius * FOLD_MIN_RADIUS_RATIO,
+        fixedRadius,
+      )
+    : Math.min(SPHERE_FOLD_MIN_RADIUS, fixedRadius);
+  const boxLimit =
+    Number.isFinite(v.boxLimit) && (v.boxLimit as number) >= 0
+      ? (v.boxLimit as number)
+      : BOX_FOLD_LIMIT;
+  return { minRadius, fixedRadius, boxLimit };
+}
+
+/** Are these the classic lengths — i.e. does this fold render exactly as it
+ * did before the fields existed? The forward and inverse paths both branch on
+ * it to take their ORIGINAL code, so "absent is byte-identical" holds by
+ * construction rather than by an argument about floating point. */
+export function isClassicFoldRadii(r: FoldRadii): boolean {
+  return (
+    r.minRadius === SPHERE_FOLD_MIN_RADIUS &&
+    r.fixedRadius === SPHERE_FOLD_FIXED_RADIUS &&
+    r.boxLimit === BOX_FOLD_LIMIT
+  );
+}
+
+/**
+ * The sphere fold's forward Lipschitz bound: the magnification `fR²/mR²`.
+ *
+ * It is attained on the inner ball, where the fold is that exact linear
+ * scaling, and the mid inversion's local scale `fR²/|x|²` peaks at the same
+ * value on the shell's inner edge `|x| = mR` — so the bound is tight, not
+ * merely valid. The outer branch is the identity, and the BOX fold's
+ * per-axis reflections are isometries at any `boxLimit`, so this is also the
+ * bound for the `mandelbox` composite: the box wall does not enter it.
+ *
+ * This is the expression `surface-de.ts`'s contraction gate multiplies by
+ * `|w|·sigma_max(M)`, and — as the deliberate complement — the one
+ * `escape-de.ts` tests for expansion, so the fold's own radii move the seam
+ * between the two render modes with them (fr-77oy tabulated how far).
+ */
+export function sphereFoldLipschitz(r: FoldRadii): number {
+  return (r.fixedRadius * r.fixedRadius) / (r.minRadius * r.minRadius);
+}
+
+/**
+ * The three fold warps at arbitrary lengths — {@link VARIATIONS}'s
+ * `boxfold`/`spherefold`/`mandelbox` entries with their constants lifted out.
+ * Returns the SHARED classic entry when the lengths are classic, so an
+ * unparameterized document does not merely compute the same numbers, it runs
+ * the same function.
+ */
+export function foldVariationFn(
+  type: "boxfold" | "spherefold" | "mandelbox",
+  r: FoldRadii,
+): VariationFn {
+  if (isClassicFoldRadii(r)) return VARIATIONS[type];
+  const { boxLimit: wall } = r;
+  const mR2 = r.minRadius * r.minRadius;
+  const fR2 = r.fixedRadius * r.fixedRadius;
+  const axis = (t: number) => 2 * clamp(t, -wall, wall) - t;
+  const factor = (r2: number) => fR2 / clamp(r2, mR2, fR2);
+  if (type === "boxfold") {
+    return (x, y, z) => [axis(x), axis(y), axis(z)];
+  }
+  if (type === "spherefold") {
+    return (x, y, z) => {
+      const c = factor(x * x + y * y + z * z);
+      return [x * c, y * c, z * c];
+    };
+  }
+  return (x, y, z) => {
+    const bx = axis(x);
+    const by = axis(y);
+    const bz = axis(z);
+    const c = factor(bx * bx + by * by + bz * bz);
+    return [bx * c, by * c, bz * c];
+  };
+}
+
+/** The fold family, as a type guard — the variations that read
+ * {@link FoldRadii}. Everything else ignores the three fields entirely. */
+export function isFoldVariationType(
+  type: VariationType,
+): type is "boxfold" | "spherefold" | "mandelbox" {
+  return type === "boxfold" || type === "spherefold" || type === "mandelbox";
+}
+
 /**
  * The White/Nylander triplex 8th power — the Mandelbulb's map (fr-7u8t.7).
  * The "triplex" product is the spherical-coordinate one, `(r, θ, φ) · (r',
@@ -280,7 +450,15 @@ export function composeVariations(
   if (!variations || variations.length === 0) return null;
   const active = variations
     .filter((v) => Number.isFinite(v.weight) && v.weight !== 0)
-    .map((v): [VariationFn, number] => [VARIATIONS[v.type], v.weight]);
+    .map((v): [VariationFn, number] => [
+      // The fold family reads its three lengths off the entry (fr-s9ll);
+      // every other type is the shared parameterless warp. Resolved here,
+      // ONCE per compose, never per plotted point.
+      isFoldVariationType(v.type)
+        ? foldVariationFn(v.type, resolveFoldRadii(v))
+        : VARIATIONS[v.type],
+      v.weight,
+    ]);
   if (active.length === 0) return null;
 
   return (x, y, z, rng) => {
