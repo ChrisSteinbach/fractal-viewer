@@ -62,7 +62,13 @@ sub-pixel, the ramp is bottom-heavy), `bulb-preview` (fr-7u8t.7's step-scale
 sweep), `escape-family-preview` (the three estimators side by side),
 `qjulia-preview` and `qjulia-beauty` (fr-7u8t.4's proof, and the twenty
 panels that demoted fr-7u8t.5/.6), `julia-flame` (the compositions three
-flame presets were picked from).
+flame presets were picked from), `spherefold-radius-sweep` (fr-qi9c: the
+sphere fold's frozen `mR`/`fR` and the box wall, swept as the two
+DIMENSIONLESS RATIOS that survive conjugation — its conjugation-control
+arm, exact at IoU 1.000 / relief 0.0000 over a 4x apparatus span, is what
+makes the other columns shape differences rather than zooms; verdict: both
+ratios are real, and the ONE-SHOT final-transform lens is the most
+sensitive role of the three).
 
 Requires **Node.js 18+** (ES2022 target; developed on Node 22).
 

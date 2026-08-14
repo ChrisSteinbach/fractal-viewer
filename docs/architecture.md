@@ -573,9 +573,11 @@ the composite Lipschitz bound `|w|·L_V·sigma_max(M) < 0.999` (`L = 1` for
 inner branch), so a fold map can read contractive in the editor yet fail the
 gate — and, the other way, a small enough weight can rescue an expanding
 affine part. The shipped Fold Lattice preset's `mandelbox` + `linear` blend
-still reads "uses variations" under this rule, and a pure-fold final
-transform stays ineligible too (the lens applies once; a multi-branch lens
-would need one root descent per branch). **Mandelbox KIFS** — twelve maps,
+still reads "uses variations" under this rule. A pure-fold FINAL transform
+is eligible since fr-g58b: the lens applies once, so its branches expand
+into one round of root descents through the untouched cores
+(`descendLens`), with no contraction gate — an un-iterated map needs none.
+**Mandelbox KIFS** — twelve maps,
 each exactly one fold entry — is the pure-fold showcase, and its preset
 loads straight into Surface mode.
 
