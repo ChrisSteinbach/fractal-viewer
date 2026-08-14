@@ -11,11 +11,7 @@ import {
   transformColors,
   W_SIDE_PALETTES,
 } from "../fractal/color";
-import {
-  analyzeEscapeSystem,
-  buildEscapeDE,
-  probeEscapeFill,
-} from "../fractal/escape-de";
+import { analyzeEscapeSystem, buildEscapeDE } from "../fractal/escape-de";
 import { analyzeBulbSystem, buildBulbDE } from "../fractal/bulb-de";
 import {
   analyzeSurfaceSystem,
@@ -3022,6 +3018,12 @@ function main(): void {
   // (fr-tmgf: the progress row's compute-path feed — null outside a
   // settle, so the row hides exactly like the strip path's idle state).
   let surfaceComputeSettleProgress: number | null = null;
+  /** What to say if this session's first settle renders NOTHING (fr-17qu) —
+   * armed by the routing that knows which object is being marched, fired by
+   * the settle that knows whether any ray hit it. Null for the IFS arms,
+   * whose attractors are non-empty by the gate's own contraction test, and
+   * outside a surface session. */
+  let surfaceBlankNotice: (() => void) | null = null;
   /**
    * Samples per pixel the compute SETTLE traces (fr-vpbq). Previews stay
    * at 1 — a preview exists to be cheap, and its whole job is to be
@@ -3044,6 +3046,24 @@ function main(): void {
    * user already waited for.
    */
   const SURFACE_COMPUTE_SETTLE_SAMPLES = 8;
+  /**
+   * Below this fraction of a settle's rays hitting anything, the session
+   * says so (fr-17qu). NOT zero, which was the second cut's mistake and
+   * would essentially never fire: the marcher accepts a hit at
+   * `uAcceptPixelEps` — the settle frame's pixel footprint, far coarser
+   * than any analytic epsilon — so a few rays catch even a system scaled
+   * so hard that every orbit escapes on its first pass.
+   *
+   * MEASURED at the entry pose, 1024x640 = 655360 rays. The nine shipped
+   * Escape-time presets hit 32752-67313 rays (5.0-10.3%), the thinnest of
+   * them being `mandelboxRings`, which is a DUST of filaments with no
+   * measurable volume at all. A Mandelbox pre-scaled by 8, whose set is
+   * degenerate, hits 126 (0.019%). That is a ~260x gap, and this sits in
+   * it: 50x below the thinnest real object, 5x above the degenerate one.
+   * At 655360 rays it means "fewer than 655 pixels", which is dust on a
+   * backdrop rather than a picture.
+   */
+  const SURFACE_BLANK_HIT_FRACTION = 0.001;
   // Which of those passes is in flight (1-based), for the row's trailing
   // detail token — null outside a settle, and left null through pass 1, so
   // an ordinary settle's row reads exactly as it did before fr-vpbq.
@@ -3499,7 +3519,38 @@ function main(): void {
           frame.width,
           frame.height,
         );
+        // fr-17qu, second cut. The FIRST completed settle of a session is
+        // the honest place to say "there is nothing here", and its own hit
+        // count is the honest evidence: a frame that drew essentially
+        // nothing at the entry pose IS blank, by the renderer's own
+        // arithmetic, so this cannot disagree with what the user is
+        // looking at.
+        //
+        // The first cut asked `probeEscapeFill` instead, before rendering,
+        // and that was the wrong instrument: it samples the bailout ball's
+        // VOLUME, and an escape-time set is often a thin fractal with
+        // essentially none. The shipped `mandelboxRings` preset reads
+        // 0.0000% fill at 65536 samples and renders ~38k surface hits —
+        // a dust of filaments. The probe was right; the question was wrong.
+        //
+        // FIRST settle only, because after that the camera has moved and a
+        // blank frame means "you navigated into a void", which is a
+        // different sentence. At entry the session has just glided to frame
+        // the bounding ball (see fitToBounds above), so the whole object is
+        // in view and zero hits means there is no object.
+        const firstSettle = !surfaceSettled;
         surfaceSettled = true;
+        const drawn = frame.counts.hit + frame.counts.plane;
+        const rays = frame.width * frame.height;
+        if (
+          firstSettle &&
+          surfaceBlankNotice &&
+          !frame.truncated &&
+          rays > 0 &&
+          drawn / rays < SURFACE_BLANK_HIT_FRACTION
+        ) {
+          surfaceBlankNotice();
+        }
         console.debug(
           `Surface compute settle ${String(frame.width)}x${String(frame.height)}: ` +
             `${frame.wallMs.toFixed(0)}ms wall, ${String(frame.passes)} passes, ` +
@@ -4105,27 +4156,17 @@ function main(): void {
             // live progress row and nothing anywhere saying why — the
             // silent-failure class fr-096u's blanked lens settles belong
             // to. A chain whose composite expands too hard escapes on its
-            // first pass everywhere (measured: `mbox2 pre-scale 4`,
-            // `boxfold6 x3`, and a lone spherefold at any weight —
-            // fr-kkb9's shape, which this covers too), so probe the
-            // bailout ball ONCE, here, at the single moment the set is
-            // determined. Deliberately not in refreshSurfaceEligibility:
-            // that gate runs on every state change and this costs 1.2-3.2ms
-            // measured, which is escape-de.ts's own reason for leaving the
-            // probe out of analyzeEscapeSystem.
-            //
-            // It stays a REPORT, never a refusal. The probe is not a proof
-            // — a set thinner than the sample reads 0 — so the honest claim
-            // is "the probe found nothing", and the mode still renders: the
-            // fr-24to/fr-zx34 line that this renderer discloses and lets
-            // the user decide rather than guessing on their behalf.
-            if (probeEscapeFill(de) === 0) {
+            // first pass everywhere: `mbox2 pre-scale 4`, `boxfold6 x3`,
+            // and a lone spherefold at any weight (fr-kkb9's shape, which
+            // this covers too). Armed here, where the chain length is
+            // known; FIRED by the settle, on the evidence below.
+            surfaceBlankNotice = () => {
               ui.flashToast(
                 de.links.length > 1
-                  ? "This chain's escape-time set looks empty — every probe point escaped on its first pass. Try a smaller fold weight or scale on one of the links."
-                  : "This fold's escape-time set looks empty — every probe point escaped on its first pass. Try a smaller fold weight or scale.",
+                  ? "This chain rendered almost nothing — fewer than one ray in a thousand hit it. Its escape-time set may be empty or too thin to see; try a smaller fold weight or scale on one of the links."
+                  : "This fold rendered almost nothing — fewer than one ray in a thousand hit it. Its escape-time set may be empty or too thin to see; try a smaller fold weight or scale.",
               );
-            }
+            };
             if (surfaceComputeAvailable()) {
               computeTarget = {
                 kind: "escape",
@@ -4146,6 +4187,11 @@ function main(): void {
             // which the eligibility gate has already excluded; the outer
             // catch is the backstop either way.
             ui.setSurfaceSessionKind("bulb");
+            surfaceBlankNotice = () => {
+              ui.flashToast(
+                "This power rendered almost nothing — fewer than one ray in a thousand hit it. Try a smaller scale on the map.",
+              );
+            };
             const de = buildBulbDE(
               state.transforms,
               state.finalTransform ?? null,
@@ -4448,6 +4494,7 @@ function main(): void {
       // the same "session-scoped progress/detail, not document state"
       // reset every other routing flag on this line gets.
       ui.setSurfaceSessionKind(null);
+      surfaceBlankNotice = null;
       // Reset only the mode this session owns — see the flame session's
       // deactivate for why this is not a blind write.
       if (state.renderMode === "surface") {

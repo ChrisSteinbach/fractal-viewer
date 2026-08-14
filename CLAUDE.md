@@ -515,14 +515,24 @@ and UI**, so the interesting math is unit-tested without a browser:
     pre-scale escapes everywhere on the first pass and the mode renders a
     blank frame — so `escapeSetContains` (membership, from the same orbit
     the estimate reads) and `probeEscapeFill` (a seeded sample of the
-    bailout ball, `0` = "the probe found nothing") exist to say so, and
-    fr-17qu wired them: main.ts probes ONCE per surface session, at the
-    single moment the DE is built, and toasts a zero without refusing the
-    render (a probe is not a proof — a set thinner than the sample reads
-    0 — and it covers fr-kkb9's lone spherefold by the same measurement).
-    Neither is wired into `analyzeEscapeSystem` or
-    `buildEscapeDE`, which stay cheap — the probe costs 1.2-3.2 ms
-    measured and that gate runs on every state change.
+    bailout ball) exist to say so. `probeEscapeFill` measures VOLUME and
+    must not be read as "will it render": an escape-time set is often a
+    thin fractal, and the shipped `mandelboxRings` reads 0.0000% fill at
+    65536 samples while rendering ~38k surface hits — fr-17qu's first cut
+    toasted "looks empty" over one of the app's own presets on exactly
+    that confusion. The signal fires off the FIRST completed settle's own
+    hit count instead (main.ts's `surfaceBlankNotice`): a frame that drew
+    essentially nothing at the entry pose — where the camera has just
+    glided to frame the whole bounding ball — IS blank by the renderer's
+    own arithmetic, so it cannot disagree with what the user sees. The
+    bar is `SURFACE_BLANK_HIT_FRACTION` (0.001) and NOT zero, because the
+    marcher accepts at `uAcceptPixelEps` and a few rays catch even a
+    degenerate system: measured at 1024x640, the nine shipped presets hit
+    5.0-10.3% of rays and a Mandelbox pre-scaled by 8 hits 0.019%, a
+    ~260x gap this sits inside. It reports, never refuses,
+    and covers fr-kkb9's lone spherefold and the bulb arm by the same
+    evidence. Neither probe is wired into `analyzeEscapeSystem` or
+    `buildEscapeDE`, which stay cheap.
     KALEIDOSCOPE is a query-space wedge fold
     (`foldQueryIntoSector`), not an orbit operation: `g` is 1-Lipschitz
     and an isometry per sector, the orbit is seeded AND offset by `g(p)`,

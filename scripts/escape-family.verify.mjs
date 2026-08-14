@@ -412,6 +412,23 @@ async function main() {
           );
           continue;
         }
+        // fr-17qu's second cut: a shipped preset must NEVER raise the
+        // blank-frame notice. Its FIRST cut did — it asked a VOLUME probe
+        // whether anything would render, and mandelboxRings is a dust with
+        // no measurable volume and ~38k surface hits, so the app cried wolf
+        // over one of its own presets. This gate had every other check and
+        // not this one: it verified the notice fires on a deliberately
+        // empty system, and never that it stays quiet on a good one.
+        const toast = await page.evaluate(() => {
+          const el = document.getElementById("toast");
+          return el && !el.classList.contains("hidden") ? el.textContent : null;
+        });
+        if (toast && /rendered almost nothing|looks empty/i.test(toast)) {
+          failures.push(
+            `${preset.key}: raised the blank-frame notice on a preset that renders — ${JSON.stringify(toast)}`,
+          );
+          console.error(`[escape-family] ${preset.key}: FALSE BLANK NOTICE`);
+        }
         const shot = path.join(args.outdir, `${preset.key}.png`);
         await page.locator("canvas").first().screenshot({ path: shot });
         shots.set(preset.key, shot);
@@ -521,16 +538,27 @@ async function main() {
       try {
         await loadPreset(page, "mandelboxClassic");
         // The same map with a big pre-scale: every orbit leaves the bailout
-        // ball on its first pass, so the set is empty and the mode would
-        // otherwise render a backdrop gradient with no explanation. Built by
-        // editing the document the preset just wrote, rather than by driving
-        // sliders, so the scenario is exactly "scale 4" and nothing else.
+        // ball on its first pass, so nothing is left to hit and the mode
+        // would otherwise render a backdrop gradient with no explanation.
+        // Built by editing the document the preset just wrote, rather than
+        // by driving sliders, so the scenario is exactly the scale and
+        // nothing else.
+        //
+        // EIGHT, not four, and the difference is the whole fr-17qu lesson.
+        // Measured ray hit rates for this map at the entry pose: scale 1
+        // 79.1%, scale 2 28.4%, scale 4 0.024%, scale 8 0.000%. Volume fill
+        // is 0.0000% for ALL of 2, 4 and 8 — which is why the first cut,
+        // asking a volume probe, would have called a system that fills a
+        // QUARTER OF THE FRAME empty. Scale 4 is nearly blank but renders
+        // ~150 pixels of a 655k-ray frame, and the notice deliberately does
+        // not fire on "nearly": its copy says every ray missed, so it fires
+        // only when every ray missed.
         await page.evaluate(() => {
           const raw = location.hash.replace(/^#v1=/, "");
           const doc = JSON.parse(
             atob(raw.replace(/-/g, "+").replace(/_/g, "/")),
           );
-          doc.transforms[0].scale = [4, 4, 4];
+          doc.transforms[0].scale = [8, 8, 8];
           const b64 = btoa(JSON.stringify(doc))
             .replace(/\+/g, "-")
             .replace(/\//g, "_")
@@ -562,7 +590,7 @@ async function main() {
             )
             .then((h) => h.jsonValue())
             .catch(() => null);
-          if (!toast || !/looks empty/i.test(toast)) {
+          if (!toast || !/rendered almost nothing/i.test(toast)) {
             failures.push(
               `empty-set system: no toast explaining the blank frame (got ${JSON.stringify(toast)})`,
             );
