@@ -327,13 +327,13 @@ import { effectiveSymmetryOrder } from "./chaos-game";
 import { mulberry32 } from "./rng";
 import {
   CONTRACTION_LIMIT,
-  SPHEREFOLD_LIPSCHITZ,
   SURFACE_FOLD_BOXFOLD,
   SURFACE_FOLD_MANDELBOX,
   SURFACE_FOLD_SPHEREFOLD,
   transformSigmas,
 } from "./surface-de";
 import type { SurfaceFoldKind } from "./surface-de";
+import { resolveFoldRadii, sphereFoldLipschitz } from "./variations";
 import type {
   SymmetryParams,
   SymmetryPlane,
@@ -444,8 +444,17 @@ export interface EscapeLink {
   /** Signed fold weight w — the classic Mandelbox scale. */
   w: number;
   /** `|w| · sigma_max(M)` — the per-step derivative growth the local
-   * fold factor multiplies onto. */
+   * fold factor multiplies onto. No fold LENGTH enters it: the sphere
+   * fold's contribution rides the per-step local factor instead. */
   derivGrowth: number;
+  /** The box fold's reflection plane (`variations.ts`'s `boxLimit`,
+   * resolved). Classic 1. */
+  boxLimit: number;
+  /** `mR²`, the sphere fold's squared minimum radius (resolved). Classic
+   * 0.25 — squared here so the orbit's hot loop never squares per step. */
+  minRadius2: number;
+  /** `fR²`, the sphere fold's squared fixed radius (resolved). Classic 1. */
+  fixedRadius2: number;
 }
 
 /**
@@ -490,11 +499,15 @@ function pureFoldVariation(t: Transform): Variation | null {
 
 /** A map's composite forward Lipschitz bound `|w|·L_V·sigma_max(M)` — the
  * same expression `analyzeSurfaceSystem` gates contraction on, so the two
- * gates cannot disagree about which side of the line a map falls. */
+ * gates cannot disagree about which side of the line a map falls.
+ * `sphereFoldLipschitz` is the magnification `fR²/mR²` (fr-s9ll), so the
+ * fold's own radii move this seam with them. */
 function foldLipschitz(fold: Variation, map: Transform): number {
   return (
     Math.abs(fold.weight) *
-    (fold.type === "boxfold" ? 1 : SPHEREFOLD_LIPSCHITZ) *
+    (fold.type === "boxfold"
+      ? 1
+      : sphereFoldLipschitz(resolveFoldRadii(fold))) *
     transformSigmas(map).max
   );
 }
@@ -562,6 +575,7 @@ export function analyzeEscapeSystem(
 function buildEscapeLink(map: Transform): EscapeLink {
   const fold = pureFoldVariation(map)!;
   const affine = composeAffine(map);
+  const radii = resolveFoldRadii(fold);
   return {
     m: affine.m,
     t: affine.t,
@@ -573,6 +587,9 @@ function buildEscapeLink(map: Transform): EscapeLink {
           : SURFACE_FOLD_MANDELBOX,
     w: fold.weight,
     derivGrowth: Math.abs(fold.weight) * transformSigmas(map).max,
+    boxLimit: radii.boxLimit,
+    minRadius2: radii.minRadius * radii.minRadius,
+    fixedRadius2: radii.fixedRadius * radii.fixedRadius,
   };
 }
 
@@ -605,9 +622,11 @@ export function buildEscapeDE(
 
 /** One axis of the box fold — variations.ts's `foldAxis`, duplicated here
  * for the same reason `variations4.ts` duplicates it: the estimator must
- * be dependency-light and bit-exact against the GLSL mirror. */
-function foldAxis(t: number): number {
-  return 2 * Math.max(-1, Math.min(1, t)) - t;
+ * be dependency-light and bit-exact against the GLSL mirror. `wall` is the
+ * link's resolved `boxLimit` (fr-s9ll); at the classic 1 the expression is
+ * character for character the one that shipped. */
+function foldAxis(t: number, wall: number): number {
+  return 2 * Math.max(-wall, Math.min(wall, t)) - t;
 }
 
 /**
@@ -717,24 +736,29 @@ function runEscapeOrbit(de: EscapeDE, p: Vec3, maxIterations: number): void {
     let fy: number;
     let fz: number;
     let localL: number;
+    // The link's own fold lengths (fr-s9ll). At the classic 0.25/1/1 every
+    // expression below is the one that shipped, term for term.
+    const wall = link.boxLimit;
+    const mR2 = link.minRadius2;
+    const fR2 = link.fixedRadius2;
     if (link.foldKind === SURFACE_FOLD_BOXFOLD) {
-      fx = foldAxis(yx);
-      fy = foldAxis(yy);
-      fz = foldAxis(yz);
+      fx = foldAxis(yx, wall);
+      fy = foldAxis(yy, wall);
+      fz = foldAxis(yz, wall);
       localL = 1;
     } else if (link.foldKind === SURFACE_FOLD_SPHEREFOLD) {
       const r2 = yx * yx + yy * yy + yz * yz;
-      const f = 1 / Math.max(0.25, Math.min(1, r2));
+      const f = fR2 / Math.max(mR2, Math.min(fR2, r2));
       fx = yx * f;
       fy = yy * f;
       fz = yz * f;
       localL = f;
     } else {
-      const bx = foldAxis(yx);
-      const by = foldAxis(yy);
-      const bz = foldAxis(yz);
+      const bx = foldAxis(yx, wall);
+      const by = foldAxis(yy, wall);
+      const bz = foldAxis(yz, wall);
       const r2 = bx * bx + by * by + bz * bz;
-      const f = 1 / Math.max(0.25, Math.min(1, r2));
+      const f = fR2 / Math.max(mR2, Math.min(fR2, r2));
       fx = bx * f;
       fy = by * f;
       fz = bz * f;
