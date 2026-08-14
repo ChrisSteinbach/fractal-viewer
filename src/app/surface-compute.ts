@@ -146,6 +146,62 @@ export const SURFACE_COMPUTE_MAX_STEPS_PER_PASS = 32;
 /** Default interval between progressive presents of a long frame. */
 export const SURFACE_COMPUTE_PROGRESS_MS = 500;
 
+/** The gamma both tracers encode their output with (surface-material.ts's
+ * `pow(linBase * lit, 1/2.2)` and its WGSL mirror). fr-vpbq's averaging
+ * has to undo it before summing and reapply it after, or antialiased
+ * edges come out too dark — the classic non-linear-average bug. */
+const SURFACE_OUTPUT_GAMMA = 2.2;
+
+/** Decode table for that gamma: byte -> linear light. 256 entries, so the
+ * per-sample accumulation costs a table lookup per channel instead of a
+ * `Math.pow` per channel per pixel. */
+const SRGB_TO_LINEAR = /* @__PURE__ */ (() => {
+  const table = new Float32Array(256);
+  for (let i = 0; i < 256; i++) {
+    table[i] = Math.pow(i / 255, SURFACE_OUTPUT_GAMMA);
+  }
+  return table;
+})();
+
+/**
+ * Where inside its pixel sample `s` aims (fr-vpbq).
+ *
+ * Sample 0 is the pixel CENTRE exactly, so a supersampled job's first pass
+ * reproduces the pre-fr-vpbq frame value for value and every later pass
+ * only refines it. The rest walk the R2 low-discrepancy sequence (Roberts'
+ * generalized golden ratio) from that centre: a fixed, seedless,
+ * well-distributed 2D stratification that needs no state, gives the same
+ * offsets for the same `s` on every device, and — unlike a jittered grid —
+ * is progressive, so stopping after any number of samples still leaves an
+ * evenly covered pixel.
+ */
+export function subPixelSample(s: number): [number, number] {
+  if (s <= 0) return [0.5, 0.5];
+  return [
+    (0.5 + 0.7548776662466927 * s) % 1,
+    (0.5 + 0.569840290998053 * s) % 1,
+  ];
+}
+
+/** Re-encode a linear-light accumulator as RGBA8, reusing `alpha`'s alpha
+ * channel (always opaque, but copied rather than assumed). */
+function encodeLinearMean(
+  accum: Float32Array,
+  taken: number,
+  alpha: Uint8Array,
+): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(alpha.length);
+  const inv = 1 / taken;
+  const invGamma = 1 / SURFACE_OUTPUT_GAMMA;
+  for (let p = 0, a = 0; p < out.length; p += 4, a += 3) {
+    out[p] = Math.round(255 * Math.pow(accum[a] * inv, invGamma));
+    out[p + 1] = Math.round(255 * Math.pow(accum[a + 1] * inv, invGamma));
+    out[p + 2] = Math.round(255 * Math.pow(accum[a + 2] * inv, invGamma));
+    out[p + 3] = alpha[p + 3];
+  }
+  return out;
+}
+
 /** A context with no usable WebGPU at all (`navigator.gpu` missing, or no
  * compatible adapter) — the session's signal to route to the WebGL tracer
  * without noting an error. */
@@ -313,6 +369,25 @@ export interface SurfaceComputeFrameOptions {
    * does. `done` may be fractional. */
   onProgress?: (pixels: Uint8Array, done: number, total: number) => void;
   progressIntervalMs?: number;
+  /**
+   * Samples per pixel (fr-vpbq). `1` — the default and every preview's
+   * value — is the pre-supersampling path, call for call.
+   *
+   * WHY IT IS N FRAMES AND NOT N RAYS. fr-vpbq measured the escape-time
+   * speckle as sub-pixel structure the marcher cannot reach: partial
+   * coverage at 16 spp is 8-13% of the object's pixels against a unit
+   * sphere's 1.31%, and its exponent against output resolution is
+   * -0.21..-0.36 where the sphere measures the perimeter law at -0.98, so
+   * no viewport resolves it. The fix is samples, not pixels. Widening a
+   * frame to N rays per pixel would multiply the five per-ray buffers and
+   * meet fr-biox's device ray ceiling N times sooner; tracing N FRAMES at
+   * N sub-pixel offsets and averaging costs the same GPU work, keeps
+   * every buffer and every watchdog bound exactly as measured, and makes
+   * the result PROGRESSIVE — sample 0 is the pre-fr-vpbq image, arriving
+   * when it always did, and each later one only improves it. A superseded
+   * job keeps the samples it finished.
+   */
+  samples?: number;
 }
 
 export interface SurfaceComputeFrame {
@@ -1228,7 +1303,7 @@ export class SurfaceComputeRenderer {
   ): Promise<SurfaceComputeFrame | null> {
     const token = ++this.frameToken;
     const run = this.chain.then(() =>
-      this.runFrame(token, spec, opts).catch((error: unknown) => {
+      this.runSamples(token, spec, opts).catch((error: unknown) => {
         // A destroyed/lost device rejects in-flight awaits — that is a
         // cancellation, not a render error. Anything else is logged once
         // and degrades to "no frame"; the session's lost-latch (not this
@@ -1241,6 +1316,100 @@ export class SurfaceComputeRenderer {
     );
     this.chain = run;
     return run;
+  }
+
+  /**
+   * The supersampling wrapper (fr-vpbq): `opts.samples` passes of
+   * {@link runFrame} at {@link subPixelSample} offsets, averaged in LINEAR
+   * light. At `samples <= 1` it is {@link runFrame} itself, call for call.
+   *
+   * AVERAGING IS LINEAR, NOT sRGB. Both tracers finish with the
+   * `pow(lit, 1/2.2)` encode (surface-material.ts's shade path, mirrored
+   * in the WGSL), so the bytes coming back are gamma-encoded; averaging
+   * them directly is the classic edge-darkening antialiasing bug. Decode
+   * through a 256-entry table (exact, free), accumulate, re-encode once
+   * per completed sample.
+   *
+   * A SUPERSEDED JOB KEEPS WHAT IT FINISHED. `runFrame` resolves null the
+   * moment the token moves, so a camera nudge mid-refinement returns the
+   * mean of the samples already taken rather than throwing them away —
+   * and sample 0 alone is exactly the frame this renderer produced before
+   * fr-vpbq, so the caller can never end up with less than it used to get.
+   * A TRUNCATED sample (a wall budget cut mid-pass) ends the refinement
+   * for the same reason: its unresolved pixels still carry the previous
+   * mean's prefill, so folding it in would double-count that mean.
+   */
+  private async runSamples(
+    token: number,
+    spec: SurfaceComputeFrameSpec,
+    opts: SurfaceComputeFrameOptions,
+  ): Promise<SurfaceComputeFrame | null> {
+    const samples = Math.max(1, Math.floor(opts.samples ?? 1));
+    if (samples === 1) return this.runFrame(token, spec, opts);
+    const rays = spec.width * spec.height;
+    const accum = new Float32Array(rays * 3);
+    let taken = 0;
+    let out: SurfaceComputeFrame | null = null;
+    let wallMs = 0;
+    let gpuMs = 0;
+    for (let s = 0; s < samples; s++) {
+      const frame = await this.runFrame(
+        token,
+        spec,
+        {
+          ...opts,
+          // Sample 0 presents its partials exactly as a single-sample
+          // frame does — the image has to develop the way it always has —
+          // and its ray tallies are stretched over the whole job so the
+          // progress row stays monotone across every sample. Later samples
+          // present only their finished mean: a partial pass would repaint
+          // aliased pixels over the smoothed ones and read as the render
+          // getting worse.
+          onProgress:
+            s === 0 && opts.onProgress
+              ? (pixels, done, total) => {
+                  opts.onProgress?.(pixels, done, total * samples);
+                }
+              : undefined,
+        },
+        subPixelSample(s),
+      );
+      if (!frame) break;
+      wallMs += frame.wallMs;
+      gpuMs += frame.gpuMs;
+      if (s > 0 && frame.truncated) break;
+      const px = frame.pixels;
+      for (let i = 0, p = 0, a = 0; i < rays; i++, p += 4, a += 3) {
+        accum[a] += SRGB_TO_LINEAR[px[p]];
+        accum[a + 1] += SRGB_TO_LINEAR[px[p + 1]];
+        accum[a + 2] += SRGB_TO_LINEAR[px[p + 2]];
+      }
+      taken++;
+      if (s === 0) {
+        // Pass 0 IS the pre-fr-vpbq frame — hand it back untouched (its
+        // own runFrame already seeded lastFrame and presented its
+        // partials), so a job superseded here delivers exactly what this
+        // renderer delivered before supersampling existed.
+        out = { ...frame, wallMs, gpuMs };
+      } else {
+        const mean = encodeLinearMean(accum, taken, px);
+        out = { ...frame, pixels: mean, wallMs, gpuMs };
+        // The running mean becomes the seed for the next pass's prefill
+        // and for the next frame after this job (the strip settle's
+        // preview-seeded-target discipline) — never a single pass's own
+        // image, which is the noisier picture of the two.
+        if (opts.capture !== true) {
+          this.lastFrame = {
+            pixels: mean,
+            width: spec.width,
+            height: spec.height,
+          };
+        }
+        opts.onProgress?.(mean, taken * rays, samples * rays);
+      }
+      if (frame.truncated) break;
+    }
+    return out;
   }
 
   /** Supersede any in-flight and queued frames — they resolve null at
@@ -1432,6 +1601,10 @@ export class SurfaceComputeRenderer {
     token: number,
     spec: SurfaceComputeFrameSpec,
     opts: SurfaceComputeFrameOptions,
+    /** This pass's sub-pixel sample position (fr-vpbq). The default is the
+     * pixel centre — the value every ray derivation used to hardcode — so
+     * a single-sample frame is the pre-supersampling one. */
+    pixelJitter: [number, number] = [0.5, 0.5],
   ): Promise<SurfaceComputeFrame | null> {
     const trace = surfaceComputeTrace;
     const traceT0 = performance.now();
@@ -1476,6 +1649,7 @@ export class SurfaceComputeRenderer {
         dither: spec.dither,
         fogTint: spec.fogTint,
         fogTintStrength: spec.fogTintStrength,
+        pixelJitter,
       }),
     );
     // Host prefill contract (module doc of surface-de-gpu.ts): rays still

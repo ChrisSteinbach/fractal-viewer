@@ -1149,7 +1149,30 @@ and UI**, so the interesting math is unit-tested without a browser:
     premise: there is no worse frame being painted over a better one to
     suppress, and a coverage threshold on the present would have had
     nothing to fix. The pane heals at park through fr-ud7n's completion
-    pass); per-frame status counts for field debugging. scene.ts
+    pass); per-frame status counts for field debugging.
+    SUPERSAMPLING (fr-vpbq) rides that loop as `opts.samples`: N passes of
+    the same frame at N sub-pixel offsets (`subPixelSample` — pass 0 the
+    pixel CENTRE exactly, the rest the R2 low-discrepancy sequence),
+    averaged in LINEAR light because both tracers end with a
+    `pow(lit, 1/2.2)` encode and averaging the bytes is the
+    edge-darkening bug. N FRAMES rather than N rays per frame, so the five
+    per-ray buffers and every watchdog bound stay exactly as measured and
+    fr-biox's device ray ceiling is not met N times sooner — and so the
+    result is PROGRESSIVE: pass 0 is the pre-fr-vpbq frame, arriving when
+    it always did and presenting its own partials, every later pass only
+    refines and presents when it lands, and a superseded job keeps what it
+    finished. The speckle it removes is sub-pixel STRUCTURE, measured, not
+    march undersampling (`exhausted` 0.00% at 20x the step budget) and not
+    reachable by any viewport (partial-coverage exponent -0.21..-0.36
+    against output resolution where a sphere's perimeter law measures
+    -0.98). main.ts spends it on the live SETTLE and on Save-PNG at 8
+    samples, never on a preview (cheap by definition) and never on offline
+    VIDEO force frames (the cost would multiply by the frame count); the
+    progress row discloses the pass as a trailing
+    `antialiasing pass k/8`, silent through pass 1. The WebGL strip arm
+    is untouched — it needs accumulation passes through the strip pump
+    rather than an in-shader loop, whose all-or-nothing per-strip cost
+    would fight the fr-096u/fr-id9r bounded-strip machinery. scene.ts
     presents frames as a DataTexture through the shared surface blit (the
     one WebGL canvas — capture/recorder unchanged) and assembles specs
     with the uniform-exact camera/eps/tier quantities (acceptance eps
