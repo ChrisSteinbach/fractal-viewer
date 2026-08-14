@@ -1,6 +1,6 @@
 import type { FlamePaletteId } from "./palette";
 import type { Rng } from "./rng";
-import type { Transform, Variation, Vec3, Vec4 } from "./types";
+import type { SymmetryParams, Transform, Variation, Vec3, Vec4 } from "./types";
 
 const HALF = 0.5;
 
@@ -1015,6 +1015,122 @@ export function mandelboxCube(): Transform[] {
 }
 
 /**
+ * One link of an escape-time CHAIN (fr-za0n, fr-s04t) in the document's own
+ * vocabulary: a transform whose only variation is a single fold, at a
+ * `weight` that is the classic Mandelbox `scale` and a `rotation` that is
+ * genuinely part of the formula rather than a re-posing (the orbit applies
+ * `M` before the fold, and folds do not commute with rotations).
+ *
+ * The whole point of these presets is that the transform LIST is a formula
+ * chain: orbit step `i` applies link `i mod n`, with the Mandelbrot offset
+ * `+ p` and the bailout test after EACH link (see `escape-de.ts` — "THE LIST
+ * IS THE SEQUENCE"). So a link is exactly {@link escapeMandelbox}'s single
+ * map with the list one longer, and no preset below invents any vocabulary
+ * the single-map trio did not already have.
+ */
+function foldLink(
+  id: number,
+  type: "mandelbox" | "boxfold" | "spherefold",
+  weight: number,
+  rotationY = 0,
+): Transform {
+  return {
+    id,
+    position: [0, 0, 0],
+    rotation: [0, (rotationY * Math.PI) / 180, 0],
+    scale: [1, 1, 1],
+    variations: [{ type, weight }],
+  };
+}
+
+/**
+ * "Fold Chain" — the escape-time mode's first HYBRID (fr-za0n, fr-s04t): a
+ * Mandelbox at the canonical scale 2 followed by a box fold at 1.6 through a
+ * 20° turn about `y`, the orbit alternating between them one link per step.
+ *
+ * It exists because the chain shipped with no way in. `escape-de.ts` became a
+ * formula chain and both shader mirrors learned to cycle it, but every
+ * escape-time preset was still ONE map — so the only route to a hybrid was to
+ * hand-author two transforms and guess two weights and an angle, which is the
+ * "a render mode with no preset is a mode nobody reaches" hole
+ * {@link mandelboxClassic} was created to close, one composition level up.
+ *
+ * The 20° turn is what makes this a chain rather than a longer Mandelbox: with
+ * both links axis-aligned the two folds share the cube's symmetry group, and
+ * the second fold's creases land on the first's. Turned, the box fold cuts
+ * ACROSS them, and the flanged, ring-eyed body of {@link mandelboxClassic}
+ * becomes a wider, flatter-topped mass carved by coarse voids that run right
+ * through it (close in it reads as a fluted drum; from the session's opening
+ * stand-off, as a cratered round body). Measured
+ * (`scripts/escape-chain.harness.ts`'s method): 6.7% of the bailout ball,
+ * against the single map's 7.8% — composition here changes the SHAPE at
+ * essentially unchanged density, which is the argument for shipping it beside
+ * the trio rather than instead of any of them.
+ */
+export function foldChain(): Transform[] {
+  return [foldLink(0, "mandelbox", 2), foldLink(1, "boxfold", 1.6, 20)];
+}
+
+/**
+ * "Fold Chain Boulder" — three links: Mandelbox 2, Mandelbox −1.5, and
+ * {@link foldChain}'s 20°-turned box fold at 1.6 (fr-za0n). Where the
+ * two-link chain is carved by a few coarse voids, this is the densest and
+ * roundest of the three — a near-spherical MASS filling its bailout ball,
+ * finely pitted all over rather than cut through.
+ *
+ * The middle link is the map {@link mandelboxCube} is built on. A negative
+ * scale turns the Mandelbox inside out (that preset's whole subject), so as
+ * a link it re-enters the positive-scale fold's output through an
+ * orientation-reversing one every pass, and the turned box fold then cuts
+ * across both. Three links, three genuinely different maps: nothing here can
+ * collapse back to a longer Mandelbox.
+ *
+ * SUBSTITUTED, and the reason is framing (fr-za0n). The chain first drafted
+ * here was `Mandelbox 2 → box fold 1.6 → sphere fold 1.2`, whose silhouette
+ * is a far more interesting object — a flat-topped urn with a rim and a
+ * waist, no single fold map's shape at any weight. But `buildEscapeDE` pins
+ * `boundingRadius` to the BAILOUT ball for every escape system, and main.ts
+ * frames a new escape session on exactly that ball, so an object reaching
+ * only ~2.0 of a radius-4 ball opens as a speck a quarter of the pane wide
+ * (measured: 2.8% ball fill, ~7% of pixels hit). This chain fills 7.8% and
+ * reaches 3.96 — the same presence as {@link mandelboxClassic} — which is
+ * what a preset owes on load. The urn is still one edit away for anyone who
+ * wants it; it is just not what a menu entry should open on.
+ */
+export function foldChainBoulder(): Transform[] {
+  return [
+    foldLink(0, "mandelbox", 2),
+    foldLink(1, "mandelbox", -1.5),
+    foldLink(2, "boxfold", 1.6, 20),
+  ];
+}
+
+/**
+ * "Fold Chain Flower" — {@link foldChain}'s two links under a five-fold
+ * kaleidoscope (fr-za0n), and the preset that needed {@link PRESET_SYMMETRIES}
+ * to exist at all.
+ *
+ * The kaleidoscope is not decoration here, it is the object: `escape-de.ts`
+ * folds the QUERY into one sector before the orbit runs (`foldQueryIntoSector`
+ * — 1-Lipschitz, an isometry per sector, so the rendered set is exactly
+ * `g⁻¹(M)` and costs nothing per orbit step), which makes the result dihedral
+ * rather than the chaos game's cyclic. Looked at down its own axis it is a
+ * five-petalled flower around a ring; obliquely — the app's opening camera —
+ * it reads as radial fluting on a drum, so this preset rewards an orbit to
+ * the pole in a way the other two do not.
+ *
+ * FIVE, specifically. Both links' folds are odd axis by axis, so the chain
+ * already carries the cube's own symmetry and a wedge fold at order 2 or 4
+ * would be a NO-OP — the preset would silently be {@link foldChain} again.
+ * Five is coprime to the cube's 4-fold axis, so every sector boundary cuts
+ * new geometry. Measured 7.0% of the bailout ball against the bare chain's
+ * 6.7%: the fold moves structure around the axis without inflating the set.
+ */
+export function foldChainFlower(): Transform[] {
+  return foldChain();
+}
+
+/**
  * The Mandelbulb family's shared recipe (fr-tdin): ONE map whose only
  * variation is the `bulb` triplex 8th power at weight 1 — the exact shape
  * `analyzeBulbSystem` admits, and the deliberate complement of both other
@@ -1498,6 +1614,12 @@ const PRESETS = {
   mandelboxClassic,
   mandelboxRings,
   mandelboxCube,
+  // The escape-time CHAINS (fr-za0n, fr-s04t): the transform list became a
+  // hybrid formula chain and both shader mirrors learned to cycle it, but
+  // every preset above is still ONE map — so the composition had no way in.
+  foldChain,
+  foldChainBoulder,
+  foldChainFlower,
   // The escape-time family's THIRD object (fr-tdin): the Mandelbulb had
   // an estimator, two shader mirrors and no way in at all.
   mandelbulbClassic,
@@ -1581,6 +1703,13 @@ export const PRESET_RENDER_HINTS: Partial<
   mandelboxClassic: "surface",
   mandelboxRings: "surface",
   mandelboxCube: "surface",
+  // The chains (fr-za0n, fr-s04t) need the hint for the identical reason —
+  // every link is non-contracting, so the chaos-game cloud is escape-reset
+  // debris — and the mode reached this way is the same escape-time marcher,
+  // now cycling the whole list instead of iterating one map.
+  foldChain: "surface",
+  foldChainBoulder: "surface",
+  foldChainFlower: "surface",
   // The Mandelbulb trio (fr-tdin) needs the hint for exactly the same
   // reason — a single non-contracting map's chaos-game cloud is
   // escape-reset debris — and the mode reached this way is the
@@ -1639,6 +1768,38 @@ export const PRESET_PALETTES: Partial<Record<Preset, FlamePaletteId>> = {
   juliaIsland: "dusk",
   juliaSnowflake: "sunset",
   juliaPinwheel: "sunset",
+};
+
+/**
+ * The KALEIDOSCOPE a preset was composed under (fr-za0n) — the fifth side
+ * table, and the one {@link foldChainFlower} could not exist without: its
+ * subject IS the symmetry. `escape-de.ts` folds the query into one sector
+ * before the orbit runs, so the five-fold flower is not a decorated
+ * {@link foldChain}, it is a different object, and shipping its transform
+ * list alone ships the wrong picture — exactly {@link PRESET_FINALS}'s
+ * argument one setting over.
+ *
+ * A fifth table beside the four above for their shared reason: `PRESETS` maps
+ * a name to `() => Transform[]`, and widening that signature would make every
+ * preset declare a symmetry it does not have. Keyed by {@link Preset} so
+ * `main.ts` looks one up by the name `presetTransforms` just used, and held
+ * as a plain value like {@link PRESET_PALETTES} rather than a factory —
+ * main.ts reads the fields into `state.ts`'s clamping setters and never
+ * stores the object, so there is nothing here to mutate.
+ *
+ * ABSENT MEANS OFF, not "leave whatever was there" — {@link PRESET_FINALS}'s
+ * rule, and load-bearing in BOTH directions. A preset is a whole-system
+ * replacement, so a kaleidoscope surviving one would silently replicate the
+ * arriving system into copies it was never composed with; and for the
+ * escape-time and Mandelbulb presets it would take their render mode away
+ * outright, because `analyzeBulbSystem` refuses ANY order above 1 and
+ * `analyzeEscapeSystem` refuses one that rotates into 4D. The `twist` a
+ * leftover order could carry does exactly that, which is why main.ts clears
+ * the twist here too and no entry below may set one: this table is 3D
+ * kaleidoscopes only, the shape every gate that reads it admits.
+ */
+export const PRESET_SYMMETRIES: Partial<Record<Preset, SymmetryParams>> = {
+  foldChainFlower: { order: 5, plane: "xz" },
 };
 
 /** Build the transform set for a named preset. */

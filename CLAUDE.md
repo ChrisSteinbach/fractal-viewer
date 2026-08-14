@@ -113,7 +113,7 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `palette.ts` — Iq cosine-gradient palettes (`buildPaletteLUT` → 256×3 LUT)
     - user-authored `CustomPalette` (2–8 stops). `PaletteSelection` = UI/state,
       `PaletteSpec` = worker/GPU wire, `resolvePalette` = bridge.
-  - `presets.ts` — default + named systems + add-transform, plus four
+  - `presets.ts` — default + named systems + add-transform, plus five
     `Partial<Record<Preset, …>>` SIDE TABLES main.ts's preset handler
     consumes: `PRESET_SCAFFOLDS` (4D wireframes), `PRESET_RENDER_HINTS`
     (the renderer a preset was authored for), and — fr-7u8t.5 —
@@ -121,8 +121,14 @@ and UI**, so the interesting math is unit-tested without a browser:
     ABSENT MEANS CLEAR, so no lens survives a preset load into a system
     whose gate refuses one) and `PRESET_PALETTES` (the flame palette a
     composition was chosen with — built-in ids only, flame-hinted presets
-    only). Four tables rather than a wider `PRESETS` signature, so no
-    preset has to declare what it does not carry.
+    only); fr-za0n added `PRESET_SYMMETRIES` (the kaleidoscope a
+    composition IS — today only `foldChainFlower`, whose subject is the
+    five-fold query fold — on `PRESET_FINALS`'s ABSENT-MEANS-OFF rule,
+    load-bearing in both directions since `analyzeBulbSystem` refuses any
+    order above 1 and `analyzeEscapeSystem` refuses one that rotates into
+    4D; main.ts also clears the twist, and no entry may carry one). Five
+    tables rather than a wider `PRESETS` signature, so no preset has to
+    declare what it does not carry.
   - `project4.ts` — SO(4) rotor→matrix + camera projection, `FourDView`,
     `sliceWeight`, `SLICE_GHOST_FLOOR` (`0.06`).
   - `random-system.ts` — "Surprise Me" generator: rolls random IFS (2–4 maps,

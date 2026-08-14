@@ -38,6 +38,7 @@ import {
   PRESET_PALETTES,
   PRESET_RENDER_HINTS,
   PRESET_SCAFFOLDS,
+  PRESET_SYMMETRIES,
   presetTransforms,
   radiolarian,
   sierpinskiPyramid,
@@ -730,6 +731,33 @@ describe("PRESET_PALETTES", () => {
       expect(PRESET_RENDER_HINTS[key as keyof typeof PRESET_RENDER_HINTS]).toBe(
         "flame",
       );
+    }
+  });
+});
+
+describe("PRESET_SYMMETRIES", () => {
+  it("keys only real preset names", () => {
+    for (const key of Object.keys(PRESET_SYMMETRIES)) {
+      expect(PRESET_NAMES).toContain(key);
+    }
+  });
+
+  // ABSENT MEANS OFF (see the table's doc): main.ts turns the kaleidoscope
+  // off on every load with no entry, so a preset added here silently
+  // replicates itself for everyone who loads it. One composition earns that.
+  it("carries a kaleidoscope only for the composition that IS one", () => {
+    expect(Object.keys(PRESET_SYMMETRIES)).toEqual(["foldChainFlower"]);
+  });
+
+  // The table's own scoping claim, and the half that would break a render
+  // mode rather than merely look wrong: a `w` plane or a nonzero twist
+  // rotates the copies out of 3D, which every gate that reads this table
+  // refuses. main.ts clears the twist unconditionally; no entry may set one.
+  it("only prescribes 3D kaleidoscopes", () => {
+    for (const symmetry of Object.values(PRESET_SYMMETRIES)) {
+      expect(symmetry.plane).not.toContain("w");
+      expect(symmetry.twist ?? 0).toBe(0);
+      expect(symmetry.order).toBeGreaterThan(1);
     }
   });
 });
