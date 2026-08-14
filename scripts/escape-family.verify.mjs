@@ -39,6 +39,11 @@
  *   node scripts/escape-family.verify.mjs --mode=sw          # SwiftShader
  *   node scripts/escape-family.verify.mjs --only=mandelbulbClassic
  *
+ * `--url` also accepts a DEPLOYED origin (`--url=https://fractal-4d.com`),
+ * which is the only way to check what users actually get — the isolation
+ * reload a live origin performs is handled, and `npm run preview` never
+ * performs it.
+ *
  * `--mode=x11:<display>` is a HEADED window on a live X display, which is the
  * only route to the real driver here and therefore the only arm on which the
  * engine question (4) has a meaningful answer — SwiftShader answers "compute,
@@ -179,8 +184,50 @@ async function openApp(browser, args) {
   page.on("console", (m) => consoleLines.push(m.text()));
   const q = args.query ? `?surfacestate&${args.query}` : "?surfacestate";
   await page.goto(`${args.url}/${q}`, { waitUntil: "load" });
-  await page.waitForFunction(() => typeof window.__surfaceState === "function");
+  await settled(page, () =>
+    page.waitForFunction(() => typeof window.__surfaceState === "function"),
+  );
+  // A LIVE origin reloads once for cross-origin isolation (fr-su3r,
+  // register-sw.ts): the first visit registers the service worker, then the
+  // page reloads to come back under COOP/COEP. `npm run preview` serves those
+  // headers already, so this never fires there — but pointing --url at the
+  // deployed site does, and every evaluate racing that reload dies with
+  // "Execution context was destroyed". Wait it out ONCE here, so the checks
+  // below can assume a stable document.
+  await page
+    .waitForFunction(() => window.crossOriginIsolated === true, undefined, {
+      timeout: 15_000,
+    })
+    .catch(() => {
+      // Not every deployment is isolated, and the app runs either way — the
+      // point was only to be past the reload if one was coming.
+    });
+  await settled(page, () =>
+    page.waitForFunction(() => typeof window.__surfaceState === "function"),
+  );
   return { context, page, consoleLines };
+}
+
+/**
+ * Run `fn`, retrying once if the page navigated out from under it.
+ *
+ * Playwright rejects an in-flight evaluate with "Execution context was
+ * destroyed" when that happens, and a navigation here is EXPECTED rather than
+ * a fault — see the isolation reload above. Retrying once is enough: the
+ * reload happens at most once per page.
+ */
+async function settled(page, fn) {
+  try {
+    return await fn();
+  } catch (error) {
+    if (
+      !/Execution context was destroyed|frame was detached/i.test(String(error))
+    ) {
+      throw error;
+    }
+    await page.waitForLoadState("load").catch(() => {});
+    return fn();
+  }
 }
 
 /** Choose a preset from the panel's menu — the path a user takes, and the one
@@ -198,19 +245,21 @@ async function loadPreset(page, key) {
   // state the panel remembers per render mode.
   let shape = null;
   for (let i = 0; i < 20; i++) {
-    shape = await page.evaluate(() => {
-      const sel = document.getElementById("presetSelect");
-      if (!sel) return { found: false, w: 0, h: 0 };
-      const details = sel.closest("details");
-      if (details && !details.open) details.open = true;
-      const r = sel.getBoundingClientRect();
-      return {
-        found: true,
-        w: r.width,
-        h: r.height,
-        mode: window.__surfaceState?.().mode ?? "?",
-      };
-    });
+    shape = await settled(page, () =>
+      page.evaluate(() => {
+        const sel = document.getElementById("presetSelect");
+        if (!sel) return { found: false, w: 0, h: 0 };
+        const details = sel.closest("details");
+        if (details && !details.open) details.open = true;
+        const r = sel.getBoundingClientRect();
+        return {
+          found: true,
+          w: r.width,
+          h: r.height,
+          mode: window.__surfaceState?.().mode ?? "?",
+        };
+      }),
+    );
     if (shape.found && shape.w > 0 && shape.h > 0) break;
     if (shape.mode !== "points") await page.click("#modePointsBtn");
     await page.waitForTimeout(250);
