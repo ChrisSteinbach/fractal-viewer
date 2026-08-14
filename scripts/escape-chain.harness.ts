@@ -18,8 +18,9 @@
  *     column is the verdict: chaining's set fattens with every link added
  *     and ends as its own bounding sphere, which is the defect fr-7u8t.8
  *     existed to fix.
- *  3. THE STEP SCALE — the sweep {@link ESCAPE_CHAIN_STEP_SCALE} comes off,
- *     with the single map as the control that anchors the reading.
+ *  3. THE STEP SCALE — the sweep that KEPT `ESCAPE_STEP_SCALE` at 0.35 for
+ *     chains as well as single maps, with the single map as the control
+ *     that anchors the reading.
  *  4. WHAT A CHAIN LOOKS LIKE — the contact sheet.
  *  5. THE KALEIDOSCOPE — exactly symmetric, and measured to cost nothing
  *     per orbit step.
@@ -40,11 +41,12 @@
 import {
   analyzeEscapeSystem,
   buildEscapeDE,
-  ESCAPE_CHAIN_STEP_SCALE,
+  ESCAPE_STEP_SCALE,
   ESCAPE_TIME_ITERATIONS,
   ESCAPE_TIME_RADIUS,
-  escapeStepScale,
+  escapeSetContains,
   estimateEscapeDistance,
+  probeEscapeFill,
 } from "../src/fractal/escape-de";
 import type { EscapeDE } from "../src/fractal/escape-de";
 import { mulberry32 } from "../src/fractal/rng";
@@ -273,15 +275,80 @@ function fitMarchRadius(de: DistanceEstimator): number {
 }
 
 /**
- * NO OVERSHOOT PROBE HERE, deliberately. The prototype's probe asked "does
- * a damped step land INSIDE the set", which needs the orbit's own escape
- * flag; the shipped estimator returns a distance, and thresholding it is a
- * proximity statistic wearing an overshoot's name — near-boundary escapers
- * have a huge `dr` and a tiny estimate too, so the threshold cannot tell
- * them from members. Rather than duplicate the shipped loop to get the flag
- * back (the one thing this harness exists NOT to do), the sheets decide the
- * way fr-7u8t.8's did: hit coverage against step scale, plus the pictures.
+ * How often does the estimate claim an empty ball that is not empty? For
+ * each exterior query the DE certifies `ball(p, d)` clear of the set;
+ * probing in several directions and asking `escapeSetContains` — the
+ * shipped membership oracle, reading the same orbit the estimate does —
+ * turns "the bound is heuristic" into a number, comparable across chains
+ * because the single-map control is measured the same way.
+ *
+ * TWO radii, because they answer different questions. `bound` probes at
+ * `0.9·d` — how often the estimate itself is not a lower bound, i.e. how
+ * heuristic it has become. `step` probes at the marcher's ACTUAL damped
+ * step, which is the only violation a damped sphere tracer can be hurt by.
+ * A large gap means the bound is loose but the damping already absorbs it.
+ *
+ * Queries are drawn in the BAILOUT ball, not in each system's own fitted
+ * one: the fitted ball shrinks around a compact chain, which would crowd
+ * every query up against that chain's surface and report a worse rate for
+ * a tighter object. The bailout ball is the domain the marcher actually
+ * enters against, and it is the same for every row.
  */
+function violationPct(
+  de: EscapeDE,
+  queries = 1200,
+  dirs = 14,
+): { bound: number; step: number } {
+  const rng = mulberry32(0x5eed_1234);
+  let probed = 0;
+  let badBound = 0;
+  let badStep = 0;
+  for (let q = 0; q < queries; q++) {
+    const u = Math.cbrt(rng()) * ESCAPE_TIME_RADIUS;
+    const ct = 2 * rng() - 1;
+    const st = Math.sqrt(Math.max(0, 1 - ct * ct));
+    const ph = 2 * Math.PI * rng();
+    const p: Vec3 = [u * st * Math.cos(ph), u * st * Math.sin(ph), u * ct];
+    const d = estimateEscapeDistance(de, p);
+    if (!(d > 1e-6)) continue; // on or inside the set: nothing certified
+    probed++;
+    let hitBound = false;
+    let hitStep = false;
+    for (let k = 0; k < dirs; k++) {
+      const c2 = 2 * rng() - 1;
+      const s2 = Math.sqrt(Math.max(0, 1 - c2 * c2));
+      const p2 = 2 * Math.PI * rng();
+      const ux = s2 * Math.cos(p2);
+      const uy = s2 * Math.sin(p2);
+      const uz = c2;
+      if (
+        !hitBound &&
+        escapeSetContains(de, [
+          p[0] + 0.9 * d * ux,
+          p[1] + 0.9 * d * uy,
+          p[2] + 0.9 * d * uz,
+        ])
+      ) {
+        hitBound = true;
+      }
+      if (
+        !hitStep &&
+        escapeSetContains(de, [
+          p[0] + ESCAPE_STEP_SCALE * d * ux,
+          p[1] + ESCAPE_STEP_SCALE * d * uy,
+          p[2] + ESCAPE_STEP_SCALE * d * uz,
+        ])
+      ) {
+        hitStep = true;
+      }
+      if (hitBound && hitStep) break;
+    }
+    if (hitBound) badBound++;
+    if (hitStep) badStep++;
+  }
+  if (probed === 0) return { bound: 0, step: 0 };
+  return { bound: (100 * badBound) / probed, step: (100 * badStep) / probed };
+}
 
 /** The shipped estimator bound to a system, ready for `de-preview.ts`. */
 function shippedDE(de: EscapeDE): DistanceEstimator {
@@ -403,7 +470,7 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
           {
             de,
             boundingRadius: marchR,
-            stepScale: ESCAPE_CHAIN_STEP_SCALE,
+            stepScale: ESCAPE_STEP_SCALE,
             eyeOffset: EYE,
             zoom: ZOOM,
           },
@@ -461,7 +528,7 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
         {
           de,
           boundingRadius: marchR,
-          stepScale: escapeStepScale(escDe),
+          stepScale: ESCAPE_STEP_SCALE,
           eyeOffset: EYE,
           zoom: ZOOM,
         },
@@ -544,7 +611,7 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
         {
           de,
           boundingRadius: marchR,
-          stepScale: escapeStepScale(escDe),
+          stepScale: ESCAPE_STEP_SCALE,
           eyeOffset: axisEye,
           zoom: ZOOM,
         },
@@ -563,6 +630,81 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
     console.log(
       `  wrote ${writeContactSheet(panels, 5, "escape-chain-kaleido.png")}`,
     );
+  });
+
+  it("measures what composition does to the BOUND", () => {
+    // The argument for widening the gate, in one column. If chaining maps
+    // together made the heuristic worse, the shipped single map would be the
+    // best-behaved row here. It is the worst.
+    for (const [label, transforms] of FIXTURES) {
+      const escDe = buildEscapeDE(transforms);
+      const v = violationPct(escDe);
+      console.log(
+        `  ${label.padEnd(34)} ${escDe.links.length} links  ` +
+          `bound ${v.bound.toFixed(1)}%  step ${v.step.toFixed(1)}%`,
+      );
+    }
+  });
+
+  it("reports an EMPTY chain instead of leaving a blank frame unexplained", () => {
+    // fr-za0n's UX landmine. A chain whose composite expands too hard escapes
+    // everywhere on the first pass and renders nothing, with no clue why.
+    // `probeEscapeFill` is what a later UI pass can ask, so the answer can be
+    // "this chain's set is empty" rather than an empty pane.
+    //
+    // The sharpest case — a mandelbox followed by a triplex power, which
+    // sends |v| ~ 7 to 5.8e5 in one link — is out of this gate's reach
+    // (power links are not folds), so these are the fold-only chains that
+    // come closest: big pre-scales, which drive |y| past the fold's range
+    // before the fold can pull it back.
+    const s = (v: number): Vec3 => [v, v, v];
+    const probes: [string, Transform[]][] = [
+      ...FIXTURES,
+      [
+        "EMPTY? mbox2 -> mbox2 pre-scale 4",
+        [
+          foldMap(1, "mandelbox", 2),
+          foldMap(2, "mandelbox", 2, { scale: s(4) }),
+        ],
+      ],
+      [
+        "EMPTY? mbox2 pre-scale 8 -> box1.6",
+        [
+          foldMap(1, "mandelbox", 2, { scale: s(8) }),
+          foldMap(2, "boxfold", 1.6),
+        ],
+      ],
+      [
+        "EMPTY? box6 -> box6 -> box6",
+        [
+          foldMap(1, "boxfold", 6),
+          foldMap(2, "boxfold", 6),
+          foldMap(3, "boxfold", 6),
+        ],
+      ],
+      [
+        "EMPTY? sph3 pre-scale 6 -> mbox2",
+        [
+          foldMap(1, "spherefold", 3, { scale: s(6) }),
+          foldMap(2, "mandelbox", 2),
+        ],
+      ],
+    ];
+    for (const [label, transforms] of probes) {
+      const fill = probeEscapeFill(buildEscapeDE(transforms));
+      console.log(
+        `  ${label.padEnd(42)} probeFill ${(100 * fill).toFixed(3)}%` +
+          (fill === 0 ? "   <- renders NOTHING" : ""),
+      );
+    }
+    // Every fixture this harness draws must be non-empty, or its sheets are
+    // measuring blank panels.
+    for (const [label, transforms] of FIXTURES) {
+      expect(
+        probeEscapeFill(buildEscapeDE(transforms)),
+        `${label} probes empty`,
+      ).toBeGreaterThan(0);
+    }
   });
 
   it("prices a chain against the single map it generalises", () => {

@@ -81,6 +81,85 @@
  * bailout ball, and it tends to draw the object (and so the marching ball
  * the queries are drawn in) inward as well.
  *
+ * WHERE THE OFFSET LANDS IS THE SAME FORK UNDER ANOTHER NAME, which is
+ * worth saying because the prototype names it separately. That harness
+ * offers `offset: "pass" | "link"` inside its chaining orbit — `+ p` after
+ * all n links, or after each. Cycling with a per-LINK offset and chaining
+ * with a per-PASS one ARE the two arms above; cycling with a per-PASS
+ * offset is chaining with an earlier bailout test, and it fattens for the
+ * same reason. So there is one axis here, not two, and the sheet settles
+ * it once: the offset lands per LINK.
+ *
+ * The prototype's own per-map numbers agree where they can be compared and
+ * split where they cannot: over its three fixtures, per-PASS wins on the
+ * two-link fold pair (bound/step violations 11.2/8.4 against 23.7/15.9)
+ * and per-LINK wins on the three-link fold chain (1.1/1.1 against 8.1/4.9)
+ * and decisively on a chain containing a triplex-power link (38.6/35.4
+ * against 92.2/84.3, at ~2.5x the steps). Those are three fixtures at one
+ * length each; the fill measurements above are eight fixtures at one to six
+ * links, on the shipped code, and they are what a chain that keeps growing
+ * has to survive. The rejected arm stays executable as
+ * `escape-chain.harness.ts`'s `estimateChained` — the discipline
+ * `escape-form-sweep.harness.ts` set for the retired Julia form — rather
+ * than as a flag, because a flag here would be permanent document state and
+ * this bead exists to avoid exactly that.
+ *
+ * COMPOSITION BUYS DE QUALITY, which is the real argument for widening the
+ * gate and was the opposite of what a "product of heuristics" intuition
+ * predicts. Bound- and damped-step violation rates over 1200 exterior
+ * queries drawn in the SAME bailout ball for every row (the fitted ball
+ * would crowd queries against a compact chain's surface and punish it for
+ * being tight), each certified ball probed in 14 directions against
+ * {@link escapeSetContains}:
+ *
+ *     CONTROL single mbox2 (ships today)   bound 13.4%   step  6.6%
+ *     mbox2 -> boxfold1.6                        4.3%         1.5%
+ *     mbox2 -> mbox2 rot20y                      5.9%         3.0%
+ *     mbox2 -> mbox-1.5                          6.1%         3.1%
+ *     box1 rot25y -> sph2                        3.7%         1.0%
+ *     mbox2 -> box1.6 -> sph1.2                  2.7%         0.7%
+ *     FOUR-link                                  2.1%         0.3%
+ *     SIX-link                                   1.5%         0.6%
+ *
+ * The shipped single map is the WORST row, by 2-9x, and the rates fall as
+ * links are added. Same mechanism as the step scale: cycling floors `dr` at
+ * every link, and more links means more floors per unit of orbit.
+ *
+ * THE BAILOUT STAYS AT 4 for chains, also measured rather than inherited.
+ * Raising it at a fixed iteration budget does not reveal more of the set,
+ * it INFLATES it — 30 passes stop sufficing to prove escape, so slow
+ * escapers are counted as members: the single-map control's ball fill runs
+ * 2.9% -> 57.7% -> 65.6% at bailout 4 / 8 / 16. And chains genuinely use
+ * the ball they are given, reaching 3.5-4.0 where the single map reaches
+ * only 2.4-3.1, so 4 is exactly right rather than generous.
+ *
+ * EMPTY CHAINS ARE REACHABLE, AND THE MODE MUST BE ABLE TO SAY SO. A chain
+ * whose composite expands too hard escapes on its first pass everywhere,
+ * and then this mode renders a blank frame with nothing anywhere saying
+ * why — which reads as a broken app. The sharpest case is a power link
+ * (a mandelbox leaves `|v|` near 7 and a triplex 8th power sends 7 to
+ * 5.8e5 in one step, so `mandelbox w=2 -> bulb` is 0.01% full and only
+ * becomes non-empty when the link's pre-scale roughly inverts the
+ * expansion ahead of it — 5.09% at pre-scale 0.3), and that shape is out
+ * of this gate. But FOLD-ONLY chains reach it too, measured: `mbox2 ->
+ * mbox2 pre-scale 4`, `mbox2 pre-scale 8 -> boxfold1.6`, `boxfold6 x3` and
+ * `spherefold3 pre-scale 6 -> mbox2` all probe empty, and every one of
+ * them passes this gate. So {@link probeEscapeFill} exists: a seeded,
+ * deterministic sample of the bailout ball, asking
+ * {@link escapeSetContains} rather than thresholding a distance, so a
+ * later UI pass can say "this chain's set is empty" instead of showing
+ * nothing. It is deliberately NOT part of {@link analyzeEscapeSystem}
+ * (a structural gate that runs on every state change must stay cheap) and
+ * NOT computed in {@link buildEscapeDE} (1-5 ms nobody has asked for yet);
+ * it is a call the caller makes when it wants the answer.
+ *
+ * ONE THING LEFT ON THE TABLE, deliberately: the prototype measured the
+ * Böttcher/log estimate form (`0.5·r·ln r / dr`, `bulb-de.ts`'s) beating
+ * this module's linear `r / dr` on EVERY system it tried — the fold-only
+ * chain included — for 20-40% more steps per ray. That is a change to the
+ * single map as much as to the chain, so it is filed separately rather
+ * than folded in here.
+ *
  * TWO FORMS, ONE TERM APART (fr-7u8t.8), and this mode shipped the wrong
  * one. Where the per-iteration offset comes from decides which of the
  * escape-time family's two canonical objects gets rendered:
@@ -234,6 +313,7 @@
 import { composeAffine } from "./affine";
 import { isFlatTransform, symmetryIsNonFlat } from "./affine4";
 import { effectiveSymmetryOrder } from "./chaos-game";
+import { mulberry32 } from "./rng";
 import {
   CONTRACTION_LIMIT,
   SPHEREFOLD_LIPSCHITZ,
@@ -265,11 +345,48 @@ export const ESCAPE_TIME_ITERATIONS = 30;
 export const ESCAPE_TIME_RADIUS = 4;
 
 /**
- * March step fudge for the SINGLE-MAP escape-time marchers (GLSL variant and
- * WGSL core alike): the scalar-derivative estimate is the field's standard
- * heuristic, not a certified lower bound, so every published Mandelbox
- * marcher damps its steps. Chains damp harder — see
- * {@link ESCAPE_CHAIN_STEP_SCALE} and {@link escapeStepScale}.
+ * March step fudge for the escape-time marchers (GLSL variant and WGSL core
+ * alike): the scalar-derivative estimate is the field's standard heuristic,
+ * not a certified lower bound, so every published Mandelbox marcher damps
+ * its steps.
+ *
+ * ONE NUMBER FOR EVERY CHAIN LENGTH, and that was MEASURED rather than
+ * assumed — fr-za0n predicted the opposite. The expectation was that a
+ * chain's bound would degrade multiplicatively, a product of per-link
+ * heuristics where the single map pays its slack once, so chains would need
+ * heavier damping. Both harnesses say no, from opposite directions.
+ *
+ * Hit coverage against step scale on the SHIPPED estimator
+ * (`scripts/escape-chain.harness.ts`, `escape-chain-march.png`), the single
+ * map first as the control:
+ *
+ *     CONTROL single mbox2       0.7 33.2  0.35 38.3  0.2 40.1  0.05 41.7
+ *     mbox2 -> boxfold1.6        0.7 35.5  0.35 40.3  0.2 41.9  0.05 43.2
+ *     mbox2 -> mbox2 rot20y      0.7 43.4  0.35 48.6  0.2 50.1  0.05 51.2
+ *     mbox2 -> box1.6 -> sph1.2  0.7 61.7  0.35 63.7  0.2 64.6  0.05 65.3
+ *     mbox2 -> mbox-1.5          0.7 48.6  0.35 53.0  0.2 55.2  0.05 57.1
+ *     box1 rot25y -> sph2        0.7 30.7  0.35 30.1  0.2 30.7  0.05 30.9
+ *     FOUR-link                  0.7 59.8  0.35 63.2  0.2 64.0  0.05 65.1
+ *     SIX-link                   0.7 42.0  0.35 48.6  0.2 50.5  0.05 52.5
+ *
+ * From 0.35 down to 0.05 the SINGLE MAP gains the most of the eight (+8.8%
+ * relative, against +2.4 to +7.9% for the chains) — every chain's curve is
+ * at least as flat as the one 0.35 was chosen against. The prototype
+ * (`scripts/hybrid-chain.harness.ts`), sweeping the other candidate orbit
+ * and a cross-family chain, lands in the same place from the other side:
+ * as a fraction of its own 0.05 asymptote, 0.35 reaches 95.7% for the
+ * control and 96.6% for the chain. Chains are more sensitive at the LOOSE
+ * end (1.0 costs the chain 38.1% against the control's 53.1%), which is
+ * exactly the region 0.35 already sits well inside.
+ *
+ * The mechanism is cycling's doing: `+ p` re-enters and `dr` is floored
+ * after EVERY link, so no two folds ever compound between derivative
+ * floors, and the slack per step is the single map's, unchanged. The
+ * multiplicative degradation the prediction feared is a property of the
+ * REJECTED per-pass orbit, not of composition.
+ *
+ * So 0.35 stands, for chains and single maps alike, and there is no second
+ * constant to keep in step across six mirrors.
  *
  * 0.7 — the common conservative pick — was chosen (fr-kltj) against an
  * object that could not test it: the Julia form's blob filled 94% of its
@@ -294,64 +411,6 @@ export const ESCAPE_TIME_RADIUS = 4;
  * exhausts into exactly the dropout this is fixing.
  */
 export const ESCAPE_STEP_SCALE = 0.35;
-
-/**
- * March step fudge for a CHAIN — two or more links (fr-za0n). Deliberately a
- * second constant rather than a quieter edit to {@link ESCAPE_STEP_SCALE}:
- * the single map's 0.35 is fr-7u8t.8's measured verdict on an object this
- * bead did not change, and nothing here re-opens it.
- *
- * AND THE REASON IS NOT THE ONE THE BEAD PREDICTED, which is worth saying
- * outright because it changed the size of the answer. fr-za0n expected a
- * chain's bound to degrade multiplicatively — a product of per-link
- * heuristics where the single map pays its slack once — and the CHAINING
- * prototype measured exactly that. Cycling does not: it re-adds `+ p` and
- * floors `dr` after EVERY link, so no two folds ever compound between
- * derivative floors and the slack per step is the single map's, unchanged.
- * The hit-coverage curves say so plainly. Measured over
- * `scripts/escape-chain.harness.ts`'s eight fixtures
- * (`escape-chain-march.png` is the sheet), hit coverage against step scale,
- * the single map's own row first as the control:
- *
- *     CONTROL single mbox2       0.7 33.2  0.35 38.3  0.2 40.1  0.05 41.7
- *     mbox2 -> boxfold1.6        0.7 35.5  0.35 40.3  0.2 41.9  0.05 43.2
- *     mbox2 -> mbox2 rot20y      0.7 43.4  0.35 48.6  0.2 50.1  0.05 51.2
- *     mbox2 -> box1.6 -> sph1.2  0.7 61.7  0.35 63.7  0.2 64.6  0.05 65.3
- *     mbox2 -> mbox-1.5          0.7 48.6  0.35 53.0  0.2 55.2  0.05 57.1
- *     box1 rot25y -> sph2        0.7 30.7  0.35 30.1  0.2 30.7  0.05 30.9
- *     FOUR-link                  0.7 59.8  0.35 63.2  0.2 64.0  0.05 65.1
- *     SIX-link                   0.7 42.0  0.35 48.6  0.2 50.5  0.05 52.5
- *
- * From 0.35 to 0.05 the SINGLE MAP gains the most of the eight (+8.8%
- * relative, against +2.4 to +7.9% for the chains). By counts alone a chain
- * would need no extra damping at all.
- *
- * What earns the second constant is the pictures, which is the currency
- * fr-7u8t.8 spent too — and there is no knee to find here either, so it is
- * a cost/quality pick rather than a correctness one. Chains put much more
- * of their surface at GRAZING incidence: shells, arches and concentric
- * rings, which the hit count barely moves over because the silhouette is
- * unchanged while the structure inside it appears or does not. On the sheet
- * the spherefold-tailed pair renders at 0.7 as a featureless dark disc and
- * at 0.35 as one thin ring, resolving its rings only at 0.2 and below,
- * while its hit count sits at 30.1-30.9% throughout; the four- and six-link
- * panels are flat and dark at 0.35 and lit at 0.2. The single map at 0.35
- * already reads as a lit object, which is what fr-7u8t.8 chose it for.
- * 0.2 costs 1.6-1.8x the steps of 0.35 across all eight fixtures, on a mode
- * that settles in tens of milliseconds, and below 0.2 the panels change
- * little for another 1.4x.
- */
-export const ESCAPE_CHAIN_STEP_SCALE = 0.2;
-
-/**
- * The march damping a system's own chain length earns it — the ONE
- * definition every marcher (CPU preview, GLSL variant, WGSL core) should
- * import rather than picking a constant. A one-link chain is fr-7u8t.8's
- * single map and keeps its number exactly.
- */
-export function escapeStepScale(de: EscapeDE): number {
-  return de.links.length > 1 ? ESCAPE_CHAIN_STEP_SCALE : ESCAPE_STEP_SCALE;
-}
 
 export type EscapeEligibilityStatus = "eligible" | "ineligible";
 
@@ -597,19 +656,24 @@ export function foldQueryIntoSector(
  * the convention `surface-de.ts`'s descent scratch already runs on. */
 const FOLDED: Vec3 = [0, 0, 0];
 
+/** The orbit's terminal radius and derivative bound, left in module scratch
+ * by {@link runEscapeOrbit} for the same reason `FOLDED` is module state.
+ * {@link estimateEscapeDistance} and {@link escapeSetContains} are both thin
+ * readers of the one loop, so they cannot disagree about what the orbit is —
+ * which is the whole point of the split, and the reason
+ * {@link probeEscapeFill} can ask about the RENDERED set rather than about a
+ * threshold on a distance. */
+let orbitR = 0;
+let orbitDr = 1;
+
 /**
- * The escape-time distance estimate (module doc) — the CPU oracle the
- * `SURFACE_ESCAPE` GLSL variant mirrors line for line. `maxIterations`
- * counts PASSES, one pass being one full cycle through the chain, so it
- * says "how many times is each link applied" at any chain length; it
- * exists for the preview tier's depth clamp, and callers wanting the full
- * estimate pass nothing.
+ * Run the chain's forward orbit from `p`, leaving the terminal radius and
+ * derivative bound in the module scratch above. This is the loop the
+ * `SURFACE_ESCAPE` GLSL variant and the WGSL `core:"escape"` kernel mirror;
+ * they inline it into their own estimator, since neither needs the
+ * membership reader.
  */
-export function estimateEscapeDistance(
-  de: EscapeDE,
-  p: Vec3,
-  maxIterations = ESCAPE_TIME_ITERATIONS,
-): number {
+function runEscapeOrbit(de: EscapeDE, p: Vec3, maxIterations: number): void {
   const links = de.links;
   const n = links.length;
   // The kaleidoscope, once, before anything else: the orbit is seeded AND
@@ -671,5 +735,93 @@ export function estimateEscapeDistance(
     dr = link.derivGrowth * localL * dr + 1;
     r = Math.sqrt(vx * vx + vy * vy + vz * vz);
   }
-  return r / dr;
+  orbitR = r;
+  orbitDr = dr;
+}
+
+/**
+ * The escape-time distance estimate (module doc) — the CPU oracle the
+ * `SURFACE_ESCAPE` GLSL variant mirrors line for line. `maxIterations`
+ * counts PASSES, one pass being one full cycle through the chain, so it
+ * says "how many times is each link applied" at any chain length; it
+ * exists for the preview tier's depth clamp, and callers wanting the full
+ * estimate pass nothing.
+ */
+export function estimateEscapeDistance(
+  de: EscapeDE,
+  p: Vec3,
+  maxIterations = ESCAPE_TIME_ITERATIONS,
+): number {
+  runEscapeOrbit(de, p, maxIterations);
+  return orbitR / orbitDr;
+}
+
+/**
+ * Is `p` in the set the marcher will draw — did its orbit stay inside the
+ * bailout ball for the whole budget? The rendered object is the
+ * FINITE-BUDGET one, so this asks with the same budget the estimate uses,
+ * not with a longer truth oracle.
+ *
+ * Exists because thresholding {@link estimateEscapeDistance} cannot answer
+ * it: `|v|/dr` goes small for a near-boundary ESCAPER too, whose `dr` has
+ * run away just as far. Analysis code that needs membership — the emptiness
+ * probe below, and the harnesses' bound-violation measurements — asks here.
+ */
+export function escapeSetContains(
+  de: EscapeDE,
+  p: Vec3,
+  maxIterations = ESCAPE_TIME_ITERATIONS,
+): boolean {
+  runEscapeOrbit(de, p, maxIterations);
+  return orbitR <= ESCAPE_TIME_RADIUS;
+}
+
+/** Probe points {@link buildEscapeDE} samples the bailout ball with for
+ * {@link EscapeDE.probeFill}. `surface-de.ts`'s bounding-radius probe is the
+ * precedent (8192 there); half of it here, because this probe answers a
+ * coarse yes/no rather than fitting a radius, and it runs a full forward
+ * orbit per point. Measured cost of the whole probe: 1-5 ms. */
+export const ESCAPE_PROBE_POINTS = 4096;
+
+/** Fixed seed for that probe, so a given system always reports the same
+ * fill — `surface-de.ts`'s `PROBE_SEED` discipline, for its reason. */
+export const ESCAPE_PROBE_SEED = 0x5eed_e5ca;
+
+/**
+ * What fraction of the bailout ball the rendered set occupies, from a
+ * seeded uniform sample (module doc's EMPTY CHAINS section).
+ *
+ * ZERO IS THE SIGNAL: a chain whose composite expands too hard escapes on
+ * its first pass everywhere, and the mode then renders an empty frame with
+ * nothing anywhere saying why. This is what lets a caller say "this chain's
+ * set is empty" instead. It is a PROBE and not a proof — a set thinner than
+ * the sample can read 0 — so the honest reading of `0` is "the probe found
+ * nothing", which is exactly the claim a UI wants to make.
+ */
+export function probeEscapeFill(
+  de: EscapeDE,
+  points = ESCAPE_PROBE_POINTS,
+  seed = ESCAPE_PROBE_SEED,
+): number {
+  if (points <= 0) return 0;
+  const rng = mulberry32(seed);
+  let inside = 0;
+  for (let i = 0; i < points; i++) {
+    // Uniform in the bailout ball: cbrt for the radius, cos-uniform for the
+    // polar angle.
+    const u = Math.cbrt(rng()) * ESCAPE_TIME_RADIUS;
+    const ct = 2 * rng() - 1;
+    const st = Math.sqrt(Math.max(0, 1 - ct * ct));
+    const ph = 2 * Math.PI * rng();
+    if (
+      escapeSetContains(de, [
+        u * st * Math.cos(ph),
+        u * st * Math.sin(ph),
+        u * ct,
+      ])
+    ) {
+      inside++;
+    }
+  }
+  return inside / points;
 }
