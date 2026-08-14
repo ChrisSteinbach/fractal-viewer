@@ -511,11 +511,36 @@ function isVec3(v: unknown): v is Vec3 {
 }
 
 /**
+ * Decode one optional fold-length leaf on an untrusted variation entry —
+ * `minRadius`, `fixedRadius`, or `boxLimit` (fr-s9ll, see `types.ts`'s
+ * {@link Variation}). QUIET fallback like {@link decodeTransform}'s
+ * `colorIndex`/`colorSpeed`: a malformed value never rejects the whole
+ * scene, it just leaves the field absent, exactly as if it had never been
+ * supplied. Unlike every other optional-number decoder in this file, this
+ * performs NO `Number(x)` coercion: only a genuine, finite `number` survives
+ * — a numeric string, a boolean, `null`, `NaN`/`Infinity`, or an object all
+ * drop to `undefined` rather than being coerced into one. There is also no
+ * clamp — unlike `colorIndex`'s `[0, 1]` range, this field's domain belongs
+ * entirely to `variations.ts`'s `resolveFoldRadii`; persist's job here is
+ * fidelity, not validation, so an out-of-domain but genuinely finite value
+ * (e.g. a negative `fixedRadius`) survives the decode untouched and is
+ * resolved at read time exactly as an authored one would be.
+ */
+function decodeFoldRadius(raw: unknown): number | undefined {
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+}
+
+/**
  * Validate one transform's untrusted `variations` field: an array (capped at
  * {@link MAX_VARIATIONS}) of `{ type, weight }` with a known {@link VariationType}
- * and a finite weight (clamped to ±{@link MAX_VARIATION_WEIGHT}). Returns the
- * parsed list, or `null` when anything is malformed so the caller rejects the
- * whole scene — matching how every other field guards untrusted input.
+ * and a finite weight (clamped to ±{@link MAX_VARIATION_WEIGHT}), plus the
+ * fold's three optional lengths (fr-s9ll — `minRadius`/`fixedRadius`/
+ * `boxLimit`), each decoded independently via {@link decodeFoldRadius} and
+ * never gated on `type`, matching how `weight` itself isn't type-checked
+ * here either. Returns the parsed list, or `null` when the `type`/`weight`
+ * pair is malformed so the caller rejects the whole scene — matching how
+ * every other field guards untrusted input; a malformed fold length alone
+ * never rejects the scene (see {@link decodeFoldRadius}).
  */
 function decodeVariations(raw: unknown): Variation[] | null {
   if (!Array.isArray(raw)) return null;
@@ -528,10 +553,17 @@ function decodeVariations(raw: unknown): Variation[] | null {
       return null;
     const weight = Number(v.weight);
     if (!Number.isFinite(weight)) return null;
-    variations.push({
+    const decoded: Variation = {
       type: v.type as VariationType,
       weight: clamp(weight, -MAX_VARIATION_WEIGHT, MAX_VARIATION_WEIGHT),
-    });
+    };
+    const minRadius = decodeFoldRadius(v.minRadius);
+    if (minRadius !== undefined) decoded.minRadius = minRadius;
+    const fixedRadius = decodeFoldRadius(v.fixedRadius);
+    if (fixedRadius !== undefined) decoded.fixedRadius = fixedRadius;
+    const boxLimit = decodeFoldRadius(v.boxLimit);
+    if (boxLimit !== undefined) decoded.boxLimit = boxLimit;
+    variations.push(decoded);
   }
   return variations;
 }
@@ -1294,6 +1326,19 @@ function decodeFourDPose(raw: unknown): FourDPose | undefined {
 // ---------------------------------------------------------------------------
 
 /**
+ * The compact wire form of one variation entry: `{ type, weight }` plus the
+ * fold's three optional lengths (fr-s9ll), each present only when the
+ * source field is finite (see `encodeTransform`'s `encodeFoldRadius`).
+ */
+interface EncodedVariation {
+  type: VariationType;
+  weight: number;
+  minRadius?: number;
+  fixedRadius?: number;
+  boxLimit?: number;
+}
+
+/**
  * The compact wire form of one transform: `id` dropped, floats rounded. `w`
  * mirrors {@link WExtension} field-for-field (same optional sub-object
  * shape) — see `encodeTransform`'s canonicalization rule for when it's
@@ -1307,8 +1352,20 @@ interface EncodedTransform {
   colorIndex?: number;
   colorSpeed?: number;
   shear?: number[];
-  variations?: { type: VariationType; weight: number }[];
+  variations?: EncodedVariation[];
   w?: WExtension;
+}
+
+/**
+ * Round one of the fold's three lengths (fr-s9ll) for the wire IFF it's
+ * present and finite — `encodeTransform`'s counterpart to
+ * {@link decodeFoldRadius}: `undefined` in, `undefined` out, so an absent
+ * `minRadius`/`fixedRadius`/`boxLimit` writes nothing and a document that
+ * never authored these fields encodes byte-identically to one that predates
+ * them.
+ */
+function encodeFoldRadius(n: number | undefined): number | undefined {
+  return n !== undefined && Number.isFinite(n) ? round4(n) : undefined;
 }
 
 /**
@@ -1367,9 +1424,25 @@ function encodeTransform(t: Transform): EncodedTransform {
   }
   if (t.shear && t.shear.some((v) => v !== 0)) e.shear = t.shear.map(round4);
   if (t.variations && t.variations.length > 0) {
-    const active = t.variations
+    const active: EncodedVariation[] = t.variations
       .filter((v) => Number.isFinite(v.weight) && v.weight !== 0)
-      .map((v) => ({ type: v.type, weight: round4(v.weight) }));
+      .map((v) => {
+        const ev: EncodedVariation = {
+          type: v.type,
+          weight: round4(v.weight),
+        };
+        // The fold's three lengths (fr-s9ll): written ONLY when present and
+        // finite, so a document that never authored them encodes
+        // byte-identically to one predating the fields entirely — see
+        // encodeFoldRadius.
+        const minRadius = encodeFoldRadius(v.minRadius);
+        if (minRadius !== undefined) ev.minRadius = minRadius;
+        const fixedRadius = encodeFoldRadius(v.fixedRadius);
+        if (fixedRadius !== undefined) ev.fixedRadius = fixedRadius;
+        const boxLimit = encodeFoldRadius(v.boxLimit);
+        if (boxLimit !== undefined) ev.boxLimit = boxLimit;
+        return ev;
+      });
     if (active.length > 0) e.variations = active;
   }
   if (!isFlatTransform(t)) {
