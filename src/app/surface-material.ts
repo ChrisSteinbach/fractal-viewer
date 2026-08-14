@@ -1097,13 +1097,39 @@ uniform float uBalloonFar;
     // between two counts it really crossed: n - log(r/R)/log(growth). Guarded
     // on having escaped at all (a bounded orbit has r <= R, which would add
     // rather than subtract) and on a growth rate above 1 (below it nothing
-    // escapes, and log would flip the sign). Both step counts are SINGLE-LINK
-    // steps, so the fraction stays in [0, 1] at any chain length (fr-s04t).
+    // escapes, and log would flip the sign).
+    //
+    // fr-byxb: the denominator is uMaxDepth, NOT the step budget
+    // uMaxDepth * n. escapedAt counts SINGLE-LINK steps and an orbit
+    // escapes after a handful of them however long the chain is, so a
+    // denominator that multiplies by the link count shrank the reachable
+    // slice of the ramp with every link added and a chain painted in the
+    // bottom of its palette. The pass budget is chain-length-INVARIANT,
+    // which is what a colour coordinate wants; at n = 1 the two are the
+    // same expression, so every shipped single-map object renders
+    // unchanged, and SURFACE_BULB below has always normalized this way.
+    //
+    // MEASURED at marched hit points (20k near-boundary exterior samples
+    // per system, |DE| < 0.02), trap [p05 p50 p95] and the fraction that
+    // saturates at the top of the ramp:
+    //
+    //   mandelboxClassic  1 link   was [0.152 0.291 0.832]  0.9% saturated
+    //                              now  IDENTICAL  (same expression)
+    //   foldChain         2 links  was [0.108 0.180 0.716]  now
+    //                                  [0.216 0.360 1.000] 12.2% saturated
+    //   foldChainBoulder  3 links  was [0.071 0.110 0.575]  now
+    //                                  [0.214 0.331 1.000] 12.2% saturated
+    //
+    // The chains' medians move from roughly half the single map's to
+    // roughly its own, which is the whole point. The disclosed cost is that
+    // 12% of hit pixels — the longest-surviving orbits, i.e. the deepest
+    // creases — now share the ramp's top with the never-escaped ones. That
+    // is a better trade than the whole object sharing its bottom.
     float escFrac = 0.0;
     if (escapedAt < steps && growth > 1.0) {
       escFrac = clamp(log(r / uBoundingRadius) / log(growth), 0.0, 1.0);
     }
-    trap = clamp((float(escapedAt) - escFrac) / float(steps), 0.0, 1.0);
+    trap = clamp((float(escapedAt) - escFrac) / float(uMaxDepth), 0.0, 1.0);
     rings = clamp(rings, 0.0, 1.0);
     sheets = clamp(sheets, 0.0, 1.0);
     return r / dr;

@@ -2095,10 +2095,18 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
     expect(wgsl).toContain("fn shadeRays");
     expect(wgsl).toContain("escapedAt = i");
     // The CONTINUOUS escape count (fr-7u8t.8) — the raw integer read as
-    // confetti under a palette once the object stopped being a blob. Both
-    // counts are SINGLE-LINK steps since fr-s04t, so the fraction stays in
-    // [0, 1] at any chain length.
-    expect(wgsl).toContain("(f32(escapedAt) - escFrac) / f32(steps)");
+    // confetti under a palette once the object stopped being a blob.
+    // Normalized by the PASS budget and not the single-link step budget
+    // (fr-byxb, mirroring the GLSL arm): escapedAt counts single-link steps
+    // and an orbit escapes after a handful of them however long the chain
+    // is, so dividing by a budget that multiplies by the link count painted
+    // a six-link chain inside the darkest fifth of its palette.
+    expect(wgsl).toContain("(f32(escapedAt) - escFrac) / f32(params.maxDepth)");
+    expect(wgsl).not.toContain("(f32(escapedAt) - escFrac) / f32(steps)");
+    // Only the denominator moved: the loop bound and the escaped test stay
+    // the per-link step budget.
+    expect(wgsl).toContain("let steps = params.maxDepth * n;");
+    expect(wgsl).toContain("if (escapedAt < steps && growth > 1.0) {");
     // ...and the growth rate the fraction divides by is the link that
     // actually produced the escaping radius, not a fixed uniform.
     expect(wgsl).toContain("growth = L.p0.z;");

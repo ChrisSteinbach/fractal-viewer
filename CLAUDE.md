@@ -222,11 +222,22 @@ and UI**, so the interesting math is unit-tested without a browser:
     bnbStage2/shadeDeWidth are all inert, and its hit-info reports the
     trap as the CONTINUOUS escape fraction (fr-7u8t.8: `escapedAt` minus
     `log(r/R)/log(growth)` for the link that produced the escaping radius,
-    over the chain's own step count — the raw integer count is a
+    over the PASS budget `maxDepth` — the raw integer count is a
     step function of position and painted the real Mandelbox as palette
     confetti; it looked fine only while the escape set was a blob with one
     count everywhere — smoothed, it is the canonical Mandelbox palette
-    coordinate) with rings/sheets over the orbit's
+    coordinate. The denominator is the pass budget and NOT the chain's own
+    `maxDepth * n` step budget since fr-byxb: `escapedAt` counts
+    single-link steps and an orbit escapes after a handful of them however
+    long the chain is, so dividing by a budget that multiplied with the
+    link count shrank the reachable ramp per link added and a chain
+    painted in the bottom of its palette — measured at marched hit points,
+    [p05 p50 p95] moving from [0.108 0.180 0.716] to [0.216 0.360 1.000]
+    on the two-link preset against the single map's unmoved
+    [0.152 0.291 0.832], for a disclosed 12% of hit pixels saturating at
+    the ramp's top. Chain-length-INVARIANT, identical at n = 1 by being
+    the same expression, and the convention `core:"bulb"` always used)
+    with rings/sheets over the orbit's
     closest approaches — the descent cores' colors-only convention.
     `core:"bulb"` (fr-7u8t.9) is the escape core's SIBLING, one formula
     over: `bulb-de.ts`'s `estimateBulbDistance` — the forward triplex-power
