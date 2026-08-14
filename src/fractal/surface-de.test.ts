@@ -32,6 +32,11 @@ import {
   sierpinskiTetrahedron,
 } from "./presets";
 import { mulberry32 } from "./rng";
+import {
+  BOX_FOLD_LIMIT,
+  SPHERE_FOLD_FIXED_RADIUS,
+  SPHERE_FOLD_MIN_RADIUS,
+} from "./variations";
 import type { SymmetryPlane, Transform, Vec3 } from "./types";
 
 /** Minimal contracting map for the eligibility-table tests below, merged
@@ -3318,5 +3323,484 @@ describe("footprint-capped descent depth (fr-3c0k)", () => {
       }
     }
     expect(differing).toBeGreaterThan(0);
+  });
+});
+
+describe("authored fold radii in the inverse branch algebra (fr-s9ll)", () => {
+  // The fold's three lengths became `Variation` fields, so every constant in
+  // the branch enumeration became an expression. Two properties have to
+  // survive that: the defaults must not move at all, and the bound must stay
+  // a LOWER bound at lengths nobody has rendered before.
+  //
+  // Ground truth is `nearestDistance` against a chaos-game cloud, the same
+  // oracle the affine sections above use — sound because the cloud is a
+  // SUBSET of the attractor, so distance-to-cloud is an upper bound on
+  // distance-to-attractor, which the estimate must sit under.
+
+  it("descends a mandelbox map identically whether the classic radii are absent or spelled out", () => {
+    const absent: Transform[] = [
+      {
+        id: 1,
+        position: [0.2, 0.1, 0],
+        rotation: [0.3, 0, 0.2],
+        scale: [0.2, 0.2, 0.2],
+        variations: [{ type: "mandelbox", weight: 0.25 }],
+      },
+      {
+        id: 2,
+        position: [-0.3, 0.25, 0.1],
+        rotation: [0, 0.4, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+    ];
+    const spelled: Transform[] = [
+      {
+        ...absent[0],
+        variations: [
+          {
+            type: "mandelbox",
+            weight: 0.25,
+            minRadius: 0.5,
+            fixedRadius: 1,
+            boxLimit: 1,
+          },
+        ],
+      },
+      absent[1],
+    ];
+    const deAbsent = buildSurfaceDE(absent);
+    const deSpelled = buildSurfaceDE(spelled);
+    const rng = mulberry32(0x5f11);
+    for (let i = 0; i < 300; i++) {
+      const p: Vec3 = [(rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3];
+      expect(estimateDistance(deSpelled, p)).toBe(
+        estimateDistance(deAbsent, p),
+      );
+      expect(estimateDistanceRefined(deSpelled, p)).toBe(
+        estimateDistanceRefined(deAbsent, p),
+      );
+    }
+  });
+
+  it("stays a lower bound on a boxfold map at a non-classic wall, which is the only length its branches read", () => {
+    const transforms: Transform[] = [
+      {
+        id: 1,
+        position: [0.15, 0.1, -0.05],
+        rotation: [0.2, 0.3, 0],
+        scale: [0.6, 0.6, 0.6],
+        variations: [{ type: "boxfold", weight: 0.9, boxLimit: 0.6 }],
+      },
+      {
+        id: 2,
+        position: [-0.4, 0.2, 0.3],
+        rotation: [0, -0.5, 0.25],
+        scale: [0.45, 0.45, 0.45],
+      },
+    ];
+    expect(analyzeSurfaceSystem(transforms).status).not.toBe("ineligible");
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 200000, mulberry32(7));
+    const rng = mulberry32(0x5f12);
+    for (let i = 0; i < 300; i++) {
+      const p: Vec3 = [(rng() - 0.5) * 4, (rng() - 0.5) * 4, (rng() - 0.5) * 4];
+      const nearest = nearestDistance(cloud, p);
+      expect(estimateDistance(de, p)).toBeLessThanOrEqual(nearest + 1e-6);
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-6,
+      );
+    }
+  });
+
+  it("stays a lower bound on a spherefold map at a wider ball, where the magnification is unchanged but every radius moved", () => {
+    // fR = 1.4, mR = 0.7 holds fR²/mR² at the classic 4 while moving the
+    // outer region, the mid shell, the inversion radius and the inner
+    // branch's output cap — so a failure here is a length substitution and
+    // not the magnification.
+    const transforms: Transform[] = [
+      {
+        id: 1,
+        position: [0.1, 0.2, 0.05],
+        rotation: [0, 0.35, 0.1],
+        scale: [0.35, 0.35, 0.35],
+        variations: [
+          { type: "spherefold", weight: 0.6, minRadius: 0.7, fixedRadius: 1.4 },
+        ],
+      },
+      {
+        id: 2,
+        position: [-0.35, -0.15, 0.2],
+        rotation: [0.4, 0, -0.3],
+        scale: [0.45, 0.45, 0.45],
+      },
+    ];
+    expect(analyzeSurfaceSystem(transforms).status).not.toBe("ineligible");
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 200000, mulberry32(7));
+    const rng = mulberry32(0x5f13);
+    for (let i = 0; i < 300; i++) {
+      const p: Vec3 = [(rng() - 0.5) * 5, (rng() - 0.5) * 5, (rng() - 0.5) * 5];
+      const nearest = nearestDistance(cloud, p);
+      expect(estimateDistance(de, p)).toBeLessThanOrEqual(nearest + 1e-6);
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-6,
+      );
+    }
+  });
+
+  it("stays a lower bound on a mandelbox map with all three lengths moved at once", () => {
+    const transforms: Transform[] = [
+      {
+        id: 1,
+        position: [0.2, -0.1, 0.15],
+        rotation: [0.25, 0.4, 0],
+        scale: [0.2, 0.2, 0.2],
+        variations: [
+          {
+            type: "mandelbox",
+            weight: 0.25,
+            minRadius: 0.3,
+            fixedRadius: 1.2,
+            boxLimit: 0.8,
+          },
+        ],
+      },
+      {
+        id: 2,
+        position: [-0.3, 0.3, -0.2],
+        rotation: [0, -0.6, 0.2],
+        scale: [0.5, 0.5, 0.5],
+      },
+    ];
+    expect(analyzeSurfaceSystem(transforms).status).not.toBe("ineligible");
+    const de = buildSurfaceDE(transforms);
+    const cloud = runChaosGame(transforms, 200000, mulberry32(7));
+    const rng = mulberry32(0x5f14);
+    for (let i = 0; i < 300; i++) {
+      const p: Vec3 = [(rng() - 0.5) * 4, (rng() - 0.5) * 4, (rng() - 0.5) * 4];
+      const nearest = nearestDistance(cloud, p);
+      expect(estimateDistance(de, p)).toBeLessThanOrEqual(nearest + 1e-6);
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-6,
+      );
+    }
+  });
+
+  it("stays a lower bound through a fold LENS at non-classic lengths — descendLens has no contraction gate to keep it honest", () => {
+    const transforms: Transform[] = [
+      {
+        id: 1,
+        position: [0.4, 0.3, 0.1],
+        rotation: [0.2, 0.5, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+      {
+        id: 2,
+        position: [-0.4, 0.15, -0.25],
+        rotation: [0, -0.6, 0.3],
+        scale: [0.48, 0.48, 0.48],
+      },
+    ];
+    const lens: Transform = {
+      id: 3,
+      position: [0.05, -0.1, 0],
+      rotation: [0.1, 0.2, 0],
+      scale: [0.9, 0.9, 0.9],
+      variations: [
+        {
+          type: "mandelbox",
+          weight: 1.1,
+          minRadius: 0.35,
+          fixedRadius: 1.3,
+          boxLimit: 0.75,
+        },
+      ],
+    };
+    expect(analyzeSurfaceSystem(transforms, lens).status).not.toBe(
+      "ineligible",
+    );
+    const de = buildSurfaceDE(transforms, lens);
+    const cloud = runChaosGame(transforms, 200000, mulberry32(7), lens);
+    const rng = mulberry32(0x5f15);
+    for (let i = 0; i < 300; i++) {
+      const p: Vec3 = [(rng() - 0.5) * 5, (rng() - 0.5) * 5, (rng() - 0.5) * 5];
+      const nearest = nearestDistance(cloud, p);
+      expect(estimateDistance(de, p)).toBeLessThanOrEqual(nearest + 1e-6);
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(
+        nearest + 1e-6,
+      );
+    }
+  });
+
+  it("moves the eligibility gate with the magnification — a map that contracts at the classic radii need not at a smaller minRadius", () => {
+    // `SPHEREFOLD_LIPSCHITZ` is no longer a constant the gate multiplies; it
+    // is `fR²/mR²`, so the same weight and scale fall on either side of
+    // CONTRACTION_LIMIT depending on the authored radii (fr-77oy measured
+    // that `mandelboxKifs` sits 9% from this seam).
+    const at = (minRadius?: number): Transform[] => [
+      {
+        id: 1,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.2, 0.2, 0.2],
+        variations: [{ type: "spherefold", weight: 1, minRadius }],
+      },
+    ];
+    // Classic: 1 x 4 x 0.2 = 0.8, contracts.
+    expect(analyzeSurfaceSystem(at()).status).not.toBe("ineligible");
+    // mR = 0.25: 1 x 16 x 0.2 = 3.2, does not.
+    expect(analyzeSurfaceSystem(at(0.25)).reasons).toContain(
+      "map 1 does not contract",
+    );
+  });
+});
+
+describe("fold-radius rescale equivariance (fr-s9ll)", () => {
+  // The sharpest check the fold family admits, and the reason fr-qi9c could
+  // measure anything at all: a uniform rescale is EQUIVARIANT through both
+  // folds, so conjugating a system by `p = k·q` gives back the same system
+  // with all three lengths and every translation divided by k —
+  //
+  //     T(p)  = w·V_{mR,fR,wall}(M p + t)
+  //     T'(q) = T(k q)/k = w·V_{mR/k, fR/k, wall/k}(M q + t/k)
+  //
+  // — whose attractor is exactly `A/k`. So `DE'(q)` must equal `DE(k q)/k`
+  // to floating point, at every query, and that is an EQUALITY rather than
+  // an inequality: it fails in BOTH directions, which the conservatism
+  // bounds above cannot do. Every LENGTH the branch algebra reads (`fixedR`,
+  // its square and reciprocal, `outputR`, the box wall, the mid guard) is
+  // pinned by it; the two dimensionless RATIOS are invariant under the
+  // rescale and are pinned by the tightness floors instead.
+  //
+  // The tolerance is relative and not exact because `buildSurfaceDE` fits
+  // its bounding ball from a seeded chaos-game probe whose first point is
+  // NOT rescaled — the two clouds converge to proportional within a few
+  // warm-up iterations, not identically.
+  const K = 2.5;
+  /** Measured worst relative disagreement across these four fixtures is
+   * 1.9e-3 to 2.6e-3, and it tracks the bounding-ball ratio (0.9974-0.9987)
+   * almost exactly — so this is the probe, not the algebra. 1% leaves ~4x
+   * margin while staying two orders under the O(1) shift any wrong length
+   * produces. */
+  const RELATIVE_TOLERANCE = 0.01;
+
+  /** `S` conjugated by `p = k·q`: same linear parts and weights, every
+   * translation and every fold length divided by `k`. */
+  function rescale(t: Transform, k: number): Transform {
+    return {
+      ...t,
+      position: [t.position[0] / k, t.position[1] / k, t.position[2] / k],
+      variations: t.variations?.map((v) => ({
+        ...v,
+        minRadius: (v.minRadius ?? SPHERE_FOLD_MIN_RADIUS) / k,
+        fixedRadius: (v.fixedRadius ?? SPHERE_FOLD_FIXED_RADIUS) / k,
+        boxLimit: (v.boxLimit ?? BOX_FOLD_LIMIT) / k,
+      })),
+    };
+  }
+
+  function expectEquivariant(
+    transforms: Transform[],
+    lens: Transform | null,
+    seed: number,
+    span: number,
+  ): void {
+    const de = buildSurfaceDE(transforms, lens);
+    const deK = buildSurfaceDE(
+      transforms.map((t) => rescale(t, K)),
+      lens ? rescale(lens, K) : null,
+    );
+    const rng = mulberry32(seed);
+    let compared = 0;
+    for (let i = 0; i < 200; i++) {
+      const q: Vec3 = [
+        (rng() - 0.5) * span,
+        (rng() - 0.5) * span,
+        (rng() - 0.5) * span,
+      ];
+      const scaled: Vec3 = [q[0] * K, q[1] * K, q[2] * K];
+      for (const estimate of [estimateDistance, estimateDistanceRefined]) {
+        const small = estimate(deK, q);
+        const large = estimate(de, scaled) / K;
+        if (Math.abs(large) <= 1e-3) continue;
+        expect(
+          Math.abs(small - large) / Math.abs(large),
+          `q=[${q.join(", ")}] ${small} vs ${large}`,
+        ).toBeLessThan(RELATIVE_TOLERANCE);
+        compared++;
+      }
+    }
+    // Guard against a vacuous pass: the queries must actually reach the
+    // descent rather than all bailing out at the sphere gate.
+    expect(compared).toBeGreaterThan(100);
+  }
+
+  it("holds for a mandelbox map with all three lengths authored", () => {
+    expectEquivariant(
+      [
+        {
+          id: 1,
+          position: [0.2, -0.1, 0.15],
+          rotation: [0.25, 0.4, 0],
+          scale: [0.2, 0.2, 0.2],
+          variations: [
+            {
+              type: "mandelbox",
+              weight: 0.25,
+              minRadius: 0.3,
+              fixedRadius: 1.2,
+              boxLimit: 0.8,
+            },
+          ],
+        },
+        {
+          id: 2,
+          position: [-0.3, 0.3, -0.2],
+          rotation: [0, -0.6, 0.2],
+          scale: [0.5, 0.5, 0.5],
+        },
+      ],
+      null,
+      0x5f21,
+      4,
+    );
+  });
+
+  it("holds for a spherefold map, where only the radial lengths are in play", () => {
+    expectEquivariant(
+      [
+        {
+          id: 1,
+          position: [0.1, 0.2, 0.05],
+          rotation: [0, 0.35, 0.1],
+          scale: [0.35, 0.35, 0.35],
+          variations: [
+            {
+              type: "spherefold",
+              weight: 0.6,
+              minRadius: 0.7,
+              fixedRadius: 1.4,
+            },
+          ],
+        },
+        {
+          id: 2,
+          position: [-0.35, -0.15, 0.2],
+          rotation: [0.4, 0, -0.3],
+          scale: [0.45, 0.45, 0.45],
+        },
+      ],
+      null,
+      0x5f22,
+      5,
+    );
+  });
+
+  it("holds for a boxfold map, where only the wall is in play", () => {
+    expectEquivariant(
+      [
+        {
+          id: 1,
+          position: [0.15, 0.1, -0.05],
+          rotation: [0.2, 0.3, 0],
+          scale: [0.6, 0.6, 0.6],
+          variations: [{ type: "boxfold", weight: 0.9, boxLimit: 0.6 }],
+        },
+        {
+          id: 2,
+          position: [-0.4, 0.2, 0.3],
+          rotation: [0, -0.5, 0.25],
+          scale: [0.45, 0.45, 0.45],
+        },
+      ],
+      null,
+      0x5f23,
+      4,
+    );
+  });
+
+  it("holds at queries within the mid branch's near-origin guard, where it folds a shell bound instead of inverting", () => {
+    // The mid branch stops inverting inside `SPHEREFOLD_MID_MIN_R·fR` of the
+    // sector origin and folds a shell bound instead. No query drawn across
+    // the bounding ball reaches that regime, so it needs probes aimed at the
+    // origin — and equivariance is the invariant that still holds there.
+    //
+    // DISCLOSED LIMIT, measured by mutating each substitution and re-running
+    // this file: three of the fold constants are NOT observable through the
+    // public estimate on any fixture here, so no test in this describe pins
+    // them. The mid guard's THRESHOLD would need a query landing in the thin
+    // band between the classic 1e-3 and 1e-3·fR; its SHELL STAND-IN is
+    // deliberately loose enough (~|w|·fR) never to be the argmin, which is
+    // the whole reason it is safe; and the inner branch's `innerScale` is
+    // dominated by that branch's own region floor, which reads `outputR`
+    // (pinned) rather than the child position. The inner branch's SIGMA is
+    // pinned, and it is the same authored ratio, so a wrong magnification
+    // still fails — what is unpinned is only an inconsistent pair no single
+    // edit produces. The argument for the mid threshold scaling with fR
+    // rather than fR² is therefore dimensional, and lives on the constant.
+    expectEquivariant(
+      [
+        {
+          id: 1,
+          position: [0.2, -0.1, 0.15],
+          rotation: [0.25, 0.4, 0],
+          scale: [0.2, 0.2, 0.2],
+          variations: [
+            {
+              type: "mandelbox",
+              weight: 0.25,
+              minRadius: 0.3,
+              fixedRadius: 1.2,
+              boxLimit: 0.8,
+            },
+          ],
+        },
+        {
+          id: 2,
+          position: [-0.3, 0.3, -0.2],
+          rotation: [0, -0.6, 0.2],
+          scale: [0.5, 0.5, 0.5],
+        },
+      ],
+      null,
+      0x5f25,
+      1e-4,
+    );
+  });
+
+  it("holds through a fold LENS, whose branches are swept at the query rather than iterated", () => {
+    expectEquivariant(
+      [
+        {
+          id: 1,
+          position: [0.4, 0.3, 0.1],
+          rotation: [0.2, 0.5, 0],
+          scale: [0.5, 0.5, 0.5],
+        },
+        {
+          id: 2,
+          position: [-0.4, 0.15, -0.25],
+          rotation: [0, -0.6, 0.3],
+          scale: [0.48, 0.48, 0.48],
+        },
+      ],
+      {
+        id: 3,
+        position: [0.05, -0.1, 0],
+        rotation: [0.1, 0.2, 0],
+        scale: [0.9, 0.9, 0.9],
+        variations: [
+          {
+            type: "mandelbox",
+            weight: 1.1,
+            minRadius: 0.35,
+            fixedRadius: 1.3,
+            boxLimit: 0.75,
+          },
+        ],
+      },
+      0x5f24,
+      5,
+    );
   });
 });
