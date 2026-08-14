@@ -5,6 +5,7 @@ import {
   SURFACE4_MAX_MAPS,
 } from "./surface-material-4d";
 import type { SurfaceDE4, SurfaceDE4Map } from "../fractal/surface-de-4d";
+import { CLASSIC_SURFACE_FOLD_RADII } from "../fractal/surface-de";
 import { twentyFourCellFlake } from "../fractal/presets";
 
 /**
@@ -29,6 +30,7 @@ function map4(overrides: Partial<SurfaceDE4Map> = {}): SurfaceDE4Map {
     foldKind: 0,
     foldInvW: 1,
     foldSigma: 0.5,
+    foldRadii: CLASSIC_SURFACE_FOLD_RADII,
     invMSigmaMin: 0.5,
     invTNorm: 0,
     bnbDir: [0, 0, 0, 0],

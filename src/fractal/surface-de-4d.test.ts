@@ -30,6 +30,11 @@ import {
 } from "./surface-de";
 import { composeAffine } from "./affine";
 import {
+  BOX_FOLD_LIMIT,
+  SPHERE_FOLD_FIXED_RADIUS,
+  SPHERE_FOLD_MIN_RADIUS,
+} from "./variations";
+import {
   applyAffine4,
   composeAffine4,
   symmetryRotation4,
@@ -2088,6 +2093,7 @@ function expandedReference4(
         foldKind: base.foldKind,
         foldInvW: base.foldInvW,
         foldSigma: base.foldSigma,
+        foldRadii: base.foldRadii,
         // Rotations leave singular values (and invT) alone; the
         // directional bound rotates with the matrix:
         // (invM·rotT)^T · d = rot · (invM^T · d).
@@ -3811,5 +3817,125 @@ describe("slab queries through the fold frontier (fr-rsp6 x fr-wa6o)", () => {
         estimateDistance4Refined(de, q, 0, halfExtent),
       ).toBeLessThanOrEqual(truth + 1e-9);
     }
+  });
+});
+
+describe("fold-radius rescale equivariance in 4D (fr-s9ll)", () => {
+  // 3D's equivariance check one dimension up, and it is here for the same
+  // reason: conjugating a system by `p = k·q` divides every translation and
+  // every fold LENGTH by k and leaves the attractor at `A/k`, so `DE'(q)`
+  // must equal `DE(k q)/k`. It is an EQUALITY, so it fails in both
+  // directions where a conservatism bound only catches overshoot — and in
+  // 4D it also covers the fourth box axis, which has no 3D counterpart to
+  // have been checked against.
+  //
+  // The magnification `fR²/mR²` is held at the classic 4 in every fixture
+  // below: it is invariant under the rescale (a ratio), so varying it would
+  // add nothing here, and holding it keeps these systems inside the
+  // contraction gate that the pairs were tuned for.
+  //
+  // DISCLOSED LIMIT, measured by mutating each substituted constant and
+  // re-running: every length is pinned EXCEPT the fourth box axis's
+  // fold-from-above preimage `pw1` and its `dwUp` region distance — the
+  // `selW === 1` branch never wins the min on these fixtures, and widening
+  // the query span to cover w = ±4 did not change that. Its three siblings
+  // `px1`/`py1`/`pz1` and the fourth axis's own `pw2`/`dwDn` are pinned, and
+  // all four axes are the same three lines of code repeated, so this is a
+  // fixture gap rather than an unchecked expression. The magnification
+  // `fR²/mR²` is likewise invisible HERE by construction (a ratio survives
+  // conjugation), and is pinned by 3D's conservatism rows instead, off the
+  // same shared `SurfaceFoldRadii` field.
+  const K = 2.5;
+  /** Same relative tolerance and same reason as 3D's: `buildSurfaceDE4`
+   * fits its ball from a seeded probe whose first point is not rescaled,
+   * so the two balls agree to ~1e-3 rather than exactly. */
+  const RELATIVE_TOLERANCE = 0.01;
+
+  /** Non-classic lengths at the CLASSIC magnification — every radius the
+   * branch algebra reads has moved, the one ratio it cannot see has not. */
+  const WIDE = { minRadius: 0.7, fixedRadius: 1.4, boxLimit: 0.75 };
+
+  function withRadii(t: Transform): Transform {
+    return { ...t, variations: t.variations?.map((v) => ({ ...v, ...WIDE })) };
+  }
+
+  function rescale(t: Transform, k: number): Transform {
+    return {
+      ...t,
+      position: [t.position[0] / k, t.position[1] / k, t.position[2] / k],
+      w: t.w ? { ...t.w, position: (t.w.position ?? 0) / k } : t.w,
+      variations: t.variations?.map((v) => ({
+        ...v,
+        // The transform's OWN lengths divided by k — reading WIDE here
+        // instead would silently give the rescaled system different base
+        // maps than the original whenever a fixture mixes authored and
+        // default radii, which is exactly what the lens case does.
+        minRadius: (v.minRadius ?? SPHERE_FOLD_MIN_RADIUS) / k,
+        fixedRadius: (v.fixedRadius ?? SPHERE_FOLD_FIXED_RADIUS) / k,
+        boxLimit: (v.boxLimit ?? BOX_FOLD_LIMIT) / k,
+      })),
+    };
+  }
+
+  function expectEquivariant4(
+    transforms: Transform[],
+    lens: Transform | null,
+    seed: number,
+    span: number,
+  ): void {
+    const de = buildSurfaceDE4(transforms, lens);
+    const deK = buildSurfaceDE4(
+      transforms.map((t) => rescale(t, K)),
+      lens ? rescale(lens, K) : null,
+    );
+    const rng = mulberry32(seed);
+    let compared = 0;
+    for (let i = 0; i < 150; i++) {
+      const q: Vec4 = [
+        (rng() - 0.5) * span,
+        (rng() - 0.5) * span,
+        (rng() - 0.5) * span,
+        (rng() - 0.5) * span,
+      ];
+      const scaled: Vec4 = [q[0] * K, q[1] * K, q[2] * K, q[3] * K];
+      const pairs: [number, number][] = [
+        [estimateDistance4(deK, q), estimateDistance4(de, scaled) / K],
+        [
+          estimateDistance4Refined(deK, q),
+          estimateDistance4Refined(de, scaled) / K,
+        ],
+      ];
+      for (const [small, large] of pairs) {
+        if (Math.abs(large) <= 1e-3) continue;
+        expect(
+          Math.abs(small - large) / Math.abs(large),
+          `q=[${q.join(", ")}] ${small} vs ${large}`,
+        ).toBeLessThan(RELATIVE_TOLERANCE);
+        compared++;
+      }
+    }
+    // Not vacuous: the queries must actually reach the descent.
+    expect(compared).toBeGreaterThan(80);
+  }
+
+  it("holds for the mandelbox pair, whose 243 branches read every length at once", () => {
+    expectEquivariant4(pureMandelboxPair4().map(withRadii), null, 0x5f31, 3);
+  });
+
+  it("holds for the spherefold pair, where only the radial lengths are in play", () => {
+    expectEquivariant4(pureSpherefoldPair4().map(withRadii), null, 0x5f32, 3);
+  });
+
+  it("holds for the boxfold pair, where only the wall is in play — including the fourth axis", () => {
+    expectEquivariant4(pureBoxfoldPair4().map(withRadii), null, 0x5f33, 3);
+  });
+
+  it("holds through a 4D fold LENS, whose branches are swept at the query rather than iterated", () => {
+    expectEquivariant4(
+      pureBoxfoldPair4(),
+      withRadii(mandelboxFinal4()),
+      0x5f34,
+      3,
+    );
   });
 });
