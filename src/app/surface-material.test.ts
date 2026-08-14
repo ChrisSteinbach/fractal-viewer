@@ -2,6 +2,7 @@ import type * as THREE from "three";
 import {
   buildSurfaceFragment,
   createSurfaceMaterial,
+  setBulbSystem,
   setSurfaceBalloon,
   setSurfaceGroundPlane,
   setSurfaceSystem,
@@ -9,6 +10,11 @@ import {
   SURFACE_MAX_MAPS,
   SURFACE_SHADE_DE_WIDTH,
 } from "./surface-material";
+import {
+  buildBulbDE,
+  BULB_ITERATIONS,
+  BULB_STEP_SCALE,
+} from "../fractal/bulb-de";
 import type {
   SurfaceBalloonSpec,
   SurfaceGroundPlaneSpec,
@@ -22,7 +28,7 @@ import {
 import { buildSurfaceDE, SURFACE_FOLD_BEAM_WIDTH } from "../fractal/surface-de";
 import type { SurfaceDE, SurfaceDEMap } from "../fractal/surface-de";
 import { defaultTransforms, sierpinskiTetrahedron } from "../fractal/presets";
-import type { Vec3 } from "../fractal/types";
+import type { Transform, Vec3 } from "../fractal/types";
 
 /**
  * The tracer itself is verified by running the app, but its kaleidoscope
@@ -254,19 +260,19 @@ function countOccurrences(source: string, needle: string): number {
 describe("buildSurfaceFragment shade probe (fr-zqu8)", () => {
   it("keeps every variant free of the probe when built at the beam width (A/A)", () => {
     const source = buildSurfaceFragment(SURFACE_FOLD_BEAM_WIDTH);
-    expect(surfaceFragmentFor(0, 0, 0, 0, source)).not.toContain(
+    expect(surfaceFragmentFor(0, 0, 0, 0, 0, source)).not.toContain(
       "surfaceDEProbe",
     );
-    expect(surfaceFragmentFor(0, 1, 0, 0, source)).not.toContain(
+    expect(surfaceFragmentFor(0, 1, 0, 0, 0, source)).not.toContain(
       "surfaceDEProbe",
     );
-    expect(surfaceFragmentFor(1, 0, 0, 0, source)).not.toContain(
+    expect(surfaceFragmentFor(1, 0, 0, 0, 0, source)).not.toContain(
       "surfaceDEProbe",
     );
   });
 
   it("compiles exactly one width-1 probe, routed as the shading taps' value form", () => {
-    const resolved = surfaceFragmentFor(0, 0, 0, 0, buildSurfaceFragment(1));
+    const resolved = surfaceFragmentFor(0, 0, 0, 0, 0, buildSurfaceFragment(1));
     expect(
       countOccurrences(resolved, "float surfaceDEProbe(vec3 p, float cutoff)"),
     ).toBe(1);
@@ -274,15 +280,16 @@ describe("buildSurfaceFragment shade probe (fr-zqu8)", () => {
   });
 
   it("strips the probe body's comments and indentation, unlike the public descent body", () => {
-    const resolved = surfaceFragmentFor(0, 0, 0, 0, buildSurfaceFragment(1));
+    const resolved = surfaceFragmentFor(0, 0, 0, 0, 0, buildSurfaceFragment(1));
     expect(resolved).toContain("\nvec3 fcQ[1];");
     expect(resolved).toContain("vec3 fcQ[FOLD_W];");
   });
 
   it("never changes the escape variant's source across probe widths", () => {
-    const atWidth1 = surfaceFragmentFor(1, 0, 0, 0, buildSurfaceFragment(1));
+    const atWidth1 = surfaceFragmentFor(1, 0, 0, 0, 0, buildSurfaceFragment(1));
     const atBeamWidth = surfaceFragmentFor(
       1,
+      0,
       0,
       0,
       0,
@@ -292,15 +299,16 @@ describe("buildSurfaceFragment shade probe (fr-zqu8)", () => {
   });
 
   it("carries no probe under the fold lens, which keeps its surfaceDECore rename", () => {
-    const resolved = surfaceFragmentFor(0, 1, 0, 0, buildSurfaceFragment(1));
+    const resolved = surfaceFragmentFor(0, 1, 0, 0, 0, buildSurfaceFragment(1));
     expect(resolved).not.toContain("surfaceDEProbe");
     expect(resolved).toContain("surfaceDECore");
   });
 
   it("adds the probe as a new name rather than another surfaceDE overload", () => {
     const needle = "float surfaceDE(vec3 p, float cutoff) {";
-    const atWidth1 = surfaceFragmentFor(0, 0, 0, 0, buildSurfaceFragment(1));
+    const atWidth1 = surfaceFragmentFor(0, 0, 0, 0, 0, buildSurfaceFragment(1));
     const atBeamWidth = surfaceFragmentFor(
+      0,
       0,
       0,
       0,
@@ -625,5 +633,140 @@ describe("SURFACE_GROUND_PLANE variant (fr-rhn5)", () => {
 
     // The balloon is senior: the plane cannot compile back in over it.
     expect(() => setSurfaceGroundPlane(material, spec)).toThrow(RangeError);
+  });
+});
+
+describe("SURFACE_BULB variant (fr-7u8t.9)", () => {
+  /** The classic Mandelbulb shape `analyzeBulbSystem` admits, with a
+   * NON-UNIT uniform scale so `sigmaMax` is a value distinguishable from
+   * 1 — dropping either of the estimator's two `sigma_max(M)` terms is a
+   * bit-exact no-op on an identity or rotation map. */
+  function scaledBulb(): Transform {
+    return {
+      id: 0,
+      position: [0.05, -0.1, 0.02],
+      rotation: [0, 0, 0],
+      scale: [1.3, 1.3, 1.3],
+      variations: [{ type: "bulb", weight: 1 }],
+    };
+  }
+
+  it("strips every bulb token from every other variant while the flag is off — the byte-identity mechanism", () => {
+    for (const [escape, lens, balloon] of [
+      [0, 0, 0],
+      [0, 1, 0],
+      [1, 0, 0],
+      [0, 0, 1],
+      [1, 0, 1],
+    ] as const) {
+      const resolved = surfaceFragmentFor(escape, lens, balloon, 0, 0);
+      expect(resolved).not.toContain("uBulb");
+      expect(resolved).not.toContain("bulbPow8");
+      // The arm is resolved away entirely — only the shipped shader's own
+      // "closes SURFACE_BULB's #else arm" commentary names it.
+      expect(resolved).not.toContain("#if SURFACE_BULB");
+      // The bulb arg omitted must resolve to the same explicit-0 source.
+      expect(surfaceFragmentFor(escape, lens, balloon, 0)).toBe(resolved);
+    }
+  });
+
+  it("replaces the descent bodies wholesale with the forward power orbit, leaving no unresolved variant conditional and a source far under the Mesa cliff", () => {
+    const resolved = surfaceFragmentFor(0, 0, 0, 0, 1);
+    expect(resolved).toContain("vec3 bulbPow8(vec3 y, float r2)");
+    expect(resolved).toContain("uniform vec4 uBulbParams;");
+    // Three overloads (cutoff form, no-arg form, hit form) and none of
+    // the inverse-descent machinery.
+    expect(countOccurrences(resolved, "float surfaceDE(")).toBe(3);
+    expect(resolved).not.toContain("fcQ");
+    expect(resolved).not.toContain("surfaceDECore");
+    // The escape variant's own forward loop is gone too — the uEsc*
+    // uniforms are declared unconditionally, its BODY is not.
+    expect(resolved).not.toContain("uEscParams.z * localL * dr");
+    expect(resolved).not.toContain("#if SURFACE_BULB");
+    expect(resolved).not.toContain("#if SURFACE_ESCAPE");
+    expect(resolved).not.toContain("#if SURFACE_FOLD_LENS");
+    // The affine/folds split stays a driver-side conditional.
+    expect(resolved).toContain("#if SURFACE_FOLDS");
+    expect(resolved.length).toBeLessThan(40 * 1024);
+  });
+
+  it("carries the three terms an identity-map fixture cannot see: the sigma seed, the sigma floor, and the ln|y| clamp", () => {
+    const resolved = surfaceFragmentFor(0, 0, 0, 0, 1);
+    // dr seeds at sigma_max(M), not 1 — dy0/dp IS M.
+    expect(resolved).toContain("float dr = sigma;");
+    // ...and the recurrence's trailing + sigma is escape-de.ts's + 1
+    // carried through M, which also floors dr.
+    expect(resolved).toContain(
+      "dr = 8.0 * (r2 * r2 * r2 * r) * sigma * dr + sigma;",
+    );
+    // A converging orbit reaches |y| < 1, where ln|y| is negative and a
+    // negative estimate marches the tracer backwards.
+    expect(
+      countOccurrences(resolved, "r <= 1.0 ? 0.0 : 0.5 * r * log(r) / dr"),
+    ).toBe(2);
+  });
+
+  it("interpolates the escape count the POWER map's way, never the fold arm's constant-factor way", () => {
+    const resolved = surfaceFragmentFor(0, 0, 0, 0, 1);
+    // r -> r^n each step, so the smooth iteration count's fraction is
+    // log(log r / log R)/log n — the fold arm's log(r/R)/log(growth)
+    // models a constant expansion factor and is wrong here.
+    expect(resolved).toContain(
+      "escFrac = clamp(log(log(r) / log(bail)) / log(8.0), 0.0, 1.0);",
+    );
+    expect(resolved).not.toContain("log(r / uBoundingRadius)");
+    expect(resolved).toContain(
+      "trap = clamp((float(escapedAt) - escFrac) / float(uMaxDepth), 0.0, 1.0);",
+    );
+  });
+
+  it("refuses to compile alongside the escape variant — each replaces the descent bodies wholesale", () => {
+    expect(() => surfaceFragmentFor(1, 0, 0, 0, 1)).toThrow(RangeError);
+  });
+
+  it("composes with the ground plane, the classic floor an escape-family object sits on", () => {
+    const resolved = surfaceFragmentFor(0, 0, 0, 1, 1);
+    expect(resolved).toContain("shadeGroundPlane");
+    expect(resolved).toContain("uBulbParams");
+    expect(resolved.length).toBeLessThan(40 * 1024);
+  });
+
+  it("setBulbSystem packs the DE onto the bulb uniforms and flips the variant, with the ORBIT bailout kept off the marching radius", () => {
+    const material = createSurfaceMaterial();
+    const de = buildBulbDE([scaledBulb()]);
+    setBulbSystem(material, de, [0.2, 0.4, 0.6]);
+
+    expect(material.defines.SURFACE_BULB).toBe(1);
+    expect(material.defines.SURFACE_ESCAPE).toBe(0);
+    expect(material.defines.SURFACE_FOLDS).toBe(0);
+    expect(material.fragmentShader).toContain("bulbPow8");
+
+    const u = material.uniforms;
+    const params = u.uBulbParams.value as THREE.Vector4;
+    expect(params.x).toBeCloseTo(de.sigmaMax, 12);
+    expect(params.y).toBeCloseTo(de.bailout, 12);
+    // A uniformly scaled map has sigmaMax = the scale, so the fixture
+    // actually exercises the terms the identity map hides.
+    expect(de.sigmaMax).toBeCloseTo(1.3, 12);
+    // The marching ball is the QUERY-space radius, NOT the orbit's
+    // bailout — the one place this wire differs from the escape mode's,
+    // where the two were the same number.
+    expect(u.uBoundingRadius.value).toBeCloseTo(de.boundingRadius, 12);
+    expect(u.uVisibleRadius.value).toBeCloseTo(de.boundingRadius, 12);
+    expect(de.bailout).toBeGreaterThan(de.boundingRadius * 2);
+    expect(u.uMaxDepth.value).toBe(BULB_ITERATIONS);
+    expect(u.uStepScale.value).toBe(BULB_STEP_SCALE);
+    expect(u.uMapCount.value).toBe(1);
+    expect(u.uSymOrder.value).toBe(1);
+  });
+
+  it("hands the descent bodies back when a later system installs over it", () => {
+    const material = createSurfaceMaterial();
+    setBulbSystem(material, buildBulbDE([scaledBulb()]), [0, 0, 0]);
+    expect(material.defines.SURFACE_BULB).toBe(1);
+
+    setSurfaceSystem(material, de3([map3()]), [black]);
+    expect(material.defines.SURFACE_BULB).toBe(0);
+    expect(material.fragmentShader).not.toContain("bulbPow8");
   });
 });

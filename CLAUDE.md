@@ -173,9 +173,10 @@ and UI**, so the interesting math is unit-tested without a browser:
     estimator the fold GLSL marches) under the `flame-gpu.ts` oracle
     discipline, source-generated per config — frontier width,
     workgroup-SHARED (banked, transposed) vs private frontier storage,
-    fr-kidj stage-2 B&B on/off (WGSL has no Mesa link cliff). FIVE
+    fr-kidj stage-2 B&B on/off (WGSL has no Mesa link cliff). SIX
     KERNEL CORES (fr-55s1 added the second, fr-dlxh the third and — its
-    4D cut — the fourth, fr-rsp6 phase 2A the fifth):
+    4D cut — the fourth, fr-rsp6 phase 2A the fifth, fr-7u8t.9 the
+    sixth):
     `core:"affine"` emits the width-4 A/B + fr-jkpn-validity-slot
     REFINED ladder (mirrors `estimateDistanceRefined`, the affine GLSL's
     estimator; width/sharedFrontier/bnbStage2/shadeDeWidth inert) beside
@@ -199,6 +200,27 @@ and UI**, so the interesting math is unit-tested without a browser:
     count everywhere — smoothed, it is the canonical Mandelbox palette
     coordinate) with rings/sheets over the orbit's
     closest approaches — the descent cores' colors-only convention.
+    `core:"bulb"` (fr-7u8t.9) is the escape core's SIBLING, one formula
+    over: `bulb-de.ts`'s `estimateBulbDistance` — the forward triplex-power
+    orbit `y <- M V(y) + y_0` with the Böttcher log estimate
+    `0.5·|y|·ln|y| / dr` — for the systems `analyzeBulbSystem` admits, in
+    the `SURFACE_BULB` GLSL arm's f32 formulation. A sixth CORE and not a
+    fourth `foldKind`, because the escape bodies dispatch on
+    `kind != 2`/`kind != 1` and an unrecognized kind would silently run
+    both folds. Everything structural is escape's (208..271 variant block
+    via `packBulbGpuParams`, no maps binding, every frontier knob inert,
+    `maxDepth` as the orbit budget, lens/balloon throw); the wire's one
+    asymmetry is that the ORBIT bailout and the QUERY-space marching ball
+    are different numbers here, so `bulbParams.y` carries the bailout and
+    the frozen `boundingRadius` stays the marching ball. Its trap is the
+    continuous escape count in the POWER-map form
+    (`log(log r / log R)/log n`, not the fold arm's constant-factor
+    `log(r/R)/log(growth)`). Three terms an identity-or-rotation fixture
+    cannot see — the `sigma_max(M)` `dr` seed, the trailing
+    `+ sigma_max(M)`, and the `ln|y|` clamp below 1 — are what the bench's
+    uniformly SCALED fixture exists for (measured: dropping either sigma
+    term is BIT-IDENTICAL on the two sigmaMax = 1 systems and fails
+    545/700 and 259/700 queries on `bulbScaled`).
     `core:"affine4"` (fr-dlxh's 4D cut) is the refined ladder ONE
     DIMENSION UP — `surface-de-4d.ts`'s `estimateDistance4Refined`
     behind the app's view lift, the estimator `surface-material-4d.ts`
@@ -405,8 +427,12 @@ and UI**, so the interesting math is unit-tested without a browser:
     because damping does not clear that residual (it lives in the boundary
     shell) and at frame level the full step loses no geometry. 0.29 us/eval,
     3.5x CHEAPER than the fold mode that already ships, refuting the bead's
-    own prediction. `scripts/bulb-preview.harness.ts` is its sheet; no
-    shader mirrors yet (fr-7u8t.9).
+    own prediction. `scripts/bulb-preview.harness.ts` is its sheet;
+    mirrored by the `SURFACE_BULB` GLSL variant
+    (`surface-material.ts`) and the `core: "bulb"` WGSL kernel
+    (`surface-de-gpu.ts`) since fr-7u8t.9, bench-pinned by the
+    `bulb-forward` eval leg — still UNREACHABLE from the app until
+    fr-tdin routes it.
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_PLANES` const arrays (single source of truth).
@@ -830,7 +856,15 @@ and UI**, so the interesting math is unit-tested without a browser:
     gate refuses but `analyzeEscapeSystem` admits — the FALLBACK since
     fr-dlxh, `surface-compute.ts`'s WebGPU renderer preferred whenever an
     adapter exists) — same marcher, tiers, strips, capture; no grid (its
-    validity chain is IFS-specific). The `SURFACE_GROUND_PLANE` variant
+    validity chain is IFS-specific). The `SURFACE_BULB` variant (fr-7u8t.9)
+    is that arm's SIBLING and `resolveVariantArms`' fifth JS-resolved key,
+    nested inside `SURFACE_ESCAPE`'s `#else` (the two are alternatives —
+    each replaces the descent bodies wholesale, so `surfaceFragmentFor`
+    refuses the pair): `bulb-de.ts`'s forward triplex-power loop, packed by
+    `setBulbSystem`, whose `uBulb*` uniforms are declared INSIDE the arm so
+    no other variant pays their bytes against the Mesa cliff (resolved
+    source ~33KB against the descent variants' ~77KB). No routing yet —
+    fr-tdin. The `SURFACE_GROUND_PLANE` variant
     (fr-rhn5) is `resolveVariantArms`' fourth JS-resolved key: an infinite
     one-sided floor below the session ball, lit by a `shadeGroundPlane`
     entry mirroring the WGSL arm term for term (penumbra shadow + AO under
