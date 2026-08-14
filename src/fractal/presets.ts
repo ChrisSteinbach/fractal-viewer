@@ -843,10 +843,14 @@ export function mandelboxClassic(): Transform[] {
 }
 
 /**
- * The same map at scale 3 (fr-7u8t.8): a far sparser set (2.8% ball fill)
- * that reads as a ball drilled through by rings of circular voids — the
- * scale where the box fold's reflections start winning against the sphere
- * fold's inflation.
+ * The same map at scale 3 (fr-7u8t.8): by far the sparsest of the three at
+ * 2.8% ball fill, and the sparseness is what shapes it — the solid breaks up
+ * into many small densely-packed lobes arranged in a shell around a hollow
+ * centre, which from the session's opening view reads as a ring. (Described
+ * from the shipped render at that pose rather than from the fold algebra: an
+ * earlier draft of this comment called it "a ball drilled through by rings of
+ * circular voids", which is the CPU harness's higher-angle view and overstates
+ * what the default framing shows.)
  */
 export function mandelboxRings(): Transform[] {
   return escapeMandelbox(3);
