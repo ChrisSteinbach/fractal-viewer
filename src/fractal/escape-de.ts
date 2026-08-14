@@ -803,12 +803,23 @@ export const ESCAPE_PROBE_SEED = 0x5eed_e5ca;
  * What fraction of the bailout ball the rendered set occupies, from a
  * seeded uniform sample (module doc's EMPTY CHAINS section).
  *
- * ZERO IS THE SIGNAL: a chain whose composite expands too hard escapes on
- * its first pass everywhere, and the mode then renders an empty frame with
- * nothing anywhere saying why. This is what lets a caller say "this chain's
- * set is empty" instead. It is a PROBE and not a proof — a set thinner than
- * the sample can read 0 — so the honest reading of `0` is "the probe found
- * nothing", which is exactly the claim a UI wants to make.
+ * THIS MEASURES VOLUME, AND DOES NOT ANSWER "WILL IT RENDER". Read the
+ * warning that follows before reaching for it, because fr-17qu's first cut
+ * reached for it and was wrong.
+ *
+ * An escape-time set is frequently a thin FRACTAL — filaments and dust with
+ * a large surface and essentially no volume — and uniform volume sampling
+ * finds nothing in one however many points it throws. The shipped
+ * `mandelboxRings` preset is exactly that: `0.0000%` fill at 65536 samples,
+ * and ~38k surface hits in a 1024x640 frame that is one of the prettiest
+ * objects the app ships. So `0` here means "the set has no measurable
+ * volume", NOT "there is nothing to draw", and a caller wanting the second
+ * must ask the marcher (main.ts fires its blank-frame notice off a completed
+ * settle's own hit count for that reason).
+ *
+ * What it is genuinely for: comparing how much of the ball two systems fill,
+ * which is what `escape-chain.harness.ts` and `hybrid-chain.harness.ts` use
+ * it for when pricing whether composition inflates a set toward a solid ball.
  */
 export function probeEscapeFill(
   de: EscapeDE,
