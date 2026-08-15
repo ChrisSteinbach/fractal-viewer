@@ -1184,7 +1184,11 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `collection.ts` — persistent multi-slot scene library (localStorage).
     `after(id)` is the drift slideshow's loop cursor. Entries carry optional
     `SavedSceneMode` (on the ENTRY, never inside `encoded`). `importScenes`
-    merges backups with dedup + fresh ids. Pure, tested.
+    merges backups with dedup + fresh ids. `setThumbnail(id, …)` (fr-r777,
+    and its `timeline.ts` twin) replaces ONLY the picture — not `add`,
+    which would mint a fresh id and re-bump the entry to the front: a
+    correction is not a new save, and the gallery must not reshuffle under
+    a user who is only waiting for a render. Pure, tested.
   - `timeline.ts` — animation timeline document: ordered keyframe steps (frozen
     encoded scene + thumbnail + `morphMs`/`holdMs` + optional render mode).
     20-step cap (refuses, never evicts). `legSeed(seed, i)` for deterministic
@@ -1222,8 +1226,45 @@ and UI**, so the interesting math is unit-tested without a browser:
     setting = one spec entry + one index.html row (pure, tested).
   - `constants.ts` — shared UI/interaction magic numbers.
   - `interactions.ts` — pointer/touch/wheel handling (Three.js raycasting).
-  - `slider-scroll-guard.ts` — undoes tap-jump on panel sliders when touch
-    becomes a scroll (tested).
+  - `slider-scroll-guard.ts` — PREVENTS the panel sliders' tap-jump on
+    touch since fr-xu4u, where fr-zoi repaired it after the fact (tested).
+    The repair let the jump commit mid-gesture and fired `input` TWICE —
+    two trips through burst coalescing, a possible history checkpoint and
+    a cloud regeneration request, for a gesture meant as a scroll. The
+    obvious prevention does NOT work and fr-zoi's own doc said it would:
+    the jump is the TOUCHSTART default action (Blink's
+    `SliderContainerElement`), not pointerdown's, so `preventDefault()`
+    there leaves it — and STICKING, with the restore gone. Of four
+    measured suppressions only one both kills the jump and keeps the pan:
+    flipping `disabled` for that one handler, on in the pointerdown
+    listener (dispatched before touchstart) and off in a `requestAnimation
+Frame` callback, which runs before paint so the disabled look never
+    reaches the screen. That kills the native drag too, so the guard now
+    DRIVES it — past `SLIDE_SLOP_PX` of horizontal travel it maps x onto
+    the track, quantizes to the slider's own `step`, and fires `input` per
+    change plus the trailing `change` fr-2c27's commit-on-release sliders
+    hang off (`numPointsSlider` defers its whole regeneration to it, and a
+    programmatic `value` assignment fires nothing). TAP-TO-SET IS GONE ON
+    TOUCH by design — on a panel of full-width sliders a tap that lands on
+    one is a scroll that has not moved yet far more often than it is an
+    edit — and desktop click-to-jump is untouched (mouse pointers return
+    early). Verified on real Chromium via
+    `scripts/panel-touch-scroll.verify.mjs`: `#fogSlider` HAZARD -> SAFE
+    from both start positions, pan still -132px. Not verified on WebKit or
+    Firefox Android.
+  - `capture-cost.ts` — the arithmetic behind a capture's cost memory
+    (fr-2q01), out of `scene.ts` so it tests without a WebGL context:
+    `solidCaptureMsPerPx` and `predictCaptureMs`. The solid Save-PNG's
+    modal is indeterminate (one synchronous raymarch reports no coverage
+    and cannot be interrupted), so the only decision left is whether it
+    skips the grace period — decided by `exportScale > 1` until this,
+    which flashed it for ~270ms over a 274ms export. `scene.ts` keeps the
+    clock and `solidCapturePxCostMs`, whose doc carries the invalidation
+    rule: the voxel grid and the solid params stale a reading, and the
+    POSE deliberately does not. The two errors are not symmetric — an
+    under-prediction still arms the 400ms grace timer, so it costs one
+    grace period, while an ABSENT reading falls back to export scale and
+    flashes every time — so the field survives everything it plausibly can.
   - `main.ts` — entry point; wires state <-> scene <-> ui <-> interactions.
     `?surfacestate` publishes `window.__surfaceState()` (fr-opgk), the
     read-only settle latch `scripts/surface-repro.verify.mjs` — and any
@@ -1250,6 +1291,25 @@ and UI**, so the interesting math is unit-tested without a browser:
     frame — both produce the export at capture time by re-tracing.
     `notifyRenderSignal` (was `notifyOfflinePark`) is the shared wake:
     progress, a session's deactivate, a playback stop, an export's Cancel.
+    THE FLAME WAIT HAS A SECOND EXIT since fr-2fbs: "Save now (rough)"
+    beside Cancel, restoring the "save what is on screen" the pre-fr-61a2
+    bug provided by accident, where the wait is longest (the budget scales
+    with export AREA, so 4x multiplies it by sixteen). FLAME ONLY —
+    solid's wait is the voxel grid with no partial to deliver — and
+    enforced structurally: `planRenderWait` returns the
+    awaitReady/deliverEarly pair and all three arms spread it, so no arm
+    restates the rule and no future arm can offer the action by copying
+    its neighbour. The press LATCHES and is honoured only once
+    `hasFirstFrame`, which makes the feature "wait for the FIRST FRAME
+    instead of the whole BUDGET" — without that latch a press in the
+    Export-size restart gap delivered the PREVIOUS session's canvas at the
+    PREVIOUS session's size, i.e. fr-61a2's own bug through the new door.
+    Ties go to the BUDGET (the wait loop re-checks readiness before any
+    stop check), so a press the finished render beat to the line gets an
+    ordinary toast rather than one labelled rough. `cancelled` survives as
+    `stop === "cancel"`, so callers predating the action are unmoved;
+    Escape stays CANCEL-ONLY; and the button is ABSENT rather than hidden
+    when not on offer, so nothing can Tab to it or query it.
   - `regen-scheduler.ts` — rAF coalescer: one generation request per frame.
   - `cloud-worker.ts` / `cloud-worker-core.ts` — point cloud generation worker:
     one-shot request/response, seeded chaos game, colors + 4D transforms
@@ -1548,10 +1608,31 @@ and UI**, so the interesting math is unit-tested without a browser:
     samples, never on a preview (cheap by definition) and never on offline
     VIDEO force frames (the cost would multiply by the frame count); the
     progress row discloses the pass as a trailing
-    `antialiasing pass k/8`, silent through pass 1. The WebGL strip arm
-    is untouched — it needs accumulation passes through the strip pump
-    rather than an in-shader loop, whose all-or-nothing per-strip cost
-    would fight the fr-096u/fr-id9r bounded-strip machinery. scene.ts
+    `antialiasing pass k/8`, silent through pass 1. THE WEBGL STRIP ARM
+    NOW DOES THE SAME THING (fr-jf9y), and by the same algorithm rather
+    than a parallel one — it imports `subPixelSample` from here, averages
+    in linear light, and spends 8 on the settle and on Save-PNG, so "8
+    samples" has ONE meaning whichever engine a machine has. The in-shader
+    loop stayed refused for the reason above (all-or-nothing per-strip
+    cost fighting the fr-096u/fr-id9r machinery); instead the settle opens
+    a SEQUENCE of N whole-frame strip jobs, each armed exactly the way
+    pass 0 is, so pump, planner, fence groups and evidence chain are
+    untouched — measured flat per-pass strip counts on real Iris
+    (152/258/258/300/258/258/258/258). The accumulator is HOST-SIDE f32,
+    not a float render target: ~2.1ms against a ~390ms pass, one sync
+    point per pass and outside any job, so strip-planner never sees it —
+    and this is the FALLBACK arm, which must not acquire an
+    `EXT_color_buffer_float` dependency on the devices that have least.
+    Pass 0 is BYTE-IDENTICAL, proved by building twice and diffing: 0 of
+    120000 pixels on SwiftShader AND on real Iris, max channel delta 0,
+    the PNGs identical to the byte. That second run is not ceremony —
+    fr-dlxh's lesson is that a classifier passed SwiftShader clean and
+    then real Iris flipped six "stable" rows, so whether Mesa contracts
+    `(vUv + 0.0) * 2.0 - 1.0` differently is a question only that driver
+    answers. Edge energy falls 0.846x / 0.851x on the two adapters, so
+    the win is the object's and not the rasterizer's. `?surfacesamples=N`
+    is the escape hatch and the A/B instrument (N=1 restores the exact
+    single-pass behaviour). scene.ts
     presents frames as a DataTexture through the shared surface blit (the
     one WebGL canvas — capture/recorder unchanged) and assembles specs
     with the uniform-exact camera/eps/tier quantities (acceptance eps
@@ -1612,7 +1693,27 @@ and UI**, so the interesting math is unit-tested without a browser:
     counts frames.
   - `render-session.ts` — `enter`/`exit`/`terminate` + first-frame-gate for
     flame/solid/surface controllers. `renderMode` is session-only, never
-    persisted.
+    persisted. An optional `onFirstFrame` fires on the false→true
+    TRANSITION alone (fr-r777 — the flame marks per progress event, so the
+    gate absorbs the repeats), which is one wiring per session rather than
+    five call sites that could each forget one.
+  - `thumbnail-patch.ts` — the pending late thumbnail corrections
+    (fr-r777), pure and session-only. A ★ Save to collection or 📍 Add
+    keyframe taken during a flame or solid session's STARTUP GAP files an
+    entry tagged with that render mode carrying a POINT-CLOUD picture; the
+    entry is right (it re-enters the tracer on load), only its picture
+    disagrees with its glyph. A thumbnail must be INSTANT — blocking the
+    save on a flame convergence would be far worse, and the export modal
+    is not available to a save — so the fall-through STAYS and a later
+    correction is armed beside it, applied when the session marks its
+    first frame. THE INVALIDATION RULE IS THE LOAD-BEARING PART: a saved
+    entry froze a DOCUMENT, so a patch applies only while the live
+    document still encodes to the string the entry was saved with AND the
+    mode is unchanged; otherwise it is dropped, because a stale-but-honest
+    picture beats a confident wrong one. The camera pose rides the encoded
+    document (fr-1k4), so a manual orbit invalidates too — the
+    conservative direction, and free in the headline case since the
+    auto-orbit tick sits past the render branches' early returns.
   - `four-d-view.ts` — session-only 4D view state (rotor, tumble, slice).
     `FourDPose` snapshots rotor + slice for persistence. `FourDTween` is the
     directed pose glide (rotor slerp + slice lerp).
