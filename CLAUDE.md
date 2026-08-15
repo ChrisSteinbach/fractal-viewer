@@ -159,8 +159,20 @@ and UI**, so the interesting math is unit-tested without a browser:
     `flame-gpu-4d.ts`; slices with `0.06` ghost floor (not solid's `0`).
   - `flame-gpu.ts` — WebGPU flame kernel (WGSL) + packing/dispatch/histogram
     layer. Pinned against CPU oracle by `src/app/gpu-bench/` (`npm run bench:gpu`).
+    The fold family's AUTHORED lengths (fr-s9ll) ride a per-TYPE Slot lane —
+    `foldRadii: array<vec4f, 3>` indexed by variation type minus 12,
+    `(mR², fR², wall)` — not a per-LANE one: `packVariations`' own invariant
+    is that a transform carries at most one entry per type, so three lanes
+    cover every fold a slot can hold where seventeen would be needed to
+    cover every lane. Squared because that is the form `foldVariationFn`'s
+    closure computes once. Mirroring flame was not optional: the mode has
+    TWO backends over one document (`flame.ts` reaches the fold through
+    `composeVariations`, which reads the lengths), so leaving the kernel
+    frozen would render one object with a WebGPU adapter and another
+    without.
   - `flame-gpu-4d.ts` — 4D WGSL kernel (4x4+t affines, `variations4`,
-    rotor+camera projection, four `FourDRenderColor` modes). Same agreement harness.
+    rotor+camera projection, four `FourDRenderColor` modes). Same agreement
+    harness, and the 3D Slot's fold lane verbatim.
   - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,
     rotation lerped nearest-turn, transform-count mismatches fade surplus by
     weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade
@@ -253,14 +265,21 @@ and UI**, so the interesting math is unit-tested without a browser:
     defaults is by CONSTRUCTION — at the classic lengths every expression
     reduces to the literal that shipped. Oracle for
     `surface-material.ts`, the `flame.ts` <-> `flame-gpu.ts` discipline one
-    render mode over — a mirror fr-3pcu still owes, so the GLSL/WGSL fold
-    arms (and the flame kernels) are FROZEN at the classic radii and a
-    non-default document renders a different object on every GPU path until
-    it lands (fr-xb8o). The mitigation until then is reachability: no editor
-    control writes the fields, `random-system.ts` does not roll them, and
-    `mutate-system.ts` perturbs a present one but never materializes an
-    absent one — so only a hand-edited hash, an imported scene or a morph
-    between two such documents can produce one.
+    render mode over — and since fr-3pcu EVERY GPU MIRROR READS THE
+    AUTHORED LENGTHS, so fr-xb8o's divergence is closed and the feature is
+    reachable: `ui.ts` gives each fold variation the lengths that fold
+    actually reads. The wire is the three AUTHORED lengths everywhere, not
+    this struct's eight derived fields — three numbers a reader can check
+    against the document beat eight combinations, which would be eight
+    chances to disagree — and each kernel re-derives the branch algebra
+    from them (`foldRadiiOf`, this file's `surfaceFoldRadii` field for
+    field). Two producers still leave the fields alone, now by CHOICE
+    rather than as fr-xb8o's mitigation: `random-system.ts` does not roll
+    them (no evidence they improve the generator, and rolling `minRadius`
+    would move systems across the eligibility seam behind the user's
+    back), and `mutate-system.ts` perturbs a present one but never
+    materializes an absent one (so a mutation grid stays a grid of the
+    system you brought it).
   - `surface-de-4d.ts` — `surface-de.ts` one dimension up (born as the
     fr-beck spike): Jacobi `singularValues4`, `analyzeSurfaceSystem4`,
     `buildSurfaceDE4` (final-transform lens included; also derives
@@ -293,7 +312,25 @@ and UI**, so the interesting math is unit-tested without a browser:
     estimator the fold GLSL marches) under the `flame-gpu.ts` oracle
     discipline, source-generated per config — frontier width,
     workgroup-SHARED (banked, transposed) vs private frontier storage,
-    fr-kidj stage-2 B&B on/off (WGSL has no Mesa link cliff). SIX
+    fr-kidj stage-2 B&B on/off (WGSL has no Mesa link cliff).
+    THE FOLD'S AUTHORED LENGTHS (fr-s9ll) ride a dedicated `fold` lane in
+    both map layouts — `GpuMap` 6 -> 7 vec4, `GpuMap4` 8 -> 9 — carrying
+    `resolveFoldRadii`'s own output `(mR, fR, wall)`, from which a
+    generated `foldRadiiOf` re-derives the branch algebra
+    (`surfaceFoldRadii` field for field, once per map per descent level,
+    outside a branch loop that runs up to 81 times). The ESCAPE core's
+    lane says something different — `(mR², fR², wall)`, the form
+    `EscapeLink` keeps and the form `fR²/clamp(r², mR², fR²)` wants —
+    exactly as its `p0` already differs; each packer transfers its OWN
+    oracle's numbers rather than recomputing them. The 3D LENS needed a
+    params slot and its block was full, so the lens fold's lengths take
+    the frozen 272 and the shared plane/balloon block moves to 288, with
+    the escape and bulb cores declaring a matching pad so that block keeps
+    ONE offset across every 3D core (params 272 -> 288, balloon -> 320,
+    plane -> 336, 4D lens -> 576). `foldRadiiOf` is emitted only where a
+    fold branch reads it — the fold cores, or ANY core under the lens
+    wrapper — so affine kernels stay byte-identical.
+    SIX
     KERNEL CORES (fr-55s1 added the second, fr-dlxh the third and — its
     4D cut — the fourth, fr-rsp6 phase 2A the fifth, fr-7u8t.9 the
     sixth):
@@ -1085,6 +1122,16 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `ui.ts` — control panel + transform list (`createElement`). Accordion of
     `<details name="panel-section">` sections, remembers open section per
     render mode. Mode content above the accordion (undo row, render progress).
+    A FOLD variation's weight row carries the lengths that fold actually
+    reads nested under it (fr-s9ll: box limit for a box fold, the sphere
+    pair for a sphere fold, all three for a mandelbox — fr-77oy measured a
+    box fold's `mR`/`fR` as inert). Two rules keep `types.ts`'s
+    "absent means classic BYTE-IDENTICALLY" true through an editing
+    session: a length is written only once its own slider moves, and
+    dragging one back to its classic value REMOVES it. The min-radius
+    slider's ceiling IS the fixed radius and moves with it — the fold's
+    domain `0 < mR <= fR` enforced in the row, so the readout is never a
+    length `resolveFoldRadii` would silently clamp.
   - `control-spec.ts` — declarative spec for panel scalar controls. Adding a
     setting = one spec entry + one index.html row (pure, tested).
   - `constants.ts` — shared UI/interaction magic numbers.
@@ -1180,6 +1227,22 @@ and UI**, so the interesting math is unit-tested without a browser:
     comment/indentation strip (the fr-zqu8 probe instance's mechanism,
     extended) emitting the identical token stream at ~30KB raw, the ~79KB
     lens variant included (29.6KB with the floor).
+    SINCE fr-s9ll THE STRIP IS A SIZE RULE, not the plane arm's private
+    habit: `surfaceFragmentFor` strips any resolved source past
+    `SURFACE_GLSL_STRIP_BYTES` (64KB). The fold's authored lengths cost
+    this file ~2.2KB — `uFoldRadii[MAX_MAPS]` inside the folds arm,
+    `uLensRadii` beside `uLensParams`, `uEscRadii[MAX_MAPS]` inside the
+    escape arm, a `foldRadiiOf` helper mirroring `surfaceFoldRadii` field
+    for field, and longer expressions at the four inverse-branch sites and
+    the escape arm's two forward folds — which took the BALLOON variant
+    from 80.9KB to 83.1KB, i.e. past the size that crashed. Measured after:
+    affine 74.6->28.0KB, lens 77.6->27.8, balloon 80.9->29.3, with escape
+    (39.8) and bulb (34.1) keeping their comments. A size threshold is the
+    honest predicate for a size cliff; a hand-kept list of which variants
+    strip is what drifts the next time one grows a paragraph. NOTE the 4D
+    fragment tracer needed no fold mirror at all — it carries no fold GLSL
+    (fr-rsp6 made fold-shaped 4D sessions compute-only), so fr-3pcu's list
+    of mirrors was one longer than the code.
     Orbit-trap color blends descent choices TOP-DOWN (depth-0 copy
     dominates, flam3's convention — fr-gt9i); the per-level decay is now the
     Color speed slider (default 0.5 = that original fixed behavior), and the

@@ -80,18 +80,32 @@ the totality guarantee; `chaos-game.test.ts` covers finiteness, seed-determinism
 
 A third family, the **Mandelbox folds** (`boxfold`/`spherefold`/`mandelbox`,
 fr-p7nu), is natively 3-D rather than a lift of a planar formula: `boxfold`
-reflects each axis back off the `|t| = 1` planes (`2·clamp(t, −1, 1) − t`,
-continuous at the fold), `spherefold` is the classic Mandelbox ball fold —
-scaling by `1/clamp(r², 0.25, 1)`, the clamp floor doing double duty as the
-totality guard — and `mandelbox` composes the two as `sphereFold(boxFold(p))`,
-its own variation because blending is a weighted **sum**: no combination of
-`boxfold` and `spherefold` weights can express a composition. The variation's
-`weight` plays the classic Mandelbox scale `s` (`s·sphereFold(boxFold(p))`;
-weight 2 reproduces the canonical step).
+reflects each axis back off the `|t| = wall` planes
+(`2·clamp(t, −wall, wall) − t`, continuous at the fold), `spherefold` is the
+classic Mandelbox ball fold — scaling by `fR²/clamp(r², mR², fR²)`, the clamp
+floor doing double duty as the totality guard — and `mandelbox` composes the
+two as `sphereFold(boxFold(p))`, its own variation because blending is a
+weighted **sum**: no combination of `boxfold` and `spherefold` weights can
+express a composition. The variation's `weight` plays the classic Mandelbox
+scale `s` (`s·sphereFold(boxFold(p))`; weight 2 reproduces the canonical step).
+
+Those three lengths — the ball's minimum and fixed radii `mR`/`fR`, and the
+box wall — are **per-variation fields**, and an ABSENT field means the classic
+0.5 / 1 / 1 byte-identically (fr-s9ll): `variations.ts`'s `resolveFoldRadii`
+is the one place that rule lives, and `foldVariationFn` hands back the shared
+classic entry at the defaults, so a document predating the fields runs the
+same function object it always ran. There is no fourth SIZE field on purpose.
+Only two DIMENSIONLESS RATIOS of the three lengths can be new shape — a
+uniform rescale of all three is equivariant through both folds, so it is
+already exactly what the transform's own affine part does — and fr-qi9c
+measured both, finding `fR/wall` the stronger of the two and the one-shot
+final-transform lens the most sensitive of the three roles a fold can play.
 
 The `radiolarian` and `swirl` presets showcase the feature (`mandelbox` showcases
 the fold family); the transform editor's **Variations** group adds/removes/weights
-them live. A map whose variation list is exactly one fold-family entry is also the
+them live, and nests each fold's own lengths under its weight row — only the ones
+that fold actually reads, since a box fold has no sphere and a sphere fold has no
+wall. A map whose variation list is exactly one fold-family entry is also the
 one nonlinear case the surface distance estimator can descend — see **The surface
 distance estimator** below (fr-5rvk).
 
@@ -569,10 +583,19 @@ branches simultaneously in-sphere, the descent runs a width-12 frontier in
 place of the affine ladder's four beam slots (see `surface-de.ts`'s module
 doc for the full argument and measured numbers). Eligibility itself gates on
 the composite Lipschitz bound `|w|·L_V·sigma_max(M) < 0.999` (`L = 1` for
-`boxfold`'s isometries, `L = 4` for the families carrying `spherefold`'s ×4
-inner branch), so a fold map can read contractive in the editor yet fail the
-gate — and, the other way, a small enough weight can rescue an expanding
-affine part. The shipped Fold Lattice preset's `mandelbox` + `linear` blend
+`boxfold`'s isometries, `L = fR²/mR²` for the families carrying `spherefold`'s
+inner branch — the classic ×4, and an authored length moves it), so a fold map
+can read contractive in the editor yet fail the gate — and, the other way, a
+small enough weight can rescue an expanding affine part. That same expression
+is what the escape-time gate below tests for EXPANSION, the two being
+deliberate complements, so a fold's own `mR` sits on the seam between the two
+renderers: lower it far enough and a Surface-mode IFS becomes an escape-time
+set instead. The app discloses that rather than preventing it (the mode's
+eligibility note names the different object), and the reach is narrow — of
+every shipped system only **Mandelbox KIFS** can cross at all, at `mR` 0.478
+against its default 0.500 (fr-77oy tabulated the rest: the single-map escape
+presets would need `mR > fR`, outside the field's domain, and every chain
+sits behind a box-fold link that expands at any ratio). The shipped Fold Lattice preset's `mandelbox` + `linear` blend
 still reads "uses variations" under this rule. A pure-fold FINAL transform
 is eligible since fr-g58b: the lens applies once, so its branches expand
 into one round of root descents through the untouched cores
