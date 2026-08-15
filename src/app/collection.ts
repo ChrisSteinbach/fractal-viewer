@@ -185,6 +185,30 @@ export class SceneCollection {
     return scene;
   }
 
+  /**
+   * Replace one entry's thumbnail, leaving everything else — `id`, `encoded`,
+   * `createdAt`, `mode` — exactly as it was (fr-r777). The one field a save
+   * can get wrong after the fact: a save taken during a flame/solid/surface
+   * render's first-frame gap files a POINT-CLOUD picture under that render's
+   * tag (the screen honestly still showed the explorer), and main.ts
+   * re-photographs the entry once the render's own first frame lands — see
+   * `thumbnail-patch.ts` for the correction and its invalidation rule.
+   *
+   * Deliberately narrower than {@link add}, which would re-bump the entry to
+   * the front with a fresh id, timestamp and mode: a correction is not a new
+   * save, and the gallery must not reshuffle under a user who is only waiting
+   * for a render to start. Returns whether an entry with this id was found;
+   * `false` — a deleted entry, or one a later save of the same document
+   * already bumped away — is a no-op that does not persist.
+   */
+  setThumbnail(id: string, thumbnail: string): boolean {
+    const scene = this.scenes.find((s) => s.id === id);
+    if (!scene) return false;
+    scene.thumbnail = thumbnail;
+    this.persist();
+    return true;
+  }
+
   /** Remove the entry with this id (no-op if absent). Persists. */
   remove(id: string): void {
     this.scenes = this.scenes.filter((s) => s.id !== id);

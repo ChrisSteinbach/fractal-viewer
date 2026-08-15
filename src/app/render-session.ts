@@ -84,6 +84,20 @@ export interface RenderSessionDeps<C> {
    * become collectable).
    */
   deactivate: () => void;
+  /**
+   * Optional: fired the first time {@link RenderSession.markFirstFrame} lands
+   * for THIS session — the TRANSITION, not every call, since a mode's
+   * first-frame signal is usually its ordinary progress event (the flame
+   * marks one per chunk). A re-{@link RenderSession.enter} resets the gate,
+   * so a fresh session fires again.
+   *
+   * The moment the app's answer to "has this render produced its picture?"
+   * flips, which is the moment anything that fell back to the explorer while
+   * it was `false` becomes correctable: main.ts patches fr-r777's late
+   * thumbnails from here. Runs after the gate has flipped, so a handler
+   * reading {@link RenderSession.hasFirstFrame} sees `true`.
+   */
+  onFirstFrame?: () => void;
 }
 
 /**
@@ -115,9 +129,14 @@ export class RenderSession<C> {
 
   /** Record that the current session's first frame has arrived — called from
    * the mode's worker-event handler on the first "progress"/"sharedFrame"
-   * (flame) or "grid" (solid) event. */
+   * (flame) or "grid" (solid) event. Callers fire it per EVENT rather than
+   * per session (the flame's every-chunk progress), so the gate absorbs the
+   * repeats and {@link RenderSessionDeps.onFirstFrame} sees only the
+   * transition. */
   markFirstFrame(): void {
+    if (this.firstFrame) return;
     this.firstFrame = true;
+    this.deps.onFirstFrame?.();
   }
 
   /** Forward a command to the running session, or a no-op when none is running.

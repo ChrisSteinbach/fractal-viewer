@@ -196,6 +196,15 @@ import {
   TimelineStore,
 } from "./timeline";
 import { TimelinePlayer } from "./timeline-player";
+import {
+  dropStaleThumbnailPatches,
+  recordThumbnailPatch,
+  resolveThumbnailPatches,
+} from "./thumbnail-patch";
+import type {
+  PendingThumbnailPatch,
+  ThumbnailPatchStore,
+} from "./thumbnail-patch";
 import type { MorphSystem } from "../fractal/morph";
 import { createFrameCoalescer } from "./regen-scheduler";
 
@@ -1565,21 +1574,121 @@ function main(): void {
     );
   }
 
+  // The render mode a save made RIGHT NOW would be tagged with while its
+  // session is still inside its first-frame gap — i.e. exactly when
+  // captureCurrentThumbnail falls through to the explorer capture. null
+  // whenever the capture already matches the tag (the points explorer, or a
+  // render that has produced its picture), so there is nothing to correct
+  // later. The two are one predicate deliberately: fr-r777's correction must
+  // arm exactly when the fall-through happens and never otherwise.
+  function thumbnailGapMode(): SavedSceneMode | null {
+    if (state.renderMode === "points") return null;
+    const session =
+      state.renderMode === "flame"
+        ? flameSession
+        : state.renderMode === "solid"
+          ? solidSession
+          : surfaceSession;
+    return session.hasFirstFrame ? null : state.renderMode;
+  }
+
   // The displayed frame as a small gallery/timeline thumbnail: mode-aware
   // (fr-75sq) — a capture from a flame/solid render reads the rendered
   // frame, except during the render's first-frame gap, when the screen
   // honestly still shows the explorer. Shared by "★ Save to collection"
   // and "📍 Add keyframe" (fr-8v41).
+  //
+  // The gap capture is CORRECT and stays the immediate answer — a thumbnail
+  // must be instant, so a save is never blocked on a convergence the way
+  // fr-61a2's Save-PNG waits behind its export modal. What fr-r777 added is a
+  // later correction: a save made in the gap records a pending patch
+  // (notePendingThumbnailPatch) that re-photographs the entry once the
+  // render's own first frame lands, if the document has not moved on
+  // meanwhile. See thumbnail-patch.ts.
   function captureCurrentThumbnail(): string {
     const mode =
-      state.renderMode === "flame" && flameSession.hasFirstFrame
-        ? "flame"
-        : state.renderMode === "solid" && solidSession.hasFirstFrame
-          ? "solid"
-          : state.renderMode === "surface" && surfaceSession.hasFirstFrame
-            ? "surface"
-            : "points";
+      state.renderMode !== "points" && thumbnailGapMode() === null
+        ? state.renderMode
+        : "points";
     return scene.captureThumbnail(mode);
+  }
+
+  // fr-r777's corrections in flight: entries saved during a render's
+  // first-frame gap, each waiting for its own render mode's first frame.
+  // Session state by decision — never persisted, since a reload legitimately
+  // abandons them (the live document it comes back to may not be the one they
+  // froze at all).
+  let pendingThumbnailPatches: PendingThumbnailPatch[] = [];
+
+  // Arm a correction for an entry just saved in `mode`'s first-frame gap.
+  // `encoded` is the document the entry FROZE — the invalidation key the
+  // correction is checked against later (thumbnail-patch.ts).
+  function notePendingThumbnailPatch(
+    store: ThumbnailPatchStore,
+    id: string,
+    mode: SavedSceneMode,
+    encoded: string,
+  ): void {
+    pendingThumbnailPatches = recordThumbnailPatch(pendingThumbnailPatches, {
+      store,
+      id,
+      mode,
+      encoded,
+    });
+  }
+
+  // Drop the corrections that can never land now — called from each session's
+  // deactivate, where a mode exit (Back, a worker error, an undo that
+  // time-travels the document, a session that died without ever rendering)
+  // has just returned the app to the explorer.
+  function dropStalePendingThumbnails(): void {
+    pendingThumbnailPatches = dropStaleThumbnailPatches(
+      pendingThumbnailPatches,
+      state.renderMode === "points" ? null : state.renderMode,
+    );
+  }
+
+  // `mode`'s session just produced its first frame (RenderSession's
+  // onFirstFrame): re-photograph every entry saved during its startup gap
+  // that is still a picture of the live document, and drop the rest.
+  //
+  // The invalidation rule lives in resolveThumbnailPatches and is the
+  // non-obvious half: a saved entry froze a DOCUMENT, so a correction is only
+  // the same picture while the live one still encodes to the same string AND
+  // the live render mode is still the tag. An edit, a preset load, an undo, a
+  // camera move (the pose rides the document, fr-1k4) or leaving the mode all
+  // drop the patch and leave the point-cloud thumbnail alone — stale but
+  // honest beats sharp and wrong.
+  //
+  // One capture serves the whole surviving list: every one of them matched
+  // the same document and the same mode.
+  function applyPendingThumbnailPatches(mode: SavedSceneMode): void {
+    if (pendingThumbnailPatches.length === 0) return;
+    const { apply, keep } = resolveThumbnailPatches(pendingThumbnailPatches, {
+      frameMode: mode,
+      mode: state.renderMode === "points" ? null : state.renderMode,
+      encoded: encodeScene(currentDocument()),
+    });
+    pendingThumbnailPatches = keep;
+    if (apply.length === 0) return;
+    const thumbnail = scene.captureThumbnail(mode);
+    let patchedCollection = false;
+    let patchedTimeline = false;
+    for (const patch of apply) {
+      // A false return is an entry that went away under us — deleted, or (in
+      // the collection) bumped by a later save of the same document, which
+      // mints a fresh id. Nothing to do: the correction dies with it.
+      if (patch.store === "collection") {
+        patchedCollection ||= collection.setThumbnail(patch.id, thumbnail);
+      } else {
+        patchedTimeline ||= timeline.setThumbnail(patch.id, thumbnail);
+      }
+    }
+    // Refresh whichever surface shows the picture. renderGallery on a closed
+    // modal is a harmless rebuild of hidden DOM — the delete handler's own
+    // idiom (it refreshes the still-open modal in place the same way).
+    if (patchedCollection) ui.renderGallery(collection.all());
+    if (patchedTimeline) refreshTimelineUi();
   }
 
   // Push the current soft-slice view state to the scene shader. Shared by
@@ -2785,6 +2894,9 @@ function main(): void {
         // the next camera move.
         scene.invalidate();
       }
+      // Whatever this render still owed a thumbnail (fr-r777) is owed
+      // nothing now — the mode is over.
+      dropStalePendingThumbnails();
       refreshUi();
       // An offline export parked on this render (fr-6jic): an early exit —
       // worker error, Back — terminated the worker, so no further progress
@@ -2792,6 +2904,9 @@ function main(): void {
       // (renderMode left flame) and fall back to capturing points.
       notifyRenderSignal();
     },
+    // The flame's first image lands: any entry saved during the startup gap
+    // can now be re-photographed as the flame it was tagged with (fr-r777).
+    onFirstFrame: () => applyPendingThumbnailPatches("flame"),
   });
 
   // The solid voxel render's worker-event handler: "grid" is this session's
@@ -2942,11 +3057,15 @@ function main(): void {
         // canvas and the same render-on-demand gate.
         scene.invalidate();
       }
+      dropStalePendingThumbnails(); // see the flame session's deactivate (fr-r777)
       refreshUi();
       // A parked offline export's early-exit wake (fr-6jic) — see the flame
       // session's deactivate.
       notifyRenderSignal();
     },
+    // The first accumulated grid: the solid twin of the flame session's own
+    // late-thumbnail correction (fr-r777).
+    onFirstFrame: () => applyPendingThumbnailPatches("solid"),
   });
 
   // The surface render session (epic fr-7jlk): sphere-trace the attractor as
@@ -4661,11 +4780,20 @@ function main(): void {
         // tracer shares the one canvas and the same render-on-demand gate.
         scene.invalidate();
       }
+      dropStalePendingThumbnails(); // see the flame session's deactivate (fr-r777)
       refreshUi();
       // A parked offline export's early-exit wake (fr-6jic) — see the flame
       // session's deactivate.
       notifyRenderSignal();
     },
+    // The surface twin of the flame session's late-thumbnail correction
+    // (fr-r777). This session's first frame is its TRACER coming up — the
+    // compile gate resolving, or the compute renderer's create — so a
+    // re-capture reads whatever has presented by then, which is exactly the
+    // rule captureThumbnail("surface") already follows for a save made here:
+    // the last traced frame if there is one, the honest explorer render if
+    // there is not.
+    onFirstFrame: () => applyPendingThumbnailPatches("surface"),
   });
 
   // The one path between the render modes (fr-39y): exit whichever
@@ -6099,13 +6227,20 @@ function main(): void {
     // drift-collection leg plays it there). During a render's first-frame
     // gap the screen still shows the explorer (the sessions' first-frame
     // gate), so the thumbnail honestly captures that instead — the tag
-    // stays the render's, which is what the save meant.
+    // stays the render's, which is what the save meant — and fr-r777 comes
+    // back once that render's first frame lands and re-photographs the entry,
+    // so the gap costs a briefly-wrong picture rather than a permanent one.
     onSaveToCollection: () => {
-      collection.add(
-        encodeScene(currentDocument()),
+      const encoded = encodeScene(currentDocument());
+      const gapMode = thumbnailGapMode();
+      const entry = collection.add(
+        encoded,
         captureCurrentThumbnail(),
         state.renderMode === "points" ? undefined : state.renderMode,
       );
+      if (gapMode) {
+        notePendingThumbnailPatch("collection", entry.id, gapMode, encoded);
+      }
       ui.setCollectionCount(collection.size);
       ui.flashToast("Saved to collection");
     },
@@ -6154,9 +6289,12 @@ function main(): void {
       timelinePolicy.stop({ notify: true });
       // A keyframe added from a flame/solid render is tagged with that mode
       // (fr-v3au) — the same capture rule as onSaveToCollection's (fr-75sq):
-      // playback re-enters the renderer and holds until it converges.
+      // playback re-enters the renderer and holds until it converges. And the
+      // same first-frame-gap correction (fr-r777).
+      const encoded = encodeScene(currentDocument());
+      const gapMode = thumbnailGapMode();
       const step = timeline.add(
-        encodeScene(currentDocument()),
+        encoded,
         captureCurrentThumbnail(),
         state.renderMode === "points" ? undefined : state.renderMode,
       );
@@ -6165,6 +6303,9 @@ function main(): void {
       if (!step) {
         ui.flashToast(`Timeline is full (${TIMELINE_CAP} keyframes)`);
         return;
+      }
+      if (gapMode) {
+        notePendingThumbnailPatch("timeline", step.id, gapMode, encoded);
       }
       refreshTimelineUi();
       ui.flashToast("Keyframe added");

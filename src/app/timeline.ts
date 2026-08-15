@@ -340,6 +340,26 @@ export class TimelineStore {
   }
 
   /**
+   * Replace one step's thumbnail, leaving everything else — `id`, `encoded`,
+   * `mode`, both timings, and its place in the sequence — exactly as it was
+   * (fr-r777). `SceneCollection.setThumbnail`'s twin, for the same reason: a
+   * 📍 Add keyframe taken during a flame/solid/surface render's first-frame
+   * gap files a POINT-CLOUD picture under that render's tag, and main.ts
+   * re-photographs the step once the render's own first frame lands (see
+   * `thumbnail-patch.ts` for the correction and its invalidation rule). A
+   * correction addresses the step in place — re-adding it would append a
+   * second keyframe to an authored sequence. Returns whether a step with this
+   * id was found; `false` (a deleted step) is a no-op that does not persist.
+   */
+  setThumbnail(id: string, thumbnail: string): boolean {
+    const step = this.steps.find((s) => s.id === id);
+    if (!step) return false;
+    step.thumbnail = thumbnail;
+    this.persist();
+    return true;
+  }
+
+  /**
    * Replace the ENTIRE timeline with `steps` and `seed` — the import file's
    * whole-timeline REPLACEMENT (fr-h9rk), not a merge. An authored sequence
    * isn't mergeable the way a collection backup is: `SceneCollection.
