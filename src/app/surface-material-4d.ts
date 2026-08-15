@@ -280,6 +280,16 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * declaration's doc carries the measured fold-phantom mechanism that
    * forced this; the 4D tracer takes the same contract for lockstep. */
   uniform float uAcceptPixelEps;
+  /** Where inside its pixel THIS pass aims (fr-jf9y), the 3D tracer's
+   * jitter uniform line for line: .xy the offset in UV, .zw the same
+   * offset in pixels, both derived by the scene from
+   * surface-compute.ts's subPixelSample. All zero is the pixel CENTRE,
+   * so every single-pass trace — and pass 0 of a supersampled settle —
+   * adds exactly 0.0 and renders the pre-fr-jf9y frame value for value.
+   * The ray's UV moves and the dither's hash takes the jittered pixel;
+   * the background ramp deliberately does not. The 3D declaration's doc
+   * carries the reasoning. */
+  uniform vec4 uPixelJitter;
 
   in vec2 vUv;
   out vec4 outColor;
@@ -1267,8 +1277,9 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     vec3 background = mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0));
 
     // Reconstruct the camera ray by unprojecting this pixel on the near and
-    // far clip planes.
-    vec2 ndc = vUv * 2.0 - 1.0;
+    // far clip planes — at the supersampling pass's own point inside the
+    // pixel (fr-jf9y; the pixel centre on every single-pass trace).
+    vec2 ndc = (vUv + uPixelJitter.xy) * 2.0 - 1.0;
     vec4 nearP = uInvProjView * vec4(ndc, -1.0, 1.0);
     vec4 farP = uInvProjView * vec4(ndc, 1.0, 1.0);
     vec3 rd = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);
@@ -1307,8 +1318,10 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     // Where the ray enters the bounding sphere — the depth-fog origin.
     float tEnter = t;
 
-    // Tiny dithered start: just breaks banding on grazing rays.
-    t += hash(gl_FragCoord.xy) * uPixelEps * max(t, 1.0);
+    // Tiny dithered start: just breaks banding on grazing rays. Hashed on
+    // the JITTERED pixel (fr-jf9y) so supersampling passes get independent
+    // start offsets instead of averaging one banding pattern N times.
+    t += hash(gl_FragCoord.xy + uPixelJitter.zw) * uPixelEps * max(t, 1.0);
 
     // --- sphere trace -------------------------------------------------------
     // Cone-style hit test: accept once the bound drops below the pixel's
@@ -1576,6 +1589,13 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       // true angular pixel size.
       uPixelEps: { value: 0.002 },
       uAcceptPixelEps: { value: 0.002 },
+      // The pixel CENTRE (fr-jf9y), the 3D tracer's default: zero here is
+      // what makes a single-pass trace value-identical to the
+      // pre-supersampling one, and setSurfaceFrameUniforms rewrites it per
+      // armed job so no abandoned settle leaks a jitter forward.
+      // All four spelled out: THREE.Vector4 defaults w to 1, and w is the
+      // dither's y offset in pixels (the 3D tracer's note).
+      uPixelJitter: { value: new THREE.Vector4(0, 0, 0, 0) },
       // Full-tier defaults; the scene overwrites all four per tier
       // (fr-sjff), same knobs as the 3D tracer.
       uMarchSteps: { value: SURFACE_FULL_MARCH_STEPS },

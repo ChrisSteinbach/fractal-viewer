@@ -93,6 +93,7 @@ import { unmaskedWebglRenderer } from "./render-backend";
 import type { SurfaceComputeFrameSpec } from "./surface-compute";
 import {
   fitSurfaceComputeRaster,
+  subPixelSample,
   surfaceComputeBandStops,
   surfaceComputeTileRows,
 } from "./surface-compute";
@@ -871,6 +872,33 @@ export class FractalScene {
   private readonly surfaceSettleTarget: THREE.WebGLRenderTarget;
   /** In-flight strip job over {@link surfaceSettleTarget}, or null. */
   private surfaceStripJob: SurfaceStripJob | null = null;
+  /** Passes the ACTIVE {@link surfaceSettleTarget} sequence wants (fr-jf9y)
+   * — {@link SURFACE_STRIP_SETTLE_SAMPLES} for a settle or an interactive
+   * Save-PNG, 1 for everything else, which is every path that existed
+   * before supersampling. */
+  private surfaceSampleTotal = 1;
+  /** Which pass of that sequence is IN FLIGHT (0-based). */
+  private surfaceSampleIndex = 0;
+  /** Passes already folded into {@link surfaceSampleAccum}. */
+  private surfaceSampleTaken = 0;
+  /** Linear-light sum of the completed passes, 3 floats per pixel
+   * (fr-jf9y). f32 rather than a float render target: this arm is the
+   * FALLBACK one — no adapter, `?surfacegl`, a lost device — so it may
+   * not assume `EXT_color_buffer_float`, and the sum then costs no
+   * precision at all. See {@link foldSurfaceSample} for where the gamma
+   * decode happens and why. */
+  private surfaceSampleAccum: Float32Array | null = null;
+  /** RGBA8 scratch the passes read back into and the mean is encoded back
+   * into — the {@link surfaceSampleTexture}'s own storage, so a pass costs
+   * one readback and one upload, no intermediate copy. */
+  private surfaceSampleTexture: THREE.DataTexture | null = null;
+  /** Frame the sequence's buffers are sized for. */
+  private surfaceSampleWidth = 0;
+  private surfaceSampleHeight = 0;
+  /** Whether {@link surfaceSampleTexture} currently holds a mean of two or
+   * more completed passes — i.e. whether it, rather than the settle
+   * target, is the image this surface last presented. */
+  private surfaceSampleMeanReady = false;
   /** True while {@link captureSurfaceFrame}'s yielding drain owns
    * {@link surfaceSettleTarget} and the full-tier uniforms — see
    * {@link surfaceCaptureBusy} for who has to respect it. */
@@ -3956,6 +3984,12 @@ export class FractalScene {
     this.abandonSurfacePreview();
     sizeTarget(this.surfaceSettleTarget, width, height);
     this.setSurfaceFrameUniforms("full", height, height);
+    // Single-pass by default (fr-jf9y), which is what the synchronous
+    // callers of this — offline export force frames and thumbnails — stay
+    // at: an export's cost would multiply by the frame count, and a
+    // thumbnail is already cheap and small. The interactive Save-PNG
+    // re-opens the sequence at full width right after this returns.
+    this.beginSurfaceSamples(1, width, height);
     // The job stays LOCAL: {@link surfaceStripJob} is the ASYNC settle's
     // slot, and a drain that parked its job there would only invite an
     // abandon path to half-release it mid-call.
@@ -4422,14 +4456,36 @@ export class FractalScene {
   surfaceRenderProgress(): {
     phase: "preview" | "settle";
     fraction: number;
+    /** Which supersampling pass is tracing, 1-based (fr-jf9y), and how
+     * many the sequence wants. Always 1/1 for a preview and for every
+     * single-pass settle, so a caller that ignores them reads exactly what
+     * it read before. */
+    sample: number;
+    samples: number;
   } | null {
     const preview = this.surfacePreviewJob;
     if (preview) {
-      return { phase: "preview", fraction: stripJobCoverage(preview) };
+      return {
+        phase: "preview",
+        fraction: stripJobCoverage(preview),
+        sample: 1,
+        samples: 1,
+      };
     }
     const settle = this.surfaceStripJob;
     if (settle) {
-      return { phase: "settle", fraction: stripJobCoverage(settle) };
+      // Coverage spans the WHOLE sequence, so the row's percentage stays
+      // monotone across the passes instead of resetting to 0% eight times
+      // (the compute arm's `done`/`total` convention, fr-vpbq).
+      const samples = this.surfaceSampleTotal;
+      return {
+        phase: "settle",
+        fraction:
+          (this.surfaceSampleIndex + stripJobCoverage(settle)) /
+          Math.max(1, samples),
+        sample: Math.min(samples, this.surfaceSampleIndex + 1),
+        samples,
+      };
     }
     return null;
   }
@@ -4546,6 +4602,202 @@ export class FractalScene {
   }
 
   /**
+   * Open a supersampling sequence over a `width` x `height` frame in
+   * {@link surfaceSettleTarget} (fr-jf9y — fr-vpbq's compute-arm shape
+   * said in strip vocabulary).
+   *
+   * `samples` PASSES, each a whole-frame strip job through the untouched
+   * pump, at {@link subPixelSample}'s offsets — the SAME R2 sequence the
+   * WebGPU arm walks, so "8 samples" means one thing in this app. The
+   * alternative, an N-loop inside the fragment, multiplies EVERY strip's
+   * cost by N: the planner would ratchet and shrink strips to stay
+   * watchdog-safe, so it would be safe, but a 3s settle would become 24s
+   * with nothing to show at 3s — against fr-096u/fr-id9r's bounded-strip
+   * tuning and against fr-24to's verdict that this renderer discloses
+   * progress rather than making the user wait blind.
+   *
+   * `samples <= 1` is every path that existed before this: previews (cheap
+   * by definition and replaced anyway), thumbnails, and offline video force
+   * frames (whose cost would multiply by the frame count). It releases the
+   * accumulator and leaves the jitter at the pixel centre, so those traces
+   * are the pre-fr-jf9y ones value for value.
+   */
+  private beginSurfaceSamples(
+    samples: number,
+    width: number,
+    height: number,
+  ): void {
+    const total = Math.max(1, Math.floor(samples));
+    this.surfaceSampleTotal = total;
+    this.surfaceSampleIndex = 0;
+    this.surfaceSampleTaken = 0;
+    this.surfaceSampleMeanReady = false;
+    this.surfaceSampleWidth = width;
+    this.surfaceSampleHeight = height;
+    if (total <= 1) {
+      // ~33MB at 1080p between the accumulator and the mean texture: a
+      // single-pass caller has no use for either.
+      this.surfaceSampleAccum = null;
+      this.surfaceSampleTexture?.dispose();
+      this.surfaceSampleTexture = null;
+      return;
+    }
+    const px = width * height;
+    if (this.surfaceSampleAccum?.length === px * 3) {
+      this.surfaceSampleAccum.fill(0);
+    } else {
+      this.surfaceSampleAccum = new Float32Array(px * 3);
+    }
+    const tex = this.surfaceSampleTexture;
+    if (!tex || tex.image.width !== width || tex.image.height !== height) {
+      tex?.dispose();
+      const next = new THREE.DataTexture(new Uint8Array(px * 4), width, height);
+      // Linear + clamp like the targets it stands in for — a capture
+      // presents it at export ratio, and a live present at DPR.
+      next.minFilter = THREE.LinearFilter;
+      next.magFilter = THREE.LinearFilter;
+      next.wrapS = THREE.ClampToEdgeWrapping;
+      next.wrapT = THREE.ClampToEdgeWrapping;
+      this.surfaceSampleTexture = next;
+    }
+  }
+
+  /** Point the active tracer at the CURRENT pass's spot inside the pixel
+   * and arm a whole-frame strip job for it (fr-jf9y). Priors and worst
+   * prices come from the same accessors {@link beginSurfaceSettle} uses,
+   * so a later pass paces exactly like the first — except that pass 0's
+   * completed retire has by now put a MEASURED observation in the evidence
+   * chain, which is strictly better than the class floor it started from.
+   *
+   * The present CADENCE is pass 0's, deliberately, even though a later
+   * pass has no new image to show until it lands: present-on-drain is how
+   * this pump bounds its own queue (see {@link pumpStrips}), and a job
+   * that never takes a gap keeps ~{@link SURFACE_STRIP_QUEUE_MS} of work
+   * permanently in flight for whatever interrupts it to wait behind.
+   * MEASURED (scripts/surface-tier.verify.mjs, SwiftShader, default
+   * system): with the gaps suppressed the mid-drag preview took longer
+   * than the gate's 1.5s to reach the canvas and its softness check read
+   * 1.03 against a 0.81 control — i.e. a drag mid-settle showed the
+   * settled frame instead of a preview, which is fr-nl32's symptom
+   * arriving by another route. What a later pass presents INTO that gap
+   * is the last COMPLETED image ({@link presentSurfaceSampleImage}), never
+   * the half-traced pass being written over it. */
+  private armSurfaceSamplePass(width: number, height: number): SurfaceStripJob {
+    const [sx, sy] = subPixelSample(this.surfaceSampleIndex);
+    const dx = sx - 0.5;
+    const dy = sy - 0.5;
+    (
+      this.activeSurfaceMaterial.uniforms.uPixelJitter.value as THREE.Vector4
+    ).set(dx / Math.max(1, width), dy / Math.max(1, height), dx, dy);
+    return this.newStripJob(
+      createStripPlanner(height, width, {
+        priorMsPerPx: this.surfaceStripPriorMsPerPx(),
+        worstMsPerPx: this.surfaceStripWorstMsPerPx(),
+      }),
+      this.surfaceStripPriorMsPerPx(),
+      SURFACE_SETTLE_PRESENT_MS,
+    );
+  }
+
+  /**
+   * Fold the completed pass sitting in {@link surfaceSettleTarget} into the
+   * running linear-light sum (fr-jf9y).
+   *
+   * THE GAMMA DECODE HAPPENS HERE, on the way in, and the re-encode in
+   * {@link encodeSurfaceSampleMean} on the way out. Both tracers end with
+   * `pow(lit, 1/2.2)`, so the bytes this readback returns are
+   * gamma-ENCODED; summing them directly is the classic edge-darkening
+   * antialiasing bug — a half-covered edge pixel would come out darker
+   * than the average light reaching it. A 256-entry table makes the decode
+   * a lookup per channel rather than a `Math.pow`.
+   *
+   * The readback is also the sequence's barrier: it forces every strip of
+   * this pass to have executed before the next pass is armed, which is the
+   * clean-probe guarantee {@link beginSurfaceSettle} pays a 1x1 readback
+   * for. It is ONE sync point per PASS, outside any job, so the pump's
+   * cost model never sees it.
+   */
+  private foldSurfaceSample(): void {
+    const accum = this.surfaceSampleAccum;
+    const tex = this.surfaceSampleTexture;
+    if (!accum || !tex) return;
+    const width = this.surfaceSampleWidth;
+    const height = this.surfaceSampleHeight;
+    const buf = tex.image.data as Uint8Array;
+    const t0 = SURFPERF ? performance.now() : 0;
+    this.renderer.readRenderTargetPixels(
+      this.surfaceSettleTarget,
+      0,
+      0,
+      width,
+      height,
+      buf,
+    );
+    const tRead = SURFPERF ? performance.now() : 0;
+    const px = width * height;
+    for (let i = 0, p = 0, a = 0; i < px; i++, p += 4, a += 3) {
+      accum[a] += SRGB_TO_LINEAR[buf[p]];
+      accum[a + 1] += SRGB_TO_LINEAR[buf[p + 1]];
+      accum[a + 2] += SRGB_TO_LINEAR[buf[p + 2]];
+    }
+    this.surfaceSampleTaken += 1;
+    // The texture now holds THIS pass verbatim — which is already the
+    // right image to re-present while pass 1 traces over the target
+    // (encodeSurfaceSampleMean takes over from two passes on).
+    tex.needsUpdate = true;
+    if (SURFPERF) {
+      // The accumulator's whole overhead, the number the host-side-vs-float-
+      // target choice was made on: readback + decode, once per PASS.
+      console.log(
+        `[surfperf] sample fold ${String(this.surfaceSampleTaken)} ` +
+          `${String(width)}x${String(height)} read=${(tRead - t0).toFixed(1)}ms` +
+          ` decode=${(performance.now() - tRead).toFixed(1)}ms`,
+      );
+    }
+  }
+
+  /**
+   * Re-encode the mean of the folded passes over the readback buffer it was
+   * accumulated from (fr-jf9y) — the gamma decode's inverse, see
+   * {@link foldSurfaceSample}. In place, so a pass costs one full-frame
+   * readback and one upload with no copy between them; alpha is left as the
+   * trace wrote it (always opaque). A no-op at one pass, where the buffer
+   * already holds that pass verbatim and a round trip through the table
+   * could only lose a least significant bit.
+   */
+  private encodeSurfaceSampleMean(): void {
+    const accum = this.surfaceSampleAccum;
+    const tex = this.surfaceSampleTexture;
+    if (!accum || !tex || this.surfaceSampleTaken < 2) return;
+    const buf = tex.image.data as Uint8Array;
+    const inv = 1 / this.surfaceSampleTaken;
+    const invGamma = 1 / SURFACE_OUTPUT_GAMMA;
+    for (let p = 0, a = 0; p < buf.length; p += 4, a += 3) {
+      buf[p] = Math.round(255 * Math.pow(accum[a] * inv, invGamma));
+      buf[p + 1] = Math.round(255 * Math.pow(accum[a + 1] * inv, invGamma));
+      buf[p + 2] = Math.round(255 * Math.pow(accum[a + 2] * inv, invGamma));
+    }
+    tex.needsUpdate = true;
+  }
+
+  /**
+   * Stretch the last COMPLETED image of the current sequence over `target`
+   * (null = the canvas): the mean of the folded passes, or pass 0 verbatim
+   * while it is the only one. False — and nothing drawn — before any pass
+   * has landed, which is the single-pass caller's whole path: it presents
+   * its traced target directly, byte for byte as before fr-jf9y.
+   */
+  private presentSurfaceSampleImage(
+    target: THREE.WebGLRenderTarget | null = null,
+  ): boolean {
+    const tex = this.surfaceSampleTexture;
+    if (!tex || this.surfaceSampleTaken < 1) return false;
+    this.blitSurface(tex, target);
+    this.surfaceSampleMeanReady = true;
+    return true;
+  }
+
+  /**
    * Start the ASYNC full-quality settle job (fr-sjff): freeze the camera +
    * full-tier quality uniforms (main.ts abandons the job on any
    * invalidation, so they cannot go stale mid-job), seed the settle target
@@ -4611,6 +4863,12 @@ export class FractalScene {
           ` partial=${this.surfaceStripPartialWorstMsPerPx.toFixed(3)}`,
       );
     }
+    // fr-jf9y: the settle is the one live frame worth supersampling — it
+    // is what a parked view finally shows, and the escape-time objects'
+    // speckle is sub-pixel structure no march budget or viewport reaches
+    // (fr-vpbq's measurement, on the engine this arm stands in for). Pass
+    // 0 is armed exactly as it always was, below.
+    this.beginSurfaceSamples(SURFACE_STRIP_SETTLE_SAMPLES, size.x, size.y);
     this.surfaceStripJob = this.newStripJob(
       createStripPlanner(size.y, size.x, {
         priorMsPerPx: this.surfaceStripPriorMsPerPx(),
@@ -4627,14 +4885,74 @@ export class FractalScene {
    * over the preview-seeded rest) on the pump's present-on-drain cadence.
    * Returns true when the frame is complete (the job is then disarmed).
    * No-op true when no job is running.
+   *
+   * "Complete" means the whole SUPERSAMPLING SEQUENCE since fr-jf9y: a
+   * finished pass folds itself into the running mean and arms the next
+   * one here, so the caller's loop is unchanged and its own settled flag
+   * still means "this is the final image". Pass 0 lands exactly when it
+   * always did.
    */
   stepSurfaceSettle(): boolean {
     if (!this.surfaceStripJob) return true;
     const { done, present } = this.renderSurfaceStrips(SURFACE_STRIP_QUEUE_MS);
-    if (done || present) {
-      this.blitSurface(this.surfaceSettleTarget.texture, null);
+    if (!done) {
+      // Present into the pump's drain gap. Pass 0 shows its own strips
+      // sharpening over the preview seed, exactly as this always did; a
+      // LATER pass repaints the last completed image instead (fr-jf9y) —
+      // the gap itself is what keeps the queue from running permanently
+      // full, but the pass being traced over the target must not be shown
+      // half-done.
+      if (present) {
+        if (
+          this.surfaceSampleIndex === 0 ||
+          !this.presentSurfaceSampleImage()
+        ) {
+          this.blitSurface(this.surfaceSettleTarget.texture, null);
+        }
+      }
+      return false;
     }
-    return done;
+    return this.advanceSurfaceSettleSample();
+  }
+
+  /**
+   * A settle pass just completed (fr-jf9y): fold it in, present, and arm
+   * the next one — or report the sequence finished.
+   *
+   * PASS 0 IS THE PRE-fr-jf9y SETTLE and is presented as one: the traced
+   * target itself, at the moment it always arrived. Everything after it
+   * only refines, and an abandon between passes leaves the canvas showing
+   * the mean of what completed — never a partially traced pass, which is
+   * why the later jobs repaint that mean into their drain gaps rather than
+   * the target they are writing.
+   */
+  private advanceSurfaceSettleSample(): boolean {
+    const target = this.surfaceSettleTarget;
+    if (this.surfaceSampleTotal <= 1) {
+      this.blitSurface(target.texture, null);
+      return true;
+    }
+    const first = this.surfaceSampleIndex === 0;
+    this.foldSurfaceSample();
+    this.encodeSurfaceSampleMean();
+    if (first || !this.presentSurfaceSampleImage()) {
+      // Pass 0 presents its own TARGET — the pre-fr-jf9y settle, at the
+      // moment it always arrived — and never the readback of it.
+      this.blitSurface(target.texture, null);
+    }
+    this.surfaceSampleIndex += 1;
+    if (this.surfaceSampleIndex >= this.surfaceSampleTotal) return true;
+    if (SURFPERF) {
+      console.log(
+        `[surfperf] settle sample ${String(this.surfaceSampleIndex)}/` +
+          `${String(this.surfaceSampleTotal)} armed`,
+      );
+    }
+    this.surfaceStripJob = this.armSurfaceSamplePass(
+      target.width,
+      target.height,
+    );
+    return false;
   }
 
   /** Discard the in-flight settle job (a fresh invalidation supersedes
@@ -4664,6 +4982,11 @@ export class FractalScene {
    * identical image).
    */
   presentSettledSurface(): void {
+    // The supersampled settle's own image is the MEAN, not the last pass
+    // left in the target (fr-jf9y) — a re-present has to repaint what the
+    // pane is already showing, or a recorder frame of a parked view would
+    // be visibly noisier than the view it recorded.
+    if (this.surfaceSampleMeanReady && this.presentSurfaceSampleImage()) return;
     this.blitSurface(this.surfaceSettleTarget.texture, null);
   }
 
@@ -4695,6 +5018,14 @@ export class FractalScene {
     const angularPerPixel = 2 * Math.tan((this.camera.fov * Math.PI) / 360);
     u.uPixelEps.value = angularPerPixel / Math.max(height, 1);
     u.uAcceptPixelEps.value = angularPerPixel / Math.max(acceptHeight, 1);
+    // Every freshly armed job aims at the pixel CENTRE (fr-jf9y). This is
+    // the ONE funnel each of them goes through, so resetting here is what
+    // makes an abandoned supersampling pass unable to leak its jitter into
+    // the preview, thumbnail or export that follows — and what keeps every
+    // single-pass trace value-identical to the pre-fr-jf9y one. Only
+    // {@link armSurfaceSamplePass} sets it otherwise, and only after this
+    // has run for the sequence's first pass.
+    (u.uPixelJitter.value as THREE.Vector4).set(0, 0, 0, 0);
     const preview = tier === "preview";
     // Derived per frame, never cached: the clamp depends on BOTH the
     // active DE's own full depth (fr-ttg5) and the live rung (fr-hith),
@@ -5414,21 +5745,52 @@ export class FractalScene {
     const arm = this.withCenteredProjection(() =>
       this.beginSurfaceFullFrame(width, height, false),
     );
+    // fr-jf9y: a saved PNG gets the same supersampling the pane it was
+    // saved from does, exactly as on the WebGPU arm (fr-vpbq) — the
+    // aliasing is scale-invariant, so exporting larger does not fix it and
+    // an unsampled export would be visibly worse than the screen it came
+    // from. Coverage below spans the passes, and Cancel lands between them.
+    this.beginSurfaceSamples(SURFACE_STRIP_SETTLE_SAMPLES, width, height);
     this.surfaceCaptureFlight = true;
-    let outcome: SurfaceDrainOutcome;
+    // Definite by the loop's first iteration; the initializer only tells
+    // the compiler the `finally` cannot see it unassigned.
+    let outcome!: SurfaceDrainOutcome;
+    let job = arm.job;
     try {
-      outcome = await this.drainStripsAsync(
-        arm.job,
-        this.surfaceSettleTarget,
-        opts ?? {},
-      );
+      for (;;) {
+        const pass = this.surfaceSampleIndex;
+        // Each pass retires on its OWN completed measurement, so a cancel
+        // mid-sequence restores the last pass that finished rather than
+        // the pre-capture prior (finishSurfaceFullFrame's rule, applied
+        // per pass because each pass IS a full frame at this pose).
+        const passArm = {
+          job,
+          priorPxCostMs:
+            pass === 0 ? arm.priorPxCostMs : this.surfaceFullPxCostMs,
+        };
+        outcome = await this.drainStripsAsync(job, this.surfaceSettleTarget, {
+          onProgress: opts?.onProgress
+            ? (fraction) =>
+                opts.onProgress?.(
+                  (pass + fraction) / Math.max(1, this.surfaceSampleTotal),
+                )
+            : undefined,
+          cancelled: opts?.cancelled,
+        });
+        // "cancelled" returns having restored the evidence the arming
+        // discarded, so the next export prices this pose from what already
+        // measured it.
+        this.finishSurfaceFullFrame(passArm, width * height, outcome);
+        if (outcome !== "done" || this.surfaceSampleTotal <= 1) break;
+        this.foldSurfaceSample();
+        this.encodeSurfaceSampleMean();
+        this.surfaceSampleIndex = pass + 1;
+        if (this.surfaceSampleIndex >= this.surfaceSampleTotal) break;
+        job = this.armSurfaceSamplePass(width, height);
+      }
     } finally {
       this.surfaceCaptureFlight = false;
     }
-    // "cancelled" returns having restored the evidence the arming
-    // discarded, so the next export prices this pose from what already
-    // measured it.
-    this.finishSurfaceFullFrame(arm, width * height, outcome);
     if (outcome === "cancelled") return null;
     // A viewport resize during the drain leaves the traced target and the
     // canvas the blit lands on at different sizes — the export would be a
@@ -5441,7 +5803,12 @@ export class FractalScene {
       return null;
     }
     return this.withPixelRatio(ratio, () => {
-      this.blitSurface(this.surfaceSettleTarget.texture, null);
+      // The mean of the completed passes (fr-jf9y), or — for a single-pass
+      // export, and for every caller that predates supersampling — the
+      // traced target itself, byte for byte as before.
+      if (this.surfaceSampleTaken < 2 || !this.presentSurfaceSampleImage()) {
+        this.blitSurface(this.surfaceSettleTarget.texture, null);
+      }
       return exportImageFrom(this.renderer.domElement);
     });
   }
@@ -5527,6 +5894,51 @@ const SURFACE_PREVIEW_PRESENT_MS = 200;
 /** Present cadence (ms) for the settle job's progressive sharpening —
  * the view is parked; fewer drain gaps means better GPU utilization. */
 const SURFACE_SETTLE_PRESENT_MS = 600;
+/**
+ * Supersampling passes the WebGL settle and the interactive Save-PNG spend
+ * (fr-jf9y) — main.ts's `SURFACE_COMPUTE_SETTLE_SAMPLES` for the WebGPU
+ * arm, deliberately the same number: the two engines render the same
+ * document, and "how much antialiasing does this app do" must not depend
+ * on which one a machine happens to have. Pass 0 lands when the settle
+ * always landed, so the count buys refinement time, never first-image
+ * time.
+ */
+const SURFACE_STRIP_SETTLE_SAMPLES = /* @__PURE__ */ resolveSettleSamples();
+
+/**
+ * `?surfacesamples=N` (fr-jf9y): the A/B override for the supersampling
+ * count, `?surfshadewidth=N`'s precedent one module over — and for the
+ * same reason. N=1 turns the settle and the Save-PNG back into the exact
+ * single-pass traces this arm made before supersampling, on the SAME
+ * build, so "pass 0 is value-identical" is a byte comparison anyone can
+ * rerun rather than an argument. Out-of-range or unparseable falls back to
+ * the shipped 8.
+ */
+function resolveSettleSamples(): number {
+  const shipped = 8;
+  if (typeof window === "undefined") return shipped;
+  const raw = new URLSearchParams(window.location.search).get("surfacesamples");
+  if (raw === null) return shipped;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 && n <= 64 ? n : shipped;
+}
+/** Gamma the surface tracers encode their output with — the
+ * `pow(lit, 1/2.2)` that ends surface-material.ts's shade path and its 4D
+ * twin. fr-jf9y's averaging has to undo it before summing and reapply it
+ * after, or antialiased edges come out too dark (surface-compute.ts states
+ * the same constant for the WebGPU arm's accumulator; if a third consumer
+ * ever appears, hoist it). */
+const SURFACE_OUTPUT_GAMMA = 2.2;
+/** Decode table for that gamma: byte -> linear light. 256 entries, so a
+ * pass costs a lookup per channel rather than a `Math.pow` per channel per
+ * pixel. */
+const SRGB_TO_LINEAR = /* @__PURE__ */ (() => {
+  const table = new Float32Array(256);
+  for (let i = 0; i < 256; i++) {
+    table[i] = Math.pow(i / 255, SURFACE_OUTPUT_GAMMA);
+  }
+  return table;
+})();
 /** Cap on strips submitted per pump call — bounds the refill loop's own
  * CPU cost (draw setup + flush per strip) per animation frame when the
  * estimate prices strips near-free. */
