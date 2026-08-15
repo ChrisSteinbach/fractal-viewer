@@ -848,7 +848,9 @@ morphs into place instead of snapping (see **Presets** below).
   (print)**. It is a real re-render at that size, not an upscale — the Solid
   and Surface renders re-trace, and changing it while a Flame is up restarts
   that render so it accumulates at the new size and its grain matches the
-  output. Large sizes get clamped: the long side never exceeds 8192px, the
+  output — and a **Save PNG** pressed right after that restart waits for
+  the fresh accumulation rather than capturing the explorer.
+  Large sizes get clamped: the long side never exceeds 8192px, the
   device's own texture limit can cut it further, and a live flame is capped
   again by its accumulation memory. A Surface render on the WebGPU tracer
   is not clamped by GPU memory, though: a big export traces in horizontal
@@ -859,7 +861,15 @@ morphs into place instead of snapping (see **Presets** below).
   mid-stream would break the capture.
 - **Save PNG** — download the current frame as a PNG. The image is the bare
   render (fractal and backdrop) without the panel, help box, or vignette, so it
-  captures whatever depth style and color mode are active.
+  captures whatever depth style and color mode are active. The PNG is
+  always the finished render of whatever mode you're in, never a
+  stand-in caught from the explorer mid-startup. In the ✺ Flame render
+  that means it waits for the accumulation to finish converging,
+  disclosing progress and a **Cancel** in its own modal — a flame that
+  has already converged still saves instantly, with no modal ever
+  showing. **Cancel** abandons the export and saves nothing; the
+  accumulation itself carries on, so pressing **Save PNG** again later
+  picks up where the render has got to.
 - **● Record video** — records the canvas as you drive it: orbit, drag sliders,
   run a Drift or a timeline, and press the button again to finish. While
   rolling it becomes **■ Stop** with the elapsed time, and it stops itself at

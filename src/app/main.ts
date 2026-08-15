@@ -537,8 +537,26 @@ function main(): void {
   // policy's onStopped) — and the driver re-checks its park condition and
   // re-arms after each, so spurious wakes are harmless.
   let offlineParkWaiter: (() => void) | null = null;
-  function notifyOfflinePark(): void {
+  // The same signal's second consumer (fr-61a2): a Save-PNG parked until the
+  // renderer it was pressed in IS the picture it will export. A list drained
+  // on every fire rather than the park's single slot, because these are
+  // ordinary awaits inside savePng rather than one driver's loop — and, like
+  // the park, each re-checks its own condition and re-arms, so a spurious
+  // wake costs one predicate evaluation.
+  let renderSignalWaiters: (() => void)[] = [];
+  /** Announce that some render's answer may have moved: progress landed, a
+   * session exited, a playback stopped, an export was cancelled. */
+  function notifyRenderSignal(): void {
     offlineParkWaiter?.();
+    const waiters = renderSignalWaiters;
+    renderSignalWaiters = [];
+    for (const wake of waiters) wake();
+  }
+  /** Resolve on the next {@link notifyRenderSignal}. */
+  function nextRenderSignal(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      renderSignalWaiters.push(resolve);
+    });
   }
 
   // Adaptive resolution (fr-4lyt): a pure frame-time governor decides when
@@ -1101,8 +1119,14 @@ function main(): void {
   // a previous session. Read by onDriftCollection: a show started from
   // INSIDE a converging render (the Collection section is reachable there
   // since fr-75sq) must hold for that render's completion rather than
-  // dwell-and-yank it.
+  // dwell-and-yank it — and, since fr-61a2, by the flame Save-PNG, which
+  // waits for the accumulation it is going to save.
   const renderComplete = { flame: false, solid: false, surface: false };
+  // The same (done, budget) pair as a 0..1 fraction, for the export modal's
+  // readout while a Save-PNG waits (fr-61a2). Written and cleared in exactly
+  // the places renderComplete is, so the two can never describe different
+  // sessions.
+  const renderCoverage = { flame: 0, solid: 0, surface: 0 };
 
   // A converging flame/solid render reported progress: record whether its
   // budget is met (a budget raised on a finished render genuinely
@@ -1129,6 +1153,7 @@ function main(): void {
     budget: number,
   ): void {
     renderComplete[mode] = done >= budget;
+    renderCoverage[mode] = budget > 0 ? Math.min(1, done / budget) : 0;
     if (done >= budget) {
       driftShow.resumeAfter(DRIFT_RENDER_LINGER_MS);
       if (state.renderMode === mode) timelinePlayer.resume();
@@ -1137,7 +1162,7 @@ function main(): void {
     // progress event: a budget-met resume above unparks it (the schedule is
     // re-armed against the parked virtual clock), and a still-converging
     // chunk repaints the canvas so the park is visible.
-    notifyOfflinePark();
+    notifyRenderSignal();
   }
 
   // ── Animation timeline (fr-8v41) ─────────────────────────────────────
@@ -1172,7 +1197,7 @@ function main(): void {
       // the stop lands mid-park (fr-6jic) — a driver awaiting a render
       // signal that will never resume must still learn the run ended.
       if (offlineExport !== null) {
-        notifyOfflinePark();
+        notifyRenderSignal();
         return;
       }
       // A stopped export run still finalizes its clip: everything recorded
@@ -2382,6 +2407,12 @@ function main(): void {
     last: { slot: number; maxHits: number } | null;
   }
   let flameShared: FlameSharedSession | null = null;
+  // What the CURRENT flame session actually accumulates at, i.e. what a
+  // Save-PNG from it will actually be (fr-61a2). Not the same number as
+  // `scene.flameRenderSize(state.exportScale)`: `start` below shrinks that
+  // target until the histogram fits the accumulator memory budget, and it is
+  // the shrunken canvas the export composites. null between sessions.
+  let flameRenderDims: { width: number; height: number } | null = null;
 
   // Why the CURRENT render's worker gave up on GPU (null while it hasn't):
   // remembered from the `gpuUnavailable` event so the subsequent `backend`
@@ -2660,6 +2691,9 @@ function main(): void {
       );
       const projection = scene.flameProjectionMatrix();
 
+      // Post-clamp, so the export modal quotes the size that will actually
+      // save rather than the size that was asked for (fr-61a2).
+      flameRenderDims = { width, height };
       flameShared = tryCreateFlameSharedSession(width, height);
       console.info(
         flameShared
@@ -2722,6 +2756,7 @@ function main(): void {
     resetProgress: () => {
       ui.setFlameProgress(0, state.flame.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first progress event.
       renderComplete.flame = false; // ...and the completion flag with it (fr-75sq): this fresh session hasn't met any budget yet.
+      renderCoverage.flame = 0; // ...and its fraction form (fr-61a2), so a waiting export reads 0% rather than the previous session's coverage.
     },
     activate: () => {
       state = setRenderMode(state, "flame");
@@ -2733,6 +2768,7 @@ function main(): void {
     },
     deactivate: () => {
       flameShared = null; // drop our half of the shared buffers; with the worker's half gone too, the SABs are collectable.
+      flameRenderDims = null; // no session, no accumulation size (fr-61a2).
       // Reset only the mode this session owns — the exact semantics the old
       // per-mode boolean had (clearing flameActive could never touch
       // solidActive), so an idempotent exit() while some OTHER mode is
@@ -2753,7 +2789,7 @@ function main(): void {
       // worker error, Back — terminated the worker, so no further progress
       // event will ever wake the driver; this is its signal to re-check
       // (renderMode left flame) and fall back to capturing points.
-      notifyOfflinePark();
+      notifyRenderSignal();
     },
   });
 
@@ -2883,6 +2919,7 @@ function main(): void {
     resetProgress: () => {
       ui.setSolidProgress(0, state.solid.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first grid event.
       renderComplete.solid = false; // ...and the completion flag with it (fr-75sq), like the flame session's resetProgress.
+      renderCoverage.solid = 0; // ...and its fraction form (fr-61a2), likewise.
     },
     activate: () => {
       // Drop any transform selection: the lens has no guide box in this mode,
@@ -2907,7 +2944,7 @@ function main(): void {
       refreshUi();
       // A parked offline export's early-exit wake (fr-6jic) — see the flame
       // session's deactivate.
-      notifyOfflinePark();
+      notifyRenderSignal();
     },
   });
 
@@ -3721,81 +3758,172 @@ function main(): void {
     /** Stops the work early. The WebGL drain polls `run.cancelled`
      * instead, so its plan leaves this out. */
     onCancel?: () => void;
+    /** Block until the mode's own render IS the picture this plan will
+     * capture (fr-61a2). Resolves null when it is, or a user-presentable
+     * note when it never will be. `savePng` stands `holdsSurfaceTracer`
+     * down for its duration — a surface export that held the tracer here
+     * would be waiting for a first frame it had itself prevented. */
+    awaitReady?: (run: ExportRun) => Promise<string | null>;
     capture: (run: ExportRun) => Promise<ExportImage | null>;
   }
 
+  /** The one way {@link awaitRenderExportable} ends without an image. */
+  const EXPORT_RENDER_STOPPED_NOTE = "Render stopped — no PNG saved";
+
   /**
-   * Pick the capture arm for the current mode. Mirrors the sessions'
-   * first-frame gate: during a render's first-frame gap the screen still
-   * shows the explorer, so the export honestly captures that instead —
-   * the same fr-75sq discipline as onSaveToCollection's thumbnail.
+   * What a Save-PNG has to wait for before the mode it was pressed in can be
+   * captured (fr-61a2).
+   *
+   * FLAME is the one renderer whose export IS the live accumulation — the
+   * surface arm traces a fresh frame at export scale and the solid arm
+   * re-raymarches, both at capture time — so flame waits for that
+   * accumulation to MEET ITS BUDGET, where the other two only wait for their
+   * session's first frame. Not a nicety: the worker's finishing chunk
+   * re-filters the histogram adaptively (fr-17t) where every progressive
+   * frame uses the fixed-radius filter, so a mid-accumulation capture saves
+   * a categorically coarser picture, not merely a noisier one.
+   */
+  function renderExportReady(mode: "flame" | "solid" | "surface"): boolean {
+    if (mode === "flame") return renderComplete.flame;
+    return mode === "solid"
+      ? solidSession.hasFirstFrame
+      : surfaceSession.hasFirstFrame;
+  }
+
+  /**
+   * Block a Save-PNG until {@link renderExportReady}, disclosing the wait
+   * through the export modal.
+   *
+   * This is what replaced the old readiness GATE. Every arm used to read
+   * `renderMode === X && session.hasFirstFrame`, and the fall-through when a
+   * gate failed captured the points explorer — so pressing Save during any
+   * render's startup gap silently saved a DIFFERENT render mode's image, and
+   * for flame that gap is opened by the Export-size select itself (its
+   * effect restarts the session). Waiting is the honest answer, and it costs
+   * nothing to build: the modal already discloses coverage and offers
+   * Cancel.
+   *
+   * Resolves null once the capture may proceed, or a user-presentable note
+   * when it never will — the session ended under us (a worker error's exit,
+   * the user leaving the mode), which is the only way this loop terminates
+   * without success. A cancel resolves null too: `run.cancelled` is the
+   * caller's to report, exactly as on the capture arms.
+   */
+  async function awaitRenderExportable(
+    mode: "flame" | "solid" | "surface",
+    run: ExportRun,
+  ): Promise<string | null> {
+    while (!renderExportReady(mode)) {
+      if (run.cancelled) return null;
+      if (state.renderMode !== mode) return EXPORT_RENDER_STOPPED_NOTE;
+      // Flame is the only arm with real coverage to show — a solid grid and
+      // a surface first frame arrive whole, so the honest percent for those
+      // is no percent at all (the modal's indeterminate state).
+      run.report(mode === "flame" ? renderCoverage.flame : null);
+      await nextRenderSignal();
+    }
+    return null;
+  }
+
+  /**
+   * Pick the capture arm for the current mode. The arm is the MODE's, full
+   * stop (fr-61a2): a render that has not produced its picture yet is waited
+   * for through `awaitReady`, never silently swapped for the explorer's. The
+   * explorer arm is reached by being in points mode, and by nothing else.
    */
   function planPngExport(scale: number): PngExportPlan {
-    if (state.renderMode === "surface" && surfaceSession.hasFirstFrame) {
+    if (state.renderMode === "surface") {
       const size = scene.exportSize(scale);
       const dims = `${String(size.width)} × ${String(size.height)}`;
-      const renderer = surfaceComputeRenderer;
-      if (renderer) {
-        return {
-          detail: `${dims} · WebGPU`,
-          // Bounded compute passes yield by construction, so the grace
-          // period alone decides: a cheap frame never flashes a modal and
-          // an expensive one shows without having to be predicted.
-          predictedMs: null,
-          cancellable: true,
-          holdsSurfaceTracer: true,
-          onCancel: () => {
-            renderer.cancel();
-          },
-          capture: (run) => captureSurfaceComputePng(renderer, scale, run),
-        };
-      }
+      // WHICH tracer owns the session is settled at the same instant as its
+      // first frame — the compute gate's resolution marks both — so before
+      // then there is no engine to name, and the detail line says only the
+      // size rather than guessing one (fr-tmgf's rule: a label must not
+      // assert an engine).
+      const engine = !surfaceSession.hasFirstFrame
+        ? ""
+        : surfaceComputeRenderer
+          ? " · WebGPU"
+          : " · WebGL";
       return {
-        detail: `${dims} · WebGL`,
+        detail: `${dims}${engine}`,
         // Used for ONE thing: whether the modal skips its grace period and
-        // shows at once. Nothing is refused on it (fr-avf6) — the WebGL arm
-        // traces and discloses exactly like the WebGPU one above.
-        predictedMs: scene.predictSurfaceCaptureMs(scale),
+        // shows at once. Nothing is refused on it (fr-avf6). Bounded compute
+        // passes yield by construction, so for those the grace period alone
+        // decides — a cheap frame never flashes a modal and an expensive one
+        // shows without having to be predicted; the WebGL drain has a
+        // measured prediction and uses it.
+        predictedMs: surfaceComputeRenderer
+          ? null
+          : scene.predictSurfaceCaptureMs(scale),
         cancellable: true,
         holdsSurfaceTracer: true,
-        capture: (run) =>
-          scene.captureSurfaceFrame(scale, {
-            onProgress: (fraction) => {
-              run.report(fraction);
-            },
-            cancelled: () => run.cancelled,
-          }),
+        onCancel: () => {
+          // The WebGL drain polls `run.cancelled` instead, so this is a
+          // no-op on that arm — which is also what it was before, as a
+          // missing hook.
+          surfaceComputeRenderer?.cancel();
+        },
+        awaitReady: (run) => awaitRenderExportable("surface", run),
+        capture: (run) => {
+          // Read at capture time, not plan time: awaitReady may have waited
+          // out the compute gate, and that gate is what decides this.
+          const renderer = surfaceComputeRenderer;
+          return renderer
+            ? captureSurfaceComputePng(renderer, scale, run)
+            : scene.captureSurfaceFrame(scale, {
+                onProgress: (fraction) => {
+                  run.report(fraction);
+                },
+                cancelled: () => run.cancelled,
+              });
+        },
       };
     }
-    if (state.renderMode === "solid" && solidSession.hasFirstFrame) {
+    if (state.renderMode === "solid") {
       const size = scene.exportSize(scale);
       return {
         detail: `${String(size.width)} × ${String(size.height)}`,
         // One synchronous raymarch at export scale: it can report no
-        // coverage mid-draw and it cannot be interrupted, so the honest
-        // disclosure is a busy modal with no Cancel at all. Export scale
-        // is the only knob that makes it slow, so it is the only thing
-        // worth predicting from — there is no per-pixel evidence to
-        // measure the way the surface tracer has.
+        // coverage mid-draw. Export scale is the only knob that makes it
+        // slow, so it is the only thing worth predicting from — there is no
+        // per-pixel evidence to measure the way the surface tracer has.
         predictedMs: scale > 1 ? EXPORT_MODAL_SLOW_PREDICTION_MS + 1 : null,
-        cancellable: false,
+        // Cancellable for the WAIT, not the raymarch (fr-61a2). This arm
+        // read `false` while it could only ever BE that one uninterruptible
+        // submission, and hiding a dead button was right. Now the long pole
+        // is a fresh session's voxel grid, which a Cancel genuinely ends —
+        // and a Cancel landing in the raymarch that follows still has an
+        // effect, since the finished frame is then discarded rather than
+        // downloaded.
+        cancellable: true,
         holdsSurfaceTracer: false,
+        awaitReady: (run) => awaitRenderExportable("solid", run),
         capture: () => scene.captureSolidFrame(scale),
       };
     }
-    if (state.renderMode === "flame" && flameSession.hasFirstFrame) {
-      // The flame canvas already holds the export-size accumulation, so a
-      // capture is a 2D composite plus the PNG encode — always inside the
-      // grace period, so this detail line never actually reaches a screen.
-      const size = scene.flameRenderSize(state.exportScale);
+    if (state.renderMode === "flame") {
+      // A flame session ACCUMULATES at the export size (fr-2urv), so the
+      // capture is a 2D composite of the canvas the worker has been filling
+      // plus the PNG encode — nothing is rendered here. What this arm waits
+      // for instead is that accumulation meeting its budget; see
+      // renderExportReady for why a mid-accumulation frame is the wrong
+      // picture rather than merely an early one.
+      const size = flameRenderDims ?? scene.flameRenderSize(state.exportScale);
       return {
         detail: `${String(size.width)} × ${String(size.height)}`,
+        // The wait yields on the worker's own progress events, so the grace
+        // period alone decides whether it earns a modal: a flame that has
+        // already converged still saves instantly and silently, exactly as
+        // it did before.
         predictedMs: null,
-        cancellable: false,
+        cancellable: true,
         holdsSurfaceTracer: false,
+        awaitReady: (run) => awaitRenderExportable("flame", run),
         capture: () => scene.captureFlameFrame(),
       };
     }
+    // Points: the explorer IS the picture, and it is already on screen.
     const size = scene.exportSize(scale);
     return {
       detail: `${String(size.width)} × ${String(size.height)}`,
@@ -3833,7 +3961,14 @@ function main(): void {
       detail: plan.detail,
       predictedMs: plan.predictedMs,
       cancellable: plan.cancellable,
-      onCancel: plan.onCancel ?? ((): void => undefined),
+      onCancel: () => {
+        plan.onCancel?.();
+        // Wake a wait parked in awaitRenderExportable (fr-61a2): its only
+        // other wake-ups are the render's own signals, and a solid grid or
+        // a flame chunk can be seconds away — a Cancel must not have to
+        // wait one out before it takes effect.
+        notifyRenderSignal();
+      },
     });
     ui.setSavePngBusy(true);
     surfaceCaptureFlight = plan.holdsSurfaceTracer;
@@ -3843,6 +3978,26 @@ function main(): void {
       // one synchronous submission — without this its modal would only
       // paint after the render it exists to disclose.
       await nextPaint();
+      // Wait for the mode's own render to BE the picture this export will
+      // save (fr-61a2), with the surface-tracer claim STOOD DOWN for the
+      // duration: a surface session's first frame arrives on the very tick
+      // that claim tells to stand aside, so holding it across the wait would
+      // be waiting for a frame we had just prevented. Nothing but a
+      // microtask passes here when the render is already exportable, which
+      // is every export that could reach this code before fr-61a2.
+      if (plan.awaitReady) {
+        surfaceCaptureFlight = false;
+        const blocked = await plan.awaitReady(run);
+        surfaceCaptureFlight = plan.holdsSurfaceTracer;
+        if (run.cancelled) {
+          ui.flashToast("Export cancelled");
+          return;
+        }
+        if (blocked !== null) {
+          ui.flashToast(blocked);
+          return;
+        }
+      }
       const image = await plan.capture(run);
       // A cancelled capture resolves null on every arm, which is also how
       // a refused encode resolves — the caller is the only one who knows
@@ -4438,6 +4593,7 @@ function main(): void {
       // Instant render, but the flag must never carry stale-true across
       // sessions (fr-75sq), like the flame/solid resets.
       renderComplete.surface = false;
+      renderCoverage.surface = 0; // ...and its fraction form (fr-61a2), like the flame/solid resets.
     },
     activate: () => {
       // NOTE the selection/guide handling other sessions do here happens
@@ -4507,7 +4663,7 @@ function main(): void {
       refreshUi();
       // A parked offline export's early-exit wake (fr-6jic) — see the flame
       // session's deactivate.
-      notifyOfflinePark();
+      notifyRenderSignal();
     },
   });
 
