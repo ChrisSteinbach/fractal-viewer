@@ -240,11 +240,62 @@ morphs into place instead of snapping (see **Presets** below).
   the explorer camera would otherwise start inside the solid). A **blend**,
   a **final transform**, or a fold that extends into 4D still has no
   escape-time reading; those keep the ordinary eligibility reasons.
-  SEVERAL pure-fold maps do have one, though (fr-za0n): the transform list
-  becomes a formula **chain**, orbit step `i` applying link `i mod n`, and a
-  kaleidoscope rides along as long as it stays in 3D. **Fold Chain**, **Fold
-  Chain Boulder** and **Fold Chain Flower** in the same menu group are
-  exactly that — the last a two-link chain under a five-fold wedge.
+  SEVERAL pure-fold maps do have one, though (fr-za0n), and this is where
+  the mode stops being a one-map renderer: **the transform list becomes a
+  formula chain.** Orbit step `i` applies link `i mod n` — the maps take
+  turns, one per step, rather than composing into a single step — with the
+  query offset added and the bailout tested after each one. A **pass** is
+  one full cycle, so the iteration budget still reads "how many times is
+  each link applied": adding a link lengthens the orbit, it does not shorten
+  each map's share of it. The tracer carries at most 24 links, the same
+  budget the descent's maps ride.
+
+  Every link keeps its **own** map: its own affine part, its own fold weight,
+  its own fold kind, and its own fold radii. A chain can therefore mix kinds
+  — a mandelbox link beside a box fold — and mix signs, which is what the
+  shipped chains do. The **weight** stays the family's real knob at every
+  link.
+
+  Three things worth knowing before you build one. Chaining **improves** the
+  render rather than straining it: cycling re-floors the estimator's
+  derivative at every link, so more links means a tighter bound, and the
+  measured bound-violation rate falls from 13.4% for the single map to 4.3%
+  at two links and 1.5% at six — the shipped single Mandelbox is the worst
+  case in the family, not the safest. It costs far less than the budget
+  implies, because every extra link is another chance for the orbit to leave
+  the bailout ball: a six-link chain measures 2.4× the single map's cost per
+  estimate, not 6×. And a long chain is **less** sensitive per link — moving
+  one link's fold displaces the object 3.8-6.4× less than moving the same
+  map alone (fr-77oy), so per-link edits get finer as the chain grows rather
+  than wilder.
+
+  A **kaleidoscope** rides along as long as it stays in 3D, and it is a
+  different mechanism here from the one the explorer gives you: the query is
+  folded into a single wedge once, before the orbit runs, so the result is
+  **dihedral** — mirrors as well as rotations — and costs nothing per orbit
+  step. (The chaos game's is cyclic, rotations only.)
+
+  The three **Fold Chain** presets in the same menu group are the showcase,
+  and they are deliberately a lesson each. **Fold Chain** is a Mandelbox at
+  the canonical 2 followed by a box fold at 1.6 through a 20° turn about `y`
+  — and the turn is the whole point: axis-aligned, both folds share the
+  cube's symmetry group and the second's creases land on the first's, so the
+  chain would just be a longer Mandelbox. Turned, the box fold cuts across
+  them, and the single map's flanged, ring-eyed body becomes a wider,
+  flatter-topped mass carved by coarse voids that run right through it, at
+  essentially unchanged density (6.7% of the bailout ball against 7.8%) —
+  composition changing the _shape_, not the amount. **Fold Chain Boulder**
+  adds a middle link at −1.5, a Mandelbox turned inside out, so the orbit
+  re-enters the positive fold's output through an orientation-reversing map
+  every pass; it is the densest and roundest of the three, a near-spherical
+  mass finely pitted all over. **Fold Chain Flower** is the most instructive:
+  it is **the same two links as Fold Chain**, and the only difference is a
+  five-fold wedge that ships as part of the composition rather than as a
+  setting you found. Five specifically — both links' folds are odd axis by
+  axis, so a wedge at order 2 or 4 is a no-op and the preset would silently
+  be Fold Chain again. Down its own axis it is a five-petalled flower around
+  a ring; obliquely, which is where the session opens, radial fluting on a
+  drum — so it is the one of the three that rewards orbiting to the pole.
   The Presets menu's **Escape-time** group — Mandelbox, Mandelbox Rings,
   Mandelbox Cube — are that mode's showcase (fr-7u8t.8), and they load
   straight into it. All three are the same single map at three fold
@@ -383,6 +434,7 @@ morphs into place instead of snapping (see **Presets** below).
   HOLDS the timeline's schedule at launch like a Flame/Solid one, but
   because the render is instant rather than accumulating, the hold resolves
   the moment the tracer lands — there's no convergence wait to sit through.
+
 - **Edit Transform N** — appears under **Transforms → Select to edit** while a
   transform is selected: sliders for its position (X/Y/Z), rotation (X/Y/Z, in
   degrees), and scale (X/Y/Z) give exact per-axis control on every device. The

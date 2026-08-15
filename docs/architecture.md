@@ -98,8 +98,10 @@ same function object it always ran. There is no fourth SIZE field on purpose.
 Only two DIMENSIONLESS RATIOS of the three lengths can be new shape — a
 uniform rescale of all three is equivariant through both folds, so it is
 already exactly what the transform's own affine part does — and fr-qi9c
-measured both, finding `fR/wall` the stronger of the two and the one-shot
-final-transform lens the most sensitive of the three roles a fold can play.
+measured both, finding `fR/wall` the stronger of the two (the other being the
+ball's own `fR/mR`, whose square is the magnification the eligibility gates
+read) and the one-shot final-transform lens the most sensitive of the three
+roles a fold can play.
 
 The `radiolarian` and `swirl` presets showcase the feature (`mandelbox` showcases
 the fold family); the transform editor's **Variations** group adds/removes/weights
@@ -587,9 +589,11 @@ the composite Lipschitz bound `|w|·L_V·sigma_max(M) < 0.999` (`L = 1` for
 inner branch — the classic ×4, and an authored length moves it), so a fold map
 can read contractive in the editor yet fail the gate — and, the other way, a
 small enough weight can rescue an expanding affine part. That same expression
-is what the escape-time gate below tests for EXPANSION, the two being
-deliberate complements, so a fold's own `mR` sits on the seam between the two
-renderers: lower it far enough and a Surface-mode IFS becomes an escape-time
+is what the ESCAPE-TIME gate tests for EXPANSION — the complementary render
+for fold maps that have no attractor to descend onto, described in
+[controls.md](controls.md#panel-controls) rather than here — the two gates
+being deliberate complements, so a fold's own `mR` sits on the seam between
+the two renderers: lower it far enough and a Surface-mode IFS becomes an escape-time
 set instead. The app discloses that rather than preventing it (the mode's
 eligibility note names the different object), and the reach is narrow — of
 every shipped system only **Mandelbox KIFS** can cross at all, at `mR` 0.478
