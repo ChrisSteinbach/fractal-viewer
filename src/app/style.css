@@ -721,9 +721,10 @@ input[type="range"] {
   /* Sliders span the panel's full width, so most scroll swipes start on one —
      without this, the thumb grabs the touch and the value changes instead of
      the panel scrolling (fr-zoi). pan-y hands vertical pans to the scroll
-     container; horizontal drags still slide the thumb. Blink still commits
-     the tap-jump on pointerdown before the pan is recognized — ui.ts's
-     slider-scroll-guard.ts undoes that once the browser claims the gesture. */
+     container; horizontal drags reach ui.ts's slider-scroll-guard.ts, which
+     drives the thumb itself since fr-xu4u — Blink commits the tap-jump in the
+     TOUCHSTART default action, so the guard hides the slider from that one
+     handler rather than letting the jump land and undoing it. */
   touch-action: pan-y;
 }
 

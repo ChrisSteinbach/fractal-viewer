@@ -1,148 +1,387 @@
 // @vitest-environment jsdom
 import { installSliderScrollGuard } from "./slider-scroll-guard";
 
-// jsdom has no PointerEvent/TouchEvent constructors; the guard only reads
-// plain properties off the events, so a generic Event with the fields
-// assigned behaves identically to the real thing.
+// jsdom has no PointerEvent constructor; the guard only reads plain
+// properties off the events, so a generic Event with the fields assigned
+// behaves identically to the real thing. Cancelable because a real
+// pointerdown is.
 function pointerEvent(
   type: string,
-  props: { pointerType?: string; clientX?: number; clientY?: number } = {},
+  props: {
+    pointerType?: string;
+    pointerId?: number;
+    clientX?: number;
+    clientY?: number;
+  } = {},
 ): Event {
-  const event = new Event(type, { bubbles: true });
-  Object.assign(event, { pointerType: "touch", ...props });
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.assign(event, {
+    pointerType: "touch",
+    pointerId: 1,
+    clientX: 0,
+    clientY: 0,
+    ...props,
+  });
   return event;
 }
 
-function touchMove(clientX: number, clientY: number): Event {
-  const event = new Event("touchmove", { bubbles: true });
-  Object.assign(event, { touches: [{ clientX, clientY }] });
-  return event;
-}
-
-function setup(): { panel: HTMLElement; slider: HTMLInputElement } {
+/** A panel holding one guarded slider, with `input`/`change` counters
+ * attached. jsdom does no layout, so the track geometry is stubbed: the
+ * slider occupies client x `left` .. `left + width`. */
+function setup(opts: {
+  min: string;
+  max: string;
+  step?: string;
+  value: string;
+  left: number;
+  width: number;
+  disabled?: boolean;
+}): {
+  panel: HTMLElement;
+  slider: HTMLInputElement;
+  inputs: ReturnType<typeof vi.fn>;
+  changes: ReturnType<typeof vi.fn>;
+} {
   document.body.replaceChildren();
   const panel = document.createElement("div");
   const slider = document.createElement("input");
   slider.type = "range";
-  slider.min = "0";
-  slider.max = "4";
-  slider.step = "0.05";
-  slider.value = "1";
+  slider.min = opts.min;
+  slider.max = opts.max;
+  if (opts.step !== undefined) slider.step = opts.step;
+  slider.value = opts.value;
+  slider.disabled = opts.disabled ?? false;
+  slider.getBoundingClientRect = () => ({
+    x: opts.left,
+    y: 0,
+    left: opts.left,
+    right: opts.left + opts.width,
+    top: 0,
+    bottom: 20,
+    width: opts.width,
+    height: 20,
+    toJSON: () => ({}),
+  });
   panel.appendChild(slider);
   document.body.appendChild(panel);
   installSliderScrollGuard(panel);
-  return { panel, slider };
+
+  const inputs = vi.fn();
+  const changes = vi.fn();
+  slider.addEventListener("input", inputs);
+  slider.addEventListener("change", changes);
+  return { panel, slider, inputs, changes };
 }
 
-/** Simulate the browser's pointerdown default action: the tap-jump. The
- * guard's own listener has already run by the time this executes. */
-function jumpTo(slider: HTMLInputElement, value: string): void {
-  slider.value = value;
-}
-
-describe("installSliderScrollGuard (fr-zoi)", () => {
-  it("restores the pre-jump value and re-fires input when the browser claims the gesture", () => {
-    const { slider } = setup();
-    const inputs = vi.fn();
-    slider.addEventListener("input", inputs);
+describe("installSliderScrollGuard (fr-xu4u)", () => {
+  it("leaves the value and the edit pipeline completely alone when a touch scroll starts on a slider", () => {
+    const { slider, inputs, changes } = setup({
+      min: "0",
+      max: "2.5",
+      step: "0.05",
+      value: "1",
+      left: 0,
+      width: 300,
+    });
 
     slider.dispatchEvent(
-      pointerEvent("pointerdown", { clientX: 50, clientY: 10 }),
+      pointerEvent("pointerdown", { clientX: 150, clientY: 400 }),
     );
-    jumpTo(slider, "2.1"); // Blink's tap-jump
-    slider.dispatchEvent(pointerEvent("pointercancel")); // pan claimed
+    for (const clientY of [380, 340, 300, 260, 220]) {
+      slider.dispatchEvent(
+        pointerEvent("pointermove", { clientX: 151, clientY }),
+      );
+    }
+    slider.dispatchEvent(pointerEvent("pointercancel")); // Chromium claimed the pan
 
     expect(slider.value).toBe("1");
-    expect(inputs).toHaveBeenCalledTimes(1);
+    expect(inputs).not.toHaveBeenCalled();
+    expect(changes).not.toHaveBeenCalled();
   });
 
-  it("keeps a deliberate horizontal slide", () => {
-    const { slider } = setup();
+  it("hides the slider from Blink's touchstart handler, and gives it back the same frame", async () => {
+    const { slider } = setup({
+      min: "0",
+      max: "4",
+      value: "1",
+      left: 0,
+      width: 200,
+    });
 
     slider.dispatchEvent(
       pointerEvent("pointerdown", { clientX: 50, clientY: 10 }),
     );
-    jumpTo(slider, "2.1");
-    slider.dispatchEvent(touchMove(110, 12));
-    jumpTo(slider, "3.3"); // native drag kept adjusting
-    slider.dispatchEvent(pointerEvent("pointerup"));
-    slider.dispatchEvent(new Event("touchend", { bubbles: true }));
+    expect(slider.disabled).toBe(true); // touchstart's default handler skips it
 
-    expect(slider.value).toBe("3.3");
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(slider.disabled).toBe(false);
   });
 
-  it("keeps a plain tap's jump (tap-to-set stays a feature)", () => {
-    const { slider } = setup();
+  it("gives the slider back at the end of a gesture even if no frame ran", () => {
+    const { slider } = setup({
+      min: "0",
+      max: "4",
+      value: "1",
+      left: 0,
+      width: 200,
+    });
 
     slider.dispatchEvent(
       pointerEvent("pointerdown", { clientX: 50, clientY: 10 }),
     );
-    jumpTo(slider, "2.1");
-    slider.dispatchEvent(pointerEvent("pointerup")); // no movement at all
-
-    expect(slider.value).toBe("2.1");
-  });
-
-  it("restores after a pure-vertical gesture even without pointercancel", () => {
-    const { slider } = setup();
-    const inputs = vi.fn();
-    slider.addEventListener("input", inputs);
-
-    slider.dispatchEvent(
-      pointerEvent("pointerdown", { clientX: 50, clientY: 100 }),
-    );
-    jumpTo(slider, "2.1");
-    slider.dispatchEvent(touchMove(52, 20)); // straight up: adx 2, ady 80
-    slider.dispatchEvent(pointerEvent("pointerup")); // engine skipped pointercancel
-
-    expect(slider.value).toBe("1");
-    expect(inputs).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not re-fire input when the claimed gesture never moved the value", () => {
-    const { slider } = setup();
-    const inputs = vi.fn();
-    slider.addEventListener("input", inputs);
-
-    slider.dispatchEvent(
-      pointerEvent("pointerdown", { clientX: 50, clientY: 10 }),
-    );
-    // No jump (finger landed exactly on the thumb).
     slider.dispatchEvent(pointerEvent("pointercancel"));
+
+    expect(slider.disabled).toBe(false);
+  });
+
+  it("writes the value the finger is over once a drag passes the horizontal slop", () => {
+    const { slider, inputs } = setup({
+      min: "0",
+      max: "4",
+      step: "0.05",
+      value: "1",
+      left: 0,
+      width: 200,
+    });
+
+    slider.dispatchEvent(
+      pointerEvent("pointerdown", { clientX: 100, clientY: 10 }),
+    );
+    slider.dispatchEvent(
+      pointerEvent("pointermove", { clientX: 150, clientY: 12 }),
+    );
+
+    expect(slider.value).toBe("3"); // 150/200 of [0, 4]
+    expect(inputs).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not move the value for a wobble shorter than the slop", () => {
+    const { slider, inputs } = setup({
+      min: "0",
+      max: "4",
+      step: "0.05",
+      value: "1",
+      left: 0,
+      width: 200,
+    });
+
+    slider.dispatchEvent(
+      pointerEvent("pointerdown", { clientX: 100, clientY: 10 }),
+    );
+    slider.dispatchEvent(
+      pointerEvent("pointermove", { clientX: 107, clientY: 10 }), // 7px < 8px
+    );
 
     expect(slider.value).toBe("1");
     expect(inputs).not.toHaveBeenCalled();
   });
 
-  it("ignores mouse pointers so desktop click-to-jump stays native", () => {
-    const { slider } = setup();
+  it("does not set a value on a plain tap (tap-to-set is gone on touch)", () => {
+    const { slider, inputs, changes } = setup({
+      min: "0",
+      max: "4",
+      step: "0.05",
+      value: "1",
+      left: 0,
+      width: 200,
+    });
+
+    slider.dispatchEvent(
+      pointerEvent("pointerdown", { clientX: 180, clientY: 10 }),
+    );
+    slider.dispatchEvent(pointerEvent("pointerup", { clientX: 180 }));
+
+    expect(slider.value).toBe("1");
+    expect(inputs).not.toHaveBeenCalled();
+    expect(changes).not.toHaveBeenCalled();
+  });
+
+  it("quantizes to the slider's own step", () => {
+    const { slider } = setup({
+      min: "0",
+      max: "4",
+      step: "0.05",
+      value: "1",
+      left: 0,
+      width: 200,
+    });
+
+    slider.dispatchEvent(
+      pointerEvent("pointerdown", { clientX: 100, clientY: 10 }),
+    );
+    slider.dispatchEvent(
+      pointerEvent("pointermove", { clientX: 133, clientY: 10 }),
+    );
+
+    expect(slider.value).toBe("2.65"); // raw 2.66 -> nearest 0.05, noise-free
+  });
+
+  it("clamps to min and max when the finger runs off either end of the track", () => {
+    const { slider } = setup({
+      min: "0",
+      max: "4",
+      step: "0.05",
+      value: "1",
+      left: 100,
+      width: 200,
+    });
+
+    slider.dispatchEvent(
+      pointerEvent("pointerdown", { clientX: 200, clientY: 10 }),
+    );
+    slider.dispatchEvent(
+      pointerEvent("pointermove", { clientX: -40, clientY: 10 }), // past the left end
+    );
+    expect(slider.value).toBe("0");
+
+    slider.dispatchEvent(
+      pointerEvent("pointermove", { clientX: 900, clientY: 10 }), // past the right end
+    );
+    expect(slider.value).toBe("4");
+  });
+
+  it("fires input once per step crossed, not once per move", () => {
+    const { slider, inputs } = setup({
+      min: "0",
+      max: "4",
+      step: "0.05",
+      value: "1",
+      left: 0,
+      width: 200,
+    });
+
+    slider.dispatchEvent(
+      pointerEvent("pointerdown", { clientX: 100, clientY: 10 }),
+    );
+    slider.dispatchEvent(pointerEvent("pointermove", { clientX: 150 }));
+    slider.dispatchEvent(pointerEvent("pointermove", { clientX: 151 })); // same 0.05 step
+
+    expect(slider.value).toBe("3");
+    expect(inputs).toHaveBeenCalledTimes(1);
+  });
+
+  it("fires the trailing change on release that commit-on-release specs need (fr-2c27)", () => {
+    const { slider, changes } = setup({
+      min: "0",
+      max: "4",
+      step: "0.05",
+      value: "1",
+      left: 0,
+      width: 200,
+    });
+
+    slider.dispatchEvent(
+      pointerEvent("pointerdown", { clientX: 100, clientY: 10 }),
+    );
+    slider.dispatchEvent(pointerEvent("pointermove", { clientX: 150 }));
+    expect(changes).not.toHaveBeenCalled(); // not mid-drag
+    slider.dispatchEvent(pointerEvent("pointerup", { clientX: 150 }));
+
+    expect(changes).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores mouse pointers so desktop click-to-jump and drag stay native", () => {
+    const { slider, inputs } = setup({
+      min: "0",
+      max: "4",
+      step: "0.05",
+      value: "1",
+      left: 0,
+      width: 200,
+    });
 
     slider.dispatchEvent(
       pointerEvent("pointerdown", {
         pointerType: "mouse",
-        clientX: 50,
+        clientX: 100,
         clientY: 10,
       }),
     );
-    jumpTo(slider, "2.1");
-    slider.dispatchEvent(pointerEvent("pointercancel"));
+    slider.dispatchEvent(
+      pointerEvent("pointermove", { pointerType: "mouse", clientX: 150 }),
+    );
 
-    expect(slider.value).toBe("2.1");
+    expect(slider.disabled).toBe(false); // never hidden from the native drag
+    expect(slider.value).toBe("1"); // which is what would own this
+    expect(inputs).not.toHaveBeenCalled();
+  });
+
+  it("leaves a disabled slider entirely alone, and still disabled", async () => {
+    const { slider, inputs } = setup({
+      min: "0",
+      max: "4",
+      step: "0.05",
+      value: "1",
+      left: 0,
+      width: 200,
+      disabled: true,
+    });
+
+    slider.dispatchEvent(
+      pointerEvent("pointerdown", { clientX: 100, clientY: 10 }),
+    );
+    slider.dispatchEvent(pointerEvent("pointermove", { clientX: 150 }));
+    slider.dispatchEvent(pointerEvent("pointerup", { clientX: 150 }));
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+
+    expect(slider.value).toBe("1");
+    expect(slider.disabled).toBe(true); // the guard never re-enables it
+    expect(inputs).not.toHaveBeenCalled();
+  });
+
+  it("ignores a second finger's moves during a drag (pinch-zoom over the panel)", () => {
+    const { slider } = setup({
+      min: "0",
+      max: "4",
+      step: "0.05",
+      value: "1",
+      left: 0,
+      width: 200,
+    });
+
+    slider.dispatchEvent(
+      pointerEvent("pointerdown", { pointerId: 1, clientX: 100, clientY: 10 }),
+    );
+    slider.dispatchEvent(
+      pointerEvent("pointermove", { pointerId: 2, clientX: 20, clientY: 10 }),
+    );
+
+    expect(slider.value).toBe("1");
   });
 
   it("guards sliders added after installation (the dynamic editor rows)", () => {
-    const { panel } = setup();
+    const { panel } = setup({
+      min: "0",
+      max: "4",
+      step: "0.05",
+      value: "1",
+      left: 0,
+      width: 200,
+    });
     const late = document.createElement("input");
     late.type = "range";
     late.min = "0";
     late.max = "10";
     late.value = "5";
+    late.getBoundingClientRect = () => ({
+      x: 0,
+      y: 0,
+      left: 0,
+      right: 200,
+      top: 0,
+      bottom: 20,
+      width: 200,
+      height: 20,
+      toJSON: () => ({}),
+    });
     panel.appendChild(late);
 
     late.dispatchEvent(
-      pointerEvent("pointerdown", { clientX: 50, clientY: 10 }),
+      pointerEvent("pointerdown", { clientX: 100, clientY: 400 }),
     );
-    jumpTo(late, "9");
+    late.dispatchEvent(
+      pointerEvent("pointermove", { clientX: 101, clientY: 240 }),
+    );
     late.dispatchEvent(pointerEvent("pointercancel"));
 
     expect(late.value).toBe("5");
