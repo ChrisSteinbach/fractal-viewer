@@ -554,6 +554,54 @@ function foldZoo4(): Transform[] {
 }
 
 /**
+ * fr-s9ll: {@link foldZoo}'s geometry with AUTHORED fold lengths — the
+ * `fold-zoo` scenario's controlled pair, differing in the fold's radii and
+ * nothing else (the same idiom `xformColorFern` plays against `fern`).
+ * Both flame kernels reach the fold through `composeVariations`, which has
+ * read these lengths since fr-s9ll's CPU half landed, so without a
+ * non-classic scenario the GPU arm could keep the classic constants and
+ * agree with its oracle on every fixture here — while the app rendered one
+ * object on a machine with a WebGPU adapter and another on a machine
+ * without.
+ *
+ * One fold per map, each parameterized DIFFERENTLY, because the flame wire
+ * is a per-TYPE lane (`foldRadii: array<vec4f, 3>`, indexed by variation
+ * type minus 12): the boxfold map carries the wall alone, the spherefold
+ * map the sphere pair alone, and the mandelbox map all three. A kernel
+ * that indexed the wrong lane reads an untouched one — zeros, not the
+ * classic set — and a kernel that read slot 0's lane for every slot gets
+ * three maps' worth of one map's lengths. The `linear` blend partner on
+ * each map is left exactly as `foldZoo` authored it: it takes no radii and
+ * exists to keep the attractor bounded.
+ */
+function foldZooParameterized(): Transform[] {
+  const radii = [
+    { boxLimit: 0.75 },
+    { minRadius: 0.375, fixedRadius: 0.8 },
+    { minRadius: 0.25, fixedRadius: 0.6, boxLimit: 1.5 },
+  ];
+  return foldZoo().map((t, i) => ({
+    ...t,
+    variations: (t.variations ?? []).map((v) =>
+      v.type === "linear" ? v : { ...v, ...radii[i] },
+    ),
+  }));
+}
+
+/** fr-s9ll: the parameterized fold zoo lifted to 4D, with `foldZoo4`'s own
+ * w-mixing blocks verbatim — so the 4D kernel's per-type fold lanes are
+ * read over genuinely 4D orbits (the full 4D radius/box, not a w = 0
+ * slice), the same relationship `foldZoo4` has to `foldZoo`. */
+function foldZooParameterized4(): Transform[] {
+  const [t0, t1, t2] = foldZooParameterized();
+  return [
+    { ...t0, w: { rotation: { xw: 0.4 } } },
+    { ...t1, w: { position: 0.25, rotation: { yw: 0.3 } } },
+    { ...t2, w: { scale: 0.55 } },
+  ];
+}
+
+/**
  * fr-hiyu's authored flam3 color pairs, one per Barnsley map, in
  * `FERN_MAPS` order (stem, frond, left leaflet, right leaflet — see
  * presets.ts). NONE of them is what the absent fields resolve to:
@@ -706,6 +754,37 @@ const SCENARIOS: ScenarioDef[] = [
     // (boxfold/spherefold/mandelbox) in the 3D WGSL kernel — see foldZoo's
     // doc — which no other 3D scenario here exercises.
   },
+  {
+    kind: "3d",
+    name: "fold-zoo-parameterized",
+    transforms: foldZooParameterized(),
+    finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
+    paletteId: "legacy",
+    // Frames this attractor's mass (probed at 400k points: x ∈ [-0.96,
+    // 1.07], y ∈ [-1.78, 1.27], z ∈ [-0.67, 1.41] at the 1%-99%
+    // percentiles). Its own camera, not fold-zoo's: authored lengths make
+    // a DIFFERENT object, which is the whole point of the pair — the same
+    // affine parts land a more compact, differently-centered cloud.
+    cameraPos: [3.8, 1.9, 4.4],
+    lookAt: [0.05, -0.25, 0.35],
+    // Measured equal-N noise floor: 1.411, by fr-jnu's CONTROL-EXPERIMENT
+    // procedure (the CPU oracle against ITSELF at two seeds, 0xc0ffee vs
+    // 0xbadcafe, 50.3M iterations each through this exact
+    // camera/downsample/tonemap pipeline) rather than fr-p7nu's
+    // CPU-vs-GPU reading — a fixture can be authored without an adapter,
+    // and the two measure the same quantity for an agreeing kernel. The
+    // procedure is calibrated on the sibling: the same control run on
+    // `fold-zoo` reads 1.455 against the 1.469 its own comment records
+    // CPU-vs-GPU. 3.0 = ~2x the floor, the same bar (and the same
+    // doubling procedure) fold-zoo carries.
+    maeThreshold: 3.0,
+    // Uniquely pins (fr-s9ll): the fold family's AUTHORED lengths in the
+    // 3D WGSL kernel — its per-type `foldRadii` lanes, packed and indexed
+    // — see foldZooParameterized's doc. Every other fold scenario here
+    // leaves all three absent, so between them they only ever exercise
+    // the classic 0.5/1/1 the kernel could equally have kept hard-coded.
+  },
   // The 4D legs (fr-e26): between them, all four FourDRenderColor kinds and
   // both slice states; hyperfern/doubleRotation both carry non-1 weights,
   // exercising the 4D kernel's weighted binary-search pick (mirroring the 3D
@@ -819,6 +898,34 @@ const SCENARIOS: ScenarioDef[] = [
     // Uniquely pins (fr-p7nu): the three Mandelbox fold variations in the 4D
     // WGSL kernel, run over genuinely 4D orbits via foldZoo4's w-mixing
     // blocks (see its doc) — the full 4D radius/box fold, not a w = 0 slice.
+  },
+  {
+    kind: "4d",
+    name: "fold-zoo-parameterized-4d",
+    system: foldZooParameterized4,
+    finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
+    rotation: BENCH_TUMBLE,
+    paletteId: "legacy",
+    colorMode: "wBlueOrange",
+    sliceOn: false,
+    sliceCenter: 0,
+    sliceWidth: 0.35,
+    sliceRelativeColor: false,
+    // fold-zoo-4d's config verbatim (same tumble, palette, color mode, no
+    // slice), so this is that scenario's controlled pair one dimension up
+    // — the fold's authored lengths are the only difference between them.
+    // Measured equal-N noise floor: 0.066 by the same control-experiment
+    // procedure `fold-zoo-parameterized` documents above, and calibrated
+    // the same way — the control run on `fold-zoo-4d` itself reads 0.225,
+    // the very number its comment records CPU-vs-GPU. 2x that (0.13) is
+    // far below the 1.0 default, so the threshold stays at the
+    // default-equivalent 1.0 rather than tightening below it (fold-zoo-4d's
+    // own reasoning, and it spells the value out for the same reason).
+    maeThreshold: 1.0,
+    // Uniquely pins (fr-s9ll): the fold family's AUTHORED lengths in the
+    // 4D WGSL kernel — Slot4's per-type `foldRadii` lanes over genuinely
+    // 4D orbits, where the fold reads the full 4D radius/box.
   },
   {
     kind: "4d",
@@ -2894,6 +3001,64 @@ function surfaceFoldSpherefoldPair(): Transform[] {
   ];
 }
 
+/** fr-s9ll: the ONE fold-core system here whose folds carry AUTHORED
+ * lengths. Every other fold fixture in this file leaves
+ * `minRadius`/`fixedRadius`/`boxLimit` absent, i.e. at the classic
+ * 0.5/1/1 the branch algebra used to bake in as literals — so the whole
+ * surface section would still pass with the new wire packed into the wrong
+ * lane, dropped on the way to the kernel, or read back as those frozen
+ * constants. The fr-s9ll unit tests pin the PACKERS; this row is what pins
+ * the kernel that consumes them.
+ *
+ * Two maps, non-classic in DIFFERENT ways, so one row separates several
+ * failure modes at once. Map 0 is a mandelbox carrying all three lengths
+ * (and a wall below 1, so the box preimages `±2·wall − u` move as well as
+ * the sphere shell). Map 1 is a spherefold at HALF the classic lengths:
+ * its magnification `fR²/mR²` is therefore exactly the classic 4, so a
+ * wire that carried only that ratio — the one number both eligibility
+ * gates read — would still render the wrong object here, while map 0's
+ * 1.78 keeps the ratio itself genuinely per-map. Map 1's `boxLimit: 2` is
+ * a length a spherefold never reads; it rides along so a lane whose
+ * (mR, fR, wall) order slipped reads 2 where 0.5 belongs and diverges
+ * loudly rather than subtly.
+ *
+ * Eligible, `deHasFolds` true, R 0.7405 — a plain fold-core system that
+ * routes through the M0 leg exactly like its neighbours. */
+function surfaceFoldParameterizedPair(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.5, 0.2, -0.1],
+      rotation: [0.4, 0.1, 0.2],
+      scale: [0.45, 0.45, 0.45],
+      variations: [
+        {
+          type: "mandelbox",
+          weight: 1,
+          minRadius: 0.375,
+          fixedRadius: 0.5,
+          boxLimit: 0.75,
+        },
+      ],
+    },
+    {
+      id: 1,
+      position: [-0.3, -0.4, 0.25],
+      rotation: [0, 0.6, 0.3],
+      scale: [0.2, 0.2, 0.2],
+      variations: [
+        {
+          type: "spherefold",
+          weight: 0.9,
+          minRadius: 0.25,
+          fixedRadius: 0.5,
+          boxLimit: 2,
+        },
+      ],
+    },
+  ];
+}
+
 /** fr-55s1 M0 (a): the sierpinski-shaped 4-map affine base
  * `scripts/surface-fold.verify.mjs`'s LENS_HASH is built on — no fold
  * anywhere, so `deHasFolds` routes it to the AFFINE core and its refined
@@ -3037,6 +3202,40 @@ function surfaceLensSpherefoldFinal(): Transform {
     rotation: [0.1, 0.2, -0.15],
     scale: [0.9, 0.9, 0.9],
     variations: [{ type: "spherefold", weight: 0.8 }],
+  };
+}
+
+/** fr-s9ll's LENS arm: a mandelbox final carrying all three authored
+ * lengths, over {@link surfaceAffineTetra} — the same base M1a/M1b wrap,
+ * so a disagreement here isolates the lens's own radii wire and nothing
+ * else. The lens is a SECOND site that reads them: `descendLens` carries
+ * its own `SurfaceFoldRadii` beside (never inside) the maps array, and the
+ * GLSL/WGSL mirrors give it its own uniform/params slot — so a kernel that
+ * wired the base maps correctly and left the lens block at the frozen
+ * constants, or filled it from map 0, would agree on every other row in
+ * this file.
+ *
+ * `minRadius` is deliberately AT the classic 0.5 while `fixedRadius` is
+ * not: this row therefore fails when `fixedRadius` alone fails to arrive,
+ * which a fixture that moved both lengths together could pass off as the
+ * other one. The wall (0.6) is below 1, so the box half of the mandelbox
+ * moves too. Eligible; the lens GROWS the attractor (R 1.2634, visR
+ * 1.9734), so the query box sizes off the lensed ball exactly like M1b's. */
+function surfaceLensParameterizedFinal(): Transform {
+  return {
+    id: 90,
+    position: [0.1, -0.05, 0.08],
+    rotation: [0.3, 0.1, -0.2],
+    scale: [0.9, 0.9, 0.9],
+    variations: [
+      {
+        type: "mandelbox",
+        weight: 1.2,
+        minRadius: 0.5,
+        fixedRadius: 0.8,
+        boxLimit: 0.6,
+      },
+    ],
   };
 }
 
@@ -3225,6 +3424,57 @@ function surfaceFold4Mandelbox(): Transform[] {
       scale: [0.13, 0.13, 0.13],
       w: { position: -0.15, rotation: { xw: 0.25 } },
       variations: [{ type: "mandelbox", weight: 1.2 }],
+    },
+  ];
+}
+
+/** fr-s9ll one dimension up: {@link surfaceFoldParameterizedPair}'s two
+ * maps (same affine parts, same authored lengths) given live w blocks, so
+ * the fold4 core reads the fold's radii at ALL THREE of its own branch
+ * sites — including the FOURTH box axis, whose `pw0/pw1/pw2` preimages and
+ * `4·wall²` visible-radius bound are the one genuinely new place a wall
+ * that arrived as the frozen 1 would show up. `surface-de-4d.ts` SHARES
+ * `SurfaceFoldRadii`/`surfaceFoldRadii` with 3D rather than redefining it,
+ * and this row is what would catch that sharing coming apart: a 3D system
+ * and its 4D lift resolving an absent field differently is exactly how the
+ * two dimensions start rendering different objects.
+ *
+ * `Transform[]` with a `w` extension, not `Transform4[]` — the fold4
+ * family's own convention (see {@link surfaceFold4Boxfold}). Eligible,
+ * `deHasFolds4` true, R 0.8265. */
+function surfaceFold4Parameterized(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.4, 0.1, 0],
+      rotation: [0.3, 0.2, 0],
+      scale: [0.45, 0.45, 0.45],
+      w: { position: 0.2, rotation: { xw: 0.3 } },
+      variations: [
+        {
+          type: "mandelbox",
+          weight: 1,
+          minRadius: 0.375,
+          fixedRadius: 0.5,
+          boxLimit: 0.75,
+        },
+      ],
+    },
+    {
+      id: 1,
+      position: [-0.35, -0.2, 0.3],
+      rotation: [0, 0.5, 0.1],
+      scale: [0.2, 0.2, 0.2],
+      w: { position: -0.1, rotation: { yw: 0.25 } },
+      variations: [
+        {
+          type: "spherefold",
+          weight: 0.9,
+          minRadius: 0.25,
+          fixedRadius: 0.5,
+          boxLimit: 2,
+        },
+      ],
     },
   ];
 }
@@ -8250,6 +8500,15 @@ async function runSurfaceDeSection(
       name: "foldBoxfoldNegPlusAffine",
       transforms: surfaceFoldBoxfoldNegPlusAffine(),
     },
+    // fr-s9ll — the fold's AUTHORED lengths. Appended after the existing
+    // fold entries rather than inserted among them: the march-unproject
+    // leg falls back to `foldSystems[0]` when mandelboxKifs is excluded
+    // (surfaceSystems=synthetic), and that leg's fixture should not change
+    // because a new agreement row arrived.
+    {
+      name: "foldParameterizedPair",
+      transforms: surfaceFoldParameterizedPair(),
+    },
     // fr-55s1 M0 — the AFFINE core's systems. Fold-free base maps, so the
     // routing below hands them the refined ladder and its own oracle.
     { name: "affineTetra", transforms: surfaceAffineTetra() },
@@ -8277,6 +8536,14 @@ async function runSurfaceDeSection(
       name: "lensOverFold",
       transforms: surfaceFoldBoxfoldPair(),
       finalTransform: surfaceLensSpherefoldFinal(),
+    },
+    // fr-s9ll — the lens's own authored lengths, over M0's affine base
+    // (see surfaceLensParameterizedFinal's doc for why the lens block is a
+    // second, independently-packed site).
+    {
+      name: "lensParameterizedOverAffine",
+      transforms: surfaceAffineTetra(),
+      finalTransform: surfaceLensParameterizedFinal(),
     },
   );
   const systems: SurfaceSystemState[] = [];
@@ -8487,6 +8754,50 @@ async function runSurfaceDeSection(
           rotation: [0, (20 * Math.PI) / 180, 0],
           scale: [1, 1, 1],
           variations: [{ type: "boxfold", weight: 1.6 }],
+        },
+      ],
+    },
+    // fr-s9ll: the chain whose links carry DIFFERENT fold apparatus from
+    // each other. `EscapeLink` holds its own `boxLimit`/`minRadius2`/
+    // `fixedRadius2` resolved at build, and the two shader mirrors pack one
+    // slot per link — so the case a per-DOCUMENT wire would pass and a
+    // per-LINK one must not is exactly this: link 0 a mandelbox at
+    // (0.375, 0.5, 0.75), link 1 a boxfold at wall 3. A kernel that read
+    // link 0's radii for every step, or hoisted one set out of the cycle,
+    // agrees with its oracle on every other escape row here, where the
+    // links either share the classic set or there is only one link.
+    //
+    // Link 1's sphere pair is ABSENT on purpose, and it is the half of the
+    // fixture that pins "absent means classic" ACROSS THE WIRE: a boxfold
+    // reads no sphere radii, but the link still packs some, and they must
+    // arrive as 0.5/1 (0.25/1 squared) rather than as zeros or as link 0's
+    // 0.25/0.5. A per-link wire that zero-filled the fields its own fold
+    // kind ignores would look correct until a chain mixed kinds.
+    {
+      name: "escChainParameterized",
+      seed: 409,
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [
+            {
+              type: "mandelbox",
+              weight: 2,
+              minRadius: 0.375,
+              fixedRadius: 0.5,
+              boxLimit: 0.75,
+            },
+          ],
+        },
+        {
+          id: 1,
+          position: [-0.1, 0.2, 0],
+          rotation: [0.2, 0, 0.1],
+          scale: [1, 1, 1],
+          variations: [{ type: "boxfold", weight: 1.5, boxLimit: 3 }],
         },
       ],
     },
@@ -8770,7 +9081,8 @@ async function runSurfaceDeSection(
   // fr-rsp6 M4: the FOLD4 core's own fixed fixture family — the same
   // "def-time eligibility gate throws" idiom as affine4SystemDefs above,
   // for the same reason (fixed fixtures; an ineligible one is a bench bug).
-  // Four systems, each `surfaceFold4Boxfold`/`surfaceFold4Mandelbox`
+  // Four systems (a fifth since fr-s9ll — see its own comment below), each
+  // `surfaceFold4Boxfold`/`surfaceFold4Mandelbox`
   // (`surface-de-4d.test.ts`'s fr-rsp6 fixtures verbatim, so bench and CPU
   // tests pin the identical systems) under a different view/symmetry: the
   // pure DE at a nonzero w0 (fold4Boxfold), the widest fold class at the
@@ -8825,6 +9137,20 @@ async function runSurfaceDeSection(
         rotor: symmetryRotation4("yw", 0.55),
         w0: 0.15 * de.boundingRadius,
         sliceHalfW: 0.1 * de.boundingRadius,
+      }),
+    },
+    // fr-s9ll: the fold's AUTHORED lengths one dimension up (see
+    // surfaceFold4Parameterized's doc). Viewed at the same nonzero w0 as
+    // fold4Boxfold/fold4Mandelbox above, so the radii are the only thing
+    // separating this row from the family's plain ones.
+    {
+      name: "fold4Parameterized",
+      seed: 525,
+      transforms: surfaceFold4Parameterized(),
+      view4: (de) => ({
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0.2 * de.boundingRadius,
+        sliceHalfW: 0,
       }),
     },
   ];
