@@ -4059,6 +4059,16 @@ function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
     w: f(link.w),
     g: f(link.derivGrowth),
     kind: link.foldKind,
+    // fr-s9ll: this LINK's own fold lengths, pre-rounded like everything
+    // else here — the squares `EscapeLink` keeps and the kernels' `fold`
+    // lane carries. A twin left at the classic 0.25/1/1 does not merely
+    // disagree with the oracle on parameterized systems; it makes the
+    // ENSEMBLE classifier exclude them, which reads as a chaotic fixture
+    // rather than as a stale copy (measured: 251 of 700 queries excluded,
+    // past the 20% cap, on a chain whose kernel rows agreed to 4.4e-7).
+    wall: f(link.boxLimit),
+    mR2: f(link.minRadius2),
+    fR2: f(link.fixedRadius2),
   }));
   const n = links.length;
   // The kaleidoscope's query-space wedge fold, ONCE before the orbit —
@@ -4093,8 +4103,8 @@ function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
   let vz = q[2];
   let dr = 1;
   let r = f(Math.sqrt(f(f(f(vx * vx) + f(vy * vy)) + f(vz * vz))));
-  const fold = (x: number): number =>
-    f(f(2 * Math.max(-1, Math.min(1, x))) - x);
+  const fold = (x: number, wall: number): number =>
+    f(f(2 * Math.max(-wall, Math.min(wall, x))) - x);
   // A PASS is one full cycle, so the budget is ESCAPE_TIME_ITERATIONS
   // applications OF EACH LINK (escape-de.ts's A PASS IS ONE FULL CYCLE).
   const steps = ESCAPE_TIME_ITERATIONS * n;
@@ -4107,13 +4117,13 @@ function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
     let yz = f(f(f(f(m[6] * vx) + f(m[7] * vy)) + f(m[8] * vz)) + t[2]);
     let localL = 1;
     if (link.kind !== 2) {
-      yx = fold(yx);
-      yy = fold(yy);
-      yz = fold(yz);
+      yx = fold(yx, link.wall);
+      yy = fold(yy, link.wall);
+      yz = fold(yz, link.wall);
     }
     if (link.kind !== 1) {
       const r2 = f(f(f(yx * yx) + f(yy * yy)) + f(yz * yz));
-      const s = f(1 / Math.max(0.25, Math.min(1, r2)));
+      const s = f(link.fR2 / Math.max(link.mR2, Math.min(link.fR2, r2)));
       yx = f(yx * s);
       yy = f(yy * s);
       yz = f(yz * s);
