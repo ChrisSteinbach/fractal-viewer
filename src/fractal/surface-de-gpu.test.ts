@@ -1838,7 +1838,7 @@ describe("groundPlane wrapper (fr-rhn5)", () => {
     expect(view.getFloat32(328, true)).toBe(Math.fround(gp.albedo[2]));
   });
 
-  it("omits the ground-plane 4th arg back to today's 272-byte packSurfaceGpuParams buffer, byte for byte", () => {
+  it("omits the ground-plane 4th arg back to today's base-size packSurfaceGpuParams buffer, byte for byte", () => {
     const de = buildSurfaceDE(foldSystemTransforms());
     const omitted = new Uint8Array(packSurfaceGpuParams(de, { itemCount: 3 }));
     const explicit = new Uint8Array(
@@ -4147,7 +4147,7 @@ describe("packBulbGpuParams (fr-7u8t.9)", () => {
     expect(view.getFloat32(268, true)).toBe(0); // packed-zero spare
   });
 
-  it("appends the ground-plane block past the bulb variant block, and omitting it returns the 272-byte buffer byte for byte", () => {
+  it("appends the ground-plane block past the bulb variant block, and omitting it returns the base-size buffer byte for byte", () => {
     const de = buildBulbDE([scaledBulb()]);
     const gp: SurfaceGpuGroundPlane = {
       y: 0.125,

@@ -635,17 +635,17 @@ import type { Vec3 } from "./types";
 export const SURFACE_GPU_HIT_FLOOR = 1.0e-5;
 
 export const SURFACE_GPU_PARAMS_BYTES = 288;
-/** Params size under `balloon: true` (fr-5wlv.5): the 272-byte 3D block
+/** Params size under `balloon: true` (fr-5wlv.5): the 288-byte 3D block
  * — variant members declared unconditionally, zero-filled when no lens —
  * plus the appended balloon block at the frozen offset 272 (layout
  * contract in the module doc). {@link packSurfaceGpuParams} returns THIS
- * size exactly when its `balloon` argument is non-null, and the 272-byte
+ * size exactly when its `balloon` argument is non-null, and the 288-byte
  * buffer byte for byte when it is null — a no-balloon kernel's struct
- * ends at 208/272 and never reads past it, but a BALLOON kernel's struct
- * is 304 bytes, so its hosts must bind a buffer packed with the balloon
+ * ends at 208/288 and never reads past it, but a BALLOON kernel's struct
+ * is 320 bytes, so its hosts must bind a buffer packed with the balloon
  * argument. */
 export const SURFACE_GPU_PARAMS_BALLOON_BYTES = 320;
-/** Params size under `groundPlane: true` (fr-rhn5): the 272-byte 3D
+/** Params size under `groundPlane: true` (fr-rhn5): the 288-byte 3D
  * block — variant members declared unconditionally, zero-filled when no
  * lens (or carrying the escape core's forward map) — plus the appended
  * plane block at the frozen offset 272, which the plane and balloon
@@ -659,7 +659,7 @@ export const SURFACE_GPU_PARAMS_BALLOON_BYTES = 320;
 export const SURFACE_GPU_PARAMS_PLANE_BYTES = 336;
 /** Params size for `core: "affine4"` — the frozen 0..207 block plus the
  * 4D variant tail (layout contract in the module doc). The other cores'
- * structs still end at 208/272; binding the larger buffer to them would
+ * structs still end at 208/288; binding the larger buffer to them would
  * be valid, but hosts size per core. */
 export const SURFACE_GPU_PARAMS4_BYTES = 464;
 /** Params size for a 4D core under `lens: true` (fr-rsp6 phase 2B): the
@@ -998,7 +998,7 @@ function writeVec3(view: DataView, offset: number, v: Vec3): void {
  * signature change — out of the fr-55s1 cut, and the app path always
  * passes footprint 0 (GLSL parity).
  *
- * `balloon` (fr-5wlv.5): null — the default — returns today's 272-byte
+ * `balloon` (fr-5wlv.5): null — the default — returns today's 288-byte
  * buffer byte for byte; non-null returns {@link
  * SURFACE_GPU_PARAMS_BALLOON_BYTES} bytes with the balloon block packed
  * at the frozen offset 272 (module-doc contract) — `center`/`rho`/`R`
