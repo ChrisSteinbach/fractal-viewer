@@ -908,6 +908,26 @@ summary.editor-group-title {
   width: 40px;
 }
 
+/* The fold family's authored lengths (fr-s9ll) sit under their own
+   variation's weight row: indented so the group reads as belonging to the
+   fold above it, and padded on the right by the remove button's column
+   (20px + the row's 9px gap) so its slider still lines up with the weight
+   slider instead of running past where that row ends. The label loses the
+   indent back out of its own min-width, keeping all the sliders on one
+   left edge. */
+.variation-fold-row {
+  padding-left: 14px;
+  padding-right: 29px;
+}
+
+.variation-fold-row .axis {
+  /* Fixed, not min-width: the three labels differ in length, and letting
+     each size itself would start the three sliders at three different x. */
+  width: 76px;
+  min-width: 76px;
+  color: var(--text-faint);
+}
+
 .variation-remove {
   flex: 0 0 auto;
   width: 20px;

@@ -32,6 +32,7 @@ import type {
   RgbStop,
 } from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
+import { CLASSIC_FOLD_RADII, isFoldVariationType } from "../fractal/variations";
 import type {
   Transform,
   Variation,
@@ -481,6 +482,53 @@ function sliderToWeight(slider: number): number {
 const VARIATION_WEIGHT_MIN = -2;
 const VARIATION_WEIGHT_MAX = 2;
 const DEFAULT_VARIATION_WEIGHT = 1;
+
+/** The fold family's three authored lengths (fr-s9ll). */
+type FoldRadiusKey = "minRadius" | "fixedRadius" | "boxLimit";
+
+/**
+ * Which of the three lengths each fold actually READS. A box fold has no
+ * sphere and a sphere fold has no wall, and fr-77oy measured exactly that:
+ * "a box-fold link's mR/fR are inert, so a per-variation schema hands
+ * boxfold two fields it cannot use". Handing them to the user anyway would
+ * be worse than handing them nothing — a control that does not move the
+ * picture teaches that the group does not work.
+ */
+const FOLD_RADIUS_FIELDS: Record<
+  "boxfold" | "spherefold" | "mandelbox",
+  FoldRadiusKey[]
+> = {
+  boxfold: ["boxLimit"],
+  spherefold: ["minRadius", "fixedRadius"],
+  mandelbox: ["minRadius", "fixedRadius", "boxLimit"],
+};
+
+const FOLD_RADIUS_LABELS: Record<FoldRadiusKey, string> = {
+  minRadius: "Min radius",
+  fixedRadius: "Fixed radius",
+  boxLimit: "Box limit",
+};
+
+/**
+ * Fold-length slider bounds. The two SPHERE radii are lengths in the fold's
+ * own u-space, floored well above `variations.ts`'s relative domain floor —
+ * the magnification is `fR²/mR²`, so the bottom of this range is already a
+ * 22500x fold and nothing below it is a picture. The BOX wall floors at 0
+ * instead, which is a real authored fold rather than a degenerate one:
+ * `2·clamp(t, 0, 0) − t = −t` is a point reflection (`resolveFoldRadii`
+ * keeps it deliberately).
+ *
+ * The min-radius ceiling is NOT `FOLD_RADIUS_MAX`: the fold's domain is
+ * `0 < mR <= fR`, so that slider's own max is the current fixed radius and
+ * moves with it. Enforced in the row rather than left to
+ * `resolveFoldRadii`'s clamp, so the readout never shows a length the
+ * renderer is not using.
+ */
+const FOLD_RADIUS_MIN = 0.01;
+const FOLD_RADIUS_MAX = 3;
+const BOX_LIMIT_MIN = 0;
+const BOX_LIMIT_MAX = 3;
+const FOLD_RADIUS_STEP = 0.005;
 
 /**
  * Display names for variation types whose identifier does not title-case into
@@ -4226,7 +4274,96 @@ export class Ui {
 
       row.append(name, slider, readout, remove);
       editor.variationList.appendChild(row);
+      if (isFoldVariationType(variation.type)) {
+        this.appendFoldRadiusRows(variation.type, i);
+      }
     });
+  }
+
+  /**
+   * The fold's three authored lengths (fr-s9ll), as rows nested under their
+   * own variation's weight row — only the ones that fold reads
+   * ({@link FOLD_RADIUS_FIELDS}).
+   *
+   * A length is written into the document ONLY once its slider moves, and
+   * dragging one back to its classic value REMOVES it again. That is what
+   * keeps `types.ts`'s "absent means the classic Mandelbox values
+   * BYTE-IDENTICALLY" true through an editing session: opening the editor
+   * on an old scene, or touching a neighbouring control, leaves an
+   * unparameterized fold with no keys at all — not three keys that happen
+   * to hold the defaults.
+   */
+  private appendFoldRadiusRows(
+    type: "boxfold" | "spherefold" | "mandelbox",
+    index: number,
+  ): void {
+    const editor = this.editor;
+    if (!editor) return;
+    const valueOf = (key: FoldRadiusKey): number =>
+      editor.variations[index][key] ?? CLASSIC_FOLD_RADII[key];
+    const write = (key: FoldRadiusKey, value: number): void => {
+      if (value === CLASSIC_FOLD_RADII[key]) {
+        delete editor.variations[index][key];
+      } else {
+        editor.variations[index][key] = value;
+      }
+    };
+    const minRow: { slider: HTMLInputElement; readout: HTMLElement }[] = [];
+    // The fold's domain is 0 < mR <= fR: lowering the fixed radius past the
+    // min radius carries the min radius down with it, rather than leaving a
+    // readout the estimator would silently clamp.
+    const followFixedRadius = (): void => {
+      const row = minRow[0];
+      if (!row) return;
+      const fR = valueOf("fixedRadius");
+      row.slider.max = String(fR);
+      if (valueOf("minRadius") > fR) {
+        write("minRadius", fR);
+        row.slider.value = String(fR);
+        row.readout.textContent = fR.toFixed(3);
+      }
+    };
+    for (const key of FOLD_RADIUS_FIELDS[type]) {
+      const row = this.doc.createElement("div");
+      row.className = "editor-row variation-row variation-fold-row";
+
+      const name = this.doc.createElement("span");
+      name.className = "axis";
+      name.textContent = FOLD_RADIUS_LABELS[key];
+
+      const slider = this.doc.createElement("input");
+      slider.type = "range";
+      slider.min = String(key === "boxLimit" ? BOX_LIMIT_MIN : FOLD_RADIUS_MIN);
+      slider.max = String(
+        key === "boxLimit"
+          ? BOX_LIMIT_MAX
+          : key === "minRadius"
+            ? valueOf("fixedRadius")
+            : FOLD_RADIUS_MAX,
+      );
+      slider.step = String(FOLD_RADIUS_STEP);
+      slider.value = String(valueOf(key));
+      slider.setAttribute(
+        "aria-label",
+        `${variationLabel(type)} ${FOLD_RADIUS_LABELS[key].toLowerCase()}`,
+      );
+
+      const readout = this.doc.createElement("span");
+      readout.className = "value";
+      readout.textContent = valueOf(key).toFixed(3);
+
+      slider.addEventListener("input", () => {
+        const value = Number(slider.value);
+        write(key, value);
+        readout.textContent = value.toFixed(3);
+        if (key === "fixedRadius") followFixedRadius();
+        this.emitGeometry();
+      });
+
+      row.append(name, slider, readout);
+      if (key === "minRadius") minRow.push({ slider, readout });
+      editor.variationList.appendChild(row);
+    }
   }
 
   /** Repopulate the add-dropdown with the variation types not already applied. */
