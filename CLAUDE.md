@@ -552,9 +552,14 @@ and UI**, so the interesting math is unit-tested without a browser:
     failure is absolved only if `escapeShadowFlipVerified` proves some
     1..4-ULP neighbor orbit REPRODUCES the GPU's value within tolerance
     (fr-7tl3's per-mismatch discipline lifted to eval; `flips=` in the
-    row, capped at 7). Measured on real Iris: fail=0 across all four
-    escape systems, worst row excluded=74/700 with flips=2, gated
-    maxAbs 2.1e-6. A `computeFrameEscape` leg
+    row, capped at 7). Measured on real Iris AT fr-dlxh, on the FOUR
+    escape systems that existed then: fail=0, worst row excluded=74/700
+    with flips=2, gated maxAbs 2.1e-6. That is a dated reading and not a
+    standing baseline — the fixture set is NINE systems now (fr-s04t
+    added the three chain rows, landing at 10.1/10.1/13.9% exclusions,
+    and fr-s9ll added the parameterized one), so a later row's numbers
+    have no business being compared against it. fr-jtd4 is open on
+    exactly that confusion. A `computeFrameEscape` leg
     runs one production frame through `SurfaceComputeRenderer` with a
     `{kind:"escape"}` target and checks it against a strided CPU sanity
     march as HIT RATES rather than the per-pixel fr-7tl3
