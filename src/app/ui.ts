@@ -1625,8 +1625,11 @@ export class Ui {
       });
     }
 
-    // A vertical scroll swipe that lands on a slider must not edit it — see
-    // slider-scroll-guard.ts for the full story (fr-zoi).
+    // A vertical scroll swipe that lands on a slider must not edit it, and
+    // since fr-xu4u it does not even try: the guard PREVENTS the tap-jump
+    // where fr-zoi undid it afterwards, and drives the touch drag itself
+    // as the price. See slider-scroll-guard.ts for the full story,
+    // including why the obvious preventDefault does not work.
     installSliderScrollGuard(this.panel);
   }
 
