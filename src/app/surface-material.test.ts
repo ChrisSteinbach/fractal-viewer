@@ -29,6 +29,7 @@ import {
 } from "../fractal/balloon-de";
 import {
   buildSurfaceDE,
+  surfaceFoldRadii,
   CLASSIC_SURFACE_FOLD_RADII,
   SURFACE_FOLD_BEAM_WIDTH,
 } from "../fractal/surface-de";
@@ -181,6 +182,133 @@ describe("setSurfaceSystem kaleidoscope packing", () => {
         tooMany.map(() => black),
       ),
     ).toThrow(RangeError);
+  });
+});
+
+describe("the fold's authored lengths in the GLSL tracer (fr-s9ll)", () => {
+  it("packs each map's own three lengths into uFoldRadii, in resolveFoldRadii's raw (not squared) form", () => {
+    const material = createSurfaceMaterial();
+    setSurfaceSystem(
+      material,
+      de3([
+        map3({
+          foldKind: 3,
+          foldRadii: surfaceFoldRadii({
+            type: "mandelbox",
+            weight: 1,
+            minRadius: 0.375,
+            fixedRadius: 1.5,
+            boxLimit: 0.75,
+          }),
+        }),
+        map3({ baseIndex: 1 }),
+      ]),
+      [black, black],
+    );
+    const radii = material.uniforms.uFoldRadii.value as THREE.Vector4[];
+    expect([radii[0].x, radii[0].y, radii[0].z]).toEqual([0.375, 1.5, 0.75]);
+    // The unparameterized slot beside it keeps the classic set, which is
+    // also this uniform's own default — so "absent means classic" holds
+    // whether or not the packer reached the slot.
+    expect([radii[1].x, radii[1].y, radii[1].z]).toEqual([0.5, 1, 1]);
+  });
+
+  it("packs the fold LENS's lengths, and resets them to the CLASSIC set — never zero — when a system arrives without one", () => {
+    const material = createSurfaceMaterial();
+    const lensed = de3([map3()]);
+    lensed.foldFinal = {
+      invM: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      invT: [0, 0, 0],
+      sigmaMin: 0.7,
+      foldKind: 2,
+      invW: 1,
+      absW: 1,
+      foldRadii: surfaceFoldRadii({
+        type: "spherefold",
+        weight: 1,
+        minRadius: 0.25,
+        fixedRadius: 0.5,
+        boxLimit: 2,
+      }),
+    };
+    setSurfaceSystem(material, lensed, [black]);
+    const lensRadii = material.uniforms.uLensRadii.value as THREE.Vector3;
+    expect([lensRadii.x, lensRadii.y, lensRadii.z]).toEqual([0.25, 0.5, 2]);
+
+    // A lens-free system reuses the same material: 0 would be a fold whose
+    // arithmetic divides by zero, so the reset is to the classic lengths.
+    setSurfaceSystem(material, de3([map3()]), [black]);
+    expect([lensRadii.x, lensRadii.y, lensRadii.z]).toEqual([0.5, 1, 1]);
+  });
+
+  it("packs each escape LINK's lengths SQUARED, so a chain may carry a different apparatus per link", () => {
+    const material = createSurfaceMaterial();
+    const de = buildEscapeDE([
+      {
+        id: 0,
+        position: [0.4, 0.3, 0.2],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [
+          {
+            type: "mandelbox",
+            weight: 2,
+            minRadius: 0.375,
+            fixedRadius: 0.5,
+            boxLimit: 0.75,
+          },
+        ],
+      },
+      {
+        id: 1,
+        position: [-0.1, 0.2, 0],
+        rotation: [0.2, 0, 0.1],
+        scale: [1, 1, 1],
+        variations: [{ type: "boxfold", weight: 1.5, boxLimit: 3 }],
+      },
+    ]);
+    setEscapeSystem(material, de, black);
+    const escRadii = material.uniforms.uEscRadii.value as THREE.Vector4[];
+    expect([escRadii[0].x, escRadii[0].y, escRadii[0].z]).toEqual([
+      0.140625, 0.25, 0.75,
+    ]);
+    // The tail link leaves the sphere pair absent: the classic 0.5/1,
+    // squared.
+    expect([escRadii[1].x, escRadii[1].y, escRadii[1].z]).toEqual([0.25, 1, 3]);
+  });
+
+  it("leaves no classic fold length baked into the emitted GLSL — the divergence fr-xb8o filed", () => {
+    for (const src of [surfaceFragmentFor(0, 0), surfaceFragmentFor(0, 1)]) {
+      expect(src).toContain("FoldRadii foldRadiiOf(vec3 f)");
+      expect(src).not.toContain("pre1 = 2.0 - u;");
+      expect(src).not.toContain("v = 0.25 * u;");
+      expect(src).not.toContain("sfSigma = 4.0;");
+      expect(src).not.toContain("max(ru - 2.0, 0.0)");
+    }
+    const escape = surfaceFragmentFor(1, 0);
+    expect(escape).not.toContain("clamp(dot(y, y), 0.25, 1.0)");
+    expect(escape).not.toContain("clamp(y, -1.0, 1.0)");
+  });
+
+  it("keeps every variant's source under the Mesa compiler cliff this file has crashed into twice", () => {
+    // 82.2KB crashed Mesa outright (resolveVariantArms); the fold's radii
+    // cost ~2.2KB of uniforms, a derivation helper and longer expressions,
+    // which took the BALLOON variant from 80.9KB past it. The strip rule
+    // is what buys the headroom back — so the assertion is on SIZE, the
+    // thing that actually crashed, not on whether a particular variant
+    // happens to be stripped.
+    const variants: [string, string][] = [
+      ["affine", surfaceFragmentFor(0, 0)],
+      ["fold lens", surfaceFragmentFor(0, 1)],
+      ["balloon", surfaceFragmentFor(0, 0, 1)],
+      ["ground plane", surfaceFragmentFor(0, 0, 0, 1)],
+      ["lens + plane", surfaceFragmentFor(0, 1, 0, 1)],
+      ["escape", surfaceFragmentFor(1, 0)],
+      ["bulb", surfaceFragmentFor(0, 0, 0, 0, 1)],
+    ];
+    for (const [name, src] of variants) {
+      expect(src.length, name).toBeLessThan(64 * 1024);
+    }
   });
 });
 
