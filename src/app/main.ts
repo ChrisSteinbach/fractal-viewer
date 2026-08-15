@@ -7387,13 +7387,27 @@ function main(): void {
     // token and percentage keep the prominent read. A grinding preview is
     // skippable (fr-37c6): the Skip button rides the row exactly while
     // there is a full render to skip TO — never during settles.
+    // fr-jf9y: the strip arm's supersampling passes, disclosed exactly as
+    // the compute arm's are (fr-vpbq) — trailing, silent through pass 1,
+    // and BEHIND the engine-reason token when both apply, since why this
+    // session is on WebGL at all outranks which pass it is on. `fraction`
+    // already spans the whole sequence, so the percentage stays monotone
+    // instead of resetting eight times.
+    const detail = [
+      surfaceWebglDetailToken,
+      progress.phase === "settle" && progress.sample > 1
+        ? `antialiasing pass ${String(progress.sample)}/${String(progress.samples)}`
+        : null,
+    ]
+      .filter((token): token is string => token !== null)
+      .join(" · ");
     ui.setSurfaceProgress({
       label:
         progress.phase === "preview"
           ? "Preview · WebGL"
           : "Full detail · WebGL",
       pct,
-      detail: surfaceWebglDetailToken ?? undefined,
+      detail: detail === "" ? undefined : detail,
       skippable: progress.phase === "preview",
     });
   }

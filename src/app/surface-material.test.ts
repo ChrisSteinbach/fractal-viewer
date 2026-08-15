@@ -312,6 +312,49 @@ describe("the fold's authored lengths in the GLSL tracer (fr-s9ll)", () => {
   });
 });
 
+describe("the supersampling jitter uniform (fr-jf9y)", () => {
+  const variants: [string, string][] = [
+    ["affine", surfaceFragmentFor(0, 0)],
+    ["fold lens", surfaceFragmentFor(0, 1)],
+    ["balloon", surfaceFragmentFor(0, 0, 1)],
+    ["ground plane", surfaceFragmentFor(0, 0, 0, 1)],
+    ["lens + plane", surfaceFragmentFor(0, 1, 0, 1)],
+    ["escape", surfaceFragmentFor(1, 0)],
+    ["bulb", surfaceFragmentFor(0, 0, 0, 0, 1)],
+  ];
+
+  it("defaults to the pixel CENTRE, which is what makes a single-pass trace the pre-fr-jf9y one", () => {
+    // The whole byte-identity argument rests here: at (0,0,0,0) the two
+    // reads below add exactly 0.0, and IEEE addition of +0.0 is exact. A
+    // preview, a thumbnail, an offline force frame and pass 0 of a
+    // supersampled settle all trace with this value.
+    const material = createSurfaceMaterial();
+    const jitter = material.uniforms.uPixelJitter.value as THREE.Vector4;
+    expect([jitter.x, jitter.y, jitter.z, jitter.w]).toEqual([0, 0, 0, 0]);
+  });
+
+  it("enters every variant in exactly two places — the ray and the dither, never the backdrop", () => {
+    // The count is the contract, not a style rule. The background gradient
+    // is a smooth ramp with nothing to alias AND has to agree with the
+    // seed the untraced strips still show, so a third read appearing here
+    // would be a bug the passes would average into a soft-edged backdrop.
+    for (const [name, src] of variants) {
+      expect(countOccurrences(src, "uniform vec4 uPixelJitter;"), name).toBe(1);
+      expect(countOccurrences(src, "uPixelJitter"), name).toBe(3);
+      expect(src, name).toContain("(vUv + uPixelJitter.xy) * 2.0 - 1.0");
+      expect(src, name).toContain("hash(gl_FragCoord.xy + uPixelJitter.zw)");
+    }
+  });
+
+  it("leaves the background gradient on the UNJITTERED pixel", () => {
+    for (const [name, src] of variants) {
+      expect(src, name).toContain(
+        "mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0))",
+      );
+    }
+  });
+});
+
 describe("setSurfaceSystem fold final lens packing (fr-g58b)", () => {
   it("packs the lens uniforms, flips SURFACE_FOLD_LENS, and keeps the cores' uFinal* at identity", () => {
     const material = createSurfaceMaterial();

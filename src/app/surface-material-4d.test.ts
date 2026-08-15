@@ -242,3 +242,23 @@ describe("slab-hit radius color (fr-9c9e)", () => {
     );
   });
 });
+
+describe("the supersampling jitter uniform (fr-jf9y)", () => {
+  // The 4D tracer is the PRIMARY arm for kaleidoscope-4D sessions and the
+  // fallback for plain-4D ones, so it takes the 3D tracer's jitter line
+  // for line — same uniform, same two reads, same untouched backdrop. The
+  // scene writes one uniform per armed job and both materials answer to it.
+  it("defaults to the pixel CENTRE, so a single-pass 4D trace is the pre-fr-jf9y one", () => {
+    const material = createSurfaceMaterial4();
+    const jitter = material.uniforms.uPixelJitter.value as THREE.Vector4;
+    expect([jitter.x, jitter.y, jitter.z, jitter.w]).toEqual([0, 0, 0, 0]);
+  });
+
+  it("enters the ray and the dither, and leaves the backdrop gradient alone", () => {
+    const glsl = createSurfaceMaterial4().fragmentShader;
+    expect(glsl).toContain("uniform vec4 uPixelJitter;");
+    expect(glsl).toContain("(vUv + uPixelJitter.xy) * 2.0 - 1.0");
+    expect(glsl).toContain("hash(gl_FragCoord.xy + uPixelJitter.zw)");
+    expect(glsl).toContain("mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0))");
+  });
+});

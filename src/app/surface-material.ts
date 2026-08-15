@@ -716,6 +716,24 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * measured on the fr-7xgi repro (CPU march emulation, 40-step preview
    * budget): phantom hits 2 -> 0, hole cost 0.4-0.9% of true hits. */
   uniform float uAcceptPixelEps;
+  /** Where inside its pixel THIS pass aims (fr-jf9y — the WebGL arm's
+   * supersampling, fr-vpbq's compute-arm shape in strip vocabulary).
+   * .xy is the offset in UV, .zw the SAME offset in pixels; the scene
+   * derives both from surface-compute.ts's subPixelSample, so the two
+   * engines walk one R2 sequence. All zero is the pixel CENTRE, which is
+   * what every single-pass trace writes — a preview, a thumbnail, an
+   * offline force frame, and pass 0 of a supersampled settle — so the
+   * two reads below add exactly 0.0 there and the frame is the
+   * pre-fr-jf9y frame value for value.
+   *
+   * TWO reads, deliberately. The ray's own UV moves (that is the sample),
+   * and the march-start dither's hash takes the JITTERED pixel so passes
+   * do not share a t offset — an identical dither under a moved ray would
+   * correlate the banding it exists to break, and averaging would not
+   * cancel it. The BACKGROUND gradient below reads the unjittered vUv on
+   * purpose: it is a smooth ramp with nothing to alias, and it has to
+   * agree with the seed the untraced strips still show. */
+  uniform vec4 uPixelJitter;
 
   /** Empty-space-skipping grid (fr-55r5 part 2), the CPU-built
    * surface-grid.ts cube uploaded as a 3D texture: each texel is a
@@ -2716,8 +2734,9 @@ ${foldValueFormGlsl(shadeDeWidth)}
     vec3 background = mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0));
 
     // Reconstruct the camera ray by unprojecting this pixel on the near and
-    // far clip planes.
-    vec2 ndc = vUv * 2.0 - 1.0;
+    // far clip planes — at the supersampling pass's own point inside the
+    // pixel (fr-jf9y; the pixel centre on every single-pass trace).
+    vec2 ndc = (vUv + uPixelJitter.xy) * 2.0 - 1.0;
     vec4 nearP = uInvProjView * vec4(ndc, -1.0, 1.0);
     vec4 farP = uInvProjView * vec4(ndc, 1.0, 1.0);
     vec3 rd = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);
@@ -2778,8 +2797,10 @@ ${foldValueFormGlsl(shadeDeWidth)}
     float tEnter = t;
 #endif
 
-    // Tiny dithered start: just breaks banding on grazing rays.
-    t += hash(gl_FragCoord.xy) * uPixelEps * max(t, 1.0);
+    // Tiny dithered start: just breaks banding on grazing rays. Hashed on
+    // the JITTERED pixel (fr-jf9y) so supersampling passes get independent
+    // start offsets instead of averaging one banding pattern N times.
+    t += hash(gl_FragCoord.xy + uPixelJitter.zw) * uPixelEps * max(t, 1.0);
 
     // --- sphere trace -------------------------------------------------------
     // Cone-style hit test: accept once the bound drops below the pixel's
@@ -3304,6 +3325,16 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       // true angular pixel size.
       uPixelEps: { value: 0.002 },
       uAcceptPixelEps: { value: 0.002 },
+      // The pixel CENTRE (fr-jf9y): zero here is what makes a single-pass
+      // trace value-identical to the pre-supersampling one. The scene
+      // rewrites it per ARMED JOB — setSurfaceFrameUniforms resets it to
+      // zero, and only a supersampling pass past the first sets it
+      // otherwise — so no abandoned settle can leak a jitter into the
+      // preview or the export that follows it.
+      // Spelled out, all four: THREE.Vector4's own default is (0, 0, 0, 1),
+      // and that 1 is the dither's y offset in PIXELS — it would move the
+      // march-start hash a whole pixel on every trace this app makes.
+      uPixelJitter: { value: new THREE.Vector4(0, 0, 0, 0) },
       // Full-tier defaults; the scene overwrites all four per tier
       // (fr-sjff).
       uMarchSteps: { value: SURFACE_FULL_MARCH_STEPS },
