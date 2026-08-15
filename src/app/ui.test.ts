@@ -68,6 +68,7 @@ function noopHandlers(): UiHandlers {
     onTimelinePlayToggle: vi.fn(),
     onTimelineExport: vi.fn(),
     onExportCancel: vi.fn(),
+    onExportDeliverEarly: vi.fn(),
     onExportTimeline: vi.fn(),
     onTimelineRemoveStep: vi.fn(),
     onTimelineMoveStep: vi.fn(),
@@ -6285,6 +6286,13 @@ describe("Ui export progress modal (fr-7mfx)", () => {
   function exportCancelBtn(): HTMLButtonElement {
     return document.getElementById("exportCancelBtn") as HTMLButtonElement;
   }
+  /** The fr-2fbs second action, or null when it is not on offer — it is
+   * DETACHED rather than hidden, so absence is the document's answer. */
+  function exportDeliverBtn(): HTMLButtonElement | null {
+    return document.getElementById(
+      "exportDeliverBtn",
+    ) as HTMLButtonElement | null;
+  }
   function exportBackdrop(): HTMLElement {
     const backdrop = exportModal().querySelector(".gallery-backdrop");
     if (!(backdrop instanceof HTMLElement)) {
@@ -6431,6 +6439,181 @@ describe("Ui export progress modal (fr-7mfx)", () => {
     pressEscape();
 
     expect(handlers.onExportCancel).not.toHaveBeenCalled();
+  });
+
+  it("takes the second action out of the document at construction (fr-2fbs)", () => {
+    // The shipped markup declares it; a Ui that has never shown a modal must
+    // still not have it in the page.
+    new Ui(document);
+
+    expect(exportDeliverBtn()).toBeNull();
+  });
+
+  it("leaves the second action out of the document for a run that did not offer one", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+
+    expect(exportDeliverBtn()).toBeNull();
+  });
+
+  it("puts the second action into the dialog, before Cancel, with the caller's own label", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+      deliverEarly: { label: "Save now (rough)" },
+    });
+
+    const btn = exportDeliverBtn();
+    expect(btn?.textContent).toBe("Save now (rough)");
+    expect(btn?.nextElementSibling).toBe(exportCancelBtn());
+  });
+
+  it("takes the second action back out on the next run that does not offer it", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+      deliverEarly: { label: "Save now (rough)" },
+    });
+
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+
+    expect(exportDeliverBtn()).toBeNull();
+  });
+
+  it("takes the second action out again when the modal hides, not just on the next run", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+      deliverEarly: { label: "Save now (rough)" },
+    });
+
+    ui.hideExportProgress();
+
+    // Between runs nothing is offering it, so nothing may be able to find it.
+    expect(exportDeliverBtn()).toBeNull();
+  });
+
+  it("re-offers the second action on a later run after one that did not", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+      deliverEarly: { label: "Save now (rough)" },
+    });
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+      deliverEarly: { label: "Save now (rough)" },
+    });
+
+    expect(exportDeliverBtn()?.nextElementSibling).toBe(exportCancelBtn());
+  });
+
+  it("second-action click fires onExportDeliverEarly, not onExportCancel", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+      deliverEarly: { label: "Save now (rough)" },
+    });
+
+    exportDeliverBtn()?.click();
+
+    expect(handlers.onExportDeliverEarly).toHaveBeenCalledTimes(1);
+    expect(handlers.onExportCancel).not.toHaveBeenCalled();
+  });
+
+  it("Escape stays cancel-only while the second action is on offer", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+      deliverEarly: { label: "Save now (rough)" },
+    });
+
+    pressEscape();
+
+    // An accidental Escape must not commit a deliberately coarser PNG.
+    expect(handlers.onExportCancel).toHaveBeenCalledTimes(1);
+    expect(handlers.onExportDeliverEarly).not.toHaveBeenCalled();
+  });
+
+  it("opens with Cancel focused even when the second action is offered", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+      deliverEarly: { label: "Save now (rough)" },
+    });
+
+    expect(document.activeElement).toBe(exportCancelBtn());
+  });
+
+  it("Tab reaches the second action instead of pinning to Cancel", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+      deliverEarly: { label: "Save now (rough)" },
+    });
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab" }));
+
+    expect(document.activeElement).toBe(exportDeliverBtn());
+  });
+
+  it("Tab still pins to Cancel when no second action is offered", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab" }));
+
+    expect(document.activeElement).toBe(exportCancelBtn());
   });
 
   it("clicking the backdrop does not close the modal", () => {

@@ -3884,6 +3884,16 @@ function main(): void {
      * down for its duration — a surface export that held the tracer here
      * would be waiting for a first frame it had itself prevented. */
     awaitReady?: (run: ExportRun) => Promise<string | null>;
+    /** The export modal's second action (fr-2fbs), present only for a wait
+     * with a partial to hand over — see {@link renderExportOffersEarlySave}.
+     * `taken()` is read back AFTER the capture: it answers what actually
+     * happened rather than what was pressed, so a press the finished render
+     * beat to the line does not get labelled rough. */
+    deliverEarly?: {
+      label: string;
+      onDeliver: () => void;
+      taken: () => boolean;
+    };
     capture: (run: ExportRun) => Promise<ExportImage | null>;
   }
 
@@ -3911,6 +3921,64 @@ function main(): void {
   }
 
   /**
+   * Whether a mode's {@link renderExportReady} wait can ever be cut short
+   * with a picture (fr-2fbs) — the one thing that decides whether the export
+   * modal offers its second action.
+   *
+   * FLAME ALONE, and structurally so. Its canvas already holds every
+   * iteration the worker has landed and IS the export (fr-2urv), so cutting
+   * the wait short delivers a real image — coarser, per the adaptive
+   * re-filter in {@link renderExportReady}'s doc, but the picture on screen.
+   * The other two waits have nothing to give: solid's is for the voxel grid
+   * its raymarch needs as INPUT, and surface's is for a first frame — before
+   * either lands there is no partial, only an empty capture.
+   *
+   * {@link planRenderWait} is the only reader, which is the point of it
+   * being a predicate: no arm of {@link planPngExport} restates the rule, so
+   * no future arm can offer the action by copying its neighbour.
+   */
+  function renderExportOffersEarlySave(
+    mode: "flame" | "solid" | "surface",
+  ): boolean {
+    return mode === "flame";
+  }
+
+  /**
+   * Whether the partial {@link renderExportOffersEarlySave} promises exists
+   * RIGHT NOW — what {@link awaitRenderExportable} honours a press against.
+   *
+   * The flame canvas only becomes THIS session's picture at THIS session's
+   * size when the worker's first chunk lands (`markFirstFrame`, beside the
+   * `setFlameImage` that resizes it); the `restarted` event's deliberate
+   * lack of one says the same thing from the other side. Until then the
+   * canvas still holds the PREVIOUS session's image at the PREVIOUS
+   * session's size — and the Export-size select restarts the session on
+   * purpose (fr-2urv), so this is not a corner: it is the headline case.
+   *
+   * MEASURED, on the first cut of this, which honoured a press with no such
+   * gate: 4x, pressed the moment the modal appeared, delivered an 820x540
+   * PNG byte-identical to the 1x render it had just replaced, with the modal
+   * quoting "3280 × 2160" beside it — fr-61a2's own wrong-subject,
+   * wrong-size export, re-entered through the new door. So the press LATCHES
+   * (`ExportRun.stop` is terminal) and delivers the instant a frame of this
+   * session's own exists, which makes the early save exactly "wait for the
+   * first frame instead of the whole budget" — the wait the solid and
+   * surface arms do outright.
+   */
+  function renderExportPartialReady(
+    mode: "flame" | "solid" | "surface",
+  ): boolean {
+    return renderExportOffersEarlySave(mode) && flameSession.hasFirstFrame;
+  }
+
+  /** The export modal's early-save label (fr-2fbs). "Save now" says what the
+   * button does; "(rough)" is the part that had to be there — the picture it
+   * saves is categorically coarser than the one the wait is for, and a bare
+   * "Save now" beside a percent readout would read as "save the finished
+   * thing, sooner". The toast the file lands with echoes the same word. */
+  const EXPORT_SAVE_EARLY_LABEL = "Save now (rough)";
+
+  /**
    * Block a Save-PNG until {@link renderExportReady}, disclosing the wait
    * through the export modal.
    *
@@ -3935,6 +4003,13 @@ function main(): void {
   ): Promise<string | null> {
     while (!renderExportReady(mode)) {
       if (run.cancelled) return null;
+      // The user asked for the picture AS IT STANDS (fr-2fbs). Tested AFTER
+      // the loop's own condition, which is what settles the race when the
+      // budget is met in the same turn as the press: a ready render exits
+      // the loop first and the FINISHED picture saves. That ordering is the
+      // one that can't disappoint — "save now" gets a save now either way,
+      // and only the coarser outcome is ever labelled coarse.
+      if (run.stop === "deliver" && renderExportPartialReady(mode)) return null;
       if (state.renderMode !== mode) return EXPORT_RENDER_STOPPED_NOTE;
       // Flame is the only arm with real coverage to show — a solid grid and
       // a surface first frame arrive whole, so the honest percent for those
@@ -3943,6 +4018,44 @@ function main(): void {
       await nextRenderSignal();
     }
     return null;
+  }
+
+  /**
+   * The wait a Save-PNG does before capturing, plus — for the one mode whose
+   * wait has a picture to hand over — the modal action that cuts it short
+   * (fr-2fbs).
+   *
+   * Built here rather than arm by arm so that "which modes offer the early
+   * save" is one predicate consulted in one place: an arm of
+   * {@link planPngExport} asks for its mode's wait and receives whatever
+   * affordances that mode has earned, and cannot spell out a different
+   * answer. `taken` is settled from the world at the moment the wait
+   * resolves — a `"deliver"` stop that the finished render beat to the line
+   * leaves `renderExportReady` true, and the capture that follows is the
+   * ordinary complete one.
+   */
+  function planRenderWait(
+    mode: "flame" | "solid" | "surface",
+  ): Pick<PngExportPlan, "awaitReady" | "deliverEarly"> {
+    if (!renderExportOffersEarlySave(mode)) {
+      return { awaitReady: (run) => awaitRenderExportable(mode, run) };
+    }
+    let early = false;
+    return {
+      deliverEarly: {
+        label: EXPORT_SAVE_EARLY_LABEL,
+        // The wait is parked on nothing but render signals, and the next
+        // one can be a whole accumulation chunk away — the same reason
+        // savePng's onCancel wakes it (fr-61a2).
+        onDeliver: notifyRenderSignal,
+        taken: () => early,
+      },
+      awaitReady: async (run) => {
+        const blocked = await awaitRenderExportable(mode, run);
+        early = run.stop === "deliver" && !renderExportReady(mode);
+        return blocked;
+      },
+    };
   }
 
   /**
@@ -3984,7 +4097,7 @@ function main(): void {
           // missing hook.
           surfaceComputeRenderer?.cancel();
         },
-        awaitReady: (run) => awaitRenderExportable("surface", run),
+        ...planRenderWait("surface"),
         capture: (run) => {
           // Read at capture time, not plan time: awaitReady may have waited
           // out the compute gate, and that gate is what decides this.
@@ -4018,7 +4131,7 @@ function main(): void {
         // downloaded.
         cancellable: true,
         holdsSurfaceTracer: false,
-        awaitReady: (run) => awaitRenderExportable("solid", run),
+        ...planRenderWait("solid"),
         capture: () => scene.captureSolidFrame(scale),
       };
     }
@@ -4039,7 +4152,12 @@ function main(): void {
         predictedMs: null,
         cancellable: true,
         holdsSurfaceTracer: false,
-        awaitReady: (run) => awaitRenderExportable("flame", run),
+        // The one wait that offers the early save (fr-2fbs): this canvas is
+        // already the export, at the export size, so stopping the wait
+        // delivers what is on screen at the resolution asked for — and the
+        // budget it is waiting out scales with the export AREA, so 4x is
+        // 16x the wait and exactly where the escape is worth having.
+        ...planRenderWait("flame"),
         capture: () => scene.captureFlameFrame(),
       };
     }
@@ -4054,8 +4172,12 @@ function main(): void {
     };
   }
 
-  /** Hand a captured still to the browser as a timestamped download. */
-  function deliverPng(image: ExportImage | null): void {
+  /** Hand a captured still to the browser as a timestamped download.
+   * `rough` says the user cut a render's wait short (fr-2fbs) and this file
+   * is the unfinished picture they asked for — the toast is the only record
+   * of that once the modal is gone, and a file that looks noisier than the
+   * screen it came from should not have to be explained by memory. */
+  function deliverPng(image: ExportImage | null, rough = false): void {
     if (!image) {
       ui.flashToast("Couldn't encode the PNG");
       return;
@@ -4064,7 +4186,9 @@ function main(): void {
     // The device ceilings may have clamped the export below the chosen
     // multiple (scene.exportPixelRatio / the flame memory clamp), so
     // report the size that actually saved.
-    ui.flashToast(`Saved ${image.width}×${image.height} PNG`);
+    ui.flashToast(
+      `Saved ${image.width}×${image.height} PNG${rough ? " · rough" : ""}`,
+    );
   }
 
   /**
@@ -4081,6 +4205,9 @@ function main(): void {
       detail: plan.detail,
       predictedMs: plan.predictedMs,
       cancellable: plan.cancellable,
+      // Absent on every arm but flame's (fr-2fbs), which is what keeps the
+      // modal a one-button dialog everywhere else.
+      deliverEarly: plan.deliverEarly,
       onCancel: () => {
         plan.onCancel?.();
         // Wake a wait parked in awaitRenderExportable (fr-61a2): its only
@@ -4126,7 +4253,7 @@ function main(): void {
         ui.flashToast("Export cancelled");
         return;
       }
-      deliverPng(image);
+      deliverPng(image, plan.deliverEarly?.taken() ?? false);
     } catch (err: unknown) {
       if (run.cancelled) {
         ui.flashToast("Export cancelled");
@@ -6531,6 +6658,9 @@ function main(): void {
     },
     onExportCancel: () => {
       exportProgress.requestCancel();
+    },
+    onExportDeliverEarly: () => {
+      exportProgress.requestDeliverEarly();
     },
     onSelect: (index) => {
       state = selectTransform(state, index);

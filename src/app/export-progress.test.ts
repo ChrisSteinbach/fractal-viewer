@@ -6,7 +6,11 @@ import {
   EXPORT_MODAL_SLOW_PREDICTION_MS,
   EXPORT_MODAL_TICK_MS,
 } from "./export-progress";
-import type { ExportProgressDeps, ExportProgressView } from "./export-progress";
+import type {
+  ExportProgressDeps,
+  ExportProgressInit,
+  ExportProgressView,
+} from "./export-progress";
 
 /**
  * A manual clock plus a fake one-shot timer registry, and a view that
@@ -19,7 +23,7 @@ import type { ExportProgressDeps, ExportProgressView } from "./export-progress";
  */
 function harness(): {
   deps: ExportProgressDeps;
-  shows: { title: string; detail: string; cancellable: boolean }[];
+  shows: ExportProgressInit[];
   statuses: { pct: number | null; note: string }[];
   hides: number[];
   advance: (ms: number) => void;
@@ -30,7 +34,7 @@ function harness(): {
   let now = 0;
   let nextTimerId = 1;
   const timers = new Map<number, { fn: () => void; ms: number }>();
-  const shows: { title: string; detail: string; cancellable: boolean }[] = [];
+  const shows: ExportProgressInit[] = [];
   const statuses: { pct: number | null; note: string }[] = [];
   const hides: number[] = [];
 
@@ -497,6 +501,241 @@ describe("createExportProgress", () => {
     expect(driver.active).toBe(true);
     // No leaked tick timer from the first run — only the second run's tick is live.
     expect(h.timers.size).toBe(1);
+  });
+
+  it("shows no second action, and no stop, for a run that never asked for one", () => {
+    const h = harness();
+    const driver = createExportProgress(h.deps);
+    const run = driver.begin({
+      title: "Saving PNG",
+      detail: "1920 × 1080",
+      predictedMs: EXPORT_MODAL_SLOW_PREDICTION_MS + 1,
+      cancellable: true,
+      onCancel: () => {},
+    });
+
+    // The pre-fr-2fbs init, key for key — the view must see nothing new.
+    expect(h.shows).toEqual([
+      { title: "Saving PNG", detail: "1920 × 1080", cancellable: true },
+    ]);
+    expect(h.shows[0].deliverEarly).toBeUndefined();
+    expect(run.stop).toBeNull();
+  });
+
+  it("passes the second action's label through to the view when one is supplied", () => {
+    const h = harness();
+    const driver = createExportProgress(h.deps);
+    driver.begin({
+      title: "Saving PNG",
+      detail: "3840 × 2160",
+      predictedMs: EXPORT_MODAL_SLOW_PREDICTION_MS + 1,
+      cancellable: true,
+      onCancel: () => {},
+      deliverEarly: { label: "Save now (rough)", onDeliver: () => {} },
+    });
+
+    expect(h.shows).toEqual([
+      {
+        title: "Saving PNG",
+        detail: "3840 × 2160",
+        cancellable: true,
+        deliverEarly: { label: "Save now (rough)" },
+      },
+    ]);
+  });
+
+  it("requestDeliverEarly() stops the run as a DELIVER, leaving cancelled false", () => {
+    const h = harness();
+    const driver = createExportProgress(h.deps);
+    const run = driver.begin({
+      title: "t",
+      detail: "d",
+      predictedMs: EXPORT_MODAL_SLOW_PREDICTION_MS + 1,
+      cancellable: true,
+      onCancel: () => {},
+      deliverEarly: { label: "Save now (rough)", onDeliver: () => {} },
+    });
+
+    driver.requestDeliverEarly();
+
+    expect(run.stop).toBe("deliver");
+    // The whole point of the third state: a caller reading only `cancelled`
+    // must not throw away the file this press asked for.
+    expect(run.cancelled).toBe(false);
+  });
+
+  it("requestDeliverEarly() fires onDeliver exactly once, and never onCancel", () => {
+    const h = harness();
+    const driver = createExportProgress(h.deps);
+    let cancelCount = 0;
+    let deliverCount = 0;
+    driver.begin({
+      title: "t",
+      detail: "d",
+      predictedMs: EXPORT_MODAL_SLOW_PREDICTION_MS + 1,
+      cancellable: true,
+      onCancel: () => {
+        cancelCount++;
+      },
+      deliverEarly: {
+        label: "Save now (rough)",
+        onDeliver: () => {
+          deliverCount++;
+        },
+      },
+    });
+
+    driver.requestDeliverEarly();
+    driver.requestDeliverEarly(); // pressed again
+
+    expect(deliverCount).toBe(1);
+    expect(cancelCount).toBe(0);
+  });
+
+  it("requestCancel() still stops the run as a CANCEL when a second action is on offer", () => {
+    const h = harness();
+    const driver = createExportProgress(h.deps);
+    const run = driver.begin({
+      title: "t",
+      detail: "d",
+      predictedMs: EXPORT_MODAL_SLOW_PREDICTION_MS + 1,
+      cancellable: true,
+      onCancel: () => {},
+      deliverEarly: { label: "Save now (rough)", onDeliver: () => {} },
+    });
+
+    driver.requestCancel();
+
+    expect(run.stop).toBe("cancel");
+    expect(run.cancelled).toBe(true);
+  });
+
+  it("requestDeliverEarly() on a run that never offered the action is a no-op", () => {
+    const h = harness();
+    const driver = createExportProgress(h.deps);
+    const run = driver.begin({
+      title: "t",
+      detail: "d",
+      predictedMs: EXPORT_MODAL_SLOW_PREDICTION_MS + 1,
+      cancellable: true,
+      onCancel: () => {},
+    });
+
+    driver.requestDeliverEarly();
+
+    expect(run.stop).toBeNull();
+  });
+
+  it("requestDeliverEarly() with no active run is a no-op and does not throw", () => {
+    const h = harness();
+    const driver = createExportProgress(h.deps);
+
+    expect(() => driver.requestDeliverEarly()).not.toThrow();
+    expect(driver.active).toBe(false);
+  });
+
+  it("a Cancel pressed after the early save lands on an outcome already decided", () => {
+    const h = harness();
+    const driver = createExportProgress(h.deps);
+    let cancelCount = 0;
+    const run = driver.begin({
+      title: "t",
+      detail: "d",
+      predictedMs: EXPORT_MODAL_SLOW_PREDICTION_MS + 1,
+      cancellable: true,
+      onCancel: () => {
+        cancelCount++;
+      },
+      deliverEarly: { label: "Save now (rough)", onDeliver: () => {} },
+    });
+
+    driver.requestDeliverEarly();
+    driver.requestCancel();
+
+    expect(run.stop).toBe("deliver"); // the first stop wins
+    expect(run.cancelled).toBe(false);
+    expect(cancelCount).toBe(0);
+  });
+
+  it("an early save pressed after a Cancel lands on an outcome already decided", () => {
+    const h = harness();
+    const driver = createExportProgress(h.deps);
+    let deliverCount = 0;
+    const run = driver.begin({
+      title: "t",
+      detail: "d",
+      predictedMs: EXPORT_MODAL_SLOW_PREDICTION_MS + 1,
+      cancellable: true,
+      onCancel: () => {},
+      deliverEarly: {
+        label: "Save now (rough)",
+        onDeliver: () => {
+          deliverCount++;
+        },
+      },
+    });
+
+    driver.requestCancel();
+    driver.requestDeliverEarly();
+
+    expect(run.stop).toBe("cancel");
+    expect(deliverCount).toBe(0);
+  });
+
+  it("pins the note to the saving message through further reports until end()", () => {
+    const h = harness();
+    const driver = createExportProgress(h.deps);
+    const run = driver.begin({
+      title: "t",
+      detail: "d",
+      predictedMs: EXPORT_MODAL_SLOW_PREDICTION_MS + 1,
+      cancellable: true,
+      onCancel: () => {},
+      deliverEarly: { label: "Save now (rough)", onDeliver: () => {} },
+    });
+
+    run.report(0.37);
+    driver.requestDeliverEarly();
+    expect(h.statuses[h.statuses.length - 1]).toEqual({
+      pct: 37,
+      note: "Saving this frame…",
+    });
+
+    h.advance(4000);
+    h.fireAll(); // the tick keeps pushing, but the elapsed clock is done
+    expect(h.statuses[h.statuses.length - 1]).toEqual({
+      pct: 37,
+      note: "Saving this frame…",
+    });
+    expect(h.hides).toEqual([]); // still up — delivering is not instant either
+
+    run.end();
+    expect(h.hides.length).toBe(1);
+  });
+
+  it("requestDeliverEarly() before the grace timer fires never shows the modal", () => {
+    const h = harness();
+    const driver = createExportProgress(h.deps);
+    let deliverCount = 0;
+    const run = driver.begin({
+      title: "t",
+      detail: "d",
+      predictedMs: null,
+      cancellable: true,
+      onCancel: () => {},
+      deliverEarly: {
+        label: "Save now (rough)",
+        onDeliver: () => {
+          deliverCount++;
+        },
+      },
+    });
+
+    driver.requestDeliverEarly();
+
+    expect(run.stop).toBe("deliver");
+    expect(deliverCount).toBe(1);
+    expect(h.shows).toEqual([]);
   });
 
   it("active is true between begin() and end(), false before and after", () => {
