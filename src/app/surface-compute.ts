@@ -319,7 +319,7 @@ export interface SurfaceComputeFrameSpec {
    * at every spec assembly so the R slider is live per-frame, exactly
    * view4's rotor/slice discipline across the WebGPU seam. REQUIRED when
    * the session's target was created with `balloon: true` (runFrame
-   * throws without it — the balloon kernel's params struct is 304 bytes
+   * throws without it — the balloon kernel's params struct is 320 bytes
    * and has no meaningful default); ignored otherwise. */
   balloon?: { center: Vec3; rho: number; R: number; far: number };
   /** Depth-fog density multiplier (fr-5h5d) — the WGSL params struct's
@@ -340,7 +340,7 @@ export interface SurfaceComputeFrameSpec {
    * backdrop either way. */
   fogTintStrength?: number;
   /** Ground plane block (fr-rhn5) — REQUIRED whenever the session's
-   * target carried `groundPlane: true` (the kernels' 320-byte params
+   * target carried `groundPlane: true` (the kernels' 336-byte params
    * struct has no meaningful default; view4/balloon's required-throw
    * discipline), ignored otherwise. Re-derived from scene state at every
    * spec assembly like the balloon block. */
@@ -1118,7 +1118,8 @@ export class SurfaceComputeRenderer {
             : SURFACE_GPU_PARAMS4_BYTES
           : target.kind === "ifs" && target.balloon === true
             ? // fr-5wlv.5: the balloon kernel's params struct appends the
-              // balloon block at the frozen offset 272.
+              // balloon block at the frozen offset 288 (272 before
+              // fr-s9ll's lens-fold quartet took that slot).
               SURFACE_GPU_PARAMS_BALLOON_BYTES
             : target.groundPlane === true
               ? // fr-rhn5: the plane kernel's params struct appends the
@@ -1141,8 +1142,9 @@ export class SurfaceComputeRenderer {
     // forking every layout/bind-group path. The ESCAPE kernel DOES read
     // it (fr-s04t: one GpuMap per chain link, the document's transform
     // list being the formula sequence). A 4D target packs the
-    // GpuMap4 layout (128-byte stride since fr-rsp6 grew it to eight
-    // vec4s for the fold lanes; its own field contract).
+    // GpuMap4 layout (144-byte stride: eight vec4s since fr-rsp6's fold
+    // lanes, nine since fr-s9ll's authored fold radii; its own field
+    // contract).
     const mapsData =
       target.kind === "escape"
         ? new Float32Array(packEscapeGpuMaps(target.de))
@@ -1780,7 +1782,7 @@ export class SurfaceComputeRenderer {
     // meaningful default).
     const target = this.target;
     // fr-rhn5: a plane session's spec must carry the live floor block
-    // (view4/balloon's required-throw discipline — the 320-byte kernel
+    // (view4/balloon's required-throw discipline — the 336-byte kernel
     // struct has no meaningful default); a no-plane session ignores any
     // stray spec.groundPlane — its buffer never grew.
     const groundPlane =
@@ -1819,9 +1821,9 @@ export class SurfaceComputeRenderer {
             : (() => {
                 // fr-5wlv.5: a balloon session's spec must carry the live
                 // balloon block (the R slider's per-frame door — view4's
-                // required-throw discipline; the 304-byte kernel struct has
+                // required-throw discipline; the 320-byte kernel struct has
                 // no meaningful default). A no-balloon session ignores any
-                // stray spec.balloon — its buffer is 272 bytes.
+                // stray spec.balloon — its buffer is 288 bytes.
                 if (target.balloon === true) {
                   const balloon = spec.balloon;
                   if (!balloon) {

@@ -910,7 +910,7 @@ export class FractalScene {
    * inverted-union wrapper (fr-5wlv.5) — the SESSION's record, frozen at
    * {@link enterSurfaceComputeSession} beside the create-target's flag,
    * deliberately distinct from the live {@link surfaceBalloonOn} toggle:
-   * a balloon kernel's 304-byte params struct needs the spec's balloon
+   * a balloon kernel's 320-byte params struct needs the spec's balloon
    * block on EVERY frame of the session, however the toggle moves before
    * the restart lands (a toggle flip re-enters the session with fresh
    * kernels). While true every frame spec carries the live
@@ -919,7 +919,7 @@ export class FractalScene {
   private surfaceComputeBalloon = false;
   /** Whether the ACTIVE compute session's kernels carry the ground-plane
    * arm (fr-rhn5) — the {@link surfaceComputeBalloon} discipline:
-   * created-with is what the 320-byte params struct needs on EVERY frame
+   * created-with is what the 336-byte params struct needs on EVERY frame
    * of the session, however the toggle moves before the restart lands.
    * While true every frame spec carries the live floor block re-derived
    * from the stored ball. */
@@ -3187,7 +3187,7 @@ export class FractalScene {
    * the inverted-union wrapper — pass exactly the create-target's flag —
    * and re-derives the ball from the DE (the WebGL install path's
    * {@link setSurfaceSystem} move, which never runs here), so every
-   * frame spec can attach the live center/rho/R/far block the 304-byte
+   * frame spec can attach the live center/rho/R/far block the 320-byte
    * params struct expects.
    */
   enterSurfaceComputeSession(
@@ -3203,7 +3203,7 @@ export class FractalScene {
     // The floor flag (fr-rhn5) records the create-target's choice exactly
     // like `balloon` above; the ball it drops under is re-derived from
     // the DE so every frame spec can attach the live floor block the
-    // 320-byte params struct expects.
+    // 336-byte params struct expects.
     this.surfaceGroundBall = balloonBall(de);
     this.surfaceComputeGroundPlane = groundPlane;
     this.surfaceFullMaxDepth = de.maxDepth;
@@ -3470,7 +3470,7 @@ export class FractalScene {
         : {}),
       // The balloon session's live block (fr-5wlv.5): keyed on the
       // SESSION flag — the kernels were compiled with the wrapper and
-      // their 304-byte params struct — with values re-derived from the
+      // their 320-byte params struct — with values re-derived from the
       // stored ball + rMult at every assembly, so the R slider is live
       // per frame exactly like the rotor/slice above.
       ...(() => {
@@ -3480,7 +3480,7 @@ export class FractalScene {
       })(),
       // The floor session's live block (fr-rhn5): keyed on the SESSION
       // flag — the kernels were compiled with the plane arm and their
-      // 320-byte params struct — with values re-derived from the stored
+      // 336-byte params struct — with values re-derived from the stored
       // ball at every assembly, the balloon block's discipline above.
       ...(() => {
         if (!this.surfaceComputeGroundPlane) return {};
