@@ -177,6 +177,34 @@ function pureQSquareVariation(t: Transform): Variation | null {
 }
 
 /**
+ * True when the document carries an active `qsquare` variation ANYWHERE —
+ * an iterated map (weight > 0) or the final transform — whether or not it
+ * is that map's only active variation. Broader than {@link
+ * pureQSquareVariation} on purpose: this is not asking whether the
+ * quaternion-Julia estimator applies (that needs a lone, pure map, per
+ * {@link analyzeQJuliaSystem}), only whether `surface-de.ts`'s ordinary
+ * "uses variations" surface-eligibility refusal is about to describe a
+ * qsquare map without saying so. fr-zi3c's fix (`main.ts`'s eligibility
+ * refresh) calls this to append a clarifying clause to that refusal —
+ * deliberately not a renderer; see the module doc's standing note on
+ * fr-7u8t.5.
+ */
+export function systemHasActiveQSquare(
+  transforms: Transform[],
+  finalTransform: Transform | null = null,
+): boolean {
+  const hasQSquare = (t: Transform): boolean =>
+    (t.variations ?? []).some(
+      (v) =>
+        v.type === "qsquare" && Number.isFinite(v.weight) && v.weight !== 0,
+    );
+  return (
+    transforms.some((t) => (t.weight ?? 1) > 0 && hasQSquare(t)) ||
+    (finalTransform !== null && hasQSquare(finalTransform))
+  );
+}
+
+/**
  * Classify a system for the quaternion Julia render (module doc). A sibling
  * of `analyzeEscapeSystem`, deliberately without its contraction clause.
  */

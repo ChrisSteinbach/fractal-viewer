@@ -43,8 +43,9 @@ export const VARIATION_TYPES = [
   // transform's translation as the Julia constant `c`, this is the map
   // `qjulia-de.ts`'s oracle estimates. NOTHING MARCHES IT: the renderer is
   // fr-7u8t.5, CLOSED won't-do — refused by measurement — so authoring a
-  // `qsquare` map and pressing Surface gets the ordinary "uses variations"
-  // refusal (fr-zi3c). The route that could still reach it is fr-j231,
+  // `qsquare` map and pressing Surface is refused. Since fr-zi3c that
+  // refusal at least NAMES the map, appending a clause to the ordinary
+  // "uses variations" reason. The route that could still reach it is fr-j231,
   // where the map is a chain LINK rather than an object of its own. It
   // renders as a plain nonlinear warp in every other mode.
   "qsquare",
