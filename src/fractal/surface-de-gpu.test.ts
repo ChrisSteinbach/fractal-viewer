@@ -162,8 +162,8 @@ function kernelOpts(
 }
 
 describe("packSurfaceGpuParams byte length", () => {
-  it("returns an ArrayBuffer of exactly SURFACE_GPU_PARAMS_BYTES (272 bytes since the fr-55s1 lens block, per the module doc)", () => {
-    expect(SURFACE_GPU_PARAMS_BYTES).toBe(272);
+  it("returns an ArrayBuffer of exactly SURFACE_GPU_PARAMS_BYTES (288 bytes since fr-s9ll appended the lens fold's lengths to the fr-55s1 lens block, per the module doc)", () => {
+    expect(SURFACE_GPU_PARAMS_BYTES).toBe(288);
     const de = buildSurfaceDE(foldSystemTransforms());
     const buf = packSurfaceGpuParams(de, { itemCount: 5 });
     expect(buf).toBeInstanceOf(ArrayBuffer);
@@ -429,7 +429,7 @@ describe("packSurfaceGpuParams final-transform lens", () => {
     );
   });
 
-  it("balloon third-arg null (and omitted) returns today's 272-byte buffer byte for byte (fr-5wlv.5)", () => {
+  it("balloon third-arg null (and omitted) returns today's base-size buffer byte for byte (fr-5wlv.5)", () => {
     const de = buildSurfaceDE(foldSystemTransforms(), affineFinalTransform());
     const omitted = new Uint8Array(packSurfaceGpuParams(de, { itemCount: 3 }));
     const explicit = new Uint8Array(
@@ -439,8 +439,8 @@ describe("packSurfaceGpuParams final-transform lens", () => {
     expect(explicit).toEqual(omitted);
   });
 
-  it("packs the balloon block at the frozen 272..303 offsets from buildBalloon's numbers, growing the buffer to 304 without touching 0..271 (fr-5wlv.5)", () => {
-    expect(SURFACE_GPU_PARAMS_BALLOON_BYTES).toBe(304);
+  it("packs the balloon block at the frozen 288..319 offsets from buildBalloon's numbers, growing the buffer to 320 without touching 0..287 (fr-5wlv.5; fr-s9ll moved the shared block from 272)", () => {
+    expect(SURFACE_GPU_PARAMS_BALLOON_BYTES).toBe(320);
     const de = buildSurfaceDE(foldSystemTransforms());
     // The oracle link: the packed block is buildBalloon's convention —
     // MARGINED rho as the divisor, R in world units, the far cap in raw
@@ -459,18 +459,18 @@ describe("packSurfaceGpuParams final-transform lens", () => {
     expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS_BALLOON_BYTES);
     expect(new Uint8Array(buf, 0, SURFACE_GPU_PARAMS_BYTES)).toEqual(plain);
     const view = new DataView(buf);
-    expect(view.getFloat32(272, true)).toBe(Math.fround(b.center[0]));
-    expect(view.getFloat32(276, true)).toBe(Math.fround(b.center[1]));
-    expect(view.getFloat32(280, true)).toBe(Math.fround(b.center[2]));
-    expect(view.getFloat32(284, true)).toBe(
+    expect(view.getFloat32(288, true)).toBe(Math.fround(b.center[0]));
+    expect(view.getFloat32(292, true)).toBe(Math.fround(b.center[1]));
+    expect(view.getFloat32(296, true)).toBe(Math.fround(b.center[2]));
+    expect(view.getFloat32(300, true)).toBe(
       Math.fround(ball.radius * BALLOON_RHO_MARGIN),
     );
-    expect(view.getFloat32(288, true)).toBe(Math.fround(1.6 * ball.radius));
-    expect(view.getFloat32(292, true)).toBe(
+    expect(view.getFloat32(304, true)).toBe(Math.fround(1.6 * ball.radius));
+    expect(view.getFloat32(308, true)).toBe(
       Math.fround(BALLOON_FAR_CAP_RHO * ball.radius),
     );
-    expect(view.getFloat32(296, true)).toBe(0);
-    expect(view.getFloat32(300, true)).toBe(0);
+    expect(view.getFloat32(312, true)).toBe(0);
+    expect(view.getFloat32(316, true)).toBe(0);
   });
 
   it("throws when a footprint is combined with the balloon (the fr-5wlv.5 cut boundary)", () => {
@@ -592,7 +592,9 @@ describe("packSurfaceGpuParams run overrides", () => {
 
 describe("packSurfaceGpuMaps", () => {
   it("packs each map's invM/invT/sigmaMin/foldInvW/foldSigma/foldKind/bnbDir/invTNorm/invMSigmaMin at the documented word offsets", () => {
-    expect(SURFACE_GPU_MAP_VEC4).toBe(6);
+    // Grown 6 -> 7 by fr-s9ll: the `fold` lane carrying the map's three
+    // AUTHORED fold lengths, pinned by its own test below.
+    expect(SURFACE_GPU_MAP_VEC4).toBe(7);
     const de = buildSurfaceDE(foldSystemTransforms());
     const out = packSurfaceGpuMaps(de);
     const stride = SURFACE_GPU_MAP_VEC4 * 4;
@@ -642,6 +644,218 @@ describe("packSurfaceGpuMaps", () => {
     const stride = SURFACE_GPU_MAP_VEC4 * 4;
     expect(out.length).toBe(stride);
     expect(Array.from(out)).toEqual(new Array(stride).fill(0));
+  });
+});
+
+describe("the fold's authored lengths on the wire (fr-s9ll)", () => {
+  it("carries each 3D map's OWN authored lengths in the fold lane, not the classic set", () => {
+    // Two folds with different apparatus, every length exactly
+    // representable in f32 and no two equal — a lane swap shows up as the
+    // wrong number rather than a coincidental match. Both stay inside the
+    // contraction gate: |w|·(fR²/mR²)·sigma_max is 0.8 and 0.72.
+    const de = buildSurfaceDE([
+      {
+        id: 0,
+        position: [0.4, 0.1, 0],
+        rotation: [0.3, 0.2, 0],
+        scale: [0.45, 0.45, 0.45],
+        variations: [
+          {
+            type: "mandelbox",
+            weight: 1,
+            minRadius: 0.375,
+            fixedRadius: 0.5,
+            boxLimit: 0.75,
+          },
+        ],
+      },
+      {
+        id: 1,
+        position: [-0.35, -0.2, 0.3],
+        rotation: [0, 0.5, 0.1],
+        scale: [0.2, 0.2, 0.2],
+        variations: [
+          {
+            type: "spherefold",
+            weight: 0.9,
+            minRadius: 0.25,
+            fixedRadius: 0.5,
+            boxLimit: 2,
+          },
+        ],
+      },
+    ]);
+    const stride = SURFACE_GPU_MAP_VEC4 * 4;
+    const out = packSurfaceGpuMaps(de);
+    expect(Array.from(out.slice(24, 28))).toEqual([0.375, 0.5, 0.75, 0]);
+    expect(Array.from(out.slice(stride + 24, stride + 28))).toEqual([
+      0.25, 0.5, 2, 0,
+    ]);
+  });
+
+  it("carries the classic (0.5, 1, 1) for a fold that authored none of them — the wire's own 'absent means classic'", () => {
+    const de = buildSurfaceDE(foldSystemTransforms());
+    const stride = SURFACE_GPU_MAP_VEC4 * 4;
+    const out = packSurfaceGpuMaps(de);
+    de.maps.forEach((_, j) => {
+      expect(Array.from(out.slice(j * stride + 24, j * stride + 28))).toEqual([
+        0.5, 1, 1, 0,
+      ]);
+    });
+  });
+
+  it("carries the same three lengths one dimension up, so a 3D system and its 4D lift cannot disagree", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.4, 0.1, 0],
+        rotation: [0.3, 0.2, 0],
+        scale: [0.45, 0.45, 0.45],
+        variations: [
+          {
+            type: "boxfold",
+            weight: 1.25,
+            minRadius: 0.375,
+            fixedRadius: 0.5,
+            boxLimit: 0.75,
+          },
+        ],
+      },
+    ];
+    const out3 = packSurfaceGpuMaps(buildSurfaceDE(transforms));
+    const out4 = packSurfaceGpuMaps4(buildSurfaceDE4(transforms));
+    expect(Array.from(out3.slice(24, 28))).toEqual([0.375, 0.5, 0.75, 0]);
+    expect(Array.from(out4.slice(32, 36))).toEqual([0.375, 0.5, 0.75, 0]);
+  });
+
+  it("carries each escape LINK's lengths SQUARED, which is the form its forward orbit reads", () => {
+    // A chain whose two links hold DIFFERENT apparatus — the head
+    // parameterized, the tail leaving the sphere pair absent — so the
+    // per-link wire and the absent-means-classic rule are pinned together.
+    const de = buildEscapeDE([
+      {
+        id: 0,
+        position: [0.4, 0.3, 0.2],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [
+          {
+            type: "mandelbox",
+            weight: 2,
+            minRadius: 0.375,
+            fixedRadius: 0.5,
+            boxLimit: 0.75,
+          },
+        ],
+      },
+      {
+        id: 1,
+        position: [-0.1, 0.2, 0],
+        rotation: [0.2, 0, 0.1],
+        scale: [1, 1, 1],
+        variations: [{ type: "boxfold", weight: 1.5, boxLimit: 3 }],
+      },
+    ]);
+    const stride = SURFACE_GPU_MAP_VEC4 * 4;
+    const maps = packEscapeGpuMaps(de);
+    expect(Array.from(maps.slice(24, 28))).toEqual([0.140625, 0.25, 0.75, 0]);
+    expect(Array.from(maps.slice(stride + 24, stride + 28))).toEqual([
+      0.25, 1, 3, 0,
+    ]);
+  });
+
+  it("packs the fold LENS's own lengths into the params block, and zeros the slot when there is no lens", () => {
+    const lensed = buildSurfaceDE(foldSystemTransforms(), {
+      id: 98,
+      position: [0.12, -0.05, 0.08],
+      rotation: [0.3, 0.1, -0.2],
+      scale: [0.9, 0.9, 0.9],
+      variations: [
+        {
+          type: "spherefold",
+          weight: 0.9,
+          minRadius: 0.375,
+          fixedRadius: 1.5,
+          boxLimit: 0.75,
+        },
+      ],
+    });
+    const view = new DataView(packSurfaceGpuParams(lensed, { itemCount: 1 }));
+    expect(view.getFloat32(272, true)).toBe(0.375);
+    expect(view.getFloat32(276, true)).toBe(1.5);
+    expect(view.getFloat32(280, true)).toBe(0.75);
+    expect(view.getFloat32(284, true)).toBe(0);
+
+    const plain = buildSurfaceDE(foldSystemTransforms());
+    expect(plain.foldFinal).toBeNull();
+    const plainView = new DataView(
+      packSurfaceGpuParams(plain, { itemCount: 1 }),
+    );
+    expect(plainView.getFloat32(272, true)).toBe(0);
+    expect(plainView.getFloat32(276, true)).toBe(0);
+    expect(plainView.getFloat32(280, true)).toBe(0);
+  });
+
+  it("packs the 4D fold lens's lengths past the lens4 block", () => {
+    const de = buildSurfaceDE4(fourDFoldSystemTransforms(), {
+      id: 98,
+      position: [0.12, -0.05, 0.08],
+      rotation: [0.3, 0.1, -0.2],
+      scale: [0.9, 0.9, 0.9],
+      variations: [
+        {
+          type: "spherefold",
+          weight: 0.9,
+          minRadius: 0.375,
+          fixedRadius: 1.5,
+          boxLimit: 0.75,
+        },
+      ],
+    });
+    expect(de.foldFinal).not.toBeNull();
+    const view = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    expect(view.getFloat32(560, true)).toBe(0.375);
+    expect(view.getFloat32(564, true)).toBe(1.5);
+    expect(view.getFloat32(568, true)).toBe(0.75);
+    expect(view.getFloat32(572, true)).toBe(0);
+  });
+
+  it("derives the branch algebra from the wire in every kernel that enumerates fold branches, and in no other", () => {
+    for (const opts of [
+      kernelOpts({ core: "fold" }),
+      kernelOpts({ core: "fold4" }),
+      kernelOpts({ core: "affine", lens: true }),
+      kernelOpts({ core: "affine4", lens: true }),
+    ]) {
+      expect(surfaceDeKernelWgsl(opts)).toContain("fn foldRadiiOf(");
+    }
+    for (const opts of [
+      kernelOpts({ core: "affine" }),
+      kernelOpts({ core: "affine4" }),
+      kernelOpts({ core: "escape" }),
+      kernelOpts({ core: "bulb" }),
+    ]) {
+      expect(surfaceDeKernelWgsl(opts)).not.toContain("foldRadiiOf");
+    }
+  });
+
+  it("leaves no classic fold length baked into a fold body — the divergence fr-xb8o filed", () => {
+    for (const core of ["fold", "fold4"] as const) {
+      const src = surfaceDeKernelWgsl(kernelOpts({ core }));
+      expect(src).not.toContain("= 2.0 - u;");
+      expect(src).not.toContain("= -2.0 - u;");
+      expect(src).not.toContain("v = 0.25 * u;");
+      expect(src).not.toContain("sfSigma = 4.0;");
+      expect(src).not.toContain("max(ru - 2.0, 0.0)");
+      expect(src).not.toContain("max(1.0 - ru, 0.0)");
+    }
+    // The forward orbit reads its links' lengths straight off the wire
+    // instead, so the escape core's own two constants are gone as well.
+    const escape = surfaceDeKernelWgsl(kernelOpts({ core: "escape" }));
+    expect(escape).not.toContain("clamp(dot(y, y), 0.25, 1.0)");
+    expect(escape).not.toContain("clamp(y, vec3f(-1.0), vec3f(1.0))");
   });
 });
 
@@ -1596,8 +1810,8 @@ describe("groundPlane wrapper (fr-rhn5)", () => {
     ).toThrow(/3D-only/);
   });
 
-  it("packs the ground-plane block at the frozen 272..319 offsets, growing the buffer to SURFACE_GPU_PARAMS_PLANE_BYTES (320) without touching 0..271", () => {
-    expect(SURFACE_GPU_PARAMS_PLANE_BYTES).toBe(320);
+  it("packs the ground-plane block at the frozen 288..335 offsets, growing the buffer to SURFACE_GPU_PARAMS_PLANE_BYTES (336) without touching 0..287", () => {
+    expect(SURFACE_GPU_PARAMS_PLANE_BYTES).toBe(336);
     const de = buildSurfaceDE(foldSystemTransforms());
     const gp: SurfaceGpuGroundPlane = {
       y: 0.125,
@@ -1612,16 +1826,16 @@ describe("groundPlane wrapper (fr-rhn5)", () => {
     expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS_PLANE_BYTES);
     expect(new Uint8Array(buf, 0, SURFACE_GPU_PARAMS_BYTES)).toEqual(plain);
     const view = new DataView(buf);
-    expect(view.getFloat32(272, true)).toBe(Math.fround(gp.y));
-    expect(view.getFloat32(276, true)).toBe(Math.fround(gp.fadeStart));
-    expect(view.getFloat32(280, true)).toBe(Math.fround(gp.fadeEnd));
-    expect(view.getFloat32(284, true)).toBe(Math.fround(gp.ballRadius));
-    expect(view.getFloat32(288, true)).toBe(Math.fround(gp.ballCenter[0]));
-    expect(view.getFloat32(292, true)).toBe(Math.fround(gp.ballCenter[1]));
-    expect(view.getFloat32(296, true)).toBe(Math.fround(gp.ballCenter[2]));
-    expect(view.getFloat32(304, true)).toBe(Math.fround(gp.albedo[0]));
-    expect(view.getFloat32(308, true)).toBe(Math.fround(gp.albedo[1]));
-    expect(view.getFloat32(312, true)).toBe(Math.fround(gp.albedo[2]));
+    expect(view.getFloat32(288, true)).toBe(Math.fround(gp.y));
+    expect(view.getFloat32(292, true)).toBe(Math.fround(gp.fadeStart));
+    expect(view.getFloat32(296, true)).toBe(Math.fround(gp.fadeEnd));
+    expect(view.getFloat32(300, true)).toBe(Math.fround(gp.ballRadius));
+    expect(view.getFloat32(304, true)).toBe(Math.fround(gp.ballCenter[0]));
+    expect(view.getFloat32(308, true)).toBe(Math.fround(gp.ballCenter[1]));
+    expect(view.getFloat32(312, true)).toBe(Math.fround(gp.ballCenter[2]));
+    expect(view.getFloat32(320, true)).toBe(Math.fround(gp.albedo[0]));
+    expect(view.getFloat32(324, true)).toBe(Math.fround(gp.albedo[1]));
+    expect(view.getFloat32(328, true)).toBe(Math.fround(gp.albedo[2]));
   });
 
   it("omits the ground-plane 4th arg back to today's 272-byte packSurfaceGpuParams buffer, byte for byte", () => {
@@ -1668,19 +1882,19 @@ describe("groundPlane wrapper (fr-rhn5)", () => {
     const view = new DataView(buf);
     expect(view.getFloat32(256, true)).toBe(Math.fround(de.foldKind));
     expect(view.getFloat32(260, true)).toBe(Math.fround(de.w));
-    expect(view.getFloat32(272, true)).toBe(Math.fround(gp.y));
-    expect(view.getFloat32(276, true)).toBe(Math.fround(gp.fadeStart));
-    expect(view.getFloat32(280, true)).toBe(Math.fround(gp.fadeEnd));
-    expect(view.getFloat32(284, true)).toBe(Math.fround(gp.ballRadius));
-    expect(view.getFloat32(288, true)).toBe(Math.fround(gp.ballCenter[0]));
-    expect(view.getFloat32(292, true)).toBe(Math.fround(gp.ballCenter[1]));
-    expect(view.getFloat32(296, true)).toBe(Math.fround(gp.ballCenter[2]));
-    expect(view.getFloat32(304, true)).toBe(Math.fround(gp.albedo[0]));
-    expect(view.getFloat32(308, true)).toBe(Math.fround(gp.albedo[1]));
-    expect(view.getFloat32(312, true)).toBe(Math.fround(gp.albedo[2]));
+    expect(view.getFloat32(288, true)).toBe(Math.fround(gp.y));
+    expect(view.getFloat32(292, true)).toBe(Math.fround(gp.fadeStart));
+    expect(view.getFloat32(296, true)).toBe(Math.fround(gp.fadeEnd));
+    expect(view.getFloat32(300, true)).toBe(Math.fround(gp.ballRadius));
+    expect(view.getFloat32(304, true)).toBe(Math.fround(gp.ballCenter[0]));
+    expect(view.getFloat32(308, true)).toBe(Math.fround(gp.ballCenter[1]));
+    expect(view.getFloat32(312, true)).toBe(Math.fround(gp.ballCenter[2]));
+    expect(view.getFloat32(320, true)).toBe(Math.fround(gp.albedo[0]));
+    expect(view.getFloat32(324, true)).toBe(Math.fround(gp.albedo[1]));
+    expect(view.getFloat32(328, true)).toBe(Math.fround(gp.albedo[2]));
   });
 
-  it("omits gp on packEscapeGpuParams back to today's 272-byte buffer, byte for byte", () => {
+  it("omits gp on packEscapeGpuParams back to today's base-size buffer, byte for byte", () => {
     const de = buildEscapeDE([canonicalMandelbox()]);
     const omitted = new Uint8Array(packEscapeGpuParams(de, { itemCount: 2 }));
     const explicit = new Uint8Array(
@@ -3553,7 +3767,7 @@ describe("packSurface4GpuParams (fr-dlxh 4D)", () => {
 
 describe("packSurface4GpuParams fold-final lens block (fr-rsp6 phase 2B)", () => {
   it("keeps the 464-byte buffer without a foldFinal and grows to SURFACE_GPU_PARAMS4_LENS_BYTES with one", () => {
-    expect(SURFACE_GPU_PARAMS4_LENS_BYTES).toBe(560);
+    expect(SURFACE_GPU_PARAMS4_LENS_BYTES).toBe(576);
     const plain = buildSurfaceDE4(fourDSystemTransforms());
     expect(plain.foldFinal).toBeNull();
     expect(
@@ -3711,8 +3925,8 @@ describe("packSurfaceGpuMaps4 (fr-dlxh 4D; fr-rsp6 phase 2A lanes)", () => {
   it("packs each map's invM rows / invT / p0 fold lanes / bnb / p1 at the documented word offsets, per SURFACE_GPU_MAP4_VEC4 stride", () => {
     // Grown 6 -> 8 by fr-rsp6 phase 2A: ONE layout for both 4D cores,
     // exactly as the 3D GpuMap carries fold lanes the affine core never
-    // reads.
-    expect(SURFACE_GPU_MAP4_VEC4).toBe(8);
+    // reads. Then 8 -> 9 by fr-s9ll's `fold` lane, the 3D one verbatim.
+    expect(SURFACE_GPU_MAP4_VEC4).toBe(9);
     const de = buildSurfaceDE4(fourDFoldSystemTransforms());
     const out = packSurfaceGpuMaps4(de);
     const stride = SURFACE_GPU_MAP4_VEC4 * 4;
@@ -3950,9 +4164,9 @@ describe("packBulbGpuParams (fr-7u8t.9)", () => {
     const view = new DataView(buf);
     expect(view.getFloat32(256, true)).toBe(Math.fround(de.sigmaMax));
     expect(view.getFloat32(260, true)).toBe(Math.fround(de.bailout));
-    expect(view.getFloat32(272, true)).toBe(Math.fround(gp.y));
-    expect(view.getFloat32(284, true)).toBe(Math.fround(gp.ballRadius));
-    expect(view.getFloat32(304, true)).toBe(Math.fround(gp.albedo[0]));
+    expect(view.getFloat32(288, true)).toBe(Math.fround(gp.y));
+    expect(view.getFloat32(300, true)).toBe(Math.fround(gp.ballRadius));
+    expect(view.getFloat32(320, true)).toBe(Math.fround(gp.albedo[0]));
 
     expect(
       new Uint8Array(packBulbGpuParams(de, { itemCount: 2 }, null)),

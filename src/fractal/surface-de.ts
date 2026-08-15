@@ -550,6 +550,14 @@ export interface SurfaceFoldRadii {
    * are `u`, `2·wall − u`, `−2·wall − u` and its in-box region is
    * `[−wall, wall]`. Classic 1. */
   wall: number;
+  /** `mR` — the sphere fold's minimum radius, the one AUTHORED length no
+   * branch below reads on its own (every CPU site wants it already combined
+   * with `fR`). It rides here for the GPU mirrors, which pack the three
+   * authored lengths and re-derive the rest of this struct in the shader:
+   * a wire of three numbers is checkable against `resolveFoldRadii` by eye,
+   * where a wire of eight derived ones would be eight chances to disagree.
+   * Classic 0.5. */
+  minR: number;
   /** `fR` — the outer branch's region radius, the mid shell's INNER edge,
    * and the divisor of the mid branch's certified factor `|u|/fR`.
    * Classic 1. */
@@ -594,6 +602,7 @@ export function surfaceFoldRadii(fold: Variation | null): SurfaceFoldRadii {
   const fixedR2 = fR * fR;
   return {
     wall,
+    minR: mR,
     fixedR: fR,
     invFixedR: 1 / fR,
     fixedR2,
