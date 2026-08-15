@@ -368,7 +368,7 @@ import type { Vec3 } from "./types";
  *
  * BYTE LAYOUT CONTRACT (pinned by surface-de-gpu.test.ts):
  *
- * Params uniform — {@link SURFACE_GPU_PARAMS_BYTES} = 272 bytes:
+ * Params uniform — {@link SURFACE_GPU_PARAMS_BYTES} = 288 bytes:
  *   offset  0  vec3f boundCenter          12  f32 boundingRadius
  *          16  f32  escapeRadius          20  f32 stepScale
  *          24  f32  visibleRadius         28  f32 slowestSigma
@@ -390,7 +390,7 @@ import type { Vec3 } from "./types";
  *              former pad1 — the depth-fog density multiplier every core's
  *              shade entry reads, {@link SurfaceGpuRunParams.fogDensity}
  *              defaulting to 1 when the caller omits it)
- *         208..271 — the VARIANT block, keyed on the kernel config
+ *         208..287 — the VARIANT block, keyed on the kernel config
  *              (mutually exclusive by construction; zeros when neither
  *              variant is active, and the plain kernels' Params struct
  *              still ends at 208 — binding the larger buffer is valid,
@@ -401,6 +401,13 @@ import type { Vec3 } from "./types";
  *              240 vec3f lensM row2   252 f32 lensT.z
  *              256 vec4f lensParams — (foldKind as f32, invW, absW,
  *                  sigmaMin), the GLSL `uLensParams` order.
+ *              272 vec4f lensFold (fr-s9ll) — the lens fold's three
+ *                  AUTHORED lengths (minRadius, fixedRadius, boxLimit)
+ *                  plus a packed-zero spare, `resolveFoldRadii`'s own
+ *                  output. The wrapper re-derives the branch algebra
+ *                  through the generated `foldRadiiOf`, which is
+ *                  `surfaceFoldRadii` field for field; zeros when there
+ *                  is no lens, which the wrapper never reads.
  *          · `core: "escape"` (fr-dlxh) — the HEAD LINK's forward map in
  *              the same interleave:
  *              208 vec3f escM row0    220 f32 escT.x
@@ -413,6 +420,11 @@ import type { Vec3 } from "./types";
  *                  (fr-7u8t.8's Mandelbrot form), so no wire field
  *                  carries it — and the spare stays reserved for the
  *                  1-or-0 form scale a Julia arm would need.
+ *              272 vec4f padF — the lens block's fold-lengths slot, PAD
+ *                  here: this core's links carry their own lengths on the
+ *                  maps binding, and the slot exists so the shared
+ *                  plane/balloon block below lands at ONE offset across
+ *                  every 3D core (fr-s9ll).
  *              Since fr-s04t the KERNEL reads every link — the head
  *              included — from the maps storage binding below, and this
  *              block is layout ballast: its offsets are frozen (the
@@ -445,18 +457,21 @@ import type { Vec3 } from "./types";
  *                  multiplication is not associative, so every power
  *                  needs its own closed form — bulb-de.ts's
  *                  `BULB_POWER` doc).
+ *              272 vec4f padF — the escape core's pad again; the bulb has
+ *                  no fold at all.
  *          · `balloon: true` (fr-5wlv.5) — the 3D block GROWS: {@link
- *              SURFACE_GPU_PARAMS_BALLOON_BYTES} = 304 bytes total. The
+ *              SURFACE_GPU_PARAMS_BALLOON_BYTES} = 320 bytes total. The
  *              struct declares the lens variant block UNCONDITIONALLY
  *              (zero-filled by the packer when no lens — the buffer was
- *              always 272 bytes; only the struct declaration ended
- *              early), so these land at the FROZEN offset 272:
- *              272 vec3f balloonCenter
- *              284 f32  balloonRho — MARGINED (`buildBalloon`'s divisor)
- *              288 f32  balloonR — world units
- *              292 f32  balloonFar — BALLOON_FAR_CAP_RHO · raw ball
+ *              always the full base size; only the struct declaration
+ *              ended early), so these land at the FROZEN offset 288
+ *              (fr-s9ll moved it from 272 for the lensFold quartet):
+ *              288 vec3f balloonCenter
+ *              300 f32  balloonRho — MARGINED (`buildBalloon`'s divisor)
+ *              304 f32  balloonR — world units
+ *              308 f32  balloonFar — BALLOON_FAR_CAP_RHO · raw ball
  *                  radius (the march far cap past the center)
- *              296 f32  padB0        300 f32 padB1   (packed zero)
+ *              312 f32  padB0        316 f32 padB1   (packed zero)
  *              Never combined with the escape or 4D variants (codegen
  *              throws).
  *          · `core: "affine4"` (fr-dlxh's 4D cut) — the variant block
@@ -493,13 +508,16 @@ import type { Vec3 } from "./types";
  *              construction).
  *          · a 4D core under `lens: true` (fr-rsp6 phase 2B) — the tail
  *              GROWS again, APPENDED past 464: {@link
- *              SURFACE_GPU_PARAMS4_LENS_BYTES} = 560 bytes total, and
+ *              SURFACE_GPU_PARAMS4_LENS_BYTES} = 576 bytes total, and
  *              {@link packSurface4GpuParams} returns exactly this size
  *              when (and only when) the DE carries a `foldFinal`:
  *              464 vec4f lens4M row0..row3   (..527)
  *              528 vec4f lens4T
  *              544 vec4f lens4Params — (foldKind as f32, invW, absW,
  *                  sigmaMin), the GLSL `uLensParams` order again.
+ *              560 vec4f lens4Fold (fr-s9ll) — the 3D `lensFold` quartet
+ *                  at the 4D block's own offset; nothing follows the
+ *                  lens4 block, so it grows in place.
  *              The cores' own final4M/final4T rows still pack
  *              IDENTITY/0 here (`final` is null whenever `foldFinal` is
  *              set), so the core bodies run their no-lens arithmetic
@@ -512,12 +530,23 @@ import type { Vec3 } from "./types";
  *   p0  = sigmaMin, foldInvW, foldSigma, foldKind (0/1/2/3 as f32)
  *   bnb = bnbDir xyz, invTNorm
  *   p1  = invMSigmaMin, 0, 0, 0
+ *   fold = minRadius, fixedRadius, boxLimit, 0 (fr-s9ll) — the map's
+ *          three AUTHORED fold lengths, `resolveFoldRadii`'s output. The
+ *          body re-derives the branch algebra from them through the
+ *          generated `foldRadiiOf` (`surfaceFoldRadii` field for field)
+ *          rather than reading eight packed combinations; a plain-affine
+ *          slot carries the classic (0.5, 1, 1) and never reads them.
  * `core: "escape"` shares that layout for its formula CHAIN (fr-s04t,
  * {@link packEscapeGpuMaps}) — one entry per LINK in document order,
  * carrying FORWARD affines in r0/r1/r2 and the GLSL `uEscParams` quartet
  * (foldKind, w, derivGrowth, 0) in p0, with bnb/p1 zero: the same
  * "one layout, lanes a core may ignore" contract the affine cores already
- * ride.
+ * ride. Its `fold` lane says something DIFFERENT from the descent cores' —
+ * (minRadius², fixedRadius², boxLimit, 0), the form `EscapeLink` keeps and
+ * the form the forward orbit's `fR²/clamp(r², mR², fR²)` wants — exactly
+ * as its `p0` already differs from theirs. Each packer transfers its own
+ * oracle's numbers rather than recomputing them, which is the whole reason
+ * a lane may mean two things here.
  *
  * 4D maps storage (`core: "affine4"` / `core: "fold4"`) — {@link
  * SURFACE_GPU_MAP4_VEC4} vec4f per map, matching WGSL `struct GpuMap4`:
@@ -526,6 +555,10 @@ import type { Vec3 } from "./types";
  *   bnb    = bnbDir (a whole vec4 up here — 3D squeezes invTNorm into
  *            its .w; in 4D the direction fills the lane)
  *   p1     = invTNorm, invMSigmaMin, 0, 0
+ *   fold   = the 3D lane exactly (minRadius, fixedRadius, boxLimit, 0):
+ *            `SurfaceFoldRadii` is SHARED by the two oracles, so a 3D
+ *            system and its 4D lift cannot disagree about what an absent
+ *            field means (fr-s9ll)
  * ONE layout for both 4D cores, exactly as the 3D GpuMap carries the
  * fold lanes for a core ("affine") that never reads them (fr-rsp6
  * phase 2A): the affine4 body reads `p0.x` alone, the fold4 body reads
@@ -601,7 +634,7 @@ import type { Vec3 } from "./types";
  * stay free of `src/app/` imports. */
 export const SURFACE_GPU_HIT_FLOOR = 1.0e-5;
 
-export const SURFACE_GPU_PARAMS_BYTES = 272;
+export const SURFACE_GPU_PARAMS_BYTES = 288;
 /** Params size under `balloon: true` (fr-5wlv.5): the 272-byte 3D block
  * — variant members declared unconditionally, zero-filled when no lens —
  * plus the appended balloon block at the frozen offset 272 (layout
@@ -611,7 +644,7 @@ export const SURFACE_GPU_PARAMS_BYTES = 272;
  * ends at 208/272 and never reads past it, but a BALLOON kernel's struct
  * is 304 bytes, so its hosts must bind a buffer packed with the balloon
  * argument. */
-export const SURFACE_GPU_PARAMS_BALLOON_BYTES = 304;
+export const SURFACE_GPU_PARAMS_BALLOON_BYTES = 320;
 /** Params size under `groundPlane: true` (fr-rhn5): the 272-byte 3D
  * block — variant members declared unconditionally, zero-filled when no
  * lens (or carrying the escape core's forward map) — plus the appended
@@ -623,7 +656,7 @@ export const SURFACE_GPU_PARAMS_BALLOON_BYTES = 304;
  * {@link packSurfaceGpuParams}/{@link packEscapeGpuParams} return THIS
  * size exactly when their `groundPlane` argument is non-null, and their
  * usual buffer byte for byte when it is null. */
-export const SURFACE_GPU_PARAMS_PLANE_BYTES = 320;
+export const SURFACE_GPU_PARAMS_PLANE_BYTES = 336;
 /** Params size for `core: "affine4"` — the frozen 0..207 block plus the
  * 4D variant tail (layout contract in the module doc). The other cores'
  * structs still end at 208/272; binding the larger buffer to them would
@@ -635,15 +668,15 @@ export const SURFACE_GPU_PARAMS4_BYTES = 464;
  * when the DE carries a `foldFinal`, and the 464-byte buffer byte for byte
  * when it does not — a no-lens kernel's struct ends at 464 and never reads
  * past it. */
-export const SURFACE_GPU_PARAMS4_LENS_BYTES = 560;
-export const SURFACE_GPU_MAP_VEC4 = 6;
+export const SURFACE_GPU_PARAMS4_LENS_BYTES = 576;
+export const SURFACE_GPU_MAP_VEC4 = 7;
 export const SURFACE_GPU_MAP_STRIDE_BYTES = SURFACE_GPU_MAP_VEC4 * 16;
 /** vec4f slots per 4D map (`struct GpuMap4`): four invM rows, invT, and
  * the three parameter lanes p0/bnb/p1 (fr-rsp6 phase 2A grew it from 6 —
  * the fold lanes the fold4 core decodes, plus the stage-2 lanes both 4D
  * cores leave unread). The field layout is its own contract; nothing
  * shares sizing math with the 3D {@link SURFACE_GPU_MAP_VEC4}. */
-export const SURFACE_GPU_MAP4_VEC4 = 8;
+export const SURFACE_GPU_MAP4_VEC4 = 9;
 /** Byte size of the ShadeParams uniform (march "unproject" + mode
  * "shade"; layout contract in the module doc). 144 through fr-5h5d's fog
  * tint pair, then 160 with fr-vpbq's `pixelJitter` at 144 — a WGSL
@@ -654,7 +687,7 @@ export const SURFACE_GPU_SHADE_BYTES = 160;
  * uniform-address-space arrays need a creation-fixed footprint, so the
  * binding becomes `array<GpuMap4, 24>` and the HOST must bind a buffer of
  * at least `SURFACE_GPU_UNIFORM_MAP_SLOTS * SURFACE_GPU_MAP4_VEC4 * 16`
- * = 3072 bytes (WebGPU validates the full type size at bind-group
+ * = 3456 bytes (WebGPU validates the full type size at bind-group
  * creation; slots past `params.mapCount` are never read, and WebGPU
  * zero-fills fresh buffers, so a short `packSurfaceGpuMaps4` write into a
  * full-size buffer is complete). 24 matches the app's 4D eligibility cap
@@ -1081,18 +1114,25 @@ export function packSurfaceGpuParams(
     view.setFloat32(260, lens.invW, true);
     view.setFloat32(264, lens.absW, true);
     view.setFloat32(268, lens.sigmaMin, true);
+    // fr-s9ll: the lens fold's three AUTHORED lengths at 272, the wire
+    // `foldRadiiOf` re-derives the branch algebra from. `SurfaceFoldRadii`
+    // keeps `minR` for exactly this — every other field of it is already a
+    // combination, and shipping combinations is how a mirror drifts.
+    view.setFloat32(272, lens.foldRadii.minR, true);
+    view.setFloat32(276, lens.foldRadii.fixedR, true);
+    view.setFloat32(280, lens.foldRadii.wall, true);
   }
-  // fr-5wlv.5: the balloon block at the frozen offset 272 (module-doc
+  // fr-5wlv.5: the balloon block at the frozen offset 288 (module-doc
   // contract) — the GLSL uBalloon* quantities in buildBalloon's
   // convention. The variant block above stays zero-filled when no lens,
   // exactly what the balloon kernel's unconditional struct members read.
   if (balloon) {
-    writeVec3(view, 272, balloon.center);
-    view.setFloat32(284, balloon.rho, true);
-    view.setFloat32(288, balloon.R, true);
-    view.setFloat32(292, balloon.far, true);
+    writeVec3(view, 288, balloon.center);
+    view.setFloat32(300, balloon.rho, true);
+    view.setFloat32(304, balloon.R, true);
+    view.setFloat32(308, balloon.far, true);
   }
-  // fr-rhn5: the ground-plane block at the frozen offset 272 it SHARES
+  // fr-rhn5: the ground-plane block at the frozen offset 288 it SHARES
   // with the balloon block (mutually exclusive — the throw above) — the
   // GLSL uGround* quantities in scene.ts's surfaceGroundPlaneSpec
   // convention.
@@ -1115,16 +1155,20 @@ export interface SurfaceGpuGroundPlane {
   albedo: Vec3;
 }
 
-/** Write the plane block at its frozen offset (module-doc layout: y 272,
- * fadeStart 276, fadeEnd 280, ballRadius 284, ballCenter 288, albedo
- * 304) — one definition for both 3D packers. */
+/** Write the plane block at its frozen offset (module-doc layout: y 288,
+ * fadeStart 292, fadeEnd 296, ballRadius 300, ballCenter 304, albedo
+ * 320) — one definition for both 3D packers, which is what keeps the block
+ * at ONE offset across cores whose 208..287 blocks say different things
+ * (fr-s9ll moved it from 272 to make room for the lens fold's lengths, and
+ * the escape/bulb cores declare a matching pad rather than let the shared
+ * block land in two places). */
 function writeGroundPlane(view: DataView, gp: SurfaceGpuGroundPlane): void {
-  view.setFloat32(272, gp.y, true);
-  view.setFloat32(276, gp.fadeStart, true);
-  view.setFloat32(280, gp.fadeEnd, true);
-  view.setFloat32(284, gp.ballRadius, true);
-  writeVec3(view, 288, gp.ballCenter);
-  writeVec3(view, 304, gp.albedo);
+  view.setFloat32(288, gp.y, true);
+  view.setFloat32(292, gp.fadeStart, true);
+  view.setFloat32(296, gp.fadeEnd, true);
+  view.setFloat32(300, gp.ballRadius, true);
+  writeVec3(view, 304, gp.ballCenter);
+  writeVec3(view, 320, gp.albedo);
 }
 
 /**
@@ -1260,6 +1304,15 @@ export function packEscapeGpuMaps(de: EscapeDE): Float32Array {
     out[base + 12] = link.foldKind;
     out[base + 13] = link.w;
     out[base + 14] = link.derivGrowth;
+    // fold = this LINK's own fold lengths (fr-s9ll), SQUARED for the two
+    // sphere radii because that is the form `EscapeLink` keeps and the
+    // form the forward orbit's `fR2 / clamp(r2, mR2, fR2)` wants. The
+    // descent cores' `fold` lane carries the raw lengths instead — the
+    // same per-core divergence `p0` already has, and each packer transfers
+    // its own oracle's numbers rather than recomputing them.
+    out[base + 24] = link.minRadius2;
+    out[base + 25] = link.fixedRadius2;
+    out[base + 26] = link.boxLimit;
   });
   return out;
 }
@@ -1530,6 +1583,12 @@ export function packSurface4GpuParams(
     view.setFloat32(548, lens4.invW, true);
     view.setFloat32(552, lens4.absW, true);
     view.setFloat32(556, lens4.sigmaMin, true);
+    // fr-s9ll: the 4D lens fold's authored lengths, the 3D `lensFold`
+    // quartet at this block's own offset — nothing follows the lens4 block,
+    // so it grows in place.
+    view.setFloat32(560, lens4.foldRadii.minR, true);
+    view.setFloat32(564, lens4.foldRadii.fixedR, true);
+    view.setFloat32(568, lens4.foldRadii.wall, true);
   }
   return buf;
 }
@@ -1562,6 +1621,12 @@ export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
     out[base + 18] = m.bnbDir[2];
     out[base + 19] = m.invTNorm;
     out[base + 20] = m.invMSigmaMin;
+    // fold = the map's three AUTHORED lengths (fr-s9ll). Absent fields
+    // resolved to the classic set by `resolveFoldRadii` long before here,
+    // so a plain-affine slot carries (0.5, 1, 1) and never reads them.
+    out[base + 24] = m.foldRadii.minR;
+    out[base + 25] = m.foldRadii.fixedR;
+    out[base + 26] = m.foldRadii.wall;
   });
   return out;
 }
@@ -1599,6 +1664,13 @@ export function packSurfaceGpuMaps4(de: SurfaceDE4): Float32Array {
     out[base + 27] = m.bnbDir[3];
     out[base + 28] = m.invTNorm;
     out[base + 29] = m.invMSigmaMin;
+    // The 3D `fold` lane one dimension up — SAME three lengths, because
+    // `SurfaceFoldRadii` is shared by the two oracles (fr-s9ll: two copies
+    // of "what does an absent field mean" is how a 3D system and its 4D
+    // lift start rendering different objects).
+    out[base + 32] = m.foldRadii.minR;
+    out[base + 33] = m.foldRadii.fixedR;
+    out[base + 34] = m.foldRadii.wall;
   });
   return out;
 }
@@ -1743,6 +1815,14 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // for. Bulb is the one bindingless core left: its single map still
   // rides the params variant block.
   const mapsBinding = !forward || core === "escape";
+  // fr-s9ll: does any body in this kernel enumerate the fold's INVERSE
+  // branches, and so need `foldRadiiOf`? The fold cores do, and so does the
+  // lens wrapper around ANY descent core (a fold FINAL is still a fold).
+  // The forward cores read their links' lengths straight off the wire —
+  // `escape-de.ts` keeps them SQUARED, which is what its orbit wants — so
+  // they never derive the branch algebra. Affine kernels stay byte-identical
+  // to the pre-fr-s9ll source, which is what makes that claim testable.
+  const foldRadii = core === "fold" || core === "fold4" || lens;
   // fr-5wlv.5: the balloon inverted-union wrapper (THE BALLOON WRAPPER,
   // module doc). Absent means no balloon, so every no-balloon config
   // generates byte-identical source.
@@ -2020,6 +2100,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
         }
         let mapSigma = m.p0.x;
         let absW = m.p0.z / mapSigma;
+        let fr = foldRadiiOf(m.fold);
         var u = vec3f(0.0);
         var ru = 0.0;
         var pre0 = vec3f(0.0);
@@ -2034,10 +2115,10 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
           u = sQ * m.p0.y;
           if (kind == 1u) {
             pre0 = u;
-            pre1 = 2.0 - u;
-            pre2 = -2.0 - u;
-            dUp = max(u - 1.0, vec3f(0.0));
-            dDn = max(-1.0 - u, vec3f(0.0));
+            pre1 = fr.wall2 - u;
+            pre2 = -fr.wall2 - u;
+            dUp = max(u - fr.wall, vec3f(0.0));
+            dDn = max(-fr.wall - u, vec3f(0.0));
           } else {
             ru = length(u);
           }
@@ -2058,13 +2139,13 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
               if (s == 0u) {
                 v = u;
                 sfSigma = 1.0;
-                sfRd = max(1.0 - ru, 0.0);
+                sfRd = max(fr.fixedR - ru, 0.0);
               } else if (s == 1u) {
-                v = 0.25 * u;
-                sfSigma = 4.0;
-                sfRd = max(ru - 2.0, 0.0);
+                v = fr.innerScale * u;
+                sfSigma = fr.innerSigma;
+                sfRd = max(ru - fr.outputR, 0.0);
               } else {
-                if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+                if (ru < fr.midMinR) {
                   // GLSL parity: plain skip — the shading chain folds no
                   // shell certificate (there is no best to fold it into).
                   if (kind == 3u) {
@@ -2072,17 +2153,17 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
                   }
                   continue;
                 }
-                let invR2 = 1.0 / (ru * ru);
+                let invR2 = fr.fixedR2 / (ru * ru);
                 v = u * invR2;
-                sfSigma = ru;
-                sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+                sfSigma = ru * fr.invFixedR;
+                sfRd = max(max(fr.fixedR - ru, ru - fr.outputR), 0.0);
               }
               if (kind == 3u) {
                 pre0 = v;
-                pre1 = 2.0 - v;
-                pre2 = -2.0 - v;
-                dUp = max(v - 1.0, vec3f(0.0));
-                dDn = max(-1.0 - v, vec3f(0.0));
+                pre1 = fr.wall2 - v;
+                pre2 = -fr.wall2 - v;
+                dUp = max(v - fr.wall, vec3f(0.0));
+                dDn = max(-fr.wall - v, vec3f(0.0));
               }
             }
             var pre: vec3f;
@@ -2918,6 +2999,7 @@ ${
         }
         let mapSigma = m.p0.x;
         let absW = m.p0.z / mapSigma;
+        let fr = foldRadiiOf(m.fold);
         var u = vec4f(0.0);
 ${
   slabExt
@@ -2944,10 +3026,10 @@ ${
     : ``
 }          if (kind == 1u) {
             pre0 = u;
-            pre1 = 2.0 - u;
-            pre2 = -2.0 - u;
-            dUp = max(u - 1.0, vec4f(0.0));
-            dDn = max(-1.0 - u, vec4f(0.0));
+            pre1 = fr.wall2 - u;
+            pre2 = -fr.wall2 - u;
+            dUp = max(u - fr.wall, vec4f(0.0));
+            dDn = max(-fr.wall - u, vec4f(0.0));
 ${
   slabExt
     ? `            if (segment) {
@@ -2989,13 +3071,13 @@ ${
               if (s == 0u) {
                 v = u;
                 sfSigma = 1.0;
-                sfRd = max(1.0 - ru, 0.0);
+                sfRd = max(fr.fixedR - ru, 0.0);
               } else if (s == 1u) {
-                v = 0.25 * u;
-                sfSigma = 4.0;
-                sfRd = max(ru - 2.0, 0.0);
+                v = fr.innerScale * u;
+                sfSigma = fr.innerSigma;
+                sfRd = max(ru - fr.outputR, 0.0);
               } else {
-                if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+                if (ru < fr.midMinR) {
                   // GLSL parity: plain skip — the shading chain folds no
                   // shell certificate (there is no best to fold it into).
                   // The mandelbox box expansion is 81 wide up here.
@@ -3004,17 +3086,17 @@ ${
                   }
                   continue;
                 }
-                let invR2 = 1.0 / (ru * ru);
+                let invR2 = fr.fixedR2 / (ru * ru);
                 v = u * invR2;
-                sfSigma = ru;
-                sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+                sfSigma = ru * fr.invFixedR;
+                sfRd = max(max(fr.fixedR - ru, ru - fr.outputR), 0.0);
               }
               if (kind == 3u) {
                 pre0 = v;
-                pre1 = 2.0 - v;
-                pre2 = -2.0 - v;
-                dUp = max(v - 1.0, vec4f(0.0));
-                dDn = max(-1.0 - v, vec4f(0.0));
+                pre1 = fr.wall2 - v;
+                pre2 = -fr.wall2 - v;
+                dUp = max(v - fr.wall, vec4f(0.0));
+                dDn = max(-fr.wall - v, vec4f(0.0));
               }
             }
             var pre: vec4f;
@@ -3205,10 +3287,13 @@ ${
       dot(L.r2.xyz, v) + L.r2.w,
     );
     if (kind != 2u) {
-      y = clamp(y, vec3f(-1.0), vec3f(1.0)) * 2.0 - y;
+      // fr-s9ll: the link's own box wall — escape-de.ts's foldAxis(t, wall).
+      y = clamp(y, vec3f(-L.fold.z), vec3f(L.fold.z)) * 2.0 - y;
     }
     if (kind != 1u) {
-      let f = 1.0 / clamp(dot(y, y), 0.25, 1.0);
+      // ...and its own sphere shell, SQUARED on the wire exactly as
+      // EscapeLink keeps it: fR2 / clamp(r2, mR2, fR2).
+      let f = L.fold.y / clamp(dot(y, y), L.fold.x, L.fold.y);
       y *= f;
     }
     v = L.p0.y * y + q;
@@ -3297,6 +3382,7 @@ ${
   let kind = u32(params.lensParams.x);
   let absW = params.lensParams.z;
   let u = p * params.lensParams.y;
+  let fr = foldRadiiOf(params.lensFold);
   var best = 1e30;
   var ru = 0.0;
   var pre0 = vec3f(0.0);
@@ -3314,10 +3400,10 @@ ${
   );
   if (kind == 1u) {
     pre0 = u;
-    pre1 = 2.0 - u;
-    pre2 = -2.0 - u;
-    dUp = max(u - 1.0, vec3f(0.0));
-    dDn = max(-1.0 - u, vec3f(0.0));
+    pre1 = fr.wall2 - u;
+    pre2 = -fr.wall2 - u;
+    dUp = max(u - fr.wall, vec3f(0.0));
+    dDn = max(-fr.wall - u, vec3f(0.0));
   } else {
     ru = length(u);
   }
@@ -3336,29 +3422,29 @@ ${
       if (s == 0u) {
         v = u;
         sfSigma = 1.0;
-        sfRd = max(1.0 - ru, 0.0);
+        sfRd = max(fr.fixedR - ru, 0.0);
       } else if (s == 1u) {
-        v = 0.25 * u;
-        sfSigma = 4.0;
-        sfRd = max(ru - 2.0, 0.0);
+        v = fr.innerScale * u;
+        sfSigma = fr.innerSigma;
+        sfRd = max(ru - fr.outputR, 0.0);
       } else {
-        if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+        if (ru < fr.midMinR) {
           if (kind == 3u) {
             b += 26u;
           }
           continue;
         }
-        let invR2 = 1.0 / (ru * ru);
+        let invR2 = fr.fixedR2 / (ru * ru);
         v = u * invR2;
-        sfSigma = ru;
-        sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+        sfSigma = ru * fr.invFixedR;
+        sfRd = max(max(fr.fixedR - ru, ru - fr.outputR), 0.0);
       }
       if (kind == 3u) {
         pre0 = v;
-        pre1 = 2.0 - v;
-        pre2 = -2.0 - v;
-        dUp = max(v - 1.0, vec3f(0.0));
-        dDn = max(-1.0 - v, vec3f(0.0));
+        pre1 = fr.wall2 - v;
+        pre2 = -fr.wall2 - v;
+        dUp = max(v - fr.wall, vec3f(0.0));
+        dDn = max(-fr.wall - v, vec3f(0.0));
       }
     }
     var pre: vec3f;
@@ -3450,6 +3536,7 @@ ${
 }  let kind = u32(params.lens4Params.x);
   let absW = params.lens4Params.z;
   let u = pq * params.lens4Params.y;
+  let fr = foldRadiiOf(params.lens4Fold);
 ${
   slabExt
     ? `  var eu = vec4f(0.0);
@@ -3489,10 +3576,10 @@ ${
     : ``
 }  if (kind == 1u) {
     pre0 = u;
-    pre1 = 2.0 - u;
-    pre2 = -2.0 - u;
-    dUp = max(u - 1.0, vec4f(0.0));
-    dDn = max(-1.0 - u, vec4f(0.0));
+    pre1 = fr.wall2 - u;
+    pre2 = -fr.wall2 - u;
+    dUp = max(u - fr.wall, vec4f(0.0));
+    dDn = max(-fr.wall - u, vec4f(0.0));
 ${
   slabExt
     ? `    if (segment) {
@@ -3520,29 +3607,29 @@ ${
       if (s == 0u) {
         v = u;
         sfSigma = 1.0;
-        sfRd = max(1.0 - ru, 0.0);
+        sfRd = max(fr.fixedR - ru, 0.0);
       } else if (s == 1u) {
-        v = 0.25 * u;
-        sfSigma = 4.0;
-        sfRd = max(ru - 2.0, 0.0);
+        v = fr.innerScale * u;
+        sfSigma = fr.innerSigma;
+        sfRd = max(ru - fr.outputR, 0.0);
       } else {
-        if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+        if (ru < fr.midMinR) {
           if (kind == 3u) {
             b += 80u;
           }
           continue;
         }
-        let invR2 = 1.0 / (ru * ru);
+        let invR2 = fr.fixedR2 / (ru * ru);
         v = u * invR2;
-        sfSigma = ru;
-        sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+        sfSigma = ru * fr.invFixedR;
+        sfRd = max(max(fr.fixedR - ru, ru - fr.outputR), 0.0);
       }
       if (kind == 3u) {
         pre0 = v;
-        pre1 = 2.0 - v;
-        pre2 = -2.0 - v;
-        dUp = max(v - 1.0, vec4f(0.0));
-        dDn = max(-1.0 - v, vec4f(0.0));
+        pre1 = fr.wall2 - v;
+        pre2 = -fr.wall2 - v;
+        dUp = max(v - fr.wall, vec4f(0.0));
+        dDn = max(-fr.wall - v, vec4f(0.0));
       }
     }
     var pre: vec4f;
@@ -4388,7 +4475,11 @@ struct Params {
   lens4MR2: vec4f,
   lens4MR3: vec4f,
   lens4T: vec4f,
-  lens4Params: vec4f,`
+  lens4Params: vec4f,
+  // fr-s9ll's lens lengths, the 3D lensFold one dimension up — the fold's
+  // radii are dimension-free (SurfaceFoldRadii is SHARED by the two
+  // oracles), so this is the same quartet at the 4D block's own offset.
+  lens4Fold: vec4f,`
       : ""
   }`
       : core === "escape"
@@ -4399,7 +4490,13 @@ struct Params {
   escT1: f32,
   escM2: vec3f,
   escT2: f32,
-  escParams: vec4f,${groundPlane ? planeStructFields : ""}`
+  escParams: vec4f,
+  // fr-s9ll: the fold-lens lengths' 272..287 slot, PAD here. This core has
+  // no lens (escape+lens throws) and its links carry their own lengths on
+  // the maps binding — the slot exists so the shared plane/balloon block
+  // lands at ONE offset (288) across every 3D core, the same layout-parity
+  // argument the 4D map struct's unread lanes already ride.
+  padF: vec4f,${groundPlane ? planeStructFields : ""}`
         : core === "bulb"
           ? /* wgsl */ `
   bulbM0: vec3f,
@@ -4408,7 +4505,9 @@ struct Params {
   bulbT1: f32,
   bulbM2: vec3f,
   bulbT2: f32,
-  bulbParams: vec4f,${groundPlane ? planeStructFields : ""}`
+  bulbParams: vec4f,
+  // The 272..287 fold-lens slot again, PAD: the bulb has no fold at all.
+  padF: vec4f,${groundPlane ? planeStructFields : ""}`
           : lens || balloon || groundPlane
             ? /* wgsl */ `
   lensM0: vec3f,
@@ -4417,7 +4516,13 @@ struct Params {
   lensT1: f32,
   lensM2: vec3f,
   lensT2: f32,
-  lensParams: vec4f,${
+  lensParams: vec4f,
+  // fr-s9ll: the lens fold's three AUTHORED lengths — (minRadius,
+  // fixedRadius, boxLimit, 0), surfaceFoldRadii's own inputs. The
+  // wrapper re-derives the branch algebra from them through foldRadiiOf,
+  // exactly as the per-map lanes do; packed zero when there is no lens,
+  // which the wrapper never reads.
+  lensFold: vec4f,${
     balloon
       ? /* wgsl */ `
   balloonCenter: vec3f,
@@ -4445,6 +4550,7 @@ struct GpuMap4 {
   p0: vec4f,
   bnb: vec4f,
   p1: vec4f,
+  fold: vec4f,
 }`
         : /* wgsl */ `
 
@@ -4455,6 +4561,7 @@ struct GpuMap {
   p0: vec4f,
   bnb: vec4f,
   p1: vec4f,
+  fold: vec4f,
 }`
   }
 
@@ -4602,6 +4709,53 @@ fn stepSector(v: vec3f) -> vec3f {
   }
   return vec3f(c * v.x + s * v.y, -s * v.x + c * v.y, v.z);
 }`
+  }${
+    // fr-s9ll: the WGSL mirror of surface-de.ts's `surfaceFoldRadii`, field
+    // for field. The wire carries the three AUTHORED lengths (the packers'
+    // own `resolveFoldRadii` output) and the branch algebra is re-derived
+    // here rather than packed: three numbers a reader can check against the
+    // document beat eight derived ones, which would be eight chances to
+    // disagree with the oracle. Cost is a handful of divides ONCE per map
+    // per descent level, outside a branch loop that runs up to 81 times.
+    // At the classic (0.5, 1, 1) every expression is exactly the literal
+    // that shipped — `wall`/`wall2` 1/2, `fixedR`/`invFixedR`/`fixedR2` 1,
+    // `innerScale` 0.25, `innerSigma` 4, `outputR` 2 — so an unparameterized
+    // document traces bit-identically. Emitted only where a fold branch
+    // reads it (the fold cores, or ANY core under the fold-lens wrapper),
+    // which keeps every affine kernel's source textually unchanged.
+    foldRadii
+      ? /* wgsl */ `
+
+struct FoldRadii {
+  wall: f32,
+  wall2: f32,
+  fixedR: f32,
+  invFixedR: f32,
+  fixedR2: f32,
+  innerScale: f32,
+  innerSigma: f32,
+  outputR: f32,
+  midMinR: f32,
+}
+
+fn foldRadiiOf(f: vec4f) -> FoldRadii {
+  let mR = f.x;
+  let fR = f.y;
+  let fR2 = fR * fR;
+  let mR2 = mR * mR;
+  return FoldRadii(
+    f.z,
+    2.0 * f.z,
+    fR,
+    1.0 / fR,
+    fR2,
+    mR2 / fR2,
+    fR2 / mR2,
+    fR2 / mR,
+    ${SPHEREFOLD_MID_MIN_R} * fR,
+  );
+}`
+      : ""
   }`;
 
   // The descent PROLOGUE both cores open with (fr-55s1): the affine
@@ -4688,7 +4842,8 @@ ${descentPrologue}
             branchCount = 81u;
           }
           let mapSigma = m.p0.x;
-          let absW = m.p0.z / mapSigma;${stage2MapHoist}
+          let absW = m.p0.z / mapSigma;
+          let fr = foldRadiiOf(m.fold);${stage2MapHoist}
           var u = vec3f(0.0);
           var ru = 0.0;
           var pre0 = vec3f(0.0);
@@ -4703,10 +4858,10 @@ ${descentPrologue}
             u = sQ * m.p0.y;
             if (kind == 1u) {
               pre0 = u;
-              pre1 = 2.0 - u;
-              pre2 = -2.0 - u;
-              dUp = max(u - 1.0, vec3f(0.0));
-              dDn = max(-1.0 - u, vec3f(0.0));
+              pre1 = fr.wall2 - u;
+              pre2 = -fr.wall2 - u;
+              dUp = max(u - fr.wall, vec3f(0.0));
+              dDn = max(-fr.wall - u, vec3f(0.0));
             } else {
               ru = length(u);
             }
@@ -4737,16 +4892,16 @@ ${descentPrologue}
                 if (s == 0u) {
                   v = u;
                   sfSigma = 1.0;
-                  sfRd = max(1.0 - ru, 0.0);
+                  sfRd = max(fr.fixedR - ru, 0.0);
                 } else if (s == 1u) {
-                  v = 0.25 * u;
-                  sfSigma = 4.0;
-                  sfRd = max(ru - 2.0, 0.0);
+                  v = fr.innerScale * u;
+                  sfSigma = fr.innerSigma;
+                  sfRd = max(ru - fr.outputR, 0.0);
                 } else {
-                  if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+                  if (ru < fr.midMinR) {
                     // f32 overflow guard: fold the unit-shell bound and
                     // skip the branch + its box expansion.
-                    var shellCert = pScale * absW * (1.0 - ru);
+                    var shellCert = pScale * absW * (fr.fixedR - ru);
                     shellCert = max(shellCert, pFloor);
                     if (shellCert < best) {
                       best = shellCert;
@@ -4762,17 +4917,17 @@ ${descentPrologue}
                     }
                     continue;
                   }
-                  let invR2 = 1.0 / (ru * ru);
+                  let invR2 = fr.fixedR2 / (ru * ru);
                   v = u * invR2;
-                  sfSigma = ru;
-                  sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+                  sfSigma = ru * fr.invFixedR;
+                  sfRd = max(max(fr.fixedR - ru, ru - fr.outputR), 0.0);
                 }${stage2SphereRescale}
                 if (kind == 3u) {
                   pre0 = v;
-                  pre1 = 2.0 - v;
-                  pre2 = -2.0 - v;
-                  dUp = max(v - 1.0, vec3f(0.0));
-                  dDn = max(-1.0 - v, vec3f(0.0));
+                  pre1 = fr.wall2 - v;
+                  pre2 = -fr.wall2 - v;
+                  dUp = max(v - fr.wall, vec3f(0.0));
+                  dDn = max(-fr.wall - v, vec3f(0.0));
                 }
               }
               var pre: vec3f;
@@ -6069,6 +6224,7 @@ ${
           }
           let mapSigma = m.p0.x;
           let absW = m.p0.z / mapSigma;
+          let fr = foldRadiiOf(m.fold);
           var u = vec4f(0.0);
 ${
   slabExt
@@ -6097,10 +6253,10 @@ ${
     : ``
 }            if (kind == 1u) {
               pre0 = u;
-              pre1 = 2.0 - u;
-              pre2 = -2.0 - u;
-              dUp = max(u - 1.0, vec4f(0.0));
-              dDn = max(-1.0 - u, vec4f(0.0));
+              pre1 = fr.wall2 - u;
+              pre2 = -fr.wall2 - u;
+              dUp = max(u - fr.wall, vec4f(0.0));
+              dDn = max(-fr.wall - u, vec4f(0.0));
 ${
   slabExt
     ? `              // REGION DISTANCES UNDER A SEGMENT (fr-wa6o x fr-rsp6):
@@ -6171,17 +6327,17 @@ ${
                 if (s == 0u) {
                   v = u;
                   sfSigma = 1.0;
-                  sfRd = max(1.0 - ru, 0.0);
+                  sfRd = max(fr.fixedR - ru, 0.0);
                 } else if (s == 1u) {
-                  v = 0.25 * u;
-                  sfSigma = 4.0;
-                  sfRd = max(ru - 2.0, 0.0);
+                  v = fr.innerScale * u;
+                  sfSigma = fr.innerSigma;
+                  sfRd = max(ru - fr.outputR, 0.0);
                 } else {
-                  if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+                  if (ru < fr.midMinR) {
                     // f32 overflow guard: fold the unit-shell bound and
                     // skip the branch + its box expansion (81 wide up
                     // here). A settled fold, so the standard exits apply.
-                    var shellCert = pScale * absW * (1.0 - ru);
+                    var shellCert = pScale * absW * (fr.fixedR - ru);
                     shellCert = max(shellCert, pFloor);
                     if (shellCert < best) {
                       best = shellCert;
@@ -6197,10 +6353,10 @@ ${
                     }
                     continue;
                   }
-                  let invR2 = 1.0 / (ru * ru);
+                  let invR2 = fr.fixedR2 / (ru * ru);
                   v = u * invR2;
-                  sfSigma = ru;
-                  sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+                  sfSigma = ru * fr.invFixedR;
+                  sfRd = max(max(fr.fixedR - ru, ru - fr.outputR), 0.0);
                 }
                 if (kind == 3u) {
 ${
@@ -6210,10 +6366,10 @@ ${
 `
     : ``
 }                  pre0 = v;
-                  pre1 = 2.0 - v;
-                  pre2 = -2.0 - v;
-                  dUp = max(v - 1.0, vec4f(0.0));
-                  dDn = max(-1.0 - v, vec4f(0.0));
+                  pre1 = fr.wall2 - v;
+                  pre2 = -fr.wall2 - v;
+                  dUp = max(v - fr.wall, vec4f(0.0));
+                  dDn = max(-fr.wall - v, vec4f(0.0));
                 }
               }
               var pre: vec4f;
@@ -6545,12 +6701,15 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
     if (kind != 2u) {
       // The box fold (boxfold + mandelbox): per-axis reflections,
       // local factor 1.
-      y = clamp(y, vec3f(-1.0), vec3f(1.0)) * 2.0 - y;
+      // fr-s9ll: the link's own box wall — escape-de.ts's foldAxis(t, wall).
+      y = clamp(y, vec3f(-L.fold.z), vec3f(L.fold.z)) * 2.0 - y;
     }
     if (kind != 1u) {
       // The sphere fold (spherefold + mandelbox): variations.ts's
       // sphereFoldFactor, which IS the local conformal factor.
-      let f = 1.0 / clamp(dot(y, y), 0.25, 1.0);
+      // ...and its own sphere shell, SQUARED on the wire exactly as
+      // EscapeLink keeps it: fR2 / clamp(r2, mR2, fR2).
+      let f = L.fold.y / clamp(dot(y, y), L.fold.x, L.fold.y);
       y *= f;
       localL = f;
     }
@@ -6694,6 +6853,7 @@ ${descentFnText(W, privateDecls)}${probeDeFns}`;
   let kind = u32(params.lensParams.x);
   let absW = params.lensParams.z;
   let u = pIn * params.lensParams.y;
+  let fr = foldRadiiOf(params.lensFold);
   var best = 1e30;
   var ru = 0.0;
   var pre0 = vec3f(0.0);
@@ -6706,10 +6866,10 @@ ${descentFnText(W, privateDecls)}${probeDeFns}`;
   var sfRd = 0.0;
   if (kind == 1u) {
     pre0 = u;
-    pre1 = 2.0 - u;
-    pre2 = -2.0 - u;
-    dUp = max(u - 1.0, vec3f(0.0));
-    dDn = max(-1.0 - u, vec3f(0.0));
+    pre1 = fr.wall2 - u;
+    pre2 = -fr.wall2 - u;
+    dUp = max(u - fr.wall, vec3f(0.0));
+    dDn = max(-fr.wall - u, vec3f(0.0));
   } else {
     ru = length(u);
   }
@@ -6728,16 +6888,16 @@ ${descentFnText(W, privateDecls)}${probeDeFns}`;
       if (s == 0u) {
         v = u;
         sfSigma = 1.0;
-        sfRd = max(1.0 - ru, 0.0);
+        sfRd = max(fr.fixedR - ru, 0.0);
       } else if (s == 1u) {
-        v = 0.25 * u;
-        sfSigma = 4.0;
-        sfRd = max(ru - 2.0, 0.0);
+        v = fr.innerScale * u;
+        sfSigma = fr.innerSigma;
+        sfRd = max(ru - fr.outputR, 0.0);
       } else {
-        if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+        if (ru < fr.midMinR) {
           // Shell guard (the oracle's): fold the settled shell bound,
           // skip the branch + its box expansion.
-          let shellCert = absW * (1.0 - ru);
+          let shellCert = absW * (fr.fixedR - ru);
           if (shellCert < best) {
             best = shellCert;
             if (best <= visBound) {
@@ -6752,17 +6912,17 @@ ${descentFnText(W, privateDecls)}${probeDeFns}`;
           }
           continue;
         }
-        let invR2 = 1.0 / (ru * ru);
+        let invR2 = fr.fixedR2 / (ru * ru);
         v = u * invR2;
-        sfSigma = ru;
-        sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+        sfSigma = ru * fr.invFixedR;
+        sfRd = max(max(fr.fixedR - ru, ru - fr.outputR), 0.0);
       }
       if (kind == 3u) {
         pre0 = v;
-        pre1 = 2.0 - v;
-        pre2 = -2.0 - v;
-        dUp = max(v - 1.0, vec3f(0.0));
-        dDn = max(-1.0 - v, vec3f(0.0));
+        pre1 = fr.wall2 - v;
+        pre2 = -fr.wall2 - v;
+        dUp = max(v - fr.wall, vec3f(0.0));
+        dDn = max(-fr.wall - v, vec3f(0.0));
       }
     }
     var pre: vec3f;
@@ -6894,6 +7054,7 @@ ${
 }  let kind = u32(params.lens4Params.x);
   let absW = params.lens4Params.z;
   let u = p * params.lens4Params.y;
+  let fr = foldRadiiOf(params.lens4Fold);
 ${
   slabExt
     ? `  // u-space is a SCALAR multiple of world space, so the half-extent
@@ -6916,10 +7077,10 @@ ${
   var sfRd = 0.0;
   if (kind == 1u) {
     pre0 = u;
-    pre1 = 2.0 - u;
-    pre2 = -2.0 - u;
-    dUp = max(u - 1.0, vec4f(0.0));
-    dDn = max(-1.0 - u, vec4f(0.0));
+    pre1 = fr.wall2 - u;
+    pre2 = -fr.wall2 - u;
+    dUp = max(u - fr.wall, vec4f(0.0));
+    dDn = max(-fr.wall - u, vec4f(0.0));
 ${
   slabExt
     ? `    // Per-axis segment relaxation, applied BEFORE any selector reads
@@ -6954,16 +7115,16 @@ ${
       if (s == 0u) {
         v = u;
         sfSigma = 1.0;
-        sfRd = max(1.0 - ru, 0.0);
+        sfRd = max(fr.fixedR - ru, 0.0);
       } else if (s == 1u) {
-        v = 0.25 * u;
-        sfSigma = 4.0;
-        sfRd = max(ru - 2.0, 0.0);
+        v = fr.innerScale * u;
+        sfSigma = fr.innerSigma;
+        sfRd = max(ru - fr.outputR, 0.0);
       } else {
-        if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+        if (ru < fr.midMinR) {
           // Shell guard (the oracle's): fold the settled shell bound,
           // skip the branch + its 81-wide box expansion.
-          let shellCert = absW * (1.0 - ru);
+          let shellCert = absW * (fr.fixedR - ru);
           if (shellCert < best) {
             best = shellCert;
             if (best <= visBound) {
@@ -6978,17 +7139,17 @@ ${
           }
           continue;
         }
-        let invR2 = 1.0 / (ru * ru);
+        let invR2 = fr.fixedR2 / (ru * ru);
         v = u * invR2;
-        sfSigma = ru;
-        sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+        sfSigma = ru * fr.invFixedR;
+        sfRd = max(max(fr.fixedR - ru, ru - fr.outputR), 0.0);
       }
       if (kind == 3u) {
         pre0 = v;
-        pre1 = 2.0 - v;
-        pre2 = -2.0 - v;
-        dUp = max(v - 1.0, vec4f(0.0));
-        dDn = max(-1.0 - v, vec4f(0.0));
+        pre1 = fr.wall2 - v;
+        pre2 = -fr.wall2 - v;
+        dUp = max(v - fr.wall, vec4f(0.0));
+        dDn = max(-fr.wall - v, vec4f(0.0));
       }
     }
     var pre: vec4f;
