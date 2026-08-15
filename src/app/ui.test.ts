@@ -2382,12 +2382,12 @@ describe("Ui variation editor", () => {
 
   it("picks up a fold length that changed under a stable selection, instead of writing the stale one back", () => {
     // The editor keeps a WORKING COPY of the variation list and emits it on
-    // the next edit, refreshing it only when the incoming list differs. The
-    // fold's three lengths (fr-s9ll) have no row of their own, so a
+    // the next edit, refreshing it only when the incoming list differs. A
     // comparison that only looked at type and weight would call these two
     // renders equal — and the weight drag below would then silently revert
     // `minRadius` to 0.3. A morph, an undo or a timeline leg all change a
-    // radius under a stable selection.
+    // radius under a stable selection, and none of them touches the fold's
+    // own rows.
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
@@ -2404,6 +2404,118 @@ describe("Ui variation editor", () => {
 
     expect(lastGeometry(handlers).variations).toEqual([
       { type: "mandelbox", weight: 1.5, minRadius: 0.4 },
+    ]);
+  });
+
+  it("offers only the lengths a fold actually reads", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const labelsFor = (type: "boxfold" | "spherefold" | "mandelbox") => {
+      ui.renderTransformEditor(
+        { ...plain, variations: [{ type, weight: 1 }] },
+        0,
+        1,
+      );
+      return Array.from(
+        document.querySelectorAll<HTMLElement>(
+          "#transformEditor .variation-fold-row .axis",
+        ),
+      ).map((el) => el.textContent);
+    };
+    // A box fold has no sphere and a sphere fold has no wall (fr-77oy: a
+    // box-fold link's mR/fR are inert).
+    expect(labelsFor("boxfold")).toEqual(["Box limit"]);
+    expect(labelsFor("spherefold")).toEqual(["Min radius", "Fixed radius"]);
+    expect(labelsFor("mandelbox")).toEqual([
+      "Min radius",
+      "Fixed radius",
+      "Box limit",
+    ]);
+  });
+
+  it("seeds each length from the document, and from the classic value where the document is silent", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        ...plain,
+        variations: [{ type: "mandelbox", weight: 1, fixedRadius: 1.5 }],
+      },
+      0,
+      1,
+    );
+    expect(editorSlider("Mandelbox fixed radius").value).toBe("1.5");
+    expect(editorSlider("Mandelbox min radius").value).toBe("0.5");
+    expect(editorSlider("Mandelbox box limit").value).toBe("1");
+  });
+
+  it("writes a length into the document only once its own slider moves", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      { ...plain, variations: [{ type: "mandelbox", weight: 1 }] },
+      0,
+      1,
+    );
+
+    const slider = editorSlider("Mandelbox min radius");
+    slider.value = "0.3";
+    slider.dispatchEvent(new Event("input"));
+
+    // Only the length that moved: the other two stay ABSENT, which is what
+    // keeps "absent means the classic values byte-identically" true.
+    expect(lastGeometry(handlers).variations).toEqual([
+      { type: "mandelbox", weight: 1, minRadius: 0.3 },
+    ]);
+  });
+
+  it("removes a length dragged back to its classic value, returning the document to its unparameterized form", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        ...plain,
+        variations: [{ type: "spherefold", weight: 1, minRadius: 0.3 }],
+      },
+      0,
+      1,
+    );
+
+    const slider = editorSlider("Spherefold min radius");
+    slider.value = "0.5";
+    slider.dispatchEvent(new Event("input"));
+
+    expect(lastGeometry(handlers).variations).toEqual([
+      { type: "spherefold", weight: 1 },
+    ]);
+  });
+
+  it("carries the min radius down when the fixed radius drops below it — the fold's own domain, not a silent clamp", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        ...plain,
+        variations: [{ type: "spherefold", weight: 1, minRadius: 0.9 }],
+      },
+      0,
+      1,
+    );
+
+    const fixed = editorSlider("Spherefold fixed radius");
+    fixed.value = "0.6";
+    fixed.dispatchEvent(new Event("input"));
+
+    const min = editorSlider("Spherefold min radius");
+    expect(min.value).toBe("0.6");
+    expect(min.max).toBe("0.6");
+    expect(lastGeometry(handlers).variations).toEqual([
+      { type: "spherefold", weight: 1, minRadius: 0.6, fixedRadius: 0.6 },
     ]);
   });
 
