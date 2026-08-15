@@ -53,7 +53,28 @@ budget and an always-counted `exhausted`, so a new sheet writes its
 estimator and its panel list, never a ninth marcher. Output lands under
 `scripts/out/`, which is gitignored — regenerate rather than commit
 megabytes of PNG. The escape-time family's sheets:
-`escape-form-sweep` (fr-7u8t.8's retired Julia form, still executable),
+`escape-form-sweep` (fr-7u8t.8's retired Julia form, still executable —
+the ORBIT form, not to be confused with the sheet below),
+`escape-estimate-form` (fr-282c's refutation: swapping the fold family to
+the Böttcher log form `0.5·|y|·ln|y|/dr` that `bulb-de.ts` and
+`qjulia-de.ts` use looks like a win and is not a different bound at all.
+`log/linear` IS `0.5·ln r`, and an escaping fold orbit lands just outside
+the radius-4 bailout ball, so the ratio is pinned near `0.5·ln 4` —
+measured p50 0.744-0.819 across seven fixtures. The control the original
+observation lacked is `linear x k`, one constant, and it reproduces the
+log arm's whole result to within 0.00-0.45 hit points, beating it on
+`mandelboxCube`. Not boundary-adaptive either — the near/far decile
+medians are flat on six of seven. And DIMENSIONALLY WRONG since fr-s9ll:
+the fold family is uniform-rescale equivariant, so an estimator must
+satisfy `DE_λ(λp) = λ·DE(p)`; linear does BIT-EXACTLY, log measures 44.8%
+median relative error, worst 107x, because `ln r` needs `r` dimensionless
+and a fold's escape is asymptotically linear so the Green's-function
+limit never arrives. `bulb-de.ts`/`qjulia-de.ts` differing from
+`escape-de.ts` is correct BY CONSTRUCTION, not drift. Its docblock also
+carries the live follow-up: the ~0.75 damping is reachable as
+`ESCAPE_STEP_SCALE` 0.35 -> ~0.26 plus the acceptance epsilon, but that
+re-opens fr-7u8t.8's deliberate cost/quality pick rather than winning
+anything free),
 `escape-chain` (fr-za0n's shipped cycling estimator, and the rejected
 per-pass CHAINING arm beside it), `hybrid-chain` (the cross-family
 prototype fr-j231 is filed from — links this gate still refuses),
