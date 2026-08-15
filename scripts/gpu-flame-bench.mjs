@@ -21,7 +21,8 @@
  *     [--surface-size=320x180] [--surface-cap-ms=120000]
  *     [--surface-systems=all|synthetic] [--surface-timing=0|1]
  *     [--surface-force=1] [--surface-shade-width=1,4]
- *     [--surface-aff4-sweep=1] [--surface-canary-trip=N]
+ *     [--surface-aff4-sweep=1] [--surface-plane-frame=1]
+ *     [--surface-canary-trip=N]
  *
  * fr-q1f8: `--surface` runs the page's surface-DE kernel section AFTER the
  * flame scenarios (`?surface=1`); `--surface-only` runs it INSTEAD of them
@@ -119,6 +120,14 @@ const SURFACE_PASSTHROUGH_FLAGS = {
   // kaleidoscope order (1,2,3,4,6), slab vs no-slab; absent/anything else
   // = the leg is skipped (see runSurfaceAff4SweepLeg's doc in main.ts).
   "surface-aff4-sweep": "surfaceAff4Sweep",
+  // fr-qjae opt-in leg: "1" renders one extra end-to-end frame through a
+  // fr-rhn5 groundPlane:true kernel and checks it against a strided CPU
+  // sanity march in hit- AND plane-rate terms; absent/anything else = the
+  // leg is skipped (see runSurfaceComputeFramePlaneLeg's doc in main.ts).
+  // Deliberately NOT in the `surfaceHeavyLeg` timeout list below: it is one
+  // cheap affine frame, and listing it there would claim a cost it does not
+  // have.
+  "surface-plane-frame": "surfacePlaneFrame",
   // fr-76pp: synthetic device-sanity trip at the Nth canary check — a
   // rehearsal of the "device-unreliable" verdict path; absent = the canary
   // runs for real (see createSurfaceCanary's doc in main.ts).
