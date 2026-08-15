@@ -55,7 +55,7 @@ function baseSpec4(
 // flame-gpu-4d.ts's byte-layout doc comment (byte offset / 4) — independent
 // of that module's own (private) offset constants, so a mistake in the
 // implementation could not coincidentally agree with a matching mistake here.
-const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 84
+const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 96
 const ROW_X = 0; // byte 0
 const ROW_Y = 4; // byte 16
 const ROW_Z = 8; // byte 32
@@ -76,7 +76,7 @@ const COLOR_SPEED = 80; // byte 320
 describe("layout constants", () => {
   it("pins the byte-layout sizes documented on the module", () => {
     expect(PARAMS4_BYTES).toBe(208);
-    expect(SLOT4_STRIDE_BYTES).toBe(336);
+    expect(SLOT4_STRIDE_BYTES).toBe(384);
     expect(CHAIN4_STRIDE_BYTES).toBe(32);
     expect(PARAMS4_ITERS_OFFSET_BYTES).toBe(144);
     expect(WEIGHT_FIXED_POINT_SCALE).toBe(256);
@@ -272,6 +272,57 @@ describe("packGpuSystem4 variation filtering", () => {
     expect(u32[VAR_TYPES + 1]).toBe(KERNEL_VARIATION_INDEX.swirl);
     expect(f32[VAR_WEIGHTS]).toBe(1);
     expect(f32[VAR_WEIGHTS + 1]).toBe(3);
+  });
+});
+
+describe("packGpuSystem4 fold radii (fr-s9ll)", () => {
+  /** Element index of fold `i`'s lane in slot 0 — the module's own
+   * SLOT4_FOLD_RADII at 84, restated as a literal for the same reason the
+   * rest of this file restates offsets. */
+  const FOLD4_RADII = 84;
+
+  it("packs the fold family's authored lengths in the 3D kernel's own form, so a system and its lift agree", () => {
+    const transforms: Transform4[] = [
+      {
+        position: [0, 0, 0, 0],
+        scale: [1, 1, 1, 1],
+        variations: [
+          { type: "boxfold", weight: 1, boxLimit: 3 },
+          {
+            type: "mandelbox",
+            weight: 1,
+            minRadius: 0.25,
+            fixedRadius: 1.5,
+            boxLimit: 0.75,
+          },
+        ],
+      },
+    ];
+    const f32 = new Float32Array(
+      packGpuSystem4(baseSpec4({ transforms4: transforms })).slots,
+    );
+    expect(Array.from(f32.slice(FOLD4_RADII, FOLD4_RADII + 3))).toEqual([
+      0.25, 1, 3,
+    ]);
+    expect(Array.from(f32.slice(FOLD4_RADII + 4, FOLD4_RADII + 7))).toEqual([
+      0, 0, 0,
+    ]);
+    expect(Array.from(f32.slice(FOLD4_RADII + 8, FOLD4_RADII + 11))).toEqual([
+      0.0625, 2.25, 0.75,
+    ]);
+  });
+
+  it("reads its lengths off the slot in the kernel rather than the classic literals", () => {
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("foldRadii: array<vec4f, 3>");
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "applyVariation(ty, a, rng, slots[slotIdx].foldRadii[fi].xyz)",
+    );
+    expect(FLAME_GPU_KERNEL_4D_WGSL).not.toContain(
+      "clamp(dot(p, p), 0.25, 1.0)",
+    );
+    expect(FLAME_GPU_KERNEL_4D_WGSL).not.toContain(
+      "clamp(p, vec4f(-1.0), vec4f(1.0))",
+    );
   });
 });
 

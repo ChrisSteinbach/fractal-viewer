@@ -70,6 +70,7 @@ import {
   effectiveSymmetryOrder,
 } from "./chaos-game";
 import { transformColors } from "./color";
+import { isFoldVariationType, resolveFoldRadii } from "./variations";
 import { buildPaletteLUT } from "./palette";
 import { mulberry32 } from "./rng";
 
@@ -137,7 +138,7 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  *   the struct to its own 16-byte alignment, so the two spare words are
  *   unavoidable — declared explicitly rather than left implicit)
  *
- * Slot (storage array element, {@link SLOT_STRIDE_BYTES} = 256 stride);
+ * Slot (storage array element, {@link SLOT_STRIDE_BYTES} = 336 stride);
  * slot count = transformCount + 1, the last being the final-transform lens
  * (read only when hasFinal = 1, never drawn by the transform pick):
  *   0 rowX vec4f (m0 m1 m2 t0) | 16 rowY | 32 rowZ
@@ -152,6 +153,15 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  *   exactly like cumWeight's base-map weight — so the kernel reads
  *   `slots[idx]` with no modulo) | 276..287 trailing pad (three spare words
  *   the 16-byte struct alignment demands once the pair grew the tail past 272)
+ *   288 foldRadii array<vec4f, 3> (fr-s9ll) — the fold family's AUTHORED
+ *   lengths, indexed by variation type MINUS 12, i.e. [boxfold, spherefold,
+ *   mandelbox]: (minRadius^2, fixedRadius^2, boxLimit, unused). SQUARED for
+ *   the sphere pair because that is the form `foldVariationFn`'s closure
+ *   computes once and the shape `fR2 / clamp(r2, mR2, fR2)` wants. Indexed
+ *   by TYPE and not by variation LANE because a transform carries at most
+ *   one entry per type (`packVariations`' own invariant), so three lanes
+ *   cover every fold a slot can hold where seventeen would be needed to
+ *   cover every lane.
  *
  * Chain (storage array element, {@link CHAIN_STRIDE_BYTES} = 32 stride):
  *   0 pos vec4f (xyz orbit point, w color coordinate) | 16 aux vec4u (x rng
@@ -165,7 +175,7 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  * bucket layout as {@link HIST_U32_PER_BUCKET} describes.
  */
 export const PARAMS_BYTES = 96;
-export const SLOT_STRIDE_BYTES = 288;
+export const SLOT_STRIDE_BYTES = 336;
 export const CHAIN_STRIDE_BYTES = 32;
 export const COLORS_BYTES = 256 * 16;
 /** Byte offset of Params.itersPerInvocation — the one field the driver
@@ -218,6 +228,11 @@ struct Slot {
   _pad0: f32,
   _pad1: f32,
   _pad2: f32,
+  // fr-s9ll: the fold family's authored lengths, indexed by type - 12
+  // ([boxfold, spherefold, mandelbox]) — (minRadius^2, fixedRadius^2,
+  // boxLimit, unused). A transform carries at most one entry per type, so
+  // three lanes cover every fold a slot can hold.
+  foldRadii: array<vec4f, 3>,
 }
 
 // "aux", not "meta": meta is a WGSL reserved identifier.
@@ -271,7 +286,7 @@ fn rand01(rng: ptr<function, vec2u>) -> f32 {
 // The variation registry (variations.ts's VARIATIONS), case-indexed by
 // KERNEL_VARIATION_INDEX. Same 3-D generalization: radial warps use the
 // full 3-D radius, angular warps act in the xy-plane and carry z through.
-fn applyVariation(t: u32, p: vec3f, rng: ptr<function, vec2u>) -> vec3f {
+fn applyVariation(t: u32, p: vec3f, rng: ptr<function, vec2u>, fr: vec3f) -> vec3f {
   switch t {
     case 0u: { // linear
       return p;
@@ -331,15 +346,15 @@ fn applyVariation(t: u32, p: vec3f, rng: ptr<function, vec2u>) -> vec3f {
       }
       return vec3f(rq * cos(th), rq * sin(th), p.z);
     }
-    case 12u: { // boxfold — per-axis reflection off the |t| = 1 planes.
-      return 2.0 * clamp(p, vec3f(-1.0), vec3f(1.0)) - p;
+    case 12u: { // boxfold — per-axis reflection off the |t| = fr.z planes.
+      return 2.0 * clamp(p, vec3f(-fr.z), vec3f(fr.z)) - p;
     }
-    case 13u: { // spherefold — Mandelbox ball fold, mR2 = 0.25, fR2 = 1.
-      return p * (1.0 / clamp(dot(p, p), 0.25, 1.0));
+    case 13u: { // spherefold — ball fold, fr = (mR2, fR2, wall).
+      return p * (fr.y / clamp(dot(p, p), fr.x, fr.y));
     }
     case 14u: { // mandelbox — spherefold after boxfold, one variation.
-      let b = 2.0 * clamp(p, vec3f(-1.0), vec3f(1.0)) - p;
-      return b * (1.0 / clamp(dot(b, b), 0.25, 1.0));
+      let b = 2.0 * clamp(p, vec3f(-fr.z), vec3f(fr.z)) - p;
+      return b * (fr.y / clamp(dot(b, b), fr.x, fr.y));
     }
     case 15u: { // qsquare — quaternion square on w = 0; p.x is the real part.
       return vec3f(p.x * p.x - p.y * p.y - p.z * p.z, 2.0 * p.x * p.y, 2.0 * p.x * p.z);
@@ -394,7 +409,15 @@ fn applySlot(slotIdx: u32, p: vec3f, rng: ptr<function, vec2u>) -> vec3f {
       // stays in cache; "s" still serves every constant-index field.
       let w = slots[slotIdx].varWeights[v >> 2u][v & 3u];
       let ty = slots[slotIdx].varTypes[v >> 2u][v & 3u];
-      acc += w * applyVariation(ty, a, rng);
+      // The fold family (12..14) reads its own authored lengths off the
+      // slot; every other type ignores the argument. Explicit bounds, not
+      // an unchecked ty - 12u: the two escape-time maps sit at 15/16 and
+      // would index past the three lanes.
+      var fi = 0u;
+      if (ty >= 12u && ty <= 14u) {
+        fi = ty - 12u;
+      }
+      acc += w * applyVariation(ty, a, rng, slots[slotIdx].foldRadii[fi].xyz);
     }
     q = acc;
   }
@@ -519,7 +542,7 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
  * offsets rather than importing these, so a mistake here could not
  * coincidentally agree with a matching mistake in the test.
  */
-const F32_PER_SLOT = SLOT_STRIDE_BYTES / 4; // 72.
+const F32_PER_SLOT = SLOT_STRIDE_BYTES / 4; // 84.
 const SLOT_ROW_X = 0;
 const SLOT_ROW_Y = 4;
 const SLOT_ROW_Z = 8;
@@ -549,6 +572,13 @@ const SLOT_COLOR_INDEX = 67;
 const SLOT_COLOR_SPEED = 68;
 // Elements 69-71 are Slot's trailing pad, left at the ArrayBuffer's zero
 // default.
+/**
+ * `foldRadii: array<vec4f, 3>` (fr-s9ll) — 12 lanes, indexed by variation
+ * type MINUS 12, i.e. [boxfold, spherefold, mandelbox]. The same contiguous
+ * reasoning as {@link SLOT_VAR_WEIGHTS}: three consecutive vec4s are 12
+ * contiguous elements, so fold `i` sits at `SLOT_FOLD_RADII + i * 4`.
+ */
+const SLOT_FOLD_RADII = 72;
 
 const F32_PER_CHAIN = CHAIN_STRIDE_BYTES / 4; // 8.
 const CHAIN_POS = 0; // pos.xyzw: x, y, z, colorCoord.
@@ -714,6 +744,22 @@ function writeSlotVariations(
   variations: Transform["variations"],
 ): void {
   const { types, weights } = packVariations(variations);
+  for (const v of variations ?? []) {
+    // fr-s9ll: the fold family's authored lengths, in the SQUARED form
+    // `foldVariationFn`'s closure computes once — one lane per fold TYPE,
+    // which is exact because a transform carries at most one entry per
+    // type. Written straight from the raw list rather than from the
+    // filtered lanes above: a zero-weight entry is dropped from the blend
+    // either way, and keying on type means the two loops need not agree
+    // about index.
+    if (!isFoldVariationType(v.type)) continue;
+    const r = resolveFoldRadii(v);
+    const lane =
+      base + SLOT_FOLD_RADII + (KERNEL_VARIATION_INDEX[v.type] - 12) * 4;
+    f32[lane] = r.minRadius * r.minRadius;
+    f32[lane + 1] = r.fixedRadius * r.fixedRadius;
+    f32[lane + 2] = r.boxLimit;
+  }
   for (let v = 0; v < types.length; v++) {
     f32[base + SLOT_VAR_WEIGHTS + v] = weights[v];
     u32[base + SLOT_VAR_TYPES + v] = types[v];
