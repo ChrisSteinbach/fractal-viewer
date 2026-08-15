@@ -428,7 +428,7 @@ import type { Vec3 } from "./types";
  *              Since fr-s04t the KERNEL reads every link — the head
  *              included — from the maps storage binding below, and this
  *              block is layout ballast: its offsets are frozen (the
- *              ground-plane block lands at 272 behind it) and it cannot
+ *              ground-plane block lands at 288 behind it) and it cannot
  *              drift from the list, `EscapeDE`'s flat fields being
  *              `links[0]`'s by construction. `symOrder`/`symPlane` in the
  *              frozen block carry the query-space wedge fold (not a
@@ -637,7 +637,7 @@ export const SURFACE_GPU_HIT_FLOOR = 1.0e-5;
 export const SURFACE_GPU_PARAMS_BYTES = 288;
 /** Params size under `balloon: true` (fr-5wlv.5): the 288-byte 3D block
  * — variant members declared unconditionally, zero-filled when no lens —
- * plus the appended balloon block at the frozen offset 272 (layout
+ * plus the appended balloon block at the frozen offset 288 (layout
  * contract in the module doc). {@link packSurfaceGpuParams} returns THIS
  * size exactly when its `balloon` argument is non-null, and the 288-byte
  * buffer byte for byte when it is null — a no-balloon kernel's struct
@@ -648,11 +648,11 @@ export const SURFACE_GPU_PARAMS_BALLOON_BYTES = 320;
 /** Params size under `groundPlane: true` (fr-rhn5): the 288-byte 3D
  * block — variant members declared unconditionally, zero-filled when no
  * lens (or carrying the escape core's forward map) — plus the appended
- * plane block at the frozen offset 272, which the plane and balloon
+ * plane block at the frozen offset 288, which the plane and balloon
  * blocks SHARE (the escape/lens 208..271 precedent: the two features are
  * mutually exclusive by construction — both the codegen and the packers
- * throw on the pair). Layout: y 272, fadeStart 276, fadeEnd 280,
- * ballRadius 284, ballCenter vec3f 288, albedo vec3f 304.
+ * throw on the pair). Layout: y 288, fadeStart 292, fadeEnd 296,
+ * ballRadius 300, ballCenter vec3f 304, albedo vec3f 320.
  * {@link packSurfaceGpuParams}/{@link packEscapeGpuParams} return THIS
  * size exactly when their `groundPlane` argument is non-null, and their
  * usual buffer byte for byte when it is null. */
@@ -1001,7 +1001,7 @@ function writeVec3(view: DataView, offset: number, v: Vec3): void {
  * `balloon` (fr-5wlv.5): null — the default — returns today's 288-byte
  * buffer byte for byte; non-null returns {@link
  * SURFACE_GPU_PARAMS_BALLOON_BYTES} bytes with the balloon block packed
- * at the frozen offset 272 (module-doc contract) — `center`/`rho`/`R`
+ * at the frozen offset 288 (module-doc contract) — `center`/`rho`/`R`
  * in `buildBalloon`'s convention (`rho` MARGINED, the bound's divisor;
  * `R` world units) and `far` the march cap past the center
  * (`BALLOON_FAR_CAP_RHO · raw ball radius`, the GLSL `uBalloonFar`).
@@ -1019,7 +1019,7 @@ export function packSurfaceGpuParams(
   if (balloon && groundPlane) {
     throw new Error(
       "surface-de-gpu: groundPlane+balloon: excluded (fr-rhn5) — the two " +
-        "blocks share the frozen offset 272 and the kernels refuse the " +
+        "blocks share the frozen offset 288 and the kernels refuse the " +
         "pair",
     );
   }
@@ -1188,7 +1188,7 @@ function writeGroundPlane(view: DataView, gp: SurfaceGpuGroundPlane): void {
  * That head-link block is the wire's ONE redundancy since fr-s04t, kept
  * deliberately: the bodies read every link — the head included — from the
  * maps storage binding ({@link packEscapeGpuMaps}), but the block's
- * offsets are frozen (the ground-plane block lands at 272 behind it) and
+ * offsets are frozen (the ground-plane block lands at 288 behind it) and
  * a struct member cannot be left undeclared without moving that. It
  * cannot drift, since `EscapeDE`'s flat fields ARE `links[0]`'s.
  *
@@ -1256,7 +1256,7 @@ export function packEscapeGpuParams(
   view.setFloat32(260, de.w, true);
   view.setFloat32(264, de.derivGrowth, true);
   // fr-rhn5: the ground-plane block appends past the escape variant
-  // block at the same frozen 272 as the descent cores' — the classic
+  // block at the same frozen 288 as the descent cores' — the classic
   // Mandelbox floor is exactly this mode's look.
   if (groundPlane) {
     writeGroundPlane(view, groundPlane);
@@ -1391,7 +1391,7 @@ export function packBulbGpuParams(
   view.setFloat32(256, de.sigmaMax, true);
   view.setFloat32(260, de.bailout, true);
   // fr-rhn5: the ground-plane block appends past the bulb variant block
-  // at the same frozen 272 the descent cores use — the Mandelbulb on a
+  // at the same frozen 288 the descent cores use — the Mandelbulb on a
   // floor is the same classic look the fold arm carries it for.
   if (groundPlane) {
     writeGroundPlane(view, groundPlane);
@@ -4372,7 +4372,7 @@ ${shadeGate}
               }`
       : "";
 
-  // fr-rhn5: the ground-plane params block at the frozen offset 272 —
+  // fr-rhn5: the ground-plane params block at the frozen offset 288 —
   // SHARED with the balloon block (they are mutually exclusive by the
   // throw above, the escape/lens 208..271 precedent). Appended after
   // the escape variant block for the escape core, and after the
@@ -4436,7 +4436,7 @@ struct Params {
     // core4 owns the variant block and the 3D lens fields stay the 3D
     // cores' alone. Every no-lens branch below is textually what it was.
     // The balloon members (fr-5wlv.5) live in the NON-core4 arm only
-    // (balloon+core4 throws above) and land at the FROZEN offset 272 by
+    // (balloon+core4 throws above) and land at the FROZEN offset 288 by
     // declaring the lens variant block UNCONDITIONALLY under balloon —
     // zero-filled by the packer when no lens, the module-doc contract.
     core4

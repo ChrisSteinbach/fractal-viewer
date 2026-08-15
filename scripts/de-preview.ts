@@ -54,7 +54,7 @@ export interface PreviewScene {
   /** What the camera looks at, and the centre of the bounding ball. */
   target?: Vec3;
   /**
-   * March step damping. 1.0 for a conformal estimate, 0.7 for the fold
+   * March step damping. 1.0 for a conformal estimate, 0.35 for the fold
    * family's heuristic — see `escape-de.ts`'s `ESCAPE_STEP_SCALE`.
    */
   stepScale: number;
