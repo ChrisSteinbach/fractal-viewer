@@ -176,6 +176,62 @@ describe("TimelineStore move", () => {
   });
 });
 
+describe("TimelineStore setThumbnail (fr-r777)", () => {
+  it("replaces the step's thumbnail and persists it", () => {
+    const storage = memoryStorage();
+    const timeline = new TimelineStore({ storage });
+    timeline.add("v1=a", "points-picture");
+    const id = timeline.all()[0].id;
+
+    expect(timeline.setThumbnail(id, "solid-picture")).toBe(true);
+
+    const reloaded = new TimelineStore({ storage });
+    expect(reloaded.all()[0].thumbnail).toBe("solid-picture");
+  });
+
+  it("leaves the step's encoded, mode and timings alone", () => {
+    const timeline = new TimelineStore({ storage: memoryStorage() });
+    timeline.add("v1=a", "points-picture", "solid");
+    const id = timeline.all()[0].id;
+    timeline.setTiming(id, { morphMs: 1500, holdMs: 500 });
+
+    timeline.setThumbnail(id, "solid-picture");
+
+    expect(timeline.all()[0]).toEqual({
+      id,
+      encoded: "v1=a",
+      thumbnail: "solid-picture",
+      mode: "solid",
+      morphMs: 1500,
+      holdMs: 500,
+    });
+  });
+
+  it("does not reorder the sequence: a corrected step keeps its place", () => {
+    const timeline = new TimelineStore({ storage: memoryStorage() });
+    timeline.add("v1=a", "");
+    timeline.add("v1=b", "");
+
+    timeline.setThumbnail(timeline.all()[0].id, "corrected");
+
+    expect(timeline.all().map((s) => s.encoded)).toEqual(["v1=a", "v1=b"]);
+    expect(timeline.size).toBe(2);
+  });
+
+  it("reports false and writes nothing when the id is unknown", () => {
+    const storage = memoryStorage();
+    const timeline = new TimelineStore({ storage });
+    timeline.add("v1=a", "points-picture");
+    const persisted = storage.store[TIMELINE_STORAGE_KEY];
+
+    expect(timeline.setThumbnail("does-not-exist", "solid-picture")).toBe(
+      false,
+    );
+    expect(timeline.all()[0].thumbnail).toBe("points-picture");
+    expect(storage.store[TIMELINE_STORAGE_KEY]).toBe(persisted);
+  });
+});
+
 describe("TimelineStore setTiming", () => {
   it("clamps a provided morphMs/holdMs to [0, MAX_STEP_MS]", () => {
     const timeline = new TimelineStore({ storage: memoryStorage() });

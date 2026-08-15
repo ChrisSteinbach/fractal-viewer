@@ -37,6 +37,7 @@ function harness(): {
     resetProgress: () => log.push("resetProgress"),
     activate: () => log.push("activate"),
     deactivate: () => log.push("deactivate"),
+    onFirstFrame: () => log.push("firstFrame"),
   });
   return { session, log, handles };
 }
@@ -86,6 +87,71 @@ describe("RenderSession enter", () => {
 
     h.session.enter();
     expect(h.session.hasFirstFrame).toBe(false);
+  });
+});
+
+describe("RenderSession onFirstFrame (fr-r777)", () => {
+  it("fires when the first frame is marked", () => {
+    const h = harness();
+    h.session.enter();
+    h.log.length = 0; // isolate the frame signal from enter's own log entries
+
+    h.session.markFirstFrame();
+    expect(h.log).toEqual(["firstFrame"]);
+  });
+
+  it("fires once per session, not once per marked frame", () => {
+    const h = harness();
+    h.session.enter();
+    h.log.length = 0;
+
+    // The flame marks its first frame from EVERY progress event, so the
+    // repeats have to land on the already-flipped gate.
+    h.session.markFirstFrame();
+    h.session.markFirstFrame();
+    h.session.markFirstFrame();
+    expect(h.log).toEqual(["firstFrame"]);
+  });
+
+  it("fires again for the next session after a re-enter", () => {
+    const h = harness();
+    h.session.enter();
+    h.session.markFirstFrame();
+    h.session.enter();
+    h.log.length = 0;
+
+    h.session.markFirstFrame();
+    expect(h.log).toEqual(["firstFrame"]);
+  });
+
+  it("sees the gate already flipped", () => {
+    const log: boolean[] = [];
+    const session = new RenderSession<string>({
+      start: () => ({ post: vi.fn(), terminate: vi.fn() }),
+      clearNotes: () => undefined,
+      resetProgress: () => undefined,
+      activate: () => undefined,
+      deactivate: () => undefined,
+      onFirstFrame: () => log.push(session.hasFirstFrame),
+    });
+    session.enter();
+
+    session.markFirstFrame();
+    expect(log).toEqual([true]);
+  });
+
+  it("a session without the hook still marks its first frame", () => {
+    const session = new RenderSession<string>({
+      start: () => ({ post: vi.fn(), terminate: vi.fn() }),
+      clearNotes: () => undefined,
+      resetProgress: () => undefined,
+      activate: () => undefined,
+      deactivate: () => undefined,
+    });
+    session.enter();
+
+    expect(() => session.markFirstFrame()).not.toThrow();
+    expect(session.hasFirstFrame).toBe(true);
   });
 });
 

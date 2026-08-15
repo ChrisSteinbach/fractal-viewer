@@ -72,6 +72,62 @@ describe("SceneCollection add", () => {
   });
 });
 
+describe("SceneCollection setThumbnail (fr-r777)", () => {
+  it("replaces the entry's thumbnail and persists it", () => {
+    const storage = fakeStorage();
+    const collection = new SceneCollection({ storage });
+    const scene = collection.add("v1=a", "points-picture");
+
+    expect(collection.setThumbnail(scene.id, "flame-picture")).toBe(true);
+
+    const reloaded = new SceneCollection({ storage });
+    expect(reloaded.all()[0].thumbnail).toBe("flame-picture");
+  });
+
+  it("leaves the entry's id, encoded, createdAt and mode alone", () => {
+    const collection = new SceneCollection({
+      storage: fakeStorage(),
+      now: () => 4242,
+    });
+    const scene = collection.add("v1=a", "points-picture", "flame");
+
+    collection.setThumbnail(scene.id, "flame-picture");
+
+    expect(collection.all()[0]).toEqual({
+      id: scene.id,
+      encoded: "v1=a",
+      thumbnail: "flame-picture",
+      createdAt: 4242,
+      mode: "flame",
+    });
+  });
+
+  it("does not reorder the collection: a corrected entry keeps its place", () => {
+    const collection = new SceneCollection({ storage: fakeStorage() });
+    const older = collection.add("v1=a", "");
+    collection.add("v1=b", "");
+
+    collection.setThumbnail(older.id, "corrected");
+
+    // Newest-first: the later save stays in front, unlike a re-`add` of the
+    // same document, which would bump the corrected entry to the top.
+    expect(collection.all().map((s) => s.encoded)).toEqual(["v1=b", "v1=a"]);
+  });
+
+  it("reports false and writes nothing when the id is unknown", () => {
+    const storage = fakeStorage();
+    const collection = new SceneCollection({ storage });
+    collection.add("v1=a", "points-picture");
+    const persisted = storage.store[COLLECTION_STORAGE_KEY];
+
+    expect(collection.setThumbnail("does-not-exist", "flame-picture")).toBe(
+      false,
+    );
+    expect(collection.all()[0].thumbnail).toBe("points-picture");
+    expect(storage.store[COLLECTION_STORAGE_KEY]).toBe(persisted);
+  });
+});
+
 describe("SceneCollection remove", () => {
   it("deletes the entry with the given id and persists the removal", () => {
     const storage = fakeStorage();
