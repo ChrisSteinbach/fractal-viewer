@@ -769,10 +769,30 @@ export class FractalScene {
    * errors are not symmetric, so the field should survive everything it
    * plausibly can.
    *
-   * {@link resize} survives for the same reason and a stronger one: the
-   * field is per-PIXEL, so the pixel count is already the prediction's
-   * own multiplier, and aspect's re-apportioning of rays is second order
-   * beside it.
+   * MEASURED, on the sequence the argument is about — export, ORBIT,
+   * export — at a 600x400 viewport sized so the export straddles the
+   * grace period but stays under the skip threshold, which makes the
+   * modal's show OFFSET the readout (~0ms = the scale heuristic answered,
+   * several hundred = a measured prediction let the grace period run):
+   *
+   *                          this build      pose-clearing build
+   *   first export here      +4ms            +3ms   (no evidence yet)
+   *   same pose again        +679ms          +596ms (evidence)
+   *   AFTER ORBITING         +645ms          +1ms   <- the whole point
+   *   same new pose again    +678ms          +618ms
+   *
+   * At the bead's own 320x240 the same result reads as modal vs no modal:
+   * the first export flashes at 273ms (its recorded 274ms, reproduced) and
+   * every export after it is silent, ORBIT INCLUDED.
+   *
+   * {@link resize} survives for the same reason and a stronger one, which
+   * is measured rather than argued: at one fixed pose the per-pixel cost
+   * came out 7.5e-4 at 640x480 (4:3) and 7.2e-4 at 3840x2160 (16:9) — a
+   * 27x change in pixel count and a change of aspect moving ms/px by ~4%.
+   * The field is per-PIXEL, so the count is already the prediction's own
+   * multiplier, and clearing here was discarding a predictor that
+   * transfers across viewports almost exactly in order to dodge a 4%
+   * error.
    *
    * Deliberately NOT cleared either by the adaptive resolution scale or the
    * panel inset — a capture overrides both ({@link withPixelRatio},
