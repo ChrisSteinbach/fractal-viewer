@@ -346,6 +346,98 @@ describe("packGpuSystem variation filtering", () => {
   });
 });
 
+describe("packGpuSystem fold radii (fr-s9ll)", () => {
+  /** Element index of fold `i`'s lane in slot 0 — the module's own
+   * SLOT_FOLD_RADII at 72, restated with a literal so a mistake there
+   * cannot coincidentally agree with a matching mistake here. */
+  const FOLD_RADII = 72;
+
+  it("packs each fold type's own authored lengths, SQUARED for the sphere pair, into its type's lane", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [
+          { type: "boxfold", weight: 1, boxLimit: 3 },
+          {
+            type: "mandelbox",
+            weight: 1,
+            minRadius: 0.25,
+            fixedRadius: 1.5,
+            boxLimit: 0.75,
+          },
+        ],
+      },
+    ];
+    const f32 = new Float32Array(packGpuSystem(baseSpec({ transforms })).slots);
+    // Lane 0 = boxfold: only the wall means anything, and the absent sphere
+    // pair resolves to the classic 0.5/1 (squared, 0.25/1).
+    expect(Array.from(f32.slice(FOLD_RADII, FOLD_RADII + 3))).toEqual([
+      0.25, 1, 3,
+    ]);
+    // Lane 1 = spherefold: untouched, this transform carries none.
+    expect(Array.from(f32.slice(FOLD_RADII + 4, FOLD_RADII + 7))).toEqual([
+      0, 0, 0,
+    ]);
+    // Lane 2 = mandelbox: all three authored, the sphere pair squared.
+    expect(Array.from(f32.slice(FOLD_RADII + 8, FOLD_RADII + 11))).toEqual([
+      0.0625, 2.25, 0.75,
+    ]);
+  });
+
+  it("packs the classic set for a fold that authored none of them, so an old document reaches the kernel unmoved", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "spherefold", weight: 1 }],
+      },
+    ];
+    const f32 = new Float32Array(packGpuSystem(baseSpec({ transforms })).slots);
+    expect(Array.from(f32.slice(FOLD_RADII + 4, FOLD_RADII + 7))).toEqual([
+      0.25, 1, 1,
+    ]);
+  });
+
+  it("replicates a base map's lengths into every kaleidoscope copy, like the color pair and cumWeight", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "mandelbox", weight: 1, fixedRadius: 1.5 }],
+      },
+    ];
+    const packed = packGpuSystem(
+      baseSpec({ transforms, symmetry: { order: 3, plane: "xz" } }),
+    );
+    const f32 = new Float32Array(packed.slots);
+    const perSlot = SLOT_STRIDE_BYTES / 4;
+    expect(packed.transformCount).toBe(3);
+    for (let s = 0; s < 3; s++) {
+      const lane = s * perSlot + FOLD_RADII + 8;
+      expect(Array.from(f32.slice(lane, lane + 3))).toEqual([0.25, 2.25, 1]);
+    }
+  });
+
+  it("reads its lengths off the slot in the kernel rather than the classic literals", () => {
+    expect(FLAME_GPU_KERNEL_WGSL).toContain("foldRadii: array<vec4f, 3>");
+    expect(FLAME_GPU_KERNEL_WGSL).toContain(
+      "applyVariation(ty, a, rng, slots[slotIdx].foldRadii[fi].xyz)",
+    );
+    expect(FLAME_GPU_KERNEL_WGSL).not.toContain("clamp(dot(p, p), 0.25, 1.0)");
+    expect(FLAME_GPU_KERNEL_WGSL).not.toContain("clamp(dot(b, b), 0.25, 1.0)");
+    expect(FLAME_GPU_KERNEL_WGSL).not.toContain(
+      "clamp(p, vec3f(-1.0), vec3f(1.0))",
+    );
+  });
+});
+
 describe("packGpuSystem parity with prepareChaosGame", () => {
   it("matches transformCount, baseTransformCount, weighted, totalWeight, and cumWeight lanes", () => {
     const transforms: Transform[] = [

@@ -81,11 +81,13 @@ import {
 import {
   COLOR_FIXED_POINT_SCALE,
   HIST_U32_PER_BUCKET,
+  KERNEL_VARIATION_INDEX,
   WORKGROUP_SIZE,
   packVariations,
   writeColorEntry,
 } from "./flame-gpu";
 import { mulberry32 } from "./rng";
+import { isFoldVariationType, resolveFoldRadii } from "./variations";
 
 /**
  * Fixed-point scale for the soft w-slice weight (see the module doc): the
@@ -150,6 +152,13 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   resolved per BASE map and written into EVERY kaleidoscope copy of it —
  *   exactly like cumWeight's base-map weight — so the kernel reads
  *   `slots[idx]` with no modulo) | 324..335 trailing pad
+ *   336 foldRadii array<vec4f, 3> (fr-s9ll) — the 3D Slot's lane verbatim:
+ *   the fold family's AUTHORED lengths indexed by variation type MINUS 12
+ *   ([boxfold, spherefold, mandelbox]), (minRadius^2, fixedRadius^2,
+ *   boxLimit, unused). Shared meaning across the two kernels for the same
+ *   reason `variations4.ts` imports `resolveFoldRadii` rather than
+ *   restating it: what an absent field means must have ONE answer, or a 3D
+ *   system and its 4D lift render different objects.
  *
  * The stride arithmetic (fr-q0h6): the pre-symmetry 224 was exactly 14 x 16
  * with no slack — fr-hiyu's color pair had already taken this struct's last
@@ -183,7 +192,7 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * `convertGpuHistogram`.
  */
 export const PARAMS4_BYTES = 208;
-export const SLOT4_STRIDE_BYTES = 336;
+export const SLOT4_STRIDE_BYTES = 384;
 export const CHAIN4_STRIDE_BYTES = 32;
 /** Byte offset of Params4.itersPerInvocation — the one field the driver
  * rewrites mid-session, exactly like the 3D layout's
@@ -247,6 +256,9 @@ struct Slot {
   _pad0: f32,
   _pad1: f32,
   _pad2: f32,
+  // fr-s9ll: the 3D Slot's fold lane verbatim — the fold family's authored
+  // lengths indexed by type - 12, (minRadius^2, fixedRadius^2, boxLimit).
+  foldRadii: array<vec4f, 3>,
 }
 
 // "aux", not "meta": meta is a WGSL reserved identifier (3D kernel's note).
@@ -294,7 +306,7 @@ fn rand01(rng: ptr<function, vec2u>) -> f32 {
 // lifted per variations4.ts's own convention: radial warps (spherical,
 // bubble) and swirl use the FULL 4D radius, angular warps act in the
 // xy-plane and carry z AND w through, sinusoidal folds all four axes.
-fn applyVariation(t: u32, p: vec4f, rng: ptr<function, vec2u>) -> vec4f {
+fn applyVariation(t: u32, p: vec4f, rng: ptr<function, vec2u>, fr: vec3f) -> vec4f {
   switch t {
     case 0u: { // linear
       return p;
@@ -354,15 +366,15 @@ fn applyVariation(t: u32, p: vec4f, rng: ptr<function, vec2u>) -> vec4f {
       }
       return vec4f(rq * cos(th), rq * sin(th), p.z, p.w);
     }
-    case 12u: { // boxfold — per-axis reflection off the |t| = 1 planes.
-      return 2.0 * clamp(p, vec4f(-1.0), vec4f(1.0)) - p;
+    case 12u: { // boxfold — per-axis reflection off the |t| = fr.z planes.
+      return 2.0 * clamp(p, vec4f(-fr.z), vec4f(fr.z)) - p;
     }
-    case 13u: { // spherefold — Mandelbox ball fold, mR2 = 0.25, fR2 = 1.
-      return p * (1.0 / clamp(dot(p, p), 0.25, 1.0));
+    case 13u: { // spherefold — ball fold, fr = (mR2, fR2, wall).
+      return p * (fr.y / clamp(dot(p, p), fr.x, fr.y));
     }
     case 14u: { // mandelbox — spherefold after boxfold, one variation.
-      let b = 2.0 * clamp(p, vec4f(-1.0), vec4f(1.0)) - p;
-      return b * (1.0 / clamp(dot(b, b), 0.25, 1.0));
+      let b = 2.0 * clamp(p, vec4f(-fr.z), vec4f(fr.z)) - p;
+      return b * (fr.y / clamp(dot(b, b), fr.x, fr.y));
     }
     case 15u: { // qsquare — quaternion square; p.x is the real part, p.yzw = (i, j, k).
       return vec4f(p.x * p.x - dot(p.yzw, p.yzw), 2.0 * p.x * p.yzw);
@@ -416,7 +428,14 @@ fn applySlot(slotIdx: u32, p: vec4f, rng: ptr<function, vec2u>) -> vec4f {
       // applySlot.
       let w = slots[slotIdx].varWeights[v >> 2u][v & 3u];
       let ty = slots[slotIdx].varTypes[v >> 2u][v & 3u];
-      acc += w * applyVariation(ty, a, rng);
+      // The fold family's own lengths (fr-s9ll), the 3D kernel's selection
+      // verbatim — explicit bounds because 15/16 would index past the
+      // three lanes.
+      var fi = 0u;
+      if (ty >= 12u && ty <= 14u) {
+        fi = ty - 12u;
+      }
+      acc += w * applyVariation(ty, a, rng, slots[slotIdx].foldRadii[fi].xyz);
     }
     q = acc;
   }
@@ -601,7 +620,7 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
  * CONTRACT with its own literal offsets, so a mistake here cannot
  * coincidentally agree with a matching mistake in the test.
  */
-const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 84.
+const F32_PER_SLOT4 = SLOT4_STRIDE_BYTES / 4; // 96.
 const SLOT4_ROW_X = 0;
 const SLOT4_ROW_Y = 4;
 const SLOT4_ROW_Z = 8;
@@ -628,6 +647,10 @@ const SLOT4_COLOR_INDEX = 79;
 const SLOT4_COLOR_SPEED = 80;
 // Elements 81-83 are Slot4's trailing pad, left at the ArrayBuffer's zero
 // default.
+/** `foldRadii: array<vec4f, 3>` (fr-s9ll) — the 3D Slot's lane verbatim,
+ * indexed by variation type MINUS 12; fold `i` sits at
+ * `SLOT4_FOLD_RADII + i * 4`. */
+const SLOT4_FOLD_RADII = 84;
 
 const F32_PER_CHAIN4 = CHAIN4_STRIDE_BYTES / 4; // 8.
 const CHAIN4_POS = 0; // pos.xyzw: the full 4D orbit point.
@@ -958,6 +981,18 @@ function writeSlot4Variations(
   variations: Transform4["variations"],
 ): void {
   const { types, weights } = packVariations(variations);
+  // fr-s9ll: the fold family's authored lengths, keyed by TYPE — the 3D
+  // packer's loop verbatim (see writeSlotVariations for why it walks the
+  // raw list rather than the filtered lanes).
+  for (const v of variations ?? []) {
+    if (!isFoldVariationType(v.type)) continue;
+    const r = resolveFoldRadii(v);
+    const lane =
+      base + SLOT4_FOLD_RADII + (KERNEL_VARIATION_INDEX[v.type] - 12) * 4;
+    f32[lane] = r.minRadius * r.minRadius;
+    f32[lane + 1] = r.fixedRadius * r.fixedRadius;
+    f32[lane + 2] = r.boxLimit;
+  }
   for (let v = 0; v < types.length; v++) {
     f32[base + SLOT4_VAR_WEIGHTS + v] = weights[v];
     u32[base + SLOT4_VAR_TYPES + v] = types[v];
