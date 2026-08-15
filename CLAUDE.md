@@ -95,6 +95,18 @@ and a deliberately delayed `sw.js`, widening the reload window on demand;
 `npm run preview` can trigger the same dance, but only at real,
 easy-to-miss localhost timing.
 
+The WebGPU compute-surface teardown gate (fr-uec4, not an npm script — it
+needs a real Firefox build with WebGPU enabled on a display, and it gates
+renderer LIFECYCLE rather than built output, so the dev server hosts it):
+`npm run dev &` then
+`node scripts/surface-teardown.verify.mjs --lens --toggleId=__modeExit
+--toggles=20`. It restarts or exits a live surface session while
+`SurfaceComputeRenderer` still has a frame parked on submitted GPU work —
+the widest trigger, a mode exit, is what undo/redo, a preset load and
+clicking Points all reach — which used to take down the whole Firefox
+process rather than the tab; exit 0 is a clean sweep, exit 3 means it
+reproduced.
+
 ## Pre-commit Hooks
 
 Husky runs lint-staged on every commit, auto-fixing ESLint + Prettier on staged
@@ -1469,7 +1481,21 @@ and UI**, so the interesting math is unit-tested without a browser:
     `scripts/surface-export-tile.verify.mjs` is the gate (tiled vs
     untiled export of one pinned pose: measured mean 0.002/255, 0.006%
     of pixels off by >8 — the march-start dither's own per-raster hash
-    phase, nothing structural).
+    phase, nothing structural). `destroy()` defers the real
+    `device.destroy()` until every in-flight frame unwinds (fr-uec4: a
+    frame parks on LIVE submitted GPU work — `mapAsync` over a submitted
+    `copyBufferToBuffer`, or `onSubmittedWorkDone` over a submitted
+    dispatch — and tearing the device down under one of those took the
+    WHOLE Firefox process down, not a tab crash or a device-loss toast).
+    `destroyed` now means "teardown requested" and `deviceDestroyed` means
+    "device gone" — the guard that stops both the idle path (`destroy()`
+    itself) and the drain path (`releaseFrame`, when the last in-flight
+    frame unwinds) from calling `device.destroy()` twice. The synchronous
+    teardown still runs whenever the device IS idle, which is what keeps
+    gpu-bench's one-device-alive-at-a-time invariant and
+    `RenderSession.terminate()`'s `void` contract untouched. The same
+    shape is still open one module over, in `flame-gpu-backend.ts`
+    (fr-mxkk).
   - `render-session.ts` — `enter`/`exit`/`terminate` + first-frame-gate for
     flame/solid/surface controllers. `renderMode` is session-only, never
     persisted.

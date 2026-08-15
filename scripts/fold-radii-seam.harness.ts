@@ -13,8 +13,10 @@
  * seam, and maxDepth saturates politely at MAX_DESCENT_DEPTH (128) from
  * mR/fR ~ 0.73 down. The real defect was elsewhere entirely — a synchronous
  * device.destroy() under an in-flight compute frame; see
- * scripts/fold-floor-crash.repro.mjs. This stays as the executable record of
- * why the radii were ruled out, and as a map of the seam itself.
+ * scripts/surface-teardown.verify.mjs, the LIVE regression gate for that
+ * defect. This sheet is not a gate — nothing here re-runs on a schedule or
+ * fails a build — it is the executable record of why the radii were ruled
+ * out on the way to finding it, and a map of the seam itself.
  *
  * NOTE the UI reaches less of this space than the sheet sweeps: ui.ts clamps
  * minRadius to [0.01, fixedRadius], fixedRadius to [0.01, 3] and boxLimit to

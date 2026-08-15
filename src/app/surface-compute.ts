@@ -1237,8 +1237,28 @@ export class SurfaceComputeRenderer {
   onLost: (() => void) | null = null;
 
   private isLost = false;
+  /** True once {@link destroy} has been called. This is the cancellation
+   * signal every in-flight await checks — it means "teardown requested",
+   * NOT "device gone" (fr-uec4): with a frame still parked on live
+   * submitted GPU work, the real `device.destroy()` is deferred until
+   * {@link framesInFlight} drains to zero. See {@link deviceDestroyed} for
+   * the device's actual state. */
   private destroyed = false;
+  /** True once `device.destroy()` has actually run. Both {@link destroy}
+   * (nothing was in flight) and {@link releaseFrame} (the last in-flight
+   * frame just unwound) can reach the real teardown, and since `destroyed`
+   * alone no longer tells the two apart, this is the guard that keeps
+   * either path from calling `device.destroy()` a second time (fr-uec4). */
+  private deviceDestroyed = false;
   private frameToken = 0;
+  /** Frames between their {@link renderFrame} call and their final unwind.
+   * A frame parks on LIVE submitted GPU work (`mapAsync` over a submitted
+   * `copyBufferToBuffer`, `onSubmittedWorkDone` over a submitted dispatch),
+   * and destroying the device out from under one of those takes the whole
+   * browser process down on Firefox (fr-uec4) — so {@link destroy} hands
+   * the real teardown to whichever frame unwinds last instead of running
+   * it out from under a live await. */
+  private framesInFlight = 0;
   /** Serializes frames: they share buffers and staging maps, so two pass
    * loops must never interleave. */
   private chain: Promise<unknown> = Promise.resolve();
@@ -1304,18 +1324,26 @@ export class SurfaceComputeRenderer {
     opts: SurfaceComputeFrameOptions = {},
   ): Promise<SurfaceComputeFrame | null> {
     const token = ++this.frameToken;
-    const run = this.chain.then(() =>
-      this.runSamples(token, spec, opts).catch((error: unknown) => {
-        // A destroyed/lost device rejects in-flight awaits — that is a
-        // cancellation, not a render error. Anything else is logged once
-        // and degrades to "no frame"; the session's lost-latch (not this
-        // path) owns recovery.
-        if (!this.destroyed && !this.isLost) {
-          console.error("Surface compute frame failed", error);
-        }
-        return null;
-      }),
-    );
+    // Counted from here to the .finally below, whatever the outcome — this
+    // is the span destroy() waits out before it is safe to actually tear
+    // the device down (fr-uec4).
+    this.framesInFlight++;
+    const run = this.chain
+      .then(() =>
+        this.runSamples(token, spec, opts).catch((error: unknown) => {
+          // A destroyed/lost device rejects in-flight awaits — that is a
+          // cancellation, not a render error. Anything else is logged once
+          // and degrades to "no frame"; the session's lost-latch (not this
+          // path) owns recovery.
+          if (!this.destroyed && !this.isLost) {
+            console.error("Surface compute frame failed", error);
+          }
+          return null;
+        }),
+      )
+      .finally(() => {
+        this.releaseFrame();
+      });
     this.chain = run;
     return run;
   }
@@ -1420,12 +1448,47 @@ export class SurfaceComputeRenderer {
     this.frameToken++;
   }
 
-  /** Cancel, then tear the device down. Safe to call twice; `onLost` does
-   * not fire for a deliberate destroy. */
+  /** Cancel, then tear the device down — immediately if nothing is in
+   * flight, or deferred to {@link releaseFrame} if a frame is still parked
+   * on live submitted GPU work. Destroying the device under a pending
+   * `mapAsync`/`onSubmittedWorkDone` takes the whole browser process down
+   * on Firefox (fr-uec4), so this hands the real `device.destroy()` call
+   * to whichever frame unwinds last rather than running it out from under
+   * one; the token bump below already guarantees no NEW work gets
+   * submitted meanwhile, so the only cost of waiting is one device
+   * outliving its session by the length of one in-flight frame.
+   * Safe to call twice — the early return below means a second call
+   * during that deferred window is a no-op and will NOT retry the
+   * teardown, which is fine only because the FIRST call already committed
+   * it to {@link releaseFrame}. `onLost` does not fire for a deliberate
+   * destroy. */
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
     this.frameToken++;
+    if (this.framesInFlight > 0) return;
+    this.destroyDevice();
+  }
+
+  /** One frame's counted span ({@link renderFrame}) has fully unwound.
+   * Releases its claim on the device and, if {@link destroy} came in while
+   * it — or a sibling queued behind it on {@link chain} — was still live,
+   * this is the last one out and owes the deferred teardown (fr-uec4). */
+  private releaseFrame(): void {
+    this.framesInFlight--;
+    if (this.framesInFlight === 0 && this.destroyed) this.destroyDevice();
+  }
+
+  /** The actual `GPUDevice.destroy()` call, behind the one-shot
+   * {@link deviceDestroyed} guard (fr-uec4): reachable from both
+   * {@link destroy} (idle — nothing was in flight) and
+   * {@link releaseFrame} (busy — something was, and just finished), and
+   * since `destroyed` alone no longer distinguishes those two calls from
+   * the outside, the guard is what keeps them from ever destroying the
+   * device twice. */
+  private destroyDevice(): void {
+    if (this.deviceDestroyed) return;
+    this.deviceDestroyed = true;
     this.device.destroy();
   }
 
