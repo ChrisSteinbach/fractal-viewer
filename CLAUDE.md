@@ -107,6 +107,27 @@ clicking Points all reach — which used to take down the whole Firefox
 process rather than the tab; exit 0 is a clean sweep, exit 3 means it
 reproduced.
 
+Its flame sibling (fr-mxkk, same prerequisites, same dev server):
+`node scripts/flame-teardown.verify.mjs --toggles=12`. It storms the
+palette select — `setPalette` has no equality guard, so every toggle
+reaches `startAccumulation` and therefore `backend.destroy()` — against a
+2B-iteration accumulation, so each teardown lands on an op parked on
+`mapAsync`/`onSubmittedWorkDone`. Same 0/3 verdicts plus exit 2 for
+INCONCLUSIVE, which is the one this gate needs and the surface one does
+not: a run that fell back to CPU (or a software adapter), or never caught
+a restart, never exercised the path and must not read as a pass — so it
+counts `Flame GPU: backend up on` lines rather than trusting
+`#flameProgress`, whose percentage stays rounded at 0% through a storm
+this fast. `--toggleId=` also takes `flameSupersampleSlider`,
+`symmetryOrderSlider`, and the sentinel `__modeExit` — that last one is
+INFORMATIONAL, not a gate on fr-mxkk: leaving flame mode never calls
+`destroy()` at all, since main.ts kills the worker with
+`worker.terminate()`, orphaning a live map a different way. MEASURED: the
+crash does not reproduce on this stack in either direction (pre-fix module
+12/12 clean, fixed module 12/12 clean), so this is a regression gate
+rather than a reproduction — the script's header carries the full
+numbers.
+
 ## Pre-commit Hooks
 
 Husky runs lint-staged on every commit, auto-fixing ESLint + Prettier on staged
