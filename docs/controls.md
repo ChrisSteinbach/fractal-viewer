@@ -401,6 +401,33 @@ morphs into place instead of snapping (see **Presets** below).
     flame keep its authored color structure. The final transform has no Color
     group: it is applied to every plotted point rather than _picked_, so it
     never moves the coordinate.
+  - **Variations → a fold's own lengths** (fr-s9ll) — a `boxfold`,
+    `spherefold` or `mandelbox` row carries the Mandelbox apparatus's three
+    lengths nested under its weight slider: **Min radius** and **Fixed
+    radius**, the ball fold's inner and outer shell, and **Box limit**, the
+    plane each axis reflects off. Only the ones that fold actually reads
+    appear — a box fold has no sphere and a sphere fold has no wall — so
+    `boxfold` shows one row, `spherefold` two, `mandelbox` all three.
+    Defaults are the classic Mandelbox `0.5 / 1 / 1`; the radii run
+    `0.01–3` and the wall `0–3`, in steps of `0.005`. A wall of `0` is a
+    real fold rather than a broken one: it point-reflects the axis.
+    Like the Color pair above, each length stays **unset** until you move
+    its own slider, and dragging one back to its default clears it again —
+    so a scene saved before you touch them is byte-identical to one saved
+    after, and one you explored and returned from is byte-identical to one
+    that never carried them. **Min radius** cannot exceed **Fixed radius**
+    (past that the ball fold is exactly the identity), so its slider's own
+    ceiling is wherever **Fixed radius** currently sits, and pulling
+    **Fixed radius** down below it carries it along rather than leaving a
+    number on screen the renderer would not use. They bite on every render:
+    the cloud, the flame, the solid and the surface trace all read the same
+    three lengths. One thing to expect on **Mandelbox KIFS**: the ball
+    fold's magnification `fixedRadius² / minRadius²` is exactly what the
+    **Surface** gate measures, and that preset sits close enough to the
+    line that dropping **Min radius** from `0.500` to below `0.478` hands
+    it to the escape-time renderer instead — a different object, which the
+    mode's own note says when you enter it. No other shipped system can
+    reach that line at all.
 - **+ Add / − Remove** — add or remove a transform (at least one always remains).
 - **Presets** — a dropdown that replaces the whole system with a named fractal,
   from the Sierpinski tetrahedron and Menger sponge to the 12-map icosahedron
