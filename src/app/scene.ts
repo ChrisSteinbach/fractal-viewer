@@ -755,11 +755,19 @@ export class FractalScene {
    * moved on. This field is a prior — there is no chain behind it — so it
    * survives.
    *
-   * The risk taken, stated plainly: a pose change into much heavier
-   * geometry can leave a slow export without its modal, where clearing
-   * would have erred toward showing one. That is one silent export,
-   * self-correcting on the next (every capture re-measures), against a
-   * flash the bead was filed about recurring after every camera move.
+   * And the risk is far smaller than it looks, which is what turns this
+   * from a gamble into the plainly right answer: AN UNDER-PREDICTION
+   * CANNOT LOSE THE MODAL. `predictedMs` decides one thing — whether to
+   * SKIP the grace period — and a value below the threshold, null
+   * included, still arms `export-progress.ts`'s grace timer, which still
+   * shows the modal {@link EXPORT_MODAL_GRACE_MS} in. So a pose change
+   * into much heavier geometry costs exactly one grace period of extra
+   * silence on an export that then discloses itself normally, and
+   * self-corrects at the next capture. OVER-prediction is the direction
+   * with teeth — a modal flashed over a 274ms export — and an absent
+   * reading falling back to `scale > 1` produces it every time. The two
+   * errors are not symmetric, so the field should survive everything it
+   * plausibly can.
    *
    * {@link resize} survives for the same reason and a stronger one: the
    * field is per-PIXEL, so the pixel count is already the prediction's
@@ -2860,8 +2868,9 @@ export class FractalScene {
 
   /**
    * Measured evidence for what a solid capture at `exportScale` would
-   * cost, or null when none survives (nothing exported yet at this
-   * volume, pose and threshold) — the solid twin of
+   * cost, or null when none survives (nothing exported yet against this
+   * volume and isosurface — the POSE is deliberately not an invalidator,
+   * see {@link solidCapturePxCostMs}) — the solid twin of
    * {@link predictSurfaceCaptureMs} (fr-2q01), feeding the same ONE
    * decision: whether the export modal skips its grace period and shows
    * at once. Never displayed, for the same reason its surface sibling
@@ -2872,10 +2881,10 @@ export class FractalScene {
    * more of them. A capture's FIXED part — the drawing-buffer resize, the
    * encoder's own setup — rides inside the measured ms/px and is
    * therefore charged per pixel, so a 1x measurement predicting a 4x
-   * export reads slightly high. That is the harmless direction: it opens
-   * a modal the grace period would have opened a third of a second later
-   * anyway, where under-predicting is what leaves a multi-second export
-   * silent.
+   * export reads slightly high. Both directions are mild: reading high
+   * opens a modal the grace period would have opened a third of a second
+   * later anyway, and reading low merely declines to skip that grace
+   * period, after which the modal appears on its own.
    */
   predictSolidCaptureMs(exportScale = 1): number | null {
     const { width, height } = this.exportSize(exportScale);

@@ -47,9 +47,15 @@ export function solidCaptureMsPerPx(
  * more of them. The capture's FIXED part — the drawing-buffer resize, the
  * encoder's setup — rides inside the measured ms/px and is therefore
  * charged per pixel, so a 1x measurement predicting a 4x export reads
- * slightly HIGH. That is the harmless direction: it opens a modal the
- * grace period would have opened a moment later anyway, where
- * under-predicting is what leaves a multi-second export silent.
+ * slightly HIGH.
+ *
+ * Neither direction is dangerous, which is why this stays one
+ * multiplication. The caller feeds ONE decision — skip the modal's grace
+ * period or not — so reading high opens a modal the grace period would
+ * have opened a moment later, and reading low only declines to skip that
+ * grace period, which still arms and still shows the modal. What has
+ * teeth is having no reading at all: the caller's fallback then answers
+ * from export scale alone and flashes a modal over a 274ms export.
  */
 export function predictCaptureMs(
   msPerPx: number | null,
