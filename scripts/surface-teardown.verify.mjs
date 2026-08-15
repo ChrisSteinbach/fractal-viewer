@@ -1,35 +1,83 @@
 /**
- * fr-uec4: the browser-killing surface restart, and the two hypotheses it
- * refuted on the way.
+ * fr-uec4: the regression gate for the WebGPU compute surface renderer's
+ * teardown race. Renamed from fold-floor-crash.repro.mjs once the real
+ * defect was found — see "WHY NOT fold-floor-ANYTHING" below — so this file
+ * no longer hunts for a cause, it PINS the fix against ever regressing.
  *
- * VERDICT (real Firefox 151, DISPLAY=:0, dom.webgpu.enabled, dev server):
- * restarting the WebGPU compute surface renderer while a frame is IN FLIGHT
- * takes the whole browser down. Not a tab crash, not a device-loss toast —
- * every context goes, and Playwright's next evaluate finds the browser closed.
+ * EXIT CODES: 0 = swept clean, no crash — the gate passes. 3 = reproduced,
+ * the browser died mid-sweep — the regression is back. 1 = harness failure
+ * (a Playwright/launch problem unrelated to the invariant under test).
  *
- *   --toggles=N   the repro. One page, one surface session, and a checkbox
- *                 whose control-spec effect is fx.restartSurfaceRender()
- *                 clicked N times while the preview/settle runs. 4/4 kills on
- *                 the compute path, 0/2 on WebGL.
- *   (no flag)     the exploratory arm that came first: one fresh page load per
- *                 (mR, fR, boxLimit) triple, enter Surface, watch, move on.
- *                 18 triples x {base map, lens}: never crashed.
+ * INVARIANT PROTECTED: tearing down or restarting `SurfaceComputeRenderer`
+ * (src/app/surface-compute.ts) while a frame is still parked on live
+ * submitted GPU work — a `mapAsync` over a submitted `copyBufferToBuffer`,
+ * or `onSubmittedWorkDone` over a submitted dispatch — must never crash the
+ * browser. Before the fix, `destroy()` called `this.device.destroy()`
+ * synchronously regardless of in-flight work, which took down the WHOLE
+ * Firefox process: every context, not a tab crash and not a device-loss
+ * toast, and Playwright's next `evaluate` finds the browser gone. WebGL is
+ * unaffected — measured, both natively and with the same fold-lens system
+ * forced onto it via ?surfacegl. Whether other WebGPU implementations
+ * crashed too was never tested: this gate drives Firefox because that is
+ * where the report came from, and "Firefox-only" is an untested claim, not
+ * a finding. Destroying a device under a parked `mapAsync` is wrong on any
+ * implementation, which is why the fix is not conditioned on one. The fix defers the
+ * real `device.destroy()` until every in-flight frame unwinds (a
+ * `framesInFlight` counter incremented in `renderFrame` and released in a
+ * `.finally`), while keeping the synchronous teardown path when the device
+ * IS idle.
  *
- * The reporter's recipe was "adjust Min Radius / Fixed Radius / Box Limit with
- * the Floor on until it goes", which pointed at fr-s9ll's authored fold radii.
- * Both halves of that turned out to be coincidence:
+ * WHY NOT fold-floor-ANYTHING: the field report read "adjust Min Radius /
+ * Fixed Radius / Box Limit together with the Floor option until it goes",
+ * which pointed straight at fr-s9ll's authored fold radii and fr-rhn5's
+ * Floor option. Both were coincidence, and both were disproved before the
+ * real defect surfaced:
  *
- *   - The RADII are innocent. Classic lengths crash at toggle 1, and the CPU
- *     sweep in scripts/fold-floor-seam.harness.ts finds nothing wrong with the
- *     estimator anywhere in the sliders' reach.
- *   - The FLOOR is not special. --toggleId=surfaceBalloonCheckbox kills it the
- *     same way. Floor and Balloon are simply the only two document edits
- *     reachable from inside a surface session — #explorerControls, and with it
- *     the transform list carrying the radius sliders, is points-mode only — so
- *     a user "playing about" in Surface mode has exactly these two switches,
- *     and both restart the renderer.
+ *   - The RADII are innocent. Classic (unauthored) lengths crash exactly as
+ *     readily as any slider position, and the CPU sweep in
+ *     scripts/fold-radii-seam.harness.ts finds nothing wrong with the
+ *     estimator anywhere the sliders can reach.
+ *   - The FLOOR is not special. --toggleId=surfaceBalloonCheckbox kills it
+ *     the same way, and so does simply LEAVING Surface mode. Floor and
+ *     Balloon are just the only two document edits reachable from INSIDE a
+ *     surface session — #explorerControls, and with it the transform list
+ *     carrying the radius sliders, is points-mode only — so a user "playing
+ *     about" in Surface mode has exactly these two switches to hand, and
+ *     both restart the renderer the same way a mode exit does.
  *
- * Arms, all against the same Sierpinski tetrahedron:
+ * MEASURED, real Firefox 151, DISPLAY=:0, dom.webgpu.enabled, dev server, a
+ * Sierpinski tetrahedron with a pure-mandelbox FINAL transform (fr-g58b's
+ * fold lens, which routes the session onto the compute renderer):
+ *
+ * | trigger, mid-flight                          | before            | after       |
+ * |---|---|---|
+ * | Floor checkbox toggles                       | died at toggle 9  | 20/20 clean |
+ * | Balloon checkbox toggles                     | died at toggle 9  | 20/20 clean |
+ * | Leave Surface mode (`RenderSession.exit()`)  | died at toggle 3  | 20/20 clean |
+ * | same three, forced onto WebGL (`?surfacegl`) | survives          | survives    |
+ *
+ * ARMS, all against the same Sierpinski tetrahedron:
+ *
+ *   --toggleId=__modeExit
+ *                 the WIDEST trigger, and the one that died fastest (toggle
+ *                 3, above): undo/redo, a preset load and clicking Points
+ *                 all reach `RenderSession.exit()`, which tears the
+ *                 renderer down the SAME way a checkbox restart does — so
+ *                 this arm stands in for that whole class rather than one
+ *                 checkbox. Simulated by clicking Points then Surface again
+ *                 from inside the toggle loop, re-entering through
+ *                 #modeSurfaceBtn.
+ *   --toggles=N   the toggle-storm arm. One page, one surface session, and
+ *                 a checkbox (or, with --toggleId=__modeExit, a mode exit)
+ *                 fired N times while a heavy fold settle is still running,
+ *                 so every toggle lands mid-flight against a renderer with
+ *                 GPU work still queued. --toggleId defaults to
+ *                 #surfaceGroundPlaneCheckbox (the Floor toggle).
+ *   (no flag)     the exploratory arm that came first: one fresh page load
+ *                 per (mR, fR, boxLimit) triple, enter Surface, watch, move
+ *                 on — no toggling, so it speaks to the radii hypothesis
+ *                 only and never exercises the teardown race. 18 triples x
+ *                 {base map, lens}: never crashed, before or after the fix.
  *
  *   --lens        a pure-mandelbox FINAL transform (fr-g58b's descendLens),
  *                 which routes the session onto the compute renderer. A lens
@@ -37,13 +85,15 @@
  *                 admissible here — unlike a base-map fold, where
  *                 analyzeSurfaceSystem only admits mR/fR > ~0.7075.
  *   --plain       no fold anywhere: bare affine tetra, native WebGL. Control.
- *   --gl          the lens system forced onto WebGL. Control.
+ *   --gl          the lens system forced onto WebGL. Control — the crash is
+ *                 WebGPU-only, so this arm must stay clean at any --toggles.
  *   --floor=off / --toggleId=... / --viewport=WxH / --toggleGapMs=N
  *
- *   node scripts/fold-floor-crash.repro.mjs --url=https://localhost:5174 \
- *        --lens --toggles=12 --toggleGapMs=900 --only='classic (no authored'
+ * RUN (needs a real Firefox build with WebGPU on a display, and the
+ * dev/preview server already up):
  *
- * Exit 0 = swept clean (no crash), 3 = reproduced, 1 = harness failure.
+ *   node scripts/surface-teardown.verify.mjs --url=https://localhost:5174 \
+ *        --lens --toggleId=__modeExit --toggles=20 --toggleGapMs=900
  */
 import { firefox } from "/home/christians/src/fractal/node_modules/playwright-core/index.mjs";
 import os from "node:os";
@@ -55,7 +105,10 @@ const args = Object.fromEntries(
     return m ? [m[1], m[2] ?? true] : [a, true];
   }),
 );
-const BASE = args.url ?? "https://localhost:5174";
+// The dev server's port, matching surface-preview-completion.verify.mjs. This
+// gate exercises renderer LIFECYCLE, not built output, so `npm run dev` is the
+// cheaper and equally valid host; pass --url to point it anywhere else.
+const BASE = args.url ?? "https://localhost:5173";
 const DISPLAY = args.display ?? ":0";
 const WATCH_MS = Number(args.watchMs ?? 20000);
 const FLOOR = args.floor !== "off";
@@ -76,7 +129,7 @@ const [vw, vh] = String(args.viewport ?? "1280x720")
   .map(Number);
 const VIEWPORT = { width: vw || 1280, height: vh || 720 };
 
-const log = (...a) => console.log("[fold-floor-crash]", ...a);
+const log = (...a) => console.log("[surface-teardown]", ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const HALF = 0.5;
@@ -333,23 +386,31 @@ async function runCase(browser, c) {
 }
 
 /**
- * The "playing about" arm. One page, one long-lived surface session, and the
- * Floor checkbox toggled repeatedly WHILE a heavy fold settle is in flight.
+ * The "playing about" arm. One page, one long-lived surface session, and a
+ * trigger — the Floor checkbox by default, any other #toggleId, or (with
+ * --toggleId=__modeExit) a mode exit — fired repeatedly WHILE a heavy fold
+ * settle is in flight.
  *
- * This is the one edit a user can make from inside a surface session — the
- * transform list is points-mode only, but #surfaceGroundPlaneCheckbox lives in
- * the Surface Look section, and its control-spec effect is
- * `fx.restartSurfaceRender()` -> `surfaceSession.enter()`, which TERMINATES the
- * running renderer and builds a new one. With an expensive fold DE the settle
- * runs for minutes, so every toggle lands mid-flight, against a renderer with
- * GPU work still queued.
+ * The Floor default is the one edit a user can make from inside a surface
+ * session — the transform list is points-mode only, but
+ * #surfaceGroundPlaneCheckbox lives in the Surface Look section, and its
+ * control-spec effect is `fx.restartSurfaceRender()` -> `surfaceSession.enter()`,
+ * which TERMINATES the running renderer and builds a new one — the same
+ * `RenderSession.exit()`/`terminate()` path a mode exit reaches directly.
+ * With an expensive fold DE the settle runs for minutes, so every toggle
+ * lands mid-flight, against a renderer with GPU work still queued.
  */
 async function runToggleArm(browser, c, toggles, gapMs) {
   const hash = enc(sceneFor(c.radii, { lens: LENS, foldType: FOLD_TYPE }));
   const url = `${BASE}/?surfacestate${FORCE_GL ? "&surfacegl" : ""}${hash}`;
   const lines = [];
   const result = {
-    label: `${c.label} [${toggles} floor toggles @${gapMs}ms]`,
+    // Name the trigger, not "floor" — the arm is whichever restart/exit door
+    // --toggleId selected, and mislabelling every run as a Floor toggle is how
+    // the original diagnosis went wrong in the first place.
+    label: `${c.label} [${toggles}x ${
+      TOGGLE_ID === "__modeExit" ? "mode exit" : TOGGLE_ID
+    } @${gapMs}ms]`,
     outcome: "ok",
     detail: "",
     lastRow: "",
@@ -392,6 +453,24 @@ async function runToggleArm(browser, c, toggles, gapMs) {
     for (let i = 0; i < toggles; i++) {
       await sleep(gapMs);
       const state = await page.evaluate(() => {
+        const rowText = () => {
+          const el = document.getElementById("surfaceProgress");
+          return el && !el.classList.contains("hidden")
+            ? (el.textContent ?? "").trim()
+            : "";
+        };
+        // Blast-radius arm: leaving the mode outright is RenderSession.exit(),
+        // which runs the SAME terminate() the restart does.
+        if (window.__toggleId === "__modeExit") {
+          document.getElementById("modePointsBtn").click();
+          document.getElementById("modeSurfaceBtn").click();
+          return {
+            ok: true,
+            floor: "mode-exit",
+            row: rowText(),
+            probe: window.__surfaceState?.() ?? null,
+          };
+        }
         const cb = document.getElementById(
           window.__toggleId ?? "surfaceGroundPlaneCheckbox",
         );
@@ -446,9 +525,19 @@ async function main() {
   const results = [];
   let reproduced = false;
 
-  const cases = args.only
+  // The toggle arm's subject is the TEARDOWN, and the fold radii are exactly
+  // what this investigation exonerated — so sweeping all of CASES there would
+  // pay 18x the wall clock to re-answer a settled question (and, at the
+  // default 20 toggles, run for the better part of an hour). One case is the
+  // gate; --only still picks a different one. The radius sweep is the
+  // no-toggles exploratory arm's job, and its record lives in
+  // scripts/fold-radii-seam.harness.ts.
+  const selected = args.only
     ? CASES.filter((c) => c.label.includes(String(args.only)))
-    : CASES;
+    : TOGGLES
+      ? CASES.slice(0, 1)
+      : CASES;
+  const cases = selected;
   for (const c of cases) {
     log(`--- ${c.label}`);
     if (!browser.isConnected()) {
@@ -488,6 +577,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error("[fold-floor-crash] harness failure:", e);
+  console.error("[surface-teardown] harness failure:", e);
   process.exit(1);
 });
