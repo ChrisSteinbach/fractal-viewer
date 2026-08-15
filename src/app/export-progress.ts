@@ -32,6 +32,25 @@
  * and never overwritten by a `report()` that arrives while the real work
  * is still unwinding underneath it.
  *
+ * A run may offer a SECOND stop (fr-2fbs): "stop waiting and deliver what
+ * you have", for the one caller whose wait is sitting on a real — coarser —
+ * picture rather than on nothing at all. It is optional in the strongest
+ * sense: a `begin()` without a `deliverEarly` action shows the modal it
+ * always showed, `requestDeliverEarly()` is inert on such a run exactly as
+ * `requestCancel()` is on a non-cancellable one, and no caller has to learn
+ * the new vocabulary. What the two stops share is the shape — a request,
+ * fired at most once, pinning its own note; what separates them is
+ * {@link ExportRun.stop}, because "stop and deliver" and "stop and discard"
+ * must not arrive at the caller as the same boolean. `cancelled` therefore
+ * keeps meaning DISCARD and nothing else: a run stopped for delivery reads
+ * `cancelled === false`, so a caller that never heard of the second action
+ * behaves exactly as it did.
+ *
+ * The first stop wins. Whichever request lands first fixes the run's
+ * outcome, and every later one is a no-op — the same "fires onCancel
+ * exactly once" rule widened by one action, so a caller can read `stop`
+ * once and trust it.
+ *
  * Pure and DOM-free like `render-tier.ts` and `drift-policy.ts`: every
  * effect — the clock, the timer primitive, and the view itself — arrives
  * through {@link ExportProgressDeps}, so this module is unit-tested with a
@@ -101,15 +120,25 @@ function pad2(n: number): string {
   return n < 10 ? `0${n}` : `${n}`;
 }
 
+/** What one freshly shown modal opens with. */
+export interface ExportProgressInit {
+  title: string;
+  detail: string;
+  /** False hides the Cancel affordance rather than offering a dead button. */
+  cancellable: boolean;
+  /** The optional second action (fr-2fbs), carrying only its label — the
+   * click routes back through {@link ExportProgressDriver.requestDeliverEarly}
+   * exactly as Cancel routes through `requestCancel`. ABSENT MEANS THE
+   * ONE-BUTTON MODAL, unchanged: a view must render nothing extra, and must
+   * not offer the action on runs that never earned it. */
+  deliverEarly?: { label: string };
+}
+
 /** The DOM surface this driver drives. `Ui` satisfies it structurally. */
 export interface ExportProgressView {
   /** Mount and show the modal. Called at most once per run — see {@link
    * ExportProgressDriver.begin}. */
-  showExportProgress(init: {
-    title: string;
-    detail: string;
-    cancellable: boolean;
-  }): void;
+  showExportProgress(init: ExportProgressInit): void;
   /** Refresh the visible modal's readout. Never called before `show`, never
    * called again after `hide`. */
   setExportProgress(status: { pct: number | null; note: string }): void;
@@ -136,6 +165,15 @@ export interface ExportProgressDeps {
   view: ExportProgressView;
 }
 
+/**
+ * How a run was stopped, when the user stopped it (fr-2fbs). `"cancel"` is
+ * stop-and-discard — the export ends with no file — and `"deliver"` is
+ * stop-and-hand-over, which only a run that offered the second action can
+ * ever reach. Both are REQUESTS: the work underneath unwinds at its own
+ * pace, and the caller's `end()` is still what closes the modal.
+ */
+export type ExportStop = "cancel" | "deliver";
+
 /** One in-flight export, as seen by its caller. */
 export interface ExportRun {
   /** Latest coverage, 0..1 — or null for honest indeterminate (a single GPU
@@ -144,8 +182,16 @@ export interface ExportRun {
   report(fraction: number | null): void;
   /** Terminal: hide the modal and drop every timer. Idempotent. */
   end(): void;
-  /** True once the user asked to stop. The caller polls this. */
+  /** True once the user asked to stop AND DISCARD. Deliberately NOT widened
+   * to cover {@link ExportStop} `"deliver"` (fr-2fbs): every existing caller
+   * reads this as "throw the export away", so a delivering run must read
+   * false here or the file it asked for would be discarded by code that
+   * predates the action. */
   readonly cancelled: boolean;
+  /** Which stop the user requested, or null while the run is simply going.
+   * The FIRST one wins — a later request cannot change it. `cancelled` is
+   * exactly `stop === "cancel"`. */
+  readonly stop: ExportStop | null;
 }
 
 /** Drives the export progress modal: when it shows, what it reads, and
@@ -161,10 +207,22 @@ export interface ExportProgressDriver {
     predictedMs: number | null;
     cancellable: boolean;
     onCancel: () => void;
+    /** Offer the second stop (fr-2fbs): a labelled action that ends the wait
+     * WITH a picture instead of without one. Omit — the default — and this
+     * run has exactly one button, byte for byte the pre-fr-2fbs modal.
+     * `onDeliver` is the `onCancel` twin: fired at most once, from
+     * {@link ExportProgressDriver.requestDeliverEarly}, to wake whatever the
+     * caller has parked. */
+    deliverEarly?: { label: string; onDeliver: () => void };
   }): ExportRun;
-  /** The view's Cancel/Escape entry point. No-op when nothing is running or
-   * the active run is not cancellable. */
+  /** The view's Cancel/Escape entry point. No-op when nothing is running,
+   * the active run is not cancellable, or it has already stopped. */
   requestCancel(): void;
+  /** The view's second-action entry point (fr-2fbs). No-op when nothing is
+   * running, the active run never offered the action, or it has already
+   * stopped — a run cannot be made to take an outcome it did not offer, the
+   * same honesty rule `cancellable: false` states for Cancel. */
+  requestDeliverEarly(): void;
   /** Whether a run is in flight (the re-entrancy guard's question). */
   readonly active: boolean;
 }
@@ -179,9 +237,12 @@ interface Run {
   readonly detail: string;
   readonly cancellable: boolean;
   readonly onCancel: () => void;
+  /** The fr-2fbs second action, or null for the one-button modal. */
+  readonly deliverEarly: { label: string; onDeliver: () => void } | null;
   visible: boolean;
   ended: boolean;
-  cancelled: boolean;
+  /** Null until a stop request lands; then fixed for the run's life. */
+  stop: ExportStop | null;
   /** Latest reported fraction, remembered across the hidden period so the
    * modal's first paint already carries real coverage (see bullet 4 in the
    * fr-7mfx spec / the module doc). */
@@ -200,17 +261,28 @@ export function createExportProgress(
   let current: Run | null = null;
 
   // The status a visible modal shows RIGHT NOW: the elapsed note ordinarily,
-  // pinned to "Cancelling…" from the moment requestCancel() succeeds until
-  // end(). Deriving the note from `run.cancelled` on every push — rather
-  // than special-casing report() while cancelling — is what makes "further
+  // pinned to the stop's own note from the moment a stop request succeeds
+  // until end(). Deriving the note from `run.stop` on every push — rather
+  // than special-casing report() while stopping — is what makes "further
   // report() calls must not overwrite that note" hold automatically: there
   // is no elapsed branch left for them to reach.
+  //
+  // The percent is deliberately NOT pinned alongside it. Under "cancel" it
+  // keeps describing work still unwinding; under "deliver" (fr-2fbs) the
+  // caller has stopped reporting by construction — it took its picture at
+  // the press — so the last number stands, which is exactly the coverage of
+  // the frame being handed over. The elapsed clock is what had to go: a
+  // timer still counting up past a decided outcome reads as a wait that has
+  // not been answered.
   function statusOf(run: Run): { pct: number | null; note: string } {
     const pct =
       run.lastFraction === null ? null : formatRenderPercent(run.lastFraction);
-    const note = run.cancelled
-      ? "Cancelling…"
-      : formatExportElapsed(deps.now() - run.startedAt);
+    const note =
+      run.stop === "cancel"
+        ? "Cancelling…"
+        : run.stop === "deliver"
+          ? "Saving this frame…"
+          : formatExportElapsed(deps.now() - run.startedAt);
     return { pct, note };
   }
 
@@ -235,11 +307,15 @@ export function createExportProgress(
   function showNow(run: Run): void {
     if (run.ended || run.visible) return;
     run.visible = true;
-    deps.view.showExportProgress({
+    const init: ExportProgressInit = {
       title: run.title,
       detail: run.detail,
       cancellable: run.cancellable,
-    });
+    };
+    // Set only when the run has one, so a view sees the same object shape
+    // it always saw for every caller that never asked for the action.
+    if (run.deliverEarly) init.deliverEarly = { label: run.deliverEarly.label };
+    deps.view.showExportProgress(init);
     pushStatus(run);
     armTick(run);
   }
@@ -266,6 +342,7 @@ export function createExportProgress(
       predictedMs: number | null;
       cancellable: boolean;
       onCancel: () => void;
+      deliverEarly?: { label: string; onDeliver: () => void };
     }): ExportRun {
       // Defensive (fr-7mfx): the caller has its own re-entrancy guard, but a
       // leaked grace/tick timer from an abandoned run would be worse than a
@@ -278,9 +355,10 @@ export function createExportProgress(
         detail: opts.detail,
         cancellable: opts.cancellable,
         onCancel: opts.onCancel,
+        deliverEarly: opts.deliverEarly ?? null,
         visible: false,
         ended: false,
-        cancelled: false,
+        stop: null,
         lastFraction: null,
         graceTimerId: null,
         tickTimerId: null,
@@ -308,19 +386,35 @@ export function createExportProgress(
           endRun(run);
         },
         get cancelled(): boolean {
-          return run.cancelled;
+          return run.stop === "cancel";
+        },
+        get stop(): ExportStop | null {
+          return run.stop;
         },
       };
     },
 
     requestCancel(): void {
       const run = current;
-      if (!run || run.ended || run.cancelled || !run.cancellable) return;
-      run.cancelled = true;
+      if (!run || run.ended || run.stop !== null || !run.cancellable) return;
+      run.stop = "cancel";
       run.onCancel();
       // No-op while hidden (pushStatus's own guard) — cancelling never
       // shows the modal early; it only pins the note for whenever the
       // modal does appear, now or on the next push.
+      pushStatus(run);
+    },
+
+    requestDeliverEarly(): void {
+      const run = current;
+      // The requestCancel guards with the run's own action standing in for
+      // `cancellable`: an action the run never offered cannot be taken, and
+      // `stop !== null` is what makes the FIRST stop win — a Cancel pressed
+      // after this one lands on an outcome already decided, which is the
+      // honest answer while the picture is already being encoded.
+      if (!run || run.ended || run.stop !== null || !run.deliverEarly) return;
+      run.stop = "deliver";
+      run.deliverEarly.onDeliver();
       pushStatus(run);
     },
 

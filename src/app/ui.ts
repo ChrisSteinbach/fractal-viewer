@@ -71,6 +71,7 @@ import {
   MIN_GUIDE_SCALE,
   MAX_GUIDE_SCALE,
 } from "./constants";
+import type { ExportProgressInit } from "./export-progress";
 import { videoCaptureSupported } from "./recorder";
 import { offlineExportSupported } from "./video-encode";
 import { installSliderScrollGuard } from "./slider-scroll-guard";
@@ -199,6 +200,12 @@ export interface UiHandlers {
    * hideExportProgress() — the modal has no ✕ or backdrop close, since an
    * accidental dismissal must not silently abandon a multi-minute export. */
   onExportCancel: () => void;
+  /** The export progress modal's second action was clicked (fr-2fbs): stop
+   * waiting for the render to finish and save the picture as it stands.
+   * Shown only for a run that offered it — see
+   * {@link Ui.showExportProgress}'s `deliverEarly` — and deliberately NOT on
+   * the Escape route, which stays cancel-only. */
+  onExportDeliverEarly: () => void;
   /** "⬇ Back up timeline" was clicked (fr-h9rk): download the authored
    * timeline — keyframe steps + the playback determinism seed — as a JSON
    * backup file, the timeline counterpart of {@link onExportCollection}. */
@@ -1026,9 +1033,20 @@ export class Ui {
   private readonly exportDetail: HTMLElement;
   private readonly exportProgress: HTMLElement;
   private readonly exportCancelBtn: HTMLButtonElement;
+  /** The optional second action (fr-2fbs) — "stop waiting and save what's
+   * there". DETACHED from the document, not merely hidden, whenever the run
+   * in flight did not offer it: an action nobody is being offered must not
+   * be tabbable, queryable, or readable as a stale label. Held here across
+   * those absences, re-inserted by {@link showExportProgress}, whose `init`
+   * also writes the label — the app owns the words. `isConnected` is
+   * therefore the single source of truth for "is it on offer", with no
+   * mirrored flag to drift from it. */
+  private readonly exportDeliverBtn: HTMLButtonElement;
   /** Whether the in-flight capture can be cancelled — mirrored from the last
    * {@link showExportProgress} call, since {@link onExportKeydown} and
-   * {@link hideExportProgress}'s focus restore both need it after the fact. */
+   * {@link hideExportProgress}'s focus restore both need it after the fact.
+   * Cancel has no {@link exportDeliverBtn}-style absence: it is the one
+   * button the dialog always has a place for, so it hides in place. */
   private exportCancellable = false;
   /** The element focused just before {@link showExportProgress} opened the
    * modal, restored by {@link hideExportProgress}. */
@@ -1324,20 +1342,33 @@ export class Ui {
 
   /** Escape-and-Tab handling for the export modal (fr-7mfx), attached only
    * while it is open — same discipline as {@link onGalleryKeydown}. Escape
-   * routes to the app's cancel (real GPU work must stop), and Tab is pinned
-   * to the Cancel button: a one-button blocking dialog must not let focus
-   * wander into the page it is blocking. Both are inert when the run is not
-   * cancellable. */
+   * routes to the app's cancel (real GPU work must stop) and to nothing
+   * else: fr-2fbs's second action saves a deliberately coarser picture, so
+   * a stray Escape must never fire it. Tab cycles the buttons the run
+   * actually offered — one of them, usually, which reproduces the original
+   * pin — because a blocking dialog must not let focus wander into the page
+   * it is blocking, and equally must not strand a keyboard user outside an
+   * action it is offering. */
   private readonly onExportKeydown = (e: KeyboardEvent): void => {
-    if (!this.exportCancellable) return;
     if (e.key === "Escape") {
-      this.handlers?.onExportCancel();
+      if (this.exportCancellable) this.handlers?.onExportCancel();
       return;
     }
-    if (e.key === "Tab") {
-      e.preventDefault();
-      this.exportCancelBtn.focus();
+    if (e.key !== "Tab") return;
+    const ring: HTMLButtonElement[] = [];
+    if (this.exportDeliverBtn.isConnected) ring.push(this.exportDeliverBtn);
+    if (this.exportCancellable) ring.push(this.exportCancelBtn);
+    if (ring.length === 0) return;
+    e.preventDefault();
+    const at = ring.indexOf(this.doc.activeElement as HTMLButtonElement);
+    if (at < 0) {
+      // Focus is somewhere else entirely (the modal opened over the page, or
+      // a focused element was removed): pull it back into the ring.
+      ring[0].focus();
+      return;
     }
+    const step = e.shiftKey ? -1 : 1;
+    ring[(at + step + ring.length) % ring.length].focus();
   };
 
   constructor(doc: Document = document) {
@@ -1424,6 +1455,13 @@ export class Ui {
     this.exportDetail = this.byId("exportDetail");
     this.exportProgress = this.byId("exportProgress");
     this.exportCancelBtn = this.byId("exportCancelBtn");
+    this.exportDeliverBtn = this.byId("exportDeliverBtn");
+    // ...and straight back out (fr-2fbs). index.html declares the button so
+    // the dialog's full vocabulary — both its actions, in their order, with
+    // their classes — stays readable in the markup; this makes the DEFAULT
+    // state the true one. showExportProgress re-inserts it for a run that
+    // offers the action, and takes it out again for one that does not.
+    this.exportDeliverBtn.remove();
     this.glowBrightnessRow = this.byId("glowBrightnessRow");
     this.balloonEchoRow = this.byId("balloonEchoRow");
     this.balloonRadiusRow = this.byId("balloonRadiusRow");
@@ -1763,6 +1801,11 @@ export class Ui {
     // app via onExportCancel instead of a bare hideExportProgress() call.
     this.exportCancelBtn.addEventListener("click", () =>
       handlers.onExportCancel(),
+    );
+    // Same reasoning for fr-2fbs's second action: it ends a real wait and
+    // commits to a file, so it routes through the app rather than the view.
+    this.exportDeliverBtn.addEventListener("click", () =>
+      handlers.onExportDeliverEarly(),
     );
     // The balloon echo's "Inflate" replay (fr-5wlv.2) — a bespoke button
     // like watchBuildBtn above, not a table-driven scalar control. The
@@ -2637,19 +2680,26 @@ export class Ui {
    * feedback otherwise on screen. `cancellable: false` states honestly that
    * the work cannot be interrupted — a single GPU submission cannot be
    * stopped mid-draw — and HIDES the Cancel button rather than offering a
-   * dead one. Arms Escape/Tab handling, remembers the currently focused
-   * element to restore on {@link hideExportProgress}, and resets the
-   * readout to 0% so a new run never opens showing the previous run's
-   * number. */
-  showExportProgress(init: {
-    title: string;
-    detail: string;
-    cancellable: boolean;
-  }): void {
+   * dead one. `deliverEarly` is the fr-2fbs second action under the same
+   * rule: absent — every caller but the flame Save-PNG's wait — leaves the
+   * modal with exactly one button, and its label comes from the app because
+   * only the app knows what the early picture will be. Arms Escape/Tab
+   * handling, remembers the currently focused element to restore on
+   * {@link hideExportProgress}, and resets the readout to 0% so a new run
+   * never opens showing the previous run's number. */
+  showExportProgress(init: ExportProgressInit): void {
     this.exportTitle.textContent = init.title;
     this.exportDetail.textContent = init.detail;
     this.exportCancellable = init.cancellable;
     this.exportCancelBtn.classList.toggle("hidden", !init.cancellable);
+    // Both branches are idempotent: `before` on an already-placed node is a
+    // move to where it already is, `remove` on a detached one does nothing.
+    if (init.deliverEarly) {
+      this.exportDeliverBtn.textContent = init.deliverEarly.label;
+      this.exportCancelBtn.before(this.exportDeliverBtn);
+    } else {
+      this.exportDeliverBtn.remove();
+    }
     this.exportProgress.classList.remove("flame-progress-estimating");
     this.exportProgress.textContent = "0%";
     this.exportProgress.style.setProperty("--progress", "0%");
@@ -2659,7 +2709,10 @@ export class Ui {
       this.doc.activeElement instanceof HTMLElement
         ? this.doc.activeElement
         : null;
+    // Cancel keeps the opening focus wherever it exists: Enter on a modal
+    // that just appeared under the user's hands must not commit to a file.
     if (init.cancellable) this.exportCancelBtn.focus();
+    else if (this.exportDeliverBtn.isConnected) this.exportDeliverBtn.focus();
   }
 
   /** Update the readout. `pct: null` is the honest indeterminate state: the
@@ -2685,6 +2738,13 @@ export class Ui {
     if (this.exportModal.classList.contains("hidden")) return;
     this.exportModal.classList.add("hidden");
     this.doc.removeEventListener("keydown", this.onExportKeydown);
+    // The fr-2fbs action belongs to the run that offered it, so it goes out
+    // with that run rather than waiting for the next showExportProgress to
+    // decide: nothing is offering it in between, and MEASURED — a browser
+    // run caught the leftover from a flame export still sitting in the
+    // page during a solid one, which is the exact "hidden is not absent"
+    // hole this detach discipline exists to close.
+    this.exportDeliverBtn.remove();
     // Clear text too, not just hide: a stale percent left in textContent
     // reads as a live render to settle-scraping harnesses (fr-d6g5).
     this.exportProgress.textContent = "";

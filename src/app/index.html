@@ -1610,7 +1610,19 @@
              gallery's ✕/backdrop/Escape trio (which Ui owns directly),
              Cancel must abort real GPU work, so it routes through a
              UiHandlers callback (onExportCancel) instead of a bare
-             hideExportProgress(). -->
+             hideExportProgress().
+         The second button (fr-2fbs) is DETACHED by Ui's constructor and put
+         back only for a run that offers the action — today the flame
+         Save-PNG's wait alone, the one export whose renderer is already
+         sitting on a real, coarser picture. It is declared here, rather than
+         built in JS, so this file keeps showing the dialog's whole
+         vocabulary; but an action nobody is being offered must not merely be
+         invisible, it must be absent, so there is nothing to tab to, query,
+         or read a stale label off. Its label is written per run by
+         showExportProgress. It shares `export-cancel`, which is a LAYOUT
+         rule (centre a block button in this dialog) rather than a
+         Cancel-specific one, so the two peers stack centred and identical
+         with no new CSS — neither is the dominant answer. -->
     <div
       id="exportModal"
       class="gallery-modal hidden"
@@ -1633,6 +1645,13 @@
         >
           0%
         </div>
+        <button
+          id="exportDeliverBtn"
+          class="btn btn-ghost export-cancel"
+          type="button"
+        >
+          Save now
+        </button>
         <button
           id="exportCancelBtn"
           class="btn btn-ghost export-cancel"
