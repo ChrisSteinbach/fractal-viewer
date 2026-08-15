@@ -601,6 +601,27 @@ describe("mutateSystem fold radii (fr-s9ll)", () => {
     }
   });
 
+  it("carries a field it has no rule for through untouched, rather than rebuilding the entry without it", () => {
+    // `jitterVariationEntry` COPIES the entry. A hand-authored fold length on
+    // a NON-fold type is inert — nothing resolves it — but an explicit
+    // rebuild would drop it silently, and it is the same rebuild that would
+    // drop the next field `Variation` grows. `persist.ts` and `morph.ts` both
+    // carry unknown fields through; this pins that mutation does too.
+    const base = system({
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "swirl", weight: 1, minRadius: 0.3 }],
+        },
+      ],
+    });
+    const mutant = mutateSystem(base, mulberry32(11));
+    expect(mutant.transforms[0].variations![0].minRadius).toBe(0.3);
+  });
+
   it("never gains fold lengths on a non-fold variation, even under wildcard", () => {
     const base = system({ transforms: swirlFlame() });
     for (let seed = 0; seed < 30; seed++) {

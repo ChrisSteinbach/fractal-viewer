@@ -365,6 +365,15 @@ function jitterBoxLimit(rng: Rng, value: number, spread: number): number {
  * whether that came from this same call or, when `fixedRadius` is absent
  * (and so stays absent), the classic 1 — mirroring `resolveFoldRadii`'s own
  * domain rule that the mid shell can never invert backwards.
+ *
+ * The entry is COPIED rather than rebuilt from `type` and `weight`, so a
+ * field this function has no rule for rides through untouched instead of
+ * vanishing — the same shape `persist.ts` and `morph.ts` carry, and the
+ * variation-level reading of this file's own "no key is ever invented or
+ * dropped" promise. Today that only matters for a hand-authored fold length
+ * on a NON-fold type, where the three fields are inert; it matters more the
+ * next time `Variation` grows a field, because an explicit rebuild fails
+ * CLOSED and drops it silently.
  */
 function jitterVariationEntry(
   rng: Rng,
@@ -372,7 +381,7 @@ function jitterVariationEntry(
   spread: number,
 ): Variation {
   const result: Variation = {
-    type: v.type,
+    ...v,
     weight: jitterVariationWeight(rng, v.weight, spread),
   };
   if (!isFoldVariationType(v.type)) return result;
