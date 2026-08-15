@@ -13,6 +13,7 @@ import {
 } from "../fractal/color";
 import { analyzeEscapeSystem, buildEscapeDE } from "../fractal/escape-de";
 import { analyzeBulbSystem, buildBulbDE } from "../fractal/bulb-de";
+import { systemHasActiveQSquare } from "../fractal/qjulia-de";
 import {
   analyzeSurfaceSystem,
   buildSurfaceDE,
@@ -4839,7 +4840,21 @@ function main(): void {
         state.finalTransform ?? null,
       );
       if (analysis.status === "ineligible") {
-        ui.setSurfaceEligibility("ineligible", analysis.reasons.join("; "));
+        // qsquare's complement, one dimension up (fr-zi3c) — see the 3D
+        // arm below for the full reasoning. Worth having HERE especially:
+        // the Julia constant's k component comes from the map's own w
+        // extension (`qjulia-de.ts` module doc), so a genuinely 4D
+        // quaternion square is exactly what routes a system to this
+        // branch in the first place.
+        const reasons4 = analysis.reasons.slice();
+        if (
+          systemHasActiveQSquare(state.transforms, state.finalTransform ?? null)
+        ) {
+          reasons4.push(
+            "a quaternion square has an escape-time set, but this build ships no renderer for it",
+          );
+        }
+        ui.setSurfaceEligibility("ineligible", reasons4.join("; "));
         return;
       }
       // fr-rsp6: fold-shaped 4D systems render ONLY on the WebGPU compute
@@ -4946,7 +4961,30 @@ function main(): void {
         );
         return;
       }
-      ui.setSurfaceEligibility("ineligible", analysis.reasons.join("; "));
+      // qsquare's complement (fr-zi3c): unlike the fold and bulb arms
+      // above, there is no third renderer to route to. A quaternion square
+      // has a genuine escape-time set and a correct, tested estimator
+      // (`qjulia-de.ts`), but Surface mode's central promise is that zoom
+      // keeps resolving, and `scripts/qjulia-beauty.harness.ts` measured
+      // the object as smooth at every level it tried — shells and whorls,
+      // no fractal detail — so fr-7u8t.5 (a WGSL/GLSL mirror) is closed
+      // won't-do on that measurement and none is planned. The honest fix
+      // is the REFUSAL, not a renderer: a system carrying an active
+      // qsquare gets a clause appended to its ordinary "uses variations"
+      // reasons, naming what the map is instead of leaving the button
+      // dark with a reason that describes neither the map nor the
+      // situation. Appended rather than substituted — a system can be
+      // ineligible for several reasons at once, and this clause must stay
+      // true regardless of what else is wrong with the document.
+      const reasons = analysis.reasons.slice();
+      if (
+        systemHasActiveQSquare(state.transforms, state.finalTransform ?? null)
+      ) {
+        reasons.push(
+          "a quaternion square has an escape-time set, but this build ships no renderer for it",
+        );
+      }
+      ui.setSurfaceEligibility("ineligible", reasons.join("; "));
       return;
     }
     // The tracer's uniform cap, on the BARE active-map count (fr-x029).

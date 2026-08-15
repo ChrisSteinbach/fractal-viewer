@@ -3,6 +3,7 @@ import {
   buildQJuliaDE,
   estimateQJuliaDistance,
   QJULIA_STEP_SCALE,
+  systemHasActiveQSquare,
 } from "./qjulia-de";
 import type { Transform, Vec4 } from "./types";
 
@@ -117,6 +118,133 @@ describe("analyzeQJuliaSystem", () => {
     expect(analysis.reasons).toContain(
       "the map is singular (zero scale on some axis)",
     );
+  });
+});
+
+describe("systemHasActiveQSquare", () => {
+  it("is false for a system with no qsquare variation anywhere", () => {
+    const spherical: Transform = {
+      id: 1,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [{ type: "spherical", weight: 1 }],
+    };
+
+    expect(systemHasActiveQSquare([spherical])).toBe(false);
+  });
+
+  it("is true for a lone active qsquare map", () => {
+    const map: Transform = {
+      id: 1,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [{ type: "qsquare", weight: 1 }],
+    };
+
+    expect(systemHasActiveQSquare([map])).toBe(true);
+  });
+
+  it("is true when qsquare is blended with other variations on the same map", () => {
+    // Broader than the eligibility gate's pure-map requirement on purpose:
+    // this predicate is asking whether the refusal reason should name
+    // qsquare, not whether the quaternion-Julia estimator applies.
+    const blended: Transform = {
+      id: 1,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [
+        { type: "qsquare", weight: 0.5 },
+        { type: "spherical", weight: 0.5 },
+      ],
+    };
+
+    expect(systemHasActiveQSquare([blended])).toBe(true);
+  });
+
+  it("is true when only one of several maps carries an active qsquare", () => {
+    const plain: Transform = {
+      id: 1,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [{ type: "linear", weight: 1 }],
+    };
+    const qsquareMap: Transform = {
+      id: 2,
+      position: [0.3, -0.1, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [{ type: "qsquare", weight: 1 }],
+    };
+
+    expect(systemHasActiveQSquare([plain, qsquareMap])).toBe(true);
+  });
+
+  it("ignores a qsquare variation on a map whose own weight is 0", () => {
+    const disabledMap: Transform = {
+      id: 1,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      weight: 0,
+      variations: [{ type: "qsquare", weight: 1 }],
+    };
+
+    expect(systemHasActiveQSquare([disabledMap])).toBe(false);
+  });
+
+  it("ignores a qsquare entry whose own variation weight is 0", () => {
+    const zeroWeightVariation: Transform = {
+      id: 1,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [
+        { type: "qsquare", weight: 0 },
+        { type: "linear", weight: 1 },
+      ],
+    };
+
+    expect(systemHasActiveQSquare([zeroWeightVariation])).toBe(false);
+  });
+
+  it("is true for an active qsquare on the final transform", () => {
+    const linearMap: Transform = {
+      id: 1,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    };
+    const finalTransform: Transform = {
+      id: 2,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [{ type: "qsquare", weight: 1 }],
+    };
+
+    expect(systemHasActiveQSquare([linearMap], finalTransform)).toBe(true);
+  });
+
+  it("ignores an inactive qsquare on the final transform", () => {
+    const linearMap: Transform = {
+      id: 1,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    };
+    const finalTransform: Transform = {
+      id: 2,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [{ type: "qsquare", weight: 0 }],
+    };
+
+    expect(systemHasActiveQSquare([linearMap], finalTransform)).toBe(false);
   });
 });
 
