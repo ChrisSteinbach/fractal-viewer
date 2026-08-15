@@ -3,6 +3,7 @@ import {
   buildSurfaceFragment,
   createSurfaceMaterial,
   setBulbSystem,
+  setEscapeSystem,
   setSurfaceBalloon,
   setSurfaceGroundPlane,
   setSurfaceSystem,
@@ -15,6 +16,7 @@ import {
   BULB_ITERATIONS,
   BULB_STEP_SCALE,
 } from "../fractal/bulb-de";
+import { buildEscapeDE } from "../fractal/escape-de";
 import type {
   SurfaceBalloonSpec,
   SurfaceGroundPlaneSpec,
@@ -675,6 +677,174 @@ describe("SURFACE_ESCAPE orbit trap (fr-byxb)", () => {
       "trap = clamp((float(escapedAt) - escFrac) / float(uMaxDepth), 0.0, 1.0);";
     expect(escape).toContain(line);
     expect(bulb).toContain(line);
+  });
+});
+
+describe("SURFACE_ESCAPE variant packing (fr-kltj, chain since fr-s04t)", () => {
+  /** A three-link chain whose links genuinely differ — fold kind, weight,
+   * matrix and translation all vary — plus one inactive (weight 0) map, so
+   * uMapCount can be shown to count LINKS rather than document transforms.
+   * fr-s04t's own lesson: identical links make every packing mutation pass
+   * vacuously, so no two links here share a fold kind, a weight or a
+   * matrix. */
+  function chain(): Transform[] {
+    return [
+      {
+        id: 0,
+        position: [0.4, 0.3, 0.2],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "mandelbox", weight: 2 }],
+      },
+      {
+        id: 1,
+        position: [-0.1, 0.5, 0.2],
+        rotation: [0.3, 0.7, -0.2],
+        scale: [1, 1, 1],
+        variations: [{ type: "boxfold", weight: 1.6 }],
+      },
+      {
+        id: 2,
+        position: [0, 0.2, -0.3],
+        rotation: [0, 0, 0],
+        scale: [2, 2, 2],
+        variations: [{ type: "spherefold", weight: 1.2 }],
+      },
+      {
+        // Inactive: a document transform that must NOT reach the chain.
+        id: 3,
+        position: [9, 9, 9],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "mandelbox", weight: 2 }],
+        weight: 0,
+      },
+    ];
+  }
+
+  it("setEscapeSystem packs each link's own matrix, translation, fold kind, weight and derivGrowth into its slot, with uMapCount the LINK count", () => {
+    const material = createSurfaceMaterial();
+    const de = buildEscapeDE(chain());
+    expect(de.links).toHaveLength(3); // 4 document transforms, one inactive.
+    // The fixture's own guarantee: no two links share a matrix, or the
+    // per-slot assertions below would still pass with every link written
+    // into slot 0.
+    expect(de.links[0].m).not.toEqual(de.links[1].m);
+    expect(de.links[1].m).not.toEqual(de.links[2].m);
+
+    setEscapeSystem(material, de, black);
+
+    const u = material.uniforms;
+    const escM = u.uEscM.value as THREE.Matrix3[];
+    const escT = u.uEscT.value as THREE.Vector3[];
+    const escParams = u.uEscParams.value as THREE.Vector4[];
+    de.links.forEach((link, i) => {
+      const m = link.m;
+      // Row-major m packed column-major — the uFinalInvM/uSymStepBack
+      // transpose convention (surface-material-4d.test.ts's own pin).
+      expect(Array.from(escM[i].elements)).toEqual([
+        m[0],
+        m[3],
+        m[6],
+        m[1],
+        m[4],
+        m[7],
+        m[2],
+        m[5],
+        m[8],
+      ]);
+      expect([escT[i].x, escT[i].y, escT[i].z]).toEqual(link.t);
+      expect(escParams[i].x).toBe(link.foldKind);
+      expect(escParams[i].y).toBe(link.w);
+      expect(escParams[i].z).toBe(link.derivGrowth);
+    });
+    expect(u.uMapCount.value).toBe(3);
+  });
+
+  it("packs the kaleidoscope's own order and plane, and leaves uSymStep inert — never the descent's precomputed sector step", () => {
+    const material = createSurfaceMaterial();
+    const de = buildEscapeDE(chain(), null, { order: 5, plane: "xy" });
+    setEscapeSystem(material, de, black);
+    const u = material.uniforms;
+    expect(u.uSymOrder.value).toBe(5);
+    // yz=0, xz=1, xy=2 — the frozen SYM_PLANE_CODE convention pinned above
+    // for setSurfaceSystem; setEscapeSystem reads the same table.
+    expect(u.uSymPlane.value).toBe(2);
+    expect((u.uSymStep.value as THREE.Vector2).x).toBe(1);
+    expect((u.uSymStep.value as THREE.Vector2).y).toBe(0);
+  });
+
+  it("reaches foldQuerySector in the emitted GLSL, applied ONCE before the orbit and never inside the step loop", () => {
+    const resolved = surfaceFragmentFor(1, 0);
+    expect(resolved).toContain("vec3 foldQuerySector(vec3 p) {");
+    expect(resolved).toContain("float a = uSymPlane == 0 ? p.y : p.x;");
+    expect(resolved).toContain(
+      "float sector = 6.283185307179586 / float(uSymOrder);",
+    );
+
+    // Both orbit-running overloads (the cutoff form and the hit-info form)
+    // seed from exactly one call ahead of their own loop — the escape set
+    // of v <- F(v) + p only inherits a rotation the SEED carries, never
+    // one reapplied mid-orbit (the module's own foldQuerySector comment).
+    const callSite = "vec3 q = foldQuerySector(p);";
+    const loopHead = "for (int i = 0; i < steps; i++) {";
+    expect(countOccurrences(resolved, callSite)).toBe(2);
+    expect(countOccurrences(resolved, loopHead)).toBe(2);
+
+    let from = 0;
+    for (let i = 0; i < 2; i++) {
+      const callIdx = resolved.indexOf(callSite, from);
+      const loopIdx = resolved.indexOf(loopHead, from);
+      const bodyEnd = resolved.indexOf("return r / dr;", loopIdx);
+      expect(loopIdx).toBeGreaterThan(callIdx);
+      expect(resolved.slice(loopIdx, bodyEnd)).not.toContain("foldQuerySector");
+      from = bodyEnd;
+    }
+  });
+
+  it("strips every escape token from every other variant while the flag is off — the byte-identity mechanism", () => {
+    // escape has no default (unlike balloon/plane/bulb), so every caller in
+    // this file passes it explicitly — there is no "omitted" form to check,
+    // unlike the other three arms' byte-identity tests.
+    for (const [lens, balloon, plane, bulb] of [
+      [0, 0, 0, 0],
+      [1, 0, 0, 0],
+      [0, 1, 0, 0],
+      [0, 0, 1, 0],
+      [0, 0, 0, 1],
+    ] as const) {
+      const resolved = surfaceFragmentFor(0, lens, balloon, plane, bulb);
+      expect(resolved).not.toContain("uEscM");
+      expect(resolved).not.toContain("uEscT");
+      expect(resolved).not.toContain("uEscParams");
+      expect(resolved).not.toContain("foldQuerySector");
+      expect(resolved).not.toContain("#if SURFACE_ESCAPE");
+    }
+  });
+
+  it("packs slot 0 from the DE's own head-link ballast fields — EscapeDE still extends EscapeLink, and this redundancy is what surface-de-gpu.test.ts's params-block pin checks on the WGSL side", () => {
+    const material = createSurfaceMaterial();
+    const de = buildEscapeDE(chain());
+    setEscapeSystem(material, de, black);
+    const u = material.uniforms;
+    const m0 = (u.uEscM.value as THREE.Matrix3[])[0];
+    expect(Array.from(m0.elements)).toEqual([
+      de.m[0],
+      de.m[3],
+      de.m[6],
+      de.m[1],
+      de.m[4],
+      de.m[7],
+      de.m[2],
+      de.m[5],
+      de.m[8],
+    ]);
+    const t0 = (u.uEscT.value as THREE.Vector3[])[0];
+    expect([t0.x, t0.y, t0.z]).toEqual(de.t);
+    const p0 = (u.uEscParams.value as THREE.Vector4[])[0];
+    expect(p0.x).toBe(de.foldKind);
+    expect(p0.y).toBe(de.w);
+    expect(p0.z).toBe(de.derivGrowth);
   });
 });
 
