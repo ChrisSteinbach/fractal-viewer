@@ -4118,10 +4118,29 @@ function main(): void {
       return {
         detail: `${String(size.width)} × ${String(size.height)}`,
         // One synchronous raymarch at export scale: it can report no
-        // coverage mid-draw. Export scale is the only knob that makes it
-        // slow, so it is the only thing worth predicting from — there is no
-        // per-pixel evidence to measure the way the surface tracer has.
-        predictedMs: scale > 1 ? EXPORT_MODAL_SLOW_PREDICTION_MS + 1 : null,
+        // coverage mid-draw, so this decides the ONE thing left — whether
+        // the modal skips its grace period. Since fr-2q01 that decision is
+        // MEASURED: the previous export's own ms/px at this volume, pose
+        // and threshold, times this export's pixels. `scale > 1` alone had
+        // opened a modal on a 320×240 scale-2 export that finished in
+        // 274ms, flashing it for ~270ms — precisely the noise the grace
+        // period exists to absorb — while being right about the 1920×1080
+        // case it was written for.
+        //
+        // The fallback is TODAY'S HEURISTIC verbatim rather than a
+        // pessimistic class prior, and deliberately: a solid march has no
+        // cost class to be pessimistic about. Its per-pixel work spans
+        // "every ray misses the box" to "every ray runs the full
+        // marchStepsForGrid loop", so a prior pitched high enough to cover
+        // the second end would show a modal on every FIRST export in the
+        // app — the same flash, moved rather than removed. (The surface
+        // arm declines its own fold prior for the mirror-image reason: it
+        // is calibrated ~100x past typical pixels.) Export scale remains
+        // the one knob known to make an unmeasured export slow, so it goes
+        // on deciding the unmeasured case, and one export teaches it.
+        predictedMs:
+          scene.predictSolidCaptureMs(scale) ??
+          (scale > 1 ? EXPORT_MODAL_SLOW_PREDICTION_MS + 1 : null),
         // Cancellable for the WAIT, not the raymarch (fr-61a2). This arm
         // read `false` while it could only ever BE that one uninterruptible
         // submission, and hiding a dead button was right. Now the long pole

@@ -23,6 +23,7 @@ import type { Mat4 } from "../fractal/flame";
 import type { OrbitCamera } from "./orbit";
 import { wSupport } from "./rotor4";
 import { contextAntialias } from "./constants";
+import { predictCaptureMs, solidCaptureMsPerPx } from "./capture-cost";
 import {
   backgroundGradientsEqual,
   DEFAULT_BACKGROUND,
@@ -697,6 +698,83 @@ export class FractalScene {
   private voxelTexture: THREE.Data3DTexture;
   private readonly voxelMaterial: THREE.ShaderMaterial;
   private readonly voxelQuad: FullScreenQuad;
+  /**
+   * Measured per-pixel cost (ms) of the last COMPLETED
+   * {@link captureSolidFrame} — the solid twin of
+   * {@link surfaceFullPxCostMs} (fr-2q01), and the only evidence
+   * {@link predictSolidCaptureMs} answers from. Null until an export has
+   * run, and again the moment anything below makes the last one a lie.
+   *
+   * SIMPLER than the surface twin, not merely analogous, and a reader
+   * should not go looking for the missing subtraction: a solid capture is
+   * ONE synchronous raymarch, so its wall IS its cost — no batch
+   * attribution over strips, no `SURFACE_STRIP_SYNC_TAX_MS` to take back
+   * out, and nothing partial to discard, because the draw either happened
+   * whole or the export produced no image at all. The wall covers the
+   * WHOLE export — buffer resize, march, readback, PNG encode — which is
+   * exactly the duration the export modal is deciding about.
+   *
+   * STALE WHEN THE MARCH'S OWN WORK CHANGES, which is two things and not
+   * the solid render's whole settings surface:
+   *  - {@link setVoxelGrid}: the grid's resolution sets `uMarchSteps`
+   *    (fr-2ul deliberately scales stride count with it) and its density
+   *    field decides where each ray breaks out of that loop. A new volume
+   *    is a new cost, in both factors at once.
+   *  - {@link setSolidParams}: `uThreshold` IS the break condition of the
+   *    primary march and the shadow march both — raise it and every ray
+   *    travels further before anything stops it. Ambient and the light
+   *    direction ride the same setter while changing no loop count;
+   *    splitting them out would only buy a stale reading the right to
+   *    survive an edit nobody makes on its own.
+   * SURVIVES A POSE CHANGE, and that is the load-bearing decision here
+   * rather than an omission. The pose genuinely re-prices a solid ray —
+   * the span runs from "off screen, every ray a miss" to "filling the
+   * frame, every ray running the full loop" — so clearing on
+   * {@link applyCamera} is defensible on accuracy grounds, and was the
+   * first thing tried. It is wrong anyway, for two reasons.
+   *
+   * First, it is accuracy this decision cannot spend. The reading feeds
+   * ONE coarse question — is this export longer than the modal's grace
+   * period — and the measured span between a 320x240 scale-2 export and a
+   * 1920x1080 one is 3ms against 4482ms, about 1500x. A pose that
+   * re-prices a ray by 2x or 5x still lands the same side of that
+   * threshold nearly always.
+   *
+   * Second, clearing costs the bead itself. Open a scene, ORBIT to frame
+   * the shot, Save PNG — the ordinary sequence — would then arrive with
+   * no evidence every single time, fall back to the `scale > 1`
+   * heuristic, and flash the modal on a 274ms export exactly as before.
+   * The win would narrow to "two exports from a pixel-identical pose",
+   * which is not how anyone uses it.
+   *
+   * The precedent agrees. The surface path keeps BOTH kinds and
+   * distinguishes them by role: `surfacePreviewPxCostMs` is a PRIOR that
+   * deliberately SURVIVES pose moves, while the strip evidence CHAIN
+   * deliberately dies on them, because a superseded job means the pose
+   * moved on. This field is a prior — there is no chain behind it — so it
+   * survives.
+   *
+   * The risk taken, stated plainly: a pose change into much heavier
+   * geometry can leave a slow export without its modal, where clearing
+   * would have erred toward showing one. That is one silent export,
+   * self-correcting on the next (every capture re-measures), against a
+   * flash the bead was filed about recurring after every camera move.
+   *
+   * {@link resize} survives for the same reason and a stronger one: the
+   * field is per-PIXEL, so the pixel count is already the prediction's
+   * own multiplier, and aspect's re-apportioning of rays is second order
+   * beside it.
+   *
+   * Deliberately NOT cleared either by the adaptive resolution scale or the
+   * panel inset — a capture overrides both ({@link withPixelRatio},
+   * {@link withCenteredProjection}), so neither can reach it — nor by
+   * fog, backdrop or lighting colour, which are per-pixel arithmetic at a
+   * fixed instruction count. And deliberately not FED by
+   * {@link captureThumbnail}'s solid arm: that marches at the live ratio
+   * and spends most of its wall in the downscale and the JPEG encode, so
+   * its ms/px is a different quantity wearing the same units.
+   */
+  private solidCapturePxCostMs: number | null = null;
 
   // The surface render (epic fr-7jlk): the IFS attractor sphere-traced as an
   // implicit surface against an analytic distance estimator (see
@@ -1731,6 +1809,8 @@ export class FractalScene {
     }
     this.lastCameraPose = [x, y, z, tx, ty, tz];
     this.renderNeeded = true;
+    // NOTE a pose change deliberately does NOT clear
+    // {@link solidCapturePxCostMs} — the argument is at that field.
     this.camera.position.set(x, y, z);
     this.camera.lookAt(tx, ty, tz);
   }
@@ -2297,6 +2377,11 @@ export class FractalScene {
     this.renderNeeded = true;
     this.viewportWidth = width;
     this.viewportHeight = height;
+    // A resize deliberately does NOT clear {@link solidCapturePxCostMs}:
+    // the field is per-PIXEL, so the pixel count is already the
+    // prediction's own multiplier, and the aspect's re-apportioning of
+    // rays between the volume and the background is second order beside
+    // it. Same argument as the pose site.
     this.syncProjection();
     this.renderer.setSize(width, height);
     this.composer.setSize(width, height);
@@ -2663,6 +2748,10 @@ export class FractalScene {
     );
     u.uTexel.value = 1 / size;
     u.uMarchSteps.value = marchStepsForGrid(size);
+    // Both factors of a solid capture's per-pixel cost just moved
+    // (fr-2q01): the step count above, and the density that decides where
+    // a ray leaves the loop. See {@link solidCapturePxCostMs}.
+    this.solidCapturePxCostMs = null;
   }
 
   /**
@@ -2679,6 +2768,10 @@ export class FractalScene {
     (u.uLightDir.value as THREE.Vector3).copy(
       lightDirection(params.lightAzimuth, params.lightElevation),
     );
+    // uThreshold is where both marches stop, so an edit here re-prices
+    // every ray (fr-2q01). See {@link solidCapturePxCostMs} for why the
+    // whole setter clears rather than the threshold alone.
+    this.solidCapturePxCostMs = null;
   }
 
   /**
@@ -2707,14 +2800,58 @@ export class FractalScene {
    * {@link captureFrame} (the renderer runs without `preserveDrawingBuffer`)
    * — including its export-resolution raymarch (fr-2urv: the volume is
    * camera-independent, so one bigger frame is just more rays).
+   *
+   * Times itself into {@link solidCapturePxCostMs} (fr-2q01), so the NEXT
+   * export's modal decides from evidence instead of from export scale. The
+   * clock spans the whole promise — a capture's wall is what the modal is
+   * about, and the readback and PNG encode are part of the wait whether or
+   * not they are part of the march. A capture that produced no image
+   * teaches nothing and leaves the previous reading standing.
    */
   captureSolidFrame(exportScale = 1): Promise<ExportImage | null> {
+    const started = performance.now();
     return this.withPixelRatio(this.exportPixelRatio(exportScale), () =>
       this.withCenteredProjection(() => {
         this.renderSolid();
         return exportImageFrom(this.renderer.domElement);
       }),
-    );
+    ).then((image) => {
+      if (image !== null) {
+        // Null from a poisoned reading leaves the field null, which is
+        // the "no evidence" state the fallback already handles — see
+        // capture-cost.ts for why that beats keeping a defensible-looking
+        // number nobody can defend.
+        this.solidCapturePxCostMs = solidCaptureMsPerPx(
+          performance.now() - started,
+          image.width * image.height,
+        );
+      }
+      return image;
+    });
+  }
+
+  /**
+   * Measured evidence for what a solid capture at `exportScale` would
+   * cost, or null when none survives (nothing exported yet at this
+   * volume, pose and threshold) — the solid twin of
+   * {@link predictSurfaceCaptureMs} (fr-2q01), feeding the same ONE
+   * decision: whether the export modal skips its grace period and shows
+   * at once. Never displayed, for the same reason its surface sibling
+   * isn't — coverage and elapsed are measured, a predicted total is a
+   * guess at the user's patience.
+   *
+   * Linear in the pixel count, which is what the march is: the same rays,
+   * more of them. A capture's FIXED part — the drawing-buffer resize, the
+   * encoder's own setup — rides inside the measured ms/px and is
+   * therefore charged per pixel, so a 1x measurement predicting a 4x
+   * export reads slightly high. That is the harmless direction: it opens
+   * a modal the grace period would have opened a third of a second later
+   * anyway, where under-predicting is what leaves a multi-second export
+   * silent.
+   */
+  predictSolidCaptureMs(exportScale = 1): number | null {
+    const { width, height } = this.exportSize(exportScale);
+    return predictCaptureMs(this.solidCapturePxCostMs, width * height);
   }
 
   /**
