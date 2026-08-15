@@ -221,6 +221,7 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
             int branchCount =
               kind == 0 ? 1 : (kind == 1 ? 27 : (kind == 2 ? 3 : 81));
             float absW = fp.z / uSigmaMin[j];
+            FoldRadii fr = foldRadiiOf(uFoldRadii[j].xyz);
             // fr-kidj stage 2 is deliberately CPU-ONLY. The oracle's
             // branch-and-bound skips (descendFold) are VALUE no-ops, so
             // this mirror computes identical values without them — and
@@ -250,10 +251,10 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
               u = sQ * fp.y;
               if (kind == 1) {
                 pre0 = u;
-                pre1 = 2.0 - u;
-                pre2 = -2.0 - u;
-                dUp = max(u - 1.0, 0.0);
-                dDn = max(-1.0 - u, 0.0);
+                pre1 = fr.wall2 - u;
+                pre2 = -fr.wall2 - u;
+                dUp = max(u - fr.wall, 0.0);
+                dDn = max(-fr.wall - u, 0.0);
               } else {
                 ru = length(u);
               }
@@ -282,17 +283,17 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
                   if (s == 0) {
                     v = u;
                     sfSigma = 1.0;
-                    sfRd = max(1.0 - ru, 0.0);
+                    sfRd = max(fr.fixedR - ru, 0.0);
                   } else if (s == 1) {
-                    v = 0.25 * u;
-                    sfSigma = 4.0;
-                    sfRd = max(ru - 2.0, 0.0);
+                    v = fr.innerScale * u;
+                    sfSigma = fr.innerSigma;
+                    sfRd = max(ru - fr.outputR, 0.0);
                   } else {
-                    if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+                    if (ru < fr.midMinR) {
                       // f32 overflow guard: fold the unit-shell bound
                       // (~pScale * |w|, never a near-zero ghost term) and
                       // skip the branch + its box expansion.
-                      float shellCert = pScale * absW * (1.0 - ru);
+                      float shellCert = pScale * absW * (fr.fixedR - ru);
                       shellCert = max(shellCert, pFloor);
                       if (shellCert < best) {
                         best = shellCert;
@@ -308,17 +309,17 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
                       }
                       continue;
                     }
-                    float invR2 = 1.0 / (ru * ru);
+                    float invR2 = fr.fixedR2 / (ru * ru);
                     v = u * invR2;
-                    sfSigma = ru;
-                    sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+                    sfSigma = ru * fr.invFixedR;
+                    sfRd = max(max(fr.fixedR - ru, ru - fr.outputR), 0.0);
                   }
                   if (kind == 3) {
                     pre0 = v;
-                    pre1 = 2.0 - v;
-                    pre2 = -2.0 - v;
-                    dUp = max(v - 1.0, 0.0);
-                    dDn = max(-1.0 - v, 0.0);
+                    pre1 = fr.wall2 - v;
+                    pre2 = -fr.wall2 - v;
+                    dUp = max(v - fr.wall, 0.0);
+                    dDn = max(-fr.wall - v, 0.0);
                   }
                 }
                 vec3 pre;
@@ -602,6 +603,13 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * the affine variant (folded in here so the swap is uniform-budget
    * neutral): (foldKind 0..3, 1/w signed, |w|*sigmaMin, trapIndex). */
   uniform vec4 uFoldParams[MAX_MAPS];
+  /** Per-map AUTHORED fold lengths (fr-s9ll): (minRadius, fixedRadius,
+   * boxLimit, unused) — resolveFoldRadii's own output, the three numbers a
+   * document carries. foldRadiiOf below re-derives the branch algebra from
+   * them, so the wire stays checkable against the document by eye. The one
+   * new per-map array this variant pays for; declared INSIDE the arm, so an
+   * affine program is byte-identical to the pre-fr-s9ll build. */
+  uniform vec4 uFoldRadii[MAX_MAPS];
 #else
   /** Per-slot palette coordinate in [0, 1] for the orbit trap
    * (CPU-precomputed from each slot's base-map index). */
@@ -653,6 +661,10 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   uniform vec4 uLensParams;
   uniform mat3 uLensInvM;
   uniform vec3 uLensInvT;
+  /** The lens fold's AUTHORED lengths (fr-s9ll), uFoldRadii's per-map
+   * quartet for the one map that is not in the array. Zero without a lens,
+   * which the wrapper never reads. */
+  uniform vec3 uLensRadii;
   /** Base-color source: 0 = by-transform (uMapColor), 1 = orbit-trap
    * palette, 2 = height ramp, 3 = radius ramp, 4 = orbit rings, 5 = orbit
    * sheets. Sources 1-5 sample uColorLUT. */
@@ -746,6 +758,44 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
       return vec3(c * p.x - s * p.z, p.y, s * p.x + c * p.z);
     }
     return vec3(c * p.x + s * p.y, -s * p.x + c * p.y, p.z);
+  }
+
+  /** The fold's three AUTHORED lengths, re-expressed in the branch
+   * algebra's own terms — surface-de.ts's surfaceFoldRadii field for
+   * field (fr-s9ll). The wire carries the lengths and this derives the
+   * rest, once per map per descent level, outside a branch loop that runs
+   * up to 81 times; at the classic (0.5, 1, 1) every expression is exactly
+   * the literal that shipped, so an unparameterized document traces
+   * bit-identically. Declared unconditionally: the fold-lens wrapper reads
+   * it around an AFFINE core too, where SURFACE_FOLDS is 0. */
+  struct FoldRadii {
+    float wall;
+    float wall2;
+    float fixedR;
+    float invFixedR;
+    float fixedR2;
+    float innerScale;
+    float innerSigma;
+    float outputR;
+    float midMinR;
+  };
+
+  FoldRadii foldRadiiOf(vec3 f) {
+    float mR = f.x;
+    float fR = f.y;
+    float fR2 = fR * fR;
+    float mR2 = mR * mR;
+    return FoldRadii(
+      f.z,
+      2.0 * f.z,
+      fR,
+      1.0 / fR,
+      fR2,
+      mR2 / fR2,
+      fR2 / mR2,
+      fR2 / mR,
+      ${SPHEREFOLD_MID_MIN_R} * fR
+    );
   }
 
   /** One extra Hutchinson level on a frozen escaped candidate's own inverse
@@ -915,6 +965,12 @@ uniform float uBalloonFar;
   uniform mat3 uEscM[MAX_MAPS];
   uniform vec3 uEscT[MAX_MAPS];
   uniform vec4 uEscParams[MAX_MAPS];
+  /** Each LINK's own fold lengths (fr-s9ll), SQUARED for the sphere pair:
+   * (minRadius^2, fixedRadius^2, boxLimit, unused), which is the form
+   * EscapeLink keeps and the form fR2/clamp(r2, mR2, fR2) wants. A chain
+   * may hold a different apparatus per link, so this is per-slot like the
+   * three above and not a single uniform. */
+  uniform vec4 uEscRadii[MAX_MAPS];
 
   /** escape-de.ts's foldQueryIntoSector — the kaleidoscope as a
    * QUERY-SPACE wedge fold, applied ONCE before the orbit (never inside
@@ -1000,12 +1056,12 @@ uniform float uBalloonFar;
       if (kind != 2) {
         // The box fold (boxfold + mandelbox): per-axis reflections,
         // local factor 1.
-        y = clamp(y, -1.0, 1.0) * 2.0 - y;
+        y = clamp(y, -uEscRadii[li].z, uEscRadii[li].z) * 2.0 - y;
       }
       if (kind != 1) {
         // The sphere fold (spherefold + mandelbox): variations.ts's
         // sphereFoldFactor, which IS the local conformal factor.
-        float f = 1.0 / clamp(dot(y, y), 0.25, 1.0);
+        float f = uEscRadii[li].y / clamp(dot(y, y), uEscRadii[li].x, uEscRadii[li].y);
         y *= f;
         localL = f;
       }
@@ -1069,10 +1125,10 @@ uniform float uBalloonFar;
       vec3 y = uEscM[li] * v + uEscT[li];
       float localL = 1.0;
       if (kind != 2) {
-        y = clamp(y, -1.0, 1.0) * 2.0 - y;
+        y = clamp(y, -uEscRadii[li].z, uEscRadii[li].z) * 2.0 - y;
       }
       if (kind != 1) {
-        float f = 1.0 / clamp(dot(y, y), 0.25, 1.0);
+        float f = uEscRadii[li].y / clamp(dot(y, y), uEscRadii[li].x, uEscRadii[li].y);
         y *= f;
         localL = f;
       }
@@ -1741,6 +1797,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
           int branchCount =
             kind == 0 ? 1 : (kind == 1 ? 27 : (kind == 2 ? 3 : 81));
           float absW = fp.z / uSigmaMin[j];
+          FoldRadii fr = foldRadiiOf(uFoldRadii[j].xyz);
           vec3 u = vec3(0.0);
           float ru = 0.0;
           vec3 pre0 = vec3(0.0);
@@ -1755,10 +1812,10 @@ ${foldValueFormGlsl(shadeDeWidth)}
             u = sQ * fp.y;
             if (kind == 1) {
               pre0 = u;
-              pre1 = 2.0 - u;
-              pre2 = -2.0 - u;
-              dUp = max(u - 1.0, 0.0);
-              dDn = max(-1.0 - u, 0.0);
+              pre1 = fr.wall2 - u;
+              pre2 = -fr.wall2 - u;
+              dUp = max(u - fr.wall, 0.0);
+              dDn = max(-fr.wall - u, 0.0);
             } else {
               ru = length(u);
             }
@@ -1776,29 +1833,29 @@ ${foldValueFormGlsl(shadeDeWidth)}
                 if (s == 0) {
                   v = u;
                   sfSigma = 1.0;
-                  sfRd = max(1.0 - ru, 0.0);
+                  sfRd = max(fr.fixedR - ru, 0.0);
                 } else if (s == 1) {
-                  v = 0.25 * u;
-                  sfSigma = 4.0;
-                  sfRd = max(ru - 2.0, 0.0);
+                  v = fr.innerScale * u;
+                  sfSigma = fr.innerSigma;
+                  sfRd = max(ru - fr.outputR, 0.0);
                 } else {
-                  if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+                  if (ru < fr.midMinR) {
                     if (kind == 3) {
                       b += 26;
                     }
                     continue;
                   }
-                  float invR2 = 1.0 / (ru * ru);
+                  float invR2 = fr.fixedR2 / (ru * ru);
                   v = u * invR2;
-                  sfSigma = ru;
-                  sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+                  sfSigma = ru * fr.invFixedR;
+                  sfRd = max(max(fr.fixedR - ru, ru - fr.outputR), 0.0);
                 }
                 if (kind == 3) {
                   pre0 = v;
-                  pre1 = 2.0 - v;
-                  pre2 = -2.0 - v;
-                  dUp = max(v - 1.0, 0.0);
-                  dDn = max(-1.0 - v, 0.0);
+                  pre1 = fr.wall2 - v;
+                  pre2 = -fr.wall2 - v;
+                  dUp = max(v - fr.wall, 0.0);
+                  dDn = max(-fr.wall - v, 0.0);
                 }
               }
               vec3 pre;
@@ -2191,6 +2248,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
     int kind = int(uLensParams.x);
     float absW = uLensParams.z;
     vec3 u = p * uLensParams.y;
+    FoldRadii fr = foldRadiiOf(uLensRadii);
     float best = 1e30;
     float ru = 0.0;
     vec3 pre0 = vec3(0.0);
@@ -2203,10 +2261,10 @@ ${foldValueFormGlsl(shadeDeWidth)}
     float sfRd = 0.0;
     if (kind == 1) {
       pre0 = u;
-      pre1 = 2.0 - u;
-      pre2 = -2.0 - u;
-      dUp = max(u - 1.0, 0.0);
-      dDn = max(-1.0 - u, 0.0);
+      pre1 = fr.wall2 - u;
+      pre2 = -fr.wall2 - u;
+      dUp = max(u - fr.wall, 0.0);
+      dDn = max(-fr.wall - u, 0.0);
     } else {
       ru = length(u);
     }
@@ -2217,16 +2275,16 @@ ${foldValueFormGlsl(shadeDeWidth)}
         if (s == 0) {
           v = u;
           sfSigma = 1.0;
-          sfRd = max(1.0 - ru, 0.0);
+          sfRd = max(fr.fixedR - ru, 0.0);
         } else if (s == 1) {
-          v = 0.25 * u;
-          sfSigma = 4.0;
-          sfRd = max(ru - 2.0, 0.0);
+          v = fr.innerScale * u;
+          sfSigma = fr.innerSigma;
+          sfRd = max(ru - fr.outputR, 0.0);
         } else {
-          if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+          if (ru < fr.midMinR) {
             // Shell guard (the oracle's): fold the settled shell bound,
             // skip the branch + its box expansion.
-            float shellCert = absW * (1.0 - ru);
+            float shellCert = absW * (fr.fixedR - ru);
             if (shellCert < best) {
               best = shellCert;
               if (best <= visBound) {
@@ -2241,17 +2299,17 @@ ${foldValueFormGlsl(shadeDeWidth)}
             }
             continue;
           }
-          float invR2 = 1.0 / (ru * ru);
+          float invR2 = fr.fixedR2 / (ru * ru);
           v = u * invR2;
-          sfSigma = ru;
-          sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+          sfSigma = ru * fr.invFixedR;
+          sfRd = max(max(fr.fixedR - ru, ru - fr.outputR), 0.0);
         }
         if (kind == 3) {
           pre0 = v;
-          pre1 = 2.0 - v;
-          pre2 = -2.0 - v;
-          dUp = max(v - 1.0, 0.0);
-          dDn = max(-1.0 - v, 0.0);
+          pre1 = fr.wall2 - v;
+          pre2 = -fr.wall2 - v;
+          dUp = max(v - fr.wall, 0.0);
+          dDn = max(-fr.wall - v, 0.0);
         }
       }
       vec3 pre;
@@ -2324,6 +2382,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
     int kind = int(uLensParams.x);
     float absW = uLensParams.z;
     vec3 u = p * uLensParams.y;
+    FoldRadii fr = foldRadiiOf(uLensRadii);
     float best = 1e30;
     float ru = 0.0;
     vec3 pre0 = vec3(0.0);
@@ -2336,10 +2395,10 @@ ${foldValueFormGlsl(shadeDeWidth)}
     float sfRd = 0.0;
     if (kind == 1) {
       pre0 = u;
-      pre1 = 2.0 - u;
-      pre2 = -2.0 - u;
-      dUp = max(u - 1.0, 0.0);
-      dDn = max(-1.0 - u, 0.0);
+      pre1 = fr.wall2 - u;
+      pre2 = -fr.wall2 - u;
+      dUp = max(u - fr.wall, 0.0);
+      dDn = max(-fr.wall - u, 0.0);
     } else {
       ru = length(u);
     }
@@ -2353,29 +2412,29 @@ ${foldValueFormGlsl(shadeDeWidth)}
         if (s == 0) {
           v = u;
           sfSigma = 1.0;
-          sfRd = max(1.0 - ru, 0.0);
+          sfRd = max(fr.fixedR - ru, 0.0);
         } else if (s == 1) {
-          v = 0.25 * u;
-          sfSigma = 4.0;
-          sfRd = max(ru - 2.0, 0.0);
+          v = fr.innerScale * u;
+          sfSigma = fr.innerSigma;
+          sfRd = max(ru - fr.outputR, 0.0);
         } else {
-          if (ru < ${SPHEREFOLD_MID_MIN_R}) {
+          if (ru < fr.midMinR) {
             if (kind == 3) {
               b += 26;
             }
             continue;
           }
-          float invR2 = 1.0 / (ru * ru);
+          float invR2 = fr.fixedR2 / (ru * ru);
           v = u * invR2;
-          sfSigma = ru;
-          sfRd = max(max(1.0 - ru, ru - 2.0), 0.0);
+          sfSigma = ru * fr.invFixedR;
+          sfRd = max(max(fr.fixedR - ru, ru - fr.outputR), 0.0);
         }
         if (kind == 3) {
           pre0 = v;
-          pre1 = 2.0 - v;
-          pre2 = -2.0 - v;
-          dUp = max(v - 1.0, 0.0);
-          dDn = max(-1.0 - v, 0.0);
+          pre1 = fr.wall2 - v;
+          pre2 = -fr.wall2 - v;
+          dUp = max(v - fr.wall, 0.0);
+          dDn = max(-fr.wall - v, 0.0);
         }
       }
       vec3 pre;
@@ -3143,6 +3202,16 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
           () => new THREE.Vector4(0, 1, 1, 0),
         ),
       },
+      // Per-map AUTHORED fold lengths (fr-s9ll): (minRadius, fixedRadius,
+      // boxLimit, unused). The default IS the classic Mandelbox set, so a
+      // slot setSurfaceSystem has not reached reads as an unparameterized
+      // fold rather than as a divide by zero.
+      uFoldRadii: {
+        value: Array.from(
+          { length: SURFACE_MAX_MAPS },
+          () => new THREE.Vector4(0.5, 1, 1, 0),
+        ),
+      },
       uMapCount: { value: 0 },
       uSymOrder: { value: 1 },
       uSymPlane: { value: 1 },
@@ -3161,6 +3230,8 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uLensParams: { value: new THREE.Vector4(0, 1, 1, 1) },
       uLensInvM: { value: new THREE.Matrix3() },
       uLensInvT: { value: new THREE.Vector3() },
+      // The lens fold's lengths, classic by default for uFoldRadii's reason.
+      uLensRadii: { value: new THREE.Vector3(0.5, 1, 1) },
       // Escape-time render (fr-kltj): inert defaults; alive only under
       // the SURFACE_ESCAPE define. One slot per CHAIN LINK since fr-s04t
       // (the document's transform list IS the formula sequence), sized
@@ -3182,6 +3253,15 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
         value: Array.from(
           { length: SURFACE_MAX_MAPS },
           () => new THREE.Vector4(0, 1, 1, 0),
+        ),
+      },
+      // Per-LINK fold lengths, SQUARED for the sphere pair (fr-s9ll) —
+      // EscapeLink's own form. The classic Mandelbox set by default, so an
+      // unreached slot could never divide by zero.
+      uEscRadii: {
+        value: Array.from(
+          { length: SURFACE_MAX_MAPS },
+          () => new THREE.Vector4(0.25, 1, 1, 0),
         ),
       },
       // Mandelbulb render (fr-7u8t.9): inert defaults; alive only under
@@ -3296,6 +3376,7 @@ export function setSurfaceSystem(
   const mapColor = u.uMapColor.value as THREE.Vector3[];
   const trapIndex = u.uTrapIndex.value as number[];
   const foldParams = u.uFoldParams.value as THREE.Vector4[];
+  const foldRadii = u.uFoldRadii.value as THREE.Vector4[];
   let hasFolds = false;
   de.maps.forEach((map, j) => {
     const m = map.invM;
@@ -3311,6 +3392,16 @@ export function setSurfaceSystem(
     // The fold-variant vec4 carries the trap coordinate in .w so swapping
     // uTrapIndex out keeps the swap uniform-budget neutral.
     foldParams[j].set(map.foldKind, map.foldInvW, map.foldSigma, trap);
+    // The map's three AUTHORED lengths (fr-s9ll); the shader's foldRadiiOf
+    // re-derives the branch algebra from them, so this ships
+    // resolveFoldRadii's output rather than surfaceFoldRadii's eight
+    // combinations.
+    foldRadii[j].set(
+      map.foldRadii.minR,
+      map.foldRadii.fixedR,
+      map.foldRadii.wall,
+      0,
+    );
     if (map.foldKind !== SURFACE_FOLD_NONE) hasFolds = true;
   });
   // Select the compiled descent pair (fold frontier vs affine ladders)
@@ -3397,10 +3488,18 @@ export function setSurfaceSystem(
     const m = lens.invM;
     lensM.set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
     lensT.set(...lens.invT);
+    (u.uLensRadii.value as THREE.Vector3).set(
+      lens.foldRadii.minR,
+      lens.foldRadii.fixedR,
+      lens.foldRadii.wall,
+    );
   } else {
     (u.uLensParams.value as THREE.Vector4).set(0, 1, 1, 1);
     lensM.identity();
     lensT.set(0, 0, 0);
+    // Reset to the CLASSIC set, not to zero: the no-lens encoding has to be
+    // a fold this arithmetic could actually run, and 0 would divide by it.
+    (u.uLensRadii.value as THREE.Vector3).set(0.5, 1, 1);
   }
 }
 
@@ -3493,7 +3592,31 @@ function resolveVariantArms(
  * pre-bulb build, and it refuses to compile alongside `escape` (each
  * replaces the descent bodies wholesale, so both on would define
  * surfaceDE twice). `source` defaults to the module's assembled
- * fragment; tests pass their own width-parameterized builds (fr-zqu8). */
+ * fragment; tests pass their own width-parameterized builds (fr-zqu8).
+ *
+ * SINCE fr-s9ll THE STRIP IS A SIZE RULE, not the plane arm's private
+ * habit: any resolved source past {@link SURFACE_GLSL_STRIP_BYTES} gets
+ * the same treatment. The fold's authored radii cost this file ~2.2KB of
+ * uniforms, a derivation helper and longer expressions, which took the
+ * BALLOON variant from 80.9KB to 83.1KB — past the 82.2KB that crashed
+ * Mesa outright. A size threshold is the honest predicate for a size
+ * cliff: a hand-kept list of which variants strip is exactly what drifts
+ * the next time one of them grows a paragraph. */
+/**
+ * Resolved-source size past which {@link surfaceFragmentFor} strips
+ * comments and indentation before handing the driver a program (fr-s9ll).
+ *
+ * The three measurements this file has paid for, all on Mesa/Iris:
+ * ~68KB linked (in ~25s), ~80KB was called the cliff, and 82.2KB crashed
+ * the compiler outright — empty info log, lost context. 64KB sits below
+ * the first of those, so every DESCENT variant strips and the two
+ * forward-orbit arms (escape ~40KB, bulb ~34KB) keep their comments,
+ * which is where a reader most often wants to see the shipped source.
+ * Stripping emits the identical token stream, so the choice is only ever
+ * about how many bytes the compiler has to walk.
+ */
+export const SURFACE_GLSL_STRIP_BYTES = 64 * 1024;
+
 export function surfaceFragmentFor(
   escape: number,
   lens: number,
@@ -3521,7 +3644,9 @@ export function surfaceFragmentFor(
     SURFACE_BALLOON: balloon,
     SURFACE_GROUND_PLANE: plane,
   });
-  return plane !== 0 ? stripGlslSource(resolved) : resolved;
+  return plane !== 0 || resolved.length > SURFACE_GLSL_STRIP_BYTES
+    ? stripGlslSource(resolved)
+    : resolved;
 }
 
 /**
@@ -3559,11 +3684,17 @@ export function setEscapeSystem(
   const escM = u.uEscM.value as THREE.Matrix3[];
   const escT = u.uEscT.value as THREE.Vector3[];
   const escParams = u.uEscParams.value as THREE.Vector4[];
+  const escRadii = u.uEscRadii.value as THREE.Vector4[];
   de.links.forEach((link, i) => {
     const m = link.m;
     escM[i].set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
     escT[i].set(...link.t);
     escParams[i].set(link.foldKind, link.w, link.derivGrowth, 0);
+    // This LINK's own fold lengths (fr-s9ll) — the squares EscapeLink
+    // already keeps, so the wire transfers the oracle's numbers rather
+    // than recomputing them. A chain may hold a different apparatus per
+    // link, which is why this is per-slot.
+    escRadii[i].set(link.minRadius2, link.fixedRadius2, link.boxLimit, 0);
   });
   (u.uMapColor.value as THREE.Vector3[])[0].set(...color);
   (u.uTrapIndex.value as number[])[0] = 0;
