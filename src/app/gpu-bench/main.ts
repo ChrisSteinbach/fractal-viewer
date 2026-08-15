@@ -119,6 +119,7 @@ import {
   SURFACE_GPU_RAY_EXHAUSTED,
   SURFACE_GPU_RAY_HIT,
   SURFACE_GPU_RAY_MISS,
+  SURFACE_GPU_RAY_PLANE,
   SURFACE_GPU_SHADE_BYTES,
   SURFACE_GPU_UNIFORM_MAP_SLOTS,
   packBulbGpuParams,
@@ -2130,6 +2131,13 @@ interface SurfaceSectionConfig {
    * Default false — the leg is silent and never runs in CI; see
    * `runSurfaceAff4SweepLeg`'s doc. */
   aff4Sweep: boolean;
+  /** fr-qjae opt-in leg (`--surface-plane-frame=1`): one production frame
+   * through a `groundPlane: true` kernel, checked against a strided CPU
+   * sanity march in hit- AND plane-RATE terms. Default false — the leg is
+   * silent and never runs in CI, the `aff4Sweep` gate's shape; see
+   * `runSurfaceComputeFramePlaneLeg`'s doc for why it is opt-in (it is a
+   * SECOND end-to-end frame on top of the five leg B already renders). */
+  planeFrame: boolean;
   /** fr-76pp opt-in (`--surface-canary-trip=N`, `surfaceCanaryTrip=N`):
    * synthetically corrupt the Nth device-sanity canary check (1-based) so
    * the whole "device-unreliable" path — trip, verdict, node printer, exit
@@ -2417,6 +2425,48 @@ interface SurfaceComputeFrameRow {
   };
 }
 
+/**
+ * fr-qjae: leg B's GROUND-PLANE row — one end-to-end frame through a
+ * `groundPlane: true` kernel, whose whole point is the fifth ray status.
+ * Its own row type rather than a widened {@link SurfaceComputeFrameRow}
+ * because `counts.plane` is the measurement here (every other frame leg's
+ * plane tally is structurally 0), and because the leg reports TWO rates
+ * against the CPU sanity march instead of one.
+ */
+interface SurfacePlaneFrameRow {
+  system: string;
+  width: number;
+  height: number;
+  wallMs: number;
+  gpuMs: number;
+  passes: number;
+  truncated: boolean;
+  counts: {
+    hit: number;
+    miss: number;
+    exhausted: number;
+    active: number;
+    plane: number;
+  };
+  /** The floor the kernel was packed with, in world units — scene.ts's
+   * `surfaceGroundPlaneSpec` numbers for this system's session ball, echoed
+   * so a row is readable without re-deriving them. */
+  plane: { y: number; fadeStart: number; fadeEnd: number; ballRadius: number };
+  /** Whole-frame GPU hit rate vs the strided CPU sanity march's, the
+   * {@link runSurfaceComputeFrameEscapeLeg} band idiom. */
+  sanityGpuHitRate: number;
+  sanityCpuHitRate: number;
+  /** The same comparison for the PLANE status: GPU `counts.plane` over the
+   * raster vs the CPU march's own plane classification over its stride
+   * sample. Gated by the same band — see the leg's doc. */
+  sanityGpuPlaneRate: number;
+  sanityCpuPlaneRate: number;
+  /** Rays the CPU sanity march sampled (stride
+   * {@link SURFACE_SANITY_STRIDE} in both axes) — the denominator behind
+   * both `sanityCpu*` rates, and the band's own noise scale. */
+  sanitySamples: number;
+}
+
 /** One arm's {@link SurfaceComputeFrame} timing/status, sliced for a
  * {@link SurfaceShadeAbRow}. */
 interface ShadeAbArmResult {
@@ -2638,6 +2688,18 @@ interface SurfaceDeResults {
    * completed-empty-vs-CPU-hits clause. Same dual notes/results.json
    * reporting. */
   computeFrame4Fold?: SurfaceComputeFrameRow | SkippedResult;
+  /** fr-qjae opt-in leg (`config.planeFrame`, `surfacePlaneFrame=1`) — leg
+   * B over a `groundPlane: true` kernel, the ONE composition no other leg
+   * reaches (fr-rhn5's kernels are otherwise pinned by source/packer tests
+   * and in-browser verification alone). `SkippedResult` when requested but
+   * the fixture did not build or the renderer broke; ABSENT when the flag
+   * is off (the `shadeAb`/`aff4Sweep` opt-in convention — silent, no note).
+   * Gates like {@link computeFrameEscape}: zero hits on a real adapter, and
+   * on an untruncated frame BOTH rate bands against the strided CPU sanity
+   * march (hit and plane). Same dual notes/results.json reporting as
+   * {@link computeFrame4} — the headless runner's stdout printer does not
+   * know this field. */
+  computeFramePlane?: SurfacePlaneFrameRow | SkippedResult;
   /** fr-p8bc shade A/B leg (informational + canvas artifacts) — absent when
    * `surfaceShadeWidths` is empty (the default, silent) or every requested
    * width was skipped (see `runSurfaceShadeAbLeg`'s doc); never affects
@@ -2943,6 +3005,18 @@ const SURFACE_FRAME_BUDGET_SW_MS = 300_000;
  * {@link SURFACE_MARCH_STEPS} is. */
 const SURFACE_FRAME_SHADOW_STEPS = 32;
 const SURFACE_FRAME_AO_TAPS = 5;
+
+/** fr-qjae: scene.ts's `GROUND_PLANE_*` floor geometry, duplicated like
+ * this file's other cross-module mirrors ({@link SURFACE_NO_SYMMETRY},
+ * {@link SURFACE_MARCH_STEPS}) — they are module-private there, and the
+ * plane frame leg's whole point is to feed the kernel the numbers the APP
+ * feeds it. Applied to the session ball exactly as `surfaceGroundPlaneSpec`
+ * applies them: floor at `center.y − radius·DROP`, radial fade band in
+ * multiples of the radius from the ball's xz center. */
+const SURFACE_PLANE_DROP = 1.02;
+const SURFACE_PLANE_FADE_START = 4;
+const SURFACE_PLANE_FADE_END = 10;
+const SURFACE_PLANE_ALBEDO: Vec3 = [0.62, 0.62, 0.62];
 
 /** fr-p8bc shade A/B leg raster — leg A's 96x54 on BOTH adapter kinds,
  * smaller than leg B's (SURFACE_FRAME_WIDTH 256x144) by measured
@@ -3567,8 +3641,10 @@ function parseSurfaceShadeWidths(raw: string | null): {
  * a software adapter), `surfaceShadeWidth` (fr-p8bc shade A/B leg probe
  * widths, e.g. "1,4"; default empty — leg skipped), `surfaceAff4Sweep`
  * (fr-b72d opt-in per-order affine4 timing sweep, "1" = on; default off —
- * see `runSurfaceAff4SweepLeg`'s doc), `surfaceCanaryTrip` (fr-76pp opt-in
- * synthetic device-sanity trip at the Nth check; default 0 = off). */
+ * see `runSurfaceAff4SweepLeg`'s doc), `surfacePlaneFrame` (fr-qjae opt-in
+ * ground-plane frame leg, "1" = on; default off — see
+ * `runSurfaceComputeFramePlaneLeg`'s doc), `surfaceCanaryTrip` (fr-76pp
+ * opt-in synthetic device-sanity trip at the Nth check; default 0 = off). */
 function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
   const variants = (params.get("surfaceVariants") ?? "shared,private")
     .split(",")
@@ -3602,6 +3678,7 @@ function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
     surfaceShadeWidths: shadeWidths.widths,
     shadeWidthNotes: shadeWidths.notes,
     aff4Sweep: params.get("surfaceAff4Sweep") === "1",
+    planeFrame: params.get("surfacePlaneFrame") === "1",
     canaryTrip:
       Number.isInteger(canaryTripParsed) && canaryTripParsed >= 1
         ? canaryTripParsed
@@ -6947,6 +7024,241 @@ async function runSurfaceComputeFrameEscapeLeg(
       counts: frame.counts,
       sanityGpuHitRate,
       sanityCpuHitRate,
+    };
+  } finally {
+    renderer.destroy();
+  }
+}
+
+/**
+ * The march kernel's own `groundPlaneStatus` (fr-rhn5), mirrored term for
+ * term — the analytic geometry that turns a sphere-gate/sphere-exit MISS
+ * into {@link SURFACE_GPU_RAY_PLANE}. From the WGSL `surfaceDeKernelWgsl`
+ * emits under `groundPlane: true`, verbatim:
+ *
+ * ```wgsl
+ * if (ro.y <= params.groundY || rd.y >= -1.0e-6) { return MISS; }
+ * let tp = (params.groundY - ro.y) / rd.y;
+ * let rel = (ro + rd * tp).xz - params.groundBallC.xz;
+ * if (dot(rel, rel) >= params.groundFadeEnd * params.groundFadeEnd) {
+ *   return MISS;
+ * }
+ * return PLANE;
+ * ```
+ *
+ * One-sided (from below the floor everything is background), downward rays
+ * only, and bounded by fadeEnd — past the band the shade returns pure
+ * background anyway, so those rays keep the cheap one-write MISS path.
+ *
+ * The CALLER applies it to a MISS and to nothing else: the kernel splices
+ * this call in at exactly three sites (`disc < 0`, `tFar <= 0`, and the step
+ * loop's `t > tFar` sphere exit), while the step-BUDGET exit writes
+ * EXHAUSTED literally — so an exhausted ray never planes, however far below
+ * the horizon it points.
+ */
+function surfaceGroundPlaneStatus(
+  ro: Vec3,
+  rd: Vec3,
+  gp: { y: number; fadeEnd: number; ballCenter: Vec3 },
+): number {
+  if (ro[1] <= gp.y || rd[1] >= -1.0e-6) return SURFACE_GPU_RAY_MISS;
+  const tp = (gp.y - ro[1]) / rd[1];
+  const relX = ro[0] + rd[0] * tp - gp.ballCenter[0];
+  const relZ = ro[2] + rd[2] * tp - gp.ballCenter[2];
+  if (relX * relX + relZ * relZ >= gp.fadeEnd * gp.fadeEnd) {
+    return SURFACE_GPU_RAY_MISS;
+  }
+  return SURFACE_GPU_RAY_PLANE;
+}
+
+/**
+ * fr-qjae: leg B's GROUND-PLANE twin — one end-to-end frame through the
+ * PRODUCTION `SurfaceComputeRenderer` with `{ kind: "ifs", groundPlane:
+ * true }`, which is the only place in this bench where a fr-rhn5 plane
+ * kernel is compiled, packed, marched AND shaded. Everything else about
+ * fr-rhn5 is pinned by source/packer unit tests and in-browser
+ * verification; what those cannot reach is the composition — the appended
+ * 336-byte params block arriving at the offset the generated struct reads,
+ * the fifth ray status surviving the host's terminal-ray compaction, and
+ * the shade batches pricing PLANE terminals with the hits.
+ *
+ * OPT-IN (`config.planeFrame`) because it is a SECOND end-to-end frame on
+ * top of the five leg B already renders, and its subject — a floor — is
+ * orthogonal to every gating question the standard section answers.
+ *
+ * Fixture is the caller's choice; `affineTetra` is what the section
+ * passes: the cheapest 3D core (fold-free ⇒ `core: "affine"`, the refined
+ * ladder rather than a fold frontier), so an extra frame stays affordable
+ * even on SwiftShader, and its ball sits at the origin under a camera at
+ * ~+0.87R, which is what guarantees the frame actually contains plane
+ * pixels rather than passing vacuously.
+ *
+ * Geometry sanity is the {@link runSurfaceComputeFrameEscapeLeg} idiom: a
+ * strided CPU march compared as RATES, not per-pixel statuses — but here
+ * two of them, hit and plane. Both bands are
+ * {@link SURFACE_SANITY_HIT_RATE_TOL}: the two rates come out of the SAME
+ * stride sample, so they carry the same sampling noise, and the plane test
+ * itself is exact analytic geometry that adds none of its own (its only
+ * error source is the hit/miss split it inherits). The band's width is set
+ * by that sampling: at stride 8 the software raster leaves 84 samples,
+ * where a rate near 0.5 has a ~5.5% binomial sigma — 0.15 is ~3 of them.
+ *
+ * Throws on renderer-creation failure or a null frame; the caller fails the
+ * section.
+ */
+async function runSurfaceComputeFramePlaneLeg(
+  sys: SurfaceSystemState,
+  software: boolean,
+  dom: SurfaceSectionDom,
+  status: (text: string) => void,
+  activity: ActivityBadge,
+): Promise<SurfacePlaneFrameRow> {
+  const width = software ? SURFACE_FRAME_WIDTH_SW : SURFACE_FRAME_WIDTH;
+  const height = software ? SURFACE_FRAME_HEIGHT_SW : SURFACE_FRAME_HEIGHT;
+  const budgetMs = software
+    ? SURFACE_FRAME_BUDGET_SW_MS
+    : SURFACE_FRAME_BUDGET_MS;
+  const pose = buildSurfacePose(sys.de, width, height);
+  const invProjView = surfaceInvProjView(sys.de, pose);
+  const colors = surfaceSlotColors(sys.transforms, sys.de.maps);
+  const trapIndices = surfaceTrapIndices(sys.transforms, sys.de.maps);
+  // scene.ts's floor, derived the app's way: the session ball is
+  // `balloonBall(de)` (enterSurfaceComputeSession re-derives exactly this),
+  // and surfaceGroundPlaneSpec applies the GROUND_PLANE_* multiples to it.
+  const ball = balloonBall(sys.de);
+  const groundPlane = {
+    y: ball.center[1] - ball.radius * SURFACE_PLANE_DROP,
+    fadeStart: ball.radius * SURFACE_PLANE_FADE_START,
+    fadeEnd: ball.radius * SURFACE_PLANE_FADE_END,
+    ballCenter: ball.center,
+    ballRadius: ball.radius,
+    albedo: SURFACE_PLANE_ALBEDO,
+  };
+
+  activity.setState("gpu", "Surface compute frame (ground plane)");
+  status("compute frame plane: creating SurfaceComputeRenderer…");
+  const renderer = await SurfaceComputeRenderer.create(
+    { kind: "ifs", de: sys.de, groundPlane: true },
+    colors,
+    trapIndices,
+  );
+  try {
+    const canvas = surfaceLabeledCanvas(
+      dom,
+      "frame-plane",
+      `compute frame ground plane — ${sys.name}`,
+      width,
+      height,
+    );
+    const spec: SurfaceComputeFrameSpec = {
+      width,
+      height,
+      invProjView,
+      camPos: pose.ro,
+      acceptPixelEps: SURFACE_PIXEL_EPS,
+      tracePixelEps:
+        (2 * Math.tan((SURFACE_POSE_FOV_DEG * Math.PI) / 360)) / height,
+      maxDepth: sys.de.maxDepth,
+      marchSteps: SURFACE_MARCH_STEPS,
+      shadowSteps: SURFACE_FRAME_SHADOW_STEPS,
+      aoTaps: SURFACE_FRAME_AO_TAPS,
+      hitFloor: SURFACE_GPU_HIT_FLOOR,
+      lightDir: surfaceNormalize([0.5, 0.8, 0.3]),
+      ambient: 0.25,
+      // The other frame legs' black backdrop — this leg compares RATES too,
+      // never miss-pixel colors. It does mean the floor's own radial fade
+      // runs out into black rather than into a gradient; the STATUS the
+      // march assigns, which is what the leg measures, is untouched by it.
+      bgTop: [0, 0, 0],
+      bgBottom: [0, 0, 0],
+      colorSource: 0,
+      colorSpeed: 0.5,
+      lut: null,
+      lutVersion: 0,
+      dither: true,
+      // fr-rhn5: a plane session's spec MUST carry the floor block (the
+      // renderer throws otherwise — the 336-byte struct has no default).
+      groundPlane,
+    };
+    status(`compute frame plane: rendering ${width}x${height}…`);
+    console.info(
+      `[surface-bench] compute frame plane: rendering ${String(width)}x${String(height)} (budget ${String(budgetMs)}ms)…`,
+    );
+    const frame = await renderer.renderFrame(spec, {
+      budgetMs,
+      onProgress: (pixels) => {
+        drawSurfaceComputeFrame(canvas, pixels, width, height);
+      },
+    });
+    if (!frame) {
+      throw new Error(
+        "renderFrame resolved null — the ground-plane app path produced no frame",
+      );
+    }
+    drawSurfaceComputeFrame(canvas, frame.pixels, width, height);
+    // Strided CPU sanity march: the kernel's own unproject rays over the
+    // identical f32 matrix, then surfaceCpuMarchState — whose check order
+    // (sphere exit, then budget, then eval) IS marchRays' — and the plane
+    // classification applied to its MISS terminal alone, exactly where the
+    // kernel splices `groundPlaneStatus` in.
+    let cpuHits = 0;
+    let cpuPlane = 0;
+    const sampled = surfaceSanityPixels(width, height);
+    for (const ray of sampled) {
+      const px = ray % width;
+      const py = Math.floor(ray / width);
+      const rd = surfaceUnprojectRay(invProjView, px, py, width, height);
+      const st = surfaceCpuMarchState(
+        sys.de,
+        pose.ro,
+        rd,
+        SURFACE_PIXEL_EPS,
+        SURFACE_MARCH_STEPS,
+      );
+      if (st.status === SURFACE_GPU_RAY_HIT) {
+        cpuHits++;
+      } else if (
+        st.status === SURFACE_GPU_RAY_MISS &&
+        surfaceGroundPlaneStatus(pose.ro, rd, groundPlane) ===
+          SURFACE_GPU_RAY_PLANE
+      ) {
+        cpuPlane++;
+      }
+    }
+    const rays = width * height;
+    const samples = Math.max(1, sampled.length);
+    const sanityGpuHitRate = frame.counts.hit / rays;
+    const sanityCpuHitRate = cpuHits / samples;
+    const sanityGpuPlaneRate = frame.counts.plane / rays;
+    const sanityCpuPlaneRate = cpuPlane / samples;
+    console.info(
+      `[surface-bench] compute frame plane: done — ${String(frame.passes)} passes, ` +
+        `${frame.wallMs.toFixed(0)}ms wall, hit=${String(frame.counts.hit)} ` +
+        `plane=${String(frame.counts.plane)} ` +
+        `(gpu hit ${sanityGpuHitRate.toFixed(3)} vs cpu ${sanityCpuHitRate.toFixed(3)}, ` +
+        `gpu plane ${sanityGpuPlaneRate.toFixed(3)} vs cpu ${sanityCpuPlaneRate.toFixed(3)})` +
+        `${frame.truncated ? ", TRUNCATED" : ""}`,
+    );
+    return {
+      system: sys.name,
+      width: frame.width,
+      height: frame.height,
+      wallMs: frame.wallMs,
+      gpuMs: frame.gpuMs,
+      passes: frame.passes,
+      truncated: frame.truncated,
+      counts: frame.counts,
+      plane: {
+        y: groundPlane.y,
+        fadeStart: groundPlane.fadeStart,
+        fadeEnd: groundPlane.fadeEnd,
+        ballRadius: groundPlane.ballRadius,
+      },
+      sanityGpuHitRate,
+      sanityCpuHitRate,
+      sanityGpuPlaneRate,
+      sanityCpuPlaneRate,
+      sanitySamples: sampled.length,
     };
   } finally {
     renderer.destroy();
@@ -11401,6 +11713,112 @@ async function runSurfaceDeSection(
           frameFailed = true;
           results.computeFrame4Fold = { skipped: describeError(e) };
           results.notes.push(`compute frame fold4: ${describeError(e)}`);
+        }
+      }
+      render();
+    }
+
+    // ----- fr-qjae: opt-in GROUND-PLANE frame leg -------------------------
+    // Off by default (`config.planeFrame`, `surfacePlaneFrame=1`) and
+    // silent when not requested — the aff4 sweep's opt-in shape, for the
+    // same reason: it is extra end-to-end work layered on a section that
+    // already renders five frames, and nothing else here needs a floor.
+    // When it DOES run it gates exactly like its escape sibling (zero hits
+    // on a real adapter; both rate bands on an untruncated frame), and its
+    // numbers also land in `notes` in the frame-row voice, since the
+    // headless runner's stdout printer does not know this row.
+    if (config.planeFrame) {
+      // affineTetra — the cheapest 3D core, ball at the origin under the
+      // pose's raised camera (see the leg's doc for the full argument).
+      const planeSys = systems.find((s) => s.name === "affineTetra");
+      if (!planeSys) {
+        results.computeFramePlane = {
+          skipped: "affineTetra did not build (see notes)",
+        };
+      } else {
+        try {
+          const row = await runSurfaceComputeFramePlaneLeg(
+            planeSys,
+            acquired.software,
+            dom,
+            status,
+            activity,
+          );
+          results.computeFramePlane = row;
+          results.notes.push(
+            `compute frame plane ${row.system} ${row.width}x${row.height}: ` +
+              `wall=${row.wallMs.toFixed(0)}ms gpu=${row.gpuMs.toFixed(0)}ms ` +
+              `passes=${String(row.passes)} hit=${String(row.counts.hit)} ` +
+              `plane=${String(row.counts.plane)} miss=${String(row.counts.miss)} ` +
+              `exhausted=${String(row.counts.exhausted)} ` +
+              `hitRate=${row.sanityGpuHitRate.toFixed(3)}/${row.sanityCpuHitRate.toFixed(3)} ` +
+              `planeRate=${row.sanityGpuPlaneRate.toFixed(3)}/${row.sanityCpuPlaneRate.toFixed(3)} ` +
+              `(gpu/cpu over ${String(row.sanitySamples)} sanity rays)` +
+              (row.truncated ? " TRUNCATED" : ""),
+          );
+          if (row.counts.hit === 0 && !acquired.software) {
+            frameFailed = true;
+            results.notes.push(
+              "compute frame plane: zero hit rays on a real adapter — failing the leg",
+            );
+          }
+          if (row.truncated) {
+            // A truncated frame leaves rays `active` — unresolved to any
+            // terminal status — so neither its hit rate nor its plane rate
+            // is comparable to the always-complete CPU sample, and a zero
+            // plane tally could be simple incompleteness. Every geometry
+            // check below is skipped, the timing legs'
+            // `sanity = "skipped (truncated)"` convention.
+            results.notes.push(
+              `compute frame plane: truncated at its ${acquired.software ? SURFACE_FRAME_BUDGET_SW_MS : SURFACE_FRAME_BUDGET_MS}ms budget` +
+                (acquired.software
+                  ? " — accepted on a software adapter"
+                  : " — informational (the rate-band checks are skipped while truncated)"),
+            );
+          } else {
+            // A COMPLETED frame with no PLANE rays at all never exercised
+            // the status this leg exists for — vacuous rather than slow, so
+            // unlike the rate bands it fails on EVERY adapter
+            // ({@link SurfaceDeResults.computeFrame4}'s
+            // completed-empty-vs-CPU-hits clause, one status over). Guarded
+            // on the CPU march finding some, so it can never fire on a pose
+            // that legitimately has no floor in frame.
+            if (row.counts.plane === 0 && row.sanityCpuPlaneRate > 0) {
+              frameFailed = true;
+              results.notes.push(
+                "compute frame plane: zero PLANE rays on a completed frame while the CPU sanity march found some — failing the leg",
+              );
+            }
+            // Same band for both rates, and the same
+            // software-is-informational split as the escape leg's (see the
+            // leg's doc for why one constant covers hit and plane alike).
+            for (const rate of [
+              {
+                label: "hit",
+                gap: Math.abs(row.sanityGpuHitRate - row.sanityCpuHitRate),
+              },
+              {
+                label: "plane",
+                gap: Math.abs(row.sanityGpuPlaneRate - row.sanityCpuPlaneRate),
+              },
+            ]) {
+              if (rate.gap <= SURFACE_SANITY_HIT_RATE_TOL) continue;
+              if (acquired.software) {
+                results.notes.push(
+                  `compute frame plane: ${rate.label}-rate gap ${rate.gap.toFixed(3)} vs the CPU sanity march — informational on a software adapter`,
+                );
+              } else {
+                frameFailed = true;
+                results.notes.push(
+                  `compute frame plane: ${rate.label}-rate gap ${rate.gap.toFixed(3)} vs the CPU sanity march exceeds ${String(SURFACE_SANITY_HIT_RATE_TOL)} — failing the leg`,
+                );
+              }
+            }
+          }
+        } catch (e) {
+          frameFailed = true;
+          results.computeFramePlane = { skipped: describeError(e) };
+          results.notes.push(`compute frame plane: ${describeError(e)}`);
         }
       }
       render();
