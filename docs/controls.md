@@ -237,9 +237,14 @@ morphs into place instead of snapping (see **Presets** below).
   ~30 branchless fold iterations per ray step, no branch frontier — and
   the session opens with the camera pulled out to frame the bailout ball
   (the chaos-game cloud such a map produces is escape-reset debris, so
-  the explorer camera would otherwise start inside the solid). Multi-map,
-  blended, kaleidoscoped or final-transform systems have no escape-time
-  reading; they keep the ordinary eligibility reasons.
+  the explorer camera would otherwise start inside the solid). A **blend**,
+  a **final transform**, or a fold that extends into 4D still has no
+  escape-time reading; those keep the ordinary eligibility reasons.
+  SEVERAL pure-fold maps do have one, though (fr-za0n): the transform list
+  becomes a formula **chain**, orbit step `i` applying link `i mod n`, and a
+  kaleidoscope rides along as long as it stays in 3D. **Fold Chain**, **Fold
+  Chain Boulder** and **Fold Chain Flower** in the same menu group are
+  exactly that — the last a two-link chain under a five-fold wedge.
   The Presets menu's **Escape-time** group — Mandelbox, Mandelbox Rings,
   Mandelbox Cube — are that mode's showcase (fr-7u8t.8), and they load
   straight into it. All three are the same single map at three fold
