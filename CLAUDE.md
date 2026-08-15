@@ -1167,7 +1167,28 @@ and UI**, so the interesting math is unit-tested without a browser:
     worker crashes. `settle()` for offline export. Pure, tested.
   - `flame-gpu-backend.ts` — drives flame WGSL kernels inside the flame worker
     behind `FlameAccumBackend` seam. Error-scoped resource creation
-    (`FlameGpuSizeError`).
+    (`FlameGpuSizeError`). `destroy()` defers the real `device.destroy()`
+    until every in-flight op unwinds (fr-mxkk — `surface-compute.ts`'s
+    fr-uec4 idiom one module over, counting OPS rather than frames, with
+    the same `destroyed` = teardown REQUESTED / `deviceDestroyed` = device
+    GONE split and the same inline teardown whenever nothing is in flight,
+    which is what keeps the seam's `void destroy()` and gpu-bench's
+    one-device-at-a-time invariant untouched). The hazard is routine here
+    rather than exotic: every palette/supersample/symmetry edit reaches
+    `startAccumulation`, which destroys the outgoing backend ON PURPOSE
+    while a superseded `runChunk` can still be parked on `mapAsync` over a
+    submitted copy. The ELEVEN explicit `GPUBuffer.destroy()` calls that
+    ran AHEAD of the device are gone rather than reordered — two of them
+    are the staging buffers a parked map holds a pending mapping on, an
+    independent crash vector, and `device.destroy()` reclaims all eleven
+    anyway — so the backend now holds only the buffers it TOUCHES (params,
+    hist + staging, display + staging) and the rest live on their bind
+    groups. `beginOp` refuses new work once teardown is requested, which
+    is what bounds the drain to the ops already started; the only caller
+    that can reach that refusal is a stale `runChunk` whose next
+    generation check discards the result regardless. Lifecycle pinned by
+    `flame-gpu-backend.test.ts` over a fake device (the class is exported
+    for it); browser gate `scripts/flame-teardown.verify.mjs`.
   - `flame-worker.ts` / `flame-worker-core.ts` — flame render worker:
     `FlameWorkerSession` driving CPU or WebGPU accumulation; SAB fast path,
     transfer fallback. GPU failure recovery ladder: retry smaller -> fresh
@@ -1494,8 +1515,9 @@ and UI**, so the interesting math is unit-tested without a browser:
     teardown still runs whenever the device IS idle, which is what keeps
     gpu-bench's one-device-alive-at-a-time invariant and
     `RenderSession.terminate()`'s `void` contract untouched. The same
-    shape is still open one module over, in `flame-gpu-backend.ts`
-    (fr-mxkk).
+    shape was open one module over and is now closed with the same
+    vocabulary — `flame-gpu-backend.ts` (fr-mxkk), counting OPS where this
+    counts frames.
   - `render-session.ts` — `enter`/`exit`/`terminate` + first-frame-gate for
     flame/solid/surface controllers. `renderMode` is session-only, never
     persisted.

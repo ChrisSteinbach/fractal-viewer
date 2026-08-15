@@ -182,14 +182,18 @@ interface GpuProgramSpec {
  * an object rather than positional arguments, since there are enough GPU
  * resources here that position would be unreadable.
  */
-interface GpuFlameBackendInit {
+export interface GpuFlameBackendInit {
   device: GPUDevice;
   accumulatePipeline: GPUComputePipeline;
   bindGroup: GPUBindGroup;
+  /** Only the buffers the backend itself still TOUCHES are handed over:
+   * `params` for `accumulate`'s one mid-session rewrite, and the two
+   * copy/readback pairs. The rest of the packed set (slots, colors, chains,
+   * the downsample intermediate/weights/params) is reachable only through
+   * the bind groups above, which is all it ever needed to be — the backend
+   * held references purely so its `destroy()` could free them one by one,
+   * and since fr-mxkk `device.destroy()` does that. */
   paramsBuffer: GPUBuffer;
-  slotsBuffer: GPUBuffer;
-  colorsBuffer: GPUBuffer;
-  chainsBuffer: GPUBuffer;
   histBuffer: GPUBuffer;
   stagingBuffer: GPUBuffer;
   /** See {@link GpuProgramSpec} — the program's mid-session-rewritten
@@ -211,11 +215,8 @@ interface GpuFlameBackendInit {
   downsampleXPipeline: GPUComputePipeline;
   downsampleYPipeline: GPUComputePipeline;
   downsampleBindGroup: GPUBindGroup;
-  intermediateBuffer: GPUBuffer;
   displayBuffer: GPUBuffer;
   displayStagingBuffer: GPUBuffer;
-  downsampleWeightsBuffer: GPUBuffer;
-  downsampleParamsBuffer: GPUBuffer;
   /** Display resolution — what `snapshotDisplay`'s `out` histogram must
    * already be sized to (baked in at backend-creation time). */
   displayWidth: number;
@@ -230,8 +231,15 @@ interface GpuFlameBackendInit {
  * this class exists, every chain has already run its `WARMUP_ITERATIONS`
  * steps unrecorded, so the very first `accumulate()` call starts already on
  * the attractor, exactly like the CPU accumulators' fresh-start.
+ *
+ * Exported for `flame-gpu-backend.test.ts`, which drives the teardown
+ * lifecycle ({@link destroy}, {@link beginOp}, {@link releaseOp}) over a
+ * fake device — the same injected-fakes seam `FlameWorkerSession` is tested
+ * through, and the only way to pin a state machine whose real inputs are a
+ * GPU driver's timing. Production code reaches this class through the two
+ * factories at the bottom of this file, never by name.
  */
-class GpuFlameBackend implements FlameAccumBackend {
+export class GpuFlameBackend implements FlameAccumBackend {
   readonly kind = "gpu" as const;
   readonly adapterLabel?: string;
   readonly software: boolean;
@@ -240,9 +248,6 @@ class GpuFlameBackend implements FlameAccumBackend {
   private readonly accumulatePipeline: GPUComputePipeline;
   private readonly bindGroup: GPUBindGroup;
   private readonly paramsBuffer: GPUBuffer;
-  private readonly slotsBuffer: GPUBuffer;
-  private readonly colorsBuffer: GPUBuffer;
-  private readonly chainsBuffer: GPUBuffer;
   private readonly histBuffer: GPUBuffer;
   private readonly stagingBuffer: GPUBuffer;
   private readonly paramsItersOffsetBytes: number;
@@ -270,11 +275,8 @@ class GpuFlameBackend implements FlameAccumBackend {
   private readonly downsampleXPipeline: GPUComputePipeline;
   private readonly downsampleYPipeline: GPUComputePipeline;
   private readonly downsampleBindGroup: GPUBindGroup;
-  private readonly intermediateBuffer: GPUBuffer;
   private readonly displayBuffer: GPUBuffer;
   private readonly displayStagingBuffer: GPUBuffer;
-  private readonly downsampleWeightsBuffer: GPUBuffer;
-  private readonly downsampleParamsBuffer: GPUBuffer;
   private readonly displayWidth: number;
   private readonly displayHeight: number;
   private readonly displayBytes: number;
@@ -294,20 +296,39 @@ class GpuFlameBackend implements FlameAccumBackend {
    * mid-session"). */
   private currentItersPerInvocation = WARMUP_ITERATIONS;
   /** Set once — a lost device never comes back — by the `device.lost`
-   * handler wired up below. Checked at the top of `accumulate()` so a
-   * doomed device fails fast with a clear message instead of queuing a
-   * dispatch that will never complete. */
+   * handler wired up below. Checked by {@link beginOp} so a doomed device
+   * fails fast with a clear message instead of queuing a dispatch that will
+   * never complete. */
   private lost = false;
+  /** True once {@link destroy} has been called. It means "teardown
+   * REQUESTED", not "device gone" (fr-mxkk): with an op still parked on
+   * live submitted GPU work, the real teardown is deferred until
+   * {@link opsInFlight} drains. {@link beginOp} refuses new work once this
+   * is set, which is what makes that drain finite. {@link deviceDestroyed}
+   * carries the device's actual state. */
   private destroyed = false;
+  /** True once `device.destroy()` has actually run — the one-shot guard
+   * over the two paths that reach the real teardown ({@link destroy}, when
+   * nothing was in flight, and {@link releaseOp}, when the last in-flight
+   * op just unwound), since `destroyed` alone no longer tells those two
+   * apart (fr-mxkk). */
+  private deviceDestroyed = false;
+  /** GPU work spans between their `queue.submit` and their final unwind:
+   * `accumulate`'s `onSubmittedWorkDone`, and the two snapshots' `mapAsync`
+   * over a submitted `copyBufferToBuffer`. Tearing this backend down out
+   * from under one of those is the browser-killer fr-uec4 measured one
+   * module over, so {@link destroy} hands the real teardown to whichever op
+   * unwinds last. Each op parks on exactly ONE await, so the wait is
+   * bounded by the chunk already in flight and there is nothing to cancel —
+   * unlike `SurfaceComputeRenderer`, whose multi-await frames need a token
+   * bump to bail out early. */
+  private opsInFlight = 0;
 
   constructor(init: GpuFlameBackendInit) {
     this.device = init.device;
     this.accumulatePipeline = init.accumulatePipeline;
     this.bindGroup = init.bindGroup;
     this.paramsBuffer = init.paramsBuffer;
-    this.slotsBuffer = init.slotsBuffer;
-    this.colorsBuffer = init.colorsBuffer;
-    this.chainsBuffer = init.chainsBuffer;
     this.histBuffer = init.histBuffer;
     this.stagingBuffer = init.stagingBuffer;
     this.paramsItersOffsetBytes = init.paramsItersOffsetBytes;
@@ -321,11 +342,8 @@ class GpuFlameBackend implements FlameAccumBackend {
     this.downsampleXPipeline = init.downsampleXPipeline;
     this.downsampleYPipeline = init.downsampleYPipeline;
     this.downsampleBindGroup = init.downsampleBindGroup;
-    this.intermediateBuffer = init.intermediateBuffer;
     this.displayBuffer = init.displayBuffer;
     this.displayStagingBuffer = init.displayStagingBuffer;
-    this.downsampleWeightsBuffer = init.downsampleWeightsBuffer;
-    this.downsampleParamsBuffer = init.downsampleParamsBuffer;
     this.displayWidth = init.displayWidth;
     this.displayHeight = init.displayHeight;
     this.displayBytes =
@@ -367,71 +385,75 @@ class GpuFlameBackend implements FlameAccumBackend {
   }
 
   async accumulate(iterations: number): Promise<number> {
-    if (this.lost) {
-      throw new Error("Flame GPU: device is lost, cannot accumulate");
-    }
-    const plan = planGpuDispatches(
-      iterations,
-      NUM_CHAINS,
-      MAX_ITERS_PER_INVOCATION,
-    );
-    if (plan.itersPerInvocation !== this.currentItersPerInvocation) {
-      this.device.queue.writeBuffer(
-        this.paramsBuffer,
-        this.paramsItersOffsetBytes,
-        new Uint32Array([plan.itersPerInvocation]),
+    this.beginOp("accumulate");
+    try {
+      const plan = planGpuDispatches(
+        iterations,
+        NUM_CHAINS,
+        MAX_ITERS_PER_INVOCATION,
       );
-      this.currentItersPerInvocation = plan.itersPerInvocation;
-    }
+      if (plan.itersPerInvocation !== this.currentItersPerInvocation) {
+        this.device.queue.writeBuffer(
+          this.paramsBuffer,
+          this.paramsItersOffsetBytes,
+          new Uint32Array([plan.itersPerInvocation]),
+        );
+        this.currentItersPerInvocation = plan.itersPerInvocation;
+      }
 
-    const encoder = this.device.createCommandEncoder({
-      label: "flame-gpu accumulate",
-    });
-    // Every dispatch this plan calls for goes in ONE compute pass — WebGPU
-    // guarantees dispatches within a pass observe each other's storage
-    // writes in issue order, so this is `plan.dispatches` sequential steps
-    // of the SAME orbit (each chain's `pos`/`aux` feeding the next), not
-    // `plan.dispatches` independent ones.
-    const pass = encoder.beginComputePass({
-      label: "flame-gpu accumulate pass",
-    });
-    pass.setPipeline(this.accumulatePipeline);
-    pass.setBindGroup(0, this.bindGroup);
-    for (let i = 0; i < plan.dispatches; i++) {
-      pass.dispatchWorkgroups(this.workgroupCount);
+      const encoder = this.device.createCommandEncoder({
+        label: "flame-gpu accumulate",
+      });
+      // Every dispatch this plan calls for goes in ONE compute pass — WebGPU
+      // guarantees dispatches within a pass observe each other's storage
+      // writes in issue order, so this is `plan.dispatches` sequential steps
+      // of the SAME orbit (each chain's `pos`/`aux` feeding the next), not
+      // `plan.dispatches` independent ones.
+      const pass = encoder.beginComputePass({
+        label: "flame-gpu accumulate pass",
+      });
+      pass.setPipeline(this.accumulatePipeline);
+      pass.setBindGroup(0, this.bindGroup);
+      for (let i = 0; i < plan.dispatches; i++) {
+        pass.dispatchWorkgroups(this.workgroupCount);
+      }
+      pass.end();
+      this.device.queue.submit([encoder.finish()]);
+      await this.device.queue.onSubmittedWorkDone();
+      return plan.iterations;
+    } finally {
+      this.releaseOp();
     }
-    pass.end();
-    this.device.queue.submit([encoder.finish()]);
-    await this.device.queue.onSubmittedWorkDone();
-    return plan.iterations;
   }
 
   async snapshot(): Promise<FlameHistogram> {
-    if (this.lost) {
-      throw new Error("Flame GPU: device is lost, cannot snapshot");
+    this.beginOp("snapshot");
+    try {
+      // Deferred from construction — see this field's doc. A CPU allocation
+      // failure here rejects like any other snapshot failure, into the
+      // session's ordinary recovery.
+      this.outHistogram ??= createFlameHistogram(this.width, this.height);
+      const encoder = this.device.createCommandEncoder({
+        label: "flame-gpu hist readback",
+      });
+      encoder.copyBufferToBuffer(
+        this.histBuffer,
+        0,
+        this.stagingBuffer,
+        0,
+        this.histBytes,
+      );
+      this.device.queue.submit([encoder.finish()]);
+      await this.stagingBuffer.mapAsync(GPUMapMode.READ);
+      // Convert BEFORE unmap(): unmap() detaches the ArrayBuffer backing
+      // getMappedRange()'s view, so reading `words` after it would throw.
+      const words = new Uint32Array(this.stagingBuffer.getMappedRange());
+      this.convertSnapshot(words, this.width, this.height, this.outHistogram);
+      this.stagingBuffer.unmap();
+      return this.outHistogram;
+    } finally {
+      this.releaseOp();
     }
-    // Deferred from construction — see this field's doc. A CPU allocation
-    // failure here rejects like any other snapshot failure, into the
-    // session's ordinary recovery.
-    this.outHistogram ??= createFlameHistogram(this.width, this.height);
-    const encoder = this.device.createCommandEncoder({
-      label: "flame-gpu hist readback",
-    });
-    encoder.copyBufferToBuffer(
-      this.histBuffer,
-      0,
-      this.stagingBuffer,
-      0,
-      this.histBytes,
-    );
-    this.device.queue.submit([encoder.finish()]);
-    await this.stagingBuffer.mapAsync(GPUMapMode.READ);
-    // Convert BEFORE unmap(): unmap() detaches the ArrayBuffer backing
-    // getMappedRange()'s view, so reading `words` after it would throw.
-    const words = new Uint32Array(this.stagingBuffer.getMappedRange());
-    this.convertSnapshot(words, this.width, this.height, this.outHistogram);
-    this.stagingBuffer.unmap();
-    return this.outHistogram;
   }
 
   /**
@@ -444,51 +466,118 @@ class GpuFlameBackend implements FlameAccumBackend {
    * downsampleX's freshly-written `intermediate` buffer, never a stale one.
    */
   async snapshotDisplay(out: FlameHistogram): Promise<FlameHistogram> {
-    if (this.lost) {
-      throw new Error("Flame GPU: device is lost, cannot snapshot display");
+    this.beginOp("snapshot display");
+    try {
+      const encoder = this.device.createCommandEncoder({
+        label: "flame-gpu downsample display",
+      });
+      const pass = encoder.beginComputePass({
+        label: "flame-gpu downsample pass",
+      });
+      pass.setBindGroup(0, this.downsampleBindGroup);
+      pass.setPipeline(this.downsampleXPipeline);
+      pass.dispatchWorkgroups(...this.downsampleXWorkgroups);
+      pass.setPipeline(this.downsampleYPipeline);
+      pass.dispatchWorkgroups(...this.downsampleYWorkgroups);
+      pass.end();
+      encoder.copyBufferToBuffer(
+        this.displayBuffer,
+        0,
+        this.displayStagingBuffer,
+        0,
+        this.displayBytes,
+      );
+      this.device.queue.submit([encoder.finish()]);
+      await this.displayStagingBuffer.mapAsync(GPUMapMode.READ);
+      // Convert BEFORE unmap() — same reason as snapshot()'s own readback above.
+      const data = new Float32Array(this.displayStagingBuffer.getMappedRange());
+      this.convertDisplay(data, this.displayWidth, this.displayHeight, out);
+      this.displayStagingBuffer.unmap();
+      return out;
+    } finally {
+      this.releaseOp();
     }
-    const encoder = this.device.createCommandEncoder({
-      label: "flame-gpu downsample display",
-    });
-    const pass = encoder.beginComputePass({
-      label: "flame-gpu downsample pass",
-    });
-    pass.setBindGroup(0, this.downsampleBindGroup);
-    pass.setPipeline(this.downsampleXPipeline);
-    pass.dispatchWorkgroups(...this.downsampleXWorkgroups);
-    pass.setPipeline(this.downsampleYPipeline);
-    pass.dispatchWorkgroups(...this.downsampleYWorkgroups);
-    pass.end();
-    encoder.copyBufferToBuffer(
-      this.displayBuffer,
-      0,
-      this.displayStagingBuffer,
-      0,
-      this.displayBytes,
-    );
-    this.device.queue.submit([encoder.finish()]);
-    await this.displayStagingBuffer.mapAsync(GPUMapMode.READ);
-    // Convert BEFORE unmap() — same reason as snapshot()'s own readback above.
-    const data = new Float32Array(this.displayStagingBuffer.getMappedRange());
-    this.convertDisplay(data, this.displayWidth, this.displayHeight, out);
-    this.displayStagingBuffer.unmap();
-    return out;
   }
 
+  /**
+   * Refuse-or-count, the one gate all three GPU entry points pass through
+   * (fr-mxkk). A lost device and a requested teardown both fail fast with a
+   * message naming `what`; anything that gets past them is COUNTED into
+   * {@link opsInFlight} until its `finally` releases it.
+   *
+   * Refusing after `destroy()` is not defensive validation — it is what
+   * gives the deferred teardown a state to be in. Before fr-mxkk a
+   * destroyed backend held a destroyed device, so work submitted to it
+   * could do nothing by construction; now the device outlives `destroy()`
+   * by up to one op, and a backend that kept accepting work would keep
+   * running a superseded accumulation on a live device the session has
+   * already replaced — and could hold that device (and its VRAM) alive
+   * indefinitely behind its own successor. Nothing in the shipped worker
+   * actually trips it: `startAccumulation` nulls `this.backend` in the same
+   * breath as destroying it, and every `runChunk` resume re-checks its
+   * generation before touching the backend again. So the refusal is the
+   * retired state's DEFINITION rather than a live path — and if one ever
+   * did reach it, that caller is by construction a stale chunk whose
+   * rejection lands in a `catch` that already knows to drop it.
+   */
+  private beginOp(what: string): void {
+    if (this.lost) {
+      throw new Error(`Flame GPU: device is lost, cannot ${what}`);
+    }
+    if (this.destroyed) {
+      throw new Error(`Flame GPU: backend is destroyed, cannot ${what}`);
+    }
+    this.opsInFlight++;
+  }
+
+  /** One counted op ({@link beginOp}) has fully unwound — success, throw or
+   * rejection alike, since every call site releases from a `finally`. If
+   * {@link destroy} came in while it was live, this is the last one out and
+   * owes the deferred teardown (fr-mxkk). */
+  private releaseOp(): void {
+    this.opsInFlight--;
+    if (this.opsInFlight === 0 && this.destroyed) this.destroyDevice();
+  }
+
+  /**
+   * Retire this backend — immediately if nothing is in flight, or deferred
+   * to {@link releaseOp} if an op is still parked on live submitted GPU
+   * work. Idempotent, per the {@link FlameAccumBackend.destroy} contract;
+   * the early return means a second call during the deferred window is a
+   * no-op and will NOT retry the teardown, which is fine only because the
+   * FIRST call already committed it to {@link releaseOp}.
+   *
+   * Stays synchronous and `void`: `flame-worker-core.ts`'s
+   * `startAccumulation` is a command handler that must land its restart in
+   * one tick, and the seam's own contract declares this `void`. The idle
+   * path therefore still tears down inline — which is also what gpu-bench's
+   * `finally { backend.destroy(); }` scenarios rely on to keep one device
+   * alive at a time (their destroys all follow an `await` that already
+   * resolved, so the counter is zero there).
+   */
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    this.paramsBuffer.destroy();
-    this.slotsBuffer.destroy();
-    this.colorsBuffer.destroy();
-    this.chainsBuffer.destroy();
-    this.histBuffer.destroy();
-    this.stagingBuffer.destroy();
-    this.intermediateBuffer.destroy();
-    this.displayBuffer.destroy();
-    this.displayStagingBuffer.destroy();
-    this.downsampleWeightsBuffer.destroy();
-    this.downsampleParamsBuffer.destroy();
+    if (this.opsInFlight > 0) return;
+    this.destroyDevice();
+  }
+
+  /**
+   * The actual teardown, behind the one-shot {@link deviceDestroyed} guard
+   * (fr-mxkk): reachable from both {@link destroy} (idle) and
+   * {@link releaseOp} (the last in-flight op just finished), and `destroyed`
+   * alone no longer tells those two calls apart.
+   *
+   * `device.destroy()` reclaims every buffer this backend owns, so the
+   * eleven explicit `GPUBuffer.destroy()` calls that used to run ahead of it
+   * are GONE rather than merely reordered: two of them are the staging
+   * buffers a parked `mapAsync` holds a pending mapping on, and freeing a
+   * buffer out from under a pending map is its own crash vector — the same
+   * class of bug this deferral exists to close.
+   */
+  private destroyDevice(): void {
+    if (this.deviceDestroyed) return;
+    this.deviceDestroyed = true;
     this.device.destroy();
   }
 }
@@ -954,9 +1043,6 @@ async function buildBackendOnDevice(
     accumulatePipeline,
     bindGroup,
     paramsBuffer,
-    slotsBuffer,
-    colorsBuffer,
-    chainsBuffer,
     histBuffer,
     stagingBuffer,
     paramsItersOffsetBytes: program.paramsItersOffsetBytes,
@@ -968,11 +1054,8 @@ async function buildBackendOnDevice(
     downsampleXPipeline,
     downsampleYPipeline,
     downsampleBindGroup,
-    intermediateBuffer,
     displayBuffer,
     displayStagingBuffer,
-    downsampleWeightsBuffer,
-    downsampleParamsBuffer,
     displayWidth: program.displayWidth,
     displayHeight: program.displayHeight,
   });
