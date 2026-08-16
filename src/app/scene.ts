@@ -8,6 +8,7 @@ import {
   BALLOON_FAR_CAP_RHO,
   BALLOON_RHO_MARGIN,
   balloonBall,
+  balloonBall4,
 } from "../fractal/balloon-de";
 import {
   transformColors,
@@ -76,6 +77,8 @@ import {
 } from "./strip-planner";
 import {
   createSurfaceMaterial4,
+  setSurface4Balloon as packSurface4Balloon,
+  setSurface4GroundPlane as packSurface4GroundPlane,
   setSurfaceSystem4 as packSurfaceSystem4,
   setSurfaceView4 as packSurfaceView4,
 } from "./surface-material-4d";
@@ -3129,13 +3132,16 @@ export class FractalScene {
   }
 
   /** Re-derive the balloon uniform spec from the stored on/rMult and the
-   * installed system's ball (null clears) and pack it into the 3D
-   * material. */
+   * installed system's ball (null clears) and pack it into the ACTIVE
+   * fragment material, clearing the other (fr-qxxw gave the 4D tracer its
+   * own arm, so the stored intent must not leave a stale one compiled
+   * into the material underneath — `setSurfaceSystem4`'s original move,
+   * now needed in both directions). */
   private applySurfaceBalloon(): void {
-    packSurfaceBalloon(
-      this.surfaceMaterial,
-      this.surfaceBalloonOn ? this.surfaceBalloonSpec() : null,
-    );
+    const spec = this.surfaceBalloonOn ? this.surfaceBalloonSpec() : null;
+    const on4 = this.activeSurfaceMaterial === this.surfaceMaterial4;
+    packSurfaceBalloon(this.surfaceMaterial, on4 ? null : spec);
+    packSurface4Balloon(this.surfaceMaterial4, on4 ? spec : null);
   }
 
   /**
@@ -3181,13 +3187,17 @@ export class FractalScene {
    * surfaceFragmentFor). Reading the define makes the gate
    * ordering-proof against the install sequence. */
   private applySurfaceGroundPlane(): void {
-    const eligible =
-      this.surfaceGroundPlaneOn &&
-      this.surfaceMaterial.defines.SURFACE_BALLOON !== 1;
-    packSurfaceGroundPlane(
-      this.surfaceMaterial,
-      eligible ? this.surfaceGroundPlaneSpec() : null,
-    );
+    const on4 = this.activeSurfaceMaterial === this.surfaceMaterial4;
+    const material = on4 ? this.surfaceMaterial4 : this.surfaceMaterial;
+    const balloonDefine = on4
+      ? material.defines.SURFACE4_BALLOON
+      : material.defines.SURFACE_BALLOON;
+    const eligible = this.surfaceGroundPlaneOn && balloonDefine !== 1;
+    const spec = eligible ? this.surfaceGroundPlaneSpec() : null;
+    // Clear the inactive material's arm for the reason applySurfaceBalloon
+    // does (fr-h0c3): a stale floor must not survive a 3D <-> 4D swap.
+    packSurfaceGroundPlane(this.surfaceMaterial, on4 ? null : spec);
+    packSurface4GroundPlane(this.surfaceMaterial4, on4 ? spec : null);
   }
 
   /**
@@ -3244,12 +3254,18 @@ export class FractalScene {
     // one every frame).
     this.dropSurfaceGridTexture();
     packSurfaceSystem4(this.surfaceMaterial4, de, colors, trapIndices);
-    // No 4D floor (fr-rhn5 is 3D-scoped) — and the stored intent must not
-    // leave a stale plane arm compiled into the 3D material underneath.
-    this.surfaceGroundBall = null;
-    this.applySurfaceGroundPlane();
     this.activeSurfaceMaterial = this.surfaceMaterial4;
     this.surfaceQuad.material = this.surfaceMaterial4;
+    // The floor (fr-h0c3) and the balloon (fr-qxxw) now install here
+    // exactly as they do for a 3D system — both live in the SLICED 3D
+    // world space, so their balls are the 4D ball projected
+    // (`balloonBall4`: the origin, and the FULL 4D visible radius, so
+    // neither slides as the slice slider scrubs). The apply methods
+    // dispatch on the active material, which is why it is set above them.
+    this.surfaceBalloonBall = balloonBall4(de);
+    this.surfaceGroundBall = balloonBall4(de);
+    this.applySurfaceBalloon();
+    this.applySurfaceGroundPlane();
     this.surfaceFullMaxDepth = de.maxDepth;
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
@@ -3485,16 +3501,49 @@ export class FractalScene {
    * ({@link setSurface4View} keeps feeding the scene state exactly as in
    * the fragment path — one funnel, both tracers).
    */
-  enterSurfaceCompute4Session(de: SurfaceDE4): void {
+  enterSurfaceCompute4Session(
+    de: SurfaceDE4,
+    balloon = false,
+    groundPlane = false,
+  ): void {
     this.renderNeeded = true;
     this.surfaceComputeActive = true;
     this.surfaceCompute4 = true;
-    // The 4D lift is a later fr-5wlv child — no 4D session balloons.
-    this.surfaceComputeBalloon = false;
-    // Nor floors (fr-rhn5's scope is 3D; the pack layer refuses 4D cores).
-    this.surfaceGroundBall = null;
-    this.surfaceComputeGroundPlane = false;
+    // fr-qxxw / fr-h0c3: both wrappers lifted, and both balls are the 4D
+    // ball projected into the sliced world space (`balloonBall4`) — the
+    // 3D entry's move with its own ball choice. The flags record the
+    // create-target's choice exactly as the 3D entry's do, so every frame
+    // spec can attach the live block the grown params struct expects.
+    this.surfaceBalloonBall = balloonBall4(de);
+    this.surfaceComputeBalloon = balloon;
+    this.surfaceGroundBall = groundPlane ? balloonBall4(de) : null;
+    this.surfaceComputeGroundPlane = groundPlane;
     this.surfaceFullMaxDepth = de.maxDepth;
+    this.surfacePreviewGovernor.reset();
+    this.surfacePreviewPxCostMs = null;
+    this.flushStripBacklog();
+  }
+
+  /**
+   * {@link enterSurfaceCompute4Session}'s FORWARD-ORBIT sibling (fr-vag4)
+   * — the 4D escape chain, which is compute-only (the fragment 4D tracer
+   * carries no escape GLSL, fr-rsp6's verdict for fold-shaped 4D sessions
+   * one family over). Structurally
+   * {@link enterSurfaceComputeForwardSession} with the 4D preview clamp:
+   * the orbit's PASS budget, no balloon ever (a forward solid's echo
+   * swallows the camera), and the floor dropping under the bailout ball.
+   */
+  enterSurfaceComputeEscape4Session(groundPlane = false, ballRadius = 1): void {
+    this.renderNeeded = true;
+    this.surfaceComputeActive = true;
+    this.surfaceCompute4 = true;
+    this.surfaceBalloonBall = null;
+    this.surfaceComputeBalloon = false;
+    this.surfaceGroundBall = groundPlane
+      ? { center: [0, 0, 0], radius: ballRadius }
+      : null;
+    this.surfaceComputeGroundPlane = groundPlane;
+    this.surfaceFullMaxDepth = ESCAPE_TIME_ITERATIONS;
     this.surfacePreviewGovernor.reset();
     this.surfacePreviewPxCostMs = null;
     this.flushStripBacklog();

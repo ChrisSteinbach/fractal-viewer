@@ -12,13 +12,26 @@ finished, and a session that leaves it that way is not done.**
 
 The standing failure mode is shipping the 3D half, filing a "4D lift" bead and
 closing the epic. fr-rhn5's ground plane (lift: fr-h0c3) and fr-5wlv's balloon
-(lift: fr-qxxw) both did exactly that, and both lifts are still open. The
-escape-time CHAIN is worse than either: `analyzeEscapeSystem` refuses every
-non-flat map outright (`map N extends into 4D`), no 4D oracle, kernel core or
-GLSL arm stands behind that refusal, and until fr-vag4 nothing tracked the lift
-at all — in the family whose own `qjulia-de.ts` describes its object as "the one
-the site is named after: a genuinely 4D set, of which a 3D render is a SLICE".
-So:
+(lift: fr-qxxw) both did exactly that; the escape-time CHAIN was worse than
+either — `analyzeEscapeSystem` refused every non-flat map outright (`map N
+extends into 4D`), no 4D oracle, kernel core or GLSL arm stood behind that
+refusal, and until fr-vag4 nothing tracked the lift at all, in the family whose
+own `qjulia-de.ts` describes its object as "the one the site is named after: a
+genuinely 4D set, of which a 3D render is a SLICE".
+
+ALL THREE ARE CLOSED as of the fr-vag4/fr-h0c3/fr-qxxw session, and what that
+session measured is the argument for the rule rather than an anecdote beside
+it. The three lifts cost ONE structural decision between them — where the 4D
+params tail's appended blocks land — and once that was made (576, the 3D
+cores' frozen 288 one dimension up), the ground plane needed NO new shader text
+at all (the march classifier and shade entry were already shared across cores),
+the balloon needed NO new wrapper text (every core shares
+`surfaceDE(pIn: vec3f, …)` over a MARCHED point, so wrapping a 4D core inverts
+in the sliced space for free), and the escape chain's oracle duplicated only
+the five maps' arithmetic while IMPORTING every constant and link code from its
+3D twin. The expensive part was none of the algebra; it was that fr-h0c3's own
+bead had to warn a future session away from offset 560, where a block appended
+without reading fr-s9ll's lens4Fold quartet would have landed INSIDE it. So:
 
 - **Both halves are scoped up front.** Work touching a twinned pair —
   `affine`/`affine4`, `chaos-game`/`chaos-game-4d`, `flame`/`flame-4d`,
@@ -30,7 +43,8 @@ So:
 - **3D-only is a decision that owes evidence, never a default.** It ships only
   with the reason written in the module doc AND a bead carrying the lift's
   ACTUAL shape (which params offset, which kernel core, which oracle) — the
-  shape fr-h0c3 and fr-qxxw both have. "3D first, 4D later" is not a reason.
+  shape fr-h0c3 and fr-qxxw both had, and the reason both were cheap to close
+  when someone finally did. "3D first, 4D later" is not a reason.
   `surface-grid.ts` is the model REFUSAL (a live rotor/slice invalidates a grid
   per frame — stated, not implied), `bulb-de.ts` its sibling one family over
   (triplex numbers are R³ with a spherical-coordinate product and no fourth
@@ -44,8 +58,14 @@ So:
   — and a lift written months later re-derives shared algebra instead of
   importing it, which is how two renderers start drawing different objects from
   one document. `variations4.ts` importing `resolveFoldRadii` rather than
-  restating it is the standing counter-example; fr-qxxw's Möbius-ball note is
-  the same hazard still open.
+  restating it is the standing counter-example, and `escape-de-4d.ts`
+  importing every constant, link code and estimate form from `escape-de.ts` is
+  the second: what a chain IS has one definition across both dimensions, and
+  only the maps' arithmetic is duplicated under the twin-file convention.
+  fr-v7ca's Möbius-ball note is the same hazard still open — fr-qxxw did NOT
+  need it (slice-then-invert keeps the inversion 3D and the slab rides both
+  terms untouched), so the helper the two beads agreed to share is still
+  unwritten and still owed to whichever slab port lands first.
 - **An unlifted gap is disclosed, not quietly filed.** A session that ends
   3D-only says so in the PR description and in its closing summary, as
   unfinished work. The bead is the tracking; it is not the disclosure.
@@ -67,7 +87,7 @@ npm run build         # Production build → dist/app/
 npm run preview       # Preview the production build locally
 npm run smoke         # Headless WebGL smoke test (SwiftShader) — boots the app, asserts it renders
 npm run bench:gpu     # Headless WebGPU flame agreement/bench (real Chrome) — pins the WGSL kernels to their CPU oracles; run after touching flame-gpu*.ts kernels (CI runs it on SwiftShader)
-npm run bench:surface # WebGPU fold-DE kernel agreement/timing — pins surface-de-gpu.ts (eval/march baselines + fr-tzdg's march-unproject/shade app path) to the CPU estimator; add --display=:0 for real-driver timing; run it on a QUIET machine, never concurrently with the test suite or other heavy CPU load — a contended software device corrupts mid-run readbacks, which the fr-76pp canary reports as verdict=device-unreliable (exit 2, rerun) instead of plausible numeric fails. KNOWN SWIFTSHADER FALSE FAILURE (fr-jtd4): the default (no `--display`) run fails the ESCAPE agreement leg on `escChainKaleido` — "21 verified chaotic flips (> 7)" — and it is spurious. Measured on the same commit: SwiftShader failures=5, chaoticFlips=21, maxAbsErr 1.333, bit-identical across a busy box and a quiet one (so it is deterministic, not contention); real Iris `--display=:0` verdict PASS, failures=0, chaoticFlips=1, maxAbsErr 3.4e-06 — a ~400,000x difference in agreement, with `excluded` identical at 97/700 on both, so the ensemble pre-filter is behaving and only the post-hoc flip count moves. ESTABLISHED: the failure is ADAPTER-SPECIFIC and deterministic — a compiler realisation difference in the forward orbit, amplified by ~8x/iteration noise growth into a binary escape decision. REFUTED BY MEASUREMENT: that fr-s9ll's 10bc444 caused it. That commit turned the sphere fold's numerator from a literal `1.0` into a uniform load, which is the right CLASS of change and predicts exactly this shape — but the leg at `10bc444^` returns chaoticFlips 21, bit-identical to HEAD on every field, and 10bc444 is the ONLY functional change to `surface-de-gpu.ts` in that span (the other two commits there are comment-only). So the cause is EARLIER, and no part of fr-s9ll is implicated. AND THERE IS NO REGRESSION AT ALL: measured at 0570354 (fr-s04t), the commit that INTRODUCED `escChainKaleido`, the row already fails with chaoticFlips 21 — bit-identical to HEAD on every field. It has never passed on a software rasteriser. fr-s04t records verification in the app on both engines but no SwiftShader `bench:surface` run, and the flips figure in the paragraph below was fr-dlxh's on real Iris, so this fixture reached this leg on a software adapter for the first time in fr-qjae's run. THE OPEN QUESTION IS THEREFORE CALIBRATION, NOT A BUG: the cap is one number applied to every adapter, and a software rasteriser is a different realisation of the same kernel. Either it becomes adapter-aware or the escape rows are simply judged on `--display=:0`, which is already this file's standing advice. A BONUS RESULT worth keeping from the same runs: `excluded`, `maxAbsErr` and `p99AbsErr` are bit-identical for this fixture across all of `0570354..HEAD` — 104 lines of `escape-de.ts` and 66 of `surface-de-gpu.ts`, fr-s9ll's authored fold radii included — which is fr-s9ll's "byte-identity at the defaults is by CONSTRUCTION" verified empirically on the CPU and GPU sides at once, rather than argued. DO NOT raise the cap to make it green — 7 is calibrated for the driver this leg gates, and fr-7tl3/fr-dlxh built the layered classifier precisely so a real disagreement could not hide inside the chaotic-orbit excuse. Judge the escape rows on `--display=:0`. CROSS-FAMILY ROWS (fr-j231): four fixtures cover a power link in the chain's TAIL (`escChainBulb`, `escChainQsquare` — a kernel reading the params block's frozen HEAD link for every step fails here), in the MIDDLE of a 3-cycle between two folds of different kinds (`escChainPowerMid` — the per-link guard, and the fold links' radii lanes surviving past a link that reads none), and in the HEAD (`escChainBulbPair`, two power links, rotated so a cycle is distinguishable from one map re-applied). All four carry `logEstimate: true` and so pin `escParams.w` at offset 268; the nine fold-only rows pin the 0 case. ALL FOUR GATE CLEAN ON BOTH ADAPTERS, fail=0, and NO CAP MOVED — real Iris maxAbs 2.98e-6 / 7.70e-6 / 2.51e-6 / 1.53e-5 at excluded 72 / 57 / 1 / 22 of 700 and flips 1 / 0 / 0 / 3, against caps of 140 and 7; SwiftShader's `excluded` is identical (the classifier is CPU-only) and its flips are 0. THE FEARED EXCLUSION BLOWOUT DID NOT HAPPEN, and the mechanism is worth keeping: `8·r⁷` noise growth is real for the ORBIT and wrong about the CLASSIFIER, because a power orbit escapes super-exponentially, membership is decided in one or two steps, and the marginal population the ensemble exists to bracket is SMALLER — three of the four cross-family rows sit BELOW the fold controls (`escMandelbox` 58, `escChainPair` 71). The pre-scales were CHOSEN off that: `excluded` is knowable on the CPU without a GPU run, so the budget was measured first and the fixture picked from it (`bulb(0.5)` rejected at 10/700 because its boundary shell collapses to 16 queries — a nearly free row that tests nothing; `bulb(0.3)` legal at 96/700 but dearer). Reach for that method before guessing. `estimateEscapeDistanceF32`, the leg's f32 twin, had to learn the two power kinds and the estimate form with them — a STALE twin does not disagree, it makes the ensemble exclude everything (fr-s9ll measured 251/700 that way) — and the fold-only rows stay bit-identical by construction and were confirmed so, `escChainKaleido` included at excluded 97 / flips 21 / maxAbs 1.333 to the digit. A `computeFrameEscapeXfam` arm was added beside the eval rows NOT as a fallback but for the one thing they cannot reach: the HIT-INFO body's power branch and its degree-selected escape count, which has no value-body counterpart. It reads GPU 0.223 vs CPU 0.226 on Iris (0.223 vs 0.202 on SwiftShader) — DENSER than its fold sibling `escMandelbox`'s 0.153/0.158, one more datum against the stiffness prediction. CI is unaffected (it runs `bench:gpu`, not this)
+npm run bench:surface # WebGPU fold-DE kernel agreement/timing — pins surface-de-gpu.ts (eval/march baselines + fr-tzdg's march-unproject/shade app path) to the CPU estimator; add --display=:0 for real-driver timing; run it on a QUIET machine, never concurrently with the test suite or other heavy CPU load — a contended software device corrupts mid-run readbacks, which the fr-76pp canary reports as verdict=device-unreliable (exit 2, rerun) instead of plausible numeric fails. KNOWN SWIFTSHADER FALSE FAILURE (fr-jtd4): the default (no `--display`) run fails the ESCAPE agreement leg on `escChainKaleido` — "21 verified chaotic flips (> 7)" — and it is spurious. Measured on the same commit: SwiftShader failures=5, chaoticFlips=21, maxAbsErr 1.333, bit-identical across a busy box and a quiet one (so it is deterministic, not contention); real Iris `--display=:0` verdict PASS, failures=0, chaoticFlips=1, maxAbsErr 3.4e-06 — a ~400,000x difference in agreement, with `excluded` identical at 97/700 on both, so the ensemble pre-filter is behaving and only the post-hoc flip count moves. ESTABLISHED: the failure is ADAPTER-SPECIFIC and deterministic — a compiler realisation difference in the forward orbit, amplified by ~8x/iteration noise growth into a binary escape decision. REFUTED BY MEASUREMENT: that fr-s9ll's 10bc444 caused it. That commit turned the sphere fold's numerator from a literal `1.0` into a uniform load, which is the right CLASS of change and predicts exactly this shape — but the leg at `10bc444^` returns chaoticFlips 21, bit-identical to HEAD on every field, and 10bc444 is the ONLY functional change to `surface-de-gpu.ts` in that span (the other two commits there are comment-only). So the cause is EARLIER, and no part of fr-s9ll is implicated. AND THERE IS NO REGRESSION AT ALL: measured at 0570354 (fr-s04t), the commit that INTRODUCED `escChainKaleido`, the row already fails with chaoticFlips 21 — bit-identical to HEAD on every field. It has never passed on a software rasteriser. fr-s04t records verification in the app on both engines but no SwiftShader `bench:surface` run, and the flips figure in the paragraph below was fr-dlxh's on real Iris, so this fixture reached this leg on a software adapter for the first time in fr-qjae's run. THE OPEN QUESTION IS THEREFORE CALIBRATION, NOT A BUG: the cap is one number applied to every adapter, and a software rasteriser is a different realisation of the same kernel. Either it becomes adapter-aware or the escape rows are simply judged on `--display=:0`, which is already this file's standing advice. A BONUS RESULT worth keeping from the same runs: `excluded`, `maxAbsErr` and `p99AbsErr` are bit-identical for this fixture across all of `0570354..HEAD` — 104 lines of `escape-de.ts` and 66 of `surface-de-gpu.ts`, fr-s9ll's authored fold radii included — which is fr-s9ll's "byte-identity at the defaults is by CONSTRUCTION" verified empirically on the CPU and GPU sides at once, rather than argued. DO NOT raise the cap to make it green — 7 is calibrated for the driver this leg gates, and fr-7tl3/fr-dlxh built the layered classifier precisely so a real disagreement could not hide inside the chaotic-orbit excuse. Judge the escape rows on `--display=:0`. CROSS-FAMILY ROWS (fr-j231): four fixtures cover a power link in the chain's TAIL (`escChainBulb`, `escChainQsquare` — a kernel reading the params block's frozen HEAD link for every step fails here), in the MIDDLE of a 3-cycle between two folds of different kinds (`escChainPowerMid` — the per-link guard, and the fold links' radii lanes surviving past a link that reads none), and in the HEAD (`escChainBulbPair`, two power links, rotated so a cycle is distinguishable from one map re-applied). All four carry `logEstimate: true` and so pin `escParams.w` at offset 268; the nine fold-only rows pin the 0 case. ALL FOUR GATE CLEAN ON BOTH ADAPTERS, fail=0, and NO CAP MOVED — real Iris maxAbs 2.98e-6 / 7.70e-6 / 2.51e-6 / 1.53e-5 at excluded 72 / 57 / 1 / 22 of 700 and flips 1 / 0 / 0 / 3, against caps of 140 and 7; SwiftShader's `excluded` is identical (the classifier is CPU-only) and its flips are 0. THE FEARED EXCLUSION BLOWOUT DID NOT HAPPEN, and the mechanism is worth keeping: `8·r⁷` noise growth is real for the ORBIT and wrong about the CLASSIFIER, because a power orbit escapes super-exponentially, membership is decided in one or two steps, and the marginal population the ensemble exists to bracket is SMALLER — three of the four cross-family rows sit BELOW the fold controls (`escMandelbox` 58, `escChainPair` 71). The pre-scales were CHOSEN off that: `excluded` is knowable on the CPU without a GPU run, so the budget was measured first and the fixture picked from it (`bulb(0.5)` rejected at 10/700 because its boundary shell collapses to 16 queries — a nearly free row that tests nothing; `bulb(0.3)` legal at 96/700 but dearer). Reach for that method before guessing. `estimateEscapeDistanceF32`, the leg's f32 twin, had to learn the two power kinds and the estimate form with them — a STALE twin does not disagree, it makes the ensemble exclude everything (fr-s9ll measured 251/700 that way) — and the fold-only rows stay bit-identical by construction and were confirmed so, `escChainKaleido` included at excluded 97 / flips 21 / maxAbs 1.333 to the digit. A `computeFrameEscapeXfam` arm was added beside the eval rows NOT as a fallback but for the one thing they cannot reach: the HIT-INFO body's power branch and its degree-selected escape count, which has no value-body counterpart. It reads GPU 0.223 vs CPU 0.226 on Iris (0.223 vs 0.202 on SwiftShader) — DENSER than its fold sibling `escMandelbox`'s 0.153/0.158, one more datum against the stiffness prediction. CI is unaffected (it runs `bench:gpu`, not this). THE 4D ESCAPE ROWS (fr-vag4): M7 pins `core:"escape4"` against `escape-de-4d.ts` on six 4D fixtures, gating on the UNCHANGED escape caps rather than escape4 twins of them — and the exclusion census said that was measured rather than assumed (44-78 of 700, inside the 3D controls' own band). MEASURED at the lift on real Iris `--display=:0`, verdict PASS, all six fail=0: `esc4ChainWRot` maxAbs 5.81e-7 excluded 78, `esc4ChainParameterized` 6.96e-6 / 78, `esc4ChainQsquare` 9.83e-7 / 58 flips 1, `esc4ChainKaleido` 6.33e-7 / 69 flips 2, `esc4ChainSlice` 9.02e-7 / 44, `esc4ChainSliceRot` 1.18e-5 / 70 flips 2 — and every pre-existing 4D row (aff4Final/aff4Slab/fold4*/lens4*) and the balloon/lens unproject legs still clean on the same run. Its f32 twin `estimateEscapeDistance4F32` was MUTATION-TESTED before that run because a stale twin does not disagree, it excludes everything: each mutation moves exactly the row written for it (classic radii 78->301, dropping `-w^2` from the quaternion square 58->203, forcing the linear form 58->538, the descents' COLLAPSED plane code 69->220, dropping the rotor 58->276, dropping w0 44->511, and adding w0 AFTER the rotor instead of inside it 70->559 — caught by `esc4ChainSliceRot` ALONE, which is why that sixth row is not redundant), while folding only x/y/z in the box fold moves ALL SIX rows 321-407, i.e. every fixture is genuinely 4D by measurement rather than by having a `w` field
 ```
 
 Run a single test file: `npx vitest run src/fractal/chaos-game.test.ts`
@@ -86,6 +106,27 @@ measured compute for all nine, which is what keeps the `core:"bulb"` WGSL
 kernel from being dead code. It also gates fr-17qu's empty-set toast and
 fr-vpbq's `antialiasing pass k/8` disclosure. `--mode=sw` runs everything but
 the engine question without a display.
+
+The 4D lifts' gate (fr-vag4/fr-h0c3/fr-qxxw, same prerequisites):
+`node scripts/surface-4d-lift.verify.mjs --display=:0`. Eight scenes as
+`#v1=` hashes rather than presets — so it needs no preset table and
+survives one changing under it — each driven into Surface FROM THE UI
+and asked the four questions no unit test reaches: does the session
+ENTER, does it reach a COMPLETED settle (the fr-opgk latch), does it
+DRAW (non-backdrop share of a real screenshot; a canvas READBACK reads
+empty for a WebGL context outside its own rAF and measures 0% for a
+frame that is plainly there), and WHICH ENGINE took it — which is what
+keeps `core:"escape4"` and the 4D plane/balloon blocks from being dead
+code. MEASURED at the lift, real Iris, 1024x640, 8/8: the 4D chain
+44.6%, under an xw kaleidoscope 44.5%, with the floor 88.9%; a 4D IFS
+attractor with the floor 89.2% and with the balloon 41.1%;
+kaleidoscope-4D through the FRAGMENT arm 67.4% / 32.3%; and the 3D
+Mandelbox-with-floor control 89.2%. Its kaleidoscope fixture is
+deliberately LIGHT (2 maps at order 3) and that is a measurement too — a
+four-map order-5 4D system settles neither with the floor NOR without it
+inside 200s on this hardware, which is fr-b72d's superlinear order cost
+and not anything a lift did. Without `--display` the engine column is
+reported rather than gated.
 
 **Harness sheets** (`scripts/*.harness.ts`, run with
 `npx vitest run --config scripts/vitest.harness.config.ts scripts/<name>`)
@@ -140,7 +181,48 @@ are executable: that cycling dissolves the power-link stiffness the bead
 blocked on, and that the Böttcher form is boundary-adaptive on a
 power-dominated chain where fr-282c measured it flat on a fold one),
 `chain-speckle` (fr-vpbq's and fr-byxb's evidence: the speckle is
-sub-pixel, the ramp is bottom-heavy), `bulb-preview` (fr-7u8t.7's step-scale
+sub-pixel, the ramp is bottom-heavy),
+`slab-ball-slack` (fr-v7ca's verdict, and the sheet whose INSTRUMENT is
+the argument: a BOXFOLD-ONLY system answers a spherefold question,
+because its two arms are the two ENDPOINTS of the lift under test — the
+shipped exact segment IS the segment+ball-slack state with no mid
+crossing ever, and `max(0, DE(p) - h)` IS the same state with the
+crossing at depth 0, so the gap between them BRACKETS everything the
+lift could ever buy. Verdict NEITHER, keep the refusal: the cheap form
+is a DILATION and not a slab — a crisp fractal becomes the bare marching
+ball at the slider's own ceiling, 44.4% of rays at 0.0 steps/px — it is
+FURTHER from the exact slab than doing nothing on two of four controls,
+it floats the whole surface toward the camera rather than adding a rind
+(mean depth error 16.9-68.8% of the marching ball against the point
+query's 0.8-15.2%), and it overcharges the bound by one to two orders of
+magnitude through DIRECTION-BLINDNESS (a true slab costs 0.3-15%, a ball
+29-100%). Both forms are SOUND — 0 violations in 9600 checks — which
+settles nothing. And the threaded design cannot be justified from
+outside the descent: its ceiling is reached only where no mid crossing
+happens, i.e. on the systems that ALREADY have the exact slab, while
+every system it is FOR crosses that branch. Two named instruments would
+reopen it),
+`escape-4d` (fr-vag4's own measure-before-building sheet, and the one
+that CONTRADICTS a prior record: fr-wuuu swept the quaternion square's
+`k` component — a `w` TRANSLATION — and found pure EROSION off the
+`w = 0` slice, containment 94-98% and a blank frame by `w0 = 0.8`; a `w`
+ROTATION reads containment 52-61% and still draws 16% of its rays at
+`w0 = 1.2`, so roughly half of every offset slice is a genuinely
+different cut. That is the empirical case for the 4D lift, and it is why
+the shipped 4D presets ROTATE rather than translate. Three more results:
+WHICH LINK carries the rotation decides everything — on the head link it
+flattens the set along the rotated axis, x-extent 3.99 -> 1.29, and
+costs a third of the rays, where a POWER link costs essentially nothing
+(47.9% -> 43.7%); a W-PLANE KALEIDOSCOPE has no visible rosette, its
+symmetry plane containing `w` rather than lying in the rendered slice,
+and is a measurable NO-OP at EVEN order — 1 point of 262144 differs at
+2/4/6/8 against ~3700 at 3/5, so a preset authored at order 4 would
+silently be its 3D twin; and a pose ROTOR can CANCEL the document's own
+`w` rotation, handing `mandelboxCube + xw = 1` back exact cube
+proportions. Its refuted-in-sheet hypothesis is kept too: the entry-pose
+hit drop is NOT sub-pixel structure the 8x settle supersampling would
+repay — doubling the panel leaves the gap unchanged),
+`bulb-preview` (fr-7u8t.7's step-scale
 sweep), `escape-family-preview` (the three estimators side by side),
 `qjulia-preview` and `qjulia-beauty` (fr-7u8t.4's proof, and the twenty
 panels that demoted fr-7u8t.5/.6), `julia-flame` (the compositions three
@@ -282,6 +364,25 @@ and UI**, so the interesting math is unit-tested without a browser:
     Balloon on/`R` persist in the scene document; `R` is authored NORMALIZED
     (multiples of the raw ball radius, `buildBalloon`'s `rMult`), one
     continuous parameter across the explorer echo and the surface balloon.
+    THE 4D LIFT (fr-qxxw) is a semantic decision and a ball choice, no new
+    algebra: `estimateBalloonDistance4` inverts in the SLICED 3D space and
+    hands the estimator `(q, w0)` on both terms — SLICE THEN INVERT, so the
+    echo is the inversion of exactly what is drawn (the explorer echo's
+    precedent), where inverting in 4D and slicing the result would draw the
+    echo of a DIFFERENT slice (`I₄({w = w0})` is a 3-sphere; the two agree
+    exactly at `w0 = 0` for this origin-anchored ball). The 3D bound then
+    applies word for word, because a 4D estimate lower-bounds the 4D
+    distance and hence the IN-SLICE one. `balloonBall4` takes the ORIGIN
+    (`SurfaceDE4` has no `boundCenter` — it is origin-anchored, and
+    `buildSurfaceDE4`'s own comment warns against copying 3D's centred fit
+    blindly) and the FULL `visibleBoundingRadius`, not a slice-adjusted
+    one: the slice sits inside `ball(0, R4)`, so the bound stays certified
+    and the shell does not pulse as the slider scrubs. A `halfExtent` rides
+    both terms untouched — the inversion never touches `w` — so the
+    Möbius-ball helper fr-qxxw and fr-v7ca agreed to share was NOT needed
+    here and is still owed to whichever slab port lands first. The WGSL 4D
+    wrapper is the 3D text UNCHANGED, which is the same decision seen from
+    the kernel side.
   - `chaos-game.ts` — IFS iterator: warm-up, escape-reset, bounds tracking.
     Injected RNG for reproducibility; optional `IterationRng` keeps morphs
     point-for-point correspondent. `SymmetryParams.blend` fades kaleidoscope
@@ -472,10 +573,18 @@ and UI**, so the interesting math is unit-tested without a browser:
     plane -> 336, 4D lens -> 576). `foldRadiiOf` is emitted only where a
     fold branch reads it — the fold cores, or ANY core under the lens
     wrapper — so affine kernels stay byte-identical.
-    SIX
+    THE 4D TAIL NOW HAS THE SAME SHAPE (fr-vag4 / fr-qxxw / fr-h0c3, one
+    decision serving all three): the shared plane/balloon block lands at
+    the frozen 576 for EVERY 4D core, which the lens4 block being declared
+    unconditionally under either is what buys — the 3D `lens || balloon ||
+groundPlane` rule one dimension up, zero-filled by the packer when
+    there is no lens (4D balloon -> 608, 4D plane -> 624). fr-h0c3's bead
+    had recorded exactly the hazard this avoids: a block appended at 560
+    lands INSIDE fr-s9ll's `lens4Fold` quartet and corrupts it.
+    SEVEN
     KERNEL CORES (fr-55s1 added the second, fr-dlxh the third and — its
     4D cut — the fourth, fr-rsp6 phase 2A the fifth, fr-7u8t.9 the
-    sixth):
+    sixth, fr-vag4 the seventh):
     `core:"affine"` emits the width-4 A/B + fr-jkpn-validity-slot
     REFINED ladder (mirrors `estimateDistanceRefined`, the affine GLSL's
     estimator; width/sharedFrontier/bnbStage2/shadeDeWidth inert) beside
@@ -698,17 +807,43 @@ and UI**, so the interesting math is unit-tested without a browser:
     fills 3.5% (fr-azjk's corrected figures — the record read 94% and 10%
     off a grid thresholding the estimate); the gate is the GAP between the
     two rates, so it moved with them).
+    `core:"escape4"` (fr-vag4) is the escape core ONE DIMENSION UP —
+    `escape-de-4d.ts`'s `estimateEscapeDistance4` — and the first core
+    that is BOTH 4D and FORWARD, which is the whole of its novelty: it
+    takes the rotor prologue and the `GpuMap4` maps layout from the
+    descent cores and the orbit, the params scalars and the colors-only
+    hit-info from `core:"escape"`. Three things fall away with the
+    dimension and NOTHING is added — no `bulbPow8` (the gate refuses a
+    triplex power), no slab (a forward orbit cannot thread a segment, so
+    the packer THROWS on a nonzero `sliceHalfW`), and no lens (an escape
+    chain has no final transform, which is what lets its params block
+    reuse lens4's 464..575 region). Its wedge fold reads `SYM_PLANE_CODE4`
+    — the index into `SYMMETRY_PLANES` — and NOT the descents'
+    `SYM_PLANE_CODE`, which deliberately collapses `xw`/`yw`/`zw` onto
+    their w-free twins: sound where the kaleidoscope is a swept matrix,
+    wrong where a fold picks its two axes by name. `lens`/`balloon` throw,
+    `groundPlane` composes, and there is no fragment mirror at all.
     Ground plane (fr-rhn5) is an orthogonal `groundPlane` option, not a
-    sixth core — it composes with every descent/escape core and the lens
-    wrapper. It adds a fifth ray status, `SURFACE_GPU_RAY_PLANE` (4), that
+    core of its own — it composes with every descent/escape core, in both
+    dimensions since fr-h0c3, and with the lens wrapper. It adds a fifth
+    ray status, `SURFACE_GPU_RAY_PLANE` (4), that
     march classifies a sphere-gate/sphere-exit MISS into when a downward
     ray crosses the floor inside its fade band (EXHAUSTED never planes);
     the shade entry lights the crossing with the hit path's penumbra/AO
     probe-width discipline under two analytic ball certificates. Params
-    append a 320-byte block (`SURFACE_GPU_PARAMS_PLANE_BYTES`) at the
-    frozen offset 272, SHARED with the balloon block — the two throw at
-    codegen/pack together (no horizon inside the balloon's shell), and so
-    do the 4D cores (3D scope). `surface-compute.ts` prices PLANE
+    append a 48-byte block at the frozen offset 288
+    (`SURFACE_GPU_PARAMS_PLANE_BYTES` 336; the 4D cores' own frozen 576,
+    `SURFACE_GPU_PARAMS4_PLANE_BYTES` 624), SHARED with the balloon block
+    — the two throw at codegen/pack together (no horizon inside the
+    balloon's shell). THE 4D LIFT NEEDED NO NEW SHADER TEXT: the march
+    classifier and the shade entry are already shared across every core,
+    so it is the params block, the struct splice and deleting the throw.
+    The floor is a world-space plane in the SLICED 3D space, so every 3D
+    certificate holds verbatim once a ball is chosen; the app chooses the
+    origin and the FULL 4D visible radius, so the floor does not slide as
+    the slice scrubs (an off-centre slice shows a smaller object floating
+    above it, which is honest — it IS a smaller slice).
+    `surface-compute.ts` prices PLANE
     terminals in the hit-priced queue, not the miss path.
     Modes:
     `eval` (per-query distances) and `march` (bounded-dispatch ray march,
@@ -1007,6 +1142,47 @@ and UI**, so the interesting math is unit-tested without a browser:
     from a third of the ball to a measure-zero dust in one step, with no
     usable band in between, and is a pitted ball even at its best. It does
     not earn the permanent document flag it would cost.
+
+  - `escape-de-4d.ts` — the escape-time chain's 4D half (fr-vag4), for the
+    systems whose maps reach out of the `w = 0` hyperplane. Everything
+    structural in `escape-de.ts` is dimension-free and carries verbatim —
+    cycling, the per-link `+ p`, the shared scalar `dr` with its `+ 1`
+    floor, the bailout radius, `ESCAPE_STEP_SCALE`, both estimate forms —
+    so this module duplicates only the maps' ARITHMETIC (`variations4.ts`'s,
+    bit-exact against the 3D forms at `w = 0`) and IMPORTS every constant
+    and link code from its twin: what a chain IS has one definition.
+    `qsquare` becomes the FULL quaternion square, whose `2|q|` stays EXACT
+    rather than heuristic because quaternion norms multiply on the whole
+    algebra — which is the point of the lift, since `variations4.ts` calls
+    that map "the only entry whose 4D form is the DEFINITION and whose 3D
+    form is the restriction". THREE REFUSALS, each with its own reason: a
+    `bulb` link (`bulb-de.ts`'s model refusal, unchanged by dimension —
+    triplex numbers have no fourth component, so a lifted triplex power
+    carries `w` untouched and its `dr` would be computed on the other
+    three); a TWIST (a double rotation's fundamental domain is not a
+    wedge, so there is no sector retraction — the `w`-PLANE it admits, and
+    `foldQueryIntoSector4` folds all six); and a SLAB at any thickness (a
+    forward orbit has no branch enumeration, so a segment straddling a box
+    fold's wall maps to a bent polyline in one step — `surface-de-4d.ts`'s
+    `slabExact4` refusal for a stronger reason no fold kind escapes). The
+    anchor is pinned with `toBe` and its one seam disclosed: the AFFINE
+    composition paths agree to ULPs and not to the bit once a transform
+    rotates, which is `affine4.ts`'s own rounding and predates this file.
+    Oracle for `surface-de-gpu.ts`'s `core: "escape4"`; NO fragment
+    mirror, so an escape-shaped 4D session is compute-only exactly as
+    fr-rsp6 made fold-shaped ones. THREE PRESETS reach it, from the 4D
+    menu group rather than the Escape-time one: `mandelboxBrick` and
+    `mandelboxColumn` are the same map (`mandelboxCube`'s) turned in `xw`
+    and in `yw`, a PAIR whose subject is that the rotation plane picks the
+    long axis — per-axis extents 3.13/2.00/2.00 against 2.00/2.49/2.00
+    against the 3D cube's 2.00/2.00/2.00, which is a 4D rotation legible
+    as a 3D proportion, and the one place the rotor slider reads as
+    geometry rather than as a tumble (an `xw` pose rotor CANCELS the
+    brick's own `xw` and hands back exact cube proportions) — and
+    `hybridChainShells` is `hybridChainQuaternion` with the rotation on
+    its POWER link, the one link position that costs essentially nothing
+    (43.7% of rays against the 3D twin's 47.9%, where the same rotation
+    on the head link costs a third of them).
 
   - `qjulia-de.ts` — the quaternion Julia set's CPU oracle (fr-7u8t.4):
     `q <- q^2 + c` (Hart/Sandin/Kauffman 1989) in the project's own
@@ -1798,6 +1974,29 @@ Frame` callback, which runs before paint so the disabled look never
     additional collapse is its march-loop scheduling under that regime
     (fr-fniy), not kernel codegen — the uniform-maps and
     refinedCert-divergence kernel suspects were both refuted with data.
+    TWO VARIANT ARMS since fr-qxxw/fr-h0c3 — the balloon inverted-union
+    and the ground plane, each mirroring its 3D original term for term —
+    and the MECHANISM is the one deviation, forced by measurement: this
+    source is 61 751 B with 3 785 B of headroom under the 64KB strip
+    threshold, and the arms are ~5.3KB and ~7.7KB, so one monolithic
+    `#if` source would be ~74KB and EVERY 4D session would pay it, in the
+    band where the 3D fold program takes ~25s to link. So the arms
+    resolve JS-side, through `surfaceFragmentFor` ITSELF rather than a
+    second preprocessor (`surface4FragmentFor` is a two-line wrapper), and
+    the `defines` keys are `SURFACE4_*` while the GLSL directives stay the
+    3D names — deliberate, called out at both sites, and renaming them
+    would break resolution. Measured: off 61 751 B (byte-identical to the
+    pre-lift source), balloon 67 123 -> 16 664 stripped, plane
+    69 497 -> 17 705. Three things could not be copied: `balloonInnerDE`'s
+    far-field clamp (it exists for 3D's FORWARD cores, whose
+    zero-iteration far value is not a distance to anything; this tracer's
+    core has a value-exact sphere floor that already is the bound — the
+    arm records that a future 4D forward core owes it),
+    `shadeGroundPlane`'s normalizer (the FULL 4D radius, not `sliceVisR`,
+    which collapses at the slab edges and would make the floor breathe as
+    the slider scrubs), and the post-march miss's sphere-exit/exhaustion
+    split, which had to be ADDED — 3D splits it because it has a floor to
+    classify into, and EXHAUSTED never planes.
   - `surface-compute.ts` — WebGPU compute renderer for fold-shaped 3D
     surface sessions (fr-tzdg): systems with base-map folds OR a fold
     FINAL lens (fr-55s1 — `deHasFolds(de) || foldFinal`; the DE picks
@@ -1824,17 +2023,31 @@ Frame` callback, which runs before paint so the disabled look never
     uniform-maps/refinedCert kernel suspects were refuted on the
     extended `--surface-aff4-sweep` leg — so the residual is this
     module's march-loop scheduling under an expensive-DE regime,
-    fr-fniy). `create()` takes a
+    fr-fniy). ESCAPE-shaped 4D sessions (fr-vag4 — a non-flat chain the
+    4D IFS gate refuses) are compute-ONLY for the fold-4D reason
+    unchanged: an escape chain IS fold-shaped, and the fragment 4D tracer
+    carries no forward-orbit GLSL either, so entry is refused without
+    compute and a mid-session loss exits with the same toast one family
+    over. `create()` takes a
     `SurfaceComputeTarget` union
-    (`{kind:"ifs"|"escape"|"bulb"|"ifs4"}`) whose
+    (`{kind:"ifs"|"escape"|"bulb"|"escape4"|"ifs4"}`) whose
     `kind` picks the kernel core (ifs4 → affine4 or fold4 off
     `deHasFolds4`, the 3D `deHasFolds` split one dimension up; `bulb` →
     fr-tdin's `core:"bulb"`, structurally the escape arm one formula
-    over — `isForwardTarget` names the pair so a branch cannot serve one
-    and miss the other), the
+    over; `escape4` → fr-vag4's `core:"escape4"` — `isForwardTarget`
+    names the THREE so a branch cannot serve one and miss another, and
+    `isFourDTarget` names the two whose frame spec must carry `view4`,
+    `escape4` being in both sets), the
     params packer and the maps
     buffer's layout/existence — the bounded march/shade host loop,
     progressive presents and failure ladder stay shared regardless.
+    `isForwardTarget` no longer means "no maps buffer": both ESCAPE kinds
+    carry their formula chain on the maps binding, so every maps-shaped
+    branch names them ahead of the predicate and `bulb` is the one
+    bindingless kind left.
+    The BALLOON and the FLOOR ride an ifs4 target since fr-qxxw/fr-h0c3,
+    with the 3D arm's precedence (the two never compile together and the
+    balloon wins); no FORWARD kind ever balloons, in either dimension.
     Escape and plain-affine ifs4 targets scale no priors (the forward
     loop is phone-cheap and the pessimistic base priors elsewhere only
     err toward smaller first slices); fold/lens-shaped ifs4 scales by

@@ -1,9 +1,13 @@
 import type * as THREE from "three";
 import {
   createSurfaceMaterial4,
+  setSurface4Balloon,
+  setSurface4GroundPlane,
   setSurfaceSystem4,
+  surface4FragmentFor,
   SURFACE4_MAX_MAPS,
 } from "./surface-material-4d";
+import { SURFACE_GLSL_STRIP_BYTES } from "./surface-material";
 import type { SurfaceDE4, SurfaceDE4Map } from "../fractal/surface-de-4d";
 import { CLASSIC_SURFACE_FOLD_RADII } from "../fractal/surface-de";
 import { twentyFourCellFlake } from "../fractal/presets";
@@ -260,5 +264,284 @@ describe("the supersampling jitter uniform (fr-jf9y)", () => {
     expect(glsl).toContain("(vUv + uPixelJitter.xy) * 2.0 - 1.0");
     expect(glsl).toContain("hash(gl_FragCoord.xy + uPixelJitter.zw)");
     expect(glsl).toContain("mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0))");
+  });
+});
+
+/** A balloon payload whose fields are all different numbers, so a packer
+ * that crossed two of them fails loudly. */
+const balloonSpec = () => ({
+  center: [1, 2, 3] as [number, number, number],
+  rho: 4,
+  R: 5,
+  far: 6,
+});
+
+/** The same, for the floor. */
+const groundSpec = () => ({
+  y: -1.5,
+  fadeStart: 3,
+  fadeEnd: 9,
+  ballCenter: [0.1, 0.2, 0.3] as [number, number, number],
+  ballRadius: 1.25,
+  albedo: [0.4, 0.5, 0.6] as [number, number, number],
+});
+
+describe("the 4D tracer's variant arms (fr-qxxw, fr-h0c3)", () => {
+  // The arms are resolved JS-side (surface4FragmentFor, which reuses the
+  // 3D file's resolver), which is what makes OFF byte-identical to the
+  // shipped tracer AND keeps every variant the driver sees far under the
+  // Mesa source cliff. MEASURED raw resolved / what the driver gets:
+  // off 61751 B (60.3KB) / 61751 B — under the 64KB threshold, so NOT
+  // stripped, i.e. the shipped bytes exactly; balloon 67123 B (65.5KB) /
+  // 16664 B (16.3KB); plane 69497 B (67.9KB) / 17705 B (17.3KB). The
+  // assertions below pin the CONTRACT (under threshold, arms present or
+  // absent) rather than those figures, which any shader edit moves.
+  it("resolves the shipped source verbatim when both arms are off", () => {
+    const glsl = surface4FragmentFor();
+    expect(glsl).toBe(createSurfaceMaterial4().fragmentShader);
+    // Un-stripped: indentation and block comments survive, which is the
+    // observable half of "a plain 4D session hands the driver the bytes it
+    // always did".
+    expect(glsl).toContain("\n  precision highp float;");
+    expect(glsl.length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+    for (const token of [
+      "uBalloonCenter",
+      "uBalloonRho",
+      "balloonInvert",
+      "surfaceDEBalloonHitInfo",
+      "surfaceDEFractal",
+      "uGroundY",
+      "uGroundBallR",
+      "shadeGroundPlane",
+    ]) {
+      expect(glsl).not.toContain(token);
+    }
+  });
+
+  it("compiles the balloon wrapper over the descent when the balloon is on", () => {
+    const glsl = surface4FragmentFor(1, 0);
+    expect(glsl).toContain("uniform vec3 uBalloonCenter;");
+    expect(glsl).toContain("uniform float uBalloonRho;");
+    // The rename that lets the wrapper own the public names.
+    expect(glsl).toContain("#define surfaceDE surfaceDEFractal");
+    expect(glsl).toContain("#undef surfaceDE");
+    expect(glsl).toContain("vec3 balloonInvert(vec3 p, out float scale) {");
+    // fractal/balloon-de.ts's invertBalloon, with the f32 centre floor.
+    expect(glsl).toContain("float fl = 1.0e-6 * uBalloonRho;");
+    expect(glsl).toContain("scale = r / uBalloonRho;");
+    // The union and its cutoff scaling (the fr-55r5 contract through the
+    // shell term's value factor).
+    expect(glsl).toContain(
+      "scale * surfaceDEFractal(q, cutoff > 0.0 ? cutoff / scale : 0.0);",
+    );
+    // The march-entry semantics: no visible-sphere gate, far cap past the
+    // balloon centre, every ray from the camera.
+    expect(glsl).toContain(
+      "float tFar = length(uCamPos - uBalloonCenter) + uBalloonFar;",
+    );
+    expect(glsl).not.toContain("shadeGroundPlane");
+    expect(glsl.length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+  });
+
+  it("keeps the 4D hit-info's sStar through the balloon's argmin routing", () => {
+    // Six outputs, one more than the 3D wrapper carries: sStar is the slab
+    // hit's own place along the query segment (fr-9c9e), so a SHELL hit's
+    // radius colour has to lift through the shell descent's parameter, not
+    // the fractal's. Ties go to the fractal (the oracle's attribution
+    // convention) — hence the strict dS < dF.
+    const glsl = surface4FragmentFor(1, 0);
+    expect(glsl).toContain(
+      "surfaceDEFractal(q, firstChoice, trap, rings, sheets, sStar);",
+    );
+    expect(glsl).toContain(
+      "return surfaceDEFractal(p, firstChoice, trap, rings, sheets, sStar);",
+    );
+    expect(glsl).toContain("if (dS < dF) {\ncolorPos = q;");
+    // Both position-driven colour sources read the winning term's SOURCE
+    // point, the radius one still through the fr-9c9e slab lift.
+    expect(glsl).toContain(
+      "u = clamp(cpos.y / uVisibleRadius * 0.5 + 0.5, 0.0, 1.0);",
+    );
+    expect(glsl).toContain(
+      "vec4 q4 = uInvRotor * vec4(cpos, uW0 + sStar * uSliceHalfW);",
+    );
+  });
+
+  it("shadows the balloon from the fractal alone — the shell never casts", () => {
+    const glsl = surface4FragmentFor(1, 0);
+    expect(glsl).toContain(
+      "vec3 sp = pos + n * h * 2.0 + uLightDir * ts;\nfloat d = surfaceDEFractal(sp);",
+    );
+  });
+
+  it("compiles the floor and its two analytic ball certificates when the plane is on", () => {
+    const glsl = surface4FragmentFor(0, 1);
+    expect(glsl).toContain("uniform float uGroundY;");
+    expect(glsl).toContain("uniform vec3 uGroundAlbedo;");
+    expect(glsl).toContain(
+      "vec3 shadeGroundPlane(vec3 ro, vec3 rd, vec3 background, out float cov) {",
+    );
+    // One-sided, radially faded, and the two gates that make an infinite
+    // floor affordable (shadow corridor, AO reach).
+    expect(glsl).toContain("if (ro.y <= uGroundY || rd.y >= -1.0e-6) {");
+    expect(glsl).toContain(
+      "1.0 - smoothstep(uGroundFadeStart, uGroundFadeEnd, length(rel));",
+    );
+    expect(glsl).toContain(
+      "float corridor = uGroundBallR * 1.05 + 0.3 * along;",
+    );
+    expect(glsl).toContain(
+      "float reach = uGroundBallR * (1.02 + 0.04 * float(uAoTaps));",
+    );
+    // The taps run the 4D value overload — there is no probe descent here.
+    expect(glsl).toContain(
+      "clamp((hh - surfaceDE(hp + vec3(0.0, hh, 0.0))) / hh, 0.0, 1.0);",
+    );
+    expect(glsl).not.toContain("balloonInvert");
+    expect(glsl.length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+  });
+
+  it("planes a sphere-exit miss and never an exhausted ray", () => {
+    // The 4D main() had no such split before fr-h0c3 — with no floor, both
+    // outcomes painted the same backdrop. A budget-exhausted ray resolved
+    // no geometry, so planing it would paint floor straight through the
+    // object it ran out of steps inside.
+    const glsl = surface4FragmentFor(0, 1);
+    expect(glsl).toContain(
+      [
+        "if (!hit) {",
+        "if (t > tFar) {",
+        "float planeCovMiss;",
+        "outColor = vec4(",
+        "shadeGroundPlane(ro, rd, background, planeCovMiss),",
+        "planeCovMiss",
+        ");",
+        "return;",
+        "}",
+        "outColor = vec4(background, 0.0);",
+      ].join("\n"),
+    );
+  });
+
+  it("lands the two pre-march misses on the floor too", () => {
+    const glsl = surface4FragmentFor(0, 1);
+    expect(glsl).toContain(
+      "if (disc < 0.0) {\nfloat planeCov;\noutColor = vec4(shadeGroundPlane(ro, rd, background, planeCov), planeCov);",
+    );
+    expect(glsl).toContain("if (tFar <= 0.0) {\nfloat planeCovExit;");
+  });
+
+  it("refuses a floor inside the shell — there is no horizon in there", () => {
+    expect(() => surface4FragmentFor(1, 1)).toThrow(RangeError);
+  });
+});
+
+describe("setSurface4Balloon (fr-qxxw)", () => {
+  it("packs the spec and compiles the arm in", () => {
+    const material = createSurfaceMaterial4();
+    setSurface4Balloon(material, balloonSpec());
+    const center = material.uniforms.uBalloonCenter.value as THREE.Vector3;
+    expect([center.x, center.y, center.z]).toEqual([1, 2, 3]);
+    expect(material.uniforms.uBalloonR.value).toBe(5);
+    expect(material.uniforms.uBalloonRho.value).toBe(4);
+    expect(material.uniforms.uBalloonFar.value).toBe(6);
+    expect(material.defines.SURFACE4_BALLOON).toBe(1);
+    expect(material.fragmentShader).toContain("balloonInvert");
+  });
+
+  it("resets to the inert off state on null, rho included", () => {
+    const material = createSurfaceMaterial4();
+    setSurface4Balloon(material, balloonSpec());
+    setSurface4Balloon(material, null);
+    const center = material.uniforms.uBalloonCenter.value as THREE.Vector3;
+    expect([center.x, center.y, center.z]).toEqual([0, 0, 0]);
+    expect(material.uniforms.uBalloonR.value).toBe(0);
+    // 1, not 0: a stray enabled read must never divide by zero.
+    expect(material.uniforms.uBalloonRho.value).toBe(1);
+    expect(material.uniforms.uBalloonFar.value).toBe(0);
+    expect(material.defines.SURFACE4_BALLOON).toBe(0);
+    expect(material.fragmentShader).not.toContain("uBalloonCenter");
+  });
+
+  it("rebuilds the program only when the arm moves, never on a radius drag", () => {
+    // The radius slider writes uniforms per tick; a program rebuild per
+    // tick would be a recompile per tick.
+    const material = createSurfaceMaterial4();
+    setSurface4Balloon(material, balloonSpec());
+    const version = material.version;
+    setSurface4Balloon(material, { ...balloonSpec(), R: 9 });
+    expect(material.uniforms.uBalloonR.value).toBe(9);
+    expect(material.version).toBe(version);
+    setSurface4Balloon(material, null);
+    expect(material.version).toBeGreaterThan(version);
+  });
+});
+
+describe("setSurface4GroundPlane (fr-h0c3)", () => {
+  it("packs the spec and compiles the arm in", () => {
+    const material = createSurfaceMaterial4();
+    setSurface4GroundPlane(material, groundSpec());
+    const u = material.uniforms;
+    expect(u.uGroundY.value).toBe(-1.5);
+    expect(u.uGroundFadeStart.value).toBe(3);
+    expect(u.uGroundFadeEnd.value).toBe(9);
+    expect(u.uGroundBallR.value).toBe(1.25);
+    const ball = u.uGroundBallC.value as THREE.Vector3;
+    expect([ball.x, ball.y, ball.z]).toEqual([0.1, 0.2, 0.3]);
+    const albedo = u.uGroundAlbedo.value as THREE.Vector3;
+    expect([albedo.x, albedo.y, albedo.z]).toEqual([0.4, 0.5, 0.6]);
+    expect(material.defines.SURFACE4_GROUND_PLANE).toBe(1);
+    expect(material.fragmentShader).toContain("shadeGroundPlane");
+  });
+
+  it("resets to the inert off state on null, ball radius and albedo included", () => {
+    const material = createSurfaceMaterial4();
+    setSurface4GroundPlane(material, groundSpec());
+    setSurface4GroundPlane(material, null);
+    const u = material.uniforms;
+    expect(u.uGroundY.value).toBe(0);
+    expect(u.uGroundFadeStart.value).toBe(0);
+    expect(u.uGroundFadeEnd.value).toBe(0);
+    // 1 and white, not zeros: a stray enabled read must never divide by
+    // zero or paint a black band.
+    expect(u.uGroundBallR.value).toBe(1);
+    const albedo = u.uGroundAlbedo.value as THREE.Vector3;
+    expect([albedo.x, albedo.y, albedo.z]).toEqual([1, 1, 1]);
+    expect(material.defines.SURFACE4_GROUND_PLANE).toBe(0);
+    expect(material.fragmentShader).not.toContain("uGroundY");
+  });
+
+  it("rebuilds the program only when the arm moves", () => {
+    const material = createSurfaceMaterial4();
+    setSurface4GroundPlane(material, groundSpec());
+    const version = material.version;
+    setSurface4GroundPlane(material, { ...groundSpec(), y: -4 });
+    expect(material.uniforms.uGroundY.value).toBe(-4);
+    expect(material.version).toBe(version);
+  });
+});
+
+describe("balloon seniority over the floor", () => {
+  it("drops a live floor when the balloon comes on", () => {
+    const material = createSurfaceMaterial4();
+    setSurface4GroundPlane(material, groundSpec());
+    expect(material.defines.SURFACE4_GROUND_PLANE).toBe(1);
+    setSurface4Balloon(material, balloonSpec());
+    expect(material.defines.SURFACE4_BALLOON).toBe(1);
+    expect(material.defines.SURFACE4_GROUND_PLANE).toBe(0);
+    expect(material.fragmentShader).not.toContain("shadeGroundPlane");
+  });
+
+  it("refuses a floor over a live balloon without moving any state", () => {
+    const material = createSurfaceMaterial4();
+    setSurface4Balloon(material, balloonSpec());
+    const version = material.version;
+    expect(() => setSurface4GroundPlane(material, groundSpec())).toThrow(
+      RangeError,
+    );
+    expect(material.defines.SURFACE4_GROUND_PLANE).toBe(0);
+    expect(material.uniforms.uGroundBallR.value).toBe(1);
+    expect(material.version).toBe(version);
+    expect(material.fragmentShader).toContain("balloonInvert");
   });
 });

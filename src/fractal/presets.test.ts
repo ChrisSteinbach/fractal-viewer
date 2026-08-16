@@ -1,5 +1,5 @@
 import { composeAffine } from "./affine";
-import { toTransform4 } from "./affine4";
+import { systemPartsAreNonFlat, toTransform4 } from "./affine4";
 import {
   DEFAULT_COLOR_SPEED,
   derivedColorIndex,
@@ -14,6 +14,11 @@ import {
   ESCAPE_LINK_QSQUARE,
 } from "./escape-de";
 import {
+  analyzeEscapeSystem4,
+  buildEscapeDE4,
+  probeEscapeFill4,
+} from "./escape-de-4d";
+import {
   appendTransform,
   barnsleyFern,
   chiralLace,
@@ -26,6 +31,7 @@ import {
   hybridChainCraters,
   hybridChainCube,
   hybridChainQuaternion,
+  hybridChainShells,
   hyperfern,
   icosahedronFlake,
   jerusalemCube,
@@ -36,6 +42,8 @@ import {
   juliaSet,
   juliaSnowflake,
   juliaSnowflakeLens,
+  mandelboxBrick,
+  mandelboxColumn,
   mandelboxKifs,
   mandelboxLattice,
   mengerSponge,
@@ -1301,5 +1309,179 @@ describe("hybrid chain presets (fr-j231 cross-family links)", () => {
       ESCAPE_LINK_MANDELBOX,
       ESCAPE_LINK_QSQUARE,
     ]);
+  });
+});
+
+describe("the 4D escape-time presets (fr-vag4)", () => {
+  // THE GATE PAIRING IS THE POINT, so every preset below asserts BOTH halves
+  // of it. `analyzeEscapeSystem` refusing with "extends into 4D" is what says
+  // the system is a genuinely new object rather than a new view of a shipped
+  // one — no 3D document can express it — and `analyzeEscapeSystem4` admitting
+  // it is what says something renders. A preset that lost its `w` rotation
+  // would still build a valid Transform[], still pass every other test here,
+  // and silently become its 3D twin: eligible in 3D, and identical to a preset
+  // the menu already offers one optgroup up.
+
+  it("mandelboxBrick is mandelboxCube turned in xw — refused in 3D, admitted in 4D", () => {
+    const transforms = mandelboxBrick();
+    const gate3 = analyzeEscapeSystem(transforms);
+
+    expect(gate3.status).toBe("ineligible");
+    expect(gate3.reasons.join("; ")).toContain("map 1 extends into 4D");
+    expect(analyzeEscapeSystem4(transforms).status).toBe("eligible");
+  });
+
+  it("mandelboxColumn is the same map turned in yw — refused in 3D, admitted in 4D", () => {
+    const transforms = mandelboxColumn();
+    const gate3 = analyzeEscapeSystem(transforms);
+
+    expect(gate3.status).toBe("ineligible");
+    expect(gate3.reasons.join("; ")).toContain("map 1 extends into 4D");
+    expect(analyzeEscapeSystem4(transforms).status).toBe("eligible");
+  });
+
+  it("hybridChainShells turns the SECOND link — refused in 3D, admitted in 4D", () => {
+    const transforms = hybridChainShells();
+    const gate3 = analyzeEscapeSystem(transforms);
+
+    // Map 2, not map 1: the rotation rides the qsquare link, which is the one
+    // link position the harness measured as costing essentially no rays.
+    expect(gate3.status).toBe("ineligible");
+    expect(gate3.reasons.join("; ")).toContain("map 2 extends into 4D");
+    expect(analyzeEscapeSystem4(transforms).status).toBe("eligible");
+  });
+
+  // main.ts routes a system to the 4D half on this predicate, so a preset that
+  // reads flat here never reaches `escape-de-4d.ts` at all — it would take the
+  // 3D path, where the gate refuses it, and land in no render mode.
+  it("routes all three to the 4D branch", () => {
+    // No lens and no kaleidoscope (neither side table carries an entry), so
+    // the transform list alone has to be what makes these non-flat.
+    for (const build of [mandelboxBrick, mandelboxColumn, hybridChainShells]) {
+      expect(
+        systemPartsAreNonFlat(build(), null, { order: 1, plane: "xz" }),
+      ).toBe(true);
+    }
+  });
+
+  it("builds mandelboxBrick as a single fold link on the linear estimate", () => {
+    const de = buildEscapeDE4(mandelboxBrick());
+
+    expect(de.links.map((l) => l.kind)).toEqual([ESCAPE_LINK_MANDELBOX]);
+    // No power link, so the terminal radius is read through the linear r/dr
+    // and not the Böttcher log form.
+    expect(de.logEstimate).toBe(false);
+  });
+
+  it("builds mandelboxColumn as a single fold link on the linear estimate", () => {
+    const de = buildEscapeDE4(mandelboxColumn());
+
+    expect(de.links.map((l) => l.kind)).toEqual([ESCAPE_LINK_MANDELBOX]);
+    expect(de.logEstimate).toBe(false);
+  });
+
+  it("builds hybridChainShells as a fold-then-power chain on the Böttcher estimate", () => {
+    const de = buildEscapeDE4(hybridChainShells());
+
+    expect(de.links.map((l) => l.kind)).toEqual([
+      ESCAPE_LINK_MANDELBOX,
+      ESCAPE_LINK_QSQUARE,
+    ]);
+    // A power link makes the chain super-exponential, so the estimate form
+    // follows the escape law (`escape-de.ts`'s THE ESTIMATE FORM FOLLOWS THE
+    // CHAIN'S ESCAPE LAW).
+    expect(de.logEstimate).toBe(true);
+  });
+
+  // Pins the authored intent the doc's measured figures rest on: every extent,
+  // fill and hit number quoted for this preset was measured on
+  // hybridChainQuaternion's exact links with one `w` block added, so a link
+  // edited here silently stales the whole paragraph.
+  it("is hybridChainQuaternion with a w rotation on the power link and nothing else", () => {
+    const [head, power] = hybridChainShells();
+    const [flatHead, flatPower] = hybridChainQuaternion();
+
+    expect(head).toEqual(flatHead);
+    expect(power.w).toEqual({ rotation: { zw: 0.35 } });
+    expect({ ...power, w: undefined }).toEqual({ ...flatPower, w: undefined });
+  });
+
+  it("hints all three as surface showcases", () => {
+    expect(PRESET_RENDER_HINTS.mandelboxBrick).toBe("surface");
+    expect(PRESET_RENDER_HINTS.mandelboxColumn).toBe("surface");
+    expect(PRESET_RENDER_HINTS.hybridChainShells).toBe("surface");
+  });
+
+  // The other four side tables are ABSENT-MEANS-something for all of them, and
+  // three of those defaults are load-bearing here: an inherited final
+  // transform or kaleidoscope takes the render mode away outright
+  // (`analyzeEscapeSystem4` refuses a final, and a `w`-plane wedge is a no-op
+  // at even order — see PRESET_SYMMETRIES' doc), and no wireframe exists for a
+  // set with no polytope behind it.
+  it("carries no scaffold, lens, palette or kaleidoscope", () => {
+    for (const name of [
+      "mandelboxBrick",
+      "mandelboxColumn",
+      "hybridChainShells",
+    ] as const) {
+      expect(PRESET_SCAFFOLDS[name]).toBeUndefined();
+      expect(PRESET_FINALS[name]).toBeUndefined();
+      expect(PRESET_PALETTES[name]).toBeUndefined();
+      expect(PRESET_SYMMETRIES[name]).toBeUndefined();
+    }
+  });
+
+  // Registered, or the menu entry in index.html points at nothing —
+  // `ui.test.ts`'s preset-menu check compares the <option> values against
+  // PRESET_NAMES, so this is the other half of that pair.
+  it("registers all three under their menu values", () => {
+    expect(PRESET_NAMES).toContain("mandelboxBrick");
+    expect(PRESET_NAMES).toContain("mandelboxColumn");
+    expect(PRESET_NAMES).toContain("hybridChainShells");
+  });
+
+  // ONE MEASURED GUARD PER PRESET, and it is a BAND rather than a value: an
+  // empty set renders a blank frame (`escape-de.ts`'s EMPTY CHAINS ARE
+  // REACHABLE) and a set filling its own bailout ball renders as the bounding
+  // sphere (fr-7u8t.8's own defect), and both are reachable by editing one
+  // weight. Sampled far below the sheet's 131072 for suite speed, so the
+  // figure moves; the band is wide enough to be about the OBJECT and not the
+  // sample. Fill is never a visibility predicate — see the third case.
+  const FILL_SAMPLES = 4096;
+
+  it("keeps mandelboxBrick a solid but partial fraction of the 4-ball", () => {
+    // Sheet: 14.816% at 131072 samples; 15.186% at this budget.
+    const fill = probeEscapeFill4(
+      buildEscapeDE4(mandelboxBrick()),
+      FILL_SAMPLES,
+    );
+
+    expect(fill).toBeGreaterThan(0.08);
+    expect(fill).toBeLessThan(0.25);
+  });
+
+  it("keeps mandelboxColumn a solid but partial fraction of the 4-ball", () => {
+    // Sheet: 14.452% at 131072 samples; 14.722% at this budget.
+    const fill = probeEscapeFill4(
+      buildEscapeDE4(mandelboxColumn()),
+      FILL_SAMPLES,
+    );
+
+    expect(fill).toBeGreaterThan(0.08);
+    expect(fill).toBeLessThan(0.25);
+  });
+
+  it("keeps hybridChainShells a THIN set that still renders", () => {
+    // Sheet: 0.346% at 131072 samples, 0.464% at this budget — 43x less
+    // volume than the brick while drawing 1.06x its rays (43.7% against
+    // 41.4%), which is why the upper bound here sits four times BELOW the
+    // pair's lower one and the lower bound is only "not empty".
+    const fill = probeEscapeFill4(
+      buildEscapeDE4(hybridChainShells()),
+      FILL_SAMPLES,
+    );
+
+    expect(fill).toBeGreaterThan(0);
+    expect(fill).toBeLessThan(0.02);
   });
 });

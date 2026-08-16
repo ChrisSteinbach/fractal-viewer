@@ -67,6 +67,13 @@ import {
 } from "../../fractal/escape-de";
 import type { EscapeDE } from "../../fractal/escape-de";
 import {
+  analyzeEscapeSystem4,
+  buildEscapeDE4,
+  estimateEscapeDistance4,
+  SYM_PLANE_CODE4,
+} from "../../fractal/escape-de-4d";
+import type { EscapeDE4 } from "../../fractal/escape-de-4d";
+import {
   accumulateFlame,
   createFlameHistogram,
   downsampleFlame,
@@ -123,6 +130,8 @@ import {
   SURFACE_GPU_SHADE_BYTES,
   SURFACE_GPU_UNIFORM_MAP_SLOTS,
   packBulbGpuParams,
+  packEscape4GpuMaps,
+  packEscape4GpuParams,
   packEscapeGpuMaps,
   packEscapeGpuParams,
   packSurface4GpuParams,
@@ -2163,8 +2172,12 @@ interface SurfaceKernelConfig {
    * `variant` is always "private" (the frontier is function-scope private
    * by construction, module doc) and `width` is LIVE like "fold"'s, so
    * unlike "affine4" it keeps a real width sweep and its own
-   * production/informational split. */
-  core: "fold" | "affine" | "escape" | "bulb" | "affine4" | "fold4";
+   * production/informational split. "escape4" (fr-vag4) is the escape
+   * loop ONE DIMENSION UP behind the same view lift the 4D descent cores
+   * take — a FORWARD core and a 4D one at once — so it inherits escape's
+   * inert `variant`/`stage2`/`width` exactly (the generator ignores all
+   * three) and affine4's fixed-width, always-gating row rule. */
+  core: "fold" | "affine" | "escape" | "bulb" | "affine4" | "fold4" | "escape4";
   variant: SurfaceVariant;
   width: number;
   stage2: boolean;
@@ -2173,7 +2186,7 @@ interface SurfaceKernelConfig {
 
 interface SurfaceAgreementRow {
   system: string;
-  core: "fold" | "affine" | "escape" | "bulb" | "affine4" | "fold4";
+  core: "fold" | "affine" | "escape" | "bulb" | "affine4" | "fold4" | "escape4";
   variant: SurfaceVariant;
   width: number;
   stage2: boolean;
@@ -2194,7 +2207,9 @@ interface SurfaceAgreementRow {
    * their ladder is fixed at {@link SURFACE_AFFINE_LADDER_WIDTH}, which
    * IS the oracle's production `beamWidth`, so there is no width sweep
    * and every row is like against like. Escape and affine4 rows gate the
-   * same way (fr-dlxh) — neither has a width to sweep. FOLD4 rows gate
+   * same way (fr-dlxh) — neither has a width to sweep — and so do
+   * ESCAPE4 rows (fr-vag4), for the escape row's reason rather than the
+   * affine one's: a forward orbit has no frontier at all. FOLD4 rows gate
    * like "fold"'s, not affine4's (fr-rsp6 M4): the fold frontier's
    * production width is the same fixed `SURFACE_FOLD_BEAM_WIDTH`
    * constant, one dimension up, so only rows at that width compare like
@@ -2231,9 +2246,10 @@ interface SurfaceAgreementRow {
    * query-mix diagnostic. */
   failuresByClass: { jittered: number; uniform: number; exact: number };
   /** fr-dlxh escape + affine4 legs, fr-rsp6's fold4 leg, (phase 2B) the
-   * M5 lens4 leg, and fr-7u8t.9's bulb leg: queries a pre-hoc stability
+   * M5 lens4 leg, fr-7u8t.9's bulb leg and fr-vag4's escape4 leg: queries
+   * a pre-hoc stability
    * gate excluded before
-   * computing `failures` — `n - stableCount`. The two FORWARD legs' gate is
+   * computing `failures` — `n - stableCount`. The THREE FORWARD legs' gate is
    * the f32-vs-f64 orbit ensemble (`compareSurfaceForwardAgreement`'s doc); the
    * affine4, fold4 AND lens4 legs' is the SAME oracle-continuity classifier
    * ({@link surface4QueryStable} — bisection queries parked on
@@ -2246,12 +2262,14 @@ interface SurfaceAgreementRow {
    * {@link SURFACE_LENS4_EXCLUDED_CAP}'s doc. `undefined` on every 3D
    * fold/affine/lens row (nothing is ever excluded there). */
   excluded?: number;
-  /** The FORWARD-orbit legs only (fr-dlxh's escape, fr-7u8t.9's bulb):
+  /** The FORWARD-orbit legs only (fr-dlxh's escape, fr-7u8t.9's bulb,
+   * fr-vag4's escape4):
    * stable-classified failures POST-HOC verified as shadow flips (the
    * GPU's value matched a 1..4-ULP neighbor orbit's fround value —
    * {@link forwardShadowFlipVerified}); excluded from `failures` but
    * capped ({@link SURFACE_ESCAPE_FLIP_CAP} /
-   * {@link SURFACE_BULB_FLIP_CAP}). */
+   * {@link SURFACE_BULB_FLIP_CAP} — the escape4 leg reuses the escape
+   * one, since it runs the same orbit one dimension up). */
   chaoticFlips?: number;
   /** The FORWARD-orbit legs only: the shared core pipeline's compile time
    * (identical across every row of a leg — one pipeline serves all its
@@ -3926,6 +3944,130 @@ function bulbQueries(de: BulbDE, seed: number): Vec3[] {
   return out;
 }
 
+/**
+ * fr-vag4 (M7): the escape4 leg's COMPOSED f64 oracle — the exact function
+ * the kernel computes per query, CPU-side, and the escape family's answer
+ * to {@link estimateSurface4Composed} one estimator class over.
+ *
+ * The kernel is handed a 3D MARCHED point and lifts it in its own body
+ * (`liftEscape4`: `rotorInv · vec4f(p, w0)`, where row `i` of the packed
+ * `rotorInv` is `(rot[i], rot[4+i], rot[8+i], rot[12+i])` — the transpose
+ * `packEscape4GpuParams` performs). So the oracle has to see the query
+ * through the SAME lift, or the two sides would be answering different
+ * questions about different points and the leg would measure the view
+ * transform rather than the orbit. Here the lift is f64 and inside the
+ * kernel it is f32; the queries are already `Math.fround`ed and
+ * {@link liftEscape4F32} reproduces the f32 lift for the classifier, so
+ * the eval tolerance absorbs only the quantization.
+ *
+ * A rotation is an ISOMETRY, so the estimate is a valid bound for the
+ * lifted point whatever the rotor is (`escape-de-4d.ts`'s own argument for
+ * putting the lift in the body at all) — the lift moves WHICH point is
+ * asked about, never what the answer means.
+ *
+ * No `sliceHalfW` argument, deliberately: a forward orbit cannot thread a
+ * segment, `packEscape4GpuParams` THROWS on a nonzero one, and the app
+ * clamps the slice thickness to zero for these sessions — so a slab is not
+ * a case this leg could pin even if it wanted to.
+ */
+function estimateEscape4Composed(
+  de: EscapeDE4,
+  view4: SurfaceGpu4View,
+  q: Vec3,
+): number {
+  const rot = view4.rotor;
+  const p: Vec4 = [0, 0, 0, 0];
+  for (let i = 0; i < 4; i++) {
+    p[i] =
+      rot[i] * q[0] +
+      rot[4 + i] * q[1] +
+      rot[8 + i] * q[2] +
+      rot[12 + i] * view4.w0;
+  }
+  return estimateEscapeDistance4(de, p);
+}
+
+/**
+ * fr-vag4: the escape4 eval leg's query mix — {@link escapeQueries}'
+ * recipe over the SLICE the kernel marches, which is what makes it a
+ * re-use rather than a fork.
+ *
+ * Every bracket is the 3D generator's own number and for its own reason:
+ * `EscapeDE4.boundingRadius` IS `ESCAPE_TIME_RADIUS` (the bailout ball is
+ * dimension-free), so the 400 uniform cube points out to `1.2 R`, the
+ * `DE < 0.02` near-boundary shell and the 0.5-half-width origin cluster
+ * all keep the proportions `bulbQueries` had to re-bracket for a
+ * differently-sized object. What changes is only the PREDICATE: the
+ * bisection asks {@link estimateEscape4Composed}, so "near the boundary"
+ * means near the boundary of the object this leg's kernel actually draws
+ * — the `w = w0` slice of the rotor-posed 4D set, not the 4D set itself.
+ *
+ * That distinction is load-bearing here in a way it never was in 3D: a
+ * slice through a set of shells is a set of surfaces, and volume says
+ * nothing about it (fr-wuuu measured a slice with LITERALLY ZERO members
+ * in 524288 samples of its own bailout ball still drawing 20.9% of its
+ * rays). The fixtures' `probeEscapeFill4` figures below are quoted as
+ * sanity bounds, never as "will it render"; the number that says this mix
+ * samples anything interesting is how many of the 200 bisections land in
+ * the shell, recorded per fixture.
+ *
+ * 700 total, every component `Math.fround`ed — see `surfaceQueries`' doc
+ * for why (the kernel only ever sees f32 query points). The `a`/`b`
+ * bisection convention is `escapeQueries`' own.
+ */
+function escape4Queries(
+  de: EscapeDE4,
+  view4: SurfaceGpu4View,
+  seed: number,
+): Vec3[] {
+  const R = de.boundingRadius;
+  const rng = mulberry32(seed);
+  const out: Vec3[] = [];
+  const half = 1.2 * R;
+  const uniformCubePoint = (): Vec3 => [
+    Math.fround((rng() - 0.5) * 2 * half),
+    Math.fround((rng() - 0.5) * 2 * half),
+    Math.fround((rng() - 0.5) * 2 * half),
+  ];
+  for (let i = 0; i < 400; i++) {
+    out.push(uniformCubePoint());
+  }
+  const nearBoundary = (p: Vec3): boolean =>
+    estimateEscape4Composed(de, view4, p) < 0.02;
+  for (let i = 0; i < 200; i++) {
+    let a: Vec3 = [
+      (rng() - 0.5) * 1.2,
+      (rng() - 0.5) * 1.2,
+      (rng() - 0.5) * 1.2,
+    ];
+    let b = uniformCubePoint();
+    const pa = nearBoundary(a);
+    for (let step = 0; step < 24; step++) {
+      const mid: Vec3 = [
+        (a[0] + b[0]) / 2,
+        (a[1] + b[1]) / 2,
+        (a[2] + b[2]) / 2,
+      ];
+      if (nearBoundary(mid) === pa) {
+        a = mid;
+      } else {
+        b = mid;
+      }
+    }
+    // The final `a` — see `escapeQueries`' doc.
+    out.push([Math.fround(a[0]), Math.fround(a[1]), Math.fround(a[2])]);
+  }
+  for (let i = 0; i < 100; i++) {
+    const s = rng() * 0.5;
+    out.push([
+      Math.fround((rng() - 0.5) * s),
+      Math.fround((rng() - 0.5) * s),
+      Math.fround((rng() - 0.5) * s),
+    ]);
+  }
+  return out;
+}
+
 /** The affine4 leg's tolerance/query radius rule: the lens GROWS or shrinks
  * the visible set, so error scales from the set the DE actually describes —
  * M0's `foldFinal ? visibleBoundingRadius : boundingRadius` analog one
@@ -4302,6 +4444,247 @@ function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
   // FORM paragraph) — `EscapeDE.logEstimate` rides `escParams.w` on the
   // wire, so the twin must read the same flag the kernel does. A fold-only
   // chain keeps the linear quotient bit for bit.
+  if (!de.logEstimate) return r / dr;
+  return r <= 1 ? 0 : f(f(f(0.5 * r) * f(Math.log(r))) / dr);
+}
+
+/**
+ * fr-vag4: the two coordinate axes each {@link SYM_PLANE_CODE4} names —
+ * `escape-de-4d.ts`'s own `PLANE_AXES`, indexed by the code that module
+ * puts on the wire, so this table and the kernel's `foldQuerySector4`
+ * decode read off the same list.
+ *
+ * It is NOT `SYM_PLANE_CODE`'s collapsed 3-value vocabulary, and that is
+ * the whole point of the escape4 kaleidoscope fixture: the descents map
+ * `xw`/`yw`/`zw` onto `0`/`1`/`2` (sound for them — their kaleidoscope is
+ * a swept matrix), where this fold picks its two axes BY NAME and a
+ * `w`-plane is exactly the case the 3D gate refuses. Measured: a twin
+ * built on the collapsed table excludes 220 of `esc4ChainKaleido`'s 700
+ * queries against the shipped 69, and moves NO other row.
+ */
+const ESCAPE4_PLANE_AXES: readonly (readonly [number, number])[] = [
+  [0, 1],
+  [0, 2],
+  [1, 2],
+  [0, 3],
+  [1, 3],
+  [2, 3],
+];
+
+/**
+ * fr-vag4: the `core: "escape4"` kernel's VIEW LIFT in f32 — the body's
+ * `liftEscape4`, `vec4f(pIn, params.w0)` through the packed `rotorInv`
+ * rows, where row `i` is `(rot[i], rot[4+i], rot[8+i], rot[12+i])` (the
+ * one real transpose, performed by `packEscape4GpuParams`).
+ *
+ * It is a SEPARATE function from the twin below because the comparator's
+ * ULP-neighbor walks ({@link forwardQueryStable},
+ * {@link forwardShadowFlipVerified}) perturb the 3D MARCHED point, which
+ * is what the kernel is handed — so the lift has to sit inside the
+ * closure they call, not outside it, or the neighbourhood being explored
+ * would be the wrong one.
+ *
+ * MEASURED, and each mutation moves exactly the fixture written for it
+ * (700 queries per row, ensemble exclusions against the shipped count):
+ * dropping the rotor moves `esc4ChainQsquare` 58 -> 276 and
+ * `esc4ChainSliceRot` 70 -> 246 and nothing else; dropping `w0` moves
+ * `esc4ChainSlice` 44 -> 511 and `esc4ChainSliceRot` 70 -> 535; and
+ * adding `w0` to the lifted `w` component AFTER the rotor instead of
+ * inside it — the plausible transcription slip that both single-term
+ * fixtures survive — is caught by `esc4ChainSliceRot` ALONE, 70 -> 559.
+ */
+function liftEscape4F32(view4: SurfaceGpu4View, q: Vec3): Vec4 {
+  const f = Math.fround;
+  // Rounded copy rather than `.map` — `SurfaceGpu4View.rotor` is an
+  // `ArrayLike<number>` (the packer only ever indexes it).
+  const rot: number[] = [];
+  for (let i = 0; i < 16; i++) rot.push(f(view4.rotor[i]));
+  const w0 = f(view4.w0);
+  const x = f(q[0]);
+  const y = f(q[1]);
+  const z = f(q[2]);
+  const out: Vec4 = [0, 0, 0, 0];
+  for (let i = 0; i < 4; i++) {
+    out[i] = f(
+      f(f(f(rot[i] * x) + f(rot[4 + i] * y)) + f(rot[8 + i] * z)) +
+        f(rot[12 + i] * w0),
+    );
+  }
+  return out;
+}
+
+/**
+ * fr-vag4: the bench's f32 twin of `estimateEscapeDistance4` —
+ * {@link estimateEscapeDistanceF32} one dimension up, term for term, with
+ * every intermediate `Math.fround`ed. Its job is that twin's exactly:
+ * comparing it against the f64 oracle in isolation, before either touches
+ * the GPU, separates f32-vs-f64 ORBIT divergence (a forward iteration is
+ * chaotic — one clamp-boundary rounding flip early on sends the whole
+ * trajectory elsewhere) from actual kernel arithmetic bugs. See
+ * `compareSurfaceForwardAgreement`'s doc for how the gap is used.
+ *
+ * A STALE TWIN DOES NOT DISAGREE — IT MAKES THE ENSEMBLE EXCLUDE
+ * EVERYTHING, which reads as a chaotic fixture rather than as a stale
+ * copy (fr-s9ll measured 251 of 700 that way on the 3D leg). So every
+ * branch below was mutation-tested against the fixture set, and each
+ * mutation moves exactly the row written for it and leaves the others at
+ * their shipped count:
+ *
+ *   mutation                                     row that catches it
+ *   the classic fold lengths instead of the      esc4ChainParameterized
+ *     link's own                                   78 -> 301
+ *   the HEAD link's lengths for every link       esc4ChainParameterized
+ *                                                  78 -> 248
+ *   `x² − y² − z²` for the quaternion square     esc4ChainQsquare
+ *     (the 3D restriction, `w` dropped)            58 -> 203
+ *   the box fold reflecting x/y/z only           ALL SIX rows
+ *                                                  -> 321..407
+ *   the descents' collapsed plane code           esc4ChainKaleido
+ *                                                  69 -> 220
+ *   the linear `r/dr` regardless of              esc4ChainQsquare
+ *     `logEstimate`                                58 -> 538
+ *
+ * (the lift's own two mutations are on {@link liftEscape4F32}). The
+ * fourth row is worth reading twice: EVERY fixture is genuinely 4D by
+ * that measure, which is what "the escape-time family's 4D half" has to
+ * mean before any of the rest is worth checking.
+ *
+ * There is no `bulb` branch and there cannot be one:
+ * `analyzeEscapeSystem4` refuses a triplex power outright (it has no
+ * fourth component — `escape-de-4d.ts`'s WHAT LIFTS section), so the
+ * `kind < 4` guard's else-arm is the quaternion square alone.
+ */
+function estimateEscapeDistance4F32(de: EscapeDE4, p: Vec4): number {
+  const f = Math.fround;
+  // One pre-rounded link per slot, cycled `i mod n` — the 3D twin's own
+  // shape, and the same per-LINK fold lengths (fr-s9ll's squares, which
+  // is the form `EscapeLink4` keeps and the `fold` lane carries).
+  const links = de.links.map((link) => ({
+    m: link.m.map(f),
+    t: link.t.map(f),
+    w: f(link.w),
+    g: f(link.derivGrowth),
+    kind: link.kind,
+    wall: f(link.boxLimit),
+    mR2: f(link.minRadius2),
+    fR2: f(link.fixedRadius2),
+  }));
+  const n = links.length;
+  // The kaleidoscope's query-space wedge fold, ONCE before the orbit —
+  // the kernel's `foldQuerySector4`, f32 throughout (its own trig
+  // included, which is where this twin and the GPU can legitimately
+  // differ by a rounding on a sector boundary; the ensemble classifier
+  // absorbs that exactly as it absorbs the orbit's chaos). The two
+  // coordinates outside the plane ride through untouched, so unlike 3D
+  // this is a write to two of four lanes rather than a three-way switch.
+  const q: Vec4 = [f(p[0]), f(p[1]), f(p[2]), f(p[3])];
+  if (de.symmetryOrder > 1) {
+    const [ia, ib] = ESCAPE4_PLANE_AXES[SYM_PLANE_CODE4[de.symmetryPlane]];
+    const a = q[ia];
+    const b = q[ib];
+    const sector = f(f(2 * Math.PI) / de.symmetryOrder);
+    const turn = f(Math.round(f(Math.atan2(b, a) / sector)) * sector);
+    const c = f(Math.cos(turn));
+    const s = f(Math.sin(turn));
+    q[ia] = f(f(a * c) + f(b * s));
+    q[ib] = Math.abs(f(f(b * c) - f(a * s)));
+  }
+  let vx = q[0];
+  let vy = q[1];
+  let vz = q[2];
+  let vw = q[3];
+  let dr = 1;
+  let r = f(
+    Math.sqrt(f(f(f(f(vx * vx) + f(vy * vy)) + f(vz * vz)) + f(vw * vw))),
+  );
+  const fold = (x: number, wall: number): number =>
+    f(f(2 * Math.max(-wall, Math.min(wall, x))) - x);
+  // A PASS is one full cycle, so the budget is ESCAPE_TIME_ITERATIONS
+  // applications OF EACH LINK — dimension-free, like everything else
+  // structural about this orbit (escape-de-4d.ts's THE ORBIT IS
+  // DIMENSION-FREE paragraph).
+  const steps = ESCAPE_TIME_ITERATIONS * n;
+  for (let i = 0; i < steps && r <= de.boundingRadius; i++) {
+    const link = links[i % n];
+    const m = link.m;
+    const t = link.t;
+    let yx = f(
+      f(f(f(f(m[0] * vx) + f(m[1] * vy)) + f(m[2] * vz)) + f(m[3] * vw)) + t[0],
+    );
+    let yy = f(
+      f(f(f(f(m[4] * vx) + f(m[5] * vy)) + f(m[6] * vz)) + f(m[7] * vw)) + t[1],
+    );
+    let yz = f(
+      f(f(f(f(m[8] * vx) + f(m[9] * vy)) + f(m[10] * vz)) + f(m[11] * vw)) +
+        t[2],
+    );
+    let yw = f(
+      f(f(f(f(m[12] * vx) + f(m[13] * vy)) + f(m[14] * vz)) + f(m[15] * vw)) +
+        t[3],
+    );
+    let localL = 1;
+    // The fold pair sits behind the kernel's own `kind < 4` guard — the
+    // two NEGATIVE tests below are exhaustive by negation over {1, 2, 3}
+    // alone, so the quaternion square has to be kept OUT of them rather
+    // than added beside them (surface-de-gpu.ts's escape4 body cites the
+    // same hazard).
+    if (link.kind < 4) {
+      if (link.kind !== 2) {
+        // The box fold, reflecting the FOURTH axis too — `variations4.ts`
+        // treats `w` exactly like a spatial axis.
+        yx = fold(yx, link.wall);
+        yy = fold(yy, link.wall);
+        yz = fold(yz, link.wall);
+        yw = fold(yw, link.wall);
+      }
+      if (link.kind !== 1) {
+        // The sphere fold through the FULL 4-radius.
+        const r2 = f(f(f(f(yx * yx) + f(yy * yy)) + f(yz * yz)) + f(yw * yw));
+        const s = f(link.fR2 / Math.max(link.mR2, Math.min(link.fR2, r2)));
+        yx = f(yx * s);
+        yy = f(yy * s);
+        yz = f(yz * s);
+        yw = f(yw * s);
+        localL = s;
+      }
+    } else {
+      // The FULL quaternion square `(x²−y²−z²−w², 2xy, 2xz, 2xw)` — the
+      // 4D form is the DEFINITION and the 3D one is its `w = 0`
+      // restriction. `2·|y|` stays EXACT rather than a bound in either
+      // dimension: quaternion norms multiply on the whole algebra, not
+      // merely on span{1, i, j}. Computed BEFORE `y` is overwritten,
+      // exactly as the kernel orders it.
+      localL = f(
+        2 *
+          f(
+            Math.sqrt(
+              f(f(f(f(yx * yx) + f(yy * yy)) + f(yz * yz)) + f(yw * yw)),
+            ),
+          ),
+      );
+      const nx = f(f(f(f(yx * yx) - f(yy * yy)) - f(yz * yz)) - f(yw * yw));
+      const ny = f(f(2 * yx) * yy);
+      const nz = f(f(2 * yx) * yz);
+      const nw = f(f(2 * yx) * yw);
+      yx = nx;
+      yy = ny;
+      yz = nz;
+      yw = nw;
+    }
+    vx = f(f(link.w * yx) + q[0]);
+    vy = f(f(link.w * yy) + q[1]);
+    vz = f(f(link.w * yz) + q[2]);
+    vw = f(f(link.w * yw) + q[3]);
+    dr = f(f(f(link.g * localL) * dr) + 1);
+    r = f(
+      Math.sqrt(f(f(f(f(vx * vx) + f(vy * vy)) + f(vz * vz)) + f(vw * vw))),
+    );
+  }
+  // The chain's escape law picks the form — `EscapeDE4.logEstimate` rides
+  // `esc4Params.x` on this core's wire (the 3D core spells the same
+  // number `escParams.w`), so the twin must read the flag the kernel
+  // reads. In 4D `logEstimate` is true exactly when some link is a
+  // quaternion square, the family's only surviving power map.
   if (!de.logEstimate) return r / dr;
   return r <= 1 ? 0 : f(f(f(0.5 * r) * f(Math.log(r))) / dr);
 }
@@ -5084,15 +5467,14 @@ interface SurfaceSystemState {
 }
 
 /** One FORWARD-orbit system's frozen state (fr-dlxh's escape; fr-7u8t.9
- * made it generic for the bulb, which differs only in the DE type): the
+ * made it generic for the bulb, which differs only in the DE type;
+ * fr-vag4's escape4 extends it below): the
  * forward-map DE, its own dedicated query set (`escapeQueries` /
- * `bulbQueries`, not `surfaceQueries` — a single expanding map has no
+ * `bulbQueries` / `escape4Queries`, not `surfaceQueries` — a single
+ * expanding map has no
  * attractor to scatter a chaos-game cloud onto), and the f64/f32
  * CPU-oracle pair the eval leg's stability gate is built from
- * (`compareSurfaceForwardAgreement`'s doc). No `buffers.maps`: neither
- * forward kernel core declares binding 1 (surface-de-gpu.ts module doc),
- * so this state — unlike {@link SurfaceSystemState} — has no maps buffer
- * to carry. */
+ * (`compareSurfaceForwardAgreement`'s doc). */
 interface SurfaceForwardSystemState<TDe> {
   name: string;
   de: TDe;
@@ -5125,6 +5507,24 @@ interface SurfaceForwardSystemState<TDe> {
 
 type SurfaceEscapeSystemState = SurfaceForwardSystemState<EscapeDE>;
 type SurfaceBulbSystemState = SurfaceForwardSystemState<BulbDE>;
+
+/**
+ * fr-vag4 (M7): the escape4 leg's system state — the forward state above
+ * plus the frozen per-system VIEW, because this is the first forward core
+ * whose kernel input is a 3D point standing for a 4D one. Everything the
+ * shared forward machinery reads (`de`, `queries`, `cpu64`, `cpu32`,
+ * `stable`, `buffers`) means exactly what it means for escape and bulb, so
+ * {@link compareSurfaceForwardAgreement} and
+ * {@link ensureSurfaceForwardEvalBuffers} take this structurally without a
+ * second copy of either; `view4` is the one field only this leg's own code
+ * touches (the composed oracle, the f32 lift, and the packer).
+ */
+interface SurfaceEscape4SystemState extends SurfaceForwardSystemState<EscapeDE4> {
+  /** Rotor + `w0` + `sliceHalfW` — the packer's {@link SurfaceGpu4View}.
+   * `sliceHalfW` is ALWAYS 0 here: a forward orbit cannot thread a
+   * segment, and `packEscape4GpuParams` throws on a nonzero one. */
+  view4: SurfaceGpu4View;
+}
 
 /** One affine4 (4D) agreement system's frozen state (fr-dlxh M3): the built
  * `SurfaceDE4`, the frozen per-system view (rotor + w0 + sliceHalfW — the
@@ -5190,14 +5590,20 @@ function surfaceBindGroupLayout(device: GPUDevice): GPUBindGroupLayout {
   });
 }
 
-/** The FORWARD cores' 3-binding interface (surface-de-gpu.ts's contract;
- * fr-dlxh's escape and fr-7u8t.9's bulb share it exactly): 0 =
- * params uniform, 2 = input storage read, 3 = output storage read_write —
- * binding 1 (maps) is not declared by either kernel (their one forward
- * map rides the params uniform's 208..271 variant block instead), so it is
- * not declared here either. A bind group built against this layout must
- * skip binding 1 too, or `createBindGroup` throws (extra entry, no matching
- * layout slot). */
+/** The FORWARD cores' shared interface (surface-de-gpu.ts's contract;
+ * fr-dlxh's escape, fr-7u8t.9's bulb and fr-vag4's escape4 all take it):
+ * 0 = params uniform, 1 = maps storage read, 2 = input storage read,
+ * 3 = output storage read_write.
+ *
+ * Binding 1 is declared here for the two ESCAPE cores, whose formula
+ * CHAIN is a list of forward maps on that binding (fr-s04t / fr-vag4 —
+ * one `GpuMap` per link in 3D, one `GpuMap4` in 4D). The BULB kernel
+ * never declares it (its single forward map rides the params uniform's
+ * 208..271 variant block), which is fine in the harmless direction: a
+ * LAYOUT may carry an entry a shader ignores, so that leg binds one zero
+ * stride and shares this definition rather than forking a 3-entry twin.
+ * The reverse would throw — a bind group missing an entry the layout
+ * declares is invalid. */
 function surfaceForwardBindGroupLayout(device: GPUDevice): GPUBindGroupLayout {
   return device.createBindGroupLayout({
     label: "surface-de forward bind group layout",
@@ -9463,6 +9869,328 @@ async function runSurfaceDeSection(
     render();
   }
 
+  // ----- Escape4 systems (fr-vag4): the escape gate's 4D HALF -----------
+  // `analyzeEscapeSystem4` is `analyzeEscapeSystem` with the flatness
+  // clause removed and a `bulb` refusal added, so these systems are
+  // refused by BOTH 3D gates above (each carries a map that reaches out of
+  // the `w = 0` slice) and by `analyzeSurfaceSystem4` (they do not all
+  // contract) — a fourth separate gate, and therefore a fourth defs list,
+  // query generator, state array and leg. They sit here rather than beside
+  // the affine4/fold4 fixtures because what they share is the ORBIT, not
+  // the dimension: the whole file's forward-orbit machinery
+  // (`forwardQueryStable`, `forwardShadowFlipVerified`,
+  // `compareSurfaceForwardAgreement`, `ensureSurfaceForwardEvalBuffers`)
+  // serves them unchanged.
+  //
+  // Each def freezes its own view (rotor + `w0`; `sliceHalfW` is always 0
+  // — `packEscape4GpuParams` throws otherwise, because a forward orbit
+  // cannot thread a segment). SIX systems, each carrying exactly one thing
+  // the others cannot see:
+  //
+  //   esc4ChainWRot          the headline shape — a two-link fold chain
+  //                          whose tail link ROTATES into `w` (`xw` 0.35).
+  //                          Identity view, so the orbit is the only 4D
+  //                          thing in the row.
+  //   esc4ChainParameterized fr-s9ll's authored lengths per LINK: link 0 a
+  //                          mandelbox at (0.65, 0.95, 0.8), link 1 a
+  //                          boxfold at wall 0.7 with its sphere pair
+  //                          ABSENT — which is the half that pins "absent
+  //                          means classic" ACROSS THE WIRE, exactly as
+  //                          `escChainParameterized` does in 3D.
+  //   esc4ChainQsquare       the FULL quaternion square beside a fold, at a
+  //                          nonzero `w` TRANSLATION (fr-wuuu's `k`
+  //                          component), under a NON-IDENTITY rotor. The
+  //                          only row with `logEstimate` true, so it is
+  //                          also the one that pins `esc4Params.x`.
+  //   esc4ChainKaleido       an order-5 kaleidoscope in the `xw` PLANE —
+  //                          the one thing the 3D leg structurally cannot
+  //                          reach (`analyzeEscapeSystem` refuses a
+  //                          kaleidoscope that rotates into 4D), and the
+  //                          only user of `SYM_PLANE_CODE4`'s six-plane
+  //                          code.
+  //   esc4ChainSlice         a nonzero `w0` at the IDENTITY rotor.
+  //   esc4ChainSliceRot      the same system at a nonzero `w0` AND a
+  //                          non-identity rotor — the CROSS term, and not
+  //                          redundant: a kernel that added `w0` to the
+  //                          lifted `w` component after the rotor instead
+  //                          of inside it passes both single-term rows and
+  //                          fails only this one (measured, on
+  //                          `liftEscape4F32`'s doc).
+  //
+  // THE FIXTURE PARAMETERS ARE MEASURED, by fr-j231's method: `excluded`
+  // is a pure function of the fixture and costs NO GPU (the ensemble
+  // classifier compares this file's f32 twin against the f64 oracle and
+  // nothing else), so the budget was swept on the CPU first and the
+  // fixtures picked out of it. Bailout-ball fill (`probeEscapeFill4`, the
+  // 4-ball) / ensemble exclusions of 700 / queries landing in the mix's own
+  // `DE < 0.02` boundary shell, against the 3D controls for scale:
+  //
+  //   escMandelbox        (3D control)  fill 3.42%  excl  58  nearBnd 283
+  //   escChainPair        (3D control)  fill 1.56%  excl  71  nearBnd 281
+  //   esc4ChainWRot                     fill 0.66%  excl  78  nearBnd 176
+  //   esc4ChainParameterized            fill 4.15%  excl  78  nearBnd 183
+  //   esc4ChainQsquare                  fill 1.73%  excl  58  nearBnd 163
+  //   esc4ChainKaleido                  fill 0.68%  excl  69  nearBnd 174
+  //   esc4ChainSlice                    fill 0.46%  excl  44  nearBnd 171
+  //   esc4ChainSliceRot                 fill 0.46%  excl  70  nearBnd 178
+  //
+  // — every row inside `SURFACE_ESCAPE_EXCLUDED_CAP` (140) with room to
+  // spare, and in the same band as the 3D controls, which is the useful
+  // result: adding a dimension does not by itself widen the marginal
+  // population the classifier exists to bracket.
+  //
+  // AND PICKED FOR WHAT THE ROW TESTS, not for the smallest number. The
+  // instructive rejections are all on `esc4ChainParameterized`, whose
+  // authored lengths move the object hard: the 3D fixture's own
+  // (0.375, 0.5, 0.75) lifts to a set with 0.00% fill and 70 boundary
+  // queries — legal, and nearly useless, since a row whose bisections
+  // never reach a boundary is a row that samples the far field. Widening
+  // link 1's wall is what actually empties these chains (wall 2.2 at
+  // otherwise CLASSIC lengths reads 0.00%/nearBnd 3 where wall 1.0 reads
+  // 0.63%/nearBnd 171), because a box fold that folds nothing back lets
+  // the orbit escape on the first pass; the shipped (0.65, 0.95, 0.8) over
+  // wall 0.7 was chosen from that sweep for fill 4.15% at nearBnd 183, the
+  // richest object in the set. `esc4ChainQsquare`'s 0.4 pre-scale is
+  // `escChainQsquare`'s own, re-measured here rather than inherited (0.5
+  // reads fill 0.29%/nearBnd 151, 0.3 reads 8.50%/nearBnd 158 at excl 61).
+  const escape4SystemDefs: {
+    name: string;
+    transforms: Transform[];
+    seed: number;
+    symmetry?: SymmetryParams;
+    view4: (de: EscapeDE4) => SurfaceGpu4View;
+  }[] = [
+    {
+      name: "esc4ChainWRot",
+      seed: 801,
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+        {
+          id: 1,
+          position: [0, 0, 0],
+          rotation: [0, (20 * Math.PI) / 180, 0],
+          scale: [1, 1, 1],
+          // The 4D degree of freedom this whole module exists for: the
+          // tail link rotates x toward w, so the orbit leaves the `w = 0`
+          // hyperplane even though the query never does.
+          w: { rotation: { xw: 0.35 } },
+          variations: [{ type: "boxfold", weight: 1.6 }],
+        },
+      ],
+      view4: () => ({
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0,
+        sliceHalfW: 0,
+      }),
+    },
+    {
+      name: "esc4ChainParameterized",
+      seed: 802,
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          w: { rotation: { zw: 0.35 } },
+          variations: [
+            {
+              type: "mandelbox",
+              weight: 2,
+              minRadius: 0.65,
+              fixedRadius: 0.95,
+              boxLimit: 0.8,
+            },
+          ],
+        },
+        {
+          id: 1,
+          position: [-0.1, 0.2, 0],
+          rotation: [0.2, 0, 0.1],
+          scale: [1, 1, 1],
+          w: { position: 0.15 },
+          variations: [{ type: "boxfold", weight: 1.6, boxLimit: 0.7 }],
+        },
+      ],
+      view4: () => ({
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0,
+        sliceHalfW: 0,
+      }),
+    },
+    {
+      name: "esc4ChainQsquare",
+      seed: 803,
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+        {
+          id: 1,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          // The pre-scale IS the parameter for a power link (escape-de.ts's
+          // POWER LINKS ARE STIFF table); the `w` translation is the `k`
+          // component fr-wuuu measured, and it is what makes this the FULL
+          // quaternion square rather than its `w = 0` restriction — the
+          // orbit's `w` lane is nonzero from the first step.
+          scale: [0.4, 0.4, 0.4],
+          w: { position: 0.35 },
+          variations: [{ type: "qsquare", weight: 1 }],
+        },
+      ],
+      // The non-identity rotor lives on this row because it is the one
+      // whose orbit already exercises every `w` lane — a rotor that
+      // scrambles the lifted query cannot hide behind a `w`-inert map here.
+      view4: () => ({
+        rotor: symmetryRotation4("xw", 0.6),
+        w0: 0,
+        sliceHalfW: 0,
+      }),
+    },
+    {
+      name: "esc4ChainKaleido",
+      seed: 804,
+      // A `w`-PLANE wedge fold: `analyzeEscapeSystem` refuses this outright
+      // ("the kaleidoscope rotates into 4D"), so no 3D row can reach
+      // `SYM_PLANE_CODE4`'s codes 3..5 or the fold's `w` axis.
+      symmetry: { order: 5, plane: "xw" },
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+        {
+          id: 1,
+          position: [0, 0, 0],
+          rotation: [0, (20 * Math.PI) / 180, 0],
+          scale: [1, 1, 1],
+          w: { rotation: { xw: 0.3 } },
+          variations: [{ type: "boxfold", weight: 1.6 }],
+        },
+      ],
+      view4: () => ({
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0,
+        sliceHalfW: 0,
+      }),
+    },
+    {
+      name: "esc4ChainSlice",
+      seed: 805,
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+        {
+          id: 1,
+          position: [0, 0, 0],
+          rotation: [0, (20 * Math.PI) / 180, 0],
+          scale: [1, 1, 1],
+          w: { rotation: { yw: 0.4 }, position: 0.2 },
+          variations: [{ type: "boxfold", weight: 1.6 }],
+        },
+      ],
+      // `w0` alone, at the identity rotor — the prologue's other term, on
+      // its own so a failure names it.
+      view4: (de) => ({
+        rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+        w0: 0.2 * de.boundingRadius,
+        sliceHalfW: 0,
+      }),
+    },
+    {
+      name: "esc4ChainSliceRot",
+      seed: 806,
+      // Deliberately `esc4ChainSlice`'s system verbatim: the two rows
+      // differ in the VIEW alone, which is what makes the pair a
+      // controlled A/B on the prologue rather than two unrelated fixtures.
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+        {
+          id: 1,
+          position: [0, 0, 0],
+          rotation: [0, (20 * Math.PI) / 180, 0],
+          scale: [1, 1, 1],
+          w: { rotation: { yw: 0.4 }, position: 0.2 },
+          variations: [{ type: "boxfold", weight: 1.6 }],
+        },
+      ],
+      view4: (de) => ({
+        rotor: symmetryRotation4("zw", 0.5),
+        w0: 0.15 * de.boundingRadius,
+        sliceHalfW: 0,
+      }),
+    },
+  ];
+  const escape4Systems: SurfaceEscape4SystemState[] = [];
+  for (const def of escape4SystemDefs) {
+    status(`cpu oracle: ${def.name}…`);
+    activity.setState("cpu", `Surface escape4 CPU oracle — ${def.name}`);
+    await new Promise<void>((resolve) => setTimeout(resolve));
+    try {
+      const symmetry = def.symmetry;
+      const eligibility = analyzeEscapeSystem4(def.transforms, null, symmetry);
+      if (eligibility.status === "ineligible") {
+        results.notes.push(
+          `${def.name}: skipped — ${eligibility.reasons.join("; ")}`,
+        );
+      } else {
+        const de = buildEscapeDE4(def.transforms, null, symmetry);
+        const view4 = def.view4(de);
+        const queries = escape4Queries(de, view4, def.seed);
+        // Both oracles see the query through the SAME view lift the kernel
+        // applies — f64 here, f32 in the twin (estimateEscape4Composed's
+        // doc). The lift rides INSIDE the f32 closure because the
+        // classifier's ULP walks perturb the 3D marched point.
+        const cpu64 = queries.map((q) => estimateEscape4Composed(de, view4, q));
+        const evalF32 = (q: Vec3): number =>
+          estimateEscapeDistance4F32(de, liftEscape4F32(view4, q));
+        const cpu32 = queries.map(evalF32);
+        const R = de.boundingRadius;
+        // The identical seven-orbit ensemble gate the 3D escape leg uses.
+        const stable = cpu64.map((c64, i) =>
+          forwardQueryStable(evalF32, queries[i], c64, surfaceEvalTol(c64, R)),
+        );
+        escape4Systems.push({
+          name: def.name,
+          de,
+          view4,
+          queries,
+          cpu64,
+          cpu32,
+          stable,
+        });
+      }
+    } catch (e) {
+      results.notes.push(`${def.name}: skipped — ${describeError(e)}`);
+    }
+    render();
+  }
+
   // ----- Mandelbulb systems (fr-7u8t.9): the escape gate's SIBLING -----
   // `analyzeBulbSystem` admits exactly one shape — a lone pure triplex
   // power at weight 1, flat, non-singular, no final, no kaleidoscope — and
@@ -10138,6 +10866,12 @@ async function runSurfaceDeSection(
   // caps (SURFACE_BULB_EXCLUDED_CAP for the pre-hoc ensemble exclusions,
   // SURFACE_BULB_FLIP_CAP for the post-hoc verified shadow flips).
   let bulbGateFail = false;
+  // fr-vag4: the escape4 eval leg's analog, reading the ESCAPE leg's own
+  // two caps rather than a pair of its own — it is the same orbit one
+  // dimension up, the same ensemble classifier and the same 700-query mix,
+  // so a separate number would be an unearned degree of freedom (and the
+  // measured exclusion census, 44-78 of 700, sits inside the 3D band).
+  let escape4GateFail = false;
   // fr-dlxh M3: the affine4 leg's analog — set when the oracle-continuity
   // gate excludes more than SURFACE_AFFINE4_EXCLUDED_CAP of a system's
   // queries, for exactly the reason above.
@@ -10169,9 +10903,11 @@ async function runSurfaceDeSection(
         ? `affine4-ladder w${cfg.width} wg${cfg.wg}`
         : cfg.core === "escape"
           ? `escape-forward wg${cfg.wg}`
-          : cfg.core === "bulb"
-            ? `bulb-forward wg${cfg.wg}`
-            : `${cfg.variant} w${cfg.width} s2=${cfg.stage2 ? "on" : "off"} wg${cfg.wg}`;
+          : cfg.core === "escape4"
+            ? `escape4-forward wg${cfg.wg}`
+            : cfg.core === "bulb"
+              ? `bulb-forward wg${cfg.wg}`
+              : `${cfg.variant} w${cfg.width} s2=${cfg.stage2 ? "on" : "off"} wg${cfg.wg}`;
   const workgroupBytesFor = (cfg: SurfaceKernelConfig): number =>
     cfg.variant === "shared"
       ? surfaceGpuWorkgroupBytes({
@@ -11208,6 +11944,150 @@ async function runSurfaceDeSection(
     }
 
     await canaryCheck("the M5 lens4 agreement leg");
+
+    // ----- M7 (fr-vag4): the ESCAPE4 core's agreement leg — GATING -----
+    // The forward escape-time orbit ONE DIMENSION UP, behind the 4D cores'
+    // view lift — `escape-de-4d.ts`'s `estimateEscapeDistance4` as the
+    // `core: "escape4"` kernel mirrors it — pinned against the COMPOSED
+    // f64 oracle (`estimateEscape4Composed`: the kernel's own
+    // `rotorInv · vec4f(p, w0)` lift in f64, then the estimator). Without
+    // this leg that kernel is unverified code, which is the whole reason
+    // the oracle-discipline pattern exists (`flame.ts` <-> `flame-gpu.ts`,
+    // one render mode over).
+    //
+    // Structurally it is M2's leg exactly — one pipeline for every system
+    // (no width/variant/stage2 sweep: all three are inert on a forward
+    // core), the escape leg's own 4-binding forward layout and buffers
+    // helper, and the SAME two-layer chaotic-orbit gate at the SAME two
+    // constants: pre-hoc, only ensemble-stable queries enter
+    // (`forwardQueryStable`, capped by SURFACE_ESCAPE_EXCLUDED_CAP);
+    // post-hoc, a residual failure is absolved only if some 1..4-ULP
+    // neighbor orbit reproduces the GPU's value (`forwardShadowFlipVerified`,
+    // capped by SURFACE_ESCAPE_FLIP_CAP). Reusing those caps rather than
+    // minting escape4 twins is deliberate — it is the same recurrence, the
+    // same query mix and the same classifier, and the measured exclusion
+    // census (44-78 of 700) sits inside the 3D leg's own band.
+    //
+    // TWO THINGS DIFFER FROM M2, both of them the 4D tail's:
+    //   - the params buffer is `packEscape4GpuParams(de, view4, …)`, which
+    //     needs the system's frozen VIEW (rotor + w0), so the state
+    //     carries one and the CPU oracle applies the identical lift;
+    //   - the maps buffer is `packEscape4GpuMaps` in the `GpuMap4` layout
+    //     (`SURFACE_GPU_MAP4_VEC4` vec4f per link, carrying a FORWARD 4x4)
+    //     rather than the 3D `GpuMap`. This core DOES declare binding 1,
+    //     exactly like `core: "escape"` — bulb is the one bindingless core
+    //     left.
+    //
+    // Judge these rows on `--display=:0`, not SwiftShader alone: fr-dlxh's
+    // lesson (a classifier that passed SwiftShader clean, then real Iris
+    // flipped six "stable" rows) is a property of forward orbits, not of
+    // the ambient dimension. fr-jtd4's standing SwiftShader false failure
+    // is on `escChainKaleido`, a 3D row; no escape4 row is implicated by
+    // it, and any escape4 row that fails on a software rasteriser and
+    // passes on a real driver should be reported with both columns rather
+    // than absolved by analogy.
+    if (escape4Systems.length > 0) {
+      const escape4EvalConfig: SurfaceKernelConfig = {
+        core: "escape4",
+        variant: "private",
+        width: SURFACE_FOLD_BEAM_WIDTH,
+        stage2: false,
+        wg: surfaceWgFor(config, "private"),
+      };
+      const label = configLabel(escape4EvalConfig);
+      status(`agreement: compiling ${label}…`);
+      activity.setState("gpu", `Surface DE agreement — ${label}`);
+      const escape4Layout = surfaceForwardBindGroupLayout(device);
+      const escape4PipelineLayout = device.createPipelineLayout({
+        label: "surface-de escape4 pipeline layout",
+        bindGroupLayouts: [escape4Layout],
+      });
+      let escape4Pipeline: GPUComputePipeline | null = null;
+      let escape4CompileMs = 0;
+      try {
+        const code = surfaceDeKernelWgsl({
+          mode: "eval",
+          core: "escape4",
+          width: escape4EvalConfig.width,
+          workgroupSize: escape4EvalConfig.wg,
+          sharedFrontier: false,
+          bnbStage2: false,
+        });
+        ({ pipeline: escape4Pipeline, compileMs: escape4CompileMs } =
+          await buildSurfacePipeline(
+            device,
+            escape4PipelineLayout,
+            code,
+            "evalQueries",
+            `surface-de eval ${label}`,
+          ));
+      } catch (e) {
+        compileFailed = true;
+        results.notes.push(`agreement ${label}: ${describeError(e)}`);
+      }
+      if (escape4Pipeline !== null) {
+        const pipeline = escape4Pipeline;
+        for (const sys of escape4Systems) {
+          status(`agreement: ${label} × ${sys.name}…`);
+          await ensureSurfaceForwardEvalBuffers(
+            device,
+            escape4Layout,
+            sys,
+            packEscape4GpuParams(sys.de, sys.view4, {
+              itemCount: sys.queries.length,
+              cutoff: 0,
+            }),
+            // The chain the kernel cycles through, in the 4D map layout.
+            packEscape4GpuMaps(sys.de),
+          );
+          const t0 = performance.now();
+          const gpu = await runSurfaceEvalDispatch(
+            device,
+            pipeline,
+            sys,
+            escape4EvalConfig.wg,
+          );
+          const gpuMs = performance.now() - t0;
+          const row = compareSurfaceForwardAgreement(
+            sys,
+            sys.de.boundingRadius,
+            // The comparator hands this closure 3D MARCHED points, so the
+            // lift belongs inside it — the same f32 lift the kernel's
+            // prologue performs (liftEscape4F32's doc).
+            (q) =>
+              estimateEscapeDistance4F32(sys.de, liftEscape4F32(sys.view4, q)),
+            escape4EvalConfig,
+            gpu,
+            escape4CompileMs,
+            gpuMs,
+          );
+          results.agreement.push(row);
+          const excluded = row.excluded ?? 0;
+          if (excluded > SURFACE_ESCAPE_EXCLUDED_CAP) {
+            escape4GateFail = true;
+            results.notes.push(
+              `escape4 agreement ${sys.name}: excluded ${excluded}/${row.n} ` +
+                `queries (> ${SURFACE_ESCAPE_EXCLUDED_CAP}) from the ` +
+                "f32-stability gate — see compareSurfaceForwardAgreement's doc",
+            );
+          }
+          const flips = row.chaoticFlips ?? 0;
+          if (flips > SURFACE_ESCAPE_FLIP_CAP) {
+            escape4GateFail = true;
+            results.notes.push(
+              `escape4 agreement ${sys.name}: ${flips} verified chaotic ` +
+                `flips (> ${SURFACE_ESCAPE_FLIP_CAP}) — a systematic ` +
+                "disagreement is wearing chaos's costume; failing the leg",
+            );
+          }
+          render();
+          await new Promise<void>((resolve) => setTimeout(resolve));
+        }
+      }
+      render();
+    }
+
+    await canaryCheck("the M7 escape4 agreement leg");
 
     // ----- Cross-checks (fold core only — see the M0 leg above) -----
     if (
@@ -12277,6 +13157,7 @@ async function runSurfaceDeSection(
       frameFailed ||
       escapeGateFail ||
       bulbGateFail ||
+      escape4GateFail ||
       affine4GateFail ||
       fold4GateFail ||
       fold4SlabExtFailed ||
@@ -12299,17 +13180,19 @@ async function runSurfaceDeSection(
                   ? "escape agreement leg excluded too many queries from its f32-stability gate — see notes"
                   : bulbGateFail
                     ? "bulb agreement leg excluded too many queries from its f32-stability gate — see notes"
-                    : affine4GateFail
-                      ? "affine4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
-                      : fold4GateFail
-                        ? "fold4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
-                        : fold4SlabExtFailed
-                          ? "fold4 slabExt A/B: slab/no-slab kernels disagree beyond tolerance at sliceHalfW 0 — see notes"
-                          : lens4GateFail
-                            ? "lens4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
-                            : lens4PackGuardFailed
-                              ? "lens4 pack-guard: packSurface4GpuParams did not refuse a spherefold-final slab query — see notes"
-                              : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
+                    : escape4GateFail
+                      ? "escape4 agreement leg excluded too many queries from its f32-stability gate — see notes"
+                      : affine4GateFail
+                        ? "affine4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
+                        : fold4GateFail
+                          ? "fold4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
+                          : fold4SlabExtFailed
+                            ? "fold4 slabExt A/B: slab/no-slab kernels disagree beyond tolerance at sliceHalfW 0 — see notes"
+                            : lens4GateFail
+                              ? "lens4 agreement leg excluded too many queries from its oracle-continuity gate — see notes"
+                              : lens4PackGuardFailed
+                                ? "lens4 pack-guard: packSurface4GpuParams did not refuse a spherefold-final slab query — see notes"
+                                : "aff4 sweep leg: a kernel-variant pair (slab/no-slab or uniform/storage maps) disagrees beyond tolerance — see notes";
     } else if (gatingRows.length === 0 && !unprojRan) {
       // Informational-only rows (all widths ≠ SURFACE_FOLD_BEAM_WIDTH) and
       // no march-unproject gate verify nothing against a like-for-like
@@ -12340,6 +13223,7 @@ async function runSurfaceDeSection(
     for (const sys of systems) destroySurfaceEvalBuffers(sys);
     for (const sys of escapeSystems) destroySurfaceForwardEvalBuffers(sys);
     for (const sys of bulbSystems) destroySurfaceForwardEvalBuffers(sys);
+    for (const sys of escape4Systems) destroySurfaceForwardEvalBuffers(sys);
     for (const sys of affine4Systems) destroySurface4EvalBuffers(sys);
     for (const sys of fold4Systems) destroySurface4EvalBuffers(sys);
     for (const sys of lens4AffineSystems) destroySurface4EvalBuffers(sys);

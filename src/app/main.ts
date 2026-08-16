@@ -16,6 +16,7 @@ import {
   buildEscapeDE,
   systemHasPowerLink,
 } from "../fractal/escape-de";
+import { analyzeEscapeSystem4, buildEscapeDE4 } from "../fractal/escape-de-4d";
 import { analyzeBulbSystem, buildBulbDE } from "../fractal/bulb-de";
 import { systemHasActiveQSquare } from "../fractal/qjulia-de";
 import {
@@ -4447,87 +4448,182 @@ function main(): void {
           // core; rotor/slice ride every frame spec); the fragment
           // tracer (fr-vxoj) is the fallback arm (?surfacegl / no
           // adapter / device loss).
-          const de = buildSurfaceDE4(
-            state.transforms,
-            state.finalTransform ?? null,
-            state.symmetry,
-          );
           surfaceSessionIs4D = true;
-          // fr-5wlv.6: no 4D escape lift exists yet (CLAUDE.md/escape-de.ts)
-          // — every live 4D session is IFS-shaped, so the balloon rows'
-          // escape gate never applies here (fourDSurfaceLive already hides
-          // them for the 4D reason).
-          ui.setSurfaceSessionKind("ifs");
-          // The fr-wa6o thickness slider is live only where the slab is
-          // SOUND (fr-rsp6): spherefold/mandelbox branches take segments
-          // to arcs, so those sessions clamp sliceHalfW to 0 at every
-          // view push below (the packer's own guard would throw) and the
-          // panel hides the thickness row.
-          surface4SlabExact = slabExact4(de);
-          ui.setFourDSlabAvailable(surface4SlabExact);
-          // Routing by MEASURED verdict (fr-dlxh 4D cut, real Iris Xe,
-          // 1024x640): PLAIN 4D systems prefer compute — settle 4.6s vs
-          // the fragment arm's 8.9s, object-mask IoU 0.996 between the
-          // arms — but KALEIDOSCOPE 4D stays on the fragment tracer:
-          // the WGSL ladder's sector sweep measured ~35x slower than
-          // the GLSL's at order 6 (a 6-minute observation never settled
-          // and plateaued at 88% where ?surfacegl settled the same
-          // scene in 10.9s; fr-b72d tracks the kernel-side sweep cost).
-          // The 3D shape-split precedent — affine stays WebGL, folds
-          // prefer compute — one dimension up. FOLD-shaped 4D systems
-          // (fr-rsp6) are compute-only at EVERY order: the fragment 4D
-          // tracer carries no fold GLSL (deliberately — the 3D fold GLSL
-          // already sits at Mesa's link cliff, and a 243-branch 4D body
-          // there would be unshippable), so there is no fragment arm to
-          // route them to; at order > 1 the fr-b72d sweep cost is
-          // disclosed by the honest progress row, never a refusal.
-          const foldShaped4 = deHasFolds4(de) || de.foldFinal !== null;
-          const compute4Shaped = foldShaped4 || de.symmetry.order <= 1;
-          if (compute4Shaped && surfaceComputeAvailable()) {
-            // No GLSL system upload — the enter twin owns the session
-            // resets, and the live view flows through setSurface4View
-            // into the scene state every frame spec re-reads.
-            computeTarget = { kind: "ifs4", de };
-            scene.enterSurfaceCompute4Session(de);
-          } else if (foldShaped4) {
-            // Reachable only through mid-session compute loss (device
-            // loss / create failure re-enter this routing with the block
-            // latched) — the eligibility gate refuses fold-4D ENTRY when
-            // compute is unavailable. There is no tracer that can render
-            // this session: exit the mode with the reason rather than
-            // hand a fold-blind tracer the wrong object. Deferred a tick
-            // exactly like the build-failure fallback below — enter()
-            // stores the handle only after start() returns, and exit()
-            // has to see it.
-            ui.flashToast(
-              "Surface render stopped: 4D folds need WebGPU compute, which just became unavailable.",
+          if (
+            analyzeSurfaceSystem4(
+              state.transforms,
+              state.finalTransform ?? null,
+            ).status === "ineligible"
+          ) {
+            // fr-vag4: the 4D IFS gate refused, so the FORWARD-ORBIT
+            // complement one dimension up — `analyzeEscapeSystem4`'s
+            // chain of non-contracting folds and quaternion squares. The
+            // 3D branch below reads the two gates in exactly this order
+            // for exactly this reason; there is no 4D Mandelbulb arm
+            // beside it, because a triplex power has no fourth component
+            // (bulb-de.ts's model refusal, which the 4D escape gate
+            // inherits by refusing a bulb LINK).
+            //
+            // COMPUTE-ONLY, and by the shipped precedent rather than a
+            // shortcut: the fragment 4D tracer carries no fold GLSL
+            // (fr-rsp6), and an escape chain is fold-shaped by nature —
+            // so, exactly like a fold-shaped 4D session, entry is refused
+            // when compute is unavailable rather than handed to a tracer
+            // that cannot render it.
+            const de = buildEscapeDE4(
+              state.transforms,
+              state.finalTransform ?? null,
+              state.symmetry,
             );
-            queueMicrotask(() => surfaceSession.exit());
+            ui.setSurfaceSessionKind("escape");
+            // A forward orbit cannot thread a segment, so there is no
+            // slab at any thickness (escape-de-4d.ts's NO SLAB
+            // paragraph) — the same row a !slabExact4 system disables,
+            // with its own reason on the tooltip: the fold family that
+            // rescues the descent (box folds only) is exactly the one
+            // that fails here, so the descent's wording would be wrong.
+            surface4SlabExact = false;
+            ui.setFourDSlabAvailable(false);
+            surfaceBlankNotice = () => {
+              ui.flashToast(
+                "This 4D chain rendered almost nothing — fewer than one ray in a thousand hit it. Its escape-time set may be empty, too thin to see, or missed by this w-slice; try another slice, or a smaller weight or scale on one of the links.",
+              );
+            };
+            if (surfaceComputeAvailable()) {
+              computeTarget = {
+                kind: "escape4",
+                de,
+                groundPlane: state.groundPlane,
+              };
+              scene.enterSurfaceComputeEscape4Session(
+                state.groundPlane,
+                de.boundingRadius,
+              );
+              scene.setSurface4View(
+                fourDView.matrix(),
+                fourDView.sliceCenter,
+                0,
+              );
+              surfaceGrid.cancel();
+              // The explorer cloud of a non-contracting 4D system is the
+              // same escape-reset debris the 3D branch frames away from,
+              // and it sits inside the solid for the same reason.
+              const R = de.boundingRadius;
+              cameraTween.fitToBounds(
+                {
+                  minX: -R,
+                  maxX: R,
+                  minY: -R,
+                  maxY: R,
+                  minZ: -R,
+                  maxZ: R,
+                  minR: 0,
+                  maxR: R,
+                },
+                { fov: scene.camera.fov, aspect: scene.camera.aspect },
+              );
+            } else {
+              // The fold-4D refusal's wording, one family over — reachable
+              // only through mid-session compute loss, since the
+              // eligibility gate refuses ENTRY without compute.
+              ui.flashToast(
+                "Surface render stopped: 4D escape-time chains need WebGPU compute, which just became unavailable.",
+              );
+              queueMicrotask(() => surfaceSession.exit());
+            }
           } else {
-            // fr-tmgf: the WebGL session says why compute passed, when
-            // it was the preferred engine (null for kaleidoscope 4D —
-            // WebGL is its MEASURED home, nothing to explain — and for
-            // the deliberate ?surfacegl flag).
-            surfaceWebglDetailToken = surfaceWebglDetail({
-              computeShaped: compute4Shaped,
-              supported: SurfaceComputeRenderer.supported(),
-              block: surfaceComputeBlock,
-            });
-            scene.setSurfaceSystem4(
-              de,
-              surfaceSlotColors(state.transforms, de.maps),
-              surfaceTrapIndices(state.transforms, de.maps),
+            const de = buildSurfaceDE4(
+              state.transforms,
+              state.finalTransform ?? null,
+              state.symmetry,
             );
+            // fr-5wlv.6 / fr-qxxw: an IFS-shaped 4D session — the balloon's
+            // live shape one dimension up, so its rows stay reachable.
+            ui.setSurfaceSessionKind("ifs");
+            // The fr-wa6o thickness slider is live only where the slab is
+            // SOUND (fr-rsp6): spherefold/mandelbox branches take segments
+            // to arcs, so those sessions clamp sliceHalfW to 0 at every
+            // view push below (the packer's own guard would throw) and the
+            // panel hides the thickness row.
+            surface4SlabExact = slabExact4(de);
+            ui.setFourDSlabAvailable(surface4SlabExact);
+            // Routing by MEASURED verdict (fr-dlxh 4D cut, real Iris Xe,
+            // 1024x640): PLAIN 4D systems prefer compute — settle 4.6s vs
+            // the fragment arm's 8.9s, object-mask IoU 0.996 between the
+            // arms — but KALEIDOSCOPE 4D stays on the fragment tracer:
+            // the WGSL ladder's sector sweep measured ~35x slower than
+            // the GLSL's at order 6 (a 6-minute observation never settled
+            // and plateaued at 88% where ?surfacegl settled the same
+            // scene in 10.9s; fr-b72d tracks the kernel-side sweep cost).
+            // The 3D shape-split precedent — affine stays WebGL, folds
+            // prefer compute — one dimension up. FOLD-shaped 4D systems
+            // (fr-rsp6) are compute-only at EVERY order: the fragment 4D
+            // tracer carries no fold GLSL (deliberately — the 3D fold GLSL
+            // already sits at Mesa's link cliff, and a 243-branch 4D body
+            // there would be unshippable), so there is no fragment arm to
+            // route them to; at order > 1 the fr-b72d sweep cost is
+            // disclosed by the honest progress row, never a refusal.
+            const foldShaped4 = deHasFolds4(de) || de.foldFinal !== null;
+            const compute4Shaped = foldShaped4 || de.symmetry.order <= 1;
+            if (compute4Shaped && surfaceComputeAvailable()) {
+              // No GLSL system upload — the enter twin owns the session
+              // resets, and the live view flows through setSurface4View
+              // into the scene state every frame spec re-reads.
+              // fr-qxxw/fr-h0c3: the balloon and the floor lift with the
+              // session, and their precedence is the 3D compute arm's —
+              // the two never compile together, and the balloon wins.
+              const groundPlane4 = state.groundPlane && !state.balloonEcho;
+              computeTarget = {
+                kind: "ifs4",
+                de,
+                balloon: state.balloonEcho,
+                groundPlane: groundPlane4,
+              };
+              scene.enterSurfaceCompute4Session(
+                de,
+                state.balloonEcho,
+                groundPlane4,
+              );
+            } else if (foldShaped4) {
+              // Reachable only through mid-session compute loss (device
+              // loss / create failure re-enter this routing with the block
+              // latched) — the eligibility gate refuses fold-4D ENTRY when
+              // compute is unavailable. There is no tracer that can render
+              // this session: exit the mode with the reason rather than
+              // hand a fold-blind tracer the wrong object. Deferred a tick
+              // exactly like the build-failure fallback below — enter()
+              // stores the handle only after start() returns, and exit()
+              // has to see it.
+              ui.flashToast(
+                "Surface render stopped: 4D folds need WebGPU compute, which just became unavailable.",
+              );
+              queueMicrotask(() => surfaceSession.exit());
+            } else {
+              // fr-tmgf: the WebGL session says why compute passed, when
+              // it was the preferred engine (null for kaleidoscope 4D —
+              // WebGL is its MEASURED home, nothing to explain — and for
+              // the deliberate ?surfacegl flag).
+              surfaceWebglDetailToken = surfaceWebglDetail({
+                computeShaped: compute4Shaped,
+                supported: SurfaceComputeRenderer.supported(),
+                block: surfaceComputeBlock,
+              });
+              scene.setSurfaceSystem4(
+                de,
+                surfaceSlotColors(state.transforms, de.maps),
+                surfaceTrapIndices(state.transforms, de.maps),
+              );
+            }
+            scene.setSurface4View(
+              fourDView.matrix(),
+              fourDView.sliceCenter,
+              surface4SlabExact ? fourDView.sliceThickness : 0,
+            );
+            // No grid for the 4D surface (the live rotor/slice would
+            // invalidate one per frame) — and a still-building 3D grid from
+            // a previous session must not land mid-4D-session.
+            surfaceGrid.cancel();
           }
-          scene.setSurface4View(
-            fourDView.matrix(),
-            fourDView.sliceCenter,
-            surface4SlabExact ? fourDView.sliceThickness : 0,
-          );
-          // No grid for the 4D surface (the live rotor/slice would
-          // invalidate one per frame) — and a still-building 3D grid from
-          // a previous session must not land mid-4D-session.
-          surfaceGrid.cancel();
         } else if (
           analyzeSurfaceSystem(state.transforms, state.finalTransform ?? null)
             .status === "ineligible"
@@ -4756,27 +4852,22 @@ function main(): void {
             }
           }
         }
-        // The surface balloon is 3D-only this cut (fr-5wlv.4; the 4D
-        // lift is a later child). This stores the live on/rMult pair —
-        // the compute frame specs and the WebGL uniforms both derive
-        // from it — and clears the 3D material's flag on every other
-        // route (4D entry, balloon toggled off), keeping 3D<->4D
-        // transitions clean; on the compute route the GLSL material
-        // stays untouched by the session, so the uniform write is inert
-        // until a fallback re-enter compiles it.
-        scene.setSurfaceBalloon(
-          !surfaceSessionIs4D && state.balloonEcho,
-          state.balloonRadius,
-        );
-        // The ground plane (fr-rhn5) is 3D-only like the balloon just
-        // above. This stores the live intent; the scene's own gate keeps
-        // it off under the balloon variant (packSurfaceGroundPlane
-        // force-drops the plane define when the balloon lands) and
-        // re-asserts it per install, so the WebGL route needs no
-        // `&& !state.balloonEcho` here — on the compute route the GLSL
-        // material stays untouched by the session, so this write is inert
-        // until a fallback re-enter compiles it.
-        scene.setSurfaceGroundPlane(!surfaceSessionIs4D && state.groundPlane);
+        // The surface balloon (fr-5wlv.4) — 4D since fr-qxxw, so no
+        // dimension gate here any more. This stores the live on/rMult
+        // pair (the compute frame specs and both fragment tracers' uniforms
+        // derive from it); the scene's own gate is what keeps it off where
+        // there is no ball to certify against — a forward-orbit session in
+        // either dimension nulls that ball, because a filled solid's echo
+        // swallows the camera. On the compute route the fragment materials
+        // stay untouched by the session, so the uniform write is inert
+        // until a fallback re-enter compiles one.
+        scene.setSurfaceBalloon(state.balloonEcho, state.balloonRadius);
+        // The ground plane (fr-rhn5) — 4D since fr-h0c3, likewise. This
+        // stores the live intent; the scene's own gate keeps it off under
+        // the balloon variant (the pack layer force-drops the plane define
+        // when the balloon lands) and re-asserts it per install, so this
+        // needs no `&& !state.balloonEcho`.
+        scene.setSurfaceGroundPlane(state.groundPlane);
         // Lighting/color settings + (when the colorSource needs one) the
         // ramp LUT: pushed at entry so a fresh session reflects the
         // persisted SurfaceParams; the control-spec effects keep them live
@@ -5136,18 +5227,60 @@ function main(): void {
         state.finalTransform ?? null,
       );
       if (analysis.status === "ineligible") {
+        // fr-vag4: the 4D IFS gate's FORWARD-ORBIT complement, the 3D
+        // arm's escape clause one dimension up. Reported through the
+        // "degraded" channel for the same reason: the note has to name
+        // the different object about to be rendered.
+        const escape4 = analyzeEscapeSystem4(
+          state.transforms,
+          state.finalTransform ?? null,
+          state.symmetry,
+        );
+        if (escape4.status === "eligible") {
+          // The chain's own cap is the 4D tracer's map cap — one
+          // `GpuMap4` per LINK on the maps binding, and eligibility is
+          // one answer whatever engine runs it (the 3D arm's reasoning,
+          // where the cap comes from the fragment fallback's uniform
+          // array instead).
+          const links = state.transforms.filter(
+            (t) => (t.weight ?? 1) > 0,
+          ).length;
+          if (links > SURFACE4_MAX_MAPS) {
+            ui.setSurfaceEligibility(
+              "ineligible",
+              `${links} chain links (the escape-time tracer carries at most ${SURFACE4_MAX_MAPS})`,
+            );
+            return;
+          }
+          // Compute-only, exactly as fold-shaped 4D systems are — an
+          // escape chain IS fold-shaped, and the fragment 4D tracer
+          // carries no forward-orbit GLSL.
+          if (!surfaceComputeAvailable()) {
+            ui.setSurfaceEligibility(
+              "ineligible",
+              "4D escape-time chains render on WebGPU compute, which is unavailable here",
+            );
+            return;
+          }
+          ui.setSurfaceEligibility(
+            "degraded",
+            links > 1
+              ? `Escape-time render: these ${links} maps reach out of the w = 0 hyperplane and do not all contract, so Surface marches the w-slice of the escape-time set of the chain they form — one link per orbit step — rather than an IFS attractor.`
+              : "Escape-time render: this 4D fold does not contract, so Surface marches the w-slice of its escape-time set rather than an IFS attractor.",
+          );
+          return;
+        }
         // qsquare's complement, one dimension up (fr-zi3c) — see the 3D
-        // arm below for the full reasoning. Worth having HERE especially:
-        // the Julia constant's k component comes from the map's own w
-        // extension (`qjulia-de.ts` module doc), so a genuinely 4D
-        // quaternion square is exactly what routes a system to this
-        // branch in the first place.
+        // arm below for the full reasoning. Since fr-vag4 a 4D quaternion
+        // square DOES render, as a link in an escape chain, so this
+        // clause survives only for the shapes that gate refuses (a LONE
+        // one, or one chained with a triplex power).
         const reasons4 = analysis.reasons.slice();
         if (
           systemHasActiveQSquare(state.transforms, state.finalTransform ?? null)
         ) {
           reasons4.push(
-            "a quaternion square has an escape-time set, but this build ships no renderer for it",
+            "a quaternion square renders only as a link in an escape-time chain — give it a map of its own beside a fold",
           );
         }
         ui.setSurfaceEligibility("ineligible", reasons4.join("; "));

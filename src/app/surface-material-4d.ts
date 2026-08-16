@@ -8,6 +8,11 @@ import {
   SURFACE_FULL_HIT_FLOOR,
   SURFACE_FULL_MARCH_STEPS,
   SURFACE_FULL_SHADOW_STEPS,
+  surfaceFragmentFor,
+} from "./surface-material";
+import type {
+  SurfaceBalloonSpec,
+  SurfaceGroundPlaneSpec,
 } from "./surface-material";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 import { lightDirection } from "./voxel-material";
@@ -80,6 +85,56 @@ import { lightDirection } from "./voxel-material";
  * uniforms `uInvRotor`/`uW0` whenever the 4D view changes). GLSL3 for the
  * same reason as the 3D shader: the DE needs dynamic loop bounds and
  * non-constant uniform-array indexing.
+ *
+ * TWO ORTHOGONAL SCENE ARMS ride this source, the 4D halves of capabilities
+ * that had shipped 3D-only: the BALLOON inverted union (fr-qxxw, lifting
+ * fr-5wlv.4) and the GROUND PLANE floor (fr-h0c3, lifting fr-rhn5). Both
+ * are `#if` arms resolved JS-side by {@link surface4FragmentFor}, so a
+ * session that wants neither hands the driver the byte-identical source it
+ * always did; `material.defines` carries the pair for change detection and
+ * as a program-cache key, never as driver-parsed text. They are mutually
+ * exclusive for the 3D reason, unchanged in 4D: there is no horizon inside
+ * an enclosing shell.
+ *
+ * THE BALLOON IS SLICE-THEN-INVERT, and that single sentence is the whole
+ * 4D content of the lift. `I(p) = c + R²(p−c)/|p−c|²` is a plain 3D
+ * inversion of the MARCHED point, applied BEFORE the descent's
+ * `uInvRotor * vec4(p, uW0)` lift — so the echo is the 3D inversion of
+ * exactly the slice being drawn, the explorer echo's own convention
+ * (`scene.ts`'s shared-geometry echo Points), and the arm is textually the
+ * 3D one: it wraps the `vec3` overloads and never touches `w`. The
+ * alternative — inverting in the attractor frame and slicing afterwards —
+ * would put `R`, `rho` and the center in a frame the rotor spins, so the
+ * shell would swim every time the user tumbled the view, which is the
+ * opposite of what a single continuous radius parameter means.
+ *
+ * THE BALLOON BALL IS THE ORIGIN AND THE FULL 4D VISIBLE RADIUS, decided
+ * host-side (this shader only reads `uBalloon*`). `SurfaceDE4` is
+ * origin-anchored by construction — there is no `boundCenter` in 4D, and
+ * `buildSurfaceDE4` records why a centred fit must not be copied down from
+ * 3D blindly — and the FULL radius, rather than `main()`'s slice-adjusted
+ * `sliceVisR`, keeps the shell stable while the slice slider scrubs. It
+ * stays conservative either way: the slice lies inside `ball(0, R4)`,
+ * since `|q| <= |(q, w0)| <= R4`.
+ *
+ * The union's one structural difference from 3D is an ABSENCE: no
+ * `balloonInnerDE` far-field clamp. That clamp exists in 3D for its two
+ * FORWARD-ORBIT cores, whose far value is not a distance to anything; this
+ * tracer has exactly one core, the certified beam descent, whose far field
+ * IS its value-exact depth-0 sphere floor. The wrapper composes over
+ * `surfaceDEFractal` directly, and a future 4D forward core would owe the
+ * clamp.
+ *
+ * THE GROUND PLANE IS THE 3D PLANE VERBATIM. The floor lives in the sliced
+ * 3D world space the camera orbits, so its geometry, its radial fade and
+ * both analytic ball certificates are dimension-free; the only 4D content
+ * sits inside `surfaceDE`, which lifts every shading tap through
+ * `uInvRotor` and therefore lights the floor with the slice actually being
+ * drawn. One thing the 4D `main()` had to GROW rather than copy: the
+ * post-march miss now splits sphere-exit (`t > tFar`, may plane) from
+ * budget EXHAUSTION (background, always) — 3D splits it because it has a
+ * floor to split it for, and until fr-h0c3 both outcomes here painted the
+ * same backdrop so nothing distinguished them.
  */
 
 /** Screen-space gradient the tracer paints on a miss — the same authored
@@ -391,6 +446,33 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     return childScale * max(r - uBoundingRadius, inner);
   }
 
+#if SURFACE_BALLOON
+// The balloon inverted-union scene, one dimension up (fr-qxxw; the 3D arm
+// is fr-5wlv.4 over fr-5wlv.3's oracle). The wrapper past the descent
+// bodies composes fractal/balloon-de.ts's estimateBalloonDistance over
+// this tracer's public DE — this rename points the descent's three
+// definitions at surfaceDEFractal so the wrapper can own the public names,
+// the SURFACE_FOLD_LENS idiom the 3D file borrowed it from.
+//
+// SLICE THEN INVERT is the whole 4D decision. I(p) is a PLAIN 3D inversion
+// of the MARCHED point, applied BEFORE the descent's
+// uInvRotor * vec4(p, uW0) lift, so the echo is the 3D inversion of exactly
+// the slice being drawn rather than a 4D inversion sliced afterwards — the
+// explorer echo's precedent (scene.ts's shared-geometry echo Points). The
+// arm is therefore textually the 3D one: it wraps the vec3 overloads and
+// never touches w. This module's doc carries the argument in full.
+//
+// uBalloon* are packed by setSurface4Balloon from buildBalloon's
+// convention: center + MARGINED rho (the bound's divisor), R in world
+// units, uBalloonFar = BALLOON_FAR_CAP_RHO * raw ball radius. The ball is
+// the ORIGIN and the FULL 4D visible radius, which is the host's decision
+// and not this arm's — see the module doc.
+uniform vec3 uBalloonCenter;
+uniform float uBalloonR;
+uniform float uBalloonRho;
+uniform float uBalloonFar;
+#define surfaceDE surfaceDEFractal
+#endif
   /**
    * Both surfaceDE overloads mirror estimateDistance4Refined in
    * src/fractal/surface-de-4d.ts (the tested CPU oracle) — any change there
@@ -1273,6 +1355,223 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     return d * uFinalSigmaMin;
   }
 
+#if SURFACE_BALLOON
+#undef surfaceDE
+  // The balloon union (fr-qxxw): fractal/balloon-de.ts's
+  // estimateBalloonDistance mirrored term for term over the descent's
+  // public DE. min(DE(p), (|p-c|/rho)*DE(I(p))) is conservative at every R
+  // — a min of two conservative bounds — and the shell term's cutoff
+  // scales by the inverse of its value factor, so the fr-55r5 early-exit
+  // contract survives verbatim (the oracle's module doc carries both
+  // arguments; nothing about either is dimension-specific, which is why
+  // this arm is the 3D one textually).
+  vec3 balloonInvert(vec3 p, out float scale) {
+    vec3 d = p - uBalloonCenter;
+    // f32 floor: 1e-6 * rho (the explorer echo's precedent, scene.ts) —
+    // the CPU oracle's 1e-12 would drown in dot(d,d)'s f32 rounding
+    // near c.
+    float fl = 1.0e-6 * uBalloonRho;
+    float r2 = max(dot(d, d), fl * fl);
+    float r = max(length(d), fl);
+    scale = r / uBalloonRho;
+    return uBalloonCenter + (uBalloonR * uBalloonR / r2) * d;
+  }
+  // NO balloonInnerDE here, and that is a real difference from the 3D arm
+  // rather than an omission. The union requires its inner estimator to be
+  // far-field SOUND — a true lower bound outside the ball — because the
+  // balloon march is the one marcher that evaluates it out there. 3D needs
+  // a clamp because two of its cores are FORWARD ORBITS whose far value is
+  // not a distance to anything (escape's |q|/dr, the bulb's Boettcher
+  // form). This tracer has exactly ONE core, the certified beam descent,
+  // whose far field IS the value-exact depth-0 sphere floor
+  // max(best, sphereBound) * uFinalSigmaMin. So the union composes over
+  // surfaceDEFractal directly — and a future 4D forward-orbit core would
+  // have to bring the clamp with it.
+  float surfaceDE(vec3 p, float cutoff) {
+    float dF = surfaceDEFractal(p, cutoff);
+    float scale;
+    vec3 q = balloonInvert(p, scale);
+    float dS =
+      scale * surfaceDEFractal(q, cutoff > 0.0 ? cutoff / scale : 0.0);
+    return min(dS, dF);
+  }
+  float surfaceDE(vec3 p) {
+    float dF = surfaceDEFractal(p);
+    float scale;
+    vec3 q = balloonInvert(p, scale);
+    float dS = scale * surfaceDEFractal(q);
+    return min(dS, dF);
+  }
+  // Hit-info with argmin routing (the oracle's attribution convention:
+  // ties -> fractal). The descent runs at the WINNING term's own query
+  // point, and colorPos reports that point so the height/radius color
+  // sources read the shell's SOURCE geometry instead of clamping at the far
+  // wall. sStar rides out with the rest (fr-9c9e) and is the winning
+  // descent's own segment parameter, so a shell hit's radius color lifts
+  // through the w its source point sits at rather than the slab's centre
+  // plane — the one output the 3D wrapper has no counterpart for.
+  float surfaceDEBalloonHitInfo(
+    vec3 p,
+    out vec3 colorPos,
+    out int firstChoice,
+    out float trap,
+    out float rings,
+    out float sheets,
+    out float sStar
+  ) {
+    float dF = surfaceDEFractal(p);
+    float scale;
+    vec3 q = balloonInvert(p, scale);
+    float dS = scale * surfaceDEFractal(q);
+    if (dS < dF) {
+      colorPos = q;
+      return scale *
+        surfaceDEFractal(q, firstChoice, trap, rings, sheets, sStar);
+    }
+    colorPos = p;
+    return surfaceDEFractal(p, firstChoice, trap, rings, sheets, sStar);
+  }
+
+#endif
+#if SURFACE_GROUND_PLANE
+  /** Ground plane (fr-h0c3), the 3D arm (fr-rhn5) VERBATIM: an infinite
+   * one-sided floor at y = uGroundY, dropped below the session ball
+   * (uGroundBallC/uGroundBallR — balloonBall's convention, certified to
+   * contain the visible set), receiving the fractal's penumbra shadow. Only
+   * rays that MISS the fractal reach it: the ball sits strictly above the
+   * plane, so along any downward ray every possible surface hit precedes
+   * the plane crossing — the floor can never occlude geometry.
+   *
+   * Nothing here is 4D-aware, deliberately. The floor lives in the SLICED
+   * 3D world space the camera orbits, so its geometry, its fade and both
+   * analytic ball certificates are dimension-free; the only 4D content is
+   * inside surfaceDE, which lifts each tap through uInvRotor and therefore
+   * lights the floor with the slice actually being drawn. There is no probe
+   * descent in 4D (the fr-p8bc width-1 split is a fold-GLSL affordance the
+   * 4D tracer never grew), so the taps call the public value overload, as
+   * the 3D arm calls its own.
+   *
+   * The one reading worth spelling out is uVisibleRadius: in this tracer it
+   * is the FULL 4D radius, not main()'s sliceVisR. That is the right scale
+   * for a floor — the fog normalizer and the shadow-step clamp then stay
+   * slice-INVARIANT, so the floor under the object does not breathe as the
+   * w-slice slider scrubs, where sliceVisR would collapse toward 0 at the
+   * slab's edges and take the floor's fog with it.
+   *
+   * Uniforms live in this arm rather than the shared block so the OFF
+   * variants' resolved source stays byte-identical (the uBalloonCenter
+   * precedent). */
+  uniform float uGroundY;
+  uniform float uGroundFadeStart;
+  uniform float uGroundFadeEnd;
+  uniform float uGroundBallR;
+  uniform vec3 uGroundBallC;
+  uniform vec3 uGroundAlbedo;
+
+  /** The out param cov is the fr-7k0o coverage flag: 1 where the floor was
+   * actually lit, 0 where this function returned the caller's own backdrop.
+   * The WebGPU arm counts a PLANE terminal for exactly those pixels, so the
+   * two engines' blank-frame arithmetic agrees on a document with a
+   * floor. */
+  vec3 shadeGroundPlane(vec3 ro, vec3 rd, vec3 background, out float cov) {
+    cov = 0.0;
+    // One-sided: visible from above only; parallel or climbing rays miss.
+    if (ro.y <= uGroundY || rd.y >= -1.0e-6) {
+      return background;
+    }
+    float tp = (uGroundY - ro.y) / rd.y;
+    vec3 hp = ro + rd * tp;
+    vec2 rel = hp.xz - uGroundBallC.xz;
+    // Scene-anchored radial fade to the pixel's own backdrop color, so
+    // neither a disc edge nor a hard horizon ever shows; past the far
+    // band the floor IS the background and the shading below is skipped.
+    float fade =
+      1.0 - smoothstep(uGroundFadeStart, uGroundFadeEnd, length(rel));
+    if (fade <= 0.0) {
+      return background;
+    }
+    cov = 1.0;
+
+    // Penumbra shadow toward the light: the hit path's DE loop, adapted
+    // for a start OUTSIDE the certified ball. Two analytic gates make the
+    // infinite floor affordable — cost proportional to the shadow
+    // CORRIDOR, not the floor area:
+    //  (a) ball behind: with the floor >= 1.02 R below the center, a
+    //      shadow ray whose closest approach to the ball center lies at
+    //      or behind its start keeps 8 d / ts >= 1 everywhere (d is at
+    //      least |p - C| - R along it, and min_s 8 (sqrt(s^2 + D^2) - R)
+    //      / s ~ 8 (0.992 D - R) >= 0 once D >= 1.008 R) — shadow is
+    //      exactly 1, zero DE evals.
+    //  (b) corridor: a closest approach clearing 1.05 R + 0.3 * along
+    //      keeps the penumbra ratio provably >= 1 against the 8 / ts
+    //      sharpening (numerically margined across the corridor's
+    //      geometries) — again shadow 1 for free. The margin errs toward
+    //      marching; the estimator's far field is its value-exact sphere
+    //      floor, so the gated and marched answers agree at the boundary.
+    // Inside the corridor the loop's exit is outside-AND-receding — the
+    // hit path's |sp| > 1.05 R alone would fire immediately down here.
+    float shadow = 1.0;
+    vec3 toC = uGroundBallC - hp;
+    float along = dot(toC, uLightDir);
+    float perp2 = dot(toC, toC) - along * along;
+    float corridor = uGroundBallR * 1.05 + 0.3 * along;
+    if (along > 0.0 && perp2 < corridor * corridor) {
+      float ts = uGroundBallR * 4.0e-4;
+      for (int i = 0; i < uShadowSteps; i++) {
+        vec3 sp = hp + uLightDir * ts;
+        float d = surfaceDE(sp);
+        shadow = min(shadow, 8.0 * d / ts);
+        ts += clamp(d, uGroundBallR * 2.0e-4, uVisibleRadius * 0.1);
+        if (shadow < 0.02 ||
+            (dot(sp - uGroundBallC, uLightDir) > 0.0 &&
+              length(sp - uGroundBallC) > uGroundBallR * 1.05)) {
+          break;
+        }
+      }
+      shadow = clamp(shadow, 0.0, 1.0);
+    }
+
+    // Contact occlusion: the hit path's AO taps straight up from the
+    // floor, skipped once the floor point is provably beyond every tap's
+    // reach of the ball (each tap needs DE < tap height, and DE is at
+    // least |hp - C| - hh - R — so |hp - C| >= R + 2 hh_max certifies
+    // occlusion 0; 0.02 R of margin on top).
+    float ao = 1.0;
+    float reach = uGroundBallR * (1.02 + 0.04 * float(uAoTaps));
+    vec3 relC = hp - uGroundBallC;
+    if (dot(relC, relC) < reach * reach) {
+      float occ = 0.0;
+      float wgt = 1.0;
+      float norm = 0.0;
+      for (int i = 1; i <= uAoTaps; i++) {
+        float hh = uGroundBallR * 0.02 * float(i);
+        occ += wgt *
+          clamp((hh - surfaceDE(hp + vec3(0.0, hh, 0.0))) / hh, 0.0, 1.0);
+        norm += wgt;
+        wgt *= 0.6;
+      }
+      ao = clamp(1.0 - 0.85 * occ / norm, 0.0, 1.0);
+    }
+
+    // The hit path's lighting minus specular (a matte floor), in the same
+    // linear space (fr-8id): n is +y, so diffuse is just uLightDir.y.
+    float diffuse = max(uLightDir.y, 0.0);
+    float lit = uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow;
+    vec3 col = pow(pow(uGroundAlbedo, vec3(2.2)) * lit, vec3(1.0 / 2.2));
+
+    // Depth fog, the hit path's formula at the plane distance: the fog
+    // origin is the ray's closest approach to the ball center (clamped to
+    // the segment), so the floor under the fractal stays as crisp as the
+    // fractal and the fade band fogs like the far wall it is.
+    float dist = tp - clamp(dot(uGroundBallC - ro, rd), 0.0, tp);
+    float fog =
+      1.0 - exp(-0.12 * pow(dist * uFogDensity / max(uVisibleRadius, 1.0e-6), 2.0));
+    col = mix(col, mix(background, uFogTint, uFogTintStrength), clamp(fog, 0.0, 1.0));
+
+    return mix(background, col, fade);
+  }
+
+#endif
   void main() {
     vec3 background = mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0));
 
@@ -1296,6 +1595,26 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     float sliceVisR =
       sqrt(max(uVisibleRadius * uVisibleRadius - sliceMinW * sliceMinW, 0.0));
 
+#if SURFACE_BALLOON
+    // Balloon mode DROPS the slice's visible-sphere gate (fr-qxxw, the
+    // oracle module's march-entry semantics): every ray can hit the
+    // enclosing shell, so every ray marches from the camera, capped at
+    // uBalloonFar past the balloon center — capped rays fall through to the
+    // existing background below (the balloon is a HIT, not a background).
+    // The sphere entry still seeds the fog origin, so the FRACTAL's own
+    // depth fog is unchanged — and for rays that MISS the sphere the origin
+    // is the closest-approach depth max(-b, 0), NOT 0: both forms meet at
+    // the silhouette (disc -> 0 collapses the entry to -b), so the fog
+    // origin is CONTINUOUS across the whole frame. Shell hits nearer than
+    // the origin clamp fog at zero (the min just before the fog term).
+    float radius = sliceVisR * 1.02;
+    float b = dot(ro, rd);
+    float c = dot(ro, ro) - radius * radius;
+    float disc = b * b - c;
+    float tFar = length(uCamPos - uBalloonCenter) + uBalloonFar;
+    float t = 0.0;
+    float tEnter = max(-b - (disc >= 0.0 ? sqrt(disc) : 0.0), 0.0);
+#else
     // Entry/exit against the origin-centered sphere bounding the slice's
     // visible set (small margin so silhouettes right at the bound aren't
     // clipped): solve |ro + t rd|^2 = radius^2. No intersection, or an exit
@@ -1305,18 +1624,30 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     float c = dot(ro, ro) - radius * radius;
     float disc = b * b - c;
     if (disc < 0.0) {
+#if SURFACE_GROUND_PLANE
+      float planeCov;
+      outColor = vec4(shadeGroundPlane(ro, rd, background, planeCov), planeCov);
+#else
       outColor = vec4(background, 0.0);
+#endif
       return;
     }
     float sq = sqrt(disc);
     float tFar = -b + sq;
     if (tFar <= 0.0) {
+#if SURFACE_GROUND_PLANE
+      float planeCovExit;
+      outColor =
+        vec4(shadeGroundPlane(ro, rd, background, planeCovExit), planeCovExit);
+#else
       outColor = vec4(background, 0.0);
+#endif
       return;
     }
     float t = max(-b - sq, 0.0);
     // Where the ray enters the bounding sphere — the depth-fog origin.
     float tEnter = t;
+#endif
 
     // Tiny dithered start: just breaks banding on grazing rays. Hashed on
     // the JITTERED pixel (fr-jf9y) so supersampling passes get independent
@@ -1348,6 +1679,27 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       t += d * uStepScale;
     }
     if (!hit) {
+#if SURFACE_GROUND_PLANE
+      // Sphere-exit misses land on the floor; budget-EXHAUSTED rays stay
+      // background (their geometry is unresolved) — the WGSL march kernel's
+      // status split, mirrored, and the one place fr-h0c3 had to ADD
+      // structure rather than copy it: 3D splits this miss because it has a
+      // floor to split it for, and the 4D loop never did, both outcomes
+      // painting the same backdrop. EXHAUSTED must never plane, or a ray
+      // that ran out of steps INSIDE the object would paint floor through
+      // it.
+      if (t > tFar) {
+        float planeCovMiss;
+        outColor = vec4(
+          shadeGroundPlane(ro, rd, background, planeCovMiss),
+          planeCovMiss
+        );
+        return;
+      }
+      // Alpha 0 for a MISS and — deliberately — for an EXHAUSTED ray too,
+      // which is the compute arm's own rule: a ray that spent its budget
+      // resolved no geometry, so it drew nothing (fr-7k0o).
+#endif
       outColor = vec4(background, 0.0);
       return;
     }
@@ -1362,7 +1714,23 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     float rings;
     float sheets;
     float sStar;
+#if SURFACE_BALLOON
+    // Argmin routing (fr-qxxw): a shell hit's extras come from the descent
+    // at its INVERTED query point, and cpos carries that point to the
+    // height/radius color sources below.
+    vec3 cpos;
+    surfaceDEBalloonHitInfo(
+      pos,
+      cpos,
+      firstChoice,
+      trap,
+      rings,
+      sheets,
+      sStar
+    );
+#else
     surfaceDE(pos, firstChoice, trap, rings, sheets, sStar);
+#endif
 
     // --- shade --------------------------------------------------------------
     // Normal from the DE gradient (tetrahedron offsets: four samples instead
@@ -1387,6 +1755,25 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       float u;
       if (uColorSource == 1) {
         u = trap;
+#if SURFACE_BALLOON
+      // The winning term's SOURCE point (fr-qxxw): a shell hit reads its
+      // PRE-inversion geometry, so the ramps sweep the same range as the
+      // fractal's own instead of clamping at the far wall. Both
+      // position-driven sources take it. The radius source keeps the fr-skhv
+      // band normalization and the fr-9c9e slab lift unchanged — see the
+      // non-balloon branches in this module's source, which this variant
+      // replaces rather than extends — with cpos for pos, and sStar the
+      // SHELL descent's own segment parameter, so point and w stay a pair.
+      } else if (uColorSource == 2) {
+        u = clamp(cpos.y / uVisibleRadius * 0.5 + 0.5, 0.0, 1.0);
+      } else if (uColorSource == 3) {
+        vec4 q4 = uInvRotor * vec4(cpos, uW0 + sStar * uSliceHalfW);
+        u = clamp(
+          (length(q4 - uRadiusCenter4) - uRadiusMinD) * uRadiusInvRange,
+          0.0,
+          1.0
+        );
+#else
       } else if (uColorSource == 2) {
         // Height normalizes against the visible bounding sphere. The 4D
         // radius is slice-invariant, so height (a plain 3D world-space
@@ -1417,6 +1804,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
           0.0,
           1.0
         );
+#endif
       } else if (uColorSource == 4) {
         u = rings;
       } else {
@@ -1434,7 +1822,18 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     float ts = h * 2.0;
     for (int i = 0; i < uShadowSteps; i++) {
       vec3 sp = pos + n * h * 2.0 + uLightDir * ts;
+#if SURFACE_BALLOON
+      // The balloon receives shadows, never casts them (fr-qxxw): shadow
+      // rays test the FRACTAL alone, so the enclosing shell cannot black
+      // out the scene it wraps. Tetra normal and AO stay on the public
+      // union forms. surfaceDEFractal directly, where 3D needs its clamped
+      // balloonInnerDE — this tracer's one core is far-field sound already
+      // (see the note above the wrapper), and a shell hit launching this
+      // ray from far outside the ball walks in on the sphere floor.
+      float d = surfaceDEFractal(sp);
+#else
       float d = surfaceDE(sp);
+#endif
       shadow = min(shadow, 8.0 * d / ts);
       ts += clamp(d, uBoundingRadius * 2.0e-4, sliceVisR * 0.1);
       if (shadow < 0.02 || length(sp) > sliceVisR * 1.05) {
@@ -1472,6 +1871,13 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     vec3 linBase = pow(base, vec3(2.2));
     vec3 col = pow(linBase * lit + vec3(specular * shadow), vec3(1.0 / 2.2));
 
+#if SURFACE_BALLOON
+    // A shell hit can land NEARER than the sphere entry seeding the fog
+    // origin; clamp so the fog term's pow never sees a negative base
+    // (undefined in GLSL) and such hits read fog-free — the march-entry
+    // semantics above. tEnter is dead past the fog term.
+    tEnter = min(tEnter, t);
+#endif
     // Depth fog toward the backdrop: squared-exponential in the distance
     // traveled inside the slice's visible sphere — ~0.38 haze at the far
     // side (a full 2R chord), a depth cue matching the explorer's fog feel
@@ -1488,6 +1894,50 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     outColor = vec4(col, 1.0);
   }
 `;
+
+/**
+ * Compose the fragment source for a variant selection: `balloon` (fr-qxxw)
+ * and `plane` (fr-h0c3), the two scene arms above, resolved JS-side so the
+ * driver only ever parses the arms a session actually uses.
+ *
+ * REUSED, NOT RE-DERIVED. {@link surfaceFragmentFor} already IS this
+ * resolver: it takes the source as a parameter, it owns the `#if` nesting
+ * bookkeeping, it owns the plane-over-balloon REFUSAL (no horizon inside
+ * the shell — a `RangeError`, and callers gate first, so reaching it is a
+ * bug), and it owns fr-s9ll's SIZE RULE, which strips comments and
+ * indentation from any resolved source past `SURFACE_GLSL_STRIP_BYTES`
+ * (64KB). Standing up a second preprocessor here is precisely the drift the
+ * twin-file convention exists to prevent — two copies of "what does this
+ * directive mean" is how a 3D system and its 4D lift start rendering
+ * different objects — so the arms in `SURFACE4_FRAGMENT` carry the 3D
+ * directive NAMES and this wrapper pins the three 3D-only flags at 0.
+ * `SURFACE_ESCAPE`, `SURFACE_BULB` and `SURFACE_FOLD_LENS` simply never
+ * appear in this source (fold-shaped and forward-orbit 4D sessions are
+ * compute-only — fr-rsp6), so pinning them costs nothing.
+ *
+ * WHY JS-SIDE AT ALL, when three.js would happily prepend two defines and
+ * let the driver's own preprocessor do it — preprocessor-DEAD text still
+ * costs SOURCE BYTES, and source bytes are what Mesa prices (the 3D file's
+ * measured ladder: ~68KB links in ~25s, ~80KB was called the cliff, 82.2KB
+ * crashed the compiler outright, empty info log, lost context). MEASURED
+ * here, raw resolved / what the driver gets:
+ *
+ * - off:     61751 B (60.3KB) / 61751 B — under 64KB, so NOT stripped, and
+ *            byte-identical to the pre-fr-qxxw source (3785 B of headroom).
+ * - balloon: 67123 B (65.5KB) / 16664 B (16.3KB) — past the threshold by
+ *            1587 B, so the size rule strips it.
+ * - plane:   69497 B (67.9KB) / 17705 B (17.3KB) — plane variants always
+ *            strip (fr-rhn5).
+ *
+ * A single monolithic source carrying both arms would be ~74KB and every
+ * 4D surface session — balloon or not, floor or not — would pay for it,
+ * for the first time putting this tracer in the band where the 3D fold
+ * program takes 25 seconds to link. Resolved per variant instead, OFF
+ * keeps its shipped bytes exactly and each arm pays only for itself.
+ */
+export function surface4FragmentFor(balloon = 0, plane = 0): string {
+  return surfaceFragmentFor(0, 0, balloon, plane, 0, SURFACE4_FRAGMENT);
+}
 
 /** CPU mirror of the `SurfaceMaps4` std140 block (fr-dqlq) — the four
  * Float32Arrays the renderer uploads verbatim, in the SAME ORDER as the
@@ -1578,6 +2028,24 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uInvRotor: { value: new THREE.Matrix4() },
       uW0: { value: 0 },
       uSliceHalfW: { value: 0 },
+      // Balloon inverted-union (fr-qxxw): inert defaults; alive only under
+      // the SURFACE_BALLOON arm (rho 1 so a stray enabled read could never
+      // divide by zero). Three.js ignores entries the compiled program
+      // does not use, so these stay unconditional.
+      uBalloonCenter: { value: new THREE.Vector3() },
+      uBalloonR: { value: 0 },
+      uBalloonRho: { value: 1 },
+      uBalloonFar: { value: 0 },
+      // Ground plane (fr-h0c3): inert defaults; alive only under the
+      // SURFACE_GROUND_PLANE arm (ball radius 1 so a stray enabled read
+      // could never divide by zero, albedo white so a stray enabled floor
+      // is visible rather than a black band).
+      uGroundY: { value: 0 },
+      uGroundFadeStart: { value: 0 },
+      uGroundFadeEnd: { value: 0 },
+      uGroundBallR: { value: 1 },
+      uGroundBallC: { value: new THREE.Vector3() },
+      uGroundAlbedo: { value: new THREE.Vector3(1, 1, 1) },
       uColorSource: { value: 0 },
       uColorSpeed: { value: 0.5 },
       uColorLUT: { value: placeholderLUT },
@@ -1608,8 +2076,30 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uAoTaps: { value: SURFACE_FULL_AO_TAPS },
       uHitFloor: { value: SURFACE_FULL_HIT_FLOOR },
     },
+    // Which scene arms are compiled in. Like the 3D tracer's variant names
+    // these are resolved JS-side ({@link surface4FragmentFor}), so the
+    // entries here are change detection and a program-cache key, never
+    // driver-parsed text — {@link setSurface4Balloon} and
+    // {@link setSurface4GroundPlane} flip them and reassemble the source.
+    // Both off is the shipped tracer, byte for byte.
+    //
+    // THE KEYS DELIBERATELY DO NOT MATCH THE GLSL DIRECTIVES. The `#if`
+    // names in SURFACE4_FRAGMENT are the 3D ones (`SURFACE_BALLOON`,
+    // `SURFACE_GROUND_PLANE`) because the 3D resolver is what reads them
+    // (see surface4FragmentFor: reuse, so there is one definition of what
+    // an arm directive means); these SURFACE4_-prefixed keys are this
+    // material's own state, and three.js prepends them as inert defines
+    // over a source whose arms are already resolved. Renaming the
+    // directives to match would break the resolution.
+    defines: {
+      SURFACE4_BALLOON: 0,
+      SURFACE4_GROUND_PLANE: 0,
+    },
     vertexShader: SURFACE4_VERTEX,
-    fragmentShader: SURFACE4_FRAGMENT,
+    // Both arms off resolves to SURFACE4_FRAGMENT verbatim (61751 B, under
+    // the 64KB strip threshold), so a plain 4D session hands the driver
+    // exactly the source it did before fr-qxxw/fr-h0c3.
+    fragmentShader: surface4FragmentFor(),
     depthTest: false,
     depthWrite: false,
   });
@@ -1793,4 +2283,120 @@ export function setSurfaceView4(
   );
   u.uW0.value = w0;
   u.uSliceHalfW.value = sliceHalfW;
+}
+
+/**
+ * Enable (`spec`) or disable (`null`) the balloon inverted-union wrapper
+ * (fr-qxxw, the 4D half of fr-5wlv.4): the scene becomes
+ * `min(DE(p), (|p−c|/rho) · DE(I(p)))` over this tracer's beam descent,
+ * mirroring `fractal/balloon-de.ts`'s `estimateBalloonDistance`.
+ *
+ * The payload is the 3D {@link SurfaceBalloonSpec}, IMPORTED rather than
+ * restated: `I` is a plain 3D inversion of the marched point (the module
+ * doc's slice-then-invert decision), so `center`, `rho`, `R` and `far` mean
+ * exactly what they mean one dimension down, and a second copy of that
+ * vocabulary is how one renderer starts drawing a different shell from the
+ * same document. What the CALLER owes 4D is the ball those numbers come
+ * from: the ORIGIN and the FULL 4D visible radius, not a probe-fit centre
+ * (there is none in 4D) and not the slice-adjusted radius (which would move
+ * the shell under the slice slider) — see the module doc.
+ *
+ * Flipping the flag reassembles the fragment source through
+ * {@link surface4FragmentFor}; a call that changes only the uniforms — the
+ * radius slider's per-drag-tick path — never touches the shader. The
+ * balloon is SENIOR to the ground plane: turning it on drops the plane arm
+ * here (no horizon inside the shell), and the caller re-asserts its stored
+ * floor intent after the toggle, exactly as 3D's does.
+ */
+export function setSurface4Balloon(
+  material: THREE.ShaderMaterial,
+  spec: SurfaceBalloonSpec | null,
+): void {
+  const u = material.uniforms;
+  const center = u.uBalloonCenter.value as THREE.Vector3;
+  if (spec) {
+    center.set(...spec.center);
+    u.uBalloonR.value = spec.R;
+    u.uBalloonRho.value = spec.rho;
+    u.uBalloonFar.value = spec.far;
+  } else {
+    // Zeros are fine while the arm is off (the compiled program has no
+    // balloon code to read them) — except rho, whose 1 keeps even a stray
+    // enabled read divide-by-zero-free, matching createSurfaceMaterial4's
+    // inert defaults.
+    center.set(0, 0, 0);
+    u.uBalloonR.value = 0;
+    u.uBalloonRho.value = 1;
+    u.uBalloonFar.value = 0;
+  }
+  const want = spec ? 1 : 0;
+  if (material.defines.SURFACE4_BALLOON !== want) {
+    const plane =
+      want === 1 ? 0 : material.defines.SURFACE4_GROUND_PLANE === 1 ? 1 : 0;
+    material.defines.SURFACE4_BALLOON = want;
+    material.defines.SURFACE4_GROUND_PLANE = plane;
+    material.fragmentShader = surface4FragmentFor(want, plane);
+    material.needsUpdate = true;
+  }
+}
+
+/**
+ * Enable (`spec`) or disable (`null`) the ground plane (fr-h0c3, the 4D
+ * half of fr-rhn5): an infinite one-sided floor below the session ball that
+ * rays MISSING the fractal intersect analytically and shade with the hit
+ * path's penumbra shadow + AO + fog, fading radially into the backdrop.
+ * Budget-EXHAUSTED rays never reach it — their geometry is unresolved, so
+ * they stay backdrop (the WGSL march kernel's status split, which the 4D
+ * `main()` grew for this arm).
+ *
+ * The payload is the 3D {@link SurfaceGroundPlaneSpec}, imported for the
+ * same reason the balloon's is: the floor lives in the sliced 3D world
+ * space, so every quantity in it is dimension-free. Flipping the flag
+ * reassembles the source through {@link surface4FragmentFor}, which strips
+ * comments and indentation from every plane variant.
+ *
+ * THROWS if asked to enable over the balloon — there is no horizon inside
+ * the shell — and it throws BEFORE any state moves, so a caller that gets
+ * the gate wrong is left with the material it had rather than a define and
+ * a shader that disagree.
+ */
+export function setSurface4GroundPlane(
+  material: THREE.ShaderMaterial,
+  spec: SurfaceGroundPlaneSpec | null,
+): void {
+  const want = spec ? 1 : 0;
+  // Assembled first, and only when the arm actually moves: this is where
+  // the plane-over-balloon refusal lives (surfaceFragmentFor's own
+  // RangeError), and nothing below it may run if it fires.
+  const fragment =
+    material.defines.SURFACE4_GROUND_PLANE === want
+      ? null
+      : surface4FragmentFor(
+          material.defines.SURFACE4_BALLOON === 1 ? 1 : 0,
+          want,
+        );
+  const u = material.uniforms;
+  if (spec) {
+    u.uGroundY.value = spec.y;
+    u.uGroundFadeStart.value = spec.fadeStart;
+    u.uGroundFadeEnd.value = spec.fadeEnd;
+    u.uGroundBallR.value = spec.ballRadius;
+    (u.uGroundBallC.value as THREE.Vector3).set(...spec.ballCenter);
+    (u.uGroundAlbedo.value as THREE.Vector3).set(...spec.albedo);
+  } else {
+    // Zeros are fine while the arm is off — except the ball radius, whose
+    // 1 keeps even a stray enabled read divide-by-zero-free, matching
+    // createSurfaceMaterial4's inert defaults.
+    u.uGroundY.value = 0;
+    u.uGroundFadeStart.value = 0;
+    u.uGroundFadeEnd.value = 0;
+    u.uGroundBallR.value = 1;
+    (u.uGroundBallC.value as THREE.Vector3).set(0, 0, 0);
+    (u.uGroundAlbedo.value as THREE.Vector3).set(1, 1, 1);
+  }
+  if (fragment !== null) {
+    material.defines.SURFACE4_GROUND_PLANE = want;
+    material.fragmentShader = fragment;
+    material.needsUpdate = true;
+  }
 }

@@ -542,7 +542,10 @@ describe("Ui surface balloon rows (fr-5wlv.4)", () => {
     expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(false);
   });
 
-  it("hides both rows in a live 4D surface session (the balloon is 3D-only this cut)", () => {
+  it("keeps both rows in a live 4D surface session — the balloon lifted with fr-qxxw", () => {
+    // The dimension gate is GONE: a 4D IFS session composes the balloon
+    // wrapper over its own core exactly as a 3D one does, so the only
+    // thing that hides these rows is a FORWARD-orbit session (below).
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
@@ -550,15 +553,11 @@ describe("Ui surface balloon rows (fr-5wlv.4)", () => {
       transforms: nonFlatTransforms(),
       balloonEcho: true,
     });
-    expect(surfaceBalloonRow().classList.contains("hidden")).toBe(true);
-    expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(true);
+    expect(surfaceBalloonRow().classList.contains("hidden")).toBe(false);
+    expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(false);
   });
 
-  it("keeps both rows for a non-flat system OUTSIDE surface mode (only the live 4D session hides them)", () => {
-    // The gate is fourDSurfaceLive — nonFlat && surface — not nonFlat
-    // alone (unlike the explorer echo's rows): the section is invisible
-    // outside surface mode anyway, so the rows stay stable for the next
-    // 3D surface entry.
+  it("keeps both rows for a non-flat system OUTSIDE surface mode", () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
@@ -665,7 +664,9 @@ describe("Ui surface ground plane row (fr-rhn5)", () => {
     expect(surfaceGroundPlaneRow().classList.contains("hidden")).toBe(false);
   });
 
-  it("hides the row in a live 4D surface session", () => {
+  it("shows the row in a live 4D surface session too — the floor lifted with fr-h0c3", () => {
+    // The w-slice the floor drops under is an ordinary 3D object, so the
+    // row now carries no gate at all: every session kind, both dimensions.
     const ui = new Ui(document);
     ui.setSurfaceSessionKind("ifs");
     ui.updateLabels({
@@ -673,10 +674,10 @@ describe("Ui surface ground plane row (fr-rhn5)", () => {
       renderMode: "surface" as const,
       transforms: nonFlatTransforms(),
     });
-    expect(surfaceGroundPlaneRow().classList.contains("hidden")).toBe(true);
+    expect(surfaceGroundPlaneRow().classList.contains("hidden")).toBe(false);
   });
 
-  it("keeps the row stable OUTSIDE surface mode (only the live 4D session hides it)", () => {
+  it("keeps the row stable OUTSIDE surface mode", () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
@@ -4665,6 +4666,51 @@ describe("Ui 4D surface session controls (fr-b30z)", () => {
     ui.setFourDSlice(false, 0, false, 0.25);
 
     expect(el("fourDSliceThicknessRow").classList.contains("hidden")).toBe(
+      false,
+    );
+  });
+
+  // fr-vag4: two sessions refuse the slab and they owe DIFFERENT reasons.
+  // The descent refuses it per fold family (a spherefold bends a segment
+  // into an arc), so a box-fold-only system keeps it — a knob the user can
+  // act on. A 4D escape-time session refuses it at every fold family,
+  // because its forward orbit has no branches to thread a segment through,
+  // and handing it the descent's wording would tell a box-fold-only chain
+  // to do what it is already doing.
+  it("gives an escape-time session its own slab reason, not the sphere-fold one", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+    ui.setSurfaceSessionKind("escape");
+    ui.setFourDSlabAvailable(false);
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+
+    const title = el("fourDSliceThicknessRow").title;
+    expect(title).toContain("escape-time render");
+    expect(title).toContain("FORWARD");
+    expect(title).not.toContain("sphere folds");
+  });
+
+  it("keeps the sphere-fold slab reason for an IFS session", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+    ui.setSurfaceSessionKind("ifs");
+    ui.setFourDSlabAvailable(false);
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+
+    const title = el("fourDSliceThicknessRow").title;
+    expect(title).toContain("sphere folds");
+    expect(title).not.toContain("escape-time render");
+  });
+
+  it("clears the slab reason once a session can take one", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+    ui.setSurfaceSessionKind("ifs");
+    ui.setFourDSlabAvailable(true);
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+
+    expect(el("fourDSliceThicknessRow").title).toBe("");
+    expect((el("fourDSliceThicknessSlider") as HTMLInputElement).disabled).toBe(
       false,
     );
   });

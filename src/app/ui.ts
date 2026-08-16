@@ -1136,28 +1136,29 @@ export class Ui {
   private readonly surfaceControls: HTMLElement;
   private readonly surfacePaletteRow: HTMLElement;
   private readonly surfaceColorSpeedRow: HTMLElement;
-  // The surface balloon rows (fr-5wlv.4): 3D-surface-only this cut — the
-  // variant exists only in the 3D material, so both hide under a live 4D
-  // surface session (fourDSurfaceLive) and under either forward-orbit one
-  // (surfaceSessionKind, fr-5wlv.6 + fr-tdin — the balloon is permanently
-  // inert there, not just momentarily unavailable like the 4D case); the
-  // radius
-  // row additionally waits for the balloon itself, mirroring the explorer
-  // pair (fr-5wlv.2). Its own Inflate button (fr-5wlv.6) binds the SAME
-  // handler as the explorer's balloonInflateButton — one sweep, one
-  // handler, two entry points.
+  // The surface balloon rows (fr-5wlv.4; 4D since fr-qxxw): hidden under
+  // a FORWARD-ORBIT session in either dimension (surfaceSessionKind,
+  // fr-5wlv.6 + fr-tdin + fr-vag4 — the balloon is permanently inert
+  // there, a filled solid's echo swallowing the camera), and under
+  // nothing else: a 4D IFS session balloons exactly like a 3D one, so the
+  // old fourDSurfaceLive gate is gone. The radius row additionally waits
+  // for the balloon itself, mirroring the explorer pair (fr-5wlv.2). Its
+  // own Inflate button (fr-5wlv.6) binds the SAME handler as the
+  // explorer's balloonInflateButton — one sweep, one handler, two entry
+  // points.
   private readonly surfaceBalloonRow: HTMLElement;
   private readonly surfaceBalloonRadiusRow: HTMLElement;
   private readonly surfaceBalloonInflateButton: HTMLButtonElement;
 
-  // The surface ground plane row (fr-rhn5): unlike the balloon rows above,
-  // visible for EVERY 3D surfaceSessionKind — the floor survives where the
-  // balloon degenerates (fr-5wlv.4's measured escape-solid interior
-  // swallowing the camera, and fr-tdin's identical measurement on the
-  // Mandelbulb, never applied to a flat plane) — and hidden only under a
-  // live 4D surface session (fourDSurfaceLive). Its
-  // checkbox is table-driven (see SCALAR_CONTROLS's surfaceGroundPlaneCheckbox
-  // entry), so only the row itself needs a reference here.
+  // The surface ground plane row (fr-rhn5; 4D since fr-h0c3): unlike the
+  // balloon rows above, visible for EVERY surfaceSessionKind in EITHER
+  // dimension — the floor survives where the balloon degenerates
+  // (fr-5wlv.4's measured escape-solid interior swallowing the camera,
+  // and fr-tdin's identical measurement on the Mandelbulb, never applied
+  // to a flat plane), and the w-slice it drops under is an ordinary 3D
+  // object. So it carries no gate at all. Its checkbox is table-driven
+  // (see SCALAR_CONTROLS's surfaceGroundPlaneCheckbox entry), so only the
+  // row itself needs a reference here.
   private readonly surfaceGroundPlaneRow: HTMLElement;
 
   // 3D VIEW controls (fr-1yn): the auto-orbit turntable — the 3D sibling of
@@ -1198,11 +1199,16 @@ export class Ui {
    * and re-marches the w slice every frame. It changes what the slice block
    * means, so {@link syncFourDViewRows} keys on it — see updateLabels. */
   private fourDSurfaceLive = false;
-  /** False while the live 4D surface session's fold set breaks segment
-   * exactness (fr-rsp6 × fr-wa6o: spherefold/mandelbox branches take
-   * segments to arcs, so the session clamps the slab to 0) — the
-   * thickness row hides rather than showing a slider the session ignores.
-   * Session-scoped, set by main.ts's routing; true outside such sessions. */
+  /** False while the live 4D surface session cannot take a slab at all,
+   * for either of two reasons the row's own tooltip distinguishes: its
+   * fold set breaks segment exactness (fr-rsp6 × fr-wa6o — spherefold and
+   * mandelbox branches take segments to arcs), or it is an ESCAPE-TIME
+   * session, whose forward orbit has no branch enumeration to thread a
+   * segment through at any fold family (fr-vag4). Either way the session
+   * clamps the slab to 0. The thickness row stays VISIBLE and DISABLES
+   * with the reason — a silently vanishing control reads as "impossible,
+   * no idea why". Session-scoped, set by main.ts's routing; true outside
+   * such sessions. */
   private fourDSlabAvailable = true;
   /**
    * The ACTIVE surface session's shape (fr-5wlv.6): `"escape"` for the
@@ -2048,12 +2054,27 @@ export class Ui {
       this.fourDSliceThicknessSlider.value = "0";
       this.fourDSliceThicknessLabel.textContent = "0.00";
     }
-    this.fourDSliceThicknessRow.title = slabRefused
-      ? "Slab thickness is unavailable with sphere folds: the slab's " +
-        "segment certificates are unsound under the spherefold's " +
-        "inversion branch (mandelbox includes it). Box-fold-only systems " +
-        "keep the slab."
-      : "";
+    // TWO SESSIONS REFUSE THE SLAB AND THEY OWE DIFFERENT REASONS
+    // (fr-vag4). The IFS descent refuses it per FOLD FAMILY — a
+    // spherefold's inversion branch bends a segment into an arc — so a
+    // box-fold-only system keeps it, which is a knob the user can act on.
+    // A 4D escape-time session refuses it at every fold family, because a
+    // forward orbit has no branch enumeration at all: the box fold that
+    // rescues the descent is exactly the one that turns a segment into a
+    // bent polyline here. Handing the descent's reason to an escape
+    // session would tell a box-fold-only chain to do the thing it is
+    // already doing.
+    this.fourDSliceThicknessRow.title = !slabRefused
+      ? ""
+      : this.surfaceSessionKind === "escape"
+        ? "Slab thickness is unavailable in the escape-time render: its " +
+          "orbit runs the maps FORWARD, with no branches to thread a " +
+          "segment through, so a slab has no certificate at any fold " +
+          "family. The IFS surface render keeps it."
+        : "Slab thickness is unavailable with sphere folds: the slab's " +
+          "segment certificates are unsound under the spherefold's " +
+          "inversion branch (mandelbox includes it). Box-fold-only systems " +
+          "keep the slab.";
   }
 
   /** fr-rsp6: whether the live 4D surface session can take a slab at all
@@ -2220,16 +2241,16 @@ export class Ui {
       "hidden",
       state.surface.colorSource !== "palette",
     );
-    // The surface balloon (fr-5wlv.4) is 3D-only this cut — the variant
-    // exists only in the 3D material — so both rows hide under a live 4D
-    // surface session, AND under either FORWARD-ORBIT one (fr-5wlv.6,
-    // fr-tdin: the balloon is PERMANENTLY inert for those filled solids,
-    // not just unavailable like the 4D case — see surfaceSessionKind's
-    // own doc); the radius row additionally waits for the balloon itself
-    // to be on, mirroring the explorer pair (fr-5wlv.2). The surface
-    // section as a whole already gates on renderMode above.
+    // The surface balloon (fr-5wlv.4, 4D since fr-qxxw) hides under a
+    // FORWARD-ORBIT session in either dimension (fr-5wlv.6, fr-tdin,
+    // fr-vag4: the balloon is PERMANENTLY inert for those filled solids —
+    // a filled interior reaches the ball center, so its echo swallows the
+    // camera — see surfaceSessionKind's own doc); the radius row
+    // additionally waits for the balloon itself to be on, mirroring the
+    // explorer pair (fr-5wlv.2). The 4D DIMENSION gate is gone: a 4D IFS
+    // session balloons exactly like a 3D one. The surface section as a
+    // whole already gates on renderMode above.
     const surfaceBalloonHidden =
-      this.fourDSurfaceLive ||
       this.surfaceSessionKind === "escape" ||
       this.surfaceSessionKind === "bulb";
     this.surfaceBalloonRow.classList.toggle("hidden", surfaceBalloonHidden);
@@ -2237,18 +2258,14 @@ export class Ui {
       "hidden",
       surfaceBalloonHidden || !state.balloonEcho,
     );
-    // The surface ground plane (fr-rhn5) is 3D-only like the balloon above,
-    // so it hides under a live 4D surface session too — but unlike the
-    // balloon it is NOT permanently inert for the forward-orbit solids
-    // (the floor survives where the balloon degenerates, scene.ts's
-    // enterSurfaceComputeForwardSession — a plane under a Mandelbox or a
-    // Mandelbulb is the mode's classic look), so it stays visible for
-    // EVERY 3D surfaceSessionKind and does not share
-    // surfaceBalloonHidden's forward-kind gate.
-    this.surfaceGroundPlaneRow.classList.toggle(
-      "hidden",
-      this.fourDSurfaceLive,
-    );
+    // The surface ground plane (fr-rhn5, 4D since fr-h0c3) is visible for
+    // EVERY session kind in both dimensions: unlike the balloon it is NOT
+    // inert for the forward-orbit solids (the floor survives where the
+    // balloon degenerates, scene.ts's enterSurfaceComputeForwardSession —
+    // a plane under a Mandelbox or a Mandelbulb is the mode's classic
+    // look), and the w-slice it drops under is an ordinary 3D object. So
+    // the row carries no gate of its own at all.
+    this.surfaceGroundPlaneRow.classList.toggle("hidden", false);
     // …including each mode's non-section block above the accordion (fr-374p):
     // the Undo/Redo row belongs to the explorer (a mid-render undo couldn't
     // affect the frozen render, same reason the editing controls hide), and

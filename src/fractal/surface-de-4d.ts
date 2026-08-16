@@ -110,7 +110,9 @@ import { clamp } from "./vec";
  * feature, and a silently inflated "slab" would be exactly the kind of
  * wrong image this project never ships. The segment+ball-slack chain
  * state that would admit spherefold slabs (inversion maps balls to balls
- * exactly) is recorded on {@link slabExact4}.
+ * exactly) is recorded on {@link slabExact4} — MEASURED and not built
+ * (fr-v7ca, `scripts/slab-ball-slack.harness.ts`): its advantage lives
+ * exactly where it is not needed. See that constant's doc.
  *
  * THE SLICE CAVEAT — why this spike exists in the first place. The app would
  * never march the full 4D attractor `A` for display; it marches a `w = w0`
@@ -526,12 +528,46 @@ export function systemFoldShaped4(
  * fold set includes spherefold or mandelbox ({@link estimateDistance4} /
  * {@link estimateDistance4Refined} throw; the app clamps sliceHalfW to 0
  * for such sessions instead of degrading into a silently wrong image).
- * Recorded finer option for a future port: the spherefold's outer
- * (identity) and inner (×4) branches ARE linear, so a segment+ball-slack
- * chain state — enclose the segment in a ball at each mid-branch crossing,
- * inversion maps balls to balls exactly, degrade the slack by sigma_max
- * per subsequent map — would admit spherefold slabs at the cost of one
- * extra scalar per chain tuple. */
+ *
+ * THE REFUSAL IS NOW MEASURED RATHER THAN MERELY REASONED (fr-v7ca,
+ * `scripts/slab-ball-slack.harness.ts`), and BOTH candidate lifts lost.
+ *
+ * The cheap one — `max(0, DE(p) − h)` over the point estimator, sound by
+ * the triangle inequality alone — DOES NOT RENDER A SLAB. It is a
+ * DILATION: on `sixteenCellFlake` it degrades from the exact slab's crisp
+ * fractal to a featureless ball by the slider's own ceiling (44.4% of rays
+ * at 0.0 steps/px — every ray hits on entry). On two of the four controls
+ * it lands FURTHER from the exact slab than doing nothing at all, and in
+ * marched depth the point query beats it on all four (mean |dt| 16.9-68.8%
+ * of the marching ball against 0.8-15.2%): it floats the whole surface
+ * toward the camera rather than adding a rind. As a bound it overcharges
+ * by one to two orders of magnitude, and the mechanism is
+ * DIRECTION-BLINDNESS — the segment reaches only in `w`, a ball has to
+ * assume every direction, so a true slab costs the bound 0.3-15% where
+ * the ball costs 29-100%. Soundness settles nothing: 0 violations in 9600
+ * checks, for BOTH forms.
+ *
+ * The finer one — the spherefold's outer (identity) and inner (×4)
+ * branches ARE linear, so a segment+ball-slack chain state (enclose the
+ * segment in a ball at each mid-branch crossing, inversion maps balls to
+ * balls exactly — `inversion.ts`'s `inversionBallScale`, which shipped
+ * with this verdict — degrade the slack by sigma_max per subsequent map)
+ * would admit spherefold slabs at the cost of one extra scalar per chain
+ * tuple — CANNOT BE JUSTIFIED FROM OUTSIDE THE DESCENT. The two arms
+ * above BRACKET it: the exact segment IS that design with no mid crossing
+ * ever, the ball form IS it with the crossing at depth 0. Its ceiling is
+ * excellent and is reached only where no crossing happens — i.e. on the
+ * systems that already have the exact slab. Every system the lift is FOR
+ * crosses the mid branch, and each crossing drops it toward the ball
+ * form.
+ *
+ * WHAT WOULD REOPEN IT, both cheap next to the frontier register the lift
+ * would cost: an instrument reporting the DEPTH of the first mid crossing
+ * per query (`FoldFrontierTap4` reports candidates but not branch
+ * indices), which decides where inside the bracket a real system falls;
+ * or a per-system thickness CAP, since the ball form tracks the exact slab
+ * wherever `h / DE` stays small and that ratio is knowable from a cheap
+ * CPU probe before any render. */
 export function slabExact4(de: SurfaceDE4): boolean {
   return (
     de.maps.every(
