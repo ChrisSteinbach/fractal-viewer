@@ -400,12 +400,12 @@ function runLocalOrbit(sys: LocalSystem, p: Vec3, maxIterations: number): void {
     const wall = link.boxLimit;
     const mR2 = link.minRadius2;
     const fR2 = link.fixedRadius2;
-    if (link.foldKind === SURFACE_FOLD_BOXFOLD) {
+    if (link.kind === SURFACE_FOLD_BOXFOLD) {
       fx = foldAxis(yx, wall);
       fy = foldAxis(yy, wall);
       fz = foldAxis(yz, wall);
       localL = 1;
-    } else if (link.foldKind === SURFACE_FOLD_SPHEREFOLD) {
+    } else if (link.kind === SURFACE_FOLD_SPHEREFOLD) {
       const r2 = yx * yx + yy * yy + yz * yz;
       const f = fR2 / Math.max(mR2, Math.min(fR2, r2));
       fx = yx * f;

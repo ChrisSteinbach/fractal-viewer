@@ -836,9 +836,11 @@ describe("SURFACE_ESCAPE orbit trap (fr-byxb)", () => {
     const resolved = surfaceFragmentFor(1, 0);
     // Only the trap's denominator moved: the orbit still runs uMaxDepth
     // passes of the whole chain, and "did it escape" still compares against
-    // that same step count.
+    // that same step count. (fr-j231 split the growth guard out into the
+    // two interpolant arms below it; the escape test itself is unmoved.)
     expect(resolved).toContain("int steps = uMaxDepth * n;");
-    expect(resolved).toContain("if (escapedAt < steps && growth > 1.0) {");
+    expect(resolved).toContain("if (escapedAt < steps) {");
+    expect(resolved).toContain("} else if (growth > 1.0) {");
   });
 
   it("normalizes the same way the bulb arm always has — one convention across both forward-orbit variants", () => {
@@ -925,7 +927,7 @@ describe("SURFACE_ESCAPE variant packing (fr-kltj, chain since fr-s04t)", () => 
         m[8],
       ]);
       expect([escT[i].x, escT[i].y, escT[i].z]).toEqual(link.t);
-      expect(escParams[i].x).toBe(link.foldKind);
+      expect(escParams[i].x).toBe(link.kind);
       expect(escParams[i].y).toBe(link.w);
       expect(escParams[i].z).toBe(link.derivGrowth);
     });
@@ -966,7 +968,10 @@ describe("SURFACE_ESCAPE variant packing (fr-kltj, chain since fr-s04t)", () => 
     for (let i = 0; i < 2; i++) {
       const callIdx = resolved.indexOf(callSite, from);
       const loopIdx = resolved.indexOf(loopHead, from);
-      const bodyEnd = resolved.indexOf("return r / dr;", loopIdx);
+      // Both bodies end on the fr-j231 form switch, which is the last
+      // statement either one runs.
+      const bodyEnd = resolved.indexOf("return uEscLogForm == 0", loopIdx);
+      expect(bodyEnd).toBeGreaterThan(loopIdx);
       expect(loopIdx).toBeGreaterThan(callIdx);
       expect(resolved.slice(loopIdx, bodyEnd)).not.toContain("foldQuerySector");
       from = bodyEnd;
@@ -1013,9 +1018,160 @@ describe("SURFACE_ESCAPE variant packing (fr-kltj, chain since fr-s04t)", () => 
     const t0 = (u.uEscT.value as THREE.Vector3[])[0];
     expect([t0.x, t0.y, t0.z]).toEqual(de.t);
     const p0 = (u.uEscParams.value as THREE.Vector4[])[0];
-    expect(p0.x).toBe(de.foldKind);
+    expect(p0.x).toBe(de.kind);
     expect(p0.y).toBe(de.w);
     expect(p0.z).toBe(de.derivGrowth);
+  });
+});
+
+describe("SURFACE_ESCAPE cross-family links (fr-j231)", () => {
+  /** A fold-only chain: the pre-fr-j231 shape, which must keep the linear
+   * estimate form to the bit. */
+  function foldChain(): Transform[] {
+    return [
+      {
+        id: 0,
+        position: [0.4, 0.3, 0.2],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "mandelbox", weight: 2 }],
+      },
+      {
+        id: 1,
+        position: [-0.1, 0.5, 0.2],
+        rotation: [0.3, 0.7, -0.2],
+        scale: [1, 1, 1],
+        variations: [{ type: "boxfold", weight: 1.6 }],
+      },
+    ];
+  }
+
+  /** The same chain with its tail link swapped for the triplex power —
+   * the cross-family shape this bead exists for. A LONE power map is
+   * refused by the gate (the Mandelbulb render owns it), so the fold link
+   * ahead of it is load-bearing, not decoration. */
+  function powerChain(): Transform[] {
+    const maps = foldChain();
+    maps[1].variations = [{ type: "bulb", weight: 1 }];
+    return maps;
+  }
+
+  it("packs uEscLogForm 0 for a fold-only chain and 1 for one carrying a power link", () => {
+    const material = createSurfaceMaterial();
+
+    // The default is the linear form, so a material that never sees an
+    // escape system reads the pre-fr-j231 behaviour.
+    expect(material.uniforms.uEscLogForm.value).toBe(0);
+
+    const folds = buildEscapeDE(foldChain());
+    expect(folds.logEstimate).toBe(false);
+    setEscapeSystem(material, folds, black);
+    expect(material.uniforms.uEscLogForm.value).toBe(0);
+
+    const powers = buildEscapeDE(powerChain());
+    expect(powers.logEstimate).toBe(true);
+    setEscapeSystem(material, powers, black);
+    expect(material.uniforms.uEscLogForm.value).toBe(1);
+
+    // And BACK: a later fold-only chain must clear the flag, or it would
+    // read the Boettcher form off a linear orbit — the stale-uniform bug
+    // this packer's every other field is written to avoid.
+    setEscapeSystem(material, buildEscapeDE(foldChain()), black);
+    expect(material.uniforms.uEscLogForm.value).toBe(0);
+  });
+
+  it("reads the terminal radius through the flag in BOTH bodies, never through the link that terminated", () => {
+    const resolved = surfaceFragmentFor(1, 0);
+    // The value form and the hit-info form both end on the same switch:
+    // 0.5*r*ln r is continuous in r, so the flag moves no seam across the
+    // surface, where a per-link choice would put a step wherever a chain
+    // changed which kind escaped.
+    expect(countOccurrences(resolved, "return uEscLogForm == 0")).toBe(2);
+    expect(
+      countOccurrences(resolved, "r <= 1.0 ? 0.0 : 0.5 * r * log(r) / dr"),
+    ).toBe(2);
+    expect(countOccurrences(resolved, "uniform int uEscLogForm;")).toBe(1);
+  });
+
+  it("guards the fold dispatch behind kind < 4, so a power kind cannot fall through both negative tests", () => {
+    const resolved = surfaceFragmentFor(1, 0);
+    // The whole hazard in one assertion: kind 4 satisfies BOTH != 2 and
+    // != 1, so without the guard a bulb link would run the box fold and
+    // the sphere fold and then the power on top of them.
+    expect(countOccurrences(resolved, "if (kind < 4) {")).toBe(2);
+    expect(countOccurrences(resolved, "} else if (kind == 4) {")).toBe(2);
+    // Both power branches compute their local factor BEFORE overwriting
+    // y — the oracle's own order, and the one way to get this wrong that
+    // still renders something.
+    expect(
+      countOccurrences(
+        resolved,
+        "localL = 8.0 * (r2y * r2y * r2y * sqrt(r2y));\n        y = bulbPow8(y, r2y);",
+      ),
+    ).toBe(2);
+    expect(
+      countOccurrences(
+        resolved,
+        "localL = 2.0 * length(y);\n        y = vec3(y.x * y.x - y.y * y.y - y.z * y.z, 2.0 * y.x * y.y, 2.0 * y.x * y.z);",
+      ),
+    ).toBe(2);
+  });
+
+  it("interpolates a power-terminated orbit's escape count the POWER map's way, off the DEGREE of the link that produced the radius", () => {
+    const resolved = surfaceFragmentFor(1, 0);
+    // A pre-scaled power link routinely has growth = |w|*sigma_max below
+    // 1, so the constant-factor guard fires and escFrac falls to 0 — the
+    // raw integer step function, fr-7u8t.8's palette confetti, through the
+    // back door. The degree is tracked per step beside growth.
+    expect(resolved).toContain(
+      "lastPower = kind == 4 ? 8.0 : (kind == 5 ? 2.0 : 0.0);",
+    );
+    expect(resolved).toContain(
+      "escFrac = clamp(log(log(r) / log(uBoundingRadius)) / log(lastPower), 0.0, 1.0);",
+    );
+    // ...and the fold arm survives underneath it, unchanged.
+    expect(resolved).toContain(
+      "escFrac = clamp(log(r / uBoundingRadius) / log(growth), 0.0, 1.0);",
+    );
+    // The power arm is the SURFACE_BULB arm's own expression with the
+    // link's degree in place of its literal 8.
+    expect(surfaceFragmentFor(0, 0, 0, 0, 1)).toContain(
+      "escFrac = clamp(log(log(r) / log(bail)) / log(8.0), 0.0, 1.0);",
+    );
+  });
+
+  it("emits the bulb arm's bulbPow8 character for character, which is what keeps the duplicate from drifting", () => {
+    // The two forward-orbit arms are ALTERNATIVES — surfaceFragmentFor
+    // refuses the pair — so a chain link of kind 4 cannot call the bulb
+    // arm's definition and the escape arm carries its own copy. Both
+    // mirror variations.ts's triplexPow8; this is the pin that makes a
+    // one-sided edit to either fail here rather than in a browser.
+    const body = (src: string): string => {
+      const start = src.indexOf("  vec3 bulbPow8(vec3 y, float r2) {");
+      expect(start).toBeGreaterThan(-1);
+      const end = src.indexOf("\n  }\n", start);
+      expect(end).toBeGreaterThan(start);
+      return src.slice(start, end + 4);
+    };
+    const escape = body(surfaceFragmentFor(1, 0));
+    const bulb = body(surfaceFragmentFor(0, 0, 0, 0, 1));
+    expect(escape).toBe(bulb);
+    // The extracted text is the whole function, not a prefix that would
+    // match on any two shaders declaring it.
+    expect(escape).toContain("return vec3(rho * s * u8, rho * s * v8, vz);");
+    expect(countOccurrences(surfaceFragmentFor(1, 0), "vec3 bulbPow8(")).toBe(
+      1,
+    );
+  });
+
+  it("keeps the widened escape variant far under the source size that crashed Mesa", () => {
+    // fr-j231 costs this arm the two power branches (twice, both bodies),
+    // the duplicated bulbPow8 and two comment paragraphs. The strip
+    // threshold is 64KB and the measured crash was 82.2KB — the escape
+    // arm's commentary is worth keeping only while it stays under the
+    // first of those.
+    expect(surfaceFragmentFor(1, 0).length).toBeLessThan(64 * 1024);
+    expect(surfaceFragmentFor(1, 0, 1).length).toBeLessThan(64 * 1024);
   });
 });
 
@@ -1044,7 +1200,14 @@ describe("SURFACE_BULB variant (fr-7u8t.9)", () => {
     ] as const) {
       const resolved = surfaceFragmentFor(escape, lens, balloon, 0, 0);
       expect(resolved).not.toContain("uBulb");
-      expect(resolved).not.toContain("bulbPow8");
+      // bulbPow8 is the ONE exception since fr-j231, and only for the
+      // escape arm: a chain link of kind 4 applies the triplex power, and
+      // the two forward-orbit arms are alternatives, so the escape arm
+      // carries its own copy of the function rather than reading this
+      // one. The descent variants still see neither.
+      if (escape === 0) {
+        expect(resolved).not.toContain("bulbPow8");
+      }
       // The arm is resolved away entirely — only the shipped shader's own
       // "closes SURFACE_BULB's #else arm" commentary names it.
       expect(resolved).not.toContain("#if SURFACE_BULB");

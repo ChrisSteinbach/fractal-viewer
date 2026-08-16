@@ -444,13 +444,13 @@ function paramEscapeDE(
       let yy = m[3] * vx + m[4] * vy + m[5] * vz + link.t[1];
       let yz = m[6] * vx + m[7] * vy + m[8] * vz + link.t[2];
       let localL = 1;
-      if (link.foldKind !== SURFACE_FOLD_SPHEREFOLD) {
+      if (link.kind !== SURFACE_FOLD_SPHEREFOLD) {
         const wall = walls[li];
         yx = 2 * Math.max(-wall, Math.min(wall, yx)) - yx;
         yy = 2 * Math.max(-wall, Math.min(wall, yy)) - yy;
         yz = 2 * Math.max(-wall, Math.min(wall, yz)) - yz;
       }
-      if (link.foldKind !== SURFACE_FOLD_BOXFOLD) {
+      if (link.kind !== SURFACE_FOLD_BOXFOLD) {
         const f =
           fR2[li] /
           Math.max(mR2[li], Math.min(fR2[li], yx * yx + yy * yy + yz * yz));
@@ -483,12 +483,12 @@ function paramFoldOnce(de: EscapeDE, fp: FoldParams, p: Vec3, out: Vec3): void {
   let x = m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + de.t[0];
   let y = m[3] * p[0] + m[4] * p[1] + m[5] * p[2] + de.t[1];
   let z = m[6] * p[0] + m[7] * p[1] + m[8] * p[2] + de.t[2];
-  if (de.foldKind !== SURFACE_FOLD_SPHEREFOLD) {
+  if (de.kind !== SURFACE_FOLD_SPHEREFOLD) {
     x = 2 * Math.max(-wall, Math.min(wall, x)) - x;
     y = 2 * Math.max(-wall, Math.min(wall, y)) - y;
     z = 2 * Math.max(-wall, Math.min(wall, z)) - z;
   }
-  if (de.foldKind !== SURFACE_FOLD_BOXFOLD) {
+  if (de.kind !== SURFACE_FOLD_BOXFOLD) {
     const f = fR2 / Math.max(mR2, Math.min(fR2, x * x + y * y + z * z));
     x *= f;
     y *= f;

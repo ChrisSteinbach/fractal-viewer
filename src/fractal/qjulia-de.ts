@@ -80,6 +80,25 @@
  * Together that is roughly 15x cheaper per ray than the escape-time fold
  * mode. `qjulia-de.test.ts` keeps both claims honest.
  *
+ * WHERE THE OBJECT ENDED UP (fr-j231), because the verdict above is not
+ * the last word and this module should say so in its own voice. The
+ * measurement that closed fr-7u8t.5 was about the quaternion square
+ * ALONE — twenty panels of shells and whorls with nothing to resolve —
+ * and `escape-de.ts`'s formula chain does not iterate it alone. A chain
+ * LINK is admitted beside a fold, the map rides the escape core, and it
+ * needs neither its own kernel nor its own 4D lift; the shipped
+ * `hybridChainQuaternion` preset is that composition, and it resolves.
+ * So the object that is dull alone earns its place composed with a fold,
+ * which is the outcome this module's own doc was holding a place for.
+ *
+ * Two things survive that unchanged. The renderer refusal STANDS: no
+ * caller reads {@link estimateQJuliaDistance}, because a chain reads the
+ * map in `v` space with `escape-de.ts`'s own estimate form rather than
+ * this file's `y`-space Böttcher one, and nothing has re-opened the
+ * question of marching the lone object. And the numbers below are still
+ * ITS object's — the 0.059 us/eval, the 1.0 step scale, the conformality
+ * argument — measured on the map by itself and not on any hybrid.
+ *
  * ELIGIBILITY is a sibling of `analyzeEscapeSystem`, not an extension of it:
  * exactly one active map whose single active variation is `qsquare`, no
  * final transform, no kaleidoscope. Note what is deliberately ABSENT — the

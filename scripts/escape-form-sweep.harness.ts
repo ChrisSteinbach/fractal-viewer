@@ -102,12 +102,12 @@ function juliaFormDE(de: EscapeDE): DistanceEstimator {
       let yy = m[3] * vx + m[4] * vy + m[5] * vz + de.t[1];
       let yz = m[6] * vx + m[7] * vy + m[8] * vz + de.t[2];
       let localL = 1;
-      if (de.foldKind !== SURFACE_FOLD_SPHEREFOLD) {
+      if (de.kind !== SURFACE_FOLD_SPHEREFOLD) {
         yx = foldAxis(yx);
         yy = foldAxis(yy);
         yz = foldAxis(yz);
       }
-      if (de.foldKind !== SURFACE_FOLD_BOXFOLD) {
+      if (de.kind !== SURFACE_FOLD_BOXFOLD) {
         const f = 1 / Math.max(0.25, Math.min(1, yx * yx + yy * yy + yz * yz));
         yx *= f;
         yy *= f;

@@ -42,6 +42,9 @@ import type {
 import { buildBulbDE, BULB_ITERATIONS, BULB_STEP_SCALE } from "./bulb-de";
 import {
   buildEscapeDE,
+  ESCAPE_LINK_BULB,
+  ESCAPE_LINK_MANDELBOX,
+  ESCAPE_LINK_QSQUARE,
   ESCAPE_STEP_SCALE,
   ESCAPE_TIME_ITERATIONS,
 } from "./escape-de";
@@ -143,6 +146,34 @@ function rotatedBoxfold(): Transform {
     rotation: [0, 0.35, 0],
     scale: [1, 1, 1],
     variations: [{ type: "boxfold", weight: 1.6 }],
+  };
+}
+
+/** A triplex-power LINK for the fr-j231 chain fixtures — `EscapeLinkKind`
+ * 4, the first kind that is not a fold. Pre-scaled to 0.3, the pre-scale
+ * escape-de.ts's POWER LINKS table measures a renderable object at, so the
+ * fixture is a chain a session could actually author. A LONE power map is
+ * refused by the gate (the Mandelbulb render owns it), so every fixture
+ * here chains it behind {@link canonicalMandelbox}. */
+function bulbLink(): Transform {
+  return {
+    id: 2,
+    position: [0, 0, 0],
+    rotation: [0, 0.2, 0],
+    scale: [0.3, 0.3, 0.3],
+    variations: [{ type: "bulb", weight: 1 }],
+  };
+}
+
+/** The quaternion square LINK — `EscapeLinkKind` 5, the other side of the
+ * `kind < 4u` guard, at the pre-scale its own stiffness bound allows. */
+function qsquareLink(): Transform {
+  return {
+    id: 3,
+    position: [0.1, 0, -0.05],
+    rotation: [0, 0, 0],
+    scale: [0.4, 0.4, 0.4],
+    variations: [{ type: "qsquare", weight: 1 }],
   };
 }
 
@@ -1880,7 +1911,7 @@ describe("groundPlane wrapper (fr-rhn5)", () => {
     expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS_PLANE_BYTES);
     expect(new Uint8Array(buf, 0, SURFACE_GPU_PARAMS_BYTES)).toEqual(plain);
     const view = new DataView(buf);
-    expect(view.getFloat32(256, true)).toBe(Math.fround(de.foldKind));
+    expect(view.getFloat32(256, true)).toBe(Math.fround(de.kind));
     expect(view.getFloat32(260, true)).toBe(Math.fround(de.w));
     expect(view.getFloat32(288, true)).toBe(Math.fround(gp.y));
     expect(view.getFloat32(292, true)).toBe(Math.fround(gp.fadeStart));
@@ -2140,10 +2171,46 @@ describe("packEscapeGpuParams (fr-dlxh)", () => {
     expect(view.getFloat32(244, true)).toBe(Math.fround(de.m[7]));
     expect(view.getFloat32(248, true)).toBe(Math.fround(de.m[8]));
     expect(view.getFloat32(252, true)).toBe(Math.fround(de.t[2]));
-    expect(view.getFloat32(256, true)).toBe(Math.fround(de.foldKind));
+    expect(view.getFloat32(256, true)).toBe(Math.fround(de.kind));
     expect(view.getFloat32(260, true)).toBe(Math.fround(de.w));
     expect(view.getFloat32(264, true)).toBe(Math.fround(de.derivGrowth));
-    expect(view.getFloat32(268, true)).toBe(0); // packed-zero spare
+    // The quartet's tail is the fr-j231 estimate-form flag, 0 on a
+    // fold-only chain (the row below is its 1 case).
+    expect(view.getFloat32(268, true)).toBe(0);
+  });
+
+  it("packs logEstimate at offset 268 — 0 for a fold-only chain, 1 once a POWER link makes the escape super-exponential (fr-j231)", () => {
+    const folds = buildEscapeDE([canonicalMandelbox(), rotatedBoxfold()]);
+    expect(folds.logEstimate).toBe(false);
+    expect(
+      new DataView(packEscapeGpuParams(folds, { itemCount: 1 })).getFloat32(
+        268,
+        true,
+      ),
+    ).toBe(0);
+
+    for (const power of [bulbLink(), qsquareLink()]) {
+      const chain = buildEscapeDE([canonicalMandelbox(), power]);
+      expect(chain.logEstimate).toBe(true);
+      expect(
+        new DataView(packEscapeGpuParams(chain, { itemCount: 1 })).getFloat32(
+          268,
+          true,
+        ),
+      ).toBe(1);
+    }
+  });
+
+  it("reads the flag off the CHAIN and not the head link — a fold head with a power tail still packs 1", () => {
+    // The head link's own kind stays a fold at offset 256, so a packer
+    // that derived the form from the flat (head-link) fields would read 0
+    // here and the kernel would march the linear estimate under a
+    // super-exponential orbit.
+    const chain = buildEscapeDE([canonicalMandelbox(), bulbLink()]);
+    const view = new DataView(packEscapeGpuParams(chain, { itemCount: 1 }));
+    expect(view.getFloat32(256, true)).toBe(Math.fround(chain.links[0].kind));
+    expect(view.getFloat32(256, true)).toBeLessThan(4);
+    expect(view.getFloat32(268, true)).toBe(1);
   });
 });
 
@@ -2172,7 +2239,7 @@ describe("packEscapeGpuMaps (the formula chain, fr-s04t)", () => {
         ].map(Math.fround),
       );
       // p0: the GLSL uEscParams order, so both mirrors read one quartet.
-      expect(maps[base + 12]).toBe(link.foldKind);
+      expect(maps[base + 12]).toBe(link.kind);
       expect(maps[base + 13]).toBe(Math.fround(link.w));
       expect(maps[base + 14]).toBe(Math.fround(link.derivGrowth));
       expect(maps[base + 15]).toBe(0);
@@ -2205,6 +2272,22 @@ describe("packEscapeGpuMaps (the formula chain, fr-s04t)", () => {
     expect(maps[12]).toBe(view.getFloat32(256, true));
     expect(maps[13]).toBe(view.getFloat32(260, true));
     expect(maps[14]).toBe(view.getFloat32(264, true));
+  });
+
+  it("writes the POWER kinds 4 and 5 in the p0.x lane a fold link uses for 1/2/3 (fr-j231) — one dispatch code space for the whole chain", () => {
+    const de = buildEscapeDE([canonicalMandelbox(), bulbLink(), qsquareLink()]);
+    const maps = packEscapeGpuMaps(de);
+    const stride = SURFACE_GPU_MAP_VEC4 * 4;
+    expect(maps[12]).toBe(ESCAPE_LINK_MANDELBOX);
+    expect(maps[stride + 12]).toBe(ESCAPE_LINK_BULB);
+    expect(maps[2 * stride + 12]).toBe(ESCAPE_LINK_QSQUARE);
+    // A power link has no fold apparatus, and buildEscapeLink resolves the
+    // CLASSIC lengths for it rather than zeros — so the lane a stray
+    // sphere-fold read would divide by is never 0 (escape-de.ts's own
+    // reason). Squared on the wire, like every other link's.
+    expect(maps[stride + 24]).toBe(Math.fround(0.5 * 0.5));
+    expect(maps[stride + 25]).toBe(1);
+    expect(maps[stride + 26]).toBe(1);
   });
 
   it("pads to one zero stride rather than an empty array, like packSurfaceGpuMaps", () => {
@@ -2344,7 +2427,10 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
     // Only the denominator moved: the loop bound and the escaped test stay
     // the per-link step budget.
     expect(wgsl).toContain("let steps = params.maxDepth * n;");
-    expect(wgsl).toContain("if (escapedAt < steps && growth > 1.0) {");
+    expect(wgsl).toContain("if (escapedAt < steps) {");
+    // The constant-factor arm is the fold family's, and fr-j231 moved it
+    // behind the power arm rather than changing it.
+    expect(wgsl).toContain("} else if (growth > 1.0) {");
     // ...and the growth rate the fraction divides by is the link that
     // actually produced the escaping radius, not a fixed uniform.
     expect(wgsl).toContain("growth = L.p0.z;");
@@ -2400,6 +2486,93 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
     ).toBe(shadeBase);
   });
 
+  it("guards the fold pair behind kind < 4u in BOTH bodies, and dispatches the two power maps past it (fr-j231)", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "escape" }),
+    );
+    // The value body and the hit-info body each carry the guard: the fold
+    // pair is exhaustive by NEGATION over {1, 2, 3}, so an unguarded kind
+    // 4 satisfies both `!= 2u` and `!= 1u` and runs BOTH folds.
+    expect(wgsl.split("if (kind < 4u) {").length).toBe(3);
+    expect(wgsl.split("} else if (kind == 4u) {").length).toBe(3);
+    // The triplex power's local factor and the quaternion square's, in the
+    // value body only — the hit-info body tracks no dr (colors-only).
+    expect(wgsl).toContain("localL = 8.0 * (r2y * r2y * r2y * sqrt(r2y));");
+    expect(wgsl).toContain("localL = 2.0 * length(y);");
+    expect(wgsl.split("y = bulbPow8(").length).toBe(3);
+    expect(
+      wgsl.split(
+        "y = vec3f(y.x * y.x - y.y * y.y - y.z * y.z, 2.0 * y.x * y.y, 2.0 * y.x * y.z);",
+      ).length,
+    ).toBe(3);
+  });
+
+  it("reads the chain's estimate form off escParams.w — linear r/dr at 0, the Böttcher form at 1, with the inside exit below r = 1 (fr-j231)", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "escape" }),
+    );
+    expect(wgsl).toContain(
+      "if (params.escParams.w == 0.0) {\n    return r / dr;",
+    );
+    // `ln r` is negative below 1 and a negative estimate marches the
+    // tracer backwards, so the converging orbit's exit is 0 — the bulb
+    // core's identical closing pair.
+    expect(wgsl).toContain("if (r <= 1.0) {\n    return 0.0;\n  }");
+    expect(wgsl).toContain("return 0.5 * r * log(r) / dr;");
+  });
+
+  it("picks the trap's interpolant by the DEGREE of the link that produced the terminal radius (fr-j231)", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "escape" }),
+    );
+    // 0 for a fold — asymptotically affine, no exponent to multiply — so a
+    // fold-only chain still reads the constant-factor arm at every step.
+    expect(wgsl).toContain("var lastPower = 0.0;");
+    expect(wgsl).toContain(
+      "lastPower = select(select(0.0, 2.0, kind == 5u), 8.0, kind == 4u);",
+    );
+    // The power arm is the bulb core's own expression with the link's
+    // degree in place of its baked-in 8. A pre-scaled power link has
+    // growth < 1, so without it the constant-factor guard fires and the
+    // trap degenerates to fr-7u8t.8's raw integer step function.
+    expect(wgsl).toContain(
+      "escFrac = clamp(log(log(r) / log(params.boundingRadius)) / log(lastPower), 0.0, 1.0);",
+    );
+  });
+
+  it("emits ONE bulbPow8, character for character the bulb core's — the escape chain's kind-4 link and the bulb core share the definition rather than copying it (fr-j231)", () => {
+    const grab = (src: string): string => {
+      const start = src.indexOf("fn bulbPow8(");
+      expect(start).toBeGreaterThan(-1);
+      return src.slice(start, src.indexOf("\n}", start) + 2);
+    };
+    const escape = surfaceDeKernelWgsl(kernelOpts({ core: "escape" }));
+    const bulb = surfaceDeKernelWgsl(kernelOpts({ core: "bulb" }));
+    expect(escape.split("fn bulbPow8(").length).toBe(2);
+    expect(bulb.split("fn bulbPow8(").length).toBe(2);
+    expect(grab(escape)).toBe(grab(bulb));
+  });
+
+  it("emits it even when no link could be a power map — the source is memoized on the CODEGEN CONFIG, so the chain's contents must not reach the text", () => {
+    // Dead code the compiler drops. Narrowing it to chains that carry a
+    // kind-4 link would key two different kernels to one cache entry,
+    // which is why the emission is unconditional for this core.
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "eval", core: "escape" }),
+    );
+    expect(wgsl).toContain("fn bulbPow8(");
+  });
+
+  it("leaves the DESCENT cores' source untouched — no bulbPow8 anywhere in an affine or fold kernel", () => {
+    for (const core of ["affine", "fold", "affine4", "fold4"] as const) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode, core }));
+        expect(wgsl).not.toContain("bulbPow8");
+        expect(wgsl).not.toContain("kind < 4u");
+      }
+    }
+  });
+
   it("surfaceGpuWorkgroupBytes returns 0 for core 'escape' even under sharedFrontier — the forward loop has no frontier concept", () => {
     expect(
       surfaceGpuWorkgroupBytes({
@@ -2409,6 +2582,103 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
         sharedFrontier: true,
       }),
     ).toBe(0);
+  });
+});
+
+/** `bulbPow8`'s emitted WGSL, FROZEN — character for character the text
+ * that lived inside `bulbDescentText` before fr-j231 hoisted it out to be
+ * shared with the escape chain's kind-4 link. Frozen here for the reason
+ * `escape-de.test.ts` freezes a copy of fr-kltj's loop: the hoist's whole
+ * claim is that it moved the text and changed nothing in it, and a claim
+ * about bytes needs the bytes written down. `variations.ts`'s
+ * `triplexPow8` is the definition both of them mirror; an edit that is
+ * genuinely intended lands here too, deliberately. */
+const BULB_POW8_WGSL = `// variations.ts's triplexPow8, the White/Nylander 8th power in its
+// trig-free form: Chebyshev T8/U7 for the polar angle, three complex
+// squarings (de Moivre) for the azimuth. The power is BAKED IN — triplex
+// multiplication is not associative, so p^8 is not ((p^2)^2)^2 and every
+// power needs its own closed form (bulb-de.ts's BULB_POWER doc). r2 is
+// passed in because every caller already has it.
+fn bulbPow8(y: vec3f, r2: f32) -> vec3f {
+  let a = y.x * y.x + y.y * y.y;
+  let z2 = y.z * y.z;
+  let r4 = r2 * r2;
+  let vz = 128.0 * z2 * z2 * z2 * z2 - 256.0 * z2 * z2 * z2 * r2 + 160.0 * z2 * z2 * r4 - 32.0 * z2 * r4 * r2 + r4 * r4;
+  let s = 128.0 * z2 * z2 * z2 * y.z - 192.0 * z2 * z2 * y.z * r2 + 80.0 * z2 * y.z * r4 - 8.0 * y.z * r4 * r2;
+  let rho = sqrt(a);
+  var inv = 0.0;
+  if (rho > 0.0) {
+    inv = 1.0 / rho;
+  }
+  let u1 = y.x * inv;
+  let v1 = y.y * inv;
+  let u2 = u1 * u1 - v1 * v1;
+  let v2 = 2.0 * u1 * v1;
+  let u4 = u2 * u2 - v2 * v2;
+  let v4 = 2.0 * u2 * v2;
+  let u8 = u4 * u4 - v4 * v4;
+  let v8 = 2.0 * u4 * v4;
+  return vec3f(rho * s * u8, rho * s * v8, vz);
+}`;
+
+describe("bulbPow8 emission and declaration order (fr-j231)", () => {
+  it("declares it before every call site in both FORWARD cores — WGSL has no forward declarations, so a body emitted in the wrong order is a compile error a GPU run would be the first to find", () => {
+    // The shipped order is headerText, then bodyBlock (which carries the
+    // descent text and therefore the definition), then the shade entry
+    // (which carries the hit-info that calls it) — so the definition
+    // precedes every use structurally. This pins that rather than trusting
+    // the assembly to stay in that order.
+    const callSites: Record<string, number> = {
+      eval: 1,
+      march: 1,
+      // Two: the value body's kind-4 branch AND the hit-info's.
+      shade: 2,
+    };
+    for (const core of ["escape", "bulb"] as const) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode, core }));
+        const declAt = wgsl.indexOf("fn bulbPow8(") + "fn ".length;
+        expect(declAt).toBeGreaterThan("fn ".length - 1);
+        // Exactly ONE definition, which is what the hoist bought.
+        expect(wgsl.split("fn bulbPow8(").length).toBe(2);
+
+        const uses = [...wgsl.matchAll(/bulbPow8\(/g)].map((m) => m.index);
+        // The definition's own occurrence is the FIRST one in the source.
+        expect(uses[0]).toBe(declAt);
+        expect(uses.length - 1).toBe(callSites[mode]);
+        for (const at of uses.slice(1)) {
+          expect(at).toBeGreaterThan(declAt);
+        }
+      }
+    }
+  });
+
+  it("emits neither the definition nor a call in ANY descent core — the catch for an emission that stopped being conditional", () => {
+    for (const core of ["affine", "fold", "affine4", "fold4"] as const) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode, core }));
+        expect(wgsl.split("fn bulbPow8(").length - 1).toBe(0);
+        expect([...wgsl.matchAll(/bulbPow8\(/g)].length).toBe(0);
+      }
+    }
+  });
+
+  it("emits the FROZEN text byte for byte in both cores — the hoist moved it and changed nothing in it", () => {
+    for (const core of ["escape", "bulb"] as const) {
+      expect(surfaceDeKernelWgsl(kernelOpts({ core }))).toContain(
+        BULB_POW8_WGSL,
+      );
+    }
+  });
+
+  it("leaves the bulb descent body's own seam where it was — definition, blank line, descent, exactly as when the text was inline", () => {
+    // With the text itself frozen above, this is what makes "core: 'bulb'
+    // is byte-identical to the pre-hoist source" a pinned claim rather
+    // than a measurement someone took once: the only thing an interpolation
+    // could plausibly change is the join, and the join is asserted here.
+    expect(surfaceDeKernelWgsl(kernelOpts({ core: "bulb" }))).toContain(
+      `${BULB_POW8_WGSL}\n\nfn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {`,
+    );
   });
 });
 
