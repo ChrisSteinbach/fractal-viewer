@@ -22,7 +22,7 @@ npm run build         # Production build → dist/app/
 npm run preview       # Preview the production build locally
 npm run smoke         # Headless WebGL smoke test (SwiftShader) — boots the app, asserts it renders
 npm run bench:gpu     # Headless WebGPU flame agreement/bench (real Chrome) — pins the WGSL kernels to their CPU oracles; run after touching flame-gpu*.ts kernels (CI runs it on SwiftShader)
-npm run bench:surface # WebGPU fold-DE kernel agreement/timing — pins surface-de-gpu.ts (eval/march baselines + fr-tzdg's march-unproject/shade app path) to the CPU estimator; add --display=:0 for real-driver timing; run it on a QUIET machine, never concurrently with the test suite or other heavy CPU load — a contended software device corrupts mid-run readbacks, which the fr-76pp canary reports as verdict=device-unreliable (exit 2, rerun) instead of plausible numeric fails. KNOWN SWIFTSHADER FALSE FAILURE (fr-jtd4): the default (no `--display`) run fails the ESCAPE agreement leg on `escChainKaleido` — "21 verified chaotic flips (> 7)" — and it is spurious. Measured on the same commit: SwiftShader failures=5, chaoticFlips=21, maxAbsErr 1.333, bit-identical across a busy box and a quiet one (so it is deterministic, not contention); real Iris `--display=:0` verdict PASS, failures=0, chaoticFlips=1, maxAbsErr 3.4e-06 — a ~400,000x difference in agreement, with `excluded` identical at 97/700 on both, so the ensemble pre-filter is behaving and only the post-hoc flip count moves. ESTABLISHED: the failure is ADAPTER-SPECIFIC and deterministic — a compiler realisation difference in the forward orbit, amplified by ~8x/iteration noise growth into a binary escape decision. REFUTED BY MEASUREMENT: that fr-s9ll's 10bc444 caused it. That commit turned the sphere fold's numerator from a literal `1.0` into a uniform load, which is the right CLASS of change and predicts exactly this shape — but the leg at `10bc444^` returns chaoticFlips 21, bit-identical to HEAD on every field, and 10bc444 is the ONLY functional change to `surface-de-gpu.ts` in that span (the other two commits there are comment-only). So the cause is EARLIER, and no part of fr-s9ll is implicated. AND THERE IS NO REGRESSION AT ALL: measured at 0570354 (fr-s04t), the commit that INTRODUCED `escChainKaleido`, the row already fails with chaoticFlips 21 — bit-identical to HEAD on every field. It has never passed on a software rasteriser. fr-s04t records verification in the app on both engines but no SwiftShader `bench:surface` run, and the flips figure in the paragraph below was fr-dlxh's on real Iris, so this fixture reached this leg on a software adapter for the first time in fr-qjae's run. THE OPEN QUESTION IS THEREFORE CALIBRATION, NOT A BUG: the cap is one number applied to every adapter, and a software rasteriser is a different realisation of the same kernel. Either it becomes adapter-aware or the escape rows are simply judged on `--display=:0`, which is already this file's standing advice. A BONUS RESULT worth keeping from the same runs: `excluded`, `maxAbsErr` and `p99AbsErr` are bit-identical for this fixture across all of `0570354..HEAD` — 104 lines of `escape-de.ts` and 66 of `surface-de-gpu.ts`, fr-s9ll's authored fold radii included — which is fr-s9ll's "byte-identity at the defaults is by CONSTRUCTION" verified empirically on the CPU and GPU sides at once, rather than argued. DO NOT raise the cap to make it green — 7 is calibrated for the driver this leg gates, and fr-7tl3/fr-dlxh built the layered classifier precisely so a real disagreement could not hide inside the chaotic-orbit excuse. Judge the escape rows on `--display=:0`. CI is unaffected (it runs `bench:gpu`, not this)
+npm run bench:surface # WebGPU fold-DE kernel agreement/timing — pins surface-de-gpu.ts (eval/march baselines + fr-tzdg's march-unproject/shade app path) to the CPU estimator; add --display=:0 for real-driver timing; run it on a QUIET machine, never concurrently with the test suite or other heavy CPU load — a contended software device corrupts mid-run readbacks, which the fr-76pp canary reports as verdict=device-unreliable (exit 2, rerun) instead of plausible numeric fails. KNOWN SWIFTSHADER FALSE FAILURE (fr-jtd4): the default (no `--display`) run fails the ESCAPE agreement leg on `escChainKaleido` — "21 verified chaotic flips (> 7)" — and it is spurious. Measured on the same commit: SwiftShader failures=5, chaoticFlips=21, maxAbsErr 1.333, bit-identical across a busy box and a quiet one (so it is deterministic, not contention); real Iris `--display=:0` verdict PASS, failures=0, chaoticFlips=1, maxAbsErr 3.4e-06 — a ~400,000x difference in agreement, with `excluded` identical at 97/700 on both, so the ensemble pre-filter is behaving and only the post-hoc flip count moves. ESTABLISHED: the failure is ADAPTER-SPECIFIC and deterministic — a compiler realisation difference in the forward orbit, amplified by ~8x/iteration noise growth into a binary escape decision. REFUTED BY MEASUREMENT: that fr-s9ll's 10bc444 caused it. That commit turned the sphere fold's numerator from a literal `1.0` into a uniform load, which is the right CLASS of change and predicts exactly this shape — but the leg at `10bc444^` returns chaoticFlips 21, bit-identical to HEAD on every field, and 10bc444 is the ONLY functional change to `surface-de-gpu.ts` in that span (the other two commits there are comment-only). So the cause is EARLIER, and no part of fr-s9ll is implicated. AND THERE IS NO REGRESSION AT ALL: measured at 0570354 (fr-s04t), the commit that INTRODUCED `escChainKaleido`, the row already fails with chaoticFlips 21 — bit-identical to HEAD on every field. It has never passed on a software rasteriser. fr-s04t records verification in the app on both engines but no SwiftShader `bench:surface` run, and the flips figure in the paragraph below was fr-dlxh's on real Iris, so this fixture reached this leg on a software adapter for the first time in fr-qjae's run. THE OPEN QUESTION IS THEREFORE CALIBRATION, NOT A BUG: the cap is one number applied to every adapter, and a software rasteriser is a different realisation of the same kernel. Either it becomes adapter-aware or the escape rows are simply judged on `--display=:0`, which is already this file's standing advice. A BONUS RESULT worth keeping from the same runs: `excluded`, `maxAbsErr` and `p99AbsErr` are bit-identical for this fixture across all of `0570354..HEAD` — 104 lines of `escape-de.ts` and 66 of `surface-de-gpu.ts`, fr-s9ll's authored fold radii included — which is fr-s9ll's "byte-identity at the defaults is by CONSTRUCTION" verified empirically on the CPU and GPU sides at once, rather than argued. DO NOT raise the cap to make it green — 7 is calibrated for the driver this leg gates, and fr-7tl3/fr-dlxh built the layered classifier precisely so a real disagreement could not hide inside the chaotic-orbit excuse. Judge the escape rows on `--display=:0`. CROSS-FAMILY ROWS (fr-j231): four fixtures cover a power link in the chain's TAIL (`escChainBulb`, `escChainQsquare` — a kernel reading the params block's frozen HEAD link for every step fails here), in the MIDDLE of a 3-cycle between two folds of different kinds (`escChainPowerMid` — the per-link guard, and the fold links' radii lanes surviving past a link that reads none), and in the HEAD (`escChainBulbPair`, two power links, rotated so a cycle is distinguishable from one map re-applied). All four carry `logEstimate: true` and so pin `escParams.w` at offset 268; the nine fold-only rows pin the 0 case. ALL FOUR GATE CLEAN ON BOTH ADAPTERS, fail=0, and NO CAP MOVED — real Iris maxAbs 2.98e-6 / 7.70e-6 / 2.51e-6 / 1.53e-5 at excluded 72 / 57 / 1 / 22 of 700 and flips 1 / 0 / 0 / 3, against caps of 140 and 7; SwiftShader's `excluded` is identical (the classifier is CPU-only) and its flips are 0. THE FEARED EXCLUSION BLOWOUT DID NOT HAPPEN, and the mechanism is worth keeping: `8·r⁷` noise growth is real for the ORBIT and wrong about the CLASSIFIER, because a power orbit escapes super-exponentially, membership is decided in one or two steps, and the marginal population the ensemble exists to bracket is SMALLER — three of the four cross-family rows sit BELOW the fold controls (`escMandelbox` 58, `escChainPair` 71). The pre-scales were CHOSEN off that: `excluded` is knowable on the CPU without a GPU run, so the budget was measured first and the fixture picked from it (`bulb(0.5)` rejected at 10/700 because its boundary shell collapses to 16 queries — a nearly free row that tests nothing; `bulb(0.3)` legal at 96/700 but dearer). Reach for that method before guessing. `estimateEscapeDistanceF32`, the leg's f32 twin, had to learn the two power kinds and the estimate form with them — a STALE twin does not disagree, it makes the ensemble exclude everything (fr-s9ll measured 251/700 that way) — and the fold-only rows stay bit-identical by construction and were confirmed so, `escChainKaleido` included at excluded 97 / flips 21 / maxAbs 1.333 to the digit. A `computeFrameEscapeXfam` arm was added beside the eval rows NOT as a fallback but for the one thing they cannot reach: the HIT-INFO body's power branch and its degree-selected escape count, which has no value-body counterpart. It reads GPU 0.223 vs CPU 0.226 on Iris (0.223 vs 0.202 on SwiftShader) — DENSER than its fold sibling `escMandelbox`'s 0.153/0.158, one more datum against the stiffness prediction. CI is unaffected (it runs `bench:gpu`, not this)
 ```
 
 Run a single test file: `npx vitest run src/fractal/chaos-game.test.ts`
@@ -76,8 +76,14 @@ carries the live follow-up: the ~0.75 damping is reachable as
 re-opens fr-7u8t.8's deliberate cost/quality pick rather than winning
 anything free),
 `escape-chain` (fr-za0n's shipped cycling estimator, and the rejected
-per-pass CHAINING arm beside it), `hybrid-chain` (the cross-family
-prototype fr-j231 is filed from — links this gate still refuses),
+per-pass CHAINING arm beside it), `hybrid-chain` (the CROSS-FAMILY
+sheet: the prototype that asked whether the escape-time family composes,
+now measuring the shipped answer against itself — it cross-validates
+`estimateEscapeDistance` on bulb/qsquare chains BIT-EXACTLY against its
+own independently-written orbit, and it is where fr-j231's two verdicts
+are executable: that cycling dissolves the power-link stiffness the bead
+blocked on, and that the Böttcher form is boundary-adaptive on a
+power-dominated chain where fr-282c measured it flat on a fold one),
 `chain-speckle` (fr-vpbq's and fr-byxb's evidence: the speckle is
 sub-pixel, the ramp is bottom-heavy), `bulb-preview` (fr-7u8t.7's step-scale
 sweep), `escape-family-preview` (the three estimators side by side),
@@ -436,7 +442,23 @@ and UI**, so the interesting math is unit-tested without a browser:
     `maxDepth * n` single-link steps — reading one `GpuMap` per link off
     the maps storage binding (`packEscapeGpuMaps`), so the escape core
     DOES declare buffer 1 now and `core:"bulb"` is the one bindingless
-    core left; width/sharedFrontier/
+    core left. Since fr-j231 a link's `kind` may be a POWER map (4
+    triplex, 5 quaternion square), so the fold pair's negative
+    `kind != 2u`/`kind != 1u` dispatch sits behind a `kind < 4u` GUARD in
+    both bodies — this file's own doc names an unguarded new kind as the
+    reason the Mandelbulb became a sixth core, and the guard is what
+    makes a fourth and fifth safe here — `bulbPow8` HOISTED to one
+    definition emitted for the two forward cores rather than copied
+    (declared in the body block, so both the value body and the entry's
+    hit-info see it, and affine/fold kernels stay byte-identical), and
+    the block's `escParams.w` at offset 268 turned from pad into the ONE
+    live word of the head-link ballast: `EscapeDE.logEstimate`, the
+    chain-level choice between `r/dr` and the Böttcher `0.5·r·ln r/dr`.
+    Its hit-info gained the matching second interpolant, off the DEGREE
+    of the link that produced the terminal radius (a pre-scaled power
+    link has `growth < 1`, which failed the old guard and dropped the
+    trap back to the raw integer confetti fr-7u8t.8 removed).
+    width/sharedFrontier/
     bnbStage2/shadeDeWidth are all inert, and its hit-info reports the
     trap as the CONTINUOUS escape fraction (fr-7u8t.8: `escapedAt` minus
     `log(r/R)/log(growth)` for the link that produced the escaping radius,
@@ -656,11 +678,111 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `escape-de.ts` — escape-time fold render's CPU oracle (fr-kltj), and
     since fr-za0n a HYBRID FORMULA CHAIN: the canonical
     Mandelbox/Juliabox object and its hybrids, for exactly the systems
-    the IFS gate refuses (one or more pure-fold flat maps of which at
+    the IFS gate refuses (one or more flat maps of which at
     least one does NOT contract, no final transform, no kaleidoscope
     that rotates out of 3D — `analyzeEscapeSystem` is the deliberate
     COMPLEMENT of `analyzeSurfaceSystem` on that shape, which admits
     exactly when EVERY map contracts).
+    A LINK NEED NOT BE A FOLD since fr-j231: the chain admits the
+    escape-time family's two POWER maps beside its three folds — the
+    triplex 8th power (`bulb`, the Mandelbulb's map) and the quaternion
+    square (`qsquare`) — so one document can hold a Mandelbox and a
+    Mandelbulb in ONE formula chain, which is where Mandelbulber gets its
+    range and the last thing this mode was missing. Nothing structural
+    moved: a link contributes its forward map and its LOCAL Lipschitz
+    factor, and both were already written down in the modules that render
+    those maps alone (`8·|y|⁷` from `bulb-de.ts`, a heuristic; `2·|y|`
+    from `qjulia-de.ts`, EXACT because quaternion norms multiply), so the
+    chain composes the shipped bounds and inherits their status rather
+    than adding a new one. A LONE power map is refused — the Mandelbulb
+    render owns one and `qjulia-de.ts`'s object is fr-7u8t.5's
+    measured-dull won't-do — which is what keeps this gate DISJOINT from
+    `analyzeBulbSystem` rather than merely ordered before it, and costs
+    no range because two power links ARE a chain. A power link's WEIGHT
+    is free (unlike `analyzeBulbSystem`'s lone map, which refuses
+    anything but 1: there is no textbook object here to deform away
+    from, and `dr` accounts for `w` exactly). The orbit stays in `v`
+    space with the literal `+ 1` — the power modules work in `y` space
+    and seed `dr` at `sigma_max(M)`; the two are the same recurrence in
+    different coordinates, but that factoring needs ONE `M` and a chain
+    has n, so staying in `v` is how a chain avoids choosing.
+    THE ESTIMATE FORM FOLLOWS THE CHAIN'S ESCAPE LAW
+    (`EscapeDE.logEstimate`, ONE flag per chain resolved at build and
+    carried on both wires rather than re-decided in six mirrors): folds
+    escape exponentially and read the linear `r/dr`; a power link makes
+    the chain super-exponential and it reads the Böttcher
+    `0.5·r·ln r/dr`, `bulb-de.ts`'s and `qjulia-de.ts`'s own form. That
+    does NOT reopen fr-282c, which refused the log form for the FOLD
+    family — its dimensional argument (the folds are uniform-rescale
+    equivariant) cannot reach a map with `V(λy) = λ^d V(y)`, and its
+    decisive empirical control was re-run here rather than waved past:
+    the log/linear ratio's near/far decile medians are FLAT for a fold
+    chain (0.738 / 0.734, 1.00x) and for a fold-TERMINATED cross chain,
+    and reach 0.55x on a power-dominated one (1.347 / 0.735). The rows
+    where the ratio is not flat are exactly the rows where the form wins
+    big — on `mbox2 -> bulb(0.5)` the bound/step overshoot goes
+    7.4/1.0% -> 2.0/0.9%, a 3.7x cut, against the 1.2x it buys where the
+    ratio IS flat, which is the constant fr-282c already refused. It wins on all
+    eleven measured rows, and at frame level renders MORE surface for
+    FEWER steps (52.68% -> 54.95% of rays at 22.2 -> 19.5 steps/ray),
+    which is what "tighter near the surface, looser far away" looks like.
+    THE PREDICTED STIFFNESS HAZARD DOES NOT REPRODUCE, and it is
+    fr-j231's most useful result. The bead blocked on it: a mandelbox
+    step leaves `|v|` near 7, a triplex 8th power sends 7 to 5.8e5, so
+    `mandelbox w=2 -> bulb` measured 0.01% ball fill — a blank frame for
+    the first thing anyone tries — and the bead recorded a second
+    prediction beside it, that CYCLING would not rescue it. Both figures
+    are the PROTOTYPE's CHAINING arm's, and the shipped orbit CYCLES:
+    `+ p` re-enters after every link, so a power link is applied to a
+    point the query has just tethered and its output is tested before any
+    fold can compound it. BOTH ARMS re-measured at EQUAL WORK (30 passes
+    each, one bailout ball, one seeded 131072-point sampler — NEVER a
+    grid, see below), `scripts/hybrid-chain.harness.ts`, ball fill at
+    pre-scale 1 / 0.6 / 0.5 / 0.4 / 0.3 / 0.2:
+
+        mbox2 -> bulb     cycling  0.29 / 1.57 / 2.78 / 6.32 / 22.89 / 64.56 %
+                          chaining 0.01 / 0.11 / 0.23 / 2.26 / 69.08 / 98.29 %
+                          rays hit 11.0 / 26.9 / 39.1 / 55.0 / 64.8  / 14.4  %
+        mbox2 -> qsquare  cycling  0.01 / 0.33 / 1.59 / 5.01 / 17.61 / 44.41 %
+                          chaining 0.00 / 0.36 / 6.77 / 27.60 / 64.18 / 88.99 %
+                          rays hit 15.8 / 40.7 / 49.8 / 50.6 / 55.9  / 28.5  %
+
+    The untuned pre-scale 1 — the exact case called blank — draws 11.0% of
+    its rays. Pushed the other way it stays renderable: 27x past the
+    closed-form bound (`escapeLinkStiffnessLimit`, kept executable as the
+    refuted prediction's own record) it still draws 0.75%, against 0.095%
+    for fr-17qu's degenerate system through the same marcher. AND CHAINING
+    HAS NO USABLE RANGE AT ALL, which fr-za0n's fold-only sheet could not
+    see: it is 12-29x EMPTIER than cycling from pre-scale 1 down to 0.5
+    and then, one step later, 3.0x and 1.5x FATTER at 0.3 and 0.2 — 69%
+    and 98% of its own bailout ball, fr-7u8t.8's "the rendered object WAS
+    its own bounding sphere" returning intact. Nothing to a solid ball
+    with no window between, where cycling climbs smoothly and reaches
+    neither failure. SO NO
+    AUTO-SCALE AND NO NEW SIGNAL — a hint computed from that bound was
+    written and then DELETED, because it fires on every row of that table
+    and every one of them renders, which is fr-17qu's second-cut lesson
+    verbatim. The volume figures are the same trap one layer down, and
+    the qsquare row is the sharpest case this family has produced:
+    0.012% fill for a system that draws a SIXTH of its rays, beside
+    `mandelboxRings` reading 0.000% at the same sample count while drawing
+    44.9% of them; the shipped `hybridChainCraters` preset reads 0.011%
+    while drawing 18.5%. THE INSTRUMENT MATTERS AND A FIRST DRAFT OF THIS
+    PARAGRAPH GOT IT WRONG: ball fill is a seeded uniform sample against
+    `escapeSetContains`, never a grid. A fold's structure sits on its own
+    walls — the integers, at the classic `boxLimit` — so a grid whose
+    planes land there over-samples them, and over `[-4, 4]` the aligned
+    resolutions are exactly `n - 1` in {8, 16, 24, 32, 40, 48}. On
+    `mandelboxClassic`, n = 23..49 reads 4.54 / 9.33 / 3.44 / 4.63 / 3.60
+    / 7.96 / 5.98 / 5.61% — a 2.72x spread, no convergence, every aligned
+    resolution high — where the sampler reads 3.540 / 3.548 / 3.568% at
+    4k / 64k / 128k. THIN sets only (a 22%-fill chain is 22.4-22.9% at
+    every n), which is why it is easy to miss: it bites exactly the rows a
+    blank-frame question is about. fr-azjk carries it back to the sheets
+    that predate this one. f32 is safe on the GPU mirrors too
+    (worst `dr/r` 2.6e13 over 200k queries, twenty-five orders under
+    3.4e38, zero non-finite): the bailout test bounds `|v|` entering
+    every link and the per-link `+ 1` floors `dr`.
     `estimateEscapeDistance` iterates the maps FORWARD with ONE shared
     scalar running derivative (Buddhi/Rrrola `DE = |v|/dr` — the field's
     standard heuristic, not a certified bound), mirrored by
@@ -757,6 +879,7 @@ and UI**, so the interesting math is unit-tested without a browser:
     `scripts/escape-form-sweep.harness.ts`: it only thins past |t| ~ 2.5
     and is a pitted ball even at its best, so it does not earn the
     permanent document flag it would cost.
+
   - `qjulia-de.ts` — the quaternion Julia set's CPU oracle (fr-7u8t.4):
     `q <- q^2 + c` (Hart/Sandin/Kauffman 1989) in the project's own
     vocabulary, since `q^2 + c` is conjugate by translation to `(q + c)^2`
@@ -780,11 +903,17 @@ and UI**, so the interesting math is unit-tested without a browser:
     of revolution — tested among those panels, and smooth too) are CLOSED
     won't-do along with their epic. The module stays for two reasons: it
     is the executable record of the measurement that refused them, and
-    fr-j231 cites it by name as where the quaternion square's EXACT
-    `2|q|` derivative lives — as a chain LINK the map rides the escape
-    core and needs neither its own kernel nor its own 4D lift, so the
-    object that is dull alone may still earn its place composed with a
-    fold.
+    it is where the quaternion square's EXACT `2|q|` derivative lives —
+    which fr-j231 CASHED IN: the map is now a chain LINK on the escape
+    core, needing neither its own kernel nor its own 4D lift, and the
+    `hybridChainQuaternion` preset renders it. So this module's own
+    prediction came true — the object that is dull alone earns its place
+    composed with a fold — while the module stays production-dead in the
+    literal sense that no renderer calls `estimateQJuliaDistance`: the
+    chain reads the map in `v` space with the linear-or-Böttcher form
+    `escape-de.ts` picks, not this file's `y`-space estimator. Its
+    step-scale and bailout numbers are still ITS object's, not a
+    hybrid's.
   - `bulb-de.ts` — the Mandelbulb's CPU oracle (fr-7u8t.7), third object in
     the escape-time family beside the folds and `qjulia-de.ts`: the triplex
     8th power (`variations.ts`'s `bulb`) iterated in the MANDELBROT form
@@ -810,7 +939,15 @@ and UI**, so the interesting math is unit-tested without a browser:
     `analyzeSurfaceSystem` and `analyzeEscapeSystem`), the compute
     renderer's `{kind:"bulb"}` target and the `SURFACE_BULB` GLSL
     fallback carry it, and the `mandelbulbClassic`/`Offset`/`Rotated`
-    presets reach it from the Escape-time menu group.
+    presets reach it from the Escape-time menu group. Since fr-j231 the
+    same map ALSO rides the escape CHAIN as a link (`ESCAPE_LINK_BULB`),
+    which is why `analyzeEscapeSystem` refuses a LONE triplex power: this
+    module's estimator is the better one for that shape (y space,
+    `dr` seeded at `sigma_max(M)`, the Böttcher form) and its gate must
+    stay the only one that admits it. Two links is a chain, and the
+    chain reads the map in `v` space with the literal `+ 1` instead —
+    the same recurrence in different coordinates, and the one thing a
+    mirror must be deliberate about.
   - `types.ts` — type vocabulary: `Transform`/`Transform4`, `Vec3`/`Vec4`,
     `Bounds`/`Bounds4`, `WExtension`; `VARIATION_TYPES`/`COLOR_MODES`/
     `FOUR_D_COLOR_MODES`/`SYMMETRY_PLANES` const arrays (single source of
@@ -828,15 +965,19 @@ and UI**, so the interesting math is unit-tested without a browser:
     the transform's own affine part does.
   - `variations.ts` — seventeen nonlinear flame variations as pure functions:
     a dozen classics, the Mandelbox fold family (`boxfold`/`spherefold`/
-    `mandelbox`, fr-p7nu), and the two escape-time maps that exist so their
-    renderers can gate on a document shape — `qsquare` (fr-7u8t.3, the
-    quaternion square) and `bulb` (fr-7u8t.7, the White/Nylander triplex
+    `mandelbox`, fr-p7nu), and the two escape-time POWER maps — `qsquare`
+    (fr-7u8t.3, the quaternion square) and `bulb` (fr-7u8t.7, the
+    White/Nylander triplex power). Those two exist so their renderers can
+    gate on a document shape, and since fr-j231 they are also CHAIN LINKS:
+    `escape-de.ts` admits either beside a fold, which is what makes the
+    seventeen-variation vocabulary compose instead of merely coexist.
+    `bulb` is the triplex
     8th power, `triplexPow8`: a TRIG-FREE closed form via the Chebyshev
     `T8`/`U7` polynomials plus de Moivre, an exact rewrite of the
     `acos`/`atan2`/`sin`/`cos`/`pow` one at 6e-14 and ~11x cheaper. The
     power is baked in because triplex multiplication is not associative —
     `p^8` is NOT `((p^2)^2)^2`, which disagrees on 48.8% of queries — so
-    every power would need its own closed form). `composeVariations` blends
+    every power would need its own closed form. `composeVariations` blends
     a transform's weighted list.
     THE FOLD'S THREE LENGTHS ARE AUTHORABLE since fr-s9ll, and this module
     owns what that means: `resolveFoldRadii` is the ONE place the
@@ -1388,7 +1529,33 @@ Frame` callback, which runs before paint so the disabled look never
     meaning PASSES, and `uSymOrder`/`uSymPlane` drive `foldQuerySector` —
     the kaleidoscope's dihedral query-space wedge fold, applied once before
     the orbit. The 24-slot cap is the mode's cap (eligibility is one answer
-    for both engines, and the compute arm's storage list has none). The `SURFACE_BULB` variant (fr-7u8t.9)
+    for both engines, and the compute arm's storage list has none).
+    Since fr-j231 a link may be a POWER map, and the arm cost three
+    things and no layout change: the fold pair's `kind != 2` / `kind != 1`
+    tests are exhaustive by NEGATION over {1, 2, 3}, so kinds 4 and 5 sit
+    behind a `kind < 4` GUARD rather than beside them (unguarded, kind 4
+    satisfies both and runs both folds — the hazard `surface-de-gpu.ts`'s
+    doc cites as why the Mandelbulb became a sixth CORE); `bulbPow8` is
+    DUPLICATED from the `SURFACE_BULB` arm character for character,
+    because the two arms are alternatives and neither can see a
+    definition emitted inside the other (a test diffs the two bodies so
+    the copy cannot drift); and `uEscLogForm` — a scalar, not the params
+    tail that comment once reserved, because the estimate form is ONE
+    number per CHAIN read after the orbit, and making it depend on which
+    link happened to terminate would put a step across every boundary
+    between the two forms. The hit-info trap gained a second interpolant
+    for the same reason it had to: `log(r/R)/log(growth)` models
+    constant-factor growth and a PRE-SCALED power link routinely has
+    `growth < 1`, so the guard fired and the trap fell back to
+    fr-7u8t.8's raw integer confetti; a power-terminated orbit reads
+    `log(log r / log R)/log d` instead, off the DEGREE tracked beside
+    `growth`. That cost the arm 8.3KB — escape 42.2 -> 50.5KB,
+    escape+balloon 48.8 -> 57.1KB — so both still keep their comments,
+    with 14.7KB and 8.2KB of headroom to the 64KB strip threshold. The
+    balloon pairing is the one to watch: another paragraph or two puts it
+    over, which is not a hazard (it strips to ~15KB, far under the 82.2KB
+    that crashed Mesa) but does mean the arm stops reading as source in a
+    driver log. The `SURFACE_BULB` variant (fr-7u8t.9)
     is that arm's SIBLING and `resolveVariantArms`' fifth JS-resolved key,
     nested inside `SURFACE_ESCAPE`'s `#else` (the two are alternatives —
     each replaces the descent bodies wholesale, so `surfaceFragmentFor`
