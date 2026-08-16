@@ -89,11 +89,20 @@
  *     where BALL wins by 10x and 4x), but 0.273/0.276 on the boxfold LENS
  *     and 0.451/0.882 on the flake, where POINT wins — and on the flake
  *     POINT wins at every stop from 0.05 up. In marched DEPTH, POINT wins on
- *     all four at every stop worth quoting: mean |dt| against EXACT at
- *     slider 0.50 is 0.112 / 0.286 / 0.080 / 0.927 world units for BALL
- *     against 0.037 / 0.167 / 0.004 / 0.041 for POINT — 16.9-68.8% of the
- *     marching-ball radius against 0.8-15.2%. (A) does not merely add a
- *     silhouette rind; it floats the whole surface `h` toward the camera.
+ *     all four: mean |dt| against EXACT at slider 0.50 is 0.112 / 0.286 /
+ *     0.080 / 0.927 world units for BALL against 0.037 / 0.167 / 0.004 /
+ *     0.041 for POINT — 16.9-68.8% of the marching-ball radius against
+ *     0.8-15.2%. (A) does not merely add a silhouette rind; it floats the
+ *     whole surface `h` toward the camera.
+ *
+ *     THE DEPTH COLUMN CARRIES ITS OWN CAVEAT AND THE TABLE PRINTS IT: those
+ *     means are taken over COMMONLY-hit pixels, and at slider 0.50 POINT
+ *     shares only 17 / 199 / 89 / 1626 pixels with EXACT against BALL's
+ *     478 / 1464 / 321 / 1844. On three systems POINT wins the depth
+ *     comparison partly by declining to draw — its shared pixels are the
+ *     ones the zero-thickness slice already had, i.e. the easy ones. On
+ *     `sixteenCellFlake`, where the two populations are comparable (1626
+ *     against 1844), the comparison is clean and POINT still wins by 23x.
  *
  *  3. IT ADDS RIND WHERE THE REAL SLAB ADDS STRUCTURE. Chebyshev distance
  *     from each ADDED pixel to the arm it is added to, at slider 0.50: 61% /
@@ -773,7 +782,7 @@ describe("fr-v7ca: ball slack against the exact segment slab", () => {
           `${frame.radius.toFixed(3)})`,
       );
       lines.push(
-        "    slider |  dt(E,B) mean    p95 |  dt(E,P) mean    p95 |  steps/px  E     B     P |  ms E    B",
+        "    slider |  dt(E,B) mean    p95     px |  dt(E,P) mean    p95     px |  steps/px  E     B     P",
       );
       SLIDER_STOPS.forEach((stop, i) => {
         const gapB = depthGap(exact[i], ball[i]);
@@ -784,16 +793,18 @@ describe("fr-v7ca: ball slack against the exact segment slab", () => {
             " |" +
             num(gapB.mean, 4, 13) +
             num(gapB.p95, 4, 7) +
+            // How many pixels the two means are taken over: a gap averaged
+            // over a handful of commonly-hit pixels is not a measurement,
+            // and the POINT column runs thin exactly where its object is.
+            cell(String(gapB.n), 7) +
             " |" +
             num(gapP.mean, 4, 13) +
             num(gapP.p95, 4, 7) +
+            cell(String(gapP.n), 7) +
             " |" +
             num(exact[i].panel.steps / (PANEL * PANEL), 1, 11) +
             num(ball[i].panel.steps / (PANEL * PANEL), 1, 6) +
-            num(point.panel.steps / (PANEL * PANEL), 1, 6) +
-            " |" +
-            num(exact[i].panel.ms, 0, 6) +
-            num(ball[i].panel.ms, 0, 6),
+            num(point.panel.steps / (PANEL * PANEL), 1, 6),
         );
       });
 
