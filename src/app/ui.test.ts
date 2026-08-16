@@ -471,6 +471,10 @@ describe("Ui glow brightness slider", () => {
 });
 
 describe("Ui balloon echo radius row (fr-5wlv.2)", () => {
+  function balloonEchoRow(): HTMLElement {
+    return document.getElementById("balloonEchoRow") as HTMLElement;
+  }
+
   function balloonRadiusRow(): HTMLElement {
     return document.getElementById("balloonRadiusRow") as HTMLElement;
   }
@@ -487,17 +491,28 @@ describe("Ui balloon echo radius row (fr-5wlv.2)", () => {
     expect(balloonRadiusRow().classList.contains("hidden")).toBe(false);
   });
 
-  it("hides both balloon rows for a non-flat system (the echo is 3D-only)", () => {
+  it("keeps the checkbox available for a non-flat system while the echo is off", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      transforms: nonFlatTransforms(),
+      balloonEcho: false,
+    });
+
+    expect(balloonEchoRow().classList.contains("hidden")).toBe(false);
+    expect(balloonRadiusRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows both balloon rows for a non-flat system while the echo is on", () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
       transforms: nonFlatTransforms(),
       balloonEcho: true,
     });
-    expect(
-      document.getElementById("balloonEchoRow")!.classList.contains("hidden"),
-    ).toBe(true);
-    expect(balloonRadiusRow().classList.contains("hidden")).toBe(true);
+
+    expect(balloonEchoRow().classList.contains("hidden")).toBe(false);
+    expect(balloonRadiusRow().classList.contains("hidden")).toBe(false);
   });
 
   it("fires onBalloonInflate when the Inflate button is clicked", () => {

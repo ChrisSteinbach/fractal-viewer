@@ -753,7 +753,9 @@
           <!-- The balloon echo (fr-5wlv.2): a second, sphere-inverted point
                cloud behind the explorer's own. Persisted scene content since
                fr-5wlv.6 — one balloon shared with the surface render's
-               Balloon checkbox below. -->
+               Balloon checkbox below. Since fr-5666, a 4D cloud projects each
+               source point through the shared rotor/w-ramp/slice path, then
+               inverts that displayed 3D point through the full 4D ball. -->
           <label
             class="checkbox-label"
             id="balloonEchoRow"
@@ -1304,10 +1306,10 @@
           <!-- The surface balloon (fr-5wlv.4): the explorer's balloon echo
                (fr-5wlv.2) rendered as real geometry by the tracer. Binds the
                SAME persisted state pair (fr-5wlv.6), so one balloon carries
-               across renderers. 3D-only this cut (hidden in a live 4D
-               surface session, and while the active session is
-               escape-shaped — the balloon is permanently inert there,
-               fr-5wlv.4). -->
+               across renderers. The 4D arm (fr-qxxw) slices then inverts; the
+               Points arm (fr-5666) projects then inverts — dimensional
+               reduction first in both. Hidden only while the active session
+               is escape-shaped, where the balloon is permanently inert. -->
           <label
             class="checkbox-label"
             id="surfaceBalloonRow"
