@@ -1624,12 +1624,19 @@ Frame` callback, which runs before paint so the disabled look never
     fr-7u8t.8's raw integer confetti; a power-terminated orbit reads
     `log(log r / log R)/log d` instead, off the DEGREE tracked beside
     `growth`. That cost the arm 8.3KB — escape 42.2 -> 50.5KB,
-    escape+balloon 48.8 -> 57.1KB — so both still keep their comments,
-    with 14.7KB and 8.2KB of headroom to the 64KB strip threshold. The
-    balloon pairing is the one to watch: another paragraph or two puts it
-    over, which is not a hazard (it strips to ~15KB, far under the 82.2KB
-    that crashed Mesa) but does mean the arm stops reading as source in a
-    driver log. The `SURFACE_BULB` variant (fr-7u8t.9)
+    escape+balloon 48.8 -> 57.1KB — so both still keep their comments.
+    The balloon pairing is the one to watch: another paragraph or two puts
+    it over the 64KB strip threshold, which is not a hazard (it strips to
+    ~15KB, far under the 82.2KB that crashed Mesa) and is not even
+    reachable in the app (balloon is IFS-only, fr-5wlv.4), but does mean
+    the arm stops reading as source in a driver log. AND A PARAGRAPH DULY
+    ARRIVED: fr-8fii's corrected clamp-cost record added ~1.7KB, so the
+    measured sizes today are escape 52.3KB and escape+balloon 58.7KB —
+    11.7KB and 5.3KB of headroom. Measure before adding the next one
+    (`surfaceFragmentFor(escape, lens, balloon, plane, bulb).length`
+    against `SURFACE_GLSL_STRIP_BYTES`); the affine/lens/balloon variants
+    are unaffected because they strip unconditionally (28.1 / 27.8 /
+    29.4KB), and `bulb` sits at 36.3KB. The `SURFACE_BULB` variant (fr-7u8t.9)
     is that arm's SIBLING and `resolveVariantArms`' fifth JS-resolved key,
     nested inside `SURFACE_ESCAPE`'s `#else` (the two are alternatives —
     each replaces the descent bodies wholesale, so `surfaceFragmentFor`
