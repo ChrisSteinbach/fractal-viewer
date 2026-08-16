@@ -778,8 +778,26 @@ and UI**, so the interesting math is unit-tested without a browser:
     resolution high — where the sampler reads 3.540 / 3.548 / 3.568% at
     4k / 64k / 128k. THIN sets only (a 22%-fill chain is 22.4-22.9% at
     every n), which is why it is easy to miss: it bites exactly the rows a
-    blank-frame question is about. fr-azjk carries it back to the sheets
-    that predate this one. f32 is safe on the GPU mirrors too
+    blank-frame question is about. AND A DISTANCE THRESHOLD IS NOT A
+    MEMBERSHIP ORACLE IN EITHER DIRECTION, which is the larger of the two
+    defects and is what manufactured the record's phantom collapse: a small
+    estimate means "near a boundary" for an ESCAPER too (escapeSetContains'
+    own doc), and CHAINING floors `dr` once per PASS, so a hard-contracting
+    chain keeps `dr` near 1 and returns O(1) distances at points whose
+    orbits never leave the ball — the bead's 0.47% at pre-scale 0.2 was a
+    set filling 98% of its own bailout ball, read as almost empty. Held at
+    the bead's OWN 16-pass budget so the instrument is the only difference,
+    its chaining row re-reads 0.01 / 0.12 / 0.24 / 6.40 / 72.88 / 98.32%
+    against the recorded 0.01 / 0.05 / 2.09 / 10.30 / 5.09 / 0.47 — 8.7x
+    high at 0.5, then 14x and 209x LOW at 0.3 and 0.2, a different SHAPE
+    rather than a precision error. fr-azjk carries both findings back to
+    the sheets that predate this one. A CROSS-FAMILY CHAIN CAN ALSO BE
+    CHEAPER THAN THE SINGLE MAP, the same result from the cost side:
+    priced as ratios in one run, `mbox2 -> bulb(1)` is 0.54x
+    `mandelboxClassic` and `bulb -> bulb rot20` 0.95x, against 1.26-1.80x
+    for the rest — a stiff link means most orbits leave on the first pass
+    and never reach the second link, let alone the 30-pass ceiling. f32 is
+    safe on the GPU mirrors too
     (worst `dr/r` 2.6e13 over 200k queries, twenty-five orders under
     3.4e38, zero non-finite): the bailout test bounds `|v|` entering
     every link and the per-link `+ 1` floors `dr`.

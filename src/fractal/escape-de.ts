@@ -81,6 +81,18 @@
  * bailout ball, and it tends to draw the object (and so the marching ball
  * the queries are drawn in) inward as well.
  *
+ * A CROSS-FAMILY CHAIN CAN BE CHEAPER THAN THE SINGLE MAP (fr-j231), which
+ * is the same result the STIFFNESS paragraph reaches from the other side.
+ * Priced as RATIOS against `mandelboxClassic` at the same budget in one run
+ * — the absolute moves with machine load, the ratio does not —
+ * `scripts/hybrid-chain.harness.ts` measures `mbox2 -> bulb(1)` at
+ * **0.54x** the single map and `bulb(0.5) -> bulb(0.5) rot20` at 0.95x,
+ * against 1.26-1.80x for the rest. At pre-scale 1 the bulb link sits 3.4x
+ * past its stiffness limit, so nearly every orbit leaves on its first pass
+ * and never reaches the second link at all, let alone the 30-pass ceiling.
+ * A stiff link makes a chain CHEAP; what it costs is set size, and the
+ * measurements below say it does not cost much of that either.
+ *
  * WHERE THE OFFSET LANDS IS THE SAME FORK UNDER ANOTHER NAME, which is
  * worth saying because the prototype names it separately. That harness
  * offers `offset: "pass" | "link"` inside its chaining orbit — `+ p` after
@@ -136,12 +148,12 @@
  * EMPTY CHAINS ARE REACHABLE, AND THE MODE MUST BE ABLE TO SAY SO. A chain
  * whose composite expands too hard escapes on its first pass everywhere,
  * and then this mode renders a blank frame with nothing anywhere saying
- * why — which reads as a broken app. The sharpest case is a power link
- * (a mandelbox leaves `|v|` near 7 and a triplex 8th power sends 7 to
- * 5.8e5 in one step, so `mandelbox w=2 -> bulb` is 0.01% full and only
- * becomes non-empty when the link's pre-scale roughly inverts the
- * expansion ahead of it — 5.09% at pre-scale 0.3), and that shape is out
- * of this gate. But FOLD-ONLY chains reach it too, measured: `mbox2 ->
+ * why — which reads as a broken app. (This paragraph used to name a power
+ * link as the sharpest case, on figures that were the PROTOTYPE's chaining
+ * arm read through a grid — and fr-j231 both admitted that shape into this
+ * gate and re-measured it: see POWER LINKS ARE STIFF below, where the
+ * untuned cross chain turns out to draw 11% of its rays.) FOLD-ONLY chains
+ * reach it, measured: `mbox2 ->
  * mbox2 pre-scale 4`, `mbox2 pre-scale 8 -> boxfold1.6`, `boxfold6 x3` and
  * `spherefold3 pre-scale 6 -> mbox2` all probe empty, and every one of
  * them passes this gate. So {@link probeEscapeFill} exists: a seeded,
@@ -366,6 +378,27 @@
  * it is one number per chain, resolved at build and carried on the wire so
  * that six mirrors cannot each decide it differently.
  *
+ * fr-282c's DECISIVE control settles it, re-run over three independent
+ * seeds: the near/far decile medians of `log/linear` are FLAT for a fold
+ * chain (1.00x) and for a fold-TERMINATED cross chain, and reach 0.55x on a
+ * power-dominated one — and the rows where the ratio is not flat are
+ * exactly the rows where the form wins big (bound overshoot cut 3.7x at
+ * `mbox2 -> bulb(0.5)`, against the 1.2x it buys where flat, which is the
+ * constant fr-282c already refused).
+ *
+ * ONE OPEN OBSERVATION, deliberately not a result. A three-link fixture
+ * adapts the OTHER way — `box1.6 -> bulb(0.3) -> sph1.2` reads near 0.793
+ * against far 1.048 — and the direction is stable (1.32x / 1.31x / 1.32x
+ * over three seeds), but it is a property of that SYSTEM rather than of
+ * chain length or of cross-family chains: the same power link at the same
+ * pre-scale between different folds (`mbox2 -> bulb(0.3) -> box1.6 rot20`)
+ * reads FLAT at 0.98x. The untested guess worth writing down for whoever
+ * picks it up is that the ratio IS `0.5·ln r_terminal`, so it is set by
+ * which link the orbit escapes on, and the adaptive fixture is the only one
+ * here ending in a BARE sphere fold, whose inversion throws an escaping
+ * point far past the bailout ball — its far decile sits at `r ~ 8.1`,
+ * double the bailout. Nothing ships on that fixture.
+ *
  * POWER LINKS ARE STIFF, AND CYCLING RESCUES THEM ANYWAY — the feature's
  * one predicted hazard, tested on the shipped orbit and REFUTED. The
  * prediction was sound and its arithmetic is worth keeping: a mandelbox
@@ -377,13 +410,26 @@
  *
  * — 0.30 for a unit-weight triplex power at `R = 4`, 0.5 for the
  * quaternion square. Above that the composite looks like a one-way trip
- * out of its own bailout ball at every query, and the prototype measured
- * exactly that: `mandelbox w=2 -> bulb` at pre-scale 1 fills 0.01% of the
- * ball, reaching 5.09% only once the pre-scale is 0.3. fr-17qu's whole
- * blank-frame notice was scheduled ahead of this bead on the strength of
- * it, and the bead recorded a second prediction beside it — that cycling
- * would NOT help, since a cycled bulb link still sees `|v| <= 4` and
- * `4⁸ = 65536` still escapes.
+ * out of its own bailout ball at every query, and the prototype appeared
+ * to measure exactly that: `mandelbox w=2 -> bulb` at pre-scale 1 reading
+ * 0.01% of the ball and rising to only 5.09% at pre-scale 0.3.
+ * fr-17qu's whole blank-frame notice was scheduled ahead of this bead on
+ * the strength of that row, and the bead recorded a second prediction
+ * beside it — that cycling would NOT help, since a cycled bulb link still
+ * sees `|v| <= 4` and `4⁸ = 65536` still escapes.
+ *
+ * BOTH HALVES OF THAT ROW WERE WRONG, and separating them took two
+ * measurements. Its INSTRUMENT was a grid thresholding the distance
+ * estimate (see THE INSTRUMENT below); re-read through
+ * {@link probeEscapeFill} at the same 16-pass budget, so the instrument is
+ * the only thing that changed, the chaining arm reads 0.01 / 0.12 / 0.24 /
+ * 6.40 / 72.88 / 98.32% as the pre-scale falls 1 -> 0.2, against the
+ * record's 0.01 / 0.05 / 2.09 / 10.30 / 5.09 / 0.47. That is 8.7x HIGH at
+ * 0.5 and then 14x and 209x LOW at 0.3 and 0.2 — not a precision error but
+ * a different SHAPE: the record describes a narrow usable band with a
+ * collapse after it, where the arm actually climbs monotonically into a
+ * solid ball. And its ORBIT was the rejected one, which is the next
+ * paragraph.
  *
  * The prototype's numbers are its CHAINING arm's, and the shipped orbit
  * cycles. That is the whole difference, and it is decisive: cycling
@@ -437,20 +483,34 @@
  * draw anything), and it covers these chains unchanged.
  *
  * THE INSTRUMENT, because a first draft of this paragraph was wrong about
- * its own numbers. Ball fill here is a SEEDED UNIFORM SAMPLE against
- * {@link escapeSetContains}, never a grid scan. A regular grid does not
- * measure the volume of a fold set: the structure sits on the fold's own
- * walls — at the integers, for the classic `boxLimit` — so a grid whose
- * planes land there over-samples them, and over `[-4, 4]` the aligned
- * resolutions are exactly `n - 1` in {8, 16, 24, 32, 40, 48}. Measured on
- * `mandelboxClassic` at n = 23..49 the readings run
+ * its own numbers and so was the record it inherited. Ball fill here is a
+ * SEEDED UNIFORM SAMPLE against {@link escapeSetContains}, never a grid
+ * and never a threshold. Two independent defects, and the second is the
+ * larger:
+ *
+ * THE GRID ALIASES. A regular grid does not measure the volume of a fold
+ * set: the structure sits on the fold's own walls — at the integers, for
+ * the classic `boxLimit` — so a grid whose planes land there over-samples
+ * them, and over `[-4, 4]` the aligned resolutions are exactly `n - 1` in
+ * {8, 16, 24, 32, 40, 48}. On `mandelboxClassic`, n = 23..49 reads
  * 4.54 / 9.33 / 3.44 / 4.63 / 3.60 / 7.96 / 5.98 / 5.61% — a 2.72x spread
  * with no convergence, every aligned resolution high — where the sampler
  * reads 3.540 / 3.548 / 3.568% at 4k / 64k / 128k. THIN sets only: a
  * 22%-fill chain reads 22.4-22.9% at every n, which is why this is easy to
  * miss, since it bites exactly the rows a blank-frame question is about.
- * fr-azjk carries the same finding back to the sheets that predate this
- * one.
+ *
+ * AND A DISTANCE THRESHOLD IS NOT A MEMBERSHIP ORACLE, in EITHER
+ * direction — which is what manufactured the phantom collapse above.
+ * {@link escapeSetContains}'s own doc gives one direction: `|v|/dr` goes
+ * small for a near-boundary ESCAPER too, whose `dr` has run away just as
+ * far. The other direction is the one that bit, and it is specific to the
+ * rejected orbit: CHAINING floors `dr` only once per PASS, so a
+ * hard-contracting chain keeps `dr` near 1 and returns O(1) distances at
+ * points whose orbits never leave the ball. Those points ARE in the set,
+ * and a `de(p) < eps` test counts every one of them out — so the record's
+ * 0.47% at pre-scale 0.2 was a set filling 98% of its own bailout ball,
+ * read as almost empty. fr-azjk carries both findings back to the sheets
+ * that predate this one.
  *
  * ELIGIBILITY is the COMPLEMENT of the IFS gate on the shapes this formula
  * covers: one or more active maps, each of whose active variation list is
