@@ -2657,6 +2657,35 @@ interface SurfaceDeResults {
    * maps buffer, unscaled priors). Gates like {@link computeFrame}, plus
    * the strided CPU sanity march's hit-rate band on real hardware. */
   computeFrameEscape?: SurfaceComputeFrameRow | SkippedResult;
+  /** fr-j231: {@link computeFrameEscape} over a CROSS-FAMILY chain
+   * (`escChainBulb` — mandelbox -> triplex power). Same leg, same gates,
+   * one thing the M2 eval leg above cannot reach: the HIT-INFO body's
+   * power branch and its `log(log r / log R) / log d` escape count, which
+   * the value body has no counterpart for. It also renders the claim
+   * fr-j231 actually makes — that a document holding a Mandelbox and a
+   * Mandelbulb reaches the production renderer through the existing
+   * `{ kind: "escape" }` target — end to end.
+   *
+   * NOT a substitute for the eval row, and it is worth being explicit
+   * about that: the fear going in was that a power link's `8·r⁷` noise
+   * growth would blow past the eval leg's exclusion/flip caps and force
+   * the rows onto this rate band instead. Measured, it did not (see the
+   * cross-family fixture block's numbers), so both gates cover them.
+   *
+   * MEASURED: real Iris, 256x144 in 247ms wall / 202ms GPU, 41 passes, 0
+   * exhausted, 8205 hits — GPU rate 0.223 against the CPU sanity march's
+   * 0.226; SwiftShader, 96x54 in 132ms, 28 passes, 1155 hits, 0.223
+   * against 0.202. The two adapters agree on the rate to three decimals,
+   * and the row carries one result beyond agreement: at the harness pose
+   * this cross-family chain draws 0.223 of its rays against the FOLD
+   * sibling `escMandelbox`'s 0.153, i.e. a mandelbox-plus-Mandelbulb
+   * chain is DENSER than the mandelbox alone — one more measurement
+   * against the stiffness prediction that a power link renders a chain
+   * marginal or empty (escape-de.ts's POWER LINKS ARE STIFF paragraph,
+   * whose own ball-fill and ray-hit tables refute it from the CPU side).
+   * NOTE the same stdout caveat as {@link computeFrame4}: the runner's
+   * printer predates this field, so the row also lands in `notes`. */
+  computeFrameEscapeXfam?: SurfaceComputeFrameRow | SkippedResult;
   /** fr-dlxh 4D (stage B2): leg B over the ifs4 class — the PRODUCTION
    * renderer on aff4Kaleido through `{ kind: "ifs4" }` (affine4 ladder
    * core, GpuMap4 maps, the REQUIRED `view4` spec field), plus a
@@ -4135,7 +4164,7 @@ function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
     t: link.t.map(f),
     w: f(link.w),
     g: f(link.derivGrowth),
-    kind: link.foldKind,
+    kind: link.kind,
     // fr-s9ll: this LINK's own fold lengths, pre-rounded like everything
     // else here — the squares `EscapeLink` keeps and the kernels' `fold`
     // lane carries. A twin left at the classic 0.25/1/1 does not merely
@@ -4193,18 +4222,75 @@ function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
     let yy = f(f(f(f(m[3] * vx) + f(m[4] * vy)) + f(m[5] * vz)) + t[1]);
     let yz = f(f(f(f(m[6] * vx) + f(m[7] * vy)) + f(m[8] * vz)) + t[2]);
     let localL = 1;
-    if (link.kind !== 2) {
-      yx = fold(yx, link.wall);
-      yy = fold(yy, link.wall);
-      yz = fold(yz, link.wall);
-    }
-    if (link.kind !== 1) {
-      const r2 = f(f(f(yx * yx) + f(yy * yy)) + f(yz * yz));
-      const s = f(link.fR2 / Math.max(link.mR2, Math.min(link.fR2, r2)));
-      yx = f(yx * s);
-      yy = f(yy * s);
-      yz = f(yz * s);
-      localL = s;
+    // fr-j231: the fold pair sits behind the kernels' own `kind < 4` guard
+    // — the two NEGATIVE tests below are exhaustive by negation over
+    // {1, 2, 3} alone, so a power link reaching them would run BOTH folds
+    // (escape-de.ts's EscapeLinkKind doc names that hazard).
+    if (link.kind < 4) {
+      if (link.kind !== 2) {
+        yx = fold(yx, link.wall);
+        yy = fold(yy, link.wall);
+        yz = fold(yz, link.wall);
+      }
+      if (link.kind !== 1) {
+        const r2 = f(f(f(yx * yx) + f(yy * yy)) + f(yz * yz));
+        const s = f(link.fR2 / Math.max(link.mR2, Math.min(link.fR2, r2)));
+        yx = f(yx * s);
+        yy = f(yy * s);
+        yz = f(yz * s);
+        localL = s;
+      }
+    } else if (link.kind === 4) {
+      // The triplex 8th power, term for term against the oracle's own
+      // inlined copy — which is `estimateBulbDistanceF32`'s below, since
+      // escape-de.ts inlines `variations.ts`'s triplexPow8 character for
+      // character the way bulb-de.ts does. Local factor `8·|y|⁷`.
+      const a = f(f(yx * yx) + f(yy * yy));
+      const z2 = f(yz * yz);
+      const r2 = f(a + z2);
+      const r4 = f(r2 * r2);
+      const nz = f(
+        f(
+          f(
+            f(
+              f(f(f(f(128 * z2) * z2) * z2) * z2) -
+                f(f(f(f(256 * z2) * z2) * z2) * r2),
+            ) + f(f(f(160 * z2) * z2) * r4),
+          ) - f(f(f(32 * z2) * r4) * r2),
+        ) + f(r4 * r4),
+      );
+      const s = f(
+        f(
+          f(
+            f(f(f(f(128 * z2) * z2) * z2) * yz) -
+              f(f(f(f(192 * z2) * z2) * yz) * r2),
+          ) + f(f(f(80 * z2) * yz) * r4),
+        ) - f(f(f(8 * yz) * r4) * r2),
+      );
+      const rho = f(Math.sqrt(a));
+      const inv = rho > 0 ? f(1 / rho) : 0;
+      const u1 = f(yx * inv);
+      const v1 = f(yy * inv);
+      const u2 = f(f(u1 * u1) - f(v1 * v1));
+      const v2 = f(f(2 * u1) * v1);
+      const u4 = f(f(u2 * u2) - f(v2 * v2));
+      const v4 = f(f(2 * u2) * v2);
+      const u8 = f(f(u4 * u4) - f(v4 * v4));
+      const v8 = f(f(2 * u4) * v4);
+      yx = f(f(rho * s) * u8);
+      yy = f(f(rho * s) * v8);
+      yz = nz;
+      localL = f(8 * f(f(f(r2 * r2) * r2) * f(Math.sqrt(r2))));
+    } else {
+      // The quaternion square on span{1, i, j} — local factor `2·|y|`,
+      // EXACT rather than a bound (qjulia-de.ts).
+      const nx = f(f(f(yx * yx) - f(yy * yy)) - f(yz * yz));
+      const ny = f(f(2 * yx) * yy);
+      const nz = f(f(2 * yx) * yz);
+      localL = f(2 * f(Math.sqrt(f(f(f(yx * yx) + f(yy * yy)) + f(yz * yz)))));
+      yx = nx;
+      yy = ny;
+      yz = nz;
     }
     vx = f(f(link.w * yx) + q[0]);
     vy = f(f(link.w * yy) + q[1]);
@@ -4212,7 +4298,12 @@ function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
     dr = f(f(f(link.g * localL) * dr) + 1);
     r = f(Math.sqrt(f(f(f(vx * vx) + f(vy * vy)) + f(vz * vz))));
   }
-  return r / dr;
+  // fr-j231: the chain's escape law picks the form (escape-de.ts's ESTIMATE
+  // FORM paragraph) — `EscapeDE.logEstimate` rides `escParams.w` on the
+  // wire, so the twin must read the same flag the kernel does. A fold-only
+  // chain keeps the linear quotient bit for bit.
+  if (!de.logEstimate) return r / dr;
+  return r <= 1 ? 0 : f(f(f(0.5 * r) * f(Math.log(r))) / dr);
 }
 
 /**
@@ -6901,6 +6992,10 @@ async function runSurfaceComputeFrameEscapeLeg(
   dom: SurfaceSectionDom,
   status: (text: string) => void,
   activity: ActivityBadge,
+  // fr-j231: the canvas label, so the cross-family arm gets its own
+  // picture instead of painting over the fold one (surfaceLabeledCanvas
+  // reuses by label, and only captions on creation).
+  canvasLabel = "frame-escape",
 ): Promise<SurfaceComputeFrameRow> {
   const width = software ? SURFACE_FRAME_WIDTH_SW : SURFACE_FRAME_WIDTH;
   const height = software ? SURFACE_FRAME_HEIGHT_SW : SURFACE_FRAME_HEIGHT;
@@ -6923,7 +7018,7 @@ async function runSurfaceComputeFrameEscapeLeg(
   try {
     const canvas = surfaceLabeledCanvas(
       dom,
-      "frame-escape",
+      canvasLabel,
       `compute frame escape — ${sys.name}`,
       width,
       height,
@@ -8937,6 +9032,12 @@ async function runSurfaceDeSection(
   // per-link rather than per-system; and `escChainKaleido` is the same
   // pair under a 5-fold kaleidoscope, because the query-space wedge fold
   // is equally a no-op on every unsymmetrised row.
+  //
+  // AND FOUR CROSS-FAMILY ROWS SINCE fr-j231 (their own block at the end of
+  // the list, with the measured exclusion budget that picked their
+  // pre-scales): every row above is fold-only, so none of them reaches the
+  // two POWER link kinds, the `kind < 4` guard that keeps them out of the
+  // fold pair, or the chain-level `logEstimate` flag.
   const escapeSystemDefs: {
     name: string;
     transforms: Transform[];
@@ -9120,6 +9221,196 @@ async function runSurfaceDeSection(
           rotation: [0.2, 0, 0.1],
           scale: [1, 1, 1],
           variations: [{ type: "boxfold", weight: 1.5, boxLimit: 3 }],
+        },
+      ],
+    },
+    // fr-j231: the CROSS-FAMILY rows. A link may now be one of two POWER
+    // maps (`ESCAPE_LINK_BULB` 4, `ESCAPE_LINK_QSQUARE` 5) beside the three
+    // folds, and every row above is fold-only — so all four of the
+    // feature's moving parts are invisible to them: the kernels' `kind < 4`
+    // GUARD (a power kind reaching the fold pair satisfies BOTH `!= 2` and
+    // `!= 1` and silently runs both folds — escape-de.ts's EscapeLinkKind
+    // doc names that hazard), the two power bodies and their local factors
+    // (`8·|y|⁷`, `2·|y|`), and `EscapeDE.logEstimate` on the wire
+    // (`escParams.w`, offset 268), which swaps the whole chain's estimate
+    // from `r / dr` to the Böttcher form `0.5·r·ln r / dr`. A fold-only
+    // chain packs 0 there, so the nine rows above ALSO pin that the flag
+    // leaves them bit-identical.
+    //
+    // The four cover the power kinds in every chain POSITION, which is
+    // what a `kind` read from the wrong slot would survive otherwise: the
+    // first two put one in the TAIL (a kernel reading the params block's
+    // frozen HEAD link for every step runs mandelbox twice and fails),
+    // `escChainPowerMid` puts one BETWEEN two folds of different kinds in a
+    // 3-cycle (so the guard is exercised per-link rather than per-system,
+    // and the fold links' own radii lanes must still arrive intact past a
+    // link that reads none), and `escChainBulbPair` is the two-power chain
+    // the module doc calls "a genuinely new set" — the only row where a
+    // power map is link 0, i.e. the one the head-link ballast agrees with.
+    //
+    // PRE-SCALES ARE MEASURED, not tuned by eye: a power link is stiff
+    // (`escapeLinkStiffnessLimit`), so its `scale` is what keeps the object
+    // off both walls — empty on one side, near-solid on the other. Measured
+    // on the CPU oracle at these exact parameters (bailout-ball fill /
+    // queries the ENSEMBLE classifier excludes of 700 / queries landing in
+    // the mix's own `DE < 0.02` boundary shell), against the two fold-only
+    // controls:
+    //
+    //   escMandelbox     (control)  fill 3.42%  excl  58  nearBnd 283
+    //   escChainPair     (control)  fill 1.56%  excl  71  nearBnd 281
+    //   escChainBulb                fill 7.71%  excl  72  nearBnd 106
+    //   escChainQsquare             fill 6.18%  excl  57  nearBnd 285
+    //   escChainPowerMid            fill 7.62%  excl   1  nearBnd 144
+    //   escChainBulbPair            fill 9.57%  excl  22  nearBnd 300
+    //
+    // — every row inside `SURFACE_ESCAPE_EXCLUDED_CAP` (140) with room to
+    // spare, and three of the four BELOW the fold controls. That is not
+    // luck and it is worth writing down: a power orbit escapes
+    // super-exponentially, so its membership decision is made in one or two
+    // steps and there is far less of the marginal population the ensemble
+    // classifier exists to bracket. The prediction going in was the
+    // opposite (`8·r⁷` at r ~ 1.2 is ~27x per link against the folds' ~8x),
+    // and it is wrong about the CLASSIFIER for the same reason cycling
+    // rescued the stiff chains: the query re-enters after every link.
+    //
+    // HOW THAT TABLE WAS OBTAINED IS THE REUSABLE PART, and the next
+    // person adding an escape fixture should start here rather than
+    // guessing a parameter and running the GPU six times. The `excluded`
+    // column costs NO GPU: `forwardQueryStable` compares this file's f32
+    // twin against the f64 oracle and nothing else, so a candidate's
+    // exclusion budget — the one number a new forward-orbit row can
+    // plausibly fail its cap on — is a pure function of the fixture,
+    // computable in about a second per candidate. Sweep the parameter on
+    // the CPU, pick, and spend the bench run on the question only a real
+    // driver can answer (`failures`, `chaoticFlips`, `maxAbsErr`). The
+    // measured runs then confirmed the method rather than merely using
+    // it: every `excluded` above came back IDENTICAL from both adapters.
+    //
+    // AND PICK FOR WHAT THE ROW TESTS, not for the smallest number. The
+    // instructive rejection is `mbox2 -> bulb` at pre-scale 0.5: excl 10
+    // — the cheapest candidate measured, five rows better than the one
+    // shipped — but its object is small enough (fill 3.00%) that the
+    // query mix's chord bisection lands only 16 of 700 queries in the
+    // `DE < 0.02` shell, against 106 at 0.4. A nearly-free row that
+    // samples the far field is worth less than a slightly dearer one that
+    // samples the boundary, which is where a distance estimator is
+    // actually hard. Pre-scale 0.3 was rejected from the other side (excl
+    // 96, fill 25.77% — legal, and a richer object, but 96 of the 140
+    // budget spent for it). The same two-sided read picked the others:
+    // qsquare 0.4 over 0.5 (fill 6.18% vs 1.30%, nearBnd 285 vs 269, for
+    // excl 57 vs 42) and the mid-chain bulb at 0.3 over 0.4 (fill 7.62%
+    // vs 2.42% at excl 1 vs 40).
+    //
+    // AND THE ROWS THEMSELVES, MEASURED ON BOTH ADAPTERS (private w12
+    // s2=off wg64, n=700 each; `--display=:0` real Iris Xe / gen-12lp
+    // first, the default SwiftShader run second). fail / maxAbs / p99Abs /
+    // excluded / verified chaotic flips:
+    //
+    //   escChainBulb      0  2.98e-6  8.52e-7  72  1  |  0  3.91e-6  9.54e-7  72  0
+    //   escChainQsquare   0  7.70e-6  7.42e-7  57  0  |  0  7.70e-6  7.38e-7  57  0
+    //   escChainPowerMid  0  2.51e-6  1.00e-6   1  0  |  0  7.43e-6  9.18e-7   1  0
+    //   escChainBulbPair  0  1.53e-5  5.27e-6  22  3  |  0  1.74e-5  6.98e-6  22  0
+    //
+    // Both adapters gate CLEAN on all four, worst flip count 3 against
+    // `SURFACE_ESCAPE_FLIP_CAP`'s 7 and worst exclusion 72 against 140, so
+    // NO cap moved and none needed to (fr-j231 went in expecting to have
+    // to argue for one). `excluded` is adapter-INDEPENDENT by construction
+    // — the ensemble classifier is CPU-only — and it duly reads identical
+    // in both columns, which is the same cross-adapter identity fr-jtd4
+    // leaned on. The real-Iris run is the one that judges these rows
+    // (this file's standing advice for every forward-orbit leg); the
+    // SwiftShader run's only failure is the pre-existing `escChainKaleido`
+    // false failure fr-jtd4 documents (fail=5, flips=21, maxAbs 1.333),
+    // reproduced here bit for bit and untouched by these fixtures.
+    {
+      name: "escChainBulb",
+      seed: 410,
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+        {
+          id: 1,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          // The pre-scale IS the parameter here (escape-de.ts's POWER LINKS
+          // ARE STIFF table): 0.4 sits mid-range of the measured 0.2-1.0
+          // span where this chain renders, at 7.71% ball fill.
+          scale: [0.4, 0.4, 0.4],
+          variations: [{ type: "bulb", weight: 1 }],
+        },
+      ],
+    },
+    {
+      name: "escChainQsquare",
+      seed: 411,
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+        {
+          id: 1,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.4, 0.4, 0.4],
+          variations: [{ type: "qsquare", weight: 1 }],
+        },
+      ],
+    },
+    {
+      name: "escChainPowerMid",
+      seed: 412,
+      transforms: [
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "boxfold", weight: 1.6 }],
+        },
+        {
+          id: 1,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.3, 0.3, 0.3],
+          variations: [{ type: "bulb", weight: 1 }],
+        },
+        {
+          id: 2,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "spherefold", weight: 1.2 }],
+        },
+      ],
+    },
+    {
+      name: "escChainBulbPair",
+      seed: 413,
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "bulb", weight: 1 }],
+        },
+        {
+          id: 1,
+          position: [0, 0, 0],
+          // Rotated, or the two links would be the same map and the row
+          // could not tell a cycle from a single map re-applied.
+          rotation: [0, (20 * Math.PI) / 180, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "bulb", weight: 1 }],
         },
       ],
     },
@@ -11490,6 +11781,78 @@ async function runSurfaceDeSection(
           frameFailed = true;
           results.computeFrameEscape = { skipped: describeError(e) };
           results.notes.push(`compute frame escape: ${describeError(e)}`);
+        }
+      }
+      render();
+
+      // fr-j231: the same leg over a CROSS-FAMILY chain — one PRODUCTION
+      // frame of `escChainBulb` (mandelbox -> triplex power) through the
+      // unchanged `{ kind: "escape" }` target. The eval leg above pins the
+      // VALUE body's two power branches over 700 stability-gated queries
+      // per row; this pins what has no value-body counterpart — the
+      // hit-info body's own power branch and the degree-selected escape
+      // count — and demonstrates the routing claim end to end. Same
+      // gates, same rate band, same truncation convention, and the same
+      // per-frame cost as its fold sibling (measured 154ms on real Iris).
+      const escXfamSys = escapeSystems.find((s) => s.name === "escChainBulb");
+      if (!escXfamSys) {
+        results.computeFrameEscapeXfam = {
+          skipped: "escChainBulb did not build (see notes)",
+        };
+      } else {
+        try {
+          const row = await runSurfaceComputeFrameEscapeLeg(
+            escXfamSys,
+            acquired.software,
+            dom,
+            status,
+            activity,
+            "frame-escape-xfam",
+          );
+          results.computeFrameEscapeXfam = row;
+          results.notes.push(
+            `compute frame escape xfam (escChainBulb) ${row.width}x${row.height}: ` +
+              `wall=${row.wallMs.toFixed(0)}ms gpu=${row.gpuMs.toFixed(0)}ms ` +
+              `passes=${String(row.passes)} hit=${String(row.counts.hit)} ` +
+              `miss=${String(row.counts.miss)} exh=${String(row.counts.exhausted)} ` +
+              `active=${String(row.counts.active)} rate gpu=${(row.sanityGpuHitRate ?? 0).toFixed(3)} ` +
+              `cpu=${(row.sanityCpuHitRate ?? 0).toFixed(3)}` +
+              (row.truncated ? " TRUNCATED" : ""),
+          );
+          if (row.counts.hit === 0 && !acquired.software) {
+            frameFailed = true;
+            results.notes.push(
+              "compute frame escape xfam: zero hit rays on a real adapter — failing the leg",
+            );
+          }
+          if (row.truncated) {
+            results.notes.push(
+              `compute frame escape xfam: truncated at its ${acquired.software ? SURFACE_FRAME_BUDGET_SW_MS : SURFACE_FRAME_BUDGET_MS}ms budget` +
+                (acquired.software
+                  ? " — accepted on a software adapter"
+                  : " — informational (only hit=0 or a null frame gate; the rate-band check is skipped while truncated)"),
+            );
+          } else {
+            const gap = Math.abs(
+              (row.sanityGpuHitRate ?? 0) - (row.sanityCpuHitRate ?? 0),
+            );
+            if (gap > SURFACE_SANITY_HIT_RATE_TOL) {
+              if (acquired.software) {
+                results.notes.push(
+                  `compute frame escape xfam: hit-rate gap ${gap.toFixed(3)} vs the CPU sanity march — informational on a software adapter`,
+                );
+              } else {
+                frameFailed = true;
+                results.notes.push(
+                  `compute frame escape xfam: hit-rate gap ${gap.toFixed(3)} vs the CPU sanity march exceeds ${String(SURFACE_SANITY_HIT_RATE_TOL)} — failing the leg`,
+                );
+              }
+            }
+          }
+        } catch (e) {
+          frameFailed = true;
+          results.computeFrameEscapeXfam = { skipped: describeError(e) };
+          results.notes.push(`compute frame escape xfam: ${describeError(e)}`);
         }
       }
       render();

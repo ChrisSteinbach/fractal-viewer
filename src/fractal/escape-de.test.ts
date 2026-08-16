@@ -1,16 +1,23 @@
 import {
   analyzeEscapeSystem,
   buildEscapeDE,
+  ESCAPE_LINK_BOXFOLD,
+  ESCAPE_LINK_BULB,
+  ESCAPE_LINK_MANDELBOX,
+  ESCAPE_LINK_QSQUARE,
   ESCAPE_PROBE_POINTS,
   ESCAPE_PROBE_SEED,
   ESCAPE_TIME_ITERATIONS,
   ESCAPE_TIME_RADIUS,
+  escapeLinkPower,
+  escapeLinkStiffnessLimit,
   escapeSetContains,
   estimateEscapeDistance,
   foldQueryIntoSector,
   probeEscapeFill,
 } from "./escape-de";
 import type { EscapeDE } from "./escape-de";
+import { composeAffine } from "./affine";
 import { analyzeBulbSystem } from "./bulb-de";
 import {
   foldChain,
@@ -27,8 +34,10 @@ import {
   SURFACE_FOLD_BOXFOLD,
   SURFACE_FOLD_MANDELBOX,
   SURFACE_FOLD_SPHEREFOLD,
+  transformSigmas,
 } from "./surface-de";
 import { mulberry32 } from "./rng";
+import { composeVariations, resolveFoldRadii, triplexPow8 } from "./variations";
 import type { SymmetryParams, Transform, VariationType, Vec3 } from "./types";
 
 /** The canonical single-map Mandelbox shape: identity-scale affine with an
@@ -91,12 +100,12 @@ function frKltjReference(
     let fy: number;
     let fz: number;
     let localL: number;
-    if (de.foldKind === SURFACE_FOLD_BOXFOLD) {
+    if (de.kind === SURFACE_FOLD_BOXFOLD) {
       fx = foldAxis(yx);
       fy = foldAxis(yy);
       fz = foldAxis(yz);
       localL = 1;
-    } else if (de.foldKind === SURFACE_FOLD_SPHEREFOLD) {
+    } else if (de.kind === SURFACE_FOLD_SPHEREFOLD) {
       const r2 = yx * yx + yy * yy + yz * yz;
       const f = 1 / Math.max(0.25, Math.min(1, r2));
       fx = yx * f;
@@ -121,6 +130,207 @@ function frKltjReference(
     r = Math.sqrt(vx * vx + vy * vy + vz * vz);
   }
   return r / dr;
+}
+
+/**
+ * The FOLD-ONLY chain estimator as it stood before fr-j231 widened the link
+ * vocabulary, frozen beside {@link frKltjReference} and for the same reason:
+ * fr-za0n's cycled orbit, fr-s9ll's authored lengths, the query-space wedge
+ * fold inlined, and the linear `r / dr` estimate returned unconditionally —
+ * because there was no other form to choose. A fold-only document must
+ * reproduce this to the bit however many link kinds the chain learns, so
+ * this must never be refactored to share code with the estimator it checks.
+ *
+ * The one thing fr-j231 moved here is a NAME: the link's map used to be
+ * `foldKind` and is now `kind`.
+ */
+function frZa0nChainReference(
+  de: EscapeDE,
+  p: Vec3,
+  maxIterations = ESCAPE_TIME_ITERATIONS,
+): number {
+  const foldAxis = (t: number, wall: number): number =>
+    2 * Math.max(-wall, Math.min(wall, t)) - t;
+  let qx = p[0];
+  let qy = p[1];
+  let qz = p[2];
+  if (de.symmetryOrder > 1) {
+    const ia = de.symmetryPlane === "yz" ? 1 : 0;
+    const ib = de.symmetryPlane === "xy" ? 1 : 2;
+    const folded = [p[0], p[1], p[2]];
+    const sector = (2 * Math.PI) / de.symmetryOrder;
+    const a = folded[ia];
+    const b = folded[ib];
+    const turn = Math.round(Math.atan2(b, a) / sector) * sector;
+    const c = Math.cos(turn);
+    const s = Math.sin(turn);
+    folded[ia] = a * c + b * s;
+    folded[ib] = Math.abs(b * c - a * s);
+    [qx, qy, qz] = folded;
+  }
+  const links = de.links;
+  const n = links.length;
+  let vx = qx;
+  let vy = qy;
+  let vz = qz;
+  let dr = 1;
+  let r = Math.sqrt(vx * vx + vy * vy + vz * vz);
+  for (
+    let step = 0;
+    step < maxIterations * n && r <= ESCAPE_TIME_RADIUS;
+    step++
+  ) {
+    const link = links[step % n];
+    const m = link.m;
+    const yx = m[0] * vx + m[1] * vy + m[2] * vz + link.t[0];
+    const yy = m[3] * vx + m[4] * vy + m[5] * vz + link.t[1];
+    const yz = m[6] * vx + m[7] * vy + m[8] * vz + link.t[2];
+    let fx: number;
+    let fy: number;
+    let fz: number;
+    let localL: number;
+    const wall = link.boxLimit;
+    const mR2 = link.minRadius2;
+    const fR2 = link.fixedRadius2;
+    if (link.kind === SURFACE_FOLD_BOXFOLD) {
+      fx = foldAxis(yx, wall);
+      fy = foldAxis(yy, wall);
+      fz = foldAxis(yz, wall);
+      localL = 1;
+    } else if (link.kind === SURFACE_FOLD_SPHEREFOLD) {
+      const r2 = yx * yx + yy * yy + yz * yz;
+      const f = fR2 / Math.max(mR2, Math.min(fR2, r2));
+      fx = yx * f;
+      fy = yy * f;
+      fz = yz * f;
+      localL = f;
+    } else {
+      const bx = foldAxis(yx, wall);
+      const by = foldAxis(yy, wall);
+      const bz = foldAxis(yz, wall);
+      const r2 = bx * bx + by * by + bz * bz;
+      const f = fR2 / Math.max(mR2, Math.min(fR2, r2));
+      fx = bx * f;
+      fy = by * f;
+      fz = bz * f;
+      localL = f;
+    }
+    vx = link.w * fx + qx;
+    vy = link.w * fy + qy;
+    vz = link.w * fz + qz;
+    dr = link.derivGrowth * localL * dr + 1;
+    r = Math.sqrt(vx * vx + vy * vy + vz * vz);
+  }
+  return r / dr;
+}
+
+/** One POWER-map link (fr-j231) — {@link foldMap}'s twin for the two
+ * cross-family maps, so a chain fixture reads as what it holds. */
+function powerMap(
+  id: number,
+  type: "bulb" | "qsquare",
+  weight = 1,
+  overrides: Partial<Transform> = {},
+): Transform {
+  return {
+    id,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [1, 1, 1],
+    variations: [{ type, weight }],
+    ...overrides,
+  };
+}
+
+/**
+ * An INDEPENDENT chain orbit (fr-j231), built from the DOCUMENT rather than
+ * from a built {@link EscapeDE}, and reaching for `variations.ts`'s own
+ * forward maps rather than restating them: `composeVariations` supplies every
+ * warp — `triplexPow8` for a bulb link, the `qsquare` table entry for a
+ * quaternion one, `foldVariationFn` at its authored lengths for a fold — and
+ * each link's local Lipschitz factor is written out from the module doc's
+ * own table (`1`, `fR²/clamp(|y|², mR², fR²)`, `8·|y|⁷`, `2·|y|`).
+ *
+ * It returns the orbit's terminal radius and derivative bound rather than a
+ * distance, so the two estimate FORMS can be checked separately from the
+ * orbit that feeds them.
+ *
+ * This is the discipline `scripts/spherefold-radius-sweep.harness.ts` set for
+ * `runEscapeOrbit`, and the strongest assurance available before six shader
+ * mirrors are written against this code: a reference that merely restated the
+ * estimator would pin nothing. Unsymmetrised on purpose — the query-space
+ * wedge fold has its own suite above, and {@link frZa0nChainReference}
+ * carries it.
+ */
+function referenceOrbit(
+  transforms: Transform[],
+  p: Vec3,
+  maxIterations = ESCAPE_TIME_ITERATIONS,
+): { r: number; dr: number } {
+  const noRng = () => 0;
+  const links = transforms
+    .filter((t) => (t.weight ?? 1) > 0)
+    .map((t) => {
+      const v = (t.variations ?? []).filter((e) => e.weight !== 0)[0];
+      const affine = composeAffine(t);
+      const radii = resolveFoldRadii(v);
+      return {
+        m: affine.m,
+        t: affine.t,
+        type: v.type,
+        w: v.weight,
+        growth: Math.abs(v.weight) * transformSigmas(t).max,
+        mR2: radii.minRadius * radii.minRadius,
+        fR2: radii.fixedRadius * radii.fixedRadius,
+        /** This link's forward warp, from `variations.ts` itself. */
+        warp: composeVariations([{ ...v, weight: 1 }])!,
+        /** ...and its box fold alone, which is where a mandelbox link's
+         * sphere factor is evaluated. */
+        boxOnly: composeVariations([
+          { type: "boxfold", weight: 1, boxLimit: radii.boxLimit },
+        ])!,
+      };
+    });
+  const n = links.length;
+  let vx = p[0];
+  let vy = p[1];
+  let vz = p[2];
+  let dr = 1;
+  let r = Math.sqrt(vx * vx + vy * vy + vz * vz);
+  for (
+    let step = 0;
+    step < maxIterations * n && r <= ESCAPE_TIME_RADIUS;
+    step++
+  ) {
+    const link = links[step % n];
+    const m = link.m;
+    const yx = m[0] * vx + m[1] * vy + m[2] * vz + link.t[0];
+    const yy = m[3] * vx + m[4] * vy + m[5] * vz + link.t[1];
+    const yz = m[6] * vx + m[7] * vy + m[8] * vz + link.t[2];
+    const f = link.warp(yx, yy, yz, noRng);
+    let localL: number;
+    if (link.type === "boxfold") {
+      localL = 1;
+    } else if (link.type === "spherefold") {
+      const r2 = yx * yx + yy * yy + yz * yz;
+      localL = link.fR2 / Math.max(link.mR2, Math.min(link.fR2, r2));
+    } else if (link.type === "mandelbox") {
+      const b = link.boxOnly(yx, yy, yz, noRng);
+      const r2 = b[0] * b[0] + b[1] * b[1] + b[2] * b[2];
+      localL = link.fR2 / Math.max(link.mR2, Math.min(link.fR2, r2));
+    } else if (link.type === "bulb") {
+      const r2 = yx * yx + yy * yy + yz * yz;
+      localL = 8 * (r2 * r2 * r2 * Math.sqrt(r2));
+    } else {
+      localL = 2 * Math.sqrt(yx * yx + yy * yy + yz * yz);
+    }
+    vx = link.w * f[0] + p[0];
+    vy = link.w * f[1] + p[1];
+    vz = link.w * f[2] + p[2];
+    dr = link.growth * localL * dr + 1;
+    r = Math.sqrt(vx * vx + vy * vy + vz * vz);
+  }
+  return { r, dr };
 }
 
 describe("analyzeEscapeSystem eligibility (fr-kltj, widened by fr-za0n)", () => {
@@ -240,7 +450,7 @@ describe("analyzeEscapeSystem eligibility (fr-kltj, widened by fr-za0n)", () => 
       canonicalMandelbox({ id: 1, weight: 0 }),
       foldMap(2, "swirl", 2),
     ]);
-    expect(analysis.reasons).toEqual(["map 3 is not a pure fold"]);
+    expect(analysis.reasons).toEqual(["map 3 is not a pure fold or power map"]);
   });
 
   it("refuses blends, non-fold variations and finals", () => {
@@ -253,13 +463,13 @@ describe("analyzeEscapeSystem eligibility (fr-kltj, widened by fr-za0n)", () => 
           ],
         }),
       ]).reasons,
-    ).toEqual(["map 1 is not a pure fold"]);
+    ).toEqual(["map 1 is not a pure fold or power map"]);
 
     expect(
       analyzeEscapeSystem([
         canonicalMandelbox({ variations: [{ type: "swirl", weight: 2 }] }),
       ]).reasons,
-    ).toEqual(["map 1 is not a pure fold"]);
+    ).toEqual(["map 1 is not a pure fold or power map"]);
 
     expect(
       analyzeEscapeSystem(
@@ -313,7 +523,7 @@ describe("buildEscapeDE (fr-kltj, widened by fr-za0n)", () => {
         variations: [{ type: "mandelbox", weight: -2 }],
       }),
     ]);
-    expect(de.foldKind).toBe(SURFACE_FOLD_MANDELBOX);
+    expect(de.kind).toBe(SURFACE_FOLD_MANDELBOX);
     expect(de.w).toBe(-2);
     expect(de.derivGrowth).toBeCloseTo(2 * 1.5, 12);
     expect(de.t).toEqual([0.4, 0.3, 0.2]);
@@ -328,7 +538,7 @@ describe("buildEscapeDE (fr-kltj, widened by fr-za0n)", () => {
       foldMap(2, "boxfold", 1.6),
       foldMap(3, "spherefold", 1.2, { scale: [2, 2, 2] }),
     ]);
-    expect(de.links.map((l) => l.foldKind)).toEqual([
+    expect(de.links.map((l) => l.kind)).toEqual([
       SURFACE_FOLD_MANDELBOX,
       SURFACE_FOLD_BOXFOLD,
       SURFACE_FOLD_SPHEREFOLD,
@@ -348,7 +558,7 @@ describe("buildEscapeDE (fr-kltj, widened by fr-za0n)", () => {
     const head = de.links[0];
     expect(de.m).toBe(head.m);
     expect(de.t).toBe(head.t);
-    expect(de.foldKind).toBe(head.foldKind);
+    expect(de.kind).toBe(head.kind);
     expect(de.w).toBe(head.w);
     expect(de.derivGrowth).toBe(head.derivGrowth);
   });
@@ -913,7 +1123,7 @@ describe("the escape-time CHAIN presets (fr-za0n, fr-s04t)", () => {
     const { links } = buildEscapeDE(t);
     expect(links.length).toBeGreaterThan(1);
     const fingerprints = links.map((l) =>
-      JSON.stringify([l.foldKind, l.w, l.m, l.t]),
+      JSON.stringify([l.kind, l.w, l.m, l.t]),
     );
     expect(new Set(fingerprints).size).toBe(links.length);
   });
@@ -1075,5 +1285,505 @@ describe("the Mandelbrot form (fr-7u8t.8)", () => {
       }
     }
     expect(interior / inBall).toBeLessThan(0.3);
+  });
+});
+
+describe("the cross-family gate (fr-j231)", () => {
+  it("refuses a LONE triplex power and names the render that owns it", () => {
+    // Not a scoping accident: a single triplex power already has an object,
+    // a better estimator (`bulb-de.ts`'s, in y space with the Böttcher form)
+    // and its own presets and kernel core. Refusing it here is what keeps
+    // this gate DISJOINT from analyzeBulbSystem rather than merely ordered
+    // before it.
+    const analysis = analyzeEscapeSystem([powerMap(0, "bulb")]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual([
+      "map 1 is a lone triplex power (the Mandelbulb render owns it)",
+    ]);
+  });
+
+  it("refuses a LONE quaternion square and says to chain it", () => {
+    // `qjulia-de.ts`'s object is the measured-dull one fr-7u8t.5 closed
+    // won't-do after twenty smooth panels — so the refusal names the way
+    // forward rather than a render that would take it.
+    const analysis = analyzeEscapeSystem([powerMap(0, "qsquare")]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual([
+      "map 1 is a lone quaternion square (chain it with another map)",
+    ]);
+  });
+
+  it("admits a bulb link chained behind a fold", () => {
+    expect(
+      analyzeEscapeSystem([foldMap(0, "mandelbox", 2), powerMap(1, "bulb")]),
+    ).toEqual({ status: "eligible", reasons: [] });
+  });
+
+  it("admits a quaternion-square link chained behind a fold", () => {
+    expect(
+      analyzeEscapeSystem([foldMap(0, "mandelbox", 2), powerMap(1, "qsquare")]),
+    ).toEqual({ status: "eligible", reasons: [] });
+  });
+
+  it("admits TWO power links — it is composition the gate widened for", () => {
+    // `bulb -> bulb` at a rotation is a genuinely new set, so neither
+    // refusal above costs the family any range.
+    expect(
+      analyzeEscapeSystem([
+        powerMap(0, "bulb"),
+        powerMap(1, "bulb", 1, { rotation: [0.3, 0.2, -0.4] }),
+      ]),
+    ).toEqual({ status: "eligible", reasons: [] });
+  });
+
+  it("admits a power link at a weight analyzeBulbSystem refuses", () => {
+    // A deliberate difference, not an oversight. A lone bulb map at a weight
+    // other than 1 renders a set `estimateBulbDistance` was not derived for,
+    // so that gate refuses it; in a CHAIN the weight is just another link
+    // parameter, and `dr` accounts for it exactly through derivGrowth.
+    expect(
+      analyzeEscapeSystem([
+        foldMap(0, "mandelbox", 2),
+        powerMap(1, "bulb", 0.7),
+      ]),
+    ).toEqual({ status: "eligible", reasons: [] });
+    expect(analyzeBulbSystem([powerMap(0, "bulb", 0.7)]).reasons).toEqual([
+      "the triplex power's weight must be 1 (scale the map instead)",
+    ]);
+  });
+
+  it("refuses a power link on a map that extends into 4D", () => {
+    const analysis = analyzeEscapeSystem([
+      foldMap(0, "mandelbox", 2),
+      powerMap(1, "bulb", 1, { w: { position: 0.4 } }),
+    ]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual(["map 2 extends into 4D"]);
+  });
+
+  it("stays DISJOINT from analyzeBulbSystem on a lone triplex power", () => {
+    // Exactly one of the two gates admits it, and it is the bulb one —
+    // which is what lets main.ts's forward arm read them in sequence.
+    const lone = [powerMap(0, "bulb")];
+    expect(analyzeBulbSystem(lone).status).toBe("eligible");
+    expect(analyzeEscapeSystem(lone).status).toBe("ineligible");
+    expect(analyzeBulbSystem(mandelbulbClassic()).status).toBe("eligible");
+    expect(analyzeEscapeSystem(mandelbulbClassic()).status).toBe("ineligible");
+  });
+
+  it("still names a variation that is neither fold nor power", () => {
+    // The message widened with the link vocabulary, and it has to keep
+    // naming the map: this is the only thing the panel gets told when a
+    // system drops out of the render mode.
+    const analysis = analyzeEscapeSystem([
+      foldMap(0, "mandelbox", 2),
+      foldMap(1, "sinusoidal", 1),
+      powerMap(2, "bulb"),
+    ]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toEqual(["map 2 is not a pure fold or power map"]);
+  });
+
+  it("takes the side the IFS gate leaves — a cross-family chain is this mode's", () => {
+    // The complement is firmer here than for folds: analyzeSurfaceSystem
+    // refuses any map carrying a non-fold variation outright, so a chain
+    // holding a power link is never IFS-eligible whatever its weights.
+    const chain = [foldMap(0, "mandelbox", 2), powerMap(1, "bulb")];
+    expect(analyzeSurfaceSystem(chain).status).toBe("ineligible");
+    expect(analyzeEscapeSystem(chain)).toEqual({
+      status: "eligible",
+      reasons: [],
+    });
+  });
+});
+
+describe("buildEscapeDE with power links (fr-j231)", () => {
+  it("gives each link its own kind, powers included", () => {
+    const de = buildEscapeDE([
+      foldMap(0, "mandelbox", 2),
+      powerMap(1, "bulb"),
+      powerMap(2, "qsquare"),
+      foldMap(3, "boxfold", 1.6),
+    ]);
+    expect(de.links.map((l) => l.kind)).toEqual([
+      ESCAPE_LINK_MANDELBOX,
+      ESCAPE_LINK_BULB,
+      ESCAPE_LINK_QSQUARE,
+      ESCAPE_LINK_BOXFOLD,
+    ]);
+    // The two power codes sit ABOVE the folds, which is what lets every
+    // mirror keep dispatching its fold pair behind a `kind < 4` guard.
+    expect(ESCAPE_LINK_BULB).toBeGreaterThan(ESCAPE_LINK_MANDELBOX);
+    expect(ESCAPE_LINK_QSQUARE).toBeGreaterThan(ESCAPE_LINK_MANDELBOX);
+  });
+
+  it("prices a power link's derivGrowth as |w|·sigma_max(M), exactly as a fold's", () => {
+    // No new per-step term: a power link's `d·|y|^(d-1)` rides the LOCAL
+    // factor the orbit computes per step, precisely like the sphere fold's.
+    const de = buildEscapeDE([
+      foldMap(0, "mandelbox", 2, { scale: [1.5, 1.5, 1.5] }),
+      powerMap(1, "bulb", -0.75, { scale: [2, 0.5, 1] }),
+      powerMap(2, "qsquare", 1.25, { scale: [0.4, 0.4, 0.4] }),
+    ]);
+    expect(de.links.map((l) => l.derivGrowth)).toEqual([3, 1.5, 0.5]);
+    // The signed weight survives — it is a free multiplier on a power link.
+    expect(de.links.map((l) => l.w)).toEqual([2, -0.75, 1.25]);
+  });
+
+  it("sets logEstimate exactly when some link is a POWER map", () => {
+    const flag = (transforms: Transform[]): boolean =>
+      buildEscapeDE(transforms).logEstimate;
+    expect(flag([canonicalMandelbox()])).toBe(false);
+    expect(flag([canonicalMandelbox(), foldMap(1, "boxfold", 1.6)])).toBe(
+      false,
+    );
+    expect(flag([foldMap(0, "mandelbox", 2), powerMap(1, "bulb")])).toBe(true);
+    expect(flag([foldMap(0, "mandelbox", 2), powerMap(1, "qsquare")])).toBe(
+      true,
+    );
+    // Resolved ONCE per chain, so six mirrors cannot each decide it
+    // differently — a power link anywhere in the list sets it.
+    expect(
+      flag([
+        foldMap(0, "mandelbox", 2),
+        foldMap(1, "boxfold", 1.6),
+        powerMap(2, "qsquare"),
+      ]),
+    ).toBe(true);
+  });
+});
+
+describe("the power links' arithmetic (fr-j231)", () => {
+  it("applies a bulb link as variations.ts's triplexPow8, with an 8·|y|⁷ factor", () => {
+    // ONE orbit step, hand-composed. The query escapes on step 0 (the
+    // triplex power sends |y| = 1.3 well past the bailout), so the second
+    // link never runs and the whole estimate is this step's:
+    //   y  = M p + t = p            (identity affine)
+    //   v  = 1·triplexPow8(y) + p   <- the forward map under test
+    //   dr = |w|·sigma_max(M)·8|y|⁷·1 + 1
+    //   DE = 0.5·r·ln r / dr        (the chain carries a power link)
+    const p: Vec3 = [1.2, 0.4, 0.3];
+    const de = buildEscapeDE([powerMap(0, "bulb"), foldMap(1, "boxfold", 1.6)]);
+    const f = triplexPow8(p[0], p[1], p[2]);
+    const r = Math.hypot(f[0] + p[0], f[1] + p[1], f[2] + p[2]);
+    const dr = 8 * Math.pow(Math.hypot(p[0], p[1], p[2]), 7) + 1;
+    expect(r).toBeGreaterThan(ESCAPE_TIME_RADIUS); // one step, as claimed
+    expect(estimateEscapeDistance(de, p)).toBeCloseTo(
+      (0.5 * r * Math.log(r)) / dr,
+      12,
+    );
+  });
+
+  it("applies a qsquare link as variations.ts's own entry, with the EXACT 2·|y| factor", () => {
+    // The same one-step shape, one map over. `|d(q²)| = 2|q|·|dq|` holds
+    // identically (quaternion norms multiply), so this factor is the one
+    // certified term in the chain's product rather than a heuristic.
+    const p: Vec3 = [1.8, 0.9, 0.6];
+    const de = buildEscapeDE([
+      powerMap(0, "qsquare"),
+      foldMap(1, "boxfold", 1.6),
+    ]);
+    const square = composeVariations([{ type: "qsquare", weight: 1 }])!;
+    const f = square(p[0], p[1], p[2], () => 0);
+    const r = Math.hypot(f[0] + p[0], f[1] + p[1], f[2] + p[2]);
+    const dr = 2 * Math.hypot(p[0], p[1], p[2]) + 1;
+    expect(r).toBeGreaterThan(ESCAPE_TIME_RADIUS);
+    expect(estimateEscapeDistance(de, p)).toBeCloseTo(
+      (0.5 * r * Math.log(r)) / dr,
+      12,
+    );
+  });
+
+  it("agrees to the BIT with an independent chain orbit, on every cross-family shape", () => {
+    // The real pin, and the one six shader mirrors will be written against:
+    // the orbit rebuilt from the DOCUMENT, taking its forward maps from
+    // `variations.ts` rather than restating them (see referenceOrbit).
+    const chains: [string, Transform[]][] = [
+      ["mandelbox -> bulb", [foldMap(0, "mandelbox", 2), powerMap(1, "bulb")]],
+      [
+        "boxfold -> qsquare, rotated",
+        [
+          foldMap(0, "boxfold", 1.6, { rotation: [0.2, -0.5, 0.1] }),
+          powerMap(1, "qsquare", 1, { scale: [0.8, 0.8, 0.8] }),
+        ],
+      ],
+      [
+        "bulb -> bulb, pre-scaled",
+        [
+          powerMap(0, "bulb", 1, { scale: [0.5, 0.5, 0.5] }),
+          powerMap(1, "bulb", 1, {
+            scale: [0.5, 0.5, 0.5],
+            rotation: [0.3, 0.2, -0.4],
+          }),
+        ],
+      ],
+      [
+        "mandelbox -> qsquare -> spherefold, authored radii and a weight",
+        [
+          foldMap(0, "mandelbox", 2, {
+            variations: [
+              {
+                type: "mandelbox",
+                weight: 2,
+                minRadius: 0.3,
+                fixedRadius: 1.4,
+                boxLimit: 0.8,
+              },
+            ],
+          }),
+          powerMap(1, "qsquare", -0.6, { position: [0.2, -0.1, 0.05] }),
+          foldMap(2, "spherefold", 1.2, { scale: [1.3, 1.3, 1.3] }),
+        ],
+      ],
+    ];
+    for (const [label, transforms] of chains) {
+      const de = buildEscapeDE(transforms);
+      const rng = mulberry32(0xc305_5f);
+      let worst = 0;
+      for (let i = 0; i < 3000; i++) {
+        const p: Vec3 = [8 * rng() - 4, 8 * rng() - 4, 8 * rng() - 4];
+        const { r, dr } = referenceOrbit(transforms, p);
+        const want = r <= 1 ? 0 : (0.5 * r * Math.log(r)) / dr;
+        worst = Math.max(worst, Math.abs(estimateEscapeDistance(de, p) - want));
+      }
+      expect(worst, label).toBe(0);
+    }
+  });
+});
+
+describe("the estimate form (fr-j231)", () => {
+  /** `mandelbox w=2 -> bulb` at pre-scale 1 — the module doc's own stiffness
+   * fixture, and the exact chain the bead predicted would render a blank
+   * frame. */
+  const CROSS: Transform[] = [foldMap(0, "mandelbox", 2), powerMap(1, "bulb")];
+
+  it("reads a power chain through the Böttcher form 0.5·r·ln r / dr", () => {
+    // A power orbit escapes SUPER-exponentially (`r -> r^d`), so its
+    // potential is log log r and the linear `r / dr` under-reads it by
+    // exactly this factor. Same terminal quantities, two readings — so the
+    // claim is about the FORM, and the linear one is measurably different.
+    const de = buildEscapeDE(CROSS);
+    expect(de.logEstimate).toBe(true);
+    const rng = mulberry32(0xb07);
+    let worstLog = 0;
+    let worstLinearGap = 0;
+    for (let i = 0; i < 1000; i++) {
+      const p: Vec3 = [8 * rng() - 4, 8 * rng() - 4, 8 * rng() - 4];
+      const { r, dr } = referenceOrbit(CROSS, p);
+      const got = estimateEscapeDistance(de, p);
+      worstLog = Math.max(
+        worstLog,
+        Math.abs(got - (r <= 1 ? 0 : (0.5 * r * Math.log(r)) / dr)),
+      );
+      worstLinearGap = Math.max(worstLinearGap, Math.abs(got - r / dr));
+    }
+    expect(worstLog).toBe(0);
+    expect(worstLinearGap).toBeGreaterThan(0.1);
+  });
+
+  it("returns exactly 0 below r = 1 — a negative estimate marches backwards", () => {
+    // `ln r` goes negative there, and a converging orbit reaches it: this
+    // chain's links are pre-scaled by 0.5, so the power damps the orbit to a
+    // sub-unit radius instead of escaping. The unclamped Böttcher value at
+    // each of these queries is a real negative number, which a sphere tracer
+    // would step BACKWARDS on.
+    const damped: Transform[] = [
+      powerMap(0, "bulb", 1, { scale: [0.5, 0.5, 0.5] }),
+      powerMap(1, "bulb", 1, {
+        scale: [0.5, 0.5, 0.5],
+        rotation: [0.3, 0.2, -0.4],
+      }),
+    ];
+    const de = buildEscapeDE(damped);
+    for (const p of [
+      [0.3, -0.2, 0.15],
+      [0.1, 0.05, -0.02],
+      [0.6, 0.4, -0.3],
+    ] as Vec3[]) {
+      const { r, dr } = referenceOrbit(damped, p);
+      expect(r, `${p.join(", ")} terminal radius`).toBeLessThan(1);
+      expect(r).toBeGreaterThan(0);
+      expect((0.5 * r * Math.log(r)) / dr).toBeLessThan(0);
+      expect(estimateEscapeDistance(de, p)).toBe(0);
+    }
+  });
+});
+
+describe("escapeLinkPower and escapeLinkStiffnessLimit (fr-j231)", () => {
+  it("reports each link's degree, and 0 for a fold", () => {
+    expect(escapeLinkPower(ESCAPE_LINK_BULB)).toBe(8);
+    expect(escapeLinkPower(ESCAPE_LINK_QSQUARE)).toBe(2);
+    // A fold is asymptotically affine: it has no degree, and the shaders'
+    // continuous escape count reads its constant-factor arm instead.
+    expect(escapeLinkPower(ESCAPE_LINK_BOXFOLD)).toBe(0);
+    expect(escapeLinkPower(ESCAPE_LINK_MANDELBOX)).toBe(0);
+  });
+
+  it("bounds a power link's stiffness at (R/|w|)^(1/d) / R", () => {
+    // The module doc's predicted hazard, kept executable because
+    // `scripts/hybrid-chain.harness.ts` measures the shipped orbit against
+    // it — cycling renders across the whole range this declares hopeless.
+    expect(escapeLinkStiffnessLimit(8, 1)).toBe(Math.pow(4, 1 / 8) / 4);
+    expect(escapeLinkStiffnessLimit(8, 1)).toBeCloseTo(0.2973, 4);
+    expect(escapeLinkStiffnessLimit(2, 1)).toBe(0.5);
+    // A heavier weight is stiffer, and the bailout radius is a parameter.
+    expect(escapeLinkStiffnessLimit(2, 4)).toBeLessThan(
+      escapeLinkStiffnessLimit(2, 1),
+    );
+    expect(escapeLinkStiffnessLimit(2, 1, 9)).toBeCloseTo(1 / 3, 12);
+  });
+
+  it("declares a fold unbounded — it has no such trip out of the ball", () => {
+    expect(
+      escapeLinkStiffnessLimit(escapeLinkPower(ESCAPE_LINK_BOXFOLD), 2),
+    ).toBe(Infinity);
+    expect(escapeLinkStiffnessLimit(8, 0)).toBe(Infinity);
+  });
+});
+
+describe("membership on a cross-family chain (fr-j231)", () => {
+  /** The bead's own worst case: a mandelbox step leaves |v| near 7 and a
+   * triplex 8th power sends 7 to 5.8e5 in one link, so this chain was
+   * predicted to escape everywhere and render a blank frame. */
+  const CROSS: Transform[] = [foldMap(0, "mandelbox", 2), powerMap(1, "bulb")];
+
+  it("finds MEMBERS at pre-scale 1 — the blank-frame prediction, refuted", () => {
+    // Cycling is the whole difference: `+ p` re-enters after EVERY link, so
+    // the power sees a point the query has just tethered and its output is
+    // tested before any fold can compound it. The module doc measures 0.56%
+    // of the bailout ball for this chain against the prototype's chaining
+    // arm at 0.01%, and 11.6% of rays hit at the framing pose; this seeded
+    // 4096-point probe reads the same few tenths of a percent.
+    const fill = probeEscapeFill(buildEscapeDE(CROSS));
+    expect(fill).toBeGreaterThan(0);
+    // ...and it is a thin fractal rather than a fattened ball, which is the
+    // other half of what makes the chain worth rendering.
+    expect(fill).toBeLessThan(0.1);
+  });
+
+  it("reads membership from the SAME orbit the estimate does", () => {
+    // escapeSetContains and estimateEscapeDistance are two readers of one
+    // loop, and the independent reference is where that can be checked from
+    // outside: a point is a member exactly when the reference's terminal
+    // radius is still inside the bailout ball. Walk the probe's own seeded
+    // sample of that ball, which is where this chain's members actually are.
+    const de = buildEscapeDE(CROSS);
+    const rng = mulberry32(ESCAPE_PROBE_SEED);
+    let members = 0;
+    for (let i = 0; i < ESCAPE_PROBE_POINTS; i++) {
+      const u = Math.cbrt(rng()) * ESCAPE_TIME_RADIUS;
+      const ct = 2 * rng() - 1;
+      const st = Math.sqrt(Math.max(0, 1 - ct * ct));
+      const ph = 2 * Math.PI * rng();
+      const p: Vec3 = [u * st * Math.cos(ph), u * st * Math.sin(ph), u * ct];
+      const inside = referenceOrbit(CROSS, p).r <= ESCAPE_TIME_RADIUS;
+      expect(escapeSetContains(de, p), `${p.join(", ")}`).toBe(inside);
+      if (inside) members++;
+    }
+    // The sweep really found some, or the agreement above is vacuous...
+    expect(members).toBeGreaterThan(0);
+    // ...and the emptiness probe is exactly that count over that sample.
+    expect(probeEscapeFill(de)).toBe(members / ESCAPE_PROBE_POINTS);
+  });
+});
+
+describe("a fold-only chain is unmoved by fr-j231", () => {
+  /** Every fold-only shape the widening could plausibly have disturbed. */
+  const SYSTEMS: [string, Transform[], SymmetryParams][] = [
+    ["lone mandelbox w=2", [canonicalMandelbox()], { order: 1, plane: "xz" }],
+    [
+      "mandelbox -> boxfold",
+      [canonicalMandelbox(), foldMap(1, "boxfold", 1.6)],
+      { order: 1, plane: "xz" },
+    ],
+    [
+      "mandelbox -> boxfold -> spherefold",
+      [
+        canonicalMandelbox(),
+        foldMap(1, "boxfold", 1.6, { rotation: [0.3, 0.7, -0.2] }),
+        foldMap(2, "spherefold", 1.2, { scale: [1.4, 1.4, 1.4] }),
+      ],
+      { order: 1, plane: "xz" },
+    ],
+    [
+      "authored fr-s9ll fold radii",
+      [
+        foldMap(0, "mandelbox", 2, {
+          variations: [
+            {
+              type: "mandelbox",
+              weight: 2,
+              minRadius: 0.3,
+              fixedRadius: 1.4,
+              boxLimit: 0.8,
+            },
+          ],
+        }),
+        foldMap(1, "boxfold", 1.6, {
+          variations: [{ type: "boxfold", weight: 1.6, boxLimit: 0.65 }],
+        }),
+      ],
+      { order: 1, plane: "xz" },
+    ],
+    [
+      "under a kaleidoscope",
+      [canonicalMandelbox(), foldMap(1, "spherefold", 1.2)],
+      { order: 5, plane: "xz" },
+    ],
+  ];
+
+  it.each(SYSTEMS)("%s keeps the LINEAR estimate form", (_l, t, symmetry) => {
+    expect(buildEscapeDE(t, null, symmetry).logEstimate).toBe(false);
+  });
+
+  it("is BIT-IDENTICAL to the pre-fr-j231 chain loop", () => {
+    // The regression net for the whole widening: every fold-only document in
+    // the wild, and the mirrors that render them, must be exactly where they
+    // were. A `logEstimate` that leaked true, a local factor that changed
+    // grouping, or a `kind` code that moved would all land here.
+    for (const [label, transforms, symmetry] of SYSTEMS) {
+      const de = buildEscapeDE(transforms, null, symmetry);
+      const rng = mulberry32(0xfe1d_ed);
+      let worst = 0;
+      for (let i = 0; i < 3000; i++) {
+        const p: Vec3 = [10 * rng() - 5, 10 * rng() - 5, 10 * rng() - 5];
+        worst = Math.max(
+          worst,
+          Math.abs(estimateEscapeDistance(de, p) - frZa0nChainReference(de, p)),
+        );
+      }
+      expect(worst, label).toBe(0);
+      // The preview tier's clamp too — a shallower budget settles the orbit
+      // somewhere else entirely, and must land on the same value there.
+      const p: Vec3 = [0.31, -0.12, 0.44];
+      expect(estimateEscapeDistance(de, p, 5), label).toBe(
+        frZa0nChainReference(de, p, 5),
+      );
+    }
+  });
+
+  it("keeps the three shipped fold presets bit-identical too", () => {
+    // The single-map trio is what a fold-only document in the wild most
+    // likely IS, and these reach the marcher through the same estimator.
+    for (const [label, transforms] of [
+      ["mandelboxClassic", mandelboxClassic()],
+      ["mandelboxRings", mandelboxRings()],
+      ["mandelboxCube", mandelboxCube()],
+      ["foldChain", foldChain()],
+      ["foldChainBoulder", foldChainBoulder()],
+    ] as [string, Transform[]][]) {
+      const de = buildEscapeDE(transforms);
+      expect(de.logEstimate, label).toBe(false);
+      const rng = mulberry32(0xd0c5);
+      let worst = 0;
+      for (let i = 0; i < 1000; i++) {
+        const p: Vec3 = [8 * rng() - 4, 8 * rng() - 4, 8 * rng() - 4];
+        worst = Math.max(
+          worst,
+          Math.abs(estimateEscapeDistance(de, p) - frZa0nChainReference(de, p)),
+        );
+      }
+      expect(worst, label).toBe(0);
+    }
   });
 });

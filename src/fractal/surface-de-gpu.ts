@@ -71,9 +71,22 @@ import type { Vec3 } from "./types";
  *   the maps storage binding ({@link packEscapeGpuMaps}), `mapCount` the
  *   link count and `maxDepth` still PASSES (`maxDepth * n` single-link
  *   steps) — with the kaleidoscope a query-space wedge fold off
- *   `symOrder`/`symPlane`. The head link also still rides the 208..271
- *   VARIANT block of the params uniform ({@link packEscapeGpuParams}) as
- *   frozen layout ballast the bodies no longer read.
+ *   `symOrder`/`symPlane`. Since fr-j231 a link may also be a POWER map:
+ *   `EscapeLinkKind` 4 is the triplex 8th power (this file's own
+ *   `bulbPow8`, shared with the bulb core rather than copied) and 5 the
+ *   quaternion square, so the fold pair's `kind != 2` / `kind != 1`
+ *   dispatch — exhaustive by NEGATION over {1, 2, 3} alone — sits behind a
+ *   `kind < 4u` GUARD in both the value and hit-info bodies; a kind that
+ *   reached it unguarded would silently run both folds, which is the same
+ *   hazard the bulb core's own bullet cites. The head link still rides the
+ *   208..271 VARIANT block of the params uniform ({@link
+ *   packEscapeGpuParams}) as frozen layout ballast the bodies no longer
+ *   read — with ONE live word in it: `escParams.w` carries
+ *   `EscapeDE.logEstimate`, the chain-level choice between `r / dr` and
+ *   the Böttcher `0.5·r·ln r / dr` a power link's super-exponential
+ *   escape needs. Its hit-info trap gained the matching second
+ *   interpolant, picked by the DEGREE of the link that produced the
+ *   terminal radius.
  *   `width`/`sharedFrontier`/
  *   `bnbStage2`/`shadeDeWidth` are all inert (no frontier, no branch
  *   fan, no probe — the GLSL arm's shape), and a
@@ -413,13 +426,20 @@ import type { Vec3 } from "./types";
  *              208 vec3f escM row0    220 f32 escT.x
  *              224 vec3f escM row1    236 f32 escT.y
  *              240 vec3f escM row2    252 f32 escT.z
- *              256 vec4f escParams — (foldKind as f32, w, derivGrowth,
- *                  0), the GLSL `uEscParams` order plus the packed-zero
- *                  spare. `escT` is the map's PRE-fold offset; the
- *                  per-iteration offset is the query point itself
- *                  (fr-7u8t.8's Mandelbrot form), so no wire field
- *                  carries it — and the spare stays reserved for the
- *                  1-or-0 form scale a Julia arm would need.
+ *              256 vec4f escParams — (kind as f32, w, derivGrowth,
+ *                  logEstimate as f32), the GLSL `uEscParams` order plus
+ *                  the slot that spare word was reserved for. `escT` is
+ *                  the map's PRE-fold offset; the per-iteration offset is
+ *                  the query point itself (fr-7u8t.8's Mandelbrot form),
+ *                  so no wire field carries it. The `.w` lane is the ONE
+ *                  live word of this block since fr-j231 — 0 reads the
+ *                  terminal radius as `r / dr`, 1 as the Böttcher
+ *                  `0.5·r·ln r / dr` (`EscapeDE.logEstimate`, true
+ *                  exactly when some link is a POWER map). It belongs
+ *                  HERE and not on the maps binding because it is one
+ *                  number per CHAIN, read once after the orbit: making it
+ *                  depend on which link happened to terminate would put a
+ *                  step across every boundary between the two forms.
  *              272 vec4f padF — the lens block's fold-lengths slot, PAD
  *                  here: this core's links carry their own lengths on the
  *                  maps binding, and the slot exists so the shared
@@ -539,7 +559,10 @@ import type { Vec3 } from "./types";
  * `core: "escape"` shares that layout for its formula CHAIN (fr-s04t,
  * {@link packEscapeGpuMaps}) — one entry per LINK in document order,
  * carrying FORWARD affines in r0/r1/r2 and the GLSL `uEscParams` quartet
- * (foldKind, w, derivGrowth, 0) in p0, with bnb/p1 zero: the same
+ * (kind, w, derivGrowth, 0) in p0 — `kind` being `escape-de.ts`'s
+ * `EscapeLinkKind`, the three folds plus fr-j231's two POWER maps at 4
+ * and 5, where a descent core's own `p0.w` carries a `SurfaceFoldKind`
+ * that never leaves {0, 1, 2, 3} — with bnb/p1 zero: the same
  * "one layout, lanes a core may ignore" contract the affine cores already
  * ride. Its `fold` lane says something DIFFERENT from the descent cores' —
  * (minRadius², fixedRadius², boxLimit, 0), the form `EscapeLink` keeps and
@@ -1183,7 +1206,7 @@ function writeGroundPlane(view: DataView, gp: SurfaceGpuGroundPlane): void {
  * plane (the `stepCos`/`stepSin` sector-sweep pair stays inert — that is
  * a descent concept) — and the 208..271 VARIANT block carries the HEAD
  * link in the lens rows' interleave, tail vec4f in the GLSL `uEscParams`
- * order (foldKind, w, derivGrowth, 0).
+ * order (kind, w, derivGrowth, logEstimate).
  *
  * That head-link block is the wire's ONE redundancy since fr-s04t, kept
  * deliberately: the bodies read every link — the head included — from the
@@ -1191,6 +1214,12 @@ function writeGroundPlane(view: DataView, gp: SurfaceGpuGroundPlane): void {
  * offsets are frozen (the ground-plane block lands at 288 behind it) and
  * a struct member cannot be left undeclared without moving that. It
  * cannot drift, since `EscapeDE`'s flat fields ARE `links[0]`'s.
+ *
+ * Its LAST word is the exception, and the only thing here the kernel
+ * reads (fr-j231): offset 268 carries `EscapeDE.logEstimate` — 0 for the
+ * fold family's linear `r / dr`, 1 for the Böttcher `0.5·r·ln r / dr` a
+ * chain holding a POWER link needs. One number per chain, so it rides the
+ * params block rather than the per-link maps binding.
  *
  * The final packs identity/1 (the escape gate refuses final transforms);
  * `escapeRadius` packs the GLSL's dead `2R` so the wire never carries an
@@ -1252,9 +1281,15 @@ export function packEscapeGpuParams(
   view.setFloat32(236, de.t[1], true);
   writeVec3(view, 240, [de.m[6], de.m[7], de.m[8]]);
   view.setFloat32(252, de.t[2], true);
-  view.setFloat32(256, de.foldKind, true);
+  view.setFloat32(256, de.kind, true);
   view.setFloat32(260, de.w, true);
   view.setFloat32(264, de.derivGrowth, true);
+  // fr-j231: the CHAIN's estimate form — 0 linear, 1 the Böttcher/
+  // Green's form (escape-de.ts's ESTIMATE FORM paragraph). The one
+  // live value in the 208..271 variant block, whose other rows stay
+  // frozen head-link ballast since fr-s04t; this is the slot the
+  // layout has reserved since the block was first written.
+  view.setFloat32(268, de.logEstimate ? 1 : 0, true);
   // fr-rhn5: the ground-plane block appends past the escape variant
   // block at the same frozen 288 as the descent cores' — the classic
   // Mandelbox floor is exactly this mode's look.
@@ -1273,9 +1308,12 @@ export function packEscapeGpuParams(
  * `links[step mod n]`):
  *   r0/r1/r2 = the FORWARD linear part's rows, `t` in the `.w` lanes
  *              (the params variant block's own interleave)
- *   p0       = (foldKind, w, derivGrowth, 0) — the GLSL `uEscParams`
+ *   p0       = (kind, w, derivGrowth, 0) — the GLSL `uEscParams`
  *              order, so the WGSL body and the GLSL arm read the same
- *              quartet in the same lanes
+ *              quartet in the same lanes. `kind` is `EscapeLinkKind`:
+ *              the three folds, plus fr-j231's triplex power (4) and
+ *              quaternion square (5), which the bodies dispatch past
+ *              their fold pair's `kind < 4u` guard
  *   bnb/p1   = zero: branch-and-bound and the descent's sigma lanes are
  *              inverse-descent concepts, packed for layout parity the
  *              way the affine cores pack the fold lanes they never read
@@ -1301,7 +1339,7 @@ export function packEscapeGpuMaps(de: EscapeDE): Float32Array {
     out[base + 9] = link.m[7];
     out[base + 10] = link.m[8];
     out[base + 11] = link.t[2];
-    out[base + 12] = link.foldKind;
+    out[base + 12] = link.kind;
     out[base + 13] = link.w;
     out[base + 14] = link.derivGrowth;
     // fold = this LINK's own fold lengths (fr-s9ll), SQUARED for the two
@@ -1765,6 +1803,50 @@ export function packSurfaceGpuShadeMaps(
   });
   return out;
 }
+
+/**
+ * `variations.ts`'s `triplexPow8` in WGSL — ONE definition for the two
+ * FORWARD cores that need it (fr-j231). It was the bulb core's private
+ * text until an escape-time chain LINK could be a triplex power
+ * (`ESCAPE_LINK_BULB`), and two copies of the map both cores' oracles
+ * share is exactly the drift `renameToProbe` and the shared descent
+ * prologue exist to prevent.
+ *
+ * Emitted for `core: "bulb"` and `core: "escape"` and for nothing else, so
+ * every affine/fold kernel's source stays byte-identical. An escape kernel
+ * whose chain holds no power link still emits it — dead code the compiler
+ * drops, and DELIBERATELY not narrowed: the source is memoized on the
+ * codegen config alone, so a maps-dependent term in the text would key
+ * two different kernels to one cache entry. Do not "fix" it by reading
+ * the link list here.
+ */
+const bulbPow8Text = /* wgsl */ `// variations.ts's triplexPow8, the White/Nylander 8th power in its
+// trig-free form: Chebyshev T8/U7 for the polar angle, three complex
+// squarings (de Moivre) for the azimuth. The power is BAKED IN — triplex
+// multiplication is not associative, so p^8 is not ((p^2)^2)^2 and every
+// power needs its own closed form (bulb-de.ts's BULB_POWER doc). r2 is
+// passed in because every caller already has it.
+fn bulbPow8(y: vec3f, r2: f32) -> vec3f {
+  let a = y.x * y.x + y.y * y.y;
+  let z2 = y.z * y.z;
+  let r4 = r2 * r2;
+  let vz = 128.0 * z2 * z2 * z2 * z2 - 256.0 * z2 * z2 * z2 * r2 + 160.0 * z2 * z2 * r4 - 32.0 * z2 * r4 * r2 + r4 * r4;
+  let s = 128.0 * z2 * z2 * z2 * y.z - 192.0 * z2 * z2 * y.z * r2 + 80.0 * z2 * y.z * r4 - 8.0 * y.z * r4 * r2;
+  let rho = sqrt(a);
+  var inv = 0.0;
+  if (rho > 0.0) {
+    inv = 1.0 / rho;
+  }
+  let u1 = y.x * inv;
+  let v1 = y.y * inv;
+  let u2 = u1 * u1 - v1 * v1;
+  let v2 = 2.0 * u1 * v1;
+  let u4 = u2 * u2 - v2 * v2;
+  let v4 = 2.0 * u2 * v2;
+  let u8 = u4 * u4 - v4 * v4;
+  let v8 = 2.0 * u4 * v4;
+  return vec3f(rho * s * u8, rho * s * v8, vz);
+}`;
 
 /**
  * Generate the WGSL source for one kernel configuration. The descent body
@@ -3274,6 +3356,10 @@ ${
   // r — the head link's until a step has run, so a one-link document
   // reads maps[0].p0.z at every step exactly as it did before the chain.
   var growth = maps[0].p0.z;
+  // fr-j231: and its DEGREE, 0 until a step has run — which is also what a
+  // FOLD leaves here, so a fold-only chain reads the constant-factor arm
+  // below at every step exactly as it did before.
+  var lastPower = 0.0;
   for (var i = 0u; i < steps; i++) {
     if (r > params.boundingRadius) {
       escapedAt = i;
@@ -3286,19 +3372,40 @@ ${
       dot(L.r1.xyz, v) + L.r1.w,
       dot(L.r2.xyz, v) + L.r2.w,
     );
-    if (kind != 2u) {
-      // fr-s9ll: the link's own box wall — escape-de.ts's foldAxis(t, wall).
-      y = clamp(y, vec3f(-L.fold.z), vec3f(L.fold.z)) * 2.0 - y;
-    }
-    if (kind != 1u) {
-      // ...and its own sphere shell, SQUARED on the wire exactly as
-      // EscapeLink keeps it: fR2 / clamp(r2, mR2, fR2).
-      let f = L.fold.y / clamp(dot(y, y), L.fold.x, L.fold.y);
-      y *= f;
+    // fr-j231: the FOLD family, GUARDED. The two tests below are
+    // exhaustive by NEGATION over {1, 2, 3} alone, so a power kind has to
+    // be kept out of them rather than added beside them — kind 4u
+    // satisfies both \`!= 2u\` and \`!= 1u\` and would silently run both
+    // folds. That hazard is this module's own doc's reason for making the
+    // Mandelbulb a sixth CORE rather than a fourth kind; the guard is what
+    // makes a fourth and fifth kind safe on the chain core.
+    if (kind < 4u) {
+      if (kind != 2u) {
+        // fr-s9ll: the link's own box wall — escape-de.ts's foldAxis(t, wall).
+        y = clamp(y, vec3f(-L.fold.z), vec3f(L.fold.z)) * 2.0 - y;
+      }
+      if (kind != 1u) {
+        // ...and its own sphere shell, SQUARED on the wire exactly as
+        // EscapeLink keeps it: fR2 / clamp(r2, mR2, fR2).
+        let f = L.fold.y / clamp(dot(y, y), L.fold.x, L.fold.y);
+        y *= f;
+      }
+    } else if (kind == 4u) {
+      // The triplex 8th power — the value body's branch minus its localL,
+      // which this colors-only body does not track.
+      y = bulbPow8(y, dot(y, y));
+    } else {
+      // The quaternion square on span{1, i, j}, closed there because the
+      // \`v x v\` term drops.
+      y = vec3f(y.x * y.x - y.y * y.y - y.z * y.z, 2.0 * y.x * y.y, 2.0 * y.x * y.z);
     }
     v = L.p0.y * y + q;
     r = length(v);
     growth = L.p0.z;
+    // fr-j231: the DEGREE of the link that produced this r — 0 for a
+    // fold, which is asymptotically affine and has no exponent to
+    // multiply.
+    lastPower = select(select(0.0, 2.0, kind == 5u), ${BULB_POWER}.0, kind == 4u);
     info.rings = min(info.rings, r / params.boundingRadius);
     info.sheets = min(info.sheets, abs(v.y) / params.boundingRadius);
     link++;
@@ -3310,9 +3417,19 @@ ${
   // term (see surface-material.ts for why the raw integer reads as confetti).
   // Normalized by params.maxDepth, NOT by the step budget — fr-byxb, and the
   // GLSL arm carries the argument.
+  //
+  // fr-j231: which interpolant reads the terminal radius depends on the
+  // link that produced it. A fold grows by a constant factor, so the
+  // ratio of logs linearises it; a power map multiplies the exponent,
+  // so the count is \`log(log r / log R) / log d\` — the bulb core's own
+  // expression, with the link's degree in place of its 8.
   var escFrac = 0.0;
-  if (escapedAt < steps && growth > 1.0) {
-    escFrac = clamp(log(r / params.boundingRadius) / log(growth), 0.0, 1.0);
+  if (escapedAt < steps) {
+    if (lastPower > 1.0) {
+      escFrac = clamp(log(log(r) / log(params.boundingRadius)) / log(lastPower), 0.0, 1.0);
+    } else if (growth > 1.0) {
+      escFrac = clamp(log(r / params.boundingRadius) / log(growth), 0.0, 1.0);
+    }
   }
   info.trap =
     clamp((f32(escapedAt) - escFrac) / f32(params.maxDepth), 0.0, 1.0);
@@ -4490,6 +4607,10 @@ struct Params {
   escT1: f32,
   escM2: vec3f,
   escT2: f32,
+  // (kind, w, derivGrowth, logEstimate) — the head link's quartet, frozen
+  // ballast the bodies read no link from (fr-s04t) EXCEPT its .w lane:
+  // fr-j231's chain-level estimate form, 0 linear and 1 Bottcher. One
+  // number per CHAIN, which is why it rides here and not the maps binding.
   escParams: vec4f,
   // fr-s9ll: the fold-lens lengths' 272..287 slot, PAD here. This core has
   // no lens (escape+lens throws) and its links carry their own lengths on
@@ -6638,7 +6759,9 @@ ${renameToProbe4(fold4DescentFnText(probeWidth, slabExt, lens))}`;
   // chain length. Every link contributes its own factor to the ONE shared
   // `dr`, whose `+ 1` (the per-link offset's own derivative) floors it
   // once per link.
-  const escapeDescentText = /* wgsl */ `// escape-de.ts's foldQueryIntoSector (fr-s04t) — the kaleidoscope as a
+  const escapeDescentText = /* wgsl */ `${bulbPow8Text}
+
+// escape-de.ts's foldQueryIntoSector (fr-s04t) — the kaleidoscope as a
 // QUERY-SPACE wedge fold applied ONCE before the orbit, never as an orbit
 // operation (the escape set of v <- F(v) + p inherits a rotation only
 // where F commutes with it). DIHEDRAL, and forced rather than chosen: the
@@ -6698,20 +6821,44 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
       dot(L.r2.xyz, v) + L.r2.w,
     );
     var localL = 1.0;
-    if (kind != 2u) {
-      // The box fold (boxfold + mandelbox): per-axis reflections,
-      // local factor 1.
-      // fr-s9ll: the link's own box wall — escape-de.ts's foldAxis(t, wall).
-      y = clamp(y, vec3f(-L.fold.z), vec3f(L.fold.z)) * 2.0 - y;
-    }
-    if (kind != 1u) {
-      // The sphere fold (spherefold + mandelbox): variations.ts's
-      // sphereFoldFactor, which IS the local conformal factor.
-      // ...and its own sphere shell, SQUARED on the wire exactly as
-      // EscapeLink keeps it: fR2 / clamp(r2, mR2, fR2).
-      let f = L.fold.y / clamp(dot(y, y), L.fold.x, L.fold.y);
-      y *= f;
-      localL = f;
+    // fr-j231: the FOLD family, GUARDED. The two tests below are
+    // exhaustive by NEGATION over {1, 2, 3} alone, so a power kind has to
+    // be kept out of them rather than added beside them — kind 4u
+    // satisfies both \`!= 2u\` and \`!= 1u\` and would silently run both
+    // folds. That hazard is this module's own doc's reason for making the
+    // Mandelbulb a sixth CORE rather than a fourth kind; the guard is what
+    // makes a fourth and fifth kind safe on the chain core.
+    if (kind < 4u) {
+      if (kind != 2u) {
+        // The box fold (boxfold + mandelbox): per-axis reflections,
+        // local factor 1.
+        // fr-s9ll: the link's own box wall — escape-de.ts's foldAxis(t, wall).
+        y = clamp(y, vec3f(-L.fold.z), vec3f(L.fold.z)) * 2.0 - y;
+      }
+      if (kind != 1u) {
+        // The sphere fold (spherefold + mandelbox): variations.ts's
+        // sphereFoldFactor, which IS the local conformal factor.
+        // ...and its own sphere shell, SQUARED on the wire exactly as
+        // EscapeLink keeps it: fR2 / clamp(r2, mR2, fR2).
+        let f = L.fold.y / clamp(dot(y, y), L.fold.x, L.fold.y);
+        y *= f;
+        localL = f;
+      }
+    } else if (kind == 4u) {
+      // The triplex 8th power. 8*r^7 is its radial/polar stretch —
+      // bulb-de.ts's HEURISTIC factor, under-reading the azimuthal
+      // stretch by up to 8x at the poles, the same class of slack the
+      // folds contribute.
+      let r2y = dot(y, y);
+      localL = ${BULB_POWER}.0 * (r2y * r2y * r2y * sqrt(r2y));
+      y = bulbPow8(y, r2y);
+    } else {
+      // The quaternion square on span{1, i, j}, closed there because the
+      // \`v x v\` term drops. Its 2*|y| is EXACT rather than a bound
+      // (quaternion norms multiply) — qjulia-de.ts's certified factor,
+      // and the one certified term in the chain's product.
+      localL = 2.0 * length(y);
+      y = vec3f(y.x * y.x - y.y * y.y - y.z * y.z, 2.0 * y.x * y.y, 2.0 * y.x * y.z);
     }
     // fr-7u8t.8: the Mandelbrot form's offset — the QUERY POINT (folded,
     // fr-s04t), not the document's t (which stays the pre-fold offset
@@ -6724,7 +6871,20 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
       link = 0u;
     }
   }
-  return r / dr;
+  // fr-j231: the Bottcher/Green's form for a chain that escapes
+  // super-exponentially (escape-de.ts's ESTIMATE FORM paragraph),
+  // selected by the chain-level flag on escParams.w. \`ln r\` goes
+  // NEGATIVE below r = 1, which a converging orbit reaches, and a
+  // negative estimate would march the tracer BACKWARDS — returning 0
+  // there is the inside signal and is safe in the direction a sphere
+  // tracer needs. The bulb core takes the identical exit.
+  if (params.escParams.w == 0.0) {
+    return r / dr;
+  }
+  if (r <= 1.0) {
+    return 0.0;
+  }
+  return 0.5 * r * log(r) / dr;
 }`;
 
   // The BULB core (fr-7u8t.9): bulb-de.ts's estimateBulbDistance — the
@@ -6736,33 +6896,7 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   // ignored (every return IS the cutoff-0 result, trivially the fr-55r5
   // contract) and li never indexes anything. Plain params.maxDepth — the
   // orbit's iteration budget; no footprint cap, like the GLSL arm.
-  const bulbDescentText = /* wgsl */ `// variations.ts's triplexPow8, the White/Nylander 8th power in its
-// trig-free form: Chebyshev T8/U7 for the polar angle, three complex
-// squarings (de Moivre) for the azimuth. The power is BAKED IN — triplex
-// multiplication is not associative, so p^8 is not ((p^2)^2)^2 and every
-// power needs its own closed form (bulb-de.ts's BULB_POWER doc). r2 is
-// passed in because every caller already has it.
-fn bulbPow8(y: vec3f, r2: f32) -> vec3f {
-  let a = y.x * y.x + y.y * y.y;
-  let z2 = y.z * y.z;
-  let r4 = r2 * r2;
-  let vz = 128.0 * z2 * z2 * z2 * z2 - 256.0 * z2 * z2 * z2 * r2 + 160.0 * z2 * z2 * r4 - 32.0 * z2 * r4 * r2 + r4 * r4;
-  let s = 128.0 * z2 * z2 * z2 * y.z - 192.0 * z2 * z2 * y.z * r2 + 80.0 * z2 * y.z * r4 - 8.0 * y.z * r4 * r2;
-  let rho = sqrt(a);
-  var inv = 0.0;
-  if (rho > 0.0) {
-    inv = 1.0 / rho;
-  }
-  let u1 = y.x * inv;
-  let v1 = y.y * inv;
-  let u2 = u1 * u1 - v1 * v1;
-  let v2 = 2.0 * u1 * v1;
-  let u4 = u2 * u2 - v2 * v2;
-  let v4 = 2.0 * u2 * v2;
-  let u8 = u4 * u4 - v4 * v4;
-  let v8 = 2.0 * u4 * v4;
-  return vec3f(rho * s * u8, rho * s * v8, vz);
-}
+  const bulbDescentText = /* wgsl */ `${bulbPow8Text}
 
 fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   let sigma = params.bulbParams.x;

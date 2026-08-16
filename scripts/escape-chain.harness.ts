@@ -188,12 +188,12 @@ function estimateChained(
       let fy: number;
       let fz: number;
       let localL: number;
-      if (link.foldKind === SURFACE_FOLD_BOXFOLD) {
+      if (link.kind === SURFACE_FOLD_BOXFOLD) {
         fx = 2 * Math.max(-1, Math.min(1, yx)) - yx;
         fy = 2 * Math.max(-1, Math.min(1, yy)) - yy;
         fz = 2 * Math.max(-1, Math.min(1, yz)) - yz;
         localL = 1;
-      } else if (link.foldKind === SURFACE_FOLD_SPHEREFOLD) {
+      } else if (link.kind === SURFACE_FOLD_SPHEREFOLD) {
         const r2 = yx * yx + yy * yy + yz * yz;
         const f = 1 / Math.max(0.25, Math.min(1, r2));
         fx = yx * f;

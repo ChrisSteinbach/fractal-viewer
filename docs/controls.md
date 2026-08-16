@@ -275,6 +275,34 @@ morphs into place instead of snapping (see **Presets** below).
   **dihedral** — mirrors as well as rotations — and costs nothing per orbit
   step. (The chaos game's is cyclic, rotations only.)
 
+  **A link need not be a fold.** Two more variations can be a link: the
+  **Mandelbulb power 8** (the triplex 8th power, the map the Mandelbulb
+  presets iterate) and the **Quaternion square**. So a chain can hold a
+  Mandelbox and a Mandelbulb at once, and the objects that come out are not
+  variants of either — they are the composition, which is what this mode was
+  built toward. The two shipped examples that make the point best are a
+  Mandelbox Cube whose faces have grown Mandelbulb skin, and the same two
+  maps **in the other order**, which is a pitted sphere covered in
+  bulb-shaped craters: link order is a real knob, not a formality.
+
+  A power map alone is not a chain — a lone triplex power is the Mandelbulb
+  presets' object and gets their (better) renderer, and a lone quaternion
+  square is a smooth, detail-free thing this build deliberately does not
+  march. Give either one a fold to work with and it becomes worth marching.
+
+  The one thing to expect: a power map is **steep**. It raises its input to
+  the 8th (or the 2nd), so an eighth power fed a radius of 4 returns 65536,
+  far outside the bailout ball. That makes a power link's **scale** its
+  loudest knob by a long way — much louder than its weight — and the shipped
+  hybrids all pre-scale theirs. It is not fragile, though: the orbit adds
+  the query point back after _every_ link, which keeps a power link from
+  ever seeing a compounded input, and dropping a Mandelbulb next to a
+  Mandelbox at scale 1 renders perfectly well (it comes out as a
+  constellation of bulb nodules arranged in the fold's symmetry). Scale it
+  down and the constellation closes into a crust; scale it far down and the
+  set inflates toward the bailout ball and goes featureless, which is the
+  same failure a fold weight has at its own extremes.
+
   The three **Fold Chain** presets in the same menu group are the showcase,
   and they are deliberately a lesson each. **Fold Chain** is a Mandelbox at
   the canonical 2 followed by a box fold at 1.6 through a 20° turn about `y`
@@ -318,7 +346,21 @@ morphs into place instead of snapping (see **Presets** below).
   unavailable in a Mandelbulb session for the same measured reason as in a
   Mandelbox one — a filled solid's sphere-inverted echo contains the camera
   — but the ground plane works, and a Mandelbulb on a floor is the mode's
-  classic look. The menu's **Fold Lattice** (formerly labelled Mandelbox)
+  classic look.
+  The group's last three, **Hybrid Chain Cube**, **Hybrid Chain Craters**
+  and **Hybrid Chain Quaternion**, are the cross-family chains, and each is
+  a different point. _Cube_ is the Mandelbox Cube's own fold weight followed
+  by a pre-scaled triplex power: the cube silhouette survives, and its faces
+  grow a Mandelbulb's cauliflower skin with circular pits bored into them —
+  two named objects, visibly both at once. _Craters_ is the same pair **the
+  other way round**, power first, and it is a different object entirely: a
+  sphere whose whole surface is bulb-shaped craters. It is also the thinnest
+  thing the mode ships — it occupies essentially no volume and still fills a
+  fifth of the frame, which is a useful thing to have seen before you judge
+  a fractal by how solid it looks. _Quaternion_ is the only place in the app
+  a quaternion square is rendered at all; alone the map is smooth and
+  featureless, and a fold in front of it is what gives it something to
+  resolve. The menu's **Fold Lattice** (formerly labelled Mandelbox)
   is an unrelated eight-map IFS that merely uses the same fold variation.
   **Mandelbox KIFS** in the Presets menu is the pure-fold showcase for the
   IFS-side fold descent and loads straight into Surface mode. Orbiting or tumbling one also starts

@@ -75,6 +75,9 @@ const PRESETS = [
   { key: "mandelbulbClassic", group: "bulb" },
   { key: "mandelbulbOffset", group: "bulb" },
   { key: "mandelbulbRotated", group: "bulb" },
+  { key: "hybridChainCube", group: "hybrid" },
+  { key: "hybridChainCraters", group: "hybrid" },
+  { key: "hybridChainQuaternion", group: "hybrid" },
 ];
 
 /** The flame presets that carry a plot-time lens (PRESET_FINALS), used by the

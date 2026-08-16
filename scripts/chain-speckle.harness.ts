@@ -650,12 +650,12 @@ function escapeTrap(
     let yx = m[0] * vx + m[1] * vy + m[2] * vz + link.t[0];
     let yy = m[3] * vx + m[4] * vy + m[5] * vz + link.t[1];
     let yz = m[6] * vx + m[7] * vy + m[8] * vz + link.t[2];
-    if (link.foldKind !== SURFACE_FOLD_SPHEREFOLD) {
+    if (link.kind !== SURFACE_FOLD_SPHEREFOLD) {
       yx = 2 * Math.max(-1, Math.min(1, yx)) - yx;
       yy = 2 * Math.max(-1, Math.min(1, yy)) - yy;
       yz = 2 * Math.max(-1, Math.min(1, yz)) - yz;
     }
-    if (link.foldKind !== SURFACE_FOLD_BOXFOLD) {
+    if (link.kind !== SURFACE_FOLD_BOXFOLD) {
       const f = 1 / Math.max(0.25, Math.min(1, yx * yx + yy * yy + yz * yz));
       yx *= f;
       yy *= f;

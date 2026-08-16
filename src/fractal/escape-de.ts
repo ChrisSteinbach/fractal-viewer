@@ -81,6 +81,18 @@
  * bailout ball, and it tends to draw the object (and so the marching ball
  * the queries are drawn in) inward as well.
  *
+ * A CROSS-FAMILY CHAIN CAN BE CHEAPER THAN THE SINGLE MAP (fr-j231), which
+ * is the same result the STIFFNESS paragraph reaches from the other side.
+ * Priced as RATIOS against `mandelboxClassic` at the same budget in one run
+ * — the absolute moves with machine load, the ratio does not —
+ * `scripts/hybrid-chain.harness.ts` measures `mbox2 -> bulb(1)` at
+ * **0.54x** the single map and `bulb(0.5) -> bulb(0.5) rot20` at 0.95x,
+ * against 1.26-1.80x for the rest. At pre-scale 1 the bulb link sits 3.4x
+ * past its stiffness limit, so nearly every orbit leaves on its first pass
+ * and never reaches the second link at all, let alone the 30-pass ceiling.
+ * A stiff link makes a chain CHEAP; what it costs is set size, and the
+ * measurements below say it does not cost much of that either.
+ *
  * WHERE THE OFFSET LANDS IS THE SAME FORK UNDER ANOTHER NAME, which is
  * worth saying because the prototype names it separately. That harness
  * offers `offset: "pass" | "link"` inside its chaining orbit — `+ p` after
@@ -136,12 +148,12 @@
  * EMPTY CHAINS ARE REACHABLE, AND THE MODE MUST BE ABLE TO SAY SO. A chain
  * whose composite expands too hard escapes on its first pass everywhere,
  * and then this mode renders a blank frame with nothing anywhere saying
- * why — which reads as a broken app. The sharpest case is a power link
- * (a mandelbox leaves `|v|` near 7 and a triplex 8th power sends 7 to
- * 5.8e5 in one step, so `mandelbox w=2 -> bulb` is 0.01% full and only
- * becomes non-empty when the link's pre-scale roughly inverts the
- * expansion ahead of it — 5.09% at pre-scale 0.3), and that shape is out
- * of this gate. But FOLD-ONLY chains reach it too, measured: `mbox2 ->
+ * why — which reads as a broken app. (This paragraph used to name a power
+ * link as the sharpest case, on figures that were the PROTOTYPE's chaining
+ * arm read through a grid — and fr-j231 both admitted that shape into this
+ * gate and re-measured it: see POWER LINKS ARE STIFF below, where the
+ * untuned cross chain turns out to draw 11% of its rays.) FOLD-ONLY chains
+ * reach it, measured: `mbox2 ->
  * mbox2 pre-scale 4`, `mbox2 pre-scale 8 -> boxfold1.6`, `boxfold6 x3` and
  * `spherefold3 pre-scale 6 -> mbox2` all probe empty, and every one of
  * them passes this gate. So {@link probeEscapeFill} exists: a seeded,
@@ -295,15 +307,231 @@
  * field this module reads, plus the flatness clause a `w`-plane or a twist
  * trips.
  *
+ * CROSS-FAMILY LINKS (fr-j231): A LINK NEED NOT BE A FOLD. The chain admits
+ * the escape-time family's two POWER maps beside its three folds — the
+ * White/Nylander triplex 8th power (`variations.ts`'s `bulb`, the
+ * Mandelbulb's map) and the quaternion square restricted to span{1, i, j}
+ * (`qsquare`) — so a document can hold a Mandelbox and a Mandelbulb in one
+ * formula chain. That is where Mandelbulber gets its range, and it is the
+ * only thing this mode was still missing: three estimators shipped as three
+ * separate modes, unable to be COMBINED.
+ *
+ * Nothing structural had to move. A link contributes exactly one thing to
+ * the orbit — its forward map — and one thing to the estimate — its LOCAL
+ * Lipschitz factor `L(y)` — and both are already written down for these two
+ * maps in the modules that render them alone:
+ *
+ *     boxfold           reflections            L = 1
+ *     spherefold        sphereFoldFactor       L = fR²/clamp(|u|², mR², fR²)
+ *     mandelbox         box, then sphere       the same, at the FOLDED u
+ *     bulb              triplexPow8            L = 8·|u|⁷      (bulb-de.ts)
+ *     qsquare           q ↦ q²                 L = 2·|u|       (qjulia-de.ts)
+ *
+ * The QUATERNION SQUARE's factor is EXACT — quaternion norms multiply, so
+ * `|d(q²)| = 2|q|·|dq|` identically — and every other row is the field's
+ * heuristic. So the widened chain composes the SHIPPED bounds and inherits
+ * their status rather than introducing a new one: the same argument the
+ * fold-only chain made, with two more rows in the table.
+ *
+ * `u` is the point that map's nonlinearity actually receives: `y = M v + t`
+ * for every row but the mandelbox, whose sphere fold reads the BOX-FOLDED
+ * `y` rather than `y` itself. {@link runEscapeOrbit} has always evaluated
+ * it there; only this table's shorthand ever said otherwise, and a mirror
+ * written from that shorthand would be wrong on exactly the one link kind
+ * that ships most.
+ *
+ * IN `v` SPACE, WITH THE LITERAL `+ 1`, and that has to be deliberate.
+ * `bulb-de.ts` and `qjulia-de.ts` iterate `y = M v + t` with `dr` tracking
+ * `dy/dp`, so they SEED `dr` at `sigma_max(M)` and add `+ sigma_max(M)`;
+ * this module iterates `v` with `dr` tracking `dv/dp`, so it seeds 1 and
+ * adds 1. `bulb-de.ts`'s own doc says the two are the same recurrence in
+ * different coordinates (factor `sigma_max` out and the `+ sigma_max`
+ * becomes `+ 1`) — but that factoring needs ONE `M` to push through, and a
+ * chain has n of them. So the chain stays in `v` space throughout, which is
+ * how it avoids having to choose. The consequence worth stating: a ONE-LINK
+ * bulb chain is not `estimateBulbDistance` — different coordinates, and a
+ * different iteration budget — which is one of the two reasons the gate
+ * below refuses a lone power map outright.
+ *
+ * THE ESTIMATE FORM FOLLOWS THE CHAIN'S ESCAPE LAW (`logEstimate`), which
+ * is the one genuinely new decision. A fold orbit escapes EXPONENTIALLY
+ * (the maps are asymptotically affine), so its potential is `log r` and the
+ * distance reads `r / dr`. A power orbit escapes SUPER-exponentially
+ * (`r ↦ r^d`), so its potential is `log log r` and the distance reads the
+ * Böttcher/Green's form `0.5·r·ln r / dr` — which is exactly what
+ * `bulb-de.ts` and `qjulia-de.ts` return. A chain holding both is
+ * super-exponential (one power link dominates a pass), so it reads the
+ * Böttcher form; a fold-only chain keeps the linear one, bit for bit.
+ *
+ * Note what this does NOT contradict. `scripts/escape-estimate-form.harness
+ * .ts` (fr-282c) refused the log form for the FOLD family, and its argument
+ * was dimensional: the folds are uniform-rescale equivariant, so an
+ * estimator must satisfy `DE_λ(λp) = λ·DE(p)`, which `ln r` cannot (it
+ * needs `r` dimensionless). A power map is NOT rescale equivariant —
+ * `V(λy) = λ^d V(y)` — so that argument does not reach a chain containing
+ * one, and the harness's other finding (`log/linear` IS `0.5·ln r`, pinned
+ * near `0.5·ln 4` because a fold's escape lands just outside the bailout
+ * ball) is exactly what changes here: a power link's escape lands at `r^d`,
+ * far outside it, and `0.5·ln r` is then the 5x correction the Böttcher
+ * form exists to apply. The multiplier is a CONTINUOUS function of the
+ * terminal radius either way, so the flag moves no seam across the surface;
+ * it is one number per chain, resolved at build and carried on the wire so
+ * that six mirrors cannot each decide it differently.
+ *
+ * fr-282c's DECISIVE control settles it, re-run over three independent
+ * seeds: the near/far decile medians of `log/linear` are FLAT for a fold
+ * chain (1.00x) and for a fold-TERMINATED cross chain, and reach 0.55x on a
+ * power-dominated one — and the rows where the ratio is not flat are
+ * exactly the rows where the form wins big (bound overshoot cut 3.7x at
+ * `mbox2 -> bulb(0.5)`, against the 1.2x it buys where flat, which is the
+ * constant fr-282c already refused).
+ *
+ * ONE OPEN OBSERVATION, deliberately not a result. A three-link fixture
+ * adapts the OTHER way — `box1.6 -> bulb(0.3) -> sph1.2` reads near 0.793
+ * against far 1.048 — and the direction is stable (1.32x / 1.31x / 1.32x
+ * over three seeds), but it is a property of that SYSTEM rather than of
+ * chain length or of cross-family chains: the same power link at the same
+ * pre-scale between different folds (`mbox2 -> bulb(0.3) -> box1.6 rot20`)
+ * reads FLAT at 0.98x. The untested guess worth writing down for whoever
+ * picks it up is that the ratio IS `0.5·ln r_terminal`, so it is set by
+ * which link the orbit escapes on, and the adaptive fixture is the only one
+ * here ending in a BARE sphere fold, whose inversion throws an escaping
+ * point far past the bailout ball — its far decile sits at `r ~ 8.1`,
+ * double the bailout. Nothing ships on that fixture.
+ *
+ * POWER LINKS ARE STIFF, AND CYCLING RESCUES THEM ANYWAY — the feature's
+ * one predicted hazard, tested on the shipped orbit and REFUTED. The
+ * prediction was sound and its arithmetic is worth keeping: a mandelbox
+ * step leaves `|v|` near 7, a triplex 8th power sends 7 to 5.8e5 in one
+ * link, and the condition for a link of degree `d` and weight `w` entering
+ * with `|v| <= R` to keep its output inside the ball is
+ *
+ *     sigma_max(M) <= (R / |w|)^(1/d) / R
+ *
+ * — 0.30 for a unit-weight triplex power at `R = 4`, 0.5 for the
+ * quaternion square. Above that the composite looks like a one-way trip
+ * out of its own bailout ball at every query, and the prototype appeared
+ * to measure exactly that: `mandelbox w=2 -> bulb` at pre-scale 1 reading
+ * 0.01% of the ball and rising to only 5.09% at pre-scale 0.3.
+ * fr-17qu's whole blank-frame notice was scheduled ahead of this bead on
+ * the strength of that row, and the bead recorded a second prediction
+ * beside it — that cycling would NOT help, since a cycled bulb link still
+ * sees `|v| <= 4` and `4⁸ = 65536` still escapes.
+ *
+ * BOTH HALVES OF THAT ROW WERE WRONG, and separating them took two
+ * measurements. Its INSTRUMENT was a grid thresholding the distance
+ * estimate (see THE INSTRUMENT below); re-read through
+ * {@link probeEscapeFill} at the same 16-pass budget, so the instrument is
+ * the only thing that changed, the chaining arm reads 0.01 / 0.12 / 0.24 /
+ * 6.40 / 72.88 / 98.32% as the pre-scale falls 1 -> 0.2, against the
+ * record's 0.01 / 0.05 / 2.09 / 10.30 / 5.09 / 0.47. That is 8.7x HIGH at
+ * 0.5 and then 14x and 209x LOW at 0.3 and 0.2 — not a precision error but
+ * a different SHAPE: the record describes a narrow usable band with a
+ * collapse after it, where the arm actually climbs monotonically into a
+ * solid ball. And its ORBIT was the rejected one, which is the next
+ * paragraph.
+ *
+ * The prototype's numbers are its CHAINING arm's, and the shipped orbit
+ * cycles. That is the whole difference, and it is decisive: cycling
+ * re-enters `+ p` after EVERY link, so a power link is applied to a point
+ * the query has just tethered and its output is tested before any fold can
+ * compound it. Both arms re-measured through ONE instrument at EQUAL WORK
+ * (30 passes each, same bailout ball, same seeded 131072-point sampler —
+ * {@link probeEscapeFill}'s, not a grid; see the INSTRUMENT note below),
+ * `scripts/hybrid-chain.harness.ts`:
+ *
+ *     mandelbox w=2 -> bulb, pre-scale    1     0.6    0.5    0.4    0.3    0.2
+ *       ball fill, CYCLING  (shipped)     0.29   1.57   2.78   6.32  22.89  64.56 %
+ *       ball fill, CHAINING (rejected)    0.01   0.11   0.23   2.26  69.08  98.29 %
+ *       rays hit, shipped                11.0   26.9   39.1   55.0   64.8   14.4  %
+ *
+ *     mandelbox w=2 -> qsquare            1     0.6    0.5    0.4    0.3    0.2
+ *       ball fill, CYCLING  (shipped)     0.01   0.33   1.59   5.01  17.61  44.41 %
+ *       ball fill, CHAINING (rejected)    0.00   0.36   6.77  27.60  64.18  88.99 %
+ *       rays hit, shipped                15.8   40.7   49.8   50.6   55.9   28.5  %
+ *
+ * The untuned pre-scale 1 — the exact case the bead calls a blank frame —
+ * draws 11.0% of its rays. It is not blank; it is a constellation of bulb
+ * nodules in the fold's own symmetry, and one of the best-looking things
+ * in the family. Pushed the other way it stays renderable too: `-> bulb`
+ * pre-scaled 8, twenty-seven times past the bound above, still draws 0.75%
+ * of its rays against the 0.095% the same marcher reads for fr-17qu's own
+ * degenerate system.
+ *
+ * AND CHAINING HAS NO USABLE RANGE AT ALL, which is more than fr-za0n's
+ * fold-only sheet could see. Read the two fill rows against each other:
+ * chaining is 12-29x EMPTIER than cycling from pre-scale 1 down to 0.5,
+ * and then, one step later, 3.0x and 1.5x FATTER at 0.3 and 0.2 — 69% and
+ * 98% of its own bailout ball, which is fr-7u8t.8's "the rendered object
+ * WAS its own bounding sphere" defect returning intact. It goes from
+ * nothing to a solid ball with no window in between, while cycling climbs
+ * smoothly through the whole range and reaches neither failure. The
+ * rejected arm is not merely worse here; on a cross-family chain it has no
+ * setting that works.
+ *
+ * SO THERE IS NO AUTO-SCALE AND NO NEW SIGNAL, and a hint computed from
+ * the bound above was written and then deleted rather than shipped: it
+ * fires on every row of that table, all of which render, which is fr-17qu's
+ * own second-cut lesson verbatim ("a signal that fires on good input is
+ * worse than the silence it replaced"). The volume figures are the same
+ * trap one layer down, and the qsquare row is the sharpest case this
+ * family has produced: 0.012% fill for a system that draws a SIXTH of its
+ * rays, beside `mandelboxRings` reading 0.000% at the same sample count
+ * while drawing 44.9% of them. A volume probe cannot answer "will it
+ * render", here or anywhere else in this mode. fr-17qu's shipped signal
+ * already asks the right question (did the first settle's own arithmetic
+ * draw anything), and it covers these chains unchanged.
+ *
+ * THE INSTRUMENT, because a first draft of this paragraph was wrong about
+ * its own numbers and so was the record it inherited. Ball fill here is a
+ * SEEDED UNIFORM SAMPLE against {@link escapeSetContains}, never a grid
+ * and never a threshold. Two independent defects, and the second is the
+ * larger:
+ *
+ * THE GRID ALIASES. A regular grid does not measure the volume of a fold
+ * set: the structure sits on the fold's own walls — at the integers, for
+ * the classic `boxLimit` — so a grid whose planes land there over-samples
+ * them, and over `[-4, 4]` the aligned resolutions are exactly `n - 1` in
+ * {8, 16, 24, 32, 40, 48}. On `mandelboxClassic`, n = 23..49 reads
+ * 4.54 / 9.33 / 3.44 / 4.63 / 3.60 / 7.96 / 5.98 / 5.61% — a 2.72x spread
+ * with no convergence, every aligned resolution high — where the sampler
+ * reads 3.540 / 3.548 / 3.568% at 4k / 64k / 128k. THIN sets only: a
+ * 22%-fill chain reads 22.4-22.9% at every n, which is why this is easy to
+ * miss, since it bites exactly the rows a blank-frame question is about.
+ *
+ * AND A DISTANCE THRESHOLD IS NOT A MEMBERSHIP ORACLE, in EITHER
+ * direction — which is what manufactured the phantom collapse above.
+ * {@link escapeSetContains}'s own doc gives one direction: `|v|/dr` goes
+ * small for a near-boundary ESCAPER too, whose `dr` has run away just as
+ * far. The other direction is the one that bit, and it is specific to the
+ * rejected orbit: CHAINING floors `dr` only once per PASS, so a
+ * hard-contracting chain keeps `dr` near 1 and returns O(1) distances at
+ * points whose orbits never leave the ball. Those points ARE in the set,
+ * and a `de(p) < eps` test counts every one of them out — so the record's
+ * 0.47% at pre-scale 0.2 was a set filling 98% of its own bailout ball,
+ * read as almost empty. fr-azjk carries both findings back to the sheets
+ * that predate this one.
+ *
  * ELIGIBILITY is the COMPLEMENT of the IFS gate on the shapes this formula
  * covers: one or more active maps, each of whose active variation list is
- * exactly one fold-family entry, all flat, no final transform, no
+ * exactly one fold-family OR power entry, all flat, no final transform, no
  * kaleidoscope that rotates out of 3D — and NOT an IFS-eligible
- * contraction. That last clause is what widened: `analyzeSurfaceSystem`
- * admits a system when EVERY map contracts, so this gate admits when at
- * least one does NOT. A two-map non-contracting fold system used to be
- * refused by both gates and rendered by nothing; it is this mode's now.
- * Everything else stays ineligible for both modes, with reasons.
+ * contraction. That contraction clause is what fr-za0n widened:
+ * `analyzeSurfaceSystem` admits a system when EVERY map contracts, so this
+ * gate admits when at least one does NOT. A two-map non-contracting fold
+ * system used to be refused by both gates and rendered by nothing; it is
+ * this mode's now. Everything else stays ineligible for both modes, with
+ * reasons.
+ *
+ * A LONE POWER MAP IS REFUSED, deliberately, and that is what keeps this
+ * gate disjoint from `analyzeBulbSystem` rather than merely ordered before
+ * it. A single triplex power already HAS an object and a better estimator —
+ * `bulb-de.ts`'s, in `y` space with the Böttcher form and its own presets
+ * and kernel core — and a single quaternion square is `qjulia-de.ts`'s
+ * measured-dull object, which fr-7u8t.5 closed won't-do after twenty panels
+ * came back smooth. Neither refusal costs range: two power links ARE a
+ * chain (`bulb -> bulb` at a rotation is a genuinely new set), and it is
+ * composition, not the maps, that this gate widened for.
  *
  * WHAT THE MIRRORS SEE (fr-s04t landed the pass fr-za0n scheduled). The
  * GLSL `SURFACE_ESCAPE` variant and the WGSL `core:"escape"` kernel both
@@ -314,15 +542,31 @@
  * own, which is the mode's cap because eligibility must be one answer for
  * both engines), WGSL as one `GpuMap` per link on the maps storage binding
  * the descent cores already carry. {@link EscapeDE} still extends
- * {@link EscapeLink}, so the flat `m`/`t`/`foldKind`/`w`/`derivGrowth`
+ * {@link EscapeLink}, so the flat `m`/`t`/`kind`/`w`/`derivGrowth`
  * fields remain the head link's — the WGSL params block keeps packing them
  * as frozen layout ballast, and nothing reads them to render. A one-link
  * document renders bit-identically to fr-kltj's on every path (`n = 1`
  * makes the cycle the single map, order 1 skips the fold entirely), which
  * is what the bench's recorded escape rows check for free.
+ *
+ * fr-j231 cost those mirrors three things and no layout. The two POWER
+ * bodies append behind a `kind < 4` guard (see {@link EscapeLinkKind} for
+ * why the guard rather than a rewrite); {@link EscapeDE.logEstimate} rides
+ * the one slot each wire already reserved for exactly this — GLSL's
+ * `uEscLogForm`, WGSL's `escParams.w`, whose comment named it "where a
+ * form flag would ride if the bulb family ever earns one"; and the
+ * hit-info's CONTINUOUS escape count learned a second interpolant, because
+ * `log(r/R)/log(growth)` models CONSTANT-factor growth and silently
+ * degenerates on a power link (a pre-scaled one has `growth < 1`, so the
+ * guard fires and the trap falls back to the raw integer count — fr-7u8t.8's
+ * palette confetti, through the back door). A power-terminated orbit reads
+ * the power form `log(log r / log R) / log d` instead, selected by the
+ * DEGREE of the link that produced the terminal radius — which is the same
+ * per-step register the constant-factor arm already tracked as `growth`.
  */
 import { composeAffine } from "./affine";
 import { isFlatTransform, symmetryIsNonFlat } from "./affine4";
+import { BULB_POWER } from "./bulb-de";
 import { effectiveSymmetryOrder } from "./chaos-game";
 import { mulberry32 } from "./rng";
 import {
@@ -332,7 +576,6 @@ import {
   SURFACE_FOLD_SPHEREFOLD,
   transformSigmas,
 } from "./surface-de";
-import type { SurfaceFoldKind } from "./surface-de";
 import { resolveFoldRadii, sphereFoldLipschitz } from "./variations";
 import type {
   SymmetryParams,
@@ -432,6 +675,45 @@ export interface EscapeEligibility {
   reasons: string[];
 }
 
+/**
+ * The maps a chain LINK may carry, as the numeric code every mirror
+ * dispatches on. The three folds keep `surface-de.ts`'s own values, so a
+ * fold-only document packs the bytes it always packed; fr-j231's two POWER
+ * maps append at 4 and 5.
+ *
+ * The codes are ORDERED — folds below {@link ESCAPE_LINK_BULB}, powers at or
+ * above it — and the mirrors lean on that: the fold family is dispatched by
+ * a pair of NEGATIVE tests (`kind != 2` runs the box fold, `kind != 1` runs
+ * the sphere fold) that are exhaustive by negation over {1, 2, 3} alone, so
+ * every one of them sits behind a `kind < 4` guard rather than being
+ * rewritten. `surface-de-gpu.ts`'s module doc names that hazard as the
+ * reason the Mandelbulb became a sixth CORE instead of a fourth kind; the
+ * guard is what makes a fourth and fifth kind safe here.
+ */
+export const ESCAPE_LINK_BOXFOLD = SURFACE_FOLD_BOXFOLD;
+export const ESCAPE_LINK_SPHEREFOLD = SURFACE_FOLD_SPHEREFOLD;
+export const ESCAPE_LINK_MANDELBOX = SURFACE_FOLD_MANDELBOX;
+/** The White/Nylander triplex 8th power — `variations.ts`'s `bulb`. */
+export const ESCAPE_LINK_BULB = 4;
+/** The quaternion square on span{1, i, j} — `variations.ts`'s `qsquare`. */
+export const ESCAPE_LINK_QSQUARE = 5;
+
+export type EscapeLinkKind = 1 | 2 | 3 | 4 | 5;
+
+/**
+ * A link's POWER `d` — the degree of its map, `V(λy) = λ^d V(y)`, which is
+ * both the exponent in its local factor `d·|y|^(d-1)` and the base of the
+ * continuous escape count the shaders paint with. `0` means "not a power
+ * map": a fold is asymptotically affine and has neither.
+ */
+export function escapeLinkPower(kind: EscapeLinkKind): number {
+  return kind === ESCAPE_LINK_BULB
+    ? BULB_POWER
+    : kind === ESCAPE_LINK_QSQUARE
+      ? 2
+      : 0;
+}
+
 /** One link of the orbit's formula chain (fr-za0n) — one active map of the
  * document, in document order, and everything the orbit needs from it. */
 export interface EscapeLink {
@@ -439,13 +721,18 @@ export interface EscapeLink {
   m: number[];
   /** Forward translation t. */
   t: Vec3;
-  /** The fold family applied after the affine part. */
-  foldKind: SurfaceFoldKind;
-  /** Signed fold weight w — the classic Mandelbox scale. */
+  /** The map applied after the affine part — a fold, or (fr-j231) one of
+   * the two power maps. */
+  kind: EscapeLinkKind;
+  /** Signed variation weight w — the classic Mandelbox scale for a fold,
+   * and a free multiplier on a power link (the orbit's `dr` accounts for
+   * it exactly, so unlike `analyzeBulbSystem`'s lone map there is no
+   * textbook object here for it to deform away from). */
   w: number;
   /** `|w| · sigma_max(M)` — the per-step derivative growth the local
-   * fold factor multiplies onto. No fold LENGTH enters it: the sphere
-   * fold's contribution rides the per-step local factor instead. */
+   * factor multiplies onto. No fold LENGTH enters it: the sphere
+   * fold's contribution rides the per-step local factor instead, and so
+   * does a power link's `d·|y|^(d-1)`. */
   derivGrowth: number;
   /** The box fold's reflection plane (`variations.ts`'s `boxLimit`,
    * resolved). Classic 1. */
@@ -469,6 +756,18 @@ export interface EscapeDE extends EscapeLink {
   /** The formula chain, in document order — one entry per active map. The
    * orbit applies `links[step mod links.length]` at each step. */
   links: EscapeLink[];
+  /**
+   * Read the terminal radius through the Böttcher/Green's form
+   * `0.5·r·ln r / dr` rather than the fold family's linear `r / dr`
+   * (module doc's ESTIMATE FORM paragraph) — true exactly when some link
+   * is a POWER map, whose super-exponential escape the linear form
+   * under-reads by a factor `0.5·ln r`.
+   *
+   * One number per chain, resolved here rather than in each of the six
+   * mirrors, and false for every document that predates fr-j231 — which
+   * is what keeps a fold-only chain bit-identical.
+   */
+  logEstimate: boolean;
   /** Kaleidoscope sectors the query is folded into before the orbit starts
    * ({@link foldQueryIntoSector}); `1` is off, and the whole fold is then
    * skipped, which is what keeps an unsymmetrised system bit-identical. */
@@ -483,8 +782,11 @@ export interface EscapeDE extends EscapeLink {
 }
 
 /** `composeVariations`' active filter again (surface-de.ts keeps its own
- * copy private): the single active fold-family entry, or null. */
-function pureFoldVariation(t: Transform): Variation | null {
+ * copy private): the single active entry a LINK may carry — the fold
+ * family, plus (fr-j231) the two escape-time power maps — or null.
+ * Exactly the set whose forward local Lipschitz factor is known in closed
+ * form, which is the whole requirement for a link. */
+function linkVariation(t: Transform): Variation | null {
   const active = (t.variations ?? []).filter(
     (v) => Number.isFinite(v.weight) && v.weight !== 0,
   );
@@ -492,9 +794,37 @@ function pureFoldVariation(t: Transform): Variation | null {
   const v = active[0];
   return v.type === "boxfold" ||
     v.type === "spherefold" ||
-    v.type === "mandelbox"
+    v.type === "mandelbox" ||
+    v.type === "bulb" ||
+    v.type === "qsquare"
     ? v
     : null;
+}
+
+/** Which of {@link linkVariation}'s types is a POWER map (fr-j231) — the
+ * two the gate treats differently and the orbit dispatches past its fold
+ * branches. */
+function isPowerVariation(v: Variation): boolean {
+  return v.type === "bulb" || v.type === "qsquare";
+}
+
+/**
+ * Does this system's chain hold a POWER link — is it a CROSS-FAMILY hybrid
+ * rather than the fold chain fr-za0n shipped? `qjulia-de.ts`'s
+ * `systemHasActiveQSquare` is the precedent, and so is its reason: main.ts's
+ * eligibility note has to name what it is about to render, and "these N
+ * folds do not all contract" stops being true the moment one of them is a
+ * triplex power.
+ *
+ * Reads the same LINK shape {@link analyzeEscapeSystem} does — one active
+ * variation per active map — so it cannot report a hybrid the gate would
+ * refuse, or miss one it admits.
+ */
+export function systemHasPowerLink(transforms: Transform[]): boolean {
+  return activeMaps(transforms).some((map) => {
+    const v = linkVariation(map);
+    return v !== null && isPowerVariation(v);
+  });
 }
 
 /** A map's composite forward Lipschitz bound `|w|·L_V·sigma_max(M)` — the
@@ -544,12 +874,32 @@ export function analyzeEscapeSystem(
   transforms.forEach((map, i) => {
     if ((map.weight ?? 1) <= 0) return;
     const label = `map ${i + 1}`;
-    const fold = pureFoldVariation(map);
-    if (!fold) {
-      reasons.push(`${label} is not a pure fold`);
+    const v = linkVariation(map);
+    if (!v) {
+      reasons.push(`${label} is not a pure fold or power map`);
     } else if (!isFlatTransform(map)) {
       reasons.push(`${label} extends into 4D`);
-    } else if (foldLipschitz(fold, map) >= CONTRACTION_LIMIT) {
+    } else if (isPowerVariation(v)) {
+      if (active.length < 2) {
+        // Module doc's LONE POWER MAP paragraph: both of these already
+        // have a home, and refusing them here is what keeps this gate
+        // DISJOINT from `analyzeBulbSystem` rather than merely ordered
+        // before it — main.ts's forward arm reads the two in sequence.
+        reasons.push(
+          v.type === "bulb"
+            ? `${label} is a lone triplex power (the Mandelbulb render owns it)`
+            : `${label} is a lone quaternion square (chain it with another map)`,
+        );
+      } else {
+        // A power link ALWAYS expands, at every parameter a document can
+        // author: its local factor `d·|y|^(d-1)` reaches 8·4⁷ = 131072 on
+        // the bailout ball's rim. The complement with the IFS gate is
+        // firmer still — `analyzeSurfaceSystem` refuses any map carrying a
+        // non-fold variation outright ("map N uses variations"), so a
+        // chain holding one is never IFS-eligible whatever its weights.
+        anyExpands = true;
+      }
+    } else if (foldLipschitz(v, map) >= CONTRACTION_LIMIT) {
       anyExpands = true;
     }
   });
@@ -573,20 +923,29 @@ export function analyzeEscapeSystem(
 
 /** One link of the chain, from the document's own vocabulary. */
 function buildEscapeLink(map: Transform): EscapeLink {
-  const fold = pureFoldVariation(map)!;
+  const v = linkVariation(map)!;
   const affine = composeAffine(map);
-  const radii = resolveFoldRadii(fold);
+  // A POWER link has no fold apparatus at all, and `resolveFoldRadii`
+  // returns the CLASSIC set for a variation carrying none — so its lane
+  // travels the wire holding the numbers every unparameterised fold link
+  // holds, rather than zeros a stray sphere-fold read could divide by.
+  // No branch reads them: the orbit dispatches on `kind` first.
+  const radii = resolveFoldRadii(v);
   return {
     m: affine.m,
     t: affine.t,
-    foldKind:
-      fold.type === "boxfold"
-        ? SURFACE_FOLD_BOXFOLD
-        : fold.type === "spherefold"
-          ? SURFACE_FOLD_SPHEREFOLD
-          : SURFACE_FOLD_MANDELBOX,
-    w: fold.weight,
-    derivGrowth: Math.abs(fold.weight) * transformSigmas(map).max,
+    kind:
+      v.type === "boxfold"
+        ? ESCAPE_LINK_BOXFOLD
+        : v.type === "spherefold"
+          ? ESCAPE_LINK_SPHEREFOLD
+          : v.type === "mandelbox"
+            ? ESCAPE_LINK_MANDELBOX
+            : v.type === "bulb"
+              ? ESCAPE_LINK_BULB
+              : ESCAPE_LINK_QSQUARE,
+    w: v.weight,
+    derivGrowth: Math.abs(v.weight) * transformSigmas(map).max,
     boxLimit: radii.boxLimit,
     minRadius2: radii.minRadius * radii.minRadius,
     fixedRadius2: radii.fixedRadius * radii.fixedRadius,
@@ -614,10 +973,34 @@ export function buildEscapeDE(
     // The head link's fields, flat — the wire fr-kltj's mirrors read.
     ...links[0],
     links,
+    logEstimate: links.some((l) => escapeLinkPower(l.kind) > 0),
     symmetryOrder: effectiveSymmetryOrder(symmetry.order, transforms.length),
     symmetryPlane: symmetry.plane,
     boundingRadius: ESCAPE_TIME_RADIUS,
   };
+}
+
+/**
+ * The stiffness bound of the module doc's POWER LINKS paragraph: the
+ * largest `sigma_max(M)` at which a link of degree `d` and weight `w`
+ * keeps its own output inside a bailout ball of radius `R` when the whole
+ * ball is thrown at it.
+ *
+ * NOT A GATE AND NOT A SIGNAL — nothing in the app calls it. It exists
+ * because the bead this feature came from blocked on it, and because
+ * `scripts/hybrid-chain.harness.ts` measures the shipped orbit against it:
+ * the bound is the CHAINING arm's, and cycling's per-link `+ p` means a
+ * real chain renders across the whole range it declares hopeless. Keeping
+ * it executable is what makes that a measurement rather than an assertion.
+ */
+export function escapeLinkStiffnessLimit(
+  power: number,
+  weight: number,
+  radius = ESCAPE_TIME_RADIUS,
+): number {
+  const w = Math.abs(weight);
+  if (power <= 0 || !(w > 0)) return Infinity;
+  return Math.pow(radius / w, 1 / power) / radius;
 }
 
 /** One axis of the box fold — variations.ts's `foldAxis`, duplicated here
@@ -741,19 +1124,19 @@ function runEscapeOrbit(de: EscapeDE, p: Vec3, maxIterations: number): void {
     const wall = link.boxLimit;
     const mR2 = link.minRadius2;
     const fR2 = link.fixedRadius2;
-    if (link.foldKind === SURFACE_FOLD_BOXFOLD) {
+    if (link.kind === ESCAPE_LINK_BOXFOLD) {
       fx = foldAxis(yx, wall);
       fy = foldAxis(yy, wall);
       fz = foldAxis(yz, wall);
       localL = 1;
-    } else if (link.foldKind === SURFACE_FOLD_SPHEREFOLD) {
+    } else if (link.kind === ESCAPE_LINK_SPHEREFOLD) {
       const r2 = yx * yx + yy * yy + yz * yz;
       const f = fR2 / Math.max(mR2, Math.min(fR2, r2));
       fx = yx * f;
       fy = yy * f;
       fz = yz * f;
       localL = f;
-    } else {
+    } else if (link.kind === ESCAPE_LINK_MANDELBOX) {
       const bx = foldAxis(yx, wall);
       const by = foldAxis(yy, wall);
       const bz = foldAxis(yz, wall);
@@ -763,6 +1146,52 @@ function runEscapeOrbit(de: EscapeDE, p: Vec3, maxIterations: number): void {
       fy = by * f;
       fz = bz * f;
       localL = f;
+    } else if (link.kind === ESCAPE_LINK_BULB) {
+      // `variations.ts`'s triplexPow8, INLINED — duplicated for the reason
+      // `foldAxis` is above, and character for character `bulb-de.ts`'s own
+      // copy so the two cannot drift. Its local factor `8·|y|⁷` is the
+      // triplex power's radial/polar stretch: a HEURISTIC, under-reading
+      // the azimuthal stretch by up to 8x at the poles (bulb-de.ts's own
+      // paragraph), which is the same class of slack the folds contribute.
+      const a = yx * yx + yy * yy;
+      const z2 = yz * yz;
+      const r2 = a + z2;
+      const r4 = r2 * r2;
+      fz =
+        128 * z2 * z2 * z2 * z2 -
+        256 * z2 * z2 * z2 * r2 +
+        160 * z2 * z2 * r4 -
+        32 * z2 * r4 * r2 +
+        r4 * r4;
+      const s =
+        128 * z2 * z2 * z2 * yz -
+        192 * z2 * z2 * yz * r2 +
+        80 * z2 * yz * r4 -
+        8 * yz * r4 * r2;
+      const rho = Math.sqrt(a);
+      const inv = rho > 0 ? 1 / rho : 0;
+      const u1 = yx * inv;
+      const v1 = yy * inv;
+      const u2 = u1 * u1 - v1 * v1;
+      const v2 = 2 * u1 * v1;
+      const u4 = u2 * u2 - v2 * v2;
+      const v4 = 2 * u2 * v2;
+      const u8 = u4 * u4 - v4 * v4;
+      const v8 = 2 * u4 * v4;
+      fx = rho * s * u8;
+      fy = rho * s * v8;
+      localL = BULB_POWER * (r2 * r2 * r2 * Math.sqrt(r2));
+    } else {
+      // The quaternion square on span{1, i, j} — `variations.ts`'s
+      // `qsquare`, which is closed on that subspace (the `v x v` term
+      // drops). Its `2·|y|` is EXACT rather than a bound: quaternion
+      // multiplication is norm-multiplicative, so `|d(q²)| = 2|q|·|dq|`
+      // identically (`qjulia-de.ts`). The one certified factor in the
+      // chain's product.
+      fx = yx * yx - yy * yy - yz * yz;
+      fy = 2 * yx * yy;
+      fz = 2 * yx * yz;
+      localL = 2 * Math.sqrt(yx * yx + yy * yy + yz * yz);
     }
     vx = link.w * fx + qx;
     vy = link.w * fy + qy;
@@ -788,7 +1217,14 @@ export function estimateEscapeDistance(
   maxIterations = ESCAPE_TIME_ITERATIONS,
 ): number {
   runEscapeOrbit(de, p, maxIterations);
-  return orbitR / orbitDr;
+  if (!de.logEstimate) return orbitR / orbitDr;
+  // The Böttcher/Green's form for a chain that escapes super-exponentially
+  // (module doc's ESTIMATE FORM paragraph). `ln r` goes NEGATIVE below
+  // r = 1, which a converging orbit reaches, and a negative estimate would
+  // march the tracer BACKWARDS — returning 0 there is the inside signal and
+  // is safe in the direction a sphere tracer needs. `bulb-de.ts` and
+  // `qjulia-de.ts` take the identical exit, for the identical reason.
+  return orbitR <= 1 ? 0 : (0.5 * orbitR * Math.log(orbitR)) / orbitDr;
 }
 
 /**

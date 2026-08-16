@@ -137,10 +137,14 @@ them.
 
 ## Related, but a different object
 
-The **quaternion Julia set** rendered by the surface/escape-time pipeline
+The **quaternion square** in the surface/escape-time pipeline
 (`qjulia-de.ts`, epic fr-7u8t) is a different fractal by a different method:
 `q ← q² + c` iterated forward in the quaternions and ray-marched with a
 distance estimator, one dimension up from the plane. It shares the
 `z² + c` (or `q² + c`) family and the letter `c`, but nothing else here —
-no inverse iteration, no chaos game, no flame render. See that module's doc
-and `docs/quaternion-julia-brief.md` for the relationship between the two.
+no inverse iteration, no chaos game, no flame render. Alone it is not
+rendered at all (measured smooth and detail-free, fr-7u8t.5); it reaches
+the screen only as a LINK in an escape-time chain beside a fold (fr-j231),
+which is what the **Hybrid Chain Quaternion** preset loads. See that
+module's doc and `docs/quaternion-julia-brief.md` for the relationship
+between the two.

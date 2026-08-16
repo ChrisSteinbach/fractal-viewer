@@ -969,17 +969,21 @@ uniform float uBalloonFar;
 #define surfaceDE surfaceDEFractal
 #endif
 #if SURFACE_ESCAPE
-  /** Escape-time fold render (fr-kltj), a LIST since fr-s04t: the FORWARD
+  /** Escape-time render (fr-kltj), a LIST since fr-s04t: the FORWARD
    * affine (M, t) of every CHAIN LINK and its
-   * (foldKind, w, |w|·sigma_max(M), unused) quartet, uMapCount slots
+   * (kind, w, |w|·sigma_max(M), unused) quartet, uMapCount slots
    * live — the document's own transform list IS the formula sequence
    * (escape-de.ts's THE TRANSFORM LIST IS THE SEQUENCE). Declared INSIDE
    * the arm, the SURFACE_BULB precedent: an array per link is the one
    * uniform block the descent variants would pay real bytes for against
    * the measured ~80KB Mesa source cliff and could never read. t is the
    * PRE-fold offset; the per-iteration offset is the query point
-   * (fr-7u8t.8's Mandelbrot form), and the unused slot is where a form
-   * flag would ride if the bulb family ever earns one. */
+   * (fr-7u8t.8's Mandelbrot form). kind is escape-de.ts's
+   * EscapeLinkKind — the three folds, plus fr-j231's two POWER maps at 4
+   * and 5. BOTH TAILS ARE STILL UNUSED (uEscParams[i].w and
+   * uEscRadii[i].w): the one flag this wire has gained since rides
+   * uEscLogForm below instead, because it is one number per CHAIN and not
+   * one per link. */
   uniform mat3 uEscM[MAX_MAPS];
   uniform vec3 uEscT[MAX_MAPS];
   uniform vec4 uEscParams[MAX_MAPS];
@@ -989,6 +993,19 @@ uniform float uBalloonFar;
    * may hold a different apparatus per link, so this is per-slot like the
    * three above and not a single uniform. */
   uniform vec4 uEscRadii[MAX_MAPS];
+  /** fr-j231: read the terminal radius through the Boettcher/Green's
+   * form 0.5*r*ln r / dr (1) or the fold family's linear r / dr
+   * (0) — EscapeDE.logEstimate, which is true exactly when some link
+   * is a POWER map. A chain-level flag and not a per-link one: the
+   * estimate is read once, after the orbit, and making it depend on
+   * WHICH link happened to terminate would put a 1.4x step across
+   * every boundary between the two (the multiplier 0.5*ln r is
+   * continuous in r; a per-link switch would not be). This is the flag
+   * the block above once reserved a params tail for — a scalar instead,
+   * since a per-link slot is the wrong shape for one number per chain
+   * (the WGSL kernel, whose params block has no scalars to spare, does
+   * ride that tail). */
+  uniform int uEscLogForm;
 
   /** escape-de.ts's foldQueryIntoSector — the kaleidoscope as a
    * QUERY-SPACE wedge fold, applied ONCE before the orbit (never inside
@@ -1033,6 +1050,34 @@ uniform float uBalloonFar;
     return vec3(fa, fb, p.z);
   }
 
+  /** The SURFACE_BULB arm's bulbPow8, duplicated CHARACTER FOR CHARACTER
+   * (fr-j231): the two forward-orbit arms are ALTERNATIVES — each
+   * replaces the descent bodies wholesale, so surfaceFragmentFor refuses
+   * the pair and neither can see a definition emitted inside the other —
+   * and a chain LINK of kind 4 needs this map. Both mirror
+   * variations.ts's triplexPow8, which is the definition; the test that
+   * diffs the two arms' bodies is what keeps this copy honest. */
+  vec3 bulbPow8(vec3 y, float r2) {
+    float a = y.x * y.x + y.y * y.y;
+    float z2 = y.z * y.z;
+    float r4 = r2 * r2;
+    float vz = 128.0 * z2 * z2 * z2 * z2 - 256.0 * z2 * z2 * z2 * r2 +
+      160.0 * z2 * z2 * r4 - 32.0 * z2 * r4 * r2 + r4 * r4;
+    float s = 128.0 * z2 * z2 * z2 * y.z - 192.0 * z2 * z2 * y.z * r2 +
+      80.0 * z2 * y.z * r4 - 8.0 * y.z * r4 * r2;
+    float rho = sqrt(a);
+    float inv = rho > 0.0 ? 1.0 / rho : 0.0;
+    float u1 = y.x * inv;
+    float v1 = y.y * inv;
+    float u2 = u1 * u1 - v1 * v1;
+    float v2 = 2.0 * u1 * v1;
+    float u4 = u2 * u2 - v2 * v2;
+    float v4 = 2.0 * u2 * v2;
+    float u8 = u4 * u4 - v4 * v4;
+    float v8 = 2.0 * u4 * v4;
+    return vec3(rho * s * u8, rho * s * v8, vz);
+  }
+
   /**
    * Escape-time fold DE (fr-kltj, CYCLING through the chain since
    * fr-s04t), mirroring escape-de.ts's estimateEscapeDistance: iterate the
@@ -1071,17 +1116,42 @@ uniform float uBalloonFar;
       int kind = int(prm.x);
       vec3 y = uEscM[li] * v + uEscT[li];
       float localL = 1.0;
-      if (kind != 2) {
-        // The box fold (boxfold + mandelbox): per-axis reflections,
-        // local factor 1.
-        y = clamp(y, -uEscRadii[li].z, uEscRadii[li].z) * 2.0 - y;
-      }
-      if (kind != 1) {
-        // The sphere fold (spherefold + mandelbox): variations.ts's
-        // sphereFoldFactor, which IS the local conformal factor.
-        float f = uEscRadii[li].y / clamp(dot(y, y), uEscRadii[li].x, uEscRadii[li].y);
-        y *= f;
-        localL = f;
+      // fr-j231: the FOLD family, GUARDED. The two tests below are
+      // exhaustive by NEGATION over {1, 2, 3} alone, so a power kind has
+      // to be kept out of them rather than added beside them — kind 4
+      // satisfies both != 2 and != 1 and would silently run both
+      // folds. (surface-de-gpu.ts's module doc names exactly that
+      // hazard as the reason the Mandelbulb became a sixth CORE rather
+      // than a fourth kind; the guard is what makes a fourth and fifth
+      // kind safe on this one.)
+      if (kind < 4) {
+        if (kind != 2) {
+          // The box fold (boxfold + mandelbox): per-axis reflections,
+          // local factor 1.
+          y = clamp(y, -uEscRadii[li].z, uEscRadii[li].z) * 2.0 - y;
+        }
+        if (kind != 1) {
+          // The sphere fold (spherefold + mandelbox): variations.ts's
+          // sphereFoldFactor, which IS the local conformal factor.
+          float f = uEscRadii[li].y / clamp(dot(y, y), uEscRadii[li].x, uEscRadii[li].y);
+          y *= f;
+          localL = f;
+        }
+      } else if (kind == 4) {
+        // The triplex 8th power. 8*r^7 is its radial/polar stretch —
+        // bulb-de.ts's HEURISTIC factor, under-reading the azimuthal
+        // stretch by up to 8x at the poles, which is the same class of
+        // slack the folds contribute.
+        float r2y = dot(y, y);
+        localL = 8.0 * (r2y * r2y * r2y * sqrt(r2y));
+        y = bulbPow8(y, r2y);
+      } else {
+        // The quaternion square on span{1, i, j}, closed there because
+        // the v x v term drops. Its 2*|y| is EXACT rather than a
+        // bound (quaternion norms multiply) — qjulia-de.ts's certified
+        // factor, and the one certified term in the chain's product.
+        localL = 2.0 * length(y);
+        y = vec3(y.x * y.x - y.y * y.y - y.z * y.z, 2.0 * y.x * y.y, 2.0 * y.x * y.z);
       }
       // fr-7u8t.8: the Mandelbrot form's offset — the QUERY POINT (folded,
       // fr-s04t), not the document's t (which stays the pre-fold offset
@@ -1097,7 +1167,16 @@ uniform float uBalloonFar;
         li = 0;
       }
     }
-    return r / dr;
+    return uEscLogForm == 0
+      ? r / dr
+      // The Boettcher/Green's form for a chain that escapes
+      // super-exponentially (escape-de.ts's ESTIMATE FORM paragraph).
+      // ln r goes NEGATIVE below r = 1, which a converging orbit
+      // reaches, and a negative estimate would march the tracer
+      // BACKWARDS — returning 0 there is the inside signal and is safe in
+      // the direction a sphere tracer needs. bulb-de.ts takes the
+      // identical exit.
+      : (r <= 1.0 ? 0.0 : 0.5 * r * log(r) / dr);
   }
 
   float surfaceDE(vec3 p) {
@@ -1133,6 +1212,10 @@ uniform float uBalloonFar;
     // document reads uEscParams[0].z at every step exactly as it did
     // before the chain (fr-s04t).
     float growth = uEscParams[0].z;
+    // fr-j231: and its DEGREE, 0 until a step has run — which is also
+    // what a FOLD leaves here, so a fold-only chain reads the
+    // constant-factor arm below at every step exactly as it did before.
+    float lastPower = 0.0;
     for (int i = 0; i < steps; i++) {
       if (r > uBoundingRadius) {
         escapedAt = i;
@@ -1142,18 +1225,51 @@ uniform float uBalloonFar;
       int kind = int(prm.x);
       vec3 y = uEscM[li] * v + uEscT[li];
       float localL = 1.0;
-      if (kind != 2) {
-        y = clamp(y, -uEscRadii[li].z, uEscRadii[li].z) * 2.0 - y;
-      }
-      if (kind != 1) {
-        float f = uEscRadii[li].y / clamp(dot(y, y), uEscRadii[li].x, uEscRadii[li].y);
-        y *= f;
-        localL = f;
+      // fr-j231: the FOLD family, GUARDED. The two tests below are
+      // exhaustive by NEGATION over {1, 2, 3} alone, so a power kind has
+      // to be kept out of them rather than added beside them — kind 4
+      // satisfies both != 2 and != 1 and would silently run both
+      // folds. (surface-de-gpu.ts's module doc names exactly that
+      // hazard as the reason the Mandelbulb became a sixth CORE rather
+      // than a fourth kind; the guard is what makes a fourth and fifth
+      // kind safe on this one.)
+      if (kind < 4) {
+        if (kind != 2) {
+          // The box fold (boxfold + mandelbox): per-axis reflections,
+          // local factor 1.
+          y = clamp(y, -uEscRadii[li].z, uEscRadii[li].z) * 2.0 - y;
+        }
+        if (kind != 1) {
+          // The sphere fold (spherefold + mandelbox): variations.ts's
+          // sphereFoldFactor, which IS the local conformal factor.
+          float f = uEscRadii[li].y / clamp(dot(y, y), uEscRadii[li].x, uEscRadii[li].y);
+          y *= f;
+          localL = f;
+        }
+      } else if (kind == 4) {
+        // The triplex 8th power. 8*r^7 is its radial/polar stretch —
+        // bulb-de.ts's HEURISTIC factor, under-reading the azimuthal
+        // stretch by up to 8x at the poles, which is the same class of
+        // slack the folds contribute.
+        float r2y = dot(y, y);
+        localL = 8.0 * (r2y * r2y * r2y * sqrt(r2y));
+        y = bulbPow8(y, r2y);
+      } else {
+        // The quaternion square on span{1, i, j}, closed there because
+        // the v x v term drops. Its 2*|y| is EXACT rather than a
+        // bound (quaternion norms multiply) — qjulia-de.ts's certified
+        // factor, and the one certified term in the chain's product.
+        localL = 2.0 * length(y);
+        y = vec3(y.x * y.x - y.y * y.y - y.z * y.z, 2.0 * y.x * y.y, 2.0 * y.x * y.z);
       }
       v = prm.y * y + q;
       dr = prm.z * localL * dr + 1.0;
       r = length(v);
       growth = prm.z;
+      // fr-j231: the DEGREE of the link that produced this r — 0 for a
+      // fold, which is asymptotically affine and has no exponent to
+      // multiply.
+      lastPower = kind == 4 ? 8.0 : (kind == 5 ? 2.0 : 0.0);
       rings = min(rings, r / uBoundingRadius);
       sheets = min(sheets, abs(v.y) / uBoundingRadius);
       li++;
@@ -1224,14 +1340,50 @@ uniform float uBalloonFar;
     // ramp's top with the never-escaped ones. A better trade than the whole
     // object sharing its bottom, and the number to beat if anyone revisits
     // this with a normalizer that does not clamp.
+    //
+    // fr-j231: A SECOND INTERPOLANT, because which one reads the terminal
+    // radius depends on the link that PRODUCED it. A fold grows by a
+    // constant factor, so the ratio of logs linearises it; a power map
+    // multiplies the exponent, so the count is log(log r / log R) / log d
+    // — the SURFACE_BULB arm's own expression, with the link's degree in
+    // place of its 8. Single-form was worse than merely imprecise on a
+    // power link: a pre-scaled one routinely has growth = |w|*sigma_max
+    // BELOW 1, so the guard fired, escFrac fell to 0 and the trap
+    // degenerated to the raw integer step function this whole comment
+    // exists to have removed — fr-7u8t.8's palette confetti, through the
+    // back door.
+    //
+    // AND IT IS PER-TERMINATING-LINK WHERE THE ESTIMATE FORM (uEscLogForm)
+    // IS PER-CHAIN, which reads as a contradiction until you ask what each
+    // one is a function of. The estimate's multiplier 0.5*ln r is
+    // CONTINUOUS in r, so choosing it per link would put a 1.4x step
+    // across every boundary between the two — hence one number for the
+    // whole chain. The escape count is a COUNT, and the link that carried
+    // the orbit out of the ball is the one whose growth law says how far
+    // past it the orbit landed. A chain holding both kinds terminates on
+    // either, so a chain-level choice here would paint half its own orbits
+    // with the wrong law.
     float escFrac = 0.0;
-    if (escapedAt < steps && growth > 1.0) {
-      escFrac = clamp(log(r / uBoundingRadius) / log(growth), 0.0, 1.0);
+    if (escapedAt < steps) {
+      if (lastPower > 1.0) {
+        escFrac = clamp(log(log(r) / log(uBoundingRadius)) / log(lastPower), 0.0, 1.0);
+      } else if (growth > 1.0) {
+        escFrac = clamp(log(r / uBoundingRadius) / log(growth), 0.0, 1.0);
+      }
     }
     trap = clamp((float(escapedAt) - escFrac) / float(uMaxDepth), 0.0, 1.0);
     rings = clamp(rings, 0.0, 1.0);
     sheets = clamp(sheets, 0.0, 1.0);
-    return r / dr;
+    return uEscLogForm == 0
+      ? r / dr
+      // The Boettcher/Green's form for a chain that escapes
+      // super-exponentially (escape-de.ts's ESTIMATE FORM paragraph).
+      // ln r goes NEGATIVE below r = 1, which a converging orbit
+      // reaches, and a negative estimate would march the tracer
+      // BACKWARDS — returning 0 there is the inside signal and is safe in
+      // the direction a sphere tracer needs. bulb-de.ts takes the
+      // identical exit.
+      : (r <= 1.0 ? 0.0 : 0.5 * r * log(r) / dr);
   }
 #else
 #if SURFACE_BULB
@@ -3285,6 +3437,10 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
           () => new THREE.Vector4(0.25, 1, 1, 0),
         ),
       },
+      // Which estimate form the escape orbit's terminal radius is read
+      // through (fr-j231): inert unless SURFACE_ESCAPE, and 0 is the
+      // pre-fr-j231 linear form, so a stale read is the old behaviour.
+      uEscLogForm: { value: 0 },
       // Mandelbulb render (fr-7u8t.9): inert defaults; alive only under
       // the SURFACE_BULB define (sigmaMax 1 and a bailout of 1 so a stray
       // enabled read could never divide by zero or take log of zero).
@@ -3720,7 +3876,7 @@ export function setEscapeSystem(
     const m = link.m;
     escM[i].set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
     escT[i].set(...link.t);
-    escParams[i].set(link.foldKind, link.w, link.derivGrowth, 0);
+    escParams[i].set(link.kind, link.w, link.derivGrowth, 0);
     // This LINK's own fold lengths (fr-s9ll) — the squares EscapeLink
     // already keeps, so the wire transfers the oracle's numbers rather
     // than recomputing them. A chain may hold a different apparatus per
@@ -3730,6 +3886,9 @@ export function setEscapeSystem(
   (u.uMapColor.value as THREE.Vector3[])[0].set(...color);
   (u.uTrapIndex.value as number[])[0] = 0;
   u.uMapCount.value = de.links.length;
+  // The chain's estimate form (fr-j231) — one number per CHAIN, resolved
+  // by the oracle so the six mirrors cannot each decide it differently.
+  u.uEscLogForm.value = de.logEstimate ? 1 : 0;
   u.uSymOrder.value = de.symmetryOrder;
   u.uSymPlane.value = SYM_PLANE_CODE[de.symmetryPlane];
   (u.uSymStep.value as THREE.Vector2).set(1, 0);

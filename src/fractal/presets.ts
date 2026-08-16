@@ -1202,6 +1202,159 @@ export function mandelbulbRotated(): Transform[] {
   return bulbMap([0, 0, 0], [0.4, -0.8, 0.3]);
 }
 
+/**
+ * One link of a CROSS-FAMILY escape-time chain (fr-j231): {@link foldLink}'s
+ * SIBLING, admitting the two POWER maps — `bulb`, `qsquare` — beside the
+ * three folds, and spending its fourth parameter on a uniform `scale` where
+ * {@link foldLink} spends one on rotation. `scale` is `escape-de.ts`'s
+ * "pre-scale" — the same affine scale every transform already carries,
+ * multiplying the point BEFORE the variation runs.
+ *
+ * A SIBLING RATHER THAN A WIDENING, deliberately. {@link foldLink}'s own doc
+ * says it builds a transform whose only variation is a single FOLD, and
+ * widening its type union would falsify that sentence for all three
+ * `foldChain*` presets without changing a thing about what they build. The
+ * two also want different fourth parameters — no fold-chain preset needs a
+ * scale, and none of these three needs a rotation — and two independently
+ * motivated fourth parameters on one function is worse than two functions
+ * with narrower, honest docs. Both return an ordinary `Transform`, so
+ * nothing downstream knows a helper exists at all.
+ *
+ * A power link needs this knob in a way a fold link never did: a
+ * unit-weight triplex power's own safe affine scale against this mode's
+ * radius-4 bailout ball is 0.30 (0.5 for the quaternion square) —
+ * `escape-de.ts`'s `escapeLinkStiffnessLimit`, an order of magnitude
+ * tighter than any fold link here has ever needed. The shipped orbit CYCLES
+ * rather than chains, which is what makes a link renderable well past that
+ * bound rather than merely near it (that module's POWER LINKS ARE STIFF
+ * paragraph) — the three presets below sit at 0.5, past the bulb's own
+ * "safe" limit, and still render cleanly.
+ */
+function hybridLink(
+  id: number,
+  type: "boxfold" | "spherefold" | "mandelbox" | "bulb" | "qsquare",
+  weight: number,
+  scale = 1,
+): Transform {
+  return {
+    id,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [scale, scale, scale],
+    variations: [{ type, weight }],
+  };
+}
+
+/**
+ * "Hybrid Chain Cube" — the escape-time mode's first CROSS-FAMILY chain
+ * (fr-j231): {@link mandelboxCube}'s own inside-out mandelbox fold (weight
+ * −1.5) followed by a Mandelbulb triplex power pre-scaled to 0.5. A
+ * Mandelbox and a Mandelbulb, in one formula chain — exactly the
+ * combination `escape-de.ts`'s CROSS-FAMILY LINKS section widened the chain
+ * to reach, where before the three estimators shipped as three separate
+ * modes, unable to be combined.
+ *
+ * The composition reads as exactly what it is. {@link mandelboxCube}'s
+ * negative-scale fold is already a solid cube with fractal detail carved
+ * into its faces (that preset's own doc); cycling a pre-scaled bulb link
+ * into the orbit after it stamps a Mandelbulb's cauliflower skin onto those
+ * faces and bores circular pits into them — unmistakably two named objects
+ * composed, not a third, unrelated one.
+ *
+ * Measured (`scripts/hybrid-chain.harness.ts`'s own preset test, a single
+ * quiet-box run — see that file to regenerate these figures rather than
+ * re-derive them): 29.0% of rays hit; `probeEscapeFill` reads 17.642% of
+ * the bailout ball filled at 131072 samples — the densest of the three
+ * hybrids, and the only one with double-digit fill. It is also the
+ * priciest per eval of the three (0.34 us), and the only hybrid dearer
+ * than either shipped fold control (foldChain 0.15, mandelboxClassic
+ * 0.14 — 2.3-2.4x). Plausibly the same mechanism as the module doc's
+ * n-times iteration ceiling, paid only by a non-escaping orbit — this
+ * chain leaves the most orbits non-escaping of the three, consistent
+ * with being the only one whose fill sits in double digits — though the
+ * cost/fill relationship was not separately measured for this trio. Its
+ * heuristic bound is also the loosest of the three at this pose (44.1%
+ * raw overshoot, against Quaternion's 7.3% and Craters' 0.0%) — but the
+ * DAMPED marching step, the number that actually governs the tracer,
+ * overshoots only 0.3% of the time, tighter than the shipped
+ * {@link foldChain} control's 4.1%.
+ */
+export function hybridChainCube(): Transform[] {
+  return [hybridLink(0, "mandelbox", -1.5), hybridLink(1, "bulb", 1, 0.5)];
+}
+
+/**
+ * "Hybrid Chain Craters" — the POWER LINK FIRST (fr-j231): a Mandelbulb
+ * triplex power pre-scaled to 0.5, followed by {@link mandelboxClassic}'s
+ * own mandelbox fold at weight 2 — the same two map types
+ * {@link hybridChainCube} chains, reordered, and at the classic scale
+ * rather than Cube's inside-out −1.5.
+ *
+ * LINK ORDER IS A REAL KNOB, and this pair is the demonstration: the same
+ * two maps, the other way round, are a different object entirely. Cube's
+ * fold-then-bulb order reads as a cube with a Mandelbulb skin stamped onto
+ * its faces; running the bulb FIRST instead folds its already
+ * power-stretched output back toward the origin every pass, and the result
+ * reads as nothing like a cube at all — a pitted sphere whose entire
+ * surface is bulb-shaped craters.
+ *
+ * A thin fractal, and not merely by description: 18.5% of rays hit while
+ * `probeEscapeFill` reads just 0.011% of the bailout ball filled at
+ * 131072 samples (same harness run as {@link hybridChainCube}'s doc).
+ * {@link mandelboxRings} is the shipped precedent for exactly this
+ * shape — a thin fractal with a large surface and essentially no
+ * volume: `escape-de.ts`'s own EMPTY CHAINS section quotes it at
+ * "0.0000% fill at 65536 samples." Both are systems a volume probe reads
+ * as next to nothing while the renderer fills a meaningful fraction of
+ * the frame with them — literally the pair of numbers fr-17qu's first
+ * cut got wrong, reproduced by a preset that ships.
+ *
+ * Its heuristic bound is exact at this pose (0.0% / 0.0% overshoot), and
+ * at 0.08 us/eval it is cheaper than BOTH shipped fold controls
+ * (foldChain 0.15, mandelboxClassic 0.14) — not merely the cheapest of
+ * the three hybrids. A cross-family chain costing less per estimate than
+ * the single Mandelbox is the opposite of what a stiff power link sounds
+ * like it should produce: an orbit that leaves via the stiff bulb link
+ * on its first pass never reaches the fold at all, so it never pays the
+ * chain's n-times iteration ceiling, resolving well inside the 30-pass
+ * budget (by pass 8, per the harness's own budget table).
+ */
+export function hybridChainCraters(): Transform[] {
+  return [hybridLink(0, "bulb", 1, 0.5), hybridLink(1, "mandelbox", 2)];
+}
+
+/**
+ * "Hybrid Chain Quaternion" — the only place in the app a `qsquare` map
+ * renders at all (fr-j231): {@link mandelboxClassic}'s own mandelbox fold
+ * at weight 2, followed by the quaternion square pre-scaled to 0.5.
+ *
+ * `qjulia-de.ts` measured the quaternion square ALONE as smooth and
+ * detail-free — twenty panels across rotations, rotor-posed slices and
+ * several constants, all shells and whorls and none of them fractal
+ * detail — and fr-7u8t.5 closed its own renderer won't-do on exactly that
+ * measurement (see that module's doc). `escape-de.ts`'s own gate names it
+ * directly on the same grounds when it refuses a LONE quaternion square —
+ * "`qjulia-de.ts`'s measured-dull object" — but a chain is not a lone map,
+ * and composed with a fold the object earns a place it does not have
+ * alone.
+ *
+ * Measured (same harness run as {@link hybridChainCube}'s doc): 47.9% of
+ * rays hit; `probeEscapeFill` reads 1.587% of the bailout ball filled at
+ * 131072 samples, at 0.11 us/eval — cheaper than BOTH shipped fold
+ * controls (foldChain 0.15, mandelboxClassic 0.14), 0.73x foldChain's
+ * cost despite being a genuinely new map pairing. Its heuristic bound is
+ * also TIGHTER than that control at the same pose (7.3% / 2.1% overshoot
+ * against 8.0% / 4.1%), another instance of composition not degrading DE
+ * quality (`escape-de.ts`'s COMPOSITION BUYS DE QUALITY section). One
+ * plausible contributor, not separately confirmed here: one of the two
+ * links' bound is EXACT rather than heuristic — the quaternion square's
+ * `2|y|` local factor, exact because quaternion norms are multiplicative
+ * rather than merely Lipschitz-bounded.
+ */
+export function hybridChainQuaternion(): Transform[] {
+  return [hybridLink(0, "mandelbox", 2), hybridLink(1, "qsquare", 1, 0.5)];
+}
+
 export function mandelboxKifs(): Transform[] {
   const foldWeight = 1.2;
   const foldScale = 0.19;
@@ -1625,6 +1778,13 @@ const PRESETS = {
   mandelbulbClassic,
   mandelbulbOffset,
   mandelbulbRotated,
+  // The first CROSS-FAMILY chains (fr-j231): a link need not be a fold — the
+  // chain also admits the two power maps, so a Mandelbox and a Mandelbulb (or
+  // a quaternion square) can ride one formula chain instead of shipping as
+  // three separate, uncombinable modes.
+  hybridChainCube,
+  hybridChainCraters,
+  hybridChainQuaternion,
   // The first non-flat presets (fr-bf6): systems whose w extension is in play.
   pentatope,
   doubleRotation,
@@ -1717,6 +1877,13 @@ export const PRESET_RENDER_HINTS: Partial<
   mandelbulbClassic: "surface",
   mandelbulbOffset: "surface",
   mandelbulbRotated: "surface",
+  // The cross-family chains (fr-j231) need the hint for the same reason as
+  // every escape-time preset above: every link is non-contracting, so the
+  // chaos-game cloud is escape-reset debris, and the mode reached this way
+  // cycles the same formula chain the fold-only presets do.
+  hybridChainCube: "surface",
+  hybridChainCraters: "surface",
+  hybridChainQuaternion: "surface",
 };
 
 /**

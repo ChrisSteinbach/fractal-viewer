@@ -7,6 +7,13 @@ import {
 } from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
 import {
+  analyzeEscapeSystem,
+  buildEscapeDE,
+  ESCAPE_LINK_BULB,
+  ESCAPE_LINK_MANDELBOX,
+  ESCAPE_LINK_QSQUARE,
+} from "./escape-de";
+import {
   appendTransform,
   barnsleyFern,
   chiralLace,
@@ -16,6 +23,9 @@ import {
   doubleRotation,
   duoprism,
   duoprismWireframe,
+  hybridChainCraters,
+  hybridChainCube,
+  hybridChainQuaternion,
   hyperfern,
   icosahedronFlake,
   jerusalemCube,
@@ -1179,6 +1189,15 @@ describe("PRESET_RENDER_HINTS", () => {
     expect(PRESET_RENDER_HINTS.mandelboxKifs).toBe("surface");
   });
 
+  // The cross-family chains (fr-j231) need the hint for the same reason as
+  // the fold-only and Mandelbulb trios: every link is non-contracting, so
+  // the chaos-game cloud is escape-reset debris rather than the attractor.
+  it("hints the hybrid chain presets as surface showcases", () => {
+    expect(PRESET_RENDER_HINTS.hybridChainCube).toBe("surface");
+    expect(PRESET_RENDER_HINTS.hybridChainCraters).toBe("surface");
+    expect(PRESET_RENDER_HINTS.hybridChainQuaternion).toBe("surface");
+  });
+
   // Both are flat 2D sheets (z pinned to 0) whose point density is heavily
   // tip-weighted — exactly what the flame's log-density exposure is for.
   it("hints julia and juliaDust as flame showcases", () => {
@@ -1240,5 +1259,47 @@ describe("dyedSpiral (per-transform flame color showcase, fr-hiyu)", () => {
     expect(count).toBeGreaterThan(0);
     for (const v of positions) expect(Number.isFinite(v)).toBe(true);
     expect(bounds.maxR).toBeLessThan(20);
+  });
+});
+
+describe("hybrid chain presets (fr-j231 cross-family links)", () => {
+  // Pins each preset to its own renderer's gate: a preset that drifted out
+  // of analyzeEscapeSystem's eligibility (a stray final transform, a weight
+  // edited to 0, a third active map) would still build a valid Transform[]
+  // and pass every test above, but would silently stop reaching the
+  // escape-time marcher at all — and if it stayed eligible but lost its
+  // power link, it would silently fall back to the linear (non-Böttcher)
+  // estimate instead.
+  it("hybridChainCube is a mandelbox-then-bulb chain the escape gate admits", () => {
+    const transforms = hybridChainCube();
+    expect(analyzeEscapeSystem(transforms).status).toBe("eligible");
+    const de = buildEscapeDE(transforms);
+    expect(de.logEstimate).toBe(true);
+    expect(de.links.map((l) => l.kind)).toEqual([
+      ESCAPE_LINK_MANDELBOX,
+      ESCAPE_LINK_BULB,
+    ]);
+  });
+
+  it("hybridChainCraters is a bulb-then-mandelbox chain the escape gate admits", () => {
+    const transforms = hybridChainCraters();
+    expect(analyzeEscapeSystem(transforms).status).toBe("eligible");
+    const de = buildEscapeDE(transforms);
+    expect(de.logEstimate).toBe(true);
+    expect(de.links.map((l) => l.kind)).toEqual([
+      ESCAPE_LINK_BULB,
+      ESCAPE_LINK_MANDELBOX,
+    ]);
+  });
+
+  it("hybridChainQuaternion is a mandelbox-then-qsquare chain the escape gate admits", () => {
+    const transforms = hybridChainQuaternion();
+    expect(analyzeEscapeSystem(transforms).status).toBe("eligible");
+    const de = buildEscapeDE(transforms);
+    expect(de.logEstimate).toBe(true);
+    expect(de.links.map((l) => l.kind)).toEqual([
+      ESCAPE_LINK_MANDELBOX,
+      ESCAPE_LINK_QSQUARE,
+    ]);
   });
 });
