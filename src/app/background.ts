@@ -59,7 +59,11 @@ export interface BackgroundParams {
   custom?: BackgroundGradient;
 }
 
-/** A fresh scene's background: the dark backdrop, no authored custom slot. */
+/** The dark backdrop with no authored custom slot — `scene.ts`'s construction
+ * placeholder, resolved before boot pushes the real document's choice. NOT the
+ * fresh-scene default it once claimed to be: `state.ts`'s `initialState`
+ * carries its own literal, and this constant has no other consumer, so
+ * changing it here would move nothing (fr-qj8k's notes carry the memo). */
 export const DEFAULT_BACKGROUND: BackgroundParams = { mode: "dark" };
 
 /** The built-in backdrops as resolved stops — `constants.ts`'s authored hex
