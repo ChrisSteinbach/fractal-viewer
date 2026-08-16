@@ -2313,6 +2313,24 @@ bd close <id>         # Complete work
 **ALWAYS create a feature branch before making changes.** Deployment to GitHub
 Pages is manual only (`workflow_dispatch`) — not triggered by merges to `main`.
 
+**MERGE BY REBASE, NEVER BY SQUASH.** `gh pr merge <n> --rebase`, not
+`--squash`. Merge commits are disabled on the repo, so the two buttons GitHub
+offers are rebase and squash and the wrong one is one word away.
+
+This is not a taste preference, and the reason is this project's own
+discipline. A commit here is a DECISION RECORD — what was measured, what was
+refuted, what a number cost — and the per-item commits a session writes are
+the unit a later reader bisects, blames and quotes. Squashing collapses them
+into one blob whose body is a wall of concatenated essays: the messages
+survive, the ADDRESSABILITY does not, and `git log --oneline` stops being a
+readable index of why the code is the way it is. The multi-item rule one
+section up ("commit per item so history stays readable") is pointless if the
+merge throws that away.
+
+DO NOT infer the method from what recent PRs did. As of this writing every
+merged PR on `main` landed as a single squashed commit — that is the mistake
+this note exists to stop, not the convention to copy.
+
 ## Session Completion
 
 When ending a work session, work is NOT complete until `git push` succeeds.
