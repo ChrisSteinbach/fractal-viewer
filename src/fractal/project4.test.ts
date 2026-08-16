@@ -42,6 +42,28 @@ function applyMatrix4(m: number[], v: Vec4): Vec4 {
   ];
 }
 
+/** Sphere-invert a displayed 3D point about `center` with squared radius
+ * `sphereR2`. Kept as a hand-written oracle for fr-5666's semantic decision:
+ * the explorer balloon transforms the point AFTER the 4D view projects it. */
+function invert3(
+  point: number[],
+  center: number[],
+  sphereR2: number,
+): number[] {
+  const d = point.map((x, i) => x - center[i]);
+  const r2 = d.reduce((sum, x) => sum + x * x, 0);
+  return center.map((x, i) => x + (sphereR2 * d[i]) / r2);
+}
+
+/** The rejected alternative: invert the source point in 4D before applying
+ * the view projection. It is intentionally local to the test because the app
+ * never renders this different object. */
+function invert4(point: Vec4, center: Vec4, sphereR2: number): Vec4 {
+  const d = point.map((x, i) => x - center[i]) as Vec4;
+  const r2 = d.reduce((sum, x) => sum + x * x, 0);
+  return center.map((x, i) => x + (sphereR2 * d[i]) / r2) as Vec4;
+}
+
 describe("composeRotorProjection4", () => {
   it("reduces to the plain xyz drop and w − center[3] for an identity rotor", () => {
     const identity = rotationMatrix4({});
@@ -91,6 +113,49 @@ describe("composeRotorProjection4", () => {
       expect(pz).toBeCloseTo(expectedP[2], 10);
       expect(sRaw).toBeCloseTo(expectedSRaw, 10);
     }
+  });
+});
+
+describe("4D explorer balloon semantics (fr-5666)", () => {
+  it("projects first, then sphere-inverts the exact displayed 3D point", () => {
+    const rotor = rotationMatrix4({ xy: 0.35, xw: 0.7, yw: -0.25 });
+    const center: Vec4 = [0.4, -0.3, 0.2, 0.6];
+    const point: Vec4 = [1.7, -0.8, 0.9, -1.1];
+    const sphereR2 = 2.25;
+    const [px, py, pz] = applyProjection4(
+      composeRotorProjection4(rotor, center),
+      point,
+    );
+    const projected = [px, py, pz];
+    const echo = invert3(projected, center.slice(0, 3), sphereR2);
+
+    // The inversion of what is drawn stays on the same ray from the displayed
+    // centre and satisfies |p-c| |I(p)-c| = R². Those are the feature's
+    // defining invariants in the user's visible 3-space.
+    const d = projected.map((x, i) => x - center[i]);
+    const e = echo.map((x, i) => x - center[i]);
+    expect(d[1] * e[2] - d[2] * e[1]).toBeCloseTo(0, 12);
+    expect(d[2] * e[0] - d[0] * e[2]).toBeCloseTo(0, 12);
+    expect(d[0] * e[1] - d[1] * e[0]).toBeCloseTo(0, 12);
+    expect(Math.hypot(...d) * Math.hypot(...e)).toBeCloseTo(sphereR2, 12);
+  });
+
+  it("is deliberately not the projection of a 4D inversion", () => {
+    // Even the identity view separates the two readings: the 4D alternative's
+    // scale includes w², so it draws a different 3D object.
+    const rotor = rotationMatrix4({});
+    const center: Vec4 = [0, 0, 0, 0];
+    const point: Vec4 = [2, 0, 0, 2];
+    const projection = composeRotorProjection4(rotor, center);
+    const [px, py, pz] = applyProjection4(projection, point);
+    const projectThenInvert = invert3([px, py, pz], [0, 0, 0], 1);
+    const invertThenProject = applyProjection4(
+      projection,
+      invert4(point, center, 1),
+    );
+
+    expect(projectThenInvert).toEqual([0.5, 0, 0]);
+    expect(invertThenProject.slice(0, 3)).toEqual([0.25, 0, 0]);
   });
 });
 

@@ -807,14 +807,19 @@ drawn slice, and the app anchors it at the origin with the FULL 4D visible
 radius so it does not slide as the slice scrubs. The balloon (fr-qxxw)
 SLICES THEN INVERTS: the marched ray already lives in the sliced 3D space,
 so the inversion stays a 3D operation on the marched point and the echo is
-the inversion of exactly what is drawn — the explorer echo's own precedent,
-and the reading a user gets as the slider scrubs, object and echo moving
-together. Inverting in 4D and slicing the result would draw the echo of a
-DIFFERENT slice (`I₄({w = w0})` is a 3-sphere, not a hyperplane; the two
-agree exactly at `w0 = 0` for this origin-anchored ball). The 3D union bound
-then applies word for word, which is the point of stating the semantics that
-way: a 4D estimate lower-bounds the 4D distance, which is at most the
-in-slice distance, so it is a valid bound for the slice. The balloon reaches
+the inversion of exactly what is drawn, and the reading a user gets as the
+slider scrubs, object and echo moving together. The explorer follows the same
+dimensional-reduction-first rule since fr-5666: it PROJECTS THEN INVERTS the
+displayed 3D point, with the source point's rotor, w-ramp and soft-slice weight,
+through the full rotation-invariant 4D enclosing ball. Projection of a 4D
+inversion would echo a different object; a pose-adjusted projected ball would
+make its normalized radius pulse during tumble. Likewise, inverting in 4D and
+slicing the result would draw a DIFFERENT slice (`I₄({w = w0})` is a 3-sphere,
+not a hyperplane; the two agree exactly at `w0 = 0` for this origin-anchored
+ball). The 3D union bound then applies word for word, which is the point of
+stating the surface semantics that way: a 4D estimate lower-bounds the 4D
+distance, which is at most the in-slice distance, so it is a valid bound for
+the slice. The balloon reaches
 no FORWARD-ORBIT session in either dimension — a filled solid's interior
 reaches the ball's centre, so its echo would swallow the camera — while the
 floor, being a plane rather than a shell, survives there and is the

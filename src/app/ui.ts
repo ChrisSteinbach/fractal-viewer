@@ -1053,9 +1053,8 @@ export class Ui {
   private exportPreviousFocus: HTMLElement | null = null;
 
   private readonly glowBrightnessRow: HTMLElement;
-  // The balloon echo's rows (fr-5wlv.2) — the checkbox row hides while the
-  // system is non-flat (the echo is 3D-view-only, like Render Style above),
-  // and the radius row additionally waits for state.balloonEcho. The
+  // The balloon echo's rows (fr-5wlv.2, 4D since fr-5666) — the checkbox has
+  // no dimension gate, and the radius row waits for state.balloonEcho. The
   // checkbox input itself is table-driven (see SCALAR_CONTROLS);
   // balloonInflateButton's click is bespoke, like watchBuildBtn.
   private readonly balloonEchoRow: HTMLElement;
@@ -2319,17 +2318,12 @@ export class Ui {
       "hidden",
       nonFlat || state.renderStyle !== "glow",
     );
-    // The balloon echo (fr-5wlv.2) is 3D-view-only for this cut — the 4D
-    // projection's position attribute holds pre-rotation coords the
-    // inversion can't meaningfully remap (scene.ts hides the echo object
-    // there too) — so the whole control hides while non-flat, like Render
-    // Style above. The radius slider + Inflate button additionally wait
-    // for the echo itself to be on.
-    this.balloonEchoRow.classList.toggle("hidden", nonFlat);
-    this.balloonRadiusRow.classList.toggle(
-      "hidden",
-      nonFlat || !state.balloonEcho,
-    );
+    // The balloon echo (fr-5wlv.2, 4D since fr-5666) follows the projected
+    // cloud in either dimension, so its checkbox has no dimensional gate.
+    // The radius slider + Inflate button wait only for the echo itself to be
+    // on.
+    this.balloonEchoRow.classList.toggle("hidden", false);
+    this.balloonRadiusRow.classList.toggle("hidden", !state.balloonEcho);
     // The ramp palette only means anything for the modes that ARE a 1-D ramp:
     // the flat view's height/radius color modes (fr-3b6; narrower than the
     // contrast slider's gating, see color.ts's colorModeUsesRampPalette) and

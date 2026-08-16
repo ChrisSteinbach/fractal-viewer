@@ -868,12 +868,13 @@ morphs into place instead of snapping (see **Presets** below).
   them far away — the same horizon the surface march caps at, so the two
   renderers agree on where the balloon ends — and the whole thing is a
   re-projection of the cloud already on screen, applied live with no
-  regenerate. The row hides while the system is non-flat: the 4D
-  projection's stored coordinates predate its rotation, so there is no
-  meaningful place to invert them from. The setting itself still reaches a
-  4D ◈ Surface render (fr-qxxw) — that tracer inverts the slice it has just
-  marched rather than any stored coordinate — so tick it from the Surface
-  section's own **Balloon** row while the render is up.
+  regenerate. In a 4D view (fr-5666), each source point takes the same rotor,
+  w-ramp and soft-slice path as the main cloud, then its displayed 3D
+  projection is inverted. This project-then-invert order makes the cave an
+  echo of exactly what is on screen; the full rotation-invariant 4D enclosing
+  ball keeps its normalized size stable while the view tumbles. The 4D
+  ◈ Surface render follows the matching rule one mode over (fr-qxxw): slice
+  first, then invert the marched 3D point.
 - **Background** (fr-5ps1) — the two-stop gradient every render shows behind
   the attractor: **Dark** (the original ground, and the default), **Haze**
   (the cooler, lighter atmosphere Aerial Haze used to force before this

@@ -72,6 +72,13 @@ the five maps' arithmetic while IMPORTING every constant and link code from its
 bead had to warn a future session away from offset 560, where a block appended
 without reading fr-s9ll's lens4Fold quartet would have landed INSIDE it. So:
 
+fr-5666 closed the balloon's remaining Points half with the same
+dimensional-reduction-first rule: the explorer PROJECTS THEN INVERTS the exact
+3D point it displays, using the full rotation-invariant 4D ball so the shell
+does not pulse as the view tumbles. Its echo shares the source point's rotor,
+w-ramp and soft-slice treatment; projection-of-a-4D-inversion would echo a
+different object.
+
 - **Both halves are scoped up front.** Work touching a twinned pair —
   `affine`/`affine4`, `chaos-game`/`chaos-game-4d`, `flame`/`flame-4d`,
   `flame-gpu`/`flame-gpu-4d`, `voxel`/`voxel-4d`, `variations`/`variations4`,
@@ -166,6 +173,14 @@ four-map order-5 4D system settles neither with the floor NOR without it
 inside 200s on this hardware, which is fr-b72d's superlinear order cost
 and not anything a lift did. Without `--display` the engine column is
 reported rather than gated.
+
+The 4D explorer balloon gate (fr-5666) is self-contained:
+`node scripts/explorer-balloon-4d.verify.mjs`. It drives Pentatope through
+Points, parks the tumble, enables the echo, reloads the app's own copied link,
+then compares real SwiftShader canvas frames with the restored echo on/off.
+That one path gates the non-flat controls, boot-time ball-uniform sync and the
+project-then-invert shader compile/render together. MEASURED at the lift:
+10.255% of pixels changed (mean absolute RGB difference 3.285, max 234).
 
 **Harness sheets** (`scripts/*.harness.ts`, run with
 `npx vitest run --config scripts/vitest.harness.config.ts scripts/<name>`)
@@ -304,13 +319,17 @@ and UI**, so the interesting math is unit-tested without a browser:
     Balloon on/`R` persist in the scene document; `R` is authored NORMALIZED
     (multiples of the raw ball radius, `buildBalloon`'s `rMult`), one
     continuous parameter across the explorer echo and the surface balloon.
-    THE 4D LIFT (fr-qxxw) is a semantic decision and a ball choice, no new
-    algebra: `estimateBalloonDistance4` inverts in the SLICED 3D space and
-    hands the estimator `(q, w0)` on both terms — SLICE THEN INVERT, so the
-    echo is the inversion of exactly what is drawn (the explorer echo's
-    precedent), where inverting in 4D and slicing the result would draw the
-    echo of a DIFFERENT slice (`I₄({w = w0})` is a 3-sphere; the two agree
-    exactly at `w0 = 0` for this origin-anchored ball). The 3D bound then
+    THE 4D LIFTS are semantic decisions and ball choices, no new algebra.
+    The surface arm (fr-qxxw) inverts in the SLICED 3D space and hands the
+    estimator `(q, w0)` on both terms — SLICE THEN INVERT, so the echo is the
+    inversion of exactly what is drawn, where inverting in 4D and slicing the
+    result would draw the echo of a DIFFERENT slice (`I₄({w = w0})` is a
+    3-sphere; the two agree exactly at `w0 = 0` for this origin-anchored
+    ball). The Points arm (fr-5666) applies the same reduction-first rule as
+    PROJECT THEN INVERT: rotate/project the stored 4D point, preserve its
+    w-ramp and soft-slice weight, then invert that visible 3D point through
+    the full rotation-invariant 4D enclosing ball. Projection of a 4D
+    inversion would not be the echo of the cloud on screen. The 3D bound then
     applies word for word, because a 4D estimate lower-bounds the 4D
     distance and hence the IN-SLICE one. `balloonBall4` takes the ORIGIN
     (`SurfaceDE4` has no `boundCenter` — it is origin-anchored, and
