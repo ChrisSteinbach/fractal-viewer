@@ -1,0 +1,99 @@
+name: GPU agreement
+
+# fr-jnu: the GPU-flame agreement harness (src/app/gpu-bench/) as a CI
+# gate — the WGSL kernels are the one re-implementation of the fractal
+# core that vitest cannot execute (WebGPU needs a real browser), so this
+# job runs the REAL kernels on SwiftShader (Chromium's bundled software
+# Vulkan; no GPU on the runner needed) and pins them statistically against
+# their CPU oracles (accumulateFlame / accumulateFlame4). The runner
+# script exits non-zero on agreement FAILURE and — deliberately — on
+# "skipped" (no WebGPU adapter), so a runner that silently loses WebGPU
+# cannot keep passing while verifying nothing.
+#
+# fr-hzlm split this out of ci.yml for ONE reason: it is the whole critical
+# path. Measured on consecutive runs it takes 16m39s-19m32s where the
+# next-slowest job (smoke) takes 1m50s, so how fast this job answers IS how
+# fast a change can land. Its own workflow file is what buys the path
+# filter below — `paths-ignore` is a workflow-level trigger key, and
+# applying it in ci.yml would have skipped lint/test/build with it (the
+# docs-only change that prompted this was caught by `prettier --check .`,
+# so those jobs must keep running on markdown).
+#
+# THE FILTER IS FAIL-SAFE AND MUST STAY THAT WAY. `paths-ignore` skips the
+# workflow only when EVERY changed file matches, so the question it asks is
+# "is this change entirely inert?" and not "does this change look like
+# kernel work?". An allowlist of kernel paths would read more precisely and
+# fail OPEN — a new file that feeds the kernels but nobody added to the
+# list would silently stop being gated, which is the same failure mode the
+# comment above rejects for a lost WebGPU adapter. Anything outside docs,
+# markdown and the beads database still pays the full sweep.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".beads/**"
+  pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".beads/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gpu-agreement-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gpu-agreement:
+    runs-on: ubuntu-latest
+    # A runaway guard, deliberately looser than the runner script's own wait
+    # cap (BENCH_TIMEOUT_MS, 20 min) so the script always trips FIRST and
+    # reports which scenario hung, instead of the job being killed with no
+    # verdict. Raised 30 -> 40 by fr-hiyu: setup (checkout, npm ci, Playwright
+    # + system deps) is several minutes on top of a sweep measured at ~16 min
+    # for its fourteen scenarios, which left the script's cap and the job's
+    # too close together to keep that ordering reliable.
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # The browser download is several minutes of every run and changes
+      # only when playwright-core does. The install step still runs on a
+      # cache hit — it is a no-op for the browser and is what installs the
+      # OS libraries `--with-deps` adds, which apt does not cache here.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-playwright-
+
+      # Same hermetic browser as the smoke job: only the Playwright-bundled
+      # Chromium is known to ship libvk_swiftshader.so.
+      - name: Install Playwright Chromium + system deps
+        run: npx playwright-core install --with-deps chromium
+
+      # --duration only shrinks the throughput-timing phase; the agreement
+      # verdict comes from the fixed equal-N legs (50.3M iterations per
+      # side per scenario), so a short duration loses no rigor.
+      - name: GPU flame agreement (WebGPU kernels vs CPU oracles)
+        run: npm run bench:gpu -- --chrome=bundled --swiftshader --duration=1 --out=bench-results
+
+      - name: Upload bench artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gpu-bench
+          path: bench-results/
+          retention-days: 30
