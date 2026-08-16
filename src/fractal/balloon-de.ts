@@ -99,7 +99,8 @@
  * persists, and it is clean.
  */
 import type { SurfaceDE } from "./surface-de";
-import type { Vec3 } from "./types";
+import type { SurfaceDE4 } from "./surface-de-4d";
+import type { Vec3, Vec4 } from "./types";
 
 /** Provenance margin multiplied onto the DE ball's radius before it
  * becomes the shell bound's divisor `rho` (module doc: measured ~4%
@@ -206,6 +207,115 @@ export function estimateBalloonDistance(
     footprint > 0 ? (footprint * (b.R * b.R)) / (r * r) : 0;
   const dShell =
     scale * fn(de, invertBalloon(b, p), innerCutoff, innerFootprint);
+  return dShell < dFractal
+    ? { d: dShell, shell: true }
+    : { d: dFractal, shell: false };
+}
+
+/* ------------------------------------------------------------------ *
+ * The 4D lift (fr-qxxw), and the whole of it is a SEMANTIC decision
+ * plus a ball choice — no new algebra.
+ *
+ * SLICE THEN INVERT. The surface render draws the `w = w0` slice of the
+ * rotor-posed 4D set, and the marched ray lives in that sliced 3D space.
+ * So the inversion stays a 3D operation ON THE MARCHED POINT and the
+ * echo is the inversion of exactly what is drawn — the explorer echo's
+ * precedent (`scene.ts` inverts the PROJECTED cloud), and the reading a
+ * user gets: object plus echo, both moving together as the slider
+ * scrubs. The rejected alternative, inverting in 4D and slicing the
+ * result, draws the echo of a DIFFERENT slice — `I₄({w = w0})` is a
+ * 3-sphere, not the hyperplane — and the two agree exactly where the
+ * ball's centre lies on the slice, which for this origin-anchored ball
+ * is `w0 = 0`.
+ *
+ * THE BOUND IS 3D's, VERBATIM, and that is the point of stating the
+ * semantics this way. Write `S` for the drawn slice and
+ * `DE(q) := DE4((q, w0))`. A 4D estimate lower-bounds the 4D distance
+ * from `(q, w0)` to the set, which is at most the IN-SLICE distance from
+ * `q` to `S` — so `DE` is a valid lower bound for `S`, and the module
+ * doc's inversion argument applies to it word for word.
+ *
+ * THE BALL IS THE ORIGIN AND THE FULL 4D RADIUS. `SurfaceDE4` has no
+ * `boundCenter` — it is origin-anchored by construction, and
+ * `buildSurfaceDE4`'s own comment warns against copying 3D's centred fit
+ * blindly (the subspace a fitted centre must project onto is the
+ * kaleidoscope generator's fixed subspace, which a twist collapses to
+ * the origin). The radius is the FULL `visibleBoundingRadius`, not the
+ * slice-adjusted one: the slice sits inside `ball(0, R4)` because
+ * `|q| <= |(q, w0)| <= R4`, so the bound stays certified, and a radius
+ * that did not move with `w0` keeps the shell from pulsing as the slice
+ * slider scrubs. `rMult` therefore means the same thing at every slice.
+ *
+ * NO SLAB CONFLICT. A `halfExtent` rides through both terms unchanged:
+ * the inversion does not touch `w`, so for each `w` in the slab the
+ * argument above holds against that slice, and a segment estimate lower-
+ * bounds every one of them. The 4D estimators' own `slabExact4` refusal
+ * is what gates whether the slab query is legal at all.
+ * ------------------------------------------------------------------ */
+
+/** The 4D public-estimator shape the wrapper composes over
+ * (`estimateDistance4` / `estimateDistance4Refined`). `cutoff` is the
+ * refined entry's; `halfExtent` rides through untouched. */
+export type BalloonEstimator4 = (
+  de: SurfaceDE4,
+  p: Vec4,
+  cutoff?: number,
+  halfExtent?: Vec4 | null,
+) => number;
+
+/** {@link balloonBall}'s 4D twin — the origin and the FULL 4D visible
+ * radius, PROJECTED to the marched 3D space (see the section note above
+ * for both choices). The final-transform fork 3D makes is absent because
+ * the answer is the same either way here: 4D's ball is origin-anchored
+ * with or without a lens, and `visibleBoundingRadius` already equals
+ * `boundingRadius` when there is no final. */
+export function balloonBall4(de: SurfaceDE4): {
+  center: Vec3;
+  radius: number;
+} {
+  return { center: [0, 0, 0], radius: de.visibleBoundingRadius };
+}
+
+/** {@link buildBalloon}'s 4D twin — same margin, same `rMult`
+ * normalization, over {@link balloonBall4}. */
+export function buildBalloon4(de: SurfaceDE4, rMult: number): Balloon {
+  const ball = balloonBall4(de);
+  return {
+    center: ball.center,
+    rho: ball.radius * BALLOON_RHO_MARGIN,
+    R: rMult * ball.radius,
+  };
+}
+
+/**
+ * The 4D union DE — {@link estimateBalloonDistance} with the slice-then-
+ * invert semantics spelled out: `p` is the MARCHED 3D point and `w0` the
+ * slice the tracer is on, so the inversion below is the 3D one and the
+ * estimator sees `(q, w0)` on both terms.
+ *
+ * The CPU oracle for the `balloon: true` WGSL 4D cores, whose wrapper is
+ * textually the 3D one for exactly this reason: it composes over a public
+ * `surfaceDE(vec3)` and the core's own prologue does the lift.
+ */
+export function estimateBalloonDistance4(
+  fn: BalloonEstimator4,
+  de: SurfaceDE4,
+  b: Balloon,
+  p: Vec3,
+  w0: number,
+  cutoff = 0,
+  halfExtent: Vec4 | null = null,
+): BalloonDistance {
+  const at = (q: Vec3): Vec4 => [q[0], q[1], q[2], w0];
+  const dFractal = fn(de, at(p), cutoff, halfExtent);
+  const dx = p[0] - b.center[0];
+  const dy = p[1] - b.center[1];
+  const dz = p[2] - b.center[2];
+  const r = Math.max(Math.hypot(dx, dy, dz), BALLOON_CENTER_FLOOR * b.rho);
+  const scale = r / b.rho;
+  const innerCutoff = cutoff > 0 ? cutoff / scale : 0;
+  const dShell =
+    scale * fn(de, at(invertBalloon(b, p)), innerCutoff, halfExtent);
   return dShell < dFractal
     ? { d: dShell, shell: true }
     : { d: dFractal, shell: false };

@@ -1731,18 +1731,34 @@ describe("surfaceDeKernelWgsl balloon wrapper (balloon, fr-5wlv.5)", () => {
     expect(plain).toContain("Defensive — a HIT ray always intersected");
   });
 
-  it("throws on the escape core and the 4D cores — the fr-5wlv.4 exclusion and the deferred 4D lift", () => {
+  it("throws on every FORWARD core — the fr-5wlv.4 exclusion, in both dimensions", () => {
     expect(() =>
       surfaceDeKernelWgsl(kernelOpts({ core: "escape", balloon: true })),
     ).toThrow(/escape/);
     expect(() =>
-      surfaceDeKernelWgsl(kernelOpts({ core: "affine4", balloon: true })),
-    ).toThrow(/3D-only/);
+      surfaceDeKernelWgsl(kernelOpts({ core: "bulb", balloon: true })),
+    ).toThrow(/bulb/);
     expect(() =>
-      surfaceDeKernelWgsl(
-        kernelOpts({ core: "fold4", width: 12, balloon: true }),
-      ),
-    ).toThrow(/3D-only/);
+      surfaceDeKernelWgsl(kernelOpts({ core: "escape4", balloon: true })),
+    ).toThrow(/escape4/);
+  });
+
+  it("composes with the 4D DESCENT cores (fr-qxxw), landing the balloon block past the unconditionally-declared lens4 block", () => {
+    for (const core of ["affine4", "fold4"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, width: 12, balloon: true }),
+      );
+      // The lens4 block is declared even without a lens, so balloonCenter
+      // lands at the frozen 576 either way.
+      expect(wgsl.indexOf("lens4Fold: vec4f")).toBeGreaterThan(0);
+      expect(wgsl.indexOf("balloonCenter: vec3f")).toBeGreaterThan(
+        wgsl.indexOf("lens4Fold: vec4f"),
+      );
+      // The wrapper text is the 3D one, unchanged — that is what makes the
+      // semantics slice-then-invert.
+      expect(wgsl).toContain("fn balloonInvert(p: vec3f) -> vec4f {");
+      expect(wgsl).toContain("fn surfaceDEFractal(");
+    }
   });
 });
 
@@ -1827,18 +1843,32 @@ describe("groundPlane wrapper (fr-rhn5)", () => {
     expect(wgsl).toContain("groundY: f32,");
   });
 
-  it("throws groundPlane+balloon (no horizon inside the shell) and groundPlane on either 4D core (fr-rhn5's 3D scope)", () => {
+  it("throws groundPlane+balloon (no horizon inside the shell), in both dimensions", () => {
     expect(() =>
       surfaceDeKernelWgsl(kernelOpts({ groundPlane: true, balloon: true })),
     ).toThrow(/groundPlane\+balloon/);
     expect(() =>
-      surfaceDeKernelWgsl(kernelOpts({ core: "affine4", groundPlane: true })),
-    ).toThrow(/3D-only/);
-    expect(() =>
       surfaceDeKernelWgsl(
-        kernelOpts({ core: "fold4", width: 12, groundPlane: true }),
+        kernelOpts({ core: "affine4", groundPlane: true, balloon: true }),
       ),
-    ).toThrow(/3D-only/);
+    ).toThrow(/groundPlane\+balloon/);
+  });
+
+  it("composes with every 4D core (fr-h0c3), landing the plane block past the unconditionally-declared lens4 block", () => {
+    for (const core of ["affine4", "fold4", "escape4"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, width: 12, groundPlane: true }),
+      );
+      const tail = core === "escape4" ? "padE4: array<vec4f, 6>," : "lens4Fold: vec4f";
+      expect(wgsl.indexOf(tail)).toBeGreaterThan(0);
+      expect(wgsl.indexOf("groundY: f32,")).toBeGreaterThan(wgsl.indexOf(tail));
+      expect(wgsl).toContain("fn shadeGroundPlane(");
+      const march = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "march", core, width: 12, groundPlane: true }),
+      );
+      expect(march).toContain("fn groundPlaneStatus(");
+      expect(march).toContain("groundPlaneStatus(ro, rd)");
+    }
   });
 
   it("packs the ground-plane block at the frozen 288..335 offsets, growing the buffer to SURFACE_GPU_PARAMS_PLANE_BYTES (336) without touching 0..287", () => {

@@ -9,6 +9,7 @@ import {
   ESCAPE_TIME_ITERATIONS,
   type EscapeDE,
 } from "./escape-de";
+import { SYM_PLANE_CODE4, type EscapeDE4 } from "./escape-de-4d";
 import {
   FOOTPRINT_DEPTH_FLOOR,
   SPHEREFOLD_MID_MIN_R,
@@ -39,9 +40,9 @@ import type { Vec3 } from "./types";
  * for term, and `src/app/gpu-bench/` pins it against that CPU oracle on
  * real query points before any timing is trusted.
  *
- * SIX KERNEL CORES (`core`; fr-55s1 stage A added the second, fr-dlxh
+ * SEVEN KERNEL CORES (`core`; fr-55s1 stage A added the second, fr-dlxh
  * the third and — its 4D cut — the fourth, fr-rsp6 phase 2A the fifth,
- * fr-7u8t.9 the sixth).
+ * fr-7u8t.9 the sixth, fr-vag4 the seventh).
  * Which estimator a system is entitled to is decided exactly as on the
  * CPU — its BASE maps for the two 3D descents AND for the two 4D ones
  * (`deHasFolds` / `deHasFolds4`), the escape gate for the forward fold
@@ -164,8 +165,27 @@ import type { Vec3 } from "./types";
  *   absence. `lens` wraps it in the SAME `descendLens4` sweep at
  *   refine=FALSE (fr-rsp6 phase 2B): the wrapper hands this core cutoff
  *   0, exactly the CPU's `refine ? innerCutoff : 0`.
+ * - `core: "escape4"` (fr-vag4) is the FORWARD escape-time orbit one
+ *   dimension up — `escape-de-4d.ts`'s `estimateEscapeDistance4`, for
+ *   exactly the systems `analyzeEscapeSystem4` admits (a non-flat chain
+ *   of folds and quaternion squares that does not all contract; the 4D
+ *   IFS gate's complement). It is BOTH a 4D core and a FORWARD one, and
+ *   that combination is the whole of its novelty: it takes the 4D tail's
+ *   rotor prologue (`rotorInv · vec4f(p, w0)`) and the `GpuMap4` maps
+ *   layout from the descent cores, and its orbit, its params-block
+ *   scalars and its colors-only hit-info from the 3D escape core. Three
+ *   things fall away with the dimension: no `bulbPow8` (a triplex power
+ *   has no fourth component, so `analyzeEscapeSystem4` refuses a `bulb`
+ *   link and the `kind` dispatch is folds + the FULL quaternion square),
+ *   no slab (a forward orbit cannot thread a segment — `sliceHalfW`
+ *   packs 0), and no lens (an escape chain has no final transform, which
+ *   is what lets its params block reuse lens4's region). The
+ *   kaleidoscope is the query-space wedge fold, generalised to all six
+ *   planes — the one place this core reads a `symPlane` the 3D one
+ *   cannot. `width`/`sharedFrontier`/`bnbStage2`/`shadeDeWidth` are
+ *   inert, `lens` and `balloon` throw, and `groundPlane` composes.
  *
- * All six bodies share the public signature — `surfaceDE(pIn, cutoff,
+ * All seven bodies share the public signature — `surfaceDE(pIn, cutoff,
  * li)` — so the mode entry points below are textually identical
  * whichever core is picked. The two 3D DESCENT cores additionally share
  * the descent PROLOGUE text (lens, sphere bound, bail threshold, fr-3c0k
@@ -267,13 +287,25 @@ import type { Vec3 } from "./types";
  * entry's defensive no-intersection miss for a clamped fog origin
  * (march-entry semantics decided on the oracle, fr-5wlv.3). Balloon
  * params ride the appended {@link SURFACE_GPU_PARAMS_BALLOON_BYTES}
- * block — {@link packSurfaceGpuParams}'s third argument. `core:
- * "escape"` THROWS (the escape solid's interior reaches the ball
- * center, so its echo swallows the camera — fr-5wlv.4's measured
- * verdict; escape sessions render plain), the 4D cores throw (the 4D
- * lift is a later fr-5wlv child), and balloon + nonzero footprint
- * throws at pack. Absent or false generates byte-identical source to
- * the pre-balloon generator for every config.
+ * block — {@link packSurfaceGpuParams}'s third argument. The two FORWARD
+ * cores THROW (a forward-orbit solid's interior reaches the ball center,
+ * so its echo swallows the camera — fr-5wlv.4's measured verdict, which
+ * fr-tdin re-measured on the Mandelbulb rather than inheriting; those
+ * sessions render plain, `core: "escape4"` included), and balloon +
+ * nonzero footprint throws at pack. Absent or false generates
+ * byte-identical source to the pre-balloon generator for every config.
+ *
+ * THE 4D DESCENT CORES COMPOSE WITH IT since fr-qxxw, and the wrapper
+ * text is unchanged to do so — which is the semantic decision, not an
+ * implementation convenience. Every core shares the public
+ * `surfaceDE(pIn, cutoff, li)` signature over a MARCHED 3D point, and a
+ * 4D core's body lifts that point to `(p, w0)` and applies the rotor in
+ * its own prologue. So wrapping it inverts in the sliced 3D space and the
+ * echo is the inversion of exactly what is drawn — SLICE-THEN-INVERT,
+ * following the explorer echo's precedent, rather than the slice of a 4D
+ * inversion (the two agree wherever the ball's centre lies on the slice,
+ * which for this origin-anchored ball is `w0 = 0`). Its params ride the
+ * appended {@link SURFACE_GPU_PARAMS4_BALLOON_BYTES} block.
  *
  * TWO FRONTIER VARIANTS, selected at source-generation time so the bench
  * can A/B them with everything else held equal:
@@ -536,12 +568,58 @@ import type { Vec3 } from "./types";
  *              544 vec4f lens4Params — (foldKind as f32, invW, absW,
  *                  sigmaMin), the GLSL `uLensParams` order again.
  *              560 vec4f lens4Fold (fr-s9ll) — the 3D `lensFold` quartet
- *                  at the 4D block's own offset; nothing follows the
- *                  lens4 block, so it grows in place.
+ *                  at the 4D block's own offset.
  *              The cores' own final4M/final4T rows still pack
  *              IDENTITY/0 here (`final` is null whenever `foldFinal` is
  *              set), so the core bodies run their no-lens arithmetic
  *              and the wrapper alone applies the lens.
+ *          · `core: "escape4"` (fr-vag4) — the SAME 464..575 region, the
+ *              4D VARIANT block's other occupant, {@link
+ *              SURFACE_GPU_PARAMS4_ESCAPE_BYTES} = 576 bytes total:
+ *              464 vec4f esc4Params — (logEstimate as f32, 0, 0, 0). One
+ *                  number per CHAIN, read once after the orbit, exactly
+ *                  as the 3D core's `escParams.w` is; the links
+ *                  themselves ride the maps binding
+ *                  ({@link packEscape4GpuMaps}) and nothing is packed
+ *                  here as head-link ballast, because this block was
+ *                  written after fr-s04t rather than frozen before it.
+ *              480..575 pad (packed zero) — the block's tail, so the
+ *                  shared plane block below lands at ONE offset across
+ *                  every 4D core, the `padF` argument of the 3D cores
+ *                  one dimension up. Mutually exclusive with lens4 by
+ *                  construction: an escape chain has no final transform.
+ *              In this core the tail's `stepBack4` rows and
+ *              `final4M`/`final4T` pack IDENTITY (no sector sweep — the
+ *              kaleidoscope is a query-space wedge fold off
+ *              `symOrder`/`symPlane` in the frozen block — and no final
+ *              lens), and `sliceHalfW` packs 0: a forward orbit cannot
+ *              thread a segment, so the app clamps the slice thickness
+ *              for these sessions (`escape-de-4d.ts`'s NO SLAB
+ *              paragraph). `visibleRadius` and `visRadius4` both carry
+ *              the bailout ball, slice-adjusted and full respectively,
+ *              exactly as they do for a descent core.
+ *          · `balloon: true` on a 4D core (fr-qxxw) — the 3D balloon
+ *              block at the 4D block's own offset, {@link
+ *              SURFACE_GPU_PARAMS4_BALLOON_BYTES} = 608 bytes total,
+ *              with the variant block above declared UNCONDITIONALLY
+ *              (zero-filled by the packer when there is no lens) so it
+ *              lands at the frozen 576:
+ *              576 vec3f balloonCenter   588 f32 balloonRho
+ *              592 f32  balloonR         596 f32 balloonFar
+ *              600 f32  padB0            604 f32 padB1
+ *              The inversion is a 3D operation on the MARCHED point,
+ *              before the body's rotor lift — the slice-then-invert
+ *              semantics fr-qxxw decided on (the explorer echo's), which
+ *              is also why the wrapper text is the 3D one unchanged.
+ *          · `groundPlane: true` on a 4D core (fr-h0c3) — the 3D plane
+ *              block at that same frozen 576, {@link
+ *              SURFACE_GPU_PARAMS4_PLANE_BYTES} = 624 bytes total, and
+ *              sharing the offset with the balloon block exactly as in
+ *              3D (the pair throws). The floor is a world-space plane in
+ *              the SLICED 3D space, so every 3D certificate holds
+ *              verbatim once a ball is chosen; the app chooses the
+ *              origin and the FULL 4D visible radius, so the floor does
+ *              not slide as the slice scrubs.
  *
  * Maps storage — {@link SURFACE_GPU_MAP_VEC4} vec4f per map ({@link
  * SURFACE_GPU_MAP_STRIDE_BYTES} bytes), matching WGSL `struct GpuMap`:
@@ -582,13 +660,18 @@ import type { Vec3 } from "./types";
  *            `SurfaceFoldRadii` is SHARED by the two oracles, so a 3D
  *            system and its 4D lift cannot disagree about what an absent
  *            field means (fr-s9ll)
- * ONE layout for both 4D cores, exactly as the 3D GpuMap carries the
+ * ONE layout for all three 4D cores, exactly as the 3D GpuMap carries the
  * fold lanes for a core ("affine") that never reads them (fr-rsp6
  * phase 2A): the affine4 body reads `p0.x` alone, the fold4 body reads
  * the whole `p0`, and NEITHER reads `bnb`/`p1` — those are packed for
  * layout parity with 3D and for the stage-2 branch-and-bound work the
  * fold4 kernel deliberately does not emit (fr-kidj's skips measured
- * 1.4-1.6x SLOWER GPU-side in 3D).
+ * 1.4-1.6x SLOWER GPU-side in 3D). `core: "escape4"` (fr-vag4) shares it
+ * for its formula CHAIN the way `core: "escape"` shares the 3D one
+ * ({@link packEscape4GpuMaps}) — one entry per LINK in document order,
+ * r0..r3/t carrying the FORWARD 4x4 affine, `p0` the
+ * (kind, w, derivGrowth, 0) quartet and `fold` the SQUARED sphere radii
+ * (mR², fR², wall, 0), each divergence being its 3D twin's.
  *
  * March state — one vec4f per ray: (t, status, steps, lastD), host-
  * initialized to `(-1, 0, 0, 0)`; `t < 0` means the sphere gate has not
@@ -692,6 +775,30 @@ export const SURFACE_GPU_PARAMS4_BYTES = 464;
  * when it does not — a no-lens kernel's struct ends at 464 and never reads
  * past it. */
 export const SURFACE_GPU_PARAMS4_LENS_BYTES = 576;
+/** Params size for `core: "escape4"` (fr-vag4) — the 464-byte 4D tail plus
+ * the 4D VARIANT block, which is the lens4 block's own 464..575 region
+ * carrying the chain's scalars instead. The two are mutually exclusive by
+ * construction (`analyzeEscapeSystem4` refuses a final transform, so an
+ * escape chain never has a lens), exactly as the 3D escape core shares the
+ * lens's 208..271 block — and sizing it identically is what keeps the
+ * shared plane/balloon block at ONE offset (576) across every 4D core. */
+export const SURFACE_GPU_PARAMS4_ESCAPE_BYTES = SURFACE_GPU_PARAMS4_LENS_BYTES;
+/** Params size for a 4D core under `balloon: true` (fr-qxxw): the 576-byte
+ * 4D block — variant members declared unconditionally, zero-filled by the
+ * packer when there is no lens — plus the appended balloon block at the
+ * frozen offset 576. The 3D pattern one dimension up, and the same host
+ * contract: a balloon kernel's struct is this size, so its hosts must bind
+ * a buffer packed with the balloon argument. */
+export const SURFACE_GPU_PARAMS4_BALLOON_BYTES =
+  SURFACE_GPU_PARAMS4_LENS_BYTES + 32;
+/** Params size for a 4D core under `groundPlane: true` (fr-h0c3): the
+ * 576-byte 4D block plus the appended plane block at 576, which the plane
+ * and balloon blocks SHARE one dimension up exactly as they do in 3D (the
+ * pair throws at codegen and at pack). Layout is the 3D plane block's,
+ * offset by 288: y 576, fadeStart 580, fadeEnd 584, ballRadius 588,
+ * ballCenter vec3f 592, albedo vec3f 608. */
+export const SURFACE_GPU_PARAMS4_PLANE_BYTES =
+  SURFACE_GPU_PARAMS4_LENS_BYTES + 48;
 export const SURFACE_GPU_MAP_VEC4 = 7;
 export const SURFACE_GPU_MAP_STRIDE_BYTES = SURFACE_GPU_MAP_VEC4 * 16;
 /** vec4f slots per 4D map (`struct GpuMap4`): four invM rows, invT, and
@@ -777,8 +884,22 @@ export interface SurfaceGpuKernelOptions {
    * options as "escape", and `lens`/`balloon` throw for the same
    * reasons. Deliberately NOT a fourth `foldKind` on the escape core:
    * those bodies dispatch on `kind != 2` / `kind != 1`, so an
-   * unrecognized kind would silently run both folds. */
-  core?: "fold" | "affine" | "escape" | "affine4" | "fold4" | "bulb";
+   * unrecognized kind would silently run both folds.
+   * "escape4" (fr-vag4) is the escape core ONE DIMENSION UP —
+   * `escape-de-4d.ts`'s `estimateEscapeDistance4` behind the 4D cores'
+   * view lift — for `analyzeEscapeSystem4` systems: pack with
+   * {@link packEscape4GpuParams} AND {@link packEscape4GpuMaps} (binding
+   * 1 is `array<GpuMap4>` carrying one FORWARD 4x4 per link), same inert
+   * options as "escape", `lens`/`balloon` throw, `groundPlane` composes,
+   * and a nonzero `footprint` or `sliceHalfW` throws at pack. */
+  core?:
+    | "fold"
+    | "affine"
+    | "escape"
+    | "affine4"
+    | "fold4"
+    | "bulb"
+    | "escape4";
   /** Emit the FOLD FINAL-transform lens wrapper (fr-55s1 stage B —
    * `descendLens`, fr-g58b's vocabulary; fr-rsp6 phase 2B lifts it to
    * the 4D cores as `descendLens4`): the descent body (any core but
@@ -810,11 +931,15 @@ export interface SurfaceGpuKernelOptions {
    * SURFACE_GPU_PARAMS_BALLOON_BYTES} params block ({@link
    * packSurfaceGpuParams}'s third argument — a balloon kernel must be
    * fed a balloon-packed buffer). Absent or false reproduces the
-   * no-balloon source byte for byte. `core: "escape"` THROWS — the
-   * escape solid's interior reaches the ball center, so its echo
-   * swallows the camera (fr-5wlv.4's measured verdict); escape sessions
-   * render plain — and the 4D cores throw (the 4D lift is a later
-   * fr-5wlv child). */
+   * no-balloon source byte for byte. Every FORWARD core THROWS — a
+   * forward-orbit solid's interior reaches the ball center, so its echo
+   * swallows the camera (fr-5wlv.4's measured verdict, re-measured on
+   * the Mandelbulb by fr-tdin); those sessions render plain. The 4D
+   * DESCENT cores compose since fr-qxxw, on the appended {@link
+   * SURFACE_GPU_PARAMS4_BALLOON_BYTES} block ({@link
+   * packSurface4GpuParams}'s `balloon` argument) — the wrapper text is
+   * unchanged, which is what makes the semantics slice-then-invert (THE
+   * BALLOON WRAPPER in the module doc). */
   balloon?: boolean;
   /** Ground plane (fr-rhn5): an infinite one-sided floor below the
    * session ball that MISS rays classify against in the march — a ray
@@ -830,11 +955,12 @@ export interface SurfaceGpuKernelOptions {
    * `groundPlane` argument — a plane kernel must be fed a plane-packed
    * buffer). Absent or false reproduces the no-plane source byte for
    * byte. `balloon` THROWS (the enclosing shell has no horizon for a
-   * floor to sit on — the GLSL arm refuses the same pair) and the 4D
-   * cores throw (fr-rhn5 is 3D-scoped); both FORWARD cores are supported
-   * — the classic Mandelbox/Mandelbulb floor — and `lens` composes exactly as the
-   * GLSL side's stripped lens+plane program does. Inert in eval mode
-   * (no rays terminate). */
+   * floor to sit on — the GLSL arm refuses the same pair); EVERY core is
+   * supported — both FORWARD cores (the classic Mandelbox/Mandelbulb
+   * floor) and, since fr-h0c3, the three 4D ones, whose plane block
+   * rides the appended {@link SURFACE_GPU_PARAMS4_PLANE_BYTES} instead —
+   * and `lens` composes exactly as the GLSL side's stripped lens+plane
+   * program does. Inert in eval mode (no rays terminate). */
   groundPlane?: boolean;
   /** March-mode ray derivation. "pose" (default) keeps the bench baseline:
    * NDC pixel centers against the pose basis — byte-identical output to
@@ -1481,6 +1607,14 @@ export interface SurfaceGpu4View {
  * cores run their no-lens arithmetic verbatim and the wrapper alone
  * applies the lens.
  *
+ * `balloon` (fr-qxxw) and `groundPlane` (fr-h0c3) append their blocks at
+ * the frozen 576 — the 3D packer's frozen-288 pair one dimension up,
+ * mutually exclusive by the same throw — and force the lens4 region to be
+ * written (zero-filled when there is no lens) so that offset holds
+ * whether or not a lens is present. The balloon's `center`/`rho` are 3D
+ * quantities in the MARCHED space: the wrapper inverts before the body's
+ * rotor lift, which is fr-qxxw's slice-then-invert semantics.
+ *
  * HOST CONTRACT for that growth: size the uniform buffer from the
  * RETURNED `byteLength` (or from {@link SURFACE_GPU_PARAMS4_LENS_BYTES}
  * whenever `de.foldFinal` is set — the two agree) and generate the
@@ -1500,7 +1634,16 @@ export function packSurface4GpuParams(
   de: SurfaceDE4,
   view4: SurfaceGpu4View,
   run: SurfaceGpuRunParams,
+  balloon: { center: Vec3; rho: number; R: number; far: number } | null = null,
+  groundPlane: SurfaceGpuGroundPlane | null = null,
 ): ArrayBuffer {
+  if (balloon && groundPlane) {
+    throw new Error(
+      "surface-de-gpu: groundPlane+balloon: excluded (fr-rhn5) — the two " +
+        "blocks share the frozen offset 576 in 4D exactly as they share " +
+        "288 in 3D, and the kernels refuse the pair",
+    );
+  }
   if ((run.footprint ?? 0) > 0) {
     throw new Error(
       "surface-de-gpu: the affine4 core has no cone-footprint depth cap " +
@@ -1515,8 +1658,17 @@ export function packSurface4GpuParams(
     );
   }
   const lens4 = de.foldFinal;
+  // The appended blocks force the lens4 region to exist (zero-filled
+  // without a lens), which is what keeps their own offset at 576 for
+  // every 4D core — the 3D packer's frozen-288 rule one dimension up.
   const buf = new ArrayBuffer(
-    lens4 ? SURFACE_GPU_PARAMS4_LENS_BYTES : SURFACE_GPU_PARAMS4_BYTES,
+    balloon
+      ? SURFACE_GPU_PARAMS4_BALLOON_BYTES
+      : groundPlane
+        ? SURFACE_GPU_PARAMS4_PLANE_BYTES
+        : lens4
+          ? SURFACE_GPU_PARAMS4_LENS_BYTES
+          : SURFACE_GPU_PARAMS4_BYTES,
   );
   const view = new DataView(buf);
   view.setFloat32(12, de.boundingRadius, true);
@@ -1622,13 +1774,181 @@ export function packSurface4GpuParams(
     view.setFloat32(552, lens4.absW, true);
     view.setFloat32(556, lens4.sigmaMin, true);
     // fr-s9ll: the 4D lens fold's authored lengths, the 3D `lensFold`
-    // quartet at this block's own offset — nothing follows the lens4 block,
-    // so it grows in place.
+    // quartet at this block's own offset.
     view.setFloat32(560, lens4.foldRadii.minR, true);
     view.setFloat32(564, lens4.foldRadii.fixedR, true);
     view.setFloat32(568, lens4.foldRadii.wall, true);
   }
+  // fr-qxxw / fr-h0c3: the shared block at 576, the 3D packer's frozen
+  // 288 one dimension up. The lens4 region above stays zero-filled when
+  // there is no lens, which is exactly what a balloon/plane 4D kernel's
+  // unconditionally-declared struct members read.
+  if (balloon) {
+    writeVec3(view, 576, balloon.center);
+    view.setFloat32(588, balloon.rho, true);
+    view.setFloat32(592, balloon.R, true);
+    view.setFloat32(596, balloon.far, true);
+  }
+  if (groundPlane) {
+    writeGroundPlane4(view, groundPlane);
+  }
   return buf;
+}
+
+/** {@link writeGroundPlane}'s 4D twin — the same block at the 4D cores'
+ * own shared offset (fr-h0c3). Two writers rather than one offset
+ * argument, so each dimension's frozen offset is a literal a reader can
+ * check against the module doc. */
+function writeGroundPlane4(
+  view: DataView,
+  gp: SurfaceGpuGroundPlane,
+): void {
+  view.setFloat32(576, gp.y, true);
+  view.setFloat32(580, gp.fadeStart, true);
+  view.setFloat32(584, gp.fadeEnd, true);
+  view.setFloat32(588, gp.ballRadius, true);
+  writeVec3(view, 592, gp.ballCenter);
+  writeVec3(view, 608, gp.albedo);
+}
+
+/**
+ * Pack the params uniform for the ESCAPE4 core (fr-vag4) — the 3D escape
+ * packer and the 4D one crossed, which is what this core is.
+ *
+ * From the escape packer: the bailout ball in `boundingRadius`,
+ * {@link ESCAPE_STEP_SCALE}, the LINK COUNT in `mapCount`, `maxDepth` as
+ * the orbit's PASS budget, and `symOrder`/`symPlane` carrying the
+ * query-space wedge fold — with `symPlane` in {@link SYM_PLANE_CODE4}'s
+ * six-plane code rather than the descents' collapsed one, because the
+ * fold picks its two axes by name.
+ *
+ * From the 4D packer: the rotor rows, `w0`, and the slice-ADJUSTED
+ * `visibleRadius` so the shared march entry's sphere gate is textually
+ * unchanged. `sliceHalfW` packs 0 — a forward orbit cannot thread a
+ * segment ({@link import("./escape-de-4d").estimateEscapeDistance4}), so
+ * a nonzero one THROWS rather than rendering a slab it cannot bound;
+ * `stepBack4` and `final4M`/`final4T` pack IDENTITY (no sector sweep, no
+ * lens), and the radius band packs `(0, 0, 1/visRadius4)` so the radius
+ * colour ramp is `|q4|` over the bailout ball — an escape chain has no
+ * probe-fit band.
+ *
+ * The 464..575 VARIANT block holds ONE live word, the chain's estimate
+ * form; it is sized to the lens4 block ({@link
+ * SURFACE_GPU_PARAMS4_ESCAPE_BYTES}) so the shared plane block below
+ * lands at 576 for every 4D core.
+ */
+export function packEscape4GpuParams(
+  de: EscapeDE4,
+  view4: SurfaceGpu4View,
+  run: SurfaceGpuRunParams,
+  groundPlane: SurfaceGpuGroundPlane | null = null,
+): ArrayBuffer {
+  if (view4.sliceHalfW > 0) {
+    throw new Error(
+      "surface-de-gpu: the escape4 core takes no slab — a forward orbit " +
+        "cannot thread a segment (escape-de-4d.ts's NO SLAB paragraph); " +
+        "clamp sliceHalfW to 0 for this session",
+    );
+  }
+  const buf = new ArrayBuffer(
+    groundPlane
+      ? SURFACE_GPU_PARAMS4_PLANE_BYTES
+      : SURFACE_GPU_PARAMS4_ESCAPE_BYTES,
+  );
+  const view = new DataView(buf);
+  const R = de.boundingRadius;
+  view.setFloat32(12, R, true);
+  view.setFloat32(16, R * 2, true);
+  view.setFloat32(20, ESCAPE_STEP_SCALE, true);
+  // The slice-adjusted marching ball: |(p, w0)| <= R implies |p| <= this,
+  // the affine4 packer's own line at sliceHalfW 0.
+  const minW = Math.abs(view4.w0);
+  const sliceR = Math.sqrt(Math.max(R * R - minW * minW, 0));
+  view.setFloat32(24, sliceR, true);
+  view.setFloat32(28, 1, true);
+  view.setFloat32(32, 1, true);
+  view.setUint32(40, de.symmetryOrder, true);
+  view.setUint32(44, SYM_PLANE_CODE4[de.symmetryPlane], true);
+  view.setUint32(48, de.links.length, true);
+  view.setUint32(52, run.maxDepth ?? ESCAPE_TIME_ITERATIONS, true);
+  view.setUint32(56, run.itemCount, true);
+  view.setUint32(60, run.stepsThisPass ?? 0, true);
+  view.setFloat32(64, run.cutoff ?? 0, true);
+  view.setUint32(72, run.marchSteps ?? 0, true);
+  const pose = run.pose;
+  view.setFloat32(76, pose?.pixelEps ?? 0, true);
+  view.setFloat32(80, R * (run.hitFloor ?? SURFACE_GPU_HIT_FLOOR), true);
+  view.setUint32(84, pose?.rasterWidth ?? 0, true);
+  view.setUint32(88, pose?.rasterHeight ?? 0, true);
+  writeVec3(view, 96, [1, 0, 0]);
+  writeVec3(view, 112, [0, 1, 0]);
+  writeVec3(view, 128, [0, 0, 1]);
+  writeVec3(view, 144, pose?.ro ?? [0, 0, 0]);
+  view.setFloat32(156, 1, true);
+  writeVec3(view, 160, pose?.right ?? [1, 0, 0]);
+  view.setFloat32(172, pose?.tanHalf ?? 0, true);
+  writeVec3(view, 176, pose?.up ?? [0, 1, 0]);
+  view.setFloat32(188, pose?.aspect ?? 1, true);
+  writeVec3(view, 192, pose?.fwd ?? [0, 0, 1]);
+  view.setFloat32(204, run.fogDensity ?? 1, true);
+  const rot = view4.rotor;
+  for (let i = 0; i < 4; i++) {
+    const at = 208 + i * 16;
+    view.setFloat32(at, rot[i], true);
+    view.setFloat32(at + 4, rot[4 + i], true);
+    view.setFloat32(at + 8, rot[8 + i], true);
+    view.setFloat32(at + 12, rot[12 + i], true);
+  }
+  // stepBack4 and final4M pack IDENTITY: this core sweeps no sectors and
+  // carries no lens, and the packers' never-uninitialized convention says
+  // a slot the body might read holds the value that makes it a no-op.
+  for (let i = 0; i < 4; i++) {
+    view.setFloat32(272 + i * 20, 1, true);
+    view.setFloat32(336 + i * 20, 1, true);
+  }
+  view.setFloat32(416, view4.w0, true);
+  view.setFloat32(424, 1, true);
+  view.setFloat32(428, R, true);
+  view.setFloat32(452, 1 / R, true);
+  // The one live word of the 464..575 variant block.
+  view.setFloat32(464, de.logEstimate ? 1 : 0, true);
+  if (groundPlane) {
+    writeGroundPlane4(view, groundPlane);
+  }
+  return buf;
+}
+
+/**
+ * Pack the ESCAPE4 core's formula CHAIN into the `GpuMap4` layout
+ * (fr-vag4) — {@link packEscapeGpuMaps} one dimension up, and the same
+ * two divergences from the descent lanes: `p0` is the
+ * (kind, w, derivGrowth, 0) quartet rather than the descent's sigma set,
+ * and `fold` carries the SQUARED sphere radii the forward orbit's
+ * `fR²/clamp(r², mR², fR²)` wants. Every other lane is zero — the same
+ * "one layout, lanes a core may ignore" contract the 4D descent cores
+ * already ride.
+ */
+export function packEscape4GpuMaps(de: EscapeDE4): Float32Array {
+  const out = new Float32Array(
+    de.links.length * SURFACE_GPU_MAP4_VEC4 * 4 || SURFACE_GPU_MAP4_VEC4 * 4,
+  );
+  de.links.forEach((link, j) => {
+    const base = j * SURFACE_GPU_MAP4_VEC4 * 4;
+    for (let i = 0; i < 16; i++) {
+      out[base + i] = link.m[i];
+    }
+    out[base + 16] = link.t[0];
+    out[base + 17] = link.t[1];
+    out[base + 18] = link.t[2];
+    out[base + 19] = link.t[3];
+    out[base + 20] = link.kind;
+    out[base + 21] = link.w;
+    out[base + 22] = link.derivGrowth;
+    out[base + 32] = link.minRadius2;
+    out[base + 33] = link.fixedRadius2;
+    out[base + 34] = link.boxLimit;
+  });
+  return out;
 }
 
 /** Pack the per-map storage array (layout contract above). */
@@ -1881,22 +2201,35 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
       "surface-de-gpu: the bulb core cannot take a fold-final lens",
     );
   }
+  if (core === "escape4" && lens) {
+    // analyzeEscapeSystem4 refuses final transforms exactly as its 3D
+    // twin does — and here the refusal is load-bearing beyond taste: the
+    // escape4 params block IS the lens4 block's region (fr-vag4).
+    throw new Error(
+      "surface-de-gpu: the escape4 core cannot take a fold-final lens",
+    );
+  }
   // The 4D cores: one view lift, one params tail, one maps layout. The
-  // shared header/entry interpolations below key on this, so a fifth
+  // shared header/entry interpolations below key on this, so an eighth
   // core cannot forget one of them.
-  const core4 = core === "affine4" || core === "fold4";
-  // The two FORWARD cores (fr-dlxh's escape, fr-7u8t.9's bulb): a forward
-  // orbit rather than a descent, so none of the descent helpers and no
-  // frontier. The shared header/entry interpolations below key on this the
-  // way they key on `core4`, so a seventh core cannot forget one of them.
-  const forward = core === "escape" || core === "bulb";
-  // ...but the escape core's formula CHAIN (fr-s04t) rides the maps
-  // storage binding — one `GpuMap` per LINK, the descent cores' own
-  // layout carrying FORWARD affines (packed by {@link
-  // packEscapeGpuMaps}), because a list is exactly what that binding is
-  // for. Bulb is the one bindingless core left: its single map still
-  // rides the params variant block.
-  const mapsBinding = !forward || core === "escape";
+  const core4 =
+    core === "affine4" || core === "fold4" || core === "escape4";
+  // The FORWARD cores (fr-dlxh's escape, fr-7u8t.9's bulb, fr-vag4's
+  // escape4): a forward orbit rather than a descent, so none of the
+  // descent helpers and no frontier. The shared header/entry
+  // interpolations below key on this the way they key on `core4`, so an
+  // eighth core cannot forget one of them. `escape4` is the first core
+  // that is BOTH — it takes the 4D tail and the `GpuMap4` layout from the
+  // descent cores and the orbit from the 3D escape one.
+  const forward = core === "escape" || core === "bulb" || core === "escape4";
+  // ...but the escape cores' formula CHAIN (fr-s04t) rides the maps
+  // storage binding — one `GpuMap`/`GpuMap4` per LINK, the descent cores'
+  // own layout carrying FORWARD affines (packed by {@link
+  // packEscapeGpuMaps} / {@link packEscape4GpuMaps}), because a list is
+  // exactly what that binding is for. Bulb is the one bindingless core
+  // left: its single map still rides the params variant block.
+  const mapsBinding =
+    !forward || core === "escape" || core === "escape4";
   // fr-s9ll: does any body in this kernel enumerate the fold's INVERSE
   // branches, and so need `foldRadiiOf`? The fold cores do, and so does the
   // lens wrapper around ANY descent core (a fold FINAL is still a fold).
@@ -1925,10 +2258,12 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
         "bulb sessions render plain",
     );
   }
-  if (balloon && core4) {
+  if (balloon && core === "escape4") {
     throw new Error(
-      "surface-de-gpu: balloon is 3D-only (the 4D lift is a later " +
-        "fr-5wlv child)",
+      "surface-de-gpu: balloon+escape4: excluded — a forward-orbit " +
+        "solid's interior reaches the ball center whatever its dimension, " +
+        "so its echo swallows the camera (fr-5wlv.4's measured verdict); " +
+        "escape sessions render plain",
     );
   }
   // fr-rhn5: the ground plane — an analytic floor MISS rays classify
@@ -1944,20 +2279,23 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
         "arm refuses the same pair)",
     );
   }
-  if (groundPlane && core4) {
-    throw new Error(
-      "surface-de-gpu: groundPlane is 3D-only (fr-rhn5's scope — the 4D " +
-        "lift would need the slab/rotor treatment)",
-    );
-  }
+  // fr-vag4/fr-qxxw/fr-h0c3: the 4D tail's VARIANT block (464..575) is
+  // declared whenever anything is appended past it, so the shared
+  // plane/balloon block lands at ONE offset (576) across every 4D core —
+  // the 3D `lens || balloon || groundPlane` rule one dimension up. The
+  // packer zero-fills it when there is no lens, exactly as 3D's does.
+  const tail4Block = core4 && (lens || balloon || groundPlane);
   // fr-d0nn: the fr-wa6o slab register-pressure probe (option doc).
-  // Meaningful only under the 4D cores — every other core reads `true`
-  // unconditionally, so `opts.slabExt` is never even consulted for them
-  // and the inertness is structural, not just documented.
-  const slabExt = core4 ? (opts.slabExt ?? true) : true;
+  // Meaningful only under the 4D DESCENT cores — every other core reads
+  // `true` unconditionally, so `opts.slabExt` is never even consulted for
+  // them and the inertness is structural, not just documented. The
+  // escape4 core is 4D and takes no slab at all (a forward orbit cannot
+  // thread a segment), so it sits with the 3D cores here.
+  const slabExt = core4 && !forward ? (opts.slabExt ?? true) : true;
   // fr-b72d: the maps-load probe (option doc). Same structural inertness
-  // as slabExt — only the 4D cores ever consult it.
-  const mapsUniform = core4 ? (opts.mapsUniform ?? false) : false;
+  // as slabExt — only the 4D descent cores ever consult it.
+  const mapsUniform =
+    core4 && !forward ? (opts.mapsUniform ?? false) : false;
   if (!Number.isInteger(width) || width < 1) {
     throw new Error(`surface-de-gpu: bad frontier width ${width}`);
   }
@@ -3438,6 +3776,75 @@ ${
   return info;
 }`;
 
+  // Escape4 hit-info (fr-vag4): the escape hit-info over vec4f, behind
+  // the same lift its value body uses. Every shading quantity is the 3D
+  // one's — the continuous escape fraction with its two interpolants,
+  // rings and sheets off the orbit's closest radial / y-plane approaches
+  // — with the bulb branch gone (the gate refuses a triplex power) and
+  // the quaternion square in its FULL form. `sheets` still reads `v.y`:
+  // the orbit runs in the ATTRACTOR frame, exactly as the 4D descents'
+  // colour sources do.
+  const escape4HitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0);
+  let q = foldQuerySector4(liftEscape4(p));
+  var v = q;
+  var r = length(v);
+  let n = params.mapCount;
+  let steps = params.maxDepth * n;
+  var link = 0u;
+  var escapedAt = steps;
+  var growth = maps[0].p0.z;
+  var lastPower = 0.0;
+  for (var i = 0u; i < steps; i++) {
+    if (r > params.boundingRadius) {
+      escapedAt = i;
+      break;
+    }
+    let L = maps[link];
+    let kind = u32(L.p0.x);
+    var y = vec4f(dot(L.r0, v), dot(L.r1, v), dot(L.r2, v), dot(L.r3, v)) + L.t;
+    if (kind < 4u) {
+      if (kind != 2u) {
+        y = clamp(y, vec4f(-L.fold.z), vec4f(L.fold.z)) * 2.0 - y;
+      }
+      if (kind != 1u) {
+        let f = L.fold.y / clamp(dot(y, y), L.fold.x, L.fold.y);
+        y *= f;
+      }
+    } else {
+      y = vec4f(
+        y.x * y.x - y.y * y.y - y.z * y.z - y.w * y.w,
+        2.0 * y.x * y.y,
+        2.0 * y.x * y.z,
+        2.0 * y.x * y.w,
+      );
+    }
+    v = L.p0.y * y + q;
+    r = length(v);
+    growth = L.p0.z;
+    lastPower = select(0.0, 2.0, kind == 5u);
+    info.rings = min(info.rings, r / params.boundingRadius);
+    info.sheets = min(info.sheets, abs(v.y) / params.boundingRadius);
+    link++;
+    if (link == n) {
+      link = 0u;
+    }
+  }
+  var escFrac = 0.0;
+  if (escapedAt < steps) {
+    if (lastPower > 1.0) {
+      escFrac = clamp(log(log(r) / log(params.boundingRadius)) / log(lastPower), 0.0, 1.0);
+    } else if (growth > 1.0) {
+      escFrac = clamp(log(r / params.boundingRadius) / log(growth), 0.0, 1.0);
+    }
+  }
+  info.trap =
+    clamp((f32(escapedAt) - escFrac) / f32(params.maxDepth), 0.0, 1.0);
+  info.rings = clamp(info.rings, 0.0, 1.0);
+  info.sheets = clamp(info.sheets, 0.0, 1.0);
+  return info;
+}`;
+
   // Bulb hit-info (fr-7u8t.9 — the GLSL SURFACE_BULB shading overload,
   // term for term): the same forward triplex-power orbit with the escape
   // family's shading extras — trap is the CONTINUOUS escape count in the
@@ -3868,7 +4275,9 @@ ${
       ? affineHitInfoText
       : core === "escape"
         ? escapeHitInfoText
-        : core === "bulb"
+        : core === "escape4"
+          ? escape4HitInfoText
+          : core === "bulb"
           ? bulbHitInfoText
           : core === "affine4"
             ? affine4HitInfoText(slabExt, lens)
@@ -3970,7 +4379,20 @@ ${balloonHitWrapText}`
     : balloon
       ? `u = clamp(hi.colorPos.y / visR * 0.5 + 0.5, 0.0, 1.0);`
       : `u = clamp(pos.y / visR * 0.5 + 0.5, 0.0, 1.0);`;
-  const shadeRadiusU = core4
+  const shadeRadiusU =
+    core === "escape4"
+      ? // fr-vag4: the same attractor-frame radius ramp, through this
+        // core's own lift (it emits none of the descents' 4D helpers, and
+        // its slab is pinned to 0 so there is no sStar term to add). The
+        // packer fills the band with (0, 0, 1/visRadius4), so the ramp is
+        // |q4| over the bailout ball — an escape chain has no probe-fit
+        // band to normalize against.
+        `let q4c = liftEscape4(pos);
+      u = clamp(
+        (length(q4c - params.radiusCenter4) - params.radiusMinD) *
+          params.radiusInvRange,
+        0.0, 1.0);`
+      : core4
     ? `let hitW = params.w0 + hi.sStar * params.sliceHalfW;
       let q4c = rotorInvApply4(vec4f(pos, hitW));
       u = clamp(
@@ -4489,12 +4911,14 @@ ${shadeGate}
               }`
       : "";
 
-  // fr-rhn5: the ground-plane params block at the frozen offset 288 —
-  // SHARED with the balloon block (they are mutually exclusive by the
-  // throw above, the escape/lens 208..271 precedent). Appended after
-  // the escape variant block for the escape core, and after the
-  // unconditionally-declared lens block (the balloon's frozen-offset
-  // move) for the descent cores.
+  // fr-rhn5: the ground-plane params block at the frozen offset 288 (576
+  // under a 4D core since fr-h0c3) — SHARED with the balloon block (they
+  // are mutually exclusive by the throw above, the escape/lens 208..271
+  // precedent). Appended after the escape variant block for the escape
+  // cores, and after the unconditionally-declared lens block (the
+  // balloon's frozen-offset move) for the descent cores. ONE text for
+  // both dimensions: the offsets follow from where it is spliced, and
+  // the block's own layout is dimension-free.
   const planeStructFields = /* wgsl */ `
   groundY: f32,
   groundFadeStart: f32,
@@ -4504,6 +4928,16 @@ ${shadeGate}
   padG0: f32,
   groundAlbedo: vec3f,
   padG1: f32,`;
+  // fr-5wlv.5's balloon block, at that same shared offset — extracted
+  // beside the plane's when fr-qxxw gave the 4D cores a second splice
+  // site, for the reason the plane's was extracted first.
+  const balloonStructFields = /* wgsl */ `
+  balloonCenter: vec3f,
+  balloonRho: f32,
+  balloonR: f32,
+  balloonFar: f32,
+  padB0: f32,
+  padB1: f32,`;
   const headerText = /* wgsl */ `
 struct Params {
   boundCenter: vec3f,
@@ -4552,10 +4986,11 @@ struct Params {
     // 4D kernel needs both the tail AND its own appended lens4 block, so
     // core4 owns the variant block and the 3D lens fields stay the 3D
     // cores' alone. Every no-lens branch below is textually what it was.
-    // The balloon members (fr-5wlv.5) live in the NON-core4 arm only
-    // (balloon+core4 throws above) and land at the FROZEN offset 288 by
-    // declaring the lens variant block UNCONDITIONALLY under balloon —
-    // zero-filled by the packer when no lens, the module-doc contract.
+    // The balloon members (fr-5wlv.5) land at the FROZEN offset 288 (576
+    // under a 4D core) by declaring the variant block UNCONDITIONALLY
+    // under balloon — zero-filled by the packer when no lens, the
+    // module-doc contract, and since fr-qxxw/fr-h0c3 that rule runs in
+    // both dimensions off `tail4Block`.
     core4
       ? /* wgsl */ `
   rotorInvR0: vec4f,
@@ -4580,13 +5015,35 @@ struct Params {
   radiusInvRange: f32,
   pad4a: f32,
   pad4b: f32,${
-    // fr-rsp6 phase 2B: the lens4 block, APPENDED past the 4D tail
-    // (432..527) and declared only under the lens. A smaller struct
-    // reading a larger buffer is valid WebGPU, so keeping it
-    // struct-conditional is what keeps every no-lens 4D kernel's text
-    // byte-identical.
-    lens
+    // fr-vag4: the escape4 core's own occupant of the 464..575 VARIANT
+    // block. One live word — the chain's estimate form — and then the
+    // pad that keeps the shared plane block at 576 for every 4D core,
+    // which is the 3D cores' `padF` argument one dimension up.
+    core === "escape4"
       ? /* wgsl */ `
+  // (logEstimate, 0, 0, 0) — fr-j231's chain-level estimate form, 0
+  // linear and 1 Bottcher. One number per CHAIN, read once after the
+  // orbit, which is why it rides here and not the maps binding. Nothing
+  // else: this block was written after fr-s04t, so it carries no frozen
+  // head-link ballast the way the 3D escape core's does.
+  esc4Params: vec4f,${
+          tail4Block
+            ? /* wgsl */ `
+  // 480..575, PAD — the lens4 block's remaining region, which this core
+  // can never use (escape4+lens throws) and which exists so the shared
+  // plane block below lands at ONE offset across every 4D core.
+  padE4: array<vec4f, 6>,`
+            : ""
+        }`
+      : // fr-rsp6 phase 2B: the lens4 block, APPENDED past the 4D tail
+        // (464..575). Declared under the lens, and — since fr-qxxw /
+        // fr-h0c3 — under anything appended past it, so the shared
+        // block keeps one offset. A smaller struct reading a larger
+        // buffer is valid WebGPU, so keeping it struct-conditional
+        // otherwise is what keeps every plain 4D kernel's text
+        // byte-identical.
+        lens || tail4Block
+        ? /* wgsl */ `
   lens4MR0: vec4f,
   lens4MR1: vec4f,
   lens4MR2: vec4f,
@@ -4597,7 +5054,9 @@ struct Params {
   // radii are dimension-free (SurfaceFoldRadii is SHARED by the two
   // oracles), so this is the same quartet at the 4D block's own offset.
   lens4Fold: vec4f,`
-      : ""
+        : ""
+  }${balloon ? balloonStructFields : ""}${
+    groundPlane ? planeStructFields : ""
   }`
       : core === "escape"
         ? /* wgsl */ `
@@ -4643,17 +5102,9 @@ struct Params {
   // wrapper re-derives the branch algebra from them through foldRadiiOf,
   // exactly as the per-map lanes do; packed zero when there is no lens,
   // which the wrapper never reads.
-  lensFold: vec4f,${
-    balloon
-      ? /* wgsl */ `
-  balloonCenter: vec3f,
-  balloonRho: f32,
-  balloonR: f32,
-  balloonFar: f32,
-  padB0: f32,
-  padB1: f32,`
-      : ""
-  }${groundPlane ? planeStructFields : ""}`
+  lensFold: vec4f,${balloon ? balloonStructFields : ""}${
+    groundPlane ? planeStructFields : ""
+  }`
             : ""
   }
 }${
@@ -6887,6 +7338,176 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   return 0.5 * r * log(r) / dr;
 }`;
 
+  // The ESCAPE4 core (fr-vag4): escape-de-4d.ts's
+  // estimateEscapeDistance4 — the 3D escape body's orbit over vec4f,
+  // behind the 4D cores' rotor lift. Three things fall away with the
+  // dimension and nothing is added: no bulbPow8 (analyzeEscapeSystem4
+  // refuses a triplex power — it has no fourth component), no slab (a
+  // forward orbit cannot thread a segment, and the packer pins
+  // sliceHalfW to 0), and no lens (an escape chain has no final
+  // transform). The two axis helpers exist because this core's
+  // kaleidoscope picks its plane by NAME out of all six, where the
+  // descents sweep a matrix and never need the axes.
+  const escape4DescentText = /* wgsl */ `fn axisAt4(p: vec4f, i: u32) -> f32 {
+  if (i == 0u) {
+    return p.x;
+  }
+  if (i == 1u) {
+    return p.y;
+  }
+  if (i == 2u) {
+    return p.z;
+  }
+  return p.w;
+}
+
+fn setAxis4(p: vec4f, i: u32, v: f32) -> vec4f {
+  var q = p;
+  if (i == 0u) {
+    q.x = v;
+  } else if (i == 1u) {
+    q.y = v;
+  } else if (i == 2u) {
+    q.z = v;
+  } else {
+    q.w = v;
+  }
+  return q;
+}
+
+// escape-de-4d.ts's foldQueryIntoSector4 — the 3D wedge fold generalised
+// to all six coordinate planes, the two coordinates outside the plane
+// riding through untouched. Still a composition of half-space folds,
+// hence 1-Lipschitz and an isometry per sector, so the marching ball does
+// not move. Plane codes are SYM_PLANE_CODE4's (the index into
+// SYMMETRY_PLANES) and NOT the descents' SYM_PLANE_CODE, which
+// deliberately collapses the w-planes onto their w-free twins.
+fn foldQuerySector4(p: vec4f) -> vec4f {
+  if (params.symOrder <= 1u) {
+    return p;
+  }
+  let code = params.symPlane;
+  var ia = 0u;
+  var ib = 1u;
+  if (code == 1u) {
+    ia = 0u;
+    ib = 2u;
+  } else if (code == 2u) {
+    ia = 1u;
+    ib = 2u;
+  } else if (code == 3u) {
+    ia = 0u;
+    ib = 3u;
+  } else if (code == 4u) {
+    ia = 1u;
+    ib = 3u;
+  } else if (code == 5u) {
+    ia = 2u;
+    ib = 3u;
+  }
+  let a = axisAt4(p, ia);
+  let b = axisAt4(p, ib);
+  let sector = 6.283185307179586 / f32(params.symOrder);
+  // Rotate BACK by the nearest whole sector, then mirror across the
+  // plane's first axis: the reflection group's fundamental-domain
+  // retraction, the 3D body's own two steps.
+  let turn = round(atan2(b, a) / sector) * sector;
+  let c = cos(turn);
+  let s = sin(turn);
+  var q = setAxis4(p, ia, a * c + b * s);
+  return setAxis4(q, ib, abs(b * c - a * s));
+}
+
+// The view lift, INLINED rather than reaching for rotorInvApply4: that
+// helper is emitted for the 4D DESCENT cores only, and this core is the
+// first that is both 4D and forward. A rotation is an isometry, so the
+// estimate survives the lift untouched. No half-extent register — the
+// packer pins sliceHalfW to 0 for this core.
+fn liftEscape4(pIn: vec3f) -> vec4f {
+  let pv = vec4f(pIn, params.w0);
+  return vec4f(
+    dot(params.rotorInvR0, pv),
+    dot(params.rotorInvR1, pv),
+    dot(params.rotorInvR2, pv),
+    dot(params.rotorInvR3, pv),
+  );
+}
+
+fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
+  let q = foldQuerySector4(liftEscape4(pIn));
+  var v = q;
+  var dr = 1.0;
+  var r = length(v);
+  let n = params.mapCount;
+  let steps = params.maxDepth * n;
+  var link = 0u;
+  for (var i = 0u; i < steps; i++) {
+    if (r > params.boundingRadius) {
+      break;
+    }
+    // The fr-za0n cycle: link i mod n. GpuMap4 rows carry the FORWARD
+    // 4x4 here (row j in r{j}, the translation in t) and p0 is the
+    // (kind, w, derivGrowth, 0) quartet — each divergence from the
+    // descent lanes being its 3D twin's.
+    let L = maps[link];
+    let kind = u32(L.p0.x);
+    var y = vec4f(dot(L.r0, v), dot(L.r1, v), dot(L.r2, v), dot(L.r3, v)) + L.t;
+    var localL = 1.0;
+    // The FOLD family, GUARDED exactly as in 3D: the two tests below are
+    // exhaustive by NEGATION over {1, 2, 3} alone, so the quaternion
+    // square has to be kept out of them rather than added beside them.
+    // The guard reads \`kind < 4u\` and not \`kind != 5u\` on purpose —
+    // it is the 3D body's line, and kind 4 (the triplex power) is
+    // refused by the gate rather than unreachable by accident.
+    if (kind < 4u) {
+      if (kind != 2u) {
+        // The box fold, now reflecting the fourth axis too — the link's
+        // own box wall (fr-s9ll).
+        y = clamp(y, vec4f(-L.fold.z), vec4f(L.fold.z)) * 2.0 - y;
+      }
+      if (kind != 1u) {
+        // The sphere fold through the FULL 4-radius, its own sphere
+        // shell SQUARED on the wire exactly as EscapeLink4 keeps it.
+        let f = L.fold.y / clamp(dot(y, y), L.fold.x, L.fold.y);
+        y *= f;
+        localL = f;
+      }
+    } else {
+      // The FULL quaternion square — variations4.ts's qsquare, whose 4D
+      // form is the DEFINITION and whose 3D form is the restriction. Its
+      // 2*|y| stays EXACT rather than a bound: quaternion norms multiply
+      // on the whole algebra, not merely on span{1, i, j}.
+      localL = 2.0 * length(y);
+      y = vec4f(
+        y.x * y.x - y.y * y.y - y.z * y.z - y.w * y.w,
+        2.0 * y.x * y.y,
+        2.0 * y.x * y.z,
+        2.0 * y.x * y.w,
+      );
+    }
+    // The Mandelbrot form's offset — the QUERY POINT, folded and lifted.
+    v = L.p0.y * y + q;
+    dr = L.p0.z * localL * dr + 1.0;
+    r = length(v);
+    link++;
+    if (link == n) {
+      link = 0u;
+    }
+  }
+  // The chain-level estimate form (fr-j231), on this core's own variant
+  // slot: 0 linear, 1 the Bottcher/Green's form. \`ln r\` goes NEGATIVE
+  // below r = 1, which a converging orbit reaches, and a negative
+  // estimate would march the tracer BACKWARDS — 0 there is the inside
+  // signal and is safe in the direction a sphere tracer needs.
+  if (params.esc4Params.x == 0.0) {
+    return r / dr;
+  }
+  if (r <= 1.0) {
+    return 0.0;
+  }
+  return 0.5 * r * log(r) / dr;
+}`;
+
   // The BULB core (fr-7u8t.9): bulb-de.ts's estimateBulbDistance — the
   // forward triplex-power orbit with the Boettcher log estimate,
   // DE = 0.5 * |y| * ln|y| / dr — in the SURFACE_BULB GLSL arm's f32
@@ -6945,7 +7566,13 @@ ${affineDescentText}`
         ? `// estimateEscapeDistance (escape-de.ts) — the forward-orbit
 // escape-time estimator, the SURFACE_ESCAPE GLSL arm's twin (fr-dlxh).
 ${escapeDescentText}`
-        : core === "bulb"
+        : core === "escape4"
+          ? `// estimateEscapeDistance4 (escape-de-4d.ts) behind the 4D cores'
+// view lift — the forward escape-time orbit one dimension up (fr-vag4).
+// No fragment mirror: an escape-shaped 4D session is compute-only, the
+// fr-rsp6 verdict for fold-shaped ones.
+${escape4DescentText}`
+          : core === "bulb"
           ? `// estimateBulbDistance (bulb-de.ts) — the forward triplex-power
 // orbit's Mandelbulb estimator, the SURFACE_BULB GLSL arm's twin
 // (fr-7u8t.9).
