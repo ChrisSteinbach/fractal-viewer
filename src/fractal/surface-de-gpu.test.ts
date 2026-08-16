@@ -3679,9 +3679,11 @@ function fourDFoldSystemTransforms(): Transform[] {
 }
 
 /** Two-map 4D system whose base maps SPHEREFOLD — the fold family whose
- * mid branch is an inversion, so `slabExact4` refuses it and a slab query
- * is unsound (surface-de-4d.ts). Mirrors that module's own
- * pureSpherefoldPair4 fixture; used here to pin the packer's slab guard. */
+ * mid branch is an inversion, so a PLAIN segment certificate is unsound
+ * there and `slabExact4` reads false. The CPU oracle answers it anyway
+ * since fr-v7ca (a ball of slack beside the segment); no kernel carries
+ * that register, which is the packer's own reason to refuse and what this
+ * fixture pins. Mirrors surface-de-4d.test.ts's pureSpherefoldPair4. */
 function fourDSpherefoldSystemTransforms(): Transform[] {
   return [
     {
@@ -4197,9 +4199,11 @@ describe("packSurface4GpuParams fold-final lens block (fr-rsp6 phase 2B)", () =>
   });
 
   it("refuses a slab query for a system slabExact4 rejects, and allows one for a boxfold-only system", () => {
-    // A spherefold branch takes a segment to an ARC, so the segment
-    // certificate is unsound (not merely loose) — the CPU entries throw
-    // and the app clamps sliceHalfW; this is the kernel-side belt.
+    // A spherefold branch takes a segment to an ARC, so a plain segment
+    // certificate is unsound (not merely loose). fr-v7ca's ball-slack
+    // capsule repairs it in the CPU oracle at the cost of a per-slot
+    // register and a second descent; no kernel here carries either, so the
+    // packer refuses on its own reason and the app clamps sliceHalfW.
     const spherefold = buildSurfaceDE4(fourDSpherefoldSystemTransforms());
     expect(() =>
       packSurface4GpuParams(spherefold, view4({ sliceHalfW: 0.05 }), {

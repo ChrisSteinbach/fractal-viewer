@@ -1062,8 +1062,10 @@ morphs into place instead of snapping (see **Presets** below).
   you widen it. Some sessions refuse the slab outright, and there the slider
   stays visible but sits disabled at 0 rather than showing a thickness the
   tracer would ignore: a
-  `spherefold` or `mandelbox` branch bends a segment into an arc, so the
-  thickened query would no longer be a safe bound (box-fold-only systems keep
+  `spherefold` or `mandelbox` branch bends a segment into an arc, and while
+  the estimator repairs that by carrying a ball of slack beside the segment
+  (fr-v7ca), the GPU tracer those 4D sessions run on carries no such thing,
+  so the row stays off there (box-fold-only systems keep
   it), and a 4D escape-time chain (see **◈ Surface**) has no branches to
   enumerate at all, so its forward orbit cannot thread a segment in the first
   place. **Slice-relative color** (fr-nn6, shown while the slice is on

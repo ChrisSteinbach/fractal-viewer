@@ -3091,7 +3091,10 @@ function main(): void {
   // fr-rsp6: false while the live 4D surface session's fold set breaks
   // segment exactness (spherefold/mandelbox — slabExact4), where every
   // view push clamps the fr-wa6o thickness to 0 and the panel hides the
-  // row. Session-scoped like the flag above.
+  // row. Session-scoped like the flag above. Named for EXACTNESS rather
+  // than support because that is what it gates: fr-v7ca's slack capsule
+  // made the CPU estimator answer those systems, the kernels did not
+  // follow, and this flag follows the kernels.
   let surface4SlabExact = true;
 
   // Monotonic token guarding the async shader-compile gate (fr-du81): each
@@ -4541,10 +4544,15 @@ function main(): void {
             // live shape one dimension up, so its rows stay reachable.
             ui.setSurfaceSessionKind("ifs");
             // The fr-wa6o thickness slider is live only where the slab is
-            // SOUND (fr-rsp6): spherefold/mandelbox branches take segments
+            // EXACT (fr-rsp6): spherefold/mandelbox branches take segments
             // to arcs, so those sessions clamp sliceHalfW to 0 at every
             // view push below (the packer's own guard would throw) and the
-            // panel hides the thickness row.
+            // panel hides the thickness row. `slabExact4`, NOT
+            // `slabSupported4` — fr-v7ca's ball-slack capsule DOES admit
+            // spherefold base maps in `surface-de-4d.ts`, but no WGSL core
+            // carries the slack register (or the second descent its ball
+            // floor costs), and a 4D fold session is compute-only, so the
+            // capability stops at the oracle until a kernel mirrors it.
             surface4SlabExact = slabExact4(de);
             ui.setFourDSlabAvailable(surface4SlabExact);
             // Routing by MEASURED verdict (fr-dlxh 4D cut, real Iris Xe,

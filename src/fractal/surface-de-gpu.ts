@@ -1619,10 +1619,17 @@ export interface SurfaceGpu4View {
  * `src/app/gpu-bench/` already sizes off `byteLength`.
  *
  * A slab query (`sliceHalfW > 0`) THROWS for a system whose fold set
- * breaks segment exactness ({@link slabExact4}) — the kernel-side belt
- * for the CPU entries' own refusal (a spherefold branch takes a segment
- * to an ARC, so the certificate is unsound, not merely loose). The app
- * clamps `sliceHalfW` to 0 for such sessions.
+ * breaks segment EXACTNESS ({@link slabExact4}) — a spherefold branch
+ * takes a segment to an ARC, so the plain certificate is unsound, not
+ * merely loose. This is no longer a belt for the CPU entries' own
+ * refusal: since fr-v7ca `surface-de-4d.ts` ANSWERS those systems, with a
+ * ball of slack beside the segment and the cheap `DE(p) − h` as an
+ * entry-level floor. It answers them at a cost no core here pays — one
+ * extra f32 of chain state per frontier slot (the register-pressure
+ * territory fr-b72d/fr-d0nn measured at 2.2x for the `ext` vec4) AND a
+ * second whole descent for the floor — so this throw stands on ITS OWN
+ * reason now: no kernel carries a slack register. The app clamps
+ * `sliceHalfW` to 0 for such sessions off the same predicate.
  */
 export function packSurface4GpuParams(
   de: SurfaceDE4,
@@ -1646,9 +1653,10 @@ export function packSurface4GpuParams(
   }
   if (view4.sliceHalfW > 0 && !slabExact4(de)) {
     throw new Error(
-      "surface-de-gpu: slab queries are unsound under spherefold/mandelbox " +
-        "branches (segment -> arc under inversion) — clamp sliceHalfW to 0 " +
-        "for this system (slabExact4)",
+      "surface-de-gpu: no 4D core carries fr-v7ca's ball-slack register, so " +
+        "a slab query is refused wherever the fold set breaks segment " +
+        "exactness (spherefold/mandelbox: segment -> arc under inversion) " +
+        "— clamp sliceHalfW to 0 for this system (slabExact4)",
     );
   }
   const lens4 = de.foldFinal;

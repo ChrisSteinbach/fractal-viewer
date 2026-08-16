@@ -11893,10 +11893,13 @@ async function runSurfaceDeSection(
     // fr-rsp6 phase 2B pack-guard pin (CPU-only, no GPU dispatch): a
     // spherefold-final DE queried through a nonzero sliceHalfW must be
     // REFUSED by `packSurface4GpuParams` (`slabExact4` — a spherefold
-    // branch takes a segment to an ARC under inversion, so a segment
-    // certificate there is unsound, not merely loose) — the kernel-side
-    // belt for the CPU entries' own `slabExact4` throw
-    // (`estimateDistance4`/`estimateDistance4Refined`). This system never
+    // branch takes a segment to an ARC under inversion, so a PLAIN segment
+    // certificate there is unsound, not merely loose). Since fr-v7ca this
+    // is no longer a belt for the CPU entries: `surface-de-4d.ts` answers
+    // spherefold BASE maps with a ball of slack, at a per-slot register and
+    // a second descent no kernel here pays, so the refusal now stands on
+    // that instead. (A spherefold FINAL lens, this fixture's shape, the CPU
+    // entries still refuse too — `slabSupported4`.) This system never
     // touches the GPU (the pack alone is under test), so it runs once here
     // rather than joining either fixture array above. Checks the CAUGHT
     // message too, not just "did it throw": a throw for the WRONG reason

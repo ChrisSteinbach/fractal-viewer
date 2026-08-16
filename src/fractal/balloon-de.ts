@@ -249,8 +249,9 @@ export function estimateBalloonDistance(
  * NO SLAB CONFLICT. A `halfExtent` rides through both terms unchanged:
  * the inversion does not touch `w`, so for each `w` in the slab the
  * argument above holds against that slice, and a segment estimate lower-
- * bounds every one of them. The 4D estimators' own `slabExact4` refusal
- * is what gates whether the slab query is legal at all.
+ * bounds every one of them. The 4D estimators' own `slabSupported4` gate
+ * is what decides whether the slab query is legal at all, and fr-v7ca's
+ * ball slack rides both terms as transparently as the segment does.
  * ------------------------------------------------------------------ */
 
 /** The 4D public-estimator shape the wrapper composes over

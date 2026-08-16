@@ -1106,9 +1106,11 @@ export class SurfaceComputeRenderer {
     // pairs share the explicit bind group layouts below, so bind groups
     // stay variant-agnostic and runFrame's pick is a pipeline handle.
     // fr-rsp6: a !slabExact4 system (spherefold/mandelbox folds) can
-    // NEVER take a slab query — the packer throws on sliceHalfW > 0 and
-    // the app clamps the thickness slider — so its ONE pair compiles
-    // slab-free outright and the A/B pair is skipped.
+    // NEVER take a slab query HERE — the packer throws on sliceHalfW > 0
+    // and the app clamps the thickness slider — so its ONE pair compiles
+    // slab-free outright and the A/B pair is skipped. (fr-v7ca's ball-slack
+    // capsule lifted the same refusal in the CPU oracle; no WGSL core
+    // mirrors it, which is exactly what this line still gates on.)
     const canSlab = target.kind !== "ifs4" || slabExact4(target.de);
     const wantNoSlab = target.kind === "ifs4" && canSlab;
     const [marchModule, shadeModule, marchModuleNoSlab, shadeModuleNoSlab] =

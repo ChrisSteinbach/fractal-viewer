@@ -59,16 +59,16 @@
  * no sector retraction to apply, and inventing one would render a set the
  * chaos game does not draw.
  *
- * NO SLAB, AND THAT IS THE SHIPPED PATTERN ONE MODE OVER. `surface-de-4d.ts`
- * refuses fr-wa6o slab queries for any system whose fold set includes a
- * spherefold or a mandelbox ({@link import("./surface-de-4d").slabExact4}) —
- * the mid branch is an inversion, which takes a segment to an arc — and the
- * app clamps `sliceHalfW` to 0 for those sessions rather than degrading into
- * a silently wrong image. A FORWARD orbit refuses it for a stronger reason
- * that no fold kind escapes: there is no branch enumeration, so a segment
- * straddling a box fold's wall maps to a bent polyline in one step. This
- * module therefore takes no `halfExtent` at all, and its hosts clamp the
- * slice thickness to zero.
+ * NO SLAB, AND THE REASON IS STRONGER THAN THE DESCENT'S. `surface-de-4d.ts`
+ * meets the spherefold's inversion — the mid branch takes a segment to an
+ * arc — by enclosing the query in a BALL and pushing that through the
+ * inversion exactly (fr-v7ca; only the FINAL-lens case is refused there
+ * outright). That repair leans entirely on branch ENUMERATION: the descent
+ * knows which branch it is in and can bound the region it came from. A
+ * FORWARD orbit has none, so a segment straddling a box fold's wall maps to
+ * a bent polyline in ONE step with nothing to enclose it against, at any
+ * fold family. This module therefore takes no `halfExtent` at all, and its
+ * hosts clamp the slice thickness to zero.
  *
  * ANCHORED AT `w = 0`, and the anchor has one seam worth naming because it
  * is NOT this module's. Every expression below appends the fourth

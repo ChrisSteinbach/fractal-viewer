@@ -780,11 +780,14 @@ retraction to fold the query into; the wedge itself generalizes cleanly, as
 included, which is exactly what the 3D gate turns away — and stays
 1-Lipschitz and an isometry per sector, so the marching ball never moves.
 And the fr-wa6o SLAB is refused at every thickness, for a reason stronger
-than the one that makes `surface-de-4d.ts`'s `slabExact4` refuse sphere
-folds: a forward orbit has no branch enumeration at all, so a segment
-straddling a box fold's wall becomes a bent polyline in a single step, and
-the session clamps the slice thickness to zero rather than degrade into a
-silently wrong image.
+than the one that keeps sphere folds off the slab in `surface-de-4d.ts`:
+that estimator meets the inversion by enclosing the query in a BALL and
+pushing the ball through it exactly (fr-v7ca — Möbius takes balls to
+balls), a repair that leans entirely on knowing which BRANCH the chain is
+in. A forward orbit has no branch enumeration at all, so a segment
+straddling a box fold's wall becomes a bent polyline in a single step with
+nothing to enclose it against, and the session clamps the slice thickness
+to zero rather than degrade into a silently wrong image.
 
 A 4D escape session is COMPUTE-ONLY, and by the shipped precedent rather
 than as a shortcut: the fragment 4D tracer deliberately carries no fold GLSL

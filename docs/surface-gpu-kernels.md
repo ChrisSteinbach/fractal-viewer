@@ -231,7 +231,16 @@ at pack (the 4D oracle has no cone cap).
 
 The FOLD frontier one dimension up — 4D fold base maps
 (`deHasFolds4`) marched as the same width-configurable frontier as 3D
-`"fold"`, slab(`ext`)-aware, sharing `GpuMap4` and the affine4 tail; no
+`"fold"`, slab(`ext`)-aware ONLY where the slab is EXACT — `slabExact4`,
+and the packer throws otherwise. That is now this core's OWN limit rather
+than a mirror of the oracle's: `surface-de-4d.ts` answers spherefold and
+mandelbox BASE maps since fr-v7ca, carrying a ball of slack beside the
+segment across the mid branch's inversion and flooring the result at
+`DE(p) − h`. Mirroring it costs one more f32 of chain state per frontier
+slot — the register-pressure territory fr-b72d/fr-d0nn measured at 2.2x
+for the `ext` vec4 — plus a second DE evaluation per query for the floor,
+so it wants its own codegen variant and has not been built. Sharing
+`GpuMap4` and the affine4 tail; no
 stage-2 B&B emission by the 3D measured verdict, and `lens:true` wraps
 either 4D core in `descendLens4`'s branch sweep (fr-rsp6 phase 2B — the
 appended lens4 params block at 464..575, `SURFACE_GPU_PARAMS4_LENS_BYTES`

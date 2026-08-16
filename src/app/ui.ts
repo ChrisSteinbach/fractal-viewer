@@ -2071,15 +2071,19 @@ export class Ui {
           "orbit runs the maps FORWARD, with no branches to thread a " +
           "segment through, so a slab has no certificate at any fold " +
           "family. The IFS surface render keeps it."
-        : "Slab thickness is unavailable with sphere folds: the slab's " +
-          "segment certificates are unsound under the spherefold's " +
-          "inversion branch (mandelbox includes it). Box-fold-only systems " +
-          "keep the slab.";
+        : "Slab thickness is unavailable with sphere folds: the fold's " +
+          "inversion bends the slab's segment into an arc (mandelbox " +
+          "includes it). The CPU estimator repairs that by carrying a ball " +
+          "of slack; the GPU tracer this session runs on does not carry " +
+          "one. Box-fold-only systems keep the slab.";
   }
 
   /** fr-rsp6: whether the live 4D surface session can take a slab at all
    * (see {@link fourDSlabAvailable}) — main.ts sets it from `slabExact4`
-   * at session routing and resets it true on session end. */
+   * (NOT `slabSupported4`: fr-v7ca's ball-slack capsule admits spherefold
+   * BASE maps in the CPU estimator, but no kernel carries a slack register,
+   * and a 4D fold session is compute-only) at session routing, and resets
+   * it true on session end. */
   setFourDSlabAvailable(available: boolean): void {
     if (this.fourDSlabAvailable === available) return;
     this.fourDSlabAvailable = available;

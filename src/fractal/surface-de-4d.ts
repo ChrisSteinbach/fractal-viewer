@@ -1,6 +1,7 @@
 import { composeAffine4, symmetryRotation4, toTransform4 } from "./affine4";
 import { effectiveSymmetryOrder } from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
+import { inversionBallScale } from "./inversion";
 import { mulberry32 } from "./rng";
 import {
   CONFORMAL_RATIO,
@@ -100,19 +101,30 @@ import { clamp } from "./vec";
  * query's segment threading rests on "affine maps take segments to
  * segments". Boxfold branch inverses are per-axis reflections ±
  * translation (linear part diag(±1)) — affine, so a boxfold-only system
- * keeps exact slab queries with the segment machinery untouched. The
- * spherefold MID branch is an inversion: it takes a segment to a circular
- * ARC, and bounding the arc by its chord is unsound in BOTH directions —
- * so systems whose fold set includes spherefold or mandelbox REFUSE
- * `halfExtent` queries outright ({@link slabExact4}; the public estimators
- * throw, and the app clamps sliceHalfW to 0 for such sessions). Refusal
- * over degradation is deliberate: `h` defaults to 0, folds are the
- * feature, and a silently inflated "slab" would be exactly the kind of
- * wrong image this project never ships. The segment+ball-slack chain
- * state that would admit spherefold slabs (inversion maps balls to balls
- * exactly) is recorded on {@link slabExact4} — MEASURED and not built
- * (fr-v7ca, `scripts/slab-ball-slack.harness.ts`): its advantage lives
- * exactly where it is not needed. See that constant's doc.
+ * keeps EXACT slab queries with the segment machinery untouched
+ * ({@link slabExact4}). The spherefold MID branch is an inversion: it
+ * takes a segment to a circular ARC, and bounding the arc by its chord is
+ * unsound in BOTH directions — so those systems carry fr-v7ca's SEGMENT +
+ * BALL-SLACK chain state instead, `(q, e, rho)`: a capsule, exact until
+ * the first mid crossing, a ball from there down, and floored at the
+ * public entry by the cheap `DE(p) − h` so the answer can never be worse
+ * than the form that lift exists to beat (which costs a second descent —
+ * {@link needsBallFloor4} carries the measurement that priced it). The
+ * derivation and the two bounds at the crossing live on
+ * {@link descendFold4}'s SLACK section; `rho` is identically 0 on a
+ * boxfold-only system, so the exact slab descends byte for byte and
+ * `h = 0` is untouched value for value. The one shape still REFUSED is a
+ * spherefold/mandelbox FINAL LENS ({@link slabSupported4}), where the
+ * crossing happens before depth 0 and the state would be born isotropic —
+ * i.e. identically the ball form
+ * `scripts/slab-ball-slack.harness.ts` measured and rejected.
+ *
+ * THE APP DOES NOT SEE THE SLACK SLAB YET, deliberately: the WGSL `fold4`
+ * core packs no slack register, so `surface-de-gpu.ts`, `surface-compute.ts`
+ * and main.ts all still gate the thickness row on {@link slabExact4} and
+ * clamp `sliceHalfW` to 0 for a spherefold session. This module is the
+ * oracle a kernel would be pinned against, and the measurement that says
+ * whether that kernel is worth its register.
  *
  * THE SLICE CAVEAT — why this spike exists in the first place. The app would
  * never march the full 4D attractor `A` for display; it marches a `w = w0`
@@ -519,55 +531,22 @@ export function systemFoldShaped4(
 
 /** True when every fold branch in the system (base maps AND a fold final
  * lens) is AFFINE — i.e. the fold set is at most {boxfold} — so the
- * fr-wa6o slab query's segment threading stays exact (affine maps take
+ * fr-wa6o slab query's segment threading is EXACT (affine maps take
  * segments to segments; a boxfold branch inverse is a per-axis reflection
- * ± translation). The spherefold MID branch is an inversion, which takes a
- * segment to a circular ARC: min-radius-over-chord and min-radius-over-arc
- * differ in BOTH directions, so a segment certificate there is unsound —
- * not merely loose — and slab queries are REFUSED for any system whose
- * fold set includes spherefold or mandelbox ({@link estimateDistance4} /
- * {@link estimateDistance4Refined} throw; the app clamps sliceHalfW to 0
- * for such sessions instead of degrading into a silently wrong image).
+ * ± translation) and the chain's ball slack stays identically 0 at every
+ * level. It is no longer a REFUSAL predicate — {@link slabSupported4} is —
+ * but it is still the one that says which systems get the tight slab, and
+ * the one the GPU mirrors gate on (`surface-de-gpu.ts` packs no slack
+ * register, so the app keeps clamping `sliceHalfW` to 0 off THIS predicate
+ * until a kernel carries one).
  *
- * THE REFUSAL IS NOW MEASURED RATHER THAN MERELY REASONED (fr-v7ca,
- * `scripts/slab-ball-slack.harness.ts`), and BOTH candidate lifts lost.
- *
- * The cheap one — `max(0, DE(p) − h)` over the point estimator, sound by
- * the triangle inequality alone — DOES NOT RENDER A SLAB. It is a
- * DILATION: on `sixteenCellFlake` it degrades from the exact slab's crisp
- * fractal to a featureless ball by the slider's own ceiling (44.4% of rays
- * at 0.0 steps/px — every ray hits on entry). On two of the four controls
- * it lands FURTHER from the exact slab than doing nothing at all, and in
- * marched depth the point query beats it on all four (mean |dt| 16.9-68.8%
- * of the marching ball against 0.8-15.2%): it floats the whole surface
- * toward the camera rather than adding a rind. As a bound it overcharges
- * by one to two orders of magnitude, and the mechanism is
- * DIRECTION-BLINDNESS — the segment reaches only in `w`, a ball has to
- * assume every direction, so a true slab costs the bound 0.3-15% where
- * the ball costs 29-100%. Soundness settles nothing: 0 violations in 9600
- * checks, for BOTH forms.
- *
- * The finer one — the spherefold's outer (identity) and inner (×4)
- * branches ARE linear, so a segment+ball-slack chain state (enclose the
- * segment in a ball at each mid-branch crossing, inversion maps balls to
- * balls exactly — `inversion.ts`'s `inversionBallScale`, which shipped
- * with this verdict — degrade the slack by sigma_max per subsequent map)
- * would admit spherefold slabs at the cost of one extra scalar per chain
- * tuple — CANNOT BE JUSTIFIED FROM OUTSIDE THE DESCENT. The two arms
- * above BRACKET it: the exact segment IS that design with no mid crossing
- * ever, the ball form IS it with the crossing at depth 0. Its ceiling is
- * excellent and is reached only where no crossing happens — i.e. on the
- * systems that already have the exact slab. Every system the lift is FOR
- * crosses the mid branch, and each crossing drops it toward the ball
- * form.
- *
- * WHAT WOULD REOPEN IT, both cheap next to the frontier register the lift
- * would cost: an instrument reporting the DEPTH of the first mid crossing
- * per query (`FoldFrontierTap4` reports candidates but not branch
- * indices), which decides where inside the bracket a real system falls;
- * or a per-system thickness CAP, since the ball form tracks the exact slab
- * wherever `h / DE` stays small and that ratio is knowable from a cheap
- * CPU probe before any render. */
+ * The spherefold MID branch is an inversion, which takes a segment to a
+ * circular ARC: min-radius-over-chord and min-radius-over-arc differ in
+ * BOTH directions, so a plain segment certificate there is unsound — not
+ * merely loose. fr-v7ca's SEGMENT + BALL-SLACK chain state is what admits
+ * those systems anyway, at a bound that degrades rather than breaks; the
+ * derivation, the (A)-arm floor under it and the measured verdict are on
+ * {@link descendFold4}'s SLACK section. */
 export function slabExact4(de: SurfaceDE4): boolean {
   return (
     de.maps.every(
@@ -575,6 +554,25 @@ export function slabExact4(de: SurfaceDE4): boolean {
         m.foldKind === SURFACE_FOLD_NONE || m.foldKind === SURFACE_FOLD_BOXFOLD,
     ) &&
     (de.foldFinal === null || de.foldFinal.foldKind === SURFACE_FOLD_BOXFOLD)
+  );
+}
+
+/** True when the public estimators ACCEPT an fr-wa6o slab query for this
+ * system — exactly {@link slabExact4} plus every system whose non-affine
+ * folds are BASE maps (fr-v7ca's segment + ball-slack chain state carries
+ * those; see {@link descendFold4}). The one shape still refused is a
+ * spherefold or mandelbox FINAL LENS, and the reason is structural rather
+ * than a gap: `descendLens4` crosses its lens inversion BEFORE depth 0, so
+ * the slack state there is born isotropic and the estimator would be
+ * `max(0, DE(p) − h)` exactly — the "ball form" (A) that
+ * `scripts/slab-ball-slack.harness.ts` measured and rejected as a DILATION
+ * rather than a slab (a featureless ball by the slider's own ceiling; a
+ * bound overcharged 4-333x by direction-blindness). A lift that is
+ * identically a form already refused is not a lift, so the lens keeps the
+ * refusal and the app keeps its disclosure. */
+export function slabSupported4(de: SurfaceDE4): boolean {
+  return (
+    de.foldFinal === null || de.foldFinal.foldKind === SURFACE_FOLD_BOXFOLD
   );
 }
 
@@ -630,8 +628,10 @@ export interface SurfaceEligibility4 {
  *
  * Eligibility says nothing about SLAB queries: the fr-wa6o `halfExtent` is
  * VIEW state, not a system property, so the segment-soundness rule lives on
- * the built DE instead ({@link slabExact4} — boxfold-only fold sets keep
- * the slab, spherefold/mandelbox refuse it at the estimator entries).
+ * the built DE instead: {@link slabExact4} says which fold sets keep the
+ * slab EXACT, {@link slabSupported4} which get it at all (fr-v7ca's ball
+ * slack answers spherefold/mandelbox BASE maps; only a non-affine FINAL
+ * lens is refused at the estimator entries).
  */
 export function analyzeSurfaceSystem4(
   transforms: Transform[],
@@ -1385,24 +1385,114 @@ function isSegment(halfExtent: Vec4 | null): halfExtent is Vec4 {
  * Routing (fr-rsp6, mirroring 3D's `estimateDistance`): a fold FINAL lens
  * wraps the cores in `descendLens4`'s branch sweep, fold base maps descend
  * `descendFold4`'s frontier, and the plain affine ladder below serves the
- * rest. Slab queries (`halfExtent`) are refused — thrown, not degraded —
- * when the system's fold set breaks segment exactness ({@link slabExact4}).
+ * rest. A slab query (`halfExtent`) is EXACT where the fold set is affine
+ * ({@link slabExact4}), carries fr-v7ca's ball slack where a base map bends
+ * it, and is refused — thrown, not degraded — for the one shape where the
+ * slack state buys nothing at all: a spherefold or mandelbox FINAL lens
+ * ({@link slabSupported4}).
  */
 export function estimateDistance4(
   de: SurfaceDE4,
   p: Vec4,
   halfExtent: Vec4 | null = null,
 ): number {
-  if (halfExtent && isSegment(halfExtent) && !slabExact4(de)) {
+  if (halfExtent && isSegment(halfExtent) && !slabSupported4(de)) {
     throw new Error(
-      "surface-de-4d: slab queries are unsound under spherefold/mandelbox " +
-        "branches (segment -> arc under inversion) — clamp sliceHalfW to 0 " +
-        "for this system (slabExact4)",
+      "surface-de-4d: slab queries under a spherefold/mandelbox FINAL lens " +
+        "would cross the inversion before depth 0, degrading to the ball " +
+        "form fr-v7ca measured and rejected — clamp sliceHalfW to 0 for " +
+        "this system (slabSupported4)",
     );
   }
-  if (de.foldFinal) return descendLens4(de, p, false, 0, halfExtent);
-  if (deHasFolds4(de)) return descendFold4(de, p, false, 0, halfExtent);
+  const slab = descendPlain4(de, p, 0, halfExtent);
+  if (!needsBallFloor4(de, halfExtent)) return slab;
+  const h = extentNorm4(halfExtent);
+  const point = descendPlain4(de, p, ballFloorCutoff4(slab, h, 0), null);
+  return ballFloored4(slab, point, h);
+}
+
+/** {@link estimateDistance4}'s three-way routing, factored out so the
+ * fr-v7ca ball floor can run the same descent twice — once on the slab,
+ * once on its centre. The cutoff is the floor's own (see
+ * {@link ballFloorCutoff4}); the public plain entry passes 0, and the
+ * fold-free `descend4` predates the cutoff machinery and takes none — a
+ * system with no folds is {@link slabExact4}, so it never reaches here
+ * with a nonzero one. */
+function descendPlain4(
+  de: SurfaceDE4,
+  p: Vec4,
+  cutoff: number,
+  halfExtent: Vec4 | null,
+): number {
+  if (de.foldFinal) return descendLens4(de, p, false, cutoff, halfExtent);
+  if (deHasFolds4(de)) return descendFold4(de, p, false, cutoff, halfExtent);
   return descend4(de, p, halfExtent);
+}
+
+/**
+ * THE BALL FLOOR (fr-v7ca), and why it is at the ENTRY rather than inside
+ * the descent. `max(0, DE(p) − h)` is sound by the triangle inequality
+ * alone — `dist(segment, A) >= dist(centre, A) − h` — so it is a second
+ * valid bound on the same query, independent of how the descent works, and
+ * the tighter of the two is what a caller should get. The capsule descent
+ * carries the same term per CANDIDATE (see {@link descendFold4}'s SLACK
+ * section), which is tighter where it applies, but that is NOT enough on
+ * its own: a slab query and a point query select different frontier chains
+ * and prune against different running minima, so they explore different
+ * trees, and a certificate the slab descent computes deep down a chain the
+ * point descent pruned early has no relation to the point descent's own
+ * answer. MEASURED before this floor existed: on the spherefold pair at
+ * `h = 0.1 R` the capsule beat the ball form on 499 of 600 queries and LOST
+ * to it on 78, by up to 58% of `h`. An estimator whose entire justification
+ * is beating the cheap form must not be allowed to lose to it, so the price
+ * of the lift is honestly TWO descents — and the cheap form needed the
+ * point descent anyway. {@link ballFloorCutoff4} is what keeps the second
+ * one from being a second FULL one.
+ */
+function needsBallFloor4(
+  de: SurfaceDE4,
+  halfExtent: Vec4 | null,
+): halfExtent is Vec4 {
+  return halfExtent !== null && isSegment(halfExtent) && !slabExact4(de);
+}
+
+function extentNorm4(halfExtent: Vec4): number {
+  return Math.sqrt(
+    halfExtent[0] * halfExtent[0] +
+      halfExtent[1] * halfExtent[1] +
+      halfExtent[2] * halfExtent[2] +
+      halfExtent[3] * halfExtent[3],
+  );
+}
+
+/**
+ * The cutoff the ball floor's centre descent runs under, and the reason it
+ * costs the estimator NOTHING to use one. The floor can only raise the
+ * answer when `point − h > slab`, i.e. `point > slab + h`, so that is the
+ * line below which the centre descent may stop caring — fr-55r5's contract
+ * exactly, with `slab + h` in place of the caller's own cutoff (and the
+ * caller's, when it is higher: below THAT the caller does not care either).
+ *
+ * The early exit cannot cost the floor a thing, and the argument is one
+ * step. `best` only ever DECREASES within a descent, and `bailBelow` arms
+ * only when the depth-0 sphere floor is itself under the cutoff, so an
+ * exited return is `max(best_at_exit, sphereBound) < cutoff` while the full
+ * return is `max(best_final, sphereBound)` with `best_final <= best_at_exit`
+ * — the full value is therefore below the cutoff too, and
+ * `point_full − h < slab` would have lost the `max` anyway.
+ */
+function ballFloorCutoff4(
+  slab: number,
+  h: number,
+  callerCutoff: number,
+): number {
+  const line = h + (callerCutoff > slab ? callerCutoff : slab);
+  return line > 0 ? line : 0;
+}
+
+function ballFloored4(slab: number, point: number, h: number): number {
+  const ball = point - h;
+  return ball > slab ? ball : slab;
 }
 
 function descend4(
@@ -1971,7 +2061,7 @@ function descentValue(
  *
  * Routing (fr-rsp6): same three-way split as `estimateDistance4` — lens
  * sweep, fold frontier, affine ladder — with `refine: true` and the cutoff
- * threaded through. Slab refusal identical ({@link slabExact4}).
+ * threaded through. Slab handling identical ({@link slabSupported4}).
  */
 export function estimateDistance4Refined(
   de: SurfaceDE4,
@@ -1979,13 +2069,29 @@ export function estimateDistance4Refined(
   cutoff = 0,
   halfExtent: Vec4 | null = null,
 ): number {
-  if (halfExtent && isSegment(halfExtent) && !slabExact4(de)) {
+  if (halfExtent && isSegment(halfExtent) && !slabSupported4(de)) {
     throw new Error(
-      "surface-de-4d: slab queries are unsound under spherefold/mandelbox " +
-        "branches (segment -> arc under inversion) — clamp sliceHalfW to 0 " +
-        "for this system (slabExact4)",
+      "surface-de-4d: slab queries under a spherefold/mandelbox FINAL lens " +
+        "would cross the inversion before depth 0, degrading to the ball " +
+        "form fr-v7ca measured and rejected — clamp sliceHalfW to 0 for " +
+        "this system (slabSupported4)",
     );
   }
+  const slab = descendRefined4(de, p, cutoff, halfExtent);
+  if (!needsBallFloor4(de, halfExtent)) return slab;
+  const h = extentNorm4(halfExtent);
+  const point = descendRefined4(de, p, ballFloorCutoff4(slab, h, cutoff), null);
+  return ballFloored4(slab, point, h);
+}
+
+/** {@link estimateDistance4Refined}'s routing, factored out for the fr-v7ca
+ * ball floor exactly as {@link descendPlain4} is. */
+function descendRefined4(
+  de: SurfaceDE4,
+  p: Vec4,
+  cutoff: number,
+  halfExtent: Vec4 | null,
+): number {
   if (de.foldFinal) return descendLens4(de, p, true, cutoff, halfExtent);
   if (deHasFolds4(de)) return descendFold4(de, p, true, cutoff, halfExtent);
   return descend4Refined(de, p, cutoff, halfExtent);
@@ -2600,6 +2706,11 @@ const fcExtW = new Float64Array(FOLD_W4);
 const fcScale = new Float64Array(FOLD_W4);
 const fcFloor = new Float64Array(FOLD_W4);
 const fcR = new Float64Array(FOLD_W4);
+/** fr-v7ca's ball slack: the radius of the ball the chain's query region has
+ * had to grow into once an inversion bent its segment. Identically 0 on a
+ * point query and on every {@link slabExact4} system, which is what keeps
+ * both of those paths byte-identical (`x − 0 === x`). */
+const fcRho = new Float64Array(FOLD_W4);
 const fnKey = new Float64Array(FOLD_W4);
 const fnX = new Float64Array(FOLD_W4);
 const fnY = new Float64Array(FOLD_W4);
@@ -2613,6 +2724,8 @@ const fnScale = new Float64Array(FOLD_W4);
 const fnFloor = new Float64Array(FOLD_W4);
 const fnR = new Float64Array(FOLD_W4);
 const fnCert = new Float64Array(FOLD_W4);
+/** {@link fcRho}'s next-level lane. */
+const fnRho = new Float64Array(FOLD_W4);
 const FOLD_SWEEP4 = [0, 0, 0, 0];
 /** The (lensed) query's own half-extent — rewritten at every entry. */
 const FOLD_EXT4 = new Float64Array(4);
@@ -2713,7 +2826,11 @@ export function setFoldFrontierTap4(tap: FoldFrontierTap4 | null): void {
  * the frontier transports it: turned by each sector step, scaled into u-space,
  * signed by the box branch's `diag(±1)` derivative, then carried through
  * `invM`. Under `segment === false` it is identically zero and every
- * propagation below is skipped.
+ * propagation below is skipped. `iRho` is fr-v7ca's ball slack beside it, on
+ * the same transport rules ({@link descendFold4}'s SLACK section) — with NO
+ * (A)-arm floor, deliberately: refinement can only RAISE a certificate the
+ * caller already floored that way (the fr-1z6p lazy guard takes `max`), so a
+ * conservative inner term here costs tightness and can never cost soundness.
  */
 function refinedCertValue4(
   de: SurfaceDE4,
@@ -2722,6 +2839,7 @@ function refinedCertValue4(
   iz: number,
   iw: number,
   iExt: Float64Array,
+  iRho: number,
   r: number,
   childScale: number,
   segment: boolean,
@@ -2788,6 +2906,14 @@ function refinedCertValue4(
       let vw = 0;
       let sfSigma = 1;
       let sfRd = 0;
+      // fr-v7ca's capsule, the frontier body's locals one level in.
+      let uRho = 0;
+      let uReach = 0;
+      let capEX = 0;
+      let capEY = 0;
+      let capEZ = 0;
+      let capEW = 0;
+      let capRho = 0;
       // The map's authored fold lengths (fr-s9ll), hoisted out of the
       // branch loop. At the classic set every expression below reduces to
       // the literal that shipped — `wall` 1, `innerScale` 0.25,
@@ -2803,11 +2929,20 @@ function refinedCertValue4(
         uw = sw * mapJ.foldInvW;
         if (segment) {
           // u-space is a SCALAR multiple of world space, so the segment's
-          // half-extent scales with it and stays a segment.
+          // half-extent scales with it and stays a segment — and the slack
+          // ball scales by the same factor's magnitude.
           euX = CERT_SWEEP_EXT4[0] * mapJ.foldInvW;
           euY = CERT_SWEEP_EXT4[1] * mapJ.foldInvW;
           euZ = CERT_SWEEP_EXT4[2] * mapJ.foldInvW;
           euW = CERT_SWEEP_EXT4[3] * mapJ.foldInvW;
+          uRho = iRho * Math.abs(mapJ.foldInvW);
+          capEX = euX;
+          capEY = euY;
+          capEZ = euZ;
+          capEW = euW;
+          capRho = uRho;
+          uReach =
+            Math.sqrt(euX * euX + euY * euY + euZ * euZ + euW * euW) + uRho;
         }
         if (kindJ === SURFACE_FOLD_BOXFOLD) {
           px0 = ux;
@@ -2831,12 +2966,13 @@ function refinedCertValue4(
           dwUp = uw > wall ? uw - wall : 0;
           dwDn = uw < -wall ? -wall - uw : 0;
           if (segment) {
-            // Same per-axis segment relaxation the frontier applies — see
-            // the frontier's own comment for the min-over-segment argument.
-            const ax = Math.abs(euX);
-            const ay = Math.abs(euY);
-            const az = Math.abs(euZ);
-            const aw = Math.abs(euW);
+            // Same per-axis segment relaxation the frontier applies, ball
+            // slack included — see the frontier's own comment for the
+            // min-over-capsule argument.
+            const ax = Math.abs(euX) + uRho;
+            const ay = Math.abs(euY) + uRho;
+            const az = Math.abs(euZ) + uRho;
+            const aw = Math.abs(euW) + uRho;
             dxUp = dxUp > ax ? dxUp - ax : 0;
             dxDn = dxDn > ax ? dxDn - ax : 0;
             dyUp = dyUp > ay ? dyUp - ay : 0;
@@ -2857,6 +2993,9 @@ function refinedCertValue4(
         let jw: number;
         let branchSigma: number;
         let branchRd = 0;
+        /** fr-v7ca's ball slack on the grandchild — `inv(M)` grows a ball by
+         * `1 / sigma_min(M)`, the frontier's own rule. */
+        let jRho = 0;
         if (kindJ === SURFACE_FOLD_NONE) {
           jx = imJ[0] * sx + imJ[1] * sy + imJ[2] * sz + imJ[3] * sw + itJ[0];
           jy = imJ[4] * sx + imJ[5] * sy + imJ[6] * sz + imJ[7] * sw + itJ[1];
@@ -2864,6 +3003,7 @@ function refinedCertValue4(
           jw =
             imJ[12] * sx + imJ[13] * sy + imJ[14] * sz + imJ[15] * sw + itJ[3];
           if (segment) applyLinear4(imJ, CERT_SWEEP_EXT4, CERT_IMG_EXT4);
+          if (iRho > 0) jRho = iRho / mapJ.sigmaMin;
           branchSigma = mapJ.sigmaMin;
         } else {
           if (
@@ -2880,6 +3020,11 @@ function refinedCertValue4(
               vw = uw;
               sfSigma = 1;
               sfRd = ru < fr.fixedR ? fr.fixedR - ru : 0;
+              capEX = euX;
+              capEY = euY;
+              capEZ = euZ;
+              capEW = euW;
+              capRho = uRho;
             } else if (s === 1) {
               vx = fr.innerScale * ux;
               vy = fr.innerScale * uy;
@@ -2887,12 +3032,19 @@ function refinedCertValue4(
               vw = fr.innerScale * uw;
               sfSigma = fr.innerSigma;
               sfRd = ru > fr.outputR ? ru - fr.outputR : 0;
+              if (segment) {
+                capEX = fr.innerScale * euX;
+                capEY = fr.innerScale * euY;
+                capEZ = fr.innerScale * euZ;
+                capEW = fr.innerScale * euW;
+                capRho = fr.innerScale * uRho;
+              }
             } else {
               if (ru < fr.midMinR) {
                 // Same shell stand-in the frontier folds, in the frozen
-                // child's own frame. (Unreachable under a segment: the
-                // public entries refuse spherefold/mandelbox slabs.)
-                const shellTerm = absWJ * (fr.fixedR - ru);
+                // child's own frame, relaxed by the capsule's reach the
+                // same way (fr-v7ca; identical at `uReach = 0`).
+                const shellTerm = absWJ * (fr.fixedR - ru - uReach);
                 if (shellTerm < inner) inner = shellTerm;
                 if (kindJ === SURFACE_FOLD_MANDELBOX) b += 80;
                 continue;
@@ -2909,10 +3061,24 @@ function refinedCertValue4(
                   : ru > fr.outputR
                     ? ru - fr.outputR
                     : 0;
+              if (segment) {
+                // The crossing, exactly as the frontier takes it — Möbius
+                // image re-centred on the point image, capped by the mid
+                // cell's own image ball (fr-v7ca).
+                const mobius = inversionBallScale(ru, uReach, fr.fixedR2);
+                const cellCap = invR2 * ru + fr.fixedR;
+                capRho =
+                  mobius > 0
+                    ? Math.min(mobius * uReach * (1 + uReach / ru), cellCap)
+                    : cellCap;
+                capEX = 0;
+                capEY = 0;
+                capEZ = 0;
+                capEW = 0;
+              }
             }
+            if (uReach > 0) sfRd = sfRd > uReach ? sfRd - uReach : 0;
             if (kindJ === SURFACE_FOLD_MANDELBOX) {
-              // No segment relaxation needed on this refresh — a mandelbox
-              // map never transports one (slabExact4).
               px0 = vx;
               px1 = wall2 - vx;
               px2 = -wall2 - vx;
@@ -2933,6 +3099,22 @@ function refinedCertValue4(
               dzDn = vz < -wall ? -wall - vz : 0;
               dwUp = vw > wall ? vw - wall : 0;
               dwDn = vw < -wall ? -wall - vw : 0;
+              if (segment) {
+                // The per-axis relaxation off the SPHERE branch's output
+                // capsule (fr-v7ca) — the frontier body's counterpart.
+                const bx = Math.abs(capEX) + capRho;
+                const by = Math.abs(capEY) + capRho;
+                const bz = Math.abs(capEZ) + capRho;
+                const bw = Math.abs(capEW) + capRho;
+                dxUp = dxUp > bx ? dxUp - bx : 0;
+                dxDn = dxDn > bx ? dxDn - bx : 0;
+                dyUp = dyUp > by ? dyUp - by : 0;
+                dyDn = dyDn > by ? dyDn - by : 0;
+                dzUp = dzUp > bz ? dzUp - bz : 0;
+                dzDn = dzDn > bz ? dzDn - bz : 0;
+                dwUp = dwUp > bw ? dwUp - bw : 0;
+                dwDn = dwDn > bw ? dwDn - bw : 0;
+              }
             }
           }
           let cx: number;
@@ -2949,6 +3131,12 @@ function refinedCertValue4(
             cz = vz;
             cw = vw;
             branchRd = sfRd;
+            if (segment) {
+              bex = capEX;
+              bey = capEY;
+              bez = capEZ;
+              bew = capEW;
+            }
           } else {
             // Box branch decode, FOUR axes: x fastest,
             // `b = selX + 3·selY + 9·selZ + 27·selW` (3D's three-axis
@@ -2964,11 +3152,13 @@ function refinedCertValue4(
             cw = selW === 0 ? pw0 : selW === 1 ? pw1 : pw2;
             if (segment) {
               // Branch derivative `diag(±1)`: the in-box preimage is `u`
-              // (+1), both folded ones are `±2 − u` (−1).
-              bex = selX === 0 ? euX : -euX;
-              bey = selY === 0 ? euY : -euY;
-              bez = selZ === 0 ? euZ : -euZ;
-              bew = selW === 0 ? euW : -euW;
+              // (+1), both folded ones are `±2 − u` (−1). Source is the
+              // capsule the decode sees (fr-v7ca) — `e_u` for a boxfold, the
+              // sphere branch's output for a mandelbox.
+              bex = selX === 0 ? capEX : -capEX;
+              bey = selY === 0 ? capEY : -capEY;
+              bez = selZ === 0 ? capEZ : -capEZ;
+              bew = selW === 0 ? capEW : -capEW;
             }
             const ddx =
               selX === 0
@@ -3026,9 +3216,10 @@ function refinedCertValue4(
             CERT_IMG_EXT4[3] =
               imJ[12] * bex + imJ[13] * bey + imJ[14] * bez + imJ[15] * bew;
           }
+          if (capRho > 0) jRho = capRho / mapJ.sigmaMin;
           branchSigma = mapJ.foldSigma * sfSigma;
         }
-        const rj = segmentRadius(jx, jy, jz, jw, CERT_IMG_EXT4);
+        const rj = segmentRadius(jx, jy, jz, jw, CERT_IMG_EXT4) - jRho;
         let innerTerm = branchSigma * (rj - R);
         if (branchRd > 0) {
           const regionTerm = absWJ * branchRd;
@@ -3047,11 +3238,59 @@ function refinedCertValue4(
  * over the `(sector, base map, fold branch)` candidate stream, region
  * floors from the branch validity cells, fr-kidj stage-1/2 skips, the
  * fr-55r5/fr-zkt2 exits at every settled fold, and — under `refine` — the
- * fr-1z6p refined certificate on escaped evictions. `halfExtent` rides
- * only where {@link slabExact4} holds (boxfold branch inverses are
- * per-axis reflections — segment-exact); the public entries refuse it
- * otherwise, so this body may assume every fold branch it transports a
- * segment through is affine.
+ * fr-1z6p refined certificate on escaped evictions.
+ *
+ * SLACK — WHAT A SLAB QUERY DOES WHEN A BRANCH IS NOT AFFINE (fr-v7ca).
+ * `halfExtent` is EXACT where {@link slabExact4} holds: a boxfold branch
+ * inverse is a per-axis reflection, so the segment stays a segment and the
+ * chain's `rho` is identically 0 (every expression below then reduces to
+ * the shipped one — `x − 0 === x`, `|e_a| + 0 === |e_a|` — and the exact
+ * slab descends byte for byte). Where the fold set includes a spherefold
+ * or a mandelbox the chain carries a CAPSULE instead: the segment
+ * `q ± e` thickened by a ball of radius `rho`, which contains the true
+ * preimage region at every level. The certificate is then
+ * `childScale · (segmentRadius(q, e) − rho − R)`, and:
+ *
+ * - EVERY AFFINE BRANCH MOVES `rho` BY ITS OWN `sigma_max` and nothing
+ *   else — the sector step is an isometry (rho unchanged), the u-space
+ *   rescale is a scalar (`|1/w|`), a box branch is `diag(±1)` (unchanged),
+ *   the spherefold's OUTER branch is the identity and its INNER branch is
+ *   a uniform `×mR²/fR²`, and `inv(M)` grows a ball by `1/sigma_min(M)`.
+ *   Since `childScale` multiplies by exactly the reciprocal of each of
+ *   those, the WORLD-space slack `childScale · rho` is INVARIANT under
+ *   every one of them: `rho` is the direction-blindness the crossing
+ *   bought, transported, never compounded.
+ * - AT THE SPHEREFOLD MID BRANCH — the inversion, the branch
+ *   {@link slabExact4} exists to name — the segment goes to a circular
+ *   ARC, and chord-vs-arc breaks the certificate in BOTH directions. So
+ *   the state drops to a pure ball: enclose the capsule, push the ball
+ *   through the inversion (Möbius takes balls to balls exactly —
+ *   `inversion.ts`'s {@link inversionBallScale}), re-emerge with `e = 0`
+ *   and the image ball as the new `rho`. Two valid images are computed and
+ *   the tighter wins — the Möbius one re-centred on the POINT image (which
+ *   costs the factor `1 + cap/|u|` and leaves every line of the point path
+ *   untouched), and the mid CELL's own image `B(0, fR)` (which bounds it
+ *   however far the Möbius form blows up, including where the capsule has
+ *   swallowed the fold's centre and `inversionBallScale` returns 0).
+ * - AND EVERY CANDIDATE CARRIES THE CHEAP FORM AS A FLOOR. `dist(segment,
+ *   piece) >= dist(centre, piece) − h` holds per CHAIN as well as
+ *   globally, so each candidate's radius is the LARGER of its capsule
+ *   radius and `|q| − h/childScale`. Two lines, and they are what keeps a
+ *   degenerate crossing (a capsule that has swallowed the fold's centre)
+ *   from poisoning the frontier with absurd certificates. They do NOT on
+ *   their own make the lift monotone against the ball form — the two
+ *   descents explore different trees — which is why the GUARANTEE lives at
+ *   the public entry instead ({@link needsBallFloor4}, and its measured
+ *   reason).
+ * - REGION FLOORS RELAX BY THE CAPSULE'S REACH, not just the segment's:
+ *   `|e_a| + rho` per box axis, `|e| + rho` on every radial spherefold
+ *   distance. Relaxation is monotone, so it composes with the selectors
+ *   exactly as the segment's did.
+ *
+ * A spherefold/mandelbox FINAL LENS is still refused ({@link
+ * slabSupported4}) and the reason is that this design would buy nothing
+ * there: `descendLens4` crosses its inversion BEFORE depth 0, so the state
+ * is born isotropic and the estimator is the ball form exactly.
  *
  * The three mechanisms that make a wide frontier both correct and affordable
  * are 3D's, and their arguments are dimension-free (read `descendFold`'s doc
@@ -3098,9 +3337,26 @@ function descendFold4(
   let z = p[2];
   let w = p[3];
   const segment = isSegment(halfExtent);
+  // fr-v7ca: does this system's fold set BEND segments? A boxfold branch
+  // inverse is a reflection, so `rho` would stay 0 through every level and
+  // every expression below reduces to the shipped one; a spherefold MID
+  // branch is an inversion and the chain has to carry a ball. One hoisted
+  // boolean, so the exact slab and the point query pay one predicate per
+  // query and nothing per candidate.
+  const slack = segment && !slabExact4(de);
+  /** The slab's world-space half-length — the (A)-arm floor's `h`. */
+  let hWorld = 0;
   FOLD_EXT4.fill(0);
   if (segment) {
     FOLD_EXT4.set(halfExtent);
+    if (slack) {
+      hWorld = Math.sqrt(
+        FOLD_EXT4[0] * FOLD_EXT4[0] +
+          FOLD_EXT4[1] * FOLD_EXT4[1] +
+          FOLD_EXT4[2] * FOLD_EXT4[2] +
+          FOLD_EXT4[3] * FOLD_EXT4[3],
+      );
+    }
   } else {
     // A point query must not inherit a previous slab query's extent residue.
     clearFoldSegmentScratch();
@@ -3133,6 +3389,10 @@ function descendFold4(
   let best = Infinity;
   const bailBelow =
     cutoff > 0 && sphereBound * finalScale < cutoff ? cutoff : -Infinity;
+  // The (A)-arm's `h` in THIS body's units: `descentValue` scales `best` by
+  // `finalScale` on the way out, so a world-space subtraction of `hWorld`
+  // is a subtraction of `hWorld / finalScale` here.
+  const hChain = slack ? hWorld / finalScale : 0;
 
   let chainCount = 1;
   fcX[0] = x;
@@ -3146,6 +3406,8 @@ function descendFold4(
   fcScale[0] = 1;
   fcFloor[0] = 0;
   fcR[0] = startR;
+  // The query IS a segment: no inversion has bent it yet.
+  fcRho[0] = 0;
 
   for (let depth = 0; depth < maxDepth && chainCount > 0; depth++) {
     let keptCount = 0;
@@ -3157,6 +3419,10 @@ function descendFold4(
     for (let c = 0; c < chainCount; c++) {
       const pScale = fcScale[c];
       const pFloor = fcFloor[c];
+      // The chain's ball slack rides every sector step untouched: a sector
+      // generator is orthogonal, and an isometry takes a ball to a ball of
+      // the same radius.
+      const pRho = fcRho[c];
       let sX = fcX[c];
       let sY = fcY[c];
       let sZ = fcZ[c];
@@ -3290,6 +3556,17 @@ function descendFold4(
           let vw = 0;
           let sfSigma = 1;
           let sfRd = 0;
+          // fr-v7ca's capsule in u-space: the chain's ball slack scaled into
+          // the fold's own units (`uRho`), and the (extent, slack) pair the
+          // BRANCH decode below actually sees (`cap*`) — the same thing for a
+          // boxfold, the SPHERE branch's output for a mandelbox.
+          let uRho = 0;
+          let uReach = 0;
+          let capEX = 0;
+          let capEY = 0;
+          let capEZ = 0;
+          let capEW = 0;
+          let capRho = 0;
           // The map's authored fold lengths (fr-s9ll), hoisted out of the
           // branch loop; classic values reduce every expression to the
           // literal that shipped.
@@ -3303,11 +3580,24 @@ function descendFold4(
             uw = sW * map.foldInvW;
             if (segment) {
               // u-space is a SCALAR multiple of world space, so the
-              // half-extent scales with the point and stays a segment.
+              // half-extent scales with the point and stays a segment — and
+              // the slack ball scales by the same factor's MAGNITUDE (a
+              // negative fold weight reflects the ball onto itself).
               euX = FOLD_SWEEP_EXT4[0] * map.foldInvW;
               euY = FOLD_SWEEP_EXT4[1] * map.foldInvW;
               euZ = FOLD_SWEEP_EXT4[2] * map.foldInvW;
               euW = FOLD_SWEEP_EXT4[3] * map.foldInvW;
+              uRho = pRho * Math.abs(map.foldInvW);
+              capEX = euX;
+              capEY = euY;
+              capEZ = euZ;
+              capEW = euW;
+              capRho = uRho;
+              // How far the u-space capsule reaches from its centre in the
+              // worst direction — the relaxation every RADIAL region distance
+              // takes, and the radius of the ball the mid branch inverts.
+              uReach =
+                Math.sqrt(euX * euX + euY * euY + euZ * euZ + euW * euW) + uRho;
             }
             if (kind === SURFACE_FOLD_BOXFOLD) {
               px0 = ux;
@@ -3341,13 +3631,16 @@ function descendFold4(
                 // per-axis relaxations (each term bounded below
                 // independently). Relaxing HERE — before any selector reads
                 // them — also covers the in-box selector's `max(dUp, dDn)`,
-                // since relaxation is monotone. Only BOXFOLD branches ever
-                // transport a segment (`slabExact4`), so the mandelbox
-                // refresh below needs no counterpart.
-                const ax = Math.abs(euX);
-                const ay = Math.abs(euY);
-                const az = Math.abs(euZ);
-                const aw = Math.abs(euW);
+                // since relaxation is monotone. A chain carrying fr-v7ca ball
+                // slack reaches `uRho` further along EVERY axis, so each
+                // per-axis relaxation is `|e_a| + rho` (0 on the exact path,
+                // where this reduces to the shipped `|e_a|` byte for byte);
+                // the mandelbox's own refresh below carries the same term off
+                // the SPHERE branch's output capsule.
+                const ax = Math.abs(euX) + uRho;
+                const ay = Math.abs(euY) + uRho;
+                const az = Math.abs(euZ) + uRho;
+                const aw = Math.abs(euW) + uRho;
                 dxUp = dxUp > ax ? dxUp - ax : 0;
                 dxDn = dxDn > ax ? dxDn - ax : 0;
                 dyUp = dyUp > ay ? dyUp - ay : 0;
@@ -3373,6 +3666,12 @@ function descendFold4(
             // branch decode), so the floor-vs-best prune runs first and
             // only surviving branches pay the inverse application.
             let candFloor = pFloor;
+            // fr-v7ca: the child's ball slack. `inv(M)` grows a ball by
+            // `sigma_max(inv M) = 1 / sigma_min(M)` — the reciprocal of the
+            // very factor `childScale` multiplies in, which is why the
+            // WORLD-space slack is invariant under every affine branch and
+            // moves only where an inversion does.
+            let candRho = 0;
             if (kind === SURFACE_FOLD_NONE) {
               if (candFloor > 0 && candFloor >= best) continue;
               // Stage-2 B&B skips (see the hoist comment above), point
@@ -3404,6 +3703,7 @@ function descendFold4(
               iw =
                 im[12] * sX + im[13] * sY + im[14] * sZ + im[15] * sW + it[3];
               if (segment) applyLinear4(im, FOLD_SWEEP_EXT4, FOLD_IMG_EXT4);
+              if (slack) candRho = pRho / map.sigmaMin;
               branchSigma = map.sigmaMin;
             } else {
               let branchRd: number;
@@ -3429,6 +3729,14 @@ function descendFold4(
                   vw = uw;
                   sfSigma = 1;
                   sfRd = ru < fr.fixedR ? fr.fixedR - ru : 0;
+                  // Identity: the capsule rides through unchanged (the
+                  // defaults set with `eu*`/`uRho` above, restated because a
+                  // mandelbox re-enters this block per sphere branch).
+                  capEX = euX;
+                  capEY = euY;
+                  capEZ = euZ;
+                  capEW = euW;
+                  capRho = uRho;
                 } else if (s === 1) {
                   vx = fr.innerScale * ux;
                   vy = fr.innerScale * uy;
@@ -3436,6 +3744,17 @@ function descendFold4(
                   vw = fr.innerScale * uw;
                   sfSigma = fr.innerSigma;
                   sfRd = ru > fr.outputR ? ru - fr.outputR : 0;
+                  // A uniform scale — LINEAR, so the segment survives as a
+                  // segment and the slack ball as a ball. Note
+                  // `innerScale · innerSigma = 1`: the world-space slack is
+                  // unmoved here, exactly as it is under every affine branch.
+                  if (segment) {
+                    capEX = fr.innerScale * euX;
+                    capEY = fr.innerScale * euY;
+                    capEZ = fr.innerScale * euZ;
+                    capEW = fr.innerScale * euW;
+                    capRho = fr.innerScale * uRho;
+                  }
                 } else {
                   if (ru < fr.midMinR) {
                     // Inverting a chain point this close to the sector
@@ -3445,10 +3764,19 @@ function descendFold4(
                     // ~pScale·|w|·fR, never a near-zero ghost term — and
                     // skip the branch (box expansion included, 81 wide
                     // here). A settled fold, so the standard exits apply.
-                    // Point queries only: a spherefold map never transports
-                    // a segment (`slabExact4`), so the shell bound needs no
-                    // segment form.
-                    let shellCert = pScale * absW * (fr.fixedR - ru);
+                    // UNDER A CAPSULE (fr-v7ca) the shell bound is a REGION
+                    // distance like any other, so it relaxes by the capsule's
+                    // own reach — and takes the (A)-arm floor beside it, since
+                    // this exit folds straight into `best` and would otherwise
+                    // be the one place the slack form could undercut
+                    // `DE(p) − h`. Both terms reduce to the shipped literal at
+                    // `uReach = 0`.
+                    let shellCert = pScale * absW * (fr.fixedR - ru - uReach);
+                    if (slack) {
+                      const shellBall =
+                        pScale * absW * (fr.fixedR - ru) - hChain;
+                      if (shellBall > shellCert) shellCert = shellBall;
+                    }
                     if (pFloor > shellCert) shellCert = pFloor;
                     if (shellCert < best) {
                       best = shellCert;
@@ -3474,13 +3802,52 @@ function descendFold4(
                       : ru > fr.outputR
                         ? ru - fr.outputR
                         : 0;
+                  if (segment) {
+                    // THE CROSSING (fr-v7ca). An inversion takes the capsule's
+                    // SEGMENT to a circular arc, so the state drops to a pure
+                    // BALL here — a ball is the one region an inversion moves
+                    // exactly (`inversion.ts`, Möbius). Two valid image balls,
+                    // and the tighter wins:
+                    //
+                    //  - THE MÖBIUS IMAGE, re-centred on the POINT image. The
+                    //    branch arithmetic above already computed that point
+                    //    (`v`), and the true image ball's centre sits
+                    //    `scale·cap²/|u|` away from it, so keeping `v` as the
+                    //    centre costs the factor `(1 + cap/|u|)` and leaves
+                    //    every line of the point path untouched.
+                    //  - THE CELL CAP. Branch enumeration only ever has to
+                    //    cover `Y ∩ cell` (the module doc's validity
+                    //    argument), and the mid cell is the shell
+                    //    `fR <= |u| <= fR²/mR`, whose image lies inside
+                    //    `B(0, fR)`. So `B(v, |v| + fR)` encloses the image
+                    //    however far the Möbius form has blown up — which it
+                    //    does once the capsule swallows the fold's own centre
+                    //    (`inversionBallScale` returns 0 there) or merely
+                    //    approaches it.
+                    const mobius = inversionBallScale(ru, uReach, fr.fixedR2);
+                    const cellCap = invR2 * ru + fr.fixedR;
+                    capRho =
+                      mobius > 0
+                        ? Math.min(mobius * uReach * (1 + uReach / ru), cellCap)
+                        : cellCap;
+                    capEX = 0;
+                    capEY = 0;
+                    capEZ = 0;
+                    capEW = 0;
+                  }
+                }
+                if (uReach > 0) {
+                  // Every `sfRd` above is a RADIAL distance from the SOURCE
+                  // point to the branch's own validity cell, and a radial
+                  // distance is 1-Lipschitz, so the capsule's minimum over
+                  // that cell is at least the centre's less the capsule's
+                  // reach. (Skipped, not merely inert, at `uReach = 0`.)
+                  sfRd = sfRd > uReach ? sfRd - uReach : 0;
                 }
                 // This sphere branch's childScale reciprocal for the
                 // stage-2 skip (sfSigma just changed).
                 invChildScale = 1 / (pScale * map.foldSigma * sfSigma);
                 if (kind === SURFACE_FOLD_MANDELBOX) {
-                  // No segment relaxation on this refresh — a mandelbox map
-                  // never transports one (`slabExact4`).
                   px0 = vx;
                   px1 = wall2 - vx;
                   px2 = -wall2 - vx;
@@ -3501,6 +3868,26 @@ function descendFold4(
                   dzDn = vz < -wall ? -wall - vz : 0;
                   dwUp = vw > wall ? vw - wall : 0;
                   dwDn = vw < -wall ? -wall - vw : 0;
+                  if (segment) {
+                    // The same per-axis relaxation the boxfold setup takes,
+                    // off the SPHERE branch's output capsule rather than the
+                    // map's input one — the counterpart the `slabExact4`
+                    // refusal used to make unnecessary (fr-v7ca). A mandelbox
+                    // is never `slabExact4`, so this refresh always runs under
+                    // the slack arm.
+                    const bx = Math.abs(capEX) + capRho;
+                    const by = Math.abs(capEY) + capRho;
+                    const bz = Math.abs(capEZ) + capRho;
+                    const bw = Math.abs(capEW) + capRho;
+                    dxUp = dxUp > bx ? dxUp - bx : 0;
+                    dxDn = dxDn > bx ? dxDn - bx : 0;
+                    dyUp = dyUp > by ? dyUp - by : 0;
+                    dyDn = dyDn > by ? dyDn - by : 0;
+                    dzUp = dzUp > bz ? dzUp - bz : 0;
+                    dzDn = dzDn > bz ? dzDn - bz : 0;
+                    dwUp = dwUp > bw ? dwUp - bw : 0;
+                    dwDn = dwDn > bw ? dwDn - bw : 0;
+                  }
                 }
               }
               let cx: number;
@@ -3517,6 +3904,15 @@ function descendFold4(
                 cz = vz;
                 cw = vw;
                 branchRd = sfRd;
+                if (segment) {
+                  // The sphere branch's own output capsule — the identity and
+                  // inner arms carry a real segment through, the mid arm has
+                  // zeroed it and left everything in `capRho` (fr-v7ca).
+                  bex = capEX;
+                  bey = capEY;
+                  bez = capEZ;
+                  bew = capEW;
+                }
               } else {
                 // Box branch decode: per-axis preimage selectors, x
                 // fastest, FOUR digits — `b = selX + 3·selY + 9·selZ +
@@ -3537,11 +3933,14 @@ function descendFold4(
                   // The branch's own derivative is `diag(±1)`: the in-box
                   // preimage is `u` (+1), both folded ones are `±2 − u`
                   // (−1). A reflection takes the segment to a segment, so
-                  // the half-extent just picks up those signs.
-                  bex = selX === 0 ? euX : -euX;
-                  bey = selY === 0 ? euY : -euY;
-                  bez = selZ === 0 ? euZ : -euZ;
-                  bew = selW === 0 ? euW : -euW;
+                  // the half-extent just picks up those signs — and leaves
+                  // the slack ball's radius alone. The source is the CAPSULE
+                  // the decode sees: the map's own `e_u` for a boxfold, the
+                  // sphere branch's output for a mandelbox (fr-v7ca).
+                  bex = selX === 0 ? capEX : -capEX;
+                  bey = selY === 0 ? capEY : -capEY;
+                  bez = selZ === 0 ? capEZ : -capEZ;
+                  bew = selW === 0 ? capEW : -capEW;
                 }
                 const ddx =
                   selX === 0
@@ -3633,9 +4032,26 @@ function descendFold4(
                 FOLD_IMG_EXT4[3] =
                   im[12] * bex + im[13] * bey + im[14] * bez + im[15] * bew;
               }
+              if (slack) candRho = capRho / map.sigmaMin;
               branchSigma = map.foldSigma * sfSigma;
             }
-            const r = segmentRadius(ix, iy, iz, iw, FOLD_IMG_EXT4);
+            // THE CANDIDATE'S RADIUS is the smallest `|·|` over its query
+            // region — the segment's, less whatever ball slack the chain has
+            // taken on. Under fr-v7ca's slack arm the CHEAP form is a second
+            // valid bound on the same region (`dist(segment, A) >=
+            // dist(centre, A) − h`, the triangle inequality, priced into this
+            // chain's own frame by `h / childScale`), and the two are
+            // independent, so the descent takes the LARGER: the slack slab
+            // can never render worse than the ball form the harness rejected,
+            // whatever a crossing does to `rho`. Both extra terms are skipped
+            // outright on the exact path.
+            let r = segmentRadius(ix, iy, iz, iw, FOLD_IMG_EXT4) - candRho;
+            if (slack) {
+              const rBall =
+                Math.sqrt(ix * ix + iy * iy + iz * iz + iw * iw) -
+                hChain * invChildScale;
+              if (rBall > r) r = rBall;
+            }
             const childScale = pScale * branchSigma;
             let key = pScale * (r - R);
             if (candFloor > 0 && candFloor > key) key = candFloor;
@@ -3686,6 +4102,7 @@ function descendFold4(
             let evR = 0;
             let evCert = 0;
             let evFloor = 0;
+            let evRho = 0;
             let evHas = false;
             if (keptCount === FOLD_W4 && key >= fnWorstKey) {
               evX = ix;
@@ -3697,6 +4114,7 @@ function descendFold4(
               evR = r;
               evCert = cert;
               evFloor = candFloor;
+              evRho = candRho;
               evHas = true;
             } else {
               let slot: number;
@@ -3714,6 +4132,7 @@ function descendFold4(
                 evR = fnR[slot];
                 evCert = fnCert[slot];
                 evFloor = fnFloor[slot];
+                evRho = fnRho[slot];
                 evHas = true;
               } else {
                 slot = keptCount;
@@ -3732,6 +4151,7 @@ function descendFold4(
               fnFloor[slot] = candFloor;
               fnR[slot] = r;
               fnCert[slot] = cert;
+              fnRho[slot] = candRho;
               // Recompute the worst kept key once the frontier is full —
               // a fixed-bound scan of reads, first max wins.
               if (keptCount === FOLD_W4) {
@@ -3760,6 +4180,7 @@ function descendFold4(
                       evZ,
                       evW,
                       FOLD_EV_EXT4,
+                      evRho,
                       evR,
                       evScale,
                       segment,
@@ -3799,6 +4220,7 @@ function descendFold4(
       fcScale[i] = fnScale[i];
       fcFloor[i] = fnFloor[i];
       fcR[i] = fnR[i];
+      fcRho[i] = fnRho[i];
     }
     chainCount = keptCount;
     if (foldFrontierTap4 !== null) {
@@ -3863,7 +4285,10 @@ const LENS_BRANCH_EXT4 = new Float64Array(4);
  * 4D one: 81/3/243 branches ({@link foldBranchCount4}) with the box code
  * `selX + 3·selY + 9·selZ + 27·selW`, and {@link segmentRadius} in place of
  * every `|q|` so a fr-wa6o slab rides through the lens too (boxfold lenses
- * only — {@link slabExact4} refuses the rest at the public entries).
+ * only — {@link slabSupported4} refuses the rest at the public entries,
+ * because a spherefold lens crosses its inversion before depth 0 and
+ * fr-v7ca's capsule state would be born isotropic here: the ball form
+ * exactly, which is the form that was measured and rejected).
  *
  * Three prunes keep the branch loop from costing its worst case, each
  * VALUE-EXACT (a pruned branch's term is proven `>= best`, so the min is
@@ -4067,7 +4492,7 @@ function descendLens4(
         if (ru < fr.midMinR) {
           // Shell guard (see doc): fold the settled shell bound and skip
           // the branch, box expansion included. Point queries only — a
-          // spherefold lens never transports a segment (`slabExact4`).
+          // spherefold lens never transports a segment (`slabSupported4`).
           const shellCert = absW * (fr.fixedR - ru);
           if (shellCert < best) {
             best = shellCert;
