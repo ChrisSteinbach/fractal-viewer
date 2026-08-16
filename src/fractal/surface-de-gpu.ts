@@ -6751,9 +6751,9 @@ ${renameToProbe4(fold4DescentFnText(probeWidth, slabExt, lens))}`;
   // THE CHAIN (fr-s04t): the orbit CYCLES through `params.mapCount` links
   // read from the maps storage binding — slot `i mod n`, Mandelbulber2's
   // `seq->GetSequence(i)`, with `+ q` and the bailout test after EACH link
-  // (chaining them fattens the set to 72.8% of the bailout ball at six
-  // links, which is fr-7u8t.8's "the object WAS its own bounding sphere"
-  // returning). A PASS is one full cycle, so the loop runs
+  // (chaining them fattens the set to 37.1% of the bailout ball at six
+  // links against cycling's 0.2%, which is fr-7u8t.8's "the object WAS its
+  // own bounding sphere" returning). A PASS is one full cycle, so the loop runs
   // `maxDepth * n` single-link steps and `maxDepth` keeps meaning "how
   // many times is each link applied" — the preview clamp's contract at any
   // chain length. Every link contributes its own factor to the ONE shared

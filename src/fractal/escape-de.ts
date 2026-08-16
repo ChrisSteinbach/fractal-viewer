@@ -47,19 +47,41 @@
  * won, and the ball-fill column is why. Chaining lets n folds compound
  * before the query point tethers the orbit again, so its non-escaping set
  * FATTENS as links are added, and it fattens toward the bailout ball it is
- * supposed to sit inside — measured over
- * `scripts/escape-chain.harness.ts`'s eight fixtures, chaining fills
- * 32 / 13 / 43% of a radius-4 ball at two links, 47% at four and 72.8% at
- * six, reaching the full bailout radius every time. That is exactly the
- * defect fr-7u8t.8 existed to fix ("the rendered object WAS its own
- * bounding sphere"), reappearing through the back door as soon as the list
- * grows, and `escape-chain-sequence.png` shows it happening: the four- and
- * six-link chaining panels are near-solid pale balls. Cycling's sets stay
- * where they should — 6.0 / 7.0 / 7.4% of the same radius-4 ball at two
- * links, and at four and six links the object has drawn IN, to 3.8% and
- * 3.6% of that ball by volume — and the panels carry lobes, arches and
- * filigree at every length. The one-link row of that sheet is its own
- * control: the two arms are the same orbit there, and print identically.
+ * supposed to sit inside, while cycling's draws IN. Measured over
+ * `scripts/escape-chain.harness.ts`'s eight fixtures — one seeded uniform
+ * sample against {@link escapeSetContains} per row, over the SHARED
+ * radius-4 bailout ball:
+ *
+ *     fill % of the bailout ball        cycling (ships)   chaining
+ *       CONTROL single mbox2 (1 link)         3.6            3.6
+ *       mbox2 -> boxfold1.6                   1.1           12.7
+ *       mbox2 -> mbox2 rot20y                 1.5            1.3
+ *       mbox2 -> mbox-1.5                     1.5           11.6
+ *       box1 rot25y -> sph2                   0.2            3.2
+ *       mbox2 -> box1.6 -> sph1.2             0.5            6.4
+ *       FOUR links                            0.6           13.8
+ *       SIX links                             0.2           37.1
+ *
+ * Chaining's six-link set fills 37.1% of the ball and reaches 3.52 of its
+ * radius 4, where the SAME six maps cycled fill 0.2% and reach 1.34 — a
+ * 186x gap that widens monotonically with every link added. That is
+ * exactly the defect fr-7u8t.8 existed to fix ("the rendered object WAS its
+ * own bounding sphere"), reappearing through the back door as soon as the
+ * list grows, and `escape-chain-sequence.png` shows it: the four- and
+ * six-link chaining panels are dense speckled balls where the cycling ones
+ * beside them carry lobes, arches and filigree at every length. The
+ * one-link row of that sheet is its own control — the two arms are the same
+ * orbit there, and print identically, fill and reach and pixels alike.
+ *
+ * THOSE FIGURES ARE FR-AZJK'S, and they replace a table that was wrong
+ * twice over (the record read 32 / 13 / 43% at two links, 47% at four and
+ * 72.8% at six against cycling's 6.0 / 7.0 / 7.4%, 3.8% and 3.6%). The
+ * instrument was a grid thresholding the distance estimate — see THE
+ * INSTRUMENT below for both defects, measured — and each row was scored
+ * against its own FITTED marching ball while the verdict was written as "of
+ * a radius-4 ball", which flatters whichever arm the fit happened to shrink
+ * around. Every number moved; the ordering, the monotonicity and the
+ * verdict did not.
  *
  * A PASS IS ONE FULL CYCLE, which is what keeps `maxIterations` meaning the
  * same thing it always meant. The loop runs `maxIterations * links.length`
@@ -73,13 +95,25 @@
  * has to be smallest.
  *
  * The n-times-the-budget price is a CEILING, and only a non-escaping orbit
- * ever pays it. Measured over 60k uniform queries in each fixture's own
- * marching ball (`scripts/escape-chain.harness.ts`, f64, single thread),
- * the single map costs 0.25 us/eval and the eight chains 0.27-1.10, with
- * the SIX-link chain at 0.60 — 2.4x the single map, not the 6x the ceiling
- * implies. Every extra link is another chance for the orbit to leave the
- * bailout ball, and it tends to draw the object (and so the marching ball
- * the queries are drawn in) inward as well.
+ * ever pays it. Measured over 60k uniform queries in the BAILOUT ball —
+ * the domain the marcher enters against, packed as both the bounding and
+ * the visible sphere by the kernels, and the same for every row
+ * (`scripts/escape-chain.harness.ts`, f64, single thread) — the single map
+ * costs 0.18 us/eval and the eight chains 0.07-0.23. NOT 6x the single
+ * map, and not 2.4x either: at or BELOW it, every row. Every extra link is
+ * another chance for the orbit to leave the ball, and it takes that chance
+ * more often than it costs a full cycle.
+ *
+ * WHERE THE QUERIES ARE DRAWN DECIDES THAT NUMBER, which fr-azjk had to
+ * separate out before the paragraph above could be trusted. Priced instead
+ * over each row's OWN fitted marching ball, the same estimator on the same
+ * systems reads 0.22 for the single map and 0.28-1.27 for the chains — the
+ * six-link one 5.8x the map rather than 0.9x — because a tight ball around
+ * a compact chain crowds every query against the set, where orbits run the
+ * full budget. Both columns are printed. The record's "0.25, chains
+ * 0.27-1.10, six links at 0.60" was the fitted one, taken when the fit
+ * itself came from the aliased instrument; the bailout column is the one
+ * that describes what a frame pays.
  *
  * A CROSS-FAMILY CHAIN CAN BE CHEAPER THAN THE SINGLE MAP (fr-j231), which
  * is the same result the STIFFNESS paragraph reaches from the other side.
@@ -140,10 +174,22 @@
  * THE BAILOUT STAYS AT 4 for chains, also measured rather than inherited.
  * Raising it at a fixed iteration budget does not reveal more of the set,
  * it INFLATES it — 30 passes stop sufficing to prove escape, so slow
- * escapers are counted as members: the single-map control's ball fill runs
- * 2.9% -> 57.7% -> 65.6% at bailout 4 / 8 / 16. And chains genuinely use
- * the ball they are given, reaching 3.5-4.0 where the single map reaches
- * only 2.4-3.1, so 4 is exactly right rather than generous.
+ * escapers are counted as members: measured over a FIXED radius-4
+ * reference ball (so the number under test is not also the ball the
+ * fraction is taken over), the single-map control's fill runs
+ * 3.6% -> 51.5% -> 53.2% at bailout 4 / 8 / 16, and 55.6% at 64. A 14x
+ * inflation for the first doubling, and then a plateau: past 8 the extra
+ * radius buys nothing but the orbits that were always going to escape.
+ *
+ * WHAT 4 IS NOT is a ball the chains are straining against — that claim
+ * was in this paragraph and fr-azjk's re-measurement inverted it. At
+ * bailout 4 the chains reach 1.96-2.94 while the SINGLE MAP reaches 3.06:
+ * cycling draws a chain IN, so 4 is generous for the chains and right for
+ * the map the constant was chosen against, which is the honest reason to
+ * leave it alone. (One exception, and it is the shape that would break a
+ * smaller ball: a chaining-arm cross-family chain reaches the full 4.00,
+ * `mandelbox -> bulb(0.3)` filling 72.9% of the ball at bailout 4 — the
+ * rejected orbit doing the rejected thing.)
  *
  * EMPTY CHAINS ARE REACHABLE, AND THE MODE MUST BE ABLE TO SAY SO. A chain
  * whose composite expands too hard escapes on its first pass everywhere,
@@ -189,10 +235,14 @@
  * format. The reasoning was sound. The object was not: at a small `t` the
  * Julia-form fold set is a FAT BLOB, and every authorable constant near the
  * origin lands there. Measured on the project's own bench fixture
- * (`escMandelbox`: mandelbox weight 2 at position (0.4, 0.3, 0.2)), 94% of
- * the bounding ball was non-escaping — the rendered object WAS its own
+ * (`escMandelbox`: mandelbox weight 2 at position (0.4, 0.3, 0.2)), 89.4%
+ * of the bounding ball was non-escaping — the rendered object WAS its own
  * bounding sphere, speckled where the escaping filaments fell below a
- * pixel. That was the mode's entire visual output.
+ * pixel. That was the mode's entire visual output. (94%, the figure this
+ * paragraph and `escape-family-preview.harness.ts` carried until fr-azjk,
+ * was the same reading through the grid-and-threshold instrument THE
+ * INSTRUMENT below retired; the shipped form at that same constant fills
+ * 3.5%, so the ratio the argument rests on is 25x rather than 9x.)
  *
  * So the offset now comes from the query point, unconditionally: `+ p`, the
  * object everyone means by "Mandelbox". `t` loses nothing — it stays the
@@ -205,14 +255,19 @@
  * (`scripts/escape-form-sweep.harness.ts` is that decision's evidence, and
  * keeps the rejected form as an executable local): because the flag would
  * be a permanent document field, and the measurement does not earn it. At
- * the classic weight 2 the Julia set fills 97 / 93 / 77 / 60 / 23% of the
- * marching ball as |t| runs 0.5 / 1 / 1.5 / 2 / 2.5 — a sphere across
- * everything a user would plausibly author, thinning only in a narrow band
- * just before it vanishes entirely — and even at the best constant found
- * (weight -1.5, t = (2.5, 0, 0), 6% fill) the object is a pitted BALL,
- * where the Mandelbrot form at those same weights gives three distinct
- * objects and needs no constant at all. A knob whose default 95% of range
- * renders a sphere is worse than no knob. If the bulb family (fr-7u8t.7)
+ * the classic weight 2 the Julia set fills 87.2 / 71.8 / 32.6 / 2.1 /
+ * 0.005% of the bailout ball as |t| runs 0.5 / 1 / 1.5 / 2 / 2.5 — a sphere
+ * across everything a user would plausibly author, and then no band at all:
+ * it goes from a third of the ball to a measure-zero dust in one step of
+ * the sweep. Even at the best constant found (weight -1.5, t = (2.5, 0, 0))
+ * the object is a pitted BALL that still draws 28.1% of its rays while
+ * filling 0.005% of the ball by volume, where the Mandelbrot form at those
+ * same weights gives three distinct objects and needs no constant at all. A
+ * knob whose default 95% of range renders a sphere is worse than no knob.
+ * (fr-azjk re-measured that sweep: it read 97 / 93 / 77 / 60 / 23% and "6%
+ * fill" through the retired instrument. The narrow usable band the record
+ * describes does not exist — which strengthens the refusal, since the
+ * remaining case for the flag was that band.) If the bulb family (fr-7u8t.7)
  * measures that ITS Julia form earns a flag, this loop inherits one
  * cheaply: the wire has a spare float reserved for exactly that
  * (`surface-de-gpu.ts`'s escParams tail), and the term is a multiply by
@@ -509,8 +564,20 @@
  * points whose orbits never leave the ball. Those points ARE in the set,
  * and a `de(p) < eps` test counts every one of them out — so the record's
  * 0.47% at pre-scale 0.2 was a set filling 98% of its own bailout ball,
- * read as almost empty. fr-azjk carries both findings back to the sheets
- * that predate this one.
+ * read as almost empty.
+ *
+ * FR-AZJK CARRIED BOTH FINDINGS BACK, and every fill figure in this doc is
+ * now the corrected instrument's: the cycling/chaining table above, the
+ * Julia form's blob and its `|t|` sweep, and the bailout sweep below. Four
+ * sheets were rebuilt on `scripts/set-extent.ts`, the one definition of
+ * "how much of a ball does this set fill" they now share, each supplying
+ * its own membership oracle — including the two ORBITS that do not ship
+ * (the rejected chaining sequence, the retired Julia form), which had to
+ * grow the `runOrbit` + estimate + membership split this module uses,
+ * because a rejected arm measured by a threshold is measured worse than the
+ * arm it loses to. NO VERDICT MOVED, in either direction, which is the
+ * outcome worth recording: the defect was in the figures, and this
+ * project's docs are read as measurement records.
  *
  * ELIGIBILITY is the COMPLEMENT of the IFS gate on the shapes this formula
  * covers: one or more active maps, each of whose active variation list is
@@ -643,10 +710,10 @@ export const ESCAPE_TIME_RADIUS = 4;
  * constant to keep in step across six mirrors.
  *
  * 0.7 — the common conservative pick — was chosen (fr-kltj) against an
- * object that could not test it: the Julia form's blob filled 94% of its
- * own bounding ball and every ray hit on its first step, at a measured 0.3
- * steps per ray. The Mandelbrot form (fr-7u8t.8) is 10% solid and threaded
- * with filaments, and there 0.7 visibly OVERSHOOTS — rays step past thin
+ * object that could not test it: the Julia form's blob filled 89.4% of its
+ * own bounding ball and every ray hit on its first step, at a measured 0.4
+ * steps per ray. The Mandelbrot form (fr-7u8t.8) fills 3.5% of the same
+ * ball and is threaded with filaments, and there 0.7 visibly OVERSHOOTS — rays step past thin
  * features and the surface renders as dark dropout speckle rather than a
  * lit solid. Measured over the classic weight-2 Mandelbox
  * (`scripts/escape-form-sweep.harness.ts`, whose sheet is the picture that

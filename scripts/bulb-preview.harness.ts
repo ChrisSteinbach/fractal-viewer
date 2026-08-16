@@ -58,6 +58,7 @@ import { triplexPow8 } from "../src/fractal/variations";
 import type { Transform, Vec3 as CoreVec3 } from "../src/fractal/types";
 import { renderPreview, writeContactSheet } from "./de-preview";
 import type { DistanceEstimator, PanelStats, Vec3 } from "./de-preview";
+import { sampleSetExtent } from "./set-extent";
 
 const SIZE = 420;
 
@@ -112,12 +113,49 @@ function triplexSquare(x: number, y: number, z: number): Vec3 {
   return [2 * z * rho * (u * u - v * v), 2 * z * rho * (2 * u * v), z * z - a];
 }
 
+/** The general-power prototype orbit's terminal state, left in module
+ * scratch by {@link runPrototypeOrbit} — `escape-de.ts`'s own split
+ * (`runEscapeOrbit`/`estimateEscapeDistance`/`escapeSetContains`) applied to
+ * this harness's local prototype, and this file's own {@link inSet} one map
+ * over: one loop, two readers, so {@link prototypeDE}'s estimate and {@link
+ * prototypeMember}'s membership answer can never disagree about what the
+ * orbit did (fr-azjk). */
+let protoR = 0;
+let protoDr = 1;
+
 /**
- * A general-power bulb estimator — the SHIPPED loop with the trig power
+ * The general-power orbit itself — the SHIPPED loop with the trig power
  * substituted and the form switchable. `julia: false` is `estimateBulbDistance`
  * at `M = I` (power 8 aside); `julia: true` is the fixed-constant form this
- * harness is here to price.
+ * harness is here to price. `bailout`/`iterations` double as the membership
+ * reader's escape radius/budget when it calls this with its own, larger
+ * pair (see {@link prototypeMember}).
  */
+function runPrototypeOrbit(
+  power: number,
+  julia: boolean,
+  c: Vec3,
+  p: Vec3,
+  bailout: number,
+  iterations: number,
+): void {
+  let [x, y, z] = p;
+  let dr = 1;
+  let r = Math.hypot(x, y, z);
+  for (let i = 0; i < iterations && r <= bailout; i++) {
+    dr = power * Math.pow(r, power - 1) * dr + (julia ? 0 : 1);
+    const [vx, vy, vz] = trigTriplexPow(x, y, z, power);
+    x = vx + (julia ? c[0] : p[0]);
+    y = vy + (julia ? c[1] : p[1]);
+    z = vz + (julia ? c[2] : p[2]);
+    r = Math.hypot(x, y, z);
+  }
+  protoR = r;
+  protoDr = dr;
+}
+
+/** The prototype orbit's distance estimate, read off {@link
+ * runPrototypeOrbit}. */
 function prototypeDE(
   power: number,
   julia: boolean,
@@ -126,56 +164,58 @@ function prototypeDE(
   iterations = BULB_ITERATIONS,
 ): DistanceEstimator {
   return (p) => {
-    let [x, y, z] = p;
-    let dr = 1;
-    let r = Math.hypot(x, y, z);
-    for (let i = 0; i < iterations && r <= bailout; i++) {
-      dr = power * Math.pow(r, power - 1) * dr + (julia ? 0 : 1);
-      const [vx, vy, vz] = trigTriplexPow(x, y, z, power);
-      x = vx + (julia ? c[0] : p[0]);
-      y = vy + (julia ? c[1] : p[1]);
-      z = vz + (julia ? c[2] : p[2]);
-      r = Math.hypot(x, y, z);
-    }
-    return r <= 1 ? 0 : (0.5 * r * Math.log(r)) / dr;
+    runPrototypeOrbit(power, julia, c, p, bailout, iterations);
+    return protoR <= 1 ? 0 : (0.5 * protoR * Math.log(protoR)) / protoDr;
   };
+}
+
+/** The prototype orbit's MEMBERSHIP, read off the same loop at a budget far
+ * past the estimator's own — {@link inSet}'s discipline, one map over: does
+ * the orbit stay bounded under a radius far past the estimator's own bailout
+ * for far more iterations than the estimator ever runs? (fr-azjk; see {@link
+ * sampleSetExtent} for why a distance threshold cannot answer this.) */
+function prototypeMember(
+  power: number,
+  julia: boolean,
+  c: Vec3,
+  p: Vec3,
+  budget = 400,
+  bail = 64,
+): boolean {
+  runPrototypeOrbit(power, julia, c, p, bail, budget);
+  return Number.isFinite(protoR) && protoR <= bail;
 }
 
 /**
  * How much of the marching ball the object fills, and how far it reaches —
  * `escape-form-sweep.harness.ts`'s `extent`, with the radius passed in
  * because the bulb family's marching ball is per-system (~1.1) rather than a
- * shared constant. "Interior" is the marcher's own view of inside: a DE
- * collapsed to nothing because `dr` ran away.
+ * shared constant.
+ *
+ * Migrated onto {@link sampleSetExtent} (fr-azjk): the 41^3 grid this used to
+ * walk aliases against a structured boundary rather than converging to it (a
+ * regular lattice over-samples wherever its spacing lines up with the
+ * object's own symmetry), and `de(p) < 1e-3` decided membership by
+ * THRESHOLDING the estimate rather than asking the orbit whether it escaped
+ * — which misreads a point exactly where this file's own {@link inSet} exists
+ * to be asked instead, near the boundary shell where `dr` has run away as
+ * fast as `|y|` has. `radius` is now both the fill ball AND the sample's own
+ * scan radius — no doubled box, no 7/8 of the draw thrown away outside the
+ * fill ball. For the SHIPS panels `radius` is `BulbDE.boundingRadius`, a
+ * bound `bulb-de.ts` already PROVES contains the non-escaping set, so a
+ * member can never be found past it and `reach` there is read, not chased;
+ * for the PROTOTYPE panels `radius` is a hand-picked constant with no such
+ * proof, so `reach` at or near `1.00xR` is the genuine signal that the guess
+ * is too tight.
  */
 function extent(
-  de: DistanceEstimator,
+  member: (p: Vec3) => boolean,
   radius: number,
 ): { fillPct: number; reach: number } {
-  const N = 41;
-  const R = 2 * radius;
-  let inBall = 0;
-  let interiorInBall = 0;
-  let maxR = 0;
-  for (let i = 0; i < N; i++) {
-    for (let j = 0; j < N; j++) {
-      for (let k = 0; k < N; k++) {
-        const p: Vec3 = [
-          -R + (2 * R * i) / (N - 1),
-          -R + (2 * R * j) / (N - 1),
-          -R + (2 * R * k) / (N - 1),
-        ];
-        const r = Math.hypot(p[0], p[1], p[2]);
-        const interior = de(p) < 1e-3;
-        if (r <= radius) {
-          inBall++;
-          if (interior) interiorInBall++;
-        }
-        if (interior) maxR = Math.max(maxR, r);
-      }
-    }
-  }
-  return { fillPct: (100 * interiorInBall) / inBall, reach: maxR / radius };
+  const { fillPct, reachAbs } = sampleSetExtent(member, {
+    fillRadius: radius,
+  });
+  return { fillPct, reach: reachAbs / radius };
 }
 
 function seeded(seed: number): () => number {
@@ -232,6 +272,10 @@ interface Entry {
   label: string;
   de: DistanceEstimator;
   radius: number;
+  /** Membership oracle for THIS entry's own orbit (fr-azjk) — never a
+   * distance threshold on `de`, so fill/reach ask the same question `inSet`/
+   * `prototypeMember` were written to answer. */
+  member: (p: Vec3) => boolean;
 }
 
 describe("fr-7u8t.7 Mandelbulb preview", () => {
@@ -249,16 +293,19 @@ describe("fr-7u8t.7 Mandelbulb preview", () => {
         label: "SHIPS — Mandelbulb, t = 0 (the textbook object)",
         de: (p) => estimateBulbDistance(classic, p),
         radius: classic.boundingRadius,
+        member: (p) => inSet(classic, p),
       },
       {
         label: "SHIPS — t = (0.2, -0.1, 0.3): the pre-power offset deforms",
         de: (p) => estimateBulbDistance(offset, p),
         radius: offset.boundingRadius,
+        member: (p) => inSet(offset, p),
       },
       {
         label: "SHIPS — rotation (0.4, -0.8, 0.3): M does not commute with V",
         de: (p) => estimateBulbDistance(rotated, p),
         radius: rotated.boundingRadius,
+        member: (p) => inSet(rotated, p),
       },
       // Row 2 — the JULIABULB, from the prototype, spread across its whole
       // usable range: the near-sphere end (`c = 0` IS the unit ball — every
@@ -268,17 +315,20 @@ describe("fr-7u8t.7 Mandelbulb preview", () => {
         label: "PROTOTYPE — Juliabulb c = (0.2, 0, 0), |c| = 0.2",
         de: prototypeDE(8, true, [0.2, 0, 0]),
         radius: 1.35,
+        member: (p) => prototypeMember(8, true, [0.2, 0, 0], p),
       },
       {
         label: "PROTOTYPE — Juliabulb c = (0.28, 0.42, 0.18), |c| = 0.53",
         de: prototypeDE(8, true, [0.28, 0.42, 0.18]),
         radius: 1.35,
+        member: (p) => prototypeMember(8, true, [0.28, 0.42, 0.18], p),
       },
       {
         label:
           "PROTOTYPE — Juliabulb c = (0, 0, 0.65) — the polar direction, at the edge of collapse",
         de: prototypeDE(8, true, [0, 0, 0.65]),
         radius: 1.35,
+        member: (p) => prototypeMember(8, true, [0, 0, 0.65], p),
       },
       // Row 3 — the POWER sweep, from the prototype: the evidence a later
       // "should power be a document knob" bead would start from.
@@ -286,21 +336,24 @@ describe("fr-7u8t.7 Mandelbulb preview", () => {
         label: "PROTOTYPE — Mandelbulb power 3",
         de: prototypeDE(3, false, [0, 0, 0]),
         radius: 1.45,
+        member: (p) => prototypeMember(3, false, [0, 0, 0], p),
       },
       {
         label: "PROTOTYPE — Mandelbulb power 5",
         de: prototypeDE(5, false, [0, 0, 0]),
         radius: 1.25,
+        member: (p) => prototypeMember(5, false, [0, 0, 0], p),
       },
       {
         label: "PROTOTYPE — Mandelbulb power 12",
         de: prototypeDE(12, false, [0, 0, 0]),
         radius: 1.15,
+        member: (p) => prototypeMember(12, false, [0, 0, 0], p),
       },
     ];
 
     const panels: PanelStats[] = entries.map((entry, i) => {
-      const { fillPct, reach } = extent(entry.de, entry.radius);
+      const { fillPct, reach } = extent(entry.member, entry.radius);
       const panel = renderPreview(
         {
           de: entry.de,
@@ -632,8 +685,11 @@ describe("fr-7u8t.7 Mandelbulb preview", () => {
   it("scans the Juliabulb's constant space for a reason to keep it", () => {
     // `escape-form-sweep.harness.ts`'s question, one object over: is the
     // fixed-constant form worth a persisted document flag? The Juliabox
-    // failed because it was a sphere at 97/93/77/60/23% fill across
-    // everything a user would author. The bulb's numbers are below.
+    // failed because it was a sphere at 87.2 / 71.8 / 32.6 / 2.1 / 0.005%
+    // fill across everything a user would author (fr-azjk's corrected
+    // reading of that sheet; it said 97/93/77/60/23% through the same
+    // grid-and-threshold instrument this file has now dropped). The bulb's
+    // numbers are below.
     const R = 1.35;
     for (const dir of [
       [1, 0, 0],
@@ -642,16 +698,13 @@ describe("fr-7u8t.7 Mandelbulb preview", () => {
     ] as Vec3[]) {
       const row = [0.1, 0.2, 0.35, 0.5, 0.7, 0.9, 1.1].map((mag) => {
         const c: Vec3 = [dir[0] * mag, dir[1] * mag, dir[2] * mag];
-        const fill = extent(prototypeDE(8, true, c), R).fillPct;
+        const fill = extent((p) => prototypeMember(8, true, c, p), R).fillPct;
         return `${mag}:${fill.toFixed(1)}%`;
       });
       console.log(`  c along (${dir.join(",")}):  ${row.join("  ")}`);
     }
     const mandel = buildBulbDE([bulbSystem()]);
-    const m = extent(
-      (p) => estimateBulbDistance(mandel, p),
-      mandel.boundingRadius,
-    );
+    const m = extent((p) => inSet(mandel, p), mandel.boundingRadius);
     console.log(
       `  Mandelbulb (t = 0, no constant at all): ${m.fillPct.toFixed(1)}% fill, reach ${m.reach.toFixed(2)}xR`,
     );

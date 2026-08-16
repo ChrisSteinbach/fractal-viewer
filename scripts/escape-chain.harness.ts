@@ -16,15 +16,44 @@
  *     kept executable here as {@link estimateChained} exactly as
  *     `escape-form-sweep.harness.ts` keeps the Julia form. The ball-fill
  *     column is the verdict: chaining's set fattens with every link added
- *     and ends as its own bounding sphere, which is the defect fr-7u8t.8
- *     existed to fix.
+ *     while cycling's draws IN, which is the defect fr-7u8t.8 existed to
+ *     fix, reappearing as soon as the list grows.
+ *
  *  3. THE STEP SCALE — the sweep that KEPT `ESCAPE_STEP_SCALE` at 0.35 for
  *     chains as well as single maps, with the single map as the control
  *     that anchors the reading.
  *  4. WHAT A CHAIN LOOKS LIKE — the contact sheet.
  *  5. THE KALEIDOSCOPE — exactly symmetric, and measured to cost nothing
  *     per orbit step.
- *  6. WHAT IT COSTS — us/eval against the single map it generalises.
+ *  6. WHAT IT COSTS — us/eval against the single map it generalises, over
+ *     the BAILOUT ball both engines march against, with each row's fitted
+ *     ball priced beside it because the two disagree by up to 8x.
+ *
+ * FR-AZJK RE-MEASURED EVERY FILL AND REACH FIGURE THIS SHEET PRINTS, and
+ * two things were wrong at once. The INSTRUMENT was a grid thresholding the
+ * distance estimate — see {@link sampleSetExtent} for both defects and the
+ * measurements behind them — and the BALL was each row's own FITTED radius
+ * while the verdict it fed was written as "x% of a radius-4 ball", so a
+ * compact arm was scored against a small ball and an inflated one against a
+ * large one. Fill is now a seeded uniform sample against a membership
+ * oracle over the shared bailout ball, for every row and both arms:
+ *
+ *     fill % of the radius-4 bailout ball    cycling (ships)   chaining
+ *       CONTROL single mbox2 (1 link)              3.6            3.6
+ *       mbox2 -> boxfold1.6                        1.1           12.7
+ *       mbox2 -> mbox2 rot20y                      1.5            1.3
+ *       mbox2 -> mbox-1.5                          1.5           11.6
+ *       box1 rot25y -> sph2                        0.2            3.2
+ *       mbox2 -> box1.6 -> sph1.2                  0.5            6.4
+ *       FOUR links                                 0.6           13.8
+ *       SIX links                                  0.2           37.1
+ *
+ * The record this replaces read 32 / 13 / 43% at two links, 47% at four and
+ * 72.8% at six for chaining, against 6.0 / 7.0 / 7.4%, 3.8% and 3.6% for
+ * cycling. Every figure moved and the VERDICT did not: chaining still
+ * fattens monotonically with length and cycling still draws in, and the gap
+ * at six links is now 186x rather than 20x. The one-link control is its own
+ * check — the two arms are the same orbit there and print identically.
  *
  * Every panel runs through `de-preview.ts`'s identical shading, so a sheet
  * compares OBJECTS and not lighting, and the sibling harnesses' caveat
@@ -62,6 +91,7 @@ import type {
 } from "../src/fractal/types";
 import { renderPreview, writeContactSheet } from "./de-preview";
 import type { DistanceEstimator, PanelStats, Vec3 } from "./de-preview";
+import { sampleSetExtent, SET_SAMPLE_POINTS } from "./set-extent";
 
 const SIZE = 420;
 /** Panel size for the sweep sheets — the same objects, cheaper. */
@@ -156,6 +186,15 @@ const FIXTURES: [string, Transform[]][] = [
 
 // -------------------------------------------------- the rejected sequencing
 
+/** The rejected orbit's terminal radius and derivative bound, left in module
+ * scratch by {@link runChainedOrbit} — `escape-de.ts`'s own split, for its
+ * reason: {@link estimateChained} and {@link chainedMember} are two readers
+ * of ONE loop, so they cannot disagree about what the orbit is, and the
+ * rejected arm can be asked for MEMBERSHIP rather than for a threshold on a
+ * distance (fr-azjk; see {@link sampleSetExtent}). */
+let chainedR = 0;
+let chainedDr = 1;
+
 /**
  * CHAINING, the fork the sheet rejected — every link inside ONE pass, with
  * the Mandelbrot offset and the bailout test paid once per pass instead of
@@ -167,11 +206,11 @@ const FIXTURES: [string, Transform[]][] = [
  * derivative factors, same `dr` recurrence — so the only difference between
  * the two arms is where `+ p` and the escape test land.
  */
-function estimateChained(
+function runChainedOrbit(
   de: EscapeDE,
   p: Vec3,
   passes = ESCAPE_TIME_ITERATIONS,
-): number {
+): void {
   const links = de.links;
   let vx = p[0];
   let vy = p[1];
@@ -222,54 +261,67 @@ function estimateChained(
     dr = dr + 1;
     r = Math.sqrt(vx * vx + vy * vy + vz * vz);
   }
-  return r / dr;
+  chainedR = r;
+  chainedDr = dr;
+}
+
+/** The rejected arm's distance estimate. */
+function estimateChained(de: EscapeDE, p: Vec3): number {
+  runChainedOrbit(de, p);
+  return chainedR / chainedDr;
+}
+
+/** The rejected arm's MEMBERSHIP, asked of the same orbit —
+ * {@link escapeSetContains} for a loop that does not ship. Without it the
+ * chaining column could only be measured by thresholding its estimate, which
+ * is precisely the reading fr-azjk found to be a different SHAPE rather than
+ * a different number: chaining floors `dr` once per PASS, so a
+ * hard-contracting chain returns O(1) distances at points whose orbits never
+ * leave the ball. */
+function chainedMember(de: EscapeDE, p: Vec3): boolean {
+  runChainedOrbit(de, p);
+  return chainedR <= ESCAPE_TIME_RADIUS;
 }
 
 // ------------------------------------------------------------ measurement
 
-/** The marcher's own view of "inside": a DE collapsed by a runaway `dr`,
- * which is the criterion `escape-de.test.ts` counts fill with. */
-const INSIDE = 1e-3;
+/** Points every fill and reach column below is sampled at. */
+const FILL_POINTS = SET_SAMPLE_POINTS;
 
-/** Grid scan of the marching box: how much of the ball the object fills, and
- * how far it reaches. `escape-form-sweep.harness.ts`'s `extent()`, with the
- * ball radius decoupled from the scan box so a set that outgrew its bound
- * shows up as reach rather than clipping. */
-function scan(
-  de: DistanceEstimator,
-  scanR: number,
-  ballR: number,
-  n: number,
-): { fillPct: number; reachAbs: number } {
-  let inBall = 0;
-  let interiorInBall = 0;
-  let maxR = 0;
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j < n; j++) {
-      for (let k = 0; k < n; k++) {
-        const p: Vec3 = [
-          -scanR + (2 * scanR * i) / (n - 1),
-          -scanR + (2 * scanR * j) / (n - 1),
-          -scanR + (2 * scanR * k) / (n - 1),
-        ];
-        const r = Math.hypot(p[0], p[1], p[2]);
-        const interior = de(p) < INSIDE;
-        if (r <= ballR) {
-          inBall++;
-          if (interior) interiorInBall++;
-        }
-        if (interior) maxR = Math.max(maxR, r);
-      }
-    }
-  }
-  return { fillPct: (100 * interiorInBall) / inBall, reachAbs: maxR };
+/**
+ * Fill and reach of one arm's set, over the BAILOUT ball every row shares
+ * (fr-azjk). Two things moved here at once and both were wrong in the same
+ * direction:
+ *
+ *  - the instrument, which was a grid thresholding a distance estimate. See
+ *    {@link sampleSetExtent} for the two defects and the measurements.
+ *  - the BALL. Each row used to be measured over its own FITTED marching
+ *    radius, while the verdict it fed was written as "x% of a radius-4 ball"
+ *    — so a compact arm was scored against a small ball and an inflated one
+ *    against a large one, which flatters exactly the arm this sheet rejected
+ *    the other way. Fill is over `ESCAPE_TIME_RADIUS` for every row now, and
+ *    the fitted radius is a FRAMING quantity that no longer touches a
+ *    reported fraction.
+ */
+function extentOf(member: (p: Vec3) => boolean): {
+  fillPct: number;
+  reachAbs: number;
+} {
+  return sampleSetExtent(member, {
+    fillRadius: ESCAPE_TIME_RADIUS,
+    points: FILL_POINTS,
+  });
 }
 
 /** Fit the preview's marching ball to the object, so every panel frames its
  * own set the same way and a sheet compares SHAPES. Over-estimates
- * deliberately (rays entering further out cost steps, never geometry). */
-function fitMarchRadius(de: DistanceEstimator): number {
-  const { reachAbs } = scan(de, ESCAPE_TIME_RADIUS, ESCAPE_TIME_RADIUS, 35);
+ * deliberately (rays entering further out cost steps, never geometry).
+ *
+ * Reach comes from the same seeded sample the fill column does, and asks the
+ * same membership question: a uniform draw puts ~16% of its points in the
+ * outermost 6% of the radius, so the shell that decides this radius is the
+ * best-sampled part of the ball. */
+function fitMarchRadius(reachAbs: number): number {
   if (reachAbs <= 0) return ESCAPE_TIME_RADIUS;
   return Math.min(ESCAPE_TIME_RADIUS, Math.max(1.15, reachAbs * 1.06));
 }
@@ -387,6 +439,14 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
           foldMap(2, "boxfold", 0.2, { scale: [0.5, 0.5, 0.5] }),
         ],
       ],
+      // fr-j231 widened the gate again, and this row moved up from REFUSED:
+      // a link need not be a fold. `scripts/hybrid-chain.harness.ts` is that
+      // decision's sheet; this row is here so the gate's own edge stays
+      // measured in the fold sheet too.
+      [
+        "mandelbox w=2 + bulb (cross-family, fr-j231)",
+        [foldMap(1, "mandelbox", 2), foldMap(2, "bulb", 1)],
+      ],
     ];
     for (const [what, transforms, symmetry] of admitted) {
       const ifs = analyzeSurfaceSystem(transforms);
@@ -419,8 +479,19 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
           null,
         ],
         [
-          "mandelbox w=2 + bulb (cross-family)",
-          [foldMap(1, "mandelbox", 2), foldMap(2, "bulb", 1)],
+          "ONE map blending a fold and a POWER (still a blend, not a chain)",
+          [
+            {
+              id: 1,
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+              variations: [
+                { type: "mandelbox", weight: 2 },
+                { type: "bulb", weight: 1 },
+              ],
+            },
+          ],
           null,
         ],
         [
@@ -459,13 +530,20 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
     for (const [label, transforms] of FIXTURES) {
       const escDe = buildEscapeDE(transforms);
       const n = escDe.links.length;
-      const arms: [string, DistanceEstimator][] = [
-        ["cycle (ships)", shippedDE(escDe)],
-        ["chain", (p: Vec3) => estimateChained(escDe, p)],
+      // Each arm brings its own ESTIMATE and its own MEMBERSHIP oracle, read
+      // off one orbit apiece, so the fill column compares two SETS rather
+      // than two thresholds (fr-azjk).
+      const arms: [string, DistanceEstimator, (p: Vec3) => boolean][] = [
+        ["cycle (ships)", shippedDE(escDe), (p) => escapeSetContains(escDe, p)],
+        [
+          "chain",
+          (p: Vec3) => estimateChained(escDe, p),
+          (p) => chainedMember(escDe, p),
+        ],
       ];
-      for (const [arm, de] of arms) {
-        const marchR = fitMarchRadius(de);
-        const { fillPct, reachAbs } = scan(de, marchR, marchR, 41);
+      for (const [arm, de, member] of arms) {
+        const { fillPct, reachAbs } = extentOf(member);
+        const marchR = fitMarchRadius(reachAbs);
         const panel = renderPreview(
           {
             de,
@@ -499,8 +577,11 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
     // so the chains' rows can be read against a scale that is known to fit.
     const panels: PanelStats[] = [];
     for (const [label, transforms] of FIXTURES) {
-      const de = shippedDE(buildEscapeDE(transforms));
-      const marchR = fitMarchRadius(de);
+      const escDe = buildEscapeDE(transforms);
+      const de = shippedDE(escDe);
+      const marchR = fitMarchRadius(
+        extentOf((p) => escapeSetContains(escDe, p)).reachAbs,
+      );
       const row: string[] = [];
       for (const stepScale of [0.7, 0.35, 0.2, 0.15, 0.1, 0.05]) {
         const panel = renderPreview(
@@ -524,8 +605,10 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
     const panels = FIXTURES.map(([label, transforms]) => {
       const escDe = buildEscapeDE(transforms);
       const de = shippedDE(escDe);
-      const marchR = fitMarchRadius(de);
-      const { fillPct, reachAbs } = scan(de, marchR, marchR, 41);
+      const { fillPct, reachAbs } = extentOf((p) =>
+        escapeSetContains(escDe, p),
+      );
+      const marchR = fitMarchRadius(reachAbs);
       const panel = renderPreview(
         {
           de,
@@ -577,8 +660,10 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
       const symmetry: SymmetryParams = { order, plane: "xz" };
       const escDe = buildEscapeDE(base, null, symmetry);
       const de = shippedDE(escDe);
-      const marchR = fitMarchRadius(de);
-      const { fillPct } = scan(de, marchR, marchR, 41);
+      const { fillPct, reachAbs } = extentOf((p) =>
+        escapeSetContains(escDe, p),
+      );
+      const marchR = fitMarchRadius(reachAbs);
 
       // Symmetry residual: rotate the query by one sector in the fold plane
       // and the estimate must not move (beyond f64 rounding in the fold's
@@ -594,11 +679,12 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
         worst = Math.max(worst, Math.abs(de(p) - de(q)));
       }
 
-      // Cost: the same 60k queries every fixture is priced over below.
+      // Cost, in the BAILOUT ball the pricing `it()` below uses, so one
+      // order's row can be read against another's and against the chains'.
       const rng2 = mulberry32(0xbeef);
       const pts: Vec3[] = [];
       for (let i = 0; i < 40_000; i++) {
-        const u = Math.cbrt(rng2()) * marchR;
+        const u = Math.cbrt(rng2()) * ESCAPE_TIME_RADIUS;
         const ct = 2 * rng2() - 1;
         const st = Math.sqrt(Math.max(0, 1 - ct * ct));
         const ph = 2 * Math.PI * rng2();
@@ -707,6 +793,27 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
         `${label} probes empty`,
       ).toBeGreaterThan(0);
     }
+
+    // ONE INSTRUMENT, PINNED (fr-azjk). Every fill column in this sheet goes
+    // through {@link sampleSetExtent}, and the module's own emptiness probe
+    // goes through `probeEscapeFill`. They must not be two definitions of
+    // "fill" that happen to agree: the shared sampler draws `probeEscapeFill`'s
+    // sequence term for term from the same seed, so at the same point count
+    // they are the SAME measurement, to the bit. `hybrid-chain.harness.ts`
+    // pins its own two derived readers the same way, and this is what makes
+    // a figure quoted from either file quotable from the other.
+    for (const points of [4096, 65536]) {
+      for (const [label, transforms] of FIXTURES) {
+        const de = buildEscapeDE(transforms);
+        expect(
+          sampleSetExtent((p) => escapeSetContains(de, p), {
+            fillRadius: ESCAPE_TIME_RADIUS,
+            points,
+          }).fillPct,
+          `${label} @ ${points}`,
+        ).toBe(100 * probeEscapeFill(de, points));
+      }
+    }
   });
 
   it("prices a chain against the single map it generalises", () => {
@@ -714,14 +821,24 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
     // times the orbit steps: cost is expected to scale with the chain, and
     // this is the number that says by how much in practice (orbits that
     // escape early never pay the full budget).
-    for (const [label, transforms] of FIXTURES) {
-      const escDe = buildEscapeDE(transforms);
-      const de = shippedDE(escDe);
-      const marchR = fitMarchRadius(de);
+    //
+    // Queries are drawn in the BAILOUT ball, for {@link violationPct}'s
+    // reason and one more of its own (fr-azjk): the escape kernels pack that
+    // ball as both the bounding AND the visible sphere, so it is the domain
+    // the shipped marcher enters against, it is the same for every row, and
+    // a cost figure then does not move when a FRAMING radius is refitted.
+    //
+    // The FITTED ball is priced beside it, because the two disagree by up to
+    // 8x and the disagreement is the finding: a tight ball around a compact
+    // chain crowds every query up against the set, where orbits run the full
+    // budget, so the same estimator reads dearest exactly where its object is
+    // smallest. The record's figures were the fitted column, taken when the
+    // fit itself came from the aliased instrument.
+    const price = (de: DistanceEstimator, radius: number): string => {
       const rng = mulberry32(0xbeef);
       const pts: Vec3[] = [];
       for (let i = 0; i < 60_000; i++) {
-        const u = Math.cbrt(rng()) * marchR;
+        const u = Math.cbrt(rng()) * radius;
         const ct = 2 * rng() - 1;
         const st = Math.sqrt(Math.max(0, 1 - ct * ct));
         const ph = 2 * Math.PI * rng();
@@ -731,10 +848,21 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
       const t0 = Date.now();
       for (const p of pts) acc += de(p);
       const ms = Date.now() - t0;
+      return (
+        `${((ms * 1000) / pts.length).toFixed(2)} us/eval ` +
+        `(ball ${radius.toFixed(2)}, checksum ${acc.toFixed(3)})`
+      );
+    };
+    for (const [label, transforms] of FIXTURES) {
+      const escDe = buildEscapeDE(transforms);
+      const de = shippedDE(escDe);
+      const marchR = fitMarchRadius(
+        extentOf((p) => escapeSetContains(escDe, p)).reachAbs,
+      );
       console.log(
-        `  ${label.padEnd(34)} ${escDe.links.length} links  ` +
-          `${((ms * 1000) / pts.length).toFixed(2)} us/eval  ` +
-          `(ball ${marchR.toFixed(2)}, checksum ${acc.toFixed(3)})`,
+        `  ${label.padEnd(34)} ${escDe.links.length} links\n` +
+          `      bailout  ${price(de, ESCAPE_TIME_RADIUS)}\n` +
+          `      fitted   ${price(de, marchR)}`,
       );
     }
   });

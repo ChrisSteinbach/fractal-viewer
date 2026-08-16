@@ -96,13 +96,14 @@
  * AND THE CHAINING FIGURES ON RECORD ARE WRONG, which is a finding and not a
  * detail — the bead, and `escape-de.ts`'s module doc after it, quote
  * 0.01 / 2.09 / 5.09 / 0.47% at pre-scale 1 / 0.5 / 0.3 / 0.2 for this arm.
- * Those came from the prototype's {@link scan}, and holding the budget fixed
- * at the bead's own 16 passes so the instrument is the only difference, the
- * same arm reads 0.01 / 0.24 / 72.88 / 98.32%. The record is 8.7x HIGH at
+ * Those came from the prototype's `scan()` (fr-azjk removed it; see section
+ * 5), and holding the budget fixed at the bead's own 16 passes so the
+ * instrument is the only difference, the same arm reads
+ * 0.01 / 0.24 / 72.88 / 98.32%. The record is 8.7x HIGH at
  * pre-scale 0.5 and then 14x and 209x LOW at 0.3 and 0.2 — it reports a
  * narrow band of usable fill with a collapse after it, where the truth is a
  * monotone climb into a solid ball. Two mechanisms, both of them `scan`'s:
- * it grids (section 5), and it thresholds `de(p) < 1e-3` instead of asking
+ * it gridded (section 5), and it thresholded `de(p) < 1e-3` instead of asking
  * membership. The second is what produces the phantom collapse — chaining
  * floors `dr` only once per PASS, so a hard-contracting chain keeps `dr`
  * near 1 and returns a LARGE distance at points whose orbits never leave the
@@ -249,9 +250,13 @@
  * eight (7.24 / 7.24 / 7.23 / 7.23%).
  *
  * COST is 0.8-3.7x the single Mandelbox on the same query set, measured
- * across three runs of this file — well inside the band
- * `escape-chain.harness.ts` measured for fold-only chains (0.27-1.10 against
- * 0.25, up to 4.4x). One chain is CHEAPER than the map it composes with,
+ * across three runs of this file — the same shape
+ * `escape-chain.harness.ts` measures for fold-only chains, whose figures
+ * fr-azjk re-took over the BAILOUT ball both engines march against
+ * (0.07-0.23 against 0.18, i.e. at or below the map; over each row's own
+ * FITTED ball, which crowds queries against the set, the same rows read
+ * 0.28-1.27 against 0.22 — the domain decides the number, and the band
+ * this file quotes is a fitted-ball one). One chain is CHEAPER than the map it composes with,
  * which is the stiffness result again from the cost side: an orbit that
  * leaves via a power link on its first pass never reaches the fold, so it
  * never pays the chain's n-times ceiling at all.
@@ -317,9 +322,15 @@
  * {@link escapeFillAtBudget} exists only because it has no budget parameter
  * and {@link chainFill} only because it cannot ask the prototype's orbit,
  * and both are pinned equal to it by assertion at two sample counts so they
- * cannot become a second definition of "fill". {@link scan} survives for
- * reach/extent and for fitting a marching radius — never as a fill value,
- * and its `fitFill` column is labelled in the output to keep it out of one.
+ * cannot become a second definition of "fill". `scan()` IS GONE
+ * (fr-azjk): the prototype's grid, and the five call sites that were still
+ * printing an unlabelled `fill`/`ball fill` off it, are replaced by
+ * {@link chainExtent} (fill EXACTLY {@link chainFill}'s number, reach a
+ * second seeded draw over the caller's own scan radius) and
+ * {@link fitMarchRadius}, both built on `set-extent.ts`'s `sampleSetExtent`
+ * over {@link chainMember} — so reach/extent and the marching-radius fit now
+ * ask membership the same way every fill figure in this file already did,
+ * and there is no second, looser definition left to label out of the way.
  *
  * ======================= WHAT THE PROTOTYPE STILL SAYS ====================
  *
@@ -361,11 +372,15 @@
  *   - HOW THE LIST IS CONSUMED: chaining vs cycling.
  *     `hybrid-chain-sequence.png` (+ `-close`) is the fold-only verdict, and
  *     on the shared bailout ball at equal work it is emphatic: at six links
- *     chaining fills 37.1% of it (a featureless crust reaching the full
- *     radius 4.00) where cycling fills 0.2% and draws in to reach 2.28, and
- *     at four links 13.8% against 0.6%. `hybrid-chain-cross-sequence.png` is
- *     the cross-family one, and section 1 above is the same fork measured
- *     against the code that shipped.
+ *     chaining fills 37.1% of it (a crust reaching to about 3.7 — most but
+ *     not quite all of the radius-4 ball; fr-azjk's membership fix moved
+ *     this reach figure down from an exact 4.00, which was section 5(b)'s
+ *     leaky distance threshold falsely admitting near-boundary escapers, not
+ *     a property of the object) where cycling fills 0.2% and draws in to
+ *     about 1.3, and at four links 13.8% against 0.6% (reach about 3.8 vs
+ *     about 1.4). `hybrid-chain-cross-sequence.png` is the cross-family one,
+ *     and section 1 above is the same fork measured against the code that
+ *     shipped.
  *   - WHERE THE OFFSET GOES: per PASS or per LINK
  *     (`hybrid-chain-offset.png`). Moot under cycling, where a pass IS one
  *     link — the same axis under two names, as `escape-de.ts` says.
@@ -430,6 +445,7 @@ import {
 import type { Transform, VariationType } from "../src/fractal/types";
 import { renderPreview, writeContactSheet } from "./de-preview";
 import type { DistanceEstimator, PanelStats, Vec3 } from "./de-preview";
+import { sampleSetExtent } from "./set-extent";
 
 const SIZE = 420;
 /** Panel size for the secondary sheets — the same objects, cheaper. */
@@ -729,45 +745,47 @@ function chain(
 
 // -------------------------------------------------------------- measurement
 
-/** Grid scan of the marching box: how much of the ball the object fills, and
- * how far it reaches. `escape-form-sweep.harness.ts`'s `extent()`, with the
- * ball radius decoupled from the scan box so a set that outgrew its bound
- * shows up as reach rather than clipping. */
-function scan(
-  de: DistanceEstimator,
+/**
+ * Fill and reach of a chain's set — `set-extent.ts`'s `sampleSetExtent`
+ * given the chain's own membership oracle ({@link chainMember}), replacing
+ * the grid this file used before fr-azjk (module doc, section 5: a grid
+ * lands a disproportionate share of its points on a fold's own walls, and
+ * `de(p) < 1e-3` is a distance threshold, not membership).
+ *
+ * TWO SEPARATE DRAWS, not one merged sample. `fillPct` is EXACTLY
+ * {@link chainFill}'s number — the fixed radius-`ESCAPE_TIME_RADIUS` ball
+ * every fill column in this file already shares, so the pinning assertion
+ * in "measures the FILL INSTRUMENT itself" covers this column too, and a
+ * reader never has to ask which of two "fill" definitions a table is using.
+ * `reachAbs` is sampled separately over the ball of radius `scanR`, which is
+ * usually a fitted marching radius and therefore larger than the fixed fill
+ * ball. Merging the two into one `sampleSetExtent({fillRadius:
+ * ESCAPE_TIME_RADIUS, scanRadius: scanR})` call would silently shrink the
+ * fill sample to `(ESCAPE_TIME_RADIUS / scanR)³` of its points and stop the
+ * fill column being literally `chainFill`.
+ */
+function chainExtent(
+  c: Chain,
   scanR: number,
-  ballR: number,
-  n: number,
 ): { fillPct: number; reachAbs: number } {
-  let inBall = 0;
-  let interiorInBall = 0;
-  let maxR = 0;
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j < n; j++) {
-      for (let k = 0; k < n; k++) {
-        const p: Vec3 = [
-          -scanR + (2 * scanR * i) / (n - 1),
-          -scanR + (2 * scanR * j) / (n - 1),
-          -scanR + (2 * scanR * k) / (n - 1),
-        ];
-        const r = Math.hypot(p[0], p[1], p[2]);
-        const interior = de(p) < 1e-3;
-        if (r <= ballR) {
-          inBall++;
-          if (interior) interiorInBall++;
-        }
-        if (interior) maxR = Math.max(maxR, r);
-      }
-    }
-  }
-  return { fillPct: (100 * interiorInBall) / inBall, reachAbs: maxR };
+  return {
+    fillPct: chainFill(c),
+    reachAbs: sampleSetExtent((p) => chainMember(c, p), {
+      fillRadius: scanR,
+    }).reachAbs,
+  };
 }
 
 /** Fit the preview's marching ball to the object, so every panel frames its
  * own set the same way and the sheet compares SHAPES. Over-estimates
- * deliberately (rays entering further out cost steps, never geometry). */
-function fitMarchRadius(de: DistanceEstimator, scanR: number): number {
-  const { reachAbs } = scan(de, scanR, scanR, 35);
+ * deliberately (rays entering further out cost steps, never geometry).
+ * Takes the CHAIN rather than a `DistanceEstimator`, since fr-azjk: reach is
+ * a membership question asked of {@link chainMember} through
+ * `sampleSetExtent`, never a distance threshold on a grid. */
+function fitMarchRadius(c: Chain, scanR: number): number {
+  const { reachAbs } = sampleSetExtent((p) => chainMember(c, p), {
+    fillRadius: scanR,
+  });
   if (reachAbs <= 0) return scanR;
   return Math.min(scanR, Math.max(1.15, reachAbs * 1.06));
 }
@@ -864,8 +882,8 @@ function report(
   stepScale = ESCAPE_STEP_SCALE,
 ): PanelReport {
   const de = chainDE(c);
-  const marchR = c.marchR ?? fitMarchRadius(de, scanR);
-  const { fillPct, reachAbs } = scan(de, marchR, marchR, 41);
+  const marchR = c.marchR ?? fitMarchRadius(c, scanR);
+  const { fillPct, reachAbs } = chainExtent(c, marchR);
   const view = { de, boundingRadius: marchR, eyeOffset: EYE, zoom: ZOOM };
   const panel = renderPreview({ ...view, stepScale }, SIZE);
   const coarse = renderPreview({ ...view, stepScale }, 150);
@@ -1013,8 +1031,9 @@ function escapeFillAtBudget(
 /** {@link sampleFill} against the PROTOTYPE's orbit — the same sampler, the
  * same seed, the same ball, the same membership question, so the headline
  * table's arms differ by their ORBIT and by nothing else. The prototype's
- * own {@link scan} is a grid and must not be read as a fill value; it
- * survives for reach/extent and for fitting a marching radius. */
+ * old `scan()` grid, which must not have been read as a fill value, is gone
+ * (fr-azjk); {@link chainExtent} and {@link fitMarchRadius} cover
+ * reach/extent and the marching-radius fit now, both via `chainMember`. */
 function chainFill(c: Chain, points = FILL_POINTS): number {
   return sampleFill((p) => chainMember(c, p), points);
 }
@@ -1520,10 +1539,13 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
     // could not say which moved them. `chaining@16` holds the budget fixed
     // so the instrument is the only difference from the record.
     //
-    // The prototype's own `scan()` grid does not appear here at all. It is a
-    // grid, it fills a radius-SIX box, and it thresholds the estimate rather
-    // than asking membership; it survives in this file for reach/extent and
-    // for fitting a marching radius, never as a fill value.
+    // The prototype's own `scan()` grid does not appear here, or ANYWHERE
+    // ELSE IN THIS FILE any more (fr-azjk): it was a grid that thresholded
+    // the estimate rather than asking membership, and it is gone rather
+    // than merely unused by this table. {@link chainExtent} and
+    // {@link fitMarchRadius} now cover every reach/extent and
+    // marching-radius site it used to, both built on `set-extent.ts`'s
+    // `sampleSetExtent` over {@link chainMember}.
     const panels: PanelStats[] = [];
     console.log(
       `  fills below are probeEscapeFill's own sampler at ${FILL_POINTS} ` +
@@ -2287,8 +2309,7 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
     );
     for (const [label, links] of rows) {
       const c = chain(label, links);
-      const de = chainDE(c);
-      const { fillPct, reachAbs } = scan(de, 6, 6, 27);
+      const { fillPct, reachAbs } = chainExtent(c, 6);
       console.log(
         `  ${label.padEnd(50)} fill ${fillPct.toFixed(2)}%  reach ${reachAbs.toFixed(2)}`,
       );
@@ -2404,7 +2425,7 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
     const dir = Math.hypot(...CLOSE_EYE);
     const panels = closes.map((c) => {
       const de = chainDE(c);
-      const fit = fitMarchRadius(de, 6);
+      const fit = fitMarchRadius(c, 6);
       const aim = 0.62 * fit;
       const target: Vec3 = [
         (CLOSE_EYE[0] / dir) * aim,
@@ -2459,8 +2480,8 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
       for (const [label, links] of pairs) {
         const c = chain(`${offset}-offset  ${label}`, links, { offset });
         const de = chainDE(c);
-        const marchR = fitMarchRadius(de, 6);
-        const { fillPct, reachAbs } = scan(de, marchR, marchR, 41);
+        const marchR = fitMarchRadius(c, 6);
+        const { fillPct, reachAbs } = chainExtent(c, marchR);
         const panel = renderPreview(
           {
             de,
@@ -2510,7 +2531,7 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
       for (const estimate of ["linear", "log"] as const) {
         const c = chain(label, links, { estimate });
         const de = chainDE(c);
-        const marchR = fitMarchRadius(de, 6);
+        const marchR = fitMarchRadius(c, 6);
         const panel = renderPreview(
           {
             de,
@@ -2537,6 +2558,19 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
     // The single-map estimators use 4. A chain of expanding maps might not
     // settle there — if the object keeps growing as the bailout rises, 4 is
     // clipping it.
+    //
+    // FILL HERE MUST STAY ON A FIXED BALL WHILE BAILOUT MOVES, or the
+    // question collapses. The bailout radius is what DEFINES membership in
+    // this test — {@link chainMember} reads `chain.bailout`, and that is
+    // exactly the field under test, sweeping 4/8/16/64 — so scanning a ball
+    // that grows with it cannot separate "the set got bigger" from "the
+    // ball we are measuring it against got bigger". {@link chainExtent}'s
+    // `fillPct` is already pinned to the fixed radius-`ESCAPE_TIME_RADIUS`
+    // ball regardless of its `scanR` argument (it is {@link chainFill}),
+    // which is exactly the fixed reference this row needs; passing `bailout`
+    // as `scanR` only widens the SEPARATE reach draw, so `reach` answers the
+    // other half honestly — how far the set's own edge sits, over the ball
+    // that bailout actually built.
     const specs: [string, ChainLink[]][] = [
       ["CONTROL single mandelbox w=2", [link("mandelbox", 2)]],
       ["mandelbox -> boxfold", [link("mandelbox", 2), link("boxfold", 1.6)]],
@@ -2560,9 +2594,14 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
       const row: string[] = [];
       for (const bailout of [4, 8, 16, 64]) {
         const c = chain(label, links, { bailout });
-        const de = chainDE(c);
-        const { fillPct, reachAbs } = scan(de, 6, 6, 33);
-        // Average orbit length over the same grid, for the cost side.
+        const { fillPct, reachAbs } = chainExtent(c, bailout);
+        // Average orbit length over a plain 15^3 grid — a COST figure (mean
+        // work per query), not a membership count, so the grid-aliasing
+        // argument above does not reach it: that argument is about a
+        // THRESHOLDED binary fraction landing disproportionately on a
+        // fold's own walls, and an unthresholded average has no threshold
+        // to alias against. Kept as a grid rather than converted to the
+        // seeded sampler for that reason.
         let iters = 0;
         let n = 0;
         for (let i = 0; i < 15; i++)
@@ -2601,7 +2640,7 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
     const panels: PanelStats[] = [];
     for (const [label, c] of cases) {
       const de = chainDE(c);
-      const marchR = fitMarchRadius(de, 6);
+      const marchR = fitMarchRadius(c, 6);
       for (const stepScale of [1, 0.5, 0.35, 0.2, 0.1, 0.05]) {
         const panel = renderPreview(
           {
@@ -2682,8 +2721,8 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
       ];
       for (const [arm, c] of arms) {
         const de = chainDE(c);
-        const marchR = fitMarchRadius(de, 6);
-        const { fillPct, reachAbs } = scan(de, marchR, marchR, 41);
+        const marchR = fitMarchRadius(c, 6);
+        const { fillPct, reachAbs } = chainExtent(c, marchR);
         const panel = renderPreview(
           {
             de,
@@ -2697,14 +2736,13 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
         const os = overshootPct(c, de, marchR);
         console.log(
           `  ${label.padEnd(28)} ${arm.padEnd(9)} iters ${String(c.iterations).padEnd(3)} ` +
-            `marchR ${marchR.toFixed(2)} fitFill ${fillPct.toFixed(1)}% ` +
-            // The FITTED ball's fill is a grid figure over each arm's OWN
-            // radius, so the two arms' columns are not the same question —
-            // which is exactly what makes chaining's "fattens toward its own
-            // bailout ball" visible (its fitted radius IS the bailout one).
-            // `ballFill` is the seeded probe over the SHARED radius-4 ball,
-            // and it is the number a docblock may quote.
-            `ballFill ${chainFill(c).toFixed(1)}% ` +
+            `marchR ${marchR.toFixed(2)} ` +
+            // `fitFill` — the grid's reading over each arm's own fitted
+            // radius — is gone: with membership there is no second,
+            // fitted-ball definition of fill left to disclaim, and
+            // chaining's "fattens toward its own bailout ball" is carried
+            // by `reach` growing alongside `ballFill` instead.
+            `ballFill ${fillPct.toFixed(1)}% ` +
             `reach ${reachAbs.toFixed(2)} ` +
             `hits ${((100 * panel.hits) / (SMALL * SMALL)).toFixed(1)}% ` +
             `steps/ray ${(panel.steps / (SMALL * SMALL)).toFixed(1)} ` +
@@ -2739,7 +2777,7 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
         // centres the marching ball on `target`, so a narrow frustum aimed at
         // the origin shows nothing but interior surface and reads as noise.
         // Aim at the near rim and inflate the ball by the same offset.
-        const fit = fitMarchRadius(de, 6);
+        const fit = fitMarchRadius(c, 6);
         const aim = 0.62 * fit;
         const cd = Math.hypot(...CLOSE_EYE);
         const panel = renderPreview(
@@ -2815,8 +2853,8 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
       ];
       for (const [arm, c] of arms) {
         const de = chainDE(c);
-        const marchR = fitMarchRadius(de, 6);
-        const { fillPct, reachAbs } = scan(de, marchR, marchR, 41);
+        const marchR = fitMarchRadius(c, 6);
+        const { fillPct, reachAbs } = chainExtent(c, marchR);
         const panel = renderPreview(
           {
             de,
@@ -2876,7 +2914,7 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
     const panels: PanelStats[] = [];
     for (const [label, c] of cases) {
       const de = chainDE(c);
-      const marchR = fitMarchRadius(de, 6);
+      const marchR = fitMarchRadius(c, 6);
       for (const stepScale of [0.7, 0.35, 0.2, 0.15, 0.1, 0.05]) {
         const panel = renderPreview(
           { de, boundingRadius: marchR, stepScale, zoom: 0.28 },
@@ -2927,7 +2965,7 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
     ];
     for (const [label, c] of specs) {
       const de = chainDE(c);
-      const marchR = fitMarchRadius(de, 6);
+      const marchR = fitMarchRadius(c, 6);
       const rng = mulberry32(0xbeef);
       const pts: Vec3[] = [];
       for (let i = 0; i < 60_000; i++) {
