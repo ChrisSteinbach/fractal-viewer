@@ -966,10 +966,14 @@ same system on both backends from the same seed-class and check the CPU/GPU
 renders agree within measured thresholds, exiting non-zero if they don't —
 the same page also doubles as the phone-benchmarking path, since it works
 interactively over the LAN like any other dev page. CI runs the whole sweep
-on every push/PR (fr-jnu): the `gpu-agreement` job executes the real WGSL
-kernels on SwiftShader (Chromium's bundled software Vulkan, so no GPU runner
-is needed), with the runner treating a skipped comparison (no WebGPU
-adapter) as a failure rather than a pass. The scenario list includes a
+(fr-jnu): the `gpu-agreement` workflow executes the real WGSL kernels on
+SwiftShader (Chromium's bundled software Vulkan, so no GPU runner is
+needed), with the runner treating a skipped comparison (no WebGPU adapter)
+as a failure rather than a pass. It runs on every push/PR EXCEPT ones whose
+every changed file is docs, markdown or the beads database (fr-hzlm — the
+sweep is ~18 min against 1m50s for the next-slowest job, so it is the whole
+critical path; the filter is deliberately a fail-safe `paths-ignore` rather
+than an allowlist of kernel paths, which would fail open). The scenario list includes a
 "variation zoo" (3D and 4D) that enables all twelve classic variation types
 across three maps plus a final-transform lens, so every hand-written WGSL
 variation formula — not just the handful the showcase presets use — is

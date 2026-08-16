@@ -49,8 +49,10 @@
  * `--swiftshader` forces the WebGPU adapter onto SwiftShader (Chrome's
  * bundled software Vulkan), so a GPU-less runner still executes the REAL
  * WGSL kernels — slowly, but bit-faithfully — instead of skipping the
- * agreement check. Together they are the CI invocation (see ci.yml's
- * gpu-agreement job).
+ * agreement check. Together they are the CI invocation (see the
+ * gpu-agreement workflow, .github/workflows/gpu-agreement.yml — its own
+ * file since fr-hzlm, so a fail-safe paths-ignore can skip the ~18min
+ * sweep on changes that are entirely docs).
  *
  * Without --url, this spawns `npm run dev` itself and tears it down when
  * done (including on error) — the whole point being a one-shot
