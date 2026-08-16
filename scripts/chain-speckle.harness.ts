@@ -277,11 +277,15 @@
  *   something fr-7u8t.8's smoothing introduced. And box-averaged over 16
  *   sub-samples the three rows read 0.16 / 0.00 / 0.00%: almost no 4x4
  *   block is clamped throughout, so the flat top-of-ramp PATCHES a palette
- *   would paint are a ONE-SAMPLE artifact at this framing and dissolve
- *   under the 8-sample settle both engines ship (fr-vpbq, fr-jf9y). The
- *   saturation is still in the samples — averaging a pinned value with an
- *   unpinned one does not recover what the clamp discarded — but the
- *   picture a user sees is not a third of the object painted one colour.
+ *   would paint are a ONE-SAMPLE artifact at this framing. READ THAT AS
+ *   DIRECTIONAL, NOT AS THE SETTLE'S OWN NUMBER: this column averages the
+ *   TRAP over 16 sub-samples, where fr-vpbq/fr-jf9y's shipped settle
+ *   averages the shaded COLOUR over 8. Two different averages of the same
+ *   underlying sub-pixel variation, so the shipped settle will land
+ *   somewhere short of this — the claim it supports is that the patches
+ *   are sub-pixel, not that 8 samples take them to zero. The saturation is
+ *   in the samples either way: averaging a pinned value with an unpinned
+ *   one does not recover what the clamp discarded.
  *
  * IN ONE LINE: partial coverage fell because the frame is finally sized
  * correctly, not because the object got smoother. The number that cannot

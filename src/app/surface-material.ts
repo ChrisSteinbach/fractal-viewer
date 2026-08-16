@@ -1368,10 +1368,13 @@ uniform float uBalloonFar;
     // (6.78 / 10.61 / 31.44%), so this is the coordinate's own saturation
     // and not something fr-7u8t.8's smoothing introduced; and box-averaged
     // over 16 sub-samples the rows read 0.16 / 0.00 / 0.00%, so the flat
-    // top-of-ramp PATCHES are a one-sample artifact that the 8-sample
-    // settle both engines ship (fr-vpbq, fr-jf9y) dissolves. Averaging a
-    // pinned sample with an unpinned one does not recover what the clamp
-    // discarded — but it is not a third of the object painted one colour.
+    // top-of-ramp PATCHES are a one-sample artifact rather than regions of
+    // the object. Read that second one as DIRECTIONAL: it averages the
+    // TRAP over 16 sub-samples where fr-vpbq/fr-jf9y's settle averages the
+    // shaded COLOUR over 8, so the shipped settle lands somewhere short of
+    // it. Averaging a pinned sample with an unpinned one does not recover
+    // what the clamp discarded either way — but it is not a third of the
+    // object painted one colour.
     //
     // fr-j231: A SECOND INTERPOLANT, because which one reads the terminal
     // radius depends on the link that PRODUCED it. A fold grows by a
