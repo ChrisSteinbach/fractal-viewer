@@ -29,6 +29,7 @@
  */
 import * as THREE from "three";
 import { SOFTWARE_RENDERER_RE } from "../render-backend";
+import { applyScenarioShard } from "./shard";
 import {
   rotationMatrix4,
   symmetryRotation4,
@@ -13322,9 +13323,13 @@ async function main(): Promise<void> {
           .filter((s) => s.length > 0),
       )
     : null;
-  const activeScenarios = filterNames
-    ? SCENARIOS.filter((s) => filterNames.has(s.name))
-    : SCENARIOS;
+  // The shard applies AFTER any name filter, so the two compose: `?shard=`
+  // alone splits the full sweep (the CI case), and `?scenarios=a,b,c&shard=`
+  // splits a hand-picked subset when reproducing one shard locally.
+  const activeScenarios = applyScenarioShard(
+    filterNames ? SCENARIOS.filter((s) => filterNames.has(s.name)) : SCENARIOS,
+    params.get("shard"),
+  );
 
   const benchResults: BenchResults = {
     userAgent: navigator.userAgent,

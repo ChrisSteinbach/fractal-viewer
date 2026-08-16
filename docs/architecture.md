@@ -973,7 +973,14 @@ as a failure rather than a pass. It runs on every push/PR EXCEPT ones whose
 every changed file is docs, markdown or the beads database (fr-hzlm — the
 sweep is ~18 min against 1m50s for the next-slowest job, so it is the whole
 critical path; the filter is deliberately a fail-safe `paths-ignore` rather
-than an allowlist of kernel paths, which would fail open). The scenario list includes a
+than an allowlist of kernel paths, which would fail open). When it does run
+it is SHARDED four ways (`--shard=i/n`, round-robin by index), which is the
+same argument in the other direction: the page partitions its own
+`SCENARIOS` list, so the union of the shards is the whole list by
+construction and a fifteenth scenario needs no CI change, where a matrix of
+hand-written `--scenarios=` name lists would silently stop covering it. An
+empty shard is not a quiet pass — no comparison ran means `agreement:
+"skipped"`, which the runner already exits 2 on. The scenario list includes a
 "variation zoo" (3D and 4D) that enables all twelve classic variation types
 across three maps plus a final-transform lens, so every hand-written WGSL
 variation formula — not just the handful the showcase presets use — is
