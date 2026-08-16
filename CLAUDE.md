@@ -182,6 +182,26 @@ blocked on, and that the Böttcher form is boundary-adaptive on a
 power-dominated chain where fr-282c measured it flat on a fold one),
 `chain-speckle` (fr-vpbq's and fr-byxb's evidence: the speckle is
 sub-pixel, the ramp is bottom-heavy),
+`slab-ball-slack` (fr-v7ca's verdict, and the sheet whose INSTRUMENT is
+the argument: a BOXFOLD-ONLY system answers a spherefold question,
+because its two arms are the two ENDPOINTS of the lift under test — the
+shipped exact segment IS the segment+ball-slack state with no mid
+crossing ever, and `max(0, DE(p) - h)` IS the same state with the
+crossing at depth 0, so the gap between them BRACKETS everything the
+lift could ever buy. Verdict NEITHER, keep the refusal: the cheap form
+is a DILATION and not a slab — a crisp fractal becomes the bare marching
+ball at the slider's own ceiling, 44.4% of rays at 0.0 steps/px — it is
+FURTHER from the exact slab than doing nothing on two of four controls,
+it floats the whole surface toward the camera rather than adding a rind
+(mean depth error 16.9-68.8% of the marching ball against the point
+query's 0.8-15.2%), and it overcharges the bound by one to two orders of
+magnitude through DIRECTION-BLINDNESS (a true slab costs 0.3-15%, a ball
+29-100%). Both forms are SOUND — 0 violations in 9600 checks — which
+settles nothing. And the threaded design cannot be justified from
+outside the descent: its ceiling is reached only where no mid crossing
+happens, i.e. on the systems that ALREADY have the exact slab, while
+every system it is FOR crosses that branch. Two named instruments would
+reopen it),
 `escape-4d` (fr-vag4's own measure-before-building sheet, and the one
 that CONTRADICTS a prior record: fr-wuuu swept the quaternion square's
 `k` component — a `w` TRANSLATION — and found pure EROSION off the
