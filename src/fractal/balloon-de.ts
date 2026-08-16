@@ -296,6 +296,13 @@ export function buildBalloon4(de: SurfaceDE4, rMult: number): Balloon {
  * The CPU oracle for the `balloon: true` WGSL 4D cores, whose wrapper is
  * textually the 3D one for exactly this reason: it composes over a public
  * `surfaceDE(vec3)` and the core's own prologue does the lift.
+ *
+ * WHICH FRAME `fn` ANSWERS IN IS THE CALLER'S CHOICE, and matching the
+ * kernel means answering in the MARCHED one. The kernel's core applies
+ * `rotorInv` inside its own body, AFTER this wrapper has inverted, so an
+ * agreement check hands `fn` an estimator that lifts the same way. Passed
+ * a bare `estimateDistance4Refined`, this measures the same object in the
+ * attractor frame instead — correct, and a different pose.
  */
 export function estimateBalloonDistance4(
   fn: BalloonEstimator4,
