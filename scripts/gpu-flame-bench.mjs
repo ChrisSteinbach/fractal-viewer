@@ -13,6 +13,7 @@
  *
  * Usage:
  *   node scripts/gpu-flame-bench.mjs [--duration=4] [--scenarios=a,b]
+ *                                     [--shard=i/n]
  *     [--url=https://host:port] [--headed] [--chrome=/path/to/chrome]
  *     [--swiftshader] [--out=bench-results]
  *     [--surface | --surface-only] [--display=:0]
@@ -140,6 +141,7 @@ function parseArgs(argv) {
   const args = {
     duration: "4",
     scenarios: undefined,
+    shard: undefined,
     url: undefined,
     headed: false,
     chrome: DEFAULT_CHROME,
@@ -165,6 +167,9 @@ function parseArgs(argv) {
         break;
       case "scenarios":
         args.scenarios = value;
+        break;
+      case "shard":
+        args.shard = value;
         break;
       case "url":
         args.url = value.replace(/\/+$/, "");
@@ -596,6 +601,7 @@ async function main() {
       duration: args.duration,
     });
     if (args.scenarios) query.set("scenarios", args.scenarios);
+    if (args.shard) query.set("shard", args.shard);
     if (args.surfaceOnly) query.set("surface", "only");
     else if (args.surface) query.set("surface", "1");
     for (const [param, value] of Object.entries(args.surfaceParams)) {
