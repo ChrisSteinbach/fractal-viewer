@@ -1306,7 +1306,9 @@ uniform float uBalloonFar;
     //
     // (a) 20k near-boundary exterior samples per system, drawn uniformly in
     //     the bailout ball and kept where |DE| < 0.02 — the whole surface,
-    //     pose-free:
+    //     pose-free. Unmoved by fr-azjk (it never fits a marching ball),
+    //     but NOT reproducible from any harness in the repo either, so
+    //     read it as a dated record rather than a re-runnable figure:
     //       mandelboxClassic  1 link  was [0.152 0.291 0.832]  0.9% clamped
     //                                 now  IDENTICAL (same expression)
     //       foldChain         2       was [0.108 0.180 0.716]
@@ -1317,10 +1319,20 @@ uniform float uBalloonFar;
     //                                 now [0.215 0.333 1.000] 15.8% clamped
     //
     // (b) chain-speckle.harness.ts's own fixtures, sampled at the PIXELS a
-    //     camera actually hits from its pose:
+    //     camera actually hits from its pose. TWO READINGS, because that
+    //     sheet's marching ball moved under it (fr-azjk: fitMarchRadius
+    //     used to threshold a distance estimate on a grid, read high, and
+    //     therefore drew these objects smaller than they are). The
+    //     pre-fr-azjk pair is what established the CLAIM:
     //       1 link  was [0.125 0.230 0.757]  now IDENTICAL, 3.99% clamped
     //       2 links was [0.083 0.132 0.313]  now [0.166 0.265 0.626], 1.9%
     //       6 links was [0.043 0.072 0.205]  now [0.256 0.431 1.000], 8.6%
+    //     and this is what a run prints TODAY, at the corrected framing —
+    //     the sheet computes the clamp share itself now (fr-8fii) rather
+    //     than leaving it to be quoted from a run nobody can repeat:
+    //       1 link  [0.149 0.259 1.000]   6.78% clamped
+    //       2 links [0.228 0.430 1.000]  10.59%
+    //       6 links [0.317 0.710 1.000]  31.44%
     //
     // WHAT BOTH AGREE ON, and it is the claim: n = 1 is unchanged to the
     // bit, and the SYSTEMATIC per-link collapse is gone. The old medians
@@ -1335,12 +1347,31 @@ uniform float uBalloonFar;
     // not a property this normalizer has — what it has is the absence of a
     // per-link trend. Where a given chain lands is the chain's business.
     //
-    // The disclosed cost is the clamp: 1.9-8.6% of the pixels a camera
-    // actually hits at six links (a); up to 15.8% over the whole surface
-    // (b). The longest-surviving orbits — the deepest creases — share the
+    // The disclosed cost is the clamp, and fr-8fii CORRECTED IT UPWARD:
+    // 6.78 / 10.59 / 31.44% of the pixels a camera actually hits at one /
+    // two / six links (b), up to 15.8% over the whole surface (a). This
+    // comment used to read "1.9-8.6% ... at six links (a); ... whole
+    // surface (b)", which was wrong three ways at once — the two
+    // population labels were swapped against the lists above, 1.9% is the
+    // TWO-link row rather than anything at six, and the pixel figures
+    // predate fr-azjk's marching-ball correction, which is what moved
+    // them. A smaller object inside a larger frame spends its hit pixels
+    // on the SILHOUETTE, where orbits escape early; the corrected frame
+    // fills with interior pixels whose orbits survive the budget, so the
+    // clamp share rose with everything else in that sheet.
+    //
+    // The longest-surviving orbits — the deepest creases — share the
     // ramp's top with the never-escaped ones. A better trade than the whole
     // object sharing its bottom, and the number to beat if anyone revisits
-    // this with a normalizer that does not clamp.
+    // this with a normalizer that does not clamp. Two measured mitigations
+    // from the same run: the RAW integer count clamps the identical pixels
+    // (6.78 / 10.61 / 31.44%), so this is the coordinate's own saturation
+    // and not something fr-7u8t.8's smoothing introduced; and box-averaged
+    // over 16 sub-samples the rows read 0.16 / 0.00 / 0.00%, so the flat
+    // top-of-ramp PATCHES are a one-sample artifact that the 8-sample
+    // settle both engines ship (fr-vpbq, fr-jf9y) dissolves. Averaging a
+    // pinned sample with an unpinned one does not recover what the clamp
+    // discarded — but it is not a third of the object painted one colour.
     //
     // fr-j231: A SECOND INTERPOLANT, because which one reads the terminal
     // radius depends on the link that PRODUCED it. A fold grows by a

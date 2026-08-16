@@ -489,18 +489,34 @@ and UI**, so the interesting math is unit-tested without a browser:
     identical to the bit (the same expression), and the SYSTEMATIC
     per-link collapse gone — but not on whether the result is flat, so
     "no per-link trend" is what this normalizer buys, not
-    chain-invariance. Cost is the clamp: 1.9-8.6% of really-hit pixels at
-    six links, up to 15.8% over the whole surface. THE PIXEL-POPULATION
+    chain-invariance. Cost is the clamp, and fr-8fii moved it a long way:
+    6.78 / 10.59 / 31.44% of really-hit pixels at one / two / six links,
+    up to 15.8% over the whole surface. The 1.9-8.6% this line used to
+    quote was wrong three ways — the two populations' labels were swapped
+    where `surface-material.ts` records them, 1.9% is the TWO-link row
+    rather than anything at six, and the pixel figures predate fr-azjk.
+    THE PIXEL-POPULATION
     ROW IS POSE-DEPENDENT AND ITS POSE MOVED (fr-azjk): `chain-speckle`
     fits its marching ball to the set's reach, that fit was inflated by a
     halo of near-boundary escapers, and on the corrected fit the shipped
     normalizer's median trap reads 0.430 at two links and 0.710 at six
     against the recorded 0.265 and 0.431. Same direction, same claim — no
     per-link collapse — measured on an object that is no longer drawn
-    smaller than it is. The convention
-    `core:"bulb"` always used)
-    with rings/sheets over the orbit's
-    closest approaches — the descent cores' colors-only convention.
+    smaller than it is, and the clamp share rose for the same reason the
+    median did: a smaller object in a larger frame spends its hit pixels
+    on the SILHOUETTE, where orbits escape early, and the corrected frame
+    fills with interior pixels whose orbits survive the budget. The sheet
+    PRINTS that share now rather than leaving it to be quoted (fr-8fii —
+    it was unfalsifiable for one release), and the same run bounds it
+    twice: the raw integer count clamps the identical pixels (6.78 /
+    10.61 / 31.44%), so the saturation is the coordinate's own and not
+    fr-7u8t.8's smoothing, and box-averaged over 16 sub-samples the rows
+    read 0.16 / 0.00 / 0.00%, so the flat top-of-ramp PATCHES are a
+    one-sample artifact the 8-sample settle (fr-vpbq, fr-jf9y) dissolves.
+    The trap drives COLOR ONLY (the convention
+    `core:"bulb"` always used), with rings/sheets over the orbit's
+    closest radial / y-plane approaches — the descent cores' colors-only
+    convention.
     `core:"bulb"` (fr-7u8t.9) is the escape core's SIBLING, one formula
     over: `bulb-de.ts`'s `estimateBulbDistance` — the forward triplex-power
     orbit `y <- M V(y) + y_0` with the Böttcher log estimate
