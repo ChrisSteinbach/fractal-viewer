@@ -556,8 +556,10 @@ and UI**, so the interesting math is unit-tested without a browser:
     sharing `GpuMap4` and the affine4 tail; no stage-2 B&B emission by
     the 3D measured verdict, and `lens:true` wraps either 4D core in
     `descendLens4`'s branch sweep (fr-rsp6 phase 2B — the appended
-    lens4 params block at 464..559, `SURFACE_GPU_PARAMS4_LENS_BYTES`
-    560, packed exactly when the DE carries a `foldFinal`; the old
+    lens4 params block at 464..575, `SURFACE_GPU_PARAMS4_LENS_BYTES`
+    576 — 464..559 as fr-rsp6 shipped it, plus fr-s9ll's `lens4Fold`
+    quartet at 560; nothing follows the block, so it grew in place —
+    packed exactly when the DE carries a `foldFinal`; the old
     "4D lens throws" rule is gone). Bench legs fold4Boxfold/Mandelbox/
     Kaleido/Slab + a fold4 compute-frame leg pin it. A `mapsUniform`
     codegen option (fr-b72d probe) moves the 4D cores' maps binding to a
