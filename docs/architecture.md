@@ -744,6 +744,26 @@ which is what SOLID mode already is. What the slab buys over Solid is
 analytic detail with no grid ceiling, and the interesting regime is
 thin-to-medium.
 
+"Affine maps take segments to segments" is the whole of that argument, and
+one fold family breaks it: the spherefold's MID branch is a sphere
+inversion, which bends the segment into a circular arc, and bounding an arc
+by its chord is unsound in both directions. The estimator meets that
+(fr-v7ca) by carrying a CAPSULE rather than a segment — `(q, e, rho)`, the
+segment thickened by a ball, exact until the first crossing and a pure ball
+from there down, since a ball is the one region an inversion moves exactly
+(Möbius takes balls to balls). Every affine branch moves `rho` by its own
+`sigma_max`, which is precisely the reciprocal of what the chain scale
+multiplies in, so the world-space slack is invariant under all of them: the
+crossing's direction-blindness is transported, never compounded. It stays in
+the CPU oracle on purpose. Measured against the one-line alternative
+`max(0, DE(p) − h)` on the systems it exists for, the capsule shares
+0.78-0.91 of its pixels with that alternative — where a real segment slab
+shares 0.27-0.57 — and cuts its bound overcharge only from 4-335x to
+1.1-1.7x, for 2-8x the work; so the WGSL cores carry no slack register and
+the app's thickness row stays off for sphere-folding systems, which is what
+`slabExact4` gates. A boxfold-only system is unaffected in either direction:
+`rho` never leaves 0 there and the exact slab descends byte for byte.
+
 The escape-time complement carries up with it (fr-vag4), and almost none of
 it is new algebra. `src/fractal/escape-de-4d.ts` is `escape-de.ts` over 4D
 points: everything structural about the chain — cycling rather than chaining,

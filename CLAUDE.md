@@ -489,6 +489,25 @@ and UI**, so the interesting math is unit-tested without a browser:
     `segmentRadius` in place of every `|q|`, and `chainScale · |e| <= h`
     caps what the bound can lose at every level. `null`/zero — the default
     and the shipped slider position — is the point query value for value.
+    A SPHEREFOLD OR MANDELBOX BASE MAP NO LONGER REFUSES ONE (fr-v7ca): the
+    chain carries a CAPSULE `(q, e, rho)`, exact until the first spherefold
+    MID crossing and a pure BALL from there down (`inversion.ts`'s Möbius
+    `inversionBallScale`, capped by the mid cell's own image ball), with the
+    public entries flooring the answer at the cheap `DE(p) − h` — a second
+    descent, run under the cutoff `slab + h` where it cannot matter. `rho`
+    is identically 0 on a boxfold-only system, so the EXACT slab and every
+    point query stay byte-identical. `slabExact4` now means EXACT and
+    `slabSupported4` means ANSWERED; only a spherefold/mandelbox FINAL LENS
+    is refused (its crossing lands before depth 0, where the capsule IS the
+    ball form). NO RENDERER TAKES IT, measured rather than pending: the
+    capsule shares 0.78-0.91 of its pixels with the ball form where a real
+    slab shares 0.27-0.57, cuts that form's bound overcharge only from
+    4-335x to 1.1-1.7x, and costs 2-8x — so `surface-de-gpu.ts`,
+    `surface-compute.ts` and main.ts all still gate on `slabExact4`, and a
+    crossing-depth instrument was never needed (branch enumeration is
+    unconditional, so a mid-crossed chain exists at depth 0 on every map and
+    crossing only LOWERS a certificate). Evidence:
+    `scripts/slab-ball-slack.harness.ts`.
   - `surface-de-gpu.ts` — WGSL fold-DE compute kernel (fr-q1f8 spike, gated
     in by fr-ck0w's occupancy verdict; app integration fr-tzdg): mirrors
     `estimateDistance`'s refine=false fold path term for term (the

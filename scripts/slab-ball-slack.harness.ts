@@ -1,15 +1,14 @@
 /**
- * WHAT THE CHEAP SLAB COSTS: BALL SLACK AGAINST THE EXACT SEGMENT (fr-v7ca).
+ * WHAT THE SLACK SLAB COSTS, AND WHAT IT BUYS (fr-v7ca).
  *
- * `surface-de-4d.ts` REFUSES fr-wa6o slab queries — `halfExtent`, thickness
- * `h > 0` — for any 4D system whose fold set includes a spherefold or a
- * mandelbox (`slabExact4`). The reason is sound and not negotiable: the
- * spherefold MID branch is a sphere inversion, an inversion takes the slab's
- * SEGMENT to a circular ARC, and min-radius-over-chord is not
- * min-radius-over-arc in either direction, so the segment certificate stops
- * being a lower bound. Box-fold-only systems keep the exact segment slab.
- * Two candidate lifts stand open, and this sheet exists to pick between them
- * with numbers rather than with taste:
+ * `surface-de-4d.ts` used to REFUSE fr-wa6o slab queries — `halfExtent`,
+ * thickness `h > 0` — for any 4D system whose fold set includes a spherefold
+ * or a mandelbox. The reason was sound and is unchanged: the spherefold MID
+ * branch is a sphere inversion, an inversion takes the slab's SEGMENT to a
+ * circular ARC, and min-radius-over-chord is not min-radius-over-arc in
+ * either direction, so a plain segment certificate there is unsound, not
+ * merely loose. Two lifts stood open, and this sheet exists to decide
+ * between them with numbers rather than with taste:
  *
  *   (A) THE BALL-SLACK FORM. `slabDE(p, h) = max(0, DE(p) - h)` over the
  *       ordinary POINT estimator. Sound by the triangle inequality in one
@@ -27,156 +26,124 @@
  *       territory fr-b72d/fr-d0nn measured at 2.2x for the `ext` vec4 — its
  *       own codegen variant, its own soundness tests, its own bench fixture.
  *
- * WHY A BOXFOLD-ONLY SYSTEM ANSWERS A SPHEREFOLD QUESTION, which is the one
- * thing to be convinced of before reading a single number below. The two
- * arms this sheet renders are the two ENDPOINTS of form (B):
+ * THE FIRST RUN OF THIS SHEET COULD ONLY BRACKET (B), and said so. On a
+ * BOXFOLD-ONLY system the two arms it renders are (B)'s two ENDPOINTS —
+ * EXACT is (B) with no mid crossing ever (`rho` never leaves 0, its ceiling)
+ * and BALL is (B) with the crossing at DEPTH 0 (`chainScale · rho_d = h`
+ * exactly, its floor) — so the EXACT-vs-BALL gap is the full span of what
+ * (B) could ever buy, and where inside it a real spherefold system falls was
+ * the whole question. (B) HAS SINCE BEEN BUILT (`descendFold4`'s SLACK
+ * section), so sections 4 measures it directly and the bracket is closed.
  *
- *   - EXACT (`estimateDistance4Refined(de, q, 0, halfExtent)`, the shipped
- *     segment machinery) is (B) with NO mid crossing ever — a boxfold branch
- *     inverse is a per-axis reflection ± translation, so `e` is transported
- *     exactly at every level and `rho` never leaves 0. That is (B) at its
- *     ceiling.
- *   - BALL (form (A)) is (B) with the crossing at DEPTH 0. The slack is
- *     carried down as `rho_d = h · prod(1/sigma_min)` and every certificate
- *     is scaled back out by `chainScale = prod(sigma_min)`, so
- *     `chainScale · rho_d = h` exactly: a ball adopted at the query and a
- *     subtraction of `h` at the very end are the same number. The beam's
- *     SELECTION survives that too — the shift is the same `h` on every
- *     chain, whatever its path, so the argmin is unmoved and the two are the
- *     same descent and not merely the same value.
+ * ================================ THE VERDICT ================================
  *
- * A real spherefold system lands BETWEEN them, at a position set by how deep
- * its first mid crossing is. So the EXACT-vs-BALL gap measured here is the
- * FULL SPAN of form (B), and an upper bound on what (B) could ever buy.
- * (What this sheet does NOT measure is where inside that span a given
- * spherefold system actually falls: `FoldFrontierTap4` reports candidates
- * but not branch INDICES, and deciding the mid region here would mean a
- * second copy of the branch algebra in a file that has no business owning
- * one. The bracket is the honest instrument.)
+ * FORM (B) IS REAL, SOUND, AND NOT WORTH A KERNEL. It lands next to form (A),
+ * which is where the first run predicted it would — and the prediction now has
+ * a STRUCTURAL reason behind it as well as two systems' worth of numbers.
+ *
+ * THE STRUCTURAL REASON, which is why two systems are enough. Branch
+ * enumeration is UNCONDITIONAL: the descent tries all three sphere branches at
+ * EVERY level, depth 0 included, on every map. So a mid-crossed chain always
+ * exists from the first level, and crossing only ever LOWERS a chain's
+ * certificate — which makes the crossed chain more likely, never less, to own
+ * the final min. There is therefore no such thing as a spherefold system whose
+ * first mid crossing is deep, and the "crossing-depth instrument" the first run
+ * named as a wake condition would have measured a constant. What was left to
+ * measure was whether the crossed chain actually wins, and it does, at every
+ * thickness that matters, on both systems below.
+ *
+ *  1. THE PICTURE PUTS (B) NEXT TO (A), and this is the cleanest number on
+ *     the sheet because it is a WITHIN-ROW comparison. Hit-mask IoU of the
+ *     two arms against each other, `IoU(S, B)`: 0.912 -> 0.783 across the
+ *     slider on the SHARP system (`mixedFoldTrio4`) and 0.766 -> 0.620 on the
+ *     smooth one. Section 1 measures the same quantity where a real slab
+ *     exists — `IoU(E, B)` — and gets 0.27 to 0.57. Where a true slab shares
+ *     roughly a third to a half of its pixels with the ball form, (B) shares
+ *     four fifths.
+ *
+ *  2. AS A BOUND IT RECOVERS A SLIVER OF THE GAP. `charge/worth`, the ball
+ *     form's overcharge, is 4.1-15.8x on the three fold controls and 117-335x
+ *     on `sixteenCellFlake` when the denominator is a REAL slab. Against
+ *     (B) as the denominator it is 1.5-1.7x on the mixed trio and 1.1-1.5x on
+ *     the spherefold pair. In absolute terms at the slider's own ceiling, (B)
+ *     keeps 0.612 / 0.583 of the point bound where (A) keeps 0.422 / 0.365 —
+ *     better, and nowhere near the 0.850-0.997 every exact control keeps.
+ *     AND THE FIXTURES ARE NOT THE EXPLANATION: `boxfoldLens4` is THINNER in
+ *     `w` than either slack system (wSupport 0.070 of visR against 0.130 and
+ *     0.174) and still overcharges 10.3-59.6x, so 1.1-1.7x is (B)'s own
+ *     ceiling here and not an artifact of a thin fixture.
+ *
+ *  3. IT COSTS 2-8x. Same panel, same pose, `ms S` against `ms B`: 10.3-16.8s
+ *     against 4.2-5.0s on the mixed trio (2.1-3.4x, and 2.1-3.4x its own
+ *     `h = 0` baseline), 297-770ms against 92-155ms on the spherefold pair.
+ *     Two descents is the honest price of the entry-level ball floor, and the
+ *     capsule's own frontier work is the rest. A kernel would pay that twice
+ *     over — the second descent AND a per-slot f32 in the register-pressure
+ *     band fr-b72d/fr-d0nn measured at 2.2x for the `ext` vec4.
+ *
+ *  4. SOUNDNESS AND THE FLOOR BOTH HOLD, which is what makes the verdict a
+ *     COST verdict rather than a correctness one. 0 violations of the true
+ *     segment distance in 4800 (query, thickness, form) checks; 0 of 2400
+ *     queries where (B) fell below `DE(p) - h`, the floor its public entry
+ *     promises; 0 where `max(0, S) < B`. (B) is never worse than (A). It is
+ *     just barely better.
+ *
+ *  5. AND SECTIONS 1-3 REPRODUCE THE PRE-LIFT SHEET EXACTLY, which is the
+ *     regression check that matters: `rho` never leaves 0 on a
+ *     {@link slabExact4} system, so the EXACT arm descends byte for byte.
+ *     Every figure the sections below print for the four boxfold controls is
+ *     the figure the first run printed.
+ *
+ * SO: (B) SHIPS IN THE CPU ORACLE AND NOWHERE ELSE. `surface-de-4d.ts`
+ * answers spherefold and mandelbox BASE maps (only a non-affine FINAL lens is
+ * still refused — `slabSupported4`, where the crossing lands before depth 0
+ * and (B) IS (A) exactly), while `surface-de-gpu.ts`'s packer,
+ * `surface-compute.ts`'s pipeline pick and main.ts's thickness row all still
+ * gate on `slabExact4`. The capability stops at the oracle deliberately: on
+ * these numbers a kernel mirror buys 1.1-1.7x of bound and four fifths of the
+ * same picture for 2-8x the work and a frontier register. This sheet is what
+ * that decision rests on, and it is kept RUNNABLE rather than summarized —
+ * which is the reason (B) stays in the oracle at all.
+ *
+ * WHAT WOULD REOPEN IT is no longer an instrument, because the instruments
+ * are spent: a THICKNESS CAP is the one design this sheet has never scored.
+ * (A) tracks a real slab wherever `h / DE` stays small — section 2's whole
+ * point — and that ratio is knowable from a cheap CPU probe before any render
+ * (`escape-de.ts`'s pre-scale method one family over: measure the budget
+ * first, then pick). A capped (A) needs no register, no second descent and no
+ * new WGSL variant, which is exactly the shape of the thing that could ship.
+ * Named, not recommended: nothing has asked for it.
  *
  * THE INSTRUMENT is `de-preview.ts`'s shared CPU marcher — no ninth marcher,
  * and the two shading terms that read the marcher's own STATISTICS rather
  * than the object (the step-count AO stand-in, the cone-traced shadow) are
  * both OFF, because the arms differ in step count by construction and a
- * comparison sheet must differ only in the formula. Four systems, all
- * `slabExact4` so the EXACT control exists: a pure-boxfold pair (the 81-branch
- * 4D fold frontier), a boxfold + two affine maps (the mixed frontier), a
- * boxfold FINAL lens over an affine 4D base (`descendLens4`), and the shipped
- * `sixteenCellFlake` preset (the plain affine ladder — the shape the slice
- * slider actually runs on today). One fixed pose per system, fitted once to
- * the widest slab so every row is the same camera. Plus one SPHEREFOLD row,
- * where no EXACT control exists — that being the whole point of the bead —
- * so the sheet shows the actual deliverable and not only its control.
+ * comparison sheet must differ only in the formula. Sections 1-3 run four
+ * `slabExact4` systems so the EXACT control exists: a pure-boxfold pair (the
+ * 81-branch 4D fold frontier), a boxfold + two affine maps (the mixed
+ * frontier), a boxfold FINAL lens over an affine 4D base (`descendLens4`),
+ * and the shipped `sixteenCellFlake` preset (the plain affine ladder — the
+ * shape the slice slider actually runs on today). Section 4 runs the two
+ * `slabExact4` FALSE systems (B) exists for, deliberately one of each KIND:
+ * `mixedFoldTrio4` is SHARP (two 81-branch boxfolds under one spherefold) and
+ * `spherefoldPair4` is SMOOTH. One fixed pose per system, fitted once to the
+ * widest slab so every row is the same camera.
  *
- * WHAT IT CONCLUDED: NEITHER — KEEP THE REFUSAL. Form (A) does not render a
- * slab, and form (B)'s advantage is unmeasurable from outside the descent
- * and collapses structurally on exactly the systems the lift is for. The
- * numbers, in the order the sections establish them:
- *
- *  1. (A) IS A DILATION, AND THE PICTURES SAY IT FIRST. On
- *     `sixteenCellFlake` the exact slab is a crisp Sierpinski-shaped fractal
- *     at EVERY thickness — hit rate 17.64% -> 20.40% across the whole sweep
- *     — while (A) is a smooth lobed blob by slider 0.10, a featureless dark
- *     ball by 0.35, and the bare marching ball by 0.50 (44.36% of rays,
- *     steps/px 0.0: every ray hits on entry). `boxfoldTrio4` and
- *     `boxfoldPair4` hold their structure to slider ~0.10 and are smooth
- *     capsules by 0.35. Coverage says the same: at slider 0.50 (A) hits
- *     2.72 / 1.77 / 3.66 / 2.22x as many rays as the exact slab.
- *
- *  2. ON TWO OF THE FOUR CONTROLS, (A) IS FURTHER FROM THE EXACT SLAB THAN
- *     DOING NOTHING AT ALL. Hit-mask IoU against EXACT at slider 0.50 —
- *     BALL vs POINT: 0.360/0.035 and 0.566/0.136 (the two base-fold systems,
- *     where BALL wins by 10x and 4x), but 0.273/0.276 on the boxfold LENS
- *     and 0.451/0.882 on the flake, where POINT wins — and on the flake
- *     POINT wins at every stop from 0.05 up. In marched DEPTH, POINT wins on
- *     all four: mean |dt| against EXACT at slider 0.50 is 0.112 / 0.286 /
- *     0.080 / 0.927 world units for BALL against 0.037 / 0.167 / 0.004 /
- *     0.041 for POINT — 16.9-68.8% of the marching-ball radius against
- *     0.8-15.2%. (A) does not merely add a silhouette rind; it floats the
- *     whole surface `h` toward the camera.
- *
- *     THE DEPTH COLUMN CARRIES ITS OWN CAVEAT AND THE TABLE PRINTS IT: those
- *     means are taken over COMMONLY-hit pixels, and at slider 0.50 POINT
- *     shares only 17 / 199 / 89 / 1626 pixels with EXACT against BALL's
- *     478 / 1464 / 321 / 1844. On three systems POINT wins the depth
- *     comparison partly by declining to draw — its shared pixels are the
- *     ones the zero-thickness slice already had, i.e. the easy ones. On
- *     `sixteenCellFlake`, where the two populations are comparable (1626
- *     against 1844), the comparison is clean and POINT still wins by 23x.
- *
- *  3. IT ADDS RIND WHERE THE REAL SLAB ADDS STRUCTURE. Chebyshev distance
- *     from each ADDED pixel to the arm it is added to, at slider 0.50: 61% /
- *     46% / 71% of (A)'s additions sit within 2px of EXACT's own hits,
- *     against 23% / 26% / 57% for the genuine slab's additions over POINT.
- *     The fourth system INVERTS the statistic (27% against 88%) and that is
- *     a worse result, not a better one: (A) has covered the whole ball
- *     there, so its additions are nowhere near EXACT's hits at all.
- *
- *  4. AS A BOUND IT OVERCHARGES BY 4x TO 333x, and the mechanism is
- *     DIRECTION-BLINDNESS. The segment reaches only in `w`; (A) has to
- *     assume every direction. Median estimate as a fraction of
- *     the point query at slider 0.50: the exact slab keeps 0.964 / 0.850 /
- *     0.990 / 0.997 of it — a true slab costs the bound 0.3-15% — while (A)
- *     keeps 0.600 / 0.381 / 0.713 / 0.000, i.e. charges 29-100% for the same
- *     thickness, an overcharge of 11.1 / 4.1 / 29.8 / 333.3x (the
- *     `charge/worth` column, and 4.1-335.5x over the whole sweep).
- *     Volumetrically, (A) returns 0 where the segment returns
- *     something positive over 8.0% / 21.5% / 3.5% / 100% of the marching
- *     ball. The whole of (A)'s behaviour is ONE dimensionless number — `h`
- *     over the DE's own typical value, which is exactly what the `med B/P`
- *     column is one minus — and `h` is `slider · wSupport`, so the systems
- *     that break are the ones that are genuinely THICK in `w`. Those are the
- *     systems a slice-thickness slider exists for.
- *
- *  5. BOTH FORMS ARE SOUND, WHICH SETTLES NOTHING. 0 violations of the true
- *     segment distance in 9600 (query, thickness, form) checks against a
- *     12000-point seeded cloud, at every thickness including the ones past
- *     the slider's ceiling. "Sound in one line" is true of (A) and is not
- *     the same claim as "renders the slab".
- *
- *  6. AND (B) CANNOT BE JUSTIFIED FROM OUTSIDE THE DESCENT. Its ceiling is
- *     real — the EXACT column above IS that ceiling, and it is excellent —
- *     but it is reached only where no mid crossing happens, i.e. on the
- *     systems that already have the exact slab. Every system the lift is for
- *     crosses the mid branch; that is what `slabExact4` refuses on, and each
- *     crossing drops (B) toward (A). This sheet BRACKETS (B) between its two
- *     arms and the bracket is wide (IoU 0.27-0.57 against 1.0; bound
- *     overcharge 4-333x), so where inside it a real
- *     spherefold system lands is the whole question — and it is not
- *     answerable here.
- *
- * WHAT WOULD REOPEN IT, both cheap next to a frontier register:
- *
- *   - THE CROSSING-DEPTH INSTRUMENT. Report the depth of the FIRST
- *     spherefold MID crossing per query (`FoldFrontierTap4` reports
- *     candidates but not branch INDICES today, which is why this sheet
- *     cannot). Typically depth 0-1 makes (B) identically (A) and the refusal
- *     permanent; deep makes (B) worth its register, and this sheet's EXACT
- *     column is then the prize.
- *   - A PER-SYSTEM THICKNESS CAP. (A) tracks the exact slab wherever
- *     `h / DE` stays small, and that ratio is knowable from a cheap probe
- *     BEFORE any render (`escape-de.ts`'s pre-scale method one family over:
- *     measure the budget on the CPU, then pick). A capped (A) is a third
- *     design and not one of the three this sheet was asked to choose
- *     between, so it is named rather than recommended.
- *
- * ONE CAVEAT THE VERDICT CARRIES, in the direction of caution. The
- * spherefold pair in section 4 is SMOOTH — shells and lobes, no fine
- * structure, `qjulia-de.ts`'s finding one map over — so its panels cannot
- * show the smoothing failure the boxfold controls show, and its clean-looking
- * sweep (3.56% -> 27.67% of rays over the slider, 0 exhausted rays, a
- * coherent object at every stop) must not be read as (A) passing. A
- * dilation of a smooth object is a smooth object. What section 4 does
- * establish is the negative: the estimators DO throw there today (asserted),
- * so the refusal is real and (A) is the only arm that can draw anything at
- * all.
+ * ONE CAVEAT THE VERDICT CARRIES, in the direction of caution. The spherefold
+ * pair is SMOOTH — shells and lobes, no fine structure, `qjulia-de.ts`'s
+ * finding one map over — so its panels cannot show the smoothing failure the
+ * boxfold controls show, and its sweep must not be read as (B) passing. That
+ * is precisely why `mixedFoldTrio4` sits beside it: sharp, and on the slack
+ * path, so the panels answer the question the smooth row cannot.
  */
 import {
+  analyzeSurfaceSystem4,
   buildSurfaceDE4,
   deHasFolds4,
   estimateDistance4,
   estimateDistance4Refined,
   slabExact4,
+  slabSupported4,
 } from "../src/fractal/surface-de-4d";
 import type { SurfaceDE4 } from "../src/fractal/surface-de-4d";
 import { runChaosGame4 } from "../src/fractal/chaos-game-4d";
@@ -194,6 +161,17 @@ import type { DistanceEstimator, PanelStats, Vec3 } from "./de-preview";
  * the 81-branch pair costs ~120us per DE eval, and 44 panels of it is the
  * whole sheet's wall. */
 const PANEL = 96;
+/**
+ * Section 4's panel edge, narrower than the global {@link PANEL} on purpose.
+ * That section renders 28 panels rather than section 1's 13-per-system, and
+ * its SLACK arm honestly costs TWO descents per query (the capsule plus the
+ * entry-level ball floor under it), so 96 would push one `it` past ten
+ * minutes on the mixed trio alone. Nothing here compares across panel sizes —
+ * every number in section 4 is a within-section comparison at one edge — so
+ * the drop costs no conclusion. Sections 1-3 keep {@link PANEL} unchanged, so
+ * their rows stay comparable with the ones the module header quotes.
+ */
+const PANEL_SLACK = 72;
 /** Points in the seeded 4D chaos game each system's framing is fitted from,
  * and the cloud section 3 measures the true segment distance against. */
 const CLOUD_POINTS = 12000;
@@ -220,7 +198,7 @@ const QUERY_SEED = 0xb0a7;
 const SLIDER_STOPS = [0.05, 0.1, 0.2, 0.35, 0.5, 1.0];
 /** The panel slider's own ceiling. */
 const SLIDER_MAX = 0.5;
-/** Queries per (system, thickness) in sections 2 and 3. */
+/** Queries per (system, thickness) in sections 2, 3 and 4. */
 const QUERIES = 200;
 /** `renderPreview`'s default eye offset, restated because the depth columns
  * need the eye position the marcher used. */
@@ -370,6 +348,86 @@ function spherefoldPair4(): Transform[] {
   ];
 }
 
+/**
+ * THE STRUCTURED NON-EXACT SYSTEM: `boxfoldPair4`'s two maps verbatim plus
+ * one spherefold, so `slabExact4` is FALSE and every slab query below takes
+ * fr-v7ca's slack path — while the two 81-branch boxfolds keep the object
+ * SHARP. That combination is the whole reason this fixture exists.
+ * `spherefoldPair4` (the row this sheet already had) is smooth by nature, so
+ * it cannot show whether form (B) preserves structure where the ball form
+ * smears it; a mixed system can, and section 4 renders both.
+ *
+ * The three numbers were picked by measurement, in this order:
+ *
+ *  - `slabExact4` FALSE is structural — one non-affine base fold is enough,
+ *    and `slack` is then armed for the WHOLE descent, not merely the third
+ *    map's branches. So the spherefold does not have to dominate the object
+ *    to put the estimator on the path being measured.
+ *  - `analyzeSurfaceSystem4` ELIGIBLE (not degraded, not ineligible) needs
+ *    the composite fold bound `|w|·L_V·sigma_max` under 1: a spherefold's
+ *    `L_V` is the classic `fR²/mR²` = 4, so `4·0.6·0.2 = 0.48` clears it
+ *    with the same margin the two boxfolds have (`1·1·0.45`). Every map is
+ *    uniformly scaled, so anisotropy is exactly 1 and the status is
+ *    `eligible` rather than `degraded`.
+ *  - COST is what set the scale/weight pair, and it is not a small effect.
+ *    A first cut at `scale 0.2, weight 1` measured `lip = 0.8`, which pushed
+ *    `maxDepth` from 13 to 42 and a single 64px panel from 4.7s to 32.5s —
+ *    the descent prunes far less when the contraction is that slack.
+ *    `weight 0.6` buys the depth back and leaves the spherefold's own scale
+ *    large enough to contribute real geometry. Two further candidates
+ *    (`0.125/0.9` and `0.16/0.9`, both `lip <= 0.58`) render the same kind
+ *    of object at 2-2.5x the cost, so this one ships.
+ *
+ * MEASURED at PANEL 72: depth 13, marchR 1.120, 8.58% of rays hit at `h = 0`
+ * (23.53% at the slider's ceiling), 0 exhausted rays at every stop — a
+ * fold-shaped object in the same coverage band as the sheet's other
+ * controls, not a near-empty frame and not the whole marching ball.
+ *
+ * NO MANDELBOX HERE, and that is a COST decision rather than a matter of
+ * principle: a mandelbox base map is 243 branches against a boxfold's 81 and
+ * a spherefold's 3, which prices a 7-stop two-arm panel sweep out of this
+ * sheet's budget. The slack path a mandelbox takes is the spherefold's — the
+ * MID branch inversion is the same crossing — so what section 4 measures
+ * here is what it would measure there, more slowly.
+ */
+function mixedFoldTrio4(): Transform[] {
+  return [
+    ...boxfoldPair4(),
+    map4({
+      id: 2,
+      position: [0, 0.3, -0.3],
+      rotation: [0.2, 0.3, 0],
+      scale: [0.2, 0.2, 0.2],
+      w: { rotation: { zw: 0.4 } },
+      variations: [{ type: "spherefold", weight: 0.6 }],
+    }),
+  ];
+}
+
+/**
+ * A spherefold FINAL lens over one plain contracting base map — the ONE shape
+ * `slabSupported4` still refuses after fr-v7ca's lift, and the reason is
+ * structural rather than a gap: `descendLens4` crosses its lens inversion
+ * BEFORE depth 0, so the chain's slack ball is born isotropic and the capsule
+ * estimator degrades to `max(0, DE(p) - h)` — form (A) exactly, which this
+ * sheet measured and rejected. Modelled on `surface-de-4d.test.ts`'s
+ * `mandelboxFinal4` but written out here: a harness must not reach into a
+ * test file's fixtures. The SMALL weight is the same requirement every lens
+ * fixture in this project carries (`u = p/w` has to reach past the fold
+ * planes), though nothing below descends it — the refusal fires at the public
+ * entry, before any branch runs.
+ */
+function spherefoldLens4(): Transform {
+  return map4({
+    id: 99,
+    position: [0.05, 0.1, 0],
+    rotation: [0.3, 0, 0.2],
+    scale: [0.85, 0.85, 0.85],
+    w: { rotation: { yw: 0.2 } },
+    variations: [{ type: "spherefold", weight: 0.6 }],
+  });
+}
+
 interface SystemSpec {
   name: string;
   transforms: Transform[];
@@ -385,6 +443,18 @@ const SYSTEMS: SystemSpec[] = [
     final: boxfoldLens4(),
   },
   { name: "sixteenCellFlake", transforms: sixteenCellFlake(), final: null },
+];
+
+/**
+ * Section 4's two systems: both `slabExact4` FALSE, so both take fr-v7ca's
+ * slack path, and deliberately one of each KIND — the mixed trio is sharp
+ * (two 81-branch boxfolds under one spherefold) and the spherefold pair is
+ * smooth. A single row could not separate "form (B) keeps the structure"
+ * from "this object had none to lose".
+ */
+const SLACK_SYSTEMS: SystemSpec[] = [
+  { name: "mixedFoldTrio4", transforms: mixedFoldTrio4(), final: null },
+  { name: "spherefoldPair4", transforms: spherefoldPair4(), final: null },
 ];
 
 // ----------------------------------------------------------------- framing
@@ -467,8 +537,28 @@ function fitFrame(spec: SystemSpec): Frame {
 
 // -------------------------------------------------------------------- arms
 
-/** EXACT: the shipped segment machinery — form (B) with no mid crossing. */
-function exactArm(frame: Frame, h: number): DistanceEstimator {
+/**
+ * SLAB: the SHIPPED slab query, one call for both of this sheet's worlds —
+ * which is the whole point of fr-v7ca's lift, and why this arm is no longer
+ * named `exactArm`. `estimateDistance4Refined(de, q, 0, halfExtent)` now
+ * ANSWERS wherever `slabSupported4` holds, and the ESTIMATOR picks the path:
+ *
+ *  - On a `slabExact4` system (fold set at most {boxfold}) it is form (B)
+ *    with no mid crossing ever — the chain's slack `rho` never leaves 0,
+ *    every expression reduces to the segment machinery that shipped before
+ *    the lift, and the answer is byte-identical to it. That is (B) at its
+ *    ceiling, and sections 1-3's four systems are all of this kind.
+ *  - On a spherefold/mandelbox BASE-map system it is form (B)'s SLACK
+ *    capsule: exact segment threading down to the first spherefold MID
+ *    crossing, a ball of slack from there down, floored at the public entry
+ *    by form (A)'s own `DE(p) - h`. Section 4's two systems are of this kind.
+ *
+ * A row says for itself which it is — `describeFrame` prints `slabExact` per
+ * system — so no second arm and no second call site is needed to tell them
+ * apart. The one shape still refused is a spherefold/mandelbox FINAL lens
+ * (`slabSupported4`), asserted in section 4.
+ */
+function slabArm(frame: Frame, h: number): DistanceEstimator {
   const halfExtent: Vec4 | null = h > 0 ? [0, 0, 0, h] : null;
   return (p) =>
     estimateDistance4Refined(
@@ -740,7 +830,7 @@ describe("fr-v7ca: ball slack against the exact segment slab", () => {
       const ball: Arm[] = [];
       for (const stop of SLIDER_STOPS) {
         const h = stop * frame.wSupport;
-        exact.push(renderArm(frame, exactArm(frame, h), PANEL));
+        exact.push(renderArm(frame, slabArm(frame, h), PANEL));
         ball.push(renderArm(frame, ballArm(frame, h), PANEL));
       }
 
@@ -1005,91 +1095,313 @@ describe("fr-v7ca: ball slack against the exact segment slab", () => {
     expect(totalViolations).toBe(0);
   });
 
-  it("section 4: the deliverable — what form (A) draws on a spherefold system, where the estimators throw today", () => {
-    const spec: SystemSpec = {
-      name: "spherefoldPair4",
-      transforms: spherefoldPair4(),
-      final: null,
-    };
-    const frame = fitFrame(spec);
-    expect(slabExact4(frame.de)).toBe(false);
-    const at: Vec4 = [
-      frame.target[0],
-      frame.target[1],
-      frame.target[2],
-      frame.w0,
-    ];
-    // The refusal itself, asserted rather than quoted: this is the state of
-    // the world the recommendation is about.
-    expect(() => estimateDistance4(frame.de, at, [0, 0, 0, 0.1])).toThrow(
-      /slab queries are unsound/,
+  it("section 4: the deliverable — what form (B) draws where form (A) was the only arm", () => {
+    // THE ONE REFUSAL THAT SURVIVES, asserted rather than quoted: this sheet
+    // is about the state of the world, and the world moved. A spherefold or
+    // mandelbox FINAL lens still throws, because `descendLens4` crosses its
+    // inversion BEFORE depth 0 — the chain's slack ball is born isotropic
+    // there and the capsule would BE `max(0, DE(p) - h)`, i.e. form (A),
+    // which is what the rest of this file measured and rejected. A lift that
+    // is identically a form already refused is not a lift.
+    const lensDe = buildSurfaceDE4([map4()], spherefoldLens4());
+    expect(slabSupported4(lensDe)).toBe(false);
+    // The point is irrelevant — the entries refuse before any branch runs.
+    const lensAt: Vec4 = [0.1, 0.2, 0.15, 0.05];
+    expect(() => estimateDistance4(lensDe, lensAt, [0, 0, 0, 0.1])).toThrow(
+      /slabSupported4/,
     );
     expect(() =>
-      estimateDistance4Refined(frame.de, at, 0, [0, 0, 0, 0.1]),
-    ).toThrow(/slab queries are unsound/);
+      estimateDistance4Refined(lensDe, lensAt, 0, [0, 0, 0, 0.1]),
+    ).toThrow(/slabSupported4/);
 
     const lines: string[] = [];
     lines.push("");
-    lines.push(describeFrame(spec.name, frame));
     lines.push(
-      "  Both public estimators THROW on a slab query here (asserted above)," +
-        " so BALL is the only arm that exists.",
+      `  S = the SHIPPED slab query (form (B)'s slack capsule, ball-floored);` +
+        ` B = form (A), max(0, DE - h); P = the point query.`,
     );
     lines.push(
-      "    slider       h  h/visR |  hit%  steps/px  exhausted |  IoU(B, h=0)   ms",
+      `  Both systems are slabExact4 FALSE, so S is the CAPSULE here and not` +
+        ` the segment machinery sections 1-3 exercise.`,
     );
+    lines.push(
+      `  Panels at ${PANEL_SLACK}px (see PANEL_SLACK); queries ${QUERIES} per` +
+        ` (system, thickness), seeded uniformly in the marching ball.`,
+    );
+    lines.push(
+      `  S IS NOT CLAMPED AT 0 and form (A) as written above IS, so the two` +
+        ` are compared under the same clamp (the S<B column);`,
+    );
+    lines.push(
+      `  S<0 counts where the shipped estimator returns a NEGATIVE value —` +
+        ` the query is nearer the set than h, which every marcher`,
+    );
+    lines.push(
+      `  reads as a hit exactly as it reads form (A)'s 0. S<P-h is the floor` +
+        ` itself, unclamped, which is what the entry actually promises.`,
+    );
+
     const stops = [0, ...SLIDER_STOPS];
-    const arms = stops.map((stop) =>
-      renderArm(frame, ballArm(frame, stop * frame.wSupport), PANEL),
-    );
-    stops.forEach((stop, i) => {
-      const h = stop * frame.wSupport;
-      lines.push(
-        "  " +
-          num(stop, 2, 8) +
-          (stop > SLIDER_MAX ? "*" : " ") +
-          num(h, 4, 7) +
-          num(h / frame.de.visibleBoundingRadius, 3, 8) +
-          " |" +
-          num(pct(arms[i].panel.hits, PANEL), 2, 6) +
-          num(arms[i].panel.steps / (PANEL * PANEL), 1, 10) +
-          cell(String(arms[i].panel.exhausted), 12) +
-          " |" +
-          num(iou(arms[0].hit, arms[i].hit), 3, 13) +
-          num(arms[i].panel.ms, 0, 6),
+    // Accumulated across BOTH systems and BOTH forms, so one number answers
+    // "did anything at all exceed the true segment distance".
+    let truthChecks = 0;
+    let truthViolations = 0;
+    /**
+     * THE BALL FLOOR'S GUARANTEE, and the one place this sheet had to be
+     * careful about what it was comparing. `estimateDistance4Refined`'s
+     * entry returns `max(capsule, DE(p) - h)` — UNCLAMPED — while form (A) as
+     * `ballArm` writes it (and as the module header states it) is
+     * `max(0, DE(p) - h)`. So there are two different questions:
+     *
+     *  - `floorViolations`: `S < DE(p) - h`, the floor the estimator itself
+     *    promises. MEASURED 0 in 2400, exactly, at every stop on both
+     *    systems.
+     *  - `clampedViolations`: `max(0, S) < B`, the like-for-like comparison —
+     *    is form (B) ever WORSE than form (A) once both are read the way a
+     *    marcher reads them. Also 0, and it is the honest form of "never
+     *    worse".
+     *
+     * The raw `S < B` count is neither of those and is NOT zero (246 of 2400
+     * on the first run of this section): every one of them is a query where
+     * `DE(p) - h < 0`, so B clamps to 0 while S returns the negative number
+     * — measured, the raw count equals the `S < 0` count exactly at every
+     * stop on both systems. That is a difference in CLAMP CONVENTION, not in
+     * the bound, which is why the `S<0` column is printed beside the floor
+     * rather than folded into it.
+     */
+    let floorChecks = 0;
+    let floorViolations = 0;
+    let clampedViolations = 0;
+
+    for (const spec of SLACK_SYSTEMS) {
+      const frame = fitFrame(spec);
+      // The row is on the SLACK path (not the exact segment one) and the
+      // estimators answer rather than throw — the two facts every number
+      // below is only meaningful under.
+      expect(slabExact4(frame.de)).toBe(false);
+      expect(slabSupported4(frame.de)).toBe(true);
+      // And that the system is one the mode would actually ENTER — a fixture
+      // the gate calls `degraded` would render a damped march and quietly
+      // measure something else. Asserted rather than asserted-in-a-comment,
+      // because `mixedFoldTrio4`'s scale/weight pair was chosen to clear it.
+      const eligibility = analyzeSurfaceSystem4(spec.transforms, spec.final);
+      expect(eligibility.status).toBe("eligible");
+
+      const slack = stops.map((stop) =>
+        renderArm(frame, slabArm(frame, stop * frame.wSupport), PANEL_SLACK),
       );
-    });
-    lines.push(
-      `  wrote ${writeContactSheet(
-        arms.map((a) => a.panel),
-        stops.length,
-        "slab-ball-slack-spherefold.png",
-      )}  (BALL at slider ${stops.join(", ")})`,
-    );
-    lines.push(
-      "  CAVEAT: this pair is SMOOTH, so its panels cannot show the smoothing" +
-        " failure the boxfold controls show.",
-    );
+      const ball = stops.map((stop) =>
+        renderArm(frame, ballArm(frame, stop * frame.wSupport), PANEL_SLACK),
+      );
+
+      lines.push("");
+      lines.push(describeFrame(spec.name, frame));
+      lines.push(
+        `  eligibility ${eligibility.status}` +
+          `  anisotropy ${eligibility.anisotropy.toFixed(3)}` +
+          `  stepScale ${eligibility.stepScale.toFixed(3)}`,
+      );
+      lines.push(
+        "  PANELS   (slider = the shipped slice-thickness knob, 0..0.50;" +
+          " * = past its max)",
+      );
+      lines.push(
+        "    slider       h  h/visR |  hit% S  hit% B |  st/px S  st/px B |" +
+          "  exh S |  IoU(S,B) IoU(S,S@0) IoU(B,B@0) |    ms S    ms B",
+      );
+      stops.forEach((stop, i) => {
+        const h = stop * frame.wSupport;
+        lines.push(
+          "  " +
+            num(stop, 2, 8) +
+            (stop > SLIDER_MAX ? "*" : " ") +
+            num(h, 4, 7) +
+            num(h / frame.de.visibleBoundingRadius, 3, 8) +
+            " |" +
+            num(pct(slack[i].panel.hits, PANEL_SLACK), 2, 8) +
+            num(pct(ball[i].panel.hits, PANEL_SLACK), 2, 8) +
+            " |" +
+            num(slack[i].panel.steps / (PANEL_SLACK * PANEL_SLACK), 1, 9) +
+            num(ball[i].panel.steps / (PANEL_SLACK * PANEL_SLACK), 1, 9) +
+            " |" +
+            cell(String(slack[i].panel.exhausted), 7) +
+            " |" +
+            num(iou(slack[i].hit, ball[i].hit), 3, 10) +
+            // Against each arm's OWN zero-thickness panel: how far the
+            // slider has moved the picture, per arm, on the same object.
+            num(iou(slack[i].hit, slack[0].hit), 3, 11) +
+            num(iou(ball[i].hit, ball[0].hit), 3, 11) +
+            " |" +
+            num(slack[i].panel.ms, 0, 8) +
+            num(ball[i].panel.ms, 0, 8),
+        );
+      });
+
+      // Row 1 SLACK, row 2 BALL, one column per stop, so each thickness's
+      // two arms sit one above the other exactly as section 1's sheet does.
+      const sheetFile =
+        spec.name === "mixedFoldTrio4"
+          ? "slab-slack-mixed.png"
+          : "slab-slack-spherefold.png";
+      lines.push(
+        `  wrote ${writeContactSheet(
+          [...slack.map((a) => a.panel), ...ball.map((a) => a.panel)],
+          stops.length,
+          sheetFile,
+        )}  (row 1 SLACK, row 2 BALL, at slider ${stops.join(", ")})`,
+      );
+
+      // ------------------------------------------------------ as a BOUND
+      const queries = ballQueries(frame, QUERIES);
+      const points = queries.map((q) =>
+        estimateDistance4Refined(
+          frame.de,
+          [q[0], q[1], q[2], frame.w0],
+          0,
+          null,
+        ),
+      );
+      lines.push(
+        "  AS A BOUND   (section 2's vocabulary, with S in the column E held" +
+          " there: charge/worth is the overcharge)",
+      );
+      lines.push(
+        "    slider       h  h/visR |  med S/P  med B/P  charge/worth |" +
+          "  med B/S  p10 B/S |  B=0,S>0    S>B",
+      );
+      const soundness: string[] = [];
+      soundness.push(
+        "  SOUNDNESS + THE BALL FLOOR   (truth = nearest distance from the" +
+          ` SEGMENT q ± (0,0,0,h) to the ${CLOUD_POINTS}-point cloud)`,
+      );
+      soundness.push(
+        "  slider  checks |  viol S  viol B |  med S/truth  med B/truth |" +
+          "  S<B  S<0  S<P-h  S>B",
+      );
+      for (const stop of SLIDER_STOPS) {
+        const h = stop * frame.wSupport;
+        const halfExtent: Vec4 = [0, 0, 0, h];
+        const slackRel: number[] = [];
+        const ballRel: number[] = [];
+        const ratios: number[] = [];
+        const relS: number[] = [];
+        const relB: number[] = [];
+        let collapsed = 0;
+        let tighter = 0;
+        let violS = 0;
+        let violB = 0;
+        let belowFloor = 0;
+        let negative = 0;
+        let belowClamped = 0;
+        queries.forEach((q, i) => {
+          const at: Vec4 = [q[0], q[1], q[2], frame.w0];
+          const s = estimateDistance4Refined(frame.de, at, 0, halfExtent);
+          const b = Math.max(0, points[i] - h);
+          if (points[i] > 0) {
+            slackRel.push(s / points[i]);
+            ballRel.push(b / points[i]);
+          }
+          if (s > 0) ratios.push(b / s);
+          if (b === 0 && s > 0) collapsed++;
+          if (s > b + 1e-12) tighter++;
+          // The three floor readings, see the counters' doc above. `S<B` is
+          // the raw comparison the two forms' own conventions produce,
+          // `S<0` is the clamp difference that explains it, and `S<P-h` is
+          // the floor the entry promises.
+          if (s < b - 1e-9) belowClamped++;
+          if (s < 0) negative++;
+          if (s < points[i] - h - 1e-9) belowFloor++;
+          // Both forms read the way a marcher reads them — the "never worse
+          // than form (A)" claim proper, with the clamp difference removed.
+          if (Math.max(0, s) < b - 1e-9) clampedViolations++;
+          const truth = nearestSegmentDistance4(frame.cloud, at, halfExtent);
+          if (s > truth + 1e-6) violS++;
+          if (b > truth + 1e-6) violB++;
+          if (truth > 0) {
+            relS.push(s / truth);
+            relB.push(b / truth);
+          }
+        });
+        ratios.sort((a, b) => a - b);
+        slackRel.sort((a, b) => a - b);
+        ballRel.sort((a, b) => a - b);
+        relS.sort((a, b) => a - b);
+        relB.sort((a, b) => a - b);
+        const worth = 1 - quantile(slackRel, 0.5);
+        const charge = 1 - quantile(ballRel, 0.5);
+        lines.push(
+          "  " +
+            num(stop, 2, 8) +
+            (stop > SLIDER_MAX ? "*" : " ") +
+            num(h, 4, 7) +
+            num(h / frame.de.visibleBoundingRadius, 3, 8) +
+            " |" +
+            num(quantile(slackRel, 0.5), 3, 9) +
+            num(quantile(ballRel, 0.5), 3, 9) +
+            num(worth > 0 ? charge / worth : NaN, 1, 14) +
+            " |" +
+            num(quantile(ratios, 0.5), 3, 9) +
+            num(quantile(ratios, 0.1), 3, 9) +
+            " |" +
+            num(collapsed / QUERIES, 3, 9) +
+            num(tighter / QUERIES, 3, 6),
+        );
+        soundness.push(
+          "  " +
+            num(stop, 2, 6) +
+            (stop > SLIDER_MAX ? "*" : " ") +
+            cell(String(QUERIES), 7) +
+            " |" +
+            cell(String(violS), 8) +
+            cell(String(violB), 8) +
+            " |" +
+            num(quantile(relS, 0.5), 3, 13) +
+            num(quantile(relB, 0.5), 3, 13) +
+            " |" +
+            cell(String(belowClamped), 5) +
+            cell(String(negative), 5) +
+            cell(String(belowFloor), 7) +
+            cell(String(tighter), 5),
+        );
+        truthChecks += QUERIES * 2;
+        truthViolations += violS + violB;
+        floorChecks += QUERIES;
+        floorViolations += belowFloor;
+      }
+      lines.push(...soundness);
+    }
+
     lines.push("");
     lines.push(
-      "  VERDICT — KEEP THE REFUSAL. (A) is a dilation, not a slab: it floats" +
-        " the marched surface h toward the",
+      `  ${truthViolations} violations of the true segment distance in` +
+        ` ${truthChecks} (query, thickness, form) checks.`,
     );
     lines.push(
-      "  camera, charges 29-100% of the bound where the exact segment charges" +
-        " 0.3-15%, and is FURTHER from the",
+      `  ${floorViolations} queries in ${floorChecks} where S fell below` +
+        ` P - h, the floor the entry promises (the S<P-h column, summed).`,
     );
     lines.push(
-      "  exact slab than doing nothing on two of four controls. (B)'s ceiling" +
-        " is the EXACT column and is worth",
+      `  ${clampedViolations} queries in ${floorChecks} where form (B) came` +
+        ` back WORSE than form (A) read the same way, max(0, S) < B.`,
     );
     lines.push(
-      "  having, but it is reached only where no mid crossing happens — i.e." +
-        " on the systems that already have",
+      "  CAVEAT: spherefoldPair4 is SMOOTH — shells and lobes, no fine" +
+        " structure — so its panels cannot show the",
     );
     lines.push(
-      "  the exact slab. See the module header for what would reopen it.",
+      "  smoothing failure the boxfold controls show, and a dilation of a" +
+        " smooth object is a smooth object. That is",
     );
+    lines.push(
+      "  exactly why mixedFoldTrio4 is beside it: two 81-branch boxfolds" +
+        " under one spherefold, sharp AND on the slack path.",
+    );
+    lines.push("  VERDICT: see the module header.");
+    // Printed BEFORE the numeric assertions, so a failure still ships the
+    // table that explains it.
     console.log(lines.join("\n"));
+    expect(truthViolations).toBe(0);
+    expect(floorViolations).toBe(0);
+    expect(clampedViolations).toBe(0);
   });
 });

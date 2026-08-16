@@ -119,12 +119,18 @@ import { clamp } from "./vec";
  * i.e. identically the ball form
  * `scripts/slab-ball-slack.harness.ts` measured and rejected.
  *
- * THE APP DOES NOT SEE THE SLACK SLAB YET, deliberately: the WGSL `fold4`
- * core packs no slack register, so `surface-de-gpu.ts`, `surface-compute.ts`
- * and main.ts all still gate the thickness row on {@link slabExact4} and
- * clamp `sliceHalfW` to 0 for a spherefold session. This module is the
- * oracle a kernel would be pinned against, and the measurement that says
- * whether that kernel is worth its register.
+ * THE APP DOES NOT SEE THE SLACK SLAB, and that is a MEASURED decision
+ * rather than a pending one. `surface-de-gpu.ts`, `surface-compute.ts` and
+ * main.ts all still gate the thickness row on {@link slabExact4} and clamp
+ * `sliceHalfW` to 0 for a spherefold session, because
+ * `scripts/slab-ball-slack.harness.ts` scored the capsule against the cheap
+ * `max(0, DE(p) - h)` on the two systems it exists for and it lands next to
+ * it: hit-mask IoU 0.62-0.91 between the two arms (a real slab shares
+ * 0.27-0.57 with that arm), the ball's bound overcharge cut only from 4-335x
+ * to 1.1-1.7x, for 2-8x the render. A kernel mirror would pay a per-slot f32
+ * in the register-pressure band fr-b72d/fr-d0nn measured at 2.2x AND the
+ * floor's second descent, to buy that. The capsule stays HERE because the
+ * sheet has to stay runnable — it is the argument, not a summary of one.
  *
  * THE SLICE CAVEAT — why this spike exists in the first place. The app would
  * never march the full 4D attractor `A` for display; it marches a `w = w0`
@@ -545,7 +551,8 @@ export function systemFoldShaped4(
  * BOTH directions, so a plain segment certificate there is unsound — not
  * merely loose. fr-v7ca's SEGMENT + BALL-SLACK chain state is what admits
  * those systems anyway, at a bound that degrades rather than breaks; the
- * derivation, the (A)-arm floor under it and the measured verdict are on
+ * derivation, the ball floor under it and the measured verdict (it barely
+ * beats the cheap form — which is why no kernel mirrors it) are on
  * {@link descendFold4}'s SLACK section. */
 export function slabExact4(de: SurfaceDE4): boolean {
   return (
@@ -3291,6 +3298,21 @@ function refinedCertValue4(
  * slabSupported4}) and the reason is that this design would buy nothing
  * there: `descendLens4` crosses its inversion BEFORE depth 0, so the state
  * is born isotropic and the estimator is the ball form exactly.
+ *
+ * AND THE MEASURED VERDICT IS THAT IT BARELY BUYS ANYTHING ANYWHERE
+ * (`scripts/slab-ball-slack.harness.ts` carries every figure). The capsule is
+ * sound, never worse than the ball form, and lands right next to it:
+ * hit-mask IoU 0.78-0.91 against the ball arm on a SHARP spherefold-mixed
+ * system, where a REAL segment slab shares only 0.27-0.57 of its pixels with
+ * that arm; the ball's bound overcharge falls from 4-335x to 1.1-1.7x and no
+ * further; the render costs 2-8x. The STRUCTURAL reason it cannot do better
+ * is one line, and it is why the crossing-depth instrument the bead named as
+ * a wake condition was never needed: branch enumeration is UNCONDITIONAL, so
+ * a mid-crossed chain exists at depth 0 on every map, and crossing only ever
+ * LOWERS a chain's certificate — so the crossed chain competes for the min
+ * from the first level, on every spherefold system there is. The lift
+ * therefore ships in this oracle and in no renderer; {@link slabExact4} still
+ * gates every mirror and the app's own thickness row.
  *
  * The three mechanisms that make a wide frontier both correct and affordable
  * are 3D's, and their arguments are dimension-free (read `descendFold`'s doc

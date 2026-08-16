@@ -90,26 +90,43 @@ bottom-heavy.
 
 ### slab-ball-slack
 
-fr-v7ca's verdict, and the sheet whose INSTRUMENT is the argument: a
-BOXFOLD-ONLY system answers a spherefold question, because its two arms are
-the two ENDPOINTS of the lift under test — the shipped exact segment IS the
-segment+ball-slack state with no mid crossing ever, and `max(0, DE(p) - h)`
-IS the same state with the crossing at depth 0, so the gap between them
-BRACKETS everything the lift could ever buy.
+fr-v7ca's verdict, in two rounds. The FIRST could only BRACKET the lift
+under test, and the sheet's instrument was that argument: a BOXFOLD-ONLY
+system answers a spherefold question, because its two arms are the two
+ENDPOINTS of the segment+ball-slack state — the shipped exact segment IS
+that state with no mid crossing ever, and `max(0, DE(p) - h)` IS the same
+state with the crossing at depth 0. It established that the CHEAP form is a
+DILATION and not a slab: a crisp fractal becomes the bare marching ball at
+the slider's own ceiling (44.4% of rays at 0.0 steps/px), on two of four
+controls it lands FURTHER from the exact slab than doing nothing, it floats
+the whole surface toward the camera rather than adding a rind (mean depth
+error 16.9-68.8% of the marching ball against the point query's 0.8-15.2%),
+and it overcharges the bound by 4-335x through DIRECTION-BLINDNESS (a true
+slab costs 0.3-15%, a ball 29-100%). Both forms sound, 0 violations in 9600
+checks, which settled nothing.
 
-Verdict NEITHER, keep the refusal: the cheap form is a DILATION and not a
-slab — a crisp fractal becomes the bare marching ball at the slider's own
-ceiling, 44.4% of rays at 0.0 steps/px — it is FURTHER from the exact slab
-than doing nothing on two of four controls, it floats the whole surface
-toward the camera rather than adding a rind (mean depth error 16.9-68.8% of
-the marching ball against the point query's 0.8-15.2%), and it overcharges
-the bound by one to two orders of magnitude through DIRECTION-BLINDNESS (a
-true slab costs 0.3-15%, a ball 29-100%). Both forms are SOUND — 0
-violations in 9600 checks — which settles nothing. And the threaded design
-cannot be justified from outside the descent: its ceiling is reached only
-where no mid crossing happens, i.e. on the systems that ALREADY have the
-exact slab, while every system it is FOR crosses that branch. Two named
-instruments would reopen it.
+THE SECOND ROUND BUILT THE THREADED STATE and closed the bracket. The
+capsule `(q, e, rho)` now ships in `surface-de-4d.ts` — exact until the
+first spherefold MID crossing, a ball from there down, floored at the public
+entry by `DE(p) - h` — and section 4 scores it directly on the two systems
+it exists for, one SHARP (two boxfolds under one spherefold) and one smooth.
+It lands next to the cheap form: hit-mask IoU 0.78-0.91 between the two arms
+on the sharp system, where a REAL slab shares only 0.27-0.57 of its pixels
+with that arm; the ball's overcharge cut from 4-335x to 1.1-1.7x and no
+further; 2-8x the render, and a kernel would also pay a per-slot f32 in the
+2.2x register band fr-b72d/fr-d0nn measured. 0 soundness violations in 4800
+checks and 0 queries below the floor, so the verdict is a COST one, not a
+correctness one.
+
+The STRUCTURAL reason it cannot do better is what makes this permanent, and
+it is why the crossing-depth instrument the first round named as a wake
+condition was never built: branch enumeration is UNCONDITIONAL, so a
+mid-crossed chain exists at depth 0 on every map, and crossing only LOWERS a
+chain's certificate — so the crossed chain competes for the min from the
+first level on every spherefold system there is. The lift ships in the CPU
+oracle and in NO renderer; `slabExact4` still gates every mirror and the
+app's thickness row. One design remains unscored: a per-system THICKNESS CAP
+over the cheap form, which needs no register and no second descent.
 
 ### escape-4d
 
