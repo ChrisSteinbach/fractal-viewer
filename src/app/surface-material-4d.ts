@@ -1305,13 +1305,13 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     float c = dot(ro, ro) - radius * radius;
     float disc = b * b - c;
     if (disc < 0.0) {
-      outColor = vec4(background, 1.0);
+      outColor = vec4(background, 0.0);
       return;
     }
     float sq = sqrt(disc);
     float tFar = -b + sq;
     if (tFar <= 0.0) {
-      outColor = vec4(background, 1.0);
+      outColor = vec4(background, 0.0);
       return;
     }
     float t = max(-b - sq, 0.0);
@@ -1348,7 +1348,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       t += d * uStepScale;
     }
     if (!hit) {
-      outColor = vec4(background, 1.0);
+      outColor = vec4(background, 0.0);
       return;
     }
     vec3 pos = ro + rd * t;
@@ -1480,6 +1480,11 @@ const SURFACE4_FRAGMENT = /* glsl */ `
       1.0 - exp(-0.12 * pow((t - tEnter) * uFogDensity / max(sliceVisR, 1.0e-6), 2.0));
     col = mix(col, mix(background, uFogTint, uFogTintStrength), clamp(fog, 0.0, 1.0));
 
+    // Alpha is the fr-7k0o COVERAGE flag, not an opacity: 1 where the
+    // frame drew something, 0 where it shows only its backdrop. The 3D
+    // tracer's convention, mirrored so scene.ts's settle fold can count
+    // either arm's output with one loop. Invisible either way — the canvas
+    // is created with alpha:false.
     outColor = vec4(col, 1.0);
   }
 `;

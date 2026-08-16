@@ -3699,6 +3699,15 @@ function main(): void {
         // different sentence. At entry the session has just glided to frame
         // the bounding ball (see fitToBounds above), so the whole object is
         // in view and zero hits means there is no object.
+        //
+        // BOTH ENGINES ANSWER THIS SINCE fr-7k0o. This arm counts ray
+        // STATUSES the kernel already reports; the WebGL strip arm counts
+        // the COVERAGE flag its tracer writes into alpha, in the readback
+        // fr-jf9y's accumulator already pays for (`scene.ts`'s
+        // `surfaceCoveredFraction`, fired from tickRender). Same fraction
+        // of the same settle frame, and `plane` counts as drawn on both —
+        // a fallback session used to render an empty set in silence, which
+        // was fr-17qu's original complaint surviving inside its own fix.
         const firstSettle = !surfaceSettled;
         surfaceSettled = true;
         const drawn = frame.counts.hit + frame.counts.plane;
@@ -7626,7 +7635,27 @@ function main(): void {
           }
           syncSurfaceProgress();
           if (scene.surfaceSettleActive) {
-            if (scene.stepSurfaceSettle()) surfaceSettled = true;
+            if (scene.stepSurfaceSettle()) {
+              // The WebGL arm's half of the blank-frame notice (fr-7k0o).
+              // Same question, same units and the same five conditions as
+              // the compute arm's (see runSurfaceComputeSettle): the first
+              // settle only, and only a frame that FINISHED — which here is
+              // what a true return means, the strip settle having no cost
+              // ceiling to truncate against. The coverage fraction comes
+              // off the alpha flag the tracer writes, counted in the
+              // readback the supersampling accumulator already pays for.
+              const firstSettle = !surfaceSettled;
+              surfaceSettled = true;
+              const drawn = scene.surfaceCoveredFraction;
+              if (
+                firstSettle &&
+                surfaceBlankNotice &&
+                drawn !== null &&
+                drawn < SURFACE_BLANK_HIT_FRACTION
+              ) {
+                surfaceBlankNotice();
+              }
+            }
           } else if (recorderActive && !scene.surfacePreviewActive) {
             // Previews off: no re-trace — captureStream freezes on the
             // last painted frame, which is exactly what the pane shows.

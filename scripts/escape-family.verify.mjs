@@ -33,6 +33,19 @@
  * now reaches its palette) is why the fold-chain shots are compared for
  * colour spread, and fr-17qu (an empty set says so) has its own scenario.
  *
+ * THAT LAST SCENARIO IS ALSO fr-7k0o'S GATE, and it needs `--query=surfacegl`
+ * to be one. fr-17qu's notice originally fired off the WebGPU settle's own
+ * per-ray status tally, so a session that fell back to the WebGL fragment
+ * tracer — no adapter, `?surfacegl`, a lost device — rendered an empty set in
+ * silence, which is fr-17qu's original complaint surviving inside its own
+ * fix. The WebGL arm counts the COVERAGE flag its tracer writes into alpha
+ * instead (scene.ts's `surfaceCoveredFraction`). MEASURED on SwiftShader at
+ * the fix: `--mode=sw --query=surfacegl` fails exactly this check on the
+ * pre-fix build ("no toast explaining the blank frame (got null)") and passes
+ * on the fixed one, with the twelve shipped presets still raising no toast at
+ * all — which is the check that matters more, since a signal that fires on
+ * good input is worse than the silence it replaced.
+ *
  * USAGE (build + `npm run preview` first — this measures a real build):
  *   npm run build && npm run preview &
  *   node scripts/escape-family.verify.mjs --mode=x11::0

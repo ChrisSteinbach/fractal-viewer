@@ -2785,7 +2785,13 @@ ${foldValueFormGlsl(shadeDeWidth)}
   uniform vec3 uGroundBallC;
   uniform vec3 uGroundAlbedo;
 
-  vec3 shadeGroundPlane(vec3 ro, vec3 rd, vec3 background) {
+  /** The out param cov is the fr-7k0o coverage flag: 1 where the floor
+   * was actually lit, 0 where this function returned the caller's own
+   * backdrop. The WebGPU arm counts a PLANE terminal for exactly those
+   * pixels, so the two engines' blank-frame arithmetic agrees on a
+   * document with a floor. */
+  vec3 shadeGroundPlane(vec3 ro, vec3 rd, vec3 background, out float cov) {
+    cov = 0.0;
     // One-sided: visible from above only; parallel or climbing rays miss.
     if (ro.y <= uGroundY || rd.y >= -1.0e-6) {
       return background;
@@ -2801,6 +2807,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
     if (fade <= 0.0) {
       return background;
     }
+    cov = 1.0;
 
     // Penumbra shadow toward the light: the hit path's DE loop, adapted
     // for a start OUTSIDE the certified ball. Two analytic gates make the
@@ -2929,9 +2936,10 @@ ${foldValueFormGlsl(shadeDeWidth)}
     float disc = b * b - c;
     if (disc < 0.0) {
 #if SURFACE_GROUND_PLANE
-      outColor = vec4(shadeGroundPlane(ro, rd, background), 1.0);
+      float planeCov;
+      outColor = vec4(shadeGroundPlane(ro, rd, background, planeCov), planeCov);
 #else
-      outColor = vec4(background, 1.0);
+      outColor = vec4(background, 0.0);
 #endif
       return;
     }
@@ -2939,9 +2947,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
     float tFar = -b + sq;
     if (tFar <= 0.0) {
 #if SURFACE_GROUND_PLANE
-      outColor = vec4(shadeGroundPlane(ro, rd, background), 1.0);
+      float planeCovExit;
+      outColor =
+        vec4(shadeGroundPlane(ro, rd, background, planeCovExit), planeCovExit);
 #else
-      outColor = vec4(background, 1.0);
+      outColor = vec4(background, 0.0);
 #endif
       return;
     }
@@ -3026,11 +3036,18 @@ ${foldValueFormGlsl(shadeDeWidth)}
       // background (their geometry is unresolved) — the WGSL march
       // kernel's status split, mirrored.
       if (t > tFar) {
-        outColor = vec4(shadeGroundPlane(ro, rd, background), 1.0);
+        float planeCovMiss;
+        outColor = vec4(
+          shadeGroundPlane(ro, rd, background, planeCovMiss),
+          planeCovMiss
+        );
         return;
       }
 #endif
-      outColor = vec4(background, 1.0);
+      // Alpha 0 for a MISS and — deliberately — for an EXHAUSTED ray too,
+      // which is the compute arm's own rule: a ray that spent its budget
+      // resolved no geometry, so it drew nothing (fr-7k0o).
+      outColor = vec4(background, 0.0);
       return;
     }
     vec3 pos = ro + rd * t;
@@ -3173,6 +3190,14 @@ ${foldValueFormGlsl(shadeDeWidth)}
       1.0 - exp(-0.12 * pow((t - tEnter) * uFogDensity / max(uVisibleRadius, 1.0e-6), 2.0));
     col = mix(col, mix(background, uFogTint, uFogTintStrength), clamp(fog, 0.0, 1.0));
 
+    // Alpha 1: a HIT. The alpha channel of this tracer's output is the
+    // fr-7k0o COVERAGE flag — 1 where the frame drew something, 0 where it
+    // shows only its own backdrop — and never an opacity. It is invisible
+    // to the user (the render target is RGBA8, the blit that copies it is
+    // NoBlending, and the canvas is created with alpha:false); the one
+    // reader is scene.ts's settle fold, which counts it so the WebGL arm
+    // can answer the blank-frame question the WebGPU arm answers from its
+    // own per-ray status tally.
     outColor = vec4(col, 1.0);
   }
 `;
