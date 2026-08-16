@@ -53,6 +53,6 @@
     "workbox-precaching": "^7.4.1"
   },
   "dependencies": {
-    "three": "^0.185.0"
+    "three": "^0.185.1"
   }
 }
