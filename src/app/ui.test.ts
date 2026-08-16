@@ -4670,6 +4670,51 @@ describe("Ui 4D surface session controls (fr-b30z)", () => {
     );
   });
 
+  // fr-vag4: two sessions refuse the slab and they owe DIFFERENT reasons.
+  // The descent refuses it per fold family (a spherefold bends a segment
+  // into an arc), so a box-fold-only system keeps it — a knob the user can
+  // act on. A 4D escape-time session refuses it at every fold family,
+  // because its forward orbit has no branches to thread a segment through,
+  // and handing it the descent's wording would tell a box-fold-only chain
+  // to do what it is already doing.
+  it("gives an escape-time session its own slab reason, not the sphere-fold one", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+    ui.setSurfaceSessionKind("escape");
+    ui.setFourDSlabAvailable(false);
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+
+    const title = el("fourDSliceThicknessRow").title;
+    expect(title).toContain("escape-time render");
+    expect(title).toContain("FORWARD");
+    expect(title).not.toContain("sphere folds");
+  });
+
+  it("keeps the sphere-fold slab reason for an IFS session", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+    ui.setSurfaceSessionKind("ifs");
+    ui.setFourDSlabAvailable(false);
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+
+    const title = el("fourDSliceThicknessRow").title;
+    expect(title).toContain("sphere folds");
+    expect(title).not.toContain("escape-time render");
+  });
+
+  it("clears the slab reason once a session can take one", () => {
+    const ui = new Ui(document);
+    const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
+    ui.setSurfaceSessionKind("ifs");
+    ui.setFourDSlabAvailable(true);
+    ui.updateLabels({ ...nonFlat, renderMode: "surface" as const });
+
+    expect(el("fourDSliceThicknessRow").title).toBe("");
+    expect((el("fourDSliceThicknessSlider") as HTMLInputElement).disabled).toBe(
+      false,
+    );
+  });
+
   it("restores the normal points-mode slice behavior after leaving surface mode", () => {
     const ui = new Ui(document);
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };

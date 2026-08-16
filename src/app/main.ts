@@ -4478,7 +4478,10 @@ function main(): void {
             ui.setSurfaceSessionKind("escape");
             // A forward orbit cannot thread a segment, so there is no
             // slab at any thickness (escape-de-4d.ts's NO SLAB
-            // paragraph) — the same row the !slabExact4 systems hide.
+            // paragraph) — the same row a !slabExact4 system disables,
+            // with its own reason on the tooltip: the fold family that
+            // rescues the descent (box folds only) is exactly the one
+            // that fails here, so the descent's wording would be wrong.
             surface4SlabExact = false;
             ui.setFourDSlabAvailable(false);
             surfaceBlankNotice = () => {

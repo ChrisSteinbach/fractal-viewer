@@ -1150,7 +1150,19 @@ groundPlane` rule one dimension up, zero-filled by the packer when
     rotates, which is `affine4.ts`'s own rounding and predates this file.
     Oracle for `surface-de-gpu.ts`'s `core: "escape4"`; NO fragment
     mirror, so an escape-shaped 4D session is compute-only exactly as
-    fr-rsp6 made fold-shaped ones.
+    fr-rsp6 made fold-shaped ones. THREE PRESETS reach it, from the 4D
+    menu group rather than the Escape-time one: `mandelboxBrick` and
+    `mandelboxColumn` are the same map (`mandelboxCube`'s) turned in `xw`
+    and in `yw`, a PAIR whose subject is that the rotation plane picks the
+    long axis — per-axis extents 3.13/2.00/2.00 against 2.00/2.49/2.00
+    against the 3D cube's 2.00/2.00/2.00, which is a 4D rotation legible
+    as a 3D proportion, and the one place the rotor slider reads as
+    geometry rather than as a tumble (an `xw` pose rotor CANCELS the
+    brick's own `xw` and hands back exact cube proportions) — and
+    `hybridChainShells` is `hybridChainQuaternion` with the rotation on
+    its POWER link, the one link position that costs essentially nothing
+    (43.7% of rays against the 3D twin's 47.9%, where the same rotation
+    on the head link costs a third of them).
 
   - `qjulia-de.ts` — the quaternion Julia set's CPU oracle (fr-7u8t.4):
     `q <- q^2 + c` (Hart/Sandin/Kauffman 1989) in the project's own

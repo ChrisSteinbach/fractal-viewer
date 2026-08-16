@@ -7,6 +7,13 @@
  *   npm run build && npm run preview &
  *   node scripts/surface-4d-lift.verify.mjs [--display=:0] [--url=…]
  *
+ * TWO PHASES: eight hash-borne SCENES (minimal documents, no preset table
+ * involved, so the gate survives one changing under it), then the three
+ * shipped 4D escape-time PRESETS loaded FROM THE MENU — the only place
+ * that checks what a user's first contact with them does, since
+ * `escape-family.verify.mjs` reads the Escape-time group and these live in
+ * the 4D one.
+ *
  * WHAT IT ASKS, per scene, of a session it drives FROM THE UI:
  *
  *   1. does the session ENTER at all (the eligibility gate admits it), and
@@ -102,6 +109,24 @@ function parseArgs(argv) {
   }
   return out;
 }
+
+/** The shipped 4D escape-time presets (fr-vag4), by their menu VALUE — the
+ * `PRESET_RENDER_HINTS` route sends all three straight to Surface, so
+ * loading one and pressing Surface is a user's whole first contact. */
+const PRESETS_4D = [
+  {
+    value: "mandelboxBrick",
+    what: "mandelboxCube turned 1 rad in xw — the cube stretched into a wide brick",
+  },
+  {
+    value: "mandelboxColumn",
+    what: "the same map turned in yw instead — the rotation plane picks the long axis",
+  },
+  {
+    value: "hybridChainShells",
+    what: "hybridChainQuaternion with the rotation on its POWER link — the one position that costs no rays",
+  },
+];
 
 const NON_BACKDROP_TOL = 10;
 
@@ -232,6 +257,54 @@ async function run() {
       );
       if (args.display !== undefined && engine !== scene.engine) failed = true;
       // Back to the explorer so the next scene's entry is a fresh session.
+      await page.click("#modePointsBtn").catch(() => {});
+    }
+
+    // PHASE 2 (fr-vag4): the shipped 4D escape-time presets, loaded FROM
+    // THE MENU rather than as a hash — which is the only way to check
+    // what a user's first contact with them actually does, and what
+    // `escape-family.verify.mjs` does for the 3D group it covers (this
+    // group is the 4D one, which that script does not read). Unit tests
+    // pin the gate and the fill; nothing but this pins that the option
+    // exists, loads, and draws.
+    for (const preset of PRESETS_4D) {
+      await page.goto(`${args.url}/?surfacestate&preset=${preset.value}`, {
+        waitUntil: "load",
+      });
+      await page.waitForFunction(
+        () => typeof window.__surfaceState === "function",
+        { timeout: 30000 },
+      );
+      await page.selectOption("#presetSelect", preset.value);
+      await page.click("#modeSurfaceBtn");
+      let state = null;
+      const deadline = Date.now() + args.settleMs;
+      let entered = false;
+      while (Date.now() < deadline) {
+        state = await page.evaluate(() => window.__surfaceState?.() ?? null);
+        if (state && state.mode !== "surface") break;
+        if (state && state.firstFrame) entered = true;
+        if (state && state.settled) break;
+        await page.waitForTimeout(250);
+      }
+      const settled = Boolean(state && state.settled);
+      const engine = state ? state.engine : null;
+      const drawn = await coverage(page);
+      const ok =
+        entered &&
+        settled &&
+        drawn !== null &&
+        drawn > 0.005 &&
+        engine !== null;
+      if (!ok) failed = true;
+      if (args.display !== undefined && engine !== "compute") failed = true;
+      process.stdout.write(
+        `${ok ? "PASS" : "FAIL"}  preset:${preset.value.padEnd(13)} ` +
+          `entered=${String(entered).padEnd(5)} settled=${String(settled).padEnd(5)} ` +
+          `engine=${String(engine).padEnd(8)} (want compute) ` +
+          `drawn=${drawn === null ? "n/a" : (drawn * 100).toFixed(1) + "%"}` +
+          `\n  ${preset.what}\n`,
+      );
       await page.click("#modePointsBtn").catch(() => {});
     }
   } finally {

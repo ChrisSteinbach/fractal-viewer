@@ -1199,11 +1199,16 @@ export class Ui {
    * and re-marches the w slice every frame. It changes what the slice block
    * means, so {@link syncFourDViewRows} keys on it — see updateLabels. */
   private fourDSurfaceLive = false;
-  /** False while the live 4D surface session's fold set breaks segment
-   * exactness (fr-rsp6 × fr-wa6o: spherefold/mandelbox branches take
-   * segments to arcs, so the session clamps the slab to 0) — the
-   * thickness row hides rather than showing a slider the session ignores.
-   * Session-scoped, set by main.ts's routing; true outside such sessions. */
+  /** False while the live 4D surface session cannot take a slab at all,
+   * for either of two reasons the row's own tooltip distinguishes: its
+   * fold set breaks segment exactness (fr-rsp6 × fr-wa6o — spherefold and
+   * mandelbox branches take segments to arcs), or it is an ESCAPE-TIME
+   * session, whose forward orbit has no branch enumeration to thread a
+   * segment through at any fold family (fr-vag4). Either way the session
+   * clamps the slab to 0. The thickness row stays VISIBLE and DISABLES
+   * with the reason — a silently vanishing control reads as "impossible,
+   * no idea why". Session-scoped, set by main.ts's routing; true outside
+   * such sessions. */
   private fourDSlabAvailable = true;
   /**
    * The ACTIVE surface session's shape (fr-5wlv.6): `"escape"` for the
@@ -2049,12 +2054,27 @@ export class Ui {
       this.fourDSliceThicknessSlider.value = "0";
       this.fourDSliceThicknessLabel.textContent = "0.00";
     }
-    this.fourDSliceThicknessRow.title = slabRefused
-      ? "Slab thickness is unavailable with sphere folds: the slab's " +
-        "segment certificates are unsound under the spherefold's " +
-        "inversion branch (mandelbox includes it). Box-fold-only systems " +
-        "keep the slab."
-      : "";
+    // TWO SESSIONS REFUSE THE SLAB AND THEY OWE DIFFERENT REASONS
+    // (fr-vag4). The IFS descent refuses it per FOLD FAMILY — a
+    // spherefold's inversion branch bends a segment into an arc — so a
+    // box-fold-only system keeps it, which is a knob the user can act on.
+    // A 4D escape-time session refuses it at every fold family, because a
+    // forward orbit has no branch enumeration at all: the box fold that
+    // rescues the descent is exactly the one that turns a segment into a
+    // bent polyline here. Handing the descent's reason to an escape
+    // session would tell a box-fold-only chain to do the thing it is
+    // already doing.
+    this.fourDSliceThicknessRow.title = !slabRefused
+      ? ""
+      : this.surfaceSessionKind === "escape"
+        ? "Slab thickness is unavailable in the escape-time render: its " +
+          "orbit runs the maps FORWARD, with no branches to thread a " +
+          "segment through, so a slab has no certificate at any fold " +
+          "family. The IFS surface render keeps it."
+        : "Slab thickness is unavailable with sphere folds: the slab's " +
+          "segment certificates are unsound under the spherefold's " +
+          "inversion branch (mandelbox includes it). Box-fold-only systems " +
+          "keep the slab.";
   }
 
   /** fr-rsp6: whether the live 4D surface session can take a slab at all

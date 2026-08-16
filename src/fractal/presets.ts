@@ -1,6 +1,13 @@
 import type { FlamePaletteId } from "./palette";
 import type { Rng } from "./rng";
-import type { SymmetryParams, Transform, Variation, Vec3, Vec4 } from "./types";
+import type {
+  Rotation4,
+  SymmetryParams,
+  Transform,
+  Variation,
+  Vec3,
+  Vec4,
+} from "./types";
 
 const HALF = 0.5;
 
@@ -1355,6 +1362,174 @@ export function hybridChainQuaternion(): Transform[] {
   return [hybridLink(0, "mandelbox", 2), hybridLink(1, "qsquare", 1, 0.5)];
 }
 
+/**
+ * The 4D escape-time PAIR's shared recipe (fr-vag4): {@link mandelboxCube}'s
+ * own map — the inside-out fold at weight −1.5 — with ONE `w`-mixing rotation
+ * angle spliced onto it, and nothing else touched.
+ *
+ * SPREAD ONTO THE 3D PRESET'S TRANSFORM rather than re-spelled, because the
+ * pair's whole claim is that these two systems ARE {@link mandelboxCube} with
+ * one angle changed. Written out longhand that claim would be a comment
+ * anybody could falsify with an edit; here it is the code, and the two
+ * presets below differ from each other by exactly the argument. A rotation is
+ * the only parameter the recipe takes because the rotation is the only thing
+ * that differs — the `w` block (`types.ts`'s
+ * {@link import("./types").WExtension}) carries a `w` position, a `w` scale
+ * and a shear too, and none of them is in play here.
+ *
+ * BOTH ARE REFUSED BY THE 3D GATE AND ADMITTED BY THE 4D ONE, which is the
+ * whole reason they are new objects rather than new views:
+ * `analyzeEscapeSystem` reports `map 1 extends into 4D` for each of them, and
+ * `analyzeEscapeSystem4` — the twin whose folds treat `w` exactly like a
+ * spatial axis — admits them. No 3D document can express either.
+ *
+ * A `w` ROTATION AND NEVER A `w` TRANSLATION, and that is measured rather
+ * than stylistic. fr-wuuu swept the other knob — the quaternion square's `k`
+ * component, i.e. a `w` OFFSET on a chain link — and came back negative: it
+ * behaves as a weaker fourth translation, every slice off `w = 0` is an
+ * EROSION of the `w = 0` set (containment 94-98%), and there is nothing left
+ * to draw at all by `w0 = 0.8`. A translation cannot MIX `w` with a spatial
+ * axis; it can only slide the object along an axis the render then cuts
+ * across. A rotation mixes, so a flat query's orbit leaves the `w = 0`
+ * hyperplane at the very first link. `scripts/escape-4d.harness.ts` section 3
+ * re-ran fr-wuuu's own question against the rotation knob (on its own subject
+ * chain, `mandelbox 2` turned `xw 0.35` then `mandelbox −1.5`, not on this
+ * pair) and got the opposite answer: containment reads 57.0 / 55.3 / 52.5 /
+ * 61.3 / 61.5% as `w0` runs 0.1 → 1.2, so roughly HALF of every offset
+ * slice's members are not members of the `w0 = 0` slice — genuinely different
+ * cuts rather than a shrinking subset — and 16.0% of rays still draw at
+ * `w0 = 1.2`, where the translation sweep had gone blank by 0.8. The slice
+ * slider is a live knob on a `w`-rotated system; it pays in density, not in
+ * existence.
+ */
+function turnedCube(
+  rotation: Pick<Rotation4, "xw" | "yw" | "zw">,
+): Transform[] {
+  const [cube] = mandelboxCube();
+  return [{ ...cube, w: { rotation } }];
+}
+
+/**
+ * "Mandelbox Brick" — {@link mandelboxCube} turned 1.0 rad in the `xw` plane
+ * (fr-vag4), and half of a PAIR whose other half is {@link mandelboxColumn}.
+ *
+ * THE ROTATION PLANE PICKS THE LONG AXIS, and that is the pair's subject.
+ * `mandelboxCube` renders a solid cube with fractal detail carved into its
+ * faces, and the sheet's per-axis extent column reads 2.00/2.00/2.00 for it —
+ * a cube, to the instrument's own resolution. Turn the same map into `w` and
+ * the proportions move with the PLANE: `xw` reads 3.13/2.00/2.00, a wide
+ * BRICK with its face medallions flattened into shallow pits, while
+ * {@link mandelboxColumn}'s `yw` reads 2.00/2.49/2.00, a standing column. A
+ * 4D rotation showing up as a 3D PROPORTION is the clearest thing this family
+ * can show a user, and it happens here on a single-map document — the
+ * simplest shape either escape-time gate admits. (`reach` cannot see any of
+ * it: reach is a radius, and a brick and a cube of the same diagonal read
+ * identically through one, which is why `scripts/escape-4d.harness.ts` prints
+ * three numbers per row.)
+ *
+ * AND THE 4D VIEW'S ROTOR UNDOES IT, live. The sheet's section 4 poses this
+ * exact system through `rotorInv · vec4(p, w0)`, the kernel body's own lift,
+ * and the three `w`-FREE control poses hold its member count to 0.4%
+ * (67367-67604 against the identity pose's 67427) — a rigid turn, exactly as
+ * the algebra requires. The `xw` rotor poses instead drop 20-28% of their
+ * members and walk the extent from 3.13/2.00/2.00 through 2.39 and 2.14 to
+ * EXACTLY 2.00/2.00/2.00 at rotor `xw = 1.0`: the rotor cancelling the
+ * document's own `xw = 1` and handing back cube proportions. `zw 0.6`
+ * redirects instead, to 3.13/2.00/2.42. So on this pair — anisotropic in `w`
+ * by construction — the 4D rotor slider reads as geometry rather than as a
+ * tumble, which the sheet's other subject (a chain, near-isotropic in `w`)
+ * does not do.
+ *
+ * Measured at the entry pose (`scripts/escape-4d.harness.ts`'s shortlist,
+ * where this row is `escapeBrick`): 41.4% of rays hit, against the 3D
+ * {@link mandelboxCube} control's 30.7% through the same marcher at the same
+ * camera — 4-ball fill 14.816%, `w = 0` slice fill 25.705%. Cost 1.45
+ * us/eval against the control's 0.90. The fill, extent and hit columns are
+ * seeded and deterministic; the us column is wall clock and moves with the
+ * machine, so read it as the 1.6x ratio to the control on that same run.
+ */
+export function mandelboxBrick(): Transform[] {
+  return turnedCube({ xw: 1 });
+}
+
+/**
+ * "Mandelbox Column" — the same map as {@link mandelboxBrick}, turned 0.8 rad
+ * in `yw` instead of `xw` (fr-vag4). It exists to run that preset's
+ * plane → axis claim TWICE, which is what turns an observation into a knob:
+ * one rotated system is a curiosity, two systems whose long axis follows the
+ * plane you rotated in is a rule the user can predict and steer.
+ *
+ * The extent column reads 2.00/2.49/2.00 against the brick's 3.13/2.00/2.00
+ * and the 3D cube's 2.00/2.00/2.00, so this is a standing COLUMN where that
+ * one is a lying brick — and its faces read as banded in horizontal courses
+ * rather than medallioned. The two angles differ (1.0 rad and 0.8) because
+ * each is the value the sheet measured, not because the plane demands one:
+ * the axis follows the PLANE, and the angle sets how far.
+ *
+ * Measured at the entry pose (the sheet's `escapeColumn` row): 41.6% of rays,
+ * 4-ball fill 14.452%, slice fill 21.512%, 1.30 us/eval. The two columns a
+ * user reads as "is it there" land within half a point of the brick's (41.4%
+ * of rays, 14.816% fill); what moves is the shape — the extents above, and a
+ * `w = 0` slice 4.2 points thinner. That is the pair's point.
+ * Both are refused in 3D with `map 1 extends into 4D` (see {@link
+ * turnedCube}).
+ */
+export function mandelboxColumn(): Transform[] {
+  return turnedCube({ yw: 0.8 });
+}
+
+/**
+ * "Hybrid Shells" — {@link hybridChainQuaternion} with the QUATERNION SQUARE
+ * link turned 0.35 rad in the `zw` plane (fr-vag4): the cross-family member
+ * of the 4D escape-time trio, and the sheet's own pick if only one of the
+ * three shipped.
+ *
+ * WHICH LINK CARRIES THE ROTATION IS THE WHOLE DESIGN, and
+ * `scripts/escape-4d.harness.ts` says so outright — "IF ONE ROW OF THIS SHEET
+ * DECIDES A PRESET, IT IS THAT ONE". Rotating the chain's HEAD (the Mandelbox
+ * at weight 2) reaches every later step through the whole orbit: it costs a
+ * third of the rays, 49.2% → 32.6%, and FLATTENS the set along the rotated
+ * axis while the other two hold, per-axis extents running 3.99/4.00/3.99 →
+ * 3.16/4.00/3.99 → 1.29/4.00/3.99 as the angle opens. Rotating the POWER link
+ * instead leaves all three extents at 3.99/4.00/3.99 on every row of that
+ * sweep and holds 43.8-51.6% of rays, because a power link's output meets the
+ * bailout test before any fold can compound it — so the rotation DEFORMS
+ * without shrinking. It is the one link position in the family that costs
+ * essentially nothing. (The sweep turns `xw`; this preset ships `zw 0.35`,
+ * which the shortlist measures at 43.7% of rays against the 3D twin's 47.9%
+ * — the same verdict at a second plane.) The
+ * 3D gate names the link, which is a useful thing to be able to read back:
+ * `analyzeEscapeSystem` refuses this system with `map 2 extends into 4D`,
+ * and `analyzeEscapeSystem4` admits it.
+ *
+ * IT IS ALSO `probeEscapeFill`'s OWN WARNING IN MINIATURE, off one table.
+ * This chain occupies 0.346% of the bailout 4-ball while drawing 43.7% of its
+ * rays; {@link mandelboxBrick} occupies 14.816% and draws 41.4%. That is 43x
+ * less volume for 1.06x the pixels. A set of shells is a set of SURFACES and
+ * no volume statistic can see one — `escape-de-4d.ts`'s `probeEscapeFill4`
+ * doc carries the stronger case from fr-wuuu, where a `w = 0.4` slice of this
+ * preset's own 3D twin has literally zero members in 524288 samples and still
+ * draws 20.9% of its rays as a coherent shaded object. Read the hit column.
+ *
+ * Rendered: broken plates, arcs and hooks scattered round a core — the
+ * family's most dramatic morphology, and about as far from
+ * {@link mandelboxBrick}'s solid block as this gate's vocabulary reaches.
+ *
+ * The `w` block is spread onto {@link hybridLink}'s output at the call site
+ * rather than passed through a fifth parameter, so this function reads as
+ * {@link hybridChainQuaternion} line for line with one field added — the
+ * diff a reader wants to see. Widening the helper would instead make all
+ * three flat hybrid chains above declare a `w` extension none of them has,
+ * which is {@link hybridLink}'s own A SIBLING RATHER THAN A WIDENING
+ * argument, one field over.
+ */
+export function hybridChainShells(): Transform[] {
+  return [
+    hybridLink(0, "mandelbox", 2),
+    { ...hybridLink(1, "qsquare", 1, 0.5), w: { rotation: { zw: 0.35 } } },
+  ];
+}
+
 export function mandelboxKifs(): Transform[] {
   const foldWeight = 1.2;
   const foldScale = 0.19;
@@ -1796,6 +1971,14 @@ const PRESETS = {
   tesseract,
   twentyFourCell: twentyFourCellFlake,
   hyperfern,
+  // The escape-time family's 4D HALF (fr-vag4): every preset above it is
+  // flat by gate, so the mode the site is named after had no 4D entry at
+  // all. Each of these three is refused by `analyzeEscapeSystem` ("map N
+  // extends into 4D") and admitted by `analyzeEscapeSystem4` — objects no 3D
+  // document can express, picked off `scripts/escape-4d.harness.ts`.
+  mandelboxBrick,
+  mandelboxColumn,
+  hybridChainShells,
 } as const satisfies Record<string, () => Transform[]>;
 
 export type Preset = keyof typeof PRESETS;
@@ -1884,6 +2067,14 @@ export const PRESET_RENDER_HINTS: Partial<
   hybridChainCube: "surface",
   hybridChainCraters: "surface",
   hybridChainQuaternion: "surface",
+  // The 4D escape-time trio (fr-vag4) needs the hint for the reason every
+  // escape-time preset above it does — a non-contracting map's chaos-game
+  // cloud is escape-reset debris, so as a point cloud these look BROKEN
+  // rather than merely under-delivered — and the mode reached this way is
+  // the same forward orbit, now over 4D points (`escape-de-4d.ts`).
+  mandelboxBrick: "surface",
+  mandelboxColumn: "surface",
+  hybridChainShells: "surface",
 };
 
 /**
@@ -1964,6 +2155,26 @@ export const PRESET_PALETTES: Partial<Record<Preset, FlamePaletteId>> = {
  * leftover order could carry does exactly that, which is why main.ts clears
  * the twist here too and no entry below may set one: this table is 3D
  * kaleidoscopes only, the shape every gate that reads it admits.
+ *
+ * AND IT STAYS 3D-ONLY EVEN THOUGH ONE GATE WOULD NOW TAKE A `w`-PLANE
+ * (fr-vag4). `analyzeEscapeSystem4` admits a kaleidoscope turning in any of
+ * the six coordinate planes — `foldQueryIntoSector4` is still 1-Lipschitz and
+ * an isometry per sector there — so the 4D escape-time trio ({@link
+ * mandelboxBrick}, {@link mandelboxColumn}, {@link hybridChainShells}) COULD
+ * have carried one, and deliberately does not. Measured
+ * (`scripts/escape-4d.harness.ts`'s shortlist): a `w`-plane wedge is a
+ * genuinely different object (IoU 0.673 against order 1) but NOT a visible
+ * rosette, because the wedge's symmetry plane CONTAINS `w` and so does not
+ * lie in the rendered slice — it reads as the unsymmetrised object with its
+ * lobes rearranged. Worse, at EVEN order it is a measurable NO-OP on that
+ * slice: 1 point of 262144 changes side at orders 2, 4, 6 and 8, against 3821
+ * and 3662 at orders 3 and 5, because the fold's arithmetic is odd axis by
+ * axis and the set already carries the symmetry the wedge would impose. (The
+ * 1 point is not a rounding coincidence worth chasing: `Math.sin(Math.PI)` is
+ * 1.22e-16, so the wedge leaks that much `w` into a query that was exactly on
+ * the slice.) A preset authored at order 4 would therefore silently be its 3D
+ * twin — {@link foldChainFlower}'s FIVE, SPECIFICALLY paragraph one dimension
+ * up, and the reason no entry here turns in a `w` plane.
  */
 export const PRESET_SYMMETRIES: Partial<Record<Preset, SymmetryParams>> = {
   foldChainFlower: { order: 5, plane: "xz" },

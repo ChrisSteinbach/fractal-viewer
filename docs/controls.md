@@ -237,9 +237,10 @@ morphs into place instead of snapping (see **Presets** below).
   ~30 branchless fold iterations per ray step, no branch frontier — and
   the session opens with the camera pulled out to frame the bailout ball
   (the chaos-game cloud such a map produces is escape-reset debris, so
-  the explorer camera would otherwise start inside the solid). A **blend**,
-  a **final transform**, or a fold that extends into 4D still has no
-  escape-time reading; those keep the ordinary eligibility reasons.
+  the explorer camera would otherwise start inside the solid). A **blend** or
+  a **final transform** still has no escape-time reading; those keep the
+  ordinary eligibility reasons. (A fold that extends into **4D** does have
+  one since fr-vag4 — see the 4D paragraph further down.)
   SEVERAL pure-fold maps do have one, though (fr-za0n), and this is where
   the mode stops being a one-map renderer: **the transform list becomes a
   formula chain.** Orbit step `i` applies link `i mod n` — the maps take
@@ -269,11 +270,42 @@ morphs into place instead of snapping (see **Presets** below).
   map alone (fr-77oy), so per-link edits get finer as the chain grows rather
   than wilder.
 
-  A **kaleidoscope** rides along as long as it stays in 3D, and it is a
-  different mechanism here from the one the explorer gives you: the query is
-  folded into a single wedge once, before the orbit runs, so the result is
-  **dihedral** — mirrors as well as rotations — and costs nothing per orbit
-  step. (The chaos game's is cyclic, rotations only.)
+  A **kaleidoscope** rides along, and it is a different mechanism here from
+  the one the explorer gives you: the query is folded into a single wedge
+  once, before the orbit runs, so the result is **dihedral** — mirrors as
+  well as rotations — and costs nothing per orbit step. (The chaos game's is
+  cyclic, rotations only.) A 3D chain takes a 3D plane; a 4D chain takes any
+  of the six, `w`-planes included. Expect little to see from those last
+  three, though: a w-plane wedge turns in a plane the rendered slice does not
+  lie in, so there is no rosette, and at EVEN order it is a measured no-op —
+  1 point in 262144 moved at orders 2/4/6/8, against ~3700 at 3/5 — so a
+  w-plane wedge at order 4 is simply the same object without it.
+
+  **A chain need not stay in 3D** (fr-vag4). A non-contracting fold — or a
+  chain of them — that reaches out of the `w = 0` hyperplane is marched as
+  the **W slice** of its 4D escape-time set, the same way a contracting 4D
+  system is marched as the slice of its attractor, and the mode's status
+  note says which of the two you are looking at ("Escape-time render: these
+  N maps reach out of the w = 0 hyperplane and do not all contract, so
+  Surface marches the w-slice of the escape-time set of the chain they form
+  — one link per orbit step — rather than an IFS attractor"). Everything
+  above holds one dimension up: same cycling, same per-link offset and
+  bailout, same weights and fold lengths, same 24-link budget — and the
+  **Quaternion square** becomes the whole quaternion square it is named
+  after rather than the 3D restriction of one, four coordinates being its
+  home dimension. The differences are three refusals and one
+  requirement. A **Mandelbulb power 8** link is not admitted in 4D (the
+  triplex power has no fourth coordinate to act on, so a chain holding one
+  stays on the 3D escape-time render, which is the better one for it
+  anyway); the kaleidoscope's **Twist** is not admitted (a double rotation
+  has no wedge to fold the query into, where a plain w-plane wedge is fine);
+  and **Slice thickness** stays at 0, because a forward orbit has no
+  branches to enumerate and so cannot thread a segment through the fold the
+  way the IFS descent can. The requirement is **WebGPU compute** — the 4D
+  tracer that runs without it has no forward-orbit path at all — so on a
+  machine with no adapter the mode disables itself with that as the reason
+  rather than drawing the wrong object, and losing the adapter mid-session
+  leaves the mode with a toast saying so.
 
   **A link need not be a fold.** Two more variations can be a link: the
   **Mandelbulb power 8** (the triplex 8th power, the map the Mandelbulb
@@ -401,7 +433,9 @@ morphs into place instead of snapping (see **Presets** below).
   extension the stall still exists but lands before the mode's first
   frame rather than inside it. A system extending into 4D is not a blocker but a different
   tracer: the mode marches the
-  **W slice** cross-section of the rotor-posed 4D attractor, and the 4D
+  **W slice** cross-section of the rotor-posed 4D attractor — or, where the
+  maps do not contract, of the 4D escape-time set they form instead (above)
+  — and the 4D
   pose stays live inside the mode — the tumble keeps turning, Shift-drag
   keeps rotating the hidden planes, and the **W slice** slider sweeps the
   cut through the shape in real time. (The slice toggle's ghosting is a
@@ -445,12 +479,15 @@ morphs into place instead of snapping (see **Presets** below).
   previews and settles once parked. The full-size poses settle within the
   render's ordinary budgets; a slider parked mid-inflation (well below
   1×) on a heavy lens system may settle with its deepest creases soft — a
-  disclosed budget trade, never a hang. The rows hide in a live 4D
-  surface session (the balloon is 3D-only for now) and for an escape-time
-  session, where the balloon isn't just unavailable but permanently
-  inert: the escape solid is filled all the way to the ball's center, so
-  its inverted echo would swallow the camera, and that render stays
-  plain. **Floor** (fr-rhn5) puts an infinite neutral-gray floor just
+  disclosed budget trade, never a hang. A 4D session traces it too
+  (fr-qxxw), off the same setting: what the tracer inverts there is the
+  **W slice** it has just marched, not the 4D set, so the echo is the
+  inversion of exactly what is drawn and the two scrub together as you move
+  the slice. The rows hide for a FORWARD-ORBIT session in either dimension
+  — the escape-time and Mandelbulb renders — where the balloon isn't just
+  unavailable but permanently inert: those solids are filled all the way to
+  the ball's center, so an inverted echo would swallow the camera, and they
+  stay plain. That gate is about the object, not the dimension. **Floor** (fr-rhn5) puts an infinite neutral-gray floor just
   below the shape to catch its shadow — the classic ray-marched-fractal
   grounding, and the scale reference fold monsters otherwise lack. The
   floor is matte-lit by the same **Light Angle** / **Light Height** /
@@ -458,9 +495,13 @@ morphs into place instead of snapping (see **Presets** below).
   occlusion where the shape nears it, is fogged by distance like any hit
   (see **Fog** below), and fades radially into the backdrop so no disc
   edge ever shows; it is one-sided, so a camera below it looks straight
-  through. Unlike the balloon it survives the escape-time session —
-  the Mandelbox solid casts its shadow on it happily — hiding only in a
-  live 4D surface session; it is likewise a recompile-class toggle, and
+  through. Unlike the balloon it carries no gate at all: it survives the
+  escape-time and Mandelbulb sessions — those solids cast their shadows on
+  it happily — and since fr-h0c3 a 4D session drops it under the marched
+  **W slice**, where it is an ordinary 3D plane like any other. (An
+  off-centre slice shows a smaller shape floating above it, which is
+  honest — it _is_ a smaller slice.) It is likewise a recompile-class
+  toggle, and
   the two compose one way only: while both are ticked the **Balloon**
   wins (there is no horizon to stand a floor on inside a closed shell),
   and the floor returns when the balloon goes off. Expect the floor to
@@ -829,7 +870,10 @@ morphs into place instead of snapping (see **Presets** below).
   re-projection of the cloud already on screen, applied live with no
   regenerate. The row hides while the system is non-flat: the 4D
   projection's stored coordinates predate its rotation, so there is no
-  meaningful place to invert them from.
+  meaningful place to invert them from. The setting itself still reaches a
+  4D ◈ Surface render (fr-qxxw) — that tracer inverts the slice it has just
+  marched rather than any stored coordinate — so tick it from the Surface
+  section's own **Balloon** row while the render is up.
 - **Background** (fr-5ps1) — the two-stop gradient every render shows behind
   the attractor: **Dark** (the original ground, and the default), **Haze**
   (the cooler, lighter atmosphere Aerial Haze used to force before this
@@ -979,7 +1023,12 @@ morphs into place instead of snapping (see **Presets** below).
   **24-Cell Flake**, **Double-Rotation Spiral**, or **Hyperfern** (Barnsley's
   fern curling through w instead of z); with **Show guides** on, the polytope
   presets tumble their own wireframe (5-cell, 16-cell, duoprism, tesseract,
-  24-cell edges) through the same rotation — or turn any flat system non-flat
+  24-cell edges) through the same rotation. The group is keyed to where its
+  systems _live_ — outside the `w = 0` hyperplane — rather than to how they
+  render, so it is not an IFS-attractor group by definition: a 4D
+  escape-time chain, which ◈ Surface marches as the **W slice** of an
+  escape-time set rather than as an attractor (see **◈ Surface** above),
+  belongs to it just as much. Or turn any flat system non-flat
   yourself: every
   transform's (and the final lens's) editor ends with a collapsed **4D**
   group, with **Position W**, **Scale W** (tracks the map's live mean 3D
@@ -1010,7 +1059,14 @@ morphs into place instead of snapping (see **Presets** below).
   centered) piles so much of the object into one image that the detail
   fills in. It is not free: a thicker slab is more surface for the marcher
   to find, so expect the preview and the full-detail pass to take longer as
-  you widen it. **Slice-relative color** (fr-nn6, shown while the slice is on
+  you widen it. Some sessions refuse the slab outright, and there the slider
+  stays visible but sits disabled at 0 rather than showing a thickness the
+  tracer would ignore: a
+  `spherefold` or `mandelbox` branch bends a segment into an arc, so the
+  thickened query would no longer be a safe bound (box-fold-only systems keep
+  it), and a 4D escape-time chain (see **◈ Surface**) has no branches to
+  enumerate at all, so its forward orbit cannot thread a segment in the first
+  place. **Slice-relative color** (fr-nn6, shown while the slice is on
   and a W-Depth palette is active) recenters the diverging ramp on the slice
   window: inside the slice everything sits near one w, so the faithful
   whole-cloud ramp renders a slice at 0 almost entirely in the palette's

@@ -591,8 +591,14 @@ can read contractive in the editor yet fail the gate — and, the other way, a
 small enough weight can rescue an expanding affine part. That same expression
 is what the ESCAPE-TIME gate tests for EXPANSION — the complementary render
 for fold maps that have no attractor to descend onto, described in
-[controls.md](controls.md#panel-controls) rather than here — the two gates
-being deliberate complements, so a fold's own `mR` sits on the seam between
+[controls.md](controls.md#panel-controls) rather than here — and since fr-vag4
+that complement holds in BOTH dimensions rather than only where the system
+happens to be flat: `escape-de.ts`'s `analyzeEscapeSystem` is the deliberate
+complement of `analyzeSurfaceSystem`, and `src/fractal/escape-de-4d.ts`'s
+`analyzeEscapeSystem4` the deliberate complement of `analyzeSurfaceSystem4`
+(the closing paragraphs of this section), so a fold that stops contracting has somewhere to go
+whichever hyperplane it lives in instead of falling out of the mode when it
+also reaches into `w`. A fold's own `mR` therefore sits on the seam between
 the two renderers: lower it far enough and a Surface-mode IFS becomes an escape-time
 set instead. The app discloses that rather than preventing it (the mode's
 eligibility note names the different object), and the reach is narrow — of
@@ -737,6 +743,83 @@ unbounded thickness would render only the projection's outer silhouette —
 which is what SOLID mode already is. What the slab buys over Solid is
 analytic detail with no grid ceiling, and the interesting regime is
 thin-to-medium.
+
+The escape-time complement carries up with it (fr-vag4), and almost none of
+it is new algebra. `src/fractal/escape-de-4d.ts` is `escape-de.ts` over 4D
+points: everything structural about the chain — cycling rather than chaining,
+the per-link `+ p`, the bailout test after every link, the single shared
+scalar derivative with its `+ 1` floor, the choice between the linear `r/dr`
+and the Böttcher `0.5·r·ln r/dr` — is stated in norms and scalars, so it
+transfers verbatim, and the module IMPORTS every constant and link code from
+its 3D twin rather than restating them: what a chain IS has one definition
+across both dimensions, and only the five maps' arithmetic widens (to
+`variations4.ts`'s, anchored bit-exactly at `w = 0`, so a lifted 3D chain's
+`w = 0` slice is its 3D object to the bit and the tests pin that with exact
+equality rather than a tolerance). The map that gains most is `qsquare`,
+whose 4D form is the DEFINITION and whose 3D form is the restriction: its
+local factor `2|q|` stays EXACT rather than heuristic one dimension up,
+because quaternion norms multiply on the whole algebra and not merely on the
+3D subspace. That the lift buys anything is measured rather than assumed:
+fr-vag4's own sheet swept both ways of leaving the hyperplane and found a `w`
+ROTATION keeping only 52-61% of the `w = 0` slice's set while still drawing
+16% of its rays at `w0 = 1.2` — roughly half of every offset slice is a
+genuinely different cut — where a `w` TRANSLATION merely erodes the same
+object (94-98% containment, and a blank frame by `w0 = 0.8`), which is the
+case for authoring a 4D chain as a rotation through `w` rather than a shift
+along it. Three things the 3D chain has are refused here, each for its
+own reason. A `bulb` link is refused because `bulb-de.ts`'s refusal is
+dimension-independent — triplex numbers are ℝ³ with a spherical-coordinate
+product and have no fourth component, so the lifted `bulb` carries `w`
+through untouched, honest for the chaos game and useless to an estimator
+whose `dr` is meanwhile being multiplied by `8|y|⁷` computed on the other
+three — and such a system stays on the flat 3D path, where the carried axis
+never moves. A nonzero kaleidoscope TWIST is refused because a double
+rotation's fundamental domain is not a wedge, so there is no sector
+retraction to fold the query into; the wedge itself generalizes cleanly, as
+`foldQueryIntoSector4` folds any of the six coordinate planes — `w`-planes
+included, which is exactly what the 3D gate turns away — and stays
+1-Lipschitz and an isometry per sector, so the marching ball never moves.
+And the fr-wa6o SLAB is refused at every thickness, for a reason stronger
+than the one that makes `surface-de-4d.ts`'s `slabExact4` refuse sphere
+folds: a forward orbit has no branch enumeration at all, so a segment
+straddling a box fold's wall becomes a bent polyline in a single step, and
+the session clamps the slice thickness to zero rather than degrade into a
+silently wrong image.
+
+A 4D escape session is COMPUTE-ONLY, and by the shipped precedent rather
+than as a shortcut: the fragment 4D tracer deliberately carries no fold GLSL
+(fr-rsp6), an escape chain is fold-shaped by nature, and there is no
+forward-orbit GLSL there either — so `surface-de-gpu.ts`'s `core:"escape4"`,
+the first kernel core that is both 4D and FORWARD (it takes the rotor
+prologue and the `GpuMap4` maps layout from the descent cores, and the params
+scalars and colors-only hit-info from `core:"escape"`), is the only thing
+that renders one. Entry is refused with the reason when no adapter is
+available, and a mid-session compute loss exits the mode with a toast,
+exactly as a fold-shaped 4D session does, rather than handing the frame to a
+tracer that would draw a different object. The two wrappers the surface
+render composes over its estimators — the ground plane and the balloon —
+lifted in the same session, and both turned out to be decisions rather than
+algebra. The ground plane (fr-h0c3)
+needed no new shader text at all — the march classifier and the shade entry
+are already shared across every core — so it is a params block, a struct
+splice and a deleted throw; the floor is an ordinary 3D plane under the
+drawn slice, and the app anchors it at the origin with the FULL 4D visible
+radius so it does not slide as the slice scrubs. The balloon (fr-qxxw)
+SLICES THEN INVERTS: the marched ray already lives in the sliced 3D space,
+so the inversion stays a 3D operation on the marched point and the echo is
+the inversion of exactly what is drawn — the explorer echo's own precedent,
+and the reading a user gets as the slider scrubs, object and echo moving
+together. Inverting in 4D and slicing the result would draw the echo of a
+DIFFERENT slice (`I₄({w = w0})` is a 3-sphere, not a hyperplane; the two
+agree exactly at `w0 = 0` for this origin-anchored ball). The 3D union bound
+then applies word for word, which is the point of stating the semantics that
+way: a 4D estimate lower-bounds the 4D distance, which is at most the
+in-slice distance, so it is a valid bound for the slice. The balloon reaches
+no FORWARD-ORBIT session in either dimension — a filled solid's interior
+reaches the ball's centre, so its echo would swallow the camera — while the
+floor, being a plane rather than a shell, survives there and is the
+escape-time mode's classic look. That split is about the OBJECT, not the
+dimension, which is why the floor ended up with no gate at all.
 
 ## Render workers & cross-origin isolation
 
