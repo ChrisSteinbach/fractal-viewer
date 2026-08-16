@@ -5,6 +5,51 @@ explorer. A set of affine transforms is rendered with the "chaos game" into a li
 Three.js point cloud. Built with TypeScript + Vite, packaged as a PWA, deployed to
 GitHub Pages. Reference docs in `docs/`.
 
+## Dimensional Parity — the 4D half is not a follow-up
+
+**The site is fractal-4d.com. A capability that exists only in 3D is not
+finished, and a session that leaves it that way is not done.**
+
+The standing failure mode is shipping the 3D half, filing a "4D lift" bead and
+closing the epic. fr-rhn5's ground plane (lift: fr-h0c3) and fr-5wlv's balloon
+(lift: fr-qxxw) both did exactly that, and both lifts are still open. The
+escape-time CHAIN is worse than either: `analyzeEscapeSystem` refuses every
+non-flat map outright (`map N extends into 4D`), no 4D oracle, kernel core or
+GLSL arm stands behind that refusal, and until fr-vag4 nothing tracked the lift
+at all — in the family whose own `qjulia-de.ts` describes its object as "the one
+the site is named after: a genuinely 4D set, of which a 3D render is a SLICE".
+So:
+
+- **Both halves are scoped up front.** Work touching a twinned pair —
+  `affine`/`affine4`, `chaos-game`/`chaos-game-4d`, `flame`/`flame-4d`,
+  `flame-gpu`/`flame-gpu-4d`, `voxel`/`voxel-4d`, `variations`/`variations4`,
+  `surface-de`/`surface-de-4d`, `surface-material`/`surface-material-4d`, or
+  the WGSL `affine`/`fold` cores against `affine4`/`fold4` — carries the 4D
+  twin in its own plan, its own estimate and its own PR. Say it in the plan,
+  not in the retro.
+- **3D-only is a decision that owes evidence, never a default.** It ships only
+  with the reason written in the module doc AND a bead carrying the lift's
+  ACTUAL shape (which params offset, which kernel core, which oracle) — the
+  shape fr-h0c3 and fr-qxxw both have. "3D first, 4D later" is not a reason.
+  `surface-grid.ts` is the model REFUSAL (a live rotor/slice invalidates a grid
+  per frame — stated, not implied), `bulb-de.ts` its sibling one family over
+  (triplex numbers are R³ with a spherical-coordinate product and no fourth
+  component to give meaning to, so `variations4.ts`'s `bulb` carries `w` through
+  untouched — honest for the chaos game, useless to an estimator), and
+  fr-7u8t.6 the model WON'T-DO (closed on twenty measured panels, not on a hunch
+  about cost).
+- **The lift costs more later, and the cost is structural.** The 3D half
+  freezes wire layout the 4D half must then append past — fr-h0c3 records a
+  plane block appended at 4D offset 560 landing INSIDE lens4 and corrupting it
+  — and a lift written months later re-derives shared algebra instead of
+  importing it, which is how two renderers start drawing different objects from
+  one document. `variations4.ts` importing `resolveFoldRadii` rather than
+  restating it is the standing counter-example; fr-qxxw's Möbius-ball note is
+  the same hazard still open.
+- **An unlifted gap is disclosed, not quietly filed.** A session that ends
+  3D-only says so in the PR description and in its closing summary, as
+  unfinished work. The bead is the tracking; it is not the disclosure.
+
 ## Commands
 
 ```bash
@@ -2059,10 +2104,14 @@ Pages is manual only (`workflow_dispatch`) — not triggered by merges to `main`
 
 When ending a work session, work is NOT complete until `git push` succeeds.
 
-1. **File issues for remaining work** — capture follow-ups in `bd`.
-2. **Run quality gates** (if code changed) — `npm test`, `npm run build`.
-3. **Update issue status** — close finished work, update in-progress items.
-4. **Push to remote** — push the feature branch and open a PR to `main`.
-5. **Verify** — all changes committed AND pushed.
+1. **Check dimensional parity** — did this touch something with a 4D twin? If
+   the 4D half is missing, the work is not done: ship it, or disclose the gap in
+   the PR description and the closing summary with the reason and a shaped bead.
+   See **Dimensional Parity** at the top of this file.
+2. **File issues for remaining work** — capture follow-ups in `bd`.
+3. **Run quality gates** (if code changed) — `npm test`, `npm run build`.
+4. **Update issue status** — close finished work, update in-progress items.
+5. **Push to remote** — push the feature branch and open a PR to `main`.
+6. **Verify** — all changes committed AND pushed.
 
 If quality gates fail, fix them before pushing. Never push broken code.
