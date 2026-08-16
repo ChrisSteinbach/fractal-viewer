@@ -896,7 +896,14 @@ and UI**, so the interesting math is unit-tested without a browser:
     thin fractal, and the shipped `mandelboxRings` reads 0.0000% fill at
     65536 samples while rendering ~38k surface hits — fr-17qu's first cut
     toasted "looks empty" over one of the app's own presets on exactly
-    that confusion. The signal fires off the FIRST completed settle's own
+    that confusion. fr-wuuu turned up a STRICTLY STRONGER case, worth
+    quoting because 0.0000% still reads as rounding: a `w = 0.4` slice of
+    `hybridChainQuaternion` has LITERALLY ZERO members in 524288 samples
+    of its own bailout ball and still draws 20.9% of its rays as a
+    coherent shaded object with creases and highlights. A slice through a
+    set of shells is a set of surfaces, and no volume statistic can see
+    one. (`scripts/hybrid-chain.harness.ts` section 6, arm (e).) The
+    signal fires off the FIRST completed settle's own
     hit count instead (main.ts's `surfaceBlankNotice`, and since fr-7k0o
     off BOTH engines' — the compute arm counts ray statuses, the WebGL
     strip arm counts the COVERAGE flag its tracer writes into alpha, which
