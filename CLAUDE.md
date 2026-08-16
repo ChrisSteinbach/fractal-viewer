@@ -511,8 +511,10 @@ and UI**, so the interesting math is unit-tested without a browser:
     twice: the raw integer count clamps the identical pixels (6.78 /
     10.61 / 31.44%), so the saturation is the coordinate's own and not
     fr-7u8t.8's smoothing, and box-averaged over 16 sub-samples the rows
-    read 0.16 / 0.00 / 0.00%, so the flat top-of-ramp PATCHES are a
-    one-sample artifact the 8-sample settle (fr-vpbq, fr-jf9y) dissolves.
+    read 0.16 / 0.00 / 0.00%, so the flat top-of-ramp PATCHES are
+    sub-pixel rather than regions of the object — DIRECTIONAL for the
+    shipped settle rather than its own figure, since this averages the
+    TRAP over 16 where fr-vpbq/fr-jf9y average the shaded COLOUR over 8.
     The trap drives COLOR ONLY (the convention
     `core:"bulb"` always used), with rings/sheets over the orbit's
     closest radial / y-plane approaches — the descent cores' colors-only
