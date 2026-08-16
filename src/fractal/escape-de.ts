@@ -630,6 +630,22 @@
  * the power form `log(log r / log R) / log d` instead, selected by the
  * DEGREE of the link that produced the terminal radius — which is the same
  * per-step register the constant-factor arm already tracked as `growth`.
+ *
+ * THIS MODULE IS THE 3D HALF (fr-vag4). `escape-de-4d.ts` is the other
+ * one, and it exists because the two clauses this gate uses to say "not
+ * mine" — `map N extends into 4D` and `the kaleidoscope rotates into 4D`
+ * — were descriptions of the estimator's state, never decisions that a 4D
+ * one should not exist. Everything structural here is dimension-free and
+ * carries verbatim: cycling, the per-link `+ p`, the shared scalar `dr`
+ * with its `+ 1` floor, the bailout radius, `ESCAPE_STEP_SCALE`, and both
+ * estimate forms. The twin duplicates only the five maps' arithmetic
+ * (`variations4.ts`'s, which is bit-exact against this file's at `w = 0`)
+ * and IMPORTS every constant and link code from here, so the two cannot
+ * disagree about what a chain IS. It refuses one thing this gate admits —
+ * a `bulb` link — because `bulb-de.ts`'s model refusal stands in any
+ * dimension: triplex numbers are R³ with no fourth component, so a
+ * lifted triplex power carries `w` untouched, which is honest for the
+ * chaos game and useless to an estimator.
  */
 import { composeAffine } from "./affine";
 import { isFlatTransform, symmetryIsNonFlat } from "./affine4";
@@ -945,6 +961,11 @@ export function analyzeEscapeSystem(
     if (!v) {
       reasons.push(`${label} is not a pure fold or power map`);
     } else if (!isFlatTransform(map)) {
+      // ROUTING, not a refusal, since fr-vag4: `escape-de-4d.ts` renders
+      // exactly this shape, and main.ts reaches it first — a non-flat
+      // document never gets as far as this gate. The clause stays because
+      // this module is 3D and must say so; the reason string is what a
+      // caller sees if it asks anyway.
       reasons.push(`${label} extends into 4D`);
     } else if (isPowerVariation(v)) {
       if (active.length < 2) {
@@ -979,6 +1000,11 @@ export function analyzeEscapeSystem(
   // A kaleidoscope is welcome (module doc) as long as it stays in 3D: a
   // `w`-plane or a nonzero twist rotates the copies out of the `w = 0`
   // hyperplane, and this estimator has no fourth coordinate to fold in.
+  // `escape-de-4d.ts`'s `foldQueryIntoSector4` does (fr-vag4) — it folds
+  // any of the six planes — so a `w`-plane is now routing rather than a
+  // dead end; a TWIST it refuses too, and for a reason that is not about
+  // dimension at all (a double rotation's fundamental domain is not a
+  // wedge).
   if (symmetryIsNonFlat(symmetry)) {
     reasons.push("the kaleidoscope rotates into 4D");
   }
@@ -1096,7 +1122,9 @@ function foldAxis(t: number, wall: number): number {
  * Throws on a `w`-plane, exactly as `chaos-game.ts`'s `symmetryRotation`
  * does and for the same reason: a 4D kaleidoscope has no 3x3, and
  * {@link analyzeEscapeSystem} already refuses one, so reaching here with
- * one is a bug rather than a case to degrade.
+ * one is a bug rather than a case to degrade. `escape-de-4d.ts`'s
+ * `foldQueryIntoSector4` is where such a document goes (fr-vag4): the
+ * same two steps over any of the six planes.
  */
 export function foldQueryIntoSector(
   p: Vec3,
