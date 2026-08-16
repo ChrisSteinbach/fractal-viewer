@@ -14,7 +14,9 @@ import type {
   BalloonEstimator,
   BalloonEstimator4,
 } from "./balloon-de";
+import { toTransform4 } from "./affine4";
 import { runChaosGame } from "./chaos-game";
+import { runChaosGame4 } from "./chaos-game-4d";
 import type { ChaosGameResult } from "./chaos-game";
 import { defaultTransforms, pentatope } from "./presets";
 import { mulberry32 } from "./rng";
@@ -719,6 +721,44 @@ describe("balloonBall4 (fr-qxxw)", () => {
     const ballLensed = balloonBall4(lensed);
     expect(ballLensed.center).toEqual([0, 0, 0]);
     expect(ballLensed.radius).toBe(lensed.visibleBoundingRadius);
+  });
+
+  it("bounds EVERY w-slice about the origin, which is the one new precondition the 4D shell bound has", () => {
+    // The shell term DIVIDES by rho, so rho under-covering the drawn set
+    // inflates the bound into genuine overshoot -- and in 4D the drawn set
+    // is a SLICE. The transfer argument on estimateBalloonDistance4 says
+    // the slice sits inside ball(0, R4) because |q| <= |(q, w0)| <= R4;
+    // this is that inequality measured, on the set the chaos game plots
+    // rather than on the claim.
+    const de4 = buildSurfaceDE4(pentatope());
+    const radius = balloonBall4(de4).radius;
+    const cloud = runChaosGame4(
+      pentatope().map(toTransform4),
+      40000,
+      mulberry32(0x5b1c4),
+    );
+    // NOTE the storage: `runChaosGame4` keeps xyz at stride 3 and `w` in
+    // its OWN array (the cloud uploads them as separate attributes), so a
+    // stride-4 read here silently mixes coordinates from three different
+    // points — which is exactly what a first cut of this test did, and it
+    // "found" a 6.8% ball violation that does not exist.
+    let worst4 = 0;
+    let worst3 = 0;
+    for (let i = 0; i < cloud.count; i++) {
+      const x = cloud.positions[i * 3];
+      const y = cloud.positions[i * 3 + 1];
+      const z = cloud.positions[i * 3 + 2];
+      const w = cloud.w[i];
+      worst4 = Math.max(worst4, Math.hypot(x, y, z, w));
+      worst3 = Math.max(worst3, Math.hypot(x, y, z));
+    }
+    // The 4D ball covers the 4D set...
+    expect(worst4).toBeLessThanOrEqual(radius);
+    // ...and therefore every slice's 3D projection, with room to spare
+    // (the projection drops |w|, so this is the strictly easier bound —
+    // asserted separately because it is the one the shell term uses).
+    expect(worst3).toBeLessThanOrEqual(radius);
+    expect(worst3).toBeLessThanOrEqual(worst4);
   });
 });
 
