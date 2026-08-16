@@ -893,13 +893,7 @@ export interface SurfaceGpuKernelOptions {
    * options as "escape", `lens`/`balloon` throw, `groundPlane` composes,
    * and a nonzero `footprint` or `sliceHalfW` throws at pack. */
   core?:
-    | "fold"
-    | "affine"
-    | "escape"
-    | "affine4"
-    | "fold4"
-    | "bulb"
-    | "escape4";
+    "fold" | "affine" | "escape" | "affine4" | "fold4" | "bulb" | "escape4";
   /** Emit the FOLD FINAL-transform lens wrapper (fr-55s1 stage B —
    * `descendLens`, fr-g58b's vocabulary; fr-rsp6 phase 2B lifts it to
    * the 4D cores as `descendLens4`): the descent body (any core but
@@ -1799,10 +1793,7 @@ export function packSurface4GpuParams(
  * own shared offset (fr-h0c3). Two writers rather than one offset
  * argument, so each dimension's frozen offset is a literal a reader can
  * check against the module doc. */
-function writeGroundPlane4(
-  view: DataView,
-  gp: SurfaceGpuGroundPlane,
-): void {
+function writeGroundPlane4(view: DataView, gp: SurfaceGpuGroundPlane): void {
   view.setFloat32(576, gp.y, true);
   view.setFloat32(580, gp.fadeStart, true);
   view.setFloat32(584, gp.fadeEnd, true);
@@ -2212,8 +2203,7 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // The 4D cores: one view lift, one params tail, one maps layout. The
   // shared header/entry interpolations below key on this, so an eighth
   // core cannot forget one of them.
-  const core4 =
-    core === "affine4" || core === "fold4" || core === "escape4";
+  const core4 = core === "affine4" || core === "fold4" || core === "escape4";
   // The FORWARD cores (fr-dlxh's escape, fr-7u8t.9's bulb, fr-vag4's
   // escape4): a forward orbit rather than a descent, so none of the
   // descent helpers and no frontier. The shared header/entry
@@ -2228,8 +2218,7 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // packEscapeGpuMaps} / {@link packEscape4GpuMaps}), because a list is
   // exactly what that binding is for. Bulb is the one bindingless core
   // left: its single map still rides the params variant block.
-  const mapsBinding =
-    !forward || core === "escape" || core === "escape4";
+  const mapsBinding = !forward || core === "escape" || core === "escape4";
   // fr-s9ll: does any body in this kernel enumerate the fold's INVERSE
   // branches, and so need `foldRadiiOf`? The fold cores do, and so does the
   // lens wrapper around ANY descent core (a fold FINAL is still a fold).
@@ -2294,8 +2283,7 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   const slabExt = core4 && !forward ? (opts.slabExt ?? true) : true;
   // fr-b72d: the maps-load probe (option doc). Same structural inertness
   // as slabExt — only the 4D descent cores ever consult it.
-  const mapsUniform =
-    core4 && !forward ? (opts.mapsUniform ?? false) : false;
+  const mapsUniform = core4 && !forward ? (opts.mapsUniform ?? false) : false;
   if (!Number.isInteger(width) || width < 1) {
     throw new Error(`surface-de-gpu: bad frontier width ${width}`);
   }
@@ -4278,12 +4266,12 @@ ${
         : core === "escape4"
           ? escape4HitInfoText
           : core === "bulb"
-          ? bulbHitInfoText
-          : core === "affine4"
-            ? affine4HitInfoText(slabExt, lens)
-            : core === "fold4"
-              ? fold4HitInfoText(slabExt, lens)
-              : foldHitInfoText;
+            ? bulbHitInfoText
+            : core === "affine4"
+              ? affine4HitInfoText(slabExt, lens)
+              : core === "fold4"
+                ? fold4HitInfoText(slabExt, lens)
+                : foldHitInfoText;
   const lensedHitInfoText = lens
     ? `${coreHitInfoText.replace(
         "fn surfaceDEHitInfo(",
@@ -4393,15 +4381,15 @@ ${balloonHitWrapText}`
           params.radiusInvRange,
         0.0, 1.0);`
       : core4
-    ? `let hitW = params.w0 + hi.sStar * params.sliceHalfW;
+        ? `let hitW = params.w0 + hi.sStar * params.sliceHalfW;
       let q4c = rotorInvApply4(vec4f(pos, hitW));
       u = clamp(
         (length(q4c - params.radiusCenter4) - params.radiusMinD) *
           params.radiusInvRange,
         0.0, 1.0);`
-    : balloon
-      ? `u = clamp(length(hi.colorPos) / visR, 0.0, 1.0);`
-      : `u = clamp(length(pos) / visR, 0.0, 1.0);`;
+        : balloon
+          ? `u = clamp(length(hi.colorPos) / visR, 0.0, 1.0);`
+          : `u = clamp(length(pos) / visR, 0.0, 1.0);`;
 
   // The march entry's gate (fr-5wlv.5): balloon mode drops the
   // visible-sphere gate (every ray can hit the enclosing shell) and caps
@@ -5027,14 +5015,14 @@ struct Params {
   // else: this block was written after fr-s04t, so it carries no frozen
   // head-link ballast the way the 3D escape core's does.
   esc4Params: vec4f,${
-          tail4Block
-            ? /* wgsl */ `
+    tail4Block
+      ? /* wgsl */ `
   // 480..575, PAD — the lens4 block's remaining region, which this core
   // can never use (escape4+lens throws) and which exists so the shared
   // plane block below lands at ONE offset across every 4D core.
   padE4: array<vec4f, 6>,`
-            : ""
-        }`
+      : ""
+  }`
       : // fr-rsp6 phase 2B: the lens4 block, APPENDED past the 4D tail
         // (464..575). Declared under the lens, and — since fr-qxxw /
         // fr-h0c3 — under anything appended past it, so the shared
@@ -5055,9 +5043,7 @@ struct Params {
   // oracles), so this is the same quartet at the 4D block's own offset.
   lens4Fold: vec4f,`
         : ""
-  }${balloon ? balloonStructFields : ""}${
-    groundPlane ? planeStructFields : ""
-  }`
+  }${balloon ? balloonStructFields : ""}${groundPlane ? planeStructFields : ""}`
       : core === "escape"
         ? /* wgsl */ `
   escM0: vec3f,
@@ -7573,20 +7559,20 @@ ${escapeDescentText}`
 // fr-rsp6 verdict for fold-shaped ones.
 ${escape4DescentText}`
           : core === "bulb"
-          ? `// estimateBulbDistance (bulb-de.ts) — the forward triplex-power
+            ? `// estimateBulbDistance (bulb-de.ts) — the forward triplex-power
 // orbit's Mandelbulb estimator, the SURFACE_BULB GLSL arm's twin
 // (fr-7u8t.9).
 ${bulbDescentText}`
-          : core === "affine4"
-            ? `// estimateDistance4Refined (surface-de-4d.ts) behind the view lift —
+            : core === "affine4"
+              ? `// estimateDistance4Refined (surface-de-4d.ts) behind the view lift —
 // the estimator the 4D GLSL tracer marches (surface-material-4d.ts), in
 // that mirror's f32 formulation. Fixed width 4 (fr-dlxh's 4D cut).
 ${affine4DescentText(slabExt, lens)}`
-            : core === "fold4"
-              ? `// descendFold4's refine=false path (surface-de-4d.ts) behind the same
+              : core === "fold4"
+                ? `// descendFold4's refine=false path (surface-de-4d.ts) behind the same
 // view lift — the 4D fold-branch frontier, f32 (fr-rsp6 phase 2A).
 ${fold4DescentFnText(width, slabExt, lens)}${probe4DeFns}`
-              : `// descendFold's refine=false path (surface-de.ts), the estimator the
+                : `// descendFold's refine=false path (surface-de.ts), the estimator the
 // fold GLSL marches, in that mirror's f32 formulation.
 ${descentFnText(W, privateDecls)}${probeDeFns}`;
 

@@ -1,5 +1,7 @@
 import {
   packBulbGpuParams,
+  packEscape4GpuMaps,
+  packEscape4GpuParams,
   packEscapeGpuMaps,
   packEscapeGpuParams,
   packSurface4GpuParams,
@@ -11,8 +13,11 @@ import {
   SURFACE_GPU_HIT_FLOOR,
   SURFACE_GPU_MAP4_VEC4,
   SURFACE_GPU_MAP_VEC4,
+  SURFACE_GPU_PARAMS4_BALLOON_BYTES,
   SURFACE_GPU_PARAMS4_BYTES,
+  SURFACE_GPU_PARAMS4_ESCAPE_BYTES,
   SURFACE_GPU_PARAMS4_LENS_BYTES,
+  SURFACE_GPU_PARAMS4_PLANE_BYTES,
   SURFACE_GPU_PARAMS_BALLOON_BYTES,
   SURFACE_GPU_PARAMS_BYTES,
   SURFACE_GPU_PARAMS_PLANE_BYTES,
@@ -30,7 +35,9 @@ import {
   BALLOON_FAR_CAP_RHO,
   BALLOON_RHO_MARGIN,
   balloonBall,
+  balloonBall4,
   buildBalloon,
+  buildBalloon4,
 } from "./balloon-de";
 import type {
   SurfaceGpu4View,
@@ -48,6 +55,7 @@ import {
   ESCAPE_STEP_SCALE,
   ESCAPE_TIME_ITERATIONS,
 } from "./escape-de";
+import { buildEscapeDE4, SYM_PLANE_CODE4 } from "./escape-de-4d";
 import {
   buildSurfaceDE,
   CLASSIC_SURFACE_FOLD_RADII,
@@ -1859,7 +1867,8 @@ describe("groundPlane wrapper (fr-rhn5)", () => {
       const wgsl = surfaceDeKernelWgsl(
         kernelOpts({ mode: "shade", core, width: 12, groundPlane: true }),
       );
-      const tail = core === "escape4" ? "padE4: array<vec4f, 6>," : "lens4Fold: vec4f";
+      const tail =
+        core === "escape4" ? "padE4: array<vec4f, 6>," : "lens4Fold: vec4f";
       expect(wgsl.indexOf(tail)).toBeGreaterThan(0);
       expect(wgsl.indexOf("groundY: f32,")).toBeGreaterThan(wgsl.indexOf(tail));
       expect(wgsl).toContain("fn shadeGroundPlane(");
@@ -4625,5 +4634,429 @@ describe("surfaceDeKernelWgsl bulb core (core, fr-7u8t.9)", () => {
     expect(wgsl).toContain("bulbParams: vec4f,");
     expect(wgsl).toContain("groundY: f32,");
     expect(wgsl).toContain("fn shadeGroundPlane(");
+  });
+});
+
+// -----------------------------------------------------------------------
+// fr-vag4: the ESCAPE4 core's packers -- packEscape4GpuParams/
+// packEscape4GpuMaps, `core: "escape4"`'s wire one dimension up from the
+// 3D escape packers above. Fixtures mirror escape-de-4d.test.ts's own
+// (duplicated per this file's DAMP convention -- test files stay isolated
+// from one another).
+// -----------------------------------------------------------------------
+
+/** The 4D escape-time family's canonical single-map Mandelbox
+ * (escape-de-4d.test.ts's own canonicalMandelbox() shape) -- non-contracting
+ * at the classic weight, so it is this render mode's on every gate it
+ * reaches. */
+function escape4Mandelbox(overrides: Partial<Transform> = {}): Transform {
+  return {
+    id: 0,
+    position: [0.4, 0.3, 0.2],
+    rotation: [0, 0, 0],
+    scale: [1, 1, 1],
+    variations: [{ type: "mandelbox", weight: 2 }],
+    ...overrides,
+  };
+}
+
+/** A second, DIFFERENT link for the escape4 chain fixtures: a rotated
+ * boxfold carrying a genuine w-mixing rotation, so the chain reaches out of
+ * the w = 0 hyperplane (the point of this render mode) and a packer that
+ * wrote the head link n times (or read slot 0 every step) could not pass. */
+function escape4RotatedBoxfold(): Transform {
+  return {
+    id: 1,
+    position: [0, 0, 0],
+    rotation: [0, 0.35, 0],
+    scale: [1, 1, 1],
+    variations: [{ type: "boxfold", weight: 1.6 }],
+    w: { position: 0.2, rotation: { xw: 0.25 } },
+  };
+}
+
+/** The quaternion-square link -- EscapeLinkKind 5, chained behind
+ * escape4Mandelbox() below the lone-power-map refusal, at the pre-scale
+ * escape-de.ts's own POWER LINKS table measures a renderable object at. */
+function escape4QsquareLink(): Transform {
+  return {
+    id: 3,
+    position: [0.1, 0, -0.05],
+    rotation: [0, 0, 0],
+    scale: [0.4, 0.4, 0.4],
+    variations: [{ type: "qsquare", weight: 1 }],
+  };
+}
+
+describe("packEscape4GpuParams byte length (fr-vag4)", () => {
+  it("returns SURFACE_GPU_PARAMS4_ESCAPE_BYTES (576) without a ground plane and SURFACE_GPU_PARAMS4_PLANE_BYTES (624) with one", () => {
+    expect(SURFACE_GPU_PARAMS4_ESCAPE_BYTES).toBe(576);
+    expect(SURFACE_GPU_PARAMS4_PLANE_BYTES).toBe(624);
+    const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
+    const plain = packEscape4GpuParams(de, view4(), { itemCount: 1 });
+    expect(plain).toBeInstanceOf(ArrayBuffer);
+    expect(plain.byteLength).toBe(SURFACE_GPU_PARAMS4_ESCAPE_BYTES);
+    const gp: SurfaceGpuGroundPlane = {
+      y: 0,
+      fadeStart: 1,
+      fadeEnd: 2,
+      ballCenter: [0, 0, 0],
+      ballRadius: 1,
+      albedo: [1, 1, 1],
+    };
+    const withPlane = packEscape4GpuParams(de, view4(), { itemCount: 1 }, gp);
+    expect(withPlane.byteLength).toBe(SURFACE_GPU_PARAMS4_PLANE_BYTES);
+  });
+});
+
+describe("packEscape4GpuParams frozen-block scalars (fr-vag4)", () => {
+  it("packs the bailout ball at boundingRadius (12), escapeRadius as 2R (16), ESCAPE_STEP_SCALE (20), the link count at mapCount (48) and maxDepth (52, overridable by run.maxDepth)", () => {
+    const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
+    const view = new DataView(
+      packEscape4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    expect(view.getFloat32(12, true)).toBe(Math.fround(de.boundingRadius));
+    expect(view.getFloat32(16, true)).toBe(Math.fround(de.boundingRadius * 2));
+    expect(view.getFloat32(20, true)).toBe(Math.fround(ESCAPE_STEP_SCALE));
+    expect(view.getUint32(48, true)).toBe(de.links.length);
+    expect(view.getUint32(48, true)).toBe(2);
+    expect(view.getUint32(52, true)).toBe(ESCAPE_TIME_ITERATIONS);
+
+    const clamped = new DataView(
+      packEscape4GpuParams(de, view4(), { itemCount: 1, maxDepth: 12 }),
+    );
+    expect(clamped.getUint32(52, true)).toBe(12);
+  });
+
+  it("packs the slice-adjusted radius at offset 24 as sqrt(R^2 - w0^2) for a nonzero w0", () => {
+    const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
+    const R = de.boundingRadius;
+    const w0 = 0.3 * R;
+    const view = new DataView(
+      packEscape4GpuParams(de, view4({ w0 }), { itemCount: 1 }),
+    );
+    expect(view.getFloat32(24, true)).toBe(
+      Math.fround(Math.sqrt(R * R - w0 * w0)),
+    );
+  });
+
+  it("packs symOrder at 40 and symPlane at 44 in SYM_PLANE_CODE4's six-plane code -- a w-plane packs its own code, not the descents' collapsed 0", () => {
+    expect(SYM_PLANE_CODE4.xw).toBe(3);
+    const chain = [escape4Mandelbox(), escape4RotatedBoxfold()];
+    const de = buildEscapeDE4(chain, null, { order: 5, plane: "xw" });
+    const view = new DataView(
+      packEscape4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    expect(view.getUint32(40, true)).toBe(5);
+    expect(view.getUint32(44, true)).toBe(3);
+  });
+
+  it("packs w0 (416), sliceHalfW as 0 (420, a forward orbit cannot thread a segment), visRadius4 as R (428) and radiusInvRange as 1/R (452)", () => {
+    const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
+    const R = de.boundingRadius;
+    const view = new DataView(
+      packEscape4GpuParams(de, view4({ w0: 0.37 }), { itemCount: 1 }),
+    );
+    expect(view.getFloat32(416, true)).toBe(Math.fround(0.37));
+    expect(view.getFloat32(420, true)).toBe(0);
+    expect(view.getFloat32(428, true)).toBe(Math.fround(R));
+    expect(view.getFloat32(452, true)).toBe(Math.fround(1 / R));
+  });
+
+  it("packs logEstimate at offset 464 -- 0 for a fold-only chain, 1 once a qsquare link is present", () => {
+    const folds = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
+    expect(folds.logEstimate).toBe(false);
+    expect(
+      new DataView(
+        packEscape4GpuParams(folds, view4(), { itemCount: 1 }),
+      ).getFloat32(464, true),
+    ).toBe(0);
+
+    const withPower = buildEscapeDE4([
+      escape4Mandelbox(),
+      escape4QsquareLink(),
+    ]);
+    expect(withPower.logEstimate).toBe(true);
+    expect(
+      new DataView(
+        packEscape4GpuParams(withPower, view4(), { itemCount: 1 }),
+      ).getFloat32(464, true),
+    ).toBe(1);
+  });
+});
+
+describe("packEscape4GpuParams stepBack4/final4M identity and the rotor transpose (fr-vag4)", () => {
+  it("packs stepBack4 (272..335) and final4M (336..399) as identity -- no sector sweep, no lens", () => {
+    const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
+    const view = new DataView(
+      packEscape4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    for (const base of [272, 336]) {
+      for (let r = 0; r < 4; r++) {
+        expect(view.getFloat32(base + r * 20, true)).toBe(1); // diagonal
+      }
+      // A sample of off-diagonal entries: zero-init, never written.
+      expect(view.getFloat32(base + 4, true)).toBe(0);
+      expect(view.getFloat32(base + 8, true)).toBe(0);
+      expect(view.getFloat32(base + 16, true)).toBe(0);
+    }
+  });
+
+  it("packs the rotor rows at 208..271 as the TRANSPOSE of the passed row-major rotor", () => {
+    const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
+    // Sixteen distinct values so a row/column mixup cannot hide behind a
+    // repeated entry -- the same recipe packSurface4GpuParams's own rotor
+    // test uses.
+    const rotor = Array.from({ length: 16 }, (_, i) => i + 1);
+    const view = new DataView(
+      packEscape4GpuParams(de, view4({ rotor }), { itemCount: 1 }),
+    );
+    for (let i = 0; i < 4; i++) {
+      const at = 208 + i * 16;
+      expect(view.getFloat32(at, true)).toBe(rotor[i]);
+      expect(view.getFloat32(at + 4, true)).toBe(rotor[4 + i]);
+      expect(view.getFloat32(at + 8, true)).toBe(rotor[8 + i]);
+      expect(view.getFloat32(at + 12, true)).toBe(rotor[12 + i]);
+    }
+  });
+});
+
+describe("packEscape4GpuParams slab refusal and ground-plane block (fr-vag4)", () => {
+  it("throws for a nonzero sliceHalfW -- a forward orbit cannot thread a segment", () => {
+    const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
+    expect(() =>
+      packEscape4GpuParams(de, view4({ sliceHalfW: 0.05 }), { itemCount: 1 }),
+    ).toThrow(/slab/);
+    expect(() =>
+      packEscape4GpuParams(de, view4({ sliceHalfW: 0 }), { itemCount: 1 }),
+    ).not.toThrow();
+  });
+
+  it("lands the ground-plane block at 576..623 without disturbing 0..575", () => {
+    const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
+    const gp: SurfaceGpuGroundPlane = {
+      y: 0.125,
+      fadeStart: 1.5,
+      fadeEnd: 4.5,
+      ballCenter: [0.25, -0.5, 0.75],
+      ballRadius: 1.25,
+      albedo: [0.375, 0.625, 0.875],
+    };
+    const plain = new Uint8Array(
+      packEscape4GpuParams(de, view4(), { itemCount: 4 }),
+    );
+    const buf = packEscape4GpuParams(de, view4(), { itemCount: 4 }, gp);
+    expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS4_PLANE_BYTES);
+    expect(new Uint8Array(buf, 0, SURFACE_GPU_PARAMS4_ESCAPE_BYTES)).toEqual(
+      plain,
+    );
+    const view = new DataView(buf);
+    expect(view.getFloat32(576, true)).toBe(Math.fround(gp.y));
+    expect(view.getFloat32(580, true)).toBe(Math.fround(gp.fadeStart));
+    expect(view.getFloat32(584, true)).toBe(Math.fround(gp.fadeEnd));
+    expect(view.getFloat32(588, true)).toBe(Math.fround(gp.ballRadius));
+    expect(view.getFloat32(592, true)).toBe(Math.fround(gp.ballCenter[0]));
+    expect(view.getFloat32(596, true)).toBe(Math.fround(gp.ballCenter[1]));
+    expect(view.getFloat32(600, true)).toBe(Math.fround(gp.ballCenter[2]));
+    expect(view.getFloat32(608, true)).toBe(Math.fround(gp.albedo[0]));
+    expect(view.getFloat32(612, true)).toBe(Math.fround(gp.albedo[1]));
+    expect(view.getFloat32(616, true)).toBe(Math.fround(gp.albedo[2]));
+  });
+});
+
+describe("packEscape4GpuMaps (fr-vag4)", () => {
+  it("packs one 36-float GpuMap4 stride per link: 16 forward matrix entries, translation at 16..19, (kind, w, derivGrowth) at 20..22, squared radii + wall at 32..34, every other lane 0", () => {
+    const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
+    const stride = SURFACE_GPU_MAP4_VEC4 * 4;
+    expect(stride).toBe(36);
+    const maps = packEscape4GpuMaps(de);
+    expect(maps.length).toBe(2 * stride);
+    de.links.forEach((link, j) => {
+      const base = j * stride;
+      for (let i = 0; i < 16; i++) {
+        expect(maps[base + i]).toBe(Math.fround(link.m[i]));
+      }
+      expect(maps[base + 16]).toBe(Math.fround(link.t[0]));
+      expect(maps[base + 17]).toBe(Math.fround(link.t[1]));
+      expect(maps[base + 18]).toBe(Math.fround(link.t[2]));
+      expect(maps[base + 19]).toBe(Math.fround(link.t[3]));
+      expect(maps[base + 20]).toBe(link.kind);
+      expect(maps[base + 21]).toBe(Math.fround(link.w));
+      expect(maps[base + 22]).toBe(Math.fround(link.derivGrowth));
+      expect(maps[base + 32]).toBe(Math.fround(link.minRadius2));
+      expect(maps[base + 33]).toBe(Math.fround(link.fixedRadius2));
+      expect(maps[base + 34]).toBe(Math.fround(link.boxLimit));
+      // Every other lane -- 23..31 and 35 -- is 0: the "one layout, lanes
+      // a core may ignore" contract the 4D descent cores already ride.
+      for (const lane of [23, 24, 25, 26, 27, 28, 29, 30, 31, 35]) {
+        expect(maps[base + lane]).toBe(0);
+      }
+    });
+  });
+
+  it("keeps the links DISTINCT -- a chain of two different links (a fold and a POWER map) packs two different strides", () => {
+    const de = buildEscapeDE4([escape4Mandelbox(), escape4QsquareLink()]);
+    const maps = packEscape4GpuMaps(de);
+    const stride = SURFACE_GPU_MAP4_VEC4 * 4;
+    const head = Array.from(maps.slice(0, stride));
+    const tail = Array.from(maps.slice(stride, 2 * stride));
+    expect(head).not.toEqual(tail);
+    expect(maps[20]).not.toBe(maps[stride + 20]);
+  });
+
+  it("pads to one zero stride rather than an empty array, like packEscapeGpuMaps", () => {
+    const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
+    const empty = packEscape4GpuMaps({ ...de, links: [] });
+    const stride = SURFACE_GPU_MAP4_VEC4 * 4;
+    expect(empty.length).toBe(stride);
+    expect(Array.from(empty)).toEqual(new Array(stride).fill(0));
+  });
+});
+
+// -----------------------------------------------------------------------
+// fr-qxxw / fr-h0c3: packSurface4GpuParams's balloon/groundPlane blocks --
+// the 3D packer's frozen-288 pair (packSurfaceGpuParams's balloon/
+// groundPlane describes above) one dimension up, appended at the frozen
+// 576.
+// -----------------------------------------------------------------------
+
+describe("packSurface4GpuParams balloon/groundPlane blocks (fr-qxxw / fr-h0c3)", () => {
+  it("passing neither balloon nor groundPlane reproduces today's buffer byte for byte, no-lens and lensed alike", () => {
+    const cases: [SurfaceDE4, number][] = [
+      [buildSurfaceDE4(fourDSystemTransforms()), SURFACE_GPU_PARAMS4_BYTES],
+      [
+        buildSurfaceDE4(fourDSystemTransforms(), fourDBoxfoldFinalTransform()),
+        SURFACE_GPU_PARAMS4_LENS_BYTES,
+      ],
+    ];
+    for (const [de, expectedSize] of cases) {
+      const omitted = new Uint8Array(
+        packSurface4GpuParams(de, view4(), { itemCount: 5 }),
+      );
+      const explicit = new Uint8Array(
+        packSurface4GpuParams(de, view4(), { itemCount: 5 }, null, null),
+      );
+      expect(omitted.byteLength).toBe(expectedSize);
+      expect(explicit).toEqual(omitted);
+    }
+  });
+
+  it("packs the balloon block at the frozen 576..607 offsets, growing the buffer to SURFACE_GPU_PARAMS4_BALLOON_BYTES (608), with the no-lens lens4 region (464..575) zero-filled and 0..463 otherwise untouched", () => {
+    expect(SURFACE_GPU_PARAMS4_BALLOON_BYTES).toBe(608);
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    expect(de.foldFinal).toBeNull();
+    const ball = balloonBall4(de);
+    const b = buildBalloon4(de, 1.6);
+    const balloon = {
+      center: b.center,
+      rho: b.rho,
+      R: b.R,
+      far: BALLOON_FAR_CAP_RHO * ball.radius,
+    };
+    const plain = new Uint8Array(
+      packSurface4GpuParams(de, view4(), { itemCount: 7 }),
+    );
+    const buf = packSurface4GpuParams(de, view4(), { itemCount: 7 }, balloon);
+    expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS4_BALLOON_BYTES);
+    expect(new Uint8Array(buf, 0, SURFACE_GPU_PARAMS4_BYTES)).toEqual(plain);
+    // The lens4 region (464..575) is zero-filled for a no-lens DE -- what
+    // keeps the balloon block's offset frozen at 576 whether or not a lens
+    // is present (pinned directly, not just implied by the byte length).
+    const lens4Region = new Uint8Array(
+      buf,
+      SURFACE_GPU_PARAMS4_BYTES,
+      SURFACE_GPU_PARAMS4_LENS_BYTES - SURFACE_GPU_PARAMS4_BYTES,
+    );
+    expect(lens4Region).toEqual(new Uint8Array(lens4Region.length));
+    const view = new DataView(buf);
+    expect(view.getFloat32(576, true)).toBe(Math.fround(b.center[0]));
+    expect(view.getFloat32(580, true)).toBe(Math.fround(b.center[1]));
+    expect(view.getFloat32(584, true)).toBe(Math.fround(b.center[2]));
+    expect(view.getFloat32(588, true)).toBe(Math.fround(b.rho));
+    expect(view.getFloat32(592, true)).toBe(Math.fround(b.R));
+    expect(view.getFloat32(596, true)).toBe(Math.fround(balloon.far));
+  });
+
+  it("keeps its lens4 block AND lands the balloon block at 576 for a LENSED 4D DE -- the two coexist", () => {
+    const de = buildSurfaceDE4(
+      fourDSystemTransforms(),
+      fourDBoxfoldFinalTransform(),
+    );
+    const lens = de.foldFinal;
+    if (!lens) throw new Error("expected a 4D foldFinal lens");
+    const ball = balloonBall4(de);
+    const b = buildBalloon4(de, 1.6);
+    const balloon = {
+      center: b.center,
+      rho: b.rho,
+      R: b.R,
+      far: BALLOON_FAR_CAP_RHO * ball.radius,
+    };
+    const lensedPlain = new Uint8Array(
+      packSurface4GpuParams(de, view4(), { itemCount: 3 }),
+    );
+    const buf = packSurface4GpuParams(de, view4(), { itemCount: 3 }, balloon);
+    expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS4_BALLOON_BYTES);
+    // The lens4 block is now REAL content, not zero-fill, and it survives
+    // byte for byte alongside the appended balloon block.
+    expect(new Uint8Array(buf, 0, SURFACE_GPU_PARAMS4_LENS_BYTES)).toEqual(
+      lensedPlain,
+    );
+    const view = new DataView(buf);
+    for (let i = 0; i < 16; i++) {
+      expect(view.getFloat32(464 + i * 4, true)).toBe(
+        Math.fround(lens.invM[i]),
+      );
+    }
+    expect(view.getFloat32(544, true)).toBe(SURFACE_FOLD_BOXFOLD);
+    expect(view.getFloat32(576, true)).toBe(Math.fround(b.center[0]));
+    expect(view.getFloat32(592, true)).toBe(Math.fround(b.R));
+  });
+
+  it("packs the ground-plane block at the frozen 576..623 offsets, growing the buffer to SURFACE_GPU_PARAMS4_PLANE_BYTES (624), leaving 0..575 untouched", () => {
+    expect(SURFACE_GPU_PARAMS4_PLANE_BYTES).toBe(624);
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const gp: SurfaceGpuGroundPlane = {
+      y: 0.125,
+      fadeStart: 1.5,
+      fadeEnd: 4.5,
+      ballCenter: [0.25, -0.5, 0.75],
+      ballRadius: 1.25,
+      albedo: [0.375, 0.625, 0.875],
+    };
+    const plain = new Uint8Array(
+      packSurface4GpuParams(de, view4(), { itemCount: 4 }),
+    );
+    const buf = packSurface4GpuParams(de, view4(), { itemCount: 4 }, null, gp);
+    expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS4_PLANE_BYTES);
+    expect(new Uint8Array(buf, 0, SURFACE_GPU_PARAMS4_BYTES)).toEqual(plain);
+    const view = new DataView(buf);
+    expect(view.getFloat32(576, true)).toBe(Math.fround(gp.y));
+    expect(view.getFloat32(580, true)).toBe(Math.fround(gp.fadeStart));
+    expect(view.getFloat32(584, true)).toBe(Math.fround(gp.fadeEnd));
+    expect(view.getFloat32(588, true)).toBe(Math.fround(gp.ballRadius));
+    expect(view.getFloat32(592, true)).toBe(Math.fround(gp.ballCenter[0]));
+    expect(view.getFloat32(596, true)).toBe(Math.fround(gp.ballCenter[1]));
+    expect(view.getFloat32(600, true)).toBe(Math.fround(gp.ballCenter[2]));
+    expect(view.getFloat32(608, true)).toBe(Math.fround(gp.albedo[0]));
+    expect(view.getFloat32(612, true)).toBe(Math.fround(gp.albedo[1]));
+    expect(view.getFloat32(616, true)).toBe(Math.fround(gp.albedo[2]));
+  });
+
+  it("throws when both a balloon and a ground plane are passed -- the two blocks share the frozen offset 576", () => {
+    const de = buildSurfaceDE4(fourDSystemTransforms());
+    const b = buildBalloon4(de, 0.9);
+    const balloon = { center: b.center, rho: b.rho, R: b.R, far: 10 };
+    const gp: SurfaceGpuGroundPlane = {
+      y: 0,
+      fadeStart: 1,
+      fadeEnd: 2,
+      ballCenter: [0, 0, 0],
+      ballRadius: 1,
+      albedo: [1, 1, 1],
+    };
+    expect(() =>
+      packSurface4GpuParams(de, view4(), { itemCount: 1 }, balloon, gp),
+    ).toThrow(/groundPlane\+balloon/);
   });
 });
