@@ -877,7 +877,12 @@ and UI**, so the interesting math is unit-tested without a browser:
     65536 samples while rendering ~38k surface hits — fr-17qu's first cut
     toasted "looks empty" over one of the app's own presets on exactly
     that confusion. The signal fires off the FIRST completed settle's own
-    hit count instead (main.ts's `surfaceBlankNotice`): a frame that drew
+    hit count instead (main.ts's `surfaceBlankNotice`, and since fr-7k0o
+    off BOTH engines' — the compute arm counts ray statuses, the WebGL
+    strip arm counts the COVERAGE flag its tracer writes into alpha, which
+    is invisible to the user, agrees with the compute arm on ground-plane
+    pixels, and is free to read in the full-frame readback fr-jf9y's
+    supersampling accumulator already pays for): a frame that drew
     essentially nothing at the entry pose — where the camera has just
     glided to frame the whole bounding ball — IS blank by the renderer's
     own arithmetic, so it cannot disagree with what the user sees. The
