@@ -50,8 +50,18 @@ the SHARED renderer eight of them import (`renderPreview`,
 `writeContactSheet`, `encodePng`, and the `DistanceEstimator`/`PanelStats`
 vocabulary): a CPU sphere-marcher with AO/shadow switches, a settable step
 budget and an always-counted `exhausted`, so a new sheet writes its
-estimator and its panel list, never a ninth marcher. Output lands under
-`scripts/out/`, which is gitignored — regenerate rather than commit
+estimator and its panel list, never a ninth marcher. `scripts/set-extent.ts`
+is the other shared instrument (fr-azjk): the ONE definition of "how much of
+a ball does this set fill, and how far out does it reach", against a
+MEMBERSHIP oracle the caller supplies and never a threshold on a distance,
+volume-uniform for fill (`probeEscapeFill`'s own draw, term for term, and
+pinned bit-equal to it) and a shell walk from the outside in for reach. Five
+sheets had each grown their own copy and all five were wrong the same two
+ways — a grid aliases against a fold's walls, and `de(p) < eps` is not
+membership in either direction — which corrected figures in four module docs
+and cost two claims: the Juliabox's "narrow usable band" does not exist, and
+`qjulia-beauty`'s "a deformed M never wins" was the instrument. Output lands
+under `scripts/out/`, which is gitignored — regenerate rather than commit
 megabytes of PNG. The escape-time family's sheets:
 `escape-form-sweep` (fr-7u8t.8's retired Julia form, still executable —
 the ORBIT form, not to be confused with the sheet below),
@@ -480,7 +490,14 @@ and UI**, so the interesting math is unit-tested without a browser:
     per-link collapse gone — but not on whether the result is flat, so
     "no per-link trend" is what this normalizer buys, not
     chain-invariance. Cost is the clamp: 1.9-8.6% of really-hit pixels at
-    six links, up to 15.8% over the whole surface. The convention
+    six links, up to 15.8% over the whole surface. THE PIXEL-POPULATION
+    ROW IS POSE-DEPENDENT AND ITS POSE MOVED (fr-azjk): `chain-speckle`
+    fits its marching ball to the set's reach, that fit was inflated by a
+    halo of near-boundary escapers, and on the corrected fit the shipped
+    normalizer's median trap reads 0.430 at two links and 0.710 at six
+    against the recorded 0.265 and 0.431. Same direction, same claim — no
+    per-link collapse — measured on an object that is no longer drawn
+    smaller than it is. The convention
     `core:"bulb"` always used)
     with rings/sheets over the orbit's
     closest approaches — the descent cores' colors-only convention.
@@ -612,9 +629,10 @@ and UI**, so the interesting math is unit-tested without a browser:
     machinery for a second DE type (measured on real Iris: 256x144 in
     136ms wall, 33 passes, 0 exhausted, GPU hit rate 0.153 vs CPU 0.158 —
     the rates roughly halved at fr-7u8t.8, which is the Mandelbrot form
-    replacing a blob that filled 94% of its own ball with an object that
-    fills 10%; the gate is the GAP between the two rates, so it moved with
-    them).
+    replacing a blob that filled 89.4% of its own ball with an object that
+    fills 3.5% (fr-azjk's corrected figures — the record read 94% and 10%
+    off a grid thresholding the estimate); the gate is the GAP between the
+    two rates, so it moved with them).
     Ground plane (fr-rhn5) is an orthogonal `groundPlane` option, not a
     sixth core — it composes with every descent/escape core and the lens
     wrapper. It adds a fifth ray status, `SURFACE_GPU_RAY_PLANE` (4), that
@@ -819,11 +837,22 @@ and UI**, so the interesting math is unit-tested without a browser:
     map against 4.3%/1.5% (two links) down to 1.5%/0.6% (six). Bailout
     stays 4 for the same measured reason it always was — raising it at a
     fixed budget inflates the set rather than revealing it (control fill
-    2.9% → 57.7% → 65.6% at 4/8/16). Phone-cheap by
-    construction (~30 branchless folds per link per eval; measured 0.25
-    us/eval at one link and 0.27-1.10 across eight chains, the six-link one
-    at 0.60 — the n-times budget is a ceiling only a non-escaping orbit
-    pays, and every extra link is another chance to escape).
+    3.6% → 51.5% → 53.2% at 4/8/16 over a FIXED radius-4 reference ball,
+    fr-azjk's corrected reading of 2.9% → 57.7% → 65.6%: a 14x inflation on
+    the first doubling and a plateau after it). What it is NOT is a ball
+    the chains strain against — that claim inverted on re-measurement:
+    cycled chains reach 1.96-2.94 where the single map reaches 3.06, so 4
+    is generous for a chain and right for the map it was chosen against. Phone-cheap by
+    construction (~30 branchless folds per link per eval; measured over the
+    BAILOUT ball the marcher actually enters, 0.18 us/eval at one link and
+    0.07-0.23 across eight chains — at or BELOW the single map on every
+    row, because the n-times budget is a ceiling only a non-escaping orbit
+    pays and every extra link is another chance to escape. fr-azjk's
+    corrected figures, and it had to separate the DOMAIN out first: priced
+    over each row's own fitted ball instead, which crowds queries against
+    the set, the same rows read 0.22 and 0.28-1.27 — the record's 0.25 /
+    0.27-1.10 / 0.60 was that column, taken when the fit came from the
+    aliased instrument. Both are printed now).
     THE LIST IS THE SEQUENCE (Mandelbulber2's `seq->GetSequence(i)`):
     orbit step `i` applies link `i mod n`, `+ p` and the bailout test
     after EACH link, and a PASS is one full cycle — so
@@ -831,8 +860,9 @@ and UI**, so the interesting math is unit-tested without a browser:
     `maxDepth` keep meaning "how many times is each link applied". The
     rejected alternative, CHAINING (all n links inside one pass, i.e. the
     per-PASS offset — the same fork under the prototype's other name),
-    was measured into a near-solid ball as links were added — 72.8% of the
-    bailout ball at six links, the fr-7u8t.8 defect returning — and
+    was measured fattening toward a solid ball as links were added — 37.1%
+    of the bailout ball at six links against cycling's 0.2%, a 186x gap
+    that widens with every link, the fr-7u8t.8 defect returning — and
     lives on as an executable local in
     `scripts/escape-chain.harness.ts`, the sheet the SHIPPED estimator
     draws (`scripts/hybrid-chain.harness.ts` is the prototype that asked
@@ -888,15 +918,18 @@ and UI**, so the interesting math is unit-tested without a browser:
     per-iteration offset is the QUERY POINT (fr-7u8t.8), which is what
     makes it the object published Mandelbox renders show. fr-kltj had
     shipped the Julia form (offset = the document's `t`), and it rendered
-    a near-SPHERE: 94% of the bounding ball non-escaping at the bench
-    fixture's own constant. `t` survives as the PRE-fold offset — a live
+    a near-SPHERE: 89.4% of the bounding ball non-escaping at the bench
+    fixture's own constant, against the shipped form's 3.5%. `t` survives as the PRE-fold offset — a live
     deformation knob, classic Mandelbox at `t = 0` — so the mode still
     adds NO document state and stays a render MODE over the existing
     vocabulary (morphs/mutations/persistence untouched). The Julia form
     was measured, not merely argued away, and lives on as a local in
-    `scripts/escape-form-sweep.harness.ts`: it only thins past |t| ~ 2.5
-    and is a pitted ball even at its best, so it does not earn the
-    permanent document flag it would cost.
+    `scripts/escape-form-sweep.harness.ts`: at weight 2 it fills
+    87.2 / 71.8 / 32.6 / 2.1 / 0.005% of the bailout ball as |t| runs
+    0.5 / 1 / 1.5 / 2 / 2.5, so it does not merely thin late — it goes
+    from a third of the ball to a measure-zero dust in one step, with no
+    usable band in between, and is a pitted ball even at its best. It does
+    not earn the permanent document flag it would cost.
 
   - `qjulia-de.ts` — the quaternion Julia set's CPU oracle (fr-7u8t.4):
     `q <- q^2 + c` (Hart/Sandin/Kauffman 1989) in the project's own
@@ -1787,9 +1820,20 @@ Frame` callback, which runs before paint so the disabled look never
     refines and presents when it lands, and a superseded job keeps what it
     finished. The speckle it removes is sub-pixel STRUCTURE, measured, not
     march undersampling (`exhausted` 0.00% at 20x the step budget) and not
-    reachable by any viewport (partial-coverage exponent -0.21..-0.36
-    against output resolution where a sphere's perimeter law measures
-    -0.98). main.ts spends it on the live SETTLE and on Save-PNG at 8
+    reachable by any viewport (the impulse rate is FLAT across a 4x
+    resolution range — 16.0-16.1% for the single map, 23.0-23.5% for a
+    six-link chain at 128/256/512px — and 39-55% of pixels still move by
+    more than 24/255 between the 1-sample and the 16-sample render, against
+    a smooth sphere's 0.29% through the same marcher). fr-azjk re-measured
+    that sheet on a corrected fitted radius and moved one leg of it: the
+    partial-coverage exponents read -0.34 (single map) and -0.73 (six links)
+    against the sphere's -0.98, not -0.21..-0.36, because partial coverage
+    counts SILHOUETTE pixels and the old inflated marching ball drew these
+    objects far smaller than they are. It is the weaker leg either way — a
+    frame-filling object keeps its structure in its interior, where a
+    silhouette statistic cannot see it, which is why the six-link row's
+    coverage fell to the sphere's while its impulse rate rose ABOVE the
+    single map's. main.ts spends it on the live SETTLE and on Save-PNG at 8
     samples, never on a preview (cheap by definition) and never on offline
     VIDEO force frames (the cost would multiply by the frame count); the
     progress row discloses the pass as a trailing

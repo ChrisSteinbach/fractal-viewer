@@ -57,98 +57,184 @@
  *
  * ============================ THE VERDICT ============================
  *
- * IT IS (B), and the margin is not close. Rows are CONTROL / TWO / SIX.
+ * IT IS STILL (B), and the margin is not close — but the numbers below
+ * moved substantially since the last reading, and the reason has to come
+ * first or the new numbers read as a retraction rather than a correction.
+ * Rows are CONTROL / TWO / SIX.
  *
- * (A) IS REFUTED as the story. NOT ONE RAY exhausts its budget in ANY arm
- * of ANY row — 0.00% at the shipped 600 steps, and still 0.00% at 12000
- * steps with the step scale at 0.05. (The app agrees: it reports
- * `exhausted 0` on escape renders.) The other (A) mechanism, striding past
- * thin features, is real but small and SATURATES: damping 0.35 -> 0.05
- * finds 3.2 / 2.8 / 3.8 more percentage points of surface (~8% relative)
- * and takes isolated-pixel speckle from 1.11/0.90/0.65% to 0.47/0.53/0.26%.
- * A third of the GEOMETRIC speckle is march-fixable; two thirds is not.
+ * THE INSTRUMENT CHANGED UNDER THIS FILE (fr-azjk), and it moved the
+ * PICTURES, not merely a printed statistic. `fitMarchRadius` used to grid
+ * the marching box and threshold the distance ESTIMATE at `1e-3`; that
+ * reach was wrong twice over (`scripts/set-extent.ts`'s module doc carries
+ * both defects — the grid aliases against a fold's own walls, and a small
+ * distance is not a membership test, since it also fires on a
+ * near-boundary ESCAPER whose `dr` has run away just as far), and it read
+ * high, because the halo of escapers it miscounted as members sits OUTSIDE
+ * the object. Reach is what a sheet fits its marching ball to, so an
+ * inflated reach does not stay a private number — it draws the object
+ * SMALLER inside its own frame, which manufactures exactly the kind of
+ * sub-pixel speckle this file exists to distinguish from the real thing.
+ * `fitMarchRadius` now asks {@link sampleSetExtent} — a seeded uniform
+ * sample against {@link escapeSetContains}, the same membership oracle the
+ * app's own blank-frame probe uses — and the fitted radii fell hard:
+ * CONTROL 3.24, TWO 2.13, SIX 1.42, against the sphere anchor's fixed
+ * 1.12. The six-link chain in particular went from a speck adrift inside a
+ * large ball to an object that fills most of its own frame. The general
+ * lesson outlasts this bead: a "how big is it" figure is never just a
+ * number in a table, it is the ruler every picture downstream gets held
+ * against, and an inflated one is a defect a reader can SEE without ever
+ * reading the number that caused it.
  *
- * (B) IS THE OBJECT, measured three independent ways:
+ * THAT CORRECTION MOVES PARTIAL COVERAGE HARD, AND IT IS NOT THE OBJECT
+ * GETTING SMOOTHER. At 16 samples per pixel, CONTROL/TWO/SIX now read
+ * 8.13 / 2.86 / 1.33% against the sphere anchor's 1.31% — where this file
+ * used to record 13.1 / 13.3 / 8.0%. Read alone, that column says the
+ * fold objects got dramatically smoother with chain length, and the
+ * six-link row's own figure (1.33%) is now barely above a SMOOTH SOLID'S
+ * (1.31%). That reading is backwards, and the mechanism is exactly what
+ * the statistic cannot see: partial coverage counts pixels straddling a
+ * SILHOUETTE, and a silhouette's share of the frame falls when the object
+ * fills more of the frame — which is precisely what an un-inflated
+ * marching ball does. The structure did not dissolve; it moved from the
+ * silhouette into the interior, where a boundary statistic has nothing to
+ * measure. The proof that it moved rather than vanished is in the row it
+ * hit hardest: the six-link chain's IMPULSE rate — a whole-frame measure,
+ * not a boundary one — reads about 23.5% against the control's 16.1% at
+ * the same 256px framing where its partial coverage now reads BELOW the
+ * control's (1.33% vs 8.13%). A reader who stopped at the coverage column
+ * would conclude the six-link object is the smoothest of the three; by
+ * every framing-robust measure below, it is the roughest.
  *
- *   PARTIAL COVERAGE — the reading that needs no inference. At 16 samples
- *   per pixel, 13.1 / 13.3 / 8.0% of the object's pixels are covered
- *   strictly between 10% and 90%. The unit-sphere anchor, same pose, same
- *   marcher, reads 1.31% (its silhouette, and nothing else). These objects
- *   are 6-10x finer than the pixel grid.
+ * THE VERDICT SURVIVES ANYWAY, on the evidence that does not depend on how
+ * the silhouette happens to be framed:
  *
- *   THE PICTURE CHANGES, it does not merely settle. Between the 1-sample
- *   and the 16-sample render, mean luminance moves 15.6 / 15.6 / 21.9 of
- *   255 and 27.4 / 27.4 / 37.6% of pixels move by more than 24/255. The
- *   sphere moves 0.4/255 and 0.29% of pixels. A speckle that a better
- *   marcher would fix does not repaint a third of the frame.
+ *   (A) IS STILL REFUTED. NOT ONE RAY exhausts its budget in ANY arm of
+ *   ANY row under the corrected radii either — 0.00% at the shipped 600
+ *   steps, and still 0.00% at 12000 steps (20x the budget) with the step
+ *   scale at 0.05. (The app agrees: it reports `exhausted 0` on escape
+ *   renders.) The other (A) mechanism, striding past thin features, is
+ *   real, small, and still SATURATES: damping 0.35 -> 0.05 finds 3.7 /
+ *   3.1 / 0.8 more percentage points of hit surface (1.2-6.8% relative)
+ *   and takes isolated-pixel mask speckle from 0.75 / 0.22 / 0.03% down to
+ *   0.34 / 0.07 / 0.00% of the region. The march-fixable SHARE of that
+ *   already-small residual now varies by row rather than holding one
+ *   number — 32% (control) / 49% (two) / 81% (six) of the 1-sample mask
+ *   speckle closes under a generous march alone, rising because the pool
+ *   it is a share OF has shrunk to a handful of pixels at six links (mask
+ *   speckle runs 0.03% -> 0.01% -> 0.00% of the region across the
+ *   shipped/generous/supersampled arms, i.e. single digits of pixels in a
+ *   256x256 panel) — read that 81% as directional, not precise; the
+ *   absolute counts behind it are the one part of this evidence a
+ *   re-framing can still make noisy.
  *
- *   THE ROUGHNESS IS NOISE-SHAPED and supersampling is what un-shapes it.
- *   Survival S (0.24 = per-pixel noise, ~4 = smooth structure; the first
- *   test measures those anchors) sits at 0.46-0.49 for the 1-sample fold
- *   renders against the sphere's 3.7, and rises to 0.57-0.65 supersampled
- *   while the impulse rate falls 67-73% and roughness more than halves.
+ *   THE IMPULSE RATE IS STILL FLAT across a 4x resolution range — about
+ *   15.6 / 16.1 / 16.0% for the control and 23.2 / 23.5 / 23.0% for the
+ *   six-link chain at 128/256/512px — so whatever the coverage column now
+ *   suggests, the appearance itself is still scale-invariant.
  *
- * (C) THE SHADING PROXY EXONERATED, and backwards from the guess: turning
- * the step-count AO and the cone shadow OFF makes the 1-sample picture
- * MORE speckled, not less (impulse 39.0 -> 47.3, 39.3 -> 47.4, 28.0 ->
- * 48.7). They were FLATTENING the noise, not making it — the shadow term
- * crushes self-shadowed filigree toward one dark value. So `de-preview.ts`
- * is not what these sheets are measuring.
+ *   THE 1x-VS-16x WHOLE-IMAGE CHANGE IS STILL ENORMOUS, and it is the
+ *   file's headline now rather than a supporting note, because it is the
+ *   one number here a re-framing cannot flatter: between the 1-sample and
+ *   the 16-sample render, about 39.5 / 49.7 / 54.5% of CONTROL/TWO/SIX's
+ *   pixels move by more than 24/255 (mean |dL| about 22.9 / 29.4 / 34.0 of
+ *   255), against the sphere's 0.29% of pixels (0.4/255). Notice the
+ *   DIRECTION: this metric RISES with chain length — exactly opposite the
+ *   partial-coverage column, which now FALLS with chain length. A
+ *   statistic that improves while the picture itself grows more sensitive
+ *   to sampling rate is measuring the wrong thing, which is the whole
+ *   reason the pin moved here instead of staying on partial coverage.
  *
- * WILL THE APP'S MARCHER FIX IT? No. The app's advantages over this
- * harness are budget, an empty-space grid and a tier-pinned acceptance
- * epsilon — all of them (A) machinery, and (A) is 0.00% here. The app
- * renders one sample per pixel with no antialiasing, exactly like arm A.
+ *   THE EXPONENT TABLE IS A SILHOUETTE MEASURE, and should be read as one
+ *   from here on rather than as a "does more resolution fix it" answer:
+ *   about -0.34 (control) and -0.73 (six-link) against the sphere's -0.98.
+ *   The control is still nothing like a silhouette (halving its partial
+ *   coverage takes ~7.7x the linear resolution, against a smooth solid's
+ *   ~2x, and against the old record's own -0.21 reading, which needed
+ *   ~26x). The six-link exponent is a great deal closer to a silhouette's
+ *   than the old record showed (halving takes ~2.6x, not far off the
+ *   sphere's own ~2x) — which is consistent with, not contrary to, the
+ *   paragraph above: its BOUNDARY resolves almost like a solid's precisely
+ *   because the corrected framing pushed most of its structure off the
+ *   boundary and into the interior. The sub-pixel claim for that row is
+ *   carried by the impulse and whole-image-move numbers now, not by this
+ *   table.
  *
- * WILL THE APP'S BIGGER VIEWPORT FIX IT? No, and this is the measurement
- * that closes the question rather than arguing it. Partial coverage
- * against output resolution, every size at 16 samples per pixel so only
- * the pixel size changes:
+ * (C) THE SHADING PROXY STAYS EXONERATED, backwards from the guess exactly
+ * as before: turning the step-count AO and the cone shadow OFF makes the
+ * 1-sample picture MORE speckled, not less (impulse 32.1 -> 51.0, 10.9 ->
+ * 55.2, 13.0 -> 59.1). They FLATTEN the noise, they do not make it — the
+ * shadow term crushes self-shadowed filigree toward one dark value. So
+ * `de-preview.ts` is still not what these sheets are measuring.
+ *
+ * WILL THE APP'S MARCHER FIX IT? No, for the same reason as before: the
+ * app's advantages over this harness are budget, an empty-space grid and a
+ * tier-pinned acceptance epsilon — all (A) machinery, and (A) is 0.00%
+ * here regardless of framing. The app renders one sample per pixel with no
+ * antialiasing, exactly like arm A.
+ *
+ * WILL THE APP'S BIGGER VIEWPORT FIX IT? Still no, and the corrected
+ * measurement makes the answer sharper rather than muddier. Partial
+ * coverage against output resolution, every size at 16 samples per pixel
+ * so only the pixel size changes:
  *
  *              128px   256px   512px    exponent   4x pixels buys
- *     CONTROL  15.29%  13.14%  11.42%     -0.21    25% fewer
- *     SIX      10.25%   8.01%   6.23%     -0.36    39% fewer
+ *     CONTROL  10.42%   8.13%   6.49%     -0.34    38% fewer
+ *     SIX       2.18%   1.33%   0.79%     -0.73    64% fewer
  *     sphere    2.67%   1.31%   0.69%     -0.98    74% fewer
  *
- * The sphere measures the perimeter law exactly (-1: its partial pixels
- * are a curve, so they halve when the pixels do), which is the instrument
- * validating itself. The folds do not: at -0.21 the object yields new
- * structure almost as fast as pixels are added, and HALVING its partial
- * coverage would take 26x the linear resolution. The impulse rate does not
- * move at all — 12.03 / 12.54 / 12.71% across a 4x resolution range — so
- * the appearance is scale-invariant even where the coverage slowly
- * improves. This is a genuinely filamentary object at every framing, not
- * one that is merely under-resolved at this one.
+ * The sphere still measures the perimeter law almost exactly (-1: its
+ * partial pixels are a curve, so they halve when the pixels do), which is
+ * the instrument validating itself. The impulse rate does not move at all
+ * across that same range — 15.63 / 16.06 / 16.02% for the control,
+ * 23.17 / 23.52 / 22.96% for six links — so the appearance is
+ * scale-invariant even where the silhouette slowly tightens. Read this
+ * table as a SILHOUETTE result, per the reorganisation above: the control
+ * is nowhere near a solid's scaling, the six-link row has drifted close to
+ * one, and neither fact bears on whether a bigger viewport fixes the
+ * PICTURE — the flat impulse rate and the 1x-vs-16x whole-image change
+ * both say it does not.
  *
  * WHAT WOULD ACTUALLY FIX IT is samples per pixel, not pixels: 16 of them
- * removes 67-73% of the impulse and turns the colour coordinate from
- * noise-shaped into the most coherent field measured. That is a real,
- * bounded change (the compute renderer already traces a host-compacted ray
- * list, so N samples per pixel is N times the rays and nothing else),
- * priced against the fact that these sessions already settle in seconds.
+ * removes 60-69% of the impulse (69% control, 65% two links, 60% six
+ * links) and pulls the colour coordinate from noise-shaped toward the hit
+ * depth's own coherence — see below for how far it actually gets, which is
+ * further for the control than for either chain. That is a real, bounded
+ * change (the compute renderer already traces a host-compacted ray list,
+ * so N samples per pixel is N times the rays and nothing else), priced
+ * against the fact that these sessions already settle in seconds.
  *
- * WOULD COLOUR MAKE IT READ AS STRUCTURE? Only after the same fix. At one
- * sample per pixel the escape-count coordinate is noise-shaped — S 0.44 /
- * 0.39 / 0.36, against the hit depth's 1.39 / 1.58 / 1.91 on the SAME
- * pixels — and 25.1 / 12.5 / 8.2% of neighbouring pixel pairs are more
- * than 0.12 of the ramp apart. Supersampled it becomes the most coherent
- * field measured: confetti falls to 7.5 / 2.1 / 0.2%, BELOW the depth's
- * own, and `chain-speckle-trap.png`'s third column shows shells, plates
- * and portholes where its first shows fizz. So the coordinate is sound and
- * the aliasing is shared: colour is worth having, and worth nothing until
- * the sampling is fixed.
+ * WOULD COLOUR MAKE IT READ AS STRUCTURE? Only after the same fix, and the
+ * corrected framing narrows how far that fix reaches. At one sample per
+ * pixel the escape-count coordinate is noise-shaped — S 0.37 / 0.29 /
+ * 0.28, against the hit depth's 1.70 / 2.09 / 2.57 on the SAME pixels —
+ * and 30.6 / 64.7 / 68.0% of neighbouring pixel pairs are more than 0.12
+ * of the ramp apart. Supersampled it collapses hard — confetti falls to
+ * 6.9 / 13.0 / 13.0%, a 4.4-5.2x cut — but IT NO LONGER CLEARS THE DEPTH
+ * FIELD'S OWN COHERENCE THE WAY THE OLD RECORD CLAIMED: on the control it
+ * lands close to depth's 6.2% (essentially tied); on the two- and six-link
+ * chains it stays well above depth's 2.5% and 0.8%. `chain-speckle-trap.png`'s
+ * third column shows this directly — the control's supersampled panel
+ * resolves into shells and plates, the chain rows stay visibly grainy next
+ * to their own depth-field neighbour. The coordinate is still sound and
+ * supersampling is still the fix that matters, but "the most coherent
+ * field measured" overstated it for anything longer than the single map:
+ * colour is worth having on the same terms as before, and the ceiling it
+ * can reach is the depth field's, not a floor every row is guaranteed to
+ * hit.
  *
- * TWO THINGS FOUND ON THE WAY, both about the CHAIN specifically:
+ * TWO THINGS FOUND ON THE WAY, both about the CHAIN specifically, and
+ * neither moved by the framing correction in its CONCLUSION — only in the
+ * example numbers, refreshed here:
  *
  *   fr-7u8t.8's CONTINUOUS COUNT BUYS NOTHING HERE. Against the raw
- *   integer count it replaced, on the same pixels: mean|d| 0.1130 vs
- *   0.1102, confetti 25.1 vs 25.0%, S 0.44 vs 0.44 — indistinguishable.
- *   It smooths WITHIN a count band, and 54.6 / 58.6 / 72.7% of neighbour
+ *   integer count it replaced, on the same pixels: mean|d| 0.1284 vs
+ *   0.1262, confetti 30.63 vs 30.69%, S 0.37 vs 0.37 — indistinguishable.
+ *   It smooths WITHIN a count band, and 57.3 / 85.3 / 84.9% of neighbour
  *   pairs here are already more than a whole count apart. (The correction
  *   still earns its place on the objects it was measured against; it just
  *   cannot reach this framing's problem.) Read the confetti threshold's
  *   own doc before comparing the two at 0.1 — that lands exactly on the
- *   raw count's lattice and manufactures an 8-point gap out of rounding.
+ *   raw count's lattice and manufactures a gap out of rounding.
  *
  *   A CHAIN USED ONLY THE BOTTOM OF THE RAMP, and this is where that was
  *   found. The coordinate divided by `maxDepth * n` single-link steps,
@@ -158,19 +244,29 @@
  *   over that painted a six-link chain in the darkest fifth of its ramp,
  *   visible here as rows that darkened with length.
  *
- *   FIXED (fr-byxb): the denominator is the PASS budget now, and this
- *   harness's own numbers are what the fix was checked against. One link
- *   is unchanged to the bit; two and six now run [0.166 0.265 0.626] and
- *   [0.256 0.431 1.000], and the rows brighten with length instead of
- *   darkening. The cost is the clamp at the top — 1.9% of hit pixels at
- *   two links, 8.6% at six, against 3.99% for the single map, which is
- *   the number to beat for anyone trying a normalizer that does not
- *   saturate.
+ *   FIXED (fr-byxb): the denominator is the PASS budget now — a property
+ *   of the formula, not of how a sheet frames its marching ball, so it
+ *   holds under any radius fr-azjk fits. One link's expression is
+ *   unchanged to the bit for the same reason (`n = 1` collapses both
+ *   denominators to the same value). This run's own ramp figures, at the
+ *   corrected framing, run [p05 p50 p95] [0.149 0.259 1.000] at one link,
+ *   [0.228 0.430 1.000] at two and [0.317 0.710 1.000] at six — the median
+ *   still rises with length (0.259 -> 0.430 -> 0.710), so the rows still
+ *   brighten instead of darkening. All three rows now touch the clamp at
+ *   p95 under this framing (a tighter ball puts more of the trap's own
+ *   tail at the boundary); the earlier record's clamp-cost percentage (a
+ *   share of hit pixels) is not printed by this file's current test, so it
+ *   is left unquoted here rather than guessed — the ramp figures above are
+ *   what this run actually measured.
  *
- * IN ONE LINE: the speckle is ~30% march (fixable, already saturating) and
- * ~70% the object (not fixable by marching or by pixels). It is real
- * structure, aliased — `chain-speckle.png`'s fourth column is what it
- * looks like resolved, and it is worth looking at.
+ * IN ONE LINE: partial coverage fell because the frame is finally sized
+ * correctly, not because the object got smoother. The number that cannot
+ * flatter itself is the picture's OWN sensitivity to sampling rate, which
+ * RISES from 39.5% at the control to 54.5% at six links while coverage
+ * falls from 8.1% to 1.3% over the same three rows. It is real structure,
+ * aliased, sitting mostly in the interior now rather than on the boundary
+ * — `chain-speckle.png`'s fourth column is what it looks like resolved,
+ * and it is worth looking at.
  *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
  *        scripts/chain-speckle.harness.ts
@@ -184,6 +280,7 @@ import {
   ESCAPE_TIME_ITERATIONS,
   ESCAPE_TIME_RADIUS,
   buildEscapeDE,
+  escapeSetContains,
   estimateEscapeDistance,
   foldQueryIntoSector,
 } from "../src/fractal/escape-de";
@@ -201,6 +298,7 @@ import {
   writeContactSheet,
 } from "./de-preview";
 import type { DistanceEstimator, PanelStats, Vec3 } from "./de-preview";
+import { sampleSetExtent } from "./set-extent";
 
 /** Panel size for the four-arm sheet. The 4x arm marches this squared times
  * sixteen rays at a quarter of the acceptance epsilon, so it is the term
@@ -296,31 +394,22 @@ const SPHERE_LABEL = "ANCHOR unit sphere (a smooth solid)";
 
 // -------------------------------------------------------- field statistics
 
-/** Grid scan of the marching box (`escape-chain.harness.ts`'s `scan`, cut
- * down to the reach it is used for here). */
-function reachOf(de: DistanceEstimator, scanR: number, n: number): number {
-  let maxR = 0;
-  for (let i = 0; i < n; i++) {
-    for (let j = 0; j < n; j++) {
-      for (let k = 0; k < n; k++) {
-        const p: Vec3 = [
-          -scanR + (2 * scanR * i) / (n - 1),
-          -scanR + (2 * scanR * j) / (n - 1),
-          -scanR + (2 * scanR * k) / (n - 1),
-        ];
-        if (de(p) < 1e-3) maxR = Math.max(maxR, Math.hypot(p[0], p[1], p[2]));
-      }
-    }
-  }
-  return maxR;
-}
-
 /** `escape-chain.harness.ts`'s `fitMarchRadius`, verbatim in effect, so a
- * panel here frames what the sheet in question framed. */
-function fitMarchRadius(de: DistanceEstimator): number {
-  const reach = reachOf(de, ESCAPE_TIME_RADIUS, 35);
-  if (reach <= 0) return ESCAPE_TIME_RADIUS;
-  return Math.min(ESCAPE_TIME_RADIUS, Math.max(1.15, reach * 1.06));
+ * panel here frames what the sheet in question framed.
+ *
+ * Reach was a grid over the marching box thresholding the estimate at
+ * `1e-3` until fr-azjk, which is the wrong instrument twice over
+ * (`scripts/set-extent.ts` carries both arguments). It asks
+ * {@link escapeSetContains} over a seeded uniform sample now, exactly as
+ * the sheet it mirrors does — the fitted radii moved by under 1% and no
+ * reading in this file depends on which one is used, but a framing
+ * quantity computed the wrong way is still a wrong number in a record. */
+function fitMarchRadius(member: (p: Vec3) => boolean): number {
+  const { reachAbs } = sampleSetExtent(member, {
+    fillRadius: ESCAPE_TIME_RADIUS,
+  });
+  if (reachAbs <= 0) return ESCAPE_TIME_RADIUS;
+  return Math.min(ESCAPE_TIME_RADIUS, Math.max(1.15, reachAbs * 1.06));
 }
 
 /** Rec.709 luminance of a rendered panel, 0..255. Post-gamma on purpose:
@@ -822,12 +911,15 @@ describe("is the escape-chain speckle undersampling or the object? (fr-za0n)", (
   it("splits the speckle: march budget vs shading proxy vs sub-pixel structure", () => {
     const panels: PanelStats[] = [];
     const partials = new Map<string, number>();
+    /** Share of pixels whose luminance MOVES between the 1-sample and the
+     * 16-sample render — the framing-robust half of the SUB-PIXEL line. */
+    const moves = new Map<string, number>();
     const rows: [string, DistanceEstimator, number][] = [
       ...FIXTURES.map(
         ([label, transforms]): [string, DistanceEstimator, number] => {
           const de = buildEscapeDE(transforms);
           const est: DistanceEstimator = (p) => estimateEscapeDistance(de, p);
-          return [label, est, fitMarchRadius(est)];
+          return [label, est, fitMarchRadius((p) => escapeSetContains(de, p))];
         },
       ),
       [SPHERE_LABEL, SPHERE, SPHERE_R],
@@ -929,6 +1021,7 @@ describe("is the escape-chain speckle undersampling or the object? (fr-za0n)", (
       );
       panels.push(a, b, c, sd.down);
       partials.set(label, sd.partialPct);
+      moves.set(label, (100 * moved) / lumC.length);
       expect(a.hits, `${label}: arm A rendered nothing`).toBeGreaterThan(
         0.005 * SIZE * SIZE,
       );
@@ -944,12 +1037,27 @@ describe("is the escape-chain speckle undersampling or the object? (fr-za0n)", (
     // The instrument's own floor: a smooth solid through this marcher and
     // this shading measures essentially nothing, so every fold reading above
     // is the OBJECT rather than the harness.
-    const sphere = partials.get(SPHERE_LABEL)!;
-    expect(sphere).toBeLessThan(2);
-    for (const [label, partial] of partials) {
+    //
+    // THE PIN IS THE WHOLE-IMAGE CHANGE, NOT PARTIAL COVERAGE (fr-azjk).
+    // Partial coverage counts pixels straddling a SILHOUETTE, and its share
+    // of the frame falls when the object fills more of the frame — which is
+    // exactly what happened when the fitted marching ball stopped being
+    // inflated by a halo of near-boundary escapers: the six-link chain went
+    // from a speck in a radius-3.7 ball to a frame-filling object in a
+    // radius-1.4 one, and its partial coverage fell to the sphere's while
+    // its impulse rate ROSE ABOVE the control's. The structure did not go
+    // anywhere; it moved from the silhouette into the interior, where a
+    // silhouette statistic cannot see it. What discriminates sub-pixel
+    // structure at any framing is whether the PICTURE CHANGES when the
+    // sampling rate does: a smooth solid is already converged at one sample
+    // and moves 0.29% of its pixels, these objects move 39-55% of theirs.
+    const sphereMove = moves.get(SPHERE_LABEL)!;
+    expect(partials.get(SPHERE_LABEL)!).toBeLessThan(2);
+    expect(sphereMove).toBeLessThan(2);
+    for (const [label, moved] of moves) {
       if (label === SPHERE_LABEL) continue;
-      expect(partial, `${label} resolves like a smooth solid`).toBeGreaterThan(
-        4 * sphere,
+      expect(moved, `${label} converges like a smooth solid`).toBeGreaterThan(
+        10 * sphereMove,
       );
     }
   });
@@ -961,7 +1069,7 @@ describe("is the escape-chain speckle undersampling or the object? (fr-za0n)", (
     for (const [label, transforms] of FIXTURES) {
       const de = buildEscapeDE(transforms);
       const est: DistanceEstimator = (p) => estimateEscapeDistance(de, p);
-      const marchR = fitMarchRadius(est);
+      const marchR = fitMarchRadius((p) => escapeSetContains(de, p));
       const arms: [number, number][] = [
         [DEFAULT_MAX_STEPS, 0.7],
         [DEFAULT_MAX_STEPS, ESCAPE_STEP_SCALE],
@@ -1010,7 +1118,7 @@ describe("is the escape-chain speckle undersampling or the object? (fr-za0n)", (
     for (const [label, transforms] of FIXTURES) {
       const de = buildEscapeDE(transforms);
       const est: DistanceEstimator = (p) => estimateEscapeDistance(de, p);
-      const marchR = fitMarchRadius(est);
+      const marchR = fitMarchRadius((p) => escapeSetContains(de, p));
       const eye: Vec3 = [EYE[0] * marchR, EYE[1] * marchR, EYE[2] * marchR];
 
       const sample = (size: number) => {
@@ -1129,7 +1237,7 @@ describe("is the escape-chain speckle undersampling or the object? (fr-za0n)", (
         ([label, transforms]): [string, DistanceEstimator, number] => {
           const de = buildEscapeDE(transforms);
           const est: DistanceEstimator = (p) => estimateEscapeDistance(de, p);
-          return [label, est, fitMarchRadius(est)];
+          return [label, est, fitMarchRadius((p) => escapeSetContains(de, p))];
         },
       ),
       [SPHERE_LABEL, SPHERE, SPHERE_R],

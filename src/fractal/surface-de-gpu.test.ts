@@ -2361,7 +2361,8 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
     expect(wgsl).toContain("if (link == n) {");
     // The bailout test sits at the head of the SINGLE-LINK step, and the
     // Mandelbrot offset lands per link — never once per pass (chaining
-    // fattens the set to 72.8% of the bailout ball at six links).
+    // fattens the set to 37.1% of the bailout ball at six links, against
+    // cycling's 0.2%).
     expect(wgsl).toContain("v = L.p0.y * y + q;");
   });
 

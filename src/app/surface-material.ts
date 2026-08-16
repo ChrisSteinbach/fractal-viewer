@@ -1094,8 +1094,9 @@ uniform float uBalloonFar;
    * Mandelbulber2's seq->GetSequence(i) — step i applies link
    * i mod n, with "+ q" and the bailout test after EACH link, never
    * after all n (chaining lets n folds compound between derivative floors
-   * and fattens the set to 72.8% of the bailout ball at six links, which
-   * is fr-7u8t.8's "the object WAS its own bounding sphere" returning). A
+   * and fattens the set to 37.1% of the bailout ball at six links against
+   * cycling's 0.2%, which is fr-7u8t.8's "the object WAS its own bounding
+   * sphere" returning). A
    * PASS is one full cycle, so the loop runs uMaxDepth * uMapCount single-
    * link steps and uMaxDepth keeps meaning "how many times is each link
    * applied" at any chain length — the preview tier's depth clamp included.

@@ -12,11 +12,16 @@
  * THE FINDING THIS HARNESS PRODUCED, and it was about code already shipped:
  * the escape-time mode's JULIA form rendered a near-SPHERE. Measured on the
  * project's own bench fixture (`escMandelbox`: mandelbox weight 2, position
- * (0.4, 0.3, 0.2)), 94% of the bounding ball was non-escaping — the
+ * (0.4, 0.3, 0.2)), 89.4% of the bounding ball was non-escaping — the
  * estimator returned 1e-10..1e-15 at every radius below 4 and jumped to |p|
  * outside it. The object genuinely WAS its own bounding ball, speckled where
  * the thin escaping filaments fell below a pixel. Nothing was wrong with the
  * estimator; the fixed-c fold map at a small constant is simply a fat blob.
+ * (This paragraph said 94% until fr-azjk. That was the same object read
+ * through a grid thresholding the distance estimate, an instrument wrong on
+ * both counts — `scripts/set-extent.ts` carries the argument, and
+ * `escape-form-sweep.harness.ts` is where the corrected sweep is executable.
+ * The shipped Mandelbrot form at the same constant fills 3.5%.)
  *
  * fr-7u8t.8 acted on that: the mode now marches the MANDELBROT form, the
  * offset taken from the SAMPLE POINT (`v <- w·V(Mv + t) + p`), so panels 0-2

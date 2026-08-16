@@ -54,17 +54,27 @@
  * through `de-preview.ts`'s identical shading, so the sheet compares OBJECTS
  * and not lighting; panel 0 is the plain `M = I`, `w0 = 0`, unposed slice —
  * the object the existing verdict describes — so every other panel is read
- * against it. `fill%`/`reach` follow `escape-form-sweep.harness.ts`'s
- * `extent()` convention (a grid over a box twice the view ball, so a set that
- * outgrew the frame reads as `reach > 1` instead of silently clipping), with
- * two additions the quadratic family needs: a dendrite constant has EMPTY
+ * against it. `reach` follows `escape-form-sweep.harness.ts`'s `extent()`
+ * convention (a grid over a box twice the view ball, so a set that outgrew
+ * the frame reads as `reach > 1` instead of silently clipping). `fill%` is
+ * VOLUME, and since fr-azjk it is answered by a seeded uniform sample
+ * against the orbit's own membership test (`qjuliaSetContains`, this file's
+ * own copy of `estimateQJuliaDistance`'s recurrence, composed through the
+ * SAME rotor/slice/anchor transform each panel is built from) rather than by
+ * thresholding the DE — `set-extent.ts`'s module doc has the general
+ * argument. `occ%`/`rough` stay GRID measures at the box's cell scale, kept
+ * for what a volume sampler cannot see: a dendrite constant has EMPTY
  * interior, so `fill%` alone would report the most intricate objects as
- * nothing — `occ%` counts cells the set comes within a cell radius of, and
- * `rough` is that occupancy's surface area over the area of an equal-volume
- * ball rasterised on the same grid (1.0 = as smooth as a ball).
+ * nothing — `occ%` counts cells the set comes within a cell radius of
+ * (never a volume fraction, however fine the grid), and `rough` is that
+ * occupancy's surface area over the area of an equal-volume ball rasterised
+ * on the same grid (1.0 = as smooth as a ball, itself a rasterised property
+ * rather than a volume one).
  *
- * MEASURED VERDICT (2026-08-14, f64 CPU): THE EXISTING VERDICT SURVIVES, and
- * the narrower reading of it does not change the answer.
+ * MEASURED VERDICT (2026-08-14, f64 CPU; fill% re-measured 2026-08-16 under
+ * fr-azjk's corrected instrument, see the closing paragraph below): THE
+ * EXISTING VERDICT SURVIVES, and the narrower reading of it does not change
+ * the answer.
  *
  *   - The theorem is confirmed numerically, and SHARPENED. `lathe` is 2e-16 —
  *     machine zero — at every plain constant tried, the gallery ones included.
@@ -75,9 +85,9 @@
  *     SAME lathe. Only the other four planes break it (`lathe` 0.02-0.10).
  *   - LEVER 1 (rotation) escapes the theorem and does not pay. Breaking the
  *     revolution SMOOTHS the object rather than complicating it: the plain
- *     rabbit's laminated shell (`rough` 1.20, fill 3.1%) becomes a smooth
- *     teardrop at `rx=45` (1.18, 3.5%) and a thin broken husk at `rx=90`
- *     (1.39, 0.4%). At 64x the rotated surface is the smoothest close-up on
+ *     rabbit's laminated shell (`rough` 1.20, fill 2.6%) becomes a smooth
+ *     teardrop at `rx=45` (1.18, 3.3%) and a thin broken husk at `rx=90`
+ *     (1.39, 0.0%). At 64x the rotated surface is the smoothest close-up on
  *     the whole sheet.
  *   - LEVER 2 (rotor slice) changes the view, never the object. A `zw` turn is
  *     a no-op — panel 8 reproduces panel 1 in every digit of every column,
@@ -96,19 +106,46 @@
  *     levers. Nothing new appears on the way in, which is exactly what a
  *     Mandelbulb close-up does do.
  *   - A THIRD LEVER, which the brief did not name and which neither the
- *     theorem nor the two above covers, pays nothing either: a NON-SIMILARITY
- *     `M` (anisotropic scale or shear, both authorable today, both admitted by
- *     `analyzeQJuliaSystem`, and both leaving the estimate sound but no longer
- *     exact). Half the search's rolls deform `M` and they do not reach the top
- *     of the ranking — the roughest body found is a plain similarity at 1.39,
- *     where the best deformed roll is 1.17.
+ *     theorem nor the two above covers, pays close to nothing either: a
+ *     NON-SIMILARITY `M` (anisotropic scale or shear, both authorable today,
+ *     both admitted by `analyzeQJuliaSystem`, and both leaving the estimate
+ *     sound but no longer exact). Half the search's rolls deform `M`, and
+ *     under the corrected fill instrument (closing paragraph below) they are
+ *     a dead heat with plain similarities at the top of the ranking rather
+ *     than trailing it: the two roughest SURVIVING bodies are both deformed,
+ *     tied at 1.17, against a best plain similarity a hundredth behind at
+ *     1.16 — a margin inside the search's own noise, not a real gap either
+ *     way.
  *   - 240 random rolls over the WHOLE authorable space (4D constant x
  *     six-plane map rotation x anisotropic scale x shear x six-plane rotor x
- *     slice offset) found 59 bodies worth looking at, 142 dusts and 18 that
+ *     slice offset) found 45 bodies worth looking at, 164 dusts and 10 that
  *     outgrew the shared frame. The best of them are handsome smooth
- *     sculptures — a Möbius loop, a pinched shell — with no fine structure at
- *     all. That is the family's ceiling, and it was found by search rather
- *     than by taste.
+ *     sculptures — a looping torus, a coiled shell — with no fine structure
+ *     at all. That is the family's ceiling, and it was found by search
+ *     rather than by taste.
+ *   - FILL'S INSTRUMENT CHANGED UNDER fr-azjk, mid-epic, and every fill%
+ *     figure above is the re-measured one: `fill%` is now a seeded uniform
+ *     sample against the orbit's own membership test rather than a
+ *     `d < 1e-3` threshold on the DE (`set-extent.ts`'s module doc; `occ%`
+ *     and `rough` are untouched, since they were already grid measures and
+ *     are now only labelled as such rather than implied to be volume). Every
+ *     panel and scan `fill%` moved by a few tenths of a point at most — three
+ *     panels rounded down to exactly 0.0%: the plain dendrite and its
+ *     `rx=60`-rotated, `xw`-sliced sibling (this doc's own prediction for a
+ *     known-empty interior, working as intended rather than regressing) and
+ *     the plain rabbit rotated `rx=90` (a thin husk, `rough` 1.39, with no
+ *     measurable interior of its own). The search loop is where it mattered:
+ *     re-run at the same 240 rolls, 45 land as bodies (was 59), 164 read
+ *     dust (was 142), 10 outgrow the frame (was 18) — fewer bodies because
+ *     the corrected sampler no longer counts a near-boundary ESCAPER as
+ *     interior, so the dust gate now catches what the threshold used to
+ *     wave through. The clearest single case is the roll that used to TOP
+ *     the ranking: `rough` 1.39, similarity, `c=(0.81,-0.81,0.18,-0.22)`,
+ *     read `fill` 2.6% on the broken instrument and reads 0.20% on the
+ *     fixed one — below the 0.5% cutoff, and now correctly excluded as
+ *     dust. Its exclusion is what moves the THIRD LEVER bullet above: with
+ *     the false top gone, the two roughest surviving bodies are both
+ *     deformed.
  *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
  *        scripts/qjulia-beauty.harness.ts
@@ -120,6 +157,7 @@
 import {
   buildQJuliaDE,
   estimateQJuliaDistance,
+  QJULIA_ITERATIONS,
   QJULIA_STEP_SCALE,
 } from "../src/fractal/qjulia-de";
 import type { QJuliaDE } from "../src/fractal/qjulia-de";
@@ -134,6 +172,7 @@ import type { RotorPair } from "../src/app/rotor4";
 import type { Rotation4, Transform, Vec3, Vec4 } from "../src/fractal/types";
 import { renderPreview, writeContactSheet } from "./de-preview";
 import type { DistanceEstimator, PanelStats } from "./de-preview";
+import { sampleSetFill, SET_SAMPLE_POINTS } from "./set-extent";
 
 const SIZE = 420;
 
@@ -321,6 +360,83 @@ function panelDE(
 ): DistanceEstimator {
   return (p) =>
     estimateQJuliaDistance(
+      de,
+      sliceQuery(r, [p[0] + centre[0], p[1] + centre[1], p[2] + centre[2]], w0),
+    );
+}
+
+// -------------------------------------------------------- the membership
+
+/** The orbit's terminal radius, left in module scratch by
+ * {@link runQJuliaOrbit} — `escape-de.ts`'s `runEscapeOrbit` split, for its
+ * reason: a fill measurement (fr-azjk) has to ask the orbit ITSELF whether
+ * it escaped, never a threshold on the distance estimate — `d < eps` reads
+ * small for a near-boundary ESCAPER exactly as it does near one the orbit
+ * stays inside of, which is DEFECT 2 in `set-extent.ts`'s module doc.
+ * `qjulia-de.ts` exports no membership reader of its own (fr-7u8t.5 is
+ * closed won't-do, so no renderer has ever needed one), so this is the
+ * harness's own copy of {@link estimateQJuliaDistance}'s position
+ * recurrence, term for term, minus the `dr` accumulator — `dr` feeds only
+ * the DISTANCE and never the escape test `r <= de.bailout` below, so
+ * dropping it cannot change what counts as a member. */
+let qjuliaOrbitR = 0;
+
+function runQJuliaOrbit(
+  de: QJuliaDE,
+  p: Vec4,
+  maxIterations = QJULIA_ITERATIONS,
+): void {
+  const m = de.m;
+  const t = de.t;
+  let yx = m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + m[3] * p[3] + t[0];
+  let yy = m[4] * p[0] + m[5] * p[1] + m[6] * p[2] + m[7] * p[3] + t[1];
+  let yz = m[8] * p[0] + m[9] * p[1] + m[10] * p[2] + m[11] * p[3] + t[2];
+  let yw = m[12] * p[0] + m[13] * p[1] + m[14] * p[2] + m[15] * p[3] + t[3];
+  let r = Math.sqrt(yx * yx + yy * yy + yz * yz + yw * yw);
+  for (let i = 0; i < maxIterations && r <= de.bailout; i++) {
+    // q² for q = yx + yy·i + yz·j + yw·k — `estimateQJuliaDistance`'s own
+    // formula, copied rather than imported so the two cannot drift apart
+    // (that module exports no split loop to share).
+    const sx = yx * yx - (yy * yy + yz * yz + yw * yw);
+    const sy = 2 * yx * yy;
+    const sz = 2 * yx * yz;
+    const sw = 2 * yx * yw;
+    yx = m[0] * sx + m[1] * sy + m[2] * sz + m[3] * sw + t[0];
+    yy = m[4] * sx + m[5] * sy + m[6] * sz + m[7] * sw + t[1];
+    yz = m[8] * sx + m[9] * sy + m[10] * sz + m[11] * sw + t[2];
+    yw = m[12] * sx + m[13] * sy + m[14] * sz + m[15] * sw + t[3];
+    r = Math.sqrt(yx * yx + yy * yy + yz * yz + yw * yw);
+  }
+  qjuliaOrbitR = r;
+}
+
+/** Did `p`'s orbit stay inside the bailout ball for the whole budget — the
+ * membership {@link estimateQJuliaDistance}'s own orbit supports but does
+ * not expose, and the reading `sampleSetFill`/`sampleSetExtent`
+ * (`set-extent.ts`) want in place of a distance threshold. */
+function qjuliaSetContains(
+  de: QJuliaDE,
+  p: Vec4,
+  maxIterations = QJULIA_ITERATIONS,
+): boolean {
+  runQJuliaOrbit(de, p, maxIterations);
+  return qjuliaOrbitR <= de.bailout;
+}
+
+/** {@link panelDE}'s membership twin: the SAME slice lift and centring
+ * shift, so fill is measured on the object the panel actually SHOWS rather
+ * than on the plain, unrotated, unsliced `q² + c` set the panel was built
+ * from — composing the transform twice, once per instrument, is exactly
+ * the gap that would make a fill column describe a different object than
+ * its own picture. */
+function panelMember(
+  de: QJuliaDE,
+  r: number[],
+  w0: number,
+  centre: Vec3,
+): (p: Vec3) => boolean {
+  return (p) =>
+    qjuliaSetContains(
       de,
       sliceQuery(r, [p[0] + centre[0], p[1] + centre[1], p[2] + centre[2]], w0),
     );
@@ -539,31 +655,59 @@ function latheDefect(de: QJuliaDE, seed = 0x51ce): number {
 // -------------------------------------------------------- the shape stats
 
 interface ShapeStats {
-  /** Percent of the view ball whose DE has collapsed to nothing — the
-   * marcher's own view of "inside", `escape-form-sweep.harness.ts`'s
-   * convention. */
+  /** Percent of the view ball whose points are MEMBERS — a seeded uniform
+   * sample against the orbit's own escape test ({@link qjuliaSetContains}),
+   * not a threshold on the DE (fr-azjk). This is the one VOLUME measure of
+   * the four; the other three stay grid measures (see `shapeStats`'s doc). */
   fillPct: number;
-  /** Percent of the view ball the set comes within one cell radius of, which
-   * is the only measure a dendrite (empty interior) shows up in at all. */
+  /** Percent of the view ball the set comes within one grid-cell radius of,
+   * which is the only measure a dendrite (empty interior) shows up in at
+   * all. A GRID measure at the `cells` resolution `shapeStats` was called
+   * with, NOT a volume fraction — see its doc. */
   occPct: number;
   /** Max occupied radius over {@link VIEW_R} — `> 1` means the frame clips. */
   reach: number;
   /** Occupancy surface area over that of an equal-volume ball rasterised on
-   * the same grid: 1.0 = as smooth as a sphere, higher = more intricate. */
+   * the same grid: 1.0 = as smooth as a sphere, higher = more intricate. An
+   * intrinsically RASTERISED ratio — see `shapeStats`'s doc. */
   rough: number;
 }
 
 /**
- * Grid stats over a box TWICE the view ball, `extent()`'s convention (so a set
- * that outgrew the frame reads as `reach > 1` rather than clipping silently).
+ * Shape measures over a box TWICE the view ball (`extent()`'s convention, so
+ * a set that outgrew the frame reads in `reach > 1` rather than clipping
+ * silently) — from TWO DIFFERENT INSTRUMENTS that must not be read as
+ * interchangeable (fr-azjk).
+ *
+ * `fillPct` is VOLUME, and it is the only one of the four numbers that is:
+ * a seeded uniform sample against `member`, the panel's own membership
+ * oracle ({@link qjuliaSetContains} composed through {@link panelMember}),
+ * never a threshold on `de`. `set-extent.ts`'s module doc gives the reason —
+ * a distance estimate reads small near a boundary an orbit ESCAPES through
+ * exactly as it does near one an orbit stays inside of, so `d < eps` cannot
+ * tell the two apart, which is what the old `d < 1e-3` reading here did.
+ *
+ * `occPct` and `rough` stay GRID measures, at the cell scale `cells`
+ * resolves the box into — a deliberate, different choice from `fillPct`,
+ * not an oversight fr-azjk missed: a dendrite constant has EMPTY interior,
+ * so a volume sampler reads `fillPct` near zero for the most intricate
+ * object on the sheet, and `occPct` ("does the set come within one cell of
+ * this point") is the only column that shows up for one at all. NEITHER IS
+ * A VOLUME FRACTION however fine `cells` gets — `occPct` counts cells the
+ * set merely comes close to (a generous, cell-radius-wide test), and
+ * `rough` is a rasterised surface-area ratio, a property of the grid it is
+ * measured on rather than of the set alone.
  */
-function shapeStats(de: DistanceEstimator, cells: number): ShapeStats {
+function shapeStats(
+  de: DistanceEstimator,
+  member: (p: Vec3) => boolean,
+  cells: number,
+): ShapeStats {
   const half = 2 * VIEW_R;
   const h = (2 * half) / (cells - 1);
   const cellRadius = (h * Math.sqrt(3)) / 2;
   const occupied = new Uint8Array(cells * cells * cells);
   let inBall = 0;
-  let interiorInBall = 0;
   let occInBall = 0;
   let maxR = 0;
   for (let i = 0; i < cells; i++) {
@@ -579,15 +723,18 @@ function shapeStats(de: DistanceEstimator, cells: number): ShapeStats {
         }
         if (r <= VIEW_R) {
           inBall++;
-          if (d < 1e-3) interiorInBall++;
           if (occ) occInBall++;
         }
       }
     }
   }
   const volumeCells = occupied.reduce((a: number, b: number) => a + b, 0);
+  const fillPct = sampleSetFill(member, {
+    fillRadius: VIEW_R,
+    points: SET_SAMPLE_POINTS,
+  });
   return {
-    fillPct: (100 * interiorInBall) / inBall,
+    fillPct,
     occPct: (100 * occInBall) / inBall,
     reach: maxR / VIEW_R,
     rough:
@@ -734,7 +881,8 @@ function renderPanel(panel: Panel, cells: number): PanelStats & ShapeStats {
   const w0 = slice.w0 ?? 0;
   const centre = sliceAnchor(de, r);
   const estimator = panelDE(de, r, w0, centre);
-  const shape = shapeStats(estimator, cells);
+  const member = panelMember(de, r, w0, centre);
+  const shape = shapeStats(estimator, member, cells);
   const stats = renderPreview(
     {
       de: estimator,
@@ -910,8 +1058,9 @@ describe("fr-7u8t.5/.6 quaternion Julia beauty sweep", () => {
       const slice = panel.slice ?? {};
       const r = sliceMatrix(slice);
       const w0 = slice.w0 ?? 0;
-      const estimator = panelDE(de, r, w0, sliceAnchor(de, r));
-      const shape = shapeStats(estimator, 121);
+      const centre = sliceAnchor(de, r);
+      const estimator = panelDE(de, r, w0, centre);
+      const shape = shapeStats(estimator, panelMember(de, r, w0, centre), 121);
       const surface = probeSurface(estimator, VIEW_R);
       const scales = [1, 8, 64];
       scales.forEach((k, row) => {
@@ -982,7 +1131,12 @@ describe("fr-7u8t.5/.6 quaternion Julia beauty sweep", () => {
       const de = buildMap(map);
       const r = sliceMatrix(slice);
       const w0 = slice.w0 ?? 0;
-      const shape = shapeStats(panelDE(de, r, w0, sliceAnchor(de, r)), 49);
+      const centre = sliceAnchor(de, r);
+      const shape = shapeStats(
+        panelDE(de, r, w0, centre),
+        panelMember(de, r, w0, centre),
+        49,
+      );
       // A bare `rough` ranking crowns DUST: a constant outside the
       // connectedness locus scatters into specks, whose staircase area over an
       // equal-volume ball is enormous and whose panel is empty backdrop. So a
@@ -1043,7 +1197,12 @@ describe("fr-7u8t.5/.6 quaternion Julia beauty sweep", () => {
       ] as [string, MapSpec][]) {
         const de = buildMap(map);
         const r = sliceMatrix({});
-        const shape = shapeStats(panelDE(de, r, 0, sliceAnchor(de, r)), 61);
+        const centre = sliceAnchor(de, r);
+        const shape = shapeStats(
+          panelDE(de, r, 0, centre),
+          panelMember(de, r, 0, centre),
+          61,
+        );
         rows.push(
           `  ${name} ${String(angle).padStart(3)}deg  fill ${shape.fillPct.toFixed(1).padStart(5)}%  ` +
             `occ ${shape.occPct.toFixed(1).padStart(5)}%  rough ${shape.rough.toFixed(2)}  ` +

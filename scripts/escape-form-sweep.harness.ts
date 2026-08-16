@@ -34,9 +34,25 @@
  * is what the Julia panels conspicuously lack.
  *
  * The console table answers what the pictures cannot: how much of the
- * marching ball each form's non-escaping set fills, and how far it reaches
- * past `ESCAPE_TIME_RADIUS` — i.e. whether the shipped bounding radius still
- * contains the object once the offset moves. (It does: reach <= 1.00xR.)
+ * bailout ball each form's non-escaping set fills, and how close to the
+ * ball's edge it comes.
+ *
+ * FR-AZJK RE-MEASURED THAT TABLE, and the figures below are the corrected
+ * ones — the sheet's verdicts are all orderings and they survived, but the
+ * numbers behind them moved. The old instrument was a grid thresholding the
+ * distance estimate, wrong on both counts ({@link extent} carries the
+ * argument); the Julia blob at `escMandelbox`'s own constant reads 89.407%
+ * of the bailout ball rather than 94%, its `|t|` sweep at weight 2 reads
+ * 87.185 / 71.796 / 32.602 / 2.148 / 0.005% rather than 97 / 93 / 77 / 60 /
+ * 23%, and the "best Juliabox found" — the row the record priced at 6% fill
+ * — has essentially NO volume (0.005%, six members in 131072 samples) while
+ * still drawing 28.1% of its rays. That last row is the sheet's own reminder
+ * that VOLUME IS NOT VISIBILITY: the shipped Mandelbrot `mandelbox w=3`
+ * reads 0.000% here too and renders the holed ball at 31.7% of rays. The
+ * verdict the sheet was written for is untouched and if anything sharper —
+ * the Julia form is a near-solid ball across everything a user would author,
+ * and where it finally thins it goes straight to a measure-zero dust, with
+ * no band of usable structure in between.
  *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
  *        scripts/escape-form-sweep.harness.ts
@@ -44,6 +60,7 @@
  */
 import {
   buildEscapeDE,
+  escapeSetContains,
   estimateEscapeDistance,
   ESCAPE_STEP_SCALE,
   ESCAPE_TIME_ITERATIONS,
@@ -57,6 +74,7 @@ import {
 import type { Transform, VariationType } from "../src/fractal/types";
 import { renderPreview, writeContactSheet } from "./de-preview";
 import type { DistanceEstimator, PanelStats, Vec3 } from "./de-preview";
+import { sampleSetExtent } from "./set-extent";
 
 const SIZE = 420;
 
@@ -79,6 +97,15 @@ function foldDE(type: VariationType, weight: number, t: Vec3): EscapeDE {
   return buildEscapeDE([foldSystem(type, weight, t)]);
 }
 
+/** The rejected form's terminal radius and derivative bound, left in module
+ * scratch by {@link runJuliaFormOrbit}. `escape-de.ts`'s own split, for its
+ * reason: the estimate and the MEMBERSHIP question are two readers of one
+ * loop, so they cannot disagree about what the orbit is — and a retired form
+ * can then be measured with the same instrument as the shipped one
+ * (fr-azjk). */
+let juliaR = 0;
+let juliaDr = 1;
+
 /**
  * The REJECTED form (fr-kltj's, retired by fr-7u8t.8): `estimateEscapeDistance`
  * term for term with the query-point offset removed, so the per-iteration
@@ -86,95 +113,105 @@ function foldDE(type: VariationType, weight: number, t: Vec3): EscapeDE {
  * app computes it any more — the module doc's "why not both forms" paragraph
  * is what this function's panels measured.
  */
-function juliaFormDE(de: EscapeDE): DistanceEstimator {
+function runJuliaFormOrbit(de: EscapeDE, p: Vec3): void {
   const m = de.m;
   const foldAxis = (t: number) => 2 * Math.max(-1, Math.min(1, t)) - t;
-  return (p) => {
-    let [vx, vy, vz] = p;
-    let dr = 1;
-    let r = Math.sqrt(vx * vx + vy * vy + vz * vz);
-    for (
-      let i = 0;
-      i < ESCAPE_TIME_ITERATIONS && r <= ESCAPE_TIME_RADIUS;
-      i++
-    ) {
-      let yx = m[0] * vx + m[1] * vy + m[2] * vz + de.t[0];
-      let yy = m[3] * vx + m[4] * vy + m[5] * vz + de.t[1];
-      let yz = m[6] * vx + m[7] * vy + m[8] * vz + de.t[2];
-      let localL = 1;
-      if (de.kind !== SURFACE_FOLD_SPHEREFOLD) {
-        yx = foldAxis(yx);
-        yy = foldAxis(yy);
-        yz = foldAxis(yz);
-      }
-      if (de.kind !== SURFACE_FOLD_BOXFOLD) {
-        const f = 1 / Math.max(0.25, Math.min(1, yx * yx + yy * yy + yz * yz));
-        yx *= f;
-        yy *= f;
-        yz *= f;
-        localL = f;
-      }
-      vx = de.w * yx;
-      vy = de.w * yy;
-      vz = de.w * yz;
-      dr = de.derivGrowth * localL * dr + 1;
-      r = Math.sqrt(vx * vx + vy * vy + vz * vz);
+  let [vx, vy, vz] = p;
+  let dr = 1;
+  let r = Math.sqrt(vx * vx + vy * vy + vz * vz);
+  for (let i = 0; i < ESCAPE_TIME_ITERATIONS && r <= ESCAPE_TIME_RADIUS; i++) {
+    let yx = m[0] * vx + m[1] * vy + m[2] * vz + de.t[0];
+    let yy = m[3] * vx + m[4] * vy + m[5] * vz + de.t[1];
+    let yz = m[6] * vx + m[7] * vy + m[8] * vz + de.t[2];
+    let localL = 1;
+    if (de.kind !== SURFACE_FOLD_SPHEREFOLD) {
+      yx = foldAxis(yx);
+      yy = foldAxis(yy);
+      yz = foldAxis(yz);
     }
-    return r / dr;
+    if (de.kind !== SURFACE_FOLD_BOXFOLD) {
+      const f = 1 / Math.max(0.25, Math.min(1, yx * yx + yy * yy + yz * yz));
+      yx *= f;
+      yy *= f;
+      yz *= f;
+      localL = f;
+    }
+    vx = de.w * yx;
+    vy = de.w * yy;
+    vz = de.w * yz;
+    dr = de.derivGrowth * localL * dr + 1;
+    r = Math.sqrt(vx * vx + vy * vy + vz * vz);
+  }
+  juliaR = r;
+  juliaDr = dr;
+}
+
+function juliaFormDE(de: EscapeDE): DistanceEstimator {
+  return (p) => {
+    runJuliaFormOrbit(de, p);
+    return juliaR / juliaDr;
+  };
+}
+
+/** {@link escapeSetContains} for the retired form: did the orbit stay inside
+ * the bailout ball for the whole budget? */
+function juliaFormMember(de: EscapeDE): (p: Vec3) => boolean {
+  return (p) => {
+    runJuliaFormOrbit(de, p);
+    return juliaR <= ESCAPE_TIME_RADIUS;
   };
 }
 
 /**
- * How much of the marching ball the object fills, and how far it reaches.
- * "Interior" is the marcher's own view of inside — a DE collapsed to nothing
- * because `dr` ran away — sampled on a grid over a box twice the bounding
- * radius, so a set that outgrew `ESCAPE_TIME_RADIUS` shows up as reach > 1
- * rather than silently clipping against the sphere gate.
+ * How much of the bailout ball a form's set fills, and how far it reaches.
+ *
+ * FR-AZJK REPLACED THE INSTRUMENT UNDER THIS SHEET, and the old one was
+ * wrong twice over: it scanned a regular GRID (which aliases against the
+ * fold's own walls — see {@link sampleSetExtent}) and it decided membership
+ * by THRESHOLDING the estimate at `1e-3`, which `escapeSetContains`'s doc
+ * says cannot answer the question in either direction. Fill is now a seeded
+ * uniform sample against the form's own membership oracle, so the Julia
+ * column and the Mandelbrot column beside it are one measurement.
+ *
+ * REACH IS NO LONGER MEASURED OVER A DOUBLE-RADIUS BOX, because under
+ * membership that question is a tautology: both orbits test `|v| <= R`
+ * before their first step, so a query outside the bailout ball escapes
+ * immediately and no member can sit beyond `R`. The old column's
+ * "reach <= 1.00xR" was therefore never evidence that the bounding radius
+ * contains the object — it is true by construction. What is left worth
+ * printing is how CLOSE to `R` the set comes, which is what this returns.
  */
-function extent(de: DistanceEstimator): { fillPct: number; reach: number } {
-  const N = 41;
-  const R = 2 * ESCAPE_TIME_RADIUS;
-  let inBall = 0;
-  let interiorInBall = 0;
-  let maxR = 0;
-  for (let i = 0; i < N; i++) {
-    for (let j = 0; j < N; j++) {
-      for (let k = 0; k < N; k++) {
-        const p: Vec3 = [
-          -R + (2 * R * i) / (N - 1),
-          -R + (2 * R * j) / (N - 1),
-          -R + (2 * R * k) / (N - 1),
-        ];
-        const r = Math.hypot(p[0], p[1], p[2]);
-        const interior = de(p) < 1e-3;
-        if (r <= ESCAPE_TIME_RADIUS) {
-          inBall++;
-          if (interior) interiorInBall++;
-        }
-        if (interior) maxR = Math.max(maxR, r);
-      }
-    }
-  }
-  return {
-    fillPct: (100 * interiorInBall) / inBall,
-    reach: maxR / ESCAPE_TIME_RADIUS,
-  };
+function extent(member: (p: Vec3) => boolean): {
+  fillPct: number;
+  reach: number;
+} {
+  const { fillPct, reachAbs } = sampleSetExtent(member, {
+    fillRadius: ESCAPE_TIME_RADIUS,
+  });
+  return { fillPct, reach: reachAbs / ESCAPE_TIME_RADIUS };
 }
 
 interface Entry {
   label: string;
   de: DistanceEstimator;
+  /** The same orbit's membership reader — what the fill column asks. */
+  member: (p: Vec3) => boolean;
 }
 
 function mandelbrot(label: string, de: EscapeDE): Entry {
   return {
     label: `MANDELBROT (ships) ${label}`,
     de: (p) => estimateEscapeDistance(de, p),
+    member: (p) => escapeSetContains(de, p),
   };
 }
 
 function julia(label: string, de: EscapeDE): Entry {
-  return { label: `JULIA (rejected)   ${label}`, de: juliaFormDE(de) };
+  return {
+    label: `JULIA (rejected)   ${label}`,
+    de: juliaFormDE(de),
+    member: juliaFormMember(de),
+  };
 }
 
 describe("fr-7u8t.8 escape-time form sweep", () => {
@@ -220,7 +257,7 @@ describe("fr-7u8t.8 escape-time form sweep", () => {
     ];
 
     const panels: PanelStats[] = entries.map((e, i) => {
-      const { fillPct, reach } = extent(e.de);
+      const { fillPct, reach } = extent(e.member);
       const panel = renderPreview(
         {
           de: e.de,
@@ -233,7 +270,7 @@ describe("fr-7u8t.8 escape-time form sweep", () => {
       console.log(
         `  ${i}. ${e.label}\n` +
           `     hits ${((panel.hits / (SIZE * SIZE)) * 100).toFixed(1)}%  ` +
-          `ball fill ${fillPct.toFixed(1)}%  ` +
+          `ball fill ${fillPct.toFixed(3)}%  ` +
           `reach ${reach.toFixed(2)}xR  ` +
           `steps/ray ${(panel.steps / (SIZE * SIZE)).toFixed(1)}  ${panel.ms}ms`,
       );
@@ -255,14 +292,19 @@ describe("fr-7u8t.8 escape-time form sweep", () => {
   });
 
   it("checks ESCAPE_STEP_SCALE still fits the object the form changed", () => {
-    // fr-7u8t.8 turned a 94%-solid blob into a 10%-solid filamented set, and
-    // ESCAPE_STEP_SCALE (0.7) was picked against the blob. If 0.7 now
-    // OVERSHOOTS thin features, damping further recovers surface a coarser
-    // march was stepping past — visible as hits climbing as the scale falls.
-    // A flat hit count means 0.7 is not the limiting factor and any residual
-    // speckle is sampling, not step damping.
+    // fr-7u8t.8 turned an 89%-solid blob into a 3.5%-solid filamented set,
+    // and the step scale in force when it did was 0.7, picked against the
+    // blob. If 0.7 OVERSHOOTS thin features, damping further recovers
+    // surface a coarser march was stepping past — visible as hits climbing
+    // as the scale falls. A flat hit count means 0.7 is not the limiting
+    // factor and any residual speckle is sampling, not step damping.
+    //
+    // The sweep list is LITERAL. It used to open with `ESCAPE_STEP_SCALE`,
+    // which silently stopped sweeping 0.7 and started measuring 0.35 twice
+    // the moment fr-za0n retuned that constant — a sweep whose own axis
+    // moves under it cannot be read against the run that decided it.
     const de = foldDE("mandelbox", 2, [0, 0, 0]);
-    const panels = [1, ESCAPE_STEP_SCALE, 0.5, 0.35, 0.2, 0.1].map(
+    const panels = [1, 0.7, 0.5, ESCAPE_STEP_SCALE, 0.2, 0.1].map(
       (stepScale) => {
         const panel = renderPreview(
           {
@@ -286,23 +328,28 @@ describe("fr-7u8t.8 escape-time form sweep", () => {
   });
 
   it("scans the Julia form's constant space for a reason to keep it", () => {
-    // The numbers behind the module doc's "only stops being a sphere past
-    // |t| ~ 2.5": ball fill against |t| along one axis, per fold weight. The
+    // The numbers behind the module doc's "stops being a sphere only past
+    // |t| ~ 2": ball fill against |t| along one axis, per fold weight. The
     // band between blob and nothing is narrow at every weight, and the
     // Mandelbrot column beside it needs no constant at all.
+    //
+    // THREE DECIMALS, because the interesting rows here are the ones that
+    // round to 0.0: a set can have no measurable volume and still render
+    // (`mandelbox w=3` does, in the SHIPPED form, at 31.7% of rays), and a
+    // column that cannot separate "thin" from "empty" is the confusion
+    // fr-17qu's first cut shipped.
     for (const w of [2, 3, -1.5]) {
       const row = [0.5, 1, 1.5, 2, 2.5, 3, 4, 5].map((mag) => {
         const fill = extent(
-          juliaFormDE(foldDE("mandelbox", w, [mag, 0, 0])),
+          juliaFormMember(foldDE("mandelbox", w, [mag, 0, 0])),
         ).fillPct;
-        return `${mag}:${fill.toFixed(1)}%`;
+        return `${mag}:${fill.toFixed(3)}%`;
       });
-      const m = extent((p) =>
-        estimateEscapeDistance(foldDE("mandelbox", w, [0, 0, 0]), p),
-      );
+      const mDe = foldDE("mandelbox", w, [0, 0, 0]);
+      const m = extent((p) => escapeSetContains(mDe, p));
       console.log(
         `  w=${w}  julia fill by |t|  ${row.join("  ")}` +
-          `   |   mandelbrot t=0: ${m.fillPct.toFixed(1)}%`,
+          `   |   mandelbrot t=0: ${m.fillPct.toFixed(3)}%`,
       );
     }
   });
