@@ -332,6 +332,133 @@
  * ask membership the same way every fill figure in this file already did,
  * and there is no second, looser definition left to label out of the way.
  *
+ * ========= 6. THE QUATERNION SQUARE'S k COMPONENT (fr-wuuu) ==============
+ *
+ * A MEASUREMENT THAT ENDS IN A WON'T-DO, and the CONTROL is what makes it
+ * one. `analyzeEscapeSystem` refuses a map that extends into 4D, so a
+ * `qsquare` link renders only the quaternion square's restriction to
+ * span{1, i, j}: the Julia constant's k component — the 4th component of that
+ * link's translation — cannot be authored. fr-7u8t.6 closed the qjulia 4D
+ * lift won't-do because every cut it rendered was smooth, and the reason to
+ * ask again is fr-j231's own result, that composition rescues a map that is
+ * dull alone. THE ANSWER IS THAT IT DOES NOT BUY AN OBJECT: it behaves like a
+ * fourth translation component, and per unit it is the WEAKER of the two.
+ *
+ * THE ARM IS {@link runChain4}, {@link runChain} one dimension up with
+ * `variations4.ts`'s forward maps read out of that file rather than
+ * re-derived, and it is PINNED BIT-EXACT against the 3D orbit at `t_w = 0` on
+ * the `w = 0` slice — 4000 queries x ten fixtures x both sequence forks, with
+ * terminal radius, iteration count and membership all EXACTLY equal on the
+ * eight cross-family rows as on the two fold-only ones. Its `dr` column is
+ * excluded BY NAME on the seven fixtures the lift genuinely moves (below)
+ * rather than by a widened tolerance. And the sweep's base row renders BYTE FOR BYTE
+ * the panel `shotShipped(buildEscapeDE(hybridChainQuaternion()))` renders —
+ * 0 of 202800 bytes differ — so what is being perturbed is the object the app
+ * draws, not a lookalike of it.
+ *
+ * THE FIXTURE IS THE SHIPPED PRESET, `hybridChainQuaternion`: `mandelbox w=2
+ * -> qsquare` at pre-scale 0.5, cycling, 30 passes. Section 1 puts that
+ * pre-scale in the healthy band (1.59% ball fill, 49.8% of rays), which is
+ * the precondition for reading a collapse as the knob's doing rather than the
+ * fixture's. The CONTROL is `t_x` ON THE SAME LINK at the SAME magnitudes — a
+ * knob the document already has — and the verdict hinges on it.
+ *
+ * THE LIFT CONVENTION DECIDES THE ANSWER, and it is the first thing to read.
+ * A 3D link lifts as `diag(M, m_w)`, and `m_w = 1` ("leave w alone") is what
+ * a first implementation reaches for. `affine4.ts`'s `embedTransform3`
+ * already refuses it, in terms that name this exact failure: `scale_w = 1`
+ * makes the embedded map an ISOMETRY in w, so "the moment a 4D edit gives the
+ * map a w-translation, `w' = w + t_w` has no fixed point, w ratchets off to
+ * the escape limit, and the cloud vanishes". It derives the map's MEAN
+ * SPATIAL CONTRACTION instead — 0.5 for this link. Both arms are measured,
+ * because a k sweep run only at `m_w = 1` would be measuring the convention.
+ * `IoU` is membership over ONE fixed 524288-point cloud in the radius-4 ball,
+ * the same points every row; `in k=0 %` is the containment fraction beside
+ * it, because IoU falls just as fast for a shrinking SUBSET as for a set that
+ * has moved, and those are different findings. `hits` is at the fixed
+ * bailout-ball pose the app frames a session on, and the fitted frame is the
+ * SAME frame on 29 of the 30 rows — the set reaches its own bailout sphere,
+ * so `fitMarchRadius4` has nothing to fit. The one exception is `m_w = 1`'s
+ * `k = 0.8` row, fitted at 3.57 and reading 40.1% there against the 41.1%
+ * tabulated here.
+ *
+ *   m_w = 1, the bare diag(M, 1) lift
+ *     magnitude           0     0.05    0.1     0.2     0.4     0.8
+ *     k    fill %       1.587   0.726   0.652   0.524   0.266   0.014
+ *          hits %       55.7    55.6    55.2    54.0    47.8    41.1
+ *          IoU          1.000   0.444   0.405   0.331   0.155   0.009
+ *          in k=0 %     100.0    97.8    97.5    98.2    98.2    84.4
+ *     t_x  fill %       1.587   1.439   1.289   1.022   0.775   1.152
+ *          hits %       55.7    54.0    52.4    49.0    42.6    28.5
+ *          IoU          1.000   0.541   0.464   0.340   0.156   0.010
+ *          in k=0 %     100.0    74.1    70.3    64.2    41.4     2.5
+ *
+ *   m_w = 0.5, embedTransform3's derived scale_w — the repo's own lift
+ *     k    fill %       1.587   1.727   1.689   1.510   0.950   0.088
+ *          hits %       49.8    49.4    48.2    46.0    41.2    32.9
+ *          IoU          1.000   0.612   0.583   0.545   0.406   0.050
+ *          in k=0 %     100.0    73.1    71.6    72.7    77.4    90.3
+ *     t_x  fill %       1.587   1.439   1.289   1.022   0.775   1.152
+ *          hits %       49.8    47.5    45.3    41.1    34.7    24.1
+ *          IoU          1.000   0.541   0.464   0.340   0.156   0.010
+ *          in k=0 %     100.0    74.1    70.3    64.2    41.4     2.5
+ *
+ * AT `m_w = 1` THE KNOB DOES NOT DISPLACE THE SET AT ALL, IT EATS IT. Every
+ * k row is a near-SUBSET of the k = 0 set — 97.8 / 97.5 / 98.2 / 98.2 / 84.4%
+ * of its members were already members — while its population falls 8419 ->
+ * 3861 -> 90. The control's containment falls the other way, 74.1 -> 2.5%,
+ * with its population holding between 4079 and 7584: `t_x` MOVES the object,
+ * `k` ERODES it. That is `embedTransform3`'s ratchet, arriving in the
+ * escape-time family exactly as its docblock predicts it for the chaos game,
+ * and it is the reason the second arm exists.
+ *
+ * AT THE REPO'S OWN LIFT THE TWO KNOBS ARE THE SAME KNOB. Over the usable
+ * range the containment columns are indistinguishable — 73.1 / 71.6 / 72.7%
+ * for k against 74.1 / 70.3 / 64.2% for `t_x` — the IoU curves fall together,
+ * and every row of both keeps rendering. Where they finally part, at 0.8, it
+ * is `k` that gives LESS: 473 members of which 90.3% are old (an erosion
+ * again, one notch later) against a relocated 6114-member set sharing 2.5% of
+ * its points with the original. k moves the object slightly less per unit
+ * than `t_x` does at every magnitude measured, and it fails first.
+ *
+ * THE PANELS AGREE, and they are the part that could have overturned the
+ * columns. All thirty are the same family of shell-and-plate object: the k
+ * rows fragment and thin, the `t_x` rows re-arrange, and NONE of them is a
+ * shape the other sweep does not also produce somewhere. There is no k-only
+ * morphology, which is what a positive result would have looked like — the
+ * knob keeping a set structured where the control destroys it, or producing a
+ * visibly different family at comparable fill.
+ *
+ * SO fr-wuuu IS A WON'T-DO. Authoring the k component would add a permanent
+ * 4D degree of freedom to the document, a fourth number on a link's
+ * translation, a lift convention to get right in six mirrors, and an
+ * eligibility gate to re-open — to buy a weaker version of a slider the panel
+ * already has. `qjulia-de.ts`'s own verdict holds one composition further out
+ * than fr-7u8t.6 could test it.
+ *
+ * THE SLICE IS THE SAME STORY, and it is the other thing a 3D-only mode
+ * cannot reach. Same fixture at `k = 0`, `m_w = 1`, sweeping `w0`:
+ *
+ *     w0   fill %       1.587   0.558   0.361   0.071   0.000   0.000
+ *          hits %       55.7    50.8    44.9    36.2    20.9     0.0
+ *          IoU          1.000   0.354   0.230   0.039   0.000   0.000
+ *          in w0=0 %    100.0    97.7    98.5    94.2     n/a     n/a
+ *
+ * Containment 94-98% on every row that has members: moving off the `w = 0`
+ * hyperplane erodes the object rather than revealing a different one, and by
+ * `w0 = 0.8` there is nothing left to draw (0.0% of rays — a genuine blank, on
+ * a sheet where nothing else is).
+ *
+ * AND ONE ROW OF IT IS THE BEST VOLUME-IS-NOT-VISIBILITY DATUM IN THE FILE.
+ * At `w0 = 0.4` the set has ZERO members in a 524288-point sample of its own
+ * bailout ball — not a rounded 0.000%, literally none — and still draws 20.9%
+ * of its rays, as a coherent shaded object with creases and highlights rather
+ * than fog. A slice through a set of shells is a set of surfaces, which has no
+ * volume for any sampler to find and a marcher hits anyway. This is
+ * `mandelboxRings`' signature (0.000% fill, 44.9% of rays) taken to its limit,
+ * and the reason `probeEscapeFill`'s warning is repeated in every module that
+ * touches it: DO NOT READ A FILL FIGURE AS "WILL IT RENDER".
+ *
  * ======================= WHAT THE PROTOTYPE STILL SAYS ====================
  *
  * {@link runChain} iterates an ARRAY of maps, accumulating one scalar
@@ -405,7 +532,10 @@
  *         `hybrid-chain-sequence-close.png` (chaining vs cycling, the fork
  *         that decided fr-za0n); `hybrid-chain-cross-sequence.png` (the same
  *         fork on cross-family chains); `hybrid-chain-offset.png`;
- *         `hybrid-chain-march.png` and `hybrid-chain-march2.png`
+ *         `hybrid-chain-march.png` and `hybrid-chain-march2.png`;
+ *         `hybrid-chain-4d-k.png` (section 6's five sweeps — the k component
+ *         and its `t_x` control under both lifts, then the w0 slice —
+ *         magnitude left to right)
  */
 import {
   analyzeBulbSystem,
@@ -429,6 +559,7 @@ import {
 } from "../src/fractal/escape-de";
 import type { EscapeDE } from "../src/fractal/escape-de";
 import { composeAffine } from "../src/fractal/affine";
+import { meanContraction } from "../src/fractal/affine4";
 import {
   foldChain,
   hybridChainCraters,
@@ -913,6 +1044,391 @@ function printReport(i: number, c: Chain, r: PanelReport): void {
       `damp+ ${r.dampGain >= 0 ? "+" : ""}${r.dampGain.toFixed(1)}%  ` +
       `${r.panel.ms}ms`,
   );
+}
+
+// ------------------------------------ the 4D twin (fr-wuuu), and its one knob
+//
+// `analyzeEscapeSystem` refuses a map that extends into 4D, so a chain
+// carrying a `qsquare` link renders only the quaternion square's restriction
+// to span{1, i, j} — the Julia constant's k component, i.e. the 4th component
+// of that link's translation, is unauthorable today. Everything from here to
+// the SHIPPED divider exists to measure what authoring it would buy.
+//
+// DELIBERATELY ADDITIVE. {@link runChain} is untouched, and this twin is
+// pinned BIT-EXACT against it at `w = 0` (the pin `it()` below), so a row of
+// the sweep and a row of any other table in this file differ by the knob and
+// by nothing else. Every forward map is `variations4.ts`'s, read out of that
+// file rather than re-derived — which is the whole reason the anchor holds:
+// each of them was written so that `w = 0` in gives `w = 0` out exactly.
+
+/**
+ * A chain link one dimension up: the 3D link verbatim, plus the knob.
+ *
+ * The linear part is the 3D `M` LIFTED as `diag(M, m_w)`. No 4x4 rotation —
+ * that would be a second new degree of freedom, and fr-wuuu asks about
+ * exactly one. `y_w = m_w · v_w + t_w` is the whole of the lift, and `m_w`
+ * exists because THE REPO ALREADY HAS AN OPINION ABOUT WHAT IT SHOULD BE:
+ * `affine4.ts`'s `embedTransform3` derives `scale_w` as the map's MEAN
+ * SPATIAL CONTRACTION rather than 1, and its docblock says why in terms that
+ * name the failure mode this sheet has to avoid — `scale_w = 1` makes the
+ * embedded map an isometry in w, so "the moment a 4D edit gives the map a
+ * w-translation, `w' = w + t_w` has no fixed point, w ratchets off to the
+ * escape limit, and the cloud vanishes". A k sweep run at `m_w = 1` alone
+ * would be measuring that known-bad convention, so the sweep runs both.
+ */
+interface ChainLink4 extends ChainLink {
+  /** `t_w` — the 4th component of the link's forward translation. On a
+   * `qsquare` link this IS the Julia constant's k component, the quantity
+   * under test; on every other link kind it is an ordinary 4th offset. */
+  tw: number;
+  /** `m_w` — the w axis's own linear gain. 1 is the bare `diag(M, 1)` lift;
+   * `meanContraction(scale)` is what `affine4.ts`'s `embedTransform3` would
+   * derive for this map. Never enters the `w = 0` slice (`m_w · 0 = 0`), so
+   * it cannot move the pin. */
+  mw: number;
+  /**
+   * `|w_i| · sigma_max(diag(M_i, m_w))`, the 4D twin of
+   * {@link ChainLink.growth}.
+   *
+   * The singular values of a block-diagonal matrix are the UNION of the
+   * blocks', so `sigma_max(diag(M, m_w)) = max(sigma_max(M), |m_w|)` and the
+   * growth factor is `max(growth, |w|·|m_w|)`. It EQUALS
+   * {@link ChainLink.growth} whenever `|m_w| <= sigma_max(M)` — always true
+   * under `embedTransform3`'s derived `scale_w`, and true at `m_w = 1` only
+   * for links that do not pre-scale. So a PRE-SCALED link under the bare lift
+   * is the one case where the 4D `dr` is deliberately larger than the 3D one:
+   * the lifted identity on the w axis does not contract, and a bound that
+   * ignored it would not bound the 4D map. That is the one quantity in this
+   * twin that is not `w = 0`-invariant, and the pin excludes exactly the
+   * fixtures it moves rather than being softened to accommodate them.
+   */
+  growth4: number;
+}
+
+/** {@link Chain} over 4D links. Every other field means what it means in 3D —
+ * the sequence/offset/bailout/estimate forks are dimension-free. */
+interface Chain4 extends Omit<Chain, "links"> {
+  links: ChainLink4[];
+}
+
+// The 4D orbit's terminal state, in module scratch for {@link runChain}'s own
+// reason: a sweep calls this ~1e8 times and an allocation per call is the
+// difference between a two-minute run and a twenty-minute one.
+let chain4R = 0;
+let chain4Dr = 1;
+let chain4Iters = 0;
+
+/**
+ * {@link runChain} one dimension up, with the QUERY a 4-vector `(p, w0)`.
+ *
+ * Both the seed and the Mandelbrot reinjection use the full `p4`, exactly as
+ * the 3D loop re-enters `p`: the slice coordinate is part of the query, not a
+ * constant riding beside it, so `w0` is added back every offset and the set
+ * this draws is the honest `w = w0` slice of the 4D object.
+ */
+function runChain4(
+  c: Chain4,
+  p: Vec3,
+  w0: number,
+  maxIterations: number,
+): void {
+  const links = c.links;
+  const cycling = c.sequence === "cycle";
+  const perLink = c.offset === "link";
+  let vx = p[0];
+  let vy = p[1];
+  let vz = p[2];
+  let vw = w0;
+  let dr = 1;
+  let r = Math.sqrt(vx * vx + vy * vy + vz * vz + vw * vw);
+  let i = 0;
+  outer: for (; i < maxIterations && r <= c.bailout; i++) {
+    const first = cycling ? i % links.length : 0;
+    const last = cycling ? first : links.length - 1;
+    for (let j = first; j <= last; j++) {
+      const lk = links[j];
+      const m = lk.m;
+      const yx = m[0] * vx + m[1] * vy + m[2] * vz + lk.t[0];
+      const yy = m[3] * vx + m[4] * vy + m[5] * vz + lk.t[1];
+      const yz = m[6] * vx + m[7] * vy + m[8] * vz + lk.t[2];
+      // `diag(M, m_w)`: the 4th output is the 4th input through the w gain,
+      // plus the link's own `t_w`. This is the only line the lift adds to the
+      // affine part, and at `w0 = 0` with `t_w = 0` it is `0` for any `m_w`.
+      const yw = lk.mw * vw + lk.tw;
+      let fx: number;
+      let fy: number;
+      let fz: number;
+      let fw: number;
+      let localL: number;
+      if (lk.kind === "boxfold") {
+        // `variations4.ts`: the per-axis fold applied to all FOUR axes.
+        fx = foldAxis(yx);
+        fy = foldAxis(yy);
+        fz = foldAxis(yz);
+        fw = foldAxis(yw);
+        localL = 1;
+      } else if (lk.kind === "spherefold") {
+        // The radius factor through the FOUR-norm (`… + w*w`), which is what
+        // makes the `w = 0` factor bit-identical to 3D.
+        const r2 = yx * yx + yy * yy + yz * yz + yw * yw;
+        const f = 1 / Math.max(0.25, Math.min(1, r2));
+        fx = yx * f;
+        fy = yy * f;
+        fz = yz * f;
+        fw = yw * f;
+        localL = f;
+      } else if (lk.kind === "mandelbox") {
+        const bx = foldAxis(yx);
+        const by = foldAxis(yy);
+        const bz = foldAxis(yz);
+        const bw = foldAxis(yw);
+        const r2 = bx * bx + by * by + bz * bz + bw * bw;
+        const f = 1 / Math.max(0.25, Math.min(1, r2));
+        fx = bx * f;
+        fy = by * f;
+        fz = bz * f;
+        fw = bw * f;
+        localL = f;
+      } else if (lk.kind === "qsquare") {
+        // `q² = x² - |v|² + 2x·v` for `q = x + y i + z j + w k` — the only
+        // map here whose 4D form is the DEFINITION and whose 3D form is the
+        // restriction. `2|q|` stays EXACT in 4D: the quaternion norm is
+        // multiplicative, which is `qjulia-de.ts`'s whole certification.
+        fx = yx * yx - yy * yy - yz * yz - yw * yw;
+        fy = 2 * yx * yy;
+        fz = 2 * yx * yz;
+        fw = 2 * yx * yw;
+        localL = 2 * Math.sqrt(yx * yx + yy * yy + yz * yz + yw * yw);
+      } else {
+        // The triplex 8th power, with `w` CARRIED THROUGH untouched —
+        // `variations4.ts`'s own admission that triplex numbers have no
+        // fourth angle to raise. `localL` is therefore the 3D `8·r₃⁷`
+        // unchanged: the map is block-diagonal `(triplexPow8, id)`, whose
+        // true 4D factor is `max(8r₃⁷, 1)`, but this bound is already the
+        // heuristic `bulb-de.ts` ships and floors `dr` per link at `+ 1`
+        // regardless. Keeping it verbatim is what makes the `w = 0` pin
+        // reach the bulb rows too. Not the subject of fr-wuuu either way.
+        const a = yx * yx + yy * yy;
+        const z2 = yz * yz;
+        const r2 = a + z2;
+        const r4 = r2 * r2;
+        fz =
+          128 * z2 * z2 * z2 * z2 -
+          256 * z2 * z2 * z2 * r2 +
+          160 * z2 * z2 * r4 -
+          32 * z2 * r4 * r2 +
+          r4 * r4;
+        const s =
+          128 * z2 * z2 * z2 * yz -
+          192 * z2 * z2 * yz * r2 +
+          80 * z2 * yz * r4 -
+          8 * yz * r4 * r2;
+        const rho = Math.sqrt(a);
+        const inv = rho > 0 ? 1 / rho : 0;
+        const u1 = yx * inv;
+        const v1 = yy * inv;
+        const u2 = u1 * u1 - v1 * v1;
+        const v2 = 2 * u1 * v1;
+        const u4 = u2 * u2 - v2 * v2;
+        const v4 = 2 * u2 * v2;
+        const u8 = u4 * u4 - v4 * v4;
+        const v8 = 2 * u4 * v4;
+        fx = rho * s * u8;
+        fy = rho * s * v8;
+        fw = yw;
+        localL = BULB_POWER * (r2 * r2 * r2 * Math.sqrt(r2));
+      }
+      vx = lk.w * fx;
+      vy = lk.w * fy;
+      vz = lk.w * fz;
+      vw = lk.w * fw;
+      dr = lk.growth4 * localL * dr;
+      if (perLink) {
+        vx += p[0];
+        vy += p[1];
+        vz += p[2];
+        vw += w0;
+        dr = dr + 1;
+      }
+      if (!(
+        Math.abs(vx) < LINK_OVERFLOW_GUARD &&
+        Math.abs(vy) < LINK_OVERFLOW_GUARD &&
+        Math.abs(vz) < LINK_OVERFLOW_GUARD &&
+        Math.abs(vw) < LINK_OVERFLOW_GUARD
+      )) {
+        r = Math.sqrt(vx * vx + vy * vy + vz * vz + vw * vw);
+        i++;
+        break outer;
+      }
+    }
+    if (!perLink) {
+      vx += p[0];
+      vy += p[1];
+      vz += p[2];
+      vw += w0;
+      dr = dr + 1;
+    }
+    r = Math.sqrt(vx * vx + vy * vy + vz * vz + vw * vw);
+  }
+  chain4R = r;
+  chain4Dr = dr;
+  chain4Iters = i;
+}
+
+/** {@link chainDE} for the `w = w0` slice: a 3D estimator, so every panel and
+ * every instrument in this file takes it unchanged. */
+function chainDE4(c: Chain4, w0: number, maxIterations = c.iterations) {
+  const log = c.estimate === "log";
+  return (p: Vec3): number => {
+    runChain4(c, p, w0, maxIterations);
+    const r = chain4R;
+    if (!log) return r / chain4Dr;
+    return r <= 1 ? 0 : (0.5 * r * Math.log(r)) / chain4Dr;
+  };
+}
+
+/** {@link chainMember} for the `w = w0` slice — MEMBERSHIP, asked of the same
+ * orbit the estimate reads, never a threshold on a distance (`set-extent.ts`'s
+ * defect 2, and this file's section 5(b)). */
+function chainMember4(c: Chain4, p: Vec3, w0: number): boolean {
+  runChain4(c, p, w0, c.iterations);
+  return chain4R <= c.bailout;
+}
+
+/** {@link link} plus the knob and the w gain. `growth4` is derived here rather
+ * than in the orbit so the hot loop stays a multiply. `mw` defaults to the
+ * bare `diag(M, 1)` lift — `embedTransform3`'s derived `scale_w` is passed
+ * explicitly by the arm that measures it, never inferred, so a fixture's lift
+ * convention is always visible at its call site. */
+function link4(
+  kind: LinkKind,
+  w: number,
+  opts: LinkOpts & { tw?: number; mw?: number } = {},
+): ChainLink4 {
+  const base = link(kind, w, opts);
+  const mw = opts.mw ?? 1;
+  return {
+    ...base,
+    tw: opts.tw ?? 0,
+    mw,
+    growth4: Math.max(base.growth, Math.abs(w) * Math.abs(mw)),
+  };
+}
+
+/** {@link chain} over 4D links — the same defaults, so a 4D fixture and its
+ * 3D twin cannot silently differ in budget, bailout or estimate form. */
+function chain4(
+  label: string,
+  links: ChainLink4[],
+  opts: Partial<Omit<Chain, "label" | "links">> = {},
+): Chain4 {
+  return { ...chain(label, links, opts), links };
+}
+
+/** {@link linksOf} one dimension up, with every `t_w` zero — the bridge the
+ * `w = 0` pin stands on. */
+function links4Of(transforms: Transform[]): ChainLink4[] {
+  return transforms.map((t) => {
+    const v = t.variations![0];
+    return link4(v.type as LinkKind, v.weight, {
+      position: t.position,
+      rotation: t.rotation,
+      scale: t.scale,
+    });
+  });
+}
+
+/**
+ * Fill and reach of a 4D chain's `w = w0` slice — the object a 3D renderer
+ * would draw — from ONE `sampleSetExtent` draw over the bailout ball.
+ *
+ * ONE CALL WHERE {@link chainExtent} NEEDS TWO, by a containment argument
+ * rather than as a saving: the orbit is seeded AT the query and the bailout
+ * test runs before the first link, so every member satisfies
+ * `|(p, w0)| <= bailout` and therefore `|p| <= bailout`. The set is inside the
+ * fill ball by construction, so nothing is lost by scanning no further — where
+ * a FITTED 3D marching ball is genuinely larger than the fixed fill ball, which
+ * is why {@link chainExtent} has to keep its two draws apart.
+ *
+ * `set-extent.ts`'s defaults are 131072 points at seed `0x5eede5ca`, which is
+ * `ESCAPE_PROBE_SEED` and {@link FILL_POINTS} to the digit — so this column is
+ * literally {@link chainFill}'s and {@link escapeFill}'s measurement. The pin
+ * `it()` asserts that rather than trusting it.
+ */
+function chainExtent4(
+  c: Chain4,
+  w0: number,
+): { fillPct: number; reachAbs: number } {
+  const ext = sampleSetExtent((p) => chainMember4(c, p, w0), {
+    fillRadius: ESCAPE_TIME_RADIUS,
+  });
+  return { fillPct: ext.fillPct, reachAbs: ext.reachAbs };
+}
+
+/** {@link fitMarchRadius}'s formula, taking the reach the caller already
+ * measured (see {@link chainExtent4}: one draw answers both) and capped at the
+ * bailout ball, which no member can leave. */
+function fitMarchRadius4(reachAbs: number): number {
+  if (reachAbs <= 0) return ESCAPE_TIME_RADIUS;
+  return Math.min(ESCAPE_TIME_RADIUS, Math.max(1.15, reachAbs * 1.06));
+}
+
+/**
+ * The ONE query cloud every IoU column in the fr-wuuu sweep is taken over.
+ *
+ * `set-extent.ts`'s draw term for term — cbrt radius, cos-uniform polar — at
+ * `ESCAPE_PROBE_SEED`, so the fill column's own 131072-point sample is
+ * literally the PREFIX of this one: the same generator, the same seed, the
+ * same order. The sweep draws four times as many, because IoU is decided by
+ * the MEMBERS and a 1.6%-fill set puts only ~2k of 131072 points inside
+ * either arm.
+ *
+ * Materialised once and shared by every row. An IoU between two sets sampled
+ * at different points is not an IoU, which is why the ball is fixed here and
+ * never re-fitted per row.
+ */
+function ballCloud(
+  radius: number,
+  points = FILL_POINTS,
+  seed = ESCAPE_PROBE_SEED,
+): Vec3[] {
+  const rng = mulberry32(seed);
+  const out: Vec3[] = [];
+  for (let i = 0; i < points; i++) {
+    const u = Math.cbrt(rng()) * radius;
+    const ct = 2 * rng() - 1;
+    const st = Math.sqrt(Math.max(0, 1 - ct * ct));
+    const ph = 2 * Math.PI * rng();
+    out.push([u * st * Math.cos(ph), u * st * Math.sin(ph), u * ct]);
+  }
+  return out;
+}
+
+/** Which of {@link ballCloud}'s points belong to the set. */
+function memberMask(pts: Vec3[], member: (p: Vec3) => boolean): Uint8Array {
+  const mask = new Uint8Array(pts.length);
+  for (let i = 0; i < pts.length; i++) mask[i] = member(pts[i]) ? 1 : 0;
+  return mask;
+}
+
+/**
+ * Intersection-over-union of two MEMBERSHIP masks — the project's
+ * same-object criterion (`spherefold-radius-sweep.harness.ts`'s `maskIoU`)
+ * asked of the set rather than of a rendered silhouette, because a sweep that
+ * moves an object toward or away from the camera would move a panel IoU
+ * without changing the object at all.
+ *
+ * Returns the union count beside it: a thin set gives a small union, and a
+ * reader has to be able to see how much sample an IoU is standing on.
+ */
+function setIoU(a: Uint8Array, b: Uint8Array): { iou: number; union: number } {
+  let inter = 0;
+  let union = 0;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] && b[i]) inter++;
+    if (a[i] || b[i]) union++;
+  }
+  return { iou: union === 0 ? 1 : inter / union, union };
 }
 
 // ------------------------------------------------- the SHIPPED estimator
@@ -2989,5 +3505,440 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
           `(ball ${marchR.toFixed(2)}, checksum ${acc.toFixed(3)})`,
       );
     }
+  });
+
+  /* ---- fr-wuuu: the quaternion square's k component ------------------- */
+
+  it("pins the 4D twin BIT-EXACT against the 3D orbit at w = 0", () => {
+    // The 4D arm's whole licence, and the first thing to run if a figure in
+    // the sweep below looks wrong. `runChain4` is a second transcription of
+    // `runChain`'s loop with a fourth coordinate threaded through it, and
+    // every map it applies is `variations4.ts`'s — written so that `w = 0` in
+    // gives `w = 0` out EXACTLY. So at `t_w = 0` on the slice `w0 = 0` the
+    // twin must return the 3D orbit TO THE BIT, not to a tolerance. If it
+    // does, every difference the sweep measures belongs to the knob.
+    //
+    // BOTH FORKS, because the twin duplicates both: `cycle`/`link` is the
+    // shipped orbit (and what the sweep runs), `chain`/`pass` covers the
+    // outer-loop offset and the `LINK_OVERFLOW_GUARD` escape a power link in
+    // a chained pass can actually reach.
+    //
+    // THE ONE EXCLUSION IS NAMED RATHER THAN ABSORBED. `dr` multiplies by
+    // `|w|·sigma_max(diag(M, 1)) = max(growth, |w|)` per link, which EXCEEDS
+    // the 3D `growth` exactly when `sigma_max(M) < 1` — i.e. on every
+    // PRE-SCALED link, which is most cross-family fixtures. That is the
+    // correct 4D quantity (the lifted identity on the w axis does not
+    // contract, and a bound ignoring it would not bound the 4D map), so the
+    // fixtures it moves have their `dr` column excluded BY NAME and the
+    // reason printed. `growth4` is not weakened to make the column green.
+    // The orbit columns — terminal radius, iteration count, membership —
+    // stay pinned on every row regardless, because `dr` never feeds back
+    // into the orbit: the SET is bit-identical even where the ESTIMATE is
+    // deliberately more conservative.
+    const fixtures: [string, Transform[]][] = [
+      // Fold-only anchors: nothing here can move, so a failure on these rows
+      // is a transcription slip in the loop rather than in a power body.
+      [
+        "FOLD mandelbox w=2 + boxfold 1.6",
+        [xmap(1, "mandelbox", 2), xmap(2, "boxfold", 1.6)],
+      ],
+      [
+        "FOLD mandelbox + boxfold + spherefold",
+        [
+          xmap(1, "mandelbox", 2),
+          xmap(2, "boxfold", 1.6),
+          xmap(3, "spherefold", 1.2),
+        ],
+      ],
+      // Every qsquare-bearing fixture this file already measures somewhere,
+      // which is the set fr-wuuu's sweep is drawn from.
+      [
+        "QSQ  mandelbox w=2 + qsquare (pre-scale 1)",
+        [xmap(1, "mandelbox", 2), xmap(2, "qsquare", 1)],
+      ],
+      [
+        "QSQ  mandelbox w=2 + qsquare (0.6)",
+        [xmap(1, "mandelbox", 2), xmap(2, "qsquare", 1, { scale: 0.6 })],
+      ],
+      [
+        "QSQ  hybridChainQuaternion (mbox2 -> qsq 0.5)",
+        hybridChainQuaternion(),
+      ],
+      [
+        "QSQ  mandelbox w=2 + qsquare (0.4)",
+        [xmap(1, "mandelbox", 2), xmap(2, "qsquare", 1, { scale: 0.4 })],
+      ],
+      [
+        "QSQ  mandelbox w=2 + qsquare (0.2)",
+        [xmap(1, "mandelbox", 2), xmap(2, "qsquare", 1, { scale: 0.2 })],
+      ],
+      [
+        "QSQ  mandelbox w=2 + qsquare (0.5) + boxfold 1.6 rot20y",
+        [
+          xmap(1, "mandelbox", 2),
+          xmap(2, "qsquare", 1, { scale: 0.5 }),
+          xmap(3, "boxfold", 1.6, { rotY: 20 }),
+        ],
+      ],
+      // The bulb bodies too. Not fr-wuuu's subject, but the twin carries them
+      // and a silently broken branch is worse than an unmeasured one.
+      [
+        "BULB boxfold 1.6 + bulb (0.3) + spherefold 1.2",
+        [
+          xmap(1, "boxfold", 1.6),
+          xmap(2, "bulb", 1, { scale: 0.3 }),
+          xmap(3, "spherefold", 1.2),
+        ],
+      ],
+      [
+        "BULB bulb (0.5) + bulb (0.5) rot 20y",
+        [
+          xmap(1, "bulb", 1, { scale: 0.5 }),
+          xmap(2, "bulb", 1, { scale: 0.5, rotY: 20 }),
+        ],
+      ],
+    ];
+    // Bit-exactness AS A NUMBER: `Object.is` first, so `Infinity` (reachable
+    // in the chained arm's runaway `dr`) reads as agreement when the two
+    // agree, and a real disagreement still comes out as a positive
+    // difference the assertion below can fail on.
+    const bitDiff = (a: number, b: number) =>
+      Object.is(a, b) ? 0 : Math.abs(a - b);
+    const excludedRows: string[] = [];
+    for (const [label, transforms] of fixtures) {
+      const l3 = linksOf(transforms);
+      const l4 = links4Of(transforms);
+      const n = l3.length;
+      const drPinned = l4.every((l, i) => l.growth4 === l3[i].growth);
+      if (!drPinned) {
+        const which = l4
+          .map((l, i) =>
+            l.growth4 === l3[i].growth
+              ? null
+              : `link ${i} (${l.kind}): growth ${l3[i].growth} -> ${l.growth4}`,
+          )
+          .filter((s): s is string => s !== null);
+        excludedRows.push(`${label} — ${which.join(", ")}`);
+      }
+      const arms: [string, Partial<Omit<Chain, "label" | "links">>][] = [
+        [
+          "cycle/link",
+          {
+            sequence: "cycle",
+            offset: "link",
+            iterations: ESCAPE_TIME_ITERATIONS * n,
+          },
+        ],
+        ["chain/pass", { sequence: "chain", offset: "pass" }],
+      ];
+      for (const [arm, opts] of arms) {
+        const c3 = chain(label, l3, opts);
+        const c4 = chain4(label, l4, opts);
+        const rng = mulberry32(0x4d_c0de);
+        let worstR = 0;
+        let worstDr = 0;
+        let iterDiff = 0;
+        let memberDiff = 0;
+        let members = 0;
+        // Half in the [-4, 4] box (the escaping far field, where the two
+        // loops must agree about the bailout test) and half uniform in the
+        // bailout ball (where orbits are long and a transcription slip has
+        // the most steps to show up in) — the cross-validation `it()`'s own
+        // query population, for its reason.
+        for (let i = 0; i < 4000; i++) {
+          let p: Vec3;
+          if (i % 2 === 0) {
+            p = [8 * rng() - 4, 8 * rng() - 4, 8 * rng() - 4];
+          } else {
+            const u = Math.cbrt(rng()) * ESCAPE_TIME_RADIUS;
+            const ct = 2 * rng() - 1;
+            const st = Math.sqrt(Math.max(0, 1 - ct * ct));
+            const ph = 2 * Math.PI * rng();
+            p = [u * st * Math.cos(ph), u * st * Math.sin(ph), u * ct];
+          }
+          runChain(c3, p, c3.iterations);
+          const r3 = chainR;
+          const dr3 = chainDr;
+          const it3 = chainIters;
+          runChain4(c4, p, 0, c4.iterations);
+          worstR = Math.max(worstR, bitDiff(chain4R, r3));
+          worstDr = Math.max(worstDr, bitDiff(chain4Dr, dr3));
+          if (chain4Iters !== it3) iterDiff++;
+          const m3 = r3 <= c3.bailout;
+          if (m3) members++;
+          if (m3 !== chain4R <= c4.bailout) memberDiff++;
+        }
+        console.log(
+          `  ${label.padEnd(54)} ${arm}  ` +
+            `|dR| ${worstR}  iters ${iterDiff === 0 ? "exact" : `${iterDiff} DIFFER`}  ` +
+            `members ${String(members).padStart(4)}/4000 ${memberDiff === 0 ? "exact" : `${memberDiff} DIFFER`}  ` +
+            `|dDr| ${drPinned ? worstDr : `${worstDr} EXCLUDED`}`,
+        );
+        expect(worstR, `${label} [${arm}] terminal radius`).toBe(0);
+        expect(iterDiff, `${label} [${arm}] iteration count`).toBe(0);
+        expect(memberDiff, `${label} [${arm}] membership`).toBe(0);
+        if (drPinned) expect(worstDr, `${label} [${arm}] dr`).toBe(0);
+      }
+    }
+    console.log(
+      `  dr EXCLUDED on ${excludedRows.length} of ${fixtures.length} fixtures, ` +
+        `because sigma_max(M) < 1 makes sigma_max(diag(M,1)) = 1 > sigma_max(M):\n` +
+        excludedRows.map((r) => `      ${r}`).join("\n"),
+    );
+
+    // ONE INSTRUMENT, not two that agree. The sweep reads fill through
+    // `set-extent.ts`'s `sampleSetExtent` ({@link chainExtent4}); every other
+    // fill column in this file reads it through {@link sampleFill}. Same
+    // draw, same 131072 points, same seed — asserted rather than assumed,
+    // because a second sampler that drifts is exactly how two tables in one
+    // file stop being comparable.
+    const baseT = hybridChainQuaternion();
+    const cyc = {
+      sequence: "cycle" as const,
+      offset: "link" as const,
+      iterations: ESCAPE_TIME_ITERATIONS * 2,
+    };
+    const fill3 = chainFill(chain("", linksOf(baseT), cyc));
+    const fill4 = chainExtent4(chain4("", links4Of(baseT), cyc), 0).fillPct;
+    console.log(
+      `  hybridChainQuaternion ball fill: 3D sampleFill ${fill3.toFixed(4)}%  ` +
+        `4D slice w0=0 sampleSetExtent ${fill4.toFixed(4)}%  (must be equal)`,
+    );
+    expect(fill4).toBe(fill3);
+  });
+
+  it("sweeps the quaternion square's k COMPONENT against an authorable control", () => {
+    // fr-wuuu's whole question. `analyzeEscapeSystem` refuses a map that
+    // extends into 4D, so a `qsquare` link renders only its restriction to
+    // span{1, i, j} and the Julia constant's k component — the 4th component
+    // of that link's translation — cannot be authored. Does it buy an OBJECT:
+    // a set that is meaningfully different and still structured? Or does it
+    // behave like a fourth translation component, i.e. more of the parameter
+    // space three knobs already cover?
+    //
+    // THE FIXTURE IS THE SHIPPED PRESET. `hybridChainQuaternion` is
+    // `mandelbox w=2 -> qsquare` at pre-scale 0.5, and this sweep is exactly
+    // that system with one number moved — so a positive result would be about
+    // something the app already draws, not about a fixture chosen to show the
+    // knob off. Its 3D restriction is healthy at that pre-scale (1.59% ball
+    // fill, ~50% of rays at the bailout-ball pose; the pre-scale table in
+    // section 1 has the whole curve), which is the precondition for reading a
+    // collapse as the knob's doing.
+    //
+    // THREE SWEEPS OVER ONE ORIGIN. Row 0 of all three IS the same measured
+    // system — measured once and reused, so the reference cannot drift
+    // between arms:
+    //   (a) k = t_w on the qsquare link      the knob under test
+    //   (b) t_x on the SAME link             the CONTROL, and the decisive
+    //                                        column: an authorable knob at
+    //                                        the same magnitudes
+    //   (c) the SLICE w0                     the other thing a 3D-only mode
+    //                                        cannot reach; secondary
+    //
+    // FIVE COLUMNS, and the pictures. `fill` and `reach` come from
+    // `set-extent.ts` alone, against the MEMBERSHIP oracle {@link
+    // chainMember4} — never a grid, never a threshold on a distance
+    // (`set-extent.ts`'s two defects, and this file's section 5). `IoU` is
+    // membership over ONE fixed cloud in ONE fixed ball, the same points for
+    // every row. And `hits` is printed TWICE on purpose: once at each row's
+    // own FITTED marching ball (what the panel shows) and once at the fixed
+    // radius-4 bailout ball (what the app frames a session on, and the only
+    // one of the two that is comparable across rows, since a fitted frame
+    // hides a shrinking object by zooming in on it).
+    //
+    // VOLUME IS NOT VISIBILITY. `probeEscapeFill`'s warning applies to every
+    // fill figure below: `mandelboxRings` reads 0.000% while drawing 44.9% of
+    // its rays. Read the verdict off the HIT columns and the panels; fill is
+    // support.
+    const PRE = 0.5;
+    const KNOB = [0, 0.05, 0.1, 0.2, 0.4, 0.8];
+    // Four times the fill sample (whose points are this cloud's prefix): a
+    // 1.6%-fill set puts ~2k of 131072 points inside either arm, and an IoU
+    // standing on 2k members cannot resolve the small-perturbation rows.
+    const IOU_POINTS = 4 * FILL_POINTS;
+    // `embedTransform3`'s own derived `scale_w` for the pre-scaled link, read
+    // from `affine4.ts` rather than restated, so the second lift arm is the
+    // repo's convention and not this file's guess at it.
+    const LIFT_W = meanContraction([PRE, PRE, PRE]);
+
+    const build = (tw: number, tx: number, mw: number): Chain4 =>
+      chain4(
+        `k=${tw} tx=${tx} mw=${mw}`,
+        [
+          link4("mandelbox", 2),
+          link4("qsquare", 1, {
+            scale: [PRE, PRE, PRE],
+            position: [tx, 0, 0],
+            tw,
+            mw,
+          }),
+        ],
+        {
+          sequence: "cycle",
+          offset: "link",
+          iterations: ESCAPE_TIME_ITERATIONS * 2,
+        },
+      );
+
+    const cloud = ballCloud(ESCAPE_TIME_RADIUS, IOU_POINTS);
+    const measure = (c: Chain4, w0: number) => {
+      const { fillPct, reachAbs } = chainExtent4(c, w0);
+      const marchR = fitMarchRadius4(reachAbs);
+      const de = chainDE4(c, w0);
+      const view = {
+        de,
+        stepScale: ESCAPE_STEP_SCALE,
+        eyeOffset: EYE,
+        zoom: ZOOM,
+      };
+      return {
+        fillPct,
+        reachAbs,
+        marchR,
+        fitted: renderPreview({ ...view, boundingRadius: marchR }, CROSS),
+        framed: renderPreview(
+          { ...view, boundingRadius: ESCAPE_TIME_RADIUS },
+          CROSS,
+        ),
+        mask: memberMask(cloud, (p) => chainMember4(c, p, w0)),
+      };
+    };
+    type Row = ReturnType<typeof measure>;
+    const show = (knob: string, r: Row, ref: Uint8Array) => {
+      const { iou, union } = setIoU(r.mask, ref);
+      // IoU CONFLATES "moved" WITH "shrank" — `|A∩B|/|A∪B|` falls just as fast
+      // when A is a shrinking SUBSET of B as when A has moved off it — so the
+      // containment fraction is printed beside it. `ofNew` near 1 says the row
+      // is an EROSION of the reference set; near 0 says it is somewhere else.
+      let own = 0;
+      let inter = 0;
+      for (let i = 0; i < r.mask.length; i++) {
+        if (r.mask[i]) own++;
+        if (r.mask[i] && ref[i]) inter++;
+      }
+      console.log(
+        `      ${knob.padEnd(8)} fill ${r.fillPct.toFixed(3).padStart(6)}%  ` +
+          `reach ${r.reachAbs.toFixed(2)}  marchR ${r.marchR.toFixed(2)}  ` +
+          `hits(fitted) ${hitPct(r.fitted, CROSS).toFixed(1).padStart(4)}%  ` +
+          `hits(R4) ${hitPct(r.framed, CROSS).toFixed(1).padStart(4)}%  ` +
+          `IoU ${iou.toFixed(3)}  ` +
+          `members ${String(own).padStart(5)} of which ` +
+          `${own > 0 ? ((100 * inter) / own).toFixed(1).padStart(5) : "  n/a"}% ` +
+          `also in k=0 (union ${String(union).padStart(5)})  ` +
+          `steps/ray ${(r.fitted.steps / (CROSS * CROSS)).toFixed(1)}`,
+      );
+    };
+
+    console.log(
+      `  fixture: hybridChainQuaternion — mandelbox w=2 -> qsquare pre-scale ` +
+        `${PRE}, CYCLING, ${ESCAPE_TIME_ITERATIONS} passes, bailout ` +
+        `${ESCAPE_TIME_RADIUS}\n` +
+        `  fill/reach: set-extent.ts over chainMember4 at ${FILL_POINTS} points ` +
+        `(membership, never a grid, never a distance threshold)\n` +
+        `  IoU: membership over ONE fixed cloud of ${IOU_POINTS} points in the ` +
+        `radius-${ESCAPE_TIME_RADIUS} ball, identical points every row\n` +
+        `  panels ${CROSS}px at each row's fitted ball; hits(R4) is the same ` +
+        `pose at the fixed bailout ball\n` +
+        `  TWO LIFTS: m_w = 1 (bare diag(M,1)) and m_w = ` +
+        `${LIFT_W} (affine4.ts's embedTransform3 derived scale_w)`,
+    );
+
+    // The reference SET is lift-independent: at `t_w = 0` on the `w = 0`
+    // slice the 4th coordinate never leaves zero, so `m_w` cannot touch it.
+    // Only the ESTIMATOR differs between the two base rows (`growth4`), which
+    // is why each arm renders its own base panel but both score against one
+    // mask.
+    const base = measure(build(0, 0, 1), 0);
+    const baseLift = measure(build(0, 0, LIFT_W), 0);
+    const ref = base.mask;
+    const panels: PanelStats[] = [];
+    const sweep = (
+      title: string,
+      first: Row,
+      rest: [string, Row][],
+      firstLabel: string,
+    ) => {
+      console.log(title);
+      show(firstLabel, first, ref);
+      panels.push(first.fitted);
+      for (const [label, r] of rest) {
+        show(label, r, ref);
+        panels.push(r.fitted);
+      }
+    };
+
+    sweep(
+      "  (a) the k COMPONENT at m_w = 1 — t_w on the qsquare link (THE KNOB)",
+      base,
+      KNOB.slice(1).map((k) => [`k = ${k}`, measure(build(k, 0, 1), 0)]),
+      "k = 0",
+    );
+    sweep(
+      "  (b) CONTROL at m_w = 1 — t_x on the SAME link, an ALREADY AUTHORABLE " +
+        "knob at the same magnitudes",
+      base,
+      KNOB.slice(1).map((tx) => [`tx = ${tx}`, measure(build(0, tx, 1), 0)]),
+      "tx = 0",
+    );
+    sweep(
+      `  (c) the k COMPONENT at m_w = ${LIFT_W} — the repo's OWN lift, which ` +
+        `exists precisely so a w-translation cannot ratchet`,
+      baseLift,
+      KNOB.slice(1).map((k) => [`k = ${k}`, measure(build(k, 0, LIFT_W), 0)]),
+      "k = 0",
+    );
+    sweep(
+      `  (d) CONTROL at m_w = ${LIFT_W} — same t_x sweep under the same lift, ` +
+        `so (c) has a control measured through the same estimator`,
+      baseLift,
+      KNOB.slice(1).map((tx) => [
+        `tx = ${tx}`,
+        measure(build(0, tx, LIFT_W), 0),
+      ]),
+      "tx = 0",
+    );
+    sweep(
+      "  (e) the SLICE w0 at k = 0, m_w = 1 — secondary, the other axis a " +
+        "3D-only mode cannot reach",
+      base,
+      KNOB.slice(1).map((w0) => [`w0 = ${w0}`, measure(build(0, 0, 1), w0)]),
+      "w0 = 0",
+    );
+
+    console.log(
+      `  wrote ${writeContactSheet(panels, KNOB.length, "hybrid-chain-4d-k.png")}` +
+        ` — rows a..e top to bottom, magnitude left to right`,
+    );
+
+    // Nothing about the VERDICT is asserted — this is a measurement, and the
+    // verdict lives in the docblock where a reader can weigh the control
+    // against the knob. What is asserted is that the instruments were in a
+    // state to answer it: the reference row renders, and its member sample is
+    // big enough for the IoU column to mean anything.
+    expect(setIoU(ref, ref).iou).toBe(1);
+    expect(setIoU(ref, ref).union).toBeGreaterThan(2000);
+    expect(hitPct(base.framed, CROSS)).toBeGreaterThan(1);
+    // The two lifts must agree about the SET at k = 0, or the arms are not
+    // comparable and (c)'s reference is not (a)'s.
+    expect(setIoU(baseLift.mask, ref).iou).toBe(1);
+
+    // AND (c)/(d)'s BASE ROW IS THE SHIPPED RENDER, TO THE BYTE. At
+    // `m_w = meanContraction` the pre-scaled link's `growth4` equals its 3D
+    // `growth`, so `chainDE4` on the `w = 0` slice is `chainDE` bit for bit,
+    // and the cross-validation `it()` pins THAT against
+    // `estimateEscapeDistance` on this very fixture. Asserting the PANELS
+    // match carries the chain through the marcher as well: whatever the sweep
+    // measures, it did not start from a different object than the app draws.
+    const shipped = shotShipped(buildEscapeDE(hybridChainQuaternion()), CROSS);
+    let bytesDiffer = 0;
+    for (let i = 0; i < shipped.rgb.length; i++) {
+      if (shipped.rgb[i] !== baseLift.framed.rgb[i]) bytesDiffer++;
+    }
+    console.log(
+      `  the m_w = ${LIFT_W} base row against shotShipped(buildEscapeDE(` +
+        `hybridChainQuaternion())): hits ${baseLift.framed.hits} vs ` +
+        `${shipped.hits}, ${bytesDiffer} bytes differ of ${shipped.rgb.length}`,
+    );
+    expect(bytesDiffer).toBe(0);
   });
 });
