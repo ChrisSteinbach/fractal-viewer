@@ -11,7 +11,11 @@ import {
   transformColors,
   W_SIDE_PALETTES,
 } from "../fractal/color";
-import { analyzeEscapeSystem, buildEscapeDE } from "../fractal/escape-de";
+import {
+  analyzeEscapeSystem,
+  buildEscapeDE,
+  systemHasPowerLink,
+} from "../fractal/escape-de";
 import { analyzeBulbSystem, buildBulbDE } from "../fractal/bulb-de";
 import { systemHasActiveQSquare } from "../fractal/qjulia-de";
 import {
@@ -4584,7 +4588,16 @@ function main(): void {
             surfaceBlankNotice = () => {
               ui.flashToast(
                 de.links.length > 1
-                  ? "This chain rendered almost nothing — fewer than one ray in a thousand hit it. Its escape-time set may be empty or too thin to see; try a smaller fold weight or scale on one of the links."
+                  ? // fr-j231 widened the chain to POWER links and the
+                    // wording with it ("weight or scale", not "fold
+                    // weight"): a triplex power carries no fold weight,
+                    // and its SCALE is the knob that matters. Deliberately
+                    // no cross-family special case beyond that — the
+                    // closed-form stiffness bound that would have named
+                    // the offending link fires across a whole range that
+                    // measurably renders (escape-de.ts's POWER LINKS
+                    // paragraph), which is fr-17qu's own second-cut lesson.
+                    "This chain rendered almost nothing — fewer than one ray in a thousand hit it. Its escape-time set may be empty or too thin to see; try a smaller weight or scale on one of the links."
                   : "This fold rendered almost nothing — fewer than one ray in a thousand hit it. Its escape-time set may be empty or too thin to see; try a smaller fold weight or scale.",
               );
             };
@@ -5208,8 +5221,16 @@ function main(): void {
           links > 1
             ? // fr-za0n's hybrid: the transform list IS the formula
               // sequence, so name the object as a chain rather than as
-              // "the canonical Mandelbox".
-              `Escape-time render: these ${links} folds do not all contract, so Surface marches the escape-time set of the chain they form — one link per orbit step — rather than an IFS attractor.`
+              // "the canonical Mandelbox". fr-j231 split the sentence
+              // again, because a chain may now hold a POWER link and
+              // "these N folds" is then simply false — and a user who has
+              // just dropped a Mandelbulb beside a Mandelbox has no other
+              // way to learn that it is participating (fr-zi3c's rule,
+              // one gate over: name the map rather than describing
+              // neither).
+              systemHasPowerLink(state.transforms)
+              ? `Escape-time render: these ${links} maps form a hybrid formula chain — folds and power maps in one sequence — so Surface marches its escape-time set, one link per orbit step, rather than an IFS attractor.`
+              : `Escape-time render: these ${links} folds do not all contract, so Surface marches the escape-time set of the chain they form — one link per orbit step — rather than an IFS attractor.`
             : "Escape-time render: this fold does not contract, so Surface marches its escape-time set — the canonical Mandelbox object — rather than an IFS attractor.",
         );
         return;
@@ -5250,12 +5271,21 @@ function main(): void {
       // situation. Appended rather than substituted — a system can be
       // ineligible for several reasons at once, and this clause must stay
       // true regardless of what else is wrong with the document.
+      //
+      // fr-j231 gave the clause somewhere to point. The escape-time chain
+      // renders a quaternion square as a LINK, so this arm is now reached
+      // only by the shapes that chain refuses — a lone square, or one
+      // sharing a map with other variations, or one on the final
+      // transform — and the sentence names the way out rather than
+      // stopping at "no renderer". That is exactly the outcome
+      // `qjulia-de.ts`'s doc predicted for its own object: dull alone,
+      // worth its place composed with a fold.
       const reasons = analysis.reasons.slice();
       if (
         systemHasActiveQSquare(state.transforms, state.finalTransform ?? null)
       ) {
         reasons.push(
-          "a quaternion square has an escape-time set, but this build ships no renderer for it",
+          "a quaternion square renders only as a link in an escape-time chain — give it a map of its own beside a fold",
         );
       }
       ui.setSurfaceEligibility("ineligible", reasons.join("; "));
