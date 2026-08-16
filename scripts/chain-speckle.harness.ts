@@ -254,10 +254,34 @@
  *   still rises with length (0.259 -> 0.430 -> 0.710), so the rows still
  *   brighten instead of darkening. All three rows now touch the clamp at
  *   p95 under this framing (a tighter ball puts more of the trap's own
- *   tail at the boundary); the earlier record's clamp-cost percentage (a
- *   share of hit pixels) is not printed by this file's current test, so it
- *   is left unquoted here rather than guessed — the ramp figures above are
- *   what this run actually measured.
+ *   tail at the boundary).
+ *
+ *   AND THE COST OF THAT CLAMP IS PRINTED NOW (fr-8fii), which is the one
+ *   figure the last reading had to leave unquoted: the share of hit pixels
+ *   pinned at exactly 1.0 runs 6.78 / 10.59 / 31.44% across the three
+ *   rows. The record it replaces — `surface-material.ts` and `CLAUDE.md`
+ *   both quoted "1.9-8.6% of really-hit pixels" — was measured at the
+ *   INFLATED marching ball, and it was a substantial under-count for the
+ *   same reason everything else in this section moved: a smaller object
+ *   inside a larger frame puts most of its hit pixels on the silhouette,
+ *   where orbits escape early, and the corrected frame fills with interior
+ *   pixels whose orbits survive the budget. The correction runs the same
+ *   direction as the median, and much harder at six links (8.6 -> 31.4%).
+ *   Read it as the price of the fr-byxb normalizer at THIS pose: a third
+ *   of a six-link chain's hit pixels share one colour with each other and
+ *   with the never-escaped interior.
+ *
+ *   TWO THINGS KEEP THAT FROM BEING AS BAD AS IT SOUNDS, both visible in
+ *   the same run. The raw integer count clamps at 6.78 / 10.61 / 31.44% —
+ *   the same pixels — so this is the coordinate's own saturation, not
+ *   something fr-7u8t.8's smoothing introduced. And box-averaged over 16
+ *   sub-samples the three rows read 0.16 / 0.00 / 0.00%: almost no 4x4
+ *   block is clamped throughout, so the flat top-of-ramp PATCHES a palette
+ *   would paint are a ONE-SAMPLE artifact at this framing and dissolve
+ *   under the 8-sample settle both engines ship (fr-vpbq, fr-jf9y). The
+ *   saturation is still in the samples — averaging a pinned value with an
+ *   unpinned one does not recover what the clamp discarded — but the
+ *   picture a user sees is not a third of the object painted one colour.
  *
  * IN ONE LINE: partial coverage fell because the frame is finally sized
  * correctly, not because the object got smoother. The number that cannot
@@ -782,6 +806,17 @@ interface Coherence {
   p05: number;
   p50: number;
   p95: number;
+  /** Percent of the sampled pixels sitting exactly ON the ramp's top — the
+   * COST of the fr-byxb normalizer, and the one figure this test used to
+   * print nowhere (fr-8fii). `escapeTrap` ends in `min(1, ...)`, so a
+   * clamped pixel is exactly 1.0 and the test is exact rather than an
+   * epsilon: it counts the orbits that outlived the pass budget together
+   * with the ones that escaped so late that `escapedAt - escFrac` reached
+   * it anyway. They share one colour, so the palette cannot tell the
+   * deepest crease from the interior. Printed for every row because the
+   * comparison is the point — the raw integer count clamps too, and the
+   * depth field's ~0% is what an unclamped coordinate looks like. */
+  clamped: number;
 }
 
 function coherence(
@@ -815,6 +850,7 @@ function coherence(
       p05: 0,
       p50: 0,
       p95: 0,
+      clamped: 0,
     };
   }
   diffs.sort((a, b) => a - b);
@@ -831,6 +867,7 @@ function coherence(
     p05: at(0.05, vals),
     p50: at(0.5, vals),
     p95: at(0.95, vals),
+    clamped: (100 * vals.filter((x) => x >= 1).length) / vals.length,
   };
 }
 
@@ -1198,7 +1235,8 @@ describe("is the escape-chain speckle undersampling or the object? (fr-za0n)", (
             `confetti(>${CONFETTI_THRESHOLD}) ${pct(c.confetti).padStart(7)}  ` +
             `band-jump ${pct(c.bandJump).padStart(7)}  ` +
             `S ${c.surv.toFixed(2)}  ` +
-            `ramp used [${c.p05.toFixed(3)} ${c.p50.toFixed(3)} ${c.p95.toFixed(3)}]`,
+            `ramp used [${c.p05.toFixed(3)} ${c.p50.toFixed(3)} ${c.p95.toFixed(3)}]  ` +
+            `clamped ${pct(c.clamped).padStart(7)}`,
         );
       line("continuous escape count (ships)", cTrap);
       line("raw integer count (pre-fr-7u8t.8)", cRaw);
