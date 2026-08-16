@@ -109,8 +109,9 @@
  *     the point query at slider 0.50: the exact slab keeps 0.964 / 0.850 /
  *     0.990 / 0.997 of it — a true slab costs the bound 0.3-15% — while (A)
  *     keeps 0.600 / 0.381 / 0.713 / 0.000, i.e. charges 29-100% for the same
- *     thickness, an overcharge of 11.1 / 4.1 / 28.7 / 333.3x (the
- *     `charge/worth` column). Volumetrically, (A) returns 0 where the segment returns
+ *     thickness, an overcharge of 11.1 / 4.1 / 29.8 / 333.3x (the
+ *     `charge/worth` column, and 4.1-335.5x over the whole sweep).
+ *     Volumetrically, (A) returns 0 where the segment returns
  *     something positive over 8.0% / 21.5% / 3.5% / 100% of the marching
  *     ball. The whole of (A)'s behaviour is ONE dimensionless number — `h`
  *     over the DE's own typical value, which is exactly what the `med B/P`
