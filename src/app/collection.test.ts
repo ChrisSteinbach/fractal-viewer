@@ -283,6 +283,157 @@ describe("SceneCollection persistence", () => {
   });
 });
 
+describe("SceneCollection persist error handling (fr-vhpt)", () => {
+  it("a) recovers from a quota error by evicting the oldest entry, keeps newer entries plus the new save in both memory and storage, and reports the eviction via onEvicted", () => {
+    const store: Record<string, string> = {};
+    let throwNext = false;
+    const storage = {
+      getItem: (k: string) => (k in store ? store[k] : null),
+      setItem: (k: string, v: string) => {
+        if (throwNext) {
+          throwNext = false;
+          throw new DOMException("quota exceeded", "QuotaExceededError");
+        }
+        store[k] = v;
+      },
+    };
+    const onEvicted = vi.fn();
+    let t = 0;
+    const collection = new SceneCollection({
+      storage,
+      now: () => t++,
+      onEvicted,
+    });
+    collection.add("v1=oldest", "");
+    collection.add("v1=middle", "");
+
+    throwNext = true; // the write this next add triggers fails once, on quota
+    collection.add("v1=newest", "");
+
+    expect(onEvicted).toHaveBeenCalledTimes(1);
+    expect(onEvicted).toHaveBeenCalledWith(1);
+    expect(collection.all().map((s) => s.encoded)).toEqual([
+      "v1=newest",
+      "v1=middle",
+    ]);
+
+    const reloaded = new SceneCollection({ storage });
+    expect(reloaded.all().map((s) => s.encoded)).toEqual([
+      "v1=newest",
+      "v1=middle",
+    ]);
+  });
+
+  it("b) on a persistent non-quota error, the failed save's entry stays in memory but unpersisted, and storage keeps its last good write rather than being truncated to match memory", () => {
+    // Chosen contract (the entry a caller's `add` already returned is not
+    // silently undone, but storage is never left worse than its last good
+    // write): matches timeline.ts's own persist-failure stance — swallow
+    // the failure, keep memory correct, don't shorten anything to "fix" it.
+    const store: Record<string, string> = {};
+    let disabled = false;
+    const storage = {
+      getItem: (k: string) => (k in store ? store[k] : null),
+      setItem: (k: string, v: string) => {
+        if (disabled)
+          throw new DOMException("storage disabled", "SecurityError");
+        store[k] = v;
+      },
+    };
+    const collection = new SceneCollection({ storage });
+    collection.add("v1=a", "");
+    collection.add("v1=b", "");
+    const persistedBefore = store[COLLECTION_STORAGE_KEY];
+
+    disabled = true;
+    expect(() => collection.add("v1=c", "")).not.toThrow();
+
+    expect(collection.all().map((s) => s.encoded)).toEqual([
+      "v1=c",
+      "v1=b",
+      "v1=a",
+    ]);
+    expect(store[COLLECTION_STORAGE_KEY]).toBe(persistedBefore);
+  });
+
+  it("c) does not call onEvicted on an ordinary successful persist", () => {
+    const onEvicted = vi.fn();
+    const collection = new SceneCollection({
+      storage: fakeStorage(),
+      onEvicted,
+    });
+
+    const scene = collection.add("v1=a", "");
+    collection.remove(scene.id);
+
+    expect(onEvicted).not.toHaveBeenCalled();
+  });
+
+  it("d) a later successful persist after a non-quota failure period writes the full list, not the truncated one (the overwrite-with-truncation bug is dead)", () => {
+    const store: Record<string, string> = {};
+    let disabled = false;
+    const storage = {
+      getItem: (k: string) => (k in store ? store[k] : null),
+      setItem: (k: string, v: string) => {
+        if (disabled)
+          throw new DOMException("storage disabled", "SecurityError");
+        store[k] = v;
+      },
+    };
+    const collection = new SceneCollection({ storage });
+    collection.add("v1=a", "");
+    collection.add("v1=b", "");
+    const third = collection.add("v1=c", "");
+
+    disabled = true;
+    // Several unrelated ops fail to persist while storage is "disabled".
+    // Under the old code each failure would evict the in-memory list
+    // toward one entry; under the fix a non-quota failure never touches
+    // memory, so nothing here shrinks the list.
+    collection.setThumbnail(third.id, "corrected-thumb");
+    collection.remove("does-not-exist");
+    expect(collection.size).toBe(3);
+
+    disabled = false;
+    collection.add("v1=d", "");
+
+    const reloaded = new SceneCollection({ storage });
+    expect(reloaded.all().map((s) => s.encoded)).toEqual([
+      "v1=d",
+      "v1=c",
+      "v1=b",
+      "v1=a",
+    ]);
+  });
+
+  it("treats a legacy DOMException carrying only the numeric code 22 (no QuotaExceededError name) as a quota error too", () => {
+    const store: Record<string, string> = {};
+    let throwNext = false;
+    const storage = {
+      getItem: (k: string) => (k in store ? store[k] : null),
+      setItem: (k: string, v: string) => {
+        if (throwNext) {
+          throwNext = false;
+          const err = new DOMException("disk full", "UnknownError");
+          Object.defineProperty(err, "code", { value: 22 });
+          throw err;
+        }
+        store[k] = v;
+      },
+    };
+    const collection = new SceneCollection({ storage });
+    collection.add("v1=a", "");
+    collection.add("v1=b", "");
+
+    throwNext = true;
+    collection.add("v1=c", "");
+
+    // Recovered by evicting the oldest, exactly like the named-error case —
+    // proves the `code === 22` arm of `isQuotaError` is load-bearing and
+    // not dead beside the `name` check.
+    expect(collection.all().map((s) => s.encoded)).toEqual(["v1=c", "v1=b"]);
+  });
+});
+
 describe("SceneCollection after (the drift show's loop cursor)", () => {
   it("returns null on an empty collection", () => {
     const collection = new SceneCollection({ storage: fakeStorage() });
