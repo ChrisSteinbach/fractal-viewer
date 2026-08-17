@@ -1709,16 +1709,20 @@ Frame` callback, which runs before paint so the disabled look never
     measurement per dispatch leave the RATIO to the attribution weight and
     only the SCALE to the data — so that branch hands the sizer exactly
     `K * 512` hits on EVERY scene, and fr-2ojg's K = 1 held the whole
-    project at 512 while measuring 90% of each dispatch to be fixed cost.
-    No sizing rule here may be written in terms of `intercept` alone.
+    project at 512. No sizing rule here may be written in terms of
+    `intercept` alone.
     K = 7 (3584 hits), chosen by FORCING the width off the model
-    (`?surfaceshadehits=N`) since the sizer only ever visits one width:
-    kaleido4's order-6 settle 180.1 -> 55.1 s (3.27x) with the worst single
-    dispatch unmoved (397.3 ms at len 512 -> 417.5 at len 3583), every
-    fr-2ojg scene within noise, settled PNGs byte-identical. Its march half
-    is 5.8% of that settle and its sweep readbacks 0.06%, which is fr-fniy's
-    own premise refuted and levers (a)/(b)/(c) closed with numbers. Tables
-    in `docs/surface-compute-renderer.md`.
+    (`?surfaceshadehits=N`) since the sizer only ever visits one width — at
+    512, kaleido4's fit says NINETY PER CENT of each hit dispatch was fixed
+    cost. That scene's order-6 settle goes 180.1 -> 55.1 s (3.27x) and
+    mandelboxKifs, the hardest here, 387.3 -> 1299.9 hits/s (3.36x), with
+    the worst single dispatch essentially unmoved (397.3 ms at len 512 ->
+    417.5 at len 3583; mandelboxKifs 1744.5 -> 2056.5, the CEILING's number
+    and 3.6x under the watchdog), every fr-2ojg scene within noise, settled
+    PNGs byte-identical. Its march half is 5.8% of that settle and its sweep
+    readbacks 0.06%, which is fr-fniy's own premise refuted and levers
+    (a)/(b)/(c) closed with numbers. Tables in
+    `docs/surface-compute-renderer.md`.
     NO submission outruns the i915 watchdog;
     progressive presents between every bounded piece; host-compacted active
     list; shading probes ride `SURFACE_COMPUTE_SHADE_DE_WIDTH` (the fr-p8bc
