@@ -9,6 +9,7 @@ import {
 import type { VoxelBounds } from "./voxel";
 import {
   DEFAULT_COLOR_SPEED,
+  ESCAPE_LIMIT,
   derivedColorIndex,
   plotPoint,
   prepareChaosGame,
@@ -793,6 +794,34 @@ describe("accumulateVoxels vs. stepOrbit/plotPoint (correctness oracle)", () => 
     expect(Array.from(withSymmetry.density)).not.toEqual(
       Array.from(withoutSymmetry.density),
     );
+  });
+});
+
+describe("accumulateVoxels escape-reseed (fr-h22c)", () => {
+  it("reseeds every iteration when the map always lands past ESCAPE_LIMIT, keeping the grid finite and populated", () => {
+    // Every oracle above is built from a contracting system that never
+    // escapes, so none of them walks voxel.ts's inlined reseed branch
+    // (vx/vy/vz redrawn from rng()). This map always lands at
+    // (2 * ESCAPE_LIMIT) on every axis — comfortably past the limit
+    // regardless of the current orbit point (scale 0 zeroes out the input)
+    // — so EVERY iteration of the hot loop, not just an occasional one,
+    // walks that branch.
+    const escapedCoord = ESCAPE_LIMIT * 2;
+    const prepared = prepareChaosGame(
+      fixedPointSystem([escapedCoord, escapedCoord, escapedCoord]),
+    );
+    const grid = createVoxelGrid(4, unitishBounds(1));
+    const palette = transformColors(1);
+
+    const result = accumulateVoxels(prepared, grid, 30, mulberry32(1), palette);
+
+    // Every reseed redraws x/y/z in [-0.5, 0.5) — comfortably inside the
+    // [-1, 1] grid bounds — so a working guard leaves a populated, finite
+    // grid; a deleted guard leaves the point stuck outside ESCAPE_LIMIT
+    // forever, permanently outside the grid, and every voxel at zero.
+    expect(Array.from(result.density).some((d) => d > 0)).toBe(true);
+    expect(Array.from(result.density).every(Number.isFinite)).toBe(true);
+    expect(Array.from(result.avgRGB).every(Number.isFinite)).toBe(true);
   });
 });
 
