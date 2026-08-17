@@ -72,6 +72,15 @@
  *      intersect/union the two boolean masks. >= 0.8 reported as-is,
  *      [0.5, 0.8) as WARN (lighting/dither may legitimately differ),
  *      < 0.5 as FAIL.
+ *      WHAT PARITY DOES NOT COVER, disclosed rather than fixed (fr-b8o5):
+ *      the CENTRED slice is the only one it ever compares. Step (d) is a
+ *      fresh navigation to the same hash, which carries no `FourDPose`, so
+ *      both settled PNGs are taken at `w0 = 0` and step (c)'s off-centre
+ *      session is discarded before the masks are built. An arm that drew a
+ *      different object OFF centre — the region fr-b8o5's whole
+ *      investigation is about — would pass this gate at IoU 1.0. Closing
+ *      it means a third settle at a nonzero slice on each arm, which is
+ *      the cost this script has so far declined to pay.
  *
  * Usage: node scripts/surface-4d.verify.mjs [url] [sceneFilter]
  * (url defaults to https://localhost:5173 — start a dev server first;
