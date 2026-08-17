@@ -316,13 +316,17 @@ const SCENE_ID = HASH_OVERRIDE !== null ? "custom" : SCENE;
  * bare `&`-joined string (a leading `&` is added when absent, so both
  * `--params=surfacecompute` and `--params=&surfacecompute` work).
  *
- * WITHOUT THIS THE INSTRUMENT CANNOT REACH THE COMPUTE ARM ON THE ONE
- * SHAPE fr-fniy IS ABOUT. main.ts routes kaleidoscope-4D (non-fold,
- * symmetry order > 1) to the FRAGMENT tracer by measured verdict, and
- * `?surfacetrace` only instruments the WebGPU frame loop — so a
- * `--hash=<kaleido4>` run without `--params=surfacecompute` silently
- * collects nothing and reports the WebGL engine. The same door reaches
- * `surfacegl`, `surfacesamples=N` and `surfacemarchchunk=N`.
+ * IT IS WHAT LET fr-fniy REACH THE ARM ITS OWN BEAD WAS ABOUT. main.ts
+ * routed kaleidoscope-4D (non-fold, symmetry order > 1) to the FRAGMENT
+ * tracer at the time, and `?surfacetrace` only instruments the WebGPU
+ * frame loop — so a `--hash=<kaleido4>` run collected nothing and reported
+ * the WebGL engine until `--params=surfacecompute` forced the other arm.
+ * That measurement is what moved the routing rule, so kaleido4 now needs
+ * no flag; `--params=surfacegl` is how you get back to the arm it left.
+ * The same door reaches `surfacesamples=N` and the fr-fniy schedule pins
+ * (`surfacemarchchunk=N`, `surfacemarchsteps=S`, `surfaceshadehits=H`) —
+ * that last one is the cost-vs-WIDTH lever, and the reason this file has
+ * a MARCH COST vs WIDTH table to compare against.
  */
 const EXTRA_PARAMS = (() => {
   const raw = typeof args.params === "string" ? args.params : "";

@@ -3128,11 +3128,13 @@ function main(): void {
     ? "flag"
     : null;
   // `?surfacecompute` is `?surfacegl`'s mirror: it makes a session PREFER
-  // the compute tracer on the shapes whose routing rule sends them to WebGL
-  // (plain affine 3D, and 4D above symmetry order 1). Both of those rules
-  // are performance verdicts, not capability ones — `core:"affine"` and
-  // `core:"affine4"`/`"fold4"` serve those shapes in production already, the
-  // 4D pair at every symmetry order — so this selects a supported path and
+  // the compute tracer on the shapes whose routing rule sends them to WebGL.
+  // That is plain affine 3D alone since fr-fniy — 4D above symmetry order 1
+  // used to be the other one, and this flag is how it stopped being: the
+  // rule sending it to WebGL could not be re-measured until the flag
+  // existed, and once it could, it was 12x wrong. The remaining rule is a
+  // performance verdict, not a capability one (`core:"affine"` serves that
+  // shape in production already), so this selects a supported path and
   // never a new one.
   //
   // It exists because a routing verdict that cannot be re-measured cannot be
