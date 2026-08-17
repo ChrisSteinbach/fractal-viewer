@@ -288,10 +288,11 @@ export interface SceneSnapshot {
   groundPlane?: boolean;
 }
 
-/** Injectable browser dependencies; both default to their `window.*` counterparts. */
+/** Injectable browser dependencies; each defaults to its real-global counterpart. */
 export interface PersistDeps {
   location?: { hash: string };
   storage?: Pick<Storage, "getItem" | "setItem">;
+  history?: Pick<History, "replaceState">;
 }
 
 // ---------------------------------------------------------------------------
@@ -2066,9 +2067,11 @@ export function saveScene(s: SceneSnapshot, deps?: PersistDeps): void {
   const encoded = encodeScene(s);
 
   // Keep the address bar share-ready without cluttering the back-button stack.
-  if (typeof history !== "undefined") {
+  const hist =
+    deps?.history ?? (typeof history !== "undefined" ? history : undefined);
+  if (hist) {
     try {
-      history.replaceState(null, "", "#" + encoded);
+      hist.replaceState(null, "", "#" + encoded);
     } catch {
       // SecurityError in sandboxed / cross-origin iframes — ignore silently.
     }
@@ -2077,7 +2080,12 @@ export function saveScene(s: SceneSnapshot, deps?: PersistDeps): void {
   const storage =
     deps?.storage ??
     (typeof window !== "undefined" ? safeLocalStorage() : undefined);
-  storage?.setItem(STORAGE_KEY, encoded);
+  try {
+    storage?.setItem(STORAGE_KEY, encoded);
+  } catch {
+    // QuotaExceededError / private-mode SecurityError — ignore silently,
+    // matching viewer-prefs.ts's saveViewerPrefs.
+  }
 }
 
 /** localStorage access throws in some private-browsing / sandboxed contexts. */
