@@ -1522,9 +1522,17 @@ Frame` callback, which runs before paint so the disabled look never
     one text two names, march/hit acceptance stay width 12). The fold-lens
     variant deliberately carries no probe (fr-otkf tracks the port — lower
     stakes now that it is the fallback rather than the primary tracer).
+    OUTPUT ALPHA IS THE fr-7k0o COVERAGE FLAG AND MUST NEVER REACH THE
+    CANVAS (fr-1wbv): three r163+ creates the canvas `alpha: true`
+    unconditionally (the renderer's `alpha` param only picks the clear
+    alpha), so a coverage-0 miss reaching the compositor ADDS the page's
+    own `--bg` to the pane — the whole of the two 4D arms' IoU 0.24/0.35
+    divergence, and an alpha hole in every WebGL surface Save-PNG. The
+    present blit (`BLIT_FRAGMENT`) strips alpha to 1 as every surface
+    present's last hop; coverage is read off the TRACE targets only.
     Full record — the variant KB sizes and their history, the Mesa link
-    cliff, the probe-width A/B and the grid-budget measurement — in
-    `docs/surface-glsl-tracers.md`.
+    cliff, the probe-width A/B and the grid-budget measurement, and the
+    fr-1wbv coverage-alpha leak — in `docs/surface-glsl-tracers.md`.
   - `surface-material-4d.ts` — 4D twin (fr-vxoj): sphere-traces the
     `w = w0` slice of the rotor-posed 4D attractor, mirroring
     `surface-de-4d.ts`'s `estimateDistance4Refined` line for line (refined
