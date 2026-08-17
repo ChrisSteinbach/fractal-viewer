@@ -2990,7 +2990,19 @@ function main(): void {
       };
       const handle = {
         post: (command: VoxelWorkerCommand) => worker.postMessage(command),
-        terminate: () => worker.terminate(),
+        terminate: () => {
+          // Detach the handlers BEFORE terminating — the flame host's idiom
+          // (fr-mps8): terminate() discards the WORKER's queue, not
+          // MessageEvents already queued on THIS thread, and the voxel worker
+          // posts a grid per chunk, so one is nearly always in flight. A
+          // stale grid arriving after exit uploaded the dead session's
+          // volume as the next session's first frame, marked first-frame on
+          // a session that drew nothing (wrong thumbnail patch), and a
+          // queued "error" tore down whatever session was live by then.
+          worker.onmessage = null;
+          worker.onerror = null;
+          worker.terminate();
+        },
       };
 
       // Post the `start` via the fresh handle — typed, so the payload is
