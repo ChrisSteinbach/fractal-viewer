@@ -647,6 +647,58 @@ export const SURFACE_COMPUTE_SHADE_HIT_CAP_START =
  * answer rather than a trapdoor. */
 export const SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS = 2000;
 
+/**
+ * How much MARGINAL work one hit dispatch may carry per unit of the fixed
+ * cost it is going to pay anyway — the middle term of
+ * {@link shadeHitAllowanceUs}, and the dial that sets the hit batch width
+ * on every scene whose fixed cost is worth more than an eighth of the pass
+ * target.
+ *
+ * READ IT AS A WIDTH, NOT AS AN EFFICIENCY, because that is what it is.
+ * {@link nextShadeHitCost} preserves `interceptUs = PIVOT · marginalUs`
+ * IDENTICALLY — see the proof in that function's doc — so in this branch
+ * `allowance / marginal` is exactly `this constant × PIVOT` and nothing
+ * about the scene survives into the answer. At 1, which is what fr-2ojg
+ * shipped, that is 512 hits on every scene in the project; at 7 it is
+ * 3584.
+ *
+ * SEVEN, MEASURED (fr-fniy, real Iris Xe / Mesa 25.2.8, kaleido4 — two
+ * maps at kaleidoscope order 6 — 1024x640, production build, identity
+ * rotor, one fresh session per cell, hit batch FORCED via
+ * `?surfaceshadehits=N` so the width is independent of the model under
+ * test). One settle frame shades the same ~32.3k hits at every width, so
+ * ms/frame is the comparison:
+ *
+ *     width      64     256     512    1024    3690   10764
+ *     ms/disp   287     313     321     336     395     947
+ *     ms/frame  144594  39661   20503   10756   3452    2841
+ *     settle    —       —       180.1s  100.1s  40.2s   35.0s
+ *
+ * A 168x width buys 3.3x the dispatch: the fit over all six widths is
+ * `283.1 ms + 64.8 µs/hit`, so at the shipped 512 NINETY PER CENT of every
+ * hit dispatch was fixed cost. 7 lands the width at 3584, which is where
+ * that curve stops paying — 3690 measured 40.2 s against 10764's 35.0 s,
+ * a further 13% for 2.4x the worst dispatch (441.7 ms against 1371.1 ms).
+ * AND THE WORST DISPATCH DOES NOT GROW at 7: 441.7 ms against the shipped
+ * width's own 397.3 ms, on a scene whose settle fell 4.5x, which is the
+ * watchdog question a mean cannot answer.
+ *
+ * WHAT THE FIXED COST IS, since it is 283 ms rather than a submission's
+ * ~1.15 ms: a hit dispatch's wall is its DEEPEST ray's shading chain —
+ * ~40 zero-cutoff on-surface DE evals in series — and at kaleidoscope
+ * order 6 one such eval is a deep sector-swept beam descent. Lanes run in
+ * parallel across EUs, so until the batch is wide enough to fill the
+ * machine that chain IS the dispatch. 512 hits is 8 workgroups on a 96-EU
+ * part; it does not come close.
+ *
+ * WHY NOT WIDER STILL: the {@link SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS}
+ * term already aims a genuinely expensive scene at the ceiling, and this
+ * term must not turn a dispatch into a watchdog conversation on a scene
+ * nobody has measured. 8·intercept is the predicted total here, so the
+ * ceiling still binds first wherever the fixed cost alone exceeds 250 ms.
+ */
+export const SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST = 7;
+
 /** How far the per-hit MARGINAL estimate may fall on one measurement — a
  * halving, matching the capacity ladder's own doubling rate.
  *
@@ -671,7 +723,18 @@ export const SURFACE_COMPUTE_SHADE_MARGINAL_DECAY = 0.5;
  * which is where fr-2ojg measured the cost-vs-width curve still flat on
  * Iris Xe (87.2 -> 136.2 ms per dispatch while hits per dispatch rose
  * ~11x): below it a measurement is nearly all fixed cost, above it the
- * marginal term is what moved. */
+ * marginal term is what moved.
+ *
+ * IT IS ALSO THE UNIT THE HIT BATCH WIDTH IS COUNTED IN, which is not
+ * what the paragraph above would lead anyone to expect and is worth
+ * knowing before touching it: {@link nextShadeHitCost} preserves
+ * `intercept = this · marginal` identically (proof there), so
+ * {@link shadeHitAllowanceUs}'s middle term hands
+ * {@link shadeHitBatchSize} exactly
+ * `SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST` times THIS number of hits.
+ * Moving the pivot moves the shipped batch width by the same factor — a
+ * second dial on the same quantity, and the one whose doc comment does
+ * not say so. Change the other one. */
 export const SURFACE_COMPUTE_SHADE_COST_PIVOT = 512;
 
 /**
@@ -710,18 +773,28 @@ export function initialShadeHitCost(): ShadeHitCost {
  * GPU time (µs) one hit dispatch may spend on MARGINAL work — hits — on
  * top of the intercept it is going to pay whatever its width.
  *
- * `max(pass target − intercept, intercept)`, and never more than
+ * `max(pass target − intercept, K · intercept)`, and never more than
  * {@link SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS} leaves. Below the
- * knee that is the room left inside the pass target (a ~88 ms intercept
- * leaves ~162 ms of hits to buy). Above it, it is the whole point of
- * fr-2ojg — spend at most as much on hits as the fixed cost already being
+ * knee that is the room left inside the pass target (a ~25 ms intercept
+ * leaves ~225 ms of hits to buy). Above it, it is the whole point of
+ * fr-2ojg — spend on hits in proportion to the fixed cost already being
  * spent: a dispatch whose intercept alone is 400 ms cannot be made
  * cheaper by shrinking it, so refusing to widen it past the pass target
  * buys no safety and costs an order of throughput (64 hits for 432 ms
  * against 800 hits for 800 ms — the same work ~12x faster).
  *
+ * K IS {@link SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST} AND IT IS A
+ * WIDTH, not a ratio the scene has any say in — see that constant for the
+ * identity that makes it one, and for the measured table that picked 7.
+ * fr-2ojg shipped 1, which held every scene in the project at 512 hits
+ * per dispatch and, on the one measured here, made 90% of every hit
+ * dispatch fixed cost.
+ *
  * THE CEILING TERM IS THE ONE PLACE THIS CAN STILL SHRINK, and where it
- * sits is the whole of its safety argument — see that constant.
+ * sits is the whole of its safety argument — see that constant. It now
+ * binds from a fixed cost of 250 ms up rather than 1 s, so the scenes
+ * whose dispatches are genuinely expensive are aimed at the ceiling
+ * itself, which is the widest thing that was ever safe to ask for.
  */
 export function shadeHitAllowanceUs(interceptUs: number): number {
   return Math.max(
@@ -730,7 +803,7 @@ export function shadeHitAllowanceUs(interceptUs: number): number {
       SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS * 1000 - interceptUs,
       Math.max(
         SURFACE_COMPUTE_PASS_TARGET_MS * 1000 - interceptUs,
-        interceptUs,
+        SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST * interceptUs,
       ),
     ),
   );
@@ -841,6 +914,37 @@ export function shadeHitBatchSize(cost: ShadeHitCost, cap: number): number {
  * pivot hands it to the intercept and the next full-width batch is
  * essentially unmoved. Pure so both the split and the clamps are
  * unit-tested.
+ *
+ * WHAT THE SPLIT CANNOT DO, and fr-fniy had to prove before it could
+ * believe it: IT NEVER IDENTIFIES THE TWO TERMS. Away from the clamps
+ * this function preserves `interceptUs = PIVOT · marginalUs` IDENTICALLY,
+ * whatever the measurements say. From a zeroed model, one update at width
+ * n gives `I = (1−w)C` and `m = wC/n`, so
+ * `I/m = n(1−w)/w = n·(P/(n+P))·((n+P)/n) = P`; and if `I = P·m` already,
+ * then `I' / m' = (I + Ps/(n+P)) / (m + s/(n+P)) = P` for ANY surprise s
+ * and any width n. Two parameters, one measurement, an exact fit — so the
+ * RATIO is set by the attribution weight alone and the data only ever
+ * moves the scale.
+ *
+ * That is not a defect in the model, which predicts the cost at the width
+ * it was measured at exactly and predicts a doubling within a factor of
+ * two. It is a defect in any SIZING rule written in terms of `intercept`
+ * alone: {@link shadeHitAllowanceUs}'s middle term divides an allowance
+ * proportional to `I` by `m`, so it returns a constant number of hits and
+ * the width it names is the CONSTANT's, not the scene's. fr-2ojg read
+ * that branch as "spend as much again on hits as the fixed cost", which
+ * is true of the model and says nothing about the machine; fr-fniy
+ * measured the machine and found the resulting 512 hits leaving 90% of
+ * every dispatch on fixed cost, four and a half times slower than the
+ * same frame at 3690. So the constant is now chosen as a width and
+ * measured as one.
+ *
+ * THE REMEDY IS NOT MORE PARAMETERS. Identifying `I` and `m` separately
+ * needs two measurements at widths far enough apart to be a lever —
+ * exactly the discipline this file's own record demands of a fit ("over a
+ * WIDE lever or not at all") — and the sizer visits one width at a time
+ * by design. `?surfaceshadehits=N` (see
+ * {@link setSurfaceComputeSchedulePins}) is the lever, run offline.
  */
 export function nextShadeHitCost(
   cost: ShadeHitCost,

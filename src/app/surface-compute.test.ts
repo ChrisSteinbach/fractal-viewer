@@ -16,9 +16,11 @@ import {
   SURFACE_COMPUTE_MAX_TILE_RAYS,
   SURFACE_COMPUTE_PASS_TARGET_MS,
   SURFACE_COMPUTE_RAY_STATE_BYTES,
+  SURFACE_COMPUTE_SHADE_COST_PIVOT,
   SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS,
   SURFACE_COMPUTE_SHADE_MARGINAL_DECAY,
   SURFACE_COMPUTE_SHADE_HIT_CAP_START,
+  SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST,
   SURFACE_COMPUTE_WORKGROUP_SIZE,
   surfaceComputeBandStops,
   surfaceComputeMaxDispatchRays,
@@ -335,22 +337,50 @@ describe("marchChunkFor", () => {
 
 describe("shadeHitAllowanceUs", () => {
   it("is the room left inside the pass target while the fixed cost fits there", () => {
-    // fr-2ojg's measured intercept on the boxfold pair: ~88ms of fixed
-    // dispatch cost leaves ~162ms of the 250ms target to buy hits with,
-    // and the predicted total is the target itself.
-    expect(shadeHitAllowanceUs(88_000)).toBe(
-      SURFACE_COMPUTE_PASS_TARGET_MS * 1000 - 88_000,
+    // lens3's ~25ms of fixed dispatch cost leaves ~225ms of the 250ms
+    // target to buy hits with, and the predicted total is the target
+    // itself. That branch owns every intercept under
+    // 250ms / (1 + WORK_PER_FIXED_COST).
+    expect(shadeHitAllowanceUs(25_000)).toBe(
+      SURFACE_COMPUTE_PASS_TARGET_MS * 1000 - 25_000,
     );
-    expect(shadeHitBudgetUs(88_000)).toBe(
+    expect(shadeHitBudgetUs(25_000)).toBe(
       SURFACE_COMPUTE_PASS_TARGET_MS * 1000,
     );
   });
 
-  it("spends up to the fixed cost again once the dispatch is latency-bound", () => {
-    // A dispatch whose fixed cost alone is 400ms cannot be made cheaper
-    // by shrinking it, so it may buy another 400ms of hits rather than
-    // refusing to widen: 64 hits for ~432ms against ~800 hits for ~800ms.
-    expect(shadeHitAllowanceUs(400_000)).toBe(400_000);
+  it("spends a multiple of the fixed cost once the dispatch is latency-bound", () => {
+    // A dispatch whose fixed cost alone is 100ms cannot be made cheaper
+    // by shrinking it, so it buys hits in proportion rather than refusing
+    // to widen.
+    expect(shadeHitAllowanceUs(100_000)).toBe(
+      SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST * 100_000,
+    );
+  });
+
+  it("names a WIDTH in that branch, not a ratio the scene has a say in", () => {
+    // nextShadeHitCost preserves intercept = PIVOT x marginal identically
+    // (proof at that function), so the allowance divided by the marginal
+    // is WORK_PER_FIXED_COST x PIVOT hits for EVERY scene that reaches
+    // this branch. The two models below differ by 100x in both terms and
+    // in what a hit costs, and the sizer asks for the same width — which
+    // is exactly why that constant had to be chosen by measuring widths.
+    const wide =
+      SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST *
+      SURFACE_COMPUTE_SHADE_COST_PIVOT;
+    // Both models sit in the middle branch, which owns fixed costs from
+    // 250ms/(1+K) to 250ms — i.e. marginals of ~61 to ~488us per hit.
+    for (const marginalUs of [100, 400]) {
+      expect(
+        shadeHitBatchSize(
+          {
+            interceptUs: SURFACE_COMPUTE_SHADE_COST_PIVOT * marginalUs,
+            marginalUs,
+          },
+          Number.MAX_SAFE_INTEGER,
+        ),
+      ).toBe(wide);
+    }
   });
 
   it("keeps buying hits across the whole range real scenes measure in", () => {
@@ -367,10 +397,24 @@ describe("shadeHitAllowanceUs", () => {
         (SURFACE_COMPUTE_PASS_TARGET_MS * 1000) / 4,
       );
     }
-    // And it RISES through that range once the dispatch is latency-bound,
-    // rather than being traded away against the intercept.
-    expect(shadeHitAllowanceUs(960_000)).toBeGreaterThan(
-      shadeHitAllowanceUs(500_000),
+  });
+
+  it("never aims a dispatch lower as its fixed cost rises", () => {
+    // The property the allowance exists to have, stated on the number it
+    // is about: what one dispatch is PREDICTED to cost in total. A rule
+    // that traded the allowance away against a rising intercept would
+    // shrink the dispatch exactly where shrinking it cannot help, which
+    // is fr-d6g5's trapdoor. Monotone up to the ceiling and then pinned
+    // there — the allowance itself falls through that upper range only
+    // because the intercept it is added to is rising.
+    let prev = 0;
+    for (let interceptUs = 0; interceptUs <= 1_900_000; interceptUs += 10_000) {
+      const totalUs = shadeHitBudgetUs(interceptUs);
+      expect(totalUs).toBeGreaterThanOrEqual(prev);
+      prev = totalUs;
+    }
+    expect(shadeHitBudgetUs(300_000)).toBe(
+      SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS * 1000,
     );
   });
 
@@ -447,29 +491,30 @@ describe("shadeHitBatchSize", () => {
 
   it("divides the budget by the MARGINAL cost, not by a whole submission over its rays (fr-2ojg)", () => {
     // fr-2ojg's measured boxfold-pair model: ~88ms fixed per dispatch,
-    // ~154us per hit beyond it. (250 - 88)ms / 154us = 1051 hits — and
-    // the measured optimum was ~1050, where the shipped sizer sat at
-    // 64-256.
+    // ~154us per hit beyond it. 7 x 88ms / 154us = 4000 hits, where the
+    // shipped sizer before fr-2ojg sat at 64-256 — and 512 after it, this
+    // model's own intercept/marginal ratio being what named that number
+    // rather than anything measured (see shadeHitAllowanceUs).
     expect(
       shadeHitBatchSize(
         { interceptUs: 88_000, marginalUs: 154 },
         SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
       ),
-    ).toBe(1051);
+    ).toBe(4000);
   });
 
   it("widens a latency-bound dispatch instead of refusing to (fr-2ojg)", () => {
-    // 400ms of fixed cost, 500us per hit: the budget doubles to 800ms and
-    // buys 800 hits with the second half. Under a fixed 250ms target the
-    // allowance would be negative and this would floor at 64 — a 12x
-    // throughput loss for no reduction in the submission wall, since the
-    // wall is the 400ms.
+    // 400ms of fixed cost, 500us per hit: the ceiling caps the predicted
+    // total at 2s, so the sizer buys the 1.6s that leaves — 3200 hits.
+    // Under a fixed 250ms target the allowance would be negative and this
+    // would floor at 64 — a 50x throughput loss for no reduction in the
+    // submission wall, since the wall is the 400ms.
     expect(
       shadeHitBatchSize(
         { interceptUs: 400_000, marginalUs: 500 },
         SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
       ),
-    ).toBe(800);
+    ).toBe(3200);
   });
 
   it("keeps buying hits right up to the ceiling", () => {
@@ -606,14 +651,12 @@ describe("nextShadeHitCost", () => {
     expect(cost.marginalUs).toBeLessThan(1);
   });
 
-  it("converges on the measured optimum within a frame's worth of dispatches (fr-2ojg)", () => {
+  it("converges on its target width within a frame's worth of dispatches (fr-2ojg)", () => {
     // The whole sizer, run against fr-2ojg's measured cost curve for the
-    // boxfold pair: 88ms of fixed dispatch cost plus 154us per hit. The
-    // optimum is cost(n) = 250ms, i.e. n = 1051. The shipped sizer sat at
-    // 64-256 for the whole settle; this reaches the optimum in single
-    // digits, and the capacity ladder — not the model — is what paces the
-    // climb, so no batch is ever wider than measured-cheap evidence
-    // supports.
+    // boxfold pair: 88ms of fixed dispatch cost plus 154us per hit. It
+    // reaches its target width in single digits, and the capacity ladder
+    // — not the model — is what paces the climb, so no batch is ever
+    // wider than measured-cheap evidence supports.
     const costOf = (n: number): number => 88_000 + 154 * n;
     let cost = initialShadeHitCost();
     let cap = SURFACE_COMPUTE_SHADE_HIT_CAP_START;
@@ -629,23 +672,41 @@ describe("nextShadeHitCost", () => {
       cost = nextShadeHitCost(cost, n, measuredUs);
       cap = nextShadeBatchSize(cap, measuredUs / 1000, budgetMs);
     }
-    expect(widths[widths.length - 1]).toBeGreaterThan(900);
-    expect(widths[widths.length - 1]).toBeLessThanOrEqual(1100);
+    expect(widths[widths.length - 1]).toBe(
+      SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST *
+        SURFACE_COMPUTE_SHADE_COST_PIVOT,
+    );
     // And the climb is the ladder's doubling, not a jump: every step at
     // most doubles the last.
     for (let i = 1; i < widths.length; i++) {
       expect(widths[i]).toBeLessThanOrEqual(2 * widths[i - 1]);
     }
-    // THE MODEL RECOVERED THE TWO PHYSICAL TERMS, which is what makes
-    // this a test of the split rather than of the ladder: a single-term
-    // sizer (PIVOT = 0, everything to the marginal) converges on the same
-    // WIDTH against a straight line and would pass every assertion above
-    // with interceptUs pinned at 0 forever. It is the intercept landing
-    // near 88ms that says the model is measuring the curve's shape.
-    expect(cost.interceptUs).toBeGreaterThan(60_000);
-    expect(cost.interceptUs).toBeLessThan(110_000);
-    expect(cost.marginalUs).toBeGreaterThan(120);
-    expect(cost.marginalUs).toBeLessThan(200);
+    // WHAT THIS DOES NOT SHOW, said here because an earlier version of
+    // this test claimed the opposite: the model does NOT recover the two
+    // physical terms, and cannot. nextShadeHitCost preserves
+    // intercept = PIVOT x marginal identically, so the reported pair
+    // lands near (88ms, 154us) here only because that curve's own ratio
+    // happens to be near the pivot — feed it a curve of the same shape
+    // with an eight times larger fixed cost and the same identity holds
+    // and the same width comes out. The split is exact-fitting at the
+    // width it measured, and that is all it is.
+    expect(cost.interceptUs / cost.marginalUs).toBeCloseTo(
+      SURFACE_COMPUTE_SHADE_COST_PIVOT,
+      6,
+    );
+    const steep = (n: number): number => 700_000 + 154 * n;
+    let other = initialShadeHitCost();
+    let otherCap = SURFACE_COMPUTE_SHADE_HIT_CAP_START;
+    for (let i = 0; i < 10; i++) {
+      const budgetMs = shadeHitBudgetUs(other.interceptUs) / 1000;
+      const n = shadeHitBatchSize(other, otherCap);
+      other = nextShadeHitCost(other, n, steep(n));
+      otherCap = nextShadeBatchSize(otherCap, steep(n) / 1000, budgetMs);
+    }
+    expect(other.interceptUs / other.marginalUs).toBeCloseTo(
+      SURFACE_COMPUTE_SHADE_COST_PIVOT,
+      6,
+    );
   });
 });
 
