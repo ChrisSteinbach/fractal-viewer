@@ -27,6 +27,7 @@ import {
 } from "../fractal/surface-de";
 import {
   isForwardTarget,
+  setSurfaceComputeSchedulePins,
   setSurfaceComputeTrace,
   SurfaceComputeRenderer,
   SurfaceComputeUnavailableError,
@@ -8048,6 +8049,27 @@ function main(): void {
       console.debug(`[surfacetrace] ${line}`);
     });
     window.__surfaceTraceLog = traceLog;
+  }
+
+  // fr-fniy: `?surfacemarchchunk=N` / `?surfacemarchsteps=S` /
+  // `?surfaceshadehits=H` pin the compute frame loop's three sizing dials so
+  // each one's cost can be priced against the width it runs at,
+  // independently of the estimate that normally picks that width — the
+  // discriminating experiment fr-2ojg's own record demands of any per-unit
+  // cost claim. Diagnostics only, same URL convention as ?surfacetrace
+  // above; see setSurfaceComputeSchedulePins.
+  {
+    const params = new URLSearchParams(window.location.search);
+    const pin = (name: string): number | null => {
+      const raw = params.get(name);
+      const n = raw === null ? NaN : Number.parseInt(raw, 10);
+      return Number.isFinite(n) && n >= 1 ? n : null;
+    };
+    setSurfaceComputeSchedulePins({
+      marchChunk: pin("surfacemarchchunk"),
+      marchSteps: pin("surfacemarchsteps"),
+      shadeHits: pin("surfaceshadehits"),
+    });
   }
 
   animate();

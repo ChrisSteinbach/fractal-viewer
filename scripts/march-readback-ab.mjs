@@ -52,8 +52,14 @@
  * completion before starting the next). Lines this script keys off:
  *
  *   frame start rays=<R> marchSteps=... budgetMs=... ...   R = this frame's rays
+ *   march BEGIN offset=... chunk=... len=<L> steps=<S> ...  one slice of a sweep
+ *   march END ms=<M>                                        that slice's own GPU ms
  *   states readback BEGIN rays=<R>  /  states readback END   OLD arm, R*16 B
  *   status readback BEGIN active=<A> / status readback END   NEW arm, A*4 B
+ *   sweep done active=<A> hitQ=... freeQ=... sweepSteps=... stepsThisPass=...
+ *                                       closes a sweep — see MARCH SWEEP SHAPE
+ *   shade BEGIN isFree=<bool> ... len=<L> ...     one hit or free batch
+ *   shade END ms=<M>                              that batch's own GPU ms
  *   present readback BEGIN / present readback END            control, R*4 B
  *   final readback BEGIN                       no END by design; R*4 B, untimed
  *   frame done passes=... truncated=... hit=... ...
@@ -79,6 +85,43 @@
  * be worth reading every time (a thin-dust system is march-bound, a
  * frame-filling one shade-bound, and the readback's SHARE differs by an
  * order of magnitude between them).
+ *
+ * MARCH SWEEP SHAPE (fr-fniy): WHERE THE TIME WENT above answers "march or
+ * shade" but not "why is march slow", and for march the answer is usually
+ * the SWEEP schedule rather than the marching itself. One sweep is a full
+ * pass over the active ray list — however many march BEGIN/END slices it
+ * takes to cover it — closed by a readback and a "sweep done" line; the
+ * headline is the stepsThisPass table, one row per distinct `steps=` value
+ * seen on `march BEGIN`: a frame whose steps stays PINNED AT 1 pays a
+ * WHOLE sweep's host cost (the readback, the JS active-list rebuild, the
+ * active-list upload) per SINGLE DE step, where a frame that ramps to 32
+ * pays that same fixed cost once per 32 steps — so a flat-at-1 shape is
+ * "the march half pays its fixed sweep cost far too often", not "marching
+ * is slow". Sweep detection reads off the "sweep done" line rather than
+ * either readback label, because that line is common to BOTH the OLD
+ * `states` and NEW `status` vocabulary (see SWEEP_LABELS below) — the one
+ * marker guaranteed to mean the same thing whichever arm produced the
+ * trace. The `active=` mean/max reported alongside it are the sweep's own
+ * — how many rays a typical/worst sweep still had left to march — and are
+ * distinct from the mean `active=` the readback BEGIN line reports about
+ * itself, which the NEW `status` vocabulary alone carries (the OLD
+ * `states` line sizes itself off the whole ray count instead, so that
+ * second mean reads "n/a" under that arm, correctly — not missing data).
+ *
+ * MARCH COST vs WIDTH (fr-fniy): the slice sizer prices a dispatch by
+ * dividing its whole time by `len * steps` — a per-ray-step cost — which
+ * is only the right quantity if a dispatch has NO fixed per-dispatch
+ * INTERCEPT, the same question fr-2ojg asked of hit shade batches. So
+ * march dispatches are bucketed by `len` on a ladder wide enough for a
+ * march slice (hundreds of thousands of rays, where a hit batch tops out
+ * in the low thousands) and reported as ns PER RAY-STEP: FALLING as width
+ * grows means a fixed cost is being amortised (an intercept the sizer's
+ * division is hiding), FLAT means the time is real per-ray-step work. The
+ * table is split one-per-`steps=`-value FIRST, because ns/ray-step is only
+ * comparable within one step count — pooling two step counts into one
+ * length bucket would average together two different fixed-cost regimes
+ * and answer neither question — and a steps value with fewer than 3
+ * dispatches is skipped as too few to read a trend into.
  *
  * HIT SHADE COST vs BATCH SIZE (fr-257o): the free queue's share turned
  * out to be per-submission wall with no work in it, and the table after
@@ -122,6 +165,27 @@
  * ramp" as a ramp of size 0. A settle of more than 12 frames prints the
  * first 6 and the last 6 with the middle elided: once the sizer has
  * converged, frame 40's ramp shape is frame 20's asked again.
+ *
+ * PER-FRAME WALL ACCOUNTING (fr-fniy): every other block prices GPU
+ * submissions; this one prices the gaps between them. `frame done`'s own
+ * `[<ms>ms]` timestamp IS that frame's wall-clock duration (`traceT0`
+ * resets at each "frame start"), so `wallMs - marchMs - shadeMs -
+ * readbackMs` (that frame's own summed dispatch/readback times) is
+ * `otherMs` — host time the GPU sat idle: the JS active-list rebuild
+ * between sweeps, `writeBuffer` uploads, the `Uint32Array.from`
+ * allocations, promise/microtask latency, per-submission host overhead.
+ * `readbackMs` here is TIMED readbacks only (the sweep readback + the
+ * progressive present; "final" has no END line and is never timed, same
+ * as everywhere else in this script). A large `other%` means the frame
+ * loop's own SCHEDULING is the cost, not the GPU work it is scheduling —
+ * a lever no kernel change reaches. One row per COMPLETED frame, same
+ * elision past 12 rows as HIT DISPATCHES PER FRAME above (and sharing its
+ * `frames` list — this table just reads different columns off it), closed
+ * by a MEAN row and a TOTAL line giving the settle's overall other share.
+ * `otherMs` is clamped at 0 — the four components are measured
+ * independently and can in principle jitter past the frame's own
+ * timestamp — and a run where that clamp ever bit is flagged rather than
+ * silently reported as a suspiciously tidy zero.
  *
  * PER-SWEEP MEANS ARE THE TRUNCATION-SAFE COMPARISON: if a scene does not
  * reach a completed settle before `--capMs`, the two arms' sweep COUNTS and
@@ -170,7 +234,7 @@
  *   node scripts/march-readback-ab.mjs [--display=:0]
  *     [--url=https://localhost:5174] [--capMs=600000] [--label=unlabelled]
  *     [--scene=mandelboxKifs] [--hash=#v1=...] [--width=1400] [--height=900]
- *     [--out=/tmp/march-readback-<label>.json]
+ *     [--params=surfacecompute] [--out=/tmp/march-readback-<label>.json]
  *
  *   --display  X display to launch headed Chrome on (real Vulkan driver).
  *   --url      Base URL of an already-running dev server. This script does
@@ -194,6 +258,13 @@
  *              run reports its scene as `custom` in both the printed
  *              summary and the JSON, since there is no registry name to
  *              report.
+ *   --params   Extra query parameters, `&`-joined, appended after
+ *              `?surfacetrace&surfacestate`. `--params=surfacecompute` is
+ *              the one this instrument needs to reach the compute arm on a
+ *              kaleidoscope-4D scene at all (main.ts routes those to the
+ *              FRAGMENT tracer, which `?surfacetrace` does not instrument);
+ *              `--params=surfacemarchchunk=N` forces the march slice width
+ *              for the cost-vs-WIDTH sweep.
  *   --width/--height  Browser window (viewport) size. The surface pane's
  *              actual raster comes out of the trace's own `frame start
  *              rays=`, not from these — they only set what the page sees.
@@ -240,6 +311,24 @@ const HASH_OVERRIDE =
 // The identifier this run REPORTS as its scene (log line, summary, JSON) —
 // "custom" under --hash, since there is no SCENES registry key to name.
 const SCENE_ID = HASH_OVERRIDE !== null ? "custom" : SCENE;
+/**
+ * Extra query parameters appended after `?surfacetrace&surfacestate`, as a
+ * bare `&`-joined string (a leading `&` is added when absent, so both
+ * `--params=surfacecompute` and `--params=&surfacecompute` work).
+ *
+ * WITHOUT THIS THE INSTRUMENT CANNOT REACH THE COMPUTE ARM ON THE ONE
+ * SHAPE fr-fniy IS ABOUT. main.ts routes kaleidoscope-4D (non-fold,
+ * symmetry order > 1) to the FRAGMENT tracer by measured verdict, and
+ * `?surfacetrace` only instruments the WebGPU frame loop — so a
+ * `--hash=<kaleido4>` run without `--params=surfacecompute` silently
+ * collects nothing and reports the WebGL engine. The same door reaches
+ * `surfacegl`, `surfacesamples=N` and `surfacemarchchunk=N`.
+ */
+const EXTRA_PARAMS = (() => {
+  const raw = typeof args.params === "string" ? args.params : "";
+  const trimmed = raw.replace(/^&+/, "").replace(/&+$/, "");
+  return trimmed === "" ? "" : `&${trimmed}`;
+})();
 const WIDTH = numArg("width", 1400);
 const HEIGHT = numArg("height", 900);
 const OUT =
@@ -372,6 +461,18 @@ if (HASH_OVERRIDE === null && !(SCENE in SCENES)) {
 const TRACE_LINE_RE = /^\[(\d+)ms\] (.*)$/;
 const FRAME_START_RE = /^frame start rays=(\d+)/;
 const FRAME_DONE_RE = /^frame done passes=(\d+) truncated=(\S+)/;
+/** Closes one march SWEEP — see the module doc's "MARCH SWEEP SHAPE". This
+ * line is common to BOTH readback vocabularies (unlike the BEGIN/END pair
+ * {@link READBACK_RE}/{@link SWEEP_LABELS} key off), which is exactly why
+ * sweep counting reads off THIS line instead of either readback label: it
+ * is the one marker guaranteed to exist and mean the same thing whichever
+ * arm produced the trace, so the fr-si66 A/B this script was built for and
+ * the fr-fniy sweep-shape questions it now also answers share one signal.
+ * Only `active=` is captured — the line's other fields (hitQ/freeQ/
+ * sweepSteps/stepsThisPass) belong to questions this script does not ask,
+ * the same restraint {@link FRAME_DONE_RE} already takes with "frame
+ * done"'s own longer tail. */
+const SWEEP_DONE_RE = /^sweep done active=(\d+)\b/;
 /** Keys a readback BEGIN/END pair off the label BEFORE " readback" — the
  * one thing that differs between the OLD (`states`) and NEW (`status`)
  * vocabulary; everything else about the line shape is shared. */
@@ -429,6 +530,27 @@ const HIT_SIZE_BUCKETS = [
 function hitSizeBucket(len) {
   return HIT_SIZE_BUCKETS.find((b) => len >= b.min && len <= b.max) ?? null;
 }
+/** Batch-size buckets for the march cost-vs-width table (fr-fniy's "MARCH
+ * COST vs WIDTH"), wider than {@link HIT_SIZE_BUCKETS} because a march
+ * slice runs to hundreds of thousands of rays where a hit shade batch tops
+ * out in the low thousands (the sizer's own capacity ladder) — the
+ * question is whether ns PER RAY-STEP falls as the slice widens, which
+ * needs a ruler wide enough to span what a slice actually reaches, not a
+ * ladder tuned to where dispatches cluster (unlike the hit buckets, a
+ * march slice's width is not itself powers-of-two-shaped — it comes off a
+ * measured us/ray-step EMA with no capacity ladder of its own). */
+const MARCH_SIZE_BUCKETS = [
+  { label: "1-1023", min: 1, max: 1023 },
+  { label: "1024-4095", min: 1024, max: 4095 },
+  { label: "4096-16383", min: 4096, max: 16383 },
+  { label: "16384-65535", min: 16384, max: 65535 },
+  { label: "65536-262143", min: 65536, max: 262143 },
+  { label: "262144+", min: 262144, max: Infinity },
+];
+
+function marchSizeBucket(len) {
+  return MARCH_SIZE_BUCKETS.find((b) => len >= b.min && len <= b.max) ?? null;
+}
 /** `final readback BEGIN` has no matching END by design (see module doc) —
  * this is the one label {@link summarize} never opens against later END. */
 const UNTIMED_READBACK_LABEL = "final";
@@ -470,6 +592,20 @@ function summarize(rawLines) {
       worstMs: null,
       worstLen: null,
       worstSteps: null,
+      /** fr-fniy "MARCH SWEEP SHAPE"'s stepsThisPass distribution — one
+       * entry per distinct `steps=` value seen on `march BEGIN`, keyed by
+       * that number (a `Map`, not the fixed string labels
+       * {@link HIT_SIZE_BUCKETS} uses, since the key is numeric and
+       * unbounded). Answers "how much of the march half's time went to
+       * each rung of the steps ramp", independent of ray count. */
+      byStep: new Map(), // steps -> { count, totalLen, totalMs }
+      /** fr-fniy "MARCH COST vs WIDTH": the same dispatches bucketed by
+       * BOTH steps and length — steps FIRST, because ns/ray-step is only
+       * comparable within one step count (see {@link MARCH_SIZE_BUCKETS}'s
+       * own comment); a length bucket pooling two different steps values
+       * would average together two different fixed-cost regimes and
+       * answer neither question. */
+      byStepAndSize: new Map(), // steps -> Map(bucketLabel -> {count, totalLen, totalSteps, totalMs})
     },
     shade: { count: 0, totalMs: 0 },
     // fr-257o: the same shade time split by which queue it drained.
@@ -491,6 +627,25 @@ function summarize(rawLines) {
     shadeHitBySize: Object.fromEntries(
       HIT_SIZE_BUCKETS.map((b) => [b.label, { count: 0, hits: 0, totalMs: 0 }]),
     ),
+  };
+  /** fr-fniy "MARCH SWEEP SHAPE": one march SWEEP is a full pass over the
+   * active ray list, closed by a "sweep done" line (see SWEEP_DONE_RE's own
+   * comment for why counting keys off that line rather than either
+   * readback label). `activeSum`/`activeMax` are the sweep's own reported
+   * `active=` — how many rays a typical/worst sweep still had left to
+   * march. `readbackActiveSum`/`readbackActiveCount` are a DIFFERENT
+   * number: the mean `active=` the readback BEGIN line reports about
+   * ITSELF, which only the NEW `status` vocabulary carries (the OLD
+   * `states` line sizes itself off the whole ray count via `rays=`
+   * instead — see `bytesForReadback`'s OLD/NEW split) — so under that arm
+   * this pair simply never increments and the report reads "n/a", which is
+   * correct, not missing data. */
+  const sweep = {
+    count: 0,
+    activeSum: 0,
+    activeMax: null,
+    readbackActiveSum: 0,
+    readbackActiveCount: 0,
   };
   let pendingShadeIsFree = null;
   let pendingShadeLen = null;
@@ -531,12 +686,29 @@ function summarize(rawLines) {
       lastFrameRays = Number(frameStart[1]);
       currentFrame = {
         index: frameRecords.length,
+        rays: lastFrameRays,
         hitDispatches: 0,
         hits: 0,
+        // HIT-shade time only (fr-2ojg's own field, feeding "HIT
+        // DISPATCHES PER FRAME" below) — distinct from `shadeMs` below,
+        // which is fr-fniy's ALL-shade (hit+free) total feeding "PER-FRAME
+        // WALL ACCOUNTING". Two different questions kept as two fields
+        // rather than one overloaded one.
         totalMs: 0,
         firstLen: null,
         maxLen: null,
         completed: false,
+        // fr-fniy "MARCH SWEEP SHAPE"'s per-frame sweep count.
+        sweeps: 0,
+        // fr-fniy "PER-FRAME WALL ACCOUNTING": wallMs comes off "frame
+        // done"'s own timestamp (set there, once traceT0's reset makes it
+        // meaningful); marchMs/shadeMs/readbackMs are this frame's own
+        // summed dispatch/readback times, accumulated dispatch by
+        // dispatch below exactly like `totalMs` already is for hit shade.
+        wallMs: null,
+        marchMs: 0,
+        shadeMs: 0,
+        readbackMs: 0,
       };
       frameRecords.push(currentFrame);
       continue;
@@ -545,7 +717,13 @@ function summarize(rawLines) {
     if (frameDone) {
       framesCompleted++;
       lastFrameTruncated = frameDone[2] === "true";
-      if (currentFrame) currentFrame.completed = true;
+      if (currentFrame) {
+        currentFrame.completed = true;
+        // fr-fniy: "frame done"'s OWN [<ms>ms] IS this frame's wall-clock
+        // duration — traceT0 resets at "frame start", so nothing needs
+        // subtracting (see the module doc's "PER-FRAME WALL ACCOUNTING").
+        currentFrame.wallMs = ms;
+      }
       continue;
     }
 
@@ -580,6 +758,45 @@ function summarize(rawLines) {
           dispatch.march.worstLen = pendingMarchLen;
           dispatch.march.worstSteps = pendingMarchSteps;
         }
+        // fr-fniy "PER-FRAME WALL ACCOUNTING": this frame's own march
+        // total, summed slice by slice exactly like `totalMs` already
+        // sums hit-shade time below.
+        if (currentFrame) currentFrame.marchMs += ms;
+        // fr-fniy "MARCH SWEEP SHAPE"'s steps distribution and "MARCH
+        // COST vs WIDTH"'s steps x size buckets both need len AND steps
+        // off the same BEGIN line (the trace always carries both
+        // together — see MARCH_BEGIN_RE's own comment); a dispatch
+        // missing either drops out of both tables the same way a
+        // len-less shade dispatch already drops out of `shadeHitBySize`
+        // below, rather than corrupting a mean with a partial record.
+        if (pendingMarchLen !== null && pendingMarchSteps !== null) {
+          let byStep = dispatch.march.byStep.get(pendingMarchSteps);
+          if (!byStep) {
+            byStep = { count: 0, totalLen: 0, totalMs: 0 };
+            dispatch.march.byStep.set(pendingMarchSteps, byStep);
+          }
+          byStep.count++;
+          byStep.totalLen += pendingMarchLen;
+          byStep.totalMs += ms;
+
+          const bucket = marchSizeBucket(pendingMarchLen);
+          if (bucket) {
+            let bySize = dispatch.march.byStepAndSize.get(pendingMarchSteps);
+            if (!bySize) {
+              bySize = new Map();
+              dispatch.march.byStepAndSize.set(pendingMarchSteps, bySize);
+            }
+            let b = bySize.get(bucket.label);
+            if (!b) {
+              b = { count: 0, totalLen: 0, totalSteps: 0, totalMs: 0 };
+              bySize.set(bucket.label, b);
+            }
+            b.count++;
+            b.totalLen += pendingMarchLen;
+            b.totalSteps += pendingMarchSteps;
+            b.totalMs += ms;
+          }
+        }
         pendingMarchLen = null;
         pendingMarchSteps = null;
       }
@@ -589,6 +806,10 @@ function summarize(rawLines) {
           : dispatch.shadeHit;
         queue.count++;
         queue.totalMs += ms;
+        // fr-fniy "PER-FRAME WALL ACCOUNTING": ALL shade this frame, hit
+        // and free alike — unlike `currentFrame.totalMs` below, which
+        // stays hit-only for fr-2ojg's ramp table.
+        if (currentFrame) currentFrame.shadeMs += ms;
         if (queue.worstMs === null || ms > queue.worstMs) {
           queue.worstMs = ms;
           queue.worstLen = pendingShadeLen;
@@ -634,8 +855,20 @@ function summarize(rawLines) {
       continue;
     }
 
+    const sweepDone = SWEEP_DONE_RE.exec(body);
+    if (sweepDone) {
+      const active = Number(sweepDone[1]);
+      sweep.count++;
+      sweep.activeSum += active;
+      if (sweep.activeMax === null || active > sweep.activeMax) {
+        sweep.activeMax = active;
+      }
+      if (currentFrame) currentFrame.sweeps++;
+      continue;
+    }
+
     const rb = READBACK_RE.exec(body);
-    if (!rb) continue; // sweep-done/ANOMALY lines — not ours
+    if (!rb) continue; // ANOMALY lines — not ours
     const [, label, beginOrEnd, rest] = rb;
 
     if (beginOrEnd === "BEGIN") {
@@ -647,6 +880,18 @@ function summarize(rawLines) {
           ? Number(activeMatch[1])
           : lastFrameRays; // present/final: no field of their own, R comes
       // from the enclosing frame's own "frame start rays=" line.
+
+      // fr-fniy "MARCH SWEEP SHAPE": the mean `active=` a SWEEP-LABEL
+      // readback reports about ITSELF — guarded on SWEEP_LABELS (not the
+      // literal "status") for the same reason SWEEP_DONE_RE is, so
+      // whichever arm is running this only ever sums that arm's own
+      // readback, and the OLD `states` line (no `active=` field — see
+      // `sweep`'s own comment above) simply never matches `activeMatch`
+      // and so never contributes.
+      if (activeMatch && SWEEP_LABELS.includes(label)) {
+        sweep.readbackActiveSum += Number(activeMatch[1]);
+        sweep.readbackActiveCount++;
+      }
 
       if (label === UNTIMED_READBACK_LABEL) {
         const s = kindStat(label);
@@ -678,6 +923,11 @@ function summarize(rawLines) {
     s.timedCount++;
     s.totalMs += ms - begin.ms;
     s.totalBytes += bytesForReadback(label, begin.extra);
+    // fr-fniy "PER-FRAME WALL ACCOUNTING": every readback that reaches
+    // this branch is by construction a TIMED one (UNTIMED_READBACK_LABEL
+    // took the early `continue` above and never opened) — the sweep
+    // readback and the progressive present, never "final".
+    if (currentFrame) currentFrame.readbackMs += ms - begin.ms;
   }
 
   // Anything still open at the end of the log lost its END because the
@@ -702,11 +952,22 @@ function summarize(rawLines) {
       totalMs: f.totalMs,
       firstLen: f.firstLen,
       maxLen: f.maxLen,
+      // fr-fniy: rays/sweeps feed "MARCH SWEEP SHAPE"'s per-frame sweep
+      // count; wallMs/marchMs/shadeMs/readbackMs feed "PER-FRAME WALL
+      // ACCOUNTING" — see `currentFrame`'s own comment above for what each
+      // one sums.
+      rays: f.rays,
+      sweeps: f.sweeps,
+      wallMs: f.wallMs,
+      marchMs: f.marchMs,
+      shadeMs: f.shadeMs,
+      readbackMs: f.readbackMs,
     }));
 
   return {
     kinds,
     dispatch,
+    sweep,
     frames,
     unmatchedBegins,
     framesTraced,
@@ -787,7 +1048,7 @@ async function driveSession() {
     // registry lookup, so an override never has to also be a valid SCENES
     // key.
     const hash = HASH_OVERRIDE ?? SCENES[SCENE]();
-    const url = `${BASE}/?surfacetrace&surfacestate${hash}`;
+    const url = `${BASE}/?surfacetrace&surfacestate${EXTRA_PARAMS}${hash}`;
     log(`navigating: ${url.slice(0, 100)}...`);
     await page.goto(url, { waitUntil: "load", timeout: 60000 });
     // Mutter only sends frame callbacks to VISIBLE surfaces — keep the
@@ -902,6 +1163,136 @@ function percentile95(values) {
 function meanOf(values) {
   const nums = values.filter((v) => v !== null && v !== undefined);
   return nums.length > 0 ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
+}
+/** Generic one-decimal formatter for non-millisecond quantities (ray
+ * counts, sweep counts, dispatch counts) — {@link fmtMs} reads as "this is
+ * a timing" even beside a number that is not one, so every fr-fniy table
+ * below uses this instead. Also replaces "HIT DISPATCHES PER FRAME"'s own
+ * MEAN row, which used to keep a private copy of exactly this function. */
+function fmt1(x) {
+  return x === null || x === undefined || !Number.isFinite(x)
+    ? "n/a"
+    : x.toFixed(1);
+}
+/** fr-fniy "PER-FRAME WALL ACCOUNTING": `otherMs` is what is left of a
+ * frame's own wall time once its march/shade/readback totals are
+ * subtracted — host time the GPU sat idle. Clamped at 0 rather than
+ * printed negative: the four components are measured independently
+ * (separate `performance.now()` spans around separate awaits), so jitter
+ * can in principle sum them a hair past the frame's own wall clock;
+ * `negative` reports whether that happened so a run where it did is
+ * flagged rather than shown a suspiciously tidy zero. `frames` is already
+ * filtered to completed frames (see `summarize`'s own filter), so
+ * `wallMs === null` should not reach this function in practice, but it is
+ * handled rather than assumed away. */
+function frameOtherMs(f) {
+  if (f.wallMs === null) return { otherMs: null, negative: false };
+  const raw = f.wallMs - f.marchMs - f.shadeMs - f.readbackMs;
+  return { otherMs: Math.max(0, raw), negative: raw < 0 };
+}
+/** fr-fniy "MARCH SWEEP SHAPE"'s headline numbers — shared by printReport
+ * and buildJsonSummary so the printed line and the JSON field can never
+ * disagree. `meanSweepsPerFrame` averages over ALL completed frames,
+ * including a legitimate zero-sweep one: unlike {@link meanOf}'s other
+ * uses in this file (firstLen/maxLen, where null means "this frame had no
+ * ramp at all" and must not drag the mean toward 0), a sweep count is
+ * always real data, never absent, so 0 belongs in the average. */
+function marchSweepStats(summary) {
+  const sweepCount = summary.sweep.count;
+  const frames = summary.frames;
+  return {
+    sweepCount,
+    meanSweepsPerFrame:
+      frames.length > 0 ? meanOf(frames.map((f) => f.sweeps)) : null,
+    meanMarchDispatchesPerSweep:
+      sweepCount > 0 ? summary.dispatch.march.count / sweepCount : null,
+    meanSweepActive:
+      sweepCount > 0 ? summary.sweep.activeSum / sweepCount : null,
+    maxSweepActive: summary.sweep.activeMax,
+    meanReadbackActive:
+      summary.sweep.readbackActiveCount > 0
+        ? summary.sweep.readbackActiveSum / summary.sweep.readbackActiveCount
+        : null,
+  };
+}
+/** fr-fniy "MARCH SWEEP SHAPE"'s stepsThisPass distribution table — one
+ * row per distinct `steps=` value seen on `march BEGIN`, SORTED ascending
+ * (Map iteration order is first-seen order, not numeric order, and the
+ * steps ramp resets every sweep, so first-seen is not even mostly
+ * sorted). Shared by printReport and buildJsonSummary. */
+function marchStepRows(summary) {
+  const marchTotalMs = summary.dispatch.march.totalMs;
+  return [...summary.dispatch.march.byStep.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([steps, s]) => ({
+      steps,
+      dispatches: s.count,
+      meanLen: s.totalLen / s.count,
+      totalMs: s.totalMs,
+      shareOfMarchMs:
+        marchTotalMs > 0 ? (s.totalMs / marchTotalMs) * 100 : null,
+    }));
+}
+/** fr-fniy "MARCH COST vs WIDTH": march dispatches bucketed by length,
+ * broken out one table per distinct `steps=` value (ns/ray-step is only
+ * comparable within one step count — see the module doc). A steps value
+ * with fewer than 3 dispatches TOTAL is dropped entirely — too few to
+ * read a trend into — checked against `byStep`'s own count rather than
+ * the sum of this function's own bucketed rows, so the cutoff cannot be
+ * evaded by a steps value whose dispatches happen to spread thin across
+ * many buckets. Shared by printReport and buildJsonSummary. */
+function marchWidthTables(summary) {
+  return [...summary.dispatch.march.byStepAndSize.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([steps, bucketsMap]) => {
+      const totalAtSteps = summary.dispatch.march.byStep.get(steps)?.count ?? 0;
+      if (totalAtSteps < 3) return null;
+      const rows = MARCH_SIZE_BUCKETS.map((b) => {
+        const s = bucketsMap.get(b.label);
+        if (!s || s.count === 0) return null;
+        const meanLen = s.totalLen / s.count;
+        const meanSteps = s.totalSteps / s.count;
+        const meanMs = s.totalMs / s.count;
+        const nsPerRayStep =
+          meanLen > 0 && meanSteps > 0
+            ? (meanMs * 1e6) / (meanLen * meanSteps)
+            : null;
+        return {
+          bucket: b.label,
+          count: s.count,
+          meanLen,
+          meanSteps,
+          meanMs,
+          nsPerRayStep,
+        };
+      }).filter((r) => r !== null);
+      return { steps, totalDispatches: totalAtSteps, rows };
+    })
+    .filter((t) => t !== null);
+}
+/** fr-fniy "PER-FRAME WALL ACCOUNTING"'s closing totals — the TOTAL line
+ * in printReport and the `wallAccounting` JSON field are the same numbers
+ * by construction, since both call this. `null` when there are no
+ * completed frames to total, the same "print/report nothing" rule every
+ * other block here follows. */
+function wallAccountingTotals(frames) {
+  if (frames.length === 0) return null;
+  const totalWallMs = frames.reduce((a, f) => a + f.wallMs, 0);
+  const totalMarchMs = frames.reduce((a, f) => a + f.marchMs, 0);
+  const totalShadeMs = frames.reduce((a, f) => a + f.shadeMs, 0);
+  const totalReadbackMs = frames.reduce((a, f) => a + f.readbackMs, 0);
+  const otherPerFrame = frames.map((f) => frameOtherMs(f));
+  const totalOtherMs = otherPerFrame.reduce((a, o) => a + o.otherMs, 0);
+  const anyNegative = otherPerFrame.some((o) => o.negative);
+  return {
+    totalWallMs,
+    totalMarchMs,
+    totalShadeMs,
+    totalReadbackMs,
+    totalOtherMs,
+    otherPctOfWall: totalWallMs > 0 ? (totalOtherMs / totalWallMs) * 100 : null,
+    anyNegative,
+  };
 }
 
 function printReport(summary, runResult) {
@@ -1034,6 +1425,81 @@ function printReport(summary, runResult) {
     `  sweep readbacks  : ${String(sweepLabels.reduce((a, l) => a + (kinds.get(l)?.count ?? 0), 0)).padStart(5)}  ${fmtMs(sweepMs).padStart(9)} ms  ${pct(sweepMs)}`,
   );
 
+  // fr-fniy: how the march half SHAPES itself sweep to sweep — see the
+  // module doc's "MARCH SWEEP SHAPE". Skipped whole when no "sweep done"
+  // line was ever seen (a march-less truncation, or a settle that never
+  // left its first outer-loop iteration).
+  const sweepStats = marchSweepStats(summary);
+  if (sweepStats.sweepCount > 0) {
+    console.log();
+    console.log(
+      "MARCH SWEEP SHAPE (one sweep = one full pass over the active list, " +
+        'closed by a readback + "sweep done"):',
+    );
+    console.log(
+      `  sweeps=${sweepStats.sweepCount}  meanSweepsPerFrame=${fmt1(sweepStats.meanSweepsPerFrame)}` +
+        `  meanMarchDispatchesPerSweep=${fmt1(sweepStats.meanMarchDispatchesPerSweep)}`,
+    );
+    console.log(
+      `  active rays: sweep-done mean=${fmt1(sweepStats.meanSweepActive)} max=${sweepStats.maxSweepActive ?? "n/a"}` +
+        `  |  readback-BEGIN mean=${fmt1(sweepStats.meanReadbackActive)}` +
+        (sweepStats.meanReadbackActive === null
+          ? "  (old `states` arm reports rays=, not active=)"
+          : ""),
+    );
+
+    // The headline table for fr-fniy: a frame whose steps stays PINNED AT
+    // 1 pays a WHOLE sweep's host cost (readback + active-list
+    // rebuild/upload) per SINGLE DE step; a frame that ramps to 32 pays it
+    // once per 32. If the dispatch count/totalMs mass sits at low steps
+    // values, that fixed cost is being paid far more often than it needs
+    // to be.
+    const stepRows = marchStepRows(summary);
+    if (stepRows.length > 0) {
+      console.log(
+        "  stepsThisPass distribution (this DISPATCH's own budget, not the sweep's mean):",
+      );
+      console.log(
+        "    steps   dispatches   meanLen      totalMs   share of march ms",
+      );
+      for (const r of stepRows) {
+        console.log(
+          `    ${String(r.steps).padStart(5)}   ${String(r.dispatches).padStart(10)}   ` +
+            `${fmt1(r.meanLen).padStart(8)}   ${fmtMs(r.totalMs).padStart(10)}   ` +
+            `${r.shareOfMarchMs === null ? "n/a" : r.shareOfMarchMs.toFixed(1) + "%"}`,
+        );
+      }
+    }
+
+    // fr-fniy: does a march dispatch have a fixed per-dispatch cost the
+    // slice sizer's len*steps division hides? FALLING ns/ray-step = yes,
+    // an intercept is being amortised as width grows; FLAT = real
+    // per-ray-step work, which no sizing change reaches. One table per
+    // distinct steps value — see the module doc's "MARCH COST vs WIDTH"
+    // for why ns/ray-step cannot be compared across step counts.
+    const widthTables = marchWidthTables(summary);
+    if (widthTables.length > 0) {
+      console.log();
+      console.log(
+        "MARCH COST vs WIDTH (FALLING ns/ray-step = a fixed per-dispatch " +
+          "cost is being amortised; FLAT = real per-ray-step work):",
+      );
+      for (const t of widthTables) {
+        console.log(`  steps=${t.steps} (${t.totalDispatches} dispatches):`);
+        console.log(
+          "    len bucket        count   meanLen  meanSteps    meanMs   ns/ray-step",
+        );
+        for (const r of t.rows) {
+          console.log(
+            `    ${r.bucket.padEnd(14)} ${String(r.count).padStart(7)}  ` +
+              `${fmt1(r.meanLen).padStart(8)}  ${fmt1(r.meanSteps).padStart(9)} ` +
+              `${fmtMs(r.meanMs).padStart(9)}   ${fmt1(r.nsPerRayStep).padStart(10)}`,
+          );
+        }
+      }
+    }
+  }
+
   // fr-257o's second half: the free queue's time was per-submission wall,
   // and this is the same question asked of the HIT queue, which the cap
   // change does not touch. A hit batch is ~178 rays — under 3 workgroups
@@ -1157,7 +1623,6 @@ function printReport(summary, runResult) {
     } else {
       frames.forEach(printFrame);
     }
-    const fmt1 = (x) => (x === null ? "n/a" : x.toFixed(1));
     console.log(
       frameRow([
         "MEAN",
@@ -1168,6 +1633,98 @@ function printReport(summary, runResult) {
         fmt1(meanOf(frames.map((f) => f.maxLen))),
       ]),
     );
+  }
+
+  // fr-fniy "PER-FRAME WALL ACCOUNTING": otherMs is host time the GPU sat
+  // idle while the frame was open (JS active-list rebuild, writeBuffer
+  // uploads, the Uint32Array.from allocations, promise/microtask latency,
+  // per-submission overhead) — a large other% means the frame loop's own
+  // SCHEDULING is the cost, not the GPU work it schedules. Same `frames`
+  // list and elision rule as "HIT DISPATCHES PER FRAME" above, just
+  // different columns off it.
+  const wallTotals = wallAccountingTotals(frames);
+  if (wallTotals !== null) {
+    console.log();
+    console.log(
+      "PER-FRAME WALL ACCOUNTING (otherMs = wallMs minus this frame's own " +
+        "march+shade+readback — host time the GPU was idle):",
+    );
+    const WALL_COL_WIDTHS = [5, 8, 7, 9, 9, 9, 11, 9, 7];
+    const wallRow = (values) =>
+      "  " +
+      values.map((v, i) => String(v).padStart(WALL_COL_WIDTHS[i])).join(" ");
+    console.log(
+      wallRow([
+        "frame",
+        "rays",
+        "sweeps",
+        "wallMs",
+        "marchMs",
+        "shadeMs",
+        "readbackMs",
+        "otherMs",
+        "other%",
+      ]),
+    );
+    let anyNegativeRow = false;
+    const otherPct = (otherMs, wallMs) =>
+      wallMs > 0 ? `${((otherMs / wallMs) * 100).toFixed(1)}%` : "n/a";
+    const printWallFrame = (f) => {
+      const { otherMs, negative } = frameOtherMs(f);
+      if (negative) anyNegativeRow = true;
+      console.log(
+        wallRow([
+          f.index,
+          f.rays,
+          f.sweeps,
+          fmtMs(f.wallMs),
+          fmtMs(f.marchMs),
+          fmtMs(f.shadeMs),
+          fmtMs(f.readbackMs),
+          fmtMs(otherMs),
+          otherPct(otherMs, f.wallMs),
+        ]),
+      );
+    };
+    if (frames.length > 12) {
+      frames.slice(0, 6).forEach(printWallFrame);
+      console.log("  ...");
+      frames.slice(-6).forEach(printWallFrame);
+    } else {
+      frames.forEach(printWallFrame);
+    }
+    const meanWallMs = meanOf(frames.map((f) => f.wallMs));
+    const meanOtherMs = meanOf(frames.map((f) => frameOtherMs(f).otherMs));
+    console.log(
+      wallRow([
+        "MEAN",
+        fmt1(meanOf(frames.map((f) => f.rays))),
+        fmt1(meanOf(frames.map((f) => f.sweeps))),
+        fmtMs(meanWallMs),
+        fmtMs(meanOf(frames.map((f) => f.marchMs))),
+        fmtMs(meanOf(frames.map((f) => f.shadeMs))),
+        fmtMs(meanOf(frames.map((f) => f.readbackMs))),
+        fmtMs(meanOtherMs),
+        otherPct(meanOtherMs, meanWallMs),
+      ]),
+    );
+    console.log(
+      `  TOTAL: wallMs=${fmtMs(wallTotals.totalWallMs)} marchMs=${fmtMs(wallTotals.totalMarchMs)} ` +
+        `shadeMs=${fmtMs(wallTotals.totalShadeMs)} readbackMs=${fmtMs(wallTotals.totalReadbackMs)} ` +
+        `otherMs=${fmtMs(wallTotals.totalOtherMs)}  (other=${
+          wallTotals.otherPctOfWall === null
+            ? "n/a"
+            : wallTotals.otherPctOfWall.toFixed(1) + "%"
+        } of wall)`,
+    );
+    if (wallTotals.anyNegative || anyNegativeRow) {
+      console.log(
+        "  NOTE: at least one frame's otherMs computed negative before " +
+          "clamping (marchMs+shadeMs+readbackMs exceeded wallMs) — the " +
+          "four components are measured independently and can jitter past " +
+          "the frame's own timestamp; read as ~0, not as a real deficit.",
+      );
+    }
   }
 
   console.log();
@@ -1242,10 +1799,52 @@ function buildJsonSummary(summary, runResult) {
     renderError: runResult.renderErrorText,
     sweepLabels,
     kinds: kindsObj,
+    // fr-fniy "MARCH SWEEP SHAPE"'s headline numbers — see
+    // `marchSweepStats`'s own comment. `null` fields (e.g.
+    // `meanReadbackActive` under the OLD `states` arm) mean the
+    // underlying trace never carried that number, not that it was 0.
+    sweep: (() => {
+      const s = marchSweepStats(summary);
+      return {
+        count: s.sweepCount,
+        meanSweepsPerFrame: round2(s.meanSweepsPerFrame),
+        meanMarchDispatchesPerSweep: round2(s.meanMarchDispatchesPerSweep),
+        meanActive: round2(s.meanSweepActive),
+        maxActive: s.maxSweepActive,
+        meanReadbackActive: round2(s.meanReadbackActive),
+      };
+    })(),
     dispatch: {
       march: {
         count: summary.dispatch.march.count,
         totalMs: round2(summary.dispatch.march.totalMs),
+        // fr-fniy "MARCH SWEEP SHAPE"'s stepsThisPass distribution — see
+        // `marchStepRows`'s own comment; array (not an object keyed by
+        // steps) so a consumer does not have to know JSON stringifies
+        // numeric keys as strings.
+        stepsDistribution: marchStepRows(summary).map((r) => ({
+          steps: r.steps,
+          dispatches: r.dispatches,
+          meanLen: round2(r.meanLen),
+          totalMs: round2(r.totalMs),
+          shareOfMarchMsPct:
+            r.shareOfMarchMs === null ? null : round2(r.shareOfMarchMs),
+        })),
+        // fr-fniy "MARCH COST vs WIDTH" — see `marchWidthTables`'s own
+        // comment for the per-steps split and the <3-dispatch cutoff.
+        widthByStep: marchWidthTables(summary).map((t) => ({
+          steps: t.steps,
+          totalDispatches: t.totalDispatches,
+          buckets: t.rows.map((r) => ({
+            bucket: r.bucket,
+            count: r.count,
+            meanLen: round2(r.meanLen),
+            meanSteps: round2(r.meanSteps),
+            meanMs: round2(r.meanMs),
+            nsPerRayStep:
+              r.nsPerRayStep === null ? null : round2(r.nsPerRayStep),
+          })),
+        })),
       },
       shade: {
         count: summary.dispatch.shade.count,
@@ -1294,10 +1893,44 @@ function buildJsonSummary(summary, runResult) {
       marchLen: summary.dispatch.march.worstLen,
       marchSteps: summary.dispatch.march.worstSteps,
     },
-    // fr-2ojg: one entry per COMPLETED frame — see the module doc's "HIT
-    // DISPATCHES PER FRAME" and summarize()'s own `frames` construction
-    // (already this exact shape; only totalMs wants rounding here).
-    frames: summary.frames.map((f) => ({ ...f, totalMs: round2(f.totalMs) })),
+    // fr-2ojg/fr-fniy: one entry per COMPLETED frame — see the module
+    // doc's "HIT DISPATCHES PER FRAME" and "PER-FRAME WALL ACCOUNTING",
+    // and summarize()'s own `frames` construction (already this exact
+    // shape; the ms fields want rounding, and otherMs/otherPct are
+    // derived the same way `wallAccountingTotals` derives its totals, off
+    // the SAME `frameOtherMs` so the two can never disagree).
+    frames: summary.frames.map((f) => {
+      const { otherMs, negative } = frameOtherMs(f);
+      return {
+        ...f,
+        totalMs: round2(f.totalMs),
+        wallMs: round2(f.wallMs),
+        marchMs: round2(f.marchMs),
+        shadeMs: round2(f.shadeMs),
+        readbackMs: round2(f.readbackMs),
+        otherMs: round2(otherMs),
+        otherPct: f.wallMs > 0 ? round2((otherMs / f.wallMs) * 100) : null,
+        otherNegativeBeforeClamp: negative,
+      };
+    }),
+    // fr-fniy "PER-FRAME WALL ACCOUNTING"'s closing totals — see
+    // `wallAccountingTotals`'s own comment. `null` when no frame
+    // completed (mirrors the printed report's own "skip the block"
+    // rule).
+    wallAccounting: (() => {
+      const t = wallAccountingTotals(summary.frames);
+      if (t === null) return null;
+      return {
+        totalWallMs: round2(t.totalWallMs),
+        totalMarchMs: round2(t.totalMarchMs),
+        totalShadeMs: round2(t.totalShadeMs),
+        totalReadbackMs: round2(t.totalReadbackMs),
+        totalOtherMs: round2(t.totalOtherMs),
+        otherPctOfWall:
+          t.otherPctOfWall === null ? null : round2(t.otherPctOfWall),
+        anyNegative: t.anyNegative,
+      };
+    })(),
   };
 }
 
