@@ -53,28 +53,23 @@
  * closing note already records the same chain reading ~90x high on one
  * attributed job, which is the size of the effect the cliff was.
  *
- * WHAT THE PROBE DID FIND, and what fr-fniy should read: `kaleido4` — two
- * maps at kaleidoscope order 6 — is a different order of problem entirely,
- * and NOT a slice one. Its full-quality settle at `w0 = 0` on the WebGL arm
- * measured 444.0s with the rotor drifted 1.5s before parking and 604.0s at
- * the identity rotor (that second cell shared the machine with a test run
- * for part of its window, so read it as an order of magnitude rather than a
- * figure); its preview alone needed ~49s to cover the raster. THE ROTOR IS
- * NOT THE EXPLANATION — the identity pose is the slower of the two — and
- * neither is within 40x of the 10.9s CLAUDE.md's routing comment records for
- * the fragment arm on this scene (fr-b72d). What it IS is fr-b72d's measured
- * superlinear order cost (x13.5 per query at order 6 on the CPU oracle,
- * matched on the GPU), landing on the arm the routing verdict calls
- * kaleidoscope-4D's measured home; the slice slider does nothing to it, the
- * same scene's cost being flat across the same sweep.
+ * WHAT THE PROBE DID FIND: `kaleido4` — two maps at kaleidoscope order 6 —
+ * is a different order of problem, and not a slice one. Its full-quality
+ * settle at `w0 = 0` measured 147s / 444s / 604s on the WebGL arm across
+ * runs at nominally identical conditions, and 179s on the compute arm
+ * (`--arm=both`, both forced). A single cell is therefore not a figure on
+ * this scene: the strip pump's cost evidence starts class-pessimistic and
+ * ratchets off the job's own measurements, so an expensive scene's total is
+ * path-dependent. What IS stable is the ORDER — minutes on either arm,
+ * against `plain4`'s 12.1s / 3.0s at the same raster — and that is the DE's
+ * own superlinear cost in symmetry order, paid by both arms alike, not
+ * anything the slice slider does.
  *
- * AND AN INSTRUMENT GAP, for whoever picks fr-fniy up: the COMPUTE arm
- * cannot be measured on a kaleidoscope-4D scene at all from the outside.
- * `?surfacegl` forces WebGL and there is no force-COMPUTE counterpart, while
- * main.ts routes every order > 1 non-fold 4D session to the fragment tracer
- * regardless — so this probe's `--arm=compute` silently measures the
- * fragment arm again on such a scene (the printed `engine` column is what
- * says so).
+ * One consequence worth knowing before running the 4D gate on this machine:
+ * `scripts/surface-4d.verify.mjs` allows itself `ARM_BUDGET_MS = 90_000` per
+ * arm, at the same 1024x640 and the same scene. That budget is 1.6-6.7x
+ * under what the WebGL arm measured here, so its kaleido4 leg cannot settle
+ * cold on this hardware.
  */
 import process from "node:process";
 import { chromium } from "playwright-core";
@@ -134,7 +129,12 @@ async function cell(browser, scene, hash, arm, slice) {
     ...(TUMBLE_MS > 0 ? {} : { reducedMotion: "reduce" }),
   });
   const page = await ctx.newPage();
-  const query = arm === "gl" ? "?surfacestate&surfacegl" : "?surfacestate";
+  // Both arms are FORCED, never left to the routing rule: `?surfacegl`
+  // blocks compute, `?surfacecompute` prefers it on the shapes the rule
+  // sends to WebGL. Without the second flag an `--arm=compute` cell on a
+  // kaleidoscope-4D scene silently measures the WebGL arm a second time.
+  const query =
+    arm === "gl" ? "?surfacestate&surfacegl" : "?surfacestate&surfacecompute";
   const out = {
     scene,
     arm,

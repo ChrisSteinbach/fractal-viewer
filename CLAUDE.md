@@ -1585,13 +1585,18 @@ Frame` callback, which runs before paint so the disabled look never
     at any symmetry order (fr-rsp6) and escape-shaped 4D sessions (fr-vag4)
     — the fragment 4D tracer deliberately carries no fold GLSL and no
     forward-orbit GLSL either. STAYS ON THE FRAGMENT TRACER by measured
-    verdict: kaleidoscope 4D (non-fold, order > 1), where the compute arm
-    never settled an observation the fragment arm settled in seconds;
+    verdict: kaleidoscope 4D (non-fold, order > 1) — real Iris, 1024x640,
+    both arms FORCED via `?surfacegl`/`?surfacecompute`, kaleido4 settles
+    147s WebGL against 179s compute, a 1.2x that sits inside the WebGL
+    arm's own 147/444/604s run-to-run spread, so the rule stands on a NULL
+    result rather than on a win. Order 1 is a clean 4x the other way (3.0s
+    compute vs 12.1s WebGL) and is why plain 4D routes to compute.
     fr-b72d's closure exonerated the kernel — the DE's cost is
-    algorithmically superlinear in order for BOTH arms and the
-    uniform-maps/refinedCert suspects were refuted on the extended
-    `--surface-aff4-sweep` leg — so the residual is this module's
+    algorithmically superlinear in order for BOTH arms, which is why that
+    scene is minutes on either — so the residual is this module's
     march-loop scheduling under an expensive-DE regime (fr-fniy).
+    `?surfacecompute` is the escape hatch that makes this re-measurable
+    (main.ts; `?surfacegl` wins if both are given).
     `create()` takes a `SurfaceComputeTarget` union
     (`{kind:"ifs"|"escape"|"bulb"|"escape4"|"ifs4"}`) whose `kind` picks
     the kernel core (ifs4 → affine4 or fold4 off `deHasFolds4`, the 3D
