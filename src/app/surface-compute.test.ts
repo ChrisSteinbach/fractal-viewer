@@ -1,19 +1,21 @@
 import {
   buildSurfaceComputeBackground,
   fitSurfaceComputeRaster,
+  initialShadeHitCost,
   marchChunkFor,
   nextShadeBatchSize,
-  nextShadeHitEmaUs,
+  nextShadeHitCost,
   nextStepsPerPass,
   resampleSurfacePixels,
   shadeHitBatchSize,
-  SURFACE_COMPUTE_INITIAL_HIT_SHADE_US,
+  shadeHitBudgetUs,
   SURFACE_COMPUTE_MARCH_CHUNK_MIN,
   SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
   SURFACE_COMPUTE_MAX_STEPS_PER_PASS,
   SURFACE_COMPUTE_MAX_TILE_RAYS,
   SURFACE_COMPUTE_PASS_TARGET_MS,
   SURFACE_COMPUTE_RAY_STATE_BYTES,
+  SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS,
   SURFACE_COMPUTE_SHADE_HIT_CAP_START,
   SURFACE_COMPUTE_WORKGROUP_SIZE,
   surfaceComputeBandStops,
@@ -329,25 +331,55 @@ describe("marchChunkFor", () => {
   });
 });
 
-describe("nextShadeBatchSize", () => {
-  it("doubles only while batches come in well under the target", () => {
-    expect(nextShadeBatchSize(32, SURFACE_COMPUTE_PASS_TARGET_MS / 2 - 1)).toBe(
-      64,
+describe("shadeHitBudgetUs", () => {
+  it("is the pass target while the fixed cost leaves room inside it", () => {
+    // fr-2ojg's measured intercept on the boxfold pair: ~88ms of fixed
+    // dispatch cost leaves ~162ms of the 250ms target to buy hits with.
+    expect(shadeHitBudgetUs(88_000)).toBe(
+      SURFACE_COMPUTE_PASS_TARGET_MS * 1000,
     );
-    // In the holding band (between half and double the target) the batch
+  });
+
+  it("spends up to the fixed cost again once the dispatch is latency-bound", () => {
+    // A dispatch whose fixed cost alone is 400ms cannot be made cheaper
+    // by shrinking it, so the budget doubles rather than refusing to
+    // widen: 64 hits for ~432ms against ~800 hits for ~800ms.
+    expect(shadeHitBudgetUs(400_000)).toBe(800_000);
+  });
+
+  it("stops at the dispatch ceiling — the watchdog margin the allowance rule must not eat", () => {
+    expect(shadeHitBudgetUs(900_000)).toBe(
+      SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS * 1000,
+    );
+  });
+});
+
+describe("nextShadeBatchSize", () => {
+  it("doubles only while batches come in under the budget they were sized for", () => {
+    expect(nextShadeBatchSize(32, 249, 250)).toBe(64);
+    // In the holding band (between the budget and double it) the capacity
     // neither grows nor shrinks.
-    expect(nextShadeBatchSize(32, SURFACE_COMPUTE_PASS_TARGET_MS)).toBe(32);
+    expect(nextShadeBatchSize(32, 250, 250)).toBe(32);
+  });
+
+  it("reads the LATENCY-BOUND budget, not a fixed pass target (fr-2ojg)", () => {
+    // A 500ms dispatch under an 800ms budget is a batch that fit: the
+    // capacity has to keep climbing there. Judged against the old fixed
+    // PASS_TARGET/2 threshold this froze at whatever width cost 125ms —
+    // ~256 hits on the fr-2ojg scene against a measured optimum of ~1050.
+    expect(nextShadeBatchSize(256, 500, 800)).toBe(512);
+    expect(nextShadeBatchSize(256, 500, SURFACE_COMPUTE_PASS_TARGET_MS)).toBe(
+      256,
+    );
   });
 
   it("quarters on a big overshoot — the watchdog-safety bias", () => {
-    expect(
-      nextShadeBatchSize(256, SURFACE_COMPUTE_PASS_TARGET_MS * 2 + 1),
-    ).toBe(64);
+    expect(nextShadeBatchSize(256, 501, 250)).toBe(64);
   });
 
   it("quarters down to the one-workgroup floor, never below (fr-d6g5)", () => {
     // Quartering from just above the floor lands exactly on it...
-    expect(nextShadeBatchSize(256, 10_000)).toBe(
+    expect(nextShadeBatchSize(256, 10_000, 250)).toBe(
       SURFACE_COMPUTE_WORKGROUP_SIZE,
     );
     // ...and quartering FROM the floor holds there rather than dropping
@@ -356,81 +388,200 @@ describe("nextShadeBatchSize", () => {
     // shrinking further would only multiply worst-ray-cost submissions —
     // the fr-d6g5 park was exactly this floor missing, quartering all the
     // way to 1-ray batches.
-    expect(nextShadeBatchSize(SURFACE_COMPUTE_WORKGROUP_SIZE, 10_000)).toBe(
-      SURFACE_COMPUTE_WORKGROUP_SIZE,
-    );
+    expect(
+      nextShadeBatchSize(SURFACE_COMPUTE_WORKGROUP_SIZE, 10_000, 250),
+    ).toBe(SURFACE_COMPUTE_WORKGROUP_SIZE);
   });
 
   it("caps at the batch ceiling", () => {
-    expect(nextShadeBatchSize(SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH, 1)).toBe(
-      SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
-    );
+    expect(
+      nextShadeBatchSize(SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH, 1, 250),
+    ).toBe(SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH);
   });
 });
 
 describe("shadeHitBatchSize", () => {
-  it("sizes the first batch from the pessimistic prior, clamped by the starting capacity", () => {
-    // Prior 20ms/hit predicts 12 hits fit the 250ms target; the
-    // one-workgroup starting capacity (fr-d6g5) wins until measurements
-    // earn more.
+  it("hands a frame that has measured nothing exactly one workgroup", () => {
+    // The empty model asks for everything (fr-2ojg deleted the per-hit
+    // prior — it could only ask for less than the floor already gives)
+    // and the one-workgroup starting capacity is what answers.
     expect(
       shadeHitBatchSize(
-        SURFACE_COMPUTE_INITIAL_HIT_SHADE_US,
+        initialShadeHitCost(),
         SURFACE_COMPUTE_SHADE_HIT_CAP_START,
       ),
     ).toBe(SURFACE_COMPUTE_SHADE_HIT_CAP_START);
   });
 
-  it("shrinks toward the one-workgroup floor as measured cost approaches the pass target — the near-surface grind regime", () => {
-    // ~108ms/hit (full-width probes at the fr-p8bc near pose on Iris)
-    // predicts 2 hits by cost alone, but the workgroup floor wins: a
-    // sub-workgroup batch can't shrink submission wall any further (GPU
-    // cost inside one workgroup is depth-, not width-dominated).
+  it("divides the budget by the MARGINAL cost, not by a whole submission over its rays (fr-2ojg)", () => {
+    // fr-2ojg's measured boxfold-pair model: ~88ms fixed per dispatch,
+    // ~154us per hit beyond it. (250 - 88)ms / 154us = 1051 hits — and
+    // the measured optimum was ~1050, where the shipped sizer sat at
+    // 64-256.
     expect(
-      shadeHitBatchSize(108_000, SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH),
+      shadeHitBatchSize(
+        { interceptUs: 88_000, marginalUs: 154 },
+        SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
+      ),
+    ).toBe(1051);
+    // THE DEFECT, stated as arithmetic: the same hardware measured
+    // through the old lens. A 16-hit dispatch of that model costs
+    // 88 + 16*0.154 = 90.5ms, which charged flat to its rays reads
+    // 5.65ms PER HIT and predicts 44 hits fit the target — under the
+    // floor, so the sizer picks 64 again and re-measures the same
+    // inflation. Every width below the occupancy knee was that loop.
+    const wholeSubmissionUsPerHit = (88_000 + 16 * 154) / 16;
+    expect(
+      Math.floor(
+        (SURFACE_COMPUTE_PASS_TARGET_MS * 1000) / wholeSubmissionUsPerHit,
+      ),
+    ).toBeLessThan(SURFACE_COMPUTE_WORKGROUP_SIZE);
+  });
+
+  it("widens a latency-bound dispatch instead of refusing to (fr-2ojg)", () => {
+    // 400ms of fixed cost, 500us per hit: the budget doubles to 800ms and
+    // buys 800 hits with the second half. Under a fixed 250ms target the
+    // allowance would be negative and this would floor at 64 — a 12x
+    // throughput loss for no reduction in the submission wall, since the
+    // wall is the 400ms.
+    expect(
+      shadeHitBatchSize(
+        { interceptUs: 400_000, marginalUs: 500 },
+        SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
+      ),
+    ).toBe(800);
+  });
+
+  it("floors at one workgroup when the fixed cost alone passes the ceiling", () => {
+    // Past SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS there is no
+    // allowance left to buy hits with — nothing about this dispatch is
+    // safe to widen, and nothing about it gets cheaper by narrowing.
+    expect(
+      shadeHitBatchSize(
+        { interceptUs: 1_400_000, marginalUs: 500 },
+        SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
+      ),
     ).toBe(SURFACE_COMPUTE_WORKGROUP_SIZE);
   });
 
-  it("never collapses below one workgroup when the linear model breaks down (fr-d6g5)", () => {
-    // At/past the pass-target cost per hit, the old code floored at a
-    // single hit — but a 1-ray batch measures the FULL per-submission
-    // wall as its per-hit cost, so the spike-lift EMA latches onto that
-    // inflated reading and pins byCost at 0 forever (the fr-d6g5 park:
-    // ~4.4 hits/s on the real driver). The floor is one workgroup instead.
+  it("never collapses below one workgroup when per-hit cost is enormous (fr-d6g5)", () => {
     expect(
-      shadeHitBatchSize(400_000, SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH),
+      shadeHitBatchSize(
+        { interceptUs: 0, marginalUs: 400_000 },
+        SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
+      ),
     ).toBe(SURFACE_COMPUTE_WORKGROUP_SIZE);
-  });
-
-  it("the workgroup floor wins over a sub-workgroup cap", () => {
     // A cap below one workgroup can't reduce submission wall either, so
     // the floor overrides it.
-    expect(shadeHitBatchSize(400_000, 8)).toBe(SURFACE_COMPUTE_WORKGROUP_SIZE);
+    expect(shadeHitBatchSize({ interceptUs: 0, marginalUs: 400_000 }, 8)).toBe(
+      SURFACE_COMPUTE_WORKGROUP_SIZE,
+    );
   });
 
   it("lets cheap measured costs fill the earned capacity, no further", () => {
-    // ~1ms/hit (cheap-probe shading) predicts 250 hits, but capacity is
-    // whatever the double/quarter policy has earned.
-    expect(shadeHitBatchSize(1_000, 64)).toBe(64);
-    expect(shadeHitBatchSize(1_000, 4096)).toBe(250);
+    expect(shadeHitBatchSize({ interceptUs: 0, marginalUs: 1_000 }, 64)).toBe(
+      64,
+    );
+    expect(shadeHitBatchSize({ interceptUs: 0, marginalUs: 1_000 }, 4096)).toBe(
+      250,
+    );
   });
 });
 
-describe("nextShadeHitEmaUs", () => {
-  it("lifts INSTANTLY to a measured spike — the queue's scanline order says an expensive region just started", () => {
-    expect(nextShadeHitEmaUs(1_000, 108_000)).toBe(108_000);
+describe("nextShadeHitCost", () => {
+  it("fits the measurement it just took — the split double-counts nothing", () => {
+    const cost = nextShadeHitCost(
+      { interceptUs: 40_000, marginalUs: 300 },
+      256,
+      190_000,
+    );
+    expect(cost.interceptUs + 256 * cost.marginalUs).toBeCloseTo(190_000, 3);
   });
 
-  it("decays slowly toward cheaper measurements — re-trusting a cheap region costs a few conservative batches, never a hang", () => {
-    expect(nextShadeHitEmaUs(108_000, 1_000)).toBeCloseTo(
-      108_000 * 0.6 + 1_000 * 0.4,
-      6,
+  it("credits a one-workgroup dispatch to the INTERCEPT — it cannot be about per-hit cost", () => {
+    // 64 hits at 97.9ms from an empty model: w = 64/(64+512) = 0.111, so
+    // ~89% of it lands on the fixed term. The truth on that scene was
+    // 88ms fixed and 154us/hit.
+    const cost = nextShadeHitCost(initialShadeHitCost(), 64, 97_856);
+    expect(cost.interceptUs).toBeGreaterThan(0.85 * 97_856);
+    expect(cost.marginalUs).toBeLessThan(200);
+  });
+
+  it("credits a wide dispatch to the MARGINAL — that is what a wide one measures", () => {
+    const cost = nextShadeHitCost(initialShadeHitCost(), 4096, 700_000);
+    expect(4096 * cost.marginalUs).toBeGreaterThan(0.85 * 700_000);
+  });
+
+  it("shrugs off a QUEUE-LIMITED batch instead of shrinking on it (fr-2ojg)", () => {
+    // The converged boxfold-pair model, then a sweep that only had 100
+    // hits to give. Its dispatch is dominated by the fixed cost, and the
+    // old whole-submission-over-rays form read that as an expensive
+    // per-hit region: 103.4ms/100 = 1.03ms per hit, a 6.7x "spike" that
+    // latched instantly and cut the next batch to 242. Here the pivot
+    // hands it to the intercept and the next batch barely moves.
+    const before = { interceptUs: 88_000, marginalUs: 154 };
+    const after = nextShadeHitCost(before, 100, 88_000 + 100 * 154);
+    const cap = SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH;
+    expect(shadeHitBatchSize(after, cap)).toBeGreaterThan(
+      0.9 * shadeHitBatchSize(before, cap),
     );
-    // The decay converges: repeated cheap measurements do reach the cheap
-    // cost rather than pinning conservative forever.
-    let ema = 108_000;
-    for (let i = 0; i < 30; i++) ema = nextShadeHitEmaUs(ema, 1_000);
-    expect(ema).toBeLessThan(1_100);
+  });
+
+  it("collapses the next batch to the floor on a genuine cost spike", () => {
+    // The same converged model walking into a band 30x more expensive per
+    // hit at 1024 hits — the scanline-clustered near-surface silhouette
+    // the whole slow-trust policy exists for. One observation is enough.
+    const spiked = nextShadeHitCost(
+      { interceptUs: 88_000, marginalUs: 154 },
+      1024,
+      88_000 + 1024 * 154 * 30,
+    );
+    expect(spiked.marginalUs).toBeGreaterThan(10 * 154);
+    expect(shadeHitBatchSize(spiked, SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH)).toBe(
+      SURFACE_COMPUTE_WORKGROUP_SIZE,
+    );
+  });
+
+  it("keeps both terms non-negative when a measurement undercuts the model", () => {
+    const cost = nextShadeHitCost(
+      { interceptUs: 500_000, marginalUs: 900 },
+      2048,
+      1_000,
+    );
+    expect(cost.interceptUs).toBeGreaterThanOrEqual(0);
+    expect(cost.marginalUs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("converges on the measured optimum within a frame's worth of dispatches (fr-2ojg)", () => {
+    // The whole sizer, run against fr-2ojg's measured cost curve for the
+    // boxfold pair: 88ms of fixed dispatch cost plus 154us per hit. The
+    // optimum is cost(n) = 250ms, i.e. n = 1051. The shipped sizer sat at
+    // 64-256 for the whole settle; this reaches the optimum in single
+    // digits, and the capacity ladder — not the model — is what paces the
+    // climb, so no batch is ever wider than measured-cheap evidence
+    // supports.
+    const costOf = (n: number): number => 88_000 + 154 * n;
+    let cost = initialShadeHitCost();
+    let cap = SURFACE_COMPUTE_SHADE_HIT_CAP_START;
+    const widths: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      const budgetMs = shadeHitBudgetUs(cost.interceptUs) / 1000;
+      const n = shadeHitBatchSize(cost, cap);
+      const measuredUs = costOf(n);
+      widths.push(n);
+      // No dispatch on the way up may pass double the budget it was
+      // sized for — the bound the capacity ladder is there to keep.
+      expect(measuredUs / 1000).toBeLessThan(2 * budgetMs);
+      cost = nextShadeHitCost(cost, n, measuredUs);
+      cap = nextShadeBatchSize(cap, measuredUs / 1000, budgetMs);
+    }
+    expect(widths[widths.length - 1]).toBeGreaterThan(900);
+    expect(widths[widths.length - 1]).toBeLessThanOrEqual(1100);
+    // And the climb is the ladder's doubling, not a jump: every step at
+    // most doubles the last.
+    for (let i = 1; i < widths.length; i++) {
+      expect(widths[i]).toBeLessThanOrEqual(2 * widths[i - 1]);
+    }
   });
 });
 
