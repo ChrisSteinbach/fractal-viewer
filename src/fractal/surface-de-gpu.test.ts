@@ -5207,3 +5207,199 @@ describe("packSurface4GpuParams balloon/groundPlane blocks (fr-qxxw / fr-h0c3)",
     ).toThrow(/groundPlane\+balloon/);
   });
 });
+
+/** Every BOX-BRANCH DECODE the generated kernel carries, in emission
+ * order. That block is the ~25 lines that turn a fold branch index `b`
+ * into its per-axis preimage selectors (`selX`/`selY`/`selZ`, plus
+ * `selW` one dimension up) and from them the `pre` preimage and the `dd`
+ * distance fan the branch floor is built out of — the fold DE's own
+ * correctness core, hand-copied once per arm because each sits inside a
+ * different descent's loop body and WGSL has no way to share a fragment
+ * of one.
+ *
+ * Anchored `var bb = b;` (the decode's first line) through
+ * `let boxRd = length(dd);` (its last) — both appear exactly once per
+ * copy and nowhere else in the module, so the extraction cannot slide.
+ * Each block is then dedented by its own common indent: the copies sit
+ * at four different nesting depths and are otherwise the same text, so a
+ * UNIFORM per-line strip is the only normalization applied and any
+ * difference in the code itself survives it. */
+function boxBranchDecodes(wgsl: string): string[] {
+  const START = "var bb = b;";
+  const END = "let boxRd = length(dd);";
+  const out: string[] = [];
+  let at = 0;
+  for (;;) {
+    const hit = wgsl.indexOf(START, at);
+    if (hit === -1) return out;
+    const from = wgsl.lastIndexOf("\n", hit) + 1;
+    const endHit = wgsl.indexOf(END, hit);
+    if (endHit === -1) {
+      throw new Error(`box-branch decode at ${hit} has no "${END}" after it`);
+    }
+    const to = wgsl.indexOf("\n", endHit);
+    const lines = wgsl.slice(from, to).split("\n");
+    const indent = Math.min(
+      ...lines
+        .filter((line) => line.trim().length > 0)
+        .map((line) => line.length - line.trimStart().length),
+    );
+    out.push(lines.map((line) => line.slice(indent)).join("\n"));
+    at = to;
+  }
+}
+
+/** Drop whole-line `//` comments, leaving the code. Used ONLY on the 4D
+ * copies, whose fr-wa6o slab sub-block carries a prose paragraph in two
+ * of the four arms and none in the other two — see the pair of tests
+ * below, the second of which shows the code underneath is identical. */
+function withoutCommentLines(block: string): string {
+  return block
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("//"))
+    .join("\n");
+}
+
+describe("box-branch decode duplication (fr-ep0w)", () => {
+  it("emits the 3D box-branch decode character for character in all eight places a fold or lens kernel carries one, so a branch fix landing in one arm and not the others cannot ship", () => {
+    // Six from the fold shade kernel — the width-`width` descent, its
+    // narrow shading probe, the hit-info descent, and the three lens
+    // sweeps wrapped around them — plus two from the affine lens kernel,
+    // whose ladder core folds nothing but whose lens wrappers decode the
+    // final transform's own branches.
+    const copies = [
+      ...boxBranchDecodes(
+        surfaceDeKernelWgsl(
+          kernelOpts({
+            mode: "shade",
+            core: "fold",
+            lens: true,
+            shadeDeWidth: 1,
+          }),
+        ),
+      ),
+      ...boxBranchDecodes(
+        surfaceDeKernelWgsl(
+          kernelOpts({ mode: "shade", core: "affine", lens: true }),
+        ),
+      ),
+    ];
+    expect(copies).toHaveLength(8);
+    for (const [i, copy] of copies.entries()) {
+      expect(copy, `copy ${String(i)}`).toBe(copies[0]);
+    }
+    // The extracted text is the whole decode, not a prefix that any two
+    // blocks opening `var bb = b;` would match.
+    expect(copies[0]).toContain("bb = b % 27u;");
+    expect(copies[0]).toContain("let selZ = bb / 9u;");
+    expect(copies[0]).toContain(
+      "select(select(pre2.x, pre1.x, selX == 1u), pre0.x, selX == 0u),",
+    );
+    expect(copies[0]).toContain("max(dUp.z, dDn.z),");
+    expect(copies[0].split("\n")).toHaveLength(30);
+  });
+
+  it("emits the 4D box-branch decode character for character in all eight places, once the slab sub-block's commentary is set aside", () => {
+    // The 4D twins of the same eight arms. Only the fr-wa6o slab's
+    // `preExt` sign fan differs between them in the shipped text, and
+    // only in its COMMENT — the next test is the proof of that.
+    const copies = [
+      ...boxBranchDecodes(
+        surfaceDeKernelWgsl(
+          kernelOpts({
+            mode: "shade",
+            core: "fold4",
+            lens: true,
+            shadeDeWidth: 1,
+          }),
+        ),
+      ),
+      ...boxBranchDecodes(
+        surfaceDeKernelWgsl(
+          kernelOpts({ mode: "shade", core: "affine4", lens: true }),
+        ),
+      ),
+    ].map(withoutCommentLines);
+    expect(copies).toHaveLength(8);
+    for (const [i, copy] of copies.entries()) {
+      expect(copy, `copy ${String(i)}`).toBe(copies[0]);
+    }
+    expect(copies[0]).toContain("bb = b % 81u;");
+    expect(copies[0]).toContain("let selW = bb / 27u;");
+    expect(copies[0]).toContain(
+      "select(select(pre2.w, pre1.w, selW == 1u), pre0.w, selW == 0u),",
+    );
+    // The slab's own reflection fan rides inside the decode and is
+    // pinned with it.
+    expect(copies[0]).toContain("select(-eu.w, eu.w, selW == 0u),");
+  });
+
+  it("emits the 4D decode character for character WITH its comments once the slab is off, which is what makes the strip above a comment strip and not a code one", () => {
+    // slabExt: false drops the `preExt` sub-block wholesale (fr-b72d's
+    // probe leg), and with it the only text the four 4D arms disagree
+    // about. Nothing is normalized here beyond the shared dedent.
+    const copies = [
+      ...boxBranchDecodes(
+        surfaceDeKernelWgsl(
+          kernelOpts({
+            mode: "shade",
+            core: "fold4",
+            lens: true,
+            shadeDeWidth: 1,
+            slabExt: false,
+          }),
+        ),
+      ),
+      ...boxBranchDecodes(
+        surfaceDeKernelWgsl(
+          kernelOpts({
+            mode: "shade",
+            core: "affine4",
+            lens: true,
+            slabExt: false,
+          }),
+        ),
+      ),
+    ];
+    expect(copies).toHaveLength(8);
+    for (const [i, copy] of copies.entries()) {
+      expect(copy, `copy ${String(i)}`).toBe(copies[0]);
+    }
+    expect(copies[0]).not.toContain("preExt");
+  });
+
+  it("counts the box-branch decode in every kernel arm that can carry one, so a new copy has to be pinned here deliberately rather than shipping unwatched", () => {
+    // The census the two identity tests are read against: which arm
+    // emits how many. A copy added to an arm (or a refactor that shares
+    // one away) moves a row here and forces the author to say so.
+    const census: [Partial<SurfaceGpuKernelOptions>, number][] = [
+      // 3D: the fold frontier alone, then each thing that wraps it.
+      [{ mode: "eval", core: "fold" }, 1],
+      [{ mode: "march", core: "fold" }, 1],
+      [{ mode: "shade", core: "fold" }, 2],
+      [{ mode: "shade", core: "fold", shadeDeWidth: 1 }, 3],
+      [{ mode: "shade", core: "fold", lens: true, shadeDeWidth: 1 }, 6],
+      [{ mode: "shade", core: "affine", lens: true }, 2],
+      // Cores with no fold branch enumeration decode nothing — the
+      // affine ladder, and both forward orbits.
+      [{ mode: "shade", core: "affine" }, 0],
+      [{ mode: "shade", core: "escape" }, 0],
+      [{ mode: "shade", core: "bulb" }, 0],
+      // 4D: the same shape one dimension up.
+      [{ mode: "eval", core: "fold4" }, 1],
+      [{ mode: "march", core: "fold4" }, 1],
+      [{ mode: "shade", core: "fold4" }, 2],
+      [{ mode: "shade", core: "fold4", shadeDeWidth: 1 }, 3],
+      [{ mode: "shade", core: "fold4", lens: true, shadeDeWidth: 1 }, 6],
+      [{ mode: "shade", core: "affine4", lens: true }, 2],
+      [{ mode: "shade", core: "affine4" }, 0],
+      [{ mode: "shade", core: "escape4" }, 0],
+    ];
+    for (const [overrides, expected] of census) {
+      const wgsl = surfaceDeKernelWgsl(kernelOpts(overrides));
+      expect(boxBranchDecodes(wgsl).length, JSON.stringify(overrides)).toBe(
+        expected,
+      );
+    }
+  });
+});

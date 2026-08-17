@@ -1339,3 +1339,106 @@ describe("the present blit strips coverage alpha (fr-1wbv)", () => {
     );
   });
 });
+
+/** Every BOX-BRANCH DECODE the assembled fragment source carries, in
+ * emission order — the GLSL twin of `surface-de-gpu.ts`'s WGSL block and
+ * the same correctness core: the lines that turn a fold branch index `b`
+ * into its per-axis preimage selectors `selX`/`selY`/`selZ` and from them
+ * the `pre` preimage and the `dd` distance fan the branch floor is built
+ * out of. GLSL has no way to share a fragment of a loop body either, so
+ * each descent in this file carries its own copy.
+ *
+ * Anchored `int bb = kind == 1 ? b : b % 27;` (the decode's first line)
+ * through `float boxRd = length(dd);` (its last) — both appear exactly
+ * once per copy and nowhere else — then dedented by the block's own
+ * common indent, since the copies sit at three different nesting depths
+ * and are otherwise the same text.
+ *
+ * Read against `buildSurfaceFragment` rather than a `surfaceFragmentFor`
+ * variant on purpose: `resolveVariantArms` only ever DELETES arms, so the
+ * assembled source is the superset every variant is cut from and a copy
+ * cannot hide in an arm this test did not resolve. */
+function boxBranchDecodes(glsl: string): string[] {
+  const START = "int bb = kind == 1 ? b : b % 27;";
+  const END = "float boxRd = length(dd);";
+  const out: string[] = [];
+  let at = 0;
+  for (;;) {
+    const hit = glsl.indexOf(START, at);
+    if (hit === -1) return out;
+    const from = glsl.lastIndexOf("\n", hit) + 1;
+    const endHit = glsl.indexOf(END, hit);
+    if (endHit === -1) {
+      throw new Error(`box-branch decode at ${String(hit)} has no "${END}"`);
+    }
+    const to = glsl.indexOf("\n", endHit);
+    const lines = glsl.slice(from, to).split("\n");
+    const indent = Math.min(
+      ...lines
+        .filter((line) => line.trim().length > 0)
+        .map((line) => line.length - line.trimStart().length),
+    );
+    out.push(lines.map((line) => line.slice(indent)).join("\n"));
+    at = to;
+  }
+}
+
+describe("box-branch decode duplication (fr-ep0w)", () => {
+  it("emits the box-branch decode character for character in all four descents that carry one, so a branch fix landing in the beam descent and not the lens wrappers cannot ship", () => {
+    // At the beam width the probe instance is not emitted (foldDescentGlsl's
+    // own contract), which leaves the four hand-written copies: the fold
+    // beam descent, the fold hit-info descent, and the SURFACE_FOLD_LENS
+    // wrapper's value and hit-info sweeps.
+    const copies = boxBranchDecodes(
+      buildSurfaceFragment(SURFACE_FOLD_BEAM_WIDTH),
+    );
+    expect(copies).toHaveLength(4);
+    for (const [i, copy] of copies.entries()) {
+      expect(copy, `copy ${String(i)}`).toBe(copies[0]);
+    }
+    // The extracted text is the whole decode, not a prefix any two blocks
+    // opening with the same `int bb` line would match.
+    expect(copies[0]).toContain("int selZ = bb / 9;");
+    expect(copies[0]).toContain(
+      "selX == 0 ? pre0.x : (selX == 1 ? pre1.x : pre2.x),",
+    );
+    expect(copies[0]).toContain(
+      "selZ == 0 ? max(dUp.z, dDn.z) : (selZ == 1 ? dUp.z : dDn.z)",
+    );
+    expect(copies[0].split("\n")).toHaveLength(15);
+  });
+
+  it("gives the shipped build's narrow shading probe the same decode, token for token — its indentation is gone because foldProbeGlsl strips the instance, its code is not", () => {
+    // SURFACE_SHADE_DE_WIDTH is 1, so the shipped source carries a FIFTH
+    // copy: foldDescentGlsl instantiated as surfaceDEProbe. That one goes
+    // out through stripGlslComments, which trims every line, so the shared
+    // dedent above cannot line it up with the others — comparing per-line
+    // TRIMMED text is what is left, and it still catches any token drift.
+    const trimmed = (block: string): string =>
+      block
+        .split("\n")
+        .map((line) => line.trim())
+        .join("\n");
+    const copies = boxBranchDecodes(
+      buildSurfaceFragment(SURFACE_SHADE_DE_WIDTH),
+    ).map(trimmed);
+    expect(copies).toHaveLength(5);
+    for (const [i, copy] of copies.entries()) {
+      expect(copy, `copy ${String(i)}`).toBe(copies[0]);
+    }
+  });
+
+  it("leaves the decode out of every arm that has no fold branch enumeration, so a copy appearing in one would move a count here", () => {
+    // The census the identity tests are read against. The escape and bulb
+    // arms replace the descent bodies wholesale with a forward orbit,
+    // which enumerates nothing; the affine ladder folds nothing either, so
+    // its copies come from the lens wrapper alone.
+    expect(boxBranchDecodes(surfaceFragmentFor(1, 0))).toHaveLength(0);
+    expect(boxBranchDecodes(surfaceFragmentFor(0, 0, 0, 0, 1))).toHaveLength(0);
+    // Both fold arms of the resolved variants, at the shipped probe width:
+    // three without the lens (beam descent, its probe, hit-info) and four
+    // with it (no probe under the lens, plus the two lens sweeps).
+    expect(boxBranchDecodes(surfaceFragmentFor(0, 0))).toHaveLength(3);
+    expect(boxBranchDecodes(surfaceFragmentFor(0, 1))).toHaveLength(4);
+  });
+});
