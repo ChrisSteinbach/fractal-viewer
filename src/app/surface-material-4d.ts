@@ -1889,8 +1889,10 @@ uniform float uBalloonFar;
     // Alpha is the fr-7k0o COVERAGE flag, not an opacity: 1 where the
     // frame drew something, 0 where it shows only its backdrop. The 3D
     // tracer's convention, mirrored so scene.ts's settle fold can count
-    // either arm's output with one loop. Invisible either way — the canvas
-    // is created with alpha:false.
+    // either arm's output with one loop. Invisible because BLIT_FRAGMENT
+    // strips it to 1 at every present (fr-1wbv — three r163+ makes the
+    // canvas alpha:true regardless, and a coverage-0 pixel reaching it
+    // composited the page background into the pane).
     outColor = vec4(col, 1.0);
   }
 `;

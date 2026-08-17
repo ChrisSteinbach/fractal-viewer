@@ -4982,11 +4982,14 @@ export class FractalScene {
    * {@link foldSurfaceSample}. In place, so a pass costs one full-frame
    * readback and one upload with no copy between them; alpha is left as the
    * trace wrote it — since fr-7k0o that is the last folded pass's COVERAGE
-   * flag rather than an opacity, which is equally invisible (this texture
-   * is blitted with `NoBlending` into a canvas created `alpha: false`) and
-   * is nothing this path reads. A no-op at one pass, where the buffer
-   * already holds that pass verbatim and a round trip through the table
-   * could only lose a least significant bit.
+   * flag rather than an opacity, which is invisible because the present
+   * blit strips alpha to 1 (fr-1wbv: three r163+ creates the canvas
+   * `alpha: true` regardless of the renderer's `alpha` param, so a
+   * coverage-0 pixel that DID reach the canvas composited the page
+   * background into the pane — the earlier "canvas is alpha:false" claim
+   * here was wrong) and is nothing this path reads. A no-op at one pass,
+   * where the buffer already holds that pass verbatim and a round trip
+   * through the table could only lose a least significant bit.
    */
   private encodeSurfaceSampleMean(): void {
     const accum = this.surfaceSampleAccum;

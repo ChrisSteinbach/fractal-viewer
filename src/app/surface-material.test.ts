@@ -1,6 +1,8 @@
 import type * as THREE from "three";
+import { Texture } from "three";
 import {
   buildSurfaceFragment,
+  createSurfaceBlitMaterial,
   createSurfaceMaterial,
   setBulbSystem,
   setEscapeSystem,
@@ -1314,5 +1316,26 @@ describe("SURFACE_BULB variant (fr-7u8t.9)", () => {
     setSurfaceSystem(material, de3([map3()]), [black]);
     expect(material.defines.SURFACE_BULB).toBe(0);
     expect(material.fragmentShader).not.toContain("bulbPow8");
+  });
+});
+
+describe("the present blit strips coverage alpha (fr-1wbv)", () => {
+  // The tracers write the fr-7k0o COVERAGE flag into alpha (miss = 0), a
+  // private side-channel of the trace targets. three r163+ creates the
+  // canvas WebGL context alpha:true regardless of the renderer's `alpha`
+  // param, so a coverage-0 pixel that reaches the canvas makes the
+  // premultiplied compositor ADD the page background to the pane —
+  // measured as exactly +#0f1018 on every miss pixel of a WebGL surface
+  // settle, the whole of the two 4D arms' IoU 0.24/0.35 divergence. The
+  // blit is every surface present's last hop (settle, preview, compute
+  // DataTexture, capture's present-then-toBlob), so alpha must die here.
+  it("forces alpha to 1 so the coverage flag never reaches the always-alpha:true canvas", () => {
+    const material = createSurfaceBlitMaterial(new Texture());
+    expect(material.fragmentShader).toContain(
+      "outColor = vec4(texture(uSrc, vUv).rgb, 1.0);",
+    );
+    expect(material.fragmentShader).not.toContain(
+      "outColor = texture(uSrc, vUv);",
+    );
   });
 });
