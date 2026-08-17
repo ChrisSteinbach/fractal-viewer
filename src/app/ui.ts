@@ -765,6 +765,47 @@ function galleryTimestamp(ms: number): string {
 }
 
 /**
+ * What counts as a Tab stop inside a modal: the standard focusable set, with
+ * `[tabindex="-1"]` excluded because a programmatic focus target is not one.
+ */
+const MODAL_FOCUSABLE_SELECTOR =
+  'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+/**
+ * The Tab ring of an open modal, in DOM order (fr-trtv): every focusable it
+ * currently holds that a user could actually reach.
+ *
+ * COMPUTED PER CALL, never snapshotted at open, because two of the four modals
+ * fill themselves AFTER opening — the gallery renders (and re-renders, after a
+ * delete) its cards, and the mutation grid enables its eight cells as
+ * thumbnails land — so a ring frozen at trap time would tab around content
+ * that is visibly on screen.
+ *
+ * Visibility is the `hidden` CLASS, this project's one display-toggle idiom
+ * (`style.css`'s `.hidden { display: none }`), checked up the ancestor chain
+ * to and including the modal itself, plus the `hidden` attribute for
+ * completeness. Deliberately NOT `offsetParent`/`getComputedStyle`: jsdom
+ * loads no stylesheet and lays nothing out, so a geometric check would read
+ * every element invisible and silently empty the ring in the very tests that
+ * gate this. An element the document has REMOVED is absent from the query
+ * already, which is how the export modal's detached second action (fr-2fbs)
+ * stays out of the ring with no flag to consult.
+ */
+function modalFocusRing(modal: HTMLElement): HTMLElement[] {
+  const found = modal.querySelectorAll<HTMLElement>(MODAL_FOCUSABLE_SELECTOR);
+  return Array.from(found).filter((el) => {
+    // `disabled` is a reflected boolean attribute on every element type that
+    // has it, so the attribute and the property cannot disagree.
+    if (el.hasAttribute("disabled") || el.hasAttribute("hidden")) return false;
+    for (let node: HTMLElement | null = el; node; node = node.parentElement) {
+      if (node.classList.contains("hidden")) return false;
+      if (node === modal) break;
+    }
+    return true;
+  });
+}
+
+/**
  * Owns the control panel and the dynamic transform list. All DOM is built with
  * `createElement`/`textContent` (never `innerHTML`) so user-influenced strings
  * can never be interpreted as markup.
@@ -928,14 +969,23 @@ export class Ui {
    * mirrored flag to drift from it. */
   private readonly exportDeliverBtn: HTMLButtonElement;
   /** Whether the in-flight capture can be cancelled — mirrored from the last
-   * {@link showExportProgress} call, since {@link onExportKeydown} and
-   * {@link hideExportProgress}'s focus restore both need it after the fact.
-   * Cancel has no {@link exportDeliverBtn}-style absence: it is the one
-   * button the dialog always has a place for, so it hides in place. */
+   * {@link showExportProgress} call, since {@link onExportKeydown}'s Escape
+   * needs it after the fact. Cancel has no {@link exportDeliverBtn}-style
+   * absence: it is the one button the dialog always has a place for, so it
+   * hides in place, which is also what keeps it out of
+   * {@link modalFocusRing}'s answer with no flag for the ring to consult. */
   private exportCancellable = false;
-  /** The element focused just before {@link showExportProgress} opened the
-   * modal, restored by {@link hideExportProgress}. */
-  private exportPreviousFocus: HTMLElement | null = null;
+
+  /**
+   * Where focus goes when an open modal closes, keyed by the modal it belongs
+   * to (fr-trtv) — see {@link trapModalFocus}/{@link releaseModalFocus}.
+   *
+   * Per-modal rather than one shared slot because these dialogs can stack: an
+   * export starting over an open gallery must restore ITS opener when it
+   * closes and leave the gallery's alone, where a single field would have the
+   * two overwrite each other and strand focus on the wrong side of a scrim.
+   */
+  private readonly modalOpeners = new Map<HTMLElement, HTMLElement>();
 
   private readonly glowBrightnessRow: HTMLElement;
   // The balloon echo's rows (fr-5wlv.2, 4D since fr-5666) — the checkbox has
@@ -1210,55 +1260,55 @@ export class Ui {
   /** Pending {@link flashToast} auto-hide, cleared/rearmed on each toast. */
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
 
-  /** Escape-to-close for the gallery, attached to the document only while the
-   * modal is open (see {@link openGallery}/{@link closeGallery}) so it never
-   * lingers or double-binds. An arrow field so add/removeEventListener share
-   * one stable reference. */
+  /** Escape-and-Tab handling for the gallery, attached to the document only
+   * while the modal is open (see {@link openGallery}/{@link closeGallery}) so
+   * it never lingers or double-binds. An arrow field so
+   * add/removeEventListener share one stable reference. Escape is this
+   * modal's own concern; Tab goes to the shared trap
+   * ({@link cycleModalFocus}), which is the whole of what the four handlers
+   * have in common. */
   private readonly onGalleryKeydown = (e: KeyboardEvent): void => {
-    if (e.key === "Escape") this.closeGallery();
+    if (e.key === "Escape") {
+      this.closeGallery();
+      return;
+    }
+    if (e.key === "Tab") this.cycleModalFocus(this.galleryModal, e);
   };
 
-  /** Escape-to-close for the About dialog (fr-1zb), the same
+  /** Escape-and-Tab handling for the About dialog (fr-1zb), the same
    * attached-only-while-open discipline as {@link onGalleryKeydown}. */
   private readonly onAboutKeydown = (e: KeyboardEvent): void => {
-    if (e.key === "Escape") this.closeAbout();
+    if (e.key === "Escape") {
+      this.closeAbout();
+      return;
+    }
+    if (e.key === "Tab") this.cycleModalFocus(this.aboutModal, e);
   };
 
-  /** Escape-to-close for the mutation grid (fr-3vly), same discipline as
-   * {@link onGalleryKeydown}. */
+  /** Escape-and-Tab handling for the mutation grid (fr-3vly), same discipline
+   * as {@link onGalleryKeydown}. */
   private readonly onMutationKeydown = (e: KeyboardEvent): void => {
-    if (e.key === "Escape") this.closeMutations();
+    if (e.key === "Escape") {
+      this.closeMutations();
+      return;
+    }
+    if (e.key === "Tab") this.cycleModalFocus(this.mutationModal, e);
   };
 
   /** Escape-and-Tab handling for the export modal (fr-7mfx), attached only
-   * while it is open — same discipline as {@link onGalleryKeydown}. Escape
-   * routes to the app's cancel (real GPU work must stop) and to nothing
-   * else: fr-2fbs's second action saves a deliberately coarser picture, so
-   * a stray Escape must never fire it. Tab cycles the buttons the run
-   * actually offered — one of them, usually, which reproduces the original
-   * pin — because a blocking dialog must not let focus wander into the page
-   * it is blocking, and equally must not strand a keyboard user outside an
-   * action it is offering. */
+   * while it is open — same discipline as {@link onGalleryKeydown}. Escape is
+   * where this modal genuinely differs from the other three: it routes to the
+   * app's cancel (real GPU work must stop) and to nothing else, since
+   * fr-2fbs's second action saves a deliberately coarser picture and a stray
+   * Escape must never fire it. Tab is the shared trap, which cycles the
+   * buttons the run actually offered — one of them, usually, which reproduces
+   * the original pin. */
   private readonly onExportKeydown = (e: KeyboardEvent): void => {
     if (e.key === "Escape") {
       if (this.exportCancellable) this.handlers?.onExportCancel();
       return;
     }
-    if (e.key !== "Tab") return;
-    const ring: HTMLButtonElement[] = [];
-    if (this.exportDeliverBtn.isConnected) ring.push(this.exportDeliverBtn);
-    if (this.exportCancellable) ring.push(this.exportCancelBtn);
-    if (ring.length === 0) return;
-    e.preventDefault();
-    const at = ring.indexOf(this.doc.activeElement as HTMLButtonElement);
-    if (at < 0) {
-      // Focus is somewhere else entirely (the modal opened over the page, or
-      // a focused element was removed): pull it back into the ring.
-      ring[0].focus();
-      return;
-    }
-    const step = e.shiftKey ? -1 : 1;
-    ring[(at + step + ring.length) % ring.length].focus();
+    if (e.key === "Tab") this.cycleModalFocus(this.exportModal, e);
   };
 
   constructor(doc: Document = document) {
@@ -2528,44 +2578,132 @@ export class Ui {
         : this.exportCollectionTitle;
   }
 
-  /** Open the gallery modal over `scenes` (newest-first) and arm Escape-to-close. */
+  /**
+   * Arm the focus trap on a modal that has just been un-hidden (fr-trtv):
+   * remember what the user was on so {@link releaseModalFocus} can hand it
+   * back, then move focus INSIDE the dialog.
+   *
+   * All four modals declare `role="dialog" aria-modal="true"`, which tells
+   * assistive technology the page behind the scrim is inert. Three of them
+   * used to declare it and then do nothing about it — focus stayed on the
+   * button that had opened the dialog and Tab walked straight into that
+   * supposedly inert page — so this and {@link cycleModalFocus} are the two
+   * halves of making the promise true.
+   *
+   * `dismiss` is the control the caller wants focus to land on, and every
+   * modal passes its dismissive one (✕, or the export modal's Cancel) rather
+   * than letting the ring's first member decide: Enter on a dialog that just
+   * appeared under the user's hands must not commit to anything — a file, a
+   * drift show, or a re-roll. It falls back to the first ring member when that
+   * control is not on offer this time.
+   *
+   * The opener is only recorded from OUTSIDE the modal, so re-showing an
+   * already-open dialog (the export modal does exactly this when a run
+   * restarts) refreshes nothing and keeps the original opener.
+   */
+  private trapModalFocus(modal: HTMLElement, dismiss?: HTMLElement): void {
+    const opener = this.doc.activeElement;
+    if (opener instanceof HTMLElement && !modal.contains(opener)) {
+      this.modalOpeners.set(modal, opener);
+    }
+    const ring = modalFocusRing(modal);
+    const target = dismiss && ring.includes(dismiss) ? dismiss : ring[0];
+    // A modal with nothing focusable in it (none ship that way) leaves focus
+    // where it is rather than throwing.
+    target?.focus();
+  }
+
+  /**
+   * Hand focus back to whatever opened `modal` (fr-trtv), completing the trap
+   * {@link trapModalFocus} armed — otherwise closing a dialog drops focus on
+   * the body and a keyboard user restarts their tab walk from the top of the
+   * page.
+   *
+   * An opener the document no longer holds — a gallery card deleted from under
+   * its own modal, a button a render-mode change rebuilt — forfeits the
+   * restore rather than throwing. Idempotent and safe on a modal that was
+   * never open, so every close path (✕, backdrop, Escape, the export modal's
+   * Cancel) can call it unconditionally.
+   */
+  private releaseModalFocus(modal: HTMLElement): void {
+    const opener = this.modalOpeners.get(modal);
+    this.modalOpeners.delete(modal);
+    if (opener?.isConnected) opener.focus();
+  }
+
+  /**
+   * Keep Tab inside `modal`'s ring, wrapping at both ends (fr-trtv) — the Tab
+   * half of the trap, shared by all four modals' keydown handlers, which own
+   * their own Escape semantics and nothing else.
+   *
+   * Focus outside the ring (the modal opened over the page, or the focused
+   * element was removed under it — a deleted gallery card) is pulled to the
+   * first member rather than stepped from a position it does not have.
+   */
+  private cycleModalFocus(modal: HTMLElement, e: KeyboardEvent): void {
+    const ring = modalFocusRing(modal);
+    if (ring.length === 0) return;
+    e.preventDefault();
+    const active = this.doc.activeElement;
+    const at = active instanceof HTMLElement ? ring.indexOf(active) : -1;
+    if (at < 0) {
+      ring[0].focus();
+      return;
+    }
+    const step = e.shiftKey ? -1 : 1;
+    ring[(at + step + ring.length) % ring.length].focus();
+  }
+
+  /** Open the gallery modal over `scenes` (newest-first), arm Escape-to-close
+   * and trap focus in the dialog. */
   openGallery(scenes: SavedScene[]): void {
     this.renderGallery(scenes);
     this.galleryModal.classList.remove("hidden");
     this.doc.addEventListener("keydown", this.onGalleryKeydown);
+    this.trapModalFocus(this.galleryModal, this.galleryCloseBtn);
   }
 
-  /** Hide the gallery modal and drop its Escape listener. Idempotent. */
+  /** Hide the gallery modal, drop its Escape listener and restore focus to
+   * whatever opened it. Idempotent. */
   closeGallery(): void {
     this.galleryModal.classList.add("hidden");
     this.doc.removeEventListener("keydown", this.onGalleryKeydown);
+    this.releaseModalFocus(this.galleryModal);
   }
 
-  /** Open the "What is this?" dialog and arm Escape-to-close. */
+  /** Open the "What is this?" dialog, arm Escape-to-close and trap focus. */
   openAbout(): void {
     this.aboutModal.classList.remove("hidden");
     this.doc.addEventListener("keydown", this.onAboutKeydown);
+    this.trapModalFocus(this.aboutModal, this.aboutCloseBtn);
   }
 
-  /** Hide the "What is this?" dialog and drop its Escape listener. Idempotent. */
+  /** Hide the "What is this?" dialog, drop its Escape listener and restore
+   * focus to whatever opened it. Idempotent. */
   closeAbout(): void {
     this.aboutModal.classList.add("hidden");
     this.doc.removeEventListener("keydown", this.onAboutKeydown);
+    this.releaseModalFocus(this.aboutModal);
   }
 
   /** Open the mutation-grid modal (fr-3vly) with all nine cells reset to
-   * placeholders, and arm Escape-to-close. The app fills the cells as it
-   * builds candidates — {@link setMutationCurrent} / {@link setMutationCell}. */
+   * placeholders, arm Escape-to-close and trap focus. The app fills the cells
+   * as it builds candidates — {@link setMutationCurrent} /
+   * {@link setMutationCell} — and the ring is recomputed per keystroke, so a
+   * cell enabled after open is tabbable. */
   openMutations(): void {
     this.resetMutationCells();
     this.mutationModal.classList.remove("hidden");
     this.doc.addEventListener("keydown", this.onMutationKeydown);
+    this.trapModalFocus(this.mutationModal, this.mutationCloseBtn);
   }
 
-  /** Hide the mutation modal and drop its Escape listener. Idempotent. */
+  /** Hide the mutation modal, drop its Escape listener and restore focus to
+   * whatever opened it. Idempotent. */
   closeMutations(): void {
     this.mutationModal.classList.add("hidden");
     this.doc.removeEventListener("keydown", this.onMutationKeydown);
+    this.releaseModalFocus(this.mutationModal);
   }
 
   /** Whether the mutation modal is on screen. The app's progressive cell
@@ -2582,9 +2720,9 @@ export class Ui {
    * dead one. `deliverEarly` is the fr-2fbs second action under the same
    * rule: absent — every caller but the flame Save-PNG's wait — leaves the
    * modal with exactly one button, and its label comes from the app because
-   * only the app knows what the early picture will be. Arms Escape/Tab
-   * handling, remembers the currently focused element to restore on
-   * {@link hideExportProgress}, and resets the readout to 0% so a new run
+   * only the app knows what the early picture will be. Arms Escape and the
+   * shared focus trap ({@link trapModalFocus}, released on
+   * {@link hideExportProgress}), and resets the readout to 0% so a new run
    * never opens showing the previous run's number. */
   showExportProgress(init: ExportProgressInit): void {
     this.exportTitle.textContent = init.title;
@@ -2604,14 +2742,11 @@ export class Ui {
     this.exportProgress.style.setProperty("--progress", "0%");
     this.exportModal.classList.remove("hidden");
     this.doc.addEventListener("keydown", this.onExportKeydown);
-    this.exportPreviousFocus =
-      this.doc.activeElement instanceof HTMLElement
-        ? this.doc.activeElement
-        : null;
     // Cancel keeps the opening focus wherever it exists: Enter on a modal
     // that just appeared under the user's hands must not commit to a file.
-    if (init.cancellable) this.exportCancelBtn.focus();
-    else if (this.exportDeliverBtn.isConnected) this.exportDeliverBtn.focus();
+    // Off-offer, the shared trap falls back to the ring's first member, which
+    // is fr-2fbs's action when that is the only button the run put up.
+    this.trapModalFocus(this.exportModal, this.exportCancelBtn);
   }
 
   /** Update the readout. `pct: null` is the honest indeterminate state: the
@@ -2649,9 +2784,7 @@ export class Ui {
     this.exportProgress.textContent = "";
     this.exportProgress.style.setProperty("--progress", "0%");
     this.exportProgress.classList.remove("flame-progress-estimating");
-    const restoreFocus = this.exportPreviousFocus;
-    this.exportPreviousFocus = null;
-    if (restoreFocus?.isConnected) restoreFocus.focus();
+    this.releaseModalFocus(this.exportModal);
   }
 
   /** Reflect a capture in flight on the Save PNG button (fr-7mfx): the

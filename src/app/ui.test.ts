@@ -6221,6 +6221,289 @@ describe("Ui export progress modal (fr-7mfx)", () => {
   });
 });
 
+// All four dialogs declare role="dialog" aria-modal="true", which tells
+// assistive technology the page behind the scrim is inert. These pin the other
+// half of that promise: focus goes in on open, Tab stays inside, and the opener
+// gets it back on close, whichever way the dialog was dismissed.
+describe("Ui modal focus trap (fr-trtv)", () => {
+  const saved = (id: string) => ({
+    id,
+    encoded: `v1=${id}`,
+    thumbnail: "data:image/jpeg;base64,x",
+    createdAt: 1_700_000_000_000,
+  });
+
+  function el(id: string): HTMLElement {
+    const found = document.getElementById(id);
+    if (!found) throw new Error(`No #${id} in index.html`);
+    return found;
+  }
+
+  function pressTab(shiftKey = false): void {
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Tab", shiftKey }),
+    );
+  }
+
+  function pressEscape(): void {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+  }
+
+  /** The gallery cards' own buttons in DOM order (load, ✕, load, ✕, …) — the
+   * tail of the dialog's Tab ring, and the part that only exists after a
+   * render. */
+  function cardButtons(): HTMLElement[] {
+    return Array.from(
+      document.querySelectorAll<HTMLElement>(
+        "#galleryGrid .gallery-card-load, #galleryGrid .gallery-card-delete",
+      ),
+    );
+  }
+
+  it("moves focus into the gallery dialog instead of leaving it on the opener", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    el("galleryBtn").focus();
+
+    ui.openGallery([saved("a"), saved("b")]);
+
+    expect(el("galleryModal").contains(document.activeElement)).toBe(true);
+    // The ✕, not the dialog's first Tab stop: Enter on a dialog that just
+    // appeared under the user's hands must not launch the drift show sitting
+    // beside it — the export modal's Cancel-first rule, one dialog over.
+    expect(document.activeElement).toBe(el("galleryCloseBtn"));
+  });
+
+  it("Tab on the gallery ring's last member wraps around to its first", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openGallery([saved("a"), saved("b")]);
+    const buttons = cardButtons();
+    buttons[buttons.length - 1].focus();
+
+    pressTab();
+
+    // ▶ Drift collection leads the dialog's DOM order; the cards trail it.
+    expect(document.activeElement).toBe(el("galleryDriftBtn"));
+  });
+
+  it("Shift+Tab on the gallery ring's first member wraps around to its last", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openGallery([saved("a"), saved("b")]);
+    el("galleryDriftBtn").focus();
+
+    pressTab(true);
+
+    const buttons = cardButtons();
+    expect(document.activeElement).toBe(buttons[buttons.length - 1]);
+  });
+
+  it("takes cards rendered after the open into the ring — it is read at keydown, not at trap time", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openGallery([]);
+    // An empty collection is one Tab stop: the ✕, with drift disabled.
+    pressTab();
+    expect(document.activeElement).toBe(el("galleryCloseBtn"));
+
+    ui.renderGallery([saved("fresh")]);
+    pressTab();
+
+    expect(document.activeElement).toBe(cardButtons()[0]);
+  });
+
+  it("Escape hands focus back to the button that opened the gallery", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const opener = el("galleryBtn");
+    opener.focus();
+    ui.openGallery([saved("a")]);
+
+    pressEscape();
+
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("the gallery's ✕ hands focus back to the button that opened it", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const opener = el("galleryBtn");
+    opener.focus();
+    ui.openGallery([saved("a")]);
+
+    el("galleryCloseBtn").click();
+
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("moves focus into the About dialog on open", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    el("aboutBtn").focus();
+
+    ui.openAbout();
+
+    expect(el("aboutModal").contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(el("aboutCloseBtn"));
+  });
+
+  it("Shift+Tab from the About dialog's ✕ wraps to the last of its links", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openAbout();
+
+    pressTab(true);
+
+    const links = document.querySelectorAll("#aboutModal .about-links a");
+    expect(document.activeElement).toBe(links[links.length - 1]);
+  });
+
+  it("the About backdrop hands focus back to the control that opened it", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const opener = el("aboutBtn");
+    opener.focus();
+    ui.openAbout();
+
+    el("aboutBackdrop").click();
+
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("moves focus into the mutation dialog on open", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    el("mutateBtn").focus();
+
+    ui.openMutations();
+
+    expect(el("mutationModal").contains(document.activeElement)).toBe(true);
+    // Not "↻ Mutate again", which leads the DOM: an accidental Enter would
+    // re-roll the eight candidates the user opened the grid to look at.
+    expect(document.activeElement).toBe(el("mutationCloseBtn"));
+  });
+
+  it("Escape hands focus back to the button that opened the mutation grid", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const opener = el("mutateBtn");
+    opener.focus();
+    ui.openMutations();
+
+    pressEscape();
+
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("takes a mutation cell into the ring once its thumbnail enables it", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openMutations();
+    // Placeholders are disabled, so the ring is ↻ Mutate again + ✕ only.
+    pressTab();
+    expect(document.activeElement).toBe(el("mutationAgainBtn"));
+
+    ui.setMutationCell(0, new Uint8ClampedArray(4 * 4 * 4), 4, false);
+    el("mutationCloseBtn").focus();
+    pressTab();
+
+    const cells = document.querySelectorAll("#mutationGrid .mutation-cell");
+    expect(document.activeElement).toBe(cells[0]);
+  });
+
+  it("never lands on or tabs to a control the dialog has hidden", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    // An uncancellable run hides Cancel in place (it is the one button the
+    // dialog always has a place for) and offers fr-2fbs's action instead, so
+    // the ring is that action alone — the shared visibility filter standing in
+    // for the export modal's own cancellable flag.
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: false,
+      deliverEarly: { label: "Save now (rough)" },
+    });
+
+    expect(document.activeElement).toBe(el("exportDeliverBtn"));
+
+    pressTab();
+    expect(document.activeElement).toBe(el("exportDeliverBtn"));
+    pressTab(true);
+    expect(document.activeElement).toBe(el("exportDeliverBtn"));
+  });
+
+  it("hideExportProgress hands focus back to the button that started the export", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const opener = el("savePngBtn");
+    opener.focus();
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+
+    ui.hideExportProgress();
+
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("keeps the original opener when a run re-shows the export modal over itself", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const opener = el("savePngBtn");
+    opener.focus();
+    // The Export-size restart path: show, then show again without a hide, so
+    // the live activeElement is the modal's own Cancel button.
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+
+    ui.hideExportProgress();
+
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("gives each stacked dialog its own opener back", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    el("galleryBtn").focus();
+    ui.openGallery([saved("a")]);
+    el("savePngBtn").focus();
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+
+    ui.hideExportProgress();
+    expect(document.activeElement).toBe(el("savePngBtn"));
+
+    ui.closeGallery();
+    expect(document.activeElement).toBe(el("galleryBtn"));
+  });
+
+  it("forfeits the restore rather than throwing when the opener has left the document", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const opener = el("galleryBtn");
+    opener.focus();
+    ui.openGallery([saved("a")]);
+    opener.remove();
+
+    expect(() => ui.closeGallery()).not.toThrow();
+  });
+});
+
 describe("Ui replay caption", () => {
   function replayCaption(): HTMLElement {
     return document.getElementById("replayCaption") as HTMLElement;
