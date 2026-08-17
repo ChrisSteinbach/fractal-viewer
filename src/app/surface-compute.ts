@@ -130,6 +130,63 @@ export function setSurfaceComputeTrace(
   surfaceComputeTrace = sink;
 }
 
+/**
+ * Debug-only pins on the frame loop's three sizing dials (fr-fniy), read
+ * once per frame exactly like the trace sink above:
+ * `?surfacemarchchunk=N` forces every march slice to N rays,
+ * `?surfacemarchsteps=S` forces the per-ray step budget to S, and
+ * `?surfaceshadehits=H` forces every HIT shade batch to H hits — each in
+ * place of the measured estimate that normally picks it.
+ *
+ * THEY EXIST BECAUSE A SIZER CANNOT OTHERWISE BE ASKED ITS OWN QUESTION.
+ * Both sizers price a dispatch per unit of work, and a per-unit cost is
+ * only meaningful where a dispatch has no large fixed cost — the defect
+ * fr-2ojg found on the shade side, where the same statistic was measuring
+ * the wrong quantity outright. Deciding that means pricing cost against
+ * WIDTH, and the widths a sizer picks are picked BY the estimate under
+ * test: "THE TABLE ALONE PROVES NOTHING"
+ * (docs/surface-compute-renderer.md). A FORCED width is the one lever
+ * independent of the model, and until these pins existed the renderer had
+ * no such lever at all — every recorded cost-vs-width table in that
+ * document is bucketed over widths its own model chose.
+ *
+ * A pin can only ask for a NARROWER dispatch than the schedule would
+ * otherwise allow, never a wider one — the march width is still clamped
+ * by the remaining active list and the device's dispatch ceiling, the hit
+ * width by the queue and the same ceiling — with one deliberate
+ * exception: the hit pin overrides
+ * {@link SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH}, because "is that cap
+ * costing us anything" is a question the cap itself would otherwise
+ * answer no to. Pinning STEPS shrinks the model's march width by the same
+ * factor it raises the step count, so the pass-target bound rides through
+ * untouched. `?surfacesamples=N` and `?surfacemaxrays=N` are the same
+ * shape of escape hatch.
+ */
+let surfaceComputeMarchChunkPin: number | null = null;
+let surfaceComputeMarchStepsPin: number | null = null;
+let surfaceComputeShadeHitsPin: number | null = null;
+
+function positivePin(value: number | null | undefined): number | null {
+  return value !== null &&
+    value !== undefined &&
+    Number.isFinite(value) &&
+    value >= 1
+    ? Math.floor(value)
+    : null;
+}
+
+/** See {@link surfaceComputeMarchChunkPin}. Any field may be null or
+ * absent to leave that dial adaptive. */
+export function setSurfaceComputeSchedulePins(pins: {
+  marchChunk?: number | null;
+  marchSteps?: number | null;
+  shadeHits?: number | null;
+}): void {
+  surfaceComputeMarchChunkPin = positivePin(pins.marchChunk);
+  surfaceComputeMarchStepsPin = positivePin(pins.marchSteps);
+  surfaceComputeShadeHitsPin = positivePin(pins.shadeHits);
+}
+
 /** Threads per workgroup — fr-q1f8's measured winner (private frontier,
  * stage-1 prune only; wg size itself measured a non-factor, 64 matches the
  * bench's private-variant default). */
@@ -2023,6 +2080,12 @@ export class SurfaceComputeRenderer {
     jobSizer?: ShadeSizerState,
   ): Promise<SurfaceComputeFrame | null> {
     const trace = surfaceComputeTrace;
+    // Read once per frame beside the trace sink, so a pin can never change
+    // under a frame that is already scheduling against it (see
+    // {@link surfaceComputeMarchChunkPin}).
+    const marchChunkPin = surfaceComputeMarchChunkPin;
+    const marchStepsPin = surfaceComputeMarchStepsPin;
+    const shadeHitsPin = surfaceComputeShadeHitsPin;
     const traceT0 = performance.now();
     const tr = (line: string): void => {
       trace?.(`[${(performance.now() - traceT0).toFixed(0)}ms] ${line}`);
@@ -2112,7 +2175,7 @@ export class SurfaceComputeRenderer {
     // submission bounded in the unit that actually costs.
     let shadeHitQueue: number[] = [];
     let shadeFreeQueue: number[] = [];
-    let stepsThisPass = 1;
+    let stepsThisPass = marchStepsPin ?? 1;
     // fr-tdft sub-ray credit bookkeeping: march steps issued to every
     // surviving active ray by COMPLETED sweeps, and how many of the
     // current sweep's rays have been dispatched so far (those hold
@@ -2452,7 +2515,7 @@ export class SurfaceComputeRenderer {
             break outer;
           }
           const chunk = Math.min(
-            marchChunkFor(rayStepEmaUs, stepsThisPass),
+            marchChunkPin ?? marchChunkFor(rayStepEmaUs, stepsThisPass),
             active.length - offset,
             maxDispatchRays,
           );
@@ -2545,7 +2608,9 @@ export class SurfaceComputeRenderer {
         sweepSteps += stepsThisPass;
         sweepSliced = 0;
         active = Uint32Array.from(next);
-        if (sweptWhole) stepsThisPass = nextStepsPerPass(stepsThisPass, 0);
+        if (marchStepsPin === null && sweptWhole) {
+          stepsThisPass = nextStepsPerPass(stepsThisPass, 0);
+        }
         tr(
           `sweep done active=${active.length} hitQ=${shadeHitQueue.length} freeQ=${shadeFreeQueue.length} sweepSteps=${sweepSteps} stepsThisPass=${stepsThisPass}`,
         );
@@ -2584,7 +2649,10 @@ export class SurfaceComputeRenderer {
         const hitBudgetMs = shadeHitBudgetUs(sizer.cost.interceptUs) / 1000;
         const batchSize = isFree
           ? Math.min(shadeFreeQueue.length, maxDispatchRays)
-          : shadeHitBatchSize(sizer.cost, sizer.cap);
+          : Math.min(
+              shadeHitsPin ?? shadeHitBatchSize(sizer.cost, sizer.cap),
+              maxDispatchRays,
+            );
         // HOLD a partial hit batch for the next sweep's hits rather than
         // paying a whole dispatch's fixed cost for it (fr-2ojg). The
         // intercept is the same whether a dispatch carries 15 hits or
