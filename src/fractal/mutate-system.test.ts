@@ -25,6 +25,31 @@ function angularDiff(a: number, b: number): number {
   return raw > Math.PI ? 2 * Math.PI - raw : raw;
 }
 
+/**
+ * fr-mdhx: `mutateSystem(base, mulberry32(seed))` — the plain, non-wildcard
+ * mutation of the Sierpinski-tetrahedron base below — is a pure function of
+ * `seed` (proved by the determinism test below, and `mutateSystem` never
+ * mutates its `base` argument — see "never mutates the base system" below).
+ * Five tests spread across three describe blocks each used to independently
+ * re-roll their own 20-30 seed copy of exactly this batch just to inspect a
+ * different field; this corpus pays that cost once and every one of them
+ * reads it read-only (nothing here, including `scoreSystem`, mutates what it
+ * reads).
+ *
+ * Sized to the largest consumer (the quality-gate test's 30 seeds) so the
+ * four 20-seed tests can share the same corpus by reading its first 20
+ * entries, rather than rolling a second, separately-sized batch of the
+ * identical (base, seed) pairs.
+ */
+const SIERPINSKI_MUTATION_BASE = system({
+  transforms: sierpinskiTetrahedron(),
+});
+const SIERPINSKI_MUTATION_CORPUS_SIZE = 30;
+const SIERPINSKI_MUTATION_CORPUS: MorphSystem[] = Array.from(
+  { length: SIERPINSKI_MUTATION_CORPUS_SIZE },
+  (_, seed) => mutateSystem(SIERPINSKI_MUTATION_BASE, mulberry32(seed)),
+);
+
 describe("mutateSystem determinism and purity", () => {
   it("is deterministic for a given seed, including the quality gate's probes", () => {
     const base = system();
@@ -135,15 +160,14 @@ describe("mutateSystem perturbation", () => {
 
   it("keeps every rotation component within 0.12 rad of the base (mod wrap) for a non-wildcard mutation", () => {
     for (let seed = 0; seed < 20; seed++) {
-      const base = system({ transforms: sierpinskiTetrahedron() });
-      const mutant = mutateSystem(base, mulberry32(seed));
-      for (let i = 0; i < base.transforms.length; i++) {
+      const mutant = SIERPINSKI_MUTATION_CORPUS[seed];
+      for (let i = 0; i < SIERPINSKI_MUTATION_BASE.transforms.length; i++) {
         for (let axis = 0; axis < 3; axis++) {
           const diff = angularDiff(
             mutant.transforms[i].rotation[axis],
-            base.transforms[i].rotation[axis],
+            SIERPINSKI_MUTATION_BASE.transforms[i].rotation[axis],
           );
-          expect(diff).toBeLessThanOrEqual(0.12 + 1e-9);
+          expect(diff, `seed ${seed}`).toBeLessThanOrEqual(0.12 + 1e-9);
         }
       }
     }
@@ -151,15 +175,14 @@ describe("mutateSystem perturbation", () => {
 
   it("keeps every position component within 0.08 of the base for a non-wildcard mutation", () => {
     for (let seed = 0; seed < 20; seed++) {
-      const base = system({ transforms: sierpinskiTetrahedron() });
-      const mutant = mutateSystem(base, mulberry32(seed));
-      for (let i = 0; i < base.transforms.length; i++) {
+      const mutant = SIERPINSKI_MUTATION_CORPUS[seed];
+      for (let i = 0; i < SIERPINSKI_MUTATION_BASE.transforms.length; i++) {
         for (let axis = 0; axis < 3; axis++) {
           const diff = Math.abs(
             mutant.transforms[i].position[axis] -
-              base.transforms[i].position[axis],
+              SIERPINSKI_MUTATION_BASE.transforms[i].position[axis],
           );
-          expect(diff).toBeLessThanOrEqual(0.08 + 1e-9);
+          expect(diff, `seed ${seed}`).toBeLessThanOrEqual(0.08 + 1e-9);
         }
       }
     }
@@ -188,12 +211,13 @@ describe("mutateSystem flatness", () => {
 describe("mutateSystem clamps", () => {
   it("keeps every scale magnitude within [0.05, 2] across many seeds", () => {
     for (let seed = 0; seed < 20; seed++) {
-      const base = system({ transforms: sierpinskiTetrahedron() });
-      const mutant = mutateSystem(base, mulberry32(seed));
+      const mutant = SIERPINSKI_MUTATION_CORPUS[seed];
       for (const t of mutant.transforms) {
         for (const v of t.scale) {
-          expect(Math.abs(v)).toBeGreaterThanOrEqual(0.05 - 1e-9);
-          expect(Math.abs(v)).toBeLessThanOrEqual(2 + 1e-9);
+          expect(Math.abs(v), `seed ${seed}`).toBeGreaterThanOrEqual(
+            0.05 - 1e-9,
+          );
+          expect(Math.abs(v), `seed ${seed}`).toBeLessThanOrEqual(2 + 1e-9);
         }
       }
     }
@@ -201,93 +225,120 @@ describe("mutateSystem clamps", () => {
 
   it("keeps every weight strictly positive across many seeds", () => {
     for (let seed = 0; seed < 20; seed++) {
-      const base = system({ transforms: sierpinskiTetrahedron() });
-      const mutant = mutateSystem(base, mulberry32(seed));
+      const mutant = SIERPINSKI_MUTATION_CORPUS[seed];
       for (const t of mutant.transforms) {
-        expect(t.weight).toBeGreaterThan(0);
+        expect(t.weight, `seed ${seed}`).toBeGreaterThan(0);
       }
     }
   });
 
-  it("preserves a negative variation weight's sign, clamping its magnitude into [0.05, 2], across many seeds", () => {
-    const variedMap: Transform = {
-      id: 0,
-      position: [0, 0.8, 0],
-      rotation: [0, 0, 0],
-      scale: [0.5, 0.5, 0.5],
-      variations: [
-        { type: "mandelbox", weight: -1.5 },
-        { type: "swirl", weight: -0.04 },
-        { type: "spherical", weight: -6 },
-      ],
-    };
-    const finalTransform: Transform = {
-      id: 0,
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      scale: [1, 1, 1],
-      variations: [{ type: "boxfold", weight: -0.8 }],
-    };
-    const base = system({
-      transforms: [variedMap, ...sierpinskiTetrahedron().slice(1)],
-      finalTransform,
-    });
+  it(
+    "preserves a negative variation weight's sign, clamping its magnitude into [0.05, 2], across many seeds",
+    // fr-mdhx: this base (negative variation weights) is unique to this
+    // test -- nothing else in the file rolls it -- so there is no batch to
+    // share it with, and its own 200-seed sweep (mutateSystem's internal
+    // quality gate included) sits close enough to vitest's 5s default
+    // under full-suite CPU contention to warrant the same generous ceiling
+    // random-system.test.ts's 200-seed sweeps use.
+    { timeout: 30_000 },
+    () => {
+      const variedMap: Transform = {
+        id: 0,
+        position: [0, 0.8, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        variations: [
+          { type: "mandelbox", weight: -1.5 },
+          { type: "swirl", weight: -0.04 },
+          { type: "spherical", weight: -6 },
+        ],
+      };
+      const finalTransform: Transform = {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "boxfold", weight: -0.8 }],
+      };
+      const base = system({
+        transforms: [variedMap, ...sierpinskiTetrahedron().slice(1)],
+        finalTransform,
+      });
 
-    for (let seed = 0; seed < 200; seed++) {
-      const mutant = mutateSystem(base, mulberry32(seed));
-      expect(mutant.transforms[0].variations).toHaveLength(3);
-      expect(mutant.finalTransform?.variations).toHaveLength(1);
-      const weights = [
-        ...mutant.transforms[0].variations!.map((v) => v.weight),
-        ...mutant.finalTransform!.variations!.map((v) => v.weight),
-      ];
-      for (const weight of weights) {
-        expect(weight).toBeLessThan(0);
-        expect(Math.abs(weight)).toBeGreaterThanOrEqual(0.05 - 1e-9);
-        expect(Math.abs(weight)).toBeLessThanOrEqual(2 + 1e-9);
+      for (let seed = 0; seed < 200; seed++) {
+        const mutant = mutateSystem(base, mulberry32(seed));
+        expect(mutant.transforms[0].variations, `seed ${seed}`).toHaveLength(3);
+        expect(mutant.finalTransform?.variations, `seed ${seed}`).toHaveLength(
+          1,
+        );
+        const weights = [
+          ...mutant.transforms[0].variations!.map((v) => v.weight),
+          ...mutant.finalTransform!.variations!.map((v) => v.weight),
+        ];
+        for (const weight of weights) {
+          expect(weight, `seed ${seed}`).toBeLessThan(0);
+          expect(Math.abs(weight), `seed ${seed}`).toBeGreaterThanOrEqual(
+            0.05 - 1e-9,
+          );
+          expect(Math.abs(weight), `seed ${seed}`).toBeLessThanOrEqual(
+            2 + 1e-9,
+          );
+        }
       }
-    }
-  });
+    },
+  );
 
-  it("keeps a positive variation weight positive with magnitude in [0.05, 2] across many seeds", () => {
-    const variedMap: Transform = {
-      id: 0,
-      position: [0, 0.8, 0],
-      rotation: [0, 0, 0],
-      scale: [0.5, 0.5, 0.5],
-      variations: [
-        { type: "mandelbox", weight: 1.5 },
-        { type: "swirl", weight: 0.04 },
-        { type: "spherical", weight: 6 },
-      ],
-    };
-    const finalTransform: Transform = {
-      id: 0,
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      scale: [1, 1, 1],
-      variations: [{ type: "boxfold", weight: 0.8 }],
-    };
-    const base = system({
-      transforms: [variedMap, ...sierpinskiTetrahedron().slice(1)],
-      finalTransform,
-    });
+  it(
+    "keeps a positive variation weight positive with magnitude in [0.05, 2] across many seeds",
+    // fr-mdhx: mirrors the negative-weight test above (its own unique base,
+    // same 200-seed shape, same reason for the generous timeout).
+    { timeout: 30_000 },
+    () => {
+      const variedMap: Transform = {
+        id: 0,
+        position: [0, 0.8, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        variations: [
+          { type: "mandelbox", weight: 1.5 },
+          { type: "swirl", weight: 0.04 },
+          { type: "spherical", weight: 6 },
+        ],
+      };
+      const finalTransform: Transform = {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "boxfold", weight: 0.8 }],
+      };
+      const base = system({
+        transforms: [variedMap, ...sierpinskiTetrahedron().slice(1)],
+        finalTransform,
+      });
 
-    for (let seed = 0; seed < 200; seed++) {
-      const mutant = mutateSystem(base, mulberry32(seed));
-      expect(mutant.transforms[0].variations).toHaveLength(3);
-      expect(mutant.finalTransform?.variations).toHaveLength(1);
-      const weights = [
-        ...mutant.transforms[0].variations!.map((v) => v.weight),
-        ...mutant.finalTransform!.variations!.map((v) => v.weight),
-      ];
-      for (const weight of weights) {
-        expect(weight).toBeGreaterThan(0);
-        expect(Math.abs(weight)).toBeGreaterThanOrEqual(0.05 - 1e-9);
-        expect(Math.abs(weight)).toBeLessThanOrEqual(2 + 1e-9);
+      for (let seed = 0; seed < 200; seed++) {
+        const mutant = mutateSystem(base, mulberry32(seed));
+        expect(mutant.transforms[0].variations, `seed ${seed}`).toHaveLength(3);
+        expect(mutant.finalTransform?.variations, `seed ${seed}`).toHaveLength(
+          1,
+        );
+        const weights = [
+          ...mutant.transforms[0].variations!.map((v) => v.weight),
+          ...mutant.finalTransform!.variations!.map((v) => v.weight),
+        ];
+        for (const weight of weights) {
+          expect(weight, `seed ${seed}`).toBeGreaterThan(0);
+          expect(Math.abs(weight), `seed ${seed}`).toBeGreaterThanOrEqual(
+            0.05 - 1e-9,
+          );
+          expect(Math.abs(weight), `seed ${seed}`).toBeLessThanOrEqual(
+            2 + 1e-9,
+          );
+        }
       }
-    }
-  });
+    },
+  );
 });
 
 describe("mutateSystem wildcard structural kick", () => {
@@ -376,7 +427,7 @@ describe("mutateSystem wildcard structural kick", () => {
       const mutant = mutateSystem(base, mulberry32(seed), { wildcard: true });
       for (const t of mutant.transforms) {
         const types = (t.variations ?? []).map((v) => v.type);
-        expect(new Set(types).size).toBe(types.length);
+        expect(new Set(types).size, `seed ${seed}`).toBe(types.length);
       }
     }
   });
@@ -384,23 +435,32 @@ describe("mutateSystem wildcard structural kick", () => {
 
 describe("mutateSystem quality gate", () => {
   it("lands a mutant that clears a fresh scoreSystem probe for the large majority of seeds mutating Sierpinski", () => {
-    const base = system({ transforms: sierpinskiTetrahedron() });
-    const SEED_COUNT = 30;
+    // Same base + seed range as SIERPINSKI_MUTATION_CORPUS above (its full
+    // 30 entries, not a slice) -- shared rather than re-rolled (fr-mdhx).
+    const SEED_COUNT = SIERPINSKI_MUTATION_CORPUS_SIZE;
     let passes = 0;
+    const failingSeeds: number[] = [];
     for (let seed = 0; seed < SEED_COUNT; seed++) {
-      const mutant = mutateSystem(base, mulberry32(seed));
+      const mutant = SIERPINSKI_MUTATION_CORPUS[seed];
       // A fresh, independent rng stream -- not a replay of mutateSystem's own
       // generation-time probes -- so this genuinely re-verifies the mutant
       // rather than trivially repeating the check that already accepted it
       // (same pattern as random-system.test.ts's re-probe tests).
       const score = scoreSystem(mutant, mulberry32(seed * 7919 + 1));
-      if (score >= MIN_OCCUPIED_CELLS) passes++;
+      if (score >= MIN_OCCUPIED_CELLS) {
+        passes++;
+      } else {
+        failingSeeds.push(seed);
+      }
     }
     // Measured (scripts-side sweep, not run here): 300/300 seeds clear a
     // fresh probe for this base -- every one of this test's 30 included.
     // Asserting well below that observed 100% so a future jitter-range
     // retune has room to cost a seed or two without breaking this test.
-    expect(passes).toBeGreaterThanOrEqual(28);
+    expect(
+      passes,
+      `failing seeds: ${failingSeeds.join(", ") || "none"}`,
+    ).toBeGreaterThanOrEqual(28);
   });
 });
 
@@ -441,10 +501,10 @@ describe("mutateSystem colorIndex/colorSpeed", () => {
     for (let seed = 0; seed < 20; seed++) {
       const mutant = mutateSystem(base, mulberry32(seed));
       for (const t of mutant.transforms) {
-        expect(t.colorIndex).toBeGreaterThanOrEqual(0);
-        expect(t.colorIndex).toBeLessThanOrEqual(1);
-        expect(t.colorSpeed).toBeGreaterThanOrEqual(0);
-        expect(t.colorSpeed).toBeLessThanOrEqual(1);
+        expect(t.colorIndex, `seed ${seed}`).toBeGreaterThanOrEqual(0);
+        expect(t.colorIndex, `seed ${seed}`).toBeLessThanOrEqual(1);
+        expect(t.colorSpeed, `seed ${seed}`).toBeGreaterThanOrEqual(0);
+        expect(t.colorSpeed, `seed ${seed}`).toBeLessThanOrEqual(1);
       }
     }
   });
@@ -539,13 +599,15 @@ describe("mutateSystem fold radii (fr-s9ll)", () => {
     for (let seed = 0; seed < 30; seed++) {
       const mutant = mutateSystem(base, mulberry32(seed));
       const v = mutant.transforms[0].variations![0];
-      expect(v.minRadius).toBeGreaterThanOrEqual(0.05 - 1e-9);
-      expect(v.minRadius).toBeLessThanOrEqual(2 + 1e-9);
-      expect(v.fixedRadius).toBeGreaterThanOrEqual(0.05 - 1e-9);
-      expect(v.fixedRadius).toBeLessThanOrEqual(2 + 1e-9);
-      expect(v.minRadius!).toBeLessThanOrEqual(v.fixedRadius! + 1e-9);
-      expect(v.boxLimit).toBeGreaterThanOrEqual(-1e-9);
-      expect(v.boxLimit).toBeLessThanOrEqual(2 + 1e-9);
+      expect(v.minRadius, `seed ${seed}`).toBeGreaterThanOrEqual(0.05 - 1e-9);
+      expect(v.minRadius, `seed ${seed}`).toBeLessThanOrEqual(2 + 1e-9);
+      expect(v.fixedRadius, `seed ${seed}`).toBeGreaterThanOrEqual(0.05 - 1e-9);
+      expect(v.fixedRadius, `seed ${seed}`).toBeLessThanOrEqual(2 + 1e-9);
+      expect(v.minRadius!, `seed ${seed}`).toBeLessThanOrEqual(
+        v.fixedRadius! + 1e-9,
+      );
+      expect(v.boxLimit, `seed ${seed}`).toBeGreaterThanOrEqual(-1e-9);
+      expect(v.boxLimit, `seed ${seed}`).toBeLessThanOrEqual(2 + 1e-9);
       if (v.minRadius !== 0.6 || v.fixedRadius !== 1.2 || v.boxLimit !== 0.9) {
         sawChange = true;
       }
@@ -568,9 +630,9 @@ describe("mutateSystem fold radii (fr-s9ll)", () => {
     for (let seed = 0; seed < 30; seed++) {
       const mutant = mutateSystem(base, mulberry32(seed));
       const v = mutant.transforms[0].variations![0];
-      expect("minRadius" in v).toBe(false);
-      expect("fixedRadius" in v).toBe(false);
-      expect("boxLimit" in v).toBe(false);
+      expect("minRadius" in v, `seed ${seed}`).toBe(false);
+      expect("fixedRadius" in v, `seed ${seed}`).toBe(false);
+      expect("boxLimit" in v, `seed ${seed}`).toBe(false);
     }
   });
 
@@ -595,9 +657,9 @@ describe("mutateSystem fold radii (fr-s9ll)", () => {
     for (let seed = 0; seed < 30; seed++) {
       const mutant = mutateSystem(base, mulberry32(seed), { wildcard: true });
       const v = mutant.transforms[0].variations![0];
-      expect("minRadius" in v).toBe(false);
-      expect("fixedRadius" in v).toBe(false);
-      expect("boxLimit" in v).toBe(false);
+      expect("minRadius" in v, `seed ${seed}`).toBe(false);
+      expect("fixedRadius" in v, `seed ${seed}`).toBe(false);
+      expect("boxLimit" in v, `seed ${seed}`).toBe(false);
     }
   });
 
@@ -635,9 +697,9 @@ describe("mutateSystem fold radii (fr-s9ll)", () => {
           ) {
             continue;
           }
-          expect("minRadius" in v).toBe(false);
-          expect("fixedRadius" in v).toBe(false);
-          expect("boxLimit" in v).toBe(false);
+          expect("minRadius" in v, `seed ${seed}`).toBe(false);
+          expect("fixedRadius" in v, `seed ${seed}`).toBe(false);
+          expect("boxLimit" in v, `seed ${seed}`).toBe(false);
         }
       }
     }
