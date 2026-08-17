@@ -17,7 +17,8 @@ import { clamp } from "./vec";
  * through unchanged, warping every z-slice the same way. The *fold* warps
  * (`boxfold`, `spherefold`, `mandelbox` — fr-p7nu) are natively 3-D: per-axis
  * plane reflections and a full-3D-radius ball inversion, the Mandelbox's two
- * moves.
+ * moves — the Mandelbox itself due to Tom Lowe ("tglad"), who introduced it on
+ * fractalforums in 2010.
  */
 export type VariationFn = (x: number, y: number, z: number, rng: Rng) => Vec3;
 
