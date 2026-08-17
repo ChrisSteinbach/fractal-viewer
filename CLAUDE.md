@@ -1637,7 +1637,14 @@ Frame` callback, which runs before paint so the disabled look never
     spike-lift latches it, and the settle reads as parked forever at a
     pose-dependent percent (fr-d6g5's Mesa-25.2.8 "park"; `?surfacetrace`
     and `scripts/fold-settle-park.repro.mjs` are that diagnosis'
-    instruments, kept). NO submission outruns the i915 watchdog;
+    instruments, kept). THE FREE (miss/exhausted) QUEUE HAS NO CAP AT ALL
+    since fr-257o — one background write per ray is not a cost model, so
+    it drains WHOLE in one dispatch per sweep, bounded by the device's
+    dispatch ceiling alone, which BOTH sizing paths now clamp at
+    (`surfaceComputeMaxDispatchRays`; the frame ceiling deliberately does
+    NOT meet it — memory question, not submission shape). MEASURED 2492
+    free dispatches -> 58 and a 35.0 s settle -> 25.0 s, settled PNGs
+    byte-identical. NO submission outruns the i915 watchdog;
     progressive presents between every bounded piece; host-compacted active
     list; shading probes ride `SURFACE_COMPUTE_SHADE_DE_WIDTH` (the fr-p8bc
     verdict); colorOut prefill seeded from the last frame
