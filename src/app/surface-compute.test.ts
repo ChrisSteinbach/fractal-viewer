@@ -17,6 +17,7 @@ import {
   SURFACE_COMPUTE_SHADE_HIT_CAP_START,
   SURFACE_COMPUTE_WORKGROUP_SIZE,
   surfaceComputeBandStops,
+  surfaceComputeMaxDispatchRays,
   surfaceComputeMaxFrameRays,
   surfaceComputeProgressDone,
   surfaceComputeTileRows,
@@ -80,6 +81,41 @@ describe("buildSurfaceComputeBackground", () => {
   });
 });
 
+describe("surfaceComputeMaxDispatchRays", () => {
+  it("buys 4,194,240 rays at WebGPU's spec-minimum workgroup ceiling (fr-257o)", () => {
+    // The device is requested without raising maxComputeWorkgroupsPerDimension
+    // (only the two storage limits are), which pins it at the spec floor of
+    // 65535 on every shipped adapter — so this is the figure that actually
+    // bounds a dispatch in the field, since every dispatch this module issues
+    // is one-dimensional at SURFACE_COMPUTE_WORKGROUP_SIZE (64) threads per
+    // workgroup.
+    const rays = surfaceComputeMaxDispatchRays({
+      maxComputeWorkgroupsPerDimension: 65535,
+    });
+    expect(rays).toBe(65535 * SURFACE_COMPUTE_WORKGROUP_SIZE);
+    expect(rays).toBe(4_194_240);
+  });
+
+  it("scales linearly with a larger reported ceiling", () => {
+    // A device advertising 4x the spec-minimum workgroup ceiling buys 4x
+    // the rays — the relationship is a straight multiply, not a curve.
+    expect(
+      surfaceComputeMaxDispatchRays({
+        maxComputeWorkgroupsPerDimension: 65535 * 4,
+      }),
+    ).toBe(4_194_240 * 4);
+  });
+
+  it("floors at one workgroup's worth of rays rather than 0 on a degenerate limit", () => {
+    // A zero-reported ceiling would zero out the multiplication, and a
+    // zero-length dispatch drains no queue and never terminates the loop
+    // that sized it — so the floor holds it at SURFACE_COMPUTE_WORKGROUP_SIZE.
+    expect(
+      surfaceComputeMaxDispatchRays({ maxComputeWorkgroupsPerDimension: 0 }),
+    ).toBe(SURFACE_COMPUTE_WORKGROUP_SIZE);
+  });
+});
+
 describe("surfaceComputeMaxFrameRays", () => {
   it("sizes the frame by the ray-state buffer against the tighter ceiling", () => {
     // A 128 MiB storage-binding ceiling under a 256 MiB buffer ceiling:
@@ -101,6 +137,26 @@ describe("surfaceComputeMaxFrameRays", () => {
         maxStorageBufferBindingSize: 2 * 1024 * 1024 * 1024,
       }),
     ).toBe((64 * 1024 * 1024) / SURFACE_COMPUTE_RAY_STATE_BYTES);
+  });
+
+  it("does NOT clamp to the dispatch ceiling — a memory question, not a submission-shape one (fr-257o)", () => {
+    // A 128 MiB storage binding still buys 8.4M rays here even though that
+    // is twice surfaceComputeMaxDispatchRays of a spec-minimum device: the
+    // two are deliberately not met against each other, since folding the
+    // smaller in would soften a 4K pane's raster for a submission-shape
+    // ceiling no single piece of work has to meet. Every dispatch this
+    // loop issues sizes and clamps at its own call site instead.
+    const frameRays = surfaceComputeMaxFrameRays({
+      maxBufferSize: 256 * 1024 * 1024,
+      maxStorageBufferBindingSize: 128 * 1024 * 1024,
+    });
+    const dispatchRays = surfaceComputeMaxDispatchRays({
+      maxComputeWorkgroupsPerDimension: 65535,
+    });
+    expect(frameRays).toBe(
+      (128 * 1024 * 1024) / SURFACE_COMPUTE_RAY_STATE_BYTES,
+    );
+    expect(frameRays).toBeGreaterThan(dispatchRays);
   });
 });
 

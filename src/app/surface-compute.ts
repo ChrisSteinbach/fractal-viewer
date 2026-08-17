@@ -693,6 +693,38 @@ function mib(bytes: number): string {
 }
 
 /**
+ * Rays ONE dispatch may cover on a device with these limits (fr-257o).
+ * Every dispatch this module issues is one-dimensional —
+ * `ceil(count / SURFACE_COMPUTE_WORKGROUP_SIZE)` workgroups along x — so
+ * `maxComputeWorkgroupsPerDimension` IS a ray count once multiplied
+ * through, and the device is requested without raising that limit (only
+ * the two storage ones), which pins it at WebGPU's spec minimum 65535 on
+ * every adapter: 4,194,240 rays.
+ *
+ * THE MARCH SLICE CAN REACH IT and never clamped at it: the slice is
+ * `min(cost-EMA prediction, active list)`, and the EMA is MEASURED, so a
+ * cheap far-field frame drives the prediction above the active list and
+ * the whole list goes out as one dispatch. That is only a problem on a
+ * raster bigger than this ceiling — and {@link surfaceComputeMaxFrameRays}
+ * of a spec-minimum 128 MiB storage binding is 8.4M rays, twice it, which
+ * a hidpi 1440p pane sits inside. WebGPU answers an over-limit
+ * `dispatchWorkgroups` with a validation error that invalidates the
+ * encoder, so the submission silently does NOTHING and those rays keep
+ * whatever their pixels were seeded with: a wrong image, not a crash,
+ * which is why it has never been reported. Pure so the arithmetic is
+ * unit-tested.
+ */
+export function surfaceComputeMaxDispatchRays(limits: {
+  maxComputeWorkgroupsPerDimension: number;
+}): number {
+  return Math.max(
+    SURFACE_COMPUTE_WORKGROUP_SIZE,
+    Math.floor(limits.maxComputeWorkgroupsPerDimension) *
+      SURFACE_COMPUTE_WORKGROUP_SIZE,
+  );
+}
+
+/**
  * The largest raster ONE frame may allocate for on a device with these
  * limits, in rays (fr-biox). `states` is both the widest per-ray buffer
  * and a bound STORAGE buffer, so it meets whichever ceiling is lower —
@@ -700,6 +732,15 @@ function mib(bytes: number): string {
  * cheaper readback (one 4 B/ray status buffer in place of the 16 B/ray
  * staging twin) cuts a frame's total commitment without moving this
  * bound. Pure so the arithmetic behind a refusal is unit-tested.
+ *
+ * DELIBERATELY NOT MET AGAINST {@link surfaceComputeMaxDispatchRays}
+ * (fr-257o), even though that one is the lower of the two on a
+ * spec-minimum device: a frame's rays are a MEMORY question and a
+ * dispatch's are a SUBMISSION-SHAPE one, and folding the smaller in here
+ * would make a 4K pane (8.3M rays, inside a spec-minimum 128 MiB binding)
+ * fit one rung softer for a ceiling no single piece of work has to meet.
+ * Every dispatch this loop issues is sized at its own site, and clamps
+ * there.
  */
 export function surfaceComputeMaxFrameRays(limits: {
   maxBufferSize: number;
@@ -2115,6 +2156,11 @@ export class SurfaceComputeRenderer {
       return performance.now() - t0;
     };
 
+    // The device's own ceiling on ONE dispatch (fr-257o) — the last clamp
+    // on the sizing below, above whatever its cost model asked for. See
+    // {@link surfaceComputeMaxDispatchRays}.
+    const maxDispatchRays = surfaceComputeMaxDispatchRays(device.limits);
+
     // Progress presents fire BETWEEN bounded pieces of work — march
     // slices and shade batches alike — never only at iteration ends: a
     // full-depth shade drain can grind for minutes, and the whole point
@@ -2185,6 +2231,7 @@ export class SurfaceComputeRenderer {
           const chunk = Math.min(
             marchChunkFor(rayStepEmaUs, stepsThisPass),
             active.length - offset,
+            maxDispatchRays,
           );
           if (!Number.isFinite(chunk) || chunk <= 0) {
             tr(`ANOMALY march chunk=${chunk} emaUs=${rayStepEmaUs}`);
