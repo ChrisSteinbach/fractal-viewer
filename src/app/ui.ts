@@ -6,14 +6,11 @@ import {
   MAX_TRANSFORMS,
 } from "../fractal/chaos-game";
 import {
-  buildColorModeLUT,
   colorModeUsesGamma,
   colorModeUsesRampPalette,
   fourDColorNeedsAttribute,
   LEGACY_POSITION_AXIS_COLORS,
   transformColors,
-  W_SIDE_PALETTES,
-  wRampColor,
 } from "../fractal/color";
 import type { PositionAxisColors } from "../fractal/color";
 import {
@@ -28,7 +25,6 @@ import {
 import type {
   CustomPalette,
   PaletteSelection,
-  PaletteSpec,
   RgbStop,
 } from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
@@ -38,7 +34,6 @@ import type {
   Variation,
   VariationType,
   Vec3,
-  WDepthColorMode,
   WExtension,
 } from "../fractal/types";
 import { clone3, to255 } from "../fractal/vec";
@@ -60,12 +55,10 @@ import {
   MIN_W_SHEAR,
   systemIsNonFlat,
 } from "./state";
-import {
-  formatIterationCount,
-  SCALAR_CONTROLS,
-  surfaceColorLUT,
-} from "./control-spec";
+import { formatIterationCount, SCALAR_CONTROLS } from "./control-spec";
 import type { ScalarControlSpec } from "./control-spec";
+import { deriveLegend, lutGradient } from "./legend-spec";
+import type { LegendPaletteControl, LegendSpec } from "./legend-spec";
 import {
   MOBILE_BREAKPOINT,
   MIN_GUIDE_SCALE,
@@ -618,114 +611,6 @@ function scaleSummary(scale: Vec3): string {
   if (x === y && y === z) return x.toFixed(2);
   return `[${scale.map((v) => v.toFixed(2)).join(", ")}]`;
 }
-
-/**
- * Number of evenly spaced samples used to build the legend's LUT-sampled
- * gradients (fr-dsz): the colorMode ramps and, since fr-a3q, the palette
- * strips — more than a coarse 8-stop bar so a non-1 `colorGamma` curve
- * (fr-8sk) still reads accurately in the legend, not just at its two
- * (always-fixed) endpoints.
- */
-const LEGEND_GRADIENT_STOPS = 16;
-
-/** Cap on individual swatches shown in the "by transform" legend before the
- * remainder folds into a single "+N" indicator — an uncapped strip would
- * grow arbitrarily wide for a many-transform system. */
-const LEGEND_MAX_SWATCHES = 12;
-
-/** Format a normalized `[0, 1]` sRGB triple as a CSS `rgb()` string. Color
- * management is disabled (`scene.ts`), so these byte values match the
- * rendered cloud exactly. */
-function cssRgb(r: number, g: number, b: number): string {
-  return `rgb(${to255(r)}, ${to255(g)}, ${to255(b)})`;
-}
-
-/**
- * Sample a 256-entry-per-channel RGB LUT into a CSS `linear-gradient` string
- * — shared by the colorMode ramps ({@link legendGradient}) and, since
- * fr-a3q, the palette strips (see {@link buildPaletteLUT}): both renderers'
- * hot loops index the very same LUTs, so sampling them here too is what
- * keeps the legend from ever drifting off the rendered colors.
- */
-function lutGradient(lut: Float32Array): string {
-  const stops: string[] = [];
-  for (let i = 0; i < LEGEND_GRADIENT_STOPS; i++) {
-    const lutIndex = Math.round((i / (LEGEND_GRADIENT_STOPS - 1)) * 255);
-    const o = lutIndex * 3;
-    stops.push(cssRgb(lut[o], lut[o + 1], lut[o + 2]));
-  }
-  return `linear-gradient(to right, ${stops.join(", ")})`;
-}
-
-/**
- * Build the legend's CSS `linear-gradient` for the height/radius color modes
- * by sampling {@link buildColorModeLUT} — the same lookup table the solid
- * render's hot loop uses, so the legend bar can never drift from the actual
- * ramp (or from the current color-contrast setting). Since fr-3b6 the
- * height/radius legend also samples the same rampPalette-aware LUT the
- * renders use (`rampPalette` defaults to `"legacy"`, the built-in ramp), so a
- * gradient-driven ramp legend can't drift either.
- */
-function legendGradient(
-  mode: "height" | "radius",
-  colorGamma: number,
-  rampPalette: PaletteSpec = "legacy",
-): string {
-  return lutGradient(buildColorModeLUT(mode, colorGamma, rampPalette));
-}
-
-/**
- * Stops in the 4D legend's diverging w ramp. Unlike the LUT gradients this
- * count must be ODD so `s = 0` lands exactly on a stop: the ramp's defining
- * feature is the dim desaturated notch at w = 0, and with an even count CSS's
- * linear interpolation would bridge straight over it. 33 (~4px per stop on
- * the 140px bar) also keeps the steep `|s|^0.6` sides honest, where 16 stops
- * would visibly overshoot the curve.
- */
-const W_RAMP_STOPS = 33;
-
-/**
- * Build a 4D projection legend gradient (fr-a3q): the diverging signed-w
- * palette that `FOUR_D_VERTEX` (scene.ts) computes in the shader, reproduced
- * stop-for-stop by calling `color.ts`'s {@link wRampColor} — the CPU twin of
- * that in-shader ramp — so the legend can't drift from the render. Since
- * fr-3o2 both draw the ramp's SHAPE from `wRampColor`'s `W_RAMP_*` constants
- * and (since fr-d47) the side pair from `W_SIDE_PALETTES`: the same can't-drift
- * fidelity bar the colorMode legend sets by sampling `buildColorModeLUT`. Two
- * deliberate differences from the coordinate ramps: it is signed (diverging
- * around w = 0, our own 3-space), and it does NOT respond to `colorGamma` —
- * the shader never applies it. Since fr-9bk the shader normalizes by the
- * bounds box's w-support at the CURRENT tumble rotation, so the strip's ends
- * mean "the cloud's current w extremes", not fixed w values — which is why the
- * legend labels the ends with signs, not numbers.
- */
-function wRampGradient(neg: Vec3, pos: Vec3): string {
-  const side = { neg, pos };
-  const stops: string[] = [];
-  for (let i = 0; i < W_RAMP_STOPS; i++) {
-    const s = (i / (W_RAMP_STOPS - 1)) * 2 - 1;
-    const [r, g, b] = wRampColor(s, side);
-    stops.push(cssRgb(r, g, b));
-  }
-  return `linear-gradient(to right, ${stops.join(", ")})`;
-}
-
-/** One prebuilt legend gradient per w-depth palette — the ramps are fixed, so
- * they're computed once at module load like the old single W_RAMP_GRADIENT. */
-const W_RAMP_GRADIENTS: Record<WDepthColorMode, string> = {
-  wBlueOrange: wRampGradient(
-    W_SIDE_PALETTES.wBlueOrange.neg,
-    W_SIDE_PALETTES.wBlueOrange.pos,
-  ),
-  wPurpleGreen: wRampGradient(
-    W_SIDE_PALETTES.wPurpleGreen.neg,
-    W_SIDE_PALETTES.wPurpleGreen.pos,
-  ),
-  wCyanMagenta: wRampGradient(
-    W_SIDE_PALETTES.wCyanMagenta.neg,
-    W_SIDE_PALETTES.wCyanMagenta.pos,
-  ),
-};
 
 /**
  * The human-readable name for a palette id, read from the panel `<select>`
@@ -3273,178 +3158,24 @@ export class Ui {
 
   /**
    * Reflect the color legend (fr-dsz, fr-a3q): an unobtrusive key for what
-   * the current view's colors mean. Three families, checked in priority
-   * order:
-   *
-   * - 4D projection (non-flat system): keyed by `state.fourDColor` (fr-d47).
-   *   The w-depth modes show their diverging signed-w ramp (see
-   *   {@link W_RAMP_GRADIENTS}) labeled "−w" / "in our 3-space" / "+w"; the
-   *   baked "transform" mode shows the same per-transform swatch strip as the
-   *   3D mode of that name (identical palette); "radius" shows the 3D radius
-   *   ramp's bar — gamma-neutral, since the 4D view never applies colorGamma,
-   *   but rampPalette-aware since fr-6ue, exactly like the bake it keys
-   *   (`buildColors4`) — labeled center/edge. `colorMode` (even "uniform")
-   *   is irrelevant here.
-   * - Palette-driven renders — flame always, solid with a non-"legacy"
-   *   palette: the active gradient palette's strip sampled from
-   *   {@link buildPaletteLUT} (the very table the render's hot loop indexes),
-   *   captioned with the palette's display name. The flame "legacy" palette
-   *   colors by producing transform along the orbit — no meaningful 1D ramp —
-   *   so it shows no legend at all, while solid "legacy" follows
-   *   colorMode/colorGamma faithfully and falls through to the family below.
-   * - Otherwise the active Color Mode's key: height/radius get a gradient
-   *   bar sampled from {@link buildColorModeLUT} (so it can never drift from
-   *   the rendered ramp, or from the current color-contrast setting) with
-   *   low/high or center/edge labels — since fr-3b6 sampling the
-   *   rampPalette-aware LUT, so a gradient-driven ramp shows its own colors
-   *   with the same labels; position shows its three axis colors as
-   *   X/Y/Z-labeled swatches (fr-8k7); transform gets one swatch per
-   *   transform; uniform hides the legend (nothing to key).
+   * the current view's colors mean. WHICH key is `legend-spec.ts`'s
+   * {@link deriveLegend} — a pure derivation off state, where the three
+   * families and their priority order are documented; this method only
+   * gathers the two things state cannot answer and paints the result.
    *
    * Takes the caller's already-computed `nonFlat` (see `updateLabels`) rather
    * than recomputing `systemIsNonFlat` here, so the two never risk reading a
    * different answer within the same refresh.
    */
   private updateLegend(state: AppState, nonFlat: boolean): void {
-    // The "Watch it build" showcase (fr-hpci) recolors the DISPLAY by
-    // transform without touching the document, so while it is armed the
-    // legend must narrate the screen, not the state: the same swatch strip
-    // both views' own by-transform modes use. Folded here (not pushed from
-    // main.ts once at arm time) so any updateLabels sync that runs
-    // mid-replay repaints the showcase legend rather than clobbering it.
-    if (this.replayShowcaseLegend) {
-      this.showLegendSwatchStrip(state.transforms);
-      return;
-    }
-    // The legend narrates the ACTIVE RENDER, so the render-mode branches
-    // come BEFORE the document-4D-ness one (fr-skhv round 2): the surface/
-    // flame/solid sessions color by their OWN sources whatever the
-    // document's dimension, and the fourDColor legend below describes the
-    // POINTS view alone. The old order short-circuited every 4D document
-    // into the explorer's −w/+w ramp — a 4D surface session rendered
-    // by-transform colors under a w-depth legend that described nothing on
-    // screen.
-    if (state.renderMode === "surface") {
-      const source = state.surface.colorSource;
-      if (source === "transform") {
-        this.showLegendSwatchStrip(state.transforms);
-        return;
-      }
-      // The key samples the EXACT ramp the tracer samples: surfaceColorLUT
-      // is the one definition of what setSurfaceColorLUT uploads
-      // (control-spec.ts), so the legend can never drift from the rendered
-      // colors — the same no-second-definition discipline as the colorMode
-      // ramps below.
-      const lut = surfaceColorLUT(state);
-      if (lut === null) {
-        // Unreachable: every non-transform source builds a LUT.
-        this.legend.classList.add("hidden");
-        return;
-      }
-      if (source === "palette" || source === "rings" || source === "sheets") {
-        // rings/sheets (fr-rl4b) ride the same descent hit-info as palette,
-        // just reading a different coordinate off it — same named-gradient
-        // legend.
-        const name = paletteDisplayName(
-          this.scalarSelect("surfacePalette"),
-          state.surface.paletteId,
-        );
-        this.showLegendBar(lutGradient(lut), "", `${name} palette`, "");
-        return;
-      }
-      this.showLegendBar(
-        lutGradient(lut),
-        source === "height" ? "low" : "center",
-        "",
-        source === "height" ? "high" : "edge",
-      );
-      return;
-    }
-
-    const render =
-      state.renderMode === "flame"
-        ? {
-            paletteId: state.flame.paletteId,
-            select: this.scalarSelect("flamePalette"),
-          }
-        : state.renderMode === "solid"
-          ? {
-              paletteId: state.solid.paletteId,
-              select: this.scalarSelect("solidPalette"),
-            }
-          : null;
-    if (render !== null) {
-      // `buildPaletteLUT` returning null IS the "no coordinate gradient"
-      // signal for "legacy" (see palette.ts) — the same discriminator the
-      // renderers use, not a second string compare that could drift.
-      const lut = buildPaletteLUT(
-        resolvePalette(render.paletteId, state.customPalette),
-      );
-      if (lut !== null) {
-        const name = paletteDisplayName(render.select, render.paletteId);
-        this.showLegendBar(lutGradient(lut), "", `${name} palette`, "");
-        return;
-      }
-      if (state.renderMode === "flame") {
-        this.legend.classList.add("hidden");
-        return;
-      }
-    }
-
-    if (nonFlat) {
-      const mode = state.fourDColor;
-      if (mode === "transform") {
-        this.showLegendSwatchStrip(state.transforms);
-        return;
-      }
-      if (mode === "radius") {
-        // The ONE radius ramp (buildColorModeLUT), over 4D distance from the
-        // cloud's 4D center. Gamma-neutral: the 4D shader never applies
-        // colorGamma, so the legend must not pretend it does. Since fr-6ue
-        // the ramp follows rampPaletteId exactly like the 3D radius mode's —
-        // the same rampPalette-aware LUT the explorer bake (buildColors4)
-        // and the render workers' own 4D radius LUT sample.
-        this.showLegendBar(
-          legendGradient(
-            "radius",
-            1,
-            resolvePalette(state.rampPaletteId, state.customPalette),
-          ),
-          "center",
-          "",
-          "edge",
-        );
-        return;
-      }
-      this.showLegendBar(W_RAMP_GRADIENTS[mode], "−w", "in our 3-space", "+w");
-      return;
-    }
-
-    const mode = state.colorMode;
-    if (mode === "uniform") {
-      this.legend.classList.add("hidden");
-      return;
-    }
-    if (mode === "height" || mode === "radius") {
-      this.showLegendBar(
-        legendGradient(
-          mode,
-          state.colorGamma,
-          resolvePalette(state.rampPaletteId, state.customPalette),
-        ),
-        mode === "height" ? "low" : "center",
-        "",
-        mode === "height" ? "high" : "edge",
-      );
-      return;
-    }
-    if (mode === "transform") {
-      this.showLegendSwatchStrip(state.transforms);
-      return;
-    }
-    // position: the three axis colors, labeled — not a 1-D ramp.
-    this.showLegendAxisSwatches(
-      state.positionAxisColors ?? LEGACY_POSITION_AXIS_COLORS,
+    this.paintLegend(
+      deriveLegend({
+        state,
+        nonFlat,
+        replayShowcase: this.replayShowcaseLegend,
+        paletteName: (control: LegendPaletteControl, id) =>
+          paletteDisplayName(this.scalarSelect(control), id),
+      }),
     );
   }
 
@@ -3455,83 +3186,43 @@ export class Ui {
     this.replayShowcaseLegend = on;
   }
 
-  /** Show the legend as the per-transform swatch strip, hiding the bar
-   * variant — shared by the 3D "By Transform" color mode and the 4D
-   * projection's baked transform mode (fr-d47), which use the identical
-   * {@link transformColors} palette. Takes the full transform list, not just
-   * a count, so an authored `colorIndex` (fr-axxl) reaches the palette. */
-  private showLegendSwatchStrip(transforms: readonly Transform[]): void {
-    this.legend.classList.remove("hidden");
-    this.legendBar.classList.add("hidden");
-    this.legendLabels.classList.add("hidden");
-    this.legendSwatches.classList.remove("hidden");
-    this.renderLegendSwatches(transforms);
-  }
-
-  /** Show the legend as a gradient bar with low/mid/high labels (empty
-   * strings render as blank), hiding the swatch variant — the shared shape
-   * of the colorMode ramps, the palette strips, and the 4D w ramp. */
-  private showLegendBar(
-    gradient: string,
-    low: string,
-    mid: string,
-    high: string,
-  ): void {
-    this.legend.classList.remove("hidden");
-    this.legendBar.classList.remove("hidden");
-    this.legendLabels.classList.remove("hidden");
-    this.legendSwatches.classList.add("hidden");
-    this.legendBar.style.backgroundImage = gradient;
-    this.legendLabelLow.textContent = low;
-    this.legendLabelMid.textContent = mid;
-    this.legendLabelHigh.textContent = high;
-  }
-
-  /** Show the legend as the position mode's three axis colors, each tagged
-   * with its axis letter (fr-8k7) — the live pickers' colors, so the legend
-   * can never drift from the rendered mapping (the default identity reads
-   * X:red Y:green Z:blue, the old "X→R Y→G Z→B" note as colors). */
-  private showLegendAxisSwatches(axes: PositionAxisColors): void {
-    this.legend.classList.remove("hidden");
-    this.legendBar.classList.add("hidden");
-    this.legendLabels.classList.add("hidden");
-    this.legendSwatches.classList.remove("hidden");
-    this.legendSwatches.replaceChildren();
-    for (const axis of ["x", "y", "z"] as const) {
-      const letter = this.doc.createElement("span");
-      letter.className = "legend-more";
-      letter.textContent = axis.toUpperCase();
-      this.legendSwatches.appendChild(letter);
-      const [r, g, b] = axes[axis];
-      const swatch = this.doc.createElement("span");
-      swatch.className = "legend-swatch";
-      swatch.style.backgroundColor = cssRgb(r, g, b);
-      this.legendSwatches.appendChild(swatch);
+  /**
+   * Paint a {@link LegendSpec} — the whole of the panel's legend behavior
+   * that touches the DOM. Every decision (which family, which gradient,
+   * which labels) was made by {@link deriveLegend}; nothing here reads state.
+   *
+   * The hidden and swatch cases deliberately leave the bar's gradient and
+   * labels alone — only a bar repaints them, and it always writes all three
+   * labels, so no stale "in our 3-space" can outlive the ramp it described.
+   */
+  private paintLegend(spec: LegendSpec): void {
+    if (spec.kind === "hidden") {
+      this.legend.classList.add("hidden");
+      return;
     }
-  }
-
-  /** Rebuild the "by transform" swatch strip from the current palette,
-   * capped at {@link LEGEND_MAX_SWATCHES} with a trailing "+N" indicator. */
-  private renderLegendSwatches(transforms: readonly Transform[]): void {
-    this.legendSwatches.replaceChildren();
-    const count = transforms.length;
-    const palette = transformColors(
-      count,
-      transforms.map((t) => t.colorIndex),
-    );
-    const shown = Math.min(count, LEGEND_MAX_SWATCHES);
-    for (let i = 0; i < shown; i++) {
-      const [r, g, b] = palette[i];
-      const swatch = this.doc.createElement("span");
-      swatch.className = "legend-swatch";
-      swatch.style.backgroundColor = cssRgb(r, g, b);
-      this.legendSwatches.appendChild(swatch);
+    const isBar = spec.kind === "bar";
+    this.legend.classList.remove("hidden");
+    this.legendBar.classList.toggle("hidden", !isBar);
+    this.legendLabels.classList.toggle("hidden", !isBar);
+    this.legendSwatches.classList.toggle("hidden", isBar);
+    if (spec.kind === "bar") {
+      this.legendBar.style.backgroundImage = spec.gradient;
+      this.legendLabelLow.textContent = spec.low;
+      this.legendLabelMid.textContent = spec.mid;
+      this.legendLabelHigh.textContent = spec.high;
+      return;
     }
-    if (count > LEGEND_MAX_SWATCHES) {
-      const more = this.doc.createElement("span");
-      more.className = "legend-more";
-      more.textContent = `+${count - LEGEND_MAX_SWATCHES}`;
-      this.legendSwatches.appendChild(more);
+    this.legendSwatches.replaceChildren();
+    for (const item of spec.items) {
+      const span = this.doc.createElement("span");
+      if (item.kind === "label") {
+        span.className = "legend-more";
+        span.textContent = item.text;
+      } else {
+        span.className = "legend-swatch";
+        span.style.backgroundColor = item.color;
+      }
+      this.legendSwatches.appendChild(span);
     }
   }
 

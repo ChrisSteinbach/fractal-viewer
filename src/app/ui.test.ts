@@ -18,7 +18,7 @@ import {
 } from "./state";
 import type { AppState, ParamSpec } from "./state";
 import { BACKGROUND_MODES } from "./background";
-import { applyScalarControl, surfaceColorLUT } from "./control-spec";
+import { applyScalarControl } from "./control-spec";
 import type { ScalarControlSpec } from "./control-spec";
 import { defaultTransforms, PRESET_NAMES } from "../fractal/presets";
 import {
@@ -26,7 +26,6 @@ import {
   FLAME_PALETTE_IDS,
   MAX_CUSTOM_PALETTE_STOPS,
   MIN_CUSTOM_PALETTE_STOPS,
-  buildPaletteLUT,
 } from "../fractal/palette";
 import type { RgbStop } from "../fractal/palette";
 import {
@@ -831,7 +830,12 @@ describe("Ui color contrast slider", () => {
   });
 });
 
-describe("Ui color legend (fr-dsz)", () => {
+describe("Ui color legend painting (fr-dsz, fr-emz0)", () => {
+  // WHICH legend a state calls for — the family, the gradient, the labels —
+  // is `legend-spec.ts`'s `deriveLegend`, covered without a DOM at all in
+  // legend-spec.test.ts. What is left here is the PAINTING: that the panel
+  // shows the spec it was handed, that the palette captions come from
+  // index.html's own option labels, and that a repaint leaves nothing stale.
   function legend(): HTMLElement {
     return document.getElementById("legend") as HTMLElement;
   }
@@ -854,11 +858,23 @@ describe("Ui color legend (fr-dsz)", () => {
    * byte-conversion the legend itself uses (color management is disabled,
    * so these bytes match the rendered cloud exactly). */
   function lutRgb(lut: Float32Array, index: number): string {
-    const o = index * 3;
-    return `rgb(${to255(lut[o])}, ${to255(lut[o + 1])}, ${to255(lut[o + 2])})`;
+    return `rgb(${to255(lut[index * 3])}, ${to255(lut[index * 3 + 1])}, ${to255(
+      lut[index * 3 + 2],
+    )})`;
+  }
+  /** A state whose first transform carries a non-trivial `w` block, making
+   * the system non-flat (affine4.ts's isFlatTransform) and routing the view
+   * to the 4D projection. */
+  function fourDState(): AppState {
+    const state = initialState(true);
+    const [first, ...rest] = state.transforms;
+    return {
+      ...state,
+      transforms: [{ ...first, w: { position: 0.5 } }, ...rest],
+    };
   }
 
-  it("shows a gradient bar for height mode, blue at the low end and red at the high end", () => {
+  it("paints a gradient bar with its three labels, hiding the swatch strip", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), colorMode: "height" });
 
@@ -866,233 +882,18 @@ describe("Ui color legend (fr-dsz)", () => {
     expect(legendBar().classList.contains("hidden")).toBe(false);
     expect(legendSwatches().classList.contains("hidden")).toBe(true);
     expect(legendLabelLow().textContent).toBe("low");
+    expect(legendLabelMid().textContent).toBe("");
     expect(legendLabelHigh().textContent).toBe("high");
 
-    // Endpoints derived from the shared ramp (color.ts's writeHeightColor via
-    // buildColorModeLUT) rather than hardcoded, so a ramp tweak can't leave
-    // this assertion silently checking the wrong colors.
+    // The bar carries the derived gradient itself, endpoints derived from
+    // the shared ramp (buildColorModeLUT) rather than hardcoded.
     const lut = buildColorModeLUT("height", 1);
     const background = legendBar().style.backgroundImage;
-    const lowRgb = lutRgb(lut, 0);
-    const highRgb = lutRgb(lut, 255);
-    expect(background).toContain(lowRgb);
-    expect(background).toContain(highRgb);
-    // Not just present — in this order. A flipped (high→low) gradient would
-    // still contain both colors, so containment alone can't catch that.
-    expect(background.indexOf(lowRgb)).toBeLessThan(
-      background.indexOf(highRgb),
-    );
+    expect(background).toContain(lutRgb(lut, 0));
+    expect(background).toContain(lutRgb(lut, 255));
   });
 
-  it("shows a gradient bar for radius mode, warm at the center and cool at the edge", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({ ...initialState(true), colorMode: "radius" });
-
-    expect(legendBar().classList.contains("hidden")).toBe(false);
-    expect(legendLabelLow().textContent).toBe("center");
-    expect(legendLabelHigh().textContent).toBe("edge");
-
-    const lut = buildColorModeLUT("radius", 1);
-    const background = legendBar().style.backgroundImage;
-    const centerRgb = lutRgb(lut, 0);
-    const edgeRgb = lutRgb(lut, 255);
-    expect(background).toContain(centerRgb);
-    expect(background).toContain(edgeRgb);
-    // Not just present — in this order. A flipped (edge→center) gradient
-    // would still contain both colors, so containment alone can't catch that.
-    expect(background.indexOf(centerRgb)).toBeLessThan(
-      background.indexOf(edgeRgb),
-    );
-  });
-
-  it("reshapes a mid gradient stop under a non-1 colorGamma while the endpoints stay fixed", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      colorMode: "height",
-      colorGamma: 1,
-    });
-    const neutralBackground = legendBar().style.backgroundImage;
-
-    ui.updateLabels({
-      ...initialState(true),
-      colorMode: "height",
-      colorGamma: 3,
-    });
-    const gammaBackground = legendBar().style.backgroundImage;
-
-    // The bar as a whole looks different under the reshaped ramp…
-    expect(gammaBackground).not.toBe(neutralBackground);
-    // …but applyColorGamma always fixes t=0 and t=1, so the two endpoint
-    // colors are identical regardless of gamma — only the interior moves.
-    const lut = buildColorModeLUT("height", 1);
-    expect(gammaBackground).toContain(lutRgb(lut, 0));
-    expect(gammaBackground).toContain(lutRgb(lut, 255));
-  });
-
-  it("keys the legend on the SURFACE colorSource while the surface render is active", () => {
-    // fr-7jlk follow-up: the legend must narrate the tracer's own coloring,
-    // not the explorer colorMode the panel left behind.
-    const ui = new Ui(document);
-    const base = initialState(true);
-    ui.updateLabels({
-      ...base,
-      renderMode: "surface",
-      surface: { ...base.surface, colorSource: "transform" },
-    });
-    expect(legendSwatches().classList.contains("hidden")).toBe(false);
-    expect(legendBar().classList.contains("hidden")).toBe(true);
-  });
-
-  it("keys the legend on the surface colorSource for a 4D DOCUMENT too — never the points view's w ramp (fr-skhv round 2)", () => {
-    // The old order tested document 4D-ness before the render mode, so a
-    // 4D surface session rendered by-transform colors under the explorer's
-    // −w/+w ramp — a legend describing nothing on screen (the user-reported
-    // shape: pentatope in Surface mode, By Transform source, w-ramp bar).
-    const ui = new Ui(document);
-    const base = initialState(true);
-    ui.updateLabels({
-      ...base,
-      renderMode: "surface",
-      transforms: base.transforms.map((t, i) =>
-        i === 0 ? { ...t, w: { position: 0.5 } } : t,
-      ),
-      surface: { ...base.surface, colorSource: "transform" },
-    });
-    expect(legendSwatches().classList.contains("hidden")).toBe(false);
-    expect(legendBar().classList.contains("hidden")).toBe(true);
-    expect(legendLabelMid().textContent).not.toBe("in our 3-space");
-  });
-
-  it("keeps the points view's 4D w-ramp legend when the explorer IS the active render", () => {
-    const ui = new Ui(document);
-    const base = initialState(true);
-    ui.updateLabels({
-      ...base,
-      transforms: base.transforms.map((t, i) =>
-        i === 0 ? { ...t, w: { position: 0.5 } } : t,
-      ),
-    });
-    expect(legendBar().classList.contains("hidden")).toBe(false);
-    expect(legendLabelMid().textContent).toBe("in our 3-space");
-  });
-
-  it("shows the surface palette's own gradient and name for the orbit-trap source", () => {
-    const ui = new Ui(document);
-    const base = initialState(true);
-    const state = {
-      ...base,
-      renderMode: "surface" as const,
-      surface: {
-        ...base.surface,
-        colorSource: "palette" as const,
-        paletteId: "sunset" as const,
-      },
-    };
-    ui.updateLabels(state);
-
-    expect(legendBar().classList.contains("hidden")).toBe(false);
-    expect(legendLabelMid().textContent).toBe("Sunset palette");
-    // Endpoints derived from the EXACT LUT the tracer samples
-    // (surfaceColorLUT), so the key can never drift from the render.
-    const lut = surfaceColorLUT(state);
-    expect(lut).not.toBeNull();
-    const background = legendBar().style.backgroundImage;
-    expect(background).toContain(lutRgb(lut as Float32Array, 0));
-    expect(background).toContain(lutRgb(lut as Float32Array, 255));
-  });
-
-  it('renders the same gradient-bar legend shape as "palette" for the "rings" source (fr-rl4b)', () => {
-    // rings rides the same descent hit-info as palette, just reading a
-    // different coordinate off it — same named-gradient legend, not the
-    // swatch strip or a ramp.
-    const ui = new Ui(document);
-    const base = initialState(true);
-    const state = {
-      ...base,
-      renderMode: "surface" as const,
-      surface: {
-        ...base.surface,
-        colorSource: "rings" as const,
-        paletteId: "sunset" as const,
-      },
-    };
-    ui.updateLabels(state);
-
-    expect(legendBar().classList.contains("hidden")).toBe(false);
-    expect(legendSwatches().classList.contains("hidden")).toBe(true);
-    expect(legendLabelMid().textContent).toBe("Sunset palette");
-    const lut = surfaceColorLUT(state);
-    expect(lut).not.toBeNull();
-    const background = legendBar().style.backgroundImage;
-    expect(background).toContain(lutRgb(lut as Float32Array, 0));
-    expect(background).toContain(lutRgb(lut as Float32Array, 255));
-  });
-
-  it('renders the same gradient-bar legend shape as "palette" for the "sheets" source (fr-rl4b)', () => {
-    const ui = new Ui(document);
-    const base = initialState(true);
-    const state = {
-      ...base,
-      renderMode: "surface" as const,
-      surface: {
-        ...base.surface,
-        colorSource: "sheets" as const,
-        paletteId: "sunset" as const,
-      },
-    };
-    ui.updateLabels(state);
-
-    expect(legendBar().classList.contains("hidden")).toBe(false);
-    expect(legendSwatches().classList.contains("hidden")).toBe(true);
-    expect(legendLabelMid().textContent).toBe("Sunset palette");
-    const lut = surfaceColorLUT(state);
-    expect(lut).not.toBeNull();
-    const background = legendBar().style.backgroundImage;
-    expect(background).toContain(lutRgb(lut as Float32Array, 0));
-    expect(background).toContain(lutRgb(lut as Float32Array, 255));
-  });
-
-  it("labels the surface height ramp low/high like the explorer's height mode", () => {
-    const ui = new Ui(document);
-    const base = initialState(true);
-    ui.updateLabels({
-      ...base,
-      renderMode: "surface",
-      surface: { ...base.surface, colorSource: "height" },
-    });
-    expect(legendBar().classList.contains("hidden")).toBe(false);
-    expect(legendLabelLow().textContent).toBe("low");
-    expect(legendLabelHigh().textContent).toBe("high");
-  });
-
-  it("reflects the user-authored custom gradient in the surface palette key", () => {
-    const ui = new Ui(document);
-    const base = initialState(true);
-    const state = {
-      ...base,
-      renderMode: "surface" as const,
-      surface: {
-        ...base.surface,
-        colorSource: "palette" as const,
-        paletteId: "custom" as const,
-      },
-      customPalette: {
-        stops: [
-          [1, 0, 0],
-          [0, 0, 1],
-        ] as [number, number, number][],
-      },
-    };
-    ui.updateLabels(state);
-
-    expect(legendLabelMid().textContent).toBe("Custom palette");
-    const background = legendBar().style.backgroundImage;
-    expect(background).toContain("rgb(255, 0, 0)");
-    expect(background).toContain("rgb(0, 0, 255)");
-  });
-
-  it("shows X/Y/Z-labeled axis swatches for position mode", () => {
+  it("paints a swatch strip as labeled spans, hiding the bar", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), colorMode: "position" });
 
@@ -1113,161 +914,35 @@ describe("Ui color legend (fr-dsz)", () => {
     ]);
   });
 
-  it("the axis swatches follow custom axis colors", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      colorMode: "position",
-      positionAxisColors: {
-        x: [1, 0.5, 0],
-        y: [0, 0.5, 1],
-        z: [0.2, 0.4, 0.6],
-      },
-    });
-
-    const swatches = Array.from(
-      legendSwatches().querySelectorAll<HTMLElement>(".legend-swatch"),
-    ).map((el) => el.style.backgroundColor);
-    expect(swatches).toEqual([
-      "rgb(255, 128, 0)",
-      "rgb(0, 128, 255)",
-      "rgb(51, 102, 153)",
-    ]);
-  });
-
-  it("shows one swatch per transform, tracking transforms.length after add/remove", () => {
-    const ui = new Ui(document);
-    const three = Array.from({ length: 3 }, () => defaultTransforms()[0]);
-    ui.updateLabels({
-      ...initialState(true),
-      colorMode: "transform",
-      transforms: three,
-    });
-    expect(legendSwatches().querySelectorAll(".legend-swatch")).toHaveLength(3);
-
-    const five = Array.from({ length: 5 }, () => defaultTransforms()[0]);
-    ui.updateLabels({
-      ...initialState(true),
-      colorMode: "transform",
-      transforms: five,
-    });
-    expect(legendSwatches().querySelectorAll(".legend-swatch")).toHaveLength(5);
-
-    const two = Array.from({ length: 2 }, () => defaultTransforms()[0]);
-    ui.updateLabels({
-      ...initialState(true),
-      colorMode: "transform",
-      transforms: two,
-    });
-    expect(legendSwatches().querySelectorAll(".legend-swatch")).toHaveLength(2);
-  });
-
-  it("caps transform swatches at 12 and folds the rest into a '+N' indicator", () => {
-    const ui = new Ui(document);
-    const thirteen = Array.from({ length: 13 }, () => defaultTransforms()[0]);
-    ui.updateLabels({
-      ...initialState(true),
-      colorMode: "transform",
-      transforms: thirteen,
-    });
-
-    expect(legendSwatches().querySelectorAll(".legend-swatch")).toHaveLength(
-      12,
-    );
-    expect(legendSwatches().querySelector(".legend-more")?.textContent).toBe(
-      "+1",
-    );
-  });
-
   it("hides the legend entirely for uniform coloring", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), colorMode: "uniform" });
     expect(legend().classList.contains("hidden")).toBe(true);
   });
 
-  it("hides the legend while a flame render uses the legacy palette", () => {
+  it("captions a palette bar with index.html's own option label", () => {
+    // index.html's option text is the app's single source of palette display
+    // names (fr-a3q) — the one input `deriveLegend` cannot derive, so this is
+    // where the `<select>` lookup is pinned.
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
-      colorMode: "height",
-      renderMode: "flame" as const,
-      flame: { ...initialState(true).flame, paletteId: "legacy" },
-    });
-    // Legacy flame color is per-producing-transform along the orbit — not a
-    // 1D ramp — so there is no strip the legend could truthfully draw.
-    expect(legend().classList.contains("hidden")).toBe(true);
-  });
-
-  it("shows the active palette strip while a flame render uses a gradient palette", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      // uniform would hide the colorMode legend — proving the palette strip
-      // doesn't come from colorMode at all.
       colorMode: "uniform",
       renderMode: "flame" as const,
-      // Not "spectrum": its c coefficients (palette.ts) are all integers, so
-      // the cosine ramp is exactly periodic and t=0/t=1 land on the identical
-      // color — useless for an endpoint-ordering assertion below. "ember" has
-      // a non-integer c on two channels, so its ends genuinely differ.
       flame: { ...initialState(true).flame, paletteId: "ember" },
     });
 
     expect(legend().classList.contains("hidden")).toBe(false);
-    expect(legendBar().classList.contains("hidden")).toBe(false);
-    expect(legendSwatches().classList.contains("hidden")).toBe(true);
-    expect(legendLabelLow().textContent).toBe("");
     expect(legendLabelMid().textContent).toBe("Ember palette");
-    expect(legendLabelHigh().textContent).toBe("");
-
-    // Endpoints derived from the very LUT the flame render indexes
-    // (buildPaletteLUT), in left-to-right order — the fr-dsz can't-drift bar.
-    const lut = buildPaletteLUT("ember");
-    if (lut === null) throw new Error("ember must have a LUT");
-    const background = legendBar().style.backgroundImage;
-    const lowRgb = lutRgb(lut, 0);
-    const highRgb = lutRgb(lut, 255);
-    expect(background).toContain(lowRgb);
-    expect(background).toContain(highRgb);
-    expect(background.indexOf(lowRgb)).toBeLessThan(
-      background.indexOf(highRgb),
-    );
   });
 
-  it("shows the ramp palette's own colors in the height legend when rampPaletteId is a gradient, with low/high labels unchanged", () => {
+  it("clears the previous family's labels when the legend family changes", () => {
     const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      colorMode: "height",
-      rampPaletteId: "legacy",
-    });
-    const legacyBackground = legendBar().style.backgroundImage;
-
-    // "ember" (not "spectrum"): its non-integer c coefficients on two
-    // channels (palette.ts) are what give the flame palette legend test
-    // above a genuine endpoint order too — same reason it applies here.
-    ui.updateLabels({
-      ...initialState(true),
-      colorMode: "height",
-      rampPaletteId: "ember",
-    });
-
+    ui.updateLabels(fourDState());
+    ui.updateLabels({ ...initialState(true), colorMode: "height" });
     expect(legendLabelLow().textContent).toBe("low");
+    expect(legendLabelMid().textContent).toBe("");
     expect(legendLabelHigh().textContent).toBe("high");
-    const background = legendBar().style.backgroundImage;
-    expect(background).not.toBe(legacyBackground);
-
-    // Endpoints derived from the same rampPalette-aware LUT the height mode
-    // now samples (buildColorModeLUT's third argument), in left-to-right
-    // order — the fr-dsz can't-drift bar, extended to fr-3b6's gradient ramps.
-    const lut = buildColorModeLUT("height", 1, "ember");
-    const lowRgb = lutRgb(lut, 0);
-    const highRgb = lutRgb(lut, 255);
-    expect(background).toContain(lowRgb);
-    expect(background).toContain(highRgb);
-    expect(background.indexOf(lowRgb)).toBeLessThan(
-      background.indexOf(highRgb),
-    );
   });
 
   it("shows the legend again after returning from a flame render", () => {
@@ -1282,63 +957,6 @@ describe("Ui color legend (fr-dsz)", () => {
       colorMode: "height",
     });
     expect(legend().classList.contains("hidden")).toBe(false);
-  });
-
-  it("shows the active palette strip while the solid render uses a gradient palette", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      colorMode: "height",
-      renderMode: "solid" as const,
-      solid: { ...initialState(true).solid, paletteId: "aurora" },
-    });
-
-    // voxel.ts's accumulateVoxels colors from the palette's LUT instead of
-    // colorMode once a non-"legacy" palette is picked — so the legend shows
-    // that palette's strip, named, rather than the colorMode ramp.
-    expect(legend().classList.contains("hidden")).toBe(false);
-    expect(legendBar().classList.contains("hidden")).toBe(false);
-    expect(legendLabelMid().textContent).toBe("Aurora palette");
-    expect(legendLabelLow().textContent).toBe("");
-    expect(legendLabelHigh().textContent).toBe("");
-  });
-
-  it("keeps the legend visible and accurate while the solid render is active with the legacy palette", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      colorMode: "height",
-      renderMode: "solid" as const,
-      solid: { ...initialState(true).solid, paletteId: "legacy" },
-    });
-    // The "legacy" solid palette follows colorMode/colorGamma exactly, so
-    // the legend (and its gradient bar) stays accurate here.
-    expect(legend().classList.contains("hidden")).toBe(false);
-    expect(legendBar().classList.contains("hidden")).toBe(false);
-  });
-
-  it("swaps the colorMode legend for the palette strip when the solid palette leaves legacy", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...initialState(true),
-      colorMode: "height",
-      renderMode: "solid" as const,
-      solid: { ...initialState(true).solid, paletteId: "legacy" },
-    });
-    expect(legend().classList.contains("hidden")).toBe(false);
-    // Legacy solid follows colorMode/colorGamma exactly, so this is still the
-    // height ramp's own low/high label, not a palette caption.
-    expect(legendLabelLow().textContent).toBe("low");
-
-    ui.updateLabels({
-      ...initialState(true),
-      colorMode: "height",
-      renderMode: "solid" as const,
-      solid: { ...initialState(true).solid, paletteId: "spectrum" },
-    });
-    expect(legend().classList.contains("hidden")).toBe(false);
-    expect(legendLabelMid().textContent).toBe("Spectrum palette");
-    expect(legendLabelLow().textContent).toBe("");
   });
 
   it("shows the legend again after returning from a solid render", () => {
@@ -1357,79 +975,6 @@ describe("Ui color legend (fr-dsz)", () => {
     expect(legend().classList.contains("hidden")).toBe(false);
   });
 
-  /** A state whose first transform carries a non-trivial `w` block, making
-   * the system non-flat (affine4.ts's isFlatTransform) and routing the view
-   * to the 4D projection. */
-  function fourDState(): ReturnType<typeof initialState> {
-    const state = initialState(true);
-    const [first, ...rest] = state.transforms;
-    return {
-      ...state,
-      transforms: [{ ...first, w: { position: 0.5 } }, ...rest],
-    };
-  }
-
-  it("shows the diverging w ramp with signed end labels for a 4D system", () => {
-    const ui = new Ui(document);
-    ui.updateLabels(fourDState());
-
-    expect(legend().classList.contains("hidden")).toBe(false);
-    expect(legendBar().classList.contains("hidden")).toBe(false);
-    expect(legendSwatches().classList.contains("hidden")).toBe(true);
-    expect(legendLabelLow().textContent).toBe("−w");
-    expect(legendLabelMid().textContent).toBe("in our 3-space");
-    expect(legendLabelHigh().textContent).toBe("+w");
-
-    // Hardcoded on purpose: since fr-d47 the side COLORS are shared DATA
-    // (color.ts's W_SIDE_PALETTES.wBlueOrange, fed to both the shader's
-    // uSideNeg/uSidePos uniforms and this legend) so they can't drift from
-    // each other — but the ramp's SHAPE is still hand-mirrored from
-    // FOUR_D_VERTEX's GLSL (scene.ts), which a TS test cannot import: the
-    // 0.38 gray baseline, the 0.6 magnitude exponent, and the 0.30 + 0.70
-    // brightness scale. At s = −1 the shader yields the pure blue side
-    // (0.30, 0.60, 1.00), at s = +1 the pure orange side (1.00, 0.50, 0.18),
-    // and at s = 0 the dim gray notch 0.38 * 0.30 = 0.114 per channel. If
-    // either the shared palette or the GLSL ramp shape changes, this test
-    // must change with it — that is the keep-in-sync contract.
-    const background = legendBar().style.backgroundImage;
-    const blue = "rgb(77, 153, 255)";
-    const gray = "rgb(29, 29, 29)";
-    const orange = "rgb(255, 128, 46)";
-    expect(background).toContain(blue);
-    expect(background).toContain(gray);
-    expect(background).toContain(orange);
-    expect(background.indexOf(blue)).toBeLessThan(background.indexOf(gray));
-    expect(background.indexOf(gray)).toBeLessThan(background.indexOf(orange));
-  });
-
-  it("shows the 4D legend even in uniform color mode", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({ ...fourDState(), colorMode: "uniform" });
-    // The 4D view colors by the rotated w in-shader; colorMode — including
-    // uniform's "nothing to key" — simply doesn't apply.
-    expect(legend().classList.contains("hidden")).toBe(false);
-    expect(legendLabelMid().textContent).toBe("in our 3-space");
-  });
-
-  it("keeps the 4D w ramp fixed as color contrast changes", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({ ...fourDState(), colorGamma: 1 });
-    const neutral = legendBar().style.backgroundImage;
-    ui.updateLabels({ ...fourDState(), colorGamma: MAX_COLOR_GAMMA });
-    // Unlike the height/radius ramps (fr-8sk), the shader never applies
-    // colorGamma to the w palette — the legend must not pretend it does.
-    expect(legendBar().style.backgroundImage).toBe(neutral);
-  });
-
-  it("clears the 4D labels when the system returns to flat", () => {
-    const ui = new Ui(document);
-    ui.updateLabels(fourDState());
-    ui.updateLabels({ ...initialState(true), colorMode: "height" });
-    expect(legendLabelLow().textContent).toBe("low");
-    expect(legendLabelMid().textContent).toBe("");
-    expect(legendLabelHigh().textContent).toBe("high");
-  });
-
   // Guards against the dropdown and FOUR_D_COLOR_MODES (fr-d47) drifting
   // apart — the options must match exactly, in order.
   it("offers exactly FOUR_D_COLOR_MODES, in order", () => {
@@ -1437,119 +982,6 @@ describe("Ui color legend (fr-dsz)", () => {
       document.querySelectorAll<HTMLOptionElement>("#fourDColor option"),
     ).map((o) => o.value);
     expect(values).toEqual([...FOUR_D_COLOR_MODES]);
-  });
-
-  it("shows the purple/green w ramp for the wPurpleGreen 4D color mode", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({ ...fourDState(), fourDColor: "wPurpleGreen" });
-
-    expect(legendBar().classList.contains("hidden")).toBe(false);
-    expect(legendLabelLow().textContent).toBe("−w");
-    expect(legendLabelMid().textContent).toBe("in our 3-space");
-    expect(legendLabelHigh().textContent).toBe("+w");
-
-    // Hardcoded on purpose, exactly like the wBlueOrange test above: these
-    // pin color.ts's W_SIDE_PALETTES.wPurpleGreen data AND the ramp's
-    // mirrored GLSL shape constants (0.38 gray, ^0.6, 0.30 + 0.70).
-    const background = legendBar().style.backgroundImage;
-    const purple = "rgb(158, 97, 255)";
-    const gray = "rgb(29, 29, 29)";
-    const green = "rgb(102, 242, 89)";
-    expect(background).toContain(purple);
-    expect(background).toContain(gray);
-    expect(background).toContain(green);
-    expect(background.indexOf(purple)).toBeLessThan(background.indexOf(gray));
-    expect(background.indexOf(gray)).toBeLessThan(background.indexOf(green));
-  });
-
-  it("shows the cyan/magenta w ramp for the wCyanMagenta 4D color mode", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({ ...fourDState(), fourDColor: "wCyanMagenta" });
-
-    expect(legendBar().classList.contains("hidden")).toBe(false);
-    expect(legendLabelLow().textContent).toBe("−w");
-    expect(legendLabelMid().textContent).toBe("in our 3-space");
-    expect(legendLabelHigh().textContent).toBe("+w");
-
-    // Hardcoded on purpose, same rationale as the other two w-depth ramps.
-    const background = legendBar().style.backgroundImage;
-    const cyan = "rgb(51, 217, 242)";
-    const gray = "rgb(29, 29, 29)";
-    const magenta = "rgb(255, 77, 191)";
-    expect(background).toContain(cyan);
-    expect(background).toContain(gray);
-    expect(background).toContain(magenta);
-    expect(background.indexOf(cyan)).toBeLessThan(background.indexOf(gray));
-    expect(background.indexOf(gray)).toBeLessThan(background.indexOf(magenta));
-  });
-
-  it("shows a swatch strip, one per transform, for the 4D transform color mode", () => {
-    const ui = new Ui(document);
-    const state = { ...fourDState(), fourDColor: "transform" as const };
-    ui.updateLabels(state);
-
-    expect(legend().classList.contains("hidden")).toBe(false);
-    expect(legendBar().classList.contains("hidden")).toBe(true);
-    expect(legendSwatches().classList.contains("hidden")).toBe(false);
-    expect(legendSwatches().querySelectorAll(".legend-swatch")).toHaveLength(
-      state.transforms.length,
-    );
-  });
-
-  it("shows the radius gradient bar for the 4D radius color mode, unaffected by color contrast", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({ ...fourDState(), fourDColor: "radius" });
-
-    expect(legendBar().classList.contains("hidden")).toBe(false);
-    expect(legendLabelLow().textContent).toBe("center");
-    expect(legendLabelHigh().textContent).toBe("edge");
-
-    const neutral = legendBar().style.backgroundImage;
-    ui.updateLabels({
-      ...fourDState(),
-      fourDColor: "radius",
-      colorGamma: MAX_COLOR_GAMMA,
-    });
-    // Gamma-neutral contract: the 4D view never applies colorGamma, so the
-    // baked radius ramp must not react to it either — mirrors the w-ramp's
-    // own "keeps the 4D w ramp fixed as color contrast changes" test above.
-    expect(legendBar().style.backgroundImage).toBe(neutral);
-  });
-
-  it("shows the ramp palette's own colors in the 4D radius legend when rampPaletteId is a gradient (fr-6ue)", () => {
-    const ui = new Ui(document);
-    ui.updateLabels({
-      ...fourDState(),
-      fourDColor: "radius",
-      rampPaletteId: "legacy",
-    });
-    const legacyBackground = legendBar().style.backgroundImage;
-
-    // "ember" again for a genuine endpoint order — same reason as the flat
-    // height legend test above (its non-integer c coefficients on two
-    // channels give distinct low/high colors).
-    ui.updateLabels({
-      ...fourDState(),
-      fourDColor: "radius",
-      rampPaletteId: "ember",
-    });
-
-    expect(legendLabelLow().textContent).toBe("center");
-    expect(legendLabelHigh().textContent).toBe("edge");
-    const background = legendBar().style.backgroundImage;
-    expect(background).not.toBe(legacyBackground);
-
-    // Endpoints derived from the same rampPalette-aware LUT the 4D radius
-    // bake now samples (buildColorModeLUT's third argument), gamma pinned to
-    // 1 — the 4D view never applies colorGamma.
-    const lut = buildColorModeLUT("radius", 1, "ember");
-    const lowRgb = lutRgb(lut, 0);
-    const highRgb = lutRgb(lut, 255);
-    expect(background).toContain(lowRgb);
-    expect(background).toContain(highRgb);
-    expect(background.indexOf(lowRgb)).toBeLessThan(
-      background.indexOf(highRgb),
-    );
   });
 });
 
