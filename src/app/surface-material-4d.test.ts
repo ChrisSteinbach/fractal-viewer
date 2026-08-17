@@ -4,11 +4,14 @@ import {
   setSurface4Balloon,
   setSurface4GroundPlane,
   setSurfaceSystem4,
+  setSurfaceView4,
   surface4FragmentFor,
   SURFACE4_MAX_MAPS,
 } from "./surface-material-4d";
 import { SURFACE_GLSL_STRIP_BYTES } from "./surface-material";
+import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
 import type { SurfaceDE4, SurfaceDE4Map } from "../fractal/surface-de-4d";
+import { radiusBandInvRange } from "../fractal/surface-de-4d";
 import { CLASSIC_SURFACE_FOLD_RADII } from "../fractal/surface-de";
 import { twentyFourCellFlake } from "../fractal/presets";
 
@@ -83,6 +86,32 @@ function mapBlock(material: THREE.ShaderMaterial): {
     colorSigma: uniforms[2].value,
     trap: uniforms[3].value,
   };
+}
+
+/** THREE.Matrix4 stores column-major; this reads one back out in the
+ * row-major order rotorMatrix (rotor4.ts) and setSurfaceView4's own doc
+ * comment both use, so an independently-computed expected matrix lines up
+ * index for index against what the packer wrote. */
+function rowMajorOf(m: THREE.Matrix4): number[] {
+  const e = m.elements;
+  return [
+    e[0],
+    e[4],
+    e[8],
+    e[12],
+    e[1],
+    e[5],
+    e[9],
+    e[13],
+    e[2],
+    e[6],
+    e[10],
+    e[14],
+    e[3],
+    e[7],
+    e[11],
+    e[15],
+  ];
 }
 
 describe("setSurfaceSystem4 slot cap", () => {
@@ -226,6 +255,35 @@ describe("setSurfaceSystem4 kaleidoscope sweep uniforms (fr-u91x)", () => {
     expect(material.uniforms.uSymOrder.value).toBe(1);
     const m = material.uniforms.uSymStepBack.value as THREE.Matrix4;
     expect(Array.from(m.elements)).toEqual(IDENTITY4);
+  });
+});
+
+describe("setSurfaceSystem4 radius-band uniforms (fr-skhv)", () => {
+  it("packs the DE's radiusBand into uRadiusCenter4/uRadiusMinD/uRadiusInvRange", () => {
+    const material = createSurfaceMaterial4();
+    // Every field a different number, like balloonSpec's fixture below —
+    // de4()'s own default band (all-zero center, degenerate [0,1] range)
+    // would let a packer that crossed two axes, or crossed minD with
+    // invRange, pass silently.
+    const radiusBand = {
+      center: [1.5, -2.25, 3.75, -0.5] as [number, number, number, number],
+      minD: 0.2,
+      maxD: 4.2,
+    };
+    setSurfaceSystem4(material, { ...de4([map4()]), radiusBand }, [[0, 0, 0]]);
+    const u = material.uniforms;
+    const center = u.uRadiusCenter4.value as THREE.Vector4;
+    expect([center.x, center.y, center.z, center.w]).toEqual(radiusBand.center);
+    expect(u.uRadiusMinD.value).toBe(radiusBand.minD);
+    // radiusBandInvRange is the ONE inverse-range definition this packer
+    // and the WGSL packer (surface-de-gpu.ts) both read off
+    // surface-de-4d.ts — pinning uRadiusInvRange against a direct call to
+    // it checks that the derived number was ROUTED to the right uniform
+    // (not swapped with minD, not dropped), the same division of labor as
+    // surface-de-gpu.test.ts's "round-trips SurfaceDE4.radiusBand" leg;
+    // radiusBandInvRange's own arithmetic is pinned independently by
+    // surface-de-4d.test.ts's "radiusBandInvRange" describe.
+    expect(u.uRadiusInvRange.value).toBe(radiusBandInvRange(radiusBand));
   });
 });
 
@@ -433,6 +491,40 @@ describe("the 4D tracer's variant arms (fr-qxxw, fr-h0c3)", () => {
 
   it("refuses a floor inside the shell — there is no horizon in there", () => {
     expect(() => surface4FragmentFor(1, 1)).toThrow(RangeError);
+  });
+});
+
+describe("setSurfaceView4 (fr-33yb, fr-wa6o)", () => {
+  it("sets uInvRotor to the inverse of a non-identity world rotor — pinned against rotor4.ts's own math, not the packer's transpose", () => {
+    const material = createSurfaceMaterial4();
+    // A single-plane SO(4) rotation's inverse is the SAME plane rotated
+    // by the NEGATIVE angle — group closure (R(angle) . R(-angle) =
+    // R(0) = identity) makes rotorMatrix(R(-angle)) the exact matrix
+    // inverse of rotorMatrix(R(angle)), and since both are orthogonal
+    // that inverse is also the transpose setSurfaceView4 is documented to
+    // compute. So this is an independent route to the expected matrix —
+    // it never transposes anything — rather than checking the packer's
+    // own column-reordered transpose against itself. Non-identity so a
+    // wrong row/column swap can't hide behind identity's symmetry, the
+    // uInvRotor counterpart of the per-map "transposes each row-major
+    // inverse map…" test above.
+    const angle = Math.PI / 6;
+    const rotor = rotorMatrix(rotateInPlane(identityRotorPair(), "xw", angle));
+    const expectedInv = rotorMatrix(
+      rotateInPlane(identityRotorPair(), "xw", -angle),
+    );
+    setSurfaceView4(material, rotor, 0, 0);
+    const invRotor = material.uniforms.uInvRotor.value as THREE.Matrix4;
+    rowMajorOf(invRotor).forEach((v, i) =>
+      expect(v).toBeCloseTo(expectedInv[i], 9),
+    );
+  });
+
+  it("uploads w0 and sliceHalfW verbatim — the normalized-slider-to-world wSupport conversion is scene.ts's setSurface4View, upstream of this packer", () => {
+    const material = createSurfaceMaterial4();
+    setSurfaceView4(material, IDENTITY4, 0.62, 0.17);
+    expect(material.uniforms.uW0.value).toBe(0.62);
+    expect(material.uniforms.uSliceHalfW.value).toBe(0.17);
   });
 });
 
