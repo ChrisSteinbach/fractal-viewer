@@ -540,8 +540,18 @@ async function main() {
     // script's usage doc for when that matters).
     const executablePath =
       args.chrome === "bundled" ? chromium.executablePath() : args.chrome;
+    // `--display` wins over `--headed`: it launches HEADED on that X
+    // display (below), so reporting `headless=true` there — as this line
+    // did — contradicts the run it is announcing, on exactly the
+    // real-driver runs the surface section insists on.
     console.error(
-      `[gpu-flame-bench] launching ${executablePath} (headless=${!args.headed})`,
+      `[gpu-flame-bench] launching ${executablePath} (${
+        args.display !== undefined
+          ? `headed on DISPLAY=${args.display}`
+          : args.headed
+            ? "headed"
+            : "headless=new"
+      })`,
     );
     // Playwright's `headless: true` launches Chrome's OLD headless mode,
     // which has no GPU stack at all — navigator.gpu never exists there, so
