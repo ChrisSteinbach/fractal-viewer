@@ -83,17 +83,34 @@ function withIsolationHeaders(response: Response): Response {
 }
 
 /**
- * The single fetch pipeline: navigations serve the precached app shell (the
- * SPA navigate fallback — query strings and all, since the shell is one
- * page); everything else is precache-first with a network fallback for the
- * stray non-precached request. Whatever the source, the response leaves with
- * isolation headers.
+ * The single fetch pipeline: navigations try the exact requested page in the
+ * precache first — a standalone precached page (e.g. gpuprobe.html) must
+ * stay reachable once a client is controlled, not collapse onto the shell
+ * (fr-8tgu) — and fall back to the app shell only on a miss (the SPA
+ * navigate fallback for everything else, query strings and all, since the
+ * shell is one page); non-navigations are precache-first with a network
+ * fallback for the stray non-precached request. Whatever the source, the
+ * response leaves with isolation headers.
  */
 async function respond(request: Request): Promise<Response> {
-  const url = request.mode === "navigate" ? "index.html" : request.url;
-  const cached = await precache.matchPrecache(url);
+  // matchPrecache resolves its argument against `location.href` (the SW's
+  // own script URL) exactly as the manifest itself was built under the "./"
+  // relative base (see createCacheKey in workbox-precaching), so the raw
+  // request URL is already the right lookup key — no separate scope-relative
+  // pathname math needed here.
+  const cached =
+    request.mode === "navigate"
+      ? await matchNavigation(request.url)
+      : await precache.matchPrecache(request.url);
   const response = cached ?? (await fetch(request));
   return withIsolationHeaders(response);
+}
+
+async function matchNavigation(url: string): Promise<Response | undefined> {
+  return (
+    (await precache.matchPrecache(url)) ??
+    (await precache.matchPrecache("index.html"))
+  );
 }
 
 self.addEventListener("fetch", (event) => {
