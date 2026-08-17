@@ -568,13 +568,45 @@ export const SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH = 4096;
 export const SURFACE_COMPUTE_SHADE_HIT_CAP_START =
   SURFACE_COMPUTE_WORKGROUP_SIZE;
 
-/** Hard ceiling (ms) on the GPU time one HIT shade dispatch may be sized
- * for — where {@link shadeHitBudgetUs}'s latency-bound allowance stops.
- * 7.5x under the ~7.5 s i915 preemption watchdog, and the frame still
- * presents and re-checks its wall budget between dispatches, so the cost
- * of the ceiling being generous is at most one dispatch of added cancel
- * latency on a pose the renderer is about to abandon. */
-export const SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS = 1000;
+/** Hard ceiling (ms) on the PREDICTED TOTAL cost of one hit dispatch —
+ * where {@link shadeHitAllowanceUs}'s latency-bound allowance stops
+ * buying hits. 3.75x under the ~7.5 s i915 preemption watchdog, and the
+ * frame presents and re-checks its wall budget between dispatches, so
+ * being generous here costs at most one dispatch of added cancel latency
+ * on a pose about to be abandoned.
+ *
+ * IT SITS AT 2 s AND NOT 1 s FOR A MEASURED REASON. A ceiling on the
+ * total necessarily squeezes the allowance to nothing as the intercept
+ * approaches it — the intercept is measured, not chosen, so the only
+ * lever left is refusing to put hits in a dispatch that is going to cost
+ * that much anyway, which is fr-d6g5's trapdoor rebuilt inside its own
+ * replacement. That squeeze has to sit OUTSIDE the range real scenes
+ * measure in, and mandelboxKifs — the hardest scene this project has —
+ * measures its intercept between 430 and 960 ms. At 1 s the squeeze bit
+ * that scene directly (its allowance fell to 38 ms and the sizer floored
+ * at one workgroup while a 500-hit batch would have cost 4% more); at
+ * 2 s it does not bite until a dispatch's FIXED cost alone is a
+ * watchdog conversation, where declining to add work is the right
+ * answer rather than a trapdoor. */
+export const SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS = 2000;
+
+/** How far the per-hit MARGINAL estimate may fall on one measurement — a
+ * halving, matching the capacity ladder's own doubling rate.
+ *
+ * The model's optimism needs a rate limit for the same reason its width
+ * does. `nextShadeHitCost` clamps the marginal at zero, and zero means
+ * FREE: the sizer then asks for the whole capacity on the strength of one
+ * cheap dispatch. That is reachable — a wide batch of ground-plane
+ * terminals (fr-rhn5 queues them WITH the hits, and they shade
+ * analytically) landing on a model converged to expensive fold hits reads
+ * as exactly that surprise — and it is fr-p8bc's "a cheap run inflates
+ * the capacity a hit band then pays" re-opened one level up, in the cost
+ * model rather than in the queue. Halving bounds the next batch at twice
+ * the last, which is the rate the capacity ladder already enforces, and
+ * it costs nothing measured: the marginal's per-dispatch moves during a
+ * real convergence are a few percent (169.9 -> 159.9 µs over the whole
+ * boxfold-pair climb). */
+export const SURFACE_COMPUTE_SHADE_MARGINAL_DECAY = 0.5;
 
 /** Batch width at which one hit-dispatch measurement is half about the
  * per-dispatch INTERCEPT and half about the per-hit MARGINAL cost — the
@@ -618,38 +650,64 @@ export function initialShadeHitCost(): ShadeHitCost {
 }
 
 /**
- * GPU-time budget (µs) one hit dispatch may be sized for, given what the
- * frame currently believes its per-dispatch INTERCEPT is.
+ * GPU time (µs) one hit dispatch may spend on MARGINAL work — hits — on
+ * top of the intercept it is going to pay whatever its width.
  *
- * The rule is `max(pass target, 2 × intercept)`, capped at
- * {@link SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS} — spend at most as
- * much on marginal work as the fixed cost you are already paying. Below
- * the knee that is just the pass target (a ~88 ms intercept leaves
- * ~162 ms of hits to buy). Above it, it is the whole point of fr-2ojg: a
- * dispatch whose fixed cost alone is 400 ms cannot be made cheaper by
- * shrinking it, so refusing to widen it past the pass target buys no
- * safety and costs an order of throughput — 64 hits for 432 ms against
- * 800 hits for 800 ms, on measurements that say the second is the same
- * work done ~12x faster.
+ * `max(pass target − intercept, intercept)`, and never more than
+ * {@link SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS} leaves. Below the
+ * knee that is the room left inside the pass target (a ~88 ms intercept
+ * leaves ~162 ms of hits to buy). Above it, it is the whole point of
+ * fr-2ojg — spend at most as much on hits as the fixed cost already being
+ * spent: a dispatch whose intercept alone is 400 ms cannot be made
+ * cheaper by shrinking it, so refusing to widen it past the pass target
+ * buys no safety and costs an order of throughput (64 hits for 432 ms
+ * against 800 hits for 800 ms — the same work ~12x faster).
+ *
+ * THE CEILING TERM IS THE ONE PLACE THIS CAN STILL SHRINK, and where it
+ * sits is the whole of its safety argument — see that constant.
  */
-export function shadeHitBudgetUs(interceptUs: number): number {
-  return Math.min(
-    SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS * 1000,
-    Math.max(SURFACE_COMPUTE_PASS_TARGET_MS * 1000, 2 * interceptUs),
+export function shadeHitAllowanceUs(interceptUs: number): number {
+  return Math.max(
+    0,
+    Math.min(
+      SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS * 1000 - interceptUs,
+      Math.max(
+        SURFACE_COMPUTE_PASS_TARGET_MS * 1000 - interceptUs,
+        interceptUs,
+      ),
+    ),
   );
+}
+
+/** What a hit dispatch sized against {@link shadeHitAllowanceUs} is
+ * predicted to cost in total (µs) — the number the capacity ladder judges
+ * the measurement against, since a threshold has to be the number the
+ * sizer aimed at. */
+export function shadeHitBudgetUs(interceptUs: number): number {
+  return interceptUs + shadeHitAllowanceUs(interceptUs);
 }
 
 /**
  * Adaptive hit-batch CAPACITY: grow while hit batches come in under the
  * budget they were sized for, QUARTER on a big overshoot. This is the
  * slow-trust bound layered over {@link shadeHitBatchSize}'s cost
- * prediction, and since fr-2ojg it is the ONLY bound on the first
- * encounter with an unmeasured-cost region: a width the model has never
- * priced can only be reached by doubling through widths it has, so the
- * first overshoot stays a bounded multiple of the budget instead of a
- * watchdog kill. The trust ladder's floor is one workgroup, never lower
- * (fr-d6g5) — see {@link shadeHitBatchSize} for why a sub-workgroup
- * capacity buys no submission-wall safety.
+ * prediction: a width the model has never priced can only be reached by
+ * doubling through widths it has, so the climb out of an EMPTY model
+ * cannot jump straight to the ceiling. The floor is one workgroup, never
+ * lower (fr-d6g5) — see {@link shadeHitBatchSize} for why a
+ * sub-workgroup capacity buys no submission-wall safety.
+ *
+ * WHAT IT DOES NOT BOUND, said plainly because an earlier draft of this
+ * comment claimed it did: once the model is calibrated it sizes at or
+ * under the budget by construction, so this capacity grows on nearly
+ * every dispatch, saturates at
+ * {@link SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH}, and thereafter binds
+ * nothing — the width is the MODEL's answer, not the ladder's. That is
+ * the intended division (the model sizes, the ladder paces the climb),
+ * and it means a cost STEP inside a calibrated frame is bounded by the
+ * model's own spike response, which is reactive, plus
+ * {@link SURFACE_COMPUTE_SHADE_MARGINAL_DECAY} bounding how fast the
+ * model may become optimistic in the first place.
  *
  * `budgetMs` is {@link shadeHitBudgetUs}'s answer for the batch being
  * judged, NOT the fixed pass target: the growth threshold has to be the
@@ -692,11 +750,9 @@ export function nextShadeBatchSize(
  * down to the floor. Pure so the prediction is unit-tested.
  */
 export function shadeHitBatchSize(cost: ShadeHitCost, cap: number): number {
-  const allowanceUs = Math.max(
-    0,
-    shadeHitBudgetUs(cost.interceptUs) - cost.interceptUs,
+  const byCost = Math.floor(
+    shadeHitAllowanceUs(cost.interceptUs) / Math.max(1, cost.marginalUs),
   );
-  const byCost = Math.floor(allowanceUs / Math.max(1, cost.marginalUs));
   return Math.max(SURFACE_COMPUTE_WORKGROUP_SIZE, Math.min(cap, byCost));
 }
 
@@ -739,7 +795,16 @@ export function nextShadeHitCost(
   const w = n / (n + SURFACE_COMPUTE_SHADE_COST_PIVOT);
   return {
     interceptUs: Math.max(0, cost.interceptUs + (1 - w) * surpriseUs),
-    marginalUs: Math.max(0, cost.marginalUs + (w * surpriseUs) / n),
+    marginalUs: Math.max(
+      0,
+      // The rate limit on optimism — see
+      // SURFACE_COMPUTE_SHADE_MARGINAL_DECAY. Nothing else stops one
+      // cheap dispatch from clamping the marginal to zero, which the
+      // sizer reads as "hits are free" and answers with the whole
+      // capacity.
+      cost.marginalUs * SURFACE_COMPUTE_SHADE_MARGINAL_DECAY,
+      cost.marginalUs + (w * surpriseUs) / n,
+    ),
   };
 }
 
