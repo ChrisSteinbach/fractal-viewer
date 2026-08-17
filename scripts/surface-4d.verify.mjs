@@ -788,6 +788,18 @@ async function main() {
       check(true, `${scene.name}/${armLabel}: settled in ${result.settleMs}ms`);
       // Fallback arm's own detail-token rule: the deliberate ?surfacegl
       // flag must carry NO trailing " — compute ..." caveat.
+      //
+      // THE ANTIALIASING TOKEN IS NOT THAT CAVEAT and has to be stripped
+      // before the question is asked. fr-jf9y gave the WebGL strip arm the
+      // same 8-sample supersampling the compute path has, and the progress
+      // row discloses the pass as its own trailing
+      // "— antialiasing pass k/8"; this assertion predates that and had
+      // been failing on every WebGL settle long enough to reach pass 2,
+      // which is all of them. What the rule is actually about is
+      // `surfaceWebglDetail`'s ENGINE explanation, which always names
+      // "compute" — so anything else that legitimately grows a trailing
+      // token belongs on this list rather than in the failure.
+      const AA_PASS_TOKEN = / — antialiasing pass \d+\/\d+$/;
       if (forceWebgl) {
         const shownTexts = result.progressSamples.filter(
           (o) => o.visible && o.text,
@@ -795,7 +807,9 @@ async function main() {
         if (shownTexts.length > 0) {
           check(
             shownTexts.every(
-              (o) => o.text.includes("· WebGL") && !o.text.includes(" — "),
+              (o) =>
+                o.text.includes("· WebGL") &&
+                !o.text.replace(AA_PASS_TOKEN, "").includes(" — "),
             ),
             `${scene.name}/${armLabel}: visible progress says "· WebGL" with no detail token (${shownTexts.map((o) => o.text).join(" | ")})`,
           );
