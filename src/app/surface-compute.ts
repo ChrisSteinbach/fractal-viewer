@@ -1807,7 +1807,46 @@ export class SurfaceComputeRenderer {
 
   /** Fired once when the device is lost OUTSIDE {@link destroy} — the
    * session's cue to re-enter via the WebGL path. */
-  onLost: (() => void) | null = null;
+  get onLost(): (() => void) | null {
+    return this.onLostCb;
+  }
+
+  /**
+   * An ACCESSOR rather than a plain field because the loss can PRECEDE the
+   * assignment: `create()` spends seconds in pipeline compiles (Mesa's own
+   * worst case, and exactly when a flaky driver dies), so `device.lost` can
+   * already be resolved when the constructor registers its handler — which
+   * then runs with no callback to call, and main.ts, whose only reader of
+   * this state is `onLost` itself, would never hear about it (a silently
+   * dead renderer whose every {@link renderFrame} resolves null: a
+   * permanently blank pane, no toast, no WebGL fallback). So a pending loss
+   * is DELIVERED here instead. Exactly once across both paths, so
+   * re-assigning a callback afterwards is not a second toast-and-re-enter.
+   */
+  set onLost(cb: (() => void) | null) {
+    this.onLostCb = cb;
+    if (cb === null || !this.isLost || this.destroyed || this.lossDelivered)
+      return;
+    this.lossDelivered = true;
+    // Never from inside the assignment itself: the handler RE-ENTERS the
+    // surface session, and its assigning caller is mid-setup (main.ts marks
+    // the session's first frame several statements below this line — on the
+    // re-entered WebGL session, which has not drawn anything yet). A
+    // microtask is also how the ordinary path arrives, so a delivered loss
+    // and a live one look the same from outside.
+    queueMicrotask(() => {
+      if (this.destroyed) return;
+      this.onLostCb?.();
+    });
+  }
+
+  private onLostCb: (() => void) | null = null;
+  /** True once a device loss has been handed to a callback — by the
+   * constructor's `device.lost` handler or by the setter above, whichever
+   * saw one first. Not "the device was lost" ({@link isLost} is that): a
+   * loss observed with no callback registered is still UNDELIVERED, and the
+   * next assignment owes it. */
+  private lossDelivered = false;
 
   private isLost = false;
   /** True once {@link destroy} has been called. This is the cancellation
@@ -1899,7 +1938,12 @@ export class SurfaceComputeRenderer {
     this.software = init.software;
     void this.device.lost.then(() => {
       this.isLost = true;
-      if (!this.destroyed) this.onLost?.();
+      // No callback yet means UNDELIVERED, not delivered-to-nobody: the
+      // setter picks it up (see {@link lossDelivered}).
+      if (this.destroyed || this.lossDelivered || this.onLostCb === null)
+        return;
+      this.lossDelivered = true;
+      this.onLostCb();
     });
   }
 

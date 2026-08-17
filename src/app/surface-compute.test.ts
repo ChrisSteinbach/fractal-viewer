@@ -1037,9 +1037,13 @@ interface TeardownHarness {
  * outcomes (a settle-on-demand device round trip, spies counting destroys) and
  * implements no GPU behavior: pipelines, layouts, bind groups and the LUT
  * texture/sampler are opaque casts, since nothing on the teardown path
- * inspects them. `lost` never settles unless a test calls `loseDevice`.
+ * inspects them. `lost` never settles unless a test calls `loseDevice` — or
+ * `lostBeforeConstruction` settles it up front, which is what a device that
+ * died during `create()`'s pipeline compiles hands the constructor (fr-5qmy).
  */
-function createHarness(): TeardownHarness {
+function createHarness(
+  opts: { lostBeforeConstruction?: boolean } = {},
+): TeardownHarness {
   const work = deferred();
   const lost = deferred();
   const bufferDestroys: ReturnType<typeof vi.fn>[] = [];
@@ -1065,6 +1069,10 @@ function createHarness(): TeardownHarness {
     createBindGroup: () => ({}) as GPUBindGroup,
     destroy: deviceDestroy,
   } as unknown as GPUDevice;
+
+  // Settled BEFORE the renderer exists, so its constructor's `.then` is
+  // already queued to run with nothing registered to hear it.
+  if (opts.lostBeforeConstruction) lost.resolve();
 
   const renderer = new SurfaceComputeRenderer({
     device,
@@ -1208,5 +1216,54 @@ describe("SurfaceComputeRenderer teardown (fr-uec4)", () => {
     expect(onLost).not.toHaveBeenCalled();
     // The handler DID run — otherwise the assertion above passes vacuously.
     expect(renderer.lost).toBe(true);
+  });
+});
+
+describe("SurfaceComputeRenderer device loss (fr-5qmy)", () => {
+  it("reports a loss that arrives after the callback is registered", async () => {
+    const { renderer, loseDevice } = createHarness();
+    const onLost = vi.fn();
+    renderer.onLost = onLost;
+
+    loseDevice();
+    await flushMicrotasks();
+
+    expect(onLost).toHaveBeenCalledTimes(1);
+    expect(renderer.lost).toBe(true);
+  });
+
+  it("reports a loss that PRECEDED the callback's registration", async () => {
+    // `create()` spends seconds in pipeline compiles, which is exactly when a
+    // flaky driver dies — so `device.lost` can already be resolved by the time
+    // main.ts gets the renderer back and assigns onLost. The loss is the
+    // session's only cue to fall back to WebGL; dropping it leaves a renderer
+    // whose every frame resolves null behind a permanently blank pane.
+    const { renderer } = createHarness({ lostBeforeConstruction: true });
+    await flushMicrotasks(); // the constructor's handler runs with no callback.
+    expect(renderer.lost).toBe(true);
+
+    const onLost = vi.fn();
+    renderer.onLost = onLost;
+    await flushMicrotasks();
+
+    expect(onLost).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-report a delivered loss to a second callback", async () => {
+    // One loss is one fallback. A later assignment must not toast the user and
+    // re-enter the mode again over the same dead device.
+    const { renderer } = createHarness({ lostBeforeConstruction: true });
+    await flushMicrotasks(); // deliver through the SETTER, as the test above.
+    const first = vi.fn();
+    renderer.onLost = first;
+    await flushMicrotasks();
+    expect(first).toHaveBeenCalledTimes(1);
+
+    const second = vi.fn();
+    renderer.onLost = second;
+    await flushMicrotasks();
+
+    expect(second).not.toHaveBeenCalled();
+    expect(first).toHaveBeenCalledTimes(1);
   });
 });
