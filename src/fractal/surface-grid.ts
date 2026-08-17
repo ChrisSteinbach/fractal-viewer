@@ -66,6 +66,15 @@ import type { Vec3 } from "./types";
  * {@link buildSurfaceGridSlab} stores `0` for such cells without calling the
  * estimator at all — roughly half the cube's cells on a typical build,
  * halving build cost for free.
+ *
+ * THREE DIMENSIONS ONLY, and that is a REFUSAL rather than an unfinished
+ * lift. A 4D session's rotor and w-slice are LIVE per-frame view state
+ * (`surface-material-4d.ts`'s `setSurfaceView4`), so the sliced set a grid
+ * would have to bound moves every frame and a build would be invalidated as
+ * fast as it completed — where this module's whole premise is that ONE
+ * build serves a whole session (`main.ts` requests exactly one per 3D
+ * surface enter, against a frozen DE). So `buildSurfaceGrid` takes
+ * `SurfaceDE` and there is deliberately no `surface-grid-4d.ts`.
  */
 
 /** Default per-axis cell count: {@link buildSurfaceGrid}'s `resolution` when
