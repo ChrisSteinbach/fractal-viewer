@@ -4,6 +4,7 @@ import {
   encodeScene,
   fromSnapshot,
   loadScene,
+  saveScene,
   toSnapshot,
 } from "./persist";
 import type { SceneSnapshot } from "./persist";
@@ -3107,6 +3108,63 @@ describe("loadScene", () => {
     const result = loadScene({ location: { hash: "" }, storage });
 
     expect(result).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// saveScene — history + storage writes (fr-532t: history is injectable via
+// PersistDeps, mirroring location/storage)
+// ---------------------------------------------------------------------------
+
+describe("saveScene", () => {
+  it("writes the encoded scene to storage under the module's key", () => {
+    const setItem = vi.fn();
+    const storage = { getItem: () => null, setItem };
+    const history = { replaceState: vi.fn() };
+    const s = baseSnapshot();
+
+    saveScene(s, { history, storage });
+
+    expect(setItem).toHaveBeenCalledWith(
+      "fractal-viewer:scene",
+      encodeScene(s),
+    );
+  });
+
+  it("calls history.replaceState with '#' + encoded", () => {
+    const replaceState = vi.fn();
+    const history = { replaceState };
+    const storage = { getItem: () => null, setItem: vi.fn() };
+    const s = baseSnapshot();
+
+    saveScene(s, { history, storage });
+
+    expect(replaceState).toHaveBeenCalledWith(null, "", "#" + encodeScene(s));
+  });
+
+  it("swallows a throwing replaceState and still writes storage", () => {
+    const setItem = vi.fn();
+    const storage = { getItem: () => null, setItem };
+    const history = {
+      replaceState: () => {
+        throw new Error("SecurityError");
+      },
+    };
+
+    expect(() => saveScene(baseSnapshot(), { history, storage })).not.toThrow();
+    expect(setItem).toHaveBeenCalled();
+  });
+
+  it("swallows a throwing setItem without throwing", () => {
+    const history = { replaceState: vi.fn() };
+    const storage = {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error("QuotaExceededError");
+      },
+    };
+
+    expect(() => saveScene(baseSnapshot(), { history, storage })).not.toThrow();
   });
 });
 
