@@ -3227,11 +3227,14 @@ ${foldValueFormGlsl(shadeDeWidth)}
     // Alpha 1: a HIT. The alpha channel of this tracer's output is the
     // fr-7k0o COVERAGE flag — 1 where the frame drew something, 0 where it
     // shows only its own backdrop — and never an opacity. It is invisible
-    // to the user (the render target is RGBA8, the blit that copies it is
-    // NoBlending, and the canvas is created with alpha:false); the one
-    // reader is scene.ts's settle fold, which counts it so the WebGL arm
-    // can answer the blank-frame question the WebGPU arm answers from its
-    // own per-ray status tally.
+    // to the user because BLIT_FRAGMENT strips it to 1 at every present
+    // (fr-1wbv: three r163+ creates the canvas alpha:true regardless of
+    // the renderer's alpha param, so a coverage-0 pixel reaching the
+    // canvas composites the page's own background ADDITIVELY over the
+    // pane — measured +#0f1018 on every miss pixel); the one reader is
+    // scene.ts's settle fold, which counts it off the TRACE target so the
+    // WebGL arm can answer the blank-frame question the WebGPU arm
+    // answers from its own per-ray status tally.
     outColor = vec4(col, 1.0);
   }
 `;
@@ -3279,18 +3282,36 @@ const BLIT_FRAGMENT = /* glsl */ `
   in vec2 vUv;
   out vec4 outColor;
   void main() {
-    outColor = texture(uSrc, vUv);
+    // ALPHA IS FORCED TO 1 HERE, and this is load-bearing (fr-1wbv): the
+    // tracers' alpha channel is the fr-7k0o COVERAGE flag (1 = drew
+    // something, 0 = backdrop), a private side-channel of the render
+    // targets — and three r163+ creates the canvas WebGL context with
+    // alpha:true unconditionally (the WebGLRenderer \`alpha\` param only
+    // picks the default CLEAR alpha), so a verbatim copy handed the
+    // compositor coverage-0 pixels over a nonzero RGB, which premultiplied
+    // compositing reads as "add the page background". Measured: every miss
+    // pixel of a WebGL surface settle gained exactly the page's own
+    // --bg #0f1018 — +(15, 16, 24)/255 — which is what drove the two 4D
+    // arms' object-mask IoU to 0.24/0.35. The canvas present (and the
+    // capture path's present-then-toBlob) is where the coverage channel
+    // must stop; the settle-target readbacks that COUNT it read the trace
+    // target, never a blit destination.
+    outColor = vec4(texture(uSrc, vUv).rgb, 1.0);
   }
 `;
 
 /**
- * Verbatim upscale blit for the preview tier (fr-5ne3): stretches the
- * preview target over the canvas. Hand-rolled rather than MeshBasicMaterial
- * so no color-space chunk can ever transform the tracer's authored-sRGB
- * output (ColorManagement is off app-wide, and this module keeps all
- * surface GLSL in one place). `src` is the preview target's texture —
- * bound once here by object identity, which `WebGLRenderTarget.setSize`
- * preserves across reallocations.
+ * Upscale blit for every surface present (fr-5ne3): stretches a traced
+ * target (or the compute frame's DataTexture) over the canvas. Hand-rolled
+ * rather than MeshBasicMaterial so no color-space chunk can ever transform
+ * the tracer's authored-sRGB output (ColorManagement is off app-wide, and
+ * this module keeps all surface GLSL in one place). RGB is copied verbatim;
+ * ALPHA IS FORCED TO 1 (fr-1wbv — see BLIT_FRAGMENT's comment: the
+ * tracers' alpha is the fr-7k0o coverage flag, and letting it reach the
+ * always-alpha:true canvas composited the page background into every miss
+ * pixel). `src` is the preview target's texture — bound once here by
+ * object identity, which `WebGLRenderTarget.setSize` preserves across
+ * reallocations.
  */
 export function createSurfaceBlitMaterial(
   src: THREE.Texture,
