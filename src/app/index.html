@@ -6,6 +6,34 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
+    <!-- fr-k4kl: the app's ONLY enforced XSS boundary. GitHub Pages sends no
+         headers, so a meta tag is the only delivery path a policy can ride —
+         and it is a real one here because the built page has exactly one
+         external module script and zero inline scripts or handlers, so
+         script-src 'self' costs nothing and turns ui.ts's never-innerHTML
+         convention into something the browser checks rather than something a
+         reviewer has to. Every other directive is what the app MEASURABLY
+         does: four same-origin module workers (main.ts, surface-grid-client's
+         factory), so worker-src needs no blob:; gallery/timeline thumbnails
+         are canvas toDataURL strings, so img-src needs data: — and that is
+         the one known sink this backstops, since a localStorage-poisoned
+         thumbnail reaching `img.src` can now only be a data:/same-origin
+         image and never an off-origin beacon; both createObjectURL blobs are
+         `<a download>` clicks (main.ts, recorder.ts), which is a navigation
+         and not a fetch, so no blob: is owed anywhere; nothing is fetched
+         off-origin at runtime, so connect-src stays 'self'. style-src keeps
+         'unsafe-inline' deliberately — styles are not the vector being closed
+         here. media-src/font-src are omitted rather than restated (default-src
+         'self' already says exactly that), and frame-ancestors is omitted
+         because a meta CSP IGNORES it — a directive that cannot be enforced
+         from here would only read as protection this page does not have.
+         SCOPE: this covers index.html alone. public/gpuprobe.html is a
+         separate page with no policy of its own, and it builds a blob: worker
+         — do not weaken this one to accommodate it. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
     <!-- Mirrors the DEFAULT (dark) backdrop's top stop (DARK_BACKDROP.top in
          src/app/constants.ts) so the mobile/PWA chrome tint meets the page
          top seamlessly. The per-scene Background control (fr-5ps1) can
