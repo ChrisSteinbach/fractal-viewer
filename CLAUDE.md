@@ -1667,7 +1667,7 @@ Frame` callback, which runs before paint so the disabled look never
     dispatches at the floor. MEASURED, real Iris: boxfoldPair settle
     25.0 s -> 10.1 s (3.5x from the pre-fr-257o 35.0 s), hit shade
     14807 -> 2675 ms, 139 -> 20 dispatches; mandelboxKifs 1.75x the
-    hits/s; lens3 -14.3%; the 4D `affine4` arm -32% on the same gate (the
+    hits/s; lens3 -14.3%; the 4D `affine4` arm -39% on the same gate (the
     sizer is host-loop state, shared by every core in both dimensions, so
     there is no 4D twin owed); all ten settled PNGs byte-identical. AND THE
     WORST SINGLE DISPATCH DID NOT GROW, which is the watchdog answer a
