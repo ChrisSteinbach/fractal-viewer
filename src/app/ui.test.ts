@@ -171,8 +171,13 @@ function editorGroupTitles(): string[] {
   ).map((el) => el.textContent ?? "");
 }
 
+// Parsed once here at module scope instead of once per test (~433 tests):
+// importNode below always deep-clones, so this cached template is never
+// mutated by a test, and re-parsing the same 63KB string per test bought
+// nothing but the parse cost itself.
+const parsed = new DOMParser().parseFromString(indexHtml, "text/html");
+
 beforeEach(() => {
-  const parsed = new DOMParser().parseFromString(indexHtml, "text/html");
   document.body.replaceChildren();
   for (const node of Array.from(parsed.body.children)) {
     // Skip the module script tag — we exercise Ui, not the app bootstrap.
