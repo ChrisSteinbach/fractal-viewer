@@ -16,6 +16,7 @@ import type {
 } from "./flame";
 import {
   DEFAULT_COLOR_SPEED,
+  ESCAPE_LIMIT,
   derivedColorIndex,
   plotPoint,
   prepareChaosGame,
@@ -398,6 +399,56 @@ describe("accumulateFlame vs. stepOrbit/plotPoint (correctness oracle)", () => {
     expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
     expect(actual.maxHits).toBe(expected.maxHits);
     expect(actual.orbit).toEqual(expected.orbit);
+  });
+});
+
+describe("accumulateFlame escape-reseed (fr-h22c)", () => {
+  it("reseeds every iteration when the map always lands past ESCAPE_LIMIT, keeping the histogram finite and resetting the color coordinate to 0.5", () => {
+    // Every oracle above is built from a contracting system that never
+    // escapes, so none of them walks flame.ts's inlined reseed branch
+    // (nx/ny/nz redrawn from rng(), c forced back to 0.5). This map always
+    // lands at (2 * ESCAPE_LIMIT) on every axis — comfortably past the
+    // limit regardless of the current orbit point (scale 0 zeroes out the
+    // input) — so EVERY iteration of the hot loop, not just an occasional
+    // one, walks that branch. colorIndex/colorSpeed are authored well away
+    // from 0.5 so the blend alone can never land c there: for the derived
+    // defaults of a single-map system (colorIndex 0.5, speed 0.5) the blend
+    // itself is already a fixed point at 0.5, which would make the reset
+    // assertion below pass even with the reset deleted.
+    const escapedCoord = ESCAPE_LIMIT * 2;
+    const transforms = fixedPointSystem([
+      escapedCoord,
+      escapedCoord,
+      escapedCoord,
+    ]).map((t) => ({ ...t, colorIndex: 0.9, colorSpeed: 0.8 }));
+    const prepared = prepareChaosGame(transforms);
+    const palette = transformColors(1);
+    const colorLUT = buildPaletteLUT("spectrum");
+    if (!colorLUT) throw new Error("spectrum should have a LUT");
+
+    const hist = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      10,
+      10,
+      30,
+      mulberry32(1),
+      palette,
+      undefined,
+      colorLUT,
+    );
+
+    // Every reseed redraws x/y/z in [-0.5, 0.5) — comfortably inside the
+    // 10x10 frame — so a working guard leaves a populated, finite
+    // histogram; a deleted guard leaves the point stuck outside
+    // ESCAPE_LIMIT forever, permanently outside the frame, and every bucket
+    // at zero.
+    expect(Array.from(hist.hits).some((h) => h > 0)).toBe(true);
+    expect(Array.from(hist.hits).every(Number.isFinite)).toBe(true);
+    expect(Array.from(hist.sumRGB).every(Number.isFinite)).toBe(true);
+    // The reset is the last thing every iteration does to c, so it lands
+    // exactly on 0.5 regardless of how many iterations ran.
+    expect(hist.orbitColor).toBe(0.5);
   });
 });
 

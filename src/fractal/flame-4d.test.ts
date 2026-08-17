@@ -1,6 +1,7 @@
 import { accumulateFlame4 } from "./flame-4d";
 import {
   DEFAULT_COLOR_SPEED,
+  ESCAPE_LIMIT,
   WARMUP_ITERATIONS,
   derivedColorIndex,
 } from "./chaos-game";
@@ -216,6 +217,54 @@ describe("accumulateFlame4 vs. stepOrbit4/plotPoint4 (correctness oracle)", () =
     expect(actual.maxHits).toBe(expected.maxHits);
     expect(actual.orbit).toEqual(expected.orbit);
     expect(actual.orbitW).toBe(expected.orbitW);
+  });
+});
+
+describe("accumulateFlame4 escape-reseed (fr-h22c)", () => {
+  it("reseeds every iteration when the map always lands past ESCAPE_LIMIT, keeping the histogram finite and resetting the color coordinate to 0.5", () => {
+    // The 4D twin of flame.test.ts's escape-reseed test: every oracle above
+    // is built from a contracting system that never escapes, so none of
+    // them walks flame-4d.ts's inlined reseed branch. This map always lands
+    // at (2 * ESCAPE_LIMIT) on every axis — comfortably past the limit
+    // regardless of the current orbit point — so EVERY iteration of the hot
+    // loop walks that branch. colorIndex/colorSpeed are authored well away
+    // from 0.5 for the same reason as the 3D test: at the derived defaults
+    // of a single-map system the blend alone is already a fixed point at
+    // 0.5, which would make the reset assertion pass even with the reset
+    // deleted.
+    const escapedCoord = ESCAPE_LIMIT * 2;
+    const transforms4 = fixedPointSystem4([
+      escapedCoord,
+      escapedCoord,
+      escapedCoord,
+      escapedCoord,
+    ]).map((t) => ({ ...t, colorIndex: 0.9, colorSpeed: 0.8 }));
+    const prepared = prepareChaosGame4(transforms4);
+    const lut = buildPaletteLUT("spectrum");
+    if (!lut) throw new Error("spectrum should have a LUT");
+
+    const hist = accumulateFlame4(
+      prepared,
+      FLAT_PROJECTION,
+      FLAT_VIEW,
+      10,
+      10,
+      30,
+      mulberry32(1),
+      { kind: "structural", lut },
+    );
+
+    // Every reseed redraws x/y/z/w in [-0.5, 0.5) — comfortably inside the
+    // 10x10 frame — so a working guard leaves a populated, finite
+    // histogram; a deleted guard leaves the point stuck outside
+    // ESCAPE_LIMIT forever, permanently outside the frame, and every bucket
+    // at zero.
+    expect(Array.from(hist.hits).some((h) => h > 0)).toBe(true);
+    expect(Array.from(hist.hits).every(Number.isFinite)).toBe(true);
+    expect(Array.from(hist.sumRGB).every(Number.isFinite)).toBe(true);
+    // The reset is the last thing every iteration does to c, so it lands
+    // exactly on 0.5 regardless of how many iterations ran.
+    expect(hist.orbitColor).toBe(0.5);
   });
 });
 

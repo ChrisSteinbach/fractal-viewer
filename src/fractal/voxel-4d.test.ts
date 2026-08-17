@@ -3,6 +3,7 @@ import { BOUNDS_MARGIN, BOUNDS_QUANTILE, createVoxelGrid } from "./voxel";
 import type { VoxelBounds } from "./voxel";
 import {
   DEFAULT_COLOR_SPEED,
+  ESCAPE_LIMIT,
   WARMUP_ITERATIONS,
   derivedColorIndex,
 } from "./chaos-game";
@@ -195,6 +196,46 @@ describe("accumulateVoxels4 vs. stepOrbit4/plotPoint4 (correctness oracle)", () 
     expect(actual.orbitW).toBe(expected.orbitW);
     // Not a vacuous comparison of all-zero grids.
     expect(actual.maxDensity).toBeGreaterThan(0);
+  });
+});
+
+describe("accumulateVoxels4 escape-reseed (fr-h22c)", () => {
+  it("reseeds every iteration when the map always lands past ESCAPE_LIMIT, keeping the grid finite and populated", () => {
+    // The 4D twin of voxel.test.ts's escape-reseed test: every oracle above
+    // is built from a contracting system that never escapes, so none of
+    // them walks voxel-4d.ts's inlined reseed branch. This map always lands
+    // at (2 * ESCAPE_LIMIT) on every axis — comfortably past the limit
+    // regardless of the current orbit point — so EVERY iteration of the hot
+    // loop walks that branch.
+    const escapedCoord = ESCAPE_LIMIT * 2;
+    const prepared = prepareChaosGame4(
+      fixedPointSystem4([
+        escapedCoord,
+        escapedCoord,
+        escapedCoord,
+        escapedCoord,
+      ]),
+    );
+    const grid = createVoxelGrid(4, unitishBounds(1));
+    const palette = transformColors(1);
+
+    const result = accumulateVoxels4(
+      prepared,
+      grid,
+      30,
+      mulberry32(1),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      { kind: "transform", palette },
+    );
+
+    // Every reseed redraws x/y/z/w in [-0.5, 0.5) — comfortably inside the
+    // [-1, 1] grid bounds — so a working guard leaves a populated, finite
+    // grid; a deleted guard leaves the point stuck outside ESCAPE_LIMIT
+    // forever, permanently outside the grid, and every voxel at zero.
+    expect(Array.from(result.density).some((d) => d > 0)).toBe(true);
+    expect(Array.from(result.density).every(Number.isFinite)).toBe(true);
+    expect(Array.from(result.avgRGB).every(Number.isFinite)).toBe(true);
   });
 });
 
