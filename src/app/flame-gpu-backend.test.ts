@@ -227,6 +227,30 @@ describe("GpuFlameBackend teardown", () => {
     expect(deviceDestroy).toHaveBeenCalledTimes(1);
   });
 
+  it("waits for BOTH in-flight ops when two overlap at destroy()", async () => {
+    // `opsInFlight` is a COUNT, and the tests above only ever drive it at one.
+    // Two ops really do overlap in the shipped worker — a progressive
+    // redisplay's readback while an accumulation chunk is still running — and
+    // each parks on its own await (onSubmittedWorkDone, mapAsync), so the
+    // teardown owes the LAST one out, not the first.
+    const { backend, deviceDestroy, resolveWork, resolveSnapshotMap } =
+      createHarness();
+    const accumulating = backend.accumulate(100);
+    const snapshotting = backend.snapshot();
+    await flushMicrotasks();
+
+    backend.destroy();
+    expect(deviceDestroy).toHaveBeenCalledTimes(0);
+
+    resolveWork();
+    await accumulating;
+    expect(deviceDestroy).toHaveBeenCalledTimes(0); // the snapshot is still parked on its map.
+
+    resolveSnapshotMap();
+    await snapshotting;
+    expect(deviceDestroy).toHaveBeenCalledTimes(1);
+  });
+
   it("tears down the device synchronously when nothing is in flight", () => {
     const { backend, deviceDestroy } = createHarness();
     backend.destroy();

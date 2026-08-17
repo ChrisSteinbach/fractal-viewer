@@ -22,12 +22,17 @@ import {
   SURFACE_COMPUTE_SHADE_HIT_CAP_START,
   SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST,
   SURFACE_COMPUTE_WORKGROUP_SIZE,
+  SurfaceComputeRenderer,
   surfaceComputeBandStops,
   surfaceComputeMaxDispatchRays,
   surfaceComputeMaxFrameRays,
   surfaceComputeProgressDone,
   surfaceComputeTileRows,
   subPixelSample,
+} from "./surface-compute";
+import type {
+  SurfaceComputeFrameSpec,
+  SurfaceComputeTarget,
 } from "./surface-compute";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 
@@ -910,5 +915,298 @@ describe("subPixelSample (fr-vpbq)", () => {
     const quarters = new Set(Array.from({ length: 8 }, (_, s) => cell(2, s)));
     expect(sixteenths.size).toBe(8);
     expect(quarters.size).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Deferred-teardown harness (fr-uec4)
+//
+// Pins the state machine `destroy()` / `releaseFrame()` / `destroyDevice()`
+// make between them: a `destroy()` landing while a frame is still counted must
+// not touch the device until that frame unwinds, and the device must never be
+// destroyed twice. Tearing a device down under a frame parked on live
+// submitted GPU work took the whole Firefox PROCESS down (fr-uec4), so this is
+// the costliest thing in the file to get wrong — and a fake GPUDevice is the
+// only way to drive a state machine whose real inputs are a GPU driver's
+// timing. `scripts/surface-teardown.verify.mjs` stays the authority on real
+// devices; these tests are the fast regression net under the counting.
+//
+// The renderer is built through its init-object constructor, the seam this
+// suite exists for — the same one `flame-gpu-backend.test.ts` drives its twin
+// through.
+// ---------------------------------------------------------------------------
+
+// `GPUBufferUsage` is a real runtime global in a browser/WebGPU context, not
+// just the compile-time ambient type `@webgpu/types` declares — a frame's
+// buffer allocation reads its flags directly, mirroring the real WebGPU API.
+// Node has no such global, so a plain Node test run needs the same minimal
+// stand-in a browser provides for free (values are the WebGPU spec's own flag
+// bits; nothing here reads them beyond handing them to the fake `createBuffer`
+// below, which ignores its argument entirely). Same stand-in, same reason, as
+// flame-gpu-backend.test.ts's `GPUMapMode`.
+globalThis.GPUBufferUsage = {
+  MAP_READ: 0x0001,
+  MAP_WRITE: 0x0002,
+  COPY_SRC: 0x0004,
+  COPY_DST: 0x0008,
+  INDEX: 0x0010,
+  VERTEX: 0x0020,
+  UNIFORM: 0x0040,
+  STORAGE: 0x0080,
+  INDIRECT: 0x0100,
+  QUERY_RESOLVE: 0x0200,
+};
+
+/** A promise a test settles on its own schedule, independent of when the
+ * class under test actually awaits it — mirrors flame-gpu-backend.test.ts's
+ * helper of the same name. */
+function deferred(): { promise: Promise<null>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<null>((res) => {
+    resolve = () => {
+      res(null);
+    };
+  });
+  return { promise, resolve };
+}
+
+/** Resolves after a real macrotask boundary, by which point every microtask
+ * queued so far has drained — a frame takes several internal `await`s to
+ * reach the point it parks at. */
+function flushMicrotasks(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** The smallest frame the renderer will accept. Only `width`/`height` matter
+ * to the teardown path (they size the per-ray buffers); every other field is
+ * required by the type and never read before the frame parks. */
+function frameSpec(): SurfaceComputeFrameSpec {
+  return {
+    width: 2,
+    height: 2,
+    invProjView: new Float32Array(16),
+    camPos: [0, 0, 3],
+    acceptPixelEps: 1e-3,
+    tracePixelEps: 1e-3,
+    maxDepth: 8,
+    marchSteps: 32,
+    shadowSteps: 0,
+    aoTaps: 0,
+    hitFloor: 1e-4,
+    lightDir: [0, 1, 0],
+    ambient: 0.2,
+    bgTop: [0, 0, 0],
+    bgBottom: [0, 0, 0],
+    colorSource: 0,
+    colorSpeed: 0.5,
+    lut: null,
+    lutVersion: 0,
+    dither: false,
+  };
+}
+
+interface TeardownHarness {
+  renderer: SurfaceComputeRenderer;
+  /** Spy on the fake device's own `destroy()` — the one call the whole
+   * fr-uec4 state machine exists to TIME correctly. */
+  deviceDestroy: ReturnType<typeof vi.fn>;
+  /** One destroy spy per per-frame GPU buffer the renderer has allocated so
+   * far (states/active/color/status + the two staging buffers). Grows as
+   * frames allocate; a parked frame's staging buffers are exactly the ones
+   * that must not be freed under it. */
+  bufferDestroys: ReturnType<typeof vi.fn>[];
+  /** Settles the device round trip an in-flight frame is parked on. A frame
+   * makes several, and the FIRST — the error-scope pair `allocateFrameBuffers`
+   * awaits over its buffer allocation (fr-biox) — is the one a fake device
+   * reaches without reimplementing the march loop's readbacks. In production
+   * a frame parks further in, on `mapAsync`/`onSubmittedWorkDone` over
+   * submitted work; either way what is under test is the COUNTED SPAN, from
+   * `renderFrame`'s increment to its `.finally` release, which is the same
+   * span whichever await the frame happens to be sitting on. It settles with
+   * NO error, so the frame resumes into the ordinary token check and unwinds
+   * there — the real cancellation path a `destroy()` (or a newer frame) puts
+   * it on, not an error path. */
+  settleFrameWork: () => void;
+  /** Resolves the device's `lost` promise, which is what a real device does
+   * once it goes away — including when we destroyed it ourselves. */
+  loseDevice: () => void;
+}
+
+/**
+ * Builds a `SurfaceComputeRenderer` over a fake GPUDevice. The fake CONFIGURES
+ * outcomes (a settle-on-demand device round trip, spies counting destroys) and
+ * implements no GPU behavior: pipelines, layouts, bind groups and the LUT
+ * texture/sampler are opaque casts, since nothing on the teardown path
+ * inspects them. `lost` never settles unless a test calls `loseDevice`.
+ */
+function createHarness(): TeardownHarness {
+  const work = deferred();
+  const lost = deferred();
+  const bufferDestroys: ReturnType<typeof vi.fn>[] = [];
+  const deviceDestroy = vi.fn();
+  const device = {
+    lost: lost.promise,
+    // Generous enough that a 2x2 frame is nowhere near the fr-biox ray
+    // ceiling this renderer checks before it allocates anything.
+    limits: {
+      maxBufferSize: 1 << 28,
+      maxStorageBufferBindingSize: 1 << 28,
+      maxComputeWorkgroupsPerDimension: 65535,
+    },
+    pushErrorScope: () => {},
+    // Both of the allocation's two pops share one promise, so a single
+    // `settleFrameWork()` releases the parked frame.
+    popErrorScope: () => work.promise,
+    createBuffer: () => {
+      const destroy = vi.fn();
+      bufferDestroys.push(destroy);
+      return { destroy } as unknown as GPUBuffer;
+    },
+    createBindGroup: () => ({}) as GPUBindGroup,
+    destroy: deviceDestroy,
+  } as unknown as GPUDevice;
+
+  const renderer = new SurfaceComputeRenderer({
+    device,
+    // The teardown path never reads the target: the packers that do sit past
+    // the point a parked frame has reached.
+    target: { kind: "ifs" } as unknown as SurfaceComputeTarget,
+    marchPipeline: {} as GPUComputePipeline,
+    marchLayout: {} as GPUBindGroupLayout,
+    shadePipeline: {} as GPUComputePipeline,
+    shadeLayout: {} as GPUBindGroupLayout,
+    marchPipelineNoSlab: null,
+    shadePipelineNoSlab: null,
+    paramsBuf: {} as GPUBuffer,
+    shadeBuf: {} as GPUBuffer,
+    mapsBuf: {} as GPUBuffer,
+    shadeMapsBuf: {} as GPUBuffer,
+    lutTex: { createView: () => ({}) } as unknown as GPUTexture,
+    lutSamp: {} as GPUSampler,
+    software: false,
+  });
+
+  return {
+    renderer,
+    deviceDestroy,
+    bufferDestroys,
+    settleFrameWork: work.resolve,
+    loseDevice: lost.resolve,
+  };
+}
+
+describe("SurfaceComputeRenderer teardown (fr-uec4)", () => {
+  it("defers device.destroy() until an in-flight frame unwinds", async () => {
+    const { renderer, deviceDestroy, settleFrameWork } = createHarness();
+    const frame = renderer.renderFrame(frameSpec());
+    await flushMicrotasks();
+
+    renderer.destroy();
+    expect(deviceDestroy).toHaveBeenCalledTimes(0);
+
+    settleFrameWork();
+    await frame;
+    expect(deviceDestroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("tears the device down synchronously when no frame is in flight", () => {
+    const { renderer, deviceDestroy } = createHarness();
+    renderer.destroy();
+    expect(deviceDestroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("destroys the device exactly once when destroy() is called twice during the deferred window", async () => {
+    const { renderer, deviceDestroy, settleFrameWork } = createHarness();
+    const frame = renderer.renderFrame(frameSpec());
+    await flushMicrotasks();
+
+    renderer.destroy();
+    renderer.destroy(); // second call while still deferred: must not re-commit the teardown.
+    expect(deviceDestroy).toHaveBeenCalledTimes(0);
+
+    settleFrameWork();
+    await frame;
+    expect(deviceDestroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for the LAST of two in-flight frames, not the first", async () => {
+    // A frame is counted from its renderFrame CALL, not from when the chain
+    // lets it run — so the second one here is in flight (queued behind the
+    // first) without ever having touched the device, and destroy() owes it
+    // the same wait. Both then unwind: the first at its post-allocation token
+    // check, the second at its first, since destroy() moved the token.
+    const { renderer, deviceDestroy, settleFrameWork } = createHarness();
+    // Read at the moment the first frame has fully unwound (its release runs
+    // before its promise resolves) with the second still counted — the one
+    // instant that tells "waits for the last" apart from "waits for one".
+    let destroysWhenFirstUnwound = -1;
+    const first = renderer.renderFrame(frameSpec()).then((frame) => {
+      destroysWhenFirstUnwound = deviceDestroy.mock.calls.length;
+      return frame;
+    });
+    // Only once the first is PARKED, or it would resolve null at its opening
+    // token check (the second call supersedes it) and never be in flight at
+    // the same time — a latest-wins request during a live frame is what
+    // actually puts two of them in the count.
+    await flushMicrotasks();
+    const second = renderer.renderFrame(frameSpec());
+
+    renderer.destroy();
+    expect(deviceDestroy).toHaveBeenCalledTimes(0);
+
+    settleFrameWork();
+    expect(await first).toBeNull();
+    expect(await second).toBeNull();
+    expect(destroysWhenFirstUnwound).toBe(0);
+    expect(deviceDestroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("never destroys the device a second time when a frame starts after the teardown", async () => {
+    const { renderer, deviceDestroy } = createHarness();
+    renderer.destroy(); // idle, so the device is already gone.
+    expect(deviceDestroy).toHaveBeenCalledTimes(1);
+
+    // The OTHER path into the real teardown: this frame is counted, resolves
+    // null at its first token check (destroy() bumped the token) and then
+    // releases — arriving at the teardown with `destroyed` already true, which
+    // is exactly what the separate `deviceDestroyed` flag is there to catch.
+    expect(await renderer.renderFrame(frameSpec())).toBeNull();
+    expect(deviceDestroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("never destroys a frame's buffers directly, leaving them to the device", async () => {
+    // Freeing a staging buffer out from under a pending map is its own crash
+    // vector — the reason the teardown hands everything to `device.destroy()`
+    // rather than walking the buffers first (flame-gpu-backend's fr-mxkk
+    // finding, one module over).
+    const { renderer, bufferDestroys, settleFrameWork } = createHarness();
+    const frame = renderer.renderFrame(frameSpec());
+    await flushMicrotasks();
+    expect(bufferDestroys.length).toBeGreaterThan(0); // the frame really allocated.
+
+    renderer.destroy();
+    settleFrameWork();
+    await frame;
+
+    bufferDestroys.forEach((destroy) =>
+      expect(destroy).toHaveBeenCalledTimes(0),
+    );
+  });
+
+  it("does not report a device loss that its own destroy() caused", async () => {
+    // A real device resolves `lost` when it is destroyed, and onLost is the
+    // session's cue to re-enter through the WebGL tracer — firing it on a
+    // deliberate exit would toast the user and restart a mode they just left.
+    const { renderer, loseDevice } = createHarness();
+    const onLost = vi.fn();
+    renderer.onLost = onLost;
+
+    renderer.destroy();
+    loseDevice();
+    await flushMicrotasks();
+
+    expect(onLost).not.toHaveBeenCalled();
+    // The handler DID run — otherwise the assertion above passes vacuously.
+    expect(renderer.lost).toBe(true);
   });
 });

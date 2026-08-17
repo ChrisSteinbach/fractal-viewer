@@ -1310,6 +1310,47 @@ export function surfaceComputeProgressDone(tally: {
 
 const WHITE_LUT = new Uint8Array(256 * 4).fill(255);
 
+/**
+ * Everything {@link SurfaceComputeRenderer}'s constructor needs, built up by
+ * the (long) {@link SurfaceComputeRenderer.buildOnDevice} driver. The same
+ * shape `GpuFlameBackendInit` takes one module over, and for the same two
+ * reasons: there are enough GPU resources here that positional arguments
+ * would be unreadable, and a NAMED init object is an injection point —
+ * `surface-compute.test.ts` drives this renderer's deferred-teardown state
+ * machine (fr-uec4) over a fake device through it, which a private
+ * constructor behind an adapter-acquiring `create()` offered no way to
+ * reach. Production code still arrives through {@link
+ * SurfaceComputeRenderer.create}, never by naming this type.
+ */
+export interface SurfaceComputeRendererInit {
+  device: GPUDevice;
+  /** Frozen at enter — a system edit re-enters the session rather than
+   * retargeting a live renderer (see {@link SurfaceComputeRenderer.create}). */
+  target: SurfaceComputeTarget;
+  marchPipeline: GPUComputePipeline;
+  marchLayout: GPUBindGroupLayout;
+  shadePipeline: GPUComputePipeline;
+  shadeLayout: GPUBindGroupLayout;
+  /** ifs4 only (fr-d0nn): the slab-free kernel pair every sliceHalfW=0
+   * frame rides — null for every other target kind. */
+  marchPipelineNoSlab: GPUComputePipeline | null;
+  shadePipelineNoSlab: GPUComputePipeline | null;
+  paramsBuf: GPUBuffer;
+  shadeBuf: GPUBuffer;
+  mapsBuf: GPUBuffer;
+  shadeMapsBuf: GPUBuffer;
+  lutTex: GPUTexture;
+  lutSamp: GPUSampler;
+  /** Adapter label from create()'s requestAdapter (fr-tmgf) — surfaced in
+   * the UI's backend disclosure; undefined when the adapter offered no
+   * vendor/architecture. */
+  adapterLabel?: string;
+  /** True when the adapter is a software rasterizer (fallback flag or a
+   * SwiftShader-class string tell — see render-backend.ts): the UI's cue to
+   * warn rather than let a CPU-rasterized settle pass as the GPU. */
+  software: boolean;
+}
+
 interface FrameBuffers {
   rays: number;
   states: GPUBuffer;
@@ -1725,7 +1766,7 @@ export class SurfaceComputeRenderer {
       );
     }
 
-    return new SurfaceComputeRenderer(
+    return new SurfaceComputeRenderer({
       device,
       target,
       marchPipeline,
@@ -1740,9 +1781,9 @@ export class SurfaceComputeRenderer {
       shadeMapsBuf,
       lutTex,
       lutSamp,
-      adapterStatus.label,
-      adapterStatus.software,
-    );
+      adapterLabel: adapterStatus.label,
+      software: adapterStatus.software,
+    });
   }
 
   /** Latched true by `device.lost` (or {@link destroy}); every later
@@ -1813,32 +1854,49 @@ export class SurfaceComputeRenderer {
     rows: Uint8Array<ArrayBuffer>;
   } | null = null;
 
-  private constructor(
-    private readonly device: GPUDevice,
-    private readonly target: SurfaceComputeTarget,
-    private readonly marchPipeline: GPUComputePipeline,
-    private readonly marchLayout: GPUBindGroupLayout,
-    private readonly shadePipeline: GPUComputePipeline,
-    private readonly shadeLayout: GPUBindGroupLayout,
-    /** ifs4 only (fr-d0nn): the slab-free kernel pair every sliceHalfW=0
-     * frame rides — null for every other target kind. */
-    private readonly marchPipelineNoSlab: GPUComputePipeline | null,
-    private readonly shadePipelineNoSlab: GPUComputePipeline | null,
-    private readonly paramsBuf: GPUBuffer,
-    private readonly shadeBuf: GPUBuffer,
-    private readonly mapsBuf: GPUBuffer,
-    private readonly shadeMapsBuf: GPUBuffer,
-    private readonly lutTex: GPUTexture,
-    private readonly lutSamp: GPUSampler,
-    /** Adapter label from create()'s requestAdapter (fr-tmgf) — surfaced
-     * in the UI's backend disclosure; undefined when the adapter offered
-     * no vendor/architecture. */
-    readonly adapterLabel: string | undefined,
-    /** True when the adapter is a software rasterizer (fallback flag or a
-     * SwiftShader-class string tell — see render-backend.ts): the UI's cue
-     * to warn rather than let a CPU-rasterized settle pass as the GPU. */
-    readonly software: boolean,
-  ) {
+  private readonly device: GPUDevice;
+  private readonly target: SurfaceComputeTarget;
+  private readonly marchPipeline: GPUComputePipeline;
+  private readonly marchLayout: GPUBindGroupLayout;
+  private readonly shadePipeline: GPUComputePipeline;
+  private readonly shadeLayout: GPUBindGroupLayout;
+  /** ifs4 only (fr-d0nn): the slab-free kernel pair every sliceHalfW=0
+   * frame rides — null for every other target kind. */
+  private readonly marchPipelineNoSlab: GPUComputePipeline | null;
+  private readonly shadePipelineNoSlab: GPUComputePipeline | null;
+  private readonly paramsBuf: GPUBuffer;
+  private readonly shadeBuf: GPUBuffer;
+  private readonly mapsBuf: GPUBuffer;
+  private readonly shadeMapsBuf: GPUBuffer;
+  private readonly lutTex: GPUTexture;
+  private readonly lutSamp: GPUSampler;
+  /** See {@link SurfaceComputeRendererInit.adapterLabel}. */
+  readonly adapterLabel: string | undefined;
+  /** See {@link SurfaceComputeRendererInit.software}. */
+  readonly software: boolean;
+
+  /** Public over a NAMED init object rather than private over sixteen
+   * positional GPU resources — see {@link SurfaceComputeRendererInit} for
+   * why (the flame backend's own constructor shape, and the seam
+   * `surface-compute.test.ts` drives the teardown state machine through).
+   * Production builds this through {@link create}. */
+  constructor(init: SurfaceComputeRendererInit) {
+    this.device = init.device;
+    this.target = init.target;
+    this.marchPipeline = init.marchPipeline;
+    this.marchLayout = init.marchLayout;
+    this.shadePipeline = init.shadePipeline;
+    this.shadeLayout = init.shadeLayout;
+    this.marchPipelineNoSlab = init.marchPipelineNoSlab;
+    this.shadePipelineNoSlab = init.shadePipelineNoSlab;
+    this.paramsBuf = init.paramsBuf;
+    this.shadeBuf = init.shadeBuf;
+    this.mapsBuf = init.mapsBuf;
+    this.shadeMapsBuf = init.shadeMapsBuf;
+    this.lutTex = init.lutTex;
+    this.lutSamp = init.lutSamp;
+    this.adapterLabel = init.adapterLabel;
+    this.software = init.software;
     void this.device.lost.then(() => {
       this.isLost = true;
       if (!this.destroyed) this.onLost?.();

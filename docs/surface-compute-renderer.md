@@ -1062,3 +1062,27 @@ one-device-alive-at-a-time invariant and `RenderSession.terminate()`'s
 The same shape was open one module over and is now closed with the same
 vocabulary: `flame-gpu-backend.ts` (fr-mxkk) counts OPS where this module
 counts frames.
+
+Pinned by `surface-compute.test.ts` (fr-t2iq) over a fake GPUDevice — the
+`flame-gpu-backend.test.ts` idiom one module over, and the reason
+`SurfaceComputeRenderer`'s constructor is PUBLIC over the named
+`SurfaceComputeRendererInit` object: sixteen positional GPU resources
+behind an adapter-acquiring `create()` left the whole state machine with
+no injection point, so the only cover it had was a manual real-Firefox
+gate. The fake CONFIGURES outcomes (a settle-on-demand device round trip,
+a `destroy` spy) and implements no GPU behavior. What it pins is the
+COUNTED SPAN — `renderFrame`'s increment to its `.finally` release — and
+the four decisions hanging off it: the deferred teardown, the inline one
+when the device is idle, exactly ONE `device.destroy()` across the
+`destroyed`/`deviceDestroyed` split, and a drain that waits for the LAST
+of two in-flight frames rather than the first (the plural case that
+matters, since a latest-wins request during a live frame counts two).
+Each of those was verified to FAIL under a matching mutation of the state
+machine, and only that one.
+
+What it cannot pin is the crash itself. The fake parks a frame at the
+allocation error-scope round trip, where a real frame parks deeper on
+`mapAsync`/`onSubmittedWorkDone` over submitted work — the same counted
+span either way, but no Node process can say whether a driver survives a
+teardown under it. `scripts/surface-teardown.verify.mjs` on a real
+Firefox stays the authority on that.
