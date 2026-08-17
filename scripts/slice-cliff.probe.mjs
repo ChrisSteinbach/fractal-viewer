@@ -56,11 +56,17 @@
  * WHAT THE PROBE DID FIND, and what fr-fniy should read: `kaleido4` — two
  * maps at kaleidoscope order 6 — is a different order of problem entirely,
  * and NOT a slice one. Its full-quality settle at `w0 = 0` on the WebGL arm
- * measured 444.0s with the rotor drifted 1.5s before parking; its preview
- * alone needed ~49s to cover the raster at that pose. That is fr-b72d's
- * measured superlinear order cost (x13.5 per query at order 6 on the CPU
- * oracle, matched on the GPU), not anything the slice slider does — the same
- * scene's cost is flat across the same slice sweep.
+ * measured 444.0s with the rotor drifted 1.5s before parking and 604.0s at
+ * the identity rotor (that second cell shared the machine with a test run
+ * for part of its window, so read it as an order of magnitude rather than a
+ * figure); its preview alone needed ~49s to cover the raster. THE ROTOR IS
+ * NOT THE EXPLANATION — the identity pose is the slower of the two — and
+ * neither is within 40x of the 10.9s CLAUDE.md's routing comment records for
+ * the fragment arm on this scene (fr-b72d). What it IS is fr-b72d's measured
+ * superlinear order cost (x13.5 per query at order 6 on the CPU oracle,
+ * matched on the GPU), landing on the arm the routing verdict calls
+ * kaleidoscope-4D's measured home; the slice slider does nothing to it, the
+ * same scene's cost being flat across the same sweep.
  *
  * AND AN INSTRUMENT GAP, for whoever picks fr-fniy up: the COMPUTE arm
  * cannot be measured on a kaleidoscope-4D scene at all from the outside.
