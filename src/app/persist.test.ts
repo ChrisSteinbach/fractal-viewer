@@ -82,6 +82,8 @@ import {
   MIN_W_POSITION,
   MIN_W_SCALE,
   initialState,
+  setSymmetryOrder,
+  setSymmetryTwist,
 } from "./state";
 import type { AppState } from "./state";
 
@@ -2800,6 +2802,21 @@ describe("decodeScene symmetry", () => {
       }),
     );
     expect(decoded!.symmetry).toEqual({ order: 5, plane: "yz", twist: 2 });
+  });
+
+  it("round-trips the symmetry an order drop leaves behind", () => {
+    // fr-4jyg: reached through the REAL reducers, not a hand-built payload —
+    // order 12, twist 7, then order 3. The decoder caps a twist at `order - 1`,
+    // so if `setSymmetryOrder` let the stale 7 stand, the reloaded scene would
+    // draw a different attractor than the live one.
+    const live = setSymmetryOrder(
+      setSymmetryTwist(setSymmetryOrder(initialState(true), 12), 7),
+      3,
+    );
+    expect(live.symmetry.twist).toBe(2);
+    expect(decodeScene(encodeScene(toSnapshot(live)))!.symmetry).toEqual(
+      live.symmetry,
+    );
   });
 
   it("writes plane, and omits twist from the encoded form when it is zero", () => {

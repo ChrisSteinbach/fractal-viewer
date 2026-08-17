@@ -1885,18 +1885,50 @@ export function systemIsNonFlat(state: AppState): boolean {
 }
 
 /**
+ * The twist rule — clamp to the spec, cap at the symmetry block's OWN order's
+ * last distinct value (`order` twists is a full turn), and store `0` as an
+ * ABSENT field — applied to `symmetry`. ONE definition, shared by both setters
+ * that can move it: {@link setSymmetryTwist} sets it, and
+ * {@link setSymmetryOrder} re-applies it to the twist already stored, since a
+ * cap written against the order at the time of the edit stops holding the
+ * moment the order moves.
+ */
+function withSymmetryTwist(
+  symmetry: SymmetryParams,
+  twist: number,
+): SymmetryParams {
+  const clamped = Math.min(
+    clampToSpec(PARAM.symmetryTwist, twist),
+    symmetry.order - 1,
+  );
+  const { twist: _dropped, ...rest } = symmetry;
+  return clamped === 0 ? rest : { ...rest, twist: clamped };
+}
+
+/**
  * Set the kaleidoscope's replica count, rounded to the nearest integer and
  * clamped to a sane range, exactly like {@link setFlameSupersample}. Persists
  * and reshapes the live explorer's point cloud as well as the flame/solid
  * renders — see {@link AppState.symmetry}.
+ *
+ * LOWERING THE ORDER RE-CAPS THE TWIST it is already carrying (fr-4jyg), by
+ * the same {@link withSymmetryTwist} rule {@link setSymmetryTwist} applies —
+ * absent stays absent, and a twist that caps to `0` DROPS to absent exactly as
+ * that setter would leave it. Without this, `{order: 12, twist: 7}` lowered to
+ * order 3 kept a twist no twist edit could have produced (the slider's own max
+ * is a static `MAX_SYMMETRY_ORDER - 1`, so nothing else recomputes it), which
+ * the live chaos game rendered while `persist.ts`'s decoder capped it back to
+ * `order - 1` on the way in: the scene on screen and the scene that was
+ * saved/shared/reloaded/undone were different attractors.
  */
 export function setSymmetryOrder(state: AppState, order: number): AppState {
+  const symmetry = {
+    ...state.symmetry,
+    order: clampToSpec(PARAM.symmetryOrder, order),
+  };
   return {
     ...state,
-    symmetry: {
-      ...state.symmetry,
-      order: clampToSpec(PARAM.symmetryOrder, order),
-    },
+    symmetry: withSymmetryTwist(symmetry, symmetry.twist ?? 0),
   };
 }
 
@@ -1929,15 +1961,7 @@ export function setSymmetryPlane(
  * Like {@link setSymmetryPlane}, a nonzero twist makes the system 4D.
  */
 export function setSymmetryTwist(state: AppState, twist: number): AppState {
-  const clamped = Math.min(
-    clampToSpec(PARAM.symmetryTwist, twist),
-    state.symmetry.order - 1,
-  );
-  const { twist: _dropped, ...rest } = state.symmetry;
-  return {
-    ...state,
-    symmetry: clamped === 0 ? rest : { ...rest, twist: clamped },
-  };
+  return { ...state, symmetry: withSymmetryTwist(state.symmetry, twist) };
 }
 
 /**
