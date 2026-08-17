@@ -1048,36 +1048,22 @@ describe("the escape-time presets (fr-7u8t.8)", () => {
   it("renders three DIFFERENT objects — the fold weight is the family's knob", () => {
     // Ball fill measured by scripts/escape-form-sweep.harness.ts: 10.6% /
     // 2.8% / 17.7%. Collapse the weights onto one value and this fails.
-    const fill = (transforms: Transform[]): number => {
-      const de = buildEscapeDE(transforms);
-      const N = 17;
-      let inBall = 0;
-      let interior = 0;
-      const step = (2 * ESCAPE_TIME_RADIUS) / (N - 1);
-      for (let i = 0; i < N; i++) {
-        for (let j = 0; j < N; j++) {
-          for (let k = 0; k < N; k++) {
-            const p: Vec3 = [
-              -ESCAPE_TIME_RADIUS + step * i,
-              -ESCAPE_TIME_RADIUS + step * j,
-              -ESCAPE_TIME_RADIUS + step * k,
-            ];
-            if (Math.hypot(p[0], p[1], p[2]) > ESCAPE_TIME_RADIUS) continue;
-            inBall++;
-            if (estimateEscapeDistance(de, p) < 1e-3) interior++;
-          }
-        }
-      }
-      return interior / inBall;
-    };
+    const fill = (transforms: Transform[]): number =>
+      probeEscapeFill(buildEscapeDE(transforms));
     const [ball, rings, cube] = [
       fill(mandelboxClassic()),
       fill(mandelboxRings()),
       fill(mandelboxCube()),
     ];
-    // Each is non-empty (a preset that renders nothing is worse than no
-    // preset) and each is a distinctly different amount of solid.
-    for (const f of [ball, rings, cube]) {
+    // mandelboxRings is the module doc's own example of a THIN fractal:
+    // ball fill (a volume sample) reads exactly 0 while the marcher still
+    // draws ~38k surface hits — probeEscapeFill answers "how much volume",
+    // never "will it render" (its own doc comment). So the non-empty floor
+    // below applies to ball/cube only; rings' exact zero is the expected,
+    // documented reading, not a broken preset. Measured: ball 3.540%,
+    // rings 0.000%, cube 11.621%.
+    expect(rings).toBe(0);
+    for (const f of [ball, cube]) {
       expect(f).toBeGreaterThan(0.01);
       expect(f).toBeLessThan(0.3);
     }
@@ -1132,37 +1118,27 @@ describe("the escape-time CHAIN presets (fr-za0n, fr-s04t)", () => {
     // Fill of the bailout ball, the figure the single-map trio is documented
     // with. Two presets landing on the same number would mean a parameter —
     // the third link, or the kaleidoscope — never reached the estimator.
-    const fill = (
-      transforms: Transform[],
-      symmetry: SymmetryParams,
-    ): number => {
-      const de = buildEscapeDE(transforms, null, symmetry);
-      const N = 21;
-      let inBall = 0;
-      let interior = 0;
-      const step = (2 * ESCAPE_TIME_RADIUS) / (N - 1);
-      for (let i = 0; i < N; i++) {
-        for (let j = 0; j < N; j++) {
-          for (let k = 0; k < N; k++) {
-            const p: Vec3 = [
-              -ESCAPE_TIME_RADIUS + step * i,
-              -ESCAPE_TIME_RADIUS + step * j,
-              -ESCAPE_TIME_RADIUS + step * k,
-            ];
-            if (Math.hypot(p[0], p[1], p[2]) > ESCAPE_TIME_RADIUS) continue;
-            inBall++;
-            if (estimateEscapeDistance(de, p) < 1e-3) interior++;
-          }
-        }
-      }
-      return interior / inBall;
-    };
+    //
+    // boulder and chain read only ~0.05 percentage points apart, so the
+    // module's default probe size (ESCAPE_PROBE_POINTS, 4096) is too coarse
+    // to separate them honestly — at 4096 samples this exact seed reads
+    // boulder BELOW chain, the wrong order. 262144 samples resolves it: the
+    // order held at every one of ten independently-seeded checks made while
+    // developing this fix (minimum observed margin ~0.033 points), so it is
+    // a converged reading rather than a lucky draw.
+    const CHAIN_TRIO_PROBE_POINTS = 262_144;
+    const fill = (transforms: Transform[], symmetry: SymmetryParams): number =>
+      probeEscapeFill(
+        buildEscapeDE(transforms, null, symmetry),
+        CHAIN_TRIO_PROBE_POINTS,
+      );
     const chain = fill(foldChain(), symmetryFor("foldChain"));
     const boulder = fill(foldChainBoulder(), symmetryFor("foldChainBoulder"));
     const flower = fill(foldChainFlower(), symmetryFor("foldChainFlower"));
     // Each is non-empty: an empty chain IS reachable inside this gate (a big
     // enough pre-scale escapes everywhere on the first pass and the mode
     // renders a blank frame), so "it rendered something" is a real claim.
+    // Measured: chain 1.134%, boulder 1.180%, flower 1.081%.
     for (const f of [chain, boulder, flower]) {
       expect(f).toBeGreaterThan(0.01);
       expect(f).toBeLessThan(0.3);
@@ -1176,8 +1152,10 @@ describe("the escape-time CHAIN presets (fr-za0n, fr-s04t)", () => {
     expect(boulder).toBeGreaterThan(chain);
     // The flower's whole difference from the chain is the wedge fold, which
     // moves structure around the axis rather than changing how much there is
-    // — so ball fill is deliberately NOT what separates those two (measured
-    // 7.0% against 6.7%). The next test is.
+    // — so ball fill is deliberately NOT what separates those two (chain and
+    // flower read ~0.05 percentage points apart at this sample size, the
+    // same order of magnitude as the boulder/chain gap above). The next
+    // test is.
     expect(flower).toBeGreaterThan(0.01);
   });
 
@@ -1262,29 +1240,13 @@ describe("the Mandelbrot form (fr-7u8t.8)", () => {
   it("leaves most of the bounding ball OUTSIDE the object — the fr-7u8t.8 bug", () => {
     // The defect this form fixes: the Julia-form set at an authored constant
     // filled 96% of its own marching ball, so the escape mode rendered its
-    // bounding sphere. Probe the same fixture on a deterministic grid and
-    // count the marcher's own view of inside (a DE collapsed by a runaway
-    // dr). Measured here: ~11%. Restore the fixed offset and it reads 96%.
+    // bounding sphere. Probe the same fixture with the seeded membership
+    // sampler (escape-de.ts's own instrument rule — never a grid, never a
+    // distance threshold) and ask how much of the ball the shipped
+    // Mandelbrot form actually fills. Measured here: ~3.5%. Restore the
+    // fixed offset and it reads 96%.
     const de = buildEscapeDE([canonicalMandelbox()]);
-    const N = 21;
-    let inBall = 0;
-    let interior = 0;
-    for (let i = 0; i < N; i++) {
-      for (let j = 0; j < N; j++) {
-        for (let k = 0; k < N; k++) {
-          const step = (2 * ESCAPE_TIME_RADIUS) / (N - 1);
-          const p: Vec3 = [
-            -ESCAPE_TIME_RADIUS + step * i,
-            -ESCAPE_TIME_RADIUS + step * j,
-            -ESCAPE_TIME_RADIUS + step * k,
-          ];
-          if (Math.hypot(p[0], p[1], p[2]) > ESCAPE_TIME_RADIUS) continue;
-          inBall++;
-          if (estimateEscapeDistance(de, p) < 1e-3) interior++;
-        }
-      }
-    }
-    expect(interior / inBall).toBeLessThan(0.3);
+    expect(probeEscapeFill(de)).toBeLessThan(0.3);
   });
 });
 
