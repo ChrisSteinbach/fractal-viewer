@@ -1547,9 +1547,11 @@ Frame` callback, which runs before paint so the disabled look never
     the per-map arrays riding a std140 uniform BLOCK (fr-dqlq), and the
     kaleidoscope SWEEPS like 3D's (fr-u91x), so 24 slots means 24
     transforms at any order. Since fr-dlxh's 4D cut this tracer is the
-    PLAIN-4D fallback arm and the kaleidoscope-4D MEASURED HOME: order > 1
-    routes here by verdict, caveat-free (fr-b72d attributed the gap to the
-    compute arm's march-loop scheduling, not kernel codegen).
+    PLAIN-4D fallback arm, and since fr-fniy the fallback for EVERY 4D
+    system: the kaleidoscope-4D home it briefly held on a null result went
+    to compute on a 12x re-measurement (see `surface-compute.ts`'s bullet),
+    so nothing routes here by preference any more — only `?surfacegl`, a
+    missing adapter or a device loss.
     TWO VARIANT ARMS since fr-qxxw/fr-h0c3 — the balloon inverted-union and
     the ground plane, each mirroring its 3D original term for term — and
     the MECHANISM is the one deviation, forced by measurement: one
@@ -1584,19 +1586,21 @@ Frame` callback, which runs before paint so the disabled look never
     mid-session loss exiting the mode with a toast: fold-shaped 4D sessions
     at any symmetry order (fr-rsp6) and escape-shaped 4D sessions (fr-vag4)
     — the fragment 4D tracer deliberately carries no fold GLSL and no
-    forward-orbit GLSL either. STAYS ON THE FRAGMENT TRACER by measured
-    verdict: kaleidoscope 4D (non-fold, order > 1) — real Iris, 1024x640,
-    both arms FORCED via `?surfacegl`/`?surfacecompute`, kaleido4 settles
-    147s WebGL against 179s compute, a 1.2x that sits inside the WebGL
-    arm's own 147/444/604s run-to-run spread, so the rule stands on a NULL
-    result rather than on a win. Order 1 is a clean 4x the other way (3.0s
-    compute vs 12.1s WebGL) and is why plain 4D routes to compute.
-    fr-b72d's closure exonerated the kernel — the DE's cost is
-    algorithmically superlinear in order for BOTH arms, which is why that
-    scene is minutes on either — so the residual is this module's
-    march-loop scheduling under an expensive-DE regime (fr-fniy).
-    `?surfacecompute` is the escape hatch that makes this re-measurable
-    (main.ts; `?surfacegl` wins if both are given).
+    forward-orbit GLSL either. THERE IS NO ORDER SPLIT LEFT since fr-fniy:
+    EVERY 4D session prefers compute, kaleidoscope included, and the
+    fragment 4D tracer is its fallback arm. That line moved on a
+    re-measurement, not a hunch — real Iris, 1024x640, identity rotor, both
+    arms FORCED via `?surfacegl`/`?surfacecompute` — where fr-b8o5 had read
+    kaleido4 at 147s WebGL against 179s compute (a 1.2x inside the WebGL
+    arm's own 147/444/604/637s spread, i.e. a NULL result that left the rule
+    alone), fr-fniy's shade-sizer fix reads **637.5s WebGL against 53.1s
+    compute**, 2.8x the fragment arm's FASTEST run ever recorded here at a
+    ~5% spread against a 4x one, first frame 0.21s against 4.86s. plain4 is
+    11.5s vs 3.0s. fr-b72d's kernel exoneration still stands and is why the
+    scene is still tens of seconds on either arm — the DE's cost is
+    algorithmically superlinear in ORDER, which no routing choice touches.
+    `?surfacecompute`/`?surfacegl` keep this re-measurable (main.ts;
+    `?surfacegl` wins if both are given).
     `create()` takes a `SurfaceComputeTarget` union
     (`{kind:"ifs"|"escape"|"bulb"|"escape4"|"ifs4"}`) whose `kind` picks
     the kernel core (ifs4 → affine4 or fold4 off `deHasFolds4`, the 3D
@@ -1663,9 +1667,10 @@ Frame` callback, which runs before paint so the disabled look never
     model, `cost(n) = intercept + n*marginal` (`ShadeHitCost`), splitting
     each measurement's surprise between the terms by WIDTH (`n/(n+512)` to
     the marginal — 512 is where the cost curve measured flat), sizing off
-    the MARGINAL alone, allowing `max(pass target - intercept, intercept)`
-    of hits per dispatch (a latency-bound dispatch cannot be made cheaper
-    by narrowing it, so refusing to widen it buys nothing), growing the
+    the MARGINAL alone, allowing
+    `max(pass target - intercept, K * intercept)` of hits per dispatch (a
+    latency-bound dispatch cannot be made cheaper by narrowing it, so
+    refusing to widen it buys nothing), growing the
     capacity ladder against THAT budget rather than a fixed
     `PASS_TARGET/2`, rate-limiting the marginal's FALL to a halving
     (`SURFACE_COMPUTE_SHADE_MARGINAL_DECAY` — clamped at zero it reads
@@ -1696,6 +1701,24 @@ Frame` callback, which runs before paint so the disabled look never
     1714.8 -> 1731.3 ms — the fold monster's worst submission is its
     deepest ray, not the sizer's width, and it hit that number at
     `len=64` before this and at `len=512` after.
+    `K` IS `SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST` AND IT IS A WIDTH,
+    not a ratio the scene has any say in (fr-fniy): THE MODEL NEVER
+    IDENTIFIES ITS TWO TERMS — `nextShadeHitCost` preserves
+    `intercept = PIVOT * marginal` IDENTICALLY, proved at that function
+    from the exact-fit split alone, because two parameters against one
+    measurement per dispatch leave the RATIO to the attribution weight and
+    only the SCALE to the data — so that branch hands the sizer exactly
+    `K * 512` hits on EVERY scene, and fr-2ojg's K = 1 held the whole
+    project at 512 while measuring 90% of each dispatch to be fixed cost.
+    No sizing rule here may be written in terms of `intercept` alone.
+    K = 7 (3584 hits), chosen by FORCING the width off the model
+    (`?surfaceshadehits=N`) since the sizer only ever visits one width:
+    kaleido4's order-6 settle 180.1 -> 55.1 s (3.27x) with the worst single
+    dispatch unmoved (397.3 ms at len 512 -> 417.5 at len 3583), every
+    fr-2ojg scene within noise, settled PNGs byte-identical. Its march half
+    is 5.8% of that settle and its sweep readbacks 0.06%, which is fr-fniy's
+    own premise refuted and levers (a)/(b)/(c) closed with numbers. Tables
+    in `docs/surface-compute-renderer.md`.
     NO submission outruns the i915 watchdog;
     progressive presents between every bounded piece; host-compacted active
     list; shading probes ride `SURFACE_COMPUTE_SHADE_DE_WIDTH` (the fr-p8bc
