@@ -1800,7 +1800,11 @@ Frame` callback, which runs before paint so the disabled look never
     whenever the device IS idle, which is what keeps gpu-bench's
     one-device-alive-at-a-time invariant and `RenderSession.terminate()`'s
     `void` contract untouched. Same shape as `flame-gpu-backend.ts`
-    (fr-mxkk), counting OPS where this counts frames.
+    (fr-mxkk), counting OPS where this counts frames — and pinned the same
+    way since fr-t2iq: `surface-compute.test.ts` over a fake device, which
+    is what the PUBLIC constructor over `SurfaceComputeRendererInit` buys
+    (production still enters through `create()`); the real-Firefox
+    `scripts/surface-teardown.verify.mjs` stays the authority on drivers.
     scene.ts presents frames as a DataTexture through the shared surface
     blit (the one WebGL canvas — capture/recorder unchanged) and assembles
     specs with the uniform-exact camera/eps/tier quantities (acceptance eps
