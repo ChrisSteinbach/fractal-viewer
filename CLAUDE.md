@@ -684,7 +684,14 @@ and UI**, so the interesting math is unit-tested without a browser:
     taps (normal/shadow/AO — they LIGHT a hit the full-width march
     already certified, never decide geometry) to a second narrow descent
     `surfaceDEProbe`, derived from the same body template by token rename
-    so the two cannot drift; app ships width 1.
+    so the two cannot drift; app ships width 1. `statusOut` (fr-si66,
+    march mode only, THROWS elsewhere) adds the host's one question as a
+    side channel — `u32(st.y)` at binding 5, indexed by the ray's SLOT in
+    the active list, written at EVERY exit but the out-of-range guard —
+    so a sweep's rebuild costs 4 B per ACTIVE ray instead of the frame's
+    whole ray state. Nothing on the device reads it, and absent/false is
+    byte-identical source, which is what leaves the bench's own march
+    legs the kernels they were.
     RE-VERIFY SURFACE KERNEL CHANGES ON `--display=:0`, NOT SWIFTSHADER
     ALONE — fr-dlxh re-proved it: a classifier passed SwiftShader clean,
     then real Iris flipped six "stable" rows. A forward orbit is chaotic
@@ -1606,7 +1613,16 @@ Frame` callback, which runs before paint so the disabled look never
     rotor/slice glide never re-presents a stale frame.
     Owns the device (bench acquisition idioms + flame-backend error
     taxonomy) and the frame loop: march slices sized from a measured
-    per-ray·step EMA, and shade batches sized in HIT units (fr-p8bc:
+    per-ray·step EMA, THE SWEEP'S ACTIVE-LIST REBUILD READING 4 B PER
+    ACTIVE RAY off the march's own status side-channel and not the whole
+    16 B/ray states buffer (fr-si66: the states never leave the device,
+    the terminal tally is kept as rays LEAVE the list, and the bench pins
+    it with no bench edit — leg B's hit-rate gate reads exactly that
+    tally. MEASURED 12.3x less transferred and 7.2x less host time
+    blocked per settle, `scripts/march-readback-ab.mjs`; the settle WALL
+    did not move, because it is shade-dominated, and the settled PNGs are
+    byte-identical across the change), and shade batches sized in HIT
+    units (fr-p8bc:
     terminal rays queue by status — misses are one background write, hits
     and, since fr-rhn5, ground-plane PLANE terminals pay the probe evals
     and arrive scanline-CLUSTERED; batches are predicted from a per-hit
@@ -1650,8 +1666,9 @@ Frame` callback, which runs before paint so the disabled look never
     it imports `subPixelSample` from here — so "8 samples" has ONE meaning
     whichever engine a machine has.
     A FRAME'S RASTER IS BOUNDED BY THE DEVICE, NOT THE CALLER (fr-biox):
-    the five per-ray buffers cost 44 B/ray (the 16 B ray state twice —
-    storage + MAP_READ staging — is what a limit bites), so `maxFrameRays`
+    the six per-ray buffers cost 36 B/ray (44 across five before fr-si66
+    dropped the ray state's MAP_READ twin), and it is the 16 B ray state
+    as a bound STORAGE buffer that a limit bites, so `maxFrameRays`
     = min(maxBufferSize, maxStorageBufferBindingSize)/16 and a frame past
     it throws `SurfaceComputeFrameSizeError` UP FRONT instead of reaching
     the kernels, because WEBGPU REFUSES SILENTLY HERE — an over-limit

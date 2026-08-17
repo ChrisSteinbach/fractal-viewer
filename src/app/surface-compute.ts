@@ -12,7 +12,12 @@
  * ever outruns the i915 watchdog): MARCH passes advance every active ray
  * by `stepsThisPass` DE steps (the bench's proven register-light kernel,
  * ray derivation swapped to the GLSL tracer's unproject), with the active
- * list compacted host-side between them; rays that turn terminal join the
+ * list compacted host-side between them FROM 4 B PER ACTIVE RAY (fr-si66:
+ * the march writes each dispatched ray's status to its own slot in the
+ * list being rebuilt, so the sweep no longer reads the whole 16 B/ray
+ * states buffer back to look at one field of it — the frame's states
+ * never leave the device now, and the terminal tally is kept as rays
+ * leave the list); rays that turn terminal join the
  * SHADE QUEUES drained in host-sized batches through the shade kernel (the
  * GLSL tracer's full shading, mirrored term for term). The split is a
  * measured verdict, not taste: shading a freshly-hit ray costs ~40
@@ -455,7 +460,9 @@ export interface SurfaceComputeFrame {
    * exhausted-dominated frame means the march budget ran dry, a
    * miss-dominated one that rays left the visible sphere; `plane`
    * (fr-rhn5) counts misses the march classified onto the ground plane
-   * (always 0 without a plane target). */
+   * (always 0 without a plane target). Kept as rays LEAVE the active list
+   * since fr-si66 — `active` is the remainder — where it used to be a
+   * final scan of a ray-state buffer the frame loop no longer reads. */
   counts: {
     hit: number;
     miss: number;
@@ -669,15 +676,16 @@ export function resampleSurfacePixels(
   return out;
 }
 
-/** Bytes the WIDEST per-ray buffer costs (the `vec4f` ray state, mirrored
- * by its MAP_READ staging twin) — the one a device's buffer/binding
- * ceilings bite first. */
+/** Bytes the WIDEST per-ray buffer costs (the `vec4f` ray state) — the one
+ * a device's buffer/binding ceilings bite first. It has no staging twin
+ * since fr-si66: nothing reads it back. */
 export const SURFACE_COMPUTE_RAY_STATE_BYTES = 16;
 
-/** Bytes of GPU buffer ONE ray costs a frame, across all five per-ray
- * buffers: states 16 + stagingStates 16 + color 4 + stagingColor 4 +
- * active 4. */
-export const SURFACE_COMPUTE_RAY_BYTES = 44;
+/** Bytes of GPU buffer ONE ray costs a frame, across all six per-ray
+ * buffers: states 16 + active 4 + color 4 + stagingColor 4 + status 4 +
+ * stagingStatus 4. Was 44 before fr-si66 traded the 16 B/ray states
+ * staging twin for a 4 B/ray status side-channel and its own twin. */
+export const SURFACE_COMPUTE_RAY_BYTES = 36;
 
 /** Byte count as MiB, for the size errors' messages. */
 function mib(bytes: number): string {
@@ -687,9 +695,11 @@ function mib(bytes: number): string {
 /**
  * The largest raster ONE frame may allocate for on a device with these
  * limits, in rays (fr-biox). `states` is both the widest per-ray buffer
- * and a bound STORAGE buffer, so it meets whichever ceiling is lower;
- * the MAP_READ staging twin is the same size under `maxBufferSize` alone.
- * Pure so the arithmetic behind a refusal is unit-tested.
+ * and a bound STORAGE buffer, so it meets whichever ceiling is lower —
+ * and it is the binding ceiling that decides, which is why fr-si66's
+ * cheaper readback (one 4 B/ray status buffer in place of the 16 B/ray
+ * staging twin) cuts a frame's total commitment without moving this
+ * bound. Pure so the arithmetic behind a refusal is unit-tested.
  */
 export function surfaceComputeMaxFrameRays(limits: {
   maxBufferSize: number;
@@ -704,11 +714,12 @@ export function surfaceComputeMaxFrameRays(limits: {
 
 /**
  * Rays one CAPTURE tile may cost, however much the device would allow
- * (fr-biox). A frame's buffers are 44 B/ray and its host mirrors another
+ * (fr-biox). A frame's buffers are 36 B/ray and its host mirrors another
  * ~24 B/ray, so an untiled 4x export of a 1920x1057 pane (32.5M rays)
- * commits ~1.4 GB of GPU memory and reads back a 520 MB state buffer per
- * march sweep — a device that reports gigabytes of `maxBufferSize` will
- * still refuse or thrash. At this cap a tile is ~176 MB of buffers,
+ * commits ~1.2 GB of GPU memory and reads back up to 130 MB of ray status
+ * per march sweep (a flat 520 MB of ray STATE before fr-si66) — a device
+ * that reports gigabytes of `maxBufferSize` will still refuse or thrash.
+ * At this cap a tile is ~144 MB of buffers,
  * comfortably above the live rasters the same code paths run all session
  * (a 1920x1057 pane is 2.0M rays), so tiling costs an export nothing it
  * was not already paying per frame.
@@ -854,7 +865,10 @@ interface FrameBuffers {
   states: GPUBuffer;
   active: GPUBuffer;
   color: GPUBuffer;
-  stagingStates: GPUBuffer;
+  /** fr-si66's march status side-channel: one `u32` per ACTIVE-LIST SLOT,
+   * written by every march dispatch and read back once per sweep. */
+  status: GPUBuffer;
+  stagingStatus: GPUBuffer;
   stagingColor: GPUBuffer;
   marchBindGroup: GPUBindGroup;
   shadeBindGroup: GPUBindGroup;
@@ -987,6 +1001,11 @@ export class SurfaceComputeRenderer {
         code: surfaceDeKernelWgsl({
           mode,
           rays: mode === "march" ? "unproject" : undefined,
+          // fr-si66: the march writes each dispatched ray's post-pass
+          // status to its own ACTIVE-LIST SLOT, which is the only field
+          // the sweep's rebuild reads — 4 B per active ray in place of
+          // the whole 16 B/ray states buffer.
+          statusOut: mode === "march",
           // fr-55s1: the DE picks the descent core exactly as the CPU
           // estimators route — fold base maps march the wide frontier,
           // fold-free ones the width-4 refined ladder (width/shadeDeWidth
@@ -1069,7 +1088,8 @@ export class SurfaceComputeRenderer {
       buffer: { type },
     });
     // March (rays:"unproject") binds params/maps/active/states + the
-    // shade uniform (invProjView + dither knobs only).
+    // shade uniform (invProjView + dither knobs only) + fr-si66's status
+    // side-channel at 5.
     const marchLayout = device.createBindGroupLayout({
       entries: [
         bufferEntry(0, "uniform"),
@@ -1077,6 +1097,7 @@ export class SurfaceComputeRenderer {
         bufferEntry(2, "read-only-storage"),
         bufferEntry(3, "storage"),
         bufferEntry(4, "uniform"),
+        bufferEntry(5, "storage"),
       ],
     });
     const shadeLayout = device.createBindGroupLayout({
@@ -1607,7 +1628,8 @@ export class SurfaceComputeRenderer {
       this.frame.states,
       this.frame.active,
       this.frame.color,
-      this.frame.stagingStates,
+      this.frame.status,
+      this.frame.stagingStatus,
       this.frame.stagingColor,
     ]) {
       b.destroy();
@@ -1619,12 +1641,12 @@ export class SurfaceComputeRenderer {
     if (this.frame && this.frame.rays >= rays) return this.frame;
     this.releaseFrameBuffers();
     const device = this.device;
+    // fr-si66: the states buffer is no longer a COPY_SRC — nothing reads
+    // it back. The host's per-sweep question is one field of it, and the
+    // march answers that directly through `status`.
     const states = device.createBuffer({
       size: rays * SURFACE_COMPUTE_RAY_STATE_BYTES,
-      usage:
-        GPUBufferUsage.STORAGE |
-        GPUBufferUsage.COPY_DST |
-        GPUBufferUsage.COPY_SRC,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
     const active = device.createBuffer({
       size: rays * 4,
@@ -1637,8 +1659,12 @@ export class SurfaceComputeRenderer {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
     });
-    const stagingStates = device.createBuffer({
-      size: rays * SURFACE_COMPUTE_RAY_STATE_BYTES,
+    const status = device.createBuffer({
+      size: rays * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    });
+    const stagingStatus = device.createBuffer({
+      size: rays * 4,
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     });
     const stagingColor = device.createBuffer({
@@ -1653,6 +1679,7 @@ export class SurfaceComputeRenderer {
         { binding: 2, resource: { buffer: active } },
         { binding: 3, resource: { buffer: states } },
         { binding: 4, resource: { buffer: this.shadeBuf } },
+        { binding: 5, resource: { buffer: status } },
       ],
     });
     const shadeBindGroup = device.createBindGroup({
@@ -1674,7 +1701,8 @@ export class SurfaceComputeRenderer {
       states,
       active,
       color,
-      stagingStates,
+      status,
+      stagingStatus,
       stagingColor,
       marchBindGroup,
       shadeBindGroup,
@@ -1717,6 +1745,19 @@ export class SurfaceComputeRenderer {
     const encoder = this.device.createCommandEncoder();
     encoder.copyBufferToBuffer(src, 0, staging, 0, bytes);
     this.device.queue.submit([encoder.finish()]);
+    return this.drainStaging(staging, bytes);
+  }
+
+  /** Map, copy out and unmap a staging buffer whose bytes are ALREADY on
+   * the queue — fr-si66's march statuses arrive that way, one copy per
+   * slice riding the slice's own submission, so the sweep pays one
+   * `mapAsync` round trip rather than one per slice. `mapAsync` queues
+   * behind everything already submitted, which is the same ordering
+   * guarantee {@link readback} leans on. */
+  private async drainStaging(
+    staging: GPUBuffer,
+    bytes: number,
+  ): Promise<ArrayBuffer> {
     await staging.mapAsync(GPUMapMode.READ, 0, bytes);
     const copy = staging.getMappedRange(0, bytes).slice(0);
     staging.unmap();
@@ -2040,6 +2081,13 @@ export class SurfaceComputeRenderer {
       pipeline: GPUComputePipeline,
       bindGroup: GPUBindGroup,
       count: number,
+      /** fr-si66: a device-local copy appended to the SAME submission —
+       * the march slice's `count` statuses, staged at the slice's own
+       * offset in the sweep's readback. Riding the dispatch costs no
+       * extra submission and no extra fence; it lands in the measured
+       * pass time, which is the honest place for it (a `count`-word copy
+       * against a `count`×`stepsThisPass` DE march). */
+      copyAfter?: { src: GPUBuffer; dst: GPUBuffer; dstOffset: number },
     ): Promise<number | null> => {
       const encoder = device.createCommandEncoder();
       const pass = encoder.beginComputePass();
@@ -2049,6 +2097,15 @@ export class SurfaceComputeRenderer {
         Math.ceil(count / SURFACE_COMPUTE_WORKGROUP_SIZE),
       );
       pass.end();
+      if (copyAfter) {
+        encoder.copyBufferToBuffer(
+          copyAfter.src,
+          0,
+          copyAfter.dst,
+          copyAfter.dstOffset,
+          count * 4,
+        );
+      }
       const t0 = performance.now();
       device.queue.submit([encoder.finish()]);
       await device.queue.onSubmittedWorkDone();
@@ -2097,7 +2154,10 @@ export class SurfaceComputeRenderer {
     // comment above shadeHitEmaUs).
     let rayStepEmaUs =
       SURFACE_COMPUTE_INITIAL_RAY_STEP_US * lensCostScale * balloonCostScale;
-    let finalStates: Float32Array | null = null;
+    // fr-si66: the frame's terminal tally, accumulated as each sweep
+    // classifies its rays — the whole-states scan that used to produce it
+    // needed a readback this loop no longer pays for.
+    const counts = { hit: 0, miss: 0, exhausted: 0, active: 0, plane: 0 };
     tr(
       `frame start rays=${rays} marchSteps=${spec.marchSteps} budgetMs=${budgetMs} shadeHitEmaUs0=${shadeHitEmaUs} rayStepEmaUs0=${rayStepEmaUs} shadeHitCap0=${shadeHitCap}`,
     );
@@ -2139,6 +2199,15 @@ export class SurfaceComputeRenderer {
             marchPipeline,
             buffers.marchBindGroup,
             slice.length,
+            // fr-si66: this slice's statuses, staged where the sweep's
+            // rebuild expects them — the kernel writes slot-relative
+            // (`statusOut[gid]`), so slice k's answers land at k's own
+            // offset and one map at the sweep's end reads the lot.
+            {
+              src: buffers.status,
+              dst: buffers.stagingStatus,
+              dstOffset: offset * 4,
+            },
           );
           tr(`march END ms=${marchMs === null ? "null" : marchMs.toFixed(1)}`);
           if (marchMs === null) return null;
@@ -2152,24 +2221,33 @@ export class SurfaceComputeRenderer {
           sweepSliced = offset;
           if (!(await maybePresent())) return null;
         }
-        tr(`states readback BEGIN rays=${rays}`);
-        const stateCopy = new Float32Array(
-          await this.readback(buffers.states, buffers.stagingStates, rays * 16),
+        // fr-si66: 4 B per ACTIVE ray, already staged by the slices' own
+        // submissions — where this used to read the WHOLE 16 B/ray states
+        // buffer back every sweep, active list or not, to look at one
+        // field of it. The saving compounds as the sweep count rises: a
+        // raster too big to sweep whole holds stepsThisPass at 1, so a
+        // full-tier settle is up to `marchSteps` sweeps, and each one used
+        // to cost the frame's entire ray state.
+        tr(`status readback BEGIN active=${active.length}`);
+        const statusCopy = new Uint32Array(
+          await this.drainStaging(buffers.stagingStatus, active.length * 4),
         );
-        tr("states readback END");
+        tr("status readback END");
         if (token !== this.frameToken || this.isLost || this.destroyed) {
           return null;
         }
-        finalStates = stateCopy;
         const next: number[] = [];
-        for (const ray of active) {
-          const rayStatus = stateCopy[ray * 4 + 1];
+        for (let slot = 0; slot < active.length; slot++) {
+          const ray = active[slot];
+          const rayStatus = statusCopy[slot];
           if (rayStatus === SURFACE_GPU_RAY_ACTIVE) {
             next.push(ray);
           } else if (
             rayStatus === SURFACE_GPU_RAY_HIT ||
             rayStatus === SURFACE_GPU_RAY_PLANE
           ) {
+            if (rayStatus === SURFACE_GPU_RAY_HIT) counts.hit++;
+            else counts.plane++;
             // fr-rhn5: plane rays are priced WITH the hits — a floor
             // pixel pays the penumbra-shadow/AO probe evals a hit pays
             // (within its corridor gates), nothing like a miss's one
@@ -2179,6 +2257,9 @@ export class SurfaceComputeRenderer {
             // never recurs.
             shadeHitQueue.push(ray);
           } else {
+            if (rayStatus === SURFACE_GPU_RAY_MISS) counts.miss++;
+            else if (rayStatus === SURFACE_GPU_RAY_EXHAUSTED)
+              counts.exhausted++;
             shadeFreeQueue.push(ray);
           }
         }
@@ -2261,19 +2342,14 @@ export class SurfaceComputeRenderer {
       await this.readback(buffers.color, buffers.stagingColor, rays * 4),
     );
     if (token !== this.frameToken || this.isLost || this.destroyed) return null;
-    const counts = { hit: 0, miss: 0, exhausted: 0, active: 0, plane: 0 };
-    if (finalStates) {
-      for (let i = 0; i < rays; i++) {
-        const status = finalStates[i * 4 + 1];
-        if (status === SURFACE_GPU_RAY_HIT) counts.hit++;
-        else if (status === SURFACE_GPU_RAY_MISS) counts.miss++;
-        else if (status === SURFACE_GPU_RAY_EXHAUSTED) counts.exhausted++;
-        else if (status === SURFACE_GPU_RAY_PLANE) counts.plane++;
-        else counts.active++;
-      }
-    } else {
-      counts.active = rays;
-    }
+    // fr-si66: the tally is kept as rays LEAVE the active list, so it
+    // needs no final pass over the ray states (there is none to read).
+    // ACTIVE is what is left over — rays a budget cut stranded mid-march,
+    // rays no sweep ever classified, and (unreachably) any status outside
+    // the vocabulary, which is exactly what the whole-buffer scan used to
+    // count as active.
+    counts.active =
+      rays - counts.hit - counts.miss - counts.exhausted - counts.plane;
     tr(
       `frame done passes=${passes} truncated=${truncated} hit=${counts.hit} miss=${counts.miss} exhausted=${counts.exhausted} active=${counts.active} plane=${counts.plane}`,
     );

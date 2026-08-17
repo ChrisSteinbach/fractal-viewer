@@ -3,11 +3,12 @@
  * fr-biox export-tiling gate: does a TILED compute capture reproduce the
  * untiled one, pixel for pixel?
  *
- * THE BUG THIS EXISTS TO CATCH. `SurfaceComputeRenderer` allocates five
- * per-ray buffers for a whole frame (44 B/ray; the ray state alone is
+ * THE BUG THIS EXISTS TO CATCH. `SurfaceComputeRenderer` allocates six
+ * per-ray buffers for a whole frame (36 B/ray since fr-si66, 44 across
+ * five before it; the ray state alone is
  * 16 B), and a capture's rays scale with exportScale SQUARED — a 4x export
  * of a 1920x1057 pane is 32.5M rays, a 520 MB ray-state buffer inside a
- * ~1.4 GB frame. Devices refuse that, and WebGPU does not throw for it:
+ * ~1.2 GB frame. Devices refuse that, and WebGPU does not throw for it:
  * `createBuffer` returns an INVALID buffer plus a validation error, and
  * the first REJECTION comes from a staging `mapAsync` several awaits later
  * — which is exactly how the bug reached a user, as a failed Save-PNG and

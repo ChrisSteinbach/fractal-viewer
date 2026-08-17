@@ -130,6 +130,85 @@ Shading probes ride the width-1 greedy descent
 cheaper shading, eyeball-identical frames). The active list is
 host-compacted. Presents are progressive between every bounded piece.
 
+### Compaction reads 4 B per active ray (fr-si66)
+
+Host compaction needs exactly one field of the ray state — the status —
+and used to get it by reading the ENTIRE `states` buffer back after every
+march sweep: 16 B per FRAME ray, whether the active list still held every
+ray or a hundred. The march kernel now writes each dispatched ray's
+post-pass status to its own SLOT in the list being rebuilt
+(`surface-de-gpu.ts`'s `statusOut` flag), and the sweep reads
+`4 × |active|` bytes instead.
+
+Three details make it a plain win rather than a trade:
+
+- The kernel writes SLOT-relative (`statusOut[gid]`), so no params field
+  moves — the frozen wire is untouched. Each march slice's dispatch
+  carries a `copyBufferToBuffer` into the sweep's staging at that slice's
+  own offset, riding the SAME submission, so there is no extra submission
+  and no extra fence; the sweep still pays exactly one `mapAsync` round
+  trip, as it always did. That copy's (small) cost lands inside the
+  measured march time, which is where it belongs.
+- The `states` buffer loses its MAP_READ staging twin and its COPY_SRC
+  usage: nothing reads it back at all now. A frame's per-ray commitment
+  falls 44 B → 36 B (see "Raster limits" below for why the device ceiling
+  does not move with it).
+- The terminal tally (`SurfaceComputeFrame.counts`) is kept as rays LEAVE
+  the active list, with `active` the remainder, replacing a final
+  whole-buffer scan of a buffer the loop no longer reads. Same numbers,
+  including on truncated frames, where the stranded rays counted as
+  ACTIVE before and still do.
+
+The gate came free. `gpu-bench`'s leg B (`runSurfaceComputeFrameLeg` and
+its escape/plane/4D siblings) drives the PRODUCTION renderer and gates
+`frame.counts.hit` against a CPU sanity march's hit rate — which is now
+the side channel's own tally, so mis-indexed slots fail the bench. The
+bench's own march legs never set the flag and their generated source is
+byte-identical, so no bench edit was needed anywhere.
+
+**MEASURED** (real Iris Xe, headed Chrome on `:0`, one full settle per
+arm of the pose-pinned 2-map boxfold pair at a 1400x900 window — a
+1.26M-ray pane — via `scripts/march-readback-ab.mjs`, the A/B instrument
+this bead left behind; the two arms are the same script against the two
+builds, told apart by the trace vocabulary alone):
+
+| per settle                   | before (`states`)   | after (`status`)           |
+| ---------------------------- | ------------------- | -------------------------- |
+| sweep readbacks              | 58                  | 58                         |
+| transferred                  | 923.79 MiB          | 74.82 MiB — **12.3x less** |
+| host time blocked            | 739.0 ms            | 102.0 ms — **7.2x less**   |
+| per sweep                    | 15.93 MiB / 12.7 ms | 1.29 MiB / 1.8 ms          |
+| `present` readback (control) | 33.65 MiB / 54 ms   | 33.65 MiB / 52 ms          |
+| `final` readback (control)   | 38.50 MiB           | 38.50 MiB                  |
+| frames traced                | 10 (10 completed)   | 10 (10 completed)          |
+| settle                       | 35.0 s              | 35.0 s                     |
+
+The 12.3x factors cleanly: **4x** from reading a `u32` status where a
+`vec4f` ray state was read, and **3.1x** from paying only for rays still
+MARCHING (mean active list 338k against a mean frame raster of 1.04M).
+Identical sweep counts and byte-identical control readbacks across the
+arms say the march schedule did not move — the arms did the same work.
+
+AND THE WALL TIME DID NOT MOVE, which is the honest half of the result:
+637 ms off a 35 s settle is ~1.8%, inside the settle poll's own 5 s
+resolution. This settle is SHADE-dominated (fr-p8bc), so the readback was
+never its critical path. The saving is transfer volume and host-blocked
+time, and it is worth most exactly where fr-biox found the problem — an
+export tile at the 4M-ray cap read a flat 64 MB of ray state per sweep,
+tens of sweeps a tile, and now reads 4 B per ray still marching.
+
+Proven output-identical rather than argued: `scripts/surface-repro.verify.mjs
+--scenario=all --runs=2 --mode=x11::0` was run against BOTH builds, and
+every settled PNG is byte-identical across them — boxfold3 (fold core),
+lens3 (lens wrapper, hit 60912 both sides, the figure that script's own
+doc already recorded), pentatope4 and pentatope4direct (affine4 core),
+sierpinski3 (the WebGL arm, control) — each also DETERMINISTIC within its
+own build. `npm run bench:surface --display=:0` reports
+`surfaceDe: verdict=pass`, and every compute-frame leg's
+hit+miss+exhausted sums exactly to its raster (4637+32227 = 36864, and so
+on through the escape, chain, ifs4 and fold4 legs), which is the new
+tally's arithmetic checked seven ways.
+
 `colorOut` is prefilled from the last frame, nearest-resampled — the
 strip settle's preview-seeded-target discipline. fr-f4bx measured what
 that buys during MOTION on a slow adapter, where every preview is a
@@ -246,10 +325,13 @@ restores the exact single-pass behaviour).
 ## Raster limits and tiled export (fr-biox)
 
 A frame's RASTER is bounded by the device, not the caller (fr-biox). The
-five per-ray buffers cost 44 B/ray — the 16 B ray state is carried
-twice, in storage and in MAP_READ staging, and that doubled cost is what
-a limit actually bites on. So `maxFrameRays = min(maxBufferSize,
-maxStorageBufferBindingSize) / 16`, and a frame that would exceed it
+six per-ray buffers cost 36 B/ray (44 across five before fr-si66 dropped
+the ray state's MAP_READ twin), and it is the 16 B ray state as a BOUND
+STORAGE buffer that a limit actually bites on. So `maxFrameRays =
+min(maxBufferSize, maxStorageBufferBindingSize) / 16` — unchanged by
+fr-si66, which is worth stating because the bead expected otherwise: a
+cheaper readback cuts what a frame COMMITS, but the ceiling was never the
+total, only the widest bound buffer. A frame that would exceed it
 throws `SurfaceComputeFrameSizeError` up front, before reaching the
 kernels — because WebGPU refuses SILENTLY here: an over-limit
 `createBuffer` call returns an invalid buffer plus a validation error,
@@ -265,7 +347,9 @@ past the ceiling traces soft and blits up — the preview tier's own
 mechanism, disclosed once per session. A capture TILES
 (`surfaceComputeTileRows`), also capped at
 `SURFACE_COMPUTE_MAX_TILE_RAYS`, so a device reporting gigabytes of
-headroom still exports in ~176 MB pieces.
+headroom still exports in ~144 MB pieces (~176 MB before fr-si66; the
+4M-ray cap itself is unchanged — it was chosen against the watchdog and
+the allocator, not against the byte count).
 
 `scene.ts`'s `captureSurfaceComputeFrame` traces the export as full-width
 BANDS. Every band's spec is assembled in ONE synchronous span, because a

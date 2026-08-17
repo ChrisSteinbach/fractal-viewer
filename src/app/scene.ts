@@ -3893,9 +3893,10 @@ export class FractalScene {
    * finer, exactly like the GLSL capture).
    *
    * TILED since fr-biox, because a frame's cost in GPU memory scales with
-   * its rays (44 B/ray across five buffers) and an export's rays scale
+   * its rays (36 B/ray across six buffers since fr-si66; 44 across five
+   * before it) and an export's rays scale
    * with exportScale SQUARED: a 4x export of a 1920x1057 pane is 32.5M
-   * rays — a 520 MB ray-state buffer inside a ~1.4 GB frame — which
+   * rays — a 520 MB ray-state buffer inside a ~1.2 GB frame — which
    * devices refuse. WebGPU does not throw for it either; `createBuffer`
    * returns an invalid buffer and the first REJECTION is a staging
    * `mapAsync` ("Invalid buffer"), which is how the bug reached a user as

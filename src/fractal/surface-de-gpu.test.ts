@@ -1216,6 +1216,153 @@ describe("surfaceDeKernelWgsl march ray derivation (rays option)", () => {
   });
 });
 
+describe("surfaceDeKernelWgsl march status side-channel (statusOut, fr-si66)", () => {
+  it("statusOut:true declares @group(0) @binding(5) var<storage, read_write> statusOut: array<u32>;, and the flag absent has no occurrence of statusOut at all", () => {
+    const on = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", core: "fold", width: 12, statusOut: true }),
+    );
+    expect(on).toContain(
+      "@group(0) @binding(5) var<storage, read_write> statusOut: array<u32>;",
+    );
+    const off = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", core: "fold", width: 12 }),
+    );
+    expect(off).not.toContain("statusOut");
+  });
+
+  it("statusOut:false reproduces the absent-field source byte for byte, and stripping every statusOut-mentioning line out of the true source recovers it exactly — the 'pure side channel' claim", () => {
+    const off = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", core: "fold", width: 12 }),
+    );
+    const explicitFalse = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", core: "fold", width: 12, statusOut: false }),
+    );
+    expect(explicitFalse).toBe(off);
+
+    const on = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", core: "fold", width: 12, statusOut: true }),
+    );
+    const stripped = on
+      .split("\n")
+      .filter((line) => !line.includes("statusOut"))
+      .join("\n");
+    expect(stripped).toBe(off);
+  });
+
+  it("writes the status at every marchRays exit except the out-of-range guard — a future early return added without a write must fail this test", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", core: "fold", width: 12, statusOut: true }),
+    );
+    const body = wgsl.slice(wgsl.indexOf("fn marchRays"));
+    const lines = body.split("\n");
+    const writeLine = "statusOut[slotI] = u32(st.y);";
+    const returnLineIndices = lines
+      .map((line, i) => (line.trim() === "return;" ? i : -1))
+      .filter((i) => i !== -1);
+    // Module doc: every exit writes it — both sphere-gate early-outs, the
+    // defensive non-ACTIVE guard and the fall-through — except the
+    // slotI >= params.itemCount guard, whose slot sits outside the
+    // dispatch's item range. That is exactly 4 literal `return;` sites.
+    expect(returnLineIndices.length).toBe(4);
+    for (let n = 0; n < returnLineIndices.length; n++) {
+      const lineIx = returnLineIndices[n];
+      let p = lineIx - 1;
+      while (p >= 0 && lines[p].trim() === "") p--;
+      const precededByWrite = p >= 0 && lines[p].trim() === writeLine;
+      if (n === 0) {
+        expect(precededByWrite).toBe(false);
+      } else {
+        expect(precededByWrite).toBe(true);
+      }
+    }
+    // The fall-through — the loop's shared exit, not a `return;` at all —
+    // writes the status right after its states[ray] = st; write.
+    const stateWriteIndices = lines
+      .map((line, i) => (line.trim() === "states[ray] = st;" ? i : -1))
+      .filter((i) => i !== -1);
+    const fallThroughIx = stateWriteIndices[stateWriteIndices.length - 1];
+    expect(lines[fallThroughIx + 1].trim()).toBe(writeLine);
+  });
+
+  it("balloon drops the two sphere-gate early-outs entirely, so its march body writes the status at exactly 2 sites against the non-balloon fold config's 4 (fr-5wlv.5's gate composes with fr-si66)", () => {
+    const writeLine = "statusOut[slotI] = u32(st.y);";
+    const plain = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", core: "fold", width: 12, statusOut: true }),
+    );
+    const balloon = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "march",
+        core: "fold",
+        width: 12,
+        balloon: true,
+        statusOut: true,
+      }),
+    );
+    expect(plain.split(writeLine).length - 1).toBe(4);
+    expect(balloon.split(writeLine).length - 1).toBe(2);
+  });
+
+  it("groundPlane's classifier assignment lands before the write at both sphere-gate exits (fr-rhn5 composes with fr-si66)", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "march",
+        core: "fold",
+        width: 12,
+        groundPlane: true,
+        statusOut: true,
+      }),
+    );
+    const gateBlock =
+      "    st.y = groundPlaneStatus(ro, rd);\n" +
+      "    states[ray] = st;\n" +
+      "    statusOut[slotI] = u32(st.y);\n" +
+      "    return;";
+    expect(wgsl.split(gateBlock).length - 1).toBe(2);
+  });
+
+  it("throws for mode 'eval' and mode 'shade' — statusOut is a march-mode output", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ mode: "eval", statusOut: true })),
+    ).toThrow(/march-mode/);
+    expect(() =>
+      surfaceDeKernelWgsl(kernelOpts({ mode: "shade", statusOut: true })),
+    ).toThrow(/march-mode/);
+  });
+
+  it("composes with the 4D descent cores — the march entry text is shared across cores, so affine4 and fold4 declare the binding and write at every exit exactly like the 3D fold core", () => {
+    const writeLine = "statusOut[slotI] = u32(st.y);";
+    for (const core of ["affine4", "fold4"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "march", core, width: 12, statusOut: true }),
+      );
+      expect(wgsl).toContain(
+        "@group(0) @binding(5) var<storage, read_write> statusOut: array<u32>;",
+      );
+      const lines = wgsl.slice(wgsl.indexOf("fn marchRays")).split("\n");
+      const returnLineIndices = lines
+        .map((line, i) => (line.trim() === "return;" ? i : -1))
+        .filter((i) => i !== -1);
+      expect(returnLineIndices.length).toBe(4);
+      for (let n = 0; n < returnLineIndices.length; n++) {
+        const lineIx = returnLineIndices[n];
+        let p = lineIx - 1;
+        while (p >= 0 && lines[p].trim() === "") p--;
+        const precededByWrite = p >= 0 && lines[p].trim() === writeLine;
+        if (n === 0) {
+          expect(precededByWrite).toBe(false);
+        } else {
+          expect(precededByWrite).toBe(true);
+        }
+      }
+      const stateWriteIndices = lines
+        .map((line, i) => (line.trim() === "states[ray] = st;" ? i : -1))
+        .filter((i) => i !== -1);
+      const fallThroughIx = stateWriteIndices[stateWriteIndices.length - 1];
+      expect(lines[fallThroughIx + 1].trim()).toBe(writeLine);
+    }
+  });
+});
+
 describe("surfaceDeKernelWgsl shade-split isolation (eval/march-pose output unchanged)", () => {
   it("mode 'eval' output contains none of the shade markers", () => {
     const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "eval" }));

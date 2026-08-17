@@ -355,6 +355,18 @@ import type { Vec3 } from "./types";
  * path, where inset/centered-projection parity matters. Either way the
  * march writes RAY STATES ONLY, never pixels.
  *
+ * MARCH STATUS SIDE-CHANNEL (`statusOut`, fr-si66): the host compacts the
+ * active list from ONE field of the ray state — the status — so reading
+ * the whole `states` buffer back to get it costs 16 B per FRAME ray a
+ * sweep where 4 B per ACTIVE ray would do. With the flag set the march
+ * additionally writes each dispatched ray's post-pass status as a `u32`
+ * at its own SLOT in the active list (binding 5) — the array the host is
+ * rebuilding — from every exit, the two sphere-gate early-outs and the
+ * defensive non-ACTIVE guard included. A pure side channel: nothing
+ * reads it back on the device, so the ray states, the pixels and every
+ * measured quantity are what they were, which is what lets the bench
+ * baselines stay byte-identical with the flag off.
+ *
  * SHADE MODE (`shadeRays`, fr-tzdg) is the split's other half: one
  * dispatch over a host-compacted list of TERMINAL rays (status HIT /
  * MISS / EXHAUSTED; `itemCount` is the BATCH length, not the frame's ray
@@ -964,6 +976,23 @@ export interface SurfaceGpuKernelOptions {
    * — the app path, where inset/centered-projection parity matters.
    * Ignored outside march mode. */
   rays?: "pose" | "unproject";
+  /** March-mode STATUS side-channel (fr-si66; module doc): also write each
+   * dispatched ray's post-pass status as a `u32` at its own slot in the
+   * active list — `@group(0) @binding(5) statusOut: array<u32>` — so the
+   * host can rebuild the active list from 4 B per ACTIVE ray instead of
+   * reading the whole 16 B/ray `states` buffer back per sweep. The value
+   * is `u32(st.y)`, the {@link SURFACE_GPU_RAY_ACTIVE} vocabulary; every
+   * exit of `marchRays` writes it, so a slot's word is always this pass's
+   * answer and never a stale one. Absent or false reproduces the
+   * pre-fr-si66 source byte for byte — which is what keeps the bench's
+   * march baselines the same kernel they have always been — and THROWS
+   * outside march mode (a host that binds a status buffer to an eval or
+   * shade pipeline has a contract bug worth hearing about). HOST
+   * CONTRACT: bind a `rays`-long `array<u32>` at binding 5 with the
+   * pipeline layout declaring it `storage`; the kernel writes only slots
+   * `[0, itemCount)`, so a slice's answers land at the slice's own
+   * offsets and everything past `itemCount` keeps whatever was there. */
+  statusOut?: boolean;
   /** Frontier width — `SURFACE_FOLD_BEAM_WIDTH` for production parity;
    * the bench sweeps 12/8/6/4 to reproduce fr-ck0w's width curve. LIVE
    * under `core: "fold"` and `core: "fold4"`. IGNORED under the fixed
@@ -2255,6 +2284,17 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
         "escape sessions render plain",
     );
   }
+  // fr-si66: the march's status side-channel (option doc). Absent means
+  // no side channel, so every pre-fr-si66 config — the bench's march
+  // baselines included — generates byte-identical source.
+  const statusOut = opts.statusOut ?? false;
+  if (statusOut && mode !== "march") {
+    throw new Error(
+      "surface-de-gpu: statusOut is a march-mode output — only the march " +
+        "advances a ray's status, and only the host's active-list rebuild " +
+        "reads one",
+    );
+  }
   // fr-rhn5: the ground plane — an analytic floor MISS rays classify
   // against in the march (status PLANE inside the fade band) and the
   // shade entry lights with the hit path's penumbra/AO machinery.
@@ -2373,6 +2413,13 @@ fn frontierIx(slot: u32, li: u32) -> u32 {
   const rayIo = `
 @group(0) @binding(2) var<storage, read> activeList: array<u32>;
 @group(0) @binding(3) var<storage, read_write> states: array<vec4f>;`;
+  // fr-si66: the march's status side-channel, one u32 per ACTIVE-LIST
+  // SLOT. Binding 5 whether or not the "unproject" arm claimed 4 for
+  // ShadeParams, so one host layout serves both march arms.
+  const statusIo = statusOut
+    ? `
+@group(0) @binding(5) var<storage, read_write> statusOut: array<u32>;`
+    : "";
   const shadeParamsIo = `
 
 struct ShadeParams {
@@ -2407,8 +2454,8 @@ fn hash2(p: vec2f) -> f32 {
 @group(0) @binding(3) var<storage, read_write> results: array<f32>;`
       : mode === "march"
         ? unproject
-          ? `${rayIo}${shadeParamsIo}${hash2Io}`
-          : rayIo
+          ? `${rayIo}${shadeParamsIo}${statusIo}${hash2Io}`
+          : `${rayIo}${statusIo}`
         : `${rayIo}${shadeParamsIo}
 @group(0) @binding(5) var<storage, read> shadeMaps: array<vec4f>;
 @group(0) @binding(6) var<storage, read_write> colorOut: array<u32>;
@@ -4408,6 +4455,12 @@ ${balloonHitWrapText}`
   const marchMissStatus = groundPlane
     ? "groundPlaneStatus(ro, rd)"
     : `${SURFACE_GPU_RAY_MISS}.0`;
+  // fr-si66: the status side-channel write. Emitted at EVERY exit of
+  // marchRays — both sphere-gate early-outs, the defensive non-ACTIVE
+  // guard and the fall-through — so a slot's word is this pass's answer
+  // and never a stale one; empty, and so byte-identical, without the flag.
+  const statusStore = (indent: string): string =>
+    statusOut ? `\n${indent}statusOut[slotI] = u32(st.y);` : "";
   const marchGate = balloon
     ? `  // fr-5wlv.5: no visible-sphere gate in balloon mode — the enclosing
   // shell can be hit from anywhere, so every ray marches from the
@@ -4425,14 +4478,14 @@ ${balloonHitWrapText}`
   let disc = bq * bq - cq;
   if (disc < 0.0) {
     st.y = ${marchMissStatus};
-    states[ray] = st;
+    states[ray] = st;${statusStore("    ")}
     return;
   }
   let sq = sqrt(disc);
   let tFar = -bq + sq;
   if (tFar <= 0.0) {
     st.y = ${marchMissStatus};
-    states[ray] = st;
+    states[ray] = st;${statusStore("    ")}
     return;
   }
   var t = st.x;
@@ -4537,7 +4590,7 @@ fn marchRays(
   }
   let ray = activeList[slotI];
   var st = states[ray];
-  if (st.y != ${SURFACE_GPU_RAY_ACTIVE}.0) {
+  if (st.y != ${SURFACE_GPU_RAY_ACTIVE}.0) {${statusStore("    ")}
     return;
   }
   let px = ray % params.rasterWidth;
@@ -4566,7 +4619,7 @@ ${marchGate}
   }
   st.x = t;
   st.z = f32(steps);
-  states[ray] = st;
+  states[ray] = st;${statusStore("  ")}
 }`
         : `
 struct SurfaceHitInfo {
