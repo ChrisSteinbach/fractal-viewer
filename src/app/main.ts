@@ -11,14 +11,9 @@ import {
   transformColors,
   W_SIDE_PALETTES,
 } from "../fractal/color";
-import {
-  analyzeEscapeSystem,
-  buildEscapeDE,
-  systemHasPowerLink,
-} from "../fractal/escape-de";
-import { analyzeEscapeSystem4, buildEscapeDE4 } from "../fractal/escape-de-4d";
-import { analyzeBulbSystem, buildBulbDE } from "../fractal/bulb-de";
-import { systemHasActiveQSquare } from "../fractal/qjulia-de";
+import { analyzeEscapeSystem, buildEscapeDE } from "../fractal/escape-de";
+import { buildEscapeDE4 } from "../fractal/escape-de-4d";
+import { buildBulbDE } from "../fractal/bulb-de";
 import {
   analyzeSurfaceSystem,
   buildSurfaceDE,
@@ -45,11 +40,9 @@ import {
   buildSurfaceDE4,
   deHasFolds4,
   slabExact4,
-  systemFoldShaped4,
 } from "../fractal/surface-de-4d";
 import { surfaceSlotColors, surfaceTrapIndices } from "./surface-slots";
-import { SURFACE_MAX_MAPS } from "./surface-material";
-import { SURFACE4_MAX_MAPS } from "./surface-material-4d";
+import { deriveSurfaceEligibility } from "./surface-eligibility";
 import {
   DEFAULT_GAMMA_THRESHOLD,
   tonemapFlame,
@@ -5280,263 +5273,24 @@ function main(): void {
 
   /**
    * Keep the Surface mode button's gate tracking the DOCUMENT (epic
-   * fr-7jlk): the pure marchability analysis (cheap — no bounding probe)
-   * plus the material's uniform-array cap — on the bare active-map count
-   * in BOTH views (fr-x029 / fr-u91x: both tracers sweep kaleidoscope
-   * sectors instead of expanding them into slots; 4D documents route to
-   * analyzeSurfaceSystem4 and the 4D tracer's own cap). Rides refreshUi —
-   * the one
-   * chokepoint every document edit, snapshot load, and undo/redo already
-   * funnels through — so the button enables/disables live as variations,
-   * 4D blocks, scales, weights, or symmetry orders change.
+   * fr-7jlk). The classification itself — five analyzers, the tracers'
+   * uniform caps, and every user-facing sentence — is
+   * `surface-eligibility.ts`'s pure `deriveSurfaceEligibility` (fr-dp50),
+   * tested over the shipped presets; this wrapper contributes exactly the
+   * two live inputs the document cannot answer (the current state and this
+   * machine's compute availability) and the ui call. Rides refreshUi — the
+   * one chokepoint every document edit, snapshot load, and undo/redo
+   * already funnels through — so the button enables/disables live as
+   * variations, 4D blocks, scales, weights, or symmetry orders change.
    */
   function refreshSurfaceEligibility(): void {
-    // A 4D document routes to the 4D analysis (fr-vxoj) — what used to be
-    // this gate's blanket "extends into 4D" disqualifier is now the 4D
-    // tracer's admission ticket. Routed on the DOCUMENT's flatness (the
-    // same predicate cloudParams stamps on generation requests), never the
-    // async-cached viewIs4D flag: this gate must track edits synchronously.
-    if (
-      systemPartsAreNonFlat(
-        state.transforms,
-        state.finalTransform ?? null,
-        state.symmetry,
-      )
-    ) {
-      const analysis = analyzeSurfaceSystem4(
-        state.transforms,
-        state.finalTransform ?? null,
-      );
-      if (analysis.status === "ineligible") {
-        // fr-vag4: the 4D IFS gate's FORWARD-ORBIT complement, the 3D
-        // arm's escape clause one dimension up. Reported through the
-        // "degraded" channel for the same reason: the note has to name
-        // the different object about to be rendered.
-        const escape4 = analyzeEscapeSystem4(
-          state.transforms,
-          state.finalTransform ?? null,
-          state.symmetry,
-        );
-        if (escape4.status === "eligible") {
-          // The chain's own cap is the 4D tracer's map cap — one
-          // `GpuMap4` per LINK on the maps binding, and eligibility is
-          // one answer whatever engine runs it (the 3D arm's reasoning,
-          // where the cap comes from the fragment fallback's uniform
-          // array instead).
-          const links = state.transforms.filter(
-            (t) => (t.weight ?? 1) > 0,
-          ).length;
-          if (links > SURFACE4_MAX_MAPS) {
-            ui.setSurfaceEligibility(
-              "ineligible",
-              `${links} chain links (the escape-time tracer carries at most ${SURFACE4_MAX_MAPS})`,
-            );
-            return;
-          }
-          // Compute-only, exactly as fold-shaped 4D systems are — an
-          // escape chain IS fold-shaped, and the fragment 4D tracer
-          // carries no forward-orbit GLSL.
-          if (!surfaceComputeAvailable()) {
-            ui.setSurfaceEligibility(
-              "ineligible",
-              "4D escape-time chains render on WebGPU compute, which is unavailable here",
-            );
-            return;
-          }
-          ui.setSurfaceEligibility(
-            "degraded",
-            links > 1
-              ? `Escape-time render: these ${links} maps reach out of the w = 0 hyperplane and do not all contract, so Surface marches the w-slice of the escape-time set of the chain they form — one link per orbit step — rather than an IFS attractor.`
-              : "Escape-time render: this 4D fold does not contract, so Surface marches the w-slice of its escape-time set rather than an IFS attractor.",
-          );
-          return;
-        }
-        // qsquare's complement, one dimension up (fr-zi3c) — see the 3D
-        // arm below for the full reasoning. Since fr-vag4 a 4D quaternion
-        // square DOES render, as a link in an escape chain, so this
-        // clause survives only for the shapes that gate refuses (a LONE
-        // one, or one chained with a triplex power).
-        const reasons4 = analysis.reasons.slice();
-        if (
-          systemHasActiveQSquare(state.transforms, state.finalTransform ?? null)
-        ) {
-          reasons4.push(
-            "a quaternion square renders only as a link in an escape-time chain — give it a map of its own beside a fold",
-          );
-        }
-        ui.setSurfaceEligibility("ineligible", reasons4.join("; "));
-        return;
-      }
-      // fr-rsp6: fold-shaped 4D systems render ONLY on the WebGPU compute
-      // path — the fragment 4D tracer carries no fold GLSL (the 3D fold
-      // GLSL already sits at Mesa's link cliff; a 243-branch 4D body
-      // there would be unshippable), so with compute unavailable (no
-      // adapter, a latched device-loss block, or the deliberate
-      // ?surfacegl flag) the mode refuses with the reason rather than
-      // letting a fold-blind tracer render the wrong object.
-      if (
-        systemFoldShaped4(state.transforms, state.finalTransform ?? null) &&
-        !surfaceComputeAvailable()
-      ) {
-        ui.setSurfaceEligibility(
-          "ineligible",
-          "4D folds render on WebGPU compute, which is unavailable here",
-        );
-        return;
-      }
-      // The 4D tracer's uniform cap. No symmetry multiplier — the 4D
-      // descent sweeps kaleidoscope sectors around the base maps
-      // (fr-u91x), so slots are active maps 1:1 at any order.
-      const activeMaps4 = state.transforms.filter(
-        (t) => (t.weight ?? 1) > 0,
-      ).length;
-      if (activeMaps4 > SURFACE4_MAX_MAPS) {
-        ui.setSurfaceEligibility(
-          "ineligible",
-          `${activeMaps4} maps (the 4D surface tracer carries at most ${SURFACE4_MAX_MAPS})`,
-        );
-        return;
-      }
-      if (analysis.status === "degraded") {
-        ui.setSurfaceEligibility(
-          "degraded",
-          `Anisotropic maps (ratio ${analysis.anisotropy.toFixed(2)}): marched conservatively.`,
-        );
-        return;
-      }
-      ui.setSurfaceEligibility("eligible", null);
-      return;
-    }
-    const analysis = analyzeSurfaceSystem(
+    const eligibility = deriveSurfaceEligibility(
       state.transforms,
       state.finalTransform ?? null,
+      state.symmetry,
+      { computeAvailable: surfaceComputeAvailable() },
     );
-    if (analysis.status === "ineligible") {
-      // The escape-time complement (fr-kltj): a single non-contracting
-      // pure-fold map — the canonical Mandelbox parameterization — has no
-      // IFS attractor, but Surface can march its escape-time set instead.
-      // Reported through the "degraded" channel so the mode's note names
-      // the different object being rendered.
-      const escape = analyzeEscapeSystem(
-        state.transforms,
-        state.finalTransform ?? null,
-        state.symmetry,
-      );
-      if (escape.status === "eligible") {
-        // The chain's own uniform cap (fr-s04t): the WebGL fallback arm
-        // carries one uEscM/uEscT/uEscParams slot per LINK, sized like the
-        // descent's per-map arrays, and eligibility is one answer for both
-        // engines — so the fragment tracer's cap is the mode's cap even
-        // though the compute arm's storage list has none. The IFS arm's
-        // gate below, one render shape over.
-        const links = state.transforms.filter(
-          (t) => (t.weight ?? 1) > 0,
-        ).length;
-        if (links > SURFACE_MAX_MAPS) {
-          ui.setSurfaceEligibility(
-            "ineligible",
-            `${links} chain links (the escape-time tracer carries at most ${SURFACE_MAX_MAPS})`,
-          );
-          return;
-        }
-        ui.setSurfaceEligibility(
-          "degraded",
-          links > 1
-            ? // fr-za0n's hybrid: the transform list IS the formula
-              // sequence, so name the object as a chain rather than as
-              // "the canonical Mandelbox". fr-j231 split the sentence
-              // again, because a chain may now hold a POWER link and
-              // "these N folds" is then simply false — and a user who has
-              // just dropped a Mandelbulb beside a Mandelbox has no other
-              // way to learn that it is participating (fr-zi3c's rule,
-              // one gate over: name the map rather than describing
-              // neither).
-              systemHasPowerLink(state.transforms)
-              ? `Escape-time render: these ${links} maps form a hybrid formula chain — folds and power maps in one sequence — so Surface marches its escape-time set, one link per orbit step, rather than an IFS attractor.`
-              : `Escape-time render: these ${links} folds do not all contract, so Surface marches the escape-time set of the chain they form — one link per orbit step — rather than an IFS attractor.`
-            : "Escape-time render: this fold does not contract, so Surface marches its escape-time set — the canonical Mandelbox object — rather than an IFS attractor.",
-        );
-        return;
-      }
-      // The escape family's second complement (fr-tdin): a single pure
-      // triplex-power map. Same channel and same reason as the fold arm
-      // above — the note names the different object being rendered,
-      // because a user who authored a `bulb` map and pressed Surface has
-      // no other way to learn that what they get is an escape-time set
-      // rather than an attractor. Without this arm the button simply went
-      // dark, with a reason ("map 1 uses variations") that described
-      // neither the map nor the fact that a renderer for it shipped.
-      if (
-        analyzeBulbSystem(
-          state.transforms,
-          state.finalTransform ?? null,
-          state.symmetry,
-        ).status === "eligible"
-      ) {
-        ui.setSurfaceEligibility(
-          "degraded",
-          "Mandelbulb render: Surface marches the escape-time set of this triplex power — the classic Mandelbulb — rather than an IFS attractor.",
-        );
-        return;
-      }
-      // qsquare's complement (fr-zi3c): unlike the fold and bulb arms
-      // above, there is no third renderer to route to. A quaternion square
-      // has a genuine escape-time set and a correct, tested estimator
-      // (`qjulia-de.ts`), but Surface mode's central promise is that zoom
-      // keeps resolving, and `scripts/qjulia-beauty.harness.ts` measured
-      // the object as smooth at every level it tried — shells and whorls,
-      // no fractal detail — so fr-7u8t.5 (a WGSL/GLSL mirror) is closed
-      // won't-do on that measurement and none is planned. The honest fix
-      // is the REFUSAL, not a renderer: a system carrying an active
-      // qsquare gets a clause appended to its ordinary "uses variations"
-      // reasons, naming what the map is instead of leaving the button
-      // dark with a reason that describes neither the map nor the
-      // situation. Appended rather than substituted — a system can be
-      // ineligible for several reasons at once, and this clause must stay
-      // true regardless of what else is wrong with the document.
-      //
-      // fr-j231 gave the clause somewhere to point. The escape-time chain
-      // renders a quaternion square as a LINK, so this arm is now reached
-      // only by the shapes that chain refuses — a lone square, or one
-      // sharing a map with other variations, or one on the final
-      // transform — and the sentence names the way out rather than
-      // stopping at "no renderer". That is exactly the outcome
-      // `qjulia-de.ts`'s doc predicted for its own object: dull alone,
-      // worth its place composed with a fold.
-      const reasons = analysis.reasons.slice();
-      if (
-        systemHasActiveQSquare(state.transforms, state.finalTransform ?? null)
-      ) {
-        reasons.push(
-          "a quaternion square renders only as a link in an escape-time chain — give it a map of its own beside a fold",
-        );
-      }
-      ui.setSurfaceEligibility("ineligible", reasons.join("; "));
-      return;
-    }
-    // The tracer's uniform cap, on the BARE active-map count (fr-x029).
-    // Kaleidoscope copies used to be expanded into slots of their own, so
-    // this gate multiplied by the symmetry order and refused high orders
-    // outright; the descent sweeps sectors around the base maps now, so
-    // order costs no slots and every order is admissible.
-    const activeMaps = state.transforms.filter(
-      (t) => (t.weight ?? 1) > 0,
-    ).length;
-    if (activeMaps > SURFACE_MAX_MAPS) {
-      ui.setSurfaceEligibility(
-        "ineligible",
-        `${activeMaps} maps (the surface tracer carries at most ${SURFACE_MAX_MAPS})`,
-      );
-      return;
-    }
-    if (analysis.status === "degraded") {
-      ui.setSurfaceEligibility(
-        "degraded",
-        `Anisotropic maps (ratio ${analysis.anisotropy.toFixed(2)}): marched conservatively.`,
-      );
-      return;
-    }
-    ui.setSurfaceEligibility("eligible", null);
+    ui.setSurfaceEligibility(eligibility.status, eligibility.note);
   }
 
   /**
