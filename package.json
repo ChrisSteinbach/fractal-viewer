@@ -27,7 +27,7 @@
     "url": "git+https://github.com/ChrisSteinbach/fractal-viewer.git"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "license": "ISC",
   "devDependencies": {

@@ -55,8 +55,7 @@ Three.js, and Vite, and packaged as an installable, offline-capable PWA.
 
 ## Getting started
 
-Requires **Node.js 18+** (the repo is developed and tested on Node 22; see
-`.nvmrc`).
+Requires **Node.js 22+** (see `.nvmrc`).
 
 ```bash
 npm install      # install dependencies (also installs the git hooks)
