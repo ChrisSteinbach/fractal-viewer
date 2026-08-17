@@ -1305,6 +1305,16 @@ and UI**, so the interesting math is unit-tested without a browser:
     length `resolveFoldRadii` would silently clamp.
   - `control-spec.ts` — declarative spec for panel scalar controls. Adding a
     setting = one spec entry + one index.html row (pure, tested).
+  - `legend-spec.ts` — the color legend as DATA (fr-emz0): `deriveLegend`
+    returns a plain `LegendSpec` (hidden / gradient bar + three labels /
+    swatch strip of labels and color chips) and `ui.ts`'s `paintLegend` only
+    paints it. Every family choice — the showcase override, the render-mode
+    branches ahead of the document's 4D-ness, the palette-driven renders,
+    the colorMode key — lives here, so it is tested without jsdom the way
+    `control-spec.ts` is. The one thing it cannot derive is a palette's
+    DISPLAY name (index.html's `<option>` labels are the app's single source
+    of those), so the caller injects a `paletteName` lookup keyed by which
+    `<select>` picked it.
   - `constants.ts` — shared UI/interaction magic numbers.
   - `interactions.ts` — pointer/touch/wheel handling (Three.js raycasting).
   - `slider-scroll-guard.ts` — PREVENTS the panel sliders' tap-jump on
