@@ -227,10 +227,12 @@ submissions painting backdrop, times the 8 supersampling passes
 (fr-vpbq). Raising that cap 16x has a hard ceiling of 7.9 s on this 35 s
 settle — real, bounded, ~22%, and NOT "most of the settle". (What
 raising it actually bought is the next section, and it beat that
-ceiling.) **The hit half is the bigger one and
-is real work**: 135 dispatches x ~178 hits at ~0.62 ms per hit is the
-width-1 probe cost fr-p8bc already cut 23.8x, re-paid by every one of the
-8 passes. No batch-cap change touches it.
+ceiling.) **The hit half is the bigger one** — 135 dispatches x ~178 hits
+at ~0.62 ms per hit, the width-1 probe cost fr-p8bc already cut 23.8x,
+re-paid by every one of the 8 passes — and this record closed by calling
+it real work no batch-cap change touches. That last clause did not
+survive its own instrument: see "And the hit half is NOT what fr-si66
+concluded" below.
 
 Proven output-identical rather than argued: `scripts/surface-repro.verify.mjs
 --scenario=all --runs=2 --mode=x11::0` was run against BOTH builds, and
@@ -277,7 +279,9 @@ Xe; the arms are the two builds):
 
 The mean column is the one-line proof that the 3.2 ms was wall and not
 work: **~300x the rays for 25% more time**. The hit and march rows are
-the controls, and they move by run-to-run variance alone. The free
+the controls, and they move by run-to-run variance alone (a third run of
+the same after build read 140 / 15157.1 ms of hit shade — the spread
+between two runs of one build, not a difference between builds). The free
 dispatch count
 landing exactly on the sweep count (58) is the other — the queue is
 emptied every time it is touched, so the floor is now "how many times
@@ -332,6 +336,57 @@ meet the same ceiling: a frame's rays are a memory question and a
 dispatch's are a submission-shape one, and folding them together would
 make a 4K pane fit one rung softer for a bound no single piece of work
 has to meet.
+
+### And the hit half is NOT what fr-si66 concluded (fr-257o, fr-2ojg)
+
+fr-si66's record two sections up closes by calling the hit queue "real
+work no batch-cap change touches". That is wrong, and fr-257o's own
+instrument is what says so. A third run of the shipped build printed the
+new HIT SHADE COST vs BATCH SIZE table (140 hit dispatches, 15157.1 ms):
+
+| batch size | dispatches | hits | totalMs | meanMs/disp | meanUs/hit |
+| ---------- | ---------- | ---- | ------- | ----------- | ---------- |
+| 1-63       | 32         | 591  | 2791.4  | 87.2        | 4723.2     |
+| 64-127     | 50         | 4023 | 5142.6  | 102.9       | 1278.3     |
+| 128-255    | 39         | 7109 | 4636.1  | 118.9       | 652.1      |
+| 256-511    | 19         | 6238 | 2587.0  | 136.2       | 414.7      |
+
+Cost per DISPATCH rises 1.56x while hits per dispatch rise ~11x — a
+latency-bound dispatch, and the flat region reaches at least 8
+workgroups where `shadeHitBatchSize`'s own argument only claims one.
+
+THE TABLE ALONE PROVES NOTHING, which is the methodological half worth
+keeping: batch size is CHOSEN from the cost EMA against a fixed
+ms/dispatch target, so "small batches have high µs/hit" is close to
+tautological — the sizer would draw that shape whether or not the small
+batches were really more expensive per hit. So the discriminating
+experiment was run: force the batch floor to 512 so size varies
+INDEPENDENTLY of the EMA, same scene, same pose, same window. Settle
+25.0 s → **15.0 s**, hit shade 15157.1 → **7853.3 ms**, dispatches 140 →
+70, and mean ms/dispatch 108.3 → 112.2 — UNCHANGED, which is the whole
+result. Cumulative from the pre-fr-257o baseline that is 35.0 s → 15.0 s,
+2.33x.
+
+The root cause is one line and it is fr-d6g5's trapdoor one order up:
+`nextShadeHitEmaUs` is fed `shadeMs * 1000 / batch.length`, a
+submission's WHOLE time over its ray count, so a 16-hit batch records its
+~85 ms latency floor as 5.2 ms per hit where the marginal cost is
+~0.26 ms — and the sizer then divides the pass target by that inflated
+number and picks another small batch. fr-d6g5 fixed the degenerate 1-ray
+case with a one-workgroup floor; the loop runs at every width below the
+occupancy knee. That intercept is NOT the per-submission wall (fr-257o
+measured that separately at 3-4 ms from the free queue, so at most ~0.6 s
+of the 15.2 s was submission overhead) — it is the batch's DEEPEST ray.
+
+IT WAS DELIBERATELY NOT SHIPPED WITH fr-257o and is fr-2ojg instead. A
+floor is a one-way promise to submit that much work whatever the EMA
+believes, and this is the exact mechanism behind five kernel-confirmed
+i915 hangs and the Mesa park. The arithmetic looks fine — fr-p8bc's worst
+measured ~108 ms/hit at full width, ÷23.8 for the shipped width-1 probe,
+is ~2.3 s for 512 hits against a ~7.5 s watchdog — but a measured average
+is not a bound, and the A/B did not run the near-surface fold-monster
+silhouettes that would test it. The bead carries the shape decision (fix
+the EMA's model, do not just raise the floor) and the gates.
 
 `colorOut` is prefilled from the last frame, nearest-resampled — the
 strip settle's preview-seeded-target discipline. fr-f4bx measured what
@@ -465,15 +520,15 @@ report: a 4x Save-PNG whose 32.5M rays wanted a 520 MB state buffer
 inside a ~1.4 GB frame, with the size that caused it appearing nowhere in
 the error.
 
-That ceiling is NOT met against the PER-DISPATCH one (fr-257o's
-`surfaceComputeMaxDispatchRays` — 4,194,240 rays at the workgroup limit
-this renderer never raises), even though the dispatch ceiling is the
-lower of the two on a spec-minimum device. They answer different
-questions — how much memory may a frame commit, versus how much work may
-one submission carry — and meeting them here would make a 4K pane trace
-soft for a bound no single dispatch has to meet. Each sizing site clamps
-at the dispatch ceiling itself instead, and a test pins the
-non-interaction so a later reader does not "fix" it.
+That ceiling is NOT met against the per-dispatch one (fr-257o's
+`surfaceComputeMaxDispatchRays`, 4,194,240 rays at the workgroup limit
+this renderer never raises) even though the dispatch ceiling is the lower
+of the two on a spec-minimum device. They answer different questions —
+how much memory may a frame commit, versus how much work may one
+submission carry — and meeting them here would make a 4K pane trace soft
+for a bound no single dispatch has to meet. The march slice and the free
+shade batch clamp at the dispatch ceiling themselves; see "The free shade
+queue drains whole" above.
 
 Both callers size against the ceiling. The live pane FITS
 (`fitSurfaceComputeRaster`): one frame IS the image, so a hidpi raster

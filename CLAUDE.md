@@ -1644,7 +1644,15 @@ Frame` callback, which runs before paint so the disabled look never
     (`surfaceComputeMaxDispatchRays`; the frame ceiling deliberately does
     NOT meet it — memory question, not submission shape). MEASURED 2492
     free dispatches -> 58 and a 35.0 s settle -> 25.0 s, settled PNGs
-    byte-identical. NO submission outruns the i915 watchdog;
+    byte-identical. AND THE HIT HALF IS NOT REAL WORK EITHER, which
+    fr-si66's record had concluded and fr-257o's own instrument refuted:
+    `nextShadeHitEmaUs` divides a submission's WHOLE time by its ray
+    count, so a small batch records its LATENCY as per-hit cost and the
+    sizer picks another small batch — fr-d6g5's trapdoor at every width
+    below the occupancy knee, worth another 25.0 s -> 15.0 s MEASURED at a
+    forced 512 floor. Left unshipped as fr-2ojg (P1): a floor is a one-way
+    promise to submit that work, and this is the mechanism behind five
+    i915 hangs. NO submission outruns the i915 watchdog;
     progressive presents between every bounded piece; host-compacted active
     list; shading probes ride `SURFACE_COMPUTE_SHADE_DE_WIDTH` (the fr-p8bc
     verdict); colorOut prefill seeded from the last frame

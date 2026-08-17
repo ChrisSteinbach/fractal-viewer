@@ -80,6 +80,16 @@
  * frame-filling one shade-bound, and the readback's SHARE differs by an
  * order of magnitude between them).
  *
+ * HIT SHADE COST vs BATCH SIZE (fr-257o): the free queue's share turned
+ * out to be per-submission wall with no work in it, and the table after
+ * WHERE THE TIME WENT asks the same question of the HIT queue, which no
+ * cap change touches. Hit dispatches are bucketed by batch size and
+ * reported with µs PER HIT; a falling column means the wider batches are
+ * amortizing a wall (a ~178-ray batch is under 3 workgroups, so
+ * under-utilization is a live hypothesis), a flat one means the time is
+ * real per-hit probe work. Printed only when some hit dispatch carried a
+ * parsable `len=`.
+ *
  * PER-SWEEP MEANS ARE THE TRUNCATION-SAFE COMPARISON: if a scene does not
  * reach a completed settle before `--capMs`, the two arms' sweep COUNTS and
  * TOTALS will legitimately differ (whichever arm got further did more
@@ -272,13 +282,37 @@ const READBACK_RE = /^(\w+) readback (BEGIN|END)\b(.*)$/;
  * when the frame was superseded mid-dispatch, which is not a timing). */
 const DISPATCH_END_RE = /^(march|shade) END ms=([0-9.]+)$/;
 /** Which QUEUE a shade dispatch drained (fr-257o). The two are different
- * animals — a FREE batch does one background write per ray and is capped
- * at a flat `SURFACE_COMPUTE_MAX_SHADE_BATCH`, a HIT batch pays the
- * on-surface probe evals and is sized predictively — so a single shade
- * mean over both says nothing about either. The BEGIN line carries the
- * flag; the very next `shade END` is its own, because the frame loop
- * awaits each dispatch before encoding the next. */
+ * animals — a FREE batch does one background write per ray and takes its
+ * WHOLE queue in one dispatch (there is no cost to model, so no cap but
+ * the device's own dispatch ceiling), a HIT batch pays the on-surface
+ * probe evals and is sized predictively against
+ * `SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH` — so a single shade mean over
+ * both says nothing about either. The BEGIN line carries the flag; the
+ * very next `shade END` is its own, because the frame loop awaits each
+ * dispatch before encoding the next. */
 const SHADE_BEGIN_RE = /^shade BEGIN isFree=(true|false)\b/;
+/** How many rays that dispatch carried, read off the SAME BEGIN line by
+ * NAME rather than by position, so a field added or reordered in the
+ * trace does not silently start reporting some other number. A line
+ * without a `len=` still counts in the free/hit totals above — it only
+ * drops out of the size table, which is the conservative direction. */
+const SHADE_LEN_RE = /\blen=(\d+)\b/;
+/** Batch-size buckets for the hit table, half-open on powers of two: the
+ * question is whether cost per HIT falls as the batch widens, and a
+ * doubling ladder is the resolution that question has (a hit batch is
+ * sized from a cost EMA, so its sizes cluster rather than spread). */
+const HIT_SIZE_BUCKETS = [
+  { label: "1-63", min: 1, max: 63 },
+  { label: "64-127", min: 64, max: 127 },
+  { label: "128-255", min: 128, max: 255 },
+  { label: "256-511", min: 256, max: 511 },
+  { label: "512-1023", min: 512, max: 1023 },
+  { label: "1024+", min: 1024, max: Infinity },
+];
+
+function hitSizeBucket(len) {
+  return HIT_SIZE_BUCKETS.find((b) => len >= b.min && len <= b.max) ?? null;
+}
 /** `final readback BEGIN` has no matching END by design (see module doc) —
  * this is the one label {@link summarize} never opens against later END. */
 const UNTIMED_READBACK_LABEL = "final";
@@ -316,8 +350,16 @@ function summarize(rawLines) {
     // fr-257o: the same shade time split by which queue it drained.
     shadeFree: { count: 0, totalMs: 0 },
     shadeHit: { count: 0, totalMs: 0 },
+    /** fr-257o: hit dispatches bucketed by BATCH SIZE — `{count, hits,
+     * totalMs}` per bucket label, where `hits` is the SUM of the batch
+     * lengths (never count x meanLen), since µs/hit is the column the
+     * work-or-wall question turns on. */
+    shadeHitBySize: Object.fromEntries(
+      HIT_SIZE_BUCKETS.map((b) => [b.label, { count: 0, hits: 0, totalMs: 0 }]),
+    ),
   };
   let pendingShadeIsFree = null;
+  let pendingShadeLen = null;
 
   const kindStat = (label) => {
     let s = kinds.get(label);
@@ -353,6 +395,8 @@ function summarize(rawLines) {
     const shadeBegin = SHADE_BEGIN_RE.exec(body);
     if (shadeBegin) {
       pendingShadeIsFree = shadeBegin[1] === "true";
+      const lenMatch = SHADE_LEN_RE.exec(body);
+      pendingShadeLen = lenMatch ? Number(lenMatch[1]) : null;
       continue;
     }
 
@@ -368,7 +412,17 @@ function summarize(rawLines) {
           : dispatch.shadeHit;
         queue.count++;
         queue.totalMs += ms;
+        if (!pendingShadeIsFree && pendingShadeLen !== null) {
+          const bucket = hitSizeBucket(pendingShadeLen);
+          if (bucket) {
+            const b = dispatch.shadeHitBySize[bucket.label];
+            b.count++;
+            b.hits += pendingShadeLen;
+            b.totalMs += ms;
+          }
+        }
         pendingShadeIsFree = null;
+        pendingShadeLen = null;
       }
       continue;
     }
@@ -732,6 +786,42 @@ function printReport(summary, runResult) {
     `  sweep readbacks  : ${String(sweepLabels.reduce((a, l) => a + (kinds.get(l)?.count ?? 0), 0)).padStart(5)}  ${fmtMs(sweepMs).padStart(9)} ms  ${pct(sweepMs)}`,
   );
 
+  // fr-257o's second half: the free queue's time was per-submission wall,
+  // and this is the same question asked of the HIT queue, which the cap
+  // change does not touch. A hit batch is ~178 rays — under 3 workgroups
+  // — so if µs/hit FALLS as batches widen, part of that 55% is wall and
+  // under-utilization and there is a lever; if it stays FLAT, it is real
+  // per-hit probe work and there is not.
+  const bySize = summary.dispatch.shadeHitBySize ?? {};
+  const sizedBuckets = HIT_SIZE_BUCKETS.filter(
+    (b) => (bySize[b.label]?.count ?? 0) > 0,
+  );
+  if (sizedBuckets.length > 0) {
+    console.log();
+    console.log(
+      "HIT SHADE COST vs BATCH SIZE (is the hit half work, or wall + under-utilization?):",
+    );
+    console.log(
+      "  batch size    dispatches       hits      totalMs   meanMs/disp   meanUs/hit",
+    );
+    for (const b of sizedBuckets) {
+      const s = bySize[b.label];
+      const meanMs = s.totalMs / s.count;
+      const usPerHit = s.hits > 0 ? (s.totalMs * 1000) / s.hits : null;
+      console.log(
+        `  ${b.label.padEnd(12)}  ${String(s.count).padStart(10)} ` +
+          `${String(s.hits).padStart(10)} ${fmtMs(s.totalMs).padStart(12)} ` +
+          `${fmtMs(meanMs).padStart(13)} ${fmtMs(usPerHit).padStart(12)}`,
+      );
+    }
+    console.log(
+      "  (read the last column: FALLING with batch size = the wider batches " +
+        "are amortizing a\n   per-submission wall, i.e. overhead a sizing " +
+        "change could still take; FLAT = real per-hit\n   probe work, which " +
+        "no batch-cap change reaches.)",
+    );
+  }
+
   console.log();
   if (unmatchedBegins.length === 0) {
     console.log("warnings: 0 unmatched BEGIN (no matching END)");
@@ -821,6 +911,16 @@ function buildJsonSummary(summary, runResult) {
         count: summary.dispatch.shadeHit.count,
         totalMs: round2(summary.dispatch.shadeHit.totalMs),
       },
+      // fr-257o: only the buckets that saw a dispatch, so an arm's JSON
+      // does not carry five zero rows for sizes its sizing never picked.
+      shadeHitBySize: Object.fromEntries(
+        Object.entries(summary.dispatch.shadeHitBySize)
+          .filter(([, s]) => s.count > 0)
+          .map(([label, s]) => [
+            label,
+            { count: s.count, hits: s.hits, totalMs: round2(s.totalMs) },
+          ]),
+      ),
     },
     unmatchedBeginCount: summary.unmatchedBegins.length,
     unparsedLines: summary.unparsedLines,
