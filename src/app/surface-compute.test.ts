@@ -708,6 +708,58 @@ describe("nextShadeHitCost", () => {
       6,
     );
   });
+
+  it("loses that ratio the moment the marginal's decay floor binds", () => {
+    // The identity is UNCLAMPED algebra, and one of the clamps is
+    // reachable in ordinary operation — an earlier draft of this file's
+    // comments claimed it held "whatever the measurements say" and the
+    // tests above all walk straight-line curves upward, so none of them
+    // could see otherwise. The floor binds exactly when a dispatch
+    // measures under HALF its prediction, and the ratio then becomes
+    // 2 * PIVOT * (measured / predicted).
+    const cost = {
+      interceptUs: SURFACE_COMPUTE_SHADE_COST_PIVOT * 200,
+      marginalUs: 200,
+    };
+    const n = 3584;
+    const predictedUs = cost.interceptUs + n * cost.marginalUs;
+    const measuredUs = predictedUs * 0.4;
+    const after = nextShadeHitCost(cost, n, measuredUs);
+    expect(after.marginalUs).toBe(
+      cost.marginalUs * SURFACE_COMPUTE_SHADE_MARGINAL_DECAY,
+    );
+    expect(after.interceptUs / after.marginalUs).toBeCloseTo(
+      2 * SURFACE_COMPUTE_SHADE_COST_PIVOT * 0.4,
+      6,
+    );
+  });
+
+  it("makes K x PIVOT an upper bound on the width, never a floor", () => {
+    // Which is the property that actually matters, since the ratio is not
+    // a constant: whatever the clamps do, the sizer may not come out
+    // ASKING FOR MORE than the dial names. It errs narrow — the shipped
+    // kaleido4 settle reports 3583 at its widest against a 2464 mean.
+    const wide =
+      SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST *
+      SURFACE_COMPUTE_SHADE_COST_PIVOT;
+    let cost = initialShadeHitCost();
+    let cap = SURFACE_COMPUTE_SHADE_HIT_CAP_START;
+    // fr-fniy's own kaleido4 curve, driven with the drain pattern its own
+    // record describes: full-width batches interleaved with the
+    // queue-limited slivers the partial-batch HOLD releases on a present
+    // interval, which is the pair that trips the floor.
+    const costOf = (n: number): number => 283_100 + 64.8 * n;
+    for (let i = 0; i < 40; i++) {
+      const asked = shadeHitBatchSize(cost, cap);
+      const sent = i % 4 === 1 ? Math.min(asked, 200) : asked;
+      const budgetMs = shadeHitBudgetUs(cost.interceptUs) / 1000;
+      const measuredUs = costOf(sent);
+      expect(asked).toBeLessThanOrEqual(wide);
+      expect(asked).toBeGreaterThanOrEqual(SURFACE_COMPUTE_WORKGROUP_SIZE);
+      cost = nextShadeHitCost(cost, sent, measuredUs);
+      cap = nextShadeBatchSize(cap, measuredUs / 1000, budgetMs);
+    }
+  });
 });
 
 describe("surfaceComputeProgressDone", () => {

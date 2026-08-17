@@ -157,14 +157,17 @@ export type SurfaceComputeBlock = "flag" | "unavailable" | "failed";
  *
  * @param computeShaped Whether the active system is a class
  *   `surface-compute.ts` would prefer: base-map folds, a fold FINAL lens,
- *   (fr-dlxh) the escape-time single pure-fold map, or (fr-dlxh's 4D
- *   cut) a PLAIN 4D system — the affine4 kernel is measured 1.7x faster
- *   there, with the fragment tracer as its fallback arm. (The param was
- *   `foldShaped` until the 4D cut made that name a lie; the semantics
- *   only ever widened.) Plain 3D affine systems and KALEIDOSCOPE 4D
- *   systems have nothing to explain: WebGL is their natural engine by
- *   design and by measured verdict respectively (the WGSL sector sweep
- *   measured ~35x slower at order 6 — fr-b72d), not a fallback.
+ *   (fr-dlxh) the escape-time single pure-fold map, or (fr-dlxh's 4D cut,
+ *   widened to EVERY 4D system by fr-fniy) a 4D system — the affine4
+ *   kernel is measured 1.7x faster on a plain one and 12x on the order-6
+ *   kaleidoscope, with the fragment tracer as its fallback arm. (The param
+ *   was `foldShaped` until the 4D cut made that name a lie; the semantics
+ *   have only ever widened, twice now.) PLAIN 3D AFFINE systems are the
+ *   one class left with nothing to explain: WebGL is their natural engine
+ *   by design, not a fallback. Kaleidoscope 4D used to be the second, on
+ *   fr-b72d's ~35x reading of the order-6 gap; fr-fniy found that gap was
+ *   the compute arm's shade sizer, fixed it, and the same cell now reads
+ *   12x the other way.
  * @param supported Whether WebGPU is even available (`navigator.gpu` exists
  *   and `requestAdapter()` returned an adapter, upstream of any session).
  * @param block The surface session's own compute-adapter outcome, or `null`

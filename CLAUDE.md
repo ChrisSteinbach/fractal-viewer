@@ -1704,12 +1704,16 @@ Frame` callback, which runs before paint so the disabled look never
     `K` IS `SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST` AND IT IS A WIDTH,
     not a ratio the scene has any say in (fr-fniy): THE MODEL NEVER
     IDENTIFIES ITS TWO TERMS — `nextShadeHitCost` preserves
-    `intercept = PIVOT * marginal` IDENTICALLY, proved at that function
-    from the exact-fit split alone, because two parameters against one
-    measurement per dispatch leave the RATIO to the attribution weight and
-    only the SCALE to the data — so that branch hands the sizer exactly
-    `K * 512` hits on EVERY scene, and fr-2ojg's K = 1 held the whole
-    project at 512. No sizing rule here may be written in terms of
+    `intercept = PIVOT * marginal` wherever its clamps do not bind, proved
+    at that function from the exact-fit split alone, because two parameters
+    against one measurement per dispatch leave the RATIO to the attribution
+    weight and only the SCALE to the data — so that branch hands the sizer
+    UP TO `K * 512` hits on EVERY scene, and fr-2ojg's K = 1 held the whole
+    project at 512. The marginal's decay floor takes the ratio BELOW the
+    pivot whenever a dispatch measures under half its prediction, which a
+    queue-limited sliver reaches routinely, so `K * PIVOT` is an upper
+    bound and the miss errs narrow — a different arbitrary number, still
+    not the scene's. No sizing rule here may be written in terms of
     `intercept` alone.
     K = 7 (3584 hits), chosen by FORCING the width off the model
     (`?surfaceshadehits=N`) since the sizer only ever visits one width — at
