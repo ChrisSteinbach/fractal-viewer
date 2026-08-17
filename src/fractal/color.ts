@@ -127,12 +127,22 @@ function writeRadiusColor(out: Float32Array, o: number, t: number): void {
  * The palette-driven counterpart of {@link writeHeightColor} /
  * {@link writeRadiusColor} (fr-3b6): paints `paletteLUT`'s color at
  * normalized coordinate `t` into `out` at offset `o`, indexing with the same
- * `Math.min(255, (t * 256) | 0)` convention the flame/voxel structural hot
- * loops use for palette LUTs (see `flame.ts`'s `accumulateFlame`). The ONE
- * palette-ramp definition: `buildColors`' height/radius branches and
- * {@link buildColorModeLUT} both call this, exactly as the built-in ramps
- * share `writeHeightColor`/`writeRadiusColor`, so the explorer's points, the
- * solid render's voxels, and the legend can never drift apart.
+ * `(t * 256) | 0` bucketing the flame/voxel structural hot loops use for
+ * palette LUTs (see `flame.ts`'s `accumulateFlame`) — but clamped at BOTH
+ * ends (fr-oxfn), unlike that sibling's top-only `Math.min(255, …)`: this
+ * function's `t` is a caller-normalized coordinate that can legitimately
+ * land outside `[0, 1]` (`buildColors`' height/radius branches normalize
+ * against float64-accumulated bounds while positions round-trip through a
+ * Float32Array — see {@link applyColorGamma}'s doc — and `buildColors4`'s
+ * radius branch never clamps `t` at all), where flame.ts's `c` is built to
+ * already sit in `[0, 1]`. An unclamped low end indexed `paletteLUT` at a
+ * negative offset — `undefined`, which writes `NaN` into every channel
+ * below; voxel.ts:601's ramp branch clamps both ends for the identical
+ * reason. The ONE palette-ramp definition: `buildColors`' height/radius
+ * branches and {@link buildColorModeLUT} both call this, exactly as the
+ * built-in ramps share `writeHeightColor`/`writeRadiusColor`, so the
+ * explorer's points, the solid render's voxels, and the legend can never
+ * drift apart.
  */
 function writePaletteRampColor(
   out: Float32Array,
@@ -140,7 +150,10 @@ function writePaletteRampColor(
   t: number,
   paletteLUT: Float32Array,
 ): void {
-  const p = Math.min(255, (t * 256) | 0) * 3;
+  // Clamp both ends (fr-oxfn): NaN fails both comparisons and falls to
+  // `(t * 256) | 0`, which ToInt32 makes 0 — the same low-end index as
+  // t <= 0, not a propagated NaN.
+  const p = (t <= 0 ? 0 : t >= 1 ? 255 : (t * 256) | 0) * 3;
   out[o] = paletteLUT[p];
   out[o + 1] = paletteLUT[p + 1];
   out[o + 2] = paletteLUT[p + 2];
