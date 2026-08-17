@@ -782,8 +782,16 @@ describe("TimelineStore replaceAll (fr-h9rk)", () => {
 });
 
 describe("legSeed", () => {
-  it("is stable for the same seed and index across calls", () => {
-    expect(legSeed(42, 0)).toBe(legSeed(42, 0));
+  it("maps (seed, index) to one fixed value — the leg a saved timeline replays", () => {
+    // Playback determinism is a claim about WHICH seed leg i gets, so the
+    // number is written down: calling the same pure function twice and
+    // comparing could not fail. Recomputed from the shipped derivation
+    // (mulberry32 of `seed ^ imul(index + 1, 0x9e3779b9)`, scaled to u32),
+    // all integer/bit arithmetic and therefore exact on any engine — a
+    // changed hash constant reshuffles every stored timeline's playback and
+    // has to fail here.
+    expect(legSeed(42, 0)).toBe(2067236868);
+    expect(legSeed(42, 1)).toBe(3257649202);
   });
 
   it("differs across leg indices for the same seed", () => {

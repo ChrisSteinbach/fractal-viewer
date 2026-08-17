@@ -624,12 +624,6 @@ describe("estimateEscapeDistance (fr-kltj)", () => {
     const full = estimateEscapeDistance(de, p, ESCAPE_TIME_ITERATIONS);
     expect(shallow).toBeGreaterThanOrEqual(full);
   });
-
-  it("is deterministic", () => {
-    const de = buildEscapeDE([canonicalMandelbox()]);
-    const p: Vec3 = [0.3, -0.7, 0.4];
-    expect(estimateEscapeDistance(de, p)).toBe(estimateEscapeDistance(de, p));
-  });
 });
 
 describe("the chain (fr-za0n)", () => {
@@ -871,14 +865,22 @@ describe("escapeSetContains and the emptiness probe (fr-za0n)", () => {
 
   it("is deterministic, and honours its sample size", () => {
     const de = buildEscapeDE(CHAIN);
-    expect(probeEscapeFill(de)).toBe(probeEscapeFill(de));
+    // The default seed is a CONSTANT, so the default sample has ONE answer
+    // — written down, because comparing the call to itself would hold just
+    // as well for a Math.random() seed. An exact k/ESCAPE_PROBE_POINTS
+    // fraction, so `toBe` is the right strength.
+    const fill = probeEscapeFill(de);
+    expect(fill).toBe(0.019775390625);
+    // The same number as a count, so the pin reads as what it is: 81 of the
+    // 4096 default samples were members.
+    expect(fill * ESCAPE_PROBE_POINTS).toBe(81);
     // A different seed is a different sample of the same set: it must land
     // on a different count (the seed is read, not decorative) while
     // agreeing in magnitude (it is the same set).
     const other = probeEscapeFill(de, undefined, 0xdead);
     expect(other).toBeGreaterThan(0);
-    expect(other).not.toBe(probeEscapeFill(de));
-    expect(Math.abs(other - probeEscapeFill(de))).toBeLessThan(0.02);
+    expect(other).not.toBe(fill);
+    expect(Math.abs(other - fill)).toBeLessThan(0.02);
     expect(probeEscapeFill(de, 0)).toBe(0);
     // `points` is the denominator AND the loop count, so a fill from N
     // samples is a whole number of them. Powers of two keep that exact.

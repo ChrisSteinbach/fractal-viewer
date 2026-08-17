@@ -17,6 +17,8 @@ import {
   planGpuDispatches,
 } from "./flame-gpu";
 import type { GpuFlameSystemSpec, GpuParamsFields } from "./flame-gpu";
+import { FLAME_GPU_KERNEL_4D_WGSL } from "./flame-gpu-4d";
+import { surfaceDeKernelWgsl } from "./surface-de-gpu";
 import { rotationMatrixXYZ } from "./affine";
 import { MAX_TRANSFORMS, prepareChaosGame } from "./chaos-game";
 import { transformColors } from "./color";
@@ -1240,5 +1242,88 @@ describe("FLAME_GPU_KERNEL_WGSL variation switch", () => {
     // A case missing from the switch falls into WGSL's `default` and
     // renders as `linear` — the exact silent failure this guards against.
     expect(cases).toEqual(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The two flame kernels' triplexPow8 (case 16u), pinned.
+//
+// Every OTHER copy of the White/Nylander 8th power is held against something:
+// bulb-de.ts iterates variations.ts's own function bit-exactly, the two GLSL
+// forward arms are asserted character-for-character against each other
+// (surface-material.test.ts), and surface-de-gpu.ts's `bulbPow8` is frozen as
+// a literal in its own suite. These two hand-written kernel strings were the
+// pair nobody read — a one-sided edit rendered a different object with a
+// WebGPU adapter than without, and no test noticed.
+//
+// They cannot share a definition (one WGSL string per dimension, no
+// preprocessor between them), so the claim is that their arithmetic is the
+// same TEXT and that the coefficients are the ones surface-de-gpu froze.
+// ---------------------------------------------------------------------------
+
+describe("the flame kernels' triplexPow8 (case 16u)", () => {
+  /** The bulb case's arithmetic: from its first statement to its return, so
+   * the prose above it and the dimensional return below it — the two places
+   * the kernels legitimately differ — stay out of the comparison. */
+  function bulbArithmetic(wgsl: string): string {
+    const open = wgsl.indexOf("    case 16u: {");
+    expect(open).toBeGreaterThan(-1);
+    const from = wgsl.indexOf("      let a = ", open);
+    const ret = wgsl.indexOf("\n      return ", open);
+    expect(from).toBeGreaterThan(open);
+    expect(ret).toBeGreaterThan(from);
+    return wgsl.slice(from, ret);
+  }
+
+  it("is the same text in the 3D and 4D kernels, which differ in the RETURN alone", () => {
+    const three = bulbArithmetic(FLAME_GPU_KERNEL_WGSL);
+    expect(three).toBe(bulbArithmetic(FLAME_GPU_KERNEL_4D_WGSL));
+    // The extracted text is the whole power, not a prefix any two shaders
+    // declaring a `let a` would match.
+    expect(three).toContain("let a = p.x * p.x + p.y * p.y;");
+    expect(three).toContain("let rho = sqrt(a);");
+    expect(three).toContain("let v8 = 2.0 * u4 * v4;");
+    // The one difference, stated: the 4D kernel carries w through untouched
+    // (variations4.ts's rule for a map with no fourth component).
+    expect(FLAME_GPU_KERNEL_WGSL).toContain(
+      "      return vec3f(rho * s * u8, rho * s * v8, zOut);",
+    );
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "      return vec4f(rho * s * u8, rho * s * v8, zOut, p.w);",
+    );
+  });
+
+  it("carries surface-de-gpu.ts's frozen bulbPow8 coefficients, which is as close to that copy as a byte pin can get", () => {
+    // A cross-file BYTE pin is impossible by construction: surface-de-gpu
+    // emits a standalone `fn bulbPow8(y: vec3f, r2: f32)` — its callers
+    // already have r2, and its zero guard is a var/if where a switch arm
+    // uses select — while the flame kernels inline the power into a case
+    // over `p` and compute r2 themselves. What DOES compare is the part a
+    // transcription slip corrupts silently rather than failing to compile:
+    // the Chebyshev T8 line (the polar output) and the U7 line (the azimuth
+    // magnitude) hold every coefficient in the 8th power.
+    const chebyshev = (wgsl: string): string[] =>
+      wgsl
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => /^let (vz|zOut|s) = 128\.0 /.test(line))
+        .map((line) =>
+          line.replace("let vz =", "let zOut =").replace(/\by\./g, "p."),
+        );
+    const frozen = chebyshev(
+      surfaceDeKernelWgsl({
+        mode: "eval",
+        width: 4,
+        workgroupSize: 32,
+        sharedFrontier: false,
+        bnbStage2: false,
+        core: "bulb",
+      }),
+    );
+    // Both lines found, in one copy — an empty or half filter would make
+    // the equalities below vacuous.
+    expect(frozen.length).toBe(2);
+    expect(chebyshev(FLAME_GPU_KERNEL_WGSL)).toEqual(frozen);
+    expect(chebyshev(FLAME_GPU_KERNEL_4D_WGSL)).toEqual(frozen);
   });
 });

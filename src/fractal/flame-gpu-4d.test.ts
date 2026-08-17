@@ -1182,4 +1182,26 @@ describe("FLAME_GPU_KERNEL_4D_WGSL variation switch", () => {
     // falls into WGSL's `default` and renders as `linear`.
     expect(cases).toEqual(expected);
   });
+
+  it("carries w through the bulb power untouched — the ONE line where this kernel departs from the 3D one", () => {
+    // The triplex 8th power has no fourth component to give meaning to
+    // (bulb-de.ts's model refusal), so variations4.ts's rule is that w
+    // rides along, and the kernel's only legitimate difference from the 3D
+    // text is the vec4f that carries it. The text identity itself is pinned
+    // once, in flame-gpu.test.ts's "the flame kernels' triplexPow8" block,
+    // which reads both kernels; this is the 4D half's own claim.
+    const body = applyVariationBody(FLAME_GPU_KERNEL_4D_WGSL);
+    expect(body).toContain(
+      "      return vec4f(rho * s * u8, rho * s * v8, zOut, p.w);",
+    );
+    // ...and w is touched NOWHERE else in the case: the polar/azimuth
+    // arithmetic reads x, y and z alone.
+    const open = body.indexOf("    case 16u: {");
+    expect(open).toBeGreaterThan(-1);
+    const arithmetic = body.slice(
+      body.indexOf("      let a = ", open),
+      body.indexOf("\n      return ", open),
+    );
+    expect(arithmetic).not.toContain("p.w");
+  });
 });

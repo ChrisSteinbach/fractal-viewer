@@ -275,6 +275,11 @@ describe("packSurfaceGpuParams field round-trip (doc offsets)", () => {
   });
 
   it("packs hitFloorEps at offset 80 as fround(boundingRadius * SURFACE_GPU_HIT_FLOOR)", () => {
+    // The literal alone is NOT the mirror claim this constant's doc makes
+    // ("Mirror of surface-material.ts's SURFACE_FULL_HIT_FLOOR"): the two
+    // are asserted EQUAL in surface-compute.test.ts, which is app-side and
+    // may therefore import the Three.js-bound GLSL module this
+    // dependency-free core must not.
     expect(SURFACE_GPU_HIT_FLOOR).toBe(1.0e-5);
     const de = buildSurfaceDE(foldSystemTransforms());
     const view = new DataView(packSurfaceGpuParams(de, { itemCount: 1 }));
