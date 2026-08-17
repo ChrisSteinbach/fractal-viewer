@@ -131,7 +131,8 @@ import { clamp } from "./vec";
  * the rendered surface. Measuring exactly how loose — is the gap small
  * enough for a real render, or does it need slice-aware tightening — is the
  * fr-beck experiment this module exists to support; the verdict below
- * answers it.
+ * answers the GO/NO-GO half, and HOW LOOSE, MEASURED (fr-b8o5) below that
+ * answers the tightness half — measured at ~10%, and flat in `w0`.
  *
  * SPIKE VERDICT (fr-beck, measured 2026-07): GO for a slice-mode render.
  * {@link estimateDistance4}'s validity held on every conformal, >=3-map
@@ -175,6 +176,39 @@ import { clamp } from "./vec";
  * on this system. Residual (disclosed on the fr-v6yg bead): 3+
  * simultaneous in-sphere branches still drop (m >= 3 slow-map systems,
  * sigma_max >= 0.96, and kaleidoscope-tied copies in 3D) at ~2-5%R.
+ *
+ * HOW LOOSE, MEASURED (fr-b8o5) — the SLICE CAVEAT's own closing question,
+ * answered. "Is the gap small enough for a real render, or does it need
+ * slice-aware tightening" was left open by the spike and is settled here
+ * against a chaos-game GROUND TRUTH rather than against another bound. The
+ * quantity is the slice PENALTY
+ *
+ *     dist4((p, w0), A) / dist3(p, A ∩ slab)
+ *
+ * — the caveat with the estimator's own conservativeness divided out — and on
+ * BOTH of the app's affine 4D scenes it sits at 0.82-0.94 at the median and
+ * DOES NOT degrade as `w0` moves off centre (`plain4` 0.91 at `w0 = 0`, 0.94
+ * at `0.3R`; `kaleido4` 0.94 and 0.88; p10 0.58-0.83 throughout, and
+ * shrinking the ground-truth slab 4x moves the medians by at most 0.03). The
+ * 4D structure nearest a point in a slice is, at the median, structure that
+ * slice itself cuts. The estimator's OWN conservativeness is three times
+ * larger and just as flat: `DE / dist4` reads 0.66-0.72 on both scenes.
+ *
+ * SO SLICE-AWARE CERTIFICATES ARE A WON'T-DO, not an unbuilt idea. They were
+ * written for this bead and measured: each chain carries the pulled-back
+ * slice normal beside its point (a plane's normal moves by `M^T` where its
+ * points move by `inv(M)`), a branch whose bounding ball cannot reach the
+ * marched slab is DROPPED — it holds no part of the drawn set — and the rest
+ * price against the disc the slab cuts rather than the whole ball,
+ * `sqrt(r^2 - dHi^2) - sqrt(R^2 - dLo^2)`, whose depth-0 instance IS the
+ * tracer's own `sliceVisR`. Sound (pinned against slab members of a
+ * chaos-game cloud, final-transform lens and twisted kaleidoscope included)
+ * and not worth it: ~10% fewer march steps for 1.4-2.2x the work per
+ * evaluation, on top of a caveat worth ~10%. The measurement lives in
+ * `scripts/slice-cost.harness.ts`, the branch algebra on the bead, and the
+ * app-level half — the 20-40x cost cliff that motivated the whole thing, and
+ * which does not reproduce on either engine — in
+ * `scripts/slice-cliff.probe.mjs`.
  *
  * SLAB QUERIES (fr-wa6o). The SLICE CAVEAT above marches a zero-thickness
  * hyperplane: the query is the single 4D point `(p, w0)`, so the rendered
