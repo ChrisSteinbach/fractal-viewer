@@ -90,6 +90,39 @@
  * real per-hit probe work. Printed only when some hit dispatch carried a
  * parsable `len=`.
  *
+ * WORST SINGLE DISPATCH (fr-2ojg): a MEAN cannot answer the watchdog
+ * question. No submission may outrun the i915 watchdog (surface-compute.ts's
+ * own fr-d6g5 history is the reason every march slice and shade batch is
+ * bounded in the first place), and a mean is exactly the statistic in which
+ * one pathological dispatch hides — a thousand 2ms dispatches and one 400ms
+ * one average out to under 2.5ms, and the mean column would never tell you
+ * the 400ms one happened. This block reports the single WORST (highest-ms)
+ * dispatch actually observed, one line per kind — hit shade, free shade,
+ * march — each beside the batch size (and, for march, the step count) it
+ * ran at, plus the hit queue's own 95th-percentile ms (nearest-rank, over
+ * the RAW per-dispatch list, not derived from the bucketed means above, so
+ * it is not diluted by whichever size bucket happens to be crowded). A kind
+ * that never dispatched in this run (a march-only truncation, say) is left
+ * out of the block silently; the whole block is skipped if none of the
+ * three ever fired at all.
+ *
+ * HIT DISPATCHES PER FRAME (fr-2ojg): the hit batch sizer's state — its
+ * intercept/marginal cost model and its capacity cap — lives in
+ * surface-compute.ts's `sizer` local, which a SUPERSAMPLING JOB hands from
+ * pass to pass (same pose, same raster) and nothing else shares, so a
+ * single-sample frame restarts the ramp from its own first hit dispatch and
+ * pays a climb a converged frame does not. This table is one
+ * row per COMPLETED frame (a "frame start" whose matching "frame done" was
+ * seen — see `framesTraced`/`framesCompleted` above for the frames this
+ * excludes), with hitDisp/hits/totalMs summed over that frame's HIT
+ * dispatches alone (free and march excluded) and firstLen/maxLen the
+ * ramp's start and its ceiling by the frame's last hit dispatch, plus a
+ * MEAN row closing it out — firstLen/maxLen average only over frames that
+ * had a hit dispatch at all, rather than counting a hitless frame's "no
+ * ramp" as a ramp of size 0. A settle of more than 12 frames prints the
+ * first 6 and the last 6 with the middle elided: once the sizer has
+ * converged, frame 40's ramp shape is frame 20's asked again.
+ *
  * PER-SWEEP MEANS ARE THE TRUNCATION-SAFE COMPARISON: if a scene does not
  * reach a completed settle before `--capMs`, the two arms' sweep COUNTS and
  * TOTALS will legitimately differ (whichever arm got further did more
@@ -99,10 +132,11 @@
  * additionally called out on its own "SWEEP HEADLINE" line so it is not
  * missed when a run did not settle.
  *
- * SCENE CHOICE: `--scene` picks which embedded document to load — both are
- * fold-shaped (same WebGPU compute path fr-si66 touches,
- * `deHasFolds(de) === true`), so either is a valid arm subject, but they
- * trade completeness for cost:
+ * SCENE CHOICE: `--scene` picks which embedded document to load — all
+ * three take the SAME WebGPU compute path fr-si66 touches (fr-tzdg's
+ * routing: base-map folds OR a fold-FINAL lens, i.e. `deHasFolds(de) ||
+ * foldFinal`), so any one is a valid arm subject, but they trade
+ * completeness, cost and HIT COVERAGE against each other:
  *   mandelboxKifs (default) — the surface fold monster fr-si66's own bead
  *     measures against, 14 maps. Thorough, but heavy: at a 1400x900 window
  *     it was measured reaching only ~9% of one settle in 90s on the
@@ -116,11 +150,26 @@
  *     end instead of two arbitrary truncation points — and the pinned
  *     pose means the two arms trace the IDENTICAL pose too, so sweep
  *     counts and totals compare exactly, not just their per-sweep means.
+ *     Its render is thin dust (that script measures ~1.8k hit pixels), so
+ *     it says little about the HIT batch sizer fr-2ojg cares about — most
+ *     of a settle here is march and free-queue background, not hit shade.
+ *   lens3 — scripts/surface-repro.verify.mjs's `SCENARIOS` lens3 entry:
+ *     fr-g58b's fold-FINAL lens archetype, a Sierpinski-shaped 4-map
+ *     affine base under a boxfold FINAL transform, so it reaches the
+ *     compute path through `foldFinal` rather than `deHasFolds` — a
+ *     genuinely different eligibility arm from the other two scenes, not
+ *     just a different document. MINTED with a pinned camera pose, same
+ *     reasoning as boxfoldPair (see `LENS3_PINNED_HASH` below). The one
+ *     scenario here that FILLS THE FRAME (~61k hit pixels of fine crease
+ *     detail, per that script's own measurement) rather than tracing thin
+ *     dust — i.e. the one with enough HIT dispatches for a batch-size A/B
+ *     (fr-2ojg's "HIT SHADE COST vs BATCH SIZE" / "WORST SINGLE DISPATCH"
+ *     / "HIT DISPATCHES PER FRAME" sections below) to say anything at all.
  *
  * Usage:
  *   node scripts/march-readback-ab.mjs [--display=:0]
  *     [--url=https://localhost:5174] [--capMs=600000] [--label=unlabelled]
- *     [--scene=mandelboxKifs] [--width=1400] [--height=900]
+ *     [--scene=mandelboxKifs] [--hash=#v1=...] [--width=1400] [--height=900]
  *     [--out=/tmp/march-readback-<label>.json]
  *
  *   --display  X display to launch headed Chrome on (real Vulkan driver).
@@ -130,8 +179,21 @@
  *              trace collected so far is still summarized and reported.
  *   --label    Tags this run's output ("before"/"after", "states"/
  *              "status", whatever distinguishes the two `git stash` arms).
- *   --scene    `mandelboxKifs` (default, thorough/heavy) or `boxfoldPair`
- *              (cheap, settles fast) — see "SCENE CHOICE" above.
+ *   --scene    `mandelboxKifs` (default, thorough/heavy), `boxfoldPair`
+ *              (cheap, settles fast) or `lens3` (fills the frame; see
+ *              "SCENE CHOICE" above). Ignored when `--hash` is given.
+ *   --hash     Escape hatch: an arbitrary scene, used VERBATIM as the URL
+ *              fragment instead of any `SCENES` entry — for a document
+ *              this registry does not carry (yet, or ever — a one-off
+ *              repro someone hands you need not earn a permanent scene
+ *              constant). Accepts either `#v1=xxxx` or bare `v1=xxxx` (a
+ *              leading `#` is prepended when absent, so both spellings
+ *              from a pasted URL/hash work unmodified). Overrides
+ *              `--scene` entirely — no registry lookup, no validation
+ *              beyond what the app's own decoder does at load — and the
+ *              run reports its scene as `custom` in both the printed
+ *              summary and the JSON, since there is no registry name to
+ *              report.
  *   --width/--height  Browser window (viewport) size. The surface pane's
  *              actual raster comes out of the trace's own `frame start
  *              rays=`, not from these — they only set what the page sees.
@@ -164,6 +226,20 @@ const BASE = String(args.url ?? "https://localhost:5174").replace(/\/+$/, "");
 const CAP_MS = numArg("capMs", 600000);
 const LABEL = typeof args.label === "string" ? args.label : "unlabelled";
 const SCENE = typeof args.scene === "string" ? args.scene : "mandelboxKifs";
+// --hash's escape hatch (see the module doc's "SCENE CHOICE"/Usage): a bare
+// `v1=...` paste is as valid as a full `#v1=...` URL fragment, so this is
+// the one place that distinction gets normalised away — everywhere else
+// treats HASH_OVERRIDE as either a ready-to-use fragment or null.
+const HASH_ARG = typeof args.hash === "string" ? args.hash : null;
+const HASH_OVERRIDE =
+  HASH_ARG === null
+    ? null
+    : HASH_ARG.startsWith("#")
+      ? HASH_ARG
+      : `#${HASH_ARG}`;
+// The identifier this run REPORTS as its scene (log line, summary, JSON) —
+// "custom" under --hash, since there is no SCENES registry key to name.
+const SCENE_ID = HASH_OVERRIDE !== null ? "custom" : SCENE;
 const WIDTH = numArg("width", 1400);
 const HEIGHT = numArg("height", 900);
 const OUT =
@@ -248,16 +324,42 @@ const mandelboxKifs = (() => {
 const BOXFOLD_PINNED_HASH =
   "#v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNCwwLjEsMF0sInJvdGF0aW9uIjpbMC4zLDAuMiwwXSwic2NhbGUiOlswLjQ1LDAuNDUsMC40NV0sInZhcmlhdGlvbnMiOlt7InR5cGUiOiJib3hmb2xkIiwid2VpZ2h0IjoxfV19LHsicG9zaXRpb24iOlstMC4zNSwtMC4yLDAuM10sInJvdGF0aW9uIjpbMCwwLjUsMC4xXSwic2NhbGUiOlswLjUsMC41LDAuNV0sInZhcmlhdGlvbnMiOlt7InR5cGUiOiJib3hmb2xkIiwid2VpZ2h0IjowLjl9XX1dLCJudW1Qb2ludHMiOjEwMDAwMCwicG9pbnRTaXplIjoxLCJjb2xvck1vZGUiOiJ0cmFuc2Zvcm0iLCJjb2xvckdhbW1hIjoxLCJyYW1wUGFsZXR0ZUlkIjoibGVnYWN5IiwiZm91ckRDb2xvciI6IndCbHVlT3JhbmdlIiwiZm91ckREZXB0aEZhZGUiOmZhbHNlLCJyZW5kZXJTdHlsZSI6ImRlcHRoRmFkZSIsInNob3dHdWlkZXMiOnRydWUsImZsYW1lIjp7ImV4cG9zdXJlIjoxLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwiZ2FtbWEiOjIuNCwidmlicmFuY3kiOjEsInN1cGVyc2FtcGxlIjoyLCJlc3RpbWF0b3JSYWRpdXMiOjYsImVzdGltYXRvck1pbmltdW1SYWRpdXMiOjAsImVzdGltYXRvckN1cnZlIjowLjQsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInNvbGlkIjp7InJlc29sdXRpb24iOjE5MiwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsInRocmVzaG9sZCI6MC4zLCJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzdXJmYWNlIjp7ImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImNvbG9yU291cmNlIjoidHJhbnNmb3JtIiwicGFsZXR0ZUlkIjoic3BlY3RydW0iLCJjb2xvclNwZWVkIjowLjV9LCJzeW1tZXRyeSI6eyJvcmRlciI6MSwicGxhbmUiOiJ4eiJ9LCJnbG93QnJpZ2h0bmVzcyI6MSwiY2FtZXJhIjp7InRhcmdldCI6WzAuMTcyNiwtMC4wNjYsMC4yNDUyXSwicmFkaXVzIjoxLjQ2MDEsInRoZXRhIjowLjc4NTQsInBoaSI6MS4wNTZ9fQ";
 
+/** scripts/surface-repro.verify.mjs's `SCENARIOS` table, the `lens3`
+ * entry's minted hash — copied verbatim, POSE-PINNED for the same reason
+ * BOXFOLD_PINNED_HASH above is (see its comment): a pose-less boot
+ * auto-frames from a `Math.random()`-seeded cloud, so two `git stash` arms
+ * would trace two different sets of rays rather than the identical work.
+ * fr-g58b's fold-FINAL lens archetype — a Sierpinski-shaped 4-map affine
+ * base under a boxfold FINAL transform, eligible through `foldFinal`
+ * rather than `deHasFolds` (see the module doc's "SCENE CHOICE") — and,
+ * per that script's own module doc, the one scenario there that FILLS THE
+ * FRAME (~61k hit pixels of fine crease detail) where boxfoldPair above is
+ * thin dust (~1.8k). That is what makes it worth adding here: a hit-shade
+ * batch-size A/B (fr-2ojg) needs hits to batch, and boxfoldPair barely has
+ * any.
+ *
+ * Already a full `#v1=` hash rather than a JS scene object, so it is used
+ * directly instead of round-tripped through enc(). Sets `showGuides: true`
+ * — harmless, left as authored, same as BOXFOLD_PINNED_HASH. */
+const LENS3_PINNED_HASH =
+  "#v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuMzUsMC4zNSwwLjM1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdfSx7InBvc2l0aW9uIjpbLTAuMzUsLTAuMzUsMC4zNV0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XX0seyJwb3NpdGlvbiI6WzAuMzUsLTAuMzUsLTAuMzVdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV19LHsicG9zaXRpb24iOlstMC4zNSwwLjM1LC0wLjM1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdfV0sIm51bVBvaW50cyI6MTAwMDAwLCJwb2ludFNpemUiOjEsImNvbG9yTW9kZSI6InRyYW5zZm9ybSIsImNvbG9yR2FtbWEiOjEsInJhbXBQYWxldHRlSWQiOiJsZWdhY3kiLCJmb3VyRENvbG9yIjoid0JsdWVPcmFuZ2UiLCJmb3VyRERlcHRoRmFkZSI6ZmFsc2UsInJlbmRlclN0eWxlIjoiZGVwdGhGYWRlIiwic2hvd0d1aWRlcyI6dHJ1ZSwiZmxhbWUiOnsiZXhwb3N1cmUiOjEsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJnYW1tYSI6Mi40LCJ2aWJyYW5jeSI6MSwic3VwZXJzYW1wbGUiOjIsImVzdGltYXRvclJhZGl1cyI6NiwiZXN0aW1hdG9yTWluaW11bVJhZGl1cyI6MCwiZXN0aW1hdG9yQ3VydmUiOjAuNCwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic29saWQiOnsicmVzb2x1dGlvbiI6MTkyLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwidGhyZXNob2xkIjowLjMsImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInN1cmZhY2UiOnsibGlnaHRBemltdXRoIjoxMzUsImxpZ2h0RWxldmF0aW9uIjo1MCwiYW1iaWVudCI6MC4yNSwiY29sb3JTb3VyY2UiOiJ0cmFuc2Zvcm0iLCJwYWxldHRlSWQiOiJzcGVjdHJ1bSIsImNvbG9yU3BlZWQiOjAuNX0sInN5bW1ldHJ5Ijp7Im9yZGVyIjoxLCJwbGFuZSI6Inh6In0sImdsb3dCcmlnaHRuZXNzIjoxLCJmaW5hbFRyYW5zZm9ybSI6eyJwb3NpdGlvbiI6WzAuMTUsLTAuMSwwLjA1XSwicm90YXRpb24iOlswLjIsMC4zLDAuMV0sInNjYWxlIjpbMC45LDAuOSwwLjldLCJ2YXJpYXRpb25zIjpbeyJ0eXBlIjoiYm94Zm9sZCIsIndlaWdodCI6MC41NX1dfSwiY2FtZXJhIjp7InRhcmdldCI6WzAuMDU2OSwtMC4wOTI1LC0wLjAzNDhdLCJyYWRpdXMiOjEuNDM5OCwidGhldGEiOjAuNzg1NCwicGhpIjoxLjA1Nn19";
+
 /** `--scene=<name>` registry: `mandelboxKifs` needs enc()'d, `boxfoldPair`
- * is already a `#v1=` hash — both resolve to a callable so the lookup site
- * (driveSession) doesn't care which. */
+ * and `lens3` are already `#v1=` hashes — all resolve to a callable so the
+ * lookup site (driveSession) doesn't care which, and so `--hash`'s own
+ * override (below) can sit beside them as one more callable-shaped case
+ * rather than a special path through driveSession. */
 const SCENES = {
   mandelboxKifs: () => enc(mandelboxKifs),
   boxfoldPair: () => BOXFOLD_PINNED_HASH,
+  lens3: () => LENS3_PINNED_HASH,
 };
-if (!(SCENE in SCENES)) {
+// --hash bypasses this registry entirely (see the module doc's Usage), so
+// an unknown --scene is only a real error when nothing else is going to
+// supply the hash.
+if (HASH_OVERRIDE === null && !(SCENE in SCENES)) {
   throw new Error(
-    `--scene: unknown scene "${SCENE}" (must be one of: ${Object.keys(SCENES).join(", ")})`,
+    `--scene: unknown scene "${SCENE}" (must be one of: ${Object.keys(SCENES).join(", ")}; or pass --hash=<#v1=...> to supply one directly)`,
   );
 }
 
@@ -281,6 +383,13 @@ const READBACK_RE = /^(\w+) readback (BEGIN|END)\b(.*)$/;
  * `<kind> END ms=<n>` with a one-decimal float (or the literal `null`
  * when the frame was superseded mid-dispatch, which is not a timing). */
 const DISPATCH_END_RE = /^(march|shade) END ms=([0-9.]+)$/;
+/** `march BEGIN`'s own line — carries the ray count and per-ray step
+ * budget THIS dispatch marched (see the module doc's "WORST SINGLE
+ * DISPATCH"), read off it by the shared {@link LEN_RE}/{@link STEPS_RE}
+ * below. Matched separately from {@link SHADE_BEGIN_RE} because a march
+ * dispatch carries no `isFree` flag to key off — there is only one kind
+ * of march. */
+const MARCH_BEGIN_RE = /^march BEGIN\b/;
 /** Which QUEUE a shade dispatch drained (fr-257o). The two are different
  * animals — a FREE batch does one background write per ray and takes its
  * WHOLE queue in one dispatch (there is no cost to model, so no cap but
@@ -295,8 +404,14 @@ const SHADE_BEGIN_RE = /^shade BEGIN isFree=(true|false)\b/;
  * NAME rather than by position, so a field added or reordered in the
  * trace does not silently start reporting some other number. A line
  * without a `len=` still counts in the free/hit totals above — it only
- * drops out of the size table, which is the conservative direction. */
-const SHADE_LEN_RE = /\blen=(\d+)\b/;
+ * drops out of the size table, which is the conservative direction. Both
+ * `shade BEGIN` and `march BEGIN` carry a `len=` field (rays queued to
+ * shade vs rays marched this dispatch), so this one regex reads either. */
+const LEN_RE = /\blen=(\d+)\b/;
+/** `march BEGIN`'s `steps=` field — the per-ray step budget
+ * (`stepsThisPass`) this dispatch marched with, read by name for the same
+ * reason {@link LEN_RE} is (fr-2ojg's "WORST SINGLE DISPATCH"). */
+const STEPS_RE = /\bsteps=(\d+)\b/;
 /** Batch-size buckets for the hit table, half-open on powers of two: the
  * question is whether cost per HIT falls as the batch widens, and a
  * doubling ladder is the resolution that question has (a hit batch is
@@ -343,13 +458,31 @@ function summarize(rawLines) {
   let lastFrameTruncated = null;
   let unparsedLines = 0;
   /** GPU-submission time by half of the frame loop, so the readback
-   * totals can be read as a SHARE of the settle rather than in a vacuum. */
+   * totals can be read as a SHARE of the settle rather than in a vacuum.
+   * `worstMs`/`worstLen` (plus march's own `worstSteps`) are fr-2ojg's
+   * "WORST SINGLE DISPATCH" — the single highest-ms dispatch seen for
+   * that kind, beside the size it ran at, which a mean cannot report. */
   const dispatch = {
-    march: { count: 0, totalMs: 0 },
+    march: {
+      count: 0,
+      totalMs: 0,
+      worstMs: null,
+      worstLen: null,
+      worstSteps: null,
+    },
     shade: { count: 0, totalMs: 0 },
     // fr-257o: the same shade time split by which queue it drained.
-    shadeFree: { count: 0, totalMs: 0 },
-    shadeHit: { count: 0, totalMs: 0 },
+    shadeFree: { count: 0, totalMs: 0, worstMs: null, worstLen: null },
+    /** `msList` is the RAW per-dispatch hit time list (fr-2ojg) — the p95
+     * line needs the actual sorted sample, not anything derivable from
+     * the bucketed means `shadeHitBySize` below already collapses. */
+    shadeHit: {
+      count: 0,
+      totalMs: 0,
+      worstMs: null,
+      worstLen: null,
+      msList: [],
+    },
     /** fr-257o: hit dispatches bucketed by BATCH SIZE — `{count, hits,
      * totalMs}` per bucket label, where `hits` is the SUM of the batch
      * lengths (never count x meanLen), since µs/hit is the column the
@@ -360,6 +493,18 @@ function summarize(rawLines) {
   };
   let pendingShadeIsFree = null;
   let pendingShadeLen = null;
+  let pendingMarchLen = null;
+  let pendingMarchSteps = null;
+  /** fr-2ojg: one record per "frame start" seen, its ramp stats
+   * accumulated as that frame's OWN hit dispatches parse, `completed`
+   * flipped true by the matching "frame done" — see the module doc's
+   * "HIT DISPATCHES PER FRAME". A frame whose "frame done" the trace
+   * never reached (settle declared or cap hit mid-frame) stays
+   * `completed: false` and is dropped from the reported `frames` list
+   * below, the same truncation `framesTraced > framesCompleted` already
+   * discloses at the summary level. */
+  const frameRecords = [];
+  let currentFrame = null;
 
   const kindStat = (label) => {
     let s = kinds.get(label);
@@ -383,19 +528,39 @@ function summarize(rawLines) {
     if (frameStart) {
       framesTraced++;
       lastFrameRays = Number(frameStart[1]);
+      currentFrame = {
+        index: frameRecords.length,
+        hitDispatches: 0,
+        hits: 0,
+        totalMs: 0,
+        firstLen: null,
+        maxLen: null,
+        completed: false,
+      };
+      frameRecords.push(currentFrame);
       continue;
     }
     const frameDone = FRAME_DONE_RE.exec(body);
     if (frameDone) {
       framesCompleted++;
       lastFrameTruncated = frameDone[2] === "true";
+      if (currentFrame) currentFrame.completed = true;
+      continue;
+    }
+
+    const marchBegin = MARCH_BEGIN_RE.exec(body);
+    if (marchBegin) {
+      const lenMatch = LEN_RE.exec(body);
+      pendingMarchLen = lenMatch ? Number(lenMatch[1]) : null;
+      const stepsMatch = STEPS_RE.exec(body);
+      pendingMarchSteps = stepsMatch ? Number(stepsMatch[1]) : null;
       continue;
     }
 
     const shadeBegin = SHADE_BEGIN_RE.exec(body);
     if (shadeBegin) {
       pendingShadeIsFree = shadeBegin[1] === "true";
-      const lenMatch = SHADE_LEN_RE.exec(body);
+      const lenMatch = LEN_RE.exec(body);
       pendingShadeLen = lenMatch ? Number(lenMatch[1]) : null;
       continue;
     }
@@ -406,19 +571,60 @@ function summarize(rawLines) {
       const ms = Number(dispatchEnd[2]);
       half.count++;
       half.totalMs += ms;
+      if (dispatchEnd[1] === "march") {
+        // fr-2ojg: worst SINGLE march dispatch — `len`/`steps` come off
+        // the matching "march BEGIN" line captured just above.
+        if (dispatch.march.worstMs === null || ms > dispatch.march.worstMs) {
+          dispatch.march.worstMs = ms;
+          dispatch.march.worstLen = pendingMarchLen;
+          dispatch.march.worstSteps = pendingMarchSteps;
+        }
+        pendingMarchLen = null;
+        pendingMarchSteps = null;
+      }
       if (dispatchEnd[1] === "shade" && pendingShadeIsFree !== null) {
         const queue = pendingShadeIsFree
           ? dispatch.shadeFree
           : dispatch.shadeHit;
         queue.count++;
         queue.totalMs += ms;
-        if (!pendingShadeIsFree && pendingShadeLen !== null) {
-          const bucket = hitSizeBucket(pendingShadeLen);
-          if (bucket) {
-            const b = dispatch.shadeHitBySize[bucket.label];
-            b.count++;
-            b.hits += pendingShadeLen;
-            b.totalMs += ms;
+        if (queue.worstMs === null || ms > queue.worstMs) {
+          queue.worstMs = ms;
+          queue.worstLen = pendingShadeLen;
+        }
+        if (!pendingShadeIsFree) {
+          // p95 needs the raw list, not the bucketed means (fr-2ojg) —
+          // see the module doc's "WORST SINGLE DISPATCH".
+          queue.msList.push(ms);
+          // This frame's ramp (fr-2ojg) — a single-sample frame gets a
+          // fresh sizer, but a supersampled job shares one across its
+          // passes, so how far it climbed by the frame's LAST hit
+          // dispatch is a per-frame question only within that job. See
+          // the module doc's "HIT DISPATCHES PER FRAME".
+          if (currentFrame) {
+            currentFrame.hitDispatches++;
+            currentFrame.totalMs += ms;
+            if (pendingShadeLen !== null) {
+              currentFrame.hits += pendingShadeLen;
+              if (currentFrame.firstLen === null) {
+                currentFrame.firstLen = pendingShadeLen;
+              }
+              if (
+                currentFrame.maxLen === null ||
+                pendingShadeLen > currentFrame.maxLen
+              ) {
+                currentFrame.maxLen = pendingShadeLen;
+              }
+            }
+          }
+          if (pendingShadeLen !== null) {
+            const bucket = hitSizeBucket(pendingShadeLen);
+            if (bucket) {
+              const b = dispatch.shadeHitBySize[bucket.label];
+              b.count++;
+              b.hits += pendingShadeLen;
+              b.totalMs += ms;
+            }
           }
         }
         pendingShadeIsFree = null;
@@ -482,9 +688,25 @@ function summarize(rawLines) {
     s.totalBytes += bytesForReadback(label, begin.extra);
   }
 
+  // fr-2ojg: only COMPLETED frames earn a row (see `frameRecords`'s own
+  // comment above) — `completed` itself is bookkeeping for THIS function,
+  // not part of the reported shape, so it is dropped here rather than
+  // carried into every consumer.
+  const frames = frameRecords
+    .filter((f) => f.completed)
+    .map((f) => ({
+      index: f.index,
+      hitDispatches: f.hitDispatches,
+      hits: f.hits,
+      totalMs: f.totalMs,
+      firstLen: f.firstLen,
+      maxLen: f.maxLen,
+    }));
+
   return {
     kinds,
     dispatch,
+    frames,
     unmatchedBegins,
     framesTraced,
     framesCompleted,
@@ -501,7 +723,7 @@ function summarize(rawLines) {
 
 async function driveSession() {
   log(
-    `starting: url=${BASE} display=${DISPLAY} capMs=${CAP_MS} label=${LABEL} scene=${SCENE} width=${WIDTH} height=${HEIGHT}`,
+    `starting: url=${BASE} display=${DISPLAY} capMs=${CAP_MS} label=${LABEL} scene=${SCENE_ID} width=${WIDTH} height=${HEIGHT}`,
   );
 
   const browser = await chromium.launch({
@@ -560,7 +782,10 @@ async function driveSession() {
       consoleIssues.push({ type: "pageerror", text: String(e) });
     });
 
-    const hash = SCENES[SCENE]();
+    // --hash wins outright when given (see the module doc's Usage) — no
+    // registry lookup, so an override never has to also be a valid SCENES
+    // key.
+    const hash = HASH_OVERRIDE ?? SCENES[SCENE]();
     const url = `${BASE}/?surfacetrace&surfacestate${hash}`;
     log(`navigating: ${url.slice(0, 100)}...`);
     await page.goto(url, { waitUntil: "load", timeout: 60000 });
@@ -655,6 +880,28 @@ function fmtMiB(bytes) {
 function round2(x) {
   return x === null || x === undefined ? null : Math.round(x * 100) / 100;
 }
+/** fr-2ojg's "WORST SINGLE DISPATCH" p95 — NEAREST-RANK over the raw
+ * per-dispatch list (never the bucketed means in `shadeHitBySize`, which
+ * would answer a coarser, bucket-diluted question): sort ascending and
+ * take `sorted[ceil(0.95*N) - 1]`. `null` on an empty list rather than
+ * NaN, so a kind with no dispatches reports as absent, not as a number
+ * that happens to be garbage. */
+function percentile95(values) {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const rank = Math.ceil(0.95 * sorted.length) - 1;
+  return sorted[rank];
+}
+/** Mean over the non-null/non-undefined entries of `values`, `null` if none
+ * qualify. The "HIT DISPATCHES PER FRAME" MEAN row uses this for
+ * firstLen/maxLen so a hitless frame (both fields null, never 0) is left
+ * OUT of that column's average rather than dragging it toward 0 — which
+ * would misreport "the ramp starts small" where the truth is "this frame
+ * had no ramp at all". */
+function meanOf(values) {
+  const nums = values.filter((v) => v !== null && v !== undefined);
+  return nums.length > 0 ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
+}
 
 function printReport(summary, runResult) {
   const {
@@ -672,7 +919,7 @@ function printReport(summary, runResult) {
   const engine = runResult.finalProbe?.engine ?? null;
 
   console.log(`\n=== march-readback-ab summary (label=${LABEL}) ===`);
-  console.log(`scene               : ${SCENE}`);
+  console.log(`scene               : ${SCENE_ID}`);
   console.log(`engine              : ${engine ?? "n/a"}`);
   console.log(`raster (last frame) : ${lastFrameRays ?? "n/a"} rays`);
   console.log(
@@ -822,6 +1069,106 @@ function printReport(summary, runResult) {
     );
   }
 
+  // fr-2ojg: the watchdog question a MEAN cannot answer — see the module
+  // doc's "WORST SINGLE DISPATCH". One line per kind, printed only for a
+  // kind that actually dispatched at least once (a --capMs cut may end a
+  // run before it ever reaches march, or keep it hit-bound the whole run
+  // with no free batch at all); the whole block is skipped if none of the
+  // three ever fired.
+  const worstMarch = summary.dispatch.march;
+  const worstFree = summary.dispatch.shadeFree;
+  const worstHit = summary.dispatch.shadeHit;
+  if (
+    worstMarch.worstMs !== null ||
+    worstFree.worstMs !== null ||
+    worstHit.worstMs !== null
+  ) {
+    console.log();
+    console.log(
+      "WORST SINGLE DISPATCH (the watchdog question — a mean cannot answer it):",
+    );
+    const worstLine = (label, text) =>
+      console.log(`  ${label.padEnd(13)}: ${text}`);
+    if (worstHit.worstMs !== null) {
+      const usPerHit = worstHit.worstLen
+        ? (worstHit.worstMs * 1000) / worstHit.worstLen
+        : null;
+      worstLine(
+        "hit shade",
+        `${fmtMs(worstHit.worstMs)} ms at len=${worstHit.worstLen ?? "n/a"}  (${fmtMs(usPerHit)} us/hit)`,
+      );
+      worstLine(
+        "hit shade p95",
+        `${fmtMs(percentile95(worstHit.msList))} ms  (over ${worstHit.msList.length} dispatch(es))`,
+      );
+    }
+    if (worstFree.worstMs !== null) {
+      worstLine(
+        "free shade",
+        `${fmtMs(worstFree.worstMs)} ms at len=${worstFree.worstLen ?? "n/a"}`,
+      );
+    }
+    if (worstMarch.worstMs !== null) {
+      worstLine(
+        "march",
+        `${fmtMs(worstMarch.worstMs)} ms at len=${worstMarch.worstLen ?? "n/a"} steps=${worstMarch.worstSteps ?? "n/a"}`,
+      );
+    }
+  }
+
+  // fr-2ojg: how much of a frame is spent re-climbing the hit batch
+  // sizer's own ramp — see the module doc's "HIT DISPATCHES PER FRAME".
+  // One row per COMPLETED frame (summarize()'s own filter — see `frames`'
+  // construction there); skipped entirely if the trace never completed one
+  // (a --capMs cut mid-first-frame, say).
+  const frames = summary.frames;
+  if (frames.length > 0) {
+    console.log();
+    console.log(
+      "HIT DISPATCHES PER FRAME (batch-size ramp; a supersampled job shares one sizer across its passes):",
+    );
+    const FRAME_COL_WIDTHS = [5, 9, 8, 9, 10, 8];
+    const frameRow = (values) =>
+      "  " +
+      values.map((v, i) => String(v).padStart(FRAME_COL_WIDTHS[i])).join(" ");
+    console.log(
+      frameRow(["frame", "hitDisp", "hits", "totalMs", "firstLen", "maxLen"]),
+    );
+    const printFrame = (f) =>
+      console.log(
+        frameRow([
+          f.index,
+          f.hitDispatches,
+          f.hits,
+          fmtMs(f.totalMs),
+          f.firstLen ?? "n/a",
+          f.maxLen ?? "n/a",
+        ]),
+      );
+    // A long settle's ramp shape repeats once the sizer has converged, so
+    // past 12 frames the first/last 6 carry the signal (does it converge,
+    // does it STAY converged) and the middle is elided rather than
+    // printed in full.
+    if (frames.length > 12) {
+      frames.slice(0, 6).forEach(printFrame);
+      console.log("  ...");
+      frames.slice(-6).forEach(printFrame);
+    } else {
+      frames.forEach(printFrame);
+    }
+    const fmt1 = (x) => (x === null ? "n/a" : x.toFixed(1));
+    console.log(
+      frameRow([
+        "MEAN",
+        fmt1(meanOf(frames.map((f) => f.hitDispatches))),
+        fmt1(meanOf(frames.map((f) => f.hits))),
+        fmtMs(meanOf(frames.map((f) => f.totalMs))),
+        fmt1(meanOf(frames.map((f) => f.firstLen))),
+        fmt1(meanOf(frames.map((f) => f.maxLen))),
+      ]),
+    );
+  }
+
   console.log();
   if (unmatchedBegins.length === 0) {
     console.log("warnings: 0 unmatched BEGIN (no matching END)");
@@ -878,7 +1225,7 @@ function buildJsonSummary(summary, runResult) {
   }
   return {
     label: LABEL,
-    scene: SCENE,
+    scene: SCENE_ID,
     url: BASE,
     display: DISPLAY,
     capMs: CAP_MS,
@@ -925,6 +1272,31 @@ function buildJsonSummary(summary, runResult) {
     unmatchedBeginCount: summary.unmatchedBegins.length,
     unparsedLines: summary.unparsedLines,
     consoleIssueCount: runResult.consoleIssues.length,
+    // fr-2ojg: the watchdog question a MEAN cannot answer (see the module
+    // doc's "WORST SINGLE DISPATCH") — a `null` field means that kind
+    // never dispatched in this run, not that it dispatched for 0ms.
+    worst: {
+      hitMs: round2(summary.dispatch.shadeHit.worstMs),
+      hitLen: summary.dispatch.shadeHit.worstLen,
+      hitUsPerHit:
+        summary.dispatch.shadeHit.worstMs !== null &&
+        summary.dispatch.shadeHit.worstLen
+          ? round2(
+              (summary.dispatch.shadeHit.worstMs * 1000) /
+                summary.dispatch.shadeHit.worstLen,
+            )
+          : null,
+      hitP95Ms: round2(percentile95(summary.dispatch.shadeHit.msList)),
+      freeMs: round2(summary.dispatch.shadeFree.worstMs),
+      freeLen: summary.dispatch.shadeFree.worstLen,
+      marchMs: round2(summary.dispatch.march.worstMs),
+      marchLen: summary.dispatch.march.worstLen,
+      marchSteps: summary.dispatch.march.worstSteps,
+    },
+    // fr-2ojg: one entry per COMPLETED frame — see the module doc's "HIT
+    // DISPATCHES PER FRAME" and summarize()'s own `frames` construction
+    // (already this exact shape; only totalMs wants rounding here).
+    frames: summary.frames.map((f) => ({ ...f, totalMs: round2(f.totalMs) })),
   };
 }
 
