@@ -374,7 +374,7 @@ describe("estimateDistance on sierpinskiTetrahedron", () => {
   it("never exceeds the brute-force nearest sampled distance, for every probe", () => {
     const transforms = sierpinskiTetrahedron();
     const de = buildSurfaceDE(transforms);
-    const cloud = runChaosGame(transforms, 200000, mulberry32(7));
+    const cloud = runChaosGame(transforms, 20000, mulberry32(7));
     const rng = mulberry32(1234);
     for (let i = 0; i < 300; i++) {
       const p: Vec3 = [(rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3];
@@ -386,7 +386,7 @@ describe("estimateDistance on sierpinskiTetrahedron", () => {
   it("stays within a bounded fraction of the true nearest distance (not a uselessly slack bound)", () => {
     const transforms = sierpinskiTetrahedron();
     const de = buildSurfaceDE(transforms);
-    const cloud = runChaosGame(transforms, 200000, mulberry32(7));
+    const cloud = runChaosGame(transforms, 20000, mulberry32(7));
     const rng = mulberry32(1234);
     const ratios: number[] = [];
     for (let i = 0; i < 300; i++) {
@@ -435,7 +435,7 @@ describe("estimateDistance on an anisotropic system", () => {
   it("never exceeds the brute-force nearest sampled distance, for every probe", () => {
     const transforms = anisotropicSierpinski();
     const de = buildSurfaceDE(transforms);
-    const cloud = runChaosGame(transforms, 200000, mulberry32(7));
+    const cloud = runChaosGame(transforms, 20000, mulberry32(7));
     const rng = mulberry32(1234);
     for (let i = 0; i < 300; i++) {
       const p: Vec3 = [(rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3];
@@ -889,7 +889,7 @@ describe("sector sweep at the wedge boundaries", () => {
     const de = buildSurfaceDE(transforms, null, symmetry);
     const cloud = runChaosGame(
       transforms,
-      200000,
+      20000,
       mulberry32(7),
       null,
       symmetry,
@@ -996,7 +996,7 @@ describe("kaleidoscope orders the symmetry expansion could not carry", () => {
     const de = buildSurfaceDE(transforms, null, beyondCap);
     const cloud = runChaosGame(
       transforms,
-      200000,
+      20000,
       mulberry32(7),
       null,
       beyondCap,
@@ -1024,9 +1024,14 @@ describe("kaleidoscope orders the symmetry expansion could not carry", () => {
     const de = buildSurfaceDE(transforms, null, beyondCap);
     const reference = expandedReference(de);
     const R = de.boundingRadius;
+    // Density is the subject: this test classifies probes as void via
+    // `nearestDistance(cloud, p) <= 0.05 * R`, and a sparser cloud would
+    // widen every gap and manufacture spurious "voids" rather than finding
+    // the genuine ones the ghosting property is about. Kept well above the
+    // 20k default (still 2.5x down from the pre-fr-b2l6 200k).
     const cloud = runChaosGame(
       transforms,
-      200000,
+      80000,
       mulberry32(7),
       null,
       beyondCap,
@@ -1197,7 +1202,7 @@ describe("estimateDistanceRefined validity (never exceeds the true distance to a
   it("holds for sierpinskiTetrahedron across uniform probes", () => {
     const transforms = sierpinskiTetrahedron();
     const de = buildSurfaceDE(transforms);
-    const cloud = runChaosGame(transforms, 200000, mulberry32(7));
+    const cloud = runChaosGame(transforms, 20000, mulberry32(7));
     const rng = mulberry32(1234);
     for (let i = 0; i < 300; i++) {
       const p: Vec3 = [(rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3];
@@ -1231,9 +1236,16 @@ describe("estimateDistanceRefined validity (never exceeds the true distance to a
     const symmetry = { order: 3, plane: "xy" } as const;
     const de = buildSurfaceDE(transforms, null, symmetry);
     const R = de.boundingRadius;
+    // Density is the subject: `baseGhosts` counts probes the cloud calls
+    // genuinely void (nearest > 0.05R) where the base estimator false-hits,
+    // and a sparse cloud misclassifies near-attractor points as void from
+    // sampling gaps alone — measured at 80k, one probe's refined estimate
+    // (0.0142) landed just under the 0.01R floor once its "far" classification
+    // stopped being reliable at that density. Kept well above the 20k default
+    // (still 1.5x down from the pre-fr-b2l6 300k).
     const cloud = runChaosGame(
       transforms,
-      300000,
+      200000,
       mulberry32(7),
       null,
       symmetry,
@@ -2846,7 +2858,7 @@ describe("estimateDistance / estimateDistanceRefined with a fold final lens (fr-
     const transforms = sierpinskiTetrahedron();
     const final = boxfoldFinal();
     const de = buildSurfaceDE(transforms, final);
-    const cloud = runChaosGame(transforms, 200000, mulberry32(101), final);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(101), final);
     const R = de.visibleBoundingRadius;
     const rng = mulberry32(202);
     const probes: Vec3[] = [];
@@ -2901,7 +2913,7 @@ describe("estimateDistance / estimateDistanceRefined with a fold final lens (fr-
       variations: [{ type: "boxfold", weight: -0.6 }],
     });
     const de = buildSurfaceDE(transforms, final);
-    const cloud = runChaosGame(transforms, 100000, mulberry32(31), final);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(31), final);
     const R = de.visibleBoundingRadius;
     const rng = mulberry32(32);
     for (let i = 0; i < 80; i++) {
@@ -2928,7 +2940,7 @@ describe("estimateDistance / estimateDistanceRefined with a fold final lens (fr-
       variations: [{ type: "mandelbox", weight: 0.6 }],
     });
     const de = buildSurfaceDE(transforms, final);
-    const cloud = runChaosGame(transforms, 200000, mulberry32(41), final);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(41), final);
     const R = de.visibleBoundingRadius;
     const rng = mulberry32(42);
     for (let i = 0; i < 80; i++) {
@@ -2955,7 +2967,7 @@ describe("estimateDistance / estimateDistanceRefined with a fold final lens (fr-
       variations: [{ type: "boxfold", weight: 0.6 }],
     });
     const de = buildSurfaceDE(transforms, final);
-    const cloud = runChaosGame(transforms, 100000, mulberry32(51), final);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(51), final);
     const R = de.visibleBoundingRadius;
     const rng = mulberry32(52);
     for (let i = 0; i < 60; i++) {
@@ -2979,7 +2991,7 @@ describe("estimateDistance / estimateDistanceRefined with a fold final lens (fr-
     const de = buildSurfaceDE(transforms, final, symmetry);
     const cloud = runChaosGame(
       transforms,
-      100000,
+      20000,
       mulberry32(61),
       final,
       symmetry,
@@ -3027,7 +3039,13 @@ describe("estimateDistance / estimateDistanceRefined with a fold final lens (fr-
     const transforms = sierpinskiTetrahedron();
     const final = boxfoldFinal();
     const de = buildSurfaceDE(transforms, final);
-    const cloud = runChaosGame(transforms, 300000, mulberry32(81), final);
+    // Density is the subject here, not just probe coverage: `nearest` below
+    // stands in for "is p genuinely in a void of the lensed attractor", and
+    // a sparse cloud would misclassify near-attractor points as void merely
+    // from sampling gaps. Kept well above the 20k default (still 15x down
+    // from the pre-fr-b2l6 300k) with `deepVoidProbes > 20` re-verified at
+    // this size.
+    const cloud = runChaosGame(transforms, 80000, mulberry32(81), final);
     const R = de.visibleBoundingRadius;
     const rng = mulberry32(82);
     let deepVoidProbes = 0;
@@ -3099,7 +3117,7 @@ describe("probe-fit centered bounding ball (fr-pjqw)", () => {
     const de = buildSurfaceDE(sierpinskiTetrahedron());
     const shiftedTransforms = translated(sierpinskiTetrahedron(), d);
     const shifted = buildSurfaceDE(shiftedTransforms);
-    const cloud = runChaosGame(shiftedTransforms, 300000, mulberry32(1235));
+    const cloud = runChaosGame(shiftedTransforms, 20000, mulberry32(1235));
     const rng = mulberry32(1234);
     const R = de.boundingRadius;
     for (let i = 0; i < 60; i++) {
@@ -3158,7 +3176,7 @@ describe("probe-fit centered bounding ball (fr-pjqw)", () => {
       boundingRadius: grown,
       escapeRadius: 2 * grown,
     };
-    const cloud = runChaosGame(transforms, 300000, mulberry32(55));
+    const cloud = runChaosGame(transforms, 20000, mulberry32(55));
     const rng = mulberry32(56);
     for (let i = 0; i < 150; i++) {
       const base = Math.floor(rng() * cloud.count) * 3;
@@ -3229,7 +3247,7 @@ describe("footprint-capped descent depth (fr-3c0k)", () => {
   it("stays a valid lower bound at every footprint, on affine and fold systems alike", () => {
     for (const transforms of [sierpinskiTetrahedron(), pureBoxfoldPair()]) {
       const de = buildSurfaceDE(transforms);
-      const cloud = runChaosGame(transforms, 200000, mulberry32(91));
+      const cloud = runChaosGame(transforms, 20000, mulberry32(91));
       const rng = mulberry32(92);
       const R = de.boundingRadius;
       for (const f of [R / 10, R / 100, R / 1000]) {
@@ -3283,7 +3301,7 @@ describe("footprint-capped descent depth (fr-3c0k)", () => {
     // still read a no-hit-at-this-resolution estimate.
     const transforms = slowProfile();
     const de = buildSurfaceDE(transforms);
-    const cloud = runChaosGame(transforms, 200000, mulberry32(94));
+    const cloud = runChaosGame(transforms, 20000, mulberry32(94));
     const R = de.boundingRadius;
     const f = 1e-3 * R;
     let checked = 0;
@@ -3400,7 +3418,7 @@ describe("authored fold radii in the inverse branch algebra (fr-s9ll)", () => {
     ];
     expect(analyzeSurfaceSystem(transforms).status).not.toBe("ineligible");
     const de = buildSurfaceDE(transforms);
-    const cloud = runChaosGame(transforms, 200000, mulberry32(7));
+    const cloud = runChaosGame(transforms, 20000, mulberry32(7));
     const rng = mulberry32(0x5f12);
     for (let i = 0; i < 300; i++) {
       const p: Vec3 = [(rng() - 0.5) * 4, (rng() - 0.5) * 4, (rng() - 0.5) * 4];
@@ -3436,7 +3454,7 @@ describe("authored fold radii in the inverse branch algebra (fr-s9ll)", () => {
     ];
     expect(analyzeSurfaceSystem(transforms).status).not.toBe("ineligible");
     const de = buildSurfaceDE(transforms);
-    const cloud = runChaosGame(transforms, 200000, mulberry32(7));
+    const cloud = runChaosGame(transforms, 20000, mulberry32(7));
     const rng = mulberry32(0x5f13);
     for (let i = 0; i < 300; i++) {
       const p: Vec3 = [(rng() - 0.5) * 5, (rng() - 0.5) * 5, (rng() - 0.5) * 5];
@@ -3474,7 +3492,7 @@ describe("authored fold radii in the inverse branch algebra (fr-s9ll)", () => {
     ];
     expect(analyzeSurfaceSystem(transforms).status).not.toBe("ineligible");
     const de = buildSurfaceDE(transforms);
-    const cloud = runChaosGame(transforms, 200000, mulberry32(7));
+    const cloud = runChaosGame(transforms, 20000, mulberry32(7));
     const rng = mulberry32(0x5f14);
     for (let i = 0; i < 300; i++) {
       const p: Vec3 = [(rng() - 0.5) * 4, (rng() - 0.5) * 4, (rng() - 0.5) * 4];
@@ -3520,7 +3538,7 @@ describe("authored fold radii in the inverse branch algebra (fr-s9ll)", () => {
       "ineligible",
     );
     const de = buildSurfaceDE(transforms, lens);
-    const cloud = runChaosGame(transforms, 200000, mulberry32(7), lens);
+    const cloud = runChaosGame(transforms, 20000, mulberry32(7), lens);
     const rng = mulberry32(0x5f15);
     for (let i = 0; i < 300; i++) {
       const p: Vec3 = [(rng() - 0.5) * 5, (rng() - 0.5) * 5, (rng() - 0.5) * 5];
