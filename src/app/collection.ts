@@ -66,6 +66,14 @@ export interface CollectionDeps {
   storage?: Pick<Storage, "getItem" | "setItem">;
   /** Clock for `createdAt`; defaults to `Date.now`. Injected for tests. */
   now?: () => number;
+  /**
+   * Called after a `persist()` whose storage write succeeded only after
+   * evicting one or more entries to make room under a quota (see
+   * `persist`'s quota-eviction retry). `count` is how many entries were
+   * evicted for THIS write. Absent = eviction still happens, nobody is
+   * told (today's behavior).
+   */
+  onEvicted?: (count: number) => void;
 }
 
 /**
@@ -139,6 +147,7 @@ function loadScenes(
 export class SceneCollection {
   private readonly storage?: Pick<Storage, "getItem" | "setItem">;
   private readonly now: () => number;
+  private readonly onEvicted?: (count: number) => void;
   private scenes: SavedScene[];
   /** Disambiguates two saves in the same millisecond — see `add`'s id
    * generation. Scoped to this instance, not persisted. */
@@ -147,6 +156,7 @@ export class SceneCollection {
   constructor(deps?: CollectionDeps) {
     this.storage = deps?.storage ?? safeLocalStorage();
     this.now = deps?.now ?? Date.now;
+    this.onEvicted = deps?.onEvicted;
     this.scenes = loadScenes(this.storage);
   }
 
@@ -328,28 +338,48 @@ export class SceneCollection {
   }
 
   /**
-   * Write the current list to storage. On a thrown error (e.g. a
-   * `QuotaExceededError` from a full disk), evicts the oldest entry
+   * Write the current list to storage. Only a QUOTA error (`isQuotaError` —
+   * a full disk) is treated as recoverable: evicts the oldest entry
    * (`this.scenes.pop()`) and retries, continuing to evict-and-retry while
-   * more than one entry remains and writes keep throwing. A final failure is
-   * swallowed silently — the in-memory list stays correct for the rest of
-   * the session, just not durable. A no-op when no storage is available.
+   * more than one entry remains and writes keep throwing quota errors. A
+   * write that succeeds only after evicting reports how many entries
+   * through `onEvicted` (absent dep = silent, matching the old behavior).
+   *
+   * Any OTHER error — storage disabled mid-session, a `SecurityError`, or a
+   * quota error that still fails once evicted down to the one-entry floor —
+   * is NOT recoverable by evicting further, so `this.scenes` is restored to
+   * its snapshot from the top of this call and the write is abandoned.
+   * Storage is left exactly as it last durably was. This is the opposite of
+   * the old behavior, which kept evicting on ANY error and left the
+   * truncated result in memory even after giving up: the NEXT successful
+   * persist (from any caller — `add`/`remove`/`setThumbnail`/`restore`/
+   * `importScenes`) would then overwrite storage's still-intact full list
+   * with that truncated one, silently destroying user-authored content.
+   * `timeline.ts`'s own persist swallows a failure the same way — in-memory
+   * stays correct, nothing is corrected by shortening the list. A no-op
+   * when no storage is available.
    */
   private persist(): void {
     if (!this.storage) return;
-    let saved = false;
-    do {
+    const snapshot = [...this.scenes];
+    let evictedCount = 0;
+    for (;;) {
       try {
         this.storage.setItem(
           COLLECTION_STORAGE_KEY,
           JSON.stringify(this.scenes),
         );
-        saved = true;
-      } catch {
-        if (this.scenes.length <= 1) return;
+        if (evictedCount > 0) this.onEvicted?.(evictedCount);
+        return;
+      } catch (err) {
+        if (!isQuotaError(err) || this.scenes.length <= 1) {
+          this.scenes = snapshot;
+          return;
+        }
         this.scenes.pop();
+        evictedCount++;
       }
-    } while (!saved);
+    }
   }
 }
 
@@ -362,4 +392,16 @@ function safeLocalStorage(): Storage | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** True for a storage-quota write failure — `persist`'s signal that
+ * evict-and-retry can plausibly help, unlike any other write error (which
+ * evicting the list does nothing to fix). Modern browsers throw a
+ * `DOMException` named `QuotaExceededError`; legacy Safari sets the numeric
+ * legacy `code` 22 instead. */
+function isQuotaError(err: unknown): boolean {
+  return (
+    err instanceof DOMException &&
+    (err.name === "QuotaExceededError" || err.code === 22)
+  );
 }

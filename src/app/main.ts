@@ -640,7 +640,17 @@ function main(): void {
   // immutable encoded string plus a thumbnail, and loading one is a
   // whole-system replacement like a preset (see loadEncodedScene). Distinct
   // localStorage key, so it never disturbs the live scene or its history.
-  const collection = new SceneCollection();
+  // onEvicted is the quota disclosure (fr-vhpt): a save that only fit by
+  // evicting the oldest entries must not hide behind the unconditional
+  // "Saved to collection" toast — data loss reported as success.
+  const collection = new SceneCollection({
+    onEvicted: (count) =>
+      ui.flashToast(
+        count === 1
+          ? "Gallery full — dropped the oldest saved scene to make room"
+          : `Gallery full — dropped the ${count} oldest saved scenes to make room`,
+      ),
+  });
 
   // The most recently ARRIVED generation (cached by applyCloudResult), so
   // a color-mode change can recolor the existing cloud (see `recolor`) instead
