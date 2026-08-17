@@ -276,3 +276,69 @@ verbatim:
 - The post-march miss's sphere-exit/exhaustion split, which had to be
   ADDED rather than copied: 3D splits it because it has a floor to
   classify into, and EXHAUSTED never planes.
+
+## The coverage-alpha leak (fr-1wbv)
+
+The tracers' output alpha is the fr-7k0o COVERAGE flag — 1 where the frame
+drew something (hit, lit ground plane), 0 where it shows only its backdrop
+— counted by scene.ts's settle fold so the WebGL arm can answer the
+blank-frame question the WebGPU arm answers from its per-ray status tally.
+fr-7k0o shipped it on the claim that the channel was invisible ("blitted
+with NoBlending into a canvas created alpha:false").
+
+THAT CLAIM WAS WRONG, and the failure it caused is fr-1wbv: three r163+
+creates the canvas WebGL context with `alpha: true` UNCONDITIONALLY — the
+`WebGLRenderer` constructor's `alpha` param only picks the default CLEAR
+alpha (verified in three r185's source, `WebGLRenderer.js`'s
+`contextAttributes`). With `premultipliedAlpha: true` (the default), the
+compositor treats canvas RGB as premultiplied, so a coverage-0 pixel with
+nonzero RGB composites as `canvas_rgb + page_bg · (1 − 0)` — the page's
+own background ADDED to the pane. The app's page background is
+`--bg: #0f1018` = (15, 16, 24).
+
+MEASURED, on the settled PNGs of `scripts/surface-4d.verify.mjs`'s two
+IoU scenes (real Iris, 1024x640, identity rotor, centred slice — the
+frames behind the bead's IoU 0.240/0.354 FAIL): the `?surfacegl` arm's
+miss pixels read exactly `DARK backdrop + (15, 16, 24)` — the delta was
+(15, 16, 24) on 98.3-98.9% of 146,414 clean background samples per
+channel on plain4 (the stragglers one count lower, quantization), the
+same on kaleido4, height-independent to ±0.02 — while HIT pixels matched
+the compute arm byte for byte and the compute arm's backdrop matched
+`resolveBackground`'s DARK pair exactly (its DataTexture carries alpha
+255 everywhere, so its pane never composited). The `#vignette` DOM
+overlay darkens both arms' pane edges multiplicatively and cancels in
+the comparison. The two candidates the bead's own WHERE-TO-START named
+are hereby REFUTED as the driver: the strip pump's linear-light
+supersample averaging and `buildSurfaceComputeBackground`'s Math.round
+quantization each bound at ~1/255 on a constant backdrop, two orders
+under the measured offset.
+
+The leak began at fr-7k0o itself (e502afe, the `1.0 -> 0.0` miss-alpha
+flip) — fr-dlxh's IoU 0.996 predates it — and reached every WebGL
+surface present since: live previews, settles, and the Save-PNG capture
+path, whose present-then-`toBlob` snapshot read the same alpha-0 canvas
+(an exported miss pixel carried alpha 0 into the PNG). The 3D fallback
+arms (escape, bulb, fold-lens under `?surfacegl`/no-adapter) leaked the
+same way; it was FOUND on the 4D gate only because that is the one gate
+that compares the two engines' frames.
+
+THE FIX IS AT THE PRESENT BOUNDARY, one line: `BLIT_FRAGMENT` copies RGB
+verbatim and FORCES ALPHA TO 1. The blit is every surface present's last
+hop — settle target, preview target, the compute frame's DataTexture,
+and the capture path's present-then-toBlob — so the coverage flag stays
+a private channel of the trace targets, which is where fr-7k0o's two
+readbacks (`foldSurfaceSample`, `measureSurfaceCoverage`) read it; no
+reader consumes alpha from a blit DESTINATION (the one target-to-target
+blit, the preview -> settle seed, is fully overwritten by strips before
+any pass-completion readback). The WGSL kernels already write alpha 1.0
+on every path, so the fix also makes the two engines' presented alpha
+identical. RE-MEASURED at the fix, same gate, same protocol (real Iris,
+dev server, both scenes): plain4 IoU 0.240 -> 1.000 (compute 52,506
+object px, surfacegl 52,505, intersection 52,505) and kaleido4 0.354 ->
+0.990 (90,070 / 90,173 / 89,674), both arms settled, liveness passed,
+no page errors, VERDICT: PASS — and a direct pixel diff of the two
+plain4 settles reads delta (0, 0, 0) on 100% of the same 146,414 clean
+background samples that measured (15, 16, 24) before. The gate's own
+
+> = 0.5 bar was deliberately left FAILING through the investigation and
+> needed no adjustment.
