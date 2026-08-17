@@ -1429,14 +1429,22 @@ describe("estimateDistanceRefined collapses a measured balloon point the base es
 // pre-refinement certificate would re-open fr-1z6p's balloon ghosts, which
 // the directed void tests at the end of this section pin.
 describe("estimateDistanceRefined early-out cutoff", () => {
-  it("returns the full-descent value bit-for-bit when the cutoff is 0", () => {
+  it("runs the full descent for a cutoff too small to fire, bit-for-bit", () => {
+    // The claim the `cutoff = 0` default makes, stated against a DIFFERENT
+    // call: every exit is guarded `cutoff > 0 && best < cutoff`, so a cutoff
+    // below every value the descent can report has to be a no-op. Comparing
+    // the default-arg call against an explicit `0` would be the identical
+    // call on both sides and could not fail.
     const de = buildSurfaceDE(sierpinskiTetrahedron());
     const rng = mulberry32(11);
+    const tiny = 1e-12 * de.boundingRadius;
     for (let i = 0; i < 60; i++) {
       const p: Vec3 = [(rng() - 0.5) * 4, (rng() - 0.5) * 4, (rng() - 0.5) * 4];
-      expect(estimateDistanceRefined(de, p, 0)).toBe(
-        estimateDistanceRefined(de, p),
-      );
+      const full = estimateDistanceRefined(de, p);
+      // Keeps the equality below from passing vacuously off an exit that
+      // COULD have fired: no probe here sits within `tiny` of the set.
+      expect(full).toBeGreaterThan(tiny);
+      expect(estimateDistanceRefined(de, p, tiny)).toBe(full);
     }
   });
 

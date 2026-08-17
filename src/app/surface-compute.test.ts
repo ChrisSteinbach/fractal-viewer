@@ -35,6 +35,25 @@ import type {
   SurfaceComputeTarget,
 } from "./surface-compute";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
+import { SURFACE_GPU_HIT_FLOOR } from "../fractal/surface-de-gpu";
+import { SURFACE_FULL_HIT_FLOOR } from "./surface-material";
+
+describe("the two engines' full-tier hit floor (mirror pin)", () => {
+  it("is ONE number: surface-de-gpu.ts's SURFACE_GPU_HIT_FLOOR is surface-material.ts's SURFACE_FULL_HIT_FLOOR", () => {
+    // `SURFACE_GPU_HIT_FLOOR`'s own doc calls itself a "Mirror of
+    // surface-material.ts's SURFACE_FULL_HIT_FLOOR", and this renderer's
+    // `hitFloor` spec field names both — but until this test the two were
+    // only ever pinned to their own literals in their own files, so
+    // retuning the GLSL side left the suite green and the two engines
+    // accepting hits at different distances on the same scene. The
+    // equality is the claim; the literal is the second line, so a
+    // deliberate retune has to move BOTH constants and this test with them.
+    // Asserted here rather than beside the kernel because src/fractal/ is
+    // the dependency-free core and surface-material.ts pulls in Three.js.
+    expect(SURFACE_GPU_HIT_FLOOR).toBe(SURFACE_FULL_HIT_FLOOR);
+    expect(SURFACE_FULL_HIT_FLOOR).toBe(1.0e-5);
+  });
+});
 
 describe("buildSurfaceComputeBackground", () => {
   it("fills each row with the kernel's own bottom-to-top gradient at pixel centers", () => {
@@ -894,10 +913,25 @@ describe("subPixelSample (fr-vpbq)", () => {
     }
   });
 
-  it("is deterministic and seedless — the same pass is the same offset on every device", () => {
-    for (let s = 0; s < 16; s++) {
-      expect(subPixelSample(s)).toEqual(subPixelSample(s));
-    }
+  it("is the same eight offsets on every device — the shipped sequence, by value", () => {
+    // "Seedless and device-independent" is a claim about WHICH numbers come
+    // out, so the numbers are written down: pass 0 the exact pixel centre,
+    // passes 1-7 the R2 low-discrepancy sequence
+    // `(0.5 + phi2^-1 * s) % 1`, `(0.5 + phi2^-2 * s) % 1`. Every step is an
+    // IEEE multiply/add/remainder on doubles, so these are exact on any
+    // engine — and the WebGL strip arm imports this same function (fr-jf9y),
+    // which is what makes "8 samples" one picture across the two engines.
+    // Comparing the call to itself asserted none of that.
+    expect(Array.from({ length: 8 }, (_, s) => subPixelSample(s))).toEqual([
+      [0.5, 0.5],
+      [0.2548776662466927, 0.06984029099805289],
+      [0.009755332493385449, 0.639680581996106],
+      [0.764632998740078, 0.2095208729941591],
+      [0.5195106649867709, 0.779361163992212],
+      [0.27438833123346384, 0.3492014549902649],
+      [0.029265997480155903, 0.9190417459883182],
+      [0.7841436637268488, 0.48888203698637156],
+    ]);
   });
 
   it("stratifies the eight passes the settle actually traces: eight distinct 4x4 cells, all four quadrants", () => {

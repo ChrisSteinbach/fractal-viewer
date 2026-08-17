@@ -778,12 +778,22 @@ describe("the 4D orbit's w terms, hand-derived at nonzero w (fr-vtaz)", () => {
 });
 
 describe("probeEscapeFill4 (fr-vag4)", () => {
-  it("is deterministic for a fixed seed", () => {
+  it("samples the SAME 512 points every call — the default seed, by value", () => {
+    // The 3D twin's rule: the default seed is a CONSTANT, so 512 samples of
+    // this chain have ONE answer, and the answer is written down. Calling
+    // the same pure function twice and comparing would hold for a
+    // Math.random() seed too — which is the whole of what "deterministic"
+    // is claiming here. 512 samples, so the fill is an exact k/512.
     const de = buildEscapeDE4([
       canonicalMandelbox(),
       foldMap(1, "boxfold", 1.6),
     ]);
-    expect(probeEscapeFill4(de, 512)).toBe(probeEscapeFill4(de, 512));
+    const fill = probeEscapeFill4(de, 512);
+    expect(fill).toBe(0.00390625);
+    // The same number as a count — 2 of the 512 samples were members, which
+    // is what a THIN 4D set looks like through a volume probe (the module
+    // doc's own warning against reading fill as "will it render").
+    expect(fill * 512).toBe(2);
   });
 
   it("returns 0 for points <= 0", () => {

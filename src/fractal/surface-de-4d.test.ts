@@ -1274,9 +1274,16 @@ describe("estimateDistance4Refined never falls below the base estimate, with a f
 // pre-refinement certificate would re-open the fr-beck ghost class, which
 // the directed void test at the end of this section pins.
 describe("estimateDistance4Refined early-out cutoff", () => {
-  it("returns the full-descent value bit-for-bit when the cutoff is 0", () => {
+  it("runs the full descent for a cutoff too small to fire, bit-for-bit", () => {
+    // The 3D twin's test one dimension up: the claim the `cutoff = 0`
+    // default makes, stated against a DIFFERENT call. Every exit is guarded
+    // `cutoff > 0 && best < cutoff`, so a cutoff below every value the
+    // descent can report has to be a no-op; comparing the default-arg call
+    // against an explicit `0` would be the identical call on both sides and
+    // could not fail.
     const de = buildSurfaceDE4(pentatope());
     const rng = mulberry32(11);
+    const tiny = 1e-12 * de.boundingRadius;
     for (let i = 0; i < 60; i++) {
       const p: Vec4 = [
         (rng() - 0.5) * 4,
@@ -1284,9 +1291,11 @@ describe("estimateDistance4Refined early-out cutoff", () => {
         (rng() - 0.5) * 4,
         (rng() - 0.5) * 4,
       ];
-      expect(estimateDistance4Refined(de, p, 0)).toBe(
-        estimateDistance4Refined(de, p),
-      );
+      const full = estimateDistance4Refined(de, p);
+      // Keeps the equality below from passing vacuously off an exit that
+      // COULD have fired: no probe here sits within `tiny` of the set.
+      expect(full).toBeGreaterThan(tiny);
+      expect(estimateDistance4Refined(de, p, tiny)).toBe(full);
     }
   });
 

@@ -369,13 +369,6 @@ describe("estimateBulbDistance", () => {
       estimateBulbDistance(de, p, BULB_ITERATIONS),
     );
   });
-
-  it("is deterministic", () => {
-    const de = buildBulbDE([bulbSystem({ position: [0.2, -0.1, 0.3] })]);
-    const p: Vec3 = [0.3, -0.7, 0.4];
-
-    expect(estimateBulbDistance(de, p)).toBe(estimateBulbDistance(de, p));
-  });
 });
 
 describe("triplexPow8", () => {
