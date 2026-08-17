@@ -20,10 +20,25 @@
 <pre id="out">running…</pre>
 <script type="module">
   const out = document.getElementById("out");
-  const lines = [];
+  // DOM-built, not innerHTML (repo policy — ui.ts:769): one text node or
+  // <span> per line, appended over the "running…" placeholder on the first
+  // call, separated by <br> like the old join("\n") was.
+  let firstLine = true;
   const log = (s, cls) => {
-    lines.push(cls ? `<span class="${cls}">${s}</span>` : s);
-    out.innerHTML = lines.join("\n");
+    if (firstLine) {
+      out.textContent = "";
+      firstLine = false;
+    } else {
+      out.appendChild(document.createElement("br"));
+    }
+    if (cls) {
+      const span = document.createElement("span");
+      span.className = cls;
+      span.textContent = s;
+      out.appendChild(span);
+    } else {
+      out.appendChild(document.createTextNode(s));
+    }
   };
   log(`userAgent: ${navigator.userAgent}`);
   // WebGL first — the Surface fallback tracer's engine. A software
