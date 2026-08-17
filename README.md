@@ -118,7 +118,8 @@ npm run lint:fix       # auto-fix what can be fixed
 ```
 
 Tests are [Vitest](https://vitest.dev/) specs alongside the source as `*.test.ts`.
-Husky runs `lint-staged` on commit. CI runs lint, type-check, build, and tests on
+Husky runs `lint-staged` on commit. CI runs lint (type-check + ESLint + Stylelint +
+Prettier), a production build, the test suite, and a headless WebGL smoke test on
 every push and pull request.
 
 ## Deployment
