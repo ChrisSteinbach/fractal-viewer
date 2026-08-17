@@ -205,7 +205,7 @@ regenerate rather than commit megabytes of PNG.
 The catalogue of sheets and what each one's verdict was is in
 `docs/harness-sheets.md`.
 
-Requires **Node.js 18+** (ES2022 target; developed on Node 22).
+Requires **Node.js 22+** (.nvmrc pins 22; the compile target is ES2022).
 
 Reproduce the COOP/COEP first-visit reload locally:
 `node scripts/isolation-reload.verify.mjs` (fr-su3r, not an npm script) —
