@@ -209,12 +209,26 @@ tile at the 4M-ray cap read a flat 64 MB of ray state per sweep, tens of
 sweeps a tile, and now reads 4 B per ray still marching.
 
 That table also says something fr-si66 did not set out to find, filed as
-fr-257o: 2634 shade dispatches at a **~8.8 ms mean** on a scene with only
-~2.4k HIT pixels. Free (miss) batches are capped at
-`SURFACE_COMPUTE_MAX_SHADE_BATCH` = 4096 rays each and cost one
-background write per ray, so a 1.26M-ray frame spends ~307 submissions
-just painting backdrop — times the 8 supersampling passes of a settle
-(fr-vpbq). The dominant term is the submission COUNT, not the shading.
+fr-257o — and a MEAN over the two shade queues is not a finding, so the
+instrument grew one more regex (the `shade BEGIN isFree=` flag) and the
+settle was run once more. The 84% splits:
+
+| shade dispatches | count | ms      | share | mean     |
+| ---------------- | ----- | ------- | ----- | -------- |
+| free (miss)      | 2492  | 7926.7  | 29.3% | 3.2 ms   |
+| hit              | 135   | 14881.1 | 55.0% | 110.2 ms |
+
+Both halves say something, and the first draft of this paragraph had the
+first one wrong by an order of magnitude. **Free batches are 29%, not
+84%**: `SURFACE_COMPUTE_MAX_SHADE_BATCH` = 4096 rays of one background
+write each costs 3.2 ms, which IS the per-submission wall (there is no
+work in it), so a 1.26M-ray frame spends ~307 submissions painting
+backdrop, times the 8 supersampling passes (fr-vpbq). Raising that cap
+16x has a hard ceiling of 7.9 s on this 35 s settle — real, bounded,
+~22%, and NOT "most of the settle". **The hit half is the bigger one and
+is real work**: 135 dispatches x ~178 hits at ~0.62 ms per hit is the
+width-1 probe cost fr-p8bc already cut 23.8x, re-paid by every one of the
+8 passes. No batch-cap change touches it.
 
 Proven output-identical rather than argued: `scripts/surface-repro.verify.mjs
 --scenario=all --runs=2 --mode=x11::0` was run against BOTH builds, and

@@ -271,6 +271,14 @@ const READBACK_RE = /^(\w+) readback (BEGIN|END)\b(.*)$/;
  * `<kind> END ms=<n>` with a one-decimal float (or the literal `null`
  * when the frame was superseded mid-dispatch, which is not a timing). */
 const DISPATCH_END_RE = /^(march|shade) END ms=([0-9.]+)$/;
+/** Which QUEUE a shade dispatch drained (fr-257o). The two are different
+ * animals — a FREE batch does one background write per ray and is capped
+ * at a flat `SURFACE_COMPUTE_MAX_SHADE_BATCH`, a HIT batch pays the
+ * on-surface probe evals and is sized predictively — so a single shade
+ * mean over both says nothing about either. The BEGIN line carries the
+ * flag; the very next `shade END` is its own, because the frame loop
+ * awaits each dispatch before encoding the next. */
+const SHADE_BEGIN_RE = /^shade BEGIN isFree=(true|false)\b/;
 /** `final readback BEGIN` has no matching END by design (see module doc) —
  * this is the one label {@link summarize} never opens against later END. */
 const UNTIMED_READBACK_LABEL = "final";
@@ -305,7 +313,11 @@ function summarize(rawLines) {
   const dispatch = {
     march: { count: 0, totalMs: 0 },
     shade: { count: 0, totalMs: 0 },
+    // fr-257o: the same shade time split by which queue it drained.
+    shadeFree: { count: 0, totalMs: 0 },
+    shadeHit: { count: 0, totalMs: 0 },
   };
+  let pendingShadeIsFree = null;
 
   const kindStat = (label) => {
     let s = kinds.get(label);
@@ -338,11 +350,26 @@ function summarize(rawLines) {
       continue;
     }
 
+    const shadeBegin = SHADE_BEGIN_RE.exec(body);
+    if (shadeBegin) {
+      pendingShadeIsFree = shadeBegin[1] === "true";
+      continue;
+    }
+
     const dispatchEnd = DISPATCH_END_RE.exec(body);
     if (dispatchEnd) {
       const half = dispatch[dispatchEnd[1]];
+      const ms = Number(dispatchEnd[2]);
       half.count++;
-      half.totalMs += Number(dispatchEnd[2]);
+      half.totalMs += ms;
+      if (dispatchEnd[1] === "shade" && pendingShadeIsFree !== null) {
+        const queue = pendingShadeIsFree
+          ? dispatch.shadeFree
+          : dispatch.shadeHit;
+        queue.count++;
+        queue.totalMs += ms;
+        pendingShadeIsFree = null;
+      }
       continue;
     }
 
@@ -692,6 +719,15 @@ function printReport(summary, runResult) {
   console.log(
     `  shade dispatches : ${String(summary.dispatch.shade.count).padStart(5)}  ${fmtMs(shadeMs).padStart(9)} ms  ${pct(shadeMs)}`,
   );
+  for (const [name, q] of [
+    ["  ...free (miss)", summary.dispatch.shadeFree],
+    ["  ...hit", summary.dispatch.shadeHit],
+  ]) {
+    const mean = q.count > 0 ? q.totalMs / q.count : null;
+    console.log(
+      `  ${name.padEnd(15)}: ${String(q.count).padStart(5)}  ${fmtMs(q.totalMs).padStart(9)} ms  ${pct(q.totalMs)}  (mean ${fmtMs(mean)} ms/dispatch)`,
+    );
+  }
   console.log(
     `  sweep readbacks  : ${String(sweepLabels.reduce((a, l) => a + (kinds.get(l)?.count ?? 0), 0)).padStart(5)}  ${fmtMs(sweepMs).padStart(9)} ms  ${pct(sweepMs)}`,
   );
@@ -776,6 +812,14 @@ function buildJsonSummary(summary, runResult) {
       shade: {
         count: summary.dispatch.shade.count,
         totalMs: round2(summary.dispatch.shade.totalMs),
+      },
+      shadeFree: {
+        count: summary.dispatch.shadeFree.count,
+        totalMs: round2(summary.dispatch.shadeFree.totalMs),
+      },
+      shadeHit: {
+        count: summary.dispatch.shadeHit.count,
+        totalMs: round2(summary.dispatch.shadeHit.totalMs),
       },
     },
     unmatchedBeginCount: summary.unmatchedBegins.length,
