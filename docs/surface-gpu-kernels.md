@@ -400,6 +400,38 @@ certified, never decide geometry) to a second narrow descent
 `surfaceDEProbe`, derived from the same body template by token rename so
 the two cannot drift; app ships width 1.
 
+### `statusOut` — the march's status side channel (fr-si66)
+
+The host compacts the active list from ONE field of the ray state, the
+status. Reading it out of the `states` buffer costs 16 B per FRAME ray
+per sweep — the whole buffer, however short the active list has become —
+where 4 B per ACTIVE ray answers the same question. `statusOut: true`
+(march mode only) declares
+`@group(0) @binding(5) var<storage, read_write> statusOut: array<u32>`
+and writes `u32(st.y)` there at EVERY exit of `marchRays`: the two
+sphere-gate early-outs, the defensive non-ACTIVE guard, and the
+fall-through. The index is the ray's SLOT in the active list, not its ray
+id — the array being rebuilt — so a host that dispatches the sweep in
+slices reads slice `k`'s answers at slice `k`'s own offsets. The
+out-of-range guard (`slotI >= params.itemCount`) is the one exit that
+must NOT write, and a codegen test pins that.
+
+It is a pure side channel: nothing on the device reads it, so the ray
+states, the pixels, and every measured quantity are what they were.
+Absent or `false` reproduces the pre-fr-si66 source byte for byte, which
+is what keeps the bench's own march legs (leg A's agreement march, the
+timing sweep) the kernels they have always been — they never set it, and
+their 4/5-entry bind group layouts are untouched. Outside march mode it
+THROWS rather than being ignored: a host that binds a status buffer to an
+eval or shade pipeline has a contract bug.
+
+Pinned end to end without a single bench edit, which is the nice part:
+leg B (`runSurfaceComputeFrameLeg` and its escape/plane/4D siblings)
+drives the PRODUCTION `SurfaceComputeRenderer`, and its gate is
+`frame.counts.hit` against a CPU sanity march's hit rate — a tally that,
+since fr-si66, is derived from this side channel. Mis-index the slots and
+the hit rate diverges.
+
 **MEASURED VERDICTS** (Iris Xe, real driver):
 
 - march traces mandelboxKifs at width 12 in 49µs/ray primary (private
