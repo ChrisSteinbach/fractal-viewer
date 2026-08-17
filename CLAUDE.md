@@ -108,10 +108,12 @@ different object.
   importing every constant, link code and estimate form from `escape-de.ts` is
   the second: what a chain IS has one definition across both dimensions, and
   only the maps' arithmetic is duplicated under the twin-file convention.
-  fr-v7ca's Möbius-ball note is the same hazard still open — fr-qxxw did NOT
-  need it (slice-then-invert keeps the inversion 3D and the slab rides both
-  terms untouched), so the helper the two beads agreed to share is still
-  unwritten and still owed to whichever slab port lands first.
+  The helper fr-v7ca and fr-qxxw agreed to share SHIPPED as `inversion.ts`
+  (fr-v7ca's `inversionBallScale`), before its second caller exists rather
+  than after — fr-qxxw did NOT need it (slice-then-invert keeps the inversion
+  3D and the slab rides both terms untouched), and the spherefold slab port
+  that would consume it stays REFUSED on fr-v7ca's own measurements
+  (`slabExact4`), so what is still owed is that port, not the identity.
 - **An unlifted gap is disclosed, not quietly filed.** A session that ends
   3D-only says so in the PR description and in its closing summary, as
   unfinished work. The bead is the tracking; it is not the disclosure.
@@ -339,7 +341,8 @@ and UI**, so the interesting math is unit-tested without a browser:
     and the shell does not pulse as the slider scrubs. A `halfExtent` rides
     both terms untouched — the inversion never touches `w` — so the
     Möbius-ball helper fr-qxxw and fr-v7ca agreed to share was NOT needed
-    here and is still owed to whichever slab port lands first. The WGSL 4D
+    here; it shipped anyway (`inversion.ts`, fr-v7ca), against a spherefold
+    slab port that stays refused. The WGSL 4D
     wrapper is the 3D text UNCHANGED, which is the same decision seen from
     the kernel side.
   - `chaos-game.ts` — IFS iterator: warm-up, escape-reset, bounds tracking.
@@ -375,6 +378,10 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `flame-gpu-4d.ts` — 4D WGSL kernel (4x4+t affines, `variations4`,
     rotor+camera projection, four `FourDRenderColor` modes). Same agreement
     harness, and the 3D Slot's fold lane verbatim.
+  - `inversion.ts` — sphere inversion's ONE shared identity (fr-v7ca):
+    `inversionBallScale`, the Möbius factor `R²/(|c|² − r²)` that takes a
+    ball to a ball exactly, returning 0 — "no information", so a caller's
+    bound degrades conservatively — when the region swallows the centre.
   - `morph.ts` — pure interpolation (`lerpSystem`): endpoint-exact at t=0/1,
     rotation lerped nearest-turn, transform-count mismatches fade surplus by
     weight, flat↔4D continuous via derived w-scale, kaleidoscope crossfade
@@ -552,45 +559,41 @@ and UI**, so the interesting math is unit-tested without a browser:
     lands INSIDE the `lens4Fold` quartet and corrupts it.
     SEVEN KERNEL CORES (fr-55s1 added the second, fr-dlxh the third and —
     its 4D cut — the fourth, fr-rsp6 phase 2A the fifth, fr-7u8t.9 the
-    sixth, fr-vag4 the seventh):
+    sixth, fr-vag4 the seventh), each described in full in the module
+    doc; what a session must not get wrong is here.
     `core:"affine"` emits the width-4 A/B + fr-jkpn-validity-slot REFINED
     ladder (mirrors `estimateDistanceRefined`, the affine GLSL's
     estimator; width/sharedFrontier/bnbStage2/shadeDeWidth inert) beside
     the fold frontier, picked off `deHasFolds` exactly like the CPU.
     `core:"escape"` (fr-dlxh) is not a descent at all — it emits
-    `escape-de.ts`'s `estimateEscapeDistance`, the FORWARD fold orbit
-    with the Buddhi/Rrrola scalar derivative, in the `SURFACE_ESCAPE`
+    `escape-de.ts`'s `estimateEscapeDistance` in the `SURFACE_ESCAPE`
     GLSL arm's f32 formulation, for exactly the systems
-    `analyzeEscapeSystem` admits; marching quantities ride the params
-    uniform via `packEscapeGpuParams` (bailout ball packed as both
-    bounding AND visible sphere, `ESCAPE_STEP_SCALE`, `maxDepth` as the
-    orbit budget in PASSES through the same preview door the descents
-    use, `mapCount` the LINK COUNT, `symOrder`/`symPlane` the query-space
-    wedge fold). Since fr-s04t it CYCLES the whole formula chain — link
-    `i mod n`, `+ p` and the bailout test after EACH link, `maxDepth * n`
-    single-link steps — reading one `GpuMap` per link off the maps
-    storage binding (`packEscapeGpuMaps`), so it DOES declare buffer 1
-    and `core:"bulb"` is the one bindingless core left. Since fr-j231 a
-    link's `kind` may be a POWER map (4 triplex, 5 quaternion square), so
-    the fold pair's negative `kind != 2u`/`kind != 1u` dispatch sits
-    behind a `kind < 4u` GUARD in both bodies — unguarded, a new kind
-    satisfies both and runs both folds, which is why the Mandelbulb
-    became a sixth core rather than a fourth kind — with `bulbPow8`
-    HOISTED to one definition emitted for the two forward cores (declared
-    in the body block so both the value body and the entry's hit-info see
-    it, and affine/fold kernels stay byte-identical). `escParams.w` at
-    offset 268 is the ONE live word of the head-link ballast:
-    `EscapeDE.logEstimate`, the chain-level choice between `r/dr` and the
-    Böttcher `0.5·r·ln r/dr`; the hit-info carries the matching second
-    interpolant off the DEGREE of the link that produced the terminal
-    radius (a pre-scaled power link has `growth < 1`, which failed the
-    old guard). Its trap is the CONTINUOUS escape fraction over the PASS
-    budget (fr-7u8t.8; denominator is `maxDepth`, NOT the chain's
-    `maxDepth * n` step budget — fr-byxb) and drives COLOR ONLY, the
-    descent cores' convention.
+    `analyzeEscapeSystem` admits, its marching quantities packed by
+    `packEscapeGpuParams` (bailout ball as BOTH bounding and visible
+    sphere, `ESCAPE_STEP_SCALE`, `maxDepth` the orbit budget in PASSES
+    through the descents' own preview door, `mapCount` the LINK COUNT). Since fr-s04t it CYCLES
+    the whole formula chain — link `i mod n`, `+ p` and the bailout test
+    after EACH link, `maxDepth * n` single-link steps — reading one
+    `GpuMap` per link off the maps storage binding (`packEscapeGpuMaps`),
+    so it DOES declare buffer 1 and `core:"bulb"` is the one bindingless
+    core left. Since fr-j231 a link's `kind` may be a POWER map (4
+    triplex, 5 quaternion square), so the fold pair's negative
+    `kind != 2u`/`kind != 1u` dispatch sits behind a `kind < 4u` GUARD in
+    both bodies — unguarded, a new kind satisfies both and runs both
+    folds, which is why the Mandelbulb became a sixth core rather than a
+    fourth kind — with `bulbPow8` HOISTED to one definition emitted for
+    the two forward cores, so affine/fold kernels stay byte-identical.
+    `escParams.w` at offset 268 is the ONE live word of the head-link
+    ballast: `EscapeDE.logEstimate`, the chain-level choice between
+    `r/dr` and the Böttcher `0.5·r·ln r/dr`, with the hit-info's matching
+    second interpolant read off the DEGREE of the link that produced the
+    terminal radius (a pre-scaled power link has `growth < 1`, which
+    failed the old guard). Its trap is the CONTINUOUS
+    escape fraction over the PASS budget (fr-7u8t.8; denominator is
+    `maxDepth`, NOT the chain's `maxDepth * n` step budget — fr-byxb) and
+    drives COLOR ONLY, the descent cores' convention.
     `core:"bulb"` (fr-7u8t.9) is the escape core's SIBLING one formula
-    over: `bulb-de.ts`'s `estimateBulbDistance`, the forward
-    triplex-power orbit with the Böttcher log estimate, for the systems
+    over: `bulb-de.ts`'s `estimateBulbDistance`, for the systems
     `analyzeBulbSystem` admits, in the `SURFACE_BULB` GLSL arm's f32
     formulation. Everything structural is escape's (208..271 variant
     block via `packBulbGpuParams`, no maps binding, every frontier knob
@@ -602,24 +605,21 @@ and UI**, so the interesting math is unit-tested without a browser:
     constant-factor form.
     `core:"affine4"` (fr-dlxh's 4D cut) is the refined ladder ONE
     DIMENSION UP — `surface-de-4d.ts`'s `estimateDistance4Refined` behind
-    the app's view lift, the estimator `surface-material-4d.ts` marches:
-    the prologue does `rotorInv · vec4f(p, w0)`, the fr-wa6o slab rides
-    one vec4f half-extent register beside every point (linear parts
-    alone, gated on the dynamically uniform `sliceHalfW > 0`), and the
-    fr-u91x kaleidoscope sweeps ONE backward-step 4×4 where 3D swept a
-    (cos, sin) pair. Its tail holds rotor/stepBack/4D-lens rows as
-    row-vec4 quartets — the buffer always stores the ROW-MAJOR bytes of
-    the matrix the body applies, the packer performing the one real
-    transpose (`setSurfaceView4`'s exact dance) — plus
-    w0/sliceHalfW/`visRadius4` and the fr-skhv radius-ramp band; maps are
-    `GpuMap4` (`packSurfaceGpuMaps4`, 128-byte stride). Two frozen slots
-    carry 4D semantics: `visibleRadius` packs the SLICE-ADJUSTED sliceVisR
-    so the shared march entry's sphere gate is the 4D GLSL's textually
-    unchanged, while the tail's `visRadius4` keeps the FULL radius for the
-    height color source and the radius source normalizes over the band —
-    both slice-invariant, and those two shade lines are the one
-    core-conditional interpolation in the shared entry text. Fixed width
-    4; nonzero `footprint` THROWS at pack (the 4D oracle has no cone cap).
+    the app's view lift, the estimator `surface-material-4d.ts` marches,
+    with the rotor prologue, the fr-wa6o slab riding one half-extent
+    register (gated on the dynamically uniform `sliceHalfW > 0`) and the
+    fr-u91x swept kaleidoscope. ITS TAIL ALWAYS STORES THE ROW-MAJOR
+    BYTES of the matrix the body applies, the packer performing the one
+    real transpose (`setSurfaceView4`'s exact dance); maps are `GpuMap4`
+    (`packSurfaceGpuMaps4`, 128-byte stride). Two frozen slots carry 4D
+    semantics: `visibleRadius` packs the SLICE-ADJUSTED sliceVisR so the
+    shared march entry's sphere gate is the 4D GLSL's textually
+    unchanged, while the tail's `visRadius4` keeps the FULL radius for
+    the height color source and the radius source normalizes over the
+    fr-skhv band — both slice-invariant, and those two shade lines are
+    the one core-conditional interpolation in the shared entry text.
+    Fixed width 4; nonzero `footprint` THROWS at pack (the 4D oracle has
+    no cone cap).
     `core:"fold4"` (fr-rsp6 phase 2A) is the FOLD frontier one dimension
     up — 4D fold base maps (`deHasFolds4`) marched as the same
     width-configurable frontier as 3D "fold", slab(`ext`)-aware, sharing
@@ -630,20 +630,18 @@ and UI**, so the interesting math is unit-tested without a browser:
     opt-in `--surface-aff4-sweep` leg.
     `core:"escape4"` (fr-vag4) is the escape core ONE DIMENSION UP —
     `escape-de-4d.ts`'s `estimateEscapeDistance4` — and the first core
-    that is BOTH 4D and FORWARD, which is the whole of its novelty: it
-    takes the rotor prologue and the `GpuMap4` maps layout from the
-    descent cores and the orbit, params scalars and colors-only hit-info
-    from `core:"escape"`. Three things fall away with the dimension and
-    NOTHING is added — no `bulbPow8` (the gate refuses a triplex power),
-    no slab (a forward orbit cannot thread a segment, so the packer
-    THROWS on a nonzero `sliceHalfW`), and no lens (an escape chain has
-    no final transform, which is what lets its params block reuse lens4's
-    464..575 region). Its wedge fold reads `SYM_PLANE_CODE4` — the index
-    into `SYMMETRY_PLANES` — and NOT the descents' `SYM_PLANE_CODE`,
-    which deliberately collapses `xw`/`yw`/`zw` onto their w-free twins:
-    sound where the kaleidoscope is a swept matrix, wrong where a fold
-    picks its two axes by name. `lens`/`balloon` throw, `groundPlane`
-    composes, and there is no fragment mirror at all.
+    that is BOTH 4D and FORWARD, which is the whole of its novelty. Three
+    things fall away with the dimension and NOTHING is added — no
+    `bulbPow8` (the gate refuses a triplex power), no slab (a forward
+    orbit cannot thread a segment, so the packer THROWS on a nonzero
+    `sliceHalfW`), and no lens (an escape chain has no final transform,
+    which is what lets its params block reuse lens4's 464..575 region).
+    Its wedge fold reads `SYM_PLANE_CODE4` — the index into
+    `SYMMETRY_PLANES` — and NOT the descents' `SYM_PLANE_CODE`, which
+    deliberately collapses `xw`/`yw`/`zw` onto their w-free twins: sound
+    where the kaleidoscope is a swept matrix, wrong where a fold picks
+    its two axes by name. `lens`/`balloon` throw, `groundPlane` composes,
+    and there is no fragment mirror at all.
     Ground plane (fr-rhn5) is an orthogonal `groundPlane` option, not a
     core of its own — it composes with every descent/escape core, in both
     dimensions since fr-h0c3, and with the lens wrapper. It adds a fifth
@@ -667,8 +665,7 @@ and UI**, so the interesting math is unit-tested without a browser:
     the Modes are textually identical whichever core is picked. And
     `lens:true` wraps EITHER descent core in `descendLens`'s fold-FINAL
     branch sweep — the body token-renames to `surfaceDECore` (hit-info to
-    `surfaceDEHitInfoCore` behind the argmin sweep, probe to
-    `surfaceDEProbeCore` under the same sweep text renamed) and the
+    `surfaceDEHitInfoCore`, probe to `surfaceDEProbeCore`) and the
     wrapper owns the public names, entries untouched; the lens block is
     zero-filled when absent, and footprint+lens is refused at pack time
     (descendLens's per-branch innerFootprint would need a core signature
@@ -680,28 +677,26 @@ and UI**, so the interesting math is unit-tested without a browser:
     byte-identical since the spike; `march` + `rays:"unproject"` swaps the
     ray derivation to the GLSL tracer's uInvProjView unproject (+
     flag-gated start dither) for the app path, and `shade` runs the GLSL
-    tracer's FULL shading (greedy width-1 hit-info descent, tetra normal,
-    penumbra shadow, AO, linear-space lighting, fog, LUT color sources)
-    over host-compacted batches of TERMINAL rays. March and shade are
-    separate entries by measured verdict, not taste: the v1 megakernel
-    shaded rays inside the march pass that terminated them and LOST THE
-    DEVICE on Iris. `shadeDeWidth` (fr-p8bc) routes exactly those probe
-    taps (normal/shadow/AO — they LIGHT a hit the full-width march
-    already certified, never decide geometry) to a second narrow descent
-    `surfaceDEProbe`, derived from the same body template by token rename
-    so the two cannot drift; app ships width 1. `statusOut` (fr-si66,
-    march mode only, THROWS elsewhere) adds the host's one question as a
-    side channel — `u32(st.y)` at binding 5, indexed by the ray's SLOT in
-    the active list, written at EVERY exit but the out-of-range guard —
-    so a sweep's rebuild costs 4 B per ACTIVE ray instead of the frame's
-    whole ray state. Nothing on the device reads it, and absent/false is
-    byte-identical source, which is what leaves the bench's own march
-    legs the kernels they were.
+    tracer's FULL shading over host-compacted batches of TERMINAL rays.
+    March and shade are separate entries by measured verdict, not taste:
+    the v1 megakernel shaded rays inside the march pass that terminated
+    them and LOST THE DEVICE on Iris. `shadeDeWidth` (fr-p8bc) routes
+    exactly those probe taps (normal/shadow/AO — they LIGHT a hit the
+    full-width march already certified, never decide geometry) to a
+    second narrow descent `surfaceDEProbe`, derived from the same body
+    template by token rename so the two cannot drift; app ships width 1.
+    `statusOut` (fr-si66, march mode only, THROWS elsewhere) adds the
+    host's one question as a side channel — `u32(st.y)` at binding 5,
+    indexed by the ray's SLOT in the active list, written at EVERY exit
+    but the out-of-range guard — so a sweep's rebuild costs 4 B per
+    ACTIVE ray instead of the frame's whole ray state. Nothing on the
+    device reads it, and absent/false is byte-identical source, which is
+    what leaves the bench's own march legs the kernels they were.
     RE-VERIFY SURFACE KERNEL CHANGES ON `--display=:0`, NOT SWIFTSHADER
-    ALONE — fr-dlxh re-proved it: a classifier passed SwiftShader clean,
-    then real Iris flipped six "stable" rows. A forward orbit is chaotic
-    and which rounding seeds flip is realization-dependent, so the escape
-    legs gate in LAYERS (a pre-hoc ensemble classifier
+    ALONE — fr-dlxh re-proved it, real Iris flipping rows a
+    SwiftShader-clean classifier had called stable. A forward orbit is
+    chaotic and which rounding seeds flip is realization-dependent, so
+    the escape legs gate in LAYERS (a pre-hoc ensemble classifier
     `escapeQueryStable` with exclusions disclosed per row, and a post-hoc
     `escapeShadowFlipVerified` absolution capped at 7 flips).
     Consumed by `src/app/surface-compute.ts` (the fold- and, since
@@ -709,9 +704,9 @@ and UI**, so the interesting math is unit-tested without a browser:
     by `src/app/gpu-bench/`'s surface section (`npm run bench:surface`;
     real-driver timing via `--display=:0`; `--surface-shade-width=N`
     reruns the fr-p8bc probe-width A/B).
-    Full record — measured verdicts, bench legs and classifier design,
-    the trap-normalizer measurement history and its corrections — in
-    `docs/surface-gpu-kernels.md`.
+    Full record — every core in full, measured verdicts, bench legs and
+    classifier design, the trap-normalizer measurement history and its
+    corrections — in `docs/surface-gpu-kernels.md`.
   - `surface-grid.ts` — empty-space skip grid for the 3D surface march:
     conservative distance floors (cell centers, cutoff `cellRadius` — at/above
     the cutoff the return is the exact full-descent value, below it 0 is the
@@ -722,120 +717,104 @@ and UI**, so the interesting math is unit-tested without a browser:
     samples it before paying a descent; `pickSurfaceGridResolution` sizes the
     build itself from a measured pilot slab, downshifting a 64/48/32 ladder to
     fit a 3s budget (floored at 32, never skipped). Module doc carries the
-    validity chain; 3D only (4D's live rotor/slice would invalidate a grid per
-    frame).
+    validity chain and the 3D-only refusal.
   - `escape-de.ts` — escape-time fold render's CPU oracle (fr-kltj), and
     since fr-za0n a HYBRID FORMULA CHAIN: the canonical
     Mandelbox/Juliabox object and its hybrids, for exactly the systems
     the IFS gate refuses (one or more flat maps of which at least one
     does NOT contract, no final transform, no kaleidoscope that rotates
     out of 3D — `analyzeEscapeSystem` is the deliberate COMPLEMENT of
-    `analyzeSurfaceSystem` on that shape, which admits exactly when EVERY
-    map contracts).
+    `analyzeSurfaceSystem`, which admits exactly when EVERY map
+    contracts).
     THE LIST IS THE SEQUENCE (Mandelbulber2's `seq->GetSequence(i)`):
     orbit step `i` applies link `i mod n`, `+ p` and the bailout test
     after EACH link, and a PASS is one full cycle — so
     `ESCAPE_TIME_ITERATIONS`, the preview depth clamp and the GPU's
     `maxDepth` keep meaning "how many times is each link applied". The
-    rejected alternative, CHAINING (all n links inside one pass, i.e. the
-    per-PASS offset), was measured fattening toward a solid ball as links
-    were added — the fr-7u8t.8 defect returning — and lives on as an
-    executable local in `scripts/escape-chain.harness.ts`, the sheet the
-    SHIPPED estimator draws (`scripts/hybrid-chain.harness.ts` is the
-    prototype that asked the question first).
-    A LINK NEED NOT BE A FOLD since fr-j231: the chain admits the
-    escape-time family's two POWER maps beside its three folds — the
-    triplex 8th power (`bulb`, the Mandelbulb's map) and the quaternion
-    square (`qsquare`) — so one document can hold a Mandelbox and a
-    Mandelbulb in ONE formula chain, which is where Mandelbulber gets its
-    range and the last thing this mode was missing. Nothing structural
-    moved: a link contributes its forward map and its LOCAL Lipschitz
-    factor, and both were already written down in the modules that render
-    those maps alone (`8·|y|⁷` from `bulb-de.ts`, a heuristic; `2·|y|`
-    from `qjulia-de.ts`, EXACT because quaternion norms multiply), so the
-    chain composes the shipped bounds and inherits their status rather
-    than adding a new one. A LONE power map is refused — the Mandelbulb
-    render owns one and `qjulia-de.ts`'s object is fr-7u8t.5's
-    measured-dull won't-do — which is what keeps this gate DISJOINT from
-    `analyzeBulbSystem` rather than merely ordered before it, and costs
-    no range because two power links ARE a chain. A power link's WEIGHT
-    is free (unlike `analyzeBulbSystem`'s lone map, which refuses
-    anything but 1: there is no textbook object here to deform away from,
-    and `dr` accounts for `w` exactly). The orbit stays in `v` space with
-    the literal `+ 1` — the power modules work in `y` space and seed `dr`
-    at `sigma_max(M)`; the two are the same recurrence in different
-    coordinates, but that factoring needs ONE `M` and a chain has n, so
-    staying in `v` is how a chain avoids choosing.
+    rejected alternative, CHAINING (all n links inside one pass), was
+    measured fattening toward a solid ball as links were added — the
+    fr-7u8t.8 defect returning — and survives only as an executable local
+    in `scripts/escape-chain.harness.ts`, the sheet the SHIPPED estimator
+    draws.
+    A LINK NEED NOT BE A FOLD since fr-j231: the chain admits the two
+    POWER maps beside its three folds — the triplex 8th power (`bulb`)
+    and the quaternion square (`qsquare`) — so one document can hold a
+    Mandelbox and a Mandelbulb in ONE chain. A link contributes its
+    forward map and its LOCAL Lipschitz factor, both already written down
+    where those maps render alone (`8·|y|⁷` from `bulb-de.ts`, a
+    heuristic; `2·|y|` from `qjulia-de.ts`, EXACT because quaternion
+    norms multiply), so the chain composes shipped bounds and inherits
+    their status rather than adding a new one. A LONE power map is
+    REFUSED — `bulb-de.ts`'s estimator is the better one for that shape —
+    which keeps this gate DISJOINT from `analyzeBulbSystem` rather than
+    merely ordered before it, and costs no range because two power links
+    ARE a chain. A power link's WEIGHT is free (`dr` accounts for `w`
+    exactly), unlike `analyzeBulbSystem`'s lone map. THE ORBIT STAYS IN
+    `v` SPACE with the literal `+ 1`: the power modules work in `y` space
+    and seed `dr` at `sigma_max(M)`, the same recurrence in different
+    coordinates, but that factoring needs ONE `M` and a chain has n.
     THE ESTIMATE FORM FOLLOWS THE CHAIN'S ESCAPE LAW
     (`EscapeDE.logEstimate`, ONE flag per chain resolved at build and
     carried on both wires rather than re-decided in six mirrors): folds
     escape exponentially and read the linear `r/dr`; a power link makes
-    the chain super-exponential and it reads the Böttcher `0.5·r·ln r/dr`,
-    `bulb-de.ts`'s and `qjulia-de.ts`'s own form. That does NOT reopen
-    fr-282c, which refused the log form for the FOLD family — its
-    dimensional argument (the folds are uniform-rescale equivariant)
-    cannot reach a map with `V(λy) = λ^d V(y)`, and its decisive
-    empirical control was re-run here rather than waved past.
-    THE PREDICTED STIFFNESS HAZARD DOES NOT REPRODUCE, and it is
-    fr-j231's most useful result: the bead's blank-frame figures are the
-    PROTOTYPE's CHAINING arm's, and the shipped orbit CYCLES — `+ p`
-    re-enters after every link, so a power link is applied to a point the
-    query has just tethered and its output is tested before any fold can
-    compound it. SO NO AUTO-SCALE AND NO NEW SIGNAL — a hint computed
-    from the closed-form bound (`escapeLinkStiffnessLimit`, kept
-    executable as the refuted prediction's own record) was written and
-    then DELETED, because it fires on every row of that table and every
-    one of them renders, which is fr-17qu's second-cut lesson verbatim.
+    the chain super-exponential and it reads the Böttcher
+    `0.5·r·ln r/dr`. That does NOT reopen fr-282c, which refused the log
+    form for the FOLD family — its dimensional argument (the folds are
+    uniform-rescale equivariant) cannot reach a map with
+    `V(λy) = λ^d V(y)`, and its decisive empirical control was re-run
+    here rather than waved past.
+    THE PREDICTED STIFFNESS HAZARD DOES NOT REPRODUCE (fr-j231's most
+    useful result: the bead's blank-frame figures are the PROTOTYPE's
+    CHAINING arm's, and cycling re-tethers the query after every link).
+    SO NO AUTO-SCALE AND NO NEW SIGNAL — a hint computed from the
+    closed-form bound (`escapeLinkStiffnessLimit`, kept executable as the
+    refuted prediction's record) was written and then DELETED, because it
+    fires on every row of that table and every one of them renders, which
+    is fr-17qu's second-cut lesson verbatim.
     TWO INSTRUMENT RULES, both of which a first draft of this record got
     wrong. Ball fill is a seeded uniform sample against
-    `escapeSetContains`, NEVER A GRID: a fold's structure sits on its own
-    walls — the integers, at the classic `boxLimit` — so a grid whose
-    planes land there over-samples them, and THIN sets only, which is why
-    it is easy to miss (it bites exactly the rows a blank-frame question
-    is about). AND A DISTANCE THRESHOLD IS NOT A MEMBERSHIP ORACLE IN
-    EITHER DIRECTION — a small estimate means "near a boundary" for an
-    ESCAPER too — which is what manufactured the record's phantom
-    collapse. fr-azjk carries both findings back to the sheets that
+    `escapeSetContains`, NEVER A GRID (a fold's structure sits on its own
+    walls — the integers, at the classic `boxLimit` — so a grid's planes
+    land there and over-sample them), and it bites THIN sets, which is
+    why it is easy to miss. AND A DISTANCE THRESHOLD IS NOT A MEMBERSHIP
+    ORACLE IN EITHER DIRECTION — a small estimate means "near a boundary"
+    for an ESCAPER too. fr-azjk carries both back to the sheets that
     predate them.
     `estimateEscapeDistance` iterates the maps FORWARD with ONE shared
     scalar running derivative (Buddhi/Rrrola `DE = |v|/dr` — the field's
     standard heuristic, not a certified bound), mirrored by
     `surface-material.ts`'s `SURFACE_ESCAPE` variant and, since fr-dlxh,
     `surface-de-gpu.ts`'s `core:"escape"` kernel. `ESCAPE_STEP_SCALE` is
-    the one marcher-damping definition both the GLSL variant and the WGSL
-    packer import, and it STAYS 0.35 AT EVERY CHAIN LENGTH, MEASURED
-    rather than assumed (fr-za0n predicted chains would need heavier
-    damping; both harnesses refute it) — cycling floors `dr` after every
-    link, so no two folds compound between floors and the slack per step
-    is the single map's. BAILOUT STAYS 4 for the same measured reason it
-    always was: raising it at a fixed budget inflates the set rather than
-    revealing it. Phone-cheap by construction (~30 branchless folds per
-    link per eval, at or BELOW the single map on every measured row,
-    because the n-times budget is a ceiling only a non-escaping orbit
-    pays and every extra link is another chance to escape). f32 is safe
-    on the GPU mirrors: the bailout test bounds `|v|` entering every link
-    and the per-link `+ 1` floors `dr`.
+    the one marcher-damping definition both mirrors import, and it STAYS
+    0.35 AT EVERY CHAIN LENGTH, MEASURED rather than assumed (fr-za0n
+    predicted chains would need heavier damping; both harnesses refute
+    it) — cycling floors `dr` after every link, so no two folds compound
+    between floors and the slack per step is the single map's. BAILOUT
+    STAYS 4 for the same measured reason it always was: raising it at a
+    fixed budget inflates the set rather than revealing it. Phone-cheap
+    by construction (the n-times budget is a ceiling only a non-escaping
+    orbit pays, and every extra link is another chance to escape). f32 is
+    safe on the GPU mirrors: the bailout test bounds `|v|` entering every
+    link and the per-link `+ 1` floors `dr`.
     EMPTY CHAINS ARE REACHABLE inside the gate — a big enough pre-scale
     escapes everywhere on the first pass and the mode renders a blank
     frame — so `escapeSetContains` (membership, from the same orbit the
     estimate reads) and `probeEscapeFill` (a seeded sample of the bailout
     ball) exist to say so. `probeEscapeFill` MEASURES VOLUME AND MUST NOT
-    BE READ AS "WILL IT RENDER": an escape-time set is often a thin
-    fractal, the shipped `mandelboxRings` reads 0.0000% fill while
-    rendering ~38k surface hits, and fr-wuuu's stronger case is a slice
-    with LITERALLY ZERO members in 524288 samples that still draws 20.9%
-    of its rays as a coherent shaded object — a slice through a set of
-    shells is a set of surfaces, and no volume statistic can see one.
-    fr-17qu's first cut toasted "looks empty" over one of the app's own
-    presets on exactly that confusion. The signal fires off the FIRST
-    completed settle's own hit count instead (main.ts's
+    BE READ AS "WILL IT RENDER": these sets are often thin fractals, and
+    fr-wuuu's case is a slice with LITERALLY ZERO members that still
+    draws a fifth of its rays as a coherent shaded object — a slice
+    through a set of shells is a set of surfaces, and no volume statistic
+    can see one (fr-17qu's first cut toasted "looks empty" over one of
+    the app's own presets on exactly that confusion). The signal fires
+    off the FIRST completed settle's own hit count instead (main.ts's
     `surfaceBlankNotice`, and since fr-7k0o off BOTH engines'): a frame
     that drew essentially nothing at the entry pose IS blank by the
     renderer's own arithmetic, so it cannot disagree with what the user
     sees. The bar is `SURFACE_BLANK_HIT_FRACTION` (0.001) and NOT zero,
-    because the marcher accepts at `uAcceptPixelEps` and a few rays catch
-    even a degenerate system. It reports, never refuses. Neither probe is
-    wired into `analyzeEscapeSystem` or `buildEscapeDE`, which stay cheap.
+    because the marcher accepts at `uAcceptPixelEps`. It reports, never
+    refuses, and neither probe is wired into `analyzeEscapeSystem` or
+    `buildEscapeDE`, which stay cheap.
     KALEIDOSCOPE is a query-space wedge fold (`foldQueryIntoSector`), not
     an orbit operation: `g` is 1-Lipschitz and an isometry per sector,
     the orbit is seeded AND offset by `g(p)`, so the set is exactly
@@ -847,16 +826,15 @@ and UI**, so the interesting math is unit-tested without a browser:
     `boxLimit`/`minRadius2`/`fixedRadius2`, resolved once at build), so a
     chain may hold a different sphere/box apparatus per link, and
     `foldLipschitz` tests the real magnification `fR²/mR²` rather than the
-    frozen 4 — which is what keeps this gate the exact COMPLEMENT of the
-    IFS one as the knob moves. Pinned against an INDEPENDENT oracle:
+    frozen 4 — which keeps this gate the exact COMPLEMENT of the IFS one
+    as the knob moves. Pinned against an INDEPENDENT oracle:
     `scripts/spherefold-radius-sweep.harness.ts`'s own parameterized copy
-    of `runEscapeOrbit`, written for fr-qi9c's sheet before any of this
-    existed, agrees bit-exactly over 12k queries including a two-link
-    chain whose links carry DIFFERENT radii.
+    of `runEscapeOrbit`, written before any of this existed, agrees
+    bit-exactly including a two-link chain whose links carry DIFFERENT
+    radii.
     ONE-LINK, UNSYMMETRISED SYSTEMS ARE BIT-IDENTICAL to fr-kltj's loop
     (pinned in `escape-de.test.ts` against a frozen copy of it), and
-    fr-s04t carried the cycle into the two shader mirrors, so a CHAIN now
-    renders what this module estimates on every path: GLSL as one
+    fr-s04t carried the cycle into both shader mirrors: GLSL as one
     `uEscM`/`uEscT`/`uEscParams` slot per link (24-slot cap, the
     descent's own — and the mode's, since eligibility is one answer for
     both engines), WGSL as one `GpuMap` per link on the maps storage
@@ -864,15 +842,13 @@ and UI**, so the interesting math is unit-tested without a browser:
     flat wire, now frozen layout ballast nothing reads to render.
     The rendered set is the MANDELBROT-form set — the per-iteration
     offset is the QUERY POINT (fr-7u8t.8), which is what makes it the
-    object published Mandelbox renders show. fr-kltj had shipped the
-    Julia form (offset = the document's `t`) and it rendered a
-    near-SPHERE. `t` survives as the PRE-fold offset — a live deformation
-    knob, classic Mandelbox at `t = 0` — so the mode still adds NO
-    document state and stays a render MODE over the existing vocabulary
-    (morphs/mutations/persistence untouched). The Julia form was
-    measured, not merely argued away, and lives on as a local in
-    `scripts/escape-form-sweep.harness.ts`; it does not earn the
-    permanent document flag it would cost.
+    object published Mandelbox renders show; fr-kltj's Julia form (offset
+    = the document's `t`) rendered a near-SPHERE and lives on as a local
+    in `scripts/escape-form-sweep.harness.ts`, not as the permanent
+    document flag it would cost. `t` survives as the PRE-fold offset — a
+    live deformation knob, classic Mandelbox at `t = 0` — so the mode
+    adds NO document state and stays a render MODE over the existing
+    vocabulary (morphs/mutations/persistence untouched).
     Full record — the cycling/chaining tables, the refuted stiffness
     prediction, the instrument corrections, and the cost, bailout and
     step-scale figures — in `docs/escape-time-family.md`.
@@ -1134,93 +1110,91 @@ and UI**, so the interesting math is unit-tested without a browser:
     per-tier `targetMs` of measured GPU time each, measured by a
     forced-completion 1x1 readback and NOT `gl.finish()`, which some
     command-buffer paths return from before execution. Measurement scaling
-    is blind to the fold+grid frames' 100-1000x cheap/expensive band
-    bimodality, so every strip is ALSO capped at `STRIP_WORST_CASE_CAP_MS`
-    of worst-case predicted cost.
+    is blind to the fold+grid frames' cheap/expensive bimodality, so every
+    strip is ALSO capped at `STRIP_WORST_CASE_CAP_MS` of worst-case
+    predicted cost.
     THE EVIDENCE CHAIN has semantics worth stating exactly: the price starts
     at a class-pessimistic ms/px, RATCHETS up as the job's own measurements
     reveal worse pixels, and chains across job re-arms via scene.ts. A
     COMPLETED job's whole-frame observation REPLACES the floor in BOTH
     directions (x10 tier-gap safety) — down matters, or a measured-cheap
     fold system stays pinned at class-floor micro-strips whose readback
-    overhead dissolves its settle and poisons the cost gate — while partial
-    jobs only RAISE. Relaxation lives exactly ONE completed-preview->settle
-    handoff (a superseded job = the pose moved on = stale evidence dies).
+    overhead dissolves its settle — while partial jobs only RAISE.
+    Relaxation lives exactly ONE completed-preview->settle handoff (a
+    superseded job = the pose moved on = stale evidence dies).
     Measurements reach the ratchet through a measurement-time
     `observe(ms, px)` door as well as `next()`'s sizing-time one (fr-id9r:
     a job's LAST measurement never reaches a sizing call, and capture
     frames' final strips are the bottom rows, fold monsters' favorite
     home). Capture observations are RAISE-ONLY and may never own the floor,
     with one exception (fr-y1m7): a COMPLETED capture may SEED an EMPTY
-    chain, because offline export is the one caller that never fills it
+    chain, since offline export is the one caller that never fills it
     otherwise — seed, never replace, and safe in the direction it can be
-    wrong, since an export-scale trace resolves finer pixels than the live
-    tier and so reads HIGH.
+    wrong, an export-scale trace reading HIGH.
     THE PUMP IS PIPELINED (fr-096u's A/B verdict): every sync point on the
-    Iris/ANGLE stack costs ~66-90ms REGARDLESS of the work behind it
+    Iris/ANGLE stack costs the same tax REGARDLESS of the work behind it
     (`SURFACE_STRIP_SYNC_TAX_MS`), so strips go out as individually FLUSHED
     draw groups (the watchdog's preemption boundaries) fenced only per
     ~`SURFACE_STRIP_FENCE_GROUP_MS` of predicted work; batch measurements
-    SUBTRACT the tax to price MARGINAL trace work (leaving it in
-    re-inflated the evidence, tightened the caps, made more strips and paid
-    more tax — a vicious cycle); strips of a row or more row-snap to a
-    single scissor rect (a ~20-30ms per-DRAW fixed cost tripled under
-    3-rect strips); and the canvas blit rides PRESENT-ON-DRAIN gaps
-    (presents share the strips' GL queue). The pipelined refill bounds its
-    in-flight queue at a queue price on TYPICAL-cost class floors (the fold
-    PRIOR, not the fold WORST constant), raised live by the job's own
-    ratchet and capped at one `STRIP_WORST_CASE_CAP_MS` of mispredicted
-    work. No-prior jobs (affine) keep the legacy sync-collapse — serial
-    joined strips completing whole light jobs in one call, escaping to the
-    pipeline past `SURFACE_STRIP_SYNC_ESCAPE_MS`.
-    Capture/offline export runs the SAME pump (fr-y6m0), looping it and
-    differing only in how it WAITS between calls: the synchronous one
-    (offline export, thumbnails) blocks on ONE whole-queue readback per
-    queueful, the yielding one (fr-7mfx's Save-PNG) hands the main thread
-    back on rAF — timer-backstopped at a frame, because a page whose frame
-    clock runs slow starves the queue, and a bounded macrotask spin when
-    the page is hidden. A capture job never presents (the export-scale
-    target must not reach the canvas), ADOPTS the fence backlog like the
-    live jobs, and winds its own queue down before returning from an abort
-    so no export leftovers outlive the export. THE SYNCHRONOUS DRAIN
-    RETIRES ITS FENCES WITHOUT POLLING THEM, straight after its readback:
-    that readback is the stronger barrier, and a sync object's signaled
-    state is only refreshed on the page's message loop, so a loop that
-    never yields reads TIMEOUT_EXPIRED forever and spins on a queue the GPU
-    finished long ago.
+    SUBTRACT the tax to price MARGINAL trace work (leaving it in was a
+    vicious cycle — inflated evidence, tighter caps, more strips, more
+    tax); strips of a row or more row-snap to a single scissor rect (a
+    per-DRAW fixed cost tripled under 3-rect strips); and the canvas blit
+    rides PRESENT-ON-DRAIN gaps (presents share the strips' GL queue). The
+    pipelined refill bounds its in-flight queue at a queue price on
+    TYPICAL-cost class floors (the fold PRIOR, not the fold WORST
+    constant), raised live by the job's own ratchet and capped at one
+    `STRIP_WORST_CASE_CAP_MS` of mispredicted work. No-prior jobs (affine)
+    keep the legacy sync-collapse — serial joined strips completing whole
+    light jobs in one call, escaping to the pipeline past
+    `SURFACE_STRIP_SYNC_ESCAPE_MS`.
+    Capture/offline export runs the SAME pump (fr-y6m0), differing only in
+    how it WAITS between calls: the synchronous one (offline export,
+    thumbnails) blocks on ONE whole-queue readback per queueful, the
+    yielding one (fr-7mfx's Save-PNG) hands the main thread back on rAF —
+    timer-backstopped at a frame, because a page whose frame clock runs
+    slow starves the queue, and a bounded macrotask spin when the page is
+    hidden. A capture job never presents (the export-scale target must not
+    reach the canvas), ADOPTS the fence backlog like the live jobs, and
+    winds its own queue down before returning from an abort so no export
+    leftovers outlive the export. THE SYNCHRONOUS DRAIN RETIRES ITS FENCES
+    WITHOUT POLLING THEM, straight after its readback: that readback is the
+    stronger barrier, and a sync object's signaled state is only refreshed
+    on the page's message loop, so a loop that never yields reads
+    TIMEOUT_EXPIRED forever and spins on a queue the GPU finished long ago.
     COST CEILINGS ARE THE SYNCHRONOUS DRAIN'S ALONE since fr-avf6 — offline
-    export and thumbnails, the callers that freeze the tab for a frame's
-    whole duration and offer no way to stop it. There, measured evidence
-    predicts the frame up front (never the class prior, which would refuse
-    every fold export sight unseen) and refuses past
-    `SURFACE_CAPTURE_PREDICT_CEILING_MS` (120s); the drain itself aborts
-    past `SURFACE_CAPTURE_SPEND_CEILING_MS` (60s) of real spend; both throw
-    `SurfaceCaptureCostError` — the offline exporter fails the run, the
-    thumbnail path falls back to the explorer render. THE INTERACTIVE
-    SAVE-PNG IS REFUSED NOTHING: its modal discloses measured coverage, its
-    Cancel works, and the drain yields, so a prediction deciding for the
-    user is the patience-guessing fr-zx34 already reverted one tier over.
+    export and thumbnails, the callers that freeze the tab and offer no way
+    to stop it. There, measured evidence predicts the frame up front (never
+    the class prior, which would refuse every fold export sight unseen) and
+    refuses past `SURFACE_CAPTURE_PREDICT_CEILING_MS` (120s); the drain
+    itself aborts past `SURFACE_CAPTURE_SPEND_CEILING_MS` (60s) of real
+    spend; both throw `SurfaceCaptureCostError` — the offline exporter
+    fails the run, the thumbnail path falls back to the explorer render.
+    THE INTERACTIVE SAVE-PNG IS REFUSED NOTHING: its modal discloses
+    measured coverage, its Cancel works, and the drain yields, so a
+    prediction deciding for the user is the patience-guessing fr-zx34
+    already reverted one tier over.
     THE STANDING VERDICT IS NO AUTOMATIC GIVE-UP (fr-24to, fr-zx34, the
     user's own call): the settle always ARMS however expensive the frame —
-    bounded strips grind visibly and interruptibly, and an early cut that
-    gated it on predicted cost silently blanked legitimate lens settles
-    into permanent preview blur, which reads as a broken render — and the
+    bounded strips grind visibly and interruptibly, and an early cut gated
+    on predicted cost silently blanked legitimate lens settles into
+    permanent preview blur, which reads as a broken render — and the
     preview always runs to COMPLETION, with `surfaceRenderProgress()` and
     the surface progress row disclosing honest coverage (naming its engine
     since fr-tmgf) so the user decides. Two rounds of budget/prediction
     truncation shipped and were REVERTED; fr-ud7n carried the same line
     across the WebGPU seam.
     fr-nl32's COALESCING RULE: `renderSurface("preview")` ARMS a fresh job,
-    so re-arming per invalidation discarded the in-flight partial and any
-    renderer where a preview spans frames painted essentially nothing for a
-    whole drag. main.ts's tick now coalesces like the compute loop — while
-    a job is in flight an invalidation STEPS it instead of re-arming, and
-    stays latched in `scene.needsRender` so the next arm takes the freshest
+    so re-arming per invalidation discarded the in-flight partial and
+    painted essentially nothing for a whole drag wherever a preview spans
+    frames. main.ts's tick coalesces like the compute loop — while a job is
+    in flight an invalidation STEPS it instead of re-arming, and stays
+    latched in `scene.needsRender` so the next arm takes the freshest
     camera. Pose coherence is free (`armSurfacePreview` snapshots the
     camera into uniforms, so a multi-frame job traces ONE pose).
     Fold surface sessions gate their first frame on `compileAsync` of the
-    fold tracer program (~25s links happen off the critical path where the
-    driver offers `KHR_parallel_shader_compile`); THE COMPILE MESH MUST
+    fold tracer program (the long links happen off the critical path where
+    the driver offers `KHR_parallel_shader_compile`); THE COMPILE MESH MUST
     MIRROR FullScreenQuad's position+uv triangle or the draw links a second
     program variant, and the gate defers activate()'s guide/selection
     refresh so no other re-link joins the driver's compile queue behind it.
@@ -1356,6 +1330,12 @@ Frame` callback, which runs before paint so the disabled look never
     under-prediction still arms the 400ms grace timer, so it costs one
     grace period, while an ABSENT reading falls back to export scale and
     flashes every time — so the field survives everything it plausibly can.
+  - `export-progress.ts` — the Save-PNG progress modal's DOM-free policy
+    (fr-7mfx): a run earns a blocking modal only past a slow `predictedMs`
+    or `EXPORT_MODAL_GRACE_MS` (never-flash, `render-tier.ts`'s
+    discipline), and its two stops stay apart on `ExportRun.stop` —
+    `"cancel"` means DISCARD, fr-2fbs's optional `"deliver"` means stop and
+    keep. Cancellation is a REQUEST, never an instant stop. Pure, tested.
   - `main.ts` — entry point; wires state <-> scene <-> ui <-> interactions.
     `?surfacestate` publishes `window.__surfaceState()` (fr-opgk), the
     read-only settle latch `scripts/surface-repro.verify.mjs` — and any
@@ -1463,80 +1443,75 @@ Frame` callback, which runs before paint so the disabled look never
     bare active-map count first, so an over-cap count throws here rather
     than degrading silently.
     VARIANT ARMS, resolved by `surfaceFragmentFor`: `SURFACE_FOLD_LENS`
-    (fr-g58b — the preprocessor renames the descent bodies to
-    `surfaceDECore`, the wrapper owns the public `surfaceDE` overloads
-    mirroring `descendLens`, and the cores' own `uFinal*` lens uniforms are
-    packed IDENTITY while the wrapper applies the real lens from `uLens*`);
-    `SURFACE_ESCAPE` (fr-kltj — replaces the descent bodies wholesale with
-    `escape-de.ts`'s forward loop, packed by `setEscapeSystem`);
-    `SURFACE_BULB` (fr-7u8t.9 — `bulb-de.ts`'s forward triplex-power loop,
-    packed by `setBulbSystem`, nested inside `SURFACE_ESCAPE`'s `#else`
-    because the two are ALTERNATIVES, each replacing the descent bodies
-    wholesale, so `surfaceFragmentFor` refuses the pair; its `uBulb*`
-    uniforms are declared INSIDE the arm so no other variant pays their
-    bytes); `SURFACE_GROUND_PLANE` (fr-rhn5 — an infinite one-sided floor
-    below the session ball, lit by a `shadeGroundPlane` entry mirroring the
-    WGSL arm term for term, called from all three miss exits, composing
-    with every other variant except the balloon, which throws — no horizon
-    inside the shell); and `SURFACE_BALLOON`. Since compute became the
-    preferred tracer, the escape, bulb and fold-lens arms are the FALLBACK
-    arms (`?surfacegl` / no adapter / device loss).
-    The escape arm CYCLES the whole formula chain since fr-s04t:
-    `uEscM`/`uEscT`/`uEscParams` are declared INSIDE the arm as one slot
-    per link, `uMapCount` is the link count, `uMaxDepth * uMapCount`
-    single-link steps keep `uMaxDepth` meaning PASSES, and
-    `uSymOrder`/`uSymPlane` drive `foldQuerySector` once before the orbit.
-    Since fr-j231 a link may be a POWER map, which cost three things and no
-    layout change: the fold pair's `kind != 2` / `kind != 1` tests are
-    exhaustive by NEGATION over {1, 2, 3}, so kinds 4 and 5 sit behind a
-    `kind < 4` GUARD rather than beside them (unguarded, kind 4 satisfies
-    both and runs both folds — the hazard `surface-de-gpu.ts`'s doc cites
-    as why the Mandelbulb became a sixth CORE); `bulbPow8` is DUPLICATED
-    from the `SURFACE_BULB` arm character for character, because the two
-    arms are alternatives and neither can see a definition emitted inside
-    the other (a test diffs the two bodies so the copy cannot drift); and
-    `uEscLogForm` is a SCALAR, not a params tail, because the estimate form
-    is ONE number per CHAIN read after the orbit, and making it depend on
-    which link happened to terminate would put a step across every boundary
-    between the two forms.
+    (fr-g58b — the descent bodies rename to `surfaceDECore`, the wrapper
+    owns the public `surfaceDE` overloads mirroring `descendLens`, and the
+    cores' own `uFinal*` lens uniforms pack IDENTITY while the wrapper
+    applies the real lens from `uLens*`); `SURFACE_ESCAPE` (fr-kltj,
+    `escape-de.ts`'s forward loop) and `SURFACE_BULB` (fr-7u8t.9,
+    `bulb-de.ts`'s forward triplex-power loop), which each replace the
+    descent bodies WHOLESALE and are therefore ALTERNATIVES —
+    `surfaceFragmentFor` REFUSES the pair, and the bulb arm's `uBulb*`
+    uniforms are declared INSIDE it so no other variant pays their bytes;
+    `SURFACE_GROUND_PLANE` (fr-rhn5 — an infinite one-sided floor below
+    the session ball, its `shadeGroundPlane` entry mirroring the WGSL arm
+    term for term, called from all three miss exits, composing with every
+    variant except the balloon, which throws — no horizon inside the
+    shell); and `SURFACE_BALLOON`. Since compute became the preferred
+    tracer, the escape, bulb and fold-lens arms are the FALLBACK arms
+    (`?surfacegl` / no adapter / device loss).
+    The escape arm CYCLES the whole formula chain since fr-s04t: one
+    `uEscM`/`uEscT`/`uEscParams` slot per link declared INSIDE the arm,
+    `uMapCount` the link count, `uMaxDepth * uMapCount` single-link steps
+    so `uMaxDepth` keeps meaning PASSES, and `uSymOrder`/`uSymPlane`
+    driving `foldQuerySector` once before the orbit. Since fr-j231 a link
+    may be a POWER map, which cost three things and no layout change: the
+    fold pair's `kind != 2` / `kind != 1` tests are exhaustive by NEGATION
+    over {1, 2, 3}, so kinds 4 and 5 sit behind a `kind < 4` GUARD rather
+    than beside them (unguarded, kind 4 satisfies both and runs both folds
+    — the hazard `surface-de-gpu.ts`'s doc cites as why the Mandelbulb
+    became a sixth CORE); `bulbPow8` is DUPLICATED from the `SURFACE_BULB`
+    arm character for character, because neither alternative can see a
+    definition emitted inside the other (a test diffs the two bodies so
+    the copy cannot drift); and `uEscLogForm` is a SCALAR, not a params
+    tail, because the estimate form is ONE number per CHAIN read after the
+    orbit — per-link would put a step across every boundary between the
+    two forms.
     THE STRIP IS A SIZE RULE, not the plane arm's private habit (fr-s9ll):
     `surfaceFragmentFor` strips any resolved source past
     `SURFACE_GLSL_STRIP_BYTES` (64KB) through `stripGlslSource`, a
     whole-source comment/indentation strip emitting the identical token
-    stream. The cliff is real — Mesa crashes at ~80KB (82.2KB observed) —
-    and a size threshold is the honest predicate for a size cliff, where a
-    hand-kept list of which variants strip is what drifts the next time one
-    grows a paragraph. MEASURE BEFORE ADDING THE NEXT PARAGRAPH:
+    stream. The cliff is real — Mesa crashes around 80KB — and a size
+    threshold is the honest predicate for a size cliff, where a hand-kept
+    list of which variants strip drifts the next time one grows a
+    paragraph. MEASURE BEFORE ADDING THE NEXT PARAGRAPH:
     `surfaceFragmentFor(escape, lens, balloon, plane, bulb).length` against
-    `SURFACE_GLSL_STRIP_BYTES`. The escape and bulb arms are the ones with
-    headroom left to spend and the escape+balloon pairing is the one to
-    watch.
+    `SURFACE_GLSL_STRIP_BYTES`. The escape and bulb arms have the headroom
+    left to spend; escape+balloon is the pairing to watch.
     Orbit-trap color blends descent choices TOP-DOWN (depth-0 copy
     dominates, flam3's convention — fr-gt9i); the per-level decay is the
     Color speed slider (default 0.5 = that original fixed behavior), and
-    the rings/sheets orbit-trap color sources ride the same hit-info
-    descent (fr-rl4b). The march samples `surface-grid.ts`'s floors
-    (NEAREST 3D texture) before paying a descent (fr-55r5 part 2): a floor
-    above `uAcceptPixelEps` — fr-7xgi's tier-pinned acceptance eps, NOT the
-    buffer-scaled `uPixelEps` — is both a no-hit proof and a safe stride,
-    damped by the same `uStepScale` as analytic steps; gridless marching
-    stays the always-correct fallback. Skips drain their own whole-ray cap
+    the rings/sheets sources ride the same hit-info descent (fr-rl4b). The
+    march samples `surface-grid.ts`'s floors (NEAREST 3D texture) before
+    paying a descent (fr-55r5 part 2): a floor above `uAcceptPixelEps` —
+    fr-7xgi's tier-pinned acceptance eps, NOT the buffer-scaled
+    `uPixelEps` — is both a no-hit proof and a safe stride, damped by the
+    same `uStepScale` as analytic steps; gridless marching stays the
+    always-correct fallback. Skips drain their own whole-ray cap
     (`SURFACE_GRID_SKIP_CAP`), never the analytic march budget, and the
     full-tier budget is 160 — fr-z70m: charging cheap conservative skips
-    against 96 march steps starved rays that thread gaps or graze faces,
-    dissolving far/threaded geometry into view-dependent dropout speckle
-    (measured + healed in `scripts/erosion-repro.harness.ts`). The three
-    shading taps (normal/shadow/AO) ride the value form, which fold systems
-    route to `surfaceDEProbe` — a width-1 instantiation of the SAME
-    fold-descent template (fr-zqu8, fr-p8bc's verdict on the fragment path;
-    one text two names, march/hit acceptance stay width 12). The fold-lens
-    variant deliberately carries no probe (fr-otkf tracks the port — lower
-    stakes now that it is the fallback rather than the primary tracer).
+    against the old 96 starved rays that thread gaps or graze faces,
+    dissolving far/threaded geometry into dropout speckle (measured +
+    healed in `scripts/erosion-repro.harness.ts`). The three shading taps
+    (normal/shadow/AO) ride the value form, which fold systems route to
+    `surfaceDEProbe` — a width-1 instantiation of the SAME fold-descent
+    template (fr-zqu8, fr-p8bc's verdict on the fragment path; one text
+    two names, march/hit acceptance stay width 12). The fold-lens variant
+    deliberately carries no probe (fr-otkf tracks the port).
     OUTPUT ALPHA IS THE fr-7k0o COVERAGE FLAG AND MUST NEVER REACH THE
     CANVAS (fr-1wbv): three r163+ creates the canvas `alpha: true`
     unconditionally (the renderer's `alpha` param only picks the clear
     alpha), so a coverage-0 miss reaching the compositor ADDS the page's
-    own `--bg` to the pane — the whole of the two 4D arms' IoU 0.24/0.35
+    own `--bg` to the pane — the whole of the two 4D arms' measured IoU
     divergence, and an alpha hole in every WebGL surface Save-PNG. The
     present blit (`BLIT_FRAGMENT`) strips alpha to 1 as every surface
     present's last hop; coverage is read off the TRACE targets only.
@@ -1594,11 +1569,11 @@ Frame` callback, which runs before paint so the disabled look never
   - `surface-compute.ts` — WebGPU compute renderer, and the ROUTING is the
     part to get right. PREFERRED whenever an adapter exists: fold-shaped 3D
     sessions (fr-tzdg — base-map folds OR a fold FINAL lens, i.e.
-    `deHasFolds(de) || foldFinal`, fr-55s1), escape-time sessions (fr-dlxh — the
-    non-contracting pure-fold map, or since fr-s04t the CHAIN of them, that
-    the IFS gate refuses), bulb sessions (fr-tdin), and PLAIN 4D sessions
-    at symmetry order 1 (fr-dlxh's 4D cut). For all of those no fold GLSL
-    ever compiles (the ~25s Mesa link, the ~5.7s lens link and the fr-096u
+    `deHasFolds(de) || foldFinal`, fr-55s1), escape-time sessions (fr-dlxh —
+    the non-contracting pure-fold map, or since fr-s04t the CHAIN of them,
+    that the IFS gate refuses), bulb sessions (fr-tdin), and PLAIN 4D
+    sessions at symmetry order 1 (fr-dlxh's 4D cut) — for all of which no
+    fold GLSL ever compiles (the Mesa link, the lens link and the fr-096u
     entry hazards never engage) and no grid is requested (gridless by
     measured decision). COMPUTE-ONLY, entry REFUSED without compute and a
     mid-session loss exiting the mode with a toast: fold-shaped 4D sessions
@@ -1606,228 +1581,192 @@ Frame` callback, which runs before paint so the disabled look never
     — the fragment 4D tracer deliberately carries no fold GLSL and no
     forward-orbit GLSL either. THERE IS NO ORDER SPLIT LEFT since fr-fniy:
     EVERY 4D session prefers compute, kaleidoscope included, and the
-    fragment 4D tracer is its fallback arm. That line moved on a
-    re-measurement, not a hunch — real Iris, 1024x640, identity rotor, both
-    arms FORCED via `?surfacegl`/`?surfacecompute` — where fr-b8o5 had read
-    kaleido4 at 147s WebGL against 179s compute (a 1.2x inside the WebGL
-    arm's own 147/444/604/637s spread, i.e. a NULL result that left the rule
-    alone), fr-fniy's shade-sizer fix reads **637.5s WebGL against 53.1s
-    compute**, 2.8x the fragment arm's FASTEST run ever recorded here at a
-    ~5% spread against a 4x one, first frame 0.21s against 4.86s. plain4 is
-    11.5s vs 3.0s. fr-b72d's kernel exoneration still stands and is why the
-    scene is still tens of seconds on either arm — the DE's cost is
-    algorithmically superlinear in ORDER, which no routing choice touches.
+    fragment 4D tracer is its fallback arm — MEASURED verdict on a
+    re-measurement, not a hunch (fr-b8o5's kaleido4 reading was a NULL
+    result inside the WebGL arm's own spread; after fr-fniy's shade-sizer
+    fix compute wins kaleido4 and plain4 outright, first frame included).
+    fr-b72d's kernel exoneration still stands and is why the scene is still
+    tens of seconds on either arm — the DE's cost is algorithmically
+    superlinear in ORDER, which no routing choice touches.
     `?surfacecompute`/`?surfacegl` keep this re-measurable (main.ts;
     `?surfacegl` wins if both are given).
     `create()` takes a `SurfaceComputeTarget` union
     (`{kind:"ifs"|"escape"|"bulb"|"escape4"|"ifs4"}`) whose `kind` picks
     the kernel core (ifs4 → affine4 or fold4 off `deHasFolds4`, the 3D
-    `deHasFolds` split one dimension up; `bulb` → `core:"bulb"`; `escape4`
-    → `core:"escape4"`), the params packer and the maps buffer's
-    layout/existence — the bounded march/shade host loop, progressive
-    presents and failure ladder stay shared regardless. Two predicates keep
-    branches honest: `isForwardTarget` names the THREE forward kinds so a
-    branch cannot serve one and miss another, and `isFourDTarget` names the
-    two whose frame spec must carry `view4` — `escape4` being in both sets.
-    `isForwardTarget` no longer means "no maps buffer": BOTH escape kinds
-    carry their formula chain on the maps binding, so every maps-shaped
-    branch names them ahead of the predicate and `bulb` is the one
-    bindingless kind left. The BALLOON and the FLOOR ride an ifs4 target
-    since fr-qxxw/fr-h0c3, with the 3D arm's precedence (the two never
-    compile together and the balloon wins); NO FORWARD KIND EVER BALLOONS,
-    in either dimension. Escape and plain-affine ifs4 targets scale no
-    priors; fold/lens-shaped ifs4 scales by branch count like 3D. The ifs4
-    kind's rotor/slice view is PER-FRAME SPEC STATE (`spec.view4`, re-read
-    from the scene's `setSurface4View` state at every spec assembly and
-    repacked per pass — the fragment tracer's live-uniform discipline
-    across the WebGPU seam; a missing view4 throws), and
-    `surfaceComputeForceFrameKey` includes the pose so a timeline leg's
-    rotor/slice glide never re-presents a stale frame.
+    split one dimension up; `bulb` → `core:"bulb"`; `escape4` →
+    `core:"escape4"`), the params packer and the maps buffer's
+    layout/existence; the bounded march/shade host loop, progressive
+    presents and failure ladder stay shared. Two predicates keep branches
+    honest: `isForwardTarget` names the THREE forward kinds and
+    `isFourDTarget` the two whose frame spec must carry `view4`, `escape4`
+    being in both. `isForwardTarget` no longer means "no maps buffer":
+    BOTH escape kinds carry their formula chain on the maps binding, so
+    every maps-shaped branch names them ahead of the predicate and `bulb`
+    is the one bindingless kind left. The BALLOON and the FLOOR ride an
+    ifs4 target since fr-qxxw/fr-h0c3, with the 3D arm's precedence (the
+    two never compile together and the balloon wins); NO FORWARD KIND EVER
+    BALLOONS, in either dimension. Escape and plain-affine ifs4 targets
+    scale no priors; fold/lens-shaped ifs4 scales by branch count like 3D.
+    The ifs4 kind's rotor/slice view is PER-FRAME SPEC STATE (`spec.view4`,
+    re-read from `setSurface4View` at every spec assembly and repacked per
+    pass — the fragment tracer's live-uniform discipline across the WebGPU
+    seam; a missing view4 throws), and `surfaceComputeForceFrameKey`
+    includes the pose so a timeline leg's glide never re-presents a stale
+    frame.
     Owns the device (bench acquisition idioms + flame-backend error
-    taxonomy) and the frame loop: march slices sized from a measured
-    per-ray·step EMA, THE SWEEP'S ACTIVE-LIST REBUILD READING 4 B PER
-    ACTIVE RAY off the march's own status side-channel and not the whole
-    16 B/ray states buffer (fr-si66: the states never leave the device,
-    the terminal tally is kept as rays LEAVE the list, and the bench pins
-    it with no bench edit — leg B's hit-rate gate reads exactly that
-    tally. MEASURED 12.3x less transferred and 7.2x less host time
-    blocked per settle, `scripts/march-readback-ab.mjs`; the settle WALL
-    did not move, because it is shade-dominated, and the settled PNGs are
-    byte-identical across the change), and shade batches sized in HIT
-    units (fr-p8bc:
-    terminal rays queue by status — misses are one background write, hits
-    and, since fr-rhn5, ground-plane PLANE terminals pay the probe evals
-    and arrive scanline-CLUSTERED; the original ray-unit
-    doubling let miss runs inflate capacity a hit band then paid, five
-    kernel-confirmed i915 GPU hangs) and FLOORED AT ONE WORKGROUP, NEVER
-    ONE HIT: within a workgroup cost is depth-dominated, so sub-workgroup
-    batches buy no submission-wall safety, and the old 1-hit floor was a
-    one-way trapdoor — one hit band past the pass target and every 1-ray
-    batch re-measures the full per-submission wall as its per-hit cost,
-    the estimate latches it, and the settle reads as parked forever at a
-    pose-dependent percent (fr-d6g5's Mesa-25.2.8 "park"; `?surfacetrace`
-    and `scripts/fold-settle-park.repro.mjs` are that diagnosis'
-    instruments, kept). THE FREE (miss/exhausted) QUEUE HAS NO CAP AT ALL
-    since fr-257o — one background write per ray is not a cost model, so
-    it drains WHOLE in one dispatch per sweep, bounded by the device's
-    dispatch ceiling alone, which BOTH sizing paths now clamp at
+    taxonomy) and the frame loop. March slices are sized from a measured
+    per-ray·step EMA, and THE SWEEP'S ACTIVE-LIST REBUILD READS 4 B PER
+    ACTIVE RAY off the march's own status side-channel, never the whole
+    16 B/ray states buffer (fr-si66: the states never leave the device and
+    the terminal tally is kept as rays LEAVE the list; MEASURED verdict:
+    far less transferred and far less host time blocked, the settle WALL
+    unmoved because it is shade-dominated, settled PNGs byte-identical).
+    Shade batches are sized in HIT units (fr-p8bc), terminal rays queueing
+    by status — misses are one background write, hits and, since fr-rhn5,
+    ground-plane PLANE terminals pay the probe evals and arrive
+    scanline-CLUSTERED; the original ray-unit doubling let miss runs
+    inflate capacity a hit band then paid, in kernel-confirmed i915 GPU
+    hangs — and FLOORED AT ONE WORKGROUP, NEVER ONE HIT: within a
+    workgroup cost is depth-dominated, so sub-workgroup batches buy no
+    submission-wall safety, and the old 1-hit floor was a one-way trapdoor
+    that latched the settle as parked forever at a pose-dependent percent
+    (fr-d6g5's Mesa park; `?surfacetrace` and
+    `scripts/fold-settle-park.repro.mjs` are that diagnosis' instruments,
+    kept). THE FREE (miss/exhausted) QUEUE HAS NO CAP AT ALL since fr-257o
+    — one background write per ray is not a cost model, so it drains WHOLE
+    in one dispatch per sweep, bounded by the device's dispatch ceiling
+    alone, which BOTH sizing paths clamp at
     (`surfaceComputeMaxDispatchRays`; the frame ceiling deliberately does
-    NOT meet it — memory question, not submission shape). MEASURED 2492
-    free dispatches -> 58 and a 35.0 s settle -> 25.0 s, settled PNGs
-    byte-identical. AND THE HIT HALF IS NOT REAL WORK EITHER, which
-    fr-si66's record had concluded, fr-257o's own instrument refuted and
-    fr-2ojg fixed: a hit dispatch's wall is FLAT in its width to at least
-    eight workgroups (its hits come from one scanline band, so the cost is
-    the deepest ray's and the lanes run in parallel), so dividing a
-    submission's WHOLE time by its ray count charged LATENCY to every hit
-    and the sizer walked itself down to the floor — fr-d6g5's trapdoor at
-    every width below the occupancy knee. The sizer now carries a two-term
-    model, `cost(n) = intercept + n*marginal` (`ShadeHitCost`), splitting
-    each measurement's surprise between the terms by WIDTH (`n/(n+512)` to
-    the marginal — 512 is where the cost curve measured flat), sizing off
-    the MARGINAL alone, allowing
-    `max(pass target - intercept, K * intercept)` of hits per dispatch (a
-    latency-bound dispatch cannot be made cheaper by narrowing it, so
-    refusing to widen it buys nothing), growing the
-    capacity ladder against THAT budget rather than a fixed
-    `PASS_TARGET/2`, rate-limiting the marginal's FALL to a halving
+    NOT meet it — memory question, not submission shape). AND THE HIT HALF
+    IS NOT REAL WORK EITHER (fr-257o found it, fr-2ojg fixed it): a hit
+    dispatch's wall is FLAT in its width to at least eight workgroups, so
+    charging a submission's whole time to its ray count charges LATENCY to
+    every hit and walks the sizer down to the floor — fr-d6g5's trapdoor
+    at every width below the occupancy knee. So the sizer carries a
+    two-term model, `cost(n) = intercept + n*marginal` (`ShadeHitCost`):
+    each measurement's surprise splits between the terms by WIDTH
+    (`n/(n+512)` to the marginal — 512 is where the cost curve measured
+    flat), sizing reads the MARGINAL alone and allows
+    `max(pass target - intercept, K * intercept)` hits per dispatch (a
+    latency-bound dispatch cannot be made cheaper by narrowing it), the
+    capacity ladder grows against THAT budget and not a fixed
+    `PASS_TARGET/2`, the marginal's FALL is rate-limited to a halving
     (`SURFACE_COMPUTE_SHADE_MARGINAL_DECAY` — clamped at zero it reads
     "hits are free" and one cheap dispatch buys the whole capacity, which
-    is fr-p8bc's inflated-capacity hole re-opened in the cost model),
-    sharing ONE sizer across a supersampling job's passes (same pose, same
-    raster — across FRAMES the ladder's first-encounter bound is the
-    point), and HOLDING a partial hit batch for the next sweep rather than
-    paying the intercept for a sliver (bounded by the march having rays
-    left AND by one present interval). No per-hit PRIOR survives — it
+    is fr-p8bc's inflated-capacity hole re-opened in the cost model), ONE
+    sizer is shared across a supersampling job's passes (same pose, same
+    raster), and a partial hit batch is HELD for the next sweep rather
+    than paying the intercept for a sliver (bounded by the march having
+    rays left AND by one present interval). No per-hit PRIOR survives — it
     could only ask for less than the one-workgroup starting cap already
-    gives, and its decay held ~7 dispatches at the floor.
-    `SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS` IS 2000 AND ITS PLACEMENT
-    IS THE MEASUREMENT, not a round number: a ceiling on the predicted
-    TOTAL must squeeze the allowance to nothing as the intercept
-    approaches it, so it has to sit outside the range real scenes measure
-    in — at 1000 it bit mandelboxKifs (whose intercept reaches 960 ms)
-    directly, and moving it to 2000 bought 3.5x the hits/s there at an
-    UNCHANGED worst dispatch. MEASURED, real Iris: boxfoldPair settle
-    25.0 s -> 10.1 s (3.5x from the pre-fr-257o 35.0 s), hit shade
-    14807 -> 2650 ms, 139 -> 20 dispatches; mandelboxKifs 6.1x the
-    hits/s; lens3 -14.3%; the 4D `affine4` arm -39% on the same gate (the
-    sizer is host-loop state, shared by every core in both dimensions, so
-    there is no 4D twin owed); all ten settled PNGs byte-identical. AND THE
-    WORST SINGLE DISPATCH DID NOT GROW, which is the watchdog answer a
-    mean cannot give: 181.2 -> 188.3 ms on boxfoldPair while the batch
-    that produced it went 369 -> 2197 hits, and on mandelboxKifs
-    1714.8 -> 1731.3 ms — the fold monster's worst submission is its
-    deepest ray, not the sizer's width, and it hit that number at
-    `len=64` before this and at `len=512` after.
+    gives. `SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS` IS 2000 AND ITS
+    PLACEMENT IS THE MEASUREMENT, not a round number: a ceiling on the
+    predicted TOTAL squeezes the allowance to nothing as the intercept
+    approaches it, so it must sit outside the range real scenes measure in
+    — at 1000 it bit mandelboxKifs directly.
     `K` IS `SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST` AND IT IS A WIDTH,
     not a ratio the scene has any say in (fr-fniy): THE MODEL NEVER
     IDENTIFIES ITS TWO TERMS — `nextShadeHitCost` preserves
-    `intercept = PIVOT * marginal` wherever its clamps do not bind, proved
-    at that function from the exact-fit split alone, because two parameters
-    against one measurement per dispatch leave the RATIO to the attribution
-    weight and only the SCALE to the data — so that branch hands the sizer
-    UP TO `K * 512` hits on EVERY scene, and fr-2ojg's K = 1 held the whole
-    project at 512. The marginal's decay floor takes the ratio BELOW the
-    pivot whenever a dispatch measures under half its prediction, which a
-    queue-limited sliver reaches routinely, so `K * PIVOT` is an upper
-    bound and the miss errs narrow — a different arbitrary number, still
-    not the scene's. No sizing rule here may be written in terms of
-    `intercept` alone.
-    K = 7 (3584 hits), chosen by FORCING the width off the model
-    (`?surfaceshadehits=N`) since the sizer only ever visits one width — at
-    512, kaleido4's fit says NINETY PER CENT of each hit dispatch was fixed
-    cost. That scene's order-6 settle goes 180.1 -> 55.1 s (3.27x) and
-    mandelboxKifs, the hardest here, 387.3 -> 1299.9 hits/s (3.36x), with
-    the worst single dispatch essentially unmoved (397.3 ms at len 512 ->
-    417.5 at len 3583; mandelboxKifs 1744.5 -> 2056.5, the CEILING's number
-    and 3.6x under the watchdog), every fr-2ojg scene within noise, settled
-    PNGs byte-identical. Its march half is 5.8% of that settle and its sweep
-    readbacks 0.06%, which is fr-fniy's own premise refuted and levers
-    (a)/(b)/(c) closed with numbers. Tables in
-    `docs/surface-compute-renderer.md`.
-    NO submission outruns the i915 watchdog;
-    progressive presents between every bounded piece; host-compacted active
-    list; shading probes ride `SURFACE_COMPUTE_SHADE_DE_WIDTH` (the fr-p8bc
-    verdict); colorOut prefill seeded from the last frame
-    (nearest-resampled), so during motion the present is the PREVIOUS frame
-    with its newly resolved rays overwritten and the pane never shows
-    backdrop mid-drag (fr-f4bx — which refuted its own bead's premise:
-    there is no worse frame being painted over a better one to suppress);
+    `intercept = PIVOT * marginal` wherever its clamps do not bind (two
+    parameters against one measurement per dispatch leave the RATIO to the
+    attribution weight and only the SCALE to the data), so that branch
+    hands the sizer UP TO `K * 512` hits on EVERY scene and fr-2ojg's
+    K = 1 held the whole project at 512; the decay floor takes the ratio
+    below the pivot routinely, so `K * PIVOT` is an upper bound the miss
+    errs narrow of. NO SIZING RULE HERE MAY BE WRITTEN IN TERMS OF
+    `intercept` ALONE. K = 7 (3584 hits), chosen by FORCING the width off
+    the model (`?surfaceshadehits=N`) since the sizer only ever visits one
+    width. MEASURED verdict for the cost model as a whole: multiples of
+    the hits/s on every measured scene, the 4D `affine4` arm included (the
+    sizer is host-loop state, shared by every core in both dimensions, so
+    there is no 4D twin owed), settled PNGs byte-identical, and THE WORST
+    SINGLE DISPATCH DID NOT GROW — the watchdog answer a mean cannot give,
+    because the fold monster's worst submission is its deepest ray, not
+    the sizer's width.
+    NO submission outruns the i915 watchdog; progressive presents between
+    every bounded piece; host-compacted active list; shading probes ride
+    `SURFACE_COMPUTE_SHADE_DE_WIDTH` (the fr-p8bc verdict); colorOut
+    prefill seeded from the last frame (nearest-resampled), so during
+    motion the present is the PREVIOUS frame with its newly resolved rays
+    overwritten and the pane never shows backdrop mid-drag (fr-f4bx);
     per-frame status counts for field debugging.
     SUPERSAMPLING (fr-vpbq) rides that loop as `opts.samples`: N FRAMES of
     the same image at N sub-pixel offsets (`subPixelSample` — pass 0 the
     pixel CENTRE exactly, the rest the R2 low-discrepancy sequence),
     averaged in LINEAR light because both tracers end with a
     `pow(lit, 1/2.2)` encode and averaging the bytes is the edge-darkening
-    bug. N frames rather than N rays per frame, so the five per-ray buffers
-    and every watchdog bound stay exactly as measured and fr-biox's device
-    ray ceiling is not met N times sooner — and so the result is
-    PROGRESSIVE: pass 0 is the pre-fr-vpbq frame, arriving when it always
-    did and presenting its own partials, every later pass only refines, and
-    a superseded job keeps what it finished. main.ts spends it on the live
-    SETTLE and on Save-PNG at 8 samples, never on a preview (cheap by
-    definition) and never on offline VIDEO force frames (the cost would
-    multiply by the frame count); the progress row discloses the pass as a
-    trailing `antialiasing pass k/8`, silent through pass 1.
-    `?surfacesamples=N` is the escape hatch and the A/B instrument. THE
-    WEBGL STRIP ARM DOES THE SAME THING BY THE SAME ALGORITHM (fr-jf9y) —
-    it imports `subPixelSample` from here — so "8 samples" has ONE meaning
-    whichever engine a machine has.
+    bug. N frames rather than N rays per frame, so every per-ray buffer
+    and watchdog bound stays as measured and fr-biox's device ray ceiling
+    is not met N times sooner — and so the result is PROGRESSIVE: pass 0
+    is the pre-fr-vpbq frame arriving when it always did, every later pass
+    only refines, and a superseded job keeps what it finished. main.ts
+    spends it on the live SETTLE and on Save-PNG at 8 samples, never on a
+    preview (cheap by definition) and never on offline VIDEO force frames
+    (the cost would multiply by the frame count); the progress row
+    discloses the pass as a trailing `antialiasing pass k/8`, silent
+    through pass 1. `?surfacesamples=N` is the escape hatch and the A/B
+    instrument. THE WEBGL STRIP ARM DOES THE SAME THING BY THE SAME
+    ALGORITHM (fr-jf9y) — it imports `subPixelSample` from here — so
+    "8 samples" has ONE meaning whichever engine a machine has.
     A FRAME'S RASTER IS BOUNDED BY THE DEVICE, NOT THE CALLER (fr-biox):
-    the six per-ray buffers cost 36 B/ray (44 across five before fr-si66
-    dropped the ray state's MAP_READ twin), and it is the 16 B ray state
-    as a bound STORAGE buffer that a limit bites, so `maxFrameRays`
+    the six per-ray buffers cost 36 B/ray, and it is the 16 B ray state as
+    a bound STORAGE buffer that a limit bites, so `maxFrameRays`
     = min(maxBufferSize, maxStorageBufferBindingSize)/16 and a frame past
     it throws `SurfaceComputeFrameSizeError` UP FRONT instead of reaching
     the kernels, because WEBGPU REFUSES SILENTLY HERE — an over-limit
     `createBuffer` returns an invalid buffer plus a validation error, and
-    the first REJECTION is a staging `mapAsync` whose message names nothing
-    about size. Both callers size against it: the live pane FITS
+    the first REJECTION is a staging `mapAsync` naming nothing about size.
+    Both callers size against it: the live pane FITS
     (`fitSurfaceComputeRaster` — one frame IS the image, so a hidpi raster
-    past the ceiling traces soft and blits up, the preview tier's own
-    mechanism, disclosed once per session) and a capture TILES
-    (`surfaceComputeTileRows`, also capped at
+    past the ceiling traces soft and blits up, disclosed once per session)
+    and a capture TILES (`surfaceComputeTileRows`, also capped at
     `SURFACE_COMPUTE_MAX_TILE_RAYS`). `captureSurfaceComputeFrame` traces
-    the export as full-width BANDS — every band's spec assembled in ONE
+    the export as full-width BANDS, every band's spec assembled in ONE
     synchronous span (a tiled export outlives an auto-orbit/drift camera
     move, the compute answer to the WebGL drain's frozen uniforms), each a
-    `camera.setViewOffset` sub-frustum, at the FULL image's trace eps, with
+    `camera.setViewOffset` sub-frustum at the FULL image's trace eps, with
     `surfaceComputeBandStops` restricting the backdrop pair to the band's
-    own edges (every tracer spreads its stops over its OWN rasterHeight, so
-    whole-image stops would repeat the gradient per band). One band is the
-    whole image on an ordinary export, byte-identical to the untiled path.
-    `?surfacemaxrays=N` pretends a device ceiling;
+    own edges (every tracer spreads its stops over its OWN rasterHeight,
+    so whole-image stops would repeat the gradient per band). One band is
+    the whole image on an ordinary export, byte-identical to the untiled
+    path. `?surfacemaxrays=N` pretends a device ceiling;
     `scripts/surface-export-tile.verify.mjs` is the gate.
     `destroy()` defers the real `device.destroy()` until every in-flight
-    frame unwinds (fr-uec4: a frame parks on LIVE submitted GPU work —
-    `mapAsync` over a submitted `copyBufferToBuffer`, or
-    `onSubmittedWorkDone` over a submitted dispatch — and tearing the
-    device down under one of those took the WHOLE Firefox process down,
-    not a tab crash or a device-loss toast). `destroyed` means "teardown
-    REQUESTED" and `deviceDestroyed` means "device GONE" — the guard that
-    stops both the idle path and the drain path (`releaseFrame`) from
-    calling `device.destroy()` twice. The synchronous teardown still runs
-    whenever the device IS idle, which is what keeps gpu-bench's
-    one-device-alive-at-a-time invariant and `RenderSession.terminate()`'s
-    `void` contract untouched. Same shape as `flame-gpu-backend.ts`
-    (fr-mxkk), counting OPS where this counts frames — and pinned the same
-    way since fr-t2iq: `surface-compute.test.ts` over a fake device, which
-    is what the PUBLIC constructor over `SurfaceComputeRendererInit` buys
-    (production still enters through `create()`); the real-Firefox
+    frame unwinds (fr-uec4: tearing the device down while a frame is
+    parked on submitted GPU work — `mapAsync` over a submitted copy, or
+    `onSubmittedWorkDone` over a submitted dispatch — took the WHOLE
+    Firefox process down, not a tab crash or a device-loss toast).
+    `destroyed` means "teardown REQUESTED" and `deviceDestroyed` means
+    "device GONE" — the guard that stops both the idle path and the drain
+    path (`releaseFrame`) from calling `device.destroy()` twice. The
+    synchronous teardown still runs whenever the device IS idle, which is
+    what keeps gpu-bench's one-device-alive-at-a-time invariant and
+    `RenderSession.terminate()`'s `void` contract untouched. Same shape as
+    `flame-gpu-backend.ts` (fr-mxkk), counting OPS where this counts
+    frames — and pinned the same way since fr-t2iq:
+    `surface-compute.test.ts` over a fake device, which is what the PUBLIC
+    constructor over `SurfaceComputeRendererInit` buys (production still
+    enters through `create()`); the real-Firefox
     `scripts/surface-teardown.verify.mjs` stays the authority on drivers.
     scene.ts presents frames as a DataTexture through the shared surface
     blit (the one WebGL canvas — capture/recorder unchanged) and assembles
-    specs with the uniform-exact camera/eps/tier quantities (acceptance eps
-    stays native-height, fr-7xgi); main.ts routes and choreographs (same
-    tier clock + preview governor, latest-wins preview coalescing +
+    specs with the uniform-exact camera/eps/tier quantities (acceptance
+    eps stays native-height, fr-7xgi); main.ts routes and choreographs
+    (same tier clock + preview governor, latest-wins preview coalescing +
     fr-ud7n's unbudgeted completion pass — the preview frame an
-    invalidation must CANCEL rather than wait out, since it is the only one
-    with no wall budget to expire — memoized offline force frames, one-way
-    fallback: create failure or device loss re-enters through the untouched
-    WebGL path; `?surfacegl` forces WebGL).
-    Full record — the routing measurements, the fr-d6g5 park diagnosis, the
-    supersampling evidence and the fr-biox field report — in
+    invalidation must CANCEL rather than wait out, since it is the only
+    one with no wall budget to expire — memoized offline force frames,
+    one-way fallback: create failure or device loss re-enters through the
+    untouched WebGL path; `?surfacegl` forces WebGL).
+    Full record — the routing measurements, the fr-d6g5 park diagnosis,
+    the supersampling evidence and the fr-biox field report — in
     `docs/surface-compute-renderer.md`.
+  - `render-backend.ts` — fr-tmgf's "which engine, and is it software?"
+    vocabulary: ONE `SOFTWARE_RENDERER_RE`, adapter-status derivation,
+    unmasked-renderer read and warning-string pair, so every site deciding
+    whether the app is silently on a CPU rasterizer agrees on the answer
+    AND the wording (`gpuprobe.html`'s inline copy is deliberately
+    byte-identical — it runs before the bundle can be trusted). Tested.
   - `render-session.ts` — `enter`/`exit`/`terminate` + first-frame-gate for
     flame/solid/surface controllers. `renderMode` is session-only, never
     persisted. An optional `onFirstFrame` fires on the false→true

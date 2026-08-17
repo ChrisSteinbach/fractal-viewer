@@ -25,6 +25,14 @@ jobs:
 
       - run: npm ci
 
+      # CLAUDE.md is loaded into every session's context and silently stops
+      # being loaded past 150000 characters, so the guard sits below that.
+      - name: CLAUDE.md size guard
+        run: |
+          size=$(wc -c < CLAUDE.md)
+          echo "CLAUDE.md is $size bytes"
+          test "$size" -le 145000
+
       - name: Lint (type-check x3, ESLint, Stylelint, Prettier)
         run: npm run lint
 
