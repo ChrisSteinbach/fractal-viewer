@@ -1337,6 +1337,38 @@ describe("setSymmetryOrder", () => {
     expect(next.transforms).toBe(state.transforms);
     expect(next.flame).toBe(state.flame);
   });
+
+  // fr-4jyg: setSymmetryTwist's cap is against the order at the time of the
+  // twist edit, so lowering the order has to re-apply it — otherwise the live
+  // render draws a twist persist.ts's decoder caps away on reload.
+  it("re-caps a twist the lowered order no longer allows", () => {
+    const twisted = setSymmetryTwist(
+      setSymmetryOrder(initialState(true), 12),
+      7,
+    );
+    expect(setSymmetryOrder(twisted, 3).symmetry.twist).toBe(2);
+  });
+
+  it("drops the twist to absent when the lowered order leaves room for none", () => {
+    const twisted = setSymmetryTwist(
+      setSymmetryOrder(initialState(true), 6),
+      4,
+    );
+    expect("twist" in setSymmetryOrder(twisted, 1).symmetry).toBe(false);
+  });
+
+  it("leaves a twist the new order still allows untouched", () => {
+    const twisted = setSymmetryTwist(
+      setSymmetryOrder(initialState(true), 12),
+      2,
+    );
+    expect(setSymmetryOrder(twisted, 5).symmetry.twist).toBe(2);
+  });
+
+  it("never materializes a twist field on a system that had none", () => {
+    const state = setSymmetryOrder(initialState(true), 8);
+    expect("twist" in setSymmetryOrder(state, 4).symmetry).toBe(false);
+  });
 });
 
 describe("setSymmetryPlane", () => {
