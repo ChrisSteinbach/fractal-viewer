@@ -220,12 +220,14 @@ settle was run once more. The 84% splits:
 
 Both halves say something, and the first draft of this paragraph had the
 first one wrong by an order of magnitude. **Free batches are 29%, not
-84%**: `SURFACE_COMPUTE_MAX_SHADE_BATCH` = 4096 rays of one background
-write each costs 3.2 ms, which IS the per-submission wall (there is no
-work in it), so a 1.26M-ray frame spends ~307 submissions painting
-backdrop, times the 8 supersampling passes (fr-vpbq). Raising that cap
-16x has a hard ceiling of 7.9 s on this 35 s settle — real, bounded,
-~22%, and NOT "most of the settle". **The hit half is the bigger one and
+84%**: the flat 4096-ray cap the two queues then shared is 4096 rays of
+one background write each costing 3.2 ms, which IS the per-submission
+wall (there is no work in it), so a 1.26M-ray frame spends ~307
+submissions painting backdrop, times the 8 supersampling passes
+(fr-vpbq). Raising that cap 16x has a hard ceiling of 7.9 s on this 35 s
+settle — real, bounded, ~22%, and NOT "most of the settle". (What
+raising it actually bought is the next section, and it beat that
+ceiling.) **The hit half is the bigger one and
 is real work**: 135 dispatches x ~178 hits at ~0.62 ms per hit is the
 width-1 probe cost fr-p8bc already cut 23.8x, re-paid by every one of the
 8 passes. No batch-cap change touches it.
@@ -241,6 +243,95 @@ own build. `npm run bench:surface --display=:0` reports
 hit+miss+exhausted sums exactly to its raster (4637+32227 = 36864, and so
 on through the escape, chain, ifs4 and fold4 legs), which is the new
 tally's arithmetic checked seven ways.
+
+### The free shade queue drains whole (fr-257o)
+
+The split above left the free half's cap un-run, and the answer turned
+out to be that there is no cap to pick: THE FREE QUEUE HAS NO COST TO
+MODEL. Every exit the shade entry offers a non-HIT status is the same two
+lines — evaluate the backdrop ramp at this pixel's row, store it — and
+that is checked per core rather than assumed, which is what fr-257o's own
+bead asked for: EXHAUSTED falls through the same `st.y != HIT` exit as
+MISS in all seven, and fr-rhn5's PLANE terminals are queued with the
+HITS, where their probe evals belong. So the free queue now drains WHOLE,
+one dispatch per march sweep, bounded by nothing but the device's own
+dispatch ceiling. `SURFACE_COMPUTE_MAX_SHADE_BATCH` became
+`SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH` with it: one constant standing for
+both queues is what let a MEAN over them read as a finding in the first
+place.
+
+**MEASURED** (`scripts/march-readback-ab.mjs` again, same pose-pinned
+2-map boxfold pair, same 1400x900 window / 1.26M-ray pane, same real Iris
+Xe; the arms are the two builds):
+
+| per settle             | before (4096 cap) | after (whole queue) |
+| ---------------------- | ----------------- | ------------------- |
+| settle wall            | 35.0 s            | **25.0 s** (−28.6%) |
+| free shade dispatches  | 2492              | **58** — one/sweep  |
+| free shade GPU time    | 8047.7 ms (29.3%) | 232.6 ms (1.1%)     |
+| mean per free dispatch | 3.2 ms @ 4096     | 4.0 ms @ ~1.2M      |
+| hit shade              | 140 / 15193.2 ms  | 150 / 15927.6 ms    |
+| march                  | 114 / 4143.9 ms   | 114 / 4030.0 ms     |
+| sweep readbacks        | 58 / 112.0 ms     | 58 / 103.0 ms       |
+| present readbacks      | 7 / 47.0 ms       | 4 / 26.0 ms         |
+
+The mean column is the one-line proof that the 3.2 ms was wall and not
+work: **~300x the rays for 25% more time**. The hit and march rows are
+the controls, and they move by run-to-run variance alone. The free
+dispatch count
+landing exactly on the sweep count (58) is the other — the queue is
+emptied every time it is touched, so the floor is now "how many times
+does a march sweep terminate a ray", which is a property of the march
+schedule and not of any cap.
+
+AND IT BEAT ITS OWN PREDICTED CEILING, which is worth saying because the
+bead's arithmetic said 7.9 s and the settle gave up 10.0 s. The extra
+~2.1 s is host-side and outside the GPU accounting entirely: 2434 fewer
+dispatches is 2434 fewer command encoders, `writeBuffer` uploads and
+`onSubmittedWorkDone` round trips (~1.15 ms each here), plus three fewer
+whole-frame present readbacks that used to fire inside the free drain.
+Accounted GPU time fell 7.2 s; the settle fell 10.0 s.
+
+`scripts/surface-repro.verify.mjs --scenario=all --runs=2 --mode=x11::0`
+against both builds measured the same thing a second way, at 1280x720,
+per SETTLE, and across five scenes rather than one — and its numbers are
+the ones that say who the change is FOR:
+
+| scenario (compute)      | before     | after     | settle wall |
+| ----------------------- | ---------- | --------- | ----------- |
+| pentatope4 (5.7k hits)  | 256 passes | 35 passes | −42.7%      |
+| pentatope4direct        | 255 passes | 41 passes | −38.9%      |
+| boxfold3 (1.8k hits)    | 253 passes | 32 passes | −30.4%      |
+| lens3 (60.9k hits)      | 268 passes | 61 passes | −17.8%      |
+| sierpinski3 (WebGL arm) | —          | —         | control     |
+
+The pass counts fall by 210-225 in every row, which is exactly
+`misses / 4096` for each raster — the free drain, and nothing else. The
+WALL falls least on lens3 and most on the sparse 4D slices, which is the
+bead's own prediction confirmed and the honest way to describe the
+feature: the saving scales with the MISS count, so the frames that take
+longest benefit least. It is 3D and 4D alike (the affine4 core has no
+folds and gains the most here), and it is one number, not a quality
+knob — every settled PNG across all ten runs is byte-identical between
+the two builds, and each is deterministic within its own build.
+
+BOTH SIZING PATHS NOW CLAMP AT THE DEVICE'S DISPATCH CEILING
+(`surfaceComputeMaxDispatchRays`), and neither did before. Every dispatch
+here is one-dimensional at 64 threads per workgroup, so
+`maxComputeWorkgroupsPerDimension` is a ray count once multiplied
+through — 4,194,240 at the spec minimum this renderer never raises. A
+free batch asks for its whole queue by design, and a march slice comes
+out of a measured cost EMA a cheap far-field frame can drive low enough
+to ask for the whole active list; either can exceed that on a raster the
+memory ceiling allows, since a spec-minimum 128 MiB binding is 8.4M rays.
+WebGPU answers an over-limit `dispatchWorkgroups` with a validation error
+that invalidates the encoder, so the submission would silently do NOTHING
+and those pixels would keep their seed — a latent, hidpi-only wrong-image
+path, not a crash. `surfaceComputeMaxFrameRays` deliberately does NOT
+meet the same ceiling: a frame's rays are a memory question and a
+dispatch's are a submission-shape one, and folding them together would
+make a 4K pane fit one rung softer for a bound no single piece of work
+has to meet.
 
 `colorOut` is prefilled from the last frame, nearest-resampled — the
 strip settle's preview-seeded-target discipline. fr-f4bx measured what

@@ -9,7 +9,7 @@ import {
   shadeHitBatchSize,
   SURFACE_COMPUTE_INITIAL_HIT_SHADE_US,
   SURFACE_COMPUTE_MARCH_CHUNK_MIN,
-  SURFACE_COMPUTE_MAX_SHADE_BATCH,
+  SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
   SURFACE_COMPUTE_MAX_STEPS_PER_PASS,
   SURFACE_COMPUTE_MAX_TILE_RAYS,
   SURFACE_COMPUTE_PASS_TARGET_MS,
@@ -362,8 +362,8 @@ describe("nextShadeBatchSize", () => {
   });
 
   it("caps at the batch ceiling", () => {
-    expect(nextShadeBatchSize(SURFACE_COMPUTE_MAX_SHADE_BATCH, 1)).toBe(
-      SURFACE_COMPUTE_MAX_SHADE_BATCH,
+    expect(nextShadeBatchSize(SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH, 1)).toBe(
+      SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH,
     );
   });
 });
@@ -386,9 +386,9 @@ describe("shadeHitBatchSize", () => {
     // predicts 2 hits by cost alone, but the workgroup floor wins: a
     // sub-workgroup batch can't shrink submission wall any further (GPU
     // cost inside one workgroup is depth-, not width-dominated).
-    expect(shadeHitBatchSize(108_000, SURFACE_COMPUTE_MAX_SHADE_BATCH)).toBe(
-      SURFACE_COMPUTE_WORKGROUP_SIZE,
-    );
+    expect(
+      shadeHitBatchSize(108_000, SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH),
+    ).toBe(SURFACE_COMPUTE_WORKGROUP_SIZE);
   });
 
   it("never collapses below one workgroup when the linear model breaks down (fr-d6g5)", () => {
@@ -397,9 +397,9 @@ describe("shadeHitBatchSize", () => {
     // wall as its per-hit cost, so the spike-lift EMA latches onto that
     // inflated reading and pins byCost at 0 forever (the fr-d6g5 park:
     // ~4.4 hits/s on the real driver). The floor is one workgroup instead.
-    expect(shadeHitBatchSize(400_000, SURFACE_COMPUTE_MAX_SHADE_BATCH)).toBe(
-      SURFACE_COMPUTE_WORKGROUP_SIZE,
-    );
+    expect(
+      shadeHitBatchSize(400_000, SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH),
+    ).toBe(SURFACE_COMPUTE_WORKGROUP_SIZE);
   });
 
   it("the workgroup floor wins over a sub-workgroup cap", () => {

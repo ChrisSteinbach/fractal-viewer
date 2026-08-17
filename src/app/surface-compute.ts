@@ -35,8 +35,9 @@
  * full-width near-surface on Iris) — several seconds past the ~7.5 s
  * i915 preemption watchdog, five kernel-confirmed GPU HANGs (ecode
  * 12:1:85dcfffb) in one bench session, and reactive quartering can only
- * react AFTER the killing batch. Now misses drain in fixed
- * ceiling-sized batches (trivially bounded), and hit batches are sized
+ * react AFTER the killing batch. Now misses drain WHOLE — one dispatch
+ * per sweep, no cost cap, since one background write per ray is not a
+ * cost to model (fr-257o) — and hit batches are sized
  * predictively from a per-hit cost EMA under a pessimistic prior
  * ({@link shadeHitBatchSize}), with the EMA lifting INSTANTLY on a
  * measured spike ({@link nextShadeHitEmaUs}) and a slow-growing capacity
@@ -534,10 +535,12 @@ export function marchChunkFor(emaUsPerRayStep: number, steps: number): number {
   return Math.max(SURFACE_COMPUTE_MARCH_CHUNK_MIN, rays);
 }
 
-/** Shade batch ceiling — plenty to swallow a whole preview's misses (or a
- * cheap-probe frame's hits) in one bounded dispatch once the measured cost
- * allows it. */
-export const SURFACE_COMPUTE_MAX_SHADE_BATCH = 4096;
+/** HIT shade batch ceiling — plenty to swallow a cheap-probe frame's hits
+ * in one bounded dispatch once the measured cost allows it. Hit-only since
+ * fr-257o: the FREE queue has no cost model to cap (see the free-batch
+ * comment in `runFrame`), and one constant standing for both queues is
+ * what let a MEAN over them be read as a finding. */
+export const SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH = 4096;
 
 /** First hit-batch CAPACITY of a frame — deliberately minimal: even at the
  * worst per-hit cost measured on Iris (~250 ms full-width probes at a
@@ -578,9 +581,9 @@ export function nextShadeBatchSize(
 ): number {
   if (
     lastBatchMs < SURFACE_COMPUTE_PASS_TARGET_MS / 2 &&
-    current < SURFACE_COMPUTE_MAX_SHADE_BATCH
+    current < SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH
   ) {
-    return Math.min(current * 2, SURFACE_COMPUTE_MAX_SHADE_BATCH);
+    return Math.min(current * 2, SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH);
   }
   if (lastBatchMs > SURFACE_COMPUTE_PASS_TARGET_MS * 2) {
     return Math.max(SURFACE_COMPUTE_WORKGROUP_SIZE, Math.floor(current / 4));
@@ -701,10 +704,11 @@ function mib(bytes: number): string {
  * the two storage ones), which pins it at WebGPU's spec minimum 65535 on
  * every adapter: 4,194,240 rays.
  *
- * THE MARCH SLICE CAN REACH IT and never clamped at it: the slice is
+ * BOTH SIZING PATHS CLAMP AT IT, and neither did before. A free shade
+ * batch asks for its whole queue by design. A march slice is
  * `min(cost-EMA prediction, active list)`, and the EMA is MEASURED, so a
  * cheap far-field frame drives the prediction above the active list and
- * the whole list goes out as one dispatch. That is only a problem on a
+ * the whole list goes out as one dispatch. Either is only a problem on a
  * raster bigger than this ceiling — and {@link surfaceComputeMaxFrameRays}
  * of a spec-minimum 128 MiB storage binding is 8.4M rays, twice it, which
  * a hidpi 1440p pane sits inside. WebGPU answers an over-limit
@@ -2157,8 +2161,8 @@ export class SurfaceComputeRenderer {
     };
 
     // The device's own ceiling on ONE dispatch (fr-257o) — the last clamp
-    // on the sizing below, above whatever its cost model asked for. See
-    // {@link surfaceComputeMaxDispatchRays}.
+    // on both sizing paths below, above whatever their cost model asked
+    // for. See {@link surfaceComputeMaxDispatchRays}.
     const maxDispatchRays = surfaceComputeMaxDispatchRays(device.limits);
 
     // Progress presents fire BETWEEN bounded pieces of work — march
@@ -2335,12 +2339,28 @@ export class SurfaceComputeRenderer {
           tr("budget truncated (shade)");
           break outer;
         }
-        // Free rays (miss/exhausted) first: one background write each,
-        // trivially bounded at the ceiling — and presents fill the
-        // backdrop before the hit grind starts.
+        // Free rays (miss/exhausted) first, ALL OF THEM IN ONE DISPATCH
+        // (fr-257o) — and presents fill the backdrop before the hit grind
+        // starts.
+        //
+        // The free queue has no cost model to cap because there is no cost
+        // to model: every exit the shade entry offers a non-HIT status is
+        // the same two lines — evaluate the backdrop ramp at this pixel's
+        // row, store it — so a free batch's GPU time is its (tiny) memory
+        // traffic plus the per-submission wall, and the wall is the whole
+        // of it at any batch size worth naming. MEASURED at the flat 4096
+        // this used to share with the hit queue: 3.2 ms per dispatch, 2492
+        // dispatches, 8.0 s of a 35 s settle spent painting backdrop —
+        // ~307 submissions per full-resolution frame times the 8
+        // supersampling passes (fr-vpbq). Nothing in that number is work.
+        //
+        // The i915 hangs behind the hit queue's slow-trust sizing do not
+        // reach here: they were HIT batches sized in RAY units, where one
+        // ray's probe evals can cost 100 ms. The only ceiling a free batch
+        // has to meet is the device's own dispatch one.
         const isFree = shadeFreeQueue.length > 0;
         const batchSize = isFree
-          ? SURFACE_COMPUTE_MAX_SHADE_BATCH
+          ? Math.min(shadeFreeQueue.length, maxDispatchRays)
           : shadeHitBatchSize(shadeHitEmaUs, shadeHitCap);
         const batch = Uint32Array.from(
           (isFree ? shadeFreeQueue : shadeHitQueue).slice(0, batchSize),
@@ -2352,7 +2372,7 @@ export class SurfaceComputeRenderer {
         }
         if (!Number.isFinite(batchSize) || batch.length === 0) {
           tr(
-            `ANOMALY shade batchSize=${batchSize} len=${batch.length} emaUs=${shadeHitEmaUs} cap=${shadeHitCap}`,
+            `ANOMALY shade isFree=${isFree} batchSize=${batchSize} len=${batch.length} emaUs=${shadeHitEmaUs} cap=${shadeHitCap}`,
           );
         }
         tr(
