@@ -71,6 +71,15 @@
  * color readback: counted (and sized, from the same rays*4 formula as
  * `present`) but never timed, since it has no END trace line by design.
  *
+ * WHERE THE TIME WENT: the report closes with the settle's GPU-submission
+ * time split MARCH vs SHADE beside the sweep-readback total, and each as a
+ * percentage of the three. A readback number on its own invites a guess
+ * about which half of the loop the rest of the settle went to — this is
+ * the line that answers it instead, and it is scene-dependent enough to
+ * be worth reading every time (a thin-dust system is march-bound, a
+ * frame-filling one shade-bound, and the readback's SHARE differs by an
+ * order of magnitude between them).
+ *
  * PER-SWEEP MEANS ARE THE TRUNCATION-SAFE COMPARISON: if a scene does not
  * reach a completed settle before `--capMs`, the two arms' sweep COUNTS and
  * TOTALS will legitimately differ (whichever arm got further did more
@@ -255,6 +264,13 @@ const FRAME_DONE_RE = /^frame done passes=(\d+) truncated=(\S+)/;
  * one thing that differs between the OLD (`states`) and NEW (`status`)
  * vocabulary; everything else about the line shape is shared. */
 const READBACK_RE = /^(\w+) readback (BEGIN|END)\b(.*)$/;
+/** The frame loop's own GPU-submission timings — the CONTEXT a readback
+ * number is meaningless without. Without them "the readback costs X ms"
+ * cannot be turned into "X% of the settle", and worse, it invites a guess
+ * about which half of the loop the rest of the time went to. Both are
+ * `<kind> END ms=<n>` with a one-decimal float (or the literal `null`
+ * when the frame was superseded mid-dispatch, which is not a timing). */
+const DISPATCH_END_RE = /^(march|shade) END ms=([0-9.]+)$/;
 /** `final readback BEGIN` has no matching END by design (see module doc) —
  * this is the one label {@link summarize} never opens against later END. */
 const UNTIMED_READBACK_LABEL = "final";
@@ -284,6 +300,12 @@ function summarize(rawLines) {
   let lastFrameRays = null;
   let lastFrameTruncated = null;
   let unparsedLines = 0;
+  /** GPU-submission time by half of the frame loop, so the readback
+   * totals can be read as a SHARE of the settle rather than in a vacuum. */
+  const dispatch = {
+    march: { count: 0, totalMs: 0 },
+    shade: { count: 0, totalMs: 0 },
+  };
 
   const kindStat = (label) => {
     let s = kinds.get(label);
@@ -316,8 +338,16 @@ function summarize(rawLines) {
       continue;
     }
 
+    const dispatchEnd = DISPATCH_END_RE.exec(body);
+    if (dispatchEnd) {
+      const half = dispatch[dispatchEnd[1]];
+      half.count++;
+      half.totalMs += Number(dispatchEnd[2]);
+      continue;
+    }
+
     const rb = READBACK_RE.exec(body);
-    if (!rb) continue; // march/shade/sweep-done/ANOMALY lines — not ours
+    if (!rb) continue; // sweep-done/ANOMALY lines — not ours
     const [, label, beginOrEnd, rest] = rb;
 
     if (beginOrEnd === "BEGIN") {
@@ -373,6 +403,7 @@ function summarize(rawLines) {
 
   return {
     kinds,
+    dispatch,
     unmatchedBegins,
     framesTraced,
     framesCompleted,
@@ -640,6 +671,31 @@ function printReport(summary, runResult) {
     }
   }
 
+  // The share the sweep readback actually is — the context without which
+  // its ms number invites a guess about where the rest of the settle went.
+  console.log();
+  const marchMs = summary.dispatch.march.totalMs;
+  const shadeMs = summary.dispatch.shade.totalMs;
+  const sweepMs = sweepLabels.reduce(
+    (acc, label) => acc + (kinds.get(label)?.totalMs ?? 0),
+    0,
+  );
+  const accounted = marchMs + shadeMs + sweepMs;
+  const pct = (ms) =>
+    accounted > 0 ? `${((ms / accounted) * 100).toFixed(1)}%` : "n/a";
+  console.log(
+    `WHERE THE TIME WENT (GPU submissions + sweep readbacks, ${fmtMs(accounted)} ms accounted):`,
+  );
+  console.log(
+    `  march dispatches : ${String(summary.dispatch.march.count).padStart(5)}  ${fmtMs(marchMs).padStart(9)} ms  ${pct(marchMs)}`,
+  );
+  console.log(
+    `  shade dispatches : ${String(summary.dispatch.shade.count).padStart(5)}  ${fmtMs(shadeMs).padStart(9)} ms  ${pct(shadeMs)}`,
+  );
+  console.log(
+    `  sweep readbacks  : ${String(sweepLabels.reduce((a, l) => a + (kinds.get(l)?.count ?? 0), 0)).padStart(5)}  ${fmtMs(sweepMs).padStart(9)} ms  ${pct(sweepMs)}`,
+  );
+
   console.log();
   if (unmatchedBegins.length === 0) {
     console.log("warnings: 0 unmatched BEGIN (no matching END)");
@@ -712,6 +768,16 @@ function buildJsonSummary(summary, runResult) {
     renderError: runResult.renderErrorText,
     sweepLabels,
     kinds: kindsObj,
+    dispatch: {
+      march: {
+        count: summary.dispatch.march.count,
+        totalMs: round2(summary.dispatch.march.totalMs),
+      },
+      shade: {
+        count: summary.dispatch.shade.count,
+        totalMs: round2(summary.dispatch.shade.totalMs),
+      },
+    },
     unmatchedBeginCount: summary.unmatchedBegins.length,
     unparsedLines: summary.unparsedLines,
     consoleIssueCount: runResult.consoleIssues.length,
