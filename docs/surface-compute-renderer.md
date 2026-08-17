@@ -10,8 +10,8 @@ every bead id, and every refuted premise behind it.
 `surface-compute.ts` is the WebGPU compute renderer for fold-shaped 3D
 surface sessions (fr-tzdg): systems with base-map folds OR a fold FINAL
 lens (fr-55s1 — `deHasFolds(de) || foldFinal`; the DE picks the kernel
-core and the lens wrapper, and the two first-sizing priors scale by the
-lens branch count 27/3/81 ÷ 8). Since fr-dlxh it also takes escape-time
+core and the lens wrapper, and the first march slice's prior scales by
+the lens branch count 27/3/81 ÷ 8). Since fr-dlxh it also takes escape-time
 sessions — the non-contracting pure-fold map, or, since fr-s04t, the
 CHAIN of them, that the IFS gate refuses. Since fr-dlxh's 4D cut it also
 takes plain 4D surface sessions (symmetry order 1).
@@ -73,10 +73,12 @@ bindingless kind left.
 The BALLOON and the FLOOR ride an `ifs4` target since fr-qxxw/fr-h0c3,
 with the 3D arm's own precedence (the two never compile together, and
 the balloon wins). No FORWARD kind ever balloons, in either dimension.
-Escape and plain-affine `ifs4` targets scale no priors (the forward loop
-is phone-cheap, and the pessimistic base priors elsewhere only err
-toward smaller first slices); fold/lens-shaped `ifs4` targets scale by
-branch count the way 3D does.
+Escape and plain-affine `ifs4` targets scale no prior (the forward loop
+is phone-cheap, and the pessimistic march prior only errs toward smaller
+first slices); fold/lens-shaped `ifs4` targets scale by branch count the
+way 3D does. Only the MARCH slice has a prior to scale since fr-2ojg —
+the shade sizer opens with an empty cost model and a one-workgroup
+capacity.
 
 The `ifs4` kind's rotor/slice view is PER-FRAME SPEC STATE (`spec.view4`,
 re-read from the scene's `setSurface4View` state at every spec assembly
@@ -106,9 +108,9 @@ March slices are sized from a measured per-ray·step EMA. Shade batches
 are sized in HIT units (fr-p8bc): terminal rays queue by status — misses
 are one background write; hits, and, since fr-rhn5, ground-plane PLANE
 terminals, pay the probe evals and arrive scanline-CLUSTERED. Batches are
-predicted from a per-hit cost EMA under a pessimistic prior, spike-lift
-instantly, decay slowly, and are capped by a slow-trust double/quarter
-policy.
+predicted from a two-term cost model — `intercept + n·marginal`, fr-2ojg,
+whose whole record is two sections down — under a slow-trust
+double/quarter capacity ladder.
 
 The original design doubled capacity in RAY units, which let a run of
 misses inflate capacity before a hit band paid for it — that caused five
@@ -117,11 +119,13 @@ never one hit: within a workgroup, cost is depth-dominated, so
 sub-workgroup batches buy no submission-wall safety. The old 1-hit floor
 was a one-way trapdoor — one hit band past the pass target, and every
 1-ray batch re-measures the full per-submission wall as its per-hit cost;
-spike-lift latches that in, producing ~4 hits/s serialization that reads
-as a settle parked forever at a pose-dependent percent. This is fr-d6g5's
-Mesa-25.2.8 "park" (see below). The `?surfacetrace` flag and
+the estimate latches that in, producing ~4 hits/s serialization that
+reads as a settle parked forever at a pose-dependent percent. This is
+fr-d6g5's Mesa-25.2.8 "park" (see below). The `?surfacetrace` flag and
 `scripts/fold-settle-park.repro.mjs` are that diagnosis' kept
-instruments.
+instruments. fr-2ojg's finding is that the SAME trapdoor ran at every
+width below the occupancy knee, not only at n=1, and that the fix for it
+is a cost model with an intercept rather than a wider floor.
 
 With the workgroup floor, no submission outruns the i915 watchdog.
 
@@ -337,7 +341,7 @@ dispatch's are a submission-shape one, and folding them together would
 make a 4K pane fit one rung softer for a bound no single piece of work
 has to meet.
 
-### And the hit half is NOT what fr-si66 concluded (fr-257o, fr-2ojg)
+### The hit half is not work either — it is wall (fr-257o found it, fr-2ojg fixed it)
 
 fr-si66's record two sections up closes by calling the hit queue "real
 work no batch-cap change touches". That is wrong, and fr-257o's own
@@ -367,26 +371,203 @@ INDEPENDENTLY of the EMA, same scene, same pose, same window. Settle
 result. Cumulative from the pre-fr-257o baseline that is 35.0 s → 15.0 s,
 2.33x.
 
-The root cause is one line and it is fr-d6g5's trapdoor one order up:
-`nextShadeHitEmaUs` is fed `shadeMs * 1000 / batch.length`, a
-submission's WHOLE time over its ray count, so a 16-hit batch records its
-~85 ms latency floor as 5.2 ms per hit where the marginal cost is
-~0.26 ms — and the sizer then divides the pass target by that inflated
-number and picks another small batch. fr-d6g5 fixed the degenerate 1-ray
-case with a one-workgroup floor; the loop runs at every width below the
-occupancy knee. That intercept is NOT the per-submission wall (fr-257o
-measured that separately at 3-4 ms from the free queue, so at most ~0.6 s
-of the 15.2 s was submission overhead) — it is the batch's DEEPEST ray.
+The root cause was one line and it is fr-d6g5's trapdoor one order up:
+`nextShadeHitEmaUs` was fed `shadeMs * 1000 / batch.length`, a
+submission's WHOLE time over its ray count, so a 16-hit batch recorded
+its ~85 ms latency floor as 5.2 ms per hit where the marginal cost is
+~0.26 ms — and the sizer then divided the pass target by that inflated
+number and picked another small batch. fr-d6g5 fixed the degenerate
+1-ray case with a one-workgroup floor; the loop ran at every width below
+the occupancy knee. That intercept is NOT the per-submission wall
+(fr-257o measured that separately at 3-4 ms from the free queue, so at
+most ~0.6 s of the 15.2 s was submission overhead) — it is the batch's
+DEEPEST ray, since lanes run in parallel across EUs and a batch's hits
+come from one scanline band.
 
-IT WAS DELIBERATELY NOT SHIPPED WITH fr-257o and is fr-2ojg instead. A
-floor is a one-way promise to submit that much work whatever the EMA
-believes, and this is the exact mechanism behind five kernel-confirmed
-i915 hangs and the Mesa park. The arithmetic looks fine — fr-p8bc's worst
-measured ~108 ms/hit at full width, ÷23.8 for the shipped width-1 probe,
-is ~2.3 s for 512 hits against a ~7.5 s watchdog — but a measured average
-is not a bound, and the A/B did not run the near-surface fold-monster
-silhouettes that would test it. The bead carries the shape decision (fix
-the EMA's model, do not just raise the floor) and the gates.
+THE FLOOR WAS THE EXPERIMENT, NOT THE DESIGN, and fr-2ojg shipped the
+model instead. A floor is a one-way promise to submit that much work
+whatever the measurements believe, and this is the exact mechanism behind
+five kernel-confirmed i915 hangs and the Mesa park.
+
+#### What shipped
+
+`ShadeHitCost` is `cost(n) = intercept + n·marginal`, in µs, and six
+pieces hang off it.
+
+1. **The model replaces the per-hit EMA.** `shadeHitBatchSize` divides
+   the budget by the MARGINAL term after paying the intercept, so a
+   narrow dispatch no longer teaches the sizer that hits are expensive.
+2. **The attribution is by width.** One observation, two unknowns, so
+   `nextShadeHitCost` splits the surprise `w = n / (n + 512)` to the
+   marginal and the rest to the intercept — a one-workgroup batch is
+   nearly all fixed cost, a wide one is nearly all marginal. 512 is eight
+   workgroups, the width the table above measured the cost curve still
+   flat at. The split is exact-fitting (after the update the model
+   reproduces the measurement at that width), so nothing is
+   double-counted in either direction, and a genuine spike still
+   collapses the next batch to the floor in ONE step.
+3. **The budget is `max(pass target, 2 × intercept)`, capped at
+   `SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS` (1000).** Spend at most as
+   much on marginal work as the fixed cost already being paid. Below the
+   knee that is just the 250 ms pass target; above it — mandelboxKifs
+   measures a ~480 ms intercept — refusing to widen past the target buys
+   no safety at all, because the wall is the intercept, and costs an
+   order of throughput.
+4. **The capacity ladder's growth threshold is that budget**, not a fixed
+   `PASS_TARGET / 2`. That constant was the OTHER half of the stall: it
+   froze the capacity at whatever width cost 125 ms, ~256 hits on the
+   boxfold pair against a measured optimum of ~1050.
+5. **One sizer per supersampling JOB.** Passes 1..N−1 differ from pass 0
+   by a sub-pixel offset and nothing else, so re-learning the model from
+   one workgroup eight times over was eight climbs for one frame's worth
+   of information. Across FRAMES the pose can jump, which is exactly what
+   the ladder's first-encounter bound is for, so the carry stops there.
+6. **A partial hit batch is HELD for the next sweep.** Draining the queue
+   to empty after every sweep paid the intercept for slivers: measured 6
+   hit dispatches per settle frame where the sizer had priced 2. The hold
+   ends when the march can no longer add to the queue (so the outer
+   loop's own condition still drains it before the frame ends) or when
+   one progressive-present interval has passed since the last hit
+   dispatch (so the screen keeps developing). Rays held over a budget cut
+   keep their seed pixels, which after the first frame is the previous
+   frame's shading of very nearly the same geometry, not backdrop.
+
+There is no per-hit cost PRIOR any more. `SURFACE_COMPUTE_INITIAL_HIT_SHADE_US`
+(20 ms/hit) could only ask for fewer hits than the one-workgroup starting
+capacity already gives, while its 0.4-per-dispatch decay held ~7
+dispatches at the floor before the measurements it was guarding against
+could speak. The capacity ladder is the first-encounter bound; the model
+is the sizer.
+
+#### Measured (real Iris Xe, Mesa 25.2.8, headed Chrome on `:0`)
+
+`scripts/march-readback-ab.mjs`, one settle per arm, the pose-pinned
+`boxfoldPair` at 1400x900 (1.26M rays) — fr-257o's own scene, so the
+numbers chain:
+
+| arm                  | settle       | hit shade     | hit disp | ms/disp | disp/frame | worst dispatch      |
+| -------------------- | ------------ | ------------- | -------- | ------- | ---------- | ------------------- |
+| shipped              | 25029 ms     | 14807.4 ms    | 139      | 106.5   | 13.9       | 181.2 ms @ len 369  |
+| + cost model         | 15016 ms     | 6248.0 ms     | 57       | 109.6   | 5.7        | 173.6 ms @ len 491  |
+| + partial-batch hold | **10063 ms** | **2674.8 ms** | **20**   | 133.7   | **2.0**    | 175.3 ms @ len 2229 |
+
+The middle row is the bead's own forced-512-floor experiment reproduced
+by the model rather than by a constant, to the second (15.0 s both
+times). Cumulative from the pre-fr-257o baseline: **35.0 s → 10.1 s,
+3.5x**. A converged frame now shades all ~2240 of its hits in ONE
+2229-hit dispatch of 175 ms; it used to take 14 dispatches and 1.8 s.
+
+The same run's cost-vs-width table extends fr-257o's two buckets further,
+and the last column is the whole argument:
+
+| batch size | dispatches | hits  | totalMs | meanMs/disp | meanUs/hit |
+| ---------- | ---------- | ----- | ------- | ----------- | ---------- |
+| 1-63       | 3          | 113   | 224.1   | 74.7        | 1983.2     |
+| 64-127     | 2          | 168   | 257.1   | 128.6       | 1530.4     |
+| 128-255    | 2          | 378   | 209.7   | 104.8       | 554.8      |
+| 256-511    | 1          | 256   | 118.7   | 118.7       | 463.7      |
+| 512-1023   | 3          | 1830  | 391.4   | 130.5       | 213.9      |
+| 1024+      | 9          | 15216 | 1473.8  | 163.8       | **96.9**   |
+
+`lens3` (fr-g58b's fold-FINAL lens, ~93k hits per frame — the
+frame-FILLING case) gains less and for a reason worth writing down: its
+per-hit cost is 17 µs, so its big batches were already pinned at
+`SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH` (4096) in BOTH arms and only the
+ramp and the queue-limited slivers moved. Settle 35031 → 30034 ms
+(−14.3%), hit shade 18084.4 → 13004.2 ms, 356 → 208 dispatches, worst
+dispatch 77.4 → 76.1 ms.
+
+`mandelboxKifs` at 800x520 does not settle at all, so it was run as a
+fixed 150 s window on both arms. It is the fold monster, and the sizer
+that never got past 127 hits there now reaches 512-1023:
+
+| arm     | hit disp | hits shaded | hit shade ms | hits/s    | worst dispatch     | p95    |
+| ------- | -------- | ----------- | ------------ | --------- | ------------------ | ------ |
+| shipped | 134      | 7961        | 127376.8     | 62.5      | 1714.8 ms @ len 64 | 1377.3 |
+| fixed   | 112      | 13900       | 126815.1     | **109.6** | 1735.1 ms @ len 64 | 1515.5 |
+
+**1.75x the hits per second on the hardest scene the project has**, and
+its own cost-vs-width table is the cleanest statement of the finding
+anywhere in this record — from 16 hits per dispatch to 512, cost per
+dispatch goes 643.8 → 1015.4 ms (1.58x) while hits per dispatch go 32x,
+i.e. 39253 → 1983 µs/hit:
+
+| batch size | dispatches | hits | totalMs | meanMs/disp | meanUs/hit |
+| ---------- | ---------- | ---- | ------- | ----------- | ---------- |
+| 1-63       | 5          | 82   | 3218.8  | 643.8       | 39253.7    |
+| 64-127     | 75         | 5011 | 90364.6 | 1204.9      | 18033.2    |
+| 128-255    | 16         | 2800 | 15788.2 | 986.8       | 5638.6     |
+| 256-511    | 12         | 3959 | 13382.0 | 1115.2      | 3380.1     |
+| 512-1023   | 4          | 2048 | 4061.5  | 1015.4      | 1983.2     |
+
+#### The watchdog question, answered by measurement rather than by a divisor
+
+fr-257o's reason for not shipping the floor was that its safety
+arithmetic ran through a measured AVERAGE (fr-p8bc's ~108 ms/hit at full
+width, ÷23.8 for the shipped width-1 probe) and that the A/B had not run
+the near-surface fold-monster silhouettes. So `march-readback-ab.mjs`
+grew three things for fr-2ojg: a WORST SINGLE DISPATCH block with a p95
+beside it (a mean cannot answer a watchdog question), a HIT DISPATCHES
+PER FRAME table (the sizer's ramp is per job, so a per-settle total hides
+how much of a frame is spent climbing), and the scenes to ask on —
+`--scene=lens3` for the frame-filling lens archetype plus a `--hash=`
+escape hatch for anything else. All three scenes were then run on both
+arms. The answer:
+
+- **boxfoldPair: 181.2 ms → 175.3 ms.** The worst submission went DOWN
+  while the batch that produced it went from 369 hits to 2229. That is
+  the flat-cost-vs-width claim proven at 6x the width, and it is the
+  single most useful line in the dataset.
+- **lens3: 77.4 ms → 76.1 ms**, at 4096 and 3728 hits respectively.
+- **mandelboxKifs: 1714.8 ms → 1735.1 ms, and in BOTH arms at `len=64`
+  — the FLOOR.** The worst submission on the fold monster is a property
+  of the scene's deepest ray, not of the sizer, and widening batches did
+  not raise it. 1.7 s is 4.3x under the ~7.5 s i915 watchdog, and it was
+  already there before this change.
+
+`scripts/fold-settle-park.repro.mjs` (mandelboxKifs at 512x320, the
+fr-d6g5 regression gate) came back **TIMEOUT, not PARKED** — the scene is
+genuinely enormous, not wedged — and its trace tail measures that scene's
+model directly: 12 dispatches averaging 19 hits cost 557.8 ms each, 21
+averaging 64 hits cost 740.0 ms each — a secant through those two widths
+puts that scene's intercept at ~481 ms and its marginal at ~4.05 ms/hit.
+That marginal independently reproduces
+fr-p8bc's own number (108 ms full-width ÷ 23.8 = 4.5 ms/hit) from a
+completely different instrument, which is the best evidence available
+that the two-term model is measuring physical things and not fitting
+noise.
+
+`scripts/surface-repro.verify.mjs --scenario=all --runs=2 --mode=x11::0`
+is DETERMINISTIC on all five scenarios with 0 differing pixels, and all
+ten settled PNGs are byte-identical BETWEEN the two arms — a sizing
+change may not move a pixel, and a ray's shading does not depend on which
+batch carried it. That run is also the second, independent measurement of
+the win, at 1280x720 and across five scenes rather than one:
+
+| scenario (settle wall)  | before      | after       |         |
+| ----------------------- | ----------- | ----------- | ------- |
+| boxfold3                | 19.0/18.8 s | 12.9/12.8 s | −32%    |
+| pentatope4 (4D affine4) | 12.8/12.9 s | 8.7/8.8 s   | −32%    |
+| pentatope4direct        | 12.8/12.9 s | 8.7/8.7 s   | −32%    |
+| lens3                   | 26.2/25.9 s | 22.1/22.2 s | −15%    |
+| sierpinski3 (WebGL arm) | 13.1/5.3 s  | 13.4/5.4 s  | control |
+
+THE 4D ROWS ARE THE DIMENSIONAL-PARITY ANSWER and they are not a separate
+lift: the sizer lives in the host frame loop, which is shared by all
+seven kernel cores in both dimensions, so `core:"affine4"` gains what
+`core:"fold"` gains — measured, not argued. `sierpinski3` runs the WebGL
+strip pump and is unmoved, which is what a control is for.
+
+#### Headroom this deliberately did not take
+
+`lens3`'s batches sit at `SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH` = 4096
+costing 66 ms against a 250 ms budget, so the model would ask for ~15000
+hits if the constant let it — worth perhaps 5 s of that 30 s settle. It
+was left alone. The constant is the last absolute stop on the model being
+wrong, and raising it is a separate safety argument with its own
+measurements (a batch is only as safe as the multiple by which an
+unmeasured band can exceed the measured one), not a free win to bundle
+into this one.
 
 `colorOut` is prefilled from the last frame, nearest-resampled — the
 strip settle's preview-seeded-target discipline. fr-f4bx measured what
@@ -423,13 +604,21 @@ See "The frame loop and batch sizing" above for the mechanism. In short:
 a batch-sizing policy that let ray-unit doubling inflate capacity ahead
 of payment, combined with a 1-hit floor, produced a one-way trapdoor on
 Mesa 25.2.8 — once a hit band pushed past the pass target, every 1-ray
-batch re-measured the full per-submission wall as its per-hit cost,
-spike-lift latched it in, and the result was ~4 hits/s serialization: a
-settle that reads as parked forever at a pose-dependent completion
-percent. The fix is the one-workgroup floor (cost inside a workgroup is
-depth-dominated, so a sub-workgroup batch buys no submission-wall
-safety). `?surfacetrace` and `scripts/fold-settle-park.repro.mjs` are the
-kept diagnostic instruments for this failure mode.
+batch re-measured the full per-submission wall as its per-hit cost, the
+spike-lift EMA latched it in, and the result was ~4 hits/s
+serialization: a settle that reads as parked forever at a pose-dependent
+completion percent. The fix was the one-workgroup floor (cost inside a
+workgroup is depth-dominated, so a sub-workgroup batch buys no
+submission-wall safety). `?surfacetrace` and
+`scripts/fold-settle-park.repro.mjs` are the kept diagnostic instruments
+for this failure mode.
+
+fr-2ojg is this diagnosis finished. The floor cured the degenerate case
+and left the mechanism running everywhere else: the flat region reaches
+at least EIGHT workgroups, so every width below that was re-measuring
+latency as per-hit cost, just less catastrophically. The EMA it latched
+is gone — see "The hit half is not work either" above for the model that
+replaced it, and for the fold-monster re-run of this same probe.
 
 ## Supersampling (fr-vpbq, fr-jf9y)
 

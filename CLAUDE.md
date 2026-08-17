@@ -1625,16 +1625,14 @@ Frame` callback, which runs before paint so the disabled look never
     units (fr-p8bc:
     terminal rays queue by status — misses are one background write, hits
     and, since fr-rhn5, ground-plane PLANE terminals pay the probe evals
-    and arrive scanline-CLUSTERED; batches are predicted from a per-hit
-    cost EMA under a pessimistic prior, spike-lift instantly, decay slowly,
-    capped by the slow-trust double/quarter policy — the original ray-unit
+    and arrive scanline-CLUSTERED; the original ray-unit
     doubling let miss runs inflate capacity a hit band then paid, five
     kernel-confirmed i915 GPU hangs) and FLOORED AT ONE WORKGROUP, NEVER
     ONE HIT: within a workgroup cost is depth-dominated, so sub-workgroup
     batches buy no submission-wall safety, and the old 1-hit floor was a
     one-way trapdoor — one hit band past the pass target and every 1-ray
     batch re-measures the full per-submission wall as its per-hit cost,
-    spike-lift latches it, and the settle reads as parked forever at a
+    the estimate latches it, and the settle reads as parked forever at a
     pose-dependent percent (fr-d6g5's Mesa-25.2.8 "park"; `?surfacetrace`
     and `scripts/fold-settle-park.repro.mjs` are that diagnosis'
     instruments, kept). THE FREE (miss/exhausted) QUEUE HAS NO CAP AT ALL
@@ -1645,14 +1643,39 @@ Frame` callback, which runs before paint so the disabled look never
     NOT meet it — memory question, not submission shape). MEASURED 2492
     free dispatches -> 58 and a 35.0 s settle -> 25.0 s, settled PNGs
     byte-identical. AND THE HIT HALF IS NOT REAL WORK EITHER, which
-    fr-si66's record had concluded and fr-257o's own instrument refuted:
-    `nextShadeHitEmaUs` divides a submission's WHOLE time by its ray
-    count, so a small batch records its LATENCY as per-hit cost and the
-    sizer picks another small batch — fr-d6g5's trapdoor at every width
-    below the occupancy knee, worth another 25.0 s -> 15.0 s MEASURED at a
-    forced 512 floor. Left unshipped as fr-2ojg (P1): a floor is a one-way
-    promise to submit that work, and this is the mechanism behind five
-    i915 hangs. NO submission outruns the i915 watchdog;
+    fr-si66's record had concluded, fr-257o's own instrument refuted and
+    fr-2ojg fixed: a hit dispatch's wall is FLAT in its width to at least
+    eight workgroups (its hits come from one scanline band, so the cost is
+    the deepest ray's and the lanes run in parallel), so dividing a
+    submission's WHOLE time by its ray count charged LATENCY to every hit
+    and the sizer walked itself down to the floor — fr-d6g5's trapdoor at
+    every width below the occupancy knee. The sizer now carries a two-term
+    model, `cost(n) = intercept + n*marginal` (`ShadeHitCost`), splitting
+    each measurement's surprise between the terms by WIDTH (`n/(n+512)` to
+    the marginal — 512 is where the cost curve measured flat), sizing off
+    the MARGINAL alone, spending `max(pass target, 2*intercept)` capped at
+    `SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS` (a latency-bound dispatch
+    cannot be made cheaper by narrowing it, so refusing to widen it buys
+    nothing), growing the capacity ladder against THAT budget rather than
+    a fixed `PASS_TARGET/2`, sharing ONE sizer across a supersampling
+    job's passes (same pose, same raster — across FRAMES the ladder's
+    first-encounter bound is the point), and HOLDING a partial hit batch
+    for the next sweep rather than paying the intercept for a sliver
+    (bounded by the march having rays left AND by one present interval).
+    No per-hit PRIOR survives — it could only ask for less than the
+    one-workgroup starting cap already gives, and its decay held ~7
+    dispatches at the floor. MEASURED, real Iris: boxfoldPair settle
+    25.0 s -> 10.1 s (3.5x from the pre-fr-257o 35.0 s), hit shade
+    14807 -> 2675 ms, 139 -> 20 dispatches; mandelboxKifs 1.75x the
+    hits/s; lens3 -14.3%; the 4D `affine4` arm -32% on the same gate (the
+    sizer is host-loop state, shared by every core in both dimensions, so
+    there is no 4D twin owed); all ten settled PNGs byte-identical. AND THE
+    WORST SINGLE DISPATCH DID NOT GROW, which is the watchdog answer a
+    mean cannot give: 181.2 -> 175.3 ms on boxfoldPair while the batch
+    that produced it went 369 -> 2229 hits, and on mandelboxKifs
+    1714.8 -> 1735.1 ms at `len=64` in BOTH arms — the fold monster's
+    worst submission is its deepest ray, not the sizer's width.
+    NO submission outruns the i915 watchdog;
     progressive presents between every bounded piece; host-compacted active
     list; shading probes ride `SURFACE_COMPUTE_SHADE_DE_WIDTH` (the fr-p8bc
     verdict); colorOut prefill seeded from the last frame
