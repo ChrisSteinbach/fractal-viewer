@@ -374,6 +374,16 @@ report: a 4x Save-PNG whose 32.5M rays wanted a 520 MB state buffer
 inside a ~1.4 GB frame, with the size that caused it appearing nowhere in
 the error.
 
+That ceiling is NOT met against the PER-DISPATCH one (fr-257o's
+`surfaceComputeMaxDispatchRays` — 4,194,240 rays at the workgroup limit
+this renderer never raises), even though the dispatch ceiling is the
+lower of the two on a spec-minimum device. They answer different
+questions — how much memory may a frame commit, versus how much work may
+one submission carry — and meeting them here would make a 4K pane trace
+soft for a bound no single dispatch has to meet. Each sizing site clamps
+at the dispatch ceiling itself instead, and a test pins the
+non-interaction so a later reader does not "fix" it.
+
 Both callers size against the ceiling. The live pane FITS
 (`fitSurfaceComputeRaster`): one frame IS the image, so a hidpi raster
 past the ceiling traces soft and blits up — the preview tier's own
