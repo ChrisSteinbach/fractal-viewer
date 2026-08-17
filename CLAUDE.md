@@ -1653,28 +1653,39 @@ Frame` callback, which runs before paint so the disabled look never
     model, `cost(n) = intercept + n*marginal` (`ShadeHitCost`), splitting
     each measurement's surprise between the terms by WIDTH (`n/(n+512)` to
     the marginal — 512 is where the cost curve measured flat), sizing off
-    the MARGINAL alone, spending `max(pass target, 2*intercept)` capped at
-    `SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS` (a latency-bound dispatch
-    cannot be made cheaper by narrowing it, so refusing to widen it buys
-    nothing), growing the capacity ladder against THAT budget rather than
-    a fixed `PASS_TARGET/2`, sharing ONE sizer across a supersampling
-    job's passes (same pose, same raster — across FRAMES the ladder's
-    first-encounter bound is the point), and HOLDING a partial hit batch
-    for the next sweep rather than paying the intercept for a sliver
-    (bounded by the march having rays left AND by one present interval).
-    No per-hit PRIOR survives — it could only ask for less than the
-    one-workgroup starting cap already gives, and its decay held ~7
-    dispatches at the floor. MEASURED, real Iris: boxfoldPair settle
+    the MARGINAL alone, allowing `max(pass target - intercept, intercept)`
+    of hits per dispatch (a latency-bound dispatch cannot be made cheaper
+    by narrowing it, so refusing to widen it buys nothing), growing the
+    capacity ladder against THAT budget rather than a fixed
+    `PASS_TARGET/2`, rate-limiting the marginal's FALL to a halving
+    (`SURFACE_COMPUTE_SHADE_MARGINAL_DECAY` — clamped at zero it reads
+    "hits are free" and one cheap dispatch buys the whole capacity, which
+    is fr-p8bc's inflated-capacity hole re-opened in the cost model),
+    sharing ONE sizer across a supersampling job's passes (same pose, same
+    raster — across FRAMES the ladder's first-encounter bound is the
+    point), and HOLDING a partial hit batch for the next sweep rather than
+    paying the intercept for a sliver (bounded by the march having rays
+    left AND by one present interval). No per-hit PRIOR survives — it
+    could only ask for less than the one-workgroup starting cap already
+    gives, and its decay held ~7 dispatches at the floor.
+    `SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS` IS 2000 AND ITS PLACEMENT
+    IS THE MEASUREMENT, not a round number: a ceiling on the predicted
+    TOTAL must squeeze the allowance to nothing as the intercept
+    approaches it, so it has to sit outside the range real scenes measure
+    in — at 1000 it bit mandelboxKifs (whose intercept reaches 960 ms)
+    directly, and moving it to 2000 bought 3.5x the hits/s there at an
+    UNCHANGED worst dispatch. MEASURED, real Iris: boxfoldPair settle
     25.0 s -> 10.1 s (3.5x from the pre-fr-257o 35.0 s), hit shade
-    14807 -> 2675 ms, 139 -> 20 dispatches; mandelboxKifs 1.75x the
+    14807 -> 2650 ms, 139 -> 20 dispatches; mandelboxKifs 6.1x the
     hits/s; lens3 -14.3%; the 4D `affine4` arm -39% on the same gate (the
     sizer is host-loop state, shared by every core in both dimensions, so
     there is no 4D twin owed); all ten settled PNGs byte-identical. AND THE
     WORST SINGLE DISPATCH DID NOT GROW, which is the watchdog answer a
-    mean cannot give: 181.2 -> 175.3 ms on boxfoldPair while the batch
-    that produced it went 369 -> 2229 hits, and on mandelboxKifs
-    1714.8 -> 1735.1 ms at `len=64` in BOTH arms — the fold monster's
-    worst submission is its deepest ray, not the sizer's width.
+    mean cannot give: 181.2 -> 188.3 ms on boxfoldPair while the batch
+    that produced it went 369 -> 2197 hits, and on mandelboxKifs
+    1714.8 -> 1731.3 ms — the fold monster's worst submission is its
+    deepest ray, not the sizer's width, and it hit that number at
+    `len=64` before this and at `len=512` after.
     NO submission outruns the i915 watchdog;
     progressive presents between every bounded piece; host-compacted active
     list; shading probes ride `SURFACE_COMPUTE_SHADE_DE_WIDTH` (the fr-p8bc

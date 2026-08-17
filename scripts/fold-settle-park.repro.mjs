@@ -26,6 +26,21 @@
 // This is a probe, not a gate: it always exits 0 and reports whatever
 // state it finds (SETTLED / PARKED-WEDGED / PARKED-SPINNING / TIMEOUT).
 //
+// PARKED-SPINNING IS NOT A RENDERER VERDICT ON THIS SCENE, and fr-2ojg
+// measured why. The staleness test reads the row's INTEGER percent, and
+// mandelboxKifs at this 512x320 viewport resolves roughly ONE percentage
+// point per 80 s of entirely healthy work — a settle frame's whole shade
+// phase is ~1.4 points of an 8-pass job — so any `--parkMs` under about
+// 150 s calls a working build parked. Measured on both sides of fr-2ojg
+// at `--parkMs=90000`: the pre-change build sat at 10% from t=260s to the
+// 400 s cap and reported PARKED-SPINNING; the fixed build, which is
+// strictly further along at every instant (12% at t=100s where the
+// baseline needed 260 s to reach 10%), reported the same thing sooner
+// simply by arriving at a frozen integer sooner. So the default
+// `--parkMs` is the honest setting, PARKED-WEDGED (the trace log itself
+// frozen) is the verdict that means what it says, and SPINNING is worth
+// acting on only against a control run of the other build.
+//
 // Usage: node scripts/fold-settle-park.repro.mjs [--url=https://localhost:5174]
 //        [--display=:0] [--capMs=600000] [--parkMs=150000]
 import fs from "node:fs";

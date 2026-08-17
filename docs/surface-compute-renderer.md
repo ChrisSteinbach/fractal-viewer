@@ -391,7 +391,7 @@ five kernel-confirmed i915 hangs and the Mesa park.
 
 #### What shipped
 
-`ShadeHitCost` is `cost(n) = intercept + n·marginal`, in µs, and six
+`ShadeHitCost` is `cost(n) = intercept + n·marginal`, in µs, and seven
 pieces hang off it.
 
 1. **The model replaces the per-hit EMA.** `shadeHitBatchSize` divides
@@ -404,15 +404,15 @@ pieces hang off it.
    workgroups, the width the table above measured the cost curve still
    flat at. The split is exact-fitting (after the update the model
    reproduces the measurement at that width), so nothing is
-   double-counted in either direction, and a genuine spike still
-   collapses the next batch to the floor in ONE step.
-3. **The budget is `max(pass target, 2 × intercept)`, capped at
-   `SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS` (1000).** Spend at most as
-   much on marginal work as the fixed cost already being paid. Below the
-   knee that is just the 250 ms pass target; above it — mandelboxKifs
-   measures a ~480 ms intercept — refusing to widen past the target buys
-   no safety at all, because the wall is the intercept, and costs an
-   order of throughput.
+   double-counted in either direction, and a genuine spike still cuts the
+   next batch by more than 6x in ONE step.
+3. **The allowance is `max(pass target − intercept, intercept)`**, i.e.
+   fill the pass target, or spend at most as much on hits as the fixed
+   cost already being paid — and never past what
+   `SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS` leaves. Below the knee that
+   is just the 250 ms pass target; above it — mandelboxKifs measures a
+   630-1280 ms intercept — refusing to widen buys no safety at all,
+   because the wall IS the intercept, and costs an order of throughput.
 4. **The capacity ladder's growth threshold is that budget**, not a fixed
    `PASS_TARGET / 2`. That constant was the OTHER half of the stall: it
    froze the capacity at whatever width cost 125 ms, ~256 hits on the
@@ -430,7 +430,22 @@ pieces hang off it.
    one progressive-present interval has passed since the last hit
    dispatch (so the screen keeps developing). Rays held over a budget cut
    keep their seed pixels, which after the first frame is the previous
-   frame's shading of very nearly the same geometry, not backdrop.
+   frame's shading of very nearly the same geometry, not backdrop — a
+   new, bounded loss on truncated frames (at most one batch's worth, and
+   only the preview path passes a wall budget at all).
+7. **The marginal may not fall by more than half on one measurement**
+   (`SURFACE_COMPUTE_SHADE_MARGINAL_DECAY`). The model clamps it at zero,
+   and zero means FREE: without a rate limit one cheap dispatch has the
+   sizer asking for the entire capacity, which on a fold monster is a
+   multi-second submission. It is reachable rather than theoretical — a
+   wide batch of ground-plane terminals, which fr-rhn5 queues WITH the
+   hits but which shade analytically, is exactly that surprise landing on
+   a model converged to expensive fold hits, and it is fr-p8bc's "a cheap
+   run inflates the capacity a hit band then pays" re-opened one level up,
+   in the cost model rather than in the queue. Halving bounds the next
+   batch at twice the last, the rate the ladder already enforces, and it
+   costs nothing measured (the marginal's real per-dispatch moves during a
+   convergence are a few percent).
 
 There is no per-hit cost PRIOR any more. `SURFACE_COMPUTE_INITIAL_HIT_SHADE_US`
 (20 ms/hit) could only ask for fewer hits than the one-workgroup starting
@@ -449,25 +464,25 @@ numbers chain:
 | -------------------- | ------------ | ------------- | -------- | ------- | ---------- | ------------------- |
 | shipped              | 25029 ms     | 14807.4 ms    | 139      | 106.5   | 13.9       | 181.2 ms @ len 369  |
 | + cost model         | 15016 ms     | 6248.0 ms     | 57       | 109.6   | 5.7        | 173.6 ms @ len 491  |
-| + partial-batch hold | **10063 ms** | **2674.8 ms** | **20**   | 133.7   | **2.0**    | 175.3 ms @ len 2229 |
+| + partial-batch hold | **10072 ms** | **2650.4 ms** | **20**   | 132.5   | **2.0**    | 188.3 ms @ len 2197 |
 
 The middle row is the bead's own forced-512-floor experiment reproduced
 by the model rather than by a constant, to the second (15.0 s both
 times). Cumulative from the pre-fr-257o baseline: **35.0 s → 10.1 s,
 3.5x**. A converged frame now shades all ~2240 of its hits in ONE
-2229-hit dispatch of 175 ms; it used to take 14 dispatches and 1.8 s.
+2246-hit dispatch of 174 ms; it used to take 14 dispatches and 1.8 s.
 
 The same run's cost-vs-width table extends fr-257o's two buckets further,
 and the last column is the whole argument:
 
 | batch size | dispatches | hits  | totalMs | meanMs/disp | meanUs/hit |
 | ---------- | ---------- | ----- | ------- | ----------- | ---------- |
-| 1-63       | 3          | 113   | 224.1   | 74.7        | 1983.2     |
-| 64-127     | 2          | 168   | 257.1   | 128.6       | 1530.4     |
-| 128-255    | 2          | 378   | 209.7   | 104.8       | 554.8      |
-| 256-511    | 1          | 256   | 118.7   | 118.7       | 463.7      |
-| 512-1023   | 3          | 1830  | 391.4   | 130.5       | 213.9      |
-| 1024+      | 9          | 15216 | 1473.8  | 163.8       | **96.9**   |
+| 1-63       | 3          | 95    | 177.0   | 59.0        | 1863.2     |
+| 64-127     | 1          | 64    | 134.9   | 134.9       | 2107.8     |
+| 128-255    | 2          | 378   | 213.8   | 106.9       | 565.6      |
+| 256-511    | 2          | 724   | 263.5   | 131.8       | 364.0      |
+| 512-1023   | 3          | 2389  | 379.9   | 126.6       | 159.0      |
+| 1024+      | 9          | 14311 | 1481.3  | 164.6       | **103.5**  |
 
 `lens3` (fr-g58b's fold-FINAL lens, ~93k hits per frame — the
 frame-FILLING case) gains less and for a reason worth writing down: its
@@ -475,22 +490,34 @@ per-hit cost is 17 µs, so its big batches were already pinned at
 `SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH` (4096) in BOTH arms and only the
 ramp and the queue-limited slivers moved. Settle 35031 → 30034 ms
 (−14.3%), hit shade 18084.4 → 13004.2 ms, 356 → 208 dispatches, worst
-dispatch 77.4 → 76.1 ms.
+dispatch 77.4 → 76.1 ms. (Its ~25 ms intercept is three orders under the
+dispatch ceiling, so the ceiling correction below does not touch it.)
 
 `mandelboxKifs` at 800x520 does not settle at all, so it was run as a
-fixed 150 s window on both arms. It is the fold monster, and the sizer
-that never got past 127 hits there now reaches 512-1023:
+fixed 150 s window on each arm. It is the fold monster, and it is where
+the ceiling's PLACEMENT turned out to matter more than anything else in
+this change — the sizer that never got past 127 hits there now spends 86
+of its 98 dispatches at 512-1023:
 
-| arm     | hit disp | hits shaded | hit shade ms | hits/s    | worst dispatch     | p95    |
-| ------- | -------- | ----------- | ------------ | --------- | ------------------ | ------ |
-| shipped | 134      | 7961        | 127376.8     | 62.5      | 1714.8 ms @ len 64 | 1377.3 |
-| fixed   | 112      | 13900       | 126815.1     | **109.6** | 1735.1 ms @ len 64 | 1515.5 |
+| arm             | hit disp | hits shaded | hit shade ms | hits/s    | worst dispatch      | p95    |
+| --------------- | -------- | ----------- | ------------ | --------- | ------------------- | ------ |
+| shipped         | 134      | 7961        | 127376.8     | 62.5      | 1714.8 ms @ len 64  | 1377.3 |
+| 1000 ms ceiling | 112      | 13900       | 126815.1     | 109.6     | 1735.1 ms @ len 64  | 1515.5 |
+| 2000 ms ceiling | 98       | 45178       | 119220.7     | **379.0** | 1731.3 ms @ len 512 | 1638.8 |
 
-**1.75x the hits per second on the hardest scene the project has**, and
-its own cost-vs-width table is the cleanest statement of the finding
+**6.1x the hits per second on the hardest scene the project has, and the
+worst single submission did not move across any of the three arms**
+(1714.8 / 1735.1 / 1731.3 ms). The scene is pose-less, so it auto-frames
+from a `Math.random()`-seeded cloud and the three runs are not the
+identical work — read the ratio as an order-of-magnitude statement, and
+the worst-dispatch column, which is measured over ~100 dispatches per
+arm, as the reliable one.
+
+Its own cost-vs-width table is the cleanest statement of the finding
 anywhere in this record — from 16 hits per dispatch to 512, cost per
 dispatch goes 643.8 → 1015.4 ms (1.58x) while hits per dispatch go 32x,
-i.e. 39253 → 1983 µs/hit:
+i.e. 39253 → 1983 µs/hit (the 1000 ms arm, where the sizer visited every
+bucket):
 
 | batch size | dispatches | hits | totalMs | meanMs/disp | meanUs/hit |
 | ---------- | ---------- | ---- | ------- | ----------- | ---------- |
@@ -499,6 +526,42 @@ i.e. 39253 → 1983 µs/hit:
 | 128-255    | 16         | 2800 | 15788.2 | 986.8       | 5638.6     |
 | 256-511    | 12         | 3959 | 13382.0 | 1115.2      | 3380.1     |
 | 512-1023   | 4          | 2048 | 4061.5  | 1015.4      | 1983.2     |
+
+#### The ceiling was strangling the scene it was there to protect
+
+The dispatch ceiling shipped at 1000 ms and an adversarial read of the
+sizer found why that was wrong before any of it reached hardware. A
+ceiling on the predicted TOTAL necessarily squeezes the allowance to
+nothing as the intercept approaches it — the intercept is measured, not
+chosen, so the only lever a total ceiling leaves is refusing to put hits
+in a dispatch that is going to cost that much anyway. That is fr-d6g5's
+trapdoor rebuilt inside its own replacement, and at 1000 ms it was not
+theoretical: mandelboxKifs's model reaches an intercept of 960 ms, where
+the allowance had fallen to 38 ms and the sizer floored at one workgroup
+while a 500-hit batch would have cost 4% more.
+
+The fix is placement, not shape. The squeeze has to sit outside the range
+real scenes measure in, and 2 s is where a dispatch's FIXED cost alone is
+already a watchdog conversation — declining to widen THAT is the right
+answer rather than a trapdoor. What the move bought, measured on the fold
+monster: **3.5x the hits per second (109.6 → 379.0) at an unchanged worst
+dispatch (1735.1 → 1731.3 ms)**. The 1000 ms constant was costing more
+throughput than everything else in this change put together, on the one
+scene that most needed it, and buying no watchdog margin for it.
+
+Two smaller corrections from the same read, both shipped: the marginal's
+fall is rate-limited (piece 7 above), because clamping it at zero let one
+cheap dispatch ask for the whole capacity; and the capacity ladder's own
+doc comment claimed to be "the ONLY bound on the first encounter with an
+unmeasured-cost region", which is false once the model is calibrated —
+the ladder saturates at the maximum within about six dispatches and
+thereafter binds nothing, by design (the model sizes, the ladder paces
+the climb out of an empty model). Three test assertions were vacuous and
+are rewritten: one fed a measurement equal to the model's own prediction,
+so the function returned its input unchanged and the assertion reduced to
+`1051 > 0.9 × 1051`; the convergence simulation passed with the intercept
+term disabled entirely, and now pins the RECOVERED terms rather than only
+the width.
 
 #### The watchdog question, answered by measurement rather than by a divisor
 
@@ -514,22 +577,43 @@ how much of a frame is spent climbing), and the scenes to ask on —
 escape hatch for anything else. All three scenes were then run on both
 arms. The answer:
 
-- **boxfoldPair: 181.2 ms → 175.3 ms.** The worst submission went DOWN
-  while the batch that produced it went from 369 hits to 2229. That is
-  the flat-cost-vs-width claim proven at 6x the width, and it is the
-  single most useful line in the dataset.
+- **boxfoldPair: 181.2 ms → 188.3 ms** while the batch that produced it
+  went from 369 hits to 2197 — 6x the width for 4% of the wall. That is
+  the flat-cost-vs-width claim proven end to end, and it is the single
+  most useful line in the dataset.
 - **lens3: 77.4 ms → 76.1 ms**, at 4096 and 3728 hits respectively.
-- **mandelboxKifs: 1714.8 ms → 1735.1 ms, and in BOTH arms at `len=64`
-  — the FLOOR.** The worst submission on the fold monster is a property
-  of the scene's deepest ray, not of the sizer, and widening batches did
-  not raise it. 1.7 s is 4.3x under the ~7.5 s i915 watchdog, and it was
+- **mandelboxKifs: 1714.8 → 1735.1 → 1731.3 ms** across the three arms.
+  The worst submission on the fold monster is a property of the scene's
+  deepest ray, not of the sizer's width: the shipped arm hit its worst at
+  `len=64` — the FLOOR — and the final arm hit the same number at
+  `len=512`. 1.7 s is 4.3x under the ~7.5 s i915 watchdog, and it was
   already there before this change.
 
 `scripts/fold-settle-park.repro.mjs` (mandelboxKifs at 512x320, the
-fr-d6g5 regression gate) came back **TIMEOUT, not PARKED**, on both this
-build and the cost-model-only one — the scene is genuinely enormous, not
-wedged, and its own trace shows the same flat curve at a third raster
-(33 hits per dispatch costs 732.6 ms, 433 costs 921.8 ms).
+fr-d6g5 regression gate) never reports PARKED-WEDGED — the trace log
+never stops growing on any arm — and its own trace shows the same flat
+curve at a third raster (33 hits per dispatch costs 732.6 ms, 433 costs
+921.8 ms).
+
+At its documented default `--parkMs` it reports TIMEOUT, and its percent
+readout is a fourth independent measurement of the change: **37% of the
+settle in a 400 s window against the pre-change build's 10% in the same
+window.**
+
+ITS PARKED-**SPINNING** VERDICT, WHICH THIS SESSION TRIPPED, IS NOT ABOUT
+THE RENDERER — and establishing that cost a control run worth keeping.
+The probe's staleness test reads an INTEGER percent, and this scene at
+this viewport resolves ~1 percentage point per 80 s of entirely healthy
+work (a settle frame's whole shade phase is ~1.4 points of an 8-pass
+job). Run at `--parkMs=90000`, tighter than the probe's own 150 s
+default, the FIXED build reported PARKED-SPINNING at 12% — so the
+pre-change build was run as a control on the same cap and reported **the
+same verdict** at 10%, having taken 350 s to reach a frozen integer where
+the fixed build took 190 s. The fixed build is strictly further along at
+every instant and reported "parked" sooner only by arriving at a frozen
+integer sooner. The probe's header now carries that so the next session
+does not re-derive it, and PARKED-WEDGED — the trace log itself frozen —
+is the verdict that means what it says.
 
 AND fr-p8bc's ~108 ms/hit — the number fr-257o's safety arithmetic ran
 through — is ITSELF a whole-submission-over-rays figure, which is to say
