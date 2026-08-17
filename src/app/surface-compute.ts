@@ -38,11 +38,15 @@
  * react AFTER the killing batch. Now misses drain WHOLE — one dispatch
  * per sweep, no cost cap, since one background write per ray is not a
  * cost to model (fr-257o) — and hit batches are sized
- * predictively from a per-hit cost EMA under a pessimistic prior
- * ({@link shadeHitBatchSize}), with the EMA lifting INSTANTLY on a
- * measured spike ({@link nextShadeHitEmaUs}) and a slow-growing capacity
- * cap ({@link nextShadeBatchSize}) bounding the first encounter with an
- * unmeasured-cost region.
+ * predictively from a two-term cost model, `intercept + n·marginal`
+ * ({@link ShadeHitCost}, {@link shadeHitBatchSize}), under a slow-growing
+ * capacity cap ({@link nextShadeBatchSize}) that bounds the first
+ * encounter with an unmeasured-cost region. THE TWO TERMS ARE THE POINT
+ * (fr-2ojg): a shade dispatch's wall time is flat in its width to at
+ * least eight workgroups on Iris, so charging a whole submission's time
+ * to its ray count read LATENCY as per-hit work and the sizer walked
+ * itself down to the floor — fr-d6g5's trapdoor at every width below the
+ * occupancy knee rather than only at n=1.
  *
  * Division of labor: this module owns the DEVICE — acquisition, the
  * per-session pipeline (the DE is frozen at session enter, matching the
@@ -551,83 +555,201 @@ export const SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH = 4096;
  * {@link SURFACE_COMPUTE_WORKGROUP_SIZE} rather than lower (fr-d6g5):
  * starting below one workgroup couldn't reduce per-submission wall either,
  * and it only kept the first hit batches measuring in the degenerate
- * regime that fed the old floor's trapdoor. */
+ * regime that fed the old floor's trapdoor.
+ *
+ * THIS IS ALSO THE WHOLE COST PRIOR since fr-2ojg. A frame opens with an
+ * EMPTY cost model ({@link ShadeHitCost} zeroed) rather than a pessimistic
+ * per-hit guess, because a prior on top of this cap could only make the
+ * first batches smaller than one workgroup — which the floor forbids
+ * anyway — while costing the frame a long climb back out of it (the old
+ * 20 ms/hit prior decayed at 0.4 per dispatch and held ~7 dispatches at
+ * the floor before the measurements it was guarding against could speak).
+ * The cap ladder is the first-encounter bound; the model is the sizer. */
 export const SURFACE_COMPUTE_SHADE_HIT_CAP_START =
   SURFACE_COMPUTE_WORKGROUP_SIZE;
 
-/** Pessimistic prior for per-HIT shade cost (µs) before a frame's first
- * measured hit batch — deliberately far above the cheap-probe common case
- * (~1 ms/hit measured) and same-order with the full-width near-surface
- * grind (~108 ms/hit measured, fr-p8bc's A/B): overestimating shrinks the
- * first batches, underestimating hangs the GPU. The measured EMA takes
- * over from the first hit batch on. */
-export const SURFACE_COMPUTE_INITIAL_HIT_SHADE_US = 20_000;
+/** Hard ceiling (ms) on the GPU time one HIT shade dispatch may be sized
+ * for — where {@link shadeHitBudgetUs}'s latency-bound allowance stops.
+ * 7.5x under the ~7.5 s i915 preemption watchdog, and the frame still
+ * presents and re-checks its wall budget between dispatches, so the cost
+ * of the ceiling being generous is at most one dispatch of added cancel
+ * latency on a pose the renderer is about to abandon. */
+export const SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS = 1000;
+
+/** Batch width at which one hit-dispatch measurement is half about the
+ * per-dispatch INTERCEPT and half about the per-hit MARGINAL cost — the
+ * attribution pivot in {@link nextShadeHitCost}. 512 = eight workgroups,
+ * which is where fr-2ojg measured the cost-vs-width curve still flat on
+ * Iris Xe (87.2 -> 136.2 ms per dispatch while hits per dispatch rose
+ * ~11x): below it a measurement is nearly all fixed cost, above it the
+ * marginal term is what moved. */
+export const SURFACE_COMPUTE_SHADE_COST_PIVOT = 512;
 
 /**
- * Adaptive hit-batch CAPACITY: grow while hit batches come in well under
- * the pass target, QUARTER on a big overshoot. This is the slow-trust
- * bound layered over {@link shadeHitBatchSize}'s cost prediction: a
- * region whose per-hit cost the EMA has not seen yet can only be met at
- * a capacity earned through measured-cheap batches, so the first
- * encounter's overshoot stays a bounded multiple of the pass target
- * instead of a watchdog kill. The trust ladder's floor is one workgroup,
- * never lower (fr-d6g5) — see {@link shadeHitBatchSize} for why a
- * sub-workgroup capacity buys no submission-wall safety. Pure so the
- * safety bias is unit-tested.
+ * The hit-shade cost model (fr-2ojg): `cost(n) = intercept + n·marginal`,
+ * in µs, for a dispatch of `n` HIT rays.
+ *
+ * The two terms are physically different things and conflating them is
+ * the defect this type exists to name. `interceptUs` is what a dispatch
+ * costs before any width — the batch's DEEPEST ray, since lanes run in
+ * parallel across EUs, so a 16-hit batch and a 512-hit batch of the same
+ * scanline band cost about the same. `marginalUs` is what each extra hit
+ * adds once past that. fr-2ojg measured the intercept at ~88 ms and the
+ * marginal at ~0.15 ms/hit on the boxfold pair: dividing a whole
+ * submission's time by its ray count called that 5.2 ms PER HIT at n=16,
+ * the sizer divided the pass target by the inflated number, picked
+ * another small batch, and re-measured the same inflation — fr-d6g5's
+ * trapdoor at every width below the occupancy knee rather than only at
+ * n=1.
+ */
+export interface ShadeHitCost {
+  /** Fixed per-dispatch cost (µs), independent of batch width. */
+  interceptUs: number;
+  /** Added cost (µs) per hit beyond the intercept. */
+  marginalUs: number;
+}
+
+/** A frame opens knowing nothing: both terms zero, so
+ * {@link shadeHitBatchSize} asks for everything and
+ * {@link SURFACE_COMPUTE_SHADE_HIT_CAP_START} hands it one workgroup.
+ * See that constant for why there is no pessimistic prior any more. */
+export function initialShadeHitCost(): ShadeHitCost {
+  return { interceptUs: 0, marginalUs: 0 };
+}
+
+/**
+ * GPU-time budget (µs) one hit dispatch may be sized for, given what the
+ * frame currently believes its per-dispatch INTERCEPT is.
+ *
+ * The rule is `max(pass target, 2 × intercept)`, capped at
+ * {@link SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS} — spend at most as
+ * much on marginal work as the fixed cost you are already paying. Below
+ * the knee that is just the pass target (a ~88 ms intercept leaves
+ * ~162 ms of hits to buy). Above it, it is the whole point of fr-2ojg: a
+ * dispatch whose fixed cost alone is 400 ms cannot be made cheaper by
+ * shrinking it, so refusing to widen it past the pass target buys no
+ * safety and costs an order of throughput — 64 hits for 432 ms against
+ * 800 hits for 800 ms, on measurements that say the second is the same
+ * work done ~12x faster.
+ */
+export function shadeHitBudgetUs(interceptUs: number): number {
+  return Math.min(
+    SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS * 1000,
+    Math.max(SURFACE_COMPUTE_PASS_TARGET_MS * 1000, 2 * interceptUs),
+  );
+}
+
+/**
+ * Adaptive hit-batch CAPACITY: grow while hit batches come in under the
+ * budget they were sized for, QUARTER on a big overshoot. This is the
+ * slow-trust bound layered over {@link shadeHitBatchSize}'s cost
+ * prediction, and since fr-2ojg it is the ONLY bound on the first
+ * encounter with an unmeasured-cost region: a width the model has never
+ * priced can only be reached by doubling through widths it has, so the
+ * first overshoot stays a bounded multiple of the budget instead of a
+ * watchdog kill. The trust ladder's floor is one workgroup, never lower
+ * (fr-d6g5) — see {@link shadeHitBatchSize} for why a sub-workgroup
+ * capacity buys no submission-wall safety.
+ *
+ * `budgetMs` is {@link shadeHitBudgetUs}'s answer for the batch being
+ * judged, NOT the fixed pass target: the growth threshold has to be the
+ * same number the sizer aimed at, or the ladder freezes exactly where the
+ * sizer wants to go. (It was `PASS_TARGET / 2`, which pinned the capacity
+ * at whatever width cost 125 ms — ~256 hits on the fr-2ojg scene, against
+ * a measured optimum of ~1050.) Pure so the safety bias is unit-tested.
  */
 export function nextShadeBatchSize(
   current: number,
   lastBatchMs: number,
+  budgetMs: number,
 ): number {
-  if (
-    lastBatchMs < SURFACE_COMPUTE_PASS_TARGET_MS / 2 &&
-    current < SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH
-  ) {
+  if (lastBatchMs < budgetMs && current < SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH) {
     return Math.min(current * 2, SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH);
   }
-  if (lastBatchMs > SURFACE_COMPUTE_PASS_TARGET_MS * 2) {
+  if (lastBatchMs > budgetMs * 2) {
     return Math.max(SURFACE_COMPUTE_WORKGROUP_SIZE, Math.floor(current / 4));
   }
   return current;
 }
 
 /**
- * Predictive hit-batch sizing (fr-p8bc): as many hits as the measured
- * per-hit cost EMA predicts fit the pass target, clamped by the
- * slow-trust capacity cap and floored at one WORKGROUP rather than one
- * hit (fr-d6g5). Sub-workgroup batches buy zero watchdog safety: GPU
- * cost inside a single workgroup ({@link SURFACE_COMPUTE_WORKGROUP_SIZE}
- * threads) is depth-dominated, not width-dominated — a dispatch of 64
- * independent rays costs about as much wall time as a dispatch of 1,
- * since lanes run in parallel across EUs — so shrinking below one
- * workgroup only multiplies the number of worst-ray-cost submissions
- * without shrinking any single one of them. The old one-hit floor was a
- * one-way trapdoor: a 1-ray batch measures the FULL per-submission wall
- * as its per-hit cost, the spike-lift EMA ({@link nextShadeHitEmaUs} —
- * jumps up instantly, decays slowly) latches onto that inflated reading,
- * `byCost` collapses to 0, and every batch thereafter re-floors at 1 —
- * measured on the real driver (Iris Xe, Mesa 25.2.8) at 170-455 ms/ray,
- * ~4.4 hits/s, the fr-d6g5 settle-park pose. Pure so the prediction is
- * unit-tested.
+ * Predictive hit-batch sizing (fr-p8bc, corrected by fr-2ojg): as many
+ * hits as the measured MARGINAL cost says fit the dispatch budget once
+ * the intercept is paid, clamped by the slow-trust capacity cap and
+ * floored at one WORKGROUP rather than one hit (fr-d6g5).
+ *
+ * Sub-workgroup batches buy zero watchdog safety: GPU cost inside a
+ * single workgroup ({@link SURFACE_COMPUTE_WORKGROUP_SIZE} threads) is
+ * depth-dominated, not width-dominated — a dispatch of 64 independent
+ * rays costs about as much wall time as a dispatch of 1, since lanes run
+ * in parallel across EUs — so shrinking below one workgroup only
+ * multiplies the number of worst-ray-cost submissions without shrinking
+ * any single one of them. fr-2ojg's measurement is that the same
+ * argument holds to at least EIGHT workgroups, which is why the divisor
+ * here is the marginal cost and not a whole submission's time over its
+ * ray count: the old form charged the intercept to every hit, so the
+ * predicted width fell as the batch narrowed and the sizer walked itself
+ * down to the floor. Pure so the prediction is unit-tested.
  */
-export function shadeHitBatchSize(emaUsPerHit: number, cap: number): number {
-  const byCost = Math.floor(
-    (SURFACE_COMPUTE_PASS_TARGET_MS * 1000) / Math.max(1, emaUsPerHit),
+export function shadeHitBatchSize(cost: ShadeHitCost, cap: number): number {
+  const allowanceUs = Math.max(
+    0,
+    shadeHitBudgetUs(cost.interceptUs) - cost.interceptUs,
   );
+  const byCost = Math.floor(allowanceUs / Math.max(1, cost.marginalUs));
   return Math.max(SURFACE_COMPUTE_WORKGROUP_SIZE, Math.min(cap, byCost));
 }
 
 /**
- * Per-hit shade-cost EMA update, deliberately ASYMMETRIC: a measured
- * spike lifts the estimate to the spike INSTANTLY (the next batch is
- * sized for the expensive region the queue's scanline order says we just
- * entered), while cheaper measurements blend in slowly (re-trusting a
- * cheap region is worth a few conservative batches; trusting an
- * expensive one late is a watchdog kill). Pure so the asymmetry — the
- * safety property — is unit-tested.
+ * Fold one measured hit dispatch into the cost model (fr-2ojg).
+ *
+ * One observation, two unknowns — so the surprise (measured minus
+ * predicted) is SPLIT by how much this width can speak about each term:
+ * `w = n / (n + PIVOT)` of it to the marginal, the rest to the intercept.
+ * A one-workgroup batch is nearly all fixed cost and moves the intercept;
+ * a wide one moves the marginal. Both clamp at zero, and the split is
+ * exact-fitting — after the update the model reproduces the measurement
+ * at that width — so nothing is double counted in either direction.
+ *
+ * THE SPIKE RESPONSE SURVIVES the change of shape, which is the safety
+ * property the old asymmetric EMA existed for: an expensive band lands as
+ * a large positive surprise, most of it at a wide `n` (so most of it in
+ * the marginal), and the next batch collapses to the floor in ONE step —
+ * measured in the fr-2ojg simulation at a 19x marginal lift and a 16x
+ * batch cut from a single 30x-cost dispatch. What does NOT survive is the
+ * old slow decay, and deliberately: re-earning a cheap region took ~10
+ * dispatches of a frame that only had ~17, so a settle spent most of its
+ * hit budget climbing out of readings that were never per-hit costs.
+ *
+ * THE QUEUE-LIMITED BATCH is the case that most needs the split. A sweep
+ * that yields fewer hits than the sizer asked for dispatches a narrow
+ * batch whose whole-submission time is dominated by the intercept; the
+ * old form read that as an expensive per-hit region and shrank. Here the
+ * pivot hands it to the intercept and the next full-width batch is
+ * essentially unmoved. Pure so both the split and the clamps are
+ * unit-tested.
  */
-export function nextShadeHitEmaUs(emaUs: number, measuredUs: number): number {
-  return measuredUs > emaUs ? measuredUs : emaUs * 0.6 + measuredUs * 0.4;
+export function nextShadeHitCost(
+  cost: ShadeHitCost,
+  hits: number,
+  measuredUs: number,
+): ShadeHitCost {
+  const n = Math.max(1, hits);
+  const surpriseUs = measuredUs - (cost.interceptUs + n * cost.marginalUs);
+  const w = n / (n + SURFACE_COMPUTE_SHADE_COST_PIVOT);
+  return {
+    interceptUs: Math.max(0, cost.interceptUs + (1 - w) * surpriseUs),
+    marginalUs: Math.max(0, cost.marginalUs + (w * surpriseUs) / n),
+  };
+}
+
+/** Everything the hit-shade sizer learns during a frame, in one mutable
+ * carrier so a supersampling job can hand it to the next pass (fr-2ojg).
+ * See the `sizer` declaration in `runFrame` for why that carry is sound
+ * for passes of one job and for nothing else. */
+interface ShadeSizerState {
+  cost: ShadeHitCost;
+  cap: number;
 }
 
 /** The bench host loop's adaptive pass sizing: double while the last pass
@@ -1509,6 +1631,18 @@ export class SurfaceComputeRenderer {
     let out: SurfaceComputeFrame | null = null;
     let wallMs = 0;
     let gpuMs = 0;
+    // ONE hit-shade sizer for the whole job (fr-2ojg). Every pass here
+    // traces the SAME pose at the SAME raster with the SAME DE — only the
+    // sub-pixel offset moves — so the cost model pass 0 measured is
+    // exactly the model passes 1..N-1 need, and re-deriving it from one
+    // workgroup each time costs the job N climbs for one frame's worth of
+    // information. This is the only carry that is sound: across frames
+    // the pose can jump, and the capacity ladder's first-encounter bound
+    // is precisely what a jumped pose needs.
+    const jobSizer: ShadeSizerState = {
+      cost: initialShadeHitCost(),
+      cap: SURFACE_COMPUTE_SHADE_HIT_CAP_START,
+    };
     for (let s = 0; s < samples; s++) {
       const frame = await this.runFrame(
         token,
@@ -1530,6 +1664,7 @@ export class SurfaceComputeRenderer {
               : undefined,
         },
         subPixelSample(s),
+        jobSizer,
       );
       if (!frame) break;
       wallMs += frame.wallMs;
@@ -1817,6 +1952,10 @@ export class SurfaceComputeRenderer {
      * pixel centre — the value every ray derivation used to hardcode — so
      * a single-sample frame is the pre-supersampling one. */
     pixelJitter: [number, number] = [0.5, 0.5],
+    /** The supersampling job's shared hit-shade sizer state (fr-2ojg),
+     * mutated in place so each pass starts where the last one converged.
+     * Absent = a fresh model and a one-workgroup capacity. */
+    jobSizer?: ShadeSizerState,
   ): Promise<SurfaceComputeFrame | null> {
     const trace = surfaceComputeTrace;
     const traceT0 = performance.now();
@@ -1916,21 +2055,34 @@ export class SurfaceComputeRenderer {
     // kernel's march loop exits early only on terminal transitions.
     let sweepSteps = 0;
     let sweepSliced = 0;
-    let shadeHitCap = SURFACE_COMPUTE_SHADE_HIT_CAP_START;
-    // fr-55s1 stage D: a fold FINAL lens multiplies every march step and
-    // every shade probe by its branch sweep — 27 boxfold / 3 spherefold /
-    // 81 mandelbox branches around the core, discounted /8 for the
-    // prunes' measured-typical survival (surfaceDescentCostWeight's
-    // factor, surface-de.ts) — so first-slice/first-batch sizing starts
-    // from a proportionally raised prior and stays watchdog-safe before
-    // the EMAs take over.
+    // The hit-shade cost model and its capacity ladder. A supersampling
+    // JOB hands the same carrier to every pass (fr-2ojg): passes 1..N-1
+    // differ from pass 0 by a sub-pixel offset and NOTHING else — same
+    // pose, same raster, same DE, same hits — so re-learning the model
+    // from one workgroup eight times over is eight ramps paid for one
+    // frame's worth of information. A single-sample frame gets a fresh
+    // model, which is where the ladder's first-encounter bound belongs.
+    const sizer: ShadeSizerState = jobSizer ?? {
+      cost: initialShadeHitCost(),
+      cap: SURFACE_COMPUTE_SHADE_HIT_CAP_START,
+    };
+    // fr-55s1 stage D: a fold FINAL lens multiplies every march step by
+    // its branch sweep — 27 boxfold / 3 spherefold / 81 mandelbox
+    // branches around the core, discounted /8 for the prunes'
+    // measured-typical survival (surfaceDescentCostWeight's factor,
+    // surface-de.ts) — so first-slice sizing starts from a
+    // proportionally raised prior and stays watchdog-safe before the EMA
+    // takes over. The SHADE side carries no prior at all since fr-2ojg
+    // (see SURFACE_COMPUTE_SHADE_HIT_CAP_START): its first batch is one
+    // workgroup whatever a prior would have said, so scaling one only
+    // lengthened the climb back out.
     // (Both FORWARD kinds scale nothing: the orbit is phone-cheap — the
     // bulb measured 3.5x CHEAPER per eval than the fold mode
     // (bulb-de.ts's verdict) — and
-    // the pessimistic base priors only err toward smaller first slices.
+    // the pessimistic base prior only errs toward smaller first slices.
     // Affine 4D targets scale nothing either — the affine4 ladder starts
-    // from the same pessimistic base priors the 3D affine class would.
-    // FOLD-shaped 4D targets scale (fr-rsp6): the base priors absorbed
+    // from the same pessimistic base prior the 3D affine class would.
+    // FOLD-shaped 4D targets scale (fr-rsp6): the base prior absorbed
     // the 3D fold class's 27/81-branch fans, and the 4D fans are 3x
     // wider — 81 boxfold / 243 mandelbox — so the first slice scales by
     // maxFan/27 (spherefold's 3 stays at the floor); a 4D fold FINAL
@@ -1970,17 +2122,15 @@ export class SurfaceComputeRenderer {
           ));
     // fr-5wlv.5: the balloon union pays the inverted shell eval on top of
     // the fractal term — fr-5wlv.1 measured rest-state march steps
-    // x1.25-2.06 over plain (value queries x1.00-1.27) — so both
-    // first-sizing priors start doubled; erring toward smaller first
-    // slices is the safe direction, and the EMAs take over from the
+    // x1.25-2.06 over plain (value queries x1.00-1.27) — so the first
+    // march slice's prior starts doubled; erring toward smaller first
+    // slices is the safe direction, and the EMA takes over from the
     // first measurement.
     const balloonCostScale =
       (this.target.kind === "ifs" || this.target.kind === "ifs4") &&
       this.target.balloon === true
         ? 2
         : 1;
-    let shadeHitEmaUs =
-      SURFACE_COMPUTE_INITIAL_HIT_SHADE_US * lensCostScale * balloonCostScale;
     let passes = 0;
     let gpuMs = 0;
     let marchGpuMs = 0;
@@ -2201,7 +2351,7 @@ export class SurfaceComputeRenderer {
     };
 
     // balloonCostScale: the fr-5wlv.1 march-step numbers (the prior
-    // comment above shadeHitEmaUs).
+    // comment above `balloonCostScale`).
     let rayStepEmaUs =
       SURFACE_COMPUTE_INITIAL_RAY_STEP_US * lensCostScale * balloonCostScale;
     // fr-si66: the frame's terminal tally, accumulated as each sweep
@@ -2209,7 +2359,7 @@ export class SurfaceComputeRenderer {
     // needed a readback this loop no longer pays for.
     const counts = { hit: 0, miss: 0, exhausted: 0, active: 0, plane: 0 };
     tr(
-      `frame start rays=${rays} marchSteps=${spec.marchSteps} budgetMs=${budgetMs} shadeHitEmaUs0=${shadeHitEmaUs} rayStepEmaUs0=${rayStepEmaUs} shadeHitCap0=${shadeHitCap}`,
+      `frame start rays=${rays} marchSteps=${spec.marchSteps} budgetMs=${budgetMs} shadeCost0=${sizer.cost.interceptUs.toFixed(0)}+n*${sizer.cost.marginalUs.toFixed(1)}us rayStepEmaUs0=${rayStepEmaUs} shadeHitCap0=${sizer.cap}`,
     );
     outer: while (
       active.length > 0 ||
@@ -2359,9 +2509,13 @@ export class SurfaceComputeRenderer {
         // ray's probe evals can cost 100 ms. The only ceiling a free batch
         // has to meet is the device's own dispatch one.
         const isFree = shadeFreeQueue.length > 0;
+        // The budget this batch is SIZED for, kept for the capacity
+        // ladder below: the growth threshold has to be the number the
+        // sizer aimed at, not a fixed constant (fr-2ojg).
+        const hitBudgetMs = shadeHitBudgetUs(sizer.cost.interceptUs) / 1000;
         const batchSize = isFree
           ? Math.min(shadeFreeQueue.length, maxDispatchRays)
-          : shadeHitBatchSize(shadeHitEmaUs, shadeHitCap);
+          : shadeHitBatchSize(sizer.cost, sizer.cap);
         const batch = Uint32Array.from(
           (isFree ? shadeFreeQueue : shadeHitQueue).slice(0, batchSize),
         );
@@ -2372,11 +2526,11 @@ export class SurfaceComputeRenderer {
         }
         if (!Number.isFinite(batchSize) || batch.length === 0) {
           tr(
-            `ANOMALY shade isFree=${isFree} batchSize=${batchSize} len=${batch.length} emaUs=${shadeHitEmaUs} cap=${shadeHitCap}`,
+            `ANOMALY shade isFree=${isFree} batchSize=${batchSize} len=${batch.length} cost=${sizer.cost.interceptUs}+n*${sizer.cost.marginalUs} cap=${sizer.cap}`,
           );
         }
         tr(
-          `shade BEGIN isFree=${isFree} hitQ=${shadeHitQueue.length} freeQ=${shadeFreeQueue.length} batchSize=${batchSize} len=${batch.length} emaUs=${shadeHitEmaUs.toFixed(1)} cap=${shadeHitCap}`,
+          `shade BEGIN isFree=${isFree} hitQ=${shadeHitQueue.length} freeQ=${shadeFreeQueue.length} batchSize=${batchSize} len=${batch.length} interceptUs=${sizer.cost.interceptUs.toFixed(0)} marginalUs=${sizer.cost.marginalUs.toFixed(1)} budgetMs=${hitBudgetMs.toFixed(0)} cap=${sizer.cap}`,
         );
         writeParams(batch.length, 0);
         device.queue.writeBuffer(buffers.active, 0, batch);
@@ -2391,14 +2545,26 @@ export class SurfaceComputeRenderer {
         shadeGpuMs += shadeMs;
         passes++;
         if (!isFree) {
-          // Hit economics only — free batches would just dilute the EMA
+          // Hit economics only — free batches would just dilute the model
           // toward zero and re-open the miss-inflated-capacity hole.
-          shadeHitEmaUs = nextShadeHitEmaUs(
-            shadeHitEmaUs,
-            (shadeMs * 1000) / batch.length,
+          sizer.cost = nextShadeHitCost(
+            sizer.cost,
+            batch.length,
+            shadeMs * 1000,
           );
-          shadeHitCap = nextShadeBatchSize(shadeHitCap, shadeMs);
-          tr(`shade ema→${shadeHitEmaUs.toFixed(1)} cap→${shadeHitCap}`);
+          // A QUEUE-LIMITED batch (the sweep had fewer hits than the
+          // sizer asked for) may shrink the capacity but never grow it:
+          // coming in under budget on a batch that could not be any wider
+          // is not evidence that a wider one would fit. That is fr-p8bc's
+          // lesson — miss runs inflating a capacity a hit band then paid
+          // — in the one place it can still happen now the queues are
+          // split.
+          const grown = nextShadeBatchSize(sizer.cap, shadeMs, hitBudgetMs);
+          sizer.cap =
+            batch.length < batchSize ? Math.min(sizer.cap, grown) : grown;
+          tr(
+            `shade cost→${sizer.cost.interceptUs.toFixed(0)}+n*${sizer.cost.marginalUs.toFixed(1)}us cap→${sizer.cap}`,
+          );
         }
         if (!(await maybePresent())) return null;
       }
