@@ -499,7 +499,12 @@ and UI**, so the interesting math is unit-tested without a browser:
     new part is the FOURTH box axis, whose `pw0/pw1/pw2` and `dwUp/dwDn`
     take the same treatment as x/y/z and whose visible-radius bound's `+ 4`
     — the axis COUNT — becomes `4·wall²`.
-    Measured verdict + numbers in the module doc. Both estimators take an
+    Measured verdict + numbers in the module doc — fr-b8o5's included: the
+    SLICE CAVEAT costs ~10% and is FLAT in `w0`, so slice-aware certificates
+    are a measured won't-do (`scripts/slice-cost.harness.ts`), and the 20-40x
+    off-centre cost cliff they were for does not reproduce on either engine
+    (`scripts/slice-cliff.probe.mjs`, the app-level pose-cost instrument).
+    Both estimators take an
     optional `halfExtent` (fr-wa6o): the query becomes the SEGMENT
     `p ± halfExtent`, which turns the marched hyperplane into a SLAB of
     half-thickness `h` — same contract (conservative bound, exact zero set),
