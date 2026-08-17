@@ -14,7 +14,8 @@ core and the lens wrapper, and the first march slice's prior scales by
 the lens branch count 27/3/81 ÷ 8). Since fr-dlxh it also takes escape-time
 sessions — the non-contracting pure-fold map, or, since fr-s04t, the
 CHAIN of them, that the IFS gate refuses. Since fr-dlxh's 4D cut it also
-takes plain 4D surface sessions (symmetry order 1).
+takes 4D surface sessions — plain ones from that cut, and every other 4D
+system since fr-fniy.
 
 All of those PREFER compute when an adapter exists: no fold GLSL ever
 compiles (the ~25s Mesa link / ~5.7s lens link / fr-096u entry hazards
@@ -27,17 +28,43 @@ deliberately carries no fold GLSL, so the eligibility gate refuses entry
 when compute is unavailable, and a mid-session compute loss exits the
 mode with a toast rather than falling back.
 
-KALEIDOSCOPE 4D (non-fold, order > 1) stays on the fragment tracer by
-MEASURED verdict: on real Iris at 1024x640, plain 4D compute settles in
-4.6s vs the fragment tracer's 8.9s, with object-mask IoU 0.996 between
-them — so compute is faster and they agree on the picture. But at order
-6 the WGSL sector sweep never settled a 6-minute observation that the
-fragment arm settled in 10.9s, a ~35x gap. fr-b72d's closure exonerated
-the kernel: the DE's cost is algorithmically superlinear in order for
-BOTH arms (CPU-oracle-matched), and the uniform-maps/refinedCert kernel
-suspects were refuted on the extended `--surface-aff4-sweep` leg. So the
-residual is this module's march-loop scheduling under an expensive-DE
-regime — fr-fniy, open.
+KALEIDOSCOPE 4D (non-fold, order > 1) came here too in fr-fniy, so there
+is no order split left: EVERY 4D session prefers compute, and the
+fragment 4D tracer is its fallback arm.
+
+That line moved twice. fr-dlxh's 4D cut kept order > 1 on the fragment
+tracer because the WGSL sector sweep never settled a 6-minute observation
+the fragment arm settled in 10.9s. fr-b72d exonerated the kernel — the
+DE's cost is algorithmically superlinear in order for BOTH arms
+(CPU-oracle-matched), and the uniform-maps/refinedCert suspects were
+refuted on the extended `--surface-aff4-sweep` leg. fr-b8o5 then made
+both arms forceable and re-measured: WebGL 147s against compute 179s, a
+1.2x sitting inside the fragment arm's own 147/444/604s spread, so the
+rule stood on a null result. fr-fniy found what the compute arm was
+actually spending that time on — a hit-shade batch width that was its
+cost model's attribution pivot rather than anything about the scene — and
+fixing it moved the row decisively. MEASURED, real Iris Xe at 1024x640,
+identity rotor, both arms forced, `scripts/slice-cliff.probe.mjs
+--arm=both --slices=0 --settle=1`:
+
+| scene                               | WebGL       | compute    |
+| ----------------------------------- | ----------- | ---------- |
+| plain4 (3 maps, order 1)            | 11.5 s      | 3.0 s      |
+| kaleido4 (2 maps, order 6, twist 1) | **637.5 s** | **53.1 s** |
+
+53.1s is 2.8x faster than the FASTEST run the fragment arm has ever
+recorded on that scene and 12x this cell's, with a ~5% run-to-run spread
+against a 4x one — no longer a null result in either magnitude or
+repeatability. First frame moves the same way, 0.21s against 4.86s. The
+two arms agree on the picture: `scripts/surface-4d.verify.mjs` step (e)
+holds them to an object-mask IoU on both scenes (plain 4D measured 0.996
+at fr-dlxh), and both settle the same 8 supersampling passes at
+`subPixelSample`'s offsets, which the strip pump and this module share by
+import.
+
+What the 12x does NOT buy is a cheap scene: kaleido4 is still tens of
+seconds, because the DE's superlinear order cost is paid by whichever arm
+renders it. That is disclosed by the progress row, never a refusal.
 
 ESCAPE-shaped 4D sessions (fr-vag4 — a non-flat chain the 4D IFS gate
 refuses) are compute-ONLY for the fold-4D reason unchanged: an escape
@@ -104,13 +131,20 @@ error taxonomy) and the frame loop.
 
 ## The frame loop and batch sizing
 
-March slices are sized from a measured per-ray·step EMA. Shade batches
+March slices are sized from a measured per-ray·step EMA, and
+`stepsThisPass` doubles toward 32 whenever a whole sweep fits one slice.
+fr-fniy priced that half and found it small — 5.8% of a settle before its
+own fix, 19.9% after, with the sweep readbacks at 0.06% and ~2% of the
+settle in per-dispatch fixed cost — so the EMA's shape is a known,
+measured, declined lever rather than an unexamined one. Shade batches
 are sized in HIT units (fr-p8bc): terminal rays queue by status — misses
 are one background write; hits, and, since fr-rhn5, ground-plane PLANE
 terminals, pay the probe evals and arrive scanline-CLUSTERED. Batches are
 predicted from a two-term cost model — `intercept + n·marginal`, fr-2ojg,
 whose whole record is two sections down — under a slow-trust
-double/quarter capacity ladder.
+double/quarter capacity ladder, and the WIDTH that model asks for is the
+attribution pivot's rather than the scene's, which is fr-fniy's finding
+and the section after fr-2ojg's.
 
 The original design doubled capacity in RAY units, which let a run of
 misses inflate capacity before a hit band paid for it — that caused five
@@ -686,6 +720,143 @@ would have had nothing to fix. The pane heals at park through fr-ud7n's
 completion pass.
 
 The loop also keeps per-frame status counts for field debugging.
+
+### The width it asks for is the model's own pivot (fr-fniy)
+
+fr-fniy opened as a march-loop question — a kaleidoscope-4D scene at
+symmetry order 6 that the compute arm settled in minutes — and the first
+thing that had to happen was an accounting, because every suspect in the
+bead was a guess. `?surfacecompute` (fr-b8o5's own follow-up) made the arm
+reachable on that shape; `--params=` carried it into
+`scripts/march-readback-ab.mjs`. MEASURED, real Iris Xe / Mesa 25.2.8,
+`kaleido4` (two maps, order 6, twist 1) at 1024x640, production build,
+identity rotor, compute arm forced, 655360 rays, ten frames (two previews
+and eight supersampling passes), 180.1 s to the settle latch:
+
+| half of the frame loop | dispatches | ms       | share     |
+| ---------------------- | ---------- | -------- | --------- |
+| hit shade              | 524        | 165918.7 | **92.1%** |
+| march                  | 130        | 10362.6  | 5.8%      |
+| free shade             | 76         | 278.5    | 0.15%     |
+| sweep readbacks        | 76         | 110.0    | 0.06%     |
+| present readbacks      | 35         | 215.0    | 0.12%     |
+| unaccounted (host)     | —          | ~3460    | 1.9%      |
+
+**The march loop is not the cost, and neither is the host.** 98.1% of the
+settle is GPU submissions, the whole compaction/readback story fr-si66
+rewrote is 0.06%, and the step ramp works: 75 sweeps over ten frames, 1.7
+march dispatches per sweep, `stepsThisPass` climbing 1→2→4→8→16→32 as the
+active list drains (60/16/17/15/10/10 dispatches at each). The march's own
+dispatches do carry a fixed cost — 40k rays cost 9.9 ms against 170k rays'
+12.7 ms at one step, so ~9 ms of each is width-independent — but 128
+dispatches of it is ~1.2 s, 2% of the settle. That is fr-2ojg's "price the
+march the way we priced the shade" answered and refused with a number
+rather than by assertion. Levers (a) and (c) of the bead go the same way:
+no preview truncated in that run, and the 500 ms presents cost 215 ms in
+total.
+
+So the residual was the hit sizer, and forcing its width — the lever the
+sizer's own estimate normally decides, `?surfaceshadehits=N` — says why.
+Each settle frame shades the SAME ~32.3k hits, so ms/frame is the
+comparison:
+
+| forced width   | 64     | 256   | 512         | 1024    | 3690   | 10764  |
+| -------------- | ------ | ----- | ----------- | ------- | ------ | ------ |
+| ms/dispatch    | 287    | 313   | 321         | 336     | 395    | 947    |
+| ms/frame       | 144594 | 39661 | **20503**   | 10756   | 3452   | 2841   |
+| settle         | —      | —     | **180.1 s** | 100.1 s | 40.2 s | 35.0 s |
+| worst dispatch | 401.0  | 407.9 | 397.3       | 418.9   | 441.7  | 1371.1 |
+
+A 168x width buys 3.3x the dispatch. The fit over all six widths is
+`283.1 ms + 64.8 µs/hit`, so at the shipped 512 **ninety per cent of every
+hit dispatch was fixed cost**, and simply doubling the batch halved the
+settle. The fixed cost is not a submission's ~1.15 ms: a hit dispatch's
+wall is its DEEPEST ray's shading chain — ~40 zero-cutoff on-surface DE
+evals in series, and at order 6 one such eval is a deep sector-swept beam
+descent — and lanes run in parallel across EUs, so until the batch fills
+the machine that chain IS the dispatch. 512 hits is 8 workgroups on a
+96-EU part.
+
+#### Why the sizer could not find that out for itself
+
+`nextShadeHitCost` preserves `interceptUs = PIVOT · marginalUs`
+**identically**. From a zeroed model, one update at width n gives
+`I = (1−w)C` and `m = wC/n` with `w = n/(n+P)`, so `I/m = n(1−w)/w = P`;
+and if `I = P·m` already then `I'/m' = (I + Ps/(n+P))/(m + s/(n+P)) = P`
+for any surprise `s` at any width. Two parameters, one measurement per
+dispatch, an exact fit — the RATIO is fixed by the attribution weight and
+the data only ever moves the scale.
+
+That is not a defect in the model, which reproduces the cost at the width
+it measured and predicts a doubling within a factor of two. It is a defect
+in a SIZING rule written in terms of `intercept` alone:
+`shadeHitAllowanceUs`'s middle branch divided an allowance proportional to
+`I` by `m`, so it returned `K · PIVOT` hits on every scene in the project
+and nothing about the scene survived into the answer. At fr-2ojg's `K = 1`
+that is 512 — the number the table above measured leaving 90% of the
+dispatch on fixed cost. The capacity ladder could not push past it either,
+since its growth threshold was `shadeHitBudgetUs(I)` = the model's own
+prediction of that same width: it stopped at exactly where the model
+wanted to be.
+
+The fix is one constant read as what it is —
+`SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST`, a width in units of the
+pivot, **7**, chosen off that table. 3584 is where the curve stops paying:
+3690 measured 40.2 s against 10764's 35.0 s, a further 13% for 2.4x the
+worst dispatch. MEASURED on the shipped build, same scene and machine:
+
+|                           | before                               | after                    |
+| ------------------------- | ------------------------------------ | ------------------------ |
+| settle                    | 180131 ms                            | **55136 ms** (3.27x)     |
+| hit shade                 | 524 dispatches / 165918.7 ms (92.1%) | 122 / 40855.7 ms (79.4%) |
+| march                     | 130 / 10362.6 ms (5.8%)              | 128 / 10224.2 ms (19.9%) |
+| sweep readbacks           | 76 / 110.0 ms                        | 75 / 113.0 ms            |
+| batch width               | 512                                  | 3583                     |
+| **worst single dispatch** | **397.3 ms @ 512**                   | **417.5 ms @ 3583**      |
+
+The last row is the watchdog answer a mean cannot give: the settle fell
+3.3x and the worst submission grew 5%, because the fold monster's worst
+dispatch is its deepest ray and not the sizer's width — the same shape
+fr-2ojg measured one regime over.
+
+The shipped 55.1 s is above the 40.2 s the forced 4096 reached, and the
+difference is disclosed rather than tuned away: 17 dispatches of the
+capacity ladder's climb out of one workgroup, and batches the sweep could
+not fill (105 dispatches carried 258752 hits, a mean of 2464 against the
+3583 asked for) because the partial-batch HOLD releases after one
+progressive-present interval. Both are the pacing fr-2ojg put there on
+purpose.
+
+`mandelboxKifs` — the hardest scene here, and the one whose intercept the
+ceiling term governs — gains the same way, on fr-2ojg's own protocol for
+it (800x520, a 150 s fixed window, since it does not settle):
+
+|                      | before          | after              |
+| -------------------- | --------------- | ------------------ |
+| hits shaded in 150 s | 45577           | 113259             |
+| hit dispatches       | 96              | 60                 |
+| **hits/s**           | **387.3**       | **1299.9** (3.36x) |
+| worst dispatch       | 1744.5 ms @ 512 | 2056.5 ms @ 3583   |
+| p95                  | 1611 ms         | 1952.8 ms          |
+
+That "before" cell was taken on this build with `?surfaceshadehits=512`
+and reads 387.3 hits/s against the 379.0 fr-2ojg recorded for the shipped
+sizer months earlier — a cross-session control on the protocol itself,
+not just on the change. The worst dispatch is now the CEILING's number
+rather than the pivot's: predicted total 2000 ms, measured 2056.5, a 2.8%
+model error, and 3.6x under the ~7.5 s i915 watchdog where fr-2ojg's
+1731 ms was 4.3x under.
+
+REGRESSION, `scripts/surface-repro.verify.mjs --scenario=all --runs=2
+--mode=x11::0`, 1280x720, against fr-2ojg's own recorded figures for the
+same scenes: boxfold3 8.6/8.7 s (was 9.2/9.4), pentatope4 7.7/7.7 (7.8/7.7),
+pentatope4direct 7.6/7.6 (7.6/7.6), lens3 21.3/21.3 (21.7/21.4),
+sierpinski3 13.3/5.3 on the WebGL control (12.1/5.4). Every scenario
+DETERMINISTIC, 0 differing pixels. Those scenes barely move, and that is
+the shape to expect: the change only reaches a dispatch whose fixed cost
+is worth more than an eighth of the pass target, and `lens3` is still held
+by `SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH` — see the headroom note above,
+which stands unchanged.
 
 ### Presentation and routing
 

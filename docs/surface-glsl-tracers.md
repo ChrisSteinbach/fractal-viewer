@@ -218,17 +218,28 @@ arrays ride a std140 uniform BLOCK (fr-dqlq: 2688 bytes of the guaranteed
 (fr-u91x), so 24 slots means 24 transforms at any order.
 
 Since fr-dlxh's 4D cut, this tracer is the PLAIN-4D fallback arm
-(`?surfacegl` / no adapter / device loss — compute is 1.7x faster there)
-and also the kaleidoscope-4D MEASURED HOME: the compute arm never
-settled a 6-minute order-6 observation that this arm settled in 10.9s
-(~35x), so order > 1 routes here by verdict, caveat-free.
+(`?surfacegl` / no adapter / device loss — compute is 1.7x faster there).
+Since fr-fniy it is the fallback for EVERY 4D system and the preferred
+arm for none: it briefly held kaleidoscope 4D as its MEASURED HOME, and
+lost it on a re-measurement.
 
-fr-b72d's closure attributed that gap: the estimator's own cost is
-superlinear in order for BOTH arms (algorithmic depth growth,
-CPU-oracle-matched — `scripts/aff4-order-cpu.harness.ts`), and the
-compute arm's additional collapse is its march-loop scheduling under that
-regime (fr-fniy), not kernel codegen. The uniform-maps and
+That episode is worth keeping, because this arm was right for two
+different reasons and then wrong. The compute arm never settled a
+6-minute order-6 observation this arm settled in 10.9s (~35x). fr-b72d's
+closure attributed the gap: the estimator's own cost is superlinear in
+order for BOTH arms (algorithmic depth growth, CPU-oracle-matched —
+`scripts/aff4-order-cpu.harness.ts`), so the residual was the compute
+arm's host loop and not kernel codegen; the uniform-maps and
 refinedCert-divergence kernel suspects were both refuted with data.
+fr-b8o5 made both arms forceable and read 147s here against 179s there —
+a 1.2x inside THIS arm's own 147/444/604/637s run-to-run spread, so the
+rule then stood on a null result rather than a win. fr-fniy found the
+compute arm's actual cost (a hit-shade batch width fixed by its own cost
+model's attribution pivot rather than by the scene) and the row became
+637.5s here against 53.1s there, with a ~5% spread against this arm's 4x
+one. Nothing about this tracer regressed; the other arm stopped wasting
+90% of its shade dispatches. The full record is in
+`docs/surface-compute-renderer.md`.
 
 ### 4D variant arms and the resolution mechanism
 

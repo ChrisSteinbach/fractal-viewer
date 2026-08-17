@@ -695,7 +695,13 @@ export const SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS = 2000;
  * term already aims a genuinely expensive scene at the ceiling, and this
  * term must not turn a dispatch into a watchdog conversation on a scene
  * nobody has measured. 8·intercept is the predicted total here, so the
- * ceiling still binds first wherever the fixed cost alone exceeds 250 ms.
+ * ceiling still binds first wherever the fixed cost alone exceeds 250 ms —
+ * and `mandelboxKifs`, the hardest scene in the project, sits exactly on
+ * that boundary. Its own measurement (800x520, a 150 s fixed window, since
+ * it does not settle): 387.3 -> 1299.9 hits/s, 3.36x, at a worst dispatch
+ * of 2056.5 ms against the old width's 1744.5 — the ceiling's number
+ * rather than this constant's, 2.8% over its predicted 2000 ms and 3.6x
+ * under the ~7.5 s i915 watchdog.
  */
 export const SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST = 7;
 
