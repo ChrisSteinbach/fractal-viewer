@@ -415,7 +415,8 @@ const STEPS_RE = /\bsteps=(\d+)\b/;
 /** Batch-size buckets for the hit table, half-open on powers of two: the
  * question is whether cost per HIT falls as the batch widens, and a
  * doubling ladder is the resolution that question has (a hit batch is
- * sized from a cost EMA, so its sizes cluster rather than spread). */
+ * sized from a measured cost model under a doubling capacity ladder, so
+ * its sizes cluster around powers of two rather than spread). */
 const HIT_SIZE_BUCKETS = [
   { label: "1-63", min: 1, max: 63 },
   { label: "64-127", min: 64, max: 127 },
