@@ -191,11 +191,30 @@ arms say the march schedule did not move — the arms did the same work.
 
 AND THE WALL TIME DID NOT MOVE, which is the honest half of the result:
 637 ms off a 35 s settle is ~1.8%, inside the settle poll's own 5 s
-resolution. This settle is SHADE-dominated (fr-p8bc), so the readback was
-never its critical path. The saving is transfer volume and host-blocked
-time, and it is worth most exactly where fr-biox found the problem — an
-export tile at the 4M-ray cap read a flat 64 MB of ray state per sweep,
-tens of sweeps a tile, and now reads 4 B per ray still marching.
+resolution. The first draft of this record ASSERTED why ("the settle is
+shade-dominated") — so the instrument grew a WHERE THE TIME WENT line and
+the same settle was re-run to find out. Measured, same scene and raster:
+
+| GPU submissions + sweep readbacks | count | ms      | share     |
+| --------------------------------- | ----- | ------- | --------- |
+| shade dispatches                  | 2634  | 23070.8 | **84.8%** |
+| march dispatches                  | 114   | 4013.9  | 14.8%     |
+| sweep readbacks (after)           | 58    | 107.0   | **0.4%**  |
+
+So the assertion held — but the number is the point: fr-si66 moved the
+readback from ~2.7% of that total to 0.4%, of a settle whose other 99.6%
+is the shade half. The saving is transfer volume and host-blocked time,
+and it is worth most exactly where fr-biox found the problem — an export
+tile at the 4M-ray cap read a flat 64 MB of ray state per sweep, tens of
+sweeps a tile, and now reads 4 B per ray still marching.
+
+That table also says something fr-si66 did not set out to find, filed as
+fr-257o: 2634 shade dispatches at a **~8.8 ms mean** on a scene with only
+~2.4k HIT pixels. Free (miss) batches are capped at
+`SURFACE_COMPUTE_MAX_SHADE_BATCH` = 4096 rays each and cost one
+background write per ray, so a 1.26M-ray frame spends ~307 submissions
+just painting backdrop — times the 8 supersampling passes of a settle
+(fr-vpbq). The dominant term is the submission COUNT, not the shading.
 
 Proven output-identical rather than argued: `scripts/surface-repro.verify.mjs
 --scenario=all --runs=2 --mode=x11::0` was run against BOTH builds, and
