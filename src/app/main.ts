@@ -3304,9 +3304,9 @@ function main(): void {
   // The escape branch consults this alone (fr-dlxh: a pure-fold map is
   // always compute-shaped, and so is a CHAIN of them — fr-s04t, whose
   // kernel cycles the list); the 3D IFS branch adds its shape
-  // test below, and the 4D branch its own (the 4D cut's measured
-  // verdict: plain 4D is compute-shaped, kaleidoscope 4D is not —
-  // fr-b72d).
+  // test below. The 4D branch consults this alone too since fr-fniy —
+  // EVERY 4D system is compute-shaped, kaleidoscope included, and the
+  // measurement that moved that line is at the branch itself.
   function surfaceComputeAvailable(): boolean {
     return surfaceComputeBlock === null && SurfaceComputeRenderer.supported();
   }
@@ -4567,7 +4567,10 @@ function main(): void {
             surface4SlabExact = slabExact4(de);
             ui.setFourDSlabAvailable(surface4SlabExact);
             // Routing by MEASURED verdict: PLAIN 4D prefers compute,
-            // KALEIDOSCOPE 4D stays on the fragment tracer.
+            // EVERY 4D SESSION PREFERS COMPUTE, kaleidoscope included since
+            // fr-fniy. The fragment 4D tracer is the fallback arm
+            // (`?surfacegl` / no adapter / device loss), which is the 3D
+            // fold/escape arrangement one dimension up.
             //
             // MEASURED 2026-08-17 on real Iris Xe (TGL GT2) through
             // ANGLE/Mesa, 1024x640, identity rotor, centred slice,
@@ -4577,40 +4580,48 @@ function main(): void {
             //   node scripts/slice-cliff.probe.mjs <url> --display=:0 \
             //     --arm=both --scenes=<plain4|kaleido4> --slices=0 --settle=1
             //
-            //   plain4   (3 maps, order 1)          WebGL 12.1s  compute 3.0s
-            //   kaleido4 (2 maps, order 6, twist 1) WebGL  147s  compute 179s
+            //   plain4   (3 maps, order 1)          WebGL  11.5s  compute 3.0s
+            //   kaleido4 (2 maps, order 6, twist 1) WebGL 637.5s  compute 53.1s
             //
-            // Order 1 is a clean 4x for compute, over ten cells whose spread
-            // is ~5%. At order 6 compute is 1.2x SLOWER, which is well inside
-            // the fragment arm's own run-to-run spread on that scene (147s /
-            // 444s / 604s at nominally identical conditions — the strip
-            // pump's cost evidence starts class-pessimistic and ratchets off
-            // the job's own measurements, so an expensive scene's total is
-            // path-dependent). A 1.2x inside a 4x band is a null result, and
-            // a null result is a reason to leave a routing rule alone, not to
-            // move it. `?surfacecompute` above is what makes that
-            // re-measurable rather than a claim: rerun the two commands
-            // before changing this line.
+            // THE ORDER-6 ROW IS WHY THIS LINE MOVED. It used to read WebGL
+            // 147s against compute 179s — a 1.2x for the fragment arm that
+            // sat inside its own run-to-run spread (147/444/604/637s at
+            // nominally identical conditions, because the strip pump's cost
+            // evidence starts class-pessimistic and ratchets off the job's
+            // own measurements, so an expensive scene's total is
+            // path-dependent), so the rule stood on a null result. fr-fniy
+            // then found the compute arm's hit-shade sizer asking for a
+            // batch width that was its own cost model's attribution pivot
+            // rather than anything about the scene, and fixing that took the
+            // compute row to 53.1s. That is 2.8x faster than the FASTEST run
+            // the fragment arm has ever recorded here and 12x this cell's,
+            // with a ~5% run-to-run spread against a 4x one — no longer a
+            // null result in either magnitude or repeatability. First frame
+            // moves the same way: 0.21s against 4.86s.
             //
             // Both arms settle the SAME picture: 8 supersampling passes at
             // `subPixelSample`'s offsets, which `scene.ts`'s strip pump and
-            // `surface-compute.ts` share by import.
+            // `surface-compute.ts` share by import, and
+            // `scripts/surface-4d.verify.mjs` step (e) holds them to an
+            // object-mask IoU on BOTH scenes.
             //
-            // The 3D shape-split precedent — affine stays WebGL, folds
-            // prefer compute — one dimension up. FOLD-shaped 4D systems
-            // (fr-rsp6) are compute-only at EVERY order: the fragment 4D
-            // tracer carries no fold GLSL (deliberately — the 3D fold GLSL
-            // already sits at Mesa's link cliff, and a 243-branch 4D body
-            // there would be unshippable), so there is no fragment arm to
-            // route them to; at order > 1 the DE's own superlinear order
-            // cost (fr-b72d: x13.5 per query at order 6 on the CPU oracle,
-            // matched on the GPU, and paid identically by BOTH arms — which
-            // is why the kaleido4 row above is minutes on either) is
-            // disclosed by the honest progress row, never a refusal.
+            // FOLD-shaped 4D systems (fr-rsp6) remain compute-ONLY rather
+            // than compute-PREFERRING: the fragment 4D tracer carries no
+            // fold GLSL (deliberately — the 3D fold GLSL already sits at
+            // Mesa's link cliff, and a 243-branch 4D body there would be
+            // unshippable), so there is no fragment arm to fall back to.
+            // That is the one thing `foldShaped4` still decides here. At
+            // order > 1 the DE's own superlinear order cost (fr-b72d:
+            // x13.5 per query at order 6 on the CPU oracle, matched on the
+            // GPU, and paid identically by BOTH arms) is disclosed by the
+            // honest progress row, never a refusal — which is why the
+            // kaleido4 row is still tens of seconds after a 12x.
+            //
+            // `?surfacegl` is the escape hatch that keeps this
+            // re-measurable: rerun the two commands before changing this
+            // line.
             const foldShaped4 = deHasFolds4(de) || de.foldFinal !== null;
-            const compute4Shaped =
-              foldShaped4 || de.symmetry.order <= 1 || surfaceComputeForced;
-            if (compute4Shaped && surfaceComputeAvailable()) {
+            if (surfaceComputeAvailable()) {
               // No GLSL system upload — the enter twin owns the session
               // resets, and the live view flows through setSurface4View
               // into the scene state every frame spec re-reads.
@@ -4644,12 +4655,13 @@ function main(): void {
               );
               queueMicrotask(() => surfaceSession.exit());
             } else {
-              // fr-tmgf: the WebGL session says why compute passed, when
-              // it was the preferred engine (null for kaleidoscope 4D —
-              // WebGL is its MEASURED home, nothing to explain — and for
-              // the deliberate ?surfacegl flag).
+              // fr-tmgf: the WebGL session says why compute passed. Every
+              // 4D system is compute-shaped since fr-fniy, so this arm is
+              // always an explanation owed — except for the deliberate
+              // `?surfacegl` flag, which `surfaceWebglDetail` returns null
+              // for on its own.
               surfaceWebglDetailToken = surfaceWebglDetail({
-                computeShaped: compute4Shaped,
+                computeShaped: true,
                 supported: SurfaceComputeRenderer.supported(),
                 block: surfaceComputeBlock,
               });
