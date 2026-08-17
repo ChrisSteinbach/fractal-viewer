@@ -620,6 +620,163 @@ describe("the 4D orbit renders what no 3D approximation can (fr-vag4)", () => {
   });
 });
 
+/**
+ * Hand-derived orbit steps at a genuinely NON-FLAT query (fr-vtaz).
+ *
+ * `runEscapeOrbit4` reimplements the fold and `qsquare` step arithmetic over
+ * four coordinates under the twin-file convention, and neither strategy above
+ * can see a wrong-but-nonzero `w` term: the anchor sweep compares the two
+ * dimensions strictly at `w = 0`, where every `w` term evaluates to `0`, and
+ * the two "renders differently" tests assert only that SOMETHING moved — a
+ * corrupted value is still a difference. So a one-character axis typo
+ * (`foldAxis(yz)` where `foldAxis(yw)` belongs) passes the whole suite.
+ *
+ * These three pin the numbers instead. Each derives one or two FULL orbit
+ * steps from the DOCUMENTED rules — `affine4.ts`'s rotation convention,
+ * `variations4.ts`'s four-coordinate warps, and `escape-de.ts`'s chain rules
+ * (step `i` applies link `i mod n`, with `+ p` and the bailout test after
+ * EACH link, and `dr` floored by `+ 1`) — at a query and a map whose `w`
+ * genuinely participates. Worth the arithmetic because this module is the CPU
+ * oracle behind the shipped `core: "escape4"` kernel: a silent `w`-term bug
+ * ships straight into a real WebGPU render path.
+ */
+describe("the 4D orbit's w terms, hand-derived at nonzero w (fr-vtaz)", () => {
+  it("folds the w axis an xw rotation mixed into -- one boxfold link, one step", () => {
+    // One boxfold link at weight 2, turned by theta = 0.7 in the xw PLANE, so
+    // x and w mix into each other: the one thing no w = 0 fixture can see.
+    // Query p = (1.5, 0.4, -1.2, 0.9), and |p| = 2.159 sits inside the bailout
+    // ball, so the single step (one pass x one link) runs.
+    //
+    //   y = R_xw(0.7)*p, affine4.ts's documented convention
+    //   (a' = a*cos - b*sin, b' = a*sin + b*cos), y and z riding through:
+    //     yx = 1.5c - 0.9s =  0.567467
+    //     yy =  0.4
+    //     yz = -1.2
+    //     yw = 1.5s + 0.9c =  1.654684
+    //   box fold, wall = 1 (the classic boxLimit): fold(t) = 2*clamp(t) - t,
+    //   so an axis inside the box folds to itself and one outside reflects --
+    //   here x and y are inside, z is below the wall and W IS ABOVE IT:
+    //     f  = (0.567467, 0.4, 2(-1) + 1.2, 2(1) - 1.654684)
+    //        = (0.567467, 0.4, -0.8, 0.345316)
+    //   v  = 2*f + p  = (2.634935, 1.2, -2.8, 1.590631)
+    //   dr = derivGrowth * L * dr + 1 = 2*1*1 + 1 = 3
+    //        (derivGrowth = |2| * sigma_max(R) = 2; a box fold's L is 1)
+    //   DE = |v| / dr = 4.330472 / 3 = 1.443491
+    //
+    // Point the w fold at z -- foldAxis(yz) where foldAxis(yw) belongs, the
+    // typo the anchor sweep cannot see -- and vw reads 2(-0.8) + 0.9 = -0.7
+    // for a DE of 1.362713.
+    const theta = 0.7;
+    const c = Math.cos(theta);
+    const s = Math.sin(theta);
+    const p: Vec4 = [1.5, 0.4, -1.2, 0.9];
+    const yx = p[0] * c - p[3] * s;
+    const yw = p[0] * s + p[3] * c;
+    const v: Vec4 = [
+      2 * yx + p[0], // inside the box, so the fold is the identity
+      2 * p[1] + p[1], // inside too
+      2 * (2 * -1 - p[2]) + p[2], // reflected off the -1 wall
+      2 * (2 * 1 - yw) + p[3], // reflected off the +1 wall -- the w term
+    ];
+    const de = buildEscapeDE4([
+      foldMap(0, "boxfold", 2, { w: { rotation: { xw: theta } } }),
+    ]);
+    expect(estimateEscapeDistance4(de, p, 1)).toBeCloseTo(
+      Math.hypot(v[0], v[1], v[2], v[3]) / 3,
+      12,
+    );
+  });
+
+  it("puts w in the sphere fold's FULL 4-radius and scales it -- one link, one step", () => {
+    // One spherefold link at weight 2 and classic radii (mR^2 = 0.25,
+    // fR^2 = 1), whose own translation (0.2, 0, 0, 0) carries the query to
+    //   y = p + t = (0.4, 0.2, -0.1, 0.8).
+    // The SPATIAL radius alone is r3^2 = 0.16 + 0.04 + 0.01 = 0.21, inside the
+    // inner ball, where the fold would be a flat x4 magnification. w adds
+    // 0.8^2 = 0.64 for r4^2 = 0.85, which lands in the inversion band
+    // [0.25, 1], so every coordinate divides by 0.85 instead -- variations4's
+    // "spherefold uses the full 4D radius", inside the orbit:
+    //   f  = 1/0.85 = 1.176471,  and the local Lipschitz factor IS that f
+    //   v  = 2*(y*f) + p = (1.141176, 0.670588, -0.335294, 2.682353)
+    //   dr = 2*f*1 + 1 = 3.352941
+    //   DE = |v| / dr = 3.009886 / 3.352941 = 0.897685
+    //
+    // Drop the `+ yw*yw` from the radius and the clamp floors at 0.25 for
+    // f = 4, reading 0.912533; scale w by the wrong axis and it reads 0.440686.
+    //
+    // THE LINK'S TRANSLATION IS LOAD-BEARING, not decoration: at t = 0 a
+    // sphere fold's output is parallel to the query (v = (2f + 1)p) and the
+    // factor cancels EXACTLY against dr = 2f + 1, so the estimate reads |p|
+    // whatever f is -- a fixture that pins nothing about the radius at all.
+    const p: Vec4 = [0.2, 0.2, -0.1, 0.8];
+    const y: Vec4 = [0.4, 0.2, -0.1, 0.8];
+    const f = 1 / 0.85;
+    const v: Vec4 = [
+      2 * (y[0] * f) + p[0],
+      2 * (y[1] * f) + p[1],
+      2 * (y[2] * f) + p[2],
+      2 * (y[3] * f) + p[3],
+    ];
+    const de = buildEscapeDE4([
+      foldMap(0, "spherefold", 2, { position: [0.2, 0, 0] }),
+    ]);
+    expect(estimateEscapeDistance4(de, p, 1)).toBeCloseTo(
+      Math.hypot(v[0], v[1], v[2], v[3]) / (2 * f + 1),
+      12,
+    );
+  });
+
+  it("squares the FULL quaternion -- a boxfold -> qsquare pass at nonzero w", () => {
+    // Two links, so ONE pass is TWO steps. Both LINEAR parts are the identity;
+    // link 1 carries a w TRANSLATION of 0.5, so the k component is in play
+    // from the map as well as from the query p = (1.5, 0.5, -0.25, 0.1).
+    //
+    //   step 0, boxfold (weight 1, wall 1): only x leaves the box.
+    //     f  = (2 - 1.5, 0.5, -0.25, 0.1) = (0.5, 0.5, -0.25, 0.1)
+    //     v  = f + p = (2, 1, -0.5, 0.2);  |v| = 2.3, still inside the ball,
+    //          so the bailout test after this link passes and step 1 runs
+    //     dr = 1*1*1 + 1 = 2
+    //   step 1, qsquare (weight 1, t_w = 0.5):
+    //     y   = v + t = (2, 1, -0.5, 0.7)
+    //     q^2 = (x^2 - y^2 - z^2 - w^2, 2xy, 2xz, 2xw)
+    //         = (4 - 1 - 0.25 - 0.49, 4, -2, 2.8) = (2.26, 4, -2, 2.8)
+    //     v   = q^2 + p = (3.76, 4.5, -2.25, 2.9);  |v| = 6.918099
+    //     L   = 2|y| = 2*sqrt(5.74) = 4.791659, EXACT for a quaternion square
+    //     dr  = 1*4.791659*2 + 1 = 10.583319
+    //   A power link makes the chain super-exponential, so the estimate is the
+    //   Boettcher form rather than the folds' linear r/dr:
+    //     DE = 0.5 * 6.918099 * ln(6.918099) / 10.583319 = 0.632154
+    //
+    // Drop the -w^2 from the real part and it reads 0.670963; point the k
+    // term at z (2*yx*yz where 2*yx*yw belongs) and it reads 0.583235.
+    const p: Vec4 = [1.5, 0.5, -0.25, 0.1];
+    const fold0: Vec4 = [2 * 1 - p[0], p[1], p[2], p[3]];
+    const v0: Vec4 = [
+      fold0[0] + p[0],
+      fold0[1] + p[1],
+      fold0[2] + p[2],
+      fold0[3] + p[3],
+    ];
+    const y1: Vec4 = [v0[0], v0[1], v0[2], v0[3] + 0.5];
+    const v1: Vec4 = [
+      y1[0] * y1[0] - y1[1] * y1[1] - y1[2] * y1[2] - y1[3] * y1[3] + p[0],
+      2 * y1[0] * y1[1] + p[1],
+      2 * y1[0] * y1[2] + p[2],
+      2 * y1[0] * y1[3] + p[3],
+    ];
+    const r = Math.hypot(v1[0], v1[1], v1[2], v1[3]);
+    const dr = 2 * Math.hypot(y1[0], y1[1], y1[2], y1[3]) * 2 + 1;
+    const de = buildEscapeDE4([
+      foldMap(0, "boxfold", 1),
+      powerMap(1, "qsquare", 1, { w: { position: 0.5 } }),
+    ]);
+    expect(estimateEscapeDistance4(de, p, 1)).toBeCloseTo(
+      (0.5 * r * Math.log(r)) / dr,
+      12,
+    );
+  });
+});
+
 describe("probeEscapeFill4 (fr-vag4)", () => {
   it("is deterministic for a fixed seed", () => {
     const de = buildEscapeDE4([
