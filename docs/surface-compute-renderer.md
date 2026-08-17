@@ -526,16 +526,29 @@ arms. The answer:
   already there before this change.
 
 `scripts/fold-settle-park.repro.mjs` (mandelboxKifs at 512x320, the
-fr-d6g5 regression gate) came back **TIMEOUT, not PARKED** — the scene is
-genuinely enormous, not wedged — and its trace tail measures that scene's
-model directly: 12 dispatches averaging 19 hits cost 557.8 ms each, 21
-averaging 64 hits cost 740.0 ms each — a secant through those two widths
-puts that scene's intercept at ~481 ms and its marginal at ~4.05 ms/hit.
-That marginal independently reproduces
-fr-p8bc's own number (108 ms full-width ÷ 23.8 = 4.5 ms/hit) from a
-completely different instrument, which is the best evidence available
-that the two-term model is measuring physical things and not fitting
-noise.
+fr-d6g5 regression gate) came back **TIMEOUT, not PARKED**, on both this
+build and the cost-model-only one — the scene is genuinely enormous, not
+wedged, and its own trace shows the same flat curve at a third raster
+(33 hits per dispatch costs 732.6 ms, 433 costs 921.8 ms).
+
+AND fr-p8bc's ~108 ms/hit — the number fr-257o's safety arithmetic ran
+through — is ITSELF a whole-submission-over-rays figure, which is to say
+the exact statistic this bead's finding says is not a per-hit cost. Its
+frame was 660 hits in 31 s at width 1, i.e. 47 ms per hit amortized,
+where the marginal cost fitted over the widest lever available here (16
+to 512 hits per dispatch on the 800x520 run above) is ~0.75 ms/hit
+against a ~630 ms intercept. So the divisor was not merely uncertain in
+degree, it was measuring the wrong quantity, and no arithmetic on it
+could have bounded a submission in either direction. That is why the
+answer had to be a measured WORST DISPATCH rather than a computation.
+
+Fit the intercept over a WIDE lever or not at all: a secant through two
+adjacent buckets of the park probe's own trace (19 vs 64 hits) reads
+4.05 ms/hit — 5x the long-lever figure — because a 45-hit lever arm
+divides bucket-mean noise by a small number. That reading is what a first
+draft of this record quoted, and it happened to land on fr-p8bc's 4.5
+ms/hit, which made it look like a confirmation of the model rather than a
+symptom of the lever.
 
 `scripts/surface-repro.verify.mjs --scenario=all --runs=2 --mode=x11::0`
 is DETERMINISTIC on all five scenarios with 0 differing pixels, and all
@@ -544,13 +557,18 @@ change may not move a pixel, and a ray's shading does not depend on which
 batch carried it. That run is also the second, independent measurement of
 the win, at 1280x720 and across five scenes rather than one:
 
-| scenario (settle wall)  | before      | after       |         |
-| ----------------------- | ----------- | ----------- | ------- |
-| boxfold3                | 19.0/18.8 s | 12.9/12.8 s | −32%    |
-| pentatope4 (4D affine4) | 12.8/12.9 s | 8.7/8.8 s   | −32%    |
-| pentatope4direct        | 12.8/12.9 s | 8.7/8.7 s   | −32%    |
-| lens3                   | 26.2/25.9 s | 22.1/22.2 s | −15%    |
-| sierpinski3 (WebGL arm) | 13.1/5.3 s  | 13.4/5.4 s  | control |
+| scenario (settle wall)  | before      | after      |         |
+| ----------------------- | ----------- | ---------- | ------- |
+| boxfold3                | 19.0/18.8 s | 9.2/9.4 s  | −51%    |
+| pentatope4 (4D affine4) | 12.8/12.9 s | 7.8/7.7 s  | −39%    |
+| pentatope4direct        | 12.8/12.9 s | 7.6/7.6 s  | −41%    |
+| lens3                   | 26.2/25.9 s | 21.7/21.4s | −17%    |
+| sierpinski3 (WebGL arm) | 13.1/5.3 s  | 12.1/5.4 s | control |
+
+Its per-settle census agrees ray for ray across the arms — boxfold3's
+`hit 1782 / miss 919818 / exhausted 0` is the same on both builds while
+its frame goes 15538 ms / 32 passes → 5992 ms / 20 — which is the
+independent check that the partial-batch hold strands nothing.
 
 THE 4D ROWS ARE THE DIMENSIONAL-PARITY ANSWER and they are not a separate
 lift: the sizer lives in the host frame loop, which is shared by all
