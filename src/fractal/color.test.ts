@@ -678,6 +678,100 @@ describe("buildColors rampPalette (fr-3b6)", () => {
   });
 });
 
+describe("writePaletteRampColor clamps out-of-range t (fr-oxfn)", () => {
+  // A non-legacy ramp palette, so these route through writePaletteRampColor
+  // rather than the built-in writeHeightColor (the existing degenerate-cloud
+  // test at color.test.ts:132 only covers the legacy ramp). Endpoints are
+  // exact (see the fr-3b6 tests above), so a clamped t reads as exactly 0 or
+  // 1 on every channel with no tolerance needed.
+  const blackToWhite: CustomPalette = {
+    stops: [
+      [0, 0, 0],
+      [1, 1, 1],
+    ],
+  };
+  const unitBounds: Bounds = {
+    minX: 0,
+    maxX: 1,
+    minY: 0,
+    maxY: 1,
+    minZ: 0,
+    maxZ: 1,
+    minR: 0,
+    maxR: 1,
+  };
+
+  it("a negative t clamps to the ramp's low end, finite and NaN-free", () => {
+    // py = -1 is below bounds.minY (0), so height's normalized t = -1.
+    // Pre-fix, the unclamped low end indexed paletteLUT at a negative
+    // offset — undefined — and writing undefined into a Float32Array stores
+    // NaN in every channel.
+    const cloud: ChaosGameResult = {
+      positions: new Float32Array([0, -1, 0]),
+      transformIndices: new Uint8Array(1),
+      count: 1,
+      bounds: unitBounds,
+    };
+    const colors = buildColors(
+      cloud,
+      defaultTransforms(),
+      "height",
+      1,
+      blackToWhite,
+    );
+    expect(Number.isFinite(colors[0])).toBe(true);
+    expect(colors[0]).toBe(0);
+    expect(colors[1]).toBe(0);
+    expect(colors[2]).toBe(0);
+  });
+
+  it("a t of +Infinity clamps to the ramp's high end, not the low end", () => {
+    // py = Infinity makes height's normalized t = Infinity. Pre-fix,
+    // `(Infinity * 256) | 0` is 0 by ToInt32, so Math.min(255, 0) landed on
+    // the LOW end — the wrong direction for a t that exceeds 1.
+    const cloud: ChaosGameResult = {
+      positions: new Float32Array([0, Infinity, 0]),
+      transformIndices: new Uint8Array(1),
+      count: 1,
+      bounds: unitBounds,
+    };
+    const colors = buildColors(
+      cloud,
+      defaultTransforms(),
+      "height",
+      1,
+      blackToWhite,
+    );
+    expect(colors[0]).toBe(1);
+    expect(colors[1]).toBe(1);
+    expect(colors[2]).toBe(1);
+  });
+
+  it("a NaN t lands at index 0, finite and NaN-free", () => {
+    // py = NaN makes height's normalized t = NaN. NaN fails both clamp
+    // comparisons (t <= 0 and t >= 1), so the ternary falls through to
+    // (t * 256) | 0 — ToInt32(NaN) is 0, landing on the same low-end index
+    // as t <= 0 rather than propagating NaN into the output.
+    const cloud: ChaosGameResult = {
+      positions: new Float32Array([0, NaN, 0]),
+      transformIndices: new Uint8Array(1),
+      count: 1,
+      bounds: unitBounds,
+    };
+    const colors = buildColors(
+      cloud,
+      defaultTransforms(),
+      "height",
+      1,
+      blackToWhite,
+    );
+    expect(Number.isFinite(colors[0])).toBe(true);
+    expect(colors[0]).toBe(0);
+    expect(colors[1]).toBe(0);
+    expect(colors[2]).toBe(0);
+  });
+});
+
 describe("colorModeUsesRampPalette", () => {
   it("is true for height and radius", () => {
     expect(colorModeUsesRampPalette("height")).toBe(true);
