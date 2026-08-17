@@ -150,17 +150,28 @@ export function setSurfaceComputeTrace(
  * no such lever at all — every recorded cost-vs-width table in that
  * document is bucketed over widths its own model chose.
  *
- * A pin can only ask for a NARROWER dispatch than the schedule would
- * otherwise allow, never a wider one — the march width is still clamped
- * by the remaining active list and the device's dispatch ceiling, the hit
- * width by the queue and the same ceiling — with one deliberate
- * exception: the hit pin overrides
- * {@link SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH}, because "is that cap
- * costing us anything" is a question the cap itself would otherwise
- * answer no to. Pinning STEPS shrinks the model's march width by the same
- * factor it raises the step count, so the pass-target bound rides through
- * untouched. `?surfacesamples=N` and `?surfacemaxrays=N` are the same
- * shape of escape hatch.
+ * THEY ARE DIAGNOSTIC KNOBS, NOT BOUNDED ONES, and the bounds they can
+ * leave are worth knowing before pointing one at a machine you care
+ * about. The WIDTH pins only ever ask for less than the schedule would
+ * have allowed on its own — a march slice is still clamped by the
+ * remaining active list and the device's dispatch ceiling, a hit batch by
+ * the queue and the same ceiling — except that the hit pin deliberately
+ * overrides BOTH {@link SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH} and the
+ * adaptive capacity, because "is that cap costing us anything" is a
+ * question the cap itself would otherwise answer no to; a large enough
+ * value therefore buys a single multi-million-hit dispatch and the
+ * watchdog conversation that goes with it.
+ *
+ * The STEPS pin is the one that can ask for MORE. It shrinks the model's
+ * march width by the factor it raises the step count, so the pass-target
+ * bound rides through — until {@link marchChunkFor}'s
+ * {@link SURFACE_COMPUTE_MARCH_CHUNK_MIN} floor takes over, which at a
+ * far-field EMA happens around eight steps; past that the width stops
+ * compensating and dispatch work grows linearly with the pin. The real
+ * bound above it is the kernel's own `steps >= params.marchSteps` break,
+ * not the sizer. Both are fine for an instrument run and neither is
+ * something to leave in a URL. `?surfacesamples=N` and `?surfacemaxrays=N`
+ * are the same shape of escape hatch.
  */
 let surfaceComputeMarchChunkPin: number | null = null;
 let surfaceComputeMarchStepsPin: number | null = null;
@@ -656,11 +667,16 @@ export const SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS = 2000;
  *
  * READ IT AS A WIDTH, NOT AS AN EFFICIENCY, because that is what it is.
  * {@link nextShadeHitCost} preserves `interceptUs = PIVOT · marginalUs`
- * IDENTICALLY — see the proof in that function's doc — so in this branch
- * `allowance / marginal` is exactly `this constant × PIVOT` and nothing
- * about the scene survives into the answer. At 1, which is what fr-2ojg
- * shipped, that is 512 hits on every scene in the project; at 7 it is
- * 3584.
+ * wherever its clamps do not bind — see the proof in that function's doc
+ * — so in this branch `allowance / marginal` is `this constant × PIVOT`
+ * and nothing about the scene survives into the answer. At 1, which is
+ * what fr-2ojg shipped, that is 512 hits on every scene in the project;
+ * at 7 it is 3584. Read as an UPPER BOUND: the marginal's decay floor
+ * takes the ratio below the pivot whenever a dispatch measures under half
+ * its prediction, which a queue-limited sliver reaches routinely, and the
+ * width then lands under it — the shipped kaleido4 settle reports 3583 at
+ * its widest and a 2464 mean. That is the same non-answer about the scene
+ * from a different arbitrary number, and it errs narrow.
  *
  * SEVEN, MEASURED (fr-fniy, real Iris Xe / Mesa 25.2.8, kaleido4 — two
  * maps at kaleidoscope order 6 — 1024x640, production build, identity
@@ -691,10 +707,16 @@ export const SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS = 2000;
  * machine that chain IS the dispatch. 512 hits is 8 workgroups on a 96-EU
  * part; it does not come close.
  *
- * WHY NOT WIDER STILL: the {@link SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS}
- * term already aims a genuinely expensive scene at the ceiling, and this
- * term must not turn a dispatch into a watchdog conversation on a scene
- * nobody has measured. 8·intercept is the predicted total here, so the
+ * WHY NOT WIDER STILL, and the answer has TWO halves. The
+ * {@link SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS} term already aims a
+ * genuinely expensive scene at the ceiling, and this term must not turn a
+ * dispatch into a watchdog conversation on a scene nobody has measured.
+ * The other half is that `7 · PIVOT` = 3584 is within 14% of
+ * {@link SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH} = 4096: at 8, or at any
+ * pivot above 585, the CAP becomes the binding constraint instead and
+ * these two dials stop meaning what their comments say. Raising either
+ * past that is the cap's separate safety argument, with its own
+ * measurements. 8·intercept is the predicted total here, so the
  * ceiling still binds first wherever the fixed cost alone exceeds 250 ms —
  * and `mandelboxKifs`, the hardest scene in the project, sits exactly on
  * that boundary. Its own measurement (800x520, a 150 s fixed window, since
@@ -734,13 +756,15 @@ export const SURFACE_COMPUTE_SHADE_MARGINAL_DECAY = 0.5;
  * IT IS ALSO THE UNIT THE HIT BATCH WIDTH IS COUNTED IN, which is not
  * what the paragraph above would lead anyone to expect and is worth
  * knowing before touching it: {@link nextShadeHitCost} preserves
- * `intercept = this · marginal` identically (proof there), so
- * {@link shadeHitAllowanceUs}'s middle term hands
- * {@link shadeHitBatchSize} exactly
+ * `intercept = this · marginal` wherever its clamps do not bind (proof
+ * there), so {@link shadeHitAllowanceUs}'s middle term hands
+ * {@link shadeHitBatchSize} up to
  * `SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST` times THIS number of hits.
  * Moving the pivot moves the shipped batch width by the same factor — a
  * second dial on the same quantity, and the one whose doc comment does
- * not say so. Change the other one. */
+ * not say so — until 585, past which
+ * {@link SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH} binds instead and moving it
+ * does nothing. Change the other one. */
 export const SURFACE_COMPUTE_SHADE_COST_PIVOT = 512;
 
 /**
@@ -922,15 +946,42 @@ export function shadeHitBatchSize(cost: ShadeHitCost, cap: number): number {
  * unit-tested.
  *
  * WHAT THE SPLIT CANNOT DO, and fr-fniy had to prove before it could
- * believe it: IT NEVER IDENTIFIES THE TWO TERMS. Away from the clamps
- * this function preserves `interceptUs = PIVOT · marginalUs` IDENTICALLY,
- * whatever the measurements say. From a zeroed model, one update at width
- * n gives `I = (1−w)C` and `m = wC/n`, so
+ * believe it: IT NEVER IDENTIFIES THE TWO TERMS. Unclamped, this function
+ * preserves `interceptUs = PIVOT · marginalUs` IDENTICALLY. From a zeroed
+ * model, one update at width n gives `I = (1−w)C` and `m = wC/n`, so
  * `I/m = n(1−w)/w = n·(P/(n+P))·((n+P)/n) = P`; and if `I = P·m` already,
  * then `I' / m' = (I + Ps/(n+P)) / (m + s/(n+P)) = P` for ANY surprise s
  * and any width n. Two parameters, one measurement, an exact fit — so the
  * RATIO is set by the attribution weight alone and the data only ever
  * moves the scale.
+ *
+ * THE CLAMPS BREAK IT, AND ONE OF THEM IS REACHABLE IN ORDINARY
+ * OPERATION — said here because a first draft of this comment claimed the
+ * identity held "whatever the measurements say", which is false and would
+ * mislead exactly the reader it is written for. The marginal's decay floor
+ * binds when `m + w·s/n < m·DECAY`, i.e. exactly when a dispatch measures
+ * under HALF what the model predicted; the ratio then becomes
+ * `2·P·(measured/predicted)`, which is BELOW P for any measurement that
+ * triggered it. The intercept's own `max(0, …)` is unreachable from an
+ * on-invariant state (it needs a negative measurement) but becomes
+ * reachable once the ratio has already fallen.
+ *
+ * The trigger is the queue-limited batch two paragraphs up, which is
+ * normal operation rather than a corner: a sliver of hits lands most of a
+ * large positive surprise on the INTERCEPT (small n, small w), and the
+ * next full-width batch then measures a fraction of that inflated
+ * prediction and trips the floor. MEASURED shape, replaying the shipped
+ * sizer against fr-fniy's own kaleido4 curve with its own drain pattern:
+ * the ratio leaves P after one such pair and settles around 250-310, and
+ * the width the sizer asks for lands in 1764-3584 rather than pinned at
+ * `K·P`.
+ *
+ * SO `K · PIVOT` IS AN UPPER BOUND ON THE WIDTH, NOT A CONSTANT, and the
+ * direction of the error is conservative. None of it makes the width any
+ * more the SCENE's: `2·P·(measured/predicted)` is as much an artifact of
+ * the attribution weight and the decay floor as `P` is. The conclusion is
+ * unchanged and if anything stronger — no sizing rule here may be written
+ * in terms of `interceptUs` alone.
  *
  * That is not a defect in the model, which predicts the cost at the width
  * it was measured at exactly and predicts a doubling within a factor of

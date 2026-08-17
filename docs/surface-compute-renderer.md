@@ -780,12 +780,13 @@ the machine that chain IS the dispatch. 512 hits is 8 workgroups on a
 #### Why the sizer could not find that out for itself
 
 `nextShadeHitCost` preserves `interceptUs = PIVOT · marginalUs`
-**identically**. From a zeroed model, one update at width n gives
-`I = (1−w)C` and `m = wC/n` with `w = n/(n+P)`, so `I/m = n(1−w)/w = P`;
-and if `I = P·m` already then `I'/m' = (I + Ps/(n+P))/(m + s/(n+P)) = P`
-for any surprise `s` at any width. Two parameters, one measurement per
-dispatch, an exact fit — the RATIO is fixed by the attribution weight and
-the data only ever moves the scale.
+**identically, unclamped**. From a zeroed model, one update at width n
+gives `I = (1−w)C` and `m = wC/n` with `w = n/(n+P)`, so
+`I/m = n(1−w)/w = P`; and if `I = P·m` already then
+`I'/m' = (I + Ps/(n+P))/(m + s/(n+P)) = P` for any surprise `s` at any
+width. Two parameters, one measurement per dispatch, an exact fit — the
+RATIO is fixed by the attribution weight and the data only ever moves the
+scale.
 
 That is not a defect in the model, which reproduces the cost at the width
 it measured and predicts a doubling within a factor of two. It is a defect
@@ -799,6 +800,27 @@ since its growth threshold was `shadeHitBudgetUs(I)` = the model's own
 prediction of that same width: it stopped at exactly where the model
 wanted to be.
 
+**The word "unclamped" is load-bearing, and a first draft of this section
+did not have it.** The marginal's decay floor
+(`SURFACE_COMPUTE_SHADE_MARGINAL_DECAY`) binds when
+`m + w·s/n < m·DECAY`, i.e. exactly when a dispatch measures under HALF
+what the model predicted, and the ratio then becomes
+`2·P·(measured/predicted)` — below `P` for anything that triggered it.
+That trigger is ordinary operation, not a corner: a queue-limited sliver
+lands most of a large positive surprise on the INTERCEPT (small `n`, small
+`w`), and the next full-width batch measures a fraction of the inflated
+prediction and trips the floor. Replaying the shipped sizer against
+kaleido4's own fit with its own drain pattern, the ratio leaves `P` after
+one such pair and settles around 250-310, and the width asked for lands in
+1764-3584. So `K · PIVOT` is an UPPER BOUND rather than a constant, the
+miss errs narrow, and the shipped settle's own numbers say so out loud —
+3583 at its widest against a 2464 mean. None of that makes the width any
+more the scene's: `2·P·(measured/predicted)` is as much an artifact of the
+attribution weight and the decay floor as `P` is, so the conclusion is
+unchanged and if anything stronger. `surface-compute.test.ts` now drives
+the clamp and pins both halves — the ratio it lands on, and that the
+sizer never asks for more than the dial names.
+
 The fix is one constant read as what it is —
 `SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST`, a width in units of the
 pivot, **7**, chosen off that table. 3584 is where the curve stops paying:
@@ -811,7 +833,7 @@ worst dispatch. MEASURED on the shipped build, same scene and machine:
 | hit shade                 | 524 dispatches / 165918.7 ms (92.1%) | 122 / 40855.7 ms (79.4%) |
 | march                     | 130 / 10362.6 ms (5.8%)              | 128 / 10224.2 ms (19.9%) |
 | sweep readbacks           | 76 / 110.0 ms                        | 75 / 113.0 ms            |
-| batch width               | 512                                  | 3583                     |
+| batch width               | 512                                  | 3583 widest, 2464 mean   |
 | **worst single dispatch** | **397.3 ms @ 512**                   | **417.5 ms @ 3583**      |
 
 The last row is the watchdog answer a mean cannot give: the settle fell
