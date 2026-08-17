@@ -2137,6 +2137,10 @@ export class SurfaceComputeRenderer {
     let shadeGpuMs = 0;
     let truncated = false;
     let lastProgress = wallStart;
+    // When the last HIT batch went out — the clock the partial-batch hold
+    // below is bounded by, so no hit waits longer than one present
+    // interval however slowly the sweeps are feeding the queue.
+    let lastHitDispatch = wallStart;
 
     // One packer per frame, kind-routed once: the 4D packer additionally
     // closes over the spec's live view (rotor/slice re-read per frame by
@@ -2516,6 +2520,37 @@ export class SurfaceComputeRenderer {
         const batchSize = isFree
           ? Math.min(shadeFreeQueue.length, maxDispatchRays)
           : shadeHitBatchSize(sizer.cost, sizer.cap);
+        // HOLD a partial hit batch for the next sweep's hits rather than
+        // paying a whole dispatch's fixed cost for it (fr-2ojg). The
+        // intercept is the same whether a dispatch carries 15 hits or
+        // 1000 — ~88 ms measured on the boxfold pair, ~480 ms on
+        // mandelboxKifs — and a sweep hands over its hits a few hundred
+        // at a time, so draining to empty after every sweep spent a
+        // frame's fixed costs several times over (MEASURED: 6 hit
+        // dispatches per settle frame where the sizer had priced 2-3,
+        // every one of the extras a queue-limited sliver).
+        //
+        // TWO BOUNDS keep it from becoming a stall. The march must still
+        // be able to ADD to the queue — once the active list is empty
+        // nothing more is coming, and the outer loop's own condition
+        // means the queue always drains before the frame ends. And no
+        // hit waits longer than one progressive-present interval: the
+        // screen has to keep developing, which is the whole reason
+        // presents fire between bounded pieces at all. Rays held over a
+        // budget cut keep their seed pixels, which for every frame after
+        // the first is the previous frame's shading of very nearly the
+        // same geometry (fr-f4bx's prefill), not backdrop.
+        if (
+          !isFree &&
+          active.length > 0 &&
+          shadeHitQueue.length < batchSize &&
+          performance.now() - lastHitDispatch < progressMs
+        ) {
+          tr(
+            `shade HOLD hitQ=${shadeHitQueue.length} want=${batchSize} active=${active.length}`,
+          );
+          break;
+        }
         const batch = Uint32Array.from(
           (isFree ? shadeFreeQueue : shadeHitQueue).slice(0, batchSize),
         );
@@ -2545,6 +2580,7 @@ export class SurfaceComputeRenderer {
         shadeGpuMs += shadeMs;
         passes++;
         if (!isFree) {
+          lastHitDispatch = performance.now();
           // Hit economics only — free batches would just dilute the model
           // toward zero and re-open the miss-inflated-capacity hole.
           sizer.cost = nextShadeHitCost(
