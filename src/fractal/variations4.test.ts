@@ -158,6 +158,22 @@ describe("composeVariations4", () => {
     ]);
     expect(withDead!(2, 3, 4, 5, Math.random)).toEqual([2, 3, 4, 5]);
   });
+
+  it("a second call reuses the result array with its own values, not the previous call's (fr-7smh)", () => {
+    // Mirrors variations.test.ts's same-named 3D test, one dimension up —
+    // the fourth (w) component is the one a partial reset would most easily
+    // miss.
+    const build = () =>
+      composeVariations4([
+        { type: "linear", weight: 0.5 },
+        { type: "spherical", weight: 1.5 },
+      ])!;
+    const blend = build();
+    blend(1, 2, 3, 4, () => 0.5); // dirties the reused array; result unread
+    const second = blend(-4, 0.5, 2, -1, () => 0.5);
+    const fresh = build();
+    expect(second).toEqual(fresh(-4, 0.5, 2, -1, () => 0.5));
+  });
 });
 
 describe("4D fold radii (fr-s9ll)", () => {

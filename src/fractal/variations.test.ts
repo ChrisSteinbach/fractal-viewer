@@ -175,6 +175,25 @@ describe("composeVariations", () => {
     ]);
     expect(withDead!(2, 3, 4, Math.random)).toEqual([2, 3, 4]);
   });
+
+  it("a second call reuses the result array with its own values, not the previous call's (fr-7smh)", () => {
+    // The blend's result array is owned by the closure and overwritten in
+    // place each call. Fire it once with values discarded (to dirty every
+    // component), then compare a second call against an independently built
+    // closure fed the SAME second inputs — a missing reset on any one
+    // component (ox/oy/oz) would leave that axis at the first call's stale
+    // value instead of the fresh one, and this would catch it.
+    const build = () =>
+      composeVariations([
+        { type: "linear", weight: 0.5 },
+        { type: "spherical", weight: 1.5 },
+      ])!;
+    const blend = build();
+    blend(1, 2, 3, () => 0.5); // dirties the reused array; result unread
+    const second = blend(-4, 0.5, 2, () => 0.5);
+    const fresh = build();
+    expect(second).toEqual(fresh(-4, 0.5, 2, () => 0.5));
+  });
 });
 
 describe("fold radii (fr-s9ll)", () => {

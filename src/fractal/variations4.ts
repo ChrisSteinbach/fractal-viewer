@@ -306,7 +306,12 @@ const VARIATIONS4: Record<VariationType, VariationFn4> = {
   },
 };
 
-/** A transform's blended 4D variation map, ready to apply to its affine output. */
+/**
+ * A transform's blended 4D variation map, ready to apply to its affine output.
+ * The returned `Vec4` is OWNED BY THE CLOSURE and overwritten in place on
+ * every call (fr-7smh), mirroring `variations.ts`'s `VariationBlend` — valid
+ * only until the next call on this SAME blend.
+ */
 export type VariationBlend4 = (
   x: number,
   y: number,
@@ -322,7 +327,8 @@ export type VariationBlend4 = (
  * {@link import("./chaos-game-4d").runChaosGame4} uses to keep purely-affine 4D
  * systems byte-for-byte identical (no RNG draw, no code-path change) to before
  * variations existed. Mirrors `variations.ts`'s `composeVariations` exactly, one
- * dimension up.
+ * dimension up — the parallel fn/weight arrays and the reused result array
+ * (fr-7smh) included.
  *
  * The blend is the weighted sum `Σ weight · V(type)` (flame semantics — weights
  * are free strengths, never normalised), evaluated left to right so a stochastic
@@ -332,28 +338,37 @@ export function composeVariations4(
   variations: Variation[] | undefined,
 ): VariationBlend4 | null {
   if (!variations || variations.length === 0) return null;
-  const active = variations
-    .filter((v) => Number.isFinite(v.weight) && v.weight !== 0)
-    .map((v): [VariationFn4, number] => [
-      isFoldVariationType(v.type)
-        ? foldVariationFn4(v.type, resolveFoldRadii(v))
-        : VARIATIONS4[v.type],
-      v.weight,
-    ]);
+  const active = variations.filter(
+    (v) => Number.isFinite(v.weight) && v.weight !== 0,
+  );
   if (active.length === 0) return null;
+
+  const fns: VariationFn4[] = active.map((v) =>
+    isFoldVariationType(v.type)
+      ? foldVariationFn4(v.type, resolveFoldRadii(v))
+      : VARIATIONS4[v.type],
+  );
+  const weights: number[] = active.map((v) => v.weight);
+  const n = fns.length;
+  const out: Vec4 = [0, 0, 0, 0];
 
   return (x, y, z, w, rng) => {
     let ox = 0;
     let oy = 0;
     let oz = 0;
     let ow = 0;
-    for (const [fn, wt] of active) {
-      const [vx, vy, vz, vw] = fn(x, y, z, w, rng);
+    for (let i = 0; i < n; i++) {
+      const [vx, vy, vz, vw] = fns[i](x, y, z, w, rng);
+      const wt = weights[i];
       ox += wt * vx;
       oy += wt * vy;
       oz += wt * vz;
       ow += wt * vw;
     }
-    return [ox, oy, oz, ow];
+    out[0] = ox;
+    out[1] = oy;
+    out[2] = oz;
+    out[3] = ow;
+    return out;
   };
 }
