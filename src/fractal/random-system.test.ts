@@ -21,6 +21,34 @@ const SEED_SAMPLE_SIZE = 50;
  * rotation-only, two-plane rotation, the flat-roll force-fallback). */
 const FOUR_D_SEED_SAMPLE_SIZE = 200;
 
+/**
+ * fr-mdhx: `randomSystem(mulberry32(seed))` is a pure function of `seed`
+ * (proved by the determinism test below), and at least a dozen tests across
+ * this file's describe blocks each used to re-roll their own fresh,
+ * identical 50- or 200-candidate batch just to inspect a different property
+ * — each roll retrying up to 40 candidates x 3 chaos-game probes, which was
+ * almost all of this file's 23.2s runtime. This corpus computes the batch
+ * ONCE (module load) and every it() below reads it read-only — sharing a
+ * computed IMMUTABLE array isn't the shared-MUTABLE-state test-isolation
+ * rule warns against (test-guided-design's DAMP section calls this out
+ * explicitly), and nothing here mutates a system it reads out of it.
+ *
+ * SEED_SAMPLE_SIZE (50) tests slice this same corpus's first 50 entries
+ * rather than rolling a separate batch: it's the same generator over a
+ * shorter prefix of the same seed sequence, so slicing is exact.
+ *
+ * Sized independently of FOUR_D_SEED_SAMPLE_SIZE (never derived from it) so
+ * a future retune of that constant can't silently shrink the corpus out
+ * from under the "never rolls one type twice" test below, which insists on
+ * exactly 200 seeds of its own accord, independent of that constant, for
+ * its own statistical-power reasons (see that test).
+ */
+const RANDOM_SYSTEM_CORPUS_SIZE = Math.max(FOUR_D_SEED_SAMPLE_SIZE, 200);
+const RANDOM_SYSTEM_CORPUS = Array.from(
+  { length: RANDOM_SYSTEM_CORPUS_SIZE },
+  (_, seed) => randomSystem(mulberry32(seed)),
+);
+
 describe("randomSystem", () => {
   it("is deterministic for a given seed, including the quality gate's probes", () => {
     const a = randomSystem(mulberry32(42));
@@ -30,32 +58,32 @@ describe("randomSystem", () => {
 
   it("generates between 2 and 4 transforms", () => {
     for (let seed = 0; seed < SEED_SAMPLE_SIZE; seed++) {
-      const { transforms } = randomSystem(mulberry32(seed));
-      expect(transforms.length).toBeGreaterThanOrEqual(2);
-      expect(transforms.length).toBeLessThanOrEqual(4);
+      const { transforms } = RANDOM_SYSTEM_CORPUS[seed];
+      expect(transforms.length, `seed ${seed}`).toBeGreaterThanOrEqual(2);
+      expect(transforms.length, `seed ${seed}`).toBeLessThanOrEqual(4);
     }
   });
 
   it("keeps every transform's position, rotation, scale magnitude, and shear within their documented ranges", () => {
     for (let seed = 0; seed < SEED_SAMPLE_SIZE; seed++) {
-      const { transforms } = randomSystem(mulberry32(seed));
+      const { transforms } = RANDOM_SYSTEM_CORPUS[seed];
       for (const t of transforms) {
         for (const v of t.position) {
-          expect(v).toBeGreaterThanOrEqual(-0.9);
-          expect(v).toBeLessThanOrEqual(0.9);
+          expect(v, `seed ${seed}`).toBeGreaterThanOrEqual(-0.9);
+          expect(v, `seed ${seed}`).toBeLessThanOrEqual(0.9);
         }
         for (const v of t.rotation) {
-          expect(v).toBeGreaterThanOrEqual(-Math.PI);
-          expect(v).toBeLessThanOrEqual(Math.PI);
+          expect(v, `seed ${seed}`).toBeGreaterThanOrEqual(-Math.PI);
+          expect(v, `seed ${seed}`).toBeLessThanOrEqual(Math.PI);
         }
         for (const v of t.scale) {
-          expect(Math.abs(v)).toBeGreaterThanOrEqual(0.35);
-          expect(Math.abs(v)).toBeLessThanOrEqual(0.85);
+          expect(Math.abs(v), `seed ${seed}`).toBeGreaterThanOrEqual(0.35);
+          expect(Math.abs(v), `seed ${seed}`).toBeLessThanOrEqual(0.85);
         }
-        expect(t.shear).toBeDefined();
+        expect(t.shear, `seed ${seed}`).toBeDefined();
         for (const v of t.shear ?? []) {
-          expect(v).toBeGreaterThanOrEqual(-0.3);
-          expect(v).toBeLessThanOrEqual(0.3);
+          expect(v, `seed ${seed}`).toBeGreaterThanOrEqual(-0.3);
+          expect(v, `seed ${seed}`).toBeLessThanOrEqual(0.3);
         }
       }
     }
@@ -63,26 +91,26 @@ describe("randomSystem", () => {
 
   it("keeps every transform's weight an integer within [1, 25]", () => {
     for (let seed = 0; seed < SEED_SAMPLE_SIZE; seed++) {
-      const { transforms } = randomSystem(mulberry32(seed));
+      const { transforms } = RANDOM_SYSTEM_CORPUS[seed];
       for (const t of transforms) {
-        expect(Number.isInteger(t.weight)).toBe(true);
-        expect(t.weight).toBeGreaterThanOrEqual(1);
-        expect(t.weight).toBeLessThanOrEqual(25);
+        expect(Number.isInteger(t.weight), `seed ${seed}`).toBe(true);
+        expect(t.weight, `seed ${seed}`).toBeGreaterThanOrEqual(1);
+        expect(t.weight, `seed ${seed}`).toBeLessThanOrEqual(25);
       }
     }
   });
 
   it("keeps variation weights within their documented ranges (linear companion vs. the rest)", () => {
     for (let seed = 0; seed < SEED_SAMPLE_SIZE; seed++) {
-      const { transforms } = randomSystem(mulberry32(seed));
+      const { transforms } = RANDOM_SYSTEM_CORPUS[seed];
       for (const t of transforms) {
         for (const v of t.variations ?? []) {
           if (v.type === "linear") {
-            expect(v.weight).toBeGreaterThanOrEqual(0.4);
-            expect(v.weight).toBeLessThanOrEqual(0.8);
+            expect(v.weight, `seed ${seed}`).toBeGreaterThanOrEqual(0.4);
+            expect(v.weight, `seed ${seed}`).toBeLessThanOrEqual(0.8);
           } else {
-            expect(v.weight).toBeGreaterThanOrEqual(0.3);
-            expect(v.weight).toBeLessThanOrEqual(0.9);
+            expect(v.weight, `seed ${seed}`).toBeGreaterThanOrEqual(0.3);
+            expect(v.weight, `seed ${seed}`).toBeLessThanOrEqual(0.9);
           }
         }
       }
@@ -99,22 +127,26 @@ describe("randomSystem", () => {
     // 5s test timeout on a loaded CI runner, which 400 did not. Spelled out
     // rather than sharing FOUR_D_SEED_SAMPLE_SIZE, whose value is tuned for
     // the 4D roll's own shapes — retuning that should not quietly change
-    // this test's detection power.
+    // this test's detection power (RANDOM_SYSTEM_CORPUS_SIZE is sized to
+    // cover this 200 regardless, for the same reason).
     for (let seed = 0; seed < 200; seed++) {
-      const { transforms } = randomSystem(mulberry32(seed));
+      const { transforms } = RANDOM_SYSTEM_CORPUS[seed];
       for (const t of transforms) {
         const types = (t.variations ?? []).map((v) => v.type);
-        expect(new Set(types).size).toBe(types.length);
+        expect(new Set(types).size, `seed ${seed}`).toBe(types.length);
       }
     }
   });
 
   it("gives every transform that has variations a linear companion", () => {
     for (let seed = 0; seed < SEED_SAMPLE_SIZE; seed++) {
-      const { transforms } = randomSystem(mulberry32(seed));
+      const { transforms } = RANDOM_SYSTEM_CORPUS[seed];
       for (const t of transforms) {
         if (t.variations && t.variations.length > 0) {
-          expect(t.variations.some((v) => v.type === "linear")).toBe(true);
+          expect(
+            t.variations.some((v) => v.type === "linear"),
+            `seed ${seed}`,
+          ).toBe(true);
         }
       }
     }
@@ -122,25 +154,26 @@ describe("randomSystem", () => {
 
   it("rolls either no final transform or a valid identity-affine lens with one in-range variation", () => {
     for (let seed = 0; seed < SEED_SAMPLE_SIZE; seed++) {
-      const { finalTransform } = randomSystem(mulberry32(seed));
+      const { finalTransform } = RANDOM_SYSTEM_CORPUS[seed];
       if (finalTransform === null) continue;
-      expect(finalTransform.position).toEqual([0, 0, 0]);
-      expect(finalTransform.rotation).toEqual([0, 0, 0]);
-      expect(finalTransform.scale).toEqual([1, 1, 1]);
-      expect(finalTransform.variations).toHaveLength(1);
+      expect(finalTransform.position, `seed ${seed}`).toEqual([0, 0, 0]);
+      expect(finalTransform.rotation, `seed ${seed}`).toEqual([0, 0, 0]);
+      expect(finalTransform.scale, `seed ${seed}`).toEqual([1, 1, 1]);
+      expect(finalTransform.variations, `seed ${seed}`).toHaveLength(1);
       const [v] = finalTransform.variations ?? [];
-      expect(["spherical", "bubble", "disc", "julia", "boxfold"]).toContain(
-        v.type,
-      );
-      expect(v.weight).toBeGreaterThanOrEqual(0.6);
-      expect(v.weight).toBeLessThanOrEqual(1.2);
+      expect(
+        ["spherical", "bubble", "disc", "julia", "boxfold"],
+        `seed ${seed}`,
+      ).toContain(v.type);
+      expect(v.weight, `seed ${seed}`).toBeGreaterThanOrEqual(0.6);
+      expect(v.weight, `seed ${seed}`).toBeLessThanOrEqual(1.2);
     }
   });
 
   it("floors every uniform-scale map at count^(-1/1.8), so jitter can't drag a 2-map roll into a thin squiggle (fr-d61)", () => {
     let uniformScaleMapsSeen = 0;
     for (let seed = 0; seed < SEED_SAMPLE_SIZE; seed++) {
-      const { transforms } = randomSystem(mulberry32(seed));
+      const { transforms } = RANDOM_SYSTEM_CORPUS[seed];
       const floor = Math.pow(transforms.length, -1 / 1.8);
       for (const t of transforms) {
         const [sx, sy, sz] = t.scale.map(Math.abs);
@@ -149,93 +182,81 @@ describe("randomSystem", () => {
         // branch's three independent continuous draws can never coincide.
         if (sx !== sy || sy !== sz) continue;
         uniformScaleMapsSeen++;
-        expect(sx).toBeGreaterThanOrEqual(floor - 1e-12);
+        expect(sx, `seed ${seed}`).toBeGreaterThanOrEqual(floor - 1e-12);
       }
     }
     expect(uniformScaleMapsSeen).toBeGreaterThan(0);
   });
 
-  it(
-    "caps a 2-map system's weight skew at 4:1 so the light branch keeps at least a fifth of the orbit (fr-d61)",
-    // fr-i4q8: a FOUR_D_SEED_SAMPLE_SIZE (200-seed) sweep through
-    // randomSystem's quality gate -- itself up to 40 chaos-game reroll
-    // probes per seed -- sits close to vitest's 5s default timeout under
-    // full-suite CPU contention. Sized generously above measured cost
-    // (well under 2s even under real contention here) rather than tuned to
-    // any one slow run.
-    { timeout: 30_000 },
-    () => {
-      let twoMapSystemsSeen = 0;
-      // Bigger sample (matching the 4D-roll tests) to hit plenty of 2-map
-      // systems.
-      for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
-        const { transforms } = randomSystem(mulberry32(seed));
-        if (transforms.length !== 2) continue;
-        twoMapSystemsSeen++;
-        const [w0, w1] = transforms.map((t) => t.weight ?? 1);
-        expect(Math.max(w0, w1)).toBeLessThanOrEqual(4 * Math.min(w0, w1));
-      }
-      expect(twoMapSystemsSeen).toBeGreaterThan(0);
-    },
-  );
+  it("caps a 2-map system's weight skew at 4:1 so the light branch keeps at least a fifth of the orbit (fr-d61)", () => {
+    let twoMapSystemsSeen = 0;
+    // Bigger sample (matching the 4D-roll tests) to hit plenty of 2-map
+    // systems.
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const { transforms } = RANDOM_SYSTEM_CORPUS[seed];
+      if (transforms.length !== 2) continue;
+      twoMapSystemsSeen++;
+      const [w0, w1] = transforms.map((t) => t.weight ?? 1);
+      expect(Math.max(w0, w1), `seed ${seed}`).toBeLessThanOrEqual(
+        4 * Math.min(w0, w1),
+      );
+    }
+    expect(twoMapSystemsSeen).toBeGreaterThan(0);
+  });
 
-  it(
-    "occasionally mirrors a map — exactly one negated scale axis, never two or three (fr-o1y)",
-    // fr-i4q8: same FOUR_D_SEED_SAMPLE_SIZE sweep cost as the weight-skew
-    // test above, sized generously for the same reason.
-    { timeout: 30_000 },
-    () => {
-      let systemsWithMirror = 0;
-      for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
-        const { transforms } = randomSystem(mulberry32(seed));
-        let mirrorSeen = false;
-        for (const t of transforms) {
-          const negatives = t.scale.filter((v) => v < 0).length;
-          // 0 = plain map, 1 = a genuine mirror. 2 would be a redundant
-          // π-rotation and 3 a compound the roll is designed never to produce.
-          expect([0, 1]).toContain(negatives);
-          if (negatives === 1) mirrorSeen = true;
-        }
-        if (mirrorSeen) systemsWithMirror++;
+  it("occasionally mirrors a map — exactly one negated scale axis, never two or three (fr-o1y)", () => {
+    let systemsWithMirror = 0;
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const { transforms } = RANDOM_SYSTEM_CORPUS[seed];
+      let mirrorSeen = false;
+      for (const t of transforms) {
+        const negatives = t.scale.filter((v) => v < 0).length;
+        // 0 = plain map, 1 = a genuine mirror. 2 would be a redundant
+        // π-rotation and 3 a compound the roll is designed never to produce.
+        expect([0, 1], `seed ${seed}`).toContain(negatives);
+        if (negatives === 1) mirrorSeen = true;
       }
-      const fraction = systemsWithMirror / FOUR_D_SEED_SAMPLE_SIZE;
-      // Generous band around the per-map 0.1 design rate (REFLECTION_
-      // PROBABILITY; ≈1 - 0.9^n per system at n maps): loose enough to never
-      // flake, tight enough to catch a broken or always-on roll.
-      expect(fraction).toBeGreaterThanOrEqual(0.1);
-      expect(fraction).toBeLessThanOrEqual(0.45);
-    },
-  );
+      if (mirrorSeen) systemsWithMirror++;
+    }
+    const fraction = systemsWithMirror / FOUR_D_SEED_SAMPLE_SIZE;
+    // Generous band around the per-map 0.1 design rate (REFLECTION_
+    // PROBABILITY; ≈1 - 0.9^n per system at n maps): loose enough to never
+    // flake, tight enough to catch a broken or always-on roll.
+    expect(fraction).toBeGreaterThanOrEqual(0.1);
+    expect(fraction).toBeLessThanOrEqual(0.45);
+  });
 });
 
 describe("randomSystem fold radii (fr-s9ll)", () => {
   it("never rolls minRadius/fixedRadius/boxLimit onto any variation, base map or final transform", () => {
     for (let seed = 0; seed < SEED_SAMPLE_SIZE; seed++) {
-      const { transforms, finalTransform } = randomSystem(mulberry32(seed));
+      const { transforms, finalTransform } = RANDOM_SYSTEM_CORPUS[seed];
       const allVariations = [
         ...transforms.flatMap((t) => t.variations ?? []),
         ...(finalTransform?.variations ?? []),
       ];
       for (const v of allVariations) {
-        expect("minRadius" in v).toBe(false);
-        expect("fixedRadius" in v).toBe(false);
-        expect("boxLimit" in v).toBe(false);
+        expect("minRadius" in v, `seed ${seed}`).toBe(false);
+        expect("fixedRadius" in v, `seed ${seed}`).toBe(false);
+        expect("boxLimit" in v, `seed ${seed}`).toBe(false);
       }
     }
   });
 });
 
-// fr-i4q8: most tests below roll FOUR_D_SEED_SAMPLE_SIZE (200) seeds through
-// randomSystem's quality gate -- itself up to 40 chaos-game reroll probes per
-// seed -- which sits close to vitest's 5s default timeout under full-suite
-// CPU contention. A describe-level timeout covers the whole block (the one
-// single-seed test inside is unaffected, just given the same generous
-// ceiling); sized above measured cost rather than tuned to any one slow run.
-describe("randomSystem's 4D extension (fr-bf6.5)", { timeout: 30_000 }, () => {
+// fr-mdhx: every sweep below reads RANDOM_SYSTEM_CORPUS (built once, above)
+// instead of rolling its own FOUR_D_SEED_SAMPLE_SIZE (200) batch, so the
+// describe-level 30s timeout this block used to carry -- the sweep, itself
+// up to 40 chaos-game reroll probes per seed, sat close to vitest's 5s
+// default under full-suite CPU contention -- is no longer earned: the
+// corpus pays that cost once, at module load, not once per test.
+describe("randomSystem's 4D extension (fr-bf6.5)", () => {
   it("is deterministic for a seed that rolls a non-flat system, including identical w blocks", () => {
     // Seed 7 is confirmed (empirically) to roll a non-flat system, so this
     // exercises the w-block equality path rather than incidentally passing
-    // because neither run touched `w` at all.
+    // because neither run touched `w` at all. Two dedicated fresh calls
+    // (not the shared corpus): the point of this test IS that two
+    // independent calls with the same seed agree.
     const a = randomSystem(mulberry32(7));
     const b = randomSystem(mulberry32(7));
     expect(systemIsFlat(a.transforms)).toBe(false);
@@ -245,7 +266,7 @@ describe("randomSystem's 4D extension (fr-bf6.5)", { timeout: 30_000 }, () => {
   it("lands a non-flat system on roughly one 'Surprise Me' roll in four", () => {
     let nonFlatCount = 0;
     for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
-      const { transforms } = randomSystem(mulberry32(seed));
+      const { transforms } = RANDOM_SYSTEM_CORPUS[seed];
       if (!systemIsFlat(transforms)) nonFlatCount++;
     }
     const fraction = nonFlatCount / FOUR_D_SEED_SAMPLE_SIZE;
@@ -258,11 +279,11 @@ describe("randomSystem's 4D extension (fr-bf6.5)", { timeout: 30_000 }, () => {
   it("carries no w key on any transform when a roll comes out flat", () => {
     let flatSystemsSeen = 0;
     for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
-      const { transforms } = randomSystem(mulberry32(seed));
+      const { transforms } = RANDOM_SYSTEM_CORPUS[seed];
       if (!systemIsFlat(transforms)) continue;
       flatSystemsSeen++;
       for (const t of transforms) {
-        expect("w" in t).toBe(false);
+        expect("w" in t, `seed ${seed}`).toBe(false);
       }
     }
     expect(flatSystemsSeen).toBeGreaterThan(0);
@@ -271,10 +292,10 @@ describe("randomSystem's 4D extension (fr-bf6.5)", { timeout: 30_000 }, () => {
   it("never attaches a w block to the final transform, flat or non-flat", () => {
     let finalTransformsSeen = 0;
     for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
-      const { finalTransform } = randomSystem(mulberry32(seed));
+      const { finalTransform } = RANDOM_SYSTEM_CORPUS[seed];
       if (finalTransform === null) continue;
       finalTransformsSeen++;
-      expect("w" in finalTransform).toBe(false);
+      expect("w" in finalTransform, `seed ${seed}`).toBe(false);
     }
     expect(finalTransformsSeen).toBeGreaterThan(0);
   });
@@ -282,38 +303,39 @@ describe("randomSystem's 4D extension (fr-bf6.5)", { timeout: 30_000 }, () => {
   it("keeps every rolled w block sparse: no shear, position and rotation in range, scale only ever the fr-bew mirror", () => {
     let wBlocksSeen = 0;
     for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
-      const { transforms } = randomSystem(mulberry32(seed));
+      const { transforms } = RANDOM_SYSTEM_CORPUS[seed];
       for (const t of transforms) {
         if (!t.w) continue;
         wBlocksSeen++;
-        expect(t.w.shear).toBeUndefined();
+        expect(t.w.shear, `seed ${seed}`).toBeUndefined();
         if (t.w.scale !== undefined) {
           // Only the fr-bew mirror ever sets w.scale: the NEGATED derived
           // mean contraction of the map's own scale (the exact value the
           // editor's Mirror W toggle would materialise), never a free-rolled
           // magnitude — and never on a block with no other w content.
-          expect(t.w.scale).toBeLessThan(0);
+          expect(t.w.scale, `seed ${seed}`).toBeLessThan(0);
           const mean =
             (Math.abs(t.scale[0]) +
               Math.abs(t.scale[1]) +
               Math.abs(t.scale[2])) /
             3;
-          expect(t.w.scale).toBeCloseTo(-mean, 12);
-          expect(t.w.position !== undefined || t.w.rotation !== undefined).toBe(
-            true,
-          );
+          expect(t.w.scale, `seed ${seed}`).toBeCloseTo(-mean, 12);
+          expect(
+            t.w.position !== undefined || t.w.rotation !== undefined,
+            `seed ${seed}`,
+          ).toBe(true);
         }
         if (t.w.position !== undefined) {
-          expect(t.w.position).toBeGreaterThanOrEqual(-0.5);
-          expect(t.w.position).toBeLessThanOrEqual(0.5);
+          expect(t.w.position, `seed ${seed}`).toBeGreaterThanOrEqual(-0.5);
+          expect(t.w.position, `seed ${seed}`).toBeLessThanOrEqual(0.5);
         }
         if (t.w.rotation) {
           const angles = Object.values(t.w.rotation);
-          expect(angles.length).toBeGreaterThanOrEqual(1);
-          expect(angles.length).toBeLessThanOrEqual(2);
+          expect(angles.length, `seed ${seed}`).toBeGreaterThanOrEqual(1);
+          expect(angles.length, `seed ${seed}`).toBeLessThanOrEqual(2);
           for (const angle of angles) {
-            expect(angle).toBeGreaterThanOrEqual(-0.7);
-            expect(angle).toBeLessThanOrEqual(0.7);
+            expect(angle, `seed ${seed}`).toBeGreaterThanOrEqual(-0.7);
+            expect(angle, `seed ${seed}`).toBeLessThanOrEqual(0.7);
           }
         }
       }
@@ -325,7 +347,7 @@ describe("randomSystem's 4D extension (fr-bf6.5)", { timeout: 30_000 }, () => {
     let wBlocksSeen = 0;
     let mirrorsSeen = 0;
     for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
-      const { transforms } = randomSystem(mulberry32(seed));
+      const { transforms } = RANDOM_SYSTEM_CORPUS[seed];
       for (const t of transforms) {
         if (!t.w) continue;
         wBlocksSeen++;
@@ -342,7 +364,7 @@ describe("randomSystem's 4D extension (fr-bf6.5)", { timeout: 30_000 }, () => {
   it("re-probing a batch's non-flat systems confirms the 4D gate's own promises: bounded radius and genuine w-extent", () => {
     let nonFlatSystemsSeen = 0;
     for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
-      const system = randomSystem(mulberry32(seed));
+      const system = RANDOM_SYSTEM_CORPUS[seed];
       if (systemIsFlat(system.transforms)) continue;
       nonFlatSystemsSeen++;
       const finalTransform4 = system.finalTransform
@@ -357,155 +379,161 @@ describe("randomSystem's 4D extension (fr-bf6.5)", { timeout: 30_000 }, () => {
         mulberry32(seed * 7919 + 1),
         finalTransform4,
       );
-      expect(result.bounds.maxW - result.bounds.minW).toBeGreaterThan(0.1);
-      expect(isAcceptableSystem4(result.bounds, result.radius)).toBe(true);
+      expect(
+        result.bounds.maxW - result.bounds.minW,
+        `seed ${seed}`,
+      ).toBeGreaterThan(0.1);
+      expect(
+        isAcceptableSystem4(result.bounds, result.radius),
+        `seed ${seed}`,
+      ).toBe(true);
     }
     expect(nonFlatSystemsSeen).toBeGreaterThan(0);
   });
 });
 
-// fr-i4q8: every test below rolls FOUR_D_SEED_SAMPLE_SIZE (200) seeds through
-// randomSystem's quality gate -- itself up to 40 chaos-game reroll probes per
-// seed -- which sits close to vitest's 5s default timeout under full-suite
-// CPU contention. Sized above measured cost rather than tuned to any one
-// slow run.
-describe(
-  "randomSystem's symmetry roll (fr-d61, fr-msw5)",
-  { timeout: 30_000 },
-  () => {
-    it("rolls symmetry on roughly 3 in 10 flat systems: integer order 2..6 about y, null otherwise", () => {
-      let flatSystemsSeen = 0;
-      let symmetryHits = 0;
-      for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
-        const { transforms, symmetry } = randomSystem(mulberry32(seed));
-        if (!systemIsFlat(transforms)) continue;
-        flatSystemsSeen++;
-        if (symmetry === null) continue;
-        symmetryHits++;
-        expect(Number.isInteger(symmetry.order)).toBe(true);
-        expect(symmetry.order).toBeGreaterThanOrEqual(2);
-        expect(symmetry.order).toBeLessThanOrEqual(6);
-        expect(symmetry.plane).toBe("xz");
-        // The flat roll's vocabulary stays frozen -- fr-msw5 only widened the
-        // non-flat roll below, never this one -- so a flat roll never carries
-        // a twist key.
-        expect(symmetry).not.toHaveProperty("twist");
-      }
-      const fraction = symmetryHits / flatSystemsSeen;
-      // Generous band around the 0.3 design target (SYMMETRY_PROBABILITY):
-      // loose enough to never flake, tight enough to catch a broken or
-      // always-on roll.
-      expect(fraction).toBeGreaterThanOrEqual(0.15);
-      expect(fraction).toBeLessThanOrEqual(0.45);
-    });
+// fr-mdhx: same corpus-sharing rationale as the 4D-extension block above --
+// every sweep here reads RANDOM_SYSTEM_CORPUS, so the describe-level 30s
+// timeout is no longer earned.
+describe("randomSystem's symmetry roll (fr-d61, fr-msw5)", () => {
+  it("rolls symmetry on roughly 3 in 10 flat systems: integer order 2..6 about y, null otherwise", () => {
+    let flatSystemsSeen = 0;
+    let symmetryHits = 0;
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const { transforms, symmetry } = RANDOM_SYSTEM_CORPUS[seed];
+      if (!systemIsFlat(transforms)) continue;
+      flatSystemsSeen++;
+      if (symmetry === null) continue;
+      symmetryHits++;
+      expect(Number.isInteger(symmetry.order), `seed ${seed}`).toBe(true);
+      expect(symmetry.order, `seed ${seed}`).toBeGreaterThanOrEqual(2);
+      expect(symmetry.order, `seed ${seed}`).toBeLessThanOrEqual(6);
+      expect(symmetry.plane, `seed ${seed}`).toBe("xz");
+      // The flat roll's vocabulary stays frozen -- fr-msw5 only widened the
+      // non-flat roll below, never this one -- so a flat roll never carries
+      // a twist key.
+      expect(symmetry, `seed ${seed}`).not.toHaveProperty("twist");
+    }
+    const fraction = symmetryHits / flatSystemsSeen;
+    // Generous band around the 0.3 design target (SYMMETRY_PROBABILITY):
+    // loose enough to never flake, tight enough to catch a broken or
+    // always-on roll.
+    expect(fraction).toBeGreaterThanOrEqual(0.15);
+    expect(fraction).toBeLessThanOrEqual(0.45);
+  });
 
-    it("rolls symmetry on roughly 3 in 10 non-flat systems: order 2..6, a rolled plane, occasional twist (fr-msw5)", () => {
-      let nonFlatSystemsSeen = 0;
-      let symmetryHits = 0;
-      for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
-        const { transforms, symmetry } = randomSystem(mulberry32(seed));
-        if (systemIsFlat(transforms)) continue;
-        nonFlatSystemsSeen++;
-        if (symmetry === null) continue;
-        symmetryHits++;
-        expect(Number.isInteger(symmetry.order)).toBe(true);
-        expect(symmetry.order).toBeGreaterThanOrEqual(2);
-        expect(symmetry.order).toBeLessThanOrEqual(6);
-        expect(
-          (SYMMETRY_PLANES as readonly string[]).includes(symmetry.plane),
-        ).toBe(true);
-        if ("twist" in symmetry) {
-          expect(Number.isInteger(symmetry.twist)).toBe(true);
-          expect(symmetry.twist).toBeGreaterThanOrEqual(1);
-          expect(symmetry.twist).toBeLessThanOrEqual(symmetry.order - 1);
-        }
-        expect(symmetry).not.toHaveProperty("blend");
-      }
-      expect(nonFlatSystemsSeen).toBeGreaterThan(0);
-      const fraction = symmetryHits / nonFlatSystemsSeen;
-      // Generous band around the same 0.3 design target
-      // (SYMMETRY_PROBABILITY, shared with the flat roll above): loose enough
-      // to never flake, tight enough to catch a broken or always-on roll.
-      expect(fraction).toBeGreaterThanOrEqual(0.15);
-      expect(fraction).toBeLessThanOrEqual(0.45);
-    });
-
-    it("reaches more than one plane and at least one twisted kaleidoscope across a seed batch (fr-msw5)", () => {
-      const planesSeen = new Set<string>();
-      let twistsSeen = 0;
-      for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
-        const { transforms, symmetry } = randomSystem(mulberry32(seed));
-        if (systemIsFlat(transforms) || symmetry === null) continue;
-        planesSeen.add(symmetry.plane);
-        if ("twist" in symmetry) twistsSeen++;
-      }
-      // Measured at FOUR_D_SEED_SAMPLE_SIZE=200 (fr-msw5): 4 distinct planes
-      // and 3 twists turn up, comfortably above the floor below -- no
-      // widening needed.
-      expect(planesSeen.size).toBeGreaterThanOrEqual(2);
-      expect(twistsSeen).toBeGreaterThanOrEqual(1);
-    });
-
-    it("re-probing a symmetric system WITH its rolled symmetry still lands acceptable bounds", () => {
-      let symmetricSystemsSeen = 0;
-      for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
-        const system = randomSystem(mulberry32(seed));
-        // fr-msw5: a non-flat system can now also carry symmetry, occasionally
-        // on a w-mixing plane (randomSymmetry4) -- runChaosGame's
-        // symmetryRotation throws on those by design (a w-plane must route to
-        // the 4D path), so this flat-only 3D re-probe is scoped to flat
-        // systems; the non-flat case gets its own runChaosGame4 re-probe below.
-        if (system.symmetry === null || !systemIsFlat(system.transforms)) {
-          continue;
-        }
-        symmetricSystemsSeen++;
-        // A fresh, independent rng stream -- not a replay of the internal
-        // generation-time probe -- so this genuinely re-verifies the system
-        // rather than trivially repeating the check that already accepted it.
-        const result = runChaosGame(
-          system.transforms,
-          4000,
-          mulberry32(seed * 7919 + 1),
-          system.finalTransform,
-          system.symmetry,
+  it("rolls symmetry on roughly 3 in 10 non-flat systems: order 2..6, a rolled plane, occasional twist (fr-msw5)", () => {
+    let nonFlatSystemsSeen = 0;
+    let symmetryHits = 0;
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const { transforms, symmetry } = RANDOM_SYSTEM_CORPUS[seed];
+      if (systemIsFlat(transforms)) continue;
+      nonFlatSystemsSeen++;
+      if (symmetry === null) continue;
+      symmetryHits++;
+      expect(Number.isInteger(symmetry.order), `seed ${seed}`).toBe(true);
+      expect(symmetry.order, `seed ${seed}`).toBeGreaterThanOrEqual(2);
+      expect(symmetry.order, `seed ${seed}`).toBeLessThanOrEqual(6);
+      expect(
+        (SYMMETRY_PLANES as readonly string[]).includes(symmetry.plane),
+        `seed ${seed}`,
+      ).toBe(true);
+      if ("twist" in symmetry) {
+        expect(Number.isInteger(symmetry.twist), `seed ${seed}`).toBe(true);
+        expect(symmetry.twist, `seed ${seed}`).toBeGreaterThanOrEqual(1);
+        expect(symmetry.twist, `seed ${seed}`).toBeLessThanOrEqual(
+          symmetry.order - 1,
         );
-        // Occupancy is deliberately not re-asserted here: a marginal system
-        // near the floor can legitimately wobble across it between seeds.
-        // Bounds acceptability is the stable promise -- the existing 4D
-        // re-probe test above makes the same trade.
-        expect(isAcceptableSystem(result.bounds)).toBe(true);
       }
-      expect(symmetricSystemsSeen).toBeGreaterThan(0);
-    });
+      expect(symmetry, `seed ${seed}`).not.toHaveProperty("blend");
+    }
+    expect(nonFlatSystemsSeen).toBeGreaterThan(0);
+    const fraction = symmetryHits / nonFlatSystemsSeen;
+    // Generous band around the same 0.3 design target
+    // (SYMMETRY_PROBABILITY, shared with the flat roll above): loose enough
+    // to never flake, tight enough to catch a broken or always-on roll.
+    expect(fraction).toBeGreaterThanOrEqual(0.15);
+    expect(fraction).toBeLessThanOrEqual(0.45);
+  });
 
-    it("re-probing a non-flat system WITH its rolled symmetry still lands acceptable bounds (fr-msw5)", () => {
-      let nonFlatSymmetricSeen = 0;
-      for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
-        const system = randomSystem(mulberry32(seed));
-        if (systemIsFlat(system.transforms) || system.symmetry === null) {
-          continue;
-        }
-        nonFlatSymmetricSeen++;
-        const finalTransform4 = system.finalTransform
-          ? toTransform4(system.finalTransform)
-          : null;
-        // A fresh, independent rng stream -- not a replay of the internal
-        // generation-time probe -- so this genuinely re-verifies the system
-        // rather than trivially repeating the check that already accepted it.
-        // Mirrors scoreSystem's own runChaosGame4 call (symmetry included).
-        const result = runChaosGame4(
-          system.transforms.map(toTransform4),
-          6000,
-          mulberry32(seed * 7919 + 1),
-          finalTransform4,
-          system.symmetry,
-        );
-        expect(isAcceptableSystem4(result.bounds, result.radius)).toBe(true);
+  it("reaches more than one plane and at least one twisted kaleidoscope across a seed batch (fr-msw5)", () => {
+    const planesSeen = new Set<string>();
+    let twistsSeen = 0;
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const { transforms, symmetry } = RANDOM_SYSTEM_CORPUS[seed];
+      if (systemIsFlat(transforms) || symmetry === null) continue;
+      planesSeen.add(symmetry.plane);
+      if ("twist" in symmetry) twistsSeen++;
+    }
+    // Measured at FOUR_D_SEED_SAMPLE_SIZE=200 (fr-msw5): 4 distinct planes
+    // and 3 twists turn up, comfortably above the floor below -- no
+    // widening needed.
+    expect(planesSeen.size).toBeGreaterThanOrEqual(2);
+    expect(twistsSeen).toBeGreaterThanOrEqual(1);
+  });
+
+  it("re-probing a symmetric system WITH its rolled symmetry still lands acceptable bounds", () => {
+    let symmetricSystemsSeen = 0;
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const system = RANDOM_SYSTEM_CORPUS[seed];
+      // fr-msw5: a non-flat system can now also carry symmetry, occasionally
+      // on a w-mixing plane (randomSymmetry4) -- runChaosGame's
+      // symmetryRotation throws on those by design (a w-plane must route to
+      // the 4D path), so this flat-only 3D re-probe is scoped to flat
+      // systems; the non-flat case gets its own runChaosGame4 re-probe below.
+      if (system.symmetry === null || !systemIsFlat(system.transforms)) {
+        continue;
       }
-      expect(nonFlatSymmetricSeen).toBeGreaterThan(0);
-    });
-  },
-);
+      symmetricSystemsSeen++;
+      // A fresh, independent rng stream -- not a replay of the internal
+      // generation-time probe -- so this genuinely re-verifies the system
+      // rather than trivially repeating the check that already accepted it.
+      const result = runChaosGame(
+        system.transforms,
+        4000,
+        mulberry32(seed * 7919 + 1),
+        system.finalTransform,
+        system.symmetry,
+      );
+      // Occupancy is deliberately not re-asserted here: a marginal system
+      // near the floor can legitimately wobble across it between seeds.
+      // Bounds acceptability is the stable promise -- the existing 4D
+      // re-probe test above makes the same trade.
+      expect(isAcceptableSystem(result.bounds), `seed ${seed}`).toBe(true);
+    }
+    expect(symmetricSystemsSeen).toBeGreaterThan(0);
+  });
+
+  it("re-probing a non-flat system WITH its rolled symmetry still lands acceptable bounds (fr-msw5)", () => {
+    let nonFlatSymmetricSeen = 0;
+    for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
+      const system = RANDOM_SYSTEM_CORPUS[seed];
+      if (systemIsFlat(system.transforms) || system.symmetry === null) {
+        continue;
+      }
+      nonFlatSymmetricSeen++;
+      const finalTransform4 = system.finalTransform
+        ? toTransform4(system.finalTransform)
+        : null;
+      // A fresh, independent rng stream -- not a replay of the internal
+      // generation-time probe -- so this genuinely re-verifies the system
+      // rather than trivially repeating the check that already accepted it.
+      // Mirrors scoreSystem's own runChaosGame4 call (symmetry included).
+      const result = runChaosGame4(
+        system.transforms.map(toTransform4),
+        6000,
+        mulberry32(seed * 7919 + 1),
+        finalTransform4,
+        system.symmetry,
+      );
+      expect(
+        isAcceptableSystem4(result.bounds, result.radius),
+        `seed ${seed}`,
+      ).toBe(true);
+    }
+    expect(nonFlatSymmetricSeen).toBeGreaterThan(0);
+  });
+});
 
 describe("scoreSystem's flat/4D routing (fr-x6hz)", () => {
   it("does not throw and returns a finite score for flat transforms carrying a w-plane symmetry", () => {
