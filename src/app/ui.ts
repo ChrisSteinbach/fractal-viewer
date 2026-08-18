@@ -3342,15 +3342,25 @@ export class Ui {
     // countdown (fr-vja8.21); a plain toast stays click-through.
     this.toast.classList.toggle("toast-actionable", action !== undefined);
     this.toast.classList.remove("hidden");
-    // A fresh toast starts a fresh countdown: stale hover/focus flags from a
-    // toast whose leave event never fired must not hold this one open.
-    this.toastHovered = false;
+    // A fresh toast starts a fresh countdown — but hover is RE-PROBED from
+    // the live hit-test state, never assumed gone: an actionable toast
+    // replacing a hovered actionable toast fires no new mouseenter (the
+    // pointer never crossed the pill's boundary), and a blind reset dropped
+    // the hold and auto-hid the new Undo under the user's own pointer.
+    // Focus IS reset: replaceChildren above destroyed any focused action
+    // button without a focusout, and a stale focus flag would wedge
+    // releaseToast into never re-arming — which is the staleness the old
+    // blind reset existed to prevent. A toast born held arms no timer;
+    // releaseToast starts the full countdown when the pointer leaves.
+    this.toastHovered = this.toast.matches(":hover");
     this.toastFocused = false;
     this.toastDurationMs = action
       ? TOAST_ACTION_DURATION_MS
       : TOAST_DURATION_MS;
     if (this.toastTimer !== null) clearTimeout(this.toastTimer);
-    this.toastTimer = setTimeout(() => this.hideToast(), this.toastDurationMs);
+    this.toastTimer = this.toastHovered
+      ? null
+      : setTimeout(() => this.hideToast(), this.toastDurationMs);
   }
 
   /** Hold the toast open (fr-vja8.21): the pointer entered it, or focus
