@@ -987,6 +987,21 @@ summary.editor-group-title {
   display: none;
 }
 
+/* Screen-reader-only content (the page-level h1, fr-vja8.29): rendered for
+   assistive tech, invisible on screen — unlike `.hidden`, which removes the
+   element from both. The standard 1px clip pattern. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 .flame-hint {
   margin-bottom: 12px;
   color: var(--text-dim);

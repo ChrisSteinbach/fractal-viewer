@@ -50,7 +50,30 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <div id="container"></div>
+    <!-- Landmark structure (fr-vja8.26): <main> around the viewport and a
+         named region on #panel below, so a landmarks-navigating screen-reader
+         user can jump between the two instead of walking the page linearly.
+         The #container/#panel ids stay untouched — CSS and JS key on them —
+         and <main> is static (body stays #container's containing block), so
+         nothing moves visually. -->
+    <main>
+      <!-- The page-level heading (fr-vja8.29): visually hidden rather than a
+           promoted #panelTitle, because the panel parks at visibility:hidden
+           when closed (taking its heading out of the accessibility tree) and
+           its text is a live 3D/4D status, not the page name. Headings then
+           read h1 (page) → h2s (panel title, dialog titles). -->
+      <h1 class="visually-hidden">4D Fractal Explorer</h1>
+      <!-- The live viewport (scene.ts injects the WebGL canvas here).
+           role="img" + aria-label because a screen reader otherwise gets no
+           signal that the app's entire visual subject exists; an honest
+           what-this-region-is label is the achievable bar for a live random
+           point cloud. -->
+      <div
+        id="container"
+        role="img"
+        aria-label="Live 3D preview of the fractal — shape it with the controls panel"
+      ></div>
+    </main>
     <div id="vignette"></div>
     <div id="error"></div>
     <div id="loading">Loading…</div>
@@ -104,7 +127,10 @@
     <button id="menuToggle" type="button" aria-label="Open controls">☰</button>
     <div id="backdrop"></div>
 
-    <div id="panel">
+    <!-- role="region" + aria-label rather than <nav>: the panel is controls,
+         not navigation (fr-vja8.26). "Controls" matches #menuToggle's own
+         "Open controls" label. -->
+    <div id="panel" role="region" aria-label="Controls">
       <h2 id="panelTitle" title="IFS = iterated function system">
         3D IFS Fractal
       </h2>

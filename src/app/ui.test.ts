@@ -6655,6 +6655,46 @@ describe("Ui fog tint row (fr-5h5d)", () => {
   });
 });
 
+describe("canvas viewport accessible name (fr-vja8.23)", () => {
+  // scene.ts injects a bare <canvas> into #container; without a role and
+  // label the app's entire visual subject is invisible to a screen reader.
+  it("names the #container viewport as an image for assistive tech", () => {
+    const container = document.getElementById("container");
+    expect(container?.getAttribute("role")).toBe("img");
+    expect(container?.getAttribute("aria-label")).toBe(
+      "Live 3D preview of the fractal — shape it with the controls panel",
+    );
+  });
+});
+
+describe("page landmark structure (fr-vja8.26)", () => {
+  it("wraps the viewport in a <main> landmark, ids untouched", () => {
+    const container = document.getElementById("container");
+    expect(container?.parentElement?.tagName).toBe("MAIN");
+    expect(document.querySelectorAll("main")).toHaveLength(1);
+  });
+
+  it("exposes the panel as a named region landmark, id untouched", () => {
+    const panel = document.getElementById("panel");
+    expect(panel?.getAttribute("role")).toBe("region");
+    expect(panel?.getAttribute("aria-label")).toBe("Controls");
+  });
+});
+
+describe("page-level heading (fr-vja8.29)", () => {
+  it("ships exactly one h1, ahead of every h2", () => {
+    const headings = Array.from(document.querySelectorAll("h1, h2"));
+    const h1s = headings.filter((h) => h.tagName === "H1");
+    expect(h1s).toHaveLength(1);
+    expect(headings[0]).toBe(h1s[0]);
+    expect(h1s[0].textContent).toBe("4D Fractal Explorer");
+    // Visually hidden, not display-hidden: it must stay in the
+    // accessibility tree (`.hidden` would take it out of both).
+    expect(h1s[0].classList.contains("visually-hidden")).toBe(true);
+    expect(h1s[0].classList.contains("hidden")).toBe(false);
+  });
+});
+
 describe("mid-session status notes are live regions (fr-vja8.25)", () => {
   // These five populate/change mid-session via targeted setters (software-
   // renderer detection, CPU fallback on a flame restart, memory clamps, the
