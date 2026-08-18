@@ -6002,71 +6002,73 @@ export class FractalScene {
     // the compiler the `finally` cannot see it unassigned.
     let outcome!: SurfaceDrainOutcome;
     let job = arm.job;
+    // fr-vja8.35: HOWEVER this capture ends — delivered, Cancelled, the
+    // viewport-mismatch refusal, or a throw unwinding out of the drain or
+    // the readback — the export-scale sample sequence is released on the
+    // way out. One outer finally rather than a release on each exit path,
+    // so an exit added later (or an exception path nobody enumerated)
+    // cannot leak the very buffers this exists to free.
     try {
-      for (;;) {
-        const pass = this.surfaceSampleIndex;
-        // Each pass retires on its OWN completed measurement, so a cancel
-        // mid-sequence restores the last pass that finished rather than
-        // the pre-capture prior (finishSurfaceFullFrame's rule, applied
-        // per pass because each pass IS a full frame at this pose).
-        const passArm = {
-          job,
-          priorPxCostMs:
-            pass === 0 ? arm.priorPxCostMs : this.surfaceFullPxCostMs,
-        };
-        outcome = await this.drainStripsAsync(job, this.surfaceSettleTarget, {
-          onProgress: opts?.onProgress
-            ? (fraction) =>
-                opts.onProgress?.(
-                  (pass + fraction) / Math.max(1, this.surfaceSampleTotal),
-                )
-            : undefined,
-          cancelled: opts?.cancelled,
-        });
-        // "cancelled" returns having restored the evidence the arming
-        // discarded, so the next export prices this pose from what already
-        // measured it.
-        this.finishSurfaceFullFrame(passArm, width * height, outcome);
-        if (outcome !== "done" || this.surfaceSampleTotal <= 1) break;
-        this.foldSurfaceSample();
-        this.encodeSurfaceSampleMean();
-        this.surfaceSampleIndex = pass + 1;
-        if (this.surfaceSampleIndex >= this.surfaceSampleTotal) break;
-        job = this.armSurfaceSamplePass(width, height);
+      try {
+        for (;;) {
+          const pass = this.surfaceSampleIndex;
+          // Each pass retires on its OWN completed measurement, so a cancel
+          // mid-sequence restores the last pass that finished rather than
+          // the pre-capture prior (finishSurfaceFullFrame's rule, applied
+          // per pass because each pass IS a full frame at this pose).
+          const passArm = {
+            job,
+            priorPxCostMs:
+              pass === 0 ? arm.priorPxCostMs : this.surfaceFullPxCostMs,
+          };
+          outcome = await this.drainStripsAsync(job, this.surfaceSettleTarget, {
+            onProgress: opts?.onProgress
+              ? (fraction) =>
+                  opts.onProgress?.(
+                    (pass + fraction) / Math.max(1, this.surfaceSampleTotal),
+                  )
+              : undefined,
+            cancelled: opts?.cancelled,
+          });
+          // "cancelled" returns having restored the evidence the arming
+          // discarded, so the next export prices this pose from what already
+          // measured it.
+          this.finishSurfaceFullFrame(passArm, width * height, outcome);
+          if (outcome !== "done" || this.surfaceSampleTotal <= 1) break;
+          this.foldSurfaceSample();
+          this.encodeSurfaceSampleMean();
+          this.surfaceSampleIndex = pass + 1;
+          if (this.surfaceSampleIndex >= this.surfaceSampleTotal) break;
+          job = this.armSurfaceSamplePass(width, height);
+        }
+      } finally {
+        this.surfaceCaptureFlight = false;
       }
+      if (outcome === "cancelled") return null;
+      // A viewport resize during the drain leaves the traced target and the
+      // canvas the blit lands on at different sizes — the export would be a
+      // scaled, half-stale frame. Rare (the modal's scrim covers the app,
+      // but not the window chrome), so refuse rather than ship a torn image.
+      if (
+        Math.floor(this.viewportWidth * ratio) !== width ||
+        Math.floor(this.viewportHeight * ratio) !== height
+      ) {
+        return null;
+      }
+      return await this.withPixelRatio(ratio, () => {
+        // The mean of the completed passes (fr-jf9y), or — for a single-pass
+        // export, and for every caller that predates supersampling — the
+        // traced target itself, byte for byte as before. The image reads the
+        // CANVAS, already blitted synchronously, so nothing needs this
+        // capture's sample sequence once this returns.
+        if (this.surfaceSampleTaken < 2 || !this.presentSurfaceSampleImage()) {
+          this.blitSurface(this.surfaceSettleTarget.texture, null);
+        }
+        return exportImageFrom(this.renderer.domElement);
+      });
     } finally {
-      this.surfaceCaptureFlight = false;
-    }
-    if (outcome === "cancelled") {
       this.releaseSurfaceSampleSequence();
-      return null;
     }
-    // A viewport resize during the drain leaves the traced target and the
-    // canvas the blit lands on at different sizes — the export would be a
-    // scaled, half-stale frame. Rare (the modal's scrim covers the app,
-    // but not the window chrome), so refuse rather than ship a torn image.
-    if (
-      Math.floor(this.viewportWidth * ratio) !== width ||
-      Math.floor(this.viewportHeight * ratio) !== height
-    ) {
-      this.releaseSurfaceSampleSequence();
-      return null;
-    }
-    const image = await this.withPixelRatio(ratio, () => {
-      // The mean of the completed passes (fr-jf9y), or — for a single-pass
-      // export, and for every caller that predates supersampling — the
-      // traced target itself, byte for byte as before.
-      if (this.surfaceSampleTaken < 2 || !this.presentSurfaceSampleImage()) {
-        this.blitSurface(this.surfaceSettleTarget.texture, null);
-      }
-      return exportImageFrom(this.renderer.domElement);
-    });
-    // fr-vja8.35: the export image above is built (it reads the CANVAS,
-    // already blitted synchronously — see releaseSurfaceSampleSequence's
-    // doc), so nothing needs this capture's export-scale sample sequence
-    // any longer.
-    this.releaseSurfaceSampleSequence();
-    return image;
   }
 
   /**

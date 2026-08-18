@@ -2924,11 +2924,13 @@ function main(): void {
         scene.invalidate();
         // Release the export-scale accumulator canvas + GPU texture
         // (fr-vja8.35) — the flame sibling of exitSurfaceComputeSession's
-        // release-on-exit, and THIS is the one chokepoint every flame exit
-        // passes through: a manual mode switch, the worker error paths, and
-        // an Export-size restart (whose immediate re-enter regrows the
-        // canvas on its first frame — one trivial realloc, accepted so the
-        // error exits can't be missed by a switch-site-only hook).
+        // release-on-exit, and the one chokepoint every LEAVE-THE-MODE exit
+        // passes through: a manual mode switch and the worker error paths
+        // both call exit(). An Export-size RESTART deliberately never gets
+        // here — restartFlameRender calls enter(), whose re-entry path
+        // terminates the old handle without running deactivate — so a
+        // restart keeps the warm canvas and repaints seamlessly, and only a
+        // genuine departure from flame mode pays the release.
         scene.exitFlameSession();
       }
       // Whatever this render still owed a thumbnail (fr-r777) is owed
@@ -5806,7 +5808,9 @@ function main(): void {
     // The Surface gate reads the DOCUMENT, and a geometry drag can carry it
     // across an analyzer seam (fr-vja8.10) — a scale reaching 1.0 stops
     // contracting mid-drag, and a stale-enabled button then routes a plainly
-    // ineligible system into a render-failure toast.
+    // ineligible system into a render-failure toast. This list+gate pair
+    // mirrors refreshUi's own tail (with the editor rebuild omitted between
+    // them) — an edit to either sequence should visit its twin.
     refreshSurfaceEligibility();
     if (state.autoUpdate) regenScheduler.schedule();
   }
