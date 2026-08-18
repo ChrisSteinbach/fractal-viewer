@@ -2130,6 +2130,25 @@ export class Ui {
     this.fourDTumbleActive = on;
   }
 
+  /** Reflect an auto-motion flip that came from the CANVAS (the Space key,
+   * fr-vja8.37) rather than the panel checkbox: exactly the DOM-side
+   * recording the change listeners perform before their handlers fire —
+   * checked state, row visibility, the help-box flag — and deliberately NOT
+   * {@link resetAutoOrbit}/{@link resetFourDTumble}, whose fresh-visit
+   * semantics would also stomp a user-chosen speed back to 1.0x. The caller
+   * (main.ts's onToggleAutoMotion) then runs the same handler logic the
+   * checkbox change would have, so the two input paths stay one path. */
+  setAutoMotionToggle(fourD: boolean, on: boolean): void {
+    if (fourD) {
+      this.fourDTumbleToggle.checked = on;
+      this.syncFourDViewRows();
+      this.fourDTumbleActive = on;
+    } else {
+      this.autoOrbitToggle.checked = on;
+      this.autoOrbitRow.classList.toggle("hidden", !on);
+    }
+  }
+
   /** Reflect scalar state into labels, inputs, the help box, and the panel. */
   updateLabels(state: AppState): void {
     this.transformCount.textContent = String(state.transforms.length);

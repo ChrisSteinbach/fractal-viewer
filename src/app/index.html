@@ -63,16 +63,14 @@
            its text is a live 3D/4D status, not the page name. Headings then
            read h1 (page) → h2s (panel title, dialog titles). -->
       <h1 class="visually-hidden">4D Fractal Explorer</h1>
-      <!-- The live viewport (scene.ts injects the WebGL canvas here).
-           role="img" + aria-label because a screen reader otherwise gets no
-           signal that the app's entire visual subject exists; an honest
-           what-this-region-is label is the achievable bar for a live random
-           point cloud. -->
-      <div
-        id="container"
-        role="img"
-        aria-label="Live 3D preview of the fractal — shape it with the controls panel"
-      ></div>
+      <!-- The live viewport (scene.ts injects the WebGL canvas here). The
+           accessible identity lives on the CANVAS itself since fr-vja8.37 —
+           a focusable widget whose label teaches the camera keys — not on
+           this div: the fr-vja8.23 role="img" wrapper was the achievable
+           bar while the canvas was inert, but role="img" prunes its subtree
+           from the accessibility tree, which would leave the now-focusable
+           canvas taking keyboard focus with no announced name at all. -->
+      <div id="container"></div>
     </main>
     <div id="vignette"></div>
     <div id="error"></div>
