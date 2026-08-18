@@ -1013,7 +1013,11 @@ export class Ui {
    * per-modal Escape/Tab handlers (fr-vja8.13's pairwise `exportModalOpen`/
    * `siblingModalOpen` guards) with one rule a fifth dialog can join by
    * calling {@link trapModalFocus} like the rest, instead of by copying a
-   * guard into four places.
+   * guard into four places. {@link modalOpeners} is this structure's twin —
+   * same key, different lifetime rule (an opener is only recorded from
+   * OUTSIDE the modal) — and both are maintained exclusively inside
+   * trapModalFocus/releaseModalFocus: edit one there without visiting the
+   * other and they drift.
    */
   private readonly modalStack: ModalStackEntry[] = [];
 
@@ -2675,6 +2679,17 @@ export class Ui {
     if (!this.modalStack.some((entry) => entry.modal === modal)) {
       if (this.modalStack.length === 0) {
         this.doc.addEventListener("keydown", this.onModalStackKeydown);
+      } else if (modal !== this.exportModal) {
+        // Tripwire, not a behavior change: onModalStackKeydown's
+        // Escape-to-oldest routing rests on the invariant that the export
+        // modal is the ONLY one that ever stacks over another (every
+        // sibling opener is pointer- and focus-unreachable while any modal
+        // is up). Nothing structural enforces that — so if a future dialog
+        // breaks it, say so out loud instead of letting Escape silently
+        // close an invisible bottom modal.
+        console.warn(
+          "Modal stacked over an open sibling — Escape routing assumes only the export modal does this; revisit onModalStackKeydown.",
+        );
       }
       this.modalStack.push({ modal, onEscape });
     }
