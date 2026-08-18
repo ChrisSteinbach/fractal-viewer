@@ -3524,19 +3524,24 @@ export class Ui {
    * isn't part of AppState, so (like {@link setFlameProgress}) this is a
    * targeted setter main.ts calls directly rather than something
    * `updateLabels` derives from state. Pass `null` when running at the
-   * requested value unclamped, to hide the note.
+   * requested value unclamped, to clear the note.
+   *
+   * TEXT ALONE drives visibility here and in the four sibling status notes
+   * (fr-vja8.48): the element stays rendered — never `.hidden` — because a
+   * live region entering the accessibility tree already populated announces
+   * unreliably, and this note is re-cleared at every render start, so
+   * populate-then-unhide was its only path. style.css's `:empty` rule
+   * collapses the cleared state.
    */
   setFlameSupersampleNote(effective: number | null, requested?: number): void {
     if (effective === null) {
       this.flameSupersampleNote.textContent = "";
-      this.flameSupersampleNote.classList.add("hidden");
       return;
     }
     this.flameSupersampleNote.textContent =
       requested !== undefined
         ? `Reduced to ${effective}× (from ${requested}×) to fit available memory.`
         : `Reduced to ${effective}× to fit available memory.`;
-    this.flameSupersampleNote.classList.remove("hidden");
   }
 
   /**
@@ -3556,10 +3561,13 @@ export class Ui {
    * warning `.flame-note` — software rasterization must not pass as a
    * normal backend note. The swap runs on every non-null call (not just
    * the software→hardware transition), so a later hardware backend note
-   * un-escalates cleanly. `null` hides the note, mirroring
+   * un-escalates cleanly. `null` clears the note, mirroring
    * {@link setFlameSupersampleNote}'s contract (cleared at the start of
-   * every render, before the fresh worker reports its own) — classes are
-   * left alone on that path, since hidden is hidden either way.
+   * every render, before the fresh worker reports its own) — the tier
+   * classes are left alone on that path, since an empty note shows neither
+   * way. Text alone drives visibility (fr-vja8.48, see
+   * {@link setFlameSupersampleNote}): the element stays rendered so the
+   * live region actually announces the restart-time CPU fallback.
    */
   setFlameBackendNote(
     backend: "gpu" | "cpu" | null,
@@ -3569,7 +3577,6 @@ export class Ui {
   ): void {
     if (backend === null) {
       this.flameBackendNote.textContent = "";
-      this.flameBackendNote.classList.add("hidden");
       return;
     }
     this.flameBackendNote.textContent =
@@ -3578,7 +3585,6 @@ export class Ui {
         : `CPU accumulation${detail ? ` — ${detail}` : ""}`;
     this.flameBackendNote.classList.toggle("flame-note", software);
     this.flameBackendNote.classList.toggle("flame-note-info", !software);
-    this.flameBackendNote.classList.remove("hidden");
   }
 
   /**
@@ -3594,16 +3600,11 @@ export class Ui {
    * runtime, device-dependent fact that isn't part of `AppState`, so —
    * like {@link setFlameBackendNote} — this is a targeted setter main.ts
    * calls directly rather than something `updateLabels` derives. `null`
-   * hides the note.
+   * clears the note; text alone drives visibility (fr-vja8.48, see
+   * {@link setFlameSupersampleNote}).
    */
   setSoftwareRendererNote(text: string | null): void {
-    if (text === null) {
-      this.softwareRendererNote.textContent = "";
-      this.softwareRendererNote.classList.add("hidden");
-      return;
-    }
-    this.softwareRendererNote.textContent = text;
-    this.softwareRendererNote.classList.remove("hidden");
+    this.softwareRendererNote.textContent = text ?? "";
   }
 
   /** Reflect solid-render progress, mirroring {@link setFlameProgress}. */
@@ -3621,19 +3622,18 @@ export class Ui {
   /**
    * Reflect whether the resolution slider's requested value had to be reduced
    * to fit the worker's memory budget — the solid render's counterpart to
-   * {@link setFlameSupersampleNote}, with the same `null`-hides contract.
+   * {@link setFlameSupersampleNote}, with the same `null`-clears contract
+   * and the same text-driven visibility (fr-vja8.48).
    */
   setSolidResolutionNote(effective: number | null, requested?: number): void {
     if (effective === null) {
       this.solidResolutionNote.textContent = "";
-      this.solidResolutionNote.classList.add("hidden");
       return;
     }
     this.solidResolutionNote.textContent =
       requested !== undefined
         ? `Reduced to ${effective}³ (from ${requested}³) to fit available memory.`
         : `Reduced to ${effective}³ to fit available memory.`;
-    this.solidResolutionNote.classList.remove("hidden");
   }
 
   /**
@@ -3656,13 +3656,11 @@ export class Ui {
     button.title = blocked
       ? `Surface render unavailable: ${detail ?? "not marchable"}`
       : "Sphere-traced surface of the attractor";
-    if (status === "degraded" && detail) {
-      this.surfaceNote.textContent = detail;
-      this.surfaceNote.classList.remove("hidden");
-    } else {
-      this.surfaceNote.textContent = "";
-      this.surfaceNote.classList.add("hidden");
-    }
+    // Text alone drives the note's visibility (fr-vja8.48, see
+    // {@link setFlameSupersampleNote}): the element stays rendered so the
+    // live region actually announces a degrade.
+    this.surfaceNote.textContent =
+      status === "degraded" && detail ? detail : "";
   }
 
   /**

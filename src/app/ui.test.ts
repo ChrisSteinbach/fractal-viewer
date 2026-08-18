@@ -2957,27 +2957,28 @@ describe("Ui.setFlameSupersampleNote", () => {
     return document.getElementById("flameSupersampleNote");
   }
 
-  it("is hidden with empty text by default", () => {
+  it("starts empty, rendered (never .hidden — fr-vja8.48)", () => {
     new Ui(document);
-    expect(note()?.classList.contains("hidden")).toBe(true);
     expect(note()?.textContent).toBe("");
+    expect(note()?.classList.contains("hidden")).toBe(false);
   });
 
-  it("shows a reduced-from message and un-hides when passed an effective value", () => {
+  it("shows a reduced-from message when passed an effective value", () => {
     const ui = new Ui(document);
     ui.setFlameSupersampleNote(1, 3);
-    expect(note()?.classList.contains("hidden")).toBe(false);
     expect(note()?.textContent).toBe(
       "Reduced to 1× (from 3×) to fit available memory.",
     );
   });
 
-  it("hides again when passed null", () => {
+  it("clears back to empty text on null, the element staying rendered", () => {
     const ui = new Ui(document);
     ui.setFlameSupersampleNote(1, 3);
     ui.setFlameSupersampleNote(null);
-    expect(note()?.classList.contains("hidden")).toBe(true);
     expect(note()?.textContent).toBe("");
+    // Visibility is text-driven: the live region must stay in the
+    // accessibility tree so the NEXT clamp message actually announces.
+    expect(note()?.classList.contains("hidden")).toBe(false);
   });
 });
 
@@ -2986,17 +2987,17 @@ describe("Ui.setFlameBackendNote", () => {
     return document.getElementById("flameBackendNote");
   }
 
-  it("is hidden with empty text by default", () => {
+  it("starts empty, rendered (never .hidden — fr-vja8.48)", () => {
     new Ui(document);
-    expect(note()?.classList.contains("hidden")).toBe(true);
     expect(note()?.textContent).toBe("");
+    expect(note()?.classList.contains("hidden")).toBe(false);
   });
 
-  it("shows a GPU accumulation message with the adapter label and un-hides", () => {
+  it("shows a GPU accumulation message with the adapter label", () => {
     const ui = new Ui(document);
     ui.setFlameBackendNote("gpu", "Apple M2");
-    expect(note()?.classList.contains("hidden")).toBe(false);
     expect(note()?.textContent).toBe("GPU accumulation (Apple M2)");
+    expect(note()?.classList.contains("hidden")).toBe(false);
   });
 
   it("omits the parenthetical when no adapter label is given", () => {
@@ -3011,12 +3012,15 @@ describe("Ui.setFlameBackendNote", () => {
     expect(note()?.textContent).toBe("CPU accumulation");
   });
 
-  it("hides again when passed null", () => {
+  it("clears back to empty text on null, the element staying rendered", () => {
     const ui = new Ui(document);
     ui.setFlameBackendNote("gpu", "Apple M2");
     ui.setFlameBackendNote(null);
-    expect(note()?.classList.contains("hidden")).toBe(true);
     expect(note()?.textContent).toBe("");
+    // Text-driven visibility (fr-vja8.48): the restart-time clear must
+    // leave the live region in the accessibility tree, or the fresh
+    // worker's backend report announces unreliably.
+    expect(note()?.classList.contains("hidden")).toBe(false);
   });
 
   it("escalates to the warning tier for a software adapter (fr-tmgf)", () => {
@@ -3053,30 +3057,29 @@ describe("Ui.setSoftwareRendererNote", () => {
     return document.getElementById("softwareRendererNote");
   }
 
-  it("is hidden with empty text by default", () => {
+  it("starts empty, rendered (never .hidden — fr-vja8.48)", () => {
     new Ui(document);
-    expect(note()?.classList.contains("hidden")).toBe(true);
     expect(note()?.textContent).toBe("");
+    expect(note()?.classList.contains("hidden")).toBe(false);
   });
 
-  it("shows the text and un-hides, keeping the warning-tier class", () => {
+  it("shows the text, keeping the warning-tier class", () => {
     const ui = new Ui(document);
     ui.setSoftwareRendererNote(
       "Software rendering (SwiftShader) — expect low performance.",
     );
-    expect(note()?.classList.contains("hidden")).toBe(false);
     expect(note()?.classList.contains("flame-note")).toBe(true);
     expect(note()?.textContent).toBe(
       "Software rendering (SwiftShader) — expect low performance.",
     );
   });
 
-  it("hides again and clears on null", () => {
+  it("clears back to empty text on null, the element staying rendered", () => {
     const ui = new Ui(document);
     ui.setSoftwareRendererNote("Software rendering (SwiftShader).");
     ui.setSoftwareRendererNote(null);
-    expect(note()?.classList.contains("hidden")).toBe(true);
     expect(note()?.textContent).toBe("");
+    expect(note()?.classList.contains("hidden")).toBe(false);
   });
 });
 
@@ -4604,27 +4607,26 @@ describe("Ui.setSolidResolutionNote", () => {
     return document.getElementById("solidResolutionNote");
   }
 
-  it("is hidden with empty text by default", () => {
+  it("starts empty, rendered (never .hidden — fr-vja8.48)", () => {
     new Ui(document);
-    expect(note()?.classList.contains("hidden")).toBe(true);
     expect(note()?.textContent).toBe("");
+    expect(note()?.classList.contains("hidden")).toBe(false);
   });
 
-  it("shows a reduced-from message and un-hides when passed an effective value", () => {
+  it("shows a reduced-from message when passed an effective value", () => {
     const ui = new Ui(document);
     ui.setSolidResolutionNote(128, 192);
-    expect(note()?.classList.contains("hidden")).toBe(false);
     expect(note()?.textContent).toBe(
       "Reduced to 128³ (from 192³) to fit available memory.",
     );
   });
 
-  it("hides again when passed null", () => {
+  it("clears back to empty text on null, the element staying rendered", () => {
     const ui = new Ui(document);
     ui.setSolidResolutionNote(128, 192);
     ui.setSolidResolutionNote(null);
-    expect(note()?.classList.contains("hidden")).toBe(true);
     expect(note()?.textContent).toBe("");
+    expect(note()?.classList.contains("hidden")).toBe(false);
   });
 });
 
@@ -6977,21 +6979,80 @@ describe("page-level heading (fr-vja8.29)", () => {
   });
 });
 
-describe("mid-session status notes are live regions (fr-vja8.25)", () => {
+describe("mid-session status notes are live regions (fr-vja8.25/.48)", () => {
   // These five populate/change mid-session via targeted setters (software-
   // renderer detection, CPU fallback on a flame restart, memory clamps, the
   // surface degraded note) — a few times per session, never per frame. The
   // slider-coupled #symmetryNote is deliberately absent: it rewrites on
   // every drag tick, which a live region would announce as chatter.
-  it.each([
+  const NOTE_IDS = [
     "softwareRendererNote",
     "flameBackendNote",
     "surfaceNote",
     "flameSupersampleNote",
     "solidResolutionNote",
-  ])("announces #%s to assistive tech when it changes", (id) => {
+  ];
+
+  it.each(NOTE_IDS)("announces #%s to assistive tech when it changes", (id) => {
     const note = document.getElementById(id);
     expect(note?.getAttribute("role")).toBe("status");
     expect(note?.getAttribute("aria-live")).toBe("polite");
   });
+
+  // fr-vja8.48: a live region ENTERING the accessibility tree already
+  // populated announces unreliably, so the five ship rendered — populated
+  // then un-hidden is exactly the path this rules out.
+  it.each(NOTE_IDS)("ships #%s rendered, not display-hidden", (id) => {
+    expect(document.getElementById(id)?.classList.contains("hidden")).toBe(
+      false,
+    );
+  });
+
+  // The full show→clear cycle for every note, the surface one included
+  // (its setter is setSurfaceEligibility, which has no describe of its
+  // own): text is the ONLY thing that changes — the element never leaves
+  // the accessibility tree at either end of the cycle.
+  it.each([
+    [
+      "softwareRendererNote",
+      (ui: Ui) => ui.setSoftwareRendererNote("Software rendering."),
+      (ui: Ui) => ui.setSoftwareRendererNote(null),
+    ],
+    [
+      "flameBackendNote",
+      (ui: Ui) => ui.setFlameBackendNote("cpu", undefined, "GPU failed"),
+      (ui: Ui) => ui.setFlameBackendNote(null),
+    ],
+    [
+      "surfaceNote",
+      (ui: Ui) =>
+        ui.setSurfaceEligibility("degraded", "marched conservatively"),
+      (ui: Ui) => ui.setSurfaceEligibility("eligible", null),
+    ],
+    [
+      "flameSupersampleNote",
+      (ui: Ui) => ui.setFlameSupersampleNote(1, 3),
+      (ui: Ui) => ui.setFlameSupersampleNote(null),
+    ],
+    [
+      "solidResolutionNote",
+      (ui: Ui) => ui.setSolidResolutionNote(128, 192),
+      (ui: Ui) => ui.setSolidResolutionNote(null),
+    ],
+  ] as const)(
+    "toggles #%s by text alone through a show→clear cycle",
+    (id, show, clear) => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      const note = document.getElementById(id);
+
+      show(ui);
+      expect(note?.textContent).not.toBe("");
+      expect(note?.classList.contains("hidden")).toBe(false);
+
+      clear(ui);
+      expect(note?.textContent).toBe("");
+      expect(note?.classList.contains("hidden")).toBe(false);
+    },
+  );
 });

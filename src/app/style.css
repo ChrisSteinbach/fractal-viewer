@@ -1132,6 +1132,20 @@ summary.editor-group-title {
   line-height: 1.4;
 }
 
+/* The five status-note live regions (fr-vja8.48) stay RENDERED at all times
+   — a live region entering the accessibility tree already populated is
+   announced unreliably, so their setters toggle only TEXT and never the
+   .hidden class. Empty IS the hidden state: no content means no line box,
+   and zeroing the box model here makes an empty note occupy nothing.
+   (#symmetryNote keeps its .hidden toggle — deliberately not a live
+   region.) */
+.flame-note:empty,
+.flame-note-info:empty {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 /* Custom palette gradient editor (fr-55k): shown under a palette <select>
    once it's set to Custom — a live strip preview, one color swatch per
    stop, and the add/remove-stop buttons. */

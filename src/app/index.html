@@ -217,13 +217,16 @@
            fr-vja8.25): these populate/change mid-session — software-renderer
            detection, a CPU fallback on a flame restart, a memory clamp — so
            without a live region a screen-reader user gets no signal. The
-           #updateBanner/#renderError notices carry the same treatment. The
            slider-coupled #symmetryNote is deliberately NOT one of them: it
            rewrites per drag tick, which a live region would announce as
-           chatter. -->
+           chatter. UNLIKE the #updateBanner/#renderError notices, these five
+           never carry .hidden (fr-vja8.48): a live region entering the
+           accessibility tree already populated announces unreliably, so the
+           elements stay rendered, their setters toggle only TEXT, and
+           style.css's :empty rule collapses the empty state visually. -->
       <p
         id="softwareRendererNote"
-        class="flame-note hidden"
+        class="flame-note"
         role="status"
         aria-live="polite"
       ></p>
@@ -238,7 +241,7 @@
         <div id="flameProgress" class="flame-progress">0%</div>
         <p
           id="flameBackendNote"
-          class="flame-note-info hidden"
+          class="flame-note-info"
           role="status"
           aria-live="polite"
         ></p>
@@ -286,7 +289,7 @@
         </label>
         <p
           id="surfaceNote"
-          class="flame-note-info hidden"
+          class="flame-note-info"
           role="status"
           aria-live="polite"
         ></p>
@@ -1154,7 +1157,7 @@
           </label>
           <p
             id="flameSupersampleNote"
-            class="flame-note hidden"
+            class="flame-note"
             role="status"
             aria-live="polite"
           ></p>
@@ -1295,7 +1298,7 @@
           </label>
           <p
             id="solidResolutionNote"
-            class="flame-note hidden"
+            class="flame-note"
             role="status"
             aria-live="polite"
           ></p>
