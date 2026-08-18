@@ -128,6 +128,13 @@ Deployment to GitHub Pages is **manual** (`workflow_dispatch`) via the "Deploy t
 GitHub Pages" workflow — nothing publishes automatically on merge. The build uses a
 relative base path, so it works at any Pages URL or custom domain.
 
+The `github-pages` environment only accepts deploys from `main`, so this workflow
+cannot deploy any other ref. **Rollback = revert the bad commit(s) on `main` and
+dispatch a fresh run** — never use "Re-run failed jobs" to try to get old content
+redeployed; a re-run rebuilds and redeploys the same commit its run originally
+dispatched, so it can retry a transient failure but never substitute an older,
+known-good state.
+
 ## Issue tracking
 
 This project uses [**beads**](https://github.com/steveyegge/beads) (`bd`) for issue
