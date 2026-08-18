@@ -2690,13 +2690,18 @@ export class FractalScene {
    * Run a synchronous render-and-read with the panel inset lifted (fr-936q):
    * exports and thumbnails should compose the fractal centered in the full
    * frame, not shifted for an overlay the image doesn't contain. Restores
-   * the inset projection afterwards AND marks the frame dirty (fr-vja8.14):
-   * the render paths clear {@link renderNeeded} before painting, so the
-   * centered frame this method just put on the canvas would otherwise STAY
-   * on screen for a parked camera — render-on-demand only repaints on an
-   * invalidation, and a capture must supply its own.
+   * the inset projection afterwards AND, by default, marks the frame dirty
+   * (fr-vja8.14): the render paths clear {@link renderNeeded} before
+   * painting, so a centered frame a readback painted onto the canvas would
+   * otherwise STAY on screen for a parked camera — render-on-demand only
+   * repaints on an invalidation, and a capture must supply its own.
+   * `invalidate: false` is for readbacks that only ASSEMBLE capture state
+   * under the centered camera and never paint the live canvas (the compute
+   * export's band specs, the WebGL capture's job arm — fr-vja8.45): for
+   * those the latch is a phantom pose change that hands the surface tier a
+   * full re-settle for a byte-identical canvas.
    */
-  private withCenteredProjection<T>(readback: () => T): T {
+  private withCenteredProjection<T>(readback: () => T, invalidate = true): T {
     const inset = this.rightInsetPx;
     if (inset === 0) return readback();
     this.rightInsetPx = 0;
@@ -2706,7 +2711,7 @@ export class FractalScene {
     } finally {
       this.rightInsetPx = inset;
       this.syncProjection();
-      this.renderNeeded = true;
+      if (invalidate) this.renderNeeded = true;
     }
   }
 
@@ -2738,28 +2743,44 @@ export class FractalScene {
         ? thumbnailFrom(this.flameCanvas, maxDim, this.backdrop, "screen")
         : "";
     }
+    if (mode === "surface" && this.surfaceComputeActive) {
+      // A compute session's thumbnail re-presents the last traced frame —
+      // a projection-independent blit, so the centered wrapper has nothing
+      // to lift and its capture invalidation (fr-vja8.14) would only hand
+      // the surface tier a phantom pose change: a full preview plus
+      // supersampled settle re-run for a byte-identical canvas after every
+      // ★ save (fr-vja8.45). Tracing here would be renderSurface's
+      // fold-GLSL path, which a compute session deliberately never
+      // compiles (fr-tzdg). Only the not-yet-presented fallback paints the
+      // (projection-dependent) explorer cloud, and that path takes the
+      // wrapper like every other painting arm.
+      if (this.representSurfaceComputeFrame()) {
+        return thumbnailFrom(this.renderer.domElement, maxDim, this.backdrop);
+      }
+      return this.withCenteredProjection(() => {
+        this.render();
+        return thumbnailFrom(this.renderer.domElement, maxDim, this.backdrop);
+      });
+    }
     return this.withCenteredProjection(() => {
       if (mode === "solid") this.renderSolid();
       else if (mode === "surface") {
-        // Compute sessions re-present their last traced frame — tracing
-        // here would be renderSurface's fold-GLSL path, which a compute
-        // session deliberately never compiles (fr-tzdg). Before any frame
-        // has presented, the explorer render is the honest thumbnail.
-        if (!this.surfaceComputeActive) {
-          try {
-            this.renderSurface();
-          } catch (err) {
-            // A save-to-collection must never freeze the tab for a
-            // monster pose's full-tier trace (fr-id9r): when the cost
-            // ceiling refuses, the explorer render is the honest
-            // fallback — the compute branch's own stance — and the
-            // dirty flag makes the next live tick re-preview the
-            // surface over it.
-            if (!(err instanceof SurfaceCaptureCostError)) throw err;
-            this.renderNeeded = true;
-            this.render();
-          }
-        } else if (!this.representSurfaceComputeFrame()) this.render();
+        // Tracing is the WebGL session's own full-tier drain, blitted
+        // centered onto the live canvas — a painting arm, so the wrapper's
+        // invalidation is load-bearing here.
+        try {
+          this.renderSurface();
+        } catch (err) {
+          // A save-to-collection must never freeze the tab for a
+          // monster pose's full-tier trace (fr-id9r): when the cost
+          // ceiling refuses, the explorer render is the honest
+          // fallback — the compute branch's own stance — and the
+          // dirty flag makes the next live tick re-preview the
+          // surface over it.
+          if (!(err instanceof SurfaceCaptureCostError)) throw err;
+          this.renderNeeded = true;
+          this.render();
+        }
       } else this.render();
       return thumbnailFrom(this.renderer.domElement, maxDim, this.backdrop);
     });
@@ -3943,6 +3964,10 @@ export class FractalScene {
     // from a different one. This is the compute path's answer to the
     // WebGL drain's frozen full-tier uniforms (fr-7mfx) — and it freezes
     // the live lighting/backdrop/palette inputs with it.
+    // invalidate: false — this readback only assembles band specs under the
+    // centered camera; nothing paints the live canvas, so the wrapper's
+    // capture invalidation would be a phantom pose change costing a full
+    // re-settle after every compute Save-PNG (fr-vja8.45).
     const bands = this.withCenteredProjection(() => {
       const specs: SurfaceComputeFrameSpec[] = [];
       for (let bottom = 0; bottom < height; bottom += rows) {
@@ -3957,7 +3982,7 @@ export class FractalScene {
         );
       }
       return specs;
-    });
+    }, false);
     const count = bands.length;
     // One band is the whole image: trace it and present its own pixels,
     // no assembly buffer (a 4x export's would be another 130 MB).
@@ -5985,8 +6010,14 @@ export class FractalScene {
     const ratio = this.exportPixelRatio(exportScale);
     const width = Math.floor(this.viewportWidth * ratio);
     const height = Math.floor(this.viewportHeight * ratio);
-    const arm = this.withCenteredProjection(() =>
-      this.beginSurfaceFullFrame(width, height, false),
+    // invalidate: false — this arms the offscreen capture job under the
+    // centered camera; a capture job never presents (strip-planner's own
+    // rule), so nothing centered ever reaches the live canvas and the
+    // wrapper's invalidation would re-arm a full settle for a frame that
+    // never changed (fr-vja8.45).
+    const arm = this.withCenteredProjection(
+      () => this.beginSurfaceFullFrame(width, height, false),
+      false,
     );
     // fr-jf9y: a saved PNG gets the same supersampling the pane it was
     // saved from does, exactly as on the WebGPU arm (fr-vpbq) — the
