@@ -3671,6 +3671,10 @@ export class Ui {
     button.className = options.selected
       ? "transform-btn selected"
       : "transform-btn";
+    // The selection state, exposed to assistive tech (fr-vja8.22) — the
+    // render-mode switch's aria-pressed pattern. Kept live for free: the
+    // list is rebuilt from scratch on every selection change.
+    button.setAttribute("aria-pressed", String(options.selected));
     button.style.borderLeftColor = options.accent;
 
     const name = this.doc.createElement("div");

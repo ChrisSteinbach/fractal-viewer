@@ -311,6 +311,50 @@ describe("Ui.renderTransformList", () => {
     // not authoring — nothing to report, exactly like an omitted weight.
     expect(buttons[2].textContent).not.toContain("Color");
   });
+
+  // fr-vja8.22: the selection used to live in className alone — a screen
+  // reader heard five identical unnamed-state buttons. aria-pressed is the
+  // render-mode switch's pattern, kept live by the full rebuild per change.
+  it("exposes the selection to ARIA via aria-pressed on every row", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformList(defaultTransforms(), 2, null);
+
+    const pressed = transformButtons().map((b) =>
+      b.getAttribute("aria-pressed"),
+    );
+    // Camera row, then transforms 1–4: index 2 → the fourth button.
+    expect(pressed).toEqual(["false", "false", "false", "true", "false"]);
+  });
+
+  it("marks the selected final-transform row pressed too", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const lens: Transform = {
+      id: 99,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    };
+    ui.renderTransformList(defaultTransforms(), "final", lens);
+
+    const buttons = transformButtons();
+    const last = buttons[buttons.length - 1];
+    expect(last.textContent).toContain("Final Transform");
+    expect(last.getAttribute("aria-pressed")).toBe("true");
+    expect(
+      buttons.filter((b) => b.getAttribute("aria-pressed") === "true"),
+    ).toHaveLength(1);
+  });
+
+  it("the list container is a labelled group (fr-vja8.22)", () => {
+    const list = document.getElementById("transformList");
+    expect(list?.getAttribute("role")).toBe("group");
+    const title = document.getElementById(
+      list?.getAttribute("aria-labelledby") ?? "",
+    );
+    expect(title?.textContent?.trim()).toBe("Select to edit");
+  });
 });
 
 describe("Ui.updateLabels", () => {
