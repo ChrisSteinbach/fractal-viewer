@@ -230,6 +230,15 @@ export function attachInteractions(
   }
 
   function moveCamera(event: Event, dx: number, dy: number): void {
+    const mouse = touchOf(event) ? null : (event as MouseEvent);
+    // A latched mouse gesture with no button still down behind it is stale —
+    // the mouseup landed where no listener here could see it (released over
+    // browser chrome, or a focus steal the blur listener below missed).
+    // Release the latch rather than orbit under a button-less mouse.
+    if (mouse && mouse.buttons === 0 && orbitMode !== "none") {
+      onPointerUp();
+      return;
+    }
     if (orbitMode === "rotate") {
       // Checked per-move (not latched at pointerdown), so pressing/releasing
       // Shift mid-drag switches live between orbiting and w-turning — both
@@ -238,7 +247,6 @@ export function attachInteractions(
       // way to turn the w-planes directly (there is no per-map w editor —
       // fr-bf6 unified "4D" into the ordinary transform editor, which does not
       // yet expose the `w` fields themselves), only the auto-tumble.
-      const mouse = touchOf(event) ? null : (event as MouseEvent);
       if (callbacks.fourDView() && mouse?.shiftKey) {
         // Dragging toward +screen-x rolls the world +x axis into +w; screen y
         // points down while world y points up, hence the dy negation for yw
@@ -376,6 +384,11 @@ export function attachInteractions(
   // reports a phantom gesture forever (pausing the auto-orbit) and the next
   // touch resumes a stale mode (fr-1k4).
   document.addEventListener("touchcancel", onPointerUp);
+  // The mouse twin of that reset: a focus steal mid-button-hold (OS dialog,
+  // Alt-Tab, screen lock) swallows the mouseup the same way, leaving the
+  // camera orbiting under a button-less mouse until the next click and
+  // gestureActive() pausing the auto-orbit indefinitely.
+  window.addEventListener("blur", onPointerUp);
   canvas.addEventListener("wheel", onWheel, { passive: false });
   canvas.addEventListener("contextmenu", onContextMenu);
 
