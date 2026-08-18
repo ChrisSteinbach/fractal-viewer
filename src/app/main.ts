@@ -5758,6 +5758,52 @@ function main(): void {
   }
 
   /**
+   * applyEdit's DRAG SIBLING (fr-vja8.53) — the one chokepoint for the
+   * mid-gesture edit paths (slider drags, the lens sliders, the guide-box
+   * drag) that cannot use applyEdit itself: its refreshUi would rebuild the
+   * transform editor and tear the dragged slider out from under the pointer.
+   * Those paths each used to restate the same bookkeeping tail by hand, and
+   * the next hand-rolled copy that forgot refreshSurfaceEligibility would
+   * silently reintroduce the stale-Surface-button bug fr-vja8.10 fixed — no
+   * test, no error, just a gate reading a document it stopped tracking.
+   *
+   * Same shape as applyEdit minus what a drag must not do: no refreshUi (the
+   * tear above) and no renderTransformEditor here EVER — the guide-box path
+   * adds its own rebuild after this returns, which is safe only because that
+   * gesture's pointer is on the CANVAS, not on a panel slider. Two more
+   * deliberate differences, decided rather than inherited (fr-vja8.53's
+   * triage): the pending load hints are NOT cleared — a drag is not a load,
+   * and today's drag paths never cleared them (an armed preset hint still
+   * fires when its snapped morph's terminal request lands, exactly as
+   * before) — and there is no snapMorph, because regenerate() (the
+   * scheduled run below) snaps any in-flight morph itself.
+   *
+   * `applyChange` mutates the document (and pushes any per-path scene
+   * geometry, e.g. setGuideGeometry); this wraps it in the shared
+   * bookkeeping: show stop, undo checkpoint, transform-list refresh, the
+   * Surface gate re-derivation (the one refreshUi output that must not go
+   * stale mid-drag), and the auto-update schedule.
+   */
+  function applyDragEdit(applyChange: () => void): void {
+    // Notify (fr-ygr1): a mid-gesture edit is a document edit like any
+    // other — it ends a running show, announced.
+    stopShows({ notify: true });
+    editSession.beginEdit();
+    applyChange();
+    ui.renderTransformList(
+      state.transforms,
+      state.selectedTransform,
+      state.finalTransform ?? null,
+    );
+    // The Surface gate reads the DOCUMENT, and a geometry drag can carry it
+    // across an analyzer seam (fr-vja8.10) — a scale reaching 1.0 stops
+    // contracting mid-drag, and a stale-enabled button then routes a plainly
+    // ineligible system into a render-failure toast.
+    refreshSurfaceEligibility();
+    if (state.autoUpdate) regenScheduler.schedule();
+  }
+
+  /**
    * Roll a fresh random system into the document — the shared body of the
    * Surprise Me button and a drift leg (fr-wavo): the same
    * quality-gated roll (random-system.ts), the same "replace" undo
@@ -6603,27 +6649,12 @@ function main(): void {
       refreshUi();
     },
     onTransformGeometry: (index, geometry) => {
-      // Notify (fr-ygr1): a panel-slider transform edit, same bucket as any
-      // other document edit.
-      stopShows({ notify: true });
-      editSession.beginEdit();
-      state = updateTransform(state, index, geometry);
-      scene.setGuideGeometry(index, geometry);
-      ui.renderTransformList(
-        state.transforms,
-        state.selectedTransform,
-        state.finalTransform ?? null,
-      );
-      // The Surface gate reads the DOCUMENT, and a geometry drag can carry
-      // it across an analyzer seam (fr-vja8.10) — a scale reaching 1.0
-      // stops contracting mid-drag, and the stale-enabled button then
-      // routes a plainly ineligible system into a render-failure toast.
-      // This path deliberately skips refreshUi (rebuilding the editor
-      // mid-drag would tear the slider out from under the pointer), so
-      // re-derive just the gate — the one refreshUi output that must not
-      // go stale here.
-      refreshSurfaceEligibility();
-      if (state.autoUpdate) regenScheduler.schedule();
+      // A panel-slider transform edit: the drag chokepoint owns the
+      // bookkeeping (fr-vja8.53); this path adds only its own guide push.
+      applyDragEdit(() => {
+        state = updateTransform(state, index, geometry);
+        scene.setGuideGeometry(index, geometry);
+      });
     },
     onToggleFinalTransform: (checked) => {
       applyEdit(() => {
@@ -6644,22 +6675,12 @@ function main(): void {
       });
     },
     onFinalTransformGeometry: (geometry) => {
-      // Notify (fr-ygr1): a panel-slider final-transform edit, same bucket
-      // as any other document edit.
-      stopShows({ notify: true });
-      editSession.beginEdit();
-      state = setFinalTransform(state, { id: 0, ...geometry });
-      ui.renderTransformList(
-        state.transforms,
-        state.selectedTransform,
-        state.finalTransform ?? null,
-      );
-      // The gate tracks lens edits too (fr-vja8.10): a near-zero scale, a
-      // non-fold variation or a w block on the final all move the
-      // analyzers. Same no-refreshUi-mid-drag reasoning as
-      // onTransformGeometry above.
-      refreshSurfaceEligibility();
-      if (state.autoUpdate) regenScheduler.schedule();
+      // A panel-slider final-transform edit — the gate tracks lens edits
+      // too (fr-vja8.10): a near-zero scale, a non-fold variation or a w
+      // block on the final all move the analyzers.
+      applyDragEdit(() => {
+        state = setFinalTransform(state, { id: 0, ...geometry });
+      });
     },
     onTogglePanel: () => {
       // Opening the panel mid-replay is reaching back in (fr-hpci): end the
@@ -6774,26 +6795,20 @@ function main(): void {
     frozen: () => state.renderMode === "flame",
     onTransformChange: (index, geometry) => {
       // A guide-box drag is a system edit (unlike a camera drag): it ends
-      // the drift show like every other undoable edit (fr-wavo). Notify
-      // (fr-ygr1): same bucket as any other document edit.
-      stopShows({ notify: true });
-      editSession.beginEdit();
-      state = updateTransform(state, index, geometry);
-      ui.renderTransformList(
-        state.transforms,
-        state.selectedTransform,
-        state.finalTransform ?? null,
-      );
+      // the drift show like every other undoable edit (fr-wavo), through
+      // the same drag chokepoint as the panel sliders (fr-vja8.53).
+      applyDragEdit(() => {
+        state = updateTransform(state, index, geometry);
+      });
+      // This path alone re-renders the panel editor so its numbers track
+      // the dragged box — safe here and ONLY here among the drag paths,
+      // because this gesture's pointer is on the canvas, not on a panel
+      // slider the rebuild would tear out from under it.
       ui.renderTransformEditor(
         state.transforms[index],
         index,
         state.transforms.length,
       );
-      // A guide-box drag moves geometry exactly like the panel sliders do,
-      // so the Surface gate must track it the same way (fr-vja8.10; see
-      // onTransformGeometry).
-      refreshSurfaceEligibility();
-      if (state.autoUpdate) regenScheduler.schedule();
     },
     fourDView: () => viewIs4D,
     onFourDRotate: ({ xw, yw, zw }) => {
