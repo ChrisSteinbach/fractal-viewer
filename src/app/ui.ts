@@ -188,8 +188,9 @@ export interface UiHandlers {
    * canvas to a downloadable video clip (fr-8v41). */
   onTimelineExport: () => void;
   /** The export progress modal's Cancel button was clicked, or Escape was
-   * pressed while it was open and cancellable (fr-7mfx): abort the
-   * in-flight capture. Both routes land here rather than a bare
+   * pressed while it was open, cancellable, and the ONLY open modal
+   * (fr-7mfx; fr-vja8.13 — a stacked Escape belongs to the dialog beneath):
+   * abort the in-flight capture. Both routes land here rather than a bare
    * hideExportProgress() — the modal has no ✕ or backdrop close, since an
    * accidental dismissal must not silently abandon a multi-minute export. */
   onExportCancel: () => void;
@@ -732,8 +733,9 @@ interface EditorState {
 /** How long a plain {@link Ui.flashToast} confirmation stays on screen. */
 const TOAST_DURATION_MS = 1800;
 
-/** How long a {@link Ui.flashToast} carrying an {@link ToastAction} stays on
- * screen (fr-ifts) — longer than a plain confirmation's {@link
+/** The auto-hide countdown for a {@link Ui.flashToast} carrying an
+ * {@link ToastAction} (fr-ifts) — paused while hovered or focused, restarted
+ * in full on leave (fr-vja8.21) — longer than a plain confirmation's {@link
  * TOAST_DURATION_MS} so there's time to notice the action and react, not
  * just read the message. */
 const TOAST_ACTION_DURATION_MS = 6000;
@@ -2660,7 +2662,8 @@ export class Ui {
    * than letting the ring's first member decide: Enter on a dialog that just
    * appeared under the user's hands must not commit to anything — a file, a
    * drift show, or a re-roll. It falls back to the first ring member when that
-   * control is not on offer this time.
+   * control is not on offer this time — or to the dialog box itself
+   * (tabindex="-1") when the ring is empty (fr-vja8.41).
    *
    * The opener is only recorded from OUTSIDE the modal, so re-showing an
    * already-open dialog (the export modal does exactly this when a run
@@ -2762,7 +2765,8 @@ export class Ui {
   }
 
   /** Hide the gallery modal, drop its Escape listener and restore focus to
-   * whatever opened it. Idempotent. */
+   * whatever opened it — skipped while the export modal still stands above
+   * (fr-vja8.13, see releaseModalFocus). Idempotent. */
   closeGallery(): void {
     this.galleryModal.classList.add("hidden");
     this.doc.removeEventListener("keydown", this.onGalleryKeydown);
@@ -2777,7 +2781,8 @@ export class Ui {
   }
 
   /** Hide the "What is this?" dialog, drop its Escape listener and restore
-   * focus to whatever opened it. Idempotent. */
+   * focus to whatever opened it — skipped while the export modal still
+   * stands above (fr-vja8.13, see releaseModalFocus). Idempotent. */
   closeAbout(): void {
     this.aboutModal.classList.add("hidden");
     this.doc.removeEventListener("keydown", this.onAboutKeydown);
@@ -2797,7 +2802,8 @@ export class Ui {
   }
 
   /** Hide the mutation modal, drop its Escape listener and restore focus to
-   * whatever opened it. Idempotent. */
+   * whatever opened it — skipped while the export modal still stands above
+   * (fr-vja8.13, see releaseModalFocus). Idempotent. */
   closeMutations(): void {
     this.mutationModal.classList.add("hidden");
     this.doc.removeEventListener("keydown", this.onMutationKeydown);
@@ -2842,8 +2848,9 @@ export class Ui {
     this.doc.addEventListener("keydown", this.onExportKeydown);
     // Cancel keeps the opening focus wherever it exists: Enter on a modal
     // that just appeared under the user's hands must not commit to a file.
-    // Off-offer, the shared trap falls back to the ring's first member, which
-    // is fr-2fbs's action when that is the only button the run put up.
+    // Off-offer, the shared trap falls back to the ring's first member —
+    // fr-2fbs's action when that is the only button up — or to the dialog
+    // box itself when the run put up none (fr-vja8.41).
     this.trapModalFocus(this.exportModal, this.exportCancelBtn);
   }
 
@@ -3346,7 +3353,9 @@ export class Ui {
    * Flash a brief bottom-center confirmation ("Saved to collection", "Link
    * copied"), auto-hiding after {@link TOAST_DURATION_MS} — or, given an
    * `action` (e.g. "Undo" after a destructive delete, fr-ifts), after the
-   * longer {@link TOAST_ACTION_DURATION_MS} instead. Re-arming (any fresh
+   * longer {@link TOAST_ACTION_DURATION_MS} instead — unless the pointer or
+   * focus is holding it open: hover/focusin pause the countdown and leaving
+   * restarts it in full (fr-vja8.21). Re-arming (any fresh
    * call, action or not) cancels the previous hide and rebuilds the toast's
    * content from scratch, so rapid actions don't leave it stuck or
    * flickering and a stale action button from a PRIOR toast can never

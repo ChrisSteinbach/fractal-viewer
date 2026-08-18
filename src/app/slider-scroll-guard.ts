@@ -60,7 +60,9 @@
  * OWNS that drag:
  *
  * - `pointerdown` (delegated, so the dynamically-built transform-editor
- *   sliders are covered too) captures the pointer and suppresses the jump.
+ *   sliders are covered too) captures the pointer and suppresses the jump —
+ *   one gesture at a time: a later finger gets only the suppression flip,
+ *   never the capture or the gesture (see the handler).
  * - Once the gesture crosses SLIDE_SLOP_PX of horizontal travel, every move
  *   writes whatever value the pointer's x names on the track and fires
  *   `input` per actual change — the event Ui.bind listens to, so a touch drag

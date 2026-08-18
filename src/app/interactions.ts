@@ -397,9 +397,10 @@ export function attachInteractions(
   // touch resumes a stale mode (fr-1k4).
   document.addEventListener("touchcancel", onPointerUp);
   // The mouse twin of that reset: a focus steal mid-button-hold (OS dialog,
-  // Alt-Tab, screen lock) swallows the mouseup the same way, leaving the
-  // camera orbiting under a button-less mouse until the next click and
-  // gestureActive() pausing the auto-orbit indefinitely.
+  // Alt-Tab, screen lock) swallows the mouseup the same way. onPointerMove's
+  // stale-latch release heals it at the first button-less move, so this
+  // exists for the mouse that never moves again — without it gestureActive()
+  // pauses the auto-orbit indefinitely.
   window.addEventListener("blur", onPointerUp);
   canvas.addEventListener("wheel", onWheel, { passive: false });
   canvas.addEventListener("contextmenu", onContextMenu);
