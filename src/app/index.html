@@ -414,6 +414,20 @@
           >
             ⬇ Back up collection
           </button>
+          <!-- fr-vja8.39: native `disabled` pulls a button out of the tab
+               ring, so its title-only reason is invisible to a keyboard/AT
+               user — this mirrors it in prose beside the button, in the
+               same role="status" idiom as #surfaceNote et al. (see the
+               fr-vja8.25/.48 comment above #softwareRendererNote); the
+               setter guards against rewriting an unchanged reason so a
+               repeated refresh doesn't re-announce it. Same idiom on
+               driftNote and timelineNote below. -->
+          <p
+            id="exportCollectionNote"
+            class="flame-note-info"
+            role="status"
+            aria-live="polite"
+          ></p>
         </details>
 
         <!-- Animation timeline (fr-8v41): an authored sequence of keyframes played
@@ -451,6 +465,17 @@
           >
             ⏺ Export clip
           </button>
+          <!-- fr-vja8.39: see exportCollectionNote's comment above — same
+               idiom, SHARED between Play and Export (see the timelineNote
+               field's doc comment in ui.ts for why one note is safe: the
+               two buttons' disabled reasons never disagree at the same
+               moment). -->
+          <p
+            id="timelineNote"
+            class="flame-note-info"
+            role="status"
+            aria-live="polite"
+          ></p>
           <!-- File backup (fr-h9rk): the timeline otherwise lives only in this
              browser profile's localStorage. Restore goes through the Share
              section's ⬆ Import file / drag-drop (fr-5mdt). -->
@@ -591,6 +616,15 @@
           >
             ▶ Drift
           </button>
+          <!-- fr-vja8.39: see exportCollectionNote's comment further up
+               (Collection section) — same reason-in-prose idiom, guarded
+               the same way against re-announcing an unchanged reason. -->
+          <p
+            id="driftNote"
+            class="flame-note-info"
+            role="status"
+            aria-live="polite"
+          ></p>
         </details>
 
         <!-- fr-186c: Appearance measured 839px with 29 controls, ~81% of it

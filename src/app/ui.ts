@@ -920,6 +920,9 @@ export class Ui {
   private readonly surpriseBtn: HTMLButtonElement;
   private readonly driftBtn: HTMLButtonElement;
   private readonly driftTitle: string;
+  /** fr-vja8.39: the reason-in-prose sibling of {@link driftTitle}'s
+   * disabled swap — see {@link setDriftAvailable}. */
+  private readonly driftNote: HTMLElement;
   private readonly regenerateBtn: HTMLButtonElement;
   private readonly savePngBtn: HTMLButtonElement;
   /** "⤓ Save PNG"'s authored title, restored once a capture finishes — the
@@ -942,6 +945,9 @@ export class Ui {
    * re-enables — the disabled state swaps in a why-explaining one, the same
    * self-explaining pattern as {@link syncGalleryDriftBtn}. */
   private readonly exportCollectionTitle: string;
+  /** fr-vja8.39: the reason-in-prose sibling of {@link exportCollectionTitle}'s
+   * disabled swap — see {@link setCollectionCount}. */
+  private readonly exportCollectionNote: HTMLElement;
   private readonly importFileBtn: HTMLButtonElement;
   private readonly importFileInput: HTMLInputElement;
   private readonly collectionCount: HTMLElement;
@@ -968,6 +974,11 @@ export class Ui {
   private readonly timelinePlayTitle: string;
   private readonly timelineExportBtn: HTMLButtonElement;
   private readonly timelineExportTitle: string;
+  /** fr-vja8.39: the reason-in-prose sibling SHARED by
+   * {@link timelinePlayTitle}'s and {@link timelineExportTitle}'s disabled
+   * swaps — see {@link syncTimelineButtons}. One note is safe because the
+   * two buttons are never disabled for different reasons at once. */
+  private readonly timelineNote: HTMLElement;
   private readonly exportTimelineBtn: HTMLButtonElement;
   /** "⬇ Back up timeline"'s authored title, restored whenever the button
    * re-enables — the disabled state swaps in a why-explaining one, the same
@@ -1475,6 +1486,7 @@ export class Ui {
     this.surpriseBtn = this.byId("surpriseBtn");
     this.driftBtn = this.byId("driftBtn");
     this.driftTitle = this.driftBtn.title;
+    this.driftNote = this.byId("driftNote");
     this.regenerateBtn = this.byId("regenerateBtn");
     this.savePngBtn = this.byId("savePngBtn");
     this.savePngTitle = this.savePngBtn.title;
@@ -1487,6 +1499,7 @@ export class Ui {
     this.copyLinkBtn = this.byId("copyLinkBtn");
     this.exportCollectionBtn = this.byId("exportCollectionBtn");
     this.exportCollectionTitle = this.exportCollectionBtn.title;
+    this.exportCollectionNote = this.byId("exportCollectionNote");
     this.importFileBtn = this.byId("importFileBtn");
     this.importFileInput = this.byId("importFileInput");
     this.collectionCount = this.byId("collectionCount");
@@ -1502,6 +1515,7 @@ export class Ui {
     this.timelinePlayTitle = this.timelinePlayBtn.title;
     this.timelineExportBtn = this.byId("timelineExportBtn");
     this.timelineExportTitle = this.timelineExportBtn.title;
+    this.timelineNote = this.byId("timelineNote");
     this.exportTimelineBtn = this.byId("exportTimelineBtn");
     this.exportTimelineTitle = this.exportTimelineBtn.title;
     // Visible when EITHER capture path exists: the realtime MediaRecorder
@@ -2711,6 +2725,22 @@ export class Ui {
     this.recordVideoBtn.classList.toggle("btn-red", recording);
   }
 
+  /**
+   * Write `text` into a disabled-reason live region (fr-vja8.39) — the
+   * shared guard for {@link driftNote}, {@link exportCollectionNote} and
+   * {@link timelineNote} — only when it actually differs from what the note
+   * already shows. Unlike the five status notes above (fr-vja8.25/.48,
+   * see {@link setFlameSupersampleNote}), which change only at a
+   * meaningful transition, these three setters re-run on every panel
+   * refresh/timeline edit/collection change whether or not the reason
+   * changed; a plain textContent write would re-announce an unchanged
+   * reason to a screen reader every time, the fr-vja8.38 chatter lesson
+   * applied to prose instead of a progress percentage.
+   */
+  private setReasonNote(note: HTMLElement, text: string): void {
+    if (note.textContent !== text) note.textContent = text;
+  }
+
   /** Reflect whether the ambient drift show is running on the Drift toggle
    * (fr-wavo): lit + "stop" affordance while active, ghost otherwise. */
   setDriftActive(on: boolean): void {
@@ -2722,7 +2752,10 @@ export class Ui {
 
   /** Enable/disable the Drift toggle for the OS reduced-motion preference
    * (fr-wavo): no motion means no drift, so the button explains itself
-   * instead of silently doing nothing. */
+   * instead of silently doing nothing. fr-vja8.39: native `disabled` pulls
+   * the button out of the tab ring, so the title-only explanation is
+   * hover-only — {@link driftNote} mirrors the same reason in prose beside
+   * it, for keyboard/AT users who can neither reach nor hover the button. */
   setDriftAvailable(available: boolean): void {
     this.driftAvailable = available;
     this.syncGalleryDriftBtn();
@@ -2730,13 +2763,19 @@ export class Ui {
     this.driftBtn.title = available
       ? this.driftTitle
       : "Unavailable: your system asks for reduced motion";
+    this.setReasonNote(
+      this.driftNote,
+      available ? "" : "Unavailable: your system asks for reduced motion.",
+    );
   }
 
   /** Reflect the saved-scene count on the "▦ Gallery (N)" button (fr-cai) —
    * and on "⬇ Back up collection"'s enabled state (fr-de9t): an empty
    * collection has nothing to back up, and the swapped-in title says so
    * instead of leaving a dead button unexplained, the same self-explaining
-   * pattern as {@link syncGalleryDriftBtn}. */
+   * pattern as {@link syncGalleryDriftBtn}. fr-vja8.39: {@link
+   * exportCollectionNote} mirrors the same reason in prose beside the
+   * button — see {@link setDriftAvailable}'s doc comment for why. */
   setCollectionCount(count: number): void {
     this.collectionCount.textContent = String(count);
     this.exportCollectionBtn.disabled = count === 0;
@@ -2744,6 +2783,10 @@ export class Ui {
       count === 0
         ? "Nothing saved yet — ★ Save to collection first"
         : this.exportCollectionTitle;
+    this.setReasonNote(
+      this.exportCollectionNote,
+      count === 0 ? "Nothing saved yet — ★ Save to collection first." : "",
+    );
   }
 
   /**
@@ -3462,7 +3505,12 @@ export class Ui {
   /** Self-explaining disabled-state derivation for Play/Export — the
    * `syncGalleryDriftBtn` pattern: each button's `disabled` and `title` are
    * re-derived from the remembered availability/active/count flags whenever
-   * any of them changes. */
+   * any of them changes. fr-vja8.39: {@link timelineNote} mirrors the same
+   * reason in prose beside the pair, in the SAME priority order as the two
+   * title derivations below so it can never disagree with what they show —
+   * see {@link setDriftAvailable}'s doc comment for why a note is needed at
+   * all, and {@link timelineNote}'s own doc comment for why one shared note
+   * is safe for two buttons. */
   private syncTimelineButtons(): void {
     const empty = this.timelineStepCount === 0;
     // "⬇ Back up timeline" only needs something to write (fr-h9rk): a pure
@@ -3489,6 +3537,13 @@ export class Ui {
       this.timelineExportBtn.disabled = false;
       this.timelineExportBtn.title =
         "Stop exporting — the partial clip still saves";
+      // Mid-export neither button is stuck-disabled-unexplained: Export is
+      // the run's own cancel affordance (forced enabled just above) and
+      // Play reads "■ Stop" the whole run (main.ts's startTimelinePlayback
+      // sets timelineActive before the first setTimelineExportProgress
+      // call, and nothing clears it before the last) — so its own
+      // `!timelineActive && …` disabled check above is already false.
+      this.setReasonNote(this.timelineNote, "");
       return;
     }
     this.timelineExportBtn.disabled =
@@ -3500,6 +3555,16 @@ export class Ui {
         : this.timelineActive
           ? "Already playing — stop first"
           : this.timelineExportTitle;
+    this.setReasonNote(
+      this.timelineNote,
+      !this.timelineAvailable
+        ? "Unavailable: your system asks for reduced motion."
+        : empty
+          ? "Add a keyframe or two first."
+          : this.timelineActive
+            ? "Export is unavailable while the timeline is playing — stop first."
+            : "",
+    );
   }
 
   /**
