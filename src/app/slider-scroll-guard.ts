@@ -217,6 +217,18 @@ export function installSliderScrollGuard(panel: HTMLElement): void {
       if (e.pointerType === "mouse") return;
       const slider = sliderFrom(e.target);
       if (!slider || slider.disabled) return;
+      // A gesture whose captured slider left the DOM mid-drag (the transform
+      // editor rebuilds under a live drag) can never end through pointer
+      // events: removal released the capture, so the lift never bubbles
+      // through the panel and end() never sees its pointerId again. Heal it
+      // here — restore the slider, drop the gesture — or the guard refuses
+      // every touch until reload. Deliberately NO trailing "change": the
+      // drag was severed, not released, and a detached slider's change
+      // would fire the rebuilt editor's stale listeners.
+      if (active && !active.slider.isConnected) {
+        release(active);
+        active = null;
+      }
       if (active) {
         // One gesture at a time: a second finger landing on a slider must
         // not displace the one in flight — that would silently drop the

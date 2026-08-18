@@ -429,6 +429,55 @@ describe("installSliderScrollGuard (fr-xu4u)", () => {
     expect(second.value).toBe("5");
   });
 
+  it("recovers when the dragged slider is removed mid-gesture, adopting the next touch", () => {
+    const { panel, slider } = setup({
+      min: "0",
+      max: "4",
+      step: "0.05",
+      value: "1",
+      left: 0,
+      width: 200,
+    });
+
+    slider.dispatchEvent(
+      pointerEvent("pointerdown", { pointerId: 1, clientX: 100, clientY: 10 }),
+    );
+    slider.dispatchEvent(
+      pointerEvent("pointermove", { pointerId: 1, clientX: 150 }),
+    );
+    expect(slider.value).toBe("3");
+
+    // The transform editor rebuilds mid-drag: the dragged slider leaves the
+    // DOM, and the finger's lift lands where the panel never sees it.
+    panel.replaceChildren();
+    const rebuilt = document.createElement("input");
+    rebuilt.type = "range";
+    rebuilt.min = "0";
+    rebuilt.max = "10";
+    rebuilt.value = "5";
+    rebuilt.getBoundingClientRect = () => ({
+      x: 0,
+      y: 0,
+      left: 0,
+      right: 200,
+      top: 0,
+      bottom: 20,
+      width: 200,
+      height: 20,
+      toJSON: () => ({}),
+    });
+    panel.appendChild(rebuilt);
+
+    // A fresh touch is adopted, not refused by the wedged gesture.
+    rebuilt.dispatchEvent(
+      pointerEvent("pointerdown", { pointerId: 2, clientX: 100, clientY: 10 }),
+    );
+    rebuilt.dispatchEvent(
+      pointerEvent("pointermove", { pointerId: 2, clientX: 160, clientY: 10 }),
+    );
+    expect(rebuilt.value).toBe("8"); // 160/200 of [0, 10]
+  });
+
   it("does not end the drag when a second finger lifts elsewhere on the panel", () => {
     const { panel, slider, changes } = setup({
       min: "0",
