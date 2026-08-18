@@ -1260,6 +1260,22 @@ export class Ui {
   /** Pending {@link flashToast} auto-hide, cleared/rearmed on each toast. */
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // The auto-hide pause (fr-vja8.21, WCAG 2.2.1): while the pointer is over
+  // the toast or focus is inside it (Tab reaches an action toast's Undo),
+  // the countdown holds — the actionable toast is the ONLY recovery path
+  // after a collection/keyframe delete, and 6s is not enough to hear the
+  // announcement, navigate there and press it. Leaving re-arms a full
+  // countdown. Both flags reset on every fresh toast and on hide, so a
+  // boundary event a browser drops (an element hidden under a parked
+  // pointer fires no mouseleave) can never wedge a later toast open.
+  private toastHovered = false;
+  private toastFocused = false;
+
+  /** The active toast's own auto-hide window ({@link TOAST_DURATION_MS} or
+   * {@link TOAST_ACTION_DURATION_MS}), remembered so the pause's re-arm
+   * counts the right one down. */
+  private toastDurationMs = TOAST_DURATION_MS;
+
   /** Escape-and-Tab handling for the gallery, attached to the document only
    * while the modal is open (see {@link openGallery}/{@link closeGallery}) so
    * it never lingers or double-binds. An arrow field so
@@ -1383,6 +1399,15 @@ export class Ui {
     this.mutationAgainBtn = this.byId("mutationAgainBtn");
     this.mutationGrid = this.byId("mutationGrid");
     this.toast = this.byId("toast");
+    // Pause-on-hover/focus (fr-vja8.21): the element is permanent, so the
+    // four listeners bind once here rather than per flashToast. mouseenter
+    // only ever fires on an actionable toast — the plain one keeps
+    // `pointer-events: none` (see .toast/.toast-actionable in style.css) —
+    // while focusin covers the keyboard route to the action button.
+    this.toast.addEventListener("mouseenter", () => this.holdToast("hover"));
+    this.toast.addEventListener("mouseleave", () => this.releaseToast("hover"));
+    this.toast.addEventListener("focusin", () => this.holdToast("focus"));
+    this.toast.addEventListener("focusout", () => this.releaseToast("focus"));
     this.aboutBtn = this.byId("aboutBtn");
     this.aboutModal = this.byId("aboutModal");
     this.aboutBackdrop = this.byId("aboutBackdrop");
@@ -3258,12 +3283,45 @@ export class Ui {
   flashToast(message: string, action?: ToastAction): void {
     this.toast.replaceChildren(this.doc.createTextNode(message));
     if (action) this.toast.appendChild(this.buildToastActionButton(action));
+    // An actionable toast opts its whole pill back into pointer events
+    // (style.css's .toast-actionable) so mousing toward Undo pauses the
+    // countdown (fr-vja8.21); a plain toast stays click-through.
+    this.toast.classList.toggle("toast-actionable", action !== undefined);
     this.toast.classList.remove("hidden");
+    // A fresh toast starts a fresh countdown: stale hover/focus flags from a
+    // toast whose leave event never fired must not hold this one open.
+    this.toastHovered = false;
+    this.toastFocused = false;
+    this.toastDurationMs = action
+      ? TOAST_ACTION_DURATION_MS
+      : TOAST_DURATION_MS;
     if (this.toastTimer !== null) clearTimeout(this.toastTimer);
-    this.toastTimer = setTimeout(
-      () => this.hideToast(),
-      action ? TOAST_ACTION_DURATION_MS : TOAST_DURATION_MS,
-    );
+    this.toastTimer = setTimeout(() => this.hideToast(), this.toastDurationMs);
+  }
+
+  /** Hold the toast open (fr-vja8.21): the pointer entered it, or focus
+   * landed inside it — reading or reaching for the action must not race the
+   * auto-hide. Cancels the pending hide; {@link releaseToast} re-arms it. */
+  private holdToast(via: "hover" | "focus"): void {
+    if (via === "hover") this.toastHovered = true;
+    else this.toastFocused = true;
+    if (this.toastTimer !== null) {
+      clearTimeout(this.toastTimer);
+      this.toastTimer = null;
+    }
+  }
+
+  /** The pointer left the toast, or focus did: once NEITHER holds it and it
+   * is still on screen, restart the full countdown ({@link holdToast}'s
+   * other half). The timer-already-armed guard keeps a stray boundary event
+   * from stacking a second timer. */
+  private releaseToast(via: "hover" | "focus"): void {
+    if (via === "hover") this.toastHovered = false;
+    else this.toastFocused = false;
+    if (this.toastHovered || this.toastFocused) return;
+    if (this.toast.classList.contains("hidden")) return;
+    if (this.toastTimer !== null) return;
+    this.toastTimer = setTimeout(() => this.hideToast(), this.toastDurationMs);
   }
 
   /** The `<button>` inside an action toast (see {@link flashToast}) — a
@@ -3282,11 +3340,15 @@ export class Ui {
   }
 
   /** Hide the toast now and cancel any pending auto-hide — shared by the
-   * timer's own trailing edge and the action button's immediate dismiss. */
+   * timer's own trailing edge and the action button's immediate dismiss.
+   * Clears the pause flags too: a hidden toast can fire no leave events, so
+   * flags left set would hold the NEXT toast open forever (fr-vja8.21). */
   private hideToast(): void {
     if (this.toastTimer !== null) clearTimeout(this.toastTimer);
     this.toast.classList.add("hidden");
     this.toastTimer = null;
+    this.toastHovered = false;
+    this.toastFocused = false;
   }
 
   /**

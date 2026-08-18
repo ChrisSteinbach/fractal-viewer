@@ -1747,6 +1747,16 @@ summary.editor-group-title {
   animation: toast-in 0.18s ease;
 }
 
+/* An ACTION toast opts its whole pill back into pointer events
+   (fr-vja8.21): hovering it pauses the auto-hide countdown — WCAG 2.2.1's
+   escape for the Undo toast that is the only recovery path after a delete —
+   which `pointer-events: none` would make unreachable before the pointer
+   ever arrived at the button. Plain toasts keep the click-through above;
+   the class rides each flashToast call (ui.ts). */
+.toast.toast-actionable {
+  pointer-events: auto;
+}
+
 /* The optional call-to-action inside a toast (e.g. "Undo" after a delete,
    fr-ifts): an inline-block sibling of the message text, so it sits on the
    same line without the parent needing `display: flex` (see the note above).

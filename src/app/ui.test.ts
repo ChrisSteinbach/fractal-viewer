@@ -5728,6 +5728,130 @@ describe("Ui toast (fr-ifts)", () => {
     expect(toastEl().querySelector(".toast-action")).toBeNull();
     expect(toastEl().textContent).toBe("Saved to collection");
   });
+
+  it("only an action toast opts its pill into pointer events (fr-vja8.21)", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+
+    ui.flashToast("Saved to collection");
+    expect(toastEl().classList.contains("toast-actionable")).toBe(false);
+
+    ui.flashToast("Deleted", { label: "Undo", onAction: vi.fn() });
+    expect(toastEl().classList.contains("toast-actionable")).toBe(true);
+
+    ui.flashToast("Saved to collection");
+    expect(toastEl().classList.contains("toast-actionable")).toBe(false);
+  });
+
+  describe("auto-hide pause on hover and focus (fr-vja8.21)", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    function hover(): void {
+      toastEl().dispatchEvent(new MouseEvent("mouseenter"));
+    }
+    function unhover(): void {
+      toastEl().dispatchEvent(new MouseEvent("mouseleave"));
+    }
+    function focusAction(): void {
+      toastEl()
+        .querySelector(".toast-action")
+        ?.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    }
+    function blurAction(): void {
+      toastEl()
+        .querySelector(".toast-action")
+        ?.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    }
+
+    it("a plain toast still auto-hides after its 1.8s window", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.flashToast("Saved to collection");
+
+      vi.advanceTimersByTime(1799);
+      expect(toastEl().classList.contains("hidden")).toBe(false);
+      vi.advanceTimersByTime(1);
+      expect(toastEl().classList.contains("hidden")).toBe(true);
+    });
+
+    it("an untouched action toast still auto-hides after its 6s window", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.flashToast("Deleted", { label: "Undo", onAction: vi.fn() });
+
+      vi.advanceTimersByTime(5999);
+      expect(toastEl().classList.contains("hidden")).toBe(false);
+      vi.advanceTimersByTime(1);
+      expect(toastEl().classList.contains("hidden")).toBe(true);
+    });
+
+    it("hovering holds the toast open indefinitely; leaving restarts the countdown", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.flashToast("Deleted", { label: "Undo", onAction: vi.fn() });
+
+      hover();
+      vi.advanceTimersByTime(60_000);
+      expect(toastEl().classList.contains("hidden")).toBe(false);
+
+      unhover();
+      vi.advanceTimersByTime(5999);
+      expect(toastEl().classList.contains("hidden")).toBe(false);
+      vi.advanceTimersByTime(1);
+      expect(toastEl().classList.contains("hidden")).toBe(true);
+    });
+
+    it("focus inside the toast holds it open; focus leaving restarts the countdown", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.flashToast("Deleted", { label: "Undo", onAction: vi.fn() });
+
+      focusAction();
+      vi.advanceTimersByTime(60_000);
+      expect(toastEl().classList.contains("hidden")).toBe(false);
+
+      blurAction();
+      vi.advanceTimersByTime(6000);
+      expect(toastEl().classList.contains("hidden")).toBe(true);
+    });
+
+    it("hover and focus hold independently — both must clear before the countdown resumes", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.flashToast("Deleted", { label: "Undo", onAction: vi.fn() });
+
+      hover();
+      focusAction();
+      unhover();
+      vi.advanceTimersByTime(60_000);
+      expect(toastEl().classList.contains("hidden")).toBe(false);
+
+      blurAction();
+      vi.advanceTimersByTime(6000);
+      expect(toastEl().classList.contains("hidden")).toBe(true);
+    });
+
+    it("a stale hold from a vanished toast cannot wedge the next one open", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.flashToast("Deleted", { label: "Undo", onAction: vi.fn() });
+      hover();
+      // The action dismisses the toast under the pointer — no mouseleave
+      // will ever fire for it.
+      toastEl().querySelector<HTMLButtonElement>(".toast-action")?.click();
+      expect(toastEl().classList.contains("hidden")).toBe(true);
+
+      ui.flashToast("Saved to collection");
+
+      vi.advanceTimersByTime(1800);
+      expect(toastEl().classList.contains("hidden")).toBe(true);
+    });
+  });
 });
 
 describe("Ui about dialog", () => {
