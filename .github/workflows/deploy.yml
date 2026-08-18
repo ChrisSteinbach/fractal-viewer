@@ -20,6 +20,51 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
+      # fr-vja8.5: the only quality gate before this job existed was
+      # `npm run build` below — a commit that compiles but fails lint or
+      # tests could reach production with zero automated objection (no
+      # branch protection either). This queries ci.yml's check runs for the
+      # exact dispatched commit and fails fast, naming whatever is missing
+      # or not green, rather than waiting for in-flight CI — a dispatch on a
+      # commit CI hasn't finished with should be re-dispatched once it has,
+      # not blocked here. gpu-agreement.yml is deliberately NOT required:
+      # its paths-ignore filter means it legitimately never runs for some
+      # commits, which would make "missing" indistinguishable from "red".
+      # Reads check-runs unauthenticated-equivalent (verified: this public
+      # repo's check-runs endpoint returns 200 with no token at all), so no
+      # extra `checks: read` permission is added beyond this job's existing
+      # contents: read.
+      - name: Require green CI for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          required="lint build test smoke"
+          runs=$(gh api "repos/${{ github.repository }}/commits/$COMMIT_SHA/check-runs" --jq '.check_runs')
+
+          missing=""
+          bad=""
+          for name in $required; do
+            # Latest run of this name by id — a commit that reached main via
+            # both a direct push and an open PR can carry more than one.
+            entry=$(jq -c --arg name "$name" '[.[] | select(.name == $name)] | max_by(.id) // empty' <<<"$runs")
+            if [ -z "$entry" ]; then
+              missing="$missing $name"
+              continue
+            fi
+            status=$(jq -r '.status' <<<"$entry")
+            conclusion=$(jq -r '.conclusion // "none"' <<<"$entry")
+            if [ "$status" != "completed" ] || [ "$conclusion" != "success" ]; then
+              bad="$bad $name($status/$conclusion)"
+            fi
+          done
+
+          if [ -n "$missing" ] || [ -n "$bad" ]; then
+            echo "::error::Refusing to deploy $COMMIT_SHA — missing checks:${missing:- none}; failed/pending checks:${bad:- none}"
+            exit 1
+          fi
+          echo "ci.yml is green for $COMMIT_SHA (lint, build, test, smoke) — proceeding."
+
       - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7
