@@ -5836,6 +5836,33 @@ describe("Ui toast (fr-ifts)", () => {
       expect(toastEl().classList.contains("hidden")).toBe(true);
     });
 
+    it("an actionable toast replacing a hovered one keeps the hold (re-probed, not reset)", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.flashToast("Deleted from collection", {
+        label: "Undo",
+        onAction: vi.fn(),
+      });
+      hover();
+      // The pointer never leaves the pill while the replacement lands, so no
+      // new mouseenter will ever fire — flashToast must re-probe the live
+      // :hover state instead of blind-resetting it, or the new Undo auto-
+      // hides under the user's own pointer. jsdom has no hit-testing, so the
+      // probe is stubbed to answer what a real browser would.
+      const probe = vi.spyOn(toastEl(), "matches").mockReturnValue(true);
+      ui.flashToast("Keyframe removed", { label: "Undo", onAction: vi.fn() });
+      probe.mockRestore();
+
+      vi.advanceTimersByTime(60_000);
+      expect(toastEl().classList.contains("hidden")).toBe(false);
+
+      unhover();
+      vi.advanceTimersByTime(5999);
+      expect(toastEl().classList.contains("hidden")).toBe(false);
+      vi.advanceTimersByTime(1);
+      expect(toastEl().classList.contains("hidden")).toBe(true);
+    });
+
     it("a stale hold from a vanished toast cannot wedge the next one open", () => {
       const ui = new Ui(document);
       ui.bind(noopHandlers());
