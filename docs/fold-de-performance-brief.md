@@ -443,13 +443,17 @@ grind safe to begin with. Truncation was never load-bearing for that safety.
 
 What survives from the branch, orthogonal to truncation and unaffected
 by its reversion: the capture cost ceilings (a predict-ceiling refusal,
-and a spend ceiling on the drain itself) and save-PNG's "Render anyway"
-opt-in — a single consented escalation that skips the predict ceiling
-and raises the spend ceiling to `SURFACE_CAPTURE_OPTIN_SPEND_CEILING_MS`
-(300s). Offline export stays loud-fail, thumbnails keep the silent explorer
-fallback, and `formatGpuMinutes`' hours tier — needed once truncated-monster
-evidence started putting hour-scale predictions into refusal messages —
-is module-private again.
+and a spend ceiling on the drain itself — both gate the SYNCHRONOUS drain
+only: offline export and thumbnails). Save-PNG's "Render anyway" opt-in —
+a single consented escalation that would have skipped the predict ceiling
+and raised the spend ceiling to a 300s
+`SURFACE_CAPTURE_OPTIN_SPEND_CEILING_MS` — did NOT ship: no such constant
+or control exists, and the interactive Save-PNG still needs none, since it
+was never gated by either ceiling to begin with. Offline export stays
+loud-fail, thumbnails keep the silent explorer fallback, and
+`formatGpuMinutes`' hours tier — needed once truncated-monster evidence
+started putting hour-scale predictions into refusal messages — is
+module-private again.
 
 ## 7. The fold-lens compute port (2026-07-30 addendum, fr-55s1)
 
