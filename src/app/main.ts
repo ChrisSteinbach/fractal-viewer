@@ -6851,7 +6851,13 @@ function main(): void {
       fourDView.rotate(xw, yw, zw);
       // animate() pushes fourDView.matrix() next frame; nothing else to do.
     },
-    fourDSliceOn: () => fourDView.sliceOn,
+    // The [ / ] keys' gate: the points-mode cross-section checkbox OR a
+    // live 4D surface session, where the slice is intrinsic — the tracer
+    // renders the w = w0 slice/slab regardless of the checkbox, the panel
+    // shows the slider unconditionally there, and gating on the checkbox
+    // alone left the keys dead in the one mode where the slice always
+    // means something (wave-5 review finding).
+    fourDSliceOn: () => fourDView.sliceOn || surfaceSessionIs4D,
     // The [ / ] keys (fr-vja8.37): the slice slider's own handler logic —
     // pose-control release, center write, push — plus the panel sync the
     // slider never needs (it IS the panel; a key nudge must reflect back
@@ -6871,6 +6877,13 @@ function main(): void {
     // handler fires (checkbox, row visibility, help-box flag; deliberately
     // NOT the fresh-visit reset methods, which would stomp a chosen speed).
     onToggleAutoMotion: () => {
+      // Points mode only (wave-5 review finding): the renders park the
+      // auto-motion and HIDE its checkbox rows (fr-osgs), so a Space here
+      // would flip the sticky choice and rewrite the persisted pref with
+      // zero visible effect — surfacing as a surprise motion start on mode
+      // exit and seeding every future reload. The neighbouring
+      // onFourDRotate carries its own version of this gate.
+      if (state.renderMode !== "points") return;
       if (viewIs4D) {
         const on = !fourDView.tumbleOn;
         ui.setAutoMotionToggle(true, on);

@@ -7275,14 +7275,25 @@ describe("Ui render-progress announcer (fr-vja8.38)", () => {
     expect(announcer()?.textContent).toBe("Surface render, 25 percent");
   });
 
-  it("a hidden row (null) re-arms Surface's quartile for the next job", () => {
+  it("a hidden row (null) re-arms Surface's quartile WITHOUT wiping the last utterance — the settle's own completion must survive the null that follows it a frame later", () => {
     const ui = new Ui(document);
-    ui.setSurfaceProgress({ label: "Full detail · WebGL", pct: 80 });
-    expect(announcer()?.textContent).toContain("Surface render, 75 percent");
-    ui.setSurfaceProgress(null); // this row's own reset signal — see setSurfaceProgress
-    expect(announcer()?.textContent).toBe("");
+    ui.setSurfaceProgress({ label: "Full detail · WebGL", pct: 100 });
+    expect(announcer()?.textContent).toContain("Surface render, 100 percent");
+    ui.setSurfaceProgress(null); // arrives ~one rAF after completion (wave-5 review)
+    // NOT cleared: a clear here raced screen readers' polite queue and
+    // dropped the one boundary that says the picture is done.
+    expect(announcer()?.textContent).toContain("Surface render, 100 percent");
+    // ...but the ladder re-armed: the next settle's own crossings speak.
     ui.setSurfaceProgress({ label: "Full detail · WebGL", pct: 30 });
     expect(announcer()?.textContent).toContain("Surface render, 25 percent");
+  });
+
+  it("preview jobs never announce quartiles — auto-motion recycles previews forever, and each would otherwise cross the whole ladder (wave-5 review)", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceProgress({ label: "Preview · WebGPU", pct: 5 }); // spends the engine one-shot
+    ui.setSurfaceProgress({ label: "Preview · WebGPU", pct: 60 });
+    ui.setSurfaceProgress({ label: "Preview · WebGPU", pct: 100 });
+    expect(announcer()?.textContent).toBe("Surface render, using WebGPU");
   });
 
   // fr-vja8.38's two surface-only one-shots: the engine token (fr-tmgf) and
@@ -7310,17 +7321,19 @@ describe("Ui render-progress announcer (fr-vja8.38)", () => {
     it("does not repeat the engine across separate jobs in the same session", () => {
       const ui = new Ui(document);
       ui.setSurfaceProgress({ label: "Preview · WebGPU", pct: 15 });
-      ui.setSurfaceProgress(null); // job settles/hides
+      ui.setSurfaceProgress(null); // job settles/hides (text persists, wave-5 review)
       ui.setSurfaceProgress({ label: "Preview · WebGPU", pct: 10 }); // a fresh job, same engine
-      expect(announcer()?.textContent).toBe("");
+      // The engine utterance from the FIRST job still stands — the fresh
+      // job added nothing new, which is the point: no repeat.
+      expect(announcer()?.textContent).toBe("Surface render, using WebGPU");
     });
 
     it("announces the antialiasing phase once when it first appears, not once per pass", () => {
       const ui = new Ui(document);
       ui.setSurfaceProgress({ label: "Full detail · WebGPU", pct: 5 }); // spends the engine one-shot
-      ui.setSurfaceProgress(null); // clears the announcer; re-arms quartile + antialiasing
+      ui.setSurfaceProgress(null); // re-arms quartile + antialiasing (text persists)
       ui.setSurfaceProgress({ label: "Full detail · WebGPU", pct: 20 }); // pass 1 is silent (fr-vpbq)
-      expect(announcer()?.textContent).toBe("");
+      expect(announcer()?.textContent).toBe("Surface render, using WebGPU"); // the standing utterance; nothing new spoken
       ui.setSurfaceProgress({
         label: "Full detail · WebGPU",
         pct: 24,
