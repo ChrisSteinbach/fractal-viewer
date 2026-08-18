@@ -1897,3 +1897,49 @@ summary.editor-group-title {
     animation: none;
   }
 }
+
+/* ── Forced colors (Windows High Contrast, fr-vja8.36) ────────────────────
+   Confirmed by real Chromium forcedColors:active screenshots: forced-colors
+   mode suppresses `background` (gradients included) and `box-shadow`
+   outright rather than remapping them, which erases two state signals that
+   have no other cue. `border`/`outline` are not suppressed — forced-colors
+   recolors them from the palette instead of dropping the property — so both
+   fixes below restate the signal on one of those instead of a third:
+     - .segmented .segment.active's gradient fill (the render-mode switch,
+       the app's most-used control) becomes indistinguishable from its
+       inactive siblings.
+     - .transform-btn.selected's tint + inset ring (the transform-list
+       selection) strips the same way.
+   Highlight/HighlightText are honored where an arbitrary color would be
+   overridden — they're also the fill native controls use for a
+   selected/current item under HCM, so this reads as the OS's own idiom
+   rather than an invented one.
+   The active segment ALSO needs forced-color-adjust: none, measured rather
+   than assumed: this Chromium paints an opaque light "backplate" behind
+   every text run under forced-colors regardless of the element's own
+   background, and Highlight+HighlightText together put white text on that
+   same near-white backplate — the label vanished in a screenshot (worse
+   than the bug: the pre-fix text was at least legible, just not
+   distinctive). forced-color-adjust: none on the rule turns the backplate
+   off; the explicit Highlight/HighlightText keywords still track the live
+   OS palette regardless, since system-color keywords resolve independently
+   of forced-color-adjust — confirmed by a follow-up screenshot with clean
+   white-on-Highlight text. The outline below doesn't need it: an outline
+   paints outside the border edge rather than behind glyphs, and it
+   measured correctly colored without the escape hatch. */
+@media (forced-colors: active) {
+  .segmented .segment.active {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+
+  /* Inset for the same reason .transform-btn's own :focus-visible override
+     is (above): .transform-list's overflow-y: auto clips overflow-x too,
+     and the button spans its full width, so a default-offset outline's
+     left/right edges would be clipped down to a top/bottom sliver. */
+  .transform-btn.selected {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
