@@ -104,6 +104,12 @@ interface ActiveGesture {
   suppressed: boolean;
 }
 
+/** The suppression's slice of a gesture — enough for `suppress`/`release` to
+ * hide a slider from one touchstart and give it back, whether or not the
+ * gesture is adopted as the active one (a refused second finger still needs
+ * its tap-jump suppressed). */
+type SliderSuppression = Pick<ActiveGesture, "slider" | "suppressed">;
+
 /** A range attribute as a number, falling back when it is absent or not a
  * valid floating-point number (`Number("")` is 0, hence the emptiness test). */
 function attrNumber(raw: string, fallback: number): number {
@@ -167,14 +173,14 @@ export function installSliderScrollGuard(panel: HTMLElement): void {
 
   /** Hide the slider from the touchstart default handler about to run — see
    * the module doc for why this, and why one frame is long enough. */
-  const suppress = (gesture: ActiveGesture): void => {
+  const suppress = (gesture: SliderSuppression): void => {
     gesture.slider.disabled = true;
     gesture.suppressed = true;
     requestAnimationFrame(() => release(gesture));
   };
 
   /** Undo `suppress`, once, and never for a slider the app itself disabled. */
-  const release = (gesture: ActiveGesture): void => {
+  const release = (gesture: SliderSuppression): void => {
     if (!gesture.suppressed) return;
     gesture.suppressed = false;
     gesture.slider.disabled = false;
@@ -209,13 +215,19 @@ export function installSliderScrollGuard(panel: HTMLElement): void {
     "pointerdown",
     (e) => {
       if (e.pointerType === "mouse") return;
-      // One gesture at a time: a second finger landing on a slider must not
-      // displace the one in flight — that would silently drop the first
-      // finger's trailing `change` (fr-2c27's commit-on-release sliders hang
-      // off it) and leave its lift ending the wrong gesture.
-      if (active) return;
       const slider = sliderFrom(e.target);
       if (!slider || slider.disabled) return;
+      if (active) {
+        // One gesture at a time: a second finger landing on a slider must
+        // not displace the one in flight — that would silently drop the
+        // first finger's trailing `change` (fr-2c27's commit-on-release
+        // sliders hang off it) and leave its lift ending the wrong gesture.
+        // But the refusal still owes THIS slider the suppression flip: its
+        // own touchstart default handler is about to run, and unsuppressed
+        // it commits the exact tap-jump the module exists to prevent.
+        suppress({ slider, suppressed: false });
+        return;
+      }
       active = {
         slider,
         pointerId: e.pointerId,
