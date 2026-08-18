@@ -5309,9 +5309,14 @@ function main(): void {
    * tested over the shipped presets; this wrapper contributes exactly the
    * two live inputs the document cannot answer (the current state and this
    * machine's compute availability) and the ui call. Rides refreshUi — the
-   * one chokepoint every document edit, snapshot load, and undo/redo
-   * already funnels through — so the button enables/disables live as
-   * variations, 4D blocks, scales, weights, or symmetry orders change.
+   * chokepoint every whole-system edit, snapshot load, and undo/redo
+   * funnels through — PLUS direct calls from the drag paths that
+   * deliberately skip refreshUi (fr-vja8.10: transform/final geometry
+   * sliders, guide-box drags, and the symmetry effects in
+   * control-spec.ts), so the button enables/disables live as variations,
+   * 4D blocks, scales, weights, or symmetry orders change — mid-drag
+   * included, where a stale-enabled button routed a plainly ineligible
+   * system into a render-failure toast.
    */
   function refreshSurfaceEligibility(): void {
     const eligibility = deriveSurfaceEligibility(
@@ -6023,6 +6028,7 @@ function main(): void {
     regenerateIfAutoUpdate: () => {
       if (state.autoUpdate) regenScheduler.schedule();
     },
+    refreshSurfaceEligibility,
     recolor,
     applyFourDColor,
     restartSolidRender: () => solidSession.enter(),
@@ -6743,6 +6749,15 @@ function main(): void {
         state.selectedTransform,
         state.finalTransform ?? null,
       );
+      // The Surface gate reads the DOCUMENT, and a geometry drag can carry
+      // it across an analyzer seam (fr-vja8.10) — a scale reaching 1.0
+      // stops contracting mid-drag, and the stale-enabled button then
+      // routes a plainly ineligible system into a render-failure toast.
+      // This path deliberately skips refreshUi (rebuilding the editor
+      // mid-drag would tear the slider out from under the pointer), so
+      // re-derive just the gate — the one refreshUi output that must not
+      // go stale here.
+      refreshSurfaceEligibility();
       if (state.autoUpdate) regenScheduler.schedule();
     },
     onToggleFinalTransform: (checked) => {
@@ -6774,6 +6789,11 @@ function main(): void {
         state.selectedTransform,
         state.finalTransform ?? null,
       );
+      // The gate tracks lens edits too (fr-vja8.10): a near-zero scale, a
+      // non-fold variation or a w block on the final all move the
+      // analyzers. Same no-refreshUi-mid-drag reasoning as
+      // onTransformGeometry above.
+      refreshSurfaceEligibility();
       if (state.autoUpdate) regenScheduler.schedule();
     },
     onTogglePanel: () => {
@@ -6906,6 +6926,10 @@ function main(): void {
         index,
         state.transforms.length,
       );
+      // A guide-box drag moves geometry exactly like the panel sliders do,
+      // so the Surface gate must track it the same way (fr-vja8.10; see
+      // onTransformGeometry).
+      refreshSurfaceEligibility();
       if (state.autoUpdate) regenScheduler.schedule();
     },
     fourDView: () => viewIs4D,

@@ -226,6 +226,16 @@ export interface ControlEffects {
   /** `regenerate()` gated on `state.autoUpdate` — for controls that reshape
    * the live point cloud, not just a render-only setting. */
   regenerateIfAutoUpdate(): void;
+  /**
+   * Re-derive the Surface mode button's eligibility gate from the current
+   * document (fr-vja8.10) — for effects whose edit can move the system
+   * across an analyzer seam without passing through main.ts's refreshUi:
+   * the symmetry controls flip the document's flatness (a w-plane or a
+   * twist) and close the Mandelbulb arm (order > 1). Cheap per input event
+   * — `deriveSurfaceEligibility` is the probe-free marchability arithmetic
+   * plus a few DOM writes on the mode button.
+   */
+  refreshSurfaceEligibility(): void;
   /** Rebuild the 3D cloud's color buffer over the cached chaos-game run
    * (never re-runs the game). */
   recolor(): void;
@@ -369,6 +379,12 @@ export function applyScalarControl(
  * table (fr-dig). */
 const symmetryEffect: ControlEffect = (state, fx) => {
   fx.regenerateIfAutoUpdate();
+  // The kaleidoscope moves the Surface gate (fr-vja8.10): a w-plane or a
+  // twist makes the document 4D, and any order above 1 closes the
+  // Mandelbulb arm — and this pipeline deliberately never runs a full
+  // refreshUi, so the button would otherwise go stale until the next
+  // unrelated edit.
+  fx.refreshSurfaceEligibility();
   const command = {
     type: "setSymmetry",
     order: state.symmetry.order,
