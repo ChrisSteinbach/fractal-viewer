@@ -1,5 +1,16 @@
 name: Deploy to GitHub Pages
 
+# fr-vja8.7: the github-pages environment's deployment branch policy allows
+# main only (confirmed via the API: custom_branch_policies has exactly one
+# entry, "main") — this workflow CANNOT deploy any other ref, and
+# "workflow_dispatch --ref <old tag/sha>" is refused at the environment gate
+# rather than at dispatch, so it looks viable until it isn't. Rollback is
+# therefore: revert the bad commit(s) on main, then dispatch a FRESH run —
+# never "Re-run failed jobs" on an old run to get old content redeployed,
+# since a re-run always rebuilds and redeploys the SAME commit that run was
+# originally dispatched against (checkout pins to that run's github.sha),
+# so it can only retry a transient failure on today's commit, never
+# substitute yesterday's.
 on:
   workflow_dispatch:
 
