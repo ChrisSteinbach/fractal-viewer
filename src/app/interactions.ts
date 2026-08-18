@@ -417,6 +417,7 @@ export function attachInteractions(
         key: event.key,
         shiftKey: event.shiftKey,
         withChordModifier: event.ctrlKey || event.altKey || event.metaKey,
+        repeat: event.repeat,
       },
       { fourD: callbacks.fourDView(), sliceOn: callbacks.fourDSliceOn() },
     );

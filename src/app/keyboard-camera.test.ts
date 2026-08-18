@@ -11,7 +11,13 @@ function press(
   key: string,
   overrides: Partial<CameraKeyInput> = {},
 ): CameraKeyInput {
-  return { key, shiftKey: false, withChordModifier: false, ...overrides };
+  return {
+    key,
+    shiftKey: false,
+    withChordModifier: false,
+    repeat: false,
+    ...overrides,
+  };
 }
 
 const FLAT: CameraKeyContext = { fourD: false, sliceOn: false };
@@ -151,6 +157,25 @@ describe("cameraKeyAction", () => {
       });
       expect(cameraKeyAction(press(" "), FOUR_D)).toEqual({
         kind: "toggleMotion",
+      });
+    });
+
+    it("acts on the initial press only — a held Space's OS repeats must not flip auto-motion at the repeat rate", () => {
+      expect(cameraKeyAction(press(" ", { repeat: true }), FLAT)).toBeNull();
+      expect(cameraKeyAction(press(" ", { repeat: true }), FOUR_D)).toBeNull();
+    });
+
+    it("movement keys keep repeating — repeat IS their continuous-motion feature", () => {
+      expect(
+        cameraKeyAction(press("ArrowRight", { repeat: true }), FLAT),
+      ).toEqual({
+        kind: "orbit",
+        dx: KEY_STEP_PX,
+        dy: 0,
+      });
+      expect(cameraKeyAction(press("-", { repeat: true }), FLAT)).toEqual({
+        kind: "dolly",
+        factor: KEY_DOLLY_STEP,
       });
     });
   });
