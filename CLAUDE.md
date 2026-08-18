@@ -291,7 +291,8 @@ not a broken render.
 ## Pre-commit Hooks
 
 Husky runs lint-staged on every commit, auto-fixing ESLint + Prettier on staged
-`.ts` files and Stylelint + Prettier on staged `.css` files. Hooks are installed by
+`src/` `.ts` files (a staged `scripts/*.ts` gets Prettier only — its lint waits
+for `npm test`) and Stylelint + Prettier on staged `.css` files. Hooks are installed by
 `npm install` (via the `prepare` script). The beads integration block in each hook
 keeps issues synced with git.
 
@@ -1773,6 +1774,13 @@ Frame` callback, which runs before paint so the disabled look never
     Full record — the routing measurements, the fr-d6g5 park diagnosis,
     the supersampling evidence and the fr-biox field report — in
     `docs/surface-compute-renderer.md`.
+  - `surface-eligibility.ts` — the Surface gate as a pure derivation
+    (fr-dp50): document in, `{status, note, kind}` out — the routing across
+    the five analyzers TESTABLE instead of an untestable closure inside
+    `main()`; `refreshSurfaceEligibility` is one call into this plus the ui
+    write, every decision leaf pinned over the shipped presets. `kind`
+    exists so `surfaceSession.start`'s own re-derivation can one day consume
+    the one shared answer (the bead trail's second slice).
   - `render-backend.ts` — fr-tmgf's "which engine, and is it software?"
     vocabulary: ONE `SOFTWARE_RENDERER_RE`, adapter-status derivation,
     unmasked-renderer read and warning-string pair, so every site deciding
