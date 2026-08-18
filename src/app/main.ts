@@ -1368,9 +1368,10 @@ function main(): void {
    * turns those clicks into the cancel affordance instead).
    */
   /** The ONE wording for an export-failure toast (fr-vja8.51): the setup
-   * catch, the run catch and the session-error report all speak through it,
-   * so a rewording cannot make the same failure class report differently
-   * depending on where the encoder died. */
+   * catch and the run catch both speak through it, so a rewording cannot
+   * make the same failure class report differently depending on where the
+   * encoder died — the session-error report keeps its own inline wording on
+   * purpose, carrying the session's message. */
   function exportFailedToast(err: unknown): void {
     ui.flashToast(
       `Export failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -3578,9 +3579,12 @@ function main(): void {
     let completionDue = false;
     try {
       // A loop already in flight when a capture starts would resume from
-      // its await and cancel the export (fr-7mfx); leave `pending` latched
-      // and let the invalidation the capture's own ratio restore raises
-      // re-kick it afterwards.
+      // its await and cancel the export (fr-7mfx); leave `pending` latched —
+      // a >1x capture's ratio restore raises an invalidation that re-kicks
+      // it, a mid-capture pose change stays latched in scene.needsRender
+      // (the capture tick never clears it), and a 1x capture raises nothing
+      // by design (fr-vja8.45) but presents its own full-detail frame of the
+      // same pose in place of the interrupted preview.
       while (
         (surfaceComputePreviewPending || completionDue) &&
         !surfaceCaptureFlight

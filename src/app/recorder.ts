@@ -2,7 +2,10 @@
 // canvas.captureStream() + MediaRecorder — no dependencies. All three render
 // modes (points/4D, flame, voxel) draw onto the same canvas, so one recorder
 // covers them all. The pure helpers (mime choice, bitrate, naming, elapsed
-// formatting) are unit-tested; the MediaRecorder glue is verified in-browser.
+// formatting) are unit-tested, and the start/finalize lifecycle (ctor-throw
+// track cleanup, the stamped duration) runs under stubbed
+// MediaRecorder/document globals in recorder.test.ts; the real capture
+// pipeline is still verified in-browser.
 //
 // Primary use case: short clips of the 4D auto-tumble for social posts, so
 // MP4/H.264 is strongly preferred (X rejects WebM uploads); WebM is the
