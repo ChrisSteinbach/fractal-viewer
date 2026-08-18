@@ -869,8 +869,16 @@
               >Tint <span id="fogTintLabel">0%</span></span
             >
             <div class="position-axis-inputs">
+              <!-- The wrapping <label>s carry no text (the row's "Tint 0%"
+                   title is a sibling span), so each input is named for
+                   assistive tech directly — the "Color stop N" pattern
+                   (ui.ts's custom-palette swatches). -->
               <label class="position-axis-label"
-                ><input type="color" id="fogTintColor" value="#ffffff"
+                ><input
+                  type="color"
+                  id="fogTintColor"
+                  value="#ffffff"
+                  aria-label="Fog tint color"
               /></label>
               <label class="position-axis-label">
                 <input
@@ -880,6 +888,7 @@
                   max="1"
                   step="0.01"
                   value="0"
+                  aria-label="Fog tint strength"
                 />
               </label>
             </div>

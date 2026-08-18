@@ -6640,4 +6640,17 @@ describe("Ui fog tint row (fr-5h5d)", () => {
       document.getElementById("fogTintRow")?.classList.contains("hidden"),
     ).toBe(false);
   });
+
+  // fr-vja8.24: the wrapping <label>s carry no text (the row's "Tint 0%"
+  // title is a sibling span outside both), so without these the inputs are
+  // unnamed color/slider controls to a screen reader.
+  it("names both inputs for assistive tech (their labels carry no text)", () => {
+    new Ui(document);
+    expect(el("fogTintColor").getAttribute("aria-label")).toBe(
+      "Fog tint color",
+    );
+    expect(el("fogTintStrength").getAttribute("aria-label")).toBe(
+      "Fog tint strength",
+    );
+  });
 });
