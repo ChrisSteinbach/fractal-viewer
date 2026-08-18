@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { ROTATE_SPEED } from "./orbit";
 import type { OrbitCamera } from "./orbit";
 import type { FractalScene } from "./scene";
+import { cameraKeyAction } from "./keyboard-camera";
 import { clamp } from "../fractal/vec";
 import { MIN_GUIDE_SCALE, MAX_GUIDE_SCALE } from "./constants";
 import type { Vec3 } from "../fractal/types";
@@ -32,6 +33,17 @@ export interface InteractionCallbacks {
   /** A Shift-retargeted gesture turned the 4D view: plane-angle deltas in
    * radians (zero for planes the gesture doesn't touch). */
   onFourDRotate: (delta: { xw: number; yw: number; zw: number }) => void;
+  /** Whether the w-slice is currently enabled — gates the [ / ] slice-nudge
+   * keys (keyboard-camera.ts, fr-vja8.37) the way {@link fourDView} gates
+   * the rotor keys. */
+  fourDSliceOn: () => boolean;
+  /** The [ / ] keys nudged the w-slice center by a normalized delta —
+   * main.ts routes it through the slice slider's own handler logic. */
+  onFourDSliceNudge: (delta: number) => void;
+  /** Space on the focused canvas toggled the shared auto-motion choice
+   * (3D auto-orbit / 4D auto-tumble, fr-0ya) — main.ts routes it through
+   * the same logic as the panel checkboxes. */
+  onToggleAutoMotion: () => void;
 }
 
 /** Radians per normalized wheel px that Shift+scroll turns the ZW plane
@@ -384,7 +396,47 @@ export function attachInteractions(
     event.preventDefault();
   }
 
+  // The keyboard path (fr-vja8.37): scene.ts made the canvas focusable, so
+  // this listener fires only while the canvas HAS focus — the scoping that
+  // makes camera keys safe at all (bound globally, unmodified arrows would
+  // shadow every panel slider's native adjustment and Space every focused
+  // button). The key->action vocabulary lives in keyboard-camera.ts, pure
+  // and tested; this applies actions through exactly the members the
+  // pointer gestures use, so the two input paths cannot drift: orbit keys
+  // call the same orbit.rotate/dolly, rotor keys ride the same
+  // onFourDRotate wire (inheriting main.ts's session gates and the
+  // pose-glide release), and frozen() blocks keys during a flame render
+  // exactly as it blocks drags. preventDefault fires only for a produced
+  // action, so unhandled keys keep their page semantics. Deliberately
+  // camera-only regardless of the transform selection — guide-box nudging
+  // stays slider-based (the fr-vja8.37 triage's own scope line).
+  function onKeyDown(event: KeyboardEvent): void {
+    if (callbacks.frozen()) return;
+    const action = cameraKeyAction(
+      {
+        key: event.key,
+        shiftKey: event.shiftKey,
+        withChordModifier: event.ctrlKey || event.altKey || event.metaKey,
+      },
+      { fourD: callbacks.fourDView(), sliceOn: callbacks.fourDSliceOn() },
+    );
+    if (action === null) return;
+    event.preventDefault();
+    if (action.kind === "orbit") {
+      orbit.rotate(action.dx, action.dy);
+    } else if (action.kind === "dolly") {
+      orbit.dolly(action.factor);
+    } else if (action.kind === "rotor") {
+      callbacks.onFourDRotate(action);
+    } else if (action.kind === "slice") {
+      callbacks.onFourDSliceNudge(action.delta);
+    } else {
+      callbacks.onToggleAutoMotion();
+    }
+  }
+
   canvas.addEventListener("mousedown", onPointerDown);
+  canvas.addEventListener("keydown", onKeyDown);
   canvas.addEventListener("touchstart", onPointerDown, { passive: false });
   document.addEventListener("mousemove", onPointerMove);
   document.addEventListener("touchmove", onPointerMove, { passive: false });

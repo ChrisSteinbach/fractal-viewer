@@ -7054,15 +7054,18 @@ describe("Ui fog tint row (fr-5h5d)", () => {
   });
 });
 
-describe("canvas viewport accessible name (fr-vja8.23)", () => {
-  // scene.ts injects a bare <canvas> into #container; without a role and
-  // label the app's entire visual subject is invisible to a screen reader.
-  it("names the #container viewport as an image for assistive tech", () => {
+describe("canvas viewport accessible name (fr-vja8.23, moved by fr-vja8.37)", () => {
+  // The identity lives on the CANVAS since fr-vja8.37 — scene.ts injects it
+  // with tabIndex 0 and an instructive aria-label that teaches the camera
+  // keys (verified in a real browser; scene.ts is outside jsdom's reach).
+  // What this suite CAN pin is the container side of that contract: the
+  // fr-vja8.23 role="img" wrapper must stay GONE, because role="img" prunes
+  // its subtree from the accessibility tree — re-adding it would leave the
+  // focusable canvas taking keyboard focus with no announced name at all.
+  it("leaves #container role-less so the focusable canvas inside it keeps its own name", () => {
     const container = document.getElementById("container");
-    expect(container?.getAttribute("role")).toBe("img");
-    expect(container?.getAttribute("aria-label")).toBe(
-      "Live 3D preview of the fractal — shape it with the controls panel",
-    );
+    expect(container?.getAttribute("role")).toBeNull();
+    expect(container?.getAttribute("aria-label")).toBeNull();
   });
 });
 

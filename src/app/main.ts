@@ -1788,6 +1788,32 @@ function main(): void {
     loadHints.clearPose();
   }
 
+  // The ONE auto-motion toggle logic per dimension (fr-vja8.37): the panel
+  // checkboxes and the canvas Space key both land here, so the session
+  // state, the sticky user choice, the help-box wording and the persisted
+  // viewer pref (fr-0ya) can never disagree about which input flipped them.
+  // The checkbox path's DOM side ran in ui.ts before its handler fired; the
+  // Space path mirrors that with ui.setAutoMotionToggle before calling in.
+  function applyAutoOrbitToggle(checked: boolean): void {
+    autoOrbitOn = checked;
+    autoOrbitUserChoice = checked;
+    // Persist the COMBINED auto-motion pref (fr-0ya) — the orbit sibling of
+    // applyFourDTumbleToggle below; both write the one shared choice.
+    updateViewerPrefs({ autoMotion: checked });
+  }
+  function applyFourDTumbleToggle(checked: boolean): void {
+    fourDView.setTumbleUserChoice(checked);
+    // The canvas help box opens by naming the motion (fr-k9nx), so a pause
+    // has to reach it — ui.ts has already recorded the flag, this is the
+    // repaint. The panel's own row visibility is ui.ts's own business.
+    ui.updateLabels(state);
+    // Persist the COMBINED auto-motion pref (fr-0ya): the last motion toggle
+    // the user flips — tumble or orbit — becomes the one shared choice both
+    // seed from on the next reload. Separate viewer-prefs key, never the
+    // scene / share-URL document; merge-written so the other prefs survive.
+    updateViewerPrefs({ autoMotion: checked });
+  }
+
   // The 3D sibling of resetFourDView(): return the auto-orbit to its "fresh
   // visit" baseline — running (paused under reduced motion, still an explicit
   // opt-in there) at default speed, except that a manual toggle is sticky
@@ -6758,31 +6784,14 @@ function main(): void {
     // so there is nothing else to push here. The toggle goes through
     // setTumbleUserChoice (not a bare tumbleOn write) so the choice is sticky
     // across fresh-visit resets (fr-g98).
-    onFourDTumbleToggle: (checked) => {
-      fourDView.setTumbleUserChoice(checked);
-      // The canvas help box opens by naming the motion (fr-k9nx), so a pause
-      // has to reach it — ui.ts has already recorded the flag, this is the
-      // repaint. The panel's own row visibility is ui.ts's own business.
-      ui.updateLabels(state);
-      // Persist the COMBINED auto-motion pref (fr-0ya): the last motion toggle
-      // the user flips — tumble or orbit — becomes the one shared choice both
-      // seed from on the next reload. Separate viewer-prefs key, never the
-      // scene / share-URL document; merge-written so the other prefs survive.
-      updateViewerPrefs({ autoMotion: checked });
-    },
+    onFourDTumbleToggle: applyFourDTumbleToggle,
     onFourDTumbleSpeedInput: (value) => {
       fourDView.tumbleSpeed = value;
     },
     // Auto-orbit pause/resume + speed (fr-1yn): the 3D siblings of the tumble
     // handlers above, same session-only pattern — the toggle also records the
     // sticky user choice resetAutoOrbitView() honors (fr-g98).
-    onAutoOrbitToggle: (checked) => {
-      autoOrbitOn = checked;
-      autoOrbitUserChoice = checked;
-      // Persist the COMBINED auto-motion pref (fr-0ya) — the orbit sibling of
-      // onFourDTumbleToggle above; both write the one shared choice.
-      updateViewerPrefs({ autoMotion: checked });
-    },
+    onAutoOrbitToggle: applyAutoOrbitToggle,
     onAutoOrbitSpeedInput: (value) => {
       autoOrbitSpeed = value;
     },
@@ -6841,6 +6850,36 @@ function main(): void {
       releaseFourDPoseControl();
       fourDView.rotate(xw, yw, zw);
       // animate() pushes fourDView.matrix() next frame; nothing else to do.
+    },
+    fourDSliceOn: () => fourDView.sliceOn,
+    // The [ / ] keys (fr-vja8.37): the slice slider's own handler logic —
+    // pose-control release, center write, push — plus the panel sync the
+    // slider never needs (it IS the panel; a key nudge must reflect back
+    // into it or the slider goes stale until the next reopen).
+    onFourDSliceNudge: (delta) => {
+      releaseFourDPoseControl();
+      fourDView.sliceCenter = Math.max(
+        -1,
+        Math.min(1, fourDView.sliceCenter + delta),
+      );
+      pushFourDSlice();
+      syncFourDSliceUi();
+    },
+    // Space (fr-vja8.37): the same toggle logic as the panel checkboxes —
+    // never a bare flag flip — with ui.setAutoMotionToggle standing in for
+    // the DOM-side recording the checkbox change listener does before its
+    // handler fires (checkbox, row visibility, help-box flag; deliberately
+    // NOT the fresh-visit reset methods, which would stomp a chosen speed).
+    onToggleAutoMotion: () => {
+      if (viewIs4D) {
+        const on = !fourDView.tumbleOn;
+        ui.setAutoMotionToggle(true, on);
+        applyFourDTumbleToggle(on);
+      } else {
+        const on = !autoOrbitOn;
+        ui.setAutoMotionToggle(false, on);
+        applyAutoOrbitToggle(on);
+      }
     },
   });
 

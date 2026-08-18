@@ -36,20 +36,35 @@ describe("resizeGuideComponent", () => {
  * canvas element and a spy orbit are the whole world. Listeners attach for
  * the page lifetime by design; each call gets its own closure, so stacking
  * them across tests is harmless. */
-function setupInteractions(opts: { selected?: number } = {}): {
+function setupInteractions(
+  opts: {
+    selected?: number;
+    frozen?: boolean;
+    fourD?: boolean;
+    sliceOn?: boolean;
+  } = {},
+): {
   canvas: HTMLCanvasElement;
   rotate: ReturnType<typeof vi.fn>;
+  dolly: ReturnType<typeof vi.fn>;
+  onFourDRotate: ReturnType<typeof vi.fn>;
+  onFourDSliceNudge: ReturnType<typeof vi.fn>;
+  onToggleAutoMotion: ReturnType<typeof vi.fn>;
   handle: InteractionsHandle;
 } {
   document.body.replaceChildren();
   const canvas = document.createElement("canvas");
   document.body.appendChild(canvas);
   const rotate = vi.fn();
+  const dolly = vi.fn();
+  const onFourDRotate = vi.fn();
+  const onFourDSliceNudge = vi.fn();
+  const onToggleAutoMotion = vi.fn();
   const orbit = {
     target: [0, 0, 0],
     rotate,
     panBy: vi.fn(),
-    dolly: vi.fn(),
+    dolly,
   } as unknown as OrbitCamera;
   const handle = attachInteractions(
     { canvas, camera: {}, guideCube: () => null } as unknown as FractalScene,
@@ -57,12 +72,23 @@ function setupInteractions(opts: { selected?: number } = {}): {
     {
       selectedTransform: () => opts.selected ?? null,
       onTransformChange: vi.fn(),
-      frozen: () => false,
-      fourDView: () => false,
-      onFourDRotate: vi.fn(),
+      frozen: () => opts.frozen ?? false,
+      fourDView: () => opts.fourD ?? false,
+      onFourDRotate,
+      fourDSliceOn: () => opts.sliceOn ?? false,
+      onFourDSliceNudge,
+      onToggleAutoMotion,
     },
   );
-  return { canvas, rotate, handle };
+  return {
+    canvas,
+    rotate,
+    dolly,
+    onFourDRotate,
+    onFourDSliceNudge,
+    onToggleAutoMotion,
+    handle,
+  };
 }
 
 // jsdom has no TouchEvent constructor; the handlers only read `touches` off
@@ -145,5 +171,101 @@ describe("attachInteractions mouse latch release", () => {
     );
 
     expect(handle.gestureActive()).toBe(true);
+  });
+});
+
+describe("attachInteractions camera keys (fr-vja8.37)", () => {
+  function key(
+    canvas: HTMLCanvasElement,
+    key: string,
+    init: KeyboardEventInit = {},
+  ): KeyboardEvent {
+    const event = new KeyboardEvent("keydown", {
+      key,
+      cancelable: true,
+      ...init,
+    });
+    canvas.dispatchEvent(event);
+    return event;
+  }
+
+  it("plain arrows orbit through the same rotate the drag uses, and consume the key", () => {
+    const { canvas, rotate } = setupInteractions();
+    const event = key(canvas, "ArrowRight");
+    expect(rotate).toHaveBeenCalledTimes(1);
+    const [dx, dy] = rotate.mock.calls[0] as [number, number];
+    expect(dx).toBeGreaterThan(0);
+    expect(dy).toBe(0);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("+ and - dolly like wheel notches", () => {
+    const { canvas, dolly } = setupInteractions();
+    key(canvas, "+");
+    key(canvas, "-");
+    expect(dolly).toHaveBeenCalledTimes(2);
+    const zoomIn = dolly.mock.calls[0][0] as number;
+    const zoomOut = dolly.mock.calls[1][0] as number;
+    expect(zoomIn).toBeLessThan(1);
+    expect(zoomOut * zoomIn).toBeCloseTo(1, 12); // a round trip returns home
+  });
+
+  it("Shift+arrows ride the SAME onFourDRotate wire as the Shift-drag while 4D", () => {
+    const { canvas, onFourDRotate, rotate } = setupInteractions({
+      fourD: true,
+    });
+    key(canvas, "ArrowUp", { shiftKey: true });
+    expect(onFourDRotate).toHaveBeenCalledTimes(1);
+    expect(onFourDRotate.mock.calls[0][0]).toMatchObject({ xw: 0, zw: 0 });
+    expect(
+      (onFourDRotate.mock.calls[0][0] as { yw: number }).yw,
+    ).toBeGreaterThan(0);
+    expect(rotate).not.toHaveBeenCalled();
+  });
+
+  it("an unhandled key is left alone — not consumed, nothing called", () => {
+    const { canvas, rotate, dolly, onToggleAutoMotion } = setupInteractions();
+    const event = key(canvas, "Tab");
+    expect(event.defaultPrevented).toBe(false);
+    expect(rotate).not.toHaveBeenCalled();
+    expect(dolly).not.toHaveBeenCalled();
+    expect(onToggleAutoMotion).not.toHaveBeenCalled();
+  });
+
+  it("Space toggles auto-motion and consumes the key so the page never scrolls", () => {
+    const { canvas, onToggleAutoMotion } = setupInteractions();
+    const event = key(canvas, " ");
+    expect(onToggleAutoMotion).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("[ and ] nudge the slice only while the slice is on", () => {
+    const off = setupInteractions({ fourD: true, sliceOn: false });
+    key(off.canvas, "[");
+    expect(off.onFourDSliceNudge).not.toHaveBeenCalled();
+
+    const on = setupInteractions({ fourD: true, sliceOn: true });
+    key(on.canvas, "]");
+    expect(on.onFourDSliceNudge).toHaveBeenCalledTimes(1);
+    expect(on.onFourDSliceNudge.mock.calls[0][0] as number).toBeGreaterThan(0);
+  });
+
+  it("frozen() blocks every key exactly as it blocks drags — a flame render's camera cannot drift", () => {
+    const { canvas, rotate, dolly, onToggleAutoMotion } = setupInteractions({
+      frozen: true,
+    });
+    key(canvas, "ArrowLeft");
+    key(canvas, "+");
+    key(canvas, " ");
+    expect(rotate).not.toHaveBeenCalled();
+    expect(dolly).not.toHaveBeenCalled();
+    expect(onToggleAutoMotion).not.toHaveBeenCalled();
+  });
+
+  it("chorded arrows pass through untouched — Alt+Left must stay history-back", () => {
+    const { canvas, rotate } = setupInteractions();
+    const event = key(canvas, "ArrowLeft", { altKey: true });
+    expect(event.defaultPrevented).toBe(false);
+    expect(rotate).not.toHaveBeenCalled();
   });
 });

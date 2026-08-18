@@ -54,6 +54,19 @@
   outline-offset: 1px;
 }
 
+/* The viewport canvas is a focus target since fr-vja8.37 (the camera keys
+   live on it) and fills the window, so the shared ring's outside offset
+   would render entirely offscreen — restate it inset, the
+   clipped-ancestor reasoning above applied to the window itself. Bare
+   `canvas` on purpose: the app's other canvases (mutation cells, gallery
+   thumbnails) are not focusable, so :focus-visible can only ever match
+   the viewport one — and an id-scoped selector here would trip
+   no-descending-specificity against later plain-canvas rules. Inherits
+   the shared ring's color/width; only the offset moves. */
+canvas:focus-visible {
+  outline-offset: -3px;
+}
+
 /* The closed #panel parks at translateX(100%) — a 300px box hanging past the
    right screen edge — and mobile browsers' fit-content viewport logic
    EXPANDS the layout viewport to contain such overflow (measured: 393×727 →

@@ -24,6 +24,23 @@ on the canvas; see **3D View** below.
 Phi (vertical orbit) is clamped just shy of the poles and the zoom radius is
 clamped to `[1, 100]` — see `src/app/orbit.ts`.
 
+### Keyboard
+
+The canvas is a focus target: **Tab** to it (or click it) and the viewpoint is
+fully drivable without a pointer — for some users this is the primary path,
+not a shortcut layer. Keys act only while the canvas has focus, so they never
+fight the panel's own sliders; held keys repeat for continuous motion.
+
+| Key        | Action                                                                                                                                        |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Arrow keys | Orbit (the plain drag, one nudge at a time)                                                                                                   |
+| `+` / `-`  | Zoom in / out (one wheel notch each)                                                                                                          |
+| Space      | Pause / resume the automatic motion — 3D auto-orbit or 4D auto-tumble, the same shared choice as the panel checkboxes (see **3D View** below) |
+
+Panning stays pointer-only (right-drag / two-finger drag); the orbit + zoom
+pair reaches every framing the auto-fit starts from. The key vocabulary lives
+in `src/app/keyboard-camera.ts`.
+
 ## 4D projection
 
 While the current system is non-flat (see **4D View** below), the point cloud
@@ -40,6 +57,19 @@ coordinate planes:
 Touch devices have no Shift key, so touch always orbits; turn a map's own
 w-planes instead from its **4D** editor group, or sweep **4D View**'s **W
 slice** slider.
+
+With the canvas focused, the same Shift convention carries to the keyboard —
+the 4D viewpoint is as pointer-free as the 3D one:
+
+| Key                     | Action                                                         |
+| ----------------------- | -------------------------------------------------------------- |
+| Shift + ← / →           | Turn the XW plane                                              |
+| Shift + ↑ / ↓           | Turn the YW plane                                              |
+| Shift + PageUp / PageDn | Turn the ZW plane (the Shift-wheel's job)                      |
+| `[` / `]`               | Nudge the **W slice** center (only while the slice is enabled) |
+
+Space toggles the auto-tumble here, exactly as it toggles the auto-orbit on a
+flat scene — one shared preference either way.
 
 ## Transform mode
 

@@ -1231,6 +1231,21 @@ export class FractalScene {
     // (glow) path re-applies an sRGB encode and lifts the blacks to grey.
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     container.appendChild(this.renderer.domElement);
+    // The canvas is a focus target (fr-vja8.37): interactions.ts binds the
+    // camera keys to it, and element-scoped keydown is what keeps arrows/
+    // Space from ever shadowing the panel's own controls. The label doubles
+    // as the discoverability channel — a screen reader teaches the keys on
+    // focus (the container div keeps its own role="img" name for the
+    // picture itself, fr-vja8.23; this names the WIDGET). Sighted keyboard
+    // users get the focus ring style.css draws on :focus-visible.
+    this.renderer.domElement.tabIndex = 0;
+    this.renderer.domElement.setAttribute(
+      "aria-label",
+      "Fractal viewpoint. Arrow keys orbit, plus and minus zoom, Space " +
+        "pauses or resumes the automatic motion. In a 4D scene, Shift with " +
+        "arrows or Page Up and Page Down turns the fourth-dimension view, " +
+        "and the bracket keys move the w slice.",
+    );
     // A restored WebGL context comes back with an undefined drawing buffer;
     // make sure the render-on-demand gate (fr-py7z) repaints it even if the
     // scene is otherwise static.
