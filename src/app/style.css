@@ -13,6 +13,19 @@
   --text-faint: #828aa0;
   --accent: #5b9dff;
   --accent-strong: #3b82f6;
+
+  /* The accent pair BEHIND WHITE TEXT (fr-vja8.20) — the fills of .btn-blue,
+     the active render-mode segment, and a pressed mirror toggle, and nothing
+     else. --accent/--accent-strong compute 2.72:1 / 3.68:1 against #fff,
+     under the 4.5:1 AA floor at these text sizes, but they pass in their own
+     contexts (focus ring, links, borders) — so the text-bearing fills get
+     their own darker pair rather than moving the whole family. Same hues
+     (216°/217°), same saturation, darkened to 4.83:1 / 6.64:1; the hover
+     stops inlined at the three sites lighten by the same ~2 points the old
+     hover did and still clear 4.5:1 (4.56 / 6.21). #06f is #0066ff — the
+     short form is stylelint's. */
+  --accent-fill: #06f;
+  --accent-fill-strong: #0a54cd;
   --good: #34d399;
   --bad: #fb7185;
   --radius: 12px;
@@ -594,13 +607,17 @@ body {
 
 .btn-blue {
   border-color: rgb(59 130 246 / 55%);
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  background: linear-gradient(
+    180deg,
+    var(--accent-fill),
+    var(--accent-fill-strong)
+  );
   color: #fff;
   box-shadow: 0 4px 14px rgb(59 130 246 / 26%);
 }
 
 .btn-blue:hover {
-  background: linear-gradient(180deg, #6aa8ff, #4789f7);
+  background: linear-gradient(180deg, #0a6cff, #0a58d6);
 }
 
 .btn-blue:disabled {
@@ -676,7 +693,11 @@ body {
 }
 
 .segmented .segment.active {
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  background: linear-gradient(
+    180deg,
+    var(--accent-fill),
+    var(--accent-fill-strong)
+  );
   color: #fff;
 }
 
@@ -995,7 +1016,11 @@ summary.editor-group-title {
 
 .mirror-btn[aria-pressed="true"] {
   border-color: var(--accent-strong);
-  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  background: linear-gradient(
+    180deg,
+    var(--accent-fill),
+    var(--accent-fill-strong)
+  );
   color: #fff;
 }
 
