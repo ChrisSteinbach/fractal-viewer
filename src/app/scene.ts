@@ -76,6 +76,11 @@ import {
   type StripPlanner,
 } from "./strip-planner";
 import {
+  StripCostEvidence,
+  STRIP_WORST_EVIDENCE_SAFETY,
+  type StripJobOutcome,
+} from "./strip-evidence";
+import {
   createSurfaceMaterial4,
   setSurface4Balloon as packSurface4Balloon,
   setSurface4GroundPlane as packSurface4GroundPlane,
@@ -1069,25 +1074,13 @@ export class FractalScene {
    * the 7.5s watchdog. Affine and escape-time systems (microseconds per
    * pixel) keep the legacy probe. */
   private surfaceDeFoldClass = false;
-  /** Worst per-pixel strip cost (ms) observed by the most recent COMPLETED
-   * strip job (null before any) — the fr-096u evidence chain: a completed
-   * job traced its WHOLE frame, so its observation REPLACES the class
-   * floor in both directions (scaled by
-   * {@link STRIP_WORST_EVIDENCE_SAFETY}). Downward matters as much as up:
-   * the fold-class floor is calibrated for deep-KIFS monsters, and pinning
-   * a measured-cheap fold system (a lens over affine cores) to it forever
-   * would dissolve its settle into tens of thousands of readback-bound
-   * micro-strips — and feed the settle cost gate an overhead-inflated
-   * prediction that silently skips a perfectly affordable frame (the
-   * fr-096u review regression). Reset on every system upload. */
-  private surfaceStripEvidencedWorstMsPerPx: number | null = null;
-  /** Worst per-pixel strip cost (ms) observed by PARTIAL (superseded) jobs
-   * since the last completed one (0 = none). Partial coverage can prove a
-   * pose expensive but never cheap, so this only ever RAISES the floor —
-   * a monster pose discovered mid-job cannot be re-rouletted by the
-   * re-armed successor — and the next completed job's whole-frame
-   * evidence clears it. Reset on every system upload. */
-  private surfaceStripPartialWorstMsPerPx = 0;
+  /** The fr-096u cost evidence chain — completed observations own the
+   * price in both directions, partials raise only, captures seed-or-raise
+   * (fr-y1m7). The rules and their measured verdicts live in
+   * strip-evidence.ts (fr-vja8.66, extracted per the capture-cost.ts
+   * precedent so they test without a WebGL context); reset on every
+   * system upload. */
+  private readonly stripEvidence = new StripCostEvidence();
   /** Whether the ACTIVE surface session renders on the WebGPU compute path
    * (fr-tzdg) — set by {@link enterSurfaceComputeSession}. While true the
    * fold GLSL is never compiled: {@link renderSurface} degrades to a
@@ -3082,8 +3075,7 @@ export class FractalScene {
     this.surfacePreviewPxCostMs = null;
     this.surfaceFullPxCostMs = null;
     this.surfaceDeFoldClass = costWeight > 1;
-    this.surfaceStripEvidencedWorstMsPerPx = null;
-    this.surfaceStripPartialWorstMsPerPx = 0;
+    this.stripEvidence.reset();
     // A new DE is a new cost class: a predecessor system's pooled fences
     // must not seed this evidence chain (fr-7to5 declines cross-system
     // inheritance — the backlog still drains FIFO, unpriced, as before
@@ -3133,8 +3125,7 @@ export class FractalScene {
     this.surfacePreviewPxCostMs = null;
     this.surfaceFullPxCostMs = null;
     this.surfaceDeFoldClass = false;
-    this.surfaceStripEvidencedWorstMsPerPx = null;
-    this.surfaceStripPartialWorstMsPerPx = 0;
+    this.stripEvidence.reset();
     this.flushStripBacklog();
   }
 
@@ -3185,8 +3176,7 @@ export class FractalScene {
     this.surfacePreviewPxCostMs = null;
     this.surfaceFullPxCostMs = null;
     this.surfaceDeFoldClass = false;
-    this.surfaceStripEvidencedWorstMsPerPx = null;
-    this.surfaceStripPartialWorstMsPerPx = 0;
+    this.stripEvidence.reset();
     this.flushStripBacklog();
   }
 
@@ -3396,8 +3386,7 @@ export class FractalScene {
     this.surfaceFullPxCostMs = null;
     // 4D surface DEs have no fold vocabulary (affine-class throughout).
     this.surfaceDeFoldClass = false;
-    this.surfaceStripEvidencedWorstMsPerPx = null;
-    this.surfaceStripPartialWorstMsPerPx = 0;
+    this.stripEvidence.reset();
     this.flushStripBacklog();
   }
 
@@ -4321,30 +4310,8 @@ export class FractalScene {
     );
   }
 
-  /**
-   * The evidence-chain price core shared by the strip cap and the queue
-   * bound: `classFloor` rules until a COMPLETED job's whole-frame
-   * observation OWNS the price — scaled by
-   * {@link STRIP_WORST_EVIDENCE_SAFETY} for the tier gap (the settle
-   * traces deeper than the preview whose evidence seeds it, ~4-6x
-   * measured) — in both directions: up on monster poses (Iris crease
-   * pixels measured 1.7-3.1s), down on measured-cheap fold systems.
-   * Partial (superseded-job) measurements come from whatever band the
-   * strips crossed and can prove a pose expensive, never cheap, so they
-   * only ever RAISE it.
-   */
-  private surfaceStripPrice(classFloor: number): number {
-    const evidenced = this.surfaceStripEvidencedWorstMsPerPx;
-    const base =
-      evidenced !== null ? evidenced * STRIP_WORST_EVIDENCE_SAFETY : classFloor;
-    return Math.max(
-      base,
-      this.surfaceStripPartialWorstMsPerPx * STRIP_WORST_EVIDENCE_SAFETY,
-    );
-  }
-
   /** Worst-case per-pixel price (ms) for the planner's strip cap
-   * (fr-096u's second mechanism): {@link surfaceStripPrice} on the
+   * (fr-096u's second mechanism): {@link StripCostEvidence.price} on the
    * class-pessimistic WORST constants — a single strip that plans into
    * the frame's most expensive band must still fit the watchdog, so
    * before evidence exists the fold floor assumes band prices
@@ -4352,7 +4319,7 @@ export class FractalScene {
    * relaxation, measured-cheap fold settles would crawl through tens of
    * thousands of class-floor micro-strips of pure readback overhead. */
   private surfaceStripWorstMsPerPx(): number {
-    return this.surfaceStripPrice(
+    return this.stripEvidence.price(
       this.surfaceDeFoldClass
         ? STRIP_FOLD_WORST_MS_PER_PX
         : STRIP_AFFINE_WORST_MS_PER_PX,
@@ -4360,7 +4327,7 @@ export class FractalScene {
   }
 
   /** Per-pixel price (ms) for the pump's in-flight queue bound (fr-id9r)
-   * — {@link surfaceStripPrice} on the TYPICAL-cost class floors (the
+   * — {@link StripCostEvidence.price} on the TYPICAL-cost class floors (the
    * fold probe prior, not the fold worst constant), still raised live by
    * the job's own ratcheted observations in the pump. The two bounds
    * deliberately price differently: the strip cap bounds ONE submission
@@ -4377,74 +4344,19 @@ export class FractalScene {
    * measured 0.5-4ms/px transition class lands that at low seconds, the
    * bead's irreducible per-monster-pixel floor. */
   private surfaceStripQueueWorstMsPerPx(): number {
-    return this.surfaceStripPrice(
+    return this.stripEvidence.price(
       this.surfaceDeFoldClass
         ? STRIP_FOLD_PRIOR_MS_PER_PX
         : STRIP_AFFINE_WORST_MS_PER_PX,
     );
   }
 
-  /** Retire a strip job into the evidence chain (see
-   * {@link surfaceStripWorstMsPerPx}). A "completed" LIVE job's
-   * observation replaces the evidence (and clears the partial raise); a
-   * "superseded" job's observation can only raise; a "capture" drain
-   * (fr-id9r) can only raise WITHOUT killing the evidence — the pose did
-   * not move, so live settle/preview evidence is still the truth a live
-   * job should price from, and an export-scale observation must tighten
-   * that floor, never own it. "capture-completed" adds the one thing a
-   * capture may do beyond raising: SEED a chain that is empty (fr-y1m7).
-   * A job that measured NOTHING (superseded before its first strip
-   * completed, or done in a single strip) carries no information and
-   * changes nothing. */
-  private retireStripJob(
-    job: SurfaceStripJob,
-    outcome: "completed" | "superseded" | "capture" | "capture-completed",
-  ): void {
-    const observed = job.planner.observedWorstMsPerPx;
-    if (outcome === "completed") {
-      if (observed > 0) {
-        this.surfaceStripEvidencedWorstMsPerPx = observed;
-        this.surfaceStripPartialWorstMsPerPx = 0;
-      }
-      return;
-    }
-    // A capture that COMPLETED may SEED an empty evidence chain (fr-y1m7),
-    // never replace a live one. The seed matters because an offline export
-    // is the one caller that never produces live evidence at all: a system
-    // upload clears the chain, force frames bypass the preview, and a
-    // raise-only retire cannot fill it — so every frame of a fold-scene
-    // video priced its queue at the class prior, ~100x above what its own
-    // pixels measured, and paid a forced-completion join per ~400px. Frame
-    // one still does; the rest now price from it. It is safe in the
-    // direction it can be wrong: a capture traces the WHOLE frame at the
-    // same pose, so its observation is a settle's in kind, and an
-    // export-scale trace resolves finer pixels than the live tier, which
-    // reads HIGH — tighter strips, never looser.
-    if (
-      outcome === "capture-completed" &&
-      observed > 0 &&
-      this.surfaceStripEvidencedWorstMsPerPx === null
-    ) {
-      this.surfaceStripEvidencedWorstMsPerPx = observed;
-    }
-    // A SUPERSEDED job means the pose moved on — and with it whatever a
-    // completed predecessor proved cheap. Keeping stale evidence bit
-    // live (fr-096u validation): a far-pose preview completed cheap
-    // during the entry glide, its relaxed floor let the PARKED monster
-    // pose plan 2220px strips, and the first groups ran 16-22s. Evidence
-    // relaxation lives exactly one completed-preview -> settle handoff
-    // (main.ts begins the settle only while the completing preview's
-    // pose still stands); everything mid-motion prices at the class
-    // floor plus the partial ratchet.
-    if (outcome === "superseded") {
-      this.surfaceStripEvidencedWorstMsPerPx = null;
-    }
-    if (observed > 0) {
-      this.surfaceStripPartialWorstMsPerPx = Math.max(
-        this.surfaceStripPartialWorstMsPerPx,
-        observed,
-      );
-    }
+  /** Retire a strip job into the evidence chain — the rules (completed
+   * replaces both directions, superseded raises only, capture never owns,
+   * fr-y1m7's seed) live in {@link StripCostEvidence.retire}; this adapter
+   * contributes only the job's observed worst px cost. */
+  private retireStripJob(job: SurfaceStripJob, outcome: StripJobOutcome): void {
+    this.stripEvidence.retire(outcome, job.planner.observedWorstMsPerPx);
   }
 
   /** Build a strip job around `planner`: the cost estimate starts at the
@@ -4568,8 +4480,8 @@ export class FractalScene {
         `[surfperf] preview armed ${String(w)}x${String(h)}` +
           ` prior=${String(previewPrior)}` +
           ` worst=${this.surfaceStripWorstMsPerPx().toFixed(2)}` +
-          ` evidenced=${String(this.surfaceStripEvidencedWorstMsPerPx)}` +
-          ` partial=${this.surfaceStripPartialWorstMsPerPx.toFixed(3)}`,
+          ` evidenced=${String(this.stripEvidence.evidencedRawMsPerPx)}` +
+          ` partial=${this.stripEvidence.partialRawMsPerPx.toFixed(3)}`,
       );
     }
     this.surfacePreviewJob = this.newStripJob(
@@ -5128,8 +5040,8 @@ export class FractalScene {
       console.log(
         `[surfperf] settle armed prior=${String(this.surfaceStripPriorMsPerPx())}` +
           ` worst=${this.surfaceStripWorstMsPerPx().toFixed(2)}` +
-          ` evidenced=${String(this.surfaceStripEvidencedWorstMsPerPx)}` +
-          ` partial=${this.surfaceStripPartialWorstMsPerPx.toFixed(3)}`,
+          ` evidenced=${String(this.stripEvidence.evidencedRawMsPerPx)}` +
+          ` partial=${this.stripEvidence.partialRawMsPerPx.toFixed(3)}`,
       );
     }
     // fr-jf9y: the settle is the one live frame worth supersampling — it
@@ -6260,14 +6172,8 @@ const SURFACE_STRIP_SYNC_TAX_MS = 80;
  * ~10-25ms forced-completion drain per strip for thousands of strips
  * (the fr-096u perf-review regression). */
 const SURFACE_STRIP_SYNC_ESCAPE_MS = 25;
-/** Multiplier from a completed job's observed worst px cost to the next
- * job's worst-case price floor (fr-096u): covers the preview-to-settle
- * tier gap (~4-6x measured px cost). Crease structure the coarser trace
- * under-sampled is the accepted residual — the cap's own headroom under
- * the watchdog absorbs it; pricing it here as well (the first cut used
- * x10) doubled the strip count of every measured-cheap fold frame for no
- * measured safety. */
-const STRIP_WORST_EVIDENCE_SAFETY = 5;
+// STRIP_WORST_EVIDENCE_SAFETY moved to strip-evidence.ts with the chain
+// (fr-vja8.66); predictSurfaceFullCostMs still applies it below.
 /** Measured GPU time (ms) each preview strip aims for (fr-du81) — well
  * under the settle tier's 75 so strips interleave with a live drag: a
  * preview frame's budget below fits two of these plus the probe. */
