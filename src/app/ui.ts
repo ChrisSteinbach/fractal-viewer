@@ -823,6 +823,61 @@ interface ModalStackEntry {
 }
 
 /**
+ * The four coarse boundaries {@link Ui.setFlameProgress}/
+ * {@link Ui.setSolidProgress}/{@link Ui.setSurfaceProgress} announce through
+ * the hidden `renderProgressAnnouncer` live region (fr-vja8.38) — four
+ * utterances per render, not the hundreds a live region wired straight to
+ * the visible per-repaint readout would produce.
+ */
+const PROGRESS_ANNOUNCE_QUARTILES = [25, 50, 75, 100] as const;
+
+/**
+ * The highest {@link PROGRESS_ANNOUNCE_QUARTILES} boundary at or below `pct`,
+ * or 0 if `pct` hasn't reached 25 yet.
+ */
+function highestProgressQuartile(pct: number): number {
+  let reached = 0;
+  for (const q of PROGRESS_ANNOUNCE_QUARTILES) {
+    if (pct >= q) reached = q;
+  }
+  return reached;
+}
+
+/**
+ * Shared quartile-announce decision for {@link Ui.setFlameProgress}/
+ * {@link Ui.setSolidProgress}/{@link Ui.setSurfaceProgress} (fr-vja8.38):
+ * `armed` is the highest quartile already announced this render (0 = none),
+ * kept on the caller's own per-mode field. Returns `armed` unchanged and a
+ * null `text` for the common case — a repaint that hasn't crossed a new
+ * boundary — or the boundary just crossed plus its speech text. A pct that
+ * skips a boundary (20% -> 60%) reports only the HIGHEST one newly crossed
+ * (50, not 25 then 50), since `highestProgressQuartile` always returns the
+ * top of the ladder at or below `pct`.
+ */
+function crossedProgressQuartile(
+  modeLabel: string,
+  pct: number,
+  armed: number,
+): { armed: number; text: string | null } {
+  const reached = highestProgressQuartile(pct);
+  if (reached <= armed) return { armed, text: null };
+  return { armed: reached, text: `${modeLabel} render, ${reached} percent` };
+}
+
+/**
+ * Pulls the engine token ("WebGPU", "WebGPU (software)", "WebGL") out of a
+ * surface progress label for {@link Ui.setSurfaceProgress}'s fr-vja8.38
+ * one-shot announcement. main.ts's syncSurfaceProgress always writes
+ * "<Preview|Full detail> · <engine>" (see its setSurfaceProgress call
+ * sites) — the part after the separator is the engine. Returns null for a
+ * label with no " · " (defensive; every real caller includes one).
+ */
+function surfaceProgressEngine(label: string): string | null {
+  const sep = label.indexOf(" · ");
+  return sep === -1 ? null : label.slice(sep + 3);
+}
+
+/**
  * Owns the control panel and the dynamic transform list. All DOM is built with
  * `createElement`/`textContent` (never `innerHTML`) so user-influenced strings
  * can never be interpreted as markup.
@@ -1062,6 +1117,45 @@ export class Ui {
    * below, so it stays visible across a render-mode switch instead of
    * disappearing with whichever status section owned it. */
   private readonly softwareRendererNote: HTMLElement;
+  /**
+   * Render-progress announcer (fr-vja8.38): ONE shared visually-hidden live
+   * region for all three progress-bearing render modes below — flame, solid
+   * and surface are mutually exclusive (only one render mode is ever
+   * active), so there is no cross-mode collision to arbitrate. The visible
+   * flameProgress/solidProgress/surfaceProgress readouts stay bare, non-live
+   * text on purpose (see each setter's own doc); this element instead gets
+   * text authored FOR SPEECH ("Flame render, 50 percent"), written at
+   * coarse quartile boundaries only — see setFlameProgress/setSolidProgress/
+   * setSurfaceProgress and {@link crossedProgressQuartile}.
+   */
+  private readonly renderProgressAnnouncer: HTMLElement;
+  /**
+   * The highest quartile already announced THIS render (0 = none yet), one
+   * per progress-bearing mode — armed back to 0 whenever that mode's setter
+   * sees its own reset signal (flame/solid: `iterationsDone` 0; surface:
+   * `null`), exactly mirroring how the visible readout itself resets, so a
+   * restart re-arms the announcer instead of finding every boundary already
+   * "reached" by the render it replaced.
+   */
+  private flameAnnouncedQuartile = 0;
+  private solidAnnouncedQuartile = 0;
+  private surfaceAnnouncedQuartile = 0;
+  /**
+   * Surface-only one-shots (fr-vja8.38), on a DIFFERENT cadence from the
+   * quartile fields above: a cheap system's preview/settle job can complete
+   * within a single frame, so re-arming per JOB (as the quartile above does,
+   * via setSurfaceProgress's `null` reset) would re-announce the engine
+   * dozens of times over one drag. `surfaceAnnouncedEngine` instead
+   * remembers the last-announced value and announces again only on an
+   * actual change (e.g. a mid-session compute -> WebGL fallback) — never
+   * reset by `null`. `surfaceAntialiasingAnnounced` is a rising-edge flag on
+   * the OPPOSITE cadence: it clears on every `null` and on every progress
+   * update whose detail stops mentioning it (fr-vpbq's cadence is silent
+   * through pass 1 of 8), so each new settle's antialiasing phase earns its
+   * own one-shot.
+   */
+  private surfaceAnnouncedEngine: string | null = null;
+  private surfaceAntialiasingAnnounced = false;
   // The mode-scoped blocks that are NOT part of any accordion section
   // (fr-374p): Points' Undo/Redo row and the flame/solid hint + progress
   // status blocks. They sit above ALL the sections in index.html — floating
@@ -1485,6 +1579,7 @@ export class Ui {
       surface: this.byId("modeSurfaceBtn"),
     };
     this.softwareRendererNote = this.byId("softwareRendererNote");
+    this.renderProgressAnnouncer = this.byId("renderProgressAnnouncer");
     this.undoRedoRow = this.byId("undoRedoRow");
     this.flameStatus = this.byId("flameStatus");
     this.solidStatus = this.byId("solidStatus");
@@ -3602,6 +3697,33 @@ export class Ui {
     this.flameProgress.classList.remove("flame-progress-estimating");
     this.flameProgress.textContent = `${done} / ${budget} iterations (${pct}%)`;
     this.flameProgress.style.setProperty("--progress", `${pct}%`);
+    this.announceFlameProgress(pct);
+  }
+
+  /**
+   * The fr-vja8.38 live-region half of {@link setFlameProgress}: announces
+   * only a newly crossed {@link PROGRESS_ANNOUNCE_QUARTILES} boundary.
+   * `pct <= 0` is this readout's own reset signal — a fresh session's
+   * `setFlameProgress(0, budget)` (see main.ts's flame `resetProgress`) and
+   * the worker's mid-session "restarted" event both call it that way — so
+   * it re-arms the quartile rather than being treated as a crossing, and
+   * clears the announcer text too: a render that restarts right after
+   * reaching (say) 25% and lands on 25% again must still mutate the live
+   * region, and an unchanged string is not guaranteed to re-announce.
+   */
+  private announceFlameProgress(pct: number): void {
+    if (pct <= 0) {
+      this.flameAnnouncedQuartile = 0;
+      this.renderProgressAnnouncer.textContent = "";
+      return;
+    }
+    const { armed, text } = crossedProgressQuartile(
+      "Flame",
+      pct,
+      this.flameAnnouncedQuartile,
+    );
+    this.flameAnnouncedQuartile = armed;
+    if (text !== null) this.renderProgressAnnouncer.textContent = text;
   }
 
   /**
@@ -3717,6 +3839,24 @@ export class Ui {
     const budget = (iterationsBudget / 1_000_000).toFixed(1);
     this.solidProgress.textContent = `${done}M / ${budget}M iterations (${pct}%)`;
     this.solidProgress.style.setProperty("--progress", `${pct}%`);
+    this.announceSolidProgress(pct);
+  }
+
+  /** The fr-vja8.38 live-region half of {@link setSolidProgress} — see
+   * {@link announceFlameProgress}, its mirror. */
+  private announceSolidProgress(pct: number): void {
+    if (pct <= 0) {
+      this.solidAnnouncedQuartile = 0;
+      this.renderProgressAnnouncer.textContent = "";
+      return;
+    }
+    const { armed, text } = crossedProgressQuartile(
+      "Solid",
+      pct,
+      this.solidAnnouncedQuartile,
+    );
+    this.solidAnnouncedQuartile = armed;
+    if (text !== null) this.renderProgressAnnouncer.textContent = text;
   }
 
   /**
@@ -3805,6 +3945,7 @@ export class Ui {
       this.surfaceProgress.textContent = "";
       this.surfaceProgress.classList.add("hidden");
       this.surfaceProgress.style.setProperty("--progress", "0%");
+      this.announceSurfaceProgress(null);
       return;
     }
     this.surfaceProgress.textContent = `${progress.label} ${String(progress.pct)}%${progress.detail ? ` — ${progress.detail}` : ""}`;
@@ -3813,6 +3954,57 @@ export class Ui {
       `${String(progress.pct)}%`,
     );
     this.surfaceProgress.classList.remove("hidden");
+    this.announceSurfaceProgress(progress);
+  }
+
+  /**
+   * The fr-vja8.38 live-region half of {@link setSurfaceProgress}. `null` is
+   * this row's own reset signal (mirrors flame/solid's `pct <= 0` — see
+   * {@link announceFlameProgress}): re-arms the quartile and the
+   * antialiasing one-shot for whichever preview/settle job comes next, and
+   * clears the announcer so a re-armed render landing on the same quartile
+   * still mutates the live region. The engine one-shot deliberately does
+   * NOT reset here — see {@link surfaceAnnouncedEngine}'s field doc: a
+   * cheap system can cycle null -> 100% -> null once a frame during a drag,
+   * and re-announcing "using WebGPU" on every one of those jobs would be
+   * exactly the chatter this feature exists to avoid.
+   *
+   * A single call can have up to three genuinely new facts to speak (engine
+   * first seen or changed, antialiasing just started, a quartile just
+   * crossed) — collected and spoken as ONE utterance rather than raced as
+   * three separate writes to the shared announcer.
+   */
+  private announceSurfaceProgress(
+    progress: { label: string; pct: number; detail?: string } | null,
+  ): void {
+    if (progress === null) {
+      this.surfaceAnnouncedQuartile = 0;
+      this.surfaceAntialiasingAnnounced = false;
+      this.renderProgressAnnouncer.textContent = "";
+      return;
+    }
+    const toAnnounce: string[] = [];
+    const engine = surfaceProgressEngine(progress.label);
+    if (engine !== null && engine !== this.surfaceAnnouncedEngine) {
+      this.surfaceAnnouncedEngine = engine;
+      toAnnounce.push(`Surface render, using ${engine}`);
+    }
+    const antialiasing =
+      progress.detail?.includes("antialiasing pass") ?? false;
+    if (antialiasing && !this.surfaceAntialiasingAnnounced) {
+      toAnnounce.push("Surface render, antialiasing passes underway");
+    }
+    this.surfaceAntialiasingAnnounced = antialiasing;
+    const { armed, text } = crossedProgressQuartile(
+      "Surface",
+      progress.pct,
+      this.surfaceAnnouncedQuartile,
+    );
+    this.surfaceAnnouncedQuartile = armed;
+    if (text !== null) toAnnounce.push(text);
+    if (toAnnounce.length > 0) {
+      this.renderProgressAnnouncer.textContent = toAnnounce.join(". ");
+    }
   }
 
   /** Seed the "Quick previews" checkbox from the stored viewer pref at boot

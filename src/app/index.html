@@ -1809,6 +1809,28 @@
       aria-live="polite"
     ></div>
 
+    <!-- Render-progress announcer (fr-vja8.38): a SEPARATE hidden live
+         region from the three visible readouts (#flameProgress,
+         #solidProgress, #surfaceProgress above) — those stay bare, non-live
+         "42%" text on purpose (see setFlameProgress/setSolidProgress/
+         setSurfaceProgress in ui.ts): with no antecedent a live "fifty
+         percent" is barely better than silence, and a region wired straight
+         to a readout that repaints many times a second would produce a
+         screen reader that never stops talking. This element instead gets
+         text authored FOR SPEECH ("Flame render, 50 percent"), written at
+         coarse quartile boundaries only. One shared element for all three
+         render modes — they are mutually exclusive (only one render mode is
+         ever active), so there is no cross-mode collision to arbitrate.
+         Ships rendered and empty rather than inserted at announce time
+         (fr-vja8.48: a live region entering the accessibility tree already
+         populated announces unreliably). -->
+    <div
+      id="renderProgressAnnouncer"
+      class="visually-hidden"
+      role="status"
+      aria-live="polite"
+    ></div>
+
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

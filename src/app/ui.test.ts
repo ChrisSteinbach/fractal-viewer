@@ -7174,3 +7174,199 @@ describe("mid-session status notes are live regions (fr-vja8.25/.48)", () => {
     },
   );
 });
+
+// fr-vja8.38: the render-progress announcer. Its closest relative is the
+// "mid-session status notes are live regions" block above — same
+// role="status"/aria-live="polite" idiom, same fr-vja8.48 rendered-not-hidden
+// shape — but this element's TEXT is authored for speech rather than mirrored
+// from a prose note, and it is throttled to coarse quartile boundaries
+// (25/50/75/100) rather than announcing every setter call, so its behavior
+// gets its own block instead of joining that one's it.each table.
+describe("Ui render-progress announcer (fr-vja8.38)", () => {
+  function announcer(): HTMLElement | null {
+    return document.getElementById("renderProgressAnnouncer");
+  }
+
+  it("ships as a live region, rendered and empty from the start (fr-vja8.48)", () => {
+    new Ui(document);
+    expect(announcer()?.getAttribute("role")).toBe("status");
+    expect(announcer()?.getAttribute("aria-live")).toBe("polite");
+    expect(announcer()?.classList.contains("visually-hidden")).toBe(true);
+    expect(announcer()?.textContent).toBe("");
+  });
+
+  // Requirement (1) of the decided design: the bare "42%" readouts must NOT
+  // become live themselves — only this separate hidden element speaks.
+  it.each(["flameProgress", "solidProgress", "surfaceProgress"])(
+    "leaves the visible #%s readout with no live region of its own",
+    (id) => {
+      new Ui(document);
+      const el = document.getElementById(id);
+      expect(el?.hasAttribute("aria-live")).toBe(false);
+      expect(el?.hasAttribute("role")).toBe(false);
+    },
+  );
+
+  it("a flame march through 0..100 announces exactly four times, in order", () => {
+    const ui = new Ui(document);
+    const announcements: string[] = [];
+    let last = announcer()?.textContent ?? "";
+    for (let done = 0; done <= 100; done++) {
+      ui.setFlameProgress(done, 100);
+      const text = announcer()?.textContent ?? "";
+      if (text !== last) announcements.push(text);
+      last = text;
+    }
+    expect(announcements).toEqual([
+      "Flame render, 25 percent",
+      "Flame render, 50 percent",
+      "Flame render, 75 percent",
+      "Flame render, 100 percent",
+    ]);
+  });
+
+  it("rapid small increments inside one quartile announce nothing new", () => {
+    const ui = new Ui(document);
+    ui.setFlameProgress(50, 100);
+    expect(announcer()?.textContent).toBe("Flame render, 50 percent");
+    for (const done of [51, 55, 60, 65, 70, 74]) {
+      ui.setFlameProgress(done, 100);
+    }
+    expect(announcer()?.textContent).toBe("Flame render, 50 percent");
+  });
+
+  it("a jump that skips a boundary announces only the highest quartile newly crossed", () => {
+    const ui = new Ui(document);
+    ui.setFlameProgress(20, 100); // still under 25%: nothing yet
+    expect(announcer()?.textContent).toBe("");
+    ui.setFlameProgress(60, 100); // crosses 25 AND 50 in one call
+    expect(announcer()?.textContent).toBe("Flame render, 50 percent");
+  });
+
+  it("a restart (iterationsDone back to 0) re-arms the quartile for the next render", () => {
+    const ui = new Ui(document);
+    ui.setFlameProgress(100, 100);
+    expect(announcer()?.textContent).toBe("Flame render, 100 percent");
+    ui.setFlameProgress(0, 100); // the worker's "restarted" event, or a fresh session
+    expect(announcer()?.textContent).toBe("");
+    ui.setFlameProgress(25, 100);
+    expect(announcer()?.textContent).toBe("Flame render, 25 percent");
+  });
+
+  it("Solid announces at the same coarse boundaries, with its own wording and reset", () => {
+    const ui = new Ui(document);
+    ui.setSolidProgress(24_000_000, 100_000_000);
+    expect(announcer()?.textContent).toBe("");
+    ui.setSolidProgress(25_000_000, 100_000_000);
+    expect(announcer()?.textContent).toBe("Solid render, 25 percent");
+    ui.setSolidProgress(75_000_000, 100_000_000); // skips 50: only the highest crossed
+    expect(announcer()?.textContent).toBe("Solid render, 75 percent");
+    ui.setSolidProgress(0, 100_000_000); // restart re-arms, like flame's
+    expect(announcer()?.textContent).toBe("");
+    ui.setSolidProgress(50_000_000, 100_000_000);
+    expect(announcer()?.textContent).toBe("Solid render, 50 percent");
+  });
+
+  it("Surface announces at the same coarse boundaries, with its own wording", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceProgress({ label: "Full detail · WebGL", pct: 12 });
+    expect(announcer()?.textContent).toBe("Surface render, using WebGL");
+    ui.setSurfaceProgress({ label: "Full detail · WebGL", pct: 30 });
+    expect(announcer()?.textContent).toBe("Surface render, 25 percent");
+  });
+
+  it("a hidden row (null) re-arms Surface's quartile for the next job", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceProgress({ label: "Full detail · WebGL", pct: 80 });
+    expect(announcer()?.textContent).toContain("Surface render, 75 percent");
+    ui.setSurfaceProgress(null); // this row's own reset signal — see setSurfaceProgress
+    expect(announcer()?.textContent).toBe("");
+    ui.setSurfaceProgress({ label: "Full detail · WebGL", pct: 30 });
+    expect(announcer()?.textContent).toContain("Surface render, 25 percent");
+  });
+
+  // fr-vja8.38's two surface-only one-shots: the engine token (fr-tmgf) and
+  // the antialiasing phase (fr-vpbq), both embedded in setSurfaceProgress's
+  // label/detail rather than broken out as their own fields — see
+  // surfaceProgressEngine and the "antialiasing pass" substring check.
+  describe("surface engine/antialiasing one-shots", () => {
+    it("announces the engine once, not on every later progress update", () => {
+      const ui = new Ui(document);
+      ui.setSurfaceProgress({ label: "Preview · WebGPU", pct: 5 });
+      expect(announcer()?.textContent).toBe("Surface render, using WebGPU");
+      ui.setSurfaceProgress({ label: "Preview · WebGPU", pct: 6 });
+      ui.setSurfaceProgress({ label: "Full detail · WebGPU", pct: 8 });
+      expect(announcer()?.textContent).toBe("Surface render, using WebGPU");
+    });
+
+    it("re-announces only when the engine actually changes", () => {
+      const ui = new Ui(document);
+      ui.setSurfaceProgress({ label: "Preview · WebGPU", pct: 5 });
+      // e.g. a mid-session compute -> WebGL fallback (device loss, create() failure).
+      ui.setSurfaceProgress({ label: "Full detail · WebGL", pct: 8 });
+      expect(announcer()?.textContent).toBe("Surface render, using WebGL");
+    });
+
+    it("does not repeat the engine across separate jobs in the same session", () => {
+      const ui = new Ui(document);
+      ui.setSurfaceProgress({ label: "Preview · WebGPU", pct: 15 });
+      ui.setSurfaceProgress(null); // job settles/hides
+      ui.setSurfaceProgress({ label: "Preview · WebGPU", pct: 10 }); // a fresh job, same engine
+      expect(announcer()?.textContent).toBe("");
+    });
+
+    it("announces the antialiasing phase once when it first appears, not once per pass", () => {
+      const ui = new Ui(document);
+      ui.setSurfaceProgress({ label: "Full detail · WebGPU", pct: 5 }); // spends the engine one-shot
+      ui.setSurfaceProgress(null); // clears the announcer; re-arms quartile + antialiasing
+      ui.setSurfaceProgress({ label: "Full detail · WebGPU", pct: 20 }); // pass 1 is silent (fr-vpbq)
+      expect(announcer()?.textContent).toBe("");
+      ui.setSurfaceProgress({
+        label: "Full detail · WebGPU",
+        pct: 24,
+        detail: "antialiasing pass 2/8",
+      });
+      expect(announcer()?.textContent).toBe(
+        "Surface render, antialiasing passes underway",
+      );
+      ui.setSurfaceProgress({
+        label: "Full detail · WebGPU",
+        pct: 24.5,
+        detail: "antialiasing pass 3/8",
+      });
+      // Still under the 25% quartile and already announced once: no repeat.
+      expect(announcer()?.textContent).toBe(
+        "Surface render, antialiasing passes underway",
+      );
+    });
+
+    it("re-arms the antialiasing one-shot for a fresh settle after the row hides", () => {
+      const ui = new Ui(document);
+      ui.setSurfaceProgress({
+        label: "Full detail · WebGPU",
+        pct: 24,
+        detail: "antialiasing pass 2/8",
+      });
+      expect(announcer()?.textContent).toContain(
+        "antialiasing passes underway",
+      );
+      ui.setSurfaceProgress(null); // settle finishes, row hides
+      ui.setSurfaceProgress({
+        label: "Full detail · WebGPU",
+        pct: 24,
+        detail: "antialiasing pass 2/8",
+      }); // a new settle after a further camera move, same shape
+      expect(announcer()?.textContent).toBe(
+        "Surface render, antialiasing passes underway",
+      );
+    });
+
+    it("combines an engine one-shot and a quartile crossing from one call into one utterance", () => {
+      const ui = new Ui(document);
+      ui.setSurfaceProgress({ label: "Full detail · WebGPU", pct: 30 });
+      expect(announcer()?.textContent).toBe(
+        "Surface render, using WebGPU. Surface render, 25 percent",
+      );
+    });
+  });
+});
