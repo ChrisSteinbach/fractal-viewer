@@ -1273,11 +1273,6 @@ export class Ui {
   private toastHovered = false;
   private toastFocused = false;
 
-  /** The active toast's own auto-hide window ({@link TOAST_DURATION_MS} or
-   * {@link TOAST_ACTION_DURATION_MS}), remembered so the pause's re-arm
-   * counts the right one down. */
-  private toastDurationMs = TOAST_DURATION_MS;
-
   /** Escape-and-Tab handling for the gallery, attached to the document only
    * while the modal is open (see {@link openGallery}/{@link closeGallery}) so
    * it never lingers or double-binds. An arrow field so
@@ -3382,13 +3377,13 @@ export class Ui {
     // releaseToast starts the full countdown when the pointer leaves.
     this.toastHovered = this.toast.matches(":hover");
     this.toastFocused = false;
-    this.toastDurationMs = action
-      ? TOAST_ACTION_DURATION_MS
-      : TOAST_DURATION_MS;
     if (this.toastTimer !== null) clearTimeout(this.toastTimer);
     this.toastTimer = this.toastHovered
       ? null
-      : setTimeout(() => this.hideToast(), this.toastDurationMs);
+      : setTimeout(
+          () => this.hideToast(),
+          action ? TOAST_ACTION_DURATION_MS : TOAST_DURATION_MS,
+        );
   }
 
   /** Hold the toast open (fr-vja8.21): the pointer entered it, or focus
@@ -3413,7 +3408,21 @@ export class Ui {
     if (this.toastHovered || this.toastFocused) return;
     if (this.toast.classList.contains("hidden")) return;
     if (this.toastTimer !== null) return;
-    this.toastTimer = setTimeout(() => this.hideToast(), this.toastDurationMs);
+    this.toastTimer = setTimeout(
+      () => this.hideToast(),
+      this.toastIsActionable() ? TOAST_ACTION_DURATION_MS : TOAST_DURATION_MS,
+    );
+  }
+
+  /** Whether the on-screen toast currently carries an action button —
+   * read straight off the rendered DOM rather than a duplicate field
+   * (fr-vja8.54): the button's presence IS what makes a toast actionable, so
+   * it cannot drift from itself the way a separately-set flag could. The
+   * `.toast-actionable` CLASS is not it — that class exists for style.css's
+   * pointer-events opt-in and is its own derivation of the same fact, one
+   * {@link releaseToast} must not round-trip through. */
+  private toastIsActionable(): boolean {
+    return this.toast.querySelector(".toast-action") !== null;
   }
 
   /** The `<button>` inside an action toast (see {@link flashToast}) — a
