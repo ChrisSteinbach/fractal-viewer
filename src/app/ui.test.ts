@@ -7370,3 +7370,226 @@ describe("Ui render-progress announcer (fr-vja8.38)", () => {
     });
   });
 });
+
+// fr-vja8.39: native `disabled` pulls a button out of the tab ring, so the
+// existing title-only disabled reason (hover-only) is invisible to a
+// keyboard/AT user. driftBtn, exportCollectionBtn and the timelinePlayBtn/
+// timelineExportBtn pair each grow a role="status"/aria-live="polite" note
+// beside them — the "mid-session status notes are live regions" idiom above
+// — mirroring the same reason in prose. Unlike that block's five notes,
+// these three setters (setDriftAvailable, setCollectionCount,
+// syncTimelineButtons via renderTimeline/setTimelineActive/
+// setTimelineAvailable/setTimelineExportProgress) re-run on every panel
+// refresh/timeline edit/collection change rather than only at a meaningful
+// transition, so each also gets a no-chatter pin: repeating the same
+// disabled state must not rewrite (and therefore not re-announce) the note.
+describe("disabled-reason notes for keyboard/AT users (fr-vja8.39)", () => {
+  it.each(["driftNote", "exportCollectionNote", "timelineNote"])(
+    "ships #%s as a role=status/aria-live=polite region, rendered and empty",
+    (id) => {
+      const note = document.getElementById(id);
+      expect(note?.getAttribute("role")).toBe("status");
+      expect(note?.getAttribute("aria-live")).toBe("polite");
+      expect(note?.classList.contains("hidden")).toBe(false);
+      expect(note?.textContent).toBe("");
+    },
+  );
+
+  describe("driftBtn / driftNote", () => {
+    function btn(): HTMLButtonElement {
+      return document.getElementById("driftBtn") as HTMLButtonElement;
+    }
+    function note(): HTMLElement {
+      return document.getElementById("driftNote") as HTMLElement;
+    }
+
+    it("writes the reduced-motion reason into the note when disabled, alongside the existing title swap", () => {
+      const ui = new Ui(document);
+      ui.setDriftAvailable(false);
+      expect(note().textContent).toBe(
+        "Unavailable: your system asks for reduced motion.",
+      );
+      expect(btn().title).toBe(
+        "Unavailable: your system asks for reduced motion",
+      );
+    });
+
+    it("clears the note when re-enabled, restoring the authored title", () => {
+      const ui = new Ui(document);
+      const authoredTitle = btn().title;
+      ui.setDriftAvailable(false);
+      ui.setDriftAvailable(true);
+      expect(note().textContent).toBe("");
+      expect(btn().disabled).toBe(false);
+      expect(btn().title).toBe(authoredTitle);
+    });
+
+    it("does not rewrite the note when the disabled state repeats (no chatter)", () => {
+      const ui = new Ui(document);
+      ui.setDriftAvailable(false);
+      let mutations = 0;
+      const observer = new MutationObserver((records) => {
+        mutations += records.length;
+      });
+      observer.observe(note(), {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+
+      ui.setDriftAvailable(false); // e.g. a later syncMotionAvailability with no real change
+
+      observer.disconnect();
+      expect(mutations).toBe(0);
+      expect(note().textContent).toBe(
+        "Unavailable: your system asks for reduced motion.",
+      );
+    });
+  });
+
+  describe("exportCollectionBtn / exportCollectionNote", () => {
+    function btn(): HTMLButtonElement {
+      return document.getElementById(
+        "exportCollectionBtn",
+      ) as HTMLButtonElement;
+    }
+    function note(): HTMLElement {
+      return document.getElementById("exportCollectionNote") as HTMLElement;
+    }
+
+    it("writes the empty-collection reason into the note at count zero, alongside the existing title swap", () => {
+      const ui = new Ui(document);
+      ui.setCollectionCount(0);
+      expect(note().textContent).toBe(
+        "Nothing saved yet — ★ Save to collection first.",
+      );
+      expect(btn().title).toBe(
+        "Nothing saved yet — ★ Save to collection first",
+      );
+    });
+
+    it("clears the note once a scene is saved, restoring the authored title", () => {
+      const ui = new Ui(document);
+      const authoredTitle = btn().title;
+      ui.setCollectionCount(0);
+      ui.setCollectionCount(1);
+      expect(note().textContent).toBe("");
+      expect(btn().disabled).toBe(false);
+      expect(btn().title).toBe(authoredTitle);
+    });
+
+    it("does not rewrite the note when count zero repeats across refreshes (no chatter)", () => {
+      const ui = new Ui(document);
+      ui.setCollectionCount(0);
+      let mutations = 0;
+      const observer = new MutationObserver((records) => {
+        mutations += records.length;
+      });
+      observer.observe(note(), {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+
+      ui.setCollectionCount(0); // e.g. an unrelated refreshUi with the same count
+
+      observer.disconnect();
+      expect(mutations).toBe(0);
+      expect(note().textContent).toBe(
+        "Nothing saved yet — ★ Save to collection first.",
+      );
+    });
+  });
+
+  describe("timelinePlayBtn / timelineExportBtn shared timelineNote", () => {
+    const step = (id: string) => ({
+      id,
+      encoded: `v1=${id}`,
+      thumbnail: "",
+      morphMs: 4000,
+      holdMs: 2000,
+    });
+
+    function playBtn(): HTMLButtonElement {
+      return document.getElementById("timelinePlayBtn") as HTMLButtonElement;
+    }
+    function exportBtn(): HTMLButtonElement {
+      return document.getElementById("timelineExportBtn") as HTMLButtonElement;
+    }
+    function note(): HTMLElement {
+      return document.getElementById("timelineNote") as HTMLElement;
+    }
+
+    it("writes the reduced-motion reason for both buttons, alongside their title swaps", () => {
+      const ui = new Ui(document);
+      ui.renderTimeline([step("a")], "0:06");
+      ui.setTimelineAvailable(false);
+      expect(note().textContent).toBe(
+        "Unavailable: your system asks for reduced motion.",
+      );
+      expect(playBtn().title).toBe(
+        "Unavailable: your system asks for reduced motion",
+      );
+      expect(exportBtn().title).toBe(
+        "Unavailable: your system asks for reduced motion",
+      );
+    });
+
+    it("writes the empty-timeline reason when there are no keyframes yet", () => {
+      const ui = new Ui(document);
+      ui.renderTimeline([], "0:00");
+      expect(note().textContent).toBe("Add a keyframe or two first.");
+    });
+
+    it("names Export specifically once playback starts, since Play stays enabled as Stop", () => {
+      const ui = new Ui(document);
+      ui.renderTimeline([step("a")], "0:06");
+      ui.setTimelineActive(true);
+      expect(playBtn().disabled).toBe(false);
+      expect(exportBtn().disabled).toBe(true);
+      expect(note().textContent).toBe(
+        "Export is unavailable while the timeline is playing — stop first.",
+      );
+    });
+
+    it("clears the note once both buttons are usable again", () => {
+      const ui = new Ui(document);
+      ui.renderTimeline([], "0:00");
+      ui.renderTimeline([step("a")], "0:06");
+      expect(note().textContent).toBe("");
+      expect(playBtn().disabled).toBe(false);
+    });
+
+    it("clears the note mid-export, when Export is force-enabled as the run's own cancel affordance", () => {
+      const ui = new Ui(document);
+      ui.renderTimeline([step("a")], "0:06");
+      ui.setTimelineActive(true);
+      expect(note().textContent).not.toBe("");
+
+      ui.setTimelineExportProgress("10%");
+
+      expect(exportBtn().disabled).toBe(false);
+      expect(note().textContent).toBe("");
+    });
+
+    it("does not rewrite the note when an unrelated timeline edit repeats the same reason (no chatter)", () => {
+      const ui = new Ui(document);
+      ui.renderTimeline([], "0:00");
+      let mutations = 0;
+      const observer = new MutationObserver((records) => {
+        mutations += records.length;
+      });
+      observer.observe(note(), {
+        childList: true,
+        characterData: true,
+        subtree: true,
+      });
+
+      ui.renderTimeline([], "0:00"); // still empty — a redundant re-render
+
+      observer.disconnect();
+      expect(mutations).toBe(0);
+      expect(note().textContent).toBe("Add a keyframe or two first.");
+    });
+  });
+});
