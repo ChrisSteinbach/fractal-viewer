@@ -135,6 +135,9 @@ export function attachInteractions(
 
   let orbitMode: OrbitMode = "none";
   let dragging = false;
+  /** True while the current orbitMode/dragging latch was begun by a touch —
+   * scopes onPointerMove's stale-mouse release to mouse-owned gestures. */
+  let latchFromTouch = false;
   let lastX = 0;
   let lastY = 0;
   let dollyStart = 0;
@@ -219,6 +222,7 @@ export function attachInteractions(
     setNdc(x, y);
     lastX = x;
     lastY = y;
+    latchFromTouch = touchOf(event) !== null;
 
     const selected = callbacks.selectedTransform();
     if (selected === null) {
@@ -231,14 +235,6 @@ export function attachInteractions(
 
   function moveCamera(event: Event, dx: number, dy: number): void {
     const mouse = touchOf(event) ? null : (event as MouseEvent);
-    // A latched mouse gesture with no button still down behind it is stale —
-    // the mouseup landed where no listener here could see it (released over
-    // browser chrome, or a focus steal the blur listener below missed).
-    // Release the latch rather than orbit under a button-less mouse.
-    if (mouse && mouse.buttons === 0 && orbitMode !== "none") {
-      onPointerUp();
-      return;
-    }
     if (orbitMode === "rotate") {
       // Checked per-move (not latched at pointerdown), so pressing/releasing
       // Shift mid-drag switches live between orbiting and w-turning — both
@@ -308,6 +304,22 @@ export function attachInteractions(
 
   function onPointerMove(event: Event): void {
     if (callbacks.frozen()) return;
+    // A latched MOUSE gesture with no button still down behind it is stale —
+    // the mouseup landed where no listener here could see it (released over
+    // browser chrome, or a focus steal the blur listener below missed).
+    // Release BOTH latches rather than track a button-less mouse: the camera
+    // latch would orbit under it, and the transform latch would commit a
+    // document edit on every hover move. Touch-owned latches are exempt — a
+    // stray mousemove during a live pinch/orbit must not end it.
+    if (
+      (orbitMode !== "none" || dragging) &&
+      !latchFromTouch &&
+      !touchOf(event) &&
+      (event as MouseEvent).buttons === 0
+    ) {
+      onPointerUp();
+      return;
+    }
     const { x, y } = pointerXY(event);
     const dx = x - lastX;
     const dy = y - lastY;
