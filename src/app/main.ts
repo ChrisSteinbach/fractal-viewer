@@ -1381,19 +1381,36 @@ function main(): void {
         height: scene.canvas.height,
         fps: OFFLINE_EXPORT_FPS,
       });
-      // The probe awaited: a raced ▶ Play (or a timeline emptied by edits)
-      // wins — abandon the export rather than double-starting a show.
+      // The probe awaited: a raced show start (or a timeline emptied by
+      // edits) wins — abandon the export rather than double-starting a
+      // run, and SAY so (fr-vja8.12: the silent abort read as a dead
+      // Export button). Above BOTH branches on purpose: the no-H.264
+      // fallback below used to restart the raced run from leg 0 as a
+      // recorded export.
+      if (timelinePlayer.active || timeline.size === 0) {
+        session?.abort();
+        ui.flashToast(
+          timelinePlayer.active
+            ? "Export abandoned — playback already started"
+            : "Export abandoned — the timeline is empty",
+        );
+        return;
+      }
       if (session === null) {
         ui.flashToast("Frame-exact export unavailable — recording live");
         startTimelinePlayback(true);
         if (!recorderActive) recorder.toggle();
         return;
       }
-      if (timelinePlayer.active || timeline.size === 0) {
-        session.abort();
-        return;
-      }
       await driveOfflineExport(session);
+    } catch (err) {
+      // A rejecting encoder probe must land in a toast, not an unhandled
+      // rejection — onTimelineExport fire-and-forgets this promise
+      // (fr-vja8.12). driveOfflineExport's own catch covers the run;
+      // this covers the setup.
+      ui.flashToast(
+        `Export failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     } finally {
       offlineExportPending = false;
     }
@@ -6485,6 +6502,14 @@ function main(): void {
         timelinePolicy.stop();
         return;
       }
+      // An offline export owns the player for its whole pending span
+      // (fr-vja8.12). Pre-run (the encoder-probe gap) a plain run started
+      // here would make startOfflineExport's raced-show guard abandon the
+      // export the user just asked for; post-run (the encode flush) it
+      // would start against a virtual clock nothing advances until the
+      // export's finally unwinds it. Either way the click loses to the
+      // export in flight — swallow it.
+      if (offlineExportPending) return;
       if (prefersReducedMotion() || timeline.size === 0) return;
       startTimelinePlayback(false);
     },
