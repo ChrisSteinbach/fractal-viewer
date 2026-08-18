@@ -48,6 +48,7 @@ function mockEffects(shared = false): ControlEffects {
     postVoxel: vi.fn(),
     presentSharedFlameFrame: vi.fn(() => shared),
     regenerateIfAutoUpdate: vi.fn(),
+    refreshSurfaceEligibility: vi.fn(),
     recolor: vi.fn(),
     applyFourDColor: vi.fn(),
     restartSolidRender: vi.fn(),
@@ -426,6 +427,22 @@ describe("effects", () => {
       const command = { type: "setSymmetry", order: 4, plane: "xz", twist: 0 };
       expect(fx.postFlame).toHaveBeenCalledWith(command);
       expect(fx.postVoxel).toHaveBeenCalledWith(command);
+    });
+
+    it("symmetry effect re-derives the Surface eligibility gate (fr-vja8.10)", () => {
+      // A symmetry edit can flip the document's flatness (a w-plane or a
+      // twist) or close the Mandelbulb arm (order > 1), and the scalar
+      // pipeline never runs a full refreshUi — the effect must refresh the
+      // gate itself or the Surface button goes stale until an unrelated
+      // edit.
+      const spec = specById("symmetryOrderSlider");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "4");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.refreshSurfaceEligibility).toHaveBeenCalledTimes(1);
     });
 
     it("symmetryPlane effect posts the identical setSymmetry shape to both render workers", () => {
