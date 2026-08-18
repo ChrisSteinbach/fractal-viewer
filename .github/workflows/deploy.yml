@@ -5,12 +5,21 @@ name: Deploy to GitHub Pages
 # entry, "main") — this workflow CANNOT deploy any other ref, and
 # "workflow_dispatch --ref <old tag/sha>" is refused at the environment gate
 # rather than at dispatch, so it looks viable until it isn't. Rollback is
-# therefore: revert the bad commit(s) on main, then dispatch a FRESH run —
-# never "Re-run failed jobs" on an old run to get old content redeployed,
-# since a re-run always rebuilds and redeploys the SAME commit that run was
-# originally dispatched against (checkout pins to that run's github.sha),
-# so it can only retry a transient failure on today's commit, never
-# substitute yesterday's.
+# therefore: land a revert of the bad commit(s) on main, then dispatch a
+# FRESH run — never "Re-run failed jobs" on an old run to get old content
+# redeployed, since a re-run always rebuilds and redeploys the SAME commit
+# that run was originally dispatched against (checkout pins to that run's
+# github.sha), so it can only retry a transient failure on today's commit,
+# never substitute yesterday's.
+#
+# fr-vja8.31: main is protected by a ruleset (pull_request + the four
+# required ci.yml checks + rebase-only), so "land a revert" means a revert
+# BRANCH taken through an ordinary PR — a direct push to main is refused.
+# That adds one CI wait (~2min) to a rollback, which is the trade the
+# protection makes on purpose: the same gate that slows a revert by two
+# minutes is the one that stops an untested commit reaching main at all.
+# The ruleset carries no bypass actors; in a genuine emergency the repo
+# admin can deactivate it from the repo's Rules settings, eyes open.
 on:
   workflow_dispatch:
 
