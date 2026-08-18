@@ -292,12 +292,12 @@ folds themselves are C0-continuous, so there is no boundary-proximity
 predictor), and which rounding seeds flip is realization-dependent — so
 the leg gates in LAYERS:
 
-- pre-hoc, a seven-orbit ENSEMBLE classifier (`escapeQueryStable` — the
+- pre-hoc, a seven-orbit ENSEMBLE classifier (`forwardQueryStable` — the
   fround twin at the query and its six one-ULP axis neighbors must all
   agree with the f64 oracle; exclusions disclosed per row and pinned
   under 20%, the structural not-eating-the-leg cap);
 - post-hoc, a residual failure is absolved only if
-  `escapeShadowFlipVerified` proves some 1..4-ULP neighbor orbit
+  `forwardShadowFlipVerified` proves some 1..4-ULP neighbor orbit
   REPRODUCES the GPU's value within tolerance (fr-7tl3's per-mismatch
   discipline lifted to eval; `flips=` in the row, capped at 7).
 

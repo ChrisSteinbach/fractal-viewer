@@ -133,8 +133,8 @@
  * at 0.22% of the marching ball between this module's polynomial power and
  * the trigonometric reference, both f64. A GPU agreement leg comparing f32
  * against this oracle will see that shell as "failures" and it is chaos,
- * not divergence; `escapeQueryStable`'s ensemble classifier and
- * `escapeShadowFlipVerified` (`src/app/gpu-bench/`) are the shape of the
+ * not divergence; `forwardQueryStable`'s ensemble classifier and
+ * `forwardShadowFlipVerified` (`src/app/gpu-bench/`) are the shape of the
  * answer. The step-scale sweep above had to exclude the same shell to
  * measure anything at all (7-28 queries per system, disclosed per row).
  *
