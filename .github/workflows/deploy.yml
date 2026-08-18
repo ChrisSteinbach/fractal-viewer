@@ -10,7 +10,12 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  # false, matching GitHub's own Pages starter workflow: deploy-pages is a
+  # multi-step create-and-poll against the Pages API, and hard-cancelling it
+  # mid-poll risks leaving the Pages deployment stuck rather than actually
+  # stopping it. Two close dispatches (double-click, impatient re-dispatch)
+  # queue instead of the earlier one being killed mid-publish.
+  cancel-in-progress: false
 
 jobs:
   deploy:
