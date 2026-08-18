@@ -36,12 +36,16 @@ fully reproducible — which is what the tests rely on.
 ## Affine transforms
 
 Each `Transform` is a position, an Euler rotation (radians, **XYZ order**), and a
-per-axis scale — the same representation Three.js uses for an `Object3D`.
-`composeAffine` turns it into `M = T · R · S`, stored as a row-major 3×3 linear
-part plus a translation, and `applyAffine` computes `M · p`:
+per-axis scale — the same representation Three.js uses for an `Object3D` —
+plus an optional shear (`xy`/`xz`/`yz`, a unit upper-triangular term with no
+`Object3D` equivalent) that reaches the rest of the affine group. `composeAffine`
+turns it into `M = T · R · S · U(shear)` (shear absent or all-zero collapses
+`U` to the identity, so an unsheared `Transform` composes exactly as before),
+stored as a row-major 3×3 linear part plus a translation, and `applyAffine`
+computes `M · p`:
 
 ```
-applyAffine(t, p) = position + R · (scale ⊙ p)
+applyAffine(t, p) = position + R · (scale ⊙ p)   // shear = 0; see composeAffine for the general case
 ```
 
 `rotationMatrixXYZ` reproduces `THREE.Matrix4.makeRotationFromEuler` for

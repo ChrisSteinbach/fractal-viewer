@@ -524,9 +524,10 @@ morphs into place instead of snapping (see **Presets** below).
 
 - **Edit Transform N** — appears under **Transforms → Select to edit** while a
   transform is selected: sliders for its position (X/Y/Z), rotation (X/Y/Z, in
-  degrees), and scale (X/Y/Z) give exact per-axis control on every device. The
-  sliders track the guide box live and stay in sync with the drag gestures
-  above.
+  degrees), scale (X/Y/Z), and shear (XY/XZ/YZ — the affine group's remaining
+  degree of freedom, no gesture above reaches it) give exact per-axis control
+  on every device. The sliders track the guide box live and stay in sync with
+  the drag gestures above.
   - **Color → Index / Speed** (fr-hiyu) — the flam3 per-xform color pair, one
     group below **Weight**. **Index** is the palette slot this map pulls the
     flame's structural color coordinate toward; **Speed** is how far each pick
