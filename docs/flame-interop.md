@@ -37,8 +37,9 @@ Four facts line the two vocabularies up better than they first appear:
    flam3's own semantics: an unnormalized weighted sum that replaces the
    affine point. Imported maps pin `scale.z = 0` and every z field to 0, so
    the orbit lives in the `z = 0` plane and our 3D engine reproduces flam3's
-   planar dynamics exactly. (The other three — `boxfold`, `spherefold`,
-   `mandelbox` — are ours, not flam3's; see "A deliberate deviation" below.)
+   planar dynamics exactly. (The other five — `boxfold`, `spherefold`,
+   `mandelbox`, `qsquare`, and `bulb` — are ours, not flam3's; see "A
+   deliberate deviation" below.)
 
 3. **The lens matches.** flam3's `<finalxform>` is applied at plot time and
    never fed back into the orbit — precisely our `finalTransform`.
@@ -70,25 +71,28 @@ Four facts line the two vocabularies up better than they first appear:
 ## A deliberate deviation: the fold family isn't flam3's
 
 Fact 2 above has a carve-out. Twelve of our seventeen `VARIATION_TYPES` are
-flam3's own attribute names; the Mandelbox fold family — `boxfold`,
-`spherefold`, `mandelbox` (fr-p7nu) — is ours. flam3 and Apophysis have no
-plain variation attributes by these names at all — their Mandelbox-adjacent
-features live in separately parameterized plugins with different names and
-different formulas, not a drop-in match — so there was no existing name being
-claimed or collided with when the fold family was added.
+flam3's own attribute names; five are ours — the Mandelbox fold family,
+`boxfold`/`spherefold`/`mandelbox` (fr-p7nu), and the two escape-time power
+maps, `qsquare` (fr-7u8t.3) and `bulb` (fr-7u8t.7). flam3 and Apophysis have
+no plain variation attributes by any of these five names — the fold family's
+Mandelbox-adjacent look lives in separately parameterized plugins with
+different names and different formulas, not a drop-in match, and
+`qsquare`/`bulb` have no flam3 analogue at all — so there was no existing
+name being claimed or collided with when any of the five was added.
 
 Two consequences follow, both accepted on purpose rather than discovered
 after the fact:
 
-- **Export.** A scene using a fold variation writes a `boxfold`/`spherefold`/
-  `mandelbox` attribute no other flam3/Apophysis tool defines — the shape
-  degrades there exactly as any unrecognized variation would. Our own
-  importer round-trips it exactly, because it's reading its own name back.
+- **Export.** A scene using one of the five writes a
+  `boxfold`/`spherefold`/`mandelbox`/`qsquare`/`bulb` attribute no other
+  flam3/Apophysis tool defines — the shape degrades there exactly as any
+  unrecognized variation would. Our own importer round-trips it exactly,
+  because it's reading its own name back.
 - **Import.** A foreign `.flame` file that happens to carry an attribute
-  literally named `boxfold`, `spherefold`, or `mandelbox` — essentially never
-  from a genuine flam3/Apophysis export, conceivably from a hand-edited file
-  or another tool's own extension — is read as our fold variation, not
-  flagged as unsupported. It no longer contributes to the aggregated
+  literally named one of the five — essentially never from a genuine
+  flam3/Apophysis export, conceivably from a hand-edited file or another
+  tool's own extension — is read as our variation, not flagged as
+  unsupported. It no longer contributes to the aggregated
   unknown-variations warning, because the name-matching import path can't
   tell it apart from a real one.
 - **Custom radii (fr-s9ll).** A fold variation's `minRadius`/`fixedRadius`/
@@ -102,7 +106,8 @@ after the fact:
   anything else warns, because the exported file always reads back at the
   classic lengths. Import has nothing to recover — there is nowhere in the
   XML the value could have come from, so a re-imported fold variation is
-  always unparameterized.
+  always unparameterized. (`qsquare`/`bulb` carry no per-variation
+  parameters of their own — this bullet is fold-only, unlike the two above.)
 
 `VARIATION_NAMES` (the set `decodeFlameFile`/`encodeFlameFile` match against)
 stays mechanically derived from `VARIATION_TYPES` — one array, not a
@@ -135,10 +140,11 @@ more valuable property to protect.
 | `size`/`center`/`scale`/`rotate`                     | ignored — the explorer auto-fits its own camera                                                     |
 
 "Known variation attrs" matches any of our seventeen `VARIATION_TYPES` by name
-— fold family included, per the deviation above. A genuine flam3/Apophysis
-file essentially never carries a `boxfold`/`spherefold`/`mandelbox`
-attribute, but one that does gets read as our fold variation rather than
-flagged as an unsupported feature.
+— the fold family and the two power maps included, per the deviation above.
+A genuine flam3/Apophysis file essentially never carries a
+`boxfold`/`spherefold`/`mandelbox`/`qsquare`/`bulb` attribute, but one that
+does gets read as our variation rather than flagged as an unsupported
+feature.
 
 Everything else about the imported scene (point count, render style, color
 mode, …) takes the app's defaults. A file with several `<flame>` elements
@@ -215,9 +221,10 @@ The export writes the system's **XY shadow**:
   aggregated). The affine skeleton still imports, which often preserves the
   large-scale composition.
 - The reverse case (export — no warning, since nothing about the written XML
-  is invalid): our Mandelbox fold family isn't a flam3 variation at all, so a
-  `boxfold`/`spherefold`/`mandelbox` attribute is inert in every other
-  flam3/Apophysis tool. See "A deliberate deviation" above.
+  is invalid): our Mandelbox fold family and the two power maps aren't flam3
+  variations at all, so a `boxfold`/`spherefold`/`mandelbox`/`qsquare`/`bulb`
+  attribute is inert in every other flam3/Apophysis tool. See "A deliberate
+  deviation" above.
 - A fold variation's custom `minRadius`/`fixedRadius`/`boxLimit` (export —
   **warned**, fr-s9ll): flam3 XML has no attribute for them, so the exported
   shape always reads back at the classic Mandelbox lengths. Absent or
