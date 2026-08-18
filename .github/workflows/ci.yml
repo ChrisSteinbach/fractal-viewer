@@ -15,6 +15,10 @@ concurrency:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    # fr-vja8.8: without timeout-minutes the default is GitHub's 360min
+    # ceiling. Measured real duration is ~1m34s-1m54s; 10 keeps smoke's
+    # existing 5x-ish margin.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -38,6 +42,8 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    # fr-vja8.8: see lint's identical comment above — same measured margin.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -53,6 +59,8 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    # fr-vja8.8: see lint's identical comment above — same measured margin.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
