@@ -1955,4 +1955,15 @@ summary.editor-group-title {
     outline: 2px solid Highlight;
     outline-offset: -2px;
   }
+
+  /* Focus must stay visible ON the selected row (WCAG 2.4.7): the
+     selection outline above would otherwise win the whole `outline`
+     shorthand over the shared focus ring, computing byte-identical whether
+     the button is focused or not — Tab landing on the selected transform
+     would show nothing (wave-5 review finding). Dashed keeps the same
+     Highlight vocabulary while being unmistakably a third state: solid =
+     selected, plain ring = focused, dashed = both. */
+  .transform-btn.selected:focus-visible {
+    outline-style: dashed;
+  }
 }

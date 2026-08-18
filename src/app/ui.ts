@@ -2736,6 +2736,17 @@ export class Ui {
    * changed; a plain textContent write would re-announce an unchanged
    * reason to a screen reader every time, the fr-vja8.38 chatter lesson
    * applied to prose instead of a progress percentage.
+   *
+   * Honest scope note (wave-5 review): two of the three notes live inside
+   * collapsible accordion sections, and a closed `<details>`' content is
+   * not exposed to AT — a reason written while its section is closed is
+   * not announced, and this guard means opening the section does not
+   * re-write it either. That matches the file's existing in-section notes
+   * (flameSupersampleNote, solidResolutionNote), and the note is ordinary
+   * VISIBLE prose beside the button whenever the section is open — the
+   * discoverability half of fr-vja8.39, which is the half a hover-only
+   * title never had. Announce-on-change is the bonus for the open case,
+   * not the load-bearing channel.
    */
   private setReasonNote(note: HTMLElement, text: string): void {
     if (note.textContent !== text) note.textContent = text;
@@ -4043,9 +4054,17 @@ export class Ui {
     progress: { label: string; pct: number; detail?: string } | null,
   ): void {
     if (progress === null) {
+      // Re-arm for the next job — but unlike flame/solid's reset, do NOT
+      // clear the announcer text (wave-5 review finding): surface nulls
+      // arrive a frame after a settle completes, so a clear here wiped the
+      // just-written "100 percent" before a screen reader could dequeue
+      // the polite utterance — the one boundary that says the picture is
+      // done. The text persists until the next genuinely new utterance
+      // overwrites it; the narrow cost is that a later settle crossing the
+      // SAME quartile as the last text written is not re-spoken, which is
+      // the lesser loss by far.
       this.surfaceAnnouncedQuartile = 0;
       this.surfaceAntialiasingAnnounced = false;
-      this.renderProgressAnnouncer.textContent = "";
       return;
     }
     const toAnnounce: string[] = [];
@@ -4060,13 +4079,21 @@ export class Ui {
       toAnnounce.push("Surface render, antialiasing passes underway");
     }
     this.surfaceAntialiasingAnnounced = antialiasing;
-    const { armed, text } = crossedProgressQuartile(
-      "Surface",
-      progress.pct,
-      this.surfaceAnnouncedQuartile,
-    );
-    this.surfaceAnnouncedQuartile = armed;
-    if (text !== null) toAnnounce.push(text);
+    // Quartiles speak for FULL-DETAIL jobs only (wave-5 review finding):
+    // preview jobs recycle continuously under auto-orbit/auto-tumble — a
+    // motion that never parks would otherwise cross 25/50/75/100 per
+    // preview, forever, which is the exact chatter this feature exists to
+    // prevent. The settle is the render whose progress means something to
+    // wait for, and it only runs on a parked view.
+    if (progress.label.startsWith("Full detail")) {
+      const { armed, text } = crossedProgressQuartile(
+        "Surface",
+        progress.pct,
+        this.surfaceAnnouncedQuartile,
+      );
+      this.surfaceAnnouncedQuartile = armed;
+      if (text !== null) toAnnounce.push(text);
+    }
     if (toAnnounce.length > 0) {
       this.renderProgressAnnouncer.textContent = toAnnounce.join(". ");
     }

@@ -235,6 +235,14 @@ export function attachInteractions(
     lastX = x;
     lastY = y;
     latchFromTouch = touchOf(event) !== null;
+    // Clicking the canvas must focus it in EVERY mode (fr-vja8.37 promises
+    // click-or-Tab reaches the camera keys): the transform path's
+    // preventDefault below would otherwise cancel the browser's
+    // focus-on-mousedown, leaving focus on whatever panel control last had
+    // it — and the next arrow key silently editing that control instead of
+    // the camera (wave-5 review finding). Idempotent on the camera path,
+    // which gets the same focus by default.
+    canvas.focus({ preventScroll: true });
 
     const selected = callbacks.selectedTransform();
     if (selected === null) {
@@ -412,11 +420,21 @@ export function attachInteractions(
   // stays slider-based (the fr-vja8.37 triage's own scope line).
   function onKeyDown(event: KeyboardEvent): void {
     if (callbacks.frozen()) return;
+    // AltGr on Windows reports ctrlKey+altKey together, and on many
+    // layouts (QWERTZ, AZERTY...) [ and ] are AltGr chords — so ctrl+alt
+    // TOGETHER producing a printable character is text input, not a
+    // shortcut chord, and must not be refused (wave-5 review finding).
+    // Ctrl+Alt with a non-printable key (arrows — OS workspace switches)
+    // stays a chord.
+    const altGr =
+      (event.ctrlKey && event.altKey && event.key.length === 1) ||
+      event.getModifierState("AltGraph");
     const action = cameraKeyAction(
       {
         key: event.key,
         shiftKey: event.shiftKey,
-        withChordModifier: event.ctrlKey || event.altKey || event.metaKey,
+        withChordModifier:
+          (event.ctrlKey || event.altKey || event.metaKey) && !altGr,
         repeat: event.repeat,
       },
       { fourD: callbacks.fourDView(), sliceOn: callbacks.fourDSliceOn() },

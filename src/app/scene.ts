@@ -1233,12 +1233,20 @@ export class FractalScene {
     container.appendChild(this.renderer.domElement);
     // The canvas is a focus target (fr-vja8.37): interactions.ts binds the
     // camera keys to it, and element-scoped keydown is what keeps arrows/
-    // Space from ever shadowing the panel's own controls. The label doubles
-    // as the discoverability channel — a screen reader teaches the keys on
-    // focus (the container div keeps its own role="img" name for the
-    // picture itself, fr-vja8.23; this names the WIDGET). Sighted keyboard
-    // users get the focus ring style.css draws on :focus-visible.
+    // Space from ever shadowing the panel's own controls. The accessible
+    // identity lives HERE, on the widget — index.html's container div
+    // carries no role since this feature (its old fr-vja8.23 role="img"
+    // would prune this focusable canvas from the accessibility tree) — and
+    // the label doubles as the discoverability channel: a screen reader
+    // teaches the keys on focus. role="application" is what makes those
+    // keys REACHABLE for that audience at all (wave-5 review finding):
+    // without a widget role, NVDA/JAWS stay in browse mode on focus and
+    // the virtual cursor swallows the very arrows the label teaches. The
+    // role is scoped to the leaf canvas — it contains no other content to
+    // trap a browse-mode user inside. Sighted keyboard users get the focus
+    // ring style.css draws on :focus-visible.
     this.renderer.domElement.tabIndex = 0;
+    this.renderer.domElement.setAttribute("role", "application");
     this.renderer.domElement.setAttribute(
       "aria-label",
       "Fractal viewpoint. Arrow keys orbit, plus and minus zoom, Space " +
