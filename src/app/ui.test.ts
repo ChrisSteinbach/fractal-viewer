@@ -6654,3 +6654,22 @@ describe("Ui fog tint row (fr-5h5d)", () => {
     );
   });
 });
+
+describe("mid-session status notes are live regions (fr-vja8.25)", () => {
+  // These five populate/change mid-session via targeted setters (software-
+  // renderer detection, CPU fallback on a flame restart, memory clamps, the
+  // surface degraded note) — a few times per session, never per frame. The
+  // slider-coupled #symmetryNote is deliberately absent: it rewrites on
+  // every drag tick, which a live region would announce as chatter.
+  it.each([
+    "softwareRendererNote",
+    "flameBackendNote",
+    "surfaceNote",
+    "flameSupersampleNote",
+    "solidResolutionNote",
+  ])("announces #%s to assistive tech when it changes", (id) => {
+    const note = document.getElementById(id);
+    expect(note?.getAttribute("role")).toBe("status");
+    expect(note?.getAttribute("aria-live")).toBe("polite");
+  });
+});
