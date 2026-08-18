@@ -6670,6 +6670,93 @@ describe("Ui modal focus trap (fr-trtv)", () => {
 
     expect(() => ui.closeGallery()).not.toThrow();
   });
+
+  // fr-vja8.13: the export modal can stack over a sibling (a Save PNG's
+  // 400ms grace window leaves the gallery opener live), and both keydown
+  // handlers hear every document keydown. Escape used to close the gallery
+  // AND silently abort the multi-minute export; Tab ran both focus cycles.
+  it("Escape under a stacked export modal closes only the gallery — the export keeps running", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.openGallery([saved("a")]);
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+
+    pressEscape();
+
+    expect(el("galleryModal").classList.contains("hidden")).toBe(true);
+    expect(el("exportModal").classList.contains("hidden")).toBe(false);
+    expect(handlers.onExportCancel).not.toHaveBeenCalled();
+
+    // Detach this Ui's document keydown listener: `document` outlives the
+    // per-test body reset, and a listener left behind with its export modal
+    // open would consume a later test's Escape.
+    ui.hideExportProgress();
+  });
+
+  it("Tab while stacked cycles only the topmost (export) ring", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openGallery([saved("a"), saved("b")]);
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+    expect(document.activeElement).toBe(el("exportCancelBtn"));
+
+    // The export ring is its lone Cancel — a cycle stays put. Without the
+    // topmost guard the gallery's handler would also step ITS ring and drag
+    // focus onto a card behind the export scrim.
+    pressTab();
+    expect(document.activeElement).toBe(el("exportCancelBtn"));
+    pressTab(true);
+    expect(document.activeElement).toBe(el("exportCancelBtn"));
+
+    ui.hideExportProgress();
+    ui.closeGallery();
+  });
+
+  it("closing the gallery under the export modal leaves focus trapped in the export dialog", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    el("galleryBtn").focus();
+    ui.openGallery([saved("a")]);
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+
+    pressEscape();
+
+    expect(el("exportModal").contains(document.activeElement)).toBe(true);
+
+    ui.hideExportProgress();
+  });
+
+  it("the export modal inherits the closed gallery's opener, so the unwind lands somewhere visible", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    el("galleryBtn").focus();
+    ui.openGallery([saved("a")]);
+    // The export modal's recorded opener is the gallery's ✕ — an element
+    // whose dialog is about to close under it.
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+    pressEscape();
+
+    ui.hideExportProgress();
+
+    expect(document.activeElement).toBe(el("galleryBtn"));
+  });
 });
 
 describe("Ui replay caption", () => {
