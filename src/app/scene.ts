@@ -2540,9 +2540,16 @@ export class FractalScene {
     // drawing buffer from its STORED ratio — without this the app renders
     // persistently soft on a denser display (or wastefully oversampled on
     // a sparser one) until a Save-PNG or governor rung change happens to
-    // re-apply it. applyPixelRatio also syncs the buffer dependents, so
-    // it replaces the bare syncBufferDependents() call.
-    this.applyPixelRatio(this.basePixelRatio() * this.resolutionScale);
+    // re-apply it. Equality-guarded (fr-vja8.50): three's setPixelRatio
+    // re-runs setSize unconditionally, so an unguarded re-apply paid the
+    // whole renderer+composer resize path twice per event through every
+    // ordinary drag-resize where the ratio never moved.
+    const ratio = this.basePixelRatio() * this.resolutionScale;
+    if (ratio !== this.renderer.getPixelRatio()) {
+      this.applyPixelRatio(ratio);
+    } else {
+      this.syncBufferDependents();
+    }
   }
 
   /**
