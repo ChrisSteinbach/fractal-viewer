@@ -29,12 +29,14 @@ describe("resizeGuideComponent", () => {
   });
 });
 
-/** attachInteractions against a minimal fake scene, in camera mode (no
- * transform selected): the paths under test never reach the raycaster, the
- * camera or a guide cube, so a bare canvas element and a spy orbit are the
- * whole world. Listeners attach for the page lifetime by design; each call
- * gets its own closure, so stacking them across tests is harmless. */
-function setupInteractions(): {
+/** attachInteractions against a minimal fake scene — camera mode by default,
+ * or a transform drag when `selected` names an index: the paths under test
+ * never reach the raycaster, the camera or a real guide cube (guideCube
+ * yields null, so a transform drag latches but edits nothing), so a bare
+ * canvas element and a spy orbit are the whole world. Listeners attach for
+ * the page lifetime by design; each call gets its own closure, so stacking
+ * them across tests is harmless. */
+function setupInteractions(opts: { selected?: number } = {}): {
   canvas: HTMLCanvasElement;
   rotate: ReturnType<typeof vi.fn>;
   handle: InteractionsHandle;
@@ -50,10 +52,10 @@ function setupInteractions(): {
     dolly: vi.fn(),
   } as unknown as OrbitCamera;
   const handle = attachInteractions(
-    { canvas, camera: {} } as unknown as FractalScene,
+    { canvas, camera: {}, guideCube: () => null } as unknown as FractalScene,
     orbit,
     {
-      selectedTransform: () => null,
+      selectedTransform: () => opts.selected ?? null,
       onTransformChange: vi.fn(),
       frozen: () => false,
       fourDView: () => false,
@@ -61,6 +63,17 @@ function setupInteractions(): {
     },
   );
   return { canvas, rotate, handle };
+}
+
+// jsdom has no TouchEvent constructor; the handlers only read `touches` off
+// the event, so a generic Event with the list assigned behaves identically.
+function touchEvent(
+  type: string,
+  touches: { clientX: number; clientY: number }[],
+): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.assign(event, { touches });
+  return event;
 }
 
 describe("attachInteractions mouse latch release", () => {
@@ -103,5 +116,34 @@ describe("attachInteractions mouse latch release", () => {
 
     expect(rotate).not.toHaveBeenCalled();
     expect(handle.gestureActive()).toBe(false);
+  });
+
+  it("releases a mouse transform-drag latch on a button-less move instead of tracking the hover", () => {
+    const { canvas, handle } = setupInteractions({ selected: 0 });
+    canvas.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, clientX: 50, clientY: 50 }),
+    );
+    expect(handle.gestureActive()).toBe(true);
+
+    document.dispatchEvent(
+      new MouseEvent("mousemove", { buttons: 0, clientX: 120, clientY: 90 }),
+    );
+
+    expect(handle.gestureActive()).toBe(false);
+  });
+
+  it("keeps a live touch orbit latched through a stray button-less mousemove", () => {
+    const { canvas, handle } = setupInteractions();
+    canvas.dispatchEvent(
+      touchEvent("touchstart", [{ clientX: 50, clientY: 50 }]),
+    );
+    expect(handle.gestureActive()).toBe(true);
+
+    // A touchscreen-laptop mouse (or palm brush) moves with no button down.
+    document.dispatchEvent(
+      new MouseEvent("mousemove", { buttons: 0, clientX: 200, clientY: 200 }),
+    );
+
+    expect(handle.gestureActive()).toBe(true);
   });
 });
