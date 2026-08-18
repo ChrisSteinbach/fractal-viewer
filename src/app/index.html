@@ -1768,7 +1768,11 @@
       aria-busy="true"
     >
       <div class="gallery-backdrop"></div>
-      <div class="gallery-dialog export-dialog">
+      <!-- tabindex="-1" (fr-vja8.41): the points-arm run (cancellable:false,
+           no fr-2fbs action) leaves this dialog with ZERO focusables, so the
+           dialog box itself is the focus trap's programmatic target — never
+           a Tab stop (the ring selector excludes tabindex="-1"). -->
+      <div class="gallery-dialog export-dialog" tabindex="-1">
         <div class="gallery-header">
           <h2 class="gallery-title" id="exportTitle">Saving PNG</h2>
         </div>

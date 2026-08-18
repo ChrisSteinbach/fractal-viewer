@@ -6786,6 +6786,73 @@ describe("Ui modal focus trap (fr-trtv)", () => {
 
     expect(document.activeElement).toBe(el("galleryBtn"));
   });
+
+  // fr-vja8.41: the points-arm export run (cancellable:false, no second
+  // action) is the one modal that ships with an EMPTY focus ring — Cancel
+  // hidden, the fr-2fbs button detached — so the trap falls back to the
+  // dialog box itself (tabindex="-1").
+  function exportDialog(): HTMLElement {
+    const dialog = el("exportModal").querySelector(".gallery-dialog");
+    if (!(dialog instanceof HTMLElement)) {
+      throw new Error("No .gallery-dialog under #exportModal");
+    }
+    return dialog;
+  }
+
+  it("focuses the dialog box itself when the export ring is empty (fr-vja8.41)", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    el("savePngBtn").focus();
+
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: false,
+    });
+
+    expect(document.activeElement).toBe(exportDialog());
+
+    ui.hideExportProgress();
+  });
+
+  it("Tab stays parked on the dialog while the export ring is empty", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: false,
+    });
+
+    pressTab();
+    expect(document.activeElement).toBe(exportDialog());
+    pressTab(true);
+    expect(document.activeElement).toBe(exportDialog());
+
+    ui.hideExportProgress();
+  });
+
+  it("closing the gallery under a points-arm export keeps focus inside the export dialog", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    el("galleryBtn").focus();
+    ui.openGallery([saved("a")]);
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: false,
+    });
+    expect(document.activeElement).toBe(exportDialog());
+
+    pressEscape();
+
+    expect(el("galleryModal").classList.contains("hidden")).toBe(true);
+    // Base behavior dropped focus to body here for the seconds of encode;
+    // the dialog target keeps the keyboard user inside the top dialog.
+    expect(el("exportModal").contains(document.activeElement)).toBe(true);
+
+    ui.hideExportProgress();
+  });
 });
 
 describe("Ui replay caption", () => {
