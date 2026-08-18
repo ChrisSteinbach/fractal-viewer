@@ -80,7 +80,11 @@ pinned above the sections (a progress readout for Flame/Solid, an instant
 hint for Surface), and the panel remembers which section was open in each
 mode, so switching Points ↔ Flame ↔ Solid ↔ Surface restores where you were.
 Scroll swipes that happen to land on a slider scroll the panel without
-editing its value; horizontal drags (and taps) still adjust it as usual.
+editing its value; horizontal drags still adjust it as usual. A tap alone
+sets nothing — tap-to-set is deliberately absent on touch (fr-xu4u), since
+on a panel of full-width sliders a tap that lands on one is a scroll that
+hasn't moved yet far more often than it's an edit, and a drag still reaches
+any value the tap could have.
 Loading a whole new system — a preset, Surprise Me, or a gallery load —
 morphs into place instead of snapping (see **Presets** below).
 
