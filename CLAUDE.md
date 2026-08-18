@@ -168,8 +168,10 @@ keeps `core:"escape4"` and the 4D plane/balloon blocks from being dead
 code. MEASURED at the lift, real Iris, 1024x640, 8/8: the 4D chain
 44.6%, under an xw kaleidoscope 44.5%, with the floor 88.9%; a 4D IFS
 attractor with the floor 89.2% and with the balloon 41.1%;
-kaleidoscope-4D through the FRAGMENT arm 67.4% / 32.3%; and the 3D
-Mandelbox-with-floor control 89.2%. Its kaleidoscope fixture is
+kaleidoscope-4D through the FRAGMENT arm 67.4% / 32.3% (the PRE-fr-fniy
+record — since fr-fniy both kaleido scenes ride COMPUTE and the gate
+expects it, re-measured 87.8% / 40.4%; fr-vja8.56 caught the script
+still expecting webgl); and the 3D Mandelbox-with-floor control 89.2%. Its kaleidoscope fixture is
 deliberately LIGHT (2 maps at order 3) and that is a measurement too — a
 four-map order-5 4D system settles neither with the floor NOR without it
 inside 200s on this hardware, which is fr-b72d's superlinear order cost
