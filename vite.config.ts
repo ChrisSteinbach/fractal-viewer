@@ -48,6 +48,19 @@ export default defineConfig({
   build: {
     outDir: "../../dist/app",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // fr-vja8.65: three.js is 37% of the main chunk's sources and
+        // changes only on dependabot bumps, while the app's own code
+        // changes every campaign wave. Workbox precaches per URL with
+        // content-hashed revisions, so splitting three out means a typical
+        // deploy re-fetches only the app chunk for returning visitors
+        // instead of the whole bundle. Loading behavior only — no code
+        // change.
+        manualChunks: (id) =>
+          id.includes("node_modules/three") ? "three" : undefined,
+      },
+    },
   },
   plugins: [
     basicSsl(),
