@@ -171,7 +171,12 @@ export function setSurfaceComputeTrace(
  * bound above it is the kernel's own `steps >= params.marchSteps` break,
  * not the sizer. Both are fine for an instrument run and neither is
  * something to leave in a URL. `?surfacesamples=N` and `?surfacemaxrays=N`
- * are the same shape of escape hatch.
+ * are the same shape of escape hatch. Unlike the app's own shareable
+ * links, which ride the `#v1=` hash, a diagnostic pin rides a plain query
+ * param, so a hostile page can hand a victim a `?surfacemarchsteps=` link
+ * and a click into Surface mode buys a single watchdog-tripping dispatch —
+ * which is why {@link SURFACE_COMPUTE_MARCH_STEPS_PIN_CAP} bounds this one
+ * pin below whatever the sizer would otherwise allow (fr-vja8.30).
  */
 let surfaceComputeMarchChunkPin: number | null = null;
 let surfaceComputeMarchStepsPin: number | null = null;
@@ -226,6 +231,20 @@ export const SURFACE_COMPUTE_PASS_TARGET_MS = 250;
  * bound; with the full march budget at 160 a frame is never more than a
  * few dozen passes. */
 export const SURFACE_COMPUTE_MAX_STEPS_PER_PASS = 32;
+
+/** Ceiling on {@link surfaceComputeMarchStepsPin} (fr-vja8.30): unlike the
+ * chunk and hit pins, marchSteps has no downstream `Math.min` — it seeds
+ * `stepsThisPass` directly, which rides unmodified into `writeParams` as a
+ * per-dispatch DE-steps-per-ray count, so an unclamped pin is the one
+ * URL-reachable path past every other sizing dial's safety machinery and
+ * into the i915 watchdog. Anchored to a generous multiple of
+ * {@link SURFACE_COMPUTE_MAX_STEPS_PER_PASS} — the adaptive scheduler's own
+ * ceiling on that same `stepsThisPass` quantity — rather than picked
+ * fresh: 128x is a few thousand, far past any legitimate experiment (the
+ * full march budget is ~160 steps/ray, spread across many dispatches) and
+ * far short of the millions a watchdog trip needed. */
+export const SURFACE_COMPUTE_MARCH_STEPS_PIN_CAP =
+  SURFACE_COMPUTE_MAX_STEPS_PER_PASS * 128;
 
 /** Default interval between progressive presents of a long frame. */
 export const SURFACE_COMPUTE_PROGRESS_MS = 500;
@@ -2438,7 +2457,14 @@ export class SurfaceComputeRenderer {
     // submission bounded in the unit that actually costs.
     let shadeHitQueue: number[] = [];
     let shadeFreeQueue: number[] = [];
-    let stepsThisPass = marchStepsPin ?? 1;
+    // fr-vja8.30: the one pin with no downstream Math.min (see the chunk
+    // and hit pins' own consumption sites below), so it is clamped here —
+    // the one place a pin value becomes stepsThisPass — rather than left
+    // to grow into a per-dispatch step count a hostile URL could pick.
+    let stepsThisPass = Math.min(
+      marchStepsPin ?? 1,
+      SURFACE_COMPUTE_MARCH_STEPS_PIN_CAP,
+    );
     // fr-tdft sub-ray credit bookkeeping: march steps issued to every
     // surviving active ray by COMPLETED sweeps, and how many of the
     // current sweep's rays have been dispatched so far (those hold
@@ -2777,6 +2803,10 @@ export class SurfaceComputeRenderer {
             tr("budget truncated (march)");
             break outer;
           }
+          // fr-vja8.30: marchChunkPin carries no cap of its own — the two
+          // terms below already bound whatever it asks for (a ray count,
+          // unlike the steps pin's per-ray work), so an unclamped parse
+          // is not a hazard here.
           const chunk = Math.min(
             marchChunkPin ?? marchChunkFor(rayStepEmaUs, stepsThisPass),
             active.length - offset,
@@ -2910,6 +2940,11 @@ export class SurfaceComputeRenderer {
         // ladder below: the growth threshold has to be the number the
         // sizer aimed at, not a fixed constant (fr-2ojg).
         const hitBudgetMs = shadeHitBudgetUs(sizer.cost.interceptUs) / 1000;
+        // fr-vja8.30: shadeHitsPin is unclamped at parse too, but it names
+        // a HIT COUNT, not per-ray work, so maxDispatchRays below already
+        // bounds it exactly like the free queue's batch size — no separate
+        // cap needed, unlike marchStepsPin
+        // ({@link SURFACE_COMPUTE_MARCH_STEPS_PIN_CAP}).
         const batchSize = isFree
           ? Math.min(shadeFreeQueue.length, maxDispatchRays)
           : Math.min(
