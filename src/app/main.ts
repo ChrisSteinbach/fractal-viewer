@@ -4462,6 +4462,12 @@ function main(): void {
       // 3D branch keeps null unconditionally — WebGL is its natural
       // engine, nothing to explain.
       surfaceWebglDetailToken = null;
+      // A grid the PREVIOUS session parked behind a capture (fr-p0mr) must
+      // not greet this one either (fr-vja8.11): a surface→surface restart
+      // (restartSurfaceRender — the balloon toggle's path) re-enters
+      // without ever running deactivate, so its boundary clear can't
+      // cover this door.
+      pendingSurfaceGrid = null;
       try {
         if (
           systemPartsAreNonFlat(
@@ -5096,6 +5102,13 @@ function main(): void {
       // supersedes by id anyway; this just keeps settle() honest for the
       // offline exporter.
       surfaceGrid.cancel();
+      // ...and one that already LANDED but parked behind a capture
+      // (fr-p0mr) dies with the session too (fr-vja8.11): tickRender
+      // applies whatever is parked in ANY later surface session — AFTER
+      // that session's own grid clear — so a stale park would hand e.g. a
+      // balloon session the fold grid fr-5wlv.3's gridless rule exists to
+      // keep away from the shell.
+      pendingSurfaceGrid = null;
       surfaceSessionIs4D = false;
       surface4SlabExact = true;
       ui.setFourDSlabAvailable(true);
