@@ -187,7 +187,20 @@
            the per-mode status sections so a silently software-rendered
            session (the trigger incident: a browser-blocklisted GPU) is
            disclosed in every mode, Points included. -->
-      <p id="softwareRendererNote" class="flame-note hidden"></p>
+      <!-- role="status" (here and on the four setter-driven notes below,
+           fr-vja8.25): these populate/change mid-session — software-renderer
+           detection, a CPU fallback on a flame restart, a memory clamp — so
+           without a live region a screen-reader user gets no signal. The
+           #updateBanner/#renderError notices carry the same treatment. The
+           slider-coupled #symmetryNote is deliberately NOT one of them: it
+           rewrites per drag tick, which a live region would announce as
+           chatter. -->
+      <p
+        id="softwareRendererNote"
+        class="flame-note hidden"
+        role="status"
+        aria-live="polite"
+      ></p>
 
       <div id="flameStatus" class="hidden">
         <p class="flame-hint">
@@ -197,7 +210,12 @@
           active — switch back to Points to keep exploring.
         </p>
         <div id="flameProgress" class="flame-progress">0%</div>
-        <p id="flameBackendNote" class="flame-note-info hidden"></p>
+        <p
+          id="flameBackendNote"
+          class="flame-note-info hidden"
+          role="status"
+          aria-live="polite"
+        ></p>
       </div>
 
       <div id="solidStatus" class="hidden">
@@ -240,7 +258,12 @@
           <input type="checkbox" id="surfacePreviewToggle" checked />
           Quick previews
         </label>
-        <p id="surfaceNote" class="flame-note-info hidden"></p>
+        <p
+          id="surfaceNote"
+          class="flame-note-info hidden"
+          role="status"
+          aria-live="polite"
+        ></p>
         <div id="surfaceProgress" class="flame-progress hidden">0%</div>
         <!-- fr-37c6's one-shot escape: shown only while a preview is
              actually grinding (setSurfaceProgress's skippable flag) — a
@@ -1093,7 +1116,12 @@
               value="2"
             />
           </label>
-          <p id="flameSupersampleNote" class="flame-note hidden"></p>
+          <p
+            id="flameSupersampleNote"
+            class="flame-note hidden"
+            role="status"
+            aria-live="polite"
+          ></p>
         </details>
       </div>
 
@@ -1229,7 +1257,12 @@
               value="192"
             />
           </label>
-          <p id="solidResolutionNote" class="flame-note hidden"></p>
+          <p
+            id="solidResolutionNote"
+            class="flame-note hidden"
+            role="status"
+            aria-live="polite"
+          ></p>
         </details>
       </div>
 
