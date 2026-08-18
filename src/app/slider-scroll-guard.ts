@@ -190,8 +190,10 @@ export function installSliderScrollGuard(panel: HTMLElement): void {
     gesture.slider.dispatchEvent(new Event("input", { bubbles: true }));
   };
 
-  const end = (): void => {
-    if (!active) return;
+  /** End the gesture — only for the pointer that owns it: a second finger
+   * lifting mid-drag must not commit or cancel the first finger's slide. */
+  const end = (e: PointerEvent): void => {
+    if (!active || e.pointerId !== active.pointerId) return;
     const gesture = active;
     active = null;
     // Belt and braces: the rAF has long since run on any frame that painted,
@@ -207,6 +209,11 @@ export function installSliderScrollGuard(panel: HTMLElement): void {
     "pointerdown",
     (e) => {
       if (e.pointerType === "mouse") return;
+      // One gesture at a time: a second finger landing on a slider must not
+      // displace the one in flight — that would silently drop the first
+      // finger's trailing `change` (fr-2c27's commit-on-release sliders hang
+      // off it) and leave its lift ending the wrong gesture.
+      if (active) return;
       const slider = sliderFrom(e.target);
       if (!slider || slider.disabled) return;
       active = {

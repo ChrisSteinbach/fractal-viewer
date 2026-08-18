@@ -349,6 +349,83 @@ describe("installSliderScrollGuard (fr-xu4u)", () => {
     expect(slider.value).toBe("1");
   });
 
+  it("ignores a second finger's down mid-drag instead of handing it the gesture", () => {
+    const { panel, slider, changes } = setup({
+      min: "0",
+      max: "4",
+      step: "0.05",
+      value: "1",
+      left: 0,
+      width: 200,
+    });
+    const second = document.createElement("input");
+    second.type = "range";
+    second.min = "0";
+    second.max = "10";
+    second.value = "5";
+    panel.appendChild(second);
+
+    // Finger A is mid-drag...
+    slider.dispatchEvent(
+      pointerEvent("pointerdown", { pointerId: 1, clientX: 100, clientY: 10 }),
+    );
+    slider.dispatchEvent(
+      pointerEvent("pointermove", { pointerId: 1, clientX: 150 }),
+    );
+    // ...when finger B lands on another slider.
+    second.dispatchEvent(
+      pointerEvent("pointerdown", { pointerId: 2, clientX: 20, clientY: 10 }),
+    );
+
+    // A keeps writing, and A's lift still fires the trailing change.
+    slider.dispatchEvent(
+      pointerEvent("pointermove", { pointerId: 1, clientX: 180 }),
+    );
+    expect(slider.value).toBe("3.6");
+    slider.dispatchEvent(
+      pointerEvent("pointerup", { pointerId: 1, clientX: 180 }),
+    );
+    expect(changes).toHaveBeenCalledTimes(1);
+    expect(second.value).toBe("5");
+  });
+
+  it("does not end the drag when a second finger lifts elsewhere on the panel", () => {
+    const { panel, slider, changes } = setup({
+      min: "0",
+      max: "4",
+      step: "0.05",
+      value: "1",
+      left: 0,
+      width: 200,
+    });
+
+    slider.dispatchEvent(
+      pointerEvent("pointerdown", { pointerId: 1, clientX: 100, clientY: 10 }),
+    );
+    slider.dispatchEvent(
+      pointerEvent("pointermove", { pointerId: 1, clientX: 150 }),
+    );
+
+    // A second finger taps the panel background mid-drag.
+    panel.dispatchEvent(
+      pointerEvent("pointerdown", { pointerId: 2, clientX: 10, clientY: 300 }),
+    );
+    panel.dispatchEvent(
+      pointerEvent("pointerup", { pointerId: 2, clientX: 10 }),
+    );
+    expect(changes).not.toHaveBeenCalled(); // the drag is not committed early
+
+    // The first finger is still driving, through to its own release.
+    slider.dispatchEvent(
+      pointerEvent("pointermove", { pointerId: 1, clientX: 180 }),
+    );
+    expect(slider.value).toBe("3.6");
+    slider.dispatchEvent(
+      pointerEvent("pointerup", { pointerId: 1, clientX: 180 }),
+    );
+    expect(changes).toHaveBeenCalledTimes(1);
+  });
+
   it("guards sliders added after installation (the dynamic editor rows)", () => {
     const { panel } = setup({
       min: "0",
