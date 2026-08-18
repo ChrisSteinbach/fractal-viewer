@@ -125,30 +125,37 @@ const MODAL_GRACE_WAIT_MS = 700;
  * that it is any particular size — `> 2000` simply didn't hold for this
  * pose even before the fix, on a byte-identical image. */
 const THUMBNAIL_MIN_CHARS = 500;
-/** Floor on the Save-PNG download's byte size (phase 2). Proves a real,
- * completed image landed — a truncated download, an all-black frame or an
- * alpha-hole canvas (fr-1wbv's leak) all compress to ~1-3K — NOT that the
- * picture is any particular size: THUMBNAIL_MIN_CHARS's own discipline,
+/** Floor on the Save-PNG download's byte size (phase 2): an INTEGRITY
+ * floor — a zero-byte, truncated or catastrophically failed encode cannot
+ * reach it — NOT a content check: THUMBNAIL_MIN_CHARS's own discipline,
  * one drain over. CALIBRATED TO THE fr-vja8.68 FIXTURE (2026-08-18,
  * SwiftShader, 660x410), where the frame is mostly backdrop and the PNG's
  * bytes are dominated by px-proportional backdrop noise, not the
- * attractor: measured 11_379 bytes at the shipped 18-tick pose and 9_372
- * even at the rejected 24-tick one — a 2.14x attractor-area change moved
- * the file ~2K, so no affordable pose at this viewport reaches the old
- * 20_000, which was calibrated against 900x560's ~1.9x pixel count.
- * 5_500 keeps ~2x margin under the shipped pose's measured bytes and
- * ~2-4x above every failure mode named above (the truncation/all-black
- * figures measured during iteration; the alpha-hole figure estimated from
- * PNG compression of large uniform regions). ONE HONEST SCOPE LOSS,
- * disclosed rather than papered over: extrapolating the two measured
- * poses to zero attractor puts a BACKDROP-ONLY frame at roughly ~7.4K —
- * above this floor — so a render that drew the gradient but no fractal is
- * no longer distinguishable BY SIZE at this fixture (the old 20k floor at
- * 900x560 did sit above its ~14K backdrop). That case is not this
- * check's load-bearing job: phase 1's settle latch proves a real trace
- * ran at this pose before any export, and wrong-source exports are the
- * flame-export gate's image-distance question — this floor exists for
- * the byte-level failures named above. */
+ * attractor: measured 11_379-11_393 bytes across four runs at the shipped
+ * 18-tick pose (near-byte-deterministic) and 9_372 (twice) at the
+ * rejected 24-tick one — a 2.14x attractor-area change moved the file
+ * ~2K, so no affordable pose at this viewport reaches the old 20_000,
+ * which was calibrated against 900x560's ~1.9x pixel count. TWO HONEST
+ * SCOPE LOSSES, disclosed rather than papered over. (1) A solid-black
+ * 660x410 canvas PNG MEASURES ~7_005 bytes through Chrome's own encoder
+ * (twice; the "all-black compresses to ~1-3K" a first cut of this comment
+ * assumed is false for this encoder) — above this floor, so an all-black
+ * or fr-1wbv-class alpha-hole frame is not distinguishable by size here.
+ * (2) Extrapolating the two measured poses to zero attractor puts a
+ * BACKDROP-ONLY frame at ~7.6-8.4K — also above this floor — so a render
+ * that drew the gradient but no fractal is not distinguishable by size
+ * either (the old 20k floor at 900x560 did sit above that fixture's
+ * ~14K backdrop; direct measurement of a backdrop-only export at this
+ * one was attempted at 32 and 48 wheel ticks and failed for app-side
+ * reasons — the export stalls past 240s or the renderer crashes at
+ * degenerate zoom). Neither case is this check's load-bearing job:
+ * phase 1's settle latch proves a real trace ran at this pose before any
+ * export, phase 2's sequencing proves the download landed only once that
+ * render finished, and wrong-source exports are the flame-export gate's
+ * image-distance question — this floor exists for the byte-level
+ * failures named at the top, and 5_500 keeps ~2x margin under the
+ * shipped pose's measured bytes while every one of those failures sits
+ * far below it. */
 const EXPORT_PNG_MIN_BYTES = 5_500;
 
 let totalChecks = 0;
