@@ -1282,33 +1282,44 @@ export class Ui {
    * add/removeEventListener share one stable reference. Escape is this
    * modal's own concern; Tab goes to the shared trap
    * ({@link cycleModalFocus}), which is the whole of what the four handlers
-   * have in common. */
+   * have in common — topmost-only while the export modal is stacked above
+   * (fr-vja8.13, see {@link exportModalOpen}). */
   private readonly onGalleryKeydown = (e: KeyboardEvent): void => {
     if (e.key === "Escape") {
+      // Consumed by this dialog's dismissal (fr-vja8.13): the stacked export
+      // modal's handler runs after this one on the same event and re-reads
+      // the DOM, so without the stop it would see the sibling already gone
+      // and abort the export.
+      if (this.exportModalOpen()) e.stopImmediatePropagation();
       this.closeGallery();
       return;
     }
-    if (e.key === "Tab") this.cycleModalFocus(this.galleryModal, e);
+    if (e.key === "Tab" && !this.exportModalOpen())
+      this.cycleModalFocus(this.galleryModal, e);
   };
 
   /** Escape-and-Tab handling for the About dialog (fr-1zb), the same
    * attached-only-while-open discipline as {@link onGalleryKeydown}. */
   private readonly onAboutKeydown = (e: KeyboardEvent): void => {
     if (e.key === "Escape") {
+      if (this.exportModalOpen()) e.stopImmediatePropagation();
       this.closeAbout();
       return;
     }
-    if (e.key === "Tab") this.cycleModalFocus(this.aboutModal, e);
+    if (e.key === "Tab" && !this.exportModalOpen())
+      this.cycleModalFocus(this.aboutModal, e);
   };
 
   /** Escape-and-Tab handling for the mutation grid (fr-3vly), same discipline
    * as {@link onGalleryKeydown}. */
   private readonly onMutationKeydown = (e: KeyboardEvent): void => {
     if (e.key === "Escape") {
+      if (this.exportModalOpen()) e.stopImmediatePropagation();
       this.closeMutations();
       return;
     }
-    if (e.key === "Tab") this.cycleModalFocus(this.mutationModal, e);
+    if (e.key === "Tab" && !this.exportModalOpen())
+      this.cycleModalFocus(this.mutationModal, e);
   };
 
   /** Escape-and-Tab handling for the export modal (fr-7mfx), attached only
@@ -1316,16 +1327,45 @@ export class Ui {
    * where this modal genuinely differs from the other three: it routes to the
    * app's cancel (real GPU work must stop) and to nothing else, since
    * fr-2fbs's second action saves a deliberately coarser picture and a stray
-   * Escape must never fire it. Tab is the shared trap, which cycles the
-   * buttons the run actually offered — one of them, usually, which reproduces
-   * the original pin. */
+   * Escape must never fire it — and only while it is the ONLY open modal
+   * (fr-vja8.13). The export modal can stack over a sibling (a Save PNG's
+   * 400ms grace window leaves the gallery opener live), both handlers hear
+   * every keydown, and an Escape aimed at that sibling used to ALSO abort a
+   * multi-minute export — the exact accident the modal's no-✕/no-backdrop
+   * design rules out. The sibling still closes; cancel stays deliberate
+   * (this modal's own Cancel button). Two guards because listener order
+   * depends on which modal attached first: in the reachable order (sibling
+   * first) the sibling's own Escape branch consumes the event before this
+   * handler runs, and the {@link siblingModalOpen} check here covers the
+   * programmatic reverse. Tab is the shared trap, which cycles the buttons
+   * the run actually offered — one of them, usually, which reproduces the
+   * original pin. */
   private readonly onExportKeydown = (e: KeyboardEvent): void => {
     if (e.key === "Escape") {
-      if (this.exportCancellable) this.handlers?.onExportCancel();
+      if (this.exportCancellable && !this.siblingModalOpen()) {
+        this.handlers?.onExportCancel();
+      }
       return;
     }
     if (e.key === "Tab") this.cycleModalFocus(this.exportModal, e);
   };
+
+  /** Whether the blocking export modal is on screen (fr-vja8.13) — the one
+   * modal that can stack over the other three, and always above them (its
+   * grace window is the only door: every sibling opener is pointer- and
+   * focus-unreachable while any modal is open). Read off the `hidden` class,
+   * this project's one display idiom, like {@link mutationsOpen}. */
+  private exportModalOpen(): boolean {
+    return !this.exportModal.classList.contains("hidden");
+  }
+
+  /** Whether any of the three dismissible dialogs is open under the export
+   * modal (fr-vja8.13) — {@link exportModalOpen}'s other half. */
+  private siblingModalOpen(): boolean {
+    return [this.galleryModal, this.aboutModal, this.mutationModal].some(
+      (modal) => !modal.classList.contains("hidden"),
+    );
+  }
 
   constructor(doc: Document = document) {
     this.doc = doc;
@@ -2649,10 +2689,24 @@ export class Ui {
    * restore rather than throwing. Idempotent and safe on a modal that was
    * never open, so every close path (✕, backdrop, Escape, the export modal's
    * Cancel) can call it unconditionally.
+   *
+   * A sibling closed UNDER the still-open export modal (fr-vja8.13 — an
+   * Escape aimed at the gallery while the export runs above it) must not
+   * yank focus out to a control behind two scrims; focus stays where the top
+   * dialog trapped it. When the export modal's own recorded opener sat
+   * inside the modal that just closed, it inherits the closing modal's
+   * opener, so the eventual unwind still lands on something visible.
    */
   private releaseModalFocus(modal: HTMLElement): void {
     const opener = this.modalOpeners.get(modal);
     this.modalOpeners.delete(modal);
+    if (modal !== this.exportModal && this.exportModalOpen()) {
+      const above = this.modalOpeners.get(this.exportModal);
+      if (opener && above && modal.contains(above)) {
+        this.modalOpeners.set(this.exportModal, opener);
+      }
+      return;
+    }
     if (opener?.isConnected) opener.focus();
   }
 
