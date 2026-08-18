@@ -42,13 +42,32 @@
  *      drainStripsSync. This is the phase the bug above lived in, so its
  *      completion — not just its output — is the load-bearing assertion.
  *
- * ZOOMED OUT ON PURPOSE. Every phase runs on a camera zoomed well back from
- * the attractor first: at the shipped default framing, a full-tier trace of
- * the default preset is on the order of 10 MINUTES under SwiftShader — a
- * gate that has to run routinely cannot afford that. Zoomed out, most rays
- * miss the attractor immediately and both drains resolve in seconds, while
- * still exercising every strip/fence/present path a slow, real capture
- * shares with this cheap one.
+ * ZOOMED OUT ON PURPOSE — AND SHRUNK (fr-vja8.68). Every phase runs on a
+ * camera zoomed well back from the attractor first: at the shipped default
+ * framing, a full-tier trace of the default preset is on the order of 10
+ * MINUTES under SwiftShader — a gate that has to run routinely cannot
+ * afford that. Zoomed out, most rays miss the attractor immediately and
+ * both drains resolve in seconds, while still exercising every
+ * strip/fence/present path a slow, real capture shares with this cheap
+ * one. The original fixture (900x560 viewport, 14 wheel ticks) was still
+ * too heavy for a software rasterizer: the phase-2 export outlived its
+ * 240s bound (measured >330s and still grinding), so phase 3's click
+ * found #savePngBtn busy-disabled and the run died on a stalled click — a
+ * failure that PRE-EXISTS the fr-vja8 campaign (A/B-proven identical on
+ * pre-campaign main). The fix is the FIXTURE, not the budgets: 660x410
+ * (the smallest viewport above the app's mobile-layout breakpoints) and
+ * 18 ticks keep the identical code path — the strip pump, both drains, a
+ * real settle over the default-preset Surface entry — while cutting
+ * per-pixel cost ~1.9x, and every export phase still takes real seconds,
+ * so the busy-disabled button, the disclosed wait and a mid-drain Cancel
+ * all stay genuinely observable. MEASURED 2026-08-18 (SwiftShader, quiet
+ * 8-core box, strictly one run at a time), three back-to-back green runs:
+ * settle 14.1s / 14.1s / 14.1s; Save-PNG export to a completed download
+ * 17.6s / 80.8s / 39.0s (the spread is the capture ratchet, see
+ * EXPORT_DOWNLOAD_TIMEOUT_MS); cancel honoured 1.4s / 0.7s / 0.7s; sync
+ * thumbnail drain 1.1s / 2.4s / 1.5s. Concurrent gate runs invalidate
+ * all of these numbers — beside stray concurrent runs the same export
+ * measured 169.3s — so run this gate ALONE.
  *
  * ROBUSTNESS. The settle wait (phase 1) and the download wait (phase 2) are
  * the two places a hung drain would otherwise wedge this script forever;
@@ -79,10 +98,18 @@ const BASE = (process.argv[2] ?? "https://localhost:4173").replace(/\/+$/, "");
 /** Bound on the live settle (phase 1). Generous even for SwiftShader on the
  * zoomed-out (cheap) frame this script insists on — a real timeout means
  * this box is unusually slow or the default pose unusually heavy, not that
- * the gate needs a longer bound. */
-const SETTLE_TIMEOUT_MS = 180_000;
+ * the gate needs a longer bound. Recalibrated 180s -> 90s with the
+ * fr-vja8.68 fixture: measured 14.1s on all three green runs (16.0s the
+ * worst observation of the day), so 90s keeps >5x margin over the worst. */
+const SETTLE_TIMEOUT_MS = 90_000;
 const SETTLE_POLL_MS = 2_000;
-/** Bound on the Save-PNG download (phase 2) — the async yielding drain. */
+/** Bound on the Save-PNG download (phase 2) — the async yielding drain.
+ * Deliberately NOT tightened with the fr-vja8.68 shrink: the export's wall
+ * is bimodal under SwiftShader (17.6s / 80.8s / 39.0s across the three
+ * green runs — the strip planner's capture-side raise-only ratchet,
+ * fr-id9r/fr-y1m7 by design, turns one slow readback into micro-strip
+ * passes), so 240s is ~3x over the worst observed mode where "5x over the
+ * typical run" would sit dangerously inside it. */
 const EXPORT_DOWNLOAD_TIMEOUT_MS = 240_000;
 /** Bound on waiting out the "Export cancelled" toast (phase 3). */
 const CANCEL_TOAST_TIMEOUT_MS = 30_000;
@@ -98,6 +125,31 @@ const MODAL_GRACE_WAIT_MS = 700;
  * that it is any particular size — `> 2000` simply didn't hold for this
  * pose even before the fix, on a byte-identical image. */
 const THUMBNAIL_MIN_CHARS = 500;
+/** Floor on the Save-PNG download's byte size (phase 2). Proves a real,
+ * completed image landed — a truncated download, an all-black frame or an
+ * alpha-hole canvas (fr-1wbv's leak) all compress to ~1-3K — NOT that the
+ * picture is any particular size: THUMBNAIL_MIN_CHARS's own discipline,
+ * one drain over. CALIBRATED TO THE fr-vja8.68 FIXTURE (2026-08-18,
+ * SwiftShader, 660x410), where the frame is mostly backdrop and the PNG's
+ * bytes are dominated by px-proportional backdrop noise, not the
+ * attractor: measured 11_379 bytes at the shipped 18-tick pose and 9_372
+ * even at the rejected 24-tick one — a 2.14x attractor-area change moved
+ * the file ~2K, so no affordable pose at this viewport reaches the old
+ * 20_000, which was calibrated against 900x560's ~1.9x pixel count.
+ * 5_500 keeps ~2x margin under the shipped pose's measured bytes and
+ * ~2-4x above every failure mode named above (the truncation/all-black
+ * figures measured during iteration; the alpha-hole figure estimated from
+ * PNG compression of large uniform regions). ONE HONEST SCOPE LOSS,
+ * disclosed rather than papered over: extrapolating the two measured
+ * poses to zero attractor puts a BACKDROP-ONLY frame at roughly ~7.4K —
+ * above this floor — so a render that drew the gradient but no fractal is
+ * no longer distinguishable BY SIZE at this fixture (the old 20k floor at
+ * 900x560 did sit above its ~14K backdrop). That case is not this
+ * check's load-bearing job: phase 1's settle latch proves a real trace
+ * ran at this pose before any export, and wrong-source exports are the
+ * flame-export gate's image-distance question — this floor exists for
+ * the byte-level failures named above. */
+const EXPORT_PNG_MIN_BYTES = 5_500;
 
 let totalChecks = 0;
 const failures = [];
@@ -166,7 +218,14 @@ async function main() {
   try {
     const ctx = await browser.newContext({
       ignoreHTTPSErrors: true,
-      viewport: { width: 900, height: 560 },
+      // fr-vja8.68: 660x410, the smallest viewport comfortably above the
+      // app's mobile-layout breakpoints (width <= 640px / height <= 380px
+      // would swap in the phone panel, which this script does not drive).
+      // Every trace-heavy phase — the settle, the Save-PNG re-trace at
+      // export scale 1, the sync thumbnail drain — costs per canvas pixel,
+      // so the shrink from 900x560 is a straight ~1.9x cut on an unchanged
+      // path. See the module doc's ZOOMED OUT note for the measured effect.
+      viewport: { width: 660, height: 410 },
       deviceScaleFactor: 1,
       reducedMotion: "reduce",
       acceptDownloads: true,
@@ -193,9 +252,16 @@ async function main() {
 
     // Zoom out so most rays miss the attractor: the cheap frame this whole
     // gate depends on to finish under SwiftShader at all (see the module
-    // doc's ZOOMED OUT note).
+    // doc's ZOOMED OUT note). Each wheel tick dollies x1.1 (deltaY's
+    // magnitude is ignored — interactions.ts), so the tick COUNT is the
+    // knob: 18 ticks sits ~x1.5 further back than the original 14, cutting
+    // the attractor's screen area ~2.1x on top of the viewport shrink,
+    // with MAX_RADIUS=100 still far away. Deeper zoom (24 ticks) was
+    // measured and REJECTED: the frame empties so far that the exported
+    // PNG falls under the size assertion (9372 bytes), while the export's
+    // wall is dominated by per-strip overhead anyway, not trace work.
     const box = await page.locator("canvas").first().boundingBox();
-    for (let i = 0; i < 14; i += 1) {
+    for (let i = 0; i < 18; i += 1) {
       await page.mouse.move(box.x + box.width * 0.35, box.y + box.height * 0.5);
       await page.mouse.wheel(0, 240);
       await page.waitForTimeout(60);
@@ -248,7 +314,7 @@ async function main() {
           .catch(() => 0)
       : 0;
     check(
-      download !== null && size > 20_000,
+      download !== null && size > EXPORT_PNG_MIN_BYTES,
       `PNG downloaded "${download?.suggestedFilename() ?? "none"}" ${String(size)} bytes` +
         ` in ${(captureMs / 1000).toFixed(1)}s` +
         (downloadFailure
@@ -315,7 +381,14 @@ async function main() {
         JSON.parse(localStorage.getItem("fractal-viewer:collection") ?? "[]")
           .length,
     );
+    // The sync drain runs inside the click handler on the page's main
+    // thread, so the click's input ack is held for the drain's whole wall
+    // time — timing the await IS timing the drain (within input-dispatch
+    // noise), and the check label below carries it so every run's log
+    // records phase 4's cost beside phases 1-3's own timings.
+    const sync0 = Date.now();
     await page.click("#saveCollectionBtn");
+    const syncHeldMs = Date.now() - sync0;
     await page.waitForTimeout(2000);
     const entries = await page.evaluate(() =>
       JSON.parse(localStorage.getItem("fractal-viewer:collection") ?? "[]"),
@@ -328,7 +401,9 @@ async function main() {
     check(
       typeof last?.thumbnail === "string" &&
         last.thumbnail.length > THUMBNAIL_MIN_CHARS,
-      `surface thumbnail rendered by the sync drain (${String(last?.thumbnail?.length ?? 0)} chars)`,
+      `surface thumbnail rendered by the sync drain ` +
+        `(${String(last?.thumbnail?.length ?? 0)} chars, click held ` +
+        `${(syncHeldMs / 1000).toFixed(1)}s)`,
     );
 
     // --- Page errors, filtered for the known SSL/service-worker noise ------
