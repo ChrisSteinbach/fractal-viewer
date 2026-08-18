@@ -85,6 +85,12 @@ export interface CameraKeyInput {
    * it can never shadow a browser or OS shortcut (Ctrl+ArrowLeft is
    * word-wise caret movement, Alt+ArrowLeft is history back...). */
   withChordModifier: boolean;
+  /** The event is an OS key-repeat of a still-held key. Repeat IS the
+   * continuous-motion feature for every movement key — but a repeating
+   * TOGGLE would flip auto-motion at the repeat rate (a flicker storm
+   * writing the viewer pref dozens of times a second), so Space acts on
+   * the initial press only. */
+  repeat: boolean;
 }
 
 /**
@@ -100,7 +106,11 @@ export function cameraKeyAction(
   if (input.withChordModifier) return null;
   const { key, shiftKey } = input;
 
-  if (key === " ") return { kind: "toggleMotion" };
+  // Initial press only — see CameraKeyInput.repeat. Returning null for the
+  // repeats leaves them unprevented, which is safe here: the page cannot
+  // scroll (body is overflow: hidden), so a held Space has no default
+  // action to suppress.
+  if (key === " ") return input.repeat ? null : { kind: "toggleMotion" };
 
   // The wheel pair. Shifted "=" produces "+" on most layouts; accept both
   // so the user need not reason about which physical key is "plus".
