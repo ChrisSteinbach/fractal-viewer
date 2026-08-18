@@ -117,9 +117,11 @@ export class CloudGenerator {
    * The id the next request — `request()` or `generateSync()` — will be
    * stamped with. Ids are monotonic, so every request posted from here on
    * satisfies `id >= peekNextId()`. main.ts's pending load hints record this
-   * at arm time (load-hints.ts, fr-vja8.34): a load arms its hints BEFORE
-   * posting any of its own requests, so an arrival below the recorded id is
-   * an in-flight leftover of a PREVIOUS load and must not consume them.
+   * when a load's opening clear runs (load-hints.ts, fr-vja8.34) — BEFORE
+   * the load posts any of its own requests — so an arrival below the
+   * recorded id is an in-flight leftover of a PREVIOUS load and must not
+   * consume them, while the load's own requests (including one posted
+   * synchronously inside its apply) all sit at or above it.
    */
   peekNextId(): number {
     return this.nextId;
