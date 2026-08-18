@@ -129,13 +129,21 @@ export function createCanvasRecorder(
       return;
     }
     let rec: MediaRecorder;
+    let stream: MediaStream | undefined;
     try {
-      const stream = canvas.captureStream();
+      stream = canvas.captureStream();
       rec = new MediaRecorder(stream, {
         mimeType: mime,
         videoBitsPerSecond: recordingBitsPerSecond(canvas.width, canvas.height),
       });
     } catch (err) {
+      // The MediaRecorder constructor can throw after captureStream() has
+      // already attached a live per-paint capture track to the canvas, and
+      // cleanup() cannot reach it (`recorder` was never assigned) — without
+      // this, every retry press leaks one for the page lifetime.
+      if (stream !== undefined) {
+        for (const track of stream.getTracks()) track.stop();
+      }
       callbacks.onError(`Could not start recording: ${String(err)}`);
       return;
     }
