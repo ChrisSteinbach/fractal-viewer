@@ -111,14 +111,20 @@ export function createCanvasRecorder(
     stop();
   };
 
+  /** The ONE way capture tracks are ended (fr-vja8.49) — shared by the
+   * normal cleanup() path and the constructor-throw branch, so a future
+   * hardening (readyState guards, audio tracks) cannot land in one and
+   * quietly miss the other, re-opening the fr-vja8.17 per-retry leak. */
+  function stopTracks(stream: MediaStream): void {
+    for (const track of stream.getTracks()) track.stop();
+  }
+
   function cleanup(): void {
     if (tickTimer !== undefined) clearInterval(tickTimer);
     tickTimer = undefined;
     document.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener("resize", onResize);
-    if (recorder !== undefined) {
-      for (const track of recorder.stream.getTracks()) track.stop();
-    }
+    if (recorder !== undefined) stopTracks(recorder.stream);
     recorder = undefined;
     chunks = [];
   }
@@ -143,9 +149,7 @@ export function createCanvasRecorder(
       // already attached a live per-paint capture track to the canvas, and
       // cleanup() cannot reach it (`recorder` was never assigned) — without
       // this, every retry press leaks one for the page lifetime.
-      if (stream !== undefined) {
-        for (const track of stream.getTracks()) track.stop();
-      }
+      if (stream !== undefined) stopTracks(stream);
       callbacks.onError(`Could not start recording: ${String(err)}`);
       return;
     }
