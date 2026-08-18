@@ -2673,9 +2673,20 @@ export class Ui {
     }
     const ring = modalFocusRing(modal);
     const target = dismiss && ring.includes(dismiss) ? dismiss : ring[0];
-    // A modal with nothing focusable in it (none ship that way) leaves focus
-    // where it is rather than throwing.
-    target?.focus();
+    // One modal DOES ship with an empty ring (fr-vja8.41): the points-arm
+    // export modal — cancellable:false hides Cancel, and no run without a
+    // wait offers the fr-2fbs action — so fall back to the dialog box
+    // itself (tabindex="-1" in index.html) rather than leaving focus
+    // outside a dialog that declares the page behind it inert.
+    (target ?? this.modalDialog(modal))?.focus();
+  }
+
+  /** The modal's dialog box — the empty-ring focus fallback (fr-vja8.41).
+   * All four modals share the `.gallery-dialog` chrome; only the export
+   * modal's carries the `tabindex="-1"` that makes the focus() land (a
+   * plain div's focus() is a no-op), and only it can have an empty ring. */
+  private modalDialog(modal: HTMLElement): HTMLElement | null {
+    return modal.querySelector<HTMLElement>(".gallery-dialog");
   }
 
   /**
@@ -2718,10 +2729,18 @@ export class Ui {
    * Focus outside the ring (the modal opened over the page, or the focused
    * element was removed under it — a deleted gallery card) is pulled to the
    * first member rather than stepped from a position it does not have.
+   *
+   * An EMPTY ring (the points-arm export modal, fr-vja8.41) still owns the
+   * Tab: park focus on the dialog box instead of returning the keystroke to
+   * the browser, which would walk it into the inert page behind the scrim.
    */
   private cycleModalFocus(modal: HTMLElement, e: KeyboardEvent): void {
     const ring = modalFocusRing(modal);
-    if (ring.length === 0) return;
+    if (ring.length === 0) {
+      e.preventDefault();
+      this.modalDialog(modal)?.focus();
+      return;
+    }
     e.preventDefault();
     const active = this.doc.activeElement;
     const at = active instanceof HTMLElement ? ring.indexOf(active) : -1;
