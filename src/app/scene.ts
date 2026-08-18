@@ -2683,8 +2683,11 @@ export class FractalScene {
    * Run a synchronous render-and-read with the panel inset lifted (fr-936q):
    * exports and thumbnails should compose the fractal centered in the full
    * frame, not shifted for an overlay the image doesn't contain. Restores
-   * the inset projection afterwards; the next live frame re-renders with it,
-   * so nothing off-center ever reaches the screen.
+   * the inset projection afterwards AND marks the frame dirty (fr-vja8.14):
+   * the render paths clear {@link renderNeeded} before painting, so the
+   * centered frame this method just put on the canvas would otherwise STAY
+   * on screen for a parked camera — render-on-demand only repaints on an
+   * invalidation, and a capture must supply its own.
    */
   private withCenteredProjection<T>(readback: () => T): T {
     const inset = this.rightInsetPx;
@@ -2696,6 +2699,7 @@ export class FractalScene {
     } finally {
       this.rightInsetPx = inset;
       this.syncProjection();
+      this.renderNeeded = true;
     }
   }
 
