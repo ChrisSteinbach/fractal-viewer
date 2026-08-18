@@ -808,6 +808,21 @@ function modalFocusRing(modal: HTMLElement): HTMLElement[] {
 }
 
 /**
+ * One entry in {@link Ui}'s modal stack (fr-vja8.52) — what
+ * `trapModalFocus`/`releaseModalFocus` push and pop, and what the shared
+ * `onModalStackKeydown` listener reads. `onEscape` is the one place a
+ * modal's Escape behavior can differ: the three dismissible dialogs close
+ * themselves unconditionally, while the export modal (fr-7mfx) — which
+ * ships with no ✕ and no bound backdrop by design, so an accidental
+ * dismissal can never abandon a multi-minute export — instead defers to
+ * whatever `showExportProgress` armed it with.
+ */
+interface ModalStackEntry {
+  modal: HTMLElement;
+  onEscape: () => void;
+}
+
+/**
  * Owns the control panel and the dynamic transform list. All DOM is built with
  * `createElement`/`textContent` (never `innerHTML`) so user-influenced strings
  * can never be interpreted as markup.
@@ -971,11 +986,12 @@ export class Ui {
    * mirrored flag to drift from it. */
   private readonly exportDeliverBtn: HTMLButtonElement;
   /** Whether the in-flight capture can be cancelled — mirrored from the last
-   * {@link showExportProgress} call, since {@link onExportKeydown}'s Escape
-   * needs it after the fact. Cancel has no {@link exportDeliverBtn}-style
-   * absence: it is the one button the dialog always has a place for, so it
-   * hides in place, which is also what keeps it out of
-   * {@link modalFocusRing}'s answer with no flag for the ring to consult. */
+   * {@link showExportProgress} call, since the export modal's Escape action
+   * (armed there, fr-vja8.52) needs it after the fact. Cancel has no
+   * {@link exportDeliverBtn}-style absence: it is the one button the dialog
+   * always has a place for, so it hides in place, which is also what keeps
+   * it out of {@link modalFocusRing}'s answer with no flag for the ring to
+   * consult. */
   private exportCancellable = false;
 
   /**
@@ -988,6 +1004,18 @@ export class Ui {
    * two overwrite each other and strand focus on the wrong side of a scrim.
    */
   private readonly modalOpeners = new Map<HTMLElement, HTMLElement>();
+
+  /**
+   * Every currently open modal, oldest first (fr-vja8.52) — pushed by
+   * {@link trapModalFocus}, popped by {@link releaseModalFocus}, and read by
+   * the shared `onModalStackKeydown` listener below, which is attached to
+   * the document only while this is non-empty. Replaces four hand-copied
+   * per-modal Escape/Tab handlers (fr-vja8.13's pairwise `exportModalOpen`/
+   * `siblingModalOpen` guards) with one rule a fifth dialog can join by
+   * calling {@link trapModalFocus} like the rest, instead of by copying a
+   * guard into four places.
+   */
+  private readonly modalStack: ModalStackEntry[] = [];
 
   private readonly glowBrightnessRow: HTMLElement;
   // The balloon echo's rows (fr-5wlv.2, 4D since fr-5666) — the checkbox has
@@ -1273,95 +1301,54 @@ export class Ui {
   private toastHovered = false;
   private toastFocused = false;
 
-  /** Escape-and-Tab handling for the gallery, attached to the document only
-   * while the modal is open (see {@link openGallery}/{@link closeGallery}) so
-   * it never lingers or double-binds. An arrow field so
-   * add/removeEventListener share one stable reference. Escape is this
-   * modal's own concern; Tab goes to the shared trap
-   * ({@link cycleModalFocus}), which is the whole of what the four handlers
-   * have in common — topmost-only while the export modal is stacked above
-   * (fr-vja8.13, see {@link exportModalOpen}). */
-  private readonly onGalleryKeydown = (e: KeyboardEvent): void => {
+  /**
+   * The single document keydown listener behind every modal (fr-vja8.52),
+   * attached only while {@link modalStack} is non-empty — armed by
+   * {@link trapModalFocus}, dropped by {@link releaseModalFocus} — so it
+   * never lingers or double-binds. Replaces four hand-copied per-modal
+   * handlers that each restated fr-vja8.13's stacking rule with a pairwise
+   * `exportModalOpen()`/`siblingModalOpen()` guard.
+   *
+   * Escape and Tab read OPPOSITE ends of {@link modalStack}, which is
+   * fr-vja8.13's own rule generalized rather than flattened. Tab is the
+   * shared focus trap ({@link cycleModalFocus}) and always cycles the
+   * NEWEST entry's ring: once the export modal stacks over a sibling, it is
+   * what the user is actually looking at, and the only one Tab may reach.
+   * Escape always goes to the OLDEST entry instead: a sibling's
+   * Escape-to-close must survive a multi-minute export stacked above it —
+   * the exact accident fr-vja8.13 fixed, where an Escape aimed at the
+   * sibling used to also abort the export. Because the export modal can
+   * only ever stack OVER an already-open sibling, never under one —
+   * opening a sibling needs a button the export modal's own focus trap and
+   * full-viewport backdrop (unbound, but still there to catch every click)
+   * put out of reach while it is up — the oldest entry is always that
+   * sibling when one is open, and the export modal itself otherwise. So the
+   * export entry's own Escape action (armed in {@link showExportProgress})
+   * needs no sibling check of its own: it is only ever consulted when it IS
+   * the oldest entry, i.e. when there is no sibling left to defer to.
+   */
+  private readonly onModalStackKeydown = (e: KeyboardEvent): void => {
+    if (this.modalStack.length === 0) return;
     if (e.key === "Escape") {
-      // Consumed by this dialog's dismissal (fr-vja8.13): the stacked export
-      // modal's handler runs after this one on the same event and re-reads
-      // the DOM, so without the stop it would see the sibling already gone
-      // and abort the export.
-      if (this.exportModalOpen()) e.stopImmediatePropagation();
-      this.closeGallery();
+      this.modalStack[0].onEscape();
       return;
     }
-    if (e.key === "Tab" && !this.exportModalOpen())
-      this.cycleModalFocus(this.galleryModal, e);
-  };
-
-  /** Escape-and-Tab handling for the About dialog (fr-1zb), the same
-   * attached-only-while-open discipline as {@link onGalleryKeydown}. */
-  private readonly onAboutKeydown = (e: KeyboardEvent): void => {
-    if (e.key === "Escape") {
-      if (this.exportModalOpen()) e.stopImmediatePropagation();
-      this.closeAbout();
-      return;
+    if (e.key === "Tab") {
+      this.cycleModalFocus(
+        this.modalStack[this.modalStack.length - 1].modal,
+        e,
+      );
     }
-    if (e.key === "Tab" && !this.exportModalOpen())
-      this.cycleModalFocus(this.aboutModal, e);
   };
 
-  /** Escape-and-Tab handling for the mutation grid (fr-3vly), same discipline
-   * as {@link onGalleryKeydown}. */
-  private readonly onMutationKeydown = (e: KeyboardEvent): void => {
-    if (e.key === "Escape") {
-      if (this.exportModalOpen()) e.stopImmediatePropagation();
-      this.closeMutations();
-      return;
-    }
-    if (e.key === "Tab" && !this.exportModalOpen())
-      this.cycleModalFocus(this.mutationModal, e);
-  };
-
-  /** Escape-and-Tab handling for the export modal (fr-7mfx), attached only
-   * while it is open — same discipline as {@link onGalleryKeydown}. Escape is
-   * where this modal genuinely differs from the other three: it routes to the
-   * app's cancel (real GPU work must stop) and to nothing else, since
-   * fr-2fbs's second action saves a deliberately coarser picture and a stray
-   * Escape must never fire it — and only while it is the ONLY open modal
-   * (fr-vja8.13). The export modal can stack over a sibling (a Save PNG's
-   * 400ms grace window leaves the gallery opener live), both handlers hear
-   * every keydown, and an Escape aimed at that sibling used to ALSO abort a
-   * multi-minute export — the exact accident the modal's no-✕/no-backdrop
-   * design rules out. The sibling still closes; cancel stays deliberate
-   * (this modal's own Cancel button). Two guards because listener order
-   * depends on which modal attached first: in the reachable order (sibling
-   * first) the sibling's own Escape branch consumes the event before this
-   * handler runs, and the {@link siblingModalOpen} check here covers the
-   * programmatic reverse. Tab is the shared trap, which cycles the buttons
-   * the run actually offered — one of them, usually, which reproduces the
-   * original pin. */
-  private readonly onExportKeydown = (e: KeyboardEvent): void => {
-    if (e.key === "Escape") {
-      if (this.exportCancellable && !this.siblingModalOpen()) {
-        this.handlers?.onExportCancel();
-      }
-      return;
-    }
-    if (e.key === "Tab") this.cycleModalFocus(this.exportModal, e);
-  };
-
-  /** Whether the blocking export modal is on screen (fr-vja8.13) — the one
-   * modal that can stack over the other three, and always above them (its
-   * grace window is the only door: every sibling opener is pointer- and
-   * focus-unreachable while any modal is open). Read off the `hidden` class,
-   * this project's one display idiom, like {@link mutationsOpen}. */
+  /** Whether the blocking export modal is on screen (fr-vja8.13) — read off
+   * the `hidden` class, this project's one display idiom, like
+   * {@link mutationsOpen}. {@link releaseModalFocus} is its one remaining
+   * reader (fr-vja8.52 retired the keydown handlers' own copies): it still
+   * needs to know whether export sits above the modal that is closing, to
+   * hand off its opener rather than restore focus behind a scrim. */
   private exportModalOpen(): boolean {
     return !this.exportModal.classList.contains("hidden");
-  }
-
-  /** Whether any of the three dismissible dialogs is open under the export
-   * modal (fr-vja8.13) — {@link exportModalOpen}'s other half. */
-  private siblingModalOpen(): boolean {
-    return [this.galleryModal, this.aboutModal, this.mutationModal].some(
-      (modal) => !modal.classList.contains("hidden"),
-    );
   }
 
   constructor(doc: Document = document) {
@@ -1802,8 +1789,9 @@ export class Ui {
     // backdrop unbound (an accidental dismissal must not silently abandon a
     // multi-minute export), and Cancel is not a pure view concern like
     // closeGallery/closeAbout/closeMutations — it has to abort real GPU
-    // work, so the click (and onExportKeydown's Escape) route through the
-    // app via onExportCancel instead of a bare hideExportProgress() call.
+    // work, so the click (and the Escape action showExportProgress arms,
+    // fr-vja8.52) route through the app via onExportCancel instead of a
+    // bare hideExportProgress() call.
     this.exportCancelBtn.addEventListener("click", () =>
       handlers.onExportCancel(),
     );
@@ -2643,7 +2631,9 @@ export class Ui {
   /**
    * Arm the focus trap on a modal that has just been un-hidden (fr-trtv):
    * remember what the user was on so {@link releaseModalFocus} can hand it
-   * back, then move focus INSIDE the dialog.
+   * back, push it onto {@link modalStack} (fr-vja8.52) so the shared
+   * `onModalStackKeydown` listener knows it is open — arming the listener
+   * itself on the first push — then move focus INSIDE the dialog.
    *
    * All four modals declare `role="dialog" aria-modal="true"`, which tells
    * assistive technology the page behind the scrim is inert. Three of them
@@ -2660,14 +2650,33 @@ export class Ui {
    * control is not on offer this time — or to the dialog box itself
    * (tabindex="-1") when the ring is empty (fr-vja8.41).
    *
+   * `onEscape` is this modal's whole Escape behavior (see
+   * {@link ModalStackEntry}) — for the export modal, a closure that reads
+   * {@link exportCancellable} fresh at Escape time rather than a value
+   * snapshotted now, so a run that becomes cancellable mid-flight needs no
+   * re-arming.
+   *
    * The opener is only recorded from OUTSIDE the modal, so re-showing an
    * already-open dialog (the export modal does exactly this when a run
-   * restarts) refreshes nothing and keeps the original opener.
+   * restarts) refreshes nothing and keeps the original opener — and, for the
+   * same reason, does not push a second stack entry: a modal already on
+   * {@link modalStack} keeps its place instead of gaining a duplicate, which
+   * would leave one release call's worth of it still on the stack.
    */
-  private trapModalFocus(modal: HTMLElement, dismiss?: HTMLElement): void {
+  private trapModalFocus(
+    modal: HTMLElement,
+    dismiss: HTMLElement | undefined,
+    onEscape: () => void,
+  ): void {
     const opener = this.doc.activeElement;
     if (opener instanceof HTMLElement && !modal.contains(opener)) {
       this.modalOpeners.set(modal, opener);
+    }
+    if (!this.modalStack.some((entry) => entry.modal === modal)) {
+      if (this.modalStack.length === 0) {
+        this.doc.addEventListener("keydown", this.onModalStackKeydown);
+      }
+      this.modalStack.push({ modal, onEscape });
     }
     const ring = modalFocusRing(modal);
     const target = dismiss && ring.includes(dismiss) ? dismiss : ring[0];
@@ -2691,7 +2700,13 @@ export class Ui {
    * Hand focus back to whatever opened `modal` (fr-trtv), completing the trap
    * {@link trapModalFocus} armed — otherwise closing a dialog drops focus on
    * the body and a keyboard user restarts their tab walk from the top of the
-   * page.
+   * page. Also pops `modal`'s entry out of {@link modalStack} (fr-vja8.52),
+   * BY IDENTITY rather than a blind top-pop — releasing a non-top modal (a
+   * sibling closing out from under the still-open export modal, exactly the
+   * case two paragraphs down) must remove its OWN entry and leave the rest
+   * of the stack untouched — and drops the shared `onModalStackKeydown`
+   * listener once the stack empties, mirroring the attach in
+   * {@link trapModalFocus}.
    *
    * An opener the document no longer holds — a gallery card deleted from under
    * its own modal, a button a render-mode change rebuilt — forfeits the
@@ -2709,6 +2724,15 @@ export class Ui {
   private releaseModalFocus(modal: HTMLElement): void {
     const opener = this.modalOpeners.get(modal);
     this.modalOpeners.delete(modal);
+    const stackIndex = this.modalStack.findIndex(
+      (entry) => entry.modal === modal,
+    );
+    if (stackIndex >= 0) {
+      this.modalStack.splice(stackIndex, 1);
+      if (this.modalStack.length === 0) {
+        this.doc.removeEventListener("keydown", this.onModalStackKeydown);
+      }
+    }
     if (modal !== this.exportModal && this.exportModalOpen()) {
       const above = this.modalOpeners.get(this.exportModal);
       if (opener && above && modal.contains(above)) {
@@ -2721,8 +2745,10 @@ export class Ui {
 
   /**
    * Keep Tab inside `modal`'s ring, wrapping at both ends (fr-trtv) — the Tab
-   * half of the trap, shared by all four modals' keydown handlers, which own
-   * their own Escape semantics and nothing else.
+   * half of the trap, shared by the one document keydown handler
+   * (`onModalStackKeydown`, fr-vja8.52) on behalf of whichever modal is
+   * newest on {@link modalStack}; Escape is that handler's own concern and
+   * nothing to do with this method.
    *
    * Focus outside the ring (the modal opened over the page, or the focused
    * element was removed under it — a deleted gallery card) is pulled to the
@@ -2755,32 +2781,32 @@ export class Ui {
   openGallery(scenes: SavedScene[]): void {
     this.renderGallery(scenes);
     this.galleryModal.classList.remove("hidden");
-    this.doc.addEventListener("keydown", this.onGalleryKeydown);
-    this.trapModalFocus(this.galleryModal, this.galleryCloseBtn);
+    this.trapModalFocus(this.galleryModal, this.galleryCloseBtn, () =>
+      this.closeGallery(),
+    );
   }
 
-  /** Hide the gallery modal, drop its Escape listener and restore focus to
-   * whatever opened it — skipped while the export modal still stands above
-   * (fr-vja8.13, see releaseModalFocus). Idempotent. */
+  /** Hide the gallery modal, drop its {@link modalStack} entry and restore
+   * focus to whatever opened it — skipped while the export modal still
+   * stands above (fr-vja8.13, see releaseModalFocus). Idempotent. */
   closeGallery(): void {
     this.galleryModal.classList.add("hidden");
-    this.doc.removeEventListener("keydown", this.onGalleryKeydown);
     this.releaseModalFocus(this.galleryModal);
   }
 
   /** Open the "What is this?" dialog, arm Escape-to-close and trap focus. */
   openAbout(): void {
     this.aboutModal.classList.remove("hidden");
-    this.doc.addEventListener("keydown", this.onAboutKeydown);
-    this.trapModalFocus(this.aboutModal, this.aboutCloseBtn);
+    this.trapModalFocus(this.aboutModal, this.aboutCloseBtn, () =>
+      this.closeAbout(),
+    );
   }
 
-  /** Hide the "What is this?" dialog, drop its Escape listener and restore
-   * focus to whatever opened it — skipped while the export modal still
-   * stands above (fr-vja8.13, see releaseModalFocus). Idempotent. */
+  /** Hide the "What is this?" dialog, drop its {@link modalStack} entry and
+   * restore focus to whatever opened it — skipped while the export modal
+   * still stands above (fr-vja8.13, see releaseModalFocus). Idempotent. */
   closeAbout(): void {
     this.aboutModal.classList.add("hidden");
-    this.doc.removeEventListener("keydown", this.onAboutKeydown);
     this.releaseModalFocus(this.aboutModal);
   }
 
@@ -2792,16 +2818,16 @@ export class Ui {
   openMutations(): void {
     this.resetMutationCells();
     this.mutationModal.classList.remove("hidden");
-    this.doc.addEventListener("keydown", this.onMutationKeydown);
-    this.trapModalFocus(this.mutationModal, this.mutationCloseBtn);
+    this.trapModalFocus(this.mutationModal, this.mutationCloseBtn, () =>
+      this.closeMutations(),
+    );
   }
 
-  /** Hide the mutation modal, drop its Escape listener and restore focus to
-   * whatever opened it — skipped while the export modal still stands above
-   * (fr-vja8.13, see releaseModalFocus). Idempotent. */
+  /** Hide the mutation modal, drop its {@link modalStack} entry and restore
+   * focus to whatever opened it — skipped while the export modal still
+   * stands above (fr-vja8.13, see releaseModalFocus). Idempotent. */
   closeMutations(): void {
     this.mutationModal.classList.add("hidden");
-    this.doc.removeEventListener("keydown", this.onMutationKeydown);
     this.releaseModalFocus(this.mutationModal);
   }
 
@@ -2819,10 +2845,12 @@ export class Ui {
    * dead one. `deliverEarly` is the fr-2fbs second action under the same
    * rule: absent — every caller but the flame Save-PNG's wait — leaves the
    * modal with exactly one button, and its label comes from the app because
-   * only the app knows what the early picture will be. Arms Escape and the
-   * shared focus trap ({@link trapModalFocus}, released on
-   * {@link hideExportProgress}), and resets the readout to 0% so a new run
-   * never opens showing the previous run's number. */
+   * only the app knows what the early picture will be. Arms the shared focus
+   * trap ({@link trapModalFocus}, released on {@link hideExportProgress})
+   * with this modal's one non-uniform Escape action (fr-vja8.52): cancel,
+   * and ONLY while {@link exportCancellable} — never the fr-2fbs action,
+   * which a stray Escape must never commit to — and resets the readout to
+   * 0% so a new run never opens showing the previous run's number. */
   showExportProgress(init: ExportProgressInit): void {
     this.exportTitle.textContent = init.title;
     this.exportDetail.textContent = init.detail;
@@ -2840,13 +2868,14 @@ export class Ui {
     this.exportProgress.textContent = "0%";
     this.exportProgress.style.setProperty("--progress", "0%");
     this.exportModal.classList.remove("hidden");
-    this.doc.addEventListener("keydown", this.onExportKeydown);
     // Cancel keeps the opening focus wherever it exists: Enter on a modal
     // that just appeared under the user's hands must not commit to a file.
     // Off-offer, the shared trap falls back to the ring's first member —
     // fr-2fbs's action when that is the only button up — or to the dialog
     // box itself when the run put up none (fr-vja8.41).
-    this.trapModalFocus(this.exportModal, this.exportCancelBtn);
+    this.trapModalFocus(this.exportModal, this.exportCancelBtn, () => {
+      if (this.exportCancellable) this.handlers?.onExportCancel();
+    });
   }
 
   /** Update the readout. `pct: null` is the honest indeterminate state: the
@@ -2867,11 +2896,11 @@ export class Ui {
     this.exportProgress.textContent = `${String(status.pct)}% · ${status.note}`;
   }
 
-  /** Hide the modal, drop the Escape/Tab listener, restore focus. Idempotent. */
+  /** Hide the modal, drop its {@link modalStack} entry, restore focus.
+   * Idempotent. */
   hideExportProgress(): void {
     if (this.exportModal.classList.contains("hidden")) return;
     this.exportModal.classList.add("hidden");
-    this.doc.removeEventListener("keydown", this.onExportKeydown);
     // The fr-2fbs action belongs to the run that offered it, so it goes out
     // with that run rather than waiting for the next showExportProgress to
     // decide: nothing is offering it in between, and MEASURED — a browser

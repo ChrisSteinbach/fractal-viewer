@@ -6853,6 +6853,54 @@ describe("Ui modal focus trap (fr-trtv)", () => {
 
     ui.hideExportProgress();
   });
+
+  // fr-vja8.52: the four pairwise Escape/Tab handlers (fr-vja8.13) collapsed
+  // into one stack-driven listener. The two tests above only ever stack the
+  // gallery under the export modal — this pins that the rule genuinely
+  // generalizes, rather than the gallery having been special-cased, by
+  // repeating it for a different sibling.
+  it("Escape under a stacked export modal closes only the About dialog — the export keeps running", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.openAbout();
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+
+    pressEscape();
+
+    expect(el("aboutModal").classList.contains("hidden")).toBe(true);
+    expect(el("exportModal").classList.contains("hidden")).toBe(false);
+    expect(handlers.onExportCancel).not.toHaveBeenCalled();
+
+    ui.hideExportProgress();
+  });
+
+  // The stack's own new property (fr-vja8.52): releasing the topmost entry
+  // must hand Tab back to whatever is left, not leave it wired to the
+  // popped entry and not silently drop the shared listener while a sibling
+  // is still open.
+  it("releasing the export modal hands Tab back to the sibling still on the stack", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.openGallery([saved("a"), saved("b")]);
+    ui.showExportProgress({
+      title: "Saving PNG",
+      detail: "",
+      cancellable: true,
+    });
+    expect(document.activeElement).toBe(el("exportCancelBtn"));
+
+    ui.hideExportProgress();
+    pressTab();
+
+    expect(document.activeElement).toBe(cardButtons()[0]);
+
+    ui.closeGallery();
+  });
 });
 
 describe("Ui replay caption", () => {
