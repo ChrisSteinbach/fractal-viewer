@@ -113,6 +113,18 @@ export class CloudGenerator {
     if (this.worker === null) this.broken = true;
   }
 
+  /**
+   * The id the next request — `request()` or `generateSync()` — will be
+   * stamped with. Ids are monotonic, so every request posted from here on
+   * satisfies `id >= peekNextId()`. main.ts's pending load hints record this
+   * at arm time (load-hints.ts, fr-vja8.34): a load arms its hints BEFORE
+   * posting any of its own requests, so an arrival below the recorded id is
+   * an in-flight leftover of a PREVIOUS load and must not consume them.
+   */
+  peekNextId(): number {
+    return this.nextId;
+  }
+
   /** Request a generation of `params`. Latest-wins: see the module doc. */
   request(params: CloudParams): void {
     const request: CloudRequest = { ...params, id: this.nextId++ };

@@ -475,3 +475,44 @@ describe("CloudGenerator settle() (fr-92t9)", () => {
     await expect(settleB).resolves.toBeUndefined();
   });
 });
+
+describe("CloudGenerator peekNextId (fr-vja8.34)", () => {
+  it("names the id the next request will be stamped with", () => {
+    const h = harness();
+
+    const peeked = h.generator.peekNextId();
+    h.generator.request(params());
+
+    expect(h.posted[0].id).toBe(peeked);
+  });
+
+  it("every request posted after a peek satisfies id >= peeked — across request(), generateSync(), and parked successors", () => {
+    const h = harness();
+
+    const peeked = h.generator.peekNextId();
+    h.generator.request(params()); // in flight
+    h.generator.request(params()); // parks in pending
+    h.generator.generateSync(params()); // sync path stamps too
+
+    h.deliverResult(fakeResult(1)); // arrival would post the parked successor
+
+    for (const request of [...h.posted, ...h.computeSyncCalls]) {
+      expect(request.id).toBeGreaterThanOrEqual(peeked);
+    }
+    expect(h.generator.peekNextId()).toBeGreaterThan(peeked);
+  });
+
+  it("peeking never consumes an id", () => {
+    const h = harness();
+
+    h.generator.peekNextId();
+    h.generator.peekNextId();
+    h.generator.request(params());
+    h.generator.request(params());
+    h.deliverResult(fakeResult(1));
+
+    // Ids stay dense: two requests take two consecutive ids despite the
+    // peeks in front of them.
+    expect(h.posted.map((r) => r.id)).toEqual([1, 2]);
+  });
+});

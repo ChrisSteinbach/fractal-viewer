@@ -55,6 +55,7 @@ import type { RenderSessionHandle } from "./render-session";
 import { voxelAccumBudgetVoxels } from "./voxel-worker-core";
 import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
 import { CloudGenerator } from "./cloud-generator";
+import { PendingLoadHints } from "./load-hints";
 import { SurfaceGridClient } from "./surface-grid-client";
 import type { SurfaceGrid } from "../fractal/surface-grid";
 import type {
@@ -672,37 +673,27 @@ function main(): void {
   // fr-3xfk). Null whenever the view isn't showing 4D.
   let fourDResult: CloudResult4D | null = null;
 
-  // A preset's render-mode hint (fr-39y, PRESET_RENDER_HINTS), waiting for
-  // the freshly loaded system's cloud to land: onPreset arms it, and
-  // applyCloudResult consumes it when the whole-system replacement arrives —
-  // entering the hinted renderer THEN, not at click time, so the flame's
-  // frozen projection can snapshot the camera already fitted to the NEW
-  // attractor (see the consumption site) instead of framing the old one.
-  // Cleared by every other edit path (applyEdit / applyDecodedSnapshot) and
-  // by a manual mode switch, so it can only ever fire for the load that
-  // armed it.
-  let pendingRenderMode: RenderMode | null = null;
-  // A timeline render keyframe's deterministic accumulator seed (fr-4ff7):
-  // launchTimelineLeg arms it alongside pendingRenderMode, and whichever
-  // flame/solid session start that hint triggers consumes it via
-  // nextRenderSeed() below — making the converged still a pure function of
-  // the timeline, residual noise included, so replaying (or offline-
-  // exporting, fr-6jic) the same timeline reproduces it exactly. Cleared
-  // wherever pendingRenderMode is cleared (applyEdit / applyDecodedSnapshot
-  // / a manual mode switch) so a stale seed can never leak into a render
-  // its own leg didn't arm; every other start rolls Math.random as before.
-  let pendingRenderSeed: number | null = null;
+  // The pending load hints (load-hints.ts, where the policy and its history
+  // live): a preset/gallery/timeline load's render-mode hint (fr-39y,
+  // fr-75sq), a timeline render keyframe's deterministic accumulator seed
+  // (fr-4ff7), and a loaded document's 4D pose (fr-pnek) — each armed right
+  // after the load's applyDecodedSnapshot/applyEdit (which clears all three
+  // on every load's behalf) and consumed when the load's OWN cloud lands
+  // (applyCloudResult), keyed to the request id the load awaits so an
+  // in-flight arrival from a superseded load can neither fire them early nor
+  // discard them (fr-vja8.34). The id read is deferred — cloudGenerator is
+  // constructed below, and no arm can run before boot reaches it.
+  const loadHints = new PendingLoadHints(() => cloudGenerator.peekNextId());
 
   // The one seed roll both render-session starts share: a worker needs an
   // explicit numeric seed — a live Rng (like Math.random) can't cross
   // postMessage — which as a side effect makes a render a reproducible pure
-  // function of its inputs. A pending timeline seed (above) pins the roll;
-  // consuming it HERE, at start time, covers the realtime and offline
-  // export paths alike without either knowing about the pinning.
+  // function of its inputs. A pending timeline seed (armed by its leg,
+  // load-hints.ts) pins the roll; consuming it HERE, at start time, covers
+  // the realtime and offline export paths alike without either knowing
+  // about the pinning.
   function nextRenderSeed(): number {
-    const seed = pendingRenderSeed ?? Math.floor(Math.random() * 0xffffffff);
-    pendingRenderSeed = null;
-    return seed;
+    return loadHints.takeSeed() ?? Math.floor(Math.random() * 0xffffffff);
   }
 
   // The session-only 4D VIEW state (fr-woc/fr-6x2/fr-nn6): the accumulated
@@ -733,16 +724,14 @@ function main(): void {
     prefersReducedMotion,
   );
 
-  // A loaded document's 4D pose (fr-pnek), waiting for its cloud to land:
-  // the pendingRenderMode pattern one field over, applied to the VIEW rather
-  // than the render mode. loadEncodedScene / launchTimelineLeg / boot arm it
-  // right after applyDecodedSnapshot (which, like every other edit path,
-  // clears it); applyCloudResult applies it wherever the fresh-visit 4D
-  // reset would otherwise fire — the first non-flat arrival of a morphing
-  // load, and the terminal replaced arrival, which would otherwise stomp a
-  // just-restored (or just-glided) pose back to the identity baseline — and
-  // consumes it once the replaced request lands.
-  let pendingFourDPose: FourDPose | null = null;
+  // A loaded document's 4D pose (fr-pnek) rides loadHints above — the
+  // render-mode-hint pattern applied to the VIEW: loadEncodedScene /
+  // restoreSnapshot / launchTimelineLeg arm it right after
+  // applyDecodedSnapshot, and applyCloudResult applies it wherever the
+  // fresh-visit 4D reset would otherwise fire (the first non-flat arrival of
+  // a morphing load, and the terminal replaced arrival, which would
+  // otherwise stomp a just-restored pose back to the identity baseline),
+  // releasing it once the awaited replaced request lands.
 
   // The 3D auto-orbit (fr-1yn): the camera-side sibling of the 4D tumble
   // above — a slow turntable on the orbit camera's theta, so a flat system's
@@ -1125,10 +1114,10 @@ function main(): void {
     if (!next) return false;
     editSession.beginEdit("replace");
     applyDecodedSnapshot(next.snap, true, true, DRIFT_MORPH_MS);
-    // Re-arm AFTER applyDecodedSnapshot, which clears pendingRenderMode on
+    // Re-arm AFTER applyDecodedSnapshot, which clears the mode hint on
     // every load (a restored document must not trigger a stale preset hint —
     // this is not that: it's the show arming the entry's own display mode).
-    if (next.mode) pendingRenderMode = next.mode;
+    if (next.mode) loadHints.armMode(next.mode);
     driftLastPlayedId = next.id;
     return true;
   }
@@ -1258,8 +1247,8 @@ function main(): void {
    * a non-flat system additionally carries its 4D view pose (fr-pnek) —
    * the rotor orientation and w-slice the author framed — and the 4D view
    * glides onto it the same way (FourDTween, rotor slerp + slice-center
-   * lerp over the leg's own duration); the pose is ALSO armed as
-   * pendingFourDPose so the arrival that lands the replaced request
+   * lerp over the leg's own duration); the pose is ALSO armed as the
+   * pending pose hint so the arrival that lands the replaced request
    * re-applies it exactly, covering both a glide that finished a beat
    * before the cloud landed and one a user gesture cancelled out from
    * under the show. Steps resolve by
@@ -1270,7 +1259,7 @@ function main(): void {
    *
    * A RENDER keyframe (fr-v3au) — a step tagged with the flame/solid mode
    * it was captured from — additionally re-enters that renderer when the
-   * morph's terminal cloud lands (pendingRenderMode, exactly
+   * morph's terminal cloud lands (the mode hint, exactly
    * advanceCollectionLeg's re-arm) and self-holds the player's schedule
    * right here at launch: the next departure has no clock until this
    * step's render meets its iteration budget (noteRenderProgress resumes
@@ -1279,7 +1268,7 @@ function main(): void {
    * from the render's entry means no schedule deadline can slip through
    * during the morph or the terminal request's in-flight gap — even a
    * holdMs: 0 render step converges before departing. The render's
-   * accumulator seed is pinned too (fr-4ff7): pendingRenderSeed carries
+   * accumulator seed is pinned too (fr-4ff7): the pending seed hint carries
    * the leg's own legSeed draw into that session start, so the converged
    * still — not just the morph into it — is identical run to run,
    * residual noise included.
@@ -1294,21 +1283,21 @@ function main(): void {
     const seed = legSeed(timeline.seed, index);
     applyDecodedSnapshot(snap, pose === undefined, true, step.morphMs, seed);
     if (pose) cameraTween.glideToPose(pose, step.morphMs);
-    // Armed AFTER applyDecodedSnapshot, which clears pendingFourDPose on
-    // every load's behalf (the pendingRenderMode pattern, fr-pnek).
+    // Armed AFTER applyDecodedSnapshot, which clears the pose hint on
+    // every load's behalf (the render-mode-hint pattern, fr-pnek).
     if (snap.fourD) {
       fourDTween.glideToPose(snap.fourD, step.morphMs);
-      pendingFourDPose = snap.fourD;
+      loadHints.armPose(snap.fourD);
     }
     if (step.mode) {
-      pendingRenderMode = step.mode;
+      loadHints.armMode(step.mode);
       // The render's accumulator seed is pinned to the same per-leg draw
       // as the morph (fr-4ff7): distinct consumers (cloud-worker point
       // correspondence vs flame/solid accumulation), so sharing the value
       // is harmless, and one draw per leg keeps the determinism story
-      // simple. Consumed by the session start the arrival's
-      // pendingRenderMode switch triggers (see nextRenderSeed).
-      pendingRenderSeed = seed;
+      // simple. Consumed by the session start the arrival's mode-hint
+      // switch triggers (see nextRenderSeed).
+      loadHints.armSeed(seed);
       timelinePlayer.hold();
     }
     return true;
@@ -1512,7 +1501,7 @@ function main(): void {
         // points-mode morph the hold is already on but the mode is still
         // "points", so morph frames capture normally; the park engages on
         // the frame whose settle landed the terminal cloud (its
-        // applyCloudResult consumed pendingRenderMode into the session) and
+        // applyCloudResult consumed the mode hint into the session) and
         // disengages when noteRenderProgress's budget-met resume drops
         // `holding` — or, for a render that exits early, when its
         // deactivate drops the mode back to "points".
@@ -1796,7 +1785,7 @@ function main(): void {
   // a running show (neither does grabbing the camera).
   function releaseFourDPoseControl(): void {
     fourDTween.cancel();
-    pendingFourDPose = null;
+    loadHints.clearPose();
   }
 
   // The 3D sibling of resetFourDView(): return the auto-orbit to its "fresh
@@ -2042,31 +2031,36 @@ function main(): void {
     // outcomes are mutually exclusive-ish (resetFourD needs nonFlat, the other
     // two need !nonFlat), so they read as independent guards here.
     const transition = viewTransition(nonFlat, wasNonFlat, request.replaced);
+    // The awaited load's pending pose, or null — null too for an arrival
+    // still in flight from a PREVIOUS load, which must not apply (nor, via
+    // releasePose below, discard) a pose the NEXT load is waiting to land
+    // (load-hints.ts, fr-vja8.34).
+    const pendingPose = loadHints.poseFor(request);
     if (transition.resetFourD) {
       if (fourDTween.active) {
         // A timeline leg's rotor glide owns the view (fr-pnek): the fresh-
         // visit reset would stomp it mid-flight (and the glide's next
         // advance would overwrite the reset anyway — a pointless flicker).
         // The glide lands the saved pose itself; nothing to do here.
-      } else if (pendingFourDPose) {
+      } else if (pendingPose) {
         // The loaded document carries its own 4D framing (fr-pnek): apply
         // it where the fresh-visit baseline would otherwise land — the
         // first non-flat arrival of a morphing load shows the destination
         // orientation immediately, and the terminal replaced arrival
         // re-applies it rather than resetting a pose the load (or a
         // just-finished timeline glide) put there. Not consumed here: the
-        // clear below keys off the replaced request itself, so a morph's
+        // release below keys off the replaced request itself, so a morph's
         // in-between arrivals can't strand the terminal one pose-less.
-        applyFourDPose(pendingFourDPose);
+        applyFourDPose(pendingPose);
       } else {
         resetFourDView();
       }
     }
-    // The pending pose is armed for exactly one load; the replaced request
-    // IS that load's landing (even when it lands flat — a corrupt document
-    // could pair a 4D pose with flat transforms), so consume it here rather
-    // than inside the nonFlat-gated branch above.
-    if (request.replaced) pendingFourDPose = null;
+    // The pending pose is armed for exactly one load; that load's own
+    // replaced request IS its landing (even when it lands flat — a corrupt
+    // document could pair a 4D pose with flat transforms), so release it
+    // here rather than inside the nonFlat-gated branch above.
+    loadHints.releasePose(request);
     if (transition.resetAutoOrbit) resetAutoOrbitView();
     if (transition.clearScaffold) {
       // scene.setFourDActive(false) (just above) restores the 3D material/
@@ -2150,9 +2144,10 @@ function main(): void {
     // HERE, when its whole-system replacement actually lands — not at click
     // time, when the camera still framed the previous attractor.
     // enterLoadedRenderMode carries the camera discipline that entry needs.
-    if (request.replaced && pendingRenderMode !== null) {
-      const target = pendingRenderMode;
-      pendingRenderMode = null;
+    // takeMode only yields for the awaited load's own replaced landing — a
+    // stale replaced arrival leaves the hint armed (fr-vja8.34).
+    const target = loadHints.takeMode(request);
+    if (target !== null) {
       enterLoadedRenderMode(target);
     }
   }
@@ -5056,7 +5051,7 @@ function main(): void {
       // entering render converges; the render's own completed-progress
       // signal re-arms the departure (noteRenderProgress), so a leg can
       // never yank a still that is mid-convergence. This runs for a manual
-      // switch AND for the show's own per-leg re-entry (the pendingRenderMode
+      // switch AND for the show's own per-leg re-entry (the mode-hint
       // consumption in applyCloudResult) — both want exactly this hold.
       if (driftShow.active && driftSource === "collection") {
         driftShow.hold();
@@ -5068,7 +5063,7 @@ function main(): void {
       }
       // Timeline playback survives this switch only while HELD (fr-v3au):
       // holding means a render keyframe owns the display — the entry
-      // arriving here is the show's own (the leg armed pendingRenderMode
+      // arriving here is the show's own (the leg armed the mode hint
       // and held the schedule at launch), or a manual mid-hold look-around,
       // which survives for the same reason a collection show's does — the
       // render mode is how the keyframe displays, not a reach into the
@@ -5252,14 +5247,12 @@ function main(): void {
     // A restored document must not trigger a preset hint armed just before
     // the time travel / gallery load — nor inherit a 4D pose armed for a
     // load it just superseded (fr-pnek; callers that WANT a pose re-arm it
-    // right after this returns, mirroring pendingRenderMode). The pose
+    // right after this returns, mirroring the mode hint). The pose
     // GLIDE is superseded the same way: left alive, a leg's still-flying
     // glide would freeze when this load lands flat (animate()'s 4D block
     // stops advancing it) and then snap its stale pose onto the NEXT
     // non-flat visit. A timeline leg re-arms its own glide right after.
-    pendingRenderMode = null;
-    pendingRenderSeed = null;
-    pendingFourDPose = null;
+    loadHints.clearAll();
     fourDTween.cancel();
     // The balloon "Inflate" sweep (fr-5wlv.6) is session-only replay motion
     // over a now-superseded document — the user just jumped states, so any
@@ -5388,8 +5381,8 @@ function main(): void {
    * the same applyDecodedSnapshot-then-applyCameraPose shape as
    * {@link loadEncodedScene}. When that captured pose carries a 4D half
    * (fr-gq99 — the checkpointed system was non-flat), the rotor/slice come
-   * back the same way the gallery load's saved 4D pose does: armed as
-   * pendingFourDPose, so applyCloudResult lands it with the restored cloud
+   * back the same way the gallery load's saved 4D pose does: armed as the
+   * pending pose hint, so applyCloudResult lands it with the restored cloud
    * where the fresh-visit reset would otherwise fire — an immediate
    * applyFourDPose here would just be stomped at arrival. A `replaced` step
    * with no captured pose (defensive — the app always supplies one via the
@@ -5405,9 +5398,9 @@ function main(): void {
     if (replaced && pose) {
       applyDecodedSnapshot(snap, false, false);
       applyCameraPose(pose.camera);
-      // Armed AFTER applyDecodedSnapshot, which clears pendingFourDPose on
-      // every load's behalf (the pendingRenderMode pattern, fr-pnek).
-      if (pose.fourD) pendingFourDPose = pose.fourD;
+      // Armed AFTER applyDecodedSnapshot, which clears the pose hint on
+      // every load's behalf (the render-mode-hint pattern, fr-pnek).
+      if (pose.fourD) loadHints.armPose(pose.fourD);
     } else {
       applyDecodedSnapshot(snap, replaced, false);
     }
@@ -5485,7 +5478,7 @@ function main(): void {
    * debounced save) via `beginEdit("replace")` before applying, and restores
    * the framing: the pose saved with the scene when there is one (fr-1k4),
    * an auto-fit for entries with no stored pose — and the saved 4D view
-   * pose when the document carries one (fr-pnek), armed as pendingFourDPose
+   * pose when the document carries one (fr-pnek), armed as the pose hint
    * so it lands with the restored cloud (the fresh-visit reset at arrival
    * would stomp an immediate apply; see applyCloudResult). A corrupt entry
    * (decode returns null — can't happen for our own encodeScene output, but
@@ -5500,9 +5493,9 @@ function main(): void {
     editSession.beginEdit("replace");
     applyDecodedSnapshot(snap, snap.camera === undefined, true);
     if (snap.camera) applyCameraPose(snap.camera);
-    // Armed AFTER applyDecodedSnapshot, which clears pendingFourDPose on
-    // every load's behalf (the pendingRenderMode pattern, fr-pnek).
-    if (snap.fourD) pendingFourDPose = snap.fourD;
+    // Armed AFTER applyDecodedSnapshot, which clears the pose hint on
+    // every load's behalf (the render-mode-hint pattern, fr-pnek).
+    if (snap.fourD) loadHints.armPose(snap.fourD);
     return true;
   }
 
@@ -5638,7 +5631,7 @@ function main(): void {
       // decodeFlameFile pre-validated the payload (same guard-not-trust
       // shape as the JSON scene branch above).
       if (loadEncodedScene(encoded)) {
-        pendingRenderMode = "flame";
+        loadHints.armMode("flame");
         ui.flashToast(`Imported "${name}"${suffix}`);
       }
       return true;
@@ -5750,9 +5743,7 @@ function main(): void {
     // Any fresh edit supersedes a preset hint still waiting for its cloud
     // (fr-39y) — onPreset re-arms it right after this returns — and a 4D
     // pose still waiting for its load's cloud (fr-pnek), same staleness.
-    pendingRenderMode = null;
-    pendingRenderSeed = null;
-    pendingFourDPose = null;
+    loadHints.clearAll();
     if (effect === "auto") snapMorph();
     const morphFrom = currentMorphSystem();
     editSession.beginEdit(effect === "always" ? "replace" : "tweak");
@@ -5990,7 +5981,7 @@ function main(): void {
       // arms its render-mode hint AFTER applyEdit (which clears it); the
       // arriving cloud consumes it — see applyCloudResult — so the showcase
       // preset actually shows up in the renderer its menu group promises.
-      pendingRenderMode = PRESET_RENDER_HINTS[preset] ?? null;
+      loadHints.armMode(PRESET_RENDER_HINTS[preset] ?? null);
     },
     // A manual press is a manual replace-load, so applyEdit (inside) also
     // ends a running drift show — the show's own legs take the same path
@@ -6480,7 +6471,7 @@ function main(): void {
       // when the load actually applied (a corrupt entry must not leave a
       // stale hint), and AFTER it: applyDecodedSnapshot clears the hint.
       if (loadEncodedScene(entry.encoded) && entry.mode) {
-        pendingRenderMode = entry.mode;
+        loadHints.armMode(entry.mode);
       }
     },
     onDeleteFromCollection: (id) => {
@@ -6693,9 +6684,7 @@ function main(): void {
       // A manual switch outranks a preset hint still waiting for its cloud —
       // and drops a 4D pose waiting for one (fr-pnek): whatever load armed
       // it, the user just reached in over it.
-      pendingRenderMode = null;
-      pendingRenderSeed = null;
-      pendingFourDPose = null;
+      loadHints.clearAll();
       switchRenderMode(mode);
     },
     // Slice state is session-only view state (like the tumble clock): it never
@@ -6929,7 +6918,7 @@ function main(): void {
   // orientation + w-slice it was saved with. AFTER the synchronous boot
   // generation above — its inline arrival runs the fresh-visit reset this
   // apply must land on top of, not under. Applied directly rather than via
-  // pendingFourDPose: the async density upgrade below is replaced:false, so
+  // the pose hint: the async density upgrade below is replaced:false, so
   // arming the pending pose here would leave it dangling for whatever
   // UNRELATED replaced request comes first (a preset click minutes later).
   // A pose paired with a flat scene (hand-crafted document) is ignored,
@@ -7254,8 +7243,8 @@ function main(): void {
       // panel controls. The per-frame lerp above deliberately skips the
       // UI (the panel is closed during playback), but the LANDING must
       // not leave it stale for when the panel reopens — the arrival-side
-      // sync (applyFourDPose via pendingFourDPose) only covers legs whose
-      // cloud landed after the glide had already finished.
+      // sync (applyFourDPose via the pending pose hint) only covers legs
+      // whose cloud landed after the glide had already finished.
       if (!fourDTween.active) syncFourDSliceUi();
     } else {
       fourDView.tick(dt);
@@ -7604,13 +7593,13 @@ function main(): void {
     // The timeline's twin (fr-v3au), with one more condition: a timeline
     // hold starts at the render keyframe's LAUNCH (launchTimelineLeg), so
     // holding-in-points is also the leg's ordinary morph and the terminal
-    // request's in-flight gap — phases where pendingRenderMode is still
+    // request's in-flight gap — phases where the mode hint is still
     // armed for the render this hold awaits. Only once it has been consumed
     // (the render entered, then exited early: Back, or a worker error) does
     // a points-mode hold mean the completion signal is never coming —
     // resume, so the schedule dwells the step's own holdMs on the points
     // cloud now showing and the show goes on (the drift stance above).
-    if (timelinePlayer.holding && pendingRenderMode === null) {
+    if (timelinePlayer.holding && loadHints.mode === null) {
       timelinePlayer.resume();
     }
     // One clamped dt for both kinds of automatic motion (4D tumble / 3D
