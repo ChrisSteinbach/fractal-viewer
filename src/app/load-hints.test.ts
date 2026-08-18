@@ -13,7 +13,10 @@ function pose(sliceCenter = 0): FourDPose {
 }
 
 /** A hints instance whose next-request id the test scripts by mutation —
- * standing in for CloudGenerator.peekNextId's monotonic counter. */
+ * standing in for CloudGenerator.peekNextId's monotonic counter. Every test
+ * follows the real call order: a load opens with clearAll() (which captures
+ * the await key), the apply may advance the counter (posting requests), and
+ * the arms run after. */
 function hintsAt(counter: { id: number }): PendingLoadHints {
   return new PendingLoadHints(() => counter.id);
 }
@@ -23,9 +26,10 @@ describe("PendingLoadHints", () => {
     it("survives a stale replaced arrival from the previous load — the fr-vja8.34 interleaving", () => {
       // Load N's terminal replaced request went out with id 4; the
       // backgrounded-tab catch-up frame launches load N+1 in the same tick,
-      // arming its mode hint while ids 5+ are still unposted.
+      // whose opening clear captures the key while ids 5+ are unposted.
       const counter = { id: 5 };
       const hints = hintsAt(counter);
+      hints.clearAll();
       hints.armMode("flame");
       // Load N's arrival lands first. It must not consume the hint...
       expect(hints.takeMode({ id: 4, replaced: true })).toBeNull();
@@ -34,27 +38,57 @@ describe("PendingLoadHints", () => {
     });
 
     it("consumes on the awaited load's own replaced arrival, then disarms", () => {
-      const hints = hintsAt({ id: 7 });
+      const counter = { id: 7 };
+      const hints = hintsAt(counter);
+      hints.clearAll();
       hints.armMode("solid");
       expect(hints.takeMode({ id: 7, replaced: true })).toBe("solid");
       expect(hints.takeMode({ id: 8, replaced: true })).toBeNull();
     });
 
-    it("consumes on a LATER id than armed — a morphing load's terminal request is posted at morph end, many intermediates later", () => {
-      const hints = hintsAt({ id: 10 });
+    it("consumes on a LATER id than the key — a morphing load's terminal request is posted at morph end, many intermediates later", () => {
+      const counter = { id: 10 };
+      const hints = hintsAt(counter);
+      hints.clearAll();
       hints.armMode("flame");
       expect(hints.takeMode({ id: 28, replaced: true })).toBe("flame");
     });
 
+    it("consumes a request the load's own apply posted BEFORE the arm ran — a reduced-motion load regenerates synchronously inside the apply", () => {
+      const counter = { id: 5 };
+      const hints = hintsAt(counter);
+      hints.clearAll(); // key = 5, captured at the top of the apply
+      counter.id = 6; // the apply posted the load's own replaced request (5)
+      hints.armMode("flame"); // armed after — the real call order
+      // The load's own request must still fire the hint: the key was
+      // captured at the clear, not here, or this arrival would be refused
+      // and the hint stranded (the roast-found regression this test pins).
+      expect(hints.takeMode({ id: 5, replaced: true })).toBe("flame");
+    });
+
+    it("draws the line at the load boundary, not inside the load's own tick — a snapped previous morph's terminal (posted during the apply) may consume, exactly as before the epoch key existed", () => {
+      const counter = { id: 5 };
+      const hints = hintsAt(counter);
+      hints.clearAll(); // key = 5
+      counter.id = 7; // the apply posted ids 5 (snapMorph terminal) and 6 (own)
+      hints.armMode("flame");
+      expect(hints.takeMode({ id: 4, replaced: true })).toBeNull(); // pre-load: refused
+      expect(hints.takeMode({ id: 5, replaced: true })).toBe("flame"); // in-load: allowed
+    });
+
     it("never consumes on a replaced:false arrival, whatever its id — a morph's intermediates pass over the hint", () => {
-      const hints = hintsAt({ id: 3 });
+      const counter = { id: 3 };
+      const hints = hintsAt(counter);
+      hints.clearAll();
       hints.armMode("flame");
       expect(hints.takeMode({ id: 9, replaced: false })).toBeNull();
       expect(hints.takeMode({ id: 10, replaced: true })).toBe("flame");
     });
 
     it("arming null is a real arm — onPreset clears the hint for a hint-less preset", () => {
-      const hints = hintsAt({ id: 2 });
+      const counter = { id: 2 };
+      const hints = hintsAt(counter);
+      hints.clearAll();
       hints.armMode("flame");
       hints.armMode(null);
       expect(hints.takeMode({ id: 2, replaced: true })).toBeNull();
@@ -63,6 +97,7 @@ describe("PendingLoadHints", () => {
     it("exposes the armed mode un-consumed for the timeline hold check", () => {
       const hints = hintsAt({ id: 1 });
       expect(hints.mode).toBeNull();
+      hints.clearAll();
       hints.armMode("solid");
       expect(hints.mode).toBe("solid");
       // Reading never consumes.
@@ -74,6 +109,7 @@ describe("PendingLoadHints", () => {
     it("a stale flat replaced arrival no longer discards the next load's pose — the silent 4D data loss fr-vja8.34 fixes", () => {
       const counter = { id: 5 };
       const hints = hintsAt(counter);
+      hints.clearAll();
       const saved = pose(0.4);
       hints.armPose(saved);
       // The undone system's flat arrival (id 4, replaced) lands after the
@@ -83,15 +119,33 @@ describe("PendingLoadHints", () => {
       expect(hints.poseFor({ id: 5, replaced: true })).toBe(saved);
     });
 
+    it("an undo across a replace lands its pose even though the restore posts its request inside the apply", () => {
+      const counter = { id: 5 };
+      const hints = hintsAt(counter);
+      hints.clearAll(); // restoreSnapshot's apply opens here: key = 5
+      counter.id = 6; // ...and posts the restore's own replaced request (5)
+      hints.armPose(pose(0.7)); // armed after the apply returns
+      // The restore's own arrival must apply AND release the pose — with an
+      // arm-time key it would be refused and the saved pose silently lost,
+      // the exact symptom fr-vja8.34 exists to fix (roast-found regression).
+      expect(hints.poseFor({ id: 5, replaced: true })).not.toBeNull();
+      hints.releasePose({ id: 5, replaced: true });
+      expect(hints.poseFor({ id: 6, replaced: true })).toBeNull();
+    });
+
     it("releases on the awaited load's own replaced landing, even a flat one", () => {
-      const hints = hintsAt({ id: 5 });
+      const counter = { id: 5 };
+      const hints = hintsAt(counter);
+      hints.clearAll();
       hints.armPose(pose());
       hints.releasePose({ id: 5, replaced: true });
       expect(hints.poseFor({ id: 6, replaced: true })).toBeNull();
     });
 
     it("poseFor serves the awaited load's replaced:false intermediates — the morph's first non-flat arrival shows the destination orientation", () => {
-      const hints = hintsAt({ id: 10 });
+      const counter = { id: 10 };
+      const hints = hintsAt(counter);
+      hints.clearAll();
       const saved = pose(0.2);
       hints.armPose(saved);
       expect(hints.poseFor({ id: 13, replaced: false })).toBe(saved);
@@ -101,14 +155,18 @@ describe("PendingLoadHints", () => {
     });
 
     it("poseFor refuses a stale arrival — the previous load's cloud must not take the next load's pose", () => {
-      const hints = hintsAt({ id: 10 });
+      const counter = { id: 10 };
+      const hints = hintsAt(counter);
+      hints.clearAll();
       hints.armPose(pose());
       expect(hints.poseFor({ id: 9, replaced: false })).toBeNull();
       expect(hints.poseFor({ id: 9, replaced: true })).toBeNull();
     });
 
     it("replaced:false arrivals never release, whatever their id", () => {
-      const hints = hintsAt({ id: 10 });
+      const counter = { id: 10 };
+      const hints = hintsAt(counter);
+      hints.clearAll();
       const saved = pose();
       hints.armPose(saved);
       hints.releasePose({ id: 15, replaced: false });
@@ -116,7 +174,9 @@ describe("PendingLoadHints", () => {
     });
 
     it("clearPose drops the pose but keeps mode and seed — a rotor grab must not cancel a timeline leg's render entry", () => {
-      const hints = hintsAt({ id: 4 });
+      const counter = { id: 4 };
+      const hints = hintsAt(counter);
+      hints.clearAll();
       hints.armPose(pose());
       hints.armMode("flame");
       hints.armSeed(123);
@@ -130,6 +190,7 @@ describe("PendingLoadHints", () => {
   describe("takeSeed", () => {
     it("takes unconditionally and disarms — the session start the mode hint triggered consumes it, whenever that runs", () => {
       const hints = hintsAt({ id: 1 });
+      hints.clearAll();
       hints.armSeed(42);
       expect(hints.takeSeed()).toBe(42);
       expect(hints.takeSeed()).toBeNull();
@@ -142,7 +203,9 @@ describe("PendingLoadHints", () => {
 
   describe("clearAll", () => {
     it("drops all three hints — applyEdit / applyDecodedSnapshot / a manual mode switch supersede whatever was waiting", () => {
-      const hints = hintsAt({ id: 6 });
+      const counter = { id: 6 };
+      const hints = hintsAt(counter);
+      hints.clearAll();
       hints.armMode("flame");
       hints.armSeed(7);
       hints.armPose(pose());
@@ -152,32 +215,30 @@ describe("PendingLoadHints", () => {
       expect(hints.takeSeed()).toBeNull();
       expect(hints.poseFor({ id: 6, replaced: true })).toBeNull();
     });
-  });
 
-  describe("await key maintenance", () => {
-    it("re-arming reads the CURRENT next id — a later load is not gated behind an earlier load's key", () => {
+    it("re-keys the window — load B's clear closes load A's window, so A's in-flight requests cannot touch B's hints", () => {
       const counter = { id: 3 };
       const hints = hintsAt(counter);
+      hints.clearAll(); // load A opens
       hints.armMode("flame");
-      // Load A's own requests went out (ids 3..6); a fresh load B arms at 7.
-      counter.id = 7;
+      counter.id = 7; // A's requests went out (ids 3..6)
+      hints.clearAll(); // load B opens: key = 7
       hints.armMode("solid");
       expect(hints.takeMode({ id: 6, replaced: true })).toBeNull();
       expect(hints.takeMode({ id: 7, replaced: true })).toBe("solid");
     });
 
-    it("each arm refreshes the shared key — the three hints always belong to the same load", () => {
+    it("arms never move the key — a load arming twice (pose from loadEncodedScene, mode from its caller) keeps one shared window", () => {
       const counter = { id: 2 };
       const hints = hintsAt(counter);
+      hints.clearAll(); // key = 2
+      counter.id = 3; // the apply posted the load's own request (2)
       hints.armPose(pose());
-      counter.id = 3;
-      // The same load arms its mode a statement later (gallery entry:
-      // loadEncodedScene arms the pose, the caller arms the mode). The key
-      // moves to 3; the pose rides along — it belongs to the same load,
-      // whose requests are all still unposted.
-      hints.armMode("flame");
-      expect(hints.poseFor({ id: 3, replaced: false })).not.toBeNull();
-      expect(hints.takeMode({ id: 3, replaced: true })).toBe("flame");
+      hints.armMode("flame"); // a second arm, later in the same load
+      // Both hints answer to the load's own request — the second arm did
+      // not slide the window past it.
+      expect(hints.poseFor({ id: 2, replaced: true })).not.toBeNull();
+      expect(hints.takeMode({ id: 2, replaced: true })).toBe("flame");
     });
   });
 });

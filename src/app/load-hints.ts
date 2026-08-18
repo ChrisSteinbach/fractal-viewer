@@ -22,27 +22,42 @@
  * the real load's saved pose was discarded and the view fell back to the
  * fresh-visit reset — no error, just a scene restored posed wrong.
  *
- * So every arm records the generation-request id its load awaits — the
- * injected `nextRequestId` (CloudGenerator.peekNextId: ids are stamped
- * monotonically at post time, and every request the arming load will produce
- * is posted AFTER the arm). Consumption then requires `request.id >= awaitId`:
+ * So the await key — the smallest generation-request id that can be the
+ * arming load's own — is recorded when the load's OPENING CLEAR runs
+ * (`clearAll`, from the applyDecodedSnapshot/applyEdit every load path
+ * enters through), via the injected `nextRequestId`
+ * (CloudGenerator.peekNextId: ids are stamped monotonically at post time).
+ * Consumption then requires `request.id >= awaitId`:
  *
- * - `>=`, never `===`, because a morphing load's terminal replaced request is
- *   posted at morph END, many ids after the arm (every intermediate takes one)
- *   — and because the generator's latest-wins pending slot OR-merges a parked
- *   terminal into the NEWER request that overwrites it, so the arrival that
- *   lands a load's replacement can carry a later id than the load's own.
- * - An arrival BELOW the key is an in-flight leftover of a previous load: it
- *   must neither consume a hint nor discard one. (Its own hints were cleared
- *   when the newer load's applyDecodedSnapshot/applyEdit ran — clearing at
- *   edit time was never the gap; consuming at arrival time was.)
+ * - Captured at the CLEAR, not at the later arm, because the apply BETWEEN
+ *   them can post the load's own landing synchronously: the non-morph
+ *   restore path (undo/redo across a replace) and every reduced-motion load
+ *   call `regenerate(true, ...)` inside the apply, so a key read at arm
+ *   time would sit one id PAST the load's own request and the hint could
+ *   never fire — the undo path's saved 4D pose would be silently lost, the
+ *   precise symptom this module exists to fix, through a different door.
+ * - `>=`, never `===`, because a morphing load's terminal replaced request
+ *   is posted at morph END, many ids after the clear (every intermediate
+ *   takes one) — and because the generator's latest-wins pending slot
+ *   OR-merges a parked terminal into the NEWER request that overwrites it,
+ *   so the arrival that lands a load's replacement can carry a later id
+ *   than the load's own.
+ * - An arrival BELOW the key is a request posted BEFORE this load began: an
+ *   in-flight leftover of a previous load, which must neither consume a
+ *   hint nor discard one. A request posted DURING the load's own apply — a
+ *   snapped previous morph's terminal, or the load's own immediate
+ *   regenerate — sits at or above the key and stays consumable, exactly as
+ *   it always was: the fix draws the line at the load boundary, not inside
+ *   the load's own tick.
  *
  * One await key covers all three hints because every arming site sits
  * immediately after an applyDecodedSnapshot/applyEdit that cleared all three
  * on the load's behalf — at any moment the armed hints all belong to the same
- * load. The seed is the one hint consumed OUT of the arrival handler
- * (nextRenderSeed takes it at whichever session start the mode hint
- * triggers), so `takeSeed` stays unconditional, exactly as before.
+ * load, and the clear that wiped the previous load's hints is the same call
+ * that opened this load's window. The seed is the one hint consumed OUT of
+ * the arrival handler (nextRenderSeed takes it at whichever session start
+ * the mode hint triggers), so `takeSeed` stays unconditional, exactly as
+ * before.
  *
  * Pure and DOM-free so the interleaving is pinned by unit tests — the
  * fr-vja8.66/.67 extraction discipline; main.ts keeps only the wiring.
@@ -68,9 +83,9 @@ export class PendingLoadHints {
 
   /**
    * @param nextRequestId The id the NEXT generation request will be stamped
-   * with (CloudGenerator.peekNextId), read lazily at each arm — main.ts
-   * constructs this before the generator exists, and no arm can run that
-   * early.
+   * with (CloudGenerator.peekNextId), read lazily at each {@link clearAll} —
+   * main.ts constructs this before the generator exists, and no clear can
+   * run that early.
    */
   constructor(private readonly nextRequestId: () => number) {}
 
@@ -81,30 +96,38 @@ export class PendingLoadHints {
   }
 
   /** Arm the render-mode hint. `null` is a real arm (onPreset passes
-   * `PRESET_RENDER_HINTS[preset] ?? null` — most presets clear). */
+   * `PRESET_RENDER_HINTS[preset] ?? null` — most presets clear). Value only:
+   * the await key was captured by the load's opening {@link clearAll}. */
   armMode(mode: RenderMode | null): void {
     this.modeHint = mode;
-    this.awaitId = this.nextRequestId();
   }
 
   /** Arm the deterministic accumulator seed (fr-4ff7, timeline legs only). */
   armSeed(seed: number): void {
     this.seedHint = seed;
-    this.awaitId = this.nextRequestId();
   }
 
   /** Arm the loaded document's 4D pose (fr-pnek). */
   armPose(pose: FourDPose): void {
     this.poseHint = pose;
-    this.awaitId = this.nextRequestId();
   }
 
-  /** Every edit/load path's "a fresh edit supersedes whatever was waiting":
-   * applyEdit, applyDecodedSnapshot, and a manual render-mode switch. */
+  /**
+   * Every edit/load path's "a fresh edit supersedes whatever was waiting":
+   * applyEdit, applyDecodedSnapshot, and a manual render-mode switch — AND
+   * the moment the next load's await key is captured (see the module doc):
+   * this runs at the top of the apply, BEFORE the apply can post the load's
+   * own first request, so that request is `>=` the key and stays
+   * consumable, while everything already in flight from before falls below
+   * it. A clear with no arms after it (an ordinary edit, a manual mode
+   * switch) just leaves the key high and the hints empty — harmless, since
+   * every take/release no-ops on a null hint.
+   */
   clearAll(): void {
     this.modeHint = null;
     this.seedHint = null;
     this.poseHint = null;
+    this.awaitId = this.nextRequestId();
   }
 
   /** The user's hand landing on the 4D view takes it back from the document
