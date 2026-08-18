@@ -386,6 +386,46 @@ describe("installSliderScrollGuard (fr-xu4u)", () => {
       pointerEvent("pointerup", { pointerId: 1, clientX: 180 }),
     );
     expect(changes).toHaveBeenCalledTimes(1);
+    // Wiring pin only: jsdom implements no slider touchstart default action,
+    // so this cannot prove B's tap-jump was suppressed — the disabled-flip
+    // test below pins that side, and the real proof is
+    // scripts/panel-touch-scroll.verify.mjs on real Chromium.
+    expect(second.value).toBe("5");
+  });
+
+  it("hides a second finger's slider from the touchstart handler even while refusing its gesture", async () => {
+    const { panel, slider } = setup({
+      min: "0",
+      max: "4",
+      step: "0.05",
+      value: "1",
+      left: 0,
+      width: 200,
+    });
+    const second = document.createElement("input");
+    second.type = "range";
+    second.min = "0";
+    second.max = "10";
+    second.value = "5";
+    panel.appendChild(second);
+
+    slider.dispatchEvent(
+      pointerEvent("pointerdown", { pointerId: 1, clientX: 100, clientY: 10 }),
+    );
+    second.dispatchEvent(
+      pointerEvent("pointerdown", { pointerId: 2, clientX: 20, clientY: 10 }),
+    );
+    // The suppression flip landed before the refusal, so Blink's touchstart
+    // handler (dispatched after pointerdown) will skip B's slider.
+    expect(second.disabled).toBe(true);
+
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(second.disabled).toBe(false); // given back the same frame
+
+    // And the refusal held: B never adopted the gesture.
+    second.dispatchEvent(
+      pointerEvent("pointermove", { pointerId: 2, clientX: 60, clientY: 10 }),
+    );
     expect(second.value).toBe("5");
   });
 
