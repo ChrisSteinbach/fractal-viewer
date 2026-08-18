@@ -94,7 +94,9 @@ export function createCanvasRecorder(
   let recorder: MediaRecorder | undefined;
   let chunks: Blob[] = [];
   let startedAtMs = 0;
-  let stoppedElapsedMs = 0;
+  /** Elapsed ms at which stop() ended THIS recording; undefined while it has
+   * not run, so finalize() can tell a user stop from a spontaneous one. */
+  let stoppedElapsedMs: number | undefined;
   let errored = false;
   let tickTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -170,6 +172,7 @@ export function createCanvasRecorder(
       return;
     }
     startedAtMs = performance.now();
+    stoppedElapsedMs = undefined;
     tickTimer = setInterval(() => {
       const elapsed = Math.round((performance.now() - startedAtMs) / 1000);
       callbacks.onTick(elapsed);
@@ -181,6 +184,12 @@ export function createCanvasRecorder(
   }
 
   function finalize(mime: string): void {
+    // "stop" fires for ANY stop, not only stop()'s: a track that ends
+    // spontaneously arrives here with stoppedElapsedMs still holding the
+    // previous clip's length (or nothing), so derive this clip's own elapsed
+    // time instead — stamping a confident wrong number into the container is
+    // exactly the broken-duration class fr-ex2/fr-87q exist to prevent.
+    const durationMs = stoppedElapsedMs ?? performance.now() - startedAtMs;
     const blob = new Blob(chunks, { type: mime });
     const filename = recordingFileName(mime, Date.now());
     const failed = errored;
@@ -190,7 +199,7 @@ export function createCanvasRecorder(
     } else if (blob.size === 0) {
       callbacks.onError("Recording produced no data.");
     } else {
-      void finishClip(blob, filename, mime, stoppedElapsedMs);
+      void finishClip(blob, filename, mime, durationMs);
     }
     callbacks.onStateChange(false);
   }
