@@ -2922,6 +2922,14 @@ function main(): void {
         // demand (fr-py7z) would leave the stale flame frame on screen until
         // the next camera move.
         scene.invalidate();
+        // Release the export-scale accumulator canvas + GPU texture
+        // (fr-vja8.35) — the flame sibling of exitSurfaceComputeSession's
+        // release-on-exit, and THIS is the one chokepoint every flame exit
+        // passes through: a manual mode switch, the worker error paths, and
+        // an Export-size restart (whose immediate re-enter regrows the
+        // canvas on its first frame — one trivial realloc, accepted so the
+        // error exits can't be missed by a switch-site-only hook).
+        scene.exitFlameSession();
       }
       // Whatever this render still owed a thumbnail (fr-r777) is owed
       // nothing now — the mode is over.

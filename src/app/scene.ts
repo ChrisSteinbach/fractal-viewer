@@ -2898,6 +2898,28 @@ export class FractalScene {
   }
 
   /**
+   * Leave the flame render session (a mode switch away from "flame"):
+   * shrink the accumulator canvas back to its 1x1 placeholder (see the
+   * constructor) and drop the texture's uploaded GPU copy — a flame
+   * session ACCUMULATES AT EXPORT SIZE (fr-2urv, see {@link setFlameImage}
+   * and {@link captureFlameFrame}'s doc), so a 4x export leaves ~132MB of
+   * canvas + GPU texture resident for the rest of the page's life once
+   * nothing shrinks it back down (fr-vja8.35). Mirrors
+   * {@link exitSurfaceComputeSession}'s dispose+null shape; `flameTexture`
+   * itself stays (it is `readonly`, and `flameMaterial.map` keeps pointing
+   * at it) — `dispose()` only releases the renderer's uploaded copy, which
+   * it transparently re-uploads from the canvas the next time the flame
+   * quad draws. There is no warm path to protect: flame RE-ENTRY re-seeds
+   * the accumulation from scratch, and the next {@link setFlameImage} call
+   * grows the canvas right back through this same file's resize check.
+   */
+  exitFlameSession(): void {
+    this.flameCanvas.width = 1;
+    this.flameCanvas.height = 1;
+    this.flameTexture.dispose();
+  }
+
+  /**
    * Upload a freshly packed density volume (RGBA8 bytes from
    * `voxelTextureData`, `size ** 3 * 4` long, x-fastest) so the next
    * {@link renderSolid} call marches it. Re-uses the existing 3D texture
@@ -5877,6 +5899,37 @@ export class FractalScene {
   }
 
   /**
+   * Release {@link surfaceSampleAccum}/{@link surfaceSampleTexture} —
+   * however a {@link captureSurfaceFrame} call ends (delivered, Cancelled,
+   * or the viewport-mismatch refusal) — so an export-scale sample sequence
+   * does not sit resident for a parked view that never arms another settle
+   * (fr-vja8.35: up to hundreds of MB at a large export scale). Mirrors
+   * {@link exitSurfaceComputeSession}'s dispose+null shape.
+   *
+   * Safe against the LIVE settle path sharing these exact two fields:
+   * {@link beginSurfaceSettle} unconditionally re-arms both, lazily, at ITS
+   * OWN (live) size on every settle (`beginSurfaceSamples`'s own
+   * reuse-or-reallocate check, this file) — same as
+   * {@link beginSurfaceFullFrame} does at the START of every full frame,
+   * export or live — and every reader of the two
+   * ({@link foldSurfaceSample}, {@link encodeSurfaceSampleMean},
+   * {@link presentSurfaceSampleImage}) already no-ops when either is
+   * absent. A parked view just never reaches that next settle to reclaim
+   * an export-sized buffer on its own. {@link surfaceSettleTarget} is
+   * deliberately left alone: {@link presentSettledSurface}'s
+   * parked-recorder-frame path reads it directly whenever the sample
+   * texture is absent, so it has to stay the one always-valid fallback
+   * image — this capture leaves it holding the last pass traced into it,
+   * not shrunk.
+   */
+  private releaseSurfaceSampleSequence(): void {
+    this.surfaceSampleAccum = null;
+    this.surfaceSampleTexture?.dispose();
+    this.surfaceSampleTexture = null;
+    this.surfaceSampleMeanReady = false;
+  }
+
+  /**
    * Save-PNG source while the surface render is active: trace the frame at
    * export resolution into the settle target, then present and read it back
    * in ONE synchronous span at the export pixel ratio — the same two-phase
@@ -5984,7 +6037,10 @@ export class FractalScene {
     } finally {
       this.surfaceCaptureFlight = false;
     }
-    if (outcome === "cancelled") return null;
+    if (outcome === "cancelled") {
+      this.releaseSurfaceSampleSequence();
+      return null;
+    }
     // A viewport resize during the drain leaves the traced target and the
     // canvas the blit lands on at different sizes — the export would be a
     // scaled, half-stale frame. Rare (the modal's scrim covers the app,
@@ -5993,9 +6049,10 @@ export class FractalScene {
       Math.floor(this.viewportWidth * ratio) !== width ||
       Math.floor(this.viewportHeight * ratio) !== height
     ) {
+      this.releaseSurfaceSampleSequence();
       return null;
     }
-    return this.withPixelRatio(ratio, () => {
+    const image = await this.withPixelRatio(ratio, () => {
       // The mean of the completed passes (fr-jf9y), or — for a single-pass
       // export, and for every caller that predates supersampling — the
       // traced target itself, byte for byte as before.
@@ -6004,6 +6061,12 @@ export class FractalScene {
       }
       return exportImageFrom(this.renderer.domElement);
     });
+    // fr-vja8.35: the export image above is built (it reads the CANVAS,
+    // already blitted synchronously — see releaseSurfaceSampleSequence's
+    // doc), so nothing needs this capture's export-scale sample sequence
+    // any longer.
+    this.releaseSurfaceSampleSequence();
+    return image;
   }
 
   /**
