@@ -709,8 +709,8 @@ and UI**, so the interesting math is unit-tested without a browser:
     SwiftShader-clean classifier had called stable. A forward orbit is
     chaotic and which rounding seeds flip is realization-dependent, so
     the escape legs gate in LAYERS (a pre-hoc ensemble classifier
-    `escapeQueryStable` with exclusions disclosed per row, and a post-hoc
-    `escapeShadowFlipVerified` absolution capped at 7 flips).
+    `forwardQueryStable` with exclusions disclosed per row, and a post-hoc
+    `forwardShadowFlipVerified` absolution capped at 7 flips).
     Consumed by `src/app/surface-compute.ts` (the fold- and, since
     fr-dlxh, escape-shaped surface sessions' preferred tracer) and pinned
     by `src/app/gpu-bench/`'s surface section (`npm run bench:surface`;

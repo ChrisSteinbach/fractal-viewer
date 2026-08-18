@@ -4138,11 +4138,11 @@ function estimateSurface4Composed(
 
 /**
  * fr-dlxh M3: the affine4 leg's ORACLE-CONTINUITY classifier — the escape
- * leg's pre-hoc ensemble shape ({@link escapeQueryStable}) minus the GPU
+ * leg's pre-hoc ensemble shape ({@link forwardQueryStable}) minus the GPU
  * modeling it doesn't need: no fround twin, no shadow orbits, just the
  * COMPOSED f64 oracle at the query's six ±1-f32-ULP axis neighbors (the
  * queries are fround'ed, so that grid is the input's own resolution; the
- * neighbor construction is escapeQueryStable's verbatim). STABLE iff all
+ * neighbor construction is forwardQueryStable's verbatim). STABLE iff all
  * seven values lie within tol/2 of the value at `q`; unstable rows are
  * excluded from the fail gate (capped — {@link
  * SURFACE_AFFINE4_EXCLUDED_CAP}).
@@ -9844,7 +9844,7 @@ async function runSurfaceDeSection(
         const cpu32 = queries.map((q) => estimateEscapeDistanceF32(de, q));
         const R = de.boundingRadius;
         // The f32-stability gate (compareSurfaceForwardAgreement's doc):
-        // only queries the ENSEMBLE classifier (escapeQueryStable — the
+        // only queries the ENSEMBLE classifier (forwardQueryStable — the
         // fround twin at the query plus its six one-ULP neighbors, all
         // agreeing with the f64 oracle) enter the GPU comparison below.
         const stable = cpu64.map((c64, i) =>
