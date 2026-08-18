@@ -31,6 +31,12 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # fr-vja8.46: load-bearing now that cancel-in-progress is false — a hung
+    # run (npm ci stall, runner loss, a gh api hang in the gate step) would
+    # otherwise hold the pages concurrency group for GitHub's 360min default,
+    # and the rollback flow (revert + fresh dispatch) queues BEHIND the
+    # zombie. Measured deploys run 34s-2min; 10 is the ci.yml margin.
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -56,7 +62,12 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
         run: |
           required="lint build test smoke"
-          runs=$(gh api "repos/${{ github.repository }}/commits/$COMMIT_SHA/check-runs" --jq '.check_runs')
+          # --paginate (fr-vja8.47): the default page is 30 newest-first, and
+          # every dispatch of this workflow mints another check suite on the
+          # same commit — enough dispatches and the REQUIRED runs (the oldest
+          # ids) truncate off the first page, false-refusing a green commit
+          # and amplifying with each retry.
+          runs=$(gh api --paginate "repos/${{ github.repository }}/commits/$COMMIT_SHA/check-runs" --jq '.check_runs' | jq -s 'add')
 
           missing=""
           bad=""
