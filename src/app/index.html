@@ -493,8 +493,18 @@
             <input type="checkbox" id="finalTransformToggle" />
             Final-transform lens (warps the whole cloud)
           </label>
-          <div class="editor-group-title">Select to edit</div>
-          <div class="transform-list" id="transformList"></div>
+          <div class="editor-group-title" id="transformListTitle">
+            Select to edit
+          </div>
+          <!-- role="group" + the title above as its name (fr-vja8.22), the
+               render-mode switch's pattern; the buttons Ui builds into it
+               carry aria-pressed for the selection state. -->
+          <div
+            class="transform-list"
+            id="transformList"
+            role="group"
+            aria-labelledby="transformListTitle"
+          ></div>
           <div id="transformEditor"></div>
         </details>
 

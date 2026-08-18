@@ -822,9 +822,15 @@ input[type="range"] {
   outline-offset: -2px;
 }
 
+/* The selection indicator is the RING, not the fill (fr-vja8.22): the 14%
+   tint reads ~1.06:1 against the unselected fill, so the state has to be
+   carried by the full-opacity accent ring — measured 5.4:1 against this
+   fill and 5.7:1 against the unselected one (≥3:1, WCAG 1.4.11). Inset, so
+   it sits inside the border and leaves the per-transform color-coded left
+   border untouched. */
 .transform-btn.selected {
   background: rgb(91 157 255 / 14%);
-  box-shadow: inset 0 0 0 1px rgb(91 157 255 / 35%);
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 .transform-btn .name {
