@@ -1367,6 +1367,16 @@ function main(): void {
    * async probe, so a second Export click can't double-start (the handler
    * turns those clicks into the cancel affordance instead).
    */
+  /** The ONE wording for an export-failure toast (fr-vja8.51): the setup
+   * catch, the run catch and the session-error report all speak through it,
+   * so a rewording cannot make the same failure class report differently
+   * depending on where the encoder died. */
+  function exportFailedToast(err: unknown): void {
+    ui.flashToast(
+      `Export failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   async function startOfflineExport(): Promise<void> {
     offlineExportPending = true;
     try {
@@ -1408,9 +1418,7 @@ function main(): void {
       // rejection — onTimelineExport fire-and-forgets this promise
       // (fr-vja8.12). driveOfflineExport's own catch covers the run;
       // this covers the setup.
-      ui.flashToast(
-        `Export failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      exportFailedToast(err);
     } finally {
       offlineExportPending = false;
     }
@@ -1561,9 +1569,7 @@ function main(): void {
       // clip, recorder.ts's error stance.
       session.abort();
       timelinePolicy.stop();
-      ui.flashToast(
-        `Export failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      exportFailedToast(err);
     } finally {
       window.removeEventListener("resize", onResize);
       offlineExport = null;
