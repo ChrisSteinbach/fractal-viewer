@@ -929,10 +929,16 @@ summary.editor-group-title {
   color: var(--text-faint);
 }
 
+/* 24×24 hit box (WCAG 2.5.8, fr-vja8.27) on a 20×20 layout footprint: the
+   -2px margins let the touch target grow without moving anything — the row's
+   9px flex gap and .variation-fold-row's 29px right pad are both computed
+   from the 20px column this button still occupies. The face is transparent,
+   so only the hover highlight shows the bigger box. */
 .variation-remove {
   flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
+  margin: -2px;
   padding: 0;
   border: none;
   border-radius: var(--radius-sm);
