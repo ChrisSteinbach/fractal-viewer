@@ -2535,7 +2535,14 @@ export class FractalScene {
     this.syncProjection();
     this.renderer.setSize(width, height);
     this.composer.setSize(width, height);
-    this.syncBufferDependents();
+    // Re-read the LIVE devicePixelRatio (fr-vja8.15): browser zoom and a
+    // monitor move change it and fire this resize, but three derives the
+    // drawing buffer from its STORED ratio — without this the app renders
+    // persistently soft on a denser display (or wastefully oversampled on
+    // a sparser one) until a Save-PNG or governor rung change happens to
+    // re-apply it. applyPixelRatio also syncs the buffer dependents, so
+    // it replaces the bare syncBufferDependents() call.
+    this.applyPixelRatio(this.basePixelRatio() * this.resolutionScale);
   }
 
   /**
