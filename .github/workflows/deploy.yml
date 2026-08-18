@@ -32,11 +32,22 @@ jobs:
       - name: Build app
         run: npm run build
 
+      # fr-vja8.4: GitHub's "Re-run failed jobs" reuses the run ID but bumps
+      # github.run_attempt, so a retry after a post-upload failure re-uploads
+      # a second "github-pages" artifact under the same run and fails with
+      # "Artifact count is 2" (2026-08-17, run 32052676809: upload succeeded,
+      # then deploy-pages hit a transient Pages-API 503 whose own error text
+      # says "please re-run"; recovery was a fresh dispatch, run 32052878457,
+      # 34s). Naming the artifact per attempt makes a same-run retry
+      # collision-free.
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5
         with:
           path: dist/app
+          name: github-pages-${{ github.run_attempt }}
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}
