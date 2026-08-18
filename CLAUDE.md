@@ -216,6 +216,16 @@ and a deliberately delayed `sw.js`, widening the reload window on demand;
 `npm run preview` can trigger the same dance, but only at real,
 easy-to-miss localhost timing.
 
+The post-deploy live-site gate (fr-vja8, not an npm script):
+`node scripts/live-site.verify.mjs [url]` boots the REAL deployed origin
+(default https://fractal-4d.com) in headless SwiftShader Chromium and
+asserts what only the live host can prove: HTTP OK, app boot
+(`#pointCount` > 0, `#error` empty), the SW's COOP/COEP compensation
+completing (`crossOriginIsolated` true through the one isolation reload),
+a controlling service worker, and no console errors. Exit 2 means the
+CHECKING side failed (browser/network) — rerun, it is not a site verdict.
+Run it after every `gh workflow run deploy.yml`.
+
 The WebGPU compute-surface teardown gate (fr-uec4, not an npm script — it
 needs a real Firefox build with WebGPU enabled on a display, and it gates
 renderer LIFECYCLE rather than built output, so the dev server hosts it):
