@@ -103,6 +103,7 @@ import {
   formatRenderPercent,
 } from "./export-progress";
 import type { ExportRun } from "./export-progress";
+import { createExportWait } from "./export-wait";
 import { EditSession, SAVE_DEBOUNCE_MS } from "./edit-session";
 import type { ViewPose } from "./history";
 import { RenderSession } from "./render-session";
@@ -3962,10 +3963,11 @@ function main(): void {
      * would be waiting for a first frame it had itself prevented. */
     awaitReady?: (run: ExportRun) => Promise<string | null>;
     /** The export modal's second action (fr-2fbs), present only for a wait
-     * with a partial to hand over — see {@link renderExportOffersEarlySave}.
-     * `taken()` is read back AFTER the capture: it answers what actually
-     * happened rather than what was pressed, so a press the finished render
-     * beat to the line does not get labelled rough. */
+     * with a partial to hand over — see export-wait.ts's
+     * `renderExportOffersEarlySave`. `taken()` is read back AFTER the
+     * capture: it answers what actually happened rather than what was
+     * pressed, so a press the finished render beat to the line does not get
+     * labelled rough. */
     deliverEarly?: {
       label: string;
       onDeliver: () => void;
@@ -3974,166 +3976,28 @@ function main(): void {
     capture: (run: ExportRun) => Promise<ExportImage | null>;
   }
 
-  /** The one way {@link awaitRenderExportable} ends without an image. */
-  const EXPORT_RENDER_STOPPED_NOTE = "Render stopped — no PNG saved";
-
-  /**
-   * What a Save-PNG has to wait for before the mode it was pressed in can be
-   * captured (fr-61a2).
-   *
-   * FLAME is the one renderer whose export IS the live accumulation — the
-   * surface arm traces a fresh frame at export scale and the solid arm
-   * re-raymarches, both at capture time — so flame waits for that
-   * accumulation to MEET ITS BUDGET, where the other two only wait for their
-   * session's first frame. Not a nicety: the worker's finishing chunk
-   * re-filters the histogram adaptively (fr-17t) where every progressive
-   * frame uses the fixed-radius filter, so a mid-accumulation capture saves
-   * a categorically coarser picture, not merely a noisier one.
-   */
-  function renderExportReady(mode: "flame" | "solid" | "surface"): boolean {
-    if (mode === "flame") return renderComplete.flame;
-    return mode === "solid"
-      ? solidSession.hasFirstFrame
-      : surfaceSession.hasFirstFrame;
-  }
-
-  /**
-   * Whether a mode's {@link renderExportReady} wait can ever be cut short
-   * with a picture (fr-2fbs) — the one thing that decides whether the export
-   * modal offers its second action.
-   *
-   * FLAME ALONE, and structurally so. Its canvas already holds every
-   * iteration the worker has landed and IS the export (fr-2urv), so cutting
-   * the wait short delivers a real image — coarser, per the adaptive
-   * re-filter in {@link renderExportReady}'s doc, but the picture on screen.
-   * The other two waits have nothing to give: solid's is for the voxel grid
-   * its raymarch needs as INPUT, and surface's is for a first frame — before
-   * either lands there is no partial, only an empty capture.
-   *
-   * {@link planRenderWait} is the only reader, which is the point of it
-   * being a predicate: no arm of {@link planPngExport} restates the rule, so
-   * no future arm can offer the action by copying its neighbour.
-   */
-  function renderExportOffersEarlySave(
-    mode: "flame" | "solid" | "surface",
-  ): boolean {
-    return mode === "flame";
-  }
-
-  /**
-   * Whether the partial {@link renderExportOffersEarlySave} promises exists
-   * RIGHT NOW — what {@link awaitRenderExportable} honours a press against.
-   *
-   * The flame canvas only becomes THIS session's picture at THIS session's
-   * size when the worker's first chunk lands (`markFirstFrame`, beside the
-   * `setFlameImage` that resizes it); the `restarted` event's deliberate
-   * lack of one says the same thing from the other side. Until then the
-   * canvas still holds the PREVIOUS session's image at the PREVIOUS
-   * session's size — and the Export-size select restarts the session on
-   * purpose (fr-2urv), so this is not a corner: it is the headline case.
-   *
-   * MEASURED, on the first cut of this, which honoured a press with no such
-   * gate: 4x, pressed the moment the modal appeared, delivered an 820x540
-   * PNG byte-identical to the 1x render it had just replaced, with the modal
-   * quoting "3280 × 2160" beside it — fr-61a2's own wrong-subject,
-   * wrong-size export, re-entered through the new door. So the press LATCHES
-   * (`ExportRun.stop` is terminal) and delivers the instant a frame of this
-   * session's own exists, which makes the early save exactly "wait for the
-   * first frame instead of the whole budget" — the wait the solid and
-   * surface arms do outright.
-   */
-  function renderExportPartialReady(
-    mode: "flame" | "solid" | "surface",
-  ): boolean {
-    return renderExportOffersEarlySave(mode) && flameSession.hasFirstFrame;
-  }
-
-  /** The export modal's early-save label (fr-2fbs). "Save now" says what the
-   * button does; "(rough)" is the part that had to be there — the picture it
-   * saves is categorically coarser than the one the wait is for, and a bare
-   * "Save now" beside a percent readout would read as "save the finished
-   * thing, sooner". The toast the file lands with echoes the same word. */
-  const EXPORT_SAVE_EARLY_LABEL = "Save now (rough)";
-
-  /**
-   * Block a Save-PNG until {@link renderExportReady}, disclosing the wait
-   * through the export modal.
-   *
-   * This is what replaced the old readiness GATE. Every arm used to read
-   * `renderMode === X && session.hasFirstFrame`, and the fall-through when a
-   * gate failed captured the points explorer — so pressing Save during any
-   * render's startup gap silently saved a DIFFERENT render mode's image, and
-   * for flame that gap is opened by the Export-size select itself (its
-   * effect restarts the session). Waiting is the honest answer, and it costs
-   * nothing to build: the modal already discloses coverage and offers
-   * Cancel.
-   *
-   * Resolves null once the capture may proceed, or a user-presentable note
-   * when it never will — the session ended under us (a worker error's exit,
-   * the user leaving the mode), which is the only way this loop terminates
-   * without success. A cancel resolves null too: `run.cancelled` is the
-   * caller's to report, exactly as on the capture arms.
-   */
-  async function awaitRenderExportable(
-    mode: "flame" | "solid" | "surface",
-    run: ExportRun,
-  ): Promise<string | null> {
-    while (!renderExportReady(mode)) {
-      if (run.cancelled) return null;
-      // The user asked for the picture AS IT STANDS (fr-2fbs). Tested AFTER
-      // the loop's own condition, which is what settles the race when the
-      // budget is met in the same turn as the press: a ready render exits
-      // the loop first and the FINISHED picture saves. That ordering is the
-      // one that can't disappoint — "save now" gets a save now either way,
-      // and only the coarser outcome is ever labelled coarse.
-      if (run.stop === "deliver" && renderExportPartialReady(mode)) return null;
-      if (state.renderMode !== mode) return EXPORT_RENDER_STOPPED_NOTE;
-      // Flame is the only arm with real coverage to show — a solid grid and
-      // a surface first frame arrive whole, so the honest percent for those
-      // is no percent at all (the modal's indeterminate state).
-      run.report(mode === "flame" ? renderCoverage.flame : null);
-      await nextRenderSignal();
-    }
-    return null;
-  }
-
-  /**
-   * The wait a Save-PNG does before capturing, plus — for the one mode whose
-   * wait has a picture to hand over — the modal action that cuts it short
-   * (fr-2fbs).
-   *
-   * Built here rather than arm by arm so that "which modes offer the early
-   * save" is one predicate consulted in one place: an arm of
-   * {@link planPngExport} asks for its mode's wait and receives whatever
-   * affordances that mode has earned, and cannot spell out a different
-   * answer. `taken` is settled from the world at the moment the wait
-   * resolves — a `"deliver"` stop that the finished render beat to the line
-   * leaves `renderExportReady` true, and the capture that follows is the
-   * ordinary complete one.
-   */
-  function planRenderWait(
-    mode: "flame" | "solid" | "surface",
-  ): Pick<PngExportPlan, "awaitReady" | "deliverEarly"> {
-    if (!renderExportOffersEarlySave(mode)) {
-      return { awaitReady: (run) => awaitRenderExportable(mode, run) };
-    }
-    let early = false;
-    return {
-      deliverEarly: {
-        label: EXPORT_SAVE_EARLY_LABEL,
-        // The wait is parked on nothing but render signals, and the next
-        // one can be a whole accumulation chunk away — the same reason
-        // savePng's onCancel wakes it (fr-61a2).
-        onDeliver: notifyRenderSignal,
-        taken: () => early,
-      },
-      awaitReady: async (run) => {
-        const blocked = await awaitRenderExportable(mode, run);
-        early = run.stop === "deliver" && !renderExportReady(mode);
-        return blocked;
-      },
-    };
-  }
+  // The wait policy itself — the readiness rule (flame waits for its
+  // BUDGET, solid/surface for a first frame), the fr-2fbs early-save
+  // affordance with its restart-gap latch, and the ties-go-to-budget
+  // awaitReady loop — is `export-wait.ts` (fr-vja8.67), extracted on the
+  // export-progress.ts precedent so those order-sensitive rules are
+  // unit-tested instead of resting on the browser gate alone. This wiring
+  // contributes exactly the live signals the module cannot own; every dep
+  // is read at wait time, never captured here, so this sits safely above
+  // the surfaceSession const it names.
+  const exportWait = createExportWait({
+    flameComplete: () => renderComplete.flame,
+    flameCoverage: () => renderCoverage.flame,
+    hasFirstFrame: (mode) =>
+      mode === "flame"
+        ? flameSession.hasFirstFrame
+        : mode === "solid"
+          ? solidSession.hasFirstFrame
+          : surfaceSession.hasFirstFrame,
+    renderMode: () => state.renderMode,
+    nextRenderSignal,
+    notifyRenderSignal,
+  });
 
   /**
    * Pick the capture arm for the current mode. The arm is the MODE's, full
@@ -4174,7 +4038,7 @@ function main(): void {
           // missing hook.
           surfaceComputeRenderer?.cancel();
         },
-        ...planRenderWait("surface"),
+        ...exportWait.planRenderWait("surface"),
         capture: (run) => {
           // Read at capture time, not plan time: awaitReady may have waited
           // out the compute gate, and that gate is what decides this.
@@ -4227,7 +4091,7 @@ function main(): void {
         // downloaded.
         cancellable: true,
         holdsSurfaceTracer: false,
-        ...planRenderWait("solid"),
+        ...exportWait.planRenderWait("solid"),
         capture: () => scene.captureSolidFrame(scale),
       };
     }
@@ -4236,8 +4100,8 @@ function main(): void {
       // capture is a 2D composite of the canvas the worker has been filling
       // plus the PNG encode — nothing is rendered here. What this arm waits
       // for instead is that accumulation meeting its budget; see
-      // renderExportReady for why a mid-accumulation frame is the wrong
-      // picture rather than merely an early one.
+      // export-wait.ts's renderExportReady for why a mid-accumulation frame
+      // is the wrong picture rather than merely an early one.
       const size = flameRenderDims ?? scene.flameRenderSize(state.exportScale);
       return {
         detail: `${String(size.width)} × ${String(size.height)}`,
@@ -4253,7 +4117,7 @@ function main(): void {
         // delivers what is on screen at the resolution asked for — and the
         // budget it is waiting out scales with the export AREA, so 4x is
         // 16x the wait and exactly where the escape is worth having.
-        ...planRenderWait("flame"),
+        ...exportWait.planRenderWait("flame"),
         capture: () => scene.captureFlameFrame(),
       };
     }
@@ -4306,10 +4170,10 @@ function main(): void {
       deliverEarly: plan.deliverEarly,
       onCancel: () => {
         plan.onCancel?.();
-        // Wake a wait parked in awaitRenderExportable (fr-61a2): its only
-        // other wake-ups are the render's own signals, and a solid grid or
-        // a flame chunk can be seconds away — a Cancel must not have to
-        // wait one out before it takes effect.
+        // Wake a wait parked in export-wait.ts's awaitRenderExportable
+        // (fr-61a2): its only other wake-ups are the render's own signals,
+        // and a solid grid or a flame chunk can be seconds away — a Cancel
+        // must not have to wait one out before it takes effect.
         notifyRenderSignal();
       },
     });
