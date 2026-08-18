@@ -324,7 +324,13 @@ body {
   display: none;
 }
 
+/* Also the ✕ of the About/Gallery/Mutation dialog headers. The 24px minima
+   (WCAG 2.5.8, fr-vja8.28) lift the ~22px box padding+font metrics produce
+   (14px glyph line + 2×4px padding); the glyph stays put — buttons center
+   their content natively. */
 .notice-dismiss {
+  min-width: 24px;
+  min-height: 24px;
   padding: 4px;
   border: none;
   background: none;
