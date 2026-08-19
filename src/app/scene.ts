@@ -3506,6 +3506,7 @@ export class FractalScene {
     for (const material of [this.surfaceMaterial, this.surfaceMaterial4]) {
       const u = material.uniforms;
       u.uAmbient.value = params.ambient;
+      u.uEnvLight.value = params.envLight;
       (u.uLightDir.value as THREE.Vector3).copy(
         lightDirection(params.lightAzimuth, params.lightElevation),
       );
@@ -3839,6 +3840,8 @@ export class FractalScene {
       hitFloor: preview ? SURFACE_PREVIEW_HIT_FLOOR : SURFACE_FULL_HIT_FLOOR,
       lightDir: [light.x, light.y, light.z],
       ambient: params.ambient,
+      // The environment-light strength (fr-ehcj), mirroring uEnvLight.
+      envLight: params.envLight,
       // The live fog density (fr-5h5d) — re-read at every spec assembly
       // exactly like the lighting/backdrop fields around it, so a live
       // Fog slider drag tracks the compute path the same frame the GLSL

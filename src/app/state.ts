@@ -304,6 +304,18 @@ export interface SurfaceParams {
    * Live-reactive.
    */
   colorSpeed: number;
+  /**
+   * Environment-light strength in [0, 1] (fr-ehcj): how far the surface
+   * render's LIGHT is tinted toward the backdrop sampled along the shading
+   * normal, hue only (never brightness) — the render sits IN its background
+   * instead of floating in front of it. 0 is the bit-exact pre-fr-ehcj
+   * identity. Specular is outside the product on purpose.
+   * The default ({@link DEFAULT_SURFACE_ENV_LIGHT}) is deliberately
+   * NON-zero, so this is a look change for existing shared links — that
+   * is intended, the feature ships on. Live-reactive, like every field
+   * here.
+   */
+  envLight: number;
 }
 
 /** Snapshot of everything the UI and renderer need to draw a frame. */
@@ -763,6 +775,23 @@ export const MAX_SOLID_AMBIENT = 0.8;
 export const DEFAULT_SURFACE_COLOR_SPEED = 0.5;
 export const MIN_SURFACE_COLOR_SPEED = 0;
 export const MAX_SURFACE_COLOR_SPEED = 1;
+/** Environment-light strength (fr-ehcj): how far the surface render's light
+ * is tinted toward the backdrop sampled along the shading normal. 0 is a
+ * bit-exact identity — the pre-fr-ehcj neutral light. The default is
+ * deliberately NON-zero, so this is a look change for scenes encoded before
+ * fr-ehcj: an existing shared link renders slightly differently now, and
+ * that is intended — the feature ships on.
+ *
+ * 0.35 IS A MEASURED VALUE, not a guess. The first cut tinted the AMBIENT
+ * term alone and was measured INVISIBLE at strength 1 — the maximum — on
+ * both built-in backdrops (headless SwiftShader A/B on mandelboxKifs;
+ * docs/surface-glsl-tracers.md carries the numbers). Ambient is a quarter
+ * of the light and the dark/haze stop pairs are near the same hue, so
+ * restricting the tint to it left nothing to see. Tinting the whole lit
+ * term reads at this strength without swamping the albedo. */
+export const DEFAULT_SURFACE_ENV_LIGHT = 0.35;
+export const MIN_SURFACE_ENV_LIGHT = 0;
+export const MAX_SURFACE_ENV_LIGHT = 1;
 /**
  * Default solid-render palette (fr-1kt): the same spectrum gradient as
  * {@link DEFAULT_FLAME_PALETTE}, for one coherent default look across both
@@ -1109,6 +1138,11 @@ export const PARAM = defineParams({
     max: MAX_SURFACE_COLOR_SPEED,
     default: DEFAULT_SURFACE_COLOR_SPEED,
   },
+  surfaceEnvLight: {
+    min: MIN_SURFACE_ENV_LIGHT,
+    max: MAX_SURFACE_ENV_LIGHT,
+    default: DEFAULT_SURFACE_ENV_LIGHT,
+  },
   symmetryOrder: {
     min: MIN_SYMMETRY_ORDER,
     max: MAX_SYMMETRY_ORDER,
@@ -1190,6 +1224,7 @@ export function initialState(panelOpen: boolean): AppState {
       colorSource: "transform",
       paletteId: DEFAULT_SOLID_PALETTE,
       colorSpeed: DEFAULT_SURFACE_COLOR_SPEED,
+      envLight: DEFAULT_SURFACE_ENV_LIGHT,
     },
     renderMode: "points",
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, plane: DEFAULT_SYMMETRY_PLANE },
@@ -1775,6 +1810,21 @@ export function setSurfaceColorSpeed(
     surface: {
       ...state.surface,
       colorSpeed: clampToSpec(PARAM.surfaceColorSpeed, colorSpeed),
+    },
+  };
+}
+
+/** Set the surface render's environment-light strength (fr-ehcj), clamped.
+ * Live-reactive like {@link setSurfaceLightAzimuth}. */
+export function setSurfaceEnvLight(
+  state: AppState,
+  envLight: number,
+): AppState {
+  return {
+    ...state,
+    surface: {
+      ...state.surface,
+      envLight: clampToSpec(PARAM.surfaceEnvLight, envLight),
     },
   };
 }

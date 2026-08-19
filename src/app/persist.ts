@@ -1098,6 +1098,10 @@ function decodeSurfaceParams(
     colorSource: "transform",
     paletteId: DEFAULT_SOLID_PALETTE,
     colorSpeed: PARAM.surfaceColorSpeed.default,
+    // fr-ehcj: absent (every pre-fr-ehcj document) decodes to the default,
+    // which is the intended on-by-default behaviour — those links render
+    // slightly differently now, on purpose.
+    envLight: PARAM.surfaceEnvLight.default,
   };
   if (raw === undefined) return defaults;
   if (typeof raw !== "object" || raw === null) return null;
@@ -1109,6 +1113,7 @@ function decodeSurfaceParams(
     "lightElevation",
     "ambient",
     "colorSpeed",
+    "envLight",
   ];
   for (const key of numeric) {
     if (s[key] === undefined) continue;
@@ -1146,6 +1151,7 @@ function decodeSurfaceParams(
     colorSource,
     paletteId,
     colorSpeed: clampToSpec(PARAM.surfaceColorSpeed, out.colorSpeed),
+    envLight: clampToSpec(PARAM.surfaceEnvLight, out.envLight),
   };
 }
 
@@ -1571,6 +1577,7 @@ export function encodeScene(s: SceneSnapshot): string {
       colorSource: s.surface.colorSource,
       paletteId: s.surface.paletteId,
       colorSpeed: round4(s.surface.colorSpeed),
+      envLight: round4(s.surface.envLight),
     },
     symmetry: {
       order: Math.round(s.symmetry.order),

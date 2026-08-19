@@ -695,6 +695,25 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * pixel's own backdrop color. scene.setFogTint keeps both current. */
   uniform vec3 uFogTint;
   uniform float uFogTintStrength;
+  /** Environment-light strength (fr-ehcj): how far the light is tinted
+   * toward the backdrop sampled along the shading normal. 0 is a bit-exact
+   * identity — the pre-fr-ehcj neutral light. The tint multiplies the WHOLE
+   * lit term, not just the ambient half: ambient-only was MEASURED
+   * invisible even at strength 1 on both built-in backdrops (docs/
+   * surface-glsl-tracers.md carries the numbers), because ambient is a
+   * quarter of the light and this app's dark/haze stops are near the same
+   * hue. Specular is deliberately left OUT of the product — the untinted
+   * highlight is what keeps a strongly tinted render from reading
+   * monochrome. */
+  uniform float uEnvLight;
+  /** The backdrop as a two-stop environment (fr-ehcj), normalized to its own
+   * max channel so uEnvLight moves HUE and never brightness — which is what
+   * lets the knob read at all against the near-black default backdrop, where
+   * an honest additive environment term would contribute nothing. */
+  vec3 envTint(vec3 n) {
+    vec3 e = mix(uBgBottom, uBgTop, n.y * 0.5 + 0.5);
+    return mix(vec3(1.0), e / max(max(e.r, max(e.g, e.b)), 1.0e-4), uEnvLight);
+  }
   /** Angular pixel footprint of the ACTIVE buffer (scene-set per frame):
    * sizes the shading probes (normal offsets, ray dither) to the pixels
    * actually being rendered. NOT the hit test's epsilon — see
@@ -2908,7 +2927,8 @@ ${foldValueFormGlsl(shadeDeWidth)}
     // The hit path's lighting minus specular (a matte floor), in the same
     // linear space (fr-8id): n is +y, so diffuse is just uLightDir.y.
     float diffuse = max(uLightDir.y, 0.0);
-    float lit = uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow;
+    vec3 lit = (uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow) *
+      envTint(vec3(0.0, 1.0, 0.0));
     vec3 col = pow(pow(uGroundAlbedo, vec3(2.2)) * lit, vec3(1.0 / 2.2));
 
     // Depth fog, the hit path's formula at the plane distance: the fog
@@ -3198,7 +3218,8 @@ ${foldValueFormGlsl(shadeDeWidth)}
     vec3 halfVec = normalize(uLightDir - rd);
     float specular = pow(max(dot(n, halfVec), 0.0), 32.0) * 0.4;
 
-    float lit = uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow;
+    vec3 lit = (uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow) *
+      envTint(n);
     // Light in linear space (fr-8id, as in voxel-material.ts): base is
     // sRGB-authored (color.ts), so decode with gamma 2.2, apply the
     // light/specular product there, and re-encode for the pass-through
@@ -3558,6 +3579,9 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uFogDensity: { value: 1 },
       uFogTint: { value: new THREE.Vector3(1, 1, 1) },
       uFogTintStrength: { value: 0 },
+      // fr-ehcj: matches state.ts's DEFAULT_SURFACE_ENV_LIGHT, the way
+      // uAmbient above mirrors its own default.
+      uEnvLight: { value: 0.35 },
       // Placeholder; the scene overwrites it per frame with the camera's
       // true angular pixel size.
       uPixelEps: { value: 0.002 },

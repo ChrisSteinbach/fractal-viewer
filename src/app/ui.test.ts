@@ -4936,6 +4936,7 @@ describe("index.html slider ranges match PARAM (fr-2v7)", () => {
     ["surfaceLightAzimuthSlider", PARAM.surfaceLightAzimuth],
     ["surfaceLightElevationSlider", PARAM.surfaceLightElevation],
     ["surfaceAmbientSlider", PARAM.surfaceAmbient],
+    ["surfaceEnvLightSlider", PARAM.surfaceEnvLight],
     ["surfaceColorSpeedSlider", PARAM.surfaceColorSpeed],
     ["symmetryOrderSlider", PARAM.symmetryOrder],
     ["symmetryTwistSlider", PARAM.symmetryTwist],

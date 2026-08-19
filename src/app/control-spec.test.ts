@@ -838,6 +838,17 @@ describe("effects", () => {
       expect(fx.scene.setSurfaceParams).toHaveBeenCalledWith(state.surface);
     });
 
+    it("surfaceEnvLightSlider effect forwards the settled surface params to the scene", () => {
+      const spec = specById("surfaceEnvLightSlider");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "0.7");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setSurfaceParams).toHaveBeenCalledWith(state.surface);
+    });
+
     it("surfaceColorSpeedSlider effect forwards the settled surface params to the scene", () => {
       const spec = specById("surfaceColorSpeedSlider");
       const previous = initialState(true);

@@ -487,9 +487,42 @@ morphs into place instead of snapping (see **Presets** below).
   included — see **Color**) that appears for the orbit-trap,
   rings, and sheets sources, plus a **Color speed** slider — orbit-trap
   source only, fading how quickly deeper descent levels blend into the trap
-  color — and **Light Angle**, **Light Height**, and **Ambient** sliders.
+  color — and **Light Angle**, **Light Height**, **Ambient**, and
+  **Environment** sliders.
   Every one of them is a plain shader input, so dragging any of them
-  re-renders instantly with nothing to restart. The orbit-trap Palette source
+  re-renders instantly with nothing to restart. **Environment** (fr-ehcj,
+  0–100%, default 35%) tints the light itself toward the **Background**
+  gradient, sampled along each point's own shading normal — a two-stop
+  sky-above/ground-below environment, so the render sits IN its backdrop
+  instead of floating in front of it (a surface facing up over the default
+  dark backdrop's blue-ish top stop reads cooler; one facing down reads
+  toward the bottom stop). It multiplies the WHOLE light — the **Ambient**
+  term and the diffuse-times-shadow term together — not the **Ambient**
+  term alone: an earlier cut tinted **Ambient** only and was MEASURED
+  indistinguishable from off even at 100%, on both built-in backdrops,
+  because **Ambient** is a small share of the light by default and this
+  app's dark and haze backdrops sit close enough in hue that a directional
+  sample between their two stops barely moves (`docs/surface-glsl-tracers.md`
+  carries the numbers). The specular highlight stays untinted at every
+  strength, which is what keeps a strongly tinted render from reading
+  monochrome instead of lit. The sample is normalized to
+  its own brightest channel before blending, so the slider moves HUE only
+  and never brightness — it reads on every backdrop, including the
+  near-black default where a plain additive light would vanish. It is a
+  DIFFERENT knob from **Tint** below in both what it reads and how: **Tint**
+  retargets the _fog_ by DEPTH — what distant geometry blends toward as it
+  recedes — while **Environment** tints the light itself by shading
+  NORMAL, independent of distance. By construction the two compose
+  additively, so pushing both to their extremes together is worth checking
+  by eye before calling a look finished, rather than assuming
+  "backdrop-tinted fog" and "backdrop-lit light" always read as
+  complementary. 0% is a bit-exact identity — the pre-fr-ehcj neutral
+  light — so a link saved before this control existed renders unchanged at
+  that setting; the shipped default is deliberately non-zero, so an
+  existing shared link now renders with a subtle environment tint, which
+  is intended. It does not reach the ◆ Solid render — that raymarcher's
+  own module doc records the gap as accepted rather than an oversight.
+  The orbit-trap Palette source
   also takes each map's ramp slot from its authored **Color → Index** (see
   **Edit Transform N**) where one is set, spreading maps evenly across the
   gradient otherwise — that one is document data rather than a live shader
@@ -525,7 +558,9 @@ morphs into place instead of snapping (see **Presets** below).
   below the shape to catch its shadow — the classic ray-marched-fractal
   grounding, and the scale reference fold monsters otherwise lack. The
   floor is matte-lit by the same **Light Angle** / **Light Height** /
-  **Ambient** as the surface, takes a soft penumbra shadow plus contact
+  **Ambient** / **Environment** as the surface (its shading normal is
+  straight up, so it takes the **Background**'s top stop), takes a soft
+  penumbra shadow plus contact
   occlusion where the shape nears it, is fogged by distance like any hit
   (see **Fog** below), and fades radially into the backdrop so no disc
   edge ever shows; it is one-sided, so a camera below it looks straight
@@ -963,7 +998,11 @@ morphs into place instead of snapping (see **Presets** below).
   reaches the same renders as **Fog** above, minus the two brightness fades
   that have no color to shift (the balloon echo's horizon and the 4D
   projection's Depth fade dim points rather than blend them). Live and
-  persisted, like the density.
+  persisted, like the density. A different knob from ◈ Surface's
+  **Environment** slider above (fr-ehcj) in both axis and target: **Tint**
+  retargets what depth _fog_ blends toward, by distance; **Environment**
+  tints the _light_ itself, by shading normal — the two compose
+  additively, so both pushed hard together is worth a by-eye check.
 - **Auto-update on change** — regenerate the cloud on every edit vs. on demand.
 - **Capture size** — in the **Capture** section, the resolution **Save PNG**
   renders at, as a multiple of the screen: **1× (screen)**, **2×**, or **4×

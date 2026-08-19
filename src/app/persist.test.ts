@@ -42,6 +42,7 @@ import {
   DEFAULT_SOLID_RESOLUTION,
   DEFAULT_SOLID_THRESHOLD,
   DEFAULT_SURFACE_COLOR_SPEED,
+  DEFAULT_SURFACE_ENV_LIGHT,
   DEFAULT_SYMMETRY_PLANE,
   DEFAULT_SYMMETRY_ORDER,
   MAX_BALLOON_RADIUS,
@@ -154,6 +155,7 @@ function baseSnapshot(): SceneSnapshot {
       colorSource: "transform",
       paletteId: DEFAULT_SOLID_PALETTE,
       colorSpeed: DEFAULT_SURFACE_COLOR_SPEED,
+      envLight: DEFAULT_SURFACE_ENV_LIGHT,
     },
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, plane: DEFAULT_SYMMETRY_PLANE },
     glowBrightness: DEFAULT_GLOW_BRIGHTNESS,
@@ -207,6 +209,7 @@ describe("encodeScene / decodeScene round-trip", () => {
       colorSource: "transform",
       paletteId: DEFAULT_SOLID_PALETTE,
       colorSpeed: DEFAULT_SURFACE_COLOR_SPEED,
+      envLight: DEFAULT_SURFACE_ENV_LIGHT,
     });
   });
 
@@ -2029,6 +2032,7 @@ describe("decodeScene surface params", () => {
         colorSource: "radius",
         paletteId: "spectrum",
         colorSpeed: 0.8,
+        envLight: 0.6,
       },
     };
     const result = decodeScene(encodeScene(s));
@@ -2039,6 +2043,7 @@ describe("decodeScene surface params", () => {
       colorSource: "radius",
       paletteId: "spectrum",
       colorSpeed: 0.8,
+      envLight: 0.6,
     });
   });
 
@@ -2063,6 +2068,7 @@ describe("decodeScene surface params", () => {
       colorSource: "transform",
       paletteId: DEFAULT_SOLID_PALETTE,
       colorSpeed: DEFAULT_SURFACE_COLOR_SPEED,
+      envLight: DEFAULT_SURFACE_ENV_LIGHT,
     });
   });
 

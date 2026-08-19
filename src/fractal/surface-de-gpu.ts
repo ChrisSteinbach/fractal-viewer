@@ -696,7 +696,7 @@ import type { Vec3 } from "./types";
  * SURFACE_GPU_PARAMS_PLANE_BYTES} block (layout on the constant's doc).
  *
  * Shade uniform (march "unproject" + mode "shade") — {@link
- * SURFACE_GPU_SHADE_BYTES} = 144 bytes, WGSL `struct ShadeParams`:
+ * SURFACE_GPU_SHADE_BYTES} = 160 bytes, WGSL `struct ShadeParams`:
  *   offset 0..63 mat4x4f invProjView (column-major, the exact
  *                THREE.Matrix4.elements scene.ts uploads as uInvProjView)
  *          64  vec3f lightDir          76  f32 ambient
@@ -705,7 +705,8 @@ import type { Vec3 } from "./types";
  *         112  u32  colorSource       116  u32 shadowSteps
  *         120  u32  aoTaps            124  u32 flags (bit0 = dither)
  *         128  vec3f fogTint          140  f32 fogTintStrength
- *         144  vec2f pixelJitter     (152..159 struct alignment pad)
+ *         144  vec2f pixelJitter      152  f32 envStrength
+ *        (156..159 struct alignment pad)
  * fogTint/fogTintStrength (fr-5h5d) retarget the shade entry's fog blend
  * to mix(bg, fogTint, fogTintStrength) — strength 0 (the default) is the
  * identity (fog blends toward bg alone), and misses never read it.
@@ -713,6 +714,11 @@ import type { Vec3 } from "./types";
  * aims at inside its pixel; its default (0.5, 0.5) is the pixel centre
  * those derivations used to spell as a literal, so an unset jitter is the
  * pre-supersampling kernel value for value.
+ * envStrength (fr-ehcj) landed in the FORMER alignment pad at 152 — the
+ * struct's byte size (160) is unchanged. It is how far the shade entry's
+ * AMBIENT term is tinted toward the backdrop sampled along the shading
+ * normal (`envTint` at both `lit` sites): default/absent 0 is the
+ * bit-exact pre-fr-ehcj identity (mix returns `vec3f(1.0)` at t=0).
  *
  * Shade maps storage (mode "shade") — one vec4f per map slot:
  * (uMapColor rgb, uFoldParams.w trapIndex); one zero stride when empty,
@@ -823,7 +829,8 @@ export const SURFACE_GPU_MAP4_VEC4 = 9;
  * "shade"; layout contract in the module doc). 144 through fr-5h5d's fog
  * tint pair, then 160 with fr-vpbq's `pixelJitter` at 144 — a WGSL
  * uniform struct rounds to its largest member's 16-byte alignment, so the
- * vec2f costs a full stride. */
+ * vec2f costs a full stride, leaving a 152..159 pad fr-ehcj's
+ * `envStrength` now fills at 152 without moving this constant. */
 export const SURFACE_GPU_SHADE_BYTES = 160;
 /** Map slots a `mapsUniform: true` 4D kernel declares (fr-b72d probe):
  * uniform-address-space arrays need a creation-fixed footprint, so the
@@ -2098,6 +2105,17 @@ export interface SurfaceGpuShadeParams {
    * coordinate too, so the samples do not share a `t` offset.
    */
   pixelJitter?: [number, number];
+  /**
+   * Environment-light strength (fr-ehcj), packed at offset 152 — the
+   * former ShadeParams alignment pad, so {@link SURFACE_GPU_SHADE_BYTES}
+   * is unchanged. How far the shade entry's AMBIENT term is tinted
+   * toward the backdrop sampled along the shading normal, hue only
+   * (`envTint` normalizes the sampled backdrop to its own max channel).
+   * Default/absent 0 is the bit-exact pre-fr-ehcj identity: the tint
+   * resolves to `vec3f(1.0)` and `lit` reduces to the old scalar formula
+   * replicated per component.
+   */
+  envStrength?: number;
 }
 
 /** Pack the ShadeParams uniform (march "unproject" + mode "shade";
@@ -2123,6 +2141,7 @@ export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
   const jitter = shade.pixelJitter ?? [0.5, 0.5];
   view.setFloat32(144, jitter[0], true);
   view.setFloat32(148, jitter[1], true);
+  view.setFloat32(152, shade.envStrength ?? 0, true);
   return buf;
 }
 
@@ -2437,6 +2456,7 @@ struct ShadeParams {
   fogTint: vec3f,
   fogTintStrength: f32,
   pixelJitter: vec2f,
+  envStrength: f32,
 }
 
 @group(0) @binding(4) var<uniform> shade: ShadeParams;`;
@@ -4719,7 +4739,15 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> vec3f {
   // The hit path's lighting minus specular (a matte floor), in the same
   // linear space (fr-8id): n is +y, so diffuse is just lightDir.y.
   let diffuse = max(shade.lightDir.y, 0.0);
-  let lit = shade.ambient * ao + (1.0 - shade.ambient) * diffuse * shadow;
+  // Environment tint (fr-ehcj): the whole light, toward the backdrop
+  // sampled along the floor's +y normal, hue-normalized so strength
+  // moves color and never brightness; strength 0 is vec3f(1.0), the
+  // bit-exact identity (surface-material.ts's envTint, inlined here
+  // rather than as a helper).
+  let envE = mix(shade.bgBottom, shade.bgTop, vec3f(0.0, 1.0, 0.0).y * 0.5 + 0.5);
+  let envTint =
+    mix(vec3f(1.0), envE / max(max(envE.r, max(envE.g, envE.b)), 1.0e-4), shade.envStrength);
+  let lit = (shade.ambient * ao + (1.0 - shade.ambient) * diffuse * shadow) * envTint;
   var col = pow(pow(params.groundAlbedo, vec3f(2.2)) * lit, vec3f(1.0 / 2.2));
   // Depth fog, the hit path's formula at the plane distance; the fog
   // origin is the ray's closest approach to the ball center (clamped to
@@ -4857,7 +4885,16 @@ ${shadeGate}
   let diffuse = max(dot(n, shade.lightDir), 0.0);
   let halfVec = normalize(shade.lightDir - rd);
   let specular = pow(max(dot(n, halfVec), 0.0), 32.0) * 0.4;
-  let lit = shade.ambient * ao + (1.0 - shade.ambient) * diffuse * shadow;
+  // Environment tint (fr-ehcj): the whole light, toward the backdrop
+  // sampled along the shading normal, hue-normalized so strength moves
+  // color and never brightness; strength 0 is vec3f(1.0), the bit-exact
+  // identity (surface-material.ts's envTint, inlined here rather than
+  // as a helper). SPECULAR STAYS UNTINTED — the highlight is what keeps
+  // a strongly-tinted render from reading monochrome.
+  let envE = mix(shade.bgBottom, shade.bgTop, n.y * 0.5 + 0.5);
+  let envTint =
+    mix(vec3f(1.0), envE / max(max(envE.r, max(envE.g, envE.b)), 1.0e-4), shade.envStrength);
+  let lit = (shade.ambient * ao + (1.0 - shade.ambient) * diffuse * shadow) * envTint;
   // Light in linear space (fr-8id): decode the sRGB base, apply the
   // light/specular product there, re-encode for the canvas.
   let linBase = pow(base, vec3f(2.2));
