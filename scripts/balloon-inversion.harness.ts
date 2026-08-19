@@ -286,6 +286,129 @@
  * extension is worth building on top later — cost/benefit calls for the
  * bead, which this file informs but does not make.
  *
+ * fr-3vjd (section 5): the balloon's union DE is two estimator calls per
+ * step, and the bead proposes a closed-form early-out for the second.
+ * Every echo point is `I(s)` with `|I(s)-c| = R^2/|s-c|`, so for a source
+ * set of radial extent `[rMin, rMax]` about `c` the WHOLE echo lies in
+ * the annulus `ANN = {x : R^2/rMax <= |x-c| <= R^2/rMin}`, and
+ * `dist(p, ANN)` — one hypot, two compares, no descent — lower-bounds
+ * `dist(p, echo)`. Section (5) measures BOTH readings of "skip": the
+ * bead's literal PER-RAY one (a ray whose whole marched segment misses
+ * ANN cannot hit the shell anywhere, so the union may drop to the
+ * fractal term for that entire ray) and the strictly stronger PER-STEP
+ * one (`clearance(p) >= DE(p)` means the shell term cannot be the min, so
+ * skipping it returns a value that is unchanged-or-larger and still
+ * conservative — `descendLens`'s region-floor idiom, which the bead names
+ * as the shape to copy).
+ *
+ * THE TWO WALLS ARE NOT SYMMETRIC, and that decides the answer. The inner
+ * wall `R^2/rho` needs an UPPER bound on `rMax` and the wrapper already
+ * carries a certified one. The outer wall `R^2/rMin` needs a LOWER bound
+ * on the set's CLOSEST approach to its own ball centre, which no sampled
+ * instrument can supply — a sample IS a member, so `min |s-c|` over any
+ * cloud OVER-states the infimum and shrinks ANN in the UNSAFE direction.
+ * `scripts/set-extent.ts` is the house definition of radial extent and
+ * measures the outer end only; it has deliberately no inner twin. So the
+ * sound `rMin` is the estimator's own region floor `DE(c)` (ONE eval at
+ * build time), and the section reports that CERT arm beside a BEST arm
+ * built from the cloud's own minimum — a CEILING no implementation can
+ * beat, carried so that "dead" and "dead only for want of a certificate"
+ * stay distinguishable. Measured, they are not distinguishable: `DE(c)`
+ * lands within 1.16-5.25x of the sampled infimum on all six systems, and
+ * at rest the two arms produce the IDENTICAL end-to-end march on five of
+ * six.
+ *
+ * MEASURED (all 6 systems — the annulus needs no grid, so `mandelboxKifs`
+ * is measured here rather than bounded — same rays as sections (2)/(4),
+ * production estimator per class, cutoff engaged, CLOUD=300k). Every
+ * figure below is structural: identical to the digit across two runs of
+ * the section, and adding it left sections (0)-(2) and (4) byte-identical
+ * and section (3)'s `apps` columns unchanged (only its own already-
+ * disclosed wall-clock column moved).
+ *
+ * AT REST (R=1.6rho, what the shipped render sits in):
+ *  - PER-RAY, the bead as literally written: 0 of 144 rays miss ANN on
+ *    every system, both arms. 0.0% of shell evals, 0.0% of total evals.
+ *    The camera sits at 1.35rho and the far cap at 10rho, so every ray
+ *    sweeps `|p-c|` across the inner wall `R^2/rho = 2.56rho` and into
+ *    ANN. THE PER-RAY FORM IS DEAD OUTRIGHT.
+ *  - PER-STEP: 40.1-75.9% of shell evals are dominated and skippable —
+ *    a large-looking number that is 20.0-38.0% of TOTAL evals and, IN
+ *    APPS (`countingDE`'s unit, the only cost unit this file trusts),
+ *    0.4-8.3% of the march. The dominated evals are ~10x cheaper than
+ *    the average shell eval, for section (3)'s own reason: they are
+ *    exactly the queries where `I(p)` lands far outside the ball and the
+ *    sphere prune kills the descent near-free.
+ *  - END TO END, early-out ENGAGED: steps mu x1.000 on every system (at
+ *    rest the shell term never WON where ANN dominates, so nothing gets
+ *    longer — this is purely not paying for a term that was not going to
+ *    be the min), apps/ray x0.917-0.996. Terminals bit-identical.
+ *  - THE OUTER WALL EXCLUDES NOTHING AT REST: 0.0% of marched arc length
+ *    on all six systems, both arms but for spherefold's BEST. It would
+ *    need `rMin > 0.256rho` to reach inside the far cap; measured
+ *    `rMin/rho` is 0.0062-0.184 certified (0.032-0.473 sampled). All of
+ *    the rest-state exclusion is the INNER hole — 32.8% of arc length, a
+ *    scale-free constant of this camera — and the inner hole is where
+ *    the fractal itself is, i.e. where the shell term was already cheap.
+ *    So the bead's OWN mechanism (a missing ray creeping to the far cap
+ *    on tiny shell-term steps, at `|p-c|` well OUTSIDE the inner wall)
+ *    is the one thing ANN cannot touch.
+ *  - TIGHTNESS: the inner wall is tight — the echo's measured inner
+ *    extent sits 4.0-5.0% above it on the five ball-filling systems (76%
+ *    on the lens archetype, whose set fills only 0.567rho of its own
+ *    analytic ball). The outer wall is 1.15-5.25x beyond the echo's
+ *    measured outer extent, and the echo's outer extent is ITSELF beyond
+ *    the far cap on 5 of 6.
+ *
+ * IN THE INFLATION TRANSIENT it is a different picture and still not a
+ * good one. At R=0.9rho, engaged apps/ray x0.945-1.000. At R=0.35rho —
+ * section (1)'s disclosed rough regime, where the echo is small and near
+ * `c` so the outer wall finally lands inside the marched span — the
+ * certified arm buys x0.712 on `spherefold pair` (its 32/144 rays DO miss
+ * ANN there, the only nonzero per-ray reading in the whole table) and
+ * x0.936 on `spiral`, and EXACTLY NOTHING (x1.000) on the other four,
+ * including both of the expensive ones.
+ *
+ * CONSERVATIVENESS (not optional — a bound that ever excludes a real hit
+ * is a correctness bug): 0 violations everywhere. Containment
+ * `R^2/|s-c| in ANN` over 300k samples x 6 systems: 0 (the BEST arm's 0
+ * is algebra, since its wall IS the cloud min; the CERT arm's is not).
+ * The closed form against the EXACT echo distance — section (1)'s
+ * identity-form reference over the same cloud, which over-states, so a
+ * violation found is real and a violation hidden is possible — 0/250
+ * sampled steps per system, worst `clearance / d(p, echo)` 0.956 over
+ * every step sampled. On SKIPPED steps specifically, the returned
+ * `DE(p)` never exceeded `d(p, echo)`: 0/250 per system. No ray
+ * classified as never entering ANN ended in a shell hit (vacuous at rest,
+ * where there are none; NOT vacuous at R=0.35rho on spherefold/spiral,
+ * where 32 and 20 rays were so classified and none hit). No engaged
+ * march lost a terminal hit.
+ *
+ * AND THE COST THIS WAS MEANT TO ATTACK IS SMALLER THAN THE BEAD SAYS.
+ * fr-3vjd's own "~200x the plain fold per ray" headline compared balloon
+ * ON at 1024x640 against balloon OFF at 720x400 — DIFFERENT RASTERS, so a
+ * ~2.3x ray count was baked in before the balloon was considered — on
+ * SwiftShader. Same-raster on real Iris it reads single-digit x, and this
+ * file's own section (2) prices the rest-state union at x1.25-2.06 steps
+ * and x1.40-3.21 apps over the plain march. A 0.4-8.3% shaving off a
+ * 1.4-3.2x overhead is not a rescue, which is the same conclusion from
+ * the other side.
+ *
+ * VERDICT: NOT WORTH BUILDING. The idea is sound, cheap and correct —
+ * it just does not remove cost, because what it can skip and what is
+ * expensive are nearly disjoint sets. At rest it is 0.4-8.3% of a
+ * balloon march's work (0.4% on `mandelboxKifs` and `boxfold pair`, the
+ * two that hurt), against a march-loop branch in five shader mirrors
+ * (two GLSL arms, two WGSL cores, the CPU oracle) plus an `rMin` term on
+ * the frozen balloon params block. The ceiling on ANY shell-skipping
+ * rule is the shell term's own share, 28.6-63.4% of apps, so the room
+ * lost is not the annulus's fault: it is that the SKIPPABLE shell evals
+ * are the cheap ones. IF someone revisits this it should be for the
+ * INFLATION TRANSIENT alone (spherefold x0.712) and only after fr-p7wy
+ * settles which engine the balloon should be on at all — and the
+ * measurement to beat is not this one, it is the `dr`-tiny far-cap creep
+ * the bead describes, which ANN provably cannot reach.
+ *
  * Usage:
  *   npx vitest run --config scripts/vitest.harness.config.ts scripts/balloon-inversion.harness.ts
  *
@@ -323,6 +446,7 @@ import {
   foldBoxfoldPair,
   foldSpherefoldPair,
 } from "./harness-profiles";
+import { sampleSetExtent } from "./set-extent";
 
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -359,6 +483,12 @@ const BALLOON_RHO_MARGIN = envFloat("RHO_MARGIN", 1);
 /** House violation threshold (surface-beam.harness.ts): excess above the
  * sampled reference that counts as a violation. */
 const VIOLATION_EPS = 1e-9;
+
+/** Steps section (5e) checks the annulus bound at, per system and per
+ * arm. Small because the reference is a brute-force scan of the whole
+ * cloud per query; a stride subsample of an already-uniform march is
+ * representative and the check is a HARD zero either way. */
+const CONSERVATISM_PROBES = 250;
 
 /** House deep-void band and marcher hit-test proxy, relative to `rho`
  * (surface-beam.harness.ts's DEEP_VOID_FACTOR / VOID_HIT_FACTOR). */
@@ -419,12 +549,145 @@ function invert(b: Balloon, p: Vec3): Vec3 {
   return [b.c[0] + s * dx, b.c[1] + s * dy, b.c[2] + s * dz];
 }
 
+/* ------------------------------------------------------------------ *
+ * fr-3vjd: the shell-exclusion ANNULUS, and the asymmetry that decides
+ * whether it is worth anything.
+ *
+ * Every echo point is `I(s)` for some `s` in the set, and
+ * `|I(s)−c| = R²/|s−c|`. So if the set's own radial extent about `c` is
+ * `[rMin, rMax]`, the WHOLE echo lies in the closed annulus
+ *
+ *     ANN = { x : R²/rMax <= |x−c| <= R²/rMin }
+ *
+ * and `dist(p, ANN)` is a closed-form LOWER BOUND on `dist(p, echo)`
+ * costing one `hypot` and two compares — no descent at all.
+ *
+ * THE TWO ENDS ARE NOT SYMMETRIC, AND THAT IS THE WHOLE MEASUREMENT.
+ * The INNER radius needs an UPPER bound on `rMax`, and the wrapper
+ * already carries a certified one: `rho`, the DE's own ball (MARGINED —
+ * `balloonEstimate`'s own divisor, section (4a)'s choice for the same
+ * reason). So `inR = R²/rho` is free and exact. The OUTER radius needs a
+ * LOWER bound on `rMin`, the set's CLOSEST approach to its own ball
+ * centre, and no sampled instrument can supply one: a sample IS a member,
+ * so `min |s−c|` over any cloud is an UPPER bound on the infimum and
+ * using it as `rMin` shrinks the annulus in the UNSAFE direction.
+ * `scripts/set-extent.ts` is the house definition of a set's radial
+ * extent and it measures the OUTER end only (`reachAbs`, a shell walk
+ * from the outside in) — it has no inner twin, and that is not an
+ * oversight this section should repair locally.
+ *
+ * The sound source for `rMin` is the estimator's own region floor:
+ * `DE(c)`, ONE evaluation at build time, conservative by exactly the
+ * argument every other bound in this file stands on (`descendLens`'s
+ * region-floor idiom, which the bead itself names as the shape to copy).
+ * Section (5) reports BOTH — the certified `DE(c)` annulus, and the
+ * OPTIMISTIC one built from the 300k cloud's own `min |s−c|`, a ceiling
+ * no instrument could ever beat — so that "dead" and "dead only because
+ * we cannot certify `rMin`" stay distinguishable.
+ * ------------------------------------------------------------------ */
+interface Annulus {
+  c: Vec3;
+  /** `R²/rho`: no echo point is closer than this to `c`. */
+  inR: number;
+  /** `R²/rMin`: no echo point is further than this. `Infinity` when the
+   * `rMin` bound is 0 — the outward half of the exclusion then says
+   * nothing at all, which is a result rather than a failure. */
+  outR: number;
+}
+
+/** `dist(p, ANN)` — a lower bound on the distance from `p` to any echo
+ * point, from the annulus alone. Zero inside the annulus. */
+function annulusClearance(a: Annulus, p: Vec3): number {
+  const r = Math.hypot(p[0] - a.c[0], p[1] - a.c[1], p[2] - a.c[2]);
+  if (r < a.inR) return a.inR - r;
+  if (r > a.outR) return r - a.outR;
+  return 0;
+}
+
+interface AnnulusStats {
+  steps: number;
+  /** Steps whose sample lands outside the annulus at all — the
+   * NECESSARY condition, and the loosest possible reading of "excluded". */
+  outside: number;
+  /** Steps where the closed form DOMINATES the fractal term
+   * (`clearance >= dFractal`) — the SUFFICIENT condition, i.e. where the
+   * shell eval could actually have been skipped with the returned value
+   * unchanged-or-larger and still conservative. */
+  dominated: number;
+  /** Shell-term evaluations actually performed. */
+  shellEvals: number;
+  /** Inverse-map visits (`countingDE`'s machine-independent unit)
+   * charged to shell-term evaluations, and the subset of them on
+   * dominated steps. AN EVAL COUNT IS NOT A COST here and this is the
+   * column that matters: section (3) measured the whole union at
+   * x1.00-1.27 apps precisely because the shell term is near-free
+   * wherever `I(p)` misses the ball — which is exactly where the
+   * annulus would skip it. */
+  shellApps: number;
+  shellAppsDominated: number;
+}
+
+function emptyAnnulusStats(): AnnulusStats {
+  return {
+    steps: 0,
+    outside: 0,
+    dominated: 0,
+    shellEvals: 0,
+    shellApps: 0,
+    shellAppsDominated: 0,
+  };
+}
+
+/** One step's annulus reading, kept for section (5e)'s conservativeness
+ * scan (which is far too expensive to run at every step: the echo
+ * reference is a 300k-sample brute force). */
+interface AnnulusSample {
+  p: Vec3;
+  dFractal: number;
+  clear: number;
+  dominated: boolean;
+  /** Inverse-map visits the SHELL term spent at this step (0 when it was
+   * skipped). Carried per sample so ONE measure-only march can be
+   * re-tallied against several candidate annuli offline — the trajectory
+   * is the untouched balloon march either way, so re-running it per
+   * candidate would measure the same steps twice. */
+  apps: number;
+}
+
+/**
+ * The annulus early-out as handed to {@link balloonEstimate}.
+ *
+ * `engage: false` MEASURES: the march is the untouched balloon march,
+ * every shell eval still runs, and each step is tallied by whether the
+ * closed form WOULD have skipped it — so what is attributed is the exact
+ * trajectory sections (2) and (4) already report. `engage: true` actually
+ * skips, which is a DIFFERENT and cheaper march (the returned value is
+ * larger, so the steps are longer too) and is measured separately.
+ *
+ * `counter` is `runMarch`'s own `countingDE` counter, threaded in so the
+ * shell term's apps can be read off between the two estimator calls; the
+ * wrapper's single entry point cannot expose that split.
+ */
+interface AnnulusRun {
+  ann: Annulus;
+  engage: boolean;
+  stats: AnnulusStats;
+  counter: { n: number };
+  samples?: AnnulusSample[];
+}
+
 /**
  * The wrapper under test: `min(DE(p), (|p−c|/rho)·DE(I(p)))` over the
  * UNTOUCHED public estimator. The shell term's cutoff scales by the
  * inverse of its value factor (`cutoff·rho/|p−c|`), so the fr-55r5
  * early-exit contract survives verbatim: the outer value crosses `cutoff`
  * exactly when the inner value crosses the scaled one.
+ *
+ * `ann` (fr-3vjd, section (5)) is a MEASUREMENT hook, off by default and
+ * inert when absent: the shell half moved into {@link balloonShellTerm}
+ * unchanged so the app counter can be read either side of it — a
+ * behavior-preserving extraction in the same sense as `runMarch`'s, and
+ * sections (0)-(4) reproduce digit for digit across it.
  */
 function balloonEstimate(
   fn: EstimatorFn,
@@ -432,8 +695,40 @@ function balloonEstimate(
   b: Balloon,
   p: Vec3,
   cutoff = 0,
+  ann: AnnulusRun | null = null,
 ): { d: number; shell: boolean } {
   const dFractal = fn(de, p, cutoff);
+  if (!ann) return balloonShellTerm(fn, de, b, p, cutoff, dFractal);
+  const clear = annulusClearance(ann.ann, p);
+  const dominated = clear >= dFractal;
+  ann.stats.steps++;
+  if (clear > 0) ann.stats.outside++;
+  if (dominated) ann.stats.dominated++;
+  const sample: AnnulusSample = { p, dFractal, clear, dominated, apps: 0 };
+  ann.samples?.push(sample);
+  if (dominated && ann.engage) return { d: dFractal, shell: false };
+  const before = ann.counter.n;
+  const out = balloonShellTerm(fn, de, b, p, cutoff, dFractal);
+  const spent = ann.counter.n - before;
+  sample.apps = spent;
+  ann.stats.shellEvals++;
+  ann.stats.shellApps += spent;
+  if (dominated) ann.stats.shellAppsDominated += spent;
+  return out;
+}
+
+/** {@link balloonEstimate}'s shell half, extracted verbatim (same
+ * arithmetic, same order) so fr-3vjd's measurement can bracket it with
+ * the inverse-map counter instead of keeping a second copy of the
+ * wrapper. */
+function balloonShellTerm(
+  fn: EstimatorFn,
+  de: SurfaceDE,
+  b: Balloon,
+  p: Vec3,
+  cutoff: number,
+  dFractal: number,
+): { d: number; shell: boolean } {
   const dx = p[0] - b.c[0];
   const dy = p[1] - b.c[1];
   const dz = p[2] - b.c[2];
@@ -928,8 +1223,13 @@ function runMarch(
   maxSteps: number,
   balloon: Balloon | null,
   onEval?: (p: Vec3, term: "fractal" | "shell") => void,
+  annulus?: AnnulusRun | null,
 ): MarchResult {
   const { de: counted, counter } = countingDE(de, de.beamWidth);
+  // fr-3vjd section (5): the run's stats are read off THIS march's own
+  // counter, so the shell term's apps can be separated from the fractal
+  // term's. Absent (every other caller) nothing below changes.
+  if (annulus) annulus.counter = counter;
   let hitF = 0;
   let hitS = 0;
   let far = 0;
@@ -950,7 +1250,7 @@ function runMarch(
         if (balloon) onEval(invert(balloon, p), "shell");
       }
       const e = balloon
-        ? balloonEstimate(fn, counted, balloon, p, eps)
+        ? balloonEstimate(fn, counted, balloon, p, eps, annulus ?? null)
         : { d: fn(counted, p, eps), shell: false };
       steps++;
       if (e.d < eps) {
@@ -1300,6 +1600,184 @@ const SYSTEMS: SystemB[] = [
   { label: "mandelboxKifs preset", transforms: mandelboxKifs() },
   lensArchetype(),
 ];
+
+/* ------------------------------------------------------------------ *
+ * fr-3vjd section (5) instruments.
+ * ------------------------------------------------------------------ */
+
+/** Resolution of the membership oracle section (5) hands
+ * `set-extent.ts`, as a fraction of `rho`: a point is a MEMBER when a
+ * plotted chaos-game sample lies within `SET_EXTENT_H_RHO * rho` of it.
+ * The attractor is the closure of the orbit, so proximity to the plotted
+ * orbit is the membership question here — NOT `de(p) < eps`, which
+ * set-extent's own doc rules out in both directions. It is an instrument
+ * resolution, disclosed with every figure it produces. */
+const SET_EXTENT_H_RHO = 0.01;
+
+/**
+ * A membership oracle over the chaos-game cloud, for `set-extent.ts`.
+ *
+ * Points arrive in coordinates RELATIVE TO `c` (the balloon's centre) and
+ * the cloud is stored the same way, so `set-extent`'s origin-centred
+ * draws and shell walk become draws and shells about `c` without
+ * touching the shared file — which matters because the balloon's centre
+ * is not the origin on every system (`spherefold pair`'s sits 46% of its
+ * own visible radius out, section (4a)).
+ *
+ * Uniform-grid hash at cell size `h`, so a query reads 27 cells.
+ */
+function buildCloudOracle(
+  cloud: ChaosGameResult,
+  c: Vec3,
+  h: number,
+): (p: Vec3) => boolean {
+  const LIM = 512;
+  const key = (ix: number, iy: number, iz: number): number =>
+    ((ix + LIM) * 2 * LIM + (iy + LIM)) * 2 * LIM + (iz + LIM);
+  const ok = (i: number): boolean => i >= -LIM && i < LIM;
+  const cells = new Map<number, number[]>();
+  const rel = new Float64Array(cloud.count * 3);
+  const pos = cloud.positions;
+  for (let i = 0; i < cloud.count; i++) {
+    const x = pos[i * 3] - c[0];
+    const y = pos[i * 3 + 1] - c[1];
+    const z = pos[i * 3 + 2] - c[2];
+    rel[i * 3] = x;
+    rel[i * 3 + 1] = y;
+    rel[i * 3 + 2] = z;
+    const ix = Math.floor(x / h);
+    const iy = Math.floor(y / h);
+    const iz = Math.floor(z / h);
+    if (!ok(ix) || !ok(iy) || !ok(iz)) continue;
+    const k = key(ix, iy, iz);
+    const bucket = cells.get(k);
+    if (bucket) bucket.push(i);
+    else cells.set(k, [i]);
+  }
+  const h2 = h * h;
+  return (p: Vec3): boolean => {
+    const bx = Math.floor(p[0] / h);
+    const by = Math.floor(p[1] / h);
+    const bz = Math.floor(p[2] / h);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const ix = bx + dx;
+          const iy = by + dy;
+          const iz = bz + dz;
+          if (!ok(ix) || !ok(iy) || !ok(iz)) continue;
+          const bucket = cells.get(key(ix, iy, iz));
+          if (!bucket) continue;
+          for (const i of bucket) {
+            const ex = rel[i * 3] - p[0];
+            const ey = rel[i * 3 + 1] - p[1];
+            const ez = rel[i * 3 + 2] - p[2];
+            if (ex * ex + ey * ey + ez * ez <= h2) return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+}
+
+interface RayAnnulusGeom {
+  /** Closest / furthest the marched segment gets to `c`. */
+  dmin: number;
+  dmax: number;
+  /** Does the segment meet the annulus AT ALL? `|p(t) − c|` is
+   * continuous on `[0, tFar]`, so the radii it attains are exactly
+   * `[dmin, dmax]` and the test is an interval overlap. A ray for which
+   * this is false can never hit the shell ANYWHERE, which is the bead's
+   * literal proposal. */
+  enters: boolean;
+  /** Arc length of the marched segment strictly inside the annulus's
+   * hole, and strictly beyond its outer wall. */
+  innerLen: number;
+  outerLen: number;
+}
+
+/** Length of `{ t in [0, tFar] : |cam + t·dir − c| <= r }` in closed
+ * form: `|p(t) − c|²` is the quadratic `t² + 2bt + c2`, so the sublevel
+ * set is one interval (or empty). */
+function segmentInsideLength(
+  b: number,
+  c2: number,
+  tFar: number,
+  r: number,
+): number {
+  if (!Number.isFinite(r)) return tFar;
+  const disc = b * b - c2 + r * r;
+  if (disc <= 0) return 0;
+  const s = Math.sqrt(disc);
+  const lo = Math.max(0, -b - s);
+  const hi = Math.min(tFar, -b + s);
+  return Math.max(0, hi - lo);
+}
+
+function rayAnnulusGeom(
+  cam: Vec3,
+  dir: Vec3,
+  tFar: number,
+  a: Annulus,
+): RayAnnulusGeom {
+  const vx = cam[0] - a.c[0];
+  const vy = cam[1] - a.c[1];
+  const vz = cam[2] - a.c[2];
+  const b = vx * dir[0] + vy * dir[1] + vz * dir[2];
+  const c2 = vx * vx + vy * vy + vz * vz;
+  const at = (t: number): number =>
+    Math.sqrt(Math.max(0, t * t + 2 * b * t + c2));
+  const dmin = at(Math.min(tFar, Math.max(0, -b)));
+  const dmax = Math.max(at(0), at(tFar));
+  return {
+    dmin,
+    dmax,
+    enters: dmax >= a.inR && dmin <= a.outR,
+    innerLen: segmentInsideLength(b, c2, tFar, a.inR),
+    outerLen: tFar - segmentInsideLength(b, c2, tFar, a.outR),
+  };
+}
+
+/** What one candidate annulus would have bought on an ALREADY-MEASURED
+ * balloon march: the trajectory is the untouched one either way, so the
+ * candidates are re-tallied off the same sample list rather than
+ * re-marched. `apps` is the unit of record (see {@link AnnulusStats}). */
+interface AnnulusTally {
+  steps: number;
+  outside: number;
+  dominated: number;
+  shellApps: number;
+  shellAppsDominated: number;
+}
+
+function tallyAnnulus(samples: AnnulusSample[], a: Annulus): AnnulusTally {
+  const t: AnnulusTally = {
+    steps: samples.length,
+    outside: 0,
+    dominated: 0,
+    shellApps: 0,
+    shellAppsDominated: 0,
+  };
+  for (const s of samples) {
+    const clear = annulusClearance(a, s.p);
+    if (clear > 0) t.outside++;
+    t.shellApps += s.apps;
+    if (clear >= s.dFractal) {
+      t.dominated++;
+      t.shellAppsDominated += s.apps;
+    }
+  }
+  return t;
+}
+
+function pct(n: number, d: number): string {
+  return d > 0 ? `${((n / d) * 100).toFixed(1)}%` : "n/a";
+}
+
+function fmtR(x: number): string {
+  return Number.isFinite(x) ? x.toFixed(3) : "inf";
+}
 
 describe("fr-5wlv.1 balloon inversion harness", () => {
   it("(0) inversion identity + involution self-check", () => {
@@ -1762,5 +2240,343 @@ describe("fr-5wlv.1 balloon inversion harness", () => {
       }
     }
     expect(true).toBe(true);
+  }, 900_000);
+  it("(5) fr-3vjd: is the shell-exclusion annulus tight enough to skip anything?", () => {
+    const restMult = Math.max(...R_REGIMES);
+    console.log(
+      `\n== (5) fr-3vjd: the annulus early-out. The whole echo lies in ` +
+        `ANN = {x : R^2/rho <= |x-c| <= R^2/rMin}, so dist(p, ANN) is a ` +
+        `closed-form lower bound on dist(p, shell) and the shell term is ` +
+        `skippable wherever that bound DOMINATES the fractal term. TWO ` +
+        `rMin bounds are carried: CERT = DE(c), the estimator's own ` +
+        `region floor (sound, one eval at build time, what a shipped ` +
+        `implementation could actually use), and BEST = min|s-c| over the ` +
+        `${CLOUD}-point cloud, which is an UPPER bound on the true ` +
+        `infimum and therefore a CEILING no sound implementation can ` +
+        `beat, not a candidate. Same rays as sections (2)/(4), production ` +
+        `estimator per class, cutoff engaged ==`,
+    );
+
+    let containmentViolations = 0;
+    let clearanceViolations = 0;
+    let skippedStepViolations = 0;
+    let missRayShellHits = 0;
+    let engagedLostHits = 0;
+    let worstClearRatio = 0;
+
+    for (const sys of SYSTEMS) {
+      const analysis = analyzeSurfaceSystem(sys.transforms, sys.final ?? null);
+      if (analysis.status === "ineligible") continue;
+      const g = ground(sys);
+      const rho = g.ball.rho / BALLOON_RHO_MARGIN;
+      const fn: EstimatorFn = deHasFolds(g.de)
+        ? estimateDistance
+        : estimateDistanceRefined;
+      const { cam, rays, tFar, eps } = buildMarchSetup(rho, g.ball.c);
+
+      // ---- (5a) the source set's radial extent about c ----------------
+      // OUTER end through the SHARED instrument (set-extent.ts) against a
+      // MEMBERSHIP oracle; INNER end through the certified region floor
+      // DE(c), with the cloud's own minimum beside it as the ceiling.
+      const ext = sampleSetExtent(
+        buildCloudOracle(g.cloud, g.ball.c, SET_EXTENT_H_RHO * rho),
+        { fillRadius: rho, scanRadius: rho * 1.15 },
+      );
+      let cloudMin = Infinity;
+      for (let i = 0; i < g.cloud.count; i++) {
+        const d = Math.sqrt(g.sCenterSq[i]);
+        if (d < cloudMin) cloudMin = d;
+      }
+      const deAtC = fn(g.de, g.ball.c, 0);
+
+      console.log(
+        `-- ${sys.label} (${deHasFolds(g.de) ? "base/fold" : "refined"}):`,
+      );
+      console.log(
+        `     ball: |c|=${Math.hypot(...g.ball.c).toFixed(4)}` +
+          ` rho=${rho.toFixed(4)} rho_margined=${g.ball.rho.toFixed(4)}` +
+          ` | cloud |s-c| in [${cloudMin.toExponential(3)},` +
+          ` ${g.sampleMax.toFixed(4)}]`,
+      );
+      console.log(
+        `     r_max (set-extent, membership oracle h=${SET_EXTENT_H_RHO}rho,` +
+          ` shells about c): reach=${ext.reachAbs.toFixed(4)} =` +
+          `${(ext.reachAbs / rho).toFixed(3)}rho, fill=` +
+          `${ext.fillPct.toFixed(2)}% of ball(c,rho) -- the annulus uses` +
+          ` the CERTIFIED rho, not this`,
+      );
+      console.log(
+        `     r_min: CERT DE(c)=${deAtC.toExponential(3)} =` +
+          `${(deAtC / rho).toExponential(2)}rho | BEST cloud-min=` +
+          `${cloudMin.toExponential(3)} = ${(cloudMin / rho).toExponential(2)}rho`,
+      );
+
+      let restSamples: AnnulusSample[] = [];
+      let restAnnCert: Annulus | null = null;
+      let restAnnBest: Annulus | null = null;
+
+      for (const rMult of R_REGIMES) {
+        const R = rMult * rho;
+        const inR = (R * R) / g.ball.rho;
+        const annCert: Annulus = {
+          c: g.ball.c,
+          inR,
+          outR: deAtC > 0 ? (R * R) / deAtC : Infinity,
+        };
+        const annBest: Annulus = {
+          c: g.ball.c,
+          inR,
+          outR: cloudMin > 0 ? (R * R) / cloudMin : Infinity,
+        };
+
+        // ---- (5b) pure ray geometry: what does ANN exclude at all? ----
+        let lenExclCert = 0;
+        let lenExclBest = 0;
+        let innerLenCert = 0;
+        const missCert: Vec3[] = [];
+        const missBest: Vec3[] = [];
+        let spanMin = Infinity;
+        let spanMax = 0;
+        for (const dir of rays) {
+          const gc = rayAnnulusGeom(cam, dir, tFar, annCert);
+          const gb = rayAnnulusGeom(cam, dir, tFar, annBest);
+          lenExclCert += gc.innerLen + gc.outerLen;
+          innerLenCert += gc.innerLen;
+          lenExclBest += gb.innerLen + gb.outerLen;
+          if (!gc.enters) missCert.push(dir);
+          if (!gb.enters) missBest.push(dir);
+          spanMin = Math.min(spanMin, gc.dmin);
+          spanMax = Math.max(spanMax, gc.dmax);
+        }
+        const lenTotal = tFar * rays.length;
+
+        // ---- (5c) the march itself, MEASURE-ONLY --------------------
+        // engage=false, so this is byte-for-byte section (2)'s balloon
+        // march and what is attributed is the trajectory that ships.
+        const balloon: Balloon = { ...g.ball, R };
+        const samples: AnnulusSample[] = [];
+        const run: AnnulusRun = {
+          ann: annCert,
+          engage: false,
+          stats: emptyAnnulusStats(),
+          counter: { n: 0 },
+          samples,
+        };
+        const m = runMarch(
+          g.de,
+          fn,
+          cam,
+          rays,
+          tFar,
+          eps,
+          MARCH_STEPS,
+          balloon,
+          undefined,
+          run,
+        );
+        const totalApps = m.appsPerRay * rays.length;
+        const tCert = tallyAnnulus(samples, annCert);
+        const tBest = tallyAnnulus(samples, annBest);
+
+        // Per-RAY skip (the bead's literal proposal): shell evals on rays
+        // that never enter ANN. One shell eval per step on a balloon
+        // march, so a march of just those rays counts them exactly.
+        const missSteps = (rs: Vec3[]): { steps: number; hitS: number } => {
+          if (rs.length === 0) return { steps: 0, hitS: 0 };
+          const mm = runMarch(
+            g.de,
+            fn,
+            cam,
+            rs,
+            tFar,
+            eps,
+            MARCH_STEPS,
+            balloon,
+          );
+          return { steps: mm.stepsMean * rs.length, hitS: mm.hitS };
+        };
+        const msCert = missSteps(missCert);
+        const msBest = missSteps(missBest);
+        missRayShellHits += msCert.hitS + msBest.hitS;
+
+        console.log(
+          `     R=${String(rMult).padEnd(4)}rho: ANN cert [${fmtR(inR)}, ` +
+            `${fmtR(annCert.outR)}] best [${fmtR(inR)}, ` +
+            `${fmtR(annBest.outR)}] | marched |p-c| in [${fmtR(spanMin)}, ` +
+            `${fmtR(spanMax)}], tFar=${fmtR(tFar)}`,
+        );
+        console.log(
+          `        (5b) rays never entering ANN: cert ${missCert.length}/` +
+            `${rays.length} best ${missBest.length}/${rays.length}` +
+            ` -> shell evals on them ${pct(msCert.steps, tCert.steps)} cert,` +
+            ` ${pct(msBest.steps, tBest.steps)} best` +
+            ` (= ${pct(msCert.steps, 2 * tCert.steps)} of TOTAL evals)`,
+        );
+        console.log(
+          `        (5c) excluded arc length ${pct(lenExclCert, lenTotal)} cert` +
+            ` (inner ${pct(innerLenCert, lenTotal)} + outer ` +
+            `${pct(lenExclCert - innerLenCert, lenTotal)})` +
+            `, ${pct(lenExclBest, lenTotal)} best` +
+            ` | STEPS landing outside ANN ${pct(tCert.outside, tCert.steps)}` +
+            ` cert, ${pct(tBest.outside, tBest.steps)} best`,
+        );
+        console.log(
+          `        (5c) shell evals SKIPPABLE (clearance >= dFractal):` +
+            ` cert ${tCert.dominated}/${tCert.steps} ` +
+            `(${pct(tCert.dominated, tCert.steps)}), best ` +
+            `${pct(tBest.dominated, tBest.steps)}` +
+            ` -> of TOTAL evals ${pct(tCert.dominated, 2 * tCert.steps)} cert,` +
+            ` ${pct(tBest.dominated, 2 * tBest.steps)} best`,
+        );
+        console.log(
+          `        (5c) IN APPS, the cost unit: the WHOLE shell term is ` +
+            `${pct(tCert.shellApps, totalApps)} of the march's ` +
+            `${totalApps.toFixed(0)} apps (= the ceiling on ANY ` +
+            `shell-skipping rule); the annulus's skippable share is ` +
+            `${pct(tCert.shellAppsDominated, totalApps)} cert, ` +
+            `${pct(tBest.shellAppsDominated, totalApps)} best`,
+        );
+
+        // ---- (5d) the same march with the early-out ENGAGED ----------
+        // A different, cheaper march: skipping returns the LARGER
+        // dFractal, so the steps lengthen too and the saving is not the
+        // measure-only tally. Terminals are printed beside the baseline's
+        // because a sound early-out may re-attribute a shell hit to the
+        // fractal term but must never lose one.
+        const engaged = (a: Annulus): MarchResult =>
+          runMarch(
+            g.de,
+            fn,
+            cam,
+            rays,
+            tFar,
+            eps,
+            MARCH_STEPS,
+            balloon,
+            undefined,
+            {
+              ann: a,
+              engage: true,
+              stats: emptyAnnulusStats(),
+              counter: { n: 0 },
+            },
+          );
+        const fmtEnd = (label: string, e: MarchResult): string =>
+          `${label} steps mu ${e.stepsMean.toFixed(1)}` +
+          ` (x${(e.stepsMean / m.stepsMean).toFixed(3)})` +
+          ` apps/ray ${e.appsPerRay.toFixed(0)}` +
+          ` (x${(e.appsPerRay / m.appsPerRay).toFixed(3)})` +
+          ` hitF ${e.hitF} hitS ${e.hitS} far ${e.far} cap ${e.cap}`;
+        const eCert = engaged(annCert);
+        const eBest = engaged(annBest);
+        console.log(
+          `        (5d) ENGAGED end to end -- baseline steps mu ` +
+            `${m.stepsMean.toFixed(1)} apps/ray ${m.appsPerRay.toFixed(0)}` +
+            ` hitF ${m.hitF} hitS ${m.hitS} far ${m.far} cap ${m.cap}` +
+            ` || ${fmtEnd("cert", eCert)} || ${fmtEnd("best", eBest)}`,
+        );
+        if (eCert.hitF + eCert.hitS < m.hitF + m.hitS) engagedLostHits++;
+        if (eBest.hitF + eBest.hitS < m.hitF + m.hitS) engagedLostHits++;
+
+        if (rMult === restMult) {
+          restSamples = samples;
+          restAnnCert = annCert;
+          restAnnBest = annBest;
+        }
+      }
+
+      // ---- (5e) conservativeness, at rest ---------------------------
+      if (restAnnCert && restAnnBest) {
+        const R = restMult * rho;
+        const balloon: Balloon = { ...g.ball, R };
+        // (i) containment: every echo point R^2/|s-c| inside ANN.
+        let cvCert = 0;
+        let cvBest = 0;
+        let echoMin = Infinity;
+        let echoMax = 0;
+        for (let i = 0; i < g.cloud.count; i++) {
+          const r = Math.sqrt(g.sCenterSq[i]);
+          const q = r > 0 ? (R * R) / r : Infinity;
+          if (q < echoMin) echoMin = q;
+          if (q > echoMax) echoMax = q;
+          if (
+            q < restAnnCert.inR - VIOLATION_EPS ||
+            q > restAnnCert.outR + VIOLATION_EPS
+          ) {
+            cvCert++;
+          }
+          if (
+            q < restAnnBest.inR - VIOLATION_EPS ||
+            q > restAnnBest.outR + VIOLATION_EPS
+          ) {
+            cvBest++;
+          }
+        }
+        containmentViolations += cvCert;
+        console.log(
+          `     (5e) containment: echo actually spans [${fmtR(echoMin)}, ` +
+            `${fmtR(echoMax)}] vs ANN cert [${fmtR(restAnnCert.inR)}, ` +
+            `${fmtR(restAnnCert.outR)}] -- outside-ANN samples: cert ` +
+            `${cvCert}/${g.cloud.count}, best ${cvBest}/${g.cloud.count}` +
+            ` (BEST's outer wall is the cloud min BY CONSTRUCTION, so its` +
+            ` 0 is algebra, not evidence)`,
+        );
+
+        // (ii) the closed form against the exact echo distance, on a
+        // stride subsample (nearestShell is a 300k brute force per query).
+        const stride = (arr: AnnulusSample[], n: number): AnnulusSample[] => {
+          if (arr.length <= n) return arr;
+          const step = arr.length / n;
+          const out: AnnulusSample[] = [];
+          for (let i = 0; i < n; i++) out.push(arr[Math.floor(i * step)]);
+          return out;
+        };
+        const dominatedRest = restSamples.filter(
+          (s) => annulusClearance(restAnnCert, s.p) >= s.dFractal,
+        );
+        let cScanned = 0;
+        let cViol = 0;
+        let worst = 0;
+        for (const s of stride(restSamples, CONSERVATISM_PROBES)) {
+          const ref = nearestShell(g, balloon, s.p);
+          const clear = annulusClearance(restAnnCert, s.p);
+          cScanned++;
+          if (clear > ref + VIOLATION_EPS) cViol++;
+          if (ref > 0) worst = Math.max(worst, clear / ref);
+        }
+        let sScanned = 0;
+        let sViol = 0;
+        for (const s of stride(dominatedRest, CONSERVATISM_PROBES)) {
+          const ref = nearestShell(g, balloon, s.p);
+          sScanned++;
+          if (s.dFractal > ref + VIOLATION_EPS) sViol++;
+        }
+        clearanceViolations += cViol;
+        skippedStepViolations += sViol;
+        worstClearRatio = Math.max(worstClearRatio, worst);
+        console.log(
+          `     (5e) closed form vs EXACT echo distance (identity over the` +
+            ` cloud): clearance <= d(p, echo) violated ${cViol}/${cScanned}` +
+            ` sampled steps, worst clearance/d = ${worst.toFixed(3)}` +
+            ` | on SKIPPED steps, returned dFractal <= d(p, echo) violated` +
+            ` ${sViol}/${sScanned} (of ${dominatedRest.length} dominated)`,
+        );
+      }
+    }
+
+    console.log(
+      `\n-- (5e) totals: containment violations ${containmentViolations},` +
+        ` clearance-bound violations ${clearanceViolations},` +
+        ` skipped-step violations ${skippedStepViolations},` +
+        ` shell hits on rays classified as never entering ANN` +
+        ` ${missRayShellHits}, engaged marches that LOST a terminal hit` +
+        ` ${engagedLostHits}. Worst clearance/d(p,echo) over every` +
+        ` sampled step: ${worstClearRatio.toFixed(3)} (must be <= 1).`,
+    );
+    expect(containmentViolations).toBe(0);
+    expect(clearanceViolations).toBe(0);
+    expect(skippedStepViolations).toBe(0);
+    expect(missRayShellHits).toBe(0);
+    expect(engagedLostHits).toBe(0);
   }, 900_000);
 });
