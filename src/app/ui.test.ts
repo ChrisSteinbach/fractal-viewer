@@ -99,6 +99,7 @@ function noopHandlers(): UiHandlers {
     onPositionAxisColors: vi.fn(),
     onBackgroundCustom: vi.fn(),
     onFogTint: vi.fn(),
+    onBalloonTint: vi.fn(),
   };
 }
 
@@ -690,6 +691,118 @@ describe("Ui surface balloon rows (fr-5wlv.4)", () => {
     ).click();
 
     expect(handlers.onBalloonInflate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Ui balloon tint (fr-j85n)", () => {
+  function balloonTintRow(): HTMLElement {
+    return document.getElementById("balloonTintRow") as HTMLElement;
+  }
+  function surfaceBalloonTintRow(): HTMLElement {
+    return document.getElementById("surfaceBalloonTintRow") as HTMLElement;
+  }
+  function el(id: string): HTMLInputElement {
+    return document.getElementById(id) as HTMLInputElement;
+  }
+
+  it("hides the Points tint row while the balloon echo is off", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), balloonEcho: false });
+    expect(balloonTintRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows the Points tint row while the balloon echo is on", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), balloonEcho: true });
+    expect(balloonTintRow().classList.contains("hidden")).toBe(false);
+  });
+
+  it("hides the Surface tint row while the balloon is off", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface" as const,
+      balloonEcho: false,
+    });
+    expect(surfaceBalloonTintRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows the Surface tint row while the balloon is on", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface" as const,
+      balloonEcho: true,
+    });
+    expect(surfaceBalloonTintRow().classList.contains("hidden")).toBe(false);
+  });
+
+  it("hides the Surface tint row for an escape surface session even with the balloon on (fr-5wlv.6)", () => {
+    // Mirrors surfaceBalloonRadiusRow's own test above: the balloon is
+    // permanently inert for the escape solid, and the tint row rides the
+    // exact same surfaceBalloonHidden gate as the radius row.
+    const ui = new Ui(document);
+    ui.setSurfaceSessionKind("escape");
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface" as const,
+      balloonEcho: true,
+    });
+    expect(surfaceBalloonTintRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("hides the Surface tint row for a Mandelbulb surface session even with the balloon on (fr-tdin)", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceSessionKind("bulb");
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface" as const,
+      balloonEcho: true,
+    });
+    expect(surfaceBalloonTintRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("reports a Points picker edit as the raw hex value", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.updateLabels(initialState(true));
+
+    const input = el("balloonTintColor");
+    input.value = "#336699";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(handlers.onBalloonTint).toHaveBeenCalledWith("#336699");
+  });
+
+  it("reports a Surface picker edit as the raw hex value through the SAME handler", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.updateLabels(initialState(true));
+
+    const input = el("surfaceBalloonTintColor");
+    input.value = "#996633";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(handlers.onBalloonTint).toHaveBeenCalledWith("#996633");
+  });
+
+  it("reflects a non-default balloonTint into BOTH pickers (gallery loads/undo move the swatch)", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({ ...initialState(true), balloonTint: "#336699" });
+    expect(el("balloonTintColor").value).toBe("#336699");
+    expect(el("surfaceBalloonTintColor").value).toBe("#336699");
+  });
+
+  it("names both color inputs for assistive tech (their labels carry no text)", () => {
+    new Ui(document);
+    expect(el("balloonTintColor").getAttribute("aria-label")).toBe(
+      "Balloon echo tint color",
+    );
+    expect(el("surfaceBalloonTintColor").getAttribute("aria-label")).toBe(
+      "Balloon echo tint color",
+    );
   });
 });
 

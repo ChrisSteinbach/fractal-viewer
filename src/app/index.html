@@ -909,6 +909,39 @@
             </button>
           </div>
 
+          <!-- Balloon echo tint (fr-j85n): color + strength blended onto the
+               echo's own base albedo before the dim/fade terms, one setting
+               shared with the surface balloon's identical row in the Surface
+               section below — the balloonRadiusRow/surfaceBalloonRadiusRow
+               "one balloon, two renderers" relationship applied to color
+               instead of size. Same position-axis-row shape as fogTintRow
+               above. -->
+          <div id="balloonTintRow" class="position-axis-row hidden">
+            <span class="position-axis-title"
+              >Tint <span id="balloonTintLabel">0%</span></span
+            >
+            <div class="position-axis-inputs">
+              <label class="position-axis-label"
+                ><input
+                  type="color"
+                  id="balloonTintColor"
+                  value="#000000"
+                  aria-label="Balloon echo tint color"
+              /></label>
+              <label class="position-axis-label">
+                <input
+                  type="range"
+                  id="balloonTintStrength"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value="0"
+                  aria-label="Balloon echo tint strength"
+                />
+              </label>
+            </div>
+          </div>
+
           <!-- The scene backdrop (fr-5ps1): shown by every renderer, not just
                the explorer, so unlike Depth Style it stays live in the 4D
                view too. Custom reveals the two-stop pickers below. -->
@@ -1503,6 +1536,39 @@
             >
               Inflate
             </button>
+          </div>
+
+          <!-- Balloon tint (fr-j85n): color + strength blended onto the
+               balloon shell's base albedo before lighting, gated on the
+               union argmin's shell attribution so a fractal-term hit is
+               untouched. Binds the SAME persisted state pair as the Points
+               section's balloonTintRow above — one setting, two render
+               modes, exactly like surfaceBalloonRadiusRow/balloonRadiusRow
+               share the balloon size. -->
+          <div id="surfaceBalloonTintRow" class="position-axis-row hidden">
+            <span class="position-axis-title"
+              >Tint <span id="surfaceBalloonTintLabel">0%</span></span
+            >
+            <div class="position-axis-inputs">
+              <label class="position-axis-label"
+                ><input
+                  type="color"
+                  id="surfaceBalloonTintColor"
+                  value="#000000"
+                  aria-label="Balloon echo tint color"
+              /></label>
+              <label class="position-axis-label">
+                <input
+                  type="range"
+                  id="surfaceBalloonTintStrength"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value="0"
+                  aria-label="Balloon echo tint strength"
+                />
+              </label>
+            </div>
           </div>
 
           <!-- The surface ground plane (fr-rhn5): an infinite floor under

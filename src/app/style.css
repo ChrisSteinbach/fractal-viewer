@@ -1254,11 +1254,15 @@ summary.editor-group-title {
   cursor: pointer;
 }
 
-/* Fog tint row (fr-5h5d): the strength slider shares this row with the
-   fixed-width swatch above, so it needs to grow into the remaining space
-   instead of fighting the swatch under the global input[type="range"]
+/* Fog tint row (fr-5h5d) and the balloon tint rows (fr-j85n, same
+   position-axis-row shape, one shared state pair seen from the Points and
+   Surface sections): the strength slider shares its row with the
+   fixed-width swatch beside it, so it needs to grow into the remaining
+   space instead of fighting the swatch under the global input[type="range"]
    100%-width rule. */
-#fogTintRow input[type="range"] {
+#fogTintRow input[type="range"],
+#balloonTintRow input[type="range"],
+#surfaceBalloonTintRow input[type="range"] {
   flex: 1;
   min-width: 0;
 }

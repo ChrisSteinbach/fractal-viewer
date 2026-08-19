@@ -41,6 +41,7 @@ function mockEffects(shared = false): ControlEffects {
       setBalloonEchoEnabled: vi.fn(),
       setBalloonEchoRadius: vi.fn(),
       setSurfaceBalloonRadius: vi.fn(),
+      setBalloonTint: vi.fn(),
       setFogDensity: vi.fn(),
       setFogTint: vi.fn(),
     },
@@ -91,6 +92,22 @@ describe("applyScalarControl: parsing/mapping", () => {
     const state = applyScalarControl(initialState(true), spec, "0.5");
 
     expect(state.fogTintStrength).toBe(0.5);
+  });
+
+  it("balloonTintStrength apply parses the raw string into a numeric balloonTintStrength", () => {
+    const spec = specById("balloonTintStrength");
+
+    const state = applyScalarControl(initialState(true), spec, "0.5");
+
+    expect(state.balloonTintStrength).toBe(0.5);
+  });
+
+  it("surfaceBalloonTintStrength apply parses the raw string into the SAME numeric balloonTintStrength (fr-j85n: one balloon, two renderers)", () => {
+    const spec = specById("surfaceBalloonTintStrength");
+
+    const state = applyScalarControl(initialState(true), spec, "0.5");
+
+    expect(state.balloonTintStrength).toBe(0.5);
   });
 
   it("numPointsSlider apply floors raw 0 to the MIN_NUM_POINTS endpoint", () => {
@@ -358,6 +375,35 @@ describe("effects", () => {
       expect(fx.scene.setSurfaceBalloonRadius).toHaveBeenCalledWith(0.9);
       expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
       expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
+    });
+
+    it("balloonTintStrength effect forwards the tint (as rgb01) and strength to the scene (fr-j85n)", () => {
+      const spec = specById("balloonTintStrength");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "0.5");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      // initialState's balloonTint defaults to DEFAULT_BALLOON_TINT,
+      // "#000000" — black.
+      expect(fx.scene.setBalloonTint).toHaveBeenCalledWith([0, 0, 0], 0.5);
+    });
+
+    it("surfaceBalloonTintStrength effect forwards the SAME tint/strength through the SAME scene method, with no session re-enter (fr-j85n)", () => {
+      const spec = specById("surfaceBalloonTintStrength");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "0.5");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setBalloonTint).toHaveBeenCalledWith([0, 0, 0], 0.5);
+      // Deliberately NOT a variant-level change, unlike
+      // surfaceBalloonCheckbox above: the tint is a uniform/spec value the
+      // already-compiled SURFACE_BALLOON arm reads, so
+      // surfaceBalloonRadiusSlider's cheap live path applies here too.
+      expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
     });
 
     it("surfaceGroundPlaneCheckbox apply sets state.groundPlane and its effect re-enters the surface session (fr-rhn5)", () => {
