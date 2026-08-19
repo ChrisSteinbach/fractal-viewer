@@ -1,4 +1,8 @@
 import * as THREE from "three";
+import {
+  BACKGROUND_SHAPE_GLSL,
+  backgroundShapeSource,
+} from "../fractal/background-shape";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 
 /**
@@ -25,6 +29,12 @@ import { DARK_BACKDROP, hexToRgb01 } from "./constants";
  * front of its backdrop — a known, accepted gap, not an oversight a
  * future reader should "fix" by copying the tint in without a bead behind
  * it.
+ *
+ * The miss-pixel gradient shares its shape with every other tracer
+ * (fr-xn9s): `backgroundShapeT`, spliced in from
+ * `../fractal/background-shape.ts`, is the one place that shape is
+ * defined — this module only supplies the two stops and the pixel's
+ * full-image UV.
  */
 
 /** Screen-space gradient the raymarcher paints on a miss — the same authored
@@ -119,8 +129,10 @@ const VOXEL_FRAGMENT = /* glsl */ `
     );
   }
 
+  ${backgroundShapeSource(BACKGROUND_SHAPE_GLSL)}
   void main() {
-    vec3 background = mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0));
+    // fr-xn9s: shared shape at full-image coordinates; see surface-material.ts.
+    vec3 background = mix(uBgBottom, uBgTop, backgroundShapeT(vUv));
 
     // Reconstruct the camera ray by unprojecting this pixel on the near and
     // far clip planes.

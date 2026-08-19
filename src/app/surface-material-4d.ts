@@ -1,4 +1,8 @@
 import * as THREE from "three";
+import {
+  BACKGROUND_SHAPE_GLSL,
+  backgroundShapeSource,
+} from "../fractal/background-shape";
 import { radiusBandInvRange } from "../fractal/surface-de-4d";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import type { Vec3 } from "../fractal/types";
@@ -330,6 +334,7 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     vec3 e = mix(uBgBottom, uBgTop, n.y * 0.5 + 0.5);
     return mix(vec3(1.0), e / max(max(e.r, max(e.g, e.b)), 1.0e-4), uEnvLight);
   }
+  ${backgroundShapeSource(BACKGROUND_SHAPE_GLSL)}
   /** Angular pixel footprint of the ACTIVE buffer (scene-set per frame):
    * sizes the shading probes (normal offsets, ray dither) to the pixels
    * actually being rendered — not the hit test; see uAcceptPixelEps. */
@@ -1581,7 +1586,8 @@ uniform float uBalloonFar;
 
 #endif
   void main() {
-    vec3 background = mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0));
+    // fr-xn9s: shared shape at full-image coordinates; see the 3D twin.
+    vec3 background = mix(uBgBottom, uBgTop, backgroundShapeT(vUv));
 
     // Reconstruct the camera ray by unprojecting this pixel on the near and
     // far clip planes — at the supersampling pass's own point inside the
@@ -1933,14 +1939,15 @@ uniform float uBalloonFar;
  * crashed the compiler outright, empty info log, lost context). MEASURED
  * here, raw resolved / what the driver gets:
  *
- * - off:     62251 B (60.8KB) / 62251 B — under 64KB, so NOT stripped
- *            (3285 B of headroom as of fr-ehcj's envTint addition, re-measured
- *            after the ambient-only cut was replaced with the whole-lit-term
- *            multiply — docs/surface-glsl-tracers.md carries the refuted
- *            ambient-only numbers).
- * - balloon: 67623 B (66.0KB) / 16836 B (16.4KB) — past the threshold, so
+ * - off:     62711 B (61.2KB) / 62711 B — under 64KB, so NOT stripped
+ *            (2825 B of headroom as of fr-xn9s's shared backgroundShapeT
+ *            splice — down from 3285 B, since the emitted function costs
+ *            460 B here even at its one-shape "linear" size —
+ *            docs/surface-glsl-tracers.md carries the fr-ehcj history this
+ *            continues).
+ * - balloon: 68105 B (66.5KB) / 16899 B (16.5KB) — past the threshold, so
  *            the size rule strips it.
- * - plane:   70035 B (68.4KB) / 17909 B (17.5KB) — plane variants always
+ * - plane:   70517 B (68.9KB) / 17972 B (17.6KB) — plane variants always
  *            strip (fr-rhn5).
  *
  * A single monolithic source carrying both arms would be ~74KB and every
@@ -2112,11 +2119,10 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       SURFACE4_GROUND_PLANE: 0,
     },
     vertexShader: SURFACE4_VERTEX,
-    // Both arms off resolves to SURFACE4_FRAGMENT verbatim (62251 B, under
+    // Both arms off resolves to SURFACE4_FRAGMENT verbatim (62711 B, under
     // the 64KB strip threshold), so a plain 4D session hands the driver
     // exactly the source it did before fr-qxxw/fr-h0c3 (plus fr-ehcj's
-    // envTint, re-measured after the ambient-only cut was replaced with the
-    // whole-lit-term multiply).
+    // envTint and fr-xn9s's shared backgroundShapeT splice).
     fragmentShader: surface4FragmentFor(),
     depthTest: false,
     depthWrite: false,

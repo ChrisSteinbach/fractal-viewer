@@ -324,7 +324,8 @@ describe("the supersampling jitter uniform (fr-jf9y)", () => {
     expect(glsl).toContain("uniform vec4 uPixelJitter;");
     expect(glsl).toContain("(vUv + uPixelJitter.xy) * 2.0 - 1.0");
     expect(glsl).toContain("hash(gl_FragCoord.xy + uPixelJitter.zw)");
-    expect(glsl).toContain("mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0))");
+    expect(glsl).toContain("mix(uBgBottom, uBgTop, backgroundShapeT(vUv))");
+    expect(glsl).toContain("float backgroundShapeT(vec2 p)");
   });
 });
 
@@ -352,12 +353,11 @@ describe("the 4D tracer's variant arms (fr-qxxw, fr-h0c3)", () => {
   // 3D file's resolver), which is what makes OFF byte-identical to the
   // shipped tracer AND keeps every variant the driver sees far under the
   // Mesa source cliff. MEASURED raw resolved / what the driver gets:
-  // off 62251 B (60.8KB) / 62251 B — under the 64KB threshold, so NOT
-  // stripped, i.e. the shipped bytes exactly (fr-ehcj's envTint moved this
-  // from 61751 B, re-measured after the ambient-only cut was replaced with
-  // the whole-lit-term multiply); balloon 67623 B (66.0KB) / 16836 B
-  // (16.4KB); plane 70035 B (68.4KB) / 17909 B (17.5KB). The
-  // assertions below pin the CONTRACT (under threshold, arms present or
+  // off 62711 B (61.2KB) / 62711 B — under the 64KB threshold, so NOT
+  // stripped, i.e. the shipped bytes exactly (fr-xn9s's shared
+  // backgroundShapeT splice moved this from 62251 B); balloon 68105 B
+  // (66.5KB) / 16899 B (16.5KB); plane 70517 B (68.9KB) / 17972 B (17.6KB).
+  // The assertions below pin the CONTRACT (under threshold, arms present or
   // absent) rather than those figures, which any shader edit moves.
   it("resolves the shipped source verbatim when both arms are off", () => {
     const glsl = surface4FragmentFor();

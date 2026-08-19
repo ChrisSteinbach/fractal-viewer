@@ -1029,12 +1029,19 @@ BANDS. Every band's spec is assembled in ONE synchronous span, because a
 tiled export must outlive an auto-orbit/drift camera move — this is the
 compute answer to the WebGL drain's frozen-uniforms approach. Each band
 is a `camera.setViewOffset` sub-frustum, traced at the FULL image's trace
-eps, with `surfaceComputeBandStops` restricting the backdrop gradient
-pair to the band's own edges (every tracer spreads its gradient stops
-over its OWN rasterHeight, so whole-image stops would repeat the gradient
-per band). Band frames run with `capture: true`, outside the live pane's
-seed chain. One band is the whole image on an ordinary export, and that
-path is byte-identical to the untiled path.
+eps, with the backdrop pair left as the WHOLE image's stops and a
+`bgOffset`/`bgExtent` pair (fr-xn9s) carrying the band's own place in
+that image instead — `fractal/background-shape.ts`'s shared shape reads
+FULL-IMAGE coordinates, so a band just reports where it sits rather than
+re-deriving its own two-stop sub-range. This retired
+`surfaceComputeBandStops`, which existed only because a LINEAR ramp
+restricted to a sub-rectangle is still linear; a non-linear shape has no
+such restriction to remap onto, while re-deriving `imageUv` per pixel
+from the full extent works for every shape, linear included. Band frames
+run with `capture: true`, outside the live pane's seed chain. One band is
+the whole image on an ordinary export, and that path is byte-identical to
+the untiled path (an absent `bgOffset`/`bgExtent` defaults to offset
+`(0, 0)` and extent equal to the frame's own raster).
 
 `?surfacemaxrays=N` pretends a device ceiling for testing.
 `scripts/surface-export-tile.verify.mjs` is the gate: tiled vs untiled

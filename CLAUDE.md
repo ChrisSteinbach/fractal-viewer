@@ -307,6 +307,24 @@ and UI**, so the interesting math is unit-tested without a browser:
   - `affine4.ts` — 4D affine group (4×4 + translation), `toTransform4` (lift
     3D→4D), `systemIsFlat`/`systemPartsAreNonFlat` predicates (derived from
     transforms, never stored).
+  - `background-shape.ts` — the backdrop gradient's SHAPE (fr-xn9s): "given
+    a pixel, what is the mix parameter between the two stops", as against
+    `background.ts`'s "given a mode, what are the two stops". The ONE
+    definition six mirrors used to hold independently — a canvas 2D
+    gradient, three byte-identical GLSL `mix(uBgBottom, uBgTop,
+clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
+    TS prefill mirror, and `surfaceComputeBandStops`, the shape's AFFINE
+    INVERSE. Emits `backgroundShapeT` from ONE body constant in two shader
+    dialects, and mirrors it in TS for the prefill and for
+    `backgroundMeanColor` (the shape INTEGRATED AWAY — THREE.Fog carries
+    one scalar colour). THE COORDINATE CONTRACT IS THE LOAD-BEARING PART:
+    every mirror evaluates at FULL-IMAGE coordinates
+    `(pixel + 0.5 + bgOffset) / bgExtent`, a DIVISION by the full extent
+    and never a multiply by a precomputed reciprocal, so a capture BAND
+    reports where it sits instead of remapping its stops — which is what
+    retired `surfaceComputeBandStops` (a linear ramp restricted to a
+    sub-rectangle is still a two-stop ramp; nothing else is) and what lets
+    a non-linear shape exist at all.
   - `balloon-de.ts` — the balloon inverted-union DE (fr-5wlv): the scene as
     the UNION of the attractor and its sphere-inverted echo
     `I(p) = c + R²(p−c)/|p−c|²`, bounded by
@@ -1738,11 +1756,13 @@ Frame` callback, which runs before paint so the disabled look never
     synchronous span (a tiled export outlives an auto-orbit/drift camera
     move, the compute answer to the WebGL drain's frozen uniforms), each a
     `camera.setViewOffset` sub-frustum at the FULL image's trace eps, with
-    `surfaceComputeBandStops` restricting the backdrop pair to the band's
-    own edges (every tracer spreads its stops over its OWN rasterHeight,
-    so whole-image stops would repeat the gradient per band). One band is
-    the whole image on an ordinary export, byte-identical to the untiled
-    path. `?surfacemaxrays=N` pretends a device ceiling;
+    the backdrop pair left as the whole image's stops and a `bgOffset`/
+    `bgExtent` pair (fr-xn9s) carrying the band's own place in that image
+    instead — `fractal/background-shape.ts`'s one shared shape reads
+    FULL-IMAGE coordinates, so a band reports where it sits rather than
+    remapping its own two-stop sub-range. One band is the whole image on
+    an ordinary export, byte-identical to the untiled path.
+    `?surfacemaxrays=N` pretends a device ceiling;
     `scripts/surface-export-tile.verify.mjs` is the gate.
     `destroy()` defers the real `device.destroy()` until every in-flight
     frame unwinds (fr-uec4: tearing the device down while a frame is

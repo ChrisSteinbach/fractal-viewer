@@ -23,7 +23,6 @@ import {
   SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST,
   SURFACE_COMPUTE_WORKGROUP_SIZE,
   SurfaceComputeRenderer,
-  surfaceComputeBandStops,
   surfaceComputeMaxDispatchRays,
   surfaceComputeMaxFrameRays,
   surfaceComputeProgressDone,
@@ -243,30 +242,37 @@ describe("surfaceComputeTileRows", () => {
   });
 });
 
-describe("surfaceComputeBandStops", () => {
-  it("reproduces the full image's gradient band by band", () => {
-    // The identity the tiled export depends on: every tracer spreads its
-    // two stops over its OWN raster, so a band handed the whole image's
-    // stops would repeat the whole gradient. Assembling the bands' own
-    // prefills must rebuild the full-height prefill row for row —
-    // buildSurfaceComputeBackground being the CPU mirror of the kernel's
-    // own mix(bgBottom, bgTop, (py + 0.5) / rasterHeight).
+describe("buildSurfaceComputeBackground band identity (fr-xn9s)", () => {
+  it("reproduces the full image's prefill band by band from offset/extent alone", () => {
+    // The identity the tiled export depends on, restated in the fr-xn9s
+    // vocabulary that retired surfaceComputeBandStops: every tracer reads
+    // the shared shape at FULL-IMAGE coordinates, so a band's own prefill —
+    // built with the band's origin/size instead of remapped stops — must
+    // reproduce the full-image trace's rows exactly, for every band height,
+    // including one that doesn't evenly divide the image.
     const top: [number, number, number] = [1, 0, 0];
     const bottom: [number, number, number] = [0, 0, 1];
-    const whole = buildSurfaceComputeBackground(1, 12, top, bottom);
+    const fullHeight = 12;
+    const fullWidth = 1;
+    const whole = buildSurfaceComputeBackground(
+      fullWidth,
+      fullHeight,
+      top,
+      bottom,
+    );
     for (const rows of [12, 6, 4, 5]) {
-      const assembled = new Uint8Array(12 * 4);
-      for (let bandBottom = 0; bandBottom < 12; bandBottom += rows) {
-        const height = Math.min(rows, 12 - bandBottom);
-        const stops = surfaceComputeBandStops(
-          top,
-          bottom,
-          bandBottom,
-          height,
-          12,
-        );
+      const assembled = new Uint8Array(fullHeight * 4);
+      for (let bandBottom = 0; bandBottom < fullHeight; bandBottom += rows) {
+        const height = Math.min(rows, fullHeight - bandBottom);
         assembled.set(
-          buildSurfaceComputeBackground(1, height, stops.bgTop, stops.bgBottom),
+          buildSurfaceComputeBackground(
+            fullWidth,
+            height,
+            top,
+            bottom,
+            [0, bandBottom],
+            [fullWidth, fullHeight],
+          ),
           bandBottom * 4,
         );
       }
@@ -274,10 +280,19 @@ describe("surfaceComputeBandStops", () => {
     }
   });
 
-  it("hands a full-height band the original stops", () => {
-    const stops = surfaceComputeBandStops([1, 0.5, 0], [0, 0.25, 1], 0, 8, 8);
-    expect(stops.bgTop).toEqual([1, 0.5, 0]);
-    expect(stops.bgBottom).toEqual([0, 0.25, 1]);
+  it("hands a full-height band the same rows as the offset-free default", () => {
+    const top: [number, number, number] = [1, 0.5, 0];
+    const bottom: [number, number, number] = [0, 0.25, 1];
+    const withOffset = buildSurfaceComputeBackground(
+      1,
+      8,
+      top,
+      bottom,
+      [0, 0],
+      [1, 8],
+    );
+    const withDefaults = buildSurfaceComputeBackground(1, 8, top, bottom);
+    expect(Array.from(withOffset)).toEqual(Array.from(withDefaults));
   });
 });
 

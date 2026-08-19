@@ -22,6 +22,21 @@ slider (default 0.5, which reproduces that original fixed behavior), and
 the rings/sheets orbit-trap color sources ride the same hit-info descent
 (fr-rl4b).
 
+## Shared background shape (fr-xn9s)
+
+Both tracers' `void main()` used to open with its own literal
+`mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0))`. That line is now
+`mix(uBgBottom, uBgTop, backgroundShapeT(vUv))`, where `backgroundShapeT`
+is spliced in verbatim (beside `envTint`, declared before both the
+ground-plane arm and `main()`) from `fractal/background-shape.ts` — the
+one shape definition every mirror (these two GLSL tracers, the WGSL
+compute kernel, the voxel raymarcher, the canvas 2D backdrop, and the fog
+midpoint) now reads. `vUv` already IS the full-image UV for these
+fragment tracers — a capture scissors strips out of a full-size target
+rather than tracing a smaller one — so no `uBgOffset`/`uBgExtent`
+uniforms were added here; the compute kernel, which traces capture BANDS
+of a larger image, carries that pair instead (`docs/surface-gpu-kernels.md`).
+
 ## Environment-lit ambient (fr-ehcj)
 
 The backdrop tints the light, hue-preserving, so the render sits IN its
@@ -275,6 +290,17 @@ crash cliff (82.2KB observed). Stripped, plane programs emit the
 identical token stream at ~30KB raw, the ~79KB lens variant included
 (29.6KB with the floor).
 
+fr-xn9s's shared `backgroundShapeT` splice (one function, ~460B, spliced
+beside `envTint` and read from `main()`'s background line) cost every
+variant the same handful of bytes, measured raw / what the driver gets
+(escape and bulb stay under 64KB, so for them "what the driver gets"
+equals raw — unstripped, same as before this addition): affine 82939B /
+29007B, lens 86170B / 28771B, balloon 89379B / 30368B, plane 89203B /
+31344B, escape 55762B / 55762B, escape+balloon 62390B / 62390B, bulb
+39161B / 39161B. Every arm stays far under the 82.2KB crash cliff, and
+none crosses the 64KB strip threshold in either direction — nothing here
+changes the strip/no-strip decision for any variant.
+
 ## The probe-width verdict
 
 The three shading taps (normal/shadow/AO) ride the value form, which fold
@@ -371,12 +397,12 @@ one. Nothing about this tracer regressed; the other arm stopped wasting
 TWO VARIANT ARMS exist since fr-qxxw/fr-h0c3 — the balloon inverted-union
 and the ground plane, each mirroring its 3D original term for term — and
 the MECHANISM is the one deviation, forced by measurement: this source is
-62,251 B with 3,285 B of headroom under the 64KB strip threshold (fr-ehcj's
-`envTint` addition, re-measured after the ambient-only cut above was
-replaced with the whole-lit-term multiply; 61,751 B before fr-ehcj), and
-the arms are ~5.4KB and ~7.8KB, so one monolithic `#if` source would be
-~74KB and EVERY 4D session would pay it, in the band where the 3D fold
-program takes ~25s to link.
+62,711 B with 2,825 B of headroom under the 64KB strip threshold (fr-xn9s's
+shared `backgroundShapeT` splice, re-measured after fr-ehcj's `envTint`
+addition — 62,251 B before fr-xn9s, 61,751 B before fr-ehcj), and the arms
+are ~5.4KB and ~7.8KB, so one monolithic `#if` source would be ~74KB and
+EVERY 4D session would pay it, in the band where the 3D fold program takes
+~25s to link.
 
 So the arms resolve JS-side, through `surfaceFragmentFor` ITSELF rather
 than a second preprocessor (`surface4FragmentFor` is a two-line wrapper),
@@ -384,9 +410,9 @@ and the `defines` keys are `SURFACE4_*` while the GLSL directives stay
 the 3D names — deliberate, called out at both sites, and renaming them
 would break resolution.
 
-Measured after fr-ehcj's whole-lit-term form: off, 62,251 B (under
-threshold, so NOT stripped); balloon 67,623 -> 16,836 B stripped; plane
-70,035 -> 17,909 B stripped.
+Measured after fr-xn9s's shared `backgroundShapeT` splice: off, 62,711 B
+(under threshold, so NOT stripped); balloon 68,105 -> 16,899 B stripped;
+plane 70,517 -> 17,972 B stripped.
 
 ## What could not be copied
 
