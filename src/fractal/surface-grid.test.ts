@@ -1,4 +1,5 @@
 import {
+  balloonClearsGridBox,
   buildSurfaceGrid,
   buildSurfaceGridSlab,
   floorToF32,
@@ -6,6 +7,8 @@ import {
   surfaceGridEstimator,
   surfaceGridSpec,
 } from "./surface-grid";
+import { BALLOON_RHO_MARGIN, buildBalloon } from "./balloon-de";
+import type { Balloon } from "./balloon-de";
 import type { SurfaceGrid, SurfaceGridSpec } from "./surface-grid";
 import { buildSurfaceDE } from "./surface-de";
 import { runChaosGame } from "./chaos-game";
@@ -464,5 +467,125 @@ describe("pickSurfaceGridResolution", () => {
     // projected(48) = 600 * 48 = 28800 > 3000.
     // projected(32) = 600 * 48 * (32/48)^3 ~= 8533 > 3000 -> floor 32.
     expect(pickSurfaceGridResolution(48, 600)).toBe(32);
+  });
+});
+
+describe("balloonClearsGridBox (fr-8yad)", () => {
+  /** `buildBalloon`'s own arithmetic, spelled out so each row below reads
+   * as the four numbers the predicate is a function of: the balloon sits
+   * at `center`, its divisor is the MARGINED ball radius, and `R` is the
+   * normalized radius in world units. */
+  function balloonAt(rawRadius: number, center: Vec3, rMult: number): Balloon {
+    return {
+      center,
+      rho: rawRadius * BALLOON_RHO_MARGIN,
+      R: rMult * rawRadius,
+    };
+  }
+
+  // fr-8yad's `spherefold pair` row, reconstructed from the measurement's
+  // own printed figures: |boundCenter| 0.7857, the box's far corner from
+  // the ORIGIN 3.0532, and R^2/rho at rest 4.3812. It is the row where
+  // the origin offset is not a formality — 0.7857 is ~46% of the system's
+  // own visibleBoundingRadius.
+  const SPHEREFOLD_CENTER: Vec3 = [0.7857, 0, 0];
+  const SPHEREFOLD_HALF_EXTENT = 3.0532 / Math.sqrt(3);
+  const SPHEREFOLD_RAW_RADIUS = (4.3812 * BALLOON_RHO_MARGIN) / 1.6 ** 2;
+
+  it("clears at the rest radius, where the shell has swallowed the whole grid box", () => {
+    // R^2/rho = 4.3812 against a box reaching 3.8389 from the balloon
+    // center: the 14.1% rest margin the measurement reports for this row.
+    const rest = balloonAt(SPHEREFOLD_RAW_RADIUS, SPHEREFOLD_CENTER, 1.6);
+    expect(balloonClearsGridBox(rest, SPHEREFOLD_HALF_EXTENT)).toBe(true);
+  });
+
+  it("fails at the early-inflation radius, where the echo is still a crumpled ball inside the box", () => {
+    const early = balloonAt(SPHEREFOLD_RAW_RADIUS, SPHEREFOLD_CENTER, 0.35);
+    expect(balloonClearsGridBox(early, SPHEREFOLD_HALF_EXTENT)).toBe(false);
+  });
+
+  it("fails at the mid-inflation radius, where the shell interpenetrates the attractor", () => {
+    const mid = balloonAt(SPHEREFOLD_RAW_RADIUS, SPHEREFOLD_CENTER, 0.9);
+    expect(balloonClearsGridBox(mid, SPHEREFOLD_HALF_EXTENT)).toBe(false);
+  });
+
+  it("measures the box from the BALLOON CENTER, refusing a radius an origin-centered reading would admit", () => {
+    // The grid cube is origin-centered; this balloon is not. At rMult 1.41
+    // the shell has cleared the box's far corner as measured FROM THE
+    // ORIGIN (3.0532) but not as measured from the balloon center
+    // (3.8389) — so a predicate written against the origin would enable
+    // fractal-only floors with the shell still cutting through the box.
+    const b = balloonAt(SPHEREFOLD_RAW_RADIUS, SPHEREFOLD_CENTER, 1.41);
+    const shellNear = (b.R * b.R) / b.rho;
+    expect(shellNear).toBeGreaterThan(Math.sqrt(3) * SPHEREFOLD_HALF_EXTENT);
+    expect(balloonClearsGridBox(b, SPHEREFOLD_HALF_EXTENT)).toBe(false);
+  });
+
+  it("keeps the whole box-corner term for an origin-centered ball, where the offset contributes nothing", () => {
+    // fr-8yad's `default` row: R^2/rho 4.5894 against boxFarFromC 3.1983,
+    // the uniform 43.5% margin every origin-centered system shows at rest.
+    const halfExtent = 3.1983 / Math.sqrt(3);
+    const raw = (4.5894 * BALLOON_RHO_MARGIN) / 1.6 ** 2;
+    expect(
+      balloonClearsGridBox(balloonAt(raw, [0, 0, 0], 1.6), halfExtent),
+    ).toBe(true);
+    expect(
+      balloonClearsGridBox(balloonAt(raw, [0, 0, 0], 0.9), halfExtent),
+    ).toBe(false);
+  });
+
+  it("flips exactly once across an inflation sweep, so the enable falls cleanly instead of flickering", () => {
+    // R is the only live term and the left side is monotone in it, which
+    // is what makes this a per-frame gate the animation can cross without
+    // debouncing. 400 steps from a crumpled ball to well past rest.
+    const seen: boolean[] = [];
+    for (let i = 0; i <= 400; i++) {
+      const rMult = (i / 400) * 2.5;
+      seen.push(
+        balloonClearsGridBox(
+          balloonAt(SPHEREFOLD_RAW_RADIUS, SPHEREFOLD_CENTER, rMult),
+          SPHEREFOLD_HALF_EXTENT,
+        ),
+      );
+    }
+    const flips = seen.filter((v, i) => i > 0 && v !== seen[i - 1]).length;
+    expect(flips).toBe(1);
+    expect(seen[0]).toBe(false);
+    expect(seen[seen.length - 1]).toBe(true);
+  });
+
+  it("refuses a degenerate ball rather than dividing its way to a pass", () => {
+    // rho = R = 0 makes the left side NaN, which compares false: the safe
+    // direction, since a disabled grid is only slower.
+    expect(balloonClearsGridBox({ center: [0, 0, 0], rho: 0, R: 0 }, 1)).toBe(
+      false,
+    );
+  });
+
+  it("answers for a real DE through buildBalloon and surfaceGridSpec — the pair main.ts hands it", () => {
+    const de = buildSurfaceDE(anisotropicSierpinski(), null, {
+      order: 1,
+      plane: "xz",
+    });
+    const halfExtent = surfaceGridSpec(de).halfExtent;
+    expect(balloonClearsGridBox(buildBalloon(de, 1.6), halfExtent)).toBe(true);
+    expect(balloonClearsGridBox(buildBalloon(de, 0.9), halfExtent)).toBe(false);
+    expect(balloonClearsGridBox(buildBalloon(de, 0.35), halfExtent)).toBe(
+      false,
+    );
+  });
+
+  it("is unmoved by the grid's resolution, so a worker downshift cannot invalidate the request-time answer", () => {
+    const de = buildSurfaceDE(foldBoxfoldPair(), null, {
+      order: 1,
+      plane: "xz",
+    });
+    const balloon = buildBalloon(de, 1.6);
+    expect(surfaceGridSpec(de, 32).halfExtent).toBe(
+      surfaceGridSpec(de, 64).halfExtent,
+    );
+    expect(
+      balloonClearsGridBox(balloon, surfaceGridSpec(de, 32).halfExtent),
+    ).toBe(balloonClearsGridBox(balloon, surfaceGridSpec(de, 64).halfExtent));
   });
 });

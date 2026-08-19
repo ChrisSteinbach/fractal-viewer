@@ -3,6 +3,7 @@ import {
   estimateDistance,
   estimateDistanceRefined,
 } from "./surface-de";
+import type { Balloon } from "./balloon-de";
 import type { SurfaceDE } from "./surface-de";
 import type { Vec3 } from "./types";
 
@@ -66,6 +67,59 @@ import type { Vec3 } from "./types";
  * {@link buildSurfaceGridSlab} stores `0` for such cells without calling the
  * estimator at all — roughly half the cube's cells on a typical build,
  * halving build cost for free.
+ *
+ * BALLOON MODE READS THESE FLOORS ONLY WHERE THE SHELL CLEARS THE BOX
+ * (fr-8yad). The balloon (`balloon-de.ts`) renders the UNION of the
+ * attractor and its sphere-inverted echo, and every floor here bounds the
+ * FRACTAL alone — so fr-5wlv shipped the grid OFF in balloon mode, since
+ * the shell can be nearer to a cell than that cell's stored floor admits.
+ * It is valid again exactly when the whole shell lies outside the grid
+ * cube, which {@link balloonClearsGridBox} tests per frame:
+ *
+ *     R^2/rho  >  |c| + sqrt(3) * halfExtent
+ *
+ * Left side: every echo point `I(s)` satisfies `|I(s) - c| = R^2/|s - c|
+ * >= R^2/rho`, so the shell's nearest approach to the balloon centre is
+ * `R^2/rho`. Right side: the cube is ORIGIN-centred while `c` is the DE's
+ * own `boundCenter`, so the cube's farthest reach FROM `c` is `|c|` plus
+ * its own far corner. The `|c|` term is not a formality — `spherefold
+ * pair` sits 0.7857 off-origin, ~46% of its own `visibleBoundingRadius`,
+ * and dropping it would quote that system a 43.5% rest margin where the
+ * real one is 14.1%.
+ *
+ * MEASURED (`scripts/balloon-inversion.harness.ts` section 4, six
+ * systems): the predicate CLEARS at rest (`rMult` 1.6) on all six and
+ * FAILS in both inflation regimes (0.35, 0.9) on all six — which is why
+ * it is a per-FRAME enable rather than a build-time decision. It is
+ * monotone in `R`, the only live term, so a radius sweep flips it exactly
+ * once per crossing; there is nothing to debounce. The grid REQUEST and
+ * the enable stay two decisions: one build at session enter serves every
+ * radius the predicate admits.
+ *
+ * "The shell clears the box" is an AGGREGATE statement and does not by
+ * itself certify any individual cell, so section (4c) checked every
+ * positive-floor cell directly against `floor + cellRadius <= max(0,
+ * R^2/rho - |cellCentre - c|)` — the sufficient condition, the bare-floor
+ * comparison being looser by exactly one `cellRadius` in the UNSAFE
+ * direction. 0 violations over 115,739-140,267 cells at resolution 64 and
+ * 13,152-18,519 at 32, five systems, tightest cell 42-62% margin. So NO
+ * FLOOR CLAMP ships. That is EMPIRICAL OVER FIVE SYSTEMS, NOT A PROOF —
+ * the margin is thinnest at resolution 32, where `cellRadius` doubles
+ * against an unchanged shell distance and which
+ * {@link pickSurfaceGridResolution} can downshift to without telling
+ * anyone.
+ *
+ * ONE THING THE PREDICATE DOES NOT COVER, and the marcher closes it
+ * instead: a balloon ray marches from the CAMERA to the far cap rather
+ * than across the visible sphere, so most of its samples land OUTSIDE the
+ * cube — where a clamped texture read returns a border cell's floor. That
+ * floor still bounds the FRACTAL (the cube is convex and contains the
+ * attractor, so clamping is a projection onto it and `dist(clamp(p), A)
+ * <= dist(p, A)`), but it bounds NOTHING about the shell, which at rest
+ * lies entirely outside the cube. The balloon arm of the GLSL march
+ * therefore refuses out-of-box samples outright — the same in-box
+ * restriction the coverage measurement modelled, whose 18.6-33.2% of
+ * steps skipped is the rate AFTER it.
  *
  * THREE DIMENSIONS ONLY, and that is a REFUSAL rather than an unfinished
  * lift. A 4D session's rotor and w-slice are LIVE per-frame view state
@@ -186,6 +240,42 @@ export function surfaceGridSpec(
   resolution: number = SURFACE_GRID_RESOLUTION,
 ): SurfaceGridSpec {
   return { resolution, halfExtent: de.visibleBoundingRadius * 1.03 };
+}
+
+/**
+ * fr-8yad: may a balloon session's march read these fractal-only floors?
+ * Yes exactly when the inverted-union's SHELL clears the grid cube —
+ *
+ *     R^2 / rho  >  |center| + sqrt(3) * halfExtent
+ *
+ * — the module doc's balloon section carrying the derivation of both
+ * sides, the measurement behind them and the per-cell soundness check
+ * that says no floor clamp is owed.
+ *
+ * A pure function of the four numbers that decide it: the balloon's `R`
+ * and MARGINED `rho` (`buildBalloon`'s own pair, not a raw radius
+ * recovered separately — the shell bound the wrapper certifies divides by
+ * the margined one), the DE ball's `center` (`balloonBall`'s, which is
+ * `de.boundCenter` for a plain system and the origin only for a lens
+ * one), and the grid cube's `halfExtent`. The `|center|` term is what
+ * makes an ORIGIN-centred cube comparable against an off-origin balloon;
+ * see the module doc for what dropping it costs.
+ *
+ * `R` is the ONLY live term (`rho`, `center` and `halfExtent` are frozen
+ * with the session's DE), and the left side is monotone in it, so this
+ * flips exactly once as a radius sweep crosses — a clean fall, nothing to
+ * debounce. A degenerate ball (`rho = 0` with `R = 0`) gives NaN, which
+ * compares false and disables the grid: the safe direction.
+ */
+export function balloonClearsGridBox(
+  balloon: Balloon,
+  halfExtent: number,
+): boolean {
+  const { center, rho, R } = balloon;
+  const shellNear = (R * R) / rho;
+  const boxFarFromCenter =
+    Math.hypot(center[0], center[1], center[2]) + Math.sqrt(3) * halfExtent;
+  return shellNear > boxFarFromCenter;
 }
 
 /** Scratch view pair {@link floorToF32} steps one float32 ulp down through —

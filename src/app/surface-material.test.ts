@@ -1,5 +1,5 @@
 import type * as THREE from "three";
-import { Texture } from "three";
+import { Data3DTexture, Texture } from "three";
 import {
   buildSurfaceFragment,
   createSurfaceBlitMaterial,
@@ -8,6 +8,8 @@ import {
   setBulbSystem,
   setEscapeSystem,
   setSurfaceBalloon,
+  setSurfaceGrid,
+  setSurfaceGridEnabled,
   setSurfaceGroundPlane,
   setSurfaceSystem,
   surfaceFragmentFor,
@@ -1509,5 +1511,56 @@ describe("box-branch decode duplication (fr-ep0w)", () => {
     // with it (no probe under the lens, plus the two lens sweeps).
     expect(boxBranchDecodes(surfaceFragmentFor(0, 0))).toHaveLength(3);
     expect(boxBranchDecodes(surfaceFragmentFor(0, 1))).toHaveLength(4);
+  });
+});
+
+describe("the balloon's empty-space-grid gate (fr-8yad)", () => {
+  it("keeps the out-of-box refusal inside the balloon arm, so every other variant's source is untouched", () => {
+    // The guard exists because a balloon ray marches from the camera to
+    // the far cap and leaves the grid cube, where an edge-clamped read
+    // returns a border cell's fractal-only floor. Non-balloon marches are
+    // confined to the traced sphere inside the cube and never meet it —
+    // so the text lives in a resolver-owned SURFACE_BALLOON arm and the
+    // shipped fold/affine/escape programs are byte-identical to their
+    // pre-fr-8yad selves.
+    for (const [escape, lens] of [
+      [0, 0],
+      [0, 1],
+      [1, 0],
+    ] as const) {
+      expect(surfaceFragmentFor(escape, lens, 0)).not.toContain("gridUv");
+    }
+    expect(surfaceFragmentFor(0, 0, 1)).toContain("gridUv");
+  });
+
+  it("refuses the skip outside the cube rather than clamping to a border cell's floor", () => {
+    // The texture coordinate is p * uGridInvSpan + 0.5, so [0,1]^3 IS the
+    // cube: outside it the loop breaks and the sample pays the analytic
+    // union DE instead of stepping by a floor that bounds only the
+    // fractal.
+    const balloon = surfaceFragmentFor(0, 0, 1);
+    expect(balloon).toContain("any(lessThan(gridUv, vec3(0.0)))");
+    expect(balloon).toContain("any(greaterThan(gridUv, vec3(1.0)))");
+    // Still one grid fetch per skip iteration, gated ahead of it.
+    expect(countOccurrences(balloon, "texture(uGridTex")).toBe(1);
+  });
+
+  it("setSurfaceGridEnabled flips the march's reads without disturbing the installed grid", () => {
+    // The radius slider's path: the predicate is re-answered per frame
+    // while the cube, its floors and its span stay exactly as built.
+    const material = createSurfaceMaterial();
+    const texture = new Data3DTexture(new Float32Array(8), 2, 2, 2);
+    setSurfaceGrid(material, texture, 4);
+    expect(material.uniforms.uGridEnabled.value).toBe(1);
+
+    setSurfaceGridEnabled(material, false);
+    expect(material.uniforms.uGridEnabled.value).toBe(0);
+    expect(material.uniforms.uGridTex.value).toBe(texture);
+    expect(material.uniforms.uGridInvSpan.value).toBe(1 / 8);
+
+    setSurfaceGridEnabled(material, true);
+    expect(material.uniforms.uGridEnabled.value).toBe(1);
+    expect(material.uniforms.uGridTex.value).toBe(texture);
+    expect(material.uniforms.uGridInvSpan.value).toBe(1 / 8);
   });
 });

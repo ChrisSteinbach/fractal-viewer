@@ -55,6 +55,7 @@ import {
   createSurfaceBlitMaterial,
   createSurfaceMaterial,
   setSurfaceGrid as packSurfaceGrid,
+  setSurfaceGridEnabled as packSurfaceGridEnabled,
   setBulbSystem as packBulbSystem,
   setEscapeSystem as packEscapeSystem,
   setSurfaceBalloon as packSurfaceBalloon,
@@ -104,6 +105,7 @@ import { BULB_ITERATIONS } from "../fractal/bulb-de";
 import type { SurfaceDE } from "../fractal/surface-de";
 import { surfaceDescentCostWeight } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
+import { balloonClearsGridBox } from "../fractal/surface-grid";
 import type { SurfaceGrid } from "../fractal/surface-grid";
 import { SURFACE_COLOR_SOURCES } from "./state";
 import type { SurfaceParams } from "./state";
@@ -1025,6 +1027,12 @@ export class FractalScene {
    * in {@link setSurfaceGrid}, disposed on every system change and on the
    * next upload); the material only holds uniforms into it. */
   private surfaceGridTexture: THREE.Data3DTexture | null = null;
+
+  /** The installed grid cube's half side, kept beside the texture because
+   * {@link applySurfaceGridEnable} re-answers fr-8yad's balloon validity
+   * predicate against it at every balloon change — the grid itself never
+   * moves, only `R` does. `null` exactly when no grid is installed. */
+  private surfaceGridHalfExtent: number | null = null;
   /** The surface balloon (fr-5wlv.4): the DE ball of the INSTALLED 3D
    * surface system — balloonBall(de) for IFS systems, the origin-centered
    * bailout ball for escape systems — recorded by
@@ -3624,6 +3632,38 @@ export class FractalScene {
     const on4 = this.activeSurfaceMaterial === this.surfaceMaterial4;
     packSurfaceBalloon(this.surfaceMaterial, on4 ? null : spec);
     packSurface4Balloon(this.surfaceMaterial4, on4 ? spec : null);
+    // The balloon is the only live input to the grid's validity gate
+    // (fr-8yad), so every path that moves it — the toggle, a radius drag,
+    // a system install re-asserting the stored pair — re-answers it here.
+    this.applySurfaceGridEnable();
+  }
+
+  /**
+   * Re-answer fr-8yad's balloon validity predicate for the INSTALLED grid
+   * and write the march's enable flag — a uniform write, never a rebuild:
+   * the cube and its floors are frozen with the session's DE, and only the
+   * balloon radius moves.
+   *
+   * The grid's floors bound the FRACTAL alone, so they are a valid bound
+   * on the balloon's UNION exactly while the inverted shell clears the
+   * cube ({@link balloonClearsGridBox}, whose module doc carries the
+   * derivation, the six-system measurement and the per-cell soundness
+   * check). A compiled balloon that fails the predicate marches gridless —
+   * the fr-5wlv state — and one that passes gets its floors back.
+   *
+   * `spec === null` is the no-balloon case in both directions: either the
+   * toggle is off, or the installed system has no ball to certify against
+   * (a forward-orbit session), and {@link applySurfaceBalloon} packs the
+   * wrapper OFF in both — a plain march, where the floors were always
+   * valid.
+   */
+  private applySurfaceGridEnable(): void {
+    if (this.surfaceGridHalfExtent === null) return;
+    const spec = this.surfaceBalloonOn ? this.surfaceBalloonSpec() : null;
+    packSurfaceGridEnabled(
+      this.surfaceMaterial,
+      spec === null || balloonClearsGridBox(spec, this.surfaceGridHalfExtent),
+    );
   }
 
   /**
@@ -3707,7 +3747,12 @@ export class FractalScene {
     );
     configureSurfaceGridTexture(texture);
     this.surfaceGridTexture = texture;
+    this.surfaceGridHalfExtent = grid.halfExtent;
     packSurfaceGrid(this.surfaceMaterial, texture, grid.halfExtent);
+    // packSurfaceGrid enables the reads; the balloon gate may take them
+    // straight back off (fr-8yad) — a grid that arrives mid-inflation is
+    // installed and inert until the radius clears the box.
+    this.applySurfaceGridEnable();
     this.renderNeeded = true;
   }
 
@@ -3717,6 +3762,9 @@ export class FractalScene {
     packSurfaceGrid(this.surfaceMaterial, null);
     this.surfaceGridTexture?.dispose();
     this.surfaceGridTexture = null;
+    // No grid installed, so nothing for the balloon gate to re-enable
+    // (fr-8yad) — packSurfaceGrid already dropped the flag.
+    this.surfaceGridHalfExtent = null;
   }
 
   /**

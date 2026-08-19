@@ -83,9 +83,13 @@
  * that graceful: capped rays fall through to the EXISTING background
  * modes (the balloon is a HIT, not a background). The spike marched this
  * exact cap (10 rho) with 0 step-budget cap-outs across 24 system x R
- * rows. The empty-space grid stays OFF in balloon mode (its floors are
- * fractal-only; the valid-at-rest re-enable rule is recorded on the
- * epic).
+ * rows. The empty-space grid is CONDITIONAL in balloon mode since
+ * fr-8yad — its floors bound the fractal alone, and are a valid bound on
+ * the union exactly while the shell clears the grid box
+ * (`surface-grid.ts`'s `balloonClearsGridBox`: `R^2/rho > |c| +
+ * sqrt(3)*halfExtent`, which the rest state satisfies on every measured
+ * system and both inflation regimes fail). fr-5wlv.3's blanket OFF was
+ * the same rule before anything measured where it holds.
  *
  * MEASURED VERDICT (fr-5wlv.1, CLOUD=300k, margin 1): 0 off-set
  * conservativeness violations anywhere; erosion transports, never

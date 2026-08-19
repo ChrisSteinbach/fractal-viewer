@@ -457,6 +457,37 @@ that thread gaps or graze faces, dissolving far/threaded geometry into
 view-dependent dropout speckle — measured and healed in
 `scripts/erosion-repro.harness.ts`.
 
+### The balloon reads the grid IN THE BOX ONLY (fr-8yad)
+
+fr-5wlv shipped balloon mode gridless: the stored floors bound the
+FRACTAL, the balloon marches the UNION of the fractal and its inverted
+echo, and the shell can be nearer to a sample than any fractal-only floor
+admits. fr-8yad re-enables them under a per-frame validity gate
+(`surface-grid.ts`'s `balloonClearsGridBox`, `R^2/rho > |c| +
+sqrt(3)*halfExtent`, whose module doc carries the derivation and the
+six-system measurement), written to `uGridEnabled` by
+`setSurfaceGridEnabled` — the texture stays installed, so a radius sweep
+costs a uniform write and the grid REQUEST stays a once-per-session
+decision.
+
+The march needed one change beside the flag, and it is a consequence of
+balloon rays not being sphere-bounded. A balloon ray starts at the CAMERA
+and runs to `uBalloonFar` past the balloon centre instead of crossing the
+visible sphere, so most of its samples land OUTSIDE the grid cube — where
+the sampler's edge clamp hands back a BORDER cell's floor. That floor is
+still a valid FRACTAL bound there (the cube is convex and contains the
+attractor, so clamping is a projection onto it and cannot increase the
+distance to the set), but it bounds nothing about the SHELL, which at
+every radius the gate admits lies entirely outside the cube. So the
+balloon arm refuses the skip outright when the sample's texture
+coordinate leaves `[0,1]^3`, which is exactly the in-box restriction the
+fr-8yad coverage measurement modelled: its 18.6-33.2% of a balloon
+march's steps skipped (48.7-76.3% of what the same grid buys the plain
+march over the same rays) is the rate AFTER it. The guard is compiled
+into the `SURFACE_BALLOON` arm alone — every other variant's march is
+confined to the `1.02 * uVisibleRadius` sphere inscribed in the `1.03`
+cube and can never meet it, so their sources stay byte-identical.
+
 ## The 4D tracer
 
 `surface-material-4d.ts` is the 4D twin (fr-vxoj): it sphere-traces the
