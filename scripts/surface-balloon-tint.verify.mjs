@@ -152,10 +152,11 @@
  *   L2 tint reaches webgl       24.712% changed  meanAbs 18.571  max 206
  *   L3 strength-0 identity       0.000% changed  meanAbs  0.000  max 0
  *   L4 echo-off inert            0.000% changed  meanAbs  0.000  max 0
- *   S  shell gate               interior 3006 px, max 0 (raw mask 3276 px,
- *                               max 3, 4 pixels moved and all 4 of them on
- *                               the balloon's own edge — see the
- *                               instrument's own note)
+ *   S  shell gate               interior 3006 px of 4690 (64%, twelve times
+ *                               the S_MIN_INTERIOR_FRACTION floor), max 0
+ *                               — raw mask 3276 px, max 3, 4 pixels moved
+ *                               and all 4 of them on the balloon's own edge
+ *                               (see the instrument's own note)
  *   P4 echo on screen (4D)      19.339% changed  meanAbs 10.030  max 196
  *   L5 tint reaches compute-4D  18.337% changed  meanAbs  7.247  max 159
  *   L6 tint reaches webgl-4D    16.738% changed  meanAbs  7.337  max 183
@@ -639,8 +640,20 @@ async function sceneDiff(page, aPng, bPng) {
  * anything, and 0 of 0 must never read as a pass — that is fr-5666's own
  * failure mode, one gate over, where a phase measured 0.000% because its
  * subject was off screen. Below {@link S_MIN_INTERIOR_FRACTION} of the
- * scene region the row REFUSES and the run reports claim (iii) as resting
- * on L4 alone. The measured run has 3006 of 4690 px, 64%.
+ * scene region the row REFUSES (to `uncovered`, exit 1, claim (iii) noted
+ * as resting on L4 alone) rather than passing on nothing. The measured run
+ * has 3006 of 4690 px — 64%, twelve times that floor.
+ *
+ * THE KNOB THAT WOULD TRIP IT IS `--radius`, DOWNWARD: a smaller rMult
+ * pulls the inversion's image in toward the frame and grows the echo, and
+ * far enough down the shell repaints essentially every scene pixel and
+ * leaves no fractal-term hit to ask about. That direction is measured in
+ * rule 2's own table as far as it goes — the balloon moves 11.151% of the
+ * region at 1.60x and 29.041% at 0.50x — but the radius at which it
+ * actually crosses this floor has NOT been measured, and is deliberately
+ * not asserted here. A session wanting to prove the guard fires should
+ * walk `--radius` down and watch the S row's interior count, rather than
+ * trust a number nobody took.
  */
 async function shellGateDelta(page, { base, tinted, maskA, maskB }) {
   return page.evaluate(
