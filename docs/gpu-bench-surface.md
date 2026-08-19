@@ -59,6 +59,30 @@ realisation of the same kernel. Either it becomes adapter-aware or the
 escape rows are simply judged on `--display=:0`, which is already this
 file's standing advice.
 
+`esc4ChainKaleido` IS THE SAME FALSE FAILURE ONE DIMENSION UP (measured
+2026-08-19, fr-ehcj/fr-xn9s/fr-h3mp session). A SwiftShader run fails BOTH
+kaleidoscope escape rows, not one, and this file previously recorded only
+the 3D row's software figures — so a session reading it would have found
+one documented failure and one apparently new. The 4D row's SwiftShader
+reading is `fail=11 maxAbs=1.33e+0 maxRel=6.67e+0 p99Abs=1.33e+0
+excluded=69 flips=35 over=10`, against the real-Iris verdict recorded
+below of `maxAbs 6.33e-7 / excluded 69 / flips 2` — the identical shape as
+the 3D row: `excluded` unmoved between adapters (so the ensemble
+pre-filter is behaving), only the post-hoc flip count moving, and by the
+same six orders of magnitude in `maxAbs`. Both rows are the wedge fold's
+forward orbit realised differently by a software compiler; a fold
+kaleidoscope is simply the fixture in this family whose orbit sits nearest
+a sector seam, in either dimension.
+
+MEASURED AS A CONTROL rather than assumed: the same two rows fail at
+`ec3a611`, BIT-IDENTICALLY on every field — fail 5/11, maxAbs 1.33e+0 both,
+p99 7.84e-4 and 1.33e+0, excluded 97/69, flips 21/35, over 4/10 — which is
+how that session cleared its own `ShadeParams` growth (160 -> 208 bytes
+across fr-ehcj/fr-xn9s/fr-h3mp) of having caused either. Running the base
+commit in a throwaway worktree is the cheap way to separate "my change" from
+"this adapter", and it is worth doing whenever a surface kernel change lands
+on a machine with no `--display=:0`.
+
 A BONUS RESULT worth keeping from the same runs: `excluded`, `maxAbsErr` and
 `p99AbsErr` are bit-identical for this fixture across all of
 `0570354..HEAD` — 104 lines of `escape-de.ts` and 66 of
