@@ -6,23 +6,23 @@ Commands section points here rather than carrying these numbers inline.
 ## What the bench pins
 
 `npm run bench:surface` is the WebGPU fold-DE kernel agreement/timing bench.
-It pins `surface-de-gpu.ts` — both the eval/march baselines and fr-tzdg's
-march-unproject/shade app path — to the CPU estimator.
+It pins `surface-de-gpu.ts` — both the eval/march baselines and the app
+path's march-unproject/shade — to the CPU estimator.
 
 ## Running it
 
 Add `--display=:0` for real-driver timing. Run it on a QUIET machine, never
 concurrently with the test suite or other heavy CPU load: a contended
-software device corrupts mid-run readbacks, which the fr-76pp canary reports
-as `verdict=device-unreliable` (exit 2, rerun) instead of plausible numeric
-fails.
+software device corrupts mid-run readbacks, which the contended-device
+canary reports as `verdict=device-unreliable` (exit 2, rerun) instead of
+plausible numeric fails.
 
 Judge the escape rows on `--display=:0` — this is already this file's
 standing advice, and the reason is the known SwiftShader false failure
-documented below (fr-jtd4). Do not raise the escape agreement cap to make a
+documented below. Do not raise the escape agreement cap to make a
 SwiftShader run green.
 
-## The known SwiftShader false failure (fr-jtd4)
+## The known SwiftShader false failure
 
 The default (no `--display`) run fails the ESCAPE agreement leg on
 `escChainKaleido` — "21 verified chaotic flips (> 7)" — and it is spurious.
@@ -37,21 +37,24 @@ ESTABLISHED: the failure is ADAPTER-SPECIFIC and deterministic — a compiler
 realisation difference in the forward orbit, amplified by ~8x/iteration
 noise growth into a binary escape decision.
 
-REFUTED BY MEASUREMENT: that fr-s9ll's `10bc444` caused it. That commit
-turned the sphere fold's numerator from a literal `1.0` into a uniform load,
-which is the right CLASS of change and predicts exactly this shape — but the
-leg at `10bc444^` returns chaoticFlips 21, bit-identical to HEAD on every
-field, and `10bc444` is the ONLY functional change to `surface-de-gpu.ts` in
-that span (the other two commits there are comment-only). So the cause is
-EARLIER, and no part of fr-s9ll is implicated.
+REFUTED BY MEASUREMENT: that the authored fold lengths' `10bc444` caused it.
+That commit turned the sphere fold's numerator from a literal `1.0` into a
+uniform load, which is the right CLASS of change and predicts exactly this
+shape — but the leg at `10bc444^` returns chaoticFlips 21, bit-identical to
+HEAD on every field, and `10bc444` is the ONLY functional change to
+`surface-de-gpu.ts` in that span (the other two commits there are
+comment-only). So the cause is EARLIER, and no part of the
+authored-fold-lengths work is implicated.
 
-AND THERE IS NO REGRESSION AT ALL: measured at `0570354` (fr-s04t), the
-commit that INTRODUCED `escChainKaleido`, the row already fails with
-chaoticFlips 21 — bit-identical to HEAD on every field. It has never passed
-on a software rasteriser. fr-s04t records verification in the app on both
+AND THERE IS NO REGRESSION AT ALL: measured at `0570354` — the commit that
+INTRODUCED `escChainKaleido`, the one that gave the chain its shader mirrors
+(one uniform slot / `GpuMap` per link) — the row already fails with
+chaoticFlips 21, bit-identical to HEAD on every field. It has never passed
+on a software rasteriser. That work records verification in the app on both
 engines but no SwiftShader `bench:surface` run, and the flips figure quoted
-above was fr-dlxh's on real Iris, so this fixture reached this leg on a
-software adapter for the first time in fr-qjae's run.
+above was the escape compute port's on real Iris, so this fixture reached
+this leg on a software adapter for the first time during the run that added
+the opt-in ground-plane frame-agreement leg.
 
 THE OPEN QUESTION IS THEREFORE CALIBRATION, NOT A BUG: the cap is one number
 applied to every adapter, and a software rasteriser is a different
@@ -60,42 +63,45 @@ escape rows are simply judged on `--display=:0`, which is already this
 file's standing advice.
 
 `esc4ChainKaleido` IS THE SAME FALSE FAILURE ONE DIMENSION UP (measured
-2026-08-19, fr-ehcj/fr-xn9s/fr-h3mp session). A SwiftShader run fails BOTH
-kaleidoscope escape rows, not one, and this file previously recorded only
-the 3D row's software figures — so a session reading it would have found
-one documented failure and one apparently new. The 4D row's SwiftShader
-reading is `fail=11 maxAbs=1.33e+0 maxRel=6.67e+0 p99Abs=1.33e+0
-excluded=69 flips=35 over=10`, against the real-Iris verdict recorded
-below of `maxAbs 6.33e-7 / excluded 69 / flips 2` — the identical shape as
-the 3D row: `excluded` unmoved between adapters (so the ensemble
-pre-filter is behaving), only the post-hoc flip count moving, and by the
-same six orders of magnitude in `maxAbs`. Both rows are the wedge fold's
-forward orbit realised differently by a software compiler; a fold
-kaleidoscope is simply the fixture in this family whose orbit sits nearest
-a sector seam, in either dimension.
+2026-08-19, in the session that landed environment-lit shading, the shared
+background-shape function and the radial backdrop shape). A SwiftShader run
+fails BOTH kaleidoscope escape rows, not one, and this file previously
+recorded only the 3D row's software figures — so a session reading it would
+have found one documented failure and one apparently new. The 4D row's
+SwiftShader reading is `fail=11 maxAbs=1.33e+0 maxRel=6.67e+0 p99Abs=1.33e+0
+excluded=69 flips=35 over=10`, against the real-Iris verdict recorded below
+of `maxAbs 6.33e-7 / excluded 69 / flips 2` — the identical shape as the 3D
+row: `excluded` unmoved between adapters (so the ensemble pre-filter is
+behaving), only the post-hoc flip count moving, and by the same six orders
+of magnitude in `maxAbs`. Both rows are the wedge fold's forward orbit
+realised differently by a software compiler; a fold kaleidoscope is simply
+the fixture in this family whose orbit sits nearest a sector seam, in either
+dimension.
 
 MEASURED AS A CONTROL rather than assumed: the same two rows fail at
 `ec3a611`, BIT-IDENTICALLY on every field — fail 5/11, maxAbs 1.33e+0 both,
 p99 7.84e-4 and 1.33e+0, excluded 97/69, flips 21/35, over 4/10 — which is
 how that session cleared its own `ShadeParams` growth (160 -> 208 bytes
-across fr-ehcj/fr-xn9s/fr-h3mp) of having caused either. Running the base
-commit in a throwaway worktree is the cheap way to separate "my change" from
-"this adapter", and it is worth doing whenever a surface kernel change lands
-on a machine with no `--display=:0`.
+across the environment-light, background-shape and radial-shape work) of
+having caused either. Running the base commit in a throwaway worktree is the
+cheap way to separate "my change" from "this adapter", and it is worth doing
+whenever a surface kernel change lands on a machine with no `--display=:0`.
 
 A BONUS RESULT worth keeping from the same runs: `excluded`, `maxAbsErr` and
-`p99AbsErr` are bit-identical for this fixture across all of
-`0570354..HEAD` — 104 lines of `escape-de.ts` and 66 of
-`surface-de-gpu.ts`, fr-s9ll's authored fold radii included — which is
-fr-s9ll's "byte-identity at the defaults is by CONSTRUCTION" verified
-empirically on the CPU and GPU sides at once, rather than argued.
+`p99AbsErr` are bit-identical for this fixture across all of `0570354..HEAD`
+— 104 lines of `escape-de.ts` and 66 of `surface-de-gpu.ts`, the authored
+fold radii included — which is the authored fold lengths' "byte-identity at
+the defaults is by CONSTRUCTION" verified empirically on the CPU and GPU
+sides at once, rather than argued.
 
 DO NOT raise the cap to make it green — 7 is calibrated for the driver this
-leg gates, and fr-7tl3/fr-dlxh built the layered classifier precisely so a
-real disagreement could not hide inside the chaotic-orbit excuse. Judge the
-escape rows on `--display=:0`.
+leg gates, and the layered classifier exists precisely so a real
+disagreement could not hide inside the chaotic-orbit excuse: it was built
+for the escape compute port after real Iris flipped march-unproject rows a
+SwiftShader-clean run had called stable. Judge the escape rows on
+`--display=:0`.
 
-## Cross-family rows (fr-j231)
+## Cross-family rows (the chain's power links)
 
 Four fixtures cover a power link in the chain's TAIL (`escChainBulb`,
 `escChainQsquare` — a kernel reading the params block's frozen HEAD link for
@@ -135,7 +141,7 @@ one more datum against the stiffness prediction. CI is unaffected (it runs
 `estimateEscapeDistanceF32`'s mutation-testing story is recorded below,
 under "Mutation-testing the f32 twins".
 
-## The 4D escape rows (fr-vag4)
+## The 4D escape rows (the escape chain's 4D lift)
 
 M7 pins `core:"escape4"` against `escape-de-4d.ts` on six 4D fixtures,
 gating on the UNCHANGED escape caps rather than escape4 twins of them — and
@@ -158,16 +164,16 @@ measurement, is recorded below under "Mutation-testing the f32 twins".
 A stale f32 twin does not disagree with its f64 CPU oracle — it makes the
 agreement ensemble exclude everything. Two twins were checked this way.
 
-`estimateEscapeDistanceF32` (the fr-j231 cross-family leg's twin) had to
-learn the two power kinds and the estimate form along with the f64 oracle.
-A stale twin here makes the ensemble exclude everything (fr-s9ll measured
-251/700 that way) — and the fold-only rows stay bit-identical by
-construction and were confirmed so, `escChainKaleido` included, at excluded
-97 / flips 21 / maxAbs 1.333 to the digit.
+`estimateEscapeDistanceF32` (the cross-family power-link leg's twin) had to
+learn the two power kinds and the estimate form along with the f64 oracle. A
+stale twin here makes the ensemble exclude everything (the authored fold
+lengths measured 251/700 that way) — and the fold-only rows stay
+bit-identical by construction and were confirmed so, `escChainKaleido`
+included, at excluded 97 / flips 21 / maxAbs 1.333 to the digit.
 
-`estimateEscapeDistance4F32` (the fr-vag4 4D escape twin) was
-MUTATION-TESTED before the lift measurement above, on the same premise:
-each mutation moves exactly the row written for it —
+`estimateEscapeDistance4F32` (the 4D escape chain's twin) was
+MUTATION-TESTED before the lift measurement above, on the same premise: each
+mutation moves exactly the row written for it —
 
 - classic radii: 78 -> 301
 - dropping `-w^2` from the quaternion square: 58 -> 203

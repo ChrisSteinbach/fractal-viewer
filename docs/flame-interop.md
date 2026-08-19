@@ -1,10 +1,9 @@
-# `.flame` interop (fr-8uy5)
+# `.flame` interop
 
 How Fractal Explorer's scene vocabulary maps onto the flam3/Apophysis `.flame` XML
 format, and exactly where the mapping is lossy. Implemented by
 `src/app/flame-file.ts` (`decodeFlameFile` / `encodeFlameFile`), reachable
-through the same panel buttons and drag-drop as the JSON scene files
-(fr-de9t).
+through the same panel buttons and drag-drop as the JSON scene files.
 
 ## Why the mapping is mostly exact
 
@@ -44,7 +43,7 @@ Four facts line the two vocabularies up better than they first appear:
 3. **The lens matches.** flam3's `<finalxform>` is applied at plot time and
    never fed back into the orbit — precisely our `finalTransform`.
 
-4. **The per-xform color matches (fr-hiyu).** A flame xform's `color` is a
+4. **The per-xform color matches.** A flame xform's `color` is a
    palette _coordinate_, not an RGB triple: the slot the orbit's color
    coordinate is pulled toward whenever that map is picked, at the map's
    `color_speed` (`c ← c·(1 - speed) + color·speed`). That is exactly
@@ -72,8 +71,8 @@ Four facts line the two vocabularies up better than they first appear:
 
 Fact 2 above has a carve-out. Twelve of our seventeen `VARIATION_TYPES` are
 flam3's own attribute names; five are ours — the Mandelbox fold family,
-`boxfold`/`spherefold`/`mandelbox` (fr-p7nu), and the two escape-time power
-maps, `qsquare` (fr-7u8t.3) and `bulb` (fr-7u8t.7). flam3 and Apophysis have
+`boxfold`/`spherefold`/`mandelbox`, and the two escape-time power
+maps, `qsquare` and `bulb`. flam3 and Apophysis have
 no plain variation attributes by any of these five names — the fold family's
 Mandelbox-adjacent look lives in separately parameterized plugins with
 different names and different formulas, not a drop-in match, and
@@ -95,7 +94,7 @@ after the fact:
   unsupported. It no longer contributes to the aggregated
   unknown-variations warning, because the name-matching import path can't
   tell it apart from a real one.
-- **Custom radii (fr-s9ll).** A fold variation's `minRadius`/`fixedRadius`/
+- **Custom radii.** A fold variation's `minRadius`/`fixedRadius`/
   `boxLimit` have no flam3 attribute to live in at all — the format has no
   per-variation parameter concept for a plain named variation, just a single
   weight. Export therefore always writes the bare `type="weight"` attribute,
@@ -130,7 +129,7 @@ more valuable property to protect.
 | `weight ≤ 0` xform                                   | **skipped + warning**                                                                               |
 | `chaos` (xaos)                                       | **ignored + warning** (no xaos in the chaos game)                                                   |
 | `opacity="0"`                                        | imported visible + warning (no per-map opacity)                                                     |
-| `color`                                              | `Transform.colorIndex`, clamped to `[0, 1]` (fr-hiyu); absent ⇒ key omitted                         |
+| `color`                                              | `Transform.colorIndex`, clamped to `[0, 1]`; absent ⇒ key omitted                                   |
 | `color_speed`                                        | `Transform.colorSpeed`, clamped to `[0, 1]`; wins over `symmetry` when both appear                  |
 | `symmetry` (deprecated)                              | `Transform.colorSpeed = (1 - symmetry) / 2`, clamped                                                |
 | `<finalxform>`                                       | `finalTransform` (same rules; its weight ignored)                                                   |
@@ -177,7 +176,7 @@ The export writes the system's **XY shadow**:
   kaleidoscopes flatten with a warning.
 - `finalTransform` → `<finalxform>`; variations pass through by name (merged
   by type — XML attributes must be unique); weights pass through as-is.
-- Per-xform colors are written **resolved** (fr-hiyu): a map's authored
+- Per-xform colors are written **resolved**: a map's authored
   `colorIndex`/`colorSpeed`, else the same fallbacks the render resolves
   through — `derivedColorIndex`'s even spread `i / (n - 1)` (`0.5` for a lone
   map) and `DEFAULT_COLOR_SPEED`. The file therefore states what we draw
@@ -226,7 +225,7 @@ The export writes the system's **XY shadow**:
   attribute is inert in every other flam3/Apophysis tool. See "A deliberate
   deviation" above.
 - A fold variation's custom `minRadius`/`fixedRadius`/`boxLimit` (export —
-  **warned**, fr-s9ll): flam3 XML has no attribute for them, so the exported
+  **warned**): flam3 XML has no attribute for them, so the exported
   shape always reads back at the classic Mandelbox lengths. Absent or
   explicitly-classic lengths lose nothing and warn nothing. See "A deliberate
   deviation" above.

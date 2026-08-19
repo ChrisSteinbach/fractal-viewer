@@ -4,7 +4,7 @@ Handover notes for a Claude Code session working on `fractal-viewer`
 (`github.com/ChrisSteinbach/fractal-viewer`, deployed as fractal-4d.com).
 
 **Problem statement.** Surface-mode DE rendering of systems containing pure-fold
-maps (`boxfold` / `spherefold` / `mandelbox`, fr-p7nu / fr-5rvk) is unusably slow
+maps (`boxfold` / `spherefold` / `mandelbox`) is unusably slow
 and locks up browsers on anything visually interesting.
 
 **Ground rules.** Everything below must preserve the validity argument in
@@ -31,7 +31,8 @@ inverse-map descent with certified `sigma_min` bounds, because that is what
 generalises to an arbitrary IFS. The price is that a fold's inverse is
 _multivalued_: 27 branches for `boxfold`, 3 for `spherefold`, 81 for `mandelbox`.
 
-From the repo's own measured numbers (module doc, fr-5rvk MEASURED VERDICT):
+From the repo's own measured numbers (module doc, the pure-fold sweep's
+MEASURED VERDICT):
 `mandelboxKifs` costs ~1400–2040 map visits per DE call, each expanding 27–81
 branches. That is on the order of 10^5 branch evaluations **per march step**.
 
@@ -161,7 +162,7 @@ sampling density.
 (`uAcceptPixelEps * t`), descending further resolves detail smaller than the
 pixel.
 
-With `MAX_DESCENT_DEPTH = 128` (raised from 48 by fr-xok8), far rays are running
+With `MAX_DESCENT_DEPTH = 128` (raised from 48), far rays are running
 ~100 levels to resolve features orders of magnitude under their footprint.
 
 **Change.** Compute the depth cap inside the march loop from the current `t`:
@@ -172,10 +173,10 @@ dMax(t) = min(uMaxDepth, ceil(log(coneRadius(t) / (2R)) / log(sigmaMaxSlowest)))
 
 **Soundness.** This is the same argument `previewMaxDepth` already rests on —
 treating "chain still in-sphere at depth `d`" as a hit is correct _at that
-resolution_ once the tracked piece is sub-footprint. Keep the fr-ttg5
+resolution_ once the tracked piece is sub-footprint. Keep the
 contraction-aware clamp semantics; the change is making `t` an input rather than
 using a single frame-wide value. Watch specifically for the return of the
-"core-ball" artefact at the slowest map's fixed point (fr-xok8) — that is the
+"core-ball" artefact at the slowest map's fixed point — that is the
 failure mode if the coupling is got wrong.
 
 ---
@@ -329,22 +330,23 @@ committing.
 - Do not weaken the lower-bound guarantee to buy speed. The existing disclosed
   residuals (the `mandelboxKifs` probe-set-shaped width-bound tail — refined
   0.22%R exact at CLOUD=300k / j1@0.039%R off-attractor at 60k, disclosed not
-  gated since fr-tikz; production fold paths march base, gated at 1.2%R
+  gated; production fold paths march base, gated at 1.2%R
   budget — and `repro2+sym4y`'s ~9.8%R) are documented and bounded; new
   unbounded ones are not acceptable.
-- Do not scale hit **acceptance** with tier or buffer resolution — fr-7xgi
-  already established that this renders the fold DE's plateau band as phantom box
-  faces. A preview may coarsen sampling, never acceptance.
-- Do not lower `MAX_DESCENT_DEPTH` as a blunt speed fix — fr-xok8 documents the
-  solid-ball artefact that causes. §3.3 is the correct form of that idea.
+- Do not scale hit **acceptance** with tier or buffer resolution — it is
+  already established that this renders the fold DE's plateau band as phantom
+  box faces. A preview may coarsen sampling, never acceptance.
+- Do not lower `MAX_DESCENT_DEPTH` as a blunt speed fix — the raise to 128
+  documents the solid-ball artefact that lowering causes. §3.3 is the correct
+  form of that idea.
 - Do not let the CPU oracle and the GLSL mirror drift. Any change here lands in
   `surface-de.ts` first with harness numbers attached.
 
 ## 6. Post-brief measured outcomes (2026-07-28 addendum)
 
-The §3.7 compute-port hypothesis was spiked (fr-q1f8), measured, and shipped
-as the fold surface session's preferred tracer (fr-tzdg,
-`src/app/surface-compute.ts`) — though with the OPPOSITE internal shape to
+The §3.7 compute-port hypothesis was spiked, measured, and shipped
+as the fold surface session's preferred tracer
+(`src/app/surface-compute.ts`) — though with the OPPOSITE internal shape to
 §3.7's sketch: private per-thread frontiers beat the workgroup-shared layout
 2-3.3x, and wavefront-style stage-2 compaction stayed off (1.4-1.6x slower).
 The march itself landed at 49µs/ray where the fragment tracer was unbounded.
@@ -354,14 +356,14 @@ end-to-end frame cost — every hit paid ~40 zero-cutoff on-surface `surfaceDE`
 evals (4 normal + up-to-32 shadow + 5 AO) through the full width-12 beam,
 measured 740s for a 96x54 frame's 660 hits on Iris (unable to converge a
 900s budget at a hit-dominated pose). This cost class is invisible to §1's
-per-eval model because it is per-HIT, not per-march-step. fr-p8bc resolved
-it: probe evals light a hit the full-width march already certified, never
-decide geometry, so they ride a width-1 greedy descent — 23.8x cheaper
-shading, eyeball-identical frames (a slight lightening of deep-crease
+per-eval model because it is per-HIT, not per-march-step. The width-1
+shading probe resolved it: probe evals light a hit the full-width march
+already certified, never decide geometry, so they ride a width-1 greedy
+descent — 23.8x cheaper shading, eyeball-identical frames (a slight lightening of deep-crease
 shadow/AO from the greedy overshoot; quality A/B leg in
 `npm run bench:surface -- --surface-shade-width=N`).
 
-The fragment-path port (fr-zqu8, `?surfshadewidth` runtime A/B in
+The fragment-path port (`?surfshadewidth` runtime A/B in
 `scripts/shade-width-ab.mjs`) then measured a second, unanticipated
 inversion: the width-1 probe didn't grow the ~25s Mesa link the gate feared
 — it CUT it 17.9x (cold links 25.5-26.4s -> 1.42-1.53s, n=3/arm,
@@ -370,17 +372,18 @@ so the pre-change program inlined the width-12 body at all ~7 `surfaceDE`
 call sites (march + 4 normal taps + shadow + AO); with the value form
 routed to a width-1 `surfaceDEProbe` (one template, two instantiations —
 the WGSL twin's derivation discipline adapted to the fragment source), only
-the march still inlines the monster. fr-5rvk's "a second full frontier body
-pushed Mesa's compiler over the edge" was the same mechanism seen from the
-other side — §1's cost model missed that COMPILE cost, like shading cost,
-scales with call sites x width, not just per-eval work. The link collapse
-also dissolved fr-f21s's link-watchdog session-death lottery (the A/B's
+the march still inlines the monster. The pure-fold sweep's "a second full
+frontier body pushed Mesa's compiler over the edge" was the same mechanism
+seen from the other side — §1's cost model missed that COMPILE cost, like
+shading cost, scales with call sites x width, not just per-eval work. The link collapse
+also dissolved the link-watchdog session-death lottery (the A/B's
 only context losses were baseline-arm, kernel silent throughout). Runtime:
 boxfold-pair settles 509-987ms vs baseline 695-1296ms with settled frames
 identical within session noise; mandelboxKifs's parked entry pose stays
 unconverged-in-minutes in BOTH arms (its crease pixels are march-bound on the
 fragment path — the width-12 march the probe deliberately leaves untouched;
-fr-24to below discloses that grind as progress instead of bounding it —
+the runtime-mode verdict below discloses that grind as progress instead of
+bounding it —
 the pose still grinds, legibly), but equal 210s windows resolve ~2.3x more
 of the frame at width 1 (the shipped width). The fold-lens variant
 deliberately carries no probe: its ~79KB source sits at the
@@ -388,26 +391,26 @@ resolveVariantArms-measured cliff, though the inlining discovery
 suggests a lens probe might SHRINK its link too — an open follow-up, not
 a shipped claim.
 
-The runtime-mode verdict (fr-24to) resolved what to do when a monster
+The runtime-mode verdict resolved what to do when a monster
 fold pose (mandelboxKifs's entry pose) makes even the bounded WebGL
 preview unaffordable: crease pixels there cost ~272-287ms/px,
 march-bound, and the floor-rung preview ran past 210s for a 4500px
 frame with no terminal state, so it ground forever and the settle
 behind it never armed. Bailing out of the render mode was rejected:
 cost is pose-local, the WebGL path is already the fallback, and
-post-fr-zqu8 entry now compiles in ~1.45s, so a bail-and-return would
-only thrash. A preview rung below the shipped floor was rejected too:
-each rung buys only ~2x while the gap at a monster pose is >=50-150x,
-and the crease pixels that dominate cost stay march-bound at any
+and entry now compiles in ~1.45s with the shade probe split out,
+so a bail-and-return would only thrash. A preview rung below the shipped
+floor was rejected too: each rung buys only ~2x while the gap at a monster
+pose is >=50-150x, and the crease pixels that dominate cost stay march-bound at any
 rung. A truncation contract shipped instead, in two calibration rounds, and both
 were REVERTED. Round one ported the compute path's flat GPU-spend budget
 onto the WebGL pump — past 4000ms of measured spend, stop refilling and
-complete TRUNCATED, retiring the evidence raise-only (fr-id9r semantics)
+complete TRUNCATED, retiring the evidence raise-only (partial-job semantics)
 — and clipped a completable heavy-lens preview on first contact: a 20-map
 Menger sponge under a mandelbox final lens measured 62% traced with ~2.5s
 left at the check, and truncating it swapped a complete whole-image blur
-for a black top band the bottom-up settle would only repair minutes later
-(fr-zx34). Round two switched the check from spend to PREDICTED remaining
+for a black top band the bottom-up settle would only repair minutes later.
+Round two switched the check from spend to PREDICTED remaining
 work — remaining px times the max of the traced average and the pump's
 marginal estimate, a band-vs-wobble spike factor meant to catch a preview
 sliding into a newly-discovered expensive band without over-reacting to
@@ -438,7 +441,7 @@ Preview 1.2% -> 5.3% -> 16% -> 93% -> complete at 16.4s spentMs, settle arms
 on completed evidence, then Full detail 0% -> 0.1% and climbing; the preset
 monster pose parked for 60s logs 120/120 responsiveness pings, ~0s stalled,
 0 errors, kernel silent, and never arms a settle at all — by decision, not
-by bug, on the same bounded-strip machinery (fr-096u/fr-id9r) that made the
+by bug, on the same bounded-strip machinery that made the
 grind safe to begin with. Truncation was never load-bearing for that safety.
 
 What survives from the branch, orthogonal to truncation and unaffected
@@ -455,14 +458,14 @@ loud-fail, thumbnails keep the silent explorer fallback, and
 started putting hour-scale predictions into refusal messages — is
 module-private again.
 
-## 7. The fold-lens compute port (2026-07-30 addendum, fr-55s1)
+## 7. The fold-lens compute port (2026-07-30 addendum)
 
-fr-tzdg's routing left one fold class on the fragment path: FINAL-lens
-systems (`foldFinal` — fr-g58b's `descendLens`), excluded because the
+The compute tracer's routing left one fold class on the fragment path:
+FINAL-lens systems (`foldFinal` — `descendLens`), excluded because the
 kernel had no lens vocabulary and `packSurfaceGpuParams` threw on it. That
-class is exactly where the WebGL path hurt most in the field (fr-zx34's
+class is exactly where the WebGL path hurt most in the field (the
 Menger+mandelbox and 4-map mandelbox-lens reports: ~5.7-6.2s blocking lens
-link, minutes-class settles), so fr-55s1 cut escape/4D out and ported the
+link, minutes-class settles), so this work cut escape/4D out and ported the
 lens.
 
 The port is two motions, both derivations rather than new estimators. The
@@ -477,7 +480,7 @@ pipeline per session; every prune value-exact: region floors, scaled
 sphere certificates, the visible pin, the cutoff contract, the spherefold
 shell guard with the mandelbox `b += 26` skip). Shading follows the same
 rename discipline one function over: hit-info behind an argmin sweep,
-the fr-p8bc probe under the SAME sweep text renamed — one text, three
+the width-1 probe under the SAME sweep text renamed — one text, three
 names. Params grew 208→272 (0-207 frozen); footprint+lens is refused at
 pack time. The bench pins it end to end: three GATING lens agreement rows
 at ~2e-7 (the 81-branch mandelbox worst case included), a lens
@@ -489,20 +492,20 @@ PRODUCTION renderer converging the lens frame (hit=811, 0 exhausted).
 Those unproject numbers are SwiftShader's. On the REAL Iris driver the
 same leg reads hits 812/811 with one status mismatch, and the fold-pair
 leg 81/82 with one — a red verdict that stood unnoticed from this
-session until fr-7tl3, because the leg had only ever been read on
+session until the leg was finally read on the real driver rather than on
 software. Both are silhouette flips: ray 1384's CPU march comes within
 2% of eps at t=5.3092 where the GPU accepts at t=5.3090 (2e-4 apart,
 tolerance 1.31e-2), ray 1312's CPU march accepts at 99.4% of eps where
 the GPU skims past. The gate now excludes exactly that shape as
 `silhouetteFlips` — closest approach at the hitting side's `t`, within
 1.5x either side of `d/eps == 1` — and reads verdict=pass on the real
-driver. The lesson generalizes past this bead: a surface-kernel verdict
+driver. The lesson generalizes past this one case: a surface-kernel verdict
 taken only on SwiftShader is not evidence about the driver that ships.
 
 Routing flipped to `deHasFolds(de) || foldFinal` with the priors scaled by
 branch-count/8 (`surfaceDescentCostWeight`'s factor) so first
 slices/batches stay watchdog-safe. Measured on the field shapes (Iris Xe,
-real driver, dev regime, same hash both arms): the fr-g58b archetype
+real driver, dev regime, same hash both arms): the fold-lens archetype
 previews in 0.94s and settles the FULL 1280x720 frame in 9.4s (287
 passes, 0 exhausted) where the WebGL arm was 43% settled at 30s; the
 81-branch mandelbox field class previews in 1.5-2s at the governor's rung
@@ -510,15 +513,18 @@ and settles in ~35-55s (thermally variable; 89% at t=30s cold) where the
 WebGL arm was 38% at 45s — a 2min+ class, before counting its silent lens
 link. No lens GLSL compiles at all on the compute route, so the ~79KB
 SURFACE_FOLD_LENS source and its link cliff are now fallback-only
-(`?surfacegl`, no-adapter, device-loss re-entry), which also lowers
-fr-otkf's stakes.
+(`?surfacegl`, no-adapter, device-loss re-entry), which also lowers the
+stakes of that variant's un-ported shade probe — a port later closed BY
+DECISION with the rest of the surface-optimization tail.
 
-One session-adjacent discovery folds in (fr-tmgf): a day of Surface
+One session-adjacent discovery folds in: a day of Surface
 renders had silently fallen back to software in the user's desktop
 browser (10-50x slower than an old phone; a fresh-profile probe got real
 Iris on both APIs, implicating the browser's own GPU-crash disablement,
-plausibly seeded by the fr-096u-era hangs). The surface progress row now
+plausibly seeded by the earlier i915 preemption hangs). The surface progress
+row now
 names its engine — "Full detail · WebGPU 51%" / "· WebGL" — fed on the
 compute side by `onProgress` ray tallies, so "which tracer, and is it
-moving" never again requires the console. The full treatment (software-
-adapter warning, flame/solid parity) stays open as fr-tmgf.
+moving" never again requires the console. The full treatment — the
+software-adapter warning and flame/solid parity — shipped later as
+`render-backend.ts`'s one shared detection-and-wording vocabulary.

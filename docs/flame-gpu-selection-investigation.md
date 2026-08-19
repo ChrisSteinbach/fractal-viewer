@@ -1,4 +1,4 @@
-# Investigation fr-2w5: why flame GPU/CPU selection was flaky
+# Why flame GPU/CPU selection was flaky — an investigation
 
 **Verdict: root-caused and fixed.** The "flakiness" was four separate,
 individually deterministic mechanisms that interleaved into apparently random
@@ -21,11 +21,11 @@ Field symptoms this explains:
 `createGpuFlameBackend` guarded only `histBytes ≤ maxStorageBufferBindingSize`
 and trusted the answer. Measured reality:
 
-| Context                       | Reported mSBBS / maxBufferSize | Actually allocatable (create-time)                                                                                    |
-| ----------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| Chrome 148, Iris Xe, Vulkan   | 4 GiB−4 / 4 GiB−4              | STORAGE ~1.5–3 GiB **varying run-to-run**; MAP_READ ~2 GiB hard (Dawn "Failed to allocate memory for buffer mapping") |
-| Firefox 151/152               | 1 GiB / 1 GiB                  | STORAGE: 1 GiB ok; MAP_READ: 1 GiB **refused** ("Out of memory"), 768 MiB ok                                          |
-| Android phone (fr-7su record) | 256 MiB                        | 126 MiB histogram ok                                                                                                  |
+| Context                     | Reported mSBBS / maxBufferSize | Actually allocatable (create-time)                                                                                    |
+| --------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| Chrome 148, Iris Xe, Vulkan | 4 GiB−4 / 4 GiB−4              | STORAGE ~1.5–3 GiB **varying run-to-run**; MAP_READ ~2 GiB hard (Dawn "Failed to allocate memory for buffer mapping") |
+| Firefox 151/152             | 1 GiB / 1 GiB                  | STORAGE: 1 GiB ok; MAP_READ: 1 GiB **refused** ("Out of memory"), 768 MiB ok                                          |
+| Android phone (soak record) | 256 MiB                        | 126 MiB histogram ok                                                                                                  |
 
 The Chrome storage ceiling moved between probe runs minutes apart
 (`VK_ERROR_OUT_OF_DEVICE_MEMORY` at 1.5 GiB in one run; 2 GiB pairs fine in
@@ -46,7 +46,7 @@ the real app at 4K × supersample 3 (2.39 GB staging ask). Both browsers
 report these failures synchronously through `pushErrorScope("out-of-memory")`
 at create time — the fix is to listen.
 
-fr-e07's Firefox field report ("Not enough memory left" mid-render on a 24 GB
+The Firefox field report ("Not enough memory left" mid-render on a 24 GB
 card) was this same mechanism: FF refuses ≥1 GiB MAP_READ staging allocations
 that its own reported 1 GiB limit permits.
 
@@ -60,14 +60,14 @@ and permanently to CPU regardless of how big the GPU is. Symptom 3 is
 deterministic arithmetic, not flakiness. Meanwhile ss1 at 4K is 265 MiB —
 comfortably inside every regime measured — and a GPU render at 1× beats a CPU
 render at 2× by an order of magnitude in converged iterations. (This is
-exactly the "shrink and retry ON the same GPU" fix fr-e07's revert notes
-prescribed and nobody implemented.)
+exactly the "shrink and retry ON the same GPU" fix that report's revert
+notes prescribed and nobody implemented.)
 
 ### RC4 — The worker→main escalation re-ran size failures
 
 `gpuUnavailable` carried no reason, so main.ts escalated **every** worker GPU
 failure to the main-thread host — including size failures, which fail
-identically there (same hardware, same allocator; fr-e07 watched both hosts
+identically there (same hardware, same allocator; that report watched both hosts
 OOM back-to-back). The E3 trace showed the user-visible result: GPU→CPU
 happens _twice_ per render before CPU sticks.
 
@@ -126,10 +126,11 @@ render.
     recomputes supersample _without_ the GPU clamp, so CPU quality is never
     degraded by a GPU-learned ceiling.
 - **Escalation gated on reason** (`main.ts`): only `"no-webgpu"` escalates a
-  worker-hosted session to the main-thread host (fr-1ib's Firefox gap); size
+  worker-hosted session to the main-thread host (Firefox's worker-WebGPU
+  gap); size
   and device failures no longer double-fail. The CPU backend note now carries
   why ("CPU accumulation — GPU failed" / "— WebGPU unavailable").
-  _Postscript: fr-27h later removed the escalation and the main-thread host
+  _Postscript: a later scope cut removed the escalation and the main-thread host
   entirely — current Firefox has worker WebGPU (see this doc's own Firefox 151
   worker-GPU verification below), so the gap it guarded had closed; a
   `no-webgpu` worker context now takes the CPU fallback directly, annotated by

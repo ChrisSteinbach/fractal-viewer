@@ -1,8 +1,8 @@
 # Harness Sheets
 
 This is the catalogue `CLAUDE.md`'s Commands section points to. It is the
-full per-sheet record — every measured number, every verdict, every bead id,
-every refuted hypothesis — for this project's executable measurement records.
+full per-sheet record — every measured number, every verdict, every refuted
+hypothesis — for this project's executable measurement records.
 
 ## What a harness sheet is
 
@@ -26,7 +26,7 @@ AO/shadow switches, a settable step budget and an always-counted `exhausted`,
 so a new sheet writes its estimator and its panel list, never a ninth
 marcher.
 
-`scripts/set-extent.ts` is the other shared instrument (fr-azjk): the ONE
+`scripts/set-extent.ts` is the other shared instrument: the ONE
 definition of "how much of a ball does this set fill, and how far out does
 it reach", against a MEMBERSHIP oracle the caller supplies and never a
 threshold on a distance, volume-uniform for fill (`probeEscapeFill`'s own
@@ -42,9 +42,10 @@ was the instrument.
 
 ### surface-beam
 
-fr-v6yg's sheet, and the one that decided a shipped default. Width-1 greedy
-descent OVERSHOOTS the true distance not just on the doubleRotation profile
-the fr-beck spike found (~19% of R) but on plain shipped presets — default
+The beam-width sheet, and the one that decided a shipped default. Width-1
+greedy descent OVERSHOOTS the true distance not just on the doubleRotation
+profile the 4D surface DE spike found (~19% of R) but on plain shipped
+presets — default
 10.8%R, spiral 8.6%R, pyramid 6.2%R, jerusalem 6.1%R — at per-map
 `sigma_max` as low as 0.4, while other systems at the SAME sigma stay
 clean. So no gating predicate exists and `buildSurfaceDE`/`buildSurfaceDE4`
@@ -55,28 +56,29 @@ systems, `sigma_max >= 0.96`), improves tightness, and costs ~1.7-1.8x
 inverse applications. Its tables are the ones `surface-de.ts`'s beam
 comment points at.
 
-fr-jkpn later widened the beam again: widths 3/4 are validity slots
+A later pass widened the beam again: widths 3/4 are validity slots
 (rank-3/4 chains, live only while in-sphere) that close the width-2
 residual above, and `buildSurfaceDE`/`buildSurfaceDE4` now always
 build width 4, not 2 — the width-1/2 rows survive only as the
-bit-exactness regression of the pre-fr-jkpn beam. fr-xok8 later
-raised the shared depth cap 48 -> 128 (the old cap clamped
+bit-exactness regression of the pre-slot beam. The depth-ceiling
+raise then took the shared cap 48 -> 128 (the old cap clamped
 sigma-0.93 systems at 0.031R of unresolved feature size), and
-fr-5rvk's section (4) extended the same width-invariance check to
+section (4) extended the same width-invariance check to
 PURE-FOLD systems, whose fixed-width branch frontier ignores
 `beamWidth` entirely (0 mismatches across 5 profiles) — though its
 bound is far looser than the affine one (median DE/D 0.13-0.20 vs
-0.61-0.84). fr-tikz's addendum then pinned the PRODUCTION estimator
+0.61-0.84). A later addendum then pinned the PRODUCTION estimator
 per system class as the one that gates (base for fold, refined for
 affine).
 
 ### fold-cost-split
 
-fr-ck0w experiment 2: the fold DE's cost, factored as march steps per ray
-times inverse applications per call, on the same rays — the split
-`docs/fold-de-performance-brief.md` §4 needed before choosing between
-shrinking the branch fan and shrinking the bound. Counts map VISITS
-through `harness-profiles.ts`'s shared `countingDE`, so its numbers are
+The fold-DE cost instrumentation's experiment 2: the fold DE's cost,
+factored as march steps per ray times inverse applications per call, on the
+same rays — the split `docs/fold-de-performance-brief.md` §4 needed before
+choosing between shrinking the branch fan and shrinking the bound. Counts
+map VISITS through `harness-profiles.ts`'s shared `countingDE`, so its
+numbers are
 comparable 1:1 with the beam and grid sheets rather than with raw branch
 arithmetic.
 
@@ -86,7 +88,7 @@ factor B (steps/ray) — apps/call spans ~5.8 to ~275 across systems
 the brief's branch-and-bound-first order. mandelboxKifs measures
 ~17.3k branch evaluations per DE call, ~98.7k per ray, matching the
 brief's back-of-envelope estimate to within an order of magnitude.
-The fr-kidj follow-up's finer per-transform counter confirmed this
+The branch-and-bound follow-up's finer per-transform counter confirmed this
 EXACTLY (1.000x against the apps x branch-fan-out reconstruction),
 and found the counting Proxy itself expensive enough (~86x slower on
 mandelboxKifs) to force a hard wall-clock cap into the harness's own
@@ -94,27 +96,28 @@ ray loops.
 
 ### lens-branch-cost
 
-fr-ybtq, and both halves of its own hypothesis came back wrong. Branch
-survival through `descendLens`'s three value-exact prunes is 5.5%
+The heavy-lens class, and both halves of its own hypothesis came back
+wrong. Branch survival through `descendLens`'s three value-exact prunes is 5.5%
 (archetype) / 8.4% (the user's field class) of 81, not "most", and per EVAL
 the field class costs only ~1.4x the archetype (262 vs 195 transforms) —
 which cannot explain a ~15x/ray field gap, so the rest is framing and ray
 count, with exhaustion ZERO at every framing tested. BEST-FIRST BRANCH
 ORDERING WAS IMPLEMENTED AND REVERTED: it cut core descents/call 4.46 ->
 2.26 and 6.83 -> 5.94 and was worth 9-15% of CPU wall, but measured a
-1.46-1.54x REGRESSION on real Iris — the same trade fr-kidj's stage-2 B&B
-lost one level down. The remaining prize needs a stronger IN-BALL
-certificate, not a cheaper route to the existing one.
+1.46-1.54x REGRESSION on real Iris — the same trade the fold descent's
+stage-2 B&B lost one level down. The remaining prize needs a stronger
+IN-BALL certificate, not a cheaper route to the existing one.
 
 ### surface-grid-cost
 
-fr-aj4w: what a `buildSurfaceGrid` enter actually costs on a pure-fold
-system, where every descent level fans one visited map into 27/3/81
-branches. It is why `surfaceGridEstimator` picks `"plain"` for fold systems
-and `"refined"` for affine, and why the worker sizes its own resolution off
+The grid build-cost measurement: what a `buildSurfaceGrid` enter actually
+costs on a pure-fold system, where every descent level fans one visited map
+into 27/3/81 branches. It is why `surfaceGridEstimator` picks `"plain"` for
+fold systems and `"refined"` for affine, and why the worker sizes its own
+resolution off
 a measured pilot slab. Rows whose PROJECTION past resolution 32 exceeds
 240s print the projection instead of spending the minutes — which answers
-the bead's "does this take minutes" question without paying it.
+the "does this take minutes" question without paying it.
 
 MEASURED VERDICT: real in direction, not magnitude — mandelboxKifs
 costs 55.8s refined vs 37.5s plain at 64^3 (~1.5x, tracking the
@@ -127,19 +130,20 @@ branch count rather than fold-kind alone.
 
 ### fold-phantom
 
-fr-7xgi's NEGATIVE CONTROL, kept for exactly that. The suspect was
-`descendFold`'s region floors: a mixed affine+fold system evicts in-sphere
-tuples constantly, and a folded near-zero floor in a genuine void would put
-a sphere tracer onto the fold's own validity plane — a rendered box face
-that is not attractor. The oracle pins CLEAN on every probe here, so the
-mechanism was elsewhere (tier-scaled hit acceptance, the fr-7xgi fix), and
-the sheet stays because a future regression that IS a true DE plateau hit
-will fire in it.
+The acceptance-eps fix's NEGATIVE CONTROL, kept for exactly that. The
+suspect was `descendFold`'s region floors: a mixed affine+fold system evicts
+in-sphere tuples constantly, and a folded near-zero floor in a genuine void
+would put a sphere tracer onto the fold's own validity plane — a rendered
+box face that is not attractor. The oracle pins CLEAN on every probe here,
+so the mechanism was elsewhere (tier-scaled hit acceptance, the acceptance-eps
+fix), and the sheet stays because a future regression that IS a true DE
+plateau hit will fire in it.
 
 ### fold-radii-seam
 
-fr-uec4's exoneration of the authored fold lengths (fr-s9ll). Across the
-whole admissible band and both box-limit extremes every DE value is
+The deferred-teardown crash hunt's exoneration of the authored fold
+lengths. Across the whole admissible band and both box-limit extremes every
+DE value is
 finite, the bounding radius never moves off 1.77, per-eval cost stays
 inside a factor of ~10 with no trend toward the seam, and `maxDepth`
 saturates politely at 128 from `mR/fR ~ 0.73` down. The real defect was a
@@ -149,7 +153,8 @@ of the eligibility seam's exact arithmetic.
 
 ### erosion-repro
 
-fr-z70m, and it drove the shipped fix. The DE, the fr-55r5/fr-zkt2 exits
+The eroded-detail bug, and it drove the shipped fix. The DE, the cutoff and
+sphere-floor exits
 and the grid floors are all sound (0 violations in 14k+ cell samples, 0
 cutoff-contract mismatches); the erosion is pure MARCH-BUDGET EXHAUSTION,
 because the skip loop charged every cheap grid skip against the same
@@ -161,7 +166,7 @@ budget of 160.
 
 ### balloon-inversion
 
-fr-5wlv.1's spike sheet: is the balloon's inverted union marchable with the
+The balloon spike's sheet: is the balloon's inverted union marchable with the
 SHIPPED estimators untouched? Its reference distance to the ECHO goes
 through inversion's exact distortion identity rather than through inverted
 f32 samples (inverting them would amplify their storage rounding by the
@@ -176,11 +181,11 @@ density, and erosion that TRANSPORTS rather than amplifies (the
 shell term matches the un-inverted outer decile's own tail
 everywhere). The one violation ever seen (a dev-run mandelboxKifs
 refined tail) traced to the plain field rather than the balloon, and
-reproduced unmodified on `surface-beam.harness.ts` (filed as
-fr-tikz). Conservative at every R measured — the verdict
+reproduced unmodified on `surface-beam.harness.ts`. Conservative at every R
+measured — the verdict
 `balloon-de.ts` ships on.
 
-fr-8yad's section (4) answers a different bead: re-enabling the
+Section (4) answers a different question: re-enabling the
 empty-space grid in balloon mode (shipped OFF) would skip 18.6-33.2%
 of a march's FRACTAL-term steps at res 64, realizing 48.7-76.3% of
 what the identical grid buys the plain march over the same rays —
@@ -193,19 +198,20 @@ margin at the tightest cell.
 
 ### aff4-order-cpu
 
-fr-b72d's attribution sheet, and it closed the question. The 4D
+The 4D kernel-cost attribution sheet, and it closed the question. The 4D
 kaleidoscope's cost growth over ORDER is ALGORITHMIC, not a kernel
 realization: CPU mean/query normalized to order 1 reads affine4 x1.8 / x4.9
 / x6.4 / x13.5 at orders 2/3/4/6 against the GPU's measured x14.4, and
 fold4 x4.5 / x12.7 / x24.7 / x58.9 against the GPU's x76.4 — far above the
 6x naive sweep-work ratio, with the p95 curve shifting the same way, so
 SIMD max-over-lanes adds little. Nothing kernel-shaped is left to chase;
-the residual app-level gap is the arms' march loops (fr-fniy).
+the residual app-level gap is the arms' march loops.
 
 ### slice-cost
 
-fr-b8o5, and it answers a question `surface-de-4d.ts` had carried open
-since fr-beck minted THE SLICE CAVEAT. Measured against a 600k-point
+The off-centre-slice measurement, and it answers a question
+`surface-de-4d.ts` had carried open since the 4D spike minted THE SLICE
+CAVEAT. Measured against a 600k-point
 chaos-game GROUND TRUTH rather than against another bound, the slice
 penalty `dist4 / dist3(slab)` reads p50 0.91 -> 0.82 across `plain4`'s whole
 `w0` sweep and 0.94 -> 0.85 across `kaleido4`'s, with p10 0.58-0.83
@@ -214,7 +220,7 @@ throughout and the medians moving at most 0.03 when the truth slab shrinks
 OFFSET — the estimator's own conservativeness is three times larger and
 just as flat (`DE / dist4` 0.66-0.72). The march agrees: steps/ray
 2.04-2.17 and 2.42-2.86 across the sweep with ZERO exhausted rays at every
-row. So the bead's 20-40x cliff is not DE looseness, and the slice-aware
+row. So the reported 20-40x cliff is not DE looseness, and the slice-aware
 certificate written for it — chains carrying the pulled-back slice normal,
 off-slab branches dropped, the rest priced against the disc the slab cuts —
 was measured at ~10% fewer march steps for 1.4-2.4x the work per
@@ -225,7 +231,8 @@ evaluation and NOT shipped. Its app-level half is
 
 ### surprise-residual
 
-fr-b5x: how often a FLAT "Surprise Me" system that cleared `randomSystem`'s
+The Surprise Me residual: how often a FLAT "Surprise Me" system that
+cleared `randomSystem`'s
 generation-time quality gate re-probes BELOW `MIN_OCCUPIED_CELLS` on fresh,
 independently-seeded streams — the residual a finite-sample gate must have.
 It measures the rate rather than ruling on it, so gate tuning can be A/B'd
@@ -235,12 +242,12 @@ against numbers; `SEEDS`/`PROBE`/`STREAMS` are env knobs.
 
 ### escape-form-sweep
 
-fr-7u8t.8's retired Julia form, still executable — the ORBIT form, not to be
+The retired Julia form, still executable — the ORBIT form, not to be
 confused with `escape-estimate-form` below.
 
 ### escape-estimate-form
 
-fr-282c's refutation: swapping the fold family to the Böttcher log form
+The log-form refutation: swapping the fold family to the Böttcher log form
 `0.5·|y|·ln|y|/dr` that `bulb-de.ts` and `qjulia-de.ts` use looks like a win
 and is not a different bound at all. `log/linear` IS `0.5·ln r`, and an
 escaping fold orbit lands just outside the radius-4 bailout ball, so the
@@ -249,7 +256,8 @@ fixtures. The control the original observation lacked is `linear x k`, one
 constant, and it reproduces the log arm's whole result to within 0.00-0.45
 hit points, beating it on `mandelboxCube`. Not boundary-adaptive either —
 the near/far decile medians are flat on six of seven. And DIMENSIONALLY
-WRONG since fr-s9ll: the fold family is uniform-rescale equivariant, so an
+WRONG once the fold's lengths are authorable: the fold family is
+uniform-rescale equivariant, so an
 estimator must satisfy `DE_λ(λp) = λ·DE(p)`; linear does BIT-EXACTLY, log
 measures 44.8% median relative error, worst 107x, because `ln r` needs `r`
 dimensionless and a fold's escape is asymptotically linear so the
@@ -257,13 +265,13 @@ Green's-function limit never arrives. `bulb-de.ts`/`qjulia-de.ts` differing
 from `escape-de.ts` is correct BY CONSTRUCTION, not drift. Its docblock also
 carries the live follow-up: the ~0.75 damping is reachable as
 `ESCAPE_STEP_SCALE` 0.35 -> ~0.26 plus the acceptance epsilon, but that
-re-opens fr-7u8t.8's deliberate cost/quality pick rather than winning
+re-opens the Mandelbrot-form cost/quality pick rather than winning
 anything free.
 
 ### escape-chain
 
-fr-za0n's shipped cycling estimator, and the rejected per-pass CHAINING arm
-beside it.
+The formula chain's shipped cycling estimator, and the rejected per-pass
+CHAINING arm beside it.
 
 ### hybrid-chain
 
@@ -271,19 +279,20 @@ The CROSS-FAMILY sheet: the prototype that asked whether the escape-time
 family composes, now measuring the shipped answer against itself — it
 cross-validates `estimateEscapeDistance` on bulb/qsquare chains
 BIT-EXACTLY against its own independently-written orbit, and it is where
-fr-j231's two verdicts are executable: that cycling dissolves the
-power-link stiffness the bead blocked on, and that the Böttcher form is
-boundary-adaptive on a power-dominated chain where fr-282c measured it flat
-on a fold one.
+the power-link work's two verdicts are executable: that cycling dissolves
+the power-link stiffness the prediction blocked on, and that the Böttcher
+form is boundary-adaptive on a power-dominated chain where the log-form
+sweep measured it flat on a fold one.
 
 ### chain-speckle
 
-fr-vpbq's and fr-byxb's evidence: the speckle is sub-pixel, the ramp is
-bottom-heavy.
+The supersampling and palette-ramp evidence: the speckle is sub-pixel, the
+ramp is bottom-heavy.
 
 ### slab-ball-slack
 
-fr-v7ca's verdict, and the sheet whose INSTRUMENT is the argument: a
+The segment+ball-slack certificate's verdict, and the sheet whose INSTRUMENT
+is the argument: a
 BOXFOLD-ONLY system answers a spherefold question, because its two arms are
 the two ENDPOINTS of the lift under test — the shipped exact segment IS the
 segment+ball-slack state with no mid crossing ever, and `max(0, DE(p) - h)`
@@ -306,14 +315,14 @@ instruments would reopen it.
 
 ### escape-4d
 
-fr-vag4's own measure-before-building sheet, and the one that CONTRADICTS a
-prior record: fr-wuuu swept the quaternion square's `k` component — a `w`
-TRANSLATION — and found pure EROSION off the `w = 0` slice, containment
-94-98% and a blank frame by `w0 = 0.8`; a `w` ROTATION reads containment
-52-61% and still draws 16% of its rays at `w0 = 1.2`, so roughly half of
-every offset slice is a genuinely different cut. That is the empirical case
-for the 4D lift, and it is why the shipped 4D presets ROTATE rather than
-translate.
+The 4D chain's own measure-before-building sheet, and the one that
+CONTRADICTS a prior record: an earlier sweep took the quaternion square's
+`k` component — a `w` TRANSLATION — and found pure EROSION off the `w = 0`
+slice, containment 94-98% and a blank frame by `w0 = 0.8`; a `w` ROTATION
+reads containment 52-61% and still draws 16% of its rays at `w0 = 1.2`, so
+roughly half of every offset slice is a genuinely different cut. That is the
+empirical case for the 4D lift, and it is why the shipped 4D presets ROTATE
+rather than translate.
 
 Three more results: WHICH LINK carries the rotation decides everything — on
 the head link it flattens the set along the rotated axis, x-extent
@@ -330,7 +339,7 @@ repay — doubling the panel leaves the gap unchanged.
 
 ### bulb-preview
 
-fr-7u8t.7's step-scale sweep.
+The Mandelbulb oracle's step-scale sweep.
 
 ### escape-family-preview
 
@@ -342,7 +351,8 @@ Companion to `qjulia-beauty` below.
 
 ### qjulia-beauty
 
-fr-7u8t.4's proof, and the twenty panels that demoted fr-7u8t.5/.6.
+The quaternion Julia oracle's proof, and the twenty panels that demoted its
+own WGSL/GLSL cores and its 4D lift to won't-do.
 
 ### julia-flame
 
@@ -350,14 +360,15 @@ The compositions three flame presets were picked from.
 
 ### spherefold-radius-sweep
 
-fr-qi9c: the sphere fold's frozen `mR`/`fR` and the box wall, swept as the
+The ratio sweep: the sphere fold's frozen `mR`/`fR` and the box wall, swept
+as the
 two DIMENSIONLESS RATIOS that survive conjugation — its conjugation-control
 arm, exact at IoU 1.000 / relief 0.0000 over a 4x apparatus span, is what
 makes the other columns shape differences rather than zooms; verdict: both
 ratios are real, and the ONE-SHOT final-transform lens is the most
 sensitive role of the three.
 
-fr-77oy added four arms where that sheet stopped, its estimator now taking
+A follow-up added four arms where that sheet stopped, its estimator now taking
 one parameter record PER LINK and cycling the chain like `runEscapeOrbit`,
 wedge fold included, pinned bit-exact on 2-link, 3-link, order-5 and
 order-3 systems: a chain DAMPS its own links 3.8-6.4x — the same map alone

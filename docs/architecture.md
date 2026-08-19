@@ -82,8 +82,8 @@ poison the rest of the orbit with `NaN`. `variations.test.ts` covers the math an
 the totality guarantee; `chaos-game.test.ts` covers finiteness, seed-determinism
 (including the stochastic `julia`), and that a variation actually moves points.
 
-A third family, the **Mandelbox folds** (`boxfold`/`spherefold`/`mandelbox`,
-fr-p7nu), is natively 3-D rather than a lift of a planar formula: `boxfold`
+A third family, the **Mandelbox folds** (`boxfold`/`spherefold`/`mandelbox`),
+is natively 3-D rather than a lift of a planar formula: `boxfold`
 reflects each axis back off the `|t| = wall` planes
 (`2·clamp(t, −wall, wall) − t`, continuous at the fold), `spherefold` is the
 classic Mandelbox ball fold — scaling by `fR²/clamp(r², mR², fR²)`, the clamp
@@ -95,16 +95,16 @@ scale `s` (`s·sphereFold(boxFold(p))`; weight 2 reproduces the canonical step).
 
 Those three lengths — the ball's minimum and fixed radii `mR`/`fR`, and the
 box wall — are **per-variation fields**, and an ABSENT field means the classic
-0.5 / 1 / 1 byte-identically (fr-s9ll): `variations.ts`'s `resolveFoldRadii`
+0.5 / 1 / 1 byte-identically: `variations.ts`'s `resolveFoldRadii`
 is the one place that rule lives, and `foldVariationFn` hands back the shared
 classic entry at the defaults, so a document predating the fields runs the
 same function object it always ran. There is no fourth SIZE field on purpose.
 Only two DIMENSIONLESS RATIOS of the three lengths can be new shape — a
 uniform rescale of all three is equivariant through both folds, so it is
-already exactly what the transform's own affine part does — and fr-qi9c
-measured both, finding `fR/wall` the stronger of the two (the other being the
-ball's own `fR/mR`, whose square is the magnification the eligibility gates
-read) and the one-shot final-transform lens the most sensitive of the three
+already exactly what the transform's own affine part does — and a ratio
+sweep measured both, finding `fR/wall` the stronger of the two (the other
+being the ball's own `fR/mR`, whose square is the magnification the
+eligibility gates read) and the one-shot final-transform lens the most sensitive of the three
 roles a fold can play.
 
 The `radiolarian` and `swirl` presets showcase the feature (`mandelbox` showcases
@@ -113,11 +113,11 @@ them live, and nests each fold's own lengths under its weight row — only the o
 that fold actually reads, since a box fold has no sphere and a sphere fold has no
 wall. A map whose variation list is exactly one fold-family entry is also the
 one nonlinear case the surface distance estimator can descend — see **The surface
-distance estimator** below (fr-5rvk).
+distance estimator** below.
 
 One variation renders a wholly different fractal on its own, unblended: `julia`
 on a single transform translated by `−c` performs exact Inverse Iteration for the
-classic 2-D Julia set of `z² + c` (fr-7u8t.1) — a fractal with no self-similar
+classic 2-D Julia set of `z² + c` — a fractal with no self-similar
 IFS structure of its own, found "for free" in the existing variation vocabulary
 rather than designed in. The `julia`/`juliaDust` presets showcase it, one a
 genuinely connected curve (Douady's rabbit) and one an unambiguous Cantor
@@ -161,7 +161,7 @@ and seed-determinism with a stochastic lens.
 | `transform` | one hue per map (evenly spaced)                     |
 | `height`    | y normalized → blue → green → red                   |
 | `radius`    | distance from origin → warm (inner) to cool (outer) |
-| `position`  | normalized xyz → rgb (axis colors pickable, fr-8k7) |
+| `position`  | normalized xyz → rgb (axis colors pickable)         |
 | `uniform`   | constant cyan `(0.4, 0.8, 1.0)`                     |
 
 `hslToRgb` matches `THREE.Color.setHSL`'s algorithm. The renderer runs with
@@ -170,27 +170,27 @@ and seed-determinism with a stochastic lens.
 being round-tripped through linear space — a predictable, testable pipeline.
 
 The `height`/`radius`/`position` modes additionally take a **color contrast**
-exponent (fr-8sk, `colorModeUsesGamma`): each mode's normalized coordinate `t`
+exponent (`colorModeUsesGamma`): each mode's normalized coordinate `t`
 is reshaped to `t ** colorGamma` before mapping to a color (1 = linear, today's
 mapping; below 1 spreads out the low end of the range, above 1 the high end).
 The solid render's voxel LUT (`buildColorModeLUT` in `voxel.ts`) is built with
 the exact same gamma, so a converged solid's colors and the live explorer's
 point colors can never drift apart.
 
-The `height`/`radius` ramps' colors themselves are also swappable (fr-3b6,
-`colorModeUsesRampPalette`): a scene-level **ramp palette** selection
+The `height`/`radius` ramps' colors themselves are also swappable
+(`colorModeUsesRampPalette`): a scene-level **ramp palette** selection
 (`AppState.rampPaletteId` — a `palette.ts` preset, the user's custom gradient,
 or the default `"legacy"` built-in ramps) makes both ramps sample the chosen
 gradient at the same gamma-mapped coordinate instead of the built-in HSL
 formulas. One definition again: `writePaletteRampColor` in `color.ts` is
 shared by `buildColors`' branches and `buildColorModeLUT`, so the explorer's
 points, the solid render's colorMode-driven voxels, and the panel legend all
-recolor together. Since fr-6ue the 4D projection's "By 4D Radius" mode follows
-the same selection.
+recolor together. The 4D projection's "By 4D Radius" mode follows the same
+selection.
 
 The `position` mode is not a 1-D ramp (a 256×3 LUT indexes one coordinate;
 position has three), so instead of the ramp palette it takes three
-user-pickable **axis colors** (fr-8k7, `AppState.positionAxisColors`): each
+user-pickable **axis colors** (`AppState.positionAxisColors`): each
 channel becomes `min(1, 0.2 + 0.8 · (tx·A + ty·B + tz·C))` over the
 gamma-mapped normalized coordinates — a dark-gray base plus the
 coordinate-weighted blend, so no corner of the bounds fades to black. The
@@ -198,7 +198,7 @@ default (field absent) is the legacy identity `A,B,C = red, green, blue`,
 which reduces the blend to the original `t·0.8 + 0.2` per channel exactly.
 Axis colors that share channels can clip toward their sum near the far corner
 of the bounds — deliberate: a directional normalization was rejected because
-it collapses the diagonal brightness dimension (see fr-8k7's notes). One
+it collapses the diagonal brightness dimension. One
 definition again: `writePositionColor` in `color.ts` is shared by
 `buildColors`' position branch and the solid render's `accumulateVoxels`, and
 the panel legend shows the live axis colors as X/Y/Z swatches.
@@ -257,7 +257,7 @@ is the entire definition of "4D": a property DERIVED from `state.transforms` /
 to 6 rotation planes + 6 shear planes + variations + weight, the full
 20-dimensional affine group of ℝ⁴ one dimension up from `Transform`'s 12 — by
 starting from `embedTransform3`'s `w = 0` embedding (built across the earlier
-fr-2ou/fr-hy8 spikes, untouched by the unification) and splicing in whatever `w`
+4D-embedding spikes, untouched by the unification) and splicing in whatever `w`
 overrides the transform carries. The embed rewrites `composeAffine`'s Euler-XYZ
 rotation as three of `Transform4`'s six plane angles (`{ yz: rx, xz: −ry, xy: rz }`
 — the sign flip on `xz` corrects for `RY`'s opposite handedness from the `R_xz`
@@ -286,7 +286,7 @@ property stronger than the rotation embed's: at `w = 0` every lifted function
 reproduces its 3D counterpart bit-for-bit (not just to rounding), so an embedded
 3D system's `w = 0` slice warps exactly like the native 3D path.
 
-`main.ts`'s `regenerate()` is where the two paths fork — though since fr-5kx it
+`main.ts`'s `regenerate()` is where the two paths fork — though it
 only decides which path to REQUEST, not run it. It computes
 `systemIsNonFlat(state)` once per generation and stamps the result onto the
 request's `fourD` field (`cloudParams`), then hands the request to
@@ -312,20 +312,20 @@ superseded preset load's intent survives into whichever request actually runs
 — see `cloud-generator.ts`) and fire from `applyCloudResult` once that
 request's result lands. Point color is a separate concern from generating the
 cloud — see below. Rotational symmetry was once 3D-only by the same recorded
-decision (fr-bf6) that kept flame and solid flat, its control hidden whenever
-the system was non-flat; fr-q0h6 overturned that last holdout: `runChaosGame4`
-now has a kaleidoscope stage of its own (copies rotate in any of the six
-coordinate planes, optionally with a `twist` — a double rotation), a w-plane or
+decision that kept flame and solid flat, its control hidden whenever
+the system was non-flat; the 4D kaleidoscope overturned that last holdout:
+`runChaosGame4` now has a kaleidoscope stage of its own (copies rotate in
+any of the six coordinate planes, optionally with a `twist` — a double rotation), a w-plane or
 nonzero twist by itself makes the system 4D (`affine4.ts`'s
 `symmetryIsNonFlat`), and the Symmetry controls stay put. The flame and solid
-renders left the same decision earlier with their 4D variants (fr-5b3/fr-4wd),
+renders left the same decision earlier with their 4D variants,
 covered under "The flame still and the solid voxel render" below.
 
 Seeing the result is a separate concern from generating it. `scene.ts` renders a
 non-flat cloud with a dedicated shader material: the vertex shader rotates each
 point about the cloud's 4D center by a `uRot4` uniform, drops the rotated `w` to
 project orthographically, and colors the point according to the panel's **4D
-Color** select (fr-d47). Three of its five modes are diverging palettes on the
+Color** select. Three of its five modes are diverging palettes on the
 signed rotated `w` — blue/orange (the default), purple/green, or cyan/magenta,
 each a `{neg, pos}` pair in `color.ts`'s `W_SIDE_PALETTES` fed to the shader as
 uniforms — toward `−w`/`+w`; the other two swap in a rotation-invariant
@@ -350,10 +350,10 @@ state — the rotor pair, tumble on/off and speed, and an optional soft w-slice 
 Gaussian opacity window around a chosen `w`, so a cross-section fades in without
 hard-culling the points outside it, with an opt-in slice-relative recolor that
 recenters the w-ramp palettes on the slice window — `project4.ts`'s
-`sliceColorRemap`, fr-nn6) — is session-only and resets to a fresh
+`sliceColorRemap`) — is session-only and resets to a fresh
 baseline only on a flat-to-non-flat transition or a whole-system replacement,
 never on an ordinary parameter edit. The 4D presets (`pentatope`,
-`doubleRotation`, and the fr-zde wave — `tesseract`, `sixteenCell`,
+`doubleRotation`, and the later wave — `tesseract`, `sixteenCell`,
 `twentyFourCell`, `duoprism`, `hyperfern` — all in `presets.ts`; the earlier
 standalone `presets4.ts` is gone, merged into the same factory record every
 other preset lives in) span static polytope flakes and dynamic w-rotation
@@ -377,7 +377,7 @@ version, bad base64/JSON, the wrong transform shape, or an unknown color/depth
 enum, and clamps numeric ranges. Storage and location are injected, so the codec
 is unit-tested with no real browser.
 
-`collection.ts` (fr-cai) layers a second, user-driven path over the same codec.
+`collection.ts` layers a second, user-driven path over the same codec.
 Where `persist.ts` autosaves the single current scene, `collection.ts` keeps a
 multi-slot library — any number of saved `encodeScene` strings, each paired
 with a small JPEG thumbnail, under its own `localStorage` key — so saving or
@@ -396,7 +396,7 @@ estimator (below), needs no accumulation and completes instantly. All three
 replay the identical chaos game (or, for the surface render, its analytic
 equivalent) — same transforms, variations, final-transform lens, symmetry —
 and present the result differently. The four renderers are one **render
-mode** axis (fr-39y): a session-only `renderMode: "points" | "flame" |
+mode** axis: a session-only `renderMode: "points" | "flame" |
 "solid" | "surface"` in `AppState` (never persisted — the app always boots
 into the points explorer), switched from a single segmented control at the
 top of the panel, so any pair of them is a direct switch, never a round-trip
@@ -406,7 +406,7 @@ Radiolarian/Swirl/Dyed Spiral, and the "Escape-time" group's Mandelboxes,
 Mandelbulbs and cross-family Hybrid Chains),
 which `main.ts` applies when the freshly loaded system's cloud lands,
 snapping the camera fit first so the flame's frozen projection frames the
-new attractor. Two sibling side tables ride the same lookup (fr-7u8t.1):
+new attractor. Two sibling side tables ride the same lookup:
 `PRESET_FINALS` gives a preset the final-transform LENS it was composed
 around — and, absent, CLEARS whatever lens the session had, so one preset's
 lens can never re-pose the next one's attractor — and `PRESET_PALETTES`
@@ -448,19 +448,19 @@ Flame color comes from `palette.ts`: Inigo-Quilez cosine gradients
 256×3 LUT by `buildPaletteLUT`. A structural color coordinate rides the orbit —
 nudged toward the chosen transform's palette slot each step, consuming no
 RNG — and indexes that LUT, so orbit-adjacent points share a hue (flam3-style
-structural coloring). Both ends of that nudge are per-transform (fr-hiyu,
-flam3's `color`/`color_speed`): a map's optional `colorIndex` names its slot and
+structural coloring). Both ends of that nudge are per-transform (flam3's
+`color`/`color_speed`): a map's optional `colorIndex` names its slot and
 its optional `colorSpeed` says how far the coordinate travels toward it
 (`c ← c·(1 - speed) + colorIndex·speed`). Absent, they derive to the even spread
 `i / (n - 1)` and a halfway `0.5` — the fixed behaviour that predated the fields,
 bit for bit — so authored color structure survives a `.flame` round trip while
 every existing scene renders unchanged. The surface render's orbit-trap
-palette source reads that same authored `colorIndex` (fr-c6yd); `colorSpeed`,
+palette source reads that same authored `colorIndex`; `colorSpeed`,
 a per-pick quantity, stops at the flame and the solid grid — the surface has
 no pick to carry it. The sentinel `"legacy"` palette opts out of the gradient
-for a flat per-transform hue. The same palettes serve the solid render — and,
-since fr-3b6, the explorer's height/radius ramp recolor (see **Color modes**).
-A user-authored **custom palette** (fr-55k) joins the presets as 2–8 evenly
+for a flat per-transform hue. The same palettes serve the solid render — and
+the explorer's height/radius ramp recolor (see **Color modes**).
+A user-authored **custom palette** joins the presets as 2–8 evenly
 spaced sRGB stops sampled piecewise-linearly into the same LUT, so it flows
 through the CPU accumulators, the WGSL kernels' packed color table, and the
 legend identically; the scene codec persists it as `#rrggbb` strings, and the
@@ -495,7 +495,7 @@ controls re-render with no worker round-trip — which is also why the solid wor
 needs no SharedArrayBuffer fast path (nothing on the main thread is tone-mapping),
 unlike the flame.
 
-Both renders extend to 4D (fr-5b3/fr-4wd). There is no separate 4D worker: the
+Both renders extend to 4D. There is no separate 4D worker: the
 flame and solid `start` commands each carry an optional `fourD` block whose mere
 presence flips the session onto the 4D chaos game and `accumulateFlame4` /
 `accumulateVoxels4`. That block is a **frozen snapshot** of the current 4D view,
@@ -505,7 +505,7 @@ center and rotated-w support, the slice window (`sliceOn` / `sliceCenter` /
 `Transform4`s. It stays valid for the render's whole life for nothing: the
 animation loop early-returns past the tumble step while a render is active, so
 the frozen rotor simply never advances. The 4D flame rides the same WebGPU path
-as the 3D one (fr-e26; see "GPU accumulation backend"), with `accumulateFlame4`
+as the 3D one (see "GPU accumulation backend"), with `accumulateFlame4`
 as its CPU oracle and fallback.
 
 One asymmetry is deliberate: the **soft w-slice floor**. The point cloud and the
@@ -519,7 +519,7 @@ with dross nobody asked to see solidified.
 
 ## The surface distance estimator
 
-A converged system can also be rendered a fourth way (epic fr-7jlk): as a
+A converged system can also be rendered a fourth way: as a
 true implicit surface, sphere-traced against an analytic **distance
 estimator** (DE) instead of accumulated from chaos-game samples. The chaos
 game applies every map FORWARD — pick `fᵢ` at random, plot `fᵢ(p)` — while a
@@ -532,9 +532,9 @@ surface-de.ts`'s `buildSurfaceDE` precomputes the inverse of every active map
 — symmetry-expanded exactly like the chaos game's own kaleidoscope copies —
 plus a seeded probe of the attractor's bounding radius and a pre-inverted
 final-transform lens; `estimateDistance` is the descent itself, following
-the two nearest inverse images at each level (the fr-v6yg width-2 beam)
+the two nearest inverse images at each level (the width-2 beam)
 plus up to two more that hold the rank-3/4 candidates while they stay
-in-sphere (fr-jkpn's validity slots — in-sphere branches carry no positive
+in-sphere (the validity slots — in-sphere branches carry no positive
 certificate, so before the slots a level with three or more simultaneous
 in-sphere branches silently dropped the excess and measurably overshot),
 while folding in a certified lower bound from every non-descended sibling
@@ -543,7 +543,7 @@ instead of stalling and the estimate stays tight near the surface without
 needing the full exponential branch tree. The production estimator —
 `estimateDistanceRefined`, the one the GLSL tracer mirrors — additionally
 spends one extra Hutchinson level on each folded sibling certificate
-(fr-1z6p, fr-beck's 4D ghost-eliminator ported back down): a barely-escaped
+(the 4D spike's ghost-eliminator ported back down): a barely-escaped
 sibling otherwise freezes a near-zero bound the marcher false-hits,
 rendering smooth "balloon" membranes across attractor voids (measured on
 the default, sierpinski, pyramid, and jerusalem presets; refinement drives
@@ -565,13 +565,13 @@ step; conservative for anisotropic ones, so the tracer only backs off its
 step size rather than risk piercing the surface; and intractable for
 nonlinear variations, which have no closed-form inverse for any bound to be
 stated in terms of — so a system using variations is ineligible outright
-(one exception below, fr-5rvk), alongside one whose maps don't contract
+(one exception below), alongside one whose maps don't contract
 (Hutchinson's condition for the attractor to exist in the first place, and
 for the descent to terminate). A
 system extending into 4D is not a disqualifier but a route: it gets the
 DE's 4D twin (two paragraphs down) instead of this 3D one.
 
-The one exception is a **pure-fold map** (fr-5rvk): a map whose variation
+The one exception is a **pure-fold map**: a map whose variation
 list is exactly one active fold-family entry (`boxfold`/`spherefold`/
 `mandelbox`) composes a genuine function `w·V(Mp + t)`, not a sum — unlike a
 blend, which has no branch decomposition and stays ineligible forever — and
@@ -595,11 +595,12 @@ can read contractive in the editor yet fail the gate — and, the other way, a
 small enough weight can rescue an expanding affine part. That same expression
 is what the ESCAPE-TIME gate tests for EXPANSION — the complementary render
 for fold maps that have no attractor to descend onto, described in
-[controls.md](controls.md#panel-controls) rather than here — and since fr-vag4
-that complement holds in BOTH dimensions rather than only where the system
-happens to be flat: `escape-de.ts`'s `analyzeEscapeSystem` is the deliberate
-complement of `analyzeSurfaceSystem`, and `src/fractal/escape-de-4d.ts`'s
-`analyzeEscapeSystem4` the deliberate complement of `analyzeSurfaceSystem4`
+[controls.md](controls.md#panel-controls) rather than here — and since the
+chain's 4D lift that complement holds in BOTH dimensions rather than only
+where the system happens to be flat: `escape-de.ts`'s `analyzeEscapeSystem`
+is the deliberate complement of `analyzeSurfaceSystem`, and
+`src/fractal/escape-de-4d.ts`'s `analyzeEscapeSystem4` the deliberate
+complement of `analyzeSurfaceSystem4`
 (the closing paragraphs of this section), so a fold that stops contracting has somewhere to go
 whichever hyperplane it lives in instead of falling out of the mode when it
 also reaches into `w`. A fold's own `mR` therefore sits on the seam between
@@ -607,11 +608,11 @@ the two renderers: lower it far enough and a Surface-mode IFS becomes an escape-
 set instead. The app discloses that rather than preventing it (the mode's
 eligibility note names the different object), and the reach is narrow — of
 every shipped system only **Mandelbox KIFS** can cross at all, at `mR` 0.478
-against its default 0.500 (fr-77oy tabulated the rest: the single-map escape
-presets would need `mR > fR`, outside the field's domain, and every chain
-sits behind a box-fold link that expands at any ratio). The shipped Fold Lattice preset's `mandelbox` + `linear` blend
-still reads "uses variations" under this rule. A pure-fold FINAL transform
-is eligible since fr-g58b: the lens applies once, so its branches expand
+against its default 0.500 (the fold-ratio sweep tabulated the rest: the
+single-map escape presets would need `mR > fR`, outside the field's domain,
+and every chain sits behind a box-fold link that expands at any ratio). The
+shipped Fold Lattice preset's `mandelbox` + `linear` blend still reads "uses variations" under this rule. A pure-fold FINAL transform
+is eligible too: the lens applies once, so its branches expand
 into one round of root descents through the untouched cores
 (`descendLens`), with no contraction gate — an un-iterated map needs none.
 **Mandelbox KIFS** — twelve maps,
@@ -622,8 +623,8 @@ loads straight into Surface mode.
 `surface-de.ts`'s `estimateDistanceRefined` line for line — the same
 symmetry-expanded inverse maps, sigma_min values, and bounding radii packed
 into fixed-size uniform arrays (capped at 24 slots) instead of JS objects,
-running the identical refined beam-descent loop per ray step. Since fr-5rvk
-that mirror is two compiled variants behind a `SURFACE_FOLDS` define — the
+running the identical refined beam-descent loop per ray step. That mirror
+is two compiled variants behind a `SURFACE_FOLDS` define — the
 affine-ladder body unchanged, or a fold-frontier body mirroring the oracle's
 `descendFold` — flipped by `setSurfaceSystem` in a rare, session-set-scale
 program rebuild, never per frame. It is the same
@@ -638,14 +639,14 @@ just repeats that same call, exactly like the solid render's raymarcher
 re-running each frame against its density grid, only here against an
 analytic field that has no convergence to wait on.
 
-Two fr-55r5 speedups shave that per-ray cost without touching the oracle
+Two speedups shave that per-ray cost without touching the oracle
 discipline. The march hands its own acceptance epsilon to the DE as an
 early-out **cutoff** (part 1): the descent stops the moment its bound is
 provably below the hit threshold — at or above the cutoff the returned value
-is the full-descent result bit for bit, so step sizes never drift, and
-fr-zkt2 added the value-exact twin exit that fires unconditionally once the
-running min reaches the depth-0 sphere floor. fr-7xgi pinned that acceptance
-epsilon itself to the full-resolution frame in every tier: the interaction
+is the full-descent result bit for bit, so step sizes never drift, and a
+value-exact twin exit fires unconditionally once the running min reaches the
+depth-0 sphere floor. That acceptance epsilon is itself pinned to the
+full-resolution frame in every tier: the interaction
 preview tier (`render-tier.ts`) used to scale it down with its own smaller
 buffer, and at a fold system's coarse rungs that epsilon crossed the fold
 DE's loose-but-valid plateau band (region floors read as low as 0.13 DE/D
@@ -654,7 +655,7 @@ preview may coarsen sampling, never acceptance. And an
 **empty-space-skipping grid** (part 2): on every 3D surface-session enter, a
 dedicated worker runs
 `src/fractal/surface-grid.ts` — pricing each cell with a per-system estimator
-(fr-aj4w's `surfaceGridEstimator`: the PLAIN one for fold systems, matching
+(`surfaceGridEstimator`: the PLAIN one for fold systems, matching
 what the fold GLSL tracer itself marches and measured ~1.5x cheaper with
 near-identical floor quality, REFINED for affine) at the centers of a 64-cube
 ceiling over the traced sphere, cutoff `cellRadius`, each cell storing the
@@ -680,22 +681,22 @@ settled-frame trace time -13% on the default system, -8% on the void-poor
 Menger sponge, with grid-vs-gridless frame diffs statistically identical to
 run-to-run noise.
 
-The same picture carries one dimension up (fr-vxoj, built on the fr-beck
+The same picture carries one dimension up (built on the 4D surface DE
 spike's measured GO verdict). `src/fractal/surface-de-4d.ts` is
 `surface-de.ts` with four coordinates: the sigma_min inequality is
 dimension-free, so the whole descent transfers verbatim; the singular values
 need a deterministic cyclic-Jacobi eigen-solve where 3D had a closed form;
-and the kaleidoscope rides the same sector SWEEP as 3D's (fr-u91x lifted
-fr-x029's expansion-to-sweep swap one dimension up: the descent turns each
+and the kaleidoscope rides the same sector SWEEP as 3D's (the expansion-to-sweep
+swap lifted one dimension up: the descent turns each
 chain point through the kaleidoscope's sectors instead of storing a composed
 matrix per copy, so symmetry order costs descent time rather than slots),
 leaving slots input maps 1:1 against the same 24-slot cap 3D uses, at any
 order.
 Those mat4-sized slots did start at 16, because in the DEFAULT uniform block
 24 of them would have claimed 192 of the 224 fragment uniform vectors WebGL2
-merely guarantees; fr-dqlq moved the per-map arrays into a std140 uniform
+merely guarantees; moving the per-map arrays into a std140 uniform
 BLOCK — 2688 bytes of a guaranteed 16KB, budgeted separately from the default
-block — which put the 24-map **24-cell** presets in reach and left the cap a
+block — put the 24-map **24-cell** presets in reach and left the cap a
 question of per-ray descent cost rather than uniform space. What the app
 marches is never the full 4D attractor but its
 `w = sliceCenter` SLICE. A certified 4D DE lower-bounds slice distance for
@@ -713,7 +714,7 @@ rotation is an isometry, so the marched field is just
 untouched — meaning the pose stays exactly as live as the camera (tumble,
 Shift-drag, and slice sweeps all keep working inside the mode), where
 flame/solid-4D freeze theirs at session start because a pose change would
-invalidate their accumulated content. Since fr-dlxh's 4D cut the same
+invalidate their accumulated content. Since the 4D compute cut the same
 estimator ALSO lives in `src/fractal/surface-de-gpu.ts` as the compute
 kernel's fourth core (`core:"affine4"`), and PLAIN 4D surface sessions
 (symmetry order 1) prefer `src/app/surface-compute.ts`'s WebGPU
@@ -722,11 +723,11 @@ spec (`view4`, re-read from the same scene state `setSurface4View`
 maintains), so the live-pose discipline survives the seam — leaving
 this fragment tracer as their fallback arm (`?surfacegl` / no adapter /
 device loss). Kaleidoscope 4D stays HERE by measured verdict: the WGSL
-sector sweep ran ~35x slower than this tracer's at order 6 (fr-b72d),
+sector sweep ran ~35x slower than this tracer's at order 6,
 the same shape-keyed routing 3D uses between its affine and fold
 classes.
 
-That slice has a **thickness** (fr-wa6o). At the shipped default of 0 it is
+That slice has a **thickness**. At the shipped default of 0 it is
 the zero-thickness hyperplane described above, value for value. Above 0 the
 query stops being the point `(p, w0)` and becomes the SEGMENT spanning
 `|w - w0| <= h`, so the mode renders the projected shadow of a SLAB
@@ -748,7 +749,7 @@ which is what SOLID mode already is. What the slab buys over Solid is
 analytic detail with no grid ceiling, and the interesting regime is
 thin-to-medium.
 
-The escape-time complement carries up with it (fr-vag4), and almost none of
+The escape-time complement carries up with it, and almost none of
 it is new algebra. `src/fractal/escape-de-4d.ts` is `escape-de.ts` over 4D
 points: everything structural about the chain — cycling rather than chaining,
 the per-link `+ p`, the bailout test after every link, the single shared
@@ -764,9 +765,9 @@ whose 4D form is the DEFINITION and whose 3D form is the restriction: its
 local factor `2|q|` stays EXACT rather than heuristic one dimension up,
 because quaternion norms multiply on the whole algebra and not merely on the
 3D subspace. That the lift buys anything is measured rather than assumed:
-fr-vag4's own sheet swept both ways of leaving the hyperplane and found a `w`
-ROTATION keeping only 52-61% of the `w = 0` slice's set while still drawing
-16% of its rays at `w0 = 1.2` — roughly half of every offset slice is a
+the 4D chain's own sheet swept both ways of leaving the hyperplane and found
+a `w` ROTATION keeping only 52-61% of the `w = 0` slice's set while still
+drawing 16% of its rays at `w0 = 1.2` — roughly half of every offset slice is a
 genuinely different cut — where a `w` TRANSLATION merely erodes the same
 object (94-98% containment, and a blank frame by `w0 = 0.8`), which is the
 case for authoring a 4D chain as a rotation through `w` rather than a shift
@@ -783,7 +784,7 @@ retraction to fold the query into; the wedge itself generalizes cleanly, as
 `foldQueryIntoSector4` folds any of the six coordinate planes — `w`-planes
 included, which is exactly what the 3D gate turns away — and stays
 1-Lipschitz and an isometry per sector, so the marching ball never moves.
-And the fr-wa6o SLAB is refused at every thickness, for a reason stronger
+And the SLAB is refused at every thickness, for a reason stronger
 than the one that makes `surface-de-4d.ts`'s `slabExact4` refuse sphere
 folds: a forward orbit has no branch enumeration at all, so a segment
 straddling a box fold's wall becomes a bent polyline in a single step, and
@@ -791,8 +792,8 @@ the session clamps the slice thickness to zero rather than degrade into a
 silently wrong image.
 
 A 4D escape session is COMPUTE-ONLY, and by the shipped precedent rather
-than as a shortcut: the fragment 4D tracer deliberately carries no fold GLSL
-(fr-rsp6), an escape chain is fold-shaped by nature, and there is no
+than as a shortcut: the fragment 4D tracer deliberately carries no fold GLSL,
+an escape chain is fold-shaped by nature, and there is no
 forward-orbit GLSL there either — so `surface-de-gpu.ts`'s `core:"escape4"`,
 the first kernel core that is both 4D and FORWARD (it takes the rotor
 prologue and the `GpuMap4` maps layout from the descent cores, and the params
@@ -803,17 +804,17 @@ exactly as a fold-shaped 4D session does, rather than handing the frame to a
 tracer that would draw a different object. The two wrappers the surface
 render composes over its estimators — the ground plane and the balloon —
 lifted in the same session, and both turned out to be decisions rather than
-algebra. The ground plane (fr-h0c3)
+algebra. The ground plane
 needed no new shader text at all — the march classifier and the shade entry
 are already shared across every core — so it is a params block, a struct
 splice and a deleted throw; the floor is an ordinary 3D plane under the
 drawn slice, and the app anchors it at the origin with the FULL 4D visible
-radius so it does not slide as the slice scrubs. The balloon (fr-qxxw)
+radius so it does not slide as the slice scrubs. The balloon
 SLICES THEN INVERTS: the marched ray already lives in the sliced 3D space,
 so the inversion stays a 3D operation on the marched point and the echo is
 the inversion of exactly what is drawn, and the reading a user gets as the
 slider scrubs, object and echo moving together. The explorer follows the same
-dimensional-reduction-first rule since fr-5666: it PROJECTS THEN INVERTS the
+dimensional-reduction-first rule: it PROJECTS THEN INVERTS the
 displayed 3D point, with the source point's rotor, w-ramp and soft-slice weight,
 through the full rotation-invariant 4D enclosing ball. Projection of a 4D
 inversion would echo a different object; a pose-adjusted projected ball would
@@ -841,16 +842,17 @@ chaos-game iterations never touch the main thread. The workers are thin
 `postMessage` glue around plain-Vitest-testable session state machines
 (`flame-worker-core.ts` / `voxel-worker-core.ts`).
 
-A third worker, `cloud-worker.ts` (fr-5kx), generates the live point cloud
+A third worker, `cloud-worker.ts`, generates the live point cloud
 itself — the PRIMARY interactive view, not an on-demand still, so it runs from
 boot rather than being entered/exited from the panel. Its shape differs from
 the flame/voxel workers as much as its purpose: no session state machine
 streaming chunked partial results, just a single one-shot request → response
 (`cloud-worker-core.ts`'s `generateCloud`, computed fresh per call), with the
 at-most-one-in-flight / latest-wins pump living on the main thread in
-`cloud-generator.ts` rather than in the worker. fr-acc's rAF coalescer
+`cloud-generator.ts` rather than in the worker. The rAF coalescer
 (`regen-scheduler.ts`) still fronts it — collapsing a drag/slider burst to one
-request per animation frame — and fr-acc's other surviving piece, the
+request per animation frame — and the other surviving piece of that
+main-thread era, the
 allocation-free hand-inlined chaos-game recording loop, now runs inside the
 worker's `generateCloud` instead of synchronously on the main thread; together
 the two bound staleness to about one generation behind the live state, no
@@ -903,8 +905,8 @@ as it happens, so the reloaded page's boot restores it verbatim — but
 (`state.ts`): a first-visit user who picked a Flame-group preset, or
 switched render mode by hand, inside the reload window used to come back
 in the Points explorer with no trace of the choice, because the restore
-is a plain scene load and the preset's render-mode hint never re-fires
-(fr-su3r). `registerServiceWorker` now takes an `onBeforeIsolationReload`
+is a plain scene load and the preset's render-mode hint never re-fires.
+`registerServiceWorker` now takes an `onBeforeIsolationReload`
 hook, fired in the instant before the reload — never the update reload
 below — with any throw swallowed, since isolation matters more than the
 carried state. `main.ts`'s hook flushes the debounced edit session first, so
@@ -921,7 +923,7 @@ so the sooner the worker claims it and the reload fires, the smaller the
 window in which interaction can be lost; an already-isolated page keeps
 the original `load` timing, since it never reloads at all.
 
-Neither everyday local surface forced that window open before fr-su3r.
+Neither everyday local surface forced that window open.
 `npm run dev` never reaches this code path at all — `register-sw.ts`
 registers no service worker in dev, which gets COOP/COEP natively from
 Vite's dev-server headers instead (above). `npm run preview` deliberately
@@ -945,20 +947,19 @@ whenever the tab becomes visible again) and the app shows the dismissible
 ignored banner costs nothing — the old worker keeps serving the old precache,
 so the old build's content-hashed chunk URLs (the flame/voxel/cloud workers)
 can no longer 404 mid-session. If another tab accepts instead, the remaining tabs
-get the same banner via the replaced-controller path (fr-k1z, fr-o13).
+get the same banner via the replaced-controller path.
 
 ## GPU accumulation backend
 
-Accumulation itself — not just display — is backend-pluggable (fr-npb): a
+Accumulation itself — not just display — is backend-pluggable: a
 `FlameAccumBackend` seam in `flame-worker-core.ts` lets the flame worker
 session drive either the CPU chaos-game loop (`accumulateFlame`, unchanged)
 or a WebGPU compute-shader backend, chosen per render behind a
-`navigator.gpu` capability check (on phones too since fr-hs9's on-device
-validation), with CPU as the universal fallback and the ground truth the GPU
-path is
-measured against. The WGSL kernel and its pure packing/dispatch-planning/
-histogram-conversion layer live in `src/fractal/flame-gpu.ts` (dependency-free
-and Vitest-tested, like the rest of `src/fractal/`); `src/app/
+`navigator.gpu` capability check (on phones too, since the on-device
+validation passed), with CPU as the universal fallback and the ground truth
+the GPU path is measured against. The WGSL kernel and its pure packing/
+dispatch-planning/histogram-conversion layer live in
+`src/fractal/flame-gpu.ts` (dependency-free and Vitest-tested, like the rest of `src/fractal/`); `src/app/
 flame-gpu-backend.ts` drives it from inside the worker behind the
 `FlameAccumBackend` seam. The kernel is a line-for-line WGSL port of
 `accumulateFlame`'s inlined stepping logic (same transform pick, affine/
@@ -974,12 +975,12 @@ runner (`scripts/gpu-flame-bench.mjs`, `npm run bench:gpu`) accumulate the
 same system on both backends from the same seed-class and check the CPU/GPU
 renders agree within measured thresholds, exiting non-zero if they don't —
 the same page also doubles as the phone-benchmarking path, since it works
-interactively over the LAN like any other dev page. CI runs the whole sweep
-(fr-jnu): the `gpu-agreement` workflow executes the real WGSL kernels on
+interactively over the LAN like any other dev page. CI runs the whole sweep:
+the `gpu-agreement` workflow executes the real WGSL kernels on
 SwiftShader (Chromium's bundled software Vulkan, so no GPU runner is
 needed), with the runner treating a skipped comparison (no WebGPU adapter)
 as a failure rather than a pass. It runs on every push/PR EXCEPT ones whose
-every changed file is docs, markdown or the beads database (fr-hzlm — the
+every changed file is docs, markdown or the beads database (the
 sweep is ~18 min against 1m50s for the next-slowest job, so it is the whole
 critical path; the filter is deliberately a fail-safe `paths-ignore` rather
 than an allowlist of kernel paths, which would fail open). When it does run
@@ -994,10 +995,10 @@ empty shard is not a quiet pass — no comparison ran means `agreement:
 across three maps plus a final-transform lens, so every hand-written WGSL
 variation formula — not just the handful the showcase presets use — is
 compared against `variations.ts`/`variations4.ts` on every CI run; a separate
-"fold zoo" (3D and 4D, fr-p7nu) pins the three-member Mandelbox fold family
+"fold zoo" (3D and 4D) pins the three-member Mandelbox fold family
 (`boxfold`/`spherefold`/`mandelbox`) against the same oracles. vitest
 separately pins the WGSL switch's case numbering to `KERNEL_VARIATION_INDEX`
-statically. See `docs/spike-fr-53k-gpu-flame-accum.md` for the original
+statically. See `docs/flame-gpu-accumulation-spike.md` for the original
 spike's go/no-go decision and measured numbers.
 
 Agreement is necessary but not sufficient — a render that matches the CPU
@@ -1009,14 +1010,14 @@ alongside `adb shell`, samples the app's own backend/clamp/error notices,
 `/proc/meminfo` MemAvailable (the real OOM oracle — `performance.memory` can't
 see the GPU storage or MAP_READ staging buffers), SoC temperature, and a
 low-memory-killer / device-lost logcat scan while you drive a full-res render
-by hand over the LAN. fr-7su's run (arm valhall, Android 10) passed cleanly:
+by hand over the LAN. The soak run (arm valhall, Android 10) passed cleanly:
 minutes of continuous GPU accumulation with no thermal/memory kill, the GPU
 path running _cooler_ than the CPU fallback it offloads, and — the device's
 `maxStorageBufferBindingSize` binding at 256 MiB — a graceful limit-guard CPU
 fallback once supersampling pushes the histogram past that ceiling
 (`flame-gpu-backend.ts`).
 
-The 4D flame render takes the same GPU path (fr-e26): `src/fractal/
+The 4D flame render takes the same GPU path: `src/fractal/
 flame-gpu-4d.ts` lifts the kernel one dimension — 4x4+translation affines,
 the `variations4` registry, the 20-coefficient rotor+camera projection, the
 four `FourDRenderColor` modes, and the soft w-slice's fractional weights

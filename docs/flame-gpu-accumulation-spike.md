@@ -1,4 +1,4 @@
-# Spike fr-53k: GPU accumulation for the flame render — go/no-go
+# GPU accumulation for the flame render — a go/no-go spike
 
 **Verdict: GO** — for WebGPU compute-shader flame accumulation as an optional
 fast path behind capability detection, with the existing CPU worker kept
@@ -10,7 +10,7 @@ resists it" cost has a concrete, bounded mitigation. The voxel path (payoff
 #2) was not benchmarked; see [Voxel path](#voxel-path) for why this result
 mostly transfers.
 
-Spike artifacts live on the throwaway branch `spike/fr-53k-gpu-flame-accum`
+Spike artifacts live on a throwaway spike branch
 (benchmark page `src/app/gpu-spike/`, runner `scripts/gpu-flame-bench.mjs`).
 No production code was changed.
 
@@ -151,7 +151,7 @@ Reading the numbers:
 - <a name="voxel-path"></a>**Voxel path.** Not benchmarked. The flame result
   transfers structurally: same chaos-game loop, same atomics, scatter into a
   `size³` storage buffer instead of 2D — and the entire O(size³)
-  pack/transfer/`texSubImage3D` pipeline (including fr-8x7's pack-duty
+  pack/transfer/`texSubImage3D` pipeline (including its pack-duty
   throttle) disappears because the volume can stay resident on-GPU next to
   the raymarcher that displays it. Recommend folding voxels into
   productization _after_ the flame path lands, not as a second spike.
@@ -206,7 +206,7 @@ What this adds beyond bigger numbers:
 - **The fixed-point overflow limit is now a hard prerequisite**, not an
   engineering nicety: at 10 G iter/s, a hot bucket (fern's peak was 52 k
   hits per 50 M iterations) crosses the ~16.7 M-hit color capacity in
-  roughly 3 seconds of accumulation. Productization (fr-npb) must ship
+  roughly 3 seconds of accumulation. Productization must ship
   overflow handling before enabling on fast GPUs.
 
 Raw JSON preserved locally as
@@ -226,5 +226,4 @@ interactively at `https://<dev-server>/gpu-spike/index.html` — including from
 a phone on the LAN, which is how phone numbers should eventually be taken.
 
 Benchmarked 2026-07-06: Chrome 148, Linux, Intel Iris Xe (gen-12lp), and
-Firefox 152, Ubuntu, AMD RX 7900 XTX (addendum), spike branch
-`spike/fr-53k-gpu-flame-accum`.
+Firefox 152, Ubuntu, AMD RX 7900 XTX (addendum), on that spike branch.

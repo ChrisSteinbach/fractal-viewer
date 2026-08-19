@@ -96,13 +96,13 @@ Transform** sliders that appear in the panel while a transform is selected.
 The panel's categories — **Capture**, **Share**, **Collection**,
 **Timeline**, **Transforms**, **Presets**, **Cloud**, **Color**,
 **Atmosphere**, **Symmetry**, and **3D View**/**4D View** — are collapsible
-sections, and opening one closes the previous (fr-zoi). The collapsed ones
-pack into rows of chips rather than stacking (fr-vha5), because nine stacked
+sections, and opening one closes the previous. The collapsed ones
+pack into rows of chips rather than stacking, because nine stacked
 headers cost 473px of a 727px phone screen before any control was visible.
 Measured, that keeps the panel between one and two phone screens rather than
 the one it used to claim: 727px with **Color** open, 1336px with
 **Transforms** open and a transform selected. The Flame, Solid, and Surface render
-modes get the same treatment (fr-99o) — **Tone** / **Blur** / **Quality** for
+modes get the same treatment — **Tone** / **Blur** / **Quality** for
 Flame, **Surface** / **Lighting** / **Quality** for Solid, and **Surface
 Look** for Surface itself (see **✺ Flame**, **◆ Solid** and **◈ Surface**
 below) — with a status block
@@ -111,14 +111,14 @@ hint for Surface), and the panel remembers which section was open in each
 mode, so switching Points ↔ Flame ↔ Solid ↔ Surface restores where you were.
 Scroll swipes that happen to land on a slider scroll the panel without
 editing its value; horizontal drags still adjust it as usual. A tap alone
-sets nothing — tap-to-set is deliberately absent on touch (fr-xu4u), since
+sets nothing — tap-to-set is deliberately absent on touch, since
 on a panel of full-width sliders a tap that lands on one is a scroll that
 hasn't moved yet far more often than it's an edit, and a drag still reaches
 any value the tap could have.
 Loading a whole new system — a preset, Surprise Me, or a gallery load —
 morphs into place instead of snapping (see **Presets** below).
 
-- **ⓘ What is this?** (fr-1zb) — right under the panel title: a short
+- **ⓘ What is this?** — right under the panel title: a short
   plain-language explanation of what an iterated function system is and how
   the chaos game draws its attractor (warm-up, escape-reseed and all), with
   further-reading links (Wikipedia's IFS / chaos game / fractal flame
@@ -216,7 +216,7 @@ morphs into place instead of snapping (see **Presets** below).
     number, which is why 192³ is the shipped detail-vs-memory compromise and
     256³ already costs about 2.4× the memory; when the requested size doesn't
     fit, a note under the slider says what was built instead.
-- **◈ Surface** (fr-7jlk) — a fourth render alongside Flame and Solid: the
+- **◈ Surface** — a fourth render alongside Flame and Solid: the
   attractor as a true implicit surface, sphere-traced live against an
   analytic distance estimator instead of accumulated from chaos-game
   samples. It needs no worker and no accumulation, so it renders instantly,
@@ -230,24 +230,24 @@ morphs into place instead of snapping (see **Presets** below).
   (scale ≈ 0), or does not contract (scale ≥ 1), and also when the map
   count exceeds the tracer's fixed uniform budget: the bare active-map
   count against a 24-map limit, for flat and 4D systems alike (the 4D
-  limit was raised from 16 by fr-dqlq, which moved that tracer's per-map
-  arrays into a std140 uniform block — the 24-map **24-cell** presets
+  limit was raised from 16 by moving that tracer's per-map arrays into a
+  std140 uniform block — the 24-map **24-cell** presets
   surface now). **Symmetry** no longer counts against that budget: the flat
   tracer used to expand each kaleidoscope copy into a map slot of its own,
   so a 4-map system was capped at 6-fold and higher orders disabled the
-  button, but fr-x029 made the distance estimator sweep the symmetry
+  button, but the distance estimator now sweeps the symmetry
   sectors around the base maps instead — any order is admissible now, at a
   proportional cost in trace time rather than in slots. High orders do
   soften the estimate (more branches per level than the tracer's beam can
   follow), which can show as faint membranes across the shape's voids.
-  **Pure-fold maps** are no longer an automatic disqualifier either
-  (fr-5rvk): a map whose variation list is exactly one fold-family entry
+  **Pure-fold maps** are no longer an automatic disqualifier either: a
+  map whose variation list is exactly one fold-family entry
   (`boxfold`/`spherefold`/`mandelbox`) is a composition the tracer can
   sweep the inverse branches of, so it stays eligible — a blend (the
   shipped **Fold Lattice** preset pairs `mandelbox` with `linear`) still
   trips the uses-variations reason, since a weighted sum has no
-  per-branch inverse. A **pure-fold final transform** is eligible too
-  (fr-g58b): the lens applies once to each query, so its fold expands
+  per-branch inverse. A **pure-fold final transform** is eligible too:
+  the lens applies once to each query, so its fold expands
   into one round of branch root descents around the untouched estimator
   — Surprise Me's boxfold-final rolls now surface-render, and a fold
   lens over an affine base costs only a few times an ordinary trace
@@ -260,10 +260,10 @@ morphs into place instead of snapping (see **Presets** below).
   trip the does-not-contract reason — and, the other way, a small enough
   weight can rescue an affine part that would otherwise read as expanding.
   A single pure-fold map that does NOT contract — the canonical Mandelbox
-  parameterization, weight ~2 — keeps the Surface button enabled anyway
-  (fr-kltj): such a map has no IFS attractor at all, so Surface marches
+  parameterization, weight ~2 — keeps the Surface button enabled
+  anyway: such a map has no IFS attractor at all, so Surface marches
   its **escape-time set** instead — the classic ray-marched Mandelbox
-  object, in the Mandelbrot form every published render uses (fr-7u8t.8),
+  object, in the Mandelbrot form every published render uses,
   disclosed by the mode's status note. The transform's own offset is not
   the escape constant; it shifts the fold's centre, so it deforms the
   object rather than replacing it, and an offset of zero gives the
@@ -274,8 +274,8 @@ morphs into place instead of snapping (see **Presets** below).
   the explorer camera would otherwise start inside the solid). A **blend** or
   a **final transform** still has no escape-time reading; those keep the
   ordinary eligibility reasons. (A fold that extends into **4D** does have
-  one since fr-vag4 — see the 4D paragraph further down.)
-  SEVERAL pure-fold maps do have one, though (fr-za0n), and this is where
+  one — see the 4D paragraph further down.)
+  SEVERAL pure-fold maps do have one, though, and this is where
   the mode stops being a one-map renderer: **the transform list becomes a
   formula chain.** Orbit step `i` applies link `i mod n` — the maps take
   turns, one per step, rather than composing into a single step — with the
@@ -301,7 +301,7 @@ morphs into place instead of snapping (see **Presets** below).
   the bailout ball: a six-link chain measures 2.4× the single map's cost per
   estimate, not 6×. And a long chain is **less** sensitive per link — moving
   one link's fold displaces the object 3.8-6.4× less than moving the same
-  map alone (fr-77oy), so per-link edits get finer as the chain grows rather
+  map alone, so per-link edits get finer as the chain grows rather
   than wilder.
 
   A **kaleidoscope** rides along, and it is a different mechanism here from
@@ -315,7 +315,7 @@ morphs into place instead of snapping (see **Presets** below).
   1 point in 262144 moved at orders 2/4/6/8, against ~3700 at 3/5 — so a
   w-plane wedge at order 4 is simply the same object without it.
 
-  **A chain need not stay in 3D** (fr-vag4). A non-contracting fold — or a
+  **A chain need not stay in 3D**. A non-contracting fold — or a
   chain of them — that reaches out of the `w = 0` hyperplane is marched as
   the **W slice** of its 4D escape-time set, the same way a contracting 4D
   system is marched as the slice of its attractor, and the mode's status
@@ -391,7 +391,7 @@ morphs into place instead of snapping (see **Presets** below).
   a ring; obliquely, which is where the session opens, radial fluting on a
   drum — so it is the one of the three that rewards orbiting to the pole.
   The Presets menu's **Escape-time** group — Mandelbox, Mandelbox Rings,
-  Mandelbox Cube — are that mode's showcase (fr-7u8t.8), and they load
+  Mandelbox Cube — are that mode's showcase, and they load
   straight into it. All three are the same single map at three fold
   weights — 2 (the classic knobbly ball), 3 (small lobes in a shell around
   a hollow centre) and −1.5 (a cube with fractal faces). The weight is the
@@ -401,7 +401,7 @@ morphs into place instead of snapping (see **Presets** below).
   position slider moves the fold's centre, which deforms rather than
   translates.
   The same group's **Mandelbulb**, **Mandelbulb Offset** and **Mandelbulb
-  Rotated** (fr-tdin) are the escape-time family's second object: a single
+  Rotated** are the escape-time family's second object: a single
   map whose only variation is the triplex 8th power, marched the same
   forward way and disclosed by its own status note ("Mandelbulb render").
   Its two knobs are the map's own — the position slider is a PRE-power
@@ -434,18 +434,18 @@ morphs into place instead of snapping (see **Presets** below).
   usual mid-ladder entry — sized so the first frame costs about what a
   fold-free system's does, since a fold descent runs orders of magnitude
   pricier per pixel. Previews are traced as the same bounded scissor
-  strips as the settle/capture tiers (fr-du81): a frame too heavy to
+  strips as the settle/capture tiers: a frame too heavy to
   finish inside its per-frame budget presents its partial progress and
   continues across frames instead of handing the GPU one unbounded
   submission — on a device far too slow for the system (a phone on a fold
   preset, software GL) the image fills in progressively and the page
   stays responsive, where it used to wedge the GPU process outright.
   On an especially heavy view, the preview and the full-detail pass can both
-  take a long time; a progress row under the Surface hint (fr-zx34) shows
+  take a long time; a progress row under the Surface hint shows
   how far along each one is ("Preview 43%", "Full detail 0.4%") so you can
   judge whether to wait it out or move the camera on — the render never
   gives up on its own. The preview tier itself is yours to control
-  (fr-37c6, and deliberately never a patience guess): a **Quick previews**
+  (and deliberately never a patience guess): a **Quick previews**
   checkbox above the progress row turns it off wholesale — the view then
   holds its last frame while you move and the full render starts the
   moment you stop, developing progressively over the held image (worth
@@ -474,7 +474,7 @@ morphs into place instead of snapping (see **Presets** below).
   keeps rotating the hidden planes, and the **W slice** slider sweeps the
   cut through the shape in real time. (The slice toggle's ghosting is a
   point-cloud affair; the surface mode always marches the current slice
-  position.) A **Slice thickness** slider (fr-wa6o) sits under it, giving
+  position.) A **Slice thickness** slider sits under it, giving
   that cut some depth — see the 4D section below. Anisotropic
   (non-uniformly scaled) maps are a
   softer case: the button stays enabled, but the mode's own status note
@@ -490,8 +490,8 @@ morphs into place instead of snapping (see **Presets** below).
   color — and **Light Angle**, **Light Height**, **Ambient**, and
   **Environment** sliders.
   Every one of them is a plain shader input, so dragging any of them
-  re-renders instantly with nothing to restart. **Environment** (fr-ehcj,
-  0–100%, default 35%) tints the light itself toward the **Background**
+  re-renders instantly with nothing to restart. **Environment** (0–100%,
+  default 35%) tints the light itself toward the **Background**
   gradient, sampled along each point's own shading normal — a two-stop
   sky-above/ground-below environment, so the render sits IN its backdrop
   instead of floating in front of it (a surface facing up over the default
@@ -516,7 +516,7 @@ morphs into place instead of snapping (see **Presets** below).
   additively, so pushing both to their extremes together is worth checking
   by eye before calling a look finished, rather than assuming
   "backdrop-tinted fog" and "backdrop-lit light" always read as
-  complementary. 0% is a bit-exact identity — the pre-fr-ehcj neutral
+  complementary. 0% is a bit-exact identity — the pre-Environment neutral
   light — so a link saved before this control existed renders unchanged at
   that setting; the shipped default is deliberately non-zero, so an
   existing shared link now renders with a subtle environment tint, which
@@ -529,7 +529,7 @@ morphs into place instead of snapping (see **Presets** below).
   input, so author it in the explorer and then enter the mode. A map's
   per-transform **Speed** does nothing here, and is not the **Color speed**
   slider above, which fades descent levels rather than picks.
-  Two persisted scene toggles round out the section. **Balloon** (fr-5wlv)
+  Two persisted scene toggles round out the section. **Balloon**
   — with its **Balloon size** slider and **Inflate** button — is the same
   balloon as **Atmosphere**'s **Balloon echo** below (one setting, shared
   across renderers), here traced as real geometry rather than echoed
@@ -546,15 +546,15 @@ morphs into place instead of snapping (see **Presets** below).
   previews and settles once parked. The full-size poses settle within the
   render's ordinary budgets; a slider parked mid-inflation (well below
   1×) on a heavy lens system may settle with its deepest creases soft — a
-  disclosed budget trade, never a hang. A 4D session traces it too
-  (fr-qxxw), off the same setting: what the tracer inverts there is the
+  disclosed budget trade, never a hang. A 4D session traces it too, off
+  the same setting: what the tracer inverts there is the
   **W slice** it has just marched, not the 4D set, so the echo is the
   inversion of exactly what is drawn and the two scrub together as you move
   the slice. The rows hide for a FORWARD-ORBIT session in either dimension
   — the escape-time and Mandelbulb renders — where the balloon isn't just
   unavailable but permanently inert: those solids are filled all the way to
   the ball's center, so an inverted echo would swallow the camera, and they
-  stay plain. That gate is about the object, not the dimension. **Floor** (fr-rhn5) puts an infinite neutral-gray floor just
+  stay plain. That gate is about the object, not the dimension. **Floor** puts an infinite neutral-gray floor just
   below the shape to catch its shadow — the classic ray-marched-fractal
   grounding, and the scale reference fold monsters otherwise lack. The
   floor is matte-lit by the same **Light Angle** / **Light Height** /
@@ -566,7 +566,7 @@ morphs into place instead of snapping (see **Presets** below).
   edge ever shows; it is one-sided, so a camera below it looks straight
   through. Unlike the balloon it carries no gate at all: it survives the
   escape-time and Mandelbulb sessions — those solids cast their shadows on
-  it happily — and since fr-h0c3 a 4D session drops it under the marched
+  it happily — and a 4D session drops it under the marched
   **W slice**, where it is an ordinary 3D plane like any other. (An
   off-centre slice shows a smaller shape floating above it, which is
   honest — it _is_ a smaller slice.) It is likewise a recompile-class
@@ -593,7 +593,7 @@ morphs into place instead of snapping (see **Presets** below).
   degree of freedom, no gesture above reaches it) give exact per-axis control
   on every device. The sliders track the guide box live and stay in sync with
   the drag gestures above.
-  - **Color → Index / Speed** (fr-hiyu) — the flam3 per-xform color pair, one
+  - **Color → Index / Speed** — the flam3 per-xform color pair, one
     group below **Weight**. **Index** is the palette slot this map pulls the
     flame's structural color coordinate toward; **Speed** is how far each pick
     moves it (`0` keeps the incoming color — flam3's "symmetry" xform, which
@@ -611,7 +611,7 @@ morphs into place instead of snapping (see **Presets** below).
     flame keep its authored color structure. The final transform has no Color
     group: it is applied to every plotted point rather than _picked_, so it
     never moves the coordinate.
-  - **Variations → a fold's own lengths** (fr-s9ll) — a `boxfold`,
+  - **Variations → a fold's own lengths** — a `boxfold`,
     `spherefold` or `mandelbox` row carries the Mandelbox apparatus's three
     lengths nested under its weight slider: **Min radius** and **Fixed
     radius**, the ball fold's inner and outer shell, and **Box limit**, the
@@ -644,17 +644,17 @@ morphs into place instead of snapping (see **Presets** below).
   and 20-map dodecahedron flakes, plus dedicated **Flame** and **4D** groups.
   Loading one — like Surprise Me and a gallery load — morphs the attractor
   smoothly from the current shape into the new one instead of snapping; the
-  OS's reduced-motion preference opts out to the instant snap (fr-a04l).
+  OS's reduced-motion preference opts out to the instant snap.
 - **Surprise Me** — rolls a whole new random system rather than a named one:
   two to four maps, a kaleidoscope about 30% of the time, a final-transform
-  lens about 25% of the time, and about 25% of rolls 4D (which since fr-msw5
+  lens about 25% of the time, and about 25% of rolls 4D (which
   may be 4D kaleidoscopes). Rolls are quality-gated — each candidate is probed
   with a short chaos game and rejected if it collapses to a point, escapes, or
   otherwise fills too little of its own bounds, and the roll retries up to
   forty times. Exhausting all forty is a backstop that measurement says
   effectively never fires; when it does, the best-scoring candidate is used
   rather than nothing. Like a preset it morphs in and is a single undo step.
-- **🧬 Mutate** (fr-3vly) — the middle ground between the sliders and a total
+- **🧬 Mutate** — the middle ground between the sliders and a total
   reroll: a 3×3 modal of small variations _around_ the current system, with the
   system itself pinned in the center for comparison. Eight candidates are
   nudged from it — every field perturbed a little, quality-gated the same way
@@ -664,7 +664,7 @@ morphs into place instead of snapping (see **Presets** below).
   undoable load and re-seeds the grid around your pick, so you can keep walking
   outward a step at a time; **↻ Mutate again** rolls eight fresh variations of
   where you are now. Nothing touches the scene until you pick.
-- **▶ Drift** (fr-wavo) — next to **Surprise Me**: an ambient, ever-evolving
+- **▶ Drift** — next to **Surprise Me**: an ambient, ever-evolving
   show for leaving the explorer running (a TV via the PWA, a second screen).
   While drifting, the explorer dwells on the current attractor for about five
   seconds, then glides over about five more into a fresh quality-gated
@@ -681,14 +681,14 @@ morphs into place instead of snapping (see **Presets** below).
   asks for reduced motion (the disabled button says why): no motion means no
   drift. Between legs the show is fully idle, so it sips battery while
   dwelling; recording a video of a drifting session works as usual.
-- **▶ Drift collection** (fr-w2ve) — in the gallery modal's header: the same
+- **▶ Drift collection** — in the gallery modal's header: the same
   ambient show, but its legs walk YOUR saved collection in gallery order
   (newest first), morphing from one saved system to the next and looping
   back to the first — a slideshow of keepers instead of random rolls. Legs
   are the same undoable replace-loads as clicking a gallery card, except the
   camera auto-fits and follows the morph rather than snapping to each
   entry's saved pose (a manual card click still restores the pose exactly).
-  Every entry plays in the mode it was **saved from** (fr-75sq): a
+  Every entry plays in the mode it was **saved from**: a
   ✺ flame / ◆ solid entry glides through the point-cloud morph, re-renders
   in its own mode with its own saved render settings, waits for the render
   to complete, lingers a second on the finished image, and moves on — while
@@ -701,17 +701,17 @@ morphs into place instead of snapping (see **Presets** below).
   else matches **▶ Drift**: the same stop-on-edit rules, the same **■ Stop
   drifting** toggle, the same reduced-motion unavailability (the button also
   disables while the collection is empty), and it is never persisted.
-- **Collection** (fr-cai) — a persistent, multi-slot library of saved systems,
+- **Collection** — a persistent, multi-slot library of saved systems,
   layered over the same encoded-scene format as the single autosaved scene
-  (see **Sharing & persistence** below). Available in every render mode
-  (fr-75sq), like Capture and Share. **★ Save to collection** saves the current system
+  (see **Sharing & persistence** below). Available in every render mode,
+  like Capture and Share. **★ Save to collection** saves the current system
   with a thumbnail of what's actually showing — the live cloud, or the
   flame/solid frame while one of those renders is up — and confirms with a
   toast. A save made from a Flame/Solid render also **tags the entry with
   that mode** (shown as a ✺/◆ glyph on its card): loading it re-enters that
   renderer once the restored cloud lands, and the drift slideshow plays it
   there. The tag lives only in your local collection — share links and the
-  autosave stay mode-less (fr-39y). **▦ Gallery (N)** (N tracks the live
+  autosave stay mode-less. **▦ Gallery (N)** (N tracks the live
   count) opens a modal grid of saved thumbnails; clicking one loads it as a
   whole-system replacement (the same undoable treatment as a preset load or
   Surprise Me) — so you can save a keeper, keep tweaking, and still load it
@@ -719,7 +719,7 @@ morphs into place instead of snapping (see **Presets** below).
   shape rather than snapping. Each card has a ✕ to delete it; Escape, the
   backdrop, or the header ✕ close the modal, and the header's **▶ Drift
   collection** starts the looping slideshow described above.
-  **⬇ Back up collection** (fr-de9t) downloads the whole gallery — encoded
+  **⬇ Back up collection** downloads the whole gallery — encoded
   scenes, mode tags, thumbnails — as one JSON backup file (disabled while
   the collection is empty). Restoring goes through **Share**'s **⬆ Import
   file**: merged entries slot into their saved chronological order, ones
@@ -727,7 +727,7 @@ morphs into place instead of snapping (see **Presets** below).
   The collection otherwise lives only in this browser profile's
   localStorage — back it up before clearing site data or when moving
   devices.
-- **Share** (fr-5mdt) — the current scene as a portable document, plus the
+- **Share** — the current scene as a portable document, plus the
   app's one import door. **🔗 Copy link** copies a shareable `#v1=…` link
   built fresh from the current state, not the (debounced) address bar.
   **⤓ Save scene file** is the link's file counterpart (see below);
@@ -736,9 +736,9 @@ morphs into place instead of snapping (see **Presets** below).
   [flame-interop.md](flame-interop.md)). **⬆ Import file** — or dropping a
   file anywhere on the page — loads a scene file, imports a `.flame` file,
   merges a collection backup into the gallery, or restores a timeline
-  backup (fr-h9rk, replacing the authored timeline — with an Undo toast
+  backup (replacing the authored timeline — with an Undo toast
   when one was there).
-- **Timeline** (fr-8v41) — an authored animation: an ordered sequence of
+- **Timeline** — an authored animation: an ordered sequence of
   keyframes played back as a chain of morphs, the drift show's directed
   counterpart — you decide what plays, in what order, at what pace. Like the
   Collection it is available in every render mode, and it persists in this
@@ -775,25 +775,25 @@ morphs into place instead of snapping (see **Presets** below).
   (the disabled buttons say why); authoring and backup stay available —
   adding keyframes isn't motion.
   A keyframe added while a Flame/Solid render is showing becomes a **render
-  keyframe** (fr-v3au), wearing the gallery's ✺/◆ glyph: on playback its leg
+  keyframe**, wearing the gallery's ✺/◆ glyph: on playback its leg
   morphs in as the point cloud, re-enters that renderer on arrival (with the
   render settings it was saved with), and HOLDS the schedule until the
   render converges — the step's hold seconds then dwell on the converged
   image before the next leg departs. Convergence time is content- and
   device-dependent, so once any step is a render keyframe the authored total
   is only a floor — the status line says so with a "+" ("0:18+"). The
-  render's accumulator seed is pinned per leg too (fr-4ff7), so the
+  render's accumulator seed is pinned per leg too, so the
   converged still is identical run to run, residual noise included.
   **⏺ Export clip** plays the timeline and downloads the result as a video.
   Whenever the browser can encode H.264 (WebCodecs), the export runs OFFLINE
-  and frame-exact (fr-92t9): the whole pipeline steps on a virtual clock —
+  and frame-exact: the whole pipeline steps on a virtual clock —
   each frame's morph sample generated at its exact time, at the scene's full
   point count (no need to touch **Morph Detail**), rendered, and encoded to
   a 30 fps MP4 — so a hitch can't drop a frame, the same timeline exports
   the same clip on the same device, and a background tab keeps exporting.
   Render keyframes PARK the virtual clock while their render converges (no
   convergence footage), then dwell the authored hold on the converged still,
-  so the clip comes out exactly the authored length (fr-6jic). The button
+  so the clip comes out exactly the authored length. The button
   turns into the progress readout and the cancel affordance ("⏳ Exporting
   42%") — cancelling (or resizing the window mid-run) still saves the
   partial clip. Without WebCodecs H.264 — or when a manual ● Record video is
@@ -801,7 +801,7 @@ morphs into place instead of snapping (see **Presets** below).
   canvas instead: content still seed-deterministic, but frame timing is
   realtime and render keyframes honestly record however long convergence
   took. Either way clips cap at 2:00, and a toast warns up front when the
-  authored total exceeds that. **⬇ Back up timeline** (fr-h9rk) downloads
+  authored total exceeds that. **⬇ Back up timeline** downloads
   the whole thing — keyframes, timings, mode tags, and the playback seed, so
   a restored timeline replays (and exports) the very same morphs — as one
   JSON file; restore it with **Share**'s **⬆ Import file** (or drop it onto
@@ -809,7 +809,7 @@ morphs into place instead of snapping (see **Presets** below).
   there was one.
 - **Points** — log-scaled slider for the point count (1k–5M); takes effect on
   **Regenerate Points** (or immediately on other edits when auto-update is on).
-- **▶ Watch it build** (fr-1zb) — replays how the chaos game drew the cloud
+- **▶ Watch it build** — replays how the chaos game drew the cloud
   that's on screen right now: the same buffer is revealed in generation order
   (no re-roll), one hop at a time at first — a bright spark riding each
   landing — then accelerating through an exponential accretion ramp back to
@@ -821,10 +821,10 @@ morphs into place instead of snapping (see **Presets** below).
   axes), and runs the auto-orbit (or, in the 4D projection, the auto-tumble)
   so the drawing is easy to follow — your actual settings are untouched
   underneath and come back exactly as they were when the replay ends or is
-  cancelled (fr-hpci).
+  cancelled.
   Reduced motion keeps that extra spin off. Opening the control panel
   mid-replay cancels the replay too, restoring everything immediately.
-- **Morph Detail** (fr-jonj) — how many points the cloud keeps while a system
+- **Morph Detail** — how many points the cloud keeps while a system
   morph is in flight (a preset load, Surprise Me, a gallery load, or a Drift
   leg). **Adaptive** (default) sizes each in-between cloud to what this device
   can regenerate in one animation frame — the smoothest motion, but on a big
@@ -853,9 +853,9 @@ morphs into place instead of snapping (see **Presets** below).
   voxel grid is unaffected either way (see **Detail**). Session-only: it is a
   device preference, so it never rides in a link or scene file.
 - **Color Mode** — see [architecture.md](architecture.md#color-modes).
-- **Ramp Palette** (fr-3b6) — appears while **Color Mode** is **By Height** or
+- **Ramp Palette** — appears while **Color Mode** is **By Height** or
   **By Radius**, the two modes that _are_ a 1-D ramp — and, in the 4D
-  projection, while **4D Color** is **By 4D Radius** (fr-6ue) — naming the
+  projection, while **4D Color** is **By 4D Radius** — naming the
   gradient those ramps sample. **Built-in ramp** (the default) keeps the
   original hand-tuned formulas (height's blue→green→red, radius's warm→cool);
   the seven named gradients — **Spectrum**, **Sunset**, **Dusk**, **Lagoon**,
@@ -869,7 +869,7 @@ morphs into place instead of snapping (see **Presets** below).
   Persists in the link and scene file, and the row simply hides again under a
   color mode with no ramp (By Transform, By Position, Uniform Cyan), holding
   your choice for the next time one is active.
-- **Custom** — the gradient editor (fr-55k), which opens under whichever
+- **Custom** — the gradient editor, which opens under whichever
   palette select you set to **Custom**: a preview strip of the gradient, one
   color swatch per stop, and **+ Stop** / **− Stop**. Stops sit evenly across
   the ramp and blend linearly between neighbors; there may be 2 to 8 of them
@@ -892,7 +892,7 @@ morphs into place instead of snapping (see **Presets** below).
   **Surface Look**'s select has none — it only appears for the color sources
   that need a gradient, and its **By Transform** source is a sibling choice in
   **Color source** above it.
-- **Axis Colors** (fr-8k7) — appears only while **Color Mode** is **By
+- **Axis Colors** — appears only while **Color Mode** is **By
   Position**: three pickers naming the color each axis contributes, blended by
   the point's normalized X/Y/Z (so a point near the far X corner reads mostly
   as the X color, one in the middle as the mix). **Reset** restores the classic
@@ -909,14 +909,14 @@ morphs into place instead of snapping (see **Presets** below).
   Haze, Glow + Bloom, Depth of Field, or Eye-Dome Lighting. The backdrop color
   itself is a separate choice — see **Background**, below; Aerial Haze only
   picks the fog treatment now.
-- **Glow Brightness** (fr-8b1) — appears only while **Depth Style** is **Glow +
+- **Glow Brightness** — appears only while **Depth Style** is **Glow +
   Bloom**: a 0.1×–3× manual multiplier on top of that style's automatic
   exposure, which already dims dense clouds and lifts sparse ones so additive
   points don't blow out to white. Reach for it when the automatic choice reads
   too hot or too dim for a particular scene — 1.00× (the default) leaves the
   automatic exposure alone. Applies live, with no regenerate, and persists in
   the link and scene file.
-- **Balloon echo** (fr-5wlv) — a second copy of the point cloud,
+- **Balloon echo** — a second copy of the point cloud,
   sphere-inverted through a balloon centered on the attractor, enclosing the
   whole scene: the fractal you're orbiting sits inside a cave whose wall is
   itself, turned inside out. The **Balloon size** slider and **Inflate**
@@ -938,17 +938,17 @@ morphs into place instead of snapping (see **Presets** below).
   them far away — the same horizon the surface march caps at, so the two
   renderers agree on where the balloon ends — and the whole thing is a
   re-projection of the cloud already on screen, applied live with no
-  regenerate. In a 4D view (fr-5666), each source point takes the same rotor,
+  regenerate. In a 4D view, each source point takes the same rotor,
   w-ramp and soft-slice path as the main cloud, then its displayed 3D
   projection is inverted. This project-then-invert order makes the cave an
   echo of exactly what is on screen; the full rotation-invariant 4D enclosing
   ball keeps its normalized size stable while the view tumbles. The 4D
-  ◈ Surface render follows the matching rule one mode over (fr-qxxw): slice
+  ◈ Surface render follows the matching rule one mode over: slice
   first, then invert the marched 3D point.
-- **Background** (fr-5ps1) — the two-stop gradient every render shows behind
+- **Background** — the two-stop gradient every render shows behind
   the attractor: **Dark** (the original ground, and the default), **Haze**
   (the cooler, lighter atmosphere Aerial Haze used to force before this
-  control existed), **Auto** (fr-mz2u), which derives a darkened gradient
+  control existed), **Auto**, which derives a darkened gradient
   from the active render's own palette — the flame/solid/surface palette
   while that render is showing, the color-ramp palette in the Points
   explorer — so the backdrop always harmonizes with the fractal and follows
@@ -967,7 +967,7 @@ morphs into place instead of snapping (see **Presets** below).
   baked colors, so a shared link keeps tracking its scene's palette; a link
   saved before this control existed still renders exactly as it always did —
   Haze if its Depth Style was Aerial, Dark otherwise.
-- **Shape** (fr-h3mp) — the backdrop's gradient shape, orthogonal to
+- **Shape** — the backdrop's gradient shape, orthogonal to
   **Background** above: **Vertical** (the default — the original top-to-
   bottom ramp) or **Radial**, a soft vignette centered behind the
   attractor, darkened corners fading toward a lighter glow at the middle.
@@ -979,7 +979,7 @@ morphs into place instead of snapping (see **Presets** below).
   Solid, Surface, and every capture), stays circular as the window resizes
   or an export scales up, and persists in the link and scene file — absent
   (every link saved before this control existed) means Vertical.
-- **Fog** (fr-5h5d) — the depth fog's density, 0×–2.50×: how much atmosphere
+- **Fog** — the depth fog's density, 0×–2.50×: how much atmosphere
   sits between you and the shape. 1.00× (the default) is exactly the fixed
   fog the app always had — links and scene files saved before the control
   existed render unchanged — and the slider scales the fog's distance unit
@@ -998,7 +998,7 @@ morphs into place instead of snapping (see **Presets** below).
   could mean the same thing across them — density alone covers the useful
   thin-to-thick range. Applies live everywhere (never a restart), and
   persists in the link and scene file.
-- **Tint** (fr-5h5d) — the color half of the atmosphere pair: what the fog
+- **Tint** — the color half of the atmosphere pair: what the fog
   fades things toward. Fog normally fades toward a color derived from the
   **Background**, which is what keeps fogged geometry looking
   veiled by what's actually behind it; the tint pulls that derived target
@@ -1011,7 +1011,7 @@ morphs into place instead of snapping (see **Presets** below).
   that have no color to shift (the balloon echo's horizon and the 4D
   projection's Depth fade dim points rather than blend them). Live and
   persisted, like the density. A different knob from ◈ Surface's
-  **Environment** slider above (fr-ehcj) in both axis and target: **Tint**
+  **Environment** slider above in both axis and target: **Tint**
   retargets what depth _fog_ blends toward, by distance; **Environment**
   tints the _light_ itself, by shading normal — the two compose
   additively, so both pushed hard together is worth a by-eye check.
@@ -1050,7 +1050,7 @@ morphs into place instead of snapping (see **Presets** below).
   WebM otherwise, with its duration metadata patched in so players scrub it
   properly. For an authored clip that is frame-exact rather than realtime, use
   **Timeline → ⏺ Export clip** instead.
-- **⤓ Save scene file** (fr-de9t) — download the current scene as a small JSON
+- **⤓ Save scene file** — download the current scene as a small JSON
   file: the same document bytes as 🔗 Copy link (camera pose included),
   wrapped in a file envelope instead of a URL, for keeping scenes where a
   link doesn't fit — archives, email attachments, version control. Load one
@@ -1064,10 +1064,10 @@ morphs into place instead of snapping (see **Presets** below).
   **✦ Final Transform** row under **Select to edit** with the usual
   position/rotation/scale/shear/variation sliders — but no selection weight, which
   is meaningless for a map applied to every point. Untick to remove it.
-- **Symmetry** (fr-6im) — kaleidoscope replication of the whole attractor:
+- **Symmetry** — kaleidoscope replication of the whole attractor:
   **Order** draws every chaos-game point up to 12 times (1 = off), the
   copies rotated evenly in the chosen **Plane** — any of the six coordinate
-  planes (fr-q0h6). XY / XZ / YZ turn in ordinary 3-space; picking XW / YW /
+  planes. XY / XZ / YZ turn in ordinary 3-space; picking XW / YW /
   ZW turns the copies through the fourth axis, which by itself makes the
   system 4D and hands the view to **4D View**'s tumbling projection.
   **Twist** adds the second angle of a 4D double rotation: copy `k` also
@@ -1095,7 +1095,7 @@ morphs into place instead of snapping (see **Presets** below).
 - **4D View** — appears once the current system is _non-flat_ (see
   [architecture.md](architecture.md#the-4d-extension)): the point cloud
   becomes an orthographic projection of a slow double rotation (XY+ZW),
-  colored per the **4D Color** select (fr-d47), spelled out right in the
+  colored per the **4D Color** select, spelled out right in the
   panel: three diverging palettes on the rotated 4th coordinate — **W Depth
   (blue / orange)** (the default), purple / green, or cyan / magenta, cool
   toward −w and warm toward +w — or two rotation-invariant modes, **By
@@ -1129,12 +1129,12 @@ morphs into place instead of snapping (see **Presets** below).
   cross-section out of the cloud (the rest stays as ghost context), its
   position slider sweeping along w — each position is a genuinely different
   3D fractal. That's the point cloud's picture specifically: a Surface
-  session (fr-b30z) keeps the same slider live but positions a hard,
+  session keeps the same slider live but positions a hard,
   zero-thickness cross-section instead — the tracer marches exactly that w,
-  with no ghost context and no soft window around it. Since fr-33yb the
-  slider lands on the same physical hyperplane in both views, normalized to
+  with no ghost context and no soft window around it. The slider lands on
+  the same physical hyperplane in both views, normalized to
   the cloud's rotated-w support at the current rotation rather than a raw
-  world-w value. **Slice thickness** (fr-wa6o, Surface sessions only) gives
+  world-w value. **Slice thickness** (Surface sessions only) gives
   that razor-thin cut some depth: at 0 — where it starts — the render is
   the pure cross-section described above, everything exactly at one w;
   raise it and the tracer instead renders everything lying within that much
@@ -1153,7 +1153,7 @@ morphs into place instead of snapping (see **Presets** below).
   thickened query would no longer be a safe bound (box-fold-only systems keep
   it), and a 4D escape-time chain (see **◈ Surface**) has no branches to
   enumerate at all, so its forward orbit cannot thread a segment in the first
-  place. **Slice-relative color** (fr-nn6, shown while the slice is on
+  place. **Slice-relative color** (shown while the slice is on
   and a W-Depth palette is active) recenters the diverging ramp on the slice
   window: inside the slice everything sits near one w, so the faithful
   whole-cloud ramp renders a slice at 0 almost entirely in the palette's
@@ -1161,7 +1161,7 @@ morphs into place instead of snapping (see **Presets** below).
   cross-section instead (±2 slice-widths; ghost context beyond that clamps
   to the side colors), changing color only, never the slice's opacity
   window, and carries into the flame/solid renders of that view. **Depth
-  fade (dim far points)** (fr-3e0) attenuates each
+  fade (dim far points)** attenuates each
   point's contribution with _camera_ distance — the one 3D depth style whose
   mechanism survives the additive blending (fade-to-black is attenuation;
   fading toward a haze color would sum across the stacked w-layers and blow
@@ -1174,8 +1174,8 @@ morphs into place instead of snapping (see **Presets** below).
   Size / Regenerate / guides / Save PNG stay live, as do the transform list
   and every transform's editor — and so does the render-mode switch: Flame,
   Solid, and Surface all render a non-flat system on their own 4D paths
-  (fr-5b3/fr-4wd for the flame and solid accumulators, fr-vxoj for the
-  tracer; the Surface button still gates on distance-estimator eligibility
+  (their own 4D accumulators for Flame and Solid, their own 4D tracer for
+  Surface; the Surface button still gates on distance-estimator eligibility
   exactly as it does for a flat system, see **◈ Surface** above). Flame and
   Solid _freeze_ the view they start from — one snapshot of the rotor, the
   slice window, and the **4D Color** choice, held for the render's whole
@@ -1183,12 +1183,12 @@ morphs into place instead of snapping (see **Presets** below).
   return to Points. Surface instead keeps the rotor and W slice live per
   frame, so the auto-tumble goes on turning under the tracer and the
   Shift-drag / Shift-wheel gestures above still steer it — and this
-  section's own controls stay reachable there too (fr-b30z), rather than
+  section's own controls stay reachable there too, rather than
   hiding with the rest: **Auto-tumble (XY+ZW)** and **Tumble speed** behave
   exactly as in Points, and the **W slice** position slider stays live and
   shown unconditionally, since the tracer marches a cross-section every
-  frame regardless of any toggle — joined there by **Slice thickness**
-  (fr-wa6o), which is that tracer's control alone and appears nowhere else.
+  frame regardless of any toggle — joined there by **Slice thickness**,
+  which is that tracer's control alone and appears nowhere else.
   The **W slice** on/off checkbox hides
   anyway — there's no off state left for it to mean — and so does
   **Slice-relative color**, since the tracer has no w-ramp palette for it to
@@ -1197,7 +1197,7 @@ morphs into place instead of snapping (see **Presets** below).
   Color** and **Depth fade** above, and **Color
   Contrast** goes with them (it tunes the height / radius / position ramps,
   none of which are in play once 4D Color owns the coloring).
-  **Symmetry** stays put (fr-q0h6): the 4D chaos game runs its own
+  **Symmetry** stays put: the 4D chaos game runs its own
   kaleidoscope stage, so Order, Plane, and Twist keep editing the live
   projection — and the frozen flame/solid snapshots and the live surface
   tracer render the same kaleidoscope (see **Symmetry** above). The
@@ -1223,9 +1223,9 @@ as you edit, and mirrored to `localStorage`. So:
   multi-slot counterpart to this single autosaved scene (see **Collection**
   above). 🔗 Copy link (in **Share**) copies a fresh link for the current
   scene, not the (debounced) address bar.
-- **Take scenes off this device with files** (fr-de9t). ⤓ Save scene file
+- **Take scenes off this device with files**. ⤓ Save scene file
   exports the current scene as JSON; ⬇ Back up collection backs up the whole
-  gallery; ⬇ Back up timeline (fr-h9rk) backs up the authored animation
+  gallery; ⬇ Back up timeline backs up the authored animation
   timeline, playback seed included. ⬆ Import file (or dropping a file onto
   the page) loads a scene file, merges a collection backup, or restores a
   timeline — all the localStorage stores above are trapped in one browser

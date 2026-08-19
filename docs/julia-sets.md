@@ -1,4 +1,4 @@
-# Julia sets by Inverse Iteration (fr-7u8t.1)
+# Julia sets by Inverse Iteration
 
 The classic Julia set of `f(z) = z² + c` is completely invariant: `J = f⁻¹(J)`.
 Writing the two inverse branches as `w±(z) = ±√(z − c)`, that becomes
@@ -72,8 +72,7 @@ variation whatever palette they are given (measured hue entropy 0.04 against
 `radiolarian`'s 0.80). They stay that way because what they exist to pin is
 the RECIPE, which a blend or a second constant would put out of reach of the
 tests above. `scripts/julia-flame.harness.ts` searched for what the recipe
-can do when it is allowed to be an artwork, and three of its panels ship
-(fr-7u8t.1):
+can do when it is allowed to be an artwork, and three of its panels ship:
 
 **`juliaIsland`** — the same exact IIM map at TWO constants, Douady's rabbit
 and `−0.4 + 0.6i` (deep in `M`'s period-2 disc, whose Julia set is the
@@ -138,13 +137,13 @@ them.
 ## Related, but a different object
 
 The **quaternion square** in the surface/escape-time pipeline
-(`qjulia-de.ts`, epic fr-7u8t) is a different fractal by a different method:
+(`qjulia-de.ts`) is a different fractal by a different method:
 `q ← q² + c` iterated forward in the quaternions and ray-marched with a
 distance estimator, one dimension up from the plane. It shares the
 `z² + c` (or `q² + c`) family and the letter `c`, but nothing else here —
 no inverse iteration, no chaos game, no flame render. Alone it is not
-rendered at all (measured smooth and detail-free, fr-7u8t.5); it reaches
-the screen only as a LINK in an escape-time chain beside a fold (fr-j231),
+rendered at all (measured smooth and detail-free); it reaches
+the screen only as a LINK in an escape-time chain beside a fold,
 which is what the **Hybrid Chain Quaternion** preset loads. See that
 module's doc and `docs/quaternion-julia-brief.md` for the relationship
 between the two.
