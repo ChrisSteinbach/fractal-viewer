@@ -26,9 +26,9 @@ import {
   setSurfaceComputeTrace,
   SurfaceComputeRenderer,
   SurfaceComputeUnavailableError,
-  type SurfaceComputeFrameSpec,
   type SurfaceComputeTarget,
 } from "./surface-compute";
+import { surfaceComputeForceFrameKey } from "./surface-force-frame-key";
 import {
   isSoftwareRendererLabel,
   softwareWarningText,
@@ -3834,75 +3834,6 @@ function main(): void {
       surfaceComputeSettleProgress = null;
       surfaceComputeSettleSample = null;
     }
-  }
-
-  function surfaceComputeForceFrameKey(spec: SurfaceComputeFrameSpec): string {
-    return [
-      Array.from(spec.invProjView).join(","),
-      spec.width,
-      spec.height,
-      spec.lutVersion,
-      spec.ambient,
-      spec.colorSource,
-      spec.colorSpeed,
-      spec.lightDir.join(","),
-      // The backdrop stops (fr-5ps1): a background change/crossfade must
-      // re-trace the memoized force frame — miss pixels carry the gradient.
-      spec.bgTop.join(","),
-      spec.bgBottom.join(","),
-      // The 4D pose (fr-dlxh 4D cut): a timeline leg glides rotor/slice
-      // with the camera parked, so a key without them would re-present a
-      // stale pose across every dwell frame of the glide.
-      ...(spec.view4
-        ? [
-            Array.from(spec.view4.rotor).join(","),
-            spec.view4.w0,
-            spec.view4.sliceHalfW,
-          ]
-        : []),
-      // The balloon block (fr-5wlv.5): a parked camera with an R sweep
-      // must never re-present a stale frame — the 4D pose-triple
-      // precedent. The "balloon" literal is the on-flag; the block
-      // exists exactly when the session's kernels carry the wrapper.
-      ...(spec.balloon
-        ? [
-            "balloon",
-            spec.balloon.center.join(","),
-            spec.balloon.rho,
-            spec.balloon.R,
-            spec.balloon.far,
-            // Balloon tint (fr-j85n): INSIDE this block, not a sibling —
-            // without the wrapper the kernel emits no mix at all, so a
-            // tint change means nothing outside a balloon session. The
-            // offline-export memo must not re-present a stale frame when a
-            // timeline leg changes the tint under a parked camera — the
-            // balloon block's own reason above. balloonTint/
-            // balloonTintStrength are optional on the spec type (like
-            // fogTint/fogTintStrength); default the same way
-            // packSurfaceGpuShade's own absent-field default does
-            // (fractal/surface-de-gpu.ts).
-            (spec.balloonTint ?? [0, 0, 0]).join(","),
-            spec.balloonTintStrength ?? 0,
-          ]
-        : []),
-      // The ground plane block (fr-rhn5): the balloon block's own
-      // precedent one level up — a parked camera with the floor toggled
-      // must never re-present a stale frame. The "groundPlane" literal is
-      // the on-flag; the block exists exactly when the session's kernels
-      // carry the plane arm (never alongside "balloon" above — the two
-      // are mutually exclusive by construction).
-      ...(spec.groundPlane
-        ? [
-            "groundPlane",
-            spec.groundPlane.y,
-            spec.groundPlane.fadeStart,
-            spec.groundPlane.fadeEnd,
-            spec.groundPlane.ballCenter.join(","),
-            spec.groundPlane.ballRadius,
-            spec.groundPlane.albedo.join(","),
-          ]
-        : []),
-    ].join("|");
   }
 
   // Offline-export force frames (fr-tzdg): trace the full-quality frame on
