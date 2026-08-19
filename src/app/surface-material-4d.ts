@@ -1967,19 +1967,25 @@ uniform float uBalloonTintStrength;
  * crashed the compiler outright, empty info log, lost context). MEASURED
  * here, raw resolved / what the driver gets:
  *
- * - off:     62804 B (61.3KB) / 62804 B — under 64KB, so NOT stripped
- *            (2732 B of headroom as of the radial backdrop branch — down
- *            from 2825 B, since the shared backgroundShapeT body and its
- *            three new uniforms cost 93 B here even at "linear" defaults —
- *            docs/surface-glsl-tracers.md carries the environment-light
- *            and shared-background-shape history this continues).
- * - balloon: 69399 B (67.8KB) / 17274 B (16.9KB) — past the threshold, so
- *            the size rule strips it (the echo tint moved this from
- *            68176 B / 17086 B: +1223 B raw, comments included, and +188 B
- *            once stripped — the uniforms and the shell-gated mix are the
- *            only bytes that survive the strip).
- * - plane:   70588 B (68.9KB) / 18159 B (17.7KB) — plane variants always
+ * - off:     62388 B (60.9KB) / 62388 B — under 64KB, so NOT stripped
+ *            (3148 B of headroom, up from the radial backdrop branch's
+ *            2732 B — itself down from 2825 B, since the shared
+ *            backgroundShapeT body and its three new uniforms cost 93 B
+ *            here even at "linear" defaults — docs/surface-glsl-tracers.md
+ *            carries the environment-light and shared-background-shape
+ *            history this continues).
+ * - balloon: 68865 B (67.3KB) / 17274 B (16.9KB) — past the threshold, so
+ *            the size rule strips it (the echo tint had moved it from
+ *            68176 B / 17086 B to 69399 B / 17274 B: +1223 B raw, comments
+ *            included, and +188 B once stripped — the uniforms and the
+ *            shell-gated mix are the only bytes that survive the strip).
+ * - plane:   70150 B (68.5KB) / 18159 B (17.7KB) — plane variants always
  *            strip.
+ *
+ * ONLY THE RAW SIDE MOVES ON A COMMENT-ONLY EDIT: the strip deletes
+ * comments anyway, so balloon's and plane's driver figures are invariant
+ * under one, and `off` — the row that never strips — is the only one whose
+ * driver bytes such an edit can reach at all.
  *
  * A single monolithic source carrying both arms would be ~74KB and every
  * 4D surface session — balloon or not, floor or not — would pay for it,
@@ -2161,7 +2167,7 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       SURFACE4_GROUND_PLANE: 0,
     },
     vertexShader: SURFACE4_VERTEX,
-    // Both arms off resolves to SURFACE4_FRAGMENT verbatim (62804 B, under
+    // Both arms off resolves to SURFACE4_FRAGMENT verbatim (62388 B, under
     // the 64KB strip threshold), so a plain 4D session hands the driver
     // exactly the source it did before the balloon and floor lifts (plus
     // the envTint term and the shared backgroundShapeT splice).
