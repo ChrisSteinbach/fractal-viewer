@@ -86,7 +86,7 @@ function toVec4(p: Vec3, w: number): Vec4 {
   return [p[0], p[1], p[2], w];
 }
 
-describe("analyzeEscapeSystem4 lifts the whole render mode (fr-vag4)", () => {
+describe("analyzeEscapeSystem4 lifts the whole render mode", () => {
   it("admits a non-flat pure-fold chain the 3D gate refuses for extending into 4D", () => {
     // The headline of the module: two mandelbox maps, the second carrying a
     // w-mixing rotation the 3D estimator has no fourth coordinate for.
@@ -191,7 +191,7 @@ describe("analyzeEscapeSystem4 lifts the whole render mode (fr-vag4)", () => {
   });
 });
 
-describe("buildEscapeDE4 (fr-vag4)", () => {
+describe("buildEscapeDE4", () => {
   it("throws on an ineligible system, with the reasons joined into the message", () => {
     expect(() =>
       buildEscapeDE4([
@@ -378,7 +378,7 @@ function anchorQueries(): Vec3[] {
   return pts;
 }
 
-describe("the 4D orbit anchors bit-exactly to the 3D one at w = 0 (fr-vag4)", () => {
+describe("the 4D orbit anchors bit-exactly to the 3D one at w = 0", () => {
   it("estimateEscapeDistance4 at w = 0 is bit-identical to estimateEscapeDistance", () => {
     const queries = anchorQueries();
     for (const [label, transforms, symmetry] of ANCHOR_SYSTEMS) {
@@ -431,7 +431,7 @@ describe("the 4D orbit anchors bit-exactly to the 3D one at w = 0 (fr-vag4)", ()
   });
 });
 
-describe("foldQueryIntoSector4 (fr-vag4)", () => {
+describe("foldQueryIntoSector4", () => {
   it("copies p through untouched at order <= 1", () => {
     const out: Vec4 = [0, 0, 0, 0];
     const p: Vec4 = [-0.3, 1.7, 0.02, -2.1];
@@ -535,7 +535,7 @@ describe("foldQueryIntoSector4 (fr-vag4)", () => {
   });
 });
 
-describe("the 4D orbit renders what no 3D approximation can (fr-vag4)", () => {
+describe("the 4D orbit renders what no 3D approximation can", () => {
   it("a w-rotated fold chain renders a different object at w = 0 than its flattened twin", () => {
     const rotated: Transform[] = [
       canonicalMandelbox({ w: { rotation: { xw: 0.3 } } }),
@@ -561,7 +561,7 @@ describe("the 4D orbit renders what no 3D approximation can (fr-vag4)", () => {
     expect(anyDiffer).toBe(true);
   });
 
-  it("a qsquare link's w translation changes set membership -- fr-wuuu's k component", () => {
+  it("a qsquare link's w translation changes set membership -- the Julia constant's k component", () => {
     const shifted: Transform[] = [
       foldMap(0, "mandelbox", 2),
       powerMap(1, "qsquare", 1, { w: { position: 0.4 } }),
@@ -621,7 +621,7 @@ describe("the 4D orbit renders what no 3D approximation can (fr-vag4)", () => {
 });
 
 /**
- * Hand-derived orbit steps at a genuinely NON-FLAT query (fr-vtaz).
+ * Hand-derived orbit steps at a genuinely NON-FLAT query.
  *
  * `runEscapeOrbit4` reimplements the fold and `qsquare` step arithmetic over
  * four coordinates under the twin-file convention, and neither strategy above
@@ -640,7 +640,7 @@ describe("the 4D orbit renders what no 3D approximation can (fr-vag4)", () => {
  * oracle behind the shipped `core: "escape4"` kernel: a silent `w`-term bug
  * ships straight into a real WebGPU render path.
  */
-describe("the 4D orbit's w terms, hand-derived at nonzero w (fr-vtaz)", () => {
+describe("the 4D orbit's w terms, hand-derived at nonzero w", () => {
   it("folds the w axis an xw rotation mixed into -- one boxfold link, one step", () => {
     // One boxfold link at weight 2, turned by theta = 0.7 in the xw PLANE, so
     // x and w mix into each other: the one thing no w = 0 fixture can see.
@@ -777,7 +777,7 @@ describe("the 4D orbit's w terms, hand-derived at nonzero w (fr-vtaz)", () => {
   });
 });
 
-describe("probeEscapeFill4 (fr-vag4)", () => {
+describe("probeEscapeFill4", () => {
   it("samples the SAME 512 points every call — the default seed, by value", () => {
     // The 3D twin's rule: the default seed is a CONSTANT, so 512 samples of
     // this chain have ONE answer, and the answer is written down. Calling

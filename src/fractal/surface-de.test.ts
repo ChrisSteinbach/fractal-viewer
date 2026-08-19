@@ -102,7 +102,7 @@ function mulMat3(a: number[], b: number[]): number[] {
 }
 
 /**
- * The pre-fr-x029 symmetry EXPANSION, preserved here and only here as the
+ * The pre-sweep symmetry EXPANSION, preserved here and only here as the
  * reference oracle the sector sweep is measured against: materialise every
  * kaleidoscope copy `Rot_k . f_i` into its own composed inverse slot
  * (`inv(M_i) . Rot_k^T`, sector-major, copy 0 unrotated first — the exact
@@ -445,8 +445,8 @@ describe("estimateDistance on an anisotropic system", () => {
   });
 });
 
-describe("estimateDistance beam descent (fr-v6yg)", () => {
-  it("buildSurfaceDE always builds beamWidth 4 — the fr-v6yg pair plus the fr-jkpn validity slots", () => {
+describe("estimateDistance beam descent", () => {
+  it("buildSurfaceDE always builds beamWidth 4 — the paired chains plus the rank-3/4 validity slots", () => {
     const de = buildSurfaceDE(sierpinskiTetrahedron());
     expect(de.beamWidth).toBe(4);
   });
@@ -456,7 +456,7 @@ describe("estimateDistance beam descent (fr-v6yg)", () => {
     // weight 6:1, sigma 0.93 vs 0.22 — see `surface-de-4d.test.ts`'s
     // doubleRotation descent-depth-stress tests for the 4D original this
     // mirrors). Its slowest map (sigma 0.93) drives maxDepth to 127
-    // levels (the full formula depth under fr-xok8's MAX_DESCENT_DEPTH
+    // levels (the full formula depth under the MAX_DESCENT_DEPTH
     // ceiling), same as that 4D twin's depth-stress test — so this uses
     // the same 1e-6 tolerance that test documents an accumulated fp-noise
     // floor for, looser than the other estimateDistance tests above.
@@ -493,7 +493,7 @@ describe("estimateDistance beam descent (fr-v6yg)", () => {
     }
   });
 
-  it("overshoots somewhere on the same queries when forced to beamWidth 1 — the fr-v6yg overshoot the beam repairs", () => {
+  it("overshoots somewhere on the same queries when forced to beamWidth 1 — the overshoot the beam repairs", () => {
     // Same profile and query construction as the fix test above, forced
     // back to beamWidth 1 (the old single-chain algorithm). Measured (this
     // exact profile, this test's cloud/query construction): max excess
@@ -543,7 +543,7 @@ describe("buildSurfaceDE with kaleidoscope symmetry", () => {
     expect(de.maps.map((m) => m.baseIndex)).toEqual([0, 1, 2, 3]);
   });
 
-  it("refuses a 4D kaleidoscope rather than descending it as a 3D one (fr-q0h6)", () => {
+  it("refuses a 4D kaleidoscope rather than descending it as a 3D one", () => {
     // A w-plane (or a twist) makes the SYSTEM 4D, so it routes to
     // surface-de-4d.ts; reaching this 3D builder with one is a routing bug.
     expect(() =>
@@ -620,7 +620,7 @@ describe("estimateDistance with kaleidoscope symmetry", () => {
   });
 });
 
-// ——— fr-x029: the sector sweep that replaced the symmetry expansion ———
+// ——— The sector sweep that replaced the symmetry expansion ———
 //
 // The sweep re-associates `inv(M_i) . Rot_k^T . q` into
 // `inv(M_i) . (Rot_k^T . q)` and walks the sectors incrementally, so it is
@@ -911,7 +911,7 @@ describe("sector sweep at the wedge boundaries", () => {
     // company, with both estimators valid against the attractor
     // throughout. Off the axis, where nothing ties, the two agree to 1e-15
     // (the suites above). Probes sweep the segment of the axis inside the
-    // bounding ball: outside it, fr-pjqw's tighter fitted sphere bound
+    // bounding ball: outside it, the tighter probe-fit sphere bound
     // DOMINATES the returned max on both sides, which masks the tie noise
     // this test exists to pin (the original origin-ball sweep of
     // z in [-2, 2] measured 21/400 differing; the ball-clipped sweep keeps
@@ -1028,7 +1028,7 @@ describe("kaleidoscope orders the symmetry expansion could not carry", () => {
     // `nearestDistance(cloud, p) <= 0.05 * R`, and a sparser cloud would
     // widen every gap and manufacture spurious "voids" rather than finding
     // the genuine ones the ghosting property is about. Kept well above the
-    // 20k default (still 2.5x down from the pre-fr-b2l6 200k).
+    // 20k default (still 2.5x down from the 200k this once built).
     const cloud = runChaosGame(
       transforms,
       80000,
@@ -1054,7 +1054,7 @@ describe("kaleidoscope orders the symmetry expansion could not carry", () => {
 });
 
 describe("estimateDistanceRefined cutoff on a swept kaleidoscope", () => {
-  // fr-55r5's contract has to survive the sweep: the early-out exits sit
+  // The cutoff contract has to survive the sweep: the early-out exits sit
   // inside the loop the sector sweep now wraps.
   const symmetry = { order: 8, plane: "xy" } as const;
 
@@ -1090,15 +1090,15 @@ describe("estimateDistanceRefined cutoff on a swept kaleidoscope", () => {
   });
 });
 
-describe("estimateDistance cutoff on a mixed affine+boxfold system (fr-7xgi)", () => {
-  // fr-aj4w grew the cutoff param on the PLAIN estimator too — it's the
-  // one the fold GLSL tracer marches (surface-material.ts's SURFACE_FOLDS
-  // body has no refined variant; see that module's doc for why), but no
-  // test ever exercised the cutoff path on a MIXED affine+fold system —
-  // the shape that grew phantom box faces under the fr-7xgi investigation
-  // (scripts/fold-phantom.harness.ts). Same fr-55r5 contract as the swept-
-  // kaleidoscope describe above, on defaultTransforms with a boxfold map
-  // substituted in for map 0.
+describe("estimateDistance cutoff on a mixed affine+boxfold system", () => {
+  // The empty-space grid grew the cutoff param on the PLAIN estimator too —
+  // it's the one the fold GLSL tracer marches (surface-material.ts's
+  // SURFACE_FOLDS body has no refined variant; see that module's doc for
+  // why), but no test ever exercised the cutoff path on a MIXED affine+fold
+  // system — the shape that grew phantom box faces under the acceptance-eps
+  // investigation (scripts/fold-phantom.harness.ts). Same cutoff contract
+  // as the swept-kaleidoscope describe above, on defaultTransforms with a
+  // boxfold map substituted in for map 0.
   function defaultTetraWithBoxfoldMap0(): Transform[] {
     return defaultTransforms().map((t) =>
       t.id === 0
@@ -1156,7 +1156,7 @@ describe("estimateDistance cutoff on a mixed affine+boxfold system (fr-7xgi)", (
 });
 
 // -----------------------------------------------------------------------
-// estimateDistanceRefined (fr-1z6p — fr-beck's 4D ghost-eliminator ported
+// estimateDistanceRefined (the 4D spike's ghost-eliminator ported
 // down; see the module doc's refined-certificates paragraph): one extra
 // Hutchinson level applied to escaped-sibling certificates before they
 // freeze, lifting the barely-escaped near-zero bounds the marcher
@@ -1219,7 +1219,7 @@ describe("estimateDistanceRefined validity (never exceeds the true distance to a
     // branches here — and kaleidoscope sectors only exist in this module.
     // Order 3 triples
     // every branch, so levels with >= 3 simultaneous in-sphere branches are
-    // common — the fr-jkpn drop class. Before the width-4 validity slots
+    // common — the validity-slot drop class. Before the width-4 slots
     // this construction measured the disclosed TRADE (refined: 0 ghosts but
     // 2/200 probes overshooting <= 0.0465 = 2.6%R); with them it measures
     // CLEAN — sierpinski's maps all translate, so no branch norms tie
@@ -1242,7 +1242,7 @@ describe("estimateDistanceRefined validity (never exceeds the true distance to a
     // sampling gaps alone — measured at 80k, one probe's refined estimate
     // (0.0142) landed just under the 0.01R floor once its "far" classification
     // stopped being reliable at that density. Kept well above the 20k default
-    // (still 1.5x down from the pre-fr-b2l6 300k).
+    // (still 1.5x down from the 300k this once built).
     const cloud = runChaosGame(
       transforms,
       200000,
@@ -1267,8 +1267,8 @@ describe("estimateDistanceRefined validity (never exceeds the true distance to a
 
   it("holds at the built width on the doubleRotation-mirror profile — refinement does not reopen the branch-selection overshoot the beam closed", () => {
     // The scary interaction, pinned: refinement RAISES certificates, and on
-    // profiles where descent drops in-sphere branches (fr-jkpn) a raised min
-    // can expose more of the drop's invalidity — fr-beck measured exactly
+    // profiles where descent drops in-sphere branches a raised min
+    // can expose more of the drop's invalidity — the 4D spike measured exactly
     // that at width 1 in 4D. At the BUILT width the beam keeps this
     // profile clean, refined or not (harness at width 4, depth 127:
     // viol=66 exact-class @3.2e-8 fp noise, maxExcess 0.0%R). Same
@@ -1308,7 +1308,7 @@ describe("estimateDistanceRefined validity (never exceeds the true distance to a
 });
 
 // -----------------------------------------------------------------------
-// fr-jkpn validity slots (widths 3/4): a second insert-shift ladder holds
+// Rank-3/4 validity slots (widths 3/4): a second insert-shift ladder holds
 // each level's rank-3/4 candidates, which continue as extra chains ONLY
 // while in-sphere — the branches that carry no positive certificate, whose
 // silent drop was width 2's measured invalidity (3+ simultaneous in-sphere
@@ -1318,7 +1318,7 @@ describe("estimateDistanceRefined validity (never exceeds the true distance to a
 // can ever drop — while width 2 measurably overshoots on the same queries.
 // -----------------------------------------------------------------------
 
-describe("fr-jkpn validity slots on the sigma-0.96 slow-map profile", () => {
+describe("validity slots on the sigma-0.96 slow-map profile", () => {
   function sigma096Profile(): Transform[] {
     return [
       {
@@ -1340,7 +1340,7 @@ describe("fr-jkpn validity slots on the sigma-0.96 slow-map profile", () => {
 
   it("holds at the built width: no jittered query exceeds the cloud-distance bound", () => {
     // Same construction and 1e-6 deep-descent fp-noise tolerance as the
-    // fr-v6yg beam tests above, one sigma notch up (0.93 -> 0.96) — the
+    // beam tests above, one sigma notch up (0.93 -> 0.96) — the
     // notch where sigma clamps at the MAX_DESCENT_DEPTH ceiling (128) and
     // the harness measured width 2 retaining ~2%R real excess (55 refined
     // violations @2.3e-2) while width 4 collapses the real excess to 0
@@ -1362,7 +1362,7 @@ describe("fr-jkpn validity slots on the sigma-0.96 slow-map profile", () => {
     }
   });
 
-  it("overshoots somewhere on the same queries when forced back to beamWidth 2 — the fr-jkpn drop the validity slots repair", () => {
+  it("overshoots somewhere on the same queries when forced back to beamWidth 2 — the drop the validity slots repair", () => {
     const transforms = sigma096Profile();
     const de = { ...buildSurfaceDE(transforms), beamWidth: 2 as const };
     const cloud = runChaosGame(transforms, 20000, mulberry32(1));
@@ -1385,7 +1385,7 @@ describe("fr-jkpn validity slots on the sigma-0.96 slow-map profile", () => {
 
 describe("estimateDistanceRefined collapses a measured balloon point the base estimator false-hits", () => {
   it("clears the sierpinski central-void probe that rendered as a membrane across the cavity", () => {
-    // Pinned from the fr-1z6p finder (cloud mulberry32(101)/300_000, uniform
+    // Pinned from the refinement finder (cloud mulberry32(101)/300_000, uniform
     // probe stream mulberry32(3), probe #140): a genuine void point in the
     // tetrahedron's central cavity — the smooth membrane the surface render
     // visibly painted across it. Measured (this build, bit-exact to
@@ -1415,7 +1415,7 @@ describe("estimateDistanceRefined collapses a measured balloon point the base es
   });
 });
 
-// estimateDistanceRefined's early-out cutoff (fr-55r5). The march needs a
+// estimateDistanceRefined's early-out cutoff. The march needs a
 // HIT DECISION, not a distance, so it hands the DE its acceptance epsilon
 // and the descent may stop once the value it would return is already below
 // it. Two properties carry the whole contract, and every test below asserts
@@ -1426,8 +1426,8 @@ describe("estimateDistanceRefined collapses a measured balloon point the base es
 //       — the hit verdict is identical: no false hit, no lost hit.
 // The trap the exits are placed against: `best` must only ever be tested
 // AFTER a fold settles it (refined, on this path). Exiting on a raw
-// pre-refinement certificate would re-open fr-1z6p's balloon ghosts, which
-// the directed void tests at the end of this section pin.
+// pre-refinement certificate would re-open the balloon ghosts refinement
+// killed, which the directed void tests at the end of this section pin.
 describe("estimateDistanceRefined early-out cutoff", () => {
   it("runs the full descent for a cutoff too small to fire, bit-for-bit", () => {
     // The claim the `cutoff = 0` default makes, stated against a DIFFERENT
@@ -1658,7 +1658,7 @@ describe("estimateDistanceRefined early-out cutoff", () => {
   });
 
   it("does not false-hit the sierpinski void probe at a cutoff above its plain-certificate dip", () => {
-    // The ghost class fr-1z6p killed, aimed straight at the early-out: at
+    // The ghost class refinement killed, aimed straight at the early-out: at
     // this void point the PLAIN certificates dip to 0.0103 while the refined
     // descent settles at 0.2739 (the fixture two describes up). A cutoff of
     // 0.05 sits between them, so an exit that fired on a raw pre-refinement
@@ -1691,19 +1691,19 @@ describe("estimateDistanceRefined early-out cutoff", () => {
   });
 });
 
-// The depth-0 sphere floor's own unconditional exit (fr-zkt2): once `best`
+// The depth-0 sphere floor's own unconditional exit: once `best`
 // falls to or below `sphereBound`, descentValue's `max(best, sphereBound)`
 // clamp is already pinned there, and `best` only ever falls further from a
 // fold — so the descent may return the instant that happens, no cutoff
 // required. That makes the exit value-exact for EVERY caller, unlike the
-// fr-55r5 cutoff exit above (exact only at or above the cutoff), but it
+// cutoff exit above (exact only at or above the cutoff), but it
 // also makes it value-INVISIBLE: the returned number is identical whether
 // or not the exit fired. There is deliberately no "did it fire" counter
 // below — the tests instead pin the invariant the exit leans on (the
-// return never drops below the floor) and re-run the fr-55r5 cutoff
+// return never drops below the floor) and re-run the cutoff
 // contract over probe corpora biased into the region where the new exit
 // actually triggers.
-describe("estimateDistanceRefined sphere-floor pin (fr-zkt2)", () => {
+describe("estimateDistanceRefined sphere-floor pin", () => {
   it("never returns below the depth-0 sphere floor, for probes inside, near and beyond the bounding sphere", () => {
     const transforms = sierpinskiTetrahedron();
     const de = buildSurfaceDE(transforms);
@@ -1778,7 +1778,7 @@ describe("estimateDistanceRefined sphere-floor pin (fr-zkt2)", () => {
   });
 
   it("keeps both cutoff properties on the slow-descending two-map profile when probes are biased outside the bounding sphere", () => {
-    // Same two maps as the fr-55r5 doubleRotation-mirror test above: sigma
+    // Same two maps as the cutoff doubleRotation-mirror test above: sigma
     // 0.93 pushes the depth cap to 127 levels, so this is where an exit
     // that fires early skips the most descent.
     const transforms: Transform[] = [
@@ -1956,7 +1956,7 @@ describe("SurfaceDEMap inverse contract", () => {
 });
 
 // -----------------------------------------------------------------------
-// fr-5rvk: PURE-FOLD MAPS — the fold-branch sweep. A map whose variation
+// PURE-FOLD MAPS — the fold-branch sweep. A map whose variation
 // list is exactly one active fold-family entry (boxfold/spherefold/
 // mandelbox) decomposes into its inverse BRANCHES instead of gating the
 // mode out; see the module doc's "PURE-FOLD MAPS" section for the validity
@@ -2009,7 +2009,7 @@ function pureMandelboxPair(): Transform[] {
   ];
 }
 
-describe("analyzeSurfaceSystem eligibility for pure-fold maps (fr-5rvk)", () => {
+describe("analyzeSurfaceSystem eligibility for pure-fold maps", () => {
   it("classifies a pure-boxfold map (plus a plain affine map) as not ineligible", () => {
     const analysis = analyzeSurfaceSystem([
       map({ variations: [{ type: "boxfold", weight: 1 }] }),
@@ -2092,7 +2092,7 @@ describe("analyzeSurfaceSystem eligibility for pure-fold maps (fr-5rvk)", () => 
     expect(analysis.reasons).toEqual([]);
   });
 
-  it("admits a pure-fold final transform — the lens expands into one round of branch root descents (fr-g58b)", () => {
+  it("admits a pure-fold final transform — the lens expands into one round of branch root descents", () => {
     const analysis = analyzeSurfaceSystem(
       [map()],
       map({ id: 99, variations: [{ type: "boxfold", weight: 1 }] }),
@@ -2128,7 +2128,7 @@ describe("analyzeSurfaceSystem eligibility for pure-fold maps (fr-5rvk)", () => 
   });
 });
 
-describe("fold-weight eligibility floor (fr-2v0y)", () => {
+describe("fold-weight eligibility floor", () => {
   it("refuses a boxfold map whose weight is just under the floor, though the composite Lipschitz gate alone would pass", () => {
     // A smaller |w| only ever HELPS the composite contraction bound (it
     // shrinks as w -> 0), so nothing here fails on that gate — the descent
@@ -2187,7 +2187,7 @@ describe("fold-weight eligibility floor (fr-2v0y)", () => {
   });
 });
 
-describe("buildSurfaceDE fold fields and depth sizing (fr-5rvk)", () => {
+describe("buildSurfaceDE fold fields and depth sizing", () => {
   it("gives a plain affine map the inert fold defaults and a pure-fold map its signed weight and branch kind", () => {
     const transforms: Transform[] = [
       map(),
@@ -2229,7 +2229,7 @@ describe("buildSurfaceDE fold fields and depth sizing (fr-5rvk)", () => {
   });
 });
 
-describe("surfaceDescentCostWeight (fr-2v0y)", () => {
+describe("surfaceDescentCostWeight", () => {
   // render-tier.ts's preview ladder consumes this number to pick a starting
   // rung before a fold session has a single measured frame; these are its
   // first direct pins, one per shape the formula treats specially.
@@ -2291,7 +2291,7 @@ describe("surfaceDescentCostWeight (fr-2v0y)", () => {
     expect(surfaceDescentCostWeight(de)).toBeCloseTo(expected, 9);
   });
 
-  it("multiplies by branchCount/8 for a pure-boxfold FINAL lens (fr-g58b)", () => {
+  it("multiplies by branchCount/8 for a pure-boxfold FINAL lens", () => {
     const de = buildSurfaceDE(
       [map()],
       map({ id: 99, variations: [{ type: "boxfold", weight: 1 }] }),
@@ -2326,7 +2326,7 @@ describe("surfaceDescentCostWeight (fr-2v0y)", () => {
   });
 });
 
-describe("estimateDistance / estimateDistanceRefined validity on a pure-boxfold system (fr-5rvk)", () => {
+describe("estimateDistance / estimateDistanceRefined validity on a pure-boxfold system", () => {
   it("keeps both estimators below the brute-force nearest cloud distance, jittered and uniform probes alike", () => {
     const transforms = pureBoxfoldPair();
     const de = buildSurfaceDE(transforms);
@@ -2398,7 +2398,7 @@ describe("estimateDistance / estimateDistanceRefined validity on a pure-boxfold 
   });
 });
 
-describe("estimateDistanceRefined on a pure-mandelbox system (fr-5rvk)", () => {
+describe("estimateDistanceRefined on a pure-mandelbox system", () => {
   it("never falls below the base estimate", () => {
     const transforms = pureMandelboxPair();
     const de = buildSurfaceDE(transforms);
@@ -2460,7 +2460,7 @@ describe("estimateDistanceRefined on a pure-mandelbox system (fr-5rvk)", () => {
   });
 });
 
-describe("spherefold mid-branch guard (fr-5rvk)", () => {
+describe("spherefold mid-branch guard", () => {
   it("returns a finite estimate at and near the sector origin, where the mid branch's inversion would otherwise overflow", () => {
     const transforms: Transform[] = [
       map({
@@ -2487,7 +2487,7 @@ describe("spherefold mid-branch guard (fr-5rvk)", () => {
   });
 });
 
-describe("fold-branch sweep interactions: kaleidoscope and beamWidth (fr-5rvk)", () => {
+describe("fold-branch sweep interactions: kaleidoscope and beamWidth", () => {
   it("stays a sound bound under a kaleidoscope sweep combined with pure-fold maps", () => {
     const transforms = pureBoxfoldPair();
     const symmetry = { order: 3, plane: "xz" } as const;
@@ -2533,13 +2533,13 @@ describe("fold-branch sweep interactions: kaleidoscope and beamWidth (fr-5rvk)",
 });
 
 // -----------------------------------------------------------------------
-// fr-2v0y: the c59b019 unsorted-worst-scan frontier restructure needs a
+// The c59b019 unsorted-worst-scan frontier restructure needs a
 // direct pin on the KEPT SET itself, not just estimator validity — a
 // dropped candidate always folds a VALID (if looser) bound, so the
 // validity suites above would stay green through a kept-set regression.
 // -----------------------------------------------------------------------
 
-describe("descendFold frontier kept set (fr-2v0y)", () => {
+describe("descendFold frontier kept set", () => {
   // The tap reports every candidate that reaches frontier insertion
   // (arrival order) and each completed level's kept slots (slot order);
   // replayFrontier below is a brute-force model of the CONTRACT — fill in
@@ -2804,7 +2804,7 @@ describe("descendFold frontier kept set (fr-2v0y)", () => {
   });
 });
 
-/** A boxfold final lens over the Sierpinski tetrahedron — the fr-g58b
+/** A boxfold final lens over the Sierpinski tetrahedron — the fold-lens
  * archetype (an affine base under a fold lens; Surprise Me's boxfold-final
  * rolls land here). The SMALL weight matters: `u = p/w` reaches ~2.2, so
  * the attractor genuinely CROSSES the fold planes and the non-identity
@@ -2820,7 +2820,7 @@ function boxfoldFinal(): Transform {
   });
 }
 
-describe("buildSurfaceDE with a pure-fold final lens (fr-g58b)", () => {
+describe("buildSurfaceDE with a pure-fold final lens", () => {
   it("builds foldFinal (and no affine final) with the lens's kind, weight and affine part", () => {
     const final = boxfoldFinal();
     const de = buildSurfaceDE(sierpinskiTetrahedron(), final);
@@ -2861,7 +2861,7 @@ describe("buildSurfaceDE with a pure-fold final lens (fr-g58b)", () => {
   });
 });
 
-describe("estimateDistance / estimateDistanceRefined with a fold final lens (fr-g58b)", () => {
+describe("estimateDistance / estimateDistanceRefined with a fold final lens", () => {
   it("keeps both estimators below the brute-force nearest distance to the LENSED cloud, jittered and uniform probes alike", () => {
     const transforms = sierpinskiTetrahedron();
     const final = boxfoldFinal();
@@ -3051,7 +3051,7 @@ describe("estimateDistance / estimateDistanceRefined with a fold final lens (fr-
     // stands in for "is p genuinely in a void of the lensed attractor", and
     // a sparse cloud would misclassify near-attractor points as void merely
     // from sampling gaps. Kept well above the 20k default (still 15x down
-    // from the pre-fr-b2l6 300k) with `deepVoidProbes > 20` re-verified at
+    // from the 300k this once built) with `deepVoidProbes > 20` re-verified at
     // this size.
     const cloud = runChaosGame(transforms, 80000, mulberry32(81), final);
     const R = de.visibleBoundingRadius;
@@ -3073,7 +3073,7 @@ describe("estimateDistance / estimateDistanceRefined with a fold final lens (fr-
 });
 
 // -----------------------------------------------------------------------
-// fr-pjqw: PROBE-FIT CENTERED BOUNDING BALL. Shipped presets are authored
+// PROBE-FIT CENTERED BOUNDING BALL. Shipped presets are authored
 // near the origin, so the origin ball wins the build's tightness
 // comparison on every one of them and the centered path never runs there
 // (measured: every beam-harness system keeps its historical R). These
@@ -3081,7 +3081,7 @@ describe("estimateDistance / estimateDistanceRefined with a fold final lens (fr-
 // systems (Surprise-Me rolls translate freely) are where it pays.
 // -----------------------------------------------------------------------
 
-describe("probe-fit centered bounding ball (fr-pjqw)", () => {
+describe("probe-fit centered bounding ball", () => {
   /** Translate an IFS so its attractor moves by exactly `d`: the map
    * x -> M(x − d) + t + d has translation t + d − M·d and the same linear
    * part, and its attractor is the original's shifted by `d`. */
@@ -3203,18 +3203,18 @@ describe("probe-fit centered bounding ball (fr-pjqw)", () => {
 });
 
 // -----------------------------------------------------------------------
-// fr-3c0k: FOOTPRINT-CAPPED DESCENT DEPTH. The marcher's per-step cone
+// FOOTPRINT-CAPPED DESCENT DEPTH. The marcher's per-step cone
 // footprint (eps·t) caps how deep a descent can usefully resolve: a chain
 // at depth d tracks a piece of diameter <= 2R·slowestSigma^d, so depth
 // past ceil(log(f/2R)/log(slowestSigma)) resolves sub-footprint detail.
 // The cap is VALID at any depth (cap terminals are certified bounds for
 // their pieces); what it trades is resolution — bounded by the footprint
-// itself, which is the fr-ttg5/previewMaxDepth argument made per-query.
+// itself, which is the `previewMaxDepth` argument made per-query.
 // -----------------------------------------------------------------------
 
-describe("footprint-capped descent depth (fr-3c0k)", () => {
+describe("footprint-capped descent depth", () => {
   /** The doubleRotation 3D mirror (sigma 0.93 — maxDepth 127, the
-   * profile fr-xok8's solid-ball artifact was measured on; its slow
+   * profile the solid-ball artifact was measured on; its slow
    * map's fixed point is the origin). */
   function slowProfile(): Transform[] {
     return [
@@ -3299,8 +3299,8 @@ describe("footprint-capped descent depth (fr-3c0k)", () => {
     }
   });
 
-  it("does not regrow the fr-xok8 solid ball at a realistic pixel footprint", () => {
-    // fr-xok8's record: at frame-wide cap 48 this profile read
+  it("does not regrow the solid-ball artifact at a realistic pixel footprint", () => {
+    // The record: at frame-wide cap 48 this profile read
     // est = |p| − 0.047 along a ray into the slow map's fixed point (the
     // origin) — a fat fabricated ball, ~5% of R. With the footprint form
     // at a full-tier pixel scale (f = 1e-3·R) the cap sizes itself to
@@ -3352,7 +3352,7 @@ describe("footprint-capped descent depth (fr-3c0k)", () => {
   });
 });
 
-describe("authored fold radii in the inverse branch algebra (fr-s9ll)", () => {
+describe("authored fold radii in the inverse branch algebra", () => {
   // The fold's three lengths became `Variation` fields, so every constant in
   // the branch enumeration became an expression. Two properties have to
   // survive that: the defaults must not move at all, and the bound must stay
@@ -3561,8 +3561,8 @@ describe("authored fold radii in the inverse branch algebra (fr-s9ll)", () => {
   it("moves the eligibility gate with the magnification — a map that contracts at the classic radii need not at a smaller minRadius", () => {
     // `SPHEREFOLD_LIPSCHITZ` is no longer a constant the gate multiplies; it
     // is `fR²/mR²`, so the same weight and scale fall on either side of
-    // CONTRACTION_LIMIT depending on the authored radii (fr-77oy measured
-    // that `mandelboxKifs` sits 9% from this seam).
+    // CONTRACTION_LIMIT depending on the authored radii (measured:
+    // `mandelboxKifs` sits 9% from this seam).
     const at = (minRadius?: number): Transform[] => [
       {
         id: 1,
@@ -3581,11 +3581,12 @@ describe("authored fold radii in the inverse branch algebra (fr-s9ll)", () => {
   });
 });
 
-describe("fold-radius rescale equivariance (fr-s9ll)", () => {
-  // The sharpest check the fold family admits, and the reason fr-qi9c could
-  // measure anything at all: a uniform rescale is EQUIVARIANT through both
-  // folds, so conjugating a system by `p = k·q` gives back the same system
-  // with all three lengths and every translation divided by k —
+describe("fold-radius rescale equivariance", () => {
+  // The sharpest check the fold family admits, and the reason the
+  // no-fourth-SIZE-field argument could measure anything at all: a uniform
+  // rescale is EQUIVARIANT through both folds, so conjugating a system by
+  // `p = k·q` gives back the same system with all three lengths and every
+  // translation divided by k —
   //
   //     T(p)  = w·V_{mR,fR,wall}(M p + t)
   //     T'(q) = T(k q)/k = w·V_{mR/k, fR/k, wall/k}(M q + t/k)

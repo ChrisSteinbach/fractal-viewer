@@ -77,18 +77,18 @@ function writeHsl(
  * (`surface-slots.ts`'s `surfaceSlotColors`), mutation thumbnails, and both
  * flame kernels' legacy (non-gradient) per-transform color.
  *
- * `colorIndexes` (fr-axxl) lets a map's authored {@link Transform.colorIndex}
+ * `colorIndexes` lets a map's authored {@link Transform.colorIndex}
  * pick its position on the hue wheel instead of the even `i / count` spread —
  * agreeing with `surface-slots.ts`'s `surfaceTrapIndices`, which already lets
  * an authored `colorIndex` win over its own derived spread for the orbit-trap
  * coordinate. Entry `i` is `colorIndexes?.[i] ?? i / count`, so an absent
  * array, or an absent/undefined entry within it, reproduces the old even
- * spread exactly — every scene authored before fr-axxl has no `colorIndex`
- * anywhere, so this is byte-for-byte unchanged for it. `colorIndex` is cyclic
- * on `[0, 1]` like any hue (`hslToRgb` wraps), so an authored `1` reads as
- * hue `0`; two maps authoring the same value legitimately land on the same
- * hue (flam3 semantics — matching how the structural color walk already
- * treats a shared `colorIndex`).
+ * spread exactly — every scene authored before the field existed has no
+ * `colorIndex` anywhere, so this is byte-for-byte unchanged for it.
+ * `colorIndex` is cyclic on `[0, 1]` like any hue (`hslToRgb` wraps), so an
+ * authored `1` reads as hue `0`; two maps authoring the same value
+ * legitimately land on the same hue (flam3 semantics — matching how the
+ * structural color walk already treats a shared `colorIndex`).
  */
 export function transformColors(
   count: number,
@@ -125,12 +125,12 @@ function writeRadiusColor(out: Float32Array, o: number, t: number): void {
 
 /**
  * The palette-driven counterpart of {@link writeHeightColor} /
- * {@link writeRadiusColor} (fr-3b6): paints `paletteLUT`'s color at
- * normalized coordinate `t` into `out` at offset `o`, indexing with the same
+ * {@link writeRadiusColor}: paints `paletteLUT`'s color at normalized
+ * coordinate `t` into `out` at offset `o`, indexing with the same
  * `(t * 256) | 0` bucketing the flame/voxel structural hot loops use for
  * palette LUTs (see `flame.ts`'s `accumulateFlame`) — but clamped at BOTH
- * ends (fr-oxfn), unlike that sibling's top-only `Math.min(255, …)`: this
- * function's `t` is a caller-normalized coordinate that can legitimately
+ * ends, unlike that sibling's top-only `Math.min(255, …)`: this function's
+ * `t` is a caller-normalized coordinate that can legitimately
  * land outside `[0, 1]` (`buildColors`' height/radius branches normalize
  * against float64-accumulated bounds while positions round-trip through a
  * Float32Array — see {@link applyColorGamma}'s doc — and `buildColors4`'s
@@ -150,9 +150,9 @@ function writePaletteRampColor(
   t: number,
   paletteLUT: Float32Array,
 ): void {
-  // Clamp both ends (fr-oxfn): NaN fails both comparisons and falls to
-  // `(t * 256) | 0`, which ToInt32 makes 0 — the same low-end index as
-  // t <= 0, not a propagated NaN.
+  // Clamp both ends: NaN fails both comparisons and falls to `(t * 256) | 0`,
+  // which ToInt32 makes 0 — the same low-end index as t <= 0, not a
+  // propagated NaN.
   const p = (t <= 0 ? 0 : t >= 1 ? 255 : (t * 256) | 0) * 3;
   out[o] = paletteLUT[p];
   out[o + 1] = paletteLUT[p + 1];
@@ -169,8 +169,8 @@ export const POSITION_COLOR_SCALE = 0.8;
 export const POSITION_COLOR_OFFSET = 0.2;
 
 /**
- * The "by position" mode's three user-pickable axis colors (fr-8k7): the
- * point's gamma-mapped normalized coordinates weight a blend of one sRGB
+ * The "by position" mode's three user-pickable axis colors: the point's
+ * gamma-mapped normalized coordinates weight a blend of one sRGB
  * color per axis (see {@link writePositionColor}) instead of the hardcoded
  * axis→channel identity. Absent everywhere it is optional
  * (`buildColors` / `accumulateVoxels` / `AppState.positionAxisColors`) means
@@ -217,8 +217,8 @@ export function isLegacyPositionAxisColors(
 }
 
 /**
- * The custom-axis-color counterpart of the legacy XYZ→RGB position mapping
- * (fr-8k7), written into `out` at offset `o`. Per channel:
+ * The custom-axis-color counterpart of the legacy XYZ→RGB position
+ * mapping, written into `out` at offset `o`. Per channel:
  *
  *   channel = min(1, OFFSET + SCALE * (tx*Ax + ty*Bx + tz*Cx))
  *
@@ -235,7 +235,7 @@ export function isLegacyPositionAxisColors(
  * nears the far corner of its bounds — the min() clip keeps the color valid
  * (three saturated colors wash toward their sum there, the user's own palette
  * choice; a directional normalization was rejected because it collapses the
- * diagonal brightness dimension entirely — see fr-8k7). The clip is REQUIRED
+ * diagonal brightness dimension entirely). The clip is REQUIRED
  * on the solid path: `voxelTextureData` packs mean colors straight into a
  * wrapping `Uint8Array`.
  *
@@ -268,8 +268,8 @@ export function writePositionColor(
 }
 
 /**
- * Apply the color-contrast exponent (fr-8sk) to a normalized coordinate `t`
- * that is expected to sit in `[0, 1]`: `t' = t ** colorGamma`. `colorGamma <
+ * Apply the color-contrast exponent to a normalized coordinate `t` that is
+ * expected to sit in `[0, 1]`: `t' = t ** colorGamma`. `colorGamma <
  * 1` spreads out the low end of the distribution (more contrast among
  * sparse/faint values), `> 1` spreads the high end; the endpoints `t = 0` and
  * `t = 1` are fixed either way. `colorGamma === 1` (the default) skips the
@@ -302,7 +302,7 @@ function applyColorGamma(t: number, colorGamma: number): number {
  * height/radius branches are the ONE ramp definition, shared so the solid
  * render's voxel colors and the explorer's point colors can never drift apart.
  *
- * `rampPalette` (fr-3b6) swaps the built-in ramp for a gradient palette —
+ * `rampPalette` swaps the built-in ramp for a gradient palette —
  * `"legacy"` (the default) keeps the built-in writers bit-identically; a
  * non-legacy spec makes entry `i` {@link writePaletteRampColor} at the same
  * gamma-mapped `t`. With `colorGamma` at its default of `1`, the palette path
@@ -334,7 +334,7 @@ export function buildColorModeLUT(
  * directly into the output `Float32Array`, keeping allocations O(1) per call
  * regardless of point count.
  *
- * `colorGamma` (fr-8sk) is a contrast exponent applied to the normalized
+ * `colorGamma` is a contrast exponent applied to the normalized
  * coordinate in the `"height"`/`"radius"`/`"position"` modes — see
  * {@link colorModeUsesGamma} and {@link applyColorGamma} for the exact
  * mapping and its `NaN`-avoiding clamp. `1` (the default) is neutral —
@@ -342,12 +342,12 @@ export function buildColorModeLUT(
  * — and `"transform"`/`"uniform"` ignore it entirely, having no coordinate
  * to reshape.
  *
- * `rampPalette` (fr-3b6) applies ONLY to the height/radius modes, replacing
+ * `rampPalette` applies ONLY to the height/radius modes, replacing
  * the built-in ramp with the gradient palette sampled at the same
  * gamma-mapped coordinate; `"legacy"` (the default) is bit-identical to
  * before the parameter existed.
  *
- * `positionAxisColors` (fr-8k7) applies ONLY to the `"position"` mode,
+ * `positionAxisColors` applies ONLY to the `"position"` mode,
  * replacing the hardcoded axis→channel identity with the coordinate-weighted
  * blend of three user-picked axis colors (see {@link writePositionColor});
  * absent (the default) keeps the legacy XYZ→RGB loop bit-identically, the
@@ -501,7 +501,7 @@ export function colorModeUsesGamma(mode: ColorMode): boolean {
   return mode === "height" || mode === "radius" || mode === "position";
 }
 
-/** True for the color modes whose ramp can be palette-driven (fr-3b6) —
+/** True for the color modes whose ramp can be palette-driven —
  * deliberately narrower than {@link colorModeUsesGamma} (position normalizes
  * coordinates but is XYZ→RGB, not a 1-D ramp). Single source of truth for the
  * UI's ramp-palette row visibility and main.ts's custom-stop recolor guard. */
@@ -511,15 +511,15 @@ export function colorModeUsesRampPalette(mode: ColorMode): boolean {
 
 /**
  * The diverging side-color pairs for the 4D projection's "w depth" color
- * modes (fr-d47): `neg` tints the −w side of our 3-space, `pos` the +w side,
- * and the shader mixes either toward a dim gray notch as |rotated w| → 0
+ * modes: `neg` tints the −w side of our 3-space, `pos` the +w side, and the
+ * shader mixes either toward a dim gray notch as |rotated w| → 0
  * (scene.ts's `FOUR_D_VERTEX`). Every pair keeps the original blue/orange
  * ramp's conventions: the cool color sits on −w, and the pair's additive sum
  * pushes toward white, so genuine 4D self-overlap still flags itself in a
  * color no single point can have. Plain data rather than GLSL constants, so
  * the shader uniforms (scene.ts), the panel legend (ui.ts), and the tests all
- * read the ONE definition and can never drift on the palette itself; since
- * fr-3o2 the ramp's SHAPE constants are shared the same way (see
+ * read the ONE definition and can never drift on the palette itself; the
+ * ramp's SHAPE constants are shared the same way (see
  * {@link W_RAMP_EXPONENT}).
  */
 export const W_SIDE_PALETTES: Record<
@@ -532,7 +532,7 @@ export const W_SIDE_PALETTES: Record<
 };
 
 /**
- * The diverging w-ramp's SHAPE constants — the single source of truth (fr-3o2)
+ * The diverging w-ramp's SHAPE constants — the single source of truth
  * for the ramp math that {@link wRampColor} runs on the CPU and that the GLSL
  * point shader (`scene.ts`'s `FOUR_D_VERTEX`) and WGSL flame kernel
  * (`flame-gpu-4d.ts`) each interpolate into their shader strings, so the four
@@ -562,7 +562,7 @@ export const W_RAMP_BRIGHTNESS_FLOOR = 0.3;
  *
  * Reads the shared SHAPE constants above and the side PALETTE from
  * {@link W_SIDE_PALETTES}, so it cannot drift from the shaders that interpolate
- * the same constants (fr-3o2) nor from the legend that calls this function.
+ * the same constants nor from the legend that calls this function.
  */
 export function wRampColor(s: number, side: { neg: Vec3; pos: Vec3 }): Vec3 {
   const clamped = s < -1 ? -1 : s > 1 ? 1 : s;
@@ -593,13 +593,13 @@ export function fourDColorNeedsAttribute(
 
 /**
  * Build the per-point color-attribute buffer for the 4D projection's baked
- * color modes (fr-d47) — the modes whose color does NOT depend on the live 4D
- * view rotation and so can be computed once per generation:
+ * color modes — the modes whose color does NOT depend on the live 4D view
+ * rotation and so can be computed once per generation:
  *
  * - `"transform"`: the same evenly-spaced-hue palette as the 3D "By
  *   Transform" mode ({@link transformColors}), keyed by the transform that
  *   produced each point. Rotation-invariant by construction. `colorIndexes`
- *   (fr-axxl) threads each BASE transform's authored {@link Transform.colorIndex}
+ *   threads each BASE transform's authored {@link Transform.colorIndex}
  *   through to {@link transformColors} exactly like `buildColors`' own
  *   `"transform"` branch; absent (or an absent entry within it) keeps the
  *   derived `i / count` spread.
@@ -608,9 +608,10 @@ export function fourDColorNeedsAttribute(
  *   non-`"legacy"` `rampPalette`), over each point's 4D Euclidean distance
  *   from the cloud's 4D `center`, normalized against the actual min→max
  *   distance range the way `buildColors`' radius branch normalizes — so the
- *   full ramp is always in play (the fr-9bk spirit). A 4D view rotation about
- *   `center` preserves every such distance, so the baked colors stay honest
- *   at every tumble angle.
+ *   full ramp is always in play, the same reason the w-color signal
+ *   normalizes per rotation rather than by the invariant 4D radius. A 4D
+ *   view rotation about `center` preserves every such distance, so the baked
+ *   colors stay honest at every tumble angle.
  *
  * The shader treats the baked color exactly like a w-depth side color — it
  * still mixes toward the dim gray notch as |rotated w| → 0 (scene.ts's
@@ -619,7 +620,7 @@ export function fourDColorNeedsAttribute(
  * this; their color is a pure function of the rotated w and lives entirely in
  * the shader (see {@link W_SIDE_PALETTES}).
  *
- * `rampPalette` (fr-6ue) is the radius mode's counterpart of `buildColors`'
+ * `rampPalette` is the radius mode's counterpart of `buildColors`'
  * parameter of the same name: the same `rampPaletteId` selection recolors the
  * 3D height/radius ramps and this 4D one, so a system going 4D never drops
  * the user's chosen gradient. `"legacy"` (the default) is bit-identical to
@@ -688,8 +689,8 @@ export function buildColors4(
 }
 
 /**
- * The "Watch it build" replay's spotlight-phase dimmer (fr-01kf): given the
- * fully revealed cloud's by-transform colors ({@link buildColors}'s
+ * The "Watch it build" replay's spotlight-phase dimmer: given the fully
+ * revealed cloud's by-transform colors ({@link buildColors}'s
  * `"transform"` mode or {@link buildColors4}'s), dim every point EXCEPT those
  * produced by transform `keep`, isolating that one map's landings. What that
  * spotlight traces out is a shrunken copy of the whole attractor — the
@@ -730,19 +731,18 @@ export function dimColorsExcept(
 }
 
 /**
- * How the 4D flame and solid renders color each plotted point/voxel (fr-5b3,
- * fr-4wd — moved here from `flame-4d.ts` so both accumulators, and neither's
- * name, own it):
+ * How the 4D flame and solid renders color each plotted point/voxel (moved
+ * here from `flame-4d.ts` so both accumulators, and neither's name, own it):
  *
  * - `"structural"`: the cosine-palette path, identical semantics to
  *   `accumulateFlame`'s `colorLUT` mode — an orbit-riding coordinate `c`
  *   blended toward the picked transform's palette slot at that transform's own
- *   color speed every step (fr-hiyu: `c ← c·(1 - speed) + slot·speed`, both
- *   resolved by `prepareChaosGame4` from the optional `colorIndex`/
+ *   color speed every step (`c ← c·(1 - speed) + slot·speed`, both resolved
+ *   by `prepareChaosGame4` from the optional `colorIndex`/
  *   `colorSpeed`, absent ⇒ the derived `idx / (n - 1)` spread and a halfway
  *   `0.5`), escape-reseed resetting it to `0.5`, indexing `lut` (a `256 * 3`
  *   `buildPaletteLUT` table). Keyed on the BASE map index
- *   (`idx % baseTransformCount`, fr-q0h6) exactly like the 3D path, so every
+ *   (`idx % baseTransformCount`) exactly like the 3D path, so every
  *   kaleidoscope copy of a map shares that map's slot; equal to the picked
  *   index at symmetry order 1.
  * - `"wRamp"`: the diverging rotated-w ramp ({@link wRampColor}) evaluated on
@@ -756,8 +756,8 @@ export function dimColorsExcept(
  *   falling back to `[1, 1, 1]` for an out-of-range index (shouldn't happen;
  *   mirrors `buildColors4`).
  * - `"radius"`: the 3D radius ramp LUT ({@link buildColorModeLUT}, built at
- *   the explorer's own `rampPalette` since fr-6ue, exactly like
- *   {@link buildColors4}'s `"radius"` branch), indexed by the plotted point's
+ *   the explorer's own `rampPalette`, exactly like {@link buildColors4}'s
+ *   `"radius"` branch), indexed by the plotted point's
  *   4D Euclidean distance from `center`, normalized over `[minD, maxD]` — the
  *   "legacy" dispatch for the explorer's "By 4D Radius" mode. `minD`/`maxD`
  *   are the explorer's own cloud's min/max 4D distance from its center

@@ -182,7 +182,7 @@ describe("accumulateVoxels bucketing", () => {
   });
 });
 
-describe("accumulateVoxels color modes (fr-c1d)", () => {
+describe("accumulateVoxels color modes", () => {
   it("colors by the height ramp at the point's normalized height", () => {
     const prepared = prepareChaosGame(fixedPointSystem([0, 0, 0]));
     const grid = createVoxelGrid(4, unitishBounds(1));
@@ -266,7 +266,7 @@ describe("accumulateVoxels color modes (fr-c1d)", () => {
     expect(grid.avgRGB[o + 2]).toBeCloseTo(UNIFORM_POINT_COLOR[2], 6);
   });
 
-  it("colors voxels through the shared writePositionColor blend for custom axis colors (fr-8k7)", () => {
+  it("colors voxels through the shared writePositionColor blend for custom axis colors", () => {
     // A fixed point with a DISTINCT normalized coordinate per axis
     // (tx=0.6, ty=0.3, tz=0.8), so swapping any two axis colors — or wiring
     // an axis to the wrong channel — lands on a visibly different value;
@@ -327,7 +327,7 @@ describe("accumulateVoxels color modes (fr-c1d)", () => {
   });
 });
 
-describe("accumulateVoxels color contrast (fr-8sk)", () => {
+describe("accumulateVoxels color contrast", () => {
   it("reshapes height-mode colors without changing density at all", () => {
     const prepared = prepareChaosGame(fixedPointSystem([0, 0, 0]));
     const palette = transformColors(1);
@@ -376,7 +376,7 @@ describe("accumulateVoxels color contrast (fr-8sk)", () => {
   });
 });
 
-describe("accumulateVoxels rampPalette (fr-3b6)", () => {
+describe("accumulateVoxels rampPalette", () => {
   it("colors by a custom ramp palette instead of the built-in height ramp", () => {
     const blackToWhite: CustomPalette = {
       stops: [
@@ -525,7 +525,7 @@ describe("accumulateVoxels vs. stepOrbit/plotPoint (correctness oracle)", () => 
     expect(actual.orbit).toEqual([x, y, z]);
   });
 
-  it("matches a reference loop that tracks the color coordinate the same way (colorLUT, fr-1kt)", () => {
+  it("matches a reference loop that tracks the color coordinate the same way (colorLUT)", () => {
     // The colorLUT counterpart to the oracle above: the color coordinate `c`
     // rides the orbit (init 0.5, blended halfway toward the picked
     // transform's slot each step) and indexes the gradient. Because updating
@@ -612,7 +612,7 @@ describe("accumulateVoxels vs. stepOrbit/plotPoint (correctness oracle)", () => 
     expect(actual.orbitColor).toBe(expected.orbitColor);
   });
 
-  it("matches the same oracle when the prepared system has rotated copies (fr-6im)", () => {
+  it("matches the same oracle when the prepared system has rotated copies", () => {
     // Same shape as the plain oracle above, but `prepared` is built with
     // symmetry: stepOrbit already rotates a picked slot's full affine +
     // variation output (see chaos-game.test.ts), so if accumulateVoxels'
@@ -684,7 +684,7 @@ describe("accumulateVoxels vs. stepOrbit/plotPoint (correctness oracle)", () => 
     expect(actual.orbit).toEqual([x, y, z]);
   });
 
-  it("matches the structural-coloring (colorLUT) oracle when the prepared system has rotated copies (fr-1kt + fr-6im)", () => {
+  it("matches the structural-coloring (colorLUT) oracle when the prepared system has rotated copies", () => {
     const transforms: Transform[] = sierpinskiTetrahedron().map((t, i) =>
       i === 0
         ? { ...t, variations: [{ type: "sinusoidal" as const, weight: 0.7 }] }
@@ -797,7 +797,7 @@ describe("accumulateVoxels vs. stepOrbit/plotPoint (correctness oracle)", () => 
   });
 });
 
-describe("accumulateVoxels escape-reseed (fr-h22c)", () => {
+describe("accumulateVoxels escape-reseed", () => {
   it("reseeds every iteration when the map always lands past ESCAPE_LIMIT, keeping the grid finite and populated", () => {
     // Every oracle above is built from a contracting system that never
     // escapes, so none of them walks voxel.ts's inlined reseed branch
@@ -825,7 +825,7 @@ describe("accumulateVoxels escape-reseed (fr-h22c)", () => {
   });
 });
 
-describe("accumulateVoxels structural coloring (colorLUT, fr-1kt)", () => {
+describe("accumulateVoxels structural coloring (colorLUT)", () => {
   it("threads the color coordinate across chunks (progressive == single-shot)", () => {
     const transforms = sierpinskiTetrahedron();
     const palette = transformColors(transforms.length);
@@ -910,7 +910,7 @@ describe("accumulateVoxels structural coloring (colorLUT, fr-1kt)", () => {
   });
 });
 
-describe("accumulateVoxels structural coloring: per-transform colorIndex/colorSpeed (fr-hiyu)", () => {
+describe("accumulateVoxels structural coloring: per-transform colorIndex/colorSpeed", () => {
   it("pins an all-absent accumulation exactly identical to the same system with every derived default authored explicitly", () => {
     const base = sierpinskiTetrahedron();
     const n = base.length;

@@ -387,7 +387,7 @@ describe("embedTransform3", () => {
         position: [(rng() - 0.5) * 2, (rng() - 0.5) * 2, (rng() - 0.5) * 2],
         rotation: [(rng() - 0.5) * 3, (rng() - 0.5) * 3, (rng() - 0.5) * 3],
         scale: [rng() + 0.3, rng() + 0.3, rng() + 0.3],
-        // Random shear too (fr-hy8): the embed now carries it, so the fold must
+        // Random shear too: the embed carries it, so the fold must
         // still agree with the 3D composeAffine in the upper-left 3x3.
         shear: [(rng() - 0.5) * 2, (rng() - 0.5) * 2, (rng() - 0.5) * 2],
       });
@@ -450,7 +450,7 @@ describe("embedTransform3", () => {
     ).toBeUndefined();
   });
 
-  it("carries authored colorIndex/colorSpeed onto the lifted Transform4 (fr-hiyu)", () => {
+  it("carries authored colorIndex/colorSpeed onto the lifted Transform4", () => {
     const embedded = embedTransform3(
       transform({ colorIndex: 0.75, colorSpeed: 0.2 }),
     );
@@ -586,7 +586,7 @@ describe("systemPartsAreNonFlat", () => {
     expect(systemPartsAreNonFlat(transforms, lens, noSymmetry)).toBe(true);
   });
 
-  it("is true when the kaleidoscope alone turns in a w-plane (fr-q0h6)", () => {
+  it("is true when the kaleidoscope alone turns in a w-plane", () => {
     expect(
       systemPartsAreNonFlat(defaultTransforms(), null, {
         order: 3,
@@ -595,7 +595,7 @@ describe("systemPartsAreNonFlat", () => {
     ).toBe(true);
   });
 
-  it("is true when the kaleidoscope alone carries a twist (fr-q0h6)", () => {
+  it("is true when the kaleidoscope alone carries a twist", () => {
     expect(
       systemPartsAreNonFlat(defaultTransforms(), null, {
         order: 5,

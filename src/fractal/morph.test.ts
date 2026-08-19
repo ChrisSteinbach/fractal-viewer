@@ -174,8 +174,7 @@ describe("lerpSystem variations", () => {
 
     // The union is keyed by TYPE rather than concatenated, so no morph
     // sample can ever carry more variations than the vocabulary has types —
-    // the bound `flame-gpu.ts`'s fixed-count variation lanes rely on
-    // (fr-qgxi).
+    // the bound `flame-gpu.ts`'s fixed-count variation lanes rely on.
     expect(types).toHaveLength(VARIATION_TYPES.length);
     expect(new Set(types).size).toBe(VARIATION_TYPES.length);
   });
@@ -553,7 +552,7 @@ describe("lerpSystem symmetry", () => {
 
   it("treats a differing twist as a different kaleidoscope and crossfades, never interpolating the twist", () => {
     // Same order and plane, different second angle: (order, plane, twist) is
-    // the identity tuple (fr-q0h6 P6), so this pair crossfades — each half
+    // the identity tuple, so this pair crossfades — each half
     // still that side's own group, twist carried whole, no in-between twist
     // value ever synthesized (it would be a rotation in neither group).
     const a = system({ symmetry: { order: 6, plane: "xw", twist: 1 } });
@@ -580,8 +579,8 @@ describe("lerpSystem symmetry", () => {
   });
 
   it("crossfades the kaleidoscopes of a flat -> 4D morph like any other differing pair", () => {
-    // The fr-5gxn non-flat skip is gone (fr-q0h6 P6): a 4D sample renders
-    // its kaleidoscope, so the crossfade runs even though b's transform
+    // The old non-flat skip is gone: a 4D sample renders its
+    // kaleidoscope, so the crossfade runs even though b's transform
     // carries a genuine w block and every intermediate is non-flat.
     const a = system({
       transforms: [transform()],

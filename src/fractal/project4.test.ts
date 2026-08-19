@@ -43,8 +43,9 @@ function applyMatrix4(m: number[], v: Vec4): Vec4 {
 }
 
 /** Sphere-invert a displayed 3D point about `center` with squared radius
- * `sphereR2`. Kept as a hand-written oracle for fr-5666's semantic decision:
- * the explorer balloon transforms the point AFTER the 4D view projects it. */
+ * `sphereR2`. Kept as a hand-written oracle for the 4D explorer balloon's
+ * semantic decision: it transforms the point AFTER the 4D view projects
+ * it. */
 function invert3(
   point: number[],
   center: number[],
@@ -116,7 +117,7 @@ describe("composeRotorProjection4", () => {
   });
 });
 
-describe("4D explorer balloon semantics (fr-5666)", () => {
+describe("4D explorer balloon semantics", () => {
   it("projects first, then sphere-inverts the exact displayed 3D point", () => {
     const rotor = rotationMatrix4({ xy: 0.35, xw: 0.7, yw: -0.25 });
     const center: Vec4 = [0.4, -0.3, 0.2, 0.6];

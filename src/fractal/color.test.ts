@@ -51,7 +51,7 @@ describe("transformColors", () => {
     expectRgbClose(transformColors(4)[0], hslToRgb(0, 0.8, 0.6));
   });
 
-  it("with no colorIndexes argument, reproduces the even i/count spread exactly (fr-axxl)", () => {
+  it("with no colorIndexes argument, reproduces the even i/count spread exactly", () => {
     const withoutArg = transformColors(4);
     const withUndefinedArray = transformColors(4, [
       undefined,
@@ -65,7 +65,7 @@ describe("transformColors", () => {
     }
   });
 
-  it("an authored colorIndex picks the hue position instead of the even spread (fr-axxl)", () => {
+  it("an authored colorIndex picks the hue position instead of the even spread", () => {
     const colors = transformColors(4, [undefined, 0.5, undefined, undefined]);
     // Map 1 authors 0.5 — same hue an even-spread map would get AT hue 0.5,
     // not the i/count spread's 1/4 it would otherwise land on.
@@ -141,7 +141,7 @@ describe("buildColors", () => {
     expect(Number.isFinite(colors[0])).toBe(true);
   });
 
-  it("transform mode: an authored colorIndex sets that map's identity hue (fr-axxl)", () => {
+  it("transform mode: an authored colorIndex sets that map's identity hue", () => {
     const transforms: Transform[] = [
       { id: 0, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
       {
@@ -175,7 +175,7 @@ describe("buildColors", () => {
   });
 });
 
-describe("buildColors color contrast (fr-8sk)", () => {
+describe("buildColors color contrast", () => {
   const result = runChaosGame(defaultTransforms(), 300, mulberry32(5));
 
   // A small hand-built cloud whose points span the full [0, 1] normalized
@@ -306,7 +306,7 @@ describe("buildColors color contrast (fr-8sk)", () => {
   });
 });
 
-describe("buildColors position axis colors (fr-8k7)", () => {
+describe("buildColors position axis colors", () => {
   // A single point at tx=0.5, ty=1, tz=0.25 within a unit cube — distinct
   // normalized coordinates on every axis, so a wrong axis→channel wiring
   // (unlike a degenerate tx=ty=tz fixture) would show up as a wrong value.
@@ -446,7 +446,7 @@ function zeroRangeBounds(): Bounds {
 }
 
 describe("buildColorModeLUT", () => {
-  // The drift guard for the solid render (fr-c1d): the LUT and buildColors
+  // The drift guard for the solid render: the LUT and buildColors
   // share one ramp definition, and this pins that fact — points placed at
   // exact LUT sample coordinates must get the same colors from both paths.
   const unitBounds: Bounds = {
@@ -536,7 +536,7 @@ describe("buildColorModeLUT", () => {
   });
 });
 
-describe("buildColorModeLUT rampPalette (fr-3b6)", () => {
+describe("buildColorModeLUT rampPalette", () => {
   const blackToWhite: CustomPalette = {
     stops: [
       [0, 0, 0],
@@ -581,7 +581,7 @@ describe("buildColorModeLUT rampPalette (fr-3b6)", () => {
   });
 });
 
-describe("buildColors rampPalette (fr-3b6)", () => {
+describe("buildColors rampPalette", () => {
   const blackToWhite: CustomPalette = {
     stops: [
       [0, 0, 0],
@@ -678,12 +678,12 @@ describe("buildColors rampPalette (fr-3b6)", () => {
   });
 });
 
-describe("writePaletteRampColor clamps out-of-range t (fr-oxfn)", () => {
+describe("writePaletteRampColor clamps out-of-range t", () => {
   // A non-legacy ramp palette, so these route through writePaletteRampColor
   // rather than the built-in writeHeightColor (the existing degenerate-cloud
   // test at color.test.ts:132 only covers the legacy ramp). Endpoints are
-  // exact (see the fr-3b6 tests above), so a clamped t reads as exactly 0 or
-  // 1 on every channel with no tolerance needed.
+  // exact (see the rampPalette tests above), so a clamped t reads as exactly
+  // 0 or 1 on every channel with no tolerance needed.
   const blackToWhite: CustomPalette = {
     stops: [
       [0, 0, 0],
@@ -839,7 +839,7 @@ describe("buildColors4", () => {
     expect(colors[2]).toBeCloseTo(1, 5);
   });
 
-  it("transform mode: an authored colorIndex sets that map's identity hue (fr-axxl)", () => {
+  it("transform mode: an authored colorIndex sets that map's identity hue", () => {
     const result: ChaosGame4Result = {
       positions: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
       w: new Float32Array([0, 0, 0]),
@@ -918,7 +918,7 @@ describe("buildColors4", () => {
   });
 });
 
-describe("buildColors4 rampPalette (fr-6ue)", () => {
+describe("buildColors4 rampPalette", () => {
   it("radius mode samples the gradient palette over 4D distance from the center", () => {
     // Same 3-point fixture shape as the "radius mode spans the warm→cool
     // ramp" test above: center [0,0,0,0]; distances 0, 1, 2 → t = 0, 0.5, 1.
@@ -983,7 +983,7 @@ describe("buildColors4 rampPalette (fr-6ue)", () => {
 
     // Endpoints land exactly on the first/last stop (buildCustomPaletteLUT's
     // two-product lerp lands entry 0 on t=0 and entry 255 on t=1 exactly),
-    // mirroring how the fr-3b6 buildColors custom-stop test pins its
+    // mirroring how the buildColors custom-stop test pins its
     // black-to-white endpoints.
     expect(colors[0]).toBeCloseTo(1, 5);
     expect(colors[1]).toBeCloseTo(0, 5);

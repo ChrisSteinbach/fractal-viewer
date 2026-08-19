@@ -55,8 +55,9 @@ export type Mat4 = number[];
  * `sumRGB / hits` then systematically undershoots, desaturating and
  * darkening exactly the hottest, most-converged bucket toward black. That
  * is precisely the region this renderer (and the higher iteration counts
- * fr-73y will push toward) is built to render brightest, so the extra
- * memory (~2x `sumRGB`'s share — roughly 66 MB total at 1920x1080) buys
+ * progressive rendering pushes toward) is built to render brightest, so the
+ * extra memory (~2x `sumRGB`'s share — roughly 66 MB total at 1920x1080)
+ * buys
  * correctness where it matters most, not just cosmetic precision.
  *
  * Pass a histogram back into {@link accumulateFlame} to keep converging it —
@@ -91,7 +92,7 @@ export interface FlameHistogram {
    */
   orbitColor: number;
   /**
-   * The 4D orbit's fourth-coordinate continuation (fr-5b3) — `flame-4d.ts`'s
+   * The 4D orbit's fourth-coordinate continuation — `flame-4d.ts`'s
    * `accumulateFlame4` twin of {@link orbit}'s `x`/`y`/`z`, kept here (rather
    * than a fourth slot on `orbit` itself) so `orbit` stays exactly the `Vec3`
    * every 3D caller already expects. Used ONLY by `accumulateFlame4`; stays at
@@ -121,7 +122,7 @@ export function createFlameHistogram(
 /**
  * Wrap externally-owned bucket arrays as a {@link FlameHistogram} — the
  * shared-memory counterpart to {@link createFlameHistogram}. Exists for the
- * flame worker's SharedArrayBuffer transport (fr-96i), where `hits`/`sumRGB`
+ * flame worker's SharedArrayBuffer transport, where `hits`/`sumRGB`
  * are views over memory shared between the worker (which downsamples into
  * them) and the main thread (which tone-maps straight out of them): both
  * sides need the same wrapper, and neither should have to know that `orbit`/
@@ -189,7 +190,7 @@ const FALLBACK_COLOR: Vec3 = [1, 1, 1];
  * camera and inside the `width` x `height` frame, increments that pixel's
  * hit count and adds a color to its color sum.
  *
- * **Coloring** has two modes (fr-6us). By default the added color is
+ * **Coloring** has two modes. By default the added color is
  * `palette[transformIndex]` — the flat per-transform hue ("legacy"). Pass a
  * `colorLUT` (a `256 * 3` interleaved RGB table from `palette.ts`'s
  * `buildPaletteLUT`) to switch to flam3-style structural coloring instead: a
@@ -198,8 +199,8 @@ const FALLBACK_COLOR: Vec3 = [1, 1, 1];
  * (`c ← c·(1 - speed) + slot·speed`, both resolved per base map by
  * `prepareChaosGame` from the transform's optional `colorIndex`/`colorSpeed`
  * — absent ⇒ the even spread `i / (n - 1)` and speed `0.5`, i.e. the halfway
- * blend this had hard-coded before fr-hiyu) — and
- * the LUT color at `c` is accumulated, so color flows continuously along the
+ * blend this had hard-coded before those fields existed) — and the LUT
+ * color at `c` is accumulated, so color flows continuously along the
  * structure. Updating `c` consumes NO `rng`, so a given seed produces the
  * byte-identical *orbit* (and thus identical `hits`) whether or not a
  * `colorLUT` is supplied; only the color sums differ. An escape-reseed resets
@@ -218,7 +219,7 @@ const FALLBACK_COLOR: Vec3 = [1, 1, 1];
  * `runChaosGame`, so the orbit is already on the attractor before anything
  * is plotted.
  *
- * **Symmetry** (fr-6im): when `prepared` was built with rotated copies (see
+ * **Symmetry**: when `prepared` was built with rotated copies (see
  * `chaos-game.ts`'s `prepareChaosGame`), this hand-inlined loop mirrors
  * `stepOrbit`'s handling exactly — the picked slot's rotation bends the
  * orbit-feedback point, and `palette`/the colorLUT slot both key on the
@@ -257,14 +258,14 @@ export function accumulateFlame(
   const { hits, sumRGB } = hist;
   let maxHits = hist.maxHits;
 
-  // Structural coloring (fr-6us): when a colorLUT is supplied, `c` rides the
+  // Structural coloring: when a colorLUT is supplied, `c` rides the
   // orbit and indexes the gradient; otherwise every `colorLUT !== undefined`
   // branch below is skipped and the per-transform `palette` path runs
   // unchanged. The per-map slot and blend speed were resolved once by
-  // `prepareChaosGame` (fr-hiyu) — a transform's authored `colorIndex`/
+  // `prepareChaosGame` — a transform's authored `colorIndex`/
   // `colorSpeed`, or the derived even spread and 0.5 halfway blend that were
   // hard-coded here before those fields existed. Both are keyed on
-  // `baseTransformCount`, not `transformCount` (fr-6im): with symmetry, every
+  // `baseTransformCount`, not `transformCount`: with symmetry, every
   // rotated copy of a base map shares that map's slot, so the gradient repeats
   // around the kaleidoscope instead of smearing continuously across copies
   // that are geometrically the same map.
@@ -309,14 +310,14 @@ export function accumulateFlame(
   for (let n = 0; n < iterations; n++) {
     // --- inlined stepOrbit(prepared, x, y, z, rng) ------------------------
     const idx = pickIndex(prepared, rng);
-    // The BASE map this slot is a (possibly rotated) copy of (fr-6im) — see
+    // The BASE map this slot is a (possibly rotated) copy of — see
     // PreparedChaosGame.baseTransformCount. Equal to `idx` at symmetry order
     // 1. Anything keyed to "which logical map" (the color slot below, and the
     // legacy `palette` lookup at the bottom of the loop) uses this, never the
     // raw expanded `idx`.
     const baseIdx = idx % baseTransformCount;
     // Blend the color coordinate toward this transform's slot, at this
-    // transform's speed (fr-hiyu). At the default speed 0.5 this reproduces the
+    // transform's speed. At the default speed 0.5 this reproduces the
     // halfway `(c + slot) / 2` blend it replaces BIT FOR BIT for every normal
     // `c` — halving is exact in binary floating point, so `c/2 + slot/2` and
     // `(c + slot)/2` round identically (verified over 5e6 random pairs in both
@@ -352,7 +353,7 @@ export function accumulateFlame(
       nz = q[2];
     }
 
-    // Symmetry (fr-6im): rotate this slot's FULL affine + variation output —
+    // Symmetry: rotate this slot's FULL affine + variation output —
     // see `chaos-game.ts`'s `stepOrbit`, which this mirrors exactly. `null`
     // (order 1, and every unrotated copy-0 slot at any order) skips this, so
     // the orbit stays byte-identical to the pre-symmetry loop exactly where
@@ -454,8 +455,8 @@ export const DEFAULT_GAMMA_THRESHOLD = 0.01;
 
 /**
  * Tone-mapping controls: `exposure` alone was enough to make a converging
- * render usable (fr-o7s); `gamma`, `gammaThreshold`, and `vibrancy` (fr-ucs)
- * add the rest of the classic flame "punchy, painterly" look on top.
+ * render usable; `gamma`, `gammaThreshold`, and `vibrancy` add the rest of
+ * the classic flame "punchy, painterly" look on top.
  */
 export interface TonemapParams {
   /**
@@ -466,8 +467,9 @@ export interface TonemapParams {
   exposure: number;
   /**
    * Reshapes the normalized [0, 1] log-density curve by `density **
-   * (1/gamma)`; 1 leaves the log-density curve exactly as fr-o7s shipped it
-   * (no reshaping — the collapse point every gamma-related test is pinned
+   * (1/gamma)`; 1 leaves the log-density curve exactly as the original
+   * log-density tonemap shipped it (no reshaping — the collapse point every
+   * gamma-related test is pinned
    * to). Above 1 pushes faint, sparsely-visited detail brighter relative to
    * the hottest buckets — the "punchy" flame look; below 1 does the reverse.
    */
@@ -622,8 +624,8 @@ const MIN_FILTER_SIGMA = 1e-3;
  *
  * `filterRadius` is FIXED for every output cell — a plain reconstruction /
  * antialiasing filter, not density-adaptive. {@link adaptiveDownsampleFlame}
- * (fr-17t) generalizes this to a per-cell radius driven by local density
- * (flam3's "density estimation") — the two functions COEXIST rather than one
+ * generalizes it to a per-cell radius driven by local density (flam3's
+ * "density estimation") — the two functions COEXIST rather than one
  * replacing the other: this one stays cheap for progressive-preview frames
  * (no per-cell radius/kernel-cache work), while the adaptive one is reserved
  * for a finished/paused render, where its O(width * height * radius^2) cost
@@ -640,7 +642,7 @@ const MIN_FILTER_SIGMA = 1e-3;
  * a dirty `out` is fine. This is what lets the flame worker reuse one
  * display-resolution histogram across progressive redisplays (instead of
  * churning a multi-megabyte allocation per tick) and, in shared-memory mode
- * (fr-96i), downsample straight into SharedArrayBuffer-backed buckets the
+ * downsample straight into SharedArrayBuffer-backed buckets the
  * main thread tone-maps from with no copy in between.
  */
 export function downsampleFlame(
@@ -1042,7 +1044,7 @@ export function adaptiveDownsampleFlame(
         }
       }
       // Step 2: map the cell's own absolute count to a radius (see the doc's
-      // ALGORITHM section for why absolute, not relative-to-peak — fr-rq6).
+      // ALGORITHM section for why absolute, not relative-to-peak).
       // max(1, count) keeps an empty cell at exactly the widest radius
       // instead of dividing by 0 ** curve.
       const radius = Math.min(

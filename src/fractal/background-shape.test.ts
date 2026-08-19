@@ -142,9 +142,9 @@ describe("backgroundShapeSource", () => {
   });
 
   it("emits identical function bodies in both dialects once the per-dialect tokens are normalized away", () => {
-    // fr-h3mp: the radial branch reads uniforms through each dialect's own
-    // `field` accessor (GLSL flat uniforms vs WGSL's `shade.` struct
-    // field), WGSL declares its local with `let` rather than a type prefix,
+    // The radial branch reads uniforms through each dialect's own `field`
+    // accessor (GLSL flat uniforms vs WGSL's `shade.` struct field),
+    // WGSL declares its local with `let` rather than a type prefix,
     // and WGSL requires an unsigned literal suffix GLSL does not — the
     // three token differences background-shape.ts's own doc calls out at
     // backgroundShapeBody. Every other character, radial arithmetic

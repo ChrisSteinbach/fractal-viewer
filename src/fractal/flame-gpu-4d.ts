@@ -1,5 +1,5 @@
 /**
- * The 4D WebGPU flame-accumulation backend's PURE side (fr-e26): the 4D WGSL
+ * The 4D WebGPU flame-accumulation backend's PURE side: the 4D WGSL
  * kernel source, its byte-layout contracts, and the packing/conversion
  * functions that translate between this codebase's plain-object 4D systems
  * and the kernel's flat GPU buffers. The 4D twin of `flame-gpu.ts`, in the
@@ -20,7 +20,7 @@
  *
  * Parity with `accumulateFlame4` (see that function and `chaos-game-4d.ts`'s
  * `stepOrbit4`): same uniform/weighted transform pick, same 4x4+t affine →
- * blended-`variations4` → kaleidoscope post-rotation step (fr-q0h6 — the 4D
+ * blended-`variations4` → kaleidoscope post-rotation step (the 4D
  * symmetry expansion `prepareChaosGame4` performs, packed here exactly as
  * `flame-gpu.ts` packs the 3D one: copy-major slots `k · baseTransformCount +
  * i`, each carrying its copy's 4x4 rotation and a `hasPost` flag), same
@@ -30,16 +30,16 @@
  * rotor+camera projection rows (`clipX`/`clipY`/`clipW`/`sRaw` — see
  * `project4.ts`'s `composeFlameProjection4`), same soft w-slice Gaussian
  * with the point-cloud ghost floor (0.06), same optional slice-relative
- * w-ramp recolor (fr-nn6 — an affine remap of `s` packed from
+ * w-ramp recolor (an affine remap of `s` packed from
  * `project4.ts`'s `sliceColorRemap`, identity when off), the same structural
- * color walk over a per-slot palette index and blend speed (fr-hiyu —
- * resolved host-side by {@link packGpuSystem4} through `chaos-game.ts`'s
+ * color walk over a per-slot palette index and blend speed (resolved
+ * host-side by {@link packGpuSystem4} through `chaos-game.ts`'s
  * `derivedColorIndex`/`DEFAULT_COLOR_SPEED`, the very definitions
  * `prepareChaosGame4` resolves the CPU oracle's with), and the same four
  * `FourDRenderColor` flavors (`color.ts`). Deliberate differences are the
  * 3D kernel's own, unchanged: f32 arithmetic instead of f64, and many
  * independent PCG32 chains instead of one mulberry32 orbit (each on its own
- * per-chain stream — see the 3D kernel's pcgNext doc, fr-8xn) —
+ * per-chain stream — see the 3D kernel's pcgNext doc) —
  * statistically the same render, not a byte-identical one.
  *
  * **The one genuinely new mechanism over the 3D kernel: fixed-point slice
@@ -125,13 +125,14 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   144 itersPerInvocation u32 | 148 colorKind u32 ({@link KERNEL_COLOR_KIND}) | 152 weighted u32 | 156 hasFinal u32
  *   160 numChains u32 | 164 totalWeight f32 | 168 invWAmp f32 | 172 sliceOn u32
  *   176 sliceCenter f32 | 180 sliceWidth f32 | 184 minD f32 | 188 invRadiusRange f32
- *   192 sliceColorShift f32 | 196 sliceColorInvScale f32 (the fr-nn6 remap —
- *   `sliceColorRemap`'s (shift, invScale); identity (0, 1) when off) |
+ *   192 sliceColorShift f32 | 196 sliceColorInvScale f32 (the slice-relative
+ *   remap — `sliceColorRemap`'s (shift, invScale); identity (0, 1) when
+ *   off) |
  *   200..207 trailing pad (WGSL rounds the struct to its 16-byte alignment,
- *   which is why dropping fr-hiyu's dead `colorDenom` from the middle of this
+ *   which is why dropping the dead `colorDenom` from the middle of this
  *   block compacted the layout without shrinking {@link PARAMS4_BYTES} — and
- *   why fr-q0h6's `baseTransformCount` grew it back into the same 208 bytes
- *   rather than past them)
+ *   why the kaleidoscope's `baseTransformCount` grew it back into the same
+ *   208 bytes rather than past them)
  *
  * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 336 stride);
  * slot count = transformCount + 1, the last being the final-transform lens
@@ -144,15 +145,15 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   64 trans vec4f (t0..t3)
  *   80 postX vec4f (symmetry post-rotation row 0) | 96 postY | 112 postZ | 128 postW
  *   144 varWeights array<vec4f, 5> | 224 varTypes array<vec4u, 5> (20 lanes of
- *   storage, 17 used — one per `VariationType`; fr-7u8t.7's `bulb` took the
+ *   storage, 17 used — one per `VariationType`; `bulb` took the
  *   count past the 16 four vec4s held, and a vec4 array cannot be widened by
  *   less than four lanes, so three ride spare)
  *   304 varCount u32 | 308 hasPost u32 | 312 cumWeight f32
- *   316 colorIndex f32 | 320 colorSpeed f32 (fr-hiyu's flam3 color pair,
+ *   316 colorIndex f32 | 320 colorSpeed f32 (the flam3 color pair,
  *   resolved per BASE map and written into EVERY kaleidoscope copy of it —
  *   exactly like cumWeight's base-map weight — so the kernel reads
  *   `slots[idx]` with no modulo) | 324..335 trailing pad
- *   336 foldRadii array<vec4f, 3> (fr-s9ll) — the 3D Slot's lane verbatim:
+ *   336 foldRadii array<vec4f, 3> — the 3D Slot's lane verbatim:
  *   the fold family's AUTHORED lengths indexed by variation type MINUS 12
  *   ([boxfold, spherefold, mandelbox]), (minRadius^2, fixedRadius^2,
  *   boxLimit, unused). Shared meaning across the two kernels for the same
@@ -160,13 +161,13 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   restating it: what an absent field means must have ONE answer, or a 3D
  *   system and its 4D lift render different objects.
  *
- * The stride arithmetic (fr-q0h6): the pre-symmetry 224 was exactly 14 x 16
- * with no slack — fr-hiyu's color pair had already taken this struct's last
+ * The stride arithmetic: the pre-symmetry 224 was exactly 14 x 16
+ * with no slack — the flam3 color pair had already taken this struct's last
  * two pad words — so the four `vec4f` rows (+64) and `hasPost` (+4) had
  * nowhere to hide. 224 + 68 = 292 bytes of content, and WGSL rounds a struct
  * up to its own alignment (16, from the `vec4f`s), so 292 -> 304 with three
  * trailing pad words. Repurposing a lane instead was not available: unlike
- * the 3D rows, a 4D post-rotation row has no unused `.w`. fr-7u8t.7 then
+ * the 3D rows, a 4D post-rotation row has no unused `.w`. A later pass
  * added a 17th `VariationType` (`bulb`), which does not fit 16 lanes: both
  * lane arrays grew by one `vec4` (+32 bytes, the smallest step available),
  * so content runs to 324 and the struct rounds 324 -> 336, keeping the same
@@ -256,7 +257,7 @@ struct Slot {
   _pad0: f32,
   _pad1: f32,
   _pad2: f32,
-  // fr-s9ll: the 3D Slot's fold lane verbatim — the fold family's authored
+  // The 3D Slot's fold lane verbatim — the fold family's authored
   // lengths indexed by type - 12, (minRadius^2, fixedRadius^2, boxLimit).
   foldRadii: array<vec4f, 3>,
 }
@@ -287,7 +288,7 @@ fn addU64(base: u32, v: u32) {
 }
 
 // PCG-RXS-M-XS 32 with per-chain streams — identical to the 3D kernel's
-// (see its stream-selector doc, fr-8xn); here the odd increment rides in
+// (see its stream-selector doc); here the odd increment rides in
 // aux.z, since aux.y already carries the bitcast color coordinate.
 fn pcgNext(rng: ptr<function, vec2u>) -> u32 {
   let s = (*rng).x * 747796405u + (*rng).y;
@@ -428,7 +429,7 @@ fn applySlot(slotIdx: u32, p: vec4f, rng: ptr<function, vec2u>) -> vec4f {
       // applySlot.
       let w = slots[slotIdx].varWeights[v >> 2u][v & 3u];
       let ty = slots[slotIdx].varTypes[v >> 2u][v & 3u];
-      // The fold family's own lengths (fr-s9ll), the 3D kernel's selection
+      // The fold family's own lengths, the 3D kernel's selection
       // verbatim — explicit bounds because 15/16 would index past the
       // three lanes.
       var fi = 0u;
@@ -452,7 +453,7 @@ fn applySlot(slotIdx: u32, p: vec4f, rng: ptr<function, vec2u>) -> vec4f {
 
 // The diverging rotated-w ramp — color.ts's wRampColor, with the shape
 // constants (exponent, gray notch, brightness floor) interpolated from its
-// W_RAMP_* exports (fr-3o2) so this kernel's copy can't drift from the CPU
+// W_RAMP_* exports so this kernel's copy can't drift from the CPU
 // twin. "s" arrives already clamped to [-1, 1].
 fn wRampColor(s: f32) -> vec3f {
   let m = pow(abs(s), ${W_RAMP_EXPONENT});
@@ -499,11 +500,11 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
 
     // Structural coloring: blend the color coordinate toward this transform's
     // palette slot, at this transform's own speed, BEFORE stepping — exactly
-    // accumulateFlame4's c = c * (1 - speed) + slot * speed (fr-hiyu), term for
+    // accumulateFlame4's c = c * (1 - speed) + slot * speed, term for
     // term, and consuming no RNG so the orbit stays identical either way.
     // The pair is read straight off the picked slot with no base-map fold —
     // packGpuSystem4 writes each BASE map's pair into every kaleidoscope copy
-    // of it, exactly as the 3D packer does (fr-q0h6).
+    // of it, exactly as the 3D packer does.
     if (params.colorKind == 0u) {
       let speed = slots[idx].colorSpeed;
       colorCoord = colorCoord * (1.0 - speed) + slots[idx].colorIndex * speed;
@@ -576,7 +577,7 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
               rgb = colors[ci].xyz;
             }
             case 1u: { // wRamp: in-shader diverging ramp on s, through the
-              // optional slice-relative remap (fr-nn6) — project4.ts's
+              // optional slice-relative remap — project4.ts's
               // sliceColorRemap, identity (shift 0, invScale 1) when off.
               let sc = clamp(
                 (s - params.sliceColorShift) * params.sliceColorInvScale,
@@ -586,7 +587,7 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
               rgb = vec3u(round(wRampColor(sc) * ${COLOR_FIXED_POINT_SCALE}.0));
             }
             case 2u: { // transform: the picked slot's BASE map palette entry
-              // (fr-q0h6) — accumulateFlame4's own color.palette[baseIdx], so
+              // accumulateFlame4's own color.palette[baseIdx], so
               // every kaleidoscope copy colors as the map it copies. Equal to
               // idx at symmetry order 1.
               rgb = colors[idx % params.baseTransformCount].xyz;
@@ -626,7 +627,7 @@ const SLOT4_ROW_Y = 4;
 const SLOT4_ROW_Z = 8;
 const SLOT4_ROW_W = 12;
 const SLOT4_TRANS = 16;
-/** The four rows of a kaleidoscope copy's 4x4 post-rotation (fr-q0h6) —
+/** The four rows of a kaleidoscope copy's 4x4 post-rotation —
  * every lane used, unlike the 3D Slot's three rows with a spare `.w`. */
 const SLOT4_POST_X = 20;
 const SLOT4_POST_Y = 24;
@@ -640,14 +641,14 @@ const SLOT4_VAR_TYPES = 56;
 const SLOT4_VAR_COUNT = 76;
 const SLOT4_HAS_POST = 77;
 const SLOT4_CUM_WEIGHT = 78;
-/** fr-hiyu's flam3 color pair, resolved per BASE map and replicated across
+/** The flam3 color pair, resolved per BASE map and replicated across
  * its kaleidoscope copies (see {@link packGpuSystem4}) — the kernel's
  * structural walk reads them straight off the picked slot. */
 const SLOT4_COLOR_INDEX = 79;
 const SLOT4_COLOR_SPEED = 80;
 // Elements 81-83 are Slot4's trailing pad, left at the ArrayBuffer's zero
 // default.
-/** `foldRadii: array<vec4f, 3>` (fr-s9ll) — the 3D Slot's lane verbatim,
+/** `foldRadii: array<vec4f, 3>` — the 3D Slot's lane verbatim,
  * indexed by variation type MINUS 12; fold `i` sits at
  * `SLOT4_FOLD_RADII + i * 4`. */
 const SLOT4_FOLD_RADII = 84;
@@ -703,7 +704,7 @@ const PARAMS4_SLICE_COLOR_INV_SCALE = 49;
 export interface GpuFlameSystemSpec4 {
   transforms4: Transform4[];
   finalTransform4: Transform4 | null;
-  /** Kaleidoscope symmetry (fr-q0h6) — see `chaos-game-4d.ts`'s
+  /** Kaleidoscope symmetry — see `chaos-game-4d.ts`'s
    * `prepareChaosGame4`, whose expansion this packer restates. Order 1 (any
    * plane, any twist) packs exactly one unrotated copy of each base map, i.e.
    * the pre-symmetry buffers byte for byte. */
@@ -730,7 +731,7 @@ export interface PackedGpuSystem4 {
   transformCount: number;
   /** `transforms4.length`: the number of BASE (un-rotated) maps, which the
    * kernel folds a picked slot back onto for the `"transform"` color mode
-   * (fr-q0h6). Equal to `transformCount` at symmetry order 1. */
+   * Equal to `transformCount` at symmetry order 1. */
   baseTransformCount: number;
   weighted: boolean;
   totalWeight: number;
@@ -757,7 +758,7 @@ const FALLBACK_COLOR: readonly [number, number, number] = [1, 1, 1];
  * Throws `RangeError` if `transforms4.length` exceeds `MAX_TRANSFORMS` —
  * same check and message shape as `prepareChaosGame4`.
  *
- * **Expansion** (fr-q0h6) mirrors `prepareChaosGame4` exactly: `order =
+ * **Expansion** mirrors `prepareChaosGame4` exactly: `order =
  * effectiveSymmetryOrder(symmetry.order, baseTransformCount)`, then slot `k *
  * baseTransformCount + i` (copy-major: every copy's base maps together, copy
  * 0 first) holds base map `i`'s affine rows + translation and its OWN
@@ -776,7 +777,7 @@ const FALLBACK_COLOR: readonly [number, number, number] = [1, 1, 1];
  * bit. `symmetry.blend` is deliberately NOT applied, exactly as the 3D packer
  * ignores it: it is a morph artifact that never reaches a render worker.
  *
- * **Color slots** (fr-hiyu): each slot also carries the flam3 pair the
+ * **Color slots**: each slot also carries the flam3 pair the
  * kernel's structural walk blends with — `colorIndex` (the transform's own, or
  * `chaos-game.ts`'s `derivedColorIndex(i, baseTransformCount)` even spread) and
  * `colorSpeed` (its own, or `DEFAULT_COLOR_SPEED`) — resolved through exactly
@@ -837,7 +838,7 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
     totalWeight > 0 &&
     Number.isFinite(totalWeight);
 
-  // Flame structural-coloring pair per BASE map (fr-hiyu), resolved through
+  // Flame structural-coloring pair per BASE map, resolved through
   // the SAME two definitions prepareChaosGame4 resolves the CPU oracle's
   // with. The expansion below writes each base map's pair into every copy of
   // it (see this function's doc).
@@ -981,7 +982,7 @@ function writeSlot4Variations(
   variations: Transform4["variations"],
 ): void {
   const { types, weights } = packVariations(variations);
-  // fr-s9ll: the fold family's authored lengths, keyed by TYPE — the 3D
+  // The fold family's authored lengths, keyed by TYPE — the 3D
   // packer's loop verbatim (see writeSlotVariations for why it walks the
   // raw list rather than the filtered lanes).
   for (const v of variations ?? []) {
@@ -1010,7 +1011,7 @@ function writeSlot4Variations(
  * Float32Array view (the kernel bitcasts it back — see the byte-layout doc),
  * then one uniform 32-bit draw for the chain's PCG32 seed, then one more
  * forced odd (`(draw << 1) | 1`) for its PCG stream increment into aux.z —
- * the 3D packer's exact convention (see `writeChainSeed`'s doc, fr-8xn).
+ * the 3D packer's exact convention (see `writeChainSeed`'s doc).
  */
 export function packGpuChains4(numChains: number, seed: number): ArrayBuffer {
   const rng: Rng = mulberry32(seed);
@@ -1049,7 +1050,7 @@ export interface GpuParams4Fields {
   /** The EXPANDED slot count the pick searches — `PackedGpuSystem4`'s own. */
   transformCount: number;
   /** The BASE map count the kernel folds a picked slot onto for the
-   * `"transform"` color mode (fr-q0h6) — `PackedGpuSystem4`'s own. */
+   * `"transform"` color mode — `PackedGpuSystem4`'s own. */
   baseTransformCount: number;
   itersPerInvocation: number;
   weighted: boolean;
@@ -1081,11 +1082,11 @@ export interface GpuParams4Fields {
  * the other modes leave those fields zeroed (the kernel never reads them).
  *
  * `sliceColorShift`/`sliceColorInvScale` come from `sliceColorRemap(view)`
- * (fr-nn6) — the identity (0, 1) unless the slice is on with the
+ * — the identity (0, 1) unless the slice is on with the
  * slice-relative color option chosen, so they are packed unconditionally
  * (only the wRamp color kind reads them).
  *
- * There is deliberately no `colorDenom` here any more (fr-hiyu), for the same
+ * There is deliberately no `colorDenom` here any more, for the same
  * reason its 3D sibling lost one: the structural mode's gradient slot is a
  * per-slot value {@link packGpuSystem4} resolves, not a uniform-wide `i /
  * (n - 1)` division the kernel redoes per iteration.

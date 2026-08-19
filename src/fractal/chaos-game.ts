@@ -42,8 +42,8 @@ const NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xz" };
 /**
  * A transform's structural color speed when it authors none
  * (`Transform.colorSpeed` absent): the halfway blend `c ← (c + slot) / 2` that
- * every flame AND solid render used before the field existed (fr-hiyu — both
- * walk the same coordinate; see `PreparedChaosGame.colorIndex`'s two readers).
+ * every flame AND solid render used before the field existed (both walk the
+ * same coordinate; see `PreparedChaosGame.colorIndex`'s two readers).
  * In flam3 terms this is `color_speed 0.5` ⇔ the legacy `symmetry 0` —
  * flam3's own default too.
  */
@@ -51,7 +51,7 @@ export const DEFAULT_COLOR_SPEED = 0.5;
 
 /**
  * The palette slot a transform falls back on when it authors no
- * `Transform.colorIndex` (fr-hiyu): map `index` of `count` spread evenly over
+ * `Transform.colorIndex`: map `index` of `count` spread evenly over
  * the `[0, 1]` gradient, `0.5` for a lone map (there is no "spread" to speak
  * of, and `0 / 0` would not be one). This is the ONE definition of that
  * derived slot — {@link prepareChaosGame}, `chaos-game-4d.ts`'s
@@ -61,9 +61,9 @@ export const DEFAULT_COLOR_SPEED = 0.5;
  * cannot drift between the CPU oracle, the GPU kernel and the UI.
  *
  * `count` is the number of BASE maps — `PreparedChaosGame.baseTransformCount`
- * in 3D and `PreparedChaosGame4.baseTransformCount` in 4D (fr-q0h6 gave the
- * 4D path its own kaleidoscope): every rotated copy of a map shares that
- * map's slot, in either dimension.
+ * in 3D and `PreparedChaosGame4.baseTransformCount` in 4D (the 4D path has
+ * its own kaleidoscope): every rotated copy of a map shares that map's slot,
+ * in either dimension.
  */
 export function derivedColorIndex(index: number, count: number): number {
   return count > 1 ? index / (count - 1) : 0.5;
@@ -99,19 +99,19 @@ export function effectiveSymmetryOrder(
  * exact same matrices {@link prepareChaosGame} rotates copies by (no drift
  * between the plotted set and its distance estimator).
  *
- * ## The fr-q0h6 axis → plane migration, entry for entry
+ * ## The axis → plane migration, entry for entry
  *
- * `SymmetryParams` named an AXIS before fr-q0h6. A simple rotation fixes the
- * orthogonal complement — an axis in 3D, a plane in 4D — so the same three
- * rotations renamed to the planes they turn IN, and each is the SAME matrix
- * it always was:
+ * `SymmetryParams` named an AXIS before the kaleidoscope went 4D. A simple
+ * rotation fixes the orthogonal complement — an axis in 3D, a plane in 4D —
+ * so the same three rotations renamed to the planes they turn IN, and each
+ * is the SAME matrix it always was:
  *
  *     legacy axis "x"  →  plane "yz"  =  rotationMatrixXYZ(angle, 0, 0)
  *     legacy axis "y"  →  plane "xz"  =  rotationMatrixXYZ(0, angle, 0)
  *     legacy axis "z"  →  plane "xy"  =  rotationMatrixXYZ(0, 0, angle)
  *
- * so every pre-fr-q0h6 document renders bit-identically (pinned by this
- * module's tests, entry for entry).
+ * so every document predating the migration renders bit-identically (pinned
+ * by this module's tests, entry for entry).
  *
  * ## One sign that is NOT `affine4.ts`'s `R_ab`
  *
@@ -127,8 +127,8 @@ export function effectiveSymmetryOrder(
  *
  * — exactly the `xz: -ry` that `affine4.ts`'s `embedTransform3` already
  * writes when it lifts a 3D Euler triple, for exactly this reason. This
- * function keeps the LEGACY sign in all three planes, because phase 1 of
- * fr-q0h6 must not move a single rendered point; a 4D generator built on
+ * function keeps the LEGACY sign in all three planes, because the migration's
+ * first phase must not move a single rendered point; a 4D generator built on
  * `rotationMatrix4` has to negate the `xz` angle to agree with it (or adopt
  * this sign), and the tests pin both relations so the choice cannot be made
  * by accident.
@@ -213,7 +213,7 @@ export interface PreparedChaosGame {
   totalWeight: number;
   /**
    * Row-major 3x3 rotation applied AFTER a slot's affine + variation output
-   * (fr-6im's kaleidoscope copies), indexed like `affines`/`variations`, or
+   * (the kaleidoscope copies), indexed like `affines`/`variations`, or
    * `null` for an unrotated slot — every slot at symmetry order 1, and every
    * copy-0 slot at any order, so the RNG stream and every coordinate stay
    * byte-identical to the pre-symmetry code path exactly where there is
@@ -221,7 +221,7 @@ export interface PreparedChaosGame {
    */
   postRotations: (number[] | null)[];
   /**
-   * Resolved flame palette slot per BASE map (fr-hiyu) — length
+   * Resolved flame palette slot per BASE map — length
    * {@link baseTransformCount}, indexed by `idx % baseTransformCount`, never by
    * the expanded slot: every kaleidoscope copy of a map colors as that map.
    * Each entry is the transform's own `colorIndex` when it authors one, else
@@ -233,7 +233,7 @@ export interface PreparedChaosGame {
    */
   colorIndex: Float64Array;
   /**
-   * Resolved flame color speed per BASE map (fr-hiyu), the companion to
+   * Resolved flame color speed per BASE map, the companion to
    * {@link colorIndex}: the transform's own `colorSpeed` or
    * {@link DEFAULT_COLOR_SPEED}. Same indexing, same two readers.
    */
@@ -246,14 +246,14 @@ export interface PreparedChaosGame {
  * per-iteration. Call once per run and reuse the result for every
  * {@link stepOrbit} / {@link plotPoint} call in that run.
  *
- * `symmetry` (fr-6im; defaults to order 1, the identity) replicates every
+ * `symmetry` (defaults to order 1, the identity) replicates every
  * base map `effectiveSymmetryOrder(symmetry.order, transforms.length)` times,
  * copy `k` rotated by `2π·k / order` in `symmetry.plane` — see
  * {@link stepOrbit} for where that rotation is actually applied. At order 1
  * (any plane) this expansion is a no-op: exactly one (unrotated) copy of each
  * base map, so every existing caller that omits `symmetry` gets a
  * byte-identical `PreparedChaosGame` to before this parameter existed.
- * `symmetry.blend` (fr-eykn; default 1) scales the rotated copies' selection
+ * `symmetry.blend` (default 1) scales the rotated copies' selection
  * weights, continuously fading the kaleidoscope between full strength (1)
  * and bit-identical-to-order-1 (0) — see the weight-table comment below.
  *
@@ -318,7 +318,7 @@ export function prepareChaosGame(
   // Only a genuinely weighted system pays for the cumulative-weight table +
   // binary search.
   //
-  // `symmetry.blend` (fr-eykn) additionally scales every ROTATED copy's slot
+  // `symmetry.blend` additionally scales every ROTATED copy's slot
   // (never copy 0), continuously thinning the kaleidoscope: at its default 1
   // the weights — and thus the `weighted` flag and the whole draw — are
   // untouched, and at 0 the copies' zero-width cumulative segments can never
@@ -343,7 +343,7 @@ export function prepareChaosGame(
     totalWeight > 0 &&
     Number.isFinite(totalWeight);
 
-  // Flame structural-coloring slots (fr-hiyu), resolved per BASE map — the
+  // Flame structural-coloring slots, resolved per BASE map — the
   // kaleidoscope copies deliberately get no entries of their own, since
   // `flame.ts` looks them up by `idx % baseTransformCount`. An all-absent
   // system resolves to exactly the `i / (n - 1)` slot and `0.5` speed the
@@ -425,7 +425,7 @@ export interface OrbitStep {
  * net-expansive application, which a well-formed IFS never produces in steady
  * state). The reseed path is a safety net only.
  *
- * Symmetry (fr-6im): when `prepared` has rotated copies, the picked slot's
+ * Symmetry: when `prepared` has rotated copies, the picked slot's
  * `postRotations` entry — the copy's rotation, applied to the map's FULL
  * affine + variation output — bends the landing point before the escape
  * check, since that rotated point is what actually feeds back into the
@@ -437,7 +437,7 @@ export interface OrbitStep {
  * per-transform coloring and the editor's selection keep meaning "logical
  * map" regardless of which kaleidoscope copy actually fired.
  *
- * `auxRng` (fr-2wfw) is the stream every ITERATION-LOCAL draw comes from —
+ * `auxRng` is the stream every ITERATION-LOCAL draw comes from —
  * a stochastic variation's coin flips (`julia`) and the escape-reseed
  * coordinates; the transform pick alone stays on `rng`. It defaults to `rng`
  * itself: the original single-stream behavior, byte-identical for every
@@ -513,7 +513,7 @@ export function stepOrbit(
  * every coordinate stays finite, otherwise this returns the orbit point
  * unchanged so a bad landing never produces NaN/Inf.
  *
- * `auxRng` (fr-2wfw) mirrors {@link stepOrbit}'s parameter of the same name:
+ * `auxRng` mirrors {@link stepOrbit}'s parameter of the same name:
  * the stream a stochastic lens's own draws come from, defaulting to `rng` —
  * the original single-stream behavior.
  */
@@ -557,13 +557,13 @@ export function plotPoint(
  * back into the orbit. Omit it (or pass `null`) and the loop takes the exact
  * same path, and consumes the RNG identically, as before the feature existed.
  *
- * An optional `symmetry` (fr-6im; defaults to order 1, the identity) draws
+ * An optional `symmetry` (defaults to order 1, the identity) draws
  * from `effectiveSymmetryOrder(symmetry.order, transforms.length)` rotated
  * copies of the transform set instead of just the base maps — see
  * {@link prepareChaosGame}. `transformIndices` still records the BASE map
  * index regardless, so per-transform coloring is unaffected.
  *
- * An optional `iterationRng` (fr-2wfw) moves every ITERATION-LOCAL draw — a
+ * An optional `iterationRng` moves every ITERATION-LOCAL draw — a
  * stochastic variation's coin flips, the escape-reseed coordinates — onto a
  * per-iteration stream rewound to `begin(i)` at each iteration, leaving
  * `rng` to serve exactly one draw per transform pick (plus the three seeding
@@ -668,7 +668,7 @@ export function runChaosGame(
       nz = q[2];
     }
 
-    // Symmetry (fr-6im): rotate this slot's FULL affine + variation output —
+    // Symmetry: rotate this slot's FULL affine + variation output —
     // see stepOrbit, which this mirrors exactly. `null` (order 1, and every
     // unrotated copy-0 slot at any order) skips this, so the orbit stays
     // byte-identical to the pre-symmetry loop exactly where there is nothing
@@ -728,7 +728,7 @@ export function runChaosGame(
     positions[i * 3] = px;
     positions[i * 3 + 1] = py;
     positions[i * 3 + 2] = pz;
-    // The BASE map this slot is a (possibly rotated) copy of (fr-6im) — see
+    // The BASE map this slot is a (possibly rotated) copy of — see
     // PreparedChaosGame.baseTransformCount — matching stepOrbit's own
     // OrbitStep.index exactly, including the escape-reseed case (idx is the
     // TRIGGERING transform, fixed before the reseed branch above runs).

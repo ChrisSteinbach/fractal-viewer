@@ -1,5 +1,5 @@
 /**
- * The 4D twin of `flame.ts`'s `accumulateFlame` (fr-5b3): accumulates a 4D
+ * The 4D twin of `flame.ts`'s `accumulateFlame`: accumulates a 4D
  * chaos-game orbit into the SAME {@link FlameHistogram} shape, but driving
  * `chaos-game-4d.ts`'s `PreparedChaosGame4`/`stepOrbit4`/`plotPoint4` and a
  * composed {@link import("./project4").composeFlameProjection4} projection
@@ -22,8 +22,8 @@
  * **Coloring** has four flavors (see {@link import("./color").FourDRenderColor}): `"structural"` is
  * the cosine-palette path, an exact mirror of `accumulateFlame`'s `colorLUT`
  * mode — an orbit-riding coordinate blended toward the picked transform's
- * palette slot at that transform's color speed every step (fr-hiyu; both
- * resolved by `prepareChaosGame4`), reset on escape-reseed, and keyed on the
+ * palette slot at that transform's color speed every step (both resolved by
+ * `prepareChaosGame4`), reset on escape-reseed, and keyed on the
  * BASE map index (`idx % baseTransformCount`) so a kaleidoscope copy colors as
  * the map it copies. The other three reproduce whichever `FourDColorMode`
  * the point-cloud explorer had active when the render started: `"wRamp"`
@@ -114,8 +114,8 @@ export function accumulateFlame4(
   // see FourDRenderColor's doc): `structural` gates both the per-step update below
   // and the escape-reseed reset, hoisted once rather than re-checking
   // `color.kind` twice per iteration. The per-map slot and blend speed were
-  // resolved once by `prepareChaosGame4` (fr-hiyu), keyed on
-  // `baseTransformCount` exactly like accumulateFlame's (fr-q0h6): with
+  // resolved once by `prepareChaosGame4`, keyed on
+  // `baseTransformCount` exactly like accumulateFlame's: with
   // symmetry, every rotated copy of a base map shares that map's slot, so the
   // gradient repeats around the kaleidoscope instead of smearing continuously
   // across copies that are geometrically the same map.
@@ -172,7 +172,7 @@ export function accumulateFlame4(
   const rs4 = projection[19];
 
   const { invWAmp, sliceOn, sliceCenter, sliceWidth } = view;
-  // The slice-relative w-ramp recolor (fr-nn6) — identity (0, 1) unless the
+  // The slice-relative w-ramp recolor — identity (0, 1) unless the
   // slice is on and the option was chosen, so the wRamp branch below applies
   // it unconditionally (see sliceColorRemap's doc).
   const { shift: colorShift, invScale: colorInvScale } = sliceColorRemap(view);
@@ -180,7 +180,7 @@ export function accumulateFlame4(
   for (let n = 0; n < iterations; n++) {
     // --- inlined stepOrbit4(prepared, x, y, z, w, rng) ---------------------
     const idx = pickIndex4(prepared, rng);
-    // The BASE map this slot is a (possibly rotated) copy of (fr-q0h6) — see
+    // The BASE map this slot is a (possibly rotated) copy of — see
     // PreparedChaosGame4.baseTransformCount. Equal to `idx` at symmetry order
     // 1. Anything keyed to "which logical map" (the color slot below, and the
     // `palette` lookup at the bottom of the loop) uses this, never the raw
@@ -189,7 +189,7 @@ export function accumulateFlame4(
     // Blend the color coordinate toward this transform's slot at this
     // transform's speed, BEFORE applying its affine — mirrors
     // accumulateFlame's formula and ordering exactly, including its
-    // bit-for-bit reproduction of the pre-fr-hiyu halfway blend at the default
+    // bit-for-bit reproduction of the older halfway blend at the default
     // speed 0.5 (see the argument there). No rng is consumed, so the orbit
     // (and `hits`) is identical whether or not structural coloring is in play.
     if (structural) {
@@ -222,7 +222,7 @@ export function accumulateFlame4(
       nw = q[3];
     }
 
-    // Symmetry (fr-q0h6): rotate this slot's FULL affine + variation output —
+    // Symmetry: rotate this slot's FULL affine + variation output —
     // see `chaos-game-4d.ts`'s `stepOrbit4`, which this mirrors exactly.
     // `null` (order 1, and every unrotated copy-0 slot at any order) skips
     // this, so the orbit stays byte-identical to the pre-symmetry loop
@@ -336,7 +336,7 @@ export function accumulateFlame4(
         break;
       }
       case "wRamp": {
-        // The optional slice-relative remap of s (fr-nn6) — wRampColor's own
+        // The optional slice-relative remap of s — wRampColor's own
         // clamp bounds the rescaled signal, exactly like the raw s's.
         const rgb = wRampColor((s - colorShift) * colorInvScale, color.side);
         r = rgb[0];

@@ -1,14 +1,13 @@
 /**
- * fr-5wlv.3: the balloon inverted-union DE — the production port of the
- * fr-5wlv.1 spike wrapper (scripts/balloon-inversion.harness.ts), the CPU
- * oracle the GLSL/WGSL balloon arms mirror under the house agreement
- * discipline (the `flame.ts` <-> `flame-gpu.ts` contract, one wrapper
- * further out).
+ * The balloon inverted-union DE — the production port of the spike wrapper
+ * (scripts/balloon-inversion.harness.ts), the CPU oracle the GLSL/WGSL
+ * balloon arms mirror under the house agreement discipline (the `flame.ts`
+ * <-> `flame-gpu.ts` contract, one wrapper further out).
  *
- * THE SCENE. The epic wants the attractor enclosed by its own
- * sphere-inverted echo: `I(p) = c + R²(p−c)/|p−c|²` through a balloon of
- * radius `R` centered at the attractor center `c`, the scene the UNION of
- * the visible set `S` and its echo `S' = I(S)`. One continuous parameter:
+ * THE SCENE. The attractor enclosed by its own sphere-inverted
+ * echo: `I(p) = c + R²(p−c)/|p−c|²` through a balloon of radius `R`
+ * centered at the attractor center `c`, the scene the UNION of the
+ * visible set `S` and its echo `S' = I(S)`. One continuous parameter:
  * at small `R` the echo is a crumpled ball near `c`; as `R` sweeps past
  * the attractor's extent the copies exchange sides continuously; at rest
  * `R > rho` the attractor sits inside a cave whose walls are itself,
@@ -34,7 +33,7 @@
  * change, and any core (affine ladder, fold frontier, escape, 4D later)
  * composes.
  *
- * THE BALL is the DE's own ({@link balloonBall}): the fr-pjqw probe-fit
+ * THE BALL is the DE's own ({@link balloonBall}): the probe-fit
  * `(boundCenter, boundingRadius)` for plain systems, the analytic
  * `([0,0,0], visibleBoundingRadius)` for lens systems (either final
  * shape) — the estimator measures distance to the VISIBLE set, which is
@@ -42,8 +41,8 @@
  * the raw radius before it becomes the bound's divisor: the shell bound
  * DIVIDES by `rho`, so a `rho` that under-covers the true set inflates
  * the bound into genuine overshoot. The DE ball's own radius is
- * `probe.maxR · 1.05 + 1e-3` over an 8192-point probe (fr-pjqw /
- * RADIUS_PAD); the spike measured `sampleMax/ballR = 0.952−0.962` at 37x
+ * `probe.maxR · 1.05 + 1e-3` over an 8192-point probe (`surface-de.ts`'s
+ * `RADIUS_PAD`); the spike measured `sampleMax/ballR = 0.952−0.962` at 37x
  * that probe density (0 conservativeness violations in 6 systems x 3 R
  * regimes x 2 estimators x 950 off-set queries at margin 1), so the pad
  * already holds with ~4% headroom — but density independence is
@@ -52,7 +51,7 @@
  * certified divisor >= 1.06x the densest measured extent while costing 2%
  * shell tightness.
  *
- * CUTOFF (fr-55r5) survives the wrapper verbatim: the shell term's inner
+ * CUTOFF survives the wrapper verbatim: the shell term's inner
  * cutoff scales by the inverse of its value factor
  * (`cutoff · rho/|p−c|`), so the outer value crosses `cutoff` exactly
  * when the inner value crosses the scaled one. Per term: an inner return
@@ -64,7 +63,7 @@
  * scale division, like every float comparison the marcher already
  * makes.)
  *
- * FOOTPRINT (fr-3c0k) passes to the fractal term verbatim and to the
+ * FOOTPRINT passes to the fractal term verbatim and to the
  * shell term scaled by the LOCAL conformal factor `R²/|p−c|²` — the
  * Jacobian of `I` at the inner query `I(p)` is `|p−c|²/R²`, so an inner
  * feature of size `g` appears near `p` at size `g·|p−c|²/R²`, and outer
@@ -75,7 +74,7 @@
  * floors at FOOTPRINT_DEPTH_FLOOR — a coarse bound is fine there, the
  * cave wall is `~R²/rho` away.
  *
- * MARCH-ENTRY SEMANTICS the shader arms share (decided here, fr-5wlv.3):
+ * MARCH-ENTRY SEMANTICS the shader arms share (decided here):
  * every ray can hit the enclosing shell, so balloon mode DROPS the
  * visible-sphere march gate and caps rays at
  * `tFar = |cam − c| + BALLOON_FAR_CAP_RHO · rho` — attractor material
@@ -83,15 +82,15 @@
  * that graceful: capped rays fall through to the EXISTING background
  * modes (the balloon is a HIT, not a background). The spike marched this
  * exact cap (10 rho) with 0 step-budget cap-outs across 24 system x R
- * rows. The empty-space grid is CONDITIONAL in balloon mode since
- * fr-8yad — its floors bound the fractal alone, and are a valid bound on
- * the union exactly while the shell clears the grid box
- * (`surface-grid.ts`'s `balloonClearsGridBox`: `R^2/rho > |c| +
- * sqrt(3)*halfExtent`, which the rest state satisfies on every measured
- * system and both inflation regimes fail). fr-5wlv.3's blanket OFF was
- * the same rule before anything measured where it holds.
+ * rows. The empty-space grid is CONDITIONAL in balloon mode — its floors
+ * bound the fractal alone, and are a valid bound on the union exactly
+ * while the shell clears the grid box (`surface-grid.ts`'s
+ * `balloonClearsGridBox`: `R^2/rho > |c| + sqrt(3)*halfExtent`, which the
+ * rest state satisfies on every measured system and both inflation regimes
+ * fail). The blanket OFF this module shipped with was the same rule before
+ * anything measured where it holds.
  *
- * MEASURED VERDICT (fr-5wlv.1, CLOUD=300k, margin 1): 0 off-set
+ * MEASURED VERDICT (the spike, CLOUD=300k, margin 1): 0 off-set
  * conservativeness violations anywhere; erosion transports, never
  * amplifies; rest-state march steps x1.25−2.06 over plain (worst rest
  * p95 131 of the 160 full-tier budget); value queries x1.00−1.27 apps —
@@ -151,7 +150,7 @@ export type BalloonEstimator = (
 /** The ball the wrapper certifies against — the DE's own, RAW
  * (unmargined): lens systems (either final shape) descend to the
  * VISIBLE set, so their ball is the analytic origin-centered visible
- * bound; plain systems use the fr-pjqw probe fit. Exposed raw so the UI
+ * bound; plain systems use the probe fit. Exposed raw so the UI
  * can normalize `R` against the same radius everywhere; the margin is
  * applied once, in {@link buildBalloon}. */
 export function balloonBall(de: SurfaceDE): { center: Vec3; radius: number } {
@@ -188,9 +187,9 @@ export function invertBalloon(b: Balloon, p: Vec3): Vec3 {
 
 /**
  * The union DE: `min(DE(p), (|p−c|/rho) · DE(I(p)))` over the UNTOUCHED
- * public estimator `fn`, with the fr-55r5 cutoff contract and the
- * fr-3c0k footprint preserved through the scale (module doc). Returns
- * the min and its term attribution for hit-info/coloring routing.
+ * public estimator `fn`, with the cutoff contract and the footprint
+ * preserved through the scale (module doc). Returns the min and its term
+ * attribution for hit-info/coloring routing.
  */
 export function estimateBalloonDistance(
   fn: BalloonEstimator,
@@ -217,7 +216,7 @@ export function estimateBalloonDistance(
 }
 
 /* ------------------------------------------------------------------ *
- * The 4D lift (fr-qxxw), and the whole of it is a SEMANTIC decision
+ * The 4D lift, and the whole of it is a SEMANTIC decision
  * plus a ball choice — no new algebra.
  *
  * SLICE THEN INVERT. The surface render draws the `w = w0` slice of the

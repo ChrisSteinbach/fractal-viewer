@@ -26,7 +26,7 @@ function angularDiff(a: number, b: number): number {
 }
 
 /**
- * fr-mdhx: `mutateSystem(base, mulberry32(seed))` — the plain, non-wildcard
+ * `mutateSystem(base, mulberry32(seed))` — the plain, non-wildcard
  * mutation of the Sierpinski-tetrahedron base below — is a pure function of
  * `seed` (proved by the determinism test below, and `mutateSystem` never
  * mutates its `base` argument — see "never mutates the base system" below).
@@ -234,8 +234,8 @@ describe("mutateSystem clamps", () => {
 
   it(
     "preserves a negative variation weight's sign, clamping its magnitude into [0.05, 2], across many seeds",
-    // fr-mdhx: this base (negative variation weights) is unique to this
-    // test -- nothing else in the file rolls it -- so there is no batch to
+    // This base (negative variation weights) is unique to this test --
+    // nothing else in the file rolls it -- so there is no batch to
     // share it with, and its own 200-seed sweep (mutateSystem's internal
     // quality gate included) sits close enough to vitest's 5s default
     // under full-suite CPU contention to warrant the same generous ceiling
@@ -290,7 +290,7 @@ describe("mutateSystem clamps", () => {
 
   it(
     "keeps a positive variation weight positive with magnitude in [0.05, 2] across many seeds",
-    // fr-mdhx: mirrors the negative-weight test above (its own unique base,
+    // Mirrors the negative-weight test above (its own unique base,
     // same 200-seed shape, same reason for the generous timeout).
     { timeout: 30_000 },
     () => {
@@ -436,7 +436,7 @@ describe("mutateSystem wildcard structural kick", () => {
 describe("mutateSystem quality gate", () => {
   it("lands a mutant that clears a fresh scoreSystem probe for the large majority of seeds mutating Sierpinski", () => {
     // Same base + seed range as SIERPINSKI_MUTATION_CORPUS above (its full
-    // 30 entries, not a slice) -- shared rather than re-rolled (fr-mdhx).
+    // 30 entries, not a slice) -- shared rather than re-rolled.
     const SEED_COUNT = SIERPINSKI_MUTATION_CORPUS_SIZE;
     let passes = 0;
     const failingSeeds: number[] = [];
@@ -464,14 +464,14 @@ describe("mutateSystem quality gate", () => {
   });
 });
 
-describe("mutateSystem symmetry routing (fr-x6hz)", () => {
+describe("mutateSystem symmetry routing", () => {
   it("does not throw when the base's transforms are flat but its symmetry turns in a w-plane", () => {
     // mutateSystem copies symmetry through verbatim, so a base carrying a
     // w-plane kaleidoscope on an otherwise-flat system reaches scoreSystem's
     // quality gate with exactly that combination on every attempt. Before
-    // fr-x6hz, scoreSystem's flat/4D routing looked at the transforms alone,
-    // so this candidate reached the 3D chaos game and its symmetryRotation
-    // threw on the w-plane.
+    // the routing fix, scoreSystem's flat/4D branch looked at the transforms
+    // alone, so this candidate reached the 3D chaos game and its
+    // symmetryRotation threw on the w-plane.
     const base = system({
       transforms: sierpinskiTetrahedron(),
       symmetry: { order: 4, plane: "xw" },
@@ -574,7 +574,7 @@ describe("mutateSystem colorIndex/colorSpeed", () => {
   });
 });
 
-describe("mutateSystem fold radii (fr-s9ll)", () => {
+describe("mutateSystem fold radii", () => {
   it("perturbs a present fold length and keeps it within its clamped, ordered range", () => {
     const foldMap: Transform = {
       id: 0,
@@ -637,12 +637,12 @@ describe("mutateSystem fold radii (fr-s9ll)", () => {
   });
 
   it("still does not introduce an absent fold length under wildcard", () => {
-    // fr-xb8o: the GPU shader mirrors are still frozen at the classic
-    // lengths, so a mutation -- wildcard included -- must never hand the
-    // user a scene the renderer draws differently on the CPU estimators
-    // than on a GPU path. Whether this particular seed's structural kick
-    // lands on this very map and swaps its type away is irrelevant here:
-    // neither the plain jitter path nor the swap ever materializes one.
+    // A mutation grid stays a grid of the system you brought it, so a
+    // mutation -- wildcard included -- may perturb a fold length the author
+    // already carries but must never invent one the base system never had.
+    // Whether this particular seed's structural kick lands on this very map
+    // and swaps its type away is irrelevant here: neither the plain jitter
+    // path nor the swap ever materializes one.
     const foldMap: Transform = {
       id: 0,
       position: [0, 0.8, 0],

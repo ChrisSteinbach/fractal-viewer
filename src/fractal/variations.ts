@@ -15,10 +15,10 @@ import { clamp } from "./vec";
  * warps (`polar`, `handkerchief`, `heart`, `disc`, `spiral`, `julia`) act in the
  * xy-plane — angle `θ = atan2(y, x)`, planar radius `√(x²+y²)` — and carry `z`
  * through unchanged, warping every z-slice the same way. The *fold* warps
- * (`boxfold`, `spherefold`, `mandelbox` — fr-p7nu) are natively 3-D: per-axis
- * plane reflections and a full-3D-radius ball inversion, the Mandelbox's two
- * moves — the Mandelbox itself due to Tom Lowe ("tglad"), who introduced it on
- * fractalforums in 2010.
+ * (`boxfold`, `spherefold`, `mandelbox`) are natively 3-D: per-axis plane
+ * reflections and a full-3D-radius ball inversion, the Mandelbox's two
+ * moves — the Mandelbox itself due to Tom Lowe ("tglad"), who introduced it
+ * on fractalforums in 2010.
  */
 export type VariationFn = (x: number, y: number, z: number, rng: Rng) => Vec3;
 
@@ -50,7 +50,7 @@ const foldAxis = (t: number) => 2 * clamp(t, -1, 1) - t;
  */
 const sphereFoldFactor = (r2: number) => 1 / clamp(r2, 0.25, 1);
 
-/* ---- the fold's three lengths (fr-s9ll) --------------------------- */
+/* ---- the fold's three lengths ------------------------------------- */
 
 /** The sphere fold's classic minimum radius `mR`. An absent
  * {@link Variation.minRadius} is exactly this. */
@@ -75,9 +75,9 @@ const FOLD_MIN_LENGTH = 1e-6;
 /**
  * Floor on `minRadius / fixedRadius`, i.e. a ceiling of `1e12` on the
  * magnification `fR²/mR²`. RELATIVE and not absolute on purpose: the whole
- * fold family is equivariant under a uniform rescale of its three lengths
- * (fr-qi9c), and an absolute floor would break that equivariance for small
- * apparatus sizes — a rescaled system would stop being the same shape.
+ * fold family is equivariant under a uniform rescale of its three lengths,
+ * and an absolute floor would break that equivariance for small apparatus
+ * sizes — a rescaled system would stop being the same shape.
  */
 const FOLD_MIN_RADIUS_RATIO = 1e-6;
 
@@ -171,7 +171,8 @@ export function isClassicFoldRadii(r: FoldRadii): boolean {
  * This is the expression `surface-de.ts`'s contraction gate multiplies by
  * `|w|·sigma_max(M)`, and — as the deliberate complement — the one
  * `escape-de.ts` tests for expansion, so the fold's own radii move the seam
- * between the two render modes with them (fr-77oy tabulated how far).
+ * between the two render modes with them — how far is tabulated in
+ * `scripts/spherefold-radius-sweep.harness.ts`.
  */
 export function sphereFoldLipschitz(r: FoldRadii): number {
   return (r.fixedRadius * r.fixedRadius) / (r.minRadius * r.minRadius);
@@ -221,7 +222,7 @@ export function isFoldVariationType(
 }
 
 /**
- * The White/Nylander triplex 8th power — the Mandelbulb's map (fr-7u8t.7).
+ * The White/Nylander triplex 8th power — the Mandelbulb's map.
  * The "triplex" product is the spherical-coordinate one, `(r, θ, φ) · (r',
  * θ', φ') = (r·r', θ+θ', φ+φ')` with `z` as the polar axis, so the 8th power
  * is `(r, θ, φ) ↦ (r⁸, 8θ, 8φ)`:
@@ -430,8 +431,8 @@ const VARIATIONS: Record<VariationType, VariationFn> = {
 /**
  * A transform's blended variation map, ready to apply to its affine output.
  * The returned `Vec3` is OWNED BY THE CLOSURE and overwritten in place on
- * every call (fr-7smh) — valid only until the next call on this SAME blend;
- * copy the components out before calling again if you need to keep them.
+ * every call — valid only until the next call on this SAME blend; copy
+ * the components out before calling again if you need to keep them.
  */
 export type VariationBlend = (
   x: number,
@@ -450,7 +451,7 @@ export type VariationBlend = (
  * are free strengths, never normalised), evaluated left to right so a stochastic
  * variation consumes the RNG in list order.
  *
- * Allocation-free per call (fr-7smh, measured 1.27-1.55x on 20M blend calls):
+ * Allocation-free per call (measured 1.27-1.55x on 20M blend calls):
  * the fn/weight pairs are split into parallel arrays once here rather than a
  * `[fn, weight]` tuple list, and the returned closure accumulates into ONE
  * result array reused across calls — see {@link VariationBlend}'s reuse
@@ -465,8 +466,8 @@ export function composeVariations(
   );
   if (active.length === 0) return null;
 
-  // The fold family reads its three lengths off the entry (fr-s9ll); every
-  // other type is the shared parameterless warp. Resolved here, ONCE per
+  // The fold family reads its three lengths off the entry; every other
+  // type is the shared parameterless warp. Resolved here, ONCE per
   // compose, never per plotted point. Parallel arrays rather than a
   // [fn, weight] tuple list, so the hot closure below indexes two flat
   // arrays instead of destructuring a tuple on every call.

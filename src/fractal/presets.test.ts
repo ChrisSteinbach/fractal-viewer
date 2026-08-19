@@ -431,7 +431,7 @@ describe("variation flame presets", () => {
     expect(analysis.stepScale).toBe(1);
   });
 
-  // The pair is the point (fr-5rvk): mandelboxLattice blends `mandelbox` with
+  // The pair is the point: mandelboxLattice blends `mandelbox` with
   // `linear` for the flame, which no surface DE can descend, so the KIFS
   // exists as its own pure-fold system rather than a tweak of that one.
   it("mandelboxLattice's blend keeps it out of the surface render", () => {
@@ -464,7 +464,7 @@ describe("variation flame presets", () => {
   }
 });
 
-// The recipe pin for fr-7u8t.1: `juliaSet`/`juliaDust` render the genuine
+// The recipe pin: `juliaSet`/`juliaDust` render the genuine
 // Julia set of z^2 + c by exact Inverse Iteration (see the presets' own
 // docs and docs/julia-sets.md), which is a claim about where the PLOTTED
 // POINTS land relative to the escape boundary of z^2 + c — not something
@@ -474,7 +474,7 @@ describe("variation flame presets", () => {
 // applying -c before the variation: either change would still pass every
 // other preset test while producing a cloud that no longer concentrates on
 // the Julia set.
-describe("juliaSet / juliaDust (IIM Julia sets, fr-7u8t.1)", () => {
+describe("juliaSet / juliaDust (IIM Julia sets)", () => {
   /** Recover a juliaSet/juliaDust preset's Julia constant from its one
    * transform's position (c = -position) rather than duplicating the
    * literal — these tests check what the preset actually emits. */
@@ -530,7 +530,7 @@ describe("juliaSet / juliaDust (IIM Julia sets, fr-7u8t.1)", () => {
    * forward iterations and some that don't — i.e. straddles the boundary
    * between the filled and escaping sets. A point deep inside a bounded
    * component, or deep in the escaping exterior, never straddles; only
-   * points close to the Julia set itself do (the fr-7u8t.1 probe's
+   * points close to the Julia set itself do (the presets' own probe
    * methodology, cleaned up).
    */
   function straddleFraction(
@@ -636,13 +636,13 @@ describe("juliaSet / juliaDust (IIM Julia sets, fr-7u8t.1)", () => {
   });
 });
 
-// The julia SHOWCASES (fr-7u8t.5). These pin what was AUTHORED, not what
+// The julia SHOWCASES. These pin what was AUTHORED, not what
 // renders: every one of them would still make a pretty flame if its second
 // constant drifted, its lens were dropped, or its palette went missing, and
 // no other test in this file would notice — which is exactly the failure
 // mode `scripts/julia-flame.harness.ts`'s sheet cannot guard against on its
 // own, since a sheet is only ever run by hand.
-describe("julia showcases (fr-7u8t.5)", () => {
+describe("julia showcases", () => {
   it("juliaIsland braids TWO exact inverse-iteration branches at two constants", () => {
     const island = juliaIsland();
 
@@ -856,7 +856,7 @@ describe("pentatopeWireframe (legibility scaffold)", () => {
     }
   });
 
-  // Adapted for the unified factory (fr-bf6): the wireframe's vertices must be
+  // Adapted for the unified factory: the wireframe's vertices must be
   // exactly the LIFTED gasket's fixed points, not the native-Transform4
   // pentatopeGasket's — the fixed point of a lifted map (scale ½) is
   // 2 · position, INCLUDING the lifted w (position[3]).
@@ -1180,7 +1180,7 @@ describe("PRESET_RENDER_HINTS", () => {
   // radiolarian, swirlFlame, and mandelboxLattice are fractal-flame
   // compositions whose payoff lives in the flame render, not the live point
   // cloud (see their own docs) — loading one switches the app into that
-  // renderer (fr-39y).
+  // renderer.
   it("hints radiolarian, swirl, mandelbox, and dyedSpiral as flame showcases", () => {
     expect(PRESET_RENDER_HINTS.radiolarian).toBe("flame");
     expect(PRESET_RENDER_HINTS.swirl).toBe("flame");
@@ -1191,13 +1191,13 @@ describe("PRESET_RENDER_HINTS", () => {
   });
 
   // mandelboxKifs is the pure-fold twin whose payoff lives in the fold
-  // surface descent, not the live point cloud (see its own doc, fr-5rvk) —
+  // surface descent, not the live point cloud (see its own doc) —
   // loading it switches the app into that renderer.
   it("hints mandelboxKifs as a surface showcase", () => {
     expect(PRESET_RENDER_HINTS.mandelboxKifs).toBe("surface");
   });
 
-  // The cross-family chains (fr-j231) need the hint for the same reason as
+  // The cross-family chains need the hint for the same reason as
   // the fold-only and Mandelbulb trios: every link is non-contracting, so
   // the chaos-game cloud is escape-reset debris rather than the attractor.
   it("hints the hybrid chain presets as surface showcases", () => {
@@ -1221,7 +1221,7 @@ describe("PRESET_RENDER_HINTS", () => {
   });
 });
 
-describe("dyedSpiral (per-transform flame color showcase, fr-hiyu)", () => {
+describe("dyedSpiral (per-transform flame color showcase)", () => {
   // The preset exists to demonstrate what the DERIVED spread cannot express,
   // so these pin its authored intent rather than its geometry: an edit that
   // quietly dropped the color pair would still render a pretty spiral, just a
@@ -1270,7 +1270,7 @@ describe("dyedSpiral (per-transform flame color showcase, fr-hiyu)", () => {
   });
 });
 
-describe("hybrid chain presets (fr-j231 cross-family links)", () => {
+describe("hybrid chain presets (cross-family links)", () => {
   // Pins each preset to its own renderer's gate: a preset that drifted out
   // of analyzeEscapeSystem's eligibility (a stray final transform, a weight
   // edited to 0, a third active map) would still build a valid Transform[]
@@ -1312,7 +1312,7 @@ describe("hybrid chain presets (fr-j231 cross-family links)", () => {
   });
 });
 
-describe("the 4D escape-time presets (fr-vag4)", () => {
+describe("the 4D escape-time presets", () => {
   // THE GATE PAIRING IS THE POINT, so every preset below asserts BOTH halves
   // of it. `analyzeEscapeSystem` refusing with "extends into 4D" is what says
   // the system is a genuinely new object rather than a new view of a shipped
@@ -1443,10 +1443,11 @@ describe("the 4D escape-time presets (fr-vag4)", () => {
   // ONE MEASURED GUARD PER PRESET, and it is a BAND rather than a value: an
   // empty set renders a blank frame (`escape-de.ts`'s EMPTY CHAINS ARE
   // REACHABLE) and a set filling its own bailout ball renders as the bounding
-  // sphere (fr-7u8t.8's own defect), and both are reachable by editing one
-  // weight. Sampled far below the sheet's 131072 for suite speed, so the
-  // figure moves; the band is wide enough to be about the OBJECT and not the
-  // sample. Fill is never a visibility predicate — see the third case.
+  // sphere (the Mandelbrot form's own defect), and both are reachable by
+  // editing one weight. Sampled far below the sheet's 131072 for suite
+  // speed, so the figure moves; the band is wide enough to be about the
+  // OBJECT and not the sample. Fill is never a visibility predicate — see
+  // the third case.
   const FILL_SAMPLES = 4096;
 
   it("keeps mandelboxBrick a solid but partial fraction of the 4-ball", () => {

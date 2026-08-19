@@ -220,7 +220,7 @@ describe("accumulateFlame4 vs. stepOrbit4/plotPoint4 (correctness oracle)", () =
   });
 });
 
-describe("accumulateFlame4 escape-reseed (fr-h22c)", () => {
+describe("accumulateFlame4 escape-reseed", () => {
   it("reseeds every iteration when the map always lands past ESCAPE_LIMIT, keeping the histogram finite and resetting the color coordinate to 0.5", () => {
     // The 4D twin of flame.test.ts's escape-reseed test: every oracle above
     // is built from a contracting system that never escapes, so none of
@@ -383,7 +383,7 @@ describe("accumulateFlame4 progressive accumulation", () => {
   });
 });
 
-describe("accumulateFlame4 soft w-slice floor (fr-6x2 ghost context)", () => {
+describe("accumulateFlame4 soft w-slice floor (ghost context)", () => {
   it("lands every iteration in one predictable bucket, weighted at the 0.06 ghost floor when far outside the slice", () => {
     // A fixed point AT the rotor's pivot (the origin) has q = R*(v - center)
     // = R*0 = 0 regardless of the rotor, so sRaw = q.w = 0 exactly — ~20
@@ -610,7 +610,7 @@ describe("accumulateFlame4 color kinds", () => {
   });
 });
 
-describe("accumulateFlame4 structural coloring: per-transform colorIndex/colorSpeed (fr-hiyu)", () => {
+describe("accumulateFlame4 structural coloring: per-transform colorIndex/colorSpeed", () => {
   it("pins an all-absent render exactly identical to the same system with every derived default authored explicitly", () => {
     const base = pentatope().map(toTransform4);
     const n = base.length;
@@ -732,7 +732,7 @@ describe("accumulateFlame4 structural coloring: per-transform colorIndex/colorSp
 });
 
 // ---------------------------------------------------------------------------
-// Kaleidoscope symmetry (fr-q0h6) — the 4D twin of flame.test.ts's
+// Kaleidoscope symmetry — the 4D twin of flame.test.ts's
 // "accumulateFlame with symmetry" block.
 // ---------------------------------------------------------------------------
 
@@ -748,7 +748,7 @@ function flatSystem4(): Transform4[] {
   ];
 }
 
-describe("accumulateFlame4 with symmetry (fr-q0h6)", () => {
+describe("accumulateFlame4 with symmetry", () => {
   it("matches the stepOrbit4/plotPoint4 oracle when the prepared system has rotated copies", () => {
     // The oracle test at the top of this file, but with a genuinely 4D
     // kaleidoscope prepared in: stepOrbit4 already rotates a picked slot's

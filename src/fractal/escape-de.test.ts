@@ -73,8 +73,8 @@ function foldMap(
 }
 
 /**
- * fr-kltj's shipped estimator body, FROZEN — the single-map escape orbit
- * exactly as it ran before fr-za0n turned the transform list into a chain.
+ * The mode's originally shipped estimator body, FROZEN — the single-map
+ * escape orbit exactly as it ran before the transform list became a chain.
  * A one-link chain has to reproduce this to the bit; that is the regression
  * net the whole widening rests on, and it is only worth anything as a
  * verbatim copy, so this must never be refactored to share code with the
@@ -133,16 +133,17 @@ function frKltjReference(
 }
 
 /**
- * The FOLD-ONLY chain estimator as it stood before fr-j231 widened the link
- * vocabulary, frozen beside {@link frKltjReference} and for the same reason:
- * fr-za0n's cycled orbit, fr-s9ll's authored lengths, the query-space wedge
- * fold inlined, and the linear `r / dr` estimate returned unconditionally —
- * because there was no other form to choose. A fold-only document must
- * reproduce this to the bit however many link kinds the chain learns, so
- * this must never be refactored to share code with the estimator it checks.
+ * The FOLD-ONLY chain estimator as it stood before the power links widened
+ * the link vocabulary, frozen beside {@link frKltjReference} and for the
+ * same reason: the cycled orbit, the authored fold lengths, the
+ * query-space wedge fold inlined, and the linear `r / dr` estimate
+ * returned unconditionally — because there was no other form to choose. A
+ * fold-only document must reproduce this to the bit however many link kinds
+ * the chain learns, so this must never be refactored to share code with the
+ * estimator it checks.
  *
- * The one thing fr-j231 moved here is a NAME: the link's map used to be
- * `foldKind` and is now `kind`.
+ * The one thing that widening moved here is a NAME: the link's map used to
+ * be `foldKind` and is now `kind`.
  */
 function frZa0nChainReference(
   de: EscapeDE,
@@ -224,7 +225,7 @@ function frZa0nChainReference(
   return r / dr;
 }
 
-/** One POWER-map link (fr-j231) — {@link foldMap}'s twin for the two
+/** One POWER-map link — {@link foldMap}'s twin for the two
  * cross-family maps, so a chain fixture reads as what it holds. */
 function powerMap(
   id: number,
@@ -243,7 +244,7 @@ function powerMap(
 }
 
 /**
- * An INDEPENDENT chain orbit (fr-j231), built from the DOCUMENT rather than
+ * An INDEPENDENT chain orbit, built from the DOCUMENT rather than
  * from a built {@link EscapeDE}, and reaching for `variations.ts`'s own
  * forward maps rather than restating them: `composeVariations` supplies every
  * warp — `triplexPow8` for a bulb link, the `qsquare` table entry for a
@@ -333,7 +334,7 @@ function referenceOrbit(
   return { r, dr };
 }
 
-describe("analyzeEscapeSystem eligibility (fr-kltj, widened by fr-za0n)", () => {
+describe("analyzeEscapeSystem eligibility, widened to chains", () => {
   it("admits the canonical non-contracting single-map mandelbox", () => {
     const analysis = analyzeEscapeSystem([canonicalMandelbox()]);
     expect(analysis.status).toBe("eligible");
@@ -341,7 +342,7 @@ describe("analyzeEscapeSystem eligibility (fr-kltj, widened by fr-za0n)", () => 
   });
 
   it("admits a CHAIN of non-contracting fold maps", () => {
-    // The shape fr-za0n exists for: refused by the IFS gate for expanding,
+    // The shape the chain exists for: refused by the IFS gate for expanding,
     // and — before this — refused here for being more than one map.
     const chain = [
       canonicalMandelbox(),
@@ -382,11 +383,11 @@ describe("analyzeEscapeSystem eligibility (fr-kltj, widened by fr-za0n)", () => 
   });
 
   it("partitions the pure-fold plane with the IFS gate — MULTI-map systems included", () => {
-    // The pre-fr-za0n version of this test swept SINGLE-map systems only,
+    // An earlier version of this test swept SINGLE-map systems only,
     // and passed for that reason alone: with one map, "more than one active
     // map" never fired and the two gates really did partition. Two maps and
     // the claim was false — a pair of non-contracting folds was refused by
-    // BOTH gates, and nothing rendered it. That hole is what fr-za0n filled,
+    // BOTH gates, and nothing rendered it. That hole is what the chain filled,
     // so the claim is now swept over PAIRS, mixed sides of the line
     // included.
     //
@@ -488,7 +489,7 @@ describe("analyzeEscapeSystem eligibility (fr-kltj, widened by fr-za0n)", () => 
   });
 
   it("ADMITS a w-free kaleidoscope and refuses one that rotates into 4D", () => {
-    // fr-za0n: the kaleidoscope became a query-space wedge fold, which is an
+    // The kaleidoscope became a query-space wedge fold, which is an
     // isometry of the plane it turns in — so a 3D one is free, and a
     // w-plane or a twist has no 3x3 to fold with.
     expect(
@@ -515,7 +516,7 @@ describe("analyzeEscapeSystem eligibility (fr-kltj, widened by fr-za0n)", () => 
   });
 });
 
-describe("buildEscapeDE (fr-kltj, widened by fr-za0n)", () => {
+describe("buildEscapeDE, widened to chains", () => {
   it("carries the forward affine, the signed weight, and the derivative growth", () => {
     const de = buildEscapeDE([
       canonicalMandelbox({
@@ -586,7 +587,7 @@ describe("buildEscapeDE (fr-kltj, widened by fr-za0n)", () => {
   });
 });
 
-describe("estimateEscapeDistance (fr-kltj)", () => {
+describe("estimateEscapeDistance", () => {
   it("reads 0 at a fixed point of the iteration — the inside signal", () => {
     // With t = 0 the origin maps to itself forever; dr grows but |v| = 0.
     const de = buildEscapeDE([canonicalMandelbox({ position: [0, 0, 0] })]);
@@ -626,8 +627,8 @@ describe("estimateEscapeDistance (fr-kltj)", () => {
   });
 });
 
-describe("the chain (fr-za0n)", () => {
-  it("is BIT-IDENTICAL to the fr-kltj single-map loop at chain length 1", () => {
+describe("the chain", () => {
+  it("is BIT-IDENTICAL to the original single-map loop at chain length 1", () => {
     // The regression net. If this ever goes red, every single-map document
     // in the wild — and the six shader mirrors that still read the head
     // link — has moved.
@@ -768,7 +769,7 @@ describe("the chain (fr-za0n)", () => {
   });
 });
 
-describe("escapeSetContains and the emptiness probe (fr-za0n)", () => {
+describe("escapeSetContains and the emptiness probe", () => {
   const CHAIN: Transform[] = [canonicalMandelbox(), foldMap(1, "boxfold", 1.6)];
 
   it("answers membership from the SAME orbit the estimate reads", () => {
@@ -827,7 +828,7 @@ describe("escapeSetContains and the emptiness probe (fr-za0n)", () => {
   });
 
   it("probes a fill for a chain that renders, and ZERO for one that does not", () => {
-    // The fr-za0n UX landmine, and the reporting that answers it. Both of
+    // The chain's UX landmine, and the reporting that answers it. Both of
     // these pass the gate; only one of them draws anything.
     const renders = probeEscapeFill(buildEscapeDE(CHAIN));
     expect(renders).toBeGreaterThan(0);
@@ -891,7 +892,7 @@ describe("escapeSetContains and the emptiness probe (fr-za0n)", () => {
   });
 });
 
-describe("the kaleidoscope fold (fr-za0n)", () => {
+describe("the kaleidoscope fold", () => {
   const CHAIN: Transform[] = [canonicalMandelbox(), foldMap(1, "boxfold", 1.6)];
 
   it("is the identity at order 1, component for component", () => {
@@ -1027,7 +1028,7 @@ describe("the kaleidoscope fold (fr-za0n)", () => {
   });
 });
 
-describe("the escape-time presets (fr-7u8t.8)", () => {
+describe("the escape-time presets", () => {
   // These three exist to make the mode reachable, and they reach it only by
   // being refused by the IFS gate — a preset that quietly became contracting
   // would land in the attractor tracer and render an empty point, with
@@ -1074,7 +1075,7 @@ describe("the escape-time presets (fr-7u8t.8)", () => {
   });
 });
 
-describe("the escape-time CHAIN presets (fr-za0n, fr-s04t)", () => {
+describe("the escape-time CHAIN presets", () => {
   /** The kaleidoscope each preset is loaded under — PRESET_SYMMETRIES' own
    * "absent means OFF" rule, which is what main.ts applies. Reading the table
    * rather than restating its values keeps this suite honest if an entry
@@ -1223,13 +1224,13 @@ describe("the escape-time CHAIN presets (fr-za0n, fr-s04t)", () => {
   });
 });
 
-describe("the Mandelbrot form (fr-7u8t.8)", () => {
+describe("the Mandelbrot form", () => {
   it("adds the QUERY POINT as the per-iteration offset, not the document's t", () => {
     // One iteration of a box fold at weight 2, t = 0, hand-computed:
     //   fold  = 2·clamp(1.2, -1, 1) - 1.2 = 0.8   (local factor 1)
     //   v     = w·fold + p = 2(0.8) + 1.2 = 2.8   <- the +p under test
     //   dr    = |w|·sigma_max(M)·1·dr + 1 = 2(1)(1) + 1 = 3
-    // Drop the offset and this reads 1.6/3 — the shipped fr-kltj value.
+    // Drop the offset and this reads 1.6/3 — the Julia form's value.
     const de = buildEscapeDE([
       canonicalMandelbox({
         position: [0, 0, 0],
@@ -1239,7 +1240,7 @@ describe("the Mandelbrot form (fr-7u8t.8)", () => {
     expect(estimateEscapeDistance(de, [1.2, 0, 0], 1)).toBeCloseTo(2.8 / 3, 12);
   });
 
-  it("leaves most of the bounding ball OUTSIDE the object — the fr-7u8t.8 bug", () => {
+  it("leaves most of the bounding ball OUTSIDE the object — the Julia-form bug", () => {
     // The defect this form fixes: the Julia-form set at an authored constant
     // filled 96% of its own marching ball, so the escape mode rendered its
     // bounding sphere. Probe the same fixture with the seeded membership
@@ -1252,7 +1253,7 @@ describe("the Mandelbrot form (fr-7u8t.8)", () => {
   });
 });
 
-describe("the cross-family gate (fr-j231)", () => {
+describe("the cross-family gate", () => {
   it("refuses a LONE triplex power and names the render that owns it", () => {
     // Not a scoping accident: a single triplex power already has an object,
     // a better estimator (`bulb-de.ts`'s, in y space with the Böttcher form)
@@ -1267,8 +1268,8 @@ describe("the cross-family gate (fr-j231)", () => {
   });
 
   it("refuses a LONE quaternion square and says to chain it", () => {
-    // `qjulia-de.ts`'s object is the measured-dull one fr-7u8t.5 closed
-    // won't-do after twenty smooth panels — so the refusal names the way
+    // `qjulia-de.ts`'s object is the measured-dull one whose own renderer
+    // was refused after twenty smooth panels — so the refusal names the way
     // forward rather than a render that would take it.
     const analysis = analyzeEscapeSystem([powerMap(0, "qsquare")]);
     expect(analysis.status).toBe("ineligible");
@@ -1361,7 +1362,7 @@ describe("the cross-family gate (fr-j231)", () => {
   });
 });
 
-describe("buildEscapeDE with power links (fr-j231)", () => {
+describe("buildEscapeDE with power links", () => {
   it("gives each link its own kind, powers included", () => {
     const de = buildEscapeDE([
       foldMap(0, "mandelbox", 2),
@@ -1417,7 +1418,7 @@ describe("buildEscapeDE with power links (fr-j231)", () => {
   });
 });
 
-describe("the power links' arithmetic (fr-j231)", () => {
+describe("the power links' arithmetic", () => {
   it("applies a bulb link as variations.ts's triplexPow8, with an 8·|y|⁷ factor", () => {
     // ONE orbit step, hand-composed. The query escapes on step 0 (the
     // triplex power sends |y| = 1.3 well past the bailout), so the second
@@ -1515,10 +1516,9 @@ describe("the power links' arithmetic (fr-j231)", () => {
   });
 });
 
-describe("the estimate form (fr-j231)", () => {
+describe("the estimate form", () => {
   /** `mandelbox w=2 -> bulb` at pre-scale 1 — the module doc's own stiffness
-   * fixture, and the exact chain the bead predicted would render a blank
-   * frame. */
+   * fixture, and the exact chain predicted to render a blank frame. */
   const CROSS: Transform[] = [foldMap(0, "mandelbox", 2), powerMap(1, "bulb")];
 
   it("reads a power chain through the Böttcher form 0.5·r·ln r / dr", () => {
@@ -1573,7 +1573,7 @@ describe("the estimate form (fr-j231)", () => {
   });
 });
 
-describe("escapeLinkPower and escapeLinkStiffnessLimit (fr-j231)", () => {
+describe("escapeLinkPower and escapeLinkStiffnessLimit", () => {
   it("reports each link's degree, and 0 for a fold", () => {
     expect(escapeLinkPower(ESCAPE_LINK_BULB)).toBe(8);
     expect(escapeLinkPower(ESCAPE_LINK_QSQUARE)).toBe(2);
@@ -1605,10 +1605,10 @@ describe("escapeLinkPower and escapeLinkStiffnessLimit (fr-j231)", () => {
   });
 });
 
-describe("membership on a cross-family chain (fr-j231)", () => {
-  /** The bead's own worst case: a mandelbox step leaves |v| near 7 and a
-   * triplex 8th power sends 7 to 5.8e5 in one link, so this chain was
-   * predicted to escape everywhere and render a blank frame. */
+describe("membership on a cross-family chain", () => {
+  /** The prediction's own worst case: a mandelbox step leaves |v| near 7
+   * and a triplex 8th power sends 7 to 5.8e5 in one link, so this chain
+   * was predicted to escape everywhere and render a blank frame. */
   const CROSS: Transform[] = [foldMap(0, "mandelbox", 2), powerMap(1, "bulb")];
 
   it("finds MEMBERS at pre-scale 1 — the blank-frame prediction, refuted", () => {
@@ -1651,7 +1651,7 @@ describe("membership on a cross-family chain (fr-j231)", () => {
   });
 });
 
-describe("a fold-only chain is unmoved by fr-j231", () => {
+describe("a fold-only chain is unmoved by the power links", () => {
   /** Every fold-only shape the widening could plausibly have disturbed. */
   const SYSTEMS: [string, Transform[], SymmetryParams][] = [
     ["lone mandelbox w=2", [canonicalMandelbox()], { order: 1, plane: "xz" }],
@@ -1670,7 +1670,7 @@ describe("a fold-only chain is unmoved by fr-j231", () => {
       { order: 1, plane: "xz" },
     ],
     [
-      "authored fr-s9ll fold radii",
+      "authored fold radii",
       [
         foldMap(0, "mandelbox", 2, {
           variations: [
@@ -1700,7 +1700,7 @@ describe("a fold-only chain is unmoved by fr-j231", () => {
     expect(buildEscapeDE(t, null, symmetry).logEstimate).toBe(false);
   });
 
-  it("is BIT-IDENTICAL to the pre-fr-j231 chain loop", () => {
+  it("is BIT-IDENTICAL to the pre-power-link chain loop", () => {
     // The regression net for the whole widening: every fold-only document in
     // the wild, and the mirrors that render them, must be exactly where they
     // were. A `logEstimate` that leaked true, a local factor that changed

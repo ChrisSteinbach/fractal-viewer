@@ -34,8 +34,8 @@ function anisotropicSierpinski(): Transform[] {
  * `pureBoxfoldPair`), duplicated locally since that module sits outside the
  * `src/` program's `rootDir` — importing it here would break `tsc --noEmit`
  * (`npm run lint`'s first step) with a TS6059 rootDir violation. A small,
- * already-validated pure-fold system for the fr-aj4w estimator-parameter
- * tests below. */
+ * already-validated pure-fold system for the estimator-parameter tests
+ * below. */
 function foldBoxfoldPair(): Transform[] {
   return [
     {
@@ -341,16 +341,16 @@ describe("buildSurfaceGrid", () => {
 });
 
 // -----------------------------------------------------------------------
-// fr-aj4w: the `estimator` parameter (measurement infrastructure for the
+// The `estimator` parameter (measurement infrastructure for the
 // fold-system grid-build cost; see scripts/surface-grid-cost.harness.ts).
 // "plain" must stay a SOUND — if weaker — lower bound on every fold system,
 // exactly like "refined". The DEFAULT is no longer flatly "refined": it now
 // follows surfaceGridEstimator's per-system choice (affine -> "refined",
-// unchanged from the pre-fr-aj4w behavior; fold -> "plain", the new
-// behavior this bead introduces so fold builds stay inside budget).
+// the original behavior; fold -> "plain", the newer one, so fold builds
+// stay inside budget).
 // -----------------------------------------------------------------------
 
-describe("surfaceGridEstimator (fr-aj4w)", () => {
+describe("surfaceGridEstimator", () => {
   it('picks "refined" for an affine system', () => {
     const de = buildSurfaceDE(sierpinskiTetrahedron());
     expect(surfaceGridEstimator(de)).toBe("refined");
@@ -362,8 +362,8 @@ describe("surfaceGridEstimator (fr-aj4w)", () => {
   });
 });
 
-describe("the estimator parameter (fr-aj4w)", () => {
-  // Affine systems keep the pre-fr-aj4w default: surfaceGridEstimator only
+describe("the estimator parameter", () => {
+  // Affine systems keep the original default: surfaceGridEstimator only
   // switches FOLD systems to "plain" (see "the default estimator flip is
   // live" below for that half).
   it('defaults to "refined" on an affine system: bit-identical values to an explicit refined build', () => {
@@ -396,7 +396,7 @@ describe("the estimator parameter (fr-aj4w)", () => {
   });
 });
 
-describe("the default estimator flip is live (fr-aj4w)", () => {
+describe("the default estimator flip is live", () => {
   it('matches an explicit "plain" build bit-for-bit on a fold system', () => {
     const de = buildSurfaceDE(foldBoxfoldPair());
     const implicit = buildSurfaceGrid(de, 8);
@@ -470,7 +470,7 @@ describe("pickSurfaceGridResolution", () => {
   });
 });
 
-describe("balloonClearsGridBox (fr-8yad)", () => {
+describe("balloonClearsGridBox", () => {
   /** `buildBalloon`'s own arithmetic, spelled out so each row below reads
    * as the four numbers the predicate is a function of: the balloon sits
    * at `center`, its divisor is the MARGINED ball radius, and `R` is the
@@ -483,7 +483,7 @@ describe("balloonClearsGridBox (fr-8yad)", () => {
     };
   }
 
-  // fr-8yad's `spherefold pair` row, reconstructed from the measurement's
+  // The `spherefold pair` row, reconstructed from the measurement's
   // own printed figures: |boundCenter| 0.7857, the box's far corner from
   // the ORIGIN 3.0532, and R^2/rho at rest 4.3812. It is the row where
   // the origin offset is not a formality — 0.7857 is ~46% of the system's
@@ -522,7 +522,7 @@ describe("balloonClearsGridBox (fr-8yad)", () => {
   });
 
   it("keeps the whole box-corner term for an origin-centered ball, where the offset contributes nothing", () => {
-    // fr-8yad's `default` row: R^2/rho 4.5894 against boxFarFromC 3.1983,
+    // The `default` row: R^2/rho 4.5894 against boxFarFromC 3.1983,
     // the uniform 43.5% margin every origin-centered system shows at rest.
     const halfExtent = 3.1983 / Math.sqrt(3);
     const raw = (4.5894 * BALLOON_RHO_MARGIN) / 1.6 ** 2;

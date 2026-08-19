@@ -1,6 +1,6 @@
 /**
- * The scene backdrop's GRADIENT SHAPE (fr-xn9s): "given a pixel, what is the
- * mix parameter between the two stops" — as opposed to `background.ts`'s
+ * The scene backdrop's GRADIENT SHAPE: "given a pixel, what is the mix
+ * parameter between the two stops" — as opposed to `background.ts`'s
  * "given a mode, what are the two stops". Before this module the shape was
  * written down SIX times: a canvas 2D linear gradient (`scene.ts`), a
  * byte-identical `mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0))` in three
@@ -10,8 +10,8 @@
  * expressible at all because a linear shape restricted to a sub-rectangle is
  * still linear. This module is the ONE definition every mirror consumes.
  *
- * `"radial"` (fr-h3mp) is the second entry in {@link BACKGROUND_SHAPES}: a
- * soft vignette, `t = smoothstep` of the normalized distance from a
+ * `"radial"` is the second entry in {@link BACKGROUND_SHAPES}: a soft
+ * vignette, `t = smoothstep` of the normalized distance from a
  * host-computed `center` scaled by a host-computed `scale` so the shape
  * stays circular in PIXELS rather than in normalized image space (see
  * {@link backgroundRadialScale}). It is a SHAPE, not a fifth
@@ -289,8 +289,8 @@ export const BACKGROUND_SHAPE_WGSL: BackgroundShapeDialect = {
 /**
  * The shared function BODY — ONE template both dialects emit from, so the
  * two shader mirrors cannot drift on the ARITHMETIC. It is
- * dialect-PARAMETERIZED rather than one literal constant: the radial branch
- * (fr-h3mp) reads `shape`/`center`/`scale` through each dialect's own
+ * dialect-PARAMETERIZED rather than one literal constant: the radial
+ * branch reads `shape`/`center`/`scale` through each dialect's own
  * {@link BackgroundShapeDialect.field} accessor, and GLSL's flat uniforms
  * cannot share a spelling with WGSL's `shade.` struct field (`uBgCenter` vs
  * `shade.bgCenter`) — the two emitted bodies are therefore NOT
@@ -314,7 +314,7 @@ function backgroundShapeBody(dialect: BackgroundShapeDialect): string {
   const one = isWgsl ? "1u" : "1";
   const decl = isWgsl ? "let r" : `${dialect.float} r`;
   return `
-  // fr-h3mp: shared body — see backgroundShapeT in background-shape.ts.
+  // Shared body — see backgroundShapeT in background-shape.ts.
   if (${dialect.field("Shape")} == ${one}) {
     ${decl} = clamp(length((p - ${dialect.field("Center")}) * ${dialect.field("Scale")}), 0.0, 1.0);
     return r * r * (3.0 - 2.0 * r);

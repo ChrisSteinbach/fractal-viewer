@@ -96,7 +96,7 @@ describe("packGpuSystem validation", () => {
     expect(() => packGpuSystem(baseSpec({ transforms }))).toThrow(RangeError);
   });
 
-  it("packs the widest variation blend a morph can build — the whole vocabulary at once (fr-qgxi)", () => {
+  it("packs the widest variation blend a morph can build — the whole vocabulary at once", () => {
     // `morph.ts` unions both sides' variation types, so a morph's worst case
     // is a fully DISJOINT pair: every warp in the vocabulary alive in one
     // transform. That union is keyed by type, so it lands at exactly
@@ -348,7 +348,7 @@ describe("packGpuSystem variation filtering", () => {
   });
 });
 
-describe("packGpuSystem fold radii (fr-s9ll)", () => {
+describe("packGpuSystem fold radii", () => {
   /** Element index of fold `i`'s lane in slot 0 — the module's own
    * SLOT_FOLD_RADII at 72, restated with a literal so a mistake there
    * cannot coincidentally agree with a matching mistake here. */
@@ -492,7 +492,7 @@ describe("packGpuSystem parity with prepareChaosGame", () => {
     // comparison. This is the anti-drift pin: the packer must resolve through
     // the same derivedColorIndex/DEFAULT_COLOR_SPEED definitions the CPU
     // oracle's PreparedChaosGame does, or a flame would color differently on
-    // GPU than on CPU (fr-hiyu).
+    // GPU than on CPU.
     const transforms: Transform[] = [
       {
         id: 0,
@@ -577,7 +577,7 @@ describe("packGpuSystem colors", () => {
 });
 
 // ---------------------------------------------------------------------------
-// fr-hiyu: the per-transform palette index + color speed the kernel's
+// The per-transform palette index + color speed the kernel's
 // structural walk blends with. The kernel reads them off the picked SLOT (no
 // `% baseTransformCount` fold and no `i / (n - 1)` division of its own), so
 // what these pin is the packer resolving absent fields exactly as
@@ -615,7 +615,8 @@ describe("packGpuSystem color slots", () => {
   it("falls back to the even i/(n-1) spread and the 0.5 halfway speed when a transform authors neither", () => {
     // Three maps with no color fields at all: derivedColorIndex spreads them
     // 0, 0.5, 1 across the gradient and every speed is DEFAULT_COLOR_SPEED —
-    // the exact behavior hard-coded in the kernel before fr-hiyu.
+    // the exact behavior hard-coded in the kernel before those fields
+    // existed.
     const f32 = new Float32Array(
       packGpuSystem(baseSpec({ transforms: makeTransforms(3) })).slots,
     );
@@ -794,7 +795,7 @@ describe("packGpuParams", () => {
     expect(f32[20]).toBeCloseTo(9.5, 6); // totalWeight
     expect(u32[21]).toBe(65536); // numChains
     // Elements 22-23 are the struct's trailing pad — the two words WGSL's
-    // 16-byte struct alignment adds back after fr-hiyu removed colorDenom.
+    // 16-byte struct alignment adds back after colorDenom was removed.
     expect(u32[22]).toBe(0);
     expect(u32[23]).toBe(0);
   });
@@ -977,7 +978,7 @@ describe("convertGpuHistogram", () => {
 });
 
 // ---------------------------------------------------------------------------
-// fr-ee9: GPU-side progressive display downsample — packGpuDownsample (the
+// GPU-side progressive display downsample — packGpuDownsample (the
 // pure kernel/weight-table packer) and convertGpuDisplayHistogram (the
 // readback converter). The WGSL itself (FLAME_GPU_DOWNSAMPLE_WGSL) is pinned
 // by the agreement harness (src/app/gpu-bench/), not here — see that
@@ -1166,7 +1167,7 @@ describe("convertGpuDisplayHistogram", () => {
 });
 
 // ---------------------------------------------------------------------------
-// fr-jnu: static tripwire tests for the variation switch's STRUCTURE. WGSL
+// Static tripwire tests for the variation switch's STRUCTURE. WGSL
 // cannot execute under Vitest, so these tests can't check the variation
 // FORMULAS — that's pinned by the browser agreement harness
 // (src/app/gpu-bench/) against flame.ts's accumulateFlame. What CAN run here

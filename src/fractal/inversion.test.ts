@@ -2,7 +2,7 @@ import { inversionBallScale } from "./inversion";
 import { mulberry32 } from "./rng";
 
 /**
- * fr-v7ca: the Möbius ball-image identity, pinned against brute force
+ * The Möbius ball-image identity, pinned against brute force
  * rather than against itself. Every test below inverts SAMPLED POINTS with
  * the raw definition `u -> R² u / |u|²` and asks whether the ball the
  * helper predicts actually holds them — which is the only question a
@@ -32,7 +32,7 @@ function ballPoint(rng: () => number, c: number[], r: number): number[] {
   }
 }
 
-describe("inversionBallScale (fr-v7ca)", () => {
+describe("inversionBallScale", () => {
   it("predicts a ball that CONTAINS the image of every point of the source ball, in 3D and in 4D", () => {
     const rng = mulberry32(0x11ce);
     for (const dim of [3, 4]) {

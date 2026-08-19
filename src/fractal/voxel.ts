@@ -1,5 +1,5 @@
 /**
- * The solid render's pure core (fr-v4f): accumulate chaos-game iterations
+ * The solid render's pure core: accumulate chaos-game iterations
  * into a 3D density voxel grid and pack that grid into RGBA8 3D-texture data
  * for a GPU raymarcher. No Three.js, no DOM — the app layer uploads the
  * packed bytes as a `Data3DTexture` and marches an isosurface through it
@@ -7,9 +7,10 @@
  * `src/app/voxel-material.ts`).
  *
  * This exists because the affine IFS has no analytic distance estimator to
- * raymarch (the reason fr-yor was rejected): the only way to give the user's
- * actual attractor lit, shadowed surfaces is to march *measured density* —
- * the chaos game's own hit counts — instead of a distance function. The grid
+ * raymarch (the reason a distance-estimator renderer was rejected here):
+ * the only way to give the user's actual attractor lit, shadowed surfaces is
+ * to march *measured density* — the chaos game's own hit counts — instead of
+ * a distance function. The grid
  * is world-space and camera-independent, so once accumulated the lit fractal
  * can be re-rendered from any angle in realtime; convergence cost is paid
  * once, not per view.
@@ -199,7 +200,7 @@ export interface VoxelGrid {
    */
   orbit: Vec3 | null;
   /**
-   * The orbit's color coordinate (flam3 semantics, fr-1kt) — the voxel
+   * The orbit's color coordinate (flam3 semantics) — the voxel
    * counterpart of `flame.ts`'s `FlameHistogram.orbitColor`: a value in
    * `[0, 1]` that blends toward the picked transform's slot each step,
    * indexing a smooth gradient palette when {@link accumulateVoxels} is given
@@ -301,9 +302,9 @@ function colorModeCode(mode: ColorMode): number {
  * running-mean color; points outside the bounds are skipped, exactly like a
  * flame point outside the frame.
  *
- * **Coloring** has two modes (fr-1kt, mirroring `flame.ts`'s `accumulateFlame`).
- * By default (`colorLUT` omitted) it follows the explorer's `colorMode`
- * (fr-c1d), using the exact hue formulas `buildColors` uses (shared via
+ * **Coloring** has two modes (mirroring `flame.ts`'s `accumulateFlame`).
+ * By default (`colorLUT` omitted) it follows the explorer's `colorMode`,
+ * using the exact hue formulas `buildColors` uses (shared via
  * `color.ts`, so the two can't drift): `"transform"` (the default) is
  * `palette[transformIndex]`; `"height"`/`"radius"` index the shared ramp at
  * the point's normalized coordinate; `"position"` maps normalized xyz to rgb;
@@ -319,9 +320,10 @@ function colorModeCode(mode: ColorMode): number {
  * color speed (`c ← c·(1 - speed) + slot·speed`, both resolved per base map
  * by `prepareChaosGame` from the optional `colorIndex`/`colorSpeed` — absent
  * ⇒ the even spread `i / (n - 1)` and speed `0.5`, i.e. the halfway blend
- * this had hard-coded before fr-hiyu) — and the LUT color at `c` is
- * painted into the voxel's running mean, so color flows continuously along
- * the structure instead of in flat per-mode regions. Updating `c` consumes NO
+ * this had hard-coded before those fields existed) — and the LUT color at
+ * `c` is painted into the voxel's running mean, so color flows continuously
+ * along the structure instead of in flat per-mode regions. Updating `c`
+ * consumes NO
  * `rng`, so a given seed produces the byte-identical orbit (and thus
  * identical `density`) whether or not a `colorLUT` is supplied, and in every
  * `colorMode`. An escape-reseed resets `c` to `0.5` alongside the point.
@@ -335,7 +337,7 @@ function colorModeCode(mode: ColorMode): number {
  * {@link WARMUP_ITERATIONS} steps first (unrecorded), exactly like
  * `runChaosGame`.
  *
- * **Symmetry** (fr-6im): when `prepared` was built with rotated copies (see
+ * **Symmetry**: when `prepared` was built with rotated copies (see
  * `chaos-game.ts`'s `prepareChaosGame`), this hand-inlined loop mirrors
  * `stepOrbit`'s handling exactly — the picked slot's rotation bends the
  * orbit-feedback point, and the `"transform"` coloring / colorLUT's color
@@ -346,7 +348,7 @@ function colorModeCode(mode: ColorMode): number {
  * Pass a seeded {@link Rng} for reproducible output (tests); the worker
  * passes a `mulberry32` seeded by the start command.
  *
- * `colorGamma` (fr-8sk) is the color-contrast exponent from `color.ts`,
+ * `colorGamma` is the color-contrast exponent from `color.ts`,
  * reshaping the same normalized coordinates `colorMode`'s height/radius/
  * position branches use (ignored by `"transform"`/`"uniform"` and by the
  * `colorLUT` path, none of which have a coordinate to reshape). For height
@@ -356,7 +358,7 @@ function colorModeCode(mode: ColorMode): number {
  * would drift apart (see `color.ts`'s `colorModeUsesGamma`). `1` (the
  * default) is neutral and never calls `**`.
  *
- * `rampPalette` (fr-3b6) swaps the height/radius ramps' built-in colors for a
+ * `rampPalette` swaps the height/radius ramps' built-in colors for a
  * gradient palette via the same shared `buildColorModeLUT`; like `colorGamma`
  * it MUST be the same value the caller's `buildColors` uses, so the solid
  * render's voxels and the explorer's points can't drift apart. `"legacy"`
@@ -364,7 +366,7 @@ function colorModeCode(mode: ColorMode): number {
  * `colorLUT` (the structural orbit gradient), which overrides `colorMode`
  * entirely and so makes `rampPalette` inert.
  *
- * `positionAxisColors` (fr-8k7) swaps the `"position"` mode's hardcoded
+ * `positionAxisColors` swaps the `"position"` mode's hardcoded
  * axis→channel identity for the coordinate-weighted blend of three
  * user-picked axis colors, via the shared `writePositionColor` (`color.ts`)
  * — the ONE custom-position definition `buildColors` also calls, so the
@@ -404,7 +406,7 @@ export function accumulateVoxels(
           rampPalette,
         )
       : null;
-  // Custom axis colors (fr-8k7): a 3-slot scratch writePositionColor writes
+  // Custom axis colors: a 3-slot scratch writePositionColor writes
   // into, allocated once per call and only when the position mode is
   // actually using them — bundled with `axes` in one object so the loop
   // below narrows both together from a single null check, no assertions.
@@ -423,16 +425,16 @@ export function accumulateVoxels(
   const invRangeR = 1 / (cb.maxR - cb.minR || 1);
   const [uniR, uniG, uniB] = UNIFORM_POINT_COLOR;
 
-  // Structural coloring (fr-1kt, mirroring accumulateFlame's colorLUT path
-  // from fr-6us): when colorLUT is supplied, `c` rides the orbit and indexes
+  // Structural coloring (mirroring accumulateFlame's own colorLUT path):
+  // when colorLUT is supplied, `c` rides the orbit and indexes
   // the gradient; otherwise every `colorLUT !== undefined` branch below is
   // skipped and the colorMode dispatch above runs unchanged. The per-map slot
-  // and blend speed were resolved once by `prepareChaosGame` (fr-hiyu) — a
+  // and blend speed were resolved once by `prepareChaosGame` — a
   // transform's authored `colorIndex`/`colorSpeed` or the derived even spread
   // and 0.5 halfway blend hard-coded here before those fields existed — so a
   // system authored for the flame colors IDENTICALLY in the solid render
   // rather than reverting to the derived spread. Both are keyed on
-  // `baseTransformCount`, not the expanded transform count (fr-6im):
+  // `baseTransformCount`, not the expanded transform count:
   // with symmetry, every rotated copy of a base map shares that map's slot,
   // so the gradient repeats around the kaleidoscope instead of smearing
   // continuously across copies that are geometrically the same map.
@@ -470,14 +472,14 @@ export function accumulateVoxels(
   for (let n = 0; n < iterations; n++) {
     // --- inlined stepOrbit(prepared, x, y, z, rng) ------------------------
     const idx = pickIndex(prepared, rng);
-    // The BASE map this slot is a (possibly rotated) copy of (fr-6im) — see
+    // The BASE map this slot is a (possibly rotated) copy of — see
     // PreparedChaosGame.baseTransformCount. Equal to `idx` at symmetry order
     // 1. The "By Transform" coloring below keys on this, never the raw
     // expanded `idx`, so it keeps meaning "logical map" (and stays in range
     // for `palette`, which is sized to the base count).
     const baseIdx = idx % baseTransformCount;
     // Blend the color coordinate toward this transform's slot at this
-    // transform's speed — `accumulateFlame`'s walk term for term (fr-hiyu),
+    // transform's speed — `accumulateFlame`'s walk term for term,
     // including its bit-for-bit reproduction of the old halfway blend at the
     // default speed 0.5. No rng is consumed, so the orbit (and `density`)
     // stays identical to the no-colorLUT path.
@@ -507,7 +509,7 @@ export function accumulateVoxels(
       nz = q[2];
     }
 
-    // Symmetry (fr-6im): rotate this slot's FULL affine + variation output —
+    // Symmetry: rotate this slot's FULL affine + variation output —
     // see `chaos-game.ts`'s `stepOrbit`, which this mirrors exactly. `null`
     // (order 1, and every unrotated copy-0 slot at any order) skips this, so
     // the orbit stays byte-identical to the pre-symmetry loop exactly where

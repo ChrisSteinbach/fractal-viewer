@@ -1,5 +1,5 @@
 /**
- * Small perturbations of an existing IFS (fr-3vly): the "mutation grid"
+ * Small perturbations of an existing IFS: the "mutation grid"
  * feature shows a handful of nudged variants of the system on screen next to
  * the original, Apophysis-mutation-window style, so a user can pick a
  * pleasing near neighbor instead of hand-tweaking sliders or rerolling a
@@ -37,7 +37,7 @@ import { CLASSIC_FOLD_RADII, isFoldVariationType } from "./variations";
 import { clamp } from "./vec";
 
 /**
- * One "wildcard" cell per mutation grid (fr-3vly): every other cell is a
+ * One "wildcard" cell per mutation grid: every other cell is a
  * gentle nudge, but a grid of only-gentle nudges risks looking like the same
  * system eight times over at a glance. The wildcard cell widens every jitter
  * range ({@link WILDCARD_SPREAD}) AND adds one structural kick (a variation
@@ -109,7 +109,7 @@ const SHEAR_CLAMP = 2;
  * weaker" rather than a different look. */
 const VARIATION_WEIGHT_JITTER_HALF_RANGE = 0.2;
 /** Variation weight MAGNITUDE clamp, mirroring the editor's variation-weight
- * slider span (`ui.ts`'s `VARIATION_WEIGHT_MIN`/`MAX` is `[-2, 2]`, fr-64k0).
+ * slider span (`ui.ts`'s `VARIATION_WEIGHT_MIN`/`MAX` is `[-2, 2]`).
  * The clamp acts on `|weight|` with the sign restored afterwards: the `0.05`
  * floor (not `0`) keeps a mutation from silently deleting a variation the
  * base system deliberately carried, and restoring the sign keeps it from
@@ -150,7 +150,7 @@ const W_SHEAR_JITTER = 0.05;
 /** `w.shear` clamp, mirroring `state.ts`'s `MIN`/`MAX_W_SHEAR` (`±2`). */
 const W_SHEAR_CLAMP = 2;
 
-/** Additive jitter half-range for `colorIndex`: `U(-0.05, 0.05)` (fr-hiyu) —
+/** Additive jitter half-range for `colorIndex`: `U(-0.05, 0.05)` —
  * matching {@link SHEAR_JITTER}'s magnitude, the closest precedent for a
  * bounded `[0, 1]` authoring value rather than a free strength: a gentle
  * nudge along the palette ramp, never enough to jump a map to a visibly
@@ -163,8 +163,8 @@ const COLOR_INDEX_JITTER = 0.05;
 const COLOR_INDEX_CLAMP_MIN = 0;
 const COLOR_INDEX_CLAMP_MAX = 1;
 
-/** Additive jitter half-range for `colorSpeed`: `U(-0.05, 0.05)` (fr-hiyu),
- * matching {@link COLOR_INDEX_JITTER} — both are `[0, 1]`-authored blend
+/** Additive jitter half-range for `colorSpeed`: `U(-0.05, 0.05)`, matching
+ * {@link COLOR_INDEX_JITTER} — both are `[0, 1]`-authored blend
  * controls, not free strengths, so the same small additive nudge fits
  * either. */
 const COLOR_SPEED_JITTER = 0.05;
@@ -175,7 +175,7 @@ const COLOR_SPEED_CLAMP_MAX = 1;
 
 /**
  * Multiplicative jitter half-range for a fold length (`minRadius`/
- * `fixedRadius`, fr-s9ll): `U(0.92, 1.08)`, the same order as
+ * `fixedRadius`): `U(0.92, 1.08)`, the same order as
  * {@link SCALE_JITTER_HALF_RANGE} — both are positive lengths on the map's
  * own rough scale, and a fold radius is exactly that: a length, not a free
  * strength.
@@ -287,7 +287,7 @@ function jitterWScale(rng: Rng, value: number, spread: number): number {
  * {@link VARIATION_WEIGHT_CLAMP_MAX}]`, then reapply the original sign —
  * {@link jitterWScale}'s sign-preserving shape, one module up: a mutation
  * nudges how strongly a variation acts, never which side of zero it acts
- * from (fr-64k0). For `weight >= 0` this is bit-identical to the old
+ * from. For `weight >= 0` this is bit-identical to the old
  * plain-clamp behavior, so every positive-weight mutation stream is
  * unchanged. Exactly one {@link uniform} draw per call, as before, so the
  * fixed-seed golden-snapshot test's rng-draw count doesn't shift. */
@@ -339,7 +339,7 @@ function jitterBoxLimit(rng: Rng, value: number, spread: number): number {
 }
 
 /**
- * Jitter one variation entry (fr-s9ll): `weight` always moves (unchanged
+ * Jitter one variation entry: `weight` always moves (unchanged
  * rule), and — for the fold family only (`boxfold`/`spherefold`/
  * `mandelbox`, see `variations.ts`'s `isFoldVariationType`) — each of
  * `minRadius`/`fixedRadius`/`boxLimit` that is already PRESENT on `v` is
@@ -348,16 +348,18 @@ function jitterBoxLimit(rng: Rng, value: number, spread: number): number {
  * `wildcard` included.
  *
  * That is narrower than "a mutation nudges what the author has" would
- * otherwise suggest, and deliberately so: the shader mirrors have not been
- * ported yet — `surface-material.ts`, `surface-material-4d.ts`,
- * `surface-de-gpu.ts` and the flame kernels are all still frozen at the
- * classic 0.5 / 1 / 1 (that port is fr-3pcu; the divergence is filed as
- * fr-xb8o). So a document carrying non-classic radii renders one object on
- * the CPU estimators and a DIFFERENT one on every GPU path. Until fr-3pcu
- * lands, no in-app producer may create such a document — a mutation
- * thumbnail must not hand the user a scene the renderer draws wrong. A
- * hand-edited hash or an imported scene can still reach it; a mutation must
- * not. Perturbing a length that is already present is fine: that document is
+ * otherwise suggest, and deliberately so. The rule first shipped as the
+ * mitigation for a CPU/GPU divergence: every shader mirror was still frozen
+ * at the classic 0.5 / 1 / 1, so a document carrying non-classic radii
+ * rendered one object on the CPU estimators and a DIFFERENT one on every GPU
+ * path, and no in-app producer was allowed to create such a document. That
+ * divergence is CLOSED — `surface-material.ts`, `surface-de-gpu.ts` and both
+ * flame kernels all read the authored lengths now, and
+ * `surface-material-4d.ts` needed nothing, carrying no fold GLSL at all. The
+ * rule stays anyway, now by CHOICE: a mutation grid must stay a grid of the
+ * system you brought it, so a cell may perturb a length the author already
+ * carries but must never invent shape parameters the base system never had.
+ * Perturbing a length that is already present is fine: that document is
  * already in that state, and silently resetting an authored field would be
  * worse.
  *
@@ -486,7 +488,7 @@ function jitterW(rng: Rng, base: WExtension, spread: number): WExtension {
  * identity a mutation grid cell shows must trace back to the base system's
  * own map), and every optional field (`shear`/`variations`/`w`/`colorIndex`/
  * `colorSpeed`) stays exactly as present or absent as it is on `base` — no
- * key is ever invented or dropped, fold-family lengths (fr-s9ll) included:
+ * key is ever invented or dropped, fold-family lengths included:
  * see {@link jitterVariationEntry} for why a mutation may perturb a present
  * `minRadius`/`fixedRadius`/`boxLimit` but never materializes an absent one.
  */
@@ -576,8 +578,8 @@ function jitterTransform(rng: Rng, base: Transform, spread: number): Transform {
   }
 
   // Placed AFTER every jitter above so a base map carrying neither field
-  // draws the exact same RNG sequence as it did before these fields existed
-  // (fr-hiyu) — every existing mutation-grid output stays byte-identical.
+  // draws the exact same RNG sequence as it did before these fields
+  // existed — every existing mutation-grid output stays byte-identical.
   if (base.colorIndex !== undefined) {
     result.colorIndex = clamp(
       base.colorIndex +
@@ -614,7 +616,7 @@ function jitterTransform(rng: Rng, base: Transform, spread: number): Transform {
  *   sibling's type would merge the two into one warp at the summed weight —
  *   a structural kick that changed nothing structural. The swapped entry
  *   also starts with none of the fold family's `minRadius`/`fixedRadius`/
- *   `boxLimit` (fr-s9ll), even if the old type had one jittered — a
+ *   `boxLimit`, even if the old type had one jittered — a
  *   genuinely different warp carries none of the old one's shape
  *   parameters, exactly as picking a fresh type in the editor would (and
  *   {@link jitterVariationEntry} never materializes one here either, so a
@@ -665,7 +667,7 @@ function applyStructuralKick(
  * materialized absent one — move (via {@link jitterVariationEntry}, the same
  * rule a base map's variations follow); its affine fields
  * (position/rotation/scale/shear), `id`, and `colorIndex`/`colorSpeed`
- * (fr-hiyu — inert on a lens the chaos game never picks, see `morph.ts`'s
+ * (inert on a lens the chaos game never picks, see `morph.ts`'s
  * `lerpFinalTransform`) all ride by reference, untouched — the lens's warp
  * can strengthen, weaken, or (for `boxfold`, the one fold type the roll ever
  * gives a lens — see `random-system.ts`'s `FINAL_VARIATION_TYPES`) reshape
@@ -717,20 +719,21 @@ function buildMutant(
 }
 
 /**
- * Perturb `base` into a small variant (fr-3vly): a mutation-grid cell. Every
+ * Perturb `base` into a small variant: a mutation-grid cell. Every
  * numeric field of every base map is nudged by a small random amount (see
  * this module's `*_JITTER`/`*_CLAMP` constants for the exact range and clamp
  * per field — each clamp mirrors an editor slider's own bound, so a mutant
  * never lands outside what the manual editor could express). Maps are never
  * added or removed, and each keeps its base `id`; every optional field
  * (`shear`/`variations`/`w`, each of `w`'s own subfields, and `colorIndex`/
- * `colorSpeed` — fr-hiyu) stays exactly as present or absent as it is on
+ * `colorSpeed`) stays exactly as present or absent as it is on
  * `base`, so a flat base system stays flat and a purely-affine map stays
  * purely affine. A fold-family variation's `minRadius`/`fixedRadius`/
- * `boxLimit` (fr-s9ll) follow that same rule strictly — perturbed when
- * present, but NEVER materialized when absent, `wildcard` included (see
- * {@link jitterVariationEntry} for why: the GPU renderers can't read them
- * yet). `symmetry` passes through unchanged, and the final-transform lens
+ * `boxLimit` follow that same rule strictly — perturbed when present, but
+ * NEVER materialized when absent, `wildcard` included (see
+ * {@link jitterVariationEntry} for why: a mutation grid stays a grid of the
+ * system you brought it). `symmetry` passes through unchanged, and the
+ * final-transform lens
  * (if any) has its variations nudged the same way (its own `colorIndex`/
  * `colorSpeed`, like its affine fields, ride by reference — see
  * {@link jitterFinalTransform}).
