@@ -324,7 +324,16 @@ function paintBackdropGradient(
  * MEASURED before the fix: switching Shape to Radial moved the solid
  * tracer's four corner luminances to a single value (a vignette) while the
  * points and flame backdrops kept the vertical ramp's top-dark/bottom-light
- * split unchanged, 14.7/15.0 against 32.9/32.9.
+ * split unchanged, 14.7/15.0 against 32.9/32.9. A second, independent run
+ * caught the same breakage from the other end and named the symptom: every
+ * flip to Radial logged `GL_INVALID_VALUE: glCopySubTextureCHROMIUM:
+ * Offset overflows texture dimensions`, from exactly the renderers that go
+ * through this canvas, and never from the two that read the shape as plain
+ * uniforms. THAT ERROR IS THE IMMUTABLE ALLOCATION REFUSING THE NEW SIZE,
+ * and it is worth knowing it is NOT adapter-specific: `useTexStorage` is a
+ * three.js policy, not a driver behaviour, so this would have shipped
+ * broken on every GPU rather than only on the software rasteriser it
+ * happened to be caught on.
  *
  * So the canvas is 256x256 always. The cost is a 256 KB canvas instead of a
  * 4 KB one, once; the linear ramp is unchanged where it is sampled, since
