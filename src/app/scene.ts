@@ -58,6 +58,7 @@ import {
   setBulbSystem as packBulbSystem,
   setEscapeSystem as packEscapeSystem,
   setSurfaceBalloon as packSurfaceBalloon,
+  packSurfaceBalloonTint,
   setSurfaceGroundPlane as packSurfaceGroundPlane,
   setSurfaceSystem as packSurfaceSystem,
   SURFACE_FULL_AO_TAPS,
@@ -157,6 +158,13 @@ const DOF_POINT_SIZE = 0.024; // dof
 // point size and color-dim multiplier — deliberately NOT wired into
 // setPointSize's per-style scaling, so the echo reads as a distinct, dimmer
 // backdrop cloud regardless of the main cloud's point-size slider.
+// BALLOON_ECHO_DIM stays a MODULE CONSTANT rather than becoming a slider
+// (fr-j85n): it is this additive-points arm's own baseline — an additive
+// cloud drawn at full source brightness blows out against the main cloud —
+// not a user knob. The authored knob is the tint pair (uEchoTint/
+// uEchoTintStrength, see BALLOON_ECHO_VERTEX and setBalloonTint), which
+// reaches brightness through a black tint: mix(base, black, s) equals
+// base * (1 - s).
 const BALLOON_ECHO_POINT_SIZE = 0.016;
 const BALLOON_ECHO_DIM = 0.5;
 /** Ground plane (fr-rhn5) geometry, in multiples of the session ball's
@@ -573,6 +581,11 @@ const BALLOON_ECHO_VERTEX = /* glsl */ `
   uniform float uEchoFadeStart;
   uniform float uEchoFadeEnd;
   uniform float uEchoDim;
+  // Independent balloon color (fr-j85n): the echo's own base-albedo tint —
+  // see the mix at vColor's assignment below. Default black at strength 0
+  // is the untinted identity.
+  uniform vec3 uEchoTint;
+  uniform float uEchoTintStrength;
   uniform float uSize;
   uniform float uHalfHeight;
   varying vec3 vColor;
@@ -617,7 +630,17 @@ const BALLOON_ECHO_VERTEX = /* glsl */ `
     // light, and without the dilution the additive wall blows out to
     // white where its enlarged points overlap.
     float mag = clamp(rr * rr / (uEchoR * uEchoR), 0.35, 8.0);
-    vColor = sourceColor * (sourceIntensity * uEchoDim / max(mag, 1.0)) * fade;
+    // Independent balloon color (fr-j85n): tint the echo's own base albedo
+    // toward uEchoTint before the dim/fade/magnification terms apply. This
+    // sits AFTER the 3D/4D branch above, on sourceColor both paths have
+    // already produced — uFourDActive is a uniform branch inside this ONE
+    // material rather than a second program, so this one edit serves both
+    // dimensions for free: no 4D-specific echo-tint code exists or is
+    // needed. uEchoTintStrength 0 (the default) makes
+    // mix(sourceColor, uEchoTint, 0.0) exactly sourceColor — today's frame
+    // byte for byte, in both dimensions.
+    vColor = mix(sourceColor, uEchoTint, uEchoTintStrength) *
+      (sourceIntensity * uEchoDim / max(mag, 1.0)) * fade;
     // Slice once, in source alpha. Radial fade deliberately remains in both
     // RGB and alpha, preserving the original echo horizon's soft fade squared.
     vFade = fade * slice;
@@ -781,6 +804,15 @@ export class FractalScene {
   // like fogDensity above; strength 0 is the untinted identity.
   private fogTint: [number, number, number] = [1, 1, 1];
   private fogTintStrength = 0;
+  // Balloon tint (fr-j85n): rgb01 color + 0..1 strength blended onto the
+  // shell's BASE ALBEDO — the explorer echo (BALLOON_ECHO_VERTEX's
+  // uEchoTint/uEchoTintStrength) AND both surface tracers
+  // (packSurfaceBalloonTint on surfaceMaterial/surfaceMaterial4) — ONE
+  // setting across all three, see setBalloonTint. Mirrors state.ts's
+  // defaults as plain literals exactly like fogTint above; strength 0 is
+  // the untinted identity in every arm and both dimensions.
+  private balloonTint: [number, number, number] = [0, 0, 0];
+  private balloonTintStrength = 0;
   private guideCubes: THREE.Object3D[] = [];
   // The shear currently baked into each guide cube's geometry, parallel to
   // guideCubes. Lets setGuideGeometry skip rebuilding the cell unless the shear
@@ -1491,6 +1523,14 @@ export class FractalScene {
         uEchoFadeStart: { value: 0 },
         uEchoFadeEnd: { value: 0 },
         uEchoDim: { value: BALLOON_ECHO_DIM },
+        // Balloon tint (fr-j85n): NOT aliased to fourDMaterial's uniforms
+        // above — every entry above IS an alias (the main cloud and its
+        // echo must track the same rotor/slice/color state), but tint is
+        // echo-only BY DEFINITION: the whole feature is the echo diverging
+        // from the main cloud's own color, so these stay this material's
+        // own uniform objects, written by setBalloonTint.
+        uEchoTint: { value: new THREE.Vector3() }, // DEFAULT_BALLOON_TINT is #000000
+        uEchoTintStrength: { value: 0 },
         uSize: { value: BALLOON_ECHO_POINT_SIZE },
         uHalfHeight: { value: buffer.y * 0.5 },
       },
@@ -2646,6 +2686,42 @@ export class FractalScene {
         this.fogTintStrength,
       );
     }
+  }
+
+  /**
+   * Set the balloon tint (fr-j85n) — `tint` an rgb01 tuple, `strength` its
+   * 0..1 blend weight; see state.ts's `AppState` fields for what they mean.
+   * ONE setter feeds BOTH renderers: the explorer echo
+   * (balloonEchoMaterial's uEchoTint/uEchoTintStrength) and the surface
+   * balloon (packSurfaceBalloonTint on BOTH surfaceMaterial and
+   * surfaceMaterial4, unconditionally — the uniform objects exist on both
+   * regardless of which arm is compiled, exactly like uBalloonCenter) —
+   * the {@link setBalloonEchoRadius}/{@link setSurfaceBalloonRadius}
+   * "one balloon, two renderers" precedent applied to color instead of
+   * size. The compute path needs nothing beyond the field update +
+   * renderNeeded: frame specs re-derive the pair from these stored fields
+   * at every assembly, exactly {@link setSurfaceBalloonRadius}'s own
+   * live-pose discipline ("frame specs re-derive the balloon block from
+   * the stored rMult at every assembly"). Strength 0 (the default) is the
+   * bit-exact identity in every renderer and both dimensions.
+   */
+  setBalloonTint(tint: [number, number, number], strength: number): void {
+    if (
+      this.balloonTintStrength === strength &&
+      this.balloonTint[0] === tint[0] &&
+      this.balloonTint[1] === tint[1] &&
+      this.balloonTint[2] === tint[2]
+    ) {
+      return;
+    }
+    this.balloonTint = [tint[0], tint[1], tint[2]];
+    this.balloonTintStrength = strength;
+    this.renderNeeded = true;
+    const u = this.balloonEchoMaterial.uniforms;
+    (u.uEchoTint.value as THREE.Vector3).set(...tint);
+    u.uEchoTintStrength.value = strength;
+    packSurfaceBalloonTint(this.surfaceMaterial, this.balloonTint, strength);
+    packSurfaceBalloonTint(this.surfaceMaterial4, this.balloonTint, strength);
   }
 
   /**
@@ -4099,6 +4175,17 @@ export class FractalScene {
       // kernel's fog toward the pixel's own backdrop alone.
       fogTint: [this.fogTint[0], this.fogTint[1], this.fogTint[2]],
       fogTintStrength: this.fogTintStrength,
+      // The live balloon tint (fr-j85n) — re-read at every spec assembly
+      // like the fog pair above, and unconditional like it: the kernel
+      // reads balloonTint/balloonTintStrength only under the balloon
+      // wrapper, where hi.shell gates the mix, so a non-balloon session is
+      // unaffected at any value.
+      balloonTint: [
+        this.balloonTint[0],
+        this.balloonTint[1],
+        this.balloonTint[2],
+      ],
+      balloonTintStrength: this.balloonTintStrength,
       // The live backdrop stops (fr-5ps1) — the same pair the GLSL tracers
       // carry as uBgTop/uBgBottom, read fresh at every spec assembly so the
       // compute frames track a background change/crossfade exactly like a

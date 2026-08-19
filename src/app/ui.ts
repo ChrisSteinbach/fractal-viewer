@@ -307,6 +307,15 @@ export interface UiHandlers {
    * callback only carries the bespoke color picker, like
    * `onBackgroundCustom` above. */
   onFogTint: (hex: string) => void;
+  /** A balloon tint color picker changed (fr-j85n) — `hex` is the input's
+   * raw `#rrggbb` value, ready for `setBalloonTint` (the reducer, not this
+   * callback, is the validation boundary). ONE handler serves BOTH pickers
+   * (the Points section's `balloonTintColor` and the Surface section's
+   * `surfaceBalloonTintColor` — one state field seen from two render
+   * modes, exactly like `onFogTint` above). The strength half of the pair
+   * is table-driven (see control-spec.ts's `balloonTintStrength`/
+   * `surfaceBalloonTintStrength` entries). */
+  onBalloonTint: (hex: string) => void;
 }
 
 /**
@@ -1095,6 +1104,14 @@ export class Ui {
   private readonly balloonEchoRow: HTMLElement;
   private readonly balloonRadiusRow: HTMLElement;
   private readonly balloonInflateButton: HTMLButtonElement;
+  /** The balloon echo's tint picker (fr-j85n) — same shape as
+   * fogTintColorInput below: the strength slider beside it is table-driven
+   * (SCALAR_CONTROLS's `balloonTintStrength` entry), so only the color
+   * input needs its own reference here. balloonTintRow hides/shows exactly
+   * with balloonRadiusRow (state.balloonEcho) — see the row toggles in
+   * updateLabels. */
+  private readonly balloonTintRow: HTMLElement;
+  private readonly balloonTintColorInput: HTMLInputElement;
   private readonly colorGammaRow: HTMLElement;
   private readonly rampPaletteRow: HTMLElement;
   private readonly positionColorsRow: HTMLElement;
@@ -1222,6 +1239,12 @@ export class Ui {
   private readonly surfaceBalloonRow: HTMLElement;
   private readonly surfaceBalloonRadiusRow: HTMLElement;
   private readonly surfaceBalloonInflateButton: HTMLButtonElement;
+  /** The surface balloon's tint picker (fr-j85n) — same state field as
+   * balloonTintColorInput above (one balloon, two renderers). Hidden
+   * exactly like surfaceBalloonRadiusRow: under a forward-orbit session in
+   * either dimension, or while the balloon itself is off. */
+  private readonly surfaceBalloonTintRow: HTMLElement;
+  private readonly surfaceBalloonTintColorInput: HTMLInputElement;
 
   // The surface ground plane row (fr-rhn5; 4D since fr-h0c3): unlike the
   // balloon rows above, visible for EVERY surfaceSessionKind in EITHER
@@ -1567,6 +1590,8 @@ export class Ui {
     this.balloonEchoRow = this.byId("balloonEchoRow");
     this.balloonRadiusRow = this.byId("balloonRadiusRow");
     this.balloonInflateButton = this.byId("balloonInflateButton");
+    this.balloonTintRow = this.byId("balloonTintRow");
+    this.balloonTintColorInput = this.byId("balloonTintColor");
     this.colorGammaRow = this.byId("colorGammaRow");
     this.rampPaletteRow = this.byId("rampPaletteRow");
     this.positionColorsRow = this.byId("positionColorsRow");
@@ -1615,6 +1640,8 @@ export class Ui {
     this.surfaceBalloonRow = this.byId("surfaceBalloonRow");
     this.surfaceBalloonRadiusRow = this.byId("surfaceBalloonRadiusRow");
     this.surfaceBalloonInflateButton = this.byId("surfaceBalloonInflateButton");
+    this.surfaceBalloonTintRow = this.byId("surfaceBalloonTintRow");
+    this.surfaceBalloonTintColorInput = this.byId("surfaceBalloonTintColor");
     this.surfaceGroundPlaneRow = this.byId("surfaceGroundPlaneRow");
     this.fourDControls = this.byId("fourDControls");
     this.fourDSliceToggle = this.byId("fourDSliceToggle");
@@ -2070,6 +2097,19 @@ export class Ui {
     this.fogTintColorInput.addEventListener("input", () => {
       handlers.onFogTint(this.fogTintColorInput.value);
     });
+    // Balloon tint color (fr-j85n): ONE handler serves both pickers — the
+    // Points section's balloonTintColorInput and the Surface section's
+    // surfaceBalloonTintColorInput are the same state field seen from two
+    // render modes (fogTintColorInput's precedent just above, doubled).
+    // Each row also hosts its own table-driven strength slider, whose
+    // "input" events must not re-trigger this handler — so, like
+    // fogTintColorInput, these bind to the picker itself, not the row.
+    this.balloonTintColorInput.addEventListener("input", () => {
+      handlers.onBalloonTint(this.balloonTintColorInput.value);
+    });
+    this.surfaceBalloonTintColorInput.addEventListener("input", () => {
+      handlers.onBalloonTint(this.surfaceBalloonTintColorInput.value);
+    });
   }
 
   /** Reflect a 4D slice state in the panel controls (fr-pnek) — how a
@@ -2374,6 +2414,13 @@ export class Ui {
       "hidden",
       surfaceBalloonHidden || !state.balloonEcho,
     );
+    // The surface balloon tint (fr-j85n) waits for exactly what the radius
+    // row above waits for — the same surfaceBalloonHidden local, so a
+    // forward-orbit session hides it even with the balloon flag on.
+    this.surfaceBalloonTintRow.classList.toggle(
+      "hidden",
+      surfaceBalloonHidden || !state.balloonEcho,
+    );
     // The surface ground plane (fr-rhn5, 4D since fr-h0c3) is visible for
     // EVERY session kind in both dimensions: unlike the balloon it is NOT
     // inert for the forward-orbit solids (the floor survives where the
@@ -2441,6 +2488,9 @@ export class Ui {
     // on.
     this.balloonEchoRow.classList.toggle("hidden", false);
     this.balloonRadiusRow.classList.toggle("hidden", !state.balloonEcho);
+    // The balloon tint (fr-j85n) waits for the echo itself, exactly like
+    // balloonRadiusRow above — same gate, same reason.
+    this.balloonTintRow.classList.toggle("hidden", !state.balloonEcho);
     // The ramp palette only means anything for the modes that ARE a 1-D ramp:
     // the flat view's height/radius color modes (fr-3b6; narrower than the
     // contrast slider's gating, see color.ts's colorModeUsesRampPalette) and
@@ -2499,6 +2549,17 @@ export class Ui {
     // undo moves the swatch instead of leaving it stale.
     if (this.fogTintColorInput.value !== state.fogTint) {
       this.fogTintColorInput.value = state.fogTint;
+    }
+    // The balloon tint pickers (fr-j85n): synced the same only-write-on-
+    // change way as fogTintColorInput just above, to BOTH inputs — the
+    // Points and Surface sections show the SAME state.balloonTint through
+    // two different DOM elements, so a gallery load or undo must move
+    // whichever one is currently stale (possibly both).
+    if (this.balloonTintColorInput.value !== state.balloonTint) {
+      this.balloonTintColorInput.value = state.balloonTint;
+    }
+    if (this.surfaceBalloonTintColorInput.value !== state.balloonTint) {
+      this.surfaceBalloonTintColorInput.value = state.balloonTint;
     }
     // Accordion restore (fr-99o): entering a render mode re-opens the section
     // the user last had open there (defaults: Presets / Tone / Surface /

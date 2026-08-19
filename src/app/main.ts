@@ -135,6 +135,7 @@ import {
   selectTransform,
   setBalloonEcho,
   setBalloonRadius,
+  setBalloonTint,
   setCustomPaletteStops,
   setFinalTransform,
   setFlamePaletteId,
@@ -3870,6 +3871,18 @@ function main(): void {
             spec.balloon.rho,
             spec.balloon.R,
             spec.balloon.far,
+            // Balloon tint (fr-j85n): INSIDE this block, not a sibling —
+            // without the wrapper the kernel emits no mix at all, so a
+            // tint change means nothing outside a balloon session. The
+            // offline-export memo must not re-present a stale frame when a
+            // timeline leg changes the tint under a parked camera — the
+            // balloon block's own reason above. balloonTint/
+            // balloonTintStrength are optional on the spec type (like
+            // fogTint/fogTintStrength); default the same way
+            // packSurfaceGpuShade's own absent-field default does
+            // (fractal/surface-de-gpu.ts).
+            (spec.balloonTint ?? [0, 0, 0]).join(","),
+            spec.balloonTintStrength ?? 0,
           ]
         : []),
       // The ground plane block (fr-rhn5): the balloon block's own
@@ -5379,6 +5392,13 @@ function main(): void {
     scene.setBalloonEchoEnabled(state.balloonEcho);
     scene.setBalloonEchoRadius(state.balloonRadius);
     scene.setSurfaceBalloonRadius(state.balloonRadius);
+    // The balloon tint pair (fr-j85n): pushed unconditionally, right beside
+    // the radius it rides with — a restored document with a non-default
+    // tint would otherwise render untinted until an edit first moved it.
+    scene.setBalloonTint(
+      hexToRgb01(state.balloonTint),
+      state.balloonTintStrength,
+    );
     // The fog density (fr-5h5d): pushed unconditionally, like the balloon
     // pair just above — a restored document with a non-default density
     // would otherwise render at the scene's default until a Fog edit
@@ -6239,6 +6259,24 @@ function main(): void {
       ui.updateLabels(state);
       scene.setFogTint(hexToRgb01(state.fogTint), state.fogTintStrength);
     },
+    // Balloon tint color (fr-j85n): the color half of the balloon tint
+    // pair, mirroring onFogTint just above exactly — one undo checkpoint
+    // per drag burst, then an instant push to every renderer the balloon
+    // reaches. ONE handler serves BOTH pickers (ui.ts wires it from the
+    // Points section's balloonTintColorInput AND the Surface section's
+    // surfaceBalloonTintColorInput). The strength half rides the
+    // table-driven onScalarControl pipeline instead (control-spec.ts's
+    // balloonTintStrength/surfaceBalloonTintStrength entries).
+    onBalloonTint: (hex) => {
+      stopShows({ notify: true });
+      editSession.beginEdit();
+      state = setBalloonTint(state, hex);
+      ui.updateLabels(state);
+      scene.setBalloonTint(
+        hexToRgb01(state.balloonTint),
+        state.balloonTintStrength,
+      );
+    },
     onRegenerate: () => regenerate(),
     // "▶ Watch it build" (fr-1zb): replay the DISPLAYED cloud's own
     // generation order — no regeneration, no RNG roll, so the shape the user
@@ -6962,6 +7000,13 @@ function main(): void {
   scene.setBalloonEchoEnabled(state.balloonEcho);
   scene.setBalloonEchoRadius(state.balloonRadius);
   scene.setSurfaceBalloonRadius(state.balloonRadius);
+  // Same push for the restored balloon tint pair (fr-j85n), right beside
+  // the radius it rides with: a document restored with a non-default tint
+  // would otherwise render untinted until an edit first moved it.
+  scene.setBalloonTint(
+    hexToRgb01(state.balloonTint),
+    state.balloonTintStrength,
+  );
   // Same push for the restored fog density (fr-5h5d): the scene constructs
   // at density 1, so a document restored with a non-default value would
   // render at the wrong density until a Fog edit first moved it.

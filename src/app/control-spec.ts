@@ -22,6 +22,7 @@ import {
   setBackgroundShape,
   setBalloonEcho,
   setBalloonRadius,
+  setBalloonTintStrength,
   setColorGamma,
   setColorMode,
   setExportScale,
@@ -191,6 +192,15 @@ export interface ControlSceneEffects {
    * (`restartSurfaceRender`), which re-derives routing + grid + variant +
    * uniforms from state in one sweep. */
   setSurfaceBalloonRadius(rMult: number): void;
+  /** Set the balloon tint (fr-j85n) — `tint` an rgb01 tuple, `strength`
+   * its 0..1 blend weight; see `scene.ts`'s `setBalloonTint`. ONE method
+   * for BOTH balloon renderers, so the two strength sliders' entries
+   * (`balloonTintStrength`, `surfaceBalloonTintStrength`) and the two
+   * bespoke color pickers all reach the same push. Uniform/spec writes
+   * only — unlike the balloon's on/off TOGGLE above this needs no session
+   * re-enter, because the tint lives inside the already-compiled
+   * SURFACE_BALLOON arm. */
+  setBalloonTint(tint: [number, number, number], strength: number): void;
   /** Set the depth-fog density multiplier (fr-5h5d) — see `scene.ts`'s
    * `setFogDensity`. Pushes the GLSL/WGSL uniform on both surface tracers
    * and re-derives the points explorer's fog band and the balloon echo's
@@ -714,6 +724,27 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       fx.cancelBalloonSweep();
     },
   },
+  {
+    // Independent balloon color (fr-j85n): the blend-weight half of the
+    // echo's own tint pair, next to balloonRadiusSlider above — the SAME
+    // state field as surfaceBalloonTintStrength below, seen through the
+    // Points explorer instead of the Surface render, exactly like
+    // balloonRadiusSlider/surfaceBalloonRadiusSlider share the balloon's
+    // size. The color half is a bespoke picker (ui.ts's onBalloonTint),
+    // like fogTintStrength's onFogTint above — this entry only carries the
+    // 0..1 strength slider, converting the paired hex color to rgb01 at the
+    // point of use rather than storing it twice.
+    kind: "range",
+    id: "balloonTintStrength",
+    label: {
+      id: "balloonTintLabel",
+      text: (s) => `${Math.round(s.balloonTintStrength * 100)}%`,
+    },
+    read: (s) => String(s.balloonTintStrength),
+    apply: (s, raw) => setBalloonTintStrength(s, Number(raw)),
+    effect: (s, fx) =>
+      fx.scene.setBalloonTint(hexToRgb01(s.balloonTint), s.balloonTintStrength),
+  },
   // ——— Export ———
   {
     // Save-PNG export size (fr-2urv): a session preference like autoUpdate /
@@ -1153,6 +1184,31 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       fx.cancelBalloonSweep();
       fx.scene.setSurfaceBalloonRadius(s.balloonRadius);
     },
+  },
+  {
+    // Independent balloon color (fr-j85n): the blend-weight half of the
+    // surface balloon's own tint pair — the SAME state field as
+    // balloonTintStrength above (one balloon, two renderers, exactly like
+    // surfaceBalloonRadiusSlider/balloonRadiusSlider share the size). The
+    // color half is a bespoke picker (ui.ts's onBalloonTint), like
+    // fogTintStrength's onFogTint. Unlike surfaceBalloonCheckbox above,
+    // this is deliberately NOT a variant-level change — no
+    // restartSurfaceRender(): the tint is a uniform/spec value the already-
+    // compiled SURFACE_BALLOON arm reads (surface-de-gpu.ts's
+    // ShadeParams.balloonTint/balloonTintStrength, surface-material.ts's
+    // uBalloonTint/uBalloonTintStrength), so surfaceBalloonRadiusSlider's
+    // cheap live path — rewrite uniforms/spec fields only — is the right
+    // precedent here, not the checkbox's session re-entry.
+    kind: "range",
+    id: "surfaceBalloonTintStrength",
+    label: {
+      id: "surfaceBalloonTintLabel",
+      text: (s) => `${Math.round(s.balloonTintStrength * 100)}%`,
+    },
+    read: (s) => String(s.balloonTintStrength),
+    apply: (s, raw) => setBalloonTintStrength(s, Number(raw)),
+    effect: (s, fx) =>
+      fx.scene.setBalloonTint(hexToRgb01(s.balloonTint), s.balloonTintStrength),
   },
   {
     // The surface ground plane checkbox (fr-rhn5): a persisted Floor toggle
