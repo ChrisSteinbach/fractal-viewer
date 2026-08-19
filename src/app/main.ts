@@ -14,6 +14,7 @@ import {
 import { analyzeEscapeSystem, buildEscapeDE } from "../fractal/escape-de";
 import { buildEscapeDE4 } from "../fractal/escape-de-4d";
 import { buildBulbDE } from "../fractal/bulb-de";
+import { buildBalloon } from "../fractal/balloon-de";
 import {
   analyzeSurfaceSystem,
   buildSurfaceDE,
@@ -57,6 +58,7 @@ import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
 import { CloudGenerator } from "./cloud-generator";
 import { PendingLoadHints } from "./load-hints";
 import { SurfaceGridClient } from "./surface-grid-client";
+import { balloonClearsGridBox, surfaceGridSpec } from "../fractal/surface-grid";
 import type { SurfaceGrid } from "../fractal/surface-grid";
 import type {
   SurfaceGridRequest,
@@ -4752,7 +4754,13 @@ function main(): void {
             // same value at enterSurfaceComputeSession so every frame
             // spec attaches the live balloon block — state.balloonEcho
             // is the one source both reads come from, at the same
-            // moment.
+            // moment. fr-8yad's balloon grid rule therefore has NOTHING
+            // to gate on this route: no core in surface-de-gpu.ts reads a
+            // grid in either dimension, so a compute balloon session is
+            // gridless for the reason every compute session is, not for
+            // fr-5wlv.3's. The rule reaches these systems only through
+            // the fallback re-enter below (?surfacegl / no adapter /
+            // device loss).
             //
             // The ground plane (fr-rhn5) yields to an active balloon: the
             // two never compile together (surface-de-gpu.ts's
@@ -4788,17 +4796,44 @@ function main(): void {
             );
             // Kick the empty-space grid build (fr-55r5 part 2). Async and
             // optional: the session renders gridless until it lands, and a
-            // superseding session boundary drops it by id. NEVER in
-            // balloon mode (fr-5wlv.3's decision): the grid's floors
-            // bound the FRACTAL alone, not the union — the shell can be
-            // nearer than any floor admits — so balloon marches gridless;
-            // the cancel keeps the session-boundary invariant (re-stamp
-            // or cancel the outstanding id) so an earlier enter's
-            // in-flight build can't land mid-balloon-session.
-            if (state.balloonEcho) {
-              surfaceGrid.cancel();
-            } else {
+            // superseding session boundary drops it by id.
+            //
+            // In balloon mode it is CONDITIONAL (fr-8yad, re-opening
+            // fr-5wlv.3's blanket refusal): the grid's floors bound the
+            // FRACTAL alone, not the union, and the shell can be nearer
+            // than any floor admits — but exactly while the shell CLEARS
+            // the grid box those floors are valid again, which the rest
+            // state satisfies on every measured system and both inflation
+            // regimes fail. This is the REQUEST half of that decision and
+            // it is asked ONCE, at the entry radius: a built grid stays
+            // valid at every radius the predicate admits, so a radius
+            // sweep re-answers only the per-frame enable
+            // (scene.setSurfaceBalloonRadius -> the uGridEnabled write),
+            // never this. `surfaceGridSpec`'s halfExtent is
+            // resolution-independent (visibleBoundingRadius * 1.03), so a
+            // worker downshift cannot move the predicate under the
+            // decision made here. The cancel keeps the session-boundary
+            // invariant (re-stamp or cancel the outstanding id) so an
+            // earlier enter's in-flight build can't land in a session
+            // that refused one.
+            //
+            // The disclosed cost of asking once: a session ENTERED
+            // mid-inflation marches gridless for its whole life, even
+            // once the radius settles back to rest. That is the cheap
+            // direction (gridless is correct, only slower) and it is
+            // barely reachable — the shipped radius is the rest one, the
+            // balloon checkbox re-enters the session, and the Inflate
+            // sweep starts from rest rather than being entered from.
+            const gridValidAtEntry =
+              !state.balloonEcho ||
+              balloonClearsGridBox(
+                buildBalloon(de, state.balloonRadius),
+                surfaceGridSpec(de).halfExtent,
+              );
+            if (gridValidAtEntry) {
               surfaceGrid.request(de);
+            } else {
+              surfaceGrid.cancel();
             }
           }
         }

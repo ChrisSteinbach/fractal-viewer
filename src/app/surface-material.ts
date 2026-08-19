@@ -781,7 +781,9 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * coordinate is p * uGridInvSpan + 0.5 (the cube is origin-centered,
    * like the traced sphere it covers). */
   uniform float uGridInvSpan;
-  /** 1 once a grid for the ACTIVE system is uploaded, else 0. */
+  /** 1 once a grid for the ACTIVE system is uploaded, else 0 — and, in
+   * balloon mode, 0 whenever the shell fails to clear the grid box
+   * (fr-8yad's per-frame validity gate, setSurfaceGridEnabled's write). */
   uniform float uGridEnabled;
 
   in vec2 vUv;
@@ -3091,6 +3093,27 @@ ${foldValueFormGlsl(shadeDeWidth)}
       // they spend gridSkips, not analytic march steps (fr-z70m).
       if (uGridEnabled > 0.5) {
         for (; gridSkips > 0; gridSkips--) {
+#if SURFACE_BALLOON
+          // fr-8yad: a balloon ray marches from the CAMERA out to the far
+          // cap rather than across the visible sphere, so most of its
+          // samples land OUTSIDE the grid cube — where the sampler's edge
+          // clamp hands back a BORDER cell's floor. That floor still
+          // bounds the FRACTAL from here (the cube is convex and holds the
+          // attractor, so clamping is a projection onto it and can only
+          // shorten the distance), but it bounds NOTHING about the SHELL,
+          // which at any radius the enable admits lies entirely outside
+          // the cube. So an out-of-box sample takes no skip at all — the
+          // same in-box restriction fr-8yad's coverage measurement
+          // modelled, whose 18.6-33.2% of steps skipped is the rate AFTER
+          // it. Inside the box the stored floor is a valid union bound by
+          // that measurement's own per-cell check (surface-grid.ts's
+          // balloon section).
+          vec3 gridUv = (ro + rd * t) * uGridInvSpan + 0.5;
+          if (any(lessThan(gridUv, vec3(0.0))) ||
+              any(greaterThan(gridUv, vec3(1.0)))) {
+            break;
+          }
+#endif
           float g =
             texture(uGridTex, (ro + rd * t) * uGridInvSpan + 0.5).r;
           if (g <= eps) {
@@ -3472,6 +3495,27 @@ export function setSurfaceGrid(
     u.uGridInvSpan.value = 1;
     u.uGridEnabled.value = 0;
   }
+}
+
+/**
+ * Flip the march's grid reads on or off WITHOUT touching the texture
+ * (fr-8yad): the balloon's validity gate, `surface-grid.ts`'s
+ * {@link balloonClearsGridBox}, is a per-frame answer about a grid the
+ * session already built. `R` is the only live term in it, so a radius
+ * sweep may cross the threshold in either direction many times over a
+ * session — re-uploading (or re-requesting) a grid for that would cost
+ * seconds where a uniform write costs nothing, which is why the REQUEST
+ * and the ENABLE are two decisions.
+ *
+ * Enabling here is only meaningful while {@link setSurfaceGrid} has a
+ * real texture installed; the caller (scene.ts) owns that invariant, and
+ * the placeholder's zero floor never skips anyway.
+ */
+export function setSurfaceGridEnabled(
+  material: THREE.ShaderMaterial,
+  enabled: boolean,
+): void {
+  material.uniforms.uGridEnabled.value = enabled ? 1 : 0;
 }
 
 export function createSurfaceMaterial(): THREE.ShaderMaterial {
