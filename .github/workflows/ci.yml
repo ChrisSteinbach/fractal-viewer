@@ -96,9 +96,9 @@ jobs:
       - run: npm ci
 
       # Shared with the gpu-agreement workflow, same key: the browser
-      # download changes only when playwright-core does. The install step
-      # still runs on a hit — no-op for the browser, and it is what pulls
-      # the OS libraries --with-deps adds, which apt does not cache here.
+      # download changes only when playwright-core does. On a hit the
+      # install step below is a pure no-op, so the steady-state browser
+      # path costs no external network at all.
       - name: Cache Playwright browsers
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -108,10 +108,16 @@ jobs:
 
       # playwright-core (the only Playwright package here) exposes the
       # `playwright-core` bin, NOT `playwright`; using `npx playwright` would
-      # auto-fetch an unpinned full package. --with-deps adds the browser's
-      # OS libraries (SwiftShader/ANGLE ship inside the bundled Chromium).
-      - name: Install Playwright Chromium + system deps
-        run: npx playwright-core install --with-deps chromium
+      # auto-fetch an unpinned full package. NO --with-deps, deliberately
+      # (fr-lt3w): its apt call against azure.archive.ubuntu.com hung four
+      # jobs to their timeouts on one pull request, the runner image already
+      # ships the browser-library closure (it ships Chrome, Chromium and
+      # Edge), and the SwiftShader constraint lives in the BUNDLED BROWSER,
+      # not the OS libraries. The full verdict — and what to do if a
+      # slimmed-down future runner image ever makes the browser fail to
+      # launch — is on gpu-agreement.yml's identical step.
+      - name: Install Playwright Chromium
+        run: npx playwright-core install chromium
 
       # scripts/webgl-smoke.mjs spawns its own `npm run dev` and tears it down.
       - name: WebGL smoke test (SwiftShader software GL)

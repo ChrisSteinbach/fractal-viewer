@@ -89,9 +89,9 @@ jobs:
       - run: npm ci
 
       # The browser download is several minutes of every run and changes
-      # only when playwright-core does. The install step still runs on a
-      # cache hit — it is a no-op for the browser and is what installs the
-      # OS libraries `--with-deps` adds, which apt does not cache here.
+      # only when playwright-core does. On a hit the install step below is
+      # a pure no-op, so the steady-state browser path costs no external
+      # network at all.
       - name: Cache Playwright browsers
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
@@ -101,8 +101,33 @@ jobs:
 
       # Same hermetic browser as the smoke job: only the Playwright-bundled
       # Chromium is known to ship libvk_swiftshader.so.
-      - name: Install Playwright Chromium + system deps
-        run: npx playwright-core install --with-deps chromium
+      #
+      # NO --with-deps, deliberately (fr-lt3w). It ran apt on every run —
+      # apt caches nothing here — and apt against azure.archive.ubuntu.com
+      # was the one flaky fetch left in these jobs: measured 2026-08-19,
+      # four jobs across the two workflows hung in this step on ONE pull
+      # request (smoke plus shards 1/3/4; shard 1 twice in a row) and died
+      # at their job timeouts without reaching a line of test code. The
+      # SwiftShader constraint above is about the BROWSER BINARY, not the
+      # OS libraries: ubuntu-latest ships Chrome, Chromium and Edge, so the
+      # shared-library closure the bundled Chromium loads is already on the
+      # image. If a future runner image slims that down, this fails at
+      # browser LAUNCH within seconds, naming the missing library —
+      # strictly better than the silent multi-minute hang it replaces — and
+      # the fix is to re-add --with-deps or move the job into
+      # mcr.microsoft.com/playwright:v<lockfile version>-noble. That
+      # container was considered and REFUSED for now: it swaps a solved,
+      # cached browser download for an uncacheable ~1GB image pull on every
+      # run of every job (the apt mirror's failure shape under a different
+      # hostname), its tag has to track package-lock's playwright-core by
+      # hand, and its default user is root, which Chromium refuses to run
+      # as without --no-sandbox — a flag this bench's headless SwiftShader
+      # launch deliberately omits (scripts/gpu-flame-bench.mjs passes it
+      # only on the --display real-driver path), so the container would
+      # mean changing the launch flags of the very instrument this gate
+      # exists to hold still.
+      - name: Install Playwright Chromium
+        run: npx playwright-core install chromium
 
       # --duration only shrinks the throughput-timing phase; the agreement
       # verdict comes from the fixed equal-N legs (50.3M iterations per
