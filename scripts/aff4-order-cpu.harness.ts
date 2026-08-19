@@ -1,6 +1,7 @@
 /**
- * fr-b72d attribution harness: the CPU oracle's OWN per-query cost curve
- * over kaleidoscope order, on EXACTLY the bench sweep leg's query mixes.
+ * 4D kernel-cost attribution harness: the CPU oracle's OWN per-query cost
+ * curve over kaleidoscope order, on EXACTLY the bench sweep leg's query
+ * mixes.
  *
  * The extended `--surface-aff4-sweep=1` leg measured (real Iris Xe,
  * 2026-08-11, /tmp/aff4-probe1) that the affine4 eval kernel's per-query
@@ -40,10 +41,10 @@
  *  - Something in between: both mechanisms are live; the printed
  *    mean-vs-p95-vs-max decomposition apportions them.
  *
- * MEASURED VERDICT (2026-08-11, Node f64, this machine — recorded on the
- * fr-b72d bead): the superlinearity is ALGORITHMIC. CPU mean/query,
- * normalized to each core's order-1 mean: affine4 x1.8 / x4.9 / x6.4 /
- * x13.5 at orders 2/3/4/6 (GPU measured x14.4 at order 6) — matching the
+ * MEASURED VERDICT (2026-08-11, Node f64, this machine): the
+ * superlinearity is ALGORITHMIC. CPU mean/query, normalized to each core's
+ * order-1 mean: affine4 x1.8 / x4.9 / x6.4 / x13.5 at orders 2/3/4/6 (GPU
+ * measured x14.4 at order 6) — matching the
  * GPU curve almost exactly, far above the 6x naive sweep-work ratio;
  * fold4 x4.5 / x12.7 / x24.7 / x58.9 (GPU x76.4 — a ~30% realization
  * residual on top of the x59 algorithmic base, small beside it). The
@@ -54,8 +55,8 @@
  * app-level gap at order 6 is NOT the eval kernel's own curve (both arms'
  * estimators pay this same algorithmic growth; the fragment arm settled
  * the same order-6 scene in 10.9s), it lives in the arms'
- * march-loop/query-distribution differences (fr-b8o5's territory; the
- * follow-up bead filed from this session).
+ * march-loop/query-distribution differences — the arms' own territory,
+ * which `scripts/slice-cliff.probe.mjs` went on to measure in the app.
  *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts scripts/aff4-order-cpu.harness.ts
  */
@@ -303,11 +304,9 @@ function timeCore(
   return stats;
 }
 
-describe("fr-b72d aff4 order-curve CPU attribution harness", () => {
+describe("aff4 order-curve CPU attribution harness", () => {
   it("times both CPU oracles on the bench sweep mixes across kaleidoscope orders", () => {
-    console.log(
-      "fr-b72d CPU attribution: per-query cost of the kernels' own oracles",
-    );
+    console.log("CPU attribution: per-query cost of the kernels' own oracles");
     console.log(
       "on the bench sweep leg's exact systems/views/mixes (see file doc).",
     );

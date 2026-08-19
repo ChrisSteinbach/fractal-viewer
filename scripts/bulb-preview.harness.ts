@@ -1,11 +1,11 @@
 /**
- * fr-7u8t.7: the Mandelbulb's picture, its price, and the two decisions the
- * bead left open.
+ * The Mandelbulb's picture, its price, and the two decisions left open
+ * when its estimator landed.
  *
  * `bulb-de.ts`'s unit tests pin the estimator's ARITHMETIC (the hand-computed
  * iteration, the scaled-map derivative seed, the `ln r` clamp). They cannot
  * answer whether the thing renders the object everyone means by "Mandelbulb",
- * and they cannot answer the two questions this bead had to decide with
+ * and they cannot answer the two questions that had to be decided with
  * numbers rather than argument. This sheet does all three, through
  * `de-preview.ts`'s shared CPU sphere-tracer, so panels compare OBJECTS and
  * not lighting:
@@ -17,10 +17,10 @@
  *      shader mirrors exist. Measured below, and it is not close: the
  *      Chebyshev/de-Moivre rewrite is an EXACT identity, ~11x cheaper per
  *      eval, and it makes the bulb cheaper to evaluate than the fold mode
- *      that already ships, rather than the expensive one the bead expected. (The
- *      trig form survives here as `trigTriplexPow`, which the power sweep in
- *      row 3 also needs — powers other than 8 have no closed form in the
- *      shipped code, deliberately.) The OTHER trig-free candidate — three
+ *      that already ships, rather than the expensive one predicted going
+ *      in. (The trig form survives here as `trigTriplexPow`, which the
+ *      power sweep in row 3 also needs — powers other than 8 have no
+ *      closed form in the shipped code, deliberately.) The OTHER trig-free candidate — three
  *      triplex squarings — is a DIFFERENT MAP, not an optimisation, and the
  *      number below says how different.
  *   3. Does the JULIABULB earn a persisted form flag, where the Juliabox
@@ -119,7 +119,7 @@ function triplexSquare(x: number, y: number, z: number): Vec3 {
  * this harness's local prototype, and this file's own {@link inSet} one map
  * over: one loop, two readers, so {@link prototypeDE}'s estimate and {@link
  * prototypeMember}'s membership answer can never disagree about what the
- * orbit did (fr-azjk). */
+ * orbit did. */
 let protoR = 0;
 let protoDr = 1;
 
@@ -172,7 +172,7 @@ function prototypeDE(
 /** The prototype orbit's MEMBERSHIP, read off the same loop at a budget far
  * past the estimator's own — {@link inSet}'s discipline, one map over: does
  * the orbit stay bounded under a radius far past the estimator's own bailout
- * for far more iterations than the estimator ever runs? (fr-azjk; see {@link
+ * for far more iterations than the estimator ever runs? (See {@link
  * sampleSetExtent} for why a distance threshold cannot answer this.) */
 function prototypeMember(
   power: number,
@@ -192,9 +192,10 @@ function prototypeMember(
  * because the bulb family's marching ball is per-system (~1.1) rather than a
  * shared constant.
  *
- * Migrated onto {@link sampleSetExtent} (fr-azjk): the 41^3 grid this used to
- * walk aliases against a structured boundary rather than converging to it (a
- * regular lattice over-samples wherever its spacing lines up with the
+ * Migrated onto {@link sampleSetExtent} by the set-extent correction: the
+ * 41^3 grid this used to walk aliases against a structured boundary rather
+ * than converging to it (a regular lattice over-samples wherever its
+ * spacing lines up with the
  * object's own symmetry), and `de(p) < 1e-3` decided membership by
  * THRESHOLDING the estimate rather than asking the orbit whether it escaped
  * — which misreads a point exactly where this file's own {@link inSet} exists
@@ -249,7 +250,7 @@ function ballQueries(n: number, radius: number, seed: number): Vec3[] {
  * with the estimator about membership in a thin shell around the boundary
  * (measured at 0.22% of the ball) — real chaos, not an estimator defect, and
  * it swamps the overshoot signal this oracle exists to measure. Same lesson
- * fr-dlxh learned for the escape kernels' agreement legs.
+ * the escape compute port learned for its kernels' agreement legs.
  */
 function inSet(de: BulbDE, p: Vec3, budget = 400, bail = 64): boolean {
   const m = de.m;
@@ -272,13 +273,13 @@ interface Entry {
   label: string;
   de: DistanceEstimator;
   radius: number;
-  /** Membership oracle for THIS entry's own orbit (fr-azjk) — never a
+  /** Membership oracle for THIS entry's own orbit — never a
    * distance threshold on `de`, so fill/reach ask the same question `inSet`/
    * `prototypeMember` were written to answer. */
   member: (p: Vec3) => boolean;
 }
 
-describe("fr-7u8t.7 Mandelbulb preview", () => {
+describe("Mandelbulb preview", () => {
   it("renders the shipped estimator, the Juliabulb prototype, and a power sweep", () => {
     const classic = buildBulbDE([bulbSystem()]);
     const offset = buildBulbDE([bulbSystem([0.2, -0.1, 0.3])]);
@@ -418,8 +419,8 @@ describe("fr-7u8t.7 Mandelbulb preview", () => {
       return (1000 * ms) / queries.length;
     };
 
-    // The family, on one query set: the bead expected the bulb to be the
-    // expensive one.
+    // The family, on one query set: the prediction going in was that the
+    // bulb would be the expensive one.
     const fold = buildEscapeDE([
       {
         id: 1,
@@ -512,11 +513,11 @@ describe("fr-7u8t.7 Mandelbulb preview", () => {
   });
 
   it("sweeps the march step scale against a membership oracle", () => {
-    // The bead predicted the fold family's damping would come back, because
-    // the triplex power is not conformal. It is right about the estimator
-    // (see the module doc's azimuthal U7 factor) and wrong about the
-    // remedy: damping does not remove the residual, and at frame level the
-    // full step loses no geometry at all.
+    // The prediction going in was that the fold family's damping would
+    // come back, because the triplex power is not conformal. That is right
+    // about the estimator (see the module doc's azimuthal U7 factor) and
+    // wrong about the remedy: damping does not remove the residual, and at
+    // frame level the full step loses no geometry at all.
     const systems: [string, Transform][] = [
       ["classic t=0    ", bulbSystem()],
       ["t=(0.2,-0.1,0.3)", bulbSystem([0.2, -0.1, 0.3])],
@@ -651,10 +652,11 @@ describe("fr-7u8t.7 Mandelbulb preview", () => {
   });
 
   it("checks BULB_STEP_SCALE against the pictures, not just the counts", () => {
-    // fr-7u8t.8's lesson, applied to this module's own constant: the fold's
-    // 0.7 had been tuned against a 94%-solid blob where every ray hit on its
-    // first step, so the damping was never exercised — and against the real
-    // object it visibly overshot (hits 62.0% at 1.0 climbing to 84.3% at
+    // The Mandelbrot-form work's lesson, applied to this module's own
+    // constant: the fold's 0.7 had been tuned against a 94%-solid blob
+    // where every ray hit on its first step, so the damping was never
+    // exercised — and against the real object it visibly overshot (hits
+    // 62.0% at 1.0 climbing to 84.3% at
     // 0.35). The same test here, at a CLOSE pose where thin features and
     // creases are what the marcher has to resolve rather than a silhouette:
     // hits climbing as the scale falls means the full step is stepping past
@@ -686,10 +688,10 @@ describe("fr-7u8t.7 Mandelbulb preview", () => {
     // `escape-form-sweep.harness.ts`'s question, one object over: is the
     // fixed-constant form worth a persisted document flag? The Juliabox
     // failed because it was a sphere at 87.2 / 71.8 / 32.6 / 2.1 / 0.005%
-    // fill across everything a user would author (fr-azjk's corrected
-    // reading of that sheet; it said 97/93/77/60/23% through the same
-    // grid-and-threshold instrument this file has now dropped). The bulb's
-    // numbers are below.
+    // fill across everything a user would author (the set-extent
+    // correction's re-reading of that sheet; it said 97/93/77/60/23%
+    // through the same grid-and-threshold instrument this file has now
+    // dropped). The bulb's numbers are below.
     const R = 1.35;
     for (const dir of [
       [1, 0, 0],

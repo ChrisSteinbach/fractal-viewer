@@ -1,39 +1,39 @@
 #!/usr/bin/env node
 /**
- * fr-5666 AND fr-j85n's real-WebGL gate for the 4D Points explorer's balloon
- * echo — RE-PINNED by fr-23oa, which caught the row below measuring the
- * control panel rather than the render.
+ * The real-WebGL gate for the 4D Points explorer's balloon echo and its
+ * authored tint — RE-PINNED by the scene-region correction, which caught
+ * the row below measuring the control panel rather than the render.
  *
- * fr-5666: the 4D Points explorer must project, then invert, its balloon
+ * THE ECHO: the 4D Points explorer must project, then invert, its balloon
  * echo, and that echo must reach real PIXELS out of a restored `#v1=`
  * document — so a shader/link failure, or the boot-time "enabled before a
  * bounding sphere exists" zero-uniform bug, cannot pass as a merely present
  * checkbox.
- * fr-j85n: the echo's authored tint pair (`balloonTint` +
+ * THE TINT: the echo's authored tint pair (`balloonTint` +
  * `balloonTintStrength`) must reach that same 4D echo's pixels, be the exact
  * identity at strength 0, move nothing but the echo, and ride the same link.
  *
- * WHAT CARRIES fr-5666'S CLAIM (fr-23oa): the echo-on/off row compared over
- * the SCENE REGION, on the RESTORED page, at a balloon radius the restored
- * DOCUMENT itself carries and where the echo is measurably in frame. All
- * three qualifiers replaced something that was load-bearing and wrong, and
- * every one of them is measured here rather than argued.
+ * WHAT CARRIES THE ECHO'S CLAIM AFTER THE RE-PIN: the echo-on/off row
+ * compared over the SCENE REGION, on the RESTORED page, at a balloon radius
+ * the restored DOCUMENT itself carries and where the echo is measurably in
+ * frame. All three qualifiers replaced something that was load-bearing and
+ * wrong, and every one of them is measured here rather than argued.
  *
  * THE ROW IT REPLACED IS KEPT AS A DISCLOSED HISTORICAL MEASUREMENT, because
- * that number is on the record in two other places (fr-5666's bead, and
- * CLAUDE.md's "MEASURED at the lift" line) and a reader who meets it is owed
- * what it actually measured. fr-5666 recorded "10.255% of pixels changed,
- * meanAbs 3.285, max 234" from a FULL-FRAME diff of an element screenshot at
- * the document's own 1.60x radius. `#container canvas` fills the viewport
- * and `#panel` is painted ON TOP of it, so that screenshot contains the
- * control panel — and ticking the Balloon checkbox reveals
- * `balloonRadiusRow`, so the PANEL RELAYOUT alone moves 27.6-31.0% of the
- * panel's own pixels. MEASURED on the same two frames, scene region only:
- * 0.000% changed, meanAbs 0, MAX 0. At 1.60x the inversion's nearest image
- * sits outside the auto-framed view, so the echo contributed NO scene pixels
- * and the whole of the pinned figure was the panel growing a row. A shader
- * that rendered literally nothing would have passed. The confirmatory
- * symptom is fr-j85n's own doing: it added a Tint row to the same
+ * that number is on the record elsewhere too (CLAUDE.md's own account of the
+ * 4D lift) and a reader who meets it is owed what it actually measured. The
+ * lift recorded "10.255% of pixels changed, meanAbs 3.285, max 234" from a
+ * FULL-FRAME diff of an element screenshot at the document's own 1.60x
+ * radius. `#container canvas` fills the viewport and `#panel` is painted ON
+ * TOP of it, so that screenshot contains the control panel — and ticking the
+ * Balloon checkbox reveals `balloonRadiusRow`, so the PANEL RELAYOUT alone
+ * moves 27.6-31.0% of the panel's own pixels. MEASURED on the same two
+ * frames, scene region only: 0.000% changed, meanAbs 0, MAX 0. At 1.60x the
+ * inversion's nearest image sits outside the auto-framed view, so the echo
+ * contributed NO scene pixels and the whole of the pinned figure was the
+ * panel growing a row. A shader that rendered literally nothing would have
+ * passed. The confirmatory
+ * symptom is the tint pair's own doing: it added a Tint row to the same
  * gated-on-balloonEcho group, so the checkbox grew the panel by one MORE row
  * — and the figure moved with it, 10.255% -> 10.349%. A number that responds
  * to adding a UI row is not measuring a render.
@@ -45,7 +45,7 @@
  * merely remembered; it simply no longer decides anything.
  *
  * THE RADIUS RIDES THE DOCUMENT, NOT A POST-BOOT DRIVE, and that ordering is
- * load-bearing rather than tidy. Half of fr-5666's subject is the boot-time
+ * load-bearing rather than tidy. Half of the lift's subject is the boot-time
  * ball-uniform sync — a document that enables the echo before its first 4D
  * cloud installs the enclosing ball — and `scene.ts`'s
  * `setBalloonEchoRadius` calls `syncBalloonEchoUniforms`, so a radius
@@ -56,19 +56,19 @@
  * carried it. Nothing touches that slider on the restored page before the
  * row is measured.
  *
- * THE TINT/4D PHASE IS THE DIMENSIONAL-PARITY CHECK. fr-j85n's mix sits AFTER
- * the 3D/4D branch, on the `sourceColor` both paths produce, inside ONE
+ * THE TINT/4D PHASE IS THE DIMENSIONAL-PARITY CHECK. The tint's mix sits
+ * AFTER the 3D/4D branch, on the `sourceColor` both paths produce, inside ONE
  * material whose `uFourDActive` is a uniform branch rather than a second
- * program — so the 4D half is free BY CONSTRUCTION. The bead demands that be
- * VERIFIED, NOT ASSUMED, and this is where the verification lives: the script
- * drives Pentatope (a 4D system) through Points, parks the tumble and enables
- * the echo, so a tint that never reached the 4D path leaves the frame
- * untouched and the phase fails.
+ * program — so the 4D half is free BY CONSTRUCTION. Dimensional parity
+ * demands that be VERIFIED, NOT ASSUMED, and this is where the verification
+ * lives: the script drives Pentatope (a 4D system) through Points, parks the
+ * tumble and enables the echo, so a tint that never reached the 4D path
+ * leaves the frame untouched and the phase fails.
  *
  * TWO MEASUREMENT RULES, both of them things this script got wrong before and
- * both of them measured rather than argued. fr-j85n wrote them for its own
- * phases; fr-23oa found the fr-5666 row breaking both, so they now govern
- * EVERY phase in the file:
+ * both of them measured rather than argued. The tint phases wrote them for
+ * themselves; the re-pin found the echo row breaking both, so they now
+ * govern EVERY phase in the file:
  *
  * 1. COMPARE THE SCENE, NOT THE PANEL. The panel is painted over the canvas
  *    (see above), and it moves for reasons that have nothing to do with the
@@ -85,22 +85,22 @@
  *    moves 0.0000% with max 0. The echo IS drawing — radius 0.2 -> 0.5 moves
  *    20.7% and 0.5 -> 1.0 moves 22.8% — so every phase runs at GATE_RADIUS,
  *    where it is in frame, and the FIRST thing measured on the restored page
- *    is that it is (the fr-5666 row, which is also the precondition every
- *    later phase leans on; fr-j85n's own precondition re-measures it at the
- *    exact state its tint phases ran at). Without that a green tint phase
- *    would prove nothing — and the fr-5666 row proved nothing for a year.
+ *    is that it is (the echo row, which is also the precondition every
+ *    later phase leans on; the tint's own precondition re-measures it at
+ *    the exact state its tint phases ran at). Without that a green tint
+ *    phase would prove nothing — and the echo row proved nothing for a year.
  *
  * WHAT THIS GATE STILL DOES NOT SETTLE, said plainly so no later session
  * reads more into a green run than is in it: "the echo draws" does NOT
  * distinguish PROJECT-THEN-INVERT from invert-then-project, which is
- * fr-5666's actual subject. Both orders put an echo on screen — they
+ * the echo lift's actual subject. Both orders put an echo on screen — they
  * disagree about WHICH object it is the echo of — and at the pose this
  * script drives (a parked tumble, the pentatope's own rotor) they can agree
  * pixel for pixel. Separating them needs a fixture built for it: a rotor
  * pose where the two orders visibly disagree, plus a reference frame saying
  * which one is right. The original gate never separated them either, and
- * fr-23oa re-pinned the row it had rather than growing that fixture inside a
- * bug fix; it is filed as its own follow-up.
+ * the correction re-pinned the row it had rather than growing that fixture
+ * inside a bug fix. That fixture is still owed, and nothing yet builds it.
  *
  * Every image comparison that decides something happens INSIDE ONE
  * post-reload page. A pose-less document auto-frames from a
@@ -113,7 +113,7 @@
  * echo-bearing rows move a few tenths of a percent between runs — a pose-less
  * document seeds its cloud from `Math.random()` — so they are recorded as what
  * a passing run measured, not as pins:
- *   echo on/off, SCENE @0.50x (fr-5666)  19.546% changed, meanAbs 0.933, max 57
+ *   echo on/off, SCENE @0.50x            19.546% changed, meanAbs 0.933, max 57
  *                                        — THE GATED ROW, floor 2.0%. Three
  *                                          runs: 19.546 / 19.840 / 20.066,
  *                                          which is the framing noise a
@@ -127,8 +127,8 @@
  *                                          historical row, asserted nowhere
  *   echo on/off, full frame @1.60x        9.199% changed, meanAbs 3.812, max 255
  *                                        — the SHAPE of the historical
- *                                          comparison (fr-5666 recorded
- *                                          10.255%/3.285/234, fr-j85n
+ *                                          comparison (the lift recorded
+ *                                          10.255%/3.285/234, the tint
  *                                          re-measured 10.349%/3.179/234), and
  *                                          READ THE NEXT PARAGRAPH BEFORE
  *                                          TREATING THE GAP AS A REGRESSION
@@ -136,8 +136,8 @@
  * WHY THAT ROW READS 9.199 AND NOT 10.3, since a later reader WILL meet the
  * three figures side by side and a 10% gap in a row nothing asserts is exactly
  * the kind of thing that starts a phantom regression hunt. IT IS NOT THE SAME
- * COMPARISON. fr-5666 and fr-j85n measured on the RESTORED page in whatever
- * accordion state the restore produced; fr-23oa moved the disclosure to the
+ * COMPARISON. The lift and the tint measured on the RESTORED page in whatever
+ * accordion state the restore produced; the re-pin moved the disclosure to the
  * PRE-SHARE page (the header's ordering argument — nothing may touch the
  * radius on the restored page before the gated row), and this script opens
  * `atmosphereSection` explicitly on the way in. Different page, different
@@ -146,14 +146,14 @@
  * digit across runs (9.199 twice, meanAbs 3.811/3.812); it is not noise, it is
  * a different panel. So the gap is CONFIRMATORY rather than concerning: a
  * number that moves when you open an accordion section is not measuring a
- * render, which is fr-23oa's thesis restated by accident. The row that is
+ * render, which is the re-pin's thesis restated by accident. The row that is
  * comparable across all three sessions is the SCENE one below, and it reads
  * 0.000% in every one of them.
  *   echo on/off, SCENE @1.60x             0.000% changed, meanAbs 0, MAX 0
  *                                        — the same two frames, and the whole
- *                                          of fr-23oa: the row above is panel
- *   echo in frame @0.50x (fr-j85n)       19.546% changed, meanAbs 0.933, max 57
- *                                        — EXACTLY the fr-5666 row's figure,
+ *                                          of the re-pin: the row above is panel
+ *   echo in frame @0.50x                 19.546% changed, meanAbs 0.933, max 57
+ *                                        — EXACTLY the echo row's figure,
  *                                          every digit, because strength 0 is
  *                                          the identity and the two pairs of
  *                                          frames are therefore byte-identical.
@@ -163,19 +163,19 @@
  *                                          at, and its agreeing to the digit is
  *                                          what says nothing drifted between
  *                                          them
- *   tint/4D parity @0.50x (fr-j85n)      37.207% changed, meanAbs 1.457, max 80
+ *   tint/4D parity @0.50x                37.207% changed, meanAbs 1.457, max 80
  *   strength 0 identity                   0.000% changed, meanAbs 0, max 0
  *   echo-off inert                        0.000% changed, meanAbs 0, max 0
  *   tint persisted                       #00ff88 / 0.42 read back off the hash
  *
- * NON-VACUITY, measured the only way that counts (fr-23oa) — twice, because
+ * NON-VACUITY, measured the only way that counts — twice, because
  * the two ways this gate could lie are different bugs:
  *
  *   A. THE ECHO DRAWS NOTHING. `scene.ts`'s `syncBalloonEchoVisibility`
  *      forced to `const visible = false`, so the echo's Points object never
  *      renders. The gated row falls to 0.000% changed, meanAbs 0, MAX 0 and
  *      the run FAILS (exit 1) — while on that same build the full-frame diff
- *      of the SAME two frames reads 10.349% / 3.179 / 234, which is fr-j85n's
+ *      of the SAME two frames reads 10.349% / 3.179 / 234, which is the tint's
  *      historical re-measurement to the last digit. So a build whose echo
  *      renders LITERALLY NOTHING reproduces the number the gate used to pass
  *      on, exactly. The defect and the fix, on one build.
@@ -183,7 +183,7 @@
  *      inversion's images sit outside the framed view. The gated row falls to
  *      1.609% (meanAbs 0.210) and the run FAILS on the
  *      ECHO_MIN_CHANGED_FRACTION floor — which is what that constant is for:
- *      at fr-j85n's 0.1% bar this configuration would have passed on a rim of
+ *      at the tint's 0.1% bar this configuration would have passed on a rim of
  *      clipped pixels. The full-frame row on those same frames reads 11.448%.
  *
  * Usage:
@@ -205,8 +205,8 @@ const VIEWPORT = { width: 960, height: 720 };
 const START_TIMEOUT_MS = 60_000;
 const DEFAULT_TIMEOUT_MS = 45_000;
 const MIN_CHANGED_FRACTION = 0.001;
-// The floor the fr-5666 row itself must clear (fr-23oa). Deliberately far
-// above MIN_CHANGED_FRACTION: that one is fr-j85n's "a tint moved something"
+// The floor the gated echo row itself must clear. Deliberately far
+// above MIN_CHANGED_FRACTION: that one is the tint's "a tint moved something"
 // bar, where this one is the gate's whole verdict on whether the 4D echo
 // draws, and the row it replaced passed at ~10% while the echo contributed
 // EXACTLY ZERO scene pixels. MEASURED 19.5% at GATE_RADIUS, ten times this
@@ -215,7 +215,7 @@ const MIN_CHANGED_FRACTION = 0.001;
 // MIN_CHANGED_FRACTION's 0.1% that vacuous configuration would have passed
 // on a rim of clipped pixels. Move GATE_RADIUS, never this.
 const ECHO_MIN_CHANGED_FRACTION = 0.02;
-// fr-j85n's drive values. TINT_HEX is deliberately far from anything the
+// The tint drive values. TINT_HEX is deliberately far from anything the
 // pentatope cloud's own per-transform palette produces, so a tinted echo
 // cannot coincide with the untinted one by accident. PERSIST_TINT_STRENGTH is
 // deliberately NEITHER endpoint: a 0/1 round trip would survive a wire that
@@ -229,7 +229,7 @@ const PERSIST_TINT_STRENGTH = 0.42;
 // tint to colour. 0.50x is measured well inside it and is still the app's own
 // slider, driven the way a user drives it — on the PRE-SHARE page, so the
 // restored document carries it and no post-boot uniform push can stand in for
-// the boot-time sync fr-5666 is about.
+// the boot-time sync this gate is about.
 const GATE_RADIUS = 0.5;
 // A phase whose whole claim is that NOTHING moved has no "changed from
 // baseline" edge to wait on, so it waits out the render the uniform push
@@ -359,13 +359,13 @@ async function stableCanvas(page, timeout, baseline = null) {
  * the scheduled render (QUIET_MS) and then demand the same two byte-identical
  * screenshots every other capture here demands.
  *
- * TWO CALLERS, and the second one is fr-23oa's. The first is the phase that
+ * TWO CALLERS, and the second one is the re-pin's. The first is the phase that
  * asserts NOTHING moved, which by construction has no edge to wait on. The
  * second is the FIRST capture after the reload, where `resolution-governor.ts`
  * restores a parked still to full scale after ~2s of quiet: a capture taken
  * before that lands is a coarser rung of the same picture, and diffing it
  * against a later one reads the RESAMPLE as content. MEASURED, and by exactly
- * the sort of accident that makes a gate lie — the fr-23oa non-vacuity run
+ * the sort of accident that makes a gate lie — the non-vacuity run
  * (echo deliberately off screen) came back 1.609% changed with max 209 on
  * that pair while the same comparison later in the same page read 0.000%
  * max 0. Both were right; only one was measuring the echo. */
@@ -378,12 +378,12 @@ async function quietCanvas(page, timeout) {
  * Mean/changed/max difference between two canvas screenshots.
  *
  * `region` picks WHAT is compared. `"frame"` is the whole element screenshot —
- * what the fr-5666 row has always compared, kept exactly. `"scene"` is the
+ * what the echo row has always compared, kept exactly. `"scene"` is the
  * canvas LEFT OF `#panel`, derived from the live DOM here rather than
  * hardcoded: the panel is painted over the canvas, so an element screenshot
  * carries it, and the panel moves for reasons that have nothing to do with the
- * render (rows appearing, a colour swatch changing). Every fr-j85n phase asks
- * about the RENDER, so every fr-j85n phase passes `"scene"`. One routine, one
+ * render (rows appearing, a colour swatch changing). Every tint phase asks
+ * about the RENDER, so every tint phase passes `"scene"`. One routine, one
  * definition of "changed", one place to read the arithmetic.
  */
 async function imageDiff(page, onPng, offPng, region = "frame") {
@@ -468,7 +468,7 @@ async function rows(page) {
     return {
       echo: visible("balloonEchoRow"),
       radius: visible("balloonRadiusRow"),
-      // fr-j85n's row hides and shows with balloonRadiusRow (state.balloonEcho
+      // The tint row hides and shows with balloonRadiusRow (state.balloonEcho
       // gates both) — reported here so the tint pair's own visibility rides
       // the same one place every other balloon row is read from.
       tint: visible("balloonTintRow"),
@@ -486,7 +486,7 @@ async function rows(page) {
 }
 
 /**
- * Drive the Points section's balloon tint pair (fr-j85n) the way the page's own
+ * Drive the Points section's balloon tint pair the way the page's own
  * listeners see it. The colour input's handler is bespoke and listens on
  * "input" (ui.ts's `onBalloonTint`); the strength slider is table-driven
  * through control-spec.ts, which reads "input" plus the trailing "change" a
@@ -657,13 +657,13 @@ async function main() {
     }
     const echoAtDocRadius = await stableCanvas(page, options.timeout, plain4);
 
-    // ——— fr-23oa: THE HISTORICAL ROW, DISCLOSED ————————————————————————
-    // One echo on/off pair at the document's OWN 1.60x — the radius fr-5666
-    // measured at — compared both ways. The full-frame figure is the shape of
-    // the number fr-5666 pinned (10.255%) and CLAUDE.md carried; the scene
-    // figure is what that number was worth. Both are printed, NEITHER is
-    // asserted: the header explains why, and the gate's own row is the one
-    // below, on the restored page at GATE_RADIUS.
+    // ——— THE HISTORICAL ROW, DISCLOSED —————————————————————————————————
+    // One echo on/off pair at the document's OWN 1.60x — the radius the 4D
+    // echo lift measured at — compared both ways. The full-frame figure is
+    // the shape of the number that lift pinned (10.255%) and CLAUDE.md
+    // carried; the scene figure is what that number was worth. Both are
+    // printed, NEITHER is asserted: the header explains why, and the gate's
+    // own row is the one below, on the restored page at GATE_RADIUS.
     const historicalFull = await imageDiff(page, echoAtDocRadius, plain4);
     const historicalScene = await imageDiff(
       page,
@@ -672,7 +672,7 @@ async function main() {
       "scene",
     );
     reportDiff(
-      "DISCLOSURE echo on/off, full frame at the document's 1.60x (fr-5666's historical comparison)",
+      "DISCLOSURE echo on/off, full frame at the document's 1.60x (the historical comparison)",
       historicalFull,
     );
     reportDiff(
@@ -680,7 +680,7 @@ async function main() {
       historicalScene,
     );
 
-    // ——— fr-23oa: PUT THE ECHO ON SCREEN, IN THE DOCUMENT ———————————————
+    // ——— PUT THE ECHO ON SCREEN, IN THE DOCUMENT ————————————————————————
     // Drive the app's own Balloon size slider to a radius whose inversion
     // images land inside the frame (rule 2), BEFORE the link is copied, so
     // the restored page boots with it and the row below never touches a
@@ -715,7 +715,7 @@ async function main() {
       fail(
         `restored document came back at balloon radius ${restored.radiusValue}x, ` +
           `not the ${GATE_RADIUS}x driven before the link was copied — the ` +
-          `fr-5666 row below would be measuring an unknown pose`,
+          `gated row below would be measuring an unknown pose`,
       );
     }
     // quietCanvas, not stableCanvas: this is the first capture after the
@@ -730,20 +730,20 @@ async function main() {
     });
     const offShot = await stableCanvas(page, options.timeout, onShot);
 
-    // ——— fr-5666: THE 4D ECHO DRAWS (the gate's load-bearing row) ————————
+    // ——— THE 4D ECHO DRAWS (the gate's load-bearing row) —————————————————
     // Scene region, restored page, document-carried GATE_RADIUS: every
     // qualifier the header argues for, in one comparison. This is what a
     // shader/link failure and the boot-time zero-uniform bug both have to
     // survive, and it is the precondition every later phase leans on.
     const diff = await imageDiff(page, onShot, offShot, "scene");
-    reportDiff(`echo on/off, scene at ${GATE_RADIUS}x (fr-5666)`, diff);
+    reportDiff(`echo on/off, scene at ${GATE_RADIUS}x`, diff);
     if (diff.changedFraction < ECHO_MIN_CHANGED_FRACTION || diff.maxDelta < 5) {
       fail(
         `the 4D balloon echo moved ${(100 * diff.changedFraction).toFixed(3)}% of ` +
           `SCENE pixels (max ${diff.maxDelta}) on a restored document at ` +
           `${GATE_RADIUS}x — it is not reaching the frame. Do not relax this ` +
-          `bar and do not fall back to the full-frame number: fr-23oa is the ` +
-          `record of that number passing on a panel relayout while the echo ` +
+          `bar and do not fall back to the full-frame number: that number is ` +
+          `on record passing on a panel relayout while the echo ` +
           `drew nothing: ${JSON.stringify(diff)}`,
       );
     }
@@ -756,7 +756,7 @@ async function main() {
       gatedFull,
     );
 
-    // ——— fr-j85n: BACK TO THE ECHO ———————————————————————————————————————
+    // ——— BACK TO THE ECHO ————————————————————————————————————————————————
     // The tint phases below can only mean something where the echo has pixels
     // (header rule 2), which the row above just measured at this radius. The
     // document already carries it, so this is the checkbox and nothing else —
@@ -766,7 +766,7 @@ async function main() {
     });
     const echoIn = await stableCanvas(page, options.timeout, offShot);
 
-    // ——— fr-j85n: THE TINT REACHES THE 4D ECHO (DIMENSIONAL PARITY) ———
+    // ——— THE TINT REACHES THE 4D ECHO (DIMENSIONAL PARITY) ————————————
     // The 4D half of the tint is free by construction (see the header) —
     // VERIFIED here, not assumed. Pentatope is a 4D system, its tumble is
     // parked, and the echo is on screen, so the only thing between this frame
@@ -795,7 +795,7 @@ async function main() {
       );
     }
 
-    // ——— fr-j85n: STRENGTH 0 IS THE IDENTITY ———————————————————————————
+    // ——— STRENGTH 0 IS THE IDENTITY ————————————————————————————————————
     // `mix(x, y, 0.0)` is exactly `x`, so a document that predates the pair —
     // or any document that leaves the strength at its default — must render
     // today's frame BYTE FOR BYTE. Measured, not argued: the COLOUR stays at
@@ -812,13 +812,13 @@ async function main() {
     reportDiff("strength0 identity", zeroDiff);
     if (zeroDiff.maxDelta !== 0) {
       fail(
-        "strength 0 is not the identity — this bar is fr-j85n's " +
+        "strength 0 is not the identity — this bar is the tint pair's " +
           '"an absent-field document renders today\'s frame byte for byte" ' +
           `claim and must not be relaxed: ${JSON.stringify(zeroDiff)}`,
       );
     }
 
-    // ——— fr-j85n: THE ECHO REALLY WAS ON SCREEN (precondition) —————————
+    // ——— THE ECHO REALLY WAS ON SCREEN (precondition) ——————————————————
     // Turn the echo off at the SAME radius the two phases above ran at. This
     // is what stops them being vacuous: it is the measurement that says those
     // pixels existed to be tinted, and it is the one the document's own 1.60x
@@ -838,7 +838,7 @@ async function main() {
       );
     }
 
-    // ——— fr-j85n: IT MOVES ONLY THE ECHO ———————————————————————————————
+    // ——— IT MOVES ONLY THE ECHO ————————————————————————————————————————
     // A control that tints the echo must be provably INERT when there is no
     // echo. Same strong colour, same full strength, echo off — anything but a
     // byte-identical scene means the mix has leaked out of the echo material
@@ -863,7 +863,7 @@ async function main() {
       );
     }
 
-    // ——— fr-j85n: THE PAIR RIDES THE #v1= HASH —————————————————————————
+    // ——— THE PAIR RIDES THE #v1= HASH ——————————————————————————————————
     // No pixels: the acceptance criterion is that the tint is scene CONTENT a
     // shared link carries, so the readback IS the two control values (and the
     // row being on screen for the echo that owns them). The echo goes back on
@@ -935,7 +935,7 @@ async function main() {
       `[explorer-balloon-4d] restored rows: ${JSON.stringify(restored)}`,
     );
     reportDiff(
-      `SUMMARY echo on/off, SCENE at ${GATE_RADIUS}x (fr-5666, THE GATED ROW)`,
+      `SUMMARY echo on/off, SCENE at ${GATE_RADIUS}x (THE GATED ROW)`,
       diff,
     );
     reportDiff(
@@ -943,7 +943,7 @@ async function main() {
       gatedFull,
     );
     reportDiff(
-      "SUMMARY echo on/off, full frame at 1.60x (fr-5666's historical row, disclosure)",
+      "SUMMARY echo on/off, full frame at 1.60x (the historical row, disclosure)",
       historicalFull,
     );
     reportDiff(
@@ -951,14 +951,14 @@ async function main() {
       historicalScene,
     );
     reportDiff(
-      `SUMMARY echo in frame at ${GATE_RADIUS}x (fr-j85n precondition)`,
+      `SUMMARY echo in frame at ${GATE_RADIUS}x (precondition)`,
       echoInDiff,
     );
-    reportDiff("SUMMARY tint/4D (dimensional parity, fr-j85n)", tintDiff);
-    reportDiff("SUMMARY strength0 identity (fr-j85n)", zeroDiff);
-    reportDiff("SUMMARY echo-off inert (fr-j85n)", offTintDiff);
+    reportDiff("SUMMARY tint/4D (dimensional parity)", tintDiff);
+    reportDiff("SUMMARY strength0 identity", zeroDiff);
+    reportDiff("SUMMARY echo-off inert", offTintDiff);
     console.error(
-      `[explorer-balloon-4d] SUMMARY tint persisted (fr-j85n): ${JSON.stringify(persisted)}`,
+      `[explorer-balloon-4d] SUMMARY tint persisted: ${JSON.stringify(persisted)}`,
     );
     console.error(`[explorer-balloon-4d] VERDICT: ${failed ? "FAIL" : "PASS"}`);
   } catch (error) {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * fr-k35: headless WebGL smoke test for the production fractal app, booted
+ * Headless WebGL smoke test for the production fractal app, booted
  * against a REAL WebGL2 context via SwiftShader (Google's software
  * Vulkan-backed GL implementation) — the committed, repeatable form of the
  * SwiftShader browser recipe, so "does the app still boot and render in a

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * fr-5ne3 / fr-sjff: browser verification for the surface render's
+ * Browser verification for the surface render's
  * interaction preview tier and its strip-bounded full-quality traces.
  * Boots the app under SwiftShader (the webgl-smoke launch recipe) and
  * drives two phases:

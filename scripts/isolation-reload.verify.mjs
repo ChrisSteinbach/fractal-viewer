@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * fr-su3r isolation-reload verifier.
+ * Isolation-reload verifier.
  *
  * On GitHub Pages the app cannot get COOP/COEP from the server (GitHub Pages
  * sends neither header), so a first-ever visit necessarily loads NON-isolated.
@@ -60,9 +60,9 @@
  *      reload's fault, not a broken interaction.
  *   5. Waits out the isolation reload (`window.crossOriginIsolated` flipping
  *      to `true`), then asserts: isolation actually engaged, the render mode
- *      is still Flame (the fr-su3r fix — this is the assertion that fails on
- *      unfixed code, where it silently reverts to Points), and the scene
- *      survived too (`location.hash` still starts with `#v1=` — the
+ *      is still Flame (the render-mode handoff — this is the assertion that
+ *      fails on unfixed code, where it silently reverts to Points), and the
+ *      scene survived too (`location.hash` still starts with `#v1=` — the
  *      pre-existing behavior this fix must not regress).
  *
  * Usage:
@@ -197,7 +197,7 @@ function resolveRequestPath(root, pathname) {
 
 /** The one fetch pipeline: resolve -> traversal-check -> directory-to-index
  * -> 404 -> correct Content-Type -> send, with the `sw.js` response alone
- * delayed by `swDelayMs` (fr-su3r's whole point: a wide, deterministic
+ * delayed by `swDelayMs` (this script's whole point: a wide, deterministic
  * isolation-reload window). Never sets COOP/COEP — see this file's header. */
 async function handleRequest(req, res, root, swDelayMs) {
   const requestUrl = new URL(req.url ?? "/", "http://isolation-reload.invalid");
@@ -496,7 +496,7 @@ async function main() {
         `got ${String(post.isolated)}`,
       );
       record(
-        "post-reload: render mode is Flame (fr-su3r fix)",
+        "post-reload: render mode is Flame (the isolation handoff)",
         post.flameActive === true,
         post.flameActive
           ? undefined
@@ -513,7 +513,7 @@ async function main() {
         "reload never fired",
       );
       skip(
-        "post-reload: render mode is Flame (fr-su3r fix)",
+        "post-reload: render mode is Flame (the isolation handoff)",
         "reload never fired",
       );
       skip(

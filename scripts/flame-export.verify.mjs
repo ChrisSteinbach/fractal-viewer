@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * fr-61a2 flame Save-PNG gate: end-to-end PASS/FAIL verification, in a real
+ * The flame Save-PNG gate: end-to-end PASS/FAIL verification, in a real
  * headless browser, that a Save PNG taken in Flame mode saves THE FLAME,
  * FINISHED — and never the Points explorer.
  *
@@ -12,15 +12,15 @@
  *     a gate failed was `scene.captureFrame(scale)` — the point cloud. So an
  *     export during any render's startup gap silently saved a DIFFERENT
  *     render mode's picture. The Export-size select reaches that state on
- *     purpose: changing it restarts the flame session (fr-2urv — a flame
+ *     purpose: changing it restarts the flame session (a flame
  *     accumulates AT the export size), so switching to 2x and pressing Save
  *     straight away downloaded the explorer. Phase 2 is that exact sequence.
  *
  *  2. UNFINISHED PICTURE. The flame canvas IS the export, so whatever the
  *     accumulation had reached at the moment of the press is what saved.
  *     That is not merely a noisier frame: the worker's finishing chunk
- *     re-filters the histogram with the ADAPTIVE density estimator (fr-17t)
- *     where every progressive frame uses the cheap fixed-radius one. Phase 3
+ *     re-filters the histogram with the ADAPTIVE density estimator where
+ *     every progressive frame uses the cheap fixed-radius one. Phase 3
  *     presses Save mid-accumulation and asserts the PNG does not arrive
  *     until the readout says 100%.
  *

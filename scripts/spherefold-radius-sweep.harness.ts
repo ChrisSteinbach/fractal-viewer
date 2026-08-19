@@ -1,6 +1,5 @@
 /**
- * fr-qi9c: does the Mandelbox sphere fold's ball radius earn a DOCUMENT
- * parameter?
+ * Does the Mandelbox sphere fold's ball radius earn a DOCUMENT parameter?
  *
  * `variations.ts`'s `sphereFoldFactor` pins the classic `mR² = 0.25`,
  * `fR² = 1`, and `foldAxis` pins the box wall at 1. Un-freezing them would
@@ -38,8 +37,8 @@
  * family's usual 35³ grid probe would quantize the normalizer by ~3%) at a
  * fixed zoom, so a pure rescale produces the same picture, and the verdict
  * number is {@link maskIoU} against the shipped arm — the object-mask IoU
- * the project already uses as its same-object criterion (fr-dlxh's 4D
- * compute verdict read 0.996). High IoU after normalization = a zoom you
+ * the project already uses as its same-object criterion (the 4D compute
+ * port's verdict read 0.996). High IoU after normalization = a zoom you
  * already have = do not pay the schema.
  *
  * GUARD THE GUARD. `it("conjugation control")` sweeps all three lengths
@@ -58,7 +57,7 @@
  * `it("pins the parameterized fold")` asserts it returns
  * `estimateEscapeDistance`'s value TO THE BIT at shipped parameters over
  * 24k queries, so a reconstruction error cannot pass as a measurement.
- * fr-77oy lifted its two original restrictions: it takes ONE parameter
+ * The later arms lifted its two original restrictions: it takes ONE parameter
  * record per LINK (broadcast from one, which is how the four original arms
  * still read) and cycles `links[step % n]` like the shipped orbit, and it
  * applies the kaleidoscope's query-space wedge by calling the estimator's
@@ -85,7 +84,7 @@
  *      a lens applied once may not, and the document parameter would be
  *      the same field for both. No preset carries a pure-fold FINAL, so
  *      the base system is authored here rather than loaded.
- * And the three fr-77oy added, which ask where the first four stopped:
+ * And the three added later, which ask where the first four stopped:
  *   5. `spherefold-chain-links.png` — the SAME map alone, as link 0 of a
  *      three-link chain, as link 1, and both links moved together. A
  *      per-link parameter gives a six-link chain twelve new ratios, so the
@@ -140,24 +139,24 @@
  * So the parameter earns its schema cost, and it earns it MOST in the
  * FINAL-transform role — the one place a reader would have guessed a
  * once-applied map would be bland. What it would cost is unchanged and
- * lives on fr-qi9c: the first per-variation parameter in the document,
+ * unchanged: the first per-variation parameter in the document,
  * ten oracle-pinned fold mirrors, `SPHEREFOLD_LIPSCHITZ` becoming
  * `fR²/mR²` (which moves the surface DE's eligibility gate with the
  * knob), and `SPHEREFOLD_MID_MIN_R` scaling with `fR²`. The GPU wire
  * needs nothing: `GpuMap`'s `p1` lane and `GpuMap4`'s carry two free f32
  * each, so a packed `(mR², fR²)` pair fits inside the frozen strides.
  *
- * THE FR-77OY VERDICT (four more arms, same instrument):
+ * THE EXTENSION VERDICT (four more arms, same instrument):
  *
- * A CHAIN DAMPS ITS OWN LINKS, which is fr-za0n's bound-quality result
- * showing up in the picture. `mandelboxClassic` and `foldChainBoulder`'s
- * link 0 are the SAME map (mandelbox at weight 2, unrotated), so the
- * comparison is like-for-like: moving that map's magnification displaces
- * the object by 1 − IoU = 0.309/0.222/0.168/0.126/0.157 across the `mR`
- * arms when it is alone, and 0.081/0.057/0.039/0.024/0.025 when it is one
- * link of three — 3.8x to 6.4x QUIETER, monotonically more so the further
- * the ratio moves. So a six-link chain's twelve ratios are twelve weak
- * knobs, not twelve strong ones.
+ * A CHAIN DAMPS ITS OWN LINKS, which is the formula chain's bound-quality
+ * result showing up in the picture. `mandelboxClassic` and
+ * `foldChainBoulder`'s link 0 are the SAME map (mandelbox at weight 2,
+ * unrotated), so the comparison is like-for-like: moving that map's
+ * magnification displaces the object by 1 − IoU =
+ * 0.309/0.222/0.168/0.126/0.157 across the `mR` arms when it is alone, and
+ * 0.081/0.057/0.039/0.024/0.025 when it is one link of three — 3.8x to 6.4x
+ * QUIETER, monotonically more so the further the ratio moves. So a six-link
+ * chain's twelve ratios are twelve weak knobs, not twelve strong ones.
  *
  * AND THEY BARELY INTERACT. Link 1's own displacement measured with link 0
  * at the shipped ratio, against the same displacement measured after link 0
@@ -169,22 +168,22 @@
  * plainly: a BOX-FOLD link's `mR`/`fR` are inert, so a per-variation
  * schema hands `boxfold` two fields it cannot use.
  *
- * THE BARE SPHERE FOLD HAS NO ESCAPE-TIME OBJECT AT ALL — a negative
- * result, and structural rather than a bad choice of weight. The sphere
- * fold only ever moves points OUTWARD in radius (inner scales by
- * `fR²/mR²`, mid sends `[mR, fR]` out to `[fR, fR²/mR]`, outer is the
- * identity), so with no box fold to bring them back the orbit splits on
- * `|w|` and neither half is a fractal: at `|w| >= 1.2` nothing is captured
- * and the set measures EMPTY at every affine part and offset tried (0.00%
- * fill, 8 of 8 weights x 4 fixtures), while at `|w| < 1` the outer branch
- * alone contracts to a fixed point and the set is a smooth SOLID (0.8% to
- * 100% fill) whose boundary is not a `dr` blow-up — so the Buddhi/Rrrola
- * heuristic cannot see it, and a ray marching inward accepts only at the
- * origin (measured radius 0.000 at every CONFORMAL affine part; anisotropy
- * is the only thing that gives the heuristic a surface, and it finds a
- * blob). This is why fr-qi9c's mandelbox rows are not a confound to be
- * controlled away: in the escape-time family, the box fold is what makes
- * an object exist for the sphere fold's ratios to shape.
+ * THE BARE SPHERE FOLD HAS NO ESCAPE-TIME OBJECT AT ALL — a negative result,
+ * and structural rather than a bad choice of weight. The sphere fold only
+ * ever moves points OUTWARD in radius (inner scales by `fR²/mR²`, mid sends
+ * `[mR, fR]` out to `[fR, fR²/mR]`, outer is the identity), so with no box
+ * fold to bring them back the orbit splits on `|w|` and neither half is a
+ * fractal: at `|w| >= 1.2` nothing is captured and the set measures EMPTY at
+ * every affine part and offset tried (0.00% fill, 8 of 8 weights x 4
+ * fixtures), while at `|w| < 1` the outer branch alone contracts to a fixed
+ * point and the set is a smooth SOLID (0.8% to 100% fill) whose boundary is
+ * not a `dr` blow-up — so the Buddhi/Rrrola heuristic cannot see it, and a
+ * ray marching inward accepts only at the origin (measured radius 0.000 at
+ * every CONFORMAL affine part; anisotropy is the only thing that gives the
+ * heuristic a surface, and it finds a blob). This is why the first four arms'
+ * mandelbox rows are not a confound to be controlled away: in the escape-time
+ * family, the box fold is what makes an object exist for the sphere fold's
+ * ratios to shape.
  *
  * SO THE CONTROL RUNS THROUGH THE LENS instead, where a bare sphere fold IS
  * well-defined — and it needs a pre-scale to mean anything. At the lens's
@@ -207,9 +206,10 @@
  * parameter has to account for.
  *
  * THE ELIGIBILITY SEAM IS REACHED BY EXACTLY ONE SHIPPED SYSTEM, which is
- * the number fr-3pcu's UI question turns on. `SPHEREFOLD_LIPSCHITZ` IS the
- * magnification ratio (asserted, not assumed: `fR²/mR² = 4` at the shipped
- * lengths), and it multiplies into `analyzeSurfaceSystem`'s contraction
+ * the number the eligibility-gate UI question turns on.
+ * `SPHEREFOLD_LIPSCHITZ` IS the magnification ratio (asserted, not assumed:
+ * `fR²/mR² = 4` at the shipped lengths), and it multiplies into
+ * `analyzeSurfaceSystem`'s contraction
  * gate and — as the deliberate complement — into `analyzeEscapeSystem`'s
  * admits-when-something-expands test, so both gates pivot on the same
  * threshold `rho_crit = min_i CONTRACTION_LIMIT / (|w_i|·sigma_max(M_i))`
@@ -233,9 +233,9 @@
  * either gate — box branches are reflection isometries at any wall — so
  * the ratio this sheet measured as the STRONGER of the two is gate-free.
  * And the FINAL-transform lens has no contraction gate at all
- * (`surface-de.ts`'s `descendLens`, fr-g58b: an un-iterated lens needs
- * none), so the ROLE this sheet measured as the most sensitive is gate-free
- * too. The design problem is one system and one ratio wide.
+ * (`surface-de.ts`'s `descendLens`: an un-iterated lens needs none), so the
+ * ROLE this sheet measured as the most sensitive is gate-free too. The
+ * design problem is one system and one ratio wide.
  *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
  *        scripts/spherefold-radius-sweep.harness.ts
@@ -315,7 +315,7 @@ const ballOverBox = (fp: FoldParams) => fp.fR / fp.wall;
 
 /** `foldChainFlower`'s five-fold wedge, read off the shipped side table
  * rather than re-typed — the preset IS its kaleidoscope (presets.ts), and
- * fr-77oy arm 3 exists to sweep exactly that pairing. */
+ * arm 3 exists to sweep exactly that pairing. */
 const FLOWER_SYMMETRY: SymmetryParams = PRESET_SYMMETRIES.foldChainFlower!;
 
 /** One chain's worth of parameters with a single link overridden — the
@@ -383,17 +383,17 @@ function soleFoldVariation(t: Transform): Variation | null {
  * contribution rides the per-step `localL`, and that picks up the new
  * parameters on its own.
  *
- * CHAINS (fr-77oy arm 1). `fp` is either ONE record broadcast to every
+ * CHAINS (arm 1). `fp` is either ONE record broadcast to every
  * link, or one PER LINK in document order — the shape a document field
  * would actually have, since the lengths would live on the `Variation` and
- * fr-s04t's chain carries one fold variation per link. The orbit cycles
+ * the chain carries one fold variation per link. The orbit cycles
  * `links[step % n]` for `ESCAPE_TIME_ITERATIONS * n` single-link steps,
  * which is `runEscapeOrbit` verbatim ("THE LIST IS THE SEQUENCE"). The
  * BAILOUT is the orbit's and not a link's, so an array must agree on it —
  * it rides the same record only because the conjugation control has to
  * scale it with the lengths.
  *
- * KALEIDOSCOPE (fr-77oy arm 3). The wedge fold is applied ONCE, before the
+ * KALEIDOSCOPE (arm 3). The wedge fold is applied ONCE, before the
  * orbit, and the folded point seeds AND offsets it — `foldQueryIntoSector`
  * imported from the estimator itself rather than re-derived, so the one
  * thing this copy must not get wrong it cannot get wrong.
@@ -474,7 +474,7 @@ function paramEscapeDE(
  * every plotted point. The `EscapeDE` is used purely as a carrier for the
  * `composeAffine` the app itself would build, and `foldKind` picks which
  * fold is applied exactly as {@link paramEscapeDE} does — so a `spherefold`
- * lens (fr-77oy arm 2) and a `mandelbox` one run the same code path. */
+ * lens (arm 2) and a `mandelbox` one run the same code path. */
 function paramFoldOnce(de: EscapeDE, fp: FoldParams, p: Vec3, out: Vec3): void {
   const m = de.m;
   const mR2 = fp.mR * fp.mR;
@@ -685,7 +685,7 @@ const hitPct = (p: PanelStats) => ((100 * p.hits) / (SIZE * SIZE)).toFixed(2);
 
 /* ------------------------------------------------------------------ */
 
-describe("fr-qi9c spherefold radius sweep", () => {
+describe("spherefold radius sweep", () => {
   it("pins the parameterized fold to the shipped estimator", () => {
     // The whole sheet rests on paramEscapeDE being runEscapeOrbit with three
     // constants lifted out. Assert it; don't inspect it.
@@ -709,7 +709,7 @@ describe("fr-qi9c spherefold radius sweep", () => {
   });
 
   it("pins the parameterized fold on a CHAIN and under a kaleidoscope", () => {
-    // fr-77oy arms 1 and 3 lift the two restrictions the fr-qi9c copy threw
+    // Arms 1 and 3 lift the two restrictions the original copy threw
     // on. Both were guarding a real hazard — a chain that ignored
     // `links[step % n]` and a kaleidoscope that skipped `foldQueryIntoSector`
     // would each render a DIFFERENT object while every IoU column below still
@@ -753,12 +753,12 @@ describe("fr-qi9c spherefold radius sweep", () => {
   });
 
   it("pins the PRODUCTION estimator's own fold radii against this copy", () => {
-    // fr-s9ll gave `Variation` the three lengths, so `estimateEscapeDistance`
-    // now reads them off the document instead of baking them in. This sheet's
-    // copy predates that and was pinned at the classic lengths before it
-    // existed — which makes it an INDEPENDENT oracle for the parameterized
-    // production path, not a restatement of it. Same lengths, two
-    // implementations, bit-exact or the change is wrong.
+    // The authored fold lengths gave `Variation` its three lengths, so
+    // `estimateEscapeDistance` now reads them off the document instead of
+    // baking them in. This sheet's copy predates that and was pinned at the
+    // classic lengths before it existed — which makes it an INDEPENDENT
+    // oracle for the parameterized production path, not a restatement of it.
+    // Same lengths, two implementations, bit-exact or the change is wrong.
     const rng = mulberry32(0x5f03c);
     const cases: [string, FoldParams[]][] = [
       ["one link, wider ball", [{ mR: 0.35, fR: 1.4, wall: 1, bailout: 4 }]],
@@ -965,14 +965,15 @@ describe("fr-qi9c spherefold radius sweep", () => {
     );
   });
 
-  /* ---- fr-77oy: where fr-qi9c's sheet stopped -------------------- */
+  /* ---- where the first four arms stopped ------------------------- */
 
   it("sweeps magnification PER LINK along a chain", () => {
     // ARM 1. A per-link parameter gives a six-link chain twelve new ratios,
     // so the question is not "does the ratio matter" (arms above answer that)
-    // but whether the links' responses INTERACT. fr-za0n measured composition
-    // IMPROVING bound quality — violation rates 13.4% at one link down to
-    // 1.5% at six — which predicts a chain is LESS sensitive per link.
+    // but whether the links' responses INTERACT. The formula chain measured
+    // composition IMPROVING bound quality — violation rates 13.4% at one link
+    // down to 1.5% at six — which predicts a chain is LESS sensitive per
+    // link.
     //
     // `foldChainBoulder` is the fixture because it is the only shipped chain
     // with TWO sphere-family links (mandelbox 2, mandelbox -1.5, boxfold
@@ -1168,10 +1169,11 @@ describe("fr-qi9c spherefold radius sweep", () => {
     // ARM 2, part 2. The one-shot lens is where a bare sphere fold IS
     // well-defined — `chaos-game.ts` bends each plotted point once and never
     // feeds it back, so none of the escape orbit's expansion dichotomy
-    // applies — and it is the role fr-qi9c measured as the most sensitive of
-    // the three. Both rows below bend the SAME attractor ({@link LENS_BASE})
-    // with the same weight, differing only in whether a box fold precedes the
-    // sphere fold, which is the box-wall control arm 2 was asked for.
+    // applies — and it is the role the first four arms measured as the most
+    // sensitive of the three. Both rows below bend the SAME attractor ({@link
+    // LENS_BASE}) with the same weight, differing only in whether a box fold
+    // precedes the sphere fold, which is the box-wall control arm 2 was asked
+    // for.
     const cloud = runChaosGame(LENS_BASE, 150_000, mulberry32(0xc10d));
     const arms = [1.0, 0.8, 0.65, 0.5, 0.35, 0.25];
     const shippedAt = arms.indexOf(SHIPPED.mR);
@@ -1319,7 +1321,8 @@ describe("fr-qi9c spherefold radius sweep", () => {
   });
 
   it("tabulates how much of the ratio's range crosses the eligibility gate", () => {
-    // ARM 4, the arm with a decision riding on it (fr-3pcu's UI question).
+    // ARM 4, the arm with a decision riding on it (the eligibility-gate UI
+    // question).
     //
     // `SPHEREFOLD_LIPSCHITZ` becomes `fR²/mR²` — the magnification ratio
     // exactly — and it multiplies into BOTH gates: `analyzeSurfaceSystem`
@@ -1337,12 +1340,12 @@ describe("fr-qi9c spherefold radius sweep", () => {
     // whose Lipschitz bound is 1 at every ratio, in which case no value of
     // the knob can move it and the crossing is unreachable.
     //
-    // Note what is NOT here: the box wall. `fR/wall` — the ratio fr-qi9c
+    // Note what is NOT here: the box wall. `fR/wall` — the ratio this sheet
     // measured as the STRONGER shape parameter — never enters either gate,
     // because the box fold's branches are reflection isometries whatever the
     // wall is. And the FINAL-transform lens has no contraction gate at all
-    // (surface-de.ts's `descendLens`; fr-g58b: an un-iterated lens needs
-    // none), so the role fr-qi9c measured as MOST sensitive is likewise
+    // (surface-de.ts's `descendLens`: an un-iterated lens needs
+    // none), so the role this sheet measured as MOST sensitive is likewise
     // untouched. This arm concerns ITERATED BASE MAPS only.
     const shippedRho = magnification(SHIPPED);
     // The whole arm rests on `SPHEREFOLD_LIPSCHITZ` being exactly the
@@ -1405,10 +1408,11 @@ describe("fr-qi9c spherefold radius sweep", () => {
       }
 
       // AUTHORABLE RANGE. `mR <= fR` is the schema's own invariant (mR > fR
-      // inverts the shell and is not a fold anyone would author; fr-s9ll's
-      // morph rule requires it at every t), so the reachable magnification is
-      // `rho >= 1`, with `rho = 1` the identity end where the fold vanishes. A
-      // threshold at or below 1 is therefore outside the range entirely.
+      // inverts the shell and is not a fold anyone would author; the authored
+      // lengths' morph rule requires it at every t), so the reachable
+      // magnification is `rho >= 1`, with `rho = 1` the identity end where
+      // the fold vanishes. A threshold at or below 1 is therefore outside the
+      // range entirely.
       const where = !Number.isFinite(rhoCrit)
         ? "no PURE-fold map — neither gate's fold path applies here"
         : fixedExpander

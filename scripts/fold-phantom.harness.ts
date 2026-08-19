@@ -1,6 +1,5 @@
 /**
- * fr-7xgi diagnostic harness: phantom box faces on MIXED affine+fold
- * systems.
+ * Diagnostic harness: phantom box faces on MIXED affine+fold systems.
  *
  * Repro (user screenshots, 2026-07-27): the "Twisted Tetrahedron" preset
  * (`defaultTransforms`, four 0.5-scale rotated corner maps) with a single
@@ -10,28 +9,27 @@
  * chaos-game samples ARE the attractor) does not contain.
  *
  * NEGATIVE CONTROL — REFUTED (see the MEASURED VERDICT below). The
- * investigation's first suspect was `descendFold` (surface-de.ts,
- * fr-5rvk): a tuple dropped or evicted from its width-12 frontier folds
- * its REGION FLOOR — `scale * |w| * regionDist`, where `regionDist`
- * measures how far the chain point strayed outside a fold branch's
- * validity region. Those floors are valid lower bounds, but their
- * zero-sets are the branch validity planes: for a boxfold map applied as
- * `q = w * V(M p + t)`, the LEVEL-1 planes sit at `|q_axis| = |w|` in
- * world space — an axis-aligned cube of side `2|w|` — and deeper levels
- * image that cube through the system's maps (the receding tents). On the
- * pure-fold profiles fr-5rvk measured, frontier pressure was low enough
- * that drop-folds never surfaced (deep-void false hits 0 everywhere). The
- * suspicion this harness was built to test: a MIXED system changes that,
- * since every level spawns 27 boxfold branches + one candidate per
- * affine map against the same 12 slots, so in-sphere tuples with
- * near-zero floors — chains hugging a validity plane — would be evicted
- * constantly, and in a genuine void their folded near-zero floors would
- * become the descent's min, with a sphere tracer converging onto the
- * validity plane itself: a rendered box face that is not attractor. The
- * DE sections below pin the oracle clean on every probe instead — which
- * is exactly why they are kept as a NEGATIVE CONTROL: a future
- * regression that IS a true DE plateau-hit (rather than a tier-acceptance
- * bug, fr-7xgi's actual mechanism) will fire here.
+ * investigation's first suspect was `descendFold` (surface-de.ts's pure-fold
+ * branch sweep): a tuple dropped or evicted from its width-12 frontier folds
+ * its REGION FLOOR — `scale * |w| * regionDist`, where `regionDist` measures
+ * how far the chain point strayed outside a fold branch's validity region.
+ * Those floors are valid lower bounds, but their zero-sets are the branch
+ * validity planes: for a boxfold map applied as `q = w * V(M p + t)`, the
+ * LEVEL-1 planes sit at `|q_axis| = |w|` in world space — an axis-aligned
+ * cube of side `2|w|` — and deeper levels image that cube through the
+ * system's maps (the receding tents). On the pure-fold profiles that sweep
+ * measured, frontier pressure was low enough that drop-folds never surfaced
+ * (deep-void false hits 0 everywhere). The suspicion this harness was built
+ * to test: a MIXED system changes that, since every level spawns 27 boxfold
+ * branches + one candidate per affine map against the same 12 slots, so
+ * in-sphere tuples with near-zero floors — chains hugging a validity plane —
+ * would be evicted constantly, and in a genuine void their folded near-zero
+ * floors would become the descent's min, with a sphere tracer converging onto
+ * the validity plane itself: a rendered box face that is not attractor. The
+ * DE sections below pin the oracle clean on every probe instead — which is
+ * exactly why they are kept as a NEGATIVE CONTROL: a future regression that
+ * IS a true DE plateau-hit (rather than a tier-acceptance bug, the actual
+ * mechanism found here) will fire here.
  *
  * WHAT THIS HARNESS MEASURES, per fold-map choice (the fold on map 0, 1,
  * 2, 3) and per estimator (plain = what the GLSL fold tracer marches,
@@ -40,7 +38,7 @@
  *  (1) DEEP-VOID FALSE HITS on general uniform probes — the beam
  *      harness's proxy (estimate < 0.01R while the true nearest cloud
  *      sample is > 0.15R away): does the mixed system false-hit at all,
- *      where the fr-5rvk profiles measured 0?
+ *      where the pure-fold profiles measured 0?
  *  (2) FACE FINGERPRINT — probes sampled ON the level-1 cube's surface
  *      (`max|q_axis| = |w|`, restricted to deep void) and offset 0.02R
  *      outward along the face normal: if the phantom is the validity
@@ -57,29 +55,28 @@
  *      DIFFERENT weight land off the planes and must go clean. Face
  *      identity, not coincidence.
  *
- * MEASURED VERDICT (fr-7xgi, 2026-07-27): the region-floor hypothesis was
- * REFUTED — the CPU oracle is clean on the repro system every way it was
- * probed (plain/refined estimators, cutoff 0 and march-like cutoffs,
- * f32-emulated arithmetic, depth-limited descents 4..14, and full march
- * emulation along 7k+ rays: zero deep-void hits everywhere), and the
- * browser matrix showed the phantom identically on SwiftShader,
- * ANGLE/Iris-Xe and Firefox/Mesa, ruling out driver miscompiles. The
- * actual mechanism was tier interaction, not the DE: the preview tier
- * derived its hit-acceptance epsilon from the PREVIEW buffer height, so
- * at the coarse rungs fold systems start on (cost-weighted ladder start +
- * panic drops; SwiftShader sat at scale ~0.1, uMaxDepth 6, acceptance
- * ~0.04 at the phantom's distance) the epsilon crossed the fold DE's
- * loose-but-valid plateau band (region-floor certificates measure DE/D as
- * low as 0.13 near fold faces vs 0.6+ on affine systems, fr-5rvk's
- * tables) and the march accepted the whole box-face shell as surface:
- * crisp phantom faces with flat plateau-gradient normals, self-similar at
- * every fold-image scale, erased only by a settle frame fold systems are
- * slowest to reach. Fix: uAcceptPixelEps (surface-material.ts, its 4D
- * twin, scene.ts) pins acceptance to the full-resolution epsilon in every
- * tier — a tier may coarsen sampling, never acceptance. Emulated at the
- * 40-step preview budget: phantom hits 2 -> 0, holes 0.4-0.9% of true
- * hits; verified live on all three GLSL stacks (phantom gone at every
- * rung, previews now match the Points silhouette).
+ * MEASURED VERDICT (2026-07-27): the region-floor hypothesis was REFUTED —
+ * the CPU oracle is clean on the repro system every way it was probed
+ * (plain/refined estimators, cutoff 0 and march-like cutoffs, f32-emulated
+ * arithmetic, depth-limited descents 4..14, and full march emulation along
+ * 7k+ rays: zero deep-void hits everywhere), and the browser matrix showed
+ * the phantom identically on SwiftShader, ANGLE/Iris-Xe and Firefox/Mesa,
+ * ruling out driver miscompiles. The actual mechanism was tier interaction,
+ * not the DE: the preview tier derived its hit-acceptance epsilon from the
+ * PREVIEW buffer height, so at the coarse rungs fold systems start on
+ * (cost-weighted ladder start + panic drops; SwiftShader sat at scale ~0.1,
+ * uMaxDepth 6, acceptance ~0.04 at the phantom's distance) the epsilon
+ * crossed the fold DE's loose-but-valid plateau band (region-floor
+ * certificates measure DE/D as low as 0.13 near fold faces vs 0.6+ on affine
+ * systems, the branch sweep's tables) and the march accepted the whole
+ * box-face shell as surface: crisp phantom faces with flat plateau-gradient
+ * normals, self-similar at every fold-image scale, erased only by a settle
+ * frame fold systems are slowest to reach. Fix: uAcceptPixelEps
+ * (surface-material.ts, its 4D twin, scene.ts) pins acceptance to the
+ * full-resolution epsilon in every tier — a tier may coarsen sampling, never
+ * acceptance. Emulated at the 40-step preview budget: phantom hits 2 -> 0,
+ * holes 0.4-0.9% of true hits; verified live on all three GLSL stacks
+ * (phantom gone at every rung, previews now match the Points silhouette).
  *
  * Usage:
  *   npx vitest run --config scripts/vitest.harness.config.ts scripts/fold-phantom.harness.ts
@@ -246,7 +243,7 @@ const ESTIMATORS = [
   { label: "refined", fn: estimateDistanceRefined },
 ] as const;
 
-describe("fr-7xgi browser-repro scene hashes", () => {
+describe("browser-repro scene hashes", () => {
   it("prints the #v1 scene hash per fold-map choice for erosion-browser.mjs --hash", () => {
     // The CPU oracle measured clean on this system (see the fold-phantom
     // tables), which is what made the browser render the next suspect:
@@ -268,7 +265,7 @@ describe("fr-7xgi browser-repro scene hashes", () => {
   });
 });
 
-describe("fr-7xgi fold phantom faces", () => {
+describe("fold phantom faces", () => {
   it("control: the pure affine preset shows zero deep-void false hits under the same probes", () => {
     const transforms = defaultTransforms();
     const de = buildSurfaceDE(transforms);
@@ -380,7 +377,7 @@ describe("fr-7xgi fold phantom faces", () => {
 });
 
 // -----------------------------------------------------------------------
-// ACCEPTANCE POLICY (fr-7xgi, the shipped fix). Emulates the preview
+// ACCEPTANCE POLICY (the shipped fix). Emulates the preview
 // march's hit test at rungs 0.1 / 0.3 / 0.7 under three eps policies:
 //
 //  - "native" (the fix): pixelEps of the FULL-RESOLUTION (800px) frame,
@@ -512,7 +509,7 @@ function acceptIsPhantom(
   return nearest3(cloud, hp) > 0.1 * R;
 }
 
-describe("fr-7xgi acceptance policy (the shipped fix)", () => {
+describe("acceptance policy (the shipped fix)", () => {
   it("rungs 0.1/0.3/0.7: native acceptance is phantom-free with negligible hole cost", () => {
     const transforms = twistedTetraWithBoxfold(0);
     const de = buildSurfaceDE(transforms);

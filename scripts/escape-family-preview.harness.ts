@@ -1,12 +1,12 @@
 /**
- * fr-7u8t: which escape-time formula is worth building next?
+ * Which escape-time formula is worth building next?
  *
- * fr-7u8t.4 established that quaternion Julia sets are provably solids of
- * revolution and therefore visually monotonous, which inverted the design
- * brief's priority ordering. This harness answers the follow-up with
- * pictures rather than argument: it renders what the app SHIPS TODAY (the
- * fr-kltj escape-time fold set, via the real `estimateEscapeDistance`)
- * beside prototypes of the Mandelbulb family, all through `de-preview.ts`'s
+ * The quaternion Julia oracle established that those sets are provably
+ * solids of revolution and therefore visually monotonous, which inverted
+ * the design brief's priority ordering. This harness answers the follow-up
+ * with pictures rather than argument: it renders what the app SHIPS TODAY
+ * (the escape-time fold set, via the real `estimateEscapeDistance`) beside
+ * prototypes of the Mandelbulb family, all through `de-preview.ts`'s
  * identical shading, so the sheet compares OBJECTS and not lighting.
  *
  * THE FINDING THIS HARNESS PRODUCED, and it was about code already shipped:
@@ -17,13 +17,14 @@
  * outside it. The object genuinely WAS its own bounding ball, speckled where
  * the thin escaping filaments fell below a pixel. Nothing was wrong with the
  * estimator; the fixed-c fold map at a small constant is simply a fat blob.
- * (This paragraph said 94% until fr-azjk. That was the same object read
- * through a grid thresholding the distance estimate, an instrument wrong on
- * both counts — `scripts/set-extent.ts` carries the argument, and
- * `escape-form-sweep.harness.ts` is where the corrected sweep is executable.
+ * (This paragraph said 94% until the set-extent correction. That was the
+ * same object read through a grid thresholding the distance estimate, an
+ * instrument wrong on both counts — `scripts/set-extent.ts` carries the
+ * argument, and `escape-form-sweep.harness.ts` is where the corrected
+ * sweep is executable.
  * The shipped Mandelbrot form at the same constant fills 3.5%.)
  *
- * fr-7u8t.8 acted on that: the mode now marches the MANDELBROT form, the
+ * A later cut acted on that: the mode now marches the MANDELBROT form, the
  * offset taken from the SAMPLE POINT (`v <- w·V(Mv + t) + p`), so panels 0-2
  * below are the SHIPPED estimator and resolve the unmistakable Mandelbox.
  * The `+ 1` in the shipped `dr` recurrence turned out to belong to this form
@@ -34,7 +35,7 @@
  *
  * The bulb estimators here are deliberately throwaway locals, not modules:
  * the point is to see the images before paying for six mirrors and a bench
- * leg. Promoting one is fr-7u8t.7's job.
+ * leg. Promoting one is `bulb-de.ts`'s job.
  *
  * CAVEAT on reading the fold panels: this marcher has no empty-space grid,
  * no tier-pinned acceptance epsilon and a 600-step budget, so the fold
@@ -133,7 +134,7 @@ interface Entry {
   eyeOffset?: Vec3;
 }
 
-describe("fr-7u8t escape-family visual comparison", () => {
+describe("escape-family visual comparison", () => {
   it("renders the shipped fold set beside the bulb prototypes", () => {
     const mbox = buildEscapeDE([foldSystem(2, { position: [0.4, 0.3, 0.2] })]);
     const ball = buildEscapeDE([foldSystem(2)]);
@@ -177,7 +178,7 @@ describe("fr-7u8t escape-family visual comparison", () => {
         zoom: 0.5,
       },
       {
-        label: "fr-7u8t.4 — quaternion Julia, dendrite c = i (for scale)",
+        label: "REFERENCE — quaternion Julia, dendrite c = i (for scale)",
         de: (p) => estimateQJuliaDistance(qj, [p[0], p[1], p[2], 0]),
         radius: qj.boundingRadius,
         stepScale: 1,

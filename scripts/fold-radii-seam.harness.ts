@@ -1,10 +1,11 @@
 /**
- * fr-uec4: the sheet that EXONERATED the authored fold lengths.
+ * The sheet that EXONERATED the authored fold lengths.
  *
  * The reported crash was Firefox dying outright while the Min/Fixed radius and
  * Box limit sliders were dragged on a Sierpinski tetra with a mandelbox map and
- * the Floor option on, which pointed straight at fr-s9ll. This asks the
- * cheapest version of that question — no browser, no GPU: does the ESTIMATOR
+ * the Floor option on, which pointed straight at the authored fold lengths.
+ * This asks the cheapest version of that question — no browser, no GPU:
+ * does the ESTIMATOR
  * itself blow up anywhere inside the region the sliders can reach?
  *
  * MEASURED VERDICT: no. Across the whole admissible band and both box-limit
@@ -131,7 +132,7 @@ function measure(
   return row;
 }
 
-describe("fr-uec4: the fold-radii eligibility seam on a Sierpinski tetra", () => {
+describe("the fold-radii eligibility seam on a Sierpinski tetra", () => {
   it("prices the DE across the Min Radius slider's travel", () => {
     const rows: Row[] = [];
     // fR and boxLimit at their classic values; walk mR down from its ceiling
@@ -143,7 +144,8 @@ describe("fr-uec4: the fold-radii eligibility seam on a Sierpinski tetra", () =>
       rows.push(measure(`mR/fR = ${ratio.toFixed(4)}`, ratio, 1, 1));
     }
     // The same ratios reached by moving fR instead, to confirm the seam is the
-    // RATIO and not either length (fr-qi9c's dimensionless-ratio claim).
+    // RATIO and not either length (the dimensionless-ratio claim the
+    // authored lengths were built on).
     rows.push(measure("mR 1.4 / fR 2 (ratio 0.700)", 1.4, 2, 1));
     rows.push(measure("mR 1.5 / fR 2 (ratio 0.750)", 1.5, 2, 1));
     // Box limit sweep at a fixed, admissible radius ratio.

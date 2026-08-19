@@ -1,5 +1,5 @@
 /**
- * Is the escape-chain speckle UNDERSAMPLING, or is it the OBJECT? (fr-za0n)
+ * Is the escape-chain speckle UNDERSAMPLING, or is it the OBJECT?
  *
  * `escape-chain.harness.ts` draws the shipped estimator and the sheet it
  * writes — `scripts/out/escape-chain.png` — is structurally interesting and
@@ -47,9 +47,9 @@
  * pixel no march budget can resolve.
  *
  * The second question is COLOUR. The app paints escape renders with the
- * CONTINUOUS escape count (fr-7u8t.8, `escapedAt - log(r/R)/log(growth)`,
- * counted in single-link steps since fr-s04t); `de-preview.ts` shades by
- * normal and step count and shows none of it. {@link escapeTrap} mirrors the
+ * CONTINUOUS escape count (`escapedAt - log(r/R)/log(growth)`, counted in
+ * single-link steps); `de-preview.ts` shades by normal and step count and
+ * shows none of it. {@link escapeTrap} mirrors the
  * GLSL/WGSL hit-info overload term for term and the last test measures that
  * coordinate's SPATIAL COHERENCE over the same hit pixels — against the raw
  * integer count it replaced, and against the hit DEPTH, which is the
@@ -62,8 +62,9 @@
  * first or the new numbers read as a retraction rather than a correction.
  * Rows are CONTROL / TWO / SIX.
  *
- * THE INSTRUMENT CHANGED UNDER THIS FILE (fr-azjk), and it moved the
- * PICTURES, not merely a printed statistic. `fitMarchRadius` used to grid
+ * THE INSTRUMENT CHANGED UNDER THIS FILE (the set-extent correction), and
+ * it moved the PICTURES, not merely a printed statistic. `fitMarchRadius`
+ * used to grid
  * the marching box and threshold the distance ESTIMATE at `1e-3`; that
  * reach was wrong twice over (`scripts/set-extent.ts`'s module doc carries
  * both defects — the grid aliases against a fold's own walls, and a small
@@ -80,10 +81,10 @@
  * CONTROL 3.24, TWO 2.13, SIX 1.42, against the sphere anchor's fixed
  * 1.12. The six-link chain in particular went from a speck adrift inside a
  * large ball to an object that fills most of its own frame. The general
- * lesson outlasts this bead: a "how big is it" figure is never just a
- * number in a table, it is the ruler every picture downstream gets held
- * against, and an inflated one is a defect a reader can SEE without ever
- * reading the number that caused it.
+ * lesson outlasts this one measurement: a "how big is it" figure is never
+ * just a number in a table, it is the ruler every picture downstream gets
+ * held against, and an inflated one is a defect a reader can SEE without
+ * ever reading the number that caused it.
  *
  * THAT CORRECTION MOVES PARTIAL COVERAGE HARD, AND IT IS NOT THE OBJECT
  * GETTING SMOOTHER. At 16 samples per pixel, CONTROL/TWO/SIX now read
@@ -226,7 +227,7 @@
  * neither moved by the framing correction in its CONCLUSION — only in the
  * example numbers, refreshed here:
  *
- *   fr-7u8t.8's CONTINUOUS COUNT BUYS NOTHING HERE. Against the raw
+ *   THE CONTINUOUS COUNT BUYS NOTHING HERE. Against the raw
  *   integer count it replaced, on the same pixels: mean|d| 0.1284 vs
  *   0.1262, confetti 30.63 vs 30.69%, S 0.37 vs 0.37 — indistinguishable.
  *   It smooths WITHIN a count band, and 57.3 / 85.3 / 84.9% of neighbour
@@ -244,10 +245,11 @@
  *   over that painted a six-link chain in the darkest fifth of its ramp,
  *   visible here as rows that darkened with length.
  *
- *   FIXED (fr-byxb): the denominator is the PASS budget now — a property
+ *   FIXED: the denominator is the PASS budget now — a property
  *   of the formula, not of how a sheet frames its marching ball, so it
- *   holds under any radius fr-azjk fits. One link's expression is
- *   unchanged to the bit for the same reason (`n = 1` collapses both
+ *   holds under any radius the set-extent correction fits. One link's
+ *   expression is unchanged to the bit for the same reason (`n = 1`
+ *   collapses both
  *   denominators to the same value). This run's own ramp figures, at the
  *   corrected framing, run [p05 p50 p95] [0.149 0.259 1.000] at one link,
  *   [0.228 0.430 1.000] at two and [0.317 0.710 1.000] at six — the median
@@ -256,7 +258,7 @@
  *   p95 under this framing (a tighter ball puts more of the trap's own
  *   tail at the boundary).
  *
- *   AND THE COST OF THAT CLAMP IS PRINTED NOW (fr-8fii), which is the one
+ *   AND THE COST OF THAT CLAMP IS PRINTED NOW, which is the one
  *   figure the last reading had to leave unquoted: the share of hit pixels
  *   pinned at exactly 1.0 runs 6.78 / 10.59 / 31.44% across the three
  *   rows. The record it replaces — `surface-material.ts` and `CLAUDE.md`
@@ -267,19 +269,21 @@
  *   where orbits escape early, and the corrected frame fills with interior
  *   pixels whose orbits survive the budget. The correction runs the same
  *   direction as the median, and much harder at six links (8.6 -> 31.4%).
- *   Read it as the price of the fr-byxb normalizer at THIS pose: a third
- *   of a six-link chain's hit pixels share one colour with each other and
+ *   Read it as the price of the PASS-budget normalizer at THIS pose: a
+ *   third of a six-link chain's hit pixels share one colour with each other
+ *   and
  *   with the never-escaped interior.
  *
  *   TWO THINGS KEEP THAT FROM BEING AS BAD AS IT SOUNDS, both visible in
  *   the same run. The raw integer count clamps at 6.78 / 10.61 / 31.44% —
  *   the same pixels — so this is the coordinate's own saturation, not
- *   something fr-7u8t.8's smoothing introduced. And box-averaged over 16
- *   sub-samples the three rows read 0.16 / 0.00 / 0.00%: almost no 4x4
+ *   something the continuous count's smoothing introduced. And box-averaged
+ *   over 16 sub-samples the three rows read 0.16 / 0.00 / 0.00%: almost no
+ *   4x4
  *   block is clamped throughout, so the flat top-of-ramp PATCHES a palette
  *   would paint are a ONE-SAMPLE artifact at this framing. READ THAT AS
  *   DIRECTIONAL, NOT AS THE SETTLE'S OWN NUMBER: this column averages the
- *   TRAP over 16 sub-samples, where fr-vpbq/fr-jf9y's shipped settle
+ *   TRAP over 16 sub-samples, where the shipped supersampled settle
  *   averages the shaded COLOUR over 8. Two different averages of the same
  *   underlying sub-pixel variation, so the shipped settle will land
  *   somewhere short of this — the claim it supports is that the patches
@@ -426,8 +430,8 @@ const SPHERE_LABEL = "ANCHOR unit sphere (a smooth solid)";
  * panel here frames what the sheet in question framed.
  *
  * Reach was a grid over the marching box thresholding the estimate at
- * `1e-3` until fr-azjk, which is the wrong instrument twice over
- * (`scripts/set-extent.ts` carries both arguments). It asks
+ * `1e-3` until the set-extent correction, which is the wrong instrument
+ * twice over (`scripts/set-extent.ts` carries both arguments). It asks
  * {@link escapeSetContains} over a seeded uniform sample now, exactly as
  * the sheet it mirrors does — the fitted radii moved by under 1% and no
  * reading in this file depends on which one is used, but a framing
@@ -729,8 +733,8 @@ function scoreSuper(panel: PanelStats): ArmStats & {
 /**
  * The app's escape-render palette coordinate, mirrored from the
  * `SURFACE_ESCAPE` GLSL hit-info overload / the WGSL `core:"escape"`
- * `surfaceDEHitInfo` term for term (fr-7u8t.8's continuous escape count,
- * counted in fr-s04t's single-link steps).
+ * `surfaceDEHitInfo` term for term (the continuous escape count, counted
+ * in single-link steps).
  *
  * Returns the shipped continuous coordinate AND the raw integer count it
  * replaced, normalized identically, so the last test can measure what that
@@ -790,7 +794,7 @@ function escapeTrap(
   if (escapedAt < steps && growth > 1) {
     escFrac = Math.max(0, Math.min(1, Math.log(r / R) / Math.log(growth)));
   }
-  // fr-byxb: normalized by the PASS budget, not the single-link step budget
+  // Normalized by the PASS budget, not the single-link step budget
   // — the shipped mirrors' denominator (surface-material.ts carries why).
   return {
     trap: Math.max(0, Math.min(1, (escapedAt - escFrac) / maxIterations)),
@@ -811,8 +815,8 @@ interface Coherence {
   p50: number;
   p95: number;
   /** Percent of the sampled pixels sitting exactly ON the ramp's top — the
-   * COST of the fr-byxb normalizer, and the one figure this test used to
-   * print nowhere (fr-8fii). `escapeTrap` ends in `min(1, ...)`, so a
+   * COST of the PASS-budget normalizer, and the one figure this test used
+   * to print nowhere. `escapeTrap` ends in `min(1, ...)`, so a
    * clamped pixel is exactly 1.0 and the test is exact rather than an
    * epsilon: it counts the orbits that outlived the pass budget together
    * with the ones that escaped so late that `escapedAt - escFrac` reached
@@ -907,7 +911,7 @@ const pct = (x: number) => `${x.toFixed(2)}%`;
 
 // ------------------------------------------------------------------ tests
 
-describe("is the escape-chain speckle undersampling or the object? (fr-za0n)", () => {
+describe("is the escape-chain speckle undersampling or the object?", () => {
   it("calibrates the 4x4-downsample survival statistic on synthetic fields", () => {
     // Anchors for every ratio printed below, measured rather than asserted
     // from theory: what does S read for pure noise, for structure at the
@@ -1079,7 +1083,7 @@ describe("is the escape-chain speckle undersampling or the object? (fr-za0n)", (
     // this shading measures essentially nothing, so every fold reading above
     // is the OBJECT rather than the harness.
     //
-    // THE PIN IS THE WHOLE-IMAGE CHANGE, NOT PARTIAL COVERAGE (fr-azjk).
+    // THE PIN IS THE WHOLE-IMAGE CHANGE, NOT PARTIAL COVERAGE.
     // Partial coverage counts pixels straddling a SILHOUETTE, and its share
     // of the frame falls when the object fills more of the frame — which is
     // exactly what happened when the fitted marching ball stopped being
@@ -1153,7 +1157,7 @@ describe("is the escape-chain speckle undersampling or the object? (fr-za0n)", (
   it("measures the escape-count colour coordinate's spatial coherence", () => {
     // Would a palette paint bands, or confetti? Three fields over the SAME
     // hit pixels: the shipped continuous count, the raw integer count it
-    // replaced (fr-7u8t.8), and the hit DEPTH — the smoothest quantity this
+    // replaced, and the hit DEPTH — the smoothest quantity this
     // surface can carry, so it is the ceiling any colour source could reach.
     const panels: PanelStats[] = [];
     for (const [label, transforms] of FIXTURES) {
@@ -1221,7 +1225,7 @@ describe("is the escape-chain speckle undersampling or the object? (fr-za0n)", (
       for (let i = 0; i < dHit.length; i++) dHit[i] = cover.v[i] >= 0.5 ? 1 : 0;
 
       // One escape count, normalized: the app divides by maxDepth * n
-      // single-link steps (fr-s04t), so a chain's whole coordinate is
+      // single-link steps, so a chain's whole coordinate is
       // finer-grained AND lives lower in [0, 1].
       const quantum = 1 / (ESCAPE_TIME_ITERATIONS * de.links.length);
       const cTrap = coherence(one.trap, one.hit, SIZE, SIZE, quantum);
@@ -1243,7 +1247,7 @@ describe("is the escape-chain speckle undersampling or the object? (fr-za0n)", (
             `clamped ${pct(c.clamped).padStart(7)}`,
         );
       line("continuous escape count (ships)", cTrap);
-      line("raw integer count (pre-fr-7u8t.8)", cRaw);
+      line("raw integer count (pre-smoothing)", cRaw);
       line("hit depth (smoothest possible)", cDepth);
       line("continuous count, 4x supersampled", cSuper);
 

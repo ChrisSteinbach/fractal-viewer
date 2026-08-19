@@ -1,12 +1,12 @@
 /**
- * fr-282c: should the escape-time FOLDS read their distance through the
+ * Should the escape-time FOLDS read their distance through the
  * Böttcher/Green's log form instead of the linear one they ship?
  *
  * THE ESTIMATE FORM, not the orbit form — `escape-form-sweep.harness.ts` is
  * the sibling that settles the other one, and the two forks are worth
  * keeping apart by name because they are worth keeping apart in the head.
  * That sheet chose which OBJECT the mode renders (the Mandelbrot `+ p`
- * against the retired Julia `+ t`, fr-7u8t.8). This one holds the orbit
+ * against the retired Julia `+ t`). This one holds the orbit
  * fixed — same links, same cycle, same bailout, same SET — and forks only
  * the RETURN STATEMENT:
  *
@@ -16,8 +16,9 @@
  *
  * ======================= VERDICT: KEEP THE LINEAR FORM =======================
  *
- * The bead is right that the log form beats the shipped one on every system
- * tested. It is right for a reason that makes the change not worth having:
+ * The proposal is right that the log form beats the shipped one on every
+ * system tested. It is right for a reason that makes the change not worth
+ * having:
  * ON THIS FAMILY THE LOG FORM IS THE LINEAR FORM TIMES A CONSTANT, and the
  * constant is a knob the mode already exposes.
  *
@@ -35,7 +36,7 @@
  * still have to be written into six mirrors, because a fold system CAN be
  * authored whose orbit converges inward.
  *
- * THE CONTROL the bead's incidental measurement lacked is `linear x k` —
+ * THE CONTROL the incidental measurement lacked is `linear x k` —
  * the shipped estimate scaled by that same median factor, a change to one
  * constant. It reproduces the log form's entire result. Hits at the shipped
  * step scale, `linear / linear x k / log-v`, with steps/ray:
@@ -49,7 +50,8 @@
  *     SIX-link          16.01@12.9  17.28@16.3  17.74@15.8             +0.45
  *
  * The log form buys 1.1-2.4 points of hits over the shipped arm for 13-30%
- * more steps — the bead's own "more hits, 20-40% more steps/ray", confirmed
+ * more steps — the proposal's own "more hits, 20-40% more steps/ray",
+ * confirmed
  * (`mandelboxCube` is the exception at +0.05, its march already converged at
  * 0.35). What the FORM is worth OVER THE CONSTANT is 0.00-0.45 points.
  *
@@ -74,7 +76,7 @@
  *
  * THE DIMENSIONAL ARGUMENT, which is why this is a refutation rather than a
  * close call. The fold family is EQUIVARIANT under a uniform rescale — since
- * fr-s9ll its three lengths are authored, so scaling `t`, the lengths and
+ * its three lengths became authored, so scaling `t`, the lengths and
  * the bailout by λ scales the whole orbit exactly (`localL` and `dr` are
  * invariant). A correctly-dimensioned estimator must then satisfy
  * `DE_λ(λp) = λ·DE(p)`. The linear form does, TO THE BIT (worst deviation
@@ -91,7 +93,7 @@
  * with `0.5·r·ln r/dr`, and why `bulb-de.ts` and `qjulia-de.ts` are right to
  * differ from `escape-de.ts` rather than having drifted from it.
  *
- * WHICH RADIUS, since the bead asks. `log-y` (the estimate read off the
+ * WHICH RADIUS, since the proposal asks. `log-y` (the estimate read off the
  * post-affine `|y|` against `sigma_max(M)·dr`) is a READOUT, not a port —
  * same orbit, same bailout on `|v|`, same set — because a chain has no
  * single `M` to push the recurrence through, which is the reason
@@ -120,7 +122,8 @@
  * compute the same expression in f32. There is nothing here a real driver
  * could show that this sheet cannot.
  *
- * CAVEATS ON THE EVIDENCE, two of which the bead names and one it does not:
+ * CAVEATS ON THE EVIDENCE, two of which the proposal names and one it does
+ * not:
  *
  *   - The violation rate is a WITNESS SEARCH and therefore a LOWER bound
  *     (14 random directions at `0.9·d` and `stepScale·d`, oracle =
@@ -144,7 +147,7 @@
  * which is what says this apparatus is measuring the same thing the module
  * doc's tables did: bound/step 14.0/9.0 against the recorded 13.4/6.6 at 14
  * directions, and at the close pose 84.54% hits at step scale 0.35 against
- * fr-7u8t.8's recorded 84.3%.
+ * the form sweep's recorded 84.3%.
  *
  * IF THE ~0.75x DAMPING IS WHAT YOU ACTUALLY WANT, it is already reachable
  * and this is where to read that before reaching for `ESCAPE_STEP_SCALE`.
@@ -157,14 +160,14 @@
  * in six mirrors to get it.
  *
  * BUT IT IS NOT A FREE WIN, and taking it means re-opening a measured
- * decision rather than filling a gap. fr-7u8t.8 chose 0.35 deliberately, as
- * a COST/QUALITY pick with no convergence knee to find — read
+ * decision rather than filling a gap. The form sweep chose 0.35 deliberately,
+ * as a COST/QUALITY pick with no convergence knee to find — read
  * `ESCAPE_STEP_SCALE`'s own doc, whose table runs 1.0 -> 62.0% hits through
  * 0.35 -> 84.3% to 0.1 -> 89.1% at 52.5 steps/ray, and which settled on 0.35
  * as "where the image stops reading as erosion and starts reading as a lit
  * object". Everything below buys hits with steps on that same curve; none of
  * it says the curve should be read at a different point. Whoever wants 0.26
- * needs fr-7u8t.8's argument re-run, not this sheet.
+ * needs that sweep's argument re-run, not this sheet.
  *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
  *        scripts/escape-estimate-form.harness.ts
@@ -226,8 +229,8 @@ const CLOSE = 340;
 const ZOOM = 0.5;
 /** The close pose: same eye, a narrow frustum. `boundingRadius` is both the
  * camera stand-off and the march bound, so a close-up has to be a telephoto
- * rather than a dolly-in. It is the pose fr-7u8t.8's own step-scale sweep
- * found the fold's overshoot at (`escape-step-scale.png`). */
+ * rather than a dolly-in. It is the pose the form sweep's own step-scale
+ * sweep found the fold's overshoot at (`escape-step-scale.png`). */
 const CLOSE_ZOOM = 0.28;
 
 // -------------------------------------------------------------- fixtures
@@ -442,7 +445,7 @@ function runLocalOrbit(sys: LocalSystem, p: Vec3, maxIterations: number): void {
  * `ln r` goes negative below `r = 1`, and a negative estimate marches the
  * tracer BACKWARDS. Returning exactly 0 there is the inside signal and is
  * safe in the direction a sphere tracer needs. It fires far more often here
- * than the bead's sketch implies — see the ratio table below, where "log
+ * than the proposal's sketch implies — see the ratio table below, where "log
  * certifies nothing" is a column.
  */
 function estimator(
@@ -461,8 +464,8 @@ function estimator(
 }
 
 /**
- * The shipped estimate, uniformly damped — the control the bead's
- * incidental measurement lacked and the one every column below needs.
+ * The shipped estimate, uniformly damped — the control the incidental
+ * measurement lacked and the one every column below needs.
  *
  * The log form is not a different bound, it is the linear bound times
  * `0.5·ln r` (the ratio table's whole subject), so a comparison against
@@ -536,8 +539,7 @@ interface RatioStats {
  * SAME terminal `r` off the SAME orbit through the SAME `dr`, so
  * `log-v / linear` is exactly `0.5·ln r`, a number that depends on nothing
  * but where the orbit stopped. This measures its distribution over the
- * marching ball, which is the whole mechanism of the bead's incidental
- * result.
+ * marching ball, which is the whole mechanism of the incidental result.
  */
 function ratioStats(sys: LocalSystem, count = 4000): RatioStats {
   const lin = estimator(sys, "linear");
@@ -670,7 +672,7 @@ function probePool(
  * the same orbit over the same links with the same bailout, so they render
  * the same SET and differ only in the number they report about it.
  *
- * THREE CAVEATS, all of which the bead names and two of which it
+ * THREE CAVEATS, all of which the proposal names and two of which it
  * under-states:
  *
  *   1. A LOWER BOUND. This is a witness search over {@link PROBE_DIRS}
@@ -886,12 +888,12 @@ function geomDiff(
 
 // ------------------------------------------------------------------ tests
 
-describe("fr-282c: linear vs Böttcher-log estimate form for the escape folds", () => {
+describe("linear vs Böttcher-log estimate form for the escape folds", () => {
   it("pins the local orbit against the SHIPPED estimator, bit-exactly", () => {
     // The whole harness rests on this. If the linear configuration of the
     // copy below is `estimateEscapeDistance` to the last bit, then the log
     // column is a change of ONE expression and nothing else — which is the
-    // claim the bead makes about the production change too. Same discipline
+    // claim the proposal makes about the production change too. Same discipline
     // as `spherefold-radius-sweep.harness.ts`'s parameterised orbit and
     // `hybrid-chain.harness.ts`'s one-link degeneration.
     const rng = mulberry32(0x2b1d);
@@ -919,7 +921,7 @@ describe("fr-282c: linear vs Böttcher-log estimate form for the escape folds", 
     // arms read the same terminal `r` off the same orbit through the same
     // `dr`, so `log-v / linear` is exactly `0.5·ln r`. If that factor sits
     // in a narrow band, the log form is the linear form under a different
-    // step scale, and the bead's "better bound, more steps" is that band
+    // step scale, and the proposal's "better bound, more steps" is that band
     // measured from the outside.
     //
     // `zero%` is the clamp firing — the log form certifying NOTHING (`r <=
@@ -945,7 +947,7 @@ describe("fr-282c: linear vs Böttcher-log estimate form for the escape folds", 
   });
 
   it("sweeps the march step scale for BOTH forms — the hits/cost frontier", () => {
-    // THE DECISIVE EXPERIMENT, and the one the bead's incidental numbers
+    // THE DECISIVE EXPERIMENT, and the one the incidental numbers
     // could not be: a uniformly smaller estimate buys more hits and pays
     // more steps whatever produced it, so the only fair question is what
     // each arm delivers AT EQUAL COST. Sweeping both over one ladder traces
@@ -1004,7 +1006,7 @@ describe("fr-282c: linear vs Böttcher-log estimate form for the escape folds", 
   });
 
   it("measures bound and damped-step VIOLATION rates for both forms", () => {
-    // The bead's own metric, reproduced with the caveats made explicit and
+    // The proposal's own metric, reproduced with the caveats made explicit and
     // one arm added. `linear@equal-work` is the control the incidental
     // measurement lacked: the shipped form damped by the same factor the
     // log form applies, so a log column that beats plain 0.35 but ties this
@@ -1053,7 +1055,7 @@ describe("fr-282c: linear vs Böttcher-log estimate form for the escape folds", 
   });
 
   it("prices the violation metric's OWN resolution", () => {
-    // The bead asks for this caveat fixed where it can be. It cannot be
+    // The proposal asks for this caveat fixed where it can be. It cannot be
     // removed — a witness search is a lower bound by construction — but it
     // CAN be priced, and a reader deciding a shader change on a 1-2 point
     // difference needs both numbers below.
@@ -1094,7 +1096,7 @@ describe("fr-282c: linear vs Böttcher-log estimate form for the escape folds", 
     // Same object, same pose, same step scale, same shading — the only
     // difference between the two panels of a row is the return statement.
     // That is what `de-preview.ts` exists to guarantee, and it is how
-    // fr-7u8t.8 decided the step scale.
+    // the form sweep decided the step scale.
     const panels: PanelStats[] = [];
     for (const f of FIXTURES) {
       const sys = localFixture(f);
@@ -1121,7 +1123,7 @@ describe("fr-282c: linear vs Böttcher-log estimate form for the escape folds", 
 
   it("looks CLOSE, where a step scale and a form separate", () => {
     // The silhouette sheet cannot settle "resolves more or merely accepts
-    // earlier". This is the pose fr-7u8t.8's own sweep found the fold's
+    // earlier". This is the pose the form sweep found the fold's
     // overshoot at, with {@link damped}'s scale control as every triple's
     // third panel: if the log panel is the CONTROL panel rather than the
     // shipped one, the form has been shown to be a constant.
@@ -1167,7 +1169,7 @@ describe("fr-282c: linear vs Böttcher-log estimate form for the escape folds", 
     // The forms share an orbit, so the only cost difference an EVAL can
     // carry is one `Math.log` and a compare. Anything larger in the frame
     // numbers is march length, not arithmetic — which is the distinction
-    // the bead's "20-40% more steps/ray" needs to be read against.
+    // the proposal's "20-40% more steps/ray" needs to be read against.
     // Every arm of every fixture is exercised before ANY of them is timed:
     // the forms share one `runLocalOrbit`, so a link shape first seen
     // halfway down the table would deoptimise the call site under the rows
@@ -1198,8 +1200,8 @@ describe("fr-282c: linear vs Böttcher-log estimate form for the escape folds", 
     // both arms; only the number reported about it moves.
     //
     // A true y-space port would test escape on `|y|` and render a different
-    // object, which is more than the one-return-statement change this bead
-    // is about.
+    // object, which is more than the one-return-statement change this
+    // proposal is about.
     for (const f of FIXTURES) {
       const sys = localFixture(f);
       const v = estimator(sys, "log-v");
@@ -1231,7 +1233,7 @@ describe("fr-282c: linear vs Böttcher-log estimate form for the escape folds", 
 
   it("tests both forms for UNIFORM-RESCALE equivariance", () => {
     // The dimensional argument, executable. The fold family is equivariant
-    // under a uniform rescale once fr-s9ll made its three lengths authored:
+    // under a uniform rescale once its three lengths became authored:
     // scale `t`, the fold's lengths and the bailout by λ and the whole orbit
     // scales exactly (`localL` and `dr` are invariant, `|v|` scales), so a
     // correctly-dimensioned estimator must satisfy DE_λ(λp) = λ·DE(p).

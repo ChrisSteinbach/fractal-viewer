@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * fr-ud7n surface-preview-completion verifier (not an npm script, like
+ * Surface-preview-completion verifier (not an npm script, like
  * scripts/isolation-reload.verify.mjs).
  *
- * Graduates /tmp/fr-preview-quit.repro.mjs (the reporter's repro, which
- * caught the BROKEN behavior) into a permanent check of the FIXED contract.
+ * Graduates the reporter's throwaway repro script (which caught the BROKEN
+ * behavior) into a permanent check of the FIXED contract.
  * The bug: on the WebGPU compute surface path, a preview frame truncated at
  * its SURFACE_COMPUTE_PREVIEW_BUDGET_MS wall budget (main.ts) while the
  * interaction-tier governor is already at its floor rung used to be the
@@ -12,7 +12,7 @@
  * surfaceComputeTick fired the full settle straight away, with no progress
  * disclosure (syncSurfaceProgress hid the row for every compute preview) and
  * no Skip button (skippable rode a WebGL-only phase). That is the exact
- * "quit on the user's behalf" pattern the fr-24to/fr-zx34/fr-37c6 line of
+ * "quit on the user's behalf" pattern the no-automatic-give-up line of
  * work removed from the WebGL strip path — just missed here. Fixed
  * behavior: a truncated floor-rung frame on a PARKED view re-runs UNBUDGETED
  * to completion (progressive presents, like the settle), discloses
@@ -21,17 +21,17 @@
  *
  * Why Firefox-shaped: this script drives Playwright's bundled Firefox
  * (stock Firefox can't be driven by playwright-core), not Chrome. Firefox's
- * WebGPU is roughly 10-20x slower than Chrome's on the same hardware
- * (fr-khxy), which is exactly what makes even the GOVERNOR FLOOR RUNG blow
- * the 2s preview budget — on Chrome the preview usually finishes inside
+ * WebGPU is roughly 10-20x slower than Chrome's on the same hardware,
+ * which is exactly what makes even the GOVERNOR FLOOR RUNG blow the 2s
+ * preview budget — on Chrome the preview usually finishes inside
  * budget and the bug never engages. This is a device-speed bug, not a
  * browser-specific one; Firefox is just the reliable way to exercise it on
  * commodity hardware. A software/SwiftShader-class adapter would work too,
  * but Firefox's real (if slow) WebGPU is what the original report used.
  *
  * The scene is the reporter's exact repro pose, hand-transcribed (not
- * embedded as an opaque base64 blob) from /tmp/fr-preview-quit.hash.txt: the
- * 20-map Menger sponge (src/fractal/presets.ts's mengerSponge(), mirrored
+ * embedded as an opaque base64 blob) from the reporter's own scene hash:
+ * the 20-map Menger sponge (src/fractal/presets.ts's mengerSponge(), mirrored
  * below since these plain-Node scripts can't import .ts sources — see
  * mengerSpongeTransforms()) plus a mandelbox fold FINAL lens and a balloon
  * echo (R=1.6). The lens makes the session fold-shaped
@@ -59,7 +59,7 @@
  * ..." lines, classifying each preview line as truncated / completion /
  * plain from its trailing parenthetical, (b) the #surfaceProgress row text
  * whenever it's visible, (c) whether #surfaceSkipPreviewBtn is visible, and
- * (d) the window.__surfaceState() probe (fr-opgk) — until `settled` latches
+ * (d) the window.__surfaceState() probe — until `settled` latches
  * or --watchMs runs out. It never clicks Skip unless --skip is passed.
  *
  * Usage:
@@ -165,11 +165,11 @@ const scene = {
   colorMode: "transform",
   renderStyle: "depthFade",
   showGuides: true,
-  // The balloon echo (fr-5wlv), copied verbatim from the reporter's hash —
+  // The balloon echo, copied verbatim from the reporter's hash —
   // orthogonal to compute eligibility, but part of the exact repro pose.
   balloonEcho: true,
   balloonRadius: 1.6,
-  // The fold FINAL lens (fr-g58b): a pure-mandelbox final transform is what
+  // The fold FINAL lens: a pure-mandelbox final transform is what
   // makes this system fold-shaped (de.foldFinal !== null), routing it onto
   // the WebGPU compute renderer instead of the plain-affine WebGL tracer.
   finalTransform: {
@@ -448,7 +448,7 @@ async function run() {
     // single-invalidation repro pose is almost always WHILE the completion
     // pass is still climbing — well before it would finish naturally. That
     // click legitimately sends the session to settle with no completion
-    // line ever appearing, which must NOT read as the fr-ud7n silent quit:
+    // line ever appearing, which must NOT read as the silent preview quit:
     // the row disclosed "Preview · WebGPU N%" with Skip visible right up to
     // the click (that's what made the click possible), and the user asked
     // to bail. Only a settle signal at/after the click can be this —
@@ -525,7 +525,7 @@ async function run() {
         verdict =
           `INCONCLUSIVE: --skip clicked Skip preview at ${clickedAt} and the session moved to settle ` +
           `(${firstSettleSignal.kind} "${firstSettleSignal.text}" at ${firstSettleSignal.t}) — the button working ` +
-          "as designed, not the fr-ud7n silent quit — but the handoff itself never resolved within this run.";
+          "as designed, not the silent preview quit — but the handoff itself never resolved within this run.";
         exitCode = 2;
       }
     } else if (
@@ -536,7 +536,7 @@ async function run() {
       verdict =
         `FAIL: truncated preview at ${firstTruncated.t} was followed by settle activity ` +
         `(${firstSettleSignal.kind} "${firstSettleSignal.text}" at ${firstSettleSignal.t}) with no ` +
-        "completion pass in between — the preview quit silently on the user's behalf (fr-ud7n reproduced).";
+        "completion pass in between — the preview quit silently on the user's behalf (the bug reproduced).";
       exitCode = 1;
     } else if (firstCompletionAfterTruncated === null) {
       verdict =

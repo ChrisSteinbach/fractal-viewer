@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * fr-a2l: collect the license notices of every third-party package that ships
+ * Collect the license notices of every third-party package that ships
  * in the production build, into one THIRD-PARTY-LICENSES.txt.
  *
  * Why: the bundled dependencies are MIT-licensed, and MIT requires their

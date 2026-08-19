@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
- * fr-opgk determinism harness: render the SAME surface scene N times from
+ * Surface determinism harness: render the SAME surface scene N times from
  * FRESH page loads on the SAME build, and diff the settled frames pixel for
  * pixel. Existence proof (or refutation) for visual A/B regression testing
- * of a renderer whose whole discipline is CPU-oracle-mirrors-GPU — the bead
- * measured 2.9% differing pixels between two runs of one pose, which made a
- * branch-vs-main A/B (3.2%) indistinguishable from its own control.
+ * of a renderer whose whole discipline is CPU-oracle-mirrors-GPU — the
+ * motivating measurement was 2.9% differing pixels between two runs of one
+ * pose, which made a branch-vs-main A/B (3.2%) indistinguishable from its
+ * own control.
  *
  * TWO THINGS make a run-to-run comparison meaningful, and both are the
  * point of this script:
@@ -37,7 +38,7 @@
  *     `#surfaceProgress` row an answer: it is hidden both BEFORE a job arms
  *     and after one finishes. This script waits on the app's own latch
  *     instead — `window.__surfaceState()`, published by `?surfacestate`
- *     (fr-opgk, main.ts's SurfaceStateProbe): a read-only view of
+ *     (main.ts's SurfaceStateProbe): a read-only view of
  *     main.ts's `surfaceSettled` (a COMPLETED full-quality frame is on
  *     screen for the CURRENT, uninvalidated view) plus the in-flight
  *     preview/settle flags of whichever engine owns the session. The
@@ -67,35 +68,36 @@
  * and ~92s with `--query=surfacegl` — i.e. an A/B of two builds is ~6
  * minutes of wall time, dominated by page boots rather than tracing.
  *
- * And the CONTROL says what the bead actually measured. The same scenes at
+ * And the CONTROL reproduces that motivating measurement. The same scenes at
  * `--pose=free` — identical in every respect except that boot auto-frames
  * them — are NOT reproducible: lens3 8.900/9.131/8.963% of pixels differing
  * with max channel delta 216-223, pentatope4 0.885/0.937/1.005% at max delta
  * 202-232, and the compute settle census moving with it (lens3 hit counts
  * 60328 / 60840 / 59844 where the pinned pose reports 60912 every time).
  * The diff images are the whole object lit up, not scattered speckle: the
- * camera moved, the renderer did not. That is the bead's 2.9%/170 in kind
- * and in magnitude.
+ * camera moved, the renderer did not. That is the motivating 2.9%/170 in
+ * kind and in magnitude.
  *
- * FR-XSO5 ADDENDUM (measured 2026-08-11): the CONTROL paragraph above never
- * actually exercised fr-chj9's boot-time seed pin — pentatope4's
+ * POSE-LESS 4D BOOT ADDENDUM (measured 2026-08-11): the CONTROL paragraph
+ * above never actually exercised the boot-time seed pin — pentatope4's
  * `--pose=free` re-selects the preset through `#presetSelect`, a mid-session
  * regenerate that deliberately still rolls fresh `Math.random()` seeds, so
  * its ~1% drift is that path's own noise, not a boot measurement (no
- * scenario booted a pose-less FOUR-D deep link at all — fr-chj9 was verified
- * only by inference). `pentatope4direct` boots a pose-less HASH deep link
- * directly instead (no menu interaction), the same way boxfold3/lens3 always
- * did — and so DOES exercise the boot-time auto-frame + 4D tumble-reset path.
+ * scenario booted a pose-less FOUR-D deep link at all, so the pin was
+ * verified only by inference). `pentatope4direct` boots a pose-less HASH
+ * deep link directly instead (no menu interaction), the same way
+ * boxfold3/lens3 always did — and so DOES exercise the boot-time
+ * auto-frame + 4D tumble-reset path.
  * Measured (Iris Xe real driver, `--pose=free`, 3 fresh loads): DETERMINISTIC
  * — identical compute settle census every run (hit 5620 / miss 915980 /
  * exhausted 0), 0 differing pixels across all 3 pairs, max channel delta 0;
  * settles 10.9/6.3/5.1s. The minted `--pose=pinned` hash's own 4D pose (p/q
  * rotor) came out BIT-IDENTICAL to pentatope4's separately-minted one —
- * direct confirmation that fr-chj9's pinned boot seed makes the tumble-reset
+ * direct confirmation that the pinned boot seed makes the tumble-reset
  * deterministic independent of how the document arrived (deep link vs preset
  * menu). Only the 3D camera auto-frame differs between the two mints (a
  * target/radius drift of a few tenths of a percent), `frameBounds`'s own
- * point-cloud sampling noise, unrelated to fr-chj9.
+ * point-cloud sampling noise, unrelated to the seed pin.
  *
  * WHAT IT REPORTS, per scenario+arm: the settle wall time of each run, then
  * every pairwise diff — %-pixels-differing, max channel delta, and the count
@@ -114,22 +116,22 @@
  *   node scripts/surface-repro.verify.mjs --scenario=pentatope4 \
  *     --query=surfacegl --mode=x11::0
  *
- *   --scenario  boxfold3    = the fr-jmat boxfold PAIR (3D fold, cheap;
- *                             prefers WebGPU compute since fr-tzdg). Its
- *                             render is a thin dust — ~1.8k hit pixels — so
- *                             read it as a fold-path check, not a coverage
- *                             one; lens3 carries the coverage.
- *               pentatope4  = the Pentatope Gasket preset (the bead's own
- *                             scene — plain 4D, so it prefers the compute
- *                             affine4 core since fr-dlxh's 4D cut). A w=0
- *                             SLICE of a 4D gasket is likewise sparse
+ *   --scenario  boxfold3    = the boxfold PAIR (3D fold, cheap; prefers the
+ *                             WebGPU compute path). Its render is a thin
+ *                             dust — ~1.8k hit pixels — so read it as a
+ *                             fold-path check, not a coverage one; lens3
+ *                             carries the coverage.
+ *               pentatope4  = the Pentatope Gasket preset (the motivating
+ *                             A/B's own scene — plain 4D, so it prefers the
+ *                             compute affine4 core). A w=0 SLICE of a 4D
+ *                             gasket is likewise sparse
  *                             (~5.7k hit pixels). Its base is a PRESET
  *                             (`#presetSelect`), so --pose=free re-selects
  *                             it through the mid-session regenerate path —
  *                             see pentatope4direct below for why that is NOT
  *                             a boot-path measurement.
- *               pentatope4direct = fr-xso5: the SAME Pentatope Gasket
- *                             transforms as pentatope4, but `base` is a
+ *               pentatope4direct = the SAME Pentatope Gasket transforms as
+ *                             pentatope4, but `base` is a
  *                             pose-less HASH deep link (like boxfold3/lens3)
  *                             instead of a preset name. `--pose=free` on
  *                             pentatope4 re-selects the preset through
@@ -137,13 +139,13 @@
  *                             path that deliberately still rolls
  *                             `Math.random()` seeds (main.ts) — it measures
  *                             THAT path's ~1% frame-to-frame drift, never
- *                             fr-chj9's boot-time seed pin. Booting a
- *                             pose-less hash directly (bootScene, no menu
+ *                             the boot-time seed pin. Booting a pose-less
+ *                             hash directly (bootScene, no menu
  *                             interaction) is the only way to exercise the
  *                             4D boot auto-frame + tumble-reset path this
  *                             harness has, so this scenario exists
  *                             specifically for `--pose=free`.
- *               lens3       = fr-g58b's fold-FINAL lens archetype: the
+ *               lens3       = the fold-FINAL lens archetype: the
  *                             `lens:true` compute wrapper / the WebGL
  *                             SURFACE_FOLD_LENS variant, and the one
  *                             scenario here that FILLS the frame (~61k hit
@@ -169,9 +171,9 @@
  *               measurement configuration. free = the SAME system with no
  *               stored pose, so boot auto-frames it from a Math.random()-
  *               seeded cloud — the CONTROL, and a faithful reproduction of
- *               the bead's original setup. Run it once and the difference
- *               between the two numbers is the answer to "is this the
- *               renderer or the camera?".
+ *               the motivating A/B's original setup. Run it once and the
+ *               difference between the two numbers is the answer to "is
+ *               this the renderer or the camera?".
  *   --runs      fresh loads per scenario+arm (default 3, minimum 2).
  *   --dwell     ms the settled verdict must hold continuously (default 2000).
  *   --settle    per-run budget for reaching that state (default 240000).
@@ -199,13 +201,13 @@ const DEFAULT_OUT_DIR = path.resolve(__dirname, "..", ".playwright-mcp");
 // either {preset} (a #presetSelect value) or {hash} (a pose-less deep link).
 // ---------------------------------------------------------------------------
 
-/** The fr-jmat boxfold pair, verbatim from surface-fold.verify.mjs's
+/** The boxfold pair, verbatim from surface-fold.verify.mjs's
  * BOXFOLD_HASH: two single-variation boxfold maps, `deHasFolds` true,
  * eligibility "eligible". Pose-less — the --mint input, not a scenario. */
 const BOXFOLD_BASE_HASH =
   "#v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNCwwLjEsMF0sInJvdGF0aW9uIjpbMC4zLDAuMiwwXSwic2NhbGUiOlswLjQ1LDAuNDUsMC40NV0sInZhcmlhdGlvbnMiOlt7InR5cGUiOiJib3hmb2xkIiwid2VpZ2h0IjoxfV19LHsicG9zaXRpb24iOlstMC4zNSwtMC4yLDAuM10sInJvdGF0aW9uIjpbMCwwLjUsMC4xXSwic2NhbGUiOlswLjUsMC41LDAuNV0sInZhcmlhdGlvbnMiOlt7InR5cGUiOiJib3hmb2xkIiwid2VpZ2h0IjowLjl9XX1dLCJudW1Qb2ludHMiOjEwMDAwMCwicG9pbnRTaXplIjoxLCJjb2xvck1vZGUiOiJ0cmFuc2Zvcm0iLCJjb2xvckdhbW1hIjoxLCJyYW1wUGFsZXR0ZUlkIjoibGVnYWN5IiwiZm91ckRDb2xvciI6IndCbHVlT3JhbmdlIiwiZm91ckREZXB0aEZhZGUiOmZhbHNlLCJyZW5kZXJTdHlsZSI6ImRlcHRoRmFkZSIsInNob3dHdWlkZXMiOnRydWUsImZsYW1lIjp7ImV4cG9zdXJlIjoxLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwiZ2FtbWEiOjIuNCwidmlicmFuY3kiOjEsInN1cGVyc2FtcGxlIjoyLCJlc3RpbWF0b3JSYWRpdXMiOjYsImVzdGltYXRvck1pbmltdW1SYWRpdXMiOjAsImVzdGltYXRvckN1cnZlIjowLjQsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInNvbGlkIjp7InJlc29sdXRpb24iOjE5MiwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsInRocmVzaG9sZCI6MC4zLCJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzdXJmYWNlIjp7ImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImNvbG9yU291cmNlIjoidHJhbnNmb3JtIiwicGFsZXR0ZUlkIjoic3BlY3RydW0iLCJjb2xvclNwZWVkIjowLjV9LCJzeW1tZXRyeSI6eyJvcmRlciI6MSwiYXhpcyI6InkifSwiZ2xvd0JyaWdodG5lc3MiOjF9";
 
-/** fr-g58b's lens archetype, verbatim from surface-fold.verify.mjs's
+/** The fold-FINAL lens archetype, verbatim from surface-fold.verify.mjs's
  * LENS_HASH: a Sierpinski-shaped 4-map affine base under a boxfold FINAL
  * transform, so the compute path takes the `lens:true` wrapper over the
  * affine core and the WebGL arm compiles SURFACE_FOLD_LENS. Its render
@@ -215,7 +217,7 @@ const BOXFOLD_BASE_HASH =
 const LENS_BASE_HASH =
   "#v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuMzUsMC4zNSwwLjM1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdfSx7InBvc2l0aW9uIjpbLTAuMzUsLTAuMzUsMC4zNV0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XX0seyJwb3NpdGlvbiI6WzAuMzUsLTAuMzUsLTAuMzVdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV19LHsicG9zaXRpb24iOlstMC4zNSwwLjM1LC0wLjM1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdfV0sIm51bVBvaW50cyI6MTAwMDAwLCJwb2ludFNpemUiOjEsImNvbG9yTW9kZSI6InRyYW5zZm9ybSIsImNvbG9yR2FtbWEiOjEsInJhbXBQYWxldHRlSWQiOiJsZWdhY3kiLCJmb3VyRENvbG9yIjoid0JsdWVPcmFuZ2UiLCJmb3VyRERlcHRoRmFkZSI6ZmFsc2UsInJlbmRlclN0eWxlIjoiZGVwdGhGYWRlIiwic2hvd0d1aWRlcyI6dHJ1ZSwiZmxhbWUiOnsiZXhwb3N1cmUiOjEsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJnYW1tYSI6Mi40LCJ2aWJyYW5jeSI6MSwic3VwZXJzYW1wbGUiOjIsImVzdGltYXRvclJhZGl1cyI6NiwiZXN0aW1hdG9yTWluaW11bVJhZGl1cyI6MCwiZXN0aW1hdG9yQ3VydmUiOjAuNCwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic29saWQiOnsicmVzb2x1dGlvbiI6MTkyLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwidGhyZXNob2xkIjowLjMsImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInN1cmZhY2UiOnsibGlnaHRBemltdXRoIjoxMzUsImxpZ2h0RWxldmF0aW9uIjo1MCwiYW1iaWVudCI6MC4yNSwiY29sb3JTb3VyY2UiOiJ0cmFuc2Zvcm0iLCJwYWxldHRlSWQiOiJzcGVjdHJ1bSIsImNvbG9yU3BlZWQiOjAuNX0sInN5bW1ldHJ5Ijp7Im9yZGVyIjoxLCJheGlzIjoieSJ9LCJnbG93QnJpZ2h0bmVzcyI6MSwiZmluYWxUcmFuc2Zvcm0iOnsicG9zaXRpb24iOlswLjE1LC0wLjEsMC4wNV0sInJvdGF0aW9uIjpbMC4yLDAuMywwLjFdLCJzY2FsZSI6WzAuOSwwLjksMC45XSwidmFyaWF0aW9ucyI6W3sidHlwZSI6ImJveGZvbGQiLCJ3ZWlnaHQiOjAuNTV9XX19";
 
-/** fr-xso5: the Pentatope Gasket preset's transforms (`pentatope()` in
+/** The Pentatope Gasket preset's transforms (`pentatope()` in
  * `src/fractal/presets.ts`), encoded pose-less — no `camera`, no `fourD`
  * block — via the app's own `toSnapshot`/`encodeScene` (src/app/persist.ts)
  * over `{ ...initialState(false), transforms: pentatope() }`, which is
@@ -254,11 +256,11 @@ const SCENARIOS = [
     name: "pentatope4direct",
     base: { hash: PENTATOPE4_BASE_HASH },
     // --mint output, 2026-08-11: PENTATOPE4_BASE_HASH after its boot
-    // auto-frame (fr-xso5). The fourD block — p:[0.9888,0,0,-0.1494],
+    // auto-frame. The fourD block — p:[0.9888,0,0,-0.1494],
     // q:[0.7317,0,0,0.6816] — is BIT-IDENTICAL to pentatope4's own mint
-    // above: fr-chj9's pinned boot seed makes the 4D tumble-reset
+    // above: the pinned boot seed makes the 4D tumble-reset
     // deterministic across both the preset-select path (pentatope4) and this
-    // direct-hash boot, exactly as the bead expects. Only the 3D camera
+    // direct-hash boot, exactly as predicted. Only the 3D camera
     // auto-frame differs (target [0.0003,0.0002,0.0001]/radius 2.3178 vs
     // pentatope4's [0,0,0]/2.3038) — the ordinary few-tenths-of-a-percent
     // spread `frameBounds`'s own point-cloud sampling carries, not a

@@ -1,17 +1,18 @@
 /**
- * fr-b8o5 — HOW LOOSE IS A 4D DE AS A BOUND ON THE SLICE IT MARCHES, AND
+ * HOW LOOSE IS A 4D DE AS A BOUND ON THE SLICE IT MARCHES, AND
  * DOES AN OFF-CENTRE SLICE COST MORE TO MARCH?
  *
- * `surface-de-4d.ts`'s module doc has carried an open question since fr-beck
- * minted it (THE SLICE CAVEAT): the estimators certify distance to the whole
- * 4D attractor `A`, the tracer only ever meets the slice `A ∩ {w = w0}`, and
+ * `surface-de-4d.ts`'s module doc has carried an open question since the
+ * 4D surface DE spike minted it (THE SLICE CAVEAT): the estimators certify
+ * distance to the whole 4D attractor `A`, the tracer only ever meets the
+ * slice `A ∩ {w = w0}`, and
  *
  *     dist4((p, w0), A) <= dist3(p, A ∩ {w = w0})
  *
  * so the bound is SAFE but can fall short — "stalling the march or reading as
  * ghostly, oversized bulges", with "measuring exactly how loose — is the gap
  * small enough for a real render, or does it need slice-aware tightening" left
- * to a later session. fr-b8o5 is that session, because the bead's own
+ * to a later session. This sheet is that session, because the standing
  * hypothesis for a measured 20-40x app cost cliff at off-centre slices was
  * exactly this gap.
  *
@@ -28,9 +29,10 @@
  *
  * A `penalty` near 1 means the nearest 4D structure is in the slice anyway and
  * slice-aware tightening has nothing to win; a `penalty` that collapses toward
- * 0 as `w0` moves off centre is the bead's hypothesis. Both cloud distances
- * are sampled, so both are UPPER bounds on the true distances and every ratio
- * printed is a LOWER bound on the real looseness — the measurement can
+ * 0 as `w0` moves off centre is what that hypothesis predicts. Both cloud
+ * distances are sampled, so both are UPPER bounds on the true distances and
+ * every ratio printed is a LOWER bound on the real looseness — the
+ * measurement can
  * understate the problem, never invent one.
  *
  * The slab half-thickness `h` matters and is swept: `A ∩ slab(h)` contains
@@ -68,10 +70,10 @@
  *    offset on either scene.
  *  - So slice-aware certificates (pruning the branches whose bounding ball
  *    cannot reach the marched slab, and pricing the rest against the disc the
- *    slab cuts) were BUILT AND MEASURED for this bead and NOT SHIPPED: on
- *    these systems they buy ~10% fewer march steps for 1.4-2.2x the work per
- *    evaluation. The bead carries the full A/B; this sheet carries the reason
- *    it was never needed.
+ *    slab cuts) were BUILT AND MEASURED and NOT SHIPPED: on these systems
+ *    they buy ~10% fewer march steps for 1.4-2.2x the work per evaluation.
+ *    Those two figures ARE that A/B; this sheet carries the reason it was
+ *    never needed.
  *  - The app-level cliff itself does not reproduce either — see
  *    `scripts/slice-cliff.probe.mjs`, which measures it in a real browser on
  *    the real driver: a `plain4` session settles in 12.1s at `w0 = 0` and
@@ -118,9 +120,9 @@ function plain4(): Transform[] {
   ];
 }
 
-/** The same script's `kaleido4` — the scene fr-b8o5 measured in the app: two
- * maps with live `w` blocks under an order-6 `xz` kaleidoscope with a twist-1
- * double rotation. */
+/** The same script's `kaleido4` — the scene the app-level cliff was
+ * measured on: two maps with live `w` blocks under an order-6 `xz`
+ * kaleidoscope with a twist-1 double rotation. */
 function kaleido4(): Transform[] {
   return [
     {
@@ -211,17 +213,17 @@ const SYSTEMS: SystemDef[] = [
     transforms: plain4(),
   },
   {
-    label: "kaleido4 (2 maps, order 6 xz twist 1 — the bead's own scene)",
+    label: "kaleido4 (2 maps, order 6 xz twist 1 — the app-measured scene)",
     fileTag: "kaleido4",
     transforms: kaleido4(),
     symmetry: { order: 6, plane: "xz", twist: 1 },
   },
 ];
 
-describe("fr-b8o5 4D slice tightness and march cost", () => {
+describe("4D slice tightness and march cost", () => {
   it("measures the slice bound's gap against a chaos-game ground truth", () => {
     console.log(
-      "fr-b8o5 A: how loose is the 4D DE as a bound on the slice it marches?",
+      "A: how loose is the 4D DE as a bound on the slice it marches?",
     );
     console.log(
       `${String(CLOUD_POINTS)}-point seeded cloud as ground truth, ${String(QUERIES)} uniform-ball`,
@@ -308,7 +310,7 @@ describe("fr-b8o5 4D slice tightness and march cost", () => {
 
   it("marches the same sweep and reports the step/exhaustion split", () => {
     console.log(
-      `\nfr-b8o5 B: the shared CPU marcher over the same sweep. ${String(SIZE)}px panels,`,
+      `\nB: the shared CPU marcher over the same sweep. ${String(SIZE)}px panels,`,
     );
     console.log(
       "maxSteps 160 (the app's full tier), camera FIXED at de.boundingRadius across",

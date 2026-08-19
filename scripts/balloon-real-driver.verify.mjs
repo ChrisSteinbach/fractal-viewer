@@ -1,4 +1,4 @@
-// fr-j8uk: live real-driver verification of the balloon surface arms.
+// Live real-driver verification of the balloon surface arms.
 // Launches headed Chrome against a real X display (the gpu-flame-bench
 // --display recipe) and measures the balloon's cost as an ON/OFF RATIO on
 // the same machine state — absolute settle times proved environment-
@@ -112,7 +112,7 @@ async function settleOrReport(page, tag, timeoutMs = SOFT_TIMEOUT_MS) {
     const err = await renderErrorText(page);
     if (err) throw new Error(`${tag}: render error banner: ${err}`);
     last = await progressText(page);
-    // The probe is the settle AUTHORITY (fr-d6g5): the progress row hides
+    // The probe is the settle AUTHORITY: the progress row hides
     // on completion without ever guaranteeing a 100% paint (its percent
     // floors), so pct scraping alone can misjudge. Text pct>=99.9 stays as
     // a harmless secondary condition below.

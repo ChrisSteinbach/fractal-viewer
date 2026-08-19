@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * fr-7su: live soak monitor for the PRODUCTION flame GPU path on a phone.
+ * Live soak monitor for the PRODUCTION flame GPU path on a phone.
  *
- * fr-hs9 flipped `gpuPreference` to `"auto"` on coarse-pointer devices after
+ * `gpuPreference` was flipped to `"auto"` on coarse-pointer devices after
  * the /gpu-bench/ agreement + throughput validation passed; the one remaining
  * checklist item is a multi-minute, full-res soak of the REAL app (not the
  * bench page) to confirm no thermal/memory kill under sustained load. Unlike
@@ -231,9 +231,10 @@ function readPageState() {
 }
 
 /** One-time environment probe: user agent + the GPU adapter's real limits.
- * `maxStorageBufferBindingSize` is the crux of fr-7su item (c): whether the
- * device is 128 MiB-class (full-res renders CPU-fall-back by design) or has
- * headroom for the whole 300 MiB accumulation budget on the GPU. */
+ * `maxStorageBufferBindingSize` is the crux of this soak's item (c):
+ * whether the device is 128 MiB-class (full-res renders CPU-fall-back by
+ * design) or has headroom for the whole 300 MiB accumulation budget on the
+ * GPU. */
 async function probeEnvironment() {
   const ua = navigator.userAgent;
   let gpu = null;

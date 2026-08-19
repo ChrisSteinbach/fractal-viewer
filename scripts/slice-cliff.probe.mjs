@@ -1,25 +1,25 @@
 /**
- * fr-b8o5 REPRODUCTION PROBE — is an off-centre 4D w-slice really 20-40x
+ * REPRODUCTION PROBE — is an off-centre 4D w-slice really 20-40x
  * more expensive to settle than `w = 0`, and on which arm?
  *
- * The bead measured the cliff in the app on real Iris (kaleido4, fragment
- * arm, `?surfperf` evidence logging) but never isolated the mechanism, and a
+ * The cliff was measured in the app on real Iris (kaleido4, fragment arm,
+ * `?surfperf` evidence logging) but the mechanism was never isolated, and a
  * CPU sweep of the same scenes through `scripts/de-preview.ts` does not
  * reproduce it at all. This probe is the smallest thing that can tell those
  * apart: one settle, timed, per (scene, arm, slice) cell, driven entirely
- * from the app's own UI and read off the fr-opgk `?surfacestate` latch —
+ * from the app's own UI and read off the `?surfacestate` settle latch —
  * `settled` means a COMPLETED full-quality frame for the CURRENT view, which
  * is the only signal that cannot freeze on a preview/settle mix.
  *
  * The slice is set through the 4D View section's `#fourDSliceSlider` with a
  * programmatic value + `input`/`change` (not ArrowRight), so a cell is ONE
- * pose rather than a burst of coalesced re-arms — the shape fr-b8o5's own
- * follow-up (fr-7to5) had to fix separately, and one this probe must not
- * re-enter.
+ * pose rather than a burst of coalesced re-arms — the shape the
+ * orphaned-fence pooling and adoption follow-up had to fix separately, and
+ * one this probe must not re-enter.
  *
- * Each cell reloads the page, so no session state carries across: the bead's
- * "pose-intrinsic, not session state" claim is re-tested rather than
- * inherited. It also PARKS THE 4D TUMBLE before entering surface mode —
+ * Each cell reloads the page, so no session state carries across: the
+ * original "pose-intrinsic, not session state" claim is re-tested rather
+ * than inherited. It also PARKS THE 4D TUMBLE before entering surface mode —
  * on by default, and a tumbling session re-arms every frame, so `settled`
  * never latches and every cell would read as a timeout measuring the
  * auto-motion instead of the pose.
@@ -47,11 +47,12 @@
  * drifting. An earlier run of the same sweep with the rotor left to tumble
  * 1.5s before parking read 11905...8734 (WebGL) and 3085...2853 (compute):
  * same shape, so this scene's cost is not strongly pose-dependent either.
- * THE 20-40x CLIFF DOES NOT REPRODUCE on this build. The bead's own figures
+ * THE 20-40x CLIFF DOES NOT REPRODUCE on this build. The original figures
  * came from the strip planner's `surfacePreviewPxCostMs` evidence chain
- * BEFORE fr-7to5 taught it to adopt an orphaned job's fences; that bead's
- * closing note already records the same chain reading ~90x high on one
- * attributed job, which is the size of the effect the cliff was.
+ * BEFORE orphaned-fence adoption taught it to take over a superseded job's
+ * fences; that fix's own record already has the same chain reading ~90x
+ * high on one attributed job, which is the size of the effect the cliff
+ * was.
  *
  * WHAT THE PROBE DID FIND: `kaleido4` — two maps at kaleidoscope order 6 —
  * is a different order of problem, and not a slice one. Its full-quality
@@ -93,9 +94,10 @@ const TIMEOUT_MS = Number(flag("timeout", "180")) * 1000;
  * expensive poses this probe exists to find, so the PREVIEW's completion is
  * the cost the sweep reads. `--settle=1` waits for the real thing. */
 const WAIT_SETTLE = flag("settle", "0") === "1";
-/** `--live=1` reproduces the bead's OWN shape: settle at slice 0 first, then
- * move the slider on the LIVE session and time the re-settle. `--live=0`
- * (default) sets the pose BEFORE entering surface, so the cell measures a
+/** `--live=1` reproduces the ORIGINAL report's shape: settle at slice 0
+ * first, then move the slider on the LIVE session and time the re-settle.
+ * `--live=0` (default) sets the pose BEFORE entering surface, so the cell
+ * measures a
  * fresh session at that pose and nothing else. */
 const LIVE = flag("live", "0") === "1";
 /** Milliseconds of ambient 4D TUMBLE to let run before parking it. 0 — the
@@ -108,7 +110,7 @@ const LIVE = flag("live", "0") === "1";
 const TUMBLE_MS = Number(flag("tumble", "0"));
 
 /** The two affine 4D scenes `scripts/surface-4d.verify.mjs` mints, verbatim —
- * `kaleido4` is the scene fr-b8o5 measured. */
+ * `kaleido4` is the scene the cliff was measured on. */
 const SCENES = {
   plain4:
     "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNSwwLDBdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV0sInciOnsicG9zaXRpb24iOjAuNSwicm90YXRpb24iOnsieHciOjAuM319fSx7InBvc2l0aW9uIjpbLTAuMjUsMC40MywwXSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdfSx7InBvc2l0aW9uIjpbLTAuMjUsLTAuNDMsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XX1dLCJudW1Qb2ludHMiOjEwMDAwMCwicG9pbnRTaXplIjoxLCJjb2xvck1vZGUiOiJ0cmFuc2Zvcm0iLCJjb2xvckdhbW1hIjoxLCJyYW1wUGFsZXR0ZUlkIjoibGVnYWN5IiwiZm91ckRDb2xvciI6IndCbHVlT3JhbmdlIiwiZm91ckREZXB0aEZhZGUiOmZhbHNlLCJyZW5kZXJTdHlsZSI6ImRlcHRoRmFkZSIsInNob3dHdWlkZXMiOnRydWUsImZsYW1lIjp7ImV4cG9zdXJlIjoxLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwiZ2FtbWEiOjIuNCwidmlicmFuY3kiOjEsInN1cGVyc2FtcGxlIjoyLCJlc3RpbWF0b3JSYWRpdXMiOjYsImVzdGltYXRvck1pbmltdW1SYWRpdXMiOjAsImVzdGltYXRvckN1cnZlIjowLjQsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInNvbGlkIjp7InJlc29sdXRpb24iOjE5MiwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsInRocmVzaG9sZCI6MC4zLCJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzdXJmYWNlIjp7ImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImNvbG9yU291cmNlIjoidHJhbnNmb3JtIiwicGFsZXR0ZUlkIjoic3BlY3RydW0iLCJjb2xvclNwZWVkIjowLjV9LCJzeW1tZXRyeSI6eyJvcmRlciI6MSwicGxhbmUiOiJ4eiJ9LCJnbG93QnJpZ2h0bmVzcyI6MX0",
@@ -184,7 +186,7 @@ async function cell(browser, scene, hash, arm, slice) {
     await page.click("#modeSurfaceBtn");
     if (LIVE && slice !== 0) {
       // Settle the CENTRE slice first, then move the slider on the live
-      // session and restart the clock — the bead's own protocol.
+      // session and restart the clock — the original report's protocol.
       const settleDeadline = Date.now() + TIMEOUT_MS;
       for (;;) {
         const st = await page.evaluate(() =>

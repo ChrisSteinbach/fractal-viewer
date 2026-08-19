@@ -1,7 +1,7 @@
 /**
- * WHAT THE CHEAP SLAB COSTS: BALL SLACK AGAINST THE EXACT SEGMENT (fr-v7ca).
+ * WHAT THE CHEAP SLAB COSTS: BALL SLACK AGAINST THE EXACT SEGMENT.
  *
- * `surface-de-4d.ts` REFUSES fr-wa6o slab queries — `halfExtent`, thickness
+ * `surface-de-4d.ts` REFUSES slab queries — `halfExtent`, thickness
  * `h > 0` — for any 4D system whose fold set includes a spherefold or a
  * mandelbox (`slabExact4`). The reason is sound and not negotiable: the
  * spherefold MID branch is a sphere inversion, an inversion takes the slab's
@@ -16,7 +16,7 @@
  *       line — `dist(segment, A) >= dist(centre, A) - h >= DE(centre) - h` —
  *       independently of how the descent works. One subtraction; no new
  *       chain state, no new frontier register, no new WGSL variant.
- *   (B) THE THREADED SEGMENT+BALL-SLACK STATE, the bead's own sketch. Carry
+ *   (B) THE THREADED SEGMENT+BALL-SLACK STATE, the original sketch. Carry
  *       `(q, e, rho)`: affine branches transport `e` exactly and grow `rho`
  *       by their `sigma_max`; at a spherefold MID crossing, enclose the
  *       segment in a ball of radius `|e| + rho`, push it through the
@@ -24,8 +24,9 @@
  *       balls to balls exactly), re-emerge with `e' = 0` and the image ball
  *       as `rho'`. One extra scalar per CPU chain tuple, one extra f32 per
  *       frontier slot in the fold4 WGSL kernel — the register-pressure
- *       territory fr-b72d/fr-d0nn measured at 2.2x for the `ext` vec4 — its
- *       own codegen variant, its own soundness tests, its own bench fixture.
+ *       territory the slab codegen variant's own sweep measured at 2.2x
+ *       for the `ext` vec4 — its own codegen variant, its own soundness
+ *       tests, its own bench fixture.
  *
  * WHY A BOXFOLD-ONLY SYSTEM ANSWERS A SPHEREFOLD QUESTION, which is the one
  * thing to be convinced of before reading a single number below. The two
@@ -65,7 +66,7 @@
  * `sixteenCellFlake` preset (the plain affine ladder — the shape the slice
  * slider actually runs on today). One fixed pose per system, fitted once to
  * the widest slab so every row is the same camera. Plus one SPHEREFOLD row,
- * where no EXACT control exists — that being the whole point of the bead —
+ * where no EXACT control exists — that being the whole point of the lift —
  * so the sheet shows the actual deliverable and not only its control.
  *
  * WHAT IT CONCLUDED: NEITHER — KEEP THE REFUSAL. Form (A) does not render a
@@ -208,9 +209,10 @@ const QUERY_SEED = 0xb0a7;
  * deliberately PAST the maximum, as the control that says what the app is
  * being kept away from.
  *
- * The bead suggested sweeping `h` in units of `visibleBoundingRadius`
- * instead, and this sheet's first run did. It is the wrong ruler and the run
- * says so: `wSupport / visR` measures 0.070 / 0.214 / 0.330 / 0.935 on the
+ * The original sketch suggested sweeping `h` in units of
+ * `visibleBoundingRadius` instead, and this sheet's first run did. It is
+ * the wrong ruler and the run says so: `wSupport / visR` measures 0.070 /
+ * 0.214 / 0.330 / 0.935 on the
  * four systems below — a 13x spread — so a visR-normalised sweep put EVERY
  * row of `boxfoldLens4` past the slider's ceiling and every row of
  * `sixteenCellFlake` well inside it, i.e. it compared four systems at four
@@ -730,7 +732,7 @@ function describeFrame(name: string, frame: Frame): string {
 
 // ------------------------------------------------------------------ suites
 
-describe("fr-v7ca: ball slack against the exact segment slab", () => {
+describe("ball slack against the exact segment slab", () => {
   it("section 1: renders EXACT, BALL and POINT at one pose per system and scores coverage, agreement, depth and cost", () => {
     const lines: string[] = [];
     for (const spec of SYSTEMS) {

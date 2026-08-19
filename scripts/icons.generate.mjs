@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * fr-vja8.32: generates the two app-icon rasters this project ships as
+ * Generates the two app-icon rasters this project ships as
  * COMMITTED PNGs — src/app/public/icon-maskable-512.png and
  * src/app/public/apple-touch-icon.png — from the one hand-authored vector,
  * src/app/public/icon.svg. The repo shipped zero app PNGs before this; both

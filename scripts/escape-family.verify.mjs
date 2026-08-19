@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * The escape-time menu group, driven from the menu (fr-tdin).
+ * The escape-time menu group, driven from the menu.
  *
- * WHY THIS EXISTS AS A SCRIPT AND NOT A UNIT TEST. fr-tdin shipped the
- * Mandelbulb's routing and nine Escape-time presets, and its own closing note
- * says the in-app check was never done because "verify the presets load" was
+ * WHY THIS EXISTS AS A SCRIPT AND NOT A UNIT TEST. The Mandelbulb's routing
+ * shipped with nine Escape-time presets, and its own closing note said the
+ * in-app check was never done because "verify the presets load" was
  * too vague to act on. Everything it actually needed to know is DOM glue and
  * GPU behaviour, which this project verifies by running the app:
  *
@@ -14,8 +14,8 @@
  *      say so — `presets.test.ts` pins the side tables' consistency, not the
  *      routing that reads them.
  *   2. The three Mandelbulbs are three OBJECTS, not three views of one. Their
- *      knobs are the pre-power offset and a rotation, and fr-tdin's own
- *      standard was "if two match, a knob is not reaching the DE".
+ *      knobs are the pre-power offset and a rotation, and that routing's
+ *      own standard was "if two match, a knob is not reaching the DE".
  *   3. PRESET_FINALS and PRESET_SYMMETRIES do not LEAK, in either direction.
  *      Both tables are ABSENT-MEANS-CLEAR, and both are load-bearing: a lens
  *      left over from a previous preset silently re-poses the arriving
@@ -24,22 +24,24 @@
  *      forward gates refuse a final transform). The reverse leak — a preset
  *      that carries a lens failing to install it — renders juliaSnowflake as
  *      a plain juliaIsland, silently.
- *   4. WHICH ENGINE each session takes. fr-tdin wired the bulb into the
+ *   4. WHICH ENGINE each session takes. The bulb was wired into the
  *      compute renderer; if bulb sessions in fact fall to the WebGL
  *      SURFACE_BULB arm, the bench-verified `core:"bulb"` WGSL kernel is dead
  *      code and nobody would know from a green test suite.
  *
- * It also covers the two beads that landed beside it: fr-byxb (a chain's trap
- * now reaches its palette) is why the fold-chain shots are compared for
- * colour spread, and fr-17qu (an empty set says so) has its own scenario.
+ * It also covers the two fixes that landed beside it: a chain's trap now
+ * reaching its palette is why the fold-chain shots are compared for colour
+ * spread, and the empty-set notice (an empty set says so) has its own
+ * scenario.
  *
- * THAT LAST SCENARIO IS ALSO fr-7k0o'S GATE, and it needs `--query=surfacegl`
- * to be one. fr-17qu's notice originally fired off the WebGPU settle's own
- * per-ray status tally, so a session that fell back to the WebGL fragment
- * tracer — no adapter, `?surfacegl`, a lost device — rendered an empty set in
- * silence, which is fr-17qu's original complaint surviving inside its own
- * fix. The WebGL arm counts the COVERAGE flag its tracer writes into alpha
- * instead (scene.ts's `surfaceCoveredFraction`). MEASURED on SwiftShader at
+ * THAT LAST SCENARIO IS ALSO THE TRACE-ALPHA COVERAGE FLAG'S GATE, and it
+ * needs `--query=surfacegl` to be one. The notice originally fired off the
+ * WebGPU settle's own per-ray status tally, so a session that fell back to
+ * the WebGL fragment tracer — no adapter, `?surfacegl`, a lost device —
+ * rendered an empty set in silence, which is the original complaint
+ * surviving inside its own fix. The WebGL arm counts the COVERAGE flag its
+ * tracer writes into alpha instead (scene.ts's `surfaceCoveredFraction`).
+ * MEASURED on SwiftShader at
  * the fix: `--mode=sw --query=surfacegl` fails exactly this check on the
  * pre-fix build ("no toast explaining the blank frame (got null)") and passes
  * on the fixed one, with the twelve shipped presets still raising no toast at
@@ -76,7 +78,7 @@ const DEFAULT_OUT_DIR = path.join(HERE, "out", "escape-family");
  * The Escape-time menu group, in menu order, plus what each one is for.
  * `group` is what the pairwise-difference check compares within: three
  * members of a group that render the same image mean a knob is not reaching
- * the DE, which is the failure fr-tdin asked about.
+ * the DE, which is the failure the routing work asked about.
  */
 const PRESETS = [
   { key: "mandelboxClassic", group: "mandelbox" },
@@ -126,8 +128,9 @@ const READ_FINAL_TRANSFORM = () => {
  * of pixels differ by more than a channel step that survives dithering. Set
  * from the measurement rather than from taste: MEASURED on the real driver,
  * every pair inside every group differs on 6.2-9.5% of pixels, while two runs
- * of the SAME pinned scene differ on 0% of them (fr-opgk's determinism
- * verdict). 2% sits with a wide margin on both sides — it is a check for a
+ * of the SAME pinned scene differ on 0% of them (the settle latch's own
+ * determinism verdict). 2% sits with a wide margin on both sides — it is a
+ * check for a
  * knob that does NOTHING, not a pixel-diff regression gate. */
 const DIFFER_FRACTION = 0.02;
 const DIFFER_DELTA = 8;
@@ -203,7 +206,7 @@ async function openApp(browser, args) {
   await settled(page, () =>
     page.waitForFunction(() => typeof window.__surfaceState === "function"),
   );
-  // A LIVE origin reloads once for cross-origin isolation (fr-su3r,
+  // A LIVE origin reloads once for cross-origin isolation (see
   // register-sw.ts): the first visit registers the service worker, then the
   // page reloads to come back under COOP/COEP. `npm run preview` serves those
   // headers already, so this never fires there — but pointing --url at the
@@ -307,7 +310,7 @@ async function loadPreset(page, key) {
 }
 
 /** Enter Surface mode from the mode button, refusing to pretend a disabled
- * button is a pass — a dark button is precisely fr-tdin's reported symptom. */
+ * button is a pass — a dark button is precisely the reported symptom. */
 async function enterSurface(page) {
   const disabled = await page.getAttribute("#modeSurfaceBtn", "disabled");
   const title = await page.getAttribute("#modeSurfaceBtn", "title");
@@ -316,7 +319,7 @@ async function enterSurface(page) {
   return { entered: true, reason: null };
 }
 
-/** Wait for the app's own settle latch (fr-opgk), held for `dwell` — see
+/** Wait for the app's own settle latch, held for `dwell` — see
  * surface-repro.verify.mjs's module doc for why a pixel-stability poll is not
  * an answer here. */
 async function waitSettled(page, args) {
@@ -428,8 +431,8 @@ async function main() {
           );
           continue;
         }
-        // fr-17qu's second cut: a shipped preset must NEVER raise the
-        // blank-frame notice. Its FIRST cut did — it asked a VOLUME probe
+        // The blank-frame notice's second cut: a shipped preset must NEVER
+        // raise that notice. Its FIRST cut did — it asked a VOLUME probe
         // whether anything would render, and mandelboxRings is a dust with
         // no measurable volume and ~38k surface hits, so the app cried wolf
         // over one of its own presets. This gate had every other check and
@@ -548,7 +551,7 @@ async function main() {
       }
     }
 
-    // --- fr-17qu: a system whose escape-time set is empty says so
+    // --- a system whose escape-time set is empty says so
     {
       const { context, page } = await openApp(browser, args);
       try {
@@ -560,7 +563,7 @@ async function main() {
         // by driving sliders, so the scenario is exactly the scale and
         // nothing else.
         //
-        // EIGHT, not four, and the difference is the whole fr-17qu lesson.
+        // EIGHT, not four, and the difference is the whole blank-frame lesson.
         // Measured ray hit rates for this map at the entry pose: scale 1
         // 79.1%, scale 2 28.4%, scale 4 0.024%, scale 8 0.000%. Volume fill
         // is 0.0000% for ALL of 2, 4 and 8 — which is why the first cut,
@@ -619,7 +622,7 @@ async function main() {
       }
     }
 
-    // --- fr-vpbq: the settle really does supersample, and says so
+    // --- the settle really does supersample, and says so
     if (wanted.length > 0) {
       const { context, page } = await openApp(browser, args);
       try {
@@ -645,7 +648,7 @@ async function main() {
             .catch(() => null);
           if (!label) {
             failures.push(
-              "the settle never reported an antialiasing pass — fr-vpbq's supersampling is not running, or the row is not disclosing it",
+              "the settle never reported an antialiasing pass — supersampling is not running, or the row is not disclosing it",
             );
           } else {
             console.error(

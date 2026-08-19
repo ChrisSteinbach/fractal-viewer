@@ -1,34 +1,35 @@
 #!/usr/bin/env node
 /**
- * fr-kz2p repro: does a Save-PNG surface export actually stall/crash at
- * extreme wheel-out zoom, and are the two symptoms the same thing?
+ * Degenerate-zoom repro: does a Save-PNG surface export actually
+ * stall/crash at extreme wheel-out zoom, and are the two symptoms the
+ * same thing?
  *
- * BACKGROUND. While measuring capture-export.verify.mjs's PNG-floor fixture
- * (fr-vja8.68), the gate agent tried a backdrop-only export at 32 and 48
+ * BACKGROUND. While measuring capture-export.verify.mjs's PNG-floor
+ * fixture, the gate agent tried a backdrop-only export at 32 and 48
  * wheel ticks (x1.1 dolly each, same recipe as that script) on the default
  * preset at 660x410 and could not get a Save-PNG to complete either way —
  * 32 ticks stalled past the gate's own 240s bound, 48 ticks reportedly
  * crashed the renderer. Both were observed ONCE on SwiftShader with no
- * repro script kept (fr-kz2p's own text). This script is that repro,
- * generalized to either tick count via `--ticks`.
+ * repro script kept. This script is that repro, generalized to either
+ * tick count via `--ticks`.
  *
- * WHAT IT SEPARATES. The bead's own framing, which reading strip-planner.ts
- * and scene.ts's capture path supports: a "stall" may just be EXPECTED
- * cost, not a bug. Three unrelated, independently-documented design
- * decisions compound at this exact pose:
- *   1. Save-PNG supersamples 8x (fr-jf9y, `SURFACE_STRIP_SETTLE_SAMPLES`) —
+ * WHAT IT SEPARATES. The original report's own framing, which reading
+ * strip-planner.ts and scene.ts's capture path supports: a "stall" may
+ * just be EXPECTED cost, not a bug. Three unrelated,
+ * independently-documented design decisions compound at this exact pose:
+ *   1. Save-PNG supersamples 8x (`SURFACE_STRIP_SETTLE_SAMPLES`) —
  *      EIGHT full-tier drains of the same frame, not one.
  *   2. Every strip is capped at STRIP_WORST_CASE_CAP_MS worth of
- *      class-pessimistic `worstMsPerPx` (fr-096u's discontinuity guard,
- *      strip-planner.ts) — for the default preset's affine DE that is
- *      floor(4000 / 0.1) = 40000px/strip, REGARDLESS of how cheap a
+ *      class-pessimistic `worstMsPerPx` (the i915-preemption discontinuity
+ *      guard, strip-planner.ts) — for the default preset's affine DE that
+ *      is floor(4000 / 0.1) = 40000px/strip, REGARDLESS of how cheap a
  *      near-empty frame actually measures. A 660x410 frame (270600px)
  *      therefore never collapses below ~7 strips per pass no matter how
  *      degenerate the zoom, so the safety net that exists to keep a single
  *      submission watchdog-safe also puts a floor under the strip COUNT.
- *   3. The interactive Save-PNG carries NO cost ceiling (fr-avf6) and NO
- *      automatic give-up (fr-24to/fr-zx34) — it grinds however long that
- *      takes, by design, disclosing coverage instead of refusing.
+ *   3. The interactive Save-PNG carries NO cost ceiling and NO automatic
+ *      give-up — it grinds however long that takes, by design, disclosing
+ *      coverage instead of refusing.
  * If (1)x(2) x a slow-but-nonzero SwiftShader per-strip sync cost adds up
  * to minutes, that is (1)+(2)+(3) working exactly as documented, not a new
  * defect — this script's job is to show whether that arithmetic actually
@@ -36,9 +37,9 @@
  * hang) or the page/GPU process actually dies (a real crash).
  *
  * INSTRUMENTS.
- *   - `?surfacestate` — the settle-latch probe (`window.__surfaceState()`,
- *     fr-opgk), read for `engine` (compute vs webgl — this fixture forces
- *     webgl, see below) and `settled`.
+ *   - `?surfacestate` — the settle-latch probe (`window.__surfaceState()`),
+ *     read for `engine` (compute vs webgl — this fixture forces webgl, see
+ *     below) and `settled`.
  *   - `?surfperf` — scene.ts's own strip-pump diagnostics. NOTE: its
  *     per-batch/per-strip lines are gated on `busyMs > SURFPERF_HEAVY_STRIP_MS`
  *     (500ms), so a run that never logs a single heavy strip is NOT
@@ -47,7 +48,7 @@
  *     at the END of each full-tier drain (i.e. up to 8 times per export,
  *     one per supersample pass) — its ABSENCE across the whole run is the
  *     more useful signal that no pass has finished yet.
- *   - `?surfacetrace` — fr-d6g5's compute-renderer frame trace. Included
+ *   - `?surfacetrace` — the compute-renderer frame trace. Included
  *     for completeness/confirmation only: this script forces `surfacegl`
  *     (matching capture-export.verify.mjs's own fixture, and the fixture
  *     the original observation used), so the compute renderer never
@@ -55,7 +56,7 @@
  *     A non-empty trace log would mean the fixture silently routed to
  *     compute and should be treated as a surprise, not corroboration.
  *   - The export modal's own DOM (#exportModal/#exportDetail/#exportProgress)
- *     — the fr-7mfx disclosed-coverage text, scraped every poll.
+ *     — its disclosed-coverage text, scraped every poll.
  *   - A `webglcontextlost` tripwire on the canvas (house convention, see
  *     capture-drain.verify.mjs / surface-tier.verify.mjs) — the actual
  *     definition of "the renderer crashed" for a WebGL context.
@@ -63,7 +64,7 @@
  *     `browser.on("disconnected")` (whole browser process died) — the
  *     other two things "crashed" could mean.
  *
- * VERDICTS (printed, and written to /tmp/fr-kz2p-<ticks>ticks-report.txt):
+ * VERDICTS (printed, and written to /tmp/degenerate-zoom-<ticks>ticks-report.txt):
  *   COMPLETED        — a download landed. Reports total wall time.
  *   STALL-TIMEOUT     — --capMs elapsed with no download, no crash, no
  *                       context loss, no render-error banner. Progress
@@ -88,7 +89,8 @@
  * `--samples=N` overrides the shipped 8x supersampling via `?surfacesamples=N`
  * (main.ts's diagnostic pin) — pass `--samples=1` to test the "is it just
  * the 8x multiplier" hypothesis directly, at the cost of no longer matching
- * the bead's own fixture exactly. Omit it to reproduce the shipped behavior.
+ * the original observation's fixture exactly. Omit it to reproduce the
+ * shipped behavior.
  */
 import fs from "node:fs";
 import process from "node:process";
@@ -110,7 +112,7 @@ const SETTLE_CAP_MS = Number(args.settleCapMs ?? 120_000);
 const SAMPLES = args.samples !== undefined ? Number(args.samples) : null;
 const POLL_MS = 5000;
 
-const log = (...a) => console.log("[fr-kz2p]", ...a);
+const log = (...a) => console.log("[degenerate-zoom]", ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Same helper as capture-export.verify.mjs: open a collapsed accordion
@@ -198,7 +200,7 @@ async function runScenario(ticks) {
   try {
     const ctx = await browser.newContext({
       ignoreHTTPSErrors: true,
-      // Same fixture as capture-export.verify.mjs (fr-vja8.68): 660x410,
+      // Same fixture as capture-export.verify.mjs: 660x410,
       // the smallest viewport above the app's mobile-layout breakpoints.
       viewport: { width: 660, height: 410 },
       deviceScaleFactor: 1,
@@ -280,7 +282,7 @@ async function runScenario(ticks) {
 
     try {
       await page.screenshot({
-        path: `/tmp/fr-kz2p-${ticks}ticks-pre-surface.png`,
+        path: `/tmp/degenerate-zoom-${ticks}ticks-pre-surface.png`,
       });
     } catch {
       // best-effort
@@ -334,7 +336,7 @@ async function runScenario(ticks) {
 
     try {
       await page.screenshot({
-        path: `/tmp/fr-kz2p-${ticks}ticks-post-settle.png`,
+        path: `/tmp/degenerate-zoom-${ticks}ticks-post-settle.png`,
       });
     } catch {
       // best-effort
@@ -431,16 +433,16 @@ async function runScenario(ticks) {
 
     try {
       await page.screenshot({
-        path: `/tmp/fr-kz2p-${ticks}ticks-final.png`,
+        path: `/tmp/degenerate-zoom-${ticks}ticks-final.png`,
       });
     } catch {
       // best-effort — page may be gone by now
     }
 
     // ---- Report --------------------------------------------------------
-    const reportPath = `/tmp/fr-kz2p-${ticks}ticks-report.txt`;
+    const reportPath = `/tmp/degenerate-zoom-${ticks}ticks-report.txt`;
     const report =
-      `fr-kz2p repro — ticks=${ticks} capMs=${CAP_MS} settleCapMs=${SETTLE_CAP_MS} samples=${SAMPLES ?? "shipped(8)"}\n` +
+      `degenerate-zoom repro — ticks=${ticks} capMs=${CAP_MS} settleCapMs=${SETTLE_CAP_MS} samples=${SAMPLES ?? "shipped(8)"}\n` +
       `VERDICT: ${verdict}\n` +
       `DETAIL: ${verdictDetail}\n` +
       `total wall: ${(elapsed() / 1000).toFixed(1)}s\n` +
@@ -506,7 +508,7 @@ async function main() {
 
 main()
   .catch((e) => {
-    console.error("[fr-kz2p] FATAL:", e);
+    console.error("[degenerate-zoom] FATAL:", e);
   })
   .finally(() => {
     // Probe, not a gate — always exit 0 regardless of verdict (see module

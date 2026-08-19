@@ -1,5 +1,5 @@
 /**
- * fr-b5x measurement harness for the "Surprise Me" quality-gate residual.
+ * Measurement harness for the "Surprise Me" quality-gate residual.
  *
  * `randomSystem` (src/fractal/random-system.ts) only returns a candidate
  * once it clears a quality gate probed on the SAME rng stream that rolled
@@ -10,9 +10,10 @@
  * kind of system, so tuning changes to the gate can be A/B'd against real
  * numbers instead of intuition.
  *
- * Methodology mirrors the fr-d61 validation: `SEEDS` seeded `randomSystem`
- * rolls, and every returned FLAT system (non-flat systems are out of scope
- * here -- see `systemIsFlat`) is re-probed via `runChaosGame` on `STREAMS`
+ * Methodology mirrors the seeded validation that tuned the generator's
+ * scale floor and weight cap: `SEEDS` seeded `randomSystem` rolls, and every
+ * returned FLAT system (non-flat systems are out of scope here -- see
+ * `systemIsFlat`) is re-probed via `runChaosGame` on `STREAMS`
  * independent fresh rng streams at `PROBE` points each -- the same
  * fresh-stream re-probe shape as random-system.test.ts's own re-probe
  * tests. Each stream's occupancy (`occupiedCellCount`) is compared against
@@ -81,7 +82,7 @@ interface FlatSystemRecord {
   symmetryOrder: number;
 }
 
-describe("Surprise Me residual sweep (fr-b5x)", () => {
+describe("Surprise Me residual sweep", () => {
   it("sweeps seeded rolls and reports the flat-system occupancy residual", () => {
     const startMs = performance.now();
 
@@ -149,7 +150,7 @@ describe("Surprise Me residual sweep (fr-b5x)", () => {
     // ---- Report ----
     const lines: string[] = [];
     lines.push("");
-    lines.push("=== Surprise Me residual sweep (fr-b5x) ===");
+    lines.push("=== Surprise Me residual sweep ===");
     lines.push(`Config: SEEDS=${SEEDS} PROBE=${PROBE} STREAMS=${STREAMS}`);
     lines.push("");
     lines.push("-- Totals --");

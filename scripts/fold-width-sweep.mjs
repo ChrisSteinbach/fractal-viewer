@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * fr-ck0w fold beam-width spill probe: sweeps `SURFACE_FOLD_BEAM_WIDTH`
+ * Fold beam-width spill probe: sweeps `SURFACE_FOLD_BEAM_WIDTH`
  * (src/fractal/surface-de.ts) across a list of widths and measures
  * settled-frame GPU trace cost on the "Mandelbox KIFS" preset, to find
  * where narrowing the fold-descent frontier (docs/fold-de-performance-brief.md
@@ -20,7 +20,7 @@
  *      app, select "Mandelbox KIFS" from the preset menu — whose render
  *      hint auto-enters Surface mode, src/fractal/presets.ts's
  *      `PRESET_RENDER_HINTS`), with the `?surfperf` query param appended
- *      (src/app/scene.ts, fr-ck0w) so every COMPLETED surface strip job
+ *      (src/app/scene.ts) so every COMPLETED surface strip job
  *      logs `[surfperf] settle complete <W>x<H> spentMs=<N>` to the
  *      console. `--mode=x11:<display>` is the only route to the REAL GPU
  *      driver on this box — headless Chromium falls back to SwiftShader
@@ -40,7 +40,7 @@
  *      session that never lost context as the width's measurement.
  *
  * KNOWN FAILURE MODE this script defends against (found while validating
- * it, fr-ck0w): the real Mesa/Iris driver on this box intermittently loses
+ * it): the real Mesa/Iris driver on this box intermittently loses
  * the WebGL context partway through the fold tracer's settle trace. Once
  * lost, every further GL call is a no-op, so the in-flight strip job
  * "completes" trivially and logs a normal-looking settle line with
@@ -87,7 +87,7 @@
  *   --port      Fixed `vite preview --strictPort` port (must be free).
  *   --out       Where to write the full JSON results.
  *
- * This script is tooling for fr-ck0w's experiment 1, not the sweep itself —
+ * This script is tooling for the beam-width experiment, not the sweep itself —
  * another step runs the real sweep. Smoke-validate with
  * `--widths=12 --mode=x11::0`: since the shipped value already IS 12, this
  * exercises the full edit/build/serve/drive/restore pipeline as a

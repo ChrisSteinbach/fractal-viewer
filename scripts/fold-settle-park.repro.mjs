@@ -1,4 +1,4 @@
-// fr-d6g5: repro for the 3D fold-core WebGPU compute settle park bug —
+// Repro for the 3D fold-core WebGPU compute settle park bug —
 // "Full detail" (compute) surface renders advance to a pose-dependent
 // percent then stop retiring rays forever, with rAF still ticking at 60Hz
 // and the GPU idle. Modeled on scripts/balloon-real-driver.verify.mjs:
@@ -7,16 +7,16 @@
 // mandelboxKifs preset, same `#modeSurfaceBtn` click + `#surfaceProgress`
 // polling idioms — but this script's job is to CAPTURE a park, not to
 // time a settle. It drives the session with `?surfacetrace` enabled
-// (main.ts, fr-d6g5) so `window.__surfaceTraceLog` records every
+// (main.ts) so `window.__surfaceTraceLog` records every
 // march/shade/readback BEGIN/END pair the compute frame loop emits; a
 // wedged GPU await shows up as a BEGIN with no END as the last line ever
 // appended — the log stops growing exactly when the frame loop stops
 // advancing.
 //
 // The SETTLE VERDICT comes from `?surfacestate`'s window.__surfaceState()
-// probe (main.ts's SurfaceStateProbe), not the #surfaceProgress text
-// (fr-d6g5): the row hides on completion and — since the fr-d6g5 ui.ts fix
-// — clears its stale text when it does, but a poll still can't tell
+// probe (main.ts's SurfaceStateProbe), not the #surfaceProgress text: the
+// row hides on completion and — since the ui.ts stale-text fix — clears
+// its stale text when it does, but a poll still can't tell
 // "hidden because done" from "hidden because nothing has started" from
 // text alone, and the row's integer percent floors so it can never
 // actually paint 100 even while visible. `probe.settled` is the one
@@ -26,17 +26,18 @@
 // This is a probe, not a gate: it always exits 0 and reports whatever
 // state it finds (SETTLED / PARKED-WEDGED / PARKED-SPINNING / TIMEOUT).
 //
-// PARKED-SPINNING IS NOT A RENDERER VERDICT ON THIS SCENE, and fr-2ojg
-// measured why. The staleness test reads the row's INTEGER percent, and
-// mandelboxKifs at this 512x320 viewport resolves roughly ONE percentage
-// point per 80 s of entirely healthy work — a settle frame's whole shade
-// phase is ~1.4 points of an 8-pass job — so any `--parkMs` under about
-// 150 s calls a working build parked. Measured on both sides of fr-2ojg
-// at `--parkMs=90000`: the pre-change build sat at 10% from t=260s to the
-// 400 s cap and reported PARKED-SPINNING; the fixed build, which is
-// strictly further along at every instant (12% at t=100s where the
-// baseline needed 260 s to reach 10%), reported the same thing sooner
-// simply by arriving at a frozen integer sooner. So the default
+// PARKED-SPINNING IS NOT A RENDERER VERDICT ON THIS SCENE, and the
+// two-term shade cost model's A/B measured why. The staleness test reads
+// the row's INTEGER percent, and mandelboxKifs at this 512x320 viewport
+// resolves roughly ONE percentage point per 80 s of entirely healthy work
+// — a settle frame's whole shade phase is ~1.4 points of an 8-pass job —
+// so any `--parkMs` under about 150 s calls a working build parked.
+// Measured on both sides of that change at `--parkMs=90000`: the
+// pre-change build sat at 10% from t=260s to the 400 s cap and reported
+// PARKED-SPINNING; the fixed build, which is strictly further along at
+// every instant (12% at t=100s where the baseline needed 260 s to reach
+// 10%), reported the same thing sooner simply by arriving at a frozen
+// integer sooner. So the default
 // `--parkMs` is the honest setting, PARKED-WEDGED (the trace log itself
 // frozen) is the verdict that means what it says, and SPINNING is worth
 // acting on only against a control run of the other build.
@@ -58,7 +59,7 @@ const BASE = args.url ?? "https://localhost:5174";
 const CAP_MS = Number(args.capMs ?? 600000);
 const PARK_MS = Number(args.parkMs ?? 150000);
 const POLL_MS = 5000;
-const TRACE_TAIL_PATH = "/tmp/fr-d6g5-trace-tail.txt";
+const TRACE_TAIL_PATH = "/tmp/fold-settle-park-trace-tail.txt";
 
 const log = (...a) => console.log("[fold-settle-park]", ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -197,7 +198,7 @@ async function sampleFromPage(page) {
     const trace = window.__surfaceTraceLog;
     const traceLen = trace ? trace.length : -1;
     const lastLine = trace && trace.length ? trace[trace.length - 1] : "(none)";
-    // The settle authority (fr-d6g5, see header comment) — defined from
+    // The settle authority (see header comment) — defined from
     // first paint since `?surfacestate` is on the URL.
     const probe = window.__surfaceState?.() ?? null;
     return { raw: prog, renderError, traceLen, lastLine, probe };
@@ -260,7 +261,8 @@ async function run() {
     await page.goto(url, { waitUntil: "load", timeout: 60000 });
     // Mutter only sends frame callbacks to VISIBLE surfaces, and the app's
     // settle machinery is present-gated — an occluded window parks it for
-    // reasons that have nothing to do with fr-d6g5. Keep the window on top.
+    // reasons that have nothing to do with the settle park. Keep the
+    // window on top.
     await page.bringToFront();
     await page.waitForTimeout(4000);
 
@@ -334,7 +336,7 @@ async function run() {
         traceLenChangedAt = elapsed;
       }
 
-      // The probe is the settle AUTHORITY (fr-d6g5, header comment):
+      // The probe is the settle AUTHORITY (header comment):
       // declare as soon as it says so, regardless of the pct scrape above
       // (which stays in the timeline purely for corroboration).
       if (sample.probe && sample.probe.settled === true) {
@@ -387,7 +389,7 @@ async function run() {
     // ---- Report -----------------------------------------------------
     const last250 = fullTrace.slice(-250);
     const tailDump =
-      `# fr-d6g5 trace tail — verdict=${verdict} pct=${verdictPct ?? "n/a"} ` +
+      `# fold-settle-park trace tail — verdict=${verdict} pct=${verdictPct ?? "n/a"} ` +
       `fullTraceLen=${fullTrace.length} dumped=${last250.length}\n` +
       last250.join("\n") +
       "\n";

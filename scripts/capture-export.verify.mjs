@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * fr-y6m0 capture-export gate: end-to-end PASS/FAIL verification, in a real
+ * Capture-export gate: end-to-end PASS/FAIL verification, in a real
  * headless browser, that BOTH surface capture drains now run through the
  * same pipelined strip pump the live settle uses (scene.ts's pumpStrips) —
- * the yielding Save-PNG drain (drainStripsAsync, fr-7mfx) and the
+ * the yielding Save-PNG drain (drainStripsAsync) and the
  * synchronous thumbnail/offline drain (drainStripsSync, via
  * captureThumbnail("surface") -> renderSurface("full")). Unlike
  * scripts/capture-drain.verify.mjs — a MEASUREMENT harness that reports A/B
@@ -31,19 +31,17 @@
  * FOUR PHASES against one live surface session, in order:
  *   1. Enter Surface mode, wait for the live settle (the unchanged
  *      pipelined pump — the baseline both drains are measured against).
- *   2. Save PNG to a real, completed download — the yielding async drain
- *      (fr-7mfx).
+ *   2. Save PNG to a real, completed download — the yielding async drain.
  *   3. Save PNG again, Cancel mid-drain: the export modal must open, the
  *      cancel must be honoured, and the surface session must still be
- *      interactive afterward — a cancelled export must not strand the pane
- *      (fr-8d3q).
+ *      interactive afterward — a cancelled export must not strand the pane.
  *   4. Save to collection: the SYNCHRONOUS drain, via
  *      captureThumbnail("surface") -> renderSurface("full") ->
  *      drainStripsSync. This is the phase the bug above lived in, so its
  *      completion — not just its output — is the load-bearing assertion.
  *
- * ZOOMED OUT ON PURPOSE — AND SHRUNK (fr-vja8.68). Every phase runs on a
- * camera zoomed well back from the attractor first: at the shipped default
+ * ZOOMED OUT ON PURPOSE — AND SHRUNK. Every phase runs on a camera
+ * zoomed well back from the attractor first: at the shipped default
  * framing, a full-tier trace of the default preset is on the order of 10
  * MINUTES under SwiftShader — a gate that has to run routinely cannot
  * afford that. Zoomed out, most rays miss the attractor immediately and
@@ -53,11 +51,12 @@
  * too heavy for a software rasterizer: the phase-2 export outlived its
  * 240s bound (measured >330s and still grinding), so phase 3's click
  * found #savePngBtn busy-disabled and the run died on a stalled click — a
- * failure that PRE-EXISTS the fr-vja8 campaign (A/B-proven identical on
- * pre-campaign main). The fix is the FIXTURE, not the budgets: 660x410
- * (the smallest viewport above the app's mobile-layout breakpoints) and
- * 18 ticks keep the identical code path — the strip pump, both drains, a
- * real settle over the default-preset Surface entry — while cutting
+ * failure that PRE-EXISTS the quality campaign that found it (A/B-proven
+ * identical on pre-campaign main). The fix is the FIXTURE, not the
+ * budgets: 660x410 (the smallest viewport above the app's mobile-layout
+ * breakpoints) and 18 ticks keep the identical code path — the strip
+ * pump, both drains, a real settle over the default-preset Surface entry —
+ * while cutting
  * per-pixel cost ~1.9x, and every export phase still takes real seconds,
  * so the busy-disabled button, the disclosed wait and a mid-drain Cancel
  * all stay genuinely observable. MEASURED 2026-08-18 (SwiftShader, quiet
@@ -99,17 +98,17 @@ const BASE = (process.argv[2] ?? "https://localhost:4173").replace(/\/+$/, "");
  * zoomed-out (cheap) frame this script insists on — a real timeout means
  * this box is unusually slow or the default pose unusually heavy, not that
  * the gate needs a longer bound. Recalibrated 180s -> 90s with the
- * fr-vja8.68 fixture: measured 14.1s on all three green runs (16.0s the
+ * shrunk fixture: measured 14.1s on all three green runs (16.0s the
  * worst observation of the day), so 90s keeps >5x margin over the worst. */
 const SETTLE_TIMEOUT_MS = 90_000;
 const SETTLE_POLL_MS = 2_000;
 /** Bound on the Save-PNG download (phase 2) — the async yielding drain.
- * Deliberately NOT tightened with the fr-vja8.68 shrink: the export's wall
+ * Deliberately NOT tightened with the fixture shrink: the export's wall
  * is bimodal under SwiftShader (17.6s / 80.8s / 39.0s across the three
- * green runs — the strip planner's capture-side raise-only ratchet,
- * fr-id9r/fr-y1m7 by design, turns one slow readback into micro-strip
- * passes), so 240s is ~3x over the worst observed mode where "5x over the
- * typical run" would sit dangerously inside it. */
+ * green runs — the strip planner's capture-side raise-only ratchet, by
+ * design, turns one slow readback into micro-strip passes), so 240s is
+ * ~3x over the worst observed mode where "5x over the typical run" would
+ * sit dangerously inside it. */
 const EXPORT_DOWNLOAD_TIMEOUT_MS = 240_000;
 /** Bound on waiting out the "Export cancelled" toast (phase 3). */
 const CANCEL_TOAST_TIMEOUT_MS = 30_000;
@@ -128,7 +127,7 @@ const THUMBNAIL_MIN_CHARS = 500;
 /** Floor on the Save-PNG download's byte size (phase 2): an INTEGRITY
  * floor — a zero-byte, truncated or catastrophically failed encode cannot
  * reach it — NOT a content check: THUMBNAIL_MIN_CHARS's own discipline,
- * one drain over. CALIBRATED TO THE fr-vja8.68 FIXTURE (2026-08-18,
+ * one drain over. CALIBRATED TO THE SHRUNK FIXTURE (2026-08-18,
  * SwiftShader, 660x410), where the frame is mostly backdrop and the PNG's
  * bytes are dominated by px-proportional backdrop noise, not the
  * attractor: measured 11_379-11_393 bytes across four runs at the shipped
@@ -140,7 +139,8 @@ const THUMBNAIL_MIN_CHARS = 500;
  * 660x410 canvas PNG MEASURES ~7_005 bytes through Chrome's own encoder
  * (twice; the "all-black compresses to ~1-3K" a first cut of this comment
  * assumed is false for this encoder) — above this floor, so an all-black
- * or fr-1wbv-class alpha-hole frame is not distinguishable by size here.
+ * frame, or one holed by the coverage-alpha leak's transparent misses, is
+ * not distinguishable by size here.
  * (2) Extrapolating the two measured poses to zero attractor puts a
  * BACKDROP-ONLY frame at ~7.6-8.4K — also above this floor — so a render
  * that drew the gradient but no fractal is not distinguishable by size
@@ -225,7 +225,7 @@ async function main() {
   try {
     const ctx = await browser.newContext({
       ignoreHTTPSErrors: true,
-      // fr-vja8.68: 660x410, the smallest viewport comfortably above the
+      // 660x410, the smallest viewport comfortably above the
       // app's mobile-layout breakpoints (width <= 640px / height <= 380px
       // would swap in the phone panel, which this script does not drive).
       // Every trace-heavy phase — the settle, the Save-PNG re-trace at
@@ -299,7 +299,7 @@ async function main() {
       return;
     }
 
-    // --- 2. Save PNG to completion: the yielding async drain (fr-7mfx) -----
+    // --- 2. Save PNG to completion: the yielding async drain ---------------
     await openPanelSection(page, "captureSection");
     const dlPromise = page.waitForEvent("download", {
       timeout: EXPORT_DOWNLOAD_TIMEOUT_MS,
@@ -332,7 +332,7 @@ async function main() {
     check(/Saved /.test(toast1), `save toast: "${toast1.trim().slice(0, 70)}"`);
     await page.waitForTimeout(1500);
 
-    // --- 3. Save PNG again, Cancel mid-drain (fr-8d3q) ----------------------
+    // --- 3. Save PNG again, Cancel mid-drain --------------------------------
     // Clear the leftover "Saved..." toast from phase 2 first, so the
     // cancel-toast check below can't be fooled by stale text.
     await page.evaluate(() => {

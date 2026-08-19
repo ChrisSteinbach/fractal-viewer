@@ -1,27 +1,28 @@
 /**
- * fr-z70m measurement harness: view-dependent erosion in the 3D surface
+ * Erosion measurement harness: view-dependent erosion in the 3D surface
  * render (sierpinski tetra + menger sponge screenshots: geometry on one
  * side of the frame dissolved into dropout speckle while the rest stayed
  * crisp). Mirrors the GLSL march loop (`surface-material.ts` main():
  * sphere gate, cone eps, empty-space grid skip, budgets, stepScale) on
  * the CPU against the tested oracles.
  *
- * MEASURED VERDICT (drove the shipped fix). The DE, the fr-55r5/fr-zkt2
- * exits and the grid floors are all sound — (A) found 0 violations of the
- * true distance in 14k+ cell samples (the 65/12 sub-floor FULL-DESCENT
- * values are DE looseness at off-center points, exactly the conservatism
- * the validity chain allows), and (B) found 0 cutoff-contract mismatches.
- * The erosion is pure MARCH-BUDGET EXHAUSTION: rays that thread gaps in
- * near geometry or graze a face need many small steps, and fr-55r5's skip
- * loop charged every cheap grid skip (small by construction: the floor is
- * the cell-center DE minus the cell half-diagonal) against the same
- * 96-step budget as full descents, shrinking exactly those rays' reach —
- * (C)/(D) localize the loss to view-dependent bands and poses, matching
- * the screenshots. (E) sized the shipped budgets: separate whole-ray skip
- * cap 256 (worst measured ray: 189 skips; 512 changed nothing) + full-tier
- * march budget 96 -> 160 took the worst-pose loss from 44/5508 true hits
- * (0.80%) to 0 on sierpinski and 65/24418 (0.27%) to 5 (0.02%) on menger,
- * with the march unchanged until the old loop's exhaustion point.
+ * MEASURED VERDICT (drove the shipped fix). The DE, the march-epsilon
+ * cutoff and value-exact sphere-floor exits and the grid floors are all
+ * sound — (A) found 0 violations of the true distance in 14k+ cell samples
+ * (the 65/12 sub-floor FULL-DESCENT values are DE looseness at off-center
+ * points, exactly the conservatism the validity chain allows), and (B)
+ * found 0 cutoff-contract mismatches. The erosion is pure MARCH-BUDGET
+ * EXHAUSTION: rays that thread gaps in near geometry or graze a face need
+ * many small steps, and the grid's original skip loop charged every cheap
+ * grid skip (small by construction: the floor is the cell-center DE minus
+ * the cell half-diagonal) against the same 96-step budget as full descents,
+ * shrinking exactly those rays' reach — (C)/(D) localize the loss to
+ * view-dependent bands and poses, matching the screenshots. (E) sized the
+ * shipped budgets: separate whole-ray skip cap 256 (worst measured ray: 189
+ * skips; 512 changed nothing) + full-tier march budget 96 -> 160 took the
+ * worst-pose loss from 44/5508 true hits (0.80%) to 0 on sierpinski and
+ * 65/24418 (0.27%) to 5 (0.02%) on menger, with the march unchanged until
+ * the old loop's exhaustion point.
  *
  *  (A) GRID VALIDITY: stored floors vs the full-descent DE at random
  *      in-cell points, and every sub-floor DE value re-checked against a
@@ -78,9 +79,9 @@ function sampleGrid(grid: SurfaceGrid, p: Vec3): number {
 
 /** The GLSL main() march, minus shading: sphere gate, cone-eps hit test,
  * optional grid skip, budget, stepScale. Dither omitted (sub-epsilon).
- * `separateSkipBudget` mirrors the fr-z70m fix (skips drain their own
- * whole-ray cap instead of uMarchSteps); false replays the shipped
- * fr-55r5 loop where every skip consumed an analytic march step. */
+ * `separateSkipBudget` mirrors the erosion fix (skips drain their own
+ * whole-ray cap instead of uMarchSteps); false replays the original
+ * grid-skip loop where every skip consumed an analytic march step. */
 function march(
   de: SurfaceDE,
   grid: SurfaceGrid | null,
@@ -118,7 +119,7 @@ function march(
     p[2] = ro[2] + rd[2] * t;
     if (grid) {
       if (separateSkipBudget) {
-        // fr-z70m loop: drain consecutive skips against skipsLeft.
+        // Fixed loop: drain consecutive skips against skipsLeft.
         for (; skipsLeft > 0; skipsLeft--) {
           const g = sampleGrid(grid, p);
           if (g <= eps) break;
@@ -131,7 +132,7 @@ function march(
           p[2] = ro[2] + rd[2] * t;
         }
       } else {
-        // Shipped fr-55r5 loop: one skip consumes this march step.
+        // Original grid-skip loop: one skip consumes this march step.
         const g = sampleGrid(grid, p);
         if (g > eps) {
           t += g * de.stepScale;
@@ -341,7 +342,7 @@ function poseRays(
   return { ro, rays, pixelEps: APP_PIXEL_EPS };
 }
 
-describe("fr-z70m erosion repro", () => {
+describe("erosion repro", () => {
   const systems = [
     { label: "sierpinski", transforms: sierpinskiTetrahedron() },
     { label: "menger", transforms: mengerSponge() },

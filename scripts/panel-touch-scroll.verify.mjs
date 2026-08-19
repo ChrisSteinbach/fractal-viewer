@@ -2,7 +2,7 @@
 /**
  * Measures whether a touch scroll gesture that STARTS ON a panel control
  * accidentally activates that control on real Chromium — the open question
- * left after fr-zoi hardened range sliders specifically
+ * left after an earlier pass hardened range sliders specifically
  * (src/app/slider-scroll-guard.ts, verified at the time against real
  * Chromium under a touch harness). This script generalizes that harness to
  * the panel's other interactive shapes: a <select> (#colorMode), a
@@ -144,10 +144,10 @@ async function snapshotState(page, selector) {
 /** The four instrumented static panel targets (item 3 of the brief).
  * fogSlider is the KNOWN hazard — the positive control that proves the
  * harness detects a real one when it exists. All four sat in Appearance
- * when this was written; fr-186c split that section three ways, so each
+ * when this was written; the Appearance split divided it three ways, so each
  * trial now opens whichever section actually contains its target. */
 const TARGETS = [
-  // The select trial was #colorMode until fr-186c, which split Appearance and
+  // The select trial was #colorMode until the panel split Appearance and
   // left Color 106px tall — short enough that the panel no longer overflows
   // when it is the open section, so the trial swiped 1px and (correctly)
   // reported INCONCLUSIVE rather than a SAFE it had not earned. #background
@@ -513,7 +513,7 @@ async function main() {
     await page.waitForTimeout(400); // let the 0.32s slide-in transition land.
 
     // Open whichever section actually contains each target, rather than one
-    // named section: fr-186c split Appearance into Cloud/Color/Atmosphere and
+    // named section: the panel split Appearance into Cloud/Color/Atmosphere and
     // scattered these four across all three, so a hardcoded section name is
     // one rename away from a harness that proves nothing.
     const openSectionFor = async (selector) => {

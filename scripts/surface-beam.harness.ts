@@ -1,7 +1,7 @@
 /**
- * fr-v6yg measurement harness for the surface-DE descent beam.
+ * Measurement harness for the surface-DE descent beam.
  *
- * The fr-beck spike measured that single-chain greedy descent OVERSHOOTS
+ * The 4D surface DE spike measured that single-chain greedy descent OVERSHOOTS
  * the true distance on doubleRotation's profile (2 maps, weight 6:1, sigma
  * 0.93/0.22): a non-descended in-sphere branch carries no certificate, and
  * when its piece is the nearest one the estimate exceeds the real distance
@@ -21,21 +21,19 @@
  *  (3) what does width 2 cost (inverse-affine applications per call) and
  *      what does it do to tightness (DE/D ratios, void false-hit proxy)?
  *
- * MEASURED VERDICT (recorded on the fr-v6yg bead; drove the shipped
- * design): width 1 overshoots not just on the doubleRotation profile
- * (~19% of R) but on plain shipped presets (default 10.8%R, spiral 8.6%R,
- * pyramid 6.2%R, jerusalem 6.1%R) with per-map sigma_max as low as 0.4 —
- * while other systems at the SAME sigma stay clean, so no predicate
- * exists and `buildSurfaceDE`/`buildSurfaceDE4` always build width 2.
- * Width 2 collapses violations to the deep-descent fp-noise floor
- * everywhere measured except three disclosed residual profiles
- * (kaleidoscope copies of a near-isometric map, whose image norms tie
- * exactly; m >= 3 slow-map systems; sigma_max >= 0.96), improves
- * tightness (the second chain refines the shallow barely-escaped
- * certificates fr-beck traced every ghost to), and costs ~1.7-1.8x
- * inverse applications.
+ * MEASURED VERDICT (it drove the shipped design): width 1 overshoots not just
+ * on the doubleRotation profile (~19% of R) but on plain shipped presets
+ * (default 10.8%R, spiral 8.6%R, pyramid 6.2%R, jerusalem 6.1%R) with per-map
+ * sigma_max as low as 0.4 — while other systems at the SAME sigma stay clean,
+ * so no predicate exists and `buildSurfaceDE`/`buildSurfaceDE4` always build
+ * width 2. Width 2 collapses violations to the deep-descent fp-noise floor
+ * everywhere measured except three disclosed residual profiles (kaleidoscope
+ * copies of a near-isometric map, whose image norms tie exactly; m >= 3
+ * slow-map systems; sigma_max >= 0.96), improves tightness (the second chain
+ * refines the shallow barely-escaped certificates the 4D spike traced every
+ * ghost to), and costs ~1.7-1.8x inverse applications.
  *
- * Methodology mirrors the fr-beck spike's section (a): per system, a
+ * Methodology mirrors the 4D surface DE spike's section (a): per system, a
  * seeded chaos-game cloud is the ground-truth sample; queries are 400
  * jittered cloud points (+-0.15/coord), 200 uniform points in a cube of
  * half-side 1.2R, and 100 exact (on-cloud) points. `estimate > nearest +
@@ -47,29 +45,28 @@
  * whose estimate reads below a marcher hit test (0.01R). All RNG streams
  * are seeded; results are reproducible bit-for-bit.
  *
- * FR-1Z6P ADDENDUM: the 3D section now measures BOTH estimators (base and
- * `estimateDistanceRefined`), exactly like the 4D section always has — the
- * refined rows are the ghost-balloon fix's evidence (voidFalseHit is the
- * balloon proxy), and the base rows double as a bit-exactness regression
- * of the shared descent body against the pre-refactor baseline.
+ * REFINED-CERTIFICATE ADDENDUM: the 3D section now measures BOTH estimators
+ * (base and `estimateDistanceRefined`), exactly like the 4D section always
+ * has — the refined rows are the ghost-balloon fix's evidence (voidFalseHit
+ * is the balloon proxy), and the base rows double as a bit-exactness
+ * regression of the shared descent body against the pre-refactor baseline.
  *
- * FR-JKPN ADDENDUM: every width loop now spans 1-4. Widths 3/4 are the
- * validity slots (rank-3/4 chains, live only while in-sphere) that closed
- * the width-2 residual above; `buildSurfaceDE`/`buildSurfaceDE4` now
- * always build width 4. Measured verdict (recorded on the fr-jkpn bead,
- * CLOUD=300k, refined estimator, w2 -> w4): jerusalem 38 viol @3.6%R ->
- * 4 @0.003%R, default/spiral/pyramid/dodecahedron -> 0, sigma-0.96 sweep
- * 23 @2.0%R -> 1 @0.0 (width 4 is exhaustive for m = 2), repro3 98
- * @2.1%R -> 57 @1.2%R (48-level cap clamps sigma-0.93 coverage; void
- * false hits tick 0 -> 2/435 there from chains legitimately surviving to
- * the clamped cap), preset voidFalseHits stay 0 everywhere, cost within
- * +/-5% of width 2 on clean presets and +28% worst (menger, refined).
- * The zero-translation kaleidoscope tie tree stays disclosed: repro2+sym4y
- * holds ~9.8%R refined at any finite width (order^depth exact ties;
- * rank selection cannot split them). The w1/w2 rows remain the
- * bit-exactness regression of the pre-fr-jkpn beam.
+ * VALIDITY-SLOT ADDENDUM: every width loop now spans 1-4. Widths 3/4 are the
+ * validity slots (rank-3/4 chains, live only while in-sphere) that closed the
+ * width-2 residual above; `buildSurfaceDE`/`buildSurfaceDE4` now always build
+ * width 4. Measured verdict (CLOUD=300k, refined estimator, w2 -> w4):
+ * jerusalem 38 viol @3.6%R -> 4 @0.003%R, default/spiral/pyramid/dodecahedron
+ * -> 0, sigma-0.96 sweep 23 @2.0%R -> 1 @0.0 (width 4 is exhaustive for m =
+ * 2), repro3 98 @2.1%R -> 57 @1.2%R (48-level cap clamps sigma-0.93 coverage;
+ * void false hits tick 0 -> 2/435 there from chains legitimately surviving to
+ * the clamped cap), preset voidFalseHits stay 0 everywhere, cost within +/-5%
+ * of width 2 on clean presets and +28% worst (menger, refined). The
+ * zero-translation kaleidoscope tie tree stays disclosed: repro2+sym4y holds
+ * ~9.8%R refined at any finite width (order^depth exact ties; rank selection
+ * cannot split them). The w1/w2 rows remain the bit-exactness regression of
+ * the beam before the validity slots.
  *
- * FR-XOK8 ADDENDUM: the depth-cap ceiling rose 48 -> 128
+ * DEPTH-CEILING ADDENDUM: the depth-cap ceiling rose 48 -> 128
  * (MAX_DESCENT_DEPTH — the old ceiling clamped sigma-0.93 systems at
  * 0.93^48 ~ 0.031R of unresolved feature size, rendering doubleRotation's
  * core as a smooth solid ball). Slow-map rows re-baselined at their new
@@ -78,11 +75,11 @@
  * excess, counted at the 1e-9 threshold) grow with depth and now dominate
  * the slow rows' viol counts — read maxExcess, not viol, on those rows.
  * Rows for systems below sigma 0.825 (every shipped 3D preset) are
- * bit-identical to the fr-jkpn baseline; repro3's disclosed width
+ * bit-identical to the validity-slot baseline; repro3's disclosed width
  * residual (1.2%R) and wanderer-terminal void false hits (2/435) persist
  * unchanged at depth 127, confirming they were never cap artifacts.
  *
- * FR-5RVK ADDENDUM: section (4) measures PURE-FOLD systems — maps whose
+ * PURE-FOLD ADDENDUM: section (4) measures PURE-FOLD systems — maps whose
  * variation list is exactly one active fold-family entry (`boxfold`,
  * `spherefold`, `mandelbox`), which `surface-de.ts` decomposes into inverse
  * BRANCHES (27/3/81 of them) and descends through a fixed-width
@@ -114,19 +111,19 @@
  * the affine presets' 90-865, because a visit fans out to its 27/81
  * branches off ONE inverse matrix.
  *
- * FR-TIKZ ADDENDUM: section (4)'s gates pin the PRODUCTION estimator per
- * system class — base for fold systems (the estimator the fold GLSL
- * variant, the WGSL fold core and the fr-aj4w grid floors march),
+ * PRODUCTION-ESTIMATOR ADDENDUM: section (4)'s gates pin the PRODUCTION
+ * estimator per system class — base for fold systems (the estimator the fold
+ * GLSL variant, the WGSL fold core and the plain grid floors march),
  * refined for affine — the shape balloon-inversion.harness.ts shipped
  * with; the refined fold rows stay measured and printed but DISCLOSE
  * rather than gate. The mandelboxKifs width-bound tail is NOT
- * exact-class-only as fr-2v0y recorded it: the 60k probe set reaches it
- * OFF-attractor (refined j1@7.7e-4) and erodes it to 1.66%R refined /
- * 0.92%R base, against 0.22%R / 0.165%R at 300k — tails are
- * probe-set-shaped (fr-5wlv.1: the spherefold outer-decile erosion runs
- * 13x its whole-attractor tail), so budgets cover the two RECORDED
+ * exact-class-only as the per-system budget split recorded it: the 60k probe
+ * set reaches it OFF-attractor (refined j1@7.7e-4) and erodes it to 1.66%R
+ * refined / 0.92%R base, against 0.22%R / 0.165%R at 300k — tails are
+ * probe-set-shaped (the balloon spike: the spherefold outer-decile erosion
+ * runs 13x its whole-attractor tail), so budgets cover the two RECORDED
  * regimes. Base off-attractor and deep-void columns are 0 at both
- * densities on every fold system; the fr-2v0y mandelboxKifs override
+ * densities on every fold system; the mandelboxKifs override
  * re-sized 3e-3 -> 1.2e-2 for the base row.
  *
  * Usage:
@@ -201,7 +198,8 @@ function envInt(name: string, fallback: number): number {
 const CLOUD = envInt("CLOUD", 300_000);
 
 /** The 3D mirror of doubleRotation's profile (its w blocks dropped): the
- * exact repro the fr-beck spike confirmed on the shipped surface-de.ts. */
+ * exact repro the 4D surface DE spike confirmed on the shipped
+ * surface-de.ts. */
 function repro3D(sigmaA = 0.93, sigmaB = 0.22): Transform[] {
   return [
     {
@@ -335,7 +333,7 @@ function countingDE4(
   // harness-profiles.ts's countingDE, which learned this the hard way: an
   // explicit field list here had silently dropped SurfaceDE4Map's newer fold
   // fields (foldKind/foldInvW/foldSigma/invMSigmaMin/invTNorm/bnbDir),
-  // caught only once fr-dyof wired scripts/ into `tsc --noEmit`.
+  // caught only once scripts/ was wired into `tsc --noEmit`.
   const maps = de.maps.map((m): SurfaceDE4Map => ({
     ...m,
     get invM() {
@@ -426,7 +424,7 @@ interface System3 {
 /** The seeded ground truth a 3D system's rows are all measured against:
  * its DE, the spike-shaped query mix, and brute-force nearest-cloud
  * distances. Shared verbatim by {@link measure3} (affine ladder rows) and
- * {@link measureFold} (fr-5rvk frontier rows) so both sections quote the
+ * {@link measureFold} (pure-fold frontier rows) so both sections quote the
  * same numbers for the same seeds. */
 function probe3(sys: System3): {
   de: SurfaceDE;
@@ -484,87 +482,84 @@ const FOLD_KIND_NAMES = ["affine", "boxfold", "spherefold", "mandelbox"];
 /** How many of a system's queries the width-invariance check re-runs. */
 const WIDTH_INVARIANCE_PROBES = 200;
 
-/** DEEP-void threshold: the criterion the fr-5rvk fold work itself measured
- * against (and the one `surface-de.test.ts`'s pure-fold void suites pin at
- * zero), reported alongside `collect`'s shared `voidFalseHit` column so the
- * two are comparable. `collect` calls anything past `0.05 * R` a void; the
- * shallow `0.05R-0.15R` band inside that is where a VALID but loose fold
- * bound legitimately reads under a marcher epsilon, and the fold
- * estimators ARE much looser than the affine ones (measured median DE/D
- * 0.13 mandelbox / 0.20 spherefold, against 0.61-0.84 across the affine
- * presets), so the shallow band measures tightness, not soundness. Only a
- * false hit in genuine deep void paints a ghost. */
+/** DEEP-void threshold: the criterion the pure-fold branch sweep itself
+ * measured against (and the one `surface-de.test.ts`'s pure-fold void suites
+ * pin at zero), reported alongside `collect`'s shared `voidFalseHit` column
+ * so the two are comparable. `collect` calls anything past `0.05 * R` a void;
+ * the shallow `0.05R-0.15R` band inside that is where a VALID but loose fold
+ * bound legitimately reads under a marcher epsilon, and the fold estimators
+ * ARE much looser than the affine ones (measured median DE/D 0.13 mandelbox /
+ * 0.20 spherefold, against 0.61-0.84 across the affine presets), so the
+ * shallow band measures tightness, not soundness. Only a false hit in genuine
+ * deep void paints a ghost. */
 const DEEP_VOID_FACTOR = 0.15;
 
 /** Marcher hit-test proxy, shared with `collect`'s void column. */
 const VOID_HIT_FACTOR = 0.01;
 
 /** On-attractor EROSION budget, as a fraction of `R`, for the `exact`
- * probe class of the PRODUCTION row (fr-tikz — the gate pins the
- * estimator each system class ships: base for folds, refined for
- * affine). Those probes are cloud points, so their `nearest` is 0 by
- * construction and ANY positive estimate counts as a violation at the
- * 1e-9 threshold — the column measures how far the descent's bound sits
- * OFF a point known to be on the attractor, not an overshoot into void.
- * The affine and 4D sections carry the identical tail (repro2 w4 refined
- * `e66@3.2e-8`, doubleRotation w4 refined `e98@3.0e-8`) and the module doc
- * says of it: read maxExcess, not viol. Measured (CLOUD=300k): the fold
- * PAIRS read 0 or fp-noise — the worst is the spherefold pair at 9/100,
- * 1.02e-4 = 0.0060%R on the fr-pjqw probe set (6/100 at 5.55e-5 before
- * the probe-fit ball moved its R; base and refined read it identically),
- * still two orders below a marcher epsilon at the set's deepest descent
- * — so 1e-4 of R holds every pair/mix row here with ~1.7x headroom while
- * refusing anything an order worse. One row needs more: see
- * {@link EXACT_EROSION_BUDGET_R_OVERRIDES} (fr-2v0y, re-sized by
- * fr-tikz). The jittered/uniform classes stay a HARD zero on the
- * production row: an overshoot there is a real validity break; the
- * non-production row's trips print as a disclosure line instead
- * (fr-tikz). */
+ * probe class of the PRODUCTION row (the gate pins the estimator each system
+ * class ships: base for folds, refined for affine). Those probes are cloud
+ * points, so their `nearest` is 0 by construction and ANY positive estimate
+ * counts as a violation at the 1e-9 threshold — the column measures how far
+ * the descent's bound sits OFF a point known to be on the attractor, not an
+ * overshoot into void. The affine and 4D sections carry the identical tail
+ * (repro2 w4 refined `e66@3.2e-8`, doubleRotation w4 refined `e98@3.0e-8`)
+ * and the module doc says of it: read maxExcess, not viol. Measured
+ * (CLOUD=300k): the fold PAIRS read 0 or fp-noise — the worst is the
+ * spherefold pair at 9/100, 1.02e-4 = 0.0060%R on the probe-fit ball's probe
+ * set (6/100 at 5.55e-5 before the probe-fit ball moved its R; base and
+ * refined read it identically), still two orders below a marcher epsilon at
+ * the set's deepest descent — so 1e-4 of R holds every pair/mix row here with
+ * ~1.7x headroom while refusing anything an order worse. One row needs more:
+ * see {@link EXACT_EROSION_BUDGET_R_OVERRIDES} (the per-system budget split,
+ * re-sized by the production-estimator gate). The jittered/uniform classes
+ * stay a HARD zero on the production row: an overshoot there is a real
+ * validity break; the non-production row's trips print as a disclosure line
+ * instead. */
 const EXACT_EROSION_BUDGET_R = 1e-4;
 
 /** Per-system overrides of {@link EXACT_EROSION_BUDGET_R}, keyed by the
- * system's `label` in test (4)'s `systems` array. fr-2v0y (PR #174
- * review): the budget used to be loosened globally 1e-4 -> 3e-3 to admit
- * ONE system's tail, which handed every fold PAIR ~54x of regression
- * headroom they never needed — split per-system instead. The SHIPPED
- * mandelboxKifs preset (12 maps, 8x81 + 4x27 branches) holds a real
- * width-bound tail at the production frontier width 12 — the fold
- * edition of fr-jkpn's more-simultaneous-in-sphere-branches-than-slots
- * drop. fr-2v0y sized the override 3e-3 on the REFINED row's 300k tail
- * (e77 @4.4e-3 = 0.22%R) and recorded it "EXACT class only" — fr-tikz
- * falsified that: the 60k probe set reaches the tail OFF-attractor
- * (refined j1@7.7e-4 = 0.039%R) and erodes it to 1.66%R, and the
- * fr-5wlv.1 balloon record shows tails are PROBE-SET-SHAPED (spherefold
- * outer-decile erosion 13x its whole-attractor tail), so a budget only
- * covers the probe sets it was recorded against. The gate now reads the
- * production (base) row — measured e73 @3.3e-3 = 0.165%R at CLOUD=300k
- * and e73 @1.8e-2 = 0.9161%R at 60k — and 1.2e-2 covers both recorded
- * regimes with ~31% headroom over the 60k worst (fr-2v0y's
- * ~35%-headroom discipline) while refusing anything an order worse.
- * Diagnostic at frontier width 24: 39 @0.06%R at 3x the inverse
+ * system's `label` in test (4)'s `systems` array. PR #174's review split
+ * these out: the budget used to be loosened globally 1e-4 -> 3e-3 to admit
+ * ONE system's tail, which handed every fold PAIR ~54x of regression headroom
+ * they never needed — split per-system instead. The SHIPPED mandelboxKifs
+ * preset (12 maps, 8x81 + 4x27 branches) holds a real width-bound tail at the
+ * production frontier width 12 — the fold edition of the validity slots' own
+ * more-simultaneous-in-sphere-branches-than-slots drop. That split sized the
+ * override 3e-3 on the REFINED row's 300k tail (e77 @4.4e-3 = 0.22%R) and
+ * recorded it "EXACT class only" — the production-estimator gate falsified
+ * that: the 60k probe set reaches the tail OFF-attractor (refined j1@7.7e-4 =
+ * 0.039%R) and erodes it to 1.66%R, and the balloon spike's record shows
+ * tails are PROBE-SET-SHAPED (spherefold outer-decile erosion 13x its
+ * whole-attractor tail), so a budget only covers the probe sets it was
+ * recorded against. The gate now reads the production (base) row — measured
+ * e73 @3.3e-3 = 0.165%R at CLOUD=300k and e73 @1.8e-2 = 0.9161%R at 60k — and
+ * 1.2e-2 covers both recorded regimes with ~31% headroom over the 60k worst
+ * (that split's ~35%-headroom discipline) while refusing anything an order
+ * worse. Diagnostic at frontier width 24: 39 @0.06%R at 3x the inverse
  * applications (2039 -> 6029 apps/call) — converging in width, so wider
- * frontiers buy it down. The refined row stays measured and printed,
- * and discloses when it trips these thresholds (fr-tikz). */
+ * frontiers buy it down. The refined row stays measured and printed, and
+ * discloses when it trips these thresholds. */
 const EXACT_EROSION_BUDGET_R_OVERRIDES: Record<string, number> = {
   "mandelboxKifs preset": 1.2e-2,
 };
 
 /** Per-system allowances against the deep-void HARD zero, keyed like
- * {@link EXACT_EROSION_BUDGET_R_OVERRIDES} (fr-2v0y — the fold section
- * had been failing since fr-pjqw landed, because the hard zero never
- * absorbed that change's disclosed reading). The one entry is carried in
- * surface-de.ts's fr-pjqw addendum: the probe-fit ball shrank the
- * mandelbox pair's R (2.30 -> 1.88), and the R-relative uniform probe
- * cloud now samples a pre-existing weak spot at p ~ [0.99, 1.93, 0.05] —
- * trueD 0.646 (0.34R) against an estimate of 0.0123, i.e. 1/200 in the
- * deep-void column. Verified BIT-IDENTICAL under the origin ball at the
- * old radius (the old probe set just never landed there) and above the
- * marcher's real acceptance epsilon at typical hit distances (~0.006): a
- * slow-march spot of the known in-sphere floor-0-drop residual class,
- * not a rendered ghost. The allowance is exactly that one probe; a
- * second hit on any system is a regression. The gate reads the
- * production row since fr-tikz; the fr-pjqw reading is
- * estimator-independent (1/200 on base and refined alike, both
+ * {@link EXACT_EROSION_BUDGET_R_OVERRIDES} (the same per-system split — the
+ * fold section had been failing since the probe-fit ball landed, because the
+ * hard zero never absorbed that change's disclosed reading). The one entry is
+ * carried in surface-de.ts's probe-fit-ball addendum: the probe-fit ball
+ * shrank the mandelbox pair's R (2.30 -> 1.88), and the R-relative uniform
+ * probe cloud now samples a pre-existing weak spot at p ~ [0.99, 1.93, 0.05]
+ * — trueD 0.646 (0.34R) against an estimate of 0.0123, i.e. 1/200 in the
+ * deep-void column. Verified BIT-IDENTICAL under the origin ball at the old
+ * radius (the old probe set just never landed there) and above the marcher's
+ * real acceptance epsilon at typical hit distances (~0.006): a slow-march
+ * spot of the known in-sphere floor-0-drop residual class, not a rendered
+ * ghost. The allowance is exactly that one probe; a second hit on any system
+ * is a regression. The gate reads the production row; the probe-fit reading
+ * is estimator-independent (1/200 on base and refined alike, both
  * densities). */
 const DEEP_VOID_ALLOWANCES: Record<string, number> = {
   "mandelbox pair": 1,
@@ -720,7 +715,7 @@ function nearest4(cloud: ChaosGame4Result, p: Vec4): number {
   return Math.sqrt(best);
 }
 
-describe("fr-v6yg surface beam harness", () => {
+describe("surface beam harness", () => {
   it("(1) 3D: predicate, validity, tightness, cost per system and width", () => {
     const presets: System3[] = [
       { label: "default", transforms: defaultTransforms() },
@@ -762,7 +757,7 @@ describe("fr-v6yg surface beam harness", () => {
       );
       console.log(
         // baseMaps x symOrder is the branching factor per level — the map
-        // array is BASE maps and the kaleidoscope is swept (fr-x029), so
+        // array is BASE maps and the kaleidoscope is swept, so
         // neither number alone is the old "slots" count.
         `-- ${sys.label}: baseMaps=${de.maps.length}x${de.symmetry.order}` +
           ` maxSigmaMax=${maxSigma.toFixed(3)}` +
@@ -863,8 +858,9 @@ describe("fr-v6yg surface beam harness", () => {
         transforms: foldBoxfoldPair(),
         symmetry: { order: 3, plane: "xz" },
       },
-      // The shipped pure-fold preset — the fr-5rvk acceptance criterion's
-      // probe set (12 maps: 8 mandelbox corners + 4 boxfold binders).
+      // The shipped pure-fold preset — the branch sweep's acceptance
+      // criterion's probe set (12 maps: 8 mandelbox corners + 4 boxfold
+      // binders).
       { label: "mandelboxKifs preset", transforms: mandelboxKifs() },
     ];
     console.log(
@@ -898,9 +894,8 @@ describe("fr-v6yg surface beam harness", () => {
       );
       // The production estimator for this system class: fold systems
       // march `base` — the estimator the fold GLSL/WGSL cores mirror and
-      // the fr-aj4w grid prices; affine march `refined`. fr-tikz: gates
-      // pin what ships; the other row is measured, printed, and disclosed
-      // below.
+      // the plain grid prices; affine march `refined`. The gates pin what
+      // ships; the other row is measured, printed, and disclosed below.
       const prodName = deHasFolds(de) ? "base" : "refined";
       const budgetR =
         EXACT_EROSION_BUDGET_R_OVERRIDES[sys.label] ?? EXACT_EROSION_BUDGET_R;
@@ -911,7 +906,7 @@ describe("fr-v6yg surface beam harness", () => {
             ` deepVoidFalseHit=${row.deep.falseHits}/${row.deep.probes}`,
         );
       }
-      // Disclosure, not a gate (fr-tikz): the non-production row's trips
+      // Disclosure, not a gate: the non-production row's trips
       // against the SAME three thresholds print here. The width-bound
       // tail is a property of the harness-only estimator at this probe
       // set, not of what ships — it stays printed so a regression is
@@ -941,7 +936,7 @@ describe("fr-v6yg surface beam harness", () => {
         );
       if (notes.length > 0)
         console.log(
-          `   ^ disclosed (fr-tikz): non-production ${otherRow.estimator} row` +
+          `   ^ disclosed: non-production ${otherRow.estimator} row` +
             ` (production for this class: ${prodName}): ${notes.join("; ")}`,
         );
       const ok = invariance.mismatches === 0;
@@ -962,10 +957,10 @@ describe("fr-v6yg surface beam harness", () => {
       const prod = prodRow.result;
       // Hard zero: the region floors exist precisely so a spurious
       // never-escaping chain cannot fabricate a hit across genuine DEEP
-      // void — the fr-5rvk criterion, pinned at zero by the pure-fold
+      // void — the branch sweep's criterion, pinned at zero by the pure-fold
       // suites in surface-de.test.ts — except where a disclosed, verified
       // reading says otherwise (DEEP_VOID_ALLOWANCES). The gate reads the
-      // production row (fr-tikz); the fr-pjqw allowance is
+      // production row; the probe-fit ball's allowance is
       // estimator-independent — the mandelbox pair reads 1/200 identically
       // on base and refined at both densities. `collect`'s shallower 0.05R
       // column is printed above but NOT asserted: see DEEP_VOID_FACTOR for
@@ -980,7 +975,7 @@ describe("fr-v6yg surface beam harness", () => {
       // Validity, hard: an estimate that exceeds the true distance at a
       // jittered or uniform probe is the real thing — a bound the marcher
       // could step straight through. The hard zero pins the PRODUCTION
-      // estimator (fr-tikz): measured 0 on every fold system's base row at
+      // estimator: measured 0 on every fold system's base row at
       // CLOUD=60k and 300k alike. The refined fold rows carry a disclosed
       // width-bound tail (see EXACT_EROSION_BUDGET_R_OVERRIDES) that the
       // 60k probe set reaches off-attractor (j1@7.7e-4 = 0.039%R,
