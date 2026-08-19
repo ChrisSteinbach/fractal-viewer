@@ -433,6 +433,36 @@ export interface AppState {
    */
   balloonRadius: number;
   /**
+   * The balloon echo/surface-balloon shell's tint color (fr-j85n), a
+   * `#rrggbb` hex string paired with {@link balloonTintStrength} — ONE
+   * setting across BOTH balloon arms, the explorer's {@link balloonEcho}
+   * Points echo (`scene.ts`'s `BALLOON_ECHO_VERTEX`) and the surface
+   * inverted-union shell (`fractal/balloon-de.ts`, `surface-material.ts`/
+   * `-4d.ts`, `fractal/surface-de-gpu.ts`). Every arm computes
+   * `mix(base, balloonTint, balloonTintStrength)` on the shell's BASE
+   * COLOUR, before lighting/intensity — see {@link DEFAULT_BALLOON_TINT} for
+   * why black — so the shell still shades as geometry instead of
+   * flattening into a flat-lit decal. Persisted scene content, the same
+   * treatment as {@link balloonEcho}/{@link fogTint}: authored appearance a
+   * shared link carries, never a viewer pref. Range/default single-sourced
+   * through {@link DEFAULT_BALLOON_TINT}; `persist.ts`'s decoder is
+   * tolerant like `fogTint`'s (a malformed value quietly drops the field),
+   * so a pre-fr-j85n link still opens with the shell untinted, exactly as
+   * it always rendered.
+   */
+  balloonTint: string;
+  /**
+   * The balloon tint's blend weight, `[0, 1]` (fr-j85n) — see
+   * {@link balloonTint} for the colour it blends toward. `0` — the default
+   * — is the untinted identity: every arm's
+   * `mix(base, balloonTint, balloonTintStrength)` collapses to `base`
+   * unchanged, so today's balloon rendering is byte-identical in every arm
+   * and both dimensions regardless of what `balloonTint` decodes to.
+   * Range/default single-sourced through {@link PARAM}.balloonTintStrength.
+   * Persists like {@link balloonRadius} — not session-only.
+   */
+  balloonTintStrength: number;
+  /**
    * Save-PNG export resolution as a multiple of the screen's (fr-2urv) —
    * see {@link EXPORT_SCALES}. Session-only, like {@link adaptiveResolution}:
    * never persisted — it is a device/workflow preference, not the scene, and
@@ -916,6 +946,33 @@ export const DEFAULT_BALLOON_RADIUS = 1.6;
 export const MIN_BALLOON_RADIUS = 0.05;
 export const MAX_BALLOON_RADIUS = 2.5;
 /**
+ * Balloon tint (fr-j85n) default — see {@link AppState.balloonTint}. At
+ * {@link DEFAULT_BALLOON_TINT_STRENGTH} (0) the colour is inert whatever it
+ * is, exactly as {@link DEFAULT_FOG_TINT}'s own doc says of white, so this
+ * value is chosen for what it does at NONZERO strength rather than for the
+ * identity: `mix(base, black, s)` is `base * (1 - s)`, so the strength
+ * slider ALONE reads as a DIMMER until the user picks a colour. That is the
+ * "dimmer" half of fr-j85n's ask, bought from the tint pair instead of a
+ * third slider — and it is why promoting `scene.ts`'s `BALLOON_ECHO_DIM`
+ * was refused: one shared brightness field would have had to carry two
+ * different "today" values (0.5 in the additive-points echo, 1.0 in the
+ * lit-surface shell), so no single default could be byte-identical in both
+ * arms, where strength 0 is.
+ */
+export const DEFAULT_BALLOON_TINT = "#000000";
+/**
+ * Balloon tint blend strength range/default — see
+ * {@link AppState.balloonTintStrength}. `0` is the untinted identity:
+ * `mix(base, balloonTint, 0)` is exactly `base` in every arm, matching
+ * today's balloon rendering bit-exactly regardless of what
+ * {@link DEFAULT_BALLOON_TINT} decodes to — the same shape as
+ * {@link DEFAULT_FOG_TINT_STRENGTH}. `1` fully replaces the shell's base
+ * colour with {@link AppState.balloonTint}.
+ */
+export const DEFAULT_BALLOON_TINT_STRENGTH = 0;
+export const MIN_BALLOON_TINT_STRENGTH = 0;
+export const MAX_BALLOON_TINT_STRENGTH = 1;
+/**
  * Depth-fog density (fr-5h5d) range/default — see
  * {@link AppState.fogDensity}. `1` is the neutral default: it reproduces the
  * fixed fog band every renderer used before this control existed — the
@@ -1166,6 +1223,11 @@ export const PARAM = defineParams({
     max: MAX_BALLOON_RADIUS,
     default: DEFAULT_BALLOON_RADIUS,
   },
+  balloonTintStrength: {
+    min: MIN_BALLOON_TINT_STRENGTH,
+    max: MAX_BALLOON_TINT_STRENGTH,
+    default: DEFAULT_BALLOON_TINT_STRENGTH,
+  },
   fogDensity: {
     min: MIN_FOG_DENSITY,
     max: MAX_FOG_DENSITY,
@@ -1196,6 +1258,8 @@ export function initialState(panelOpen: boolean): AppState {
     adaptiveResolution: true,
     balloonEcho: false,
     balloonRadius: DEFAULT_BALLOON_RADIUS,
+    balloonTint: DEFAULT_BALLOON_TINT,
+    balloonTintStrength: DEFAULT_BALLOON_TINT_STRENGTH,
     exportScale: 1,
     panelOpen,
     flame: {
@@ -1458,6 +1522,37 @@ export function setBalloonRadius(
   return {
     ...state,
     balloonRadius: clampToSpec(PARAM.balloonRadius, balloonRadius),
+  };
+}
+
+/**
+ * Set the balloon tint color (fr-j85n) — see {@link AppState.balloonTint}.
+ * Strict, like {@link setFogTint}: this reducer's own input IS the raw
+ * string, so it is the validation boundary rather than a caller upstream of
+ * it. Normalizes to lowercase; a string that doesn't match `#rrggbb`
+ * (case-insensitive) leaves state unchanged, mirroring `decodeScene`'s own
+ * quiet-reject contract for a malformed value one layer out.
+ */
+export function setBalloonTint(state: AppState, balloonTint: string): AppState {
+  if (!/^#[0-9a-f]{6}$/i.test(balloonTint)) return state;
+  return { ...state, balloonTint: balloonTint.toLowerCase() };
+}
+
+/**
+ * Set the balloon tint's blend strength (fr-j85n), clamped to
+ * {@link PARAM}.balloonTintStrength's range — see
+ * {@link AppState.balloonTintStrength} for what `0`/`1` mean.
+ */
+export function setBalloonTintStrength(
+  state: AppState,
+  balloonTintStrength: number,
+): AppState {
+  return {
+    ...state,
+    balloonTintStrength: clampToSpec(
+      PARAM.balloonTintStrength,
+      balloonTintStrength,
+    ),
   };
 }
 
