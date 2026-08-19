@@ -55,6 +55,7 @@ import {
   setSurfaceAmbient,
   setSurfaceColorSource,
   setSurfaceColorSpeed,
+  setSurfaceEnvLight,
   setSurfaceLightAzimuth,
   setSurfaceLightElevation,
   setSurfacePaletteId,
@@ -1068,6 +1069,17 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     },
     read: (s) => String(s.surface.ambient),
     apply: (s, raw) => setSurfaceAmbient(s, Number(raw)),
+    effect: surfaceParamsEffect,
+  },
+  {
+    kind: "range",
+    id: "surfaceEnvLightSlider",
+    label: {
+      id: "surfaceEnvLightLabel",
+      text: (s) => `${Math.round(s.surface.envLight * 100)}%`,
+    },
+    read: (s) => String(s.surface.envLight),
+    apply: (s, raw) => setSurfaceEnvLight(s, Number(raw)),
     effect: surfaceParamsEffect,
   },
   {

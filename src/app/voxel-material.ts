@@ -15,6 +15,16 @@ import { DARK_BACKDROP, hexToRgb01 } from "./constants";
  * GLSL lives here, everything camera/texture lives there. GLSL3 because
  * `sampler3D` requires it; Three injects the built-in vertex attributes and
  * matrix uniforms for GLSL3 ShaderMaterials automatically.
+ *
+ * DELIBERATELY NOT ENVIRONMENT-LIT (fr-ehcj scoped it out): the surface
+ * tracers (`surface-material.ts` / `-4d.ts`) and their WGSL mirror
+ * (`fractal/surface-de-gpu.ts`) tint the AMBIENT term toward the backdrop
+ * sampled along the shading normal, so those renders sit IN their
+ * background; this raymarcher's `uAmbient` blend below stays a plain
+ * scalar. That leaves the solid render as the one mode still floating in
+ * front of its backdrop — a known, accepted gap, not an oversight a
+ * future reader should "fix" by copying the tint in without a bead behind
+ * it.
  */
 
 /** Screen-space gradient the raymarcher paints on a miss — the same authored
@@ -202,6 +212,8 @@ const VOXEL_FRAGMENT = /* glsl */ `
     vec3 halfVec = normalize(uLightDir - rd);
     float specular = pow(max(dot(n, halfVec), 0.0), 32.0) * 0.4;
 
+    // Plain scalar ambient, deliberately NOT environment-tinted (fr-ehcj
+    // scoped the solid render out — see the module doc).
     float lit = uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow;
     // Light in linear space (fr-8id): base is sRGB-authored (color.ts), so
     // decode with gamma 2.2, apply the light/specular product there, and

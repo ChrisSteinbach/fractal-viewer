@@ -377,6 +377,58 @@ honest — it IS a smaller slice).
 `surface-compute.ts` prices PLANE terminals in the hit-priced queue, not
 the miss path.
 
+## Environment-lit ambient (fr-ehcj)
+
+`ShadeParams.envStrength` (`f32`, offset 152 — the former struct
+alignment pad between `pixelJitter` at 144 and the 160-byte end, so
+`SURFACE_GPU_SHADE_BYTES` is unchanged) is the WGSL mirror of the GLSL
+tracers' `uEnvLight`: how far the shade entry's light is tinted toward the
+backdrop sampled along the shading normal, hue-normalized so strength
+moves color and never brightness. It is inlined at both `lit` sites (the
+ground-plane arm's fixed `+y` normal, and the hit path's `n`) rather than
+emitted as a WGSL helper function — WGSL has no source-size limit to save
+against here, and inlining means a kernel mode that never shades pays
+nothing extra by construction, with no risk of a stray function landing
+in one it shouldn't:
+
+```
+let envE = mix(shade.bgBottom, shade.bgTop, n.y * 0.5 + 0.5);
+let envTint = mix(vec3f(1.0), envE / max(max(envE.r, max(envE.g, envE.b)), 1.0e-4), shade.envStrength);
+let lit = (shade.ambient * ao + (1.0 - shade.ambient) * diffuse * shadow) * envTint;
+```
+
+THE TINT MULTIPLIES THE WHOLE `lit` TERM, NOT JUST THE AMBIENT HALF — a
+first cut that scaled only `shade.ambient * ao` by `envTint` and left the
+diffuse half alone was MEASURED indistinguishable from strength 0 at
+strength 1, the maximum, on both built-in backdrops (a real-browser A/B on
+the GLSL mirror, since the tint math and the built-in dark/haze stop pairs
+are shared with this kernel; see `docs/surface-glsl-tracers.md` for the
+numbers). The reason travels: ambient is a quarter of the light by default
+(`DEFAULT_SOLID_AMBIENT`, 0.25, shared by surface and solid), and this
+app's dark (`#0d0d18`/`#1f2039`)
+and haze (`#3c4a72`/`#5d6d9b`) stop pairs sit close in hue, so a
+directional sample between them barely varies — a small slice of a nearly
+uniform color is imperceptible. Specular is deliberately OUTSIDE the
+product at every call site (added after `lit`, never multiplied through
+it) — an untinted highlight is what keeps a strongly tinted render from
+reading monochrome.
+
+Absent/0 is the bit-exact pre-fr-ehcj identity — `mix(a, b, 0)` returns
+`a`, so `envTint` is `vec3f(1.0)` and `lit` reduces to the old scalar
+formula (the product of a scalar and `vec3f(1.0)` is that scalar per
+component). `packSurfaceGpuShade` defaults `envStrength` to 0 when
+omitted, exactly like `fogTintStrength` and `pixelJitter` before it.
+
+The compute-frame bench legs (`npm run bench:surface`) deliberately run
+over a BLACK backdrop (`bgTop = bgBottom = [0, 0, 0]`) and never set
+`envLight` on their specs, so `SurfaceComputeFrameSpec.envLight` stays
+`undefined` and packs to `envStrength: 0` — the bit-exact identity, so
+the shade path's agreement legs are unaffected by this change. Had a
+bench spec set a nonzero strength over that backdrop, `envTint`'s
+`max(..., 1e-4)` guard would still keep the ambient term from going
+`NaN` (it would just read `vec3f(0.0)` and black out the ambient half),
+but no shipped spec reaches that case.
+
 ## Modes
 
 `eval` (per-query distances) and `march` (bounded-dispatch ray march,

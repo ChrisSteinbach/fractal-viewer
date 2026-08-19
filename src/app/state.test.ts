@@ -28,6 +28,7 @@ import {
   DEFAULT_SOLID_RESOLUTION,
   DEFAULT_SOLID_THRESHOLD,
   DEFAULT_SURFACE_COLOR_SPEED,
+  DEFAULT_SURFACE_ENV_LIGHT,
   DEFAULT_SYMMETRY_PLANE,
   DEFAULT_SYMMETRY_ORDER,
   FLAME_ITERATION_DETENTS,
@@ -53,6 +54,7 @@ import {
   MAX_SOLID_RESOLUTION,
   MAX_SOLID_THRESHOLD,
   MAX_SURFACE_COLOR_SPEED,
+  MAX_SURFACE_ENV_LIGHT,
   MAX_SYMMETRY_ORDER,
   MIN_BALLOON_RADIUS,
   MIN_COLOR_GAMMA,
@@ -76,6 +78,7 @@ import {
   MIN_SOLID_RESOLUTION,
   MIN_SOLID_THRESHOLD,
   MIN_SURFACE_COLOR_SPEED,
+  MIN_SURFACE_ENV_LIGHT,
   MIN_SYMMETRY_ORDER,
   MIN_TRANSFORMS,
   nearestFlameIterationDetentIndex,
@@ -125,6 +128,7 @@ import {
   setSurfaceAmbient,
   setSurfaceColorSource,
   setSurfaceColorSpeed,
+  setSurfaceEnvLight,
   setSurfaceLightAzimuth,
   setSurfaceLightElevation,
   setSurfacePaletteId,
@@ -220,6 +224,7 @@ describe("initialState", () => {
       colorSource: "transform",
       paletteId: DEFAULT_SOLID_PALETTE,
       colorSpeed: DEFAULT_SURFACE_COLOR_SPEED,
+      envLight: DEFAULT_SURFACE_ENV_LIGHT,
     });
   });
 
@@ -1104,6 +1109,27 @@ describe("setSurfaceColorSpeed", () => {
     expect(next.surface.ambient).toBe(state.surface.ambient);
     expect(next.surface.colorSource).toBe(state.surface.colorSource);
     expect(next.surface.paletteId).toBe(state.surface.paletteId);
+  });
+});
+
+describe("setSurfaceEnvLight", () => {
+  it("sets the environment-light strength immutably", () => {
+    const state = initialState(true);
+    const next = setSurfaceEnvLight(state, 0.9);
+    expect(next.surface.envLight).toBe(0.9);
+    expect(state.surface.envLight).toBe(DEFAULT_SURFACE_ENV_LIGHT);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(setSurfaceEnvLight(initialState(true), 5).surface.envLight).toBe(
+      MAX_SURFACE_ENV_LIGHT,
+    );
+  });
+
+  it("clamps below the minimum", () => {
+    expect(setSurfaceEnvLight(initialState(true), -5).surface.envLight).toBe(
+      MIN_SURFACE_ENV_LIGHT,
+    );
   });
 });
 

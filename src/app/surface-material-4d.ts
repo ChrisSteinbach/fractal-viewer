@@ -323,6 +323,13 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * backdrop color. scene.setFogTint keeps both current. */
   uniform vec3 uFogTint;
   uniform float uFogTintStrength;
+  /** Environment-light strength (fr-ehcj); 0 is a bit-exact identity.
+   * Tints the WHOLE lit term — see the 3D twin for why not ambient only. */
+  uniform float uEnvLight;
+  vec3 envTint(vec3 n) {
+    vec3 e = mix(uBgBottom, uBgTop, n.y * 0.5 + 0.5);
+    return mix(vec3(1.0), e / max(max(e.r, max(e.g, e.b)), 1.0e-4), uEnvLight);
+  }
   /** Angular pixel footprint of the ACTIVE buffer (scene-set per frame):
    * sizes the shading probes (normal offsets, ray dither) to the pixels
    * actually being rendered — not the hit test; see uAcceptPixelEps. */
@@ -1556,7 +1563,8 @@ uniform float uBalloonFar;
     // The hit path's lighting minus specular (a matte floor), in the same
     // linear space (fr-8id): n is +y, so diffuse is just uLightDir.y.
     float diffuse = max(uLightDir.y, 0.0);
-    float lit = uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow;
+    vec3 lit = (uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow) *
+      envTint(vec3(0.0, 1.0, 0.0));
     vec3 col = pow(pow(uGroundAlbedo, vec3(2.2)) * lit, vec3(1.0 / 2.2));
 
     // Depth fog, the hit path's formula at the plane distance: the fog
@@ -1860,7 +1868,8 @@ uniform float uBalloonFar;
     vec3 halfVec = normalize(uLightDir - rd);
     float specular = pow(max(dot(n, halfVec), 0.0), 32.0) * 0.4;
 
-    float lit = uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow;
+    vec3 lit = (uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow) *
+      envTint(n);
     // Light in linear space (fr-8id, as in voxel-material.ts): base is
     // sRGB-authored (color.ts), so decode with gamma 2.2, apply the
     // light/specular product there, and re-encode for the pass-through
@@ -1924,11 +1933,14 @@ uniform float uBalloonFar;
  * crashed the compiler outright, empty info log, lost context). MEASURED
  * here, raw resolved / what the driver gets:
  *
- * - off:     61751 B (60.3KB) / 61751 B — under 64KB, so NOT stripped, and
- *            byte-identical to the pre-fr-qxxw source (3785 B of headroom).
- * - balloon: 67123 B (65.5KB) / 16664 B (16.3KB) — past the threshold by
- *            1587 B, so the size rule strips it.
- * - plane:   69497 B (67.9KB) / 17705 B (17.3KB) — plane variants always
+ * - off:     62251 B (60.8KB) / 62251 B — under 64KB, so NOT stripped
+ *            (3285 B of headroom as of fr-ehcj's envTint addition, re-measured
+ *            after the ambient-only cut was replaced with the whole-lit-term
+ *            multiply — docs/surface-glsl-tracers.md carries the refuted
+ *            ambient-only numbers).
+ * - balloon: 67623 B (66.0KB) / 16836 B (16.4KB) — past the threshold, so
+ *            the size rule strips it.
+ * - plane:   70035 B (68.4KB) / 17909 B (17.5KB) — plane variants always
  *            strip (fr-rhn5).
  *
  * A single monolithic source carrying both arms would be ~74KB and every
@@ -2060,6 +2072,8 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uFogDensity: { value: 1 },
       uFogTint: { value: new THREE.Vector3(1, 1, 1) },
       uFogTintStrength: { value: 0 },
+      // fr-ehcj: matches state.ts's DEFAULT_SURFACE_ENV_LIGHT.
+      uEnvLight: { value: 0.35 },
       // Placeholder; the scene overwrites it per frame with the camera's
       // true angular pixel size.
       uPixelEps: { value: 0.002 },
@@ -2098,9 +2112,11 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       SURFACE4_GROUND_PLANE: 0,
     },
     vertexShader: SURFACE4_VERTEX,
-    // Both arms off resolves to SURFACE4_FRAGMENT verbatim (61751 B, under
+    // Both arms off resolves to SURFACE4_FRAGMENT verbatim (62251 B, under
     // the 64KB strip threshold), so a plain 4D session hands the driver
-    // exactly the source it did before fr-qxxw/fr-h0c3.
+    // exactly the source it did before fr-qxxw/fr-h0c3 (plus fr-ehcj's
+    // envTint, re-measured after the ambient-only cut was replaced with the
+    // whole-lit-term multiply).
     fragmentShader: surface4FragmentFor(),
     depthTest: false,
     depthWrite: false,

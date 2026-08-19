@@ -428,6 +428,13 @@ export interface SurfaceComputeFrameSpec {
   hitFloor: number;
   lightDir: Vec3;
   ambient: number;
+  /** Environment-light strength (fr-ehcj) — the ShadeParams tail (module
+   * doc in `fractal/surface-de-gpu.ts`): how far the shade kernel's
+   * AMBIENT term is tinted toward the backdrop sampled along the normal.
+   * Optional so callers predating this feature (gpu-bench's spec
+   * literals) keep compiling; absent/0 is the bit-exact pre-fr-ehcj
+   * identity, matching {@link packSurfaceGpuShade}'s own default. */
+  envLight?: number;
   /** The scene backdrop's two gradient stops (fr-5ps1) — the pair the GLSL
    * tracers carry as uBgTop/uBgBottom, fed to the shade kernel's miss/fog
    * gradient AND the host prefill, re-read per spec assembly like the
@@ -2411,6 +2418,7 @@ export class SurfaceComputeRenderer {
         fogTint: spec.fogTint,
         fogTintStrength: spec.fogTintStrength,
         pixelJitter,
+        envStrength: spec.envLight,
       }),
     );
     // Host prefill contract (module doc of surface-de-gpu.ts): rays still

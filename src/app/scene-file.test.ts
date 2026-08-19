@@ -32,6 +32,7 @@ import {
   DEFAULT_SOLID_RESOLUTION,
   DEFAULT_SOLID_THRESHOLD,
   DEFAULT_SURFACE_COLOR_SPEED,
+  DEFAULT_SURFACE_ENV_LIGHT,
   DEFAULT_SYMMETRY_PLANE,
   DEFAULT_SYMMETRY_ORDER,
 } from "./state";
@@ -86,6 +87,7 @@ function baseSnapshot(): SceneSnapshot {
       colorSource: "transform",
       paletteId: DEFAULT_SOLID_PALETTE,
       colorSpeed: DEFAULT_SURFACE_COLOR_SPEED,
+      envLight: DEFAULT_SURFACE_ENV_LIGHT,
     },
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, plane: DEFAULT_SYMMETRY_PLANE },
     glowBrightness: DEFAULT_GLOW_BRIGHTNESS,

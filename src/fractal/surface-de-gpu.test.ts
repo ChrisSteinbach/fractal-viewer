@@ -1009,6 +1009,26 @@ describe("packSurfaceGpuShade", () => {
     expect(view.getFloat32(136, true)).toBe(0.875);
     expect(view.getFloat32(140, true)).toBe(Math.fround(0.4));
   });
+
+  it("defaults envStrength to 0 at offset 152 when omitted (fr-ehcj's pre-feature identity)", () => {
+    const view = new DataView(packSurfaceGpuShade(shadeParams()));
+    expect(view.getFloat32(152, true)).toBe(0);
+  });
+
+  it("round-trips an explicit envStrength at offset 152 (fr-ehcj)", () => {
+    const view = new DataView(
+      packSurfaceGpuShade(shadeParams({ envStrength: 0.4 })),
+    );
+    expect(view.getFloat32(152, true)).toBe(Math.fround(0.4));
+  });
+
+  it("writes an omitted envStrength byte-identically to the pre-fr-ehcj buffer at every other offset", () => {
+    const withField = new Uint8Array(
+      packSurfaceGpuShade(shadeParams({ envStrength: 0 })),
+    );
+    const without = new Uint8Array(packSurfaceGpuShade(shadeParams()));
+    expect(withField).toEqual(without);
+  });
 });
 
 describe("packSurfaceGpuShadeMaps", () => {

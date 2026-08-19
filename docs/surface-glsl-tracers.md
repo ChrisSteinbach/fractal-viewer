@@ -22,6 +22,131 @@ slider (default 0.5, which reproduces that original fixed behavior), and
 the rings/sheets orbit-trap color sources ride the same hit-info descent
 (fr-rl4b).
 
+## Environment-lit ambient (fr-ehcj)
+
+The backdrop tints the light, hue-preserving, so the render sits IN its
+background instead of floating in front of it. An additive backdrop light
+is invisible against the default near-black backdrop, which is most
+sessions — so instead the sampled backdrop is normalized to its own max
+channel before blending, which moves HUE only and never brightness:
+
+```
+envTint(n) = mix(vec3(1.0), e / max(max(e.r, max(e.g, e.b)), 1.0e-4), uEnvLight)
+   where e = mix(uBgBottom, uBgTop, n.y * 0.5 + 0.5)
+```
+
+REFUTED FIRST CUT: the tint originally scaled only the AMBIENT half —
+`vec3 lit = uAmbient * ao * envTint(n) + vec3((1.0 - uAmbient) * diffuse *
+shadow)` — and settled frames at strength 1, the MAXIMUM, were
+indistinguishable from strength 0 on both built-in backdrops. That
+refutation is a QUALITATIVE read of the two settled screenshots side by
+side, not a pixel diff — the harness that produced them had not yet
+cropped to the render pane, so a whole-window diff would have been
+dominated by the control panel and worth nothing. It is stated as what it
+is: a feature whose maximum cannot be seen has failed its own acceptance
+("the backdrop VISIBLY grounds the render"), and no finer number was
+needed to decide that.
+
+A headless SwiftShader A/B of the SHIPPED whole-lit-term form
+(`scripts/tmp-envlight-ab.mjs`, a throwaway harness modeled on
+`surface-repro.verify.mjs`; deleted after this measurement, numbers kept
+here) confirms the tint reads now: the fr-jmat boxfold PAIR (two
+single-variation boxfold maps — the same fold-lens fragment fallback arm
+`mandelboxKifs` would take, but settling on headless SwiftShader's software
+rasterizer at 480x300, since the eight-corner `mandelboxKifs` preset never
+reached a completed settle in 240s at any strength — stuck marching the
+real settle pass, not merely slow to start), dark and haze backdrops,
+strength 0 vs 0.35 vs 1, diffed against its own strength-0 baseline
+(144,000 px/frame, canvas-only screenshot):
+
+| backdrop | pair   | px differing         | meanAbs (all px) | meanAbs (changed px) | maxΔ | meanSigned R / G / B       |
+| -------- | ------ | -------------------- | ---------------- | -------------------- | ---- | -------------------------- |
+| dark     | 0→0.35 | 1204/144000 (0.836%) | 0.0307           | 3.6708               | 17   | −0.0498 / −0.0423 / 0.0000 |
+| dark     | 0→1    | 1204/144000 (0.836%) | 0.0970           | 11.5988              | 54   | −0.1576 / −0.1334 / 0.0000 |
+| haze     | 0→0.35 | 1200/144000 (0.833%) | 0.0241           | 2.8900               | 17   | −0.0447 / −0.0275 / 0.0000 |
+| haze     | 0→1    | 1204/144000 (0.836%) | 0.0746           | 8.9280               | 52   | −0.1403 / −0.0837 / 0.0000 |
+
+Every differing pixel is a lit surface HIT — this scene's thin dust is
+~1200-1300 hit pixels out of 144,000, and essentially all of them move —
+so `meanAbs (changed px)` is the number that answers "is this visible on
+the geometry": 11.6/255 (4.5%) at full strength on dark, 8.9/255 (3.5%) on
+haze, with individual channel swings up to 54/255 (21%) — plainly visible
+on the lit surface, not a rounding wobble, which is what the ambient-only
+cut never achieved even at strength 1.
+
+MEANSIGNED B IS ZERO ON BOTH BACKDROPS, not a coincidence: both built-in
+stops (`#0d0d18`/`#1f2039` dark, `#3c4a72`/`#5d6d9b` haze) have BLUE as
+their brightest channel, so `envTint`'s own-max-channel normalization
+divides by (approximately) the blue value at every sampled point —
+`envTint`'s blue component comes out near 1 (identity) while red and green,
+being smaller than blue in both stops, scale down. The tint therefore reads
+as a cooling/darkening of red and green rather than a shift toward blue,
+on EITHER shipped backdrop — an artifact of both backdrops sharing a
+blue-dominant hue, not a general property of the formula (a red- or
+green-dominant custom backdrop would move a different channel pair).
+
+The reason the ambient-only cut failed travels rather than being a fluke of
+that scene: ambient is a quarter of the light at the shipped default
+(`uAmbient` 0.25), and this app's dark and haze stop pairs sit close
+together in hue, so a directional sample mixed between them barely
+varies — a small slice of a nearly-uniform color is imperceptible against
+the diffuse three-quarters of the light staying neutral.
+
+THE SHIPPED FORM multiplies the WHOLE `lit` term instead, ambient and
+diffuse-times-shadow together:
+
+```
+OLD:  float lit = uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow;
+NEW:  vec3  lit = (uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow) * envTint(n);
+```
+
+Specular is deliberately OUTSIDE the product at every call site — added to
+`lit * linBase` after the fact, never multiplied through — because an
+untinted highlight is what keeps a strongly tinted render from reading
+monochrome instead of lit.
+
+HUE-NORMALIZATION ITSELF is a decision worth recording alongside the
+ambient-only refutation: an honest additive environment term (`lit +=
+uEnvLight * e`) is invisible against this app's near-black default
+backdrop — the one every new session and most saved links actually use —
+so the physically honest form would be a feature nobody could see. Dividing
+the sampled backdrop by its own max channel turns the knob into a hue
+carrier instead, which is what makes it read at the default backdrop and
+not just on haze.
+
+STRENGTH 0 IS BIT-EXACT: `mix(a, b, 0)` returns `a` exactly regardless of
+`b` (the `max(..., 1e-4)` guard keeps `e / …` finite so a zero-strength
+blend never risks a NaN contaminating the result), so `envTint` reduces to
+`vec3(1.0)` and `lit` reduces to the pre-fr-ehcj scalar formula — the
+product of a scalar and `vec3(1.0)` is that scalar per component, same
+operand order.
+
+The `envTint` helper is declared once per file (GLSL needs declaration
+before use, and each file's `main()` is a single template, so it cannot be
+shared across `surface-material.ts` and `surface-material-4d.ts` as one
+function) — a pinned test in `surface-material-4d.test.ts` asserts the two
+bodies agree character for character (whitespace normalized, since the 3D
+"off" variant strips while the 4D "off" variant does not) so the mirror
+cannot drift.
+
+A panel **Environment** slider (`surfaceEnvLightSlider`, `state.ts`'s
+`envLight`, `DEFAULT_SURFACE_ENV_LIGHT`) exposes the strength, default
+0.35 — deliberately non-zero, so existing shared links render with a
+subtle environment tint now. It is a different knob from fr-5h5d's
+**Tint** (which retargets the depth _fog_ by distance, not the light by
+normal); the two compose additively and are worth checking by eye at both
+extremes together before calling a look finished. `voxel-material.ts`
+(the ◆ Solid raymarcher) is deliberately NOT environment-lit — see that
+module's own doc comment for the reason.
+
+Re-measured resolved 3D variant sizes after the whole-lit-term change (raw
+resolved / what the driver actually gets, all under the 64KB
+`SURFACE_GLSL_STRIP_BYTES` strip threshold once stripped): affine 82284 B
+-> 28944 B (stripped), fold lens 85507 B -> 28708 B (stripped), balloon
+88698 B -> 30305 B (stripped), plane 88532 B -> 31281 B (stripped),
+lens+plane 91755 B -> 31045 B (stripped), escape 55114 B (53.8KB, NOT
+stripped), bulb 38578 B (37.7KB, NOT stripped).
+
 ## Variant arms
 
 **`SURFACE_FOLD_LENS`** (fr-g58b): compiles when a fold FINAL lens is
@@ -246,8 +371,10 @@ one. Nothing about this tracer regressed; the other arm stopped wasting
 TWO VARIANT ARMS exist since fr-qxxw/fr-h0c3 — the balloon inverted-union
 and the ground plane, each mirroring its 3D original term for term — and
 the MECHANISM is the one deviation, forced by measurement: this source is
-61,751 B with 3,785 B of headroom under the 64KB strip threshold, and the
-arms are ~5.3KB and ~7.7KB, so one monolithic `#if` source would be
+62,251 B with 3,285 B of headroom under the 64KB strip threshold (fr-ehcj's
+`envTint` addition, re-measured after the ambient-only cut above was
+replaced with the whole-lit-term multiply; 61,751 B before fr-ehcj), and
+the arms are ~5.4KB and ~7.8KB, so one monolithic `#if` source would be
 ~74KB and EVERY 4D session would pay it, in the band where the 3D fold
 program takes ~25s to link.
 
@@ -257,8 +384,9 @@ and the `defines` keys are `SURFACE4_*` while the GLSL directives stay
 the 3D names — deliberate, called out at both sites, and renaming them
 would break resolution.
 
-Measured: off, 61,751 B (byte-identical to the pre-lift source); balloon
-67,123 -> 16,664 B stripped; plane 69,497 -> 17,705 B stripped.
+Measured after fr-ehcj's whole-lit-term form: off, 62,251 B (under
+threshold, so NOT stripped); balloon 67,623 -> 16,836 B stripped; plane
+70,035 -> 17,909 B stripped.
 
 ## What could not be copied
 

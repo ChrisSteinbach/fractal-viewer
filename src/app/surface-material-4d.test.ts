@@ -8,7 +8,10 @@ import {
   surface4FragmentFor,
   SURFACE4_MAX_MAPS,
 } from "./surface-material-4d";
-import { SURFACE_GLSL_STRIP_BYTES } from "./surface-material";
+import {
+  SURFACE_GLSL_STRIP_BYTES,
+  surfaceFragmentFor,
+} from "./surface-material";
 import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
 import type { SurfaceDE4, SurfaceDE4Map } from "../fractal/surface-de-4d";
 import { radiusBandInvRange } from "../fractal/surface-de-4d";
@@ -349,9 +352,11 @@ describe("the 4D tracer's variant arms (fr-qxxw, fr-h0c3)", () => {
   // 3D file's resolver), which is what makes OFF byte-identical to the
   // shipped tracer AND keeps every variant the driver sees far under the
   // Mesa source cliff. MEASURED raw resolved / what the driver gets:
-  // off 61751 B (60.3KB) / 61751 B — under the 64KB threshold, so NOT
-  // stripped, i.e. the shipped bytes exactly; balloon 67123 B (65.5KB) /
-  // 16664 B (16.3KB); plane 69497 B (67.9KB) / 17705 B (17.3KB). The
+  // off 62251 B (60.8KB) / 62251 B — under the 64KB threshold, so NOT
+  // stripped, i.e. the shipped bytes exactly (fr-ehcj's envTint moved this
+  // from 61751 B, re-measured after the ambient-only cut was replaced with
+  // the whole-lit-term multiply); balloon 67623 B (66.0KB) / 16836 B
+  // (16.4KB); plane 70035 B (68.4KB) / 17909 B (17.5KB). The
   // assertions below pin the CONTRACT (under threshold, arms present or
   // absent) rather than those figures, which any shader edit moves.
   it("resolves the shipped source verbatim when both arms are off", () => {
@@ -491,6 +496,27 @@ describe("the 4D tracer's variant arms (fr-qxxw, fr-h0c3)", () => {
 
   it("refuses a floor inside the shell — there is no horizon in there", () => {
     expect(() => surface4FragmentFor(1, 1)).toThrow(RangeError);
+  });
+
+  it("emits the 3D and 4D envTint helpers character for character, which is what keeps the mirror from drifting (fr-ehcj)", () => {
+    // The 3D and 4D tracers each declare their own envTint (GLSL needs
+    // declaration before use in each source, so it cannot be shared as
+    // one function) — this pin is what stands in for that sharing.
+    // Whitespace is normalized before comparing: the 3D "off" variant
+    // strips (its raw source is over the Mesa size threshold) while the
+    // 4D "off" variant does not, so the token stream is what must agree,
+    // not the indentation.
+    const body = (src: string): string => {
+      const match = src.match(/vec3 envTint\(vec3 n\) \{[\s\S]*?\n\s*\}/);
+      expect(match).not.toBeNull();
+      return match![0].replace(/\s+/g, " ").trim();
+    };
+    const glsl3d = body(surfaceFragmentFor(0, 0));
+    const glsl4d = body(surface4FragmentFor());
+    expect(glsl3d).toBe(glsl4d);
+    expect(glsl3d).toContain(
+      "return mix(vec3(1.0), e / max(max(e.r, max(e.g, e.b)), 1.0e-4), uEnvLight);",
+    );
   });
 });
 
