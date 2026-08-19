@@ -186,13 +186,19 @@ DRAW (non-backdrop share of a real screenshot; a canvas READBACK reads
 empty for a WebGL context outside its own rAF and measures 0% for a
 frame that is plainly there), and WHICH ENGINE took it — which is what
 keeps `core:"escape4"` and the 4D plane/balloon blocks from being dead
-code. MEASURED at the lift, real Iris, 1024x640, 8/8: the 4D chain
-44.6%, under an xw kaleidoscope 44.5%, with the floor 88.9%; a 4D IFS
-attractor with the floor 89.2% and with the balloon 41.1%;
-kaleidoscope-4D through the FRAGMENT arm 67.4% / 32.3% (the PRE-fr-fniy
-record — since fr-fniy both kaleido scenes ride COMPUTE and the gate
-expects it, re-measured 87.8% / 40.4%; fr-vja8.56 caught the script
-still expecting webgl); and the 3D Mandelbox-with-floor control 89.2%. Its kaleidoscope fixture is
+code. MEASURED real Iris, 1024x640, 11/11 (fr-0cw6, the first run with
+`page.bringToFront()` — see below): the 4D chain 44.6%, under an xw
+kaleidoscope 44.5%, with the floor 87.8%; a 4D IFS attractor with the
+floor 87.7% and with the balloon 40.9%; kaleidoscope-4D 86.6% / 40.1%
+(COMPUTE since fr-fniy — the 67.4% / 32.3% pair was the PRE-fr-fniy
+FRAGMENT record, and fr-vja8.56 caught the script still expecting
+webgl); the 3D Mandelbox-with-floor control 88.2%; and the three shipped
+4D presets 89.5% / 89.4% / 83.1%, which no earlier run reached.
+THE FLOOR-BEARING ROWS ALL FELL ~1.0-1.5 POINTS against the pre-fr-0cw6
+record while the two FLOORLESS rows reproduced to the digit, which is
+fr-0cw6's own prediction that a gate parking mid-settle may have been
+measuring a partially-drawn frame; one run, so it is a re-read rather
+than a second independent pin. Its kaleidoscope fixture is
 deliberately LIGHT (2 maps at order 3) and that is a measurement too — a
 four-map order-5 4D system settles neither with the floor NOR without it
 inside 200s on this hardware, which is fr-b72d's superlinear order cost
@@ -204,8 +210,18 @@ The 4D explorer balloon gate (fr-5666) is self-contained:
 Points, parks the tumble, enables the echo, reloads the app's own copied link,
 then compares real SwiftShader canvas frames with the restored echo on/off.
 That one path gates the non-flat controls, boot-time ball-uniform sync and the
-project-then-invert shader compile/render together. MEASURED at the lift:
-10.255% of pixels changed (mean absolute RGB difference 3.285, max 234).
+project-then-invert shader compile/render together. IT COMPARES THE SCENE
+REGION, NOT THE FRAME, at a radius the DOCUMENT carries and where the echo is
+demonstrably on screen — fr-23oa: the original row diffed the full frame at the
+document's own 1.60x, where the echo is off screen entirely, so all 10.255% of
+it was `#panel` growing a row and a shader drawing NOTHING would have passed
+(same two frames, scene only: 0.000%, max 0). MEASURED re-pinned: 19.9% of
+scene pixels changed, meanAbs 0.944, against a 2% floor. The radius is driven
+BEFORE the share link is copied, because `setBalloonEchoRadius` syncs the
+uniforms and a post-reload drive would repair the very desync the gate exists
+to catch. It still does NOT separate project-then-invert from
+invert-then-project — both draw something; that needs a rotor pose where they
+visibly disagree.
 
 **Harness sheets** (`scripts/*.harness.ts`, run with
 `npx vitest run --config scripts/vitest.harness.config.ts scripts/<name>`)
@@ -1864,6 +1880,20 @@ Frame` callback, which runs before paint so the disabled look never
     write, every decision leaf pinned over the shipped presets. `kind`
     exists so `surfaceSession.start`'s own re-derivation can one day consume
     the one shared answer (the bead trail's second slice).
+  - `surface-force-frame-key.ts` — the offline-export force-frame memo key
+    (`ensureSurfaceComputeForceFrame` re-PRESENTS instead of re-tracing when
+    it is unchanged), pulled out of main.ts's closure so it tests at all —
+    `capture-cost.ts`'s pattern, and the extraction is what let fr-nez0's bug
+    get a regression test. It must key EVERY spec field that repaints a HIT,
+    and missing one fails SILENTLY: fog (fr-5h5d), envLight (fr-ehcj) and the
+    backdrop SHAPE triple (fr-h3mp) all landed after the key and none were
+    added, so an atmosphere-only timeline leg under a parked camera exported
+    the PREVIOUS leg's frame for its whole dwell. EACH ABSENT FIELD MUST
+    DEFAULT TO WHAT `packSurfaceGpuShade` DEFAULTS TO — a key that defaults
+    differently re-creates the bug from the other side, keying two specs the
+    same that pack differently. The string is a plain `join("|")`, so every
+    optional block is tagged and fixed-length when present; the module doc
+    carries the collision argument.
   - `render-backend.ts` — fr-tmgf's "which engine, and is it software?"
     vocabulary: ONE `SOFTWARE_RENDERER_RE`, adapter-status derivation,
     unmasked-renderer read and warning-string pair, so every site deciding
