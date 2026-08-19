@@ -353,10 +353,10 @@ describe("the 4D tracer's variant arms (fr-qxxw, fr-h0c3)", () => {
   // 3D file's resolver), which is what makes OFF byte-identical to the
   // shipped tracer AND keeps every variant the driver sees far under the
   // Mesa source cliff. MEASURED raw resolved / what the driver gets:
-  // off 62711 B (61.2KB) / 62711 B — under the 64KB threshold, so NOT
-  // stripped, i.e. the shipped bytes exactly (fr-xn9s's shared
-  // backgroundShapeT splice moved this from 62251 B); balloon 68105 B
-  // (66.5KB) / 16899 B (16.5KB); plane 70517 B (68.9KB) / 17972 B (17.6KB).
+  // off 62804 B (61.3KB) / 62804 B — under the 64KB threshold, so NOT
+  // stripped, i.e. the shipped bytes exactly (fr-h3mp's radial branch
+  // moved this from 62711 B); balloon 68176 B (66.6KB) / 17086 B (16.7KB);
+  // plane 70588 B (68.9KB) / 18159 B (17.7KB).
   // The assertions below pin the CONTRACT (under threshold, arms present or
   // absent) rather than those figures, which any shader edit moves.
   it("resolves the shipped source verbatim when both arms are off", () => {

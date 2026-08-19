@@ -89,6 +89,7 @@ import {
   setAdaptiveResolution,
   setBackgroundCustom,
   setBackgroundMode,
+  setBackgroundShape,
   setBalloonEcho,
   setBalloonRadius,
   setColorGamma,
@@ -1703,6 +1704,15 @@ describe("setBackgroundCustom", () => {
     const next = setBackgroundCustom(state, authored);
     expect(next.background).toEqual({ mode: "custom", custom: authored });
     expect(state.background.custom).not.toEqual(authored);
+  });
+});
+
+describe("setBackgroundShape", () => {
+  it("sets the shape while preserving mode/custom, immutably", () => {
+    const state = setBackgroundMode(initialState(true), "haze");
+    const next = setBackgroundShape(state, "radial");
+    expect(next.background).toEqual({ mode: "haze", shape: "radial" });
+    expect(state.background).not.toHaveProperty("shape");
   });
 });
 

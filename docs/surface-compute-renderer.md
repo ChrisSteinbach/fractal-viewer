@@ -1049,6 +1049,35 @@ export of one pinned pose measures a mean difference of 0.002/255, with
 0.006% of pixels off by more than 8 — the march-start dither's own
 per-raster hash phase, nothing structural.
 
+### Radial vignette + bands (fr-h3mp)
+
+`SurfaceComputeFrameSpec` grows an optional `bgShape` — the same
+optional/required split as `bgOffset`/`bgExtent`: absent defaults to
+`{kind: "linear"}`, so gpu-bench's spec literals compile unchanged.
+`scene.ts`'s `surfaceComputeFrameSpecAt` derives it from the live
+`backdropShape` field and, for `"radial"`, computes `scale` via
+`backgroundRadialScale` of `bgExtent` — the FULL image `bgOffset`/
+`bgExtent` already name, NOT of this call's own `width`/`height`. That
+distinction is the whole reason `surfaceComputeBandStops` had to go one
+level up: a capture band's raster is a SLICE of the full export, and
+scaling a vignette by the slice's own dimensions would draw a different
+ellipse per band instead of one consistent vignette across the whole
+tiled image. `captureSurfaceComputeFrame`'s per-band spec assembly needs
+no separate handling for this — every band already computes its own
+`bgOffset`/`bgExtent` from the SAME `band.fullHeight`, so `bgShape`'s
+scale falls out of that existing plumbing for free.
+
+`runFrame` packs `bgShape`/`bgCenter`/`bgScale` into `packSurfaceGpuShade`
+exactly like `bgOffset`/`bgExtent`, and the host prefill
+(`buildSurfaceComputeBackground`) reads the same spec — so a radial
+session's ACTIVE-ray prefill (a budget cut, or a mid-frame progress
+present) already shows the vignette instead of a stale linear guess. The
+prefill row cache (`SurfaceComputeRenderer`'s private `background` field)
+keys on `bgCenter`/`bgScale` alongside the existing `shapeKind`/
+`bgOffset`/`bgExtent` keys, so a viewport resize under a live radial
+session (which moves `scale` without moving `shapeKind`) still
+invalidates the cached rows instead of serving a stale ellipse.
+
 ## Teardown (fr-uec4)
 
 `destroy()` defers the real `device.destroy()` until every in-flight

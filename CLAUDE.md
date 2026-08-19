@@ -314,8 +314,9 @@ and UI**, so the interesting math is unit-tested without a browser:
     gradient, three byte-identical GLSL `mix(uBgBottom, uBgTop,
 clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     TS prefill mirror, and `surfaceComputeBandStops`, the shape's AFFINE
-    INVERSE. Emits `backgroundShapeT` from ONE body constant in two shader
-    dialects, and mirrors it in TS for the prefill and for
+    INVERSE. Emits `backgroundShapeT` from ONE body TEMPLATE in two shader
+    dialects (dialect-parameterized since fr-h3mp — see below — but still
+    ONE shared math text), and mirrors it in TS for the prefill and for
     `backgroundMeanColor` (the shape INTEGRATED AWAY — THREE.Fog carries
     one scalar colour). THE COORDINATE CONTRACT IS THE LOAD-BEARING PART:
     every mirror evaluates at FULL-IMAGE coordinates
@@ -324,7 +325,19 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     reports where it sits instead of remapping its stops — which is what
     retired `surfaceComputeBandStops` (a linear ramp restricted to a
     sub-rectangle is still a two-stop ramp; nothing else is) and what lets
-    a non-linear shape exist at all.
+    a non-linear shape exist at all. `"radial"` (fr-h3mp) is the second
+    entry in `BACKGROUND_SHAPES`: a smoothstep vignette reading a
+    host-computed `center`/`scale` (`backgroundRadialScale`, per-axis so
+    the shape stays circular in real pixels rather than elliptical in
+    normalized UV) through the SAME dialect `field` accessor
+    (`uBgCenter`/`shade.bgCenter`) both shader mirrors and the WGSL
+    `ShadeParams` tail (`surface-de-gpu.ts`, `bgCenter`/`bgScale`/`bgShape`
+    appended at 176/184/192, struct now 208 B) now carry — a SHAPE
+    orthogonal to `background.ts`'s MODE, so every mode can be linear or
+    radial and `BackgroundGradient` stays the two-stop pair it always was.
+    Full measurement record (byte sizes, the two-token dialect divergence,
+    the viewport-vs-canvas scale distinction) in
+    `docs/surface-glsl-tracers.md`.
   - `balloon-de.ts` — the balloon inverted-union DE (fr-5wlv): the scene as
     the UNION of the attractor and its sphere-inverted echo
     `I(p) = c + R²(p−c)/|p−c|²`, bounded by
@@ -1098,8 +1111,16 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     render-mode landings — persisted as the MODE alone, never baked colors.
     `lerpBackground` + `BackgroundTween` are the replace-load
     crossfade, a fourth motion beside the system morph/camera/4D rotor
-    glides. Persists via `persist.ts`, whose decoder doubles as the legacy
-    migration (absent field + aerial style → haze). Pure, tested.
+    glides — the SHAPE below is deliberately not part of it (no meaningful
+    midpoint between linear and radial; it pops to the target's at the
+    leg's first push). Persists via `persist.ts`, whose decoder doubles as
+    the legacy migration (absent field + aerial style → haze). Pure,
+    tested. `BackgroundParams.shape` (fr-h3mp) is ORTHOGONAL to `mode` —
+    the gradient SHAPE (`fractal/background-shape.ts`'s vocabulary) every
+    mode's two stops paint through, absent means `"linear"` byte-identical
+    to every pre-fr-h3mp document. `scene.ts`'s Shape select
+    (`setBackgroundShape`) and `pushBackground` read it the same way the
+    Background select reads `mode`.
   - `exposure.ts` — `glowExposure`: density-adaptive brightness for the
     `"glow"` render style (not the flame tone-map). Pure, tested.
   - `resolution-governor.ts` — adaptive resolution: frame-time ladder (EMA +

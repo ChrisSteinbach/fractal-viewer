@@ -20,9 +20,12 @@
  * Pure: no Three.js, no DOM. Colors are `RgbStop` tuples (0..1 channels,
  * `palette.ts`'s convention, matching `positionAxisColors`).
  */
+import type { BackgroundShape } from "../fractal/background-shape";
 import type { PaletteSpec, RgbStop } from "../fractal/palette";
 import { buildPaletteLUT } from "../fractal/palette";
 import { DARK_BACKDROP, HAZE_BACKDROP, hexToRgb01 } from "./constants";
+
+export type { BackgroundShape } from "../fractal/background-shape";
 
 /**
  * The Background select's positions (fr-5ps1): the two built-in backdrops the
@@ -53,10 +56,19 @@ export interface BackgroundGradient {
  * switching away and back never loses authored colors. `"auto"` persists as
  * the MODE alone (fr-mz2u): the derived colors are never baked into the
  * document, so palette edits keep tracking after a link round-trip.
+ *
+ * `shape` (fr-h3mp) is ORTHOGONAL to `mode`: it picks the GRADIENT SHAPE
+ * (`fractal/background-shape.ts`'s vocabulary — linear ramp or radial
+ * vignette) that the two `mode`-derived stops are painted through, so every
+ * mode can be linear or radial and a palette-linked `"auto"` backdrop gets
+ * a vignette for free. Absent means `"linear"`, matching
+ * `DEFAULT_BACKGROUND_SHAPE` — every document predating this field is
+ * unmoved.
  */
 export interface BackgroundParams {
   mode: BackgroundMode;
   custom?: BackgroundGradient;
+  shape?: BackgroundShape;
 }
 
 /** The dark backdrop with no authored custom slot — `scene.ts`'s construction
@@ -257,6 +269,14 @@ export interface BackgroundSample {
  * target, then idle), `cancel` discards it. Times come from the caller's
  * clock — main.ts's `nowMs()`, so offline export's virtual clock drives it
  * deterministically (the fr-92t9 contract the other tweens honor).
+ *
+ * The SHAPE (fr-h3mp) is deliberately NOT part of what this tween
+ * interpolates — a shape has no meaningful midpoint between "linear" and
+ * "radial". During a crossfade the COLORS fade through this class exactly
+ * as before, and the caller switches the scene's shape to the target
+ * document's at the START of the leg (main.ts's `pushBackground`), so the
+ * vignette geometry (or its absence) never blends, only pops at the leg's
+ * first frame.
  */
 export class BackgroundTween {
   private from: BackgroundGradient | null = null;

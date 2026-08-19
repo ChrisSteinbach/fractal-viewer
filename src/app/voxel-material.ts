@@ -71,6 +71,11 @@ const VOXEL_FRAGMENT = /* glsl */ `
   uniform mat4 uInvProjView;
   uniform vec3 uBgTop;
   uniform vec3 uBgBottom;
+  /** Backdrop gradient SHAPE (fr-h3mp): mirrors the surface tracers'
+   * uBgShape/uBgCenter/uBgScale — see surface-material.ts. */
+  uniform int uBgShape;
+  uniform vec2 uBgCenter;
+  uniform vec2 uBgScale;
   /** Primary march step count, scaled with the bound grid so the stride
    * stays ~1.16 voxels (see marchStepsForGrid). */
   uniform int uMarchSteps;
@@ -321,6 +326,10 @@ export function createVoxelMaterial(
       uInvProjView: { value: new THREE.Matrix4() },
       uBgTop: { value: BG_TOP.clone() },
       uBgBottom: { value: BG_BOTTOM.clone() },
+      // fr-h3mp: linear defaults, matching the surface tracers.
+      uBgShape: { value: 0 },
+      uBgCenter: { value: new THREE.Vector2(0.5, 0.5) },
+      uBgScale: { value: new THREE.Vector2(1, 1) },
       // Matches the placeholder 1³ texture era; a real value arrives with
       // the first uploaded volume (setVoxelGrid → marchStepsForGrid).
       uMarchSteps: { value: 220 },
