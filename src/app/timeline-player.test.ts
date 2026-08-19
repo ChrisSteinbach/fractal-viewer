@@ -204,7 +204,7 @@ describe("TimelinePlayer restart after done", () => {
   });
 });
 
-describe("TimelinePlayer held legs (fr-v3au)", () => {
+describe("TimelinePlayer held legs", () => {
   it("hold suspends firing: frame() returns null repeatedly however far the clock runs, staying active and held", () => {
     let t = 0;
     const player = new TimelinePlayer(() => t);

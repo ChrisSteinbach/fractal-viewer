@@ -1,5 +1,5 @@
 /**
- * Isolation-reload handoff (fr-su3r): a one-load-wide sessionStorage bridge
+ * Isolation-reload handoff: a one-load-wide sessionStorage bridge
  * carrying the exact session-only slice of `AppState` that the cross-origin-
  * isolation reload (`register-sw.ts`) would otherwise silently discard.
  *
@@ -25,7 +25,7 @@
  * switch chosen inside the reload window is a real, current-session user
  * action, not scene content — yet the reload throws it away with nothing to
  * blame, because the restore that follows is a plain scene load, not a
- * preset load, so the hint never re-fires (fr-su3r: picking a Flame-group
+ * preset load, so the hint never re-fires (picking a Flame-group
  * preset in the reload window leaves the app in Points mode after reload,
  * even though the authored system itself comes back correctly).
  *
@@ -65,7 +65,7 @@ import type { RenderMode } from "./state";
 // ---------------------------------------------------------------------------
 
 /**
- * The one-load-wide handoff payload (fr-su3r): exactly the session-only
+ * The one-load-wide handoff payload: exactly the session-only
  * `AppState` slice the isolation reload would otherwise discard. A single
  * field today; more could join it later under the same one-shot,
  * read-and-clear contract without changing the storage key.

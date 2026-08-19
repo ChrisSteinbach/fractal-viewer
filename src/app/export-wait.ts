@@ -1,18 +1,18 @@
 /**
- * The Save-PNG wait policy (fr-vja8.67): WHAT a Save-PNG pressed in a
- * render mode has to wait for before its capture may run (fr-61a2), WHICH
- * mode's wait can be cut short with a picture (fr-2fbs), and HOW a press
- * that raced the finishing render resolves. Extracted from main.ts on the
- * `export-progress.ts` (fr-7mfx) precedent — that module is the same
- * feature's other half, the modal's timing policy, already DOM-free and
- * tested; this one is the wait that modal discloses. main.ts's
- * `planPngExport` arms spread {@link ExportWaitPolicy.planRenderWait}'s
- * result into their plans, and contribute nothing of their own to the
- * rules here — which is the point: the policy is order-sensitive (the
- * ties-go-to-budget re-check, the fr-2fbs latch whose absence measurably
- * delivered the previous session's canvas at the previous session's
- * size), and order-sensitive logic buried in main.ts was covered only by
- * the minutes-long browser gate.
+ * The Save-PNG wait policy: WHAT a Save-PNG pressed in a render mode has to
+ * wait for before its capture may run, WHICH mode's wait can be cut short
+ * with a picture, and HOW a press that raced the finishing render resolves.
+ * Extracted from main.ts on the `export-progress.ts` precedent — that
+ * module is the same feature's other half, the modal's timing policy,
+ * already DOM-free and tested; this one is the wait that modal discloses.
+ * main.ts's `planPngExport` arms spread {@link
+ * ExportWaitPolicy.planRenderWait}'s result into their plans, and
+ * contribute nothing of their own to the rules here — which is the point:
+ * the policy is order-sensitive (the ties-go-to-budget re-check, the
+ * early-save latch whose absence measurably delivered the previous
+ * session's canvas at the previous session's size), and order-sensitive
+ * logic buried in main.ts was covered only by the minutes-long browser
+ * gate.
  *
  * Every live signal — the flame budget flag and its coverage fraction,
  * the sessions' first-frame gates, the app's current render mode, and the
@@ -35,7 +35,7 @@ export type ExportWaitMode = "flame" | "solid" | "surface";
  * an image. */
 export const EXPORT_RENDER_STOPPED_NOTE = "Render stopped — no PNG saved";
 
-/** The export modal's early-save label (fr-2fbs). "Save now" says what the
+/** The export modal's early-save label. "Save now" says what the
  * button does; "(rough)" is the part that had to be there — the picture it
  * saves is categorically coarser than the one the wait is for, and a bare
  * "Save now" beside a percent readout would read as "save the finished
@@ -78,7 +78,7 @@ export interface ExportWaitDeps {
  * is (a cancel resolves null too — `run.cancelled` is the caller's to
  * report) or a user-presentable note when it never will be. `deliverEarly`
  * is present only for the one mode whose wait has a partial to hand over
- * (fr-2fbs) — ABSENT, not undefined-valued, everywhere else, so no view
+ * — ABSENT, not undefined-valued, everywhere else, so no view
  * can offer the action on a run that never earned it. */
 export interface RenderWaitPlan {
   awaitReady: (run: ExportRun) => Promise<string | null>;
@@ -107,14 +107,14 @@ export interface ExportWaitPolicy {
 export function createExportWait(deps: ExportWaitDeps): ExportWaitPolicy {
   /**
    * What a Save-PNG has to wait for before the mode it was pressed in can
-   * be captured (fr-61a2).
+   * be captured.
    *
    * FLAME is the one renderer whose export IS the live accumulation — the
    * surface arm traces a fresh frame at export scale and the solid arm
    * re-raymarches, both at capture time — so flame waits for that
    * accumulation to MEET ITS BUDGET, where the other two only wait for
    * their session's first frame. Not a nicety: the worker's finishing
-   * chunk re-filters the histogram adaptively (fr-17t) where every
+   * chunk re-filters the histogram adaptively where every
    * progressive frame uses the fixed-radius filter, so a mid-accumulation
    * capture saves a categorically coarser picture, not merely a noisier
    * one.
@@ -126,11 +126,11 @@ export function createExportWait(deps: ExportWaitDeps): ExportWaitPolicy {
 
   /**
    * Whether a mode's {@link renderExportReady} wait can ever be cut short
-   * with a picture (fr-2fbs) — the one thing that decides whether the
+   * with a picture — the one thing that decides whether the
    * export modal offers its second action.
    *
    * FLAME ALONE, and structurally so. Its canvas already holds every
-   * iteration the worker has landed and IS the export (fr-2urv), so
+   * iteration the worker has landed and IS the export, so
    * cutting the wait short delivers a real image — coarser, per the
    * adaptive re-filter in {@link renderExportReady}'s doc, but the picture
    * on screen. The other two waits have nothing to give: solid's is for
@@ -157,12 +157,12 @@ export function createExportWait(deps: ExportWaitDeps): ExportWaitPolicy {
    * lack of one says the same thing from the other side. Until then the
    * canvas still holds the PREVIOUS session's image at the PREVIOUS
    * session's size — and the Export-size select restarts the session on
-   * purpose (fr-2urv), so this is not a corner: it is the headline case.
+   * purpose, so this is not a corner: it is the headline case.
    *
-   * MEASURED, on the first cut of this, which honoured a press with no
-   * such gate: 4x, pressed the moment the modal appeared, delivered an
-   * 820x540 PNG byte-identical to the 1x render it had just replaced, with
-   * the modal quoting "3280 × 2160" beside it — fr-61a2's own
+   * MEASURED, on the first cut of this, which honoured a press with no such
+   * gate: 4x, pressed the moment the modal appeared, delivered an 820x540
+   * PNG byte-identical to the 1x render it had just replaced, with the
+   * modal quoting "3280 × 2160" beside it — the fall-through bug's own
    * wrong-subject, wrong-size export, re-entered through the new door. So
    * the press LATCHES (`ExportRun.stop` is terminal) and delivers the
    * instant a frame of this session's own exists, which makes the early
@@ -199,7 +199,7 @@ export function createExportWait(deps: ExportWaitDeps): ExportWaitPolicy {
   ): Promise<string | null> {
     while (!renderExportReady(mode)) {
       if (run.cancelled) return null;
-      // The user asked for the picture AS IT STANDS (fr-2fbs). Tested
+      // The user asked for the picture AS IT STANDS. Tested
       // AFTER the loop's own condition, which is what settles the race
       // when the budget is met in the same turn as the press: a ready
       // render exits the loop first and the FINISHED picture saves. That
@@ -220,7 +220,7 @@ export function createExportWait(deps: ExportWaitDeps): ExportWaitPolicy {
   /**
    * The wait a Save-PNG does before capturing, plus — for the one mode
    * whose wait has a picture to hand over — the modal action that cuts it
-   * short (fr-2fbs).
+   * short.
    *
    * Built here rather than arm by arm so that "which modes offer the
    * early save" is one predicate consulted in one place: an arm of
@@ -241,7 +241,7 @@ export function createExportWait(deps: ExportWaitDeps): ExportWaitPolicy {
         label: EXPORT_SAVE_EARLY_LABEL,
         // The wait is parked on nothing but render signals, and the next
         // one can be a whole accumulation chunk away — the same reason
-        // main.ts's savePng Cancel wakes it (fr-61a2).
+        // main.ts's savePng Cancel wakes it.
         onDeliver: deps.notifyRenderSignal,
         taken: () => early,
       },

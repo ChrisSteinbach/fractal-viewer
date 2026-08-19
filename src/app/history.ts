@@ -16,11 +16,11 @@
  * in memory (a string's size is exactly its wire size, not whatever object
  * graph a `SceneSnapshot` happens to retain).
  *
- * Each entry ALSO carries an out-of-band view pose (fr-uf3, see
+ * Each entry ALSO carries an out-of-band view pose (see
  * {@link HistoryEntry.pose}) alongside — but deliberately NOT inside — its
  * snapshot string, so undo/redo across a whole-system replace can restore the
  * exact pre-replace framing while the `===` dedup keeps comparing only the
- * camera-less string. Since fr-gq99 that framing is the whole {@link ViewPose}
+ * camera-less string. That framing is the whole {@link ViewPose}
  * — the orbit camera plus, for a non-flat system, the 4D rotor/slice pose.
  * Both halves are type-only imports (from the pure `orbit.ts` and
  * `four-d-view.ts`), so this stays free of any DOM or runtime app-module
@@ -32,8 +32,8 @@ import type { CameraPose } from "./orbit";
 
 /**
  * The complete view framing captured out of band per history entry: the orbit
- * camera (fr-uf3) plus — while the checkpointed system was non-flat — the 4D
- * view pose (fr-gq99), so undo/redo across a replace restores the tumble
+ * camera plus — while the checkpointed system was non-flat — the 4D
+ * view pose, so undo/redo across a replace restores the tumble
  * rotor and w-slice with the same fidelity as the 3D camera. Deliberately the
  * same `camera`/`fourD` field vocabulary as `persist.ts`'s `SceneSnapshot`
  * document — this is the identical framing, just carried OUTSIDE the encoded
@@ -56,9 +56,9 @@ export interface HistoryEntry {
    * whether to re-frame the camera when crossing it in either direction. */
   replaced: boolean;
   /**
-   * The view pose the state {@link snapshot} was viewed WITH — orbit camera
-   * (fr-uf3) plus, for a non-flat system, the 4D rotor/slice (fr-gq99) —
-   * captured out of band when this entry was pushed: at a `checkpoint` it is
+   * The view pose the state {@link snapshot} was viewed WITH — the orbit
+   * camera plus, for a non-flat system, the 4D rotor/slice — captured out of
+   * band when this entry was pushed: at a `checkpoint` it is
    * the framing of the pre-edit state; on an undo/redo push it is the framing
    * the state being parked was just left with. Undo/redo restores it when it
    * lands on this entry across a `replaced` transition, instead of auto-fitting
@@ -106,7 +106,7 @@ export class SceneHistory {
 
   /**
    * Record the pre-edit state at the leading edge of an edit burst, tagged
-   * with the current live view `pose` (fr-uf3, fr-gq99) so undo can later
+   * with the current live view `pose` so undo can later
    * return to this exact framing across a replace. If the top entry already has this
    * exact snapshot, a burst ended right back where it started — refresh its
    * flag AND pose rather than pushing a duplicate step, so undo never has to
@@ -135,7 +135,7 @@ export class SceneHistory {
    * entry, pushes `current` onto the redo stack tagged with that entry's own
    * `replaced` flag (so redo can later restore the correct transition kind)
    * and the current live `pose` (the framing `current` is being parked with,
-   * so a later redo can restore it — fr-uf3), and returns the popped entry
+   * so a later redo can restore it), and returns the popped entry
    * (whose own pose the caller restores). Null when nothing is left to undo.
    */
   undo(current: string, pose?: ViewPose): HistoryEntry | null {
@@ -155,7 +155,7 @@ export class SceneHistory {
    * Step forward: the mirror of `undo`. Pops the redo top, pushes `current`
    * back onto the undo stack tagged with that entry's `replaced` flag and the
    * current live `pose` (the framing `current` is being parked with, so a
-   * later undo can restore it — fr-uf3; evicting past the cap, same as
+   * later undo can restore it; evicting past the cap, same as
    * `checkpoint`), and returns the popped entry (whose own pose the caller
    * restores). Null when nothing is left to redo.
    */

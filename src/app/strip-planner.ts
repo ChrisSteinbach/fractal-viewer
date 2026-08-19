@@ -1,38 +1,37 @@
 /**
- * Adaptive scissor-strip planner for the surface render's WebGL traces
- * (fr-sjff / fr-8kup / fr-du81 / fr-096u): carves a frame into strips
- * sized so no single GPU submission ever runs unbounded.
+ * Adaptive scissor-strip planner for the surface render's WebGL traces:
+ * carves a frame into strips sized so no single GPU submission ever runs
+ * unbounded.
  *
  * The problem being solved: close to the viewplane every ray is
  * near-surface and burns the whole march budget of heavy DE calls, so a
  * frame submitted as ONE draw call can mean tens of seconds of GPU work in
  * a single submission — which trips the driver/browser GPU watchdog
  * (kernel-confirmed on Mesa/Iris: i915 preemption-timeout resets at
- * `preempt_timeout_ms` = 7.5s, fr-096u), loses the WebGL context, and
- * wedges the GPU process until the browser restarts. The fix is
- * architectural: every trace goes out as scissored strips with a
- * forced-completion sync between them (a 1x1 readback — a data dependency
- * no driver can fake; `gl.finish()` can return before execution on some
- * command-buffer paths), each sized to roughly `targetMs` of measured GPU
- * time — bounded submissions the watchdog waves through, on ANY system at
- * ANY zoom.
+ * `preempt_timeout_ms` = 7.5s), loses the WebGL context, and wedges the GPU
+ * process until the browser restarts. The fix is architectural: every trace
+ * goes out as scissored strips with a forced-completion sync between them
+ * (a 1x1 readback — a data dependency no driver can fake; `gl.finish()` can
+ * return before execution on some command-buffer paths), each sized to
+ * roughly `targetMs` of measured GPU time — bounded submissions the
+ * watchdog waves through, on ANY system at ANY zoom.
  *
- * Units are PIXELS, not rows (fr-096u). The planner's original row
- * vocabulary had two unbounded corners, both measured into kernel GPU
- * hangs on Iris Xe fold sessions: the probe strip (rows-fraction sized —
- * at full resolution 3 rows of a fold-frontier DE measured 0.5-4ms/px,
- * i.e. up to ~15s in the one submission that by definition runs before
- * any measurement exists), and the 1-row floor (a single 1280px fold row
- * is seconds of GPU; an 8192px capture row far worse). Pixel units close
- * both: the probe is sized from a per-pixel cost PRIOR — the caller's
- * measured value when one exists, else a pessimistic fold-class prior
- * ({@link STRIP_FOLD_PRIOR_MS_PER_PX}), else the legacy fraction for
- * affine-cheap systems — and a strip that must shrink below one row
- * simply becomes a partial row. Each strip is a contiguous row-major
- * pixel interval, handed to the renderer as 1-3 scissor rects (partial
- * first row, full middle rows, partial last row) submitted together under
- * one fence: the per-submission bound is the strip's PIXEL count, which
- * the planner controls exactly.
+ * Units are PIXELS, not rows. The planner's original row vocabulary had two
+ * unbounded corners, both measured into kernel GPU hangs on Iris Xe fold
+ * sessions: the probe strip (rows-fraction sized — at full resolution 3
+ * rows of a fold-frontier DE measured 0.5-4ms/px, i.e. up to ~15s in the
+ * one submission that by definition runs before any measurement exists),
+ * and the 1-row floor (a single 1280px fold row is seconds of GPU; an
+ * 8192px capture row far worse). Pixel units close both: the probe is sized
+ * from a per-pixel cost PRIOR — the caller's measured value when one
+ * exists, else a pessimistic fold-class prior ({@link
+ * STRIP_FOLD_PRIOR_MS_PER_PX}), else the legacy fraction for affine-cheap
+ * systems — and a strip that must shrink below one row simply becomes a
+ * partial row. Each strip is a contiguous row-major pixel interval, handed
+ * to the renderer as 1-3 scissor rects (partial first row, full middle
+ * rows, partial last row) submitted together under one fence: the
+ * per-submission bound is the strip's PIXEL count, which the planner
+ * controls exactly.
  *
  * Sizing after the probe is as many pixels as the measured MARGINAL cost
  * says fit one strip target ({@link stripModelPx}), clamped to
@@ -46,31 +45,30 @@
  * interruptible.
  *
  * Measurement scaling alone is still blind to a cost DISCONTINUITY — the
- * second fr-096u mechanism: a strip sized from a cheap band's measurement
- * can land in the frame's expensive band and cost its pixel count times a
+ * second hang mechanism: a strip sized from a cheap band's measurement can
+ * land in the frame's expensive band and cost its pixel count times a
  * 100-1000x higher price in one submission (fold+grid frames are exactly
  * that bimodal). {@link STRIP_WORST_CASE_CAP_MS} priced at the caller's
  * class-pessimistic `worstMsPerPx` caps every strip's worst-case cost, so
  * the transition strip is ~2s instead of minutes; see the constant's doc.
  *
- * WHAT A MEASUREMENT IS PRICED AS is the fr-ado7 correction, and it is
- * the whole of why {@link StripCost} exists. Until then the sizer carried
- * ONE number — a batch's whole wall over its pixel count — which charges
- * every submission's FIXED cost (the fence/poll service, the per-draw
- * setup, one caller tick of poll quantization) to the pixels that
- * happened to ride it. That is an absorbing state, not an over-estimate:
- * a fixed-cost-dominated batch reads as expensive pixels, the sizer asks
- * for fewer, the next batch is MORE fixed-dominated, and growing back
- * would need a batch measuring under `targetMs` that the fixed cost alone
- * forbids. Measured (fr-kz2p, a near-empty frame at extreme zoom): strips
- * collapsed 990 -> ... -> 1px and then oscillated at 1-6px, each batch
- * still costing 500-1700ms REGARDLESS of its pixel count, with the export
- * frozen at 59% for the last 5.5 minutes of a 480s run. The compute arm
- * had the identical pathology at its hit dispatches and fixed it in
- * `surface-compute.ts` (fr-p8bc / fr-d6g5 / fr-2ojg): two terms, each
+ * WHAT A MEASUREMENT IS PRICED AS is the two-term correction, and it is the
+ * whole of why {@link StripCost} exists. Until then the sizer carried ONE
+ * number — a batch's whole wall over its pixel count — which charges every
+ * submission's FIXED cost (the fence/poll service, the per-draw setup, one
+ * caller tick of poll quantization) to the pixels that happened to ride it.
+ * That is an absorbing state, not an over-estimate: a fixed-cost-dominated
+ * batch reads as expensive pixels, the sizer asks for fewer, the next batch
+ * is MORE fixed-dominated, and growing back would need a batch measuring
+ * under `targetMs` that the fixed cost alone forbids. Measured on a
+ * near-empty frame at extreme zoom: strips collapsed 990 -> ... -> 1px and
+ * then oscillated at 1-6px, each batch still costing 500-1700ms REGARDLESS
+ * of its pixel count, with the export frozen at 59% for the last 5.5
+ * minutes of a 480s run. The compute arm had the identical pathology at its
+ * hit dispatches and fixed it in `surface-compute.ts`: two terms, each
  * measurement's surprise split by WIDTH so a narrow batch charges the
- * INTERCEPT, sizing off the MARGINAL alone. This file now runs that model
- * — see {@link StripCost} and {@link nextStripCost} — and the safety
+ * INTERCEPT, sizing off the MARGINAL alone. This file now runs that model —
+ * see {@link StripCost} and {@link nextStripCost} — and the safety
  * mechanisms above are untouched by it: the cap is applied LAST and is
  * still priced on the raw ms/px ratchet, so the SET of sizes a strip may
  * take is exactly what it was and only the choice within it moved.
@@ -92,7 +90,7 @@ export const STRIP_PROBE_FRACTION = 1 / 256;
  * capture tiers' size. Low enough to stay far from any watchdog and to keep
  * the async settle path's frames responsive; high enough that
  * forced-completion pipeline bubbles stay a small fraction of the work.
- * The preview tier plans against a smaller target (fr-du81) so its strips
+ * The preview tier plans against a smaller target so its strips
  * interleave with a live drag — passed per planner via `targetMs`. */
 export const STRIP_TARGET_MS = 75;
 
@@ -105,21 +103,21 @@ export const STRIP_MAX_GROWTH = 8;
 
 /**
  * Pessimistic per-pixel cost prior (ms) for FOLD-CLASS systems before any
- * measurement exists — the fr-096u fix for the unprimed probe, and the
- * strip twin of `surface-compute.ts`'s pessimistic first-slice/first-batch
- * priors (fr-p8bc's lesson: bound first submissions by a pessimistic
+ * measurement exists — the fix for the unprimed probe, and the strip twin
+ * of `surface-compute.ts`'s pessimistic first-slice/first-batch priors (the
+ * width-1 shading probe's lesson: bound first submissions by a pessimistic
  * per-unit prior in the unit that actually costs). Calibration: Iris Xe
- * measured 0.5-4ms/px on the mandelboxKifs full tier (fr-096u's sweep
- * data); headless SwiftShader ~6ms/px at preview depth (fr-du81). 10ms/px
- * sits above both, so the probe lands near `targetMs` and the real
- * measurement takes over one strip later; reality would need to beat the
- * prior ~100x — two orders past anything measured — before a probe
+ * measured 0.5-4ms/px on the mandelboxKifs full tier (the hang
+ * investigation's sweep data); headless SwiftShader ~6ms/px at preview
+ * depth. 10ms/px sits above both, so the probe lands near `targetMs` and
+ * the real measurement takes over one strip later; reality would need to
+ * beat the prior ~100x — two orders past anything measured — before a probe
  * approached the 7.5s i915 preemption window.
  */
 export const STRIP_FOLD_PRIOR_MS_PER_PX = 10;
 
 /** Fold-class worst-case per-pixel cost (ms) for the per-strip cap.
- * MEASURED, not guessed: fr-096u's Iris Xe settle-tier diagnostics put the
+ * MEASURED, not guessed: Iris Xe settle-tier diagnostics put the
  * mandelboxKifs surface band at ~42ms/px average — with single crease
  * pixels up to ~2.2s(!), which is why the cap must assume band prices far
  * above the probe prior (the probe prior is a typical-band figure for
@@ -129,8 +127,8 @@ export const STRIP_FOLD_PRIOR_MS_PER_PX = 10;
  * transition strip instead of the ~8.5s that killed the context at a
  * 200px cap. Crease-pixel RUNS (adjacent multi-second pixels) can still
  * exceed the cap's promise — but the settle always arms regardless
- * (fr-096u) and previews likewise run to completion however long that takes
- * (fr-zx34's no-give-up verdict, progress disclosed) — the worst-case
+ * and previews likewise run to completion however long that takes
+ * (the no-automatic-give-up verdict, progress disclosed) — the worst-case
  * cap's job is keeping each SUBMISSION bounded while those grinds stay
  * interruptible. */
 export const STRIP_FOLD_WORST_MS_PER_PX = 50;
@@ -146,21 +144,20 @@ export const STRIP_AFFINE_WORST_MS_PER_PX = 0.1;
 
 /**
  * Worst-case GPU time (ms) any single strip is allowed to PLAN for, priced
- * at the caller's class-pessimistic `worstMsPerPx` (fr-096u's second
+ * at the caller's class-pessimistic `worstMsPerPx` (the second hang
  * mechanism). The growth cap alone is a RATIO bound on pixels and cannot
  * see a cost DISCONTINUITY: fold+grid frames are bimodal (grid-skipped
  * empty rows ~0.01-0.05ms/px vs surface-band rows 0.5-4ms/px, a 100-1000x
- * step), so strips that grew big through the cheap band could slam into
- * the expensive band as one multi-minute submission — the kernel-confirmed
- * i915 preemption hang that survived the probe fix. Capping every strip at
+ * step), so strips that grew big through the cheap band could slam into the
+ * expensive band as one multi-minute submission — the kernel-confirmed i915
+ * preemption hang that survived the probe fix. Capping every strip at
  * `STRIP_WORST_CASE_CAP_MS / worstMsPerPx` pixels bounds that transition
- * strip to seconds even if the measurement history says the region is
- * free; within the expensive band the ordinary measurement scaling takes
- * over and strips shrink to `targetMs`. 4000ms sits just under the 7.5s
- * i915 preemption window at the priced worst case — the margin the first
- * fr-096u cut doubled (2000ms) bought nothing but strip-count overhead,
- * which the review measured as a real slowdown on measured-cheap fold
- * systems.
+ * strip to seconds even if the measurement history says the region is free;
+ * within the expensive band the ordinary measurement scaling takes over and
+ * strips shrink to `targetMs`. 4000ms sits just under the 7.5s i915
+ * preemption window at the priced worst case — the margin the first cut
+ * doubled (2000ms) bought nothing but strip-count overhead, which the
+ * review measured as a real slowdown on measured-cheap fold systems.
  */
 export const STRIP_WORST_CASE_CAP_MS = 4000;
 
@@ -187,12 +184,12 @@ export const STRIP_WORST_CASE_CAP_MS = 4000;
  *
  * Scaling by `targetMs` fixes exactly that, because the target IS the
  * statement of how much work one strip should carry: the settle tier's
- * pivot is 125px and the preview tier's is 20px. 0.6ms/px is the price
- * that puts them there, and it sits inside the measured heavy-fold band
- * (fr-096u: 0.5-4ms/px on mandelboxKifs, fr-du81: ~6ms/px for a
- * SwiftShader preview) — so "narrower than one strip target of HEAVY
- * pixels" is the reading of "too narrow to be about pixels". UNMEASURED
- * as a pivot; simulated across the tiers, not pinned on a driver.
+ * pivot is 125px and the preview tier's is 20px. 0.6ms/px is the price that
+ * puts them there, and it sits inside the measured heavy-fold band
+ * (0.5-4ms/px on mandelboxKifs, ~6ms/px for a SwiftShader preview) — so
+ * "narrower than one strip target of HEAVY pixels" is the reading of "too
+ * narrow to be about pixels". UNMEASURED as a pivot; simulated across the
+ * tiers, not pinned on a driver.
  */
 export const STRIP_COST_PIVOT_MS_PER_PX = 0.6;
 
@@ -210,7 +207,7 @@ export function stripCostPivotPx(targetMs: number): number {
  * How much MARGINAL work (ms of predicted per-pixel cost) one strip may
  * carry per unit of the FIXED cost its batch is going to pay anyway — the
  * second term of {@link stripAllowanceMs}, and the branch that breaks
- * fr-ado7's absorbing state.
+ * the single-number estimator's absorbing state.
  *
  * A batch whose wall is dominated by fixed cost cannot be made cheaper by
  * shrinking the strips inside it; refusing to widen them past `targetMs`
@@ -220,15 +217,15 @@ export function stripCostPivotPx(targetMs: number): number {
  * batch pays a 500ms fixed cost may carry another 500ms of predicted
  * marginal work, i.e. the batch is at worst half overhead.
  *
- * ONE, AND UNMEASURED — deliberately the conservative end. Its compute
- * twin ships 7 on a measured table (`SURFACE_COMPUTE_SHADE_WORK_PER_
- * FIXED_COST`), which is the same dial one arm over; nothing here has
- * been measured on a real driver yet, and the number is an UPPER BOUND on
- * a strip's width in the branch that binds, so erring low costs
- * throughput and erring high spends watchdog headroom. The outer bound is
- * {@link STRIP_WORST_CASE_CAP_MS} either way — the cap is applied after
- * this and wins — so raising it can only trade submissions for size
- * INSIDE the fr-096u envelope.
+ * ONE, AND UNMEASURED — deliberately the conservative end. Its compute twin
+ * ships 7 on a measured table (`SURFACE_COMPUTE_SHADE_WORK_PER_
+ * FIXED_COST`), which is the same dial one arm over; nothing here has been
+ * measured on a real driver yet, and the number is an UPPER BOUND on a
+ * strip's width in the branch that binds, so erring low costs throughput
+ * and erring high spends watchdog headroom. The outer bound is {@link
+ * STRIP_WORST_CASE_CAP_MS} either way — the cap is applied after this and
+ * wins — so raising it can only trade submissions for size INSIDE the
+ * watchdog-safe envelope.
  */
 export const STRIP_WORK_PER_FIXED_COST = 1;
 
@@ -242,7 +239,7 @@ export const STRIP_WORK_PER_FIXED_COST = 1;
  * width, and a too-wide hit dispatch is the hazard there. This sizer's
  * runaway is the mirror image: a RISING marginal SHRINKS strips, and
  * shrinking is the direction with an absorbing state at the bottom
- * (fr-ado7 — a 1px strip carries a whole submission's fixed cost, which
+ * (a 1px strip carries a whole submission's fixed cost, which
  * re-reads as expensive pixels). Optimism here needs no rate limit of its
  * own because it already has two independent bounds this planner has
  * always had and the compute sizer did not: {@link STRIP_MAX_GROWTH}
@@ -254,7 +251,7 @@ export const STRIP_WORK_PER_FIXED_COST = 1;
  * it, and until then the strip is bounded by the worst-case cap rather
  * than by the model. That is bounded, not unbounded — every strip is
  * still clamped to {@link STRIP_WORST_CASE_CAP_MS} of GPU at the raw
- * ratcheted price, which is fr-096u's whole promise and does not go
+ * ratcheted price, which is the bounded-submission promise and does not go
  * through the model at all. The rise limit is belt-and-braces regardless:
  * the width split already leaves a narrow batch's surprise almost
  * entirely on the intercept, and the identity in {@link nextStripCost}
@@ -267,7 +264,7 @@ export const STRIP_COST_MARGINAL_RISE = 2;
 /**
  * Smallest strip (px) the cost model may size, once it has a measurement
  * — the "sane unit of work" floor, not the smallest expressible one
- * (fr-ado7; `surface-compute.ts` floors its hit batches at one WORKGROUP
+ * (`surface-compute.ts` floors its hit batches at one WORKGROUP
  * for the same reason: "shrinking below one workgroup only multiplies the
  * number of worst-ray-cost submissions without shrinking any single one
  * of them"). Every strip carries a whole submission's fixed cost, so a
@@ -287,16 +284,15 @@ export const STRIP_COST_MARGINAL_RISE = 2;
  *
  * IT DOES NOT APPLY TO THE PROBE, nor to a repeat of an unmeasured strip:
  * that size is the caller's PRIOR, the one pessimistic bound standing
- * over a submission nothing has measured (fr-096u's unprimed-probe
- * hang), and flooring it would be a 32x unmeasured jump past exactly that
+ * over a submission nothing has measured (the unprimed-probe hang),
+ * and flooring it would be a 32x unmeasured jump past exactly that
  * bound.
  */
 export const STRIP_MIN_PX = 32;
 
 /**
- * The strip cost model (fr-ado7): `cost(px) = interceptMs + px *
- * marginalMsPerPx`, the strip twin of `surface-compute.ts`'s
- * `ShadeHitCost`.
+ * The strip cost model: `cost(px) = interceptMs + px * marginalMsPerPx`,
+ * the strip twin of `surface-compute.ts`'s `ShadeHitCost`.
  *
  * The two terms are physically different things and conflating them is
  * the defect this type exists to name. `interceptMs` is what a batch
@@ -336,13 +332,13 @@ export function stripCostIsEmpty(cost: StripCost): boolean {
  * `max(targetMs - intercept, STRIP_WORK_PER_FIXED_COST * intercept)`.
  *
  * Below the knee that is simply the room left inside the strip target (a
- * 5ms intercept leaves 70ms of pixels to buy), which is what keeps
- * ordinary frames sized as they always were. Above it — an intercept
- * larger than the whole target — it is fr-ado7's escape: a batch whose
- * fixed cost alone exceeds `targetMs` cannot be made cheaper by putting
- * fewer pixels in it, so the sizer stops trying to hit a total it can no
- * longer reach and buys marginal work in proportion to the fixed cost it
- * is paying anyway.
+ * 5ms intercept leaves 70ms of pixels to buy), which is what keeps ordinary
+ * frames sized as they always were. Above it — an intercept larger than the
+ * whole target — it is the absorbing state's escape: a batch whose fixed
+ * cost alone exceeds `targetMs` cannot be made cheaper by putting fewer
+ * pixels in it, so the sizer stops trying to hit a total it can no longer
+ * reach and buys marginal work in proportion to the fixed cost it is paying
+ * anyway.
  */
 export function stripAllowanceMs(
   interceptMs: number,
@@ -361,10 +357,11 @@ export function stripAllowanceMs(
  * worst-case cap are what bound the answer then, exactly as they bound a
  * near-zero measurement today).
  *
- * SIZING READS THE MARGINAL AND NOTHING ELSE. Dividing by a batch
- * average would charge the intercept to every pixel, so the predicted
- * width would fall as the strip narrowed and the sizer would walk itself
- * to the floor — fr-ado7, and fr-d6g5's trapdoor one module over.
+ * SIZING READS THE MARGINAL AND NOTHING ELSE. Dividing by a batch average
+ * would charge the intercept to every pixel, so the predicted width would
+ * fall as the strip narrowed and the sizer would walk itself to the floor —
+ * the single-number estimator's ratchet, and the shade sizer's one-hit
+ * trapdoor one module over.
  */
 export function stripModelPx(cost: StripCost, targetMs: number): number {
   const allowanceMs = stripAllowanceMs(cost.interceptMs, targetMs);
@@ -375,7 +372,7 @@ export function stripModelPx(cost: StripCost, targetMs: number): number {
 
 /**
  * Fold one measured batch — `measuredMs` of wall over `px` traced pixels
- * — into the cost model (fr-ado7, mirroring `surface-compute.ts`'s
+ * — into the cost model (mirroring `surface-compute.ts`'s
  * `nextShadeHitCost`).
  *
  * One observation, two unknowns — so the surprise (measured minus
@@ -464,13 +461,13 @@ export interface StripPlannerOptions {
   /** Measured GPU time (ms) each strip aims for. */
   targetMs?: number;
   /**
-   * Best available per-pixel cost estimate (ms) BEFORE the probe runs:
-   * the caller's measured value from an earlier job when one exists (a
-   * completed preview priming the settle, fr-du81), else
-   * {@link STRIP_FOLD_PRIOR_MS_PER_PX} for fold-class systems, else null
-   * — which keeps the legacy rows-fraction probe for affine-cheap
-   * systems. Sizes ONLY the probe; every later strip is sized from the
-   * {@link StripCost} the job's own measurements build.
+   * Best available per-pixel cost estimate (ms) BEFORE the probe runs: the
+   * caller's measured value from an earlier job when one exists (a
+   * completed preview priming the settle), else {@link
+   * STRIP_FOLD_PRIOR_MS_PER_PX} for fold-class systems, else null — which
+   * keeps the legacy rows-fraction probe for affine-cheap systems. Sizes
+   * ONLY the probe; every later strip is sized from the {@link StripCost}
+   * the job's own measurements build.
    */
   priorMsPerPx?: number | null;
   /**
@@ -485,7 +482,7 @@ export interface StripPlannerOptions {
    * {@link STRIP_WORST_CASE_CAP_MS} of worst-case predicted GPU, which is
    * what bounds the cheap-to-expensive transition strip the measurement
    * history cannot foresee — and the planner RAISES it further mid-job as
-   * its own measurements reveal worse pixels (fr-096u measured fold
+   * its own measurements reveal worse pixels (measured fold
    * crease pixels at 1.7-3.1s EACH on Iris: after the first one, only
    * ~1px strips are safe, and the job that discovers it must tighten
    * itself, not just its successors). Omit/null for no cap (tests). NOT
@@ -501,7 +498,7 @@ export interface StripPlanner {
   readonly done: boolean;
   /** Pixels handed out so far. Callers render every strip the moment it
    * is planned, so this doubles as "pixels traced" — the numerator a
-   * superseded job extrapolates its full-frame cost from (fr-du81). */
+   * superseded job extrapolates its full-frame cost from. */
   readonly plannedPx: number;
   /** The full pixel count this planner tiles (rows x rowPx). */
   readonly totalPx: number;
@@ -517,7 +514,7 @@ export interface StripPlanner {
    * a superseded job's partial observation may only raise it. */
   readonly observedWorstMsPerPx: number;
   /**
-   * The two-term cost model this job's measurements have built (fr-ado7):
+   * The two-term cost model this job's measurements have built:
    * `{interceptMs, marginalMsPerPx}`, both zero until something is
    * measured. Read it for the MARGINAL — the only honest per-pixel price
    * a caller pacing its own queue can use, and the one the single
@@ -547,29 +544,28 @@ export interface StripPlanner {
   next(prevMs: number | null): Strip | null;
   /**
    * Report a measurement directly: `ms` of GPU time observed over `px`
-   * traced pixels (a single strip or a fence batch — reported at the
-   * width it was actually measured at, which is what lets the cost model
+   * traced pixels (a single strip or a fence batch — reported at the width
+   * it was actually measured at, which is what lets the cost model
    * attribute it). Folds into {@link cost} and ratchets the worst-price
-   * observation exactly like the `prevMs` handed to {@link next} does —
-   * the difference is
-   * WHEN: `next` only hears about a measurement if another strip is still
-   * to be planned, so a job's LAST measurement (the final drain strip,
-   * the final fence batch, a sync-collapse strip that escapes the regime)
-   * never reached the ratchet — and a completed job whose final strip
-   * discovered the expensive band then handed the evidence chain a
-   * too-low worst (fr-24to safety half). Callers report every measurement
-   * here at the moment it exists; the `next` door stays as well, and
-   * `scene.ts`'s sync-collapse path deliberately uses both — the ratchet
-   * is a max, and the model's split is exact-fitting, so folding the same
-   * measurement at the same width twice is a no-op. The one sharp edge is
-   * that the exact fit is what a clamp breaks: when
-   * {@link STRIP_COST_MARGINAL_RISE} binds on the first fold, a second
-   * fold of the same measurement moves the marginal again, so that path
-   * allows one extra doubling per strip. Harmless where it happens (the
+   * observation exactly like the `prevMs` handed to {@link next} does — the
+   * difference is WHEN: `next` only hears about a measurement if another
+   * strip is still to be planned, so a job's LAST measurement (the final
+   * drain strip, the final fence batch, a sync-collapse strip that escapes
+   * the regime) never reached the ratchet — and a completed job whose final
+   * strip discovered the expensive band then handed the evidence chain a
+   * too-low worst (the no-give-up verdict's safety half). Callers report
+   * every measurement here at the moment it exists; the `next` door stays
+   * as well, and `scene.ts`'s sync-collapse path deliberately uses both —
+   * the ratchet is a max, and the model's split is exact-fitting, so
+   * folding the same measurement at the same width twice is a no-op. The
+   * one sharp edge is that the exact fit is what a clamp breaks: when
+   * {@link STRIP_COST_MARGINAL_RISE} binds on the first fold, a second fold
+   * of the same measurement moves the marginal again, so that path allows
+   * one extra doubling per strip. Harmless where it happens (the
    * sync-collapse regime escapes to the pipelined one the moment a strip
    * measures past `SURFACE_STRIP_SYNC_ESCAPE_MS`, so the model is barely
-   * consulted there) — but a NEW caller with batch-width measurements
-   * must report them here and pass null to {@link next}.
+   * consulted there) — but a NEW caller with batch-width measurements must
+   * report them here and pass null to {@link next}.
    */
   observe(ms: number, px: number): void;
 }
@@ -621,7 +617,7 @@ export function createStripPlanner(
   );
   let planned = 0;
   let lastPx = 0;
-  // The two-term cost model (fr-ado7). Empty until a REAL measurement
+  // The two-term cost model. Empty until a REAL measurement
   // lands: a prior is a price, not an observation, and sizing a strip
   // from it would be the unprimed-probe hazard one step later.
   let cost = initialStripCost();
@@ -676,20 +672,20 @@ export function createStripPlanner(
         // STRIP_MIN_PX may widen it here.
         px = Math.min(lastPx, capPx());
       } else {
-        // THE CLAMP ORDER IS THE SAFETY ARGUMENT AND MUST NOT BE
-        // REORDERED (fr-ado7 over fr-096u). Innermost is the model's own
-        // answer, held to STRIP_MAX_GROWTH of its predecessor so a width
-        // the measurements have never priced is only reached by climbing
-        // through widths they have. Then STRIP_MIN_PX, the sane-unit
-        // floor that breaks fr-ado7's collapse — it may beat the growth
-        // cap, because it is a constant rather than a measurement and so
-        // cannot balloon. Then the worst-case cap, LAST and outermost:
-        // an unbounded strip draw is fr-096u's kernel-confirmed i915
-        // preemption hang, so wherever floor and cap disagree the CAP
-        // WINS — on a cheap frame the floor governs and the spiral
-        // breaks, on an expensive one the cap governs exactly as it did
-        // before this model existed. The set of sizes a strip may take
-        // is therefore unchanged; only the choice within it moved.
+        // THE CLAMP ORDER IS THE SAFETY ARGUMENT AND MUST NOT BE REORDERED
+        // (the cost model inside the watchdog bound). Innermost is the
+        // model's own answer, held to STRIP_MAX_GROWTH of its predecessor
+        // so a width the measurements have never priced is only reached by
+        // climbing through widths they have. Then STRIP_MIN_PX, the
+        // sane-unit floor that breaks the 1px collapse — it may beat the
+        // growth cap, because it is a constant rather than a measurement
+        // and so cannot balloon. Then the worst-case cap, LAST and
+        // outermost: an unbounded strip draw is the kernel-confirmed i915
+        // preemption hang, so wherever floor and cap disagree the CAP WINS
+        // — on a cheap frame the floor governs and the spiral breaks, on an
+        // expensive one the cap governs exactly as it did before this model
+        // existed. The set of sizes a strip may take is therefore
+        // unchanged; only the choice within it moved.
         const grown = Math.min(
           stripModelPx(cost, targetMs),
           lastPx * STRIP_MAX_GROWTH,
@@ -698,7 +694,7 @@ export function createStripPlanner(
       }
       px = Math.min(px, totalPx - planned);
       // Row-snap strips of a row or more: ending on a row boundary keeps
-      // a row-aligned successor to ONE scissor rect (fr-096u measured a
+      // a row-aligned successor to ONE scissor rect (measured a
       // ~20-30ms fixed GPU cost per draw on Iris/ANGLE — three rects per
       // strip tripled it) and avoids 1px-tall partial rows, whose 2x2
       // fragment-quad shading wastes half the lanes. Sub-row strips (the

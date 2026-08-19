@@ -8,19 +8,19 @@
 export const MOBILE_BREAKPOINT = 640;
 
 /**
- * Ceiling on a replace-load morph's INTERMEDIATE generation requests
- * (fr-a04l): each frame of the tween re-runs the chaos game, so a 5M-point
- * scene must never try to animate at full count. Since fr-a5gu the actual
- * per-frame count adapts to measured generation latency (`morph-budget.ts`)
- * and this is only its upper clamp — a device fast enough to generate more
- * than this per frame gains nothing visible from denser intermediates. The
- * morph's terminal sample — the real replaced request — uses the full
- * `numPoints`, so the settled cloud is never degraded.
+ * Ceiling on a replace-load morph's INTERMEDIATE generation requests: each
+ * frame of the tween re-runs the chaos game, so a 5M-point scene must never
+ * try to animate at full count. The actual per-frame count adapts to
+ * measured generation latency (`morph-budget.ts`) and this is only its
+ * upper clamp — a device fast enough to generate more than this per frame
+ * gains nothing visible from denser intermediates. The morph's terminal
+ * sample — the real replaced request — uses the full `numPoints`, so the
+ * settled cloud is never degraded.
  */
 export const MORPH_MAX_POINTS = 400_000;
 
 /**
- * Duration of the balloon echo's "Inflate" replay (fr-5wlv.2, main.ts's
+ * Duration of the balloon echo's "Inflate" replay (main.ts's
  * onBalloonInflate): how long the radius sweep takes to ease from a
  * crumpled near-center ball out to its rest size.
  */
@@ -35,8 +35,8 @@ export const MAX_GUIDE_SCALE = 2;
 /**
  * Backdrop gradient stops, authored in sRGB and rendered verbatim (scene.ts
  * disables THREE.ColorManagement). Single source of truth for the explorer's
- * CanvasTexture backdrops, the fog colors derived from their midpoints
- * (fr-1lj), and the solid raymarcher's miss gradient (voxel-material.ts).
+ * CanvasTexture backdrops, the fog colors derived from their midpoints,
+ * and the solid raymarcher's miss gradient (voxel-material.ts).
  */
 export const DARK_BACKDROP = { top: "#0d0d18", bottom: "#1f2039" } as const;
 
@@ -54,7 +54,7 @@ export function hexToRgb01(hex: string): [number, number, number] {
 
 /**
  * Whether to request MSAA (`antialias: true`) when creating the WebGL
- * context (fr-rr2m). A context-creation-time decision — WebGL cannot toggle
+ * context. A context-creation-time decision — WebGL cannot toggle
  * it live, so this is a boot heuristic.
  *
  * MSAA pays off only at low pixel densities: at `dpr >= 2` the drawing

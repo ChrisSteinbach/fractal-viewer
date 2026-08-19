@@ -1,5 +1,5 @@
 /**
- * The arithmetic behind a capture's cost memory (fr-2q01), pulled out of
+ * The arithmetic behind a capture's cost memory, pulled out of
  * `scene.ts` so it can be tested without a WebGL context.
  *
  * The solid render's Save-PNG shows an INDETERMINATE modal — one

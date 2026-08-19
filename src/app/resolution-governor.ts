@@ -1,5 +1,5 @@
 /**
- * Adaptive render-resolution governor (fr-4lyt): watches the wall-clock gap
+ * Adaptive render-resolution governor: watches the wall-clock gap
  * between consecutively RENDERED animation frames and decides when weak
  * hardware should trade pixel count for frame rate — and when it has earned
  * that resolution back.
@@ -48,14 +48,14 @@
  * the ladder down and then simply stop — the view settles, the user's hand
  * leaves the canvas — and render-on-demand then produces no more frames at
  * all, so no more samples ever arrive to earn the resolution back; a still
- * parked mid-interaction would stay downscaled indefinitely.
- * {@link ResolutionGovernor.idleRestore} is that missing recovery edge
- * (fr-vxbo): fed quiet time since the last RENDERED frame instead of a dt
- * between two of them, and once that quiet stretch clears
- * {@link GOVERNOR_IDLE_RESTORE_MS} it restores straight to full resolution
- * and forgets all timing state in one shot — a parked still costs nothing
- * extra to show at full scale, and a genuinely slow device just earns its
- * way back down again once interaction and sampling resume.
+ * parked mid-interaction would stay downscaled indefinitely. {@link
+ * ResolutionGovernor.idleRestore} is that missing recovery edge: fed quiet
+ * time since the last RENDERED frame instead of a dt between two of them,
+ * and once that quiet stretch clears {@link GOVERNOR_IDLE_RESTORE_MS} it
+ * restores straight to full resolution and forgets all timing state in one
+ * shot — a parked still costs nothing extra to show at full scale, and a
+ * genuinely slow device just earns its way back down again once interaction
+ * and sampling resume.
  *
  * Pure and clock-free like `exposure.ts` and `morph-budget.ts`: dt arrives as
  * a plain number the caller measured against its own clock, so tests drive
@@ -104,7 +104,7 @@ export const GOVERNOR_OUTLIER_STREAK = 5;
 
 /**
  * Quiet time (ms) with no RENDERED frame after which a below-full scale
- * restores to full (fr-vxbo). Render-on-demand means the sample stream
+ * restores to full. Render-on-demand means the sample stream
  * {@link ResolutionGovernor.sample} depends on can simply stop — the
  * interaction that stepped the ladder down ends, and no more frames ever
  * arrive on their own to earn the resolution back. Long enough that a mere

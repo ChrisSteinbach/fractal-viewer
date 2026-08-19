@@ -35,7 +35,7 @@ function baseSpec(
 
 describe("surfaceComputeForceFrameKey", () => {
   it("keys two value-equal specs identically, even built as separate objects", () => {
-    // Every optional field this bead adds, plus the pre-existing view4 and
+    // Every optional field this fix adds, plus the pre-existing view4 and
     // groundPlane blocks, populated in full — two independently-built specs
     // (fresh arrays throughout, no shared references) must still key alike.
     const a = baseSpec({
@@ -129,7 +129,7 @@ describe("surfaceComputeForceFrameKey", () => {
     expect(square).not.toBe(stretched);
   });
 
-  // The collision hazard (fr-nez0's own callout): the key is a plain array
+  // The collision hazard (named in the module doc): the key is a plain array
   // `.join("|")`, so a naive append could let two DIFFERENT optional-block
   // combinations read as the same string. bgShape (new) and view4
   // (pre-existing) are the closest-sized neighbors — bgShape contributes 4

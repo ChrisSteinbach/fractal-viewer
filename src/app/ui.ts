@@ -72,19 +72,18 @@ import { installSliderScrollGuard } from "./slider-scroll-guard";
 export type { Preset };
 
 /**
- * Which object a live surface session is actually marching (fr-5wlv.6,
- * widened by fr-tdin) — the routing decision main.ts made at
- * `surfaceSession.start()`, pushed in so the panel's rows can tell the
- * truth about what applies. `"ifs"` is the inverse-descent attractor
- * (3D or 4D); `"escape"` and `"bulb"` are the two FORWARD-ORBIT
- * escape-time objects, which share every panel consequence — see
- * {@link Ui.setSurfaceSessionKind}.
+ * Which object a live surface session is actually marching — the routing
+ * decision main.ts made at `surfaceSession.start()`, pushed in so the
+ * panel's rows can tell the truth about what applies. `"ifs"` is the
+ * inverse-descent attractor (3D or 4D); `"escape"` and `"bulb"` are the
+ * two FORWARD-ORBIT escape-time objects, which share every panel
+ * consequence — see {@link Ui.setSurfaceSessionKind}.
  */
 export type SurfaceSessionKind = "ifs" | "escape" | "bulb";
 
 /** The geometry (and weight/variations) a transform editor edits. `w` is the
- * optional 4D extension (fr-bf6.3, see `types.ts`'s `WExtension`) — included
- * here so the single editor can be the one UI that creates/edits it, but see
+ * optional 4D extension (see `types.ts`'s `WExtension`) — included here so
+ * the single editor can be the one UI that creates/edits it, but see
  * {@link Ui.emitGeometry} for why it's only ever present on the emitted
  * object when the working copy actually has one. */
 type Geometry = Pick<
@@ -102,8 +101,8 @@ type Geometry = Pick<
 
 /** The final transform's geometry — the same, minus the fields that only mean
  * something for a map the chaos game PICKS: the selection weight, and the two
- * structural-color fields (fr-hiyu), which move the color coordinate on each
- * pick. A lens applied to every plotted point has neither. */
+ * structural-color fields, which move the color coordinate on each pick. A
+ * lens applied to every plotted point has neither. */
 type FinalGeometry = Omit<Geometry, "weight" | "colorIndex" | "colorSpeed">;
 
 /** The current edit target: a transform index, the final transform, or none. */
@@ -119,8 +118,8 @@ export interface UiHandlers {
   onPreset: (preset: Preset) => void;
   /** "Surprise Me" was clicked: roll a fresh random IFS and load it like a preset. */
   onSurprise: () => void;
-  /** "🧬 Mutate" was clicked (fr-3vly): open the mutation-grid modal. The app
-   * builds the candidates and fills the cells via {@link Ui.openMutations} /
+  /** "🧬 Mutate" was clicked: open the mutation-grid modal. The app builds
+   * the candidates and fills the cells via {@link Ui.openMutations} /
    * {@link Ui.setMutationCell}. */
   onOpenMutations: () => void;
   /** A mutation cell was clicked: load candidate `index` (0..7) — a normal
@@ -130,8 +129,8 @@ export interface UiHandlers {
   /** The mutation modal's "↻ Mutate again" was clicked: roll eight fresh
    * candidates from the same current system. */
   onMutateAgain: () => void;
-  /** "▶ Drift" was clicked: toggle the ambient drift show (fr-wavo) —
-   * session-only, like the auto-orbit/tumble motion; main.ts owns the policy. */
+  /** "▶ Drift" was clicked: toggle the ambient drift show — session-only, like
+   * the auto-orbit/tumble motion; main.ts owns the policy. */
   onDriftToggle: () => void;
   /**
    * A table-driven scalar control changed (see control-spec.ts's
@@ -141,7 +140,7 @@ export interface UiHandlers {
    * live-reactive, which forward to a render worker — are documented on the
    * spec entries themselves.
    *
-   * `phase` (fr-2c27) distinguishes the live "input" stream (fired on every
+   * `phase` distinguishes the live "input" stream (fired on every
    * tick while a range drags, or once for a select/checkbox's own change)
    * from a range spec's trailing "commit" — fired once on release for specs
    * that declare `ValueControlSpec.commit`, alongside (not instead of) the
@@ -157,52 +156,51 @@ export interface UiHandlers {
   onSavePng: () => void;
   onRecordVideoToggle: () => void;
   /** "⤓ Save scene file" was clicked: download the current scene document as
-   * a JSON file (fr-de9t) — the file counterpart of "🔗 Copy link". */
+   * a JSON file — the file counterpart of "🔗 Copy link". */
   onSaveSceneFile: () => void;
   /** "⤓ Export .flame" was clicked: download the system's XY shadow as a
-   * flam3/Apophysis .flame file (fr-8uy5, `flame-file.ts`). */
+   * flam3/Apophysis .flame file (`flame-file.ts`). */
   onSaveFlameFile: () => void;
   /** "★ Save to collection" was clicked: snapshot the current scene into the
-   * saved-scene collection (fr-cai). */
+   * saved-scene collection. */
   onSaveToCollection: () => void;
   /** "▦ Gallery" was clicked: open the saved-scene gallery modal. The app
    * hands the current collection back via {@link Ui.openGallery}. */
   onOpenGallery: () => void;
   /** The gallery modal's "▶ Drift collection" was clicked: start the drift
-   * show over the saved collection instead of random rolls (fr-w2ve) —
-   * main.ts owns the playlist policy, like onDriftToggle. */
+   * show over the saved collection instead of random rolls — main.ts owns
+   * the playlist policy, like onDriftToggle. */
   onDriftCollection: () => void;
   /** A gallery thumbnail was clicked: load that saved scene by its id
    * (whole-system replacement, like a preset load). */
   onLoadFromCollection: (id: string) => void;
   /** A gallery card's ✕ was clicked: delete that saved scene by its id. */
   onDeleteFromCollection: (id: string) => void;
-  /** "📍 Add keyframe" was clicked (fr-8v41): append the current view —
-   * scene document + camera pose + a thumbnail of what's showing — to the
+  /** "📍 Add keyframe" was clicked: append the current view — scene
+   * document + camera pose + a thumbnail of what's showing — to the
    * animation timeline. */
   onTimelineAddKeyframe: () => void;
   /** "▶ Play timeline" / "■ Stop" was clicked: toggle timeline playback —
    * session-only motion like the drift show; main.ts owns the policy. */
   onTimelinePlayToggle: () => void;
   /** "⏺ Export clip" was clicked: play the timeline while recording the
-   * canvas to a downloadable video clip (fr-8v41). */
+   * canvas to a downloadable video clip. */
   onTimelineExport: () => void;
   /** The export progress modal's Cancel button was clicked, or Escape was
-   * pressed while it was open, cancellable, and the ONLY open modal
-   * (fr-7mfx; fr-vja8.13 — a stacked Escape belongs to the dialog beneath):
-   * abort the in-flight capture. Both routes land here rather than a bare
-   * hideExportProgress() — the modal has no ✕ or backdrop close, since an
-   * accidental dismissal must not silently abandon a multi-minute export. */
+   * pressed while it was open, cancellable, and the ONLY open modal (a
+   * stacked Escape belongs to the dialog beneath): abort the in-flight
+   * capture. Both routes land here rather than a bare hideExportProgress() —
+   * the modal has no ✕ or backdrop close, since an accidental dismissal must
+   * not silently abandon a multi-minute export. */
   onExportCancel: () => void;
-  /** The export progress modal's second action was clicked (fr-2fbs): stop
-   * waiting for the render to finish and save the picture as it stands.
-   * Shown only for a run that offered it — see
-   * {@link Ui.showExportProgress}'s `deliverEarly` — and deliberately NOT on
-   * the Escape route, which stays cancel-only. */
+  /** The export progress modal's second action was clicked: stop waiting for
+   * the render to finish and save the picture as it stands. Shown only for a
+   * run that offered it — see {@link Ui.showExportProgress}'s `deliverEarly`
+   * — and deliberately NOT on the Escape route, which stays cancel-only. */
   onExportDeliverEarly: () => void;
-  /** "⬇ Back up timeline" was clicked (fr-h9rk): download the authored
-   * timeline — keyframe steps + the playback determinism seed — as a JSON
-   * backup file, the timeline counterpart of {@link onExportCollection}. */
+  /** "⬇ Back up timeline" was clicked: download the authored timeline —
+   * keyframe steps + the playback determinism seed — as a JSON backup file,
+   * the timeline counterpart of {@link onExportCollection}. */
   onExportTimeline: () => void;
   /** A timeline row's ✕ was clicked: remove that keyframe by its id. */
   onTimelineRemoveStep: (id: string) => void;
@@ -219,10 +217,10 @@ export interface UiHandlers {
   /** "🔗 Copy link" was clicked: copy a shareable URL of the current scene. */
   onCopyLink: () => void;
   /** "⬇ Back up collection" was clicked: download the whole saved-scene
-   * collection as a JSON backup file (fr-de9t). */
+   * collection as a JSON backup file. */
   onExportCollection: () => void;
-  /** An import file arrived (fr-de9t) — picked through "⬆ Import file"'s
-   * hidden input, or dropped anywhere on the page (main.ts owns the drop
+  /** An import file arrived — picked through "⬆ Import file"'s hidden
+   * input, or dropped anywhere on the page (main.ts owns the drop
    * listeners): a scene file to load, a collection backup to merge, or a
    * timeline backup to restore. Reading and validating the untrusted bytes
    * is the app's job (`scene-file.ts`'s `decodeImportFile`), not this
@@ -238,77 +236,77 @@ export interface UiHandlers {
   onTogglePanel: () => void;
   onClosePanel: () => void;
   /**
-   * A render-mode segment was clicked (fr-39y): switch which renderer
-   * displays the attractor — `"points"` returns to the live explorer,
-   * `"flame"` freezes the camera and starts a flame render, `"solid"` starts
-   * accumulating the density volume (camera stays live). Fires for the
-   * already-active segment too; the app treats that as a no-op.
+   * A render-mode segment was clicked: switch which renderer displays the
+   * attractor — `"points"` returns to the live explorer, `"flame"` freezes
+   * the camera and starts a flame render, `"solid"` starts accumulating the
+   * density volume (camera stays live). Fires for the already-active segment
+   * too; the app treats that as a no-op.
    */
   onRenderMode: (mode: RenderMode) => void;
-  /** The 3D auto-orbit (fr-1yn) was paused or resumed — the camera-side
+  /** The 3D auto-orbit was paused or resumed — the camera-side
    * sibling of {@link onFourDTumbleToggle}. */
   onAutoOrbitToggle: (checked: boolean) => void;
-  /** The surface mode's "Quick previews" checkbox was flipped (fr-37c6):
-   * `false` = invalidations never trace the preview tier — the pane holds
-   * its last frame while the view moves and the full render starts on park.
-   * A per-browser viewer pref (like the motion toggles' autoMotion), and
+  /** The surface mode's "Quick previews" checkbox was flipped: `false` =
+   * invalidations never trace the preview tier — the pane holds its last
+   * frame while the view moves and the full render starts on park. A
+   * per-browser viewer pref (like the motion toggles' autoMotion), and
    * flipping it off mid-grind takes effect immediately. */
   onSurfacePreviewToggle: (checked: boolean) => void;
-  /** The progress row's "Skip preview" button was clicked (fr-37c6):
-   * abandon the in-flight preview and start the full-detail render of this
-   * view now. One-shot — the next move previews as usual. */
+  /** The progress row's "Skip preview" button was clicked: abandon the
+   * in-flight preview and start the full-detail render of this view now.
+   * One-shot — the next move previews as usual. */
   onSurfaceSkipPreview: () => void;
   /** The 3D orbit-speed slider moved: `value` is the rate multiplier (×). */
   onAutoOrbitSpeedInput: (value: number) => void;
-  /** The 4D soft w-slice (fr-6x2) was toggled on or off. */
+  /** The 4D soft w-slice was toggled on or off. */
   onFourDSliceToggle: (checked: boolean) => void;
   /** The 4D slice-position slider moved: `value` is the slice center in
    * signed normalized rotated-w units, [-1, 1]. */
   onFourDSliceInput: (value: number) => void;
-  /** The 4D slice-thickness slider moved (fr-wa6o): `value` is the slab's
+  /** The 4D slice-thickness slider moved: `value` is the slab's
    * HALF-thickness in the same normalized rotated-w units as
-   * {@link onFourDSliceInput}'s center, [0, 0.5]. Surface-only — the row is
-   * shown exactly in a live 4D surface session (see
+   * {@link onFourDSliceInput}'s center, [0, 0.5]. Surface-only — the row
+   * is shown exactly in a live 4D surface session (see
    * {@link Ui.syncFourDViewRows}), whose tracer renders everything within
    * that much of the slice plane instead of the plane alone. */
   onFourDSliceThicknessInput: (value: number) => void;
-  /** The slice-relative color option (fr-nn6) was toggled — recenter the
-   * w-ramp color modes' diverging palette on the slice window. Session-only
-   * view state, exactly like the slice toggle/position above. */
+  /** The slice-relative color option was toggled — recenter the w-ramp
+   * color modes' diverging palette on the slice window. Session-only view
+   * state, exactly like the slice toggle/position above. */
   onFourDSliceRelColorToggle: (checked: boolean) => void;
-  /** The 4D auto-tumble was paused or resumed (fr-woc). */
+  /** The 4D auto-tumble was paused or resumed. */
   onFourDTumbleToggle: (checked: boolean) => void;
   /** The 4D tumble-speed slider moved: `value` is the rate multiplier (×). */
   onFourDTumbleSpeedInput: (value: number) => void;
   /** "▶ Watch it build" was clicked (in the About dialog or the panel):
    * replay how the chaos game accretes the current cloud, point by point. */
   onWatchBuild: () => void;
-  /** "Inflate" was clicked (fr-5wlv.2): sweep the balloon echo's radius
-   * from a crumpled ball out to its rest size, turning the echo on first
-   * if it wasn't already. */
+  /** "Inflate" was clicked: sweep the balloon echo's radius from a
+   * crumpled ball out to its rest size, turning the echo on first if it
+   * wasn't already. */
   onBalloonInflate: () => void;
-  /** The gradient editor (fr-55k) changed the custom palette's stop list —
-   * a recolor, an added stop, or a removed stop; `stops` is the editor's
+  /** The gradient editor changed the custom palette's stop list — a
+   * recolor, an added stop, or a removed stop; `stops` is the editor's
    * whole new list, parsed and ready for `setCustomPaletteStops`. */
   onCustomPaletteStops: (stops: RgbStop[]) => void;
-  /** The position mode's axis-color pickers changed (fr-8k7) — `colors` is
-   * the full x/y/z triple as parsed from the three inputs; the Reset button
-   * sends the exact legacy identity (the reducer normalizes it to absent). */
+  /** The position mode's axis-color pickers changed — `colors` is the full
+   * x/y/z triple as parsed from the three inputs; the Reset button sends the
+   * exact legacy identity (the reducer normalizes it to absent). */
   onPositionAxisColors: (colors: PositionAxisColors) => void;
-  /** The custom backdrop's top/bottom pickers changed (fr-5ps1) — `custom`
-   * is the full stop pair as parsed from the two inputs, ready for
+  /** The custom backdrop's top/bottom pickers changed — `custom` is the
+   * full stop pair as parsed from the two inputs, ready for
    * `setBackgroundCustom`. Only reachable while the Background select sits
    * on Custom (the row is hidden otherwise). */
   onBackgroundCustom: (custom: BackgroundGradient) => void;
-  /** The fog tint color picker changed (fr-5h5d) — `hex` is the input's raw
+  /** The fog tint color picker changed — `hex` is the input's raw
    * `#rrggbb` value, ready for `setFogTint` (the reducer, not this
    * callback, is the validation boundary). The strength half of the pair
    * is table-driven (see control-spec.ts's `fogTintStrength` entry); this
    * callback only carries the bespoke color picker, like
    * `onBackgroundCustom` above. */
   onFogTint: (hex: string) => void;
-  /** A balloon tint color picker changed (fr-j85n) — `hex` is the input's
-   * raw `#rrggbb` value, ready for `setBalloonTint` (the reducer, not this
+  /** A balloon tint color picker changed — `hex` is the input's raw
+   * `#rrggbb` value, ready for `setBalloonTint` (the reducer, not this
    * callback, is the validation boundary). ONE handler serves BOTH pickers
    * (the Points section's `balloonTintColor` and the Surface section's
    * `surfaceBalloonTintColor` — one state field seen from two render
@@ -359,12 +357,12 @@ interface ChannelSpec {
   /**
    * Convert a slider reading back to a model value. `current` is the axis's
    * model value before this drag: the scale channel needs it to re-apply the
-   * model's existing sign to the slider's magnitude-only reading (fr-lca —
-   * see the Scale entry in {@link CHANNELS}), since otherwise every drag
-   * would silently clear a mirror. Every other channel's slider already
-   * carries the signed (or angular) model value directly, so their
-   * `fromSlider` ignores the second parameter — fewer parameters than the
-   * type declares is valid TypeScript.
+   * model's existing sign to the slider's magnitude-only reading (see the
+   * Scale entry in {@link CHANNELS}), since otherwise every drag would
+   * silently clear a mirror. Every other channel's slider already carries
+   * the signed (or angular) model value directly, so their `fromSlider`
+   * ignores the second parameter — fewer parameters than the type declares
+   * is valid TypeScript.
    */
   fromSlider: (slider: number, current: number) => number;
   format: (model: number) => string;
@@ -389,8 +387,9 @@ function displayDegrees(rad: number): number {
   return Math.round(wrapDegrees(radToDeg(rad)));
 }
 
-// Scale bounds share the guide-box clamp (MIN/MAX_GUIDE_SCALE) used in interactions.ts.
-// The scale sliders are magnitude-only; the sign lives on the Mirror toggles (fr-lca).
+// Scale bounds share the guide-box clamp (MIN/MAX_GUIDE_SCALE) used in
+// interactions.ts. The scale sliders are magnitude-only; the sign lives on the
+// Mirror toggles.
 const CHANNELS: Record<Channel, ChannelSpec> = {
   position: {
     title: "Position",
@@ -433,9 +432,9 @@ const CHANNELS: Record<Channel, ChannelSpec> = {
 
 const CHANNEL_ORDER: Channel[] = ["position", "rotation", "scale", "shear"];
 
-/** Shared `<details name>` for the transform editor's groups (fr-64ku), so
- * opening one closes the rest — the same exclusive-accordion idiom the panel's
- * outer sections use, one level in. */
+/** Shared `<details name>` for the transform editor's groups, so opening one
+ * closes the rest — the same exclusive-accordion idiom the panel's outer
+ * sections use, one level in. */
 const EDITOR_GROUP_NAME = "transform-editor-group";
 
 /** The group a fresh selection opens when the user has expressed no
@@ -443,7 +442,7 @@ const EDITOR_GROUP_NAME = "transform-editor-group";
 const DEFAULT_EDITOR_GROUP = "Position";
 
 /**
- * Deep-copy a transform's optional `w` extension (fr-bf6.3, see `types.ts`'s
+ * Deep-copy a transform's optional `w` extension (see `types.ts`'s
  * `WExtension`) so the editor's mutable working copy and the transform's own
  * stored one never alias — the `w`-shaped counterpart to `clone3` for the
  * plain Vec3 channels (position/rotation/scale/shear). `undefined` in,
@@ -482,23 +481,23 @@ function sliderToWeight(slider: number): number {
 }
 
 /**
- * Variation blend-weight slider bounds. Linear (not log like selection weight):
- * a variation's strength reads naturally as a `-2…2` coefficient. Negative
- * weights are real objects, not degenerate ones — the classic Mandelbox is
- * `s = -1.5`, and reflection blends need `w < 0` (fr-64k0) — so the slider
- * reaches them directly instead of leaving them URL/`.flame`-import-only.
- * `0` contributes nothing but keeps the row; removal is the row's × button.
+ * Variation blend-weight slider bounds. Linear (not log like selection
+ * weight): a variation's strength reads naturally as a `-2…2` coefficient.
+ * Negative weights are real objects, not degenerate ones — the classic
+ * Mandelbox is `s = -1.5`, and reflection blends need `w < 0` — so the slider
+ * reaches them directly instead of leaving them URL/`.flame`-import-only. `0`
+ * contributes nothing but keeps the row; removal is the row's × button.
  */
 const VARIATION_WEIGHT_MIN = -2;
 const VARIATION_WEIGHT_MAX = 2;
 const DEFAULT_VARIATION_WEIGHT = 1;
 
-/** The fold family's three authored lengths (fr-s9ll). */
+/** The fold family's three authored lengths. */
 type FoldRadiusKey = "minRadius" | "fixedRadius" | "boxLimit";
 
 /**
  * Which of the three lengths each fold actually READS. A box fold has no
- * sphere and a sphere fold has no wall, and fr-77oy measured exactly that:
+ * sphere and a sphere fold has no wall, and a sweep measured exactly that:
  * "a box-fold link's mR/fR are inert, so a per-variation schema hands
  * boxfold two fields it cannot use". Handing them to the user anyway would
  * be worse than handing them nothing — a control that does not move the
@@ -561,7 +560,7 @@ function variationLabel(type: VariationType): string {
  * real change.
  *
  * It compares EVERY persisted field, not only the ones the rows render. The
- * fold's three lengths (fr-s9ll) have no row of their own, but this predicate
+ * fold's three lengths have no row of their own, but this predicate
  * also decides whether the editor's WORKING COPY is refreshed from the
  * document — and the working copy is what the next slider drag emits back. A
  * comparison that ignored them would let a morph, an undo or a timeline leg
@@ -591,7 +590,7 @@ function variationSummary(t: Transform): string[] {
 }
 
 /**
- * The list row's structural-color lines (fr-hiyu) — one per field this map
+ * The list row's structural-color lines — one per field this map
  * actually AUTHORS (`Transform.colorIndex` / `Transform.colorSpeed`), none for
  * the overwhelmingly common map that authors neither.
  *
@@ -614,7 +613,7 @@ function colorSummary(t: Transform): string[] {
 }
 
 /** The list row's scale line: one number while uniform, the full triple
- * once any axis differs — an anisotropic or mirrored scale (fr-lca) would
+ * once any axis differs — an anisotropic or mirrored scale would
  * otherwise masquerade as a plain uniform contraction. */
 function scaleSummary(scale: Vec3): string {
   const [x, y, z] = scale;
@@ -628,8 +627,8 @@ function scaleSummary(scale: Vec3): string {
  * palette display names (ui.test.ts pins the option values to
  * `FLAME_PALETTE_IDS`), so the legend reuses them instead of introducing a
  * second copy that could drift. Falls back to the raw id if the option is
- * ever missing — which today also covers the `"custom"` sentinel (fr-55k),
- * until index.html carries a Custom `<option>` of its own (a later change).
+ * ever missing — which today also covers the `"custom"` sentinel, until
+ * index.html carries a Custom `<option>` of its own (a later change).
  */
 function paletteDisplayName(
   select: HTMLSelectElement,
@@ -647,24 +646,24 @@ interface AxisControl {
 }
 
 /**
- * Live handles into the collapsed "4D" group's eight rows (fr-bf6.3) — one
- * per {@link WExtension} field, since unlike the plain Vec3 channels each
+ * Live handles into the collapsed "4D" group's eight rows — one per
+ * {@link WExtension} field, since unlike the plain Vec3 channels each
  * binds to an independently-optional field rather than a shared indexed
  * array. Rotation/Shear W hold their XW/YW/ZW rows in that order.
  */
 interface FourDControls {
   positionW: AxisControl;
   scaleW: AxisControl;
-  /** The Scale W group's mirror toggle (fr-icy): pressed ⇔ the explicit
-   * `w.scale` is negative. Never pressed while auto — the derived mean is
-   * always positive. */
+  /** The Scale W group's mirror toggle: pressed ⇔ the explicit `w.scale`
+   * is negative. Never pressed while auto — the derived mean is always
+   * positive. */
   mirrorW: HTMLButtonElement;
   rotationW: AxisControl[];
   shearW: AxisControl[];
 }
 
 /**
- * Live handles into the "Color" group's two rows (fr-hiyu), plus the fallback
+ * Live handles into the "Color" group's two rows, plus the fallback
  * the Index row displays while the transform authors none.
  */
 interface ColorControls {
@@ -704,28 +703,27 @@ interface EditorState {
     scale: Vec3;
     shear: Vec3;
     weight: number;
-    /** Working copy of the transform's optional 4D extension (fr-bf6.3);
-     * `undefined` exactly when the transform has none AND the user hasn't
-     * touched the 4D group yet — see {@link Ui.mutateW}/{@link Ui.emitGeometry}. */
+    /** Working copy of the transform's optional 4D extension; `undefined`
+     * exactly when the transform has none AND the user hasn't touched the 4D
+     * group yet — see {@link Ui.mutateW}/{@link Ui.emitGeometry}. */
     w: WExtension | undefined;
-    /** Working copy of the transform's optional palette slot (fr-hiyu);
-     * `undefined` exactly when the transform authors none AND the user hasn't
-     * moved the Index slider yet — the same sparse discipline as `w` above,
-     * and for the same reason (see {@link Ui.emitGeometry}). The rows still
-     * DISPLAY the derived fallback meanwhile; only this working copy is
-     * empty. */
+    /** Working copy of the transform's optional palette slot; `undefined`
+     * exactly when the transform authors none AND the user hasn't moved the
+     * Index slider yet — the same sparse discipline as `w` above, and for the
+     * same reason (see {@link Ui.emitGeometry}). The rows still DISPLAY the
+     * derived fallback meanwhile; only this working copy is empty. */
     colorIndex: number | undefined;
-    /** Working copy of the transform's optional color speed (fr-hiyu) —
+    /** Working copy of the transform's optional color speed —
      * {@link colorIndex}'s twin in every respect. */
     colorSpeed: number | undefined;
   };
   controls: Record<Channel, AxisControl[]>;
-  /** The Scale group's per-axis mirror toggles (fr-lca): pressed ⇔ that
-   * axis's scale is negative (a reflection). */
+  /** The Scale group's per-axis mirror toggles: pressed ⇔ that axis's
+   * scale is negative (a reflection). */
   mirror: HTMLButtonElement[];
   /** The selection-weight control, or `null` for the final transform (no weight). */
   weightControl: AxisControl | null;
-  /** The "Color" group's rows (fr-hiyu), or `null` for the final transform —
+  /** The "Color" group's rows, or `null` for the final transform —
    * which is never PICKED, so it never moves the color coordinate. */
   colorControls: ColorControls | null;
   /** Working copy of the transform's variation blend, edited in place. */
@@ -734,8 +732,8 @@ interface EditorState {
   variationList: HTMLElement;
   /** The "add variation" dropdown, whose options exclude already-added types. */
   variationAdd: HTMLSelectElement;
-  /** The collapsed "4D" group's row controls (fr-bf6.3) — always built,
-   * whether or not this transform currently carries a `w` block. */
+  /** The collapsed "4D" group's row controls — always built, whether
+   * or not this transform currently carries a `w` block. */
   fourD: FourDControls;
 }
 
@@ -743,15 +741,15 @@ interface EditorState {
 const TOAST_DURATION_MS = 1800;
 
 /** The auto-hide countdown for a {@link Ui.flashToast} carrying an
- * {@link ToastAction} (fr-ifts) — paused while hovered or focused, restarted
- * in full on leave (fr-vja8.21) — longer than a plain confirmation's {@link
- * TOAST_DURATION_MS} so there's time to notice the action and react, not
- * just read the message. */
+ * {@link ToastAction} — paused while hovered or focused, restarted in
+ * full on leave — longer than a plain confirmation's
+ * {@link TOAST_DURATION_MS} so there's time to notice the action and
+ * react, not just read the message. */
 const TOAST_ACTION_DURATION_MS = 6000;
 
 /** An optional call-to-action rendered inside a {@link Ui.flashToast} — e.g.
- * "Undo" after a destructive delete (fr-ifts). Clicking it runs `onAction`
- * and hides the toast immediately, without waiting for the auto-hide timer. */
+ * "Undo" after a destructive delete. Clicking it runs `onAction` and hides the
+ * toast immediately, without waiting for the auto-hide timer. */
 interface ToastAction {
   label: string;
   onAction: () => void;
@@ -783,7 +781,7 @@ const MODAL_FOCUSABLE_SELECTOR =
   'button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 /**
- * The Tab ring of an open modal, in DOM order (fr-trtv): every focusable it
+ * The Tab ring of an open modal, in DOM order: every focusable it
  * currently holds that a user could actually reach.
  *
  * COMPUTED PER CALL, never snapshotted at open, because two of the four modals
@@ -799,7 +797,7 @@ const MODAL_FOCUSABLE_SELECTOR =
  * loads no stylesheet and lays nothing out, so a geometric check would read
  * every element invisible and silently empty the ring in the very tests that
  * gate this. An element the document has REMOVED is absent from the query
- * already, which is how the export modal's detached second action (fr-2fbs)
+ * already, which is how the export modal's detached second action
  * stays out of the ring with no flag to consult.
  */
 function modalFocusRing(modal: HTMLElement): HTMLElement[] {
@@ -817,14 +815,14 @@ function modalFocusRing(modal: HTMLElement): HTMLElement[] {
 }
 
 /**
- * One entry in {@link Ui}'s modal stack (fr-vja8.52) — what
+ * One entry in {@link Ui}'s modal stack — what
  * `trapModalFocus`/`releaseModalFocus` push and pop, and what the shared
  * `onModalStackKeydown` listener reads. `onEscape` is the one place a
  * modal's Escape behavior can differ: the three dismissible dialogs close
- * themselves unconditionally, while the export modal (fr-7mfx) — which
- * ships with no ✕ and no bound backdrop by design, so an accidental
- * dismissal can never abandon a multi-minute export — instead defers to
- * whatever `showExportProgress` armed it with.
+ * themselves unconditionally, while the export modal — which ships with
+ * no ✕ and no bound backdrop by design, so an accidental dismissal can
+ * never abandon a multi-minute export — instead defers to whatever
+ * `showExportProgress` armed it with.
  */
 interface ModalStackEntry {
   modal: HTMLElement;
@@ -834,9 +832,9 @@ interface ModalStackEntry {
 /**
  * The four coarse boundaries {@link Ui.setFlameProgress}/
  * {@link Ui.setSolidProgress}/{@link Ui.setSurfaceProgress} announce through
- * the hidden `renderProgressAnnouncer` live region (fr-vja8.38) — four
- * utterances per render, not the hundreds a live region wired straight to
- * the visible per-repaint readout would produce.
+ * the hidden `renderProgressAnnouncer` live region — four utterances per
+ * render, not the hundreds a live region wired straight to the visible
+ * per-repaint readout would produce.
  */
 const PROGRESS_ANNOUNCE_QUARTILES = [25, 50, 75, 100] as const;
 
@@ -854,14 +852,14 @@ function highestProgressQuartile(pct: number): number {
 
 /**
  * Shared quartile-announce decision for {@link Ui.setFlameProgress}/
- * {@link Ui.setSolidProgress}/{@link Ui.setSurfaceProgress} (fr-vja8.38):
- * `armed` is the highest quartile already announced this render (0 = none),
- * kept on the caller's own per-mode field. Returns `armed` unchanged and a
- * null `text` for the common case — a repaint that hasn't crossed a new
- * boundary — or the boundary just crossed plus its speech text. A pct that
- * skips a boundary (20% -> 60%) reports only the HIGHEST one newly crossed
- * (50, not 25 then 50), since `highestProgressQuartile` always returns the
- * top of the ladder at or below `pct`.
+ * {@link Ui.setSolidProgress}/{@link Ui.setSurfaceProgress}: `armed` is the
+ * highest quartile already announced this render (0 = none), kept on the
+ * caller's own per-mode field. Returns `armed` unchanged and a null `text`
+ * for the common case — a repaint that hasn't crossed a new boundary — or
+ * the boundary just crossed plus its speech text. A pct that skips a
+ * boundary (20% -> 60%) reports only the HIGHEST one newly crossed (50, not
+ * 25 then 50), since `highestProgressQuartile` always returns the top of
+ * the ladder at or below `pct`.
  */
 function crossedProgressQuartile(
   modeLabel: string,
@@ -875,8 +873,8 @@ function crossedProgressQuartile(
 
 /**
  * Pulls the engine token ("WebGPU", "WebGPU (software)", "WebGL") out of a
- * surface progress label for {@link Ui.setSurfaceProgress}'s fr-vja8.38
- * one-shot announcement. main.ts's syncSurfaceProgress always writes
+ * surface progress label for {@link Ui.setSurfaceProgress}'s one-shot
+ * live-region announcement. main.ts's syncSurfaceProgress always writes
  * "<Preview|Full detail> · <engine>" (see its setSurfaceProgress call
  * sites) — the part after the separator is the engine. Returns null for a
  * label with no " · " (defensive; every real caller includes one).
@@ -897,10 +895,10 @@ export class Ui {
   private handlers: UiHandlers | null = null;
 
   private readonly helpTitle: HTMLElement;
-  /** The panel's own heading. Since fr-bf6 the system's dimensionality is a
-   * live property, so the title tells the truth per generation — "3D IFS
+  /** The panel's own heading. The system's dimensionality is a live
+   * property, so the title tells the truth per generation — "3D IFS
    * Fractal" for a flat system, "4D IFS Fractal" once any map's `w`
-   * extension is in play (fr-9uw). */
+   * extension is in play. */
   private readonly panelTitle: HTMLElement;
   private readonly helpText: HTMLElement;
   private readonly pointCount: HTMLElement;
@@ -913,7 +911,7 @@ export class Ui {
   private readonly legendSwatches: HTMLElement;
   /** While true, {@link updateLegend} shows the by-transform swatch strip
    * regardless of the state's color mode — the "Watch it build" showcase's
-   * display-only recolor (fr-hpci). Set/cleared by main.ts as the showcase
+   * display-only recolor. Set/cleared by main.ts as the showcase
    * arms/disarms, each followed by an updateLabels sync. */
   private replayShowcaseLegend = false;
   private readonly menuToggle: HTMLElement;
@@ -929,23 +927,23 @@ export class Ui {
   private readonly surpriseBtn: HTMLButtonElement;
   private readonly driftBtn: HTMLButtonElement;
   private readonly driftTitle: string;
-  /** fr-vja8.39: the reason-in-prose sibling of {@link driftTitle}'s
-   * disabled swap — see {@link setDriftAvailable}. */
+  /** The reason-in-prose sibling of {@link driftTitle}'s disabled
+   * swap — see {@link setDriftAvailable}. */
   private readonly driftNote: HTMLElement;
   private readonly regenerateBtn: HTMLButtonElement;
   private readonly savePngBtn: HTMLButtonElement;
   /** "⤓ Save PNG"'s authored title, restored once a capture finishes — the
-   * disabled-while-busy state swaps in a why-explaining one (fr-7mfx), the
-   * same self-explaining pattern as {@link exportCollectionTitle}. */
+   * disabled-while-busy state swaps in a why-explaining one, the same
+   * self-explaining pattern as {@link exportCollectionTitle}. */
   private readonly savePngTitle: string;
   private readonly recordVideoBtn: HTMLButtonElement;
   private readonly saveSceneFileBtn: HTMLButtonElement;
   private readonly saveFlameFileBtn: HTMLButtonElement;
 
-  // Saved-scene collection (fr-cai): the panel's Save/Gallery/Copy-link
-  // buttons, the gallery-count readout, and the gallery modal + its parts —
-  // plus the fr-de9t file backup/restore trio (export, import, and the
-  // hidden file input the import button opens).
+  // Saved-scene collection: the panel's Save/Gallery/Copy-link buttons, the
+  // gallery-count readout, and the gallery modal + its parts — plus the
+  // file backup/restore trio (export, import, and the hidden file input the
+  // import button opens).
   private readonly saveCollectionBtn: HTMLButtonElement;
   private readonly galleryBtn: HTMLButtonElement;
   private readonly copyLinkBtn: HTMLButtonElement;
@@ -954,7 +952,7 @@ export class Ui {
    * re-enables — the disabled state swaps in a why-explaining one, the same
    * self-explaining pattern as {@link syncGalleryDriftBtn}. */
   private readonly exportCollectionTitle: string;
-  /** fr-vja8.39: the reason-in-prose sibling of {@link exportCollectionTitle}'s
+  /** The reason-in-prose sibling of {@link exportCollectionTitle}'s
    * disabled swap — see {@link setCollectionCount}. */
   private readonly exportCollectionNote: HTMLElement;
   private readonly importFileBtn: HTMLButtonElement;
@@ -974,7 +972,7 @@ export class Ui {
   private gallerySceneCount = 0;
   private readonly toast: HTMLElement;
 
-  // Animation timeline (fr-8v41): the panel's own authoring section, outside
+  // Animation timeline: the panel's own authoring section, outside
   // #explorerControls like Collection/Export (adding a keyframe works from a
   // flame/solid render too). Play/Export mirror the Drift toggle's
   // lit/self-explaining-disabled-title pattern — see syncTimelineButtons.
@@ -983,15 +981,15 @@ export class Ui {
   private readonly timelinePlayTitle: string;
   private readonly timelineExportBtn: HTMLButtonElement;
   private readonly timelineExportTitle: string;
-  /** fr-vja8.39: the reason-in-prose sibling SHARED by
-   * {@link timelinePlayTitle}'s and {@link timelineExportTitle}'s disabled
-   * swaps — see {@link syncTimelineButtons}. One note is safe because the
-   * two buttons are never disabled for different reasons at once. */
+  /** The reason-in-prose sibling SHARED by {@link timelinePlayTitle}'s and
+   * {@link timelineExportTitle}'s disabled swaps — see
+   * {@link syncTimelineButtons}. One note is safe because the two buttons
+   * are never disabled for different reasons at once. */
   private readonly timelineNote: HTMLElement;
   private readonly exportTimelineBtn: HTMLButtonElement;
   /** "⬇ Back up timeline"'s authored title, restored whenever the button
    * re-enables — the disabled state swaps in a why-explaining one, the same
-   * self-explaining pattern as {@link exportCollectionTitle} (fr-h9rk). */
+   * self-explaining pattern as {@link exportCollectionTitle}. */
   private readonly exportTimelineTitle: string;
   private readonly timelineStatus: HTMLElement;
   private readonly timelineList: HTMLElement;
@@ -1004,17 +1002,17 @@ export class Ui {
   private timelineAvailable = true;
   private timelineActive = false;
   private timelineStepCount = 0;
-  /** Non-null while the offline frame-exact export runs (fr-92t9): the
-   * progress fragment the Export button shows — and the signal that the
-   * button is currently the run's CANCEL affordance rather than a start
+  /** Non-null while the offline frame-exact export runs: the progress
+   * fragment the Export button shows — and the signal that the button
+   * is currently the run's CANCEL affordance rather than a start
    * ({@link setTimelineExportProgress}). */
   private timelineExportProgress: string | null = null;
 
-  // Mutation grid (fr-3vly): the Presets section's "🧬 Mutate" button and the
-  // 3×3 modal it opens — the gallery modal's chrome with a fixed grid of
-  // candidate cells the app fills progressively (setMutationCell). DOM order
-  // is 0..8 with the CENTER (4) an inert current-system cell; candidate
-  // index i (0..7) maps around it.
+  // Mutation grid: the Presets section's "🧬 Mutate" button and the 3×3 modal
+  // it opens — the gallery modal's chrome with a fixed grid of candidate
+  // cells the app fills progressively (setMutationCell). DOM order is 0..8
+  // with the CENTER (4) an inert current-system cell; candidate index i
+  // (0..7) maps around it.
   private readonly mutateBtn: HTMLButtonElement;
   private readonly mutationModal: HTMLElement;
   private readonly mutationBackdrop: HTMLElement;
@@ -1027,12 +1025,12 @@ export class Ui {
   /** The inert center cell showing the system being mutated. */
   private mutationCenter: HTMLElement | null = null;
 
-  // "What is this?" About dialog (fr-1zb): mirrors the gallery modal's own
-  // shape (open button, backdrop, close button). aboutWatchBtn and
-  // watchBuildBtn are the two "▶ Watch it build" entry points — the About
-  // dialog and the Appearance panel — both firing the same onWatchBuild
-  // handler; replayCaption is the narration pill main.ts drives during the
-  // replay via setReplayCaption.
+  // "What is this?" About dialog: mirrors the gallery modal's own shape
+  // (open button, backdrop, close button). aboutWatchBtn and watchBuildBtn
+  // are the two "▶ Watch it build" entry points — the About dialog and the
+  // Appearance panel — both firing the same onWatchBuild handler;
+  // replayCaption is the narration pill main.ts drives during the replay
+  // via setReplayCaption.
   private readonly aboutBtn: HTMLButtonElement;
   private readonly aboutModal: HTMLElement;
   private readonly aboutBackdrop: HTMLElement;
@@ -1041,28 +1039,28 @@ export class Ui {
   private readonly watchBuildBtn: HTMLButtonElement;
   private readonly replayCaption: HTMLElement;
 
-  // Export progress modal (fr-7mfx): a BLOCKING modal shown for the
-  // duration of a Save PNG capture, reusing the gallery modal's chrome.
-  // Unlike the three modals above, closing it is not a pure view concern —
-  // Cancel has to abort real GPU work — so it has no bare close*() method;
-  // see showExportProgress/setExportProgress/hideExportProgress below.
+  // Export progress modal: a BLOCKING modal shown for the duration of a
+  // Save PNG capture, reusing the gallery modal's chrome. Unlike the three
+  // modals above, closing it is not a pure view concern — Cancel has to
+  // abort real GPU work — so it has no bare close*() method; see
+  // showExportProgress/setExportProgress/hideExportProgress below.
   private readonly exportModal: HTMLElement;
   private readonly exportTitle: HTMLElement;
   private readonly exportDetail: HTMLElement;
   private readonly exportProgress: HTMLElement;
   private readonly exportCancelBtn: HTMLButtonElement;
-  /** The optional second action (fr-2fbs) — "stop waiting and save what's
-   * there". DETACHED from the document, not merely hidden, whenever the run
-   * in flight did not offer it: an action nobody is being offered must not
-   * be tabbable, queryable, or readable as a stale label. Held here across
+  /** The optional second action — "stop waiting and save what's there".
+   * DETACHED from the document, not merely hidden, whenever the run in
+   * flight did not offer it: an action nobody is being offered must not be
+   * tabbable, queryable, or readable as a stale label. Held here across
    * those absences, re-inserted by {@link showExportProgress}, whose `init`
    * also writes the label — the app owns the words. `isConnected` is
    * therefore the single source of truth for "is it on offer", with no
    * mirrored flag to drift from it. */
   private readonly exportDeliverBtn: HTMLButtonElement;
-  /** Whether the in-flight capture can be cancelled — mirrored from the last
-   * {@link showExportProgress} call, since the export modal's Escape action
-   * (armed there, fr-vja8.52) needs it after the fact. Cancel has no
+  /** Whether the in-flight capture can be cancelled — mirrored from the
+   * last {@link showExportProgress} call, since the export modal's Escape
+   * action (armed there) needs it after the fact. Cancel has no
    * {@link exportDeliverBtn}-style absence: it is the one button the dialog
    * always has a place for, so it hides in place, which is also what keeps
    * it out of {@link modalFocusRing}'s answer with no flag for the ring to
@@ -1071,7 +1069,7 @@ export class Ui {
 
   /**
    * Where focus goes when an open modal closes, keyed by the modal it belongs
-   * to (fr-trtv) — see {@link trapModalFocus}/{@link releaseModalFocus}.
+   * to — see {@link trapModalFocus}/{@link releaseModalFocus}.
    *
    * Per-modal rather than one shared slot because these dialogs can stack: an
    * export starting over an open gallery must restore ITS opener when it
@@ -1081,11 +1079,11 @@ export class Ui {
   private readonly modalOpeners = new Map<HTMLElement, HTMLElement>();
 
   /**
-   * Every currently open modal, oldest first (fr-vja8.52) — pushed by
-   * {@link trapModalFocus}, popped by {@link releaseModalFocus}, and read by
-   * the shared `onModalStackKeydown` listener below, which is attached to
-   * the document only while this is non-empty. Replaces four hand-copied
-   * per-modal Escape/Tab handlers (fr-vja8.13's pairwise `exportModalOpen`/
+   * Every currently open modal, oldest first — pushed by
+   * {@link trapModalFocus}, popped by {@link releaseModalFocus}, and read
+   * by the shared `onModalStackKeydown` listener below, which is attached
+   * to the document only while this is non-empty. Replaces four hand-copied
+   * per-modal Escape/Tab handlers (the pairwise `exportModalOpen`/
    * `siblingModalOpen` guards) with one rule a fifth dialog can join by
    * calling {@link trapModalFocus} like the rest, instead of by copying a
    * guard into four places. {@link modalOpeners} is this structure's twin —
@@ -1097,15 +1095,15 @@ export class Ui {
   private readonly modalStack: ModalStackEntry[] = [];
 
   private readonly glowBrightnessRow: HTMLElement;
-  // The balloon echo's rows (fr-5wlv.2, 4D since fr-5666) — the checkbox has
-  // no dimension gate, and the radius row waits for state.balloonEcho. The
-  // checkbox input itself is table-driven (see SCALAR_CONTROLS);
-  // balloonInflateButton's click is bespoke, like watchBuildBtn.
+  // The balloon echo's rows — the checkbox has no dimension gate, and the
+  // radius row waits for state.balloonEcho. The checkbox input itself is
+  // table-driven (see SCALAR_CONTROLS); balloonInflateButton's click is
+  // bespoke, like watchBuildBtn.
   private readonly balloonEchoRow: HTMLElement;
   private readonly balloonRadiusRow: HTMLElement;
   private readonly balloonInflateButton: HTMLButtonElement;
-  /** The balloon echo's tint picker (fr-j85n) — same shape as
-   * fogTintColorInput below: the strength slider beside it is table-driven
+  /** The balloon echo's tint picker — same shape as fogTintColorInput
+   * below: the strength slider beside it is table-driven
    * (SCALAR_CONTROLS's `balloonTintStrength` entry), so only the color
    * input needs its own reference here. balloonTintRow hides/shows exactly
    * with balloonRadiusRow (state.balloonEcho) — see the row toggles in
@@ -1126,9 +1124,9 @@ export class Ui {
     top: HTMLInputElement;
     bottom: HTMLInputElement;
   };
-  /** The fog tint's bespoke color picker (fr-5h5d) — the strength slider
-   * beside it is table-driven (see SCALAR_CONTROLS's `fogTintStrength`
-   * entry), so only the color input needs its own reference here, unlike
+  /** The fog tint's bespoke color picker — the strength slider beside it
+   * is table-driven (see SCALAR_CONTROLS's `fogTintStrength` entry), so
+   * only the color input needs its own reference here, unlike
    * `backgroundInputs`' pair. */
   private readonly fogTintColorInput: HTMLInputElement;
   private readonly symmetryNote: HTMLElement;
@@ -1136,24 +1134,24 @@ export class Ui {
   private readonly transformEditor: HTMLElement;
 
   private readonly explorerControls: HTMLElement;
-  /** The render-mode segmented control's three buttons (fr-39y), keyed by the
-   * mode each one switches to — the single entry/exit surface that replaced
-   * the flame/solid modal islands' four separate buttons. */
+  /** The render-mode segmented control's three buttons, keyed by the mode
+   * each one switches to — the single entry/exit surface that replaced the
+   * flame/solid modal islands' four separate buttons. */
   private readonly modeButtons: Record<RenderMode, HTMLButtonElement>;
-  /** fr-tmgf: device-level software-rasterizer warning (see
+  /** Device-level software-rasterizer warning (see
    * {@link setSoftwareRendererNote}) — sits OUTSIDE every mode-scoped block
    * below, so it stays visible across a render-mode switch instead of
    * disappearing with whichever status section owned it. */
   private readonly softwareRendererNote: HTMLElement;
   /**
-   * Render-progress announcer (fr-vja8.38): ONE shared visually-hidden live
-   * region for all three progress-bearing render modes below — flame, solid
-   * and surface are mutually exclusive (only one render mode is ever
-   * active), so there is no cross-mode collision to arbitrate. The visible
+   * Render-progress announcer: ONE shared visually-hidden live region for
+   * all three progress-bearing render modes below — flame, solid and surface
+   * are mutually exclusive (only one render mode is ever active), so there
+   * is no cross-mode collision to arbitrate. The visible
    * flameProgress/solidProgress/surfaceProgress readouts stay bare, non-live
    * text on purpose (see each setter's own doc); this element instead gets
-   * text authored FOR SPEECH ("Flame render, 50 percent"), written at
-   * coarse quartile boundaries only — see setFlameProgress/setSolidProgress/
+   * text authored FOR SPEECH ("Flame render, 50 percent"), written at coarse
+   * quartile boundaries only — see setFlameProgress/setSolidProgress/
    * setSurfaceProgress and {@link crossedProgressQuartile}.
    */
   private readonly renderProgressAnnouncer: HTMLElement;
@@ -1169,27 +1167,26 @@ export class Ui {
   private solidAnnouncedQuartile = 0;
   private surfaceAnnouncedQuartile = 0;
   /**
-   * Surface-only one-shots (fr-vja8.38), on a DIFFERENT cadence from the
-   * quartile fields above: a cheap system's preview/settle job can complete
-   * within a single frame, so re-arming per JOB (as the quartile above does,
-   * via setSurfaceProgress's `null` reset) would re-announce the engine
-   * dozens of times over one drag. `surfaceAnnouncedEngine` instead
-   * remembers the last-announced value and announces again only on an
-   * actual change (e.g. a mid-session compute -> WebGL fallback) — never
-   * reset by `null`. `surfaceAntialiasingAnnounced` is a rising-edge flag on
-   * the OPPOSITE cadence: it clears on every `null` and on every progress
-   * update whose detail stops mentioning it (fr-vpbq's cadence is silent
-   * through pass 1 of 8), so each new settle's antialiasing phase earns its
-   * own one-shot.
+   * Surface-only one-shots, on a DIFFERENT cadence from the quartile fields
+   * above: a cheap system's preview/settle job can complete within a single
+   * frame, so re-arming per JOB (as the quartile above does, via
+   * setSurfaceProgress's `null` reset) would re-announce the engine dozens of
+   * times over one drag. `surfaceAnnouncedEngine` instead remembers the
+   * last-announced value and announces again only on an actual change (e.g. a
+   * mid-session compute -> WebGL fallback) — never reset by `null`.
+   * `surfaceAntialiasingAnnounced` is a rising-edge flag on the OPPOSITE
+   * cadence: it clears on every `null` and on every progress update whose
+   * detail stops mentioning it (supersampling's cadence is silent through pass
+   * 1 of 8), so each new settle's antialiasing phase earns its own one-shot.
    */
   private surfaceAnnouncedEngine: string | null = null;
   private surfaceAntialiasingAnnounced = false;
-  // The mode-scoped blocks that are NOT part of any accordion section
-  // (fr-374p): Points' Undo/Redo row and the flame/solid hint + progress
-  // status blocks. They sit above ALL the sections in index.html — floating
-  // content wedged between two collapsed section headers reads as the open
-  // content of the header above it — and each shows/hides with its render
-  // mode exactly like the section containers below.
+  // The mode-scoped blocks that are NOT part of any accordion section: Points'
+  // Undo/Redo row and the flame/solid hint + progress status blocks. They sit
+  // above ALL the sections in index.html — floating content wedged between two
+  // collapsed section headers reads as the open content of the header above it
+  // — and each shows/hides with its render mode exactly like the section
+  // containers below.
   private readonly undoRedoRow: HTMLElement;
   private readonly flameStatus: HTMLElement;
   private readonly solidStatus: HTMLElement;
@@ -1202,130 +1199,127 @@ export class Ui {
   private readonly solidResolutionNote: HTMLElement;
   private readonly solidProgress: HTMLElement;
 
-  // The surface render's status block (epic fr-7jlk): a hint paragraph, a
-  // note line (degraded-march notice while active), and the trace-progress
-  // row (fr-zx34, see setSurfaceProgress). The mode button itself carries
-  // the eligibility gate — see setSurfaceEligibility.
+  // The surface render's status block: a hint paragraph, a note line
+  // (degraded-march notice while active), and the trace-progress row (see
+  // setSurfaceProgress). The mode button itself carries the eligibility
+  // gate — see setSurfaceEligibility.
   private readonly surfaceStatus: HTMLElement;
   private readonly surfaceNote: HTMLElement;
   private readonly surfaceProgress: HTMLElement;
-  // The preview tier under user control (fr-37c6): the quick-previews
-  // checkbox is a per-BROWSER viewer pref main.ts seeds at boot
+  // The preview tier under user control: the quick-previews checkbox is a
+  // per-BROWSER viewer pref main.ts seeds at boot
   // (setSurfacePreviewToggle), and the skip button is the one-shot escape
   // from a grinding preview — shown exactly while setSurfaceProgress
   // reports a skippable phase, hidden with the row.
   private readonly surfacePreviewToggle: HTMLInputElement;
   private readonly surfaceSkipPreviewBtn: HTMLButtonElement;
-  // The surface render's own settings block (fr-7jlk v2): lighting sliders
-  // plus the base-color source/palette selects, the same solidControls
-  // pattern one render mode over. surfacePaletteRow additionally gates on
-  // colorSource being "palette", "rings", or "sheets" (fr-rl4b: all three
-  // sample the user-selected palette) — like glowBrightnessRow's renderStyle
-  // gate. surfaceColorSpeedRow (fr-rl4b) gates more narrowly, on exactly
-  // "palette": color speed shapes only that source's orbit-trap blend.
+  // The surface render's own settings block: lighting sliders plus the
+  // base-color source/palette selects, the same solidControls pattern one
+  // render mode over. surfacePaletteRow additionally gates on colorSource
+  // being "palette", "rings", or "sheets" (all three sample the
+  // user-selected palette) — like glowBrightnessRow's renderStyle gate.
+  // surfaceColorSpeedRow gates more narrowly, on exactly "palette": color
+  // speed shapes only that source's orbit-trap blend.
   private readonly surfaceControls: HTMLElement;
   private readonly surfacePaletteRow: HTMLElement;
   private readonly surfaceColorSpeedRow: HTMLElement;
-  // The surface balloon rows (fr-5wlv.4; 4D since fr-qxxw): hidden under
-  // a FORWARD-ORBIT session in either dimension (surfaceSessionKind,
-  // fr-5wlv.6 + fr-tdin + fr-vag4 — the balloon is permanently inert
-  // there, a filled solid's echo swallowing the camera), and under
-  // nothing else: a 4D IFS session balloons exactly like a 3D one, so the
-  // old fourDSurfaceLive gate is gone. The radius row additionally waits
-  // for the balloon itself, mirroring the explorer pair (fr-5wlv.2). Its
-  // own Inflate button (fr-5wlv.6) binds the SAME handler as the
+  // The surface balloon rows, 3D and 4D alike: hidden under a
+  // FORWARD-ORBIT session in either dimension (surfaceSessionKind — the
+  // balloon is permanently inert there, a filled solid's echo swallowing
+  // the camera), and under nothing else: a 4D IFS session balloons
+  // exactly like a 3D one, so the old fourDSurfaceLive gate is gone. The
+  // radius row additionally waits for the balloon itself, mirroring the
+  // explorer pair. Its own Inflate button binds the SAME handler as the
   // explorer's balloonInflateButton — one sweep, one handler, two entry
   // points.
   private readonly surfaceBalloonRow: HTMLElement;
   private readonly surfaceBalloonRadiusRow: HTMLElement;
   private readonly surfaceBalloonInflateButton: HTMLButtonElement;
-  /** The surface balloon's tint picker (fr-j85n) — same state field as
+  /** The surface balloon's tint picker — same state field as
    * balloonTintColorInput above (one balloon, two renderers). Hidden
    * exactly like surfaceBalloonRadiusRow: under a forward-orbit session in
    * either dimension, or while the balloon itself is off. */
   private readonly surfaceBalloonTintRow: HTMLElement;
   private readonly surfaceBalloonTintColorInput: HTMLInputElement;
 
-  // The surface ground plane row (fr-rhn5; 4D since fr-h0c3): unlike the
-  // balloon rows above, visible for EVERY surfaceSessionKind in EITHER
-  // dimension — the floor survives where the balloon degenerates
-  // (fr-5wlv.4's measured escape-solid interior swallowing the camera,
-  // and fr-tdin's identical measurement on the Mandelbulb, never applied
-  // to a flat plane), and the w-slice it drops under is an ordinary 3D
-  // object. So it carries no gate at all. Its checkbox is table-driven
-  // (see SCALAR_CONTROLS's surfaceGroundPlaneCheckbox entry), so only the
-  // row itself needs a reference here.
+  // The surface ground plane row, 3D and 4D alike: unlike the balloon rows
+  // above, visible for EVERY surfaceSessionKind in EITHER dimension — the
+  // floor survives where the balloon degenerates (the measured escape-solid
+  // interior swallowing the camera, and the identical measurement on the
+  // Mandelbulb, never applied to a flat plane), and the w-slice it drops under
+  // is an ordinary 3D object. So it carries no gate at all. Its checkbox is
+  // table-driven (see SCALAR_CONTROLS's surfaceGroundPlaneCheckbox entry), so
+  // only the row itself needs a reference here.
   private readonly surfaceGroundPlaneRow: HTMLElement;
 
-  // 3D VIEW controls (fr-1yn): the auto-orbit turntable — the 3D sibling of
-  // the 4D auto-tumble below, same session-only checkbox + speed-row pattern,
-  // shown exactly when the 4D block is not (flat system, no render active).
+  // 3D VIEW controls: the auto-orbit turntable — the 3D sibling of the 4D
+  // auto-tumble below, same session-only checkbox + speed-row pattern, shown
+  // exactly when the 4D block is not (flat system, no render active).
   private readonly threeDControls: HTMLElement;
   private readonly autoOrbitToggle: HTMLInputElement;
   private readonly autoOrbitRow: HTMLElement;
   private readonly autoOrbitSpeedSlider: HTMLInputElement;
   private readonly autoOrbitSpeedLabel: HTMLElement;
 
-  // 4D VIEW controls (fr-cbg/fr-woc/fr-6x2). "4D" is a DERIVED property of the
-  // system now (fr-bf6, see affine4.ts's systemIsFlat/state.ts's
-  // systemIsNonFlat) rather than a mode with its own entry/exit button, so only
-  // the tumble/slice block remains here; its visibility (and the sub-blocks
-  // that hide alongside it — see updateLabels) is a VIEW gate keyed on that
-  // same non-flatness, not a separate on/off the user toggles.
+  // 4D VIEW controls. "4D" is a DERIVED property of the system now (see
+  // affine4.ts's systemIsFlat/state.ts's systemIsNonFlat) rather than a mode
+  // with its own entry/exit button, so only the tumble/slice block remains
+  // here; its visibility (and the sub-blocks that hide alongside it — see
+  // updateLabels) is a VIEW gate keyed on that same non-flatness, not a
+  // separate on/off the user toggles.
   private readonly fourDControls: HTMLElement;
   private readonly fourDSliceToggle: HTMLInputElement;
   private readonly fourDSliceToggleRow: HTMLElement;
   private readonly fourDSliceRow: HTMLElement;
   private readonly fourDSliceSlider: HTMLInputElement;
   private readonly fourDSliceLabel: HTMLElement;
-  // Slice thickness (fr-wa6o): lives inside fourDSliceRow like the rel-color
-  // row below, but with the OPPOSITE surface gate — a slab only means
-  // something to the tracer that marches one, so its row shows exactly in a
-  // live 4D surface session (see syncFourDViewRows).
+  // Slice thickness: lives inside fourDSliceRow like the rel-color row
+  // below, but with the OPPOSITE surface gate — a slab only means something
+  // to the tracer that marches one, so its row shows exactly in a live 4D
+  // surface session (see syncFourDViewRows).
   private readonly fourDSliceThicknessRow: HTMLElement;
   private readonly fourDSliceThicknessSlider: HTMLInputElement;
   private readonly fourDSliceThicknessLabel: HTMLElement;
-  // Slice-relative color (fr-nn6): lives inside fourDSliceRow (so it hides
-  // with the slice), with its own row element hidden for the baked fr-d47
-  // modes — the remap only touches the w-ramp palettes (see updateLabels).
+  // Slice-relative color: lives inside fourDSliceRow (so it hides with the
+  // slice), with its own row element hidden for the baked 4D color modes — the
+  // remap only touches the w-ramp palettes (see updateLabels).
   private readonly fourDSliceRelColorToggle: HTMLInputElement;
   private readonly fourDSliceRelColorRow: HTMLElement;
-  /** True while the panel is showing a LIVE 4D surface session (fr-b30z):
-   * a non-flat system in Surface mode, where the tracer re-poses the rotor
-   * and re-marches the w slice every frame. It changes what the slice block
+  /** True while the panel is showing a LIVE 4D surface session: a non-flat
+   * system in Surface mode, where the tracer re-poses the rotor and
+   * re-marches the w slice every frame. It changes what the slice block
    * means, so {@link syncFourDViewRows} keys on it — see updateLabels. */
   private fourDSurfaceLive = false;
   /** False while the live 4D surface session cannot take a slab at all,
    * for either of two reasons the row's own tooltip distinguishes: its
-   * fold set breaks segment exactness (fr-rsp6 × fr-wa6o — spherefold and
-   * mandelbox branches take segments to arcs), or it is an ESCAPE-TIME
-   * session, whose forward orbit has no branch enumeration to thread a
-   * segment through at any fold family (fr-vag4). Either way the session
-   * clamps the slab to 0. The thickness row stays VISIBLE and DISABLES
-   * with the reason — a silently vanishing control reads as "impossible,
-   * no idea why". Session-scoped, set by main.ts's routing; true outside
-   * such sessions. */
+   * fold set breaks segment exactness (spherefold and mandelbox branches
+   * take segments to arcs), or it is an ESCAPE-TIME session, whose
+   * forward orbit has no branch enumeration to thread a segment through
+   * at any fold family. Either way the session clamps the slab to 0. The
+   * thickness row stays VISIBLE and DISABLES with the reason — a
+   * silently vanishing control reads as "impossible, no idea why".
+   * Session-scoped, set by main.ts's routing; true outside such
+   * sessions. */
   private fourDSlabAvailable = true;
   /**
-   * The ACTIVE surface session's shape (fr-5wlv.6): `"escape"` for the
-   * escape-time fold render (fr-kltj) and `"bulb"` for the Mandelbulb
-   * (fr-tdin) — the two FORWARD-ORBIT objects, filled solids whose
-   * interior reaches the ball centre, so scene.ts nulls the ball
-   * (fr-5wlv.4's measured degeneracy, re-measured on the bulb by
-   * fr-tdin) and the balloon is permanently inert for both — `"ifs"` for
-   * every ordinary IFS or live 4D session, `null` outside a surface
-   * session (or before the routing decision lands). Session-scoped like
-   * {@link fourDSlabAvailable}, set by main.ts's own routing at
-   * surfaceSession.start() and reset on session end — NOT document-derived
-   * like {@link fourDSurfaceLive} above, since "would this document route
-   * to escape" needs the same analysis main.ts's routing already ran; read
-   * by updateLabels alongside fourDSurfaceLive to gate the balloon rows.
+   * The ACTIVE surface session's shape: `"escape"` for the escape-time fold
+   * render and `"bulb"` for the Mandelbulb — the two FORWARD-ORBIT objects,
+   * filled solids whose interior reaches the ball centre, so scene.ts nulls
+   * the ball (the measured degeneracy, re-measured on the bulb) and the
+   * balloon is permanently inert for both — `"ifs"` for every ordinary IFS or
+   * live 4D session, `null` outside a surface session (or before the routing
+   * decision lands). Session-scoped like {@link fourDSlabAvailable}, set by
+   * main.ts's own routing at surfaceSession.start() and reset on session end —
+   * NOT document-derived like {@link fourDSurfaceLive} above, since "would
+   * this document route to escape" needs the same analysis main.ts's routing
+   * already ran; read by updateLabels alongside fourDSurfaceLive to gate the
+   * balloon rows.
    */
   private surfaceSessionKind: SurfaceSessionKind | null = null;
-  // Auto-tumble pause/resume + speed (fr-woc): same session-only pattern as
-  // the slice controls above. The toggle's own wrapper row (fr-osgs) hides —
-  // with the speed row — in a live 4D surface session, where the ambient
-  // tumble is PARKED (see syncFourDViewRows).
+  // Auto-tumble pause/resume + speed: same session-only pattern as the
+  // slice controls above. The toggle's own wrapper row hides — with the
+  // speed row — in a live 4D surface session, where the ambient tumble
+  // is PARKED (see syncFourDViewRows).
   private readonly fourDTumbleToggle: HTMLInputElement;
   private readonly fourDTumbleToggleRow: HTMLElement;
   private readonly fourDTumbleRow: HTMLElement;
@@ -1333,10 +1327,10 @@ export class Ui {
   private readonly fourDTumbleSpeedLabel: HTMLElement;
   /** Is the projection ACTUALLY tumbling right now (main.ts's
    * `fourDView.tumbleOn`, whose default this matches)? Mirrored here because
-   * the canvas help box names the motion (fr-k9nx) and would otherwise claim
-   * a tumble that is parked. Deliberately not the checkbox — unlike `sliceOn`
-   * (see updateLabels' syncFourDViewRows call), the control is not the truth:
-   * a build replay's showcase forces the tumble on for its duration WITHOUT
+   * the canvas help box names the motion and would otherwise claim a tumble
+   * that is parked. Deliberately not the checkbox — unlike `sliceOn` (see
+   * updateLabels' syncFourDViewRows call), the control is not the truth: a
+   * build replay's showcase forces the tumble on for its duration WITHOUT
    * touching the user's control (main.ts's replayShowcase), and the help box
    * describes the canvas, not the panel. Kept in step by
    * {@link setFourDTumbleActive}, {@link resetFourDTumble}, and the toggle's
@@ -1345,11 +1339,11 @@ export class Ui {
   private readonly colorModeRow: HTMLElement;
   /** The 4D Color select's wrapper — {@link colorModeRow}'s non-flat sibling
    * in the Appearance section: exactly one of the pair shows, and
-   * `#rampPaletteRow` sits statically beneath them (fr-15g; the fr-6ue
-   * gate/gated co-location with no DOM re-homing). */
+   * `#rampPaletteRow` sits statically beneath them (gate and gated
+   * co-located, with no DOM re-homing). */
   private readonly fourDColorRow: HTMLElement;
   /** The 4D depth-fade toggle's wrapper — renderStyleRow's non-flat sibling
-   * in the Appearance section (fr-15g). */
+   * in the Appearance section. */
   private readonly fourDDepthFadeRow: HTMLElement;
   private readonly renderStyleRow: HTMLElement;
 
@@ -1370,8 +1364,7 @@ export class Ui {
   >();
 
   /** The gradient-stop editor rows shown under the flame/solid/surface/ramp
-   * palette `<select>`s once set to Custom (fr-55k; the ramp row since
-   * fr-3b6, the surface row since fr-ibcm): a live gradient strip preview,
+   * palette `<select>`s once set to Custom: a live gradient strip preview,
    * one `<input type="color">` per stop, and the add/remove-stop buttons.
    * All four editors read/write the SAME shared `AppState.customPalette`
    * slot (see {@link syncCustomPaletteEditors}) — only which row is visible
@@ -1388,7 +1381,7 @@ export class Ui {
     }
   >;
 
-  /** Which accordion section is open, remembered per render mode (fr-99o) so
+  /** Which accordion section is open, remembered per render mode so
    * switching Points ↔ Flame ↔ Solid ↔ Surface restores each mode's working
    * section instead of landing on an all-collapsed panel. `""` = the user
    * deliberately collapsed everything in that mode. Session-only, like
@@ -1407,24 +1400,25 @@ export class Ui {
   private editor: EditorState | null = null;
 
   /**
-   * Session memory of which transform-editor group is open (fr-64ku). Every
+   * Session memory of which transform-editor group is open. Every
    * fresh selection restores it, so tuning Rotation across several transforms
    * doesn't mean reopening the group at each one.
    *
-   * `null` = the user has never chosen, which is where fr-bf6.3's rule still
-   * applies: a transform that already carries a `w` extension opens on "4D",
-   * so a system authored by preset or URL hash shows its 4D values instead of
-   * hiding them a click away. Once a choice exists it wins — the same "never
-   * fight a manual toggle mid-session" line that rule was written on.
+   * `null` = the user has never chosen, which is where the 4D group's own rule
+   * still applies: a transform that already carries a `w` extension opens on
+   * "4D", so a system authored by preset or URL hash shows its 4D values
+   * instead of hiding them a click away. Once a choice exists it wins — the
+   * same "never fight a manual toggle mid-session" line that rule was written
+   * on.
    */
   private editorOpenGroup: string | null = null;
 
   /** Pending {@link flashToast} auto-hide, cleared/rearmed on each toast. */
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // The auto-hide pause (fr-vja8.21, WCAG 2.2.1): while the pointer is over
-  // the toast or focus is inside it (Tab reaches an action toast's Undo),
-  // the countdown holds — the actionable toast is the ONLY recovery path
+  // The auto-hide pause (WCAG 2.2.1): while the pointer is over the toast
+  // or focus is inside it (Tab reaches an action toast's Undo), the
+  // countdown holds — the actionable toast is the ONLY recovery path
   // after a collection/keyframe delete, and 6s is not enough to hear the
   // announcement, navigate there and press it. Leaving re-arms a full
   // countdown. Both flags reset on every fresh toast and on hide, so a
@@ -1434,21 +1428,21 @@ export class Ui {
   private toastFocused = false;
 
   /**
-   * The single document keydown listener behind every modal (fr-vja8.52),
+   * The single document keydown listener behind every modal,
    * attached only while {@link modalStack} is non-empty — armed by
    * {@link trapModalFocus}, dropped by {@link releaseModalFocus} — so it
    * never lingers or double-binds. Replaces four hand-copied per-modal
-   * handlers that each restated fr-vja8.13's stacking rule with a pairwise
+   * handlers that each restated the stacking rule with a pairwise
    * `exportModalOpen()`/`siblingModalOpen()` guard.
    *
-   * Escape and Tab read OPPOSITE ends of {@link modalStack}, which is
-   * fr-vja8.13's own rule generalized rather than flattened. Tab is the
+   * Escape and Tab read OPPOSITE ends of {@link modalStack}, which is that
+   * same stacking rule generalized rather than flattened. Tab is the
    * shared focus trap ({@link cycleModalFocus}) and always cycles the
    * NEWEST entry's ring: once the export modal stacks over a sibling, it is
    * what the user is actually looking at, and the only one Tab may reach.
    * Escape always goes to the OLDEST entry instead: a sibling's
    * Escape-to-close must survive a multi-minute export stacked above it —
-   * the exact accident fr-vja8.13 fixed, where an Escape aimed at the
+   * the exact accident that rule fixed, where an Escape aimed at the
    * sibling used to also abort the export. Because the export modal can
    * only ever stack OVER an already-open sibling, never under one —
    * opening a sibling needs a button the export modal's own focus trap and
@@ -1473,12 +1467,13 @@ export class Ui {
     }
   };
 
-  /** Whether the blocking export modal is on screen (fr-vja8.13) — read off
-   * the `hidden` class, this project's one display idiom, like
+  /** Whether the blocking export modal is on screen — read off the
+   * `hidden` class, this project's one display idiom, like
    * {@link mutationsOpen}. {@link releaseModalFocus} is its one remaining
-   * reader (fr-vja8.52 retired the keydown handlers' own copies): it still
-   * needs to know whether export sits above the modal that is closing, to
-   * hand off its opener rather than restore focus behind a scrim. */
+   * reader (the shared modal stack retired the keydown handlers' own
+   * copies): it still needs to know whether export sits above the modal
+   * that is closing, to hand off its opener rather than restore focus
+   * behind a scrim. */
   private exportModalOpen(): boolean {
     return !this.exportModal.classList.contains("hidden");
   }
@@ -1542,8 +1537,8 @@ export class Ui {
     this.exportTimelineBtn = this.byId("exportTimelineBtn");
     this.exportTimelineTitle = this.exportTimelineBtn.title;
     // Visible when EITHER capture path exists: the realtime MediaRecorder
-    // capture, or the offline frame-exact WebCodecs export (fr-92t9) —
-    // main.ts's onTimelineExport routes between them.
+    // capture, or the offline frame-exact WebCodecs export — main.ts's
+    // onTimelineExport routes between them.
     this.timelineExportBtn.classList.toggle(
       "hidden",
       !videoCaptureSupported() && !offlineExportSupported(),
@@ -1558,9 +1553,9 @@ export class Ui {
     this.mutationAgainBtn = this.byId("mutationAgainBtn");
     this.mutationGrid = this.byId("mutationGrid");
     this.toast = this.byId("toast");
-    // Pause-on-hover/focus (fr-vja8.21): the element is permanent, so the
-    // four listeners bind once here rather than per flashToast. mouseenter
-    // only ever fires on an actionable toast — the plain one keeps
+    // Pause-on-hover/focus: the element is permanent, so the four
+    // listeners bind once here rather than per flashToast. mouseenter only
+    // ever fires on an actionable toast — the plain one keeps
     // `pointer-events: none` (see .toast/.toast-actionable in style.css) —
     // while focusin covers the keyboard route to the action button.
     this.toast.addEventListener("mouseenter", () => this.holdToast("hover"));
@@ -1580,8 +1575,8 @@ export class Ui {
     this.exportProgress = this.byId("exportProgress");
     this.exportCancelBtn = this.byId("exportCancelBtn");
     this.exportDeliverBtn = this.byId("exportDeliverBtn");
-    // ...and straight back out (fr-2fbs). index.html declares the button so
-    // the dialog's full vocabulary — both its actions, in their order, with
+    // ...and straight back out. index.html declares the button so the
+    // dialog's full vocabulary — both its actions, in their order, with
     // their classes — stays readable in the markup; this makes the DEFAULT
     // state the true one. showExportProgress re-inserts it for a run that
     // offers the action, and takes it out again for one that does not.
@@ -1706,13 +1701,13 @@ export class Ui {
       },
     };
 
-    // Panel accordion (fr-zoi): the sections are exclusive-open
-    // <details name="panel-section"> groups, so the browser owns which one is
-    // open (plus the keyboard/AT semantics). Ui adds just two things on top:
-    // the per-render-mode memory of the open section (fr-99o — recorded here,
-    // restored in updateLabels), and a scroll re-anchor, because when the
-    // section that just auto-closed sat ABOVE the tapped one, the collapse
-    // shifts the tapped summary up — on a phone, clean out of view.
+    // Panel accordion: the sections are exclusive-open <details
+    // name="panel-section"> groups, so the browser owns which one is open
+    // (plus the keyboard/AT semantics). Ui adds just two things on top: the
+    // per-render-mode memory of the open section (recorded here, restored in
+    // updateLabels), and a scroll re-anchor, because when the section that
+    // just auto-closed sat ABOVE the tapped one, the collapse shifts the
+    // tapped summary up — on a phone, clean out of view.
     for (const section of Array.from(
       this.panel.querySelectorAll<HTMLDetailsElement>("details.panel-section"),
     )) {
@@ -1737,8 +1732,8 @@ export class Ui {
         // correctness, so skip it quietly where it's unavailable.
         if (typeof summary?.scrollIntoView !== "function") return;
         this.doc.defaultView?.requestAnimationFrame?.(() => {
-          // Re-anchor only while the panel is actually on screen (fr-dd4b).
-          // This toggle also fires for PROGRAMMATIC opens — updateLabels'
+          // Re-anchor only while the panel is actually on screen. This
+          // toggle also fires for PROGRAMMATIC opens — updateLabels'
           // per-mode accordion restore — which the drift show triggers on
           // every flame/solid leg with the panel closed, i.e. parked
           // off-screen at translateX(100%). scrollIntoView would then ask
@@ -1754,11 +1749,11 @@ export class Ui {
       });
     }
 
-    // A vertical scroll swipe that lands on a slider must not edit it, and
-    // since fr-xu4u it does not even try: the guard PREVENTS the tap-jump
-    // where fr-zoi undid it afterwards, and drives the touch drag itself
-    // as the price. See slider-scroll-guard.ts for the full story,
-    // including why the obvious preventDefault does not work.
+    // A vertical scroll swipe that lands on a slider must not edit it, and it
+    // does not even try: the guard PREVENTS the tap-jump rather than undoing
+    // it afterwards, and drives the touch drag itself as the price. See
+    // slider-scroll-guard.ts for the full story, including why the obvious
+    // preventDefault does not work.
     installSliderScrollGuard(this.panel);
   }
 
@@ -1789,13 +1784,13 @@ export class Ui {
 
   /**
    * Read a gradient editor's current stop list from its `stops` container, in
-   * DOM order (fr-55k) — shared by the delegated recolor listener and the
-   * add/remove button handlers below, all of which need "the stops as they
-   * stand right now" before computing their own edit. Returns `null` if any
-   * child color input's value fails to parse, so the delegated listener can
-   * ignore the whole event rather than act on a partial read; this can't
-   * actually happen for a real `<input type="color">`, whose value is always
-   * a well-formed `#rrggbb`.
+   * DOM order — shared by the delegated recolor listener and the add/remove
+   * button handlers below, all of which need "the stops as they stand right
+   * now" before computing their own edit. Returns `null` if any child color
+   * input's value fails to parse, so the delegated listener can ignore the
+   * whole event rather than act on a partial read; this can't actually happen
+   * for a real `<input type="color">`, whose value is always a well-formed
+   * `#rrggbb`.
    */
   private readCustomPaletteStops(container: HTMLElement): RgbStop[] | null {
     const stops: RgbStop[] = [];
@@ -1822,7 +1817,7 @@ export class Ui {
 
   /** Read the two backdrop pickers as a BackgroundGradient, or null if
    * either fails to parse — the readPositionAxisColors contract, one row
-   * over (fr-5ps1). */
+   * over. */
   private readBackgroundCustom(): BackgroundGradient | null {
     const top = hexToRgb(this.backgroundInputs.top.value);
     const bottom = hexToRgb(this.backgroundInputs.bottom.value);
@@ -1886,8 +1881,8 @@ export class Ui {
     // the backdrop, and Escape (bound only while open) all just closeGallery().
     this.galleryCloseBtn.addEventListener("click", () => this.closeGallery());
     this.galleryBackdrop.addEventListener("click", () => this.closeGallery());
-    // Timeline (fr-8v41): the three top-level actions are parameterless,
-    // like Surprise Me / Drift — row-level actions (remove/move/timing) are
+    // Timeline: the three top-level actions are parameterless, like
+    // Surprise Me / Drift — row-level actions (remove/move/timing) are
     // wired per-row in renderTimeline instead.
     this.timelineAddBtn.addEventListener("click", () =>
       handlers.onTimelineAddKeyframe(),
@@ -1901,8 +1896,8 @@ export class Ui {
     this.exportTimelineBtn.addEventListener("click", () =>
       handlers.onExportTimeline(),
     );
-    // The mutation grid (fr-3vly): opening and re-rolling go through the app
-    // (it owns the candidates); closing mirrors the gallery's pure-view
+    // The mutation grid: opening and re-rolling go through the app (it
+    // owns the candidates); closing mirrors the gallery's pure-view
     // ✕/backdrop/Escape trio.
     this.mutateBtn.addEventListener("click", () => handlers.onOpenMutations());
     this.mutationAgainBtn.addEventListener("click", () =>
@@ -1914,9 +1909,9 @@ export class Ui {
     this.mutationBackdrop.addEventListener("click", () =>
       this.closeMutations(),
     );
-    // The About dialog (fr-1zb) is the same kind of pure view concern:
-    // opening it needs no handler (the dialog is static content), and
-    // closing it mirrors the gallery's ✕/backdrop/Escape trio exactly.
+    // The About dialog is the same kind of pure view concern: opening
+    // it needs no handler (the dialog is static content), and closing
+    // it mirrors the gallery's ✕/backdrop/Escape trio exactly.
     this.aboutBtn.addEventListener("click", () => this.openAbout());
     this.aboutCloseBtn.addEventListener("click", () => this.closeAbout());
     this.aboutBackdrop.addEventListener("click", () => this.closeAbout());
@@ -1924,26 +1919,26 @@ export class Ui {
     // and the Appearance panel's — both fire the one handler.
     this.aboutWatchBtn.addEventListener("click", () => handlers.onWatchBuild());
     this.watchBuildBtn.addEventListener("click", () => handlers.onWatchBuild());
-    // The export progress modal (fr-7mfx) deliberately does NOT mirror the
+    // The export progress modal deliberately does NOT mirror the
     // ✕/backdrop/Escape trio above: index.html wires no ✕ and leaves the
     // backdrop unbound (an accidental dismissal must not silently abandon a
     // multi-minute export), and Cancel is not a pure view concern like
     // closeGallery/closeAbout/closeMutations — it has to abort real GPU
-    // work, so the click (and the Escape action showExportProgress arms,
-    // fr-vja8.52) route through the app via onExportCancel instead of a
-    // bare hideExportProgress() call.
+    // work, so the click (and the Escape action showExportProgress arms)
+    // route through the app via onExportCancel instead of a bare
+    // hideExportProgress() call.
     this.exportCancelBtn.addEventListener("click", () =>
       handlers.onExportCancel(),
     );
-    // Same reasoning for fr-2fbs's second action: it ends a real wait and
-    // commits to a file, so it routes through the app rather than the view.
+    // Same reasoning for the second action: it ends a real wait and commits
+    // to a file, so it routes through the app rather than the view.
     this.exportDeliverBtn.addEventListener("click", () =>
       handlers.onExportDeliverEarly(),
     );
-    // The balloon echo's "Inflate" replay (fr-5wlv.2) — a bespoke button
-    // like watchBuildBtn above, not a table-driven scalar control. The
-    // surface balloon's own Inflate button (fr-5wlv.6) fires the exact
-    // SAME handler — one sweep, one radius field, two renderers' buttons.
+    // The balloon echo's "Inflate" replay — a bespoke button like
+    // watchBuildBtn above, not a table-driven scalar control. The surface
+    // balloon's own Inflate button fires the exact SAME handler — one
+    // sweep, one radius field, two renderers' buttons.
     this.balloonInflateButton.addEventListener("click", () =>
       handlers.onBalloonInflate(),
     );
@@ -1964,11 +1959,11 @@ export class Ui {
             : input.value,
         ),
       );
-      // Commit-on-release (fr-2c27): a range spec that declares `commit`
-      // ALSO gets the trailing "change" event a range input fires once the
-      // drag ends — reported as the "commit" phase, on top of (not instead
-      // of) the "input" listener above, which already covered every tick
-      // during the drag itself.
+      // Commit-on-release: a range spec that declares `commit` ALSO gets
+      // the trailing "change" event a range input fires once the drag ends
+      // — reported as the "commit" phase, on top of (not instead of) the
+      // "input" listener above, which already covered every tick during
+      // the drag itself.
       if (spec.kind === "range" && spec.commit) {
         input.addEventListener("change", () =>
           handlers.onScalarControl(spec, input.value, "commit"),
@@ -2015,10 +2010,10 @@ export class Ui {
       // The speed slider only means anything while the tumble is running —
       // same "row hides with its toggle" pattern as the slice below (tumble
       // state is session-only and never enters AppState); the shared sync
-      // also keeps the surface-mode gate honest (fr-osgs).
+      // also keeps the surface-mode gate honest.
       this.syncFourDViewRows();
       // Set BEFORE the handler: main.ts answers this one with an
-      // updateLabels, which reads the flag to word the help box (fr-k9nx).
+      // updateLabels, which reads the flag to word the help box.
       this.fourDTumbleActive = on;
       handlers.onFourDTumbleToggle(on);
     });
@@ -2050,12 +2045,11 @@ export class Ui {
         this.fourDSliceRelColorToggle.checked,
       ),
     );
-    // Custom palette gradient editor (fr-55k; the ramp row since fr-3b6, the
-    // surface row since fr-ibcm): the flame/solid/surface/ramp rows share
+    // Custom palette gradient editor: the flame/solid/surface/ramp rows share
     // this same wiring, each against its own DOM elements. The recolor
     // listener is delegated on the `stops` container (rather than bound per
-    // input) so it survives syncCustomPaletteEditors rebuilding the inputs
-    // on an add/remove.
+    // input) so it survives syncCustomPaletteEditors rebuilding the inputs on
+    // an add/remove.
     for (const kind of ["flame", "solid", "surface", "ramp"] as const) {
       const editor = this.customPaletteEditors[kind];
       editor.stops.addEventListener("input", () => {
@@ -2073,9 +2067,9 @@ export class Ui {
         handlers.onCustomPaletteStops(stops.slice(0, -1));
       });
     }
-    // Position axis colors (fr-8k7): three pickers report as one triple —
-    // the app state is the triple, so a drag in any one picker re-reads all
-    // three, exactly like the gradient editor reads its whole stop list.
+    // Position axis colors: three pickers report as one triple — the app
+    // state is the triple, so a drag in any one picker re-reads all three,
+    // exactly like the gradient editor reads its whole stop list.
     this.positionColorsRow.addEventListener("input", () => {
       const colors = this.readPositionAxisColors();
       if (colors) handlers.onPositionAxisColors(colors);
@@ -2083,22 +2077,22 @@ export class Ui {
     this.positionColorsResetBtn.addEventListener("click", () =>
       handlers.onPositionAxisColors(LEGACY_POSITION_AXIS_COLORS),
     );
-    // Custom backdrop stops (fr-5ps1): two pickers report as one pair — the
-    // app state is the pair, so a drag in either re-reads both, exactly like
-    // the position axis row just above.
+    // Custom backdrop stops: two pickers report as one pair — the app state
+    // is the pair, so a drag in either re-reads both, exactly like the
+    // position axis row just above.
     this.backgroundCustomRow.addEventListener("input", () => {
       const custom = this.readBackgroundCustom();
       if (custom) handlers.onBackgroundCustom(custom);
     });
-    // Fog tint color (fr-5h5d): bound to the single picker itself, not the
-    // row — unlike the pair above, there is no sibling input to jointly
+    // Fog tint color: bound to the single picker itself, not the row —
+    // unlike the pair above, there is no sibling input to jointly
     // re-read, and the row also hosts the table-driven strength slider,
     // whose own "input" events must not re-trigger this handler.
     this.fogTintColorInput.addEventListener("input", () => {
       handlers.onFogTint(this.fogTintColorInput.value);
     });
-    // Balloon tint color (fr-j85n): ONE handler serves both pickers — the
-    // Points section's balloonTintColorInput and the Surface section's
+    // Balloon tint color: ONE handler serves both pickers — the Points
+    // section's balloonTintColorInput and the Surface section's
     // surfaceBalloonTintColorInput are the same state field seen from two
     // render modes (fogTintColorInput's precedent just above, doubled).
     // Each row also hosts its own table-driven strength slider, whose
@@ -2112,12 +2106,12 @@ export class Ui {
     });
   }
 
-  /** Reflect a 4D slice state in the panel controls (fr-pnek) — how a
-   * restored document's saved 4D pose, applied to the view out from under
-   * the UI (main.ts's applyFourDPose), keeps the panel truthful. The
-   * position row shows/hides with the toggle exactly as its change handler
-   * does; `thickness` (fr-wa6o) rides along, since a saved pose carries one
-   * whether or not the session it lands in is showing that row. */
+  /** Reflect a 4D slice state in the panel controls — how a restored
+   * document's saved 4D pose, applied to the view out from under the UI
+   * (main.ts's applyFourDPose), keeps the panel truthful. The position row
+   * shows/hides with the toggle exactly as its change handler does;
+   * `thickness` rides along, since a saved pose carries one whether or not
+   * the session it lands in is showing that row. */
   setFourDSlice(
     on: boolean,
     center: number,
@@ -2140,7 +2134,7 @@ export class Ui {
    * view reveals the UI owns, since both are session-only and never enter
    * AppState.
    *
-   * A LIVE 4D surface session (fr-b30z) has no slice choice to offer. That
+   * A LIVE 4D surface session has no slice choice to offer. That
    * tracer marches a `w = w0` cross-section unconditionally — `sliceOn`
    * never reaches it (main.ts pushes only `sliceCenter`/`sliceThickness`
    * into `setSurface4View`) — so the toggle would be a lie, while the
@@ -2148,12 +2142,12 @@ export class Ui {
    * that makes its continuous family of 3D fractals reachable. Hide the
    * toggle, show the slider regardless.
    *
-   * The thickness slider (fr-wa6o) is that toggle's exact complement: the
+   * The thickness slider is that toggle's exact complement: the
    * slab it widens is a property of the tracer's own distance estimator, so
    * it shows ONLY in a live surface session. The point cloud's slice has a
    * fixed Gaussian width of its own that this control does not touch.
    *
-   * The TUMBLE rows hide whole in that session too (fr-osgs): the ambient
+   * The TUMBLE rows hide whole in that session too: the ambient
    * tumble PARKS there — every tick would invalidate the frame and pin the
    * tier scheduler in preview, so the settle could never arm — and a
    * visible toggle whose motion never happens reads as a broken view. The
@@ -2174,9 +2168,9 @@ export class Ui {
     );
     // The thickness row stays VISIBLE in every live 4D surface session
     // and DISABLES with the reason when the session's fold set refuses
-    // the slab (fr-rsp6 × fr-wa6o) — a silently vanishing control reads
-    // as "impossible, no idea why", where the truth is a per-fold-family
-    // soundness rule the user can act on (boxfold keeps the slab).
+    // the slab — a silently vanishing control reads as "impossible, no
+    // idea why", where the truth is a per-fold-family soundness rule the
+    // user can act on (boxfold keeps the slab).
     this.fourDSliceThicknessRow.classList.toggle(
       "hidden",
       !this.fourDSurfaceLive,
@@ -2191,15 +2185,14 @@ export class Ui {
       this.fourDSliceThicknessSlider.value = "0";
       this.fourDSliceThicknessLabel.textContent = "0.00";
     }
-    // TWO SESSIONS REFUSE THE SLAB AND THEY OWE DIFFERENT REASONS
-    // (fr-vag4). The IFS descent refuses it per FOLD FAMILY — a
-    // spherefold's inversion branch bends a segment into an arc — so a
-    // box-fold-only system keeps it, which is a knob the user can act on.
-    // A 4D escape-time session refuses it at every fold family, because a
-    // forward orbit has no branch enumeration at all: the box fold that
-    // rescues the descent is exactly the one that turns a segment into a
-    // bent polyline here. Handing the descent's reason to an escape
-    // session would tell a box-fold-only chain to do the thing it is
+    // TWO SESSIONS REFUSE THE SLAB AND THEY OWE DIFFERENT REASONS. The IFS
+    // descent refuses it per FOLD FAMILY — a spherefold's inversion branch
+    // bends a segment into an arc — so a box-fold-only system keeps it, which
+    // is a knob the user can act on. A 4D escape-time session refuses it at
+    // every fold family, because a forward orbit has no branch enumeration at
+    // all: the box fold that rescues the descent is exactly the one that turns
+    // a segment into a bent polyline here. Handing the descent's reason to an
+    // escape session would tell a box-fold-only chain to do the thing it is
     // already doing.
     this.fourDSliceThicknessRow.title = !slabRefused
       ? ""
@@ -2214,17 +2207,17 @@ export class Ui {
           "keep the slab.";
   }
 
-  /** fr-rsp6: whether the live 4D surface session can take a slab at all
-   * (see {@link fourDSlabAvailable}) — main.ts sets it from `slabExact4`
-   * at session routing and resets it true on session end. */
+  /** Whether the live 4D surface session can take a slab at all (see
+   * {@link fourDSlabAvailable}) — main.ts sets it from `slabExact4` at
+   * session routing and resets it true on session end. */
   setFourDSlabAvailable(available: boolean): void {
     if (this.fourDSlabAvailable === available) return;
     this.fourDSlabAvailable = available;
     this.syncFourDViewRows();
   }
 
-  /** fr-5wlv.6: which shape the active surface session actually routed to
-   * (see {@link surfaceSessionKind}) — main.ts sets it once per
+  /** Which shape the active surface session actually routed to (see
+   * {@link surfaceSessionKind}) — main.ts sets it once per
    * surfaceSession.start() branch and resets it to `null` on session end,
    * mirroring {@link setFourDSlabAvailable}'s own routing-pushed pattern.
    * Unlike that setter, this one does not self-sync: the gated rows also
@@ -2238,10 +2231,10 @@ export class Ui {
 
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
    * a slice left behind by the previous visit never silently applies. The
-   * slice-relative color option (fr-nn6) resets with it: it's slice view
-   * state, and the fresh-visit default is the faithful whole-cloud ramp.
-   * So does the slab thickness (fr-wa6o), whose fresh-visit default is the
-   * zero-thickness cross-section. */
+   * slice-relative color option resets with it: it's slice view state, and the
+   * fresh-visit default is the faithful whole-cloud ramp. So does the slab
+   * thickness, whose fresh-visit default is the zero-thickness
+   * cross-section. */
   resetFourDSlice(): void {
     this.setFourDSlice(false, 0, false, 0);
   }
@@ -2249,7 +2242,7 @@ export class Ui {
   /** Reset the auto-orbit controls on every fresh visit to the 3D view — `on`
    * is false under prefers-reduced-motion (where the orbit starts paused but
    * stays available as an explicit opt-in) or when the user's sticky toggle
-   * choice says so (fr-g98; mirrors {@link resetFourDTumble}). */
+   * choice says so (mirrors {@link resetFourDTumble}). */
   resetAutoOrbit(on: boolean): void {
     this.autoOrbitToggle.checked = on;
     this.autoOrbitRow.classList.toggle("hidden", !on);
@@ -2259,8 +2252,7 @@ export class Ui {
 
   /** Reset the 4D tumble controls on every 4D entry — `on` is false under
    * prefers-reduced-motion (where the tumble starts paused but stays available
-   * as an explicit opt-in) or when the user's sticky toggle choice says so
-   * (fr-g98). */
+   * as an explicit opt-in) or when the user's sticky toggle choice says so. */
   resetFourDTumble(on: boolean): void {
     this.fourDTumbleToggle.checked = on;
     this.syncFourDViewRows();
@@ -2272,21 +2264,22 @@ export class Ui {
   /** Mirror a tumble on/off that did NOT come from the panel control — today
    * only the build replay's showcase, which forces the projection to tumble
    * for the replay and puts the prior flag back afterwards without ever
-   * touching the user's checkbox (fr-k9nx; see {@link fourDTumbleActive}).
+   * touching the user's checkbox (see {@link fourDTumbleActive}).
    * Wording-only: callers refresh the help box with the {@link updateLabels}
    * they already run. */
   setFourDTumbleActive(on: boolean): void {
     this.fourDTumbleActive = on;
   }
 
-  /** Reflect an auto-motion flip that came from the CANVAS (the Space key,
-   * fr-vja8.37) rather than the panel checkbox: exactly the DOM-side
-   * recording the change listeners perform before their handlers fire —
-   * checked state, row visibility, the help-box flag — and deliberately NOT
+  /** Reflect an auto-motion flip that came from the CANVAS (the Space key)
+   * rather than the panel checkbox: exactly the DOM-side recording the
+   * change listeners perform before their handlers fire — checked state,
+   * row visibility, the help-box flag — and deliberately NOT
    * {@link resetAutoOrbit}/{@link resetFourDTumble}, whose fresh-visit
-   * semantics would also stomp a user-chosen speed back to 1.0x. The caller
-   * (main.ts's onToggleAutoMotion) then runs the same handler logic the
-   * checkbox change would have, so the two input paths stay one path. */
+   * semantics would also stomp a user-chosen speed back to 1.0x. The
+   * caller (main.ts's onToggleAutoMotion) then runs the same handler logic
+   * the checkbox change would have, so the two input paths stay one
+   * path. */
   setAutoMotionToggle(fourD: boolean, on: boolean): void {
     if (fourD) {
       this.fourDTumbleToggle.checked = on;
@@ -2331,9 +2324,9 @@ export class Ui {
 
     this.finalTransformToggle.checked = state.finalTransform !== undefined;
 
-    // The render-mode segmented control (fr-39y) is the panel's one fixed
-    // switch between the three sibling renderers; each mode's own params
-    // show beneath it. Reflect the active segment…
+    // The render-mode segmented control is the panel's one fixed switch
+    // between the three sibling renderers; each mode's own params show
+    // beneath it. Reflect the active segment…
     for (const mode of RENDER_MODES) {
       const active = state.renderMode === mode;
       this.modeButtons[mode].classList.toggle("active", active);
@@ -2344,25 +2337,23 @@ export class Ui {
     // render would just be confusing — but the segmented control itself stays,
     // so flame↔solid is a direct switch, not a round-trip through Points.
     const rendering = state.renderMode !== "points";
-    // "4D" is a DERIVED property of the system (fr-bf6, see affine4.ts's
-    // systemIsFlat via state.ts's systemIsNonFlat), NOT a fourth render mode —
-    // so this is a VIEW gate, orthogonal to the segmented control above.
-    // The presets block, transform list, and editor all STAY VISIBLE and live
-    // for a non-flat system exactly as for a flat one — only the controls
-    // that are genuinely meaningless while viewing the 4D shader path
-    // (color mode/contrast, depth style — neither reaches the 4D projection
-    // or its own w-driven coloring; symmetry, by contrast, stays put since
-    // fr-q0h6 gave the 4D chaos game its own kaleidoscope stage) hide; their
-    // 4D look siblings
-    // (the 4D Color and depth-fade rows) swap into the same Appearance slots
-    // (fr-15g), and the 4D View section's tumble/slice block replaces the 3D
-    // View block. All four render modes stay available while
-    // non-flat: the flame/solid renders snapshot the frozen 4D view and run
-    // their own 4D accumulators (fr-5b3/fr-4wd), and the surface tracer poses
-    // the 4D attractor live (fr-vxoj). The tumble/slice block hides under the
-    // FROZEN renders for the same reason the editing controls do — the view
-    // (rotor + slice) is baked into their worker snapshot, so its controls
-    // couldn't affect it — but NOT under a live 4D surface session (fr-b30z),
+    // "4D" is a DERIVED property of the system (see affine4.ts's systemIsFlat
+    // via state.ts's systemIsNonFlat), NOT a fourth render mode — so this is a
+    // VIEW gate, orthogonal to the segmented control above. The presets block,
+    // transform list, and editor all STAY VISIBLE and live for a non-flat
+    // system exactly as for a flat one — only the controls that are genuinely
+    // meaningless while viewing the 4D shader path (color mode/contrast, depth
+    // style — neither reaches the 4D projection or its own w-driven coloring;
+    // symmetry, by contrast, stays put — the 4D chaos game has a kaleidoscope
+    // stage of its own) hide; their 4D look siblings (the 4D Color and
+    // depth-fade rows) swap into the same Appearance slots, and the 4D View
+    // section's tumble/slice block replaces the 3D View block. All four render
+    // modes stay available while non-flat: the flame/solid renders snapshot
+    // the frozen 4D view and run their own 4D accumulators, and the surface
+    // tracer poses the 4D attractor live. The tumble/slice block hides under
+    // the FROZEN renders for the same reason the editing controls do — the
+    // view (rotor + slice) is baked into their worker snapshot, so its
+    // controls couldn't affect it — but NOT under a live 4D surface session,
     // where the tracer re-poses and re-marches every frame and those are the
     // only controls that reach it.
     const nonFlat = systemIsNonFlat(state);
@@ -2381,31 +2372,30 @@ export class Ui {
       state.renderMode !== "surface",
     );
     // The surface palette select means anything for "palette", "rings", and
-    // "sheets" (fr-rl4b) — all three sample the user-selected palette —
-    // like glowBrightnessRow, hidden whenever none of those three is active.
+    // "sheets" — all three sample the user-selected palette — like
+    // glowBrightnessRow, hidden whenever none of those three is active.
     this.surfacePaletteRow.classList.toggle(
       "hidden",
       state.surface.colorSource !== "palette" &&
         state.surface.colorSource !== "rings" &&
         state.surface.colorSource !== "sheets",
     );
-    // The color-speed slider (fr-rl4b) only shapes the "palette" source's
-    // orbit-trap blend weight — inert for rings/sheets (a different
-    // coordinate off the same descent) and every other source, so it hides
-    // unless "palette" is exactly the active one.
+    // The color-speed slider only shapes the "palette" source's orbit-trap
+    // blend weight — inert for rings/sheets (a different coordinate off
+    // the same descent) and every other source, so it hides unless
+    // "palette" is exactly the active one.
     this.surfaceColorSpeedRow.classList.toggle(
       "hidden",
       state.surface.colorSource !== "palette",
     );
-    // The surface balloon (fr-5wlv.4, 4D since fr-qxxw) hides under a
-    // FORWARD-ORBIT session in either dimension (fr-5wlv.6, fr-tdin,
-    // fr-vag4: the balloon is PERMANENTLY inert for those filled solids —
-    // a filled interior reaches the ball center, so its echo swallows the
-    // camera — see surfaceSessionKind's own doc); the radius row
-    // additionally waits for the balloon itself to be on, mirroring the
-    // explorer pair (fr-5wlv.2). The 4D DIMENSION gate is gone: a 4D IFS
-    // session balloons exactly like a 3D one. The surface section as a
-    // whole already gates on renderMode above.
+    // The surface balloon, 3D and 4D alike, hides under a FORWARD-ORBIT
+    // session in either dimension (the balloon is PERMANENTLY inert for
+    // those filled solids — a filled interior reaches the ball center, so
+    // its echo swallows the camera — see surfaceSessionKind's own doc);
+    // the radius row additionally waits for the balloon itself to be on,
+    // mirroring the explorer pair. The 4D DIMENSION gate is gone: a 4D
+    // IFS session balloons exactly like a 3D one. The surface section as
+    // a whole already gates on renderMode above.
     const surfaceBalloonHidden =
       this.surfaceSessionKind === "escape" ||
       this.surfaceSessionKind === "bulb";
@@ -2414,23 +2404,23 @@ export class Ui {
       "hidden",
       surfaceBalloonHidden || !state.balloonEcho,
     );
-    // The surface balloon tint (fr-j85n) waits for exactly what the radius
-    // row above waits for — the same surfaceBalloonHidden local, so a
+    // The surface balloon tint waits for exactly what the radius row
+    // above waits for — the same surfaceBalloonHidden local, so a
     // forward-orbit session hides it even with the balloon flag on.
     this.surfaceBalloonTintRow.classList.toggle(
       "hidden",
       surfaceBalloonHidden || !state.balloonEcho,
     );
-    // The surface ground plane (fr-rhn5, 4D since fr-h0c3) is visible for
-    // EVERY session kind in both dimensions: unlike the balloon it is NOT
-    // inert for the forward-orbit solids (the floor survives where the
-    // balloon degenerates, scene.ts's enterSurfaceComputeForwardSession —
-    // a plane under a Mandelbox or a Mandelbulb is the mode's classic
-    // look), and the w-slice it drops under is an ordinary 3D object. So
-    // the row carries no gate of its own at all.
+    // The surface ground plane is visible for EVERY session kind in both
+    // dimensions: unlike the balloon it is NOT inert for the
+    // forward-orbit solids (the floor survives where the balloon
+    // degenerates, scene.ts's enterSurfaceComputeForwardSession — a plane
+    // under a Mandelbox or a Mandelbulb is the mode's classic look), and
+    // the w-slice it drops under is an ordinary 3D object. So the row
+    // carries no gate of its own at all.
     this.surfaceGroundPlaneRow.classList.toggle("hidden", false);
-    // …including each mode's non-section block above the accordion (fr-374p):
-    // the Undo/Redo row belongs to the explorer (a mid-render undo couldn't
+    // …including each mode's non-section block above the accordion: the
+    // Undo/Redo row belongs to the explorer (a mid-render undo couldn't
     // affect the frozen render, same reason the editing controls hide), and
     // the flame/solid status blocks belong to their renders.
     this.undoRedoRow.classList.toggle("hidden", rendering);
@@ -2441,66 +2431,65 @@ export class Ui {
       state.renderMode !== "surface",
     );
     this.fourDControls.classList.toggle("hidden", !nonFlat || frozenRender);
-    // The slice and tumble rows read differently in a live surface session
-    // — see syncFourDViewRows. Both toggles are session-only view state the
-    // UI owns, so the checkboxes themselves are the truth it re-applies.
+    // The slice and tumble rows read differently in a live surface session —
+    // see syncFourDViewRows. Both toggles are session-only view state the UI
+    // owns, so the checkboxes themselves are the truth it re-applies.
     this.syncFourDViewRows();
-    // The slice-relative option (fr-nn6) only touches the w-ramp palettes, so
-    // its row hides under the baked fr-d47 modes — the same single source of
-    // truth (color.ts) the shader's bake-vs-uniform dispatch keys on — and
-    // under a live surface session, whose tracer has no w ramp at all (its
-    // color sources are by-transform / palette / height / 4D radius / rings /
+    // The slice-relative option only touches the w-ramp palettes, so its row
+    // hides under the baked 4D color modes — the same single source of truth
+    // (color.ts) the shader's bake-vs-uniform dispatch keys on — and under a
+    // live surface session, whose tracer has no w ramp at all (its color
+    // sources are by-transform / palette / height / 4D radius / rings /
     // sheets, none of which the remap touches).
     this.fourDSliceRelColorRow.classList.toggle(
       "hidden",
       this.fourDSurfaceLive || fourDColorNeedsAttribute(state.fourDColor),
     );
-    // The 3D View block (auto-orbit, fr-1yn) is the flat-system counterpart of
-    // the 4D block: exactly one of the two shows outside a render. It hides
-    // during renders for the same frozen-view reason (the flame freezes the
-    // camera outright; the solid render keeps manual gestures but animate()'s
-    // early return stops the automatic motion, so the controls would be inert).
+    // The 3D View block (auto-orbit) is the flat-system counterpart of the 4D
+    // block: exactly one of the two shows outside a render. It hides during
+    // renders for the same frozen-view reason (the flame freezes the camera
+    // outright; the solid render keeps manual gestures but animate()'s early
+    // return stops the automatic motion, so the controls would be inert).
     this.threeDControls.classList.toggle("hidden", nonFlat || rendering);
     this.colorModeRow.classList.toggle("hidden", nonFlat);
     // The 4D look rows are the non-flat replacements for the color-mode and
-    // depth-style rows (fr-15g): color is an Appearance concern in both
-    // views, so the pair swaps in place rather than living in the 4D View
-    // section (which keeps only the spatial tumble/slice controls).
+    // depth-style rows: color is an Appearance concern in both views, so
+    // the pair swaps in place rather than living in the 4D View section
+    // (which keeps only the spatial tumble/slice controls).
     this.fourDColorRow.classList.toggle("hidden", !nonFlat);
     this.fourDDepthFadeRow.classList.toggle("hidden", !nonFlat);
     this.renderStyleRow.classList.toggle("hidden", nonFlat);
-    // The Symmetry section deliberately does NOT gate on `nonFlat` (fr-q0h6
-    // P6): every render path sweeps or expands the kaleidoscope for a 4D
-    // system too, so the controls stay editable — and fr-5gxn's "parked
-    // kaleidoscope" note died with the hiding, since no authored symmetry is
-    // inert anymore (a w-plane or twist makes the system itself 4D).
-    // The manual brightness override only means anything for the glow render
-    // style, so — like the flame/solid sub-panels above — it's hidden whenever
-    // that style isn't the active one (and always while non-flat, since
-    // renderStyle itself never reaches the 4D projection either).
+    // The Symmetry section deliberately does NOT gate on `nonFlat`: every
+    // render path sweeps or expands the kaleidoscope for a 4D system too, so
+    // the controls stay editable — and the old "parked kaleidoscope" note died
+    // with the hiding, since no authored symmetry is inert anymore (a w-plane
+    // or twist makes the system itself 4D). The manual brightness override
+    // only means anything for the glow render style, so — like the flame/solid
+    // sub-panels above — it's hidden whenever that style isn't the active one
+    // (and always while non-flat, since renderStyle itself never reaches the
+    // 4D projection either).
     this.glowBrightnessRow.classList.toggle(
       "hidden",
       nonFlat || state.renderStyle !== "glow",
     );
-    // The balloon echo (fr-5wlv.2, 4D since fr-5666) follows the projected
-    // cloud in either dimension, so its checkbox has no dimensional gate.
-    // The radius slider + Inflate button wait only for the echo itself to be
-    // on.
+    // The balloon echo follows the projected cloud in either dimension, so
+    // its checkbox has no dimensional gate. The radius slider + Inflate
+    // button wait only for the echo itself to be on.
     this.balloonEchoRow.classList.toggle("hidden", false);
     this.balloonRadiusRow.classList.toggle("hidden", !state.balloonEcho);
-    // The balloon tint (fr-j85n) waits for the echo itself, exactly like
+    // The balloon tint waits for the echo itself, exactly like
     // balloonRadiusRow above — same gate, same reason.
     this.balloonTintRow.classList.toggle("hidden", !state.balloonEcho);
     // The ramp palette only means anything for the modes that ARE a 1-D ramp:
-    // the flat view's height/radius color modes (fr-3b6; narrower than the
-    // contrast slider's gating, see color.ts's colorModeUsesRampPalette) and
-    // the 4D projection's "By 4D Radius" mode, which follows the same
-    // selection (fr-6ue). It is ONE row (select + custom-stop editor) serving
-    // both views: it sits statically beneath the flat/4D color-select pair,
-    // exactly one of which is visible per view (fr-15g), so it is always
-    // directly under the select that gates it — the exclusive-open accordion
-    // demands gate and gated share a section, and the static Appearance
-    // layout satisfies that without the old DOM re-homing.
+    // the flat view's height/radius color modes (narrower than the contrast
+    // slider's gating, see color.ts's colorModeUsesRampPalette) and the 4D
+    // projection's "By 4D Radius" mode, which follows the same selection. It
+    // is ONE row (select + custom-stop editor) serving both views: it sits
+    // statically beneath the flat/4D color-select pair, exactly one of which
+    // is visible per view, so it is always directly under the select that
+    // gates it — the exclusive-open accordion demands gate and gated share a
+    // section, and the static Appearance layout satisfies that without the
+    // old DOM re-homing.
     this.rampPaletteRow.classList.toggle(
       "hidden",
       nonFlat
@@ -2530,7 +2519,7 @@ export class Ui {
       const input = this.positionAxisInputs[axis];
       if (input.value !== hex) input.value = hex;
     }
-    // The custom backdrop pickers (fr-5ps1): shown only while the Background
+    // The custom backdrop pickers: shown only while the Background
     // select sits on Custom; synced to the resolved stops with the same
     // only-write-on-change guard as the axis pickers above.
     this.backgroundCustomRow.classList.toggle(
@@ -2543,32 +2532,32 @@ export class Ui {
       const input = this.backgroundInputs[stop];
       if (input.value !== hex) input.value = hex;
     }
-    // The fog tint picker (fr-5h5d): synced the same only-write-on-change
-    // way as the backdrop pickers just above — state already holds the hex
-    // string directly (no rgbToHex conversion needed), so a gallery load or
-    // undo moves the swatch instead of leaving it stale.
+    // The fog tint picker: synced the same only-write-on-change way as the
+    // backdrop pickers just above — state already holds the hex string
+    // directly (no rgbToHex conversion needed), so a gallery load or undo
+    // moves the swatch instead of leaving it stale.
     if (this.fogTintColorInput.value !== state.fogTint) {
       this.fogTintColorInput.value = state.fogTint;
     }
-    // The balloon tint pickers (fr-j85n): synced the same only-write-on-
-    // change way as fogTintColorInput just above, to BOTH inputs — the
-    // Points and Surface sections show the SAME state.balloonTint through
-    // two different DOM elements, so a gallery load or undo must move
-    // whichever one is currently stale (possibly both).
+    // The balloon tint pickers: synced the same only-write-on-change way as
+    // fogTintColorInput just above, to BOTH inputs — the Points and Surface
+    // sections show the SAME state.balloonTint through two different DOM
+    // elements, so a gallery load or undo must move whichever one is
+    // currently stale (possibly both).
     if (this.balloonTintColorInput.value !== state.balloonTint) {
       this.balloonTintColorInput.value = state.balloonTint;
     }
     if (this.surfaceBalloonTintColorInput.value !== state.balloonTint) {
       this.surfaceBalloonTintColorInput.value = state.balloonTint;
     }
-    // Accordion restore (fr-99o): entering a render mode re-opens the section
-    // the user last had open there (defaults: Presets / Tone / Surface /
-    // Surface Look — see openSectionByMode). Setting .open trips the details
-    // name-group
-    // exclusivity, so the previous mode's section closes by itself. Runs
-    // after the visibility gating above so the hidden check reads this
-    // update's state, and only on an actual mode change so a collapse the
-    // user makes within a mode is respected until they leave it.
+    // Accordion restore: entering a render mode re-opens the section the
+    // user last had open there (defaults: Presets / Tone / Surface / Surface
+    // Look — see openSectionByMode). Setting .open trips the details
+    // name-group exclusivity, so the previous mode's section closes by
+    // itself. Runs after the visibility gating above so the hidden check
+    // reads this update's state, and only on an actual mode change so a
+    // collapse the user makes within a mode is respected until they leave
+    // it.
     if (state.renderMode !== this.sectionMode) {
       this.sectionMode = state.renderMode;
       const remembered = this.openSectionByMode[state.renderMode];
@@ -2620,20 +2609,20 @@ export class Ui {
     } else if (nonFlat) {
       // The 4D projection tumbles on its own (pause/speed in the panel); the
       // camera orbits the projected cloud exactly like camera mode, and Shift
-      // retargets drag/scroll to the hidden w-planes (fr-woc) — the help box
-      // is the most visible gesture surface, so the Shift line lives here as
-      // well as in the panel hint. Touch has no Shift; it keeps the orbit
-      // lines only. Takes priority over a transform/final-lens selection
-      // (fr-bf6, unlike the OLD 4D mode's forced-null selection) — there is no
-      // draggable guide box in the projection no matter which transform is
-      // selected in the (still-live) list, so the canvas gesture is always
-      // this one; only the panel's own editor responds to the selection.
+      // retargets drag/scroll to the hidden w-planes — the help box is the
+      // most visible gesture surface, so the Shift line lives here as well as
+      // in the panel hint. Touch has no Shift; it keeps the orbit lines only.
+      // Takes priority over a transform/final-lens selection (unlike the OLD
+      // 4D mode's forced-null selection) — there is no draggable guide box in
+      // the projection no matter which transform is selected in the
+      // (still-live) list, so the canvas gesture is always this one; only the
+      // panel's own editor responds to the selection.
       this.helpTitle.textContent = "4D Projection";
       // The opening line describes the cloud rather than a gesture, so it has
-      // to track the tumble (fr-k9nx): a parked projection that still claimed
-      // to be tumbling read as a broken view, and the paused wording points
-      // back at the control that parked it just as the running one introduces
-      // the motion.
+      // to track the tumble: a parked projection that still claimed to be
+      // tumbling read as a broken view, and the paused wording points back at
+      // the control that parked it just as the running one introduces the
+      // motion.
       const subject = this.fourDTumbleActive
         ? "Auto-tumbling 4D IFS"
         : "4D IFS (tumble paused)";
@@ -2690,24 +2679,23 @@ export class Ui {
   }
 
   /**
-   * Sync the flame/solid/surface/ramp gradient-stop editors (fr-55k; the
-   * ramp row since fr-3b6, the surface row since fr-ibcm) to
+   * Sync the flame/solid/surface/ramp gradient-stop editors to
    * `state.customPalette`, called from {@link updateLabels} right after the
    * table-driven scalar sync loop. Four rows now: the flame/solid rows show
    * only while their OWN render's palette select is on
    * {@link CUSTOM_PALETTE_ID}; the surface and ramp rows additionally sit
    * INSIDE a gated container (`#surfacePaletteRow`, hidden unless the
    * surface colorSource is one of the three that sample the user palette —
-   * `palette`/`rings`/`sheets`, fr-rl4b; `#rampPaletteRow`, the
-   * per-view ramp-mode gating — flat: `colorModeUsesRampPalette`; non-flat:
-   * `fourDColor === "radius"`, fr-6ue), so {@link updateLabels}' container
-   * gating composes on top of the isCustom gating handled here — both must
-   * hold for those editors to actually show. All four edit the same shared
-   * slot (see `state.ts`'s `AppState.customPalette`), so switching which
-   * one is "custom" never loses an in-progress edit. The stop inputs are
-   * only rebuilt when their count changes (add/remove, or a fresh seed) —
-   * an ordinary recolor instead updates each input's value in place, so it
-   * never clobbers a color picker mid-drag with a redundant write.
+   * `palette`/`rings`/`sheets`; `#rampPaletteRow`, the per-view ramp-mode
+   * gating — flat: `colorModeUsesRampPalette`; non-flat: `fourDColor ===
+   * "radius"`), so {@link updateLabels}' container gating composes on top
+   * of the isCustom gating handled here — both must hold for those editors
+   * to actually show. All four edit the same shared slot (see `state.ts`'s
+   * `AppState.customPalette`), so switching which one is "custom" never
+   * loses an in-progress edit. The stop inputs are only rebuilt when their
+   * count changes (add/remove, or a fresh seed) — an ordinary recolor
+   * instead updates each input's value in place, so it never clobbers a
+   * color picker mid-drag with a redundant write.
    */
   private syncCustomPaletteEditors(state: AppState): void {
     const paletteIdByKind: Record<
@@ -2787,15 +2775,15 @@ export class Ui {
   }
 
   /**
-   * Write `text` into a disabled-reason live region (fr-vja8.39) — the
+   * Write `text` into a disabled-reason live region — the
    * shared guard for {@link driftNote}, {@link exportCollectionNote} and
    * {@link timelineNote} — only when it actually differs from what the note
-   * already shows. Unlike the five status notes above (fr-vja8.25/.48,
-   * see {@link setFlameSupersampleNote}), which change only at a
+   * already shows. Unlike the five status notes above (see
+   * {@link setFlameSupersampleNote}), which change only at a
    * meaningful transition, these three setters re-run on every panel
    * refresh/timeline edit/collection change whether or not the reason
    * changed; a plain textContent write would re-announce an unchanged
-   * reason to a screen reader every time, the fr-vja8.38 chatter lesson
+   * reason to a screen reader every time, the live-region chatter lesson
    * applied to prose instead of a progress percentage.
    *
    * Honest scope note (wave-5 review): two of the three notes live inside
@@ -2805,7 +2793,7 @@ export class Ui {
    * re-write it either. That matches the file's existing in-section notes
    * (flameSupersampleNote, solidResolutionNote), and the note is ordinary
    * VISIBLE prose beside the button whenever the section is open — the
-   * discoverability half of fr-vja8.39, which is the half a hover-only
+   * discoverability half of the fix, which is the half a hover-only
    * title never had. Announce-on-change is the bonus for the open case,
    * not the load-bearing channel.
    */
@@ -2813,8 +2801,8 @@ export class Ui {
     if (note.textContent !== text) note.textContent = text;
   }
 
-  /** Reflect whether the ambient drift show is running on the Drift toggle
-   * (fr-wavo): lit + "stop" affordance while active, ghost otherwise. */
+  /** Reflect whether the ambient drift show is running on the Drift
+   * toggle: lit + "stop" affordance while active, ghost otherwise. */
   setDriftActive(on: boolean): void {
     this.driftBtn.textContent = on ? "■ Stop drifting" : "▶ Drift";
     this.driftBtn.setAttribute("aria-pressed", String(on));
@@ -2822,12 +2810,12 @@ export class Ui {
     this.driftBtn.classList.toggle("btn-blue", on);
   }
 
-  /** Enable/disable the Drift toggle for the OS reduced-motion preference
-   * (fr-wavo): no motion means no drift, so the button explains itself
-   * instead of silently doing nothing. fr-vja8.39: native `disabled` pulls
-   * the button out of the tab ring, so the title-only explanation is
-   * hover-only — {@link driftNote} mirrors the same reason in prose beside
-   * it, for keyboard/AT users who can neither reach nor hover the button. */
+  /** Enable/disable the Drift toggle for the OS reduced-motion
+   * preference: no motion means no drift, so the button explains itself
+   * instead of silently doing nothing. Native `disabled` pulls the button
+   * out of the tab ring, so the title-only explanation is hover-only —
+   * {@link driftNote} mirrors the same reason in prose beside it, for
+   * keyboard/AT users who can neither reach nor hover the button. */
   setDriftAvailable(available: boolean): void {
     this.driftAvailable = available;
     this.syncGalleryDriftBtn();
@@ -2841,13 +2829,13 @@ export class Ui {
     );
   }
 
-  /** Reflect the saved-scene count on the "▦ Gallery (N)" button (fr-cai) —
-   * and on "⬇ Back up collection"'s enabled state (fr-de9t): an empty
-   * collection has nothing to back up, and the swapped-in title says so
-   * instead of leaving a dead button unexplained, the same self-explaining
-   * pattern as {@link syncGalleryDriftBtn}. fr-vja8.39: {@link
-   * exportCollectionNote} mirrors the same reason in prose beside the
-   * button — see {@link setDriftAvailable}'s doc comment for why. */
+  /** Reflect the saved-scene count on the "▦ Gallery (N)" button — and on
+   * "⬇ Back up collection"'s enabled state: an empty collection has
+   * nothing to back up, and the swapped-in title says so instead of
+   * leaving a dead button unexplained, the same self-explaining pattern as
+   * {@link syncGalleryDriftBtn}. {@link exportCollectionNote} mirrors the
+   * same reason in prose beside the button — see
+   * {@link setDriftAvailable}'s doc comment for why. */
   setCollectionCount(count: number): void {
     this.collectionCount.textContent = String(count);
     this.exportCollectionBtn.disabled = count === 0;
@@ -2862,9 +2850,9 @@ export class Ui {
   }
 
   /**
-   * Arm the focus trap on a modal that has just been un-hidden (fr-trtv):
+   * Arm the focus trap on a modal that has just been un-hidden:
    * remember what the user was on so {@link releaseModalFocus} can hand it
-   * back, push it onto {@link modalStack} (fr-vja8.52) so the shared
+   * back, push it onto {@link modalStack} so the shared
    * `onModalStackKeydown` listener knows it is open — arming the listener
    * itself on the first push — then move focus INSIDE the dialog.
    *
@@ -2881,7 +2869,7 @@ export class Ui {
    * appeared under the user's hands must not commit to anything — a file, a
    * drift show, or a re-roll. It falls back to the first ring member when that
    * control is not on offer this time — or to the dialog box itself
-   * (tabindex="-1") when the ring is empty (fr-vja8.41).
+   * (tabindex="-1") when the ring is empty.
    *
    * `onEscape` is this modal's whole Escape behavior (see
    * {@link ModalStackEntry}) — for the export modal, a closure that reads
@@ -2924,27 +2912,27 @@ export class Ui {
     }
     const ring = modalFocusRing(modal);
     const target = dismiss && ring.includes(dismiss) ? dismiss : ring[0];
-    // One modal DOES ship with an empty ring (fr-vja8.41): the points-arm
-    // export modal — cancellable:false hides Cancel, and no run without a
-    // wait offers the fr-2fbs action — so fall back to the dialog box
-    // itself (tabindex="-1" in index.html) rather than leaving focus
-    // outside a dialog that declares the page behind it inert.
+    // One modal DOES ship with an empty ring: the points-arm export modal
+    // — cancellable:false hides Cancel, and no run without a wait offers
+    // the early-save action — so fall back to the dialog box itself
+    // (tabindex="-1" in index.html) rather than leaving focus outside a
+    // dialog that declares the page behind it inert.
     (target ?? this.modalDialog(modal))?.focus();
   }
 
-  /** The modal's dialog box — the empty-ring focus fallback (fr-vja8.41).
-   * All four modals share the `.gallery-dialog` chrome; only the export
-   * modal's carries the `tabindex="-1"` that makes the focus() land (a
-   * plain div's focus() is a no-op), and only it can have an empty ring. */
+  /** The modal's dialog box — the empty-ring focus fallback. All four
+   * modals share the `.gallery-dialog` chrome; only the export modal's
+   * carries the `tabindex="-1"` that makes the focus() land (a plain div's
+   * focus() is a no-op), and only it can have an empty ring. */
   private modalDialog(modal: HTMLElement): HTMLElement | null {
     return modal.querySelector<HTMLElement>(".gallery-dialog");
   }
 
   /**
-   * Hand focus back to whatever opened `modal` (fr-trtv), completing the trap
+   * Hand focus back to whatever opened `modal`, completing the trap
    * {@link trapModalFocus} armed — otherwise closing a dialog drops focus on
    * the body and a keyboard user restarts their tab walk from the top of the
-   * page. Also pops `modal`'s entry out of {@link modalStack} (fr-vja8.52),
+   * page. Also pops `modal`'s entry out of {@link modalStack},
    * BY IDENTITY rather than a blind top-pop — releasing a non-top modal (a
    * sibling closing out from under the still-open export modal, exactly the
    * case two paragraphs down) must remove its OWN entry and leave the rest
@@ -2958,7 +2946,7 @@ export class Ui {
    * never open, so every close path (✕, backdrop, Escape, the export modal's
    * Cancel) can call it unconditionally.
    *
-   * A sibling closed UNDER the still-open export modal (fr-vja8.13 — an
+   * A sibling closed UNDER the still-open export modal (an
    * Escape aimed at the gallery while the export runs above it) must not
    * yank focus out to a control behind two scrims; focus stays where the top
    * dialog trapped it. When the export modal's own recorded opener sat
@@ -2988,9 +2976,9 @@ export class Ui {
   }
 
   /**
-   * Keep Tab inside `modal`'s ring, wrapping at both ends (fr-trtv) — the Tab
+   * Keep Tab inside `modal`'s ring, wrapping at both ends — the Tab
    * half of the trap, shared by the one document keydown handler
-   * (`onModalStackKeydown`, fr-vja8.52) on behalf of whichever modal is
+   * (`onModalStackKeydown`) on behalf of whichever modal is
    * newest on {@link modalStack}; Escape is that handler's own concern and
    * nothing to do with this method.
    *
@@ -2998,7 +2986,7 @@ export class Ui {
    * element was removed under it — a deleted gallery card) is pulled to the
    * first member rather than stepped from a position it does not have.
    *
-   * An EMPTY ring (the points-arm export modal, fr-vja8.41) still owns the
+   * An EMPTY ring (the points-arm export modal) still owns the
    * Tab: park focus on the dialog box instead of returning the keystroke to
    * the browser, which would walk it into the inert page behind the scrim.
    */
@@ -3032,7 +3020,7 @@ export class Ui {
 
   /** Hide the gallery modal, drop its {@link modalStack} entry and restore
    * focus to whatever opened it — skipped while the export modal still
-   * stands above (fr-vja8.13, see releaseModalFocus). Idempotent. */
+   * stands above (see releaseModalFocus). Idempotent. */
   closeGallery(): void {
     this.galleryModal.classList.add("hidden");
     this.releaseModalFocus(this.galleryModal);
@@ -3048,17 +3036,17 @@ export class Ui {
 
   /** Hide the "What is this?" dialog, drop its {@link modalStack} entry and
    * restore focus to whatever opened it — skipped while the export modal
-   * still stands above (fr-vja8.13, see releaseModalFocus). Idempotent. */
+   * still stands above (see releaseModalFocus). Idempotent. */
   closeAbout(): void {
     this.aboutModal.classList.add("hidden");
     this.releaseModalFocus(this.aboutModal);
   }
 
-  /** Open the mutation-grid modal (fr-3vly) with all nine cells reset to
-   * placeholders, arm Escape-to-close and trap focus. The app fills the cells
-   * as it builds candidates — {@link setMutationCurrent} /
-   * {@link setMutationCell} — and the ring is recomputed per keystroke, so a
-   * cell enabled after open is tabbable. */
+  /** Open the mutation-grid modal with all nine cells reset to placeholders,
+   * arm Escape-to-close and trap focus. The app fills the cells as it builds
+   * candidates — {@link setMutationCurrent} / {@link setMutationCell} — and
+   * the ring is recomputed per keystroke, so a cell enabled after open is
+   * tabbable. */
   openMutations(): void {
     this.resetMutationCells();
     this.mutationModal.classList.remove("hidden");
@@ -3069,7 +3057,7 @@ export class Ui {
 
   /** Hide the mutation modal, drop its {@link modalStack} entry and restore
    * focus to whatever opened it — skipped while the export modal still
-   * stands above (fr-vja8.13, see releaseModalFocus). Idempotent. */
+   * stands above (see releaseModalFocus). Idempotent. */
   closeMutations(): void {
     this.mutationModal.classList.add("hidden");
     this.releaseModalFocus(this.mutationModal);
@@ -3081,20 +3069,20 @@ export class Ui {
     return !this.mutationModal.classList.contains("hidden");
   }
 
-  /** Show the blocking export modal (fr-7mfx): a Save PNG capture is
-   * starting and may run for minutes on a surface render with no other
-   * feedback otherwise on screen. `cancellable: false` states honestly that
-   * the work cannot be interrupted — a single GPU submission cannot be
-   * stopped mid-draw — and HIDES the Cancel button rather than offering a
-   * dead one. `deliverEarly` is the fr-2fbs second action under the same
-   * rule: absent — every caller but the flame Save-PNG's wait — leaves the
-   * modal with exactly one button, and its label comes from the app because
-   * only the app knows what the early picture will be. Arms the shared focus
-   * trap ({@link trapModalFocus}, released on {@link hideExportProgress})
-   * with this modal's one non-uniform Escape action (fr-vja8.52): cancel,
-   * and ONLY while {@link exportCancellable} — never the fr-2fbs action,
-   * which a stray Escape must never commit to — and resets the readout to
-   * 0% so a new run never opens showing the previous run's number. */
+  /** Show the blocking export modal: a Save PNG capture is starting and may
+   * run for minutes on a surface render with no other feedback otherwise on
+   * screen. `cancellable: false` states honestly that the work cannot be
+   * interrupted — a single GPU submission cannot be stopped mid-draw — and
+   * HIDES the Cancel button rather than offering a dead one. `deliverEarly`
+   * is the second action under the same rule: absent — every caller but the
+   * flame Save-PNG's wait — leaves the modal with exactly one button, and
+   * its label comes from the app because only the app knows what the early
+   * picture will be. Arms the shared focus trap ({@link trapModalFocus},
+   * released on {@link hideExportProgress}) with this modal's one
+   * non-uniform Escape action: cancel, and ONLY while
+   * {@link exportCancellable} — never the early-save action, which a stray
+   * Escape must never commit to — and resets the readout to 0% so a new run
+   * never opens showing the previous run's number. */
   showExportProgress(init: ExportProgressInit): void {
     this.exportTitle.textContent = init.title;
     this.exportDetail.textContent = init.detail;
@@ -3115,8 +3103,8 @@ export class Ui {
     // Cancel keeps the opening focus wherever it exists: Enter on a modal
     // that just appeared under the user's hands must not commit to a file.
     // Off-offer, the shared trap falls back to the ring's first member —
-    // fr-2fbs's action when that is the only button up — or to the dialog
-    // box itself when the run put up none (fr-vja8.41).
+    // the early-save action when that is the only button up — or to the
+    // dialog box itself when the run put up none.
     this.trapModalFocus(this.exportModal, this.exportCancelBtn, () => {
       if (this.exportCancellable) this.handlers?.onExportCancel();
     });
@@ -3145,24 +3133,24 @@ export class Ui {
   hideExportProgress(): void {
     if (this.exportModal.classList.contains("hidden")) return;
     this.exportModal.classList.add("hidden");
-    // The fr-2fbs action belongs to the run that offered it, so it goes out
-    // with that run rather than waiting for the next showExportProgress to
-    // decide: nothing is offering it in between, and MEASURED — a browser
-    // run caught the leftover from a flame export still sitting in the
-    // page during a solid one, which is the exact "hidden is not absent"
-    // hole this detach discipline exists to close.
+    // The early-save action belongs to the run that offered it, so it goes
+    // out with that run rather than waiting for the next
+    // showExportProgress to decide: nothing is offering it in between, and
+    // MEASURED — a browser run caught the leftover from a flame export
+    // still sitting in the page during a solid one, which is the exact
+    // "hidden is not absent" hole this detach discipline exists to close.
     this.exportDeliverBtn.remove();
     // Clear text too, not just hide: a stale percent left in textContent
-    // reads as a live render to settle-scraping harnesses (fr-d6g5).
+    // reads as a live render to settle-scraping harnesses.
     this.exportProgress.textContent = "";
     this.exportProgress.style.setProperty("--progress", "0%");
     this.exportProgress.classList.remove("flame-progress-estimating");
     this.releaseModalFocus(this.exportModal);
   }
 
-  /** Reflect a capture in flight on the Save PNG button (fr-7mfx): the
-   * modal's scrim blocks it once shown, but the grace period leaves a
-   * window where a second press would start a second capture. */
+  /** Reflect a capture in flight on the Save PNG button: the modal's
+   * scrim blocks it once shown, but the grace period leaves a window
+   * where a second press would start a second capture. */
   setSavePngBusy(busy: boolean): void {
     this.savePngBtn.disabled = busy;
     this.savePngBtn.title = busy
@@ -3292,10 +3280,10 @@ export class Ui {
 
   /**
    * Derive the "▶ Drift collection" button's disabled state from its two
-   * remembered inputs (fr-w2ve): the drift show's reduced-motion
-   * availability (shared with the panel's Drift toggle) and whether there is
-   * anything saved to loop over — with a title that says which one is the
-   * reason, mirroring how the Drift toggle explains itself.
+   * remembered inputs: the drift show's reduced-motion availability (shared
+   * with the panel's Drift toggle) and whether there is anything saved to
+   * loop over — with a title that says which one is the reason, mirroring
+   * how the Drift toggle explains itself.
    */
   private syncGalleryDriftBtn(): void {
     const empty = this.gallerySceneCount === 0;
@@ -3309,9 +3297,9 @@ export class Ui {
 
   private galleryCard(scene: SavedScene): HTMLElement {
     const label = galleryTimestamp(scene.createdAt);
-    // A saved-from-a-renderer entry (fr-75sq) wears its mode on the caption
-    // with the segmented control's own glyphs, so a mixed gallery reads at a
-    // glance which cards are flame/solid stills. Points entries stay bare.
+    // A saved-from-a-renderer entry wears its mode on the caption with the
+    // segmented control's own glyphs, so a mixed gallery reads at a glance
+    // which cards are flame/solid stills. Points entries stay bare.
     const modeCaption =
       scene.mode === "flame"
         ? "✺ "
@@ -3372,11 +3360,11 @@ export class Ui {
   }
 
   /**
-   * (Re)build the timeline rows in playback order (fr-8v41): called by
-   * main.ts at boot and after every timeline edit (add/remove/move/retime).
-   * `durationLabel` arrives preformatted (e.g. "0:18") — main.ts owns
-   * formatting the summed morph/hold milliseconds into a clock label. All DOM
-   * is built with `createElement`, never `innerHTML` — the same stance as
+   * (Re)build the timeline rows in playback order: called by main.ts at boot
+   * and after every timeline edit (add/remove/move/retime). `durationLabel`
+   * arrives preformatted (e.g. "0:18") — main.ts owns formatting the summed
+   * morph/hold milliseconds into a clock label. All DOM is built with
+   * `createElement`, never `innerHTML` — the same stance as
    * {@link renderGallery}: a step's thumbnail only ever sets `img.src`, and
    * its id only ever rides a closure, never markup.
    */
@@ -3431,11 +3419,11 @@ export class Ui {
     }
 
     if (step.mode !== undefined) {
-      // A keyframe captured from a flame/solid/surface render (fr-v3au)
-      // plays back in that renderer and holds until it converges (the
-      // surface render converges instantly) — flagged with the same glyph
-      // vocabulary as galleryCard's mode caption (fr-75sq). A plain
-      // (points) step gets no element at all.
+      // A keyframe captured from a flame/solid/surface render plays back
+      // in that renderer and holds until it converges (the surface render
+      // converges instantly) — flagged with the same glyph vocabulary as
+      // galleryCard's mode caption. A plain (points) step gets no element
+      // at all.
       const mode = this.doc.createElement("span");
       mode.className = "timeline-step-mode";
       mode.textContent =
@@ -3505,12 +3493,12 @@ export class Ui {
   }
 
   /** One morph/hold `<input type="number">`, wrapped in its labeled
-   * `label.timeline-step-timing` (fr-8v41). Committing an empty or
-   * non-finite value restores the input's displayed seconds from
-   * `currentMs` instead of calling `onCommit` — the row undoes the bad edit
-   * in place rather than ever sending a garbage value on; range clamping is
-   * the store's job (`timeline.ts`'s `clampMs`), so the min/max attributes
-   * here are just affordance. */
+   * `label.timeline-step-timing`. Committing an empty or non-finite value
+   * restores the input's displayed seconds from `currentMs` instead of
+   * calling `onCommit` — the row undoes the bad edit in place rather than
+   * ever sending a garbage value on; range clamping is the store's job
+   * (`timeline.ts`'s `clampMs`), so the min/max attributes here are just
+   * affordance. */
   private timelineTimingInput(
     fieldLabel: "morph" | "hold",
     currentMs: number,
@@ -3543,8 +3531,8 @@ export class Ui {
   }
 
   /** Mirror {@link setDriftActive}'s lit/"stop"-affordance shape for the
-   * Play button (fr-8v41): "■ Stop" + pressed + blue while playback runs,
-   * "▶ Play timeline" + ghost otherwise. */
+   * Play button: "■ Stop" + pressed + blue while playback runs, "▶ Play
+   * timeline" + ghost otherwise. */
   setTimelineActive(on: boolean): void {
     this.timelineActive = on;
     this.timelinePlayBtn.textContent = on ? "■ Stop" : "▶ Play timeline";
@@ -3562,8 +3550,8 @@ export class Ui {
     this.syncTimelineButtons();
   }
 
-  /** Reflect the offline frame-exact export's progress on the Export button
-   * (fr-92t9): non-null (e.g. "42%") relabels it "⏳ Exporting 42%" and
+  /** Reflect the offline frame-exact export's progress on the Export
+   * button: non-null (e.g. "42%") relabels it "⏳ Exporting 42%" and
    * keeps it ENABLED as the run's cancel affordance (main.ts routes the
    * click to a stop; the partial clip still saves); null restores the
    * ordinary label and disabled-state derivation. */
@@ -3577,17 +3565,17 @@ export class Ui {
   /** Self-explaining disabled-state derivation for Play/Export — the
    * `syncGalleryDriftBtn` pattern: each button's `disabled` and `title` are
    * re-derived from the remembered availability/active/count flags whenever
-   * any of them changes. fr-vja8.39: {@link timelineNote} mirrors the same
-   * reason in prose beside the pair, in the SAME priority order as the two
-   * title derivations below so it can never disagree with what they show —
-   * see {@link setDriftAvailable}'s doc comment for why a note is needed at
+   * any of them changes. {@link timelineNote} mirrors the same reason in
+   * prose beside the pair, in the SAME priority order as the two title
+   * derivations below so it can never disagree with what they show — see
+   * {@link setDriftAvailable}'s doc comment for why a note is needed at
    * all, and {@link timelineNote}'s own doc comment for why one shared note
    * is safe for two buttons. */
   private syncTimelineButtons(): void {
     const empty = this.timelineStepCount === 0;
-    // "⬇ Back up timeline" only needs something to write (fr-h9rk): a pure
-    // data read, so neither reduced motion nor a running playback disables
-    // it — the emptiness-only rule "⬇ Back up collection" follows
+    // "⬇ Back up timeline" only needs something to write: a pure data
+    // read, so neither reduced motion nor a running playback disables it —
+    // the emptiness-only rule "⬇ Back up collection" follows
     // (setCollectionCount), unlike its Play/Export-clip neighbors below.
     this.exportTimelineBtn.disabled = empty;
     this.exportTimelineBtn.title = empty
@@ -3602,9 +3590,9 @@ export class Ui {
         ? "Add a keyframe or two first"
         : this.timelinePlayTitle;
 
-    // Mid-offline-export (fr-92t9) the button is the run's cancel
-    // affordance: always enabled, whatever the availability/active flags
-    // say (the run being active is exactly why it must stay clickable).
+    // Mid-offline-export the button is the run's cancel affordance:
+    // always enabled, whatever the availability/active flags say (the
+    // run being active is exactly why it must stay clickable).
     if (this.timelineExportProgress !== null) {
       this.timelineExportBtn.disabled = false;
       this.timelineExportBtn.title =
@@ -3642,22 +3630,22 @@ export class Ui {
   /**
    * Flash a brief bottom-center confirmation ("Saved to collection", "Link
    * copied"), auto-hiding after {@link TOAST_DURATION_MS} — or, given an
-   * `action` (e.g. "Undo" after a destructive delete, fr-ifts), after the
-   * longer {@link TOAST_ACTION_DURATION_MS} instead — unless the pointer or
-   * focus is holding it open: hover/focusin pause the countdown and leaving
-   * restarts it in full (fr-vja8.21). Re-arming (any fresh
-   * call, action or not) cancels the previous hide and rebuilds the toast's
-   * content from scratch, so rapid actions don't leave it stuck or
-   * flickering and a stale action button from a PRIOR toast can never
-   * linger into a plain one. Clicking the action runs `onAction` and hides
-   * the toast immediately, ahead of its own timer.
+   * `action` (e.g. "Undo" after a destructive delete), after the longer
+   * {@link TOAST_ACTION_DURATION_MS} instead — unless the pointer or focus
+   * is holding it open: hover/focusin pause the countdown and leaving
+   * restarts it in full. Re-arming (any fresh call, action or not) cancels
+   * the previous hide and rebuilds the toast's content from scratch, so
+   * rapid actions don't leave it stuck or flickering and a stale action
+   * button from a PRIOR toast can never linger into a plain one. Clicking
+   * the action runs `onAction` and hides the toast immediately, ahead of
+   * its own timer.
    */
   flashToast(message: string, action?: ToastAction): void {
     this.toast.replaceChildren(this.doc.createTextNode(message));
     if (action) this.toast.appendChild(this.buildToastActionButton(action));
     // An actionable toast opts its whole pill back into pointer events
     // (style.css's .toast-actionable) so mousing toward Undo pauses the
-    // countdown (fr-vja8.21); a plain toast stays click-through.
+    // countdown; a plain toast stays click-through.
     this.toast.classList.toggle("toast-actionable", action !== undefined);
     this.toast.classList.remove("hidden");
     // A fresh toast starts a fresh countdown — but hover is RE-PROBED from
@@ -3681,9 +3669,9 @@ export class Ui {
         );
   }
 
-  /** Hold the toast open (fr-vja8.21): the pointer entered it, or focus
-   * landed inside it — reading or reaching for the action must not race the
-   * auto-hide. Cancels the pending hide; {@link releaseToast} re-arms it. */
+  /** Hold the toast open: the pointer entered it, or focus landed inside it
+   * — reading or reaching for the action must not race the auto-hide.
+   * Cancels the pending hide; {@link releaseToast} re-arms it. */
   private holdToast(via: "hover" | "focus"): void {
     if (via === "hover") this.toastHovered = true;
     else this.toastFocused = true;
@@ -3709,13 +3697,13 @@ export class Ui {
     );
   }
 
-  /** Whether the on-screen toast currently carries an action button —
-   * read straight off the rendered DOM rather than a duplicate field
-   * (fr-vja8.54): the button's presence IS what makes a toast actionable, so
-   * it cannot drift from itself the way a separately-set flag could. The
-   * `.toast-actionable` CLASS is not it — that class exists for style.css's
-   * pointer-events opt-in and is its own derivation of the same fact, one
-   * {@link releaseToast} must not round-trip through. */
+  /** Whether the on-screen toast currently carries an action button — read
+   * straight off the rendered DOM rather than a duplicate field: the button's
+   * presence IS what makes a toast actionable, so it cannot drift from itself
+   * the way a separately-set flag could. The `.toast-actionable` CLASS is not
+   * it — that class exists for style.css's pointer-events opt-in and is its
+   * own derivation of the same fact, one {@link releaseToast} must not
+   * round-trip through. */
   private toastIsActionable(): boolean {
     return this.toast.querySelector(".toast-action") !== null;
   }
@@ -3738,7 +3726,7 @@ export class Ui {
   /** Hide the toast now and cancel any pending auto-hide — shared by the
    * timer's own trailing edge and the action button's immediate dismiss.
    * Clears the pause flags too: a hidden toast can fire no leave events, so
-   * flags left set would hold the NEXT toast open forever (fr-vja8.21). */
+   * flags left set would hold the NEXT toast open forever. */
   private hideToast(): void {
     if (this.toastTimer !== null) clearTimeout(this.toastTimer);
     this.toast.classList.add("hidden");
@@ -3748,7 +3736,7 @@ export class Ui {
   }
 
   /**
-   * Reflect the color legend (fr-dsz, fr-a3q): an unobtrusive key for what
+   * Reflect the color legend: an unobtrusive key for what
    * the current view's colors mean. WHICH key is `legend-spec.ts`'s
    * {@link deriveLegend} — a pure derivation off state, where the three
    * families and their priority order are documented; this method only
@@ -3770,9 +3758,9 @@ export class Ui {
     );
   }
 
-  /** Arm/disarm the replay showcase's legend presentation (fr-hpci) — see
-   * {@link replayShowcaseLegend}. Recorded only; the caller's updateLabels
-   * sync repaints. */
+  /** Arm/disarm the replay showcase's legend presentation — see
+   * {@link replayShowcaseLegend}. Recorded only; the caller's
+   * updateLabels sync repaints. */
   setReplayShowcaseLegend(on: boolean): void {
     this.replayShowcaseLegend = on;
   }
@@ -3820,11 +3808,11 @@ export class Ui {
   /** Reflect flame-render progress as an iteration count and percentage.
    * Also clears the busy state {@link setFlameEstimating} set — every
    * `progress`/`sharedFrame` event from the worker is what ends an
-   * "estimating" spell (fr-99z), whichever one arrives next. */
+   * "estimating" spell, whichever one arrives next. */
   setFlameProgress(iterationsDone: number, iterationsBudget: number): void {
     // floor, not round: a 99.7%-done progressive frame must not claim
     // "(100%)" — reading 100% while the image is still not final is exactly
-    // the ambiguity fr-99z exists to remove.
+    // the ambiguity the busy indicator exists to remove.
     const pct =
       iterationsBudget > 0
         ? Math.min(100, Math.floor((iterationsDone / iterationsBudget) * 100))
@@ -3838,9 +3826,9 @@ export class Ui {
   }
 
   /**
-   * The fr-vja8.38 live-region half of {@link setFlameProgress}: announces
-   * only a newly crossed {@link PROGRESS_ANNOUNCE_QUARTILES} boundary.
-   * `pct <= 0` is this readout's own reset signal — a fresh session's
+   * The live-region half of {@link setFlameProgress}: announces only a
+   * newly crossed {@link PROGRESS_ANNOUNCE_QUARTILES} boundary. `pct <= 0`
+   * is this readout's own reset signal — a fresh session's
    * `setFlameProgress(0, budget)` (see main.ts's flame `resetProgress`) and
    * the worker's mid-session "restarted" event both call it that way — so
    * it re-arms the quartile rather than being treated as a crossing, and
@@ -3865,10 +3853,10 @@ export class Ui {
 
   /**
    * Busy indicator for the worker's synchronous adaptive density-estimation
-   * pass (fr-99z): shown right when the worker posts `estimating`, i.e.
-   * while it is still crunching that multi-second pass with no other
-   * feedback otherwise on screen. Cleared by the next {@link setFlameProgress}
-   * call, which the following `progress`/`sharedFrame` event always triggers.
+   * pass: shown right when the worker posts `estimating`, i.e. while it is
+   * still crunching that multi-second pass with no other feedback otherwise on
+   * screen. Cleared by the next {@link setFlameProgress} call, which the
+   * following `progress`/`sharedFrame` event always triggers.
    */
   setFlameEstimating(): void {
     this.flameProgress.textContent = "applying density estimate…";
@@ -3885,12 +3873,11 @@ export class Ui {
    * `updateLabels` derives from state. Pass `null` when running at the
    * requested value unclamped, to clear the note.
    *
-   * TEXT ALONE drives visibility here and in the four sibling status notes
-   * (fr-vja8.48): the element stays rendered — never `.hidden` — because a
-   * live region entering the accessibility tree already populated announces
-   * unreliably, and this note is re-cleared at every render start, so
-   * populate-then-unhide was its only path. style.css's `:empty` rule
-   * collapses the cleared state.
+   * TEXT ALONE drives visibility here and in the four sibling status notes:
+   * the element stays rendered — never `.hidden` — because a live region
+   * entering the accessibility tree already populated announces unreliably,
+   * and this note is re-cleared at every render start, so populate-then-unhide
+   * was its only path. style.css's `:empty` rule collapses the cleared state.
    */
   setFlameSupersampleNote(effective: number | null, requested?: number): void {
     if (effective === null) {
@@ -3904,29 +3891,28 @@ export class Ui {
   }
 
   /**
-   * Which accumulation engine is driving the current flame render (fr-npb)
-   * — reflects the worker's one-time-per-backend `"backend"` event (see
+   * Which accumulation engine is driving the current flame render — reflects
+   * the worker's one-time-per-backend `"backend"` event (see
    * `flame-worker-core.ts`'s `FlameAccumBackend`), so a GPU render (or a
-   * mid-session fallback to CPU) is visible rather than silent. `adapter`
-   * is whatever label the GPU backend factory discovered (e.g. a
-   * `GPUAdapterInfo` description); omitted for the CPU backend, or a GPU one
-   * with no better label to offer. `detail` (fr-2w5) is a short
-   * why-am-I-on-CPU annotation ("GPU failed", "WebGPU unavailable") shown
-   * when the CPU backend is a FALLBACK rather than the natural choice —
-   * the one-word answer that makes a field report of "it says CPU"
-   * diagnosable. `software` (fr-tmgf) is the worker backend event's own
-   * GPUAdapterInfo fallback/SwiftShader tell, escalating this note's tier:
-   * true swaps the note's class from informational `.flame-note-info` to
-   * warning `.flame-note` — software rasterization must not pass as a
-   * normal backend note. The swap runs on every non-null call (not just
-   * the software→hardware transition), so a later hardware backend note
-   * un-escalates cleanly. `null` clears the note, mirroring
-   * {@link setFlameSupersampleNote}'s contract (cleared at the start of
-   * every render, before the fresh worker reports its own) — the tier
-   * classes are left alone on that path, since an empty note shows neither
-   * way. Text alone drives visibility (fr-vja8.48, see
-   * {@link setFlameSupersampleNote}): the element stays rendered so the
-   * live region actually announces the restart-time CPU fallback.
+   * mid-session fallback to CPU) is visible rather than silent. `adapter` is
+   * whatever label the GPU backend factory discovered (e.g. a `GPUAdapterInfo`
+   * description); omitted for the CPU backend, or a GPU one with no better
+   * label to offer. `detail` is a short why-am-I-on-CPU annotation ("GPU
+   * failed", "WebGPU unavailable") shown when the CPU backend is a FALLBACK
+   * rather than the natural choice — the one-word answer that makes a field
+   * report of "it says CPU" diagnosable. `software` is the worker backend
+   * event's own GPUAdapterInfo fallback/SwiftShader tell, escalating this
+   * note's tier: true swaps the note's class from informational
+   * `.flame-note-info` to warning `.flame-note` — software rasterization must
+   * not pass as a normal backend note. The swap runs on every non-null call
+   * (not just the software→hardware transition), so a later hardware backend
+   * note un-escalates cleanly. `null` clears the note, mirroring
+   * {@link setFlameSupersampleNote}'s contract (cleared at the start of every
+   * render, before the fresh worker reports its own) — the tier classes are
+   * left alone on that path, since an empty note shows neither way. Text alone
+   * drives visibility (see {@link setFlameSupersampleNote}): the element stays
+   * rendered so the live region actually announces the restart-time CPU
+   * fallback.
    */
   setFlameBackendNote(
     backend: "gpu" | "cpu" | null,
@@ -3947,20 +3933,18 @@ export class Ui {
   }
 
   /**
-   * Device-level software-rasterizer warning (fr-tmgf): unlike the
-   * per-mode notes elsewhere in this file, this one sits OUTSIDE every
-   * render mode (see `softwareRendererNote`'s placement in index.html,
-   * ahead of `flameStatus`) because a silently software-rendered session
-   * — the trigger incident was a browser-blocklisted GPU — is exactly as
-   * misleading in Points as it is in Flame or Surface. Warning-tier
-   * `.flame-note` (red, `var(--bad)`) per the style.css contract:
-   * software rasterization standing in for the real GPU is a "not quite
-   * what you asked for" condition, not a routine informational note. A
-   * runtime, device-dependent fact that isn't part of `AppState`, so —
-   * like {@link setFlameBackendNote} — this is a targeted setter main.ts
-   * calls directly rather than something `updateLabels` derives. `null`
-   * clears the note; text alone drives visibility (fr-vja8.48, see
-   * {@link setFlameSupersampleNote}).
+   * Device-level software-rasterizer warning: unlike the per-mode notes
+   * elsewhere in this file, this one sits OUTSIDE every render mode (see
+   * `softwareRendererNote`'s placement in index.html, ahead of `flameStatus`)
+   * because a silently software-rendered session — the trigger incident was a
+   * browser-blocklisted GPU — is exactly as misleading in Points as it is in
+   * Flame or Surface. Warning-tier `.flame-note` (red, `var(--bad)`) per the
+   * style.css contract: software rasterization standing in for the real GPU is
+   * a "not quite what you asked for" condition, not a routine informational
+   * note. A runtime, device-dependent fact that isn't part of `AppState`, so —
+   * like {@link setFlameBackendNote} — this is a targeted setter main.ts calls
+   * directly rather than something `updateLabels` derives. `null` clears the
+   * note; text alone drives visibility (see {@link setFlameSupersampleNote}).
    */
   setSoftwareRendererNote(text: string | null): void {
     this.softwareRendererNote.textContent = text ?? "";
@@ -3979,7 +3963,7 @@ export class Ui {
     this.announceSolidProgress(pct);
   }
 
-  /** The fr-vja8.38 live-region half of {@link setSolidProgress} — see
+  /** The live-region half of {@link setSolidProgress} — see
    * {@link announceFlameProgress}, its mirror. */
   private announceSolidProgress(pct: number): void {
     if (pct <= 0) {
@@ -3999,8 +3983,8 @@ export class Ui {
   /**
    * Reflect whether the resolution slider's requested value had to be reduced
    * to fit the worker's memory budget — the solid render's counterpart to
-   * {@link setFlameSupersampleNote}, with the same `null`-clears contract
-   * and the same text-driven visibility (fr-vja8.48).
+   * {@link setFlameSupersampleNote}, with the same `null`-clears contract and
+   * the same text-driven visibility.
    */
   setSolidResolutionNote(effective: number | null, requested?: number): void {
     if (effective === null) {
@@ -4014,14 +3998,14 @@ export class Ui {
   }
 
   /**
-   * Reflect the surface render's marchability (epic fr-7jlk, from
-   * `analyzeSurfaceSystem` + the uniform-array cap): `ineligible` disables
-   * the mode button outright with the reason in its tooltip (the mode
-   * physically can't run — no valid distance estimator); `degraded` keeps it
-   * enabled but shows `detail` as an in-mode note (anisotropic maps marched
-   * conservatively); `eligible` restores the default affordance. main.ts
-   * recomputes this on every document change, so the button tracks edits
-   * live — including while some other render is active.
+   * Reflect the surface render's marchability (from `analyzeSurfaceSystem` +
+   * the uniform-array cap): `ineligible` disables the mode button outright
+   * with the reason in its tooltip (the mode physically can't run — no valid
+   * distance estimator); `degraded` keeps it enabled but shows `detail` as
+   * an in-mode note (anisotropic maps marched conservatively); `eligible`
+   * restores the default affordance. main.ts recomputes this on every
+   * document change, so the button tracks edits live — including while some
+   * other render is active.
    */
   setSurfaceEligibility(
     status: "eligible" | "degraded" | "ineligible",
@@ -4033,36 +4017,34 @@ export class Ui {
     button.title = blocked
       ? `Surface render unavailable: ${detail ?? "not marchable"}`
       : "Sphere-traced surface of the attractor";
-    // Text alone drives the note's visibility (fr-vja8.48, see
-    // {@link setFlameSupersampleNote}): the element stays rendered so the
-    // live region actually announces a degrade.
+    // Text alone drives the note's visibility (see
+    // {@link setFlameSupersampleNote}): the element stays rendered so
+    // the live region actually announces a degrade.
     this.surfaceNote.textContent =
       status === "degraded" && detail ? detail : "";
   }
 
   /**
-   * Reflect the surface trace's coverage (fr-zx34): heavy fold poses grind
-   * their preview/settle strip jobs for seconds to MINUTES, and the mode's
-   * verdict is to never give up on a frame — this row is what lets the
-   * user decide whether the pose is worth the wait. Same text-plus-underline
-   * idiom as {@link setFlameProgress}; `null` hides the row (instant
-   * renders and settled frames, the common case, never show it). Unlike
-   * the flame/solid rows it hides rather than parking at 0%, because
-   * most surface renders finish within a frame or two and a permanent
-   * "0%" would read as a stuck render. POSE-derived and polled from the
-   * render loop — never shares {@link setSurfaceEligibility}'s
-   * document-derived note element. `detail` (fr-tmgf) is a fallback-reason
-   * token ("compute failed" / "compute unavailable") appended TRAILING
-   * after the percentage, so the engine token and percentage stay the
-   * prominent read — the fr-tmgf legibility lesson: the eye catches
-   * leading tokens.
+   * Reflect the surface trace's coverage: heavy fold poses grind their
+   * preview/settle strip jobs for seconds to MINUTES, and the mode's verdict
+   * is to never give up on a frame — this row is what lets the user decide
+   * whether the pose is worth the wait. Same text-plus-underline idiom as
+   * {@link setFlameProgress}; `null` hides the row (instant renders and
+   * settled frames, the common case, never show it). Unlike the flame/solid
+   * rows it hides rather than parking at 0%, because most surface renders
+   * finish within a frame or two and a permanent "0%" would read as a stuck
+   * render. POSE-derived and polled from the render loop — never shares
+   * {@link setSurfaceEligibility}'s document-derived note element. `detail`
+   * is a fallback-reason token ("compute failed" / "compute unavailable")
+   * appended TRAILING after the percentage, so the engine token and
+   * percentage stay the prominent read — the render-backend disclosure's
+   * legibility lesson: the eye catches leading tokens.
    *
-   * `skippable` (fr-37c6) shows the one-shot "Skip preview" button under
-   * the row — main.ts passes it exactly while a preview is grinding (the
-   * phase with a full render to skip TO): a WebGL preview strip job, or
-   * the compute path's unbudgeted completion pass (fr-ud7n). The button
-   * hides with the row, and settles never show it (there is nothing after
-   * a settle to skip to).
+   * `skippable` shows the one-shot "Skip preview" button under the row —
+   * main.ts passes it exactly while a preview is grinding (the phase with a
+   * full render to skip TO): a WebGL preview strip job, or the compute path's
+   * unbudgeted completion pass. The button hides with the row, and settles
+   * never show it (there is nothing after a settle to skip to).
    */
   setSurfaceProgress(
     progress: {
@@ -4078,7 +4060,7 @@ export class Ui {
     );
     if (progress === null) {
       // Clear text too, not just hide: a stale "99%" left in textContent
-      // reads as a live percent to settle-scraping harnesses (fr-d6g5).
+      // reads as a live percent to settle-scraping harnesses.
       this.surfaceProgress.textContent = "";
       this.surfaceProgress.classList.add("hidden");
       this.surfaceProgress.style.setProperty("--progress", "0%");
@@ -4095,7 +4077,7 @@ export class Ui {
   }
 
   /**
-   * The fr-vja8.38 live-region half of {@link setSurfaceProgress}. `null` is
+   * The live-region half of {@link setSurfaceProgress}. `null` is
    * this row's own reset signal (mirrors flame/solid's `pct <= 0` — see
    * {@link announceFlameProgress}): re-arms the quartile and the
    * antialiasing one-shot for whichever preview/settle job comes next, and
@@ -4161,15 +4143,15 @@ export class Ui {
   }
 
   /** Seed the "Quick previews" checkbox from the stored viewer pref at boot
-   * (fr-37c6) — the checkbox itself is the live source of truth afterward,
-   * so this is a one-time write, not a sync. */
+   * — the checkbox itself is the live source of truth afterward, so this is
+   * a one-time write, not a sync. */
   setSurfacePreviewToggle(on: boolean): void {
     this.surfacePreviewToggle.checked = on;
   }
 
   /**
-   * Rebuild the "select to edit" list: a camera row, one row per transform, and
-   * — when a final transform is enabled — a lens row at the bottom.
+   * Rebuild the "select to edit" list: a camera row, one row per transform,
+   * and — when a final transform is enabled — a lens row at the bottom.
    */
   renderTransformList(
     transforms: Transform[],
@@ -4240,9 +4222,9 @@ export class Ui {
     button.className = options.selected
       ? "transform-btn selected"
       : "transform-btn";
-    // The selection state, exposed to assistive tech (fr-vja8.22) — the
-    // render-mode switch's aria-pressed pattern. Kept live for free: the
-    // list is rebuilt from scratch on every selection change.
+    // The selection state, exposed to assistive tech — the render-mode
+    // switch's aria-pressed pattern. Kept live for free: the list is
+    // rebuilt from scratch on every selection change.
     button.setAttribute("aria-pressed", String(options.selected));
     button.style.borderLeftColor = options.accent;
 
@@ -4268,7 +4250,7 @@ export class Ui {
    *
    * `transformCount` is how many base maps the system holds — everything else
    * the editor shows is a property of the transform itself, but the Color
-   * group's derived palette slot (fr-hiyu) is a property of the map's
+   * group's derived palette slot is a property of the map's
    * position among ALL of them (`chaos-game.ts`'s `derivedColorIndex`), so it
    * has to be passed in rather than inferred here. Required, not defaulted:
    * a silently-assumed count would render a plausible but wrong slot.
@@ -4291,14 +4273,14 @@ export class Ui {
   }
 
   /**
-   * Create one collapsible editor group (fr-64ku). The editor measured 786px
+   * Create one collapsible editor group. The editor measured 786px
    * of the Transforms section's 1253px on a 393x727 phone — two and a half
    * screens for one selected transform, and nearly every pixel of it a live
    * slider a thumb has to cross to scroll past. Only one group is ever being
    * edited at a time, so they collapse into an exclusive sub-accordion under
    * one shared `name`.
    *
-   * The 4D group (fr-bf6.3) was already exactly this shape; the other seven
+   * The 4D group was already exactly this shape; the other seven
    * join it. Sharing the `name` is also what folds 4D's bespoke
    * open-when-`w`-is-present rule into a single decision — under exclusivity
    * at most one group can win, so the choice has to be made in one place
@@ -4342,8 +4324,8 @@ export class Ui {
         : this.editorOpenGroup;
     // Resolved per build and deliberately NOT written back to
     // `editorOpenGroup`: leaving the field null until a real user toggle keeps
-    // fr-bf6.3's rule alive for every 4D transform selected before then, not
-    // just the first one the session happens to build.
+    // the 4D group's rule alive for every 4D transform selected before then,
+    // not just the first one the session happens to build.
     const openGroup =
       remembered ?? (transform.w !== undefined ? "4D" : DEFAULT_EDITOR_GROUP);
 
@@ -4360,9 +4342,9 @@ export class Ui {
       shear: clone3(transform.shear ?? [0, 0, 0]),
       weight: transform.weight ?? 1,
       w: cloneW(transform.w),
-      // Copied RAW, unresolved (fr-hiyu): `undefined` here is the transform's
-      // real state — "authors none, so the renderers derive it" — and keeping
-      // it that way is what lets an unrelated edit round-trip a map without
+      // Copied RAW, unresolved: `undefined` here is the transform's real
+      // state — "authors none, so the renderers derive it" — and keeping it
+      // that way is what lets an unrelated edit round-trip a map without
       // materializing either key. The rows resolve for DISPLAY only; see
       // buildColorControls.
       colorIndex: transform.colorIndex,
@@ -4433,8 +4415,8 @@ export class Ui {
       target === "final"
         ? null
         : this.buildWeightControl(geometry.weight, openGroup);
-    // Color sits directly below Weight and above Variations (fr-hiyu): the
-    // two per-map structural-color fields belong beside the other whole-map
+    // Color sits directly below Weight and above Variations: the two
+    // per-map structural-color fields belong beside the other whole-map
     // property the chaos game reads when it PICKS this map, not among the
     // geometry channels. Omitted for the final transform for that same
     // reason — see buildColorControls.
@@ -4474,10 +4456,10 @@ export class Ui {
 
   /** Build a Scale group's "Mirror" row of aria-pressed toggle buttons —
    * pressed means the corresponding scale component is negative (a
-   * reflection). Shared by the 3D Scale group's X/Y/Z toggles (fr-lca) and
-   * the 4D group's single Scale W toggle (fr-icy). The scale sliders carry
-   * pure magnitude, so these toggles are the editor's only way to create or
-   * clear a mirror. */
+   * reflection). Shared by the 3D Scale group's X/Y/Z toggles and the 4D
+   * group's single Scale W toggle. The scale sliders carry pure magnitude,
+   * so these toggles are the editor's only way to create or clear a
+   * mirror. */
   private buildMirrorRow(
     group: HTMLElement,
     toggles: MirrorToggleSpec[],
@@ -4541,7 +4523,7 @@ export class Ui {
   }
 
   /**
-   * Build the "Color" group (fr-hiyu): the two per-map structural-color
+   * Build the "Color" group: the two per-map structural-color
    * fields — the palette slot this map pulls the color coordinate toward
    * (`Transform.colorIndex`, flam3's per-xform `color`) and how far each pick
    * moves it (`Transform.colorSpeed`, flam3's `color_speed`). Both the flame
@@ -4585,8 +4567,8 @@ export class Ui {
   ): ColorControls {
     const group = this.createEditorGroup("Color", openGroup);
 
-    // The two fields do not share one reach (fr-c6yd). Index also steers a
-    // Surface render, but only under its Palette (orbit-trap) color source —
+    // The two fields do not share one reach. Index also steers a Surface
+    // render, but only under its Palette (orbit-trap) color source —
     // `surface-slots.ts`'s `surfaceTrapIndices` reads the authored slot there
     // without walking it, since the surface descends a map rather than picking
     // one. Speed stays narrower: it only moves the coordinate in a Flame or
@@ -4752,7 +4734,7 @@ export class Ui {
   }
 
   /**
-   * The fold's three authored lengths (fr-s9ll), as rows nested under their
+   * The fold's three authored lengths, as rows nested under their
    * own variation's weight row — only the ones that fold reads
    * ({@link FOLD_RADIUS_FIELDS}).
    *
@@ -4948,13 +4930,13 @@ export class Ui {
   }
 
   /**
-   * Build the collapsed "4D" group (fr-bf6.3): the only UI that can create or
+   * Build the collapsed "4D" group: the only UI that can create or
    * edit a transform's optional `w` extension (see `types.ts`'s
    * `WExtension`). Always built — never conditionally omitted — so every
    * other editor interaction keeps working uniformly whether or not this
    * particular transform is currently non-flat.
    *
-   * This was the editor's only collapsible group until fr-64ku made all eight
+   * This was the editor's only collapsible group until all eight became
    * collapsible and exclusive, so the open/closed decision moved out to
    * {@link buildEditor} — under one shared `name` only one group can win, and
    * that has to be decided in one place. The rule this group contributed
@@ -5004,7 +4986,7 @@ export class Ui {
       0.01,
       scaleWInitial,
       (v) => Math.abs(v),
-      // Magnitude-only slider (fr-icy — fr-lca's scale-channel treatment one
+      // Magnitude-only slider (the Scale group's own channel treatment one
       // dimension up): re-apply the sign of the CURRENT model value, read at
       // input time. buildFourDRow's input listener calls fromSlider BEFORE
       // onModelChange writes the new value, so this sees the pre-drag sign;
@@ -5028,9 +5010,9 @@ export class Ui {
       scaleW.readout.textContent = `${scaleWInitial.toFixed(2)} (auto)`;
     }
 
-    // The Scale W slider above is magnitude-only (fr-icy), so this single
-    // toggle is the editor's only way to create or clear a 4D reflection —
-    // the exact counterpart of the 3D Scale group's Mirror row (fr-lca).
+    // The Scale W slider above is magnitude-only, so this single toggle is
+    // the editor's only way to create or clear a 4D reflection — the exact
+    // counterpart of the 3D Scale group's Mirror row.
     const [mirrorW] = this.buildMirrorRow(scaleGroup, [
       {
         label: "W",
@@ -5102,11 +5084,11 @@ export class Ui {
 
   /**
    * Ensure the working `w` block exists, then run `mutate` to set exactly the
-   * one field the fired slider owns — the sparse-write contract (fr-bf6.3):
-   * untouched fields must never be materialized, since their absence is what
-   * keeps an unrelated edit from dragging a flat transform's `w` into
-   * existence, and what lets `w.scale` keep meaning "derived" until the user
-   * actually sets it (see `WExtension.scale`'s doc).
+   * one field the fired slider owns — the sparse-write contract: untouched
+   * fields must never be materialized, since their absence is what keeps an
+   * unrelated edit from dragging a flat transform's `w` into existence, and
+   * what lets `w.scale` keep meaning "derived" until the user actually sets
+   * it (see `WExtension.scale`'s doc).
    */
   private mutateW(mutate: (w: WExtension) => void): void {
     const editor = this.editor;
@@ -5131,8 +5113,8 @@ export class Ui {
   }
 
   /** Re-sync the 4D group's sliders/readouts to the current working geometry
-   * — the fr-bf6.3 counterpart to the Position/Rotation/Scale/Shear loop and
-   * the weight control's own re-sync in {@link syncEditor}. Never touches the
+   * — the 4D counterpart to the Position/Rotation/Scale/Shear loop and the
+   * weight control's own re-sync in {@link syncEditor}. Never touches the
    * `<details>` open/closed state — see {@link buildFourDGroup}'s doc. */
   private syncFourDControls(): void {
     const editor = this.editor;
@@ -5242,7 +5224,7 @@ export class Ui {
     this.emitGeometry();
   }
 
-  /** Flip one axis's scale sign (fr-lca). No refreshScaleWIfAuto here: the
+  /** Flip one axis's scale sign. No refreshScaleWIfAuto here: the
    * derived Scale W is the MEAN of the |components|, unchanged by a sign
    * flip. */
   private onMirrorToggle(axis: number): void {
@@ -5256,12 +5238,12 @@ export class Ui {
     this.emitGeometry();
   }
 
-  /** Flip Scale W's sign (fr-icy) — the 4D group's counterpart to
-   * {@link onMirrorToggle}. While `w.scale` is unset (auto), this negates the
-   * DERIVED mean and materializes it as the explicit value, exactly like a
-   * slider nudge would: "derived but mirrored" isn't representable in the
-   * sparse model, whose absent-scale state always means the positive mean
-   * (see `WExtension.scale`). */
+  /** Flip Scale W's sign — the 4D group's counterpart to
+   * {@link onMirrorToggle}. While `w.scale` is unset (auto), this negates
+   * the DERIVED mean and materializes it as the explicit value, exactly
+   * like a slider nudge would: "derived but mirrored" isn't representable
+   * in the sparse model, whose absent-scale state always means the
+   * positive mean (see `WExtension.scale`). */
   private onMirrorWToggle(): void {
     const editor = this.editor;
     if (!editor) return;
@@ -5289,11 +5271,11 @@ export class Ui {
   }
 
   /**
-   * Author this map's palette slot (fr-hiyu). Writing the working copy is
-   * exactly what MATERIALIZES the optional field: until a slider fires this,
-   * the row has only been displaying `chaos-game.ts`'s derived slot and the
-   * transform carries no `colorIndex` key at all (see
-   * {@link buildColorControls} and {@link emitGeometry}).
+   * Author this map's palette slot. Writing the working copy is exactly what
+   * MATERIALIZES the optional field: until a slider fires this, the row has
+   * only been displaying `chaos-game.ts`'s derived slot and the transform
+   * carries no `colorIndex` key at all (see {@link buildColorControls} and
+   * {@link emitGeometry}).
    */
   private onColorIndexInput(value: number): void {
     const editor = this.editor;
@@ -5326,10 +5308,10 @@ export class Ui {
       scale: clone3(editor.geometry.scale),
       shear: clone3(editor.geometry.shear),
       variations: editor.variations.map((v) => ({ ...v })),
-      // Sparse by construction (fr-bf6.3): only include `w` when the working
-      // copy actually has one, so a transform the user never touched the 4D
-      // group on emits geometry with NO `w` key at all — not `undefined`,
-      // not `{}` — keeping it byte-identical through an unrelated edit (see
+      // Sparse by construction: only include `w` when the working copy
+      // actually has one, so a transform the user never touched the 4D group
+      // on emits geometry with NO `w` key at all — not `undefined`, not `{}`
+      // — keeping it byte-identical through an unrelated edit (see
       // WExtension's docs: absence is the flat/identity state). Cloned again
       // here (like the plain Vec3 channels above) so the emitted object never
       // aliases the editor's own live-mutated working copy.
@@ -5343,13 +5325,13 @@ export class Ui {
       this.handlers?.onTransformGeometry(editor.target, {
         ...base,
         weight: editor.geometry.weight,
-        // Sparse exactly like `w` above (fr-hiyu), and load-bearing for the
-        // same reason: these keys are emitted ONLY once the user has moved
-        // their slider. Selecting a map, dragging its guide box, or editing
-        // any other row leaves an unauthored map with NO colorIndex /
-        // colorSpeed key — `state.ts`'s updateTransform merges, so an absent
-        // key preserves absence, and absence is what keeps the derived slot
-        // (and every scene saved before this field existed) byte-identical
+        // Sparse exactly like `w` above, and load-bearing for the same
+        // reason: these keys are emitted ONLY once the user has moved their
+        // slider. Selecting a map, dragging its guide box, or editing any
+        // other row leaves an unauthored map with NO colorIndex / colorSpeed
+        // key — `state.ts`'s updateTransform merges, so an absent key
+        // preserves absence, and absence is what keeps the derived slot (and
+        // every scene saved before this field existed) byte-identical
         // through the round trip. See `types.ts`'s field docs.
         ...(editor.geometry.colorIndex !== undefined
           ? { colorIndex: editor.geometry.colorIndex }

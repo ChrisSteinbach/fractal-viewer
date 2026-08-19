@@ -1,12 +1,12 @@
 /**
  * Coalesces a burst of point-cloud regenerations into at most one run per
- * animation frame (fr-acc). During a guide-box drag or a panel-slider drag
+ * animation frame. During a guide-box drag or a panel-slider drag
  * the triggering event fires many times per frame; this collapses a frame's
  * worth of requests into one deferred run — the very next animation frame
  * regenerates once, reflecting the latest state, and every intermediate
  * request within that frame is dropped.
  *
- * Generation runs in a Web Worker (fr-5kx; see `cloud-generator.ts`), so
+ * Generation runs in a Web Worker (see `cloud-generator.ts`), so
  * per-frame this bounds request-building and postMessage traffic — and in
  * the generator's synchronous fallback mode (worker failed to load or
  * crashed) it is all that stops a drag from running a full, synchronous

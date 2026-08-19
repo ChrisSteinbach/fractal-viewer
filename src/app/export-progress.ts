@@ -1,5 +1,5 @@
 /**
- * The Save-PNG export progress modal's DOM-free state machine (fr-7mfx):
+ * The Save-PNG export progress modal's DOM-free state machine:
  * decides WHEN a running export earns a blocking modal, WHAT the modal
  * reads while it's up, and routes the modal's Cancel button back to the
  * export in flight. `Ui` (the DOM side) and `main.ts` (the wiring) are
@@ -32,7 +32,7 @@
  * and never overwritten by a `report()` that arrives while the real work
  * is still unwinding underneath it.
  *
- * A run may offer a SECOND stop (fr-2fbs): "stop waiting and deliver what
+ * A run may offer a SECOND stop: "stop waiting and deliver what
  * you have", for the one caller whose wait is sitting on a real — coarser —
  * picture rather than on nothing at all. It is optional in the strongest
  * sense: a `begin()` without a `deliverEarly` action shows the modal it
@@ -61,13 +61,13 @@
  * from inside its own callback, the same way `main.ts` will wire it.
  */
 
-/** Grace period before a running export shows its modal (fr-7mfx). Flame and
+/** Grace period before a running export shows its modal. Flame and
  * explorer captures finish well inside it, so the common case never flashes a
  * modal at all. */
 export const EXPORT_MODAL_GRACE_MS = 400;
 
 /** Predicted cost above which the modal skips the grace period and shows at
- * once (fr-7mfx): once the caller already has real evidence — a surface
+ * once: once the caller already has real evidence — a surface
  * export's own estimated cost — that a run will take longer than this,
  * waiting out {@link EXPORT_MODAL_GRACE_MS} on top buys nothing but a
  * silent extra third of a second, and every silent frame on a minutes-long
@@ -77,7 +77,7 @@ export const EXPORT_MODAL_GRACE_MS = 400;
  * run finishes inside it. */
 export const EXPORT_MODAL_SLOW_PREDICTION_MS = 1200;
 
-/** How often a visible modal refreshes its elapsed readout (fr-7mfx), by
+/** How often a visible modal refreshes its elapsed readout, by
  * re-arming itself every tick — see the module doc for why there is no
  * `setInterval` in {@link ExportProgressDeps}. A single bounded GPU
  * submission can go silent for its whole duration with no `report()` at
@@ -88,7 +88,7 @@ export const EXPORT_MODAL_SLOW_PREDICTION_MS = 1200;
 export const EXPORT_MODAL_TICK_MS = 250;
 
 /**
- * Percent convention shared with the surface progress row (the fr-99z rule):
+ * Percent convention shared with the surface progress row:
  * FLOOR, never round — a rounded 100% while work is still landing reads as a
  * finished render that hasn't finished — and one decimal below 10% so a slow
  * start still visibly moves. Input is clamped to [0, 1].
@@ -126,7 +126,7 @@ export interface ExportProgressInit {
   detail: string;
   /** False hides the Cancel affordance rather than offering a dead button. */
   cancellable: boolean;
-  /** The optional second action (fr-2fbs), carrying only its label — the
+  /** The optional second action, carrying only its label — the
    * click routes back through {@link ExportProgressDriver.requestDeliverEarly}
    * exactly as Cancel routes through `requestCancel`. ABSENT MEANS THE
    * ONE-BUTTON MODAL, unchanged: a view must render nothing extra, and must
@@ -166,7 +166,7 @@ export interface ExportProgressDeps {
 }
 
 /**
- * How a run was stopped, when the user stopped it (fr-2fbs). `"cancel"` is
+ * How a run was stopped, when the user stopped it. `"cancel"` is
  * stop-and-discard — the export ends with no file — and `"deliver"` is
  * stop-and-hand-over, which only a run that offered the second action can
  * ever reach. Both are REQUESTS: the work underneath unwinds at its own
@@ -183,7 +183,7 @@ export interface ExportRun {
   /** Terminal: hide the modal and drop every timer. Idempotent. */
   end(): void;
   /** True once the user asked to stop AND DISCARD. Deliberately NOT widened
-   * to cover {@link ExportStop} `"deliver"` (fr-2fbs): every existing caller
+   * to cover {@link ExportStop} `"deliver"`: every existing caller
    * reads this as "throw the export away", so a delivering run must read
    * false here or the file it asked for would be discarded by code that
    * predates the action. */
@@ -207,18 +207,18 @@ export interface ExportProgressDriver {
     predictedMs: number | null;
     cancellable: boolean;
     onCancel: () => void;
-    /** Offer the second stop (fr-2fbs): a labelled action that ends the wait
+    /** Offer the second stop: a labelled action that ends the wait
      * WITH a picture instead of without one. Omit — the default — and this
-     * run has exactly one button, byte for byte the pre-fr-2fbs modal.
-     * `onDeliver` is the `onCancel` twin: fired at most once, from
-     * {@link ExportProgressDriver.requestDeliverEarly}, to wake whatever the
-     * caller has parked. */
+     * run has exactly one button, byte for byte the one-button modal that
+     * predates it. `onDeliver` is the `onCancel` twin: fired at most once,
+     * from {@link ExportProgressDriver.requestDeliverEarly}, to wake
+     * whatever the caller has parked. */
     deliverEarly?: { label: string; onDeliver: () => void };
   }): ExportRun;
   /** The view's Cancel/Escape entry point. No-op when nothing is running,
    * the active run is not cancellable, or it has already stopped. */
   requestCancel(): void;
-  /** The view's second-action entry point (fr-2fbs). No-op when nothing is
+  /** The view's second-action entry point. No-op when nothing is
    * running, the active run never offered the action, or it has already
    * stopped — a run cannot be made to take an outcome it did not offer, the
    * same honesty rule `cancellable: false` states for Cancel. */
@@ -237,7 +237,7 @@ interface Run {
   readonly detail: string;
   readonly cancellable: boolean;
   readonly onCancel: () => void;
-  /** The fr-2fbs second action, or null for the one-button modal. */
+  /** The second action, or null for the one-button modal. */
   readonly deliverEarly: { label: string; onDeliver: () => void } | null;
   visible: boolean;
   ended: boolean;
@@ -245,7 +245,7 @@ interface Run {
   stop: ExportStop | null;
   /** Latest reported fraction, remembered across the hidden period so the
    * modal's first paint already carries real coverage (see bullet 4 in the
-   * fr-7mfx spec / the module doc). */
+   * modal spec / the module doc). */
   lastFraction: number | null;
   graceTimerId: number | null;
   tickTimerId: number | null;
@@ -268,7 +268,7 @@ export function createExportProgress(
   // is no elapsed branch left for them to reach.
   //
   // The percent is deliberately NOT pinned alongside it. Under "cancel" it
-  // keeps describing work still unwinding; under "deliver" (fr-2fbs) the
+  // keeps describing work still unwinding; under "deliver" the
   // caller has stopped reporting by construction — it took its picture at
   // the press — so the last number stands, which is exactly the coverage of
   // the frame being handed over. The elapsed clock is what had to go: a
@@ -344,7 +344,7 @@ export function createExportProgress(
       onCancel: () => void;
       deliverEarly?: { label: string; onDeliver: () => void };
     }): ExportRun {
-      // Defensive (fr-7mfx): the caller has its own re-entrancy guard, but a
+      // Defensive: the caller has its own re-entrancy guard, but a
       // leaked grace/tick timer from an abandoned run would be worse than a
       // redundant hide.
       if (current) endRun(current);

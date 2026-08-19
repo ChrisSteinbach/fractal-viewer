@@ -60,14 +60,14 @@ describe("surfaceGridResultTransfers", () => {
 });
 
 // -----------------------------------------------------------------------
-// fr-aj4w: the measured-pilot-slab downshift. buildSurfaceGridResult times
-// one mid z-layer of the requested cube, then lets surface-grid.ts's
+// The measured-pilot-slab downshift. buildSurfaceGridResult times one mid
+// z-layer of the requested cube, then lets surface-grid.ts's
 // pickSurfaceGridResolution decide whether the full build stays at the
 // request or drops to a cheaper ladder rung (see that module's doc and the
 // module doc above for the full reasoning).
 // -----------------------------------------------------------------------
 
-describe("the pilot slab and downshift ladder (fr-aj4w)", () => {
+describe("the pilot slab and downshift ladder", () => {
   it("keeps the requested resolution and matches a one-shot build bit-for-bit when the resolution sits below the ladder", () => {
     const de = buildSurfaceDE(sierpinskiTetrahedron());
     // 16 is below every SURFACE_GRID_RESOLUTION_LADDER rung (64/48/32), so

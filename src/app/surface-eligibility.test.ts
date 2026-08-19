@@ -27,7 +27,7 @@ function derivePreset(
   );
 }
 
-describe("deriveSurfaceEligibility over the shipped presets (fr-dp50)", () => {
+describe("deriveSurfaceEligibility over the shipped presets", () => {
   it("admits every surface-hinted preset (none refuses its own showcase)", () => {
     const surfacePresets = PRESET_NAMES.filter(
       (p) => PRESET_RENDER_HINTS[p] === "surface",
@@ -97,7 +97,7 @@ describe("deriveSurfaceEligibility over the shipped presets (fr-dp50)", () => {
   });
 });
 
-describe("deriveSurfaceEligibility caps and refusal notes (fr-dp50)", () => {
+describe("deriveSurfaceEligibility caps and refusal notes", () => {
   it("refuses past the tracer's map cap, counting only active maps", () => {
     const base = sierpinskiTetrahedron();
     const crowd: Transform[] = [];

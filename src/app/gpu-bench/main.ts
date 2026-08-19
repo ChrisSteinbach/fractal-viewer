@@ -1,15 +1,16 @@
 /**
- * fr-npb: the standing statistical-agreement harness pinning
+ * The standing statistical-agreement harness pinning
  * `src/fractal/flame-gpu.ts`'s WGSL kernel (driven by
  * `src/app/flame-gpu-backend.ts`) to `src/fractal/flame.ts`'s
- * `accumulateFlame` — its CPU oracle. Productized from fr-53k's spike page
- * (`git show spike/fr-53k-gpu-flame-accum:src/app/gpu-spike/main.ts`), now
- * driving the SHIPPED backend instead of the spike's standalone engine.
+ * `accumulateFlame` — its CPU oracle. Productized from the GPU
+ * flame-accumulation spike's own page
+ * (`docs/flame-gpu-accumulation-spike.md`), now driving the SHIPPED backend
+ * instead of the spike's standalone engine.
  * Served at /gpu-bench/index.html by `npm run dev`; dev-only — not part of
  * the production build (see vite.config.ts — only the root index.html is a
  * build input).
  *
- * fr-e26: the 4D scenarios pin `src/fractal/flame-gpu-4d.ts`'s kernel
+ * The 4D scenarios pin `src/fractal/flame-gpu-4d.ts`'s kernel
  * (driven by the same backend module's `createGpuFlameBackend4`) to
  * `flame-4d.ts`'s `accumulateFlame4` the exact same way — every scenario,
  * 3D or 4D, runs through ONE shared timed/equal-N/display-downsample
@@ -240,7 +241,7 @@ interface ComparisonMetrics {
 }
 
 /**
- * fr-ee9: the display-downsample agreement leg's metrics — comparing the GPU
+ * The display-downsample agreement leg's metrics — comparing the GPU
  * `snapshotDisplay` kernel's output against `downsampleFlame` fed the exact
  * SAME resident histogram (see `compareDisplayDownsample`'s doc). An
  * EXACTNESS check modulo f32 rounding, not a statistical one like
@@ -261,11 +262,11 @@ interface DisplayDownsampleMetrics {
 }
 
 /**
- * fr-ee9's acceptance-evidence measurement: how much cheaper a progressive
- * redisplay tick is with the new resident-buffer downsample
- * (`snapshotDisplay`, readback + convert already included) than with the old
- * full-histogram-readback path (`snapshot` + CPU `downsampleFlame`) — see
- * `measureRedisplayCost`'s doc.
+ * The GPU display-downsample's acceptance-evidence measurement: how much
+ * cheaper a progressive redisplay tick is with the new resident-buffer
+ * downsample (`snapshotDisplay`, readback + convert already included) than
+ * with the old full-histogram-readback path (`snapshot` + CPU
+ * `downsampleFlame`) — see `measureRedisplayCost`'s doc.
  */
 interface RedisplayCostMetrics {
   /** Mean ms of `snapshot()` (readback + convert already included) + CPU
@@ -275,7 +276,8 @@ interface RedisplayCostMetrics {
    * over the same number of reps. */
   newMs: number;
   /** `newMs / oldMs` — the new path's cost as a fraction of the old path's;
-   * fr-ee9's whole point is this landing well under 1. */
+   * moving the downsample onto the GPU is only worth it if this lands well
+   * under 1. */
   ratio: number;
 }
 
@@ -284,12 +286,12 @@ interface ScenarioResultRecord {
   cpu: TimedResult;
   gpu: TimedGpuResult | SkippedResult;
   comparison: ComparisonMetrics | SkippedResult;
-  /** fr-ee9: the display-downsample agreement leg — see
+  /** The display-downsample agreement leg — see
    * `DisplayDownsampleMetrics`'s doc. Skipped under the exact same condition
    * as `comparison` (no GPU backend at all this run). */
   displayDownsample: DisplayDownsampleMetrics | SkippedResult;
-  /** fr-ee9: see `RedisplayCostMetrics`'s doc — this scenario's measured
-   * redisplay-cost ratio, the bead's acceptance evidence. */
+  /** See `RedisplayCostMetrics`'s doc — this scenario's measured
+   * redisplay-cost ratio, the GPU downsample's acceptance evidence. */
   redisplayCost: RedisplayCostMetrics | SkippedResult;
 }
 
@@ -298,7 +300,7 @@ interface BenchResults {
   timestamp: string;
   adapter: BenchAdapterInfo | null;
   scenarios: ScenarioResultRecord[];
-  /** fr-ee9: a standalone ss=1 (no supersample) display-downsample agreement
+  /** A standalone ss=1 (no supersample) display-downsample agreement
    * check — every `scenarios` entry runs at the same ss=2 accumulation (see
    * `ACCUM_WIDTH`/`ACCUM_HEIGHT`), so this is the only leg exercising
    * `downsampleFlame`'s (and the GPU kernel's) scale-1 pass-through path —
@@ -312,7 +314,7 @@ interface BenchResults {
    * was skipped (no WebGPU in this browser: see `computeAgreement`'s doc for
    * why that is deliberately NOT a failure). */
   agreement: "pass" | "fail" | "skipped";
-  /** fr-q1f8: the surface-DE WGSL kernel section (`runSurfaceDeSection`) —
+  /** The surface-DE WGSL kernel section (`runSurfaceDeSection`) —
    * present only once that section has run (`?surface=1|only` or its
    * button), ABSENT otherwise so a run without the new flags produces a
    * bit-for-bit unchanged results.json. Its verdict is deliberately
@@ -349,16 +351,17 @@ interface ScenarioDef3D {
    * — it has a Monte-Carlo noise floor that is a property of the SCENARIO
    * (how much of the frame is sparse, few-hits-per-bucket haze, where one
    * hit of shot noise is a large tone-mapped delta), not of the kernels.
-   * The compact-filament presets floor around ~0.3 (fr-53k), which is what
-   * the default threshold's 1.0 was calibrated against; a diffuse scenario
-   * with a higher measured floor documents it and overrides here rather
-   * than loosening the bar for everyone.
+   * The compact-filament presets floor around ~0.3 (measured in the GPU
+   * flame-accumulation spike), which is what the default threshold's 1.0
+   * was calibrated against; a diffuse scenario with a higher measured floor
+   * documents it and overrides here rather than loosening the bar for
+   * everyone.
    */
   maeThreshold?: number;
 }
 
 /**
- * A 4D scenario (fr-e26): a 3D-authored preset lifted per-map through
+ * A 4D scenario: a 3D-authored preset lifted per-map through
  * `toTransform4` (exactly how the app's own 4D mode builds its Transform4
  * set — see main.ts's `fourDRenderSnapshot`), viewed through a frozen
  * `rotationMatrix4(rotation)` tumble. `paletteId` and `colorMode` reproduce
@@ -373,17 +376,17 @@ interface ScenarioDef4D {
   name: string;
   system: () => Transform[];
   finalTransform: Transform | null;
-  /** Kaleidoscope symmetry (fr-q0h6 lit the 4D path) — spelled out per
-   * scenario exactly like {@link ScenarioDef3D.symmetry}, so an order-1 leg
-   * says so rather than defaulting silently. */
+  /** Kaleidoscope symmetry (the 4D kaleidoscope lit this path) — spelled
+   * out per scenario exactly like {@link ScenarioDef3D.symmetry}, so an
+   * order-1 leg says so rather than defaulting silently. */
   symmetry: SymmetryParams;
   rotation: Rotation4;
   paletteId: FlamePaletteId;
   colorMode: FourDColorMode;
-  /** The "radius" color mode's ramp palette (fr-6ue) — the `fourD` start
-   * block's `rampPalette`, minus the custom-payload arm the bench doesn't
-   * author. Omitted = `"legacy"` (the built-in warm→cool ramp); only the
-   * radius mode reads it. */
+  /** The "radius" color mode's ramp palette — the `fourD` start block's
+   * `rampPalette`, minus the custom-payload arm the bench doesn't author.
+   * Omitted = `"legacy"` (the built-in warm→cool ramp); only the radius
+   * mode reads it. */
   rampPalette?: FlamePaletteId;
   sliceOn: boolean;
   sliceCenter: number;
@@ -404,7 +407,7 @@ const SIERPINSKI_CAMERA: Pick<ScenarioDef3D, "cameraPos" | "lookAt"> = {
 /** The preset re-centers Barnsley's coordinates (FERN_SCALE 0.3 around
  * FERN_CENTER — see presets.ts), so the fern spans roughly ±0.75 x ±1.5
  * around the origin; a straight-on close camera frames it fully. Shared by
- * the two fern scenarios (`fern` and fr-hiyu's `xform-color`), which differ
+ * the two fern scenarios (`fern` and `xform-color`), which differ
  * only in their color authoring — the same framing keeps them visually
  * comparable in the bench's own screenshots. */
 const FERN_CAMERA: Pick<ScenarioDef3D, "cameraPos" | "lookAt"> = {
@@ -420,7 +423,7 @@ const FERN_CAMERA: Pick<ScenarioDef3D, "cameraPos" | "lookAt"> = {
 const BENCH_TUMBLE: Rotation4 = { xy: 0.35, xw: 0.65, yw: 0.4, zw: 0.55 };
 
 /**
- * fr-jnu: the "variation zoo" — three contractive maps that between them
+ * The "variation zoo" — three contractive maps that between them
  * enable all 12 VariationTypes exactly once (4 lanes each), so one scenario
  * pins every hand-written WGSL variation formula against the CPU oracle's
  * variations.ts. Grouping is deliberate: the origin-divergent warps
@@ -474,7 +477,7 @@ function variationZoo(): Transform[] {
 }
 
 /**
- * fr-jnu: a gentle final-transform lens (small rotation, mild sinusoidal
+ * A gentle final-transform lens (small rotation, mild sinusoidal
  * fold) for the zoo scenarios — pins the kernels' hasFinal slot path
  * (applySlot on the lens slot, adopt-only-if-finite), which no other
  * scenario exercises in either dimension.
@@ -492,7 +495,7 @@ function variationZooLens(): Transform {
   };
 }
 
-/** fr-jnu: the zoo lifted to 4D — the same three maps with w-mixing blocks
+/** The zoo lifted to 4D — the same three maps with w-mixing blocks
  * (a w rotation, a w offset + rotation, an independent w scale), so the 4D
  * kernel's variations4 lanes run over genuinely 4D orbits. */
 function variationZoo4(): Transform[] {
@@ -505,7 +508,7 @@ function variationZoo4(): Transform[] {
 }
 
 /**
- * fr-p7nu: the "fold zoo" — three contractive maps, each pairing one of the
+ * The "fold zoo" — three contractive maps, each pairing one of the
  * Mandelbox fold family (`boxfold`/`spherefold`/`mandelbox`) with a small
  * `linear` component, so this scenario pins the three hand-written WGSL fold
  * formulas against the CPU oracle's `variations.ts` — the same role
@@ -551,7 +554,7 @@ function foldZoo(): Transform[] {
   ];
 }
 
-/** fr-p7nu: the fold zoo lifted to 4D — the same three maps with w-mixing
+/** The fold zoo lifted to 4D — the same three maps with w-mixing
  * blocks (a w rotation, a w offset + rotation, an independent w scale),
  * mirroring `variationZoo4`'s pattern exactly, so the 4D kernel's fold cases
  * run over genuinely 4D orbits (the full 4D radius/box, not a w = 0 slice). */
@@ -565,12 +568,12 @@ function foldZoo4(): Transform[] {
 }
 
 /**
- * fr-s9ll: {@link foldZoo}'s geometry with AUTHORED fold lengths — the
+ * {@link foldZoo}'s geometry with AUTHORED fold lengths — the
  * `fold-zoo` scenario's controlled pair, differing in the fold's radii and
  * nothing else (the same idiom `xformColorFern` plays against `fern`).
  * Both flame kernels reach the fold through `composeVariations`, which has
- * read these lengths since fr-s9ll's CPU half landed, so without a
- * non-classic scenario the GPU arm could keep the classic constants and
+ * read these lengths since the authored-lengths CPU half landed, so without
+ * a non-classic scenario the GPU arm could keep the classic constants and
  * agree with its oracle on every fixture here — while the app rendered one
  * object on a machine with a WebGPU adapter and another on a machine
  * without.
@@ -599,7 +602,7 @@ function foldZooParameterized(): Transform[] {
   }));
 }
 
-/** fr-s9ll: the parameterized fold zoo lifted to 4D, with `foldZoo4`'s own
+/** The parameterized fold zoo lifted to 4D, with `foldZoo4`'s own
  * w-mixing blocks verbatim — so the 4D kernel's per-type fold lanes are
  * read over genuinely 4D orbits (the full 4D radius/box, not a w = 0
  * slice), the same relationship `foldZoo4` has to `foldZoo`. */
@@ -613,7 +616,7 @@ function foldZooParameterized4(): Transform[] {
 }
 
 /**
- * fr-hiyu's authored flam3 color pairs, one per Barnsley map, in
+ * The authored flam3 color pairs, one per Barnsley map, in
  * `FERN_MAPS` order (stem, frond, left leaflet, right leaflet — see
  * presets.ts). NONE of them is what the absent fields resolve to:
  * `derivedColorIndex` would spread four maps 0, 1/3, 2/3, 1 and
@@ -647,7 +650,7 @@ const XFORM_COLOR_PAIRS: ReadonlyArray<
 ];
 
 /** Barnsley's fern with {@link XFORM_COLOR_PAIRS} authored onto every map —
- * the `xform-color` scenario's system (fr-hiyu). The geometry is the stock
+ * the `xform-color` scenario's system. The geometry is the stock
  * preset, deliberately: keeping it identical to the `fern` scenario's makes
  * the two entries a controlled pair, differing in the color authoring and
  * nothing else. */
@@ -687,7 +690,7 @@ const SCENARIOS: ScenarioDef[] = [
     // a wrong slot reads as a hue shift rather than a shade of one hue.
     paletteId: "spectrum",
     ...FERN_CAMERA,
-    // Uniquely pins (fr-hiyu): the per-transform colorIndex/colorSpeed pair
+    // Uniquely pins: the per-transform colorIndex/colorSpeed pair
     // the kernels' structural walk reads off each Slot, and the walk formula
     // itself at speeds either side of the old hard-coded 0.5. Every OTHER
     // scenario here leaves both fields absent, so between them they only ever
@@ -727,7 +730,7 @@ const SCENARIOS: ScenarioDef[] = [
     // escape-tail outliers beyond 2x that box).
     cameraPos: [3.4, 1.6, 3.3],
     lookAt: [0.9, 0, 0.05],
-    // Measured equal-N noise floor (fr-jnu control experiment): the CPU
+    // Measured equal-N noise floor (control experiment): the CPU
     // oracle against ITSELF at two seeds (0xc0ffee vs 0xbadcafe, 50.3M
     // iterations each, this exact camera/tonemap pipeline) gives maeRGB
     // 2.379 — the 12-warp blend renders as diffuse few-hits-per-bucket haze
@@ -739,7 +742,7 @@ const SCENARIOS: ScenarioDef[] = [
     // formula divergence (even one mislabeled case body at weight 0.35)
     // restructures whole filaments and measures in the tens.
     maeThreshold: 4,
-    // Uniquely pins (fr-jnu): all 12 VariationTypes in the 3D WGSL kernel
+    // Uniquely pins: all 12 VariationTypes in the 3D WGSL kernel
     // (see variationZoo's doc), the 3D kernel's WEIGHTED transform pick
     // (sierpinski/fern/swirl/kaleido above are all uniform-weight systems),
     // and the 3D final-transform lens slot — none of which any other 3D
@@ -756,12 +759,12 @@ const SCENARIOS: ScenarioDef[] = [
     // y ∈ [-1.74, 1.83], z ∈ [-0.85, 2.04] at the 1%-99% percentiles).
     cameraPos: [4.3, 2.2, 5.0],
     lookAt: [0.6, 0, 0.6],
-    // Measured equal-N noise floor (fr-p7nu): CPU-vs-GPU maeRGB on SwiftShader
-    // is 1.469, stable bit-for-bit across repeated runs (integer atomic
+    // Measured equal-N noise floor: CPU-vs-GPU maeRGB on SwiftShader is
+    // 1.469, stable bit-for-bit across repeated runs (integer atomic
     // accumulation has no run-to-run float-order variance). 3.0 = roughly 2x
-    // that measured value, per the bead's threshold procedure.
+    // that measured value, per the standing threshold procedure.
     maeThreshold: 3.0,
-    // Uniquely pins (fr-p7nu): the three Mandelbox fold variations
+    // Uniquely pins: the three Mandelbox fold variations
     // (boxfold/spherefold/mandelbox) in the 3D WGSL kernel — see foldZoo's
     // doc — which no other 3D scenario here exercises.
   },
@@ -779,10 +782,10 @@ const SCENARIOS: ScenarioDef[] = [
     // affine parts land a more compact, differently-centered cloud.
     cameraPos: [3.8, 1.9, 4.4],
     lookAt: [0.05, -0.25, 0.35],
-    // Measured equal-N noise floor: 1.411, by fr-jnu's CONTROL-EXPERIMENT
+    // Measured equal-N noise floor: 1.411, by the CONTROL-EXPERIMENT
     // procedure (the CPU oracle against ITSELF at two seeds, 0xc0ffee vs
     // 0xbadcafe, 50.3M iterations each through this exact
-    // camera/downsample/tonemap pipeline) rather than fr-p7nu's
+    // camera/downsample/tonemap pipeline) rather than the fold zoo's
     // CPU-vs-GPU reading — a fixture can be authored without an adapter,
     // and the two measure the same quantity for an agreeing kernel. The
     // procedure is calibrated on the sibling: the same control run on
@@ -790,16 +793,16 @@ const SCENARIOS: ScenarioDef[] = [
     // CPU-vs-GPU. 3.0 = ~2x the floor, the same bar (and the same
     // doubling procedure) fold-zoo carries.
     maeThreshold: 3.0,
-    // Uniquely pins (fr-s9ll): the fold family's AUTHORED lengths in the
+    // Uniquely pins: the fold family's AUTHORED lengths in the
     // 3D WGSL kernel — its per-type `foldRadii` lanes, packed and indexed
     // — see foldZooParameterized's doc. Every other fold scenario here
     // leaves all three absent, so between them they only ever exercise
     // the classic 0.5/1/1 the kernel could equally have kept hard-coded.
   },
-  // The 4D legs (fr-e26): between them, all four FourDRenderColor kinds and
+  // The 4D legs: between them, all four FourDRenderColor kinds and
   // both slice states; hyperfern/doubleRotation both carry non-1 weights,
   // exercising the 4D kernel's weighted binary-search pick (mirroring the 3D
-  // zoo's weighted-pick coverage above). fr-jnu's variation-zoo-4d below
+  // zoo's weighted-pick coverage above). The variation-zoo-4d leg below
   // closes the remaining gap: every variations4 formula over a genuinely 4D
   // orbit, plus the 4D kernel's final-transform lens slot — neither
   // exercised by hyperfern/doubleRotation.
@@ -831,7 +834,7 @@ const SCENARIOS: ScenarioDef[] = [
     sliceOn: true,
     sliceCenter: 0.25,
     sliceWidth: 0.3,
-    // The fr-nn6 slice-relative recolor rides this leg too: the remap is the
+    // The slice-relative recolor rides this leg too: the remap is the
     // identity arithmetic with non-neutral (shift, invScale), so this pins
     // both kernels' wRamp path AND the remap in one scenario.
     sliceRelativeColor: true,
@@ -859,10 +862,10 @@ const SCENARIOS: ScenarioDef[] = [
     rotation: BENCH_TUMBLE,
     paletteId: "legacy",
     colorMode: "radius",
-    // Non-legacy (fr-6ue): the app's 4D radius LUT can now be palette-driven,
-    // and the LUT crosses to the kernel as data — so the pinned scenario
-    // rides a gradient-built LUT, proving the packing passes it through
-    // rather than only ever agreeing on the built-in ramp's bytes.
+    // Non-legacy: the app's 4D radius LUT can now be palette-driven, and
+    // the LUT crosses to the kernel as data — so the pinned scenario rides
+    // a gradient-built LUT, proving the packing passes it through rather
+    // than only ever agreeing on the built-in ramp's bytes.
     rampPalette: "dusk",
     sliceOn: false,
     sliceCenter: 0,
@@ -882,7 +885,7 @@ const SCENARIOS: ScenarioDef[] = [
     sliceCenter: 0,
     sliceWidth: 0.35,
     sliceRelativeColor: false,
-    // Uniquely pins (fr-jnu): every variations4 formula in the 4D WGSL
+    // Uniquely pins: every variations4 formula in the 4D WGSL
     // kernel, run over genuinely 4D orbits via variationZoo4's w-mixing
     // blocks (see its doc), and the 4D kernel's final-transform lens slot —
     // neither exercised by the four 4D scenarios above.
@@ -900,13 +903,13 @@ const SCENARIOS: ScenarioDef[] = [
     sliceCenter: 0,
     sliceWidth: 0.35,
     sliceRelativeColor: false,
-    // Measured equal-N noise floor (fr-p7nu): CPU-vs-GPU maeRGB on SwiftShader
-    // is 0.225, stable bit-for-bit across repeated runs (see fold-zoo's own
-    // comment for why). 2x that (0.45) is below the bead's 1.0 floor, so
+    // Measured equal-N noise floor: CPU-vs-GPU maeRGB on SwiftShader is
+    // 0.225, stable bit-for-bit across repeated runs (see fold-zoo's own
+    // comment for why). 2x that (0.45) is below the default 1.0 floor, so
     // maeThreshold stays at the default-equivalent 1.0 rather than tightening
     // below it.
     maeThreshold: 1.0,
-    // Uniquely pins (fr-p7nu): the three Mandelbox fold variations in the 4D
+    // Uniquely pins: the three Mandelbox fold variations in the 4D
     // WGSL kernel, run over genuinely 4D orbits via foldZoo4's w-mixing
     // blocks (see its doc) — the full 4D radius/box fold, not a w = 0 slice.
   },
@@ -934,7 +937,7 @@ const SCENARIOS: ScenarioDef[] = [
     // default-equivalent 1.0 rather than tightening below it (fold-zoo-4d's
     // own reasoning, and it spells the value out for the same reason).
     maeThreshold: 1.0,
-    // Uniquely pins (fr-s9ll): the fold family's AUTHORED lengths in the
+    // Uniquely pins: the fold family's AUTHORED lengths in the
     // 4D WGSL kernel — Slot4's per-type `foldRadii` lanes over genuinely
     // 4D orbits, where the fold reads the full 4D radius/box.
   },
@@ -959,7 +962,7 @@ const SCENARIOS: ScenarioDef[] = [
     sliceCenter: 0,
     sliceWidth: 0.35,
     sliceRelativeColor: false,
-    // Uniquely pins (fr-q0h6): the 4D kernel's symmetry expansion — Slot4's
+    // Uniquely pins: the 4D kernel's symmetry expansion — Slot4's
     // four post-rotation rows and `hasPost`, the copy-major slot order and
     // its inherited weights/color pair, and Params4's `baseTransformCount`
     // fold. Every other 4D scenario here is order 1, where all of that is
@@ -1012,9 +1015,9 @@ const EQUAL_N_CALL_ITERATIONS = 16_777_216;
 const EQUAL_N_CALLS = 3;
 const EQUAL_N_ITERATIONS = EQUAL_N_CALL_ITERATIONS * EQUAL_N_CALLS; // 50,331,648
 
-/** Agreement thresholds (fr-npb): below these, CPU/GPU output is accepted as
+/** Agreement thresholds: below these, CPU/GPU output is accepted as
  * the same statistical render (Monte-Carlo shot noise, not divergence) — see
- * `docs/spike-fr-53k-gpu-flame-accum.md`'s measured figures, which sit
+ * `docs/flame-gpu-accumulation-spike.md`'s measured figures, which sit
  * comfortably under both. The MAE threshold is the DEFAULT bar, calibrated
  * on the compact-filament presets' ~0.3 noise floor; a scenario whose
  * equal-N floor is intrinsically higher overrides it per scenario
@@ -1153,7 +1156,7 @@ type CpuChunkFn = (
 ) => FlameHistogram;
 
 /**
- * A scenario's two engines (fr-e26): the CPU oracle's chunk function and
+ * A scenario's two engines: the CPU oracle's chunk function and
  * the production GPU backend factory — everything dimension-specific,
  * behind which `runScenario`'s timed/equal-N/display-downsample pipeline is
  * shared verbatim by the 3D and 4D kernels. Built by {@link prepare3D} /
@@ -1344,7 +1347,7 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
  * the app would for that palette/mode combination.
  *
  * Takes the BASE 4D transforms (not just a count) so the `"transform"` case
- * can thread each map's authored `colorIndex` (fr-axxl) through to
+ * can thread each map's authored `colorIndex` through to
  * {@link transformColors}, exactly like the worker's own `buildFourDColor`
  * reuses its stored `baseTransforms4`.
  */
@@ -1507,7 +1510,7 @@ async function runGpuTimed(
 interface GpuEqualNResult {
   histogram: FlameHistogram;
   /**
-   * fr-ee9: the SAME backend's own `snapshotDisplay()` output, taken right
+   * The SAME backend's own `snapshotDisplay()` output, taken right
    * after `histogram` (no further `accumulate()` calls in between — both
    * read the identical resident buffer). `undefined` only if this backend
    * has no `snapshotDisplay` (shouldn't happen for a production GPU backend
@@ -1515,7 +1518,7 @@ interface GpuEqualNResult {
    * honest about the interface's optionality rather than asserting it).
    */
   gpuDisplayDownsample?: FlameHistogram;
-  /** fr-ee9: see {@link measureRedisplayCost}'s doc; `undefined` under the
+  /** See {@link measureRedisplayCost}'s doc; `undefined` under the
    * same condition as `gpuDisplayDownsample`. */
   redisplayCost?: RedisplayCostMetrics;
 }
@@ -1533,7 +1536,7 @@ interface GpuEqualNResult {
  * NOT downgraded to a graceful `{ skipped }`, unlike a missing/failed
  * backend, because it signals a real bug rather than an absent capability.
  *
- * fr-ee9: also captures the display-downsample agreement leg's GPU side and
+ * Also captures the display-downsample agreement leg's GPU side and
  * the redisplay-cost bench, both against this SAME accumulated backend
  * before it is destroyed — see `GpuEqualNResult`'s doc. `runScenario` builds
  * the CPU-oracle side (a `downsampleFlame` call it needs anyway for its own
@@ -1649,14 +1652,14 @@ function passesAgreement(
   );
 }
 
-/** Per-bucket tolerance for the fr-ee9 display-downsample exactness check —
- * `max(1e-6, 1e-4 * max(|cpu|, 1))`, per the bead's brief. */
+/** Per-bucket tolerance for the display-downsample exactness check —
+ * `max(1e-6, 1e-4 * max(|cpu|, 1))`. */
 function displayDownsampleTolerance(cpuValue: number): number {
   return Math.max(1e-6, 1e-4 * Math.max(Math.abs(cpuValue), 1));
 }
 
 /**
- * fr-ee9's display-downsample agreement leg: compares the GPU
+ * The display-downsample agreement leg: compares the GPU
  * `snapshotDisplay` kernel's output against `downsampleFlame` fed the exact
  * SAME resident histogram (both `gpu` and `cpu` here are downsampled from
  * the same `backend.snapshot()` readback — see `GpuEqualNResult`'s doc) — an
@@ -1701,14 +1704,15 @@ function compareDisplayDownsample(
 const REDISPLAY_COST_REPS = 5;
 
 /**
- * fr-ee9's acceptance-evidence measurement: how much cheaper a progressive
- * redisplay tick is with the new resident-buffer downsample
- * (`snapshotDisplay` — GPU dispatch + readback + convert already included)
- * than with the OLD full-histogram-readback path (`snapshot` — readback +
- * convert already included — followed by a CPU `downsampleFlame` pass).
- * Both are timed against the SAME already-accumulated `backend` (no further
- * `accumulate()` calls in between, or between the two loops below), so
- * neither side's timing is skewed by doing more or less actual accumulation
+ * The GPU display-downsample's acceptance-evidence measurement: how much
+ * cheaper a progressive redisplay tick is with the new resident-buffer
+ * downsample (`snapshotDisplay` — GPU dispatch + readback + convert already
+ * included) than with the OLD full-histogram-readback path (`snapshot` —
+ * readback + convert already included — followed by a CPU `downsampleFlame`
+ * pass). Both are timed against the SAME already-accumulated `backend` (no
+ * further `accumulate()` calls in between, or between the two loops below),
+ * so neither side's timing is skewed by doing more or less actual
+ * accumulation
  * work — the ratio isolates the redisplay mechanism's own cost. Returns
  * `null` when `backend` has no `snapshotDisplay` (see `GpuEqualNResult`'s
  * doc for when that can happen).
@@ -1889,8 +1893,8 @@ async function runScenario(
   activity: ActivityBadge,
 ): Promise<ScenarioResultRecord> {
   // Everything dimension-specific — CPU oracle, projection/view/color
-  // derivation, production backend factory — lives behind the engines
-  // (fr-e26); the whole pipeline below is shared by the 3D and 4D kernels.
+  // derivation, production backend factory — lives behind the engines; the
+  // whole pipeline below is shared by the 3D and 4D kernels.
   const engines = buildEngines(def);
 
   setStatus(dom, `running: cpu timed — ${formatRate(NaN)}`);
@@ -1951,7 +1955,7 @@ async function runScenario(
       displayDownsample = { skipped: gpuEqualN.skipped };
       redisplayCost = { skipped: gpuEqualN.skipped };
     } else {
-      // fr-ee9: this IS the CPU oracle side of the display-downsample
+      // This IS the CPU oracle side of the display-downsample
       // agreement leg below (downsampleFlame fed the GPU's own resident
       // histogram) — computed once here for the existing tone-mapped-image
       // comparison, then reused for `compareDisplayDownsample` rather than
@@ -2005,7 +2009,7 @@ async function runScenario(
 }
 
 // ---------------------------------------------------------------------------
-// Standalone ss=1 display-downsample check (fr-ee9)
+// Standalone ss=1 display-downsample check
 // ---------------------------------------------------------------------------
 
 /** Small enough to accumulate and read back quickly — this check only needs
@@ -2016,7 +2020,7 @@ const SS1_HEIGHT = 135;
 const SS1_ITERATIONS = 4_000_000;
 
 /**
- * fr-ee9's ss=1 (no supersample) display-downsample agreement check,
+ * The ss=1 (no supersample) display-downsample agreement check,
  * standalone from the per-scenario legs above: every `SCENARIOS` entry runs
  * at the same fixed ss=2 accumulation (`ACCUM_WIDTH`/`ACCUM_HEIGHT`, both
  * `DISPLAY_WIDTH`/`HEIGHT * SUPERSAMPLE`), so none of them ever exercises
@@ -2024,7 +2028,7 @@ const SS1_ITERATIONS = 4_000_000;
  * path — phase pinned to 0, sigma pinned to its `MIN_FILTER_SIGMA` floor
  * (see flame.ts's `downsampleFlame` doc). Reworking every `ScenarioDef` to
  * carry its own supersample factor just for this would be a much bigger
- * change than the bead calls for, so this runs one small, cheap,
+ * change than this check warrants, so this runs one small, cheap,
  * independent accumulation at `SS1_WIDTH x SS1_HEIGHT` (accumulation ===
  * display resolution) using the first scenario's system, purely to exercise
  * that path — not a timed/visual comparison the way the scenarios above are.
@@ -2093,14 +2097,14 @@ async function runSs1DisplayDownsampleCheck(): Promise<
 }
 
 // ---------------------------------------------------------------------------
-// Surface-DE WGSL kernel section (fr-q1f8)
+// Surface-DE WGSL kernel section
 // ---------------------------------------------------------------------------
 //
 // Pins `src/fractal/surface-de-gpu.ts`'s fold-DE compute kernel against
 // `estimateDistance` (surface-de.ts, refine=false — the exact estimator the
 // kernel mirrors) on real query points, then times the march kernel on
-// mandelboxKifs — the brief §3.7 measurement. Since fr-55s1 the section
-// also pins the kernel's SECOND descent core: a fold-free system compiles
+// mandelboxKifs — the brief §3.7 measurement. The section also pins the
+// kernel's SECOND descent core: a fold-free system compiles
 // `core: "affine"` — the width-4 refined ladder — and is compared against
 // `estimateDistanceRefined`, the estimator THAT core mirrors. Which core
 // and which oracle is inferred per system from `deHasFolds(de)`, exactly
@@ -2123,58 +2127,59 @@ interface SurfaceSectionConfig {
   systems: "all" | "synthetic";
   timing: boolean;
   force: boolean;
-  /** fr-p8bc shade A/B leg probe widths (`--surface-shade-width`, e.g.
+  /** Shade probe-width A/B leg widths (`--surface-shade-width`, e.g.
    * "1,4"), default empty — the leg skips (silently) when this is empty. */
   surfaceShadeWidths: number[];
   /** Invalid `surfaceShadeWidth` tokens dropped while parsing
    * `surfaceShadeWidths` above (non-numeric or < 1) — unlike the other list
    * params' silent `parseSurfaceIntList` filter, this one is user-facing
-   * enough (hand-typed while chasing fr-p8bc's verdict) that a typo is
+   * enough (hand-typed while chasing the probe-width verdict) that a typo is
    * reported rather than silently doing nothing. Merged into the section's
    * `notes` by `runSurfaceShadeAbLeg`'s caller, since `parseSurfaceConfig`
    * runs before the section's `results` object exists. */
   shadeWidthNotes: string[];
-  /** fr-b72d opt-in leg (`--surface-aff4-sweep=1`): per-kaleidoscope-order
-   * affine4/fold4 eval-kernel timing across five arms (slab vs no-slab,
-   * fr-d0nn's register-pressure probe; uniform vs storage maps, fr-b72d's
-   * maps-load probe; affine4 vs fold4, the fold-4D-at-high-order curve).
-   * Default false — the leg is silent and never runs in CI; see
-   * `runSurfaceAff4SweepLeg`'s doc. */
+  /** The 4D kernel-cost opt-in leg (`--surface-aff4-sweep=1`):
+   * per-kaleidoscope-order affine4/fold4 eval-kernel timing across five
+   * arms (slab vs no-slab, the slab's register-pressure probe; uniform vs
+   * storage maps, the maps-load probe; affine4 vs fold4, the
+   * fold-4D-at-high-order curve). Default false — the leg is silent and
+   * never runs in CI; see `runSurfaceAff4SweepLeg`'s doc. */
   aff4Sweep: boolean;
-  /** fr-qjae opt-in leg (`--surface-plane-frame=1`): one production frame
-   * through a `groundPlane: true` kernel, checked against a strided CPU
-   * sanity march in hit- AND plane-RATE terms. Default false — the leg is
+  /** Ground-plane opt-in leg (`--surface-plane-frame=1`): one production
+   * frame through a `groundPlane: true` kernel, checked against a strided
+   * CPU sanity march in hit- AND plane-RATE terms. Default false — the leg is
    * silent and never runs in CI, the `aff4Sweep` gate's shape; see
    * `runSurfaceComputeFramePlaneLeg`'s doc for why it is opt-in (it is a
    * SECOND end-to-end frame on top of the five leg B already renders). */
   planeFrame: boolean;
-  /** fr-76pp opt-in (`--surface-canary-trip=N`, `surfaceCanaryTrip=N`):
-   * synthetically corrupt the Nth device-sanity canary check (1-based) so
-   * the whole "device-unreliable" path — trip, verdict, node printer, exit
-   * code — can be exercised end-to-end without a real device upset. The
-   * trip detail is prefixed `SYNTHETIC` so a rehearsal can never be
-   * mistaken for a real one. 0 (the default) = off. */
+  /** Device-sanity canary opt-in (`--surface-canary-trip=N`,
+   * `surfaceCanaryTrip=N`): synthetically corrupt the Nth device-sanity
+   * canary check (1-based) so the whole "device-unreliable" path — trip,
+   * verdict, node printer, exit code — can be exercised end-to-end without
+   * a real device upset. The trip detail is prefixed `SYNTHETIC` so a
+   * rehearsal can never be mistaken for a real one. 0 (the default) =
+   * off. */
   canaryTrip: number;
 }
 
 interface SurfaceKernelConfig {
-  /** Which descent body the kernel carries (fr-55s1; fr-dlxh; fr-rsp6).
+  /** Which descent body the kernel carries.
    * "fold" is the frontier this section was built around; "affine" is the
    * fixed width-4 refined ladder, where `variant`/`stage2` are inert (the
    * generator ignores them) and `width` is always the ladder's own 4;
    * "escape" is the forward escape-time loop, where `variant`/`stage2` are
    * likewise inert and `width` is carried only for a readable label (the
-   * generator ignores it too); "bulb" (fr-7u8t.9) is that loop's sibling
+   * generator ignores it too); "bulb" is that loop's sibling
    * one formula over — the forward triplex-power orbit — with the same
-   * inert options for the same reason; "affine4" is that ladder ONE DIMENSION UP
-   * behind the view lift (fr-dlxh M3) — same inert options as "affine",
-   * same fixed width 4 (`buildSurfaceDE4`'s `beamWidth`); "fold4" (fr-rsp6
-   * M4) is the fold frontier ONE DIMENSION UP behind the same view lift —
+   * inert options for the same reason; "affine4" is that ladder ONE
+   * DIMENSION UP behind the view lift — same inert options as "affine",
+   * same fixed width 4 (`buildSurfaceDE4`'s `beamWidth`); "fold4" is the
+   * fold frontier ONE DIMENSION UP behind the same view lift —
    * `variant` is always "private" (the frontier is function-scope private
    * by construction, module doc) and `width` is LIVE like "fold"'s, so
    * unlike "affine4" it keeps a real width sweep and its own
-   * production/informational split. "escape4" (fr-vag4) is the escape
-   * loop ONE DIMENSION UP behind the same view lift the 4D descent cores
+   * production/informational split. "escape4" is the escape loop ONE
+   * DIMENSION UP behind the same view lift the 4D descent cores
    * take — a FORWARD core and a 4D one at once — so it inherits escape's
    * inert `variant`/`stage2`/`width` exactly (the generator ignores all
    * three) and affine4's fixed-width, always-gating row rule. */
@@ -2200,23 +2205,22 @@ interface SurfaceAgreementRow {
   /** Whether this row gates the section verdict. The CPU oracle's fold
    * frontier width is the FIXED module constant
    * `SURFACE_FOLD_BEAM_WIDTH` (12) — `estimateDistance` cannot be built
-   * narrower (the fr-ck0w sweep rewrote the source to change it) — so
+   * narrower (the beam-width sweep rewrote the source to change it) — so
    * only rows at exactly that width compare like against like. Narrower
    * kernel widths are still run as an INFORMATIONAL measurement of the
-   * fr-5rvk narrow-width erosion (a real, expected estimator difference,
-   * not kernel disagreement). AFFINE-core rows always gate (fr-55s1):
+   * narrow-width erosion (a real, expected estimator difference, not
+   * kernel disagreement). AFFINE-core rows always gate:
    * their ladder is fixed at {@link SURFACE_AFFINE_LADDER_WIDTH}, which
    * IS the oracle's production `beamWidth`, so there is no width sweep
    * and every row is like against like. Escape and affine4 rows gate the
-   * same way (fr-dlxh) — neither has a width to sweep — and so do
-   * ESCAPE4 rows (fr-vag4), for the escape row's reason rather than the
-   * affine one's: a forward orbit has no frontier at all. FOLD4 rows gate
-   * like "fold"'s, not affine4's (fr-rsp6 M4): the fold frontier's
-   * production width is the same fixed `SURFACE_FOLD_BEAM_WIDTH`
-   * constant, one dimension up, so only rows at that width compare like
-   * against like — narrower rows are the same fr-5rvk erosion
-   * measurement, informational only. The M5 LENS leg's rows (fr-rsp6
-   * phase 2B) gate exactly like whichever core the lens wraps — a
+   * same way — neither has a width to sweep — and so do ESCAPE4 rows,
+   * for the escape row's reason rather than the affine one's: a forward
+   * orbit has no frontier at all. FOLD4 rows gate like "fold"'s, not
+   * affine4's: the fold frontier's production width is the same fixed
+   * `SURFACE_FOLD_BEAM_WIDTH` constant, one dimension up, so only rows at
+   * that width compare like against like — narrower rows are the same
+   * narrow-width erosion measurement, informational only. The M5 LENS
+   * leg's rows gate exactly like whichever core the lens wraps — a
    * `core: "affine4"` lens row always gates, a `core: "fold4"` one only at
    * `SURFACE_FOLD_BEAM_WIDTH` — since {@link compareSurface4Agreement}/
    * {@link compareSurfaceFold4Agreement} read `cfg.core`/`cfg.width` alone
@@ -2230,9 +2234,10 @@ interface SurfaceAgreementRow {
   /** Error-distribution report (diagnosis, not gating): the most positive
    * and most negative `gpu − cpu`. At a width NARROWER than the oracle's
    * both signs are pure width effects, per the descendFold doc: silent
-   * in-sphere floor-0 drops lose the true ancestor chain and OVERSHOOT
-   * (gpu > cpu — fr-5rvk measured exactly this on-attractor), while
-   * drop-folded escaped certificates freeze shallow and UNDER-estimate
+   * in-sphere floor-0 drops lose the true ancestor chain and OVERSHOOT (gpu
+   * > cpu — the pure-fold branch sweep measured exactly this on-attractor),
+   * while drop-folded escaped certificates freeze shallow and
+   * UNDER-estimate
    * ("loses tightness, never validity"). At the production width both
    * must vanish into f32 noise. */
   maxGpuMinusCpu: number;
@@ -2246,12 +2251,10 @@ interface SurfaceAgreementRow {
    * doesn't share this layout, and `excluded` below is that leg's own
    * query-mix diagnostic. */
   failuresByClass: { jittered: number; uniform: number; exact: number };
-  /** fr-dlxh escape + affine4 legs, fr-rsp6's fold4 leg, (phase 2B) the
-   * M5 lens4 leg, fr-7u8t.9's bulb leg and fr-vag4's escape4 leg: queries
-   * a pre-hoc stability
-   * gate excluded before
-   * computing `failures` — `n - stableCount`. The THREE FORWARD legs' gate is
-   * the f32-vs-f64 orbit ensemble (`compareSurfaceForwardAgreement`'s doc); the
+  /** The escape, affine4, fold4, M5 lens4, bulb and escape4 legs:
+   * queries a pre-hoc stability gate excluded before computing `failures`
+   * — `n - stableCount`. The THREE FORWARD legs' gate is the f32-vs-f64
+   * orbit ensemble (`compareSurfaceForwardAgreement`'s doc); the
    * affine4, fold4 AND lens4 legs' is the SAME oracle-continuity classifier
    * ({@link surface4QueryStable} — bisection queries parked on
    * beam-selection discontinuities), evaluated against whichever composed
@@ -2263,10 +2266,9 @@ interface SurfaceAgreementRow {
    * {@link SURFACE_LENS4_EXCLUDED_CAP}'s doc. `undefined` on every 3D
    * fold/affine/lens row (nothing is ever excluded there). */
   excluded?: number;
-  /** The FORWARD-orbit legs only (fr-dlxh's escape, fr-7u8t.9's bulb,
-   * fr-vag4's escape4):
-   * stable-classified failures POST-HOC verified as shadow flips (the
-   * GPU's value matched a 1..4-ULP neighbor orbit's fround value —
+  /** The FORWARD-orbit legs only (escape, bulb, escape4):
+   * stable-classified failures POST-HOC verified as shadow flips (the GPU's
+   * value matched a 1..4-ULP neighbor orbit's fround value —
    * {@link forwardShadowFlipVerified}); excluded from `failures` but
    * capped ({@link SURFACE_ESCAPE_FLIP_CAP} /
    * {@link SURFACE_BULB_FLIP_CAP} — the escape4 leg reuses the escape
@@ -2284,10 +2286,10 @@ interface SurfaceAgreementRow {
 interface SurfaceCrossCheckRow {
   /** "shared-vs-private": identical (width, stage2) must be EXACTLY equal
    * (same arithmetic, different frontier storage) — mismatches fail the
-   * verdict. "stage2-on-vs-off": informational only — the fr-kidj stage-2
-   * skips are value no-ops in exact arithmetic, but f32 rounding may flip
-   * marginal frontier insertions, so deltas are reported, never gated.
-   * "slabext-on-vs-off" (fr-rsp6 M4): the fold4 leg's `slabExt` A/B on
+   * verdict. "stage2-on-vs-off": informational only — the branch-and-bound
+   * stage-2 skips are value no-ops in exact arithmetic, but f32 rounding
+   * may flip marginal frontier insertions, so deltas are reported, never
+   * gated. "slabext-on-vs-off": the fold4 leg's `slabExt` A/B on
    * `fold4Boxfold` (`sliceHalfW` 0) — `segmentRadius4(q, 0)` is `length(q)`
    * bit for bit there (surface-de-gpu.ts's `slabExt` doc), so this is
    * TOLERANCE-gated like the opt-in aff4 sweep leg's own slab/no-slab
@@ -2337,7 +2339,7 @@ interface SurfaceTimingRow {
 }
 
 /**
- * fr-tzdg leg A — the march-unproject agreement gate: the app path's ray
+ * Leg A — the march-unproject agreement gate: the app path's ray
  * derivation (`rays:"unproject"`, dirs from ShadeParams.invProjView, the
  * exact kernel config `SurfaceComputeRenderer` compiles) marched to
  * completion and compared per ray against a CPU emulator that derives rays
@@ -2408,7 +2410,7 @@ interface SurfaceUnprojectRow {
 }
 
 /**
- * fr-tzdg leg B — one end-to-end frame through the PRODUCTION
+ * Leg B — one end-to-end frame through the PRODUCTION
  * `SurfaceComputeRenderer` (march slices + shade batches, the app's exact
  * host loop), presented onto a canvas the headless runner screenshots.
  * Informational, except: zero hit rays on a REAL adapter, or a null
@@ -2422,15 +2424,15 @@ interface SurfaceComputeFrameRow {
   passes: number;
   truncated: boolean;
   counts: { hit: number; miss: number; exhausted: number; active: number };
-  /** Escape frame leg only (fr-dlxh): whole-frame GPU hit rate vs a
+  /** Escape frame leg only: whole-frame GPU hit rate vs a
    * strided CPU sanity march's rate — the timing legs' rate-band idiom in
    * place of a per-pixel comparison (see the leg's design comment). */
   sanityGpuHitRate?: number;
   sanityCpuHitRate?: number;
-  /** ifs4 frame leg only (fr-dlxh 4D; fr-rsp6 phase 3's fold4 invocation
-   * gets one too, same leg function): a SECOND frame rendered by the SAME
-   * renderer at a different `view4` (rotated rotor, different w0) — the
-   * per-frame view-repack proof (`spec.view4` is per-renderFrame state,
+  /** ifs4 frame leg only (the fold4 invocation gets one too, same leg
+   * function): a SECOND frame rendered by the SAME renderer at a different
+   * `view4` (rotated rotor, different w0) — the per-frame view-repack proof
+   * (`spec.view4` is per-renderFrame state,
    * exactly scene.ts's live rotor/slice contract). Same numbers as the
    * primary frame's, gated by the call site under the same rules. */
   view2?: {
@@ -2445,7 +2447,7 @@ interface SurfaceComputeFrameRow {
 }
 
 /**
- * fr-qjae: leg B's GROUND-PLANE row — one end-to-end frame through a
+ * Leg B's GROUND-PLANE row — one end-to-end frame through a
  * `groundPlane: true` kernel, whose whole point is the fifth ray status.
  * Its own row type rather than a widened {@link SurfaceComputeFrameRow}
  * because `counts.plane` is the measurement here (every other frame leg's
@@ -2499,12 +2501,12 @@ interface ShadeAbArmResult {
 }
 
 /**
- * fr-p8bc shade A/B leg — one row per (pose, probe width): the PRODUCTION
- * `SurfaceComputeRenderer` at shipped-parity (`shadeDeWidth =
+ * The shade probe-width A/B leg — one row per (pose, probe width): the
+ * PRODUCTION `SurfaceComputeRenderer` at shipped-parity (`shadeDeWidth =
  * SURFACE_FOLD_BEAM_WIDTH`, "baseline") against a cheap-shade-probe-width
  * renderer ("cheap"), same DE/frame-spec/raster otherwise. Purely
- * informational (see `runSurfaceShadeAbLeg`'s doc) — this is the measured
- * verdict for fr-p8bc, not a section gate.
+ * informational (see `runSurfaceShadeAbLeg`'s doc) — this is where the
+ * probe-width verdict was measured, not a section gate.
  */
 interface SurfaceShadeAbRow {
   pose: "standard" | "near";
@@ -2544,10 +2546,11 @@ interface SurfaceShadeAbRow {
 }
 
 /**
- * fr-b72d opt-in sweep leg — one (order, core, variant, maps) timing row.
- * `usPerQuery` is derived from `minMs` (the least-noise-contaminated
- * estimate of the kernel's own cost), not `meanMs`. `reps` is normally
- * {@link SURFACE_AFF4_SWEEP_REPS}, but reads lower when a timed dispatch
+ * The 4D kernel-cost opt-in sweep leg — one (order, core, variant, maps)
+ * timing row. `usPerQuery` is derived from `minMs` (the
+ * least-noise-contaminated estimate of the kernel's own cost), not
+ * `meanMs`. `reps` is normally {@link SURFACE_AFF4_SWEEP_REPS}, but reads
+ * lower when a timed dispatch
  * blew past {@link SURFACE_AFF4_SWEEP_REP_CAP_MS} and the loop stopped
  * early — `minMs`/`meanMs` still cover exactly the reps that ran. `core`
  * and `maps` are the two probe axes this row can vary over independently
@@ -2574,14 +2577,14 @@ interface SurfaceAff4SweepRow {
 }
 
 /**
- * fr-b72d opt-in sweep leg — one order's exact-equality check between two
- * kernel variants that are expected to agree bit for bit (see {@link
- * SURFACE_AFF4_SWEEP_TOL_FACTOR}'s doc for why). `pair` names which two
- * arms are being compared: `"slab-vs-noslab"` is the original affine4
+ * The 4D kernel-cost opt-in sweep leg — one order's exact-equality check
+ * between two kernel variants that are expected to agree bit for bit (see
+ * {@link SURFACE_AFF4_SWEEP_TOL_FACTOR}'s doc for why). `pair` names which
+ * two arms are being compared: `"slab-vs-noslab"` is the original affine4
  * register-pressure A/B; `"affine4-uniform-vs-storage"` and
- * `"fold4-uniform-vs-storage"` are fr-b72d's maps-load probe, one per
- * core, each comparing that core's noslab-uniform arm against its own
- * noslab-storage arm. `withinTolerance` false means the leg fails the
+ * `"fold4-uniform-vs-storage"` are the maps-load probe, one per core, each
+ * comparing that core's noslab-uniform arm against its own noslab-storage
+ * arm. `withinTolerance` false means the leg fails the
  * section — see `runSurfaceAff4SweepLeg`'s doc.
  */
 interface SurfaceAff4SweepAgreement {
@@ -2597,12 +2600,13 @@ interface SurfaceAff4SweepAgreement {
 }
 
 /**
- * fr-b72d opt-in sweep leg's structured result (`config.aff4Sweep`,
- * `surfaceAff4Sweep=1`) — see `runSurfaceAff4SweepLeg`'s doc for what it
- * measures. Every row/agreement entry is duplicated as a human-readable
- * line in `results.notes` (the `computeFrame4` leg's dual-reporting
- * convention), so a headless run's stdout discloses it via the existing
- * `note:` printer without a bespoke stdout formatter.
+ * The 4D kernel-cost opt-in sweep leg's structured result
+ * (`config.aff4Sweep`, `surfaceAff4Sweep=1`) — see
+ * `runSurfaceAff4SweepLeg`'s doc for what it measures. Every row/agreement
+ * entry is duplicated as a human-readable line in `results.notes` (the
+ * `computeFrame4` leg's dual-reporting convention), so a headless run's
+ * stdout discloses it via the existing `note:` printer without a bespoke
+ * stdout formatter.
  */
 interface SurfaceAff4SweepResult {
   rows: SurfaceAff4SweepRow[];
@@ -2615,7 +2619,7 @@ interface SurfaceAff4SweepResult {
   compileMs: Record<string, number>;
 }
 
-/** fr-76pp: the device-sanity tripwire's result — see
+/** The device-sanity tripwire's result — see
  * {@link createSurfaceCanary}'s doc for the mechanism and the incident it
  * exists for. Present whenever the canary armed (absent = canary disabled,
  * with the reason in `notes`). */
@@ -2635,9 +2639,9 @@ interface SurfaceDeviceSanityResult {
 }
 
 interface SurfaceDeResults {
-  /** `"device-unreliable"` (fr-76pp) means the device-sanity canary tripped
-   * mid-run: numeric rows in this result are NOT evidence of a kernel
-   * defect — rerun on a quiet machine. The node driver refuses to exit
+  /** `"device-unreliable"` means the device-sanity canary tripped mid-run:
+   * numeric rows in this result are NOT evidence of a kernel defect —
+   * rerun on a quiet machine. The node driver refuses to exit
    * green on it (exit 2, the "refusing to report success" convention). */
   verdict: "pass" | "fail" | "skipped" | "device-unreliable";
   reason?: string;
@@ -2646,44 +2650,44 @@ interface SurfaceDeResults {
   agreement: SurfaceAgreementRow[];
   crossChecks: SurfaceCrossCheckRow[];
   timing: SurfaceTimingRow[];
-  /** fr-tzdg leg A (gating) — absent until the leg runs; SkippedResult when
+  /** Leg A (gating) — absent until the leg runs; SkippedResult when
    * it could not run (the error is also in notes, and the verdict fails). */
   marchUnproject?: SurfaceUnprojectRow | SkippedResult;
-  /** fr-55s1 stage C: leg A over the lens field class
+  /** Stage C: leg A over the lens field class
    * (lensMandelboxOverAffine) — the affine core under the 81-branch
    * mandelbox lens, marched by the app's exact ray derivation. Gates like
    * {@link marchUnproject}. */
   marchUnprojectLens?: SurfaceUnprojectRow | SkippedResult;
-  /** fr-5wlv.5 (balloonMarch): leg A over the balloon inverted-union —
-   * one fold system's kernel with `balloon: true` at the rest regime
-   * (R = 1.6, the state that persists — fr-5wlv.1's spike regimes),
+  /** balloonMarch: leg A over the balloon inverted-union — one fold
+   * system's kernel with `balloon: true` at the rest regime
+   * (R = 1.6, the state that persists — the balloon spike's regimes),
    * marched by the app's exact ray derivation through the balloon march
    * entry (no visible-sphere gate, `t = 0` start, the oracle's far cap)
    * against the CPU emulator's balloon arm (the union DE over the same
    * core-routed estimator). Gates like {@link marchUnproject}, the
    * silhouette-flip exclusion machinery included. */
   marchUnprojectBalloon?: SurfaceUnprojectRow | SkippedResult;
-  /** fr-tzdg leg B (informational + canvas artifact) — absent until run;
+  /** Leg B (informational + canvas artifact) — absent until run;
    * SkippedResult when mandelboxKifs was excluded or the renderer broke. */
   computeFrame?: SurfaceComputeFrameRow | SkippedResult;
-  /** fr-55s1 stage C: leg B over the lens field class — the PRODUCTION
+  /** Stage C: leg B over the lens field class — the PRODUCTION
    * SurfaceComputeRenderer on lensMandelboxOverAffine (affine core +
    * 81-branch mandelbox lens, branch-scaled priors). Gates like
    * {@link computeFrame} (zero hits on real hardware fails). */
   computeFrameLens?: SurfaceComputeFrameRow | SkippedResult;
-  /** fr-dlxh: leg B over the escape class — the PRODUCTION renderer on
+  /** Leg B over the escape class — the PRODUCTION renderer on
    * escMandelbox through `{ kind: "escape" }` (forward-orbit core, no
    * maps buffer, unscaled priors). Gates like {@link computeFrame}, plus
    * the strided CPU sanity march's hit-rate band on real hardware. */
   computeFrameEscape?: SurfaceComputeFrameRow | SkippedResult;
-  /** fr-j231: {@link computeFrameEscape} over a CROSS-FAMILY chain
+  /** {@link computeFrameEscape} over a CROSS-FAMILY chain
    * (`escChainBulb` — mandelbox -> triplex power). Same leg, same gates,
    * one thing the M2 eval leg above cannot reach: the HIT-INFO body's
    * power branch and its `log(log r / log R) / log d` escape count, which
-   * the value body has no counterpart for. It also renders the claim
-   * fr-j231 actually makes — that a document holding a Mandelbox and a
-   * Mandelbulb reaches the production renderer through the existing
-   * `{ kind: "escape" }` target — end to end.
+   * the value body has no counterpart for. It also renders the claim the
+   * cross-family power links actually make — that a document holding a
+   * Mandelbox and a Mandelbulb reaches the production renderer through the
+   * existing `{ kind: "escape" }` target — end to end.
    *
    * NOT a substitute for the eval row, and it is worth being explicit
    * about that: the fear going in was that a power link's `8·r⁷` noise
@@ -2705,7 +2709,7 @@ interface SurfaceDeResults {
    * NOTE the same stdout caveat as {@link computeFrame4}: the runner's
    * printer predates this field, so the row also lands in `notes`. */
   computeFrameEscapeXfam?: SurfaceComputeFrameRow | SkippedResult;
-  /** fr-dlxh 4D (stage B2): leg B over the ifs4 class — the PRODUCTION
+  /** Stage B2: leg B over the ifs4 class — the PRODUCTION
    * renderer on aff4Kaleido through `{ kind: "ifs4" }` (affine4 ladder
    * core, GpuMap4 maps, the REQUIRED `view4` spec field), plus a
    * second-view4 frame from the same renderer ({@link
@@ -2721,7 +2725,7 @@ interface SurfaceDeResults {
    * field — the row also lands in `notes` (the frame-row voice) so the
    * run's summary discloses it; results.json carries the full row. */
   computeFrame4?: SurfaceComputeFrameRow | SkippedResult;
-  /** fr-rsp6 phase 3: {@link computeFrame4}'s fold4 twin — the SAME leg
+  /** {@link computeFrame4}'s fold4 twin — the SAME leg
    * body ({@link runSurfaceComputeFrame4Leg}) on `fold4Boxfold` instead of
    * `aff4Kaleido`. An `ifs4` target whose DE carries fold maps routes
    * `SurfaceComputeRenderer.create` to `core: "fold4"` on its own
@@ -2736,26 +2740,27 @@ interface SurfaceDeResults {
    * completed-empty-vs-CPU-hits clause. Same dual notes/results.json
    * reporting. */
   computeFrame4Fold?: SurfaceComputeFrameRow | SkippedResult;
-  /** fr-qjae opt-in leg (`config.planeFrame`, `surfacePlaneFrame=1`) — leg
-   * B over a `groundPlane: true` kernel, the ONE composition no other leg
-   * reaches (fr-rhn5's kernels are otherwise pinned by source/packer tests
-   * and in-browser verification alone). `SkippedResult` when requested but
-   * the fixture did not build or the renderer broke; ABSENT when the flag
-   * is off (the `shadeAb`/`aff4Sweep` opt-in convention — silent, no note).
-   * Gates like {@link computeFrameEscape}: zero hits on a real adapter, and
-   * on an untruncated frame BOTH rate bands against the strided CPU sanity
-   * march (hit and plane). Same dual notes/results.json reporting as
-   * {@link computeFrame4} — the headless runner's stdout printer does not
-   * know this field. */
+  /** Ground-plane opt-in leg (`config.planeFrame`, `surfacePlaneFrame=1`)
+   * — leg B over a `groundPlane: true` kernel, the ONE composition no other
+   * leg reaches (the plane kernels are otherwise pinned by source/packer
+   * tests and in-browser verification alone). `SkippedResult` when
+   * requested but the fixture did not build or the renderer broke; ABSENT
+   * when the flag is off (the `shadeAb`/`aff4Sweep` opt-in convention —
+   * silent, no note). Gates like {@link computeFrameEscape}: zero hits on a
+   * real adapter, and on an untruncated frame BOTH rate bands against the
+   * strided CPU sanity march (hit and plane). Same dual notes/results.json
+   * reporting as {@link computeFrame4} — the headless runner's stdout
+   * printer does not know this field. */
   computeFramePlane?: SurfacePlaneFrameRow | SkippedResult;
-  /** fr-p8bc shade A/B leg (informational + canvas artifacts) — absent when
-   * `surfaceShadeWidths` is empty (the default, silent) or every requested
-   * width was skipped (see `runSurfaceShadeAbLeg`'s doc); never affects
-   * {@link SurfaceDeResults.verdict}. */
+  /** Shade probe-width A/B leg (informational + canvas artifacts) — absent
+   * when `surfaceShadeWidths` is empty (the default, silent) or every
+   * requested width was skipped (see `runSurfaceShadeAbLeg`'s doc); never
+   * affects {@link SurfaceDeResults.verdict}. */
   shadeAb?: SurfaceShadeAbRow[];
-  /** fr-b72d opt-in leg (`config.aff4Sweep`, `surfaceAff4Sweep=1`) —
-   * `surfaceShadeWidths`' "absent when not requested" convention, not
-   * {@link computeFrame4}'s always-attempted `SkippedResult` shape: absent
+  /** The 4D kernel-cost opt-in leg (`config.aff4Sweep`,
+   * `surfaceAff4Sweep=1`) — `surfaceShadeWidths`' "absent when not
+   * requested" convention, not {@link computeFrame4}'s always-attempted
+   * `SkippedResult` shape: absent
    * when off (the default, silent), when skipped on a software adapter
    * without `surfaceForce=1` (noted), or before the first order's kernels
    * ever compiled; otherwise holds whatever orders completed even if a
@@ -2764,7 +2769,7 @@ interface SurfaceDeResults {
    * beyond {@link SURFACE_AFF4_SWEEP_TOL_FACTOR}, or on an unhandled
    * error mid-sweep (also noted either way). */
   aff4Sweep?: SurfaceAff4SweepResult;
-  /** fr-76pp device-sanity tripwire state — absent only when the canary
+  /** Device-sanity tripwire state — absent only when the canary
    * could not arm (setup failure, disclosed in notes). */
   deviceSanity?: SurfaceDeviceSanityResult;
   /** Skipped configs/systems, WGSL compile errors (verbatim), and other
@@ -2783,12 +2788,12 @@ const SURFACE_CLOUD_POINTS = 100_000;
  * rather than importing the three-laden material module. */
 const SURFACE_MARCH_STEPS = 160;
 /** How many un-excluded status mismatches a march-unproject row describes
- * ray-by-ray before it stops printing (fr-7tl3). Sized for the handful of
+ * ray-by-ray before it stops printing. Sized for the handful of
  * silhouette rays a healthy leg produces, not for a broken kernel. */
 const SURFACE_MISMATCH_DIAG_CAP = 8;
 /** How far the CPU march's closest approach may sit from the acceptance
  * threshold — as a factor either side of `d / eps == 1` — and still count
- * as a silhouette flip rather than a real disagreement (fr-7tl3). Matches
+ * as a silhouette flip rather than a real disagreement. Matches
  * the `1.5·eps` convention the both-hit graze branch already uses, and
  * discriminates sharply: the two measured flips read 0.994 and 1.02, while
  * a solid hit the other side never approached, or a genuinely empty ray,
@@ -2803,7 +2808,7 @@ const SURFACE_POSE_PHI = 1.2;
 const SURFACE_POSE_DIST_FACTOR = 2.4;
 const SURFACE_POSE_FOV_DEG = 60;
 
-/** Cone-eps slope `2·tan(fov/2) / 720` — 720 is the fr-ck0w width sweep's
+/** Cone-eps slope `2·tan(fov/2) / 720` — 720 is the beam-width sweep's
  * viewport HEIGHT (scripts/fold-width-sweep.mjs), deliberately DECOUPLED
  * from the bench raster exactly like erosion-repro.harness.ts's
  * APP_PIXEL_EPS: the raster only decides how many rays we trace, not how
@@ -2812,19 +2817,19 @@ const SURFACE_PIXEL_EPS =
   (2 * Math.tan((SURFACE_POSE_FOV_DEG * Math.PI) / 360)) / 720;
 
 /** Adaptive stepsThisPass: start at 1, double while the last pass came in
- * under the target, capped — every submission stays bounded (the fr-096u
- * i915 preemption-timeout lesson, host-side). */
+ * under the target, capped — every submission stays bounded (the
+ * kernel-confirmed i915 preemption-hang lesson, host-side). */
 const SURFACE_PASS_TARGET_MS = 250;
 const SURFACE_MAX_STEPS_PER_PASS = 32;
 
-/** The affine core's ladder width (fr-55s1): fixed at the CPU oracle's
+/** The affine core's ladder width: fixed at the CPU oracle's
  * production `SurfaceDE.beamWidth`, which `buildSurfaceDE` always sets to
  * 4 and `surface-material.ts`'s affine arm hardcodes. Unlike the fold
  * frontier there is no width to sweep — so every affine agreement row is
  * a GATING row. */
 const SURFACE_AFFINE_LADDER_WIDTH = 4;
 
-/** fr-dlxh: how many of the escape eval leg's 700 queries per system the
+/** How many of the escape eval leg's 700 queries per system the
  * f32-stability gate (`compareSurfaceForwardAgreement`'s doc) may exclude
  * before the leg stops trusting its own `failures` count and fails the
  * section outright — 20%. The pin is STRUCTURAL (the classifier must not
@@ -2838,7 +2843,7 @@ const SURFACE_AFFINE_LADDER_WIDTH = 4;
  * noise. */
 const SURFACE_ESCAPE_EXCLUDED_CAP = 140;
 
-/** fr-7u8t.9: {@link SURFACE_ESCAPE_EXCLUDED_CAP} for the bulb eval leg,
+/** {@link SURFACE_ESCAPE_EXCLUDED_CAP} for the bulb eval leg,
  * at the same structural 20% of 700. The classifier is the escape leg's
  * unchanged ({@link forwardQueryStable}) and so is the reason for a cap
  * — it must not be allowed to eat the leg — but the orbit it brackets is
@@ -2849,12 +2854,12 @@ const SURFACE_ESCAPE_EXCLUDED_CAP = 140;
  * boundary) leaves 560 queries gating. */
 const SURFACE_BULB_EXCLUDED_CAP = 140;
 
-/** fr-7u8t.9: {@link SURFACE_ESCAPE_FLIP_CAP} for the bulb leg — same
+/** {@link SURFACE_ESCAPE_FLIP_CAP} for the bulb leg — same
  * 1%-of-700 reasoning, same meaning (isolated post-hoc shadow flips are
  * the chaos tax; dozens are a bug wearing its costume). */
 const SURFACE_BULB_FLIP_CAP = 7;
 
-/** fr-dlxh M3: how many of the affine4 leg's 700 queries per system the
+/** How many of the affine4 leg's 700 queries per system the
  * oracle-continuity gate ({@link surface4QueryStable}) may exclude before
  * the leg stops trusting its own `failures` count and fails the section —
  * 3%. Structural, like the escape cap: far above the measured census
@@ -2865,8 +2870,8 @@ const SURFACE_BULB_FLIP_CAP = 7;
  * disagreement behind "edge-parked", not absorbing expected f32 noise. */
 const SURFACE_AFFINE4_EXCLUDED_CAP = 21;
 
-/** fr-rsp6 M4: the starting point for how many of the fold4 eval leg's 700
- * queries per system the oracle-continuity gate ({@link surface4QueryStable},
+/** The starting point for how many of the fold4 eval leg's 700 queries per
+ * system the oracle-continuity gate ({@link surface4QueryStable},
  * `refined=false`) may exclude before that system's row stops trusting its
  * own `failures` count — {@link SURFACE_AFFINE4_EXCLUDED_CAP}'s 3%, one
  * estimator class over. NOT a floor to silently widen: a system whose
@@ -2892,7 +2897,7 @@ function fold4ExcludedCap(system: string): number {
   );
 }
 
-/** fr-rsp6 phase 2B: the M5 LENS agreement leg's own exclusion cap — the
+/** The M5 LENS agreement leg's own exclusion cap — the
  * same 3% starting point as {@link SURFACE_AFFINE4_EXCLUDED_CAP} /
  * {@link SURFACE_FOLD4_EXCLUDED_CAP}, one selection-discontinuity source
  * further over: the lens wrapper's own branch-argmin (`descendLens4`) adds
@@ -2921,7 +2926,7 @@ function lens4ExcludedCap(system: string): number {
   );
 }
 
-/** fr-rsp6 M4's slabExt A/B gate on `fold4Boxfold` (`sliceHalfW` 0): the
+/** The fold4 leg's slabExt A/B gate on `fold4Boxfold` (`sliceHalfW` 0): the
  * same noise/real boundary as {@link SURFACE_AFF4_SWEEP_TOL_FACTOR}, scaled
  * by the system's own `boundingRadius` like every other surface eval
  * tolerance in this file — see `runSurfaceDeSection`'s fold4 slabExt block
@@ -2929,13 +2934,14 @@ function lens4ExcludedCap(system: string): number {
  * bit-identical. */
 const SURFACE_FOLD4_SLABEXT_TOL_FACTOR = 1e-5;
 
-/** fr-b72d opt-in sweep leg (`runSurfaceAff4SweepLeg`): the kaleidoscope
- * orders it times the affine4 eval kernel at. 1 and 6 are the two measured
- * endpoints (compute 1.7x faster than fragment GLSL at order 1, ~35x
- * SLOWER at order 6, real Iris Xe); 2/3/4 fill in the unmeasured middle. */
+/** The 4D kernel-cost opt-in sweep leg (`runSurfaceAff4SweepLeg`): the
+ * kaleidoscope orders it times the affine4 eval kernel at. 1 and 6 are the
+ * two measured endpoints (compute 1.7x faster than fragment GLSL at order
+ * 1, ~35x SLOWER at order 6, real Iris Xe); 2/3/4 fill in the unmeasured
+ * middle. */
 const SURFACE_AFF4_SWEEP_ORDERS = [1, 2, 3, 4, 6];
-/** fr-b72d sweep leg: the CEILING an adaptively-sized batch is clamped to
- * on a real adapter — tiled up from {@link affine4Queries}' 700-query mix
+/** The sweep leg: the CEILING an adaptively-sized batch is clamped to on
+ * a real adapter — tiled up from {@link affine4Queries}' 700-query mix
  * (see the leg's doc for why tiling, not resampling). Every (order, core)
  * pair sizes its OWN batch toward {@link SURFACE_AFF4_SWEEP_TARGET_MS} from
  * a measured pilot (the leg's doc's pilot → batch derivation); this cap
@@ -2943,7 +2949,7 @@ const SURFACE_AFF4_SWEEP_ORDERS = [1, 2, 3, 4, 6];
  * configuration (low order, affine4) reaches it while an expensive one
  * (order 6, fold4) sizes far below it. */
 const SURFACE_AFF4_SWEEP_BATCH = 65536;
-/** fr-b72d sweep leg: the adaptive batch's ceiling under
+/** The sweep leg: the adaptive batch's ceiling under
  * `acquired.software` (SwiftShader CI/dev boxes) instead of {@link
  * SURFACE_AFF4_SWEEP_BATCH} — 5 orders × 2 cores × up to 5 arms × (1 pilot
  * + 1 warmup + 5 timed) dispatches at the real-adapter ceiling would be
@@ -2951,7 +2957,7 @@ const SURFACE_AFF4_SWEEP_BATCH = 65536;
  * job is only to prove it dispatches and agrees, never to produce a
  * meaningful timing curve. */
 const SURFACE_AFF4_SWEEP_BATCH_SW = 8192;
-/** fr-b72d sweep leg's adaptive batch sizing: the pilot dispatch's size, in
+/** The sweep leg's adaptive batch sizing: the pilot dispatch's size, in
  * whole tiles of {@link affine4Queries}' 700-query mix (2 tiles = 1400
  * queries) — see the leg's doc for why a fixed 65536-query batch is unsafe
  * at order 6 under `core: "fold4"` (multi-ten-second single submission,
@@ -2961,7 +2967,7 @@ const SURFACE_AFF4_SWEEP_BATCH_SW = 8192;
  * pathologically slow pilot still leaves a comparable-sized batch to time
  * rather than degenerating toward zero. */
 const SURFACE_AFF4_SWEEP_PILOT_TILES = 2;
-/** fr-b72d sweep leg's adaptive batch sizing: the wall-clock budget each
+/** The sweep leg's adaptive batch sizing: the wall-clock budget each
  * (order, core)'s derived batch targets per TIMED dispatch, extrapolated
  * from the pilot's measured µs/query and rounded to a whole number of
  * 700-query tiles, then clamped to
@@ -2972,15 +2978,15 @@ const SURFACE_AFF4_SWEEP_PILOT_TILES = 2;
  * pilot's estimate being wrong (e.g. an arm genuinely costlier than the
  * noslab-storage pipeline the pilot measures). */
 const SURFACE_AFF4_SWEEP_TARGET_MS = 1500;
-/** fr-b72d sweep leg: timed dispatches per arm, after one untimed warmup
+/** The sweep leg: timed dispatches per arm, after one untimed warmup
  * dispatch (which also supplies the agreement-gate value — see the leg's
  * doc). */
 const SURFACE_AFF4_SWEEP_REPS = 5;
-/** fr-b72d sweep leg: a single timed dispatch beyond this is a hang risk,
+/** The sweep leg: a single timed dispatch beyond this is a hang risk,
  * not a measurement worth waiting out — the rep loop stops after it and
  * reports however many reps actually completed. */
 const SURFACE_AFF4_SWEEP_REP_CAP_MS = 10_000;
-/** fr-b72d sweep leg's exact-equality agreement gates (slab-vs-noslab, and
+/** The sweep leg's exact-equality agreement gates (slab-vs-noslab, and
  * since the maps-load probe, uniform-vs-storage per core): every pair this
  * leg compares is mathematically bit-identical by construction — slab vs
  * noslab because at `sliceHalfW: 0`, `segmentRadius4(q, 0)` is `length(q)`
@@ -3007,7 +3013,7 @@ const SURFACE_SANITY_HIT_RATE_TOL = 0.15;
  * device must be asked for more at acquisition (surface-de-gpu.ts doc). */
 const SURFACE_DEFAULT_WORKGROUP_STORAGE = 16_384;
 
-/** fr-tzdg leg A raster — an agreement gate, not a timing, so small keeps
+/** Leg A raster — an agreement gate, not a timing, so small keeps
  * both the CPU emulator (a full estimateDistance march per pixel) and the
  * SwiftShader CI path affordable. 16:9 like the timing raster, so leg B's
  * real-adapter raster shares the same aspect (and therefore the same
@@ -3028,16 +3034,17 @@ const SURFACE_UNPROJ_CAP_MS = 600_000;
  * whole-raster dispatch of width-12 descents is a MINUTES-long single
  * submission — Chrome kills the GPU process (and took the page with it,
  * measured on the first CI-shaped run of this leg) — exactly the
- * unbounded-submission class fr-096u bans. So the leg's own host loop
- * slices the ACTIVE LIST too (surface-compute.ts's marchChunkFor idea,
- * floor sized for software costs), from a deliberately pessimistic
- * initial per-ray·step cost on software adapters that the measured EMA
+ * unbounded-submission class the i915 preemption hang bans. So the leg's
+ * own host loop slices the ACTIVE LIST too (surface-compute.ts's
+ * marchChunkFor idea, floor sized for software costs), from a deliberately
+ * pessimistic initial per-ray·step cost on software adapters that the
+ * measured EMA
  * immediately corrects; step growth waits on MEASURED sub-target passes,
  * never assumed ones. */
 const SURFACE_UNPROJ_MIN_CHUNK = 64;
 const SURFACE_UNPROJ_INITIAL_RAY_STEP_US_SW = 1000;
 
-/** fr-tzdg leg B raster/budget: full-tier knobs at 256x144 on a real
+/** Leg B raster/budget: full-tier knobs at 256x144 on a real
  * adapter; the SwiftShader CI path shrinks the raster and stretches the
  * budget (truncation is accepted there — software timing is not the
  * point, the exercised host loop is). */
@@ -3054,7 +3061,7 @@ const SURFACE_FRAME_BUDGET_SW_MS = 300_000;
 const SURFACE_FRAME_SHADOW_STEPS = 32;
 const SURFACE_FRAME_AO_TAPS = 5;
 
-/** fr-qjae: scene.ts's `GROUND_PLANE_*` floor geometry, duplicated like
+/** scene.ts's `GROUND_PLANE_*` floor geometry, duplicated like
  * this file's other cross-module mirrors ({@link SURFACE_NO_SYMMETRY},
  * {@link SURFACE_MARCH_STEPS}) — they are module-private there, and the
  * plane frame leg's whole point is to feed the kernel the numbers the APP
@@ -3066,7 +3073,7 @@ const SURFACE_PLANE_FADE_START = 4;
 const SURFACE_PLANE_FADE_END = 10;
 const SURFACE_PLANE_ALBEDO: Vec3 = [0.62, 0.62, 0.62];
 
-/** fr-p8bc shade A/B leg raster — leg A's 96x54 on BOTH adapter kinds,
+/** Shade probe-width A/B leg raster — leg A's 96x54 on BOTH adapter kinds,
  * smaller than leg B's (SURFACE_FRAME_WIDTH 256x144) by measured
  * necessity: the full-width BASELINE arm is the leg's cost ceiling
  * (~108-516 ms/hit on Iris — the standard pose's silhouette-graze hits
@@ -3088,21 +3095,22 @@ const SURFACE_SHADE_AB_HEIGHT_SW = 54;
 const SURFACE_SHADE_AB_BUDGET_MS = 900_000;
 const SURFACE_SHADE_AB_BUDGET_SW_MS = 300_000;
 
-/** fr-p8bc shade A/B leg's "near" pose distance factor, vs. the standard
+/** Shade probe-width A/B leg's "near" pose distance factor, vs. the standard
  * bench pose's `SURFACE_POSE_DIST_FACTOR` (2.4, far-field — mostly
  * background/miss rays). Closer in means hits dominate the raster: the
- * shading-BOUND regime the standard pose lacks and the one fr-p8bc's probe
- * width actually needs to be measured in. */
+ * shading-BOUND regime the standard pose lacks and the one a shading
+ * probe's width actually needs to be measured in. */
 const SURFACE_SHADE_AB_NEAR_DIST_FACTOR = 1.4;
 
-/** fr-p8bc shade A/B diff: doubles as the amplified-diff canvas's per-channel
- * multiplier (`min(255, |Δ| × 8)`, so an 8-level channel delta already
- * saturates to visible) and the `pctPixelsOver8` report threshold — the
- * field's own name is this constant's value, so the two never drift apart. */
+/** Shade probe-width A/B diff: doubles as the amplified-diff canvas's
+ * per-channel multiplier (`min(255, |Δ| × 8)`, so an 8-level channel delta
+ * already saturates to visible) and the `pctPixelsOver8` report threshold
+ * — the field's own name is this constant's value, so the two never drift
+ * apart. */
 const SURFACE_SHADE_AB_DIFF_THRESHOLD = 8;
 
 /** Both maps pure `spherefold` — the hardest void-false-hit profile in the
- * fr-5rvk set. Mirrors scripts/harness-profiles.ts — keep in sync
+ * pure-fold set. Mirrors scripts/harness-profiles.ts — keep in sync
  * (importing from scripts/ into the Vite page is off-limits). */
 function surfaceFoldSpherefoldPair(): Transform[] {
   return [
@@ -3123,14 +3131,14 @@ function surfaceFoldSpherefoldPair(): Transform[] {
   ];
 }
 
-/** fr-s9ll: the ONE fold-core system here whose folds carry AUTHORED
+/** The ONE fold-core system here whose folds carry AUTHORED
  * lengths. Every other fold fixture in this file leaves
  * `minRadius`/`fixedRadius`/`boxLimit` absent, i.e. at the classic
  * 0.5/1/1 the branch algebra used to bake in as literals — so the whole
  * surface section would still pass with the new wire packed into the wrong
  * lane, dropped on the way to the kernel, or read back as those frozen
- * constants. The fr-s9ll unit tests pin the PACKERS; this row is what pins
- * the kernel that consumes them.
+ * constants. The authored-lengths unit tests pin the PACKERS; this row is
+ * what pins the kernel that consumes them.
  *
  * Two maps, non-classic in DIFFERENT ways, so one row separates several
  * failure modes at once. Map 0 is a mandelbox carrying all three lengths
@@ -3181,7 +3189,7 @@ function surfaceFoldParameterizedPair(): Transform[] {
   ];
 }
 
-/** fr-55s1 M0 (a): the sierpinski-shaped 4-map affine base
+/** M0 (a): the sierpinski-shaped 4-map affine base
  * `scripts/surface-fold.verify.mjs`'s LENS_HASH is built on — no fold
  * anywhere, so `deHasFolds` routes it to the AFFINE core and its refined
  * oracle. Deliberately the lens archetype's BASE: stage B wraps this exact
@@ -3216,11 +3224,12 @@ function surfaceAffineTetra(): Transform[] {
   ];
 }
 
-/** fr-55s1 M0 (b): the affine core's RICH case — three rotated maps whose
+/** M0 (b): the affine core's RICH case — three rotated maps whose
  * per-axis scales differ, run under a kaleidoscope (order 3, `systemDefs`)
- * and an affine FINAL lens, so one row exercises the fr-x029 sector sweep,
- * the packed final-lens prologue/epilogue and the fr-zkt2 sphere-floor exit
- * at once (that exit is live exactly on ANISOTROPIC maps, whose
+ * and an affine FINAL lens, so one row exercises the kaleidoscope sector
+ * sweep, the packed final-lens prologue/epilogue and the value-exact
+ * sphere-floor exit at once (that exit is live exactly on ANISOTROPIC maps,
+ * whose
  * certificates lose a sigmaMin/sigmaMax factor per level; on isotropic
  * ones it provably never fires). The anisotropy is deliberately SMALL —
  * ratio 1.037 against `CONFORMAL_RATIO`'s 1.05 — because past that
@@ -3262,8 +3271,8 @@ function surfaceAffineTwistFinal(): Transform {
   };
 }
 
-/** fr-55s1 stage B (M1a): the LENS_HASH archetype's FINAL —
- * scripts/surface-fold.verify.mjs:52's fr-g58b lens verbatim (boxfold
+/** Stage B (M1a): the LENS_HASH archetype's FINAL —
+ * scripts/surface-fold.verify.mjs:52's pure-fold lens verbatim (boxfold
  * weight 0.55 over a rotated, offset, shrunk affine part). Sits over
  * {@link surfaceAffineTetra}, so the M1 row pins the lens wrapper around
  * the SAME affine core M0's affineTetra row pins bare. */
@@ -3277,10 +3286,11 @@ function surfaceLensBoxfoldFinal(): Transform {
   };
 }
 
-/** fr-55s1 stage B (M1b): a mandelbox FINAL at weight 1 — fr-zx34's field
- * class (4-map affine base under a mandelbox lens) and the sweep's 81-branch
- * worst case, so the agreement row covers the spherefold shell guard, the
- * `b += 26` box-expansion skip and the per-s box re-triple in one system. */
+/** Stage B (M1b): a mandelbox FINAL at weight 1 — the truncated-preview
+ * regression's field class (4-map affine base under a mandelbox lens) and
+ * the sweep's 81-branch worst case, so the agreement row covers the
+ * spherefold shell guard, the `b += 26` box-expansion skip and the per-s
+ * box re-triple in one system. */
 function surfaceLensMandelboxFinal(): Transform {
   return {
     id: 91,
@@ -3291,7 +3301,7 @@ function surfaceLensMandelboxFinal(): Transform {
   };
 }
 
-/** fr-55s1 stage B (M1c)'s BASE: the fr-5rvk two-map pure-boxfold pair
+/** Stage B (M1c)'s BASE: the pure-fold branch sweep's two-map boxfold pair
  * (scripts/surface-fold.verify.mjs's BOXFOLD_HASH shape, also
  * surface-de-gpu.test.ts's `foldSystemTransforms`) — a minimal eligible
  * FOLD base, so the lens leg pins the wrapper around the fold core too. */
@@ -3314,7 +3324,7 @@ function surfaceFoldBoxfoldPair(): Transform[] {
   ];
 }
 
-/** fr-55s1 stage B (M1c): a spherefold FINAL over the boxfold pair — the
+/** Stage B (M1c): a spherefold FINAL over the boxfold pair — the
  * 3-branch sweep (s0/s1/mid incl. the SPHEREFOLD_MID_MIN_R shell guard)
  * seeding FOLD-core descents, `descendLens`'s other inner route. */
 function surfaceLensSpherefoldFinal(): Transform {
@@ -3327,15 +3337,15 @@ function surfaceLensSpherefoldFinal(): Transform {
   };
 }
 
-/** fr-s9ll's LENS arm: a mandelbox final carrying all three authored
- * lengths, over {@link surfaceAffineTetra} — the same base M1a/M1b wrap,
- * so a disagreement here isolates the lens's own radii wire and nothing
- * else. The lens is a SECOND site that reads them: `descendLens` carries
- * its own `SurfaceFoldRadii` beside (never inside) the maps array, and the
- * GLSL/WGSL mirrors give it its own uniform/params slot — so a kernel that
- * wired the base maps correctly and left the lens block at the frozen
- * constants, or filled it from map 0, would agree on every other row in
- * this file.
+/** The authored-lengths LENS arm: a mandelbox final carrying all three
+ * authored lengths, over {@link surfaceAffineTetra} — the same base M1a/M1b
+ * wrap, so a disagreement here isolates the lens's own radii wire and
+ * nothing else. The lens is a SECOND site that reads them: `descendLens`
+ * carries its own `SurfaceFoldRadii` beside (never inside) the maps array,
+ * and the GLSL/WGSL mirrors give it its own uniform/params slot — so a
+ * kernel that wired the base maps correctly and left the lens block at the
+ * frozen constants, or filled it from map 0, would agree on every other row
+ * in this file.
  *
  * `minRadius` is deliberately AT the classic 0.5 while `fixedRadius` is
  * not: this row therefore fails when `fixedRadius` alone fails to arrive,
@@ -3382,7 +3392,7 @@ function surfaceFoldBoxfoldNegPlusAffine(): Transform[] {
   ];
 }
 
-/** fr-dlxh M3 (a): the affine4 core's pure-DE baseline — four contracting,
+/** M3 (a): the affine4 core's pure-DE baseline — four contracting,
  * near-isotropic maps whose LIVE w blocks (positions straddling 0, three
  * w-mixing rotations, one explicitly pinned `w.scale`) push the attractor
  * genuinely off the `w = 0` slice, so the 4x4 inverse maps carry real w
@@ -3423,7 +3433,7 @@ function surfaceAff4Tetra(): Transform[] {
   ];
 }
 
-/** fr-dlxh M3 (b): the fr-u91x sector-sweep case — two 4D maps under a
+/** M3 (b): the 4D sector-sweep case — two 4D maps under a
  * TWISTED order-3 kaleidoscope (`plane: "xz", twist: 1`, a genuine double
  * rotation), so `stepSector4`'s one whole backward 4x4 (`stepBack4`, never
  * a (cos, sin) pair) carries real w mixing. Queried at a NONZERO `w0`
@@ -3448,7 +3458,7 @@ function surfaceAff4Kaleido(): Transform[] {
   ];
 }
 
-/** fr-dlxh M3 (c)'s BASE: three contracting maps with live w blocks — the
+/** M3 (c)'s BASE: three contracting maps with live w blocks — the
  * 4D final-lens system's inner attractor (see {@link surfaceAff4Final}). */
 function surfaceAff4FinalBase(): Transform[] {
   return [
@@ -3476,7 +3486,7 @@ function surfaceAff4FinalBase(): Transform[] {
   ];
 }
 
-/** fr-dlxh M3 (c): a 4D affine FINAL lens with a live w block (w offset +
+/** M3 (c): a 4D affine FINAL lens with a live w block (w offset +
  * yw rotation over a rotated, offset, isotropically shrunk affine part —
  * surface-de-gpu.test.ts's `fourDFinalTransform` shape with a smaller w
  * offset, so the posed slice still cuts the lensed set), exercising the
@@ -3492,7 +3502,7 @@ function surfaceAff4Final(): Transform {
   };
 }
 
-/** fr-rsp6 M4's boxfold base: `surface-de-4d.test.ts`'s `pureBoxfoldPair4`
+/** M4's boxfold base: `surface-de-4d.test.ts`'s `pureBoxfoldPair4`
  * verbatim (same numbers, same seed of live w blocks) — bench and CPU
  * tests pin the identical system on purpose. Isometric branches only
  * (sigma_c = 1 on every one of the 81), so `fold4Boxfold` is the fold4
@@ -3519,7 +3529,7 @@ function surfaceFold4Boxfold(): Transform[] {
   ];
 }
 
-/** fr-rsp6 M4's mandelbox base: `surface-de-4d.test.ts`'s
+/** M4's mandelbox base: `surface-de-4d.test.ts`'s
  * `pureMandelboxPair4` verbatim — the RETUNED weights (1.3/1.2) and small
  * scales (0.12/0.13) the CPU suite settled on so the width-12 frontier
  * actually SATURATES at a shallow depth (~20): see that test file's doc
@@ -3550,9 +3560,10 @@ function surfaceFold4Mandelbox(): Transform[] {
   ];
 }
 
-/** fr-s9ll one dimension up: {@link surfaceFoldParameterizedPair}'s two
- * maps (same affine parts, same authored lengths) given live w blocks, so
- * the fold4 core reads the fold's radii at ALL THREE of its own branch
+/** The authored lengths one dimension up: {@link
+ * surfaceFoldParameterizedPair}'s two maps (same affine parts, same
+ * authored lengths) given live w blocks, so the fold4 core reads the fold's
+ * radii at ALL THREE of its own branch
  * sites — including the FOURTH box axis, whose `pw0/pw1/pw2` preimages and
  * `4·wall²` visible-radius bound are the one genuinely new place a wall
  * that arrived as the frozen 1 would show up. `surface-de-4d.ts` SHARES
@@ -3601,7 +3612,7 @@ function surfaceFold4Parameterized(): Transform[] {
   ];
 }
 
-/** fr-rsp6 phase 2B's boxfold LENS final — `surface-de-4d.test.ts`'s
+/** The 4D lens leg's boxfold LENS final — `surface-de-4d.test.ts`'s
  * `boxfoldFinal4` verbatim (same numbers, same live w block): bench and
  * CPU tests pin the identical lens, the same discipline
  * `surfaceFold4Boxfold`'s `pureBoxfoldPair4` copy above already follows.
@@ -3622,7 +3633,7 @@ function surfaceLens4BoxfoldFinal(): Transform {
   };
 }
 
-/** fr-rsp6 phase 2B's mandelbox LENS final over the affine (`pentatope`)
+/** The 4D lens leg's mandelbox LENS final over the affine (`pentatope`)
  * base — `lens4MandelboxOverAffine`, the 243-branch lens fan and this
  * leg's widest per-query branch count. A FRESH weight (~1.1, an
  * EXPANDING lens) rather than `surface-de-4d.test.ts`'s own
@@ -3686,13 +3697,13 @@ function parseSurfaceShadeWidths(raw: string | null): {
  * (per-timing-config wall cap, default 120000), `surfaceSystems`
  * (all|synthetic — synthetic skips the mandelboxKifs preset),
  * `surfaceTiming` (0 skips timing), `surfaceForce` (1 runs timing even on
- * a software adapter), `surfaceShadeWidth` (fr-p8bc shade A/B leg probe
+ * a software adapter), `surfaceShadeWidth` (shade probe-width A/B leg
  * widths, e.g. "1,4"; default empty — leg skipped), `surfaceAff4Sweep`
- * (fr-b72d opt-in per-order affine4 timing sweep, "1" = on; default off —
- * see `runSurfaceAff4SweepLeg`'s doc), `surfacePlaneFrame` (fr-qjae opt-in
+ * (opt-in per-order affine4 timing sweep, "1" = on; default off — see
+ * `runSurfaceAff4SweepLeg`'s doc), `surfacePlaneFrame` (opt-in
  * ground-plane frame leg, "1" = on; default off — see
- * `runSurfaceComputeFramePlaneLeg`'s doc), `surfaceCanaryTrip` (fr-76pp
- * opt-in synthetic device-sanity trip at the Nth check; default 0 = off). */
+ * `runSurfaceComputeFramePlaneLeg`'s doc), `surfaceCanaryTrip` (opt-in
+ * synthetic device-sanity trip at the Nth check; default 0 = off). */
 function parseSurfaceConfig(params: URLSearchParams): SurfaceSectionConfig {
   const variants = (params.get("surfaceVariants") ?? "shared,private")
     .split(",")
@@ -3755,7 +3766,7 @@ function surfaceWgFor(
  * points; cloud samples are already f32.)
  *
  * The cloud is rolled through the system's own FINAL transform and
- * kaleidoscope (fr-55s1): the on-attractor class only means anything if it
+ * kaleidoscope: the on-attractor class only means anything if it
  * samples the set the DE actually describes. Both default to the
  * fold systems' existing arguments, so their query sets are unchanged.
  */
@@ -3803,15 +3814,15 @@ function surfaceQueries(
 }
 
 /**
- * fr-dlxh: the escape eval leg's own query mix — `surfaceQueries`' chaos-game
+ * The escape eval leg's own query mix — `surfaceQueries`' chaos-game
  * sampling is unsound here (a single EXPANDING map has no attractor to
  * scatter a cloud onto), so this samples directly: 400 uniform cube points,
  * 200 bisected onto the `DE < 0.02` near-boundary shell (the region a
  * distance estimator most needs to be right in), and 100 clustered on the
  * ORIGIN — deep "inside" for the Mandelbrot form these maps now iterate,
  * whose bounded orbits are exactly the critical orbit's neighbourhood
- * (fr-7u8t.8; the cluster sat on the map's fixed offset `t` while that was
- * the Julia constant). 700 total, every component `Math.fround`ed — see
+ * (the cluster sat on the map's fixed offset `t` while that was the Julia
+ * constant). 700 total, every component `Math.fround`ed — see
  * `surfaceQueries`' doc for why (the kernel only ever sees f32 query points).
  *
  * The near-boundary batch starts `a` SMALL (unscaled by `R`, so it is very
@@ -3872,7 +3883,7 @@ function escapeQueries(de: EscapeDE, seed: number): Vec3[] {
 }
 
 /**
- * fr-7u8t.9: the bulb eval leg's query mix — {@link escapeQueries}' recipe
+ * The bulb eval leg's query mix — {@link escapeQueries}' recipe
  * RE-BRACKETED, not reused. Every constant there is written for a
  * radius-4 marching ball (`ESCAPE_TIME_RADIUS` doubles as the escape
  * mode's bounding radius); the Mandelbulb's marching ball is
@@ -3946,7 +3957,7 @@ function bulbQueries(de: BulbDE, seed: number): Vec3[] {
 }
 
 /**
- * fr-vag4 (M7): the escape4 leg's COMPOSED f64 oracle — the exact function
+ * M7: the escape4 leg's COMPOSED f64 oracle — the exact function
  * the kernel computes per query, CPU-side, and the escape family's answer
  * to {@link estimateSurface4Composed} one estimator class over.
  *
@@ -3989,7 +4000,7 @@ function estimateEscape4Composed(
 }
 
 /**
- * fr-vag4: the escape4 eval leg's query mix — {@link escapeQueries}'
+ * The escape4 eval leg's query mix — {@link escapeQueries}'
  * recipe over the SLICE the kernel marches, which is what makes it a
  * re-use rather than a fork.
  *
@@ -4005,12 +4016,12 @@ function estimateEscape4Composed(
  *
  * That distinction is load-bearing here in a way it never was in 3D: a
  * slice through a set of shells is a set of surfaces, and volume says
- * nothing about it (fr-wuuu measured a slice with LITERALLY ZERO members
- * in 524288 samples of its own bailout ball still drawing 20.9% of its
- * rays). The fixtures' `probeEscapeFill4` figures below are quoted as
- * sanity bounds, never as "will it render"; the number that says this mix
- * samples anything interesting is how many of the 200 bisections land in
- * the shell, recorded per fixture.
+ * nothing about it (the quaternion k-component sweep measured a slice with
+ * LITERALLY ZERO members in 524288 samples of its own bailout ball still
+ * drawing 20.9% of its rays). The fixtures' `probeEscapeFill4` figures
+ * below are quoted as sanity bounds, never as "will it render"; the number
+ * that says this mix samples anything interesting is how many of the 200
+ * bisections land in the shell, recorded per fixture.
  *
  * 700 total, every component `Math.fround`ed — see `surfaceQueries`' doc
  * for why (the kernel only ever sees f32 query points). The `a`/`b`
@@ -4075,7 +4086,7 @@ function escape4Queries(
  * dimension up. ONE definition, shared by the query generator and the
  * comparator so the two cannot drift. Checks BOTH lens shapes
  * (`de.final`, the plain affine lens M3's `aff4Final` carries, and
- * `de.foldFinal`, the fr-rsp6 phase 2B fold lens the M5 leg's lens4
+ * `de.foldFinal`, the fold lens the M5 leg's lens4
  * systems carry — the two are mutually exclusive on any built DE, so this
  * is never ambiguous): `visibleBoundingRadius` already equals
  * `boundingRadius` bit-for-bit whenever NEITHER is set
@@ -4092,11 +4103,11 @@ function surface4ToleranceR(de: SurfaceDE4): number {
 }
 
 /**
- * fr-dlxh M3 (fr-rsp6 M4 reuses it for fold4): the affine4/fold4 eval legs'
+ * M3 (M4 reuses it for fold4): the affine4/fold4 eval legs'
  * COMPOSED f64 oracle — the exact function the kernel computes per query,
  * CPU-side. The view lift first (`q4 = Mᵀ · (q, w0)` where M is the
  * row-major pose rotor — component `i` reads M's COLUMN `i`, exactly the
- * packed rotorInv rows), then the fr-wa6o half-extent seeded from M's w
+ * packed rotorInv rows), then the slab half-extent seeded from M's w
  * ROW times `sliceHalfW` (the kernel's `rotorInvWCol4() * params.sliceHalfW`),
  * then the inner estimator at cutoff 0 — which applies `de.final`/kaleidoscope
  * ITSELF, so nothing is pre-applied here. `refined` (default `true`, M3's
@@ -4137,7 +4148,7 @@ function estimateSurface4Composed(
 }
 
 /**
- * fr-dlxh M3: the affine4 leg's ORACLE-CONTINUITY classifier — the escape
+ * M3: the affine4 leg's ORACLE-CONTINUITY classifier — the escape
  * leg's pre-hoc ensemble shape ({@link forwardQueryStable}) minus the GPU
  * modeling it doesn't need: no fround twin, no shadow orbits, just the
  * COMPOSED f64 oracle at the query's six ±1-f32-ULP axis neighbors (the
@@ -4163,7 +4174,7 @@ function estimateSurface4Composed(
  * them — the other three parked rows happened to land the same side on
  * both processors.
  *
- * fr-rsp6 M4 reuses this verbatim for the fold4 leg, `refined=false` so the
+ * M4 reuses this verbatim for the fold4 leg, `refined=false` so the
  * probed neighbors and the caller's `cpu` value are the SAME PLAIN estimator
  * — fold frontiers select among far more branches per level (81/243 vs the
  * affine ladder's 4), so a denser discontinuity set is plausible on its own
@@ -4195,7 +4206,7 @@ function surface4QueryStable(
 }
 
 /**
- * fr-dlxh M3: the affine4 eval leg's own query mix — `surfaceQueries`'
+ * M3: the affine4 eval leg's own query mix — `surfaceQueries`'
  * 3D chaos-game sampling doesn't know the view lift, and `escapeQueries`'
  * sizes assume an escape basin, so this leg samples VIEW-space directly
  * (the kernel's own input space), `escapeQueries`' structure at the
@@ -4212,7 +4223,7 @@ function surface4QueryStable(
  * central region). 700 total, every component `Math.fround`ed — see
  * `surfaceQueries`' doc for why (the kernel only ever sees f32 points).
  *
- * fr-rsp6 M4 reuses this verbatim for the fold4 leg (`refined=false`,
+ * M4 reuses this verbatim for the fold4 leg (`refined=false`,
  * threaded into every `estimateSurface4Composed` call below including the
  * boundary-bisection predicate) rather than forking a fold-shaped twin —
  * the sampling GEOMETRY (ball radius, bisection depth, cluster spread)
@@ -4287,7 +4298,7 @@ function affine4Queries(
 }
 
 /**
- * fr-dlxh: the bench's f32 twin of `estimateEscapeDistance` — every
+ * The bench's f32 twin of `estimateEscapeDistance` — every
  * intermediate `Math.fround`ed, the same duplicated-emulator discipline
  * this file's CPU march emulators already follow (`surfaceCpuMarch` et
  * al.). Comparing this against the f64 oracle in isolation, before either
@@ -4300,7 +4311,7 @@ function affine4Queries(
  */
 function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
   const f = Math.fround;
-  // fr-s04t: the whole CHAIN, in the kernel's own f32 lanes — one
+  // The whole CHAIN, in the kernel's own f32 lanes — one
   // pre-rounded link per slot, cycled `i mod n`.
   const links = de.links.map((link) => ({
     m: link.m.map(f),
@@ -4308,7 +4319,7 @@ function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
     w: f(link.w),
     g: f(link.derivGrowth),
     kind: link.kind,
-    // fr-s9ll: this LINK's own fold lengths, pre-rounded like everything
+    // This LINK's own fold lengths, pre-rounded like everything
     // else here — the squares `EscapeLink` keeps and the kernels' `fold`
     // lane carries. A twin left at the classic 0.25/1/1 does not merely
     // disagree with the oracle on parameterized systems; it makes the
@@ -4365,7 +4376,7 @@ function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
     let yy = f(f(f(f(m[3] * vx) + f(m[4] * vy)) + f(m[5] * vz)) + t[1]);
     let yz = f(f(f(f(m[6] * vx) + f(m[7] * vy)) + f(m[8] * vz)) + t[2]);
     let localL = 1;
-    // fr-j231: the fold pair sits behind the kernels' own `kind < 4` guard
+    // The fold pair sits behind the kernels' own `kind < 4` guard
     // — the two NEGATIVE tests below are exhaustive by negation over
     // {1, 2, 3} alone, so a power link reaching them would run BOTH folds
     // (escape-de.ts's EscapeLinkKind doc names that hazard).
@@ -4441,7 +4452,7 @@ function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
     dr = f(f(f(link.g * localL) * dr) + 1);
     r = f(Math.sqrt(f(f(f(vx * vx) + f(vy * vy)) + f(vz * vz))));
   }
-  // fr-j231: the chain's escape law picks the form (escape-de.ts's ESTIMATE
+  // The chain's escape law picks the form (escape-de.ts's ESTIMATE
   // FORM paragraph) — `EscapeDE.logEstimate` rides `escParams.w` on the
   // wire, so the twin must read the same flag the kernel does. A fold-only
   // chain keeps the linear quotient bit for bit.
@@ -4450,7 +4461,7 @@ function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
 }
 
 /**
- * fr-vag4: the two coordinate axes each {@link SYM_PLANE_CODE4} names —
+ * The two coordinate axes each {@link SYM_PLANE_CODE4} names —
  * `escape-de-4d.ts`'s own `PLANE_AXES`, indexed by the code that module
  * puts on the wire, so this table and the kernel's `foldQuerySector4`
  * decode read off the same list.
@@ -4473,7 +4484,7 @@ const ESCAPE4_PLANE_AXES: readonly (readonly [number, number])[] = [
 ];
 
 /**
- * fr-vag4: the `core: "escape4"` kernel's VIEW LIFT in f32 — the body's
+ * The `core: "escape4"` kernel's VIEW LIFT in f32 — the body's
  * `liftEscape4`, `vec4f(pIn, params.w0)` through the packed `rotorInv`
  * rows, where row `i` is `(rot[i], rot[4+i], rot[8+i], rot[12+i])` (the
  * one real transpose, performed by `packEscape4GpuParams`).
@@ -4515,7 +4526,7 @@ function liftEscape4F32(view4: SurfaceGpu4View, q: Vec3): Vec4 {
 }
 
 /**
- * fr-vag4: the bench's f32 twin of `estimateEscapeDistance4` —
+ * The bench's f32 twin of `estimateEscapeDistance4` —
  * {@link estimateEscapeDistanceF32} one dimension up, term for term, with
  * every intermediate `Math.fround`ed. Its job is that twin's exactly:
  * comparing it against the f64 oracle in isolation, before either touches
@@ -4526,8 +4537,9 @@ function liftEscape4F32(view4: SurfaceGpu4View, q: Vec3): Vec4 {
  *
  * A STALE TWIN DOES NOT DISAGREE — IT MAKES THE ENSEMBLE EXCLUDE
  * EVERYTHING, which reads as a chaotic fixture rather than as a stale
- * copy (fr-s9ll measured 251 of 700 that way on the 3D leg). So every
- * branch below was mutation-tested against the fixture set, and each
+ * copy (the authored-lengths work measured 251 of 700 that way on the 3D
+ * leg). So every branch below was mutation-tested against the fixture set,
+ * and each
  * mutation moves exactly the row written for it and leaves the others at
  * their shipped count:
  *
@@ -4558,8 +4570,8 @@ function liftEscape4F32(view4: SurfaceGpu4View, q: Vec3): Vec4 {
 function estimateEscapeDistance4F32(de: EscapeDE4, p: Vec4): number {
   const f = Math.fround;
   // One pre-rounded link per slot, cycled `i mod n` — the 3D twin's own
-  // shape, and the same per-LINK fold lengths (fr-s9ll's squares, which
-  // is the form `EscapeLink4` keeps and the `fold` lane carries).
+  // shape, and the same per-LINK fold lengths (the SQUARES, which are the
+  // form `EscapeLink4` keeps and the `fold` lane carries).
   const links = de.links.map((link) => ({
     m: link.m.map(f),
     t: link.t.map(f),
@@ -4691,7 +4703,7 @@ function estimateEscapeDistance4F32(de: EscapeDE4, p: Vec4): number {
 }
 
 /**
- * fr-7u8t.9: the bench's f32 twin of `estimateBulbDistance` — the SIXTH
+ * The bench's f32 twin of `estimateBulbDistance` — the SIXTH
  * and last copy of that formula (oracle, GLSL value, GLSL hit, WGSL
  * value, WGSL hit, this), written term for term against the oracle with
  * every intermediate `Math.fround`ed and every association matched
@@ -4774,8 +4786,8 @@ function estimateBulbDistanceF32(de: BulbDE, p: Vec3): number {
 }
 
 /**
- * fr-dlxh: the ENSEMBLE half of the FORWARD-orbit stability classifier
- * (fr-7u8t.9 generalized it from the escape leg's own by taking the f32
+ * The ENSEMBLE half of the FORWARD-orbit stability classifier
+ * (generalized from the escape leg's own by taking the f32
  * evaluator as an argument — the mechanism is formula-agnostic, so the
  * bulb leg reuses this one rather than growing a fourth copy of the
  * ULP-neighbor walk; every word below was measured on the escape orbit
@@ -4840,12 +4852,13 @@ function surfaceCross(a: Vec3, b: Vec3): Vec3 {
  * target origin, orbit angles (0.9, 1.2), distance
  * `distFactor` × visibleBoundingRadius (default `SURFACE_POSE_DIST_FACTOR`
  * 2.4 — every existing caller), vertical fov 60° — packed into the kernel's
- * {@link SurfaceGpuPose}. `distFactor` is fr-p8bc's shade A/B leg's hook for
- * its closer "near" pose ({@link SURFACE_SHADE_AB_NEAR_DIST_FACTOR}); no
- * other caller passes it. */
+ * {@link SurfaceGpuPose}. `distFactor` is the shade probe-width A/B leg's
+ * hook for its closer "near" pose
+ * ({@link SURFACE_SHADE_AB_NEAR_DIST_FACTOR}); no other caller passes
+ * it. */
 function buildSurfacePose(
-  // Structural pick, not the whole DE: the escape frame leg (fr-dlxh)
-  // frames its bailout ball through the same pose math.
+  // Structural pick, not the whole DE: the escape frame leg frames its
+  // bailout ball through the same pose math.
   de: Pick<SurfaceDE, "visibleBoundingRadius">,
   rasterWidth: number,
   rasterHeight: number,
@@ -4903,7 +4916,7 @@ function surfaceRayDir(pose: SurfaceGpuPose, px: number, py: number): Vec3 {
  * `estimateDistance` — the same sphere gate, cone-eps hit test, budget and
  * stepScale the kernel's marchRays runs, with the DE's eps passed as the
  * cutoff exactly like both of them. */
-/** The estimator a system's kernel marches (fr-55s1) — the freeze loop's
+/** The estimator a system's kernel marches — the freeze loop's
  * routing, verbatim: fold base maps the plain descent, fold-free ones the
  * refined ladder; both route a `foldFinal` through `descendLens`
  * internally, so the march emulators stay one call either way. */
@@ -4913,7 +4926,7 @@ function surfaceMarchEstimate(de: SurfaceDE, p: Vec3, eps: number): number {
     : estimateDistanceRefined(de, p, eps);
 }
 
-/** The march emulators' balloon arm (fr-5wlv.5): the oracle ball in
+/** The march emulators' balloon arm: the oracle ball in
  * `buildBalloon`'s convention plus the march far cap — present exactly
  * when a leg marches a `balloon: true` kernel. */
 interface SurfaceCpuBalloon {
@@ -4921,7 +4934,7 @@ interface SurfaceCpuBalloon {
   far: number;
 }
 
-/** {@link surfaceMarchEstimate} under the balloon union (fr-5wlv.5):
+/** {@link surfaceMarchEstimate} under the balloon union:
  * `estimateBalloonDistance` composed over the SAME core-routed estimator
  * — the exact function the balloon kernels mirror (the wrapper over the
  * public descent, `balloon-de.ts`'s oracle link). */
@@ -5053,7 +5066,7 @@ function surfaceUnprojectRay(
  * `(t, steps)`; the check order — sphere exit, then budget, then eval — is
  * the kernel's). Ray derivation is the caller's; the loop itself stays
  * surfaceCpuMarch's: f64 accumulation, {@link surfaceMarchEstimate} (the
- * system's own core estimator since fr-55s1), the same
+ * system's own core estimator), the same
  * eps/hit-floor/stepScale. Pre-gate misses report `t = −1`, matching the
  * kernel's untouched `st.x` initialization.
  */
@@ -5068,7 +5081,7 @@ function surfaceCpuMarchState(
   let t: number;
   let tFar: number;
   if (balloon) {
-    // fr-5wlv.5: the balloon march entry, the kernel's marchGate mirrored
+    // The balloon march entry, the kernel's marchGate mirrored
     // — no visible-sphere gate (every ray can hit the enclosing shell),
     // t = 0 start, far horizon |ro − c| + far; the DE below is the union.
     const c = balloon.b.center;
@@ -5119,7 +5132,7 @@ function surfaceRayStatusName(status: number): string {
  * legitimately disagree about whether the surface was touched. A genuinely
  * empty ray reports a ratio orders of magnitude above it.
  *
- * This is what the silhouetteFlips exclusion GATES on (fr-7tl3), not merely
+ * This is what the silhouetteFlips exclusion GATES on, not merely
  * what a row prints: a terminal `t` says where a march stopped, and for a
  * hit-vs-miss pair those places are unrelated by construction, but the
  * closest approach says where it came NEAREST — the one place both sides
@@ -5138,7 +5151,7 @@ function surfaceCpuMarchApproach(
   let t: number;
   let tFar: number;
   if (balloon) {
-    // fr-5wlv.5: the balloon entry, exactly surfaceCpuMarchState's —
+    // The balloon entry, exactly surfaceCpuMarchState's —
     // the silhouette classifier must walk the same trajectory it judges.
     const c = balloon.b.center;
     tFar = Math.hypot(ro[0] - c[0], ro[1] - c[1], ro[2] - c[2]) + balloon.far;
@@ -5177,7 +5190,7 @@ function surfaceCpuMarchApproach(
 }
 
 /**
- * fr-7tl3: what a status mismatch the boundary rule did not cover prints
+ * What a status mismatch the boundary rule did not cover prints
  * about ITSELF — whether it went on to be excluded as a silhouette flip or
  * to fail the gate (the caller tags which). The aggregate counters name a
  * count, never a ray, so the first move on a red verdict used to be
@@ -5230,7 +5243,7 @@ function describeSurfaceUnprojectMismatch(
       pixelEps * hitT,
       de.boundingRadius * SURFACE_GPU_HIT_FLOOR,
     );
-    // fr-5wlv.5: a balloon hit's endpoint can sit on the SHELL, so the
+    // A balloon hit's endpoint can sit on the SHELL, so the
     // on-surface question is the union's, not the fractal's alone.
     const d = balloon
       ? estimateBalloonDistance(estimateDistance, de, balloon.b, p, eps * 1.5).d
@@ -5348,10 +5361,10 @@ async function acquireSurfaceDevice(
  * `layout` is normally an explicit `GPUPipelineLayout` — every pipeline
  * bound against this section's one shared `bindGroupLayout` uses the same
  * object, so their bind groups interchange freely. Pass `"auto"` only when
- * a pipeline's binding TYPES diverge from that shared layout (fr-b72d's
- * `mapsUniform: true` arms need binding 1 typed `uniform` where the shared
- * layout declares `read-only-storage`, and WebGPU has no "same layout,
- * different binding type" escape hatch) — callers doing so MUST derive
+ * a pipeline's binding TYPES diverge from that shared layout (the sweep
+ * leg's `mapsUniform: true` arms need binding 1 typed `uniform` where the
+ * shared layout declares `read-only-storage`, and WebGPU has no "same
+ * layout, different binding type" escape hatch) — callers doing so MUST derive
  * that pipeline's bind group from its own `getBindGroupLayout(0)`, never
  * the shared `bindGroupLayout`, which would throw at bind-group creation
  * (binding-type mismatch).
@@ -5442,8 +5455,8 @@ interface SurfaceSystemState {
   name: string;
   /** Which kernel core this system is entitled to, and therefore which CPU
    * oracle `cpu` below holds — both inferred from the DE by `deHasFolds`,
-   * exactly as `surface-de.ts`'s own estimators route (fr-55s1). Widened to
-   * the shared `"fold" | "affine" | "escape"` vocabulary (fr-dlxh), though
+   * exactly as `surface-de.ts`'s own estimators route. Widened to the
+   * shared `"fold" | "affine" | "escape"` vocabulary, though
    * this state never actually carries "escape": `buildSurfaceDE` refuses
    * escape-time shapes by design, so those systems live in the separate
    * {@link SurfaceEscapeSystemState} array below instead — its own `de`
@@ -5467,14 +5480,13 @@ interface SurfaceSystemState {
   };
 }
 
-/** One FORWARD-orbit system's frozen state (fr-dlxh's escape; fr-7u8t.9
- * made it generic for the bulb, which differs only in the DE type;
- * fr-vag4's escape4 extends it below): the
- * forward-map DE, its own dedicated query set (`escapeQueries` /
- * `bulbQueries` / `escape4Queries`, not `surfaceQueries` — a single
- * expanding map has no
- * attractor to scatter a chaos-game cloud onto), and the f64/f32
- * CPU-oracle pair the eval leg's stability gate is built from
+/** One FORWARD-orbit system's frozen state (escape first; made generic
+ * for the bulb, which differs only in the DE type; escape4 extends it
+ * below): the forward-map DE, its own dedicated query set
+ * (`escapeQueries` / `bulbQueries` / `escape4Queries`, not
+ * `surfaceQueries` — a single expanding map has no attractor to scatter a
+ * chaos-game cloud onto), and the f64/f32 CPU-oracle pair the eval leg's
+ * stability gate is built from
  * (`compareSurfaceForwardAgreement`'s doc). */
 interface SurfaceForwardSystemState<TDe> {
   name: string;
@@ -5493,7 +5505,7 @@ interface SurfaceForwardSystemState<TDe> {
   stable: boolean[];
   buffers?: {
     params: GPUBuffer;
-    /** The forward chain's storage list (fr-s04t): the escape core's
+    /** The forward chain's storage list: the escape core's
      * links, one `GpuMap` each; ONE zero stride for the bulb core, whose
      * single map still rides the params variant block and which never
      * declares the binding (the layout may carry an entry a shader
@@ -5510,7 +5522,7 @@ type SurfaceEscapeSystemState = SurfaceForwardSystemState<EscapeDE>;
 type SurfaceBulbSystemState = SurfaceForwardSystemState<BulbDE>;
 
 /**
- * fr-vag4 (M7): the escape4 leg's system state — the forward state above
+ * M7: the escape4 leg's system state — the forward state above
  * plus the frozen per-system VIEW, because this is the first forward core
  * whose kernel input is a 3D point standing for a 4D one. Everything the
  * shared forward machinery reads (`de`, `queries`, `cpu64`, `cpu32`,
@@ -5527,7 +5539,7 @@ interface SurfaceEscape4SystemState extends SurfaceForwardSystemState<EscapeDE4>
   view4: SurfaceGpu4View;
 }
 
-/** One affine4 (4D) agreement system's frozen state (fr-dlxh M3): the built
+/** One affine4 (4D) agreement system's frozen state (M3): the built
  * `SurfaceDE4`, the frozen per-system view (rotor + w0 + sliceHalfW — the
  * packer's {@link SurfaceGpu4View}), its own view-space query set
  * ({@link affine4Queries}) and the COMPOSED f64 oracle values
@@ -5592,14 +5604,14 @@ function surfaceBindGroupLayout(device: GPUDevice): GPUBindGroupLayout {
 }
 
 /** The FORWARD cores' shared interface (surface-de-gpu.ts's contract;
- * fr-dlxh's escape, fr-7u8t.9's bulb and fr-vag4's escape4 all take it):
+ * escape, bulb and escape4 all take it):
  * 0 = params uniform, 1 = maps storage read, 2 = input storage read,
  * 3 = output storage read_write.
  *
  * Binding 1 is declared here for the two ESCAPE cores, whose formula
- * CHAIN is a list of forward maps on that binding (fr-s04t / fr-vag4 —
- * one `GpuMap` per link in 3D, one `GpuMap4` in 4D). The BULB kernel
- * never declares it (its single forward map rides the params uniform's
+ * CHAIN is a list of forward maps on that binding — one `GpuMap` per link
+ * in 3D, one `GpuMap4` in 4D. The BULB kernel never declares it (its single
+ * forward map rides the params uniform's
  * 208..271 variant block), which is fine in the harmless direction: a
  * LAYOUT may carry an entry a shader ignores, so that leg binds one zero
  * stride and shares this definition rather than forking a 3-entry twin.
@@ -5615,7 +5627,7 @@ function surfaceForwardBindGroupLayout(device: GPUDevice): GPUBindGroupLayout {
         buffer: { type: "uniform" },
       },
       {
-        // fr-s04t: the ESCAPE core's formula chain (one GpuMap per link).
+        // The ESCAPE core's formula chain (one GpuMap per link).
         // The BULB core ignores it — a layout may carry entries a shader
         // never declares, which is what lets both legs share this one.
         binding: 1,
@@ -5636,7 +5648,7 @@ function surfaceForwardBindGroupLayout(device: GPUDevice): GPUBindGroupLayout {
   });
 }
 
-/** The march "unproject" interface (fr-tzdg): the march set (0-3) plus
+/** The march "unproject" interface: the march set (0-3) plus
  * binding 4 = the 128-byte ShadeParams uniform the kernel reads its rays +
  * dither inputs from (surface-de-gpu.ts's binding table). */
 function surfaceUnprojectBindGroupLayout(
@@ -5755,11 +5767,11 @@ function destroySurfaceEvalBuffers(sys: SurfaceSystemState): void {
   sys.buffers = undefined;
 }
 
-/** {@link ensureSurfaceEvalBuffers}'s FORWARD-core twin (fr-dlxh; made
- * core-agnostic by fr-7u8t.9, which passes the packed params in rather
+/** {@link ensureSurfaceEvalBuffers}'s FORWARD-core twin (made
+ * core-agnostic for the bulb, which passes the packed params in rather
  * than naming a packer): the same lazy-create-once contract, with the
  * caller passing BOTH packed buffers — the escape core's formula chain
- * rides the maps binding (fr-s04t, `packEscapeGpuMaps`), while the bulb
+ * rides the maps binding (`packEscapeGpuMaps`), while the bulb
  * core's single map still rides the params variant block and takes one
  * zero stride here (see {@link surfaceForwardBindGroupLayout}). */
 async function ensureSurfaceForwardEvalBuffers<TDe>(
@@ -5836,7 +5848,7 @@ function destroySurfaceForwardEvalBuffers<TDe>(
   sys.buffers = undefined;
 }
 
-/** {@link ensureSurfaceEvalBuffers}' affine4 twin (fr-dlxh M3): the same
+/** {@link ensureSurfaceEvalBuffers}' affine4 twin (M3): the same
  * lazy-create-once contract and the same four bindings, with the 4D packers
  * — `packSurface4GpuParams` (the frozen block + the 208.. 4D variant tail,
  * fed the system's frozen view) and `packSurfaceGpuMaps4` (`GpuMap4`
@@ -5919,7 +5931,7 @@ function destroySurface4EvalBuffers(sys: Surface4SystemState): void {
   sys.buffers = undefined;
 }
 
-/** Shared by every eval leg (fold/affine/lens AND escape, fr-dlxh): the
+/** Shared by every eval leg (fold/affine/lens AND escape): the
  * dispatch body only ever touches the query count and the three bindings
  * every eval bind group carries in common (results/staging/bindGroup — the
  * escape core's params/queries/results trio, or the maps-bound legs'
@@ -5965,7 +5977,7 @@ function surfaceEvalTol(cpu: number, R: number): number {
   return Math.max(2e-4 * R, 2e-3 * Math.max(Math.abs(cpu), 0.05 * R));
 }
 
-/** fr-76pp: thrown by the device-sanity canary ({@link createSurfaceCanary})
+/** Thrown by the device-sanity canary ({@link createSurfaceCanary})
  * when the shared device stops reproducing its own baseline mid-run. The
  * section's outer catch turns it into the `"device-unreliable"` verdict
  * instead of a plausible-looking numeric "fail". */
@@ -5997,7 +6009,7 @@ interface SurfaceCanary {
 }
 
 /**
- * fr-76pp: the device-sanity tripwire. Observed incident: `bench:surface`
+ * The device-sanity tripwire. Observed incident: `bench:surface`
  * on SwiftShader, run concurrently with the full vitest suite + a dev
  * server + a driven browser, reported plausible gating failures
  * (lens4MandelboxOverAffine fail=676/700 maxAbs=0.96, persisting into the
@@ -6255,11 +6267,11 @@ function compareSurfaceAgreement(
 }
 
 /**
- * {@link compareSurfaceAgreement}'s FORWARD-leg twin (fr-dlxh's escape;
- * fr-7u8t.9 parameterized it on the f32 evaluator and the tolerance
- * radius so the bulb leg shares the identical error math rather than a
- * second copy that could drift). A forward
- * escape-time orbit is CHAOTIC — with no beam-of-several-chains to absorb a
+ * {@link compareSurfaceAgreement}'s FORWARD-leg twin (escape first, then
+ * parameterized on the f32 evaluator and the tolerance radius so the bulb
+ * leg shares the identical error math rather than a second copy that could
+ * drift). A forward escape-time orbit is CHAOTIC — with no
+ * beam-of-several-chains to absorb a
  * clamp-boundary rounding flip the way the IFS beam estimators do, an f32
  * trajectory can diverge from its f64 twin long before either orbit
  * escapes, producing total DE disagreement that is orbit chaos, not a
@@ -6271,10 +6283,10 @@ function compareSurfaceAgreement(
  * that fraction (never silently loses its teeth) by failing the section
  * outright if too many queries end up excluded. */
 /**
- * fr-dlxh: the forward-orbit eval legs' POST-HOC flip verification —
- * fr-7tl3's per-mismatch discipline lifted from the march legs, and
- * (fr-7u8t.9) evaluator-parameterized beside its ensemble twin above, so
- * escape and bulb share one definition. A stable-classified
+ * The forward-orbit eval legs' POST-HOC flip verification — the march
+ * legs' per-mismatch discipline lifted over here, and
+ * evaluator-parameterized beside its ensemble twin above, so escape and
+ * bulb share one definition. A stable-classified
  * query can still fail when the GPU's f32 rounding seeds (FMA
  * contraction, reciprocal rounding) push a marginal orbit across the
  * escape dichotomy in a direction none of the classifier's seven fround
@@ -6399,12 +6411,12 @@ function compareSurfaceForwardAgreement<TDe>(
 }
 
 /**
- * {@link compareSurfaceAgreement}'s affine4-leg twin (fr-dlxh M3): the
+ * {@link compareSurfaceAgreement}'s affine4-leg twin (M3): the
  * identical per-row error math and {@link surfaceEvalTol} bound against the
  * COMPOSED f64 oracle values, with `R` from {@link surface4ToleranceR}
  * (the lens-aware radius the query generator already scaled from). The
  * refined beam's mins absorb f32 trajectory flips exactly as the 3D M0
- * ladder's do (the fr-dlxh verdict for ladder cores) — measured p99 ~2e-7
+ * ladder's do (the measured verdict for ladder cores) — p99 ~2e-7
  * across every system — so no per-flip machinery exists here. The ONE
  * exclusion is pre-hoc: rows `sys.stable` marked as parked on a
  * beam-selection discontinuity ({@link surface4QueryStable}'s doc carries
@@ -6476,7 +6488,7 @@ function compareSurface4Agreement(
 }
 
 /**
- * {@link compareSurface4Agreement}'s fold4-leg twin (fr-rsp6 M4): the
+ * {@link compareSurface4Agreement}'s fold4-leg twin (M4): the
  * identical per-row error math, {@link surfaceEvalTol} bound, and pre-hoc
  * oracle-continuity exclusion (`sys.cpu`/`sys.stable` already computed
  * against the PLAIN composed oracle — `estimateSurface4Composed(...,
@@ -6486,7 +6498,7 @@ function compareSurface4Agreement(
  * the 3D fold row's own idiom ({@link compareSurfaceAgreement}) instead of
  * affine4's "always gate" — only rows at the CPU oracle's fixed
  * `SURFACE_FOLD_BEAM_WIDTH` frontier width compare like against like;
- * narrower rows are the same fr-5rvk narrow-width erosion measurement,
+ * narrower rows are the same narrow-width erosion measurement,
  * informational only.
  */
 function compareSurfaceFold4Agreement(
@@ -6844,7 +6856,7 @@ async function runSurfaceUnprojectMarch(
 }
 
 /**
- * fr-tzdg leg A driver: compile the march kernel at the app's EXACT config
+ * Leg A driver: compile the march kernel at the app's EXACT config
  * (`rays:"unproject"`, production width, private frontier, stage-2 off,
  * `SURFACE_COMPUTE_WORKGROUP_SIZE`), march the agreement raster to
  * completion through {@link runSurfaceUnprojectMarch}'s bounded host loop,
@@ -6865,7 +6877,7 @@ async function runSurfaceUnprojectLeg(
   const rays = width * height;
   const pose = buildSurfacePose(sys.de, width, height);
   const invProjView = surfaceInvProjView(sys.de, pose);
-  // fr-5wlv.5 (balloonMarch): a non-null balloonR marches the SAME system
+  // balloonMarch: a non-null balloonR marches the SAME system
   // through the balloon kernel — buildBalloon's numbers packed at the
   // frozen 272 offset, the balloon march entry replacing the sphere gate
   // — against the CPU emulator's balloon arm. The pose stays the plain
@@ -6899,7 +6911,7 @@ async function runSurfaceUnprojectLeg(
   const code = surfaceDeKernelWgsl({
     mode: "march",
     rays: "unproject",
-    // fr-55s1 stage C: the system's own core + lens, the app renderer's
+    // Stage C: the system's own core + lens, the app renderer's
     // exact derivation. mandelboxKifs keeps its byte-identical fold
     // source (explicit fold core + lens:false are the pinned off state).
     core: sys.core,
@@ -6985,7 +6997,7 @@ async function runSurfaceUnprojectLeg(
         // the whole width x height raster, so offset is the origin.
         bgOffset: [0, 0],
         bgExtent: [width, height],
-        // fr-h3mp: also inert in march mode; linear (0) needs no real
+        // Also inert in march mode; linear (0) needs no real
         // center/scale.
         bgCenter: [0.5, 0.5],
         bgScale: [1, 1],
@@ -7094,7 +7106,7 @@ async function runSurfaceUnprojectLeg(
     }
 
     const R = sys.de.boundingRadius;
-    // fr-7tl3: every mismatch past the boundary rule describes itself,
+    // Every mismatch past the boundary rule describes itself,
     // tagged with the verdict it received — the excluded ones too, so a run
     // can confirm the silhouette rule fired on the rays it was meant to and
     // not on others. Capped: a whole-feature divergence would otherwise
@@ -7113,7 +7125,7 @@ async function runSurfaceUnprojectLeg(
         if (ct >= 0 && gpuT >= 0 && Math.abs(gpuT - ct) <= tol) {
           row.boundaryFlips++;
         } else {
-          // fr-7tl3: boundaryFlips cannot catch a hit-vs-miss pair — it
+          // boundaryFlips cannot catch a hit-vs-miss pair — it
           // compares terminal t, but a miss runs on to the sphere exit
           // while a hit stops at the surface, so that gap is always huge.
           // Ask instead whether the CPU march's own CLOSEST APPROACH (not
@@ -7196,7 +7208,7 @@ async function runSurfaceUnprojectLeg(
             pose.pixelEps * gpuT,
             R * SURFACE_GPU_HIT_FLOOR,
           );
-          // fr-5wlv.5: under the balloon a both-hit endpoint can sit on
+          // Under the balloon a both-hit endpoint can sit on
           // the SHELL — confirm against the union, not the fractal alone.
           const dGpu = balloonCpu
             ? estimateBalloonDistance(
@@ -7291,7 +7303,7 @@ function drawSurfaceComputeFrame(
 }
 
 /**
- * fr-tzdg leg B driver: one end-to-end mandelboxKifs frame through the
+ * Leg B driver: one end-to-end mandelboxKifs frame through the
  * PRODUCTION `SurfaceComputeRenderer` — its own device, its own march/shade
  * pipelines, the app's host loop — at full-tier knobs, presented onto the
  * section's canvas (progressively, like the app's settle presents). Colors
@@ -7332,9 +7344,9 @@ async function runSurfaceComputeFrameLeg(
       height,
       invProjView,
       camPos: pose.ro,
-      // The harness's fixed acceptance slope (fr-7xgi semantics) — the
-      // same eps leg A marched with; trace slope from this raster's own
-      // height, scene.ts's convention.
+      // The harness's fixed acceptance slope (tier-pinned acceptance
+      // semantics) — the same eps leg A marched with; trace slope from
+      // this raster's own height, scene.ts's convention.
       acceptPixelEps: SURFACE_PIXEL_EPS,
       tracePixelEps:
         (2 * Math.tan((SURFACE_POSE_FOV_DEG * Math.PI) / 360)) / height,
@@ -7392,12 +7404,12 @@ async function runSurfaceComputeFrameLeg(
 }
 
 /**
- * Leg B's escape twin (fr-dlxh): one end-to-end frame through the
+ * Leg B's escape twin: one end-to-end frame through the
  * PRODUCTION renderer with a `{ kind: "escape" }` target — the app path
  * for `analyzeEscapeSystem` sessions (forward-orbit core, no maps buffer,
  * one shade slot). Geometry sanity is a strided CPU march compared as HIT
  * RATES (the timing legs' `SURFACE_SANITY_HIT_RATE_TOL` idiom), NOT the
- * per-pixel fr-7tl3 status-exclusion tiers — deliberate: the march entry
+ * per-pixel status-exclusion tiers — deliberate: the march entry
  * text is shared across cores (test-pinned) and the escape DE is
  * eval-pinned over 700 stability-gated queries per system, so a rate band
  * absorbs the boundary flips a chaotic forward orbit produces without
@@ -7409,7 +7421,7 @@ async function runSurfaceComputeFrameEscapeLeg(
   dom: SurfaceSectionDom,
   status: (text: string) => void,
   activity: ActivityBadge,
-  // fr-j231: the canvas label, so the cross-family arm gets its own
+  // The canvas label, so the cross-family arm gets its own
   // picture instead of painting over the fold one (surfaceLabeledCanvas
   // reuses by label, and only captions on creation).
   canvasLabel = "frame-escape",
@@ -7543,7 +7555,7 @@ async function runSurfaceComputeFrameEscapeLeg(
 }
 
 /**
- * The march kernel's own `groundPlaneStatus` (fr-rhn5), mirrored term for
+ * The march kernel's own `groundPlaneStatus`, mirrored term for
  * term — the analytic geometry that turns a sphere-gate/sphere-exit MISS
  * into {@link SURFACE_GPU_RAY_PLANE}. From the WGSL `surfaceDeKernelWgsl`
  * emits under `groundPlane: true`, verbatim:
@@ -7584,11 +7596,11 @@ function surfaceGroundPlaneStatus(
 }
 
 /**
- * fr-qjae: leg B's GROUND-PLANE twin — one end-to-end frame through the
+ * Leg B's GROUND-PLANE twin — one end-to-end frame through the
  * PRODUCTION `SurfaceComputeRenderer` with `{ kind: "ifs", groundPlane:
- * true }`, which is the only place in this bench where a fr-rhn5 plane
+ * true }`, which is the only place in this bench where a ground-plane
  * kernel is compiled, packed, marched AND shaded. Everything else about
- * fr-rhn5 is pinned by source/packer unit tests and in-browser
+ * the plane is pinned by source/packer unit tests and in-browser
  * verification; what those cannot reach is the composition — the appended
  * 336-byte params block arriving at the offset the generated struct reads,
  * the fifth ray status surviving the host's terminal-ray compaction, and
@@ -7688,7 +7700,7 @@ async function runSurfaceComputeFramePlaneLeg(
       lut: null,
       lutVersion: 0,
       dither: true,
-      // fr-rhn5: a plane session's spec MUST carry the floor block (the
+      // A plane session's spec MUST carry the floor block (the
       // renderer throws otherwise — the 336-byte struct has no default).
       groundPlane,
     };
@@ -7777,8 +7789,8 @@ async function runSurfaceComputeFramePlaneLeg(
   }
 }
 
-/** The ifs4 frame leg's strided CPU sanity march (fr-dlxh 4D; fr-rsp6
- * phase 3 widened it to the fold4 core): the kernel's own unproject rays
+/** The ifs4 frame leg's strided CPU sanity march (affine4 first, then
+ * widened to the fold4 core): the kernel's own unproject rays
  * over the identical f32 matrix, the affine4/fold4 marcher's shared
  * quantities — the SLICE-ADJUSTED sphere gate (sliceVisR · 1.02,
  * recomputed the packer's offset-24 way from max(|w0| − h, 0)), cone eps
@@ -7836,9 +7848,9 @@ function surface4CpuSanityRate(
 }
 
 /**
- * Leg B's ifs4 twin (fr-dlxh 4D, stage B2; fr-rsp6 phase 3 widened it to
- * the fold4 core): TWO end-to-end frames through the PRODUCTION renderer
- * with ONE `{ kind: "ifs4" }` target — the app path for
+ * Leg B's ifs4 twin (stage B2, later widened to the fold4 core): TWO
+ * end-to-end frames through the PRODUCTION renderer with ONE `{ kind:
+ * "ifs4" }` target — the app path for
  * `analyzeSurfaceSystem4` sessions (GpuMap4 maps at binding 1, the
  * REQUIRED spec-carried `view4`) — the second frame at a DIFFERENT view4
  * (rotated rotor, different w0), proving the per-frame view repack end to
@@ -8065,7 +8077,7 @@ function shadeAbArmResult(frame: SurfaceComputeFrame | null): ShadeAbArmResult {
 }
 
 /**
- * fr-p8bc shade A/B pixel diff: RGB-only (the kernel never writes
+ * The shade probe-width A/B pixel diff: RGB-only (the kernel never writes
  * translucent pixels — alpha is always 255), comparing the two arms' raw
  * RGBA8 buffers directly in the kernel's OWN row-0-is-bottom order —
  * equivalent pixel-for-pixel to comparing the flipped/presented images,
@@ -8144,7 +8156,7 @@ async function ensureRenderer(
 }
 
 /**
- * fr-p8bc's measured-verdict leg: the shipped shade-probe width
+ * The probe-width verdict's leg: the shipped shade-probe width
  * (`SURFACE_FOLD_BEAM_WIDTH`, the full width-12 beam) against cheaper
  * `--surface-shade-width` candidates, on the PRODUCTION
  * `SurfaceComputeRenderer` — renderers differing ONLY in `opts.shadeDeWidth`,
@@ -8286,7 +8298,7 @@ async function runSurfaceShadeAbLeg(
     };
   };
 
-  activity.setState("gpu", "Surface shade A/B (fr-p8bc)");
+  activity.setState("gpu", "Surface shade probe-width A/B");
   const rows: SurfaceShadeAbRow[] = [];
 
   // Phase 1: the baseline arm — reused across poses when it stays alive,
@@ -8458,7 +8470,7 @@ async function runSurfaceShadeAbLeg(
   return { rows, notes };
 }
 
-/** fr-b72d opt-in sweep leg: builds one kaleidoscope order's affine4
+/** The opt-in sweep leg: builds one kaleidoscope order's affine4
  * system + frozen view, exactly the way {@link runSurfaceDeSection}'s own
  * `affine4SystemDefs` loop builds `aff4Kaleido` — the SAME base maps
  * (`surfaceAff4Kaleido()`), the same `plane: "xz", twist: 1` double
@@ -8491,7 +8503,7 @@ function buildAff4SweepSystem(order: number): {
   return { de, view4 };
 }
 
-/** fr-b72d opt-in sweep leg: builds one kaleidoscope order's FOLD4 system +
+/** The opt-in sweep leg: builds one kaleidoscope order's FOLD4 system +
  * frozen view, mirroring {@link buildAff4SweepSystem} one core over — same
  * eligibility-throw idiom (fixed fixture family; an ineligible order is a
  * bench bug), same identity-rotor / `w0 = 0.2 · boundingRadius` /
@@ -8501,7 +8513,7 @@ function buildAff4SweepSystem(order: number): {
  * `pureBoxfoldPair4` verbatim) instead of the affine ladder's base maps.
  * Boxfold's 4D branch fan is 81 branches per map — the heaviest COMMON
  * fold family (isometric-only, `sigma_c = 1` on all 81 — M4's own doc) —
- * so this curve is the fold-4D-at-high-order datum fr-b72d's routing
+ * so this curve is the fold-4D-at-high-order datum the 4D routing
  * question needs; mandelbox (243 branches per map) scales roughly 3x on
  * top of it, which this leg doesn't need to chase separately to answer
  * that question. */
@@ -8528,10 +8540,10 @@ function buildFold4SweepSystem(order: number): {
 }
 
 /**
- * fr-b72d: the opt-in per-kaleidoscope-order affine4/fold4 eval-kernel
- * timing sweep (`config.aff4Sweep`, `--surface-aff4-sweep=1`). Originally a
- * two-arm affine4 slab/no-slab A/B answering fr-b72d's own question (the
- * affine4 COMPUTE kernel measured ~1.7x FASTER than the fragment-GLSL
+ * The opt-in per-kaleidoscope-order affine4/fold4 eval-kernel timing
+ * sweep (`config.aff4Sweep`, `--surface-aff4-sweep=1`). Originally a
+ * two-arm affine4 slab/no-slab A/B answering the 4D kernel-cost question
+ * (the affine4 COMPUTE kernel measured ~1.7x FASTER than the fragment-GLSL
  * tracer at kaleidoscope order 1 but ~35x SLOWER at order 6, real Iris Xe;
  * orders 2-5 were never measured, and it was unknown whether the slowdown
  * is the eval kernel's own superlinear cost in symmetry order or an
@@ -8539,9 +8551,9 @@ function buildFold4SweepSystem(order: number): {
  * times the BARE eval kernel — no march, no host loop, no shading — at
  * every order in {@link SURFACE_AFF4_SWEEP_ORDERS}, but now across FIVE
  * arms spanning TWO cores: `core: "affine4"` runs `slab` (today's shipped
- * kernel), `noslab` (`slabExt: false`, fr-d0nn's original register-pressure
+ * kernel), `noslab` (`slabExt: false`, the original register-pressure
  * probe), and `noslab` with `mapsUniform: true`; `core: "fold4"` runs only
- * `noslab` and `noslab`+`mapsUniform: true` (no slab arm — the fr-wa6o slab
+ * `noslab` and `noslab`+`mapsUniform: true` (no slab arm — the slice-slab
  * question is already covered on the affine4 ladder above, and separately
  * by M4's own dedicated slabExt A/B on `fold4Boxfold`, so this leg's fold4
  * arms stay narrowly scoped to the axis below they actually add). The two
@@ -8549,7 +8561,7 @@ function buildFold4SweepSystem(order: number): {
  *
  * (1) UNIFORM vs STORAGE maps isolates the per-iteration maps-load tax.
  * The fragment-GLSL 4D tracer this kernel lost to at order 6 reads its
- * maps from a std140 uniform BLOCK (fr-dqlq), which Mesa serves from the
+ * maps from a std140 uniform BLOCK, which Mesa serves from the
  * constant cache / push space; the WGSL storage loads this kernel emits
  * instead sit in the innermost sector-sweep loop AND inside every
  * `refinedCert` re-sweep, behind Tint's runtime-sized-array robustness
@@ -8621,13 +8633,13 @@ function buildFold4SweepSystem(order: number): {
  * by the caller) still leaves every prior order's rows visible in
  * `results.aff4Sweep` rather than losing them.
  *
- * MEASURED VERDICT (real Iris Xe, 2026-08-11 — the fr-b72d closure run):
- * axis (1) REFUTED — uniform maps moved nothing (fold4 0.99x flat at
- * every order, affine4 0.79-1.02x), values bit-identical, so the arms
+ * MEASURED VERDICT (real Iris Xe, 2026-08-11 — the 4D kernel-cost closure
+ * run): axis (1) REFUTED — uniform maps moved nothing (fold4 0.99x flat
+ * at every order, affine4 0.79-1.02x), values bit-identical, so the arms
  * stay as the refutation's standing gate and production never sets
  * `mapsUniform`. Axis (2) landed the real answer: BOTH curves are
- * superlinear (affine4 x14.4, fold4 x76.4 at order 6 vs the 6x naive
- * work ratio) and fold4's — with no `refinedCert` at all — is the worse,
+ * superlinear (affine4 x14.4, fold4 x76.4 at order 6 vs the 6x naive work
+ * ratio) and fold4's — with no `refinedCert` at all — is the worse,
  * refuting the divergence-amplified-refinement suspect too; the CPU
  * oracle then reproduced both shapes on these exact mixes (x13.5/x58.9 —
  * `scripts/aff4-order-cpu.harness.ts`), so the superlinearity is the
@@ -8666,7 +8678,7 @@ async function runSurfaceAff4SweepLeg(
   const affineWidth = SURFACE_AFFINE_LADDER_WIDTH;
   const fold4Width = SURFACE_FOLD_BEAM_WIDTH;
 
-  activity.setState("gpu", "Surface affine4/fold4 sweep (fr-b72d)");
+  activity.setState("gpu", "Surface affine4/fold4 maps-binding sweep");
   status("aff4 sweep: compiling kernels…");
   const { pipeline: slabPipeline, compileMs: slabCompileMs } =
     await buildSurfacePipeline(
@@ -8785,7 +8797,7 @@ async function runSurfaceAff4SweepLeg(
     compileMs,
   });
 
-  // fr-b72d maps-load probe: a fixed 24-slot footprint regardless of how
+  // The maps-load probe: a fixed 24-slot footprint regardless of how
   // many maps the system actually has (surface-de-gpu.ts's
   // SURFACE_GPU_UNIFORM_MAP_SLOTS doc) — WebGPU validates the FULL bound
   // type size at bind-group creation, and a fresh buffer is zero-filled,
@@ -8843,7 +8855,7 @@ async function runSurfaceAff4SweepLeg(
       GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     );
     device.queue.writeBuffer(mapsStorage, 0, mapsData);
-    // fr-b72d probe's uniform-usage twin — same content, full 24-slot
+    // The probe's uniform-usage twin — same content, full 24-slot
     // footprint (this function's doc above).
     const mapsUniformBuf = await createSurfaceBuffer(
       device,
@@ -9271,7 +9283,7 @@ function buildSurfaceSectionDom(container: HTMLElement): SurfaceSectionDom {
   const root = document.createElement("div");
   root.className = "scenario";
   const heading = document.createElement("h2");
-  heading.textContent = "surface-de (fr-q1f8) — ";
+  heading.textContent = "surface-de compute kernel — ";
   const status = document.createElement("span");
   status.className = "status";
   status.textContent = "idle";
@@ -9290,7 +9302,7 @@ function buildSurfaceSectionDom(container: HTMLElement): SurfaceSectionDom {
  * software adapters unless forced). Never throws: unavailable WebGPU is a
  * "skipped" verdict, anything after device acquisition that breaks is a
  * "fail" with the error in `reason`/`notes` — except a device-sanity
- * canary trip (fr-76pp), which is the "device-unreliable" verdict: the
+ * canary trip, which is the "device-unreliable" verdict: the
  * shared device stopped reproducing its own baseline mid-run, so numeric
  * rows are not evidence either way and the only honest instruction is
  * "rerun on a quiet machine" (see {@link createSurfaceCanary}).
@@ -9334,7 +9346,7 @@ async function runSurfaceDeSection(
       name: "foldBoxfoldNegPlusAffine",
       transforms: surfaceFoldBoxfoldNegPlusAffine(),
     },
-    // fr-s9ll — the fold's AUTHORED lengths. Appended after the existing
+    // The fold's AUTHORED lengths. Appended after the existing
     // fold entries rather than inserted among them: the march-unproject
     // leg falls back to `foldSystems[0]` when mandelboxKifs is excluded
     // (surfaceSystems=synthetic), and that leg's fixture should not change
@@ -9343,7 +9355,7 @@ async function runSurfaceDeSection(
       name: "foldParameterizedPair",
       transforms: surfaceFoldParameterizedPair(),
     },
-    // fr-55s1 M0 — the AFFINE core's systems. Fold-free base maps, so the
+    // M0 — the AFFINE core's systems. Fold-free base maps, so the
     // routing below hands them the refined ladder and its own oracle.
     { name: "affineTetra", transforms: surfaceAffineTetra() },
     {
@@ -9352,7 +9364,7 @@ async function runSurfaceDeSection(
       finalTransform: surfaceAffineTwistFinal(),
       symmetry: { order: 3, plane: "xz" },
     },
-    // fr-55s1 stage B (M1) — the fold FINAL lens systems. `buildSurfaceDE`
+    // Stage B (M1) — the fold FINAL lens systems. `buildSurfaceDE`
     // turns each fold-carrying final into `de.foldFinal`; the CPU calls
     // below route through `descendLens` on their own, and the M1 leg
     // compiles the kernel with `lens: true` around each system's core.
@@ -9371,7 +9383,7 @@ async function runSurfaceDeSection(
       transforms: surfaceFoldBoxfoldPair(),
       finalTransform: surfaceLensSpherefoldFinal(),
     },
-    // fr-s9ll — the lens's own authored lengths, over M0's affine base
+    // The lens's own authored lengths, over M0's affine base
     // (see surfaceLensParameterizedFinal's doc for why the lens block is a
     // second, independently-packed site).
     {
@@ -9389,7 +9401,7 @@ async function runSurfaceDeSection(
       const finalTransform = def.finalTransform ?? null;
       const symmetry = def.symmetry ?? SURFACE_NO_SYMMETRY;
       const de = buildSurfaceDE(def.transforms, finalTransform, symmetry);
-      // fr-55s1: the DE picks BOTH the kernel core and the CPU oracle, by
+      // The DE picks BOTH the kernel core and the CPU oracle, by
       // the same `deHasFolds` test `estimateDistance*` route on. Fold base
       // maps march the wide frontier, pinned against PLAIN
       // `estimateDistance` (refine=false — the estimator that kernel
@@ -9427,21 +9439,21 @@ async function runSurfaceDeSection(
     render();
   }
 
-  // ----- Escape-time systems (fr-dlxh): a SEPARATE gate + CPU oracle -----
+  // ----- Escape-time systems: a SEPARATE gate + CPU oracle -----
   // `buildSurfaceDE` refuses these shapes by design (single non-contracting
   // pure-fold map — `analyzeEscapeSystem` is its deliberate complement), so
   // they never enter `systemDefs`/`systems` above and never touch
   // `deHasFolds`/fold/affine routing. Five SINGLE-MAP systems: both fold arms gated
   // solo (boxfold, spherefold), both together (mandelbox), an off-axis
-  // rotated/scaled matrix with a negative fold weight, and — since
-  // fr-7u8t.8 moved the per-iteration offset onto the query point — the
+  // rotated/scaled matrix with a negative fold weight, and — since the
+  // per-iteration offset moved onto the query point — the
   // ZERO-offset mandelbox, which is the textbook object the escape presets
   // ship and the only fixture whose pre-fold offset contributes nothing.
   //
-  // THREE MORE SINCE fr-s04t, and they are the load-bearing ones for the
-  // chain: the orbit CYCLES through the document's transform list, so on
-  // any single-map fixture the whole inner step is a no-op and every
-  // mutation of it passes (fr-7u8t.9's sigma_max lesson, one level up).
+  // THREE MORE SINCE THE CHAIN LANDED, and they are the load-bearing ones
+  // for the chain: the orbit CYCLES through the document's transform list,
+  // so on any single-map fixture the whole inner step is a no-op and every
+  // mutation of it passes (the bulb leg's sigma_max lesson, one level up).
   // So `escChainPair` runs two links whose FOLD KIND, weight and matrix
   // all differ (a kernel that read slot 0 every step, or applied the
   // links in the wrong order, gets a different orbit); `escChainTriple`
@@ -9450,11 +9462,11 @@ async function runSurfaceDeSection(
   // pair under a 5-fold kaleidoscope, because the query-space wedge fold
   // is equally a no-op on every unsymmetrised row.
   //
-  // AND FOUR CROSS-FAMILY ROWS SINCE fr-j231 (their own block at the end of
-  // the list, with the measured exclusion budget that picked their
-  // pre-scales): every row above is fold-only, so none of them reaches the
-  // two POWER link kinds, the `kind < 4` guard that keeps them out of the
-  // fold pair, or the chain-level `logEstimate` flag.
+  // AND FOUR CROSS-FAMILY ROWS SINCE THE POWER LINKS (their own block at
+  // the end of the list, with the measured exclusion budget that picked
+  // their pre-scales): every row above is fold-only, so none of them
+  // reaches the two POWER link kinds, the `kind < 4` guard that keeps them
+  // out of the fold pair, or the chain-level `logEstimate` flag.
   const escapeSystemDefs: {
     name: string;
     transforms: Transform[];
@@ -9526,7 +9538,7 @@ async function runSurfaceDeSection(
         },
       ],
     },
-    // The chain rows (fr-s04t) — escape-chain.harness.ts's own fixtures,
+    // The chain rows — escape-chain.harness.ts's own fixtures,
     // which is where their measured bound/step-violation and fill numbers
     // come from.
     {
@@ -9597,7 +9609,7 @@ async function runSurfaceDeSection(
         },
       ],
     },
-    // fr-s9ll: the chain whose links carry DIFFERENT fold apparatus from
+    // The chain whose links carry DIFFERENT fold apparatus from
     // each other. `EscapeLink` holds its own `boxLimit`/`minRadius2`/
     // `fixedRadius2` resolved at build, and the two shader mirrors pack one
     // slot per link — so the case a per-DOCUMENT wire would pass and a
@@ -9641,7 +9653,7 @@ async function runSurfaceDeSection(
         },
       ],
     },
-    // fr-j231: the CROSS-FAMILY rows. A link may now be one of two POWER
+    // The CROSS-FAMILY rows. A link may now be one of two POWER
     // maps (`ESCAPE_LINK_BULB` 4, `ESCAPE_LINK_QSQUARE` 5) beside the three
     // folds, and every row above is fold-only — so all four of the
     // feature's moving parts are invisible to them: the kernels' `kind < 4`
@@ -9730,15 +9742,17 @@ async function runSurfaceDeSection(
     //
     // Both adapters gate CLEAN on all four, worst flip count 3 against
     // `SURFACE_ESCAPE_FLIP_CAP`'s 7 and worst exclusion 72 against 140, so
-    // NO cap moved and none needed to (fr-j231 went in expecting to have
-    // to argue for one). `excluded` is adapter-INDEPENDENT by construction
-    // — the ensemble classifier is CPU-only — and it duly reads identical
-    // in both columns, which is the same cross-adapter identity fr-jtd4
-    // leaned on. The real-Iris run is the one that judges these rows
-    // (this file's standing advice for every forward-orbit leg); the
-    // SwiftShader run's only failure is the pre-existing `escChainKaleido`
-    // false failure fr-jtd4 documents (fail=5, flips=21, maxAbs 1.333),
-    // reproduced here bit for bit and untouched by these fixtures.
+    // NO cap moved and none needed to (the cross-family work went in
+    // expecting to have to argue for one). `excluded` is
+    // adapter-INDEPENDENT by construction — the ensemble classifier is
+    // CPU-only — and it duly reads identical in both columns, which is the
+    // same cross-adapter identity the escChainKaleido false-failure
+    // diagnosis leaned on. The real-Iris run is the one that judges these
+    // rows (this file's standing advice for every forward-orbit leg); the
+    // SwiftShader run's only failure is the pre-existing, known
+    // SwiftShader-only `escChainKaleido` false failure (fail=5, flips=21,
+    // maxAbs 1.333), reproduced here bit for bit and untouched by these
+    // fixtures.
     {
       name: "escChainBulb",
       seed: 410,
@@ -9838,7 +9852,7 @@ async function runSurfaceDeSection(
     activity.setState("cpu", `Surface escape CPU oracle — ${def.name}`);
     await new Promise<void>((resolve) => setTimeout(resolve));
     try {
-      // fr-s04t: the kaleidoscope row carries a symmetry, so both gate
+      // The kaleidoscope row carries a symmetry, so both gate
       // and build take the def's own (the others default to order 1,
       // exactly as before).
       const symmetry = def.symmetry;
@@ -9880,7 +9894,7 @@ async function runSurfaceDeSection(
     render();
   }
 
-  // ----- Escape4 systems (fr-vag4): the escape gate's 4D HALF -----------
+  // ----- Escape4 systems: the escape gate's 4D HALF -----------
   // `analyzeEscapeSystem4` is `analyzeEscapeSystem` with the flatness
   // clause removed and a `bulb` refusal added, so these systems are
   // refused by BOTH 3D gates above (each carries a map that reaches out of
@@ -9902,14 +9916,14 @@ async function runSurfaceDeSection(
   //                          whose tail link ROTATES into `w` (`xw` 0.35).
   //                          Identity view, so the orbit is the only 4D
   //                          thing in the row.
-  //   esc4ChainParameterized fr-s9ll's authored lengths per LINK: link 0 a
+  //   esc4ChainParameterized the authored fold lengths per LINK: link 0 a
   //                          mandelbox at (0.65, 0.95, 0.8), link 1 a
   //                          boxfold at wall 0.7 with its sphere pair
   //                          ABSENT — which is the half that pins "absent
   //                          means classic" ACROSS THE WIRE, exactly as
   //                          `escChainParameterized` does in 3D.
   //   esc4ChainQsquare       the FULL quaternion square beside a fold, at a
-  //                          nonzero `w` TRANSLATION (fr-wuuu's `k`
+  //                          nonzero `w` TRANSLATION (the quaternion `k`
   //                          component), under a NON-IDENTITY rotor. The
   //                          only row with `logEstimate` true, so it is
   //                          also the one that pins `esc4Params.x`.
@@ -9928,13 +9942,14 @@ async function runSurfaceDeSection(
   //                          fails only this one (measured, on
   //                          `liftEscape4F32`'s doc).
   //
-  // THE FIXTURE PARAMETERS ARE MEASURED, by fr-j231's method: `excluded`
-  // is a pure function of the fixture and costs NO GPU (the ensemble
-  // classifier compares this file's f32 twin against the f64 oracle and
-  // nothing else), so the budget was swept on the CPU first and the
-  // fixtures picked out of it. Bailout-ball fill (`probeEscapeFill4`, the
-  // 4-ball) / ensemble exclusions of 700 / queries landing in the mix's own
-  // `DE < 0.02` boundary shell, against the 3D controls for scale:
+  // THE FIXTURE PARAMETERS ARE MEASURED, by the cross-family rows' method:
+  // `excluded` is a pure function of the fixture and costs NO GPU (the
+  // ensemble classifier compares this file's f32 twin against the f64
+  // oracle and nothing else), so the budget was swept on the CPU first and
+  // the fixtures picked out of it. Bailout-ball fill (`probeEscapeFill4`,
+  // the 4-ball) / ensemble exclusions of 700 / queries landing in the
+  // mix's own `DE < 0.02` boundary shell, against the 3D controls for
+  // scale:
   //
   //   escMandelbox        (3D control)  fill 3.42%  excl  58  nearBnd 283
   //   escChainPair        (3D control)  fill 1.56%  excl  71  nearBnd 281
@@ -10052,7 +10067,7 @@ async function runSurfaceDeSection(
           rotation: [0, 0, 0],
           // The pre-scale IS the parameter for a power link (escape-de.ts's
           // POWER LINKS ARE STIFF table); the `w` translation is the `k`
-          // component fr-wuuu measured, and it is what makes this the FULL
+          // component the k-sweep measured, and it is what makes this FULL
           // quaternion square rather than its `w = 0` restriction — the
           // orbit's `w` lane is nonzero from the first step.
           scale: [0.4, 0.4, 0.4],
@@ -10202,7 +10217,7 @@ async function runSurfaceDeSection(
     render();
   }
 
-  // ----- Mandelbulb systems (fr-7u8t.9): the escape gate's SIBLING -----
+  // ----- Mandelbulb systems: the escape gate's SIBLING -----
   // `analyzeBulbSystem` admits exactly one shape — a lone pure triplex
   // power at weight 1, flat, non-singular, no final, no kaleidoscope — and
   // both `buildSurfaceDE` and `analyzeEscapeSystem` refuse it, so like the
@@ -10210,13 +10225,13 @@ async function runSurfaceDeSection(
   // FOUR systems, and the third is the load-bearing one: `dr` seeds at
   // `sigma_max(M)` and its recurrence's trailing term is `+ sigma_max(M)`,
   // so on an IDENTITY or ROTATION map (sigmaMax = 1) dropping either term
-  // is a BIT-EXACT no-op that passes the whole suite — the mutation
-  // fr-7u8t.4 shipped undetected one object over. `bulbScaled` is the
-  // uniformly scaled fixture (s = 1.3 > 1) that makes both visible;
-  // `bulbRotAniso` additionally separates sigmaMax from sigmaMin (the
-  // escape radius reads min, the derivative reads max) under an off-axis
-  // M, the deliberately-worst archetype this family's `escMandelboxRot`
-  // plays one object over.
+  // is a BIT-EXACT no-op that passes the whole suite — the mutation the
+  // quaternion-Julia oracle shipped undetected one object over.
+  // `bulbScaled` is the uniformly scaled fixture (s = 1.3 > 1) that makes
+  // both visible; `bulbRotAniso` additionally separates sigmaMax from
+  // sigmaMin (the escape radius reads min, the derivative reads max) under
+  // an off-axis M, the deliberately-worst archetype this family's
+  // `escMandelboxRot` plays one object over.
   const bulbSystemDefs: {
     name: string;
     transforms: Transform[];
@@ -10318,15 +10333,15 @@ async function runSurfaceDeSection(
     render();
   }
 
-  // ----- Affine4 (4D) systems (fr-dlxh M3): a THIRD separate gate -----
+  // ----- Affine4 (4D) systems (M3): a THIRD separate gate -----
   // `buildSurfaceDE` has no 4D shape at all — these systems live behind
   // `analyzeSurfaceSystem4`/`buildSurfaceDE4` and the kernel's view lift,
   // so like the escape leg they carry their own defs, query generator,
   // comparator and (M3 below) leg. Each def freezes its own view (rotor +
   // w0 + sliceHalfW), built AFTER the DE so w0/h can scale from the probed
   // radius; together the four cover the pure DE at the identity view, the
-  // fr-u91x double-rotation sector sweep at a nonzero w0, the 4D final
-  // lens under a w-mixing pose rotor, and the fr-wa6o slab query (every
+  // 4D double-rotation sector sweep at a nonzero w0, the 4D final
+  // lens under a w-mixing pose rotor, and the slab query (every
   // ext register live). `symmetryRotation4` mints the pose rotors: any
   // proper rotation works, and that constructor is already convention-safe
   // (PLANE_SIGN) and in the import set.
@@ -10430,19 +10445,19 @@ async function runSurfaceDeSection(
     render();
   }
 
-  // fr-rsp6 M4: the FOLD4 core's own fixed fixture family — the same
+  // M4: the FOLD4 core's own fixed fixture family — the same
   // "def-time eligibility gate throws" idiom as affine4SystemDefs above,
   // for the same reason (fixed fixtures; an ineligible one is a bench bug).
-  // Four systems (a fifth since fr-s9ll — see its own comment below), each
-  // `surfaceFold4Boxfold`/`surfaceFold4Mandelbox`
-  // (`surface-de-4d.test.ts`'s fr-rsp6 fixtures verbatim, so bench and CPU
+  // Four systems (a fifth for the authored lengths — see its own comment
+  // below), each `surfaceFold4Boxfold`/`surfaceFold4Mandelbox`
+  // (`surface-de-4d.test.ts`'s own fixtures verbatim, so bench and CPU
   // tests pin the identical systems) under a different view/symmetry: the
   // pure DE at a nonzero w0 (fold4Boxfold), the widest fold class at the
-  // same view (fold4Mandelbox, 243 branches per map), the fr-u91x
-  // kaleidoscope sweep through fold branches (fold4Kaleido), and the
-  // fr-wa6o slab query threaded through them (fold4Slab, every ext
-  // register live). `null` finalTransform always — fold4 FINAL lenses are
-  // fr-rsp6 phase 2B, out of this cut (surface-de-gpu.ts's module doc).
+  // same view (fold4Mandelbox, 243 branches per map), the 4D kaleidoscope
+  // sweep through fold branches (fold4Kaleido), and the slab query
+  // threaded through them (fold4Slab, every ext register live). `null`
+  // finalTransform always — fold4 FINAL lenses are the LATER phase, out of
+  // this cut (surface-de-gpu.ts's module doc).
   const fold4SystemDefs: {
     name: string;
     seed: number;
@@ -10491,7 +10506,7 @@ async function runSurfaceDeSection(
         sliceHalfW: 0.1 * de.boundingRadius,
       }),
     },
-    // fr-s9ll: the fold's AUTHORED lengths one dimension up (see
+    // The fold's AUTHORED lengths one dimension up (see
     // surfaceFold4Parameterized's doc). Viewed at the same nonzero w0 as
     // fold4Boxfold/fold4Mandelbox above, so the radii are the only thing
     // separating this row from the family's plain ones.
@@ -10562,13 +10577,13 @@ async function runSurfaceDeSection(
     render();
   }
 
-  // fr-rsp6 phase 2B: the 4D LENS fixture family (M5 below) — a fold FINAL
+  // The 4D LENS fixture family (M5 below) — a fold FINAL
   // over the affine4/fold4 fixtures' own base shapes, `descendLens4`'s
   // branch sweep exercised one dimension up. Same "def-time eligibility
   // gate throws" idiom as affine4SystemDefs/fold4SystemDefs above (fixed
   // fixtures; an ineligible one is a bench bug, not a leg quietly running
   // short). The base for the affine-ladder trio is `pentatope()` —
-  // `surface-de-4d.test.ts`'s fr-rsp6 lens suite uses it throughout ("Base
+  // `surface-de-4d.test.ts`'s lens suite uses it throughout ("Base
   // transforms are pentatope() ... 4D's analogue of 3D's
   // sierpinskiTetrahedron() base"), so bench and CPU tests pin the same
   // lensed systems, exactly like `fold4Boxfold` already pins
@@ -10582,7 +10597,7 @@ async function runSurfaceDeSection(
   // 243-branch mandelbox lens fan, this leg's widest per-query branch
   // count), and `lens4Slab` (the SAME boxfold lens re-viewed through
   // `aff4Slab`'s exact slab — boxfold-only on both the base, trivially
-  // true here, and the lens keeps `slabExact4` true, so the fr-wa6o
+  // true here, and the lens keeps `slabExact4` true, so the slab's
   // segment machinery rides through the lens too). The fourth,
   // `lens4BoxOverFold`, wraps the FOLD frontier instead: the same boxfold
   // lens over `fold4Boxfold`'s own pair (`pureBoxfoldPair4`, fold maps at
@@ -10671,7 +10686,7 @@ async function runSurfaceDeSection(
     render();
   }
 
-  // fr-rsp6 phase 2B: the ONE lens4 system that wraps the FOLD frontier —
+  // The ONE lens4 system that wraps the FOLD frontier —
   // see the block comment above for why this def is separate from
   // lens4AffineSystemDefs (a different base, a different core, a
   // different CPU estimator — `estimateDistance4` plain, not refined).
@@ -10801,7 +10816,7 @@ async function runSurfaceDeSection(
     stage2: false,
     wg: surfaceWgFor(config, stage2OffVariant),
   });
-  // The affine core's single agreement config (fr-55s1 M0): its ladder is
+  // The affine core's single agreement config (M0): its ladder is
   // FIXED width 4 and the generator ignores `sharedFrontier`/`bnbStage2`
   // there, so a variant/width sweep would compile the identical source
   // four times over. One config, and every row it produces gates.
@@ -10867,41 +10882,41 @@ async function runSurfaceDeSection(
   results.adapter = acquired.adapterInfo;
   results.limits = acquired.limits;
   let compileFailed = false;
-  // fr-dlxh: set when the escape eval leg's f32-stability gate excludes too
+  // Set when the escape eval leg's f32-stability gate excludes too
   // large a fraction of a system's 700 queries (SURFACE_ESCAPE_EXCLUDED_CAP)
   // — separate from `anyAgreementFail` (computed at verdict time from
   // `results.agreement`) because an over-wide exclusion is a red flag even
   // when the surviving `failures` count itself is 0.
   let escapeGateFail = false;
-  // fr-7u8t.9: the bulb eval leg's analog of escapeGateFail — same two
+  // The bulb eval leg's analog of escapeGateFail — same two
   // caps (SURFACE_BULB_EXCLUDED_CAP for the pre-hoc ensemble exclusions,
   // SURFACE_BULB_FLIP_CAP for the post-hoc verified shadow flips).
   let bulbGateFail = false;
-  // fr-vag4: the escape4 eval leg's analog, reading the ESCAPE leg's own
+  // The escape4 eval leg's analog, reading the ESCAPE leg's own
   // two caps rather than a pair of its own — it is the same orbit one
   // dimension up, the same ensemble classifier and the same 700-query mix,
   // so a separate number would be an unearned degree of freedom (and the
   // measured exclusion census, 44-78 of 700, sits inside the 3D band).
   let escape4GateFail = false;
-  // fr-dlxh M3: the affine4 leg's analog — set when the oracle-continuity
+  // M3: the affine4 leg's analog — set when the oracle-continuity
   // gate excludes more than SURFACE_AFFINE4_EXCLUDED_CAP of a system's
   // queries, for exactly the reason above.
   let affine4GateFail = false;
-  // fr-rsp6 M4: the fold4 leg's analog of affine4GateFail, per-system cap
+  // M4: the fold4 leg's analog of affine4GateFail, per-system cap
   // (fold4ExcludedCap).
   let fold4GateFail = false;
-  // fr-rsp6 M4: the fold4 leg's slabExt A/B on fold4Boxfold — set when the
+  // M4: the fold4 leg's slabExt A/B on fold4Boxfold — set when the
   // slabExt:true/false kernels disagree beyond SURFACE_FOLD4_SLABEXT_TOL_FACTOR
   // at sliceHalfW 0, where surface-de-gpu.ts's slabExt doc says they must
   // be mathematically bit-identical (runSurfaceAff4SweepLeg's own gate,
   // one estimator class over).
   let fold4SlabExtFailed = false;
-  // fr-rsp6 phase 2B: the M5 lens4 leg's analog of affine4GateFail/
+  // The M5 lens4 leg's analog of affine4GateFail/
   // fold4GateFail — per-system cap (lens4ExcludedCap), checked on every
   // GATING lens4 row (the three affine4-cored rows always gate; the one
   // fold4-cored row only at its production width, mirroring M4).
   let lens4GateFail = false;
-  // fr-rsp6 phase 2B: the pack-guard pin (CPU-only, no GPU dispatch) —
+  // The pack-guard pin (CPU-only, no GPU dispatch) —
   // `packSurface4GpuParams` must THROW for a spherefold-final DE queried
   // through a nonzero sliceHalfW (the slabExact4 refusal, surface-de-gpu.ts).
   // Set when it does NOT throw, or throws for an unrelated reason.
@@ -10929,7 +10944,7 @@ async function runSurfaceDeSection(
         })
       : 0;
 
-  // fr-76pp: the device-sanity canary, destroyed in the finally — declared
+  // The device-sanity canary, destroyed in the finally — declared
   // out here so the finally can reach it.
   let canary: SurfaceCanary | undefined;
   try {
@@ -10939,7 +10954,7 @@ async function runSurfaceDeSection(
       bindGroupLayouts: [bindGroupLayout],
     });
 
-    // ----- Device-sanity canary (fr-76pp) — armed before any leg -----
+    // ----- Device-sanity canary — armed before any leg -----
     // Its t0 baseline brackets every dispatch below; each leg banner
     // re-checks it, so a mid-run device upset (the contended-SwiftShader
     // class) becomes a "device-unreliable" verdict at the boundary where
@@ -11023,7 +11038,7 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the fold agreement leg");
 
-    // ----- M0 (fr-55s1): the AFFINE core's agreement leg — GATING -----
+    // ----- M0: the AFFINE core's agreement leg — GATING -----
     // Fold-free systems compile the width-4 refined ladder and pin against
     // `estimateDistanceRefined` (their `cpu` values above already are it),
     // the same eval protocol and tolerance formula as the fold rows one
@@ -11078,7 +11093,7 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the M0 affine agreement leg");
 
-    // ----- M1 (fr-55s1 stage B): the fold-lens agreement leg — GATING -----
+    // ----- M1 (stage B): the fold-lens agreement leg — GATING -----
     // One pipeline PER SYSTEM: `lens` wraps that system's own core
     // (lensOverFold marches the width-12 fold frontier inside the sweep,
     // the affine-based pair the width-4 ladder), and every row compares
@@ -11132,10 +11147,10 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the M1 fold-lens agreement leg");
 
-    // ----- balloonEval (fr-5wlv.5): the inverted-union eval leg — GATING -----
-    // Three systems — the affine default, one fold system, the fr-g58b
-    // lens archetype — x the spike's two R regimes (0.35 early / 1.6
-    // rest, fr-5wlv.1). Each pipeline compiles the system's OWN core+lens
+    // ----- balloonEval: the inverted-union eval leg — GATING -----
+    // Three systems — the affine default, one fold system, the pure-fold
+    // lens archetype — x the balloon spike's two R regimes (0.35 early /
+    // 1.6 rest). Each pipeline compiles the system's OWN core+lens
     // with `balloon: true`; the params pack `buildBalloon`'s numbers as
     // the third argument (the oracle link), and the CPU oracle is
     // `estimateBalloonDistance` over the same core-routed estimator the
@@ -11259,14 +11274,14 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the balloonEval leg");
 
-    // ----- M2 (fr-dlxh): the ESCAPE core's agreement leg — GATING -----
+    // ----- M2: the ESCAPE core's agreement leg — GATING -----
     // Forward escape-time systems never enter `systems` above — `buildSurfaceDE`
     // refuses their shape by design — so `escapeSystems` (built right after
     // the systemDefs CPU-oracle loop) is the only source for this leg. One
     // pipeline for every system: the escape core takes no width/variant/
     // stage2 sweep (inert, like the affine ladder), and its maps binding
     // carries the formula CHAIN rather than inverse descent maps
-    // (fr-s04t — one `GpuMap` per link, `packEscapeGpuMaps`), so this leg
+    // (one `GpuMap` per link, `packEscapeGpuMaps`), so this leg
     // gets its own bind group layout and buffers helper rather than
     // `ensureSurfaceEvalBuffers`'s descent-shaped one.
     if (escapeSystems.length > 0) {
@@ -11320,7 +11335,7 @@ async function runSurfaceDeSection(
               itemCount: sys.queries.length,
               cutoff: 0,
             }),
-            // fr-s04t: the chain the kernel cycles through.
+            // The chain the kernel cycles through.
             packEscapeGpuMaps(sys.de),
           );
           const t0 = performance.now();
@@ -11368,7 +11383,7 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the M2 escape agreement leg");
 
-    // ----- M6 (fr-7u8t.9): the BULB core's agreement leg — GATING -----
+    // ----- M6: the BULB core's agreement leg — GATING -----
     // The escape leg's exact shape one formula over: `bulbSystems` is the
     // only source (no other gate admits a pure triplex power), one
     // pipeline serves every system (no width/variant/stage2 sweep — all
@@ -11481,7 +11496,7 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the M6 bulb agreement leg");
 
-    // ----- M3 (fr-dlxh): the AFFINE4 core's agreement leg — GATING -----
+    // ----- M3: the AFFINE4 core's agreement leg — GATING -----
     // The 4D refined ladder behind the view lift — `estimateDistance4Refined`
     // (surface-de-4d.ts) as `surface-material-4d.ts` marches it — pinned
     // against the COMPOSED f64 oracle (`estimateSurface4Composed`: the same
@@ -11561,7 +11576,7 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the M3 affine4 agreement leg");
 
-    // ----- M4 (fr-rsp6 phase 2A): the FOLD4 core's agreement leg -----
+    // ----- M4: the FOLD4 core's agreement leg -----
     // The fold frontier one dimension up, behind the SAME view lift as M3
     // — `descendFold4` refine=FALSE (surface-de-4d.ts) as the fold4
     // GLSL/WGSL body marches it — pinned against the COMPOSED f64 oracle
@@ -11570,12 +11585,12 @@ async function runSurfaceDeSection(
     // buffers (the params/maps/queries data doesn't depend on kernel
     // width — only the compiled source does): `SURFACE_FOLD_BEAM_WIDTH`
     // (12) is the CPU oracle's own fixed frontier width, so it GATES; 4 is
-    // the same fr-5rvk narrow-width erosion measurement 3D's fold rows
+    // the same narrow-width erosion measurement 3D's fold rows
     // already run, informational only
     // (`compareSurfaceFold4Agreement`'s `gating` rule — the 3D fold row's
     // idiom, not M3's fixed-width "always gate"). Private variant, stage2
     // off always: the fold4 frontier is function-scope private by
-    // construction and the fr-kidj skips are not emitted at all
+    // construction and the branch-and-bound skips are not emitted at all
     // (surface-de-gpu.ts's module doc), so there is no variant/stage2
     // sweep to run here.
     const gpuByFold4Key = new Map<string, Float32Array>();
@@ -11658,7 +11673,7 @@ async function runSurfaceDeSection(
         render();
       }
 
-      // fr-rsp6 M4's slabExt A/B (mirrors runSurfaceAff4SweepLeg's own
+      // M4's slabExt A/B (mirrors runSurfaceAff4SweepLeg's own
       // slab/no-slab comparison + note wording, one estimator class over):
       // fold4Boxfold's own sliceHalfW is 0, so surface-de-gpu.ts's
       // `slabExt` doc applies verbatim — segmentRadius4(q, 0) is length(q)
@@ -11746,7 +11761,7 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the M4 fold4 agreement leg");
 
-    // ----- M5 (fr-rsp6 phase 2B): the 4D LENS agreement leg -----
+    // ----- M5: the 4D LENS agreement leg -----
     // The fold-FINAL lens (`descendLens4`) wrapped around EITHER 4D core,
     // pinned against the SAME composed-oracle machinery M3/M4 already use —
     // `de.foldFinal` alone routes `estimateDistance4`/`estimateDistance4Refined`
@@ -11760,7 +11775,7 @@ async function runSurfaceDeSection(
     // (one system) wraps the FOLD frontier — a fold base (`fold4Boxfold`'s
     // pair), so the wrapper routes through `descendFold4` and mirrors PLAIN
     // `estimateDistance4` — and sweeps the SAME two widths as M4 (12 gates,
-    // 4 is the fr-5rvk narrow-width erosion measurement, informational).
+    // 4 is the narrow-width erosion measurement, informational).
     if (lens4AffineSystems.length > 0) {
       const lens4AffineConfig: SurfaceKernelConfig = {
         core: "affine4",
@@ -11900,7 +11915,7 @@ async function runSurfaceDeSection(
       }
     }
 
-    // fr-rsp6 phase 2B pack-guard pin (CPU-only, no GPU dispatch): a
+    // The pack-guard pin (CPU-only, no GPU dispatch): a
     // spherefold-final DE queried through a nonzero sliceHalfW must be
     // REFUSED by `packSurface4GpuParams` (`slabExact4` — a spherefold
     // branch takes a segment to an ARC under inversion, so a segment
@@ -11956,7 +11971,7 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the M5 lens4 agreement leg");
 
-    // ----- M7 (fr-vag4): the ESCAPE4 core's agreement leg — GATING -----
+    // ----- M7: the ESCAPE4 core's agreement leg — GATING -----
     // The forward escape-time orbit ONE DIMENSION UP, behind the 4D cores'
     // view lift — `escape-de-4d.ts`'s `estimateEscapeDistance4` as the
     // `core: "escape4"` kernel mirrors it — pinned against the COMPOSED
@@ -11989,10 +12004,10 @@ async function runSurfaceDeSection(
     //     exactly like `core: "escape"` — bulb is the one bindingless core
     //     left.
     //
-    // Judge these rows on `--display=:0`, not SwiftShader alone: fr-dlxh's
-    // lesson (a classifier that passed SwiftShader clean, then real Iris
-    // flipped six "stable" rows) is a property of forward orbits, not of
-    // the ambient dimension. fr-jtd4's standing SwiftShader false failure
+    // Judge these rows on `--display=:0`, not SwiftShader alone: the escape
+    // core's own lesson (a classifier that passed SwiftShader clean, then
+    // real Iris flipped six "stable" rows) is a property of forward orbits,
+    // not of the ambient dimension. The standing SwiftShader false failure
     // is on `escChainKaleido`, a 3D row; no escape4 row is implicated by
     // it, and any escape4 row that fails on a software rasteriser and
     // passes on a real driver should be reported with both columns rather
@@ -12163,14 +12178,14 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the cross-check leg");
 
-    // ----- Leg A (fr-tzdg): march-unproject agreement — GATING -----
+    // ----- Leg A: march-unproject agreement — GATING -----
     // The app path's ray derivation against the CPU emulator, at the exact
     // kernel config SurfaceComputeRenderer compiles. An agreement gate, so
     // it runs on software adapters too (the CI path), like the eval legs.
     let unprojFailed = false;
     {
       // The leg compiles a FOLD march kernel, so it only ever runs on a
-      // fold system (fr-55s1: the affine systems beside them march a
+      // fold system (the affine systems beside them march a
       // different core, whose march/shade legs are stages C's).
       const sys =
         foldSystems.find((s) => s.name === "mandelboxKifs") ?? foldSystems[0];
@@ -12206,9 +12221,9 @@ async function runSurfaceDeSection(
         render();
       }
 
-      // fr-55s1 stage C: the same gate over the lens field class — the
-      // affine core under the 81-branch mandelbox lens, the exact kernel
-      // the app renderer compiles for fr-zx34's system shape. Same
+      // Stage C: the same gate over the lens field class — the affine
+      // core under the 81-branch mandelbox lens, the exact kernel the app
+      // renderer compiles for the truncated-preview system shape. Same
       // truncation/failure gating as the fold leg above.
       const lensSys = lensSystems.find(
         (s) => s.name === "lensMandelboxOverAffine",
@@ -12245,12 +12260,12 @@ async function runSurfaceDeSection(
         render();
       }
 
-      // fr-5wlv.5 (balloonMarch): the same gate through the balloon
-      // inverted-union — one fold system's kernel with `balloon: true` at
-      // the rest regime R = 1.6 (fr-5wlv.1: rest is what persists, and it
-      // measured clean; the 0.35 rough regime is the eval leg's to pin
-      // for values). Same truncation/failure gating as the legs above,
-      // the silhouette-flip machinery included (its caps unchanged).
+      // balloonMarch: the same gate through the balloon inverted-union —
+      // one fold system's kernel with `balloon: true` at the rest regime
+      // R = 1.6 (rest is what persists, and it measured clean; the 0.35
+      // rough regime is the eval leg's to pin for values). Same
+      // truncation/failure gating as the legs above, the silhouette-flip
+      // machinery included (its caps unchanged).
       const balloonSys = foldSystems.find(
         (s) => s.name === "foldSpherefoldPair",
       );
@@ -12512,7 +12527,7 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the timing protocol");
 
-    // ----- Leg B (fr-tzdg): end-to-end frame via SurfaceComputeRenderer --
+    // ----- Leg B: end-to-end frame via SurfaceComputeRenderer --
     // The production app loop on its own device; informational except the
     // two documented conditions. Runs on software adapters too (shrunken
     // raster, stretched budget, truncation accepted — see the constants).
@@ -12558,7 +12573,7 @@ async function runSurfaceDeSection(
       }
       render();
 
-      // fr-55s1 stage C: the PRODUCTION renderer over the lens field
+      // Stage C: the PRODUCTION renderer over the lens field
       // class — lensMandelboxOverAffine through the same create/frame
       // protocol (its DE derives core "affine" + lens:true and the
       // branch-scaled priors inside the renderer). Same gates.
@@ -12601,21 +12616,21 @@ async function runSurfaceDeSection(
       }
       render();
 
-      // fr-dlxh: leg B over the escape class — the PRODUCTION renderer on
+      // Leg B over the escape class — the PRODUCTION renderer on
       // escMandelbox through `{ kind: "escape" }` (forward-orbit core, no
       // maps buffer). Same gates, plus the strided CPU sanity march's
       // hit-rate band on real hardware (see the leg's design comment).
       //
-      // NO BULB TWIN, deliberately (fr-7u8t.9). This leg drives the
-      // PRODUCTION `SurfaceComputeRenderer`, whose target union has no
-      // `{ kind: "bulb" }` arm — adding one is the routing work fr-tdin
-      // owns, not this bead's, and a frame leg written against a renderer
-      // path that does not exist yet would pin nothing. What the leg
-      // actually buys is also already bought here: the march/shade ENTRY
-      // text is shared across every core (test-pinned) and the bulb DE is
-      // eval-pinned by M6 above, which is exactly the argument the escape
-      // frame leg's own doc makes for checking hit RATES instead of
-      // pixels. fr-tdin should add the twin when it adds the target.
+      // NO BULB TWIN. When this leg was written the PRODUCTION
+      // `SurfaceComputeRenderer`'s target union carried no
+      // `{ kind: "bulb" }` arm at all, so a frame leg written against a
+      // renderer path that did not exist would have pinned nothing; the
+      // arm has since landed with the bulb routing, and the twin still has
+      // not, because what it would buy is already bought here: the
+      // march/shade ENTRY text is shared across every core (test-pinned)
+      // and the bulb DE is eval-pinned by M6 above, which is exactly the
+      // argument the escape frame leg's own doc makes for checking hit
+      // RATES instead of pixels.
       const escSys = escapeSystems.find((s) => s.name === "escMandelbox");
       if (!escSys) {
         results.computeFrameEscape = {
@@ -12676,7 +12691,7 @@ async function runSurfaceDeSection(
       }
       render();
 
-      // fr-j231: the same leg over a CROSS-FAMILY chain — one PRODUCTION
+      // The same leg over a CROSS-FAMILY chain — one PRODUCTION
       // frame of `escChainBulb` (mandelbox -> triplex power) through the
       // unchanged `{ kind: "escape" }` target. The eval leg above pins the
       // VALUE body's two power branches over 700 stability-gated queries
@@ -12748,7 +12763,7 @@ async function runSurfaceDeSection(
       }
       render();
 
-      // fr-dlxh 4D (stage B2): leg B over the ifs4 class — TWO frames on
+      // Stage B2: leg B over the ifs4 class — TWO frames on
       // one PRODUCTION renderer (the second at a different view4: the
       // per-frame repack proof). Gates mirror the escape leg's — zero hits
       // on a real adapter, truncation skips the band, the rate band
@@ -12852,7 +12867,7 @@ async function runSurfaceDeSection(
       }
       render();
 
-      // fr-rsp6 phase 3: the fold4 twin of the leg above — the SAME
+      // The fold4 twin of the leg above — the SAME
       // runSurfaceComputeFrame4Leg body, on the fold4Slab fixture instead
       // of aff4Kaleido. SurfaceComputeRenderer.create routes an ifs4
       // target whose DE carries fold maps to core:"fold4" on its own
@@ -12972,7 +12987,7 @@ async function runSurfaceDeSection(
       render();
     }
 
-    // ----- fr-qjae: opt-in GROUND-PLANE frame leg -------------------------
+    // ----- Opt-in GROUND-PLANE frame leg ---------------------------------
     // Off by default (`config.planeFrame`, `surfacePlaneFrame=1`) and
     // silent when not requested — the aff4 sweep's opt-in shape, for the
     // same reason: it is extra end-to-end work layered on a section that
@@ -13080,7 +13095,7 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the compute-frame legs");
 
-    // ----- fr-b72d: opt-in per-kaleidoscope-order affine4/fold4 timing ----
+    // ----- Opt-in per-kaleidoscope-order affine4/fold4 timing ------------
     // sweep. Off by default (`config.aff4Sweep`, `surfaceAff4Sweep=1`) —
     // never runs in CI, and silent (no notes at all) when not requested,
     // like the shade A/B leg's own `surfaceShadeWidths` gate. GATING when
@@ -13118,7 +13133,7 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the aff4 sweep leg");
 
-    // ----- Shade A/B leg (fr-p8bc): cheap shading-probe-width vs the -----
+    // ----- Shade A/B leg: cheap shading-probe-width vs the --------------
     // shipped full-width baseline. Runs AFTER leg B, purely informational —
     // never gates the verdict below (see runSurfaceShadeAbLeg's doc) — so
     // the whole call is wrapped: any thrown error becomes a note instead of
@@ -13148,7 +13163,7 @@ async function runSurfaceDeSection(
     // ----- Verdict -----
     // Only production-width rows gate: the CPU oracle's fold frontier is
     // the fixed SURFACE_FOLD_BEAM_WIDTH scratch, so narrower-width rows
-    // measure the expected fr-5rvk erosion, not kernel disagreement (see
+    // measure the expected narrow-width erosion, not kernel disagreement (see
     // SurfaceAgreementRow.gating).
     const anyAgreementFail = results.agreement.some(
       (r) => r.gating && r.failures > 0,
@@ -13215,7 +13230,7 @@ async function runSurfaceDeSection(
     }
   } catch (e) {
     if (e instanceof SurfaceDeviceUnreliableError) {
-      // fr-76pp: not a kernel verdict at all — the device stopped
+      // Not a kernel verdict at all — the device stopped
       // reproducing its own baseline, so every numeric row this run
       // produced (including any gating failures already recorded above)
       // is evidence of nothing. Remaining legs were skipped on purpose:
@@ -13269,7 +13284,7 @@ function isSoftwareAdapter(adapter: BenchAdapterInfo): boolean {
   // box — see scripts/gpu-flame-bench.mjs) reports the tell in `architecture`
   // ("swiftshader"), often leaving `description` empty — so all three fields
   // are checked, not just description/vendor. The regex is the app's ONE
-  // software-tell definition (render-backend.ts, fr-tmgf).
+  // software-tell definition (render-backend.ts).
   return (
     SOFTWARE_RENDERER_RE.test(adapter.description) ||
     SOFTWARE_RENDERER_RE.test(adapter.vendor) ||
@@ -13317,7 +13332,7 @@ async function main(): Promise<void> {
 
   const params = new URLSearchParams(window.location.search);
   const autorun = params.get("autorun") === "1";
-  // fr-q1f8: `surface=1` runs the surface-DE section AFTER the flame
+  // `surface=1` runs the surface-DE section AFTER the flame
   // scenarios; `surface=only` runs it INSTEAD of them. Absent (the CI
   // case), the flame pipeline below is bit-for-bit unchanged.
   const surfaceMode = params.get("surface");
@@ -13424,7 +13439,7 @@ async function main(): Promise<void> {
     running = true;
     setButtonsDisabled(true);
     try {
-      // fr-q1f8: `?surface=only` replaces the flame sweep with the
+      // `?surface=only` replaces the flame sweep with the
       // surface-DE section; without the param this branch is the unchanged
       // CI path.
       if (surfaceMode !== "only") {
@@ -13435,7 +13450,7 @@ async function main(): Promise<void> {
             await runScenario(def, dom, currentDuration(), activity),
           );
         }
-        // fr-ee9: the standalone ss=1 display-downsample check — always run
+        // The standalone ss=1 display-downsample check — always run
         // as part of a full sweep (independent of any ?scenarios= filter
         // above), since it is the only leg that exercises the scale-1
         // pass-through path at all (see runSs1DisplayDownsampleCheck's doc),

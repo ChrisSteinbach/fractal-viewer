@@ -32,7 +32,7 @@ describe("previewMaxDepth", () => {
     expect(previewMaxDepth(4)).toBe(4);
   });
 
-  it("reproduces the fr-ttg5 half-depth anchor exactly at the 0.3 rung", () => {
+  it("reproduces the half-depth anchor exactly at the 0.3 rung", () => {
     // The scale-aware form must agree with the fixed one it generalizes,
     // rung for rung, or the shipped mid-ladder behavior has changed.
     expect(previewMaxDepth(20, PREVIEW_START_SCALE)).toBe(10);
@@ -73,8 +73,8 @@ describe("previewMaxDepth", () => {
 
 describe("createPreviewGovernor", () => {
   it("starts on the shipped fixed preview scale", () => {
-    // Mid-ladder by design: an unmeasured device gets exactly fr-5ne3's
-    // behavior, and measurement only moves it from there.
+    // Mid-ladder by design: an unmeasured device gets exactly the
+    // originally shipped behavior, and measurement only moves it from there.
     expect(createPreviewGovernor().scale).toBe(0.3);
   });
 
@@ -87,7 +87,7 @@ describe("createPreviewGovernor", () => {
     expect(governor.scale).toBe(0.3);
   });
 
-  it("panics straight to the floor on a TRUNCATED first trace — budget exhaustion is not compile overhead (fr-khxy round 3)", () => {
+  it("panics straight to the floor on a TRUNCATED first trace — budget exhaustion is not compile overhead", () => {
     const governor = createPreviewGovernor();
     // A truncated trace means the renderer's wall budget elapsed with rays
     // still unresolved — no warm cache would have absorbed that. Swallowing

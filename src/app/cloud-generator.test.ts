@@ -345,7 +345,7 @@ describe("CloudGenerator generateSync", () => {
   });
 });
 
-describe("CloudGenerator latency reporting (fr-a5gu)", () => {
+describe("CloudGenerator latency reporting", () => {
   it("reports the post-to-reply latency of a worker generation to onResult", () => {
     let clock = 1000;
     const h = harness(undefined, () => clock);
@@ -395,7 +395,7 @@ describe("CloudGenerator latency reporting (fr-a5gu)", () => {
   });
 });
 
-describe("CloudGenerator settle() (fr-92t9)", () => {
+describe("CloudGenerator settle()", () => {
   it("resolves immediately when the generator is idle", async () => {
     const h = harness();
 
@@ -476,7 +476,7 @@ describe("CloudGenerator settle() (fr-92t9)", () => {
   });
 });
 
-describe("CloudGenerator peekNextId (fr-vja8.34)", () => {
+describe("CloudGenerator peekNextId", () => {
   it("names the id the next request will be stamped with", () => {
     const h = harness();
 

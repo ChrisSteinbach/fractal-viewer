@@ -36,7 +36,7 @@ export function pickRecorderMime(
 /**
  * Target encoder bitrate: ~0.08 bits per pixel per frame at `fps` (the
  * MediaRecorder capture path assumes its 60Hz default; the offline
- * frame-exact export passes its own rate, fr-92t9), clamped to [8, 30] Mbps.
+ * frame-exact export passes its own rate), clamped to [8, 30] Mbps.
  * Point clouds are high-frequency content that browser default bitrates
  * smear badly; upload targets re-encode anyway, so erring high costs only
  * local file size.
@@ -114,10 +114,11 @@ export function createCanvasRecorder(
     stop();
   };
 
-  /** The ONE way capture tracks are ended (fr-vja8.49) — shared by the
+  /** The ONE way capture tracks are ended — shared by the
    * normal cleanup() path and the constructor-throw branch, so a future
    * hardening (readyState guards, audio tracks) cannot land in one and
-   * quietly miss the other, re-opening the fr-vja8.17 per-retry leak. */
+   * quietly miss the other, re-opening the per-retry track leak a
+   * throwing MediaRecorder constructor used to cause. */
   function stopTracks(stream: MediaStream): void {
     for (const track of stream.getTracks()) track.stop();
   }
@@ -195,7 +196,7 @@ export function createCanvasRecorder(
     // spontaneously arrives here with stoppedElapsedMs still holding the
     // previous clip's length (or nothing), so derive this clip's own elapsed
     // time instead — stamping a confident wrong number into the container is
-    // exactly the broken-duration class fr-ex2/fr-87q exist to prevent.
+    // exactly the broken-duration class the patchers exist to prevent.
     const durationMs = stoppedElapsedMs ?? performance.now() - startedAtMs;
     const blob = new Blob(chunks, { type: mime });
     const filename = recordingFileName(mime, Date.now());
@@ -243,8 +244,8 @@ async function finishClip(
     // MediaRecorder streams the container out before the clip's length is
     // known, so both muxers leave broken duration metadata that upload
     // probes (e.g. Bluesky's) reject: Chrome's fragmented MP4 keeps the
-    // moov durations at 0 (fr-ex2) and WebM ships a zero or missing
-    // Segment Info Duration (fr-87q). Write the real wall-clock duration
+    // moov durations at 0, and WebM ships a zero or missing
+    // Segment Info Duration. Write the real wall-clock duration
     // into the container before handing the file over.
     const bytes = new Uint8Array(await blob.arrayBuffer());
     if (mime.startsWith("video/mp4")) {

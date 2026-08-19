@@ -174,7 +174,7 @@ describe("attachInteractions mouse latch release", () => {
   });
 });
 
-describe("attachInteractions camera keys (fr-vja8.37)", () => {
+describe("attachInteractions camera keys", () => {
   function key(
     canvas: HTMLCanvasElement,
     key: string,

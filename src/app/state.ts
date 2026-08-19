@@ -56,7 +56,7 @@ export const RENDER_STYLES = [
 export type RenderStyle = (typeof RENDER_STYLES)[number];
 
 /**
- * The unified render-mode axis (fr-39y): WHICH of the three sibling renderers
+ * The unified render-mode axis: WHICH of the three sibling renderers
  * is displaying the attractor. `"points"` is the live point-cloud explorer —
  * the always-interactive default; `"flame"` and `"solid"` are the two
  * converging render overlays that take its place until the user switches
@@ -75,7 +75,7 @@ export const RENDER_MODES = ["points", "flame", "solid", "surface"] as const;
 export type RenderMode = (typeof RENDER_MODES)[number];
 
 /**
- * The user's morph-detail preference (fr-jonj): how a system morph's
+ * The user's morph-detail preference: how a system morph's
  * INTERMEDIATE point clouds trade density against shape-update rate. The
  * adaptive budget (`morph-budget.ts`, which implements these semantics)
  * reads fine live, but on a video recording a sparse intermediate cloud
@@ -103,7 +103,7 @@ export const MORPH_DETAILS = ["adaptive", "dense", "full"] as const;
 export type MorphDetail = (typeof MORPH_DETAILS)[number];
 
 /**
- * The Save-PNG export-size multipliers (fr-2urv): the drawing-buffer
+ * The Save-PNG export-size multipliers: the drawing-buffer
  * resolution Save PNG renders at, as a multiple of the screen's. The
  * device may clamp the resulting size (texture-size / flame-memory
  * ceilings) — see scene.ts and main.ts's flame session start.
@@ -124,7 +124,7 @@ export interface FlameParams {
   iterations: number;
   /**
    * Gamma-reshapes the log-density curve (see `flame.ts`'s `TonemapParams`);
-   * 1 = neutral (fr-o7s's original curve, unchanged). Applied live over the
+   * 1 = neutral (the original curve, unchanged). Applied live over the
    * current accumulation — never needs a re-accumulate.
    */
   gamma: number;
@@ -158,9 +158,9 @@ export interface FlameParams {
    * `estimatorRadius`. */
   estimatorCurve: number;
   /**
-   * Structural-coloring palette (fr-6us; see `palette.ts`). A cosine-gradient
+   * Structural-coloring palette (see `palette.ts`). A cosine-gradient
    * id paints continuous color along the orbit; `"legacy"` keeps the original
-   * per-transform-hue coloring; `"custom"` (fr-55k) selects the user-authored
+   * per-transform-hue coloring; `"custom"` selects the user-authored
    * gradient in {@link AppState.customPalette}. Defaults to a gradient
    * ({@link DEFAULT_FLAME_PALETTE}) — an absent or unrecognized decoded value
    * falls back to the same default (see `persist.ts`). Changing it restarts
@@ -171,7 +171,7 @@ export interface FlameParams {
 }
 
 /**
- * Settings for the solid render (fr-v4f; `src/fractal/voxel.ts` + the GPU
+ * Settings for the solid render (`src/fractal/voxel.ts` + the GPU
  * raymarcher in `scene.ts`). Persists as a render-settings block like
  * {@link FlameParams}, independent of whether a render is active.
  */
@@ -199,10 +199,10 @@ export interface SolidParams {
    * stay. Live-reactive. */
   ambient: number;
   /**
-   * Structural-coloring palette (fr-1kt; shares fr-6us's `PaletteSelection`
-   * union — see `palette.ts`). A cosine-gradient id paints continuous color
-   * along the orbit, overriding colorMode entirely; `"legacy"` keeps the
-   * colorMode-driven coloring (fr-c1d); `"custom"` (fr-55k) selects the
+   * Structural-coloring palette (shares the flame render's
+   * `PaletteSelection` union — see `palette.ts`). A cosine-gradient id
+   * paints continuous color along the orbit, overriding colorMode entirely;
+   * `"legacy"` keeps the colorMode-driven coloring; `"custom"` selects the
    * user-authored gradient in {@link AppState.customPalette}. Defaults to a
    * gradient ({@link DEFAULT_SOLID_PALETTE}) — an absent or unrecognized
    * decoded value falls back to the same default (see `persist.ts`).
@@ -213,7 +213,7 @@ export interface SolidParams {
 }
 
 /**
- * The surface render's base-color source (fr-7jlk; see
+ * The surface render's base-color source (see
  * {@link SurfaceParams.colorSource}). `"transform"` keys each map's own
  * By-Transform color, exactly like the explorer's colorMode of the same
  * name; `"palette"` paints an orbit-trap coordinate through a cosine-gradient
@@ -221,7 +221,7 @@ export interface SolidParams {
  * dimension over; `"height"`/`"radius"` reuse the explorer's ONE ramp
  * definition (`color.ts`'s `buildColorModeLUT`), the same ramp the solid
  * render's `"legacy"`-palette path and the panel legend already share;
- * `"rings"` is the classic geometric orbit trap (fr-rl4b) — the descent's
+ * `"rings"` is the classic geometric orbit trap — the descent's
  * closest radial approach to the attractor's center, painted through the
  * same palette as `"palette"`, reading as concentric structure-following
  * shells; `"sheets"` is its plane-trap sibling — the descent's closest
@@ -250,7 +250,7 @@ export const SURFACE_COLOR_SOURCES = [
 export type SurfaceColorSource = (typeof SURFACE_COLOR_SOURCES)[number];
 
 /**
- * Settings for the surface render (fr-7jlk; the sphere-traced implicit
+ * Settings for the surface render (the sphere-traced implicit
  * surface — `surface-material.ts`'s GLSL tracer over `surface-de.ts`'s
  * analytic distance estimator). Persists as a render-settings block like
  * {@link FlameParams}/{@link SolidParams}, independent of whether the render
@@ -278,15 +278,15 @@ export interface SurfaceParams {
    * range. Live-reactive. */
   ambient: number;
   /**
-   * Base-color source (fr-7jlk) — see {@link SurfaceColorSource} for what
+   * Base-color source — see {@link SurfaceColorSource} for what
    * each value means. Live-reactive, like every field here.
    */
   colorSource: SurfaceColorSource;
   /**
    * Structural-coloring palette for the `"palette"` colorSource (shares
-   * fr-6us's `PaletteSelection` union — see `palette.ts`), sampled along the
-   * orbit-trap coordinate. `"custom"` (fr-55k) selects the user-authored
-   * gradient in {@link AppState.customPalette}. Defaults to
+   * the flame render's `PaletteSelection` union — see `palette.ts`),
+   * sampled along the orbit-trap coordinate. `"custom"` selects the
+   * user-authored gradient in {@link AppState.customPalette}. Defaults to
    * {@link DEFAULT_SOLID_PALETTE} — the same gradient the solid render
    * defaults to, reused rather than redeclared, so a fresh session's two
    * converging renders share one default look; an absent or unrecognized
@@ -298,19 +298,19 @@ export interface SurfaceParams {
    */
   paletteId: PaletteSelection;
   /**
-   * Per-level decay of the `"palette"` source's orbit-trap blend weight
-   * (fr-rl4b) — flam3's "color speed" one render over; see
+   * Per-level decay of the `"palette"` source's orbit-trap blend weight —
+   * flam3's "color speed" one render over; see
    * {@link DEFAULT_SURFACE_COLOR_SPEED} for the endpoints. Inert for every
    * other colorSource, but stored regardless (like {@link paletteId}).
    * Live-reactive.
    */
   colorSpeed: number;
   /**
-   * Environment-light strength in [0, 1] (fr-ehcj): how far the surface
+   * Environment-light strength in [0, 1]: how far the surface
    * render's LIGHT is tinted toward the backdrop sampled along the shading
    * normal, hue only (never brightness) — the render sits IN its background
-   * instead of floating in front of it. 0 is the bit-exact pre-fr-ehcj
-   * identity. Specular is outside the product on purpose.
+   * instead of floating in front of it. 0 is the bit-exact identity of the
+   * neutral light it replaced. Specular is outside the product on purpose.
    * The default ({@link DEFAULT_SURFACE_ENV_LIGHT}) is deliberately
    * NON-zero, so this is a look change for existing shared links — that
    * is intended, the feature ships on. Live-reactive, like every field
@@ -340,7 +340,7 @@ export interface AppState {
   showGuides: boolean;
   colorMode: ColorMode;
   /**
-   * How the 4D projection view colors points (fr-d47): a diverging signed-w
+   * How the 4D projection view colors points: a diverging signed-w
    * palette or a baked structural mode — see `fractal/types.ts`'s
    * {@link FourDColorMode} and `color.ts`'s `buildColors4`. Persists like
    * `colorMode` / `renderStyle` (NOT session-only, unlike the tumble/slice
@@ -349,7 +349,7 @@ export interface AppState {
    */
   fourDColor: FourDColorMode;
   /**
-   * Camera-depth fade for the 4D projection view (fr-3e0): dim each point's
+   * Camera-depth fade for the 4D projection view: dim each point's
    * additive contribution with camera distance, restoring the camera-z cue
    * the 4D path otherwise lacks (the 3D "Depth Style" never reaches it — see
    * `scene.ts`'s render()/setRenderStyle guards). Opt-in (default off)
@@ -363,18 +363,18 @@ export interface AppState {
   fourDDepthFade: boolean;
   /**
    * Contrast exponent applied to the normalized coordinate in the
-   * height/radius/position color modes (fr-8sk, see `color.ts`'s
+   * height/radius/position color modes (see `color.ts`'s
    * `colorModeUsesGamma`): `t' = t ** colorGamma`. `1` = linear (today's
    * mapping, unreshaped). Persists like `colorMode` / `renderStyle` /
    * `glowBrightness` — not session-only.
    */
   colorGamma: number;
   /**
-   * Which gradient palette the height/radius color-mode ramps sample
-   * (fr-3b6) — everywhere the ONE ramp definition flows: the explorer's
+   * Which gradient palette the height/radius color-mode ramps sample —
+   * everywhere the ONE ramp definition flows: the explorer's
    * point colors (`buildColors`), the solid render's `"legacy"`-palette
    * colorMode path (`accumulateVoxels`), and the panel legend, all via
-   * `color.ts`'s `buildColorModeLUT`. Since fr-6ue the 4D projection's
+   * `color.ts`'s `buildColorModeLUT`. The 4D projection's
    * "By 4D Radius" mode follows the same selection — the explorer bake
    * (`buildColors4`), the flame/voxel workers' 4D radius LUT, and the 4D
    * legend. `"legacy"` keeps the built-in ramps; `"custom"` selects the
@@ -393,7 +393,7 @@ export interface AppState {
    */
   morphDetail: MorphDetail;
   /**
-   * Whether the adaptive-resolution governor (fr-4lyt) may trade render
+   * Whether the adaptive-resolution governor may trade render
    * resolution for frame rate under sustained slow frames. Session-only,
    * like {@link autoUpdate}: never persisted — it describes THIS device's
    * headroom, not the scene, and a shared link must not carry one machine's
@@ -401,24 +401,24 @@ export interface AppState {
    */
   adaptiveResolution: boolean;
   /**
-   * Whether the explorer's "Balloon echo" (fr-5wlv.2) is showing: a second
+   * Whether the explorer's "Balloon echo" is showing: a second
    * point cloud sharing the main cloud's own geometry, sphere-inverted
    * about its enclosing ball — see `scene.ts`'s `syncBalloonEchoUniforms`
    * and `fractal/balloon-de.ts`'s module doc for the inversion math.
-   * Persisted scene content since fr-5wlv.6 (epic fr-5wlv's "mode
+   * Persisted scene content (the balloon epic's "mode
    * persists" acceptance) — the same treatment as {@link background}/
    * {@link renderStyle}, NOT session-only like {@link adaptiveResolution}:
    * the balloon is part of what a shared link shows. `persist.ts`'s
    * decoder is tolerant, like `background`'s (an absent/malformed value
-   * quietly falls back to off), so a pre-fr-5wlv.6 link still opens with
-   * the balloon off, exactly as it always rendered.
+   * quietly falls back to off), so a link predating the field still opens
+   * with the balloon off, exactly as it always rendered.
    */
   balloonEcho: boolean;
   /**
    * The balloon echo's radius, as a NORMALIZED multiple of the cloud's own
    * enclosing-ball radius (`rMult = 1` touches the attractor's extent —
    * see `fractal/balloon-de.ts`'s `buildBalloon`, whose `rMult` carries the
-   * same meaning). Persisted alongside {@link balloonEcho} since fr-5wlv.6
+   * same meaning). Persisted alongside {@link balloonEcho}
    * — a shared link carries the cave at the size it was authored — and
    * still live per-frame-updatable exactly as before: the "Inflate" replay
    * (`main.ts`'s `onBalloonInflate`) sweeps it every tick via direct
@@ -433,7 +433,7 @@ export interface AppState {
    */
   balloonRadius: number;
   /**
-   * The balloon echo/surface-balloon shell's tint color (fr-j85n), a
+   * The balloon echo/surface-balloon shell's tint color, a
    * `#rrggbb` hex string paired with {@link balloonTintStrength} — ONE
    * setting across BOTH balloon arms, the explorer's {@link balloonEcho}
    * Points echo (`scene.ts`'s `BALLOON_ECHO_VERTEX`) and the surface
@@ -447,12 +447,12 @@ export interface AppState {
    * shared link carries, never a viewer pref. Range/default single-sourced
    * through {@link DEFAULT_BALLOON_TINT}; `persist.ts`'s decoder is
    * tolerant like `fogTint`'s (a malformed value quietly drops the field),
-   * so a pre-fr-j85n link still opens with the shell untinted, exactly as
-   * it always rendered.
+   * so a link predating the tint pair still opens with the shell untinted,
+   * exactly as it always rendered.
    */
   balloonTint: string;
   /**
-   * The balloon tint's blend weight, `[0, 1]` (fr-j85n) — see
+   * The balloon tint's blend weight, `[0, 1]` — see
    * {@link balloonTint} for the colour it blends toward. `0` — the default
    * — is the untinted identity: every arm's
    * `mix(base, balloonTint, balloonTintStrength)` collapses to `base`
@@ -463,7 +463,7 @@ export interface AppState {
    */
   balloonTintStrength: number;
   /**
-   * Save-PNG export resolution as a multiple of the screen's (fr-2urv) —
+   * Save-PNG export resolution as a multiple of the screen's —
    * see {@link EXPORT_SCALES}. Session-only, like {@link adaptiveResolution}:
    * never persisted — it is a device/workflow preference, not the scene, and
    * while a flame render is active it also sets the resolution the whole
@@ -480,7 +480,7 @@ export interface AppState {
    * like {@link solid}. */
   surface: SurfaceParams;
   /**
-   * Which renderer is displaying the attractor (fr-39y) — see
+   * Which renderer is displaying the attractor — see
    * {@link RENDER_MODES}. Session-only, like `selectedTransform` /
    * `autoUpdate`: never persisted, so the app always boots into the
    * `"points"` explorer (see `persist.ts`'s `SceneSnapshot`, which omits
@@ -489,7 +489,7 @@ export interface AppState {
    */
   renderMode: RenderMode;
   /**
-   * Rotational/mirror symmetry (fr-6im): replicate `transforms` into rotated
+   * Rotational/mirror symmetry: replicate `transforms` into rotated
    * copies for every render — see `fractal/types.ts`'s `SymmetryParams`.
    * Unlike {@link renderMode} this is NOT session-only:
    * it persists like `colorMode` / `renderStyle`, and it shapes the live
@@ -498,7 +498,7 @@ export interface AppState {
    */
   symmetry: SymmetryParams;
   /**
-   * Manual brightness multiplier for the glow render style (fr-8b1):
+   * Manual brightness multiplier for the glow render style:
    * multiplies the density-adaptive auto-exposure every frame (see
    * `main.ts`'s `animate` and `exposure.ts`'s `glowExposure`). Persists like
    * `colorMode` / `renderStyle` / `symmetry` — not session-only, and not
@@ -507,7 +507,7 @@ export interface AppState {
    */
   glowBrightness: number;
   /**
-   * The one user-authored gradient slot (fr-55k), shared by the flame and
+   * The one user-authored gradient slot, shared by the flame and
    * solid renders — each opts in independently via its own
    * `paletteId === "custom"`. Absent until a palette select first lands on
    * Custom, at which point {@link setFlamePaletteId}/{@link setSolidPaletteId}
@@ -518,7 +518,7 @@ export interface AppState {
    */
   customPalette?: CustomPalette;
   /**
-   * The position color mode's three user-picked axis colors (fr-8k7, see
+   * The position color mode's three user-picked axis colors (see
    * `color.ts`'s `writePositionColor`). Absent = the legacy XYZ→RGB identity
    * mapping — kept absent rather than storing the identity explicitly, so
    * "absent = legacy" stays the one discriminator and default scenes keep
@@ -528,19 +528,19 @@ export interface AppState {
    */
   positionAxisColors?: PositionAxisColors;
   /**
-   * The scene backdrop (fr-5ps1, see `background.ts`): which two-stop
+   * The scene backdrop (see `background.ts`): which two-stop
    * gradient every renderer draws behind the attractor — the built-in dark
    * or haze pair, or the user-authored custom gradient. Persists like
    * `colorMode` / `renderStyle`; `persist.ts` omits the pristine default so
    * never-touched scenes keep their short URLs, and decodes an absent field
    * per the LEGACY coupling (haze for an aerial-style document, dark
-   * otherwise) so pre-fr-5ps1 links render exactly as they always did. The
-   * `custom` slot survives while unselected, exactly like
+   * otherwise) so links predating the field render exactly as they always
+   * did. The `custom` slot survives while unselected, exactly like
    * {@link customPalette}.
    */
   background: BackgroundParams;
   /**
-   * Depth-fog density multiplier (fr-5h5d): scales the fog DISTANCE UNIT for
+   * Depth-fog density multiplier: scales the fog DISTANCE UNIT for
    * both the point explorer's depthFade/aerial styles (`scene.ts`'s
    * `updateFog`, a plain `THREE.Fog`), every surface tracer (GLSL
    * `uFogDensity` in `surface-material.ts`/`surface-material-4d.ts`, WGSL
@@ -549,7 +549,7 @@ export interface AppState {
    * plus the balloon echo's own radial fade, which shares the same
    * distance-unit intuition (see `scene.ts`'s `syncBalloonEchoUniforms`).
    * Flame carries no fog term and is unaffected. `1` reproduces the
-   * pre-fr-5h5d rendering exactly — the fixed band every renderer shipped
+   * pre-control fog rendering exactly — the fixed band every renderer shipped
    * with before this control existed; `0` disables depth fog for the
    * fog-bearing styles (the balloon's far cap then shows as a hard horizon
    * instead of fading to background — deliberate). Top-level rather than
@@ -559,7 +559,7 @@ export interface AppState {
    */
   fogDensity: number;
   /**
-   * Depth-fog tint (fr-5h5d): a `#rrggbb` color, paired with
+   * Depth-fog tint: a `#rrggbb` color, paired with
    * {@link fogTintStrength}, that shifts what the depth fog blends toward.
    * Every fog-bearing renderer {@link fogDensity} reaches computes
    * `mix(derivedTarget, fogTint, fogTintStrength)` — see `scene.ts`'s
@@ -567,30 +567,30 @@ export interface AppState {
    * `uFogTint`/`uFogTintStrength` pair in `surface-material.ts`/
    * `surface-material-4d.ts`/`voxel-material.ts`. `derivedTarget` is applied
    * FIRST and stays each renderer's own — the backdrop-midpoint fog color
-   * (fr-1lj) for the points explorer, the sampled per-pixel backdrop
+   * for the points explorer, the sampled per-pixel backdrop
    * gradient for the surface/solid shaders — so the tint applies AFTER that
    * derivation rather than replacing it, and editing the background stays
    * meaningful instead of fighting a baked-in tint target. `#ffffff` is the
    * default — see {@link fogTintStrength} for why the PAIR (not this field
-   * alone) is what reproduces pre-fr-5h5d rendering exactly. Top-level
+   * alone) is what reproduces the pre-control fog rendering exactly. Top-level
    * rather than nested under {@link AppState.surface}, the same multi-mode
    * reason as {@link fogDensity}. Persists like `fogDensity` — not
    * session-only.
    */
   fogTint: string;
   /**
-   * Depth-fog tint blend weight, `[0, 1]` (fr-5h5d) — see {@link fogTint}
+   * Depth-fog tint blend weight, `[0, 1]` — see {@link fogTint}
    * for the color it blends toward. `0` is the untinted identity: every
    * fog-bearing renderer's `mix(derivedTarget, fogTint, fogTintStrength)`
-   * collapses to `derivedTarget` unchanged, bit-exact with pre-fr-5h5d
-   * rendering — so an absent/pre-fr-5h5d document decodes to this default
-   * regardless of what `fogTint` decodes to. Range/default single-sourced
-   * through {@link PARAM}.fogTintStrength. Persists like `fogDensity` — not
-   * session-only.
+   * collapses to `derivedTarget` unchanged, bit-exact with the pre-control
+   * fog rendering — so an absent document, or one predating these controls,
+   * decodes to this default regardless of what `fogTint` decodes to.
+   * Range/default single-sourced through {@link PARAM}.fogTintStrength.
+   * Persists like `fogDensity` — not session-only.
    */
   fogTintStrength: number;
   /**
-   * Whether the surface render's ground plane is showing (fr-rhn5): an
+   * Whether the surface render's ground plane is showing: an
    * infinite floor beneath the session ball, catching the fractal's
    * penumbra shadow — see `scene.ts`'s `setSurfaceGroundPlane` and
    * `surface-material.ts`'s `SurfaceGroundPlaneSpec`/WGSL `PLANE` arm.
@@ -603,8 +603,8 @@ export interface AppState {
    * treatment as `balloonEcho`/`fogDensity` — a shared link carries the
    * floor at the state it was authored. `persist.ts`'s decoder is tolerant,
    * like `balloonEcho`'s (an absent/malformed value quietly falls back to
-   * off), so a pre-fr-rhn5 link still opens with the floor off, exactly as
-   * it always rendered.
+   * off), so a link predating the field still opens with the floor off,
+   * exactly as it always rendered.
    */
   groundPlane: boolean;
 }
@@ -638,15 +638,15 @@ export const MIN_FLAME_EXPOSURE = 0.2;
 export const MAX_FLAME_EXPOSURE = 4;
 export const MIN_FLAME_ITERATIONS = 1_000_000;
 /**
- * GPU accumulation (fr-npb) measures ~10G iterations/sec on discrete GPUs
- * (fr-53k addendum), so billion-iteration budgets stay interactive (fr-79p).
- * 2B stays under 2^31, so the value is int32-safe everywhere (worker
- * messages, GPU dispatch counts, etc.) without needing a separate "GPU mode"
- * ceiling.
+ * GPU accumulation measures ~10G iterations/sec on discrete GPUs (the
+ * accumulation spike's addendum), so billion-iteration budgets stay
+ * interactive. 2B stays under 2^31, so the value is int32-safe everywhere
+ * (worker messages, GPU dispatch counts, etc.) without needing a separate
+ * "GPU mode" ceiling.
  */
 export const MAX_FLAME_ITERATIONS = 2_000_000_000;
 /**
- * Detents for the flame Quality slider (fr-79p; `index.html`'s
+ * Detents for the flame Quality slider (`index.html`'s
  * `flameIterationsSlider`), which carries a detent INDEX rather than a raw
  * iteration count — see {@link nearestFlameIterationDetentIndex}. A linear,
  * 1M-step slider spanning [{@link MIN_FLAME_ITERATIONS},
@@ -706,7 +706,7 @@ export function nearestFlameIterationDetentIndex(iterations: number): number {
 }
 /**
  * A moderately "punchy" default — MIN_FLAME_GAMMA (1) is the neutral point
- * that leaves fr-o7s's original log-density curve unreshaped; 2.4 pushes
+ * that leaves the original log-density curve unreshaped; 2.4 pushes
  * faint/sparse detail brighter, the classic flame look (see TonemapParams.gamma).
  */
 export const DEFAULT_FLAME_GAMMA = 2.4;
@@ -733,7 +733,7 @@ export const MIN_FLAME_SUPERSAMPLE = 1;
  */
 export const MAX_FLAME_SUPERSAMPLE = 3;
 /**
- * Defaults for the adaptive density-estimation blur (fr-17t; see
+ * Defaults for the adaptive density-estimation blur (see
  * `flame.ts`'s `DensityEstimatorParams`). estimatorCurve's range and default
  * follow that type's doc ("flam3-ish values sit around 0.3-0.6"); the MIN is
  * a small positive floor, not 0 — `count ** 0` is 1 regardless of count,
@@ -751,7 +751,7 @@ export const DEFAULT_ESTIMATOR_CURVE = 0.4;
 export const MIN_ESTIMATOR_CURVE = 0.1;
 export const MAX_ESTIMATOR_CURVE = 3;
 /**
- * Default flame palette (fr-6us): the classic full-spectrum cosine gradient,
+ * Default flame palette: the classic full-spectrum cosine gradient,
  * so the first flame a user ever renders shows the iridescent structural
  * coloring the feature exists for rather than the flat per-transform hues of
  * `"legacy"`. Both the fresh-session default AND `persist.ts`'s decode
@@ -759,12 +759,12 @@ export const MAX_ESTIMATOR_CURVE = 3;
  */
 export const DEFAULT_FLAME_PALETTE: FlamePaletteId = "spectrum";
 /**
- * Solid render (fr-v4f) defaults and ranges. 192^3 is the detail/memory
+ * Solid render defaults and ranges. 192^3 is the detail/memory
  * sweet spot (a 256^3 grid is ~2.4x the memory and allocation risk for a
  * modest sharpness gain); the worker's own byte budget may still clamp the
  * top of this range on constrained devices (see `voxel-worker-core.ts`).
  *
- * The ceiling (512) matches the desktop budget ceiling (fr-8x7): 512^3 x 20
+ * The ceiling (512) matches the desktop budget ceiling: 512^3 x 20
  * bytes/voxel = 2.5 GiB, exactly `voxelAccumBudgetVoxels`'s
  * `VOXEL_ACCUM_MAX_BYTES` in `voxel-worker-core.ts`, so a desktop reporting
  * (or assumed to have, per that function) 8+ GiB can run the slider's full
@@ -798,20 +798,20 @@ export const MAX_SOLID_LIGHT_ELEVATION = 85;
 export const DEFAULT_SOLID_AMBIENT = 0.25;
 export const MIN_SOLID_AMBIENT = 0;
 export const MAX_SOLID_AMBIENT = 0.8;
-/** Per-level decay of the surface render's orbit-trap color blend
- * (fr-rl4b) — flam3's "color speed", one render over. 0.5 is the classic
- * halving the blend shipped with (fr-gt9i); 0 paints each top-level copy a
+/** Per-level decay of the surface render's orbit-trap color blend —
+ * flam3's "color speed", one render over. 0.5 is the classic
+ * halving the blend shipped with; 0 paints each top-level copy a
  * single pure color; 1 weighs every descent level equally (maximum
  * blending). */
 export const DEFAULT_SURFACE_COLOR_SPEED = 0.5;
 export const MIN_SURFACE_COLOR_SPEED = 0;
 export const MAX_SURFACE_COLOR_SPEED = 1;
-/** Environment-light strength (fr-ehcj): how far the surface render's light
+/** Environment-light strength: how far the surface render's light
  * is tinted toward the backdrop sampled along the shading normal. 0 is a
- * bit-exact identity — the pre-fr-ehcj neutral light. The default is
+ * bit-exact identity — the neutral light it replaced. The default is
  * deliberately NON-zero, so this is a look change for scenes encoded before
- * fr-ehcj: an existing shared link renders slightly differently now, and
- * that is intended — the feature ships on.
+ * the control existed: an existing shared link renders slightly differently
+ * now, and that is intended — the feature ships on.
  *
  * 0.35 IS A MEASURED VALUE, not a guess. The first cut tinted the AMBIENT
  * term alone and was measured INVISIBLE at strength 1 — the maximum — on
@@ -824,7 +824,7 @@ export const DEFAULT_SURFACE_ENV_LIGHT = 0.35;
 export const MIN_SURFACE_ENV_LIGHT = 0;
 export const MAX_SURFACE_ENV_LIGHT = 1;
 /**
- * Default solid-render palette (fr-1kt): the same spectrum gradient as
+ * Default solid-render palette: the same spectrum gradient as
  * {@link DEFAULT_FLAME_PALETTE}, for one coherent default look across both
  * converging renders. Like the flame default, this is both the
  * fresh-session default AND `persist.ts`'s decode fallback for an absent or
@@ -832,7 +832,7 @@ export const MAX_SURFACE_ENV_LIGHT = 1;
  */
 export const DEFAULT_SOLID_PALETTE: FlamePaletteId = "spectrum";
 /**
- * Default ramp palette for the explorer's height/radius color modes (fr-3b6)
+ * Default ramp palette for the explorer's height/radius color modes
  * — `"legacy"`, the built-in blue→green→red / warm→cool ramps. Deliberately
  * NOT a gradient, unlike {@link DEFAULT_FLAME_PALETTE} /
  * {@link DEFAULT_SOLID_PALETTE}: the built-in coordinate ramps are a
@@ -849,14 +849,14 @@ export const MIN_SYMMETRY_ORDER = 1;
  * already clamps the actually-used order down to fit `MAX_TRANSFORMS` (256),
  * and 12 is exactly enough for e.g. a 20-map preset's 12-fold symmetry
  * (20*12=240<=256) without silently losing a value a shared URL might carry.
- * The UI slider spans this same range since fr-xkkb — it used to cap at 9,
+ * The UI slider spans this same range — it used to cap at 9,
  * so a shared link at 10-12 was silently rewritten the moment the slider
  * was touched.
  */
 export const MAX_SYMMETRY_ORDER = 12;
 /**
- * The plane the kaleidoscope turns in by default (fr-q0h6). `"xz"` is the
- * pre-fr-q0h6 default axis `"y"` under the new vocabulary — the SAME rotation
+ * The plane the kaleidoscope turns in by default. `"xz"` is the
+ * legacy default axis `"y"` under the new vocabulary — the SAME rotation
  * (see `chaos-game.ts`'s `symmetryRotation`), so this default did not move
  * when the field was renamed. Both the fresh-session default AND
  * `persist.ts`'s decode fallback for an absent/unrecognized `plane` (and for
@@ -864,7 +864,7 @@ export const MAX_SYMMETRY_ORDER = 12;
  */
 export const DEFAULT_SYMMETRY_PLANE: SymmetryPlane = "xz";
 /**
- * The kaleidoscope's default TWIST (fr-q0h6): `0`, a simple rotation — what
+ * The kaleidoscope's default TWIST: `0`, a simple rotation — what
  * every document written before the field existed means, and the only value
  * the 3D paths ever see. Ranges `[0, MAX_SYMMETRY_ORDER - 1]` because copy
  * `k`'s second angle is `2π·k·twist / order`, so `order` twists is a full
@@ -875,7 +875,7 @@ export const DEFAULT_SYMMETRY_TWIST = 0;
 export const MIN_SYMMETRY_TWIST = 0;
 export const MAX_SYMMETRY_TWIST = MAX_SYMMETRY_ORDER - 1;
 /**
- * Manual brightness multiplier for the glow render style (fr-8b1), applied on
+ * Manual brightness multiplier for the glow render style, applied on
  * top of the density-adaptive auto-exposure computed every frame in
  * `main.ts` (see `exposure.ts`'s `glowExposure`). Local density can vary by
  * orders of magnitude in ways that the coarse, average-density estimate can't
@@ -886,7 +886,7 @@ export const DEFAULT_GLOW_BRIGHTNESS = 1;
 export const MIN_GLOW_BRIGHTNESS = 0.1;
 export const MAX_GLOW_BRIGHTNESS = 3;
 /**
- * Color-contrast exponent (fr-8sk) defaults and range — see
+ * Color-contrast exponent defaults and range — see
  * `AppState.colorGamma`. `1` is neutral (today's linear mapping).
  * Log-symmetric around 1 (`MIN_COLOR_GAMMA === 1 / MAX_COLOR_GAMMA`) so the
  * UI's log-scale slider puts neutral exactly at its center; 5 is generous
@@ -897,13 +897,13 @@ export const DEFAULT_COLOR_GAMMA = 1;
 export const MIN_COLOR_GAMMA = 0.2;
 export const MAX_COLOR_GAMMA = 5;
 /**
- * Default 4D color mode (fr-d47): the original diverging blue/orange w
+ * Default 4D color mode: the original diverging blue/orange w
  * ramp, so pre-existing scenes (whose links never carried the field) render
  * exactly as before this option existed.
  */
 export const DEFAULT_FOUR_D_COLOR: FourDColorMode = "wBlueOrange";
 /**
- * 4D per-map extension (fr-cbg spike) ranges — see `fractal/types.ts`'s
+ * 4D per-map extension ranges — see `fractal/types.ts`'s
  * `WExtension`. Nothing in THIS module uses them yet: `persist.ts` imports
  * them now to clamp `w` fields on decode, and the upcoming single-editor task
  * will import these same constants for its own sliders, so the wire format
@@ -916,9 +916,9 @@ export const DEFAULT_FOUR_D_COLOR: FourDColorMode = "wBlueOrange";
  * how every other angle in this codebase is represented once off a slider.
  * `MIN`/`MAX_W_SHEAR` has no retired slider to inherit from, so it instead
  * matches the 3D shear channel's own range (`ui.ts`'s `CHANNELS.shear`, ±2).
- * Since fr-icy, `w.scale`'s bounds apply to its MAGNITUDE only: the sign is
+ * `w.scale`'s bounds apply to its MAGNITUDE only: the sign is
  * a 4D reflection, expressed in the editor as a magnitude slider plus a
- * Mirror W toggle (fr-lca's scale-channel pattern one dimension up) and
+ * Mirror W toggle (the 3D scale channel's pattern one dimension up) and
  * preserved by `persist.ts`'s sign-preserving clamp (`decodeWScale`).
  */
 export const MIN_W_POSITION = -1.5;
@@ -930,8 +930,8 @@ export const MAX_W_ANGLE = Math.PI;
 export const MIN_W_SHEAR = -2;
 export const MAX_W_SHEAR = 2;
 /**
- * Balloon echo (fr-5wlv.2) radius range/default — see
- * {@link AppState.balloonRadius}. Persisted since fr-5wlv.6: `persist.ts`
+ * Balloon echo radius range/default — see
+ * {@link AppState.balloonRadius}. Persisted scene content: `persist.ts`
  * clamps a decoded value into this exact range via {@link PARAM}, the same
  * clamp {@link setBalloonRadius} applies to a live edit. The numbers
  * themselves predate persistence and need no revisiting:
@@ -946,18 +946,18 @@ export const DEFAULT_BALLOON_RADIUS = 1.6;
 export const MIN_BALLOON_RADIUS = 0.05;
 export const MAX_BALLOON_RADIUS = 2.5;
 /**
- * Balloon tint (fr-j85n) default — see {@link AppState.balloonTint}. At
+ * Balloon tint default — see {@link AppState.balloonTint}. At
  * {@link DEFAULT_BALLOON_TINT_STRENGTH} (0) the colour is inert whatever it
  * is, exactly as {@link DEFAULT_FOG_TINT}'s own doc says of white, so this
  * value is chosen for what it does at NONZERO strength rather than for the
  * identity: `mix(base, black, s)` is `base * (1 - s)`, so the strength
  * slider ALONE reads as a DIMMER until the user picks a colour. That is the
- * "dimmer" half of fr-j85n's ask, bought from the tint pair instead of a
- * third slider — and it is why promoting `scene.ts`'s `BALLOON_ECHO_DIM`
- * was refused: one shared brightness field would have had to carry two
- * different "today" values (0.5 in the additive-points echo, 1.0 in the
- * lit-surface shell), so no single default could be byte-identical in both
- * arms, where strength 0 is.
+ * "dimmer" half of the balloon-tint ask, bought from the tint pair instead
+ * of a third slider — and it is why promoting `scene.ts`'s
+ * `BALLOON_ECHO_DIM` was refused: one shared brightness field would have
+ * had to carry two different "today" values (0.5 in the additive-points
+ * echo, 1.0 in the lit-surface shell), so no single default could be
+ * byte-identical in both arms, where strength 0 is.
  */
 export const DEFAULT_BALLOON_TINT = "#000000";
 /**
@@ -973,7 +973,7 @@ export const DEFAULT_BALLOON_TINT_STRENGTH = 0;
 export const MIN_BALLOON_TINT_STRENGTH = 0;
 export const MAX_BALLOON_TINT_STRENGTH = 1;
 /**
- * Depth-fog density (fr-5h5d) range/default — see
+ * Depth-fog density range/default — see
  * {@link AppState.fogDensity}. `1` is the neutral default: it reproduces the
  * fixed fog band every renderer used before this control existed — the
  * points explorer's `updateFog` arithmetic is unchanged at `d = 1`, and the
@@ -988,19 +988,19 @@ export const DEFAULT_FOG_DENSITY = 1;
 export const MIN_FOG_DENSITY = 0;
 export const MAX_FOG_DENSITY = 2.5;
 /**
- * Fog tint (fr-5h5d) default — see {@link AppState.fogTint}. White is the
+ * Fog tint default — see {@link AppState.fogTint}. White is the
  * identity color: paired with {@link DEFAULT_FOG_TINT_STRENGTH} (0), the
  * `mix` every fog-bearing renderer applies collapses to its own derived
  * target regardless of `fogTint`'s exact value, so this is what an
- * absent/pre-fr-5h5d document decodes to.
+ * absent document — or one predating these controls — decodes to.
  */
 export const DEFAULT_FOG_TINT = "#ffffff";
 /**
- * Fog tint strength (fr-5h5d) range/default — see
+ * Fog tint strength range/default — see
  * {@link AppState.fogTintStrength}. `0` is the untinted identity: every
  * fog-bearing renderer's blend collapses to its own derived target
- * unchanged, matching pre-fr-5h5d rendering bit-exactly. `1` fully replaces
- * the derived target with {@link AppState.fogTint}.
+ * unchanged, matching the pre-control fog rendering bit-exactly. `1` fully
+ * replaces the derived target with {@link AppState.fogTint}.
  */
 export const DEFAULT_FOG_TINT_STRENGTH = 0;
 export const MIN_FOG_TINT_STRENGTH = 0;
@@ -1171,7 +1171,7 @@ export const PARAM = defineParams({
     max: MAX_SOLID_AMBIENT,
     default: DEFAULT_SOLID_AMBIENT,
   },
-  // Surface render (fr-7jlk) lighting is the SAME physical quantity as the
+  // Surface render lighting is the SAME physical quantity as the
   // solid render's lighting just above (a horizontal light angle, a height
   // above the horizon, a fill-light floor) — these three reuse the solid
   // MIN_/MAX_/DEFAULT_ constants directly rather than redeclaring identical
@@ -1339,14 +1339,14 @@ export function setTransforms(
  * Update a single transform's geometry, preserving its id. A plain object
  * spread over the patch: every field genuinely PRESENT on `geometry`
  * replaces the transform's own, including `w` (the optional 4D extension,
- * fr-bf6.3 — see `WExtension`'s docs). The single editor (`ui.ts`) always
+ * see `WExtension`'s docs). The single editor (`ui.ts`) always
  * emits every other field but includes `w` only when its own working copy is
  * non-empty, so an ordinary edit that never touched the 4D group carries no
  * `w` key at all — this spread then leaves an existing `w` block untouched.
  * Full replacement, never a field-by-field merge, happens only when the
  * caller actually supplies a `w`.
  *
- * The two optional structural-color fields (fr-hiyu) ride the same discipline: the
+ * The two optional structural-color fields ride the same discipline: the
  * editor emits `colorIndex`/`colorSpeed` only once their sliders have actually
  * been moved, so this spread preserves absence — which is what keeps an
  * unauthored map on its derived palette slot through any other edit.
@@ -1397,7 +1397,7 @@ export function setColorMode(state: AppState, colorMode: ColorMode): AppState {
 }
 
 /**
- * Set how the 4D projection colors points (fr-d47). Not clamped — it is an
+ * Set how the 4D projection colors points. Not clamped — it is an
  * enum (see `fractal/types.ts`'s `FourDColorMode`), and the UI only offers
  * valid values (persistence validates untrusted input in `decodeScene`), like
  * {@link setSymmetryPlane}.
@@ -1409,7 +1409,7 @@ export function setFourDColor(
   return { ...state, fourDColor };
 }
 
-/** Toggle the 4D projection's camera-depth fade (fr-3e0) — see
+/** Toggle the 4D projection's camera-depth fade — see
  * {@link AppState.fourDDepthFade}. */
 export function setFourDDepthFade(
   state: AppState,
@@ -1430,7 +1430,7 @@ export function setColorGamma(state: AppState, colorGamma: number): AppState {
 }
 
 /**
- * Set the height/radius ramps' gradient palette (fr-3b6). Not clamped — it
+ * Set the height/radius ramps' gradient palette. Not clamped — it
  * is an enum (see `palette.ts`), and the UI only offers valid ids
  * (persistence validates untrusted input in `decodeScene`). Recolors the
  * live cloud over the cached run — never a regenerate (see `main.ts`).
@@ -1456,7 +1456,7 @@ export function setRampPaletteId(
 }
 
 /**
- * Set the position color mode's axis colors (fr-8k7). Setting the exact
+ * Set the position color mode's axis colors. Setting the exact
  * legacy identity (see `color.ts`'s `LEGACY_POSITION_AXIS_COLORS`)
  * normalizes back to `undefined` — "absent = legacy" stays the one
  * discriminator, the encoded scene keeps its short URL, and the legacy
@@ -1504,7 +1504,7 @@ export function setAdaptiveResolution(
   return { ...state, adaptiveResolution };
 }
 
-/** Toggle the balloon echo (fr-5wlv.2). Session-only, like
+/** Toggle the balloon echo. Session-only, like
  * {@link setAdaptiveResolution}. */
 export function setBalloonEcho(
   state: AppState,
@@ -1526,7 +1526,7 @@ export function setBalloonRadius(
 }
 
 /**
- * Set the balloon tint color (fr-j85n) — see {@link AppState.balloonTint}.
+ * Set the balloon tint color — see {@link AppState.balloonTint}.
  * Strict, like {@link setFogTint}: this reducer's own input IS the raw
  * string, so it is the validation boundary rather than a caller upstream of
  * it. Normalizes to lowercase; a string that doesn't match `#rrggbb`
@@ -1539,7 +1539,7 @@ export function setBalloonTint(state: AppState, balloonTint: string): AppState {
 }
 
 /**
- * Set the balloon tint's blend strength (fr-j85n), clamped to
+ * Set the balloon tint's blend strength, clamped to
  * {@link PARAM}.balloonTintStrength's range — see
  * {@link AppState.balloonTintStrength} for what `0`/`1` mean.
  */
@@ -1697,7 +1697,7 @@ export function setFlameEstimatorCurve(
  * validates untrusted input in `decodeScene`). Restarts accumulation in the
  * worker when it changes; see `main.ts`.
  *
- * A fresh switch TO {@link CUSTOM_PALETTE_ID} (fr-55k) — `customPalette` not
+ * A fresh switch TO {@link CUSTOM_PALETTE_ID} — `customPalette` not
  * yet set — seeds it from the palette being REPLACED (the previous
  * `flame.paletteId`), via `palette.ts`'s {@link seedCustomStops}, so Custom
  * starts as a tweakable copy of the look the user was just seeing. Picking a
@@ -1719,7 +1719,7 @@ export function setFlamePaletteId(
 }
 
 /**
- * Switch which renderer displays the attractor (fr-39y) — see
+ * Switch which renderer displays the attractor — see
  * {@link AppState.renderMode}. Session-only, like {@link selectTransform}:
  * never an undoable/persisted edit. The enter/exit choreography around a
  * change (spinning render workers up and down) lives in main.ts's
@@ -1832,7 +1832,7 @@ export function setSolidAmbient(state: AppState, ambient: number): AppState {
  * validates untrusted input in `decodeScene`). Restarts accumulation in the
  * worker when it changes; see `main.ts`.
  *
- * A fresh switch TO {@link CUSTOM_PALETTE_ID} (fr-55k) — `customPalette` not
+ * A fresh switch TO {@link CUSTOM_PALETTE_ID} — `customPalette` not
  * yet set — seeds it from the palette being REPLACED (the previous
  * `solid.paletteId`), via `palette.ts`'s {@link seedCustomStops}, exactly like
  * {@link setFlamePaletteId}. Picking a preset id, or re-picking Custom when a
@@ -1895,7 +1895,7 @@ export function setSurfaceAmbient(state: AppState, ambient: number): AppState {
   };
 }
 
-/** Set the surface render's orbit-trap color speed (fr-rl4b), clamped.
+/** Set the surface render's orbit-trap color speed, clamped.
  * Live-reactive like {@link setSurfaceLightAzimuth}. */
 export function setSurfaceColorSpeed(
   state: AppState,
@@ -1910,7 +1910,7 @@ export function setSurfaceColorSpeed(
   };
 }
 
-/** Set the surface render's environment-light strength (fr-ehcj), clamped.
+/** Set the surface render's environment-light strength, clamped.
  * Live-reactive like {@link setSurfaceLightAzimuth}. */
 export function setSurfaceEnvLight(
   state: AppState,
@@ -1926,7 +1926,7 @@ export function setSurfaceEnvLight(
 }
 
 /**
- * Set the surface render's base-color source (fr-7jlk) — see
+ * Set the surface render's base-color source — see
  * {@link SurfaceColorSource}. Not clamped — it is an enum, and the UI only
  * offers valid values (persistence validates untrusted input in
  * `decodeScene`), like {@link setFourDColor}'s sibling enum field. Unlike a
@@ -1941,14 +1941,15 @@ export function setSurfaceColorSource(
 }
 
 /**
- * Set the surface render's structural-coloring palette (fr-7jlk; shares
- * fr-6us's `PaletteSelection` union — see `palette.ts`). Not clamped — it is
- * an enum, and the UI only offers valid ids (persistence validates untrusted
- * input in `decodeScene`). Live-reactive, unlike {@link setFlamePaletteId}/
- * {@link setSolidPaletteId}: the surface tracer has no accumulation for the
- * old palette to be baked into, so nothing restarts.
+ * Set the surface render's structural-coloring palette (shares
+ * the flame render's `PaletteSelection` union — see `palette.ts`). Not
+ * clamped — it is an enum, and the UI only offers valid ids (persistence
+ * validates untrusted input in `decodeScene`). Live-reactive, unlike
+ * {@link setFlamePaletteId}/{@link setSolidPaletteId}: the surface tracer
+ * has no accumulation for the old palette to be baked into, so nothing
+ * restarts.
  *
- * A fresh switch TO {@link CUSTOM_PALETTE_ID} (fr-55k) — `customPalette` not
+ * A fresh switch TO {@link CUSTOM_PALETTE_ID} — `customPalette` not
  * yet set — seeds it from the palette being REPLACED (the previous
  * `surface.paletteId`), via `palette.ts`'s {@link seedCustomStops}, exactly
  * like {@link setFlamePaletteId}/{@link setSolidPaletteId}. Picking a preset
@@ -1969,7 +1970,7 @@ export function setSurfacePaletteId(
 }
 
 /**
- * Replace the user-authored gradient's stops (fr-55k) — the gradient editor's
+ * Replace the user-authored gradient's stops — the gradient editor's
  * add/remove/recolor/reorder edits all funnel through this one reducer,
  * passing their whole new stop list. Never throws: fewer than
  * {@link MIN_CUSTOM_PALETTE_STOPS} isn't a gradient — the UI never actually
@@ -2005,7 +2006,7 @@ export function setCustomPaletteStops(
 
 /**
  * Whether the CURRENT system needs the 4D projection view — the derived
- * condition (fr-bf6) that makes "4D" a property of `state.transforms` /
+ * condition that makes "4D" a property of `state.transforms` /
  * `state.finalTransform` rather than a separate mode the user enters/exits
  * (see `affine4.ts`'s `systemIsFlat`/`isFlatTransform`, the underlying
  * flatness predicates). The final transform counts only per its own enabled
@@ -2057,7 +2058,7 @@ function withSymmetryTwist(
  * and reshapes the live explorer's point cloud as well as the flame/solid
  * renders — see {@link AppState.symmetry}.
  *
- * LOWERING THE ORDER RE-CAPS THE TWIST it is already carrying (fr-4jyg), by
+ * LOWERING THE ORDER RE-CAPS THE TWIST it is already carrying, by
  * the same {@link withSymmetryTwist} rule {@link setSymmetryTwist} applies —
  * absent stays absent, and a twist that caps to `0` DROPS to absent exactly as
  * that setter would leave it. Without this, `{order: 12, twist: 7}` lowered to
@@ -2111,7 +2112,7 @@ export function setSymmetryTwist(state: AppState, twist: number): AppState {
 }
 
 /**
- * The palette the `"auto"` backdrop tracks (fr-mz2u): the ACTIVE render's
+ * The palette the `"auto"` backdrop tracks: the ACTIVE render's
  * own palette select — the flame/solid/surface `paletteId` while that
  * render is showing, else the explorer's {@link AppState.rampPaletteId}.
  * Deliberately COARSE: it reads only {@link AppState.renderMode}, never the
@@ -2134,7 +2135,7 @@ export function activeScenePalette(state: AppState): PaletteSpec {
 }
 
 /**
- * The one state-aware backdrop resolution (fr-mz2u): `resolveBackground`
+ * The one state-aware backdrop resolution: `resolveBackground`
  * with the {@link activeScenePalette} supplied, so `"auto"` derives from
  * what the scene is actually showing. Every consumer that holds an
  * {@link AppState} resolves through THIS (main.ts's pushes, the
@@ -2146,7 +2147,7 @@ export function resolveSceneBackground(state: AppState): BackgroundGradient {
 }
 
 /**
- * Set which backdrop the scene renders (fr-5ps1) — see
+ * Set which backdrop the scene renders — see
  * {@link AppState.background}. Not clamped — it is an enum (see
  * `background.ts`'s `BACKGROUND_MODES`), and the UI only offers valid values
  * (persistence validates untrusted input in `decodeScene`), like
@@ -2154,7 +2155,7 @@ export function resolveSceneBackground(state: AppState): BackgroundGradient {
  *
  * A fresh switch TO `"custom"` — no authored gradient yet — seeds the custom
  * slot from the backdrop being REPLACED (the resolved stops of the previous
- * mode, an `"auto"` predecessor's derived stops included — fr-mz2u), so
+ * mode, an `"auto"` predecessor's derived stops included), so
  * Custom starts as a tweakable copy of the current look: the exact
  * {@link setFlamePaletteId}/`seedCustomStops` discipline, applied to the
  * backdrop. Picking a built-in mode, or re-picking Custom when a payload
@@ -2173,7 +2174,7 @@ export function setBackgroundMode(
 }
 
 /**
- * Replace the custom backdrop's authored gradient (fr-5ps1) — both color
+ * Replace the custom backdrop's authored gradient — both color
  * pickers funnel through this one reducer with the whole new stop pair.
  * Never clamped: the UI's `<input type="color">` → `hexToRgb` path can only
  * produce valid 0..1 channels (the {@link setPositionAxisColors} contract),
@@ -2190,7 +2191,7 @@ export function setBackgroundCustom(
 }
 
 /**
- * Set the backdrop's gradient SHAPE (fr-h3mp) — orthogonal to `mode` (see
+ * Set the backdrop's gradient SHAPE — orthogonal to `mode` (see
  * {@link BackgroundParams.shape}). Not clamped, same enum discipline as
  * {@link setBackgroundMode} (`background-shape.ts`'s `BACKGROUND_SHAPES`;
  * persistence validates untrusted input). Leaves `mode`/`custom` untouched.
@@ -2220,7 +2221,7 @@ export function setGlowBrightness(
 }
 
 /**
- * Set the depth-fog density multiplier (fr-5h5d), clamped to
+ * Set the depth-fog density multiplier, clamped to
  * {@link PARAM}.fogDensity's range — see {@link AppState.fogDensity} for
  * what `0`/`1` mean.
  */
@@ -2232,7 +2233,7 @@ export function setFogDensity(state: AppState, fogDensity: number): AppState {
 }
 
 /**
- * Set the fog tint color (fr-5h5d) — see {@link AppState.fogTint}. Strict,
+ * Set the fog tint color — see {@link AppState.fogTint}. Strict,
  * unlike `setPositionAxisColors`/`setBackgroundCustom` (which trust an
  * already-parsed `<input type="color">` → `hexToRgb` value): this reducer's
  * own input IS the raw string, so it is the validation boundary rather than
@@ -2247,7 +2248,7 @@ export function setFogTint(state: AppState, fogTint: string): AppState {
 }
 
 /**
- * Set the fog tint's blend strength (fr-5h5d), clamped to
+ * Set the fog tint's blend strength, clamped to
  * {@link PARAM}.fogTintStrength's range — see {@link AppState.fogTintStrength}
  * for what `0`/`1` mean.
  */
@@ -2262,7 +2263,7 @@ export function setFogTintStrength(
 }
 
 /**
- * Toggle the surface ground plane (fr-rhn5) — see
+ * Toggle the surface ground plane — see
  * {@link AppState.groundPlane}. No validation boundary needed: unlike
  * `setFogTint`'s raw-string input, this reducer's own parameter is already
  * the checkbox's `boolean`.

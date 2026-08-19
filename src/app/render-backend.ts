@@ -1,5 +1,5 @@
 /**
- * fr-tmgf's "which engine, and is it software?" vocabulary: one regex, one
+ * The "which engine, and is it software?" vocabulary: one regex, one
  * WebGPU adapter status derivation, one WebGL unmasked-renderer read, and one
  * pair of warning strings — so every place the app decides whether it is
  * silently running on a SOFTWARE renderer (SwiftShader / llvmpipe /
@@ -55,7 +55,7 @@ export interface GpuAdapterInfoLike {
 
 /**
  * Derive whether a WebGPU adapter is software and the label to show for it,
- * reproducing `flame-gpu-backend.ts`'s pre-fr-tmgf label shape exactly while
+ * reproducing `flame-gpu-backend.ts`'s original label shape exactly while
  * broadening the software detection it fed.
  *
  * @param info WebGPU adapter info (`adapter.info`, or a bench/probe stand-in).
@@ -65,7 +65,7 @@ export interface GpuAdapterInfoLike {
  *
  * `software` is true when `info.isFallbackAdapter` or `adapterFallback` says
  * so, OR when any of `vendor`/`architecture`/`device`/`description` matches
- * {@link SOFTWARE_RENDERER_RE}. The string tell is the fr-tmgf addition:
+ * {@link SOFTWARE_RENDERER_RE}. The string tell is the later addition:
  * Chrome has been seen handing out real-looking software stacks with
  * `isFallbackAdapter` false, reporting "swiftshader" in `architecture` with
  * an empty `description` — which is why all four fields are checked rather
@@ -157,16 +157,16 @@ export type SurfaceComputeBlock = "flag" | "unavailable" | "failed";
  *
  * @param computeShaped Whether the active system is a class
  *   `surface-compute.ts` would prefer: base-map folds, a fold FINAL lens,
- *   (fr-dlxh) the escape-time single pure-fold map, or (fr-dlxh's 4D cut,
- *   widened to EVERY 4D system by fr-fniy) a 4D system — the affine4
- *   kernel is measured 1.7x faster on a plain one and 12x on the order-6
+ *   the escape-time single pure-fold map, or (since the shade-sizer width
+ *   fix widened it to EVERY 4D system) a 4D system — the affine4 kernel
+ *   is measured 1.7x faster on a plain one and 12x on the order-6
  *   kaleidoscope, with the fragment tracer as its fallback arm. (The param
  *   was `foldShaped` until the 4D cut made that name a lie; the semantics
  *   have only ever widened, twice now.) PLAIN 3D AFFINE systems are the
  *   one class left with nothing to explain: WebGL is their natural engine
  *   by design, not a fallback. Kaleidoscope 4D used to be the second, on
- *   fr-b72d's ~35x reading of the order-6 gap; fr-fniy found that gap was
- *   the compute arm's shade sizer, fixed it, and the same cell now reads
+ *   an earlier ~35x reading of the order-6 gap; that gap turned out to be
+ *   the compute arm's shade sizer, fixed since, and the same cell now reads
  *   12x the other way.
  * @param supported Whether WebGPU is even available (`navigator.gpu` exists
  *   and `requestAdapter()` returned an adapter, upstream of any session).
@@ -192,10 +192,10 @@ export function surfaceWebglDetail(args: {
  * {@link unmaskedWebglRenderer} string that triggered the warning.
  *
  * The leading token names the condition (engine first, so a skimmed banner
- * still says which stack is affected); the `chrome://gpu` hint is the bead's
- * requested breadcrumb — the field incident behind fr-tmgf was a browser
- * that had silently blocklisted the GPU, and "check its GPU settings" is the
- * one-line fix a user can act on without filing a bug.
+ * still says which stack is affected); the `chrome://gpu` hint is the
+ * requested breadcrumb — the field incident behind this warning was a
+ * browser that had silently blocklisted the GPU, and "check its GPU
+ * settings" is the one-line fix a user can act on without filing a bug.
  */
 export function softwareWarningText(
   kind: "webgl" | "webgpu",

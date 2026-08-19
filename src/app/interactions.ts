@@ -26,29 +26,29 @@ export interface InteractionCallbacks {
    */
   frozen: () => boolean;
   /** True while the view is showing the 4D projection (a DERIVED property of
-   * the system — fr-bf6 — cached by `main.ts`, not a mode flag): Shift
+   * the system, cached by `main.ts`, not a mode flag): Shift
    * retargets rotate-drags and the wheel from the 3D camera to the three
-   * w-plane rotations (fr-woc). */
+   * w-plane rotations. */
   fourDView: () => boolean;
   /** A Shift-retargeted gesture turned the 4D view: plane-angle deltas in
    * radians (zero for planes the gesture doesn't touch). */
   onFourDRotate: (delta: { xw: number; yw: number; zw: number }) => void;
   /** Whether the w-slice is currently enabled — gates the [ / ] slice-nudge
-   * keys (keyboard-camera.ts, fr-vja8.37) the way {@link fourDView} gates
+   * keys (keyboard-camera.ts) the way {@link fourDView} gates
    * the rotor keys. */
   fourDSliceOn: () => boolean;
   /** The [ / ] keys nudged the w-slice center by a normalized delta —
    * main.ts routes it through the slice slider's own handler logic. */
   onFourDSliceNudge: (delta: number) => void;
   /** Space on the focused canvas toggled the shared auto-motion choice
-   * (3D auto-orbit / 4D auto-tumble, fr-0ya) — main.ts routes it through
+   * (3D auto-orbit / 4D auto-tumble) — main.ts routes it through
    * the same logic as the panel checkboxes. */
   onToggleAutoMotion: () => void;
 }
 
-/** Radians per normalized wheel px that Shift+scroll turns the ZW plane
- * (fr-woc) — one ~100 px notch (after `deltaMode` normalization) reaches
- * roughly 0.15 rad before clamping, matching the drag gesture's feel. */
+/** Radians per normalized wheel px that Shift+scroll turns the ZW plane —
+ * one ~100 px notch (after `deltaMode` normalization) reaches roughly
+ * 0.15 rad before clamping, matching the drag gesture's feel. */
 const FOUR_D_WHEEL_SPEED = 0.0025;
 /** Per-event clamp on the Shift+scroll ZW turn: a single coarse notch steps
  * ~8.6°, while a trackpad's stream of small deltas stays smooth. */
@@ -59,8 +59,8 @@ type OrbitMode = "none" | "rotate" | "pan" | "dolly-pan";
 /**
  * One component of a guide-box resize: multiply the magnitude by `factor` and
  * clamp it to the guide range, preserving the component's sign — a mirrored
- * (negative-scale) axis stays mirrored through a pinch or wheel resize
- * (fr-lca). A zero component grows to the positive floor, matching the old
+ * (negative-scale) axis stays mirrored through a pinch or wheel resize.
+ * A zero component grows to the positive floor, matching the old
  * clamp-up behavior. Exported for tests.
  */
 export function resizeGuideComponent(value: number, factor: number): number {
@@ -72,7 +72,7 @@ export function resizeGuideComponent(value: number, factor: number): number {
 
 /**
  * Resize a guide box per-axis by one shared `factor` — sign-preserving and
- * anisotropy-preserving, unlike the `setScalar` this replaced (fr-lca), which
+ * anisotropy-preserving, unlike the `setScalar` this replaced, which
  * flattened all three axes to a clamped copy of `scale.x` on every pinch or
  * wheel step (destroying any mirror along the way, since the clamp floor is
  * positive).
@@ -235,13 +235,13 @@ export function attachInteractions(
     lastX = x;
     lastY = y;
     latchFromTouch = touchOf(event) !== null;
-    // Clicking the canvas must focus it in EVERY mode (fr-vja8.37 promises
-    // click-or-Tab reaches the camera keys): the transform path's
-    // preventDefault below would otherwise cancel the browser's
-    // focus-on-mousedown, leaving focus on whatever panel control last had
-    // it — and the next arrow key silently editing that control instead of
-    // the camera (wave-5 review finding). Idempotent on the camera path,
-    // which gets the same focus by default.
+    // Clicking the canvas must focus it in EVERY mode (click-or-Tab must
+    // reach the camera keys): the transform path's preventDefault below
+    // would otherwise cancel the browser's focus-on-mousedown, leaving
+    // focus on whatever panel control last had it — and the next arrow key
+    // silently editing that control instead of the camera (wave-5 review
+    // finding). Idempotent on the camera path, which gets the same focus by
+    // default.
     canvas.focus({ preventScroll: true });
 
     const selected = callbacks.selectedTransform();
@@ -261,7 +261,7 @@ export function attachInteractions(
       // are incremental deltas, so there is no jump on the switch. Touch
       // events have no shiftKey, so touch always orbits; touch has no other
       // way to turn the w-planes directly (there is no per-map w editor —
-      // fr-bf6 unified "4D" into the ordinary transform editor, which does not
+      // "4D" is unified into the ordinary transform editor, which does not
       // yet expose the `w` fields themselves), only the auto-tumble.
       if (callbacks.fourDView() && mouse?.shiftKey) {
         // Dragging toward +screen-x rolls the world +x axis into +w; screen y
@@ -404,7 +404,7 @@ export function attachInteractions(
     event.preventDefault();
   }
 
-  // The keyboard path (fr-vja8.37): scene.ts made the canvas focusable, so
+  // The keyboard path: scene.ts made the canvas focusable, so
   // this listener fires only while the canvas HAS focus — the scoping that
   // makes camera keys safe at all (bound globally, unmodified arrows would
   // shadow every panel slider's native adjustment and Space every focused
@@ -417,7 +417,7 @@ export function attachInteractions(
   // exactly as it blocks drags. preventDefault fires only for a produced
   // action, so unhandled keys keep their page semantics. Deliberately
   // camera-only regardless of the transform selection — guide-box nudging
-  // stays slider-based (the fr-vja8.37 triage's own scope line).
+  // stays slider-based (the keyboard work's own scope line).
   function onKeyDown(event: KeyboardEvent): void {
     if (callbacks.frozen()) return;
     // AltGr on Windows reports ctrlKey+altKey together, and on many
@@ -465,7 +465,7 @@ export function attachInteractions(
   // gesture mid-touch (navigation swipe, app switch, notification shade).
   // Without this the orbitMode/dragging latch sticks, so gestureActive()
   // reports a phantom gesture forever (pausing the auto-orbit) and the next
-  // touch resumes a stale mode (fr-1k4).
+  // touch resumes a stale mode.
   document.addEventListener("touchcancel", onPointerUp);
   // The mouse twin of that reset: a focus steal mid-button-hold (OS dialog,
   // Alt-Tab, screen lock) swallows the mouseup the same way. onPointerMove's

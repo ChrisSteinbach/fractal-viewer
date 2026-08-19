@@ -1,5 +1,5 @@
 /**
- * The live point cloud's worker-side compute (fr-5kx): one pure function from
+ * The live point cloud's worker-side compute: one pure function from
  * a {@link CloudRequest} to a {@link CloudResult} — the chaos game
  * (`runChaosGame` / `runChaosGame4`, seeded) plus, on the 3D path, the baked
  * color buffer (`buildColors`), so a regeneration costs the main thread
@@ -13,9 +13,9 @@
  * a generation is a one-shot request → response (no chunking, no live
  * commands, no progress streaming). While a huge generation runs, the WORKER
  * is busy but the main thread stays interactive — the cloud is merely a
- * generation behind, which is the entire point (fr-acc measured the
- * synchronous alternative: a multi-hundred-ms main-thread stall per drag
- * frame at high point counts). The at-most-one-in-flight policy lives in
+ * generation behind, which is the entire point (the synchronous
+ * alternative was measured at a multi-hundred-ms main-thread stall per
+ * drag frame at high point counts). The at-most-one-in-flight policy lives in
  * `cloud-generator.ts`, so this module never sees overlapping requests.
  */
 import { runChaosGame } from "../fractal/chaos-game";
@@ -51,7 +51,7 @@ export interface CloudRequest {
   /** Explicit numeric seed (a live `Rng` can't cross postMessage) — same
    * discipline as the flame/voxel `start` commands. */
   seed: number;
-  /** Kaleidoscope symmetry (fr-6im; 4D since fr-q0h6). Both paths honor it —
+  /** Kaleidoscope symmetry, 3D and 4D alike. Both paths honor it —
    * `runChaosGame4` rotates its copies in a PLANE (optionally a second,
    * orthogonal one, for a double rotation) where `runChaosGame` rotates about
    * an axis, and the two agree entry for entry wherever a system is flat. */
@@ -66,7 +66,7 @@ export interface CloudRequest {
   colorMode: ColorMode;
   colorGamma: number;
   /**
-   * Gradient palette for the height/radius color-mode ramps (fr-3b6),
+   * Gradient palette for the height/radius color-mode ramps,
    * resolved by the MAIN thread (`resolvePalette` — the bare `"custom"`
    * sentinel has no payload to cross the wire with; see `palette.ts`'s
    * `PaletteSpec`), exactly like the flame/voxel start commands' `palette`.
@@ -74,7 +74,7 @@ export interface CloudRequest {
    * on the 4D path like the rest of the color-bake inputs.
    */
   rampPalette: PaletteSpec;
-  /** The position mode's custom axis colors (fr-8k7) — `buildColors`'
+  /** The position mode's custom axis colors — `buildColors`'
    * parameter of the same name; absent = the legacy XYZ→RGB mapping. Inert
    * for every other `colorMode`, and on the 4D path like the rest of the
    * color-bake inputs. */
@@ -101,7 +101,7 @@ export interface CloudResult3D extends ChaosGameResult {
    * this generation was in flight. */
   colors: Float32Array;
   /**
-   * Outlier-robust box for the camera fit (fr-3xfk): per-axis trimmed
+   * Outlier-robust box for the camera fit: per-axis trimmed
    * quantiles of the delivered cloud (`framing-bounds.ts`), baked worker-side
    * like `colors`. The camera fit/chase frames THIS; `bounds` stays the true
    * min/max extent, which color normalization and the glow-exposure estimate
@@ -118,7 +118,7 @@ export interface CloudResult4D extends ChaosGame4Result {
   id: number;
   fourD: true;
   /**
-   * Outlier-robust framing radius for the camera fit (fr-3xfk): a trimmed
+   * Outlier-robust framing radius for the camera fit: a trimmed
    * quantile of the 4D distance-from-`center` (`framing-bounds.ts`), still
    * rotation-invariant because the tumble rotates about `center` itself.
    * The fit frames this ball; the EXACT `radius` keeps feeding the frustum
@@ -132,7 +132,7 @@ export type CloudResult = CloudResult3D | CloudResult4D;
 
 /**
  * XOR'd into `request.seed` to derive the iteration-local stream's own seed
- * (fr-2wfw; the golden-ratio constant, but any fixed value works —
+ * (the golden-ratio constant, but any fixed value works —
  * `mulberry32`'s mixing decorrelates any two distinct seeds). One derivation
  * for the 3D and 4D paths, so a flat↔4D morph's alternating requests keep
  * one discipline.
@@ -151,7 +151,7 @@ const ITERATION_SEED_XOR = 0x9e3779b9;
  * `iterationRng`). Still a pure function of the request, but the primary
  * pick stream's consumption becomes rigid (one draw per pick), and each
  * iteration's dice are its own. That keeps the morph's pinned-seed point
- * correspondence intact across ε-different samples (fr-2wfw): on one shared
+ * correspondence intact across ε-different samples: on one shared
  * stream, a single differing escape — or a weight-boundary pick flip landing
  * on a `julia`-carrying map in one sample only — shifted every subsequent
  * transform pick and re-rolled the entire remaining cloud; the morph

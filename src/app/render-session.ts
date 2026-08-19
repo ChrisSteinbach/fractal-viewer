@@ -1,7 +1,7 @@
 /**
  * The enter / exit / terminate + first-frame-gate choreography shared by
- * main.ts's two render controllers — the flame render (fr-o7s) and the
- * solid voxel render (fr-v4f). Both are session-only overlays OF the explorer:
+ * main.ts's two render controllers — the flame render and the solid voxel
+ * render. Both are session-only overlays OF the explorer:
  * a Render click freezes (flame) or accumulates a world-space volume over
  * (solid) the current system in a fresh worker, and the app returns to the
  * live explorer on Back, on a render error, or on an undo/redo that
@@ -93,7 +93,7 @@ export interface RenderSessionDeps<C> {
    *
    * The moment the app's answer to "has this render produced its picture?"
    * flips, which is the moment anything that fell back to the explorer while
-   * it was `false` becomes correctable: main.ts patches fr-r777's late
+   * it was `false` becomes correctable: main.ts patches the late
    * thumbnails from here. Runs after the gate has flipped, so a handler
    * reading {@link RenderSession.hasFirstFrame} sees `true`.
    */

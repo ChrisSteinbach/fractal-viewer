@@ -226,7 +226,7 @@ describe("CameraTween.finish", () => {
   });
 });
 
-describe("CameraTween.track (fr-cfoc)", () => {
+describe("CameraTween.track", () => {
   // A second box well away from SAMPLE_BOUNDS, for retargeting scenarios.
   const OTHER_BOUNDS: Bounds = {
     minX: 9,
@@ -406,7 +406,7 @@ describe("CameraTween.track (fr-cfoc)", () => {
   });
 });
 
-describe("CameraTween.glideToPose (fr-8v41)", () => {
+describe("CameraTween.glideToPose", () => {
   // Well clear of the boot camera's own pose (target [0,0,0], radius ~8.12,
   // theta ~0.785, phi ~1.054 for new OrbitCamera([5, 4, 5])) and of
   // SAMPLE_BOUNDS's fit, so a test that reaches this pose can't pass by

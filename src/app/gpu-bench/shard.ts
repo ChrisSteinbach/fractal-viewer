@@ -1,5 +1,5 @@
 /**
- * fr-hzlm: splitting the GPU-agreement scenario sweep across CI jobs.
+ * Splitting the GPU-agreement scenario sweep across CI jobs.
  *
  * The agreement gate is ~18 min against 1m50s for the next-slowest CI job,
  * so it is the whole critical path; four shards cut that to roughly setup

@@ -1,6 +1,6 @@
 /**
- * The main-thread client for the live point cloud's generation worker
- * (fr-5kx): owns the request/response policy that lets the interactive cloud
+ * The main-thread client for the live point cloud's generation worker:
+ * owns the request/response policy that lets the interactive cloud
  * regenerate off the main thread without ever showing torn or out-of-order
  * results.
  *
@@ -11,8 +11,8 @@
  * visit" resets and camera fit survive into the request that actually runs).
  * When the in-flight result lands, the pending request (if any) is posted
  * immediately, then the result is delivered. Combined with `main.ts`'s rAF
- * coalescer in front (fr-acc), a drag burst degrades gracefully: the cloud
- * updates as fast as one generation takes, showing every result it finishes,
+ * coalescer in front, a drag burst degrades gracefully: the cloud updates
+ * as fast as one generation takes, showing every result it finishes,
  * always converging on the latest state.
  *
  * Fallback, because the live cloud IS the app (unlike the optional flame/
@@ -20,7 +20,7 @@
  * can't be created, fails to load (e.g. a stale-deploy 404), or crashes, the
  * generator flips permanently to running {@link CloudGeneratorDeps.computeSync}
  * — the exact same pure `generateCloud` the worker runs — inline on the main
- * thread: fr-acc's coalesced-but-synchronous behavior, jankier but correct.
+ * thread: coalesced-but-synchronous behavior, jankier but correct.
  * The freshest outstanding request is re-run synchronously at the moment of
  * failure, so a request can never be silently lost to a crash.
  *
@@ -64,7 +64,7 @@ export interface CloudGeneratorDeps {
    * (whose `replaced`/`fit` flags the arrival handler acts on) and the
    * generation's measured latency in ms — post→reply on the worker path,
    * around the compute on the synchronous paths — which feeds the morph's
-   * adaptive point budget (`morph-budget.ts`, fr-a5gu). Never called for a
+   * adaptive point budget (`morph-budget.ts`). Never called for a
    * result a newer `generateSync` has already superseded. */
   onResult: (
     result: CloudResult,
@@ -117,7 +117,7 @@ export class CloudGenerator {
    * The id the next request — `request()` or `generateSync()` — will be
    * stamped with. Ids are monotonic, so every request posted from here on
    * satisfies `id >= peekNextId()`. main.ts's pending load hints record this
-   * when a load's opening clear runs (load-hints.ts, fr-vja8.34) — BEFORE
+   * when a load's opening clear runs (load-hints.ts) — BEFORE
    * the load posts any of its own requests — so an arrival below the
    * recorded id is an in-flight leftover of a PREVIOUS load and must not
    * consume them, while the load's own requests (including one posted
@@ -170,7 +170,7 @@ export class CloudGenerator {
    * delivered via `onResult` — not merely posted. Resolves immediately
    * when already idle, including permanent synchronous-fallback mode,
    * where every `request()` computes and delivers inline before
-   * returning. The offline frame-exact video export (fr-92t9) awaits this
+   * returning. The offline frame-exact video export awaits this
    * between issuing a frame's generation request and rendering/encoding
    * that frame, so each exported frame shows exactly its own sample
    * rather than a stale or still-computing one. Multiple concurrent

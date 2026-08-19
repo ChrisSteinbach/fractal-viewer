@@ -1,52 +1,53 @@
 /**
- * WebGPU compute renderer for FOLD 3D surface sessions (fr-tzdg) — the
- * integration of fr-q1f8's measured verdict: the WGSL march kernel traces
- * mandelboxKifs at ~49µs/ray on the same hardware where the WebGL
- * fragment tracer is unbounded (>1300µs/ray), and compiles in ~0.1-0.3s
- * where the fold GLSL links in ~25s on Mesa (fr-096u's entry cliff).
+ * WebGPU compute renderer for FOLD 3D surface sessions — the app
+ * integration of the WGSL kernel spike's measured verdict: the march
+ * kernel traces mandelboxKifs at ~49µs/ray on the same hardware where the
+ * WebGL fragment tracer is unbounded (>1300µs/ray), and compiles in
+ * ~0.1-0.3s where the fold GLSL links in ~25s on Mesa (the entry cliff
+ * behind the kernel-confirmed i915 preemption hang).
  *
- * A frame is TWO pipelines (an ifs4 session holds two PAIRS — fr-d0nn:
- * a slab-free variant serves every sliceHalfW=0 frame at a measured
- * 2.2-2.4x kernel discount, the full fr-wa6o pair any h > 0 frame),
- * both bounded by construction (no submission
- * ever outruns the i915 watchdog): MARCH passes advance every active ray
- * by `stepsThisPass` DE steps (the bench's proven register-light kernel,
- * ray derivation swapped to the GLSL tracer's unproject), with the active
- * list compacted host-side between them FROM 4 B PER ACTIVE RAY (fr-si66:
+ * A frame is TWO pipelines (an ifs4 session holds two PAIRS: a slab-free
+ * variant serves every sliceHalfW=0 frame at a measured 2.2-2.4x kernel
+ * discount, the full slab pair any h > 0 frame), both bounded by
+ * construction (no submission ever outruns the i915 watchdog): MARCH
+ * passes advance every active ray by `stepsThisPass` DE steps (the
+ * bench's proven register-light kernel, ray derivation swapped to the
+ * GLSL tracer's unproject), with the active list compacted host-side
+ * between them FROM 4 B PER ACTIVE RAY (the march status side-channel:
  * the march writes each dispatched ray's status to its own slot in the
  * list being rebuilt, so the sweep no longer reads the whole 16 B/ray
  * states buffer back to look at one field of it — the frame's states
  * never leave the device now, and the terminal tally is kept as rays
- * leave the list); rays that turn terminal join the
- * SHADE QUEUES drained in host-sized batches through the shade kernel (the
- * GLSL tracer's full shading, mirrored term for term). The split is a
- * measured verdict, not taste: shading a freshly-hit ray costs ~40
- * zero-cutoff on-surface DE evals, and the v1 megakernel — which shaded
- * rays inside whichever march pass terminated them — measured 1.1-5.3s
- * per pass on Iris and LOST THE DEVICE at full depth/budgets (fr-096u's
- * watchdog through the shading door; numbers on the fr-tzdg bead).
+ * leave the list); rays that turn terminal join the SHADE QUEUES drained
+ * in host-sized batches through the shade kernel (the GLSL tracer's full
+ * shading, mirrored term for term). The split is a measured verdict, not
+ * taste: shading a freshly-hit ray costs ~40 zero-cutoff on-surface DE
+ * evals, and the v1 megakernel — which shaded rays inside whichever march
+ * pass terminated them — measured 1.1-5.3s per pass on Iris and LOST THE
+ * DEVICE at full depth/budgets (the i915 watchdog through the shading
+ * door).
  *
- * Shade batches are sized in HIT units, not ray units (fr-p8bc's second
- * lesson): only HIT rays pay the on-surface probe evals — miss/exhausted
- * rays write one background pixel — and the queue arrives in scanline
- * order, so cost is spatially CLUSTERED. The original ray-unit doubling
- * grew batch capacity across a run of ~free misses and then submitted
- * thousands of rays straight into a hit band (~108 ms/hit measured
- * full-width near-surface on Iris) — several seconds past the ~7.5 s
- * i915 preemption watchdog, five kernel-confirmed GPU HANGs (ecode
+ * Shade batches are sized in HIT units, not ray units (the probe-width
+ * verdict's second lesson): only HIT rays pay the on-surface probe evals
+ * — miss/exhausted rays write one background pixel — and the queue
+ * arrives in scanline order, so cost is spatially CLUSTERED. The original
+ * ray-unit doubling grew batch capacity across a run of ~free misses and
+ * then submitted thousands of rays straight into a hit band (~108 ms/hit
+ * measured full-width near-surface on Iris) — several seconds past the
+ * ~7.5 s i915 preemption watchdog, five kernel-confirmed GPU HANGs (ecode
  * 12:1:85dcfffb) in one bench session, and reactive quartering can only
  * react AFTER the killing batch. Now misses drain WHOLE — one dispatch
  * per sweep, no cost cap, since one background write per ray is not a
- * cost to model (fr-257o) — and hit batches are sized
- * predictively from a two-term cost model, `intercept + n·marginal`
- * ({@link ShadeHitCost}, {@link shadeHitBatchSize}), under a slow-growing
- * capacity cap ({@link nextShadeBatchSize}) that bounds the first
- * encounter with an unmeasured-cost region. THE TWO TERMS ARE THE POINT
- * (fr-2ojg): a shade dispatch's wall time is flat in its width to at
- * least eight workgroups on Iris, so charging a whole submission's time
- * to its ray count read LATENCY as per-hit work and the sizer walked
- * itself down to the floor — fr-d6g5's trapdoor at every width below the
- * occupancy knee rather than only at n=1.
+ * cost to model — and hit batches are sized predictively from a two-term
+ * cost model, `intercept + n·marginal` ({@link ShadeHitCost},
+ * {@link shadeHitBatchSize}), under a slow-growing capacity cap
+ * ({@link nextShadeBatchSize}) that bounds the first encounter with an
+ * unmeasured-cost region. THE TWO TERMS ARE THE POINT: a shade dispatch's
+ * wall time is flat in its width to at least eight workgroups on Iris, so
+ * charging a whole submission's time to its ray count read LATENCY as
+ * per-hit work and the sizer walked itself down to the floor — the
+ * settle-park trapdoor at every width below the occupancy knee rather
+ * than only at n=1.
  *
  * Division of labor: this module owns the DEVICE — acquisition, the
  * per-session pipeline (the DE is frozen at session enter, matching the
@@ -131,7 +132,7 @@ type SurfaceComputeTraceSink = (line: string) => void;
 
 let surfaceComputeTrace: SurfaceComputeTraceSink | null = null;
 
-/** Opt-in frame-loop tracing (fr-d6g5): captured once per frame at start. */
+/** Opt-in frame-loop tracing: captured once per frame at start. */
 export function setSurfaceComputeTrace(
   sink: SurfaceComputeTraceSink | null,
 ): void {
@@ -139,20 +140,20 @@ export function setSurfaceComputeTrace(
 }
 
 /**
- * Debug-only pins on the frame loop's three sizing dials (fr-fniy), read
- * once per frame exactly like the trace sink above:
- * `?surfacemarchchunk=N` forces every march slice to N rays,
- * `?surfacemarchsteps=S` forces the per-ray step budget to S, and
- * `?surfaceshadehits=H` forces every HIT shade batch to H hits — each in
- * place of the measured estimate that normally picks it.
+ * Debug-only pins on the frame loop's three sizing dials, read once per
+ * frame exactly like the trace sink above: `?surfacemarchchunk=N` forces
+ * every march slice to N rays, `?surfacemarchsteps=S` forces the per-ray
+ * step budget to S, and `?surfaceshadehits=H` forces every HIT shade
+ * batch to H hits — each in place of the measured estimate that normally
+ * picks it.
  *
  * THEY EXIST BECAUSE A SIZER CANNOT OTHERWISE BE ASKED ITS OWN QUESTION.
  * Both sizers price a dispatch per unit of work, and a per-unit cost is
  * only meaningful where a dispatch has no large fixed cost — the defect
- * fr-2ojg found on the shade side, where the same statistic was measuring
- * the wrong quantity outright. Deciding that means pricing cost against
- * WIDTH, and the widths a sizer picks are picked BY the estimate under
- * test: "THE TABLE ALONE PROVES NOTHING"
+ * the two-term cost model found on the shade side, where the same
+ * statistic was measuring the wrong quantity outright. Deciding that
+ * means pricing cost against WIDTH, and the widths a sizer picks are
+ * picked BY the estimate under test: "THE TABLE ALONE PROVES NOTHING"
  * (docs/surface-compute-renderer.md). A FORCED width is the one lever
  * independent of the model, and until these pins existed the renderer had
  * no such lever at all — every recorded cost-vs-width table in that
@@ -178,13 +179,14 @@ export function setSurfaceComputeTrace(
  * compensating and dispatch work grows linearly with the pin. The real
  * bound above it is the kernel's own `steps >= params.marchSteps` break,
  * not the sizer. Both are fine for an instrument run and neither is
- * something to leave in a URL. `?surfacesamples=N` and `?surfacemaxrays=N`
- * are the same shape of escape hatch. Unlike the app's own shareable
- * links, which ride the `#v1=` hash, a diagnostic pin rides a plain query
- * param, so a hostile page can hand a victim a `?surfacemarchsteps=` link
- * and a click into Surface mode buys a single watchdog-tripping dispatch —
- * which is why {@link SURFACE_COMPUTE_MARCH_STEPS_PIN_CAP} bounds this one
- * pin below whatever the sizer would otherwise allow (fr-vja8.30).
+ * something to leave in a URL. `?surfacesamples=N` and
+ * `?surfacemaxrays=N` are the same shape of escape hatch. Unlike the
+ * app's own shareable links, which ride the `#v1=` hash, a diagnostic pin
+ * rides a plain query param, so a hostile page can hand a victim a
+ * `?surfacemarchsteps=` link and a click into Surface mode buys a single
+ * watchdog-tripping dispatch — which is why
+ * {@link SURFACE_COMPUTE_MARCH_STEPS_PIN_CAP} bounds this one pin below
+ * whatever the sizer would otherwise allow.
  */
 let surfaceComputeMarchChunkPin: number | null = null;
 let surfaceComputeMarchStepsPin: number | null = null;
@@ -211,28 +213,29 @@ export function setSurfaceComputeSchedulePins(pins: {
   surfaceComputeShadeHitsPin = positivePin(pins.shadeHits);
 }
 
-/** Threads per workgroup — fr-q1f8's measured winner (private frontier,
- * stage-1 prune only; wg size itself measured a non-factor, 64 matches the
+/** Threads per workgroup — the kernel spike's measured winner (private
+ * frontier, stage-1 prune only; wg size itself measured a non-factor, 64
+ * matches the
  * bench's private-variant default). */
 export const SURFACE_COMPUTE_WORKGROUP_SIZE = 64;
 
 /** Frontier width for the shade kernel's PROBE evals — the normal/shadow/
- * AO taps, fr-p8bc's lever: they light a hit the full-width march already
- * certified, never decide geometry, so they ride the width-1 greedy
- * descent. MEASURED VERDICT (gpu-bench shade A/B leg, real Iris Xe,
- * mandelboxKifs 96x54, identical 660-hit sets): full-width probe shading
- * 740 s/frame vs 31 s at width 1 (23.8x, thermally understated), and at
- * the hit-dominated near pose the full-width arm cannot even converge a
- * 900 s budget — while the images are eyeball-identical (differences are
- * a slight lightening of deep-crease shadow/AO from the greedy DE's
- * overshoot; 8.1% of pixels differ by >8/255, mean 23.5 on those, no
- * structural artifacts). Rerun via
+ * AO taps, the probe-width lever: they light a hit the full-width march
+ * already certified, never decide geometry, so they ride the width-1
+ * greedy descent. MEASURED VERDICT (gpu-bench shade A/B leg, real Iris
+ * Xe, mandelboxKifs 96x54, identical 660-hit sets): full-width probe
+ * shading 740 s/frame vs 31 s at width 1 (23.8x, thermally understated),
+ * and at the hit-dominated near pose the full-width arm cannot even
+ * converge a 900 s budget — while the images are eyeball-identical
+ * (differences are a slight lightening of deep-crease shadow/AO from the
+ * greedy DE's overshoot; 8.1% of pixels differ by >8/255, mean 23.5 on
+ * those, no structural artifacts). Rerun via
  * `npm run bench:surface -- --display=:0 --surface-shade-width=1`. */
 export const SURFACE_COMPUTE_SHADE_DE_WIDTH = 1;
 
 /** Per-pass GPU-time target the adaptive `stepsThisPass` doubles toward —
  * the bench host loop's own pacing constant. Far under the ~7.5s i915
- * preemption watchdog (fr-096u) while keeping pass overhead amortized. */
+ * preemption watchdog while keeping pass overhead amortized. */
 export const SURFACE_COMPUTE_PASS_TARGET_MS = 250;
 
 /** Cap on DE steps a single dispatch may advance a ray — the bench's own
@@ -240,14 +243,14 @@ export const SURFACE_COMPUTE_PASS_TARGET_MS = 250;
  * few dozen passes. */
 export const SURFACE_COMPUTE_MAX_STEPS_PER_PASS = 32;
 
-/** Ceiling on {@link surfaceComputeMarchStepsPin} (fr-vja8.30): unlike the
- * chunk and hit pins, marchSteps has no downstream `Math.min` — it seeds
- * `stepsThisPass` directly, which rides unmodified into `writeParams` as a
- * per-dispatch DE-steps-per-ray count, so an unclamped pin is the one
+/** Ceiling on {@link surfaceComputeMarchStepsPin}: unlike the chunk and
+ * hit pins, marchSteps has no downstream `Math.min` — it seeds
+ * `stepsThisPass` directly, which rides unmodified into `writeParams` as
+ * a per-dispatch DE-steps-per-ray count, so an unclamped pin is the one
  * URL-reachable path past every other sizing dial's safety machinery and
  * into the i915 watchdog. Anchored to a generous multiple of
- * {@link SURFACE_COMPUTE_MAX_STEPS_PER_PASS} — the adaptive scheduler's own
- * ceiling on that same `stepsThisPass` quantity — rather than picked
+ * {@link SURFACE_COMPUTE_MAX_STEPS_PER_PASS} — the adaptive scheduler's
+ * own ceiling on that same `stepsThisPass` quantity — rather than picked
  * fresh: 128x is a few thousand, far past any legitimate experiment (the
  * full march budget is ~160 steps/ray, spread across many dispatches) and
  * far short of the millions a watchdog trip needed. */
@@ -258,8 +261,9 @@ export const SURFACE_COMPUTE_MARCH_STEPS_PIN_CAP =
 export const SURFACE_COMPUTE_PROGRESS_MS = 500;
 
 /** The gamma both tracers encode their output with (surface-material.ts's
- * `pow(linBase * lit, 1/2.2)` and its WGSL mirror). fr-vpbq's averaging
- * has to undo it before summing and reapply it after, or antialiased
+ * `pow(linBase * lit, 1/2.2)` and its WGSL mirror). Supersampling's
+ * averaging has to undo it before summing and reapply it after, or
+ * antialiased
  * edges come out too dark — the classic non-linear-average bug. */
 const SURFACE_OUTPUT_GAMMA = 2.2;
 
@@ -275,16 +279,16 @@ const SRGB_TO_LINEAR = /* @__PURE__ */ (() => {
 })();
 
 /**
- * Where inside its pixel sample `s` aims (fr-vpbq).
+ * Where inside its pixel sample `s` aims.
  *
- * Sample 0 is the pixel CENTRE exactly, so a supersampled job's first pass
- * reproduces the pre-fr-vpbq frame value for value and every later pass
- * only refines it. The rest walk the R2 low-discrepancy sequence (Roberts'
- * generalized golden ratio) from that centre: a fixed, seedless,
- * well-distributed 2D stratification that needs no state, gives the same
- * offsets for the same `s` on every device, and — unlike a jittered grid —
- * is progressive, so stopping after any number of samples still leaves an
- * evenly covered pixel.
+ * Sample 0 is the pixel CENTRE exactly, so a supersampled job's first
+ * pass reproduces the pre-supersampling frame value for value and every
+ * later pass only refines it. The rest walk the R2 low-discrepancy
+ * sequence (Roberts' generalized golden ratio) from that centre: a fixed,
+ * seedless, well-distributed 2D stratification that needs no state, gives
+ * the same offsets for the same `s` on every device, and — unlike a
+ * jittered grid — is progressive, so stopping after any number of samples
+ * still leaves an evenly covered pixel.
  */
 export function subPixelSample(s: number): [number, number] {
   if (s <= 0) return [0.5, 0.5];
@@ -319,45 +323,45 @@ function encodeLinearMean(
 export class SurfaceComputeUnavailableError extends Error {}
 
 /**
- * A raster this device cannot allocate a frame's buffers for (fr-biox):
- * past its own `maxBufferSize`/`maxStorageBufferBindingSize`, or refused
- * by the allocator. Thrown BEFORE the kernels ever see it, because WebGPU
- * does not throw here on its own — an over-limit `createBuffer` returns an
- * INVALID buffer plus a validation error, and the first thing that rejects
- * is the staging `mapAsync`, whose "Invalid buffer" says nothing about the
- * size that caused it (the fr-biox field report, from a 4x export).
+ * A raster this device cannot allocate a frame's buffers for: past its
+ * own `maxBufferSize`/`maxStorageBufferBindingSize`, or refused by the
+ * allocator. Thrown BEFORE the kernels ever see it, because WebGPU does
+ * not throw here on its own — an over-limit `createBuffer` returns an
+ * INVALID buffer plus a validation error, and the first thing that
+ * rejects is the staging `mapAsync`, whose "Invalid buffer" says nothing
+ * about the size that caused it (the field report that found this, from a
+ * 4x export).
  */
 export class SurfaceComputeFrameSizeError extends Error {}
 
 /**
- * What one compute session traces (fr-dlxh): an IFS attractor descent
- * (the fr-tzdg/fr-55s1 fold and fold-lens classes, `SurfaceDE` frozen at
- * enter), an escape-time forward orbit (`EscapeDE`, the systems
- * `analyzeEscapeSystem` admits — the IFS gate's complement), a
- * Mandelbulb forward orbit (`BulbDE`, the systems `analyzeBulbSystem`
- * admits — fr-tdin; structurally the escape kind one formula over, so
- * every branch below that names "escape" names this too), or a 4D IFS
- * descent (`SurfaceDE4`, the fr-dlxh 4D cut — the systems
+ * What one compute session traces: an IFS attractor descent (the fold and
+ * fold-lens classes, `SurfaceDE` frozen at enter), an escape-time forward
+ * orbit (`EscapeDE`, the systems `analyzeEscapeSystem` admits — the IFS
+ * gate's complement), a Mandelbulb forward orbit (`BulbDE`, the systems
+ * `analyzeBulbSystem` admits; structurally the escape kind one formula
+ * over, so every branch below that names "escape" names this too), or a
+ * 4D IFS descent (`SurfaceDE4`, the 4D cut — the systems
  * `analyzeSurfaceSystem4` admits; its rotor/slice VIEW is per-frame SPEC
  * state, never frozen here). The kind picks the kernel core, the params
  * packer and the maps buffer's layout; everything else — the bounded
  * march/shade host loop, the progressive presents, the failure ladder —
  * is shared.
  *
- * A fifth kind since fr-vag4: a 4D escape-time forward orbit
- * (`EscapeDE4`, the systems `analyzeEscapeSystem4` admits — the 4D IFS
- * gate's complement), which is the first target that is BOTH forward and
- * 4D. It takes the ifs4 kind's per-frame `view4` and its `GpuMap4` maps
- * layout, and the escape kind's everything-else.
+ * A fifth kind: a 4D escape-time forward orbit (`EscapeDE4`, the systems
+ * `analyzeEscapeSystem4` admits — the 4D IFS gate's complement), which is
+ * the first target that is BOTH forward and 4D. It takes the ifs4 kind's
+ * per-frame `view4` and its `GpuMap4` maps layout, and the escape kind's
+ * everything-else.
  *
- * An `ifs`/`ifs4` target's `balloon` flag (fr-5wlv.5, lifted by fr-qxxw)
+ * An `ifs`/`ifs4` target's `balloon` flag, lifted to 4D with the rest,
  * compiles the kernels with the balloon inverted-union wrapper over
  * whichever core/lens the DE picks; the live balloon parameters then ride
  * every frame's spec (`SurfaceComputeFrameSpec.balloon` — the R slider's
  * live-per-frame door, view4's discipline). No FORWARD kind ever sets it
  * (the codegen throws for all three: a filled solid's echo swallows the
- * camera — fr-5wlv.4's measured verdict for the escape solid, re-measured
- * on the Mandelbulb by fr-tdin).
+ * camera — the balloon's measured verdict for the escape solid,
+ * re-measured on the Mandelbulb).
  */
 export type SurfaceComputeTarget =
   | { kind: "ifs"; de: SurfaceDE; balloon?: boolean; groundPlane?: boolean }
@@ -371,16 +375,15 @@ export type SurfaceComputeTarget =
       groundPlane?: boolean;
     };
 
-/** The FORWARD-orbit kinds (fr-dlxh's escape, fr-tdin's bulb, fr-vag4's
- * escape4): a forward orbit rather than an inverse descent, so no descent
- * lens and no frontier width — and the same session-shaping consequences
- * everywhere the host loop asks "is this a descent?". Named once so a
- * fourth forward core cannot be added to one branch and missed in
- * another.
+/** The FORWARD-orbit kinds (escape, bulb, escape4): a forward orbit
+ * rather than an inverse descent, so no descent lens and no frontier
+ * width — and the same session-shaping consequences everywhere the host
+ * loop asks "is this a descent?". Named once so a fourth forward core
+ * cannot be added to one branch and missed in another.
  *
  * NOT "no maps buffer": the two ESCAPE kinds carry their formula chain on
- * the maps binding (fr-s04t, fr-vag4), so every maps-shaped branch names
- * them before it reaches this predicate — bulb is the one bindingless
+ * the maps binding, so every maps-shaped branch names them before it
+ * reaches this predicate — bulb is the one bindingless
  * kind. */
 export function isForwardTarget(
   target: SurfaceComputeTarget,
@@ -413,8 +416,8 @@ export function isFourDTarget(target: SurfaceComputeTarget): target is
 /** Everything one frame needs beyond the session-frozen DE: raster size,
  * camera, tier budgets, live lighting/color params. Assembled by scene.ts
  * (`surfaceComputeFrameSpec`) so the eps discipline stays in one place:
- * `acceptPixelEps` derives from the NATIVE buffer height (fr-7xgi — a
- * preview coarsens sampling, never acceptance), `tracePixelEps` from the
+ * `acceptPixelEps` derives from the NATIVE buffer height (a preview
+ * coarsens sampling, never acceptance), `tracePixelEps` from the
  * trace raster's own height (dither + normal probe scale). */
 export interface SurfaceComputeFrameSpec {
   width: number;
@@ -436,22 +439,22 @@ export interface SurfaceComputeFrameSpec {
   hitFloor: number;
   lightDir: Vec3;
   ambient: number;
-  /** Environment-light strength (fr-ehcj) — the ShadeParams tail (module
-   * doc in `fractal/surface-de-gpu.ts`): how far the shade kernel's
-   * AMBIENT term is tinted toward the backdrop sampled along the normal.
-   * Optional so callers predating this feature (gpu-bench's spec
-   * literals) keep compiling; absent/0 is the bit-exact pre-fr-ehcj
+  /** Environment-light strength — the ShadeParams tail (module doc in
+   * `fractal/surface-de-gpu.ts`): how far the shade kernel's AMBIENT term
+   * is tinted toward the backdrop sampled along the normal. Optional so
+   * callers predating this feature (gpu-bench's spec literals) keep
+   * compiling; absent/0 is the bit-exact untinted
    * identity, matching {@link packSurfaceGpuShade}'s own default. */
   envLight?: number;
-  /** The scene backdrop's two gradient stops (fr-5ps1) — the pair the GLSL
-   * tracers carry as uBgTop/uBgBottom, fed to the shade kernel's miss/fog
+  /** The scene backdrop's two gradient stops — the pair the GLSL tracers
+   * carry as uBgTop/uBgBottom, fed to the shade kernel's miss/fog
    * gradient AND the host prefill, re-read per spec assembly like the
    * lighting. */
   bgTop: Vec3;
   bgBottom: Vec3;
   /** The traced raster's pixel offset within, and pixel size of, the FULL
-   * image (fr-xn9s) — `fractal/background-shape.ts`'s coordinate
-   * contract, forwarded to the shade kernel's `bgOffset`/`bgExtent` and to
+   * image — `fractal/background-shape.ts`'s coordinate contract,
+   * forwarded to the shade kernel's `bgOffset`/`bgExtent` and to
    * {@link buildSurfaceComputeBackground}'s host prefill. OPTIONAL here,
    * unlike {@link packSurfaceGpuShade}'s own required fields: the
    * renderer knows the frame's own raster, so an absent pair defaults to
@@ -460,7 +463,7 @@ export interface SurfaceComputeFrameSpec {
    * compiling unchanged. A capture band passes both explicitly. */
   bgOffset?: [number, number];
   bgExtent?: [number, number];
-  /** The shared background shape (fr-h3mp) — `fractal/background-shape.ts`'s
+  /** The shared background shape — `fractal/background-shape.ts`'s
    * `BackgroundShapeSpec`, forwarded to the shade kernel's
    * `bgShape`/`bgCenter`/`bgScale` and to
    * {@link buildSurfaceComputeBackground}'s host prefill. OPTIONAL, same
@@ -480,15 +483,15 @@ export interface SurfaceComputeFrameSpec {
    * when the ramp actually changed. */
   lutVersion: number;
   dither: boolean;
-  /** The 4D session's LIVE view (fr-dlxh 4D cut): the same (rotor, w0,
-   * sliceHalfW) triple `setSurfaceView4` receives, re-read from scene
-   * state at every spec assembly — the spec is rebuilt per renderFrame,
-   * which is exactly what keeps the rotor/slice as live as the camera.
-   * REQUIRED for an `ifs4` target (runFrame throws without it — a 4D
-   * frame with no pose is a contract bug, not a default); ignored for
+  /** The 4D session's LIVE view: the same (rotor, w0, sliceHalfW) triple
+   * `setSurfaceView4` receives, re-read from scene state at every spec
+   * assembly — the spec is rebuilt per renderFrame, which is exactly what
+   * keeps the rotor/slice as live as the camera. REQUIRED for an `ifs4`
+   * target (runFrame throws without it — a 4D frame with no pose is a
+   * contract bug, not a default); ignored for
    * the 3D kinds. */
   view4?: SurfaceGpu4View;
-  /** The balloon session's LIVE inverted-union parameters (fr-5wlv.5):
+  /** The balloon session's LIVE inverted-union parameters:
    * `buildBalloon`'s convention — center + MARGINED rho (the bound's
    * divisor), R in world units — plus the march far cap
    * (`BALLOON_FAR_CAP_RHO · raw ball radius`). Re-read from scene state
@@ -498,43 +501,43 @@ export interface SurfaceComputeFrameSpec {
    * throws without it — the balloon kernel's params struct is 320 bytes
    * and has no meaningful default); ignored otherwise. */
   balloon?: { center: Vec3; rho: number; R: number; far: number };
-  /** Depth-fog density multiplier (fr-5h5d) — the WGSL params struct's
-   * former pad1 slot (module doc in `fractal/surface-de-gpu.ts`), re-read
-   * from scene state at every spec assembly like the rest of this
-   * interface. Defaults to 1 (the pre-fr-5h5d fixed fog) when omitted,
+  /** Depth-fog density multiplier — the WGSL params struct's former pad1
+   * slot (module doc in `fractal/surface-de-gpu.ts`), re-read from scene
+   * state at every spec assembly like the rest of this interface.
+   * Defaults to 1 (the fixed fog it replaced) when omitted,
    * matching {@link SurfaceGpuRunParams.fogDensity}'s own default. */
   fogDensity?: number;
-  /** Fog tint color (fr-5h5d) — the ShadeParams tail (module doc in
+  /** Fog tint color — the ShadeParams tail (module doc in
    * `fractal/surface-de-gpu.ts`): the shade kernel's fog blends toward
    * mix(bg, fogTint, fogTintStrength); re-read from scene state at every
    * spec assembly like fogDensity. Defaults to [1, 1, 1] when omitted,
    * matching {@link packSurfaceGpuShade}'s own default. */
   fogTint?: Vec3;
-  /** Fog tint strength (fr-5h5d), 0..1 — 0 (the default when omitted,
-   * matching {@link packSurfaceGpuShade}) is the identity: fog toward
-   * the pixel's own backdrop color alone; misses keep the pure untinted
+  /** Fog tint strength, 0..1 — 0 (the default when omitted, matching
+   * {@link packSurfaceGpuShade}) is the identity: fog toward the pixel's
+   * own backdrop color alone; misses keep the pure untinted
    * backdrop either way. */
   fogTintStrength?: number;
-  /** The balloon echo's tint color (fr-j85n) — the ShadeParams tail
-   * (module doc in `fractal/surface-de-gpu.ts`): a SHELL hit's base
-   * albedo mixes toward it before lighting, so the inverted copy reads
-   * as an echo rather than as more of the same object. Re-read from
-   * scene state at every spec assembly like fogTint. Defaults to
-   * [0, 0, 0] when omitted, matching {@link packSurfaceGpuShade}'s own
-   * default — the document's `DEFAULT_BALLOON_TINT`, black, which is
-   * what makes the strength slider alone a dimmer. Unread by a session
+  /** The balloon echo's tint color — the ShadeParams tail (module doc in
+   * `fractal/surface-de-gpu.ts`): a SHELL hit's base albedo mixes toward
+   * it before lighting, so the inverted copy reads as an echo rather than
+   * as more of the same object. Re-read from scene state at every spec
+   * assembly like fogTint. Defaults to [0, 0, 0] when omitted, matching
+   * {@link packSurfaceGpuShade}'s own default — the document's
+   * `DEFAULT_BALLOON_TINT`, black, which is what makes the strength
+   * slider alone a dimmer. Unread by a session
    * whose target was created without `balloon: true`. */
   balloonTint?: Vec3;
-  /** The balloon echo's tint strength (fr-j85n), 0..1 — 0 (the default
-   * when omitted, matching {@link packSurfaceGpuShade}) is the identity,
-   * `mix(x, y, 0)` = x, so an unset pair renders the pre-fr-j85n frame
-   * byte for byte. The kernel gates it per-ray on the union argmin, so a
+  /** The balloon echo's tint strength, 0..1 — 0 (the default when
+   * omitted, matching {@link packSurfaceGpuShade}) is the identity,
+   * `mix(x, y, 0)` = x, so an unset pair renders the pre-tint frame byte
+   * for byte. The kernel gates it per-ray on the union argmin, so a
    * FRACTAL-term hit is untouched at any strength. */
   balloonTintStrength?: number;
-  /** Ground plane block (fr-rhn5) — REQUIRED whenever the session's
-   * target carried `groundPlane: true` (the kernels' 336-byte params
-   * struct has no meaningful default; view4/balloon's required-throw
-   * discipline), ignored otherwise. Re-derived from scene state at every
+  /** Ground plane block — REQUIRED whenever the session's target carried
+   * `groundPlane: true` (the kernels' 336-byte params struct has no
+   * meaningful default; view4/balloon's required-throw discipline),
+   * ignored otherwise. Re-derived from scene state at every
    * spec assembly like the balloon block. */
   groundPlane?: SurfaceGpuGroundPlane;
 }
@@ -544,40 +547,40 @@ export interface SurfaceComputeFrameOptions {
    * out keep their background prefill and the frame reports `truncated`. */
   budgetMs?: number;
   /** This frame is an off-canvas CAPTURE (a Save-PNG tile), not the live
-   * pane (fr-biox): it neither seeds from the last live frame nor becomes
-   * the seed for the next one. Both directions would be wrong — an export
-   * traces a different raster (and, tiled, a BAND of a different image),
-   * and it needs no seed at all, having no wall budget to leave rays
+   * pane: it neither seeds from the last live frame nor becomes the seed
+   * for the next one. Both directions would be wrong — an export traces a
+   * different raster (and, tiled, a BAND of a different image), and it
+   * needs no seed at all, having no wall budget to leave rays
    * unresolved by. */
   capture?: boolean;
   /** Progressive present: called with a full-frame RGBA snapshot at most
    * every `progressIntervalMs` while rays are still marching. `done` /
-   * `total` are ray-work tallies from `surfaceComputeProgressDone`
-   * (fr-tdft): a ray's march half accrues CONTINUOUSLY with its consumed
-   * steps and lands in full on going terminal; the shade half lands once
-   * its pixel is shaded. The fr-tmgf disclosure hook: main.ts drives the
+   * `total` are ray-work tallies from `surfaceComputeProgressDone`: a
+   * ray's march half accrues CONTINUOUSLY with its consumed steps and
+   * lands in full on going terminal; the shade half lands once its pixel
+   * is shaded. The render-backend disclosure hook: main.ts drives the
    * surface progress row from them, so a compute settle reports honest
    * coverage the way the WebGL strip path's `surfaceRenderProgress()`
    * does. `done` may be fractional. */
   onProgress?: (pixels: Uint8Array, done: number, total: number) => void;
   progressIntervalMs?: number;
   /**
-   * Samples per pixel (fr-vpbq). `1` — the default and every preview's
-   * value — is the pre-supersampling path, call for call.
+   * Samples per pixel. `1` — the default and every preview's value — is
+   * the pre-supersampling path, call for call.
    *
-   * WHY IT IS N FRAMES AND NOT N RAYS. fr-vpbq measured the escape-time
-   * speckle as sub-pixel structure the marcher cannot reach: partial
-   * coverage at 16 spp is 8-13% of the object's pixels against a unit
-   * sphere's 1.31%, and its exponent against output resolution is
+   * WHY IT IS N FRAMES AND NOT N RAYS. Supersampling measured the
+   * escape-time speckle as sub-pixel structure the marcher cannot reach:
+   * partial coverage at 16 spp is 8-13% of the object's pixels against a
+   * unit sphere's 1.31%, and its exponent against output resolution is
    * -0.21..-0.36 where the sphere measures the perimeter law at -0.98, so
    * no viewport resolves it. The fix is samples, not pixels. Widening a
    * frame to N rays per pixel would multiply the five per-ray buffers and
-   * meet fr-biox's device ray ceiling N times sooner; tracing N FRAMES at
-   * N sub-pixel offsets and averaging costs the same GPU work, keeps
-   * every buffer and every watchdog bound exactly as measured, and makes
-   * the result PROGRESSIVE — sample 0 is the pre-fr-vpbq image, arriving
-   * when it always did, and each later one only improves it. A superseded
-   * job keeps the samples it finished.
+   * meet the device ray ceiling N times sooner; tracing N FRAMES at N
+   * sub-pixel offsets and averaging costs the same GPU work, keeps every
+   * buffer and every watchdog bound exactly as measured, and makes the
+   * result PROGRESSIVE — sample 0 is the pre-supersampling image,
+   * arriving when it always did, and each later one only improves it. A
+   * superseded job keeps the samples it finished.
    */
   samples?: number;
 }
@@ -592,8 +595,8 @@ export interface SurfaceComputeFrame {
   /** Measured compute-submission time (excludes readbacks) — the honest
    * cost sample for the preview governor. */
   gpuMs: number;
-  /** March / shade portions of {@link gpuMs} — the fr-p8bc verdict split:
-   * shading dominance is the measured lever the shade probe width
+  /** March / shade portions of {@link gpuMs} — the probe-width verdict
+   * split: shading dominance is the measured lever the shade probe width
    * targets, so the two costs stay separately visible. */
   marchMs: number;
   shadeMs: number;
@@ -602,10 +605,10 @@ export interface SurfaceComputeFrame {
   /** Final ray-status tallies — how the frame's rays ended (`active` is
    * nonzero only on truncated frames). Field-debuggability: an
    * exhausted-dominated frame means the march budget ran dry, a
-   * miss-dominated one that rays left the visible sphere; `plane`
-   * (fr-rhn5) counts misses the march classified onto the ground plane
-   * (always 0 without a plane target). Kept as rays LEAVE the active list
-   * since fr-si66 — `active` is the remainder — where it used to be a
+   * miss-dominated one that rays left the visible sphere; `plane` counts
+   * misses the march classified onto the ground plane (always 0 without a
+   * plane target). Kept as rays LEAVE the active list — `active` is the
+   * remainder — where it used to be a
    * final scan of a ray-state buffer the frame loop no longer reads. */
   counts: {
     hit: number;
@@ -653,9 +656,9 @@ export function buildSurfaceComputeBackground(
   };
   if (shape.kind === "linear") {
     // "linear" ignores u, so one shape evaluation covers the whole row —
-    // the pre-fr-xn9s loop's cost exactly. A shape that reads u (fr-h3mp's
-    // radial, eventually) cannot take this path and must fall to the
-    // per-pixel loop below.
+    // the original loop's cost exactly. A shape that reads u (the radial
+    // one) cannot take this path and must fall to the per-pixel loop
+    // below.
     for (let py = 0; py < height; py++) {
       const [, v] = backgroundImageUv(0, py, offset, extent);
       const [rf, gf, bf] = backgroundColorAt(0, v, stops, shape);
@@ -706,30 +709,31 @@ export function marchChunkFor(emaUsPerRayStep: number, steps: number): number {
 }
 
 /** HIT shade batch ceiling — plenty to swallow a cheap-probe frame's hits
- * in one bounded dispatch once the measured cost allows it. Hit-only since
- * fr-257o: the FREE queue has no cost model to cap (see the free-batch
- * comment in `runFrame`), and one constant standing for both queues is
+ * in one bounded dispatch once the measured cost allows it. Hit-only
+ * since the free/hit drain split: the FREE queue has no cost model to cap
+ * (see the free-batch comment in `runFrame`), and one constant standing
+ * for both queues is
  * what let a MEAN over them be read as a finding. */
 export const SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH = 4096;
 
-/** First hit-batch CAPACITY of a frame — deliberately minimal: even at the
- * worst per-hit cost measured on Iris (~250 ms full-width probes at a
- * near-surface silhouette), one workgroup's worth of hits stays well under
- * the ~7.5 s i915 watchdog while the frame's first measurements come in
- * (the wall doesn't scale with batch size inside a workgroup — see
- * {@link shadeHitBatchSize}). Floored at
- * {@link SURFACE_COMPUTE_WORKGROUP_SIZE} rather than lower (fr-d6g5):
- * starting below one workgroup couldn't reduce per-submission wall either,
- * and it only kept the first hit batches measuring in the degenerate
- * regime that fed the old floor's trapdoor.
+/** First hit-batch CAPACITY of a frame — deliberately minimal: even at
+ * the worst per-hit cost measured on Iris (~250 ms full-width probes at a
+ * near-surface silhouette), one workgroup's worth of hits stays well
+ * under the ~7.5 s i915 watchdog while the frame's first measurements
+ * come in (the wall doesn't scale with batch size inside a workgroup —
+ * see {@link shadeHitBatchSize}). Floored at
+ * {@link SURFACE_COMPUTE_WORKGROUP_SIZE} rather than lower: starting
+ * below one workgroup couldn't reduce per-submission wall either, and it
+ * only kept the first hit batches measuring in the degenerate regime that
+ * fed the old floor's trapdoor.
  *
- * THIS IS ALSO THE WHOLE COST PRIOR since fr-2ojg. A frame opens with an
- * EMPTY cost model ({@link ShadeHitCost} zeroed) rather than a pessimistic
- * per-hit guess, because a prior on top of this cap could only make the
- * first batches smaller than one workgroup — which the floor forbids
- * anyway — while costing the frame a long climb back out of it (the old
- * 20 ms/hit prior decayed at 0.4 per dispatch and held ~7 dispatches at
- * the floor before the measurements it was guarding against could speak).
+ * THIS IS ALSO THE WHOLE COST PRIOR. A frame opens with an EMPTY cost
+ * model ({@link ShadeHitCost} zeroed) rather than a pessimistic per-hit
+ * guess, because a prior on top of this cap could only make the first
+ * batches smaller than one workgroup — which the floor forbids anyway —
+ * while costing the frame a long climb back out of it (the old 20 ms/hit
+ * prior decayed at 0.4 per dispatch and held ~7 dispatches at the floor
+ * before the measurements it was guarding against could speak).
  * The cap ladder is the first-encounter bound; the model is the sizer. */
 export const SURFACE_COMPUTE_SHADE_HIT_CAP_START =
   SURFACE_COMPUTE_WORKGROUP_SIZE;
@@ -745,14 +749,14 @@ export const SURFACE_COMPUTE_SHADE_HIT_CAP_START =
  * total necessarily squeezes the allowance to nothing as the intercept
  * approaches it — the intercept is measured, not chosen, so the only
  * lever left is refusing to put hits in a dispatch that is going to cost
- * that much anyway, which is fr-d6g5's trapdoor rebuilt inside its own
- * replacement. That squeeze has to sit OUTSIDE the range real scenes
+ * that much anyway, which is the settle-park trapdoor rebuilt inside its
+ * own replacement. That squeeze has to sit OUTSIDE the range real scenes
  * measure in, and mandelboxKifs — the hardest scene this project has —
  * measures its intercept between 430 and 960 ms. At 1 s the squeeze bit
  * that scene directly (its allowance fell to 38 ms and the sizer floored
- * at one workgroup while a 500-hit batch would have cost 4% more); at
- * 2 s it does not bite until a dispatch's FIXED cost alone is a
- * watchdog conversation, where declining to add work is the right
+ * at one workgroup while a 500-hit batch would have cost 4% more); at 2 s
+ * it does not bite until a dispatch's FIXED cost alone is a watchdog
+ * conversation, where declining to add work is the right
  * answer rather than a trapdoor. */
 export const SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS = 2000;
 
@@ -768,20 +772,21 @@ export const SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS = 2000;
  * wherever its clamps do not bind — see the proof in that function's doc
  * — so in this branch `allowance / marginal` is `this constant × PIVOT`
  * and nothing about the scene survives into the answer. At 1, which is
- * what fr-2ojg shipped, that is 512 hits on every scene in the project;
- * at 7 it is 3584. Read as an UPPER BOUND: the marginal's decay floor
- * takes the ratio below the pivot whenever a dispatch measures under half
- * its prediction, which a queue-limited sliver reaches routinely, and the
- * width then lands under it — the shipped kaleido4 settle reports 3583 at
- * its widest and a 2464 mean. That is the same non-answer about the scene
- * from a different arbitrary number, and it errs narrow.
+ * what the two-term model shipped, that is 512 hits on every scene in the
+ * project; at 7 it is 3584. Read as an UPPER BOUND: the marginal's decay
+ * floor takes the ratio below the pivot whenever a dispatch measures
+ * under half its prediction, which a queue-limited sliver reaches
+ * routinely, and the width then lands under it — the shipped kaleido4
+ * settle reports 3583 at its widest and a 2464 mean. That is the same
+ * non-answer about the scene from a different arbitrary number, and it
+ * errs narrow.
  *
- * SEVEN, MEASURED (fr-fniy, real Iris Xe / Mesa 25.2.8, kaleido4 — two
- * maps at kaleidoscope order 6 — 1024x640, production build, identity
- * rotor, one fresh session per cell, hit batch FORCED via
- * `?surfaceshadehits=N` so the width is independent of the model under
- * test). One settle frame shades the same ~32.3k hits at every width, so
- * ms/frame is the comparison:
+ * SEVEN, MEASURED (real Iris Xe / Mesa 25.2.8, kaleido4 — two maps at
+ * kaleidoscope order 6 — 1024x640, production build, identity rotor, one
+ * fresh session per cell, hit batch FORCED via `?surfaceshadehits=N` so
+ * the width is independent of the model under test). One settle frame
+ * shades the same ~32.3k hits at every width, so ms/frame is the
+ * comparison:
  *
  *     width      64     256     512    1024    3690   10764
  *     ms/disp   287     313     321     336     395     947
@@ -832,24 +837,25 @@ export const SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST = 7;
  * does. `nextShadeHitCost` clamps the marginal at zero, and zero means
  * FREE: the sizer then asks for the whole capacity on the strength of one
  * cheap dispatch. That is reachable — a wide batch of ground-plane
- * terminals (fr-rhn5 queues them WITH the hits, and they shade
+ * terminals (the ground plane queues them WITH the hits, and they shade
  * analytically) landing on a model converged to expensive fold hits reads
- * as exactly that surprise — and it is fr-p8bc's "a cheap run inflates
- * the capacity a hit band then pays" re-opened one level up, in the cost
- * model rather than in the queue. Halving bounds the next batch at twice
- * the last, which is the rate the capacity ladder already enforces, and
- * it costs nothing measured: the marginal's per-dispatch moves during a
- * real convergence are a few percent (169.9 -> 159.9 µs over the whole
+ * as exactly that surprise — and it is the probe-width lesson's "a cheap
+ * run inflates the capacity a hit band then pays" re-opened one level up,
+ * in the cost model rather than in the queue. Halving bounds the next
+ * batch at twice the last, which is the rate the capacity ladder already
+ * enforces, and it costs nothing measured: the marginal's per-dispatch
+ * moves during a real convergence are a few percent (169.9 -> 159.9 µs
+ * over the whole
  * boxfold-pair climb). */
 export const SURFACE_COMPUTE_SHADE_MARGINAL_DECAY = 0.5;
 
 /** Batch width at which one hit-dispatch measurement is half about the
  * per-dispatch INTERCEPT and half about the per-hit MARGINAL cost — the
  * attribution pivot in {@link nextShadeHitCost}. 512 = eight workgroups,
- * which is where fr-2ojg measured the cost-vs-width curve still flat on
- * Iris Xe (87.2 -> 136.2 ms per dispatch while hits per dispatch rose
- * ~11x): below it a measurement is nearly all fixed cost, above it the
- * marginal term is what moved.
+ * which is where the two-term model measured the cost-vs-width curve
+ * still flat on Iris Xe (87.2 -> 136.2 ms per dispatch while hits per
+ * dispatch rose ~11x): below it a measurement is nearly all fixed cost,
+ * above it the marginal term is what moved.
  *
  * IT IS ALSO THE UNIT THE HIT BATCH WIDTH IS COUNTED IN, which is not
  * what the paragraph above would lead anyone to expect and is worth
@@ -866,21 +872,21 @@ export const SURFACE_COMPUTE_SHADE_MARGINAL_DECAY = 0.5;
 export const SURFACE_COMPUTE_SHADE_COST_PIVOT = 512;
 
 /**
- * The hit-shade cost model (fr-2ojg): `cost(n) = intercept + n·marginal`,
- * in µs, for a dispatch of `n` HIT rays.
+ * The hit-shade cost model: `cost(n) = intercept + n·marginal`, in µs,
+ * for a dispatch of `n` HIT rays.
  *
  * The two terms are physically different things and conflating them is
  * the defect this type exists to name. `interceptUs` is what a dispatch
  * costs before any width — the batch's DEEPEST ray, since lanes run in
  * parallel across EUs, so a 16-hit batch and a 512-hit batch of the same
  * scanline band cost about the same. `marginalUs` is what each extra hit
- * adds once past that. fr-2ojg measured the intercept at ~88 ms and the
- * marginal at ~0.15 ms/hit on the boxfold pair: dividing a whole
- * submission's time by its ray count called that 5.2 ms PER HIT at n=16,
- * the sizer divided the pass target by the inflated number, picked
- * another small batch, and re-measured the same inflation — fr-d6g5's
- * trapdoor at every width below the occupancy knee rather than only at
- * n=1.
+ * adds once past that. The model's own run measured the intercept at ~88
+ * ms and the marginal at ~0.15 ms/hit on the boxfold pair: dividing a
+ * whole submission's time by its ray count called that 5.2 ms PER HIT at
+ * n=16, the sizer divided the pass target by the inflated number, picked
+ * another small batch, and re-measured the same inflation — the
+ * settle-park trapdoor at every width below the occupancy knee rather
+ * than only at n=1.
  */
 export interface ShadeHitCost {
   /** Fixed per-dispatch cost (µs), independent of batch width. */
@@ -904,9 +910,9 @@ export function initialShadeHitCost(): ShadeHitCost {
  * `max(pass target − intercept, K · intercept)`, and never more than
  * {@link SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS} leaves. Below the
  * knee that is the room left inside the pass target (a ~25 ms intercept
- * leaves ~225 ms of hits to buy). Above it, it is the whole point of
- * fr-2ojg — spend on hits in proportion to the fixed cost already being
- * spent: a dispatch whose intercept alone is 400 ms cannot be made
+ * leaves ~225 ms of hits to buy). Above it, it is the whole point of the
+ * two-term model — spend on hits in proportion to the fixed cost already
+ * being spent: a dispatch whose intercept alone is 400 ms cannot be made
  * cheaper by shrinking it, so refusing to widen it past the pass target
  * buys no safety and costs an order of throughput (64 hits for 432 ms
  * against 800 hits for 800 ms — the same work ~12x faster).
@@ -914,9 +920,9 @@ export function initialShadeHitCost(): ShadeHitCost {
  * K IS {@link SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST} AND IT IS A
  * WIDTH, not a ratio the scene has any say in — see that constant for the
  * identity that makes it one, and for the measured table that picked 7.
- * fr-2ojg shipped 1, which held every scene in the project at 512 hits
- * per dispatch and, on the one measured here, made 90% of every hit
- * dispatch fixed cost.
+ * The model as first shipped used 1, which held every scene in the
+ * project at 512 hits per dispatch and, on the one measured here, made
+ * 90% of every hit dispatch fixed cost.
  *
  * THE CEILING TERM IS THE ONE PLACE THIS CAN STILL SHRINK, and where it
  * sits is the whole of its safety argument — see that constant. It now
@@ -952,8 +958,8 @@ export function shadeHitBudgetUs(interceptUs: number): number {
  * prediction: a width the model has never priced can only be reached by
  * doubling through widths it has, so the climb out of an EMPTY model
  * cannot jump straight to the ceiling. The floor is one workgroup, never
- * lower (fr-d6g5) — see {@link shadeHitBatchSize} for why a
- * sub-workgroup capacity buys no submission-wall safety.
+ * lower — see {@link shadeHitBatchSize} for why a sub-workgroup capacity
+ * buys no submission-wall safety.
  *
  * WHAT IT DOES NOT BOUND, said plainly because an earlier draft of this
  * comment claimed it did: once the model is calibrated it sizes at or
@@ -971,8 +977,9 @@ export function shadeHitBudgetUs(interceptUs: number): number {
  * judged, NOT the fixed pass target: the growth threshold has to be the
  * same number the sizer aimed at, or the ladder freezes exactly where the
  * sizer wants to go. (It was `PASS_TARGET / 2`, which pinned the capacity
- * at whatever width cost 125 ms — ~256 hits on the fr-2ojg scene, against
- * a measured optimum of ~1050.) Pure so the safety bias is unit-tested.
+ * at whatever width cost 125 ms — ~256 hits on the measured scene,
+ * against a measured optimum of ~1050.) Pure so the safety bias is
+ * unit-tested.
  */
 export function nextShadeBatchSize(
   current: number,
@@ -989,10 +996,10 @@ export function nextShadeBatchSize(
 }
 
 /**
- * Predictive hit-batch sizing (fr-p8bc, corrected by fr-2ojg): as many
- * hits as the measured MARGINAL cost says fit the dispatch budget once
- * the intercept is paid, clamped by the slow-trust capacity cap and
- * floored at one WORKGROUP rather than one hit (fr-d6g5).
+ * Predictive hit-batch sizing, corrected by the two-term cost model: as
+ * many hits as the measured MARGINAL cost says fit the dispatch budget
+ * once the intercept is paid, clamped by the slow-trust capacity cap and
+ * floored at one WORKGROUP rather than one hit.
  *
  * Sub-workgroup batches buy zero watchdog safety: GPU cost inside a
  * single workgroup ({@link SURFACE_COMPUTE_WORKGROUP_SIZE} threads) is
@@ -1000,7 +1007,7 @@ export function nextShadeBatchSize(
  * rays costs about as much wall time as a dispatch of 1, since lanes run
  * in parallel across EUs — so shrinking below one workgroup only
  * multiplies the number of worst-ray-cost submissions without shrinking
- * any single one of them. fr-2ojg's measurement is that the same
+ * any single one of them. The model's measurement is that the same
  * argument holds to at least EIGHT workgroups, which is why the divisor
  * here is the marginal cost and not a whole submission's time over its
  * ray count: the old form charged the intercept to every hit, so the
@@ -1015,7 +1022,7 @@ export function shadeHitBatchSize(cost: ShadeHitCost, cap: number): number {
 }
 
 /**
- * Fold one measured hit dispatch into the cost model (fr-2ojg).
+ * Fold one measured hit dispatch into the cost model.
  *
  * One observation, two unknowns — so the surprise (measured minus
  * predicted) is SPLIT by how much this width can speak about each term:
@@ -1029,7 +1036,7 @@ export function shadeHitBatchSize(cost: ShadeHitCost, cap: number): number {
  * property the old asymmetric EMA existed for: an expensive band lands as
  * a large positive surprise, most of it at a wide `n` (so most of it in
  * the marginal), and the next batch collapses to the floor in ONE step —
- * measured in the fr-2ojg simulation at a 19x marginal lift and a 16x
+ * measured in the cost-model simulation at a 19x marginal lift and a 16x
  * batch cut from a single 30x-cost dispatch. What does NOT survive is the
  * old slow decay, and deliberately: re-earning a cheap region took ~10
  * dispatches of a frame that only had ~17, so a settle spent most of its
@@ -1043,15 +1050,15 @@ export function shadeHitBatchSize(cost: ShadeHitCost, cap: number): number {
  * essentially unmoved. Pure so both the split and the clamps are
  * unit-tested.
  *
- * WHAT THE SPLIT CANNOT DO, and fr-fniy had to prove before it could
- * believe it: IT NEVER IDENTIFIES THE TWO TERMS. Unclamped, this function
- * preserves `interceptUs = PIVOT · marginalUs` IDENTICALLY. From a zeroed
- * model, one update at width n gives `I = (1−w)C` and `m = wC/n`, so
- * `I/m = n(1−w)/w = n·(P/(n+P))·((n+P)/n) = P`; and if `I = P·m` already,
- * then `I' / m' = (I + Ps/(n+P)) / (m + s/(n+P)) = P` for ANY surprise s
- * and any width n. Two parameters, one measurement, an exact fit — so the
- * RATIO is set by the attribution weight alone and the data only ever
- * moves the scale.
+ * WHAT THE SPLIT CANNOT DO, and the width fix had to prove before it
+ * could believe it: IT NEVER IDENTIFIES THE TWO TERMS. Unclamped, this
+ * function preserves `interceptUs = PIVOT · marginalUs` IDENTICALLY. From
+ * a zeroed model, one update at width n gives `I = (1−w)C` and `m =
+ * wC/n`, so `I/m = n(1−w)/w = n·(P/(n+P))·((n+P)/n) = P`; and if `I =
+ * P·m` already, then `I' / m' = (I + Ps/(n+P)) / (m + s/(n+P)) = P` for
+ * ANY surprise s and any width n. Two parameters, one measurement, an
+ * exact fit — so the RATIO is set by the attribution weight alone and the
+ * data only ever moves the scale.
  *
  * THE CLAMPS BREAK IT, AND ONE OF THEM IS REACHABLE IN ORDINARY
  * OPERATION — said here because a first draft of this comment claimed the
@@ -1069,10 +1076,10 @@ export function shadeHitBatchSize(cost: ShadeHitCost, cap: number): number {
  * large positive surprise on the INTERCEPT (small n, small w), and the
  * next full-width batch then measures a fraction of that inflated
  * prediction and trips the floor. MEASURED shape, replaying the shipped
- * sizer against fr-fniy's own kaleido4 curve with its own drain pattern:
- * the ratio leaves P after one such pair and settles around 250-310, and
- * the width the sizer asks for lands in 1764-3584 rather than pinned at
- * `K·P`.
+ * sizer against the width fix's own kaleido4 curve with its own drain
+ * pattern: the ratio leaves P after one such pair and settles around
+ * 250-310, and the width the sizer asks for lands in 1764-3584 rather
+ * than pinned at `K·P`.
  *
  * SO `K · PIVOT` IS AN UPPER BOUND ON THE WIDTH, NOT A CONSTANT, and the
  * direction of the error is conservative. None of it makes the width any
@@ -1086,13 +1093,13 @@ export function shadeHitBatchSize(cost: ShadeHitCost, cap: number): number {
  * two. It is a defect in any SIZING rule written in terms of `intercept`
  * alone: {@link shadeHitAllowanceUs}'s middle term divides an allowance
  * proportional to `I` by `m`, so it returns a constant number of hits and
- * the width it names is the CONSTANT's, not the scene's. fr-2ojg read
- * that branch as "spend as much again on hits as the fixed cost", which
- * is true of the model and says nothing about the machine; fr-fniy
- * measured the machine and found the resulting 512 hits leaving 90% of
- * every dispatch on fixed cost, four and a half times slower than the
- * same frame at 3690. So the constant is now chosen as a width and
- * measured as one.
+ * the width it names is the CONSTANT's, not the scene's. The two-term
+ * model read that branch as "spend as much again on hits as the fixed
+ * cost", which is true of the model and says nothing about the machine;
+ * the width fix measured the machine and found the resulting 512 hits
+ * leaving 90% of every dispatch on fixed cost, four and a half times
+ * slower than the same frame at 3690. So the constant is now chosen as a
+ * width and measured as one.
  *
  * THE REMEDY IS NOT MORE PARAMETERS. Identifying `I` and `m` separately
  * needs two measurements at widths far enough apart to be a lever —
@@ -1125,8 +1132,8 @@ export function nextShadeHitCost(
 }
 
 /** Everything the hit-shade sizer learns during a frame, in one mutable
- * carrier so a supersampling job can hand it to the next pass (fr-2ojg).
- * See the `sizer` declaration in `runFrame` for why that carry is sound
+ * carrier so a supersampling job can hand it to the next pass. See the
+ * `sizer` declaration in `runFrame` for why that carry is sound
  * for passes of one job and for nothing else. */
 interface ShadeSizerState {
   cost: ShadeHitCost;
@@ -1184,12 +1191,13 @@ export function resampleSurfacePixels(
 
 /** Bytes the WIDEST per-ray buffer costs (the `vec4f` ray state) — the one
  * a device's buffer/binding ceilings bite first. It has no staging twin
- * since fr-si66: nothing reads it back. */
+ * since the march status side-channel landed: nothing reads it back. */
 export const SURFACE_COMPUTE_RAY_STATE_BYTES = 16;
 
 /** Bytes of GPU buffer ONE ray costs a frame, across all six per-ray
  * buffers: states 16 + active 4 + color 4 + stagingColor 4 + status 4 +
- * stagingStatus 4. Was 44 before fr-si66 traded the 16 B/ray states
+ * stagingStatus 4. Was 44 before the status side-channel traded the 16
+ * B/ray states
  * staging twin for a 4 B/ray status side-channel and its own twin. */
 export const SURFACE_COMPUTE_RAY_BYTES = 36;
 
@@ -1199,9 +1207,9 @@ function mib(bytes: number): string {
 }
 
 /**
- * Rays ONE dispatch may cover on a device with these limits (fr-257o).
- * Every dispatch this module issues is one-dimensional —
- * `ceil(count / SURFACE_COMPUTE_WORKGROUP_SIZE)` workgroups along x — so
+ * Rays ONE dispatch may cover on a device with these limits. Every
+ * dispatch this module issues is one-dimensional — `ceil(count /
+ * SURFACE_COMPUTE_WORKGROUP_SIZE)` workgroups along x — so
  * `maxComputeWorkgroupsPerDimension` IS a ray count once multiplied
  * through, and the device is requested without raising that limit (only
  * the two storage ones), which pins it at WebGPU's spec minimum 65535 on
@@ -1233,21 +1241,20 @@ export function surfaceComputeMaxDispatchRays(limits: {
 
 /**
  * The largest raster ONE frame may allocate for on a device with these
- * limits, in rays (fr-biox). `states` is both the widest per-ray buffer
- * and a bound STORAGE buffer, so it meets whichever ceiling is lower —
- * and it is the binding ceiling that decides, which is why fr-si66's
+ * limits, in rays. `states` is both the widest per-ray buffer and a bound
+ * STORAGE buffer, so it meets whichever ceiling is lower — and it is the
+ * binding ceiling that decides, which is why the status side-channel's
  * cheaper readback (one 4 B/ray status buffer in place of the 16 B/ray
  * staging twin) cuts a frame's total commitment without moving this
  * bound. Pure so the arithmetic behind a refusal is unit-tested.
  *
- * DELIBERATELY NOT MET AGAINST {@link surfaceComputeMaxDispatchRays}
- * (fr-257o), even though that one is the lower of the two on a
- * spec-minimum device: a frame's rays are a MEMORY question and a
- * dispatch's are a SUBMISSION-SHAPE one, and folding the smaller in here
- * would make a 4K pane (8.3M rays, inside a spec-minimum 128 MiB binding)
- * fit one rung softer for a ceiling no single piece of work has to meet.
- * Every dispatch this loop issues is sized at its own site, and clamps
- * there.
+ * DELIBERATELY NOT MET AGAINST {@link surfaceComputeMaxDispatchRays},
+ * even though that one is the lower of the two on a spec-minimum device:
+ * a frame's rays are a MEMORY question and a dispatch's are a
+ * SUBMISSION-SHAPE one, and folding the smaller in here would make a 4K
+ * pane (8.3M rays, inside a spec-minimum 128 MiB binding) fit one rung
+ * softer for a ceiling no single piece of work has to meet. Every
+ * dispatch this loop issues is sized at its own site, and clamps there.
  */
 export function surfaceComputeMaxFrameRays(limits: {
   maxBufferSize: number;
@@ -1261,16 +1268,16 @@ export function surfaceComputeMaxFrameRays(limits: {
 }
 
 /**
- * Rays one CAPTURE tile may cost, however much the device would allow
- * (fr-biox). A frame's buffers are 36 B/ray and its host mirrors another
- * ~24 B/ray, so an untiled 4x export of a 1920x1057 pane (32.5M rays)
- * commits ~1.2 GB of GPU memory and reads back up to 130 MB of ray status
- * per march sweep (a flat 520 MB of ray STATE before fr-si66) — a device
+ * Rays one CAPTURE tile may cost, however much the device would allow. A
+ * frame's buffers are 36 B/ray and its host mirrors another ~24 B/ray, so
+ * an untiled 4x export of a 1920x1057 pane (32.5M rays) commits ~1.2 GB
+ * of GPU memory and reads back up to 130 MB of ray status per march sweep
+ * (a flat 520 MB of ray STATE before the status side-channel) — a device
  * that reports gigabytes of `maxBufferSize` will still refuse or thrash.
- * At this cap a tile is ~144 MB of buffers,
- * comfortably above the live rasters the same code paths run all session
- * (a 1920x1057 pane is 2.0M rays), so tiling costs an export nothing it
- * was not already paying per frame.
+ * At this cap a tile is ~144 MB of buffers, comfortably above the live
+ * rasters the same code paths run all session (a 1920x1057 pane is 2.0M
+ * rays), so tiling costs an export nothing it was not already paying per
+ * frame.
  */
 export const SURFACE_COMPUTE_MAX_TILE_RAYS = 4_000_000;
 
@@ -1301,11 +1308,11 @@ export function surfaceComputeTileRows(
 }
 
 /**
- * Shrink a raster to fit a device's own frame ceiling, keeping its aspect
- * (fr-biox). The live pane cannot tile the way a capture can — one frame
- * IS the image — so an enormous drawing buffer (a hidpi 5K desktop) that
- * would overrun {@link surfaceComputeMaxFrameRays} traces slightly soft
- * and blits up, the preview tier's own mechanism, instead of failing to
+ * Shrink a raster to fit a device's own frame ceiling, keeping its
+ * aspect. The live pane cannot tile the way a capture can — one frame IS the
+ * image — so an enormous drawing buffer (a hidpi 5K desktop) that would
+ * overrun {@link surfaceComputeMaxFrameRays} traces slightly soft and
+ * blits up, the preview tier's own mechanism, instead of failing to
  * allocate. Pure so the fit is unit-tested.
  */
 export function fitSurfaceComputeRaster(
@@ -1327,22 +1334,22 @@ export function fitSurfaceComputeRaster(
 }
 
 /**
- * Ray-work `done` tally for a settle's progress report (fr-tdft).
+ * Ray-work `done` tally for a settle's progress report.
  *
  * A ray's unit of progress splits half march, half shade: the march half
- * accrues CONTINUOUSLY as the ray consumes its step budget, lands in
- * full on going terminal, and the shade half lands when the pixel is
- * shaded. Counting only shaded rays displayed a heavy frame's whole
- * first march sweep as 0% for a minute of honest work, then read the
- * cheap miss-drain as a sprint; crediting only TERMINAL rays (the first
- * fr-tdft fix) still parked a fully in-sphere pose at a low pct through
- * its long first sweep — no ray terminates until deep into the step
- * budget, so the sweep's real work stayed invisible. Sub-ray credit is
- * exact host-side bookkeeping, no extra readback: the kernel's march
- * loop breaks only on terminal transitions, so a still-ACTIVE ray has
- * consumed exactly the steps the host issued to it (`sweepSteps`, plus
- * `stepsThisPass` for the `sliced` rays the current sweep has already
- * dispatched), never more than `marchSteps` by the exhaustion rule.
+ * accrues CONTINUOUSLY as the ray consumes its step budget, lands in full
+ * on going terminal, and the shade half lands when the pixel is shaded.
+ * Counting only shaded rays displayed a heavy frame's whole first march
+ * sweep as 0% for a minute of honest work, then read the cheap miss-drain
+ * as a sprint; crediting only TERMINAL rays (the first fix) still parked
+ * a fully in-sphere pose at a low pct through its long first sweep — no
+ * ray terminates until deep into the step budget, so the sweep's real
+ * work stayed invisible. Sub-ray credit is exact host-side bookkeeping,
+ * no extra readback: the kernel's march loop breaks only on terminal
+ * transitions, so a still-ACTIVE ray has consumed exactly the steps the
+ * host issued to it (`sweepSteps`, plus `stepsThisPass` for the `sliced`
+ * rays the current sweep has already dispatched), never more than
+ * `marchSteps` by the exhaustion rule.
  *
  * Monotone by construction: step fractions only grow (capped at 1, and
  * a marching ray's credit never exceeds the terminal half), `active`
@@ -1379,16 +1386,16 @@ export function surfaceComputeProgressDone(tally: {
 const WHITE_LUT = new Uint8Array(256 * 4).fill(255);
 
 /**
- * Everything {@link SurfaceComputeRenderer}'s constructor needs, built up by
- * the (long) {@link SurfaceComputeRenderer.buildOnDevice} driver. The same
- * shape `GpuFlameBackendInit` takes one module over, and for the same two
- * reasons: there are enough GPU resources here that positional arguments
- * would be unreadable, and a NAMED init object is an injection point —
- * `surface-compute.test.ts` drives this renderer's deferred-teardown state
- * machine (fr-uec4) over a fake device through it, which a private
- * constructor behind an adapter-acquiring `create()` offered no way to
- * reach. Production code still arrives through {@link
- * SurfaceComputeRenderer.create}, never by naming this type.
+ * Everything {@link SurfaceComputeRenderer}'s constructor needs, built up
+ * by the (long) {@link SurfaceComputeRenderer.buildOnDevice} driver. The
+ * same shape `GpuFlameBackendInit` takes one module over, and for the
+ * same two reasons: there are enough GPU resources here that positional
+ * arguments would be unreadable, and a NAMED init object is an injection
+ * point — `surface-compute.test.ts` drives this renderer's
+ * deferred-teardown state machine over a fake device through it, which a
+ * private constructor behind an adapter-acquiring `create()` offered no
+ * way to reach. Production code still arrives through
+ * {@link SurfaceComputeRenderer.create}, never by naming this type.
  */
 export interface SurfaceComputeRendererInit {
   device: GPUDevice;
@@ -1399,8 +1406,8 @@ export interface SurfaceComputeRendererInit {
   marchLayout: GPUBindGroupLayout;
   shadePipeline: GPUComputePipeline;
   shadeLayout: GPUBindGroupLayout;
-  /** ifs4 only (fr-d0nn): the slab-free kernel pair every sliceHalfW=0
-   * frame rides — null for every other target kind. */
+  /** ifs4 only: the slab-free kernel pair every sliceHalfW=0 frame rides
+   * — null for every other target kind. */
   marchPipelineNoSlab: GPUComputePipeline | null;
   shadePipelineNoSlab: GPUComputePipeline | null;
   paramsBuf: GPUBuffer;
@@ -1409,8 +1416,8 @@ export interface SurfaceComputeRendererInit {
   shadeMapsBuf: GPUBuffer;
   lutTex: GPUTexture;
   lutSamp: GPUSampler;
-  /** Adapter label from create()'s requestAdapter (fr-tmgf) — surfaced in
-   * the UI's backend disclosure; undefined when the adapter offered no
+  /** Adapter label from create()'s requestAdapter — surfaced in the UI's
+   * backend disclosure; undefined when the adapter offered no
    * vendor/architecture. */
   adapterLabel?: string;
   /** True when the adapter is a software rasterizer (fallback flag or a
@@ -1424,7 +1431,7 @@ interface FrameBuffers {
   states: GPUBuffer;
   active: GPUBuffer;
   color: GPUBuffer;
-  /** fr-si66's march status side-channel: one `u32` per ACTIVE-LIST SLOT,
+  /** The march status side-channel: one `u32` per ACTIVE-LIST SLOT,
    * written by every march dispatch and read back once per sweep. */
   status: GPUBuffer;
   stagingStatus: GPUBuffer;
@@ -1442,17 +1449,17 @@ export class SurfaceComputeRenderer {
 
   private static adapterProbe: Promise<boolean> | null = null;
 
-  /** Cached one-shot adapter probe (fr-khxy): whether `requestAdapter()`
-   * actually yields an adapter in this context. {@link supported} alone
-   * admits contexts that EXPOSE `navigator.gpu` with no working adapter
-   * behind it — modern Firefox ships the object ahead of per-platform
-   * support — and fold-4D routing has no fallback arm to absorb that
-   * late surprise: entry was admitted, create() failed, and the mode
-   * exited on a toast the user can miss ("no preview ever appears").
-   * Boot fires this probe and latches the same one-way routing block a
-   * failed create() would have set, so the eligibility gate refuses
-   * fold-4D up front with the honest note instead. The probed adapter
-   * is discarded — {@link create} requests its own; same
+  /** Cached one-shot adapter probe: whether `requestAdapter()` actually
+   * yields an adapter in this context. {@link supported} alone admits
+   * contexts that EXPOSE `navigator.gpu` with no working adapter behind
+   * it — modern Firefox ships the object ahead of per-platform support —
+   * and fold-4D routing has no fallback arm to absorb that late surprise:
+   * entry was admitted, create() failed, and the mode exited on a toast
+   * the user can miss ("no preview ever appears"). Boot fires this probe
+   * and latches the same one-way routing block a failed create() would
+   * have set, so the eligibility gate refuses fold-4D up front with the
+   * honest note instead. The probed adapter is discarded — {@link create}
+   * requests its own; same
    * powerPreference so the two answers cannot diverge. */
   static probeAdapter(): Promise<boolean> {
     if (!SurfaceComputeRenderer.supported()) return Promise.resolve(false);
@@ -1496,20 +1503,21 @@ export class SurfaceComputeRenderer {
       );
     }
     // Without requiredLimits the device silently defaults to WebGPU's
-    // conservative spec minimums — the flame backend's fr-53k lesson. A
-    // full-resolution settle's state buffer (16 bytes/ray) fits the 128MiB
-    // default comfortably, but pass the adapter's real ceiling anyway so a
-    // hi-res export never trips a limit the hardware doesn't have.
+    // conservative spec minimums — the flame accumulation spike's lesson.
+    // A full-resolution settle's state buffer (16 bytes/ray) fits the
+    // 128MiB default comfortably, but pass the adapter's real ceiling
+    // anyway so a hi-res export never trips a limit the hardware doesn't
+    // have.
     const device = await adapter.requestDevice({
       requiredLimits: {
         maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
         maxBufferSize: adapter.limits.maxBufferSize,
       },
     });
-    // fr-tmgf: capture the adapter's identity before the reference is
-    // dropped — the renderer discloses label + software verdict to the UI
-    // (the shared render-backend derivation, same as the flame worker's;
-    // the older spec kept `isFallbackAdapter` on the adapter itself).
+    // Capture the adapter's identity before the reference is dropped —
+    // the renderer discloses label + software verdict to the UI (the
+    // shared render-backend derivation, same as the flame worker's; the
+    // older spec kept `isFallbackAdapter` on the adapter itself).
     const adapterStatus = webgpuAdapterStatus(
       adapter.info,
       (adapter as { isFallbackAdapter?: boolean }).isFallbackAdapter,
@@ -1560,30 +1568,30 @@ export class SurfaceComputeRenderer {
         code: surfaceDeKernelWgsl({
           mode,
           rays: mode === "march" ? "unproject" : undefined,
-          // fr-si66: the march writes each dispatched ray's post-pass
-          // status to its own ACTIVE-LIST SLOT, which is the only field
-          // the sweep's rebuild reads — 4 B per active ray in place of
-          // the whole 16 B/ray states buffer.
+          // The march writes each dispatched ray's post-pass status to
+          // its own ACTIVE-LIST SLOT, which is the only field the sweep's
+          // rebuild reads — 4 B per active ray in place of the whole 16
+          // B/ray states buffer.
           statusOut: mode === "march",
-          // fr-55s1: the DE picks the descent core exactly as the CPU
-          // estimators route — fold base maps march the wide frontier,
-          // fold-free ones the width-4 refined ladder (width/shadeDeWidth
-          // are inert there) — and a fold FINAL lens wraps either core in
-          // descendLens's branch sweep. fr-dlxh: an escape target takes
-          // the forward-orbit core instead (no lens — the escape gate
-          // refuses final transforms). fr-rsp6: a 4D target routes the
-          // SAME way one dimension up — fold base maps the fold4
-          // frontier, fold-free ones the affine4 ladder, and a 4D fold
-          // FINAL wraps either in descendLens4's sweep.
+          // The DE picks the descent core exactly as the CPU estimators
+          // route — fold base maps march the wide frontier, fold-free
+          // ones the width-4 refined ladder (width/shadeDeWidth are inert
+          // there) — and a fold FINAL lens wraps either core in
+          // descendLens's branch sweep. An escape target takes the
+          // forward-orbit core instead (no lens — the escape gate refuses
+          // final transforms). A 4D target routes the SAME way one
+          // dimension up — fold base maps the fold4 frontier, fold-free
+          // ones the affine4 ladder, and a 4D fold FINAL wraps either in
+          // descendLens4's sweep.
           core:
             target.kind === "escape"
               ? "escape"
               : target.kind === "escape4"
-                ? // fr-vag4: the escape orbit one dimension up — 4D tail
+                ? // The escape orbit one dimension up — 4D tail
                   // and GpuMap4 maps, forward orbit and no frontier.
                   "escape4"
                 : target.kind === "bulb"
-                  ? // fr-tdin: the Mandelbulb's forward triplex-power orbit
+                  ? // The Mandelbulb's forward triplex-power orbit
                     // — the escape core's sibling, and a CORE of its own
                     // rather than a fourth foldKind (surface-de-gpu.ts's
                     // own reasoning: the escape bodies dispatch on
@@ -1598,29 +1606,27 @@ export class SurfaceComputeRenderer {
                       ? "fold"
                       : "affine",
           lens: !isForwardTarget(target) && target.de.foldFinal !== null,
-          // fr-5wlv.5, lifted by fr-qxxw: a balloon ifs/ifs4 target
-          // compiles the inverted-union wrapper over whichever core+lens
-          // the DE picked; the FORWARD kinds never set the flag (their
-          // codegen throws are the backstop).
+          // A balloon ifs/ifs4 target compiles the inverted-union wrapper
+          // over whichever core+lens the DE picked; the FORWARD kinds
+          // never set the flag (their codegen throws are the backstop).
           balloon:
             (target.kind === "ifs" || target.kind === "ifs4") &&
             target.balloon === true,
-          // fr-rhn5, lifted by fr-h0c3: the ground plane compiles into
-          // every kind — the classic Mandelbox/Mandelbulb floor, and the
-          // floor under a w-slice — and a balloon+plane target is a
-          // caller bug the codegen rejects loudly.
+          // The ground plane compiles into every kind — the classic
+          // Mandelbox/Mandelbulb floor, and the floor under a w-slice —
+          // and a balloon+plane target is a caller bug the codegen
+          // rejects loudly.
           groundPlane: target.groundPlane === true,
           width: SURFACE_FOLD_BEAM_WIDTH,
           shadeDeWidth: mode === "shade" ? shadeDeWidth : undefined,
           workgroupSize: SURFACE_COMPUTE_WORKGROUP_SIZE,
           sharedFrontier: false,
           bnbStage2: false,
-          // fr-d0nn: the fr-wa6o slab half-extent registers cost the
-          // affine4 kernel a measured 2.2-2.4x at EVERY kaleidoscope
-          // order on Iris (occupancy — they are live whether or not the
-          // slab is on), so an ifs4 session compiles BOTH variants and
-          // runFrame picks per frame by the live sliceHalfW. Inert for
-          // every other core.
+          // The slab half-extent registers cost the affine4 kernel a
+          // measured 2.2-2.4x at EVERY kaleidoscope order on Iris
+          // (occupancy — they are live whether or not the slab is on), so
+          // an ifs4 session compiles BOTH variants and runFrame picks per
+          // frame by the live sliceHalfW. Inert for every other core.
           slabExt,
         }),
       });
@@ -1647,7 +1653,7 @@ export class SurfaceComputeRenderer {
       buffer: { type },
     });
     // March (rays:"unproject") binds params/maps/active/states + the
-    // shade uniform (invProjView + dither knobs only) + fr-si66's status
+    // shade uniform (invProjView + dither knobs only) + the status
     // side-channel at 5.
     const marchLayout = device.createBindGroupLayout({
       entries: [
@@ -1681,14 +1687,14 @@ export class SurfaceComputeRenderer {
       ],
     });
     // An ifs4 target compiles a SECOND, slab-free kernel pair beside the
-    // full one (fr-d0nn): the shipped slider position is sliceHalfW 0,
-    // where the slab pair's ext registers are pure occupancy tax. Both
-    // pairs share the explicit bind group layouts below, so bind groups
-    // stay variant-agnostic and runFrame's pick is a pipeline handle.
-    // fr-rsp6: a !slabExact4 system (spherefold/mandelbox folds) can
-    // NEVER take a slab query — the packer throws on sliceHalfW > 0 and
-    // the app clamps the thickness slider — so its ONE pair compiles
-    // slab-free outright and the A/B pair is skipped.
+    // full one: the shipped slider position is sliceHalfW 0, where the
+    // slab pair's ext registers are pure occupancy tax. Both pairs share
+    // the explicit bind group layouts below, so bind groups stay
+    // variant-agnostic and runFrame's pick is a pipeline handle. A
+    // !slabExact4 system (spherefold/mandelbox folds) can NEVER take a
+    // slab query — the packer throws on sliceHalfW > 0 and the app clamps
+    // the thickness slider — so its ONE pair compiles slab-free outright
+    // and the A/B pair is skipped.
     const canSlab = target.kind !== "ifs4" || slabExact4(target.de);
     const wantNoSlab = target.kind === "ifs4" && canSlab;
     const [marchModule, shadeModule, marchModuleNoSlab, shadeModuleNoSlab] =
@@ -1744,21 +1750,21 @@ export class SurfaceComputeRenderer {
           : target.groundPlane === true
             ? SURFACE_GPU_PARAMS4_PLANE_BYTES
             : target.kind === "escape4"
-              ? // fr-vag4: the escape4 variant block is the lens4
+              ? // The escape4 variant block is the lens4
                 // block's own region, so its size is the lens size.
                 SURFACE_GPU_PARAMS4_ESCAPE_BYTES
               : target.de.foldFinal !== null
-                ? // fr-rsp6 phase 2B: a fold FINAL grows the params with
+                ? // A fold FINAL grows the params with
                   // the lens block past the 4D tail.
                   SURFACE_GPU_PARAMS4_LENS_BYTES
                 : SURFACE_GPU_PARAMS4_BYTES
         : target.kind === "ifs" && target.balloon === true
-          ? // fr-5wlv.5: the balloon kernel's params struct appends the
-            // balloon block at the frozen offset 288 (272 before
-            // fr-s9ll's lens-fold quartet took that slot).
+          ? // The balloon kernel's params struct appends the balloon
+            // block at the frozen offset 288 (272 before the lens-fold
+            // quartet took that slot).
             SURFACE_GPU_PARAMS_BALLOON_BYTES
           : target.groundPlane === true
-            ? // fr-rhn5: the plane kernel's params struct appends the
+            ? // The plane kernel's params struct appends the
               // plane block at the same frozen offset (the two are
               // mutually exclusive by the codegen throw).
               SURFACE_GPU_PARAMS_PLANE_BYTES
@@ -1774,18 +1780,17 @@ export class SurfaceComputeRenderer {
     // buffer requirement — the bench's own idiom. The BULB kernel never
     // DECLARES the maps binding, but the explicit bind group layouts
     // below keep entry 1 (a layout may carry entries a shader ignores),
-    // so that target binds one zero stride there rather than
-    // forking every layout/bind-group path. The ESCAPE kernel DOES read
-    // it (fr-s04t: one GpuMap per chain link, the document's transform
-    // list being the formula sequence). A 4D target packs the
-    // GpuMap4 layout (144-byte stride: eight vec4s since fr-rsp6's fold
-    // lanes, nine since fr-s9ll's authored fold radii; its own field
-    // contract).
+    // so that target binds one zero stride there rather than forking
+    // every layout/bind-group path. The ESCAPE kernel DOES read it (one
+    // GpuMap per chain link, the document's transform list being the
+    // formula sequence). A 4D target packs the GpuMap4 layout (144-byte
+    // stride: eight vec4s for the fold lanes, nine with the authored fold
+    // radii; its own field contract).
     const mapsData =
       target.kind === "escape"
         ? new Float32Array(packEscapeGpuMaps(target.de))
         : target.kind === "escape4"
-          ? // fr-vag4: the same chain one dimension up, in the GpuMap4
+          ? // The same chain one dimension up, in the GpuMap4
             // layout — named BEFORE isForwardTarget, which no longer
             // implies "bindingless".
             new Float32Array(packEscape4GpuMaps(target.de))
@@ -1861,9 +1866,9 @@ export class SurfaceComputeRenderer {
   }
 
   /**
-   * The largest raster this device can trace as ONE frame, in rays
-   * (fr-biox) — {@link surfaceComputeMaxFrameRays} of its real limits.
-   * Callers that own the raster read it: captures TILE against it
+   * The largest raster this device can trace as ONE frame, in rays —
+   * {@link surfaceComputeMaxFrameRays} of its real limits. Callers that
+   * own the raster read it: captures TILE against it
    * ({@link surfaceComputeTileRows}), the live pane FITS to it
    * ({@link fitSurfaceComputeRaster}). A frame past it throws
    * {@link SurfaceComputeFrameSizeError} rather than reaching the
@@ -1919,24 +1924,26 @@ export class SurfaceComputeRenderer {
   private isLost = false;
   /** True once {@link destroy} has been called. This is the cancellation
    * signal every in-flight await checks — it means "teardown requested",
-   * NOT "device gone" (fr-uec4): with a frame still parked on live
-   * submitted GPU work, the real `device.destroy()` is deferred until
-   * {@link framesInFlight} drains to zero. See {@link deviceDestroyed} for
+   * NOT "device gone": with a frame still parked on live submitted GPU
+   * work, the real `device.destroy()` is deferred until
+   * {@link framesInFlight} drains to zero. See {@link deviceDestroyed}
+   * for
    * the device's actual state. */
   private destroyed = false;
   /** True once `device.destroy()` has actually run. Both {@link destroy}
    * (nothing was in flight) and {@link releaseFrame} (the last in-flight
    * frame just unwound) can reach the real teardown, and since `destroyed`
    * alone no longer tells the two apart, this is the guard that keeps
-   * either path from calling `device.destroy()` a second time (fr-uec4). */
+   * either path from calling `device.destroy()` a second time. */
   private deviceDestroyed = false;
   private frameToken = 0;
-  /** Frames between their {@link renderFrame} call and their final unwind.
-   * A frame parks on LIVE submitted GPU work (`mapAsync` over a submitted
-   * `copyBufferToBuffer`, `onSubmittedWorkDone` over a submitted dispatch),
-   * and destroying the device out from under one of those takes the whole
-   * browser process down on Firefox (fr-uec4) — so {@link destroy} hands
-   * the real teardown to whichever frame unwinds last instead of running
+  /** Frames between their {@link renderFrame} call and their final
+   * unwind. A frame parks on LIVE submitted GPU work (`mapAsync` over a
+   * submitted `copyBufferToBuffer`, `onSubmittedWorkDone` over a
+   * submitted dispatch), and destroying the device out from under one of
+   * those takes the whole browser process down on Firefox — so
+   * {@link destroy} hands the real teardown to whichever frame unwinds
+   * last instead of running
    * it out from under a live await. */
   private framesInFlight = 0;
   /** Serializes frames: they share buffers and staging maps, so two pass
@@ -1954,18 +1961,18 @@ export class SurfaceComputeRenderer {
   private background: {
     width: number;
     height: number;
-    /** The stops the rows were built from (fr-5ps1) — a live background
+    /** The stops the rows were built from — a live background
      * change/crossfade must invalidate the cache, not just a resize. */
     bgTop: Vec3;
     bgBottom: Vec3;
-    /** The band's own place in the full image (fr-xn9s) — a capture that
-     * tiles reuses this renderer across bands, so the key must catch a
+    /** The band's own place in the full image — a capture that tiles
+     * reuses this renderer across bands, so the key must catch a
      * band boundary moving even when width/height/stops do not. */
     bgOffset: [number, number];
     bgExtent: [number, number];
     shapeKind: BackgroundShapeSpec["kind"];
-    /** The radial shape's own geometry (fr-h3mp) — a centre/scale change
-     * (a viewport resize under the SAME shapeKind) must invalidate the
+    /** The radial shape's own geometry — a centre/scale change (a
+     * viewport resize under the SAME shapeKind) must invalidate the
      * cache too, not just a shapeKind flip. Unread while shapeKind is
      * "linear", but still compared so a stale radial reading can never
      * survive a later switch back to "linear" and then to "radial" again
@@ -1981,8 +1988,8 @@ export class SurfaceComputeRenderer {
   private readonly marchLayout: GPUBindGroupLayout;
   private readonly shadePipeline: GPUComputePipeline;
   private readonly shadeLayout: GPUBindGroupLayout;
-  /** ifs4 only (fr-d0nn): the slab-free kernel pair every sliceHalfW=0
-   * frame rides — null for every other target kind. */
+  /** ifs4 only: the slab-free kernel pair every sliceHalfW=0 frame rides
+   * — null for every other target kind. */
   private readonly marchPipelineNoSlab: GPUComputePipeline | null;
   private readonly shadePipelineNoSlab: GPUComputePipeline | null;
   private readonly paramsBuf: GPUBuffer;
@@ -2040,9 +2047,9 @@ export class SurfaceComputeRenderer {
     opts: SurfaceComputeFrameOptions = {},
   ): Promise<SurfaceComputeFrame | null> {
     const token = ++this.frameToken;
-    // Counted from here to the .finally below, whatever the outcome — this
-    // is the span destroy() waits out before it is safe to actually tear
-    // the device down (fr-uec4).
+    // Counted from here to the .finally below, whatever the outcome —
+    // this is the span destroy() waits out before it is safe to actually
+    // tear the device down.
     this.framesInFlight++;
     const run = this.chain
       .then(() =>
@@ -2065,9 +2072,9 @@ export class SurfaceComputeRenderer {
   }
 
   /**
-   * The supersampling wrapper (fr-vpbq): `opts.samples` passes of
-   * {@link runFrame} at {@link subPixelSample} offsets, averaged in LINEAR
-   * light. At `samples <= 1` it is {@link runFrame} itself, call for call.
+   * The supersampling wrapper: `opts.samples` passes of {@link runFrame}
+   * at {@link subPixelSample} offsets, averaged in LINEAR light. At
+   * `samples <= 1` it is {@link runFrame} itself, call for call.
    *
    * AVERAGING IS LINEAR, NOT sRGB. Both tracers finish with the
    * `pow(lit, 1/2.2)` encode (surface-material.ts's shade path, mirrored
@@ -2080,10 +2087,11 @@ export class SurfaceComputeRenderer {
    * moment the token moves, so a camera nudge mid-refinement returns the
    * mean of the samples already taken rather than throwing them away —
    * and sample 0 alone is exactly the frame this renderer produced before
-   * fr-vpbq, so the caller can never end up with less than it used to get.
-   * A TRUNCATED sample (a wall budget cut mid-pass) ends the refinement
-   * for the same reason: its unresolved pixels still carry the previous
-   * mean's prefill, so folding it in would double-count that mean.
+   * supersampling, so the caller can never end up with less than it used
+   * to get. A TRUNCATED sample (a wall budget cut mid-pass) ends the
+   * refinement for the same reason: its unresolved pixels still carry the
+   * previous mean's prefill, so folding it in would double-count that
+   * mean.
    */
   private async runSamples(
     token: number,
@@ -2098,11 +2106,11 @@ export class SurfaceComputeRenderer {
     let out: SurfaceComputeFrame | null = null;
     let wallMs = 0;
     let gpuMs = 0;
-    // ONE hit-shade sizer for the whole job (fr-2ojg). Every pass here
-    // traces the SAME pose at the SAME raster with the SAME DE — only the
-    // sub-pixel offset moves — so the cost model pass 0 measured is
-    // exactly the model passes 1..N-1 need, and re-deriving it from one
-    // workgroup each time costs the job N climbs for one frame's worth of
+    // ONE hit-shade sizer for the whole job. Every pass here traces the
+    // SAME pose at the SAME raster with the SAME DE — only the sub-pixel
+    // offset moves — so the cost model pass 0 measured is exactly the
+    // model passes 1..N-1 need, and re-deriving it from one workgroup
+    // each time costs the job N climbs for one frame's worth of
     // information. This is the only carry that is sound: across frames
     // the pose can jump, and the capacity ladder's first-encounter bound
     // is precisely what a jumped pose needs.
@@ -2145,8 +2153,8 @@ export class SurfaceComputeRenderer {
       }
       taken++;
       if (s === 0) {
-        // Pass 0 IS the pre-fr-vpbq frame — hand it back untouched (its
-        // own runFrame already seeded lastFrame and presented its
+        // Pass 0 IS the pre-supersampling frame — hand it back untouched
+        // (its own runFrame already seeded lastFrame and presented its
         // partials), so a job superseded here delivers exactly what this
         // renderer delivered before supersampling existed.
         out = { ...frame, wallMs, gpuMs };
@@ -2178,18 +2186,18 @@ export class SurfaceComputeRenderer {
   }
 
   /** Cancel, then tear the device down — immediately if nothing is in
-   * flight, or deferred to {@link releaseFrame} if a frame is still parked
-   * on live submitted GPU work. Destroying the device under a pending
-   * `mapAsync`/`onSubmittedWorkDone` takes the whole browser process down
-   * on Firefox (fr-uec4), so this hands the real `device.destroy()` call
-   * to whichever frame unwinds last rather than running it out from under
-   * one; the token bump below already guarantees no NEW work gets
+   * flight, or deferred to {@link releaseFrame} if a frame is still
+   * parked on live submitted GPU work. Destroying the device under a
+   * pending `mapAsync`/`onSubmittedWorkDone` takes the whole browser
+   * process down on Firefox, so this hands the real `device.destroy()`
+   * call to whichever frame unwinds last rather than running it out from
+   * under one; the token bump below already guarantees no NEW work gets
    * submitted meanwhile, so the only cost of waiting is one device
-   * outliving its session by the length of one in-flight frame.
-   * Safe to call twice — the early return below means a second call
-   * during that deferred window is a no-op and will NOT retry the
-   * teardown, which is fine only because the FIRST call already committed
-   * it to {@link releaseFrame}. `onLost` does not fire for a deliberate
+   * outliving its session by the length of one in-flight frame. Safe to
+   * call twice — the early return below means a second call during that
+   * deferred window is a no-op and will NOT retry the teardown, which is
+   * fine only because the FIRST call already committed it to
+   * {@link releaseFrame}. `onLost` does not fire for a deliberate
    * destroy. */
   destroy(): void {
     if (this.destroyed) return;
@@ -2202,18 +2210,18 @@ export class SurfaceComputeRenderer {
   /** One frame's counted span ({@link renderFrame}) has fully unwound.
    * Releases its claim on the device and, if {@link destroy} came in while
    * it — or a sibling queued behind it on {@link chain} — was still live,
-   * this is the last one out and owes the deferred teardown (fr-uec4). */
+   * this is the last one out and owes the deferred teardown. */
   private releaseFrame(): void {
     this.framesInFlight--;
     if (this.framesInFlight === 0 && this.destroyed) this.destroyDevice();
   }
 
   /** The actual `GPUDevice.destroy()` call, behind the one-shot
-   * {@link deviceDestroyed} guard (fr-uec4): reachable from both
-   * {@link destroy} (idle — nothing was in flight) and
-   * {@link releaseFrame} (busy — something was, and just finished), and
-   * since `destroyed` alone no longer distinguishes those two calls from
-   * the outside, the guard is what keeps them from ever destroying the
+   * {@link deviceDestroyed} guard: reachable from both {@link destroy}
+   * (idle — nothing was in flight) and {@link releaseFrame} (busy —
+   * something was, and just finished), and since `destroyed` alone no
+   * longer distinguishes those two calls from the outside, the guard is
+   * what keeps them from ever destroying the
    * device twice. */
   private destroyDevice(): void {
     if (this.deviceDestroyed) return;
@@ -2222,15 +2230,15 @@ export class SurfaceComputeRenderer {
   }
 
   /**
-   * {@link ensureFrameBuffers} with the device's own verdict attached
-   * (fr-biox). A frame's five per-ray buffers are the only allocation
-   * that scales with the caller's raster, and WebGPU reports both ways it
-   * can fail WITHOUT throwing: an over-limit size is a validation error
-   * returning an invalid buffer, an exhausted allocator an out-of-memory
-   * one. Either way the first REJECTION comes from a staging `mapAsync`
-   * several awaits later ("Invalid buffer" — the fr-biox report), so the
-   * size that caused it is checked up front and the scopes convert what
-   * is left into an error that names it.
+   * {@link ensureFrameBuffers} with the device's own verdict attached. A
+   * frame's five per-ray buffers are the only allocation that scales with
+   * the caller's raster, and WebGPU reports both ways it can fail WITHOUT
+   * throwing: an over-limit size is a validation error returning an
+   * invalid buffer, an exhausted allocator an out-of-memory one. Either
+   * way the first REJECTION comes from a staging `mapAsync` several
+   * awaits later ("Invalid buffer" — the field report), so the size that
+   * caused it is checked up front and the scopes convert what is left
+   * into an error that names it.
    *
    * Only the allocating call pays for this: a reused frame (every frame
    * at a steady raster) returns before the scopes are pushed, so the
@@ -2288,9 +2296,9 @@ export class SurfaceComputeRenderer {
     if (this.frame && this.frame.rays >= rays) return this.frame;
     this.releaseFrameBuffers();
     const device = this.device;
-    // fr-si66: the states buffer is no longer a COPY_SRC — nothing reads
-    // it back. The host's per-sweep question is one field of it, and the
-    // march answers that directly through `status`.
+    // The states buffer is no longer a COPY_SRC — nothing reads it back.
+    // The host's per-sweep question is one field of it, and the march
+    // answers that directly through `status`.
     const states = device.createBuffer({
       size: rays * SURFACE_COMPUTE_RAY_STATE_BYTES,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
@@ -2420,10 +2428,10 @@ export class SurfaceComputeRenderer {
   }
 
   /** Map, copy out and unmap a staging buffer whose bytes are ALREADY on
-   * the queue — fr-si66's march statuses arrive that way, one copy per
-   * slice riding the slice's own submission, so the sweep pays one
-   * `mapAsync` round trip rather than one per slice. `mapAsync` queues
-   * behind everything already submitted, which is the same ordering
+   * the queue — the march statuses arrive that way, one copy per slice
+   * riding the slice's own submission, so the sweep pays one `mapAsync`
+   * round trip rather than one per slice. `mapAsync` queues behind
+   * everything already submitted, which is the same ordering
    * guarantee {@link readback} leans on. */
   private async drainStaging(
     staging: GPUBuffer,
@@ -2439,12 +2447,12 @@ export class SurfaceComputeRenderer {
     token: number,
     spec: SurfaceComputeFrameSpec,
     opts: SurfaceComputeFrameOptions,
-    /** This pass's sub-pixel sample position (fr-vpbq). The default is the
-     * pixel centre — the value every ray derivation used to hardcode — so
+    /** This pass's sub-pixel sample position. The default is the pixel
+     * centre — the value every ray derivation used to hardcode — so
      * a single-sample frame is the pre-supersampling one. */
     pixelJitter: [number, number] = [0.5, 0.5],
-    /** The supersampling job's shared hit-shade sizer state (fr-2ojg),
-     * mutated in place so each pass starts where the last one converged.
+    /** The supersampling job's shared hit-shade sizer state, mutated in
+     * place so each pass starts where the last one converged.
      * Absent = a fresh model and a one-workgroup capacity. */
     jobSizer?: ShadeSizerState,
   ): Promise<SurfaceComputeFrame | null> {
@@ -2469,11 +2477,11 @@ export class SurfaceComputeRenderer {
     const buffers = await this.allocateFrameBuffers(rays);
     if (token !== this.frameToken || this.isLost || this.destroyed) return null;
 
-    // fr-xn9s: an absent bgOffset/bgExtent means an ordinary frame — this
-    // raster IS the full image (module doc on SurfaceComputeFrameSpec).
+    // An absent bgOffset/bgExtent means an ordinary frame — this raster
+    // IS the full image (module doc on SurfaceComputeFrameSpec).
     const bgOffset: [number, number] = spec.bgOffset ?? [0, 0];
     const bgExtent: [number, number] = spec.bgExtent ?? [width, height];
-    // fr-h3mp: an absent bgShape means linear, the pre-fr-h3mp shape.
+    // An absent bgShape means linear, the shape that shipped first.
     const bgShape: BackgroundShapeSpec = spec.bgShape ?? {
       kind: DEFAULT_BACKGROUND_SHAPE,
     };
@@ -2526,8 +2534,8 @@ export class SurfaceComputeRenderer {
     // the LAST frame — resampled across raster changes — is the strip
     // settle's preview-seeded-target discipline: a frame's presents never
     // look worse than the image they follow. First frame of a session
-    // seeds the backdrop gradient, and so does every capture frame
-    // (fr-biox: an export tile has no live image to carry).
+    // seeds the backdrop gradient, and so does every capture frame (an
+    // export tile has no live image to carry).
     const last = opts.capture === true ? null : this.lastFrame;
     device.queue.writeBuffer(
       buffers.color,
@@ -2560,65 +2568,64 @@ export class SurfaceComputeRenderer {
     for (let i = 0; i < rays; i++) active[i] = i;
     // Rays that turned terminal in a march pass, awaiting a shade batch.
     // The QUEUES are the v2 architecture's point: shading a freshly-HIT
-    // ray costs ~40 zero-cutoff on-surface DE evals — orders of magnitude
-    // more than a march step — and letting it ride the march pass that
-    // terminated it measured 1.1-5.3s submissions and a real device loss
-    // on Iris (fr-096u's watchdog through the shading door). Hits and
-    // misses queue SEPARATELY because their costs differ by those same
-    // orders of magnitude and the arrival order is scanline-coherent: a
-    // shared ray-unit queue let miss runs inflate the batch size that a
-    // following hit band then paid — the module doc's five kernel-
-    // confirmed GPU hangs. Host-sized pure batches keep every shading
-    // submission bounded in the unit that actually costs.
+    // ray costs ~40 zero-cutoff on-surface DE evals — orders of
+    // magnitude more than a march step — and letting it ride the march
+    // pass that terminated it measured 1.1-5.3s submissions and a real
+    // device loss on Iris (the i915 watchdog through the shading door).
+    // Hits and misses queue SEPARATELY because their costs differ by
+    // those same orders of magnitude and the arrival order is
+    // scanline-coherent: a shared ray-unit queue let miss runs inflate
+    // the batch size that a following hit band then paid — the module
+    // doc's five kernel- confirmed GPU hangs. Host-sized pure batches
+    // keep every shading submission bounded in the unit that actually
+    // costs.
     let shadeHitQueue: number[] = [];
     let shadeFreeQueue: number[] = [];
-    // fr-vja8.30: the one pin with no downstream Math.min (see the chunk
-    // and hit pins' own consumption sites below), so it is clamped here —
-    // the one place a pin value becomes stepsThisPass — rather than left
-    // to grow into a per-dispatch step count a hostile URL could pick.
+    // The one pin with no downstream Math.min (see the chunk and hit
+    // pins' own consumption sites below), so it is clamped here — the
+    // one place a pin value becomes stepsThisPass — rather than left to
+    // grow into a per-dispatch step count a hostile URL could pick.
     let stepsThisPass = Math.min(
       marchStepsPin ?? 1,
       SURFACE_COMPUTE_MARCH_STEPS_PIN_CAP,
     );
-    // fr-tdft sub-ray credit bookkeeping: march steps issued to every
-    // surviving active ray by COMPLETED sweeps, and how many of the
-    // current sweep's rays have been dispatched so far (those hold
-    // stepsThisPass steps more). Exact for still-active rays — the
-    // kernel's march loop exits early only on terminal transitions.
+    // Sub-ray credit bookkeeping: march steps issued to every surviving
+    // active ray by COMPLETED sweeps, and how many of the current
+    // sweep's rays have been dispatched so far (those hold stepsThisPass
+    // steps more). Exact for still-active rays — the kernel's march loop
+    // exits early only on terminal transitions.
     let sweepSteps = 0;
     let sweepSliced = 0;
     // The hit-shade cost model and its capacity ladder. A supersampling
-    // JOB hands the same carrier to every pass (fr-2ojg): passes 1..N-1
-    // differ from pass 0 by a sub-pixel offset and NOTHING else — same
-    // pose, same raster, same DE, same hits — so re-learning the model
-    // from one workgroup eight times over is eight ramps paid for one
-    // frame's worth of information. A single-sample frame gets a fresh
-    // model, which is where the ladder's first-encounter bound belongs.
+    // JOB hands the same carrier to every pass: passes 1..N-1 differ
+    // from pass 0 by a sub-pixel offset and NOTHING else — same pose,
+    // same raster, same DE, same hits — so re-learning the model from
+    // one workgroup eight times over is eight ramps paid for one frame's
+    // worth of information. A single-sample frame gets a fresh model,
+    // which is where the ladder's first-encounter bound belongs.
     const sizer: ShadeSizerState = jobSizer ?? {
       cost: initialShadeHitCost(),
       cap: SURFACE_COMPUTE_SHADE_HIT_CAP_START,
     };
-    // fr-55s1 stage D: a fold FINAL lens multiplies every march step by
-    // its branch sweep — 27 boxfold / 3 spherefold / 81 mandelbox
-    // branches around the core, discounted /8 for the prunes'
-    // measured-typical survival (surfaceDescentCostWeight's factor,
-    // surface-de.ts) — so first-slice sizing starts from a
-    // proportionally raised prior and stays watchdog-safe before the EMA
-    // takes over. The SHADE side carries no prior at all since fr-2ojg
-    // (see SURFACE_COMPUTE_SHADE_HIT_CAP_START): its first batch is one
-    // workgroup whatever a prior would have said, so scaling one only
-    // lengthened the climb back out.
-    // (Both FORWARD kinds scale nothing: the orbit is phone-cheap — the
-    // bulb measured 3.5x CHEAPER per eval than the fold mode
-    // (bulb-de.ts's verdict) — and
-    // the pessimistic base prior only errs toward smaller first slices.
-    // Affine 4D targets scale nothing either — the affine4 ladder starts
-    // from the same pessimistic base prior the 3D affine class would.
-    // FOLD-shaped 4D targets scale (fr-rsp6): the base prior absorbed
-    // the 3D fold class's 27/81-branch fans, and the 4D fans are 3x
-    // wider — 81 boxfold / 243 mandelbox — so the first slice scales by
-    // maxFan/27 (spherefold's 3 stays at the floor); a 4D fold FINAL
-    // multiplies its own fan/8 exactly like the 3D lens.)
+    // A fold FINAL lens multiplies every march step by its branch sweep
+    // — 27 boxfold / 3 spherefold / 81 mandelbox branches around the
+    // core, discounted /8 for the prunes' measured-typical survival
+    // (surfaceDescentCostWeight's factor, surface-de.ts) — so
+    // first-slice sizing starts from a proportionally raised prior and
+    // stays watchdog-safe before the EMA takes over. The SHADE side
+    // carries no prior at all (see SURFACE_COMPUTE_SHADE_HIT_CAP_START):
+    // its first batch is one workgroup whatever a prior would have said,
+    // so scaling one only lengthened the climb back out. (Both FORWARD
+    // kinds scale nothing: the orbit is phone-cheap — the bulb measured
+    // 3.5x CHEAPER per eval than the fold mode (bulb-de.ts's verdict) —
+    // and the pessimistic base prior only errs toward smaller first
+    // slices. Affine 4D targets scale nothing either — the affine4
+    // ladder starts from the same pessimistic base prior the 3D affine
+    // class would. FOLD-shaped 4D targets scale: the base
+    // prior absorbed the 3D fold class's 27/81-branch fans, and the 4D
+    // fans are 3x wider — 81 boxfold / 243 mandelbox — so the first
+    // slice scales by maxFan/27 (spherefold's 3 stays at the floor); a
+    // 4D fold FINAL multiplies its own fan/8 exactly like the 3D lens.)
     const lensKind = !isForwardTarget(this.target)
       ? this.target.de.foldFinal?.foldKind
       : undefined;
@@ -2652,8 +2659,8 @@ export class SurfaceComputeRenderer {
             1,
             (lensFan4 ?? (lensKind === 1 ? 27 : lensKind === 2 ? 3 : 81)) / 8,
           ));
-    // fr-5wlv.5: the balloon union pays the inverted shell eval on top of
-    // the fractal term — fr-5wlv.1 measured rest-state march steps
+    // The balloon union pays the inverted shell eval on top of the
+    // fractal term — the balloon spike measured rest-state march steps
     // x1.25-2.06 over plain (value queries x1.00-1.27) — so the first
     // march slice's prior starts doubled; erring toward smaller first
     // slices is the safe direction, and the EMA takes over from the
@@ -2680,7 +2687,7 @@ export class SurfaceComputeRenderer {
     // loud here rather than defaulted (a 4D frame with no pose has no
     // meaningful default).
     const target = this.target;
-    // fr-rhn5: a plane session's spec must carry the live floor block
+    // A plane session's spec must carry the live floor block
     // (view4/balloon's required-throw discipline — the 336-byte kernel
     // struct has no meaningful default); a no-plane session ignores any
     // stray spec.groundPlane — its buffer never grew.
@@ -2716,15 +2723,15 @@ export class SurfaceComputeRenderer {
         : target.kind === "escape4"
           ? (run) => packEscape4GpuParams(target.de, view4!, run, groundPlane)
           : target.kind === "bulb"
-            ? // fr-tdin: the escape packer's twin — one asymmetry, and it
+            ? // The escape packer's twin — one asymmetry, and it
               // is inside packBulbGpuParams: the ORBIT bailout and the
               // QUERY-space marching ball are different numbers for this
               // object, so the frozen radii take the latter.
               (run) => packBulbGpuParams(target.de, run, groundPlane)
             : target.kind === "ifs4"
               ? (() => {
-                  // fr-qxxw: a balloon 4D session's spec must carry the
-                  // live balloon block, exactly as a 3D one's does.
+                  // A balloon 4D session's spec must carry the live balloon
+                  // block, exactly as a 3D one's does.
                   if (target.balloon === true) {
                     const balloon = spec.balloon;
                     if (!balloon) {
@@ -2745,11 +2752,11 @@ export class SurfaceComputeRenderer {
                     );
                 })()
               : (() => {
-                  // fr-5wlv.5: a balloon session's spec must carry the live
-                  // balloon block (the R slider's per-frame door — view4's
-                  // required-throw discipline; the 320-byte kernel struct has
-                  // no meaningful default). A no-balloon session ignores any
-                  // stray spec.balloon — its buffer is 288 bytes.
+                  // A balloon session's spec must carry the live balloon
+                  // block (the R slider's per-frame door — view4's
+                  // required-throw discipline; the 320-byte kernel struct
+                  // has no meaningful default). A no-balloon session ignores
+                  // any stray spec.balloon — its buffer is 288 bytes.
                   if (target.balloon === true) {
                     const balloon = spec.balloon;
                     if (!balloon) {
@@ -2763,15 +2770,15 @@ export class SurfaceComputeRenderer {
                   return (run: SurfaceGpuRunParams) =>
                     packSurfaceGpuParams(target.de, run, null, groundPlane);
                 })();
-    // fr-d0nn: an ifs4 frame at the shipped sliceHalfW 0 rides the
-    // slab-free kernel pair (measured 2.2-2.4x cheaper at every
-    // kaleidoscope order — the fr-wa6o ext registers are occupancy tax
-    // even when dynamically dead); any h > 0 frame takes the full slab
-    // pair. Per frame, not per session — the thickness slider is live
-    // and can cross 0 mid-session. Non-ifs4 targets carry no noslab
-    // pair, so they always resolve to the main one. The h = 0 outputs
-    // are bit-identical between the pairs (segmentRadius4 at e = 0 IS
-    // length(q)), pinned by the bench's aff4 sweep agreement gate.
+    // An ifs4 frame at the shipped sliceHalfW 0 rides the slab-free
+    // kernel pair (measured 2.2-2.4x cheaper at every kaleidoscope order
+    // — the slab's ext registers are occupancy tax even when dynamically
+    // dead); any h > 0 frame takes the full slab pair. Per frame, not
+    // per session — the thickness slider is live and can cross 0
+    // mid-session. Non-ifs4 targets carry no noslab pair, so they always
+    // resolve to the main one. The h = 0 outputs are bit-identical
+    // between the pairs (segmentRadius4 at e = 0 IS length(q)), pinned
+    // by the bench's aff4 sweep agreement gate.
     const slabFrame = (spec.view4?.sliceHalfW ?? 0) > 0;
     const marchPipeline =
       !slabFrame && this.marchPipelineNoSlab !== null
@@ -2800,9 +2807,8 @@ export class SurfaceComputeRenderer {
           aspect: width / Math.max(1, height),
           rasterWidth: width,
           rasterHeight: height,
-          // The ACCEPTANCE slope (fr-7xgi): eps = max(pixelEps * t,
-          // hitFloorEps) in the kernel's march — native-height derived,
-          // tier-independent.
+          // The ACCEPTANCE slope: eps = max(pixelEps * t, hitFloorEps) in
+          // the kernel's march — native-height derived, tier-independent.
           pixelEps: spec.acceptPixelEps,
         },
       };
@@ -2812,11 +2818,12 @@ export class SurfaceComputeRenderer {
       pipeline: GPUComputePipeline,
       bindGroup: GPUBindGroup,
       count: number,
-      /** fr-si66: a device-local copy appended to the SAME submission —
-       * the march slice's `count` statuses, staged at the slice's own
+      /** A device-local copy appended to the SAME submission — the
+       * march slice's `count` statuses, staged at the slice's own
        * offset in the sweep's readback. Riding the dispatch costs no
        * extra submission and no extra fence; it lands in the measured
-       * pass time, which is the honest place for it (a `count`-word copy
+       * pass time, which is the honest place for it (a `count`-word
+       * copy
        * against a `count`×`stepsThisPass` DE march). */
       copyAfter?: { src: GPUBuffer; dst: GPUBuffer; dstOffset: number },
     ): Promise<number | null> => {
@@ -2846,9 +2853,9 @@ export class SurfaceComputeRenderer {
       return performance.now() - t0;
     };
 
-    // The device's own ceiling on ONE dispatch (fr-257o) — the last clamp
-    // on both sizing paths below, above whatever their cost model asked
-    // for. See {@link surfaceComputeMaxDispatchRays}.
+    // The device's own ceiling on ONE dispatch — the last clamp on both
+    // sizing paths below, above whatever their cost model asked for. See
+    // {@link surfaceComputeMaxDispatchRays}.
     const maxDispatchRays = surfaceComputeMaxDispatchRays(device.limits);
 
     // Progress presents fire BETWEEN bounded pieces of work — march
@@ -2867,9 +2874,9 @@ export class SurfaceComputeRenderer {
         return false;
       }
       lastProgress = performance.now();
-      // fr-tdft: march credit accrues per consumed step, shade credit on
-      // shaded pixels — surfaceComputeProgressDone owns the formula and
-      // the monotonicity argument.
+      // March credit accrues per consumed step, shade credit on shaded
+      // pixels — surfaceComputeProgressDone owns the formula and the
+      // monotonicity argument.
       opts.onProgress(
         partial,
         surfaceComputeProgressDone({
@@ -2886,13 +2893,13 @@ export class SurfaceComputeRenderer {
       return true;
     };
 
-    // balloonCostScale: the fr-5wlv.1 march-step numbers (the prior
-    // comment above `balloonCostScale`).
+    // balloonCostScale: the balloon spike's march-step numbers (the
+    // prior comment above `balloonCostScale`).
     let rayStepEmaUs =
       SURFACE_COMPUTE_INITIAL_RAY_STEP_US * lensCostScale * balloonCostScale;
-    // fr-si66: the frame's terminal tally, accumulated as each sweep
-    // classifies its rays — the whole-states scan that used to produce it
-    // needed a readback this loop no longer pays for.
+    // The frame's terminal tally, accumulated as each sweep classifies
+    // its rays — the whole-states scan that used to produce it needed a
+    // readback this loop no longer pays for.
     const counts = { hit: 0, miss: 0, exhausted: 0, active: 0, plane: 0 };
     tr(
       `frame start rays=${rays} marchSteps=${spec.marchSteps} budgetMs=${budgetMs} shadeCost0=${sizer.cost.interceptUs.toFixed(0)}+n*${sizer.cost.marginalUs.toFixed(1)}us rayStepEmaUs0=${rayStepEmaUs} shadeHitCap0=${sizer.cap}`,
@@ -2918,10 +2925,10 @@ export class SurfaceComputeRenderer {
             tr("budget truncated (march)");
             break outer;
           }
-          // fr-vja8.30: marchChunkPin carries no cap of its own — the two
-          // terms below already bound whatever it asks for (a ray count,
-          // unlike the steps pin's per-ray work), so an unclamped parse
-          // is not a hazard here.
+          // marchChunkPin carries no cap of its own — the two terms below
+          // already bound whatever it asks for (a ray count, unlike the
+          // steps pin's per-ray work), so an unclamped parse is not a
+          // hazard here.
           const chunk = Math.min(
             marchChunkPin ?? marchChunkFor(rayStepEmaUs, stepsThisPass),
             active.length - offset,
@@ -2940,8 +2947,8 @@ export class SurfaceComputeRenderer {
             marchPipeline,
             buffers.marchBindGroup,
             slice.length,
-            // fr-si66: this slice's statuses, staged where the sweep's
-            // rebuild expects them — the kernel writes slot-relative
+            // This slice's statuses, staged where the sweep's rebuild
+            // expects them — the kernel writes slot-relative
             // (`statusOut[gid]`), so slice k's answers land at k's own
             // offset and one map at the sweep's end reads the lot.
             {
@@ -2962,13 +2969,13 @@ export class SurfaceComputeRenderer {
           sweepSliced = offset;
           if (!(await maybePresent())) return null;
         }
-        // fr-si66: 4 B per ACTIVE ray, already staged by the slices' own
+        // 4 B per ACTIVE ray, already staged by the slices' own
         // submissions — where this used to read the WHOLE 16 B/ray states
         // buffer back every sweep, active list or not, to look at one
         // field of it. The saving compounds as the sweep count rises: a
         // raster too big to sweep whole holds stepsThisPass at 1, so a
-        // full-tier settle is up to `marchSteps` sweeps, and each one used
-        // to cost the frame's entire ray state.
+        // full-tier settle is up to `marchSteps` sweeps, and each one
+        // used to cost the frame's entire ray state.
         tr(`status readback BEGIN active=${active.length}`);
         const statusCopy = new Uint32Array(
           await this.drainStaging(buffers.stagingStatus, active.length * 4),
@@ -2989,13 +2996,13 @@ export class SurfaceComputeRenderer {
           ) {
             if (rayStatus === SURFACE_GPU_RAY_HIT) counts.hit++;
             else counts.plane++;
-            // fr-rhn5: plane rays are priced WITH the hits — a floor
-            // pixel pays the penumbra-shadow/AO probe evals a hit pays
-            // (within its corridor gates), nothing like a miss's one
-            // background write; the hit EMA's slow-trust policy absorbs
-            // the remaining within-band spread, and the original
-            // 100-1000x miss/hit bimodality that forced the queue split
-            // never recurs.
+            // Plane rays are priced WITH the hits — a floor pixel pays
+            // the penumbra-shadow/AO probe evals a hit pays (within
+            // its corridor gates), nothing like a miss's one
+            // background write; the hit EMA's slow-trust policy
+            // absorbs the remaining within-band spread, and the
+            // original 100-1000x miss/hit bimodality that forced the
+            // queue split never recurs.
             shadeHitQueue.push(ray);
           } else {
             if (rayStatus === SURFACE_GPU_RAY_MISS) counts.miss++;
@@ -3031,20 +3038,20 @@ export class SurfaceComputeRenderer {
           tr("budget truncated (shade)");
           break outer;
         }
-        // Free rays (miss/exhausted) first, ALL OF THEM IN ONE DISPATCH
-        // (fr-257o) — and presents fill the backdrop before the hit grind
-        // starts.
+        // Free rays (miss/exhausted) first, ALL OF THEM IN ONE DISPATCH —
+        // and presents fill the backdrop before the hit grind starts.
         //
-        // The free queue has no cost model to cap because there is no cost
-        // to model: every exit the shade entry offers a non-HIT status is
-        // the same two lines — evaluate the backdrop ramp at this pixel's
-        // row, store it — so a free batch's GPU time is its (tiny) memory
-        // traffic plus the per-submission wall, and the wall is the whole
-        // of it at any batch size worth naming. MEASURED at the flat 4096
-        // this used to share with the hit queue: 3.2 ms per dispatch, 2492
-        // dispatches, 8.0 s of a 35 s settle spent painting backdrop —
-        // ~307 submissions per full-resolution frame times the 8
-        // supersampling passes (fr-vpbq). Nothing in that number is work.
+        // The free queue has no cost model to cap because there is no
+        // cost to model: every exit the shade entry offers a non-HIT
+        // status is the same two lines — evaluate the backdrop ramp at
+        // this pixel's row, store it — so a free batch's GPU time is its
+        // (tiny) memory traffic plus the per-submission wall, and the
+        // wall is the whole of it at any batch size worth naming.
+        // MEASURED at the flat 4096 this used to share with the hit
+        // queue: 3.2 ms per dispatch, 2492 dispatches, 8.0 s of a 35 s
+        // settle spent painting backdrop — ~307 submissions per
+        // full-resolution frame times the 8 supersampling passes. Nothing
+        // in that number is work.
         //
         // The i915 hangs behind the hit queue's slow-trust sizing do not
         // reach here: they were HIT batches sized in RAY units, where one
@@ -3053,12 +3060,12 @@ export class SurfaceComputeRenderer {
         const isFree = shadeFreeQueue.length > 0;
         // The budget this batch is SIZED for, kept for the capacity
         // ladder below: the growth threshold has to be the number the
-        // sizer aimed at, not a fixed constant (fr-2ojg).
+        // sizer aimed at, not a fixed constant.
         const hitBudgetMs = shadeHitBudgetUs(sizer.cost.interceptUs) / 1000;
-        // fr-vja8.30: shadeHitsPin is unclamped at parse too, but it names
-        // a HIT COUNT, not per-ray work, so maxDispatchRays below already
-        // bounds it exactly like the free queue's batch size — no separate
-        // cap needed, unlike marchStepsPin
+        // shadeHitsPin is unclamped at parse too, but it names a HIT
+        // COUNT, not per-ray work, so maxDispatchRays below already
+        // bounds it exactly like the free queue's batch size — no
+        // separate cap needed, unlike marchStepsPin
         // ({@link SURFACE_COMPUTE_MARCH_STEPS_PIN_CAP}).
         const batchSize = isFree
           ? Math.min(shadeFreeQueue.length, maxDispatchRays)
@@ -3067,25 +3074,25 @@ export class SurfaceComputeRenderer {
               maxDispatchRays,
             );
         // HOLD a partial hit batch for the next sweep's hits rather than
-        // paying a whole dispatch's fixed cost for it (fr-2ojg). The
-        // intercept is the same whether a dispatch carries 15 hits or
-        // 1000 — ~88 ms measured on the boxfold pair, ~480 ms on
-        // mandelboxKifs — and a sweep hands over its hits a few hundred
-        // at a time, so draining to empty after every sweep spent a
-        // frame's fixed costs several times over (MEASURED: 6 hit
-        // dispatches per settle frame where the sizer had priced 2-3,
-        // every one of the extras a queue-limited sliver).
+        // paying a whole dispatch's fixed cost for it. The intercept is
+        // the same whether a dispatch carries 15 hits or 1000 — ~88 ms
+        // measured on the boxfold pair, ~480 ms on mandelboxKifs — and a
+        // sweep hands over its hits a few hundred at a time, so draining
+        // to empty after every sweep spent a frame's fixed costs several
+        // times over (MEASURED: 6 hit dispatches per settle frame where
+        // the sizer had priced 2-3, every one of the extras a
+        // queue-limited sliver).
         //
         // TWO BOUNDS keep it from becoming a stall. The march must still
         // be able to ADD to the queue — once the active list is empty
         // nothing more is coming, and the outer loop's own condition
-        // means the queue always drains before the frame ends. And no
-        // hit waits longer than one progressive-present interval: the
-        // screen has to keep developing, which is the whole reason
-        // presents fire between bounded pieces at all. Rays held over a
-        // budget cut keep their seed pixels, which for every frame after
-        // the first is the previous frame's shading of very nearly the
-        // same geometry (fr-f4bx's prefill), not backdrop.
+        // means the queue always drains before the frame ends. And no hit
+        // waits longer than one progressive-present interval: the screen
+        // has to keep developing, which is the whole reason presents fire
+        // between bounded pieces at all. Rays held over a budget cut keep
+        // their seed pixels, which for every frame after the first is the
+        // previous frame's shading of very nearly the same geometry (the
+        // last frame's prefill), not backdrop.
         if (
           !isFree &&
           active.length > 0 &&
@@ -3137,10 +3144,10 @@ export class SurfaceComputeRenderer {
           // A QUEUE-LIMITED batch (the sweep had fewer hits than the
           // sizer asked for) may shrink the capacity but never grow it:
           // coming in under budget on a batch that could not be any wider
-          // is not evidence that a wider one would fit. That is fr-p8bc's
-          // lesson — miss runs inflating a capacity a hit band then paid
-          // — in the one place it can still happen now the queues are
-          // split.
+          // is not evidence that a wider one would fit. That is the
+          // probe-width lesson — miss runs inflating a capacity a hit
+          // band then paid — in the one place it can still happen now the
+          // queues are split.
           const grown = nextShadeBatchSize(sizer.cap, shadeMs, hitBudgetMs);
           sizer.cap =
             batch.length < batchSize ? Math.min(sizer.cap, grown) : grown;
@@ -3157,11 +3164,11 @@ export class SurfaceComputeRenderer {
       await this.readback(buffers.color, buffers.stagingColor, rays * 4),
     );
     if (token !== this.frameToken || this.isLost || this.destroyed) return null;
-    // fr-si66: the tally is kept as rays LEAVE the active list, so it
-    // needs no final pass over the ray states (there is none to read).
-    // ACTIVE is what is left over — rays a budget cut stranded mid-march,
-    // rays no sweep ever classified, and (unreachably) any status outside
-    // the vocabulary, which is exactly what the whole-buffer scan used to
+    // The tally is kept as rays LEAVE the active list, so it needs no
+    // final pass over the ray states (there is none to read). ACTIVE is
+    // what is left over — rays a budget cut stranded mid-march, rays no
+    // sweep ever classified, and (unreachably) any status outside the
+    // vocabulary, which is exactly what the whole-buffer scan used to
     // count as active.
     counts.active =
       rays - counts.hit - counts.miss - counts.exhausted - counts.plane;

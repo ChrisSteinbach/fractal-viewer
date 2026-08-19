@@ -1,7 +1,7 @@
 /**
- * The flame render's Web Worker session state machine (fr-73y): supersampled
+ * The flame render's Web Worker session state machine: supersampled
  * accumulation, the proactive + reactive OOM guard, throttled downsample, a
- * finished-frame adaptive density-estimation blur (fr-17t), and live
+ * finished-frame adaptive density-estimation blur, and live
  * tone-map/estimate re-application all run here, off the main thread.
  * `flame-worker.ts` is the thin `self.onmessage`/`postMessage` glue
  * that wires a {@link FlameWorkerSession} to the real worker globals; this
@@ -9,7 +9,7 @@
  * `performance`, `setTimeout`), which is what makes it plain-Vitest testable
  * with an injected {@link FlameWorkerDeps} instead of a real Worker.
  *
- * Transport comes in two flavors (fr-96i). The upgrade is a
+ * Transport comes in two flavors. The upgrade is a
  * **SharedArrayBuffer-backed display histogram**: when the page is
  * cross-origin isolated (COOP/COEP — natively from the dev server's headers,
  * or injected by the service worker in `sw/sw.ts` on hosts like GitHub Pages
@@ -22,20 +22,20 @@
  * makes exposure/gamma/vibrancy changes land instantly there with no worker
  * round trip. The notification postMessage doubles as the memory-visibility
  * edge for the bucket writes (message delivery happens-after them), so no
- * Atomics are involved. The **fallback** is fr-73y's postMessage TRANSFER:
- * without isolation (SAB is unavailable there at all) the session keeps
- * every histogram to itself and hands the main thread an
+ * Atomics are involved. The **fallback** is the worker's original
+ * postMessage TRANSFER: without isolation (SAB is unavailable there at all)
+ * the session keeps every histogram to itself and hands the main thread an
  * already-downsampled-and-tone-mapped display-resolution RGBA image per
  * update. Either way the big supersampled accumulator never leaves the
  * worker.
  *
- * Accumulation itself runs through a pluggable {@link FlameAccumBackend}
- * (fr-npb): CPU by default, or — when the `start` command's
- * `gpuPreference` opts in and the real worker wires up a `createGpuBackend`
- * factory — a WebGPU accumulator (`flame-gpu.ts`), which `runChunk` drives
- * through the exact same chunk/redisplay loop. A GPU failure runs through
- * {@link handleGpuFailure}'s recovery ladder (fr-2w5) — retry ON the GPU at
- * a smaller supersample, one fresh-device retry — before the permanent
+ * Accumulation itself runs through a pluggable {@link FlameAccumBackend}:
+ * CPU by default, or — when the `start` command's `gpuPreference` opts in
+ * and the real worker wires up a `createGpuBackend` factory — a WebGPU
+ * accumulator (`flame-gpu.ts`), which `runChunk` drives through the exact
+ * same chunk/redisplay loop. A GPU failure runs through
+ * {@link handleGpuFailure}'s recovery ladder — retry ON the GPU at a
+ * smaller supersample, one fresh-device retry — before the permanent
  * once-per-session CPU fallback (`gpuFailed`). See that interface's doc for
  * the seam's contract.
  */
@@ -92,7 +92,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 /**
- * One shared display-resolution frame slot (fr-96i): views over
+ * One shared display-resolution frame slot: views over
  * SharedArrayBuffers, allocated by the main thread and handed to the worker
  * in the `start` command (structured clone of a SAB-backed view shares the
  * buffer — nothing is copied or transferred). Same bucket layout as
@@ -133,7 +133,7 @@ export type FlameWorkerCommand =
       iterationsBudget: number;
       /**
        * Scales `iterationsBudget` — and every later `setIterationsBudget`
-       * command — for a hi-res export session (fr-2urv): the export size's
+       * command — for a hi-res export session: the export size's
        * area ratio vs. the screen, so per-OUTPUT-PIXEL sample density matches
        * a 1× render instead of dimming/noising as the histogram spreads over
        * more buckets. Lives worker-side so the main thread's live budget
@@ -149,25 +149,24 @@ export type FlameWorkerCommand =
       estimatorMinimumRadius: number;
       estimatorCurve: number;
       /**
-       * Structural-coloring palette (fr-6us); `"legacy"` = per-transform
-       * hue; since fr-55k may also be a self-contained `CustomPalette`
-       * payload.
+       * Structural-coloring palette; `"legacy"` = per-transform hue, and
+       * it may also be a self-contained `CustomPalette` payload.
        */
       palette: PaletteSpec;
-      /** Kaleidoscope symmetry (fr-6im; 4D since fr-q0h6, which is also why
-       * `twist` rides along — the second angle of a 4D double rotation, which
+      /** Kaleidoscope symmetry, 4D as well as 3D — which is also why
+       * `twist` rides along (the second angle of a 4D double rotation, which
        * only the 4D path can express). Absent `twist` means 0. */
       order: number;
       plane: SymmetryPlane;
       twist?: number;
       /**
-       * Optional 4D flame render (fr-5b3): present when the explorer was in
+       * Optional 4D flame render: present when the explorer was in
        * 4D mode when the render was entered. When present, the session
        * drives `chaos-game-4d.ts`'s 4D chaos game and `flame-4d.ts`'s
        * `accumulateFlame4` instead of the 3D path. `transforms`/
        * `finalTransform` above still arrive either way (the main thread
        * always sends both), but are simply unused when this is present.
-       * `gpuPreference` applies to 4D sessions too (fr-e26): `"auto"` tries
+       * `gpuPreference` applies to 4D sessions too: `"auto"` tries
        * the `createGpuBackend4` factory (`flame-gpu-4d.ts`'s WGSL kernel)
        * with the same recovery-ladder-then-CPU discipline as the 3D path
        * (see `handleGpuFailure`).
@@ -195,7 +194,7 @@ export type FlameWorkerCommand =
          * thread reads `FOUR_D_SLICE_WIDTH`). */
         sliceWidth: number;
         /** Whether the w-ramp color modes recenter their ramp on the slice
-         * window (fr-nn6) — `project4.ts`'s `FourDView.sliceRelativeColor`. */
+         * window — `project4.ts`'s `FourDView.sliceRelativeColor`. */
         sliceRelativeColor: boolean;
         /** The explorer's active 4D color mode — drives the "legacy"
          * palette dispatch (see `color.ts`'s `FourDRenderColor`). */
@@ -206,7 +205,7 @@ export type FlameWorkerCommand =
         radiusMin: number;
         radiusMax: number;
         /**
-         * Gradient palette for the "radius" color mode's ramp (fr-6ue) — the
+         * Gradient palette for the "radius" color mode's ramp — the
          * same `rampPaletteId` selection the explorer's 3D height/radius
          * ramps follow, resolved by the main thread; `"legacy"` = the
          * built-in warm→cool ramp. Only the radius mode reads it; snapshotted
@@ -216,7 +215,7 @@ export type FlameWorkerCommand =
         rampPalette: PaletteSpec;
       };
       /**
-       * Two SAB-backed display-resolution frame slots (fr-96i), present only
+       * Two SAB-backed display-resolution frame slots, present only
        * when the page is cross-origin isolated (the main thread gates the
        * allocation on `crossOriginIsolated`). Their presence selects the
        * transport: the session downsamples into them alternately and emits
@@ -227,7 +226,7 @@ export type FlameWorkerCommand =
        */
       sharedFrames?: [SharedFrameBuffers, SharedFrameBuffers];
       /**
-       * Opt into the WebGPU accumulation backend (fr-npb) when the real
+       * Opt into the WebGPU accumulation backend when the real
        * worker's `createGpuBackend` factory is wired up: `"auto"` tries GPU
        * first and falls back to CPU (once per session) on any failure;
        * `"off"` — and, deliberately, absent — never attempts it. Absent
@@ -238,7 +237,7 @@ export type FlameWorkerCommand =
        */
       gpuPreference?: "auto" | "off";
       /**
-       * Opt into per-chunk throughput instrumentation (fr-ul2): when true, the
+       * Opt into per-chunk throughput instrumentation: when true, the
        * session times each accumulation chunk's accumulate / readback / inter-
        * chunk-gap phases and periodically logs a {@link FlamePerfMeter} summary
        * via the `log` dep. Absent/false (production default) leaves the loop
@@ -264,7 +263,7 @@ export type FlameWorkerCommand =
       type: "setSymmetry";
       order: number;
       plane: SymmetryPlane;
-      /** See the `start` command's own `twist` (fr-q0h6). */
+      /** See the `start` command's own `twist`. */
       twist?: number;
     };
 
@@ -281,7 +280,7 @@ export type FlameWorkerEvent =
     }
   | {
       /**
-       * Shared-memory counterpart to `progress` (fr-96i): the frame is
+       * Shared-memory counterpart to `progress`: the frame is
        * already sitting in one of the `start` command's `sharedFrames`
        * slots, so only scalars cross here — the main thread tone-maps the
        * named slot itself. Delivery of this message is also what guarantees
@@ -305,7 +304,7 @@ export type FlameWorkerEvent =
   | {
       /**
        * Emitted synchronously, right where {@link FlameWorkerSession}'s
-       * `startAccumulation` discards the in-flight accumulation (fr-h6sn) —
+       * `startAccumulation` discards the in-flight accumulation —
        * a live `setSupersample`/`setPalette`/`setSymmetry` restart, the
        * allocation-failure fallback, or the initial `start` (harmless there:
        * nothing stale is on screen yet to correct). The next `progress`/
@@ -323,8 +322,8 @@ export type FlameWorkerEvent =
     }
   | {
       /**
-       * Which {@link FlameAccumBackend} is driving the CURRENT accumulation
-       * (fr-npb) — emitted once per backend creation, i.e. on the first
+       * Which {@link FlameAccumBackend} is driving the CURRENT
+       * accumulation — emitted once per backend creation, i.e. on the first
        * chunk of every `start`/restart (a live `setSupersample`/`setPalette`/
        * `setSymmetry`, or a GPU-failure/OOM-ratchet restart), so the UI's
        * label always reflects the backend actually in use, including across
@@ -339,7 +338,7 @@ export type FlameWorkerEvent =
       adapter?: string;
       /** True when a GPU backend runs on a SOFTWARE (fallback/SwiftShader-
        * class) adapter — see {@link FlameAccumBackend.software}. The main
-       * thread escalates its backend note to the warning tier (fr-tmgf):
+       * thread escalates its backend note to the warning tier:
        * software rasterization must not pass as a normal GPU render.
        * Absent for CPU backends. */
       software?: boolean;
@@ -360,7 +359,7 @@ export type FlameWorkerEvent =
        *
        * Purely ADVISORY: the session still falls back to CPU entirely on its
        * own, so a host that ignores this event behaves exactly as before. The
-       * main thread uses it (fr-2w5) to annotate the subsequent "backend"
+       * main thread uses it to annotate the subsequent "backend"
        * event's CPU note with WHY the GPU path was abandoned.
        */
       type: "gpuUnavailable";
@@ -369,9 +368,9 @@ export type FlameWorkerEvent =
   | {
       /**
        * Emitted right before the synchronous, unchunked adaptive
-       * density-estimation pass (fr-17t) — on the finished frame, and again
+       * density-estimation pass — on the finished frame, and again
        * on every live estimator-param/budget change that re-runs it once
-       * done (fr-99z). `postMessage` queues immediately, so this reaches the
+       * done. `postMessage` queues immediately, so this reaches the
        * main thread while the worker is still crunching that pass; the next
        * `progress`/`sharedFrame` event clears whatever busy state it set.
        */
@@ -407,18 +406,18 @@ export interface FlameWorkerDeps {
    * needing millions of real iterations to span more than one chunk. */
   initialChunkSize?: number;
   /**
-   * Async factory for the WebGPU accumulation backend (fr-npb), tried when
+   * Async factory for the WebGPU accumulation backend, tried when
    * a `start`/restart's `gpuPreference` is `"auto"`. Absent
    * means CPU-only, unconditionally, regardless of `gpuPreference`: this
    * factory's presence, not the preference field, is what actually gates
    * the attempt. Rejection is non-fatal: {@link handleGpuFailure} decides
-   * between retrying the factory at a smaller supersample (fr-2w5's ladder
-   * — a {@link FlameGpuSizeError} or any failure at supersample > 1) and
-   * the permanent CPU fallback (see `gpuFailed`).
+   * between retrying the factory at a smaller supersample (the ladder's
+   * first rung — a {@link FlameGpuSizeError} or any failure at supersample
+   * > 1) and the permanent CPU fallback (see `gpuFailed`).
    */
   createGpuBackend?: (request: GpuBackendRequest) => Promise<FlameAccumBackend>;
   /**
-   * The 4D counterpart of {@link createGpuBackend} (fr-e26): tried when a 4D
+   * The 4D counterpart of {@link createGpuBackend}: tried when a 4D
    * session's `gpuPreference` is `"auto"`, with the same absent-means-CPU
    * and rejection-falls-back semantics. A separate factory (rather than one
    * dimension-switched request) because the two kernels' requests share
@@ -448,7 +447,7 @@ const FLAME_CHUNK_MAX = 20_000_000;
 const FLAME_FRAME_BUDGET_MS = 8;
 
 /**
- * GPU counterparts of the CPU chunk-size constants above (fr-npb) — used by
+ * GPU counterparts of the CPU chunk-size constants above — used by
  * `adaptChunkSize`/`startAccumulation` whenever the CURRENT backend's `kind`
  * is `"gpu"`. An order of magnitude (or more) bigger than the CPU numbers
  * because a GPU dispatch's iteration rate is itself orders of magnitude
@@ -476,9 +475,9 @@ const FLAME_GPU_FRAME_BUDGET_MS = 24;
 /** Fixed reconstruction-filter radius (display pixels) `downsampleFlame` blurs
  * PROGRESSIVE (not-yet-finished) frames with in `runChunk` — see its doc for
  * why fixed rather than density-adaptive. The finished frame instead gets
- * `adaptiveDownsampleFlame` (fr-17t), which has no equivalent fixed-radius
+ * `adaptiveDownsampleFlame`, which has no equivalent fixed-radius
  * constant since its whole point is a radius computed per cell. Exported
- * (fr-ee9) so `GpuBackendRequest`'s `progressiveFilterRadius` and the
+ * so `GpuBackendRequest`'s `progressiveFilterRadius` and the
  * gpu-bench agreement harness both read the SAME value rather than each
  * re-declaring their own copy that could silently drift from this one. */
 export const FLAME_FILTER_RADIUS = 0.4;
@@ -519,7 +518,7 @@ const FLAME_ACCUM_MAX_BYTES = 2560 * MIB;
  * The accumulation-memory budget (in buckets — see
  * {@link BYTES_PER_ACCUM_BUCKET}) for the device we're actually running on,
  * from the two signals only the MAIN thread can read; it computes this and
- * ships the result in the `start` command (fr-7c8). Before this, the budget
+ * ships the result in the `start` command. Before this, the budget
  * was a flat 300 MiB sized for phones, which on any display larger than
  * ~1920×1280 device pixels clamped supersampling to 1× no matter how much
  * RAM the machine had — a 64 GB desktop with a 1440p/4K monitor was capped
@@ -555,7 +554,7 @@ function describeError(e: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
-// Accumulation backend seam (fr-npb)
+// Accumulation backend seam
 // ---------------------------------------------------------------------------
 
 /**
@@ -567,7 +566,7 @@ function describeError(e: unknown): string {
  * failures by `instanceof` without importing the WebGPU-touching module
  * (which imports this one — the classes living there would be a cycle).
  *
- * The session treats this class as RETRYABLE AT A SMALLER SIZE (fr-2w5's
+ * The session treats this class as RETRYABLE AT A SMALLER SIZE (the
  * supersample ladder): the same GPU that refuses a `w*ss × h*ss` histogram
  * almost always accepts `ss-1` — measured ceilings sit far below reported
  * limits and even move run-to-run with memory pressure, so "this size
@@ -628,7 +627,7 @@ export interface FlameAccumBackend {
    */
   snapshot(): FlameHistogram | Promise<FlameHistogram>;
   /**
-   * OPTIONAL (fr-ee9): a progressive-display-resolution downsample WITHOUT a
+   * OPTIONAL: a progressive-display-resolution downsample WITHOUT a
    * full-histogram readback — a GPU backend runs its downsample compute
    * kernel over the resident accumulation buffer and reads back only a
    * `displayWidth x displayHeight` histogram, instead of `snapshot()`'s full
@@ -660,7 +659,7 @@ export interface FlameAccumBackend {
   /**
    * True when this GPU backend runs on a FALLBACK (software) adapter —
    * SwiftShader-class, not real hardware. Chrome hands exactly that out
-   * right after a GPU-process crash (fr-2w5's E4 experiment: the crashed
+   * right after a GPU-process crash (measured: the crashed
    * hardware gets blocklisted for a while and `requestAdapter()` silently
    * succeeds with `google/swiftshader`), so the session's device-loss retry
    * checks this to avoid trading a hardware backend for a 10-100x slower
@@ -681,11 +680,11 @@ export interface GpuBackendRequest {
    * `FlameWorkerSession.baseTransforms`. */
   transforms: Transform[];
   finalTransform: Transform | null;
-  /** Kaleidoscope symmetry (fr-6im) — see `chaos-game.ts`'s `prepareChaosGame`. */
+  /** Kaleidoscope symmetry — see `chaos-game.ts`'s `prepareChaosGame`. */
   order: number;
   plane: SymmetryPlane;
-  /** Structural-coloring palette (fr-6us); `"legacy"` = per-transform hue;
-   * since fr-55k may also be a self-contained `CustomPalette` payload. */
+  /** Structural-coloring palette; `"legacy"` = per-transform hue, and it
+   * may also be a self-contained `CustomPalette` payload. */
   palette: PaletteSpec;
   projection: Mat4;
   /** ACCUMULATION resolution (display size x effective supersample) — NOT
@@ -701,7 +700,7 @@ export interface GpuBackendRequest {
    */
   seed: number;
   /**
-   * fr-ee9: DISPLAY resolution (the session's fixed `width`/`height` — NOT
+   * DISPLAY resolution (the session's fixed `width`/`height` — NOT
    * `width`/`height` above, which are the accumulation size) and the fixed
    * reconstruction-filter radius progressive redisplays blur with — sizes
    * and parameterizes a `snapshotDisplay`-capable backend's downsample
@@ -714,7 +713,7 @@ export interface GpuBackendRequest {
 
 /**
  * Everything a `createGpuBackend4` factory needs to stand up one 4D
- * accumulation's worth of GPU state (fr-e26) — the 4D twin of
+ * accumulation's worth of GPU state — the 4D twin of
  * {@link GpuBackendRequest}, carrying exactly what `flame-gpu-4d.ts`'s
  * packers consume. `projection`, `view`, and `color` are the SAME objects
  * the CPU oracle (`accumulateFlame4`, via `Cpu4DFlameBackend`) takes, so
@@ -727,7 +726,7 @@ export interface GpuBackendRequest4 {
    * `FlameWorkerSession.baseTransforms4`. */
   transforms4: Transform4[];
   finalTransform4: Transform4 | null;
-  /** Kaleidoscope symmetry (fr-q0h6) — see `chaos-game-4d.ts`'s
+  /** Kaleidoscope symmetry — see `chaos-game-4d.ts`'s
    * `prepareChaosGame4`. Flattened exactly like {@link GpuBackendRequest}'s
    * `order`/`plane`, plus the `twist` only a 4D rotation can carry. */
   order: number;
@@ -748,7 +747,7 @@ export interface GpuBackendRequest4 {
   /** Deterministic per-restart seed — same contract as
    * {@link GpuBackendRequest.seed}. */
   seed: number;
-  /** fr-ee9: display resolution + progressive filter radius — same contract
+  /** Display resolution + progressive filter radius — same contract
    * as {@link GpuBackendRequest}'s fields of the same names. */
   displayWidth: number;
   displayHeight: number;
@@ -836,11 +835,11 @@ class CpuFlameBackend implements FlameAccumBackend {
 }
 
 /**
- * The CPU 4D accumulation backend (fr-5b3): wraps `flame-4d.ts`'s
+ * The CPU 4D accumulation backend: wraps `flame-4d.ts`'s
  * `accumulateFlame4` in the same shape {@link CpuFlameBackend} wraps
  * `accumulateFlame` in for the 3D path. Driven through the same
  * `FlameWorkerSession.backend` seam and `runChunk` loop as every other
- * engine (fr-e26 — until the 4D GPU kernel existed, this class had its own
+ * engine (until the 4D GPU kernel existed, this class had its own
  * synchronous `runChunk4` twin); its `accumulate`/`snapshot` return plain
  * values (never promises), so `runChunk`'s `isPromiseLike` guard keeps a
  * CPU-only 4D render exactly as synchronous as it always was. This is both
@@ -921,7 +920,7 @@ export class FlameWorkerSession {
   private readonly createGpuBackend?: (
     request: GpuBackendRequest,
   ) => Promise<FlameAccumBackend>;
-  /** The 4D factory (fr-e26) — same absent-means-CPU rule, for 4D sessions. */
+  /** The 4D factory — same absent-means-CPU rule, for 4D sessions. */
   private readonly createGpuBackend4?: (
     request: GpuBackendRequest4,
   ) => Promise<FlameAccumBackend>;
@@ -989,12 +988,12 @@ export class FlameWorkerSession {
    * computeEffectiveSupersample's restart guard handles). */
   private symmetryOrder = 1;
   private symmetryPlane: SymmetryPlane = "xz";
-  /** The second angle of a 4D double rotation (fr-q0h6) — 0 for every 3D
+  /** The second angle of a 4D double rotation — 0 for every 3D
    * session, which cannot express one. */
   private symmetryTwist = 0;
   private rng: Rng = Math.random;
 
-  /** The current accumulation's engine (fr-npb) — `null` between a
+  /** The current accumulation's engine — `null` between a
    * `startAccumulation` and the next `runChunk` call, which creates one
    * lazily (GPU creation is async; `startAccumulation`'s callers are all
    * synchronous command handlers, so they can't await it themselves). */
@@ -1010,18 +1009,18 @@ export class FlameWorkerSession {
    * recovery ladder in {@link handleGpuFailure} exhausted — and never
    * resets. NOT set by an individual size/mid-render failure while the
    * ladder still has smaller supersamples (or the one device-loss retry)
-   * left to try: fr-2w5's measurements showed GPU allocation ceilings sit
+   * left to try: measurements showed GPU allocation ceilings sit
    * far below reported limits AND move run-to-run with memory pressure, so
    * "failed once at this size" says nothing about smaller sizes. */
   private gpuFailed = false;
   /** GPU-only supersample ceiling, learned by {@link handleGpuFailure}'s
    * shrink-and-retry ladder: ratchets DOWN from the failing effective
    * supersample so the retry recomputes a smaller accumulation and stays ON
-   * the GPU (fr-e07's prescribed real fix). Consulted by
-   * `computeEffectiveSupersample` only while GPU is still eligible — once
-   * `gpuFailed` sets, the CPU fallback recomputes WITHOUT this clamp and
-   * gets its full budgeted supersample back. Session-lifetime, reset by
-   * `start`. */
+   * the GPU — the prescribed real fix for a refused allocation, where
+   * dropping to CPU is not. Consulted by `computeEffectiveSupersample` only
+   * while GPU is still eligible — once `gpuFailed` sets, the CPU fallback
+   * recomputes WITHOUT this clamp and gets its full budgeted supersample
+   * back. Session-lifetime, reset by `start`. */
   private gpuMaxSupersample = Infinity;
   /** Whether this session has already spent its ONE free full-size GPU
    * retry after a mid-render failure at supersample 1 (typically a lost
@@ -1039,7 +1038,7 @@ export class FlameWorkerSession {
    * with no `createGpuBackend` factory wired up
    * behaves identically regardless of what this says. */
   private gpuPreference: "auto" | "off" = "off";
-  /** fr-ul2 throughput instrumentation, all inert unless the `start` command
+  /** Throughput instrumentation, all inert unless the `start` command
    * set `instrument` (see its doc). `perf` accumulates per-chunk phase timings
    * and periodically yields a summary to `log`; `lastChunkEndAt` is the clock
    * reading at the previous chunk's end, so the next chunk can attribute the
@@ -1103,7 +1102,7 @@ export class FlameWorkerSession {
 
   private iterationsDone = 0;
   private iterationsBudget = 0;
-  /** See the start command's `iterationsBudgetScale` (fr-2urv). Session-lifetime, set by `start`. */
+  /** See the start command's `iterationsBudgetScale`. Session-lifetime, set by `start`. */
   private iterationsBudgetScale = 1;
 
   private tonemapParams: TonemapParams = {
@@ -1126,7 +1125,7 @@ export class FlameWorkerSession {
   private lastDownsampleAt: number | undefined;
   /**
    * "The finished-frame adaptive display for the CURRENT accumulation +
-   * budget has already been sent" (fr-ee9). Exists because a
+   * budget has already been sent". Exists because a
    * `snapshotDisplay`-capable (GPU) backend's progressive due ticks
    * deliberately never refresh `this.histogram` (see that method's doc) —
    * so `setIterationsBudget`'s lowered-mid-render branch can no longer
@@ -1144,7 +1143,7 @@ export class FlameWorkerSession {
    * double-scheduling the loop (e.g. a `setIterationsBudget` bump arriving
    * while a chunk is already pending). */
   private running = false;
-  /** True while a deferred re-estimate (fr-3fv) is sitting in the schedule
+  /** True while a deferred re-estimate is sitting in the schedule
    * queue — guards `setEstimatorParam` against queuing a second one on top
    * of it, which is what lets a burst of live estimator-param commands
    * coalesce into a single adaptive pass instead of one per command (see
@@ -1182,14 +1181,14 @@ export class FlameWorkerSession {
         if (this.iterationsDone < this.iterationsBudget) {
           // Resuming past a prior finish (or past whatever had accumulated)
           // means a new finished frame will eventually be owed again —
-          // un-latch the guard (fr-ee9) before ensureRunning() schedules the
+          // un-latch the guard before ensureRunning() schedules the
           // chunk that will (eventually) produce it.
           this.finalFrameDisplayed = false;
           this.ensureRunning();
         } else if (wasFinished) {
           // Already finished before this change, so the frame on screen is
           // already the adaptive finished one — only the label's target is
-          // now stale (fr-15z). Re-send (a cheap re-tonemap in transfer
+          // now stale. Re-send (a cheap re-tonemap in transfer
           // mode, a scalars-only re-notification in shared mode) so it
           // reads 100% against the new budget.
           this.redisplayNow();
@@ -1197,7 +1196,7 @@ export class FlameWorkerSession {
           // Lowered to/below the accumulated count mid-render: that finishes
           // the render on the spot, but no chunk will run to say so — the
           // already-scheduled one bails silently in runChunk — so the label
-          // would freeze at its last value (fr-15z) and the display would
+          // would freeze at its last value and the display would
           // keep the cheap progressive filter instead of the finished-frame
           // adaptive estimate. Finish here: adaptive pass + final progress —
           // but ONLY for the CPU backend, whose live `this.histogram` is
@@ -1211,7 +1210,7 @@ export class FlameWorkerSession {
         // deliberately skip it, see FlameAccumBackend.snapshotDisplay's doc)
         // or STALE (left over from a PREVIOUS finish), so redisplaying from
         // it now would either no-op or silently show old data — do nothing
-        // here. runChunk's own budget-met entry bail (fr-ee9) is what
+        // here. runChunk's own budget-met entry bail is what
         // actually finishes the render in this case: it fetches a fresh
         // `backend.snapshot()` and produces the finished frame instead —
         // mid-render implies `running === true`, so a chunk is always
@@ -1252,8 +1251,8 @@ export class FlameWorkerSession {
     }
   }
 
-  /** The session's live kaleidoscope as the one object every consumer wants
-   * (fr-q0h6): `prepareChaosGame`/`prepareChaosGame4`, `symmetryIsNonFlat`,
+  /** The session's live kaleidoscope as the one object every consumer
+   * wants: `prepareChaosGame`/`prepareChaosGame4`, `symmetryIsNonFlat`,
    * and the GPU packer all take a {@link SymmetryParams}, so the three
    * retained scalars are reassembled here rather than at each call site. */
   private symmetry(): SymmetryParams {
@@ -1266,7 +1265,7 @@ export class FlameWorkerSession {
 
   /**
    * {@link symmetry} as the 3D `prepareChaosGame` can express it: a 4D
-   * kaleidoscope (fr-q0h6 — a w-plane, or a twist) has no 3D expansion at
+   * kaleidoscope (a w-plane, or a twist) has no 3D expansion at
    * all, and `chaos-game.ts`'s `symmetryRotation` THROWS on a w-plane rather
    * than degrade, so the 3D prepare is asked for the identity instead.
    * Authoring one also makes the SYSTEM non-flat, so in a 4D session that
@@ -1418,11 +1417,11 @@ export class FlameWorkerSession {
       case "transform":
         return {
           kind: "transform",
-          // BASE maps, not the symmetry-EXPANDED slot count (fr-q0h6):
+          // BASE maps, not the symmetry-EXPANDED slot count:
           // `accumulateFlame4` (and the GPU kernel) index this by
           // `idx % baseTransformCount`, so every kaleidoscope copy takes the
           // color of the map it copies — and the hues stay put when the
-          // kaleidoscope's order changes. colorIndexes (fr-axxl) come from
+          // kaleidoscope's order changes. colorIndexes come from
           // the same `baseTransforms4` the structural walk already resolves
           // its own colorIndex/colorSpeed pair from — no second wire channel
           // needed.
@@ -1482,9 +1481,8 @@ export class FlameWorkerSession {
    * `setSupersample`/`setPalette`/`setSymmetry` command, and the
    * allocation-failure fallback in `runChunk` — all need a from-scratch
    * histogram at a (possibly new) size, and this is the ONE place that
-   * actually discards one, which is also where the `restarted` event
-   * (fr-h6sn) is emitted. Assumes width/height (the display size) are
-   * already set.
+   * actually discards one, which is also where the `restarted` event is
+   * emitted. Assumes width/height (the display size) are already set.
    */
   private startAccumulation(requested: number): void {
     const effective = this.computeEffectiveSupersample(requested);
@@ -1492,7 +1490,7 @@ export class FlameWorkerSession {
     this.accumHeight = this.height * effective;
     this.effectiveSupersample = effective;
     this.lastRequestedSupersample = requested;
-    // A restart, in place, of the SAME session (fr-npb) — bump the
+    // A restart, in place, of the SAME session — bump the
     // generation so a `runChunk` already in flight (mid-chunk, or awaiting
     // GPU backend creation) recognizes on its next check that IT has been
     // superseded, and destroy the outgoing backend now rather than leaving
@@ -1567,7 +1565,7 @@ export class FlameWorkerSession {
    * these commands in quick succession. Running the pass synchronously per
    * command makes the visible display lag behind the pointer by (queued
    * commands × pass cost): a one-second drag can queue ~30 of them, each
-   * replaying the full pass before the next command is even read (fr-3fv).
+   * replaying the full pass before the next command is even read.
    *
    * So instead of running it inline, defer the pass through `schedule`
    * (`(fn) => setTimeout(fn, 0)` in the real worker) and coalesce with
@@ -1594,8 +1592,8 @@ export class FlameWorkerSession {
    * covers `setIterationsBudget` resuming accumulation WITHOUT bumping
    * `generation` (see that case's comment) — without this check, a
    * deferred pass firing mid-resume would waste a full pass on a histogram
-   * about to be overwritten AND prematurely set `finalFrameDisplayed`
-   * (fr-ee9), suppressing the resumed render's own real finished frame.
+   * about to be overwritten AND prematurely set `finalFrameDisplayed`,
+   * suppressing the resumed render's own real finished frame.
    */
   private setEstimatorParam<K extends keyof DensityEstimatorParams>(
     key: K,
@@ -1641,8 +1639,8 @@ export class FlameWorkerSession {
   }
 
   /** Live kaleidoscope change. Both dimensions rebuild their own prepared
-   * game (fr-q0h6 gave the 4D path `postRotations`/base-map bookkeeping of
-   * its own, so this is no longer 3D-only) and restart the accumulation. */
+   * game (the 4D path has `postRotations`/base-map bookkeeping of its
+   * own, so this is no longer 3D-only) and restart the accumulation. */
   private setSymmetry(
     order: number,
     plane: SymmetryPlane,
@@ -1697,7 +1695,7 @@ export class FlameWorkerSession {
    * Bring up a backend for the CURRENT accumulation: GPU first when
    * `gpuPreference` is `"auto"`, the session's dimension has a factory
    * wired up, and GPU hasn't already failed this session; CPU otherwise.
-   * Dimension-aware (fr-e26): a 4D session tries `createGpuBackend4` and
+   * Dimension-aware: a 4D session tries `createGpuBackend4` and
    * falls back to {@link Cpu4DFlameBackend}, a 3D one tries
    * `createGpuBackend` and falls back to {@link CpuFlameBackend} — one
    * `gpuPreference`/`gpuFailed` discipline over both. Returns the CPU
@@ -1748,7 +1746,7 @@ export class FlameWorkerSession {
 
   /**
    * The one GPU-failure policy, shared by every failure site — the factory
-   * catches below and `runChunk`'s mid-render catches (fr-2w5). Decides
+   * catches below and `runChunk`'s mid-render catches. Decides
    * between the recovery ladder (stay on GPU at a smaller size, or one
    * fresh-device retry) and the permanent CPU ratchet, restarting the
    * accumulation whenever its effective size must change or the failed
@@ -1765,7 +1763,8 @@ export class FlameWorkerSession {
    * - `"cpu"`: permanent ratchet at create time with the accumulation size
    *   unchanged — continue THIS accumulation on a CPU backend.
    *
-   * The ladder, concretely (all measurements fr-2w5):
+   * The ladder, concretely (all measurements from the flame
+   * GPU-selection investigation, `docs/flame-gpu-selection-investigation.md`):
    * - {@link FlameGpuUnavailableError} → permanent, `"no-webgpu"` (no size
    *   or retry would help — the context simply has no WebGPU).
    * - Any other failure with effective supersample > 1 → learn
@@ -1775,7 +1774,9 @@ export class FlameWorkerSession {
    *   1 GiB reported vs <1 GiB mappable on Firefox) that one step down
    *   almost always fits — and a GPU render at 1x beats a CPU render at 2x
    *   by an order of magnitude in the iterations that actually converge the
-   *   image (fr-e07's prescribed, never-implemented real fix).
+   *   image — the real fix a refused GPU allocation needs, where
+   *   escalating to a second WebGPU host was tried and reverted (both
+   *   hosts throw the same out-of-memory).
    * - At supersample 1, one `gpuLossRetried` full-size mid-render retry (a
    *   lost device — driver reset/GPU-process crash — usually comes back
    *   with a fresh adapter), then permanent `"error"`.
@@ -1877,7 +1878,7 @@ export class FlameWorkerSession {
     }
   }
 
-  /** The 4D twin of {@link createGpuBackendWithFallback} (fr-e26) — same
+  /** The 4D twin of {@link createGpuBackendWithFallback} — same
    * policy, `Cpu4DFlameBackend` as the CPU fallback. */
   private async createGpuBackend4WithFallback(
     gpuFactory4: (request: GpuBackendRequest4) => Promise<FlameAccumBackend>,
@@ -1970,9 +1971,9 @@ export class FlameWorkerSession {
   /** Assembles a {@link GpuBackendRequest} from the session's retained
    * "last start" state — see that type's doc for the per-restart `seed`.
    * Same non-null-assertion discipline as {@link makeCpuBackend}, and the
-   * same field-free shape as {@link buildGpuBackendRequest4} (fr-e26 made
-   * `createBackend` arg-free; a lingering `projection` parameter here would
-   * suggest a per-call value where there is only the session's own). */
+   * same field-free shape as {@link buildGpuBackendRequest4}
+   * (`createBackend` is arg-free; a lingering `projection` parameter here
+   * would suggest a per-call value where there is only the session's own). */
   private buildGpuBackendRequest(): GpuBackendRequest {
     return {
       transforms: this.baseTransforms,
@@ -1990,7 +1991,7 @@ export class FlameWorkerSession {
     };
   }
 
-  /** The 4D twin of {@link buildGpuBackendRequest} (fr-e26). Non-null
+  /** The 4D twin of {@link buildGpuBackendRequest}. Non-null
    * assertions per {@link makeCpu4DBackend}'s discipline; `fourDColor` is
    * rebuilt by every `startAccumulation`, so the request always carries the
    * CURRENT palette/color-mode dispatch, exactly like the CPU backend. */
@@ -2027,7 +2028,7 @@ export class FlameWorkerSession {
    * the microtask queue, and a plain synchronous `while` loop can never
    * catch that continuation (see `isPromiseLike`'s doc).
    *
-   * Generation handling (fr-npb): `gen` is this call's accumulation
+   * Generation handling: `gen` is this call's accumulation
    * identity, captured on entry. Because backend creation and accumulation
    * can both genuinely suspend (the GPU paths), a `setSupersample`/
    * `setPalette`/`setSymmetry`/OOM-ratchet/GPU-failure restart can land on
@@ -2049,9 +2050,8 @@ export class FlameWorkerSession {
     // a chunk already scheduled runs regardless of what happens in between
     // (JS is single-threaded, but a `setIterationsBudget` command handled
     // before this chunk fires doesn't retroactively unschedule it).
-    // `hasGeometry()` covers whichever dimension this session runs in
-    // (fr-e26 — this one loop now drives 3D and 4D alike; see
-    // `createBackend`).
+    // `hasGeometry()` covers whichever dimension this session runs in (this
+    // one loop drives 3D and 4D alike; see `createBackend`).
     if (!this.hasGeometry()) {
       this.running = false;
       return;
@@ -2061,7 +2061,7 @@ export class FlameWorkerSession {
     // never raised past it) must stop here too — without this,
     // `iterationsBudget - iterationsDone` below goes negative and silently
     // corrupts the progress count instead of just finishing. Split out from
-    // the prepared/projection bail above (fr-ee9): unlike that,
+    // the prepared/projection bail above: unlike that,
     // this case may still owe the finished-frame adaptive display — a
     // snapshotDisplay-capable (GPU) backend's progressive due ticks
     // deliberately never refresh `this.histogram` (see
@@ -2133,7 +2133,7 @@ export class FlameWorkerSession {
         : createdResult;
       if (created === null || gen !== this.generation) {
         // Superseded while the factory was in flight — by a live command's
-        // restart, or (`null`, fr-2w5) by the factory's own failure ladder
+        // restart, or (`null`) by the factory's own failure ladder
         // restarting at a smaller supersample (see this method's doc and
         // handleGpuFailure). Nobody else references `created` — it was
         // never installed as `this.backend` — so release it now rather
@@ -2166,7 +2166,7 @@ export class FlameWorkerSession {
     }
     const backend = this.backend;
 
-    // fr-ul2 instrumentation: this chunk's steady-state start (AFTER any
+    // Instrumentation: this chunk's steady-state start (AFTER any
     // one-time backend creation above, so backend-bring-up cost isn't charged
     // to steady-state throughput) and the scheduling gap since the previous
     // chunk's work ended. Both guarded — a non-instrumented run reads the
@@ -2192,7 +2192,7 @@ export class FlameWorkerSession {
     // the `due` computation below), so `this.histogram` is always populated
     // from that very chunk's snapshot before `runChunk` can be called
     // again — this session-level flag correctly tracks "fresh start" across
-    // every backend. (fr-ee9: a snapshotDisplay-capable GPU backend's
+    // every backend. (A snapshotDisplay-capable GPU backend's
     // progressive due ticks leave `this.histogram` unpopulated — see that
     // method's doc — so the "first due chunk populates this.histogram"
     // invariant above doesn't hold universally. It still holds everywhere
@@ -2217,8 +2217,8 @@ export class FlameWorkerSession {
         return;
       }
       if (backend.kind === "gpu") {
-        // GPU failure recovery (fr-2w5): a GPU accumulate failure at a big
-        // supersample IS very often a size signal — fr-2w5 measured
+        // GPU failure recovery: a GPU accumulate failure at a big
+        // supersample IS very often a size signal — measured
         // allocation ceilings far below reported limits, moving with live
         // memory pressure, and surfacing mid-render when create-time scopes
         // miss them — so handleGpuFailure's ladder retries smaller ON the
@@ -2270,14 +2270,14 @@ export class FlameWorkerSession {
       finished ||
       this.lastDownsampleAt === undefined ||
       t1 - this.lastDownsampleAt >= FLAME_REDISPLAY_INTERVAL_MS;
-    // fr-ul2: bracket the WHOLE redisplay (readback + convert + display) so its
+    // Bracket the WHOLE redisplay (readback + convert + display) so its
     // cost is attributed apart from accumulate. Reading the clock here (not
     // inside the branches) leaves their control flow untouched; a superseded/
     // failed readback returns early and never reaches the meter feed below.
     const tReadback0 = this.instrument && due ? this.now() : 0;
     if (due) {
       if (!finished && backend.snapshotDisplay !== undefined) {
-        // GPU progressive display path (fr-ee9): the downsample runs
+        // GPU progressive display path: the downsample runs
         // resident on the device, reading back only a display-resolution
         // histogram — no full w*h*ss^2 readback + CPU downsampleFlame every
         // tick (see FlameAccumBackend.snapshotDisplay's doc). `this.histogram`
@@ -2372,7 +2372,7 @@ export class FlameWorkerSession {
       }
     }
 
-    // fr-ul2: feed this chunk's phase timings to the meter and periodically log
+    // Feed this chunk's phase timings to the meter and periodically log
     // a summary. Reaching here means the chunk's accumulate (and any due
     // redisplay) both succeeded for the current generation. `now` also stamps
     // the chunk's end so the NEXT chunk can attribute the scheduling gap.
@@ -2423,7 +2423,7 @@ export class FlameWorkerSession {
    * Advance the display-slot cursor and return the slot the caller should
    * write into next — the slot-cycling dance `rebuildDisplay` (the CPU/
    * finished-frame downsample path) and the GPU progressive display path
-   * (fr-ee9's `runChunk` due branch) both need identically: cycles
+   * (`runChunk`'s due branch) both need identically: cycles
    * {@link displaySlots} (the SAB-backed double buffer in shared mode, or the
    * one locally-owned reused histogram in transfer mode), recording which
    * slot was written last for {@link sendProgress}'s `sharedFrame` notice.
@@ -2440,7 +2440,7 @@ export class FlameWorkerSession {
    * Rebuild `displayHistogram` from the current (full-resolution)
    * `histogram` into the next {@link displaySlots} target (via
    * {@link takeDisplaySlot}). `adaptive` picks the filter: the full
-   * density-estimation pass (fr-17t) is O(width * height * radius^2) and not
+   * density-estimation pass is O(width * height * radius^2) and not
    * chunked — cheap enough to pay ONCE on the finished frame, but not on
    * every throttled progressive redisplay while still accumulating (that
    * loop's whole reason to be throttled at all). The cheap fixed-radius
@@ -2450,7 +2450,7 @@ export class FlameWorkerSession {
    */
   private rebuildDisplay(adaptive: boolean): void {
     if (!this.histogram) return;
-    // Queued ahead of the synchronous pass below (fr-99z) so the main thread
+    // Queued ahead of the synchronous pass below so the main thread
     // sees it while the worker is still crunching, not after — see the
     // FlameWorkerEvent variant's doc. Progressive redisplays (adaptive ===
     // false) never take long enough to need this.
@@ -2514,7 +2514,7 @@ export class FlameWorkerSession {
    * calling this, precisely so that stays true even though the command
    * that queued it may have arrived mid-accumulation), so this IS the
    * finished-frame adaptive display for the current accumulation + budget —
-   * set `finalFrameDisplayed` (fr-ee9) accordingly. */
+   * set `finalFrameDisplayed` accordingly. */
   private redisplayWithFreshEstimate(): void {
     if (!this.histogram) return;
     this.rebuildDisplay(true);

@@ -9,8 +9,8 @@ import type { ViewPose } from "./history";
  * no DOM, no real clock. `fireSave` fires whatever debounce is currently
  * armed (the 300 ms save timer in the app); `current`/`setScene` stand in for
  * reading and mutating the app's live `state`; `currentPose`/`setPose` stand
- * in for the live view pose — since fr-gq99 the whole view framing, the orbit
- * camera (fr-uf3) plus, for a non-flat system, the 4D rotor/slice half, not
+ * in for the live view pose — the whole view framing, the orbit
+ * camera plus, for a non-flat system, the 4D rotor/slice half, not
  * just the camera. `restore` mirrors main.ts: only a cross-replace step moves
  * the camera, so only then does the modelled live pose follow the restored
  * entry.
@@ -136,7 +136,7 @@ describe("EditSession replace", () => {
   });
 });
 
-describe("EditSession view pose across a replace (fr-uf3, fr-gq99)", () => {
+describe("EditSession view pose across a replace", () => {
   const poseS0: ViewPose = {
     camera: { target: [0, 0, 0], radius: 10, theta: 0, phi: 1 },
   };
@@ -218,7 +218,7 @@ describe("EditSession view pose across a replace (fr-uf3, fr-gq99)", () => {
     expect(last.replaced).toBe(false);
   });
 
-  it("undo across a replace restores the checkpoint's captured 4D pose, not the current one (fr-gq99)", () => {
+  it("undo across a replace restores the checkpoint's captured 4D pose, not the current one", () => {
     const h = harness();
     h.setPose(pose4D); // viewing a non-flat system
     h.session.beginEdit("replace"); // checkpoints s0 tagged replaced, captures pose4D
@@ -234,7 +234,7 @@ describe("EditSession view pose across a replace (fr-uf3, fr-gq99)", () => {
     expect(last.pose?.fourD).toBe(fourD);
   });
 
-  it("redo hands back the parked pose's missing 4D half as absent (fr-gq99)", () => {
+  it("redo hands back the parked pose's missing 4D half as absent", () => {
     const h = harness();
     h.setPose(pose4D);
     h.session.beginEdit("replace");

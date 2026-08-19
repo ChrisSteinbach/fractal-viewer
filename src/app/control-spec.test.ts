@@ -102,7 +102,7 @@ describe("applyScalarControl: parsing/mapping", () => {
     expect(state.balloonTintStrength).toBe(0.5);
   });
 
-  it("surfaceBalloonTintStrength apply parses the raw string into the SAME numeric balloonTintStrength (fr-j85n: one balloon, two renderers)", () => {
+  it("surfaceBalloonTintStrength apply parses the raw string into the SAME numeric balloonTintStrength (one balloon, two renderers)", () => {
     const spec = specById("surfaceBalloonTintStrength");
 
     const state = applyScalarControl(initialState(true), spec, "0.5");
@@ -243,7 +243,7 @@ describe("read: state -> element value", () => {
     expect(spec.read(state)).toBe("ember");
   });
 
-  it("surfaceGroundPlaneCheckbox read reflects state.groundPlane (fr-rhn5)", () => {
+  it("surfaceGroundPlaneCheckbox read reflects state.groundPlane", () => {
     const spec = specById("surfaceGroundPlaneCheckbox");
     const state = { ...initialState(true), groundPlane: true };
 
@@ -349,7 +349,7 @@ describe("effects", () => {
       expect(fx.scene.setFogTint).toHaveBeenCalledWith([1, 1, 1], 0.5);
     });
 
-    it("surfaceBalloonCheckbox effect re-enters the surface session and cancels an in-flight sweep (fr-5wlv.4)", () => {
+    it("surfaceBalloonCheckbox effect re-enters the surface session and cancels an in-flight sweep", () => {
       const spec = specById("surfaceBalloonCheckbox");
       const previous = initialState(true);
       const state = applyScalarControl(previous, spec, true);
@@ -364,7 +364,7 @@ describe("effects", () => {
       expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
     });
 
-    it("surfaceBalloonRadiusSlider effect forwards the radius through the scene's cheap path and cancels an in-flight sweep (fr-5wlv.4)", () => {
+    it("surfaceBalloonRadiusSlider effect forwards the radius through the scene's cheap path and cancels an in-flight sweep", () => {
       const spec = specById("surfaceBalloonRadiusSlider");
       const previous = initialState(true);
       const state = applyScalarControl(previous, spec, "0.9");
@@ -377,7 +377,7 @@ describe("effects", () => {
       expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
     });
 
-    it("balloonTintStrength effect forwards the tint (as rgb01) and strength to the scene (fr-j85n)", () => {
+    it("balloonTintStrength effect forwards the tint (as rgb01) and strength to the scene", () => {
       const spec = specById("balloonTintStrength");
       const previous = initialState(true);
       const state = applyScalarControl(previous, spec, "0.5");
@@ -390,7 +390,7 @@ describe("effects", () => {
       expect(fx.scene.setBalloonTint).toHaveBeenCalledWith([0, 0, 0], 0.5);
     });
 
-    it("surfaceBalloonTintStrength effect forwards the SAME tint/strength through the SAME scene method, with no session re-enter (fr-j85n)", () => {
+    it("surfaceBalloonTintStrength effect forwards the SAME tint/strength through the SAME scene method, with no session re-enter", () => {
       const spec = specById("surfaceBalloonTintStrength");
       const previous = initialState(true);
       const state = applyScalarControl(previous, spec, "0.5");
@@ -406,7 +406,7 @@ describe("effects", () => {
       expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
     });
 
-    it("surfaceGroundPlaneCheckbox apply sets state.groundPlane and its effect re-enters the surface session (fr-rhn5)", () => {
+    it("surfaceGroundPlaneCheckbox apply sets state.groundPlane and its effect re-enters the surface session", () => {
       const spec = specById("surfaceGroundPlaneCheckbox");
       const previous = initialState(true);
       const state = applyScalarControl(previous, spec, true);
@@ -433,12 +433,12 @@ describe("effects", () => {
 
       // Each no-ops in the other view (recolor only touches the flat cloud;
       // applyFourDColor only touches the 4D bake), so calling both
-      // unconditionally re-bakes exactly the displayed cloud (fr-6ue).
+      // unconditionally re-bakes exactly the displayed cloud.
       expect(fx.recolor).toHaveBeenCalled();
       expect(fx.applyFourDColor).toHaveBeenCalled();
     });
 
-    it("rampPalette effect also tracks the auto background (fr-mz2u)", () => {
+    it("rampPalette effect also tracks the auto background", () => {
       const spec = specById("rampPalette");
       const previous = initialState(true);
       const state = applyScalarControl(previous, spec, "ember");
@@ -497,7 +497,7 @@ describe("effects", () => {
       expect(fx.postVoxel).toHaveBeenCalledWith(command);
     });
 
-    it("symmetry effect re-derives the Surface eligibility gate (fr-vja8.10)", () => {
+    it("symmetry effect re-derives the Surface eligibility gate", () => {
       // A symmetry edit can flip the document's flatness (a w-plane or a
       // twist) or close the Mandelbulb arm (order > 1), and the scalar
       // pipeline never runs a full refreshUi — the effect must refresh the
@@ -641,7 +641,7 @@ describe("effects", () => {
       });
     });
 
-    it("flamePalette effect also tracks the auto background, alongside still posting setPalette (fr-mz2u)", () => {
+    it("flamePalette effect also tracks the auto background, alongside still posting setPalette", () => {
       const spec = specById("flamePalette");
       const previous = initialState(true);
       const state = applyScalarControl(previous, spec, "spectrum");
@@ -649,8 +649,9 @@ describe("effects", () => {
 
       spec.effect?.(state, fx, previous);
 
-      // Proves the fr-mz2u addition extended the effect rather than replacing
-      // it: the pre-existing worker forward still fires alongside the new call.
+      // Proves the auto-background call extended the effect rather than
+      // replacing it: the pre-existing worker forward still fires alongside
+      // the new call.
       expect(fx.trackAutoBackground).toHaveBeenCalledTimes(1);
       expect(fx.postFlame).toHaveBeenCalledWith({
         type: "setPalette",
@@ -760,7 +761,7 @@ describe("effects", () => {
       });
     });
 
-    it("solidPalette effect also tracks the auto background (fr-mz2u)", () => {
+    it("solidPalette effect also tracks the auto background", () => {
       const spec = specById("solidPalette");
       const previous = initialState(true);
       const state = applyScalarControl(previous, spec, "spectrum");
@@ -980,7 +981,7 @@ describe("effects", () => {
       );
     });
 
-    it("surfacePalette effect also tracks the auto background (fr-mz2u)", () => {
+    it("surfacePalette effect also tracks the auto background", () => {
       const spec = specById("surfacePalette");
       const previous = initialState(true);
       const state = applyScalarControl(previous, spec, "aurora");
@@ -1031,7 +1032,7 @@ describe("surfaceColorLUT", () => {
     expect(lut).toEqual(buildPaletteLUT(DEFAULT_SOLID_PALETTE));
   });
 
-  it('returns the identical LUT as "palette" for the "rings" colorSource (fr-rl4b, same paletteId)', () => {
+  it('returns the identical LUT as "palette" for the "rings" colorSource (same paletteId)', () => {
     // rings and palette read different coordinates off the same descent, but
     // both sample the user's chosen gradient — they must share one LUT.
     const base = initialState(true);
@@ -1057,7 +1058,7 @@ describe("surfaceColorLUT", () => {
     expect(lut).toEqual(surfaceColorLUT(paletteState));
   });
 
-  it('returns the identical LUT as "palette" for the "sheets" colorSource (fr-rl4b, same paletteId)', () => {
+  it('returns the identical LUT as "palette" for the "sheets" colorSource (same paletteId)', () => {
     const base = initialState(true);
     const paletteState = {
       ...base,
@@ -1100,7 +1101,7 @@ describe("surfaceColorLUT", () => {
   });
 });
 
-describe("commit (fr-2c27)", () => {
+describe("commit", () => {
   it("numPointsSlider commit calls regenerateIfAutoUpdate", () => {
     const spec = specById("numPointsSlider");
     if (spec.kind !== "range") throw new Error("expected a range spec");
@@ -1124,9 +1125,9 @@ describe("commit (fr-2c27)", () => {
 describe("table policy", () => {
   it("morphDetail, autoUpdate, adaptiveResolutionCheckbox, and exportScale are the only entries marked persisted: false", () => {
     // The balloon pairs (balloonEchoCheckbox/balloonRadiusSlider,
-    // surfaceBalloonCheckbox/surfaceBalloonRadiusSlider) left this list in
-    // fr-5wlv.6: the balloon graduated from session-only view state to
-    // persisted scene content (epic fr-5wlv's "mode persists" acceptance).
+    // surfaceBalloonCheckbox/surfaceBalloonRadiusSlider) left this list when
+    // the balloon graduated from session-only view state to persisted scene
+    // content.
     const neverPersisted = SCALAR_CONTROLS.filter(
       (s) => s.persisted === false,
     ).map((s) => s.id);
@@ -1177,9 +1178,9 @@ describe("table policy", () => {
       (s) => s.view === undefined,
     ).length;
 
-    // The symmetry entries left the flat set with fr-q0h6 P6: a kaleidoscope
-    // is live in both views now (a w-plane or twist even makes the system
-    // 4D), so its controls carry no view guard.
+    // The symmetry entries left the flat set when the 4D chaos game got a
+    // kaleidoscope of its own: it is live in both views now (a w-plane or
+    // twist even makes the system 4D), so its controls carry no view guard.
     expect(flatIds).toEqual(
       ["colorGammaSlider", "colorMode", "renderStyle"].sort(),
     );

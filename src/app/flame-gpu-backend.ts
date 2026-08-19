@@ -1,5 +1,5 @@
 /**
- * The WebGPU flame-accumulation backend's BROWSER side (fr-npb): plugs
+ * The WebGPU flame-accumulation backend's BROWSER side: plugs
  * `flame-gpu.ts`'s pure packing/planning/conversion layer into the flame
  * worker session's {@link FlameAccumBackend} seam (`flame-worker-core.ts`).
  * `flame-worker.ts` wires {@link createGpuFlameBackend} in as that seam's
@@ -8,18 +8,18 @@
  * thread's (see that module's own doc for why `self`/`navigator` aren't
  * typed via the `webworker` lib in this project).
  *
- * Structurally this is fr-53k's spike driver (`git show
- * spike/fr-53k-gpu-flame-accum:src/app/gpu-spike/engine.ts`), restated
- * against this module's COMMITTED layout/API: 240 B slots (15 variation
- * lanes, fr-p7nu's Mandelbox fold family bringing the original 12 to 15) and
- * 8-word (emulated-u64) histogram buckets instead of the spike's
- * 144 B/4-lane/single-u32 shapes, and `flame-gpu.ts`'s exported
+ * Structurally this is the GPU flame-accumulation spike's driver
+ * (`docs/flame-gpu-accumulation-spike.md`), restated against this module's
+ * COMMITTED layout/API: 240 B slots (15 variation lanes, the Mandelbox fold
+ * family bringing the original 12 to 15) and 8-word (emulated-u64)
+ * histogram buckets instead of the spike's 144 B/4-lane/single-u32 shapes,
+ * and `flame-gpu.ts`'s exported
  * `packGpuSystem`/`packGpuChains`/`packGpuParams`/`planGpuDispatches`/
  * `convertGpuHistogram` instead of the spike's local (unexported) packing
  * helpers. See that file's module doc for the byte-layout contract this
  * drives and the WGSL kernel itself.
  *
- * fr-e26: the driver body — device acquisition, buffer/bind-group/pipeline
+ * The driver body — device acquisition, buffer/bind-group/pipeline
  * setup, the shared downsample pipeline, the warmup dispatch, and the
  * {@link GpuFlameBackend} class itself — is dimension-agnostic, so it is
  * factored into {@link createBackendForProgram}, parameterized by a
@@ -31,18 +31,18 @@
  *
  * This module never falls back to CPU itself — every failure mode here is a
  * thrown (`create`) or rejected (`accumulate`) error with a message naming
- * what went wrong, and (fr-2w5) a CLASS naming its kind:
- * `FlameGpuUnavailableError` when the context has no usable WebGPU,
- * `FlameGpuSizeError` when the accumulation size is what failed (device
- * limits, or a scoped out-of-memory at resource creation), plain `Error`
- * otherwise. `flame-worker-core.ts`'s `FlameWorkerSession`
- * (`handleGpuFailure` — the supersample-shrink ladder in front of the
- * `gpuFailed` ratchet) owns all recovery and keys its retry policy off
- * those classes. Diagnostics that aren't part of that control flow (a
- * genuinely lost device, an uncaptured device error mid-render, the
- * one-line backend-up breadcrumb) just `console.info`/`console.error` — the
- * session's own `log` sink is what tells the user-visible fallback story
- * once the next `accumulate()` throws.
+ * what went wrong, and a CLASS naming its kind: `FlameGpuUnavailableError`
+ * when the context has no usable WebGPU, `FlameGpuSizeError` when the
+ * accumulation size is what failed (device limits, or a scoped
+ * out-of-memory at resource creation), plain `Error` otherwise.
+ * `flame-worker-core.ts`'s `FlameWorkerSession` (`handleGpuFailure` — the
+ * supersample-shrink ladder in front of the `gpuFailed` ratchet) owns all
+ * recovery and keys its retry policy off those classes. Diagnostics that
+ * aren't part of that control flow (a genuinely lost device, an uncaptured
+ * device error mid-render, the one-line backend-up breadcrumb) just
+ * `console.info`/`console.error` — the session's own `log` sink is what
+ * tells the user-visible fallback story once the next `accumulate()`
+ * throws.
  */
 import {
   BYTES_PER_GPU_BUCKET,
@@ -95,13 +95,13 @@ function ceilDiv(total: number, size: number): number {
 
 /**
  * Independent chains iterated in parallel — must be a multiple of
- * {@link WORKGROUP_SIZE} (512 workgroups at 128). fr-53k's spike measured
- * this as a good default across integrated and discrete GPUs; unlike the
+ * {@link WORKGROUP_SIZE} (512 workgroups at 128). The spike measured this
+ * as a good default across integrated and discrete GPUs; unlike the
  * spike, this isn't caller-configurable — one fixed value keeps the packed
  * chains buffer's size (and thus a big chunk of this backend's VRAM
  * footprint) predictable from the accumulation resolution alone.
  *
- * fr-hs9's phone validation kept this same value for mobile: an arm-valhall
+ * The phone validation kept this same value for mobile: an arm-valhall
  * phone passed the gpu-bench agreement checks and measured ~19-36x its CPU
  * worker at 65536 chains, so there is no adapter-conditional lower count —
  * the minimum dispatch quantum (one iteration per chain, ~1.2 ms at that
@@ -142,7 +142,7 @@ type DisplayConverter = (
 ) => FlameHistogram;
 
 /**
- * One accumulation program's worth of dimension-SPECIFIC state (fr-e26):
+ * One accumulation program's worth of dimension-SPECIFIC state:
  * the WGSL kernel, its packed buffers, the one mid-session-rewritten uniform
  * field's offset, and the readback conversions — everything about a backend
  * that differs between the 3D and 4D kernels. The dimension-AGNOSTIC rest
@@ -167,7 +167,7 @@ interface GpuProgramSpec {
   /** Accumulation resolution (display size x effective supersample). */
   width: number;
   height: number;
-  /** fr-ee9: display resolution + progressive filter radius — sizes the
+  /** Display resolution + progressive filter radius — sizes the
    * shared downsample pipeline (see `GpuBackendRequest`'s same fields). */
   displayWidth: number;
   displayHeight: number;
@@ -192,7 +192,7 @@ export interface GpuFlameBackendInit {
    * the downsample intermediate/weights/params) is reachable only through
    * the bind groups above, which is all it ever needed to be — the backend
    * held references purely so its `destroy()` could free them one by one,
-   * and since fr-mxkk `device.destroy()` does that. */
+   * and `device.destroy()` does that. */
   paramsBuffer: GPUBuffer;
   histBuffer: GPUBuffer;
   stagingBuffer: GPUBuffer;
@@ -210,7 +210,7 @@ export interface GpuFlameBackendInit {
   /** Whether the adapter is a software fallback — see
    * {@link FlameAccumBackend.software}. */
   software: boolean;
-  /** fr-ee9: the progressive-display two-pass separable downsample's
+  /** The progressive-display two-pass separable downsample's
    * pipelines, buffers, and shared bind group — see `snapshotDisplay`'s doc. */
   downsampleXPipeline: GPUComputePipeline;
   downsampleYPipeline: GPUComputePipeline;
@@ -262,15 +262,15 @@ export class GpuFlameBackend implements FlameAccumBackend {
    * `CpuFlameBackend` handing back its own live accumulator object every
    * time. The converters' `out` contract unconditionally overwrites every
    * bucket, so reuse is indistinguishable from a fresh allocation to any
-   * caller. Lazy (fr-2w5/fr-7su) because these are accumulation-resolution
+   * caller. Lazy because these are accumulation-resolution
    * Float64 arrays on the CPU heap — up to gigabytes at a desktop
    * resolution x supersample — and progressive redisplays never touch them
    * (they use `snapshotDisplay`): only the finished frame does. Allocating
    * them eagerly at create time taxed every GPU render with memory
-   * pressure that (fr-2w5's measurements) directly shrinks how much the
+   * pressure that — measured — directly shrinks how much the
    * GPU allocator will grant this same render's device buffers. */
   private outHistogram: FlameHistogram | null = null;
-  /** fr-ee9: the progressive-display two-pass downsample's pipelines,
+  /** The progressive-display two-pass downsample's pipelines,
    * buffers, and shared bind group — see `snapshotDisplay`'s doc. */
   private readonly downsampleXPipeline: GPUComputePipeline;
   private readonly downsampleYPipeline: GPUComputePipeline;
@@ -301,7 +301,7 @@ export class GpuFlameBackend implements FlameAccumBackend {
    * never complete. */
   private lost = false;
   /** True once {@link destroy} has been called. It means "teardown
-   * REQUESTED", not "device gone" (fr-mxkk): with an op still parked on
+   * REQUESTED", not "device gone": with an op still parked on
    * live submitted GPU work, the real teardown is deferred until
    * {@link opsInFlight} drains. {@link beginOp} refuses new work once this
    * is set, which is what makes that drain finite. {@link deviceDestroyed}
@@ -311,12 +311,12 @@ export class GpuFlameBackend implements FlameAccumBackend {
    * over the two paths that reach the real teardown ({@link destroy}, when
    * nothing was in flight, and {@link releaseOp}, when the last in-flight
    * op just unwound), since `destroyed` alone no longer tells those two
-   * apart (fr-mxkk). */
+   * apart. */
   private deviceDestroyed = false;
   /** GPU work spans between their `queue.submit` and their final unwind:
    * `accumulate`'s `onSubmittedWorkDone`, and the two snapshots' `mapAsync`
    * over a submitted `copyBufferToBuffer`. Tearing this backend down out
-   * from under one of those is the browser-killer fr-uec4 measured one
+   * from under one of those is the browser-killing teardown measured one
    * module over, so {@link destroy} hands the real teardown to whichever op
    * unwinds last. Each op parks on exactly ONE await, so the wait is
    * bounded by the chunk already in flight and there is nothing to cancel —
@@ -457,7 +457,7 @@ export class GpuFlameBackend implements FlameAccumBackend {
   }
 
   /**
-   * fr-ee9: the progressive-display downsample — runs the two-pass separable
+   * The progressive-display downsample — runs the two-pass separable
    * Gaussian filter (`FLAME_GPU_DOWNSAMPLE_WGSL`) over the RESIDENT `hist`
    * buffer (no full-histogram readback) and reads back only a
    * `displayWidth x displayHeight` f32 histogram into `out`. Both dispatches
@@ -500,13 +500,13 @@ export class GpuFlameBackend implements FlameAccumBackend {
   }
 
   /**
-   * Refuse-or-count, the one gate all three GPU entry points pass through
-   * (fr-mxkk). A lost device and a requested teardown both fail fast with a
+   * Refuse-or-count, the one gate all three GPU entry points pass through.
+   * A lost device and a requested teardown both fail fast with a
    * message naming `what`; anything that gets past them is COUNTED into
    * {@link opsInFlight} until its `finally` releases it.
    *
    * Refusing after `destroy()` is not defensive validation — it is what
-   * gives the deferred teardown a state to be in. Before fr-mxkk a
+   * gives the deferred teardown a state to be in. Before it a
    * destroyed backend held a destroyed device, so work submitted to it
    * could do nothing by construction; now the device outlives `destroy()`
    * by up to one op, and a backend that kept accepting work would keep
@@ -533,7 +533,7 @@ export class GpuFlameBackend implements FlameAccumBackend {
   /** One counted op ({@link beginOp}) has fully unwound — success, throw or
    * rejection alike, since every call site releases from a `finally`. If
    * {@link destroy} came in while it was live, this is the last one out and
-   * owes the deferred teardown (fr-mxkk). */
+   * owes the deferred teardown. */
   private releaseOp(): void {
     this.opsInFlight--;
     if (this.opsInFlight === 0 && this.destroyed) this.destroyDevice();
@@ -563,10 +563,10 @@ export class GpuFlameBackend implements FlameAccumBackend {
   }
 
   /**
-   * The actual teardown, behind the one-shot {@link deviceDestroyed} guard
-   * (fr-mxkk): reachable from both {@link destroy} (idle) and
-   * {@link releaseOp} (the last in-flight op just finished), and `destroyed`
-   * alone no longer tells those two calls apart.
+   * The actual teardown, behind the one-shot {@link deviceDestroyed}
+   * guard: reachable from both {@link destroy} (idle) and
+   * {@link releaseOp} (the last in-flight op just finished), and
+   * `destroyed` alone no longer tells those two calls apart.
    *
    * `device.destroy()` reclaims every buffer this backend owns, so the
    * eleven explicit `GPUBuffer.destroy()` calls that used to run ahead of it
@@ -585,14 +585,14 @@ export class GpuFlameBackend implements FlameAccumBackend {
 /**
  * Stand up one accumulation's worth of GPU state for a packed
  * {@link GpuProgramSpec} and return it behind the {@link FlameAccumBackend}
- * seam — the dimension-agnostic driver both factories share (fr-e26; this
- * is the whole body `createGpuFlameBackend` owned before the 4D kernel
+ * seam — the dimension-agnostic driver both factories share (this is the
+ * whole body `createGpuFlameBackend` owned before the 4D kernel
  * existed, with the program-specific inputs parameterized out).
  *
  * Every early-exit here is a thrown `Error` (which, inside this `async`
  * function, becomes a REJECTED promise) with a message naming what failed;
  * see the module doc for why this never attempts its own CPU fallback. The
- * error's CLASS is the session's classification signal (fr-2w5):
+ * error's CLASS is the session's classification signal:
  * {@link FlameGpuUnavailableError} for a context with no usable WebGPU at
  * all, {@link FlameGpuSizeError} for size-caused failures — the device-limit
  * guards AND any scoped out-of-memory error from resource creation, which
@@ -621,7 +621,7 @@ async function createBackendForProgram(
 
   // Without requiredLimits, the DEVICE (not just the adapter) is silently
   // capped at WebGPU's conservative spec-default limits (128 MiB) even on
-  // hardware that supports far more — fr-53k's spike caught this the hard
+  // hardware that supports far more — the spike caught this the hard
   // way; every render past a trivial accumulation resolution needs the
   // adapter's REAL ceiling, not the spec default.
   const device = await adapter.requestDevice({
@@ -650,12 +650,13 @@ async function createBackendForProgram(
  * invalid-but-real-looking buffer whose failure otherwise surfaces only
  * when something touches it mid-render, seconds later and with a message
  * naming the wrong thing ("invalid due to a previous error" at the first
- * snapshot readback — fr-2w5 reproduced exactly this at 4K x supersample 3,
- * and fr-e07's Firefox field report was the same mechanism). The scopes
+ * snapshot readback — reproduced exactly this at 4K x supersample 3, and
+ * a Firefox field report was the same mechanism). The scopes
  * convert that into a create-time, classified, retryable failure. Measured
  * on both Chrome and Firefox: allocation refusals DO report synchronously
  * through `pushErrorScope("out-of-memory")` here, at sizes far below the
- * limits the adapter reports (see the fr-2w5 bead / scripts/gpu-probe.mjs).
+ * limits the adapter reports (see `docs/flame-gpu-selection-investigation.md`
+ * and scripts/gpu-probe.mjs).
  */
 async function buildBackendOnDevice(
   device: GPUDevice,
@@ -729,7 +730,7 @@ async function buildBackendOnDevice(
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
   });
   // ONE reusable staging buffer for every snapshot() readback over this
-  // backend's whole lifetime — a fresh mappable buffer per call (as fr-53k's
+  // backend's whole lifetime — a fresh mappable buffer per call (as the
   // spike did, readHistogram() being called once at the very end there)
   // would be needless per-redisplay churn here, where runChunk calls
   // snapshot() repeatedly over a render's whole progressive lifetime.
@@ -772,7 +773,7 @@ async function buildBackendOnDevice(
   // An explicit (not "auto") pipeline layout, shared by both pipelines
   // below, so ONE bind group works for both — "auto" layouts can't share a
   // bind group across pipelines, and warmup/accumulate must read/write the
-  // exact same buffers (fr-53k lesson).
+  // exact same buffers (a spike lesson).
   const pipelineLayout = device.createPipelineLayout({
     label: "flame-gpu pipeline layout",
     bindGroupLayouts: [bindGroupLayout],
@@ -826,7 +827,7 @@ async function buildBackendOnDevice(
     ],
   });
 
-  // fr-ee9: the progressive-display two-pass separable downsample — built
+  // The progressive-display two-pass separable downsample — built
   // once per backend (display dims + filter radius are fixed for the whole
   // accumulation), driven by GpuFlameBackend.snapshotDisplay() on every
   // progressive redisplay tick instead of a full histogram readback + CPU
@@ -863,7 +864,7 @@ async function buildBackendOnDevice(
   // intermediate: one row per SOURCE row, one column per OUTPUT column (see
   // downsampleX's doc) — outW * srcH * 16 B, always <= the already-limit-
   // checked hist buffer's 32 B * srcW * srcH (since srcW >= outW), so no new
-  // device-limit guard is needed here (see the fr-ee9 brief's Part 2 note).
+  // device-limit guard is needed here.
   const intermediateBuffer = device.createBuffer({
     label: "flame-gpu downsample intermediate",
     size: program.displayWidth * program.height * DISPLAY_BUCKET_BYTES,
@@ -953,8 +954,8 @@ async function buildBackendOnDevice(
   });
 
   // binding 1 reuses the accumulate pipeline's own `histBuffer` (created
-  // above) as a read-only resource — the whole point of fr-ee9 is running
-  // the downsample over that RESIDENT buffer, never reading it back in full.
+  // above) as a read-only resource — the whole point of the GPU downsample
+  // is running it over that RESIDENT buffer, never reading it back in full.
   const downsampleBindGroup = device.createBindGroup({
     label: "flame-gpu downsample bind group",
     layout: downsampleBindGroupLayout,
@@ -1011,17 +1012,17 @@ async function buildBackendOnDevice(
   // A fallback adapter is SOFTWARE WebGPU (SwiftShader-class) — flagged on
   // the backend for the session's device-loss-retry policy, and labeled so
   // the UI note never passes software rasterization off as the real GPU.
-  // Detection + label shape live in render-backend.ts (fr-tmgf), shared
+  // Detection + label shape live in render-backend.ts, shared
   // with the surface compute renderer: the fallback flag's older home on
   // the adapter itself is read too, and the string tell catches the
   // real-looking software stacks Chrome hands out with `isFallbackAdapter`
-  // unset (the fr-tmgf field incident).
+  // unset (the field incident that made the string tell necessary).
   const { label: adapterLabel, software } = webgpuAdapterStatus(
     adapter.info,
     (adapter as { isFallbackAdapter?: boolean }).isFallbackAdapter,
   );
 
-  // The one create-time diagnostic breadcrumb (fr-2w5): when a field report
+  // The one create-time diagnostic breadcrumb: when a field report
   // says "it picked X", this line says what the context offered and what
   // was asked of it. console.info, not the session's log sink — same
   // pattern as the device-lost diagnostics in GpuFlameBackend's
@@ -1115,7 +1116,7 @@ export async function createGpuFlameBackend(
 }
 
 /**
- * The 4D twin of {@link createGpuFlameBackend} (fr-e26): packs
+ * The 4D twin of {@link createGpuFlameBackend}: packs
  * `flame-gpu-4d.ts`'s program — the 4D kernel pinned against
  * `accumulateFlame4` — and hands off to the same shared driver. Matches
  * `FlameWorkerDeps.createGpuBackend4`'s signature exactly. Note the 4D

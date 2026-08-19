@@ -285,7 +285,7 @@ describe("Ui.renderTransformList", () => {
     expect(buttons[2].textContent).toContain("Scale: 0.50");
   });
 
-  it("lists the structural-color fields only for a map that authors them (fr-hiyu)", () => {
+  it("lists the structural-color fields only for a map that authors them", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     const transforms: Transform[] = [
@@ -314,9 +314,9 @@ describe("Ui.renderTransformList", () => {
     expect(buttons[2].textContent).not.toContain("Color");
   });
 
-  // fr-vja8.22: the selection used to live in className alone — a screen
-  // reader heard five identical unnamed-state buttons. aria-pressed is the
-  // render-mode switch's pattern, kept live by the full rebuild per change.
+  // The selection used to live in className alone — a screen reader heard
+  // five identical unnamed-state buttons. aria-pressed is the render-mode
+  // switch's pattern, kept live by the full rebuild per change.
   it("exposes the selection to ARIA via aria-pressed on every row", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
@@ -349,7 +349,7 @@ describe("Ui.renderTransformList", () => {
     ).toHaveLength(1);
   });
 
-  it("the list container is a labelled group (fr-vja8.22)", () => {
+  it("the list container is a labelled group", () => {
     const list = document.getElementById("transformList");
     expect(list?.getAttribute("role")).toBe("group");
     const title = document.getElementById(
@@ -412,7 +412,7 @@ describe("Ui point size slider", () => {
   });
 });
 
-describe("Ui scalar control commit phase (fr-2c27)", () => {
+describe("Ui scalar control commit phase", () => {
   it("a range with a declared commit reports the commit phase on change, on top of input", () => {
     const onScalarControl = vi.fn();
     const ui = new Ui(document);
@@ -456,7 +456,7 @@ describe("Ui scalar control commit phase (fr-2c27)", () => {
   });
 });
 
-describe("Ui morph detail select (fr-jonj)", () => {
+describe("Ui morph detail select", () => {
   // Guards against the dropdown and MORPH_DETAILS drifting apart — the
   // options must match exactly, in order (the fourDColor discipline).
   it("offers exactly MORPH_DETAILS, in order", () => {
@@ -479,7 +479,7 @@ describe("Ui morph detail select (fr-jonj)", () => {
   });
 });
 
-describe("Ui export size select (fr-2urv)", () => {
+describe("Ui export size select", () => {
   // Guards against the dropdown and EXPORT_SCALES drifting apart — the
   // options must match exactly, in order (the morphDetail discipline).
   it("offers exactly EXPORT_SCALES, in order", () => {
@@ -520,7 +520,7 @@ describe("Ui glow brightness slider", () => {
   });
 });
 
-describe("Ui balloon echo radius row (fr-5wlv.2)", () => {
+describe("Ui balloon echo radius row", () => {
   function balloonEchoRow(): HTMLElement {
     return document.getElementById("balloonEchoRow") as HTMLElement;
   }
@@ -578,7 +578,7 @@ describe("Ui balloon echo radius row (fr-5wlv.2)", () => {
   });
 });
 
-describe("Ui surface balloon rows (fr-5wlv.4)", () => {
+describe("Ui surface balloon rows", () => {
   function surfaceBalloonRow(): HTMLElement {
     return document.getElementById("surfaceBalloonRow") as HTMLElement;
   }
@@ -607,7 +607,7 @@ describe("Ui surface balloon rows (fr-5wlv.4)", () => {
     expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(false);
   });
 
-  it("keeps both rows in a live 4D surface session — the balloon lifted with fr-qxxw", () => {
+  it("keeps both rows in a live 4D surface session — the balloon lifts to 4D", () => {
     // The dimension gate is GONE: a 4D IFS session composes the balloon
     // wrapper over its own core exactly as a 3D one does, so the only
     // thing that hides these rows is a FORWARD-orbit session (below).
@@ -633,9 +633,9 @@ describe("Ui surface balloon rows (fr-5wlv.4)", () => {
     expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(false);
   });
 
-  it("hides both rows when the active surface session is escape-shaped (fr-5wlv.6)", () => {
-    // The balloon is permanently inert for the escape solid (fr-5wlv.4) —
-    // main.ts pushes the session's actual routing decision via
+  it("hides both rows when the active surface session is escape-shaped", () => {
+    // The balloon is permanently inert for the escape solid — main.ts
+    // pushes the session's actual routing decision via
     // setSurfaceSessionKind, independent of fourDSurfaceLive's own
     // document-derived gate.
     const ui = new Ui(document);
@@ -662,10 +662,10 @@ describe("Ui surface balloon rows (fr-5wlv.4)", () => {
     expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(false);
   });
 
-  it("hides both rows when the active surface session is a Mandelbulb (fr-tdin)", () => {
+  it("hides both rows when the active surface session is a Mandelbulb", () => {
     // Measured, not inherited: the Mandelbulb's interior reaches the ball
     // centre exactly as the escape solid's does, so its echo swallows the
-    // camera and every ray hits at t ~ 0 (fr-tdin's probe — union DE at the
+    // camera and every ray hits at t ~ 0 (measured: union DE at the
     // session's own opening eye is exactly 0 at R = 0.35 and 0.9). Same
     // treatment as the escape kind, for the same reason.
     const ui = new Ui(document);
@@ -679,7 +679,7 @@ describe("Ui surface balloon rows (fr-5wlv.4)", () => {
     expect(surfaceBalloonRadiusRow().classList.contains("hidden")).toBe(true);
   });
 
-  it("fires onBalloonInflate when the surface Inflate button is clicked (fr-5wlv.6)", () => {
+  it("fires onBalloonInflate when the surface Inflate button is clicked", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
@@ -694,7 +694,7 @@ describe("Ui surface balloon rows (fr-5wlv.4)", () => {
   });
 });
 
-describe("Ui balloon tint (fr-j85n)", () => {
+describe("Ui balloon tint", () => {
   function balloonTintRow(): HTMLElement {
     return document.getElementById("balloonTintRow") as HTMLElement;
   }
@@ -737,7 +737,7 @@ describe("Ui balloon tint (fr-j85n)", () => {
     expect(surfaceBalloonTintRow().classList.contains("hidden")).toBe(false);
   });
 
-  it("hides the Surface tint row for an escape surface session even with the balloon on (fr-5wlv.6)", () => {
+  it("hides the Surface tint row for an escape surface session even with the balloon on", () => {
     // Mirrors surfaceBalloonRadiusRow's own test above: the balloon is
     // permanently inert for the escape solid, and the tint row rides the
     // exact same surfaceBalloonHidden gate as the radius row.
@@ -751,7 +751,7 @@ describe("Ui balloon tint (fr-j85n)", () => {
     expect(surfaceBalloonTintRow().classList.contains("hidden")).toBe(true);
   });
 
-  it("hides the Surface tint row for a Mandelbulb surface session even with the balloon on (fr-tdin)", () => {
+  it("hides the Surface tint row for a Mandelbulb surface session even with the balloon on", () => {
     const ui = new Ui(document);
     ui.setSurfaceSessionKind("bulb");
     ui.updateLabels({
@@ -806,7 +806,7 @@ describe("Ui balloon tint (fr-j85n)", () => {
   });
 });
 
-describe("Ui surface ground plane row (fr-rhn5)", () => {
+describe("Ui surface ground plane row", () => {
   function surfaceGroundPlaneRow(): HTMLElement {
     return document.getElementById("surfaceGroundPlaneRow") as HTMLElement;
   }
@@ -821,7 +821,7 @@ describe("Ui surface ground plane row (fr-rhn5)", () => {
     expect(surfaceGroundPlaneRow().classList.contains("hidden")).toBe(false);
   });
 
-  it("shows the row for an escape surface session too — unlike the balloon row, which hides there (fr-5wlv.6)", () => {
+  it("shows the row for an escape surface session too — unlike the balloon row, which hides there", () => {
     const ui = new Ui(document);
     ui.setSurfaceSessionKind("escape");
     ui.updateLabels({
@@ -831,7 +831,7 @@ describe("Ui surface ground plane row (fr-rhn5)", () => {
     expect(surfaceGroundPlaneRow().classList.contains("hidden")).toBe(false);
   });
 
-  it("shows the row for a Mandelbulb session too — the floor survives where the balloon degenerates (fr-tdin)", () => {
+  it("shows the row for a Mandelbulb session too — the floor survives where the balloon degenerates", () => {
     const ui = new Ui(document);
     ui.setSurfaceSessionKind("bulb");
     ui.updateLabels({
@@ -841,7 +841,7 @@ describe("Ui surface ground plane row (fr-rhn5)", () => {
     expect(surfaceGroundPlaneRow().classList.contains("hidden")).toBe(false);
   });
 
-  it("shows the row in a live 4D surface session too — the floor lifted with fr-h0c3", () => {
+  it("shows the row in a live 4D surface session too — the floor lifts to 4D", () => {
     // The w-slice the floor drops under is an ordinary 3D object, so the
     // row now carries no gate at all: every session kind, both dimensions.
     const ui = new Ui(document);
@@ -864,7 +864,7 @@ describe("Ui surface ground plane row (fr-rhn5)", () => {
   });
 });
 
-describe("Ui surface palette row (fr-7jlk)", () => {
+describe("Ui surface palette row", () => {
   function surfacePaletteRow(): HTMLElement {
     return document.getElementById("surfacePaletteRow") as HTMLElement;
   }
@@ -887,7 +887,7 @@ describe("Ui surface palette row (fr-7jlk)", () => {
     expect(surfacePaletteRow().classList.contains("hidden")).toBe(false);
   });
 
-  it('is shown while the surface colorSource is "rings" (fr-rl4b)', () => {
+  it('is shown while the surface colorSource is "rings"', () => {
     // rings/sheets ride the same user-selected palette as "palette" — just a
     // different orbit-trap coordinate off the same descent — so the palette
     // picker must stay reachable for all three.
@@ -899,7 +899,7 @@ describe("Ui surface palette row (fr-7jlk)", () => {
     expect(surfacePaletteRow().classList.contains("hidden")).toBe(false);
   });
 
-  it('is shown while the surface colorSource is "sheets" (fr-rl4b)', () => {
+  it('is shown while the surface colorSource is "sheets"', () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
@@ -909,7 +909,7 @@ describe("Ui surface palette row (fr-7jlk)", () => {
   });
 });
 
-describe("Ui surface color speed row (fr-rl4b)", () => {
+describe("Ui surface color speed row", () => {
   function surfaceColorSpeedRow(): HTMLElement {
     return document.getElementById("surfaceColorSpeedRow") as HTMLElement;
   }
@@ -993,7 +993,7 @@ describe("Ui color contrast slider", () => {
   });
 });
 
-describe("Ui color legend painting (fr-dsz, fr-emz0)", () => {
+describe("Ui color legend painting", () => {
   // WHICH legend a state calls for — the family, the gradient, the labels —
   // is `legend-spec.ts`'s `deriveLegend`, covered without a DOM at all in
   // legend-spec.test.ts. What is left here is the PAINTING: that the panel
@@ -1085,8 +1085,8 @@ describe("Ui color legend painting (fr-dsz, fr-emz0)", () => {
 
   it("captions a palette bar with index.html's own option label", () => {
     // index.html's option text is the app's single source of palette display
-    // names (fr-a3q) — the one input `deriveLegend` cannot derive, so this is
-    // where the `<select>` lookup is pinned.
+    // names — the one input `deriveLegend` cannot derive, so this is where
+    // the `<select>` lookup is pinned.
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
@@ -1138,8 +1138,8 @@ describe("Ui color legend painting (fr-dsz, fr-emz0)", () => {
     expect(legend().classList.contains("hidden")).toBe(false);
   });
 
-  // Guards against the dropdown and FOUR_D_COLOR_MODES (fr-d47) drifting
-  // apart — the options must match exactly, in order.
+  // Guards against the dropdown and FOUR_D_COLOR_MODES drifting apart
+  // — the options must match exactly, in order.
   it("offers exactly FOUR_D_COLOR_MODES, in order", () => {
     const values = Array.from(
       document.querySelectorAll<HTMLOptionElement>("#fourDColor option"),
@@ -1347,7 +1347,7 @@ describe("Ui.renderTransformEditor", () => {
     expect(editorSliders()).toHaveLength(23);
   });
 
-  it("opens only Position for a flat transform (fr-64ku)", () => {
+  it("opens only Position for a flat transform", () => {
     const transforms = defaultTransforms();
     const ui = new Ui(document);
     ui.bind(noopHandlers());
@@ -1361,7 +1361,7 @@ describe("Ui.renderTransformEditor", () => {
     expect(open).toEqual(["Position"]);
   });
 
-  it("groups every editor section under one exclusive disclosure name (fr-64ku)", () => {
+  it("groups every editor section under one exclusive disclosure name", () => {
     const transforms = defaultTransforms();
     const ui = new Ui(document);
     ui.bind(noopHandlers());
@@ -1379,7 +1379,7 @@ describe("Ui.renderTransformEditor", () => {
     expect(new Set(names).size).toBe(1);
   });
 
-  it("keeps the group the user opened when the selection changes (fr-64ku)", () => {
+  it("keeps the group the user opened when the selection changes", () => {
     const transforms = defaultTransforms();
     const ui = new Ui(document);
     ui.bind(noopHandlers());
@@ -1406,7 +1406,7 @@ describe("Ui.renderTransformEditor", () => {
     expect(open).toEqual(["Rotation"]);
   });
 
-  it("falls back to Position when the remembered group has no final-transform counterpart (fr-64ku)", () => {
+  it("falls back to Position when the remembered group has no final-transform counterpart", () => {
     const transforms = defaultTransforms();
     const ui = new Ui(document);
     ui.bind(noopHandlers());
@@ -1701,7 +1701,7 @@ describe("Ui.renderTransformEditor", () => {
   });
 });
 
-describe("Ui transform color editor (fr-hiyu)", () => {
+describe("Ui transform color editor", () => {
   /** A map that authors neither optional color field — the overwhelmingly
    * common case, and the one whose absence has to survive every round trip. */
   const unauthored: Transform = {
@@ -1898,9 +1898,9 @@ describe("Ui final transform", () => {
     ui.bind(noopHandlers());
     ui.renderTransformEditor(lens, "final", 1);
 
-    // Same channels as a transform, but no Weight group — a selection weight is
-    // meaningless for a map applied to every point. The 4D group is still
-    // there, though (fr-bf6.3): both editors get it.
+    // Same channels as a transform, but no Weight group — a selection weight
+    // is meaningless for a map applied to every point. The 4D group is still
+    // there, though: both editors get it.
     expect(editorGroupTitles()).toEqual([
       "Position",
       "Rotation",
@@ -1984,8 +1984,8 @@ describe("Ui variation editor", () => {
     select.value = "mandelbox";
     select.dispatchEvent(new Event("change"));
 
-    // Absent means the classic 0.5 / 1 / 1 (fr-s9ll), so a freshly added fold
-    // must not materialize them — the add-dropdown has no opinion about the
+    // Absent means the classic 0.5 / 1 / 1, so a freshly added fold must
+    // not materialize them — the add-dropdown has no opinion about the
     // fold's apparatus.
     expect(lastGeometry(handlers).variations).toEqual([
       { type: "mandelbox", weight: 1 },
@@ -2035,7 +2035,7 @@ describe("Ui variation editor", () => {
         ),
       ).map((el) => el.textContent);
     };
-    // A box fold has no sphere and a sphere fold has no wall (fr-77oy: a
+    // A box fold has no sphere and a sphere fold has no wall (measured: a
     // box-fold link's mR/fR are inert).
     expect(labelsFor("boxfold")).toEqual(["Box limit"]);
     expect(labelsFor("spherefold")).toEqual(["Min radius", "Fixed radius"]);
@@ -2228,8 +2228,8 @@ describe("Ui variation editor", () => {
   });
 });
 
-// The collapsed "4D" group (fr-bf6.3): the single UI that can create or edit
-// a transform's optional `w` extension (see fractal/types.ts's WExtension).
+// The collapsed "4D" group: the single UI that can create or edit a
+// transform's optional `w` extension (see fractal/types.ts's WExtension).
 describe("Ui 4D group", () => {
   const flat: Transform = {
     id: 0,
@@ -2239,8 +2239,8 @@ describe("Ui 4D group", () => {
   };
 
   function fourDDetails(): HTMLDetailsElement {
-    // Every editor group is a <details> since fr-64ku, so this has to name the
-    // one it wants rather than take the first.
+    // Every editor group is a <details>, so this has to name the one it
+    // wants rather than take the first.
     const details = [
       ...document.querySelectorAll<HTMLDetailsElement>(
         "#transformEditor details",
@@ -2503,7 +2503,7 @@ describe("Ui 4D group", () => {
   });
 });
 
-describe("Ui render mode switch (fr-39y)", () => {
+describe("Ui render mode switch", () => {
   function modeBtn(
     mode: "points" | "flame" | "solid" | "surface",
   ): HTMLButtonElement {
@@ -2655,11 +2655,11 @@ describe("Ui render mode switch (fr-39y)", () => {
   });
 
   // The accordion reads correctly only if nothing floats between section
-  // headers (fr-374p): content wedged between two collapsed <summary> rows
-  // looks like the open content of the section above it. So the mode
-  // containers hold accordion sections and nothing else — each mode's
-  // non-section content (Undo/Redo, the flame/solid status text) lives above
-  // the first section, right after the render-mode switch.
+  // headers: content wedged between two collapsed <summary> rows looks like
+  // the open content of the section above it. So the mode containers hold
+  // accordion sections and nothing else — each mode's non-section content
+  // (Undo/Redo, the flame/solid status text) lives above the first section,
+  // right after the render-mode switch.
   it("keeps every non-section block above the first accordion section", () => {
     for (const containerId of [
       "explorerControls",
@@ -2692,9 +2692,9 @@ describe("Ui render mode switch (fr-39y)", () => {
     }
   });
 
-  // The refactor's whole point (fr-39y): the segmented control itself is
-  // never hidden by updateLabels, so flame<->solid is a direct switch rather
-  // than a round-trip through Points.
+  // The refactor's whole point: the segmented control itself is never hidden
+  // by updateLabels, so flame<->solid is a direct switch rather than a
+  // round-trip through Points.
   it("keeps the segmented control usable during a render, for a direct flame<->solid switch", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderMode: "flame" });
@@ -2733,9 +2733,9 @@ describe("Ui flame render controls", () => {
       "2.50×",
     );
 
-    // 42M is not itself a detent (fr-79p): its nearest in log space is the
-    // 5e7 detent (index 5), so the slider thumb snaps there for display while
-    // the label keeps showing the exact stored value.
+    // 42M is not itself a detent: its nearest in log space is the 5e7 detent
+    // (index 5), so the slider thumb snaps there for display while the label
+    // keeps showing the exact stored value.
     const iterationsSlider = document.getElementById(
       "flameIterationsSlider",
     ) as HTMLInputElement;
@@ -2745,7 +2745,7 @@ describe("Ui flame render controls", () => {
     );
   });
 
-  it("reflects a GPU-scale iteration budget in billions in the Quality label (fr-79p)", () => {
+  it("reflects a GPU-scale iteration budget in billions in the Quality label", () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
@@ -2778,7 +2778,7 @@ describe("Ui flame render controls", () => {
     expect(current().flame.exposure).toBe(1.75);
   });
 
-  it("applies the slider's detent index to state.flame.iterations on input (fr-79p)", () => {
+  it("applies the slider's detent index to state.flame.iterations on input", () => {
     const { handlers, current } = scalarHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
@@ -2957,7 +2957,7 @@ describe("Ui flame render controls", () => {
 
   // Guards against the dropdown and the palette registry drifting apart — the
   // options must match FLAME_PALETTES exactly, in order (legacy first),
-  // followed by the Custom sentinel (fr-55k) last.
+  // followed by the Custom sentinel last.
   it("offers exactly the registered flame palettes plus Custom, in order", () => {
     const values = Array.from(
       document.querySelectorAll<HTMLOptionElement>("#flamePalette option"),
@@ -2982,8 +2982,8 @@ describe("Ui flame render controls", () => {
     ui.bind(handlers);
 
     const select = document.getElementById("flamePalette") as HTMLSelectElement;
-    // Not "spectrum": that's the default since fr-9mw, so setting it
-    // wouldn't prove the change handler actually applies a new value.
+    // Not "spectrum": that's the default, so setting it wouldn't prove the
+    // change handler actually applies a new value.
     select.value = "sunset";
     select.dispatchEvent(new Event("change"));
 
@@ -3008,7 +3008,7 @@ describe("Ui.setFlameProgress", () => {
     );
   });
 
-  it("does not claim 100% for a nearly-done progressive frame (fr-99z)", () => {
+  it("does not claim 100% for a nearly-done progressive frame", () => {
     const ui = new Ui(document);
     ui.setFlameProgress(19_950_000, 20_000_000); // 99.75% — would round to 100.
     expect(document.getElementById("flameProgress")?.textContent).toContain(
@@ -3016,7 +3016,7 @@ describe("Ui.setFlameProgress", () => {
     );
   });
 
-  it("formats a >= 1e9 budget in billions, done still in millions (fr-79p)", () => {
+  it("formats a >= 1e9 budget in billions, done still in millions", () => {
     const ui = new Ui(document);
     ui.setFlameProgress(843_200_000, 2_000_000_000);
     expect(document.getElementById("flameProgress")?.textContent).toBe(
@@ -3024,7 +3024,7 @@ describe("Ui.setFlameProgress", () => {
     );
   });
 
-  it("clears the estimating busy state set by setFlameEstimating (fr-99z)", () => {
+  it("clears the estimating busy state set by setFlameEstimating", () => {
     const ui = new Ui(document);
     ui.setFlameEstimating();
 
@@ -3037,14 +3037,14 @@ describe("Ui.setFlameProgress", () => {
     expect(progress?.textContent).toBe("20.0M / 20.0M iterations (100%)");
   });
 
-  it("writes the percentage to the --progress custom property (fr-dshq)", () => {
+  it("writes the percentage to the --progress custom property", () => {
     const ui = new Ui(document);
     ui.setFlameProgress(12_345_000, 20_000_000);
     const progress = document.getElementById("flameProgress");
     expect(progress?.style.getPropertyValue("--progress")).toBe("61%");
   });
 
-  it("resets --progress to 0% when called with no iterations done (fr-dshq)", () => {
+  it("resets --progress to 0% when called with no iterations done", () => {
     const ui = new Ui(document);
     ui.setFlameProgress(20_000_000, 20_000_000);
     ui.setFlameProgress(0, 20_000_000);
@@ -3054,7 +3054,7 @@ describe("Ui.setFlameProgress", () => {
 });
 
 describe("Ui.setFlameEstimating", () => {
-  it("shows the busy label and adds the estimating modifier class (fr-99z)", () => {
+  it("shows the busy label and adds the estimating modifier class", () => {
     const ui = new Ui(document);
     ui.setFlameEstimating();
 
@@ -3071,7 +3071,7 @@ describe("Ui.setFlameSupersampleNote", () => {
     return document.getElementById("flameSupersampleNote");
   }
 
-  it("starts empty, rendered (never .hidden — fr-vja8.48)", () => {
+  it("starts empty, rendered (never .hidden)", () => {
     new Ui(document);
     expect(note()?.textContent).toBe("");
     expect(note()?.classList.contains("hidden")).toBe(false);
@@ -3101,7 +3101,7 @@ describe("Ui.setFlameBackendNote", () => {
     return document.getElementById("flameBackendNote");
   }
 
-  it("starts empty, rendered (never .hidden — fr-vja8.48)", () => {
+  it("starts empty, rendered (never .hidden)", () => {
     new Ui(document);
     expect(note()?.textContent).toBe("");
     expect(note()?.classList.contains("hidden")).toBe(false);
@@ -3131,13 +3131,13 @@ describe("Ui.setFlameBackendNote", () => {
     ui.setFlameBackendNote("gpu", "Apple M2");
     ui.setFlameBackendNote(null);
     expect(note()?.textContent).toBe("");
-    // Text-driven visibility (fr-vja8.48): the restart-time clear must
-    // leave the live region in the accessibility tree, or the fresh
-    // worker's backend report announces unreliably.
+    // Text-driven visibility: the restart-time clear must leave the
+    // live region in the accessibility tree, or the fresh worker's
+    // backend report announces unreliably.
     expect(note()?.classList.contains("hidden")).toBe(false);
   });
 
-  it("escalates to the warning tier for a software adapter (fr-tmgf)", () => {
+  it("escalates to the warning tier for a software adapter", () => {
     const ui = new Ui(document);
     ui.setFlameBackendNote(
       "gpu",
@@ -3152,7 +3152,7 @@ describe("Ui.setFlameBackendNote", () => {
     expect(note()?.classList.contains("flame-note-info")).toBe(false);
   });
 
-  it("returns to the info tier when a later backend is hardware (fr-tmgf)", () => {
+  it("returns to the info tier when a later backend is hardware", () => {
     const ui = new Ui(document);
     ui.setFlameBackendNote(
       "gpu",
@@ -3171,7 +3171,7 @@ describe("Ui.setSoftwareRendererNote", () => {
     return document.getElementById("softwareRendererNote");
   }
 
-  it("starts empty, rendered (never .hidden — fr-vja8.48)", () => {
+  it("starts empty, rendered (never .hidden)", () => {
     new Ui(document);
     expect(note()?.textContent).toBe("");
     expect(note()?.classList.contains("hidden")).toBe(false);
@@ -3363,7 +3363,7 @@ describe("Ui solid render controls", () => {
     expect(current().solid.resolution).toBe(224);
   });
 
-  // Followed by the Custom sentinel (fr-55k) last, mirroring #flamePalette.
+  // Followed by the Custom sentinel last, mirroring #flamePalette.
   it("offers exactly the registered palettes plus Custom, in order", () => {
     const values = Array.from(
       document.querySelectorAll<HTMLOptionElement>("#solidPalette option"),
@@ -3388,8 +3388,8 @@ describe("Ui solid render controls", () => {
     ui.bind(handlers);
 
     const select = document.getElementById("solidPalette") as HTMLSelectElement;
-    // Not "spectrum": that's the default since fr-9mw, so setting it
-    // wouldn't prove the change handler actually applies a new value.
+    // Not "spectrum": that's the default, so setting it wouldn't prove the
+    // change handler actually applies a new value.
     select.value = "sunset";
     select.dispatchEvent(new Event("change"));
 
@@ -3397,7 +3397,7 @@ describe("Ui solid render controls", () => {
   });
 });
 
-describe("custom palette editor (fr-55k)", () => {
+describe("custom palette editor", () => {
   it("hides the flame custom-palette row while the palette is a preset id", () => {
     const ui = new Ui(document);
     ui.updateLabels(initialState(true));
@@ -3429,7 +3429,7 @@ describe("custom palette editor (fr-55k)", () => {
   });
 
   it("keeps the surface editor's CONTAINER gated on the orbit-trap colorSource", () => {
-    // The editor row itself keys on paletteId (fr-ibcm), but it sits inside
+    // The editor row itself keys on paletteId, but it sits inside
     // #surfacePaletteRow, which updateLabels hides unless the colorSource is
     // "palette" — both gates must hold for the editor to actually show.
     const ui = new Ui(document);
@@ -3620,7 +3620,7 @@ describe("custom palette editor (fr-55k)", () => {
   });
 });
 
-describe("Ui ramp palette (fr-3b6)", () => {
+describe("Ui ramp palette", () => {
   function el(id: string): HTMLElement {
     return document.getElementById(id) as HTMLElement;
   }
@@ -3675,7 +3675,7 @@ describe("Ui ramp palette (fr-3b6)", () => {
     expect(el("rampPaletteRow").classList.contains("hidden")).toBe(true);
   });
 
-  // Since fr-6ue, non-flat visibility keys on fourDColor === "radius", not on
+  // Non-flat visibility keys on fourDColor === "radius", not on
   // colorMode — the default fourDColor ("wBlueOrange") still hides here.
   it("is hidden while non-flat with a w-depth 4D color mode, even with colorMode height", () => {
     const ui = new Ui(document);
@@ -3687,7 +3687,7 @@ describe("Ui ramp palette (fr-3b6)", () => {
     expect(el("rampPaletteRow").classList.contains("hidden")).toBe(true);
   });
 
-  it("is shown while non-flat once fourDColor is radius, whatever colorMode says (fr-6ue)", () => {
+  it("is shown while non-flat once fourDColor is radius, whatever colorMode says", () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
@@ -3701,7 +3701,7 @@ describe("Ui ramp palette (fr-3b6)", () => {
     expect(el("rampPaletteRow").classList.contains("hidden")).toBe(false);
   });
 
-  it("sits statically beneath the flat/4D color-select pair — no re-homing (fr-15g)", () => {
+  it("sits statically beneath the flat/4D color-select pair — no re-homing", () => {
     const ui = new Ui(document);
     // Flat: Color Mode shows, 4D Color hides; the ramp row sits after the
     // pair, inside Appearance.
@@ -3713,7 +3713,7 @@ describe("Ui ramp palette (fr-3b6)", () => {
     expect(el("fourDColorRow").classList.contains("hidden")).toBe(true);
 
     // Non-flat: the visible select flips; the ramp row itself never moves —
-    // the exclusive-open accordion's gate/gated co-location (fr-6ue) holds
+    // the exclusive-open accordion's gate/gated co-location holds
     // statically because exactly one of the pair shows per view.
     ui.updateLabels({
       ...initialState(true),
@@ -3760,7 +3760,7 @@ describe("Ui ramp palette (fr-3b6)", () => {
     expect(el("rampCustomPaletteRow").classList.contains("hidden")).toBe(true);
   });
 
-  it("shows the ramp custom-stop editor in the 4D view when fourDColor is radius and rampPaletteId is custom (fr-6ue)", () => {
+  it("shows the ramp custom-stop editor in the 4D view when fourDColor is radius and rampPaletteId is custom", () => {
     const ui = new Ui(document);
     ui.updateLabels({
       ...initialState(true),
@@ -3797,7 +3797,7 @@ describe("Ui ramp palette (fr-3b6)", () => {
   });
 });
 
-describe("position axis colors row (fr-8k7)", () => {
+describe("position axis colors row", () => {
   function el(id: string): HTMLElement {
     return document.getElementById(id) as HTMLElement;
   }
@@ -3878,15 +3878,15 @@ describe("position axis colors row (fr-8k7)", () => {
   });
 });
 
-// "4D" is a DERIVED property of the system (fr-bf6): there is no fourDActive
-// flag to flip in AppState anymore, so these tests build a state whose
+// "4D" is a DERIVED property of the system: there is no fourDActive flag
+// to flip in AppState anymore, so these tests build a state whose
 // transform list actually carries a non-trivial `w` block — exactly what
 // systemIsNonFlat (and so the panel gating) reads.
 function nonFlatTransforms(): Transform[] {
   return [{ ...defaultTransforms()[0], w: { position: 0.5 } }];
 }
 
-describe("Ui 4D view gating (fr-bf6)", () => {
+describe("Ui 4D view gating", () => {
   function el(id: string): HTMLElement {
     return document.getElementById(id) as HTMLElement;
   }
@@ -3898,9 +3898,9 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     expect(el("fourDControls").classList.contains("hidden")).toBe(true);
   });
 
-  // The panel's own heading tells the truth per generation (fr-9uw): the
-  // system's dimensionality is a live property since fr-bf6, not a fixed
-  // claim about the app.
+  // The panel's own heading tells the truth per generation: the
+  // system's dimensionality is a live property, not a fixed claim
+  // about the app.
   it("titles the panel by the system's dimensionality", () => {
     const ui = new Ui(document);
 
@@ -3914,7 +3914,7 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     expect(el("panelTitle").textContent).toBe("3D IFS Fractal");
   });
 
-  it("shows the 4D controls and hides color/style — but keeps Symmetry — for a non-flat system; the render mode switch stays (fr-5b3/fr-4wd)", () => {
+  it("shows the 4D controls and hides color/style — but keeps Symmetry — for a non-flat system; the render mode switch stays", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
 
@@ -3925,16 +3925,16 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     expect(el("renderModeSwitch").classList.contains("hidden")).toBe(false);
     expect(el("colorModeRow").classList.contains("hidden")).toBe(true);
     expect(el("renderStyleRow").classList.contains("hidden")).toBe(true);
-    // The Symmetry section used to hide here too; since fr-q0h6 every render
-    // path sweeps or expands the kaleidoscope for a 4D system, so its
-    // controls stay editable.
+    // The Symmetry section used to hide here too; every render path sweeps
+    // or expands the kaleidoscope for a 4D system, so its controls stay
+    // editable.
     expect(el("symmetrySection").classList.contains("hidden")).toBe(false);
   });
 
   // The 4D look controls live in Appearance beside their flat siblings
-  // (fr-15g) — color is an Appearance concern in both views; the 4D View
+  // — color is an Appearance concern in both views; the 4D View
   // section keeps only the spatial tumble/slice controls.
-  it("shows the 4D Color and depth-fade rows in Appearance only while non-flat (fr-15g)", () => {
+  it("shows the 4D Color and depth-fade rows in Appearance only while non-flat", () => {
     const ui = new Ui(document);
 
     ui.updateLabels(initialState(true));
@@ -3951,8 +3951,8 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     expect(el("fourDControls").contains(el("fourDColorRow"))).toBe(false);
   });
 
-  // The 3D View block (auto-orbit, fr-1yn) is the flat-system counterpart of
-  // the 4D block: exactly one of the two shows outside a render, and both
+  // The 3D View block (auto-orbit) is the flat-system counterpart of the
+  // 4D block: exactly one of the two shows outside a render, and both
   // hide while a render freezes the view's automatic motion.
   it("shows the 3D auto-orbit block only for a flat system outside a render", () => {
     const ui = new Ui(document);
@@ -3973,10 +3973,10 @@ describe("Ui 4D view gating (fr-bf6)", () => {
 
   // Flame and solid freeze the 4D view (rotor + slice) into their active
   // render's worker snapshot (main.ts's fourDRenderSnapshot), so its controls
-  // hide during those FROZEN renders exactly like the editing controls do.
-  // A live 4D surface session is different (fr-b30z): its tracer re-poses
-  // the view every frame instead of freezing it — see the "Ui 4D surface
-  // session controls" tests below.
+  // hide during those FROZEN renders exactly like the editing controls do. A
+  // live 4D surface session is different: its tracer re-poses the view every
+  // frame instead of freezing it — see the "Ui 4D surface session controls"
+  // tests below.
   it("hides the 4D tumble/slice controls while a FROZEN render is active on a non-flat system", () => {
     const ui = new Ui(document);
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
@@ -3993,7 +3993,7 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     expect(el("fourDControls").classList.contains("hidden")).toBe(false);
   });
 
-  // The crucial inversion from the old 4D MODE (fr-bf6): unlike the retired
+  // The crucial inversion from the old 4D MODE: unlike the retired
   // fourDActive flag, which hid the whole editing surface, a non-flat system
   // keeps its presets/transform-list/editor exactly as live and visible as a
   // flat one — only the controls that are genuinely inert while viewing the
@@ -4003,8 +4003,8 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
 
     expect(el("presetSection").classList.contains("hidden")).toBe(false);
-    // The list and editor live inside the Transforms accordion section
-    // (fr-zoi), so its visibility is theirs.
+    // The list and editor live inside the Transforms accordion section, so
+    // its visibility is theirs.
     expect(el("transformsSection").classList.contains("hidden")).toBe(false);
     expect(el("transformList").closest("details")?.id).toBe(
       "transformsSection",
@@ -4042,10 +4042,10 @@ describe("Ui 4D view gating (fr-bf6)", () => {
       colorMode: "height",
       transforms: nonFlatTransforms(),
     });
-    // fr-a3q: a non-flat system routes the legend to the 4D projection's
-    // diverging w ramp instead of hiding it — colorMode is irrelevant here
-    // (color comes from the rotated w in-shader). See the full w-ramp
-    // assertions in the "Ui color legend (fr-dsz)" describe block.
+    // A non-flat system routes the legend to the 4D projection's diverging
+    // w ramp instead of hiding it — colorMode is irrelevant here (color
+    // comes from the rotated w in-shader). See the full w-ramp assertions
+    // in the "Ui color legend" describe block.
     expect(el("legend").classList.contains("hidden")).toBe(false);
     expect(el("legendLabelMid").textContent).toBe("in our 3-space");
   });
@@ -4058,10 +4058,10 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     );
   });
 
-  // fr-k9nx: the opening help-box line names the tumble motion instead of
-  // asserting it unconditionally, so it has to track fourDTumbleActive
-  // (default true, mirroring main.ts's fourDView.tumbleOn) rather than being
-  // a fixed string.
+  // The opening help-box line names the tumble motion instead of asserting
+  // it unconditionally, so it has to track fourDTumbleActive (default true,
+  // mirroring main.ts's fourDView.tumbleOn) rather than being a fixed
+  // string.
   it("opens the help box on the auto-tumbling line by default", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), transforms: nonFlatTransforms() });
@@ -4094,7 +4094,7 @@ describe("Ui 4D view gating (fr-bf6)", () => {
 
   // Regression test for the real user path: unchecking the panel's own
   // toggle has to repaint the help box, not just flip fourDTumbleActive
-  // silently (fr-k9nx).
+  // silently.
   it("re-words the help box when the tumble checkbox is unchecked", () => {
     const ui = new Ui(document);
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
@@ -4112,9 +4112,9 @@ describe("Ui 4D view gating (fr-bf6)", () => {
     );
   });
 
-  // fr-k9nx: the build-replay showcase forces the tumble on for its duration
-  // via setFourDTumbleActive without ever touching the user's checkbox, so
-  // the help box has to believe the override, not the untouched control.
+  // The build-replay showcase forces the tumble on for its duration via
+  // setFourDTumbleActive without ever touching the user's checkbox, so the
+  // help box has to believe the override, not the untouched control.
   it("words the help box as auto-tumbling when setFourDTumbleActive(true) overrides an unchecked checkbox", () => {
     const ui = new Ui(document);
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
@@ -4146,21 +4146,20 @@ describe("Ui 4D view gating (fr-bf6)", () => {
   });
 });
 
-// A live 4D surface session (fr-b30z) is the one case where the 4D View
-// block's slice controls stay meaningful DURING a render: unlike
-// flame/solid, which freeze the rotor/slice into a worker snapshot, the
-// surface tracer re-poses the rotor and re-marches the w slice every frame
-// (main.ts's setSurface4View), so the sliders are the only controls that
-// reach it. The cross-section itself is unconditional in that mode —
-// `sliceOn` never reaches the tracer (main.ts pushes only `sliceCenter` into
-// setSurface4View) — so the on/off toggle would be a lie there, while the
-// position slider is the mode's defining control; slice-relative color only
-// remaps the w-depth palette the tracer doesn't have, so it hides too. The
-// TUMBLE half is the exception since fr-osgs: the ambient tumble parks in
-// surface mode (its every tick would pin the tier scheduler in preview and
-// the settle could never arm), so its controls hide whole — the user's
-// checkbox state surviving for the projection view.
-describe("Ui 4D surface session controls (fr-b30z)", () => {
+// A live 4D surface session is the one case where the 4D View block's slice
+// controls stay meaningful DURING a render: unlike flame/solid, which freeze
+// the rotor/slice into a worker snapshot, the surface tracer re-poses the
+// rotor and re-marches the w slice every frame (main.ts's setSurface4View),
+// so the sliders are the only controls that reach it. The cross-section
+// itself is unconditional in that mode — `sliceOn` never reaches the tracer
+// (main.ts pushes only `sliceCenter` into setSurface4View) — so the on/off
+// toggle would be a lie there, while the position slider is the mode's
+// defining control; slice-relative color only remaps the w-depth palette the
+// tracer doesn't have, so it hides too. The TUMBLE half is the exception:
+// the ambient tumble parks in surface mode (its every tick would pin the
+// tier scheduler in preview and the settle could never arm), so its controls
+// hide whole — the user's checkbox state surviving for the projection view.
+describe("Ui 4D surface session controls", () => {
   function el(id: string): HTMLElement {
     return document.getElementById(id) as HTMLElement;
   }
@@ -4196,7 +4195,7 @@ describe("Ui 4D surface session controls (fr-b30z)", () => {
   // fourDColorNeedsAttribute (color.ts) is false for the w-depth modes, so
   // "wBlueOrange" is a value the baked-mode gate alone would SHOW — asserting
   // it in both modes here makes the surface-only hide the visible contrast,
-  // not a restatement of the fr-nn6 baked-mode gate covered above.
+  // not a restatement of the baked-mode gate covered above.
   it("hides slice-relative color in a live 4D surface session", () => {
     const ui = new Ui(document);
     const nonFlat = {
@@ -4229,10 +4228,10 @@ describe("Ui 4D surface session controls (fr-b30z)", () => {
     expect((el("fourDSliceSlider") as HTMLInputElement).value).toBe("0.4");
   });
 
-  // The slice-thickness slider (fr-wa6o) is the exact complement of the
-  // W-slice on/off toggle above: the slab it widens is a property of the
-  // tracer's own distance estimator, so it appears only where that tracer
-  // runs. Points' slice is a fixed-width Gaussian this control never touches.
+  // The slice-thickness slider is the exact complement of the W-slice on/off
+  // toggle above: the slab it widens is a property of the tracer's own
+  // distance estimator, so it appears only where that tracer runs. Points'
+  // slice is a fixed-width Gaussian this control never touches.
   it("shows the slice thickness slider in a live 4D surface session", () => {
     const ui = new Ui(document);
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
@@ -4283,13 +4282,13 @@ describe("Ui 4D surface session controls (fr-b30z)", () => {
     );
   });
 
-  // fr-vag4: two sessions refuse the slab and they owe DIFFERENT reasons.
-  // The descent refuses it per fold family (a spherefold bends a segment
-  // into an arc), so a box-fold-only system keeps it — a knob the user can
-  // act on. A 4D escape-time session refuses it at every fold family,
-  // because its forward orbit has no branches to thread a segment through,
-  // and handing it the descent's wording would tell a box-fold-only chain
-  // to do what it is already doing.
+  // Two sessions refuse the slab and they owe DIFFERENT reasons. The
+  // descent refuses it per fold family (a spherefold bends a segment into
+  // an arc), so a box-fold-only system keeps it — a knob the user can act
+  // on. A 4D escape-time session refuses it at every fold family, because
+  // its forward orbit has no branches to thread a segment through, and
+  // handing it the descent's wording would tell a box-fold-only chain to
+  // do what it is already doing.
   it("gives an escape-time session its own slab reason, not the sphere-fold one", () => {
     const ui = new Ui(document);
     const nonFlat = { ...initialState(true), transforms: nonFlatTransforms() };
@@ -4340,9 +4339,9 @@ describe("Ui 4D surface session controls (fr-b30z)", () => {
     expect(el("fourDSliceRow").classList.contains("hidden")).toBe(true);
   });
 
-  // fr-osgs: the ambient tumble PARKS in surface mode (main.ts skips the
-  // tick — every one would invalidate the frame and pin the tier scheduler
-  // in preview, so the settle could never arm), and a visible toggle whose
+  // The ambient tumble PARKS in surface mode (main.ts skips the tick —
+  // every one would invalidate the frame and pin the tier scheduler in
+  // preview, so the settle could never arm), and a visible toggle whose
   // motion never happens reads as a broken view — both tumble rows hide.
   it("hides the auto-tumble toggle and speed rows in a live 4D surface session", () => {
     const ui = new Ui(document);
@@ -4391,7 +4390,7 @@ describe("Ui 4D surface session controls (fr-b30z)", () => {
   });
 });
 
-describe("Ui 4D slice controls (fr-6x2)", () => {
+describe("Ui 4D slice controls", () => {
   function el(id: string): HTMLElement {
     return document.getElementById(id) as HTMLElement;
   }
@@ -4521,7 +4520,7 @@ describe("Ui 4D slice controls (fr-6x2)", () => {
   });
 });
 
-describe("Ui 4D depth-fade control (fr-3e0)", () => {
+describe("Ui 4D depth-fade control", () => {
   function toggle(): HTMLInputElement {
     return document.getElementById("fourDDepthFadeToggle") as HTMLInputElement;
   }
@@ -4551,7 +4550,7 @@ describe("Ui 4D depth-fade control (fr-3e0)", () => {
   });
 });
 
-describe("Ui 3D auto-orbit controls (fr-1yn)", () => {
+describe("Ui 3D auto-orbit controls", () => {
   function el(id: string): HTMLElement {
     return document.getElementById(id) as HTMLElement;
   }
@@ -4617,7 +4616,7 @@ describe("Ui 3D auto-orbit controls (fr-1yn)", () => {
   });
 });
 
-describe("Ui 4D tumble controls (fr-woc)", () => {
+describe("Ui 4D tumble controls", () => {
   function el(id: string): HTMLElement {
     return document.getElementById(id) as HTMLElement;
   }
@@ -4700,14 +4699,14 @@ describe("Ui.setSolidProgress", () => {
     );
   });
 
-  it("writes the percentage to the --progress custom property (fr-dshq)", () => {
+  it("writes the percentage to the --progress custom property", () => {
     const ui = new Ui(document);
     ui.setSolidProgress(12_345_000, 20_000_000);
     const progress = document.getElementById("solidProgress");
     expect(progress?.style.getPropertyValue("--progress")).toBe("61%");
   });
 
-  it("resets --progress to 0% when called with no iterations done (fr-dshq)", () => {
+  it("resets --progress to 0% when called with no iterations done", () => {
     const ui = new Ui(document);
     ui.setSolidProgress(20_000_000, 20_000_000);
     ui.setSolidProgress(0, 20_000_000);
@@ -4721,7 +4720,7 @@ describe("Ui.setSolidResolutionNote", () => {
     return document.getElementById("solidResolutionNote");
   }
 
-  it("starts empty, rendered (never .hidden — fr-vja8.48)", () => {
+  it("starts empty, rendered (never .hidden)", () => {
     new Ui(document);
     expect(note()?.textContent).toBe("");
     expect(note()?.classList.contains("hidden")).toBe(false);
@@ -4762,7 +4761,7 @@ describe("Ui.setSurfaceProgress", () => {
     expect(progress()?.style.getPropertyValue("--progress")).toBe("51%");
   });
 
-  it("appends a trailing fallback-reason detail after the percentage (fr-tmgf)", () => {
+  it("appends a trailing fallback-reason detail after the percentage", () => {
     const ui = new Ui(document);
     ui.setSurfaceProgress({
       label: "Full detail · WebGL",
@@ -4789,7 +4788,7 @@ describe("Ui.setSurfaceProgress", () => {
     expect(progress()?.style.getPropertyValue("--progress")).toBe("0%");
   });
 
-  it("clears textContent when passed null, not just hiding (fr-d6g5)", () => {
+  it("clears textContent when passed null, not just hiding", () => {
     const ui = new Ui(document);
     ui.setSurfaceProgress({ label: "Full detail · WebGPU", pct: 99 });
     ui.setSurfaceProgress(null);
@@ -4800,7 +4799,7 @@ describe("Ui.setSurfaceProgress", () => {
     return document.getElementById("surfaceSkipPreviewBtn");
   }
 
-  it("shows the Skip button only for a skippable phase (fr-37c6)", () => {
+  it("shows the Skip button only for a skippable phase", () => {
     const ui = new Ui(document);
     ui.setSurfaceProgress({
       label: "Preview · WebGL",
@@ -4812,7 +4811,7 @@ describe("Ui.setSurfaceProgress", () => {
     expect(skipButton()?.classList.contains("hidden")).toBe(true);
   });
 
-  it("hides the Skip button when the row hides (fr-37c6)", () => {
+  it("hides the Skip button when the row hides", () => {
     const ui = new Ui(document);
     ui.setSurfaceProgress({
       label: "Preview · WebGL",
@@ -4823,7 +4822,7 @@ describe("Ui.setSurfaceProgress", () => {
     expect(skipButton()?.classList.contains("hidden")).toBe(true);
   });
 
-  it("fires onSurfaceSkipPreview when the Skip button is clicked (fr-37c6)", () => {
+  it("fires onSurfaceSkipPreview when the Skip button is clicked", () => {
     const ui = new Ui(document);
     const handlers = noopHandlers();
     ui.bind(handlers);
@@ -4837,7 +4836,7 @@ describe("Ui.setSurfaceProgress", () => {
   });
 });
 
-describe("Ui surface quick-previews toggle (fr-37c6)", () => {
+describe("Ui surface quick-previews toggle", () => {
   function toggle(): HTMLInputElement {
     return document.getElementById("surfacePreviewToggle") as HTMLInputElement;
   }
@@ -4890,7 +4889,7 @@ describe("Ui symmetry controls", () => {
     ).toBe("xy");
   });
 
-  it("offers all six coordinate planes in the plane select, w-planes included (fr-q0h6)", () => {
+  it("offers all six coordinate planes in the plane select, w-planes included", () => {
     const select = document.getElementById(
       "symmetryPlane",
     ) as HTMLSelectElement;
@@ -5007,17 +5006,17 @@ describe("Ui symmetry controls", () => {
   });
 });
 
-// fr-2v7: index.html's slider min/max are single-sourced from state.ts's PARAM
-// table. This pins every DIRECTLY-mapped slider (HTML range == the parameter's
-// value range) against its spec, so editing a range in one place without the
-// other fails here. Excluded on purpose (their HTML range is a mapping DOMAIN,
-// not the parameter's value range — see control-spec.ts): numPointsSlider and
+// index.html's slider min/max are single-sourced from state.ts's PARAM table.
+// This pins every DIRECTLY-mapped slider (HTML range == the parameter's value
+// range) against its spec, so editing a range in one place without the other
+// fails here. Excluded on purpose (their HTML range is a mapping DOMAIN, not
+// the parameter's value range — see control-spec.ts): numPointsSlider and
 // colorGammaSlider carry a log-scale position and flameIterationsSlider a
-// detent index. symmetryOrderSlider joined the direct set with fr-xkkb (its
-// max used to be capped below its spec, silently rewriting shared 10-12
-// links), and symmetryTwistSlider's static range IS its spec — the tighter
-// order-dependent cap lives in setSymmetryTwist alone.
-describe("index.html slider ranges match PARAM (fr-2v7)", () => {
+// detent index. symmetryOrderSlider joined the direct set once its max stopped
+// being capped below its spec (which silently rewrote shared 10-12 links), and
+// symmetryTwistSlider's static range IS its spec — the tighter order-dependent
+// cap lives in setSymmetryTwist alone.
+describe("index.html slider ranges match PARAM", () => {
   const doc = new DOMParser().parseFromString(indexHtml, "text/html");
   const attr = (id: string, name: string): string => {
     const el = doc.getElementById(id);
@@ -5068,11 +5067,11 @@ describe("index.html slider ranges match PARAM (fr-2v7)", () => {
   });
 });
 
-// fr-zoi: the panel's categories are an exclusive-open accordion of native
-// <details name="panel-section"> — one shared name, so the browser closes the
-// rest when one opens. These pin the markup contract that behavior rides on;
-// jsdom doesn't enforce the exclusivity itself, real browsers do.
-describe("panel accordion sections (fr-zoi)", () => {
+// The panel's categories are an exclusive-open accordion of native <details
+// name="panel-section"> — one shared name, so the browser closes the rest
+// when one opens. These pin the markup contract that behavior rides on; jsdom
+// doesn't enforce the exclusivity itself, real browsers do.
+describe("panel accordion sections", () => {
   const sections = (): HTMLDetailsElement[] =>
     Array.from(
       document.querySelectorAll<HTMLDetailsElement>(
@@ -5093,7 +5092,7 @@ describe("panel accordion sections (fr-zoi)", () => {
     expect(open.map((section) => section.id)).toEqual(["presetSection"]);
   });
 
-  // fr-99o: each render mode remembers its own open section; switching modes
+  // Each render mode remembers its own open section; switching modes
   // restores it (defaults: Presets / Tone / Surface). jsdom doesn't enforce
   // the name-group exclusivity — real browsers close the others — so these
   // assert only what Ui itself does: open the target on a mode change.
@@ -5183,8 +5182,8 @@ describe("panel accordion sections (fr-zoi)", () => {
     // The editor's groups nest INSIDE the Transforms section, and a details
     // name group must not contain nested members — sharing a name with any
     // ancestor disclosure would hand browsers an invalid group and make the
-    // exclusivity misfire. fr-64ku gave the groups a name of their own, so
-    // assert the actual spec rule rather than "no name at all": no editor
+    // exclusivity misfire. The groups have a name of their own, so assert
+    // the actual spec rule rather than "no name at all": no editor
     // disclosure may share a name with a disclosure that contains it.
     for (const details of editorDetails) {
       const name = details.getAttribute("name");
@@ -5195,7 +5194,7 @@ describe("panel accordion sections (fr-zoi)", () => {
   });
 });
 
-describe("Ui panel accordion re-anchor (fr-dd4b)", () => {
+describe("Ui panel accordion re-anchor", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
@@ -5281,7 +5280,7 @@ describe("Ui collection gallery", () => {
     expect(second.querySelector(".gallery-card-noimg")).not.toBeNull();
   });
 
-  it("captions a saved-from-a-renderer entry with its mode glyph (fr-75sq)", () => {
+  it("captions a saved-from-a-renderer entry with its mode glyph", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     ui.openGallery([
@@ -5338,7 +5337,7 @@ describe("Ui collection gallery", () => {
   });
 });
 
-describe("Ui timeline section (fr-8v41)", () => {
+describe("Ui timeline section", () => {
   const step = (id: string, thumbnail = "", morphMs = 4000, holdMs = 2000) => ({
     id,
     encoded: `v1=${id}`,
@@ -5540,7 +5539,7 @@ describe("Ui timeline section (fr-8v41)", () => {
     );
   });
 
-  it("wears a mode glyph for a flame/solid keyframe (fr-v3au)", () => {
+  it("wears a mode glyph for a flame/solid keyframe", () => {
     const ui = new Ui(document);
     ui.renderTimeline(
       [
@@ -5602,7 +5601,7 @@ describe("Ui timeline section (fr-8v41)", () => {
   });
 });
 
-describe("Ui file import/export (fr-de9t)", () => {
+describe("Ui file import/export", () => {
   it("fires onSaveSceneFile when ⤓ Save scene file is clicked", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
@@ -5611,7 +5610,7 @@ describe("Ui file import/export (fr-de9t)", () => {
     expect(handlers.onSaveSceneFile).toHaveBeenCalledTimes(1);
   });
 
-  it("fires onSaveFlameFile when ⤓ Export .flame is clicked (fr-8uy5)", () => {
+  it("fires onSaveFlameFile when ⤓ Export .flame is clicked", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
@@ -5619,7 +5618,7 @@ describe("Ui file import/export (fr-de9t)", () => {
     expect(handlers.onSaveFlameFile).toHaveBeenCalledTimes(1);
   });
 
-  it("accepts .flame files in the import picker (fr-8uy5)", () => {
+  it("accepts .flame files in the import picker", () => {
     new Ui(document);
     const accept =
       document.getElementById("importFileInput")?.getAttribute("accept") ?? "";
@@ -5698,7 +5697,7 @@ describe("Ui file import/export (fr-de9t)", () => {
   });
 });
 
-describe("Ui mutation grid (fr-3vly)", () => {
+describe("Ui mutation grid", () => {
   const SIZE = 4;
   const pixels = () => new Uint8ClampedArray(SIZE * SIZE * 4);
   const cells = () =>
@@ -5790,7 +5789,7 @@ describe("Ui mutation grid (fr-3vly)", () => {
   });
 });
 
-describe("Ui toast (fr-ifts)", () => {
+describe("Ui toast", () => {
   function toastEl(): HTMLElement {
     return document.getElementById("toast") as HTMLElement;
   }
@@ -5846,7 +5845,7 @@ describe("Ui toast (fr-ifts)", () => {
     expect(toastEl().textContent).toBe("Saved to collection");
   });
 
-  it("only an action toast opts its pill into pointer events (fr-vja8.21)", () => {
+  it("only an action toast opts its pill into pointer events", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
 
@@ -5860,7 +5859,7 @@ describe("Ui toast (fr-ifts)", () => {
     expect(toastEl().classList.contains("toast-actionable")).toBe(false);
   });
 
-  describe("auto-hide pause on hover and focus (fr-vja8.21)", () => {
+  describe("auto-hide pause on hover and focus", () => {
     beforeEach(() => {
       vi.useFakeTimers();
     });
@@ -6080,7 +6079,7 @@ describe("Ui about dialog", () => {
   });
 });
 
-describe("Ui export progress modal (fr-7mfx)", () => {
+describe("Ui export progress modal", () => {
   function exportModal(): HTMLElement {
     return document.getElementById("exportModal") as HTMLElement;
   }
@@ -6096,7 +6095,7 @@ describe("Ui export progress modal (fr-7mfx)", () => {
   function exportCancelBtn(): HTMLButtonElement {
     return document.getElementById("exportCancelBtn") as HTMLButtonElement;
   }
-  /** The fr-2fbs second action, or null when it is not on offer — it is
+  /** The early-save second action, or null when it is not on offer — it is
    * DETACHED rather than hidden, so absence is the document's answer. */
   function exportDeliverBtn(): HTMLButtonElement | null {
     return document.getElementById(
@@ -6251,7 +6250,7 @@ describe("Ui export progress modal (fr-7mfx)", () => {
     expect(handlers.onExportCancel).not.toHaveBeenCalled();
   });
 
-  it("takes the second action out of the document at construction (fr-2fbs)", () => {
+  it("takes the second action out of the document at construction", () => {
     // The shipped markup declares it; a Ui that has never shown a modal must
     // still not have it in the page.
     new Ui(document);
@@ -6537,7 +6536,7 @@ describe("Ui export progress modal (fr-7mfx)", () => {
 // assistive technology the page behind the scrim is inert. These pin the other
 // half of that promise: focus goes in on open, Tab stays inside, and the opener
 // gets it back on close, whichever way the dialog was dismissed.
-describe("Ui modal focus trap (fr-trtv)", () => {
+describe("Ui modal focus trap", () => {
   const saved = (id: string) => ({
     id,
     encoded: `v1=${id}`,
@@ -6728,9 +6727,9 @@ describe("Ui modal focus trap (fr-trtv)", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     // An uncancellable run hides Cancel in place (it is the one button the
-    // dialog always has a place for) and offers fr-2fbs's action instead, so
-    // the ring is that action alone — the shared visibility filter standing in
-    // for the export modal's own cancellable flag.
+    // dialog always has a place for) and offers the early-save action instead,
+    // so the ring is that action alone — the shared visibility filter standing
+    // in for the export modal's own cancellable flag.
     ui.showExportProgress({
       title: "Saving PNG",
       detail: "",
@@ -6815,10 +6814,10 @@ describe("Ui modal focus trap (fr-trtv)", () => {
     expect(() => ui.closeGallery()).not.toThrow();
   });
 
-  // fr-vja8.13: the export modal can stack over a sibling (a Save PNG's
-  // 400ms grace window leaves the gallery opener live), and both keydown
-  // handlers hear every document keydown. Escape used to close the gallery
-  // AND silently abort the multi-minute export; Tab ran both focus cycles.
+  // The export modal can stack over a sibling (a Save PNG's 400ms grace
+  // window leaves the gallery opener live), and both keydown handlers hear
+  // every document keydown. Escape used to close the gallery AND silently
+  // abort the multi-minute export; Tab ran both focus cycles.
   it("Escape under a stacked export modal closes only the gallery — the export keeps running", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
@@ -6902,10 +6901,10 @@ describe("Ui modal focus trap (fr-trtv)", () => {
     expect(document.activeElement).toBe(el("galleryBtn"));
   });
 
-  // fr-vja8.41: the points-arm export run (cancellable:false, no second
-  // action) is the one modal that ships with an EMPTY focus ring — Cancel
-  // hidden, the fr-2fbs button detached — so the trap falls back to the
-  // dialog box itself (tabindex="-1").
+  // The points-arm export run (cancellable:false, no second action) is the
+  // one modal that ships with an EMPTY focus ring — Cancel hidden, the
+  // early-save button detached — so the trap falls back to the dialog box
+  // itself (tabindex="-1").
   function exportDialog(): HTMLElement {
     const dialog = el("exportModal").querySelector(".gallery-dialog");
     if (!(dialog instanceof HTMLElement)) {
@@ -6914,7 +6913,7 @@ describe("Ui modal focus trap (fr-trtv)", () => {
     return dialog;
   }
 
-  it("focuses the dialog box itself when the export ring is empty (fr-vja8.41)", () => {
+  it("focuses the dialog box itself when the export ring is empty", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     el("savePngBtn").focus();
@@ -6969,11 +6968,11 @@ describe("Ui modal focus trap (fr-trtv)", () => {
     ui.hideExportProgress();
   });
 
-  // fr-vja8.52: the four pairwise Escape/Tab handlers (fr-vja8.13) collapsed
-  // into one stack-driven listener. The two tests above only ever stack the
-  // gallery under the export modal — this pins that the rule genuinely
-  // generalizes, rather than the gallery having been special-cased, by
-  // repeating it for a different sibling.
+  // The four pairwise Escape/Tab handlers collapsed into one stack-driven
+  // listener. The two tests above only ever stack the gallery under the
+  // export modal — this pins that the rule genuinely generalizes, rather
+  // than the gallery having been special-cased, by repeating it for a
+  // different sibling.
   it("Escape under a stacked export modal closes only the About dialog — the export keeps running", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
@@ -6994,10 +6993,10 @@ describe("Ui modal focus trap (fr-trtv)", () => {
     ui.hideExportProgress();
   });
 
-  // The stack's own new property (fr-vja8.52): releasing the topmost entry
-  // must hand Tab back to whatever is left, not leave it wired to the
-  // popped entry and not silently drop the shared listener while a sibling
-  // is still open.
+  // The stack's own new property: releasing the topmost entry must hand
+  // Tab back to whatever is left, not leave it wired to the popped entry
+  // and not silently drop the shared listener while a sibling is still
+  // open.
   it("releasing the export modal hands Tab back to the sibling still on the stack", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
@@ -7052,7 +7051,7 @@ describe("background select menu", () => {
   });
 });
 
-describe("background shape select menu (fr-h3mp)", () => {
+describe("background shape select menu", () => {
   // Same discipline as the background mode menu above, pinned against
   // BACKGROUND_SHAPES (fractal/background-shape.ts) rather than
   // BACKGROUND_MODES — the shape is a separate, orthogonal vocabulary.
@@ -7064,7 +7063,7 @@ describe("background shape select menu (fr-h3mp)", () => {
   });
 });
 
-describe("Ui background backdrop row (fr-5ps1)", () => {
+describe("Ui background backdrop row", () => {
   function backgroundCustomRow(): HTMLElement {
     return document.getElementById("backgroundCustomRow") as HTMLElement;
   }
@@ -7078,7 +7077,7 @@ describe("Ui background backdrop row (fr-5ps1)", () => {
     expect(backgroundCustomRow().classList.contains("hidden")).toBe(true);
   });
 
-  it('stays hidden once the background mode is "auto" (fr-mz2u)', () => {
+  it('stays hidden once the background mode is "auto"', () => {
     const ui = new Ui(document);
     ui.updateLabels(setBackgroundMode(initialState(true), "auto"));
     expect(backgroundCustomRow().classList.contains("hidden")).toBe(true);
@@ -7119,7 +7118,7 @@ describe("Ui background backdrop row (fr-5ps1)", () => {
     const top = el("backgroundTop");
     top.value = "#336699";
     // The listener is delegated on the row, so the event must bubble — the
-    // positionColorsRow discipline (fr-8k7), one row over.
+    // positionColorsRow discipline, one row over.
     top.dispatchEvent(new Event("input", { bubbles: true }));
 
     expect(handlers.onBackgroundCustom).toHaveBeenCalledWith({
@@ -7129,7 +7128,7 @@ describe("Ui background backdrop row (fr-5ps1)", () => {
   });
 });
 
-describe("Ui fog tint row (fr-5h5d)", () => {
+describe("Ui fog tint row", () => {
   function el(id: string): HTMLInputElement {
     return document.getElementById(id) as HTMLInputElement;
   }
@@ -7167,9 +7166,9 @@ describe("Ui fog tint row (fr-5h5d)", () => {
     ).toBe(false);
   });
 
-  // fr-vja8.24: the wrapping <label>s carry no text (the row's "Tint 0%"
-  // title is a sibling span outside both), so without these the inputs are
-  // unnamed color/slider controls to a screen reader.
+  // The wrapping <label>s carry no text (the row's "Tint 0%" title is a
+  // sibling span outside both), so without these the inputs are unnamed
+  // color/slider controls to a screen reader.
   it("names both inputs for assistive tech (their labels carry no text)", () => {
     new Ui(document);
     expect(el("fogTintColor").getAttribute("aria-label")).toBe(
@@ -7181,14 +7180,14 @@ describe("Ui fog tint row (fr-5h5d)", () => {
   });
 });
 
-describe("canvas viewport accessible name (fr-vja8.23, moved by fr-vja8.37)", () => {
-  // The identity lives on the CANVAS since fr-vja8.37 — scene.ts injects it
-  // with tabIndex 0 and an instructive aria-label that teaches the camera
-  // keys (verified in a real browser; scene.ts is outside jsdom's reach).
-  // What this suite CAN pin is the container side of that contract: the
-  // fr-vja8.23 role="img" wrapper must stay GONE, because role="img" prunes
-  // its subtree from the accessibility tree — re-adding it would leave the
-  // focusable canvas taking keyboard focus with no announced name at all.
+describe("canvas viewport accessible name", () => {
+  // The identity lives on the CANVAS — scene.ts injects it with tabIndex 0
+  // and an instructive aria-label that teaches the camera keys (verified
+  // in a real browser; scene.ts is outside jsdom's reach). What this suite
+  // CAN pin is the container side of that contract: the earlier role="img"
+  // wrapper must stay GONE, because role="img" prunes its subtree from the
+  // accessibility tree — re-adding it would leave the focusable canvas
+  // taking keyboard focus with no announced name at all.
   it("leaves #container role-less so the focusable canvas inside it keeps its own name", () => {
     const container = document.getElementById("container");
     expect(container?.getAttribute("role")).toBeNull();
@@ -7196,7 +7195,7 @@ describe("canvas viewport accessible name (fr-vja8.23, moved by fr-vja8.37)", ()
   });
 });
 
-describe("page landmark structure (fr-vja8.26)", () => {
+describe("page landmark structure", () => {
   it("wraps the viewport in a <main> landmark, ids untouched", () => {
     const container = document.getElementById("container");
     expect(container?.parentElement?.tagName).toBe("MAIN");
@@ -7210,7 +7209,7 @@ describe("page landmark structure (fr-vja8.26)", () => {
   });
 });
 
-describe("page-level heading (fr-vja8.29)", () => {
+describe("page-level heading", () => {
   it("ships exactly one h1, ahead of every h2", () => {
     const headings = Array.from(document.querySelectorAll("h1, h2"));
     const h1s = headings.filter((h) => h.tagName === "H1");
@@ -7224,7 +7223,7 @@ describe("page-level heading (fr-vja8.29)", () => {
   });
 });
 
-describe("mid-session status notes are live regions (fr-vja8.25/.48)", () => {
+describe("mid-session status notes are live regions", () => {
   // These five populate/change mid-session via targeted setters (software-
   // renderer detection, CPU fallback on a flame restart, memory clamps, the
   // surface degraded note) — a few times per session, never per frame. The
@@ -7244,9 +7243,9 @@ describe("mid-session status notes are live regions (fr-vja8.25/.48)", () => {
     expect(note?.getAttribute("aria-live")).toBe("polite");
   });
 
-  // fr-vja8.48: a live region ENTERING the accessibility tree already
-  // populated announces unreliably, so the five ship rendered — populated
-  // then un-hidden is exactly the path this rules out.
+  // A live region ENTERING the accessibility tree already populated
+  // announces unreliably, so the five ship rendered — populated then
+  // un-hidden is exactly the path this rules out.
   it.each(NOTE_IDS)("ships #%s rendered, not display-hidden", (id) => {
     expect(document.getElementById(id)?.classList.contains("hidden")).toBe(
       false,
@@ -7302,19 +7301,19 @@ describe("mid-session status notes are live regions (fr-vja8.25/.48)", () => {
   );
 });
 
-// fr-vja8.38: the render-progress announcer. Its closest relative is the
-// "mid-session status notes are live regions" block above — same
-// role="status"/aria-live="polite" idiom, same fr-vja8.48 rendered-not-hidden
-// shape — but this element's TEXT is authored for speech rather than mirrored
-// from a prose note, and it is throttled to coarse quartile boundaries
+// The render-progress announcer. Its closest relative is the "mid-session
+// status notes are live regions" block above — same
+// role="status"/aria-live="polite" idiom, same rendered-not-hidden shape —
+// but this element's TEXT is authored for speech rather than mirrored from a
+// prose note, and it is throttled to coarse quartile boundaries
 // (25/50/75/100) rather than announcing every setter call, so its behavior
 // gets its own block instead of joining that one's it.each table.
-describe("Ui render-progress announcer (fr-vja8.38)", () => {
+describe("Ui render-progress announcer", () => {
   function announcer(): HTMLElement | null {
     return document.getElementById("renderProgressAnnouncer");
   }
 
-  it("ships as a live region, rendered and empty from the start (fr-vja8.48)", () => {
+  it("ships as a live region, rendered and empty from the start", () => {
     new Ui(document);
     expect(announcer()?.getAttribute("role")).toBe("status");
     expect(announcer()?.getAttribute("aria-live")).toBe("polite");
@@ -7423,8 +7422,8 @@ describe("Ui render-progress announcer (fr-vja8.38)", () => {
     expect(announcer()?.textContent).toBe("Surface render, using WebGPU");
   });
 
-  // fr-vja8.38's two surface-only one-shots: the engine token (fr-tmgf) and
-  // the antialiasing phase (fr-vpbq), both embedded in setSurfaceProgress's
+  // The two surface-only one-shots: the engine token and the
+  // antialiasing phase, both embedded in setSurfaceProgress's
   // label/detail rather than broken out as their own fields — see
   // surfaceProgressEngine and the "antialiasing pass" substring check.
   describe("surface engine/antialiasing one-shots", () => {
@@ -7459,7 +7458,7 @@ describe("Ui render-progress announcer (fr-vja8.38)", () => {
       const ui = new Ui(document);
       ui.setSurfaceProgress({ label: "Full detail · WebGPU", pct: 5 }); // spends the engine one-shot
       ui.setSurfaceProgress(null); // re-arms quartile + antialiasing (text persists)
-      ui.setSurfaceProgress({ label: "Full detail · WebGPU", pct: 20 }); // pass 1 is silent (fr-vpbq)
+      ui.setSurfaceProgress({ label: "Full detail · WebGPU", pct: 20 }); // pass 1 is silent
       expect(announcer()?.textContent).toBe("Surface render, using WebGPU"); // the standing utterance; nothing new spoken
       ui.setSurfaceProgress({
         label: "Full detail · WebGPU",
@@ -7511,9 +7510,9 @@ describe("Ui render-progress announcer (fr-vja8.38)", () => {
   });
 });
 
-// fr-vja8.39: native `disabled` pulls a button out of the tab ring, so the
-// existing title-only disabled reason (hover-only) is invisible to a
-// keyboard/AT user. driftBtn, exportCollectionBtn and the timelinePlayBtn/
+// Native `disabled` pulls a button out of the tab ring, so the existing
+// title-only disabled reason (hover-only) is invisible to a keyboard/AT
+// user. driftBtn, exportCollectionBtn and the timelinePlayBtn/
 // timelineExportBtn pair each grow a role="status"/aria-live="polite" note
 // beside them — the "mid-session status notes are live regions" idiom above
 // — mirroring the same reason in prose. Unlike that block's five notes,
@@ -7523,7 +7522,7 @@ describe("Ui render-progress announcer (fr-vja8.38)", () => {
 // refresh/timeline edit/collection change rather than only at a meaningful
 // transition, so each also gets a no-chatter pin: repeating the same
 // disabled state must not rewrite (and therefore not re-announce) the note.
-describe("disabled-reason notes for keyboard/AT users (fr-vja8.39)", () => {
+describe("disabled-reason notes for keyboard/AT users", () => {
   it.each(["driftNote", "exportCollectionNote", "timelineNote"])(
     "ships #%s as a role=status/aria-live=polite region, rendered and empty",
     (id) => {

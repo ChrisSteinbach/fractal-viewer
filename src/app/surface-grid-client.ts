@@ -1,8 +1,7 @@
 /**
  * The main-thread client for the surface render's empty-space-skipping grid
- * worker (fr-55r5 part 2): owns the one-shot, latest-wins request policy
- * that keeps a grid build off the main thread without ever delivering a
- * torn or stale result.
+ * worker: owns the one-shot, latest-wins request policy that keeps a grid
+ * build off the main thread without ever delivering a torn or stale result.
  *
  * Policy, in one breath: **at most one worker; latest request wins.** Unlike
  * `cloud-generator.ts`'s live point cloud, a request made while one is
@@ -79,8 +78,8 @@ export interface SurfaceGridClientDeps {
   /** Delivers a finished build — called ONLY for the request that is
    * current at the moment its result arrives (see the module doc's
    * latest-wins policy), with the id already stripped down to the plain
-   * `{ resolution, halfExtent, values }` grid. Since fr-aj4w, `resolution`/
-   * `halfExtent` here are what the worker actually built, which may be
+   * `{ resolution, halfExtent, values }` grid. `resolution`/`halfExtent`
+   * here are what the worker actually built, which may be
    * coarser than requested (see {@link SurfaceGridClient.request}) — this
    * is the authoritative shape, not the request. */
   onGrid: (grid: SurfaceGrid) => void;
@@ -121,14 +120,14 @@ export class SurfaceGridClient {
    * (creation failed or declined): see the module doc's graceful
    * degradation.
    *
-   * `resolution` is a CEILING, not a promise (fr-aj4w): a fold system's
-   * build can cost up to ~40x an affine one at the same resolution, so the
-   * worker times a measured pilot slab first and may downshift to a
-   * coarser grid to stay under its build-time budget
-   * (`surface-grid.ts`'s `pickSurfaceGridResolution`). The delivered
-   * grid's own `resolution`/`halfExtent` (see {@link
-   * SurfaceGridClientDeps.onGrid}) reflect what was actually built and are
-   * the authoritative values — never the `resolution` passed here.
+   * `resolution` is a CEILING, not a promise: a fold system's build can
+   * cost up to ~40x an affine one at the same resolution, so the worker
+   * times a measured pilot slab first and may downshift to a coarser grid
+   * to stay under its build-time budget (`surface-grid.ts`'s
+   * `pickSurfaceGridResolution`). The delivered grid's own
+   * `resolution`/`halfExtent` (see {@link SurfaceGridClientDeps.onGrid})
+   * reflect what was actually built and are the authoritative values —
+   * never the `resolution` passed here.
    */
   request(de: SurfaceDE, resolution: number = SURFACE_GRID_RESOLUTION): void {
     if (this.worker === null) this.worker = this.spawnWorker();

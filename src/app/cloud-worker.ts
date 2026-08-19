@@ -1,5 +1,5 @@
 /**
- * The live point cloud's actual Web Worker entry point (fr-5kx): thin
+ * The live point cloud's actual Web Worker entry point: thin
  * `self.onmessage` / `postMessage` glue around {@link generateCloud}, which
  * owns all the real logic. Nothing here is unit-tested directly — it is
  * verified by running the app, same as `flame-worker.ts` / `voxel-worker.ts`,

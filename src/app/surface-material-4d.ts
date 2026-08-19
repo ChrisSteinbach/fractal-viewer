@@ -23,25 +23,25 @@ import { lightDirection } from "./voxel-material";
 
 /**
  * The 4D surface render's GPU sphere-tracer — the 4D twin of
- * `surface-material.ts` (fr-vxoj): a full-screen-quad ShaderMaterial that
- * marches camera rays against an analytic distance estimator for the
- * `w = w0` SLICE of a 4D IFS attractor — width-4 beam inverse-map descent
- * with REFINED sibling certificates, precomputed by `buildSurfaceDE4`
+ * `surface-material.ts`: a full-screen-quad ShaderMaterial that marches
+ * camera rays against an analytic distance estimator for the `w = w0`
+ * SLICE of a 4D IFS attractor — width-4 beam inverse-map descent with
+ * REFINED sibling certificates, precomputed by `buildSurfaceDE4`
  * (`src/fractal/surface-de-4d.ts`) and packed here into the fixed-size
- * arrays of a std140 uniform BLOCK (fr-dqlq — that block is what lets the
- * cap match 3D's 24 maps). The refined certificate — one extra Hutchinson
- * level applied to every escaped, non-descended sibling before it freezes
- * into the running min — was the fr-beck spike's measured ghost-eliminator
+ * arrays of a std140 uniform BLOCK (that block is what lets the cap match
+ * 3D's 24 maps). The refined certificate — one extra Hutchinson level
+ * applied to every escaped, non-descended sibling before it freezes into
+ * the running min — was the 4D surface spike's measured ghost-eliminator
  * (0.0% ghost-of-hits on every slice measured, down from a 4.7-84.6% range
  * unrefined); beam width 4 is hardcoded here exactly as in the 3D shader.
- * fr-jkpn's rank-3/4 validity slots ride along too — extra chains that
- * stay live only while their image is in-sphere. Kaleidoscope sectors are
- * SWEPT from two default-block uniforms (`uSymOrder` + the backward-step
- * `uSymStepBack`) rather than expanded into slots — fr-u91x, the 3D
- * tracer's fr-x029 shape one dimension up, with the whole `mat4` standing
- * in for 3D's `(cos, sin)` pair because a 4D double rotation carries two
- * angles; the slab query's half-extent rotates through the same matrix
- * (an isometry maps segments to segments).
+ * The rank-3/4 validity slots ride along too — extra chains that stay live
+ * only while their image is in-sphere. Kaleidoscope sectors are SWEPT from
+ * two default-block uniforms (`uSymOrder` + the backward-step
+ * `uSymStepBack`) rather than expanded into slots — the 3D tracer's
+ * sector-sweep shape one dimension up, with the whole `mat4` standing in
+ * for 3D's `(cos, sin)` pair because a 4D double rotation carries two
+ * angles; the slab query's half-extent rotates through the same matrix (an
+ * isometry maps segments to segments).
  *
  * The rotor and w-slice arrive as VIEW uniforms rather than baked into the
  * packed maps: every query lifts `q = uInvRotor * vec4(p, uW0)` into the
@@ -49,14 +49,14 @@ import { lightDirection } from "./voxel-material";
  * an isometry — distances, march steps, and gradients all survive the lift
  * unchanged.
  *
- * The slice has a THICKNESS since fr-wa6o. With `uSliceHalfW > 0` the query
- * stops being the point `(p, uW0)` and becomes the SEGMENT spanning
- * `|w - uW0| <= uSliceHalfW` over `p`, so what the tracer marches is a
- * SLAB's projected shadow rather than a single cross-section — thin
- * structure that a zero-thickness plane can only ever catch edge-on reads
- * as solid. Affine maps take segments to segments, which is why the whole
- * descent generalizes term for term: one extra `vec4` beside every chain's
- * and candidate's point (moved by each inverse map's LINEAR part alone —
+ * The slice has a THICKNESS. With `uSliceHalfW > 0` the query stops being
+ * the point `(p, uW0)` and becomes the SEGMENT spanning `|w - uW0| <=
+ * uSliceHalfW` over `p`, so what the tracer marches is a SLAB's projected
+ * shadow rather than a single cross-section — thin structure that a
+ * zero-thickness plane can only ever catch edge-on reads as solid. Affine
+ * maps take segments to segments, which is why the whole descent
+ * generalizes term for term: one extra `vec4` beside every chain's and
+ * candidate's point (moved by each inverse map's LINEAR part alone —
  * translations slide a segment's centre, never its extent),
  * {@link segmentRadius} wherever the point path took `length`, and a
  * visible-ball gate widened to the slab's most generous `|w|`. The bound
@@ -90,13 +90,13 @@ import { lightDirection } from "./voxel-material";
  * same reason as the 3D shader: the DE needs dynamic loop bounds and
  * non-constant uniform-array indexing.
  *
- * TWO ORTHOGONAL SCENE ARMS ride this source, the 4D halves of capabilities
- * that had shipped 3D-only: the BALLOON inverted union (fr-qxxw, lifting
- * fr-5wlv.4) and the GROUND PLANE floor (fr-h0c3, lifting fr-rhn5). Both
- * are `#if` arms resolved JS-side by {@link surface4FragmentFor}, so a
- * session that wants neither hands the driver the byte-identical source it
- * always did; `material.defines` carries the pair for change detection and
- * as a program-cache key, never as driver-parsed text. They are mutually
+ * TWO ORTHOGONAL SCENE ARMS ride this source, the 4D halves of
+ * capabilities that had shipped 3D-only: the BALLOON inverted union and
+ * the GROUND PLANE floor, each lifting its 3D arm. Both are `#if` arms
+ * resolved JS-side by {@link surface4FragmentFor}, so a session that wants
+ * neither hands the driver the byte-identical source it always did;
+ * `material.defines` carries the pair for change detection and as a
+ * program-cache key, never as driver-parsed text. They are mutually
  * exclusive for the 3D reason, unchanged in 4D: there is no horizon inside
  * an enclosing shell.
  *
@@ -137,8 +137,8 @@ import { lightDirection } from "./voxel-material";
  * drawn. One thing the 4D `main()` had to GROW rather than copy: the
  * post-march miss now splits sphere-exit (`t > tFar`, may plane) from
  * budget EXHAUSTION (background, always) — 3D splits it because it has a
- * floor to split it for, and until fr-h0c3 both outcomes here painted the
- * same backdrop so nothing distinguished them.
+ * floor to split it for, and before the floor's 4D lift both outcomes here
+ * painted the same backdrop so nothing distinguished them.
  */
 
 /** Screen-space gradient the tracer paints on a miss — the same authored
@@ -151,24 +151,25 @@ const BG_BOTTOM = new THREE.Vector3(...hexToRgb01(DARK_BACKDROP.bottom));
 
 /** Compile-time size of the per-map arrays — 24, matching the 3D tracer's
  * `SURFACE_MAX_MAPS`, so the 24-map presets (`twentyFourCell`, i.e.
- * `twentyFourCellFlake`) can be surfaced (fr-dqlq).
+ * `twentyFourCellFlake`) can be surfaced.
  *
  * The cap sat at 16 while the arrays lived in the DEFAULT uniform block,
- * where they cost ~8 of WebGL2's guaranteed 224 fragment uniform VECTORS per
- * slot (a mat4 array element takes 4 rows; a float or vec3 element takes a
- * whole row each — 4 + 1 + 1 + 1 + 1) — 24 slots would have been 192 rows,
- * plus the ~33 misc uniforms below, close enough to a link failure on
- * minimum-spec devices to be worth avoiding. fr-dqlq moved them into the
- * std140 uniform BLOCK declared in the fragment shader below, which is
- * budgeted separately: 24 slots of mat4 + 3 vec4 = 24 * (64 + 16 + 16 + 16)
- * = 2688 bytes of the 16 KB block size (and 1 of the 12 fragment blocks)
- * every WebGL2 device guarantees. Raising the cap further is now a matter of
- * how much per-ray DESCENT cost the tracer can afford, not of uniform space.
+ * where they cost ~8 of WebGL2's guaranteed 224 fragment uniform VECTORS
+ * per slot (a mat4 array element takes 4 rows; a float or vec3 element
+ * takes a whole row each — 4 + 1 + 1 + 1 + 1) — 24 slots would have been
+ * 192 rows, plus the ~33 misc uniforms below, close enough to a link
+ * failure on minimum-spec devices to be worth avoiding. The cap raise
+ * moved them into the std140 uniform BLOCK declared in the fragment shader
+ * below, which is budgeted separately: 24 slots of mat4 + 3 vec4 = 24 *
+ * (64 + 16 + 16 + 16) = 2688 bytes of the 16 KB block size (and 1 of the
+ * 12 fragment blocks) every WebGL2 device guarantees. Raising the cap
+ * further is now a matter of how much per-ray DESCENT cost the tracer can
+ * afford, not of uniform space.
  *
  * Kaleidoscope sectors are swept from uniforms rather than expanded into
- * slots (fr-u91x; see surface-de-4d.ts's SYMMETRY section), so 24 slots
- * means 24 transforms at ANY symmetry order. The app gates systems whose
- * map count exceeds it before entering the mode, so {@link setSurfaceSystem4}
+ * slots (see surface-de-4d.ts's SYMMETRY section), so 24 slots means 24
+ * transforms at ANY symmetry order. The app gates systems whose map count
+ * exceeds it before entering the mode, so {@link setSurfaceSystem4}
  * treats overflow as a bug, not a degrade. */
 export const SURFACE4_MAX_MAPS = 24;
 
@@ -184,8 +185,8 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   precision highp float;
 
   const int MAX_MAPS = ${SURFACE4_MAX_MAPS};
-  /** Sphere-trace step budget per ray — per-tier uniform (fr-sjff), in
-   * lockstep with the 3D tracer's. Tracer-side only, like the loop caps
+  /** Sphere-trace step budget per ray — a per-tier uniform, in lockstep
+   * with the 3D tracer's. Tracer-side only, like the loop caps
    * below — the DE bodies stay oracle-mirrored. */
   uniform int uMarchSteps;
   /** Penumbra shadow-ray step budget per hit (per-tier). */
@@ -197,13 +198,13 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   uniform float uHitFloor;
 
   /** Everything per-map, in a std140 uniform BLOCK rather than the default
-   * block (fr-dqlq): 24 slots cost 2688 bytes of the 16 KB every WebGL2
-   * device guarantees per block, where the same arrays as default-block
-   * uniforms would have eaten 192 of the guaranteed 224 fragment uniform
-   * vectors. Only the first uMapCount slots are meaningful; the rest are
+   * block: 24 slots cost 2688 bytes of the 16 KB every WebGL2 device
+   * guarantees per block, where the same arrays as default-block uniforms
+   * would have eaten 192 of the guaranteed 224 fragment uniform vectors.
+   * Only the first uMapCount slots are meaningful; the rest are
    * stale/identity and never read. One slot per INPUT transform at any
-   * kaleidoscope order — sectors are swept, not expanded (fr-u91x; see
-   * uSymOrder below).
+   * kaleidoscope order — sectors are swept, not expanded (see uSymOrder
+   * below).
    *
    * This member list IS the layout contract with the THREE.UniformsGroup in
    * createSurfaceMaterial4 below: the renderer uploads that group's backing
@@ -229,8 +230,8 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     vec4 uMapTrap[MAX_MAPS];
   };
   uniform int uMapCount;
-  /** Kaleidoscope sectors swept around every base map (fr-u91x; >= 1).
-   * 1 leaves the sweep a single pass with no rotation, which is what keeps
+  /** Kaleidoscope sectors swept around every base map (>= 1). 1 leaves the
+   * sweep a single pass with no rotation, which is what keeps
    * non-symmetric systems bit-identical to the pre-sweep tracer. Default
    * block, like uMapCount — three's UBO writer is float-only, so ints stay
    * out of the block. */
@@ -258,10 +259,10 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   /** 4D radius bounding the VISIBLE set F(attractor) — feeds the slice
    * ray/sphere gate in main() below. */
   uniform float uVisibleRadius;
-  /** Radial color band of the visible set (fr-skhv, SurfaceDE4.radiusBand):
-   * the probe's 4D bounds-center plus the [minD, maxD] distance range from
-   * it, delivered as minD and 1/range so the radius source below maps the
-   * band onto the whole ramp exactly the way buildColors4's radius mode
+  /** Radial color band of the visible set (SurfaceDE4.radiusBand): the
+   * probe's 4D bounds-center plus the [minD, maxD] distance range from it,
+   * delivered as minD and 1/range so the radius source below maps the band
+   * onto the whole ramp exactly the way buildColors4's radius mode
    * does. Attractor-frame constants — no swim under rotor or slice moves. */
   uniform vec4 uRadiusCenter4;
   uniform float uRadiusMinD;
@@ -278,18 +279,18 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   uniform mat4 uInvRotor;
   /** The marched w-slice, as a WORLD w in the view frame — the same
    * hyperplane the cloud/flame/voxel renderers slice at, but not the same
-   * NUMBER: their slice window is written in normalized rotated-w
-   * (q.w * uInvWAmp4), and scene.ts's setSurface4View converts the shared
-   * slider through wSupport on the way here (fr-33yb). Backticks would end
+   * NUMBER: their slice window is written in normalized rotated-w (q.w *
+   * uInvWAmp4), and scene.ts's setSurface4View converts the shared slider
+   * through wSupport on the way here. Backticks would end
    * this template literal, so this whole GLSL source names code plainly. */
   uniform float uW0;
   /** HALF-THICKNESS of the marched SLAB, a literal world w in the view
-   * frame — the same units and the same frame as uW0 (fr-wa6o). 0 is the
+   * frame — the same units and the same frame as uW0. 0 is the
    * zero-thickness hyperplane this tracer shipped with, and every term
    * below collapses to that path's arithmetic bit for bit (see
-   * segmentRadius); above 0 each query becomes the SEGMENT the slab
-   * |w - uW0| less than or equal to uSliceHalfW cuts over the queried 3D
-   * point, so the render shows the slab's whole shadow rather than one
+   * segmentRadius); above 0 each query becomes the SEGMENT the slab |w -
+   * uW0| less than or equal to uSliceHalfW cuts over the queried 3D point,
+   * so the render shows the slab's whole shadow rather than one
    * cross-section. The validity argument — affine maps take segments to
    * segments, so every chain carries one extra vec4 and every ball
    * certificate reads a segment radius — is the SLAB QUERIES section of
@@ -299,8 +300,8 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * palette, 2 = height ramp, 3 = radius ramp, 4 = orbit rings, 5 = orbit
    * sheets. Sources 1-5 sample uColorLUT. */
   uniform int uColorSource;
-  /** Per-level decay of the orbit-trap blend weight (flam3's color speed,
-   * fr-rl4b): 0.5 = the classic halving, 0 = pure depth-0 regions, 1 =
+  /** Per-level decay of the orbit-trap blend weight (flam3's color speed):
+   * 0.5 = the classic halving, 0 = pure depth-0 regions, 1 =
    * every level weighs the same. Read by the "palette" source only. */
   uniform float uColorSpeed;
   /** 256x1 RGBA ramp for sources 1-5, built CPU-side by color.ts's ONE ramp
@@ -313,26 +314,26 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   uniform mat4 uInvProjView;
   uniform vec3 uBgTop;
   uniform vec3 uBgBottom;
-  /** Backdrop gradient SHAPE (fr-h3mp): mirrors the 3D tracer's
+  /** Backdrop gradient SHAPE: mirrors the 3D tracer's
    * uBgShape/uBgCenter/uBgScale line for line — see the 3D twin. */
   uniform int uBgShape;
   uniform vec2 uBgCenter;
   uniform vec2 uBgScale;
-  /** Depth-fog density multiplier (fr-5h5d): scales the traveled-distance
-   * term of the fog blend below (main()'s float fog computation),
-   * mirroring the 3D tracer's uFogDensity line for line — 1 is the
-   * pre-fr-5h5d fixed fog, 0 (scene-set floor) fades it away entirely.
-   * Scene-set, independent of the installed system — see scene.ts's
+  /** Depth-fog density multiplier: scales the traveled-distance term of
+   * the fog blend below (main()'s float fog computation), mirroring the 3D
+   * tracer's uFogDensity line for line — 1 is the fixed fog it replaced, 0
+   * (scene-set floor) fades it away entirely. Scene-set, independent of
+   * the installed system — see scene.ts's
    * setFogDensity. */
   uniform float uFogDensity;
-  /** Fog tint (fr-5h5d): what the depth fog blends toward is
-   * mix(background, uFogTint, uFogTintStrength), mirroring the 3D
-   * tracer's uFogTint line for line — strength 0 (the default) is a
-   * bit-exact identity, the pre-tint fog toward the pixel's own
+  /** Fog tint: what the depth fog blends toward is mix(background,
+   * uFogTint, uFogTintStrength), mirroring the 3D tracer's uFogTint line
+   * for line — strength 0 (the default) is a bit-exact identity, the
+   * pre-tint fog toward the pixel's own
    * backdrop color. scene.setFogTint keeps both current. */
   uniform vec3 uFogTint;
   uniform float uFogTintStrength;
-  /** Environment-light strength (fr-ehcj); 0 is a bit-exact identity.
+  /** Environment-light strength; 0 is a bit-exact identity.
    * Tints the WHOLE lit term — see the 3D twin for why not ambient only. */
   uniform float uEnvLight;
   vec3 envTint(vec3 n) {
@@ -344,22 +345,22 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * sizes the shading probes (normal offsets, ray dither) to the pixels
    * actually being rendered — not the hit test; see uAcceptPixelEps. */
   uniform float uPixelEps;
-  /** Angular pixel footprint of the FULL-RESOLUTION frame, tier-INDEPENDENT
-   * (fr-7xgi, mirrored from the 3D tracer): hit acceptance and the DE
-   * cutoff run at max(uAcceptPixelEps * t, uBoundingRadius * uHitFloor) in
-   * every tier — a tier may coarsen sampling, never acceptance, so a
+  /** Angular pixel footprint of the FULL-RESOLUTION frame,
+   * tier-INDEPENDENT (mirrored from the 3D tracer): hit acceptance and the
+   * DE cutoff run at max(uAcceptPixelEps * t, uBoundingRadius * uHitFloor)
+   * in every tier — a tier may coarsen sampling, never acceptance, so a
    * preview can never accept a hit the settle frame would reject. The 3D
    * declaration's doc carries the measured fold-phantom mechanism that
    * forced this; the 4D tracer takes the same contract for lockstep. */
   uniform float uAcceptPixelEps;
-  /** Where inside its pixel THIS pass aims (fr-jf9y), the 3D tracer's
-   * jitter uniform line for line: .xy the offset in UV, .zw the same
-   * offset in pixels, both derived by the scene from
-   * surface-compute.ts's subPixelSample. All zero is the pixel CENTRE,
-   * so every single-pass trace — and pass 0 of a supersampled settle —
-   * adds exactly 0.0 and renders the pre-fr-jf9y frame value for value.
-   * The ray's UV moves and the dither's hash takes the jittered pixel;
-   * the background ramp deliberately does not. The 3D declaration's doc
+  /** Where inside its pixel THIS pass aims, the 3D tracer's jitter uniform
+   * line for line: .xy the offset in UV, .zw the same offset in pixels,
+   * both derived by the scene from surface-compute.ts's subPixelSample.
+   * All zero is the pixel CENTRE, so every single-pass trace — and pass 0
+   * of a supersampled settle — adds exactly 0.0 and renders the
+   * pre-supersampling frame value for value. The ray's UV moves and the
+   * dither's hash takes the jittered pixel; the background ramp
+   * deliberately does not. The 3D declaration's doc
    * carries the reasoning. */
   uniform vec4 uPixelJitter;
 
@@ -373,11 +374,11 @@ const SURFACE4_FRAGMENT = /* glsl */ `
 
   /** Distance from the ORIGIN to the segment q + s*e, s in [-1, 1] — the
    * slab query's stand-in for length(q) at every radius, escape test and
-   * ball certificate the descent computes (fr-wa6o; the oracle's own
-   * segmentRadius, and the SLAB QUERIES section of surface-de-4d.ts's
-   * module doc). s is the segment's own parameter at closest approach: the
-   * unconstrained minimizer of the squared length is -dot(q, e) / dot(e, e),
-   * and clamping it to the segment's ends turns the infinite LINE's distance
+   * ball certificate the descent computes (the oracle's own segmentRadius,
+   * and the SLAB QUERIES section of surface-de-4d.ts's module doc). s is
+   * the segment's own parameter at closest approach: the unconstrained
+   * minimizer of the squared length is -dot(q, e) / dot(e, e), and
+   * clamping it to the segment's ends turns the infinite LINE's distance
    * (which undershoots, and by more than the slab justifies) into the
    * segment's exact one.
    *
@@ -402,10 +403,10 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   }
 
   /** The segment parameter s in [-1, 1] at that same closest approach —
-   * segmentRadius's argmin, shared guard and all (fr-9c9e). Every affine
-   * inverse map preserves the parameterization — T^-1(q + s e) is
-   * T^-1(q) + s * (M e) — so a chain tuple's s lives on the ORIGINAL
-   * query segment at any depth.
+   * segmentRadius's argmin, shared guard and all. Every affine inverse map
+   * preserves the parameterization — T^-1(q + s e) is T^-1(q) + s * (M e)
+   * — so a chain tuple's s lives on the ORIGINAL query segment at any
+   * depth.
    * 0 at e = 0: the point query has no segment to place a hit on. */
   float segmentS(vec4 q, vec4 e) {
     float ee = dot(e, e);
@@ -424,22 +425,22 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     return uSymStepBack * q;
   }
 
-  /** One extra Hutchinson level on a frozen escaped candidate's own inverse
-   * image (the oracle's refinedCert): the certificate becomes
+  /** One extra Hutchinson level on a frozen escaped candidate's own
+   * inverse image (the oracle's refinedCert): the certificate becomes
    * childScale * max(r - R, min sigmaMin_j * (|invMap_j(img)| - R)) —
    * never below the base childScale * (r - R), with the min over every
    * (sector, base map) pair, which the sweep spells out exactly as the
-   * oracle's refinedCert does (fr-u91x) — skipping the rotated pieces
-   * would skip candidates the descent itself sweeps. fr-beck measured this
-   * exact refinement eliminating every march ghost.
+   * oracle's refinedCert does — skipping the rotated pieces would skip
+   * candidates the descent itself sweeps. The 4D surface spike measured
+   * this exact refinement eliminating every march ghost.
    *
-   * imgExt is the candidate's segment half-extent (fr-wa6o), rotated one
-   * backward step per sector alongside the point and carried through each
-   * inner map by its LINEAR part alone, turning that |invMap_j(img)| into a
-   * segment radius; zero — the point query — leaves every term above
-   * unchanged. The segment flag is recomputed from uSliceHalfW here rather
-   * than passed, because a free function sees no caller scope; it is the
-   * same dynamically-uniform test the descent bodies hoist, so both
+   * imgExt is the candidate's segment half-extent, rotated one backward
+   * step per sector alongside the point and carried through each inner map
+   * by its LINEAR part alone, turning that |invMap_j(img)| into a segment
+   * radius; zero — the point query — leaves every term above unchanged.
+   * The segment flag is recomputed from uSliceHalfW here rather than
+   * passed, because a free function sees no caller scope; it is the same
+   * dynamically-uniform test the descent bodies hoist, so both
    * branches cost nothing across a draw. */
   float refinedCert4(vec4 img, vec4 imgExt, float r, float childScale) {
     bool segment = uSliceHalfW > 0.0;
@@ -464,12 +465,12 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   }
 
 #if SURFACE_BALLOON
-// The balloon inverted-union scene, one dimension up (fr-qxxw; the 3D arm
-// is fr-5wlv.4 over fr-5wlv.3's oracle). The wrapper past the descent
-// bodies composes fractal/balloon-de.ts's estimateBalloonDistance over
-// this tracer's public DE — this rename points the descent's three
-// definitions at surfaceDEFractal so the wrapper can own the public names,
-// the SURFACE_FOLD_LENS idiom the 3D file borrowed it from.
+// The balloon inverted-union scene, one dimension up (the 3D arm wraps the
+// same CPU oracle). The wrapper past the descent bodies composes
+// fractal/balloon-de.ts's estimateBalloonDistance over this tracer's
+// public DE — this rename points the descent's three definitions at
+// surfaceDEFractal so the wrapper can own the public names, the
+// SURFACE_FOLD_LENS idiom the 3D file borrowed it from.
 //
 // SLICE THEN INVERT is the whole 4D decision. I(p) is a PLAIN 3D inversion
 // of the MARCHED point, applied BEFORE the descent's
@@ -488,28 +489,27 @@ uniform vec3 uBalloonCenter;
 uniform float uBalloonR;
 uniform float uBalloonRho;
 uniform float uBalloonFar;
-// The echo's own tint (fr-j85n), the 3D arm's uBalloonTint/
-// uBalloonTintStrength verbatim, packed by the SAME packSurfaceBalloonTint
-// (surface-material.ts — both materials declare these names). Mixed into
-// the BASE COLOUR of a shell hit, before lighting; strength 0 is the
-// default and mix(x, y, 0.0) == x exactly, so an unset tint is today's
-// frame byte for byte.
+// The echo's own tint, the 3D arm's uBalloonTint/ uBalloonTintStrength
+// verbatim, packed by the SAME packSurfaceBalloonTint (surface-material.ts
+// — both materials declare these names). Mixed into the BASE COLOUR of a
+// shell hit, before lighting; strength 0 is the default and mix(x, y, 0.0)
+// == x exactly, so an unset tint is today's frame byte for byte.
 uniform vec3 uBalloonTint;
 uniform float uBalloonTintStrength;
 #define surfaceDE surfaceDEFractal
 #endif
   /**
    * Both surfaceDE overloads mirror estimateDistance4Refined in
-   * src/fractal/surface-de-4d.ts (the tested CPU oracle) — any change there
-   * must land in BOTH bodies here, and vice versa. Width-4 BEAM inverse-map
-   * descent (fr-v6yg's paired A/B chains, ported one dimension up by
-   * fr-beck) with REFINED sibling certificates (fr-beck's measured
-   * ghost-eliminator: one extra Hutchinson level applied to a candidate's
-   * own inverse image before it freezes into the running min) — hardcoded
-   * here exactly as 3D hardcodes its beam width, so there is no 'wide' flag
-   * and no width-1 branch to port. fr-jkpn's rank-3/4 validity slots ride
-   * along as extra V1/V2 chains, live only while their image stays
-   * in-sphere — an escaped rank-3/4 candidate folds the same refined
+   * src/fractal/surface-de-4d.ts (the tested CPU oracle) — any change
+   * there must land in BOTH bodies here, and vice versa. Width-4 BEAM
+   * inverse-map descent (paired A/B chains, ported one dimension up by the
+   * 4D surface spike) with REFINED sibling certificates (that spike's
+   * measured ghost-eliminator: one extra Hutchinson level applied to a
+   * candidate's own inverse image before it freezes into the running min)
+   * — hardcoded here exactly as 3D hardcodes its beam width, so there is
+   * no 'wide' flag and no width-1 branch to port. The rank-3/4 validity
+   * slots ride along as extra V1/V2 chains, live only while their image
+   * stays in-sphere — an escaped rank-3/4 candidate folds the same refined
    * certificate instead, exactly as it would without the slots. Refined
    * folds replace plain ones at the single per-candidate EVICTION fold
    * (whichever tuple the rank-1..4 ladders displace) and the two rank-3/4
@@ -519,80 +519,76 @@ uniform float uBalloonTintStrength;
    * all) stay PLAIN, exactly as estimateDistance4Refined keeps them —
    * refining those would cost another inverse-map sweep for candidates
    * already destined for the running min by a cheaper route. Every refined
-   * fold site carries the oracle's fr-1z6p laziness guard: refinement can
-   * only RAISE a certificate, so a fold whose PLAIN certificate already
-   * fails to beat the running min is skipped whole — bit-exact, and it
-   * caps the inner sweeps at the folds that actually advance the min
-   * (measured on the fr-v6yg harness: tesseract 1504 -> 450 apps/call,
-   * values unchanged).
-   * 1e30 stands in for Infinity
-   * (slot-occupancy tests use < 1e29): with sigma products <= 1 and real
-   * distances O(1..10) it can never be confused for a real bound. This
-   * plain overload is the workhorse (march, normals, shadow, occlusion);
-   * the out-param overload below adds hit-shading extras.
+   * fold site carries the oracle's laziness guard: refinement can only
+   * RAISE a certificate, so a fold whose PLAIN certificate already fails
+   * to beat the running min is skipped whole — bit-exact, and it caps the
+   * inner sweeps at the folds that actually advance the min (measured on
+   * the beam harness: tesseract 1504 -> 450 apps/call, values unchanged).
+   * 1e30 stands in for Infinity (slot-occupancy tests use < 1e29): with
+   * sigma products <= 1 and real distances O(1..10) it can never be
+   * confused for a real bound. This plain overload is the workhorse
+   * (march, normals, shadow, occlusion); the out-param overload below adds
+   * hit-shading extras.
    *
-   * EARLY-OUT CUTOFF (fr-55r5), mirroring the oracle's cutoff parameter.
-   * The march needs a HIT DECISION, not a distance, so it passes its own
-   * acceptance epsilon and the descent stops as soon as the value it would
-   * return is already below it. A cutoff of 0.0 — the zero-argument
-   * overload below, every tap that needs the DISTANCE — is the full
-   * descent. Above the cutoff the value is the full-descent one (early
-   * exits only ever return BELOW it, so step lengths never drift); below
-   * it, the full descent would have landed below too, so the hit verdict
-   * is identical. Both rest on best only ever FALLING, and on the exits
-   * testing it only after a fold has SETTLED it — refined, here — never on
-   * the raw plain certificate that gates the fold. Exiting on the latter
-   * would re-open the ghost class refinement exists to kill: a
-   * barely-escaped sibling dips under the epsilon, the full descent lifts
-   * it back above.
+   * EARLY-OUT CUTOFF, mirroring the oracle's cutoff parameter. The march
+   * needs a HIT DECISION, not a distance, so it passes its own acceptance
+   * epsilon and the descent stops as soon as the value it would return is
+   * already below it. A cutoff of 0.0 — the zero-argument overload below,
+   * every tap that needs the DISTANCE — is the full descent. Above the
+   * cutoff the value is the full-descent one (early exits only ever return
+   * BELOW it, so step lengths never drift); below it, the full descent
+   * would have landed below too, so the hit verdict is identical. Both
+   * rest on best only ever FALLING, and on the exits testing it only after
+   * a fold has SETTLED it — refined, here — never on the raw plain
+   * certificate that gates the fold. Exiting on the latter would re-open
+   * the ghost class refinement exists to kill: a barely-escaped sibling
+   * dips under the epsilon, the full descent lifts it back above.
    *
-   * SPHERE FLOOR (fr-zkt2), mirroring the oracle's own unconditional exit.
-   * Once best falls to or below sphereBound the return is already pinned
-   * at sphereBound * uFinalSigmaMin — the epilogue clamps through
-   * max(best, sphereBound), and best only ever falls, so no later fold
-   * can lift the clamp back off sphereBound. The descent therefore exits
-   * the instant best <= sphereBound, unconditionally — no cutoff
-   * involved. Unlike the fr-55r5 exit above, this one is value-exact for
-   * EVERY caller, including a cutoff of 0.0 (the zero-argument overload
-   * below): it returns the full-descent value bit-for-bit, always.
-   * Live on anisotropic maps (certificates lose a sigmaMin/sigmaMax
-   * factor per level and dip under the floor); provably dead on
-   * isotropic invariant-ball maps, where certificates never dip (see
-   * the oracle's paragraph).
+   * SPHERE FLOOR, mirroring the oracle's own unconditional exit. Once best
+   * falls to or below sphereBound the return is already pinned at
+   * sphereBound * uFinalSigmaMin — the epilogue clamps through max(best,
+   * sphereBound), and best only ever falls, so no later fold can lift the
+   * clamp back off sphereBound. The descent therefore exits the instant
+   * best <= sphereBound, unconditionally — no cutoff involved. Unlike the
+   * cutoff exit above, this one is value-exact for EVERY caller, including
+   * a cutoff of 0.0 (the zero-argument overload below): it returns the
+   * full-descent value bit-for-bit, always. Live on anisotropic maps
+   * (certificates lose a sigmaMin/sigmaMax factor per level and dip under
+   * the floor); provably dead on isotropic invariant-ball maps, where
+   * certificates never dip (see the oracle's paragraph).
    *
-   * SLAB QUERIES (fr-wa6o), mirroring the oracle's halfExtent parameter.
-   * The query is no longer the single point (p, uW0) but the SEGMENT it
-   * spans through the slab of half-thickness uSliceHalfW — the part of
-   * |w - uW0| less than or equal to uSliceHalfW sitting over p — so the
-   * marched object is the slab's shadow rather than one cross-section.
-   * Affine maps take segments to segments, so the whole descent carries
-   * one extra vec4 beside each chain's and candidate's point, pushed
-   * through the inverse map's LINEAR part alone (a translation slides a
-   * segment's centre and leaves its extent alone), and every |q| - R ball
-   * certificate becomes segmentRadius(q, ext) - R. Beam, validity slots,
-   * refined certificates, terminal KIFS bound, depth-0 sphere floor, final
-   * lens and both early exits are structurally untouched; the bound only
-   * loosens, by at most uSliceHalfW (see the oracle's HOW MUCH THE BOUND
-   * CAN LOSE), and the zero set is exactly the shadow being marched, so
-   * nothing new can go unsound. Cost: uSliceHalfW greater than 0 is the
-   * segment flag each body hoists, DYNAMICALLY UNIFORM across a draw, so
-   * the propagation branches cost nothing when the slab is off — but the
-   * extra vec4 per chain, candidate, eviction and image slot is live
-   * register pressure either way, the one price this pays unconditionally.
-   * At uSliceHalfW == 0 every value here is today's, bit for bit:
-   * segmentRadius degenerates to length, and a zero extent stays zero
-   * through any linear map.
+   * SLAB QUERIES, mirroring the oracle's halfExtent parameter. The query
+   * is no longer the single point (p, uW0) but the SEGMENT it spans
+   * through the slab of half-thickness uSliceHalfW — the part of |w - uW0|
+   * less than or equal to uSliceHalfW sitting over p — so the marched
+   * object is the slab's shadow rather than one cross-section. Affine maps
+   * take segments to segments, so the whole descent carries one extra vec4
+   * beside each chain's and candidate's point, pushed through the inverse
+   * map's LINEAR part alone (a translation slides a segment's centre and
+   * leaves its extent alone), and every |q| - R ball certificate becomes
+   * segmentRadius(q, ext) - R. Beam, validity slots, refined certificates,
+   * terminal KIFS bound, depth-0 sphere floor, final lens and both early
+   * exits are structurally untouched; the bound only loosens, by at most
+   * uSliceHalfW (see the oracle's HOW MUCH THE BOUND CAN LOSE), and the
+   * zero set is exactly the shadow being marched, so nothing new can go
+   * unsound. Cost: uSliceHalfW greater than 0 is the segment flag each
+   * body hoists, DYNAMICALLY UNIFORM across a draw, so the propagation
+   * branches cost nothing when the slab is off — but the extra vec4 per
+   * chain, candidate, eviction and image slot is live register pressure
+   * either way, the one price this pays unconditionally. At uSliceHalfW ==
+   * 0 every value here is today's, bit for bit: segmentRadius degenerates
+   * to length, and a zero extent stays zero through any linear map.
    *
-   * SECTOR SWEEP (fr-u91x), mirroring the oracle's kaleidoscope. Each
-   * chain point (and its slab half-extent — an isometry maps segments to
-   * segments) turns one backward step per sector via uSymStepBack, and
-   * every base map is applied to it there, sector-major (k*n + i, the
-   * chaos-game expansion's slot order), so the candidate stream — keys,
-   * certificates, tie-breaks — is exactly the expanded system's without a
-   * single expanded slot. uSymOrder 1 leaves the k > 0 branches dead:
+   * SECTOR SWEEP, mirroring the oracle's kaleidoscope. Each chain point
+   * (and its slab half-extent — an isometry maps segments to segments)
+   * turns one backward step per sector via uSymStepBack, and every base
+   * map is applied to it there, sector-major (k*n + i, the chaos-game
+   * expansion's slot order), so the candidate stream — keys, certificates,
+   * tie-breaks — is exactly the expanded system's without a single
+   * expanded slot. uSymOrder 1 leaves the k > 0 branches dead:
    * non-symmetric systems run the pre-sweep arithmetic unchanged. The
-   * oracle module's SYMMETRY section carries the validity argument and
-   * why a single wedge FOLD would not be sound here.
+   * oracle module's SYMMETRY section carries the validity argument and why
+   * a single wedge FOLD would not be sound here.
    */
   float surfaceDE(vec3 p, float cutoff) {
     // View -> attractor frame: a rotation is an isometry, so the DE's
@@ -600,11 +596,11 @@ uniform float uBalloonTintStrength;
     // lens, exactly as the oracle's prologue.
     vec4 q = uInvRotor * vec4(p, uW0);
     // The query's half-extent, carried alongside the point down every
-    // chain (fr-wa6o). Zero — the shipped slider position — is the point
-    // query this tracer shipped with, and every term below collapses to it
-    // exactly (see segmentRadius). The slab's half-extent in the ATTRACTOR
-    // frame: a w displacement of uSliceHalfW in the view frame is
-    // uSliceHalfW times the inverse rotor's w column.
+    // chain. Zero — the shipped slider position — is the point query this
+    // tracer shipped with, and every term below collapses to it exactly
+    // (see segmentRadius). The slab's half-extent in the ATTRACTOR frame:
+    // a w displacement of uSliceHalfW in the view frame is uSliceHalfW
+    // times the inverse rotor's w column.
     bool segment = uSliceHalfW > 0.0;
     vec4 ext = segment ? uInvRotor[3] * uSliceHalfW : vec4(0.0);
     q = uFinalInvM * q + uFinalInvT;
@@ -620,15 +616,16 @@ uniform float uBalloonTintStrength;
     // -1e30 disables the test: a cutoff of 0.0, and a depth-0 sphere floor
     // that already holds the answer at or above the cutoff no matter how
     // far best falls, since the floor is what the return clamps to. (That
-    // sphere floor case now has its own unconditional exit — fr-zkt2,
-    // below — that fires the moment best reaches it, cutoff or not.)
+    // sphere floor case now has its own unconditional exit — the
+    // sphere-floor pin below — that fires the moment best reaches it,
+    // cutoff or not.)
     float bailBelow =
       (cutoff > 0.0 && sphereBound * uFinalSigmaMin < cutoff) ? cutoff : -1e30;
     // Chain slot A starts at the (lensed) query; slot B idles until beam
     // selection fills it. Each chain carries the contraction accumulated
-    // INCLUDING its own map and the radius it was selected at, plus (since
-    // fr-wa6o) its own segment half-extent — one vec4 where the oracle
-    // unrolls a 4-element buffer.
+    // INCLUDING its own map and the radius it was selected at, plus its
+    // own segment half-extent — one vec4 where the oracle unrolls a
+    // 4-element buffer.
     vec4 aQ = q;
     vec4 aExt = ext;
     float aScale = 1.0;
@@ -639,11 +636,11 @@ uniform float uBalloonTintStrength;
     float bScale = 1.0;
     float bR = 0.0;
     bool bLive = false;
-    // Validity chains (fr-jkpn): they hold the level's rank-3/4
-    // candidates ONLY while their points are in-sphere, and carry no R
-    // field — unlike A/B they never fold a terminal (see past the loop),
-    // and expansion re-derives every child radius, so the selection
-    // radius is dead weight once occupancy is decided.
+    // Validity chains: they hold the level's rank-3/4 candidates ONLY
+    // while their points are in-sphere, and carry no R field — unlike A/B
+    // they never fold a terminal (see past the loop), and expansion
+    // re-derives every child radius, so the selection radius is dead
+    // weight once occupancy is decided.
     vec4 v1Q = vec4(0.0);
     vec4 v1Ext = vec4(0.0);
     float v1Scale = 1.0;
@@ -719,17 +716,17 @@ uniform float uBalloonTintStrength;
           pExt = v2Ext;
           pScale = v2Scale;
         }
-        // Sector sweep (fr-u91x, fr-x029's shape one dimension up): the
-        // chain point — and, under a slab query, its half-extent, since the
+        // Sector sweep, the 3D tracer's shape one dimension up: the chain
+        // point — and, under a slab query, its half-extent, since the
         // backward step is an isometry taking segments to segments — turns
         // one step per kaleidoscope sector, and every BASE map is applied
-        // to it there, so the candidates and their SECTOR-MAJOR enumeration
-        // order (k*n + i, exactly chaos-game-4d's expansion slots) are the
-        // ones the expansion would have produced. The ladders below
-        // therefore break ties the same way, and the beam, the validity
-        // slots and the exits see an unchanged stream. See the oracle
-        // module's SYMMETRY section for why a single wedge FOLD would not
-        // be sound here.
+        // to it there, so the candidates and their SECTOR-MAJOR
+        // enumeration order (k*n + i, exactly chaos-game-4d's expansion
+        // slots) are the ones the expansion would have produced. The
+        // ladders below therefore break ties the same way, and the beam,
+        // the validity slots and the exits see an unchanged stream. See
+        // the oracle module's SYMMETRY section for why a single wedge FOLD
+        // would not be sound here.
         vec4 sQ = pQ;
         vec4 sExt = pExt;
         for (int k = 0; k < uSymOrder; k++) {
@@ -743,7 +740,7 @@ uniform float uBalloonTintStrength;
             vec4 img = uInvM[j] * sQ + uInvT[j];
             // uInvM[j] carries no translation — uInvT[j] is a separate
             // member — so this IS the inverse map's linear part, all a
-            // segment's half-extent ever sees (fr-wa6o).
+            // segment's half-extent ever sees.
             vec4 imgExt = segment ? uInvM[j] * sExt : vec4(0.0);
             float r = segmentRadius(img, imgExt);
             float key = pScale * (r - uBoundingRadius);
@@ -843,22 +840,23 @@ uniform float uBalloonTintStrength;
               eCert = tCert;
             }
             // The tuple leaving the beam frontier: escaped candidates fold
-            // their REFINED certificate (fr-beck: one extra Hutchinson level
-            // closes the barely-escaped-sibling ghost) — skipped whole when
-            // its plain certificate cannot beat the running min anyway (the
+            // their REFINED certificate (one extra Hutchinson level closes
+            // the barely-escaped-sibling ghost) — skipped whole when its
+            // plain certificate cannot beat the running min anyway (the
             // oracle's laziness guard, bit-exact); an in-sphere tuple
             // carries no positive certificate — it can only get here past
-            // FOUR smaller keys, the (shrunken) fr-jkpn residual drop.
+            // FOUR smaller keys, the (shrunken) residual drop the validity
+            // slots left.
             if (eR > uBoundingRadius && eCert < best) {
               best = min(best, refinedCert4(eQ, eExt, eR, eScale));
-              // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2):
-              // the folded certificate is FINALIZED (already refined), and
-              // best only falls from here. Once best is at or below
-              // sphereBound the return is already pinned at sphereBound *
-              // uFinalSigmaMin no matter how much further best still
-              // falls, so that case exits unconditionally; short of it,
-              // the settled verdict against the caller's cutoff means the
-              // rest of the descent cannot lift it back either.
+              // Cutoff exit plus the sphere-floor pin: the folded
+              // certificate is FINALIZED (already refined), and best only
+              // falls from here. Once best is at or below sphereBound the
+              // return is already pinned at sphereBound * uFinalSigmaMin no
+              // matter how much further best still falls, so that case
+              // exits unconditionally; short of it, the settled verdict
+              // against the caller's cutoff means the rest of the descent
+              // cannot lift it back either.
               if (best <= sphereBound || best * uFinalSigmaMin < bailBelow) {
                 return max(best, sphereBound) * uFinalSigmaMin;
               }
@@ -923,17 +921,16 @@ uniform float uBalloonTintStrength;
           v2Live = true;
         }
       }
-      // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2), covering
-      // the four promote folds above in one test: each either wrote a
-      // settled certificate into best (refined at the two validity-slot
-      // sites, the deliberately plain escape-radius bound at the other
-      // two) or continued a chain, and best only falls from here. Once
-      // best is at or below sphereBound the eventual return is already
-      // pinned at sphereBound * uFinalSigmaMin, so that case exits
-      // unconditionally. Deliberately NOT a break: the terminal bounds
-      // past the loop are folds the FULL descent only makes at the depth
-      // cap, and folding one here could drop best below a value that
-      // descent never reaches.
+      // Cutoff exit plus the sphere-floor pin, covering the four promote
+      // folds above in one test: each either wrote a settled certificate
+      // into best (refined at the two validity-slot sites, the
+      // deliberately plain escape-radius bound at the other two) or
+      // continued a chain, and best only falls from here. Once best is at
+      // or below sphereBound the eventual return is already pinned at
+      // sphereBound * uFinalSigmaMin, so that case exits unconditionally.
+      // Deliberately NOT a break: the terminal bounds past the loop are
+      // folds the FULL descent only makes at the depth cap, and folding
+      // one here could drop best below a value that descent never reaches.
       if (best <= sphereBound || best * uFinalSigmaMin < bailBelow) {
         return max(best, sphereBound) * uFinalSigmaMin;
       }
@@ -951,19 +948,19 @@ uniform float uBalloonTintStrength;
     // A/B. In-sphere means inside the bounding SPHERE, not near the
     // attractor, so a validity chain's cap terminal is a vacuous negative
     // bound that can only ever pull the estimate toward a fabricated hit
-    // (the membrane direction fr-jkpn's record calls the visually harmful
-    // one), never fix a real one — the piece it tracks sits within
+    // (the membrane direction the validity-slot record calls the visually
+    // harmful one), never fix a real one — the piece it tracks sits within
     // sigmaMax_chain * 2R of the query, sub-resolution wherever the depth
-    // cap is not clamped. Measured (fr-jkpn harness, all systems, both
+    // cap is not clamped. Measured (the beam harness, all systems, both
     // estimators, widths 3/4): folding them changes NOTHING — whenever a
     // validity chain survives to the cap, chain A holds an equal-or-deeper
     // branch whose terminal already dominates — so the fold is omitted on
-    // principle, not cost. (The disclosed repro3 void-false-hit uptick,
-    // 0 -> 2/435 refined at width 4, comes from A's OWN terminal on
-    // wanderer branches the validity slots keep alive in-sphere to the
-    // depth cap — and in-sphere is not near-attractor, so the KIFS
-    // last-value bound is vacuous for them at ANY cap size: re-measured
-    // unchanged after fr-xok8 raised the ceiling from 48 to 128.)
+    // principle, not cost. (The disclosed repro3 void-false-hit uptick, 0
+    // -> 2/435 refined at width 4, comes from A's OWN terminal on wanderer
+    // branches the validity slots keep alive in-sphere to the depth cap —
+    // and in-sphere is not near-attractor, so the KIFS last-value bound is
+    // vacuous for them at ANY cap size: re-measured unchanged after the
+    // descent-depth ceiling rose from 48 to 128.)
     float d = max(best, sphereBound);
     return d * uFinalSigmaMin;
   }
@@ -983,45 +980,43 @@ uniform float uBalloonTintStrength;
    * of the CPU oracle's distance contract (surface-de-4d.ts mirrors
    * distance only). firstChoice is the depth-0 winning candidate's map,
    * keying by-transform color (identical to the old greedy pick: level 0
-   * has one chain at scale 1, so the selection key ranks by radius
-   * alone). trap is a flame-style structural blend of the winning
-   * candidates' palette coordinates, accumulated TOP-DOWN with
-   * geometrically decaying weight (level d weighs uColorSpeed^d,
-   * normalized at the end; 0.5 is the classic decay): the depth-0 choice
-   * — which top-level copy of the attractor the hit sits in — dominates
-   * the final coordinate, matching flam3's convention where the
-   * LAST-applied transform dominates a plotted point's color (descent
-   * order is application order reversed, so descent level 0 is the most
-   * significant digit; the previous deepest-first recurrence rendered as
-   * per-pixel palette noise — fr-gt9i). rings is the classic geometric
-   * orbit trap (fr-rl4b): the winning chain's closest radial approach
-   * |image|/R across the descent, min-tracked exactly where the trap
-   * blend samples — radial shells in raw attractor space that follow the
-   * fractal's own structure. sheets is rings' plane-trap sibling: the
-   * winning chain's closest approach |image.y|/R to the attractor
-   * frame's y = 0 plane, min-tracked the same way — nested laminar bands
-   * cutting across the structure. (An escape-depth extra was tried in
-   * this slot first and swapped out pre-release: on uniform-contraction
-   * systems the escape level is pinned by the hit epsilon, not local
-   * structure, and it rendered one flat hue.) sStar is the slab hit's own
-   * place along the query segment (fr-9c9e): the level winner's
+   * has one chain at scale 1, so the selection key ranks by radius alone).
+   * trap is a flame-style structural blend of the winning candidates'
+   * palette coordinates, accumulated TOP-DOWN with geometrically decaying
+   * weight (level d weighs uColorSpeed^d, normalized at the end; 0.5 is
+   * the classic decay): the depth-0 choice — which top-level copy of the
+   * attractor the hit sits in — dominates the final coordinate, matching
+   * flam3's convention where the LAST-applied transform dominates a
+   * plotted point's color (descent order is application order reversed, so
+   * descent level 0 is the most significant digit; the previous
+   * deepest-first recurrence rendered as per-pixel palette noise). rings
+   * is the classic geometric orbit trap: the winning chain's closest
+   * radial approach |image|/R across the descent, min-tracked exactly
+   * where the trap blend samples — radial shells in raw attractor space
+   * that follow the fractal's own structure. sheets is rings' plane-trap
+   * sibling: the winning chain's closest approach |image.y|/R to the
+   * attractor frame's y = 0 plane, min-tracked the same way — nested
+   * laminar bands cutting across the structure. (An escape-depth extra was
+   * tried in this slot first and swapped out pre-release: on
+   * uniform-contraction systems the escape level is pinned by the hit
+   * epsilon, not local structure, and it rendered one flat hue.) sStar is
+   * the slab hit's own place along the query segment: the level winner's
    * closest-approach parameter, overwritten per level so the DEEPEST
-   * resolved level — the contracted neighborhood the accepted hit
-   * actually sits in — reports; inverse maps preserve the segment
-   * parameterization (see segmentS), so it reads directly on the original
-   * |w - uW0| <= uSliceHalfW span, and main()'s radius color lifts
-   * through w0 + sStar * uSliceHalfW. Always 0 at uSliceHalfW = 0. It
-   * follows the per-level best candidate and stops when every chain has
-   * escaped. Called ONCE per hit; the march itself uses the plain
-   * overload.
+   * resolved level — the contracted neighborhood the accepted hit actually
+   * sits in — reports; inverse maps preserve the segment parameterization
+   * (see segmentS), so it reads directly on the original |w - uW0| <=
+   * uSliceHalfW span, and main()'s radius color lifts through w0 + sStar *
+   * uSliceHalfW. Always 0 at uSliceHalfW = 0. It follows the per-level
+   * best candidate and stops when every chain has escaped. Called ONCE per
+   * hit; the march itself uses the plain overload.
    *
-   * The fr-wa6o slab query rides here identically — same extent prologue,
-   * same vec4 per chain, candidate and eviction slot, same segmentRadius
-   * at every ball certificate — because lockstep with the plain overload
-   * IS the contract; only the extras above are extra. Of those, rings
+   * The slab query rides here identically — same extent prologue, same
+   * vec4 per chain, candidate and eviction slot, same segmentRadius at
+   * every ball certificate — because lockstep with the plain overload IS
+   * the contract; only the extras above are extra. Of those, rings
    * inherits the segment radius (it reads c1R, which is one), while sheets
-   * keeps reading the chain centre's y: shading, not distance. The fr-u91x
-   * sector sweep rides the same way, and c1Map stays the BASE map index j
+   * keeps reading the chain centre's y: shading, not distance. The sector
+   * sweep rides the same way, and c1Map stays the BASE map index j
    * whichever sector the winning candidate came from — every kaleidoscope
    * copy of a map colors as that map, exactly chaos-game-4d's
    * transformIndices discipline.
@@ -1035,8 +1030,8 @@ uniform float uBalloonTintStrength;
     out float sStar
   ) {
     vec4 q = uInvRotor * vec4(p, uW0);
-    // The slab query's half-extent (fr-wa6o), exactly as the plain
-    // overload's prologue derives it — see that body's doc comment.
+    // The slab query's half-extent, exactly as the plain overload's
+    // prologue derives it — see that body's doc comment.
     bool segment = uSliceHalfW > 0.0;
     vec4 ext = segment ? uInvRotor[3] * uSliceHalfW : vec4(0.0);
     q = uFinalInvM * q + uFinalInvT;
@@ -1058,11 +1053,11 @@ uniform float uBalloonTintStrength;
     float bScale = 1.0;
     float bR = 0.0;
     bool bLive = false;
-    // Validity chains (fr-jkpn): they hold the level's rank-3/4
-    // candidates ONLY while their points are in-sphere, and carry no R
-    // field — unlike A/B they never fold a terminal (see past the loop),
-    // and expansion re-derives every child radius, so the selection
-    // radius is dead weight once occupancy is decided.
+    // Validity chains: they hold the level's rank-3/4 candidates ONLY
+    // while their points are in-sphere, and carry no R field — unlike A/B
+    // they never fold a terminal (see past the loop), and expansion
+    // re-derives every child radius, so the selection radius is dead
+    // weight once occupancy is decided.
     vec4 v1Q = vec4(0.0);
     vec4 v1Ext = vec4(0.0);
     float v1Scale = 1.0;
@@ -1144,17 +1139,17 @@ uniform float uBalloonTintStrength;
           pExt = v2Ext;
           pScale = v2Scale;
         }
-        // Sector sweep (fr-u91x, fr-x029's shape one dimension up): the
-        // chain point — and, under a slab query, its half-extent, since the
+        // Sector sweep, the 3D tracer's shape one dimension up: the chain
+        // point — and, under a slab query, its half-extent, since the
         // backward step is an isometry taking segments to segments — turns
         // one step per kaleidoscope sector, and every BASE map is applied
-        // to it there, so the candidates and their SECTOR-MAJOR enumeration
-        // order (k*n + i, exactly chaos-game-4d's expansion slots) are the
-        // ones the expansion would have produced. The ladders below
-        // therefore break ties the same way, and the beam, the validity
-        // slots and the exits see an unchanged stream. See the oracle
-        // module's SYMMETRY section for why a single wedge FOLD would not
-        // be sound here.
+        // to it there, so the candidates and their SECTOR-MAJOR
+        // enumeration order (k*n + i, exactly chaos-game-4d's expansion
+        // slots) are the ones the expansion would have produced. The
+        // ladders below therefore break ties the same way, and the beam,
+        // the validity slots and the exits see an unchanged stream. See
+        // the oracle module's SYMMETRY section for why a single wedge FOLD
+        // would not be sound here.
         vec4 sQ = pQ;
         vec4 sExt = pExt;
         for (int k = 0; k < uSymOrder; k++) {
@@ -1168,7 +1163,7 @@ uniform float uBalloonTintStrength;
             vec4 img = uInvM[j] * sQ + uInvT[j];
             // uInvM[j] carries no translation — uInvT[j] is a separate
             // member — so this IS the inverse map's linear part, all a
-            // segment's half-extent ever sees (fr-wa6o).
+            // segment's half-extent ever sees.
             vec4 imgExt = segment ? uInvM[j] * sExt : vec4(0.0);
             float r = segmentRadius(img, imgExt);
             float key = pScale * (r - uBoundingRadius);
@@ -1269,12 +1264,13 @@ uniform float uBalloonTintStrength;
               eCert = tCert;
             }
             // The tuple leaving the beam frontier: escaped candidates fold
-            // their REFINED certificate (fr-beck: one extra Hutchinson level
-            // closes the barely-escaped-sibling ghost) — skipped whole when
-            // its plain certificate cannot beat the running min anyway (the
+            // their REFINED certificate (one extra Hutchinson level closes
+            // the barely-escaped-sibling ghost) — skipped whole when its
+            // plain certificate cannot beat the running min anyway (the
             // oracle's laziness guard, bit-exact); an in-sphere tuple
             // carries no positive certificate — it can only get here past
-            // FOUR smaller keys, the (shrunken) fr-jkpn residual drop.
+            // FOUR smaller keys, the (shrunken) residual drop the validity
+            // slots left.
             if (eR > uBoundingRadius && eCert < best) {
               best = min(best, refinedCert4(eQ, eExt, eR, eScale));
             }
@@ -1288,13 +1284,13 @@ uniform float uBalloonTintStrength;
       trapNorm += trapW;
       trapW *= uColorSpeed;
       rings = min(rings, c1R / uBoundingRadius);
-      // Under a slab query (fr-wa6o) rings rides the SEGMENT radius, since
-      // c1R is one; sheets keeps reading the segment's CENTRE y by design —
-      // a shading extra, not part of the distance contract, and a coordinate
+      // Under a slab query rings rides the SEGMENT radius, since c1R is
+      // one; sheets keeps reading the segment's CENTRE y by design — a
+      // shading extra, not part of the distance contract, and a coordinate
       // is what the plane trap wants.
       sheets = min(sheets, abs(c1Q.y) / uBoundingRadius);
       // Overwritten, not min-tracked: the deepest level's winner is the
-      // honest place along the slab segment (fr-9c9e, see the doc above).
+      // honest place along the slab segment (see the doc above).
       sStar = segmentS(c1Q, c1Ext);
       aLive = false;
       bLive = false;
@@ -1357,22 +1353,22 @@ uniform float uBalloonTintStrength;
     // A/B. In-sphere means inside the bounding SPHERE, not near the
     // attractor, so a validity chain's cap terminal is a vacuous negative
     // bound that can only ever pull the estimate toward a fabricated hit
-    // (the membrane direction fr-jkpn's record calls the visually harmful
-    // one), never fix a real one — the piece it tracks sits within
+    // (the membrane direction the validity-slot record calls the visually
+    // harmful one), never fix a real one — the piece it tracks sits within
     // sigmaMax_chain * 2R of the query, sub-resolution wherever the depth
-    // cap is not clamped. Measured (fr-jkpn harness, all systems, both
+    // cap is not clamped. Measured (the beam harness, all systems, both
     // estimators, widths 3/4): folding them changes NOTHING — whenever a
     // validity chain survives to the cap, chain A holds an equal-or-deeper
     // branch whose terminal already dominates — so the fold is omitted on
-    // principle, not cost. (The disclosed repro3 void-false-hit uptick,
-    // 0 -> 2/435 refined at width 4, comes from A's OWN terminal on
-    // wanderer branches the validity slots keep alive in-sphere to the
-    // depth cap — and in-sphere is not near-attractor, so the KIFS
-    // last-value bound is vacuous for them at ANY cap size: re-measured
-    // unchanged after fr-xok8 raised the ceiling from 48 to 128.)
-    // Normalize the top-down blend. Every call that can reach a hit runs
-    // depth 0 (uMapCount >= 1, chains start live), so trapNorm >= 1; the
-    // guard just keeps a zero-map placeholder call from dividing by zero.
+    // principle, not cost. (The disclosed repro3 void-false-hit uptick, 0
+    // -> 2/435 refined at width 4, comes from A's OWN terminal on wanderer
+    // branches the validity slots keep alive in-sphere to the depth cap —
+    // and in-sphere is not near-attractor, so the KIFS last-value bound is
+    // vacuous for them at ANY cap size: re-measured unchanged after the
+    // descent-depth ceiling rose from 48 to 128.) Normalize the top-down
+    // blend. Every call that can reach a hit runs depth 0 (uMapCount >= 1,
+    // chains start live), so trapNorm >= 1; the guard just keeps a
+    // zero-map placeholder call from dividing by zero.
     trap = trapNorm > 0.0 ? trapAcc / trapNorm : 0.0;
     rings = clamp(rings, 0.0, 1.0);
     sheets = clamp(sheets, 0.0, 1.0);
@@ -1382,14 +1378,14 @@ uniform float uBalloonTintStrength;
 
 #if SURFACE_BALLOON
 #undef surfaceDE
-  // The balloon union (fr-qxxw): fractal/balloon-de.ts's
-  // estimateBalloonDistance mirrored term for term over the descent's
-  // public DE. min(DE(p), (|p-c|/rho)*DE(I(p))) is conservative at every R
-  // — a min of two conservative bounds — and the shell term's cutoff
-  // scales by the inverse of its value factor, so the fr-55r5 early-exit
-  // contract survives verbatim (the oracle's module doc carries both
-  // arguments; nothing about either is dimension-specific, which is why
-  // this arm is the 3D one textually).
+  // The balloon union: fractal/balloon-de.ts's estimateBalloonDistance
+  // mirrored term for term over the descent's public DE. min(DE(p),
+  // (|p-c|/rho)*DE(I(p))) is conservative at every R — a min of two
+  // conservative bounds — and the shell term's cutoff scales by the inverse
+  // of its value factor, so the cutoff early-exit contract survives
+  // verbatim (the oracle's module doc carries both arguments; nothing about
+  // either is dimension-specific, which is why this arm is the 3D one
+  // textually).
   vec3 balloonInvert(vec3 p, out float scale) {
     vec3 d = p - uBalloonCenter;
     // f32 floor: 1e-6 * rho (the explorer echo's precedent, scene.ts) —
@@ -1427,18 +1423,17 @@ uniform float uBalloonTintStrength;
     float dS = scale * surfaceDEFractal(q);
     return min(dS, dF);
   }
-  // Hit-info with argmin routing (the oracle's attribution convention:
-  // ties -> fractal). The descent runs at the WINNING term's own query
-  // point, and colorPos reports that point so the height/radius color
-  // sources read the shell's SOURCE geometry instead of clamping at the far
-  // wall. sStar rides out with the rest (fr-9c9e) and is the winning
-  // descent's own segment parameter, so a shell hit's radius color lifts
-  // through the w its source point sits at rather than the slab's centre
-  // plane — the one output the 3D wrapper has no counterpart for. shell
-  // (fr-j85n) mirrors the same argmin as a 0/1 flag — 1.0 when the inverted
-  // echo term won, 0.0 on the fractal term or a tie — so the caller can
-  // restrict the tint mix to shell hits alone; kept right after colorPos,
-  // with sStar staying the trailing output.
+  // Hit-info with argmin routing (the oracle's attribution convention: ties
+  // -> fractal). The descent runs at the WINNING term's own query point,
+  // and colorPos reports that point so the height/radius color sources read
+  // the shell's SOURCE geometry instead of clamping at the far wall. sStar
+  // rides out with the rest and is the winning descent's own segment
+  // parameter, so a shell hit's radius color lifts through the w its source
+  // point sits at rather than the slab's centre plane — the one output the
+  // 3D wrapper has no counterpart for. shell mirrors the same argmin as a
+  // 0/1 flag — 1.0 when the inverted echo term won, 0.0 on the fractal term
+  // or a tie — so the caller can restrict the tint mix to shell hits alone;
+  // kept right after colorPos, with sStar staying the trailing output.
   float surfaceDEBalloonHitInfo(
     vec3 p,
     out vec3 colorPos,
@@ -1466,22 +1461,22 @@ uniform float uBalloonTintStrength;
 
 #endif
 #if SURFACE_GROUND_PLANE
-  /** Ground plane (fr-h0c3), the 3D arm (fr-rhn5) VERBATIM: an infinite
-   * one-sided floor at y = uGroundY, dropped below the session ball
-   * (uGroundBallC/uGroundBallR — balloonBall's convention, certified to
-   * contain the visible set), receiving the fractal's penumbra shadow. Only
-   * rays that MISS the fractal reach it: the ball sits strictly above the
-   * plane, so along any downward ray every possible surface hit precedes
-   * the plane crossing — the floor can never occlude geometry.
+  /** Ground plane, the 3D arm VERBATIM: an infinite one-sided floor at y =
+   * uGroundY, dropped below the session ball (uGroundBallC/uGroundBallR —
+   * balloonBall's convention, certified to contain the visible set),
+   * receiving the fractal's penumbra shadow. Only rays that MISS the
+   * fractal reach it: the ball sits strictly above the plane, so along any
+   * downward ray every possible surface hit precedes the plane crossing —
+   * the floor can never occlude geometry.
    *
    * Nothing here is 4D-aware, deliberately. The floor lives in the SLICED
    * 3D world space the camera orbits, so its geometry, its fade and both
    * analytic ball certificates are dimension-free; the only 4D content is
    * inside surfaceDE, which lifts each tap through uInvRotor and therefore
-   * lights the floor with the slice actually being drawn. There is no probe
-   * descent in 4D (the fr-p8bc width-1 split is a fold-GLSL affordance the
-   * 4D tracer never grew), so the taps call the public value overload, as
-   * the 3D arm calls its own.
+   * lights the floor with the slice actually being drawn. There is no
+   * probe descent in 4D (the width-1 probe split is a fold-GLSL affordance
+   * the 4D tracer never grew), so the taps call the public value overload,
+   * as the 3D arm calls its own.
    *
    * The one reading worth spelling out is uVisibleRadius: in this tracer it
    * is the FULL 4D radius, not main()'s sliceVisR. That is the right scale
@@ -1500,10 +1495,11 @@ uniform float uBalloonTintStrength;
   uniform vec3 uGroundBallC;
   uniform vec3 uGroundAlbedo;
 
-  /** The out param cov is the fr-7k0o coverage flag: 1 where the floor was
-   * actually lit, 0 where this function returned the caller's own backdrop.
-   * The WebGPU arm counts a PLANE terminal for exactly those pixels, so the
-   * two engines' blank-frame arithmetic agrees on a document with a
+  /** The out param cov is the trace-alpha coverage flag: 1 where the floor
+   * was actually lit, 0 where this function returned the caller's own
+   * backdrop. The WebGPU arm counts a PLANE terminal for exactly those
+   * pixels, so the two engines' blank-frame arithmetic agrees on a
+   * document with a
    * floor. */
   vec3 shadeGroundPlane(vec3 ro, vec3 rd, vec3 background, out float cov) {
     cov = 0.0;
@@ -1586,7 +1582,7 @@ uniform float uBalloonTintStrength;
     }
 
     // The hit path's lighting minus specular (a matte floor), in the same
-    // linear space (fr-8id): n is +y, so diffuse is just uLightDir.y.
+    // linear space: n is +y, so diffuse is just uLightDir.y.
     float diffuse = max(uLightDir.y, 0.0);
     vec3 lit = (uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow) *
       envTint(vec3(0.0, 1.0, 0.0));
@@ -1606,12 +1602,13 @@ uniform float uBalloonTintStrength;
 
 #endif
   void main() {
-    // fr-xn9s: shared shape at full-image coordinates; see the 3D twin.
+    // The shared background shape at full-image coordinates; see the 3D
+    // twin.
     vec3 background = mix(uBgBottom, uBgTop, backgroundShapeT(vUv));
 
-    // Reconstruct the camera ray by unprojecting this pixel on the near and
-    // far clip planes — at the supersampling pass's own point inside the
-    // pixel (fr-jf9y; the pixel centre on every single-pass trace).
+    // Reconstruct the camera ray by unprojecting this pixel on the near
+    // and far clip planes — at the supersampling pass's own point inside
+    // the pixel (the pixel centre on every single-pass trace).
     vec2 ndc = (vUv + uPixelJitter.xy) * 2.0 - 1.0;
     vec4 nearP = uInvProjView * vec4(ndc, -1.0, 1.0);
     vec4 farP = uInvProjView * vec4(ndc, 1.0, 1.0);
@@ -1622,25 +1619,25 @@ uniform float uBalloonTintStrength;
     // |(p, w)| <= uVisibleRadius implies |p| <= this (rotation preserves
     // the 4D norm), taken at the slab's most generous w — the |w| in
     // [|uW0| - uSliceHalfW, |uW0| + uSliceHalfW] closest to 0, since a
-    // smaller |w| leaves a wider 3D ball (fr-wa6o). Empty when the whole
-    // slab sits past the visible radius. At uSliceHalfW == 0 this is
-    // abs(uW0) squared, the zero-thickness value bit for bit.
+    // smaller |w| leaves a wider 3D ball. Empty when the whole slab sits
+    // past the visible radius. At uSliceHalfW == 0 this is abs(uW0)
+    // squared, the zero-thickness value bit for bit.
     float sliceMinW = max(abs(uW0) - uSliceHalfW, 0.0);
     float sliceVisR =
       sqrt(max(uVisibleRadius * uVisibleRadius - sliceMinW * sliceMinW, 0.0));
 
 #if SURFACE_BALLOON
-    // Balloon mode DROPS the slice's visible-sphere gate (fr-qxxw, the
-    // oracle module's march-entry semantics): every ray can hit the
-    // enclosing shell, so every ray marches from the camera, capped at
-    // uBalloonFar past the balloon center — capped rays fall through to the
-    // existing background below (the balloon is a HIT, not a background).
-    // The sphere entry still seeds the fog origin, so the FRACTAL's own
-    // depth fog is unchanged — and for rays that MISS the sphere the origin
-    // is the closest-approach depth max(-b, 0), NOT 0: both forms meet at
-    // the silhouette (disc -> 0 collapses the entry to -b), so the fog
-    // origin is CONTINUOUS across the whole frame. Shell hits nearer than
-    // the origin clamp fog at zero (the min just before the fog term).
+    // Balloon mode DROPS the slice's visible-sphere gate (the oracle
+    // module's march-entry semantics): every ray can hit the enclosing
+    // shell, so every ray marches from the camera, capped at uBalloonFar
+    // past the balloon center — capped rays fall through to the existing
+    // background below (the balloon is a HIT, not a background). The
+    // sphere entry still seeds the fog origin, so the FRACTAL's own depth
+    // fog is unchanged — and for rays that MISS the sphere the origin is
+    // the closest-approach depth max(-b, 0), NOT 0: both forms meet at the
+    // silhouette (disc -> 0 collapses the entry to -b), so the fog origin
+    // is CONTINUOUS across the whole frame. Shell hits nearer than the
+    // origin clamp fog at zero (the min just before the fog term).
     float radius = sliceVisR * 1.02;
     float b = dot(ro, rd);
     float c = dot(ro, ro) - radius * radius;
@@ -1684,26 +1681,27 @@ uniform float uBalloonTintStrength;
 #endif
 
     // Tiny dithered start: just breaks banding on grazing rays. Hashed on
-    // the JITTERED pixel (fr-jf9y) so supersampling passes get independent
-    // start offsets instead of averaging one banding pattern N times.
+    // the JITTERED pixel so supersampling passes get independent start
+    // offsets instead of averaging one banding pattern N times.
     t += hash(gl_FragCoord.xy + uPixelJitter.zw) * uPixelEps * max(t, 1.0);
 
-    // --- sphere trace -------------------------------------------------------
-    // Cone-style hit test: accept once the bound drops below the pixel's
-    // angular footprint at that depth (uPixelEps * t — resolution scales
-    // with distance), floored so the test can't degenerate at t ~ 0. That
-    // same epsilon is handed to the DE as its early-out cutoff (fr-55r5):
-    // this test is all the step asks of the descent, so the descent may
-    // stop as soon as its bound is provably under it. A returned value at
-    // or above the epsilon is the full-descent distance bit for bit, so the
-    // step length below never drifts. The march runs the plain DE overload;
-    // the hit's coloring extras are fetched once below.
+    // --- sphere trace
+    // ------------------------------------------------------- Cone-style
+    // hit test: accept once the bound drops below the pixel's angular
+    // footprint at that depth (uPixelEps * t — resolution scales with
+    // distance), floored so the test can't degenerate at t ~ 0. That same
+    // epsilon is handed to the DE as its early-out cutoff: this test is
+    // all the step asks of the descent, so the descent may stop as soon as
+    // its bound is provably under it. A returned value at or above the
+    // epsilon is the full-descent distance bit for bit, so the step length
+    // below never drifts. The march runs the plain DE overload; the hit's
+    // coloring extras are fetched once below.
     bool hit = false;
     for (int i = 0; i < uMarchSteps; i++) {
       if (t > tFar) {
         break;
       }
-      // Tier-independent acceptance — see uAcceptPixelEps (fr-7xgi).
+      // Tier-independent acceptance — see uAcceptPixelEps.
       float eps = max(uAcceptPixelEps * t, uBoundingRadius * uHitFloor);
       float d = surfaceDE(ro + rd * t, eps);
       if (d < eps) {
@@ -1715,13 +1713,13 @@ uniform float uBalloonTintStrength;
     if (!hit) {
 #if SURFACE_GROUND_PLANE
       // Sphere-exit misses land on the floor; budget-EXHAUSTED rays stay
-      // background (their geometry is unresolved) — the WGSL march kernel's
-      // status split, mirrored, and the one place fr-h0c3 had to ADD
-      // structure rather than copy it: 3D splits this miss because it has a
-      // floor to split it for, and the 4D loop never did, both outcomes
-      // painting the same backdrop. EXHAUSTED must never plane, or a ray
-      // that ran out of steps INSIDE the object would paint floor through
-      // it.
+      // background (their geometry is unresolved) — the WGSL march
+      // kernel's status split, mirrored, and the one place the 4D floor
+      // lift had to ADD structure rather than copy it: 3D splits this miss
+      // because it has a floor to split it for, and the 4D loop never did,
+      // both outcomes painting the same backdrop. EXHAUSTED must never
+      // plane, or a ray that ran out of steps INSIDE the object would
+      // paint floor through it.
       if (t > tFar) {
         float planeCovMiss;
         outColor = vec4(
@@ -1732,7 +1730,7 @@ uniform float uBalloonTintStrength;
       }
       // Alpha 0 for a MISS and — deliberately — for an EXHAUSTED ray too,
       // which is the compute arm's own rule: a ray that spent its budget
-      // resolved no geometry, so it drew nothing (fr-7k0o).
+      // resolved no geometry, so it drew nothing.
 #endif
       outColor = vec4(background, 0.0);
       return;
@@ -1749,8 +1747,8 @@ uniform float uBalloonTintStrength;
     float sheets;
     float sStar;
 #if SURFACE_BALLOON
-    // Argmin routing (fr-qxxw): a shell hit's extras come from the descent
-    // at its INVERTED query point, and cpos carries that point to the
+    // Argmin routing: a shell hit's extras come from the descent at its
+    // INVERTED query point, and cpos carries that point to the
     // height/radius color sources below.
     vec3 cpos;
     float shell;
@@ -1792,11 +1790,11 @@ uniform float uBalloonTintStrength;
       if (uColorSource == 1) {
         u = trap;
 #if SURFACE_BALLOON
-      // The winning term's SOURCE point (fr-qxxw): a shell hit reads its
+      // The winning term's SOURCE point: a shell hit reads its
       // PRE-inversion geometry, so the ramps sweep the same range as the
       // fractal's own instead of clamping at the far wall. Both
-      // position-driven sources take it. The radius source keeps the fr-skhv
-      // band normalization and the fr-9c9e slab lift unchanged — see the
+      // position-driven sources take it. The radius source keeps the
+      // radius-band normalization and the slab lift unchanged — see the
       // non-balloon branches in this module's source, which this variant
       // replaces rather than extends — with cpos for pos, and sStar the
       // SHELL descent's own segment parameter, so point and w stay a pair.
@@ -1820,20 +1818,20 @@ uniform float uBalloonTintStrength;
         // lift the hit back into the attractor frame and measure its
         // distance from the probe's 4D center, normalized over the
         // content band [minD, maxD] the way buildColors4's radius branch
-        // normalizes (fr-skhv) — dividing by the full visible radius
-        // instead used only the narrow sub-band [minD, maxD]/visR4 of
-        // the ramp, which in 4D rendered whole frames in one hue.
+        // normalizes over the radius band — dividing by the full visible
+        // radius instead used only the narrow sub-band [minD, maxD]/visR4
+        // of the ramp, which in 4D rendered whole frames in one hue.
         // length() of a center-relative offset is rotation-invariant and
         // the band is an attractor-frame constant, so this reading is
         // invariant under BOTH rotor spins and slice moves — unlike a
         // plain 3D length(pos), which would swim under either.
         //
-        // Under a slab (uSliceHalfW > 0, fr-wa6o) the hit can sit anywhere
-        // in |w - uW0| <= uSliceHalfW; the descent's sStar — the deepest
-        // level winner's segment parameter — places it, so the ramp reads
-        // the hit's OWN w rather than flattening to the slab's centre
-        // plane (fr-9c9e). At uSliceHalfW = 0, sStar is 0 and this is the
-        // slice plane exactly, bit for bit.
+        // Under a slab (uSliceHalfW > 0) the hit can sit anywhere in |w -
+        // uW0| <= uSliceHalfW; the descent's sStar — the deepest level
+        // winner's segment parameter — places it, so the ramp reads the
+        // hit's OWN w rather than flattening to the slab's centre plane.
+        // At uSliceHalfW = 0, sStar is 0 and this is the slice plane
+        // exactly, bit for bit.
         vec4 q4 = uInvRotor * vec4(pos, uW0 + sStar * uSliceHalfW);
         u = clamp(
           (length(q4 - uRadiusCenter4) - uRadiusMinD) * uRadiusInvRange,
@@ -1849,11 +1847,11 @@ uniform float uBalloonTintStrength;
       base = texture(uColorLUT, vec2(u, 0.5)).rgb;
     }
 #if SURFACE_BALLOON
-    // fr-j85n: the echo's own tint, on the BASE ALBEDO before lighting —
-    // shell restricts it to the inverted term (the oracle's own
-    // attribution; ties go to the fractal), so a fractal-term hit is
-    // untouched at any strength. strength 0 (the default) makes this
-    // mix(base, uBalloonTint, 0.0) == base — today's frame byte for byte.
+    // The echo's own tint, on the BASE ALBEDO before lighting — shell
+    // restricts it to the inverted term (the oracle's own attribution;
+    // ties go to the fractal), so a fractal-term hit is untouched at any
+    // strength. strength 0 (the default) makes this mix(base,
+    // uBalloonTint, 0.0) == base — today's frame byte for byte.
     base = mix(base, uBalloonTint, uBalloonTintStrength * shell);
 #endif
 
@@ -1867,10 +1865,10 @@ uniform float uBalloonTintStrength;
     for (int i = 0; i < uShadowSteps; i++) {
       vec3 sp = pos + n * h * 2.0 + uLightDir * ts;
 #if SURFACE_BALLOON
-      // The balloon receives shadows, never casts them (fr-qxxw): shadow
-      // rays test the FRACTAL alone, so the enclosing shell cannot black
-      // out the scene it wraps. Tetra normal and AO stay on the public
-      // union forms. surfaceDEFractal directly, where 3D needs its clamped
+      // The balloon receives shadows, never casts them: shadow rays test
+      // the FRACTAL alone, so the enclosing shell cannot black out the
+      // scene it wraps. Tetra normal and AO stay on the public union
+      // forms. surfaceDEFractal directly, where 3D needs its clamped
       // balloonInnerDE — this tracer's one core is far-field sound already
       // (see the note above the wrapper), and a shell hit launching this
       // ray from far outside the ball walks in on the sphere floor.
@@ -1906,7 +1904,7 @@ uniform float uBalloonTintStrength;
 
     vec3 lit = (uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow) *
       envTint(n);
-    // Light in linear space (fr-8id, as in voxel-material.ts): base is
+    // Light in linear space (as in voxel-material.ts): base is
     // sRGB-authored (color.ts), so decode with gamma 2.2, apply the
     // light/specular product there, and re-encode for the pass-through
     // canvas (ColorManagement is off). A fully lit, specular-free surface
@@ -1931,36 +1929,36 @@ uniform float uBalloonTintStrength;
       1.0 - exp(-0.12 * pow((t - tEnter) * uFogDensity / max(sliceVisR, 1.0e-6), 2.0));
     col = mix(col, mix(background, uFogTint, uFogTintStrength), clamp(fog, 0.0, 1.0));
 
-    // Alpha is the fr-7k0o COVERAGE flag, not an opacity: 1 where the
-    // frame drew something, 0 where it shows only its backdrop. The 3D
-    // tracer's convention, mirrored so scene.ts's settle fold can count
-    // either arm's output with one loop. Invisible because BLIT_FRAGMENT
-    // strips it to 1 at every present (fr-1wbv — three r163+ makes the
-    // canvas alpha:true regardless, and a coverage-0 pixel reaching it
-    // composited the page background into the pane).
+    // Alpha is the COVERAGE flag, not an opacity: 1 where the frame drew
+    // something, 0 where it shows only its backdrop. The 3D tracer's
+    // convention, mirrored so scene.ts's settle fold can count either
+    // arm's output with one loop. Invisible because BLIT_FRAGMENT strips
+    // it to 1 at every present (three r163+ makes the canvas alpha:true
+    // regardless, and a coverage-0 pixel reaching it composited the page
+    // background into the pane).
     outColor = vec4(col, 1.0);
   }
 `;
 
 /**
- * Compose the fragment source for a variant selection: `balloon` (fr-qxxw)
- * and `plane` (fr-h0c3), the two scene arms above, resolved JS-side so the
- * driver only ever parses the arms a session actually uses.
+ * Compose the fragment source for a variant selection: `balloon` and
+ * `plane`, the two scene arms above, resolved JS-side so the driver only
+ * ever parses the arms a session actually uses.
  *
  * REUSED, NOT RE-DERIVED. {@link surfaceFragmentFor} already IS this
  * resolver: it takes the source as a parameter, it owns the `#if` nesting
  * bookkeeping, it owns the plane-over-balloon REFUSAL (no horizon inside
  * the shell — a `RangeError`, and callers gate first, so reaching it is a
- * bug), and it owns fr-s9ll's SIZE RULE, which strips comments and
- * indentation from any resolved source past `SURFACE_GLSL_STRIP_BYTES`
- * (64KB). Standing up a second preprocessor here is precisely the drift the
+ * bug), and it owns the SIZE RULE, which strips comments and indentation
+ * from any resolved source past `SURFACE_GLSL_STRIP_BYTES` (64KB).
+ * Standing up a second preprocessor here is precisely the drift the
  * twin-file convention exists to prevent — two copies of "what does this
  * directive mean" is how a 3D system and its 4D lift start rendering
  * different objects — so the arms in `SURFACE4_FRAGMENT` carry the 3D
  * directive NAMES and this wrapper pins the three 3D-only flags at 0.
  * `SURFACE_ESCAPE`, `SURFACE_BULB` and `SURFACE_FOLD_LENS` simply never
  * appear in this source (fold-shaped and forward-orbit 4D sessions are
- * compute-only — fr-rsp6), so pinning them costs nothing.
+ * compute-only), so pinning them costs nothing.
  *
  * WHY JS-SIDE AT ALL, when three.js would happily prepend two defines and
  * let the driver's own preprocessor do it — preprocessor-DEAD text still
@@ -1970,18 +1968,18 @@ uniform float uBalloonTintStrength;
  * here, raw resolved / what the driver gets:
  *
  * - off:     62804 B (61.3KB) / 62804 B — under 64KB, so NOT stripped
- *            (2732 B of headroom as of fr-h3mp's radial branch — down from
- *            2825 B, since the shared backgroundShapeT body and its three
- *            new uniforms cost 93 B here even at "linear" defaults —
- *            docs/surface-glsl-tracers.md carries the fr-ehcj/fr-xn9s
- *            history this continues).
+ *            (2732 B of headroom as of the radial backdrop branch — down
+ *            from 2825 B, since the shared backgroundShapeT body and its
+ *            three new uniforms cost 93 B here even at "linear" defaults —
+ *            docs/surface-glsl-tracers.md carries the environment-light
+ *            and shared-background-shape history this continues).
  * - balloon: 69399 B (67.8KB) / 17274 B (16.9KB) — past the threshold, so
- *            the size rule strips it (fr-j85n's echo tint moved this from
+ *            the size rule strips it (the echo tint moved this from
  *            68176 B / 17086 B: +1223 B raw, comments included, and +188 B
  *            once stripped — the uniforms and the shell-gated mix are the
  *            only bytes that survive the strip).
  * - plane:   70588 B (68.9KB) / 18159 B (17.7KB) — plane variants always
- *            strip (fr-rhn5).
+ *            strip.
  *
  * A single monolithic source carrying both arms would be ~74KB and every
  * 4D surface session — balloon or not, floor or not — would pay for it,
@@ -1993,9 +1991,9 @@ export function surface4FragmentFor(balloon = 0, plane = 0): string {
   return surfaceFragmentFor(0, 0, balloon, plane, 0, SURFACE4_FRAGMENT);
 }
 
-/** CPU mirror of the `SurfaceMaps4` std140 block (fr-dqlq) — the four
- * Float32Arrays the renderer uploads verbatim, in the SAME ORDER as the
- * block's members in `SURFACE4_FRAGMENT`. Held per material rather than
+/** CPU mirror of the `SurfaceMaps4` std140 block — the four Float32Arrays
+ * the renderer uploads verbatim, in the SAME ORDER as the block's members
+ * in `SURFACE4_FRAGMENT`. Held per material rather than
  * module-wide so a second tracer would get its own buffer. */
 interface Surface4MapBuffers {
   /** MAX_MAPS * 16 floats: `inv(M_i)` COLUMN-major, std140's mat4 layout. */
@@ -2082,22 +2080,22 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uInvRotor: { value: new THREE.Matrix4() },
       uW0: { value: 0 },
       uSliceHalfW: { value: 0 },
-      // Balloon inverted-union (fr-qxxw): inert defaults; alive only under
-      // the SURFACE_BALLOON arm (rho 1 so a stray enabled read could never
+      // Balloon inverted-union: inert defaults; alive only under the
+      // SURFACE_BALLOON arm (rho 1 so a stray enabled read could never
       // divide by zero). Three.js ignores entries the compiled program
       // does not use, so these stay unconditional.
       uBalloonCenter: { value: new THREE.Vector3() },
       uBalloonR: { value: 0 },
       uBalloonRho: { value: 1 },
       uBalloonFar: { value: 0 },
-      // The echo's independent tint (fr-j85n): inert default (strength 0)
-      // is a bit-exact identity, matching the 3D twin. Packed by the
-      // SHARED packSurfaceBalloonTint (surface-material.ts) — this
-      // material declares the same uniform names, so no 4D-local pack
-      // helper is needed.
+      // The echo's independent tint: inert default (strength 0) is a
+      // bit-exact identity, matching the 3D twin. Packed by the SHARED
+      // packSurfaceBalloonTint (surface-material.ts) — this material
+      // declares the same uniform names, so no 4D-local pack helper is
+      // needed.
       uBalloonTint: { value: new THREE.Vector3() },
       uBalloonTintStrength: { value: 0 },
-      // Ground plane (fr-h0c3): inert defaults; alive only under the
+      // Ground plane: inert defaults; alive only under the
       // SURFACE_GROUND_PLANE arm (ball radius 1 so a stray enabled read
       // could never divide by zero, albedo white so a stray enabled floor
       // is visible rather than a black band).
@@ -2116,28 +2114,28 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uInvProjView: { value: new THREE.Matrix4() },
       uBgTop: { value: BG_TOP.clone() },
       uBgBottom: { value: BG_BOTTOM.clone() },
-      // fr-h3mp: linear defaults, matching the 3D twin.
+      // Background shape: linear defaults, matching the 3D twin.
       uBgShape: { value: 0 },
       uBgCenter: { value: new THREE.Vector2(0.5, 0.5) },
       uBgScale: { value: new THREE.Vector2(1, 1) },
       uFogDensity: { value: 1 },
       uFogTint: { value: new THREE.Vector3(1, 1, 1) },
       uFogTintStrength: { value: 0 },
-      // fr-ehcj: matches state.ts's DEFAULT_SURFACE_ENV_LIGHT.
+      // Environment light: matches state.ts's DEFAULT_SURFACE_ENV_LIGHT.
       uEnvLight: { value: 0.35 },
       // Placeholder; the scene overwrites it per frame with the camera's
       // true angular pixel size.
       uPixelEps: { value: 0.002 },
       uAcceptPixelEps: { value: 0.002 },
-      // The pixel CENTRE (fr-jf9y), the 3D tracer's default: zero here is
-      // what makes a single-pass trace value-identical to the
-      // pre-supersampling one, and setSurfaceFrameUniforms rewrites it per
-      // armed job so no abandoned settle leaks a jitter forward.
-      // All four spelled out: THREE.Vector4 defaults w to 1, and w is the
+      // The pixel CENTRE, the 3D tracer's default: zero here is what
+      // makes a single-pass trace value-identical to the
+      // pre-supersampling one, and setSurfaceFrameUniforms rewrites it
+      // per armed job so no abandoned settle leaks a jitter forward. All
+      // four spelled out: THREE.Vector4 defaults w to 1, and w is the
       // dither's y offset in pixels (the 3D tracer's note).
       uPixelJitter: { value: new THREE.Vector4(0, 0, 0, 0) },
-      // Full-tier defaults; the scene overwrites all four per tier
-      // (fr-sjff), same knobs as the 3D tracer.
+      // Full-tier defaults; the scene overwrites all four per tier, same
+      // knobs as the 3D tracer.
       uMarchSteps: { value: SURFACE_FULL_MARCH_STEPS },
       uShadowSteps: { value: SURFACE_FULL_SHADOW_STEPS },
       uAoTaps: { value: SURFACE_FULL_AO_TAPS },
@@ -2165,8 +2163,8 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
     vertexShader: SURFACE4_VERTEX,
     // Both arms off resolves to SURFACE4_FRAGMENT verbatim (62804 B, under
     // the 64KB strip threshold), so a plain 4D session hands the driver
-    // exactly the source it did before fr-qxxw/fr-h0c3 (plus fr-ehcj's
-    // envTint and fr-xn9s/fr-h3mp's shared backgroundShapeT splice).
+    // exactly the source it did before the balloon and floor lifts (plus
+    // the envTint term and the shared backgroundShapeT splice).
     fragmentShader: surface4FragmentFor(),
     depthTest: false,
     depthWrite: false,
@@ -2229,11 +2227,11 @@ export function setSurfaceSystem4(
     maps.trap[j * 4] = trapIndices ? trapIndices[j] : 0;
   });
   u.uMapCount.value = de.maps.length;
-  // The kaleidoscope sweep (fr-u91x): always written, like the lens reset
-  // below — order 1 (whose matrix the sweep never reads) is the "no
-  // kaleidoscope" encoding, so a previous system's sectors never leak.
-  // Matrix4.set takes row-major arguments and stores column-major
-  // internally, exactly the uFinalInvM convention above.
+  // The kaleidoscope sweep: always written, like the lens reset below —
+  // order 1 (whose matrix the sweep never reads) is the "no kaleidoscope"
+  // encoding, so a previous system's sectors never leak. Matrix4.set takes
+  // row-major arguments and stores column-major internally, exactly the
+  // uFinalInvM convention above.
   u.uSymOrder.value = de.symmetry.order;
   const sb = de.symmetry.stepBack;
   (u.uSymStepBack.value as THREE.Matrix4).set(
@@ -2259,9 +2257,9 @@ export function setSurfaceSystem4(
   u.uMaxDepth.value = de.maxDepth;
   u.uStepScale.value = de.stepScale;
   u.uVisibleRadius.value = de.visibleBoundingRadius;
-  // Radius-ramp band (fr-skhv): minD + 1/range via the core's ONE
-  // inverse-range definition, shared with the WGSL packer so the two
-  // tracers map the band identically.
+  // Radius-ramp band: minD + 1/range via the core's ONE inverse-range
+  // definition, shared with the WGSL packer so the two tracers map the band
+  // identically.
   const band = de.radiusBand;
   (u.uRadiusCenter4.value as THREE.Vector4).set(
     band.center[0],
@@ -2312,16 +2310,17 @@ export function setSurfaceSystem4(
  * consumes — it rotates attractor space INTO view space (the cloud shader
  * computes `uRot4 * position`). The tracer needs the opposite direction,
  * view space back into the attractor frame, and a rotation matrix's
- * inverse is exactly its transpose — so `uInvRotor` is set from the SAME 16
- * numbers with rows and columns swapped (a column-reordered `Matrix4.set`,
- * since `set` itself always fills row-major). `w0` is the marched slice's
- * w-coordinate, uploaded verbatim, and `sliceHalfW` its HALF-THICKNESS in
- * the same units and the same frame (fr-wa6o): 0 marches the zero-thickness
- * hyperplane this tracer shipped with, value for value, and anything above
- * turns every descent query into the segment the slab cuts over its point
- * (see `uSliceHalfW`'s declaration). Both ride the same call because they
- * describe one hyperslab and `scene.ts` derives them from one slider
- * position. No dirty-check here: like {@link setSurfaceSystem4}, this is a
+ * inverse is exactly its transpose — so `uInvRotor` is set from the SAME
+ * 16 numbers with rows and columns swapped (a column-reordered
+ * `Matrix4.set`, since `set` itself always fills row-major). `w0` is the
+ * marched slice's w-coordinate, uploaded verbatim, and `sliceHalfW` its
+ * HALF-THICKNESS in the same units and the same frame: 0 marches the
+ * zero-thickness hyperplane this tracer shipped with, value for value, and
+ * anything above turns every descent query into the segment the slab cuts
+ * over its point (see `uSliceHalfW`'s declaration). Both ride the same
+ * call because they describe one hyperslab and `scene.ts` derives them
+ * from one slider position. No dirty-check here: like
+ * {@link setSurfaceSystem4}, this is a
  * pure packer — `scene.ts` owns render-needed bookkeeping. */
 export function setSurfaceView4(
   material: THREE.ShaderMaterial,
@@ -2355,9 +2354,9 @@ export function setSurfaceView4(
 
 /**
  * Enable (`spec`) or disable (`null`) the balloon inverted-union wrapper
- * (fr-qxxw, the 4D half of fr-5wlv.4): the scene becomes
- * `min(DE(p), (|p−c|/rho) · DE(I(p)))` over this tracer's beam descent,
- * mirroring `fractal/balloon-de.ts`'s `estimateBalloonDistance`.
+ * (the 4D half of the 3D balloon arm): the scene becomes `min(DE(p),
+ * (|p−c|/rho) · DE(I(p)))` over this tracer's beam descent, mirroring
+ * `fractal/balloon-de.ts`'s `estimateBalloonDistance`.
  *
  * The payload is the 3D {@link SurfaceBalloonSpec}, IMPORTED rather than
  * restated: `I` is a plain 3D inversion of the marched point (the module
@@ -2409,8 +2408,8 @@ export function setSurface4Balloon(
 }
 
 /**
- * Enable (`spec`) or disable (`null`) the ground plane (fr-h0c3, the 4D
- * half of fr-rhn5): an infinite one-sided floor below the session ball that
+ * Enable (`spec`) or disable (`null`) the ground plane (the 4D half of the
+ * 3D floor arm): an infinite one-sided floor below the session ball that
  * rays MISSING the fractal intersect analytically and shade with the hit
  * path's penumbra shadow + AO + fog, fading radially into the backdrop.
  * Budget-EXHAUSTED rays never reach it — their geometry is unresolved, so

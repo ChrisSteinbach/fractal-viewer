@@ -1,5 +1,5 @@
 /**
- * fr-ul2 throughput instrumentation for the flame accumulation loop. A
+ * Throughput instrumentation for the flame accumulation loop. A
  * {@link FlameWorkerSession} that opted in (its `start` set `instrument`) feeds
  * one {@link FlameChunkSample} per completed accumulation chunk; the meter sums
  * each phase and, once a display window's worth of wall time has elapsed,
@@ -10,7 +10,7 @@
  *
  * Why it exists: the `/gpu-bench/` page measures RAW kernel throughput —
  * `iterations / sum(accumulate())`, with no readback and no scheduling gap in
- * the denominator (see gpu-bench's `runGpuTimed`). A phone soak (fr-7su) saw
+ * the denominator (see gpu-bench's `runGpuTimed`). A phone soak saw
  * the PRODUCTION path sustain ~50x LESS than that same adapter's bench number.
  * The bench cannot reproduce the deficit precisely because it excludes the two
  * phases this meter isolates: the per-redisplay readback and the inter-chunk

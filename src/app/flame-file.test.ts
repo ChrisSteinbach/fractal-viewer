@@ -897,7 +897,7 @@ describe("encodeFlameFile warnings", () => {
   it("keeps a twisted w-free kaleidoscope's copies but warns that the twist was dropped", () => {
     // Plane "xy" projects faithfully, so without the twist this export would
     // carry no kaleidoscope warning at all — but the twist's second rotation
-    // turns the copies through zw, which no 2D xform can express (fr-q0h6).
+    // turns the copies through zw, which no 2D xform can express.
     const transforms: Transform[] = [
       {
         id: 0,
@@ -972,7 +972,7 @@ describe("encodeFlameFile warnings", () => {
   });
 });
 
-describe("encodeFlameFile fold radii (fr-s9ll)", () => {
+describe("encodeFlameFile fold radii", () => {
   it("warns when a fold variation's lengths differ from the classic Mandelbox radii", () => {
     const transforms: Transform[] = [
       {

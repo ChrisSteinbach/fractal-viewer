@@ -176,7 +176,7 @@ describe("TimelineStore move", () => {
   });
 });
 
-describe("TimelineStore setThumbnail (fr-r777)", () => {
+describe("TimelineStore setThumbnail", () => {
   it("replaces the step's thumbnail and persists it", () => {
     const storage = memoryStorage();
     const timeline = new TimelineStore({ storage });
@@ -488,7 +488,7 @@ describe("TimelineStore restore", () => {
   });
 });
 
-describe("TimelineStore mode (fr-v3au)", () => {
+describe("TimelineStore mode", () => {
   it("round-trips a mode tag through storage", () => {
     const storage = memoryStorage();
     new TimelineStore({ storage }).add("v1=a", "thumb-a", "flame");
@@ -505,7 +505,7 @@ describe("TimelineStore mode (fr-v3au)", () => {
     expect(step?.mode).toBeUndefined();
   });
 
-  it("loads a pre-fr-v3au step with no mode field at all, mode undefined and the step intact", () => {
+  it("loads a legacy step with no mode field at all, mode undefined and the step intact", () => {
     const storage = memoryStorage({
       [TIMELINE_STORAGE_KEY]: JSON.stringify({
         seed: 1,
@@ -624,7 +624,7 @@ describe("TimelineStore clear", () => {
   });
 });
 
-describe("TimelineStore replaceAll (fr-h9rk)", () => {
+describe("TimelineStore replaceAll", () => {
   it("replaces the existing steps wholesale, in the given order", () => {
     const timeline = new TimelineStore({ storage: memoryStorage() });
     timeline.add("v1=old-a", "");

@@ -88,12 +88,12 @@ describe("formatRenderPercent", () => {
   });
 
   it("floors rather than rounds up at a decimal boundary below 10 percent", () => {
-    // 0.499% would round to 0.5 under naive rounding; the fr-99z rule floors it.
+    // 0.499% would round to 0.5 under naive rounding; the floor rule keeps it down.
     expect(formatRenderPercent(0.00499)).toBe(0.4);
   });
 
   it("floors rather than rounds up crossing a whole-percent boundary", () => {
-    // 4.99% would round to 5 under naive rounding; the fr-99z rule floors it to 4.9.
+    // 4.99% would round to 5 under naive rounding; the floor rule keeps it at 4.9.
     expect(formatRenderPercent(0.0499)).toBe(4.9);
   });
 
@@ -514,7 +514,7 @@ describe("createExportProgress", () => {
       onCancel: () => {},
     });
 
-    // The pre-fr-2fbs init, key for key — the view must see nothing new.
+    // The one-button init, key for key — the view must see nothing new.
     expect(h.shows).toEqual([
       { title: "Saving PNG", detail: "1920 × 1080", cancellable: true },
     ]);

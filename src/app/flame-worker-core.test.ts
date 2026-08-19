@@ -457,7 +457,7 @@ describe("FlameWorkerSession setIterationsBudget", () => {
     expect(calls).toHaveLength(1); // no further (and certainly no negative-count) accumulate call.
   });
 
-  it("reports the finish immediately when the budget is lowered below what has already accumulated (fr-15z)", () => {
+  it("reports the finish immediately when the budget is lowered below what has already accumulated", () => {
     // Lowering the budget below iterationsDone finishes the render on the
     // spot, but no chunk runs to say so — the session must emit the final
     // progress itself, or the label freezes at its pre-change value.
@@ -473,7 +473,7 @@ describe("FlameWorkerSession setIterationsBudget", () => {
     expect(last.iterationsBudget).toBe(5); // the new (already-met) target.
   });
 
-  it("emits an estimating event before the resulting frame when a lowered budget ends the render early (fr-99z)", () => {
+  it("emits an estimating event before the resulting frame when a lowered budget ends the render early", () => {
     const { session, events, scheduler } = harness({ initialChunkSize: 10 });
     session.handle(startCommand({ iterationsBudget: 40 }));
     scheduler.step(); // one chunk in (10 done).
@@ -526,7 +526,7 @@ describe("FlameWorkerSession setIterationsBudget", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Hi-res export iteration-budget scaling (fr-2urv)
+// Hi-res export iteration-budget scaling
 // ---------------------------------------------------------------------------
 
 describe("FlameWorkerSession iterationsBudgetScale", () => {
@@ -575,7 +575,7 @@ describe("FlameWorkerSession iterationsBudgetScale", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Device-aware accumulation budget policy (fr-7c8)
+// Device-aware accumulation budget policy
 // ---------------------------------------------------------------------------
 
 describe("flameAccumBudgetBuckets", () => {
@@ -606,7 +606,7 @@ describe("flameAccumBudgetBuckets", () => {
   });
 
   it("lets a desktop run 3x supersample on a full 4K drawing buffer", () => {
-    // The original complaint (fr-7c8): under the old flat 300 MiB budget a
+    // The original complaint: under the old flat 300 MiB budget a
     // 64 GB desktop with a big monitor couldn't even get 2x.
     const budget = flameAccumBudgetBuckets(8, false);
     expect(clampSupersampleToBudget(3840, 2160, 3, budget)).toBe(3);
@@ -625,7 +625,7 @@ describe("flameAccumBudgetBuckets", () => {
 describe("FlameWorkerSession proactive supersample budget", () => {
   it("clamps against the start command's own budget when it carries one", () => {
     // Same 10x10 @ 3x geometry as the deps-budget test below, but the budget
-    // rides in the start command — the path main.ts actually uses (fr-7c8).
+    // rides in the start command — the path main.ts actually uses.
     // Without it, the built-in floor (millions of buckets) would clamp nothing.
     const { session, events, scheduler } = harness();
     session.handle(
@@ -751,7 +751,7 @@ describe("FlameWorkerSession setSupersample", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Palette: live setPalette command (fr-6us)
+// Palette: live setPalette command
 // ---------------------------------------------------------------------------
 
 describe("FlameWorkerSession setPalette", () => {
@@ -787,7 +787,7 @@ describe("FlameWorkerSession setPalette", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Symmetry: live setSymmetry command (fr-6im)
+// Symmetry: live setSymmetry command
 // ---------------------------------------------------------------------------
 
 describe("FlameWorkerSession setSymmetry", () => {
@@ -870,7 +870,7 @@ describe("FlameWorkerSession setSymmetry", () => {
     expect(events).toHaveLength(0);
   });
 
-  it("survives a 4D kaleidoscope arriving at a 3D session, rendering it unreplicated (fr-q0h6)", () => {
+  it("survives a 4D kaleidoscope arriving at a 3D session, rendering it unreplicated", () => {
     // A live symmetry edit can turn a flat system 4D under a render session
     // whose dimension was fixed at start. `symmetryRotation` THROWS on a
     // w-plane, so without the symmetry3D guard this would kill the worker.
@@ -891,7 +891,7 @@ describe("FlameWorkerSession setSymmetry", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Restart notification: the "restarted" event (fr-h6sn)
+// Restart notification: the "restarted" event
 // ---------------------------------------------------------------------------
 
 describe("FlameWorkerSession restarted event", () => {
@@ -1047,7 +1047,7 @@ describe("FlameWorkerSession reactive OOM guard", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Adaptive density-estimation blur (fr-17t): fixed-radius previews, adaptive
+// Adaptive density-estimation blur: fixed-radius previews, adaptive
 // only on the finished frame.
 // ---------------------------------------------------------------------------
 
@@ -1123,7 +1123,7 @@ describe("FlameWorkerSession adaptive density-estimation blur", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Busy indicator for the adaptive pass (fr-99z): an "estimating" event
+// Busy indicator for the adaptive pass: an "estimating" event
 // queued right before the synchronous adaptive downsample, so the main
 // thread can show a busy label while the worker is still crunching it.
 // ---------------------------------------------------------------------------
@@ -1163,13 +1163,13 @@ describe("FlameWorkerSession estimating event", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Live estimator params (fr-17t): mirrors "live tone-map params" above, but
+// Live estimator params: mirrors "live tone-map params" above, but
 // a change re-runs the adaptive downsample itself (not just a re-tonemap of
 // the existing displayHistogram), since estimatorParams feed that pass, not
 // tonemapFlame. A live change defers that re-estimate through the scheduler
 // instead of running it inline, so a burst of these commands from a slider
 // drag coalesces into a single adaptive pass rather than one per command
-// (fr-3fv) — see setEstimatorParam's doc.
+// — see setEstimatorParam's doc.
 // ---------------------------------------------------------------------------
 
 describe("FlameWorkerSession live estimator params", () => {
@@ -1192,7 +1192,7 @@ describe("FlameWorkerSession live estimator params", () => {
     expect(last.iterationsDone).toBe(40);
   });
 
-  it("defers the re-estimate to the next scheduler tick when a param changes after accumulation is done (fr-3fv)", () => {
+  it("defers the re-estimate to the next scheduler tick when a param changes after accumulation is done", () => {
     const { session, events, scheduler } = harness();
     session.handle(startCommand({ iterationsBudget: 50 }));
     scheduler.drain();
@@ -1200,7 +1200,7 @@ describe("FlameWorkerSession live estimator params", () => {
     expect(doneCount).toBeGreaterThan(0); // budget (50) < initial chunk size -> finished already.
 
     session.handle({ type: "setEstimatorRadius", estimatorRadius: 10 });
-    // Deferred through the scheduler (fr-3fv), not run inline — handle()
+    // Deferred through the scheduler, not run inline — handle()
     // itself must not have produced anything synchronously.
     expect(progressEvents(events)).toHaveLength(doneCount);
 
@@ -1208,7 +1208,7 @@ describe("FlameWorkerSession live estimator params", () => {
     expect(progressEvents(events)).toHaveLength(doneCount + 1);
   });
 
-  it("coalesces a burst of estimator commands into a single adaptive pass (fr-3fv)", () => {
+  it("coalesces a burst of estimator commands into a single adaptive pass", () => {
     const { session, events, scheduler } = harness();
     session.handle(startCommand({ iterationsBudget: 50 }));
     scheduler.drain();
@@ -1230,7 +1230,7 @@ describe("FlameWorkerSession live estimator params", () => {
     expect(progressEvents(events)).toHaveLength(doneProgress + 1);
   });
 
-  it("the coalesced pass uses the newest value of every param, not just whichever command triggered it (fr-3fv)", () => {
+  it("the coalesced pass uses the newest value of every param, not just whichever command triggered it", () => {
     // Mirrors "applies estimator params to the finished frame" above: same
     // seed and budget, differing only in HOW the final estimator params are
     // reached — a burst of live commands (session A) vs. starting with them
@@ -1274,13 +1274,13 @@ describe("FlameWorkerSession live estimator params", () => {
     expect(imgA).toEqual(imgB);
   });
 
-  it("emits an estimating event immediately before the resulting progress event when a param changes after accumulation is done (fr-99z)", () => {
+  it("emits an estimating event immediately before the resulting progress event when a param changes after accumulation is done", () => {
     const { session, events, scheduler } = harness();
     session.handle(startCommand({ iterationsBudget: 50 }));
     scheduler.drain();
 
     session.handle({ type: "setEstimatorRadius", estimatorRadius: 10 });
-    scheduler.drain(); // runs the deferred re-estimate (fr-3fv).
+    scheduler.drain(); // runs the deferred re-estimate.
 
     const last = events.slice(-2);
     expect(last[0]).toEqual({ type: "estimating" });
@@ -1299,7 +1299,7 @@ describe("FlameWorkerSession live estimator params", () => {
     const callsAfterDone = calls.length;
 
     session.handle({ type: "setEstimatorCurve", estimatorCurve: 2 });
-    scheduler.drain(); // runs the deferred re-estimate (fr-3fv) — still no accumulate call.
+    scheduler.drain(); // runs the deferred re-estimate — still no accumulate call.
     expect(calls).toHaveLength(callsAfterDone); // no new accumulate call.
   });
 
@@ -1323,13 +1323,13 @@ describe("FlameWorkerSession live estimator params", () => {
       estimatorMinimumRadius: 0,
     });
     session.handle({ type: "setEstimatorCurve", estimatorCurve: 0.3 });
-    scheduler.drain(); // runs the deferred (coalesced) re-estimate (fr-3fv).
+    scheduler.drain(); // runs the deferred (coalesced) re-estimate.
     const afterChange = Array.from(progressEvents(events).at(-1)!.image);
 
     expect(afterChange).not.toEqual(finishedImage);
   });
 
-  it("drops a pending re-estimate when a new render supersedes it (fr-3fv)", () => {
+  it("drops a pending re-estimate when a new render supersedes it", () => {
     const { session, events, scheduler } = harness();
     session.handle(startCommand({ iterationsBudget: 500 }));
     scheduler.drain();
@@ -1346,7 +1346,7 @@ describe("FlameWorkerSession live estimator params", () => {
     expect(progressEvents(events).at(-1)!.iterationsDone).toBe(50);
   });
 
-  it("a budget raise racing the deferred re-estimate still yields the resumed render's finished frame (fr-ee9)", () => {
+  it("a budget raise racing the deferred re-estimate still yields the resumed render's finished frame", () => {
     const { session, events, scheduler } = harness({ initialChunkSize: 10 });
     session.handle(startCommand({ iterationsBudget: 40 }));
     scheduler.drain();
@@ -1361,7 +1361,7 @@ describe("FlameWorkerSession live estimator params", () => {
 
     // The deferred task bailed on `this.running` (true again mid-resume)
     // rather than running early and prematurely latching `finalFrameDisplayed`
-    // (fr-ee9) — only the resumed render's OWN finished-frame pass produced a
+    // — only the resumed render's OWN finished-frame pass produced a
     // new estimating event, and the render actually reached the raised budget.
     expect(estimatingEvents(events)).toHaveLength(doneEstimating + 1);
     expect(progressEvents(events).at(-1)!.iterationsDone).toBe(80);
@@ -1369,7 +1369,7 @@ describe("FlameWorkerSession live estimator params", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Shared-frame transport (fr-96i): `start` carrying SAB-backed slots flips
+// Shared-frame transport: `start` carrying SAB-backed slots flips
 // the session to downsampling into shared memory and emitting scalars-only
 // sharedFrame notifications; the main thread tone-maps the named slot itself.
 // ---------------------------------------------------------------------------
@@ -1473,7 +1473,7 @@ describe("FlameWorkerSession shared-frame transport", () => {
     // other slot (each command cycles the buffer, so a second one would wrap
     // back around to slot 0 — deliberately not sent here).
     session.handle({ type: "setEstimatorRadius", estimatorRadius: 8 });
-    scheduler.drain(); // runs the deferred re-estimate (fr-3fv).
+    scheduler.drain(); // runs the deferred re-estimate.
 
     const after = sharedFrameEvents(events).at(-1)!;
     expect(after.slot).toBe(1);
@@ -1481,7 +1481,7 @@ describe("FlameWorkerSession shared-frame transport", () => {
     expect(Array.from(frames[0].hits)).toEqual(firstSlotSnapshot); // the previously notified slot was never touched.
   });
 
-  it("re-notifies the same already-built slot when a finished render's budget target changes (fr-15z label parity)", () => {
+  it("re-notifies the same already-built slot when a finished render's budget target changes (label parity)", () => {
     const frames = makeSharedFrames(8, 8);
     const { session, events, scheduler } = harness();
     session.handle(startCommand({ sharedFrames: frames }));
@@ -1500,7 +1500,7 @@ describe("FlameWorkerSession shared-frame transport", () => {
 });
 
 // ---------------------------------------------------------------------------
-// GPU accumulation backend (fr-npb): the pluggable FlameAccumBackend seam —
+// GPU accumulation backend: the pluggable FlameAccumBackend seam —
 // a `start`/restart opts in via `gpuPreference: "auto"` plus an injected
 // `createGpuBackend` factory; every fake backend below returns REAL promises
 // (unlike the CPU path, which never actually suspends — see
@@ -1651,7 +1651,7 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     expect(gpuUnavailableEvents(events)).toHaveLength(0);
   });
 
-  it("retries the GPU factory at supersample 1 when creation size-fails at 2, staying on the GPU (fr-2w5 ladder)", async () => {
+  it("retries the GPU factory at supersample 1 when creation size-fails at 2, staying on the GPU (the ladder)", async () => {
     const requestedWidths: number[] = [];
     const workingBackend: FlameAccumBackend = {
       kind: "gpu",
@@ -1683,8 +1683,9 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     await drainAsync(scheduler);
 
     // 2x failed, 1x succeeded — ON the GPU, never touching CPU: the whole
-    // point of the ladder (fr-e07's prescribed real fix). No gpuUnavailable:
-    // the GPU did not become unavailable, it just needed a smaller size.
+    // point of the ladder — the real fix a refused allocation needs. No
+    // gpuUnavailable: the GPU did not become unavailable, it just needed a
+    // smaller size.
     expect(requestedWidths).toEqual([16, 8]);
     expect(backendEvents(events)).toEqual([
       { type: "backend", backend: "gpu", adapter: "Fake Adapter" },
@@ -1797,7 +1798,7 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     await drainAsync(scheduler);
 
     // A mid-render failure at 2x is very often a size/pressure signal
-    // (fr-2w5's measurements: create-time scopes can't catch everything,
+    // (measured: create-time scopes can't catch everything,
     // e.g. Firefox's mapAsync-time refusals), so the ladder retries smaller
     // ON the GPU rather than writing it off for the session.
     expect(requestedWidths).toEqual([16, 8]);
@@ -1830,7 +1831,7 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     let factoryCalls = 0;
     const createGpuBackend = async (): Promise<FlameAccumBackend> => {
       factoryCalls++;
-      // Exactly Chrome's post-GPU-process-crash shape (fr-2w5's E4b): the
+      // Exactly Chrome's post-GPU-process-crash shape, as measured: the
       // first request gets real hardware; after the crash, requestAdapter
       // silently succeeds with SwiftShader.
       return factoryCalls === 1 ? hardwareBackend : softwareBackend;
@@ -1875,7 +1876,7 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
         type: "backend",
         backend: "gpu",
         adapter: "google swiftshader (software)",
-        // The software verdict rides the wire (fr-tmgf) so the UI can
+        // The software verdict rides the wire so the UI can
         // escalate its note to the warning tier.
         software: true,
       },
@@ -1884,7 +1885,7 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     expect(progressEvents(events).at(-1)!.iterationsDone).toBe(500);
   });
 
-  it("emits gpuUnavailable with reason 'error' when GPU accumulate keeps failing mid-render, after one fresh-device retry (fr-2w5)", async () => {
+  it("emits gpuUnavailable with reason 'error' when GPU accumulate keeps failing mid-render, after one fresh-device retry", async () => {
     let accumulateCalls = 0;
     const backend: FlameAccumBackend = {
       kind: "gpu",
@@ -1904,8 +1905,8 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     await drainAsync(scheduler);
 
     // The create succeeded (gpu), a mid-render failure at supersample 1 gets
-    // ONE fresh-device retry (a lost device usually comes back — fr-2w5's
-    // E4b), the retry's own first chunk fails too, and only then does the
+    // ONE fresh-device retry (a lost device usually comes back, as
+    // measured), the retry's own first chunk fails too, and only then does the
     // session ratchet to cpu — with reason "error", NOT "no-webgpu": this is
     // the Firefox mid-render OOM shape (a hardware/allocator failure, not a
     // missing API).
@@ -1965,7 +1966,7 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
 
     expect(backendEvents(events).map((e) => e.backend)).toEqual([
       "gpu",
-      "gpu", // the one fresh-device retry (fr-2w5) — its first chunk fails too.
+      "gpu", // the one fresh-device retry — its first chunk fails too.
       "cpu",
     ]);
     // 10 (the GPU chunk that succeeded before the failure) then 40 (the
@@ -2011,7 +2012,7 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
 
     expect(backendEvents(events).map((e) => e.backend)).toEqual([
       "gpu",
-      "gpu", // the one fresh-device retry (fr-2w5) — its first due snapshot fails too.
+      "gpu", // the one fresh-device retry — its first due snapshot fails too.
       "cpu",
     ]);
     // 10 (the one GPU due tick whose snapshot succeeded — chunks 2 and 3
@@ -2170,7 +2171,7 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
 });
 
 // ---------------------------------------------------------------------------
-// GPU progressive display downsample (fr-ee9): the optional
+// GPU progressive display downsample: the optional
 // FlameAccumBackend.snapshotDisplay seam — a GPU backend's progressive
 // (not-yet-finished) due ticks prefer it over a full snapshot(), and the
 // finalFrameDisplayed latch that keeps the finished-frame adaptive display
@@ -2180,7 +2181,7 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
 // drainAsync/flushMicrotasks rather than the synchronous scheduler.drain().
 // ---------------------------------------------------------------------------
 
-describe("FlameWorkerSession GPU progressive display (fr-ee9)", () => {
+describe("FlameWorkerSession GPU progressive display", () => {
   it("takes the snapshotDisplay path (not snapshot) on a not-yet-finished due tick, landing in the expected shared slot; the finished tick still uses the full snapshot + adaptive estimate", async () => {
     const frames = makeSharedFrames(8, 8);
     let snapshotCalls = 0;
@@ -2228,7 +2229,7 @@ describe("FlameWorkerSession GPU progressive display (fr-ee9)", () => {
     ); // the snapshotDisplay mock's own fill really landed in the named slot.
 
     // The finished frame still runs the (synchronous, unchunked) adaptive
-    // density-estimation pass — fr-17t/fr-99z's "estimating" busy event,
+    // density-estimation pass — the "estimating" busy event,
     // queued right before it — even though the progressive tick above never
     // touched that codepath at all (it used snapshotDisplay, not
     // rebuildDisplay).
@@ -2257,7 +2258,7 @@ describe("FlameWorkerSession GPU progressive display (fr-ee9)", () => {
     );
     await drainAsync(scheduler);
 
-    expect(snapshotDisplayCalls).toBe(2); // the first attempt's due tick + the fresh-device retry's (fr-2w5).
+    expect(snapshotDisplayCalls).toBe(2); // the first attempt's due tick + the fresh-device retry's.
     expect(backendEvents(events).map((e) => e.backend)).toEqual([
       "gpu",
       "gpu",
@@ -2273,7 +2274,7 @@ describe("FlameWorkerSession GPU progressive display (fr-ee9)", () => {
   });
 
   it("produces the finished adaptive frame via the pending chunk when the budget is lowered below done mid-GPU-render, with FRESH (not stale/missing) data", async () => {
-    // Regression test for the stale-histogram hole (fr-ee9): a GPU backend's
+    // Regression test for the stale-histogram hole: a GPU backend's
     // progressive due ticks never refresh this.histogram (they use
     // snapshotDisplay instead), so setIterationsBudget's lowered-mid-render
     // branch must NOT try to redisplay from it itself — it would either
@@ -2430,7 +2431,7 @@ describe("FlameWorkerSession GPU progressive display (fr-ee9)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4D flame render (fr-5b3, fr-e26): the `fourD` start-command block drives a
+// 4D flame render: the `fourD` start-command block drives a
 // 4D session through the SAME unified runChunk/FlameAccumBackend seam as a 3D
 // one — there is no separate synchronous runChunk4 loop anymore.
 // `gpuPreference: "auto"` tries the `createGpuBackend4` factory
@@ -2544,7 +2545,7 @@ describe("FlameWorkerSession 4D flame render", () => {
     ).toBeGreaterThanOrEqual(500);
   });
 
-  it("threads the fourD block's rampPalette into the radius mode's color LUT (fr-6ue)", async () => {
+  it("threads the fourD block's rampPalette into the radius mode's color LUT", async () => {
     const fourD: NonNullable<
       Extract<FlameWorkerCommand, { type: "start" }>["fourD"]
     > = {
@@ -2702,7 +2703,7 @@ describe("FlameWorkerSession 4D flame render", () => {
     expect(Array.from(last.image).some((v) => v !== 0)).toBe(true);
   });
 
-  it("setSymmetry on a 4D session restarts accumulation, exactly like the 3D path (fr-q0h6)", () => {
+  it("setSymmetry on a 4D session restarts accumulation, exactly like the 3D path", () => {
     const { session, events, scheduler } = harness({ initialChunkSize: 10 });
     session.handle(
       startCommand({ fourD: defaultFourD(), iterationsBudget: 40 }),
@@ -2784,7 +2785,7 @@ describe("FlameWorkerSession 4D flame render", () => {
 });
 
 // ---------------------------------------------------------------------------
-// fr-ul2 throughput instrumentation wiring (the meter's own math is covered by
+// Throughput instrumentation wiring (the meter's own math is covered by
 // flame-perf.test.ts — these pin that the session actually drives it, and only
 // when opted in). A large fixed clock step makes a single chunk's summed
 // wall+gap cross the meter's window, so one render is enough to emit.

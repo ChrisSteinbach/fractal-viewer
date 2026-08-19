@@ -1,10 +1,10 @@
 /**
- * Outlier-robust bounds for the camera fit/chase to FRAME (fr-3xfk): per-axis
+ * Outlier-robust bounds for the camera fit/chase to FRAME: per-axis
  * trimmed quantiles of the delivered point cloud, baked worker-side onto
  * every `CloudResult` (`cloud-worker-core.ts`'s `generateCloud` attaches
  * `frameBounds`/`frameRadius`) and read by main.ts's `attractorFramingBounds`,
- * which `camera-tween.ts`'s glide/chase actually frame — and, since fr-2b82,
- * by main.ts's glow-exposure block, whose points-per-pixel estimate likewise
+ * which `camera-tween.ts`'s glide/chase actually frame — and also by
+ * main.ts's glow-exposure block, whose points-per-pixel estimate likewise
  * wants the box where the mass actually is (the raw box's outlier inflation
  * under-estimated density and over-brightened the glow). The true min/max
  * `bounds` on the same result stays untouched and keeps driving everything

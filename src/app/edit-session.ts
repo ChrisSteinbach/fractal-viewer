@@ -14,11 +14,11 @@
  * A whole-system replacement (preset load / Surprise Me) is the one
  * exception: it must cut its own fresh checkpoint even in the middle of an
  * open burst, and tag that history transition as `replaced` so undo/redo can
- * re-frame the camera when crossing it (see `HistoryEntry.replaced`). Since
- * fr-uf3 that re-framing restores the EXACT pre-replace pose, captured out of
+ * re-frame the camera when crossing it (see `HistoryEntry.replaced`). That
+ * re-framing restores the EXACT pre-replace pose, captured out of
  * band at each checkpoint/undo/redo push via `EditSessionDeps.pose` and parked
  * on `HistoryEntry.pose`, rather than a fresh auto-fit of the restored system
- * — and since fr-gq99 the pose is the whole `ViewPose` (orbit camera plus,
+ * — and the pose is the whole `ViewPose` (orbit camera plus,
  * for a non-flat system, the 4D rotor/slice), so the 4D view comes back too.
  *
  * Undo/redo settle an in-progress burst first — flushing it so the
@@ -58,7 +58,7 @@ export interface EditSessionDeps {
   /** Apply a history snapshot back to the app: decode it, swap it into state,
    * and refresh scene + ui. MUST NOT cut a checkpoint (EditSession guarantees
    * restore never opens a burst — it handles the resulting bare save itself).
-   * `pose` (fr-uf3, fr-gq99) is the framing captured with the restored entry
+   * `pose` is the framing captured with the restored entry
    * — orbit camera plus, for a non-flat system, the 4D rotor/slice: the app
    * restores it across a `replaced` step (instead of auto-fitting) and ignores
    * it for a tweak step (which leaves the camera alone). */
@@ -66,8 +66,8 @@ export interface EditSessionDeps {
   /** Reflect undo/redo availability in the UI (ui.setUndoRedo in the app). */
   syncUi: (canUndo: boolean, canRedo: boolean) => void;
   /** Read the CURRENT live view pose (viewPose() in the app): the orbit
-   * camera (fr-uf3) plus, while the displayed system is non-flat, the 4D
-   * rotor/slice pose (fr-gq99) — captured out of band onto each history entry
+   * camera plus, while the displayed system is non-flat, the 4D
+   * rotor/slice pose — captured out of band onto each history entry
    * at every checkpoint and at each undo/redo's park of the state being left,
    * so undo/redo across a whole-system replace restores the exact framing
    * instead of refitting. Never encoded into the snapshot string (that would

@@ -1,17 +1,17 @@
 import type { SavedSceneMode } from "./collection";
 
 /**
- * The bookkeeping behind fr-r777's LATE thumbnail correction.
+ * The bookkeeping behind the LATE thumbnail correction.
  *
  * A ★ Save to collection / 📍 Add keyframe taken during a flame/solid/surface
  * render's first-frame gap files an entry TAGGED with that render mode
- * (`SavedScene.mode`/`TimelineStep.mode`, fr-75sq/fr-v3au) carrying a
+ * (`SavedScene.mode`/`TimelineStep.mode`) carrying a
  * POINT-CLOUD picture: main.ts's `captureCurrentThumbnail` falls through to
  * the explorer capture there, because during the gap the screen honestly
  * still shows the explorer. The entry itself is correct — it re-enters the
  * tracer on load — only its picture disagrees with its glyph.
  *
- * The fix cannot be the one fr-61a2 applied to Save-PNG, which WAITS for the
+ * The fix cannot be the one applied to Save-PNG, which WAITS for the
  * render behind the export modal: a thumbnail must be INSTANT. Blocking ★
  * Save to collection on a flame convergence would be far worse than a wrong
  * thumbnail, and the export modal is not available to a save — it is not an
@@ -25,7 +25,7 @@ import type { SavedSceneMode } from "./collection";
  * entry holds AND the live render mode is still the one the entry was tagged
  * with. Everything else drops the patch and leaves the point-cloud thumbnail
  * where it is: an edit, a preset load, an undo, a CAMERA move (the pose rides
- * the document since fr-1k4, so an orbit really does mean a different
+ * the document, so an orbit really does mean a different
  * document — which is why a re-capture after one would be a picture of
  * something the entry does not hold), leaving the mode, or a session that
  * dies without ever producing a frame. A stale-but-honest picture of the

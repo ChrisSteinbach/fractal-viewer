@@ -228,7 +228,7 @@ describe("VoxelWorkerSession start", () => {
     });
   });
 
-  it("carries the color mode into the packed voxel colors (fr-c1d)", () => {
+  it("carries the color mode into the packed voxel colors", () => {
     const { session, events, scheduler } = harness();
     session.handle(
       startCommand({ colorMode: "uniform", iterationsBudget: 2000 }),
@@ -261,7 +261,7 @@ describe("VoxelWorkerSession start", () => {
     expect(run()).toEqual(run());
   });
 
-  it("carries the ramp palette into the height ramp's voxel colors (fr-3b6)", () => {
+  it("carries the ramp palette into the height ramp's voxel colors", () => {
     // Same seed and geometry, differing ONLY in the start command's
     // rampPalette: the height-mode colors must come out different — pinning
     // that the wire field actually reaches accumulateVoxels (the ramp's
@@ -321,7 +321,7 @@ describe("VoxelWorkerSession setIterationsBudget", () => {
     }
     // The lowered budget finished the render on the spot, and no chunk runs
     // to say so — the session must send the final grid itself (fresh
-    // counters included) or the progress label freezes (fr-15z).
+    // counters included) or the progress label freezes.
     const last = gridEvents(events)[gridEvents(events).length - 1];
     expect(last.iterationsDone).toBe(100); // what actually accumulated, unchanged.
     expect(last.iterationsBudget).toBe(50); // the new (already-met) target.
@@ -349,7 +349,7 @@ describe("VoxelWorkerSession setIterationsBudget", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Palette: live setPalette command (fr-1kt)
+// Palette: live setPalette command
 // ---------------------------------------------------------------------------
 
 describe("VoxelWorkerSession setPalette", () => {
@@ -397,7 +397,7 @@ describe("VoxelWorkerSession setPalette", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Symmetry: live setSymmetry command (fr-6im)
+// Symmetry: live setSymmetry command
 // ---------------------------------------------------------------------------
 
 describe("VoxelWorkerSession setSymmetry", () => {
@@ -472,7 +472,7 @@ describe("VoxelWorkerSession setSymmetry", () => {
     expect(events).toHaveLength(0);
   });
 
-  it("survives a 4D kaleidoscope arriving at a 3D session, rendering it unreplicated (fr-q0h6)", () => {
+  it("survives a 4D kaleidoscope arriving at a 3D session, rendering it unreplicated", () => {
     // A live symmetry edit can turn a flat system 4D under a render session
     // whose dimension was fixed at start. `symmetryRotation` THROWS on a
     // w-plane, so without the symmetry3D guard this would kill the worker.
@@ -491,7 +491,7 @@ describe("VoxelWorkerSession setSymmetry", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Restart notification: the "restarted" event (fr-h6sn)
+// Restart notification: the "restarted" event
 // ---------------------------------------------------------------------------
 
 describe("VoxelWorkerSession restarted event", () => {
@@ -552,7 +552,7 @@ describe("VoxelWorkerSession memory guards", () => {
 
   it("clamps against the start command's own budget when it carries one", () => {
     // Same 64 -> 32 clamp as the deps-budget test above, but the budget
-    // rides in the start command — the path main.ts actually uses (fr-8x7).
+    // rides in the start command — the path main.ts actually uses.
     // Without it, the built-in floor (256^3 worth of voxels) would clamp
     // nothing at a mere 64^3 request.
     const { session, events, scheduler } = harness();
@@ -615,7 +615,7 @@ describe("VoxelWorkerSession memory guards", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4D solid render (fr-4wd): the `fourD` start-command block drives
+// 4D solid render: the `fourD` start-command block drives
 // computeVoxelBounds4/accumulateVoxels4 instead of the 3D path, and every
 // command handler must still behave sanely — setSymmetry becomes a no-op
 // (symmetry is 3D-only), setPalette still restarts. A plain 3D start (no
@@ -638,7 +638,7 @@ describe("VoxelWorkerSession 4D solid render", () => {
     expect(last.texture.some((b) => b > 0)).toBe(true);
   });
 
-  it("setSymmetry on a 4D session restarts accumulation and re-emits a grid (fr-q0h6)", () => {
+  it("setSymmetry on a 4D session restarts accumulation and re-emits a grid", () => {
     const { session, events, scheduler } = harness({ initialChunkSize: 50 });
     session.handle(
       startCommand({ fourD: defaultFourD(), iterationsBudget: 200 }),
@@ -743,7 +743,7 @@ describe("VoxelWorkerSession 4D solid render", () => {
     expect(last.boundsMax[2]).toBeGreaterThan(last.boundsMin[2]);
   });
 
-  it("rampPalette recolors the 4D radius mode's voxels without moving density (fr-6ue)", () => {
+  it("rampPalette recolors the 4D radius mode's voxels without moving density", () => {
     const runOne = harness();
     runOne.session.handle(
       startCommand({
@@ -797,7 +797,7 @@ describe("VoxelWorkerSession 4D solid render", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Device-aware accumulation budget policy (fr-8x7)
+// Device-aware accumulation budget policy
 // ---------------------------------------------------------------------------
 
 describe("voxelAccumBudgetVoxels", () => {
@@ -868,7 +868,7 @@ describe("VoxelWorkerSession texture throttling", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Pack-aware texture throttle (fr-8x7): the refresh interval stretches when
+// Pack-aware texture throttle: the refresh interval stretches when
 // packing itself is slow, so a big grid can't spend nearly all its time
 // re-packing instead of accumulating — see VOXEL_TEXTURE_PACK_DUTY's doc.
 // ---------------------------------------------------------------------------
@@ -901,7 +901,7 @@ describe("VoxelWorkerSession texture pack throttling", () => {
     // So only chunks 1 and 10 emit a grid: 2 total. Contrast with a flat
     // 250 ms stride under this SAME pack cost: a 400 ms pack pushes the very
     // next chunk's gap to 400 + 8 = 408 ms, already >= 250 ms — so EVERY one
-    // of the 10 chunks would re-pack (fr-8x7's exact bug: lastTextureAt is
+    // of the 10 chunks would re-pack (the exact bug: lastTextureAt is
     // stamped at pack START, so a slow-enough pack makes every subsequent
     // chunk immediately "due" again).
     const values = [
@@ -944,13 +944,13 @@ describe("VoxelWorkerSession texture pack throttling", () => {
   it("keeps today's flat 250 ms schedule when packing is fast (3x cost stays under the floor)", () => {
     // Identical structure to the slow-pack case above, but the pack costs
     // only 10 fake-ms: VOXEL_TEXTURE_PACK_DUTY(3) * 10 = 30, which loses to
-    // the Math.max against the flat VOXEL_TEXTURE_INTERVAL_MS (250) — so the
-    // throttle threshold is 250 ms throughout, exactly as it was before
-    // fr-8x7 introduced the stretch (today's <=256^3 sizes, where packing is
-    // fast). With only 10 chunks of 8 ms each, the gap since chunk 1's pack
-    // (18, 26, 34, 42, 50, 58, 66, 74 minus 8) never climbs anywhere near
-    // 250 ms either, so — like the slow-pack case — only the always-due
-    // first and last chunks emit.
+    // the Math.max against the flat VOXEL_TEXTURE_INTERVAL_MS (250) — so
+    // the throttle threshold is 250 ms throughout, exactly as it was before
+    // the 512^3 ceiling introduced the stretch (today's <=256^3 sizes,
+    // where packing is fast). With only 10 chunks of 8 ms each, the gap
+    // since chunk 1's pack (18, 26, 34, 42, 50, 58, 66, 74 minus 8) never
+    // climbs anywhere near 250 ms either, so — like the slow-pack case —
+    // only the always-due first and last chunks emit.
     //
     // The exact count (not a loose range) is what would catch a regression
     // that dropped the `Math.max` floor: a bare `3 * lastPackMs` (30 ms)

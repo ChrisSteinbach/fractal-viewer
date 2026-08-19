@@ -1,5 +1,5 @@
 /**
- * The solid render's Web Worker session state machine (fr-v4f): bounds
+ * The solid render's Web Worker session state machine: bounds
  * estimation, voxel-grid accumulation in adaptive chunks, the proactive +
  * reactive OOM guard, and throttled RGBA8 texture packing — all off the main
  * thread. `voxel-worker.ts` is the thin `self.onmessage`/`postMessage` glue
@@ -13,9 +13,9 @@
  * Unlike the flame session there are no live tone-map commands: everything
  * visual downstream of the grid (isosurface threshold, light direction,
  * ambient) is a GPU uniform the main thread changes without touching the
- * worker. Only the iteration budget, the palette (fr-1kt — restarts
- * accumulation the same way, since baked-in colors can't be reapplied live),
- * and the symmetry (fr-6im — it reshapes the geometry itself, not a
+ * worker. Only the iteration budget, the palette (restarts accumulation
+ * the same way, since baked-in colors can't be reapplied live),
+ * and the symmetry (it reshapes the geometry itself, not a
  * tone-map param, so it restarts accumulation like the flame session's
  * `setSymmetry`) are live here.
  */
@@ -69,20 +69,20 @@ export type VoxelWorkerCommand =
       /** Requested voxels per axis; the session clamps to its memory budget. */
       resolution: number;
       /** The explorer's active color mode, carried into the voxel colors
-       * (fr-c1d) — see `accumulateVoxels`' coloring doc. */
+       * — see `accumulateVoxels`' coloring doc. */
       colorMode: ColorMode;
-      /** Contrast exponent for the coordinate-normalized color modes
-       * (fr-8sk) — snapshotted at render entry exactly like `colorMode`. */
+      /** Contrast exponent for the coordinate-normalized color modes —
+       * snapshotted at render entry exactly like `colorMode`. */
       colorGamma: number;
       /**
-       * Structural-coloring palette (fr-1kt, mirroring the flame's fr-6us);
-       * "legacy" = the existing colorMode-driven coloring; since fr-55k may
+       * Structural-coloring palette (mirroring the flame's);
+       * "legacy" = the existing colorMode-driven coloring, and it may
        * also be a self-contained `CustomPalette` payload.
        */
       palette: PaletteSpec;
       /**
        * Gradient palette for the colorMode-driven height/radius RAMPS
-       * (fr-3b6) — deliberately named apart from `palette` above, because
+       * — deliberately named apart from `palette` above, because
        * this session carries TWO palette concepts: `palette` is the
        * STRUCTURAL orbit gradient that overrides `colorMode` entirely, while
        * `rampPalette` recolors the height/radius ramps within the
@@ -94,7 +94,7 @@ export type VoxelWorkerCommand =
        */
       rampPalette: PaletteSpec;
       /**
-       * The position mode's custom axis colors (fr-8k7) — snapshotted at
+       * The position mode's custom axis colors — snapshotted at
        * render entry exactly like `colorMode`/`colorGamma`; the position
        * axis pickers are only reachable in the points view, so there is no
        * live command for it (mirrors `rampPalette`'s doc). Only matters
@@ -115,14 +115,14 @@ export type VoxelWorkerCommand =
        * Omitted, the session falls back to the phone-safe floor.
        */
       maxVoxels?: number;
-      /** Kaleidoscope symmetry (fr-6im; 4D since fr-q0h6, which is also why
-       * `twist` rides along — the second angle of a 4D double rotation, which
+      /** Kaleidoscope symmetry, 4D as well as 3D — which is also why
+       * `twist` rides along (the second angle of a 4D double rotation, which
        * only the 4D path can express). Absent `twist` means 0. */
       order: number;
       plane: SymmetryPlane;
       twist?: number;
       /**
-       * Optional 4D solid render (fr-4wd, mirroring the flame's fr-5b3):
+       * Optional 4D solid render (mirroring the flame's):
        * present when the explorer was in 4D mode when the render was
        * entered. When present, the session drives `chaos-game-4d.ts`'s 4D
        * chaos game and `voxel-4d.ts`'s `computeVoxelBounds4`/
@@ -132,7 +132,7 @@ export type VoxelWorkerCommand =
        * simply unused when this is present — the 4D view hides the contrast
        * control and never applied gamma to color (see `color.ts`'s
        * `buildColors4` doc), the radius LUT below uses gamma 1, and this
-       * block carries its own `rampPalette` (fr-6ue), keeping it
+       * block carries its own `rampPalette`, keeping it
        * structurally identical to the flame `start`'s so main.ts's one
        * `fourDRenderSnapshot` feeds both. Unlike the flame session, there
        * is no GPU backend to opt out of here: the voxel session is CPU-only
@@ -162,7 +162,7 @@ export type VoxelWorkerCommand =
          * thread reads `FOUR_D_SLICE_WIDTH`). */
         sliceWidth: number;
         /** Whether the w-ramp color modes recenter their ramp on the slice
-         * window (fr-nn6) — `project4.ts`'s `FourDView.sliceRelativeColor`. */
+         * window — `project4.ts`'s `FourDView.sliceRelativeColor`. */
         sliceRelativeColor: boolean;
         /** The explorer's active 4D color mode — drives the "legacy"
          * palette dispatch (see `color.ts`'s `FourDRenderColor`). */
@@ -173,7 +173,7 @@ export type VoxelWorkerCommand =
         radiusMin: number;
         radiusMax: number;
         /**
-         * Gradient palette for the "radius" color mode's ramp (fr-6ue) — the
+         * Gradient palette for the "radius" color mode's ramp — the
          * same `rampPaletteId` selection the explorer's 3D height/radius
          * ramps follow, resolved by the main thread; `"legacy"` = the
          * built-in warm→cool ramp. Only the radius mode reads it;
@@ -188,7 +188,7 @@ export type VoxelWorkerCommand =
       type: "setSymmetry";
       order: number;
       plane: SymmetryPlane;
-      /** See the `start` command's own `twist` (fr-q0h6). */
+      /** See the `start` command's own `twist`. */
       twist?: number;
     };
 
@@ -215,8 +215,8 @@ export type VoxelWorkerEvent =
   | {
       /**
        * Emitted synchronously, right where {@link VoxelWorkerSession}'s
-       * `startAccumulation` discards the in-flight accumulation (fr-h6sn,
-       * mirroring the flame session's own `restarted` event) — a live
+       * `startAccumulation` discards the in-flight accumulation (mirroring
+       * the flame session's own `restarted` event) — a live
        * `setPalette`/`setSymmetry` restart, the allocation-failure fallback,
        * or the initial `start` (harmless there: nothing stale is on screen
        * yet to correct). The next `grid` report — the only other thing that
@@ -305,7 +305,7 @@ const VOXEL_TEXTURE_INTERVAL_MS = 250;
  * subsequent 8 ms accumulation chunk is immediately "due" again the instant
  * it returns, and the worker spends nearly all its time re-packing instead of
  * accumulating. Packing is O(size^3) — tens of ms at 192^3, but roughly
- * ~500 ms at 512^3 — so raising the desktop ceiling to 512^3 (fr-8x7) is what
+ * ~500 ms at 512^3 — so raising the desktop ceiling to 512^3 is what
  * made the fixed stride pathological; the flame worker needs no equivalent
  * guard because its per-refresh output is display-resolution, not O(size^3).
  */
@@ -318,7 +318,7 @@ const MIB = 1024 * 1024;
 /**
  * Phone-safe floor (and no-better-information default) for one session's
  * grid + texture. 320 MiB / 20 bytes is exactly 256^3 — the value the app
- * shipped with since fr-v4f, so coarse-pointer devices keep exactly their old
+ * originally shipped with, so coarse-pointer devices keep exactly their old
  * behavior (the old 256-max slider passes untouched). Same reasoning as the
  * flame's floor (`FLAME_ACCUM_FLOOR_BYTES`): phones die uncatchably (the OS
  * kills the tab before an allocation ever throws), so they get a conservative
@@ -344,12 +344,12 @@ const VOXEL_ACCUM_MAX_BYTES = 2560 * MIB;
 /**
  * The grid+texture memory budget (in voxels — see {@link BYTES_PER_VOXEL})
  * for the device we're actually running on, from the two signals only the
- * MAIN thread can read; it computes this and ships the result in the `start`
- * command (fr-8x7, mirroring the flame's fr-7c8 — see
- * `flame-worker-core.ts`'s `flameAccumBudgetBuckets`). Before this, the
- * budget was a flat 320 MiB sized so the OLD 256 slider max fit exactly on
- * every device — i.e. desktops were pinned to a phone-derived resolution
- * ceiling no matter how much RAM they actually had.
+ * MAIN thread can read; it computes this and ships the result in the
+ * `start` command (mirroring the flame's — see `flame-worker-core.ts`'s
+ * `flameAccumBudgetBuckets`). Before this, the budget was a flat 320 MiB
+ * sized so the OLD 256 slider max fit exactly on every device — i.e.
+ * desktops were pinned to a phone-derived resolution ceiling no matter how
+ * much RAM they actually had.
  *
  * - `coarsePointer` (from `matchMedia("(pointer: coarse)")`) marks
  *   phone/tablet-class devices: they keep the flat floor, and their
@@ -410,13 +410,13 @@ export class VoxelWorkerSession {
   private palette: ReturnType<typeof transformColors> = [];
   private rng: Rng = Math.random;
   private colorMode: ColorMode = "transform";
-  /** The position mode's custom axis colors (fr-8k7) — see `voxel.ts`'s
+  /** The position mode's custom axis colors — see `voxel.ts`'s
    * `accumulateVoxels`. */
   private positionAxisColors: PositionAxisColors | undefined;
-  /** Contrast exponent for the coordinate-normalized color modes (fr-8sk) —
+  /** Contrast exponent for the coordinate-normalized color modes —
    * see `voxel.ts`'s `accumulateVoxels`. */
   private colorGamma = 1;
-  /** Gradient palette for the colorMode-driven height/radius ramps (fr-3b6)
+  /** Gradient palette for the colorMode-driven height/radius ramps
    * — see the `start` command's `rampPalette` doc for how it differs from
    * `colorLUT` below (the STRUCTURAL palette, which overrides colorMode and
    * so makes this inert while non-null). */
@@ -456,7 +456,7 @@ export class VoxelWorkerSession {
   private baseFinalTransform: Transform | null = null;
   /** The raw 4D transform set from the last "start"'s `fourD` block —
    * retained for the same reason as the 3D pair above: setSymmetry re-runs
-   * `prepareChaosGame4` over it with the NEW symmetry (fr-q0h6). Empty for a
+   * `prepareChaosGame4` over it with the NEW symmetry. Empty for a
    * 3D session. */
   private baseTransforms4: Transform4[] = [];
   private baseFinalTransform4: Transform4 | null = null;
@@ -467,7 +467,7 @@ export class VoxelWorkerSession {
    * more than once in a row). */
   private symmetryOrder = 1;
   private symmetryPlane: SymmetryPlane = "xz";
-  /** The second angle of a 4D double rotation (fr-q0h6) — 0 for every 3D
+  /** The second angle of a 4D double rotation — 0 for every 3D
    * session, which cannot express one. */
   private symmetryTwist = 0;
 
@@ -518,7 +518,7 @@ export class VoxelWorkerSession {
           this.ensureRunning(); // resume if this raised the budget past iterationsDone.
         } else if (wasFinished) {
           // Already finished before this change, so the displayed texture is
-          // already final — only the label's target is now stale (fr-15z).
+          // already final — only the label's target is now stale.
           // Send just the counters; see the `progress` event's doc for why
           // not the (heavy) full grid.
           this.emit({
@@ -530,7 +530,7 @@ export class VoxelWorkerSession {
           // Lowered to/below the accumulated count mid-render: that finishes
           // the render on the spot, but no chunk will run to say so — the
           // already-scheduled one bails silently in runChunk — so the label
-          // would freeze at its last value (fr-15z) and the display would
+          // would freeze at its last value and the display would
           // miss whatever accumulated since the last throttled pack. Send
           // the final grid (fresh counters included) here.
           this.sendGrid(this.grid);
@@ -547,7 +547,7 @@ export class VoxelWorkerSession {
   }
 
   /** The session's live kaleidoscope as the one object every consumer wants
-   * (fr-q0h6) — mirrors flame-worker-core's own `symmetry()`. */
+   * — mirrors flame-worker-core's own `symmetry()`. */
   private symmetry(): SymmetryParams {
     return {
       order: this.symmetryOrder,
@@ -684,11 +684,11 @@ export class VoxelWorkerSession {
       case "transform":
         return {
           kind: "transform",
-          // BASE maps, not the symmetry-EXPANDED slot count (fr-q0h6):
+          // BASE maps, not the symmetry-EXPANDED slot count:
           // `accumulateVoxels4` indexes this by `idx % baseTransformCount`,
           // so every kaleidoscope copy takes the color of the map it copies
           // — and the hues stay put when the kaleidoscope's order changes.
-          // colorIndexes (fr-axxl) come from the same `baseTransforms4` the
+          // colorIndexes come from the same `baseTransforms4` the
           // structural walk already resolves its own colorIndex/colorSpeed
           // pair from — no second wire channel needed.
           palette: transformColors(
@@ -708,7 +708,7 @@ export class VoxelWorkerSession {
   }
 
   /**
-   * Live palette change (fr-1kt, mirroring the flame session's `setPalette`):
+   * Live palette change (mirroring the flame session's `setPalette`):
    * avgRGB has the OLD palette's colors baked in as a running mean, so —
    * unlike a GPU-uniform param — this can't be re-applied to the existing
    * accumulation; it has to accumulate afresh. Bounds/resolution are
@@ -723,8 +723,8 @@ export class VoxelWorkerSession {
   }
 
   /** Live kaleidoscope change. Both dimensions rebuild their own prepared
-   * game (fr-q0h6 gave the 4D path `postRotations`/base-map bookkeeping of
-   * its own, so this is no longer 3D-only), re-pilot their bounds, and
+   * game (the 4D path has `postRotations`/base-map bookkeeping of its
+   * own, so this is no longer 3D-only), re-pilot their bounds, and
    * restart the accumulation — mirrors flame-worker-core's own
    * `setSymmetry`, plus the bounds pass the flame has no counterpart for. */
   private setSymmetry(
@@ -787,7 +787,7 @@ export class VoxelWorkerSession {
    * guard) doesn't care whether it's being filled by the 3D or 4D path. The
    * ONE place that actually discards a prior accumulation (shared by
    * `start`, a live `setPalette`/`setSymmetry`, and the OOM retry above), so
-   * it's also where the `restarted` event (fr-h6sn) is emitted — but only
+   * it's also where the `restarted` event is emitted — but only
    * once the grid is actually (re)allocated, i.e. never for a failed attempt
    * that's about to retry smaller.
    */

@@ -1,5 +1,5 @@
 /**
- * fr-xu4u: keep panel scrolling from editing sliders — by never editing them.
+ * Keep panel scrolling from editing sliders — by never editing them.
  *
  * The panel's range inputs get `touch-action: pan-y` (style.css), so a
  * vertical touch drag that happens to start on a slider scrolls the panel —
@@ -8,25 +8,26 @@
  * the panel scrolls AND the value silently jumps to wherever the finger first
  * landed on the track.
  *
- * fr-zoi REPAIRED that after the fact — snapshot the value on pointerdown,
- * restore it once the browser claimed the gesture for panning. Measured
- * against real Chromium (scripts/panel-touch-scroll.verify.mjs), the repair
- * still let the jump commit mid-gesture (fogSlider 1 -> 1.25 from a centre
- * start, 1 -> 0 from a left-edge start, its [0, 2.5] track position exactly)
- * and fired `input` TWICE — once for the jump, once for the restore. Both
- * trips run the real edit pipeline: edit-session burst coalescing, a possible
- * history checkpoint, a cloud regeneration request — for a gesture the user
- * meant as a scroll. So the guard PREVENTS the jump instead.
+ * An earlier pass REPAIRED that after the fact — snapshot the value on
+ * pointerdown, restore it once the browser claimed the gesture for panning.
+ * Measured against real Chromium (scripts/panel-touch-scroll.verify.mjs),
+ * the repair still let the jump commit mid-gesture (fogSlider 1 -> 1.25
+ * from a centre start, 1 -> 0 from a left-edge start, its [0, 2.5] track
+ * position exactly) and fired `input` TWICE — once for the jump, once for
+ * the restore. Both trips run the real edit pipeline: edit-session burst
+ * coalescing, a possible history checkpoint, a cloud regeneration request —
+ * for a gesture the user meant as a scroll. So the guard PREVENTS the jump
+ * instead.
  *
- * WHICH DEFAULT ACTION THE JUMP IS, measured rather than assumed — fr-zoi's
- * own doc said pointerdown, and that is wrong. Under a CDP touch swipe the
- * value is still untouched when `touchstart` is DISPATCHED and already jumped
- * by the first `pointermove`, so the jump is the TOUCHSTART default action
- * (Blink's SliderContainerElement::HandleTouchEvent), and `preventDefault()`
- * on pointerdown does not stop it — measured, with the cancel landing
- * (`defaultPrevented` true at the document) and the value moving 1 -> 1.25
- * anyway. Four candidate suppressions were measured against one vertical
- * swipe; only the last does the job:
+ * WHICH DEFAULT ACTION THE JUMP IS, measured rather than assumed — that
+ * pass's own doc said pointerdown, and that is wrong. Under a CDP touch
+ * swipe the value is still untouched when `touchstart` is DISPATCHED and
+ * already jumped by the first `pointermove`, so the jump is the TOUCHSTART
+ * default action (Blink's SliderContainerElement::HandleTouchEvent), and
+ * `preventDefault()` on pointerdown does not stop it — measured, with the
+ * cancel landing (`defaultPrevented` true at the document) and the value
+ * moving 1 -> 1.25 anyway. Four candidate suppressions were measured
+ * against one vertical swipe; only the last does the job:
  *
  * - `preventDefault()` on touchstart: kills the jump AND the pan (scroll
  *   delta 0px where every other arm scrolled -135px). Cancelling a touchstart
@@ -68,7 +69,7 @@
  *   `input` per actual change — the event Ui.bind listens to, so a touch drag
  *   reaches the same scalar/editor pipeline a mouse drag does. `pointerup`
  *   after any write fires the trailing `change` that a native drag ends with:
- *   fr-2c27's commit-on-release specs hang off it (numPointsSlider defers its
+ *   the commit-on-release specs hang off it (numPointsSlider defers its
  *   whole regeneration there), and assigning `value` from script fires
  *   nothing by itself. Measured on the same 200px drag: guard-driven 10
  *   `input` + 1 `change` against the native 16 + 2, landing one step apart
@@ -234,7 +235,7 @@ export function installSliderScrollGuard(panel: HTMLElement): void {
       if (active) {
         // One gesture at a time: a second finger landing on a slider must
         // not displace the one in flight — that would silently drop the
-        // first finger's trailing `change` (fr-2c27's commit-on-release
+        // first finger's trailing `change` (the commit-on-release
         // sliders hang off it) and leave its lift ending the wrong gesture.
         // But the refusal still owes THIS slider the suppression flip: its
         // own touchstart default handler is about to run, and unsuppressed

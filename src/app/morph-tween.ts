@@ -1,18 +1,18 @@
 /**
- * The system-morph TWEEN (fr-jx9o, part 2 of the system-morphing feature): a
- * per-frame driver over fr-idze's pure interpolation
- * (`../fractal/morph`'s {@link lerpSystem}), shaped like `camera-tween.ts`'s
- * `CameraTween` and `build-replay.ts`'s `BuildReplay` one level up. When a
- * replace-load (preset / Surprise Me / gallery) swaps in a new attractor,
- * main.ts's animate loop is expected to poll {@link MorphTween.sample} once
- * per frame — same call pattern as `CameraTween.advance` / `BuildReplay.frame`
- * — and issue one cloud generation request per sample, so the point cloud
- * flows into the new shape instead of snapping (fr-a04l wires this up). The
- * FINAL sample (`t >= 1`) doubles as the real replaced/fit generation request
- * that an instant swap would have issued, so its `system` must be `to` BY
- * REFERENCE — not a freshly-lerped copy that merely equals it. The terminal
- * branch hands `to` back directly, the same exactness `lerpSystem`'s own
- * `t >= 1` contract promises (fr-idze).
+ * The system-morph TWEEN (part 2 of the system-morphing feature): a
+ * per-frame driver over the pure interpolation (`../fractal/morph`'s {@link
+ * lerpSystem}), shaped like `camera-tween.ts`'s `CameraTween` and
+ * `build-replay.ts`'s `BuildReplay` one level up. When a replace-load
+ * (preset / Surprise Me / gallery) swaps in a new attractor, main.ts's
+ * animate loop is expected to poll {@link MorphTween.sample} once per frame
+ * — same call pattern as `CameraTween.advance` / `BuildReplay.frame` — and
+ * issue one cloud generation request per sample, so the point cloud flows
+ * into the new shape instead of snapping (the replace-load morph wires this
+ * up). The FINAL sample (`t >= 1`) doubles as the real replaced/fit
+ * generation request that an instant swap would have issued, so its
+ * `system` must be `to` BY REFERENCE — not a freshly-lerped copy that
+ * merely equals it. The terminal branch hands `to` back directly, the same
+ * exactness `lerpSystem`'s own `t >= 1` contract promises.
  *
  * ## Why the tween pins a seed
  *

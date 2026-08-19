@@ -253,12 +253,12 @@ describe("createExportWait: planRenderWait per-mode affordances", () => {
   });
 });
 
-describe("createExportWait: the fr-2fbs early save", () => {
+describe("createExportWait: the early save", () => {
   it("the press latches across the restart gap and is honored only once this session's first frame lands", async () => {
     const h = harness();
-    // The Export-size restart gap (fr-61a2's headline case): budget unmet
-    // AND no first frame — the canvas still holds the PREVIOUS session's
-    // picture at the PREVIOUS session's size.
+    // The Export-size restart gap (the fall-through bug's headline case):
+    // budget unmet AND no first frame — the canvas still holds the
+    // PREVIOUS session's picture at the PREVIOUS session's size.
     const { run, press } = stubRun();
     const plan = createExportWait(h.deps).planRenderWait("flame");
     let outcome: string | null | undefined;

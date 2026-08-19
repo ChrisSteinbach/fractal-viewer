@@ -86,8 +86,8 @@ describe("buildSurfaceComputeBackground", () => {
   it("tracks custom top/bottom stops rather than any built-in constant", () => {
     // Red top / blue bottom, hand-computed against the documented formula —
     // NOT re-derived by calling the function under test — so this proves
-    // the prefill actually reads the passed stops (fr-5ps1's Background
-    // control) instead of silently always reproducing DARK_BACKDROP.
+    // the prefill actually reads the passed stops (the Background control)
+    // instead of silently always reproducing DARK_BACKDROP.
     const rows = buildSurfaceComputeBackground(2, 4, [1, 0, 0], [0, 0, 1]);
 
     expect(rows.length).toBe(2 * 4 * 4);
@@ -109,7 +109,7 @@ describe("buildSurfaceComputeBackground", () => {
     }
   });
 
-  it("falls to the per-pixel loop and paints a centered vignette for the radial shape (fr-h3mp)", () => {
+  it("falls to the per-pixel loop and paints a centered vignette for the radial shape", () => {
     const width = 8;
     const height = 4;
     const top = hexToRgb01(DARK_BACKDROP.top); // the corner color
@@ -144,7 +144,7 @@ describe("buildSurfaceComputeBackground", () => {
 });
 
 describe("surfaceComputeMaxDispatchRays", () => {
-  it("buys 4,194,240 rays at WebGPU's spec-minimum workgroup ceiling (fr-257o)", () => {
+  it("buys 4,194,240 rays at WebGPU's spec-minimum workgroup ceiling", () => {
     // The device is requested without raising maxComputeWorkgroupsPerDimension
     // (only the two storage limits are), which pins it at the spec floor of
     // 65535 on every shipped adapter — so this is the figure that actually
@@ -180,10 +180,10 @@ describe("surfaceComputeMaxDispatchRays", () => {
 
 describe("surfaceComputeMaxFrameRays", () => {
   it("sizes the frame by the ray-state buffer against the tighter ceiling", () => {
-    // A 128 MiB storage-binding ceiling under a 256 MiB buffer ceiling:
-    // the binding one governs, and it buys 128 MiB / 16 B = 8.4M rays —
-    // just over a 4K raster, and a quarter of what a 4x export of a
-    // 1920x1057 pane would ask for (fr-biox's report).
+    // A 128 MiB storage-binding ceiling under a 256 MiB buffer ceiling: the
+    // binding one governs, and it buys 128 MiB / 16 B = 8.4M rays — just
+    // over a 4K raster, and a quarter of what a 4x export of a 1920x1057
+    // pane would ask for (the device-ceiling report).
     expect(
       surfaceComputeMaxFrameRays({
         maxBufferSize: 256 * 1024 * 1024,
@@ -201,7 +201,7 @@ describe("surfaceComputeMaxFrameRays", () => {
     ).toBe((64 * 1024 * 1024) / SURFACE_COMPUTE_RAY_STATE_BYTES);
   });
 
-  it("does NOT clamp to the dispatch ceiling — a memory question, not a submission-shape one (fr-257o)", () => {
+  it("does NOT clamp to the dispatch ceiling — a memory question, not a submission-shape one", () => {
     // A 128 MiB storage binding still buys 8.4M rays here even though that
     // is twice surfaceComputeMaxDispatchRays of a spec-minimum device: the
     // two are deliberately not met against each other, since folding the
@@ -230,8 +230,8 @@ describe("surfaceComputeTileRows", () => {
   });
 
   it("bands a 4x export under the tile cap", () => {
-    // The fr-biox report's raster: 7680x4228 = 32.5M rays, which asked
-    // for a 520 MB ray-state buffer as one frame.
+    // The device-ceiling report's raster: 7680x4228 = 32.5M rays, which
+    // asked for a 520 MB ray-state buffer as one frame.
     const rows = surfaceComputeTileRows(7680, 4228, Infinity);
     expect(rows * 7680).toBeLessThanOrEqual(SURFACE_COMPUTE_MAX_TILE_RAYS);
     expect(Math.ceil(4228 / rows)).toBe(9);
@@ -275,14 +275,15 @@ describe("surfaceComputeTileRows", () => {
   });
 });
 
-describe("buildSurfaceComputeBackground band identity (fr-xn9s)", () => {
+describe("buildSurfaceComputeBackground band identity", () => {
   it("reproduces the full image's prefill band by band from offset/extent alone", () => {
-    // The identity the tiled export depends on, restated in the fr-xn9s
-    // vocabulary that retired surfaceComputeBandStops: every tracer reads
-    // the shared shape at FULL-IMAGE coordinates, so a band's own prefill —
-    // built with the band's origin/size instead of remapped stops — must
-    // reproduce the full-image trace's rows exactly, for every band height,
-    // including one that doesn't evenly divide the image.
+    // The identity the tiled export depends on, restated in the shared
+    // background shape's vocabulary that retired surfaceComputeBandStops:
+    // every tracer reads the shared shape at FULL-IMAGE coordinates, so a
+    // band's own prefill — built with the band's origin/size instead of
+    // remapped stops — must reproduce the full-image trace's rows exactly,
+    // for every band height, including one that doesn't evenly divide the
+    // image.
     const top: [number, number, number] = [1, 0, 0];
     const bottom: [number, number, number] = [0, 0, 1];
     const fullHeight = 12;
@@ -456,14 +457,14 @@ describe("shadeHitAllowanceUs", () => {
   });
 
   it("keeps buying hits across the whole range real scenes measure in", () => {
-    // The ceiling on the predicted TOTAL necessarily squeezes the
-    // allowance to nothing as the intercept approaches it — a dispatch
-    // that costs the ceiling before its first hit has no room for hits.
-    // That squeeze is fr-d6g5's trapdoor if it lands where scenes live,
-    // and mandelboxKifs, the hardest scene here, measures its intercept
-    // between 430 and 960 ms. So across 0-1s of fixed cost the allowance
-    // is never less than a quarter of the pass target, and never less
-    // than what a batch of hits can be bought with.
+    // The ceiling on the predicted TOTAL necessarily squeezes the allowance
+    // to nothing as the intercept approaches it — a dispatch that costs the
+    // ceiling before its first hit has no room for hits. That squeeze is
+    // the settle-park trapdoor if it lands where scenes live, and
+    // mandelboxKifs, the hardest scene here, measures its intercept between
+    // 430 and 960 ms. So across 0-1s of fixed cost the allowance is never
+    // less than a quarter of the pass target, and never less than what a
+    // batch of hits can be bought with.
     for (let interceptUs = 0; interceptUs <= 1_000_000; interceptUs += 10_000) {
       expect(shadeHitAllowanceUs(interceptUs)).toBeGreaterThanOrEqual(
         (SURFACE_COMPUTE_PASS_TARGET_MS * 1000) / 4,
@@ -472,11 +473,11 @@ describe("shadeHitAllowanceUs", () => {
   });
 
   it("never aims a dispatch lower as its fixed cost rises", () => {
-    // The property the allowance exists to have, stated on the number it
-    // is about: what one dispatch is PREDICTED to cost in total. A rule
-    // that traded the allowance away against a rising intercept would
-    // shrink the dispatch exactly where shrinking it cannot help, which
-    // is fr-d6g5's trapdoor. Monotone up to the ceiling and then pinned
+    // The property the allowance exists to have, stated on the number it is
+    // about: what one dispatch is PREDICTED to cost in total. A rule that
+    // traded the allowance away against a rising intercept would shrink the
+    // dispatch exactly where shrinking it cannot help, which is the
+    // settle-park trapdoor. Monotone up to the ceiling and then pinned
     // there — the allowance itself falls through that upper range only
     // because the intercept it is added to is rising.
     let prev = 0;
@@ -510,11 +511,11 @@ describe("nextShadeBatchSize", () => {
     expect(nextShadeBatchSize(32, 250, 250)).toBe(32);
   });
 
-  it("reads the LATENCY-BOUND budget, not a fixed pass target (fr-2ojg)", () => {
+  it("reads the LATENCY-BOUND budget, not a fixed pass target", () => {
     // A 500ms dispatch under an 800ms budget is a batch that fit: the
     // capacity has to keep climbing there. Judged against the old fixed
     // PASS_TARGET/2 threshold this froze at whatever width cost 125ms —
-    // ~256 hits on the fr-2ojg scene against a measured optimum of ~1050.
+    // ~256 hits on the measured scene against a measured optimum of ~1050.
     expect(nextShadeBatchSize(256, 500, 800)).toBe(512);
     expect(nextShadeBatchSize(256, 500, SURFACE_COMPUTE_PASS_TARGET_MS)).toBe(
       256,
@@ -525,7 +526,7 @@ describe("nextShadeBatchSize", () => {
     expect(nextShadeBatchSize(256, 501, 250)).toBe(64);
   });
 
-  it("quarters down to the one-workgroup floor, never below (fr-d6g5)", () => {
+  it("quarters down to the one-workgroup floor, never below", () => {
     // Quartering from just above the floor lands exactly on it...
     expect(nextShadeBatchSize(256, 10_000, 250)).toBe(
       SURFACE_COMPUTE_WORKGROUP_SIZE,
@@ -534,7 +535,7 @@ describe("nextShadeBatchSize", () => {
     // below it: a sub-workgroup batch buys no submission-wall safety (GPU
     // cost inside one workgroup is depth-, not width-dominated), so
     // shrinking further would only multiply worst-ray-cost submissions —
-    // the fr-d6g5 park was exactly this floor missing, quartering all the
+    // the settle park was exactly this floor missing, quartering all the
     // way to 1-ray batches.
     expect(
       nextShadeBatchSize(SURFACE_COMPUTE_WORKGROUP_SIZE, 10_000, 250),
@@ -550,9 +551,9 @@ describe("nextShadeBatchSize", () => {
 
 describe("shadeHitBatchSize", () => {
   it("hands a frame that has measured nothing exactly one workgroup", () => {
-    // The empty model asks for everything (fr-2ojg deleted the per-hit
-    // prior — it could only ask for less than the floor already gives)
-    // and the one-workgroup starting capacity is what answers.
+    // The empty model asks for everything (the two-term model deleted the
+    // per-hit prior — it could only ask for less than the floor already
+    // gives) and the one-workgroup starting capacity is what answers.
     expect(
       shadeHitBatchSize(
         initialShadeHitCost(),
@@ -561,10 +562,10 @@ describe("shadeHitBatchSize", () => {
     ).toBe(SURFACE_COMPUTE_SHADE_HIT_CAP_START);
   });
 
-  it("divides the budget by the MARGINAL cost, not by a whole submission over its rays (fr-2ojg)", () => {
-    // fr-2ojg's measured boxfold-pair model: ~88ms fixed per dispatch,
-    // ~154us per hit beyond it. 7 x 88ms / 154us = 4000 hits, where the
-    // shipped sizer before fr-2ojg sat at 64-256 — and 512 after it, this
+  it("divides the budget by the MARGINAL cost, not by a whole submission over its rays", () => {
+    // The measured boxfold-pair model: ~88ms fixed per dispatch, ~154us per
+    // hit beyond it. 7 x 88ms / 154us = 4000 hits, where the shipped sizer
+    // before the two-term model sat at 64-256 — and 512 after it, this
     // model's own intercept/marginal ratio being what named that number
     // rather than anything measured (see shadeHitAllowanceUs).
     expect(
@@ -575,7 +576,7 @@ describe("shadeHitBatchSize", () => {
     ).toBe(4000);
   });
 
-  it("widens a latency-bound dispatch instead of refusing to (fr-2ojg)", () => {
+  it("widens a latency-bound dispatch instead of refusing to", () => {
     // 400ms of fixed cost, 500us per hit: the ceiling caps the predicted
     // total at 2s, so the sizer buys the 1.6s that leaves — 3200 hits.
     // Under a fixed 250ms target the allowance would be negative and this
@@ -605,7 +606,7 @@ describe("shadeHitBatchSize", () => {
     ).toBe(1200);
   });
 
-  it("never collapses below one workgroup when per-hit cost is enormous (fr-d6g5)", () => {
+  it("never collapses below one workgroup when per-hit cost is enormous", () => {
     expect(
       shadeHitBatchSize(
         { interceptUs: 0, marginalUs: 400_000 },
@@ -653,7 +654,7 @@ describe("nextShadeHitCost", () => {
     expect(4096 * cost.marginalUs).toBeGreaterThan(0.85 * 700_000);
   });
 
-  it("shrugs off a QUEUE-LIMITED batch instead of shrinking on it (fr-2ojg)", () => {
+  it("shrugs off a QUEUE-LIMITED batch instead of shrinking on it", () => {
     // The converged boxfold-pair model, then a sweep that only had 100
     // hits to give — and 5% dearer than priced, so there is a real
     // surprise to attribute rather than a no-op.
@@ -699,12 +700,12 @@ describe("nextShadeHitCost", () => {
     );
   });
 
-  it("will not become optimistic faster than the capacity ladder grows (fr-2ojg)", () => {
+  it("will not become optimistic faster than the capacity ladder grows", () => {
     // A wildly cheap measurement against a converged model — a wide batch
-    // of ground-plane terminals, which fr-rhn5 queues WITH the hits but
-    // which shade analytically. Clamped at zero the marginal would read
-    // "hits are free" and the sizer would ask for the entire capacity on
-    // one dispatch's evidence, which on a fold monster is a multi-second
+    // of ground-plane terminals, which the ground plane queues WITH the
+    // hits but which shade analytically. Clamped at zero the marginal would
+    // read "hits are free" and the sizer would ask for the entire capacity
+    // on one dispatch's evidence, which on a fold monster is a multi-second
     // submission. The decay floor holds it to a halving, i.e. at most a
     // doubling of the next batch — the rate the ladder already enforces.
     const before = { interceptUs: 500_000, marginalUs: 900 };
@@ -723,12 +724,12 @@ describe("nextShadeHitCost", () => {
     expect(cost.marginalUs).toBeLessThan(1);
   });
 
-  it("converges on its target width within a frame's worth of dispatches (fr-2ojg)", () => {
-    // The whole sizer, run against fr-2ojg's measured cost curve for the
-    // boxfold pair: 88ms of fixed dispatch cost plus 154us per hit. It
-    // reaches its target width in single digits, and the capacity ladder
-    // — not the model — is what paces the climb, so no batch is ever
-    // wider than measured-cheap evidence supports.
+  it("converges on its target width within a frame's worth of dispatches", () => {
+    // The whole sizer, run against the measured cost curve for the boxfold
+    // pair: 88ms of fixed dispatch cost plus 154us per hit. It reaches its
+    // target width in single digits, and the capacity ladder — not the
+    // model — is what paces the climb, so no batch is ever wider than
+    // measured-cheap evidence supports.
     const costOf = (n: number): number => 88_000 + 154 * n;
     let cost = initialShadeHitCost();
     let cap = SURFACE_COMPUTE_SHADE_HIT_CAP_START;
@@ -816,8 +817,8 @@ describe("nextShadeHitCost", () => {
       SURFACE_COMPUTE_SHADE_COST_PIVOT;
     let cost = initialShadeHitCost();
     let cap = SURFACE_COMPUTE_SHADE_HIT_CAP_START;
-    // fr-fniy's own kaleido4 curve, driven with the drain pattern its own
-    // record describes: full-width batches interleaved with the
+    // the width fix's own kaleido4 curve, driven with the drain pattern its
+    // own record describes: full-width batches interleaved with the
     // queue-limited slivers the partial-batch HOLD releases on a present
     // interval, which is the pair that trips the floor.
     const costOf = (n: number): number => 283_100 + 64.8 * n;
@@ -866,7 +867,7 @@ describe("surfaceComputeProgressDone", () => {
     ).toBe(1);
   });
 
-  it("credits terminal-but-unshaded rays half — the shipped fr-tdft behavior unchanged", () => {
+  it("credits terminal-but-unshaded rays half — the shipped behavior unchanged", () => {
     expect(
       surfaceComputeProgressDone({
         rays: 100,
@@ -939,8 +940,8 @@ describe("surfaceComputeProgressDone", () => {
   });
 });
 
-describe("subPixelSample (fr-vpbq)", () => {
-  it("puts pass 0 at the pixel CENTRE exactly — the claim that a supersampled frame's first pass is the pre-fr-vpbq one", () => {
+describe("subPixelSample", () => {
+  it("puts pass 0 at the pixel CENTRE exactly — the claim that a supersampled frame's first pass is the pre-supersampling one", () => {
     // Not "close to" 0.5: every ray derivation used to spell the centre as a
     // literal 0.5, so anything else here makes pass 0 a different image and
     // the whole bit-identity argument false.
@@ -964,12 +965,12 @@ describe("subPixelSample (fr-vpbq)", () => {
   it("is the same eight offsets on every device — the shipped sequence, by value", () => {
     // "Seedless and device-independent" is a claim about WHICH numbers come
     // out, so the numbers are written down: pass 0 the exact pixel centre,
-    // passes 1-7 the R2 low-discrepancy sequence
-    // `(0.5 + phi2^-1 * s) % 1`, `(0.5 + phi2^-2 * s) % 1`. Every step is an
-    // IEEE multiply/add/remainder on doubles, so these are exact on any
-    // engine — and the WebGL strip arm imports this same function (fr-jf9y),
-    // which is what makes "8 samples" one picture across the two engines.
-    // Comparing the call to itself asserted none of that.
+    // passes 1-7 the R2 low-discrepancy sequence `(0.5 + phi2^-1 * s) % 1`,
+    // `(0.5 + phi2^-2 * s) % 1`. Every step is an IEEE
+    // multiply/add/remainder on doubles, so these are exact on any engine —
+    // and the WebGL strip arm imports this same function, which is what
+    // makes "8 samples" one picture across the two engines. Comparing the
+    // call to itself asserted none of that.
     expect(Array.from({ length: 8 }, (_, s) => subPixelSample(s))).toEqual([
       [0.5, 0.5],
       [0.2548776662466927, 0.06984029099805289],
@@ -1001,17 +1002,17 @@ describe("subPixelSample (fr-vpbq)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Deferred-teardown harness (fr-uec4)
+// Deferred-teardown harness
 //
 // Pins the state machine `destroy()` / `releaseFrame()` / `destroyDevice()`
-// make between them: a `destroy()` landing while a frame is still counted must
-// not touch the device until that frame unwinds, and the device must never be
-// destroyed twice. Tearing a device down under a frame parked on live
-// submitted GPU work took the whole Firefox PROCESS down (fr-uec4), so this is
-// the costliest thing in the file to get wrong — and a fake GPUDevice is the
-// only way to drive a state machine whose real inputs are a GPU driver's
-// timing. `scripts/surface-teardown.verify.mjs` stays the authority on real
-// devices; these tests are the fast regression net under the counting.
+// make between them: a `destroy()` landing while a frame is still counted
+// must not touch the device until that frame unwinds, and the device must
+// never be destroyed twice. Tearing a device down under a frame parked on
+// live submitted GPU work took the whole Firefox PROCESS down, so this is the
+// costliest thing in the file to get wrong — and a fake GPUDevice is the only
+// way to drive a state machine whose real inputs are a GPU driver's timing.
+// `scripts/surface-teardown.verify.mjs` stays the authority on real devices;
+// these tests are the fast regression net under the counting.
 //
 // The renderer is built through its init-object constructor, the seam this
 // suite exists for — the same one `flame-gpu-backend.test.ts` drives its twin
@@ -1090,7 +1091,7 @@ function frameSpec(): SurfaceComputeFrameSpec {
 interface TeardownHarness {
   renderer: SurfaceComputeRenderer;
   /** Spy on the fake device's own `destroy()` — the one call the whole
-   * fr-uec4 state machine exists to TIME correctly. */
+   * deferred-teardown state machine exists to TIME correctly. */
   deviceDestroy: ReturnType<typeof vi.fn>;
   /** One destroy spy per per-frame GPU buffer the renderer has allocated so
    * far (states/active/color/status + the two staging buffers). Grows as
@@ -1098,15 +1099,16 @@ interface TeardownHarness {
    * that must not be freed under it. */
   bufferDestroys: ReturnType<typeof vi.fn>[];
   /** Settles the device round trip an in-flight frame is parked on. A frame
-   * makes several, and the FIRST — the error-scope pair `allocateFrameBuffers`
-   * awaits over its buffer allocation (fr-biox) — is the one a fake device
-   * reaches without reimplementing the march loop's readbacks. In production
-   * a frame parks further in, on `mapAsync`/`onSubmittedWorkDone` over
-   * submitted work; either way what is under test is the COUNTED SPAN, from
-   * `renderFrame`'s increment to its `.finally` release, which is the same
-   * span whichever await the frame happens to be sitting on. It settles with
-   * NO error, so the frame resumes into the ordinary token check and unwinds
-   * there — the real cancellation path a `destroy()` (or a newer frame) puts
+   * makes several, and the FIRST — the error-scope pair
+   * `allocateFrameBuffers` awaits over its buffer allocation — is the one a
+   * fake device reaches without reimplementing the march loop's readbacks.
+   * In production a frame parks further in, on
+   * `mapAsync`/`onSubmittedWorkDone` over submitted work; either way what is
+   * under test is the COUNTED SPAN, from `renderFrame`'s increment to its
+   * `.finally` release, which is the same span whichever await the frame
+   * happens to be sitting on. It settles with NO error, so the frame resumes
+   * into the ordinary token check and unwinds there — the real cancellation
+   * path a `destroy()` (or a newer frame) puts
    * it on, not an error path. */
   settleFrameWork: () => void;
   /** Resolves the device's `lost` promise, which is what a real device does
@@ -1115,13 +1117,13 @@ interface TeardownHarness {
 }
 
 /**
- * Builds a `SurfaceComputeRenderer` over a fake GPUDevice. The fake CONFIGURES
- * outcomes (a settle-on-demand device round trip, spies counting destroys) and
- * implements no GPU behavior: pipelines, layouts, bind groups and the LUT
- * texture/sampler are opaque casts, since nothing on the teardown path
- * inspects them. `lost` never settles unless a test calls `loseDevice` — or
- * `lostBeforeConstruction` settles it up front, which is what a device that
- * died during `create()`'s pipeline compiles hands the constructor (fr-5qmy).
+ * Builds a `SurfaceComputeRenderer` over a fake GPUDevice. The fake
+ * CONFIGURES outcomes (a settle-on-demand device round trip, spies counting
+ * destroys) and implements no GPU behavior: pipelines, layouts, bind groups
+ * and the LUT texture/sampler are opaque casts, since nothing on the teardown
+ * path inspects them. `lost` never settles unless a test calls `loseDevice` —
+ * or `lostBeforeConstruction` settles it up front, which is what a device
+ * that died during `create()`'s pipeline compiles hands the constructor.
  */
 function createHarness(
   opts: { lostBeforeConstruction?: boolean } = {},
@@ -1132,7 +1134,7 @@ function createHarness(
   const deviceDestroy = vi.fn();
   const device = {
     lost: lost.promise,
-    // Generous enough that a 2x2 frame is nowhere near the fr-biox ray
+    // Generous enough that a 2x2 frame is nowhere near the device's ray
     // ceiling this renderer checks before it allocates anything.
     limits: {
       maxBufferSize: 1 << 28,
@@ -1185,7 +1187,7 @@ function createHarness(
   };
 }
 
-describe("SurfaceComputeRenderer teardown (fr-uec4)", () => {
+describe("SurfaceComputeRenderer teardown", () => {
   it("defers device.destroy() until an in-flight frame unwinds", async () => {
     const { renderer, deviceDestroy, settleFrameWork } = createHarness();
     const frame = renderer.renderFrame(frameSpec());
@@ -1265,10 +1267,10 @@ describe("SurfaceComputeRenderer teardown (fr-uec4)", () => {
   });
 
   it("never destroys a frame's buffers directly, leaving them to the device", async () => {
-    // Freeing a staging buffer out from under a pending map is its own crash
-    // vector — the reason the teardown hands everything to `device.destroy()`
-    // rather than walking the buffers first (flame-gpu-backend's fr-mxkk
-    // finding, one module over).
+    // Freeing a staging buffer out from under a pending map is its own
+    // crash vector — the reason the teardown hands everything to
+    // `device.destroy()` rather than walking the buffers first
+    // (flame-gpu-backend's own finding, one module over).
     const { renderer, bufferDestroys, settleFrameWork } = createHarness();
     const frame = renderer.renderFrame(frameSpec());
     await flushMicrotasks();
@@ -1301,7 +1303,7 @@ describe("SurfaceComputeRenderer teardown (fr-uec4)", () => {
   });
 });
 
-describe("SurfaceComputeRenderer device loss (fr-5qmy)", () => {
+describe("SurfaceComputeRenderer device loss", () => {
   it("reports a loss that arrives after the callback is registered", async () => {
     const { renderer, loseDevice } = createHarness();
     const onLost = vi.fn();

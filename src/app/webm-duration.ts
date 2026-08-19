@@ -1,6 +1,6 @@
 // In-place (or minimally-grown) duration patch for MediaRecorder's WebM
-// (EBML/Matroska) output — the WebM counterpart to mp4-duration.ts's fr-ex2
-// fix (fr-87q).
+// (EBML/Matroska) output — the WebM counterpart to mp4-duration.ts's
+// zero-duration fix.
 //
 // Firefox's WebM muxer writes a Segment > Info > Duration element but leaves
 // its float64 value at 0 — the EBML equivalent of Chrome's moov duration
@@ -15,7 +15,7 @@
 // size, when it's declared rather than left open-ended) is rewritten in the
 // same pass. EBML layout per the Matroska spec; the two shapes patched here
 // were verified against real Firefox and Chromium captures during the
-// fr-87q diagnosis.
+// diagnosis.
 
 // ---------------------------------------------------------------------------
 // Element ids (numeric value, marker bit included)

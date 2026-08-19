@@ -80,7 +80,7 @@ describe("createStripPlanner", () => {
   it("reads one slow measurement at a narrow width as fixed cost, not as expensive pixels", () => {
     const planner = createStripPlanner(720, 1280, { priorMsPerPx: 10 });
     planner.next(null); // 8px probe
-    // fr-ado7: an 8px batch measuring 1e9ms is ONE observation of TWO
+    // An 8px batch measuring 1e9ms is ONE observation of TWO
     // unknowns, and at a width this far under the pivot the split hands
     // nearly all of it to the intercept -- so the model does NOT conclude
     // that pixels cost 125,000,000ms each and shrink to 1px (the old
@@ -304,8 +304,9 @@ describe("createStripPlanner", () => {
     // -- it cannot tell a monster pose from an overhead-bound batch, by
     // construction (see nextStripCost's identity note) -- and the RAW
     // ms/px ratchet, which the model deliberately does not feed,
-    // overrules it. Pre-fr-ado7 this read 1px: the same cap arithmetic
-    // reached by a sizer that also charged the fixed cost to the pixels.
+    // overrules it. The single-number sizer read 1px here: the same cap
+    // arithmetic reached by a sizer that also charged the fixed cost to
+    // the pixels.
     expect(planner.next(40_000)!.px).toBe(8);
     expect(planner.observedWorstMsPerPx).toBe(500);
     // A worse per-pixel batch ratchets further: 8000ms over those 8px is
@@ -374,8 +375,9 @@ describe("createStripPlanner", () => {
     // final strip's measurement handed to next() is silently dropped...
     expect(planner.next(8000)).toBeNull();
     expect(planner.observedWorstMsPerPx).toBe(0);
-    // ...the measurement door still ratchets (fr-24to's safety half): the
-    // evidence chain a completed job feeds must include its OWN last strip.
+    // ...the measurement door still ratchets (the no-give-up verdict's
+    // safety half): the evidence chain a completed job feeds must include
+    // its OWN last strip.
     planner.observe(8000, 4); // 8000 / 4 = 2000 ms/px
     expect(planner.observedWorstMsPerPx).toBe(2000);
   });
@@ -423,11 +425,11 @@ function runSizes(
   return sizes;
 }
 
-/** A FROZEN COPY of the pre-fr-ado7 sizer — one number, `px * min(target
+/** A FROZEN COPY of the single-number sizer — one number, `px * min(target
  * / prevMs, STRIP_MAX_GROWTH)`, floored at 1px, under the same probe,
  * worst-case cap and row-snap the planner still has. Kept executable so
  * "ordinary frames are unmoved" is a comparison rather than a memory
- * (`escape-de.test.ts` pins fr-kltj's loop the same way). */
+ * (`escape-de.test.ts` pins the original single-fold loop the same way). */
 function runLegacySizes(
   rows: number,
   width: number,
@@ -494,9 +496,9 @@ function runLegacySizes(
   return sizes;
 }
 
-describe("createStripPlanner cost model (fr-ado7)", () => {
+describe("createStripPlanner cost model", () => {
   it("cannot be driven into the 1px absorbing state by fixed-cost-dominated batches", () => {
-    // fr-kz2p's measured shape: a near-empty frame whose batches cost
+    // The measured shape: a near-empty frame whose batches cost
     // 500ms of WALL regardless of their pixel count (a fence sync plus one
     // yielding-drain tick), over pixels that are essentially free. The old
     // single-number sizer read 500ms/1px as genuine per-pixel cost, asked
@@ -563,7 +565,7 @@ describe("createStripPlanner cost model (fr-ado7)", () => {
   });
 
   it("keeps the worst-case cap ahead of the sane-unit floor when they conflict", () => {
-    // fr-096u's precedence, written as a test so nobody re-orders the
+    // The clamp precedence, written as a test so nobody re-orders the
     // clamp: a genuinely expensive band prices the cap below STRIP_MIN_PX
     // and the CAP wins -- an unbounded strip draw is a kernel-confirmed
     // i915 preemption hang, and a slow export is not worth one.
@@ -628,7 +630,7 @@ describe("createStripPlanner cost model (fr-ado7)", () => {
       (px: number) => 2 + px * 0.02,
     ],
   ])(
-    "sizes %s within a few percent of the pre-fr-ado7 sizer",
+    "sizes %s within a few percent of the single-number sizer",
     (_name, rows, width, prior, worst, targetMs, costMs) => {
       // The near-no-op requirement, measured against a FROZEN COPY of the
       // old sizer below rather than against remembered numbers -- the
@@ -672,7 +674,7 @@ describe("createStripPlanner cost model (fr-ado7)", () => {
     // THE KNOWN REGRESSION, pinned so it cannot drift unnoticed. Where a
     // scene's natural strip is far below the pivot, the split reads its
     // measurements as mostly fixed cost and the sizer stops tracking
-    // targetMs: a 4ms/px preview (fr-du81 measured ~6ms/px on SwiftShader,
+    // targetMs: a 4ms/px preview (~6ms/px was measured on SwiftShader,
     // so this is a real tier) converges at the class cap instead of at
     // ~3px. Bounded on both sides -- STRIP_MIN_PX below, the worst-case
     // cap above -- so it costs interruption granularity, never watchdog
@@ -743,7 +745,7 @@ describe("createStripPlanner cost model (fr-ado7)", () => {
 
   it("sizes from the marginal alone, never from a batch average", () => {
     // 900ms over 900px is 1ms/px as a batch average, and dividing the
-    // target by that -- the pre-fr-ado7 sizer -- asks for 75px. The
+    // target by that -- the single-number sizer -- asks for 75px. The
     // model's marginal says otherwise: a good part of that batch was its
     // intercept, so the same measurement buys a materially wider strip.
     const cost = nextStripCost(
@@ -788,7 +790,7 @@ describe("createStripPlanner cost model (fr-ado7)", () => {
     // A repeat call with no measurement must leave the model empty and
     // repeat the PRIOR's size -- flooring an unmeasured strip at
     // STRIP_MIN_PX would be a 32x jump past the one pessimistic bound
-    // standing over a submission nothing has timed (fr-096u).
+    // standing over a submission nothing has timed.
     const planner = createStripPlanner(720, 1280, { priorMsPerPx: 10 });
     expect(planner.next(null)!.px).toBe(8);
     expect(planner.next(null)!.px).toBe(8);

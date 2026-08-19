@@ -1,10 +1,10 @@
 /**
- * The offline frame-exact timeline export's driver loop (fr-92t9): step a
+ * The offline frame-exact timeline export's driver loop: step a
  * VIRTUAL clock through the timeline playback one exported frame at a time —
  * `startMs + i * frameMs`, never `performance.now()` — settling each frame's
  * generation before it is rendered and encoded.
  *
- * ## Why not the realtime capture (fr-8v41's recorder)?
+ * ## Why not the realtime capture (`recorder.ts`)?
  *
  * The MediaRecorder export records the live canvas: the CONTENT is already
  * seed-deterministic (timeline.ts's `legSeed` pins every leg's generation
@@ -18,10 +18,10 @@
  * timestep. Same device + same timeline + hands off the controls =>
  * the same clip, frame for frame — slower or faster than realtime,
  * whichever the machine dictates, and correct either way. (One asterisk:
- * a render keyframe's flame/solid session rolls a fresh seed per entry —
- * fr-4ff7 — so its converged still carries run-to-run residual-noise
- * differences; the clip's TIMING stays exact either way, because the park
- * in step 3 below contributes no frames.)
+ * a render keyframe's flame/solid session rolls a fresh seed per entry, so
+ * its converged still carries run-to-run residual-noise differences; the
+ * clip's TIMING stays exact either way, because the park in step 3 below
+ * contributes no frames.)
  *
  * ## The per-frame contract
  *
@@ -38,7 +38,7 @@
  *    rendered or encoded: the run's last captured frame is the last one the
  *    playback actually owned.
  * 3. While `renderParked()` — this frame's step landed a render keyframe's
- *    terminal cloud and entered its flame/solid session (fr-6jic) — the
+ *    terminal cloud and entered its flame/solid session — the
  *    loop PARKS: the virtual clock stays at `t` and nothing is encoded
  *    while the render converges to its iteration budget in real time,
  *    exactly the live playback's held schedule (timeline-player.ts's "Held
@@ -113,9 +113,9 @@ export interface OfflineExportDeps {
   /** Whether the playback run still owns the stage — false once the player
    * reported done or a stop reached it. */
   running(): boolean;
-  /** Whether the playback is parked on a converging render keyframe
-   * (fr-6jic): the frame's leg has entered its flame/solid session and the
-   * player is holding for the render's budget-met signal. Checked after
+  /** Whether the playback is parked on a converging render keyframe: the
+   * frame's leg has entered its flame/solid session and the player is
+   * holding for the render's budget-met signal. Checked after
    * `stepFrame`; while true the driver captures nothing and the virtual
    * clock stays put (see the module header's per-frame contract, step 3). */
   renderParked(): boolean;
@@ -125,7 +125,7 @@ export interface OfflineExportDeps {
    * spurious signals are harmless. */
   nextParkSignal(): Promise<void>;
   /** Paint the settled frame at `nowMs` to the canvas, forced past
-   * render-on-demand. May be async (fr-tzdg: the surface compute path
+   * render-on-demand. May be async (the surface compute path
    * traces its full-quality frame on the GPU first), and the driver
    * awaits it — but the PAINT itself must be the implementation's final
    * synchronous act, so the canvas read in `encodeFrame` shares its task
@@ -169,7 +169,7 @@ export async function runOfflineExport(
     // landed since the last frame) — a frame stepped after the end is
     // never captured.
     if (!deps.running()) break;
-    // A render keyframe's park (fr-6jic): the step above landed the leg's
+    // A render keyframe's park: the step above landed the leg's
     // terminal cloud and entered its flame/solid render — hold the virtual
     // clock right here, capturing nothing, until the render converges (or
     // exits, or the run stops). Still-parked wakes repaint so the screen

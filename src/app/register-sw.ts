@@ -1,6 +1,6 @@
 /**
- * Service-worker registration + the cross-origin-isolation bootstrap
- * (fr-96i), modeled on coi-serviceworker
+ * Service-worker registration + the cross-origin-isolation bootstrap,
+ * modeled on coi-serviceworker
  * (https://github.com/gzuidhof/coi-serviceworker).
  *
  * GitHub Pages cannot send the COOP/COEP headers that SharedArrayBuffer (the
@@ -21,8 +21,8 @@
  * does not, because it was never written there. `AppState.renderMode` is
  * exactly this: it is session-only by design, so a first-visit user who
  * picks a Flame-group preset, or switches render mode by hand, inside the
- * reload window comes back in Points mode with no trace of the choice
- * (fr-su3r). `registerServiceWorker` now takes an `onBeforeIsolationReload`
+ * reload window comes back in Points mode with no trace of the choice.
+ * `registerServiceWorker` takes an `onBeforeIsolationReload`
  * hook, called in the instant before the reload fires, so the app can
  * snapshot whatever session-only state the reload is about to destroy.
  * Carrying that snapshot across the reload and restoring it afterward is the
@@ -37,7 +37,7 @@
  * is skips the wait and registers immediately instead: that load is
  * disposable anyway, so the sooner the worker claims it and the reload
  * fires, the smaller the window in which user interaction can be lost
- * (fr-su3r; see the branch at the end of `registerServiceWorker`). Notably
+ * (see the branch at the end of `registerServiceWorker`). Notably
  * neither path adopts the `virtual:pwa-register` module's autoUpdate client,
  * which force-reloads open pages whenever an updated worker activates: a new
  * deploy's worker (see sw/sw.ts) now waits rather than taking over, and this
@@ -45,7 +45,7 @@
  * reload this module ever performs unprompted is the isolation dance, and
  * only from a page that loaded non-isolated.
  *
- * A new deploy's worker now waits instead of taking over (fr-o13): it parks
+ * A new deploy's worker waits instead of taking over: it parks
  * in `waiting` until this page tells it to go ahead. `registerServiceWorker`
  * detects that waiting worker — immediately at registration, or via
  * `updatefound` once a fresh install completes — and reports it through
@@ -118,8 +118,8 @@ export interface ServiceWorkerHooks {
  * detected; call it to apply the update, per the dance described above.
  * `hooks.onBeforeIsolationReload`, when given, fires immediately before the
  * isolation reload specifically — never the update reload — so the app can
- * snapshot whatever session-only state that reload is about to destroy
- * (fr-su3r); any throw out of it is swallowed, because isolation matters
+ * snapshot whatever session-only state that reload is about to destroy;
+ * any throw out of it is swallowed, because isolation matters
  * more than the carried state. The two live on one options object because
  * there are now two unrelated optional callbacks to pass instead of one.
  */
@@ -264,7 +264,7 @@ export function registerServiceWorker(hooks: ServiceWorkerHooks = {}): void {
   // bandwidth politeness: that load is disposable (the reload is about to
   // throw it away), so registering right now instead of waiting for `load`
   // only shrinks the window in which user interaction can be lost, and never
-  // costs anything a `load`-timed register wouldn't have (fr-su3r). That
+  // costs anything a `load`-timed register wouldn't have. That
   // holds even in browsers where SW-injected COOP/COEP never actually
   // isolates (the loop-guard case above): the same single wasted reload just
   // happens sooner. A page that is already isolated keeps the original

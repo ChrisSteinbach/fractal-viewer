@@ -21,9 +21,9 @@ import { twentyFourCellFlake } from "../fractal/presets";
 
 /**
  * The 4D tracer's per-map data rides a std140 uniform BLOCK rather than
- * default-block uniform arrays (fr-dqlq — that block is what let the cap
- * match 3D's 24 maps), and a std140 lane written one float off is invisible
- * until someone loads a 4D system in a browser. So while the rest of this
+ * default-block uniform arrays (that block is what let the cap match 3D's
+ * 24 maps), and a std140 lane written one float off is invisible until
+ * someone loads a 4D system in a browser. So while the rest of this
  * material is verified by running the app, its PACKER is pinned here: the
  * block's backing floats are pure data, no GL context involved.
  */
@@ -36,8 +36,8 @@ function map4(overrides: Partial<SurfaceDE4Map> = {}): SurfaceDE4Map {
     invT: [0, 0, 0, 0],
     sigmaMin: 0.5,
     baseIndex: 0,
-    // Inert affine-slot defaults for the fr-rsp6 fold fields — this
-    // packer predates fold-4D and packs none of them.
+    // Inert affine-slot defaults for the 4D fold fields — this packer
+    // predates fold-4D and packs none of them.
     foldKind: 0,
     foldInvW: 1,
     foldSigma: 0.5,
@@ -222,7 +222,7 @@ describe("setSurfaceSystem4 std140 packing", () => {
   });
 });
 
-describe("setSurfaceSystem4 kaleidoscope sweep uniforms (fr-u91x)", () => {
+describe("setSurfaceSystem4 kaleidoscope sweep uniforms", () => {
   it("defaults to a single sector and an identity backward step before any system arrives", () => {
     const material = createSurfaceMaterial4();
     expect(material.uniforms.uSymOrder.value).toBe(1);
@@ -262,7 +262,7 @@ describe("setSurfaceSystem4 kaleidoscope sweep uniforms (fr-u91x)", () => {
   });
 });
 
-describe("setSurfaceSystem4 radius-band uniforms (fr-skhv)", () => {
+describe("setSurfaceSystem4 radius-band uniforms", () => {
   it("packs the DE's radiusBand into uRadiusCenter4/uRadiusMinD/uRadiusInvRange", () => {
     const material = createSurfaceMaterial4();
     // Every field a different number, like balloonSpec's fixture below —
@@ -291,7 +291,7 @@ describe("setSurfaceSystem4 radius-band uniforms (fr-skhv)", () => {
   });
 });
 
-describe("slab-hit radius color (fr-9c9e)", () => {
+describe("slab-hit radius color", () => {
   // The tracer itself is verified by running the app; what is pinned here
   // is the MIRRORING contract with surface-de-gpu.ts's affine4 core: both
   // shading descents report sStar — the deepest level winner's segment
@@ -309,12 +309,12 @@ describe("slab-hit radius color (fr-9c9e)", () => {
   });
 });
 
-describe("the supersampling jitter uniform (fr-jf9y)", () => {
+describe("the supersampling jitter uniform", () => {
   // The 4D tracer is the PRIMARY arm for kaleidoscope-4D sessions and the
   // fallback for plain-4D ones, so it takes the 3D tracer's jitter line
   // for line — same uniform, same two reads, same untouched backdrop. The
   // scene writes one uniform per armed job and both materials answer to it.
-  it("defaults to the pixel CENTRE, so a single-pass 4D trace is the pre-fr-jf9y one", () => {
+  it("defaults to the pixel CENTRE, so a single-pass 4D trace is the pre-supersampling one", () => {
     const material = createSurfaceMaterial4();
     const jitter = material.uniforms.uPixelJitter.value as THREE.Vector4;
     expect([jitter.x, jitter.y, jitter.z, jitter.w]).toEqual([0, 0, 0, 0]);
@@ -349,18 +349,18 @@ const groundSpec = () => ({
   albedo: [0.4, 0.5, 0.6] as [number, number, number],
 });
 
-describe("the 4D tracer's variant arms (fr-qxxw, fr-h0c3)", () => {
+describe("the 4D tracer's variant arms", () => {
   // The arms are resolved JS-side (surface4FragmentFor, which reuses the
   // 3D file's resolver), which is what makes OFF byte-identical to the
   // shipped tracer AND keeps every variant the driver sees far under the
-  // Mesa source cliff. MEASURED raw resolved / what the driver gets:
-  // off 62804 B (61.3KB) / 62804 B — under the 64KB threshold, so NOT
-  // stripped, i.e. the shipped bytes exactly (fr-h3mp's radial branch
+  // Mesa source cliff. MEASURED raw resolved / what the driver gets: off
+  // 62804 B (61.3KB) / 62804 B — under the 64KB threshold, so NOT
+  // stripped, i.e. the shipped bytes exactly (the radial backdrop branch
   // moved this from 62711 B); balloon 69399 B (67.8KB) / 17274 B (16.9KB)
-  // (fr-j85n's echo tint moved this from 68176 B / 17086 B); plane
-  // 70588 B (68.9KB) / 18159 B (17.7KB).
-  // The assertions below pin the CONTRACT (under threshold, arms present or
-  // absent) rather than those figures, which any shader edit moves.
+  // (the echo tint moved this from 68176 B / 17086 B); plane 70588 B
+  // (68.9KB) / 18159 B (17.7KB). The assertions below pin the CONTRACT
+  // (under threshold, arms present or absent) rather than those figures,
+  // which any shader edit moves.
   it("resolves the shipped source verbatim when both arms are off", () => {
     const glsl = surface4FragmentFor();
     expect(glsl).toBe(createSurfaceMaterial4().fragmentShader);
@@ -394,7 +394,7 @@ describe("the 4D tracer's variant arms (fr-qxxw, fr-h0c3)", () => {
     // fractal/balloon-de.ts's invertBalloon, with the f32 centre floor.
     expect(glsl).toContain("float fl = 1.0e-6 * uBalloonRho;");
     expect(glsl).toContain("scale = r / uBalloonRho;");
-    // The union and its cutoff scaling (the fr-55r5 contract through the
+    // The union and its cutoff scaling (the cutoff contract through the
     // shell term's value factor).
     expect(glsl).toContain(
       "scale * surfaceDEFractal(q, cutoff > 0.0 ? cutoff / scale : 0.0);",
@@ -409,10 +409,10 @@ describe("the 4D tracer's variant arms (fr-qxxw, fr-h0c3)", () => {
   });
 
   it("keeps the 4D hit-info's sStar through the balloon's argmin routing", () => {
-    // Six outputs, one more than the 3D wrapper carries: sStar is the slab
-    // hit's own place along the query segment (fr-9c9e), so a SHELL hit's
-    // radius colour has to lift through the shell descent's parameter, not
-    // the fractal's. Ties go to the fractal (the oracle's attribution
+    // Six outputs, one more than the 3D wrapper carries: sStar is the
+    // slab hit's own place along the query segment, so a SHELL hit's
+    // radius colour has to lift through the shell descent's parameter,
+    // not the fractal's. Ties go to the fractal (the oracle's attribution
     // convention) — hence the strict dS < dF.
     const glsl = surface4FragmentFor(1, 0);
     expect(glsl).toContain(
@@ -423,7 +423,7 @@ describe("the 4D tracer's variant arms (fr-qxxw, fr-h0c3)", () => {
     );
     expect(glsl).toContain("if (dS < dF) {\ncolorPos = q;");
     // Both position-driven colour sources read the winning term's SOURCE
-    // point, the radius one still through the fr-9c9e slab lift.
+    // point, the radius one still through the slab lift.
     expect(glsl).toContain(
       "u = clamp(cpos.y / uVisibleRadius * 0.5 + 0.5, 0.0, 1.0);",
     );
@@ -467,10 +467,10 @@ describe("the 4D tracer's variant arms (fr-qxxw, fr-h0c3)", () => {
   });
 
   it("planes a sphere-exit miss and never an exhausted ray", () => {
-    // The 4D main() had no such split before fr-h0c3 — with no floor, both
-    // outcomes painted the same backdrop. A budget-exhausted ray resolved
-    // no geometry, so planing it would paint floor straight through the
-    // object it ran out of steps inside.
+    // The 4D main() had no such split before the floor's 4D lift — with
+    // no floor, both outcomes painted the same backdrop. A
+    // budget-exhausted ray resolved no geometry, so planing it would
+    // paint floor straight through the object it ran out of steps inside.
     const glsl = surface4FragmentFor(0, 1);
     expect(glsl).toContain(
       [
@@ -500,7 +500,7 @@ describe("the 4D tracer's variant arms (fr-qxxw, fr-h0c3)", () => {
     expect(() => surface4FragmentFor(1, 1)).toThrow(RangeError);
   });
 
-  it("emits the 3D and 4D envTint helpers character for character, which is what keeps the mirror from drifting (fr-ehcj)", () => {
+  it("emits the 3D and 4D envTint helpers character for character, which is what keeps the mirror from drifting", () => {
     // The 3D and 4D tracers each declare their own envTint (GLSL needs
     // declaration before use in each source, so it cannot be shared as
     // one function) — this pin is what stands in for that sharing.
@@ -521,7 +521,7 @@ describe("the 4D tracer's variant arms (fr-qxxw, fr-h0c3)", () => {
     );
   });
 
-  it("packs the echo tint's uniforms and the shell-gated base-albedo mix when the balloon is on (fr-j85n)", () => {
+  it("packs the echo tint's uniforms and the shell-gated base-albedo mix when the balloon is on", () => {
     const glsl = surface4FragmentFor(1, 0);
     expect(glsl).toContain("uniform vec3 uBalloonTint;");
     expect(glsl).toContain("uniform float uBalloonTintStrength;");
@@ -533,7 +533,7 @@ describe("the 4D tracer's variant arms (fr-qxxw, fr-h0c3)", () => {
     expect(glsl.length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
   });
 
-  it("pays nothing for the echo tint while the balloon is off (fr-j85n)", () => {
+  it("pays nothing for the echo tint while the balloon is off", () => {
     // uBalloonTint/uBalloonTintStrength both carry the uBalloonCenter etc.
     // prefix the "resolves the shipped source verbatim" test above already
     // nets for the off/off case; this pins the tint's own tokens
@@ -562,7 +562,7 @@ describe("the 4D tracer's variant arms (fr-qxxw, fr-h0c3)", () => {
     );
   });
 
-  it("emits the same balloon tint mix line in both dimensions, character for character (fr-j85n)", () => {
+  it("emits the same balloon tint mix line in both dimensions, character for character", () => {
     // The bulbPow8 drift-prevention idiom (surface-material.test.ts), one
     // feature over: both mirrors read shell and uBalloonTint the same way,
     // so a one-sided edit to either fails here rather than in a browser.
@@ -573,7 +573,7 @@ describe("the 4D tracer's variant arms (fr-qxxw, fr-h0c3)", () => {
   });
 });
 
-describe("setSurfaceView4 (fr-33yb, fr-wa6o)", () => {
+describe("setSurfaceView4", () => {
   it("sets uInvRotor to the inverse of a non-identity world rotor — pinned against rotor4.ts's own math, not the packer's transpose", () => {
     const material = createSurfaceMaterial4();
     // A single-plane SO(4) rotation's inverse is the SAME plane rotated
@@ -607,7 +607,7 @@ describe("setSurfaceView4 (fr-33yb, fr-wa6o)", () => {
   });
 });
 
-describe("setSurface4Balloon (fr-qxxw)", () => {
+describe("setSurface4Balloon", () => {
   it("packs the spec and compiles the arm in", () => {
     const material = createSurfaceMaterial4();
     setSurface4Balloon(material, balloonSpec());
@@ -647,7 +647,7 @@ describe("setSurface4Balloon (fr-qxxw)", () => {
     expect(material.version).toBeGreaterThan(version);
   });
 
-  it("packSurfaceBalloonTint (surface-material.ts) packs this material's uniforms too — one helper, both dimensions (fr-j85n)", () => {
+  it("packSurfaceBalloonTint (surface-material.ts) packs this material's uniforms too — one helper, both dimensions", () => {
     // No 4D-local pack helper exists: this material declares the same
     // uBalloonTint/uBalloonTintStrength names as the 3D one, the
     // established direction of reuse this module already runs the other
@@ -670,7 +670,7 @@ describe("setSurface4Balloon (fr-qxxw)", () => {
   });
 });
 
-describe("setSurface4GroundPlane (fr-h0c3)", () => {
+describe("setSurface4GroundPlane", () => {
   it("packs the spec and compiles the arm in", () => {
     const material = createSurfaceMaterial4();
     setSurface4GroundPlane(material, groundSpec());

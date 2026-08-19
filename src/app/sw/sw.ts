@@ -1,5 +1,5 @@
 /**
- * Hand-written service worker (fr-96i), built by vite-plugin-pwa's
+ * Hand-written service worker, built by vite-plugin-pwa's
  * `injectManifest` strategy (which compiles this file and substitutes the
  * real precache manifest for `self.__WB_MANIFEST`). It replaces the
  * generated (`generateSW`) worker for ONE reason: composing Workbox's
@@ -38,7 +38,7 @@ precache.addToCacheList(self.__WB_MANIFEST);
 
 // A new deploy's worker now waits until every open page lets go — or until a
 // page explicitly sends `SKIP_WAITING` after the user accepts the update
-// banner (fr-o13) — so an open session's old precache is never yanked out
+// banner — so an open session's old precache is never yanked out
 // from under it. Old workbox cache-name generations are still pruned on
 // activate via cleanupOutdatedCaches.
 cleanupOutdatedCaches();
@@ -54,7 +54,7 @@ self.addEventListener("activate", (event) => {
 // The client half lives in ../register-sw.ts: when the user accepts the
 // update banner, the page posts this message to the WAITING worker, which
 // then skipWaiting()s into activation; the page reloads on the resulting
-// controllerchange (fr-o13).
+// controllerchange.
 self.addEventListener("message", (event) => {
   if ((event.data as { type?: unknown } | null)?.type === "SKIP_WAITING") {
     void self.skipWaiting();
@@ -85,8 +85,8 @@ function withIsolationHeaders(response: Response): Response {
 /**
  * The single fetch pipeline: navigations try the exact requested page in the
  * precache first — a standalone precached page (e.g. gpuprobe.html) must
- * stay reachable once a client is controlled, not collapse onto the shell
- * (fr-8tgu) — and fall back to the app shell only on a miss (the SPA
+ * stay reachable once a client is controlled, not collapse onto the
+ * shell — and fall back to the app shell only on a miss (the SPA
  * navigate fallback for everything else, query strings and all, since the
  * shell is one page); non-navigations are precache-first with a network
  * fallback for the stray non-precached request. Whatever the source, the

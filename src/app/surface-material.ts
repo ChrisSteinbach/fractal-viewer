@@ -22,36 +22,35 @@ import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 import { lightDirection } from "./voxel-material";
 
 /**
- * The surface render's GPU sphere-tracer (epic fr-7jlk): a full-screen-quad
+ * The surface render's GPU sphere-tracer: a full-screen-quad
  * ShaderMaterial that marches camera rays against an analytic distance
- * estimator for the IFS attractor — width-4 beam inverse-map descent
- * (fr-v6yg) with REFINED sibling certificates (fr-1z6p: fr-beck's measured
- * ghost-eliminator ported down from the 4D tracer, closing the smooth
- * "balloon" membranes the plain certificates rendered across attractor
- * voids), precomputed by `buildSurfaceDE` (`src/fractal/surface-de.ts`)
- * and packed into fixed-size uniform arrays here — BASE maps only, with
- * kaleidoscope copies swept as sectors around them rather than expanded
- * into slots (fr-x029), so the array budget no longer caps symmetry order.
- * fr-jkpn's validity slots
- * ride along too — rank-3/4 candidate chains that stay live only while
+ * estimator for the IFS attractor — width-4 beam inverse-map descent with
+ * REFINED sibling certificates (the measured ghost-eliminator ported down
+ * from the 4D tracer, closing the smooth "balloon" membranes the plain
+ * certificates rendered across attractor voids), precomputed by
+ * `buildSurfaceDE` (`src/fractal/surface-de.ts`) and packed into
+ * fixed-size uniform arrays here — BASE maps only, with kaleidoscope
+ * copies swept as sectors around them rather than expanded into slots, so
+ * the array budget no longer caps symmetry order. The validity slots ride
+ * along too — rank-3/4 candidate chains that stay live only while
  * in-sphere, closing the multi-branch drops width 2 alone still had. Hits
- * are shaded in the solid raymarcher's vocabulary — DE-gradient
- * normals, Lambert diffuse + Blinn-Phong specular, a soft penumbra shadow
- * ray toward the light, DE-probed ambient occlusion — with four base-color
+ * are shaded in the solid raymarcher's vocabulary — DE-gradient normals,
+ * Lambert diffuse + Blinn-Phong specular, a soft penumbra shadow ray
+ * toward the light, DE-probed ambient occlusion — with four base-color
  * sources (by-transform, orbit-trap palette, height ramp, radius ramp; the
  * ramps sample a 256x1 LUT built CPU-side by color.ts's ONE ramp
- * definition) and exponential depth fog toward the backdrop. Rays that miss
- * paint the same dark gradient backdrop as the explorer, so the mode reads
- * as the same scene, surfaced.
+ * definition) and exponential depth fog toward the backdrop. Rays that
+ * miss paint the same dark gradient backdrop as the explorer, so the mode
+ * reads as the same scene, surfaced.
  *
- * The GLSL `surfaceDE` mirrors `estimateDistanceRefined` in `surface-de.ts`
- * line for line (the `refine === true` path of its shared descent body) —
- * the tested CPU oracle, the same discipline as `flame.ts` <->
- * `flame-gpu.ts`. Since fr-5rvk that is TWO compiled variants behind the
+ * The GLSL `surfaceDE` mirrors `estimateDistanceRefined` in
+ * `surface-de.ts` line for line (the `refine === true` path of its shared
+ * descent body) — the tested CPU oracle, the same discipline as `flame.ts`
+ * <-> `flame-gpu.ts`. That is TWO compiled variants behind the
  * `SURFACE_FOLDS` define, flipped by `setSurfaceSystem` when the DE's
- * fold-ness changes (a session-set-scale program rebuild): `0` compiles the
- * affine ladder bodies above byte-for-byte as they shipped, `1` compiles
- * fold-frontier bodies mirroring the oracle's `descendFold` — the
+ * fold-ness changes (a session-set-scale program rebuild): `0` compiles
+ * the affine ladder bodies above byte-for-byte as they shipped, `1`
+ * compiles fold-frontier bodies mirroring the oracle's `descendFold` — the
  * `SURFACE_FOLD_BEAM_WIDTH`-slot frontier with region floors, floored
  * keys, the drop-fold rule and floor-vs-best pruning that make pure-fold
  * maps (27/3/81 inverse branches each) marchable at all. Per-map fold data
@@ -62,23 +61,23 @@ import { lightDirection } from "./voxel-material";
  * The three shading taps (normal gradient, penumbra shadow, ambient
  * occlusion) ride the 1-arg value form, which fold systems route to
  * `surfaceDEProbe` — a width-1 instantiation of the SAME descent template
- * (fr-zqu8, the WGSL twin's fr-p8bc verdict ported to the fragment path;
- * one text, two names, so the bodies cannot drift). Taps light a hit the
+ * (the WGSL twin's probe-width verdict ported to the fragment path; one
+ * text, two names, so the bodies cannot drift). Taps light a hit the
  * full-width march already certified, never decide geometry — the march
  * and hit acceptance stay at FOLD_W. Measured (Iris Xe, real driver, cold
  * Mesa cache, `scripts/shade-width-ab.mjs`): the probe CUT the fold
  * program's ~25s Mesa link 17.9x (25.5-26.4s -> 1.42-1.53s, n=3/arm) —
  * Mesa inlines the width-12 body at every call site, and with the probe
- * only the march still does — which also dissolved fr-f21s's
- * link-watchdog session-death lottery (the A/B's only context losses were
- * baseline-arm, kernel silent throughout). Boxfold-pair settles 509-987ms
- * vs baseline 695-1296ms, settled frames identical within session noise
- * (cross-arm pixel diff == within-arm rerun diff); equal 210s
- * mandelboxKifs windows resolve ~2.3x more frame at width 1, its crease
- * pixels staying march-bound (the fragment path's residual — compute owns
- * those sessions where an adapter exists, fr-tzdg). `?surfshadewidth=N`
- * overrides the width per session; N = FOLD_W disables the probe and
- * reproduces the pre-fr-zqu8 source byte for byte.
+ * only the march still does — which also dissolved the link-watchdog
+ * session-death lottery (the A/B's only context losses were baseline-arm,
+ * kernel silent throughout). Boxfold-pair settles 509-987ms vs baseline
+ * 695-1296ms, settled frames identical within session noise (cross-arm
+ * pixel diff == within-arm rerun diff); equal 210s mandelboxKifs windows
+ * resolve ~2.3x more frame at width 1, its crease pixels staying
+ * march-bound (the fragment path's residual — compute owns those sessions
+ * where an adapter exists). `?surfshadewidth=N` overrides the width per
+ * session; N = FOLD_W disables the probe and reproduces the pre-probe
+ * source byte for byte.
  *
  * Kept in its own module so `scene.ts` stays the
  * wiring layer: everything GLSL lives here, everything camera/frame lives
@@ -99,18 +98,18 @@ const BG_TOP = new THREE.Vector3(...hexToRgb01(DARK_BACKDROP.top));
 const BG_BOTTOM = new THREE.Vector3(...hexToRgb01(DARK_BACKDROP.bottom));
 
 /** Whole-ray cap on empty-space-grid cell skips, SEPARATE from the
- * march-step budget (fr-z70m). A skip is one NEAREST texel read — orders of
+ * march-step budget. A skip is one NEAREST texel read — orders of
  * magnitude cheaper than the beam descent `uMarchSteps` exists to bound —
  * and the floors it steps by are deliberately conservative
  * (`surface-grid.ts`: DE at the cell center minus the cell half-diagonal),
  * so a ray threading gaps or grazing a face takes MANY of them where the
- * analytic march would take one large step. fr-55r5 originally charged
+ * analytic march would take one large step. The grid's first cut charged
  * every skip against `uMarchSteps`, which SHRANK the march's reach exactly
  * on those rays — far or occlusion-threaded geometry dissolved into
  * per-pixel dropout speckle, worst wherever a view lined grazing faces up
- * (the fr-z70m screenshots' one-sided erosion). Exhausting this cap only
- * falls through to the analytic step — never wrong, just slower.
- * 256 clears the worst whole-ray skip count measured across the fr-z70m
+ * (the one-sided erosion the bug's screenshots showed). Exhausting this
+ * cap only falls through to the analytic step — never wrong, just slower.
+ * 256 clears the worst whole-ray skip count measured across the erosion
  * pose sweeps (189, `scripts/erosion-repro.harness.ts`); doubling it
  * changed nothing measured. */
 export const SURFACE_GRID_SKIP_CAP = 256;
@@ -119,12 +118,12 @@ export const SURFACE_GRID_SKIP_CAP = 256;
  * per slot (mat3 = 3, plus vec3 + float + vec3 + float), 24 maps stays
  * comfortably under WebGL2's guaranteed 224 fragment uniform vectors.
  *
- * Slots are BASE maps (fr-x029). Kaleidoscope copies used to be expanded
- * into slots of their own, so this budget doubled as a cap on
- * `order * baseMaps` and gated high orders out of the mode; the descent now
- * sweeps sectors around the base maps instead (three scalar uniforms, no
- * slots), so the budget is the bare active-map count at ANY order. The app
- * gates on that count before entering the mode, so {@link setSurfaceSystem}
+ * Slots are BASE maps. Kaleidoscope copies used to be expanded into slots
+ * of their own, so this budget doubled as a cap on `order * baseMaps` and
+ * gated high orders out of the mode; the descent now sweeps sectors around
+ * the base maps instead (three scalar uniforms, no slots), so the budget
+ * is the bare active-map count at ANY order. The app gates on that count
+ * before entering the mode, so {@link setSurfaceSystem}
  * treats overflow as a bug, not a degrade. */
 export const SURFACE_MAX_MAPS = 24;
 
@@ -137,22 +136,22 @@ const SURFACE_VERTEX = /* glsl */ `
 `;
 
 /**
- * Default frontier width of the fold shading-probe descent (fr-zqu8, the
- * WebGL port of fr-p8bc's compute-twin verdict): the value-form DE the
- * shading taps ride (normal gradient, penumbra shadow, ambient occlusion
- * — taps LIGHT a hit the full-width march already certified, never
- * decide geometry) runs a width-1 greedy descent instead of the FOLD_W
- * frontier. Width 1 is the old greedy descent the oracle keeps for tests
- * — known to overshoot, which reads as a slight lightening of
- * deep-crease shadow/AO and which fr-p8bc measured as eyeball-identical
- * frames at 23.8x cheaper shading on the compute twin.
+ * Default frontier width of the fold shading-probe descent (the WebGL port
+ * of the compute twin's probe-width verdict): the value-form DE the
+ * shading taps ride (normal gradient, penumbra shadow, ambient occlusion —
+ * taps LIGHT a hit the full-width march already certified, never decide
+ * geometry) runs a width-1 greedy descent instead of the FOLD_W frontier.
+ * Width 1 is the old greedy descent the oracle keeps for tests — known to
+ * overshoot, which reads as a slight lightening of deep-crease shadow/AO
+ * and which the probe-width A/B measured as eyeball-identical frames at
+ * 23.8x cheaper shading on the compute twin.
  */
 export const SURFACE_SHADE_DE_WIDTH = 1;
 
 /** `?surfshadewidth=N` (1..SURFACE_FOLD_BEAM_WIDTH) overrides the shipped
  * probe width for A/B runs, read once at module load like scene.ts's
- * `?surfperf`. N equal to the beam width DISABLES the probe and
- * reproduces the pre-fr-zqu8 fragment source byte for byte — the WGSL
+ * `?surfperf`. N equal to the beam width DISABLES the probe and reproduces
+ * the pre-probe fragment source byte for byte — the WGSL
  * twin's A/A discipline (equal widths emit identical source). */
 function resolveShadeDeWidth(): number {
   if (typeof window === "undefined") return SURFACE_SHADE_DE_WIDTH;
@@ -165,13 +164,13 @@ function resolveShadeDeWidth(): number {
 }
 
 /**
- * The fold-frontier descent body (fr-5rvk through fr-kidj) as ONE template
- * instantiated twice — fr-zqu8, mirroring surface-de-gpu.ts's
- * surfaceDEProbe derivation: the public `surfaceDE` at width FOLD_W, plus
- * (when the shade width differs) a `surfaceDEProbe` copy at
- * {@link SURFACE_SHADE_DE_WIDTH}. One text, two names: the bodies cannot
- * drift. Unlike the WGSL twin's module-scope frontier, the arrays here
- * are function-local, so the instances share scratch names safely and
+ * The fold-frontier descent body (the pure-fold branch sweep through its
+ * branch-and-bound) as ONE template instantiated twice, mirroring
+ * surface-de-gpu.ts's surfaceDEProbe derivation: the public `surfaceDE` at
+ * width FOLD_W, plus (when the shade width differs) a `surfaceDEProbe`
+ * copy at {@link SURFACE_SHADE_DE_WIDTH}. One text, two names: the bodies
+ * cannot drift. Unlike the WGSL twin's module-scope frontier, the arrays
+ * here are function-local, so the instances share scratch names safely and
  * only the function name and width vary.
  */
 const foldDescentGlsl = (fnName: string, width: string): string =>
@@ -180,7 +179,7 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
     float startR = length(q - uBoundCenter);
     float sphereBound = startR - uBoundingRadius;
     float best = 1e30;
-    // The oracle's bailBelow (fr-55r5): -1e30 disables the test.
+    // The oracle's bailBelow: -1e30 disables the test.
     float bailBelow =
       (cutoff > 0.0 && sphereBound * uFinalSigmaMin < cutoff) ? cutoff : -1e30;
     // The frontier (the oracle's fc* scratch): point, scale, floor and
@@ -226,21 +225,20 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
               kind == 0 ? 1 : (kind == 1 ? 27 : (kind == 2 ? 3 : 81));
             float absW = fp.z / uSigmaMin[j];
             FoldRadii fr = foldRadiiOf(uFoldRadii[j].xyz);
-            // fr-kidj stage 2 is deliberately CPU-ONLY. The oracle's
-            // branch-and-bound skips (descendFold) are VALUE no-ops, so
-            // this mirror computes identical values without them — and
-            // every GLSL encoding tried (full dual-bound, dir-form only,
-            // uniform-array data, in-shader-derived data) pushed this
+            // Branch-and-bound stage 2 is deliberately CPU-ONLY. The
+            // oracle's branch-and-bound skips (descendFold) are VALUE
+            // no-ops, so this mirror computes identical values without them
+            // — and every GLSL encoding tried (full dual-bound, dir-form
+            // only, uniform-array data, in-shader-derived data) pushed this
             // variant's already-critical Mesa/Iris LINK over the browser
             // watchdog cliff: sessions died at entry with the
-            // VALIDATE_STATUS-false/empty-log reset debris (fr-096u;
-            // stage 1 alone links and runs clean — bisected commit by
-            // commit on the real driver). The trade is measured: the
-            // width sweep shows this kernel OCCUPANCY-bound (superlinear
-            // in frontier width; ALU cuts bought ~14% at equal width), so
-            // the skip's GPU value is small, while its CPU value (grid
-            // builds, oracle consumers: 75x fewer transforms/call) is
-            // kept in full.
+            // VALIDATE_STATUS-false/empty-log reset debris (stage 1 alone
+            // links and runs clean — bisected commit by commit on the real
+            // driver). The trade is measured: the width sweep shows this
+            // kernel OCCUPANCY-bound (superlinear in frontier width; ALU
+            // cuts bought ~14% at equal width), so the skip's GPU value is
+            // small, while its CPU value (grid builds, oracle consumers:
+            // 75x fewer transforms/call) is kept in full.
             vec3 u = vec3(0.0);
             float ru = 0.0;
             vec3 pre0 = vec3(0.0);
@@ -267,7 +265,7 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
               vec3 img;
               float branchSigma;
               // The candidate's floor is knowable BEFORE the child
-              // transform (fr-kidj stage 1: branchRd needs only the branch
+              // transform (stage 1: branchRd needs only the branch
               // decode), so the floor-vs-best prune runs first and only
               // surviving branches pay the inverse application — the
               // oracle's exact order.
@@ -494,29 +492,29 @@ const stripGlslComments = (glsl: string): string =>
     .filter((line) => line.length > 0)
     .join("\n");
 
-/** Whole-source stripper for the ground-plane variants (fr-rhn5):
- * block comments first (the uniform docs), then
- * {@link stripGlslComments}'s line-comment/blank/indent pass. Applied
- * ONLY when SURFACE_GROUND_PLANE resolves 1 — the plane arm's text would
- * push the shared fold/affine source (~76.5KB shipped) past the measured
- * ~80KB Mesa crash cliff, and raw SOURCE size is what that compiler
- * prices, comments included (see resolveVariantArms). Stripping emits
- * the identical token stream, and the plane variants are NEW programs
- * with no shipped-bytes baseline to preserve — the probe instance's
- * exact precedent, one level up. Every OFF variant keeps its shipped
- * bytes: this function never runs for them. Driver-side `#` directives
- * survive (they are not comments; leading whitespace before `#` was
+/** Whole-source stripper for the ground-plane variants: block comments
+ * first (the uniform docs), then {@link stripGlslComments}'s
+ * line-comment/blank/indent pass. Applied ONLY when SURFACE_GROUND_PLANE
+ * resolves 1 — the plane arm's text would push the shared fold/affine
+ * source (~76.5KB shipped) past the measured ~80KB Mesa crash cliff, and
+ * raw SOURCE size is what that compiler prices, comments included (see
+ * resolveVariantArms). Stripping emits the identical token stream, and the
+ * plane variants are NEW programs with no shipped-bytes baseline to
+ * preserve — the probe instance's exact precedent, one level up. Every OFF
+ * variant keeps its shipped bytes: this function never runs for them.
+ * Driver-side `#` directives survive (they are not comments; leading
+ * whitespace before `#` was
  * legal anyway and the trim leaves them at column 0). */
 function stripGlslSource(glsl: string): string {
   return stripGlslComments(glsl.replace(/\/\*[\s\S]*?\*\//g, ""));
 }
 
-/** The probe instance (fr-zqu8), emitted only when the width differs from
+/** The probe instance, emitted only when the width differs from
  * the beam's and only into the NON-lens source: the lens variant's source
  * already sits at the Mesa cliff (~79KB where ~80KB crashed — see
  * resolveVariantArms), its taps keep full-width cores through the public
- * wrapper, and fr-p8bc's compute verdict never covered lenses (the twin
- * renders no foldFinal systems). Comments are stripped for the same
+ * wrapper, and the compute probe-width verdict never covered lenses (the
+ * twin renders no foldFinal systems). Comments are stripped for the same
  * reason the lens arm is excluded: source size. */
 const foldProbeGlsl = (shadeDeWidth: number): string =>
   shadeDeWidth === SURFACE_FOLD_BEAM_WIDTH
@@ -527,8 +525,8 @@ const foldProbeGlsl = (shadeDeWidth: number): string =>
 ${stripGlslComments(foldDescentGlsl("surfaceDEProbe", String(shadeDeWidth)))}
 #endif`;
 
-/** The value form the shading taps call, routed per fr-zqu8 (probe under
- * SURFACE_FOLDS, full descent elsewhere) — or the pre-fr-zqu8 text
+/** The value form the shading taps call, routed per the probe rule (probe
+ * under SURFACE_FOLDS, full descent elsewhere) — or the pre-probe text
  * verbatim when the probe is disabled. */
 const foldValueFormGlsl = (shadeDeWidth: number): string =>
   shadeDeWidth === SURFACE_FOLD_BEAM_WIDTH
@@ -542,10 +540,10 @@ const foldValueFormGlsl = (shadeDeWidth: number): string =>
     : `  /** Value form: what the shading taps call — normal gradient, penumbra
    * shadow and occlusion probes; the march and hit acceptance use the
    * cutoff overload and stay full-width. Fold systems route it to the
-   * width-${String(shadeDeWidth)} shading-probe descent (fr-zqu8;
-   * fr-p8bc's measured verdict). The affine ladder keeps the full
-   * descent, and under the fold lens the public wrapper below owns the
-   * taps with full-width cores — see foldProbeGlsl for why the lens
+   * width-${String(shadeDeWidth)} shading-probe descent (the measured
+   * probe-width verdict). The affine ladder keeps the full descent, and
+   * under the fold lens the public wrapper below owns the taps with
+   * full-width cores — see foldProbeGlsl for why the lens
    * variant carries no probe. */
   float surfaceDE(vec3 p) {
 #if SURFACE_FOLD_LENS
@@ -560,9 +558,9 @@ const foldValueFormGlsl = (shadeDeWidth: number): string =>
   }`;
 
 /**
- * Assemble the fragment source for one shading-probe width (fr-zqu8):
+ * Assemble the fragment source for one shading-probe width:
  * `SURFACE_FOLD_BEAM_WIDTH` disables the probe and reproduces the
- * pre-fr-zqu8 source byte for byte. Exported for tests; the module ships
+ * pre-probe source byte for byte. Exported for tests; the module ships
  * exactly one build (SURFACE_FRAGMENT below).
  */
 export function buildSurfaceFragment(shadeDeWidth: number): string {
@@ -572,9 +570,9 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
 
   const int MAX_MAPS = ${SURFACE_MAX_MAPS};
   const int GRID_SKIP_CAP = ${SURFACE_GRID_SKIP_CAP};
-  /** Sphere-trace step budget per ray — a per-tier uniform (fr-sjff): the
-   * preview tier trades steps for frame rate on map-heavy systems whose DE
-   * cost the depth clamp can't touch. Tracer-side only, like the loop caps
+  /** Sphere-trace step budget per ray — a per-tier uniform: the preview
+   * tier trades steps for frame rate on map-heavy systems whose DE cost
+   * the depth clamp can't touch. Tracer-side only, like the loop caps
    * below — the DE bodies stay oracle-mirrored. */
   uniform int uMarchSteps;
   /** Penumbra shadow-ray step budget per hit (per-tier). */
@@ -598,21 +596,21 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   /** sRGB 0..1 base color per map slot (keyed to base maps caller-side). */
   uniform vec3 uMapColor[MAX_MAPS];
 #if SURFACE_FOLDS
-  /** Fold-branch sweep (fr-5rvk), compiled in only for systems with
-   * pure-fold maps (the SURFACE_FOLDS define; affine systems keep the
-   * ladder bodies verbatim). Frontier width, from the oracle's measured
+  /** Fold-branch sweep, compiled in only for systems with pure-fold maps
+   * (the SURFACE_FOLDS define; affine systems keep the ladder bodies
+   * verbatim). Frontier width, from the oracle's measured
    * SURFACE_FOLD_BEAM_WIDTH. */
   const int FOLD_W = ${SURFACE_FOLD_BEAM_WIDTH};
   /** Per-map fold data + the orbit-trap coordinate uTrapIndex carries in
    * the affine variant (folded in here so the swap is uniform-budget
    * neutral): (foldKind 0..3, 1/w signed, |w|*sigmaMin, trapIndex). */
   uniform vec4 uFoldParams[MAX_MAPS];
-  /** Per-map AUTHORED fold lengths (fr-s9ll): (minRadius, fixedRadius,
-   * boxLimit, unused) — resolveFoldRadii's own output, the three numbers a
-   * document carries. foldRadiiOf below re-derives the branch algebra from
-   * them, so the wire stays checkable against the document by eye. The one
-   * new per-map array this variant pays for; declared INSIDE the arm, so an
-   * affine program is byte-identical to the pre-fr-s9ll build. */
+  /** Per-map AUTHORED fold lengths: (minRadius, fixedRadius, boxLimit,
+   * unused) — resolveFoldRadii's own output, the three numbers a document
+   * carries. foldRadiiOf below re-derives the branch algebra from them,
+   * so the wire stays checkable against the document by eye. The one new
+   * per-map array this variant pays for; declared INSIDE the arm, so an
+   * affine program is byte-identical to the pre-authored-lengths build. */
   uniform vec4 uFoldRadii[MAX_MAPS];
 #else
   /** Per-slot palette coordinate in [0, 1] for the orbit trap
@@ -620,12 +618,12 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   uniform float uTrapIndex[MAX_MAPS];
 #endif
   uniform int uMapCount;
-  /** Kaleidoscope sectors swept around every base map (fr-x029; >= 1).
-   * 1 leaves the sweep a single pass with no rotation, which is what keeps
+  /** Kaleidoscope sectors swept around every base map (>= 1). 1 leaves
+   * the sweep a single pass with no rotation, which is what keeps
    * non-symmetric systems bit-identical to the pre-sweep tracer. */
   uniform int uSymOrder;
   /** Symmetry plane: 0 = yz, 1 = xz, 2 = xy (surface-de.ts's SYM_PLANE_CODE
-   * — the pre-fr-q0h6 axis codes, renamed and not renumbered). */
+   * — the pre-4D axis codes, renamed and not renumbered). */
   uniform int uSymPlane;
   /** cos/sin of ONE forward sector step 2*PI/uSymOrder. Sectors are walked
    * incrementally off this pair, so no per-sector transcendental — and no
@@ -633,12 +631,12 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   uniform vec2 uSymStep;
   /** Bounding-sphere radius R of the RAW attractor (pre final transform). */
   uniform float uBoundingRadius;
-  /** Center of the raw attractor's bounding ball (fr-pjqw: the probe-fit
+  /** Center of the raw attractor's bounding ball (the probe-fit
    * near-smallest enclosing ball when it beats the origin ball, else the
-   * origin). Every attractor-sphere term below reads
-   * length(x - uBoundCenter) - uBoundingRadius; u-space fold geometry and
-   * the uVisibleRadius gates stay origin-anchored. The escape-time
-   * variant never reads it (its uBoundingRadius is that mode's own
+   * origin). Every attractor-sphere term below reads length(x -
+   * uBoundCenter) - uBoundingRadius; u-space fold geometry and the
+   * uVisibleRadius gates stay origin-anchored. The escape-time variant
+   * never reads it (its uBoundingRadius is that mode's own
    * bailout radius). */
   uniform vec3 uBoundCenter;
   /** Descent stops once the greedy image escapes this (2R): deeper
@@ -656,25 +654,25 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   uniform mat3 uFinalInvM;
   uniform vec3 uFinalInvT;
   uniform float uFinalSigmaMin;
-  /** Pure-fold final lens (fr-g58b): (foldKind, 1/w, |w|, sigmaMin of the
-   * lens's affine part). Alive only under the SURFACE_FOLD_LENS define —
-   * the wrapper past the descent bodies enumerates the fold's inverse
+  /** Pure-fold final lens: (foldKind, 1/w, |w|, sigmaMin of the lens's
+   * affine part). Alive only under the SURFACE_FOLD_LENS define — the
+   * wrapper past the descent bodies enumerates the fold's inverse
    * branches around the UNTOUCHED cores, and the uFinal* trio above is
    * packed IDENTITY so the cores run their no-lens arithmetic verbatim
    * (the oracle's descendLens / foldFinal split). */
   uniform vec4 uLensParams;
   uniform mat3 uLensInvM;
   uniform vec3 uLensInvT;
-  /** The lens fold's AUTHORED lengths (fr-s9ll), uFoldRadii's per-map
-   * quartet for the one map that is not in the array. Zero without a lens,
+  /** The lens fold's AUTHORED lengths, uFoldRadii's per-map quartet for
+   * the one map that is not in the array. Zero without a lens,
    * which the wrapper never reads. */
   uniform vec3 uLensRadii;
   /** Base-color source: 0 = by-transform (uMapColor), 1 = orbit-trap
    * palette, 2 = height ramp, 3 = radius ramp, 4 = orbit rings, 5 = orbit
    * sheets. Sources 1-5 sample uColorLUT. */
   uniform int uColorSource;
-  /** Per-level decay of the orbit-trap blend weight (flam3's color speed,
-   * fr-rl4b): 0.5 = the classic halving, 0 = pure depth-0 regions, 1 =
+  /** Per-level decay of the orbit-trap blend weight (flam3's color
+   * speed): 0.5 = the classic halving, 0 = pure depth-0 regions, 1 =
    * every level weighs the same. Read by the "palette" source only. */
   uniform float uColorSpeed;
   /** 256x1 RGBA ramp for sources 1-5, built CPU-side by color.ts's ONE
@@ -687,40 +685,41 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   uniform mat4 uInvProjView;
   uniform vec3 uBgTop;
   uniform vec3 uBgBottom;
-  /** The backdrop's gradient SHAPE (fr-h3mp): 0 = linear (vertical ramp,
-   * the shipped shape), 1 = radial (vignette). uBgCenter/uBgScale are the
+  /** The backdrop's gradient SHAPE: 0 = linear (vertical ramp, the
+   * shipped shape), 1 = radial (vignette). uBgCenter/uBgScale are the
    * radial branch's normalized-image centre and per-axis scale (see
    * fractal/background-shape.ts's backgroundRadialScale); linear ignores
    * both. Read by the shared backgroundShapeT body spliced in below. */
   uniform int uBgShape;
   uniform vec2 uBgCenter;
   uniform vec2 uBgScale;
-  /** Depth-fog density multiplier (fr-5h5d): scales the traveled-distance
-   * term of the fog blend below (main()'s float fog computation) — 1 is
-   * the pre-fr-5h5d fixed fog, 0 (scene-set floor) fades it away entirely.
+  /** Depth-fog density multiplier: scales the traveled-distance term of
+   * the fog blend below (main()'s float fog computation) — 1 is the fixed
+   * fog it replaced, 0 (scene-set floor) fades it away entirely.
    * Scene-set, independent of the installed system — see scene.ts's
    * setFogDensity. */
   uniform float uFogDensity;
-  /** Fog tint (fr-5h5d): what the depth fog blends toward is
-   * mix(background, uFogTint, uFogTintStrength) — strength 0 (the
-   * default) is a bit-exact identity, the pre-tint fog toward the
+  /** Fog tint: what the depth fog blends toward is mix(background,
+   * uFogTint, uFogTintStrength) — strength 0 (the default) is a bit-exact
+   * identity, the pre-tint fog toward the
    * pixel's own backdrop color. scene.setFogTint keeps both current. */
   uniform vec3 uFogTint;
   uniform float uFogTintStrength;
-  /** Environment-light strength (fr-ehcj): how far the light is tinted
-   * toward the backdrop sampled along the shading normal. 0 is a bit-exact
-   * identity — the pre-fr-ehcj neutral light. The tint multiplies the WHOLE
-   * lit term, not just the ambient half: ambient-only was MEASURED
-   * invisible even at strength 1 on both built-in backdrops (docs/
+  /** Environment-light strength: how far the light is tinted toward the
+   * backdrop sampled along the shading normal. 0 is a bit-exact identity
+   * — the neutral light it replaced. The tint multiplies the WHOLE lit
+   * term, not just the ambient half: ambient-only was MEASURED invisible
+   * even at strength 1 on both built-in backdrops (docs/
    * surface-glsl-tracers.md carries the numbers), because ambient is a
    * quarter of the light and this app's dark/haze stops are near the same
    * hue. Specular is deliberately left OUT of the product — the untinted
    * highlight is what keeps a strongly tinted render from reading
    * monochrome. */
   uniform float uEnvLight;
-  /** The backdrop as a two-stop environment (fr-ehcj), normalized to its own
-   * max channel so uEnvLight moves HUE and never brightness — which is what
-   * lets the knob read at all against the near-black default backdrop, where
+  /** The backdrop as a two-stop environment, normalized to its own max
+   * channel so uEnvLight moves HUE and never brightness — which is what
+   * lets the knob read at all against the near-black default backdrop,
+   * where
    * an honest additive environment term would contribute nothing. */
   vec3 envTint(vec3 n) {
     vec3 e = mix(uBgBottom, uBgTop, n.y * 0.5 + 0.5);
@@ -733,10 +732,10 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * uAcceptPixelEps. */
   uniform float uPixelEps;
   /** Angular pixel footprint of the FULL-RESOLUTION frame (the settle /
-   * capture buffer), scene-set per frame and tier-INDEPENDENT: the march's
-   * hit acceptance, the grid's no-hit proof, and the DE's cutoff all run
-   * at max(uAcceptPixelEps * t, uBoundingRadius * uHitFloor) in EVERY
-   * tier. A tier may coarsen sampling, never acceptance (fr-7xgi): scaling
+   * capture buffer), scene-set per frame and tier-INDEPENDENT: the
+   * march's hit acceptance, the grid's no-hit proof, and the DE's cutoff
+   * all run at max(uAcceptPixelEps * t, uBoundingRadius * uHitFloor) in
+   * EVERY tier. A tier may coarsen sampling, never acceptance: scaling
    * the acceptance epsilon with a preview's smaller buffer let it cross
    * the fold DE's loose-but-valid plateau band (fold-branch region floors
    * measure DE/D as low as 0.13 near fold faces, vs 0.6+ on affine
@@ -745,18 +744,19 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * except fold systems settle slowest, so the phantom was what users
    * actually saw. Pinning acceptance to the full-resolution epsilon makes
    * a preview unable to accept any hit the settle frame would reject;
-   * measured on the fr-7xgi repro (CPU march emulation, 40-step preview
+   * measured on the phantom-face repro (CPU march emulation, 40-step
+   * preview
    * budget): phantom hits 2 -> 0, hole cost 0.4-0.9% of true hits. */
   uniform float uAcceptPixelEps;
-  /** Where inside its pixel THIS pass aims (fr-jf9y — the WebGL arm's
-   * supersampling, fr-vpbq's compute-arm shape in strip vocabulary).
-   * .xy is the offset in UV, .zw the SAME offset in pixels; the scene
-   * derives both from surface-compute.ts's subPixelSample, so the two
-   * engines walk one R2 sequence. All zero is the pixel CENTRE, which is
-   * what every single-pass trace writes — a preview, a thumbnail, an
-   * offline force frame, and pass 0 of a supersampled settle — so the
-   * two reads below add exactly 0.0 there and the frame is the
-   * pre-fr-jf9y frame value for value.
+  /** Where inside its pixel THIS pass aims (the WebGL arm's
+   * supersampling, the compute arm's shape in strip vocabulary). .xy is
+   * the offset in UV, .zw the SAME offset in pixels; the scene derives
+   * both from surface-compute.ts's subPixelSample, so the two engines
+   * walk one R2 sequence. All zero is the pixel CENTRE, which is what
+   * every single-pass trace writes — a preview, a thumbnail, an offline
+   * force frame, and pass 0 of a supersampled settle — so the two reads
+   * below add exactly 0.0 there and the frame is the pre-supersampling
+   * frame value for value.
    *
    * TWO reads, deliberately. The ray's own UV moves (that is the sample),
    * and the march-start dither's hash takes the JITTERED pixel so passes
@@ -767,14 +767,14 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * agree with the seed the untraced strips still show. */
   uniform vec4 uPixelJitter;
 
-  /** Empty-space-skipping grid (fr-55r5 part 2), the CPU-built
-   * surface-grid.ts cube uploaded as a 3D texture: each texel is a
-   * conservative distance floor good for EVERY point of its cell (DE at
-   * the cell center minus the cell's half-diagonal, f32-floored — see
-   * that module's validity chain), 0 where no positive floor could be
-   * certified. NEAREST-sampled so a lookup reads exactly the cell the
-   * point is in — interpolated floors of NEIGHBOR cells would not be
-   * valid here. 0 while no grid has arrived (uGridEnabled 0 keeps the
+  /** Empty-space-skipping grid, the CPU-built surface-grid.ts cube
+   * uploaded as a 3D texture: each texel is a conservative distance floor
+   * good for EVERY point of its cell (DE at the cell center minus the
+   * cell's half-diagonal, f32-floored — see that module's validity
+   * chain), 0 where no positive floor could be certified. NEAREST-sampled
+   * so a lookup reads exactly the cell the point is in — interpolated
+   * floors of NEIGHBOR cells would not be valid here. 0 while no grid has
+   * arrived (uGridEnabled 0 keeps the
    * march off the placeholder anyway). */
   uniform sampler3D uGridTex;
   /** 1 / (2 * halfExtent) of the grid cube: world point -> texture
@@ -782,8 +782,9 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * like the traced sphere it covers). */
   uniform float uGridInvSpan;
   /** 1 once a grid for the ACTIVE system is uploaded, else 0 — and, in
-   * balloon mode, 0 whenever the shell fails to clear the grid box
-   * (fr-8yad's per-frame validity gate, setSurfaceGridEnabled's write). */
+   * balloon mode, 0 whenever the shell fails to clear the grid box (the
+   * balloon's per-frame validity gate, setSurfaceGridEnabled's
+   * write). */
   uniform float uGridEnabled;
 
   in vec2 vUv;
@@ -814,11 +815,12 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
 
   /** The fold's three AUTHORED lengths, re-expressed in the branch
    * algebra's own terms — surface-de.ts's surfaceFoldRadii field for
-   * field (fr-s9ll). The wire carries the lengths and this derives the
-   * rest, once per map per descent level, outside a branch loop that runs
-   * up to 81 times; at the classic (0.5, 1, 1) every expression is exactly
-   * the literal that shipped, so an unparameterized document traces
-   * bit-identically. Declared unconditionally: the fold-lens wrapper reads
+   * field. The wire carries the lengths and this derives the rest, once
+   * per map per descent level, outside a branch loop that runs up to 81
+   * times; at the classic (0.5, 1, 1) every expression is exactly the
+   * literal that shipped, so an unparameterized document traces
+   * bit-identically. Declared unconditionally: the fold-lens wrapper
+   * reads
    * it around an AFFINE core too, where SURFACE_FOLDS is 0. */
   struct FoldRadii {
     float wall;
@@ -850,24 +852,25 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
     );
   }
 
-  /** One extra Hutchinson level on a frozen escaped candidate's own inverse
-   * image (the oracle's refinedCert): the certificate becomes
+  /** One extra Hutchinson level on a frozen escaped candidate's own
+   * inverse image (the oracle's refinedCert): the certificate becomes
    * childScale * max(r - R, min_j sigmaMin_j * (|invMap_j(img)| - R)) —
-   * never below the plain childScale * (r - R). fr-beck measured this
-   * exact refinement eliminating every march ghost; fr-1z6p ports it here
-   * from the 4D tracer, closing the balloon membranes the plain
-   * certificates painted across attractor voids. "Every map" means every
-   * (sector, base map) pair, which the sweep spells out where the expanded
-   * slot list used to (fr-x029). */
-  // fr-3c0k's per-step footprint depth cap is deliberately CPU-ONLY
+   * never below the plain childScale * (r - R). The 4D surface spike
+   * measured this exact refinement eliminating every march ghost; the
+   * port brings it down from the 4D tracer, closing the balloon membranes
+   * the plain certificates painted across attractor voids. "Every map"
+   * means every (sector, base map) pair, which the sweep spells out where
+   * the expanded
+   * slot list used to. */
+  // The per-step cone-footprint depth cap is deliberately CPU-ONLY
   // (estimateDistance*'s optional footprint parameter). Every GLSL
   // encoding tried — a mutable global as the descent loop bound, and the
   // same global as an in-loop break under a uniform bound — regressed
   // this variant's already-critical Mesa/Iris fold LINK past the browser
   // watchdog (context lost at entry with the VALIDATE_STATUS-false reset
-  // debris; bisected on the real driver, fr-096u). A depth-cap PARAMETER
-  // threaded through the overloads (an SSA value, not a global) is the
-  // credible future encoding.
+  // debris; bisected on the real driver). A depth-cap PARAMETER threaded
+  // through the overloads (an SSA value, not a global) is the credible
+  // future encoding.
 
 #if SURFACE_FOLDS
   // The fold variant defines NO refinedCert at all: its descent folds
@@ -875,14 +878,13 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   // reasons, both measured. Correctness: on fold systems the region
   // floors, not refinement, carry the ghost-killing — deep-void false
   // hits are 0 for both estimators, and refinement adds only a
-  // width-bound tail the surface-beam harness discloses rather than
-  // gates (fr-tikz: refined-on-folds is harness-only; the gates pin the
-  // base row this variant marches). Compile survival:
-  // refinement's inner (sector x map x branch) sweep inlines into the
-  // frontier's innermost loop, and Mesa's compiler already dies on this
-  // variant without it (Iris Xe: linkProgram stall, empty info log,
-  // context lost). The affine variant below keeps the refined discipline
-  // unchanged.
+  // width-bound tail the surface-beam harness discloses rather than gates
+  // (refined-on-folds is harness-only; the gates pin the base row this
+  // variant marches). Compile survival: refinement's inner (sector x map
+  // x branch) sweep inlines into the frontier's innermost loop, and
+  // Mesa's compiler already dies on this variant without it (Iris Xe:
+  // linkProgram stall, empty info log, context lost). The affine variant
+  // below keeps the refined discipline unchanged.
 #else
   float refinedCert(vec3 img, float r, float childScale) {
     float inner = 1e30;
@@ -907,146 +909,142 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * Both surfaceDE overloads mirror estimateDistanceRefined in
    * src/fractal/surface-de.ts (the tested CPU oracle) — any change there
    * must land in BOTH bodies here, and vice versa. Width-4 BEAM
-   * inverse-map descent (fr-v6yg's paired A/B chains, plus fr-jkpn's
-   * rank-3/4 validity slots; the CPU oracle's beamWidth is always 4 in
-   * production builds, so the tracer hardcodes it): each level expands
-   * every live chain through every map — every (kaleidoscope sector, base
-   * map) pair, swept rather than stored since fr-x029 — and ranks the four
-   * smallest-key candidates by chainScale * (r - R) — the best two continue as the
-   * next A/B chains, and ranks 3/4 continue as extra chains ONLY while
-   * their image stays in-sphere, folding the same REFINED certificate
-   * below the moment they escape instead — and folds every OTHER escaped
-   * candidate's REFINED certificate (fr-1z6p: refinedCert above) into the
-   * running min — so surfaces reachable through a shallower or
-   * second-nearest branch are never overshot, and barely-escaped siblings
-   * no longer freeze the near-zero plain bounds that false-hit as
-   * balloons — while chains A/B keep refining down to their terminal
-   * last-value bound (folded PLAIN when a chain escapes past
-   * uEscapeRadius or the depth cap ends the loop, exactly as the oracle
-   * keeps them; validity chains fold no cap terminal at all — see the
-   * promote comment below). Every refined fold site carries the oracle's
-   * laziness guard: refinement can only RAISE a certificate, so a fold
-   * whose PLAIN certificate already fails to beat the running min is
-   * skipped whole — bit-exact, and it caps the inner sweeps at the folds
-   * that actually advance the min. See the oracle module's doc for the
-   * validity argument and the measured numbers. 1e30 stands in for
-   * Infinity (slot-occupancy tests use < 1e29): with sigma products <= 1
-   * and real distances O(1..10) it can never be confused for a real
-   * bound. This plain overload is the workhorse (march, normals, shadow,
-   * occlusion); the out-param overload below adds hit-shading extras.
+   * inverse-map descent (paired A/B chains, plus the rank-3/4 validity
+   * slots; the CPU oracle's beamWidth is always 4 in production builds,
+   * so the tracer hardcodes it): each level expands every live chain
+   * through every map — every (kaleidoscope sector, base map) pair, swept
+   * rather than stored — and ranks the four smallest-key candidates by
+   * chainScale * (r - R) — the best two continue as the next A/B chains,
+   * and ranks 3/4 continue as extra chains ONLY while their image stays
+   * in-sphere, folding the same REFINED certificate below the moment they
+   * escape instead — and folds every OTHER escaped candidate's REFINED
+   * certificate (refinedCert above) into the running min — so surfaces
+   * reachable through a shallower or second-nearest branch are never
+   * overshot, and barely-escaped siblings no longer freeze the near-zero
+   * plain bounds that false-hit as balloons — while chains A/B keep
+   * refining down to their terminal last-value bound (folded PLAIN when a
+   * chain escapes past uEscapeRadius or the depth cap ends the loop,
+   * exactly as the oracle keeps them; validity chains fold no cap
+   * terminal at all — see the promote comment below). Every refined fold
+   * site carries the oracle's laziness guard: refinement can only RAISE a
+   * certificate, so a fold whose PLAIN certificate already fails to beat
+   * the running min is skipped whole — bit-exact, and it caps the inner
+   * sweeps at the folds that actually advance the min. See the oracle
+   * module's doc for the validity argument and the measured numbers. 1e30
+   * stands in for Infinity (slot-occupancy tests use < 1e29): with sigma
+   * products <= 1 and real distances O(1..10) it can never be confused
+   * for a real bound. This plain overload is the workhorse (march,
+   * normals, shadow, occlusion); the out-param overload below adds
+   * hit-shading extras.
    *
-   * EARLY-OUT CUTOFF (fr-55r5), mirroring the oracle's cutoff parameter.
-   * The march needs a HIT DECISION, not a distance, so it passes its own
-   * acceptance epsilon and the descent stops as soon as the value it would
-   * return is already below it. A cutoff of 0.0 — the zero-argument
-   * overload below, every tap that needs the DISTANCE — is the full
-   * descent. Above the cutoff the value is the full-descent one (early
-   * exits only ever return BELOW it, so step lengths never drift); below
-   * it, the full descent would have landed below too, so the hit verdict
-   * is identical. Both rest on best only ever FALLING, and on the exits
-   * testing it only after a fold has SETTLED it — refined, here — never on
-   * the raw plain certificate that gates the fold. Exiting on the latter
-   * would re-open the balloon ghosts refinement exists to kill: a
-   * barely-escaped sibling dips under the epsilon, the full descent lifts
-   * it back above.
+   * EARLY-OUT CUTOFF, mirroring the oracle's cutoff parameter. The march
+   * needs a HIT DECISION, not a distance, so it passes its own acceptance
+   * epsilon and the descent stops as soon as the value it would return is
+   * already below it. A cutoff of 0.0 — the zero-argument overload below,
+   * every tap that needs the DISTANCE — is the full descent. Above the
+   * cutoff the value is the full-descent one (early exits only ever
+   * return BELOW it, so step lengths never drift); below it, the full
+   * descent would have landed below too, so the hit verdict is identical.
+   * Both rest on best only ever FALLING, and on the exits testing it only
+   * after a fold has SETTLED it — refined, here — never on the raw plain
+   * certificate that gates the fold. Exiting on the latter would re-open
+   * the balloon ghosts refinement exists to kill: a barely-escaped
+   * sibling dips under the epsilon, the full descent lifts it back above.
    *
-   * SPHERE FLOOR (fr-zkt2), mirroring the oracle's own unconditional exit.
-   * Once best falls to or below sphereBound the return is already pinned
-   * at sphereBound * uFinalSigmaMin — the epilogue clamps through
-   * max(best, sphereBound), and best only ever falls, so no later fold
-   * can lift the clamp back off sphereBound. The descent therefore exits
-   * the instant best <= sphereBound, unconditionally — no cutoff
-   * involved. Unlike the fr-55r5 exit above, this one is value-exact for
-   * EVERY caller, including a cutoff of 0.0 (the zero-argument overload
-   * below): it returns the full-descent value bit-for-bit, always.
-   * Live on anisotropic maps (certificates lose a sigmaMin/sigmaMax
-   * factor per level and dip under the floor); provably dead on
-   * isotropic invariant-ball maps, where certificates never dip (see
-   * the oracle's paragraph).
+   * SPHERE FLOOR, mirroring the oracle's own unconditional exit. Once
+   * best falls to or below sphereBound the return is already pinned at
+   * sphereBound * uFinalSigmaMin — the epilogue clamps through max(best,
+   * sphereBound), and best only ever falls, so no later fold can lift the
+   * clamp back off sphereBound. The descent therefore exits the instant
+   * best <= sphereBound, unconditionally — no cutoff involved. Unlike the
+   * cutoff exit above, this one is value-exact for EVERY caller,
+   * including a cutoff of 0.0 (the zero-argument overload below): it
+   * returns the full-descent value bit-for-bit, always. Live on
+   * anisotropic maps (certificates lose a sigmaMin/sigmaMax factor per
+   * level and dip under the floor); provably dead on isotropic
+   * invariant-ball maps, where certificates never dip (see the oracle's
+   * paragraph).
    *
-   * FOLD SYSTEMS (fr-5rvk) compile the WIDE-FRONTIER variant instead —
-   * the oracle's descendFold, selected by the SURFACE_FOLDS define at
-   * system-set time so the affine ladder text above stays byte-for-byte
-   * what shipped: a FOLD_W-slot frontier replaces the four ladder slots
-   * (fold maps spawn 27/3/81 branch candidates and whole sets stay
-   * in-sphere at once), every candidate carries a REGION FLOOR (the
-   * strongest scale * |w| * regionDist certificate of its branch
-   * history) that its keys, certificates and cap terminals are raised
-   * to, tuples dropped off the frontier fold their floor (the drop-fold
-   * rule — validity at any width), and candidates whose floor already
-   * reaches the running min are pruned outright. Two deliberate
-   * departures from the affine variant's shape, both forced by real
-   * drivers (Mesa on Iris Xe died compiling the first cut — linkProgram
-   * stall, empty info log, lost context): the frontier is stored
-   * UNSORTED with a tracked worst slot (one indexed write + a
-   * fixed-bound read-only rescan, where the sorted insert-shift's
-   * data-dependent chains killed the compiler), and the variant marches
-   * the oracle's refine=false path — PLAIN certificates, no refinedCert
-   * at all (see the fold refinedCert note above: on fold systems the
-   * region floors carry the ghost-killing, and base is the production
-   * estimator the harness gates — fr-tikz). See descendFold's doc for
+   * FOLD SYSTEMS compile the WIDE-FRONTIER variant instead — the oracle's
+   * descendFold, selected by the SURFACE_FOLDS define at system-set time
+   * so the affine ladder text above stays byte-for-byte what shipped: a
+   * FOLD_W-slot frontier replaces the four ladder slots (fold maps spawn
+   * 27/3/81 branch candidates and whole sets stay in-sphere at once),
+   * every candidate carries a REGION FLOOR (the strongest scale * |w| *
+   * regionDist certificate of its branch history) that its keys,
+   * certificates and cap terminals are raised to, tuples dropped off the
+   * frontier fold their floor (the drop-fold rule — validity at any
+   * width), and candidates whose floor already reaches the running min
+   * are pruned outright. Two deliberate departures from the affine
+   * variant's shape, both forced by real drivers (Mesa on Iris Xe died
+   * compiling the first cut — linkProgram stall, empty info log, lost
+   * context): the frontier is stored UNSORTED with a tracked worst slot
+   * (one indexed write + a fixed-bound read-only rescan, where the sorted
+   * insert-shift's data-dependent chains killed the compiler), and the
+   * variant marches the oracle's refine=false path — PLAIN certificates,
+   * no refinedCert at all (see the fold refinedCert note above: on fold
+   * systems the region floors carry the ghost-killing, and base is the
+   * production estimator the harness gates). See descendFold's doc for
    * the measured numbers.
    */
 #if SURFACE_BALLOON
-// fr-5wlv.4: the balloon inverted-union scene (epic fr-5wlv). The wrapper
-// at the bottom of this file composes fractal/balloon-de.ts's
-// estimateBalloonDistance over the compiled variant's public DE — this
-// rename points every variant's public definitions at surfaceDEFractal so
-// the wrapper can own the public names, the SURFACE_FOLD_LENS idiom one
-// level further out. uBalloon* are packed by setSurfaceBalloon from
-// buildBalloon's convention: center + MARGINED rho (the bound's divisor),
-// R in world units, uBalloonFar = BALLOON_FAR_CAP_RHO * raw ball radius.
+// The balloon inverted-union scene. The wrapper at the bottom of this
+// file composes fractal/balloon-de.ts's estimateBalloonDistance over the
+// compiled variant's public DE — this rename points every variant's
+// public definitions at surfaceDEFractal so the wrapper can own the
+// public names, the SURFACE_FOLD_LENS idiom one level further out.
+// uBalloon* are packed by setSurfaceBalloon from buildBalloon's
+// convention: center + MARGINED rho (the bound's divisor), R in world
+// units, uBalloonFar = BALLOON_FAR_CAP_RHO * raw ball radius.
 uniform vec3 uBalloonCenter;
 uniform float uBalloonR;
 uniform float uBalloonRho;
 uniform float uBalloonFar;
-// The echo's own tint (fr-j85n), packed by packSurfaceBalloonTint: mixed
-// into the BASE COLOUR of a shell hit, before lighting, so the shell still
-// shades as geometry and the specular stays untinted — the envTint
-// precedent. Declared inside this arm, the SURFACE_BULB precedent: no
-// other variant pays these bytes. Strength 0 is the default and
-// mix(x, y, 0.0) == x exactly, so an unset tint is today's frame byte for
-// byte.
+// The echo's own tint, packed by packSurfaceBalloonTint: mixed into the
+// BASE COLOUR of a shell hit, before lighting, so the shell still shades
+// as geometry and the specular stays untinted — the envTint precedent.
+// Declared inside this arm, the SURFACE_BULB precedent: no other variant
+// pays these bytes. Strength 0 is the default and mix(x, y, 0.0) == x
+// exactly, so an unset tint is today's frame byte for byte.
 uniform vec3 uBalloonTint;
 uniform float uBalloonTintStrength;
 #define surfaceDE surfaceDEFractal
 #endif
 #if SURFACE_ESCAPE
-  /** Escape-time render (fr-kltj), a LIST since fr-s04t: the FORWARD
-   * affine (M, t) of every CHAIN LINK and its
-   * (kind, w, |w|·sigma_max(M), unused) quartet, uMapCount slots
-   * live — the document's own transform list IS the formula sequence
-   * (escape-de.ts's THE TRANSFORM LIST IS THE SEQUENCE). Declared INSIDE
-   * the arm, the SURFACE_BULB precedent: an array per link is the one
-   * uniform block the descent variants would pay real bytes for against
-   * the measured ~80KB Mesa source cliff and could never read. t is the
-   * PRE-fold offset; the per-iteration offset is the query point
-   * (fr-7u8t.8's Mandelbrot form). kind is escape-de.ts's
-   * EscapeLinkKind — the three folds, plus fr-j231's two POWER maps at 4
-   * and 5. BOTH TAILS ARE STILL UNUSED (uEscParams[i].w and
-   * uEscRadii[i].w): the one flag this wire has gained since rides
-   * uEscLogForm below instead, because it is one number per CHAIN and not
+  /** Escape-time render, a LIST: the FORWARD affine (M, t) of every CHAIN
+   * LINK and its (kind, w, |w|·sigma_max(M), unused) quartet, uMapCount
+   * slots live — the document's own transform list IS the formula
+   * sequence (escape-de.ts's THE TRANSFORM LIST IS THE SEQUENCE).
+   * Declared INSIDE the arm, the SURFACE_BULB precedent: an array per
+   * link is the one uniform block the descent variants would pay real
+   * bytes for against the measured ~80KB Mesa source cliff and could
+   * never read. t is the PRE-fold offset; the per-iteration offset is the
+   * query point (the Mandelbrot form). kind is escape-de.ts's
+   * EscapeLinkKind — the three folds, plus the two POWER maps at 4 and 5.
+   * BOTH TAILS ARE STILL UNUSED (uEscParams[i].w and uEscRadii[i].w): the
+   * one flag this wire has gained since rides uEscLogForm below instead,
+   * because it is one number per CHAIN and not
    * one per link. */
   uniform mat3 uEscM[MAX_MAPS];
   uniform vec3 uEscT[MAX_MAPS];
   uniform vec4 uEscParams[MAX_MAPS];
-  /** Each LINK's own fold lengths (fr-s9ll), SQUARED for the sphere pair:
+  /** Each LINK's own fold lengths, SQUARED for the sphere pair:
    * (minRadius^2, fixedRadius^2, boxLimit, unused), which is the form
    * EscapeLink keeps and the form fR2/clamp(r2, mR2, fR2) wants. A chain
    * may hold a different apparatus per link, so this is per-slot like the
    * three above and not a single uniform. */
   uniform vec4 uEscRadii[MAX_MAPS];
-  /** fr-j231: read the terminal radius through the Boettcher/Green's
-   * form 0.5*r*ln r / dr (1) or the fold family's linear r / dr
-   * (0) — EscapeDE.logEstimate, which is true exactly when some link
-   * is a POWER map. A chain-level flag and not a per-link one: the
-   * estimate is read once, after the orbit, and making it depend on
-   * WHICH link happened to terminate would put a 1.4x step across
-   * every boundary between the two (the multiplier 0.5*ln r is
-   * continuous in r; a per-link switch would not be). This is the flag
-   * the block above once reserved a params tail for — a scalar instead,
-   * since a per-link slot is the wrong shape for one number per chain
-   * (the WGSL kernel, whose params block has no scalars to spare, does
+  /** Read the terminal radius through the Boettcher/Green's form 0.5*r*ln
+   * r / dr (1) or the fold family's linear r / dr (0) —
+   * EscapeDE.logEstimate, which is true exactly when some link is a POWER
+   * map. A chain-level flag and not a per-link one: the estimate is read
+   * once, after the orbit, and making it depend on WHICH link happened to
+   * terminate would put a 1.4x step across every boundary between the two
+   * (the multiplier 0.5*ln r is continuous in r; a per-link switch would
+   * not be). This is the flag the block above once reserved a params tail
+   * for — a scalar instead, since a per-link slot is the wrong shape for
+   * one number per chain (the WGSL kernel, whose params block has no
+   * scalars to spare, does
    * ride that tail). */
   uniform int uEscLogForm;
 
@@ -1062,12 +1060,13 @@ uniform float uBalloonTintStrength;
    * offset by g(p), the rendered set is exactly g^-1(M), and neither the
    * marching ball nor dr's "+ 1" needs a new term (the oracle's module
    * doc carries the argument). uSymOrder <= 1 returns the point
-   * untouched, which is what keeps an unsymmetrised document bit-identical
-   * to fr-kltj's. Plane codes are surface-de.ts's SYM_PLANE_CODE
-   * (0 = yz, 1 = xz, 2 = xy), and the two axes per plane are the oracle's
-   * own ia/ib. Landing exactly on a sector boundary is consistent either
-   * way a round() breaks the tie (the two roundings differ by a
-   * reflection the mirror then undoes), so GLSL's implementation-defined
+   * untouched, which is what keeps an unsymmetrised document
+   * bit-identical to the pre-kaleidoscope escape arm's. Plane codes are
+   * surface-de.ts's SYM_PLANE_CODE (0 = yz, 1 = xz, 2 = xy), and the two
+   * axes per plane are the oracle's own ia/ib. Landing exactly on a
+   * sector boundary is consistent either way a round() breaks the tie
+   * (the two roundings differ by a reflection the mirror then undoes), so
+   * GLSL's implementation-defined
    * half-way rule costs nothing here. */
   vec3 foldQuerySector(vec3 p) {
     if (uSymOrder <= 1) {
@@ -1093,12 +1092,12 @@ uniform float uBalloonTintStrength;
     return vec3(fa, fb, p.z);
   }
 
-  /** The SURFACE_BULB arm's bulbPow8, duplicated CHARACTER FOR CHARACTER
-   * (fr-j231): the two forward-orbit arms are ALTERNATIVES — each
-   * replaces the descent bodies wholesale, so surfaceFragmentFor refuses
-   * the pair and neither can see a definition emitted inside the other —
-   * and a chain LINK of kind 4 needs this map. Both mirror
-   * variations.ts's triplexPow8, which is the definition; the test that
+  /** The SURFACE_BULB arm's bulbPow8, duplicated CHARACTER FOR CHARACTER:
+   * the two forward-orbit arms are ALTERNATIVES — each replaces the
+   * descent bodies wholesale, so surfaceFragmentFor refuses the pair and
+   * neither can see a definition emitted inside the other — and a chain
+   * LINK of kind 4 needs this map. Both mirror variations.ts's
+   * triplexPow8, which is the definition; the test that
    * diffs the two arms' bodies is what keeps this copy honest. */
   vec3 bulbPow8(vec3 y, float r2) {
     float a = y.x * y.x + y.y * y.y;
@@ -1122,27 +1121,27 @@ uniform float uBalloonTintStrength;
   }
 
   /**
-   * Escape-time fold DE (fr-kltj, CYCLING through the chain since
-   * fr-s04t), mirroring escape-de.ts's estimateEscapeDistance: iterate the
-   * chain's fold maps FORWARD from the query with ONE shared scalar
-   * running derivative (the Buddhi/Rrrola Mandelbox form), DE = |v| / dr.
-   * This variant REPLACES the inverse-descent bodies wholesale — the whole
-   * #else arm below is not compiled — and it is phone-cheap: ~30 branchless
-   * folds per link per evaluation, no frontier, no branches. cutoff
-   * is accepted for signature parity and ignored: the loop is fixed-cost,
-   * so the full value is always returned, trivially satisfying the
-   * fr-55r5 contract (every return IS the cutoff-0 result).
+   * Escape-time fold DE, CYCLING through the chain, mirroring
+   * escape-de.ts's estimateEscapeDistance: iterate the chain's fold maps
+   * FORWARD from the query with ONE shared scalar running derivative (the
+   * Buddhi/Rrrola Mandelbox form), DE = |v| / dr. This variant REPLACES
+   * the inverse-descent bodies wholesale — the whole #else arm below is
+   * not compiled — and it is phone-cheap: ~30 branchless folds per link
+   * per evaluation, no frontier, no branches. cutoff is accepted for
+   * signature parity and ignored: the loop is fixed-cost, so the full
+   * value is always returned, trivially satisfying the cutoff contract
+   * (every return IS the cutoff-0 result).
    *
-   * CYCLING, NOT CHAINING (the oracle's measured verdict, fr-za0n):
-   * Mandelbulber2's seq->GetSequence(i) — step i applies link
-   * i mod n, with "+ q" and the bailout test after EACH link, never
-   * after all n (chaining lets n folds compound between derivative floors
-   * and fattens the set to 37.1% of the bailout ball at six links against
-   * cycling's 0.2%, which is fr-7u8t.8's "the object WAS its own bounding
-   * sphere" returning). A
-   * PASS is one full cycle, so the loop runs uMaxDepth * uMapCount single-
-   * link steps and uMaxDepth keeps meaning "how many times is each link
-   * applied" at any chain length — the preview tier's depth clamp included.
+   * CYCLING, NOT CHAINING (the oracle's measured verdict):
+   * Mandelbulber2's seq->GetSequence(i) — step i applies link i mod n,
+   * with "+ q" and the bailout test after EACH link, never after all n
+   * (chaining lets n folds compound between derivative floors and fattens
+   * the set to 37.1% of the bailout ball at six links against cycling's
+   * 0.2%, which is the "object WAS its own bounding sphere" defect the
+   * Mandelbrot form fixed, returning). A PASS is one full cycle, so the
+   * loop runs uMaxDepth * uMapCount single- link steps and uMaxDepth
+   * keeps meaning "how many times is each link applied" at any chain
+   * length — the preview tier's depth clamp included.
    */
   float surfaceDE(vec3 p, float cutoff) {
     vec3 q = foldQuerySector(p);
@@ -1160,14 +1159,14 @@ uniform float uBalloonTintStrength;
       int kind = int(prm.x);
       vec3 y = uEscM[li] * v + uEscT[li];
       float localL = 1.0;
-      // fr-j231: the FOLD family, GUARDED. The two tests below are
-      // exhaustive by NEGATION over {1, 2, 3} alone, so a power kind has
-      // to be kept out of them rather than added beside them — kind 4
-      // satisfies both != 2 and != 1 and would silently run both
-      // folds. (surface-de-gpu.ts's module doc names exactly that
-      // hazard as the reason the Mandelbulb became a sixth CORE rather
-      // than a fourth kind; the guard is what makes a fourth and fifth
-      // kind safe on this one.)
+      // The FOLD family, GUARDED. The two tests below are exhaustive by
+      // NEGATION over {1, 2, 3} alone, so a power kind has to be kept out
+      // of them rather than added beside them — kind 4 satisfies both !=
+      // 2 and != 1 and would silently run both folds.
+      // (surface-de-gpu.ts's module doc names exactly that hazard as the
+      // reason the Mandelbulb became a sixth CORE rather than a fourth
+      // kind; the guard is what makes a fourth and fifth kind safe on
+      // this one.)
       if (kind < 4) {
         if (kind != 2) {
           // The box fold (boxfold + mandelbox): per-axis reflections,
@@ -1197,8 +1196,8 @@ uniform float uBalloonTintStrength;
         localL = 2.0 * length(y);
         y = vec3(y.x * y.x - y.y * y.y - y.z * y.z, 2.0 * y.x * y.y, 2.0 * y.x * y.z);
       }
-      // fr-7u8t.8: the Mandelbrot form's offset — the QUERY POINT (folded,
-      // fr-s04t), not the document's t (which stays the pre-fold offset
+      // The Mandelbrot form's offset — the QUERY POINT (folded before the
+      // orbit), not the document's t (which stays the pre-fold offset
       // inside y above).
       v = prm.y * y + q;
       // EVERY LINK CONTRIBUTES ITS OWN FACTOR to the one shared dr, and
@@ -1251,14 +1250,14 @@ uniform float uBalloonTintStrength;
     int steps = uMaxDepth * n;
     int li = 0;
     int escapedAt = steps;
-    // The growth factor of the link whose application produced the
-    // current r — the head link's until a step has run, so a one-link
-    // document reads uEscParams[0].z at every step exactly as it did
-    // before the chain (fr-s04t).
+    // The growth factor of the link whose application produced the current
+    // r — the head link's until a step has run, so a one-link document
+    // reads uEscParams[0].z at every step exactly as it did before the
+    // chain landed.
     float growth = uEscParams[0].z;
-    // fr-j231: and its DEGREE, 0 until a step has run — which is also
-    // what a FOLD leaves here, so a fold-only chain reads the
-    // constant-factor arm below at every step exactly as it did before.
+    // And its DEGREE, 0 until a step has run — which is also what a FOLD
+    // leaves here, so a fold-only chain reads the constant-factor arm
+    // below at every step exactly as it did before.
     float lastPower = 0.0;
     for (int i = 0; i < steps; i++) {
       if (r > uBoundingRadius) {
@@ -1269,14 +1268,14 @@ uniform float uBalloonTintStrength;
       int kind = int(prm.x);
       vec3 y = uEscM[li] * v + uEscT[li];
       float localL = 1.0;
-      // fr-j231: the FOLD family, GUARDED. The two tests below are
-      // exhaustive by NEGATION over {1, 2, 3} alone, so a power kind has
-      // to be kept out of them rather than added beside them — kind 4
-      // satisfies both != 2 and != 1 and would silently run both
-      // folds. (surface-de-gpu.ts's module doc names exactly that
-      // hazard as the reason the Mandelbulb became a sixth CORE rather
-      // than a fourth kind; the guard is what makes a fourth and fifth
-      // kind safe on this one.)
+      // The FOLD family, GUARDED. The two tests below are exhaustive by
+      // NEGATION over {1, 2, 3} alone, so a power kind has to be kept out
+      // of them rather than added beside them — kind 4 satisfies both !=
+      // 2 and != 1 and would silently run both folds.
+      // (surface-de-gpu.ts's module doc names exactly that hazard as the
+      // reason the Mandelbulb became a sixth CORE rather than a fourth
+      // kind; the guard is what makes a fourth and fifth kind safe on
+      // this one.)
       if (kind < 4) {
         if (kind != 2) {
           // The box fold (boxfold + mandelbox): per-axis reflections,
@@ -1310,9 +1309,8 @@ uniform float uBalloonTintStrength;
       dr = prm.z * localL * dr + 1.0;
       r = length(v);
       growth = prm.z;
-      // fr-j231: the DEGREE of the link that produced this r — 0 for a
-      // fold, which is asymptotically affine and has no exponent to
-      // multiply.
+      // The DEGREE of the link that produced this r — 0 for a fold, which
+      // is asymptotically affine and has no exponent to multiply.
       lastPower = kind == 4 ? 8.0 : (kind == 5 ? 2.0 : 0.0);
       rings = min(rings, r / uBoundingRadius);
       sheets = min(sheets, abs(v.y) / uBoundingRadius);
@@ -1321,27 +1319,28 @@ uniform float uBalloonTintStrength;
         li = 0;
       }
     }
-    // fr-7u8t.8: the CONTINUOUS escape count, not the raw integer. escapedAt
-    // is a step function of position, so a palette over it lands adjacent
-    // pixels on unrelated colours — confetti, and the more so the finer the
-    // structure. Invisible while the escape set was a blob (one iteration
-    // count everywhere = one flat colour); the real Mandelbox shows it at
-    // once. The orbit leaves the bailout ball by a factor of about
-    // growth per step, so how far PAST the radius it landed says where
-    // between two counts it really crossed: n - log(r/R)/log(growth). Guarded
-    // on having escaped at all (a bounded orbit has r <= R, which would add
-    // rather than subtract) and on a growth rate above 1 (below it nothing
-    // escapes, and log would flip the sign).
+    // The CONTINUOUS escape count, not the raw integer. escapedAt is a
+    // step function of position, so a palette over it lands adjacent
+    // pixels on unrelated colours — confetti, and the more so the finer
+    // the structure. Invisible while the escape set was a blob (one
+    // iteration count everywhere = one flat colour); the real Mandelbox
+    // shows it at once. The orbit leaves the bailout ball by a factor of
+    // about growth per step, so how far PAST the radius it landed says
+    // where between two counts it really crossed: n -
+    // log(r/R)/log(growth). Guarded on having escaped at all (a bounded
+    // orbit has r <= R, which would add rather than subtract) and on a
+    // growth rate above 1 (below it nothing escapes, and log would flip
+    // the sign).
     //
-    // fr-byxb: the denominator is uMaxDepth, NOT the step budget
-    // uMaxDepth * n. escapedAt counts SINGLE-LINK steps and an orbit
-    // escapes after a handful of them however long the chain is, so a
-    // denominator that multiplies by the link count shrank the reachable
-    // slice of the ramp with every link added and a chain painted in the
-    // bottom of its palette. The pass budget is chain-length-INVARIANT,
-    // which is what a colour coordinate wants; at n = 1 the two are the
-    // same expression, so every shipped single-map object renders
-    // unchanged, and SURFACE_BULB below has always normalized this way.
+    // The denominator is uMaxDepth, NOT the step budget uMaxDepth * n.
+    // escapedAt counts SINGLE-LINK steps and an orbit escapes after a
+    // handful of them however long the chain is, so a denominator that
+    // multiplies by the link count shrank the reachable slice of the ramp
+    // with every link added and a chain painted in the bottom of its
+    // palette. The pass budget is chain-length-INVARIANT, which is what a
+    // colour coordinate wants; at n = 1 the two are the same expression,
+    // so every shipped single-map object renders unchanged, and
+    // SURFACE_BULB below has always normalized this way.
     //
     // MEASURED TWICE, by two populations that disagree about the size of
     // the win — recorded together, because the difference is the honest
@@ -1349,9 +1348,10 @@ uniform float uBalloonTintStrength;
     //
     // (a) 20k near-boundary exterior samples per system, drawn uniformly in
     //     the bailout ball and kept where |DE| < 0.02 — the whole surface,
-    //     pose-free. Unmoved by fr-azjk (it never fits a marching ball),
-    //     but NOT reproducible from any harness in the repo either, so
-    //     read it as a dated record rather than a re-runnable figure:
+    //     pose-free. Unmoved by the set-extent correction (it never fits
+    //     a marching ball), but NOT reproducible from any harness in the
+    //     repo either, so read it as a dated record rather than a
+    //     re-runnable figure:
     //       mandelboxClassic  1 link  was [0.152 0.291 0.832]  0.9% clamped
     //                                 now  IDENTICAL (same expression)
     //       foldChain         2       was [0.108 0.180 0.716]
@@ -1363,16 +1363,17 @@ uniform float uBalloonTintStrength;
     //
     // (b) chain-speckle.harness.ts's own fixtures, sampled at the PIXELS a
     //     camera actually hits from its pose. TWO READINGS, because that
-    //     sheet's marching ball moved under it (fr-azjk: fitMarchRadius
-    //     used to threshold a distance estimate on a grid, read high, and
-    //     therefore drew these objects smaller than they are). The
-    //     pre-fr-azjk pair is what established the CLAIM:
+    //     sheet's marching ball moved under it (the set-extent
+    //     correction: fitMarchRadius used to threshold a distance estimate
+    //     on a grid, read high, and therefore drew these objects smaller
+    //     than they are). The pair from before that correction is what
+    //     established the CLAIM:
     //       1 link  was [0.125 0.230 0.757]  now IDENTICAL, 3.99% clamped
     //       2 links was [0.083 0.132 0.313]  now [0.166 0.265 0.626], 1.9%
     //       6 links was [0.043 0.072 0.205]  now [0.256 0.431 1.000], 8.6%
     //     and this is what a run prints TODAY, at the corrected framing —
-    //     the sheet computes the clamp share itself now (fr-8fii) rather
-    //     than leaving it to be quoted from a run nobody can repeat:
+    //     the sheet computes the clamp share itself now rather than
+    //     leaving it to be quoted from a run nobody can repeat:
     //       1 link  [0.149 0.259 1.000]   6.78% clamped
     //       2 links [0.228 0.430 1.000]  10.59%
     //       6 links [0.317 0.710 1.000]  31.44%
@@ -1390,46 +1391,46 @@ uniform float uBalloonTintStrength;
     // not a property this normalizer has — what it has is the absence of a
     // per-link trend. Where a given chain lands is the chain's business.
     //
-    // The disclosed cost is the clamp, and fr-8fii CORRECTED IT UPWARD:
+    // The disclosed cost is the clamp, and the correction moved it UPWARD:
     // 6.78 / 10.59 / 31.44% of the pixels a camera actually hits at one /
     // two / six links (b), up to 15.8% over the whole surface (a). This
     // comment used to read "1.9-8.6% ... at six links (a); ... whole
     // surface (b)", which was wrong three ways at once — the two
     // population labels were swapped against the lists above, 1.9% is the
     // TWO-link row rather than anything at six, and the pixel figures
-    // predate fr-azjk's marching-ball correction, which is what moved
-    // them. A smaller object inside a larger frame spends its hit pixels
-    // on the SILHOUETTE, where orbits escape early; the corrected frame
-    // fills with interior pixels whose orbits survive the budget, so the
-    // clamp share rose with everything else in that sheet.
+    // predate the marching-ball correction, which is what moved them. A
+    // smaller object inside a larger frame spends its hit pixels on the
+    // SILHOUETTE, where orbits escape early; the corrected frame fills
+    // with interior pixels whose orbits survive the budget, so the clamp
+    // share rose with everything else in that sheet.
     //
     // The longest-surviving orbits — the deepest creases — share the
-    // ramp's top with the never-escaped ones. A better trade than the whole
-    // object sharing its bottom, and the number to beat if anyone revisits
-    // this with a normalizer that does not clamp. Two measured mitigations
-    // from the same run: the RAW integer count clamps the identical pixels
-    // (6.78 / 10.61 / 31.44%), so this is the coordinate's own saturation
-    // and not something fr-7u8t.8's smoothing introduced; and box-averaged
-    // over 16 sub-samples the rows read 0.16 / 0.00 / 0.00%, so the flat
-    // top-of-ramp PATCHES are a one-sample artifact rather than regions of
-    // the object. Read that second one as DIRECTIONAL: it averages the
-    // TRAP over 16 sub-samples where fr-vpbq/fr-jf9y's settle averages the
-    // shaded COLOUR over 8, so the shipped settle lands somewhere short of
-    // it. Averaging a pinned sample with an unpinned one does not recover
-    // what the clamp discarded either way — but it is not a third of the
-    // object painted one colour.
+    // ramp's top with the never-escaped ones. A better trade than the
+    // whole object sharing its bottom, and the number to beat if anyone
+    // revisits this with a normalizer that does not clamp. Two measured
+    // mitigations from the same run: the RAW integer count clamps the
+    // identical pixels (6.78 / 10.61 / 31.44%), so this is the
+    // coordinate's own saturation and not something the continuous
+    // smoothing introduced; and box-averaged over 16 sub-samples the rows
+    // read 0.16 / 0.00 / 0.00%, so the flat top-of-ramp PATCHES are a
+    // one-sample artifact rather than regions of the object. Read that
+    // second one as DIRECTIONAL: it averages the TRAP over 16 sub-samples
+    // where the supersampled settle averages the shaded COLOUR over 8, so
+    // the shipped settle lands somewhere short of it. Averaging a pinned
+    // sample with an unpinned one does not recover what the clamp
+    // discarded either way — but it is not a third of the object painted
+    // one colour.
     //
-    // fr-j231: A SECOND INTERPOLANT, because which one reads the terminal
-    // radius depends on the link that PRODUCED it. A fold grows by a
-    // constant factor, so the ratio of logs linearises it; a power map
-    // multiplies the exponent, so the count is log(log r / log R) / log d
-    // — the SURFACE_BULB arm's own expression, with the link's degree in
-    // place of its 8. Single-form was worse than merely imprecise on a
-    // power link: a pre-scaled one routinely has growth = |w|*sigma_max
-    // BELOW 1, so the guard fired, escFrac fell to 0 and the trap
-    // degenerated to the raw integer step function this whole comment
-    // exists to have removed — fr-7u8t.8's palette confetti, through the
-    // back door.
+    // A SECOND INTERPOLANT, because which one reads the terminal radius
+    // depends on the link that PRODUCED it. A fold grows by a constant
+    // factor, so the ratio of logs linearises it; a power map multiplies
+    // the exponent, so the count is log(log r / log R) / log d — the
+    // SURFACE_BULB arm's own expression, with the link's degree in place
+    // of its 8. Single-form was worse than merely imprecise on a power
+    // link: a pre-scaled one routinely has growth = |w|*sigma_max BELOW 1,
+    // so the guard fired, escFrac fell to 0 and the trap degenerated to
+    // the raw integer step function this whole comment exists to have
+    // removed — the palette confetti, through the back door.
     //
     // AND IT IS PER-TERMINATING-LINK WHERE THE ESTIMATE FORM (uEscLogForm)
     // IS PER-CHAIN, which reads as a contradiction until you ask what each
@@ -1465,13 +1466,13 @@ uniform float uBalloonTintStrength;
   }
 #else
 #if SURFACE_BULB
-  /** Mandelbulb render (fr-7u8t.9): the FORWARD affine (M, t) of the
-   * single triplex-power map and (sigma_max(M), bailout, unused, unused).
+  /** Mandelbulb render: the FORWARD affine (M, t) of the single
+   * triplex-power map and (sigma_max(M), bailout, unused, unused).
    * Declared INSIDE the arm, unlike the escape variant's uEsc* trio: the
    * other variants would pay these bytes against the measured ~80KB Mesa
    * source cliff for uniforms they can never read. t is the PRE-power
-   * offset, a live deformation knob with the textbook Mandelbulb at
-   * t = 0; the per-iteration offset is derived from the query point (the
+   * offset, a live deformation knob with the textbook Mandelbulb at t =
+   * 0; the per-iteration offset is derived from the query point (the
    * Mandelbrot form). The BAILOUT rides .y because it is the ORBIT's
    * ball, which — unlike the escape mode's — is NOT uBoundingRadius:
    * that stays the query-space marching ball. */
@@ -1508,18 +1509,18 @@ uniform float uBalloonTintStrength;
   }
 
   /**
-   * Mandelbulb DE (fr-7u8t.9), mirroring bulb-de.ts's
-   * estimateBulbDistance: iterate the single triplex-power map FORWARD
-   * from y_0 = M p + t with a scalar running derivative, and read the
-   * Boettcher log estimate 0.5 * |y| * ln|y| / dr off |y| — the PRE-power
-   * vector, never the post-power one (the oracle's WHICH VECTOR THE
-   * ESTIMATE READS paragraph; mixing the two silently renders a different
-   * object). This variant REPLACES the inverse-descent bodies wholesale,
-   * exactly as SURFACE_ESCAPE does, and is cheaper than that one: uMaxDepth
-   * (16 full, preview-clamped) branchless iterations per evaluation, no
-   * frontier, no branches. cutoff is accepted for signature parity and
-   * ignored: the loop is fixed-cost, so the full value is always returned,
-   * trivially satisfying the fr-55r5 contract.
+   * Mandelbulb DE, mirroring bulb-de.ts's estimateBulbDistance: iterate
+   * the single triplex-power map FORWARD from y_0 = M p + t with a scalar
+   * running derivative, and read the Boettcher log estimate 0.5 * |y| *
+   * ln|y| / dr off |y| — the PRE-power vector, never the post-power one
+   * (the oracle's WHICH VECTOR THE ESTIMATE READS paragraph; mixing the
+   * two silently renders a different object). This variant REPLACES the
+   * inverse-descent bodies wholesale, exactly as SURFACE_ESCAPE does, and
+   * is cheaper than that one: uMaxDepth (16 full, preview-clamped)
+   * branchless iterations per evaluation, no frontier, no branches.
+   * cutoff is accepted for signature parity and ignored: the loop is
+   * fixed-cost, so the full value is always returned, trivially
+   * satisfying the cutoff contract.
    */
   float surfaceDE(vec3 p, float cutoff) {
     float sigma = uBulbParams.x;
@@ -1621,9 +1622,9 @@ uniform float uBalloonTintStrength;
 #if SURFACE_FOLD_LENS
   // Compile every descent body below under a CORE name: the fold-lens
   // wrapper past the hit variants owns the public surfaceDE overloads and
-  // calls these once per lens branch (fr-g58b; the oracle's descendLens).
-  // With the define off this block vanishes and the bodies keep their
-  // shipped names, untouched.
+  // calls these once per lens branch (the oracle's descendLens). With the
+  // define off this block vanishes and the bodies keep their shipped
+  // names, untouched.
 #if SURFACE_BALLOON
   // Under balloon+lens the surfaceDEFractal rename above is still active;
   // a bare re-#define of the same token would be a redefinition error.
@@ -1640,12 +1641,13 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
     float startR = length(q - uBoundCenter);
     float sphereBound = startR - uBoundingRadius;
     float best = 1e30;
-    // The value below which this descent may stop (the oracle's bailBelow).
-    // -1e30 disables the test: a cutoff of 0.0, and a depth-0 sphere floor
-    // that already holds the answer at or above the cutoff no matter how
-    // far best falls, since the floor is what the return clamps to. (That
-    // sphere floor case now has its own unconditional exit — fr-zkt2,
-    // below — that fires the moment best reaches it, cutoff or not.)
+    // The value below which this descent may stop (the oracle's
+    // bailBelow). -1e30 disables the test: a cutoff of 0.0, and a depth-0
+    // sphere floor that already holds the answer at or above the cutoff no
+    // matter how far best falls, since the floor is what the return clamps
+    // to. (That sphere floor case now has its own unconditional exit — the
+    // sphere-floor pin below — that fires the moment best reaches it,
+    // cutoff or not.)
     float bailBelow =
       (cutoff > 0.0 && sphereBound * uFinalSigmaMin < cutoff) ? cutoff : -1e30;
     // Chain slot A starts at the (lensed) query; slot B idles until beam
@@ -1659,11 +1661,11 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
     float bScale = 1.0;
     float bR = 0.0;
     bool bLive = false;
-    // Validity chains (fr-jkpn): they hold the level's rank-3/4
-    // candidates ONLY while their points are in-sphere, and carry no R
-    // field — unlike A/B they never fold a terminal (see past the loop),
-    // and expansion re-derives every child radius, so the selection
-    // radius is dead weight once occupancy is decided.
+    // Validity chains: they hold the level's rank-3/4 candidates ONLY
+    // while their points are in-sphere, and carry no R field — unlike A/B
+    // they never fold a terminal (see past the loop), and expansion
+    // re-derives every child radius, so the selection radius is dead
+    // weight once occupancy is decided.
     vec3 v1Q = vec3(0.0);
     float v1Scale = 1.0;
     bool v1Live = false;
@@ -1728,14 +1730,15 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
           pQ = v2Q;
           pScale = v2Scale;
         }
-        // Sector sweep (fr-x029): the chain point turns one step per
-        // kaleidoscope sector and every BASE map is applied to it there, so
-        // the candidates — and their SECTOR-MAJOR enumeration order, the
-        // order the expanded slot list was built in — are exactly the ones
-        // the expansion produced. The ladders below therefore break ties
-        // the same way, and the beam, the validity slots and the cutoff
-        // exits see an unchanged stream. See the oracle module's symmetry
-        // section for why a single wedge FOLD would not be sound here.
+        // Sector sweep: the chain point turns one step per kaleidoscope
+        // sector and every BASE map is applied to it there, so the
+        // candidates — and their SECTOR-MAJOR enumeration order, the
+        // order the expanded slot list was built in — are exactly the
+        // ones the expansion produced. The ladders below therefore break
+        // ties the same way, and the beam, the validity slots and the
+        // cutoff exits see an unchanged stream. See the oracle module's
+        // symmetry section for why a single wedge FOLD would not be sound
+        // here.
         vec3 sQ = pQ;
         for (int k = 0; k < uSymOrder; k++) {
           if (k > 0) {
@@ -1826,22 +1829,23 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
               eCert = tCert;
             }
             // The tuple leaving the beam frontier: escaped candidates fold
-            // their REFINED certificate (fr-1z6p: one extra Hutchinson
-            // level closes the barely-escaped-sibling balloon) — skipped
-            // whole when its plain certificate cannot beat the running min
-            // anyway (the oracle's laziness guard, bit-exact); an in-sphere
-            // tuple carries no positive certificate — it can only get here
-            // past FOUR smaller keys, the (shrunken) fr-jkpn residual drop.
+            // their REFINED certificate (one extra Hutchinson level closes
+            // the barely-escaped-sibling balloon) — skipped whole when its
+            // plain certificate cannot beat the running min anyway (the
+            // oracle's laziness guard, bit-exact); an in-sphere tuple
+            // carries no positive certificate — it can only get here past
+            // FOUR smaller keys, the (shrunken) residual drop the validity
+            // slots left.
             if (eR > uBoundingRadius && eCert < best) {
               best = min(best, refinedCert(eQ, eR, eScale));
-              // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2):
-              // the folded certificate is FINALIZED (already refined),
-              // and best only falls from here. Once best is at or below
-              // sphereBound the return is already pinned at sphereBound *
-              // uFinalSigmaMin no matter how much further best still
-              // falls, so that case exits unconditionally; short of it,
-              // the settled verdict against the caller's cutoff means the
-              // rest of the descent cannot lift it back either.
+              // Cutoff exit plus the sphere-floor pin: the folded
+              // certificate is FINALIZED (already refined), and best only
+              // falls from here. Once best is at or below sphereBound the
+              // return is already pinned at sphereBound * uFinalSigmaMin
+              // no matter how much further best still falls, so that case
+              // exits unconditionally; short of it, the settled verdict
+              // against the caller's cutoff means the rest of the descent
+              // cannot lift it back either.
               if (best <= sphereBound || best * uFinalSigmaMin < bailBelow) {
                 return max(best, sphereBound) * uFinalSigmaMin;
               }
@@ -1901,17 +1905,17 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
           v2Live = true;
         }
       }
-      // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2), covering
-      // the four promote folds above in one test: each either wrote a
-      // settled certificate into best (refined at the two validity-slot
-      // sites, the deliberately plain escape-radius bound at the other
-      // two) or continued a chain, and best only falls from here. Once
-      // best is at or below sphereBound the eventual return is already
-      // pinned at sphereBound * uFinalSigmaMin, so that case exits
-      // unconditionally. Deliberately NOT a break: the terminal bounds
-      // past the loop are folds the FULL descent only makes at the depth
-      // cap, and folding one here could drop best below a value that
-      // descent never reaches.
+      // Cutoff exit plus the sphere-floor pin, covering the four promote
+      // folds above in one test: each either wrote a settled certificate
+      // into best (refined at the two validity-slot sites, the
+      // deliberately plain escape-radius bound at the other two) or
+      // continued a chain, and best only falls from here. Once best is at
+      // or below sphereBound the eventual return is already pinned at
+      // sphereBound * uFinalSigmaMin, so that case exits unconditionally.
+      // Deliberately NOT a break: the terminal bounds past the loop are
+      // folds the FULL descent only makes at the depth cap, and folding
+      // one here could drop best below a value that descent never
+      // reaches.
       if (best <= sphereBound || best * uFinalSigmaMin < bailBelow) {
         return max(best, sphereBound) * uFinalSigmaMin;
       }
@@ -1929,19 +1933,19 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
     // A/B. In-sphere means inside the bounding SPHERE, not near the
     // attractor, so a validity chain's cap terminal is a vacuous negative
     // bound that can only ever pull the estimate toward a fabricated hit
-    // (the membrane direction fr-jkpn's record calls the visually harmful
-    // one), never fix a real one — the piece it tracks sits within
+    // (the membrane direction the validity-slot record calls the visually
+    // harmful one), never fix a real one — the piece it tracks sits within
     // sigmaMax_chain * 2R of the query, sub-resolution wherever the depth
-    // cap is not clamped. Measured (fr-jkpn harness, all systems, both
+    // cap is not clamped. Measured (the beam harness, all systems, both
     // estimators, widths 3/4): folding them changes NOTHING — whenever a
     // validity chain survives to the cap, chain A holds an equal-or-deeper
     // branch whose terminal already dominates — so the fold is omitted on
-    // principle, not cost. (The disclosed repro3 void-false-hit uptick,
-    // 0 -> 2/435 refined at width 4, comes from A's OWN terminal on
-    // wanderer branches the validity slots keep alive in-sphere to the
-    // depth cap — and in-sphere is not near-attractor, so the KIFS
-    // last-value bound is vacuous for them at ANY cap size: re-measured
-    // unchanged after fr-xok8 raised the ceiling from 48 to 128.)
+    // principle, not cost. (The disclosed repro3 void-false-hit uptick, 0
+    // -> 2/435 refined at width 4, comes from A's OWN terminal on wanderer
+    // branches the validity slots keep alive in-sphere to the depth cap —
+    // and in-sphere is not near-attractor, so the KIFS last-value bound is
+    // vacuous for them at ANY cap size: re-measured unchanged after the
+    // descent-depth ceiling rose from 48 to 128.)
     float d = max(best, sphereBound);
     return d * uFinalSigmaMin;
   }
@@ -1953,25 +1957,24 @@ ${foldValueFormGlsl(shadeDeWidth)}
    * Hit-shading variant: the SAME refined beam descent as the plain
    * overload — keep the two bodies in lockstep, both mirror
    * estimateDistanceRefined — plus tracer-side extras that are NOT part
-   * of the CPU oracle's distance contract (surface-de.ts mirrors
-   * distance only). firstChoice is the depth-0 winning candidate's map,
-   * keying by-transform color (identical to the old greedy pick: level 0
-   * has one chain at scale 1, so the selection key ranks by radius
-   * alone). trap is a flame-style structural blend of the winning
-   * candidates' palette coordinates, accumulated TOP-DOWN with
-   * geometrically decaying weight (level d weighs uColorSpeed^d,
-   * normalized at the end; 0.5 is the classic decay): the depth-0 choice
-   * — WHICH top-level copy of the attractor the hit sits in — dominates
-   * the final coordinate, matching flam3's convention where the
-   * LAST-applied transform dominates a plotted point's color (descent
-   * order is application order reversed, so descent level 0 is the most
-   * significant digit). The previous blend ran the recurrence
-   * deepest-first — address digits that vary sub-pixel, which rendered
-   * as per-pixel palette noise with no distinguishable color regions
-   * (fr-gt9i). rings is the classic geometric orbit trap (fr-rl4b): the
-   * winning chain's closest radial approach |image|/R across the
-   * descent, min-tracked exactly where the trap blend samples — radial
-   * shells in raw attractor space that follow the fractal's own
+   * of the CPU oracle's distance contract (surface-de.ts mirrors distance
+   * only). firstChoice is the depth-0 winning candidate's map, keying
+   * by-transform color (identical to the old greedy pick: level 0 has one
+   * chain at scale 1, so the selection key ranks by radius alone). trap
+   * is a flame-style structural blend of the winning candidates' palette
+   * coordinates, accumulated TOP-DOWN with geometrically decaying weight
+   * (level d weighs uColorSpeed^d, normalized at the end; 0.5 is the
+   * classic decay): the depth-0 choice — WHICH top-level copy of the
+   * attractor the hit sits in — dominates the final coordinate, matching
+   * flam3's convention where the LAST-applied transform dominates a
+   * plotted point's color (descent order is application order reversed,
+   * so descent level 0 is the most significant digit). The previous blend
+   * ran the recurrence deepest-first — address digits that vary
+   * sub-pixel, which rendered as per-pixel palette noise with no
+   * distinguishable color regions. rings is the classic geometric orbit
+   * trap: the winning chain's closest radial approach |image|/R across
+   * the descent, min-tracked exactly where the trap blend samples —
+   * radial shells in raw attractor space that follow the fractal's own
    * structure. sheets is rings' plane-trap sibling: the winning chain's
    * closest approach |image.y|/R to the attractor frame's y = 0 plane,
    * min-tracked the same way — nested laminar bands cutting across the
@@ -2196,11 +2199,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
     float bScale = 1.0;
     float bR = 0.0;
     bool bLive = false;
-    // Validity chains (fr-jkpn): they hold the level's rank-3/4
-    // candidates ONLY while their points are in-sphere, and carry no R
-    // field — unlike A/B they never fold a terminal (see past the loop),
-    // and expansion re-derives every child radius, so the selection
-    // radius is dead weight once occupancy is decided.
+    // Validity chains: they hold the level's rank-3/4 candidates ONLY
+    // while their points are in-sphere, and carry no R field — unlike A/B
+    // they never fold a terminal (see past the loop), and expansion
+    // re-derives every child radius, so the selection radius is dead
+    // weight once occupancy is decided.
     vec3 v1Q = vec3(0.0);
     float v1Scale = 1.0;
     bool v1Live = false;
@@ -2270,14 +2273,15 @@ ${foldValueFormGlsl(shadeDeWidth)}
           pQ = v2Q;
           pScale = v2Scale;
         }
-        // Sector sweep (fr-x029): the chain point turns one step per
-        // kaleidoscope sector and every BASE map is applied to it there, so
-        // the candidates — and their SECTOR-MAJOR enumeration order, the
-        // order the expanded slot list was built in — are exactly the ones
-        // the expansion produced. The ladders below therefore break ties
-        // the same way, and the beam, the validity slots and the cutoff
-        // exits see an unchanged stream. See the oracle module's symmetry
-        // section for why a single wedge FOLD would not be sound here.
+        // Sector sweep: the chain point turns one step per kaleidoscope
+        // sector and every BASE map is applied to it there, so the
+        // candidates — and their SECTOR-MAJOR enumeration order, the
+        // order the expanded slot list was built in — are exactly the
+        // ones the expansion produced. The ladders below therefore break
+        // ties the same way, and the beam, the validity slots and the
+        // cutoff exits see an unchanged stream. See the oracle module's
+        // symmetry section for why a single wedge FOLD would not be sound
+        // here.
         vec3 sQ = pQ;
         for (int k = 0; k < uSymOrder; k++) {
           if (k > 0) {
@@ -2369,12 +2373,13 @@ ${foldValueFormGlsl(shadeDeWidth)}
               eCert = tCert;
             }
             // The tuple leaving the beam frontier: escaped candidates fold
-            // their REFINED certificate (fr-1z6p: one extra Hutchinson
-            // level closes the barely-escaped-sibling balloon) — skipped
-            // whole when its plain certificate cannot beat the running min
-            // anyway (the oracle's laziness guard, bit-exact); an in-sphere
-            // tuple carries no positive certificate — it can only get here
-            // past FOUR smaller keys, the (shrunken) fr-jkpn residual drop.
+            // their REFINED certificate (one extra Hutchinson level closes
+            // the barely-escaped-sibling balloon) — skipped whole when its
+            // plain certificate cannot beat the running min anyway (the
+            // oracle's laziness guard, bit-exact); an in-sphere tuple
+            // carries no positive certificate — it can only get here past
+            // FOUR smaller keys, the (shrunken) residual drop the validity
+            // slots left.
             if (eR > uBoundingRadius && eCert < best) {
               best = min(best, refinedCert(eQ, eR, eScale));
             }
@@ -2446,22 +2451,22 @@ ${foldValueFormGlsl(shadeDeWidth)}
     // A/B. In-sphere means inside the bounding SPHERE, not near the
     // attractor, so a validity chain's cap terminal is a vacuous negative
     // bound that can only ever pull the estimate toward a fabricated hit
-    // (the membrane direction fr-jkpn's record calls the visually harmful
-    // one), never fix a real one — the piece it tracks sits within
+    // (the membrane direction the validity-slot record calls the visually
+    // harmful one), never fix a real one — the piece it tracks sits within
     // sigmaMax_chain * 2R of the query, sub-resolution wherever the depth
-    // cap is not clamped. Measured (fr-jkpn harness, all systems, both
+    // cap is not clamped. Measured (the beam harness, all systems, both
     // estimators, widths 3/4): folding them changes NOTHING — whenever a
     // validity chain survives to the cap, chain A holds an equal-or-deeper
     // branch whose terminal already dominates — so the fold is omitted on
-    // principle, not cost. (The disclosed repro3 void-false-hit uptick,
-    // 0 -> 2/435 refined at width 4, comes from A's OWN terminal on
-    // wanderer branches the validity slots keep alive in-sphere to the
-    // depth cap — and in-sphere is not near-attractor, so the KIFS
-    // last-value bound is vacuous for them at ANY cap size: re-measured
-    // unchanged after fr-xok8 raised the ceiling from 48 to 128.)
-    // Normalize the top-down blend. Every call that can reach a hit runs
-    // depth 0 (uMapCount >= 1, chains start live), so trapNorm >= 1; the
-    // guard just keeps a zero-map placeholder call from dividing by zero.
+    // principle, not cost. (The disclosed repro3 void-false-hit uptick, 0
+    // -> 2/435 refined at width 4, comes from A's OWN terminal on wanderer
+    // branches the validity slots keep alive in-sphere to the depth cap —
+    // and in-sphere is not near-attractor, so the KIFS last-value bound is
+    // vacuous for them at ANY cap size: re-measured unchanged after the
+    // descent-depth ceiling rose from 48 to 128.) Normalize the top-down
+    // blend. Every call that can reach a hit runs depth 0 (uMapCount >= 1,
+    // chains start live), so trapNorm >= 1; the guard just keeps a
+    // zero-map placeholder call from dividing by zero.
     trap = trapNorm > 0.0 ? trapAcc / trapNorm : 0.0;
     rings = clamp(rings, 0.0, 1.0);
     sheets = clamp(sheets, 0.0, 1.0);
@@ -2479,17 +2484,17 @@ ${foldValueFormGlsl(shadeDeWidth)}
   #define surfaceDE surfaceDEFractal
 #endif
   /**
-   * Pure-fold FINAL lens (fr-g58b), mirroring the oracle's descendLens
-   * line for line: the visible set is F(A) with F = w*V(M p + t), so each
-   * of V's inverse branches seeds one root descent through the untouched
-   * cores above (uFinal* is packed identity when this define is on), with
-   * the fr-5rvk branch vocabulary — preimage, conformal sigma, region
-   * floor — lifted one level to the query. The estimate is the min over
-   * branch terms, floored by the visible-set sphere bound. Prunes (region
-   * floor vs best, sphere certificate vs best, visible-sphere pin) are
+   * Pure-fold FINAL lens, mirroring the oracle's descendLens line for
+   * line: the visible set is F(A) with F = w*V(M p + t), so each of V's
+   * inverse branches seeds one root descent through the untouched cores
+   * above (uFinal* is packed identity when this define is on), with the
+   * fold branch vocabulary — preimage, conformal sigma, region floor —
+   * lifted one level to the query. The estimate is the min over branch
+   * terms, floored by the visible-set sphere bound. Prunes (region floor
+   * vs best, sphere certificate vs best, visible-sphere pin) are
    * value-exact — see the oracle's doc for the argument, and the cutoff
-   * contract note there for why inner descents receive
-   * min(best, cutoff) / factor.
+   * contract note there for why inner descents receive min(best, cutoff)
+   * / factor.
    */
   float surfaceDE(vec3 p, float cutoff) {
     float visBound = length(p) - uVisibleRadius;
@@ -2729,20 +2734,20 @@ ${foldValueFormGlsl(shadeDeWidth)}
   }
 #endif
 
-// Closes SURFACE_BULB's #else arm, then SURFACE_ESCAPE's: everything from
-// the fold-lens rename through the lens wrapper exists only when NEITHER
-// forward-orbit variant (fr-kltj's escape, fr-7u8t.9's bulb) is on.
+// Closes SURFACE_BULB's #else arm, then SURFACE_ESCAPE's: everything
+// from the fold-lens rename through the lens wrapper exists only when
+// NEITHER forward-orbit variant (escape, bulb) is on.
 #endif
 #endif
 
 #if SURFACE_BALLOON
 #undef surfaceDE
-  // The balloon union (fr-5wlv.4): fractal/balloon-de.ts's
-  // estimateBalloonDistance mirrored term for term over the variant's
-  // public DE. min(DE(p), (|p-c|/rho)*DE(I(p))) is conservative at every
-  // R; the shell cutoff scales by the inverse of its value factor so the
-  // fr-55r5 early-exit contract survives verbatim (the oracle's module
-  // doc carries the argument).
+  // The balloon union: fractal/balloon-de.ts's estimateBalloonDistance
+  // mirrored term for term over the variant's public DE. min(DE(p),
+  // (|p-c|/rho)*DE(I(p))) is conservative at every R; the shell cutoff
+  // scales by the inverse of its value factor so the cutoff early-exit
+  // contract survives verbatim (the oracle's module doc carries the
+  // argument).
   vec3 balloonInvert(vec3 p, out float scale) {
     vec3 d = p - uBalloonCenter;
     // f32 floor: 1e-6 * rho (the explorer echo's precedent, scene.ts) —
@@ -2765,7 +2770,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
   // clamp below is exactly the certified far-field the IFS cores already
   // have: the set lives inside the bailout ball, so |q| - R_ball is a
   // true conservative bound out there; inside the ball the escape
-  // heuristic applies unchanged (the epic's claim-class note). NOTE the
+  // heuristic applies unchanged (a claim-class note). NOTE the
   // app never routes an escape session here anymore — the escape solid's
   // interior reaches the ball center, so its echo swallows the camera
   // (scene.setEscapeSystem's measured-degeneracy comment) — but the
@@ -2777,12 +2782,12 @@ ${foldValueFormGlsl(shadeDeWidth)}
     if (rrEsc > uBoundingRadius) return rrEsc - uBoundingRadius;
 #endif
 #if SURFACE_BULB
-    // The bulb DE needs the identical far-field clamp (fr-7u8t.9): its
-    // zero-iteration far value is 0.5*|y|*ln|y|/sigma, likewise not a
-    // distance to anything, and the set lives inside the same marching
-    // ball. A separate #if rather than a compound condition, so both
-    // names stay JS-resolved (resolveVariantArms) and no dead text ever
-    // reaches the driver.
+    // The bulb DE needs the identical far-field clamp: its zero-iteration
+    // far value is 0.5*|y|*ln|y|/sigma, likewise not a distance to
+    // anything, and the set lives inside the same marching ball. A
+    // separate #if rather than a compound condition, so both names stay
+    // JS-resolved (resolveVariantArms) and no dead text ever reaches the
+    // driver.
     float rrBulb = length(p);
     if (rrBulb > uBoundingRadius) return rrBulb - uBoundingRadius;
 #endif
@@ -2808,10 +2813,9 @@ ${foldValueFormGlsl(shadeDeWidth)}
     return min(dS, dF);
   }
   // Composes over the variant's own NO-CUTOFF form, never the cutoff form
-  // above: fold systems route that form to the width-1 probe (fr-p8bc),
-  // and building on the cutoff form would silently upgrade every
-  // normal/AO tap back to the full-width descent — the 23.8x shading
-  // regression.
+  // above: fold systems route that form to the width-1 probe, and
+  // building on the cutoff form would silently upgrade every normal/AO
+  // tap back to the full-width descent — the 23.8x shading regression.
   float surfaceDE(vec3 p) {
     float dF = balloonInnerDE(p);
     float scale;
@@ -2823,9 +2827,9 @@ ${foldValueFormGlsl(shadeDeWidth)}
   // ties -> fractal). The descent runs at the winning term's own query
   // point; colorPos reports that point so the height/radius color sources
   // read the shell's SOURCE geometry instead of clamping at the far wall.
-  // shell (fr-j85n) mirrors the same argmin as a 0/1 flag — 1.0 when the
-  // inverted echo term won, 0.0 on the fractal term or a tie — so the
-  // caller can restrict the tint mix to shell hits alone.
+  // shell mirrors the same argmin as a 0/1 flag — 1.0 when the inverted
+  // echo term won, 0.0 on the fractal term or a tie — so the caller can
+  // restrict the tint mix to shell hits alone.
   float surfaceDEBalloonHitInfo(
     vec3 p,
     out vec3 colorPos,
@@ -2851,15 +2855,15 @@ ${foldValueFormGlsl(shadeDeWidth)}
 
 #endif
 #if SURFACE_GROUND_PLANE
-  /** Ground plane (fr-rhn5): an infinite one-sided floor at y = uGroundY,
-   * dropped below the session ball (uGroundBallC/uGroundBallR —
-   * balloonBall's convention for IFS, the origin bailout ball for escape;
-   * certified to contain the visible set), receiving the fractal's
-   * penumbra shadow. Only rays that MISS the fractal reach it: the ball
-   * sits strictly above the plane, so along any downward ray every
-   * possible surface hit precedes the plane crossing — the floor can
-   * never occlude geometry. Uniforms live in this arm rather than the
-   * shared block so the OFF variants' resolved source stays
+  /** Ground plane: an infinite one-sided floor at y = uGroundY, dropped
+   * below the session ball (uGroundBallC/uGroundBallR — balloonBall's
+   * convention for IFS, the origin bailout ball for escape; certified to
+   * contain the visible set), receiving the fractal's penumbra shadow.
+   * Only rays that MISS the fractal reach it: the ball sits strictly
+   * above the plane, so along any downward ray every possible surface hit
+   * precedes the plane crossing — the floor can never occlude geometry.
+   * Uniforms live in this arm rather than the shared block so the OFF
+   * variants' resolved source stays
    * byte-identical (the uBalloonCenter precedent). */
   uniform float uGroundY;
   uniform float uGroundFadeStart;
@@ -2868,10 +2872,10 @@ ${foldValueFormGlsl(shadeDeWidth)}
   uniform vec3 uGroundBallC;
   uniform vec3 uGroundAlbedo;
 
-  /** The out param cov is the fr-7k0o coverage flag: 1 where the floor
-   * was actually lit, 0 where this function returned the caller's own
-   * backdrop. The WebGPU arm counts a PLANE terminal for exactly those
-   * pixels, so the two engines' blank-frame arithmetic agrees on a
+  /** The out param cov is the trace-alpha coverage flag: 1 where the
+   * floor was actually lit, 0 where this function returned the caller's
+   * own backdrop. The WebGPU arm counts a PLANE terminal for exactly
+   * those pixels, so the two engines' blank-frame arithmetic agrees on a
    * document with a floor. */
   vec3 shadeGroundPlane(vec3 ro, vec3 rd, vec3 background, out float cov) {
     cov = 0.0;
@@ -2955,7 +2959,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
     }
 
     // The hit path's lighting minus specular (a matte floor), in the same
-    // linear space (fr-8id): n is +y, so diffuse is just uLightDir.y.
+    // linear space: n is +y, so diffuse is just uLightDir.y.
     float diffuse = max(uLightDir.y, 0.0);
     vec3 lit = (uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow) *
       envTint(vec3(0.0, 1.0, 0.0));
@@ -2975,15 +2979,15 @@ ${foldValueFormGlsl(shadeDeWidth)}
 
 #endif
   void main() {
-    // fr-xn9s: the shared shape at FULL-IMAGE coordinates. This arm always
-    // traces the whole image (capture scissors strips out of a full-size
-    // target), so vUv IS imageUv — the compute arm, which traces capture
-    // BANDS, carries a bgOffset/bgExtent pair instead.
+    // The shared background shape at FULL-IMAGE coordinates. This arm
+    // always traces the whole image (capture scissors strips out of a
+    // full-size target), so vUv IS imageUv — the compute arm, which traces
+    // capture BANDS, carries a bgOffset/bgExtent pair instead.
     vec3 background = mix(uBgBottom, uBgTop, backgroundShapeT(vUv));
 
-    // Reconstruct the camera ray by unprojecting this pixel on the near and
-    // far clip planes — at the supersampling pass's own point inside the
-    // pixel (fr-jf9y; the pixel centre on every single-pass trace).
+    // Reconstruct the camera ray by unprojecting this pixel on the near
+    // and far clip planes — at the supersampling pass's own point inside
+    // the pixel (the pixel centre on every single-pass trace).
     vec2 ndc = (vUv + uPixelJitter.xy) * 2.0 - 1.0;
     vec4 nearP = uInvProjView * vec4(ndc, -1.0, 1.0);
     vec4 farP = uInvProjView * vec4(ndc, 1.0, 1.0);
@@ -2991,21 +2995,21 @@ ${foldValueFormGlsl(shadeDeWidth)}
     vec3 ro = uCamPos;
 
 #if SURFACE_BALLOON
-    // Balloon mode drops the visible-sphere skip (fr-5wlv.4, the oracle
-    // module's march-entry semantics): every ray can hit the enclosing
-    // shell, so every ray marches from the camera, capped at uBalloonFar
-    // past the balloon center — capped rays fall through to the existing
-    // background below (the balloon is a HIT, not a background). The
-    // sphere entry still seeds the fog origin, so the FRACTAL's own depth
-    // fog is unchanged — and for rays that MISS the sphere the origin is
-    // the closest-approach depth max(-b, 0), NOT 0: both forms meet at
-    // the silhouette (disc -> 0 collapses the entry to -b), so the fog
-    // origin is CONTINUOUS across the whole frame. Seeding misses from
-    // the camera instead painted the sphere's silhouette as a visibly
-    // lighter disc over the shell — same wall, ~|cam| less fog distance
-    // inside the disc than one pixel outside it (user-reported on the
-    // R=0.99 mid-flip from a far camera). Shell hits nearer than the
-    // origin clamp fog at zero (the min just before the fog term).
+    // Balloon mode drops the visible-sphere skip (the oracle module's
+    // march-entry semantics): every ray can hit the enclosing shell, so
+    // every ray marches from the camera, capped at uBalloonFar past the
+    // balloon center — capped rays fall through to the existing background
+    // below (the balloon is a HIT, not a background). The sphere entry
+    // still seeds the fog origin, so the FRACTAL's own depth fog is
+    // unchanged — and for rays that MISS the sphere the origin is the
+    // closest-approach depth max(-b, 0), NOT 0: both forms meet at the
+    // silhouette (disc -> 0 collapses the entry to -b), so the fog origin
+    // is CONTINUOUS across the whole frame. Seeding misses from the camera
+    // instead painted the sphere's silhouette as a visibly lighter disc
+    // over the shell — same wall, ~|cam| less fog distance inside the disc
+    // than one pixel outside it (user-reported on the R=0.99 mid-flip from
+    // a far camera). Shell hits nearer than the origin clamp fog at zero
+    // (the min just before the fog term).
     float radius = uVisibleRadius * 1.02;
     float b = dot(ro, rd);
     float c = dot(ro, ro) - radius * radius;
@@ -3049,61 +3053,63 @@ ${foldValueFormGlsl(shadeDeWidth)}
 #endif
 
     // Tiny dithered start: just breaks banding on grazing rays. Hashed on
-    // the JITTERED pixel (fr-jf9y) so supersampling passes get independent
-    // start offsets instead of averaging one banding pattern N times.
+    // the JITTERED pixel so supersampling passes get independent start
+    // offsets instead of averaging one banding pattern N times.
     t += hash(gl_FragCoord.xy + uPixelJitter.zw) * uPixelEps * max(t, 1.0);
 
-    // --- sphere trace -------------------------------------------------------
-    // Cone-style hit test: accept once the bound drops below the pixel's
-    // angular footprint at that depth (uPixelEps * t — resolution scales
-    // with distance), floored so the test can't degenerate at t ~ 0. That
-    // same epsilon is handed to the DE as its early-out cutoff (fr-55r5):
-    // this test is all the step asks of the descent, so the descent may
-    // stop as soon as its bound is provably under it. A returned value at
-    // or above the epsilon is the full-descent distance bit for bit, so the
-    // step length below never drifts. The march runs the plain DE overload;
-    // the hit's coloring extras are fetched once below.
+    // --- sphere trace
+    // ------------------------------------------------------- Cone-style
+    // hit test: accept once the bound drops below the pixel's angular
+    // footprint at that depth (uPixelEps * t — resolution scales with
+    // distance), floored so the test can't degenerate at t ~ 0. That same
+    // epsilon is handed to the DE as its early-out cutoff: this test is
+    // all the step asks of the descent, so the descent may stop as soon as
+    // its bound is provably under it. A returned value at or above the
+    // epsilon is the full-descent distance bit for bit, so the step length
+    // below never drifts. The march runs the plain DE overload; the hit's
+    // coloring extras are fetched once below.
     bool hit = false;
-    // Whole-ray budget for grid cell skips, SEPARATE from uMarchSteps
-    // (fr-z70m): a skip is one texel read, orders of magnitude cheaper
-    // than the descent uMarchSteps exists to bound, and its conservative
-    // floor advances far less than the analytic step it stands in for —
-    // charging skips against the march budget shrank the ray's REACH,
-    // dissolving far/threaded geometry into dropout speckle. Running dry
-    // here only falls through to the analytic step: slower, never wrong.
+    // Whole-ray budget for grid cell skips, SEPARATE from uMarchSteps: a
+    // skip is one texel read, orders of magnitude cheaper than the descent
+    // uMarchSteps exists to bound, and its conservative floor advances far
+    // less than the analytic step it stands in for — charging skips
+    // against the march budget shrank the ray's REACH, dissolving
+    // far/threaded geometry into dropout speckle. Running dry here only
+    // falls through to the analytic step: slower, never wrong.
     int gridSkips = GRID_SKIP_CAP;
     for (int i = 0; i < uMarchSteps; i++) {
       if (t > tFar) {
         break;
       }
       // Acceptance epsilon: tier-independent by design — see
-      // uAcceptPixelEps (fr-7xgi).
+      // uAcceptPixelEps.
       float eps = max(uAcceptPixelEps * t, uBoundingRadius * uHitFloor);
-      // Empty-space skip (fr-55r5 part 2): texture reads against the
-      // precomputed grid before paying a descent. The stored floor bounds
-      // the distance from ANYWHERE in the sample's cell (surface-grid.ts's
-      // validity chain), so a step of g cannot cross the surface — and a
-      // floor above eps also proves this sample is no hit, so the analytic
-      // DE has nothing to add. Cells outside the grid's certified sphere
-      // store 0 and fall through; uStepScale damps the step exactly as the
-      // analytic path damps its own, since the floors inherit the same
-      // probed-bounding-radius margins the damping exists for. Consecutive
-      // skips drain in this inner walk — the same read/compare/step
-      // sequence the outer \`continue\` used to produce, bit for bit — so
-      // they spend gridSkips, not analytic march steps (fr-z70m).
+      // Empty-space skip: texture reads against the precomputed grid
+      // before paying a descent. The stored floor bounds the distance
+      // from ANYWHERE in the sample's cell (surface-grid.ts's validity
+      // chain), so a step of g cannot cross the surface — and a floor
+      // above eps also proves this sample is no hit, so the analytic DE
+      // has nothing to add. Cells outside the grid's certified sphere
+      // store 0 and fall through; uStepScale damps the step exactly as
+      // the analytic path damps its own, since the floors inherit the
+      // same probed-bounding-radius margins the damping exists for.
+      // Consecutive skips drain in this inner walk — the same
+      // read/compare/step sequence the outer \`continue\` used to
+      // produce, bit for bit — so they spend gridSkips, not analytic
+      // march steps.
       if (uGridEnabled > 0.5) {
         for (; gridSkips > 0; gridSkips--) {
 #if SURFACE_BALLOON
-          // fr-8yad: a balloon ray marches from the CAMERA out to the far
-          // cap rather than across the visible sphere, so most of its
-          // samples land OUTSIDE the grid cube — where the sampler's edge
-          // clamp hands back a BORDER cell's floor. That floor still
-          // bounds the FRACTAL from here (the cube is convex and holds the
+          // A balloon ray marches from the CAMERA out to the far cap
+          // rather than across the visible sphere, so most of its samples
+          // land OUTSIDE the grid cube — where the sampler's edge clamp
+          // hands back a BORDER cell's floor. That floor still bounds the
+          // FRACTAL from here (the cube is convex and holds the
           // attractor, so clamping is a projection onto it and can only
           // shorten the distance), but it bounds NOTHING about the SHELL,
           // which at any radius the enable admits lies entirely outside
           // the cube. So an out-of-box sample takes no skip at all — the
-          // same in-box restriction fr-8yad's coverage measurement
+          // same in-box restriction the balloon's coverage measurement
           // modelled, whose 18.6-33.2% of steps skipped is the rate AFTER
           // it. Inside the box the stored floor is a valid union bound by
           // that measurement's own per-cell check (surface-grid.ts's
@@ -3129,8 +3135,8 @@ ${foldValueFormGlsl(shadeDeWidth)}
           break;
         }
       }
-      // fr-3c0k's per-step cone-footprint depth cap runs CPU-side only —
-      // see the note above the descent bodies for the measured Mesa link
+      // The per-step cone-footprint depth cap runs CPU-side only — see
+      // the note above the descent bodies for the measured Mesa link
       // cliff that keeps it out of this shader.
       float d = surfaceDE(ro + rd * t, eps);
       if (d < eps) {
@@ -3155,7 +3161,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
 #endif
       // Alpha 0 for a MISS and — deliberately — for an EXHAUSTED ray too,
       // which is the compute arm's own rule: a ray that spent its budget
-      // resolved no geometry, so it drew nothing (fr-7k0o).
+      // resolved no geometry, so it drew nothing.
       outColor = vec4(background, 0.0);
       return;
     }
@@ -3170,9 +3176,9 @@ ${foldValueFormGlsl(shadeDeWidth)}
     float rings;
     float sheets;
 #if SURFACE_BALLOON
-    // Argmin routing (fr-5wlv.4): a shell hit's extras come from the
-    // descent at its INVERTED query point, and cpos carries that point to
-    // the height/radius color sources below.
+    // Argmin routing: a shell hit's extras come from the descent at its
+    // INVERTED query point, and cpos carries that point to the
+    // height/radius color sources below.
     vec3 cpos;
     float shell;
     surfaceDEBalloonHitInfo(pos, cpos, shell, firstChoice, trap, rings, sheets);
@@ -3206,9 +3212,9 @@ ${foldValueFormGlsl(shadeDeWidth)}
       if (uColorSource == 1) {
         u = trap;
 #if SURFACE_BALLOON
-      // The winning term's SOURCE point (fr-5wlv.4): a shell hit reads
-      // its pre-inversion geometry, so the ramps sweep the same range as
-      // the fractal's own instead of clamping at the far wall.
+      // The winning term's SOURCE point: a shell hit reads its
+      // pre-inversion geometry, so the ramps sweep the same range as the
+      // fractal's own instead of clamping at the far wall.
       } else if (uColorSource == 2) {
         u = clamp(cpos.y / uVisibleRadius * 0.5 + 0.5, 0.0, 1.0);
       } else if (uColorSource == 3) {
@@ -3227,11 +3233,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
       base = texture(uColorLUT, vec2(u, 0.5)).rgb;
     }
 #if SURFACE_BALLOON
-    // fr-j85n: the echo's own tint, on the BASE ALBEDO before lighting —
-    // shell restricts it to the inverted term (the oracle's own
-    // attribution; ties go to the fractal), so a fractal-term hit is
-    // untouched at any strength. strength 0 (the default) makes this
-    // mix(base, uBalloonTint, 0.0) == base — today's frame byte for byte.
+    // The echo's own tint, on the BASE ALBEDO before lighting — shell
+    // restricts it to the inverted term (the oracle's own attribution;
+    // ties go to the fractal), so a fractal-term hit is untouched at any
+    // strength. strength 0 (the default) makes this mix(base,
+    // uBalloonTint, 0.0) == base — today's frame byte for byte.
     base = mix(base, uBalloonTint, uBalloonTintStrength * shell);
 #endif
 
@@ -3244,14 +3250,14 @@ ${foldValueFormGlsl(shadeDeWidth)}
     for (int i = 0; i < uShadowSteps; i++) {
       vec3 sp = pos + n * h * 2.0 + uLightDir * ts;
 #if SURFACE_BALLOON
-      // The balloon receives shadows, never casts them (fr-5wlv.4):
-      // shadow rays test the FRACTAL alone, so the enclosing shell cannot
-      // black out the scene it wraps. Tetra normal and AO stay on the
-      // public union forms. balloonInnerDE, not surfaceDEFractal: a
-      // shell hit launches this ray from far OUTSIDE the ball, where the
-      // escape core's raw far value is unsound (its doc above) — the
-      // clamped form both keeps it sound and walks the ray to the ball
-      // in a few steps, so the fractal's occlusion is actually tested.
+      // The balloon receives shadows, never casts them: shadow rays test
+      // the FRACTAL alone, so the enclosing shell cannot black out the
+      // scene it wraps. Tetra normal and AO stay on the public union
+      // forms. balloonInnerDE, not surfaceDEFractal: a shell hit launches
+      // this ray from far OUTSIDE the ball, where the escape core's raw
+      // far value is unsound (its doc above) — the clamped form both
+      // keeps it sound and walks the ray to the ball in a few steps, so
+      // the fractal's occlusion is actually tested.
       float d = balloonInnerDE(sp);
 #else
       float d = surfaceDE(sp);
@@ -3284,7 +3290,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
 
     vec3 lit = (uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow) *
       envTint(n);
-    // Light in linear space (fr-8id, as in voxel-material.ts): base is
+    // Light in linear space (as in voxel-material.ts): base is
     // sRGB-authored (color.ts), so decode with gamma 2.2, apply the
     // light/specular product there, and re-encode for the pass-through
     // canvas (ColorManagement is off). A fully lit, specular-free surface
@@ -3310,16 +3316,16 @@ ${foldValueFormGlsl(shadeDeWidth)}
     col = mix(col, mix(background, uFogTint, uFogTintStrength), clamp(fog, 0.0, 1.0));
 
     // Alpha 1: a HIT. The alpha channel of this tracer's output is the
-    // fr-7k0o COVERAGE flag — 1 where the frame drew something, 0 where it
-    // shows only its own backdrop — and never an opacity. It is invisible
-    // to the user because BLIT_FRAGMENT strips it to 1 at every present
-    // (fr-1wbv: three r163+ creates the canvas alpha:true regardless of
-    // the renderer's alpha param, so a coverage-0 pixel reaching the
-    // canvas composites the page's own background ADDITIVELY over the
-    // pane — measured +#0f1018 on every miss pixel); the one reader is
-    // scene.ts's settle fold, which counts it off the TRACE target so the
-    // WebGL arm can answer the blank-frame question the WebGPU arm
-    // answers from its own per-ray status tally.
+    // COVERAGE flag — 1 where the frame drew something, 0 where it shows
+    // only its own backdrop — and never an opacity. It is invisible to the
+    // user because BLIT_FRAGMENT strips it to 1 at every present (three
+    // r163+ creates the canvas alpha:true regardless of the renderer's
+    // alpha param, so a coverage-0 pixel reaching the canvas composites
+    // the page's own background ADDITIVELY over the pane — measured
+    // +#0f1018 on every miss pixel); the one reader is scene.ts's settle
+    // fold, which counts it off the TRACE target so the WebGL arm can
+    // answer the blank-frame question the WebGPU arm answers from its own
+    // per-ray status tally.
     outColor = vec4(col, 1.0);
   }
 `;
@@ -3330,23 +3336,24 @@ ${foldValueFormGlsl(shadeDeWidth)}
 const SURFACE_FRAGMENT = buildSurfaceFragment(resolveShadeDeWidth());
 
 /**
- * Per-tier march/shading budgets (fr-sjff): map-heavy systems (Menger's 20
- * flat maps, high-order kaleidoscopes — whose sectors cost no slots since
- * fr-x029 but still cost inverse applications) pay per DE CALL, which the
- * preview depth clamp can't reduce — so the preview also trims how many DE
- * calls a pixel can spend. All tracer-side (march loop, shadow loop, AO
- * taps, hit-test floor): none of these appear in the CPU oracle's distance
- * contract, so the oracle-mirrored DE bodies are untouched.
+ * Per-tier march/shading budgets: map-heavy systems (Menger's 20 flat
+ * maps, high-order kaleidoscopes — whose sectors cost no slots but still
+ * cost inverse applications) pay per DE CALL, which the preview depth
+ * clamp can't reduce — so the preview also trims how many DE calls a pixel
+ * can spend. All tracer-side (march loop, shadow loop, AO taps, hit-test
+ * floor): none of these appear in the CPU oracle's distance contract, so
+ * the oracle-mirrored DE bodies are untouched.
  *
- * The full-tier march budget was born at 96 and moved to 160 by fr-z70m:
- * rays that thread gaps in near geometry or graze a face at a shallow
- * angle legitimately need well over 96 analytic steps at close-up eps, and
- * exhaustion painted background through whole regions of standing geometry
- * (view-dependent dropout speckle — the measured tail: 0.80% of one worst
- * pose's true hits lost at 96, 0.00% at 160 on sierpinski; menger 0.27% ->
- * 0.02%). Cost is bounded where it matters: every full-tier submission is
- * already sliced to measured GPU time by the strip planner, and ordinary
- * rays exit on hit or sphere-exit long before either cap.
+ * The full-tier march budget was born at 96 and moved to 160 by the
+ * one-sided erosion bug: rays that thread gaps in near geometry or graze a
+ * face at a shallow angle legitimately need well over 96 analytic steps at
+ * close-up eps, and exhaustion painted background through whole regions of
+ * standing geometry (view-dependent dropout speckle — the measured tail:
+ * 0.80% of one worst pose's true hits lost at 96, 0.00% at 160 on
+ * sierpinski; menger 0.27% -> 0.02%). Cost is bounded where it matters:
+ * every full-tier submission is already sliced to measured GPU time by the
+ * strip planner, and ordinary rays exit on hit or sphere-exit long before
+ * either cap.
  */
 export const SURFACE_FULL_MARCH_STEPS = 160;
 export const SURFACE_PREVIEW_MARCH_STEPS = 40;
@@ -3367,36 +3374,35 @@ const BLIT_FRAGMENT = /* glsl */ `
   in vec2 vUv;
   out vec4 outColor;
   void main() {
-    // ALPHA IS FORCED TO 1 HERE, and this is load-bearing (fr-1wbv): the
-    // tracers' alpha channel is the fr-7k0o COVERAGE flag (1 = drew
-    // something, 0 = backdrop), a private side-channel of the render
-    // targets — and three r163+ creates the canvas WebGL context with
-    // alpha:true unconditionally (the WebGLRenderer \`alpha\` param only
-    // picks the default CLEAR alpha), so a verbatim copy handed the
-    // compositor coverage-0 pixels over a nonzero RGB, which premultiplied
+    // ALPHA IS FORCED TO 1 HERE, and this is load-bearing: the tracers'
+    // alpha channel is the COVERAGE flag (1 = drew something, 0 =
+    // backdrop), a private side-channel of the render targets — and three
+    // r163+ creates the canvas WebGL context with alpha:true
+    // unconditionally (the WebGLRenderer \`alpha\` param only picks the
+    // default CLEAR alpha), so a verbatim copy handed the compositor
+    // coverage-0 pixels over a nonzero RGB, which premultiplied
     // compositing reads as "add the page background". Measured: every miss
-    // pixel of a WebGL surface settle gained exactly the page's own
-    // --bg #0f1018 — +(15, 16, 24)/255 — which is what drove the two 4D
-    // arms' object-mask IoU to 0.24/0.35. The canvas present (and the
-    // capture path's present-then-toBlob) is where the coverage channel
-    // must stop; the settle-target readbacks that COUNT it read the trace
-    // target, never a blit destination.
+    // pixel of a WebGL surface settle gained exactly the page's own --bg
+    // #0f1018 — +(15, 16, 24)/255 — which is what drove the two 4D arms'
+    // object-mask IoU to 0.24/0.35. The canvas present (and the capture
+    // path's present-then-toBlob) is where the coverage channel must stop;
+    // the settle-target readbacks that COUNT it read the trace target,
+    // never a blit destination.
     outColor = vec4(texture(uSrc, vUv).rgb, 1.0);
   }
 `;
 
 /**
- * Upscale blit for every surface present (fr-5ne3): stretches a traced
- * target (or the compute frame's DataTexture) over the canvas. Hand-rolled
- * rather than MeshBasicMaterial so no color-space chunk can ever transform
- * the tracer's authored-sRGB output (ColorManagement is off app-wide, and
- * this module keeps all surface GLSL in one place). RGB is copied verbatim;
- * ALPHA IS FORCED TO 1 (fr-1wbv — see BLIT_FRAGMENT's comment: the
- * tracers' alpha is the fr-7k0o coverage flag, and letting it reach the
- * always-alpha:true canvas composited the page background into every miss
- * pixel). `src` is the preview target's texture — bound once here by
- * object identity, which `WebGLRenderTarget.setSize` preserves across
- * reallocations.
+ * Upscale blit for every surface present: stretches a traced target (or
+ * the compute frame's DataTexture) over the canvas. Hand-rolled rather
+ * than MeshBasicMaterial so no color-space chunk can ever transform the
+ * tracer's authored-sRGB output (ColorManagement is off app-wide, and this
+ * module keeps all surface GLSL in one place). RGB is copied verbatim;
+ * ALPHA IS FORCED TO 1 (see BLIT_FRAGMENT's comment: the tracers' alpha is
+ * the coverage flag, and letting it reach the always-alpha:true canvas
+ * composited the page background into every miss pixel). `src` is the
+ * preview target's texture — bound once here by object identity, which
+ * `WebGLRenderTarget.setSize` preserves across reallocations.
  */
 export function createSurfaceBlitMaterial(
   src: THREE.Texture,
@@ -3469,12 +3475,12 @@ function surfaceGridUniforms(): Record<string, THREE.IUniform> {
 }
 
 /**
- * Point the march at a freshly uploaded empty-space grid (fr-55r5 part 2) —
- * or back at nothing (`null`, the {@link setSurfaceSystem} reset: a new
- * system's DE invalidates every floor of the old one's grid, so the march
- * must run gridless until the new build lands). `halfExtent` is the grid
- * cube's half side (surface-grid.ts's `SurfaceGridSpec`); the caller owns
- * the texture's lifecycle, this only wires uniforms.
+ * Point the march at a freshly uploaded empty-space grid — or back at
+ * nothing (`null`, the {@link setSurfaceSystem} reset: a new system's DE
+ * invalidates every floor of the old one's grid, so the march must run
+ * gridless until the new build lands). `halfExtent` is the grid cube's
+ * half side (surface-grid.ts's `SurfaceGridSpec`); the caller owns the
+ * texture's lifecycle, this only wires uniforms.
  */
 export function setSurfaceGrid(
   material: THREE.ShaderMaterial,
@@ -3498,8 +3504,8 @@ export function setSurfaceGrid(
 }
 
 /**
- * Flip the march's grid reads on or off WITHOUT touching the texture
- * (fr-8yad): the balloon's validity gate, `surface-grid.ts`'s
+ * Flip the march's grid reads on or off WITHOUT touching the texture: the
+ * balloon's validity gate, `surface-grid.ts`'s
  * {@link balloonClearsGridBox}, is a per-frame answer about a grid the
  * session already built. `R` is the only live term in it, so a radius
  * sweep may cross the threshold in either direction many times over a
@@ -3552,7 +3558,7 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
         ),
       },
       uTrapIndex: { value: new Array<number>(SURFACE_MAX_MAPS).fill(0) },
-      // Fold-variant per-map data (fr-5rvk): (foldKind, 1/w, |w|*sigmaMin,
+      // Fold-variant per-map data: (foldKind, 1/w, |w|*sigmaMin,
       // trapIndex). Only the variant selected by the SURFACE_FOLDS define
       // has this uniform active — Three.js ignores entries the compiled
       // program does not use, so both arrays stay packed unconditionally.
@@ -3562,10 +3568,10 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
           () => new THREE.Vector4(0, 1, 1, 0),
         ),
       },
-      // Per-map AUTHORED fold lengths (fr-s9ll): (minRadius, fixedRadius,
-      // boxLimit, unused). The default IS the classic Mandelbox set, so a
-      // slot setSurfaceSystem has not reached reads as an unparameterized
-      // fold rather than as a divide by zero.
+      // Per-map AUTHORED fold lengths: (minRadius, fixedRadius, boxLimit,
+      // unused). The default IS the classic Mandelbox set, so a slot
+      // setSurfaceSystem has not reached reads as an unparameterized fold
+      // rather than as a divide by zero.
       uFoldRadii: {
         value: Array.from(
           { length: SURFACE_MAX_MAPS },
@@ -3585,18 +3591,17 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uFinalInvM: { value: new THREE.Matrix3() },
       uFinalInvT: { value: new THREE.Vector3() },
       uFinalSigmaMin: { value: 1 },
-      // Fold final lens (fr-g58b): inert defaults; alive only under the
+      // Fold final lens: inert defaults; alive only under the
       // SURFACE_FOLD_LENS define.
       uLensParams: { value: new THREE.Vector4(0, 1, 1, 1) },
       uLensInvM: { value: new THREE.Matrix3() },
       uLensInvT: { value: new THREE.Vector3() },
       // The lens fold's lengths, classic by default for uFoldRadii's reason.
       uLensRadii: { value: new THREE.Vector3(0.5, 1, 1) },
-      // Escape-time render (fr-kltj): inert defaults; alive only under
-      // the SURFACE_ESCAPE define. One slot per CHAIN LINK since fr-s04t
-      // (the document's transform list IS the formula sequence), sized
-      // like the descent's per-map arrays — slots past uMapCount are
-      // never read.
+      // Escape-time render: inert defaults; alive only under the
+      // SURFACE_ESCAPE define. One slot per CHAIN LINK (the document's
+      // transform list IS the formula sequence), sized like the descent's
+      // per-map arrays — slots past uMapCount are never read.
       uEscM: {
         value: Array.from(
           { length: SURFACE_MAX_MAPS },
@@ -3615,9 +3620,9 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
           () => new THREE.Vector4(0, 1, 1, 0),
         ),
       },
-      // Per-LINK fold lengths, SQUARED for the sphere pair (fr-s9ll) —
-      // EscapeLink's own form. The classic Mandelbox set by default, so an
-      // unreached slot could never divide by zero.
+      // Per-LINK fold lengths, SQUARED for the sphere pair — EscapeLink's
+      // own form. The classic Mandelbox set by default, so an unreached
+      // slot could never divide by zero.
       uEscRadii: {
         value: Array.from(
           { length: SURFACE_MAX_MAPS },
@@ -3625,30 +3630,31 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
         ),
       },
       // Which estimate form the escape orbit's terminal radius is read
-      // through (fr-j231): inert unless SURFACE_ESCAPE, and 0 is the
-      // pre-fr-j231 linear form, so a stale read is the old behaviour.
+      // through: inert unless SURFACE_ESCAPE, and 0 is the linear form
+      // the fold-only chain always read, so a stale read is the old
+      // behaviour.
       uEscLogForm: { value: 0 },
-      // Mandelbulb render (fr-7u8t.9): inert defaults; alive only under
-      // the SURFACE_BULB define (sigmaMax 1 and a bailout of 1 so a stray
+      // Mandelbulb render: inert defaults; alive only under the
+      // SURFACE_BULB define (sigmaMax 1 and a bailout of 1 so a stray
       // enabled read could never divide by zero or take log of zero).
       uBulbM: { value: new THREE.Matrix3() },
       uBulbT: { value: new THREE.Vector3() },
       uBulbParams: { value: new THREE.Vector4(1, 1, 0, 0) },
-      // Balloon inverted-union (fr-5wlv.4): inert defaults; alive only
-      // under the SURFACE_BALLOON define (rho 1 so a stray enabled read
-      // could never divide by zero). Three.js ignores entries the
-      // compiled program does not use, so these stay unconditional.
+      // Balloon inverted-union: inert defaults; alive only under the
+      // SURFACE_BALLOON define (rho 1 so a stray enabled read could never
+      // divide by zero). Three.js ignores entries the compiled program
+      // does not use, so these stay unconditional.
       uBalloonCenter: { value: new THREE.Vector3() },
       uBalloonR: { value: 0 },
       uBalloonRho: { value: 1 },
       uBalloonFar: { value: 0 },
-      // The echo's independent tint (fr-j85n): inert default (strength 0,
+      // The echo's independent tint: inert default (strength 0,
       // packSurfaceBalloonTint's own default) is a bit-exact identity —
       // see the uBalloonTint declaration above. Unconditional like the
       // rest of this block.
       uBalloonTint: { value: new THREE.Vector3() },
       uBalloonTintStrength: { value: 0 },
-      // Ground plane (fr-rhn5): inert defaults; alive only under the
+      // Ground plane: inert defaults; alive only under the
       // SURFACE_GROUND_PLANE define (ball radius 1 so a stray enabled
       // read could never divide by zero). Three.js ignores entries the
       // compiled program does not use, so these stay unconditional.
@@ -3667,48 +3673,48 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uInvProjView: { value: new THREE.Matrix4() },
       uBgTop: { value: BG_TOP.clone() },
       uBgBottom: { value: BG_BOTTOM.clone() },
-      // fr-h3mp: linear defaults — 0 is inert, center/scale unread by
-      // "linear" — so a stray enabled read could never divide by zero.
+      // Background shape: linear defaults — 0 is inert, center/scale
+      // unread by "linear" — so a stray enabled read could never divide
+      // by zero.
       uBgShape: { value: 0 },
       uBgCenter: { value: new THREE.Vector2(0.5, 0.5) },
       uBgScale: { value: new THREE.Vector2(1, 1) },
       uFogDensity: { value: 1 },
       uFogTint: { value: new THREE.Vector3(1, 1, 1) },
       uFogTintStrength: { value: 0 },
-      // fr-ehcj: matches state.ts's DEFAULT_SURFACE_ENV_LIGHT, the way
-      // uAmbient above mirrors its own default.
+      // Environment light: matches state.ts's DEFAULT_SURFACE_ENV_LIGHT,
+      // the way uAmbient above mirrors its own default.
       uEnvLight: { value: 0.35 },
       // Placeholder; the scene overwrites it per frame with the camera's
       // true angular pixel size.
       uPixelEps: { value: 0.002 },
       uAcceptPixelEps: { value: 0.002 },
-      // The pixel CENTRE (fr-jf9y): zero here is what makes a single-pass
-      // trace value-identical to the pre-supersampling one. The scene
-      // rewrites it per ARMED JOB — setSurfaceFrameUniforms resets it to
-      // zero, and only a supersampling pass past the first sets it
-      // otherwise — so no abandoned settle can leak a jitter into the
-      // preview or the export that follows it.
-      // Spelled out, all four: THREE.Vector4's own default is (0, 0, 0, 1),
-      // and that 1 is the dither's y offset in PIXELS — it would move the
-      // march-start hash a whole pixel on every trace this app makes.
+      // The pixel CENTRE: zero here is what makes a single-pass trace
+      // value-identical to the pre-supersampling one. The scene rewrites
+      // it per ARMED JOB — setSurfaceFrameUniforms resets it to zero, and
+      // only a supersampling pass past the first sets it otherwise — so
+      // no abandoned settle can leak a jitter into the preview or the
+      // export that follows it. Spelled out, all four: THREE.Vector4's
+      // own default is (0, 0, 0, 1), and that 1 is the dither's y offset
+      // in PIXELS — it would move the march-start hash a whole pixel on
+      // every trace this app makes.
       uPixelJitter: { value: new THREE.Vector4(0, 0, 0, 0) },
-      // Full-tier defaults; the scene overwrites all four per tier
-      // (fr-sjff).
+      // Full-tier defaults; the scene overwrites all four per tier.
       uMarchSteps: { value: SURFACE_FULL_MARCH_STEPS },
       uShadowSteps: { value: SURFACE_FULL_SHADOW_STEPS },
       uAoTaps: { value: SURFACE_FULL_AO_TAPS },
       uHitFloor: { value: SURFACE_FULL_HIT_FLOOR },
     },
     // Which descent bodies are compiled in: SURFACE_FOLDS 0 = the affine
-    // ladder pair (byte-for-byte the pre-fr-5rvk shader), 1 = the
-    // fold-frontier pair. SURFACE_FOLD_LENS 1 additionally renames the
-    // bodies to surfaceDECore and compiles the fold-lens wrapper as the
-    // public surfaceDE (fr-g58b). SURFACE_ESCAPE 1 replaces the descent
-    // bodies wholesale with the escape-time loop (fr-kltj).
+    // ladder pair (byte-for-byte the shader that predates the fold
+    // frontier), 1 = the fold-frontier pair. SURFACE_FOLD_LENS 1
+    // additionally renames the bodies to surfaceDECore and compiles the
+    // fold-lens wrapper as the public surfaceDE. SURFACE_ESCAPE 1 replaces
+    // the descent bodies wholesale with the escape-time loop.
     // SURFACE_BALLOON 1 wraps whichever variant compiled in the balloon
-    // inverted-union (fr-5wlv.4, setSurfaceBalloon) — like the lens and
-    // escape names it is resolved JS-side, so the entry here is change
-    // detection (and a program-cache key), never driver-parsed text.
+    // inverted-union (setSurfaceBalloon) — like the lens and escape names
+    // it is resolved JS-side, so the entry here is change detection (and a
+    // program-cache key), never driver-parsed text.
     // setSurfaceSystem/setEscapeSystem flip these when the system's shape
     // changes — rare, session-enter-scale recompiles.
     defines: {
@@ -3735,10 +3741,10 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
  * orbit-trap palette coordinate in [0, 1] for `de.maps[j]` (both already
  * keyed by `baseIndex` on the caller's side, both `de.maps.length` long).
  * `trapIndices` is optional for callers that predate the color sources:
- * omitting it zero-fills the live slots — an explicit reset, like the final
- * lens, so a previous system's traps never leak. Slots past the live count
- * keep stale values by design — `uMapCount` guards every shader loop.
- * `de.maps` is BASE maps (fr-x029), so the kaleidoscope rides the three
+ * omitting it zero-fills the live slots — an explicit reset, like the
+ * final lens, so a previous system's traps never leak. Slots past the live
+ * count keep stale values by design — `uMapCount` guards every shader
+ * loop. `de.maps` is BASE maps, so the kaleidoscope rides the three
  * `uSym*` scalars below rather than costing slots. Throws RangeError if
  * `de.maps.length > SURFACE_MAX_MAPS`: callers gate eligibility first, so
  * reaching it is a bug. */
@@ -3754,8 +3760,8 @@ export function setSurfaceSystem(
     );
   }
   // A new system invalidates every floor of the old system's grid — march
-  // gridless until the fresh build lands (fr-55r5 part 2). The caller owns
-  // the old texture's disposal.
+  // gridless until the fresh build lands. The caller owns the old
+  // texture's disposal.
   setSurfaceGrid(material, null);
   const u = material.uniforms;
   const invM = u.uInvM.value as THREE.Matrix3[];
@@ -3780,7 +3786,7 @@ export function setSurfaceSystem(
     // The fold-variant vec4 carries the trap coordinate in .w so swapping
     // uTrapIndex out keeps the swap uniform-budget neutral.
     foldParams[j].set(map.foldKind, map.foldInvW, map.foldSigma, trap);
-    // The map's three AUTHORED lengths (fr-s9ll); the shader's foldRadiiOf
+    // The map's three AUTHORED lengths; the shader's foldRadiiOf
     // re-derives the branch algebra from them, so this ships
     // resolveFoldRadii's output rather than surfaceFoldRadii's eight
     // combinations.
@@ -3793,18 +3799,18 @@ export function setSurfaceSystem(
     if (map.foldKind !== SURFACE_FOLD_NONE) hasFolds = true;
   });
   // Select the compiled descent pair (fold frontier vs affine ladders)
-  // and whether the fold-lens wrapper wraps them (fr-g58b). A define
-  // change forces a program rebuild — rare (system-set time, and only
-  // when fold-ness actually flips).
+  // and whether the fold-lens wrapper wraps them. A define change forces
+  // a program rebuild — rare (system-set time, and only when fold-ness
+  // actually flips).
   const wantFolds = hasFolds ? 1 : 0;
   const wantLens = de.foldFinal ? 1 : 0;
-  // The balloon flag (fr-5wlv.4) is orthogonal session state owned by
+  // The balloon flag is orthogonal session state owned by
   // setSurfaceBalloon — a system swap preserves whatever it last set.
   const balloon = material.defines.SURFACE_BALLOON === 1 ? 1 : 0;
-  // The ground plane (fr-rhn5) is likewise orthogonal session state
-  // owned by setSurfaceGroundPlane — a system swap preserves it (every
-  // variant carries the plane arm: its programs resolve through
-  // stripGlslSource, far under the Mesa cliff).
+  // The ground plane is likewise orthogonal session state owned by
+  // setSurfaceGroundPlane — a system swap preserves it (every variant
+  // carries the plane arm: its programs resolve through stripGlslSource,
+  // far under the Mesa cliff).
   const plane = material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0;
   if (
     material.defines.SURFACE_FOLDS !== wantFolds ||
@@ -3830,8 +3836,8 @@ export function setSurfaceSystem(
     material.needsUpdate = true;
   }
   u.uMapCount.value = de.maps.length;
-  // The kaleidoscope the descent sweeps instead of expanding (fr-x029):
-  // three scalars where every extra order used to cost `maps.length` slots.
+  // The kaleidoscope the descent sweeps instead of expanding: three
+  // scalars where every extra order used to cost `maps.length` slots.
   u.uSymOrder.value = de.symmetry.order;
   u.uSymPlane.value = SYM_PLANE_CODE[de.symmetry.plane];
   (u.uSymStep.value as THREE.Vector2).set(
@@ -3844,9 +3850,9 @@ export function setSurfaceSystem(
   u.uMaxDepth.value = de.maxDepth;
   u.uStepScale.value = de.stepScale;
   u.uVisibleRadius.value = de.visibleBoundingRadius;
-  // The final lens must be RESET when absent — the previous system may have
-  // had one, and identity / zero / 1 is the shader's "no lens" encoding.
-  // With a FOLD lens (fr-g58b) the identity encoding is deliberate and
+  // The final lens must be RESET when absent — the previous system may
+  // have had one, and identity / zero / 1 is the shader's "no lens"
+  // encoding. With a FOLD lens the identity encoding is deliberate and
   // load-bearing: the descent cores must run their no-lens arithmetic
   // (the oracle keeps final null whenever foldFinal is set), and the
   // wrapper compiled by SURFACE_FOLD_LENS applies the real lens from
@@ -3897,13 +3903,13 @@ export function setSurfaceSystem(
  * own bodies. Measured necessity, not tidiness: Mesa's compiler sits on a
  * knife's edge with the fold-frontier variant — the shipped ~68KB source
  * links (in ~25s), but the SAME compiled tokens preceded by the
- * lens/escape variants' preprocessor-dead text pushed the source past
- * 80KB and the compile crashed outright, twice per session (empty info
- * log, lost context — the exact fr-5rvk failure signature, resurrected
- * by nothing but source growth). SURFACE_FOLDS stays a driver-side
- * define, exactly as shipped and measured. Handles the two names'
- * `#if` / `#else` / `#endif` with proper nesting bookkeeping for every
- * OTHER `#if`-family directive encountered inside their arms (those
+ * lens/escape variants' preprocessor-dead text pushed the source past 80KB
+ * and the compile crashed outright, twice per session (empty info log,
+ * lost context — the exact failure signature the fold branch sweep first
+ * produced, resurrected by nothing but source growth). SURFACE_FOLDS stays
+ * a driver-side define, exactly as shipped and measured. Handles the two
+ * names' `#if` / `#else` / `#endif` with proper nesting bookkeeping for
+ * every OTHER `#if`-family directive encountered inside their arms (those
  * lines pass through untouched for the driver).
  */
 function resolveVariantArms(
@@ -3963,36 +3969,35 @@ function resolveVariantArms(
 
 /** Compose the fragment source for a variant selection — the driver only
  * ever sees SURFACE_FOLDS conditionals (see resolveVariantArms). `balloon`
- * (fr-5wlv.4) resolves the SURFACE_BALLOON wrapper arms the same JS-side
- * way — with it 0 the resolved source is byte-identical to the
- * pre-balloon build, so the lens variant's ~79KB never grows toward the
- * measured Mesa cliff. `plane` (fr-rhn5) is the ground-plane arm under
- * the same contract — 0 resolves byte-identical to the pre-plane build —
- * except that 1 additionally strips comments/indentation from the WHOLE
- * resolved source ({@link stripGlslSource}): same token stream, new
- * program, and the raw size Mesa prices drops from the cliff's edge
- * (~76.5KB shipped fold/affine against the ~80KB measured crash) to
- * roughly half, which is what lets every variant carry the floor, the
- * ~79KB lens included. Only `balloon` refuses the pair (the enclosing
- * shell has no horizon for a floor to sit on; callers gate, so reaching
- * the throw is a bug). `bulb` (fr-7u8t.9) is the SECOND forward-orbit
- * variant under the same contract — 0 resolves byte-identical to the
- * pre-bulb build, and it refuses to compile alongside `escape` (each
- * replaces the descent bodies wholesale, so both on would define
- * surfaceDE twice). `source` defaults to the module's assembled
- * fragment; tests pass their own width-parameterized builds (fr-zqu8).
+ * resolves the SURFACE_BALLOON wrapper arms the same JS-side way — with it
+ * 0 the resolved source is byte-identical to the pre-balloon build, so the
+ * lens variant's ~79KB never grows toward the measured Mesa cliff. `plane`
+ * is the ground-plane arm under the same contract — 0 resolves
+ * byte-identical to the pre-plane build — except that 1 additionally
+ * strips comments/indentation from the WHOLE resolved source
+ * ({@link stripGlslSource}): same token stream, new program, and the raw
+ * size Mesa prices drops from the cliff's edge (~76.5KB shipped
+ * fold/affine against the ~80KB measured crash) to roughly half, which is
+ * what lets every variant carry the floor, the ~79KB lens included. Only
+ * `balloon` refuses the pair (the enclosing shell has no horizon for a
+ * floor to sit on; callers gate, so reaching the throw is a bug). `bulb`
+ * is the SECOND forward-orbit variant under the same contract — 0 resolves
+ * byte-identical to the pre-bulb build, and it refuses to compile
+ * alongside `escape` (each replaces the descent bodies wholesale, so both
+ * on would define surfaceDE twice). `source` defaults to the module's
+ * assembled fragment; tests pass their own width-parameterized builds.
  *
- * SINCE fr-s9ll THE STRIP IS A SIZE RULE, not the plane arm's private
- * habit: any resolved source past {@link SURFACE_GLSL_STRIP_BYTES} gets
- * the same treatment. The fold's authored radii cost this file ~2.2KB of
- * uniforms, a derivation helper and longer expressions, which took the
- * BALLOON variant from 80.9KB to 83.1KB — past the 82.2KB that crashed
- * Mesa outright. A size threshold is the honest predicate for a size
- * cliff: a hand-kept list of which variants strip is exactly what drifts
+ * THE STRIP IS A SIZE RULE, not the plane arm's private habit: any
+ * resolved source past {@link SURFACE_GLSL_STRIP_BYTES} gets the same
+ * treatment. The fold's authored radii cost this file ~2.2KB of uniforms,
+ * a derivation helper and longer expressions, which took the BALLOON
+ * variant from 80.9KB to 83.1KB — past the 82.2KB that crashed Mesa
+ * outright. A size threshold is the honest predicate for a size cliff: a
+ * hand-kept list of which variants strip is exactly what drifts
  * the next time one of them grows a paragraph. */
 /**
  * Resolved-source size past which {@link surfaceFragmentFor} strips
- * comments and indentation before handing the driver a program (fr-s9ll).
+ * comments and indentation before handing the driver a program.
  *
  * The three measurements this file has paid for, all on Mesa/Iris:
  * ~68KB linked (in ~25s), ~80KB was called the cliff, and 82.2KB crashed
@@ -4038,15 +4043,14 @@ export function surfaceFragmentFor(
 }
 
 /**
- * Pack an {@link EscapeDE} (fr-kltj; its whole formula CHAIN since
- * fr-s04t) and flip the material onto the escape-time variant. The
- * IFS-side uniforms the shared marcher still reads — bounding/visible
- * radii, uMaxDepth (the iteration budget the preview tier clamps through
- * previewMaxDepth), step scale, slot-0 color for the by-transform source —
- * are packed to the escape set's values; everything descent-specific
- * (inverse maps, sector sweep, lenses, grid) is reset to inert, and no
- * grid is ever uploaded for this mode (the empty-space chain's validity
- * argument is IFS-specific).
+ * Pack an {@link EscapeDE} — its whole formula CHAIN — and flip the
+ * material onto the escape-time variant. The IFS-side uniforms the shared
+ * marcher still reads — bounding/visible radii, uMaxDepth (the iteration
+ * budget the preview tier clamps through previewMaxDepth), step scale,
+ * slot-0 color for the by-transform source — are packed to the escape
+ * set's values; everything descent-specific (inverse maps, sector sweep,
+ * lenses, grid) is reset to inert, and no grid is ever uploaded for this
+ * mode (the empty-space chain's validity argument is IFS-specific).
  *
  * TWO frozen slots carry escape meanings rather than inert ones, both
  * because they mean exactly the same thing here as they do for a descent:
@@ -4078,17 +4082,17 @@ export function setEscapeSystem(
     escM[i].set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
     escT[i].set(...link.t);
     escParams[i].set(link.kind, link.w, link.derivGrowth, 0);
-    // This LINK's own fold lengths (fr-s9ll) — the squares EscapeLink
-    // already keeps, so the wire transfers the oracle's numbers rather
-    // than recomputing them. A chain may hold a different apparatus per
-    // link, which is why this is per-slot.
+    // This LINK's own fold lengths — the squares EscapeLink already keeps,
+    // so the wire transfers the oracle's numbers rather than recomputing
+    // them. A chain may hold a different apparatus per link, which is why
+    // this is per-slot.
     escRadii[i].set(link.minRadius2, link.fixedRadius2, link.boxLimit, 0);
   });
   (u.uMapColor.value as THREE.Vector3[])[0].set(...color);
   (u.uTrapIndex.value as number[])[0] = 0;
   u.uMapCount.value = de.links.length;
-  // The chain's estimate form (fr-j231) — one number per CHAIN, resolved
-  // by the oracle so the six mirrors cannot each decide it differently.
+  // The chain's estimate form — one number per CHAIN, resolved by the
+  // oracle so the six mirrors cannot each decide it differently.
   u.uEscLogForm.value = de.logEstimate ? 1 : 0;
   u.uSymOrder.value = de.symmetryOrder;
   u.uSymPlane.value = SYM_PLANE_CODE[de.symmetryPlane];
@@ -4104,10 +4108,10 @@ export function setEscapeSystem(
   (u.uLensParams.value as THREE.Vector4).set(0, 1, 1, 1);
   (u.uLensInvM.value as THREE.Matrix3).identity();
   (u.uLensInvT.value as THREE.Vector3).set(0, 0, 0);
-  // Preserve the balloon flag exactly like setSurfaceSystem (fr-5wlv.4):
-  // balloon-over-escape is a supported wrap. The ground plane (fr-rhn5)
-  // is preserved the same way — the classic Mandelbox floor is exactly
-  // an escape session's look.
+  // Preserve the balloon flag exactly like setSurfaceSystem:
+  // balloon-over-escape is a supported wrap. The ground plane is
+  // preserved the same way — the classic Mandelbox floor is exactly an
+  // escape session's look.
   const balloon = material.defines.SURFACE_BALLOON === 1 ? 1 : 0;
   const plane = material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0;
   if (
@@ -4117,8 +4121,8 @@ export function setEscapeSystem(
     material.defines.SURFACE_FOLD_LENS !== 0
   ) {
     material.defines.SURFACE_ESCAPE = 1;
-    // The two forward-orbit variants are exclusive (fr-7u8t.9): a
-    // previous Mandelbulb session must hand the bodies back here too.
+    // The two forward-orbit variants are exclusive: a previous Mandelbulb
+    // session must hand the bodies back here too.
     material.defines.SURFACE_BULB = 0;
     material.defines.SURFACE_FOLDS = 0;
     material.defines.SURFACE_FOLD_LENS = 0;
@@ -4128,18 +4132,17 @@ export function setEscapeSystem(
 }
 
 /**
- * Pack a {@link BulbDE} (fr-7u8t.9) and flip the material onto the
- * Mandelbulb variant — {@link setEscapeSystem}'s twin one formula over.
- * The IFS-side uniforms the shared marcher still reads — bounding/visible
- * radii, uMaxDepth (the iteration budget the preview tier clamps through
- * previewMaxDepth), step scale, slot-0 color for the by-transform source
- * — are packed to the bulb set's values; everything descent-specific
- * (maps, symmetry, lenses, grid) is reset to inert, and no grid is ever
- * uploaded for this mode (the empty-space chain's validity argument is
- * IFS-specific). Note the ONE asymmetry against the escape packer: the
- * ORBIT's bailout ball and the QUERY-space marching ball are different
- * numbers here, so uBoundingRadius takes the latter and the bailout rides
- * uBulbParams.y.
+ * Pack a {@link BulbDE} and flip the material onto the Mandelbulb variant
+ * — {@link setEscapeSystem}'s twin one formula over. The IFS-side uniforms
+ * the shared marcher still reads — bounding/visible radii, uMaxDepth (the
+ * iteration budget the preview tier clamps through previewMaxDepth), step
+ * scale, slot-0 color for the by-transform source — are packed to the bulb
+ * set's values; everything descent-specific (maps, symmetry, lenses, grid)
+ * is reset to inert, and no grid is ever uploaded for this mode (the
+ * empty-space chain's validity argument is IFS-specific). Note the ONE
+ * asymmetry against the escape packer: the ORBIT's bailout ball and the
+ * QUERY-space marching ball are different numbers here, so uBoundingRadius
+ * takes the latter and the bailout rides uBulbParams.y.
  */
 export function setBulbSystem(
   material: THREE.ShaderMaterial,
@@ -4198,8 +4201,8 @@ export function setBulbSystem(
   }
 }
 
-/** The balloon inverted-union's uniform payload (fr-5wlv.4), built by
- * scene.ts from fractal/balloon-de.ts's conventions — see
+/** The balloon inverted-union's uniform payload, built by scene.ts from
+ * fractal/balloon-de.ts's conventions — see
  * {@link setSurfaceBalloon}. */
 export interface SurfaceBalloonSpec {
   /** The DE ball's center (balloon-de.ts's balloonBall convention). */
@@ -4214,15 +4217,15 @@ export interface SurfaceBalloonSpec {
 }
 
 /**
- * Enable (`spec`) or disable (`null`) the balloon inverted-union wrapper
- * (fr-5wlv.4): the scene becomes `min(DE(p), (|p-c|/rho) * DE(I(p)))`
- * over whichever variant is compiled — affine, folds, fold lens or
- * escape — mirroring fractal/balloon-de.ts's `estimateBalloonDistance`.
- * Flipping the flag reassembles the fragment source through
- * {@link surfaceFragmentFor} with the material's CURRENT escape/lens
- * flags (a session-set-scale program rebuild, like the other variant
- * defines); a call that changes only the uniforms — the radius slider's
- * per-drag-tick path — never touches the shader.
+ * Enable (`spec`) or disable (`null`) the balloon inverted-union wrapper:
+ * the scene becomes `min(DE(p), (|p-c|/rho) * DE(I(p)))` over whichever
+ * variant is compiled — affine, folds, fold lens or escape — mirroring
+ * fractal/balloon-de.ts's `estimateBalloonDistance`. Flipping the flag
+ * reassembles the fragment source through {@link surfaceFragmentFor} with
+ * the material's CURRENT escape/lens flags (a session-set-scale program
+ * rebuild, like the other variant defines); a call that changes only the
+ * uniforms — the radius slider's per-drag-tick path — never touches the
+ * shader.
  */
 export function setSurfaceBalloon(
   material: THREE.ShaderMaterial,
@@ -4247,11 +4250,11 @@ export function setSurfaceBalloon(
   }
   const want = spec ? 1 : 0;
   if (material.defines.SURFACE_BALLOON !== want) {
-    // Balloon and ground plane (fr-rhn5) never compile together — the
-    // enclosing shell has no horizon for a floor to sit on — and the
-    // balloon is senior: turning it on drops the plane define here, and
-    // the scene re-asserts its stored floor intent (which its own
-    // balloon gate keeps off) after every toggle.
+    // Balloon and ground plane never compile together — the enclosing
+    // shell has no horizon for a floor to sit on — and the balloon is
+    // senior: turning it on drops the plane define here, and the scene
+    // re-asserts its stored floor intent (which its own balloon gate keeps
+    // off) after every toggle.
     const plane =
       want === 1 ? 0 : material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0;
     material.defines.SURFACE_BALLOON = want;
@@ -4268,10 +4271,10 @@ export function setSurfaceBalloon(
 }
 
 /**
- * Pack the balloon echo's independent tint (fr-j85n): the shell-hit mix
- * `mix(base, uBalloonTint, uBalloonTintStrength * shell)` both tracers'
- * `main()` applies before lighting, gated on `surfaceDEBalloonHitInfo`'s own
- * argmin attribution. ONE helper serves BOTH dimensions — this module and
+ * Pack the balloon echo's independent tint: the shell-hit mix `mix(base,
+ * uBalloonTint, uBalloonTintStrength * shell)` both tracers' `main()`
+ * applies before lighting, gated on `surfaceDEBalloonHitInfo`'s own argmin
+ * attribution. ONE helper serves BOTH dimensions — this module and
  * `surface-material-4d.ts` declare the identical `uBalloonTint`/
  * `uBalloonTintStrength` uniform names, the established direction of reuse
  * this module already carries the other way (the 4D material imports
@@ -4292,9 +4295,9 @@ export function packSurfaceBalloonTint(
   u.uBalloonTintStrength.value = strength;
 }
 
-/** The ground plane's uniform payload (fr-rhn5), built by scene.ts from
- * the session ball (fractal/balloon-de.ts's balloonBall convention for
- * IFS systems, the origin bailout ball for escape) — see
+/** The ground plane's uniform payload, built by scene.ts from the session
+ * ball (fractal/balloon-de.ts's balloonBall convention for IFS systems,
+ * the origin bailout ball for escape) — see
  * {@link setSurfaceGroundPlane}. All quantities in world units. */
 export interface SurfaceGroundPlaneSpec {
   /** Floor height: ball bottom with a small drop (scene.ts owns the
@@ -4314,18 +4317,17 @@ export interface SurfaceGroundPlaneSpec {
 }
 
 /**
- * Enable (`spec`) or disable (`null`) the ground plane (fr-rhn5): an
- * infinite one-sided floor below the session ball that rays MISSING the
- * fractal intersect analytically and shade with the hit path's penumbra
- * shadow + AO + fog, fading radially into the backdrop. Flipping the
- * flag reassembles the fragment source through
- * {@link surfaceFragmentFor} with the material's CURRENT escape/lens
- * flags (a session-set-scale program rebuild, exactly
- * {@link setSurfaceBalloon}'s contract; plane programs resolve through
- * {@link stripGlslSource}, so even the lens variant stays far under the
- * Mesa cliff). Throws if asked to enable over the balloon variant —
- * callers gate eligibility first (scene.ts's applySurfaceGroundPlane),
- * so reaching the refusal is a bug.
+ * Enable (`spec`) or disable (`null`) the ground plane: an infinite
+ * one-sided floor below the session ball that rays MISSING the fractal
+ * intersect analytically and shade with the hit path's penumbra shadow +
+ * AO + fog, fading radially into the backdrop. Flipping the flag
+ * reassembles the fragment source through {@link surfaceFragmentFor} with
+ * the material's CURRENT escape/lens flags (a session-set-scale program
+ * rebuild, exactly {@link setSurfaceBalloon}'s contract; plane programs
+ * resolve through {@link stripGlslSource}, so even the lens variant stays
+ * far under the Mesa cliff). Throws if asked to enable over the balloon
+ * variant — callers gate eligibility first (scene.ts's
+ * applySurfaceGroundPlane), so reaching the refusal is a bug.
  */
 export function setSurfaceGroundPlane(
   material: THREE.ShaderMaterial,

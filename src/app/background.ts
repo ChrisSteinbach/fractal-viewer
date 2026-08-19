@@ -1,5 +1,5 @@
 /**
- * The scene backdrop (fr-5ps1): a two-stop vertical gradient every renderer
+ * The scene backdrop: a two-stop vertical gradient every renderer
  * shows behind the attractor — the explorer's CanvasTexture, the flame
  * composite, the voxel/surface tracers' miss gradient (their `uBgTop`/
  * `uBgBottom` uniforms), and the WebGPU compute kernels' shade params.
@@ -10,9 +10,9 @@
  * push, captures, the compute frame spec, and the morph-leg crossfade —
  * resolves through it, so no two renderers can disagree about the backdrop.
  *
- * The vocabulary is deliberately an extensible id list: fr-mz2u added the
- * palette-linked `"auto"` mode ({@link autoBackground}) and fr-4vi7 adds
- * curated presets, all riding this same `(top, bottom)` plumbing.
+ * The vocabulary is deliberately an extensible id list: the palette-linked
+ * `"auto"` mode ({@link autoBackground}) was added to it, and any curated
+ * preset would ride this same `(top, bottom)` plumbing.
  * `persist.ts` decodes an unknown id to the legacy default rather than
  * rejecting, so links written by future builds degrade gracefully in this
  * one.
@@ -28,15 +28,14 @@ import { DARK_BACKDROP, HAZE_BACKDROP, hexToRgb01 } from "./constants";
 export type { BackgroundShape } from "../fractal/background-shape";
 
 /**
- * The Background select's positions (fr-5ps1): the two built-in backdrops the
- * app has always had — `"dark"` (every render style's original ground) and
- * `"haze"` (the cooler, lighter atmosphere the aerial style used to force) —
- * plus `"auto"`, the palette-derived backdrop (fr-mz2u, see
- * {@link autoBackground}), and `"custom"`, the user-authored two-stop
- * gradient (a single flat color = top equals bottom). Single source of truth
- * for the {@link BackgroundMode} type, the UI select's options (pinned by
- * ui.test.ts) and the persistence validator (`persist.ts`) — the
- * `RENDER_STYLES` discipline.
+ * The Background select's positions: the two built-in backdrops the app has
+ * always had — `"dark"` (every render style's original ground) and `"haze"`
+ * (the cooler, lighter atmosphere the aerial style used to force) — plus
+ * `"auto"`, the palette-derived backdrop (see {@link autoBackground}), and
+ * `"custom"`, the user-authored two-stop gradient (a single flat color =
+ * top equals bottom). Single source of truth for the {@link BackgroundMode}
+ * type, the UI select's options (pinned by ui.test.ts) and the persistence
+ * validator (`persist.ts`) — the `RENDER_STYLES` discipline.
  */
 export const BACKGROUND_MODES = ["dark", "haze", "auto", "custom"] as const;
 
@@ -54,10 +53,10 @@ export interface BackgroundGradient {
  * select first lands on Custom (which seeds it from the backdrop being
  * replaced — the `customPalette` discipline), then kept while unselected so
  * switching away and back never loses authored colors. `"auto"` persists as
- * the MODE alone (fr-mz2u): the derived colors are never baked into the
+ * the MODE alone: the derived colors are never baked into the
  * document, so palette edits keep tracking after a link round-trip.
  *
- * `shape` (fr-h3mp) is ORTHOGONAL to `mode`: it picks the GRADIENT SHAPE
+ * `shape` is ORTHOGONAL to `mode`: it picks the GRADIENT SHAPE
  * (`fractal/background-shape.ts`'s vocabulary — linear ramp or radial
  * vignette) that the two `mode`-derived stops are painted through, so every
  * mode can be linear or radial and a palette-linked `"auto"` backdrop gets
@@ -75,7 +74,7 @@ export interface BackgroundParams {
  * placeholder, resolved before boot pushes the real document's choice. NOT the
  * fresh-scene default it once claimed to be: `state.ts`'s `initialState`
  * carries its own literal, and this constant has no other consumer, so
- * changing it here would move nothing (fr-qj8k's notes carry the memo). */
+ * changing it here would move nothing. */
 export const DEFAULT_BACKGROUND: BackgroundParams = { mode: "dark" };
 
 /** The built-in backdrops as resolved stops — `constants.ts`'s authored hex
@@ -90,7 +89,7 @@ const HAZE_GRADIENT: BackgroundGradient = {
 };
 
 /**
- * The `"auto"` derivation's tuning (fr-mz2u), exported so the tests pin the
+ * The `"auto"` derivation's tuning, exported so the tests pin the
  * CONTRACT (luminance bands, sample positions) rather than magic numbers —
  * re-tuning the look is a one-object edit that can't silently drift from
  * what the tests assert.
@@ -161,7 +160,7 @@ function deriveAutoStop(
 }
 
 /**
- * The palette-linked backdrop (fr-mz2u): derive `(top, bottom)` stops from
+ * The palette-linked backdrop: derive `(top, bottom)` stops from
  * the active palette's own LUT — the same `buildPaletteLUT` output the
  * renderers sample, so the backdrop is guaranteed to echo exactly the
  * gradient on screen, custom stops included. See
@@ -191,7 +190,7 @@ export function autoBackground(palette: PaletteSpec): BackgroundGradient {
  * returns the authored slot; a custom mode with no payload (unreachable
  * through the reducer/decoder, which both guarantee a payload before the
  * mode) falls back to the dark backdrop rather than throwing — the same
- * defensive stance as `persist.ts`'s quiet fallbacks. `"auto"` (fr-mz2u)
+ * defensive stance as `persist.ts`'s quiet fallbacks. `"auto"`
  * derives from the caller's active palette ({@link autoBackground}); callers
  * with no palette in hand (boot placeholders, the hidden custom-picker sync)
  * get the same dark fallback — `state.ts`'s `resolveSceneBackground` is the
@@ -258,7 +257,7 @@ export interface BackgroundSample {
 }
 
 /**
- * The backdrop's replace-load crossfade (fr-5ps1): a timeline/drift leg or
+ * The backdrop's replace-load crossfade: a timeline/drift leg or
  * gallery load that morphs the system also fades the background from the
  * pre-load backdrop to the target document's, over the same duration —
  * the fourth motion beside the system morph, the camera glide and the 4D
@@ -268,9 +267,9 @@ export interface BackgroundSample {
  * returns the frame's gradient while active (`final: true` on the exact
  * target, then idle), `cancel` discards it. Times come from the caller's
  * clock — main.ts's `nowMs()`, so offline export's virtual clock drives it
- * deterministically (the fr-92t9 contract the other tweens honor).
+ * deterministically (the offline-export contract the other tweens honor).
  *
- * The SHAPE (fr-h3mp) is deliberately NOT part of what this tween
+ * The SHAPE is deliberately NOT part of what this tween
  * interpolates — a shape has no meaningful midpoint between "linear" and
  * "radial". During a crossfade the COLORS fade through this class exactly
  * as before, and the caller switches the scene's shape to the target
