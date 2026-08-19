@@ -83,14 +83,31 @@ envTint(n) = mix(vec3(1.0), e / max(max(e.r, max(e.g, e.b)), 1.0e-4), uEnvLight)
 REFUTED FIRST CUT: the tint originally scaled only the AMBIENT half —
 `vec3 lit = uAmbient * ao * envTint(n) + vec3((1.0 - uAmbient) * diffuse *
 shadow)` — and settled frames at strength 1, the MAXIMUM, were
-indistinguishable from strength 0 on both built-in backdrops. That
-refutation is a QUALITATIVE read of the two settled screenshots side by
-side, not a pixel diff — the harness that produced them had not yet
-cropped to the render pane, so a whole-window diff would have been
-dominated by the control panel and worth nothing. It is stated as what it
-is: a feature whose maximum cannot be seen has failed its own acceptance
-("the backdrop VISIBLY grounds the render"), and no finer number was
-needed to decide that.
+indistinguishable from strength 0 on both built-in backdrops in a
+side-by-side read. THE REFUSAL WAS ON PERCEPTIBILITY, NOT ON
+MEASURABILITY, and the distinction is worth stating precisely because the
+ambient-only cut does NOT measure zero. Its own A/B (mandelboxClassic, the
+escape GLSL arm, 800x500, against each backdrop's strength-0 baseline)
+reads:
+
+| backdrop | pair  | px differing | meanAbs (changed px) | maxΔ | meanSigned R / G / B    |
+| -------- | ----- | ------------ | -------------------- | ---- | ----------------------- |
+| dark     | 0→0.4 | 7.277%       | 3.0401               | 11   | −0.516 / −0.148 / 0.000 |
+| dark     | 0→1   | 7.277%       | 8.1941               | 30   | −1.394 / −0.395 / 0.000 |
+| haze     | 0→0.4 | 7.277%       | 2.6866               | 11   | −0.486 / −0.101 / 0.000 |
+| haze     | 0→1   | 7.277%       | 7.1971               | 30   | −1.305 / −0.266 / 0.000 |
+
+DO NOT READ THAT TABLE AGAINST THE SHIPPED FORM'S BELOW: they are
+DIFFERENT SCENES at different rasters (this one mandelboxClassic at
+800x500, the other a boxfold pair at 480x300, chosen because
+`mandelboxKifs` never settled), so the two `meanAbs` columns are not
+comparable and no ratio between them means anything. What the ambient-only
+table establishes on its own is the thing that mattered: at the MAXIMUM
+the strongest single channel moves 30/255 on a small minority of pixels
+and the frame reads the same. A feature whose maximum cannot be seen has
+failed its own acceptance ("the backdrop VISIBLY grounds the render"),
+which is a judgement about the render and not about a number — so the
+number is recorded here rather than used to justify the call.
 
 A headless SwiftShader A/B of the SHIPPED whole-lit-term form
 (`scripts/tmp-envlight-ab.mjs`, a throwaway harness modeled on

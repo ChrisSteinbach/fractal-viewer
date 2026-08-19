@@ -22,7 +22,7 @@ import { DARK_BACKDROP, hexToRgb01 } from "./constants";
  *
  * DELIBERATELY NOT ENVIRONMENT-LIT (fr-ehcj scoped it out): the surface
  * tracers (`surface-material.ts` / `-4d.ts`) and their WGSL mirror
- * (`fractal/surface-de-gpu.ts`) tint the AMBIENT term toward the backdrop
+ * (`fractal/surface-de-gpu.ts`) tint the WHOLE lit term toward the backdrop
  * sampled along the shading normal, so those renders sit IN their
  * background; this raymarcher's `uAmbient` blend below stays a plain
  * scalar. That leaves the solid render as the one mode still floating in
