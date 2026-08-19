@@ -161,11 +161,13 @@
  *
  * Engines, ASSERTED and not merely printed: `3d-on-plain` / `3d-on-tinted`
  * / `3d-on-zero` and the three compute 4D captures took `compute`; all four
- * `gl-` captures took `webgl`. Settles, same run: compute 3D 118-121s,
- * webgl 3D 95-104s, balloon-off 6-14s, compute 4D 40-73s, webgl 4D 28-31s.
- * Timing here means nothing (software adapters, and the gate traces a
- * postage stamp on purpose); it is recorded only so a later session knows
- * what "slow" looks like before it suspects a hang.
+ * `gl-` captures took `webgl`. Settles, ACROSS those runs: compute 3D
+ * 118-246s, webgl 3D 95-243s, balloon-off 6-26s, compute 4D 40-73s, webgl
+ * 4D 28-31s. Those spreads are the MACHINE, not the scene — the same
+ * capture ran 118s and 246s on a quiet and a busy box while returning the
+ * identical picture — which is the argument for reading the pixel rows and
+ * ignoring the clock. They are recorded only so a later session knows what
+ * "slow" looks like here before it suspects a hang.
  *
  * NOT COVERED HERE, and the reason is the environment rather than the
  * feature: every figure above is SOFTWARE — SwiftShader for WebGPU, ANGLE
@@ -186,8 +188,10 @@ const VIEWPORT = { width: 900, height: 560 };
  * the header for why the raster has to be this small. */
 const DEVICE_SCALE = 0.12;
 /** Normalized balloon radius (multiples of the raw ball radius,
- * `buildBalloon`'s `rMult`) — measured to put the echo in frame at this
- * pose where the shipped 1.60x does not. See rule 2 in the header. */
+ * `buildBalloon`'s `rMult`). 0.50x rather than the document's shipped
+ * 1.60x because the tint's own signal there is 66x stronger in the mean —
+ * MEASURED both ways, rule 2's table in the header, reproducible with
+ * `--radius`. */
 const BALLOON_RADIUS = 0.5;
 /** Deliberately far from anything this system's per-transform palette
  * produces, so a tinted shell cannot coincide with an untinted one. Same
