@@ -332,7 +332,8 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     normalized UV) through the SAME dialect `field` accessor
     (`uBgCenter`/`shade.bgCenter`) both shader mirrors and the WGSL
     `ShadeParams` tail (`surface-de-gpu.ts`, `bgCenter`/`bgScale`/`bgShape`
-    appended at 176/184/192, struct now 208 B) now carry — a SHAPE
+    appended at 176/184/192, struct 208 B then, 224 since
+    fr-j85n's balloon tint pair) now carry — a SHAPE
     orthogonal to `background.ts`'s MODE, so every mode can be linear or
     radial and `BackgroundGradient` stays the two-stop pair it always was.
     Full measurement record (byte sizes, the two-token dialect divergence,
@@ -389,6 +390,26 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     slab port that stays refused. The WGSL 4D
     wrapper is the 3D text UNCHANGED, which is the same decision seen from
     the kernel side.
+    THE ECHO'S COLOUR IS AUTHORED since fr-j85n, as ONE pair across both
+    arms: `balloonTint`/`balloonTintStrength` mix the SHELL's base albedo
+    toward an authored colour BEFORE lighting (`mix(base, tint, strength)`),
+    so the shell still shades as geometry and the specular stays untinted.
+    Strength 0 — the default and the absent-field value — is `mix(x, y, 0)`
+    = x exactly, so every pre-fr-j85n document renders byte for byte. The
+    surface arms gate it on the oracle's OWN `BalloonDistance.shell`
+    attribution, which all three shader mirrors had been dropping: the WGSL
+    hit-info now carries it as a balloon-only `shell` member beside
+    `colorPos`, both GLSL arms as an out-param, ties to the fractal term in
+    every mirror. The pair rides `ShadeParams` (208/220, struct 224) and NOT
+    the frozen balloon DE params block — it LIGHTS a hit, it does not move
+    geometry — and `surface-de-gpu.ts`'s shade entry being SHARED across all
+    seven cores is what made the 4D half one emission rather than a lift.
+    NO SECOND BRIGHTNESS KNOB, and `BALLOON_ECHO_DIM` stays a module
+    constant: the default tint is BLACK, so the strength slider alone reads
+    as a dimmer (`mix(base, black, s)` = `base·(1−s)`), where one shared dim
+    field would have had to carry two different "today" values — 0.5 in the
+    additive-points echo, 1.0 in the lit-surface shell — and so could not be
+    byte-identical in both arms.
   - `chaos-game.ts` — IFS iterator: warm-up, escape-reset, bounds tracking.
     Injected RNG for reproducibility; optional `IterationRng` keeps morphs
     point-for-point correspondent. `SymmetryParams.blend` fades kaleidoscope

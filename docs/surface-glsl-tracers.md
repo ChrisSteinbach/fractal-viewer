@@ -277,6 +277,30 @@ composes with every other variant except `SURFACE_BALLOON` (throws — no
 horizon inside the shell); off, it resolves byte-identical to the
 pre-plane build.
 
+**`SURFACE_BALLOON`** (fr-5wlv.4, 4D lift fr-qxxw): the inverted-union echo
+arm. Since fr-j85n it also carries the echo's OWN tint: `uBalloonTint`/
+`uBalloonTintStrength` declare INSIDE the arm — the `SURFACE_BULB`
+precedent, no other variant pays their bytes — packed by a single shared
+`packSurfaceBalloonTint`, declared in this file and called by `scene.ts` on
+BOTH `surfaceMaterial` and `surfaceMaterial4`, since the two materials
+declare the identical uniform names. That is the established direction of
+reuse this file already carries the other way — `surface-material-4d.ts`
+imports `surfaceFragmentFor` and `SurfaceBalloonSpec` from here — so one
+pack helper living here too is the same rule, not a new one.
+
+`surfaceDEBalloonHitInfo` gained an `out float shell` right after
+`out vec3 colorPos` in both files' signatures; the 4D file's own trailing
+`out float sStar` stays LAST, so the new parameter slots in before it, not
+after. Both files mix at the identical base-albedo site — right after the
+color source resolves `base`, before the normal is even sampled:
+`base = mix(base, uBalloonTint, uBalloonTintStrength * shell)`, gated
+`#if SURFACE_BALLOON`. That is before lighting, so the shell still shades
+as geometry and the specular stays untinted (the `envTint` rule above).
+Strength 0, the default, is `mix(x, y, 0.0)` = x exactly — today's frame
+byte for byte — and `shell` (the same `dS < dF` argmin the hit-info
+wrapper already computes) restricts the mix to the echo term alone, so a
+fractal-term hit is untouched at any strength.
+
 ## The Mesa link cliff and the source-size rule
 
 Turning the ground plane on would have pushed the shared fold/affine
@@ -356,6 +380,43 @@ bytes, measured "what the driver gets": affine 29194B (+187), lens 28958B
 escape+balloon 62707B (+317), bulb 39569B (+408). Every arm still stays
 far under the 82.2KB crash cliff and no variant's strip/no-strip decision
 moved.
+
+fr-j85n's balloon tint — `uBalloonTint`/`uBalloonTintStrength` declared
+inside the arm, the `shell` out-param, and the base-albedo mix — cost
+every BALLOON-carrying variant a fixed amount and every other variant
+nothing, measured "what the driver gets" against the prior HEAD (d13264a):
+3D balloon 30555B -> 30743B (+188), 3D balloon+lens 30371B -> 30559B
+(+188), 3D escape+balloon 62707B -> 63913B (+1206), 4D balloon 17086B ->
+17274B (+188). Every non-balloon variant is unchanged: 3D plain 29194B, 3D
+lens 28958B, 3D escape 56105B, 3D bulb 39569B, 3D plane 31531B, 4D plain
+62804B, 4D plane 18159B.
+
+The +188/+1206 split is the strip threshold, not the change itself. 3D
+plain, 3D balloon, 3D balloon+lens and 4D balloon are all STRIPPED
+(comments gone), so their resolved source gained only the ~188B of LIVE
+TOKENS the change adds; 3D escape, 3D escape+balloon, 3D bulb and 4D plain
+stay UNSTRIPPED (comments kept), so 3D escape+balloon — the one
+balloon-carrying variant in that group — carries the new code's comments
+too, the whole +1206.
+
+That reading is measured, not inferred: 4D balloon's RAW pre-strip source
+went 68176B -> 69399B, **+1223B** — the same ~1.2KB of source the
+unstripped escape+balloon pairing shows as +1206. The change costs every
+balloon-carrying arm the same ~1.2KB of text; the strip is simply
+deleting most of it again wherever it engages, leaving the ~188B of live
+tokens behind. (`surface-material-4d.ts`'s own pinned raw/stripped figure
+above `surface4FragmentFor` carries that pair.)
+
+That leaves 3D escape+balloon as the pairing to watch, per this doc's own
+MEASURE-BEFORE-ADDING-THE-NEXT-PARAGRAPH rule: it now sits at 63913B,
+1623B under the 65,536B (64KB) `SURFACE_GLSL_STRIP_BYTES` threshold.
+Crossing it is NOT a cliff — the threshold is only where the STRIP
+engages, and a stripped source runs a fraction of its raw size (the
+descent-family variants measured earlier in this section stripped from
+~83-92KB raw down to ~28-31KB, roughly a third) — the Mesa cliff is ~80KB
+and stripping is what keeps every variant far below it. And it is a
+MEASUREMENT pairing only: balloon is IFS-only (fr-5wlv.4), so no shipped
+session ever compiles this source.
 
 ## The probe-width verdict
 

@@ -492,6 +492,72 @@ rays arm) reads the new fields through the same `ShadeParams` binding as
 `bgOffset`/`bgExtent` — no core-specific change, since the shade entry's
 `imageUv`/`bg` computation is shared text across all seven cores.
 
+## Balloon echo tint (fr-j85n)
+
+`ShadeParams` grows a `vec3f` + `f32` — `balloonTint` at offset 208,
+`balloonTintStrength` at 220 — `SURFACE_GPU_SHADE_BYTES` 208 -> 224, and
+this time with NO tail pad: 220 + 4 = 224 is already a multiple of the
+struct's 16-byte alignment. fr-h3mp's own rounding (192 + 4 = 196, rounded
+up to the 16-byte multiple 208) left a 196..207 pad behind `bgShape`'s
+trailing `u32`, and the fr-ehcj precedent above is filling a pad IN PLACE
+rather than growing the struct — but a `vec3f`'s `AlignOf` is 16, and
+196 % 16 != 0, so that trick does not repeat here: the pair has to land at
+the next 16-aligned offset instead. It rides `ShadeParams` and not the
+frozen balloon DE params block — 288/320/336 in 3D, 464/576/608/624 in 4D
+— because it LIGHTS a hit rather than moving geometry: the march reads
+only the DE params block and never touches `ShadeParams`, so a tint living
+there would be invisible to every mode but `shade`.
+
+A balloon-only `shell: f32` member joins `SurfaceHitInfo` right beside
+`colorPos`, added by the same balloon-only branch that already emits it.
+WGSL value constructors are all-or-none, so every core's own full-member
+constructor grows a matching zero
+(`SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0, vec3f(0.0), 0.0)`) — and a zeroed
+`shell` reads as the FRACTAL term, the safe direction: an untinted hit.
+Only `surfaceDEHitInfo`'s balloon wrapper writes a live value, mirroring
+the oracle's own `BalloonDistance.shell` attribution — 1.0 when the echo
+term wins the argmin STRICTLY (`dS < dF`) and 0.0 otherwise, so a tie goes
+to the fractal exactly as the CPU convention does:
+
+```
+if (dS < dF) {
+  var hi = surfaceDEHitInfoFractal(inv.xyz, li);
+  hi.colorPos = inv.xyz;
+  hi.shell = 1.0;
+  return hi;
+}
+var hi = surfaceDEHitInfoFractal(p, li);
+hi.colorPos = p;
+hi.shell = 0.0;
+return hi;
+```
+
+The shade entry mixes at the base-albedo site — right after the color
+source resolves `base` (map / trap / height / radius / rings / sheets) and
+before the normal is even sampled, so before the sRGB decode and the
+lighting product: `base = mix(base, shade.balloonTint,
+shade.balloonTintStrength * hi.shell)`. That ordering is the same rule
+fr-ehcj's `envTint` states above — the shell still shades as geometry (its
+normal/shadow/AO taps read the same DE), and specular stays untinted,
+added to the lit product after the fact rather than multiplied through.
+Strength 0 — the packer's default and the document's absent-field value —
+is `mix(x, y, 0.0)` = x exactly: today's frame byte for byte, and
+`hi.shell` restricts the mix to the echo term alone, so a fractal-term hit
+inside a balloon scene is untouched at any strength.
+
+A `balloon: false` kernel emits NOTHING new but the two unconditional
+`ShadeParams` members — `packSurfaceGpuShade` defaults both to the
+identity ([0, 0, 0] and 0) when omitted, exactly like `envStrength` and
+`fogTintStrength` before them — since no non-balloon core declares
+`hi.shell` and nothing outside a balloon shade entry ever reads
+`shade.balloonTint`/`shade.balloonTintStrength`. Both dimensions reach it
+from ONE emission: the shade entry's color-resolve block is shared text
+across all seven cores, so the mix and the `shell` member cost the 4D
+cores nothing beyond what the 3D ones already pay — the packer was already
+shared across dimensions before this bead. And NO FORWARD KIND EVER
+BALLOONS: `core:"escape"`/`"bulb"`/`"escape4"` all throw on `balloon: true`
+(fr-5wlv.4's exclusion), so those three cores carry none of this.
+
 ## Modes
 
 `eval` (per-query distances) and `march` (bounded-dispatch ray march,
