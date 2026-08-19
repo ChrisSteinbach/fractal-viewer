@@ -1248,7 +1248,29 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     ~`SURFACE_STRIP_FENCE_GROUP_MS` of predicted work; batch measurements
     SUBTRACT the tax to price MARGINAL trace work (leaving it in was a
     vicious cycle — inflated evidence, tighter caps, more strips, more
-    tax); strips of a row or more row-snap to a single scissor rect (a
+    tax); THE FLAT SUBTRACTION WAS NOT ENOUGH, and fr-ado7 is the
+    correction — a single ms/px number absorbs whatever fixed cost the
+    constant under-states, so at a frame whose true per-pixel cost is near
+    zero the estimator read 500-1700ms batches of 1-6 px as genuine
+    per-pixel cost, shrank, and could not grow back (recovery needs a
+    measurement under `STRIP_TARGET_MS`, which fixed overhead alone
+    forbids): a ONE-WAY RATCHET into a 1px absorbing state, measured
+    frozen at 59% past 480s. The planner now carries the COMPUTE arm's
+    two-term model (`surface-compute.ts`'s `ShadeHitCost`, fr-2ojg, whose
+    own one-workgroup-floor comment describes this bug as its own pre-fix
+    design): `interceptMs` + `px * marginalMsPerPx`, each measurement's
+    surprise split BY WIDTH so a narrow batch charges the INTERCEPT,
+    sizing off the marginal alone, the marginal's RISE rate-limited (the
+    direction that shrinks strips — compute limits its FALL, for the
+    opposite reason, so the direction is reasoned and not copied), and a
+    sane-unit floor `STRIP_MIN_PX` instead of one pixel. THE CLAMP ORDER
+    IS SAFETY-CRITICAL: model, growth cap, floor, then
+    `STRIP_WORST_CASE_CAP_MS` LAST — wherever floor and cap disagree the
+    CAP WINS, because an unbounded strip draw is fr-096u's
+    kernel-confirmed i915 preemption hang. The set of sizes a strip may
+    take is unchanged; only the choice within it moved. DO NOT tune the
+    tax constant instead — that only moves where the same ratchet engages;
+    strips of a row or more row-snap to a single scissor rect (a
     per-DRAW fixed cost tripled under 3-rect strips); and the canvas blit
     rides PRESENT-ON-DRAIN gaps (presents share the strips' GL queue). The
     pipelined refill bounds its in-flight queue at a queue price on
