@@ -9,7 +9,7 @@ import type { FoldRadii } from "./variations";
 import { clamp } from "./vec";
 
 /**
- * The 4D lift of the seventeen nonlinear variation functions (fr-hy8), the fourth
+ * The 4D lift of the seventeen nonlinear variation functions, the fourth
  * dimension raised over `variations.ts` by the SAME convention that file already
  * documents for its 2D → 3D lift — read that header first. One dimension up:
  *
@@ -20,16 +20,16 @@ import { clamp } from "./vec";
  *   - **Radial warps** (`spherical`, `bubble`) and `swirl` use the full 4-D
  *     radius `x²+y²+z²+w²`, so `w` genuinely participates; where the 3D code
  *     scales `z` by a radial factor, the 4D code scales `w` by that same factor.
- *   - **Fold warps** (`boxfold`, `spherefold`, `mandelbox` — fr-p7nu) treat `w`
- *     exactly like the spatial axes: the box fold reflects all four axes and
- *     the sphere fold inverts through the full 4-D radius.
+ *   - **Fold warps** (`boxfold`, `spherefold`, `mandelbox`) treat `w` exactly
+ *     like the spatial axes: the box fold reflects all four axes and the
+ *     sphere fold inverts through the full 4-D radius.
  *   - `sinusoidal` folds each of the four axes through a sine; `linear` is the
  *     identity.
- *   - `qsquare` (fr-7u8t.3) is the only entry whose 4D form is the DEFINITION
- *     and whose 3D form is the restriction — the quaternions are natively 4D.
- *     `bulb` (fr-7u8t.7) is the opposite extreme: triplex numbers have no 4D
- *     structure at all, so it warps `x, y, z` and carries `w` through, the
- *     angular warps' treatment of an axis their formula never mentions.
+ *   - `qsquare` is the only entry whose 4D form is the DEFINITION and whose
+ *     3D form is the restriction — the quaternions are natively 4D. `bulb`
+ *     is the opposite extreme: triplex numbers have no 4D structure at all,
+ *     so it warps `x, y, z` and carries `w` through, the angular warps'
+ *     treatment of an axis their formula never mentions.
  *
  * ## The anchor property (the heart of the embed — see `embedTransform3`)
  *
@@ -309,8 +309,8 @@ const VARIATIONS4: Record<VariationType, VariationFn4> = {
 /**
  * A transform's blended 4D variation map, ready to apply to its affine output.
  * The returned `Vec4` is OWNED BY THE CLOSURE and overwritten in place on
- * every call (fr-7smh), mirroring `variations.ts`'s `VariationBlend` — valid
- * only until the next call on this SAME blend.
+ * every call, mirroring `variations.ts`'s `VariationBlend` — valid only
+ * until the next call on this SAME blend.
  */
 export type VariationBlend4 = (
   x: number,
@@ -328,7 +328,7 @@ export type VariationBlend4 = (
  * systems byte-for-byte identical (no RNG draw, no code-path change) to before
  * variations existed. Mirrors `variations.ts`'s `composeVariations` exactly, one
  * dimension up — the parallel fn/weight arrays and the reused result array
- * (fr-7smh) included.
+ * included.
  *
  * The blend is the weighted sum `Σ weight · V(type)` (flame semantics — weights
  * are free strengths, never normalised), evaluated left to right so a stochastic

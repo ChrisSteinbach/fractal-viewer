@@ -1,6 +1,6 @@
 /**
- * Quaternion Julia render (fr-7u8t): the distance-estimated escape-time set
- * of `q <- q² + c` in the quaternions — the original 3D fractal DE result
+ * Quaternion Julia render: the distance-estimated escape-time set of
+ * `q <- q² + c` in the quaternions — the original 3D fractal DE result
  * (Hart/Sandin/Kauffman, SIGGRAPH 1989) — for exactly the systems whose one
  * map is a pure quaternion square.
  *
@@ -17,7 +17,7 @@
  * writing `psi(q) = q + c`, `psi . F . psi⁻¹ (q) = q² + c`. So the authored
  * transform's TRANSLATION is the Julia constant, the rendered set is the
  * classic set translated by `-c`, and no second document format is needed —
- * the fr-kltj scoping decision one object over.
+ * the escape-time fold render's scoping decision one object over.
  *
  * That conjugacy is not decoration; it is what the estimator iterates. Set
  * `y_n = M v_n + t` (the point actually being squared). Then
@@ -75,18 +75,18 @@
  *     queries each, at three values of c including one with a real fourth
  *     component: 0.00% overshoot at every scale, 1.0 included. The fold
  *     path's damping (`escape-de.ts`'s `ESCAPE_STEP_SCALE`, measured down
- *     to 0.35 by fr-7u8t.8) is not needed here,
- *     which is the conformality above showing up in the marcher.
+ *     to 0.35) is not needed here, which is the conformality above showing
+ *     up in the marcher.
  * Together that is roughly 15x cheaper per ray than the escape-time fold
  * mode. `qjulia-de.test.ts` keeps both claims honest.
  *
- * WHERE THE OBJECT ENDED UP (fr-j231), because the verdict above is not
- * the last word and this module should say so in its own voice. The
- * measurement that closed fr-7u8t.5 was about the quaternion square
- * ALONE — twenty panels of shells and whorls with nothing to resolve —
- * and `escape-de.ts`'s formula chain does not iterate it alone. A chain
- * LINK is admitted beside a fold, the map rides the escape core, and it
- * needs neither its own kernel nor its own 4D lift; the shipped
+ * WHERE THE OBJECT ENDED UP, because the verdict above is not the last
+ * word and this module should say so in its own voice. The measurement
+ * that refused this object a renderer of its own was about the quaternion
+ * square ALONE — twenty panels of shells and whorls with nothing to
+ * resolve — and `escape-de.ts`'s formula chain does not iterate it alone.
+ * A chain LINK is admitted beside a fold, the map rides the escape core,
+ * and it needs neither its own kernel nor its own 4D lift; the shipped
  * `hybridChainQuaternion` preset is that composition, and it resolves.
  * So the object that is dull alone earns its place composed with a fold,
  * which is the outcome this module's own doc was holding a place for.
@@ -140,8 +140,8 @@ export const QJULIA_BAILOUT_FLOOR = 4;
  * doc's step-scale sweep measured 0.00% overshoot at full step length
  * across three values of `c`. Exported as a named constant anyway so that
  * IF a mirror is ever written it imports the one definition rather than
- * inlining a literal, as the fold path does. NONE EXISTS: fr-7u8t.5 is
- * closed won't-do — see the module doc's standing note.
+ * inlining a literal, as the fold path does. NONE EXISTS: a renderer of
+ * this object's own is refused — see the module doc's standing note.
  */
 export const QJULIA_STEP_SCALE = 1;
 
@@ -156,8 +156,9 @@ export interface QJuliaEligibility {
 
 /** Everything a quaternion Julia marcher WOULD need — the uniform/params
  * wire format, mirroring {@link estimateQJuliaDistance}. No marcher reads
- * it, and none is planned (fr-7u8t.5, closed won't-do); the shape is here
- * because it is the wire the measurement was taken through. */
+ * it, and none is planned (a renderer of its own is refused by
+ * measurement); the shape is here because it is the wire the measurement
+ * was taken through. */
 export interface QJuliaDE {
   /** Row-major 4x4 FORWARD linear part `M` of the map. */
   m: number[];
@@ -203,10 +204,9 @@ function pureQSquareVariation(t: Transform): Variation | null {
  * quaternion-Julia estimator applies (that needs a lone, pure map, per
  * {@link analyzeQJuliaSystem}), only whether `surface-de.ts`'s ordinary
  * "uses variations" surface-eligibility refusal is about to describe a
- * qsquare map without saying so. fr-zi3c's fix (`main.ts`'s eligibility
- * refresh) calls this to append a clarifying clause to that refusal —
- * deliberately not a renderer; see the module doc's standing note on
- * fr-7u8t.5.
+ * qsquare map without saying so. `main.ts`'s eligibility refresh calls
+ * this to append a clarifying clause to that refusal — deliberately not a
+ * renderer; see the module doc's standing note on the refusal.
  */
 export function systemHasActiveQSquare(
   transforms: Transform[],
@@ -287,9 +287,9 @@ function escapeRadius(sigmaMin: number, tLen: number): number {
  * Precompute the {@link QJuliaDE} for an eligible system. Throws on an
  * ineligible one ({@link analyzeQJuliaSystem}) — the contract the fold and
  * bulb builders keep, where the app gates first and reaching the throw is
- * a bug. There is no app caller (fr-7u8t.5, closed won't-do), so the throw
- * is the only gate; the harnesses call {@link analyzeQJuliaSystem} first
- * exactly as a routing arm would.
+ * a bug. There is no app caller — a renderer of this object's own is
+ * refused — so the throw is the only gate; the harnesses call
+ * {@link analyzeQJuliaSystem} first exactly as a routing arm would.
  */
 export function buildQJuliaDE(
   transforms: Transform[],
@@ -327,12 +327,12 @@ export function buildQJuliaDE(
  * The quaternion Julia distance estimate (module doc) — the f64 oracle a
  * GLSL variant and WGSL core WOULD mirror line for line, under the
  * `flame-gpu.ts` discipline the rest of this family follows. Neither
- * exists, and neither will: fr-7u8t.5 is closed won't-do, refused by
- * measurement (module doc). What DOES consume this module is fr-j231,
- * which takes the exact `2|q|` derivative below for a chain LINK.
- * `maxIterations` exists
- * for the preview tier's depth clamp, through the same door the fold
- * descents use; callers wanting the full estimate pass nothing.
+ * exists, and neither will: a renderer of this object's own is refused by
+ * measurement (module doc). What DOES consume this module is the
+ * escape-time CHAIN, which takes the exact `2|q|` derivative below for a
+ * chain LINK. `maxIterations` exists for the preview tier's depth clamp,
+ * through the same door the fold descents use; callers wanting the full
+ * estimate pass nothing.
  */
 export function estimateQJuliaDistance(
   de: QJuliaDE,

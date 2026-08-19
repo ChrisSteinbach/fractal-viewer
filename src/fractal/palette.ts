@@ -1,6 +1,6 @@
 /**
- * Smooth cosine gradient palettes for structural coloring (fr-6us), shared by
- * the flame renderer and the solid/voxel renderer (fr-1kt). Inigo Quilez's
+ * Smooth cosine gradient palettes for structural coloring, shared by
+ * the flame renderer and the solid/voxel renderer. Inigo Quilez's
  * cosine-gradient formula — one continuous curve per RGB channel:
  *
  *   channel(t) = clamp01(a + b * cos(2π (c * t + d)))
@@ -21,7 +21,7 @@
  * ({@link buildPaletteLUT}) and each renderer's hot loop indexes it per
  * iteration.
  *
- * **Custom palettes (fr-55k)**: alongside the built-in cosine gradients, a
+ * **Custom palettes**: alongside the built-in cosine gradients, a
  * user can author their own gradient as {@link MIN_CUSTOM_PALETTE_STOPS}–
  * {@link MAX_CUSTOM_PALETTE_STOPS} sRGB {@link RgbStop}s
  * ({@link CustomPalette}), evenly spaced across `t ∈ [0, 1]` and sampled
@@ -53,7 +53,7 @@ interface CosinePalette {
 }
 
 /**
- * One color stop in a user-authored gradient (fr-55k): an sRGB triple with
+ * One color stop in a user-authored gradient: an sRGB triple with
  * each channel in `[0, 1]`, the same convention `color.ts` and the rest of
  * this module use. Distinct from {@link Triple}, which holds cosine
  * *coefficients*, not colors.
@@ -61,7 +61,7 @@ interface CosinePalette {
 export type RgbStop = readonly [number, number, number];
 
 /**
- * A user-authored gradient palette (fr-55k):
+ * A user-authored gradient palette:
  * {@link MIN_CUSTOM_PALETTE_STOPS}–{@link MAX_CUSTOM_PALETTE_STOPS}
  * {@link RgbStop}s, evenly spaced across `t ∈ [0, 1]` (stop `j` sits at
  * `t = j / (stops.length - 1)`) and sampled piecewise-linearly by
@@ -148,7 +148,7 @@ export const FLAME_PALETTE_IDS = Object.keys(
 
 /**
  * The sentinel {@link PaletteSelection} value meaning "use the custom
- * gradient" (fr-55k). Deliberately not a key of {@link FLAME_PALETTES} — see
+ * gradient". Deliberately not a key of {@link FLAME_PALETTES} — see
  * the module doc.
  */
 export const CUSTOM_PALETTE_ID = "custom";
@@ -202,7 +202,7 @@ function cosineChannel(
 /**
  * Byte-quantize a channel to the nearest of 256 values (`round(v * 255) /
  * 255`), so a sampled color survives the gradient editor's
- * `<input type="color">` (`#rrggbb`) round-trip exactly (fr-55k; see
+ * `<input type="color">` (`#rrggbb`) round-trip exactly (see
  * {@link seedCustomStops}).
  */
 function quantizeByte(v: number): number {
@@ -211,7 +211,7 @@ function quantizeByte(v: number): number {
 
 /**
  * Render one {@link CosinePalette}'s gradient into a flat `256 * 3` LUT.
- * Factored out of {@link buildPaletteLUT} (fr-55k) so {@link seedCustomStops}
+ * Factored out of {@link buildPaletteLUT} so {@link seedCustomStops}
  * can build `"spectrum"`'s LUT directly — as a statically non-null
  * {@link CosinePalette}, not a {@link FlamePaletteId} lookup that could in
  * principle be `"legacy"` — when it needs a guaranteed-non-null fallback.
@@ -231,7 +231,7 @@ function buildGradientLUT(palette: CosinePalette): Float32Array {
 
 /**
  * Render a {@link CustomPalette}'s gradient into a flat `256 * 3` LUT,
- * sampling its stops piecewise-linearly (fr-55k). For entry `i`:
+ * sampling its stops piecewise-linearly. For entry `i`:
  * `t = i / 255` rescales onto the stop-index space as
  * `scaled = t * (stops.length - 1)`; `k = min(floor(scaled), stops.length -
  * 2)` picks the enclosing segment's lower stop (the `min` clamps the last
@@ -275,7 +275,7 @@ function buildCustomPaletteLUT(palette: CustomPalette): Float32Array {
  * per-sample `Math.cos` (or, for a custom gradient, a per-sample lerp) into a
  * single array read.
  *
- * Accepts a {@link PaletteSpec} (fr-55k). A built-in {@link FlamePaletteId}
+ * Accepts a {@link PaletteSpec}. A built-in {@link FlamePaletteId}
  * behaves exactly as before this feature: `null` for the `"legacy"` id — it
  * has no coordinate gradient (see {@link FLAME_PALETTES}); the caller falls
  * back to the per-transform palette, keeping legacy renders byte-identical —
@@ -293,8 +293,8 @@ export function buildPaletteLUT(palette: PaletteSpec): Float32Array | null {
 /**
  * Turn a {@link PaletteSelection} (what the UI `<select>` / `AppState` hold)
  * into a {@link PaletteSpec} (what {@link buildPaletteLUT} — and,
- * downstream, the render workers' GPU packing — consume) — fr-55k. A
- * built-in id, including `"legacy"`, passes through unchanged. For
+ * downstream, the render workers' GPU packing — consume). A built-in id,
+ * including `"legacy"`, passes through unchanged. For
  * {@link CUSTOM_PALETTE_ID}, returns `custom` when the caller has one;
  * otherwise falls back to a freshly {@link seedCustomStops seeded} gradient
  * rather than `null` or throwing, so this stays a total function. Callers
@@ -313,7 +313,7 @@ export function resolvePalette(
 
 /**
  * The starter stops shown when a user first switches a palette `<select>` to
- * Custom (fr-55k): a {@link CUSTOM_PALETTE_SEED_STOPS}-stop, tweakable copy
+ * Custom: a {@link CUSTOM_PALETTE_SEED_STOPS}-stop, tweakable copy
  * of the gradient they were just looking at, rather than an arbitrary
  * default. `from` resolves to a source id first — `"custom"` itself (e.g.
  * re-seeding) maps to `"spectrum"`, the same gradient fresh sessions default
@@ -348,7 +348,7 @@ export function seedCustomStops(from: PaletteSelection): RgbStop[] {
 
 /**
  * Encode an {@link RgbStop} as a lowercase `#rrggbb` string for the gradient
- * editor's `<input type="color">` (fr-55k). Each channel is clamped to
+ * editor's `<input type="color">`. Each channel is clamped to
  * `[0, 1]` before quantizing, matching {@link buildCustomPaletteLUT}'s own
  * clamp, so a stop straying outside range (e.g. from a hand-edited URL hash)
  * still round-trips to a valid color instead of garbage hex digits. Inverse
@@ -364,7 +364,7 @@ export function rgbToHex(stop: RgbStop): string {
 
 /**
  * Parse a `#rrggbb` string (as produced by an `<input type="color">`, or by
- * {@link rgbToHex}) into an {@link RgbStop} — fr-55k. Strict: only exactly
+ * {@link rgbToHex}) into an {@link RgbStop}. Strict: only exactly
  * six hex digits (either case) after a leading `#` are accepted
  * (`/^#[0-9a-fA-F]{6}$/`); anything else — wrong length, `#rgb` shorthand, a
  * stray alpha channel, non-hex characters, a missing `#` — returns `null`

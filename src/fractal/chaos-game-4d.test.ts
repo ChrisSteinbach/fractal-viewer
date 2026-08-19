@@ -28,8 +28,8 @@ import type { IterationRng, Rng } from "./rng";
 import { composeVariations4 } from "./variations4";
 import type { Bounds4, Transform, Transform4, Vec4 } from "./types";
 
-// presets4.ts (the fr-cbg spike's native-Transform4 preset module) was
-// deleted once fr-bf6 unified "4D" into an ordinary Transform's optional `w`
+// presets4.ts (the 4D spike's native-Transform4 preset module) was deleted
+// once "4D" was unified into an ordinary Transform's optional `w`
 // block: `presets.ts`'s `pentatope` + `toTransform4` now produce the
 // bit-identical Transform4[] its old `pentatopeGasket` did (composeAffine4
 // skips the lift's all-zero rotation exactly like an absent one — see
@@ -106,7 +106,7 @@ describe("runChaosGame4 determinism", () => {
     expect(Array.from(a.positions)).not.toEqual(Array.from(b.positions));
   });
 
-  // Golden pin (fr-5b3 seam refactor): exact values captured from the
+  // Golden pin (the prepared-seam refactor): exact values captured from the
   // UNMODIFIED (pre-prepareChaosGame4) implementation. If the seam refactor
   // changes RNG consumption order, this fails — fix the refactor, never these
   // constants.
@@ -428,7 +428,7 @@ describe("prepareChaosGame4", () => {
   });
 });
 
-describe("prepareChaosGame4 flame color resolution (fr-hiyu)", () => {
+describe("prepareChaosGame4 flame color resolution", () => {
   it("resolves an all-absent system to the derived spread and DEFAULT_COLOR_SPEED", () => {
     const prepared = prepareChaosGame4(makeMaps(4));
     expect(Array.from(prepared.colorIndex)).toEqual([0, 1 / 3, 2 / 3, 1]);
@@ -551,7 +551,7 @@ describe("stepOrbit4", () => {
   });
 });
 
-describe("prepareChaosGame4 / stepOrbit4 with symmetry (fr-q0h6)", () => {
+describe("prepareChaosGame4 / stepOrbit4 with symmetry", () => {
   function fixedRng(value: number) {
     return () => value;
   }
@@ -697,7 +697,7 @@ describe("prepareChaosGame4 / stepOrbit4 with symmetry (fr-q0h6)", () => {
   });
 });
 
-describe("runChaosGame4 with symmetry (fr-q0h6)", () => {
+describe("runChaosGame4 with symmetry", () => {
   // An attractor pinned strictly to +x, so a kaleidoscope in the xy plane
   // spreads it into as many angular sectors as it has copies — and the share
   // of points per sector reads the copies' selection share directly.
@@ -807,7 +807,7 @@ describe("runChaosGame4 with symmetry (fr-q0h6)", () => {
   });
 });
 
-describe("runChaosGame4 vs. runChaosGame under a w-free kaleidoscope (fr-q0h6 continuity)", () => {
+describe("runChaosGame4 vs. runChaosGame under a w-free kaleidoscope (continuity)", () => {
   // Pure translate + scale: no rotation, no shear, no variation. That is what
   // makes the two paths comparable ENTRY FOR ENTRY rather than to within a
   // few ulps — `composeAffine4` builds its 3x3 block from `rotationMatrix4`'s
@@ -1179,7 +1179,7 @@ describe("runChaosGame4 vs. stepOrbit4/plotPoint4 (allocation-free oracle)", () 
   });
 });
 
-describe("iteration-local randomness isolation (fr-2wfw, 4D twin)", () => {
+describe("iteration-local randomness isolation (4D twin)", () => {
   // The 3D gauntlet fixture from chaos-game.test.ts lifted through
   // toTransform4 — a weighted map (weighted pick path), a `julia`-carrying
   // map (stochastic draws), and a `spherical`-carrying map that diverges

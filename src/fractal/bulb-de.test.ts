@@ -438,7 +438,7 @@ describe("triplexPow8", () => {
   });
 });
 
-describe("the Mandelbulb presets (fr-tdin)", () => {
+describe("the Mandelbulb presets", () => {
   // These three exist to make the mode reachable, and they reach it only by
   // being refused by BOTH other surface gates: the IFS descent (which has no
   // inverse branch for a triplex power) and the escape-time fold gate (which
@@ -460,9 +460,9 @@ describe("the Mandelbulb presets (fr-tdin)", () => {
   });
 
   it("renders three NON-EMPTY sets", () => {
-    // A preset that renders nothing is worse than no preset (fr-7u8t.8's
-    // lesson). Fill measured in each system's own marching ball, which is
-    // per-system here rather than a shared constant.
+    // A preset that renders nothing is worse than no preset. Fill
+    // measured in each system's own marching ball, which is per-system
+    // here rather than a shared constant.
     for (const transforms of [
       mandelbulbClassic(),
       mandelbulbOffset(),

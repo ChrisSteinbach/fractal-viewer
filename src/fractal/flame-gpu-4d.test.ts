@@ -179,7 +179,7 @@ describe("packGpuSystem4 slot layout (byte-layout pinning)", () => {
     expect(u32[VAR_COUNT]).toBe(0);
     // All 16 storage lanes (15 used variation types + 1 spare), not just the
     // old 12 — a zero-fill regression in the unused 16th lane, or in lanes
-    // 12-14 (the fr-p7nu fold family), must fail here.
+    // 12-14 (the Mandelbox fold family), must fail here.
     for (let v = 0; v < 16; v++) {
       expect(f32[VAR_WEIGHTS + v]).toBe(0);
       expect(u32[VAR_TYPES + v]).toBe(0);
@@ -275,7 +275,7 @@ describe("packGpuSystem4 variation filtering", () => {
   });
 });
 
-describe("packGpuSystem4 fold radii (fr-s9ll)", () => {
+describe("packGpuSystem4 fold radii", () => {
   /** Element index of fold `i`'s lane in slot 0 — the module's own
    * SLOT4_FOLD_RADII at 84, restated as a literal for the same reason the
    * rest of this file restates offsets. */
@@ -352,7 +352,7 @@ describe("packGpuSystem4 parity with prepareChaosGame4", () => {
 
   it("resolves every slot's color pair to the value prepareChaosGame4 resolved for that transform", () => {
     // Mixed on purpose — authored pair, speed only, neither — so the
-    // fallbacks run on BOTH sides. The anti-drift pin (fr-hiyu): pack through
+    // fallbacks run on BOTH sides. The anti-drift pin: pack through
     // the same derivedColorIndex/DEFAULT_COLOR_SPEED definitions the CPU
     // oracle's PreparedChaosGame4 uses, or a 4D flame colors differently on
     // GPU than on CPU.
@@ -385,7 +385,7 @@ describe("packGpuSystem4 parity with prepareChaosGame4", () => {
   });
 });
 
-describe("packGpuSystem4 symmetry expansion (fr-q0h6)", () => {
+describe("packGpuSystem4 symmetry expansion", () => {
   /** Two visibly distinct base maps, so a slot that took the wrong base
    * transform's affine is obvious from row 0 alone. */
   function twoBaseMaps(): Transform4[] {
@@ -642,7 +642,7 @@ describe("packGpuSystem4 colors", () => {
 });
 
 // ---------------------------------------------------------------------------
-// fr-hiyu: the per-transform palette index + color speed the kernel's
+// The per-transform palette index + color speed the kernel's
 // structural walk blends with, packed per slot (the 3D twin's own color-slot
 // block, minus the kaleidoscope replication 4D has no copies for).
 // ---------------------------------------------------------------------------
@@ -675,7 +675,8 @@ describe("packGpuSystem4 color slots", () => {
   it("falls back to the even i/(n-1) spread and the 0.5 halfway speed when a transform authors neither", () => {
     // Three maps with no color fields: derivedColorIndex spreads them 0, 0.5,
     // 1 across the gradient and every speed is DEFAULT_COLOR_SPEED — the
-    // behavior the kernel hard-coded before fr-hiyu. Keyed on the RAW
+    // behavior the kernel hard-coded before those fields existed. Keyed on
+    // the RAW
     // transform count: 4D has no symmetry copies to collapse.
     const f32 = new Float32Array(
       packGpuSystem4(baseSpec4({ transforms4: makeTransforms4(3) })).slots,
@@ -885,17 +886,18 @@ describe("packGpuParams4", () => {
     expect(u32[SLICE_ON]).toBe(1);
     expect(f32[SLICE_CENTER]).toBeCloseTo(0.25, 6);
     expect(f32[SLICE_WIDTH]).toBeCloseTo(0.3, 6);
-    // The fr-nn6 remap stays the identity here: VIEW's sliceRelativeColor is
-    // false, so sliceOn alone isn't enough to opt in (see sliceColorRemap).
+    // The slice-relative remap stays the identity here: VIEW's
+    // sliceRelativeColor is false, so sliceOn alone isn't enough to opt in
+    // (see sliceColorRemap).
     expect(f32[SLICE_COLOR_SHIFT]).toBe(0);
     expect(f32[SLICE_COLOR_INV_SCALE]).toBe(1);
     // Elements 50-51 are the struct's trailing pad — the two words WGSL's
-    // 16-byte struct alignment still leaves after fr-q0h6's
+    // 16-byte struct alignment still leaves after the kaleidoscope's
     // baseTransformCount took the third.
     for (const pad of [50, 51]) expect(u32[pad]).toBe(0);
   });
 
-  it("packs the slice-relative color remap (fr-nn6) into sliceColorShift/sliceColorInvScale when both the slice and the option are on", () => {
+  it("packs the slice-relative color remap into sliceColorShift/sliceColorInvScale when both the slice and the option are on", () => {
     const buf = packGpuParams4(
       fields4({
         view: {
@@ -1133,12 +1135,12 @@ describe("FLAME_GPU_KERNEL_4D_WGSL", () => {
 });
 
 // ---------------------------------------------------------------------------
-// fr-jnu: the 4D twin of flame-gpu.test.ts's "FLAME_GPU_KERNEL_WGSL
+// The 4D twin of flame-gpu.test.ts's "FLAME_GPU_KERNEL_WGSL
 // variation switch" block. The exact case numbering (linear: 0, sinusoidal:
 // 1, ...) is pinned ONCE, in that file — this file doesn't repeat the
 // literal because the 4D kernel is hand-written against the SAME
 // KERNEL_VARIATION_INDEX table, imported from flame-gpu.ts rather than kept
-// as a 4D-local copy (fr-e26; see this module's own doc comment). What these
+// as a 4D-local copy (see this module's own doc comment). What these
 // tests check is that the 4D kernel's switch actually matches that shared
 // table — the same silent-`linear`-fallback failure mode as the 3D kernel
 // if it doesn't.

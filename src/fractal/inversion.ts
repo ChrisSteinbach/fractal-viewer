@@ -1,25 +1,26 @@
 /**
  * Sphere inversion, and the one thing about it that is not mechanical:
- * WHAT IT DOES TO A BOUNDED REGION (fr-v7ca).
+ * WHAT IT DOES TO A BOUNDED REGION.
  *
  * Two features in this codebase push an uncertainty region through the same
  * map and would otherwise derive the same identity twice — the failure mode
  * `variations4.ts` avoids by importing `resolveFoldRadii` rather than
- * restating it, and the reason fr-v7ca and fr-qxxw agreed in writing that
- * "whichever lands first should EXPORT the helper":
+ * restating it, and the reason the two agreed in writing that "whichever
+ * lands first should EXPORT the helper":
  *
- *   - `surface-de-4d.ts`'s spherefold MID branch, where the fr-wa6o slab's
- *     SEGMENT crosses an inversion. A segment goes to a circular ARC there,
- *     and min-radius-over-chord is not min-radius-over-arc in either
- *     direction, so the segment certificate stops being a lower bound —
- *     unsound, not merely loose, which is what `slabExact4` refused. A BALL
- *     survives the crossing exactly, so the chain state carries a ball's
- *     worth of slack across it and re-emerges with a segment of zero length.
+ *   - `surface-de-4d.ts`'s spherefold MID branch, where the 4D
+ *     slice-thickness slab's SEGMENT crosses an inversion. A segment goes
+ *     to a circular ARC there, and min-radius-over-chord is not
+ *     min-radius-over-arc in either direction, so the segment certificate
+ *     stops being a lower bound — unsound, not merely loose, which is what
+ *     `slabExact4` refused. A BALL survives the crossing exactly, so the
+ *     chain state carries a ball's worth of slack across it and re-emerges
+ *     with a segment of zero length.
  *   - `balloon-de.ts`'s inverted-union echo, whose DE IS an inversion. Its
- *     shipped 4D lift (fr-qxxw) did NOT need this, because slice-then-invert
- *     keeps the inversion three-dimensional and a slab rides both terms
- *     untouched — but a future arm that transports a region through the echo
- *     wants this identity and not a second derivation of it.
+ *     shipped 4D lift did NOT need this, because slice-then-invert keeps
+ *     the inversion three-dimensional and a slab rides both terms
+ *     untouched — but a future arm that transports a region through the
+ *     echo wants this identity and not a second derivation of it.
  *
  * THE IDENTITY. Inversion through the sphere of radius `R` about the origin,
  * `u -> R² u / |u|²`, is a Möbius transformation, and Möbius transformations

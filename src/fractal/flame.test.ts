@@ -402,7 +402,7 @@ describe("accumulateFlame vs. stepOrbit/plotPoint (correctness oracle)", () => {
   });
 });
 
-describe("accumulateFlame escape-reseed (fr-h22c)", () => {
+describe("accumulateFlame escape-reseed", () => {
   it("reseeds every iteration when the map always lands past ESCAPE_LIMIT, keeping the histogram finite and resetting the color coordinate to 0.5", () => {
     // Every oracle above is built from a contracting system that never
     // escapes, so none of them walks flame.ts's inlined reseed branch
@@ -452,7 +452,7 @@ describe("accumulateFlame escape-reseed (fr-h22c)", () => {
   });
 });
 
-describe("accumulateFlame structural coloring (colorLUT, fr-6us)", () => {
+describe("accumulateFlame structural coloring (colorLUT)", () => {
   it("matches a reference loop that tracks the color coordinate the same way", () => {
     // The colorLUT counterpart to the oracle above: the color coordinate `c`
     // rides the orbit (init 0.5, blended halfway toward the picked transform's
@@ -631,7 +631,7 @@ describe("accumulateFlame structural coloring (colorLUT, fr-6us)", () => {
   });
 });
 
-describe("accumulateFlame structural coloring: per-transform colorIndex/colorSpeed (fr-hiyu)", () => {
+describe("accumulateFlame structural coloring: per-transform colorIndex/colorSpeed", () => {
   it("pins an all-absent render exactly identical to the same system with every derived default authored explicitly", () => {
     const base = sierpinskiTetrahedron();
     const n = base.length;
@@ -891,7 +891,7 @@ function tonemapFlameNeutralOracle(
   return out;
 }
 
-describe("accumulateFlame with symmetry (fr-6im)", () => {
+describe("accumulateFlame with symmetry", () => {
   it("matches the stepOrbit/plotPoint oracle when the prepared system has rotated copies", () => {
     // Same shape as "accumulateFlame vs. stepOrbit/plotPoint" above, but
     // `prepared` is built with rotated copies: stepOrbit already rotates a
@@ -1774,7 +1774,7 @@ describe("adaptiveDownsampleFlame", () => {
     expect(sparseOut.hits[bucket] / 5).toBeLessThan(0.5);
   });
 
-  it("keeps a well-sampled cell sharp regardless of how hot the image's peak is elsewhere (fr-rq6)", () => {
+  it("keeps a well-sampled cell sharp regardless of how hot the image's peak is elsewhere", () => {
     // The bug this pins against: the original mapping normalized a cell's
     // density against the histogram's PEAK on a log scale, so a
     // well-converged 1000-hit cell sitting in an image whose hottest bucket
@@ -2002,7 +2002,7 @@ describe("adaptiveDownsampleFlame", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Reused `out` histograms (fr-96i): both downsample flavors can write into a
+// Reused `out` histograms: both downsample flavors can write into a
 // caller-provided target — the seam that lets the flame worker downsample
 // straight into SharedArrayBuffer-backed buckets (and reuse one local
 // histogram across progressive ticks in transfer mode). The contract under
@@ -2100,7 +2100,7 @@ describe("adaptiveDownsampleFlame into a reused out histogram", () => {
     // whose entire (even widest-radius) footprint holds no hits take the
     // empty-footprint fast path, which must still WRITE its zeros — a
     // reused dirty target would otherwise leak stale garbage exactly where
-    // the skip saved the gather (see fr-rq6's occupancy skip).
+    // the skip saved the gather (see the occupancy skip).
     const size = 96; // several occupancy tiles across, so far cells' tile queries are genuinely empty.
     const source = createFlameHistogram(size, size);
     source.hits[0] = 500; // top-left corner.

@@ -143,10 +143,10 @@ export function composeFlameProjection4(
 }
 
 /**
- * The ghost-context floor the flame and point-cloud soft w-slices share
- * (fr-6x2): outside the Gaussian slice window a point still contributes this
- * fraction, so the rest of the cloud reads as faint ghost context rather than
- * vanishing. The single source of truth (fr-3o2) for the `0.06` the GLSL point
+ * The ghost-context floor the flame and point-cloud soft w-slices share:
+ * outside the Gaussian slice window a point still contributes this fraction,
+ * so the rest of the cloud reads as faint ghost context rather than
+ * vanishing. The single source of truth for the `0.06` the GLSL point
  * shader (`scene.ts`), the WGSL flame kernel (`flame-gpu-4d.ts`), and
  * `flame-4d.ts`'s CPU accumulator all pass as {@link sliceWeight}'s `floor`.
  *
@@ -158,7 +158,7 @@ export function composeFlameProjection4(
 export const SLICE_GHOST_FLOOR = 0.06;
 
 /**
- * The soft w-slice window (fr-6x2): a Gaussian opacity centered on `center`
+ * The soft w-slice window: a Gaussian opacity centered on `center`
  * with standard-deviation-like `width`, floored at `floor` so the rest of the
  * cloud stays visible as ghost context outside the slice. CPU twin of the
  * GLSL slice in `scene.ts`'s `FOUR_D_VERTEX` (`slice = floor + (1 − floor) *
@@ -177,8 +177,8 @@ export function sliceWeight(
 }
 
 /**
- * The frozen 4D view parameters a render (flame or solid, fr-5b3/fr-4wd) was
- * entered with — moved here from `flame-4d.ts` since it describes projection
+ * The frozen 4D view parameters a render (flame or solid) was entered
+ * with — moved here from `flame-4d.ts` since it describes projection
  * state, not anything specific to the flame accumulator: everything
  * `accumulateFlame4`/`accumulateVoxels4` need to reproduce `scene.ts`'s
  * `FOUR_D_VERTEX` shader's signed-w normalization and soft w-slice, held
@@ -205,14 +205,14 @@ export interface FourDView {
    * plain number (the main thread reads `FOUR_D_SLICE_WIDTH`). */
   sliceWidth: number;
   /** Whether the w-ramp color modes recenter their ramp on the slice window
-   * (fr-nn6) — see {@link sliceColorRemap}. Meaningless (and ignored, via
+   * — see {@link sliceColorRemap}. Meaningless (and ignored, via
    * that function's `sliceOn` gate) while the slice is off. */
   sliceRelativeColor: boolean;
 }
 
 /**
  * How far out into the slice's Gaussian falloff the slice-relative w-ramp
- * (fr-nn6) reaches before saturating: the ramp's full `[-1, 1]` spans
+ * reaches before saturating: the ramp's full `[-1, 1]` spans
  * `±SLICE_COLOR_SPAN` slice-widths around the slice center. 2 puts the
  * palette's saturated ends at the faint outer edge of the visible
  * cross-section (pure Gaussian weight `exp(-2) ≈ 0.135`), so essentially the
@@ -223,7 +223,7 @@ export interface FourDView {
 export const SLICE_COLOR_SPAN = 2;
 
 /**
- * The slice-relative w-ramp recolor (fr-nn6) as an affine remap of the
+ * The slice-relative w-ramp recolor as an affine remap of the
  * normalized signed-w signal `s`: the "wRamp" color paths evaluate their
  * diverging palette at `clamp((s - shift) * invScale, -1, 1)` instead of at
  * `s` itself. With the w-slice on, everything visible sits near `s =

@@ -159,7 +159,7 @@ describe("composeVariations4", () => {
     expect(withDead!(2, 3, 4, 5, Math.random)).toEqual([2, 3, 4, 5]);
   });
 
-  it("a second call reuses the result array with its own values, not the previous call's (fr-7smh)", () => {
+  it("a second call reuses the result array with its own values, not the previous call's", () => {
     // Mirrors variations.test.ts's same-named 3D test, one dimension up —
     // the fourth (w) component is the one a partial reset would most easily
     // miss.
@@ -176,7 +176,7 @@ describe("composeVariations4", () => {
   });
 });
 
-describe("4D fold radii (fr-s9ll)", () => {
+describe("4D fold radii", () => {
   it("boxfold, spherefold and mandelbox render byte-identically in 4D whether the classic radii are absent or spelled out explicitly", () => {
     const points = mulberry32(20260815);
     const blendRng = mulberry32(7);

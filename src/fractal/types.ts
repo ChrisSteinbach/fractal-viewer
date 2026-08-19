@@ -30,26 +30,26 @@ export const VARIATION_TYPES = [
   "spiral",
   "bubble",
   "julia",
-  // The Mandelbox fold family (fr-p7nu) — append-only from here: the GPU
-  // kernels' numeric ids (`KERNEL_VARIATION_INDEX` in `flame-gpu.ts`) follow
-  // this order, so new types go at the END and existing entries never move.
+  // The Mandelbox fold family — append-only from here: the GPU kernels'
+  // numeric ids (`KERNEL_VARIATION_INDEX` in `flame-gpu.ts`) follow this
+  // order, so new types go at the END and existing entries never move.
   "boxfold",
   "spherefold",
   "mandelbox",
-  // The quaternion square (fr-7u8t.3): `x` is the REAL part and `(y, z, w)`
-  // the imaginary basis `(i, j, k)`, which is what makes the w = 0 restriction
+  // The quaternion square: `x` is the REAL part and `(y, z, w)` the
+  // imaginary basis `(i, j, k)`, which is what makes the w = 0 restriction
   // bit-exact — `span{1, i, j}` is closed under squaring, so the 3D and 4D
   // registries agree at `w = 0` like every other entry. Authored with a
   // transform's translation as the Julia constant `c`, this is the map
-  // `qjulia-de.ts`'s oracle estimates. NOTHING MARCHES IT: the renderer is
-  // fr-7u8t.5, CLOSED won't-do — refused by measurement — so authoring a
-  // `qsquare` map and pressing Surface is refused. Since fr-zi3c that
-  // refusal at least NAMES the map, appending a clause to the ordinary
-  // "uses variations" reason. The route that could still reach it is fr-j231,
-  // where the map is a chain LINK rather than an object of its own. It
+  // `qjulia-de.ts`'s oracle estimates. NOTHING MARCHES IT ALONE: a renderer
+  // of its own was refused by measurement, so authoring a `qsquare` map and
+  // pressing Surface is refused — and that refusal at least NAMES the map,
+  // appending a clause to the ordinary "uses variations" reason. What DOES
+  // reach it is the escape-time CHAIN, where the map is a LINK rather than
+  // an object of its own (`escape-de.ts`'s `ESCAPE_LINK_QSQUARE`). It
   // renders as a plain nonlinear warp in every other mode.
   "qsquare",
-  // The White/Nylander triplex 8th power (fr-7u8t.7): the Mandelbulb's map,
+  // The White/Nylander triplex 8th power: the Mandelbulb's map,
   // `(r, θ, φ) ↦ (r⁸, 8θ, 8φ)` in spherical coordinates about the z axis
   // (`variations.ts`'s `triplexPow8`). Parameter-free on purpose — the power
   // is fixed at the iconic 8 and is NOT a document field, so this stays one
@@ -79,12 +79,12 @@ export type VariationType = (typeof VARIATION_TYPES)[number];
  * caps untrusted input at {@link VARIATION_TYPES}`.length`. That
  * makes the type vocabulary itself the bound on a blend's length, which is
  * what lets the GPU flame kernels give a Slot a fixed count of variation
- * lanes (`flame-gpu.ts`'s `MAX_SLOT_VARIATIONS`, fr-qgxi). Readers don't
+ * lanes (`flame-gpu.ts`'s `MAX_SLOT_VARIATIONS`). Readers don't
  * depend on it — a repeated type simply adds, both on the CPU
  * (`composeVariations`) and in the kernels — so it is a budget convention,
  * not a parsing rule.
  *
- * THE FOLD RADII ARE THE FIRST PER-VARIATION PARAMETERS (fr-s9ll), and they
+ * THE FOLD RADII ARE THE FIRST PER-VARIATION PARAMETERS, and they
  * deliberately break the type -> weight mental model above rather than
  * pretending to fit it: `boxLimit` belongs to `boxfold` and `mandelbox`,
  * `minRadius`/`fixedRadius` to `spherefold` and `mandelbox`, and every other
@@ -97,9 +97,9 @@ export type VariationType = (typeof VARIATION_TYPES)[number];
  * that rule is written down; nothing else may re-derive it.
  *
  * WHY THERE ARE THREE AND NOT FOUR. The fold has exactly three lengths, and
- * only TWO dimensionless ratios of them are new shape (fr-qi9c): uniform
- * pre-scale is equivariant through both folds, so scaling all three together
- * is what the transform's own affine part already does. The two that survive
+ * only TWO dimensionless ratios of them are new shape: uniform pre-scale
+ * is equivariant through both folds, so scaling all three together is what
+ * the transform's own affine part already does. The two that survive
  * are the magnification `fixedRadius²/minRadius²` and the ball-vs-box ratio
  * `fixedRadius/boxLimit`. There is no size field, because size is not a
  * parameter.
@@ -144,7 +144,7 @@ export interface Transform {
    */
   weight?: number;
   /**
-   * Optional palette index in `[0, 1]` — flam3's per-xform `color` (fr-hiyu).
+   * Optional palette index in `[0, 1]` — flam3's per-xform `color`.
    * The gradient slot a flame render's structural color coordinate is pulled
    * toward whenever this map is picked (see `flame.ts`'s `accumulateFlame`).
    * Omitted ⇒ DERIVED: `chaos-game.ts`'s `derivedColorIndex` spreads map
@@ -153,8 +153,8 @@ export interface Transform {
    * existed, so an absent value is byte-for-byte the old behaviour. Read by
    * the flame (`flame.ts`/`flame-4d.ts` and their WGSL twins) and the solid
    * voxel grid (`voxel.ts`/`voxel-4d.ts`), the two renders that walk a
-   * structural color coordinate, and — since fr-c6yd — the surface tracer's
-   * orbit-trap coordinate under its "Palette" color source, which reads this
+   * structural color coordinate, and the surface tracer's orbit-trap
+   * coordinate under its "Palette" color source, which reads this
    * slot rather than walking it (`src/app/surface-slots.ts`'s
    * `surfaceTrapIndices`, whose own fallback spread agrees with
    * `derivedColorIndex` at every `n > 1` but parks a lone map at the ramp
@@ -162,8 +162,8 @@ export interface Transform {
    * palette active, and in all three an absent value renders exactly as it
    * did before this field existed.
    *
-   * Since fr-axxl, the IDENTITY-hue palette (`color.ts`'s `transformColors`)
-   * reads it too — a second, independent mechanism: a map's `colorIndex`
+   * The IDENTITY-hue palette (`color.ts`'s `transformColors`) reads it
+   * too — a second, independent mechanism: a map's `colorIndex`
    * picks its position on the hue wheel instead of the even `i / count`
    * spread (note the different derived fallback from the structural readers
    * above — `i / count`, not `derivedColorIndex`'s `i / (n - 1)` — the two
@@ -180,8 +180,8 @@ export interface Transform {
   colorIndex?: number;
   /**
    * Optional color speed in `[0, 1]` — flam3's per-xform `color_speed` (the
-   * legacy `symmetry` attribute is `1 - 2·speed`); fr-hiyu. How far the
-   * structural color coordinate moves toward {@link colorIndex} on each pick:
+   * legacy `symmetry` attribute is `1 - 2·speed`). How far the structural
+   * color coordinate moves toward {@link colorIndex} on each pick:
    * `c ← c·(1 - speed) + colorIndex·speed`. `0` pins the coordinate (flam3's
    * "symmetry" xforms, which shade without recoloring), `1` snaps it straight
    * to the slot. Omitted ⇒ `chaos-game.ts`'s `DEFAULT_COLOR_SPEED` (`0.5`), the halfway
@@ -241,7 +241,7 @@ export const COLOR_MODES = [
 export type ColorMode = (typeof COLOR_MODES)[number];
 
 /**
- * How the 4D projection view colors points (fr-d47), in UI order. Same
+ * How the 4D projection view colors points, in UI order. Same
  * single-source pattern as {@link COLOR_MODES}: this array drives the
  * {@link FourDColorMode} type and the persistence validator
  * (`VALID_FOUR_D_COLOR_MODES` in `persist.ts`), so adding a mode is one edit.
@@ -296,9 +296,9 @@ export interface Bounds {
  * planes: in 4D you rotate IN a plane, not ABOUT an axis (a simple rotation
  * fixes the orthogonal complement, an axis in 3D but a whole plane in 4D).
  * The three w-free planes (`xy`/`xz`/`yz`) are the ones that also have a 3x3,
- * and they are what the pre-fr-q0h6 `SymmetryAxis` named from the other side:
- * axis `x` = plane `yz`, axis `y` = plane `xz`, axis `z` = plane `xy`. See
- * `chaos-game.ts`'s `symmetryRotation` for the migration's exact matrices
+ * and they are what the `SymmetryAxis` they replaced named from the other
+ * side: axis `x` = plane `yz`, axis `y` = plane `xz`, axis `z` = plane `xy`.
+ * See `chaos-game.ts`'s `symmetryRotation` for the migration's exact matrices
  * (including the one sign the `R_ab` convention does NOT share with
  * "rotation about +y").
  */
@@ -308,7 +308,7 @@ export const SYMMETRY_PLANES = ["xy", "xz", "yz", "xw", "yw", "zw"] as const;
 export type SymmetryPlane = (typeof SYMMETRY_PLANES)[number];
 
 /**
- * Rotational/mirror symmetry (fr-6im): replicate the whole transform set
+ * Rotational/mirror symmetry: replicate the whole transform set
  * `order` times, each copy rotated by an additional `2π / order` in
  * `plane`, producing a kaleidoscope — see `chaos-game.ts`'s
  * `prepareChaosGame`. `order: 1` is the identity regardless of
@@ -322,15 +322,16 @@ export interface SymmetryParams {
   /** Coordinate plane the copies are rotated in. */
   plane: SymmetryPlane;
   /**
-   * The SECOND angle of a 4D double rotation (fr-q0h6), as an integer number
-   * of sectors: copy `k` additionally turns by `2π·k·twist / order` in the
+   * The SECOND angle of a 4D double rotation, as an integer number of
+   * sectors: copy `k` additionally turns by `2π·k·twist / order` in the
    * plane ORTHOGONAL to {@link plane} (`xy`↔`zw`, `xz`↔`yw`, `xw`↔`yz`) —
    * implied by the choice of `plane`, never a second field. `0` (and absent,
-   * the default) is a SIMPLE rotation, which is what every pre-fr-q0h6
-   * document has and what the 3D paths are the only consumers of; `1` and
-   * `order - 1` are the left/right ISOCLINIC cases. Holding the first angle
-   * at exactly `2π / order` is WLOG — reindexing `k` reaches every cyclic
-   * subgroup of order `n` — so one integer covers the whole family.
+   * the default) is a SIMPLE rotation, which is what every document
+   * predating the 4D kaleidoscope has and what the 3D paths are the only
+   * consumers of; `1` and `order - 1` are the left/right ISOCLINIC cases.
+   * Holding the first angle at exactly `2π / order` is WLOG — reindexing `k`
+   * reaches every cyclic subgroup of order `n` — so one integer covers the
+   * whole family.
    *
    * A nonzero twist rotates the attractor OUT of the `w = 0` hyperplane, so
    * it makes the SYSTEM non-flat (`affine4.ts`'s `symmetryIsNonFlat`) exactly
@@ -338,7 +339,7 @@ export interface SymmetryParams {
    */
   twist?: number;
   /**
-   * Strength of the rotated copies, `0..1` (fr-eykn): a weight multiplier on
+   * Strength of the rotated copies, `0..1`: a weight multiplier on
    * every copy-`k>0` slot's selection probability (`prepareChaosGame`), so
    * `1` — and absent, the default — is the full kaleidoscope, `0` renders
    * bit-identically to `order: 1`, and values between thin the copies out.
@@ -351,8 +352,8 @@ export interface SymmetryParams {
 }
 
 /**
- * Rotation of a 4D map (fr-cbg spike), one optional angle in radians per
- * coordinate plane. A 4D rotation has SIX independent planes (vs. three axes in
+ * Rotation of a 4D map, one optional angle in radians per coordinate
+ * plane. A 4D rotation has SIX independent planes (vs. three axes in
  * 3D — in 4D you rotate *in a plane*, not *about an axis*): the three planes of
  * the embedded 3D space (`xy`, `xz`, `yz`) plus the three that mix in the fourth
  * coordinate (`xw`, `yw`, `zw`). Each field is the angle of `R_ab` as defined in
@@ -369,7 +370,7 @@ export interface Rotation4 {
 }
 
 /**
- * Shear of a 4D map (fr-hy8): the six above-diagonal entries of a 4x4 unit
+ * Shear of a 4D map: the six above-diagonal entries of a 4x4 unit
  * upper-triangular matrix `U`, the direct 4D extension of {@link Transform.shear}
  * (a `Vec3` `[xy, xz, yz]` in 3D). Each field `ab` sits at row `index(a)`, column
  * `index(b)` of `U` (with `x=0, y=1, z=2, w=3`), row-major:
@@ -439,11 +440,11 @@ export interface WExtension {
 }
 
 /**
- * One affine map of a 4D IFS (fr-cbg spike; completed in fr-hy8). With shear and
- * variations it now parameterizes the FULL 20-dimensional affine group of R⁴ —
- * 4 position + 4 scale + 6 rotation ({@link Rotation4}) + 6 shear
- * ({@link Shear4}) — the exact `M = R · diag(scale) · U` (QR-style) picture of
- * the 3D {@link Transform} one dimension up, plus the same post-affine nonlinear
+ * One affine map of a 4D IFS. With shear and variations it now
+ * parameterizes the FULL 20-dimensional affine group of R⁴ — 4 position +
+ * 4 scale + 6 rotation ({@link Rotation4}) + 6 shear ({@link Shear4}) — the
+ * exact `M = R · diag(scale) · U` (QR-style) picture of the 3D
+ * {@link Transform} one dimension up, plus the same post-affine nonlinear
  * {@link Variation} blend. Every field but `position`/`scale` is optional and
  * absent ⇒ its identity, so a plain contraction stays a two-field object and
  * embeds/composes bit-identically. See `affine4.ts` (`composeAffine4`) and
@@ -473,7 +474,7 @@ export interface Transform4 {
   weight?: number;
   /**
    * Palette index for the 4D flame's structural coloring, mirroring
-   * {@link Transform.colorIndex} exactly (fr-hiyu). Omitted ⇒ the derived
+   * {@link Transform.colorIndex} exactly. Omitted ⇒ the derived
    * even spread. Carried across the 3D → 4D lift by `affine4.ts`'s
    * `embedTransform3`, so a `Transform` that authors one keeps it in every
    * 4D render.
@@ -481,8 +482,8 @@ export interface Transform4 {
   colorIndex?: number;
   /**
    * Color speed for the 4D flame's structural coloring, mirroring
-   * {@link Transform.colorSpeed} exactly (fr-hiyu). Omitted ⇒
-   * `chaos-game.ts`'s `DEFAULT_COLOR_SPEED`.
+   * {@link Transform.colorSpeed} exactly. Omitted ⇒ `chaos-game.ts`'s
+   * `DEFAULT_COLOR_SPEED`.
    */
   colorSpeed?: number;
 }

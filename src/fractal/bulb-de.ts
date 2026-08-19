@@ -1,8 +1,8 @@
 /**
- * Mandelbulb render (fr-7u8t.7): the distance-estimated escape-time set of
- * the White/Nylander triplex 8th power — the third object in the
- * escape-time family, beside `escape-de.ts`'s folds and `qjulia-de.ts`'s
- * quaternion Julia, and the one people picture when they say "3D fractal".
+ * Mandelbulb render: the distance-estimated escape-time set of the
+ * White/Nylander triplex 8th power — the third object in the escape-time
+ * family, beside `escape-de.ts`'s folds and `qjulia-de.ts`'s quaternion
+ * Julia, and the one people picture when they say "3D fractal".
  *
  * THE OBJECT. The vocabulary is unchanged — a transform carrying the `bulb`
  * variation (`variations.ts`'s `triplexPow8`) and nothing else. Iterated
@@ -11,8 +11,8 @@
  *
  *     v <- V(M v + t) + p        V = the triplex 8th power, p = the query
  *
- * MANDELBROT, NOT JULIA, and that is a decision fr-7u8t.8 already paid for
- * one object over. Read `escape-de.ts`'s "TWO FORMS" and "WHY NOT BOTH
+ * MANDELBROT, NOT JULIA, and that is a decision already paid for one
+ * object over. Read `escape-de.ts`'s "TWO FORMS" and "WHY NOT BOTH
  * FORMS" paragraphs: the fold mode shipped the Julia form (offset fixed by
  * the document), measured it rendering a near-sphere at every constant a
  * user would author, and replaced it with the query-point offset. This
@@ -89,10 +89,10 @@
  *   - 0.29 us/eval at 8.9 orbit iterations average over 200k uniform
  *     queries in its own marching ball, against 1.04 us/eval for the
  *     shipped mandelbox fold and 0.22 for the quaternion square on the same
- *     set. The bead expected this to be the EXPENSIVE object (its
- *     trig prototype measured ~2 us/eval, "so a trig-free triplex
- *     formulation is worth measuring"); it is the middle one, and 3.5x
- *     cheaper than the fold mode that already ships.
+ *     set. The prediction going in was that this would be the EXPENSIVE
+ *     object (the trig prototype measured ~2 us/eval, "so a trig-free
+ *     triplex formulation is worth measuring"); it is the middle one, and
+ *     3.5x cheaper than the fold mode that already ships.
  *   - TRIG-FREE, and the choice was not close. `triplexPow8`'s
  *     Chebyshev/de-Moivre form is an EXACT algebraic rewrite of the
  *     `acos`/`atan2`/`sin`/`cos`/`pow` one — 6e-14 worst relative
@@ -104,7 +104,7 @@
  *     rather than an optimisation: it disagrees with the power on 48.8% of
  *     queries, because triplex multiplication is not associative and
  *     squaring re-canonicalises the polar angle every step.
- *   - STEP SCALE 1.0, measured rather than assumed — and the bead's
+ *   - STEP SCALE 1.0, measured rather than assumed — and the going-in
  *     prediction that "the step-scale damping comes back" did not hold.
  *     Swept 1.0/0.9/0.8/0.7/0.6/0.5 against a 400-iteration membership
  *     oracle, 24 probe directions per query, 2.4k-3.3k probed queries on
@@ -115,28 +115,29 @@
  *     classic fixture, with 2.2% of pixels differing by more than 12/255
  *     (crease shading). Re-run at a CLOSE pose, where creases and filigree
  *     rather than a silhouette are what the marcher must resolve — the pose
- *     fr-7u8t.8's own sweep found the fold's overshoot at — the six panels
+ *     the fold's own sweep found its overshoot at — the six panels
  *     from 1.0 down to 0.2 are indistinguishable and hits move 89.52% ->
  *     89.53%, about two pixels in 176k
  *     (`scripts/out/bulb-step-scale.png`). For scale, the fold family on
  *     its own object still loses 4.6% of its hits and differs on 12.1% at
- *     the 0.35 fr-7u8t.8 measured it down to — and lost 17% at the 0.7 it
+ *     the 0.35 it was measured down to — and lost 17% at the 0.7 it
  *     shipped with before that, climbing 62% -> 84% of its hits as the
  *     damping fell, which is what a step scale that is actually binding
  *     looks like. Nothing here climbs: 0.7 would buy 2.4x fewer differing
- *     pixels for 1.45x the steps, if fr-7u8t.9's real tracer ever wants it.
+ *     pixels for 1.45x the steps, if the real tracer ever wants it.
  *
- * ONE WARNING FOR THE MIRRORS (fr-7u8t.9), learned by fr-dlxh one object
- * over and re-measured here: a forward power-8 orbit multiplies any
- * perturbation by `8r⁷` per step, so two implementations of the SAME map
- * disagree about membership in a thin shell around the boundary — measured
- * at 0.22% of the marching ball between this module's polynomial power and
- * the trigonometric reference, both f64. A GPU agreement leg comparing f32
- * against this oracle will see that shell as "failures" and it is chaos,
- * not divergence; `forwardQueryStable`'s ensemble classifier and
- * `forwardShadowFlipVerified` (`src/app/gpu-bench/`) are the shape of the
- * answer. The step-scale sweep above had to exclude the same shell to
- * measure anything at all (7-28 queries per system, disclosed per row).
+ * ONE WARNING FOR THE MIRRORS, learned by the escape core's own compute
+ * port one object over and re-measured here: a forward power-8 orbit
+ * multiplies any perturbation by `8r⁷` per step, so two implementations of
+ * the SAME map disagree about membership in a thin shell around the
+ * boundary — measured at 0.22% of the marching ball between this module's
+ * polynomial power and the trigonometric reference, both f64. A GPU
+ * agreement leg comparing f32 against this oracle will see that shell as
+ * "failures" and it is chaos, not divergence; `forwardQueryStable`'s
+ * ensemble classifier and `forwardShadowFlipVerified`
+ * (`src/app/gpu-bench/`) are the shape of the answer. The step-scale sweep
+ * above had to exclude the same shell to measure anything at all (7-28
+ * queries per system, disclosed per row).
  *
  * ELIGIBILITY is a sibling of `analyzeEscapeSystem` and
  * `analyzeQJuliaSystem`, not an extension of either: exactly one active map
@@ -165,8 +166,8 @@ import type { SymmetryParams, Transform, Variation, Vec3 } from "./types";
  * repeated-squaring ladder to parameterise), which would mean a branch in
  * six shader mirrors and a persisted knob whose interesting values are all
  * near 8 anyway. `scripts/bulb-preview.harness.ts` renders the neighbours
- * from a local prototype, which is the evidence a later bead would need to
- * overturn this.
+ * from a local prototype, which is the evidence a later change would need
+ * to overturn this.
  */
 export const BULB_POWER = 8;
 
@@ -346,10 +347,9 @@ export function buildBulbDE(
 
 /**
  * The Mandelbulb distance estimate (module doc) — the f64 oracle the GLSL
- * variant and WGSL core will mirror line for line (fr-7u8t.9).
- * `maxIterations` exists for the preview tier's depth clamp, through the
- * same door the fold descents use; callers wanting the full estimate pass
- * nothing.
+ * variant and WGSL core mirror line for line. `maxIterations` exists for
+ * the preview tier's depth clamp, through the same door the fold descents
+ * use; callers wanting the full estimate pass nothing.
  */
 export function estimateBulbDistance(
   de: BulbDE,

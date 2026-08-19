@@ -17,7 +17,7 @@ export function mulberry32(seed: number): Rng {
 }
 
 /**
- * A per-iteration random stream (fr-2wfw): {@link begin} rewinds it to a
+ * A per-iteration random stream: {@link begin} rewinds it to a
  * deterministic origin for iteration `i`, and {@link draw} then yields that
  * iteration's own reproducible sequence — a counter-based view of
  * {@link mulberry32}, whose per-draw avalanche is what makes seeding by a

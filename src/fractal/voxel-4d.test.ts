@@ -199,7 +199,7 @@ describe("accumulateVoxels4 vs. stepOrbit4/plotPoint4 (correctness oracle)", () 
   });
 });
 
-describe("accumulateVoxels4 escape-reseed (fr-h22c)", () => {
+describe("accumulateVoxels4 escape-reseed", () => {
   it("reseeds every iteration when the map always lands past ESCAPE_LIMIT, keeping the grid finite and populated", () => {
     // The 4D twin of voxel.test.ts's escape-reseed test: every oracle above
     // is built from a contracting system that never escapes, so none of
@@ -350,7 +350,7 @@ describe("accumulateVoxels4 progressive accumulation", () => {
   });
 });
 
-describe("accumulateVoxels4 bucketing and the w-slice (fr-4wd)", () => {
+describe("accumulateVoxels4 bucketing and the w-slice", () => {
   it("lands a fixed-point system's every iteration in the predicted voxel", () => {
     const prepared = prepareChaosGame4(fixedPointSystem4([0, 0, 0, 0]));
     const grid = createVoxelGrid(4, unitishBounds(1));
@@ -441,7 +441,7 @@ describe("accumulateVoxels4 bucketing and the w-slice (fr-4wd)", () => {
   });
 });
 
-describe("accumulateVoxels4 weighted running-mean color (fr-4wd)", () => {
+describe("accumulateVoxels4 weighted running-mean color", () => {
   it("reduces exactly to the unweighted 3D-style running mean when the slice is off", () => {
     // Two transforms that both collapse to the SAME fixed point (scale 0)
     // but are picked with different indices, so the structural color
@@ -873,7 +873,7 @@ describe("accumulateVoxels4 color kinds", () => {
   });
 });
 
-describe("accumulateVoxels4 structural coloring: per-transform colorIndex/colorSpeed (fr-hiyu)", () => {
+describe("accumulateVoxels4 structural coloring: per-transform colorIndex/colorSpeed", () => {
   it("pins an all-absent accumulation exactly identical to the same system with every derived default authored explicitly", () => {
     const base = pentatope().map(toTransform4);
     const n = base.length;
@@ -985,7 +985,7 @@ describe("accumulateVoxels4 structural coloring: per-transform colorIndex/colorS
 });
 
 // ---------------------------------------------------------------------------
-// Kaleidoscope symmetry (fr-q0h6) — the 4D twin of voxel.test.ts's own
+// Kaleidoscope symmetry — the 4D twin of voxel.test.ts's own
 // symmetry block, and flame-4d.test.ts's line for line.
 // ---------------------------------------------------------------------------
 
@@ -1002,7 +1002,7 @@ function flatSystem4(): Transform4[] {
   ];
 }
 
-describe("accumulateVoxels4 with symmetry (fr-q0h6)", () => {
+describe("accumulateVoxels4 with symmetry", () => {
   it("matches the stepOrbit4/plotPoint4 oracle when the prepared system has rotated copies", () => {
     // The oracle test at the top of this file, but with a genuinely 4D
     // kaleidoscope prepared in: stepOrbit4 already rotates a picked slot's

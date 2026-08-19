@@ -20,16 +20,16 @@ import type {
 } from "./types";
 
 /** A freshly rolled system: the base maps, plus an optional final-transform
- * lens (see {@link Transform} and `AppState.finalTransform`). Rare spice
- * (fr-bf6.5): roughly one roll in four ({@link FOUR_D_PROBABILITY}) also
- * gives some of the base maps a sparse `w` extension (see
- * {@link Transform.w}, occasionally itself w-mirrored — fr-bew), landing a
- * genuinely non-flat system that the app renders through its tumbling 4D
- * projection instead of the flat point cloud. The final transform never
- * carries a `w` block — see {@link randomFinalTransform}.
+ * lens (see {@link Transform} and `AppState.finalTransform`). Rare spice:
+ * roughly one roll in four ({@link FOUR_D_PROBABILITY}) also gives some of
+ * the base maps a sparse `w` extension (see {@link Transform.w},
+ * occasionally itself w-mirrored), landing a genuinely non-flat system that
+ * the app renders through its tumbling 4D projection instead of the flat
+ * point cloud. The final transform never carries a `w` block — see
+ * {@link randomFinalTransform}.
  *
- * `symmetry` (fr-wti's follow-up, landed via fr-d61, widened to non-flat
- * candidates via fr-msw5) is rolled for BOTH arms: a flat candidate via
+ * `symmetry`, added after the generator shipped and later widened to
+ * non-flat candidates, is rolled for BOTH arms: a flat candidate via
  * {@link randomSymmetry} (order 2..6, always about `"xz"`), a non-flat one
  * via {@link randomSymmetry4} (order 2..6, any of the six
  * {@link SYMMETRY_PLANES}, occasionally a twist). `null` means "no
@@ -64,9 +64,9 @@ const AXIS_JITTER = 0.2;
 /**
  * Floor on a map's shared (pre-per-axis) scale, expressed as a similarity
  * dimension rather than a raw scale so it composes with whatever `n` the
- * roll picked. fr-d61: a validation failure surfaced a 2-map pure-affine
- * roll where both maps' ±{@link SCALE_JITTER} draws happened to land low,
- * dragging the effective similarity dimension to ≈1.7 — well under
+ * roll picked. A validation failure surfaced a 2-map pure-affine roll where
+ * both maps' ±{@link SCALE_JITTER} draws happened to land low, dragging the
+ * effective similarity dimension to ≈1.7 — well under
  * {@link TARGET_DIMENSION_MIN} — and rendering as a thin squiggle that only
  * barely cleared the occupancy gate.
  *
@@ -85,8 +85,8 @@ const SCALE_MIN = 0.35;
 const SCALE_MAX = 0.85;
 const UNIFORM_SCALE_PROBABILITY = 0.7;
 /**
- * Per-map odds of rolling a MIRRORED map (fr-o1y): exactly one axis of the
- * rolled scale is negated, making the map orientation-reversing — the
+ * Per-map odds of rolling a MIRRORED map: exactly one axis of the rolled
+ * scale is negated, making the map orientation-reversing — the
  * handedness-flipping family the chiralLace preset celebrates, which the
  * all-positive {@link SCALE_MIN}..{@link SCALE_MAX} magnitudes could never
  * reach. One axis, never two: with `det R = det U = 1` in the engine's
@@ -114,7 +114,7 @@ const ZERO_SHEAR_PROBABILITY = 0.7;
  * regions of points and the cloud goes patchy. */
 const WEIGHT_ROLL = 24;
 /**
- * Cap on a 2-map system's weight ratio. fr-d61's validation fail had a
+ * Cap on a 2-map system's weight ratio. The same validation fail had a
  * second ingredient alongside the thin scale draw: a 3:16 weight skew on a
  * 2-map roll, leaving the light branch only ~16% of the orbit's points —
  * starving half the structure. Applied deterministically to `weight` AFTER
@@ -155,41 +155,40 @@ const FINAL_VARIATION_TYPES: VariationType[] = [
   "bubble",
   "disc",
   "julia",
-  // fr-p7nu: a whole-attractor box fold as the final lens is bounded — it
-  // maps everything into/toward the unit box — so, unlike an inversion, it
-  // cannot blow up the system. spherefold/mandelbox stay out of this pool
-  // (see fr-p7nu.3).
+  // A whole-attractor box fold as the final lens is bounded — it maps
+  // everything into/toward the unit box — so, unlike an inversion, it cannot
+  // blow up the system. spherefold/mandelbox stay out of this pool — a
+  // deliberate call, measured when the fold family joined the roll.
   "boxfold",
 ];
 
 /**
- * Rotational-symmetry roll: fr-wti's original follow-up idea, landed here
- * via fr-d61 now that fr-6im has shipped rotational/mirror symmetry —
- * random kaleidoscopes look disproportionately good for how cheap they are
- * to roll, so roughly 3 flat rolls in 10 also land one, at an integer order
- * of 2..6 ({@link SYMMETRY_ORDER_MIN} + `floor(rng() *`
+ * Rotational-symmetry roll, landed once the kaleidoscope itself had
+ * shipped — random kaleidoscopes look disproportionately good for how cheap
+ * they are to roll, so roughly 3 flat rolls in 10 also land one, at an
+ * integer order of 2..6 ({@link SYMMETRY_ORDER_MIN} + `floor(rng() *`
  * {@link SYMMETRY_ORDER_SPAN}`)`), comfortably inside the UI slider's 1..12
- * range (1..9 before fr-xkkb).
+ * range.
  *
- * The plane is ALWAYS `"xz"` (the pre-fr-q0h6 `"y"` axis renamed) for this
- * FLAT roll, never rolled: every rolled map already carries a uniformly
- * random rotation, so changing which w-free plane the kaleidoscope turns in
- * amounts to a global reorientation of the whole cloud — and the
- * free-orbiting camera erases any difference reorientation would make. It
- * would be a draw spent on no added variety. (A w-plane or twist would be
- * genuinely different — it makes the system 4D — which is exactly what the
- * non-flat roll below spends its extra draws on.)
+ * The plane is ALWAYS `"xz"` (the `"y"` axis renamed when the kaleidoscope
+ * went 4D) for this FLAT roll, never rolled: every rolled map already
+ * carries a uniformly random rotation, so changing which w-free plane the
+ * kaleidoscope turns in amounts to a global reorientation of the whole
+ * cloud — and the free-orbiting camera erases any difference reorientation
+ * would make. It would be a draw spent on no added variety. (A w-plane or
+ * twist would be genuinely different — it makes the system 4D — which is
+ * exactly what the non-flat roll below spends its extra draws on.)
  *
- * fr-msw5 lifted the deferral this paragraph used to record: 4D candidates
- * now roll too, via {@link randomSymmetry4}, at the SAME last-drawn position
- * in {@link randomCandidate} (`transforms` → `finalTransform` →
- * `symmetry`) — not because the dial only just became live (since fr-q0h6
- * the 4D pipeline has rendered a kaleidoscope like any other, and since
- * fr-x6hz {@link scoreSystem} already threads a non-flat candidate's
- * `symmetry` through its `runChaosGame4` probe) but because, until now,
- * rolling one would have spent extra rng draws BEFORE `symmetry`'s position
- * and shifted the documented candidate draw order, changing every existing
- * 4D "Surprise Me" result for no reason (fr-3rem's original deferral).
+ * A later pass lifted the deferral this paragraph used to record: 4D
+ * candidates now roll too, via {@link randomSymmetry4}, at the SAME
+ * last-drawn position in {@link randomCandidate} (`transforms` →
+ * `finalTransform` → `symmetry`) — not because the dial only just became
+ * live (the 4D pipeline had long rendered a kaleidoscope like any other, and
+ * {@link scoreSystem} already threaded a non-flat candidate's `symmetry`
+ * through its `runChaosGame4` probe) but because, until then, rolling one
+ * would have spent extra rng draws BEFORE `symmetry`'s position and shifted
+ * the documented candidate draw order, changing every existing 4D "Surprise
+ * Me" result for no reason.
  * Placed at the same LAST position instead, the extra draws land strictly
  * after everything the candidate already rolls, so a flat candidate's
  * sequence is untouched and a 4D candidate's `transforms`/`finalTransform`
@@ -212,9 +211,9 @@ const SYMMETRY_ORDER_SPAN = 5;
 const SYMMETRY_TWIST_PROBABILITY = 0.25;
 
 /**
- * Rare-spice roll (fr-bf6.5): one system-level draw deciding whether THIS
- * candidate gets a `w` extension at all — no UI dial, just an occasional
- * surprise. A miss costs exactly this one `rng()` draw: every subsequent
+ * Rare-spice roll: one system-level draw deciding whether THIS candidate
+ * gets a `w` extension at all — no UI dial, just an occasional surprise. A
+ * miss costs exactly this one `rng()` draw: every subsequent
  * roll takes the same path, and consumes the rng identically, as before this
  * feature existed. A hit always yields a non-flat system (the force-
  * fallback in {@link randomTransforms} guarantees it), so this is also, in
@@ -224,9 +223,9 @@ const SYMMETRY_TWIST_PROBABILITY = 0.25;
 const FOUR_D_PROBABILITY = 0.25;
 /** Per-map odds of a rolled `w.position` (see {@link randomWExtension}) once
  * a candidate has hit {@link FOUR_D_PROBABILITY} — independent of the
- * rotation roll below and of the existing weight/variation rolls (fr-d61:
- * coupling a 4D roll to map weight would skew which maps get the
- * selection spotlight). */
+ * rotation roll below and of the existing weight/variation rolls (coupling a
+ * 4D roll to map weight would skew which maps get the selection
+ * spotlight). */
 const FOUR_D_POSITION_PROBABILITY = 0.6;
 /** `w.position` uniform range: comfortably inside the editor's ±1.5 clamp,
  * so a hit's structure stays near the `w = 0` slice rather than flung to
@@ -250,11 +249,12 @@ const FOUR_D_ROTATION_RANGE = 0.7;
  * {@link WExtension}'s `rotation` field). */
 const W_ROTATION_PLANES = ["xw", "yw", "zw"] as const;
 /**
- * Per-map odds that a landed `w` block ALSO mirrors w (fr-bew): `w.scale` is
+ * Per-map odds that a landed `w` block ALSO mirrors w: `w.scale` is
  * materialised as the NEGATED derived mean contraction — the 4D reflection
- * fr-icy made expressible end-to-end (editor, codec, chaos game, GPU
- * kernels), which this generator alone never produced. See
- * {@link randomWExtension} for why the magnitude stays the derived mean.
+ * the editor's Mirror W toggle and the sign-preserving codec made
+ * expressible end-to-end (editor, codec, chaos game, GPU kernels), which
+ * this generator alone never produced. See {@link randomWExtension} for why
+ * the magnitude stays the derived mean.
  * Matches {@link REFLECTION_PROBABILITY}'s 0.1 — the same rare-spice order
  * as the 3D mirror, conditioned further on the block having landed content
  * at all — so roughly one returned 4D system in four carries a w-mirror.
@@ -275,16 +275,16 @@ const FOUR_D_FORCE_POSITION_MAX = 0.5;
 /** Probe size for the quality gate: large enough for a candidate's bounds to
  * settle onto its attractor and to populate the occupancy grid, small enough
  * that rerolling is cheap — acceptance costs {@link STABILITY_PROBES} probes
- * of this size, one probe per {@link scoreSystem} call (fr-b5x's
- * stability gate; see {@link randomSystem}). Shared by the flat
+ * of this size, one probe per {@link scoreSystem} call (the stability gate;
+ * see {@link randomSystem}). Shared by the flat
  * (`runChaosGame`) and non-flat (`runChaosGame4`) probes — a larger sample
  * was tried for the 4D branch during tuning and didn't meaningfully change the
  * gate's tail behavior (see {@link FOUR_D_RADIUS_CAP}'s doc for why), so
  * there was nothing 4D-specific to justify a separate budget here. */
 const PROBE_POINTS = 4000;
 /** Total candidates tried before giving up and returning the best-scoring
- * one seen (see {@link scoreSystem}; fr-b5x), rather than an arbitrary
- * last-rolled one. Measured over 20000 seeded rolls — with the
+ * one seen (see {@link scoreSystem}), rather than an arbitrary last-rolled
+ * one. Measured over 20000 seeded rolls — with the
  * {@link STABILITY_PROBES} gate in place — not one burned through all 40,
  * so the exhaustion fallback is a backstop for pathological rng streams,
  * not a hot path; that is also why no test pins a specific exhausting seed
@@ -292,7 +292,7 @@ const PROBE_POINTS = 4000;
 const MAX_ATTEMPTS = 40;
 /**
  * How many independent probes must ALL clear the gate before a candidate is
- * accepted (fr-b5x's stability gate — see {@link randomSystem} for why one
+ * accepted (the stability gate — see {@link randomSystem} for why one
  * probe is not enough). Chosen from a measured ladder on the 2000-seed sweep
  * (scripts/surprise-residual.harness.ts): accepted flat systems re-probing
  * below the occupancy floor on one fresh stream went 39 → 27 → 14 → 8 for
@@ -302,8 +302,8 @@ const MAX_ATTEMPTS = 40;
  * acceptance odds AGAINST legitimately-sparse-but-STABLE systems
  * (barnsleyFern-class rolls pass each probe at roughly 0.85-0.9, so they
  * keep only that rate raised to this power) — pruning exactly the airy
- * rolls worth keeping, to chase a tail already far below fr-wti's manual
- * acceptance bar.
+ * rolls worth keeping, to chase a tail already far below the generator's
+ * own 19-of-20 manual acceptance bar.
  */
 const STABILITY_PROBES = 3;
 /** Below this, the second-largest per-axis extent reads as "no shape" (see
@@ -318,8 +318,8 @@ const OCCUPANCY_GRID = 24;
  * Calibrated against the presets (every one lands ≥ 350, the thinnest being
  * barnsleyFern) and against captured dusty rolls (≤ ~210): systems whose
  * orbit piles onto a handful of micro-clusters stop claiming new cells at
- * this resolution, while genuine fractal structure keeps resolving. fr-d61
- * fixed its thin-roll causes at the source instead of raising this floor —
+ * this resolution, while genuine fractal structure keeps resolving. The
+ * thin-roll causes were fixed at the source instead of raising this floor —
  * the scale floor ({@link EFFECTIVE_DIMENSION_FLOOR}) and 2-map weight cap
  * ({@link TWO_MAP_WEIGHT_RATIO_CAP}) — since barnsleyFern already probes at
  * ~350, leaving little headroom to raise it into. */
@@ -409,8 +409,8 @@ function randomScale(rng: Rng, baseScale: number, scaleFloor: number): Vec3 {
 }
 
 /**
- * Maybe mirror a rolled scale (fr-o1y): with
- * {@link REFLECTION_PROBABILITY}, negate one uniformly-chosen axis.
+ * Maybe mirror a rolled scale: with {@link REFLECTION_PROBABILITY}, negate
+ * one uniformly-chosen axis.
  * Gate-first like {@link randomShear}, so a miss costs exactly one draw and
  * a hit exactly two.
  */
@@ -452,8 +452,8 @@ function randomVariationType(rng: Rng, exclude?: VariationType): VariationType {
  * preset transform carries no `variations` key at all (see e.g.
  * `defaultTransforms`).
  *
- * NEVER rolls `minRadius`/`fixedRadius`/`boxLimit` (fr-s9ll), even when the
- * rolled type lands on `boxfold`/`spherefold`/`mandelbox`: a rolled fold
+ * NEVER rolls `minRadius`/`fixedRadius`/`boxLimit`, even when the rolled
+ * type lands on `boxfold`/`spherefold`/`mandelbox`: a rolled fold
  * variation always comes out at the canonical Mandelbox lengths (absent, per
  * `variations.ts`'s `resolveFoldRadii`). This generator is quality-gated by
  * chaos-game probes against a measured-good acceptance rate
@@ -499,7 +499,7 @@ function randomVariations(rng: Rng): Variation[] | undefined {
  * ({@link FOUR_D_POSITION_PROBABILITY}) and a w-rotation kick — one plane,
  * occasionally two ({@link FOUR_D_ROTATION_PROBABILITY} /
  * {@link FOUR_D_SECOND_ROTATION_PROBABILITY}). Deliberately independent of
- * `weight`/`variations` (fr-d61's weight-skew caution: coupling a 4D roll to
+ * `weight`/`variations` (the same weight-skew caution: coupling a 4D roll to
  * either would bias which maps get chosen or how they're already warped).
  *
  * `w.scale` is MOSTLY left absent: `toTransform4` then derives it as the
@@ -507,10 +507,10 @@ function randomVariations(rng: Rng): Variation[] | undefined {
  * inside this generator's contractive scale bounds — no new escape risk, and
  * nothing goes stale as the map's own scale is edited later. Occasionally
  * ({@link FOUR_D_REFLECTION_PROBABILITY}) a block that landed content also
- * MIRRORS w (fr-bew): `w.scale` is materialised as the NEGATED derived mean —
- * exactly the value the editor's Mirror W toggle materialises (fr-icy),
- * since "derived but mirrored" isn't representable in the sparse model. Same
- * rationale as the 3D mirror ({@link REFLECTION_PROBABILITY}): a reflection
+ * MIRRORS w: `w.scale` is materialised as the NEGATED derived mean — exactly
+ * the value the editor's Mirror W toggle materialises, since "derived but
+ * mirrored" isn't representable in the sparse model. Same rationale as the
+ * 3D mirror ({@link REFLECTION_PROBABILITY}): a reflection
  * changes handedness, not contraction (the magnitude is untouched), so the
  * quality gates judge mirrored candidates on the same terms as everything
  * else. The mirror gate is rolled LAST and only for a block with content, so
@@ -628,8 +628,8 @@ function randomTransforms(rng: Rng, fourD: boolean): Transform[] {
  * `FINAL_TRANSFORM_NULL_PROBABILITY`; otherwise the identity affine
  * (mirrors `defaultFinalTransform`) plus one variation from the four
  * "lens-flavored" types, at a weight in `[0.6, 1.2]`. Never carries a `w`
- * block (fr-bf6.5), even when the system it lenses is non-flat: a rolled
- * lens is rare enough already, and a non-flat lens would bend the WHOLE
+ * block, even when the system it lenses is non-flat: a rolled lens is rare
+ * enough already, and a non-flat lens would bend the WHOLE
  * cloud through an extra, hidden 4th-dimension feature the roll never
  * surfaces anywhere else.
  */
@@ -644,8 +644,8 @@ function randomFinalTransform(rng: Rng): Transform | null {
     scale: [1, 1, 1],
     variations: [
       {
-        // boxLimit stays absent here too (fr-s9ll, see randomVariations'
-        // fold-radii note): a rolled boxfold lens is always the canonical one.
+        // boxLimit stays absent here too (see randomVariations' fold-radii
+        // note): a rolled boxfold lens is always the canonical one.
         type,
         weight: uniform(
           rng,
@@ -668,23 +668,23 @@ function randomSymmetry(rng: Rng): SymmetryParams | null {
   if (rng() >= SYMMETRY_PROBABILITY) return null;
   return {
     order: SYMMETRY_ORDER_MIN + Math.floor(rng() * SYMMETRY_ORDER_SPAN),
-    // The pre-fr-q0h6 "y" axis, renamed: the same rotation, so every rolled
-    // kaleidoscope is the one this generator always rolled. Deliberately not
-    // widened to the six planes here: every rolled map already carries a
-    // uniformly random rotation, so for a FLAT candidate a different w-free
-    // plane is just a global reorientation of the same attractor, which the
-    // free-orbiting camera erases — no added variety. A non-flat candidate
-    // rolls its own, wider symmetry instead (see randomSymmetry4), where
-    // that argument doesn't carry over.
+    // The "y" axis renamed when the kaleidoscope went 4D: the same rotation,
+    // so every rolled kaleidoscope is the one this generator always rolled.
+    // Deliberately not widened to the six planes here: every rolled map
+    // already carries a uniformly random rotation, so for a FLAT candidate a
+    // different w-free plane is just a global reorientation of the same
+    // attractor, which the free-orbiting camera erases — no added variety. A
+    // non-flat candidate rolls its own, wider symmetry instead (see
+    // randomSymmetry4), where that argument doesn't carry over.
     plane: "xz",
   };
 }
 
 /**
- * Roll an optional kaleidoscope for a NON-FLAT candidate (fr-msw5, lifting
- * the deferral fr-3rem recorded): since fr-q0h6 the 4D pipeline renders a
- * kaleidoscope end-to-end, and since fr-x6hz {@link scoreSystem} already
- * threads a non-flat candidate's `symmetry` through its `runChaosGame4`
+ * Roll an optional kaleidoscope for a NON-FLAT candidate, lifting the
+ * deferral the flat roll above records: the 4D pipeline renders a
+ * kaleidoscope end-to-end, and {@link scoreSystem} already threads a
+ * non-flat candidate's `symmetry` through its `runChaosGame4`
  * probe — a rolled w-plane/twisted kaleidoscope is judged by the shape it
  * actually renders, with {@link isAcceptableSystem4}'s bounds/radius/
  * w-extent caps applying to the kaleidoscoped cloud exactly as they do to an
@@ -738,16 +738,16 @@ function randomSymmetry4(rng: Rng): SymmetryParams | null {
 
 /**
  * Roll a full candidate: the base maps, the optional final-transform lens,
- * and an optional symmetry — now rolled for BOTH arms (fr-msw5). Draw order
- * is `fourD` gate → `transforms` → `finalTransform` → `symmetry`. The
+ * and an optional symmetry — now rolled for BOTH arms. Draw order is
+ * `fourD` gate → `transforms` → `finalTransform` → `symmetry`. The
  * {@link FOUR_D_PROBABILITY} roll is deliberately the FIRST draw of a
  * candidate — a single leading `rng()` call — so a miss leaves every
  * subsequent roll's sequence (and the rng values it consumes) exactly as it
  * was before this feature existed; only a hit spends any further draws on
  * `w`. `symmetry` is rolled LAST for both arms — {@link randomSymmetry} for a
  * flat candidate, {@link randomSymmetry4} for a non-flat one — which is
- * exactly what let fr-msw5 widen the 4D roll without a version bump: placed
- * after every draw the candidate already makes, the extra draws a 4D
+ * exactly what let the 4D roll widen without a version bump: placed after
+ * every draw the candidate already makes, the extra draws a 4D
  * symmetry roll spends land strictly AFTER `transforms`/`finalTransform`, so
  * (i) a FLAT candidate's rng sequence is completely unaffected by this
  * change, and (ii) a 4D candidate's `transforms`/`finalTransform` for a
@@ -859,9 +859,9 @@ export function isAcceptableSystem4(bounds: Bounds4, radius: number): boolean {
  * The six axis-aligned fields {@link occupiedCellCount} actually reads.
  * {@link Bounds} and {@link Bounds4} both satisfy this structurally, so the
  * same occupancy grid serves the 3D probe and the 4D probe's projected-xyz
- * occupancy check (fr-bf6.5: the user judges structure by what shows up in
- * the projection, i.e. the xyz the 4D cloud carries) without
- * `occupiedCellCount` caring which result shape it was handed.
+ * occupancy check (the user judges structure by what shows up in the
+ * projection, i.e. the xyz the 4D cloud carries) without `occupiedCellCount`
+ * caring which result shape it was handed.
  */
 type SpatialExtent = Pick<
   Bounds,
@@ -936,8 +936,8 @@ const NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xz" };
  * exactly `score >= MIN_OCCUPIED_CELLS`. The probe branches on
  * `affine4.ts`'s {@link systemPartsAreNonFlat} — the transforms AND the
  * final-transform lens AND the symmetry, not `systemIsFlat(transforms)`
- * alone (fr-x6hz): a candidate's transforms can be entirely flat while its
- * symmetry turns in a `w`-plane or carries a `twist` — 4D structure the 3D
+ * alone: a candidate's transforms can be entirely flat while its symmetry
+ * turns in a `w`-plane or carries a `twist` — 4D structure the 3D
  * path's `symmetryRotation` cannot express (it throws rather than degrade,
  * see `chaos-game.ts`) — so routing on the transforms alone could hand it to
  * the 3D branch and crash the quality gate:
@@ -971,8 +971,8 @@ const NO_SYMMETRY: SymmetryParams = { order: 1, plane: "xz" };
  * so {@link randomSystem}'s best-candidate bookkeeping never needs to care
  * which kind of candidate it is holding.
  *
- * Shared by two acceptance gates (fr-3vly): {@link randomSystem}'s own roll
- * here, and `mutate-system.ts`'s mutation gate, which judges a perturbed
+ * Shared by two acceptance gates: {@link randomSystem}'s own roll here, and
+ * `mutate-system.ts`'s mutation gate, which judges a perturbed
  * system by the exact same "renders as a real shape" bar so a mutant is held
  * to no looser a standard than a fresh roll — symmetry-crash included: a
  * mutant copies its base's symmetry through verbatim, so a hand-authored
@@ -1014,22 +1014,22 @@ export function scoreSystem(candidate: RandomSystem, rng: Rng): number {
 /**
  * Generate a random IFS: 2-4 affine maps with weighted selection, shear,
  * nonlinear variations, and an occasional single-axis mirror
- * ({@link REFLECTION_PROBABILITY} — fr-o1y), plus a chance of a
- * final-transform lens — everything the core supports, so "Surprise Me" can
+ * ({@link REFLECTION_PROBABILITY}), plus a chance of a final-transform
+ * lens — everything the core supports, so "Surprise Me" can
  * reach anywhere the manual editor can — and, occasionally
  * ({@link FOUR_D_PROBABILITY}), a sparse `w` extension on some of the base
- * maps (fr-bf6.5), landing a genuinely 4D system — itself occasionally
- * w-mirrored ({@link FOUR_D_REFLECTION_PROBABILITY} — fr-bew). Every
- * candidate, flat or non-flat, additionally has a chance
+ * maps, landing a genuinely 4D system — itself occasionally w-mirrored
+ * ({@link FOUR_D_REFLECTION_PROBABILITY}). Every candidate, flat or
+ * non-flat, additionally has a chance
  * ({@link SYMMETRY_PROBABILITY}) of a rolled rotational symmetry —
  * {@link randomSymmetry} for a flat candidate, {@link randomSymmetry4} for a
- * non-flat one (fr-msw5).
+ * non-flat one.
  *
  * Each candidate is probed ({@link scoreSystem} — bounds sanity plus
  * {@link occupiedCellCount} ≥ `MIN_OCCUPIED_CELLS`) and must pass that gate
  * on {@link STABILITY_PROBES} consecutive, independently-seeded probes
- * before it's returned (fr-b5x). One probe is a {@link PROBE_POINTS}-point
- * finite sample of a chaotic orbit, and some otherwise-plausible variation
+ * before it's returned. One probe is a {@link PROBE_POINTS}-point finite
+ * sample of a chaotic orbit, and some otherwise-plausible variation
  * blends (spiral/handkerchief/swirl-heavy mixes especially) are multi-modal
  * at that sample size: which lobe the orbit favors is decided by stream
  * luck. Under a single-probe gate, a 2000-seed sweep found 39/1490 accepted
@@ -1047,8 +1047,8 @@ export function scoreSystem(candidate: RandomSystem, rng: Rng): number {
  * `MAX_ATTEMPTS` candidates total. Always returns something — so the UI
  * never needs a failure path — and on exhaustion that is the BEST-scoring
  * candidate seen (each judged by its worst probe), not the arbitrary
- * last-rolled one (fr-b5x): the least-dusty near-miss beats whatever the
- * final roll happened to produce.
+ * last-rolled one: the least-dusty near-miss beats whatever the final roll
+ * happened to produce.
  *
  * Takes only an injected {@link Rng} and never touches `Math.random`, so a
  * fixed seed reproduces the exact same system, gate probes included.
@@ -1065,9 +1065,9 @@ export function randomSystem(rng: Rng): RandomSystem {
       probe < STABILITY_PROBES && score >= MIN_OCCUPIED_CELLS;
       probe++
     ) {
-      // Stability gate (fr-b5x): the same bar, on further independent
-      // probes. Folding each score in via min() also keeps the
-      // best-candidate bookkeeping below judging by worst evidence seen.
+      // Stability gate: the same bar, on further independent probes.
+      // Folding each score in via min() also keeps the best-candidate
+      // bookkeeping below judging by worst evidence seen.
       score = Math.min(score, scoreSystem(candidate, rng));
     }
     if (score >= MIN_OCCUPIED_CELLS) return candidate;

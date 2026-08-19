@@ -1,6 +1,6 @@
 /**
  * Pure interpolation between two IFS systems — the dependency-free core of
- * the system-morphing feature (fr-idze): when a replace-load (preset /
+ * the system-morphing feature: when a replace-load (preset /
  * Surprise Me / gallery) swaps in a new attractor, a follow-up driver tweens
  * through this module's {@link lerpSystem} instead of snapping straight to
  * the target. A {@link MorphSystem} is the attractor-SHAPING subset of a
@@ -35,21 +35,21 @@
  * - Negative scale lerps straight through zero on purpose: the momentary
  *   planar collapse is the correct mirror fold-through, not a case to dodge.
  * - `symmetry`'s order/plane/twist are discrete and cannot interpolate, but its
- *   VISUAL WEIGHT can (fr-eykn): when the two sides' kaleidoscopes differ —
+ *   VISUAL WEIGHT can: when the two sides' kaleidoscopes differ —
  *   the identity tuple is (order, plane, twist), see {@link lerpSymmetry} —
  *   `a`'s fades out over the first half (`blend` 1 -> 0, see
  *   `SymmetryParams.blend`) and `b`'s fades in over the second — continuous
  *   at the midpoint, where both ends sit at blend 0 (bit-identical to order
  *   1, per `prepareChaosGame`). A matching pair stays untouched and an
  *   order-1 side needs no fade (it has no copies) — both ride by reference.
- * - The fold's three lengths (fr-s9ll — `Variation.minRadius`/`fixedRadius`/
+ * - The fold's three lengths (`Variation.minRadius`/`fixedRadius`/
  *   `boxLimit`) lerp like any other absent-means-default optional number
  *   ({@link lerpOptional}), but the default they resolve an absent side
  *   through is the CLASSIC length (`variations.ts`'s `SPHERE_FOLD_MIN_RADIUS`/
  *   `SPHERE_FOLD_FIXED_RADIUS`/`BOX_FOLD_LIMIT`), never a synthesized 0 — so
  *   `minRadius: 0.3` against an absent side morphs 0.3 -> 0.5, not 0.3 -> 0.
  *   Both sides absent stays absent, keeping an unparameterized morph
- *   byte-identical to before fr-s9ll.
+ *   byte-identical to before those fields existed.
  */
 import { isFlatTransform, meanContraction } from "./affine4";
 import { DEFAULT_COLOR_SPEED, derivedColorIndex } from "./chaos-game";
@@ -124,7 +124,7 @@ function lerpRotation(a: Vec3, b: Vec3, t: number): Vec3 {
 
 /** Absent-means-`fallback` scalar lerp, shared by every optional numeric
  * field (`weight`, `colorSpeed`, `w.position`, each w-mixing plane) — plus
- * `colorIndex` (fr-hiyu), whose `fallback` is `derivedColorIndex(i, n)`
+ * `colorIndex`, whose `fallback` is `derivedColorIndex(i, n)`
  * rather than a constant (see {@link lerpTransforms}): absent on both sides
  * stays absent, otherwise both sides resolve through `fallback` and lerp. */
 function lerpOptional(
@@ -167,7 +167,7 @@ function lerpWPlanes(
 }
 
 /** One type's pooled data: the summed weight plus whichever fold lengths
- * (fr-s9ll) its entries carried — the shape {@link lerpVariations} unions
+ * its entries carried — the shape {@link lerpVariations} unions
  * across both sides. */
 type VariationInfo = {
   weight: number;
@@ -209,7 +209,7 @@ function variationInfo(
 
 /** Union the two sides' variation types (a type missing on one side resolves
  * to weight 0 there) and lerp each type's weight — weights are free
- * strengths, never renormalized — alongside its fold lengths (fr-s9ll), each
+ * strengths, never renormalized — alongside its fold lengths, each
  * through {@link lerpOptional} with the CLASSIC length as the fallback
  * (`SPHERE_FOLD_MIN_RADIUS`/`SPHERE_FOLD_FIXED_RADIUS`/`BOX_FOLD_LIMIT` —
  * `variations.ts`'s own constants, never re-typed here as a magic number). A
@@ -224,7 +224,7 @@ function variationInfo(
  * what bounds a sample's blend LENGTH at the type vocabulary's own size, so
  * even a fully disjoint pair stays inside the GPU flame Slot's fixed
  * variation lanes — `flame-gpu.ts`'s `MAX_SLOT_VARIATIONS`, whose packer
- * throws past them (fr-qgxi). */
+ * throws past them. */
 function lerpVariations(
   a: Variation[] | undefined,
   b: Variation[] | undefined,
@@ -307,7 +307,7 @@ function lerpW(a: Transform, b: Transform, t: number): WExtension | undefined {
 /** Lerp one paired transform, field by field, assigning `id` from the pair's
  * position rather than either side's own id (mid-morph ids are
  * display-only — see the module header). `colorIndexFallback` is the
- * absent-side default for `colorIndex` (fr-hiyu) — passed in rather than
+ * absent-side default for `colorIndex` — passed in rather than
  * derived here, since it depends on the pair's INDEX and the system's map
  * COUNT, neither of which this function knows; see {@link lerpTransforms}
  * and {@link lerpFinalTransform} for the two callers' fallback choices. */
@@ -367,7 +367,7 @@ function phantomTransform(t: Transform): Transform {
 
 /** Pair `a`/`b`'s transforms by index, padding the shorter side with
  * {@link phantomTransform} copies of the longer side's surplus maps, and
- * lerp each pair. Each pair's `colorIndex` fallback (fr-hiyu) is
+ * lerp each pair. Each pair's `colorIndex` fallback is
  * `derivedColorIndex(i, length)` — the PAIRED length (after phantom
  * padding), used for BOTH sides of the pair, never either side's own
  * (possibly shorter) `transforms.length`. Two reasons: a
@@ -404,7 +404,7 @@ function identityTransform(id: number): Transform {
 }
 
 /**
- * `symmetry` for a morph (fr-eykn): two kaleidoscopes are the SAME exactly
+ * `symmetry` for a morph: two kaleidoscopes are the SAME exactly
  * when the identity tuple (order, plane, twist) matches — `blend`
  * deliberately ignored, it's a morph artifact, not an identity — and a
  * matching pair rides through untouched; a differing pair CROSSFADES — the
@@ -417,15 +417,16 @@ function identityTransform(id: number): Transform {
  * a CHAINED morph (morph-tween.ts) depart from a mid-fade sample without its
  * kaleidoscope popping back to full first.
  *
- * `twist` (fr-q0h6) rides each side's own branch untouched, NEVER
+ * `twist` rides each side's own branch untouched, NEVER
  * interpolated — a crossfade fades one kaleidoscope OUT and the other IN, so
  * each half is still that side's own group, twist included (an interpolated
  * twist would sweep the copies through rotations that belong to neither
  * side's group). It joins the identity comparison for the same reason
  * `plane` does: two kaleidoscopes of equal order that turn differently are
- * not the same kaleidoscope. Flatness plays no part here (the fr-5gxn
- * non-flat skip died with fr-q0h6 P6): a 4D sample renders its kaleidoscope
- * like any other, so the crossfade is always worth computing.
+ * not the same kaleidoscope. Flatness plays no part here (the old non-flat
+ * skip died when the 4D pipeline learned to render a kaleidoscope): a 4D
+ * sample renders its kaleidoscope like any other, so the crossfade is always
+ * worth computing.
  */
 function lerpSymmetry(
   a: SymmetryParams,
@@ -465,10 +466,10 @@ function lerpSymmetry(
  * side's id) so the lens fades in/out through {@link lerpTransformPair}'s
  * ordinary field rules; when both have one, they lerp directly with `b`'s
  * id. The final transform is never picked by the chaos game — it only bends
- * a point at plot time — so its `colorIndex`/`colorSpeed` pair is inert
- * (fr-hiyu); the lone-map fallback `derivedColorIndex(0, 1)` (`0.5`) is
- * passed purely to satisfy {@link lerpTransformPair}'s signature, not
- * because any renderer reads it.
+ * a point at plot time — so its `colorIndex`/`colorSpeed` pair is inert;
+ * the lone-map fallback `derivedColorIndex(0, 1)` (`0.5`) is passed purely
+ * to satisfy {@link lerpTransformPair}'s signature, not because any renderer
+ * reads it.
  */
 function lerpFinalTransform(
   a: Transform | null,
@@ -514,9 +515,9 @@ export function lerpSystem(
 ): MorphSystem {
   if (t <= 0) return a;
   if (t >= 1) return b;
-  // No flatness is derived here (that would be circular: since fr-q0h6
-  // flatness consumes symmetry via `symmetryIsNonFlat`) — symmetry is simply
-  // computed, and any caller that wants the SAMPLE's flatness derives it
+  // No flatness is derived here (that would be circular: flatness consumes
+  // symmetry via `symmetryIsNonFlat`) — symmetry is simply computed, and any
+  // caller that wants the SAMPLE's flatness derives it
   // from the finished parts + symmetry, exactly as for an authored system.
   return {
     transforms: lerpTransforms(a.transforms, b.transforms, t),

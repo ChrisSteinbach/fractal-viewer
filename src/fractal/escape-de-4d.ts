@@ -1,6 +1,6 @@
 /**
- * Escape-time chain, one dimension up (fr-vag4): `escape-de.ts`'s forward
- * formula chain over 4D points, for the systems whose maps reach out of the
+ * Escape-time chain, one dimension up: `escape-de.ts`'s forward formula
+ * chain over 4D points, for the systems whose maps reach out of the
  * `w = 0` hyperplane — the dimensional-parity half of the family the site is
  * named after.
  *
@@ -10,9 +10,10 @@
  * estimator's state, never a decision that a 4D one should not exist — and
  * the sharpest case is `qsquare`, whose 4D form is the DEFINITION and whose
  * 3D form is the restriction (`variations4.ts`). The one map in this family
- * whose home dimension is four was the one being run flattened; fr-wuuu
- * measured what the `k` component does to it. So this module is the 4D half
- * of a mode that had none.
+ * whose home dimension is four was the one being run flattened, and
+ * `scripts/hybrid-chain.harness.ts`'s k-component sweep measured what that
+ * component does to it. So this module is the 4D half of a mode that had
+ * none.
  *
  * WHAT LIFTS, AND WHAT DOES NOT — the gate refuses PER LINK KIND rather than
  * per map, because the three questions have three different answers:
@@ -60,7 +61,7 @@
  * chaos game does not draw.
  *
  * NO SLAB, AND THAT IS THE SHIPPED PATTERN ONE MODE OVER. `surface-de-4d.ts`
- * refuses fr-wa6o slab queries for any system whose fold set includes a
+ * refuses slab queries for any system whose fold set includes a
  * spherefold or a mandelbox ({@link import("./surface-de-4d").slabExact4}) —
  * the mid branch is an inversion, which takes a segment to an arc — and the
  * app clamps `sliceHalfW` to 0 for those sessions rather than degrading into
@@ -247,8 +248,8 @@ export function analyzeEscapeSystem4(
     } else if (v.type === "qsquare") {
       if (active.length < 2) {
         // 3D's LONE POWER MAP clause, and it holds here for the same reason:
-        // `qjulia-de.ts`'s object is fr-7u8t.5/.6's measured won't-do, dull
-        // alone and worth rendering composed. Two links is a chain.
+        // `qjulia-de.ts`'s object is a measured won't-do, dull alone and
+        // worth rendering composed. Two links is a chain.
         reasons.push(
           `${label} is a lone quaternion square (chain it with another map)`,
         );
@@ -545,8 +546,8 @@ export function estimateEscapeDistance4(
  * FINITE-BUDGET one, so this asks with the same budget the estimate uses.
  *
  * Exists because thresholding {@link estimateEscapeDistance4} cannot answer
- * it (3D's paragraph, and fr-azjk's correction of four harness sheets that
- * tried).
+ * it (3D's paragraph, and the set-extent correction of four harness sheets
+ * that tried).
  */
 export function escapeSetContains4(
   de: EscapeDE4,
@@ -566,8 +567,8 @@ export function escapeSetContains4(
  * here than in 3D and was measured on this very family: a `w = 0.4` slice of
  * `hybridChainQuaternion` has LITERALLY ZERO members in 524288 samples of its
  * own bailout ball and still draws 20.9% of its rays as a coherent shaded
- * object (fr-wuuu). A slice through a set of shells is a set of surfaces, and
- * no volume statistic can see one. In 4D the trap is routine rather than
+ * object. A slice through a set of shells is a set of surfaces, and no
+ * volume statistic can see one. In 4D the trap is routine rather than
  * exotic, because every rendered frame IS such a slice.
  */
 export function probeEscapeFill4(

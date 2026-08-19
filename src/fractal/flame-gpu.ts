@@ -1,5 +1,5 @@
 /**
- * The WebGPU flame-accumulation backend's PURE side (fr-npb): the WGSL
+ * The WebGPU flame-accumulation backend's PURE side: the WGSL
  * kernel source, its byte-layout contracts, and (below the kernel) the
  * packing/planning/conversion functions that translate between this
  * codebase's plain-object systems and the kernel's flat GPU buffers.
@@ -10,24 +10,24 @@
  * Vitest-testable (`flame-gpu.test.ts`), exactly like the rest of
  * `src/fractal/`. The one thing that cannot run under Vitest is the WGSL
  * string itself; it is pinned instead by the statistical agreement harness
- * (`src/app/gpu-bench/`, fr-53k's equal-N methodology) against
- * `accumulateFlame`, this kernel's line-for-line CPU reference.
+ * (`src/app/gpu-bench/`, the accumulation spike's equal-N methodology)
+ * against `accumulateFlame`, this kernel's line-for-line CPU reference.
  *
- * The kernel is fr-53k's spike kernel, productionized. Parity with
+ * The kernel is that spike's kernel, productionized. Parity with
  * `accumulateFlame` (see that function and `chaos-game.ts`'s `stepOrbit`):
  * same uniform/weighted transform pick (lower-bound binary search over
  * cumulative weights), same affine → blended-variations → symmetry
  * post-rotation step, same escape-reseed limit (written NaN-robustly for
  * f32: WGSL comparisons with NaN are false, so `!(all inside)` catches NaN
  * and ±inf alike), same final-transform adopt-only-if-finite lens, same
- * flam3 color-coordinate walk (fr-hiyu: its per-map palette slot and blend
+ * flam3 color-coordinate walk (its per-map palette slot and blend
  * speed ride the SLOT, resolved host-side by {@link packGpuSystem} through
  * the very same `derivedColorIndex`/`DEFAULT_COLOR_SPEED` `prepareChaosGame`
  * resolves the CPU oracle's with), same NDC → pixel bucketing. Deliberate
- * differences, measured and accepted in fr-53k's go/no-go
- * (`docs/spike-fr-53k-gpu-flame-accum.md`): f32 arithmetic instead of f64,
+ * differences, measured and accepted in the spike's go/no-go
+ * (`docs/flame-gpu-accumulation-spike.md`): f32 arithmetic instead of f64,
  * and many independent PCG32 chains instead of one mulberry32 orbit — each
- * chain on its own PCG stream (a per-chain odd increment, fr-8xn), so
+ * chain on its own PCG stream (a per-chain odd increment), so
  * distinct chains walk distinct full-period LCG cycles rather than
  * phase-shifted copies of one shared cycle. The output is a statistically
  * indistinguishable render of the same attractor, not a byte-identical one.
@@ -47,11 +47,11 @@
  *   variation type at once; the spike's 4 lanes would have forced a silent
  *   CPU fallback for variation-heavy systems. Slots now carry
  *   {@link MAX_SLOT_VARIATIONS} (type, weight) lanes — one per
- *   {@link VariationType} (fr-p7nu added the Mandelbox fold family —
- *   `boxfold`/`spherefold`/`mandelbox`, fr-7u8t.3 added `qsquare` to fill the
- *   16 lanes the arrays had always reserved, and fr-7u8t.7's `bulb` took the
- *   count to 17 — widening both lane arrays by one `vec4`, the smallest step
- *   a `vec4` array has, so three of the 20 lanes now ride spare).
+ *   {@link VariationType} (the Mandelbox fold family added
+ *   `boxfold`/`spherefold`/`mandelbox`, `qsquare` filled the 16 lanes the
+ *   arrays had always reserved, and `bulb` took the count to 17 — widening
+ *   both lane arrays by one `vec4`, the smallest step a `vec4` array has, so
+ *   three of the 20 lanes now ride spare).
  */
 import type { Rng } from "./rng";
 import type { SymmetryParams, Transform, VariationType } from "./types";
@@ -76,14 +76,14 @@ import { mulberry32 } from "./rng";
 
 /** Invocations per workgroup; a dispatch is `numChains / WORKGROUP_SIZE`
  * workgroups. 128 measured well on both integrated and discrete GPUs in
- * fr-53k; chain counts must be a multiple of this. */
+ * the accumulation spike; chain counts must be a multiple of this. */
 export const WORKGROUP_SIZE = 128;
 
 /** Fixed-point scale for color channels: palette/LUT entries are
  * pre-scaled to `round(channel * 256)` at pack time, so the kernel adds
  * integers and {@link convertGpuHistogram} divides once on readback.
  * Quantization is ≤ 1/512 per channel per hit — invisible under the
- * log-density tonemap (measured: bias ≤ 0.065/255 in fr-53k). */
+ * log-density tonemap (measured: bias ≤ 0.065/255 in that spike). */
 export const COLOR_FIXED_POINT_SCALE = 256;
 
 /** Variation (type, weight) lanes per slot — equal to `VARIATION_TYPES.length`
@@ -144,16 +144,16 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  *   0 rowX vec4f (m0 m1 m2 t0) | 16 rowY | 32 rowZ
  *   48 postX vec4f (symmetry post-rotation row, w unused) | 64 postY | 80 postZ
  *   96 varWeights array<vec4f, 5> | 176 varTypes array<vec4u, 5> (20 lanes of
- *   storage, 17 used — one per {@link VariationType}; fr-7u8t.7's `bulb` took
+ *   storage, 17 used — one per {@link VariationType}; `bulb` took
  *   the count past the 16 four vec4s held, and a vec4 array cannot be widened
  *   by less than four lanes, so three ride spare)
  *   256 varCount u32 | 260 hasPost u32 | 264 cumWeight f32
- *   268 colorIndex f32 | 272 colorSpeed f32 (fr-hiyu's flam3 color pair,
+ *   268 colorIndex f32 | 272 colorSpeed f32 (the flam3 color pair,
  *   resolved per BASE map and written into EVERY kaleidoscope copy of it —
  *   exactly like cumWeight's base-map weight — so the kernel reads
  *   `slots[idx]` with no modulo) | 276..287 trailing pad (three spare words
  *   the 16-byte struct alignment demands once the pair grew the tail past 272)
- *   288 foldRadii array<vec4f, 3> (fr-s9ll) — the fold family's AUTHORED
+ *   288 foldRadii array<vec4f, 3> — the fold family's AUTHORED
  *   lengths, indexed by variation type MINUS 12, i.e. [boxfold, spherefold,
  *   mandelbox]: (minRadius^2, fixedRadius^2, boxLimit, unused). SQUARED for
  *   the sphere pair because that is the form `foldVariationFn`'s closure
@@ -228,7 +228,7 @@ struct Slot {
   _pad0: f32,
   _pad1: f32,
   _pad2: f32,
-  // fr-s9ll: the fold family's authored lengths, indexed by type - 12
+  // The fold family's authored lengths, indexed by type - 12
   // ([boxfold, spherefold, mandelbox]) — (minRadius^2, fixedRadius^2,
   // boxLimit, unused). A transform carries at most one entry per type, so
   // three lanes cover every fold a slot can hold.
@@ -264,7 +264,7 @@ fn addU64(base: u32, v: u32) {
 }
 
 // PCG-RXS-M-XS 32 with per-chain streams: rng.x the mutable state, rng.y the
-// chain's odd LCG increment — PCG's stream selector (fr-8xn). A shared
+// chain's odd LCG increment — PCG's stream selector. A shared
 // increment would put every chain on the SAME full-period 2^32 cycle
 // (Hull–Dobell: c odd, a = 1 mod 4), making chains phase-shifted copies of
 // one sequence that replay each other's draws wherever their states drift
@@ -474,7 +474,7 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
 
     // Structural coloring: blend the color coordinate toward this transform's
     // palette slot, at this transform's own speed, BEFORE stepping — exactly
-    // accumulateFlame's c = c * (1 - speed) + slot * speed (fr-hiyu), term for
+    // accumulateFlame's c = c * (1 - speed) + slot * speed, term for
     // term, and consuming no RNG so the orbit stays identical either way. At
     // the default speed 0.5 this is bit-identical to the halfway blend it
     // replaces: halving is exact in binary FP, so both forms round exactly
@@ -565,7 +565,7 @@ const SLOT_VAR_TYPES = 44;
 const SLOT_VAR_COUNT = 64;
 const SLOT_HAS_POST = 65;
 const SLOT_CUM_WEIGHT = 66;
-/** fr-hiyu's flam3 color pair, resolved per BASE map and replicated across its
+/** The flam3 color pair, resolved per BASE map and replicated across its
  * kaleidoscope copies (see {@link packGpuSystem}) — the kernel's structural
  * walk reads them straight off the picked slot. */
 const SLOT_COLOR_INDEX = 67;
@@ -573,7 +573,7 @@ const SLOT_COLOR_SPEED = 68;
 // Elements 69-71 are Slot's trailing pad, left at the ArrayBuffer's zero
 // default.
 /**
- * `foldRadii: array<vec4f, 3>` (fr-s9ll) — 12 lanes, indexed by variation
+ * `foldRadii: array<vec4f, 3>` — 12 lanes, indexed by variation
  * type MINUS 12, i.e. [boxfold, spherefold, mandelbox]. The same contiguous
  * reasoning as {@link SLOT_VAR_WEIGHTS}: three consecutive vec4s are 12
  * contiguous elements, so fold `i` sits at `SLOT_FOLD_RADII + i * 4`.
@@ -614,8 +614,8 @@ const PARAMS_NUM_CHAINS = 21;
  * restatement — see the module doc's "restated, not imported" note): one
  * nonzero Euler angle for the requested w-free plane, matching
  * `prepareChaosGame`'s per-copy post-rotation exactly, including the plane →
- * Euler mapping fr-q0h6's axis migration pins there (`yz`/`xz`/`xy` ← the
- * legacy `x`/`y`/`z`, same matrices, same signs).
+ * Euler mapping the 4D kaleidoscope's axis migration pins there
+ * (`yz`/`xz`/`xy` ← the legacy `x`/`y`/`z`, same matrices, same signs).
  *
  * Throws on a `w`-plane for the same reason the oracle does: this kernel is
  * the 3D flame's, and a 4D symmetry routes to `flame-gpu-4d.ts` instead.
@@ -702,11 +702,11 @@ function writeSlotPost(
  * filter. Defensive: the lane count IS `VariationType`'s member count, and a
  * transform carries at most one entry per type (see `types.ts`'s `Variation`
  * for the convention and its enforcers — of which `morph.ts`'s type-keyed
- * union and `persist.ts`'s decode cap are the two that matter here, fr-qgxi),
+ * union and `persist.ts`'s decode cap are the two that matter here),
  * so every legal transform already fits; this only fires if that union ever
  * grows without a matching bump to the Slot layout.
  *
- * Exported (fr-e26) for `flame-gpu-4d.ts`: a variation list is
+ * Exported for `flame-gpu-4d.ts`: a variation list is
  * dimension-free data (`Variation[]` is shared by `Transform` and
  * `Transform4`), so the 4D packer reuses this filter/index mapping verbatim
  * rather than restating it.
@@ -745,7 +745,7 @@ function writeSlotVariations(
 ): void {
   const { types, weights } = packVariations(variations);
   for (const v of variations ?? []) {
-    // fr-s9ll: the fold family's authored lengths, in the SQUARED form
+    // The fold family's authored lengths, in the SQUARED form
     // `foldVariationFn`'s closure computes once — one lane per fold TYPE,
     // which is exact because a transform carries at most one entry per
     // type. Written straight from the raw list rather than from the
@@ -774,7 +774,7 @@ function writeSlotVariations(
  * for the inverse on readback). The w lane is left at the `ArrayBuffer`'s
  * zero default (unused padding).
  *
- * Exported (fr-e26) for `flame-gpu-4d.ts`: the `colors` table's entry layout
+ * Exported for `flame-gpu-4d.ts`: the `colors` table's entry layout
  * (and its fixed-point scale) is identical one dimension up, so the 4D
  * packer writes its LUT/palette entries through this same helper.
  */
@@ -834,7 +834,7 @@ export interface PackedGpuSystem {
  * Pack a {@link GpuFlameSystemSpec} into the kernel's Slot storage buffer and
  * 256-entry colors buffer — the flat-buffer restatement of `chaos-game.ts`'s
  * `prepareChaosGame` expansion and `flame.ts`'s `accumulateFlame` weight/
- * color handling (fr-53k's spike packing, ported to this module's
+ * color handling (the spike's packing, ported to this module's
  * {@link MAX_SLOT_VARIATIONS}-variation-lane, 64-bit-histogram Slot layout —
  * see the module doc for what changed and why).
  *
@@ -859,7 +859,7 @@ export interface PackedGpuSystem {
  * Number.isFinite(totalWeight)`) — so the kernel's weighted/uniform pick
  * branch agrees with the CPU's bit for bit.
  *
- * **Color slots** (fr-hiyu): every slot also carries the flam3 pair the
+ * **Color slots**: every slot also carries the flam3 pair the
  * kernel's structural walk blends with — `colorIndex` (the transform's own, or
  * `derivedColorIndex(i, baseTransformCount)`'s even spread) and `colorSpeed`
  * (its own, or `DEFAULT_COLOR_SPEED`). Both are resolved from the BASE map and
@@ -878,7 +878,7 @@ export interface PackedGpuSystem {
  *
  * **Colors**: `palette === "legacy"` packs `transformColors(baseTransformCount,
  * colorIndexes)` (one entry per BASE map, `colorMode = 0`) — each map's
- * authored `colorIndex` (fr-axxl) picks its hue exactly like the CPU legacy
+ * authored `colorIndex` picks its hue exactly like the CPU legacy
  * path, since the shader only ever indexes this precomputed table, never
  * computes a hue itself; anything else packs the 256-entry
  * `buildPaletteLUT(palette)` gradient (`colorMode = 1`). Either way each
@@ -920,7 +920,7 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
     totalWeight > 0 &&
     Number.isFinite(totalWeight);
 
-  // Flame structural-coloring pair per BASE map (fr-hiyu), resolved through
+  // Flame structural-coloring pair per BASE map, resolved through
   // the SAME two definitions prepareChaosGame resolves the CPU oracle's with,
   // so an absent field cannot mean one thing here and another there. The
   // expansion below writes each base map's pair into every copy of it (see
@@ -969,7 +969,7 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
     // Named `transformPalette`, not `palette` — the spec's own `palette` is
     // in scope here, and a same-named inner local would be easy to misread
     // even though this legacy branch never touches the outer one. Authored
-    // colorIndexes (fr-axxl) ride the same `transforms` already in scope for
+    // colorIndexes ride the same `transforms` already in scope for
     // the affine/variation packing above — the shader itself never computes
     // a hue; it only indexes this precomputed table, so this one call site
     // is the whole GPU-side fix.
@@ -1015,7 +1015,7 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
  * draw for the kernel's own per-chain PCG32 seed, then one more forced odd
  * (`(draw << 1) | 1`, PCG's stream-selector convention) for the chain's
  * private LCG increment — distinct streams, not phase shifts of one shared
- * cycle (fr-8xn).
+ * cycle.
  */
 function writeChainSeed(
   f32: Float32Array,
@@ -1041,7 +1041,7 @@ function writeChainSeed(
  * involved — rather than `numChains` independently-seeded (and therefore
  * correlated) streams.
  * On the GPU side each chain also carries its own odd PCG increment, so
- * distinct chains advance distinct full-period streams (fr-8xn).
+ * distinct chains advance distinct full-period streams.
  */
 export function packGpuChains(numChains: number, seed: number): ArrayBuffer {
   const rng = mulberry32(seed);
@@ -1083,7 +1083,7 @@ export interface GpuParamsFields {
  * `accumulateFlame` (the histogram accumulates density, it doesn't
  * depth-sort).
  *
- * There is deliberately no `colorDenom` here any more (fr-hiyu): the gradient
+ * There is deliberately no `colorDenom` here any more: the gradient
  * slot a base map maps to is no longer a uniform-wide `i / (n - 1)` division
  * the kernel redoes per iteration, but a per-slot value {@link packGpuSystem}
  * resolves — so the uniform lost the field rather than carrying a value with
@@ -1253,7 +1253,7 @@ export function convertGpuHistogram(
 }
 
 // ---------------------------------------------------------------------------
-// Progressive display downsample (fr-ee9): a two-pass separable Gaussian
+// Progressive display downsample: a two-pass separable Gaussian
 // compute filter that mirrors `flame.ts`'s `downsampleFlame` in structure,
 // not just in spirit — see that function's doc for the CPU algorithm this
 // restates. Moves the PROGRESSIVE (not-yet-finished) redisplay's downsample
@@ -1293,7 +1293,7 @@ export function convertGpuHistogram(
  * export just for this (see this module's own doc for the broader "restated,
  * not imported" pattern — `symmetryPostRotation` does the same for
  * `chaos-game.ts`'s private `symmetryRotation`); kept in sync by hand, and by
- * the agreement harness (Part 4 of fr-ee9), which would show a kernel-shape
+ * the agreement harness's downsample part, which would show a kernel-shape
  * mismatch against `downsampleFlame` if the two ever drifted.
  */
 const MIN_FILTER_SIGMA = 1e-3;
@@ -1462,7 +1462,7 @@ export interface PackedGpuDownsample {
 
 /**
  * Pack the uniform + weight table for the two-pass separable GPU downsample
- * (fr-ee9) — the exact kernel `downsampleFlame` (`flame.ts`, lines ~620-745)
+ * — the exact kernel `downsampleFlame` (`flame.ts`, lines ~620-745)
  * computes, restated as two 1-D passes (see {@link FLAME_GPU_DOWNSAMPLE_WGSL}'s
  * doc for why that restatement is exact, not approximate). `srcW`/`srcH` are
  * the ACCUMULATION resolution (display size x effective supersample);
@@ -1566,11 +1566,12 @@ export function packGpuDownsample(
  * {@link convertGpuHistogram}'s emulated-u64 accumulation buckets) — into an
  * existing {@link FlameHistogram}. `out` is mandatory (not optional): unlike
  * `convertGpuHistogram`, every caller already owns a specific display-slot
- * histogram to reuse (fr-ee9's whole point is never allocating a fresh one
- * per redisplay tick) — see `flame-worker-core.ts`'s `FlameAccumBackend.
- * snapshotDisplay` doc. Every bucket is unconditionally overwritten (the
- * same dirty-reuse contract as `convertGpuHistogram`'s `out`), and `maxHits`
- * is recomputed as the max over every converted bucket.
+ * histogram to reuse (the GPU downsample's whole point is never allocating
+ * a fresh one per redisplay tick) — see `flame-worker-core.ts`'s
+ * `FlameAccumBackend.snapshotDisplay` doc. Every bucket is unconditionally
+ * overwritten (the same dirty-reuse contract as `convertGpuHistogram`'s
+ * `out`), and `maxHits` is recomputed as the max over every converted
+ * bucket.
  *
  * Throws `RangeError` (naming both the actual and expected length/dims) on a
  * `data` length mismatch or an `out` dimension mismatch — same shape as

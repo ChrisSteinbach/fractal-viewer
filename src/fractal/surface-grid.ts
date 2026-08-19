@@ -8,7 +8,7 @@ import type { SurfaceDE } from "./surface-de";
 import type { Vec3 } from "./types";
 
 /**
- * Empty-space-skipping grid for the surface render (fr-55r5 part 2).
+ * Empty-space-skipping grid for the surface render.
  *
  * {@link estimateDistanceRefined} is exact but not cheap: a beam of
  * inverse-map descents, up to `de.maxDepth` levels deep. Most of a
@@ -21,7 +21,7 @@ import type { Vec3 } from "./types";
  * the same oracle discipline `surface-de.ts` itself follows for
  * `surface-material.ts`.
  *
- * WHAT A BUILD COSTS is a fr-aj4w concern threaded through the module:
+ * WHAT A BUILD COSTS is a measured concern threaded through the module:
  * per-cell descent cost spans ~40x across systems (fold frontiers dwarf
  * the affine ladder), so floors are priced with a per-system estimator
  * ({@link surfaceGridEstimator}: plain for fold systems, refined for
@@ -46,7 +46,7 @@ import type { Vec3 } from "./types";
  *
  * THE CUTOFF DOES DOUBLE DUTY. Each cell calls the estimator with `cutoff =
  * cellRadius`, not a full (`cutoff = 0`) descent. `estimateDistanceRefined`'s
- * contract (see its doc, fr-55r5) says a returned value `>= cutoff` equals
+ * contract (see its doc) says a returned value `>= cutoff` equals
  * the full-descent result bit-for-bit, while a value `< cutoff` only
  * promises the full descent is ALSO `< cutoff` — the early exit may have
  * taken a shortcut through an unfolded branch, so a sub-cutoff value is not
@@ -68,11 +68,11 @@ import type { Vec3 } from "./types";
  * estimator at all — roughly half the cube's cells on a typical build,
  * halving build cost for free.
  *
- * BALLOON MODE READS THESE FLOORS ONLY WHERE THE SHELL CLEARS THE BOX
- * (fr-8yad). The balloon (`balloon-de.ts`) renders the UNION of the
- * attractor and its sphere-inverted echo, and every floor here bounds the
- * FRACTAL alone — so fr-5wlv shipped the grid OFF in balloon mode, since
- * the shell can be nearer to a cell than that cell's stored floor admits.
+ * BALLOON MODE READS THESE FLOORS ONLY WHERE THE SHELL CLEARS THE BOX.
+ * The balloon (`balloon-de.ts`) renders the UNION of the attractor and its
+ * sphere-inverted echo, and every floor here bounds the FRACTAL alone — so
+ * the balloon shipped with the grid OFF, since the shell can be nearer to
+ * a cell than that cell's stored floor admits.
  * It is valid again exactly when the whole shell lies outside the grid
  * cube, which {@link balloonClearsGridBox} tests per frame:
  *
@@ -132,10 +132,10 @@ import type { Vec3 } from "./types";
  */
 
 /** Default per-axis cell count: {@link buildSurfaceGrid}'s `resolution` when
- * a caller does not size it explicitly, at the low end of the bead's 64-128
- * range — an AFFINE worker build stays under ~2s on mid systems at
- * `64 ** 3` cells. Fold systems can cost 40x more per cell (fr-aj4w's
- * measured tables), which is why the production worker treats this as a
+ * a caller does not size it explicitly, at the low end of the originally
+ * proposed 64-128 range — an AFFINE worker build stays under ~2s on mid systems at
+ * `64 ** 3` cells. Fold systems can cost 40x more per cell (the measured
+ * build-cost tables), which is why the production worker treats this as a
  * CEILING and downshifts through {@link pickSurfaceGridResolution} when a
  * measured pilot slab projects the full build over budget. Tests pass an
  * explicit smaller resolution so they never pay this cost. */
@@ -143,19 +143,20 @@ export const SURFACE_GRID_RESOLUTION = 64;
 
 /** What a full grid build is allowed to cost, projected from the worker's
  * measured pilot slab ({@link pickSurfaceGridResolution}). Sized against
- * fr-aj4w's tables: every affine preset projects well under it at `64 ** 3`
- * (so the shipped resolution is untouched exactly where it was already
- * fine), the expensive fold systems (`mandelboxKifs` 38s, mandelbox pair
- * 13s at 64^3 plain on the dev machine) land at the ladder floor, and the
- * cheap fold pairs (0.3-1.2s) keep their full 64^3. The budget bounds the
- * one edge fr-aj4w called sharpest: offline timeline export awaits the
- * grid build (`main.ts`'s `surfaceGrid.settle()`), so build cost is a
- * render-keyframe STALL, not just background worker heat. */
+ * the measured build-cost tables: every affine preset projects well under
+ * it at `64 ** 3` (so the shipped resolution is untouched exactly where it
+ * was already fine), the expensive fold systems (`mandelboxKifs` 38s,
+ * mandelbox pair 13s at 64^3 plain on the dev machine) land at the ladder
+ * floor, and the cheap fold pairs (0.3-1.2s) keep their full 64^3. The
+ * budget bounds the one edge those measurements called sharpest: offline
+ * timeline export awaits the grid build (`main.ts`'s
+ * `surfaceGrid.settle()`), so build cost is a render-keyframe STALL, not
+ * just background worker heat. */
 export const SURFACE_GRID_BUDGET_MS = 3000;
 
 /** The resolutions {@link pickSurfaceGridResolution} may downshift
  * through, descending. 32 is the floor: an 8x cost cut from 64 that still
- * carries the coarse void structure a fold march skips by (fr-aj4w's
+ * carries the coarse void structure a fold march skips by (the build-cost
  * tables show positive-floor fraction and median floor barely move across
  * 64/48/32) — below that, cells outgrow the voids between fold plates and
  * the grid stops paying for itself, so past the floor the answer is "build
@@ -182,8 +183,8 @@ export const SURFACE_GRID_RESOLUTION_LADDER = [64, 48, 32];
  *
  * Both approximations lean the same safe way. The equator pilot
  * over-states the mean layer, and per-cell cost measured mildly SUB-linear
- * in resolution (fr-aj4w's tables: `mandelboxKifs` visits/cell falls ~20%
- * from 64^3 to 32^3), so projections for coarser rungs are mild
+ * in resolution (the build-cost tables: `mandelboxKifs` visits/cell falls
+ * ~20% from 64^3 to 32^3), so projections for coarser rungs are mild
  * OVER-estimates — the planner downshifts a shade too eagerly rather than
  * ever wedging the worker on a build it under-priced.
  */
@@ -243,7 +244,7 @@ export function surfaceGridSpec(
 }
 
 /**
- * fr-8yad: may a balloon session's march read these fractal-only floors?
+ * May a balloon session's march read these fractal-only floors?
  * Yes exactly when the inverted-union's SHELL clears the grid cube —
  *
  *     R^2 / rho  >  |center| + sqrt(3) * halfExtent
@@ -317,9 +318,9 @@ const point: Vec3 = [0, 0, 0];
  * prices each cell's floor with. Validity only needs two properties, and
  * BOTH shipped estimators have them: (a) `dist(., A)` is lower-bounded
  * everywhere — the property this module's own validity argument builds the
- * whole floor chain on — and (b) the fr-55r5 `cutoff` early-out contract
- * holds (`surface-de.ts`'s doc directly above `estimateDistance` spells it
- * out: a returned value `>= cutoff` is the full-descent result
+ * whole floor chain on — and (b) the march-epsilon `cutoff` early-out
+ * contract holds (`surface-de.ts`'s doc directly above `estimateDistance`
+ * spells it out: a returned value `>= cutoff` is the full-descent result
  * bit-for-bit, a value `< cutoff` only certifies the full result is ALSO
  * `< cutoff`). {@link buildSurfaceGridSlab} calls with `cutoff =
  * cellRadius` either way, so the same store-or-drop logic below is sound
@@ -333,7 +334,7 @@ const point: Vec3 = [0, 0, 0];
  * shorter marcher skips where a floor does survive).
  *
  * The default is {@link surfaceGridEstimator}'s per-system choice, decided
- * by fr-aj4w's measurements (`scripts/surface-grid-cost.harness.ts`):
+ * by the build-cost measurements (`scripts/surface-grid-cost.harness.ts`):
  * `"plain"` for fold systems, `"refined"` for affine ones. The explicit
  * parameter remains so that harness can keep pricing BOTH estimators on
  * any system.
@@ -344,7 +345,7 @@ export type SurfaceGridEstimator = "refined" | "plain";
  * The estimator a production grid build should price `de`'s floors with —
  * {@link buildSurfaceGridSlab}/{@link buildSurfaceGrid}'s default when the
  * caller does not choose explicitly. Fold systems build `"plain"`, affine
- * systems `"refined"`, per fr-aj4w's measured verdict:
+ * systems `"refined"`, per the build-cost measurements' verdict:
  *
  * - COST. On the shipped fold showcase (`mandelboxKifs`, 12 maps) the
  *   refined build runs ~1.5x the plain one in wall time AND inverse-map
@@ -366,8 +367,8 @@ export type SurfaceGridEstimator = "refined" | "plain";
  * Affine systems keep `"refined"`: their refined build is cheap (~2x a
  * plain one that is itself well under budget — 0.27s vs 0.13s at 64^3 on
  * the dev machine's default preset), their GLSL march mirrors the REFINED
- * body, and fr-1z6p's ghost work showed refined bounds are what keep
- * affine voids honest.
+ * body, and the ghost work behind the refined certificates showed refined
+ * bounds are what keep affine voids honest.
  */
 export function surfaceGridEstimator(de: SurfaceDE): SurfaceGridEstimator {
   return deHasFolds(de) ? "plain" : "refined";

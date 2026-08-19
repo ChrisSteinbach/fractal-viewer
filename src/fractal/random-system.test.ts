@@ -15,15 +15,15 @@ import { SYMMETRY_PLANES } from "./types";
 import type { Bounds, Bounds4, Transform } from "./types";
 
 const SEED_SAMPLE_SIZE = 50;
-/** Larger batch for the 4D-roll tests (fr-bf6.5): the roll only hits ~1/4 of
- * the time, so a bigger sample is needed for both the fraction check and to
- * reliably surface at least one of each sparse-`w` shape (position-only,
+/** Larger batch for the 4D-roll tests: the roll only hits ~1/4 of the time,
+ * so a bigger sample is needed for both the fraction check and to reliably
+ * surface at least one of each sparse-`w` shape (position-only,
  * rotation-only, two-plane rotation, the flat-roll force-fallback). */
 const FOUR_D_SEED_SAMPLE_SIZE = 200;
 
 /**
- * fr-mdhx: `randomSystem(mulberry32(seed))` is a pure function of `seed`
- * (proved by the determinism test below), and at least a dozen tests across
+ * `randomSystem(mulberry32(seed))` is a pure function of `seed` (proved by
+ * the determinism test below), and at least a dozen tests across
  * this file's describe blocks each used to re-roll their own fresh,
  * identical 50- or 200-candidate batch just to inspect a different property
  * — each roll retrying up to 40 candidates x 3 chaos-game probes, which was
@@ -170,7 +170,7 @@ describe("randomSystem", () => {
     }
   });
 
-  it("floors every uniform-scale map at count^(-1/1.8), so jitter can't drag a 2-map roll into a thin squiggle (fr-d61)", () => {
+  it("floors every uniform-scale map at count^(-1/1.8), so jitter can't drag a 2-map roll into a thin squiggle", () => {
     let uniformScaleMapsSeen = 0;
     for (let seed = 0; seed < SEED_SAMPLE_SIZE; seed++) {
       const { transforms } = RANDOM_SYSTEM_CORPUS[seed];
@@ -178,7 +178,7 @@ describe("randomSystem", () => {
       for (const t of transforms) {
         const [sx, sy, sz] = t.scale.map(Math.abs);
         // Exact magnitude equality identifies the uniform-scale branch (a
-        // mirror roll — fr-o1y — only flips one sign): the anisotropic
+        // mirror roll only flips one sign): the anisotropic
         // branch's three independent continuous draws can never coincide.
         if (sx !== sy || sy !== sz) continue;
         uniformScaleMapsSeen++;
@@ -188,7 +188,7 @@ describe("randomSystem", () => {
     expect(uniformScaleMapsSeen).toBeGreaterThan(0);
   });
 
-  it("caps a 2-map system's weight skew at 4:1 so the light branch keeps at least a fifth of the orbit (fr-d61)", () => {
+  it("caps a 2-map system's weight skew at 4:1 so the light branch keeps at least a fifth of the orbit", () => {
     let twoMapSystemsSeen = 0;
     // Bigger sample (matching the 4D-roll tests) to hit plenty of 2-map
     // systems.
@@ -204,7 +204,7 @@ describe("randomSystem", () => {
     expect(twoMapSystemsSeen).toBeGreaterThan(0);
   });
 
-  it("occasionally mirrors a map — exactly one negated scale axis, never two or three (fr-o1y)", () => {
+  it("occasionally mirrors a map — exactly one negated scale axis, never two or three", () => {
     let systemsWithMirror = 0;
     for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
       const { transforms } = RANDOM_SYSTEM_CORPUS[seed];
@@ -227,7 +227,7 @@ describe("randomSystem", () => {
   });
 });
 
-describe("randomSystem fold radii (fr-s9ll)", () => {
+describe("randomSystem fold radii", () => {
   it("never rolls minRadius/fixedRadius/boxLimit onto any variation, base map or final transform", () => {
     for (let seed = 0; seed < SEED_SAMPLE_SIZE; seed++) {
       const { transforms, finalTransform } = RANDOM_SYSTEM_CORPUS[seed];
@@ -244,13 +244,13 @@ describe("randomSystem fold radii (fr-s9ll)", () => {
   });
 });
 
-// fr-mdhx: every sweep below reads RANDOM_SYSTEM_CORPUS (built once, above)
-// instead of rolling its own FOUR_D_SEED_SAMPLE_SIZE (200) batch, so the
+// Every sweep below reads RANDOM_SYSTEM_CORPUS (built once, above) instead
+// of rolling its own FOUR_D_SEED_SAMPLE_SIZE (200) batch, so the
 // describe-level 30s timeout this block used to carry -- the sweep, itself
 // up to 40 chaos-game reroll probes per seed, sat close to vitest's 5s
 // default under full-suite CPU contention -- is no longer earned: the
 // corpus pays that cost once, at module load, not once per test.
-describe("randomSystem's 4D extension (fr-bf6.5)", () => {
+describe("randomSystem's 4D extension", () => {
   it("is deterministic for a seed that rolls a non-flat system, including identical w blocks", () => {
     // Seed 7 is confirmed (empirically) to roll a non-flat system, so this
     // exercises the w-block equality path rather than incidentally passing
@@ -300,7 +300,7 @@ describe("randomSystem's 4D extension (fr-bf6.5)", () => {
     expect(finalTransformsSeen).toBeGreaterThan(0);
   });
 
-  it("keeps every rolled w block sparse: no shear, position and rotation in range, scale only ever the fr-bew mirror", () => {
+  it("keeps every rolled w block sparse: no shear, position and rotation in range, scale only ever the w-mirror", () => {
     let wBlocksSeen = 0;
     for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
       const { transforms } = RANDOM_SYSTEM_CORPUS[seed];
@@ -309,7 +309,7 @@ describe("randomSystem's 4D extension (fr-bf6.5)", () => {
         wBlocksSeen++;
         expect(t.w.shear, `seed ${seed}`).toBeUndefined();
         if (t.w.scale !== undefined) {
-          // Only the fr-bew mirror ever sets w.scale: the NEGATED derived
+          // Only the w-mirror roll ever sets w.scale: the NEGATED derived
           // mean contraction of the map's own scale (the exact value the
           // editor's Mirror W toggle would materialise), never a free-rolled
           // magnitude — and never on a block with no other w content.
@@ -343,7 +343,7 @@ describe("randomSystem's 4D extension (fr-bf6.5)", () => {
     expect(wBlocksSeen).toBeGreaterThan(0);
   });
 
-  it("occasionally mirrors a landed w block — negative w.scale at the documented rare rate (fr-bew)", () => {
+  it("occasionally mirrors a landed w block — negative w.scale at the documented rare rate", () => {
     let wBlocksSeen = 0;
     let mirrorsSeen = 0;
     for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
@@ -392,10 +392,10 @@ describe("randomSystem's 4D extension (fr-bf6.5)", () => {
   });
 });
 
-// fr-mdhx: same corpus-sharing rationale as the 4D-extension block above --
+// Same corpus-sharing rationale as the 4D-extension block above --
 // every sweep here reads RANDOM_SYSTEM_CORPUS, so the describe-level 30s
 // timeout is no longer earned.
-describe("randomSystem's symmetry roll (fr-d61, fr-msw5)", () => {
+describe("randomSystem's symmetry roll", () => {
   it("rolls symmetry on roughly 3 in 10 flat systems: integer order 2..6 about y, null otherwise", () => {
     let flatSystemsSeen = 0;
     let symmetryHits = 0;
@@ -409,8 +409,8 @@ describe("randomSystem's symmetry roll (fr-d61, fr-msw5)", () => {
       expect(symmetry.order, `seed ${seed}`).toBeGreaterThanOrEqual(2);
       expect(symmetry.order, `seed ${seed}`).toBeLessThanOrEqual(6);
       expect(symmetry.plane, `seed ${seed}`).toBe("xz");
-      // The flat roll's vocabulary stays frozen -- fr-msw5 only widened the
-      // non-flat roll below, never this one -- so a flat roll never carries
+      // The flat roll's vocabulary stays frozen -- widening only ever
+      // touched the non-flat roll below -- so a flat roll never carries
       // a twist key.
       expect(symmetry, `seed ${seed}`).not.toHaveProperty("twist");
     }
@@ -422,7 +422,7 @@ describe("randomSystem's symmetry roll (fr-d61, fr-msw5)", () => {
     expect(fraction).toBeLessThanOrEqual(0.45);
   });
 
-  it("rolls symmetry on roughly 3 in 10 non-flat systems: order 2..6, a rolled plane, occasional twist (fr-msw5)", () => {
+  it("rolls symmetry on roughly 3 in 10 non-flat systems: order 2..6, a rolled plane, occasional twist", () => {
     let nonFlatSystemsSeen = 0;
     let symmetryHits = 0;
     for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
@@ -456,7 +456,7 @@ describe("randomSystem's symmetry roll (fr-d61, fr-msw5)", () => {
     expect(fraction).toBeLessThanOrEqual(0.45);
   });
 
-  it("reaches more than one plane and at least one twisted kaleidoscope across a seed batch (fr-msw5)", () => {
+  it("reaches more than one plane and at least one twisted kaleidoscope across a seed batch", () => {
     const planesSeen = new Set<string>();
     let twistsSeen = 0;
     for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
@@ -465,7 +465,7 @@ describe("randomSystem's symmetry roll (fr-d61, fr-msw5)", () => {
       planesSeen.add(symmetry.plane);
       if ("twist" in symmetry) twistsSeen++;
     }
-    // Measured at FOUR_D_SEED_SAMPLE_SIZE=200 (fr-msw5): 4 distinct planes
+    // Measured at FOUR_D_SEED_SAMPLE_SIZE=200: 4 distinct planes
     // and 3 twists turn up, comfortably above the floor below -- no
     // widening needed.
     expect(planesSeen.size).toBeGreaterThanOrEqual(2);
@@ -476,7 +476,7 @@ describe("randomSystem's symmetry roll (fr-d61, fr-msw5)", () => {
     let symmetricSystemsSeen = 0;
     for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
       const system = RANDOM_SYSTEM_CORPUS[seed];
-      // fr-msw5: a non-flat system can now also carry symmetry, occasionally
+      // A non-flat system can also carry symmetry, occasionally
       // on a w-mixing plane (randomSymmetry4) -- runChaosGame's
       // symmetryRotation throws on those by design (a w-plane must route to
       // the 4D path), so this flat-only 3D re-probe is scoped to flat
@@ -504,7 +504,7 @@ describe("randomSystem's symmetry roll (fr-d61, fr-msw5)", () => {
     expect(symmetricSystemsSeen).toBeGreaterThan(0);
   });
 
-  it("re-probing a non-flat system WITH its rolled symmetry still lands acceptable bounds (fr-msw5)", () => {
+  it("re-probing a non-flat system WITH its rolled symmetry still lands acceptable bounds", () => {
     let nonFlatSymmetricSeen = 0;
     for (let seed = 0; seed < FOUR_D_SEED_SAMPLE_SIZE; seed++) {
       const system = RANDOM_SYSTEM_CORPUS[seed];
@@ -535,11 +535,12 @@ describe("randomSystem's symmetry roll (fr-d61, fr-msw5)", () => {
   });
 });
 
-describe("scoreSystem's flat/4D routing (fr-x6hz)", () => {
+describe("scoreSystem's flat/4D routing", () => {
   it("does not throw and returns a finite score for flat transforms carrying a w-plane symmetry", () => {
-    // Before fr-x6hz, scoreSystem routed on `systemIsFlat(transforms)` alone,
-    // so this flat-transform candidate reached the 3D `runChaosGame`, whose
-    // `symmetryRotation` throws on a plane that mixes w.
+    // Before the routing fix, scoreSystem branched on
+    // `systemIsFlat(transforms)` alone, so this flat-transform candidate
+    // reached the 3D `runChaosGame`, whose `symmetryRotation` throws on a
+    // plane that mixes w.
     const score = scoreSystem(
       {
         transforms: sierpinskiTetrahedron(),
@@ -833,7 +834,7 @@ describe("occupiedCellCount", () => {
     ).toBeGreaterThanOrEqual(MIN_OCCUPIED_CELLS);
   });
 
-  it("accepts a Bounds4 directly, for the 4D probe's projected-xyz occupancy check (fr-bf6.5)", () => {
+  it("accepts a Bounds4 directly, for the 4D probe's projected-xyz occupancy check", () => {
     // The 8 corners of the unit cube again, but handed a Bounds4 (minW/maxW
     // included and ignored) instead of a Bounds -- occupiedCellCount only
     // ever reads the six x/y/z fields the two types share.

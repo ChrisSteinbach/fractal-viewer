@@ -37,7 +37,7 @@ import type {
 import { clamp } from "./vec";
 
 /**
- * 4D surface distance estimation for an affine IFS — the fr-beck feasibility
+ * 4D surface distance estimation for an affine IFS — the feasibility
  * spike, `surface-de.ts`'s distance estimator (DE) carried one dimension up.
  * See that module's doc for the full validity argument and the KIFS-descent
  * picture it builds on; this doc covers only what changes (or does not)
@@ -50,7 +50,7 @@ import { clamp } from "./vec";
  * holds for an invertible linear map `M` in ANY dimension: the proof only
  * needs `sigma_min` to be the worst-case contraction `M` applies to any unit
  * direction, never the dimension of the space `M` acts on. So everything 3D
- * builds on top of it — the width-2 descent beam (fr-v6yg) refining the
+ * builds on top of it — the width-2 descent beam refining the
  * branches whose inverse images land nearest the origin, escaped-sibling
  * certificates folded in at every level, the terminal KIFS bound closing
  * off each descended chain — carries over unchanged.
@@ -72,20 +72,20 @@ import { clamp } from "./vec";
  *
  * WHAT THIS SPIKE DELIBERATELY LEAVES OUT.
  * - No kaleidoscope symmetry — at the time true of the whole 4D chaos-game
- *   pipeline by design. BOTH halves have SINCE landed: fr-q0h6 gave
- *   `chaos-game-4d.ts` its kaleidoscope (`postRotations`, copy-major slots
- *   `k*n + i`), and fr-u91x lifted the 3D tracer's sector sweep up here —
+ *   pipeline by design. BOTH halves have SINCE landed: `chaos-game-4d.ts`
+ *   grew its kaleidoscope (`postRotations`, copy-major slots `k*n + i`),
+ *   and the 3D tracer's sector sweep was lifted up here —
  *   see the SYMMETRY section below. {@link SurfaceDE4.maps} STAYS the input
- *   maps 1:1 at any order, exactly like 3D's post-fr-x029 `SurfaceDEMap[]`.
+ *   maps 1:1 at any order, exactly like 3D's swept `SurfaceDEMap[]`.
  * - The final-transform lens is no longer on this list. It was originally
  *   deferred here as 3D's `SurfaceDE.final` "waiting to happen" until this
- *   spike's verdict landed; it has SINCE landed (fr-vxoj, post-verdict), a
+ *   spike's verdict landed; it has SINCE landed (post-verdict), a
  *   straight port one dimension up — {@link SurfaceDE4.final}, matching
  *   `analyzeSurfaceSystem4`/`buildSurfaceDE4` bookkeeping, and the lens
  *   prologue/epilogue {@link estimateDistance4} and
  *   {@link estimateDistance4Refined} apply in lockstep.
- * - Folds are no longer on this list either (fr-rsp6): the fold-branch
- *   sweep — 3D's fr-5rvk pure-fold base maps and fr-g58b fold FINAL lens —
+ * - Folds are no longer on this list either: the fold-branch
+ *   sweep — 3D's pure-fold base maps and its fold FINAL lens —
  *   is ported one dimension up. The validity argument transfers verbatim
  *   (each fold branch is affine-or-conformal in ANY dimension;
  *   `V(Y) = ∪_c B_c(Y ∩ cell_c)` and unconditional branch enumeration keep
@@ -96,9 +96,9 @@ import { clamp } from "./vec";
  *   exactly like every spatial axis, so no new fold math exists — the maps
  *   are the same three families the 4D chaos game already iterates.
  *
- * SLAB × FOLD (the one place fr-wa6o and fr-rsp6 interact). The slab
- * query's segment threading rests on "affine maps take segments to
- * segments". Boxfold branch inverses are per-axis reflections ±
+ * SLAB × FOLD (the one place the slab query and the fold sweep interact).
+ * The slab query's segment threading rests on "affine maps take segments
+ * to segments". Boxfold branch inverses are per-axis reflections ±
  * translation (linear part diag(±1)) — affine, so a boxfold-only system
  * keeps exact slab queries with the segment machinery untouched. The
  * spherefold MID branch is an inversion: it takes a segment to a circular
@@ -108,11 +108,11 @@ import { clamp } from "./vec";
  * throw, and the app clamps sliceHalfW to 0 for such sessions). Refusal
  * over degradation is deliberate: `h` defaults to 0, folds are the
  * feature, and a silently inflated "slab" would be exactly the kind of
- * wrong image this project never ships. The segment+ball-slack chain
- * state that would admit spherefold slabs (inversion maps balls to balls
+ * wrong image this project never ships. The segment+ball-slack chain state
+ * that would admit spherefold slabs (inversion maps balls to balls
  * exactly) is recorded on {@link slabExact4} — MEASURED and not built
- * (fr-v7ca, `scripts/slab-ball-slack.harness.ts`): its advantage lives
- * exactly where it is not needed. See that constant's doc.
+ * (`scripts/slab-ball-slack.harness.ts`): its advantage lives exactly
+ * where it is not needed. See that constant's doc.
  *
  * THE SLICE CAVEAT — why this spike exists in the first place. The app would
  * never march the full 4D attractor `A` for display; it marches a `w = w0`
@@ -130,11 +130,11 @@ import { clamp } from "./vec";
  * distance, stalling the march or reading as ghostly, oversized bulges in
  * the rendered surface. Measuring exactly how loose — is the gap small
  * enough for a real render, or does it need slice-aware tightening — is the
- * fr-beck experiment this module exists to support; the verdict below
- * answers the GO/NO-GO half, and HOW LOOSE, MEASURED (fr-b8o5) below that
+ * experiment this module exists to support; the verdict below
+ * answers the GO/NO-GO half, and HOW LOOSE, MEASURED below that
  * answers the tightness half — measured at ~10%, and flat in `w0`.
  *
- * SPIKE VERDICT (fr-beck, measured 2026-07): GO for a slice-mode render.
+ * SPIKE VERDICT (measured 2026-07): GO for a slice-mode render.
  * {@link estimateDistance4}'s validity held on every conformal, >=3-map
  * preset measured (pentatope, sixteenCellFlake, tesseract): 0 violations
  * across 2100 queries (700 each — jittered/uniform/exact). But the slice
@@ -159,25 +159,25 @@ import { clamp } from "./vec";
  * which the certificate refinement never touches: its violations measurably
  * WORSEN under refinement (39 -> 49 over the same 700-query mix) and its
  * march stays majority-ghost even refined (91.5% -> 52.9% of hits). An
- * eligibility-side guard for that profile was filed as follow-up work
- * (fr-v6yg). Full experiment tables live on the fr-beck bead.
+ * eligibility-side guard for that profile was the planned follow-up;
+ * the paragraph below is what landed instead.
  *
- * FR-V6YG RESOLUTION (measured 2026-07, after the verdict above): the
- * exclusion is repaired — not by an eligibility guard but by the width-2
- * descent BEAM both estimators now run (see `estimateDistance` in the 3D
- * twin for the mechanics): the second chain refines the second-nearest
- * in-sphere branch instead of dropping it, which is exactly the
- * branch-selection risk doubleRotation exposed. Measured on the fr-v6yg
- * harness (`scripts/surface-beam.harness.ts`): doubleRotation's jittered/
- * uniform violations drop to 0 for BOTH estimators (max excess 19.4%R base
- * / 20.8%R refined -> fp-noise ~3e-8), and the refined estimator's
- * void-false-hit proxy reads 0/514 — the march-ghost mechanism and the
- * overshoot mechanism are both closed, at ~1.5x inverse-application cost
- * on this system. Residual (disclosed on the fr-v6yg bead): 3+
+ * THAT EXCLUSION'S RESOLUTION (measured 2026-07, after the verdict above):
+ * the exclusion is repaired — not by an eligibility guard but by the
+ * width-2 descent BEAM both estimators now run (see `estimateDistance` in
+ * the 3D twin for the mechanics): the second chain refines the
+ * second-nearest in-sphere branch instead of dropping it, which is exactly
+ * the branch-selection risk doubleRotation exposed. Measured on the beam
+ * harness (`scripts/surface-beam.harness.ts`): doubleRotation's
+ * jittered/uniform violations drop to 0 for BOTH estimators (max excess
+ * 19.4%R base / 20.8%R refined -> fp-noise ~3e-8), and the refined
+ * estimator's void-false-hit proxy reads 0/514 — the march-ghost mechanism
+ * and the overshoot mechanism are both closed, at ~1.5x
+ * inverse-application cost on this system. Residual, disclosed with it: 3+
  * simultaneous in-sphere branches still drop (m >= 3 slow-map systems,
  * sigma_max >= 0.96, and kaleidoscope-tied copies in 3D) at ~2-5%R.
  *
- * HOW LOOSE, MEASURED (fr-b8o5) — the SLICE CAVEAT's own closing question,
+ * HOW LOOSE, MEASURED — the SLICE CAVEAT's own closing question,
  * answered. "Is the gap small enough for a real render, or does it need
  * slice-aware tightening" was left open by the spike and is settled here
  * against a chaos-game GROUND TRUTH rather than against another bound. The
@@ -194,23 +194,22 @@ import { clamp } from "./vec";
  * slice itself cuts. The estimator's OWN conservativeness is three times
  * larger and just as flat: `DE / dist4` reads 0.66-0.72 on both scenes.
  *
- * SO SLICE-AWARE CERTIFICATES ARE A WON'T-DO, not an unbuilt idea. They were
- * written for this bead and measured: each chain carries the pulled-back
- * slice normal beside its point (a plane's normal moves by `M^T` where its
+ * SO SLICE-AWARE CERTIFICATES ARE A WON'T-DO, not an unbuilt idea. They
+ * were written and measured: each chain carries the pulled-back slice
+ * normal beside its point (a plane's normal moves by `M^T` where its
  * points move by `inv(M)`), a branch whose bounding ball cannot reach the
- * marched slab is DROPPED — it holds no part of the drawn set — and the rest
- * price against the disc the slab cuts rather than the whole ball,
+ * marched slab is DROPPED — it holds no part of the drawn set — and the
+ * rest price against the disc the slab cuts rather than the whole ball,
  * `sqrt(r^2 - dHi^2) - sqrt(R^2 - dLo^2)`, whose depth-0 instance IS the
  * tracer's own `sliceVisR`. Sound (pinned against slab members of a
- * chaos-game cloud, final-transform lens and twisted kaleidoscope included)
- * and not worth it: ~10% fewer march steps for 1.4-2.2x the work per
- * evaluation, on top of a caveat worth ~10%. The measurement lives in
- * `scripts/slice-cost.harness.ts`, the branch algebra on the bead, and the
- * app-level half — the 20-40x cost cliff that motivated the whole thing, and
- * which does not reproduce on either engine — in
- * `scripts/slice-cliff.probe.mjs`.
+ * chaos-game cloud, final-transform lens and twisted kaleidoscope
+ * included) and not worth it: ~10% fewer march steps for 1.4-2.2x the work
+ * per evaluation, on top of a caveat worth ~10%. The measurement lives in
+ * `scripts/slice-cost.harness.ts`, and the app-level half — the 20-40x
+ * cost cliff that motivated the whole thing, and which does not reproduce
+ * on either engine — in `scripts/slice-cliff.probe.mjs`.
  *
- * SLAB QUERIES (fr-wa6o). The SLICE CAVEAT above marches a zero-thickness
+ * SLAB QUERIES. The SLICE CAVEAT above marches a zero-thickness
  * hyperplane: the query is the single 4D point `(p, w0)`, so the rendered
  * object is the cross-section `A ∩ {w = w0}`. Both estimators now take an
  * optional half-extent `e` that turns the query into the SEGMENT
@@ -234,7 +233,7 @@ import { clamp } from "./vec";
  * So the descent carries one extra 4-vector alongside each chain's and
  * candidate's point, transformed by the inverse map's LINEAR part alone, and
  * every `|q| - R` ball certificate becomes {@link segmentRadius}` - R`. The
- * beam, fr-jkpn's validity slots, fr-beck's refined certificates, the
+ * beam, the validity slots, the spike's refined certificates, the
  * terminal KIFS bound, the depth-0 sphere floor, the final-transform lens and
  * both early exits are structurally untouched.
  *
@@ -249,20 +248,20 @@ import { clamp } from "./vec";
  * dilating the rendered object in x/y/z too — where the segment fattens it in
  * `w` alone, which is the whole point.)
  *
- * SYMMETRY: THE SECTOR SWEEP, ONE DIMENSION UP (fr-u91x). A 4D kaleidoscope
- * of order `n` (fr-q0h6) replicates every base map into `n` copies
+ * SYMMETRY: THE SECTOR SWEEP, ONE DIMENSION UP. A 4D kaleidoscope
+ * of order `n` replicates every base map into `n` copies
  * `g_k . f_i`, `g_k` the rotation for copy `k` applied AFTER the base map —
  * `chaos-game-4d.ts`'s `postRotations`, built by `affine4.ts`'s
  * `symmetryRotation4(plane, 2πk/n, twist)`: a rotation in a PLANE, plus an
  * optional `twist` turning the COMPLEMENT plane in lockstep (a double
  * rotation, which has no 3D counterpart). The DE never materialises those
- * copies: exactly like 3D's fr-x029 repacking, {@link SurfaceDE4.maps} holds
+ * copies: exactly like 3D's own repacking, {@link SurfaceDE4.maps} holds
  * the base inverses only and the descent walks the `n` sectors by turning
  * each chain point ONE step backward per sector — `inv(M_i) . g_k^T . q`
  * re-associated as `inv(M_i) . (g_k^T . q)` — enumerated sector-major
  * (sector `k` outer, base map `i` inner), the expansion's own `k*n + i` slot
  * order, so the insert-shift ladders break ties identically and the beam,
- * fr-jkpn's validity slots, the refined certificates and the cutoff exits
+ * the validity slots, the refined certificates and the cutoff exits
  * see an unchanged candidate stream. The validity argument (and the whole
  * WHY-NOT-THE-KIFS-FOLD case against folding the query into one wedge — a
  * fold minimises over a SUBSET of group elements and can only come out too
@@ -292,7 +291,7 @@ import { clamp } from "./vec";
  *   `twist != 0` the ORIGIN alone — both angles are nonzero multiples of
  *   `2π/order` strictly inside `(0, 2π)`, so neither block of the generator
  *   fixes a direction. This module's bounding ball is ORIGIN-anchored by
- *   construction (3D's fr-pjqw centred fit was never ported up), and the
+ *   construction (3D's probe-fit centred ball was never ported up), and the
  *   origin is fixed by EVERY generator, twist included, so the ball is
  *   sector-invariant for free and there is nothing to project — see the
  *   comment in {@link buildSurfaceDE4} for what a future centred-ball port
@@ -301,7 +300,7 @@ import { clamp } from "./vec";
  *   origin) is why every origin-anchored gate — the depth-0 sphere bound,
  *   the escape test, the tracer's visible-ball gate (its slab form
  *   `max(0, |w0| - h)` included) — needs no per-sector adjustment, the very
- *   fact 3D's fold frontier leans on for its fr-kidj `chainNormSq` hoist
+ *   fact 3D's fold frontier leans on for its `chainNormSq` hoist
  *   (no fold frontier exists here for the hoist itself to land in).
  */
 
@@ -473,8 +472,8 @@ function isActive(t: Transform): boolean {
   return (t.weight ?? 1) > 0;
 }
 
-/** The fold family the 4D descent can sweep (fr-rsp6 — `surface-de.ts`'s
- * fr-5rvk set, which cannot export a private const). `variations4.ts` folds
+/** The fold family the 4D descent can sweep (`surface-de.ts`'s own set,
+ * which cannot export a private const). `variations4.ts` folds
  * `w` exactly like every spatial axis, so the family is the same three. */
 const FOLD_VARIATION_TYPES = new Set(["boxfold", "spherefold", "mandelbox"]);
 
@@ -499,7 +498,7 @@ function pureFoldVariation(t: Transform): Variation | null {
  * `boxLimit`, and the spherefold's magnification `fR²/mR²`
  * ({@link sphereFoldLipschitz}) is the same radial statement whatever the
  * ambient dimension — so the fold's own radii move the contraction gate
- * with them exactly as in 3D (fr-s9ll). */
+ * with them exactly as in 3D. */
 function foldLipschitz(v: Variation): number {
   return (
     Math.abs(v.weight) *
@@ -533,7 +532,7 @@ export function deHasFolds4(de: SurfaceDE4): boolean {
 
 /** True when the DOCUMENT is fold-shaped for a 4D surface session — any
  * ACTIVE pure-fold base map or a pure-fold final — WITHOUT building the DE
- * (fr-rsp6 phase 3): the eligibility gate consults this per edit, and a
+ * at all: the eligibility gate consults this per edit, and a
  * fold-shaped 4D system renders ONLY on the WebGPU compute path (the
  * fragment 4D tracer carries no fold GLSL — deliberately: the 3D fold GLSL
  * already sits at Mesa's link cliff, and a 243-branch 4D body there would
@@ -553,7 +552,7 @@ export function systemFoldShaped4(
 
 /** True when every fold branch in the system (base maps AND a fold final
  * lens) is AFFINE — i.e. the fold set is at most {boxfold} — so the
- * fr-wa6o slab query's segment threading stays exact (affine maps take
+ * slab query's segment threading stays exact (affine maps take
  * segments to segments; a boxfold branch inverse is a per-axis reflection
  * ± translation). The spherefold MID branch is an inversion, which takes a
  * segment to a circular ARC: min-radius-over-chord and min-radius-over-arc
@@ -563,8 +562,8 @@ export function systemFoldShaped4(
  * {@link estimateDistance4Refined} throw; the app clamps sliceHalfW to 0
  * for such sessions instead of degrading into a silently wrong image).
  *
- * THE REFUSAL IS NOW MEASURED RATHER THAN MERELY REASONED (fr-v7ca,
- * `scripts/slab-ball-slack.harness.ts`), and BOTH candidate lifts lost.
+ * THE REFUSAL IS NOW MEASURED RATHER THAN MERELY REASONED
+ * (`scripts/slab-ball-slack.harness.ts`), and BOTH candidate lifts lost.
  *
  * The cheap one — `max(0, DE(p) − h)` over the point estimator, sound by
  * the triangle inequality alone — DOES NOT RENDER A SLAB. It is a
@@ -638,21 +637,20 @@ export interface SurfaceEligibility4 {
 
 /**
  * Classify a system for a 4D surface render mode. Mirrors 3D's
- * `analyzeSurfaceSystem` — the fr-5rvk pure-fold base-map carve-out and the
- * fr-g58b pure-fold FINAL included since fr-rsp6 (exactly one active
- * fold-family variation is admitted per map with the composite
- * `|w|·L_V·sigma_max` contraction bound and the NEAR_ZERO_FOLD_WEIGHT
- * floor; blends refuse; the fold FINAL needs only the weight floor) — with
- * two deliberate differences: every transform is lifted with `toTransform4`
- * before its sigmas are measured (so a map's `w` extension is what gets
- * checked for contraction, not ignored — fold maps included: their
- * composite bound prices the lifted sigma), and there is no
- * `isFlatTransform` gate — a system extending into 4D is the entire point
- * of this module, not a disqualifier. Weight-0 maps are still ignored
- * (never selected, so they add nothing to the attractor). Symmetry never
- * affects eligibility — kaleidoscope copies are rotations of maps already
- * analyzed (the 3D `analyzeSurfaceSystem` stance, twist included: a double
- * rotation is still an isometry).
+ * `analyzeSurfaceSystem` — the pure-fold base-map carve-out and the pure-fold
+ * FINAL included (exactly one active fold-family variation is admitted per
+ * map with the composite `|w|·L_V·sigma_max` contraction bound and the
+ * NEAR_ZERO_FOLD_WEIGHT floor; blends refuse; the fold FINAL needs only the
+ * weight floor) — with two deliberate differences: every transform is lifted
+ * with `toTransform4` before its sigmas are measured (so a map's `w`
+ * extension is what gets checked for contraction, not ignored — fold maps
+ * included: their composite bound prices the lifted sigma), and there is no
+ * `isFlatTransform` gate — a system extending into 4D is the entire point of
+ * this module, not a disqualifier. Weight-0 maps are still ignored (never
+ * selected, so they add nothing to the attractor). Symmetry never affects
+ * eligibility — kaleidoscope copies are rotations of maps already analyzed
+ * (the 3D `analyzeSurfaceSystem` stance, twist included: a double rotation is
+ * still an isometry).
  *
  * The optional `finalTransform` mirrors 3D's final-transform gate (blended
  * variations disqualify, near-zero scale disqualifies, anisotropy folds into
@@ -662,7 +660,7 @@ export interface SurfaceEligibility4 {
  * the `w = 0` slice via the final transform is exactly this module's point,
  * not a disqualifier.
  *
- * Eligibility says nothing about SLAB queries: the fr-wa6o `halfExtent` is
+ * Eligibility says nothing about SLAB queries: the `halfExtent` is
  * VIEW state, not a system property, so the segment-soundness rule lives on
  * the built DE instead ({@link slabExact4} — boxfold-only fold sets keep
  * the slab, spherefold/mandelbox refuse it at the estimator entries).
@@ -686,7 +684,7 @@ export function analyzeSurfaceSystem4(
     if (!isActive(t)) return;
     const label = `map ${i + 1}`;
     // Pure-fold maps (exactly one active fold-family variation) descend via
-    // the fold-branch sweep (fr-rsp6 — 3D's fr-5rvk carve-out one dimension
+    // the fold-branch sweep (3D's carve-out one dimension
     // up); every other active variation list has no tractable inverse and
     // gates the mode out.
     const fold = pureFoldVariation(t);
@@ -717,12 +715,12 @@ export function analyzeSurfaceSystem4(
   });
 
   if (finalTransform) {
-    // A pure-fold FINAL is eligible (fr-rsp6 — 3D's fr-g58b lens one
-    // dimension up): the lens is applied ONCE to the query point, so its
-    // fold expands into one round of branch root descents with no
-    // contraction requirement (an un-iterated map needs none, exactly like
-    // the affine lens). Blended final variation lists stay out for the
-    // iterated maps' reason: a weighted sum has no branch decomposition.
+    // A pure-fold FINAL is eligible (3D's lens one dimension up): the lens is
+    // applied ONCE to the query point, so its fold expands into one round of
+    // branch root descents with no contraction requirement (an un-iterated
+    // map needs none, exactly like the affine lens). Blended final variation
+    // lists stay out for the iterated maps' reason: a weighted sum has no
+    // branch decomposition.
     const foldFinal = pureFoldVariation(finalTransform);
     if (!foldFinal && hasActiveVariations(finalTransform)) {
       reasons.push("final transform uses variations");
@@ -827,7 +825,7 @@ function transpose4(m: number[]): number[] {
 }
 
 /**
- * One sector step of the kaleidoscope sweep (fr-u91x): turn `(x, y, z, w)`
+ * One sector step of the kaleidoscope sweep: turn `(x, y, z, w)`
  * BACKWARD by one sector — multiply by {@link SurfaceSymmetry4.stepBack} —
  * writing into `out` so the descent's hot loop never allocates. The 4D twin
  * of `surface-de.ts`'s `stepSector`, except the step is one whole matrix
@@ -851,7 +849,7 @@ function stepSector4(
 }
 
 /** One BASE (un-rotated) inverted map of the 4D DE — the direct analogue of
- * 3D's `SurfaceDEMap`. Kaleidoscope copies are not slots (fr-u91x): the
+ * 3D's `SurfaceDEMap`. Kaleidoscope copies are not slots: the
  * descent sweeps sectors around these — see the module doc's SYMMETRY
  * section. */
 export interface SurfaceDE4Map {
@@ -867,11 +865,11 @@ export interface SurfaceDE4Map {
    * factor multiplied into the running `dr` product. */
   sigmaMin: number;
   /** Which input transform this slot inverts — the index into the caller's
-   * `transforms`, for per-transform coloring. The sector sweep (fr-u91x)
+   * `transforms`, for per-transform coloring. The sector sweep
    * replaced what would have been a symmetry expansion, so this array stays
    * base-sized at any order and no two slots ever share a base map. */
   baseIndex: number;
-  /** The slot's fold family (fr-rsp6 — 3D's fr-5rvk fields one dimension
+  /** The slot's fold family (3D's fold fields one dimension
    * up), `SURFACE_FOLD_NONE` for a plain affine slot. A fold slot iterates
    * `w·V(Mp + t)`, so the descent expands its inverse into
    * {@link foldBranchCount4} branch preimages per application. */
@@ -882,15 +880,15 @@ export interface SurfaceDE4Map {
   /** `|w| · sigmaMin` for a fold slot (`sigmaMin` when none) — the
    * certified per-branch contraction floor the chain scale multiplies. */
   foldSigma: number;
-  /** The fold's authored lengths in branch-algebra form (fr-s9ll) — the
+  /** The fold's authored lengths in branch-algebra form — the
    * classic set at foldKind `SURFACE_FOLD_NONE`, where nothing reads it.
    * Same field 3D's `SurfaceDEMap` carries. */
   foldRadii: SurfaceFoldRadii;
-  /** Smallest singular value of `inv(M)` = `1 / sigma_max(M)` — fr-kidj
-   * stage-2 bound data (the sigma-form skip's constant). */
+  /** Smallest singular value of `inv(M)` = `1 / sigma_max(M)` —
+   * branch-and-bound stage-2 data (the sigma-form skip's constant). */
   invMSigmaMin: number;
-  /** `|invT|` — fr-kidj stage-2's translation norm (origin-centered here:
-   * this module never adopted 3D's fr-pjqw centred ball, so the stage-2
+  /** `|invT|` — stage-2's translation norm (origin-centered here:
+   * this module never adopted 3D's probe-fit centred ball, so the stage-2
    * bounds price the plain `invT` forms — see the build's bounding-radius
    * comment for why a centred port must NOT mirror 3D blindly). */
   invTNorm: number;
@@ -899,8 +897,8 @@ export interface SurfaceDE4Map {
   bnbDir: Vec4;
 }
 
-/** The kaleidoscope the 4D descent sweeps instead of expanding — fr-u91x,
- * 3D's fr-x029 `SurfaceSymmetry` one dimension up. */
+/** The kaleidoscope the 4D descent sweeps instead of expanding — 3D's
+ * `SurfaceSymmetry` one dimension up. */
 export interface SurfaceSymmetry4 {
   /** Effective sector count — `effectiveSymmetryOrder` against the FULL
    * transform list, exactly as `prepareChaosGame4` clamps it. `1` = no
@@ -922,13 +920,13 @@ export interface SurfaceSymmetry4 {
 }
 
 /** Everything {@link estimateDistance4} needs, precomputed — the 4D
- * analogue of 3D's `SurfaceDE`, final-transform lens included (fr-vxoj,
- * post-verdict — see the module doc's landing note). */
+ * analogue of 3D's `SurfaceDE`, final-transform lens included
+ * (post-verdict — see the module doc's landing note). */
 export interface SurfaceDE4 {
   /** One inverse map per ACTIVE input transform (weight-0 maps contribute no
    * slot — they are never selected, so they add nothing to the attractor),
    * and kaleidoscope copies contribute none either: {@link symmetry} is
-   * swept around every entry (fr-u91x), so this array is base-sized at any
+   * swept around every entry, so this array is base-sized at any
    * order. */
   maps: SurfaceDE4Map[];
   /** Kaleidoscope sectors swept around every {@link maps} entry. */
@@ -939,7 +937,7 @@ export interface SurfaceDE4 {
   /** Radius bounding the VISIBLE set `F(attractor)` — equals
    * `boundingRadius` when there is no final transform. */
   visibleBoundingRadius: number;
-  /** Radial color band of the VISIBLE set (fr-skhv): the seeded probe's 4D
+  /** Radial color band of the VISIBLE set: the seeded probe's 4D
    * bounds-center — final transform applied, so this is the PLOTTED set —
    * and the [minD, maxD] range of the probe points' distances from it: the
    * exact quantities `buildColors4`'s `"radius"` mode normalizes with. The
@@ -959,12 +957,13 @@ export interface SurfaceDE4 {
    * features below `DEPTH_RESOLUTION`. */
   maxDepth: number;
   /** How many descent chains {@link estimateDistance4} refines in
-   * parallel. Widths 1/2 are the classic greedy chain and the fr-v6yg pair;
-   * widths 3/4 add the fr-jkpn VALIDITY slots — extra chains that hold the
-   * level's rank-3/4 candidates ONLY while their points are in-sphere (an
-   * escaped rank-3/4 candidate folds its refined certificate instead,
-   * exactly as it would without the slots), so levels with three or four
-   * simultaneous in-sphere branches no longer drop the excess uncounted.
+   * parallel. Widths 1/2 are the classic greedy chain and the paired A/B
+   * chains; widths 3/4 add the rank-3/4 VALIDITY slots — extra chains that
+   * hold the level's rank-3/4 candidates ONLY while their points are
+   * in-sphere (an escaped rank-3/4 candidate folds its refined certificate
+   * instead, exactly as it would without the slots), so levels with three
+   * or four simultaneous in-sphere branches no longer drop the excess
+   * uncounted.
    * {@link buildSurfaceDE4} always emits 4 (see the 3D twin's module doc
    * for the measured verdict); 1 and 2 exist so tests can pin each
    * mechanism. */
@@ -979,7 +978,7 @@ export interface SurfaceDE4 {
    * the slice lower-bound argument is unaffected by the lens. Mutually
    * exclusive with {@link foldFinal}. */
   final: { invM: number[]; invT: Vec4; sigmaMin: number } | null;
-  /** Pure-fold FINAL lens (fr-rsp6 — 3D's fr-g58b `foldFinal` one
+  /** Pure-fold FINAL lens (3D's `foldFinal` one
    * dimension up), or `null`. When set, {@link final} is `null` and the
    * public estimators route through `descendLens4`: the lens fold expands
    * into ONE round of branch root descents around the untouched cores.
@@ -993,8 +992,8 @@ export interface SurfaceDE4 {
     foldKind: SurfaceFoldKind;
     invW: number;
     absW: number;
-    /** The lens fold's authored lengths (fr-s9ll), in the same
-     * branch-algebra form the base maps carry. */
+    /** The lens fold's authored lengths, in the same branch-algebra form
+     * the base maps carry. */
     foldRadii: SurfaceFoldRadii;
   } | null;
 }
@@ -1004,7 +1003,7 @@ export interface SurfaceDE4 {
  * (`toTransform4`) and analytically inverted, the kaleidoscope the descent
  * sweeps around them (same `effectiveSymmetryOrder` clamp against the FULL
  * transform list `prepareChaosGame4` applies, so the swept set is the
- * plotted set — fr-u91x), a probed bounding-hypersphere radius, a depth cap
+ * plotted set), a probed bounding-hypersphere radius, a depth cap
  * sized off the slowest contraction, and the pre-inverted final-transform
  * lens. Mirrors 3D's `buildSurfaceDE`; every plane (w-planes included) and
  * any twist is admissible here — this module is exactly where 3D's
@@ -1045,7 +1044,7 @@ export function buildSurfaceDE4(
     ];
     const sigmaMin = analysis.sigmas[i].min;
     // Pure-fold maps carry their fold family + weight into the descent's
-    // branch expansion (fr-rsp6 — 3D's fold-branch sweep one dimension up);
+    // branch expansion (3D's fold-branch sweep one dimension up);
     // plain affine maps get the inert defaults.
     const fold = pureFoldVariation(t);
     const foldKind: SurfaceFoldKind = !fold
@@ -1067,8 +1066,8 @@ export function buildSurfaceDE4(
       foldRadii: surfaceFoldRadii(fold),
       // Reciprocal singular values: sigma(inv(M)) = 1/sigma(M), so the
       // smallest of the inverse is exactly one over the largest of the
-      // forward map (fr-kidj stage 2's bound data). Origin-centered — this
-      // module has no fr-pjqw ball, so the plain invT forms are exact.
+      // forward map (the stage-2 bound data). Origin-centered — this
+      // module has no probe-fit ball, so the plain invT forms are exact.
       invMSigmaMin: 1 / analysis.sigmas[i].max,
       invTNorm,
       bnbDir:
@@ -1130,7 +1129,7 @@ export function buildSurfaceDE4(
   // ORIGIN" base case — so this re-derives the max ORIGIN distance directly
   // from the emitted points instead of reusing that field.
   //
-  // The ball is ORIGIN-anchored (this module never adopted 3D's fr-pjqw
+  // The ball is ORIGIN-anchored (this module never adopted 3D's
   // probe-fit centred ball), and the origin is fixed by EVERY sector
   // generator, twist included — so the ball is invariant under the whole
   // kaleidoscope group and the sweep needs no centre projection. Recorded
@@ -1166,7 +1165,7 @@ export function buildSurfaceDE4(
   const boundingRadius = maxR * RADIUS_PAD + 1e-3;
 
   // Depth cap from the SLOWEST contraction, identical formula to 3D
-  // (ceiling: see MAX_DESCENT_DEPTH's fr-xok8 sizing note — doubleRotation
+  // (ceiling: see MAX_DESCENT_DEPTH's sizing note — doubleRotation
   // is the preset the old 48 ceiling clamped into a solid core ball). For
   // fold maps the slowest certified branch is |w|·L_V·sigma_min — the
   // spherefold's ×4 branches shrink features slowest — and eligibility
@@ -1249,7 +1248,7 @@ export function buildSurfaceDE4(
     }
   }
 
-  // Radial color band of the VISIBLE set (fr-skhv): re-probe WITH the
+  // Radial color band of the VISIBLE set: re-probe WITH the
   // final transform when one exists — runChaosGame4's own final
   // application (composed affine + variations) is the plotted set's
   // ground truth, better than re-deriving F here — else reuse the raw
@@ -1313,7 +1312,7 @@ export function radiusBandInvRange(band: SurfaceDE4["radiusBand"]): number {
 /**
  * Distance from the ORIGIN to the segment `{q + s·e : s ∈ [-1, 1]}` — the
  * slab query's stand-in for `|q|` at every radius, escape test and ball
- * certificate the descent computes (fr-wa6o; see the module doc's SLAB
+ * certificate the descent computes (see the module doc's SLAB
  * QUERIES section). `s` is the segment's own parameter at closest approach:
  * the unconstrained minimizer of `|q + s·e|²` is `-dot(q, e) / dot(e, e)`,
  * and clamping it to the segment's ends turns the infinite LINE's distance
@@ -1400,23 +1399,23 @@ function isSegment(halfExtent: Vec4 | null): halfExtent is Vec4 {
  * `chainScale · (r - R)`, the frozen certificates every non-descended
  * escaped candidate folds, the terminal bound a chain folds at escape or
  * the depth cap, and the width-1 equivalence to the classic greedy descent.
- * Width 2 is what repairs the fr-v6yg branch-selection overshoot
+ * Width 2 is what repairs the branch-selection overshoot
  * (doubleRotation's profile) that certificate refinement provably cannot
- * touch; widths 3/4 add the fr-jkpn validity slots — rank-3/4 chains that
+ * touch; widths 3/4 add the validity slots — rank-3/4 chains that
  * live only while in-sphere, closing the 3-and-4-simultaneous drops.
  *
  * `halfExtent` turns the query into the SEGMENT `p ± halfExtent` — the slab
- * query of fr-wa6o, see the module doc's SLAB QUERIES section. The default
+ * query — see the module doc's SLAB QUERIES section. The default
  * `null` is the point query, value for value.
  *
- * Kaleidoscope sectors are SWEPT around the base maps (fr-u91x, the module
+ * Kaleidoscope sectors are SWEPT around the base maps (the module
  * doc's SYMMETRY section): each chain point (and its half-extent) turns one
  * backward step per sector and every base map is applied to it there,
  * sector-major, so the candidate stream is exactly the expansion's. Order 1
  * leaves every `k > 0` branch dead — a system without symmetry runs the
  * pre-sweep arithmetic unchanged.
  *
- * Routing (fr-rsp6, mirroring 3D's `estimateDistance`): a fold FINAL lens
+ * Routing (mirroring 3D's `estimateDistance`): a fold FINAL lens
  * wraps the cores in `descendLens4`'s branch sweep, fold base maps descend
  * `descendFold4`'s frontier, and the plain affine ladder below serves the
  * rest. Slab queries (`halfExtent`) are refused — thrown, not degraded —
@@ -1472,7 +1471,7 @@ function descend4(
     finalScale = f.sigmaMin;
   }
 
-  // Kaleidoscope sectors swept around the base maps (fr-u91x) — `order` 1
+  // Kaleidoscope sectors swept around the base maps — `order` 1
   // leaves every `k > 0` branch below dead, so a system without symmetry
   // runs the pre-sweep arithmetic unchanged. `sweep`/`sweepExt` are the
   // sector scratch (point quadruple + slab half-extent), hoisted here so
@@ -1488,7 +1487,7 @@ function descend4(
   let best = Infinity;
 
   // Chain slot A starts at the (lensed) query; slot B idles until beam
-  // selection fills it (width-2 up). V1/V2 are the fr-jkpn validity slots
+  // selection fills it (width-2 up). V1/V2 are the validity slots
   // (widths 3/4): they hold the level's rank-3/4 candidates ONLY while
   // those are in-sphere — branches that carry no positive certificate, so
   // dropping them was the measured invalidity — and fold the ordinary
@@ -1630,7 +1629,7 @@ function descend4(
         pExt = v2Ext;
         pScale = v2Scale;
       }
-      // Sector sweep (fr-u91x, fr-x029's shape one dimension up): the chain
+      // Sector sweep (3D's shape one dimension up): the chain
       // point — and, under a slab query, its half-extent, since the backward
       // step is an isometry taking segments to segments — turns one step per
       // kaleidoscope sector, and every BASE map is applied to it there, so
@@ -1780,7 +1779,7 @@ function descend4(
           // The tuple leaving the beam frontier: escaped candidates fold
           // their plain certificate; an in-sphere tuple carries no positive
           // certificate — on widths 3/4 it can only get here past FOUR
-          // smaller keys, the (shrunken) fr-jkpn residual drop.
+          // smaller keys, the (shrunken) residual drop the slots exist for.
           if (eR > R && eCert < best) best = eCert;
         }
       }
@@ -1866,10 +1865,10 @@ function descend4(
   // A/B. In-sphere means inside the bounding SPHERE, not near the
   // attractor, so a validity chain's cap terminal is a vacuous negative
   // bound that can only ever pull the estimate toward a fabricated hit
-  // (the membrane direction fr-jkpn's record calls the visually harmful
+  // (the membrane direction the beam record calls the visually harmful
   // one), never fix a real one — the piece it tracks sits within
   // sigmaMax_chain * 2R of the query, sub-resolution wherever the depth
-  // cap is not clamped. Measured (fr-jkpn harness, all systems, both
+  // cap is not clamped. Measured (beam harness, all systems, both
   // estimators, widths 3/4): folding them changes NOTHING — whenever a
   // validity chain survives to the cap, chain A holds an equal-or-deeper
   // branch whose terminal already dominates — so the fold is omitted on
@@ -1878,7 +1877,7 @@ function descend4(
   // wanderer branches the validity slots keep alive in-sphere to the
   // depth cap — and in-sphere is not near-attractor, so the KIFS
   // last-value bound is vacuous for them at ANY cap size: re-measured
-  // unchanged after fr-xok8 raised the ceiling from 48 to 128.)
+  // unchanged after the ceiling was raised from 48 to 128.)
   let d = best;
   if (sphereBound > d) d = sphereBound;
   return d * finalScale;
@@ -1912,10 +1911,10 @@ function descentValue(
  *               [ sigmaMin_k * (|invMap_k(g_sector^T q'_j)| - R) ]
  *     cert_j  = sigmaMin_j * max( r_j - R, inner_j )
  *
- * (the sector sweep of fr-u91x — at order 1 exactly the historical
+ * (the sector sweep — at order 1 exactly the historical
  * min-over-maps)
  *
- * Widths 3/4 add the fr-jkpn validity slots exactly as the base estimator
+ * Widths 3/4 add the validity slots exactly as the base estimator
  * does (rank-3/4 chains that live only while in-sphere, closing the
  * 3-and-4-simultaneous drops); their escaped rank-3/4 candidates fold
  * through this same guarded refined path, indistinguishable from the
@@ -1932,7 +1931,7 @@ function descentValue(
  * `p` — pinned by `surface-de-4d.test.ts`'s "never falls below the base
  * estimate" test.
  *
- * WHY THIS EXISTS. fr-beck's spike measured WHICH term of
+ * WHY THIS EXISTS. The spike measured WHICH term of
  * {@link estimateDistance4}'s `min(best, terminal)` (floored by the depth-0
  * sphere bound) produces
  * every false-hit ("ghost") a `w = w0` slice march would register: on every
@@ -1956,7 +1955,7 @@ function descentValue(
  * sibling), at strictly less work than the measured 5.65x exhaustive
  * ceiling — the shape the SPIKE VERDICT's cost note said a GPU port
  * should take. On top of that, every refined fold site carries the
- * fr-1z6p laziness guard (backported alongside the 3D
+ * fold-time laziness guard (backported alongside the 3D
  * `estimateDistanceRefined`): refinement can only RAISE a certificate, so
  * a fold whose PLAIN certificate already fails to beat the running min
  * folds nothing either way (`min(best, refined) === best` whenever
@@ -1964,7 +1963,7 @@ function descentValue(
  * number in the SPIKE VERDICT above is unchanged — while the extra
  * sweeps collapse to the folds that actually advance the min.
  *
- * EARLY-OUT CUTOFF (fr-55r5), the 3D twin's `estimateDistanceRefined`
+ * EARLY-OUT CUTOFF, the 3D twin's `estimateDistanceRefined`
  * contract verbatim. A sphere-tracing march needs a hit DECISION, not a
  * distance: `cutoff` is its acceptance epsilon at the query point, and the
  * descent may stop the moment the value it would return is already below
@@ -1986,7 +1985,7 @@ function descentValue(
  * a barely-escaped sibling dips under the cutoff, the full descent lifts it
  * back above, and the march paints a membrane across a void.
  *
- * SPHERE FLOOR (fr-zkt2), the 3D twin's contract one dimension up (see
+ * SPHERE FLOOR, the 3D twin's contract one dimension up (see
  * estimateDistanceRefined's paragraph for where the exit pays — live on
  * anisotropic maps, provably dead on isotropic invariant-ball ones, since
  * `|p - t| - sigma R >= |p| - R` inducts down every chain). Once `best`
@@ -1996,14 +1995,14 @@ function descentValue(
  * off `sphereBound`. The descent therefore exits the instant
  * `best <= sphereBound`, unconditionally — no cutoff involved — and the
  * value it returns equals the full descent's, bit-for-bit, always, unlike
- * the fr-55r5 exit above which is exact only at or above a cutoff. Plain
+ * the cutoff exit above which is exact only at or above a cutoff. Plain
  * `estimateDistance4` does NOT carry this exit: unlike 3D, where both
  * estimators share `descend` and the plain one picks the exit up
  * structurally, the two 4D estimators predate the cutoff machinery and
- * stay self-contained (see the module doc) — the bead scopes this exit to
- * the refined estimator only.
+ * stay self-contained (see the module doc) — this exit is deliberately
+ * scoped to the refined estimator only.
  *
- * Routing (fr-rsp6): same three-way split as `estimateDistance4` — lens
+ * Routing: same three-way split as `estimateDistance4` — lens
  * sweep, fold frontier, affine ladder — with `refine: true` and the cutoff
  * threaded through. Slab refusal identical ({@link slabExact4}).
  */
@@ -2059,7 +2058,7 @@ function descend4Refined(
     finalScale = f.sigmaMin;
   }
 
-  // Kaleidoscope sectors swept around the base maps (fr-u91x) — `order` 1
+  // Kaleidoscope sectors swept around the base maps — `order` 1
   // leaves every `k > 0` branch below dead, so a system without symmetry
   // runs the pre-sweep arithmetic unchanged. `sweep`/`sweepExt` are the
   // descent body's sector scratch; `refinedCert` below carries its OWN pair,
@@ -2074,15 +2073,15 @@ function descend4Refined(
   const wide = de.beamWidth > 1;
   let best = Infinity;
 
-  // Early-out threshold (fr-55r5): the value below which the descent may
-  // stop and hand the caller what it has. `-Infinity` disables the test —
-  // for `cutoff <= 0` (callers that need the distance itself), and for a
-  // depth-0 sphere floor that already holds the answer at or above the
-  // cutoff no matter how far `best` falls, since the floor is what the
-  // return would clamp to. Both exits below test `best * finalScale`
-  // against it AFTER a fold, never a raw pre-refinement key. (That sphere
-  // floor case now has its own unconditional exit — fr-zkt2, below — that
-  // fires the moment `best` reaches it, cutoff or not.)
+  // Early-out threshold: the value below which the descent may stop and hand
+  // the caller what it has. `-Infinity` disables the test — for `cutoff <= 0`
+  // (callers that need the distance itself), and for a depth-0 sphere floor
+  // that already holds the answer at or above the cutoff no matter how far
+  // `best` falls, since the floor is what the return would clamp to. Both
+  // exits below test `best * finalScale` against it AFTER a fold, never a raw
+  // pre-refinement key. (That sphere floor case now has its own unconditional
+  // exit — the sphere-floor pin below — that fires the moment `best` reaches
+  // it, cutoff or not.)
   const bailBelow =
     cutoff > 0 && sphereBound * finalScale < cutoff ? cutoff : -Infinity;
 
@@ -2090,7 +2089,7 @@ function descend4Refined(
   // image, over every (sector, base map) pair (see the doc comment's
   // VALIDITY note): the certificate becomes childScale * max(r - R, inner)
   // — never below the base estimator's childScale * (r - R). The inner min
-  // must cover the same candidate set the descent sweeps (fr-u91x), or a
+  // must cover the same candidate set the descent sweeps, or a
   // symmetric system's certificate would skip its rotated pieces.
   // `certSweep`/`certSweepExt` are this refinement's OWN sector scratch,
   // distinct from the descent body's `sweep`/`sweepExt`: refinement runs
@@ -2147,7 +2146,7 @@ function descend4Refined(
   };
 
   // Chain slot A starts at the (lensed) query; slot B idles until beam
-  // selection fills it (width-2 up). V1/V2 are the fr-jkpn validity slots
+  // selection fills it (width-2 up). V1/V2 are the validity slots
   // (widths 3/4): they hold the level's rank-3/4 candidates ONLY while
   // those are in-sphere — branches that carry no positive certificate, so
   // dropping them was the measured invalidity — and fold the ordinary
@@ -2286,7 +2285,7 @@ function descend4Refined(
         pExt = v2Ext;
         pScale = v2Scale;
       }
-      // Sector sweep (fr-u91x, fr-x029's shape one dimension up): the chain
+      // Sector sweep (3D's shape one dimension up): the chain
       // point — and, under a slab query, its half-extent, since the backward
       // step is an isometry taking segments to segments — turns one step per
       // kaleidoscope sector, and every BASE map is applied to it there, so
@@ -2463,12 +2462,12 @@ function descend4Refined(
           // already knows the plain certificate would have advanced the
           // min); an in-sphere tuple carries no positive certificate — on
           // widths 3/4 it can only get here past FOUR smaller keys, the
-          // (shrunken) fr-jkpn residual drop.
+          // (shrunken) residual drop the slots exist for.
           if (eR > R && eCert < best) {
             const rc = refinedCert(eX, eY, eZ, eW, eExt, eR, eScale);
             if (rc < best) {
               best = rc;
-              // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2).
+              // Cutoff exit plus the sphere-floor pin.
               // `rc` is FINALIZED — already refined — and `best` only
               // falls from here. Once `best` sits at or below the depth-0
               // sphere bound the return is pinned at `sphereBound *
@@ -2561,7 +2560,7 @@ function descend4Refined(
         v2Live = true;
       }
     }
-    // Cutoff exit (fr-55r5) plus the sphere-floor pin (fr-zkt2), covering
+    // Cutoff exit plus the sphere-floor pin, covering
     // the four promote folds above in one test: each of them either wrote
     // a settled certificate into `best` (a refined one at the two
     // validity-slot sites and the width-1 runner-up, the deliberately
@@ -2590,10 +2589,10 @@ function descend4Refined(
   // A/B. In-sphere means inside the bounding SPHERE, not near the
   // attractor, so a validity chain's cap terminal is a vacuous negative
   // bound that can only ever pull the estimate toward a fabricated hit
-  // (the membrane direction fr-jkpn's record calls the visually harmful
+  // (the membrane direction the beam record calls the visually harmful
   // one), never fix a real one — the piece it tracks sits within
   // sigmaMax_chain * 2R of the query, sub-resolution wherever the depth
-  // cap is not clamped. Measured (fr-jkpn harness, all systems, both
+  // cap is not clamped. Measured (beam harness, all systems, both
   // estimators, widths 3/4): folding them changes NOTHING — whenever a
   // validity chain survives to the cap, chain A holds an equal-or-deeper
   // branch whose terminal already dominates — so the fold is omitted on
@@ -2602,16 +2601,16 @@ function descend4Refined(
   // wanderer branches the validity slots keep alive in-sphere to the
   // depth cap — and in-sphere is not near-attractor, so the KIFS
   // last-value bound is vacuous for them at ANY cap size: re-measured
-  // unchanged after fr-xok8 raised the ceiling from 48 to 128.)
+  // unchanged after the ceiling was raised from 48 to 128.)
   return descentValue(best, sphereBound, finalScale);
 }
 
 // ---------------------------------------------------------------------------
-// Fold frontier scratch (fr-rsp6) — 3D's `descendFold` module-scope state one
+// Fold frontier scratch — 3D's `descendFold` module-scope state one
 // dimension up: the CURRENT frontier (`fc*`), the next level's kept tuples
 // (`fn*`, key-ascending only in the sense that the kept SET is the level's
 // smallest keys — the storage itself is deliberately unsorted, see the
-// insertion comment), the sector-sweep quadruple, and the fr-wa6o half-extent
+// insertion comment), the sector-sweep quadruple, and the slab half-extent
 // buffers every point is shadowed by. Zero-allocation hot path; single-threaded
 // by construction (each worker owns its module instance, and
 // {@link refinedCertValue4} — which carries its OWN sweep scratch — never
@@ -2672,7 +2671,7 @@ const CERT_IMG_EXT4 = new Float64Array(4);
  * previous SLAB query's residue would otherwise leak in and shrink every
  * radius that reads them — a silent OVERSHOOT, the one error class this
  * module refuses to ship. One reset per point query keeps `h = 0` value-exact
- * against the pre-fr-wa6o arithmetic. (The frontier's own `fc*`/`fn*` extent
+ * against the pre-slab arithmetic. (The frontier's own `fc*`/`fn*` extent
  * lanes need no reset: they are written unconditionally from
  * {@link FOLD_IMG_EXT4} and {@link FOLD_EXT4}, both of which this covers.)
  */
@@ -2686,7 +2685,7 @@ function clearFoldSegmentScratch(): void {
 
 /** One frontier-insertion candidate as {@link FoldFrontierTap4} reports it:
  * the floored selection key and the chain state the slot would carry. The
- * fr-wa6o half-extent is deliberately absent — the replay cross-check drives
+ * slab half-extent is deliberately absent — the replay cross-check drives
  * POINT queries, where it is identically zero. */
 export interface FoldFrontierCandidate4 {
   key: number;
@@ -2729,11 +2728,11 @@ export function setFoldFrontierTap4(tap: FoldFrontierTap4 | null): void {
 /**
  * One extra Hutchinson level on a frozen escaped candidate's own inverse
  * image, over every `(sector, base map, fold branch)` triple — 3D's
- * `refinedCertValue` (fr-1z6p) one dimension up: the certificate becomes
+ * `refinedCertValue` one dimension up: the certificate becomes
  * `childScale * max(r - R, inner)`, never below the plain
  * `childScale * (r - R)`. Called only from {@link descendFold4}'s refined
  * path, and only for folds whose PLAIN certificate already beats the running
- * min (the fr-1z6p laziness guard). The affine ladder keeps its own
+ * min (the fold-time laziness guard). The affine ladder keeps its own
  * fold-free closure inside `descend4Refined` — that estimator predates folds
  * and stays self-contained, exactly as the two 4D estimators do.
  *
@@ -2743,7 +2742,7 @@ export function setFoldFrontierTap4(tap: FoldFrontierTap4 | null): void {
  * strengthening the frontier's certificates do,
  * `max(branchSigma·(rj − R), |w|·regionDist)`.
  *
- * `iExt` is the candidate's half-extent (fr-wa6o), transported here exactly as
+ * `iExt` is the candidate's slab half-extent, transported here exactly as
  * the frontier transports it: turned by each sector step, scaled into u-space,
  * signed by the box branch's `diag(±1)` derivative, then carried through
  * `invM`. Under `segment === false` it is identically zero and every
@@ -2822,7 +2821,7 @@ function refinedCertValue4(
       let vw = 0;
       let sfSigma = 1;
       let sfRd = 0;
-      // The map's authored fold lengths (fr-s9ll), hoisted out of the
+      // The map's authored fold lengths, hoisted out of the
       // branch loop. At the classic set every expression below reduces to
       // the literal that shipped — `wall` 1, `innerScale` 0.25,
       // `innerSigma` 4, `fixedR`/`invFixedR`/`fixedR2` 1, `outputR` 2 — so
@@ -3076,13 +3075,13 @@ function refinedCertValue4(
 }
 
 /**
- * Fold-branch frontier descent, one dimension up (fr-rsp6) — the 4D twin
+ * Fold-branch frontier descent, one dimension up — the 4D twin
  * of 3D's `descendFold`: a width-{@link FOLD_W4} frontier
  * over the `(sector, base map, fold branch)` candidate stream, region
- * floors from the branch validity cells, fr-kidj stage-1/2 skips, the
- * fr-55r5/fr-zkt2 exits at every settled fold, and — under `refine` — the
- * fr-1z6p refined certificate on escaped evictions. `halfExtent` rides
- * only where {@link slabExact4} holds (boxfold branch inverses are
+ * floors from the branch validity cells, the branch-and-bound's stage-1/2
+ * skips, the cutoff/sphere-floor exits at every settled fold, and — under
+ * `refine` — the refined certificate on escaped evictions. `halfExtent`
+ * rides only where {@link slabExact4} holds (boxfold branch inverses are
  * per-axis reflections — segment-exact); the public entries refuse it
  * otherwise, so this body may assume every fold branch it transports a
  * segment through is affine.
@@ -3102,20 +3101,20 @@ function refinedCertValue4(
  *   `max(pScale·(r − R), floor)`, and a tuple dropped off the frontier folds
  *   its floor when it has one — the subtree's every fold is >= its floor, so
  *   the drop loses tightness, never validity.
- * - FLOOR-VS-BEST PRUNE + fr-kidj's stage-2 BRANCH-AND-BOUND SKIP, both
+ * - FLOOR-VS-BEST PRUNE + the stage-2 BRANCH-AND-BOUND SKIP, both
  *   priced BEFORE the child transform.
  *
  * FOUR DIMENSIONS, FOUR DELTAS. The branch fan grows ({@link
  * foldBranchCount4}: boxfold 3^4 = 81 with `b = selX + 3·selY + 9·selZ +
  * 27·selW`, spherefold still 3, mandelbox 3·81 = 243 with
  * `b = boxIndex + 81·sphereIndex`); every radius is {@link segmentRadius}
- * rather than `|q|`, so the fr-wa6o slab rides one extra 4-vector per chain
- * and candidate; there is NO fr-pjqw bound centre (this module's ball is
+ * rather than `|q|`, so the slab rides one extra 4-vector per chain
+ * and candidate; there is NO probe-fit bound centre (this module's ball is
  * origin-anchored — where 3D subtracts `boundCenter`, 4D subtracts nothing)
- * and NO fr-3c0k footprint cap (no cone-footprint parameter exists up here),
+ * and NO footprint cap (no cone-footprint parameter exists up here),
  * so the loop runs `de.maxDepth`. Like 3D, this body IGNORES
  * `de.beamWidth` — the affine ladder's 1/2/3/4 slots are replaced wholesale
- * by the {@link FOLD_W4}-wide frontier, whose sizing (fr-5rvk, measured) is a
+ * by the {@link FOLD_W4}-wide frontier, whose measured sizing is a
  * statement about branch fans and region floors that the lift keeps.
  */
 function descendFold4(
@@ -3201,7 +3200,7 @@ function descendFold4(
         FOLD_SWEEP_EXT4[2] = fcExtZ[c];
         FOLD_SWEEP_EXT4[3] = fcExtW[c];
       }
-      // fr-kidj stage-2 hoists: the chain-point norm is sector-invariant
+      // Stage-2 hoists: the chain-point norm is sector-invariant
       // (every generator is an orthogonal map fixing the origin — the module
       // doc's FIXED SUBSPACE note), so the affine arm's |pre|² is one number
       // per chain; 1/pScale prices the skip's frontier-key condition.
@@ -3227,7 +3226,7 @@ function descendFold4(
           const kind = map.foldKind;
           const branchCount = foldBranchCount4(kind);
           const absW = map.foldSigma / map.sigmaMin;
-          // fr-kidj stage 2 (branch-and-bound skip): a candidate whose
+          // Stage 2 (branch-and-bound skip): a candidate whose
           // processing is provably a STATE no-op — nothing folded below
           // best, nothing displaced in the frontier — can be skipped
           // bit-identically, not merely validly. The child radius is
@@ -3255,7 +3254,7 @@ function descendFold4(
           // now would also be decided at any later state; enumeration order
           // (and thus every tie-break) is untouched.
           //
-          // SEGMENT BYPASS (fr-wa6o × fr-rsp6, a 4D-only decision): both
+          // SEGMENT BYPASS (slab × fold, a 4D-only decision): both
           // forms are POINT statements, and under a slab query `r` is the
           // segment's MINIMUM radius, which sits BELOW them. The sigma form
           // relaxes cheaply (replace `|pre|` with the segment's own radius),
@@ -3324,7 +3323,7 @@ function descendFold4(
           let vw = 0;
           let sfSigma = 1;
           let sfRd = 0;
-          // The map's authored fold lengths (fr-s9ll), hoisted out of the
+          // The map's authored fold lengths, hoisted out of the
           // branch loop; classic values reduce every expression to the
           // literal that shipped.
           const fr = map.foldRadii;
@@ -3365,7 +3364,7 @@ function descendFold4(
               dwUp = uw > wall ? uw - wall : 0;
               dwDn = uw < -wall ? -wall - uw : 0;
               if (segment) {
-                // REGION DISTANCES UNDER A SEGMENT (fr-wa6o × fr-rsp6). The
+                // REGION DISTANCES UNDER A SEGMENT (slab × fold). The
                 // distances above are measured from the u-space CENTRE, but
                 // the query is the whole segment `u ± e_u`. Each per-axis
                 // distance is 1-Lipschitz in its axis, so
@@ -3403,7 +3402,7 @@ function descendFold4(
             let branchSigma: number;
             // The candidate's floor — its chain's floor, raised below by
             // the branch's own region certificate — is knowable BEFORE the
-            // child transform (fr-kidj stage 1: branchRd needs only the
+            // child transform (stage 1: branchRd needs only the
             // branch decode), so the floor-vs-best prune runs first and
             // only surviving branches pay the inverse application.
             let candFloor = pFloor;
@@ -3784,7 +3783,7 @@ function descendFold4(
                 if (evCert < best) {
                   let folded = evCert;
                   if (refine) {
-                    // fr-1z6p's lazy guard: refinement can only RAISE a
+                    // The lazy guard: refinement can only RAISE a
                     // certificate, so only folds that would advance the min
                     // pay the extra Hutchinson level.
                     const rc = refinedCertValue4(
@@ -3878,8 +3877,8 @@ const LENS_EXT4 = new Float64Array(4);
 const LENS_BRANCH_EXT4 = new Float64Array(4);
 
 /**
- * Fold FINAL lens sweep, one dimension up (fr-rsp6) — the 4D twin of 3D's
- * `descendLens` (fr-g58b): the visible set is `F(A)` with `F = w·V(M p + t)`
+ * Fold FINAL lens sweep, one dimension up — the 4D twin of 3D's
+ * `descendLens`: the visible set is `F(A)` with `F = w·V(M p + t)`
  * and `V` a fold family, so
  *
  *     dist(p, F(A)) = |w| · dist(p/w, V(Y))        (odd folds; Y = M·A + t)
@@ -3896,7 +3895,7 @@ const LENS_BRANCH_EXT4 = new Float64Array(4);
  * `|p| − visibleBoundingRadius`. Every dimension-sensitive quantity is the
  * 4D one: 81/3/243 branches ({@link foldBranchCount4}) with the box code
  * `selX + 3·selY + 9·selZ + 27·selW`, and {@link segmentRadius} in place of
- * every `|q|` so a fr-wa6o slab rides through the lens too (boxfold lenses
+ * every `|q|` so a slab rides through the lens too (boxfold lenses
  * only — {@link slabExact4} refuses the rest at the public entries).
  *
  * Three prunes keep the branch loop from costing its worst case, each
@@ -3908,22 +3907,22 @@ const LENS_BRANCH_EXT4 = new Float64Array(4);
  * - SPHERE CERTIFICATE vs best: `factor_c·(|q_c| − R) >= best` — the core's
  *   return never undercuts its own depth-0 sphere bound (the same statement
  *   under a segment, where both sides read {@link segmentRadius}).
- * - VISIBLE-SPHERE PIN (the fr-zkt2 argument, outer edition): once
+ * - VISIBLE-SPHERE PIN (the sphere-floor argument, outer edition): once
  *   `best <= |p| − visibleR` the eventual `max(best, visBound)` is pinned;
  *   return it immediately, bit-exact for every caller.
  *
  * The visible ball stays ORIGIN-centered, matching 3D's deliberate choice —
- * trivially so here, since this module never adopted 3D's fr-pjqw probe-fit
+ * trivially so here, since this module never adopted 3D's probe-fit
  * centre for the raw attractor's ball either (module doc, FIXED SUBSPACE).
  *
  * The spherefold MID branch keeps its shell guard, scaled by the map's own
- * `fR` since fr-s9ll (`foldRadii.midMinR`): a query that close to the origin
+ * `fR` (`foldRadii.midMinR`): a query that close to the origin
  * in u-space folds the settled shell bound `|w|·(fR − ru)` instead of
  * inverting (and, for the mandelbox, skips that sphere branch's whole
  * 81-wide box expansion), exactly as the iterated sweep does.
  *
  * BRANCH ORDER IS DELIBERATELY THE INDEX ORDER — carried up from 3D's record
- * rather than re-derived (fr-ybtq, measured 2026-07-30; do not "fix" this
+ * rather than re-derived (measured 2026-07-30; do not "fix" this
  * without re-measuring). Best-FIRST ordering (seed the sweep with the argmin
  * of each branch's exact depth-0 lower bound, then sweep skipping it) was
  * implemented in 3D's function, its WGSL mirror and their tests, and
@@ -3935,28 +3934,28 @@ const LENS_BRANCH_EXT4 = new Float64Array(4);
  * certificate is vacuous at ANY visit order — ordering had already reached
  * its ceiling.
  *
- * AND THE STRONGER IN-BALL CERTIFICATE IS AT ITS CEILING TOO (fr-sm95,
- * measured 2026-07-30, 3D — recorded here so a 4D reader does not rebuild
- * it). A conservative distance floor over the BASE attractor, sampled at each
- * branch preimage from `surface-grid.ts`, was wired in as a fourth prune and
- * measured on three systems: ONE paid (fr-ybtq's field class, 6.83 -> 3.71
- * core descents per call), the other two got 3-12% and nothing while still
- * paying the fetch. Unlike the three prunes above it is SOUND BUT NOT
- * VALUE-EXACT — a floor bounds the TRUE distance, which the core's return
- * only under-estimates — so every mirror not sampling the same floors becomes
- * a DIFFERENT estimator. NOT LANDED; `bd show fr-sm95` carries the tables.
- * (4D has no grid at all — the live rotor/slice would invalidate one per
- * frame — so the prune is doubly unavailable here.)
+ * AND THE STRONGER IN-BALL CERTIFICATE IS AT ITS CEILING TOO (measured
+ * 2026-07-30, 3D — recorded here so a 4D reader does not rebuild it). A
+ * conservative distance floor over the BASE attractor, sampled at each branch
+ * preimage from `surface-grid.ts`, was wired in as a fourth prune and measured
+ * on three systems: ONE paid (the identity-lens field class, 6.83 -> 3.71 core
+ * descents per call), the other two got 3-12% and nothing while still paying
+ * the fetch. Unlike the three prunes above it is SOUND BUT NOT VALUE-EXACT — a
+ * floor bounds the TRUE distance, which the core's return only under-estimates
+ * — so every mirror not sampling the same floors becomes a DIFFERENT
+ * estimator. NOT LANDED; the 3D twin's `descendLens` doc carries the tables.
+ * (4D has no grid at all — the live rotor/slice would invalidate one per frame
+ * — so the prune is doubly unavailable here.)
  *
- * CUTOFF CONTRACT (fr-55r5's, honored verbatim): inner descents receive
- * `min(best, cutoff)/factor_c` when `cutoff > 0` — an inner value below that
- * line certifies its term below `min(best, cutoff)`, so any inexact
+ * CUTOFF CONTRACT (the march-epsilon one, honored verbatim): inner descents
+ * receive `min(best, cutoff)/factor_c` when `cutoff > 0` — an inner value
+ * below that line certifies its term below `min(best, cutoff)`, so any inexact
  * (early-exited) term forces the final return under the cutoff, and every
  * return at or above the cutoff is a min over EXACT terms. ONE SEAM over 3D:
- * the plain 4D core (`descend4`) predates the cutoff machinery and takes
- * none, so on the `refine === false` affine arm the root descents run EXACT
- * — tighter than the contract requires, never looser, and the plain public
- * entry passes `cutoff = 0` anyway, so no caller can tell.
+ * the plain 4D core (`descend4`) predates the cutoff machinery and takes none,
+ * so on the `refine === false` affine arm the root descents run EXACT —
+ * tighter than the contract requires, never looser, and the plain public entry
+ * passes `cutoff = 0` anyway, so no caller can tell.
  */
 function descendLens4(
   de: SurfaceDE4,
@@ -4027,7 +4026,7 @@ function descendLens4(
   let sfSigma = 1;
   let sfRd = 0;
   let ru = 0;
-  // The LENS fold's own authored lengths (fr-s9ll) — a final transform
+  // The LENS fold's own authored lengths — a final transform
   // carries its three fields exactly like a base map, and the classic set
   // reduces every expression below to the literal that shipped.
   const fr = lens.foldRadii;

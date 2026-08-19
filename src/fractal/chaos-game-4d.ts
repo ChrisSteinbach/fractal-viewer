@@ -14,8 +14,8 @@ import type { IterationRng, Rng } from "./rng";
 import type { Bounds4, SymmetryParams, Transform4, Vec4 } from "./types";
 
 /**
- * # 4D chaos game (fr-cbg spike; variations + lens in fr-hy8; prepared seams
- * in fr-5b3)
+ * # 4D chaos game (born as a points-mode spike; variations, shear and the
+ * lens followed, then the prepared seams the 4D renders needed)
  *
  * A dedicated, self-contained 4D path that mirrors the SHAPE of
  * `chaos-game.ts`'s {@link import("./chaos-game").runChaosGame} but does not try
@@ -36,8 +36,8 @@ import type { Bounds4, SymmetryParams, Transform4, Vec4 } from "./types";
  * variations and no lens takes the exact same code path, and consumes the RNG
  * identically, as before those were added (the blend/lens are `null`).
  *
- * Since fr-q0h6 it carries the kaleidoscope too (`symmetry`, defaulting to the
- * order-1 identity): a 4D simple rotation fixes a PLANE where a 3D one fixes an
+ * It carries the kaleidoscope too (`symmetry`, defaulting to the order-1
+ * identity): a 4D simple rotation fixes a PLANE where a 3D one fixes an
  * axis, and 4D additionally admits the DOUBLE rotation a
  * {@link SymmetryParams.twist} asks for — two orthogonal planes turning at
  * once, which has no 3D counterpart. `affine4.ts`'s {@link symmetryRotation4}
@@ -45,8 +45,9 @@ import type { Bounds4, SymmetryParams, Transform4, Vec4 } from "./types";
  * the three w-free planes at twist 0, so a flat system's kaleidoscope survives
  * being routed through this path unchanged.
  *
- * As of fr-5b3 (the 4D flame/solid renders), the per-run setup and per-iteration stepping are hoisted
- * into their own exported seams — {@link prepareChaosGame4}, {@link pickIndex4},
+ * For the 4D flame/solid renders, the per-run setup and per-iteration
+ * stepping are hoisted into their own exported seams —
+ * {@link prepareChaosGame4}, {@link pickIndex4},
  * {@link stepOrbit4}, {@link plotPoint4} — the 4D twins of `chaos-game.ts`'s
  * `prepareChaosGame`/`pickIndex`/`stepOrbit`/`plotPoint`. This is what lets a
  * future 4D histogram accumulator (a `flame-gpu.ts`-style hand-inlined hot loop)
@@ -77,7 +78,7 @@ export interface ChaosGame4Result {
   /**
    * Axis-aligned extent of the cloud (all four coordinates). The box's
    * half-extents also drive the shader's rotation-covariant w-colour
-   * amplitude (fr-9bk).
+   * amplitude.
    */
   bounds: Bounds4;
   /** Center of the bounds box. */
@@ -168,7 +169,7 @@ export interface PreparedChaosGame4 {
   totalWeight: number;
   /**
    * Row-major 4x4 rotation applied AFTER a slot's affine + variation output
-   * (fr-q0h6's 4D kaleidoscope copies — `chaos-game.ts`'s 3x3
+   * (the 4D kaleidoscope copies — `chaos-game.ts`'s 3x3
    * `PreparedChaosGame.postRotations` one dimension up), indexed like
    * `affines`/`variations`, or `null` for an unrotated slot — every slot at
    * symmetry order 1, and every copy-0 slot at any order, so the RNG stream
@@ -177,7 +178,7 @@ export interface PreparedChaosGame4 {
    */
   postRotations: (number[] | null)[];
   /**
-   * Resolved flame palette slot per BASE map (fr-hiyu) — length
+   * Resolved flame palette slot per BASE map — length
    * {@link baseTransformCount}, indexed by `idx % baseTransformCount`, never
    * by the expanded slot: every kaleidoscope copy of a map colors as that
    * map. Each entry is the transform's own `colorIndex` or `chaos-game.ts`'s
@@ -187,7 +188,7 @@ export interface PreparedChaosGame4 {
    */
   colorIndex: Float64Array;
   /**
-   * Resolved flame color speed per BASE map (fr-hiyu), the companion to
+   * Resolved flame color speed per BASE map, the companion to
    * {@link colorIndex}: the transform's own `colorSpeed` or `chaos-game.ts`'s
    * `DEFAULT_COLOR_SPEED`. Same indexing, same two readers.
    */
@@ -201,7 +202,7 @@ export interface PreparedChaosGame4 {
  * {@link stepOrbit4} / {@link plotPoint4} call in that run. Mirrors
  * `chaos-game.ts`'s `prepareChaosGame` one dimension up.
  *
- * `symmetry` (fr-q0h6; defaults to order 1, the identity) replicates every
+ * `symmetry` (defaults to order 1, the identity) replicates every
  * base map `effectiveSymmetryOrder(symmetry.order, transforms.length)` times,
  * copy `k` rotated by `2π·k / order` in `symmetry.plane` — plus
  * `2π·k·twist / order` in the plane orthogonal to it, the second angle of a 4D
@@ -210,7 +211,7 @@ export interface PreparedChaosGame4 {
  * (any plane, any twist) this expansion is a no-op: exactly one (unrotated)
  * copy of each base map, so every existing caller that omits `symmetry` gets a
  * byte-identical `PreparedChaosGame4` to before this parameter existed.
- * `symmetry.blend` (fr-eykn; default 1) scales the rotated copies' selection
+ * `symmetry.blend` (default 1) scales the rotated copies' selection
  * weights, continuously fading the kaleidoscope between full strength (1) and
  * bit-identical-to-order-1 (0) — see the weight-table comment below.
  *
@@ -281,7 +282,7 @@ export function prepareChaosGame4(
   // the RNG identically to the obvious code; only a genuinely weighted system
   // pays for the cumulative table + binary search.
   //
-  // `symmetry.blend` (fr-eykn) additionally scales every ROTATED copy's slot
+  // `symmetry.blend` additionally scales every ROTATED copy's slot
   // (never copy 0), continuously thinning the kaleidoscope: at its default 1
   // the weights — and thus the `weighted` flag and the whole draw — are
   // untouched, and at 0 the copies' zero-width cumulative segments can never
@@ -304,7 +305,7 @@ export function prepareChaosGame4(
     totalWeight > 0 &&
     Number.isFinite(totalWeight);
 
-  // Flame structural-coloring slots (fr-hiyu), resolved per BASE map — the
+  // Flame structural-coloring slots, resolved per BASE map — the
   // kaleidoscope copies deliberately get no entries of their own, since
   // `flame-4d.ts` looks them up by `idx % baseTransformCount`.
   const colorIndex = new Float64Array(baseTransformCount);
@@ -383,7 +384,7 @@ export interface OrbitStep4 {
  * affine-then-variation order, same post-rotation position, same escape check
  * (now over all four coordinates), same reseed-all-coordinates recovery.
  *
- * Symmetry (fr-q0h6): when `prepared` has rotated copies, the picked slot's
+ * Symmetry: when `prepared` has rotated copies, the picked slot's
  * `postRotations` entry — the copy's 4x4 rotation, applied to the map's FULL
  * affine + variation output — bends the landing point before the escape
  * check, since that rotated point is what actually feeds back into the orbit.
@@ -395,7 +396,7 @@ export interface OrbitStep4 {
  * per-transform coloring and the editor's selection keep meaning "logical
  * map" regardless of which kaleidoscope copy actually fired.
  *
- * `auxRng` (fr-2wfw) mirrors `stepOrbit`'s parameter of the same name — the
+ * `auxRng` mirrors `stepOrbit`'s parameter of the same name — the
  * stream every iteration-local draw (a stochastic variation's coin flips,
  * the escape-reseed coordinates) comes from, defaulting to `rng` itself (the
  * original single-stream behavior, byte-identical for every existing
@@ -478,7 +479,7 @@ export function stepOrbit4(
  * four coordinates stays finite, otherwise this returns the orbit point
  * unchanged so a bad landing never produces NaN/Inf.
  *
- * `auxRng` (fr-2wfw) mirrors `plotPoint`'s parameter of the same name: the
+ * `auxRng` mirrors `plotPoint`'s parameter of the same name: the
  * stream a stochastic lens's own draws come from, defaulting to `rng` — the
  * original single-stream behavior.
  */
@@ -539,7 +540,7 @@ export function plotPoint4(
  * past {@link MAX_TRANSFORMS} (the Uint8 transform-index cap) via
  * {@link prepareChaosGame4}.
  *
- * An optional `symmetry` (fr-q0h6; defaults to order 1, the identity) draws
+ * An optional `symmetry` (defaults to order 1, the identity) draws
  * from `effectiveSymmetryOrder(symmetry.order, transforms.length)` rotated
  * copies of the transform set instead of just the base maps — see
  * {@link prepareChaosGame4}. `transformIndices` still records the BASE map
@@ -547,7 +548,7 @@ export function plotPoint4(
  * same positional slot `runChaosGame` gives it, so the two signatures stay
  * readable side by side.
  *
- * An optional `iterationRng` (fr-2wfw) moves every iteration-local draw — a
+ * An optional `iterationRng` moves every iteration-local draw — a
  * stochastic variation's coin flips, the escape-reseed coordinates — onto a
  * per-iteration stream, mirroring `runChaosGame`'s parameter of the same
  * name; see that doc (and `rng.ts`'s `IterationRng`) for the
@@ -652,7 +653,7 @@ export function runChaosGame4(
       nw = q[3];
     }
 
-    // Symmetry (fr-q0h6): rotate this slot's FULL affine + variation output —
+    // Symmetry: rotate this slot's FULL affine + variation output —
     // see stepOrbit4, which this mirrors exactly. `null` (order 1, and every
     // unrotated copy-0 slot at any order) skips this, so the orbit stays
     // byte-identical to the pre-symmetry loop exactly where there is nothing
@@ -728,7 +729,7 @@ export function runChaosGame4(
     positions[i * 3 + 1] = py;
     positions[i * 3 + 2] = pz;
     wBuffer[i] = pw;
-    // The BASE map this slot is a (possibly rotated) copy of (fr-q0h6) — see
+    // The BASE map this slot is a (possibly rotated) copy of — see
     // PreparedChaosGame4.baseTransformCount — matching stepOrbit4's own
     // OrbitStep4.index exactly, including the escape-reseed case (idx is the
     // TRIGGERING transform, fixed before the reseed branch above runs).

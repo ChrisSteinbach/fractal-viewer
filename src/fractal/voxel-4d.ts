@@ -1,7 +1,7 @@
 /**
- * The 4D twin of `voxel.ts`'s `computeVoxelBounds`/`accumulateVoxels`
- * (fr-4wd): voxelizes a 4D chaos-game orbit — rotated by a frozen-at-render-
- * entry rotor about the cloud's 4D center and orthographically projected to
+ * The 4D twin of `voxel.ts`'s `computeVoxelBounds`/`accumulateVoxels`: it
+ * voxelizes a 4D chaos-game orbit — rotated by a frozen-at-render-entry
+ * rotor about the cloud's 4D center and orthographically projected to
  * 3D (drop the rotated w) — into the SAME world-space {@link VoxelGrid} the
  * 3D path fills, weighted by the soft w-slice window when it is on, so the
  * solid render "solidifies the current w-slice" while the camera itself
@@ -32,7 +32,7 @@ const FALLBACK_COLOR: Vec3 = [1, 1, 1];
 
 /**
  * Pure (floor-0) slice weight a sample must clear to participate in
- * {@link computeVoxelBounds4}'s quantile trim (fr-4wd) — well above the
+ * {@link computeVoxelBounds4}'s quantile trim — well above the
  * flame/point-cloud's 0.06 ghost floor, so genuinely faint ghost context
  * doesn't drag the trim back out toward the whole cloud.
  */
@@ -62,7 +62,7 @@ const SLICE_TRIM_MIN_FRACTION = 0.01;
  * -1, 1)` (`rotorProj`'s `sRaw` row) is also computed — see `project4.ts`'s
  * `RotorProjection4` doc for the row layout.
  *
- * **Slice-aware trimming (fr-4wd)**: when `view.sliceOn`, the quantile trim
+ * **Slice-aware trimming**: when `view.sliceOn`, the quantile trim
  * considers ONLY samples whose PURE Gaussian slice weight
  * ({@link sliceWeight} with `floor = 0`, unlike the flame/point-cloud's 0.06
  * ghost floor) is at least {@link SLICE_TRIM_THRESHOLD} — so the grid's
@@ -266,8 +266,8 @@ export function computeVoxelBounds4(
  * `accumulateFlame4`: `"structural"` indexes `color.lut` at the orbit-riding
  * coordinate `c`; `"wRamp"` calls {@link wRampColor}; `"transform"` is
  * `color.palette[baseIdx]` (the BASE map index — every kaleidoscope copy
- * colors as the map it copies, fr-q0h6), falling back to
- * `[1, 1, 1]` for an out-of-range index; `"radius"` indexes `color.lut` at
+ * colors as the map it copies), falling back to `[1, 1, 1]` for an
+ * out-of-range index; `"radius"` indexes `color.lut` at
  * the plotted point's 4D Euclidean distance from `color.center`, normalized
  * over `[color.minD, color.maxD]` with the same round-to-nearest 256-step
  * convention `voxel.ts` already uses for its own radius/height ramps.
@@ -302,8 +302,8 @@ export function accumulateVoxels4(
   // Structural coloring (mirrors accumulateFlame4's colorLUT path exactly —
   // see FourDRenderColor's doc): `structural` gates both the per-step update
   // below and the escape-reseed reset. The per-map slot and blend speed were
-  // resolved once by `prepareChaosGame4` (fr-hiyu), keyed on the BASE map
-  // index (fr-q0h6) so every kaleidoscope copy shares its map's slot — so a
+  // resolved once by `prepareChaosGame4`, keyed on the BASE map index so
+  // every kaleidoscope copy shares its map's slot — so a
   // 4D system authored for the flame colors identically here.
   const structural = color.kind === "structural";
   const colorSlots = prepared.colorIndex;
@@ -342,7 +342,7 @@ export function accumulateVoxels4(
   }
 
   const { invWAmp, sliceOn, sliceCenter, sliceWidth } = view;
-  // The slice-relative w-ramp recolor (fr-nn6) — identity (0, 1) unless the
+  // The slice-relative w-ramp recolor — identity (0, 1) unless the
   // slice is on and the option was chosen, so the wRamp branch below applies
   // it unconditionally (see sliceColorRemap's doc).
   const { shift: colorShift, invScale: colorInvScale } = sliceColorRemap(view);
@@ -354,7 +354,7 @@ export function accumulateVoxels4(
   for (let n = 0; n < iterations; n++) {
     // --- inlined stepOrbit4(prepared, x, y, z, w, rng) ---------------------
     const idx = pickIndex4(prepared, rng);
-    // The BASE map this slot is a (possibly rotated) copy of (fr-q0h6) — see
+    // The BASE map this slot is a (possibly rotated) copy of — see
     // PreparedChaosGame4.baseTransformCount. Equal to `idx` at symmetry order
     // 1. Anything keyed to "which logical map" (the color slot below, and the
     // `palette` lookup further down) uses this, never the raw expanded `idx`.
@@ -394,7 +394,7 @@ export function accumulateVoxels4(
       nw = q[3];
     }
 
-    // Symmetry (fr-q0h6): rotate this slot's FULL affine + variation output —
+    // Symmetry: rotate this slot's FULL affine + variation output —
     // see `chaos-game-4d.ts`'s `stepOrbit4`, which this mirrors exactly.
     // `null` (order 1, and every unrotated copy-0 slot at any order) skips
     // this, so the orbit stays byte-identical to the pre-symmetry loop
@@ -522,7 +522,7 @@ export function accumulateVoxels4(
         break;
       }
       case "wRamp": {
-        // The optional slice-relative remap of s (fr-nn6) — wRampColor's own
+        // The optional slice-relative remap of s — wRampColor's own
         // clamp bounds the rescaled signal, exactly like the raw s's.
         const rgb = wRampColor((s - colorShift) * colorInvScale, color.side);
         r = rgb[0];

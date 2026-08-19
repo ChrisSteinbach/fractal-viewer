@@ -551,7 +551,7 @@ export function swirlFlame(): Transform[] {
 const DYED_ARM_SLOT = 0.62;
 
 /**
- * "Dyed Spiral" — the showcase for per-transform flame color (fr-hiyu). A
+ * "Dyed Spiral" — the showcase for per-transform flame color. A
  * four-map spiral whose palette structure is AUTHORED rather than derived, so
  * color follows where a point CAME FROM instead of where its map happens to
  * sit in the transform list.
@@ -641,8 +641,8 @@ const JULIA_SET_C: [number, number] = [-0.123, 0.745];
 const JULIA_DUST_C: [number, number] = [0.36, 0.6];
 
 /**
- * The one-transform recipe shared by {@link juliaSet} and {@link juliaDust}
- * (fr-7u8t.1): exact Inverse Iteration (IIM) for the Julia set of z² + c.
+ * The one-transform recipe shared by {@link juliaSet} and {@link juliaDust}:
+ * exact Inverse Iteration (IIM) for the Julia set of z² + c.
  * `variations.ts`'s `julia` IS flam3's `juliaN(power=2, dist=1)` — half the
  * angle, square-root the radius, a random half-turn — which is exactly the
  * pair of inverse branches w±(z) = ±sqrt(z − c) that make
@@ -675,7 +675,7 @@ function juliaBranch(id: number, c: [number, number]): Transform {
 }
 
 /**
- * The Julia set of z² + c at {@link JULIA_SET_C} (fr-7u8t.1), by exact
+ * The Julia set of z² + c at {@link JULIA_SET_C}, by exact
  * Inverse Iteration — see {@link juliaIim}. `−0.123 + 0.745i` is Douady's
  * rabbit, the center of M's period-3 hyperbolic component: the critical
  * orbit of z² + c lands on an attracting 3-cycle (magnitude ~0.869,
@@ -694,7 +694,7 @@ function juliaBranch(id: number, c: [number, number]): Transform {
  * `docs/julia-sets.md` for the harmonic-measure caveat behind the ~6%
  * residual above (it applies to both presets, connected or not).
  *
- * A PROOF, NOT A SHOWCASE — and deliberately still one (fr-7u8t.5). A
+ * A PROOF, NOT A SHOWCASE — and deliberately still one. A
  * LONE transform parks the flame's color coordinate at
  * `derivedColorIndex(0, 1) = 0.5` forever: there is no second slot for a
  * point's history to move it toward, so this preset is STRUCTURALLY
@@ -715,7 +715,7 @@ export function juliaSet(): Transform[] {
 }
 
 /**
- * {@link juliaSet}'s dust twin (fr-7u8t.1): the identical IIM recipe at
+ * {@link juliaSet}'s dust twin: the identical IIM recipe at
  * {@link JULIA_DUST_C}, a c verified outside the Mandelbrot set with room
  * to spare (unlike a marginal outside-M c, whose Cantor gaps would be too
  * fine to read as anything but connected — see `docs/julia-sets.md`). For
@@ -749,8 +749,8 @@ export function juliaDust(): Transform[] {
 const JULIA_SPIRAL_C: [number, number] = [-0.4, 0.6];
 
 /**
- * "Julia Island" (fr-7u8t.5) — TWO exact IIM maps, at {@link
- * JULIA_SET_C} and {@link JULIA_SPIRAL_C}. Each alone is a genuine Julia
+ * "Julia Island" — TWO exact IIM maps, at {@link JULIA_SET_C} and
+ * {@link JULIA_SPIRAL_C}. Each alone is a genuine Julia
  * set ({@link juliaIim}); both together are the attractor of FOUR
  * inverse branches, which is no polynomial's Julia set — an island whose
  * boundary carries the rabbit's dendrites and the spiral's whorls at
@@ -771,7 +771,7 @@ export function juliaIsland(): Transform[] {
 }
 
 /**
- * "Julia Snowflake" (fr-7u8t.5) — {@link juliaIsland} seen through a
+ * "Julia Snowflake" — {@link juliaIsland} seen through a
  * final `julia` LENS ({@link juliaSnowflakeLens}, installed by
  * {@link PRESET_FINALS}). The plot-time map halves every angle and
  * square-roots every radius, so the island folds into a two-fold star and
@@ -802,7 +802,7 @@ export function juliaSnowflakeLens(): Transform {
 }
 
 /**
- * "Julia Pinwheel" (fr-7u8t.5) — the counter-rotating `swirl` PAIR (the
+ * "Julia Pinwheel" — the counter-rotating `swirl` PAIR (the
  * same two arm maps {@link dyedSpiral} braids, without its authored color
  * slots) flattened to the plane, seen through a final `julia` lens turned
  * 1.1 rad ({@link juliaPinwheelLens}). The lens doubles the spiral and
@@ -856,9 +856,9 @@ export function juliaPinwheelLens(): Transform {
 
 /**
  * "Fold Lattice" — an eight-map fold lattice built on the `mandelbox`
- * variation (fr-p7nu), the box-fold + sphere-fold composite behind the
+ * variation, the box-fold + sphere-fold composite behind the
  * escape-time Mandelbox, here driving an IFS. It carried the menu label
- * "Mandelbox" until fr-7u8t.8 made the actual Mandelbox reachable
+ * "Mandelbox" until the Mandelbrot form made the actual Mandelbox reachable
  * ({@link mandelboxClassic}) and the name had to go to the object that
  * earns it; the preset KEY is untouched, since keys never reach a saved
  * document. Each map runs the classic step
@@ -903,7 +903,7 @@ export function mandelboxLattice(): Transform[] {
 }
 
 /**
- * "Mandelbox KIFS" — the fold family's SURFACE-render showcase (fr-5rvk):
+ * "Mandelbox KIFS" — the fold family's SURFACE-render showcase:
  * twelve maps whose variation lists are each exactly ONE fold entry, so the
  * surface DE can descend them. Its sibling {@link mandelboxLattice} never
  * can: a `mandelbox` + `linear` BLEND is a weighted sum, not a composition,
@@ -921,7 +921,7 @@ export function mandelboxLattice(): Transform[] {
  * branch factor resolves features below `1e-4`, and a composite of `0.97`
  * would need ~300 levels against `MAX_DESCENT_DEPTH`'s 128 — the clamp
  * measured as ~0.23%R of erosion on exact on-attractor probes (the
- * fr-xok8 residual class, fold edition). `0.19` puts the composite at
+ * clamp-erosion residual class, fold edition). `0.19` puts the composite at
  * `4·1.2·0.19 = 0.912`, which resolves in exactly 100 levels — under the
  * ceiling with margin — at a barely-visible cost in fold-structure size.
  * The box fold's branches are plane REFLECTIONS (`L = 1`), so a `boxfold`
@@ -956,7 +956,7 @@ export function mandelboxLattice(): Transform[] {
  * no more structure.
  */
 /**
- * The escape-time Mandelbox family's shared recipe (fr-7u8t.8): ONE fold map
+ * The escape-time Mandelbox family's shared recipe: ONE fold map
  * at a non-contracting weight, no pre-fold offset.
  *
  * `analyzeSurfaceSystem` refuses this shape — an expanding map has no IFS
@@ -986,7 +986,7 @@ function escapeMandelbox(weight: number): Transform[] {
 }
 
 /**
- * The Mandelbox itself, at the canonical scale 2 (fr-7u8t.8) — the knobbly
+ * The Mandelbox itself, at the canonical scale 2 — the knobbly
  * fractal ball with crevices running to every depth, and the object the
  * escape-time mode was built for. Measured (`scripts/escape-form-sweep.harness.ts`):
  * its non-escaping set fills 10.6% of the bailout ball and reaches to the
@@ -997,7 +997,7 @@ export function mandelboxClassic(): Transform[] {
 }
 
 /**
- * The same map at scale 3 (fr-7u8t.8): by far the sparsest of the three at
+ * The same map at scale 3: by far the sparsest of the three at
  * 2.8% ball fill, and the sparseness is what shapes it — the solid breaks up
  * into many small densely-packed lobes arranged in a shell around a hollow
  * centre, which from the session's opening view reads as a ring. (Described
@@ -1011,7 +1011,7 @@ export function mandelboxRings(): Transform[] {
 }
 
 /**
- * The same map at scale -1.5 (fr-7u8t.8). Negative scales turn the Mandelbox
+ * The same map at scale -1.5. Negative scales turn the Mandelbox
  * inside out: the set becomes a solid CUBE (17.7% ball fill, the fattest of
  * the three) with fractal detail carved into its faces rather than a lobed
  * ball — the cheapest of the three to march, and the one that reads clearly
@@ -1022,7 +1022,7 @@ export function mandelboxCube(): Transform[] {
 }
 
 /**
- * One link of an escape-time CHAIN (fr-za0n, fr-s04t) in the document's own
+ * One link of an escape-time CHAIN in the document's own
  * vocabulary: a transform whose only variation is a single fold, at a
  * `weight` that is the classic Mandelbox `scale` and a `rotation` that is
  * genuinely part of the formula rather than a re-posing (the orbit applies
@@ -1051,7 +1051,7 @@ function foldLink(
 }
 
 /**
- * "Fold Chain" — the escape-time mode's first HYBRID (fr-za0n, fr-s04t): a
+ * "Fold Chain" — the escape-time mode's first HYBRID: a
  * Mandelbox at the canonical scale 2 followed by a box fold at 1.6 through a
  * 20° turn about `y`, the orbit alternating between them one link per step.
  *
@@ -1080,7 +1080,7 @@ export function foldChain(): Transform[] {
 
 /**
  * "Fold Chain Boulder" — three links: Mandelbox 2, Mandelbox −1.5, and
- * {@link foldChain}'s 20°-turned box fold at 1.6 (fr-za0n). Where the
+ * {@link foldChain}'s 20°-turned box fold at 1.6. Where the
  * two-link chain is carved by a few coarse voids, this is the densest and
  * roundest of the three — a near-spherical MASS filling its bailout ball,
  * finely pitted all over rather than cut through.
@@ -1092,7 +1092,7 @@ export function foldChain(): Transform[] {
  * across both. Three links, three genuinely different maps: nothing here can
  * collapse back to a longer Mandelbox.
  *
- * SUBSTITUTED, and the reason is framing (fr-za0n). The chain first drafted
+ * SUBSTITUTED, and the reason is framing. The chain first drafted
  * here was `Mandelbox 2 → box fold 1.6 → sphere fold 1.2`, whose silhouette
  * is a far more interesting object — a flat-topped urn with a rim and a
  * waist, no single fold map's shape at any weight. But `buildEscapeDE` pins
@@ -1114,8 +1114,8 @@ export function foldChainBoulder(): Transform[] {
 
 /**
  * "Fold Chain Flower" — {@link foldChain}'s two links under a five-fold
- * kaleidoscope (fr-za0n), and the preset that needed {@link PRESET_SYMMETRIES}
- * to exist at all.
+ * kaleidoscope, and the preset that needed {@link PRESET_SYMMETRIES} to
+ * exist at all.
  *
  * The kaleidoscope is not decoration here, it is the object: `escape-de.ts`
  * folds the QUERY into one sector before the orbit runs (`foldQueryIntoSector`
@@ -1138,7 +1138,7 @@ export function foldChainFlower(): Transform[] {
 }
 
 /**
- * The Mandelbulb family's shared recipe (fr-tdin): ONE map whose only
+ * The Mandelbulb family's shared recipe: ONE map whose only
  * variation is the `bulb` triplex 8th power at weight 1 — the exact shape
  * `analyzeBulbSystem` admits, and the deliberate complement of both other
  * surface gates (`analyzeSurfaceSystem` refuses it for "uses variations",
@@ -1174,7 +1174,7 @@ function bulbMap(t: Vec3 = [0, 0, 0], rotation: Vec3 = [0, 0, 0]): Transform[] {
 }
 
 /**
- * The Mandelbulb itself (fr-tdin) — the White/Nylander triplex 8th power
+ * The Mandelbulb itself — the White/Nylander triplex 8th power
  * at `t = 0`, which is the object every published "Mandelbulb" render
  * shows: a knobbly ball of stacked bulbs with a fluted equator and
  * filigree running into every crease. `scripts/bulb-preview.harness.ts`'s
@@ -1185,7 +1185,7 @@ export function mandelbulbClassic(): Transform[] {
 }
 
 /**
- * The same power with a pre-power offset (fr-tdin). `t` is added BEFORE
+ * The same power with a pre-power offset. `t` is added BEFORE
  * the triplex power rather than after it, so it does not slide the object
  * — it bites into it, opening the bulbs asymmetrically and breaking the
  * z-axis symmetry the classic object has. The one continuous deformation
@@ -1196,7 +1196,7 @@ export function mandelbulbOffset(): Transform[] {
 }
 
 /**
- * The same power behind a ROTATION (fr-tdin) — a genuinely different
+ * The same power behind a ROTATION — a genuinely different
  * object, not a different view of the first. A rigid rotation `M` applied
  * before the power does not commute with it (the triplex power is defined
  * in spherical coordinates about the z axis, so rotating first moves
@@ -1210,7 +1210,7 @@ export function mandelbulbRotated(): Transform[] {
 }
 
 /**
- * One link of a CROSS-FAMILY escape-time chain (fr-j231): {@link foldLink}'s
+ * One link of a CROSS-FAMILY escape-time chain: {@link foldLink}'s
  * SIBLING, admitting the two POWER maps — `bulb`, `qsquare` — beside the
  * three folds, and spending its fourth parameter on a uniform `scale` where
  * {@link foldLink} spends one on rotation. `scale` is `escape-de.ts`'s
@@ -1253,9 +1253,9 @@ function hybridLink(
 }
 
 /**
- * "Hybrid Chain Cube" — the escape-time mode's first CROSS-FAMILY chain
- * (fr-j231): {@link mandelboxCube}'s own inside-out mandelbox fold (weight
- * −1.5) followed by a Mandelbulb triplex power pre-scaled to 0.5. A
+ * "Hybrid Chain Cube" — the escape-time mode's first CROSS-FAMILY chain:
+ * {@link mandelboxCube}'s own inside-out mandelbox fold (weight −1.5)
+ * followed by a Mandelbulb triplex power pre-scaled to 0.5. A
  * Mandelbox and a Mandelbulb, in one formula chain — exactly the
  * combination `escape-de.ts`'s CROSS-FAMILY LINKS section widened the chain
  * to reach, where before the three estimators shipped as three separate
@@ -1291,7 +1291,7 @@ export function hybridChainCube(): Transform[] {
 }
 
 /**
- * "Hybrid Chain Craters" — the POWER LINK FIRST (fr-j231): a Mandelbulb
+ * "Hybrid Chain Craters" — the POWER LINK FIRST: a Mandelbulb
  * triplex power pre-scaled to 0.5, followed by {@link mandelboxClassic}'s
  * own mandelbox fold at weight 2 — the same two map types
  * {@link hybridChainCube} chains, reordered, and at the classic scale
@@ -1313,8 +1313,8 @@ export function hybridChainCube(): Transform[] {
  * volume: `escape-de.ts`'s own EMPTY CHAINS section quotes it at
  * "0.0000% fill at 65536 samples." Both are systems a volume probe reads
  * as next to nothing while the renderer fills a meaningful fraction of
- * the frame with them — literally the pair of numbers fr-17qu's first
- * cut got wrong, reproduced by a preset that ships.
+ * the frame with them — literally the pair of numbers the blank-frame
+ * notice's first cut got wrong, reproduced by a preset that ships.
  *
  * Its heuristic bound is exact at this pose (0.0% / 0.0% overshoot), and
  * at 0.08 us/eval it is cheaper than BOTH shipped fold controls
@@ -1332,13 +1332,13 @@ export function hybridChainCraters(): Transform[] {
 
 /**
  * "Hybrid Chain Quaternion" — the only place in the app a `qsquare` map
- * renders at all (fr-j231): {@link mandelboxClassic}'s own mandelbox fold
+ * renders at all: {@link mandelboxClassic}'s own mandelbox fold
  * at weight 2, followed by the quaternion square pre-scaled to 0.5.
  *
  * `qjulia-de.ts` measured the quaternion square ALONE as smooth and
  * detail-free — twenty panels across rotations, rotor-posed slices and
  * several constants, all shells and whorls and none of them fractal
- * detail — and fr-7u8t.5 closed its own renderer won't-do on exactly that
+ * detail — and a renderer of its own was refused on exactly that
  * measurement (see that module's doc). `escape-de.ts`'s own gate names it
  * directly on the same grounds when it refuses a LONE quaternion square —
  * "`qjulia-de.ts`'s measured-dull object" — but a chain is not a lone map,
@@ -1363,7 +1363,7 @@ export function hybridChainQuaternion(): Transform[] {
 }
 
 /**
- * The 4D escape-time PAIR's shared recipe (fr-vag4): {@link mandelboxCube}'s
+ * The 4D escape-time PAIR's shared recipe: {@link mandelboxCube}'s
  * own map — the inside-out fold at weight −1.5 — with ONE `w`-mixing rotation
  * angle spliced onto it, and nothing else touched.
  *
@@ -1384,15 +1384,15 @@ export function hybridChainQuaternion(): Transform[] {
  * spatial axis — admits them. No 3D document can express either.
  *
  * A `w` ROTATION AND NEVER A `w` TRANSLATION, and that is measured rather
- * than stylistic. fr-wuuu swept the other knob — the quaternion square's `k`
- * component, i.e. a `w` OFFSET on a chain link — and came back negative: it
+ * than stylistic. A sweep of the other knob — the quaternion square's `k`
+ * component, i.e. a `w` OFFSET on a chain link — came back negative: it
  * behaves as a weaker fourth translation, every slice off `w = 0` is an
  * EROSION of the `w = 0` set (containment 94-98%), and there is nothing left
  * to draw at all by `w0 = 0.8`. A translation cannot MIX `w` with a spatial
  * axis; it can only slide the object along an axis the render then cuts
  * across. A rotation mixes, so a flat query's orbit leaves the `w = 0`
  * hyperplane at the very first link. `scripts/escape-4d.harness.ts` section 3
- * re-ran fr-wuuu's own question against the rotation knob (on its own subject
+ * re-ran that same question against the rotation knob (on its own subject
  * chain, `mandelbox 2` turned `xw 0.35` then `mandelbox −1.5`, not on this
  * pair) and got the opposite answer: containment reads 57.0 / 55.3 / 52.5 /
  * 61.3 / 61.5% as `w0` runs 0.1 → 1.2, so roughly HALF of every offset
@@ -1410,8 +1410,8 @@ function turnedCube(
 }
 
 /**
- * "Mandelbox Brick" — {@link mandelboxCube} turned 1.0 rad in the `xw` plane
- * (fr-vag4), and half of a PAIR whose other half is {@link mandelboxColumn}.
+ * "Mandelbox Brick" — {@link mandelboxCube} turned 1.0 rad in the `xw`
+ * plane, and half of a PAIR whose other half is {@link mandelboxColumn}.
  *
  * THE ROTATION PLANE PICKS THE LONG AXIS, and that is the pair's subject.
  * `mandelboxCube` renders a solid cube with fractal detail carved into its
@@ -1454,7 +1454,7 @@ export function mandelboxBrick(): Transform[] {
 
 /**
  * "Mandelbox Column" — the same map as {@link mandelboxBrick}, turned 0.8 rad
- * in `yw` instead of `xw` (fr-vag4). It exists to run that preset's
+ * in `yw` instead of `xw`. It exists to run that preset's
  * plane → axis claim TWICE, which is what turns an observation into a knob:
  * one rotated system is a curiosity, two systems whose long axis follows the
  * plane you rotated in is a rule the user can predict and steer.
@@ -1480,7 +1480,7 @@ export function mandelboxColumn(): Transform[] {
 
 /**
  * "Hybrid Shells" — {@link hybridChainQuaternion} with the QUATERNION SQUARE
- * link turned 0.35 rad in the `zw` plane (fr-vag4): the cross-family member
+ * link turned 0.35 rad in the `zw` plane: the cross-family member
  * of the 4D escape-time trio, and the sheet's own pick if only one of the
  * three shipped.
  *
@@ -1507,8 +1507,8 @@ export function mandelboxColumn(): Transform[] {
  * rays; {@link mandelboxBrick} occupies 14.816% and draws 41.4%. That is 43x
  * less volume for 1.06x the pixels. A set of shells is a set of SURFACES and
  * no volume statistic can see one — `escape-de-4d.ts`'s `probeEscapeFill4`
- * doc carries the stronger case from fr-wuuu, where a `w = 0.4` slice of this
- * preset's own 3D twin has literally zero members in 524288 samples and still
+ * doc carries the stronger case, where a `w = 0.4` slice of this preset's
+ * own 3D twin has literally zero members in 524288 samples and still
  * draws 20.9% of its rays as a coherent shaded object. Read the hit column.
  *
  * Rendered: broken plates, arcs and hooks scattered round a core — the
@@ -1928,7 +1928,7 @@ const PRESETS = {
   dyedSpiral,
   julia: juliaSet,
   juliaDust,
-  // The julia family's SHOWCASES (fr-7u8t.5), beside the two austere
+  // The julia family's SHOWCASES, beside the two austere
   // proofs above — see `scripts/julia-flame.harness.ts` for the sheet
   // these three were picked off, and {@link juliaSet}'s doc for why the
   // proofs could not simply be prettied up instead.
@@ -1937,33 +1937,33 @@ const PRESETS = {
   juliaPinwheel,
   mandelbox: mandelboxLattice,
   mandelboxKifs,
-  // The escape-time set's own presets (fr-7u8t.8): the mode had none, so the
+  // The escape-time set's own presets: the mode had none, so the
   // only route in was authoring a lone fold map by hand.
   mandelboxClassic,
   mandelboxRings,
   mandelboxCube,
-  // The escape-time CHAINS (fr-za0n, fr-s04t): the transform list became a
+  // The escape-time CHAINS: the transform list became a
   // hybrid formula chain and both shader mirrors learned to cycle it, but
   // every preset above is still ONE map — so the composition had no way in.
   foldChain,
   foldChainBoulder,
   foldChainFlower,
-  // The escape-time family's THIRD object (fr-tdin): the Mandelbulb had
+  // The escape-time family's THIRD object: the Mandelbulb had
   // an estimator, two shader mirrors and no way in at all.
   mandelbulbClassic,
   mandelbulbOffset,
   mandelbulbRotated,
-  // The first CROSS-FAMILY chains (fr-j231): a link need not be a fold — the
+  // The first CROSS-FAMILY chains: a link need not be a fold — the
   // chain also admits the two power maps, so a Mandelbox and a Mandelbulb (or
   // a quaternion square) can ride one formula chain instead of shipping as
   // three separate, uncombinable modes.
   hybridChainCube,
   hybridChainCraters,
   hybridChainQuaternion,
-  // The first non-flat presets (fr-bf6): systems whose w extension is in play.
+  // The first non-flat presets: systems whose w extension is in play.
   pentatope,
   doubleRotation,
-  // The second wave of 4D systems (fr-zde): the remaining regular polytopes
+  // The second wave of 4D systems: the remaining regular polytopes
   // small enough to converge as flakes (the 120-/600-cell's hundreds of maps
   // are not), a duoprism, and the fern bent through w.
   sixteenCell: sixteenCellFlake,
@@ -1971,7 +1971,7 @@ const PRESETS = {
   tesseract,
   twentyFourCell: twentyFourCellFlake,
   hyperfern,
-  // The escape-time family's 4D HALF (fr-vag4): every preset above it is
+  // The escape-time family's 4D HALF: every preset above it is
   // flat by gate, so the mode the site is named after had no 4D entry at
   // all. Each of these three is refused by `analyzeEscapeSystem` ("map N
   // extends into 4D") and admitted by `analyzeEscapeSystem4` — objects no 3D
@@ -2003,7 +2003,7 @@ export const PRESET_SCAFFOLDS: Partial<Record<Preset, () => [Vec4, Vec4][]>> = {
 };
 
 /**
- * The render mode a preset was authored to showcase (fr-39y), for presets
+ * The render mode a preset was authored to showcase, for presets
  * whose payoff lives in a specific renderer rather than the live point
  * cloud: {@link radiolarian} and {@link swirlFlame} are fractal-FLAME
  * compositions (see their docs — nonlinear variation blends that read as a
@@ -2021,12 +2021,12 @@ export const PRESET_RENDER_HINTS: Partial<
   radiolarian: "flame",
   swirl: "flame",
   dyedSpiral: "flame",
-  // Flat 2D sheets in the XY plane (fr-7u8t.1): the flame's log-density
+  // Flat 2D sheets in the XY plane: the flame's log-density
   // exposure is what turns an IIM Julia set's tip-heavy point density into
   // a legible curve instead of a faint, mostly-empty sparkle.
   julia: "flame",
   juliaDust: "flame",
-  // The julia SHOWCASES (fr-7u8t.5), for the same reason one line up —
+  // The julia SHOWCASES, for the same reason one line up —
   // they are flat sheets too, and two of them are the same sheet through
   // a plot-time lens ({@link PRESET_FINALS}).
   juliaIsland: "flame",
@@ -2034,10 +2034,9 @@ export const PRESET_RENDER_HINTS: Partial<
   juliaPinwheel: "flame",
   mandelbox: "flame",
   // The pure-fold twin exists to showcase the fold-branch surface descent
-  // (fr-5rvk) — as a point cloud it under-delivers the same way the flame
-  // presets do.
+  // — as a point cloud it under-delivers the same way the flame presets do.
   mandelboxKifs: "surface",
-  // The escape-time trio (fr-7u8t.8) needs the hint more than any preset
+  // The escape-time trio needs the hint more than any preset
   // here: the chaos-game cloud of a non-contracting map is escape-reset
   // debris, so as a point cloud these look BROKEN rather than merely
   // under-delivered. Surface mode is the only place they are anything at
@@ -2046,28 +2045,28 @@ export const PRESET_RENDER_HINTS: Partial<
   mandelboxClassic: "surface",
   mandelboxRings: "surface",
   mandelboxCube: "surface",
-  // The chains (fr-za0n, fr-s04t) need the hint for the identical reason —
+  // The chains need the hint for the identical reason —
   // every link is non-contracting, so the chaos-game cloud is escape-reset
   // debris — and the mode reached this way is the same escape-time marcher,
   // now cycling the whole list instead of iterating one map.
   foldChain: "surface",
   foldChainBoulder: "surface",
   foldChainFlower: "surface",
-  // The Mandelbulb trio (fr-tdin) needs the hint for exactly the same
+  // The Mandelbulb trio needs the hint for exactly the same
   // reason — a single non-contracting map's chaos-game cloud is
   // escape-reset debris — and the mode reached this way is the
   // escape-time family's THIRD marcher, the forward triplex-power orbit.
   mandelbulbClassic: "surface",
   mandelbulbOffset: "surface",
   mandelbulbRotated: "surface",
-  // The cross-family chains (fr-j231) need the hint for the same reason as
+  // The cross-family chains need the hint for the same reason as
   // every escape-time preset above: every link is non-contracting, so the
   // chaos-game cloud is escape-reset debris, and the mode reached this way
   // cycles the same formula chain the fold-only presets do.
   hybridChainCube: "surface",
   hybridChainCraters: "surface",
   hybridChainQuaternion: "surface",
-  // The 4D escape-time trio (fr-vag4) needs the hint for the reason every
+  // The 4D escape-time trio needs the hint for the reason every
   // escape-time preset above it does — a non-contracting map's chaos-game
   // cloud is escape-reset debris, so as a point cloud these look BROKEN
   // rather than merely under-delivered — and the mode reached this way is
@@ -2078,8 +2077,8 @@ export const PRESET_RENDER_HINTS: Partial<
 };
 
 /**
- * The FINAL-TRANSFORM lens a preset was authored around (fr-7u8t.5), for
- * the compositions whose subject is the lens rather than the attractor:
+ * The FINAL-TRANSFORM lens a preset was authored around, for the
+ * compositions whose subject is the lens rather than the attractor:
  * {@link juliaSnowflake} and {@link juliaPinwheel} are one plot-time map
  * over a system that renders as something else entirely without it, so
  * shipping them as transform lists alone would ship the wrong picture.
@@ -2103,8 +2102,8 @@ export const PRESET_FINALS: Partial<Record<Preset, () => Transform>> = {
 };
 
 /**
- * The flame palette a preset was composed against (fr-7u8t.5) — the
- * fourth side table, and the one that needed the most justification,
+ * The flame palette a preset was composed against — the fourth side
+ * table, and the one that needed the most justification,
  * since a palette is the user's taste everywhere else in the app.
  *
  * It earns a table because for these compositions the palette is not
@@ -2129,7 +2128,7 @@ export const PRESET_PALETTES: Partial<Record<Preset, FlamePaletteId>> = {
 };
 
 /**
- * The KALEIDOSCOPE a preset was composed under (fr-za0n) — the fifth side
+ * The KALEIDOSCOPE a preset was composed under — the fifth side
  * table, and the one {@link foldChainFlower} could not exist without: its
  * subject IS the symmetry. `escape-de.ts` folds the query into one sector
  * before the orbit runs, so the five-fold flower is not a decorated
@@ -2156,8 +2155,8 @@ export const PRESET_PALETTES: Partial<Record<Preset, FlamePaletteId>> = {
  * the twist here too and no entry below may set one: this table is 3D
  * kaleidoscopes only, the shape every gate that reads it admits.
  *
- * AND IT STAYS 3D-ONLY EVEN THOUGH ONE GATE WOULD NOW TAKE A `w`-PLANE
- * (fr-vag4). `analyzeEscapeSystem4` admits a kaleidoscope turning in any of
+ * AND IT STAYS 3D-ONLY EVEN THOUGH ONE GATE WOULD NOW TAKE A `w`-PLANE.
+ * `analyzeEscapeSystem4` admits a kaleidoscope turning in any of
  * the six coordinate planes — `foldQueryIntoSector4` is still 1-Lipschitz and
  * an isometry per sector there — so the 4D escape-time trio ({@link
  * mandelboxBrick}, {@link mandelboxColumn}, {@link hybridChainShells}) COULD

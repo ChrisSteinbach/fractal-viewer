@@ -10,7 +10,7 @@ import type {
 } from "./types";
 
 /**
- * A composed 4D affine map (fr-cbg spike), stored as a row-major 4x4 linear part
+ * A composed 4D affine map, stored as a row-major 4x4 linear part
  * (rotation scaled per column) plus a translation. Applying it to a point `p`
  * computes `m · p + t`. Mirrors {@link import("./affine").Affine}, one dimension
  * up: `m` has 16 entries instead of 9, `t` has 4 instead of 3.
@@ -175,11 +175,12 @@ const PLANE_SIGN: Readonly<Record<SymmetryPlane, number>> = {
 };
 
 /**
- * Row-major 4x4 rotation for kaleidoscope copy `k` of a {@link SymmetryParams}
- * (fr-q0h6): `angle` in the chosen `plane`, plus `angle · twist` in the plane
- * orthogonal to it — the second angle of a 4D DOUBLE rotation, which has no 3D
- * counterpart. The 4D twin of `chaos-game.ts`'s `symmetryRotation`, and what
- * `chaos-game-4d.ts`'s `prepareChaosGame4` rotates its expanded copies by.
+ * Row-major 4x4 rotation for kaleidoscope copy `k` of a
+ * {@link SymmetryParams}: `angle` in the chosen `plane`, plus `angle · twist`
+ * in the plane orthogonal to it — the second angle of a 4D DOUBLE rotation,
+ * which has no 3D counterpart. The 4D twin of `chaos-game.ts`'s
+ * `symmetryRotation`, and what `chaos-game-4d.ts`'s `prepareChaosGame4`
+ * rotates its expanded copies by.
  *
  * Both angles go through {@link PLANE_SIGN}, so on the three `w`-free planes
  * this reproduces the 3D `symmetryRotation`'s 3x3 ENTRY FOR ENTRY (pinned by
@@ -187,10 +188,11 @@ const PLANE_SIGN: Readonly<Record<SymmetryPlane, number>> = {
  * `[0, 0, 0, 1]` — a flat system's kaleidoscope is the same kaleidoscope on
  * either path, which is the whole point of the vocabulary being shared.
  *
- * `twist = 0` — the default, every pre-fr-q0h6 document, and everything the 3D
- * paths can express — emits a SINGLE factor: the complement's angle is exactly
- * `0`, which {@link rotationMatrix4} skips rather than multiplying in as an
- * identity, so the untouched rows stay bit-exact.
+ * `twist = 0` — the default, every document predating the 4D kaleidoscope,
+ * and everything the 3D paths can express — emits a SINGLE factor: the
+ * complement's angle is exactly `0`, which {@link rotationMatrix4} skips
+ * rather than multiplying in as an identity, so the untouched rows stay
+ * bit-exact.
  */
 export function symmetryRotation4(
   plane: SymmetryPlane,
@@ -211,8 +213,8 @@ export function symmetryRotation4(
  * (`m[r*4+c] *= scale[c]`), one dimension up — then the unit upper-triangular
  * {@link Shear4} factor `U` is folded in by column operations, exactly as the 3D
  * `composeAffine` does (see {@link foldShear4}). Skipped entirely when `shear` is
- * absent or all-zero, so an unsheared system composes bit-identically to before
- * fr-hy8.
+ * absent or all-zero, so an unsheared system composes bit-identically to
+ * before 4D shear existed.
  */
 export function composeAffine4(transform: Transform4): Affine4 {
   // rotationMatrix4 returns a fresh array, so scaling it in place is safe.
@@ -291,8 +293,8 @@ export function applyAffine4(
  * derived `scale_w` a lifted map gets while `w.scale` is unset (see
  * {@link embedTransform3}'s JSDoc for why the mean contraction, not `1`).
  * Exported so every place that previews or materialises that derived value —
- * the editor's Scale W "(auto)" readout and Mirror W toggle (fr-icy), the
- * random generator's w-mirror roll (fr-bew) — shares this one formula and
+ * the editor's Scale W "(auto)" readout and Mirror W toggle, the random
+ * generator's w-mirror roll — shares this one formula and
  * can never drift from what the lift actually derives.
  */
 export function meanContraction(scale: Vec3): number {
@@ -305,17 +307,17 @@ export function meanContraction(scale: Vec3): number {
  * Embed a 3D {@link Transform} as a {@link Transform4} living in the `w = 0`
  * slice: position gains a `0` fourth coordinate, scale gains the map's MEAN
  * spatial contraction `(|sx|+|sy|+|sz|)/3` (below), the Euler-XYZ rotation is
- * rewritten as three plane angles, and — since fr-hy8 completed the
- * {@link Transform4} parameterization — the 3D shear and variations carry across
- * verbatim. The embed is now TOTAL: every 3D {@link Transform} is representable,
- * so there is no reject condition and no throw.
+ * rewritten as three plane angles, and — once the {@link Transform4}
+ * parameterization was completed with shear and variations — those carry
+ * across verbatim. The embed is TOTAL: every 3D {@link Transform} is
+ * representable, so there is no reject condition and no throw.
  *
  * ## Why `scale_w` is the mean contraction, not `1`
  *
  * `scale_w = 1` looks like the natural "leave w alone" choice, but it makes the
  * embedded system an ISOMETRY in w — no attractor in that direction. Untouched,
  * that merely leaves the cloud parked in whatever slice the seed landed in; the
- * moment a 4D edit (fr-2ou) gives the map a w-translation, `w' = w + t_w` has
+ * moment a 4D edit gives the map a w-translation, `w' = w + t_w` has
  * no fixed point, w ratchets off to the escape limit, and the cloud "vanishes"
  * into constant reseeds. Contracting w at the map's mean spatial rate keeps ANY
  * 4D parameter edit a contraction, and makes the pure embed genuinely attract
@@ -372,7 +374,7 @@ export function embedTransform3(t: Transform): Transform4 {
     embedded.variations = t.variations.map((v) => ({ ...v }));
   }
   if (t.weight !== undefined) embedded.weight = t.weight;
-  // The flame color-authoring pair (fr-hiyu) rides along untouched: absent
+  // The flame color-authoring pair rides along untouched: absent
   // stays absent, so a 4D render derives the same slot the 3D one does.
   if (t.colorIndex !== undefined) embedded.colorIndex = t.colorIndex;
   if (t.colorSpeed !== undefined) embedded.colorSpeed = t.colorSpeed;
@@ -491,7 +493,7 @@ export function systemIsFlat(transforms: readonly Transform[]): boolean {
  * stamp, so a flat↔4D pair takes the 4D path exactly when the interpolated
  * maps (or the crossfading kaleidoscope) first carry live 4D structure.
  *
- * Since fr-q0h6 the `symmetry` is a THIRD input, on the same footing as the
+ * The `symmetry` is a THIRD input, on the same footing as the
  * transforms: a kaleidoscope turning in a `w`-plane (or with a twist) is 4D
  * structure just as surely as a map's `w` block is — see
  * {@link symmetryIsNonFlat}. Required, not optional, precisely so a caller
@@ -512,14 +514,14 @@ export function systemPartsAreNonFlat(
 }
 
 /** Whether a {@link SymmetryPlane} mixes the fourth coordinate — the three
- * planes that have no 3x3 and so cannot be handed to a 3D dispatch (fr-q0h6).
+ * planes that have no 3x3 and so cannot be handed to a 3D dispatch.
  * `xy`/`xz`/`yz` are w-free; `xw`/`yw`/`zw` are not. */
 export function planeHasW(plane: SymmetryPlane): boolean {
   return plane === "xw" || plane === "yw" || plane === "zw";
 }
 
 /**
- * Whether a kaleidoscope by itself makes a system 4D (fr-q0h6): a `w`-plane
+ * Whether a kaleidoscope by itself makes a system 4D: a `w`-plane
  * rotation, or a nonzero {@link SymmetryParams.twist} (the second angle of a
  * double rotation, taken in the plane orthogonal to the chosen one — always a
  * `w`-plane when the chosen one is w-free), moves the copies OUT of the

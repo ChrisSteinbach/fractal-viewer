@@ -343,7 +343,7 @@ describe("derivedColorIndex", () => {
   });
 });
 
-describe("prepareChaosGame flame color resolution (fr-hiyu)", () => {
+describe("prepareChaosGame flame color resolution", () => {
   it("resolves an all-absent system to the derived spread and DEFAULT_COLOR_SPEED", () => {
     const prepared = prepareChaosGame(makeTransforms(4));
     expect(Array.from(prepared.colorIndex)).toEqual([0, 1 / 3, 2 / 3, 1]);
@@ -507,9 +507,9 @@ describe("symmetryRotation", () => {
 
   const ANGLES = [0.3, 1.1, 2.4, -0.7, (2 * Math.PI) / 5];
 
-  // ——— fr-q0h6: the axis -> plane migration is BIT-EXACT ———
+  // ——— the axis -> plane migration is BIT-EXACT ———
   //
-  // Every pre-fr-q0h6 document names an axis; persist.ts maps it to a plane.
+  // Every document predating it names an axis; persist.ts maps it to a plane.
   // These three pin that the plane produces the SAME matrix the axis did, so
   // no existing document's kaleidoscope moves by so much as an ulp.
 
@@ -583,7 +583,7 @@ describe("symmetryRotation", () => {
 });
 
 describe("prepareChaosGame symmetry planes", () => {
-  it("refuses to expand a w-plane kaleidoscope, which has no 3x3 (fr-q0h6)", () => {
+  it("refuses to expand a w-plane kaleidoscope, which has no 3x3", () => {
     expect(() =>
       prepareChaosGame(makeTransforms(2), null, { order: 3, plane: "yw" }),
     ).toThrow(/mixes w/);
@@ -624,7 +624,7 @@ describe("effectiveSymmetryOrder", () => {
   });
 });
 
-describe("prepareChaosGame / stepOrbit with symmetry (fr-6im)", () => {
+describe("prepareChaosGame / stepOrbit with symmetry", () => {
   function fixedRng(value: number) {
     return () => value;
   }
@@ -1055,7 +1055,7 @@ describe("runChaosGame vs. stepOrbit/plotPoint (allocation-free oracle)", () => 
   });
 });
 
-describe("iteration-local randomness isolation (fr-2wfw)", () => {
+describe("iteration-local randomness isolation", () => {
   // A fixture exercising every way ε-different runs can desynchronize a
   // SHARED stream: map 0's non-1 weight forces the weighted pick path (an
   // ε weight change flips occasional picks across cumulative boundaries),
@@ -1195,7 +1195,7 @@ describe("iteration-local randomness isolation (fr-2wfw)", () => {
   });
 });
 
-describe("symmetry blend (fr-eykn)", () => {
+describe("symmetry blend", () => {
   // An attractor pinned strictly to +x, so an order-2 y-axis kaleidoscope's
   // rotated copy lands strictly in -x: the share of points at x < 0 reads
   // the copies' selection share directly.

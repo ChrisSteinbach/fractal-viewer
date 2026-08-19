@@ -176,7 +176,7 @@ describe("composeVariations", () => {
     expect(withDead!(2, 3, 4, Math.random)).toEqual([2, 3, 4]);
   });
 
-  it("a second call reuses the result array with its own values, not the previous call's (fr-7smh)", () => {
+  it("a second call reuses the result array with its own values, not the previous call's", () => {
     // The blend's result array is owned by the closure and overwritten in
     // place each call. Fire it once with values discarded (to dirty every
     // component), then compare a second call against an independently built
@@ -196,7 +196,7 @@ describe("composeVariations", () => {
   });
 });
 
-describe("fold radii (fr-s9ll)", () => {
+describe("fold radii", () => {
   it("absent fields resolve to the classic lengths", () => {
     expect(resolveFoldRadii({ type: "mandelbox", weight: 2 })).toEqual(
       CLASSIC_FOLD_RADII,

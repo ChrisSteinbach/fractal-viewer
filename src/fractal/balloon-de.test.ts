@@ -29,11 +29,11 @@ import { buildSurfaceDE4, estimateDistance4Refined } from "./surface-de-4d";
 import type { Transform, Vec3, Vec4 } from "./types";
 
 /**
- * fr-5wlv.3: tests for the balloon inverted-union DE. The reference
- * machinery below (`unitDir`, `nearestPlain`, `nearestShell`, the off-set
- * query builder) is ported from `scripts/balloon-inversion.harness.ts`'s
- * fr-5wlv.1 spike, at reduced scale — tests must not import from `scripts/`,
- * so it is copied here rather than shared.
+ * Tests for the balloon inverted-union DE. The reference machinery below
+ * (`unitDir`, `nearestPlain`, `nearestShell`, the off-set query builder)
+ * is ported from `scripts/balloon-inversion.harness.ts`'s spike, at
+ * reduced scale — tests must not import from `scripts/`, so it is copied
+ * here rather than shared.
  */
 
 /** Uniform-random unit vector (RNG-to-sphere recipe ported from the spike
@@ -358,8 +358,8 @@ describe("balloon-de", () => {
     it("stays under the sampled union on a fold system across R regimes (base estimator)", () => {
       // Production fold paths march estimateDistance — the estimator the
       // fold GLSL/WGSL cores mirror. estimateDistanceRefined on a fold
-      // system carries a disclosed pre-existing width-bound tail (fr-tikz)
-      // and is not what fold systems march, so it is deliberately not
+      // system carries a disclosed pre-existing width-bound tail and is
+      // not what fold systems march, so it is deliberately not
       // exercised here.
       const transforms = foldBoxfoldPair();
       const de = buildSurfaceDE(transforms, null, { order: 1, plane: "xz" });
@@ -551,7 +551,7 @@ describe("balloon-de", () => {
     });
   });
 
-  describe("cutoff contract (fr-55r5)", () => {
+  describe("cutoff contract", () => {
     it("honors the cutoff contract on an affine system (refined estimator)", () => {
       const transforms = defaultTransforms();
       const de = buildSurfaceDE(transforms, null, { order: 1, plane: "xz" });
@@ -690,13 +690,13 @@ describe("balloon-de", () => {
 });
 
 /**
- * fr-qxxw: the 4D lift's entry points -- balloonBall4/buildBalloon4/
+ * The 4D lift's entry points -- balloonBall4/buildBalloon4/
  * estimateBalloonDistance4, one dimension up from the describes above.
  * Mirrors their structure closely; see each block for what changes (and
  * what deliberately does not) crossing into 4D.
  */
 
-describe("balloonBall4 (fr-qxxw)", () => {
+describe("balloonBall4", () => {
   it("returns the origin and visibleBoundingRadius with or without a final transform -- the 3D final-transform fork is absent because 4D's ball is origin-anchored by construction", () => {
     const transforms = pentatope();
     const plain = buildSurfaceDE4(transforms);
@@ -762,7 +762,7 @@ describe("balloonBall4 (fr-qxxw)", () => {
   });
 });
 
-describe("buildBalloon4 (fr-qxxw)", () => {
+describe("buildBalloon4", () => {
   it("margins the raw radius into rho and scales it by rMult into R, exactly as buildBalloon does", () => {
     const de4 = buildSurfaceDE4(pentatope());
     const ball = balloonBall4(de4);
@@ -773,7 +773,7 @@ describe("buildBalloon4 (fr-qxxw)", () => {
   });
 });
 
-describe("estimateBalloonDistance4 conservativeness against each term's own certified value (fr-qxxw)", () => {
+describe("estimateBalloonDistance4 conservativeness against each term's own certified value", () => {
   it("never exceeds either term's own value and matches min(fractal, scale*shell) exactly, across rMult regimes and w0 slices", () => {
     // A faithful port of the 3D conservativeness test above -- sample a
     // cloud of the DRAWN SLICE, measure true nearest-neighbor distances --
@@ -854,7 +854,7 @@ describe("estimateBalloonDistance4 conservativeness against each term's own cert
   });
 });
 
-describe("estimateBalloonDistance4 shell term formula and argument routing (stub estimator) (fr-qxxw)", () => {
+describe("estimateBalloonDistance4 shell term formula and argument routing (stub estimator)", () => {
   it("lifts the 3D-inverted point with the SAME w0 on the shell call, passes (p, w0) verbatim on the fractal call, scales the inner cutoff by 1/scale, and threads halfExtent through both calls untouched", () => {
     const w0 = 0.22;
     const halfExtent: Vec4 = [0.01, 0.02, -0.015, 0.03];
@@ -911,7 +911,7 @@ describe("estimateBalloonDistance4 shell term formula and argument routing (stub
   });
 });
 
-describe("estimateBalloonDistance4 tie-breaking (fr-qxxw)", () => {
+describe("estimateBalloonDistance4 tie-breaking", () => {
   it("breaks a tie between the two terms in favor of the fractal term", () => {
     const de4 = buildSurfaceDE4(pentatope());
     const b: Balloon = { center: [0.3, -0.2, 0.1], rho: 2.04, R: 3.2 };
@@ -939,7 +939,7 @@ describe("estimateBalloonDistance4 tie-breaking (fr-qxxw)", () => {
   });
 });
 
-describe("estimateBalloonDistance4 center limit (fr-qxxw)", () => {
+describe("estimateBalloonDistance4 center limit", () => {
   it("the shell term approaches R^2/rho as the query approaches the center", () => {
     const de4 = buildSurfaceDE4(pentatope());
     const c: Vec3 = [0.3, -0.2, 0.1];

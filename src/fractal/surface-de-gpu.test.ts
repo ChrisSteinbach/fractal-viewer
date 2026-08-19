@@ -66,7 +66,7 @@ import { buildSurfaceDE4, radiusBandInvRange } from "./surface-de-4d";
 import type { SurfaceDE4 } from "./surface-de-4d";
 import type { Transform } from "./types";
 
-/** Two-map pure-boxfold system (the fr-5rvk shape used throughout
+/** Two-map pure-boxfold system (the pure-fold shape used throughout
  * surface-de.test.ts and scripts/harness-profiles.ts's foldBoxfoldPair) — a
  * minimal ELIGIBLE fold system, so buildSurfaceDE gives a real SurfaceDE with
  * non-trivial per-map fold fields to pin the packer's byte layout against. */
@@ -105,7 +105,7 @@ function affineFinalTransform(): Transform {
  * weight) — gives `SurfaceDE.foldFinal` a real, BUILT lens, so the packer's
  * identity-final-under-the-lens contract and the 208+ block are pinned
  * against `buildSurfaceDE`'s own output rather than a hand-crafted object
- * (fr-55s1 stage B). */
+ * (the fold-lens port's stage B). */
 function spherefoldFinalTransform(): Transform {
   return {
     id: 98,
@@ -143,7 +143,7 @@ function negativeWeightMandelbox(): Transform {
   };
 }
 
-/** A second, DIFFERENT link for the chain fixtures (fr-s04t): a rotated
+/** A second, DIFFERENT link for the chain fixtures: a rotated
  * boxfold at weight 1.6 — a different fold kind, weight and matrix from
  * {@link canonicalMandelbox}, so a packer that wrote the head link n times
  * (or read slot 0 every step) could not pass. */
@@ -157,7 +157,7 @@ function rotatedBoxfold(): Transform {
   };
 }
 
-/** A triplex-power LINK for the fr-j231 chain fixtures — `EscapeLinkKind`
+/** A triplex-power LINK for the power-link chain fixtures — `EscapeLinkKind`
  * 4, the first kind that is not a fold. Pre-scaled to 0.3, the pre-scale
  * escape-de.ts's POWER LINKS table measures a renderable object at, so the
  * fixture is a chain a session could actually author. A LONE power map is
@@ -201,7 +201,7 @@ function kernelOpts(
 }
 
 describe("packSurfaceGpuParams byte length", () => {
-  it("returns an ArrayBuffer of exactly SURFACE_GPU_PARAMS_BYTES (288 bytes since fr-s9ll appended the lens fold's lengths to the fr-55s1 lens block, per the module doc)", () => {
+  it("returns an ArrayBuffer of exactly SURFACE_GPU_PARAMS_BYTES (288 bytes since the lens fold's authored lengths were appended to the lens block, per the module doc)", () => {
     expect(SURFACE_GPU_PARAMS_BYTES).toBe(288);
     const de = buildSurfaceDE(foldSystemTransforms());
     const buf = packSurfaceGpuParams(de, { itemCount: 5 });
@@ -232,7 +232,7 @@ describe("packSurfaceGpuParams field round-trip (doc offsets)", () => {
     expect(view.getUint32(52, true)).toBe(de.maxDepth);
   });
 
-  it("maps symmetry plane yz/xz/xy to symPlane 0/1/2 at offset 44 — the frozen pre-fr-q0h6 axis codes", () => {
+  it("maps symmetry plane yz/xz/xy to symPlane 0/1/2 at offset 44 — the frozen axis codes", () => {
     for (const [plane, expected] of [
       ["yz", 0],
       ["xz", 1],
@@ -334,7 +334,7 @@ describe("packSurfaceGpuParams final-transform lens", () => {
     expect(view.getFloat32(156, true)).toBe(Math.fround(f.sigmaMin));
   });
 
-  it("round-trips a foldFinal lens's invM rows / invT / lensParams at the documented 208..271 offsets (fr-55s1 stage B)", () => {
+  it("round-trips a foldFinal lens's invM rows / invT / lensParams at the documented 208..271 offsets", () => {
     const de = buildSurfaceDE(foldSystemTransforms());
     // Synthetic, distinctive lens values — this pins the byte LAYOUT, not
     // eligibility (the throw-free packing of a real lens system is the
@@ -430,7 +430,7 @@ describe("packSurfaceGpuParams final-transform lens", () => {
     expect(view.getFloat32(268, true)).toBe(Math.fround(lens.sigmaMin));
   });
 
-  it("throws when a footprint is combined with a foldFinal lens (the fr-55s1 cut boundary)", () => {
+  it("throws when a footprint is combined with a foldFinal lens (the fold-lens cut boundary)", () => {
     const de = buildSurfaceDE(foldSystemTransforms());
     const withFoldFinal: SurfaceDE = {
       ...de,
@@ -473,7 +473,7 @@ describe("packSurfaceGpuParams final-transform lens", () => {
     );
   });
 
-  it("balloon third-arg null (and omitted) returns today's base-size buffer byte for byte (fr-5wlv.5)", () => {
+  it("balloon third-arg null (and omitted) returns today's base-size buffer byte for byte", () => {
     const de = buildSurfaceDE(foldSystemTransforms(), affineFinalTransform());
     const omitted = new Uint8Array(packSurfaceGpuParams(de, { itemCount: 3 }));
     const explicit = new Uint8Array(
@@ -483,7 +483,7 @@ describe("packSurfaceGpuParams final-transform lens", () => {
     expect(explicit).toEqual(omitted);
   });
 
-  it("packs the balloon block at the frozen 288..319 offsets from buildBalloon's numbers, growing the buffer to 320 without touching 0..287 (fr-5wlv.5; fr-s9ll moved the shared block from 272)", () => {
+  it("packs the balloon block at the frozen 288..319 offsets from buildBalloon's numbers, growing the buffer to 320 without touching 0..287 (the lensFold quartet moved the shared block up from 272)", () => {
     expect(SURFACE_GPU_PARAMS_BALLOON_BYTES).toBe(320);
     const de = buildSurfaceDE(foldSystemTransforms());
     // The oracle link: the packed block is buildBalloon's convention —
@@ -517,7 +517,7 @@ describe("packSurfaceGpuParams final-transform lens", () => {
     expect(view.getFloat32(316, true)).toBe(0);
   });
 
-  it("throws when a footprint is combined with the balloon (the fr-5wlv.5 cut boundary)", () => {
+  it("throws when a footprint is combined with the balloon (the balloon cut boundary)", () => {
     const de = buildSurfaceDE(foldSystemTransforms());
     const b = buildBalloon(de, 0.9);
     const balloon = { center: b.center, rho: b.rho, R: b.R, far: 10 };
@@ -617,7 +617,7 @@ describe("packSurfaceGpuParams run overrides", () => {
     );
   });
 
-  // fr-5h5d: offset 204 is the former pad1 slot, claimed for the fog
+  // Offset 204 is the former pad1 slot, claimed for the fog
   // density multiplier every core's shared shade entry reads.
   it("defaults offset 204 (fogDensity, former pad1) to 1 when run.fogDensity is omitted", () => {
     const de = buildSurfaceDE(foldSystemTransforms());
@@ -636,7 +636,7 @@ describe("packSurfaceGpuParams run overrides", () => {
 
 describe("packSurfaceGpuMaps", () => {
   it("packs each map's invM/invT/sigmaMin/foldInvW/foldSigma/foldKind/bnbDir/invTNorm/invMSigmaMin at the documented word offsets", () => {
-    // Grown 6 -> 7 by fr-s9ll: the `fold` lane carrying the map's three
+    // Grown 6 -> 7 by the `fold` lane carrying the map's three
     // AUTHORED fold lengths, pinned by its own test below.
     expect(SURFACE_GPU_MAP_VEC4).toBe(7);
     const de = buildSurfaceDE(foldSystemTransforms());
@@ -691,7 +691,7 @@ describe("packSurfaceGpuMaps", () => {
   });
 });
 
-describe("the fold's authored lengths on the wire (fr-s9ll)", () => {
+describe("the fold's authored lengths on the wire", () => {
   it("carries each 3D map's OWN authored lengths in the fold lane, not the classic set", () => {
     // Two folds with different apparatus, every length exactly
     // representable in f32 and no two equal — a lane swap shows up as the
@@ -885,7 +885,7 @@ describe("the fold's authored lengths on the wire (fr-s9ll)", () => {
     }
   });
 
-  it("leaves no classic fold length baked into a fold body — the divergence fr-xb8o filed", () => {
+  it("leaves no classic fold length baked into a fold body — the CPU/GPU divergence this closed", () => {
     for (const core of ["fold", "fold4"] as const) {
       const src = surfaceDeKernelWgsl(kernelOpts({ core }));
       expect(src).not.toContain("= 2.0 - u;");
@@ -933,13 +933,13 @@ function shadeParams(
 
 describe("packSurfaceGpuShade", () => {
   it("returns an ArrayBuffer of exactly SURFACE_GPU_SHADE_BYTES (224 bytes, per the module doc)", () => {
-    // 144 through fr-5h5d's fog tint pair; 160 since fr-vpbq's pixelJitter
+    // 144 through the fog tint pair; 160 since pixelJitter
     // at 144 (a WGSL uniform struct rounds to its largest member's 16-byte
     // alignment, so the trailing vec2f costs a full stride); 176 since
-    // fr-xn9s's bgOffset/bgExtent vec2f pair at 160/168; 208 since
-    // fr-h3mp's bgCenter/bgScale vec2f pair at 176/184 plus bgShape u32 at
+    // the bgOffset/bgExtent vec2f pair at 160/168; 208 since
+    // the bgCenter/bgScale vec2f pair at 176/184 plus bgShape u32 at
     // 192, rounded up to the next 16-byte multiple; and 224 since
-    // fr-j85n's balloonTint vec3f at 208 plus balloonTintStrength f32 at
+    // balloonTint's vec3f at 208 plus balloonTintStrength f32 at
     // 220 — bgShape's 196..207 tail is 12 bytes a vec3f cannot use
     // (AlignOf 16, 196 % 16 != 0), so the pair lands at the next
     // 16-aligned offset and closes the struct with no pad at all.
@@ -955,7 +955,7 @@ describe("packSurfaceGpuShade", () => {
     expect(view.getFloat32(148, true)).toBe(0.5);
   });
 
-  it("round-trips an explicit pixelJitter at offset 144 (fr-vpbq)", () => {
+  it("round-trips an explicit pixelJitter at offset 144", () => {
     const view = new DataView(
       packSurfaceGpuShade(shadeParams({ pixelJitter: [0.25, 0.8125] })),
     );
@@ -1002,7 +1002,7 @@ describe("packSurfaceGpuShade", () => {
     expect(off.getUint32(124, true)).toBe(0);
   });
 
-  it("defaults fogTint to [1, 1, 1] at offset 128 and fogTintStrength to 0 at offset 140 when omitted (the fr-5h5d identity)", () => {
+  it("defaults fogTint to [1, 1, 1] at offset 128 and fogTintStrength to 0 at offset 140 when omitted (the fog-tint identity)", () => {
     const view = new DataView(packSurfaceGpuShade(shadeParams()));
     expect(view.getFloat32(128, true)).toBe(1);
     expect(view.getFloat32(132, true)).toBe(1);
@@ -1022,19 +1022,19 @@ describe("packSurfaceGpuShade", () => {
     expect(view.getFloat32(140, true)).toBe(Math.fround(0.4));
   });
 
-  it("defaults envStrength to 0 at offset 152 when omitted (fr-ehcj's pre-feature identity)", () => {
+  it("defaults envStrength to 0 at offset 152 when omitted (the pre-feature identity)", () => {
     const view = new DataView(packSurfaceGpuShade(shadeParams()));
     expect(view.getFloat32(152, true)).toBe(0);
   });
 
-  it("round-trips an explicit envStrength at offset 152 (fr-ehcj)", () => {
+  it("round-trips an explicit envStrength at offset 152", () => {
     const view = new DataView(
       packSurfaceGpuShade(shadeParams({ envStrength: 0.4 })),
     );
     expect(view.getFloat32(152, true)).toBe(Math.fround(0.4));
   });
 
-  it("writes an omitted envStrength byte-identically to the pre-fr-ehcj buffer at every other offset", () => {
+  it("writes an omitted envStrength byte-identically to the pre-environment-light buffer at every other offset", () => {
     const withField = new Uint8Array(
       packSurfaceGpuShade(shadeParams({ envStrength: 0 })),
     );
@@ -1042,7 +1042,7 @@ describe("packSurfaceGpuShade", () => {
     expect(withField).toEqual(without);
   });
 
-  it("round-trips bgOffset/bgExtent at offsets 160/168 (fr-xn9s)", () => {
+  it("round-trips bgOffset/bgExtent at offsets 160/168", () => {
     const view = new DataView(
       packSurfaceGpuShade(
         shadeParams({ bgOffset: [7, 1057], bgExtent: [1920, 3169] }),
@@ -1054,7 +1054,7 @@ describe("packSurfaceGpuShade", () => {
     expect(view.getFloat32(172, true)).toBe(3169);
   });
 
-  it("round-trips bgCenter/bgScale/bgShape at offsets 176/184/192 (fr-h3mp)", () => {
+  it("round-trips bgCenter/bgScale/bgShape at offsets 176/184/192", () => {
     const view = new DataView(
       packSurfaceGpuShade(
         shadeParams({
@@ -1071,7 +1071,7 @@ describe("packSurfaceGpuShade", () => {
     expect(view.getUint32(192, true)).toBe(1);
   });
 
-  it("round-trips balloonTint at offset 208 and balloonTintStrength at 220 (fr-j85n)", () => {
+  it("round-trips balloonTint at offset 208 and balloonTintStrength at 220", () => {
     const view = new DataView(
       packSurfaceGpuShade(
         shadeParams({
@@ -1086,7 +1086,7 @@ describe("packSurfaceGpuShade", () => {
     expect(view.getFloat32(220, true)).toBe(0.75);
   });
 
-  it("zero-fills the whole balloon tint pair when the caller omits it — mix(base, black, 0) is the pre-fr-j85n identity", () => {
+  it("zero-fills the whole balloon tint pair when the caller omits it — mix(base, black, 0) is the pre-tint identity", () => {
     const view = new DataView(packSurfaceGpuShade(shadeParams()));
     expect(view.getFloat32(208, true)).toBe(0);
     expect(view.getFloat32(212, true)).toBe(0);
@@ -1094,10 +1094,10 @@ describe("packSurfaceGpuShade", () => {
     expect(view.getFloat32(220, true)).toBe(0);
   });
 
-  it("leaves the 196..207 alignment pad untouched, so bgShape's tail is not what fr-j85n's vec3f landed in", () => {
+  it("leaves the 196..207 alignment pad untouched, so bgShape's tail is not what the tint's vec3f landed in", () => {
     // The tint could NOT sit at 196 (vec3f AlignOf 16, 196 % 16 != 0),
     // which is the whole reason the struct grew rather than filling a pad
-    // the way fr-ehcj's envStrength did at 152.
+    // the way envStrength did at 152.
     const bytes = new Uint8Array(
       packSurfaceGpuShade(
         shadeParams({
@@ -1320,7 +1320,7 @@ describe("surfaceDeKernelWgsl march ray derivation (rays option)", () => {
   });
 });
 
-describe("surfaceDeKernelWgsl march status side-channel (statusOut, fr-si66)", () => {
+describe("surfaceDeKernelWgsl march status side-channel (statusOut)", () => {
   it("statusOut:true declares @group(0) @binding(5) var<storage, read_write> statusOut: array<u32>;, and the flag absent has no occurrence of statusOut at all", () => {
     const on = surfaceDeKernelWgsl(
       kernelOpts({ mode: "march", core: "fold", width: 12, statusOut: true }),
@@ -1388,7 +1388,7 @@ describe("surfaceDeKernelWgsl march status side-channel (statusOut, fr-si66)", (
     expect(lines[fallThroughIx + 1].trim()).toBe(writeLine);
   });
 
-  it("balloon drops the two sphere-gate early-outs entirely, so its march body writes the status at exactly 2 sites against the non-balloon fold config's 4 (fr-5wlv.5's gate composes with fr-si66)", () => {
+  it("balloon drops the two sphere-gate early-outs entirely, so its march body writes the status at exactly 2 sites against the non-balloon fold config's 4 (the balloon gate composes with the side channel)", () => {
     const writeLine = "statusOut[slotI] = u32(st.y);";
     const plain = surfaceDeKernelWgsl(
       kernelOpts({ mode: "march", core: "fold", width: 12, statusOut: true }),
@@ -1406,7 +1406,7 @@ describe("surfaceDeKernelWgsl march status side-channel (statusOut, fr-si66)", (
     expect(balloon.split(writeLine).length - 1).toBe(2);
   });
 
-  it("groundPlane's classifier assignment lands before the write at both sphere-gate exits (fr-rhn5 composes with fr-si66)", () => {
+  it("groundPlane's classifier assignment lands before the write at both sphere-gate exits (the plane composes with the side channel)", () => {
     const wgsl = surfaceDeKernelWgsl(
       kernelOpts({
         mode: "march",
@@ -1517,7 +1517,7 @@ describe("surfaceDeKernelWgsl frontier storage class", () => {
   });
 });
 
-describe("surfaceDeKernelWgsl shade probe width (shadeDeWidth, fr-p8bc)", () => {
+describe("surfaceDeKernelWgsl shade probe width (shadeDeWidth)", () => {
   it("throws on a zero or non-integer shade probe width", () => {
     expect(() =>
       surfaceDeKernelWgsl(kernelOpts({ mode: "shade", shadeDeWidth: 0 })),
@@ -1594,7 +1594,7 @@ describe("surfaceDeKernelWgsl shade probe width (shadeDeWidth, fr-p8bc)", () => 
   });
 });
 
-describe("surfaceDeKernelWgsl descent core (core, fr-55s1)", () => {
+describe("surfaceDeKernelWgsl descent core (core)", () => {
   it("omitted and explicit 'fold' produce identical source across every mode/variant — the byte-identical off state", () => {
     const cases: Partial<SurfaceGpuKernelOptions>[] = [
       { mode: "eval", width: 12, sharedFrontier: true, bnbStage2: true },
@@ -1627,7 +1627,7 @@ describe("surfaceDeKernelWgsl descent core (core, fr-55s1)", () => {
     expect(wgsl).not.toContain("v1Live");
   });
 
-  it("core 'affine' emits the width-4 refined ladder — refinedCert, A/B chains, fr-jkpn validity slots — and no fold frontier", () => {
+  it("core 'affine' emits the width-4 refined ladder — refinedCert, A/B chains, rank-3/4 validity slots — and no fold frontier", () => {
     const wgsl = surfaceDeKernelWgsl(
       kernelOpts({ mode: "eval", core: "affine" }),
     );
@@ -1723,7 +1723,7 @@ describe("surfaceDeKernelWgsl descent core (core, fr-55s1)", () => {
   });
 });
 
-describe("surfaceDeKernelWgsl fold-lens wrapper (lens, fr-55s1 stage B)", () => {
+describe("surfaceDeKernelWgsl fold-lens wrapper (lens)", () => {
   it("omitted and explicit lens:false produce identical source across every mode/variant/core — the byte-identical off state", () => {
     const cases: Partial<SurfaceGpuKernelOptions>[] = [
       { mode: "eval", width: 12, sharedFrontier: true, bnbStage2: true },
@@ -1836,7 +1836,7 @@ describe("surfaceDeKernelWgsl fold-lens wrapper (lens, fr-55s1 stage B)", () => 
   });
 });
 
-describe("surfaceDeKernelWgsl balloon wrapper (balloon, fr-5wlv.5)", () => {
+describe("surfaceDeKernelWgsl balloon wrapper (balloon)", () => {
   it("omitted and explicit balloon:false produce identical source across every 3D mode/variant — the byte-identical off state", () => {
     const cases: Partial<SurfaceGpuKernelOptions>[] = [
       { mode: "eval", core: "affine", width: 4 },
@@ -1878,7 +1878,7 @@ describe("surfaceDeKernelWgsl balloon wrapper (balloon, fr-5wlv.5)", () => {
       );
       expect(wgsl.split("fn balloonInvert(").length).toBe(2);
       // The union: min of the fractal term and the scaled shell term,
-      // with the fr-55r5 inner cutoff scaled by the value factor.
+      // with the march-epsilon inner cutoff scaled by the value factor.
       expect(wgsl).toContain("return min(dS, dF);");
       expect(wgsl).toContain("select(0.0, cutoff / inv.w, cutoff > 0.0)");
       // The balloon params struct fields exist only under balloon.
@@ -1936,8 +1936,8 @@ describe("surfaceDeKernelWgsl balloon wrapper (balloon, fr-5wlv.5)", () => {
     expect(wgsl.split("fn surfaceDEHitInfoFractal(").length).toBe(2);
     expect(wgsl.split("fn surfaceDEHitInfo(").length).toBe(2);
     // The core's full-member constructor gained the zeroed colorPos —
-    // WGSL value constructors are all-or-none — and, since fr-j85n, the
-    // zeroed `shell` beside it.
+    // WGSL value constructors are all-or-none — and the echo tint added
+    // the zeroed `shell` beside it.
     expect(wgsl).toContain(
       "SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0, vec3f(0.0), 0.0)",
     );
@@ -1993,7 +1993,7 @@ describe("surfaceDeKernelWgsl balloon wrapper (balloon, fr-5wlv.5)", () => {
     expect(plain).toContain("Defensive — a HIT ray always intersected");
   });
 
-  it("throws on every FORWARD core — the fr-5wlv.4 exclusion, in both dimensions", () => {
+  it("throws on every FORWARD core — the swallowed-camera exclusion, in both dimensions", () => {
     expect(() =>
       surfaceDeKernelWgsl(kernelOpts({ core: "escape", balloon: true })),
     ).toThrow(/escape/);
@@ -2005,7 +2005,7 @@ describe("surfaceDeKernelWgsl balloon wrapper (balloon, fr-5wlv.5)", () => {
     ).toThrow(/escape4/);
   });
 
-  it("composes with the 4D DESCENT cores (fr-qxxw), landing the balloon block past the unconditionally-declared lens4 block", () => {
+  it("composes with the 4D DESCENT cores, landing the balloon block past the unconditionally-declared lens4 block", () => {
     for (const core of ["affine4", "fold4"] as const) {
       const wgsl = surfaceDeKernelWgsl(
         kernelOpts({ mode: "shade", core, width: 12, balloon: true }),
@@ -2024,7 +2024,7 @@ describe("surfaceDeKernelWgsl balloon wrapper (balloon, fr-5wlv.5)", () => {
   });
 });
 
-describe("balloon echo tint (fr-j85n)", () => {
+describe("balloon echo tint", () => {
   it("carries the oracle's shell attribution on SurfaceHitInfo, written 1.0 by the echo branch and 0.0 by the fractal fall-through", () => {
     const wgsl = surfaceDeKernelWgsl(
       kernelOpts({ mode: "shade", width: 12, shadeDeWidth: 1, balloon: true }),
@@ -2149,7 +2149,7 @@ describe("balloon echo tint (fr-j85n)", () => {
   });
 });
 
-describe("groundPlane wrapper (fr-rhn5)", () => {
+describe("groundPlane wrapper", () => {
   it("pins SURFACE_GPU_RAY_PLANE to 4, sitting beside the ACTIVE/HIT/MISS/EXHAUSTED march-state contract", () => {
     expect(SURFACE_GPU_RAY_PLANE).toBe(4);
   });
@@ -2189,14 +2189,14 @@ describe("groundPlane wrapper (fr-rhn5)", () => {
     // Both sphere-gate early-outs plus the step loop's sphere exit: three
     // MISS terminations, all reclassified against the floor.
     expect(wgsl.split("st.y = groundPlaneStatus(ro, rd);").length).toBe(4);
-    // The lens block (fr-5wlv.5's frozen-offset move) is what puts the
+    // The lens block (the balloon's frozen-offset move) is what puts the
     // plane block at the frozen offset 272 here.
     expect(wgsl).toContain("lensM0: vec3f,");
     expect(wgsl).toContain("groundY: f32,");
     expect(wgsl).toContain("groundAlbedo: vec3f,");
   });
 
-  it("shade lights the PLANE status (4.0) through shadeGroundPlane, whose taps ride the fr-p8bc width-1 probe exactly like the fractal's own shading taps", () => {
+  it("shade lights the PLANE status (4.0) through shadeGroundPlane, whose taps ride the width-1 probe exactly like the fractal's own shading taps", () => {
     const wgsl = surfaceDeKernelWgsl(
       kernelOpts({
         mode: "shade",
@@ -2241,7 +2241,7 @@ describe("groundPlane wrapper (fr-rhn5)", () => {
     ).toThrow(/groundPlane\+balloon/);
   });
 
-  it("composes with every 4D core (fr-h0c3), landing the plane block past the unconditionally-declared lens4 block", () => {
+  it("composes with every 4D core, landing the plane block past the unconditionally-declared lens4 block", () => {
     for (const core of ["affine4", "fold4", "escape4"] as const) {
       const wgsl = surfaceDeKernelWgsl(
         kernelOpts({ mode: "shade", core, width: 12, groundPlane: true }),
@@ -2382,7 +2382,7 @@ describe("ray-state status constants", () => {
   });
 });
 
-describe("packEscapeGpuParams (fr-dlxh)", () => {
+describe("packEscapeGpuParams", () => {
   it("returns an ArrayBuffer of exactly SURFACE_GPU_PARAMS_BYTES, the same struct size the fold/affine packer uses", () => {
     const de = buildEscapeDE([canonicalMandelbox()]);
     const buf = packEscapeGpuParams(de, { itemCount: 1 });
@@ -2390,7 +2390,7 @@ describe("packEscapeGpuParams (fr-dlxh)", () => {
     expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS_BYTES);
   });
 
-  it("packs the LINK COUNT at mapCount and the wedge fold's order/plane at symOrder/symPlane (fr-s04t)", () => {
+  it("packs the LINK COUNT at mapCount and the wedge fold's order/plane at symOrder/symPlane", () => {
     const chain = buildEscapeDE(
       [canonicalMandelbox(), rotatedBoxfold()],
       null,
@@ -2456,7 +2456,7 @@ describe("packEscapeGpuParams (fr-dlxh)", () => {
     expect(view.getUint32(72, true)).toBe(96);
   });
 
-  // fr-5h5d: the escape core shares the frozen block's offset-204
+  // The escape core shares the frozen block's offset-204
   // fogDensity slot (former pad1) — packEscapeGpuParams never wrote it
   // before this, leaving it at the ArrayBuffer's zero default.
   it("defaults offset 204 (fogDensity, former pad1) to 1 when run.fogDensity is omitted", () => {
@@ -2592,12 +2592,12 @@ describe("packEscapeGpuParams (fr-dlxh)", () => {
     expect(view.getFloat32(256, true)).toBe(Math.fround(de.kind));
     expect(view.getFloat32(260, true)).toBe(Math.fround(de.w));
     expect(view.getFloat32(264, true)).toBe(Math.fround(de.derivGrowth));
-    // The quartet's tail is the fr-j231 estimate-form flag, 0 on a
+    // The quartet's tail is the chain-level estimate-form flag, 0 on a
     // fold-only chain (the row below is its 1 case).
     expect(view.getFloat32(268, true)).toBe(0);
   });
 
-  it("packs logEstimate at offset 268 — 0 for a fold-only chain, 1 once a POWER link makes the escape super-exponential (fr-j231)", () => {
+  it("packs logEstimate at offset 268 — 0 for a fold-only chain, 1 once a POWER link makes the escape super-exponential", () => {
     const folds = buildEscapeDE([canonicalMandelbox(), rotatedBoxfold()]);
     expect(folds.logEstimate).toBe(false);
     expect(
@@ -2632,7 +2632,7 @@ describe("packEscapeGpuParams (fr-dlxh)", () => {
   });
 });
 
-describe("packEscapeGpuMaps (the formula chain, fr-s04t)", () => {
+describe("packEscapeGpuMaps (the formula chain)", () => {
   it("packs one GpuMap stride per link, in document order, with the forward rows and the uEscParams quartet", () => {
     const de = buildEscapeDE([canonicalMandelbox(), rotatedBoxfold()]);
     const maps = packEscapeGpuMaps(de);
@@ -2692,7 +2692,7 @@ describe("packEscapeGpuMaps (the formula chain, fr-s04t)", () => {
     expect(maps[14]).toBe(view.getFloat32(264, true));
   });
 
-  it("writes the POWER kinds 4 and 5 in the p0.x lane a fold link uses for 1/2/3 (fr-j231) — one dispatch code space for the whole chain", () => {
+  it("writes the POWER kinds 4 and 5 in the p0.x lane a fold link uses for 1/2/3 — one dispatch code space for the whole chain", () => {
     const de = buildEscapeDE([canonicalMandelbox(), bulbLink(), qsquareLink()]);
     const maps = packEscapeGpuMaps(de);
     const stride = SURFACE_GPU_MAP_VEC4 * 4;
@@ -2718,7 +2718,7 @@ describe("packEscapeGpuMaps (the formula chain, fr-s04t)", () => {
   });
 });
 
-describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
+describe("surfaceDeKernelWgsl escape core (core)", () => {
   it("throws when combined with a fold-final lens — the escape gate refuses final transforms, so no shape is pinned", () => {
     expect(() =>
       surfaceDeKernelWgsl(kernelOpts({ core: "escape", lens: true })),
@@ -2743,7 +2743,7 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
       wgsl.split("fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32)").length,
     ).toBe(2);
     expect(wgsl).toContain("dr = L.p0.z * localL * dr + 1.0");
-    // fr-s04t: the formula chain rides the maps storage binding — one
+    // The formula chain rides the maps storage binding — one
     // GpuMap per link — and the head link's params block stays declared
     // as frozen layout ballast the body no longer reads.
     expect(wgsl).toContain(
@@ -2834,10 +2834,10 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
     );
     expect(wgsl).toContain("fn shadeRays");
     expect(wgsl).toContain("escapedAt = i");
-    // The CONTINUOUS escape count (fr-7u8t.8) — the raw integer read as
+    // The CONTINUOUS escape count — the raw integer read as
     // confetti under a palette once the object stopped being a blob.
     // Normalized by the PASS budget and not the single-link step budget
-    // (fr-byxb, mirroring the GLSL arm): escapedAt counts single-link steps
+    // (mirroring the GLSL arm): escapedAt counts single-link steps
     // and an orbit escapes after a handful of them however long the chain
     // is, so dividing by a budget that multiplies by the link count painted
     // a six-link chain inside the darkest fifth of its palette.
@@ -2847,8 +2847,8 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
     // the per-link step budget.
     expect(wgsl).toContain("let steps = params.maxDepth * n;");
     expect(wgsl).toContain("if (escapedAt < steps) {");
-    // The constant-factor arm is the fold family's, and fr-j231 moved it
-    // behind the power arm rather than changing it.
+    // The constant-factor arm is the fold family's, and the power links
+    // moved it behind the power arm rather than changing it.
     expect(wgsl).toContain("} else if (growth > 1.0) {");
     // ...and the growth rate the fraction divides by is the link that
     // actually produced the escaping radius, not a fixed uniform.
@@ -2905,7 +2905,7 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
     ).toBe(shadeBase);
   });
 
-  it("guards the fold pair behind kind < 4u in BOTH bodies, and dispatches the two power maps past it (fr-j231)", () => {
+  it("guards the fold pair behind kind < 4u in BOTH bodies, and dispatches the two power maps past it", () => {
     const wgsl = surfaceDeKernelWgsl(
       kernelOpts({ mode: "shade", core: "escape" }),
     );
@@ -2926,7 +2926,7 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
     ).toBe(3);
   });
 
-  it("reads the chain's estimate form off escParams.w — linear r/dr at 0, the Böttcher form at 1, with the inside exit below r = 1 (fr-j231)", () => {
+  it("reads the chain's estimate form off escParams.w — linear r/dr at 0, the Böttcher form at 1, with the inside exit below r = 1", () => {
     const wgsl = surfaceDeKernelWgsl(
       kernelOpts({ mode: "eval", core: "escape" }),
     );
@@ -2940,7 +2940,7 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
     expect(wgsl).toContain("return 0.5 * r * log(r) / dr;");
   });
 
-  it("picks the trap's interpolant by the DEGREE of the link that produced the terminal radius (fr-j231)", () => {
+  it("picks the trap's interpolant by the DEGREE of the link that produced the terminal radius", () => {
     const wgsl = surfaceDeKernelWgsl(
       kernelOpts({ mode: "shade", core: "escape" }),
     );
@@ -2953,13 +2953,13 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
     // The power arm is the bulb core's own expression with the link's
     // degree in place of its baked-in 8. A pre-scaled power link has
     // growth < 1, so without it the constant-factor guard fires and the
-    // trap degenerates to fr-7u8t.8's raw integer step function.
+    // trap degenerates to the raw integer step function.
     expect(wgsl).toContain(
       "escFrac = clamp(log(log(r) / log(params.boundingRadius)) / log(lastPower), 0.0, 1.0);",
     );
   });
 
-  it("emits ONE bulbPow8, character for character the bulb core's — the escape chain's kind-4 link and the bulb core share the definition rather than copying it (fr-j231)", () => {
+  it("emits ONE bulbPow8, character for character the bulb core's — the escape chain's kind-4 link and the bulb core share the definition rather than copying it", () => {
     const grab = (src: string): string => {
       const start = src.indexOf("fn bulbPow8(");
       expect(start).toBeGreaterThan(-1);
@@ -3005,9 +3005,10 @@ describe("surfaceDeKernelWgsl escape core (core, fr-dlxh)", () => {
 });
 
 /** `bulbPow8`'s emitted WGSL, FROZEN — character for character the text
- * that lived inside `bulbDescentText` before fr-j231 hoisted it out to be
- * shared with the escape chain's kind-4 link. Frozen here for the reason
- * `escape-de.test.ts` freezes a copy of fr-kltj's loop: the hoist's whole
+ * that lived inside `bulbDescentText` before the power links hoisted it
+ * out to be shared with the escape chain's kind-4 link. Frozen here for
+ * the reason `escape-de.test.ts` freezes a copy of the single-map loop:
+ * the hoist's whole
  * claim is that it moved the text and changed nothing in it, and a claim
  * about bytes needs the bytes written down. `variations.ts`'s
  * `triplexPow8` is the definition both of them mirror; an edit that is
@@ -3040,7 +3041,7 @@ fn bulbPow8(y: vec3f, r2: f32) -> vec3f {
   return vec3f(rho * s * u8, rho * s * v8, vz);
 }`;
 
-describe("bulbPow8 emission and declaration order (fr-j231)", () => {
+describe("bulbPow8 emission and declaration order", () => {
   it("declares it before every call site in both FORWARD cores — WGSL has no forward declarations, so a body emitted in the wrong order is a compile error a GPU run would be the first to find", () => {
     // The shipped order is headerText, then bodyBlock (which carries the
     // descent text and therefore the definition), then the shade entry
@@ -3101,8 +3102,8 @@ describe("bulbPow8 emission and declaration order (fr-j231)", () => {
   });
 });
 
-describe("surfaceDeKernelWgsl affine4 core (core, fr-dlxh 4D)", () => {
-  it("accepts a fold-final lens since fr-rsp6 phase 2B — descendLens4's sweep around the REFINED ladder", () => {
+describe("surfaceDeKernelWgsl affine4 core (core)", () => {
+  it("accepts a fold-final lens — descendLens4's sweep around the REFINED ladder", () => {
     const wgsl = surfaceDeKernelWgsl(
       kernelOpts({ core: "affine4", lens: true }),
     );
@@ -3207,7 +3208,7 @@ describe("surfaceDeKernelWgsl affine4 core (core, fr-dlxh 4D)", () => {
     // the FULL 4D visible radius, radius as the rotor-lifted TRUE 4D
     // radius — the slice-invariant 4D GLSL forms, not the 3D entries'
     // straight visibleRadius reads. Radius lifts through the slab hit's
-    // OWN w (fr-9c9e): hit-info's sStar places it along the fr-wa6o
+    // OWN w: hit-info's sStar places it along the slab
     // segment, and stays 0 at h = 0 (w0 exactly).
     expect(wgsl).toContain("params.visRadius4");
     expect(wgsl).toContain(
@@ -3311,7 +3312,7 @@ describe("surfaceDeKernelWgsl affine4 core (core, fr-dlxh 4D)", () => {
   });
 });
 
-describe("surfaceDeKernelWgsl affine4 slab half-extent (slabExt, fr-d0nn probe for fr-b72d)", () => {
+describe("surfaceDeKernelWgsl affine4 slab half-extent (slabExt, the register-pressure probe)", () => {
   it("defaults to true: explicit and omitted produce identical eval-mode source", () => {
     const omitted = surfaceDeKernelWgsl(kernelOpts({ core: "affine4" }));
     const explicit = surfaceDeKernelWgsl(
@@ -3320,7 +3321,7 @@ describe("surfaceDeKernelWgsl affine4 slab half-extent (slabExt, fr-d0nn probe f
     expect(explicit).toBe(omitted);
   });
 
-  it("false strips the fr-wa6o half-extent machinery from the eval-mode descent (fn refinedCert / fn surfaceDE), leaving the shared segmentRadius4 helper declared but uncalled", () => {
+  it("false strips the half-extent machinery from the eval-mode descent (fn refinedCert / fn surfaceDE), leaving the shared segmentRadius4 helper declared but uncalled", () => {
     const withExt = surfaceDeKernelWgsl(kernelOpts({ core: "affine4" }));
     const withoutExt = surfaceDeKernelWgsl(
       kernelOpts({ core: "affine4", slabExt: false }),
@@ -3367,7 +3368,7 @@ describe("surfaceDeKernelWgsl affine4 slab half-extent (slabExt, fr-d0nn probe f
     }
   });
 
-  it("threads the slab hit's own w into the radius color (fr-9c9e): slab shade updates info.sStar per level, noslab keeps the constructor's 0", () => {
+  it("threads the slab hit's own w into the radius color: slab shade updates info.sStar per level, noslab keeps the constructor's 0", () => {
     const withExt = surfaceDeKernelWgsl(
       kernelOpts({ mode: "shade", core: "affine4" }),
     );
@@ -3395,7 +3396,7 @@ describe("surfaceDeKernelWgsl affine4 slab half-extent (slabExt, fr-d0nn probe f
   });
 });
 
-describe("surfaceDeKernelWgsl 4D maps address space (mapsUniform, fr-b72d probe)", () => {
+describe("surfaceDeKernelWgsl 4D maps address space (mapsUniform, the maps-load probe)", () => {
   const STORAGE_LINE =
     "@group(0) @binding(1) var<storage, read> maps: array<GpuMap4>;";
   const UNIFORM_LINE = `@group(0) @binding(1) var<uniform> maps: array<GpuMap4, ${SURFACE_GPU_UNIFORM_MAP_SLOTS}>;`;
@@ -3463,7 +3464,7 @@ describe("surfaceDeKernelWgsl 4D maps address space (mapsUniform, fr-b72d probe)
   });
 });
 
-describe("surfaceDeKernelWgsl fold4 core (core, fr-rsp6 phase 2A)", () => {
+describe("surfaceDeKernelWgsl fold4 core (core)", () => {
   it("accepts a fold-final lens since phase 2B — descendLens4's sweep around the PLAIN frontier", () => {
     const wgsl = surfaceDeKernelWgsl(kernelOpts({ core: "fold4", lens: true }));
     expect(wgsl).toContain("fn surfaceDECore(qIn: vec4f, qExt: vec4f,");
@@ -3574,7 +3575,7 @@ describe("surfaceDeKernelWgsl fold4 core (core, fr-rsp6 phase 2A)", () => {
     expect(wgsl).toContain("branchCount = 243u;");
     expect(wgsl).toContain("rotorInvApply4");
     // Slice-invariant height/radius normalizers, like the affine4 core —
-    // radius through the slab hit's own w (fr-9c9e), the greedy chain's
+    // radius through the slab hit's own w, the greedy chain's
     // level winner placing it.
     expect(wgsl).toContain("params.visRadius4");
     expect(wgsl).toContain(
@@ -3625,7 +3626,7 @@ describe("surfaceDeKernelWgsl fold4 core (core, fr-rsp6 phase 2A)", () => {
     expect(base).not.toContain("m.p1");
   });
 
-  it("emits the fr-p8bc probe from the same body at the probe width, with no index helper to rename (both frontiers are function-scope)", () => {
+  it("emits the narrow shading probe from the same body at the probe width, with no index helper to rename (both frontiers are function-scope)", () => {
     const wgsl = surfaceDeKernelWgsl(
       kernelOpts({ mode: "shade", core: "fold4", width: 12, shadeDeWidth: 1 }),
     );
@@ -3699,7 +3700,7 @@ describe("surfaceDeKernelWgsl fold4 core (core, fr-rsp6 phase 2A)", () => {
   });
 });
 
-describe("surfaceDeKernelWgsl fold4 slab half-extent (slabExt, fr-rsp6 phase 2A)", () => {
+describe("surfaceDeKernelWgsl fold4 slab half-extent (slabExt)", () => {
   it("defaults to true: explicit and omitted produce identical eval-mode source", () => {
     const omitted = surfaceDeKernelWgsl(kernelOpts({ core: "fold4" }));
     const explicit = surfaceDeKernelWgsl(
@@ -3708,7 +3709,7 @@ describe("surfaceDeKernelWgsl fold4 slab half-extent (slabExt, fr-rsp6 phase 2A)
     expect(explicit).toBe(omitted);
   });
 
-  it("false strips the fr-wa6o half-extent machinery from the eval-mode descent, leaving the shared segmentRadius4 helper declared but uncalled", () => {
+  it("false strips the half-extent machinery from the eval-mode descent, leaving the shared segmentRadius4 helper declared but uncalled", () => {
     const withExt = surfaceDeKernelWgsl(
       kernelOpts({ core: "fold4", width: 12 }),
     );
@@ -3778,7 +3779,7 @@ describe("surfaceDeKernelWgsl fold4 slab half-extent (slabExt, fr-rsp6 phase 2A)
     expect(closes).toBe(opens);
   });
 
-  it("threads the slab hit's own w into the radius color (fr-9c9e): slab shade updates info.sStar per level, noslab keeps the constructor's 0", () => {
+  it("threads the slab hit's own w into the radius color: slab shade updates info.sStar per level, noslab keeps the constructor's 0", () => {
     const withExt = surfaceDeKernelWgsl(
       kernelOpts({ mode: "shade", core: "fold4", width: 12 }),
     );
@@ -3796,7 +3797,7 @@ describe("surfaceDeKernelWgsl fold4 slab half-extent (slabExt, fr-rsp6 phase 2A)
   });
 });
 
-describe("surfaceDeKernelWgsl 4D fold-lens wrapper (lens, fr-rsp6 phase 2B)", () => {
+describe("surfaceDeKernelWgsl 4D fold-lens wrapper (lens)", () => {
   it("omitted and explicit lens:false stay byte-identical for both 4D cores, at either slabExt", () => {
     const cases: Partial<SurfaceGpuKernelOptions>[] = [
       { mode: "eval", core: "affine4" },
@@ -3882,7 +3883,7 @@ describe("surfaceDeKernelWgsl 4D fold-lens wrapper (lens, fr-rsp6 phase 2B)", ()
     expect(noslab).toContain("let visBound = length(p) - params.visRadius4;");
   });
 
-  it("hands the REFINED core the fr-55r5 inner cutoff and the PLAIN core cutoff 0 — descendLens4's `refine ? innerCutoff : 0` seam", () => {
+  it("hands the REFINED core the march-epsilon inner cutoff and the PLAIN core cutoff 0 — descendLens4's `refine ? innerCutoff : 0` seam", () => {
     const affine4 = surfaceDeKernelWgsl(
       kernelOpts({ core: "affine4", lens: true }),
     );
@@ -3896,7 +3897,7 @@ describe("surfaceDeKernelWgsl 4D fold-lens wrapper (lens, fr-rsp6 phase 2B)", ()
     expect(fold4).not.toContain("innerCutoff = min(best, cutoff) / factor;");
   });
 
-  it("threads the fr-wa6o segment through the branch transport under slabExt, and drops it entirely without", () => {
+  it("threads the slab segment through the branch transport under slabExt, and drops it entirely without", () => {
     const withExt = surfaceDeKernelWgsl(
       kernelOpts({ core: "fold4", lens: true, width: 12 }),
     );
@@ -4031,7 +4032,7 @@ function fourDSystemTransforms(): Transform[] {
   ];
 }
 
-/** Two-map 4D system whose BASE maps FOLD (fr-rsp6 phase 2A) — the 3D
+/** Two-map 4D system whose BASE maps FOLD — the 3D
  * foldSystemTransforms() shape with a genuine w block, and deliberately
  * non-unit boxfold weights so `foldInvW` (1/w) and `foldSigma` (|w|·sigmaMin)
  * land away from the affine defaults 1 / sigmaMin that would let a lane
@@ -4082,7 +4083,7 @@ function fourDSpherefoldSystemTransforms(): Transform[] {
   ];
 }
 
-/** A boxfold FINAL lens over a 4D base — the fr-rsp6 phase 2B archetype,
+/** A boxfold FINAL lens over a 4D base — the 4D lens archetype,
  * mirroring surface-de-4d.test.ts's boxfoldFinal4(). The SMALL weight
  * matters: `u = p/w` reaches past the fold planes, so the non-identity
  * branches carry real geometry instead of degenerating to the affine part,
@@ -4124,7 +4125,7 @@ function view4(overrides: Partial<SurfaceGpu4View> = {}): SurfaceGpu4View {
   };
 }
 
-describe("packSurface4GpuParams (fr-dlxh 4D)", () => {
+describe("packSurface4GpuParams", () => {
   it("returns an ArrayBuffer of exactly SURFACE_GPU_PARAMS4_BYTES — the frozen 0..207 block plus the 4D variant tail (464 bytes, per the module doc)", () => {
     expect(SURFACE_GPU_PARAMS4_BYTES).toBe(464);
     const de = buildSurfaceDE4(fourDSystemTransforms());
@@ -4208,7 +4209,7 @@ describe("packSurface4GpuParams (fr-dlxh 4D)", () => {
     expect(view.getFloat32(68, true)).toBe(0);
   });
 
-  // fr-5h5d: the 4D cores share the frozen block's offset-204 fogDensity
+  // The 4D cores share the frozen block's offset-204 fogDensity
   // slot (former pad1) — packSurface4GpuParams never wrote it before
   // this, leaving it at the ArrayBuffer's zero default.
   it("defaults offset 204 (fogDensity, former pad1) to 1 when run.fogDensity is omitted", () => {
@@ -4454,7 +4455,7 @@ describe("packSurface4GpuParams (fr-dlxh 4D)", () => {
   });
 });
 
-describe("packSurface4GpuParams fold-final lens block (fr-rsp6 phase 2B)", () => {
+describe("packSurface4GpuParams fold-final lens block", () => {
   it("keeps the 464-byte buffer without a foldFinal and grows to SURFACE_GPU_PARAMS4_LENS_BYTES with one", () => {
     expect(SURFACE_GPU_PARAMS4_LENS_BYTES).toBe(576);
     const plain = buildSurfaceDE4(fourDSystemTransforms());
@@ -4528,7 +4529,7 @@ describe("packSurface4GpuParams fold-final lens block (fr-rsp6 phase 2B)", () =>
     expect(lens.absW).toBeCloseTo(0.55, 12);
   });
 
-  it("round-trips SurfaceDE4.radiusBand at 432..455 — center, minD, the shared radiusBandInvRange, zero spares (fr-skhv)", () => {
+  it("round-trips SurfaceDE4.radiusBand at 432..455 — center, minD, the shared radiusBandInvRange, zero spares", () => {
     const de = buildSurfaceDE4(fourDSystemTransforms());
     const view = new DataView(
       packSurface4GpuParams(de, view4(), { itemCount: 1 }),
@@ -4610,11 +4611,11 @@ describe("packSurface4GpuParams fold-final lens block (fr-rsp6 phase 2B)", () =>
   });
 });
 
-describe("packSurfaceGpuMaps4 (fr-dlxh 4D; fr-rsp6 phase 2A lanes)", () => {
+describe("packSurfaceGpuMaps4", () => {
   it("packs each map's invM rows / invT / p0 fold lanes / bnb / p1 at the documented word offsets, per SURFACE_GPU_MAP4_VEC4 stride", () => {
-    // Grown 6 -> 8 by fr-rsp6 phase 2A: ONE layout for both 4D cores,
+    // Grown 6 -> 8 by the 4D fold-branch sweep: ONE layout for both 4D cores,
     // exactly as the 3D GpuMap carries fold lanes the affine core never
-    // reads. Then 8 -> 9 by fr-s9ll's `fold` lane, the 3D one verbatim.
+    // reads. Then 8 -> 9 by the authored-lengths `fold` lane, the 3D one verbatim.
     expect(SURFACE_GPU_MAP4_VEC4).toBe(9);
     const de = buildSurfaceDE4(fourDFoldSystemTransforms());
     const out = packSurfaceGpuMaps4(de);
@@ -4697,7 +4698,7 @@ function canonicalBulb(): Transform {
  * distinguishable from each other and from a dropped term. An
  * identity-or-rotation fixture cannot see either of the estimator's
  * `sigma_max(M)` terms — dropping them there is a bit-exact no-op, the
- * mutation fr-7u8t.4 shipped undetected one object over. */
+ * mutation that shipped undetected one object over. */
 function scaledBulb(): Transform {
   return {
     id: 0,
@@ -4708,7 +4709,7 @@ function scaledBulb(): Transform {
   };
 }
 
-describe("packBulbGpuParams (fr-7u8t.9)", () => {
+describe("packBulbGpuParams", () => {
   it("returns an ArrayBuffer of exactly SURFACE_GPU_PARAMS_BYTES, the same struct size every other 3D packer uses", () => {
     const de = buildBulbDE([canonicalBulb()]);
     const buf = packBulbGpuParams(de, { itemCount: 1 });
@@ -4863,7 +4864,7 @@ describe("packBulbGpuParams (fr-7u8t.9)", () => {
   });
 });
 
-describe("surfaceDeKernelWgsl bulb core (core, fr-7u8t.9)", () => {
+describe("surfaceDeKernelWgsl bulb core (core)", () => {
   it("throws when combined with a fold-final lens or the balloon — the bulb gate refuses finals, and the solid's interior reaches the ball center", () => {
     expect(() =>
       surfaceDeKernelWgsl(kernelOpts({ core: "bulb", lens: true })),
@@ -5017,7 +5018,7 @@ describe("surfaceDeKernelWgsl bulb core (core, fr-7u8t.9)", () => {
 });
 
 // -----------------------------------------------------------------------
-// fr-vag4: the ESCAPE4 core's packers -- packEscape4GpuParams/
+// The ESCAPE4 core's packers -- packEscape4GpuParams/
 // packEscape4GpuMaps, `core: "escape4"`'s wire one dimension up from the
 // 3D escape packers above. Fixtures mirror escape-de-4d.test.ts's own
 // (duplicated per this file's DAMP convention -- test files stay isolated
@@ -5067,7 +5068,7 @@ function escape4QsquareLink(): Transform {
   };
 }
 
-describe("packEscape4GpuParams byte length (fr-vag4)", () => {
+describe("packEscape4GpuParams byte length", () => {
   it("returns SURFACE_GPU_PARAMS4_ESCAPE_BYTES (576) without a ground plane and SURFACE_GPU_PARAMS4_PLANE_BYTES (624) with one", () => {
     expect(SURFACE_GPU_PARAMS4_ESCAPE_BYTES).toBe(576);
     expect(SURFACE_GPU_PARAMS4_PLANE_BYTES).toBe(624);
@@ -5088,7 +5089,7 @@ describe("packEscape4GpuParams byte length (fr-vag4)", () => {
   });
 });
 
-describe("packEscape4GpuParams frozen-block scalars (fr-vag4)", () => {
+describe("packEscape4GpuParams frozen-block scalars", () => {
   it("packs the bailout ball at boundingRadius (12), escapeRadius as 2R (16), ESCAPE_STEP_SCALE (20), the link count at mapCount (48) and maxDepth (52, overridable by run.maxDepth)", () => {
     const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
     const view = new DataView(
@@ -5164,7 +5165,7 @@ describe("packEscape4GpuParams frozen-block scalars (fr-vag4)", () => {
   });
 });
 
-describe("packEscape4GpuParams stepBack4/final4M identity and the rotor transpose (fr-vag4)", () => {
+describe("packEscape4GpuParams stepBack4/final4M identity and the rotor transpose", () => {
   it("packs stepBack4 (272..335) and final4M (336..399) as identity -- no sector sweep, no lens", () => {
     const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
     const view = new DataView(
@@ -5200,7 +5201,7 @@ describe("packEscape4GpuParams stepBack4/final4M identity and the rotor transpos
   });
 });
 
-describe("packEscape4GpuParams slab refusal and ground-plane block (fr-vag4)", () => {
+describe("packEscape4GpuParams slab refusal and ground-plane block", () => {
   it("throws for a nonzero sliceHalfW -- a forward orbit cannot thread a segment", () => {
     const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
     expect(() =>
@@ -5243,7 +5244,7 @@ describe("packEscape4GpuParams slab refusal and ground-plane block (fr-vag4)", (
   });
 });
 
-describe("packEscape4GpuMaps (fr-vag4)", () => {
+describe("packEscape4GpuMaps", () => {
   it("packs one 36-float GpuMap4 stride per link: 16 forward matrix entries, translation at 16..19, (kind, w, derivGrowth) at 20..22, squared radii + wall at 32..34, every other lane 0", () => {
     const de = buildEscapeDE4([escape4Mandelbox(), escape4RotatedBoxfold()]);
     const stride = SURFACE_GPU_MAP4_VEC4 * 4;
@@ -5293,13 +5294,13 @@ describe("packEscape4GpuMaps (fr-vag4)", () => {
 });
 
 // -----------------------------------------------------------------------
-// fr-qxxw / fr-h0c3: packSurface4GpuParams's balloon/groundPlane blocks --
+// packSurface4GpuParams's balloon/groundPlane blocks --
 // the 3D packer's frozen-288 pair (packSurfaceGpuParams's balloon/
 // groundPlane describes above) one dimension up, appended at the frozen
 // 576.
 // -----------------------------------------------------------------------
 
-describe("packSurface4GpuParams balloon/groundPlane blocks (fr-qxxw / fr-h0c3)", () => {
+describe("packSurface4GpuParams balloon/groundPlane blocks", () => {
   it("passing neither balloon nor groundPlane reproduces today's buffer byte for byte, no-lens and lensed alike", () => {
     const cases: [SurfaceDE4, number][] = [
       [buildSurfaceDE4(fourDSystemTransforms()), SURFACE_GPU_PARAMS4_BYTES],
@@ -5482,7 +5483,7 @@ function boxBranchDecodes(wgsl: string): string[] {
 }
 
 /** Drop whole-line `//` comments, leaving the code. Used ONLY on the 4D
- * copies, whose fr-wa6o slab sub-block carries a prose paragraph in two
+ * copies, whose slab sub-block carries a prose paragraph in two
  * of the four arms and none in the other two — see the pair of tests
  * below, the second of which shows the code underneath is identical. */
 function withoutCommentLines(block: string): string {
@@ -5492,7 +5493,7 @@ function withoutCommentLines(block: string): string {
     .join("\n");
 }
 
-describe("box-branch decode duplication (fr-ep0w)", () => {
+describe("box-branch decode duplication", () => {
   it("emits the 3D box-branch decode character for character in all eight places a fold or lens kernel carries one, so a branch fix landing in one arm and not the others cannot ship", () => {
     // Six from the fold shade kernel — the width-`width` descent, its
     // narrow shading probe, the hit-info descent, and the three lens
@@ -5532,7 +5533,7 @@ describe("box-branch decode duplication (fr-ep0w)", () => {
   });
 
   it("emits the 4D box-branch decode character for character in all eight places, once the slab sub-block's commentary is set aside", () => {
-    // The 4D twins of the same eight arms. Only the fr-wa6o slab's
+    // The 4D twins of the same eight arms. Only the slab's
     // `preExt` sign fan differs between them in the shipped text, and
     // only in its COMMENT — the next test is the proof of that.
     const copies = [
@@ -5567,8 +5568,9 @@ describe("box-branch decode duplication (fr-ep0w)", () => {
   });
 
   it("emits the 4D decode character for character WITH its comments once the slab is off, which is what makes the strip above a comment strip and not a code one", () => {
-    // slabExt: false drops the `preExt` sub-block wholesale (fr-b72d's
-    // probe leg), and with it the only text the four 4D arms disagree
+    // slabExt: false drops the `preExt` sub-block wholesale (the
+    // register-pressure probe's leg), and with it the only text the four
+    // 4D arms disagree
     // about. Nothing is normalized here beyond the shared dedent.
     const copies = [
       ...boxBranchDecodes(
