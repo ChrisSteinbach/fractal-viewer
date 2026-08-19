@@ -206,6 +206,12 @@ async function run() {
       // three identical hit counts).
       const url = `${args.url}/?surfacestate&scene=${scene.name}#${scene.hash}`;
       await page.goto(url, { waitUntil: "load" });
+      // Mutter only sends frame callbacks to VISIBLE surfaces, and the
+      // settle latch this loop polls is present-gated — an occluded window
+      // parks it at a deterministic percent (fr-j8uk measured 64%/99%
+      // stalls in the sibling balloon gate). Keep the window on top before
+      // anything waits on it.
+      await page.bringToFront();
       await page.waitForFunction(
         () => typeof window.__surfaceState === "function",
         {
@@ -271,6 +277,7 @@ async function run() {
       await page.goto(`${args.url}/?surfacestate&preset=${preset.value}`, {
         waitUntil: "load",
       });
+      await page.bringToFront();
       await page.waitForFunction(
         () => typeof window.__surfaceState === "function",
         { timeout: 30000 },
