@@ -9,22 +9,22 @@ historical narrative live.
 ## What a strip is
 
 `strip-planner.ts` sizes adaptive scissor strips for EVERY WebGL surface
-trace, previews included (fr-sjff). `surface-compute.ts`'s WebGPU compute
-path is not one of its callers — that path bounds its own submissions
-instead (fr-tzdg). fr-du81 removed the preview tier's one remaining
-unbounded draw, closing off the i915-preemption GPU-hang path that used to
-kill fold sessions outright.
+trace, previews included. `surface-compute.ts`'s WebGPU compute path is not
+one of its callers — that path bounds its own submissions instead. Bounded
+preview strips removed the preview tier's one remaining unbounded draw,
+closing off the i915-preemption GPU-hang path that used to kill fold
+sessions outright.
 
-Units are PIXELS, not rows (fr-096u): a strip is a row-major pixel interval
-rendered as 1-3 scissor rects under ONE fence, so fold strips can shrink
-below the cost of a single row.
+Units are PIXELS, not rows: a strip is a row-major pixel interval rendered
+as 1-3 scissor rects under ONE fence, so fold strips can shrink below the
+cost of a single row.
 
 ## Cost priors and the evidence chain
 
 The probe that starts a job is sized from a per-pixel cost prior, chosen in
 order: the measured preview cost when one exists, else a pessimistic
 fold-class prior, else the legacy rows fraction for affine. (The old
-unprimed 3-row probe at full resolution was fr-096u's kernel-confirmed i915
+unprimed 3-row probe at full resolution was the kernel-confirmed i915
 preemption hang — this ladder exists to never issue that probe again.)
 From there, strips scale toward a per-tier `targetMs` of measured GPU time
 each. "Measured" here means forced-completion via a 1x1 readback — NOT
@@ -57,7 +57,7 @@ dies with it. (A far-pose glide preview once relaxed the floor under a
 parked monster pose — that's the failure mode this one-handoff lifetime
 closes.)
 
-fr-id9r closed two remaining holes in this chain:
+A later strip-pump safety pass closed two remaining holes in this chain:
 
 1. Measurements now also reach the ratchet through a measurement-time
    `observe(ms, px)` door. Previously `next()`'s sizing-time door only
@@ -81,14 +81,15 @@ fr-id9r closed two remaining holes in this chain:
 
 Measured on Iris Xe, real driver: a 180s `mandelboxKifs` run now completes
 360/360 responsiveness pings with 0s stalled and the kernel silent; lens
-settle 0.87-1.0s; escape 48ms; boxfold settle 793ms versus 212ms at the
-fr-096u tip. The accepted residual cost is that the queue-priced first
-preview paces slower pre-evidence, so its inflated evidence over-strips the
-settle that follows it — a documented, accepted trade rather than a bug.
+settle 0.87-1.0s; escape 48ms; boxfold settle 793ms versus 212ms at the tip
+of the preemption-hang work. The accepted residual cost is that the
+queue-priced first preview paces slower pre-evidence, so its inflated
+evidence over-strips the settle that follows it — a documented, accepted
+trade rather than a bug.
 
 ## The pipelined pump and the sync tax
 
-`scene.ts`'s strip pump is PIPELINED — fr-096u's A/B verdict. The reason:
+`scene.ts`'s strip pump is PIPELINED — a measured A/B verdict. The reason:
 every sync point on the Iris/ANGLE stack costs ~66-90ms REGARDLESS of the
 work behind it (`SURFACE_STRIP_SYNC_TAX_MS`). Main's 3.3s lens settle was
 roughly 50 strips times that tax, and an earlier branch's first
@@ -110,7 +111,7 @@ No-prior jobs (affine) keep the legacy sync-collapse behavior: serial
 joined strips that complete a whole light job in one call, escaping to the
 pipelined behavior past `SURFACE_STRIP_SYNC_ESCAPE_MS`.
 
-## The two-term cost model (fr-ado7)
+## The two-term cost model
 
 Subtracting a FLAT `SURFACE_STRIP_SYNC_TAX_MS` and dividing the rest by the
 batch's pixels was a calibration, and it had an absorbing state. When a
@@ -118,23 +119,24 @@ batch's wall is dominated by fixed cost rather than by trace work,
 subtracting 80ms leaves the remainder attributed to the pixels; the sizer
 asks for fewer; the next batch is MORE fixed-dominated; and growing back
 needs a batch measuring under `targetMs`, which the fixed cost alone
-forbids. fr-kz2p measured it on a near-empty frame at extreme zoom: strips
-collapsed 990 → 484 → … → 1px and then oscillated at 1-6px, each batch
-still costing 500-1700ms REGARDLESS of pixel count, with a Save-PNG frozen
-at 59% for the last 5.5 minutes of a 480s run. Extrapolated remaining cost:
-hours to days for one pass of eight.
+forbids. The degenerate-zoom export stall measured it on a near-empty frame
+at extreme zoom: strips collapsed 990 → 484 → … → 1px and then oscillated at
+1-6px, each batch still costing 500-1700ms REGARDLESS of pixel count, with a
+Save-PNG frozen at 59% for the last 5.5 minutes of a 480s run. Extrapolated
+remaining cost: hours to days for one pass of eight.
 
-**The fix is `surface-compute.ts`'s `ShadeHitCost` ported down** (fr-p8bc /
-fr-d6g5 / fr-2ojg had the identical pathology at hit dispatches):
-`StripCost = {interceptMs, marginalMsPerPx}`, each measurement's surprise
-split by WIDTH (`w = px/(px + pivot)` to the marginal, the rest to the
-intercept), sizing off the MARGINAL alone. The safety mechanisms are
-untouched: **the worst-case cap is still priced on the RAW ms/px ratchet
-and applied LAST**, so the set of sizes a strip may take is exactly what it
-was — only the choice within it moved. That precedence is load-bearing and
-is written at the clamp: the model cannot tell a monster pose from an
-overhead-bound batch (see the identity below), and the raw ratchet is the
-only thing that can.
+**The fix is `surface-compute.ts`'s `ShadeHitCost` ported down** (the
+compute arm's hit-shade sizer had the identical pathology at hit dispatches
+— hit-unit batches, the one-hit-floor settle park, and the two-term model
+that fixed it): `StripCost = {interceptMs, marginalMsPerPx}`, each
+measurement's surprise split by WIDTH (`w = px/(px + pivot)` to the
+marginal, the rest to the intercept), sizing off the MARGINAL alone. The
+safety mechanisms are untouched: **the worst-case cap is still priced on the
+RAW ms/px ratchet and applied LAST**, so the set of sizes a strip may take
+is exactly what it was — only the choice within it moved. That precedence is
+load-bearing and is written at the clamp: the model cannot tell a monster
+pose from an overhead-bound batch (see the identity below), and the raw
+ratchet is the only thing that can.
 
 Three places the port had to DIVERGE from its compute twin, each measured
 or reasoned rather than copied:
@@ -146,9 +148,9 @@ or reasoned rather than copied:
   planner's two tiers are three orders of magnitude apart in natural strip
   width (a light affine settle converges at ~35,000px; a heavy fold PREVIEW
   at ~3px). A single pixel pivot cannot serve both. `STRIP_COST_PIVOT_MS_PER_PX`
-  = 0.6 (inside the measured heavy-fold band: fr-096u's 0.5-4ms/px on
-  mandelboxKifs, fr-du81's ~6ms/px SwiftShader preview) puts the settle
-  tier's pivot at 125px and the preview tier's at 20px.
+  = 0.6 (inside the measured heavy-fold band: 0.5-4ms/px on mandelboxKifs,
+  ~6ms/px on a SwiftShader preview) puts the settle tier's pivot at 125px
+  and the preview tier's at 20px.
 - **The rate limit is on the marginal's RISE, not its FALL.** Compute limits
   the fall because a falling marginal INFLATES its batch width. Here a
   RISING marginal SHRINKS strips, and shrinking is the direction with the
@@ -160,10 +162,10 @@ or reasoned rather than copied:
   class's fresh cap (4000/50 = 80px), so it can never loosen a strip that
   cap was holding; 32x fewer submissions than a 1px floor. It does NOT
   apply to the probe or to a repeat of an unmeasured strip — that size is
-  the caller's PRIOR, fr-096u's one bound on an unmeasured submission.
+  the caller's PRIOR, the one bound an unmeasured submission has.
 
 `scene.ts` changed in three ways. Both writers already reported at
-measurement time (fr-id9r's `observe` door), so they feed the model
+measurement time (the safety pass's `observe` door), so they feed the model
 directly; the pipelined refill now passes **null** to `next()` instead of
 `estimate × lastSubmittedPx`, because re-quoting a batch average at one
 strip's width is a fabricated measurement at a width nothing was measured
@@ -181,14 +183,14 @@ raw ratchet, `SURFACE_STRIP_QUEUE_WORST_MS`) is untouched.
 
 Every number below is the shipped planner run against synthetic cost
 functions (`intercept + px × marginal`), against a frozen copy of the
-pre-fr-ado7 sizer under the same probe, cap and row-snap. The frozen copy
-lives in `strip-planner.test.ts` so "ordinary frames are unmoved" stays a
-comparison rather than a memory. Converged strip, its cost, and the
-frame's submission count:
+single-number sizer that preceded it, under the same probe, cap and
+row-snap. The frozen copy lives in `strip-planner.test.ts` so "ordinary
+frames are unmoved" stays a comparison rather than a memory. Converged
+strip, its cost, and the frame's submission count:
 
 | scene (cost function)               | new                        | old                        |
 | ----------------------------------- | -------------------------- | -------------------------- |
-| degenerate 500ms fixed (fr-kz2p)    | 222px / 500ms / 4,151 subs | 1px / 500ms / 921,600 subs |
+| degenerate 500ms fixed (zoom stall) | 222px / 500ms / 4,151 subs | 1px / 500ms / 921,600 subs |
 | degenerate 100ms fixed, 660x410     | 125px / 100ms / 2,165 subs | 1px / 100ms / 270,600 subs |
 | degenerate noisy 500-1700ms         | 1280px / 700ms / 720 subs  | 1px / 921,600 subs         |
 | healthy fold settle 5+0.05/px       | 1280px / 69ms / 720 subs   | identical                  |
@@ -229,23 +231,22 @@ would take, not as something shipped.
 
 ## Capture and export drains
 
-Capture/offline export runs the SAME pump (fr-y6m0). Before this, those
-drains used to join every strip themselves — effectively the pre-fr-096u
-shape, wearing export clothing, multiplying the sync tax by the planner's
-strip count.
+Capture/offline export runs the SAME pump. Before that, those drains used to
+join every strip themselves — effectively the pre-pipeline shape, wearing
+export clothing, multiplying the sync tax by the planner's strip count.
 
 Both drains now loop the same pump and differ only in how they WAIT
 between calls:
 
 - The synchronous drain (offline export, thumbnails) blocks on ONE
   whole-queue readback per queueful.
-- The yielding drain (fr-7mfx's Save-PNG) hands the main thread back on
-  rAF, timer-backstopped at a frame — because a page whose frame clock
-  runs slow starves the queue (headless SwiftShader serves rAF at
-  ~10Hz), and because a bounded macrotask spin covers the case where the
-  page is hidden, rAF stops and timers throttle. This is what lets a
-  cancel land within a tick instead of behind a multi-second crease
-  strip.
+- The yielding drain (the Save-PNG's, behind its progress modal) hands the
+  main thread back on rAF, timer-backstopped at a frame — because a page
+  whose frame clock runs slow starves the queue (headless SwiftShader
+  serves rAF at ~10Hz), and because a bounded macrotask spin covers the
+  case where the page is hidden, rAF stops and timers throttle. This is
+  what lets a cancel land within a tick instead of behind a multi-second
+  crease strip.
 
 A capture job never presents (the export-scale target must not reach the
 canvas), ADOPTS the fence backlog exactly like live jobs (a pipelined
@@ -276,15 +277,15 @@ renders the collection thumbnail through the sync drain in 2.5s (main:
 
 ## Cost ceilings, and why the interactive path has none
 
-Cost ceilings belong to the SYNCHRONOUS drain alone, since fr-avf6 —
-offline export and thumbnails, the callers that freeze the tab for a
-frame's whole duration and offer no way to stop it. There, measured
-evidence predicts the frame cost up front (never the class prior, which
-would refuse every fold export sight unseen), and the drain refuses past
-`SURFACE_CAPTURE_PREDICT_CEILING_MS` (120s). The drain itself also aborts
-past `SURFACE_CAPTURE_SPEND_CEILING_MS` (60s) of real spend. Both throw
-`SurfaceCaptureCostError`: the offline exporter fails the run, and the
-thumbnail path falls back to the explorer render.
+Cost ceilings belong to the SYNCHRONOUS drain alone — offline export and
+thumbnails, the callers that freeze the tab for a frame's whole duration and
+offer no way to stop it. There, measured evidence predicts the frame cost up
+front (never the class prior, which would refuse every fold export sight
+unseen), and the drain refuses past `SURFACE_CAPTURE_PREDICT_CEILING_MS`
+(120s). The drain itself also aborts past `SURFACE_CAPTURE_SPEND_CEILING_MS`
+(60s) of real spend. Both throw `SurfaceCaptureCostError`: the offline
+exporter fails the run, and the thumbnail path falls back to the explorer
+render.
 
 The ceiling's currency changed meaning along with the drain fix:
 `spentMs` is batch-attributed busy wall time with the sync tax subtracted,
@@ -293,10 +294,10 @@ so the same 60s budget now buys tracing where it used to buy joins.
 The INTERACTIVE Save-PNG path is refused nothing. Its modal discloses
 measured coverage, its Cancel works, and the drain yields — so having a
 prediction (measured to run ~4x high) decide for the user would be exactly
-the patience-guessing that fr-zx34 already reverted for the preview tier,
-one render mode over (and the WebGPU arm had never done that in the first
-place). The "Render anyway" opt-in was retired along with the refusal it
-existed to escalate past.
+the patience-guessing that the truncated-preview regression already reverted
+for the preview tier, one render mode over (and the WebGPU arm had never
+done that in the first place). The "Render anyway" opt-in was retired along
+with the refusal it existed to escalate past.
 
 Capture observations feed the evidence chain RAISE-ONLY, without killing
 it: the pose hasn't moved, so live settle/preview evidence stays valid,
@@ -304,44 +305,42 @@ and the drain's export-scale observation may only tighten that floor,
 never own it outright. (A micro-strip capture priced at pure readback
 overhead would otherwise pin the next settle to dissolved micro-strips.)
 
-One exception, fr-y1m7: a COMPLETED capture may SEED an EMPTY chain,
-because offline export is the one caller that never fills the chain any
-other way (a system upload clears it, and force frames bypass the
-preview). Without this, every frame of a fold-scene video priced its queue
-at the class prior — roughly 100x above its own actual pixels — and paid
-a join per ~400px. The rule is seed, never replace, and it's safe in the
-direction it can be wrong: a capture traces the WHOLE frame at its armed
-pose, and an export-scale trace resolves finer pixels than the live tier,
-so its reading is HIGH rather than low.
+One exception, measured on an unmeasured fold capture: a COMPLETED capture
+may SEED an EMPTY chain, because offline export is the one caller that never
+fills the chain any other way (a system upload clears it, and force frames
+bypass the preview). Without this, every frame of a fold-scene video priced
+its queue at the class prior — roughly 100x above its own actual pixels —
+and paid a join per ~400px. The rule is seed, never replace, and it's safe
+in the direction it can be wrong: a capture traces the WHOLE frame at its
+armed pose, and an export-scale trace resolves finer pixels than the live
+tier, so its reading is HIGH rather than low.
 
-## The no-give-up verdict (fr-24to / fr-zx34)
+## The no-give-up verdict
 
-fr-24to asked for a runtime-mode verdict on monster-pose previews: the
-floor-rung preview at `mandelboxKifs`'s entry pose ran past 210s and
-4500px with no terminal state — the settle never armed. A mode bail and a
-sub-floor rung were both considered and rejected, because the cost is
-pose-local (only ~2x per rung) against a gap of >=50-150x, so neither
-would have actually helped.
+The question was a runtime-mode verdict on monster-pose previews: the
+floor-rung preview at `mandelboxKifs`'s entry pose ran past 210s and 4500px
+with no terminal state — the settle never armed. A mode bail and a sub-floor
+rung were both considered and rejected, because the cost is pose-local (only
+~2x per rung) against a gap of >=50-150x, so neither would have actually
+helped.
 
-Two rounds of budget/prediction truncation shipped, and were then
-REVERTED (fr-zx34): both clipped a preview that was actually completable.
-The first case clipped a 20-map Menger-lens preview that was 62% done with
-only ~2.5s left.
+Two rounds of budget/prediction truncation shipped, and were then REVERTED:
+both clipped a preview that was actually completable. The first case clipped
+a 20-map Menger-lens preview that was 62% done with only ~2.5s left.
 
-Final verdict, the user's: no automatic give-up.
-`surfaceRenderProgress()` plus the surface progress row ("Preview 43%" /
-"Full detail 0.4%", one decimal place under 10%, hidden when idle — and
-since fr-tmgf the label also names its engine, "· WebGL" / "· WebGPU",
-with the compute side fed by `onProgress` ray tallies) disclose honest
-coverage, and the user decides. At true monsters the preview may grind
-for minutes with the settle never arming, but safely — 120/120
-responsiveness pings, 0s stalled, because the bounded-strip pump (not
-truncation) is what carries safety here.
+Final verdict, the user's: no automatic give-up. `surfaceRenderProgress()`
+plus the surface progress row ("Preview 43%" / "Full detail 0.4%", one
+decimal place under 10%, hidden when idle — and the label also names its
+engine, "· WebGL" / "· WebGPU", with the compute side fed by `onProgress`
+ray tallies) disclose honest coverage, and the user decides. At true
+monsters the preview may grind for minutes with the settle never arming, but
+safely — 120/120 responsiveness pings, 0s stalled, because the bounded-strip
+pump (not truncation) is what carries safety here.
 
 Save-PNG's refusals had gained a "Render anyway" opt-in (a 300s consented
-backstop) before fr-avf6 retired both the refusal and the opt-in: once the
-export modal disclosed coverage and Cancel actually worked, the refusal
-was just guessing at a patience the user was already expressing directly.
+backstop) before both the refusal and the opt-in were retired: once the
+export modal disclosed coverage and Cancel actually worked, the refusal was
+just guessing at a patience the user was already expressing directly.
 
 Measured A/B (Iris, real driver, `?surfacegl`): lens-system settle 2.5s
 versus main's 3.2s (total-to-settled 6.8s versus 7.4s), boxfold-pair
@@ -349,28 +348,28 @@ settle 0.2s, escape 45ms — all at full safety caps, kernel-silent through
 every monster run.
 
 The settle always ARMS, however expensive the frame: bounded strips grind
-visibly and interruptibly. (An early fr-096u cut had gated the settle on
-predicted cost and silently blanked legitimate lens settles into permanent
-preview blur — a silent refusal reads as a broken render, which is the
-core lesson behind this whole verdict.) The same never-refuse discipline
-now covers the preview too: it always runs to completion, with progress
-disclosed rather than bounded.
+visibly and interruptibly. (An early cut of the preemption-hang work had
+gated the settle on predicted cost and silently blanked legitimate lens
+settles into permanent preview blur — a silent refusal reads as a broken
+render, which is the core lesson behind this whole verdict.) The same
+never-refuse discipline now covers the preview too: it always runs to
+completion, with progress disclosed rather than bounded.
 
-fr-ud7n carried that same line across the WebGPU seam, where all three
-affordances — always-arms settle, always-completes preview, disclosed
-progress — had been missed. A compute preview is wall-budgeted
-(`main.ts`'s `SURFACE_COMPUTE_PREVIEW_BUDGET_MS`, 2s) so the rung ladder
-can learn during motion — that budget is legitimate and unchanged. But at
-the FLOOR rung, a truncated frame used to be the preview's LAST word:
-there was nothing cheaper to drop to, so the loop drained and the settle
-fired over a mostly-backdrop pane, with the truncation undisclosed and
-unskippable. The budget stays a MEASUREMENT device; what changed is the
+The unbudgeted completion pass carried that same line across the WebGPU
+seam, where all three affordances — always-arms settle, always-completes
+preview, disclosed progress — had been missed. A compute preview is
+wall-budgeted (`main.ts`'s `SURFACE_COMPUTE_PREVIEW_BUDGET_MS`, 2s) so the
+rung ladder can learn during motion — that budget is legitimate and
+unchanged. But at the FLOOR rung, a truncated frame used to be the preview's
+LAST word: there was nothing cheaper to drop to, so the loop drained and the
+settle fired over a mostly-backdrop pane, with the truncation undisclosed
+and unskippable. The budget stays a MEASUREMENT device; what changed is the
 terminal state on a parked view — a floor-rung truncation now re-runs the
-same rung UNBUDGETED to completion, with progressive presents, a
-"Preview · WebGPU N%" row label, and a live Skip button
-(`skipSurfacePreviewNow`'s compute arm had already implemented the
-handoff; only its visibility was missing). Bounded submissions, not the
-budget, carry watchdog safety — the settle is equally unbudgeted.
+same rung UNBUDGETED to completion, with progressive presents, a "Preview ·
+WebGPU N%" row label, and a live Skip button (`skipSurfacePreviewNow`'s
+compute arm had already implemented the handoff; only its visibility was
+missing). Bounded submissions, not the budget, carry watchdog safety — the
+settle is equally unbudgeted.
 
 MEASURED (Playwright, Firefox 151 WebGPU, ~10-20x slower than Chrome's,
 1920x1057, using the reporter's own 20-map Menger + mandelbox fold lens +
@@ -385,7 +384,7 @@ inside the budget on this hardware, so the bug is device-speed-dependent
 (slow adapters, software devices, big viewports) rather than
 browser-specific.
 
-## Preview coalescing (fr-nl32)
+## Preview coalescing
 
 The STRIP path had the mirror hole to the WebGPU one above: calling
 `renderSurface("preview")` ARMS a fresh job every time, so re-arming per
@@ -432,14 +431,14 @@ behind the fold program.
 Quick-reference table of the headline measured results above, each tied
 to the section that carries its full context:
 
-| Scenario                                                                    | Result                                                                                                                                                                                       |
-| --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| fr-id9r fix, Iris Xe, 180s `mandelboxKifs` run                              | 360/360 responsiveness pings, 0s stalled, kernel silent; lens settle 0.87-1.0s; escape 48ms; boxfold settle 793ms vs 212ms at the fr-096u tip                                                |
-| fr-id9r fix, before/after queue stall                                       | ~3s per crease pixel / ~46s at parked monster poses -> ~one worst-capped strip beyond the one executing                                                                                      |
-| Capture/export drain fix, SwiftShader, 1280x720, unfinishable pose          | live settle 38% of a 60s window in both arms; capture 0.4% -> 15% (~37x)                                                                                                                     |
-| Capture/export drain fix, SwiftShader, cheap 900x560 frame                  | live settle 2.6s; old Save-PNG burned 60s and refused; new: 4.7s deliver, 0.9s cancel (old: 2.2s); thumbnail 2.5s via sync drain (old: 4.3s parked, 6.8s after a drag); byte-identical image |
-| Sync-fence polling fix                                                      | 4.3s thumbnail that hung 300s with `spentMs` frozen at 0, before the fix                                                                                                                     |
-| fr-24to/fr-zx34 final verdict, Iris real driver, `?surfacegl`               | lens settle 2.5s vs main 3.2s (total-to-settled 6.8s vs 7.4s); boxfold-pair settle 0.2s; escape 45ms                                                                                         |
-| fr-ud7n, Firefox 151 WebGPU, 1920x1057, 20-map Menger + fold lens + balloon | two 2.1s truncated floor previews at 5% of 9916 rays; completion pass 13.8s, 3.9% -> 97%; settle still 48% after 179s                                                                        |
-| fr-nl32, SwiftShader, 100ms drag cadence                                    | 13/15 samples byte-identical at 0% over 6s of drag; one partial strip briefly reached 19% before re-arming reset it to 0%                                                                    |
-| fr-nl32 fix, `surface-tier.verify.mjs` mid-drag check                       | jpeg similarity 0.99-1.00 (bug: mid-drag frame was actually the settled frame) -> 0.83 (fixed: genuinely softer mid-drag frame)                                                              |
+| Scenario                                                                                       | Result                                                                                                                                                                                       |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Strip-pump safety pass, Iris Xe, 180s `mandelboxKifs` run                                      | 360/360 responsiveness pings, 0s stalled, kernel silent; lens settle 0.87-1.0s; escape 48ms; boxfold settle 793ms vs 212ms at the preemption-hang work's tip                                 |
+| Strip-pump safety pass, before/after queue stall                                               | ~3s per crease pixel / ~46s at parked monster poses -> ~one worst-capped strip beyond the one executing                                                                                      |
+| Capture/export drain fix, SwiftShader, 1280x720, unfinishable pose                             | live settle 38% of a 60s window in both arms; capture 0.4% -> 15% (~37x)                                                                                                                     |
+| Capture/export drain fix, SwiftShader, cheap 900x560 frame                                     | live settle 2.6s; old Save-PNG burned 60s and refused; new: 4.7s deliver, 0.9s cancel (old: 2.2s); thumbnail 2.5s via sync drain (old: 4.3s parked, 6.8s after a drag); byte-identical image |
+| Sync-fence polling fix                                                                         | 4.3s thumbnail that hung 300s with `spentMs` frozen at 0, before the fix                                                                                                                     |
+| No-give-up final verdict, Iris real driver, `?surfacegl`                                       | lens settle 2.5s vs main 3.2s (total-to-settled 6.8s vs 7.4s); boxfold-pair settle 0.2s; escape 45ms                                                                                         |
+| Unbudgeted completion pass, Firefox 151 WebGPU, 1920x1057, 20-map Menger + fold lens + balloon | two 2.1s truncated floor previews at 5% of 9916 rays; completion pass 13.8s, 3.9% -> 97%; settle still 48% after 179s                                                                        |
+| Preview-coalescing bug, SwiftShader, 100ms drag cadence                                        | 13/15 samples byte-identical at 0% over 6s of drag; one partial strip briefly reached 19% before re-arming reset it to 0%                                                                    |
+| Preview-coalescing fix, `surface-tier.verify.mjs` mid-drag check                               | jpeg similarity 0.99-1.00 (bug: mid-drag frame was actually the settled frame) -> 0.83 (fixed: genuinely softer mid-drag frame)                                                              |

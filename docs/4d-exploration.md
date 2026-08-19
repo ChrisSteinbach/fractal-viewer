@@ -1,7 +1,7 @@
 # Beyond Three Dimensions: 4D IFS Exploration
 
 Status: design exploration (2026-07). The smallest proof-of-payoff spike
-(**fr-cbg**) and its full productization (**fr-bf6**) have since shipped —
+(§7) and its full productization have since shipped —
 see the 2026-07-05 addendum, §8 — though §§3–4's parallel-mode plan below is
 superseded by the unified design that actually landed. This note exists so
 the analysis doesn't have to be re-derived if/when the n ≥ 5 question comes
@@ -46,7 +46,7 @@ at n = 3 does the number of planes equal the number of axes. Consequences:
 
 - A simple rotation fixes an (n−2)-dimensional subspace: an axis in 3D, a
   _plane_ in 4D. The kaleidoscope feature's `SymmetryAxis` became a symmetry
-  plane exactly this way (fr-q0h6: `SymmetryParams.plane`, six coordinate
+  plane exactly this way (`SymmetryParams.plane`, six coordinate
   planes to choose from, plus an optional `twist` — the double-rotation case
   below).
 - 4D admits **double rotations** — two independent planes turning at once
@@ -59,7 +59,7 @@ documents the exact convention used to lift Draves' planar flame formulas to
 3D: radial warps (`spherical`, `bubble`, `swirl`'s radius) use the full
 radius, angular warps act in the xy-plane and carry z through unchanged. The
 identical convention carries w through unchanged. We committed to the
-generalization scheme once already. (A later third family, fr-p7nu's
+generalization scheme once already. (A later third family, the
 Mandelbox folds, needed no new convention either — natively 3-D to begin
 with, lifting them just means folding w like any other axis, anchor property
 intact.)
@@ -67,11 +67,11 @@ intact.)
 **Mechanical bits.** The escape check gains `|w|`; reseeding draws four
 coordinates; `Bounds` gains `minW`/`maxW` and the radial extent becomes the 4D
 radius. A pleasant accident: the 4D radius is invariant under the 4D view
-rotation, so auto-framing (fr-0b8) can frame to `maxR` once and never needs to
+rotation, so auto-framing can frame to `maxR` once and never needs to
 re-run as the user tumbles the cloud. (w-_color_, by contrast, outgrew the
 invariant radius: anisotropic clouds washed out toward gray, so the shader now
 normalizes by the bounds box's rotation-covariant support in the rotated-w
-direction — fr-9bk.)
+direction.)
 
 ## 2. Seeing it: projection
 
@@ -90,7 +90,7 @@ orthographic first.)
 
 **w as color.** A `"w"` entry in `COLOR_MODES` is the cheapest, most effective
 display of the fourth dimension, and it composes with the color legend
-(fr-dsz) and the coordinate-mode gamma slider (fr-8sk). One subtlety: once the
+and the coordinate-mode gamma slider. One subtlety: once the
 4D rotation lives in a shader uniform, the rotated w only exists in the
 shader, so w-coloring must be shader-side too (mix palette endpoints by
 normalized w) — CPU-baked color attributes would go stale the moment the
@@ -134,21 +134,21 @@ _is_ the demo.
 
 ## 4. Codebase impact map
 
-| Area                       | Change                                                                       | Notes                                                                                                                                                     |
-| -------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fractal/affine.ts`        | parallel `Affine4` path: 4×4 from six plane angles, scale, translation       | keep the 3D path byte-identical; shear later                                                                                                              |
-| `fractal/chaos-game.ts`    | 4D step/escape/bounds/plot                                                   | house style is hand-unrolled hot loops (flame inlines `stepOrbit`), so a dedicated Vec4 path beats an n-generic abstraction                               |
-| `fractal/types.ts`         | `Vec4`, rotation/shear arity, `Bounds` + w                                   | a v2 of the `Transform` shape                                                                                                                             |
-| `fractal/variations.ts`    | apply the documented scheme with w carried through                           | radial warps use the full 4D radius — a later third family (fr-p7nu's Mandelbox folds) needed no scheme change: w just folds like any other axis          |
-| `fractal/color.ts`         | `"w"` color mode                                                             | shader-side when the rotation is shader-side                                                                                                              |
-| `fractal/presets.ts`       | pentatope gasket, tesseract flake, double-rotation spiral                    | 3D presets embed at w = 0                                                                                                                                 |
-| `fractal/random-system.ts` | 4D "surprise" with the same contraction heuristics                           | later                                                                                                                                                     |
-| `app/scene.ts`             | w attribute, `mat4` rotation uniform, slice uniforms                         | `onBeforeCompile`                                                                                                                                         |
-| `app/orbit.ts`             | unchanged                                                                    | the 3D camera orbits the projection; 4D view rotation is separate state (a quaternion pair)                                                               |
-| `app/persist.ts`           | v2 hash with a `dims` field; v1 decodes as 3D                                | the strict decoder was built for this — **superseded by §8 (fr-bf6)**: shipped as an additive `w` block inside the existing v1 codec, no `dims`/v2 needed |
-| `app/ui.ts`                | grouped/collapsible 4D parameter rows                                        | the real cost — **superseded by §8 (fr-bf6)**: shipped as one collapsed 4D group in the existing editor, not a parallel one                               |
-| `app/interactions.ts`      | modifier-retargeted drags; guide boxes become projected tesseract wireframes | raycast the projection as today                                                                                                                           |
-| flame / voxel workers      | must be generalized in lockstep, or gated "3D only"                          | voxel could consume the projected cloud but re-voxelizes per 4D rotation; flame's inlined loop needs real work                                            |
+| Area                       | Change                                                                       | Notes                                                                                                                                            |
+| -------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `fractal/affine.ts`        | parallel `Affine4` path: 4×4 from six plane angles, scale, translation       | keep the 3D path byte-identical; shear later                                                                                                     |
+| `fractal/chaos-game.ts`    | 4D step/escape/bounds/plot                                                   | house style is hand-unrolled hot loops (flame inlines `stepOrbit`), so a dedicated Vec4 path beats an n-generic abstraction                      |
+| `fractal/types.ts`         | `Vec4`, rotation/shear arity, `Bounds` + w                                   | a v2 of the `Transform` shape                                                                                                                    |
+| `fractal/variations.ts`    | apply the documented scheme with w carried through                           | radial warps use the full 4D radius — a later third family (the Mandelbox folds) needed no scheme change: w just folds like any other axis       |
+| `fractal/color.ts`         | `"w"` color mode                                                             | shader-side when the rotation is shader-side                                                                                                     |
+| `fractal/presets.ts`       | pentatope gasket, tesseract flake, double-rotation spiral                    | 3D presets embed at w = 0                                                                                                                        |
+| `fractal/random-system.ts` | 4D "surprise" with the same contraction heuristics                           | later                                                                                                                                            |
+| `app/scene.ts`             | w attribute, `mat4` rotation uniform, slice uniforms                         | `onBeforeCompile`                                                                                                                                |
+| `app/orbit.ts`             | unchanged                                                                    | the 3D camera orbits the projection; 4D view rotation is separate state (a quaternion pair)                                                      |
+| `app/persist.ts`           | v2 hash with a `dims` field; v1 decodes as 3D                                | the strict decoder was built for this — **superseded by §8**: shipped as an additive `w` block inside the existing v1 codec, no `dims`/v2 needed |
+| `app/ui.ts`                | grouped/collapsible 4D parameter rows                                        | the real cost — **superseded by §8**: shipped as one collapsed 4D group in the existing editor, not a parallel one                               |
+| `app/interactions.ts`      | modifier-retargeted drags; guide boxes become projected tesseract wireframes | raycast the projection as today                                                                                                                  |
+| flame / voxel workers      | must be generalized in lockstep, or gated "3D only"                          | voxel could consume the projected cloud but re-voxelizes per 4D rotation; flame's inlined loop needs real work                                   |
 
 ## 5. Why cap at n = 4
 
@@ -176,7 +176,7 @@ structure the whole way through. Showcase presets:
 It is also near-virgin territory: 4D fractals in the wild are almost all
 quaternion Julia sets; interactive 4D _IFS_ toys effectively don't exist.
 
-## 7. The spike (fr-cbg)
+## 7. The spike
 
 Smallest slice that proves the payoff — points mode only:
 
@@ -192,17 +192,16 @@ Out of scope: editing UI, persistence, flame/voxel, drag gestures, symmetry.
 Success criterion: the pentatope gasket tumbling smoothly with w-color, the 3D
 shape visibly flowing through non-rigid changes.
 
-## 8. Addendum (2026-07-05): the unification pivot (fr-bf6)
+## 8. Addendum (2026-07-05): the unification pivot
 
 §§3–4 above describe the plan as it stood when this note was written: a parallel
 `Transform4`/`Affine4` system the user explicitly enters and exits, a v2
 persistence format keyed on a `dims` field, and a grouped-but-separate 4D
-parameter editor costed as "the real cost." The spike (§7) shipped as
-**fr-cbg**, followed by **fr-hy8** (shear, variations, and a 4D final-transform
-lens, completing `Transform4`'s parameterization) — but the productization
-epic, **fr-bf6**, rejected the parallel-mode plan outright rather than building
-it. Recorded here so the "why" doesn't have to be reconstructed from the git
-log:
+parameter editor costed as "the real cost." The spike (§7) shipped, followed
+by a second pass adding shear, variations and a 4D final-transform lens
+(completing `Transform4`'s parameterization) — but the productization epic
+rejected the parallel-mode plan outright rather than building it. Recorded
+here so the "why" doesn't have to be reconstructed from the git log:
 
 - **A unified model, not a mode.** `Transform` gained one optional field,
   `w?: WExtension` (`position?`, `scale?`, `rotation?: {xw,yw,zw}`,
@@ -217,7 +216,8 @@ log:
   mode field on `AppState`, no entry/exit action, and no separate
   `fourDSystem` to fall out of sync with the real one. The lift
   (`toTransform4`) is `embedTransform3`'s pre-existing `w = 0` embedding
-  (built across fr-2ou/fr-hy8, untouched by fr-bf6) plus a sparse splice of
+  (built across the two earlier 4D spikes, untouched by the unification) plus
+  a sparse splice of
   whatever `w` overrides a transform carries.
 - **Persistence: additive, not v2.** The `dims`-field v2 hash design never got
   built and is now dead. `persist.ts` instead threads an optional `w` block
@@ -247,8 +247,8 @@ log:
   than generalize, whenever `systemIsNonFlat` holds. This was the resolution
   this table's "flame / voxel workers" row left open, and each item has since
   earned its way off the list separately: the flame and solid renders gained
-  true 4D accumulators (fr-5b3/fr-4wd), and the kaleidoscope generalized last
-  (fr-q0h6) — the 4D chaos game grew a post-rotation stage, the symmetry
+  true 4D accumulators, and the kaleidoscope generalized last — the 4D chaos
+  game grew a post-rotation stage, the symmetry
   plane spans all six coordinate planes plus an optional twist (a double
   rotation), a w-plane or twist by itself makes the system 4D, and the
   Symmetry controls now stay put for a non-flat system.

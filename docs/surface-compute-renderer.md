@@ -3,74 +3,73 @@
 This is the full record behind CLAUDE.md's `surface-compute.ts` bullet
 (`src/app/surface-compute.ts`). The bullet in CLAUDE.md is the condensed
 routing table and the rules; this document keeps every measured number,
-every bead id, and every refuted premise behind it.
+every measurement narrative, and every refuted premise behind it.
 
 ## Which sessions route here
 
 `surface-compute.ts` is the WebGPU compute renderer for fold-shaped 3D
-surface sessions (fr-tzdg): systems with base-map folds OR a fold FINAL
-lens (fr-55s1 — `deHasFolds(de) || foldFinal`; the DE picks the kernel
-core and the lens wrapper, and the first march slice's prior scales by
-the lens branch count 27/3/81 ÷ 8). Since fr-dlxh it also takes escape-time
-sessions — the non-contracting pure-fold map, or, since fr-s04t, the
-CHAIN of them, that the IFS gate refuses. Since fr-dlxh's 4D cut it also
-takes 4D surface sessions — plain ones from that cut, and every other 4D
-system since fr-fniy.
+surface sessions: systems with base-map folds OR a fold FINAL lens
+(`deHasFolds(de) || foldFinal`; the DE picks the kernel core and the lens
+wrapper, and the first march slice's prior scales by the lens branch count
+27/3/81 ÷ 8). Since the escape port it also takes escape-time sessions — the
+non-contracting pure-fold map, or the CHAIN of them, that the IFS gate
+refuses. Since that port's 4D cut it also takes 4D surface sessions — plain
+ones from the cut itself, and every other 4D system since the shade-sizer
+width fix.
 
 All of those PREFER compute when an adapter exists: no fold GLSL ever
-compiles (the ~25s Mesa link / ~5.7s lens link / fr-096u entry hazards
-never engage), and there is no grid request (gridless by decision,
+compiles (the ~25s Mesa link / ~5.7s lens link / i915-preemption entry
+hazards never engage), and there is no grid request (gridless by decision,
 measured).
 
-FOLD-shaped 4D sessions (fr-rsp6: 4D base-map folds or a 4D fold FINAL,
-any symmetry order) are compute-ONLY. The fragment 4D tracer
-deliberately carries no fold GLSL, so the eligibility gate refuses entry
-when compute is unavailable, and a mid-session compute loss exits the
-mode with a toast rather than falling back.
+FOLD-shaped 4D sessions (4D base-map folds or a 4D fold FINAL, any symmetry
+order) are compute-ONLY. The fragment 4D tracer deliberately carries no fold
+GLSL, so the eligibility gate refuses entry when compute is unavailable, and
+a mid-session compute loss exits the mode with a toast rather than falling
+back.
 
-KALEIDOSCOPE 4D (non-fold, order > 1) came here too in fr-fniy, so there
-is no order split left: EVERY 4D session prefers compute, and the
-fragment 4D tracer is its fallback arm.
+KALEIDOSCOPE 4D (non-fold, order > 1) came here too with the shade-sizer
+width fix, so there is no order split left: EVERY 4D session prefers
+compute, and the fragment 4D tracer is its fallback arm.
 
-That line moved twice. fr-dlxh's 4D cut kept order > 1 on the fragment
-tracer because the WGSL sector sweep never settled a 6-minute observation
-the fragment arm settled in 10.9s. fr-b72d exonerated the kernel — the
-DE's cost is algorithmically superlinear in order for BOTH arms
-(CPU-oracle-matched), and the uniform-maps/refinedCert suspects were
-refuted on the extended `--surface-aff4-sweep` leg. fr-b8o5 then made
-both arms forceable and re-measured: WebGL 147s against compute 179s, a
-1.2x sitting inside the fragment arm's own 147/444/604s spread, so the
-rule stood on a null result. fr-fniy found what the compute arm was
-actually spending that time on — a hit-shade batch width that was its
-cost model's attribution pivot rather than anything about the scene — and
-fixing it moved the row decisively. MEASURED, real Iris Xe at 1024x640,
-identity rotor, both arms forced, `scripts/slice-cliff.probe.mjs
---arm=both --slices=0 --settle=1`:
+That line moved twice. The 4D cut kept order > 1 on the fragment tracer
+because the WGSL sector sweep never settled a 6-minute observation the
+fragment arm settled in 10.9s. The 4D kernel-cost investigation exonerated
+the kernel — the DE's cost is algorithmically superlinear in order for BOTH
+arms (CPU-oracle-matched), and the uniform-maps/refinedCert suspects were
+refuted on the extended `--surface-aff4-sweep` leg. The off-centre-slice
+investigation then made both arms forceable and re-measured: WebGL 147s
+against compute 179s, a 1.2x sitting inside the fragment arm's own
+147/444/604s spread, so the rule stood on a null result. The shade-sizer
+width fix found what the compute arm was actually spending that time on — a
+hit-shade batch width that was its cost model's attribution pivot rather
+than anything about the scene — and fixing it moved the row decisively.
+MEASURED, real Iris Xe at 1024x640, identity rotor, both arms forced,
+`scripts/slice-cliff.probe.mjs --arm=both --slices=0 --settle=1`:
 
 | scene                               | WebGL       | compute    |
 | ----------------------------------- | ----------- | ---------- |
 | plain4 (3 maps, order 1)            | 11.5 s      | 3.0 s      |
 | kaleido4 (2 maps, order 6, twist 1) | **637.5 s** | **53.1 s** |
 
-53.1s is 2.8x faster than the FASTEST run the fragment arm has ever
-recorded on that scene and 12x this cell's, with a ~5% run-to-run spread
-against a 4x one — no longer a null result in either magnitude or
-repeatability. First frame moves the same way, 0.21s against 4.86s. The
-two arms agree on the picture: `scripts/surface-4d.verify.mjs` step (e)
-holds them to an object-mask IoU on both scenes (plain 4D measured 0.996
-at fr-dlxh), and both settle the same 8 supersampling passes at
-`subPixelSample`'s offsets, which the strip pump and this module share by
-import.
+53.1s is 2.8x faster than the FASTEST run the fragment arm has ever recorded
+on that scene and 12x this cell's, with a ~5% run-to-run spread against a 4x
+one — no longer a null result in either magnitude or repeatability. First
+frame moves the same way, 0.21s against 4.86s. The two arms agree on the
+picture: `scripts/surface-4d.verify.mjs` step (e) holds them to an
+object-mask IoU on both scenes (plain 4D measured 0.996 at the 4D cut), and
+both settle the same 8 supersampling passes at `subPixelSample`'s offsets,
+which the strip pump and this module share by import.
 
 What the 12x does NOT buy is a cheap scene: kaleido4 is still tens of
 seconds, because the DE's superlinear order cost is paid by whichever arm
 renders it. That is disclosed by the progress row, never a refusal.
 
-ESCAPE-shaped 4D sessions (fr-vag4 — a non-flat chain the 4D IFS gate
-refuses) are compute-ONLY for the fold-4D reason unchanged: an escape
-chain IS fold-shaped, and the fragment 4D tracer carries no
-forward-orbit GLSL either, so entry is refused without compute and a
-mid-session loss exits with the same toast one family over.
+ESCAPE-shaped 4D sessions (a non-flat chain the 4D IFS gate refuses) are
+compute-ONLY for the fold-4D reason unchanged: an escape chain IS
+fold-shaped, and the fragment 4D tracer carries no forward-orbit GLSL
+either, so entry is refused without compute and a mid-session loss exits
+with the same toast one family over.
 
 ## Targets and cores
 
@@ -80,9 +79,8 @@ kernel core:
 
 - `ifs4` → affine4 or fold4, off `deHasFolds4` (the 3D `deHasFolds` split
   one dimension up).
-- `bulb` → fr-tdin's `core:"bulb"`, structurally the escape arm one
-  formula over.
-- `escape4` → fr-vag4's `core:"escape4"`.
+- `bulb` → `core:"bulb"`, structurally the escape arm one formula over.
+- `escape4` → `core:"escape4"`.
 
 `isForwardTarget` names the THREE forward-orbit kinds (`escape`, `bulb`,
 `escape4`) so a branch cannot serve one and miss another. `isFourDTarget`
@@ -97,15 +95,15 @@ carry their formula chain on the maps binding, so every maps-shaped
 branch names them ahead of the predicate, and `bulb` is the one
 bindingless kind left.
 
-The BALLOON and the FLOOR ride an `ifs4` target since fr-qxxw/fr-h0c3,
-with the 3D arm's own precedence (the two never compile together, and
-the balloon wins). No FORWARD kind ever balloons, in either dimension.
-Escape and plain-affine `ifs4` targets scale no prior (the forward loop
-is phone-cheap, and the pessimistic march prior only errs toward smaller
-first slices); fold/lens-shaped `ifs4` targets scale by branch count the
-way 3D does. Only the MARCH slice has a prior to scale since fr-2ojg —
-the shade sizer opens with an empty cost model and a one-workgroup
-capacity.
+The BALLOON and the FLOOR ride an `ifs4` target since their own 4D lifts,
+with the 3D arm's own precedence (the two never compile together, and the
+balloon wins). No FORWARD kind ever balloons, in either dimension. Escape
+and plain-affine `ifs4` targets scale no prior (the forward loop is
+phone-cheap, and the pessimistic march prior only errs toward smaller first
+slices); fold/lens-shaped `ifs4` targets scale by branch count the way 3D
+does. Only the MARCH slice has a prior to scale since the two-term shade
+cost model — the shade sizer opens with an empty cost model and a
+one-workgroup capacity.
 
 The `ifs4` kind's rotor/slice view is PER-FRAME SPEC STATE (`spec.view4`,
 re-read from the scene's `setSurface4View` state at every spec assembly
@@ -115,60 +113,60 @@ carried across the WebGPU seam; a missing `view4` throws), and
 rotor/slice glide never re-presents a stale frame.
 
 `SURFACE_ESCAPE` GLSL and the fragment 4D tracer are the fallback arms
-(`?surfacegl` / no adapter / device loss), exactly like
-`SURFACE_FOLD_LENS`; the fr-tmgf detail vocabulary widened to cover them
+(`?surfacegl` / no adapter / device loss), exactly like `SURFACE_FOLD_LENS`;
+the render-backend detail vocabulary widened to cover them
 (`surfaceWebglDetail`'s param is `computeShaped` now — every 4D system is
 compute-shaped).
 
-MEASURED (fr-55s1, Iris Xe real driver, dev regime): the fr-g58b lens
-archetype previews in 0.94s and settles a full 1280x720 frame in 9.4s (0
-exhausted) where the WebGL A/B of the same hash was 43% settled at 30s;
-the 81-branch mandelbox field class settles in ~35-55s (thermally
-variable) against a 2min+ WebGL grind.
+MEASURED (at the fold-lens compute port, Iris Xe real driver, dev regime):
+the fold-FINAL lens archetype previews in 0.94s and settles a full 1280x720
+frame in 9.4s (0 exhausted) where the WebGL A/B of the same hash was 43%
+settled at 30s; the 81-branch mandelbox field class settles in ~35-55s
+(thermally variable) against a 2min+ WebGL grind.
 
 The renderer owns the device (bench acquisition idioms + flame-backend
 error taxonomy) and the frame loop.
 
 ## The frame loop and batch sizing
 
-March slices are sized from a measured per-ray·step EMA, and
-`stepsThisPass` doubles toward 32 whenever a whole sweep fits one slice.
-fr-fniy priced that half and found it small — 5.8% of a settle before its
+March slices are sized from a measured per-ray·step EMA, and `stepsThisPass`
+doubles toward 32 whenever a whole sweep fits one slice. The shade-sizer
+width fix priced that half and found it small — 5.8% of a settle before its
 own fix, 19.9% after, with the sweep readbacks at 0.06% and ~2% of the
-settle in per-dispatch fixed cost — so the EMA's shape is a known,
-measured, declined lever rather than an unexamined one. Shade batches
-are sized in HIT units (fr-p8bc): terminal rays queue by status — misses
-are one background write; hits, and, since fr-rhn5, ground-plane PLANE
-terminals, pay the probe evals and arrive scanline-CLUSTERED. Batches are
-predicted from a two-term cost model — `intercept + n·marginal`, fr-2ojg,
-whose whole record is two sections down — under a slow-trust
-double/quarter capacity ladder, and the WIDTH that model asks for is the
-attribution pivot's rather than the scene's, which is fr-fniy's finding
-and the section after fr-2ojg's.
+settle in per-dispatch fixed cost — so the EMA's shape is a known, measured,
+declined lever rather than an unexamined one. Shade batches are sized in HIT
+units (the shading probe's second lesson): terminal rays queue by status —
+misses are one background write; hits, and ground-plane PLANE terminals, pay
+the probe evals and arrive scanline-CLUSTERED. Batches are predicted from a
+two-term cost model — `intercept + n·marginal`, whose whole record is two
+sections down — under a slow-trust double/quarter capacity ladder, and the
+WIDTH that model asks for is the attribution pivot's rather than the
+scene's, which is the width fix's finding and the section after the cost
+model's.
 
-The original design doubled capacity in RAY units, which let a run of
-misses inflate capacity before a hit band paid for it — that caused five
+The original design doubled capacity in RAY units, which let a run of misses
+inflate capacity before a hit band paid for it — that caused five
 kernel-confirmed i915 GPU hangs. The fix floors batches at one WORKGROUP,
-never one hit: within a workgroup, cost is depth-dominated, so
-sub-workgroup batches buy no submission-wall safety. The old 1-hit floor
-was a one-way trapdoor — one hit band past the pass target, and every
-1-ray batch re-measures the full per-submission wall as its per-hit cost;
-the estimate latches that in, producing ~4 hits/s serialization that
-reads as a settle parked forever at a pose-dependent percent. This is
-fr-d6g5's Mesa-25.2.8 "park" (see below). The `?surfacetrace` flag and
-`scripts/fold-settle-park.repro.mjs` are that diagnosis' kept
-instruments. fr-2ojg's finding is that the SAME trapdoor ran at every
-width below the occupancy knee, not only at n=1, and that the fix for it
-is a cost model with an intercept rather than a wider floor.
+never one hit: within a workgroup, cost is depth-dominated, so sub-workgroup
+batches buy no submission-wall safety. The old 1-hit floor was a one-way
+trapdoor — one hit band past the pass target, and every 1-ray batch
+re-measures the full per-submission wall as its per-hit cost; the estimate
+latches that in, producing ~4 hits/s serialization that reads as a settle
+parked forever at a pose-dependent percent. This is the Mesa-25.2.8 settle
+"park" (see below). The `?surfacetrace` flag and
+`scripts/fold-settle-park.repro.mjs` are that diagnosis' kept instruments.
+The cost model's finding is that the SAME trapdoor ran at every width below
+the occupancy knee, not only at n=1, and that the fix for it is a cost model
+with an intercept rather than a wider floor.
 
 With the workgroup floor, no submission outruns the i915 watchdog.
 
 Shading probes ride the width-1 greedy descent
-(`SURFACE_COMPUTE_SHADE_DE_WIDTH`, the fr-p8bc measured verdict: 23.8x
-cheaper shading, eyeball-identical frames). The active list is
-host-compacted. Presents are progressive between every bounded piece.
+(`SURFACE_COMPUTE_SHADE_DE_WIDTH`, the probe-width verdict: 23.8x cheaper
+shading, eyeball-identical frames). The active list is host-compacted.
+Presents are progressive between every bounded piece.
 
-### Compaction reads 4 B per active ray (fr-si66)
+### Compaction reads 4 B per active ray
 
 Host compaction needs exactly one field of the ray state — the status —
 and used to get it by reading the ENTIRE `states` buffer back after every
@@ -207,7 +205,7 @@ byte-identical, so no bench edit was needed anywhere.
 **MEASURED** (real Iris Xe, headed Chrome on `:0`, one full settle per
 arm of the pose-pinned 2-map boxfold pair at a 1400x900 window — a
 1.26M-ray pane — via `scripts/march-readback-ab.mjs`, the A/B instrument
-this bead left behind; the two arms are the same script against the two
+that work left behind; the two arms are the same script against the two
 builds, told apart by the trace vocabulary alone):
 
 | per settle                   | before (`states`)   | after (`status`)           |
@@ -239,17 +237,18 @@ the same settle was re-run to find out. Measured, same scene and raster:
 | march dispatches                  | 114   | 4013.9  | 14.8%     |
 | sweep readbacks (after)           | 58    | 107.0   | **0.4%**  |
 
-So the assertion held — but the number is the point: fr-si66 moved the
-readback from ~2.7% of that total to 0.4%, of a settle whose other 99.6%
-is the shade half. The saving is transfer volume and host-blocked time,
-and it is worth most exactly where fr-biox found the problem — an export
-tile at the 4M-ray cap read a flat 64 MB of ray state per sweep, tens of
-sweeps a tile, and now reads 4 B per ray still marching.
+So the assertion held — but the number is the point: the status side channel
+moved the readback from ~2.7% of that total to 0.4%, of a settle whose other
+99.6% is the shade half. The saving is transfer volume and host-blocked
+time, and it is worth most exactly where the raster-ceiling field report
+found the problem — an export tile at the 4M-ray cap read a flat 64 MB of
+ray state per sweep, tens of sweeps a tile, and now reads 4 B per ray still
+marching.
 
-That table also says something fr-si66 did not set out to find, filed as
-fr-257o — and a MEAN over the two shade queues is not a finding, so the
-instrument grew one more regex (the `shade BEGIN isFree=` flag) and the
-settle was run once more. The 84% splits:
+That table also says something that work did not set out to find, and which
+became the free/hit shade-drain split — and a MEAN over the two shade queues
+is not a finding, so the instrument grew one more regex (the `shade BEGIN
+isFree=` flag) and the settle was run once more. The 84% splits:
 
 | shade dispatches | count | ms      | share | mean     |
 | ---------------- | ----- | ------- | ----- | -------- |
@@ -257,20 +256,19 @@ settle was run once more. The 84% splits:
 | hit              | 135   | 14881.1 | 55.0% | 110.2 ms |
 
 Both halves say something, and the first draft of this paragraph had the
-first one wrong by an order of magnitude. **Free batches are 29%, not
-84%**: the flat 4096-ray cap the two queues then shared is 4096 rays of
-one background write each costing 3.2 ms, which IS the per-submission
-wall (there is no work in it), so a 1.26M-ray frame spends ~307
-submissions painting backdrop, times the 8 supersampling passes
-(fr-vpbq). Raising that cap 16x has a hard ceiling of 7.9 s on this 35 s
-settle — real, bounded, ~22%, and NOT "most of the settle". (What
-raising it actually bought is the next section, and it beat that
-ceiling.) **The hit half is the bigger one** — 135 dispatches x ~178 hits
-at ~0.62 ms per hit, the width-1 probe cost fr-p8bc already cut 23.8x,
-re-paid by every one of the 8 passes — and this record closed by calling
-it real work no batch-cap change touches. That last clause did not
-survive its own instrument: see "And the hit half is NOT what fr-si66
-concluded" below.
+first one wrong by an order of magnitude. **Free batches are 29%, not 84%**:
+the flat 4096-ray cap the two queues then shared is 4096 rays of one
+background write each costing 3.2 ms, which IS the per-submission wall
+(there is no work in it), so a 1.26M-ray frame spends ~307 submissions
+painting backdrop, times the 8 supersampling passes. Raising that cap 16x
+has a hard ceiling of 7.9 s on this 35 s settle — real, bounded, ~22%, and
+NOT "most of the settle". (What raising it actually bought is the next
+section, and it beat that ceiling.) **The hit half is the bigger one** — 135
+dispatches x ~178 hits at ~0.62 ms per hit, the width-1 probe cost the
+probe-width verdict already cut 23.8x, re-paid by every one of the 8 passes
+— and this record closed by calling it real work no batch-cap change
+touches. That last clause did not survive its own instrument: see "The hit
+half is not work either" below.
 
 Proven output-identical rather than argued: `scripts/surface-repro.verify.mjs
 --scenario=all --runs=2 --mode=x11::0` was run against BOTH builds, and
@@ -284,18 +282,18 @@ hit+miss+exhausted sums exactly to its raster (4637+32227 = 36864, and so
 on through the escape, chain, ifs4 and fold4 legs), which is the new
 tally's arithmetic checked seven ways.
 
-### The free shade queue drains whole (fr-257o)
+### The free shade queue drains whole
 
-The split above left the free half's cap un-run, and the answer turned
-out to be that there is no cap to pick: THE FREE QUEUE HAS NO COST TO
-MODEL. Every exit the shade entry offers a non-HIT status is the same two
-lines — evaluate the backdrop ramp at this pixel's row, store it — and
-that is checked per core rather than assumed, which is what fr-257o's own
-bead asked for: EXHAUSTED falls through the same `st.y != HIT` exit as
-MISS in all seven, and fr-rhn5's PLANE terminals are queued with the
-HITS, where their probe evals belong. So the free queue now drains WHOLE,
-one dispatch per march sweep, bounded by nothing but the device's own
-dispatch ceiling. `SURFACE_COMPUTE_MAX_SHADE_BATCH` became
+The split above left the free half's cap un-run, and the answer turned out
+to be that there is no cap to pick: THE FREE QUEUE HAS NO COST TO MODEL.
+Every exit the shade entry offers a non-HIT status is the same two lines —
+evaluate the backdrop ramp at this pixel's row, store it — and that is
+checked per core rather than assumed, which is what the split's own design
+asked for: EXHAUSTED falls through the same `st.y != HIT` exit as MISS in
+all seven, and the ground plane's PLANE terminals are queued with the HITS,
+where their probe evals belong. So the free queue now drains WHOLE, one
+dispatch per march sweep, bounded by nothing but the device's own dispatch
+ceiling. `SURFACE_COMPUTE_MAX_SHADE_BATCH` became
 `SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH` with it: one constant standing for
 both queues is what let a MEAN over them read as a finding in the first
 place.
@@ -327,9 +325,9 @@ does a march sweep terminate a ray", which is a property of the march
 schedule and not of any cap.
 
 AND IT BEAT ITS OWN PREDICTED CEILING, which is worth saying because the
-bead's arithmetic said 7.9 s and the settle gave up 10.0 s. The extra
-~2.1 s is host-side and outside the GPU accounting entirely: 2434 fewer
-dispatches is 2434 fewer command encoders, `writeBuffer` uploads and
+predicted ceiling was 7.9 s and the settle gave up 10.0 s. The extra ~2.1 s
+is host-side and outside the GPU accounting entirely: 2434 fewer dispatches
+is 2434 fewer command encoders, `writeBuffer` uploads and
 `onSubmittedWorkDone` round trips (~1.15 ms each here), plus three fewer
 whole-frame present readbacks that used to fire inside the free drain.
 Accounted GPU time fell 7.2 s; the settle fell 10.0 s.
@@ -347,15 +345,15 @@ the ones that say who the change is FOR:
 | lens3 (60.9k hits)      | 268 passes | 61 passes | −17.8%      |
 | sierpinski3 (WebGL arm) | —          | —         | control     |
 
-The pass counts fall by 210-225 in every row, which is exactly
-`misses / 4096` for each raster — the free drain, and nothing else. The
-WALL falls least on lens3 and most on the sparse 4D slices, which is the
-bead's own prediction confirmed and the honest way to describe the
-feature: the saving scales with the MISS count, so the frames that take
-longest benefit least. It is 3D and 4D alike (the affine4 core has no
-folds and gains the most here), and it is one number, not a quality
-knob — every settled PNG across all ten runs is byte-identical between
-the two builds, and each is deterministic within its own build.
+The pass counts fall by 210-225 in every row, which is exactly `misses /
+4096` for each raster — the free drain, and nothing else. The WALL falls
+least on lens3 and most on the sparse 4D slices, which is the change's own
+prediction confirmed and the honest way to describe the feature: the saving
+scales with the MISS count, so the frames that take longest benefit least.
+It is 3D and 4D alike (the affine4 core has no folds and gains the most
+here), and it is one number, not a quality knob — every settled PNG across
+all ten runs is byte-identical between the two builds, and each is
+deterministic within its own build.
 
 BOTH SIZING PATHS NOW CLAMP AT THE DEVICE'S DISPATCH CEILING
 (`surfaceComputeMaxDispatchRays`), and neither did before. Every dispatch
@@ -375,11 +373,11 @@ dispatch's are a submission-shape one, and folding them together would
 make a 4K pane fit one rung softer for a bound no single piece of work
 has to meet.
 
-### The hit half is not work either — it is wall (fr-257o found it, fr-2ojg fixed it)
+### The hit half is not work either — it is wall (the free/hit split found it, the two-term model fixed it)
 
-fr-si66's record two sections up closes by calling the hit queue "real
-work no batch-cap change touches". That is wrong, and fr-257o's own
-instrument is what says so. A third run of the shipped build printed the
+The compaction record two sections up closes by calling the hit queue "real
+work no batch-cap change touches". That is wrong, and the free-queue work's
+own instrument is what says so. A third run of the shipped build printed the
 new HIT SHADE COST vs BATCH SIZE table (140 hit dispatches, 15157.1 ms):
 
 | batch size | dispatches | hits | totalMs | meanMs/disp | meanUs/hit |
@@ -394,34 +392,32 @@ latency-bound dispatch, and the flat region reaches at least 8
 workgroups where `shadeHitBatchSize`'s own argument only claims one.
 
 THE TABLE ALONE PROVES NOTHING, which is the methodological half worth
-keeping: batch size is CHOSEN from the cost EMA against a fixed
-ms/dispatch target, so "small batches have high µs/hit" is close to
-tautological — the sizer would draw that shape whether or not the small
-batches were really more expensive per hit. So the discriminating
-experiment was run: force the batch floor to 512 so size varies
-INDEPENDENTLY of the EMA, same scene, same pose, same window. Settle
-25.0 s → **15.0 s**, hit shade 15157.1 → **7853.3 ms**, dispatches 140 →
-70, and mean ms/dispatch 108.3 → 112.2 — UNCHANGED, which is the whole
-result. Cumulative from the pre-fr-257o baseline that is 35.0 s → 15.0 s,
-2.33x.
+keeping: batch size is CHOSEN from the cost EMA against a fixed ms/dispatch
+target, so "small batches have high µs/hit" is close to tautological — the
+sizer would draw that shape whether or not the small batches were really
+more expensive per hit. So the discriminating experiment was run: force the
+batch floor to 512 so size varies INDEPENDENTLY of the EMA, same scene, same
+pose, same window. Settle 25.0 s → **15.0 s**, hit shade 15157.1 → **7853.3
+ms**, dispatches 140 → 70, and mean ms/dispatch 108.3 → 112.2 — UNCHANGED,
+which is the whole result. Cumulative from the baseline before the
+free-queue drain that is 35.0 s → 15.0 s, 2.33x.
 
-The root cause was one line and it is fr-d6g5's trapdoor one order up:
-`nextShadeHitEmaUs` was fed `shadeMs * 1000 / batch.length`, a
-submission's WHOLE time over its ray count, so a 16-hit batch recorded
-its ~85 ms latency floor as 5.2 ms per hit where the marginal cost is
-~0.26 ms — and the sizer then divided the pass target by that inflated
-number and picked another small batch. fr-d6g5 fixed the degenerate
-1-ray case with a one-workgroup floor; the loop ran at every width below
-the occupancy knee. That intercept is NOT the per-submission wall
-(fr-257o measured that separately at 3-4 ms from the free queue, so at
-most ~0.6 s of the 15.2 s was submission overhead) — it is the batch's
-DEEPEST ray, since lanes run in parallel across EUs and a batch's hits
-come from one scanline band.
+The root cause was one line and it is the settle park's trapdoor one order
+up: `nextShadeHitEmaUs` was fed `shadeMs * 1000 / batch.length`, a
+submission's WHOLE time over its ray count, so a 16-hit batch recorded its
+~85 ms latency floor as 5.2 ms per hit where the marginal cost is ~0.26 ms —
+and the sizer then divided the pass target by that inflated number and
+picked another small batch. The park fix cured the degenerate 1-ray case
+with a one-workgroup floor; the loop ran at every width below the occupancy
+knee. That intercept is NOT the per-submission wall (the free queue measured
+that separately at 3-4 ms, so at most ~0.6 s of the 15.2 s was submission
+overhead) — it is the batch's DEEPEST ray, since lanes run in parallel
+across EUs and a batch's hits come from one scanline band.
 
-THE FLOOR WAS THE EXPERIMENT, NOT THE DESIGN, and fr-2ojg shipped the
-model instead. A floor is a one-way promise to submit that much work
-whatever the measurements believe, and this is the exact mechanism behind
-five kernel-confirmed i915 hangs and the Mesa park.
+THE FLOOR WAS THE EXPERIMENT, NOT THE DESIGN, and the two-term model shipped
+instead. A floor is a one-way promise to submit that much work whatever the
+measurements believe, and this is the exact mechanism behind five
+kernel-confirmed i915 hangs and the Mesa park.
 
 #### What shipped
 
@@ -472,11 +468,12 @@ pieces hang off it.
    and zero means FREE: without a rate limit one cheap dispatch has the
    sizer asking for the entire capacity, which on a fold monster is a
    multi-second submission. It is reachable rather than theoretical — a
-   wide batch of ground-plane terminals, which fr-rhn5 queues WITH the
-   hits but which shade analytically, is exactly that surprise landing on
-   a model converged to expensive fold hits, and it is fr-p8bc's "a cheap
-   run inflates the capacity a hit band then pays" re-opened one level up,
-   in the cost model rather than in the queue. Halving bounds the next
+   wide batch of ground-plane terminals, which the ground plane queues
+   WITH the hits but which shade analytically, is exactly that surprise
+   landing on a model converged to expensive fold hits, and it is the
+   hit-unit sizing lesson's "a cheap run inflates the capacity a hit band
+   then pays" re-opened one level up, in the cost model rather than in the
+   queue. Halving bounds the next
    batch at twice the last, the rate the ladder already enforces, and it
    costs nothing measured (the marginal's real per-dispatch moves during a
    convergence are a few percent).
@@ -491,8 +488,8 @@ is the sizer.
 #### Measured (real Iris Xe, Mesa 25.2.8, headed Chrome on `:0`)
 
 `scripts/march-readback-ab.mjs`, one settle per arm, the pose-pinned
-`boxfoldPair` at 1400x900 (1.26M rays) — fr-257o's own scene, so the
-numbers chain:
+`boxfoldPair` at 1400x900 (1.26M rays) — the free-queue section's own scene,
+so the numbers chain:
 
 | arm                  | settle       | hit shade     | hit disp | ms/disp | disp/frame | worst dispatch      |
 | -------------------- | ------------ | ------------- | -------- | ------- | ---------- | ------------------- |
@@ -500,14 +497,14 @@ numbers chain:
 | + cost model         | 15016 ms     | 6248.0 ms     | 57       | 109.6   | 5.7        | 173.6 ms @ len 491  |
 | + partial-batch hold | **10072 ms** | **2650.4 ms** | **20**   | 132.5   | **2.0**    | 188.3 ms @ len 2197 |
 
-The middle row is the bead's own forced-512-floor experiment reproduced
-by the model rather than by a constant, to the second (15.0 s both
-times). Cumulative from the pre-fr-257o baseline: **35.0 s → 10.1 s,
-3.5x**. A converged frame now shades all ~2240 of its hits in ONE
-2246-hit dispatch of 174 ms; it used to take 14 dispatches and 1.8 s.
+The middle row is the forced-512-floor experiment reproduced by the model
+rather than by a constant, to the second (15.0 s both times). Cumulative
+from the baseline before the free-queue drain: **35.0 s → 10.1 s, 3.5x**. A
+converged frame now shades all ~2240 of its hits in ONE 2246-hit dispatch of
+174 ms; it used to take 14 dispatches and 1.8 s.
 
-The same run's cost-vs-width table extends fr-257o's two buckets further,
-and the last column is the whole argument:
+The same run's cost-vs-width table extends those two buckets further, and
+the last column is the whole argument:
 
 | batch size | dispatches | hits  | totalMs | meanMs/disp | meanUs/hit |
 | ---------- | ---------- | ----- | ------- | ----------- | ---------- |
@@ -518,14 +515,14 @@ and the last column is the whole argument:
 | 512-1023   | 3          | 2389  | 379.9   | 126.6       | 159.0      |
 | 1024+      | 9          | 14311 | 1481.3  | 164.6       | **103.5**  |
 
-`lens3` (fr-g58b's fold-FINAL lens, ~93k hits per frame — the
-frame-FILLING case) gains less and for a reason worth writing down: its
-per-hit cost is 17 µs, so its big batches were already pinned at
-`SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH` (4096) in BOTH arms and only the
-ramp and the queue-limited slivers moved. Settle 35031 → 30034 ms
-(−14.3%), hit shade 18084.4 → 13004.2 ms, 356 → 208 dispatches, worst
-dispatch 77.4 → 76.1 ms. (Its ~25 ms intercept is three orders under the
-dispatch ceiling, so the ceiling correction below does not touch it.)
+`lens3` (the fold-FINAL lens, ~93k hits per frame — the frame-FILLING case)
+gains less and for a reason worth writing down: its per-hit cost is 17 µs,
+so its big batches were already pinned at
+`SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH` (4096) in BOTH arms and only the ramp
+and the queue-limited slivers moved. Settle 35031 → 30034 ms (−14.3%), hit
+shade 18084.4 → 13004.2 ms, 356 → 208 dispatches, worst dispatch 77.4 → 76.1
+ms. (Its ~25 ms intercept is three orders under the dispatch ceiling, so the
+ceiling correction below does not touch it.)
 
 `mandelboxKifs` at 800x520 does not settle at all, so it was run as a
 fixed 150 s window on each arm. It is the fold monster, and it is where
@@ -563,16 +560,16 @@ bucket):
 
 #### The ceiling was strangling the scene it was there to protect
 
-The dispatch ceiling shipped at 1000 ms and an adversarial read of the
-sizer found why that was wrong before any of it reached hardware. A
-ceiling on the predicted TOTAL necessarily squeezes the allowance to
-nothing as the intercept approaches it — the intercept is measured, not
-chosen, so the only lever a total ceiling leaves is refusing to put hits
-in a dispatch that is going to cost that much anyway. That is fr-d6g5's
-trapdoor rebuilt inside its own replacement, and at 1000 ms it was not
-theoretical: mandelboxKifs's model reaches an intercept of 960 ms, where
-the allowance had fallen to 38 ms and the sizer floored at one workgroup
-while a 500-hit batch would have cost 4% more.
+The dispatch ceiling shipped at 1000 ms and an adversarial read of the sizer
+found why that was wrong before any of it reached hardware. A ceiling on the
+predicted TOTAL necessarily squeezes the allowance to nothing as the
+intercept approaches it — the intercept is measured, not chosen, so the only
+lever a total ceiling leaves is refusing to put hits in a dispatch that is
+going to cost that much anyway. That is the park's trapdoor rebuilt inside
+its own replacement, and at 1000 ms it was not theoretical: mandelboxKifs's
+model reaches an intercept of 960 ms, where the allowance had fallen to 38
+ms and the sizer floored at one workgroup while a 500-hit batch would have
+cost 4% more.
 
 The fix is placement, not shape. The squeeze has to sit outside the range
 real scenes measure in, and 2 s is where a dispatch's FIXED cost alone is
@@ -599,17 +596,17 @@ the width.
 
 #### The watchdog question, answered by measurement rather than by a divisor
 
-fr-257o's reason for not shipping the floor was that its safety
-arithmetic ran through a measured AVERAGE (fr-p8bc's ~108 ms/hit at full
-width, ÷23.8 for the shipped width-1 probe) and that the A/B had not run
-the near-surface fold-monster silhouettes. So `march-readback-ab.mjs`
-grew three things for fr-2ojg: a WORST SINGLE DISPATCH block with a p95
-beside it (a mean cannot answer a watchdog question), a HIT DISPATCHES
+The reason the free-queue work did not ship the floor was that its safety
+arithmetic ran through a measured AVERAGE (the probe-width A/B's ~108 ms/hit
+at full width, ÷23.8 for the shipped width-1 probe) and that the A/B had not
+run the near-surface fold-monster silhouettes. So `march-readback-ab.mjs`
+grew three things for the cost model: a WORST SINGLE DISPATCH block with a
+p95 beside it (a mean cannot answer a watchdog question), a HIT DISPATCHES
 PER FRAME table (the sizer's ramp is per job, so a per-settle total hides
 how much of a frame is spent climbing), and the scenes to ask on —
-`--scene=lens3` for the frame-filling lens archetype plus a `--hash=`
-escape hatch for anything else. All three scenes were then run on both
-arms. The answer:
+`--scene=lens3` for the frame-filling lens archetype plus a `--hash=` escape
+hatch for anything else. All three scenes were then run on both arms. The
+answer:
 
 - **boxfoldPair: 181.2 ms → 188.3 ms** while the batch that produced it
   went from 369 hits to 2197 — 6x the width for 4% of the wall. That is
@@ -624,10 +621,9 @@ arms. The answer:
   already there before this change.
 
 `scripts/fold-settle-park.repro.mjs` (mandelboxKifs at 512x320, the
-fr-d6g5 regression gate) never reports PARKED-WEDGED — the trace log
-never stops growing on any arm — and its own trace shows the same flat
-curve at a third raster (33 hits per dispatch costs 732.6 ms, 433 costs
-921.8 ms).
+settle-park regression gate) never reports PARKED-WEDGED — the trace log
+never stops growing on any arm — and its own trace shows the same flat curve
+at a third raster (33 hits per dispatch costs 732.6 ms, 433 costs 921.8 ms).
 
 At its documented default `--parkMs` it reports TIMEOUT, and its percent
 readout is a fourth independent measurement of the change: **37% of the
@@ -649,22 +645,22 @@ integer sooner. The probe's header now carries that so the next session
 does not re-derive it, and PARKED-WEDGED — the trace log itself frozen —
 is the verdict that means what it says.
 
-AND fr-p8bc's ~108 ms/hit — the number fr-257o's safety arithmetic ran
-through — is ITSELF a whole-submission-over-rays figure, which is to say
-the exact statistic this bead's finding says is not a per-hit cost. Its
-frame was 660 hits in 31 s at width 1, i.e. 47 ms per hit amortized,
-where the marginal cost fitted over the widest lever available here (16
-to 512 hits per dispatch on the 800x520 run above) is ~0.75 ms/hit
-against a ~630 ms intercept. So the divisor was not merely uncertain in
-degree, it was measuring the wrong quantity, and no arithmetic on it
-could have bounded a submission in either direction. That is why the
-answer had to be a measured WORST DISPATCH rather than a computation.
+AND the probe-width A/B's ~108 ms/hit — the number that safety arithmetic
+ran through — is ITSELF a whole-submission-over-rays figure, which is to say
+the exact statistic this section's finding says is not a per-hit cost. Its
+frame was 660 hits in 31 s at width 1, i.e. 47 ms per hit amortized, where
+the marginal cost fitted over the widest lever available here (16 to 512
+hits per dispatch on the 800x520 run above) is ~0.75 ms/hit against a ~630
+ms intercept. So the divisor was not merely uncertain in degree, it was
+measuring the wrong quantity, and no arithmetic on it could have bounded a
+submission in either direction. That is why the answer had to be a measured
+WORST DISPATCH rather than a computation.
 
 Fit the intercept over a WIDE lever or not at all: a secant through two
-adjacent buckets of the park probe's own trace (19 vs 64 hits) reads
-4.05 ms/hit — 5x the long-lever figure — because a 45-hit lever arm
-divides bucket-mean noise by a small number. That reading is what a first
-draft of this record quoted, and it happened to land on fr-p8bc's 4.5
+adjacent buckets of the park probe's own trace (19 vs 64 hits) reads 4.05
+ms/hit — 5x the long-lever figure — because a 45-hit lever arm divides
+bucket-mean noise by a small number. That reading is what a first draft of
+this record quoted, and it happened to land on the probe-width A/B's 4.5
 ms/hit, which made it look like a confirmation of the model rather than a
 symptom of the lever.
 
@@ -705,29 +701,30 @@ measurements (a batch is only as safe as the multiple by which an
 unmeasured band can exceed the measured one), not a free win to bundle
 into this one.
 
-`colorOut` is prefilled from the last frame, nearest-resampled — the
-strip settle's preview-seeded-target discipline. fr-f4bx measured what
-that buys during MOTION on a slow adapter, where every preview is a
+`colorOut` is prefilled from the last frame, nearest-resampled — the strip
+settle's preview-seeded-target discipline. The floor-rung preview question —
+paint a 5%-resolved frame, or hold the last good one? — measured what that
+buys during MOTION on a slow adapter, where every preview is a
 budget-truncated one: the present is the PREVIOUS frame with its newly
 resolved rays overwritten, so the pane never shows backdrop mid-drag.
 Measured on 1280x720 Firefox WebGPU, dragging into a mandelbox-lens
-close-up: mid-drag frames measured 0.98-0.99x the completed preview's
-size, i.e. full coverage, and at the extreme a preview resolving ZERO
-rays in its 2.2s budget presents the prior image byte for byte. That
-refutes the bead's own premise — there is no worse frame being painted
-over a better one to suppress, and a coverage threshold on the present
-would have had nothing to fix. The pane heals at park through fr-ud7n's
-completion pass.
+close-up: mid-drag frames measured 0.98-0.99x the completed preview's size,
+i.e. full coverage, and at the extreme a preview resolving ZERO rays in its
+2.2s budget presents the prior image byte for byte. That refutes that
+question's own premise — there is no worse frame being painted over a better
+one to suppress, and a coverage threshold on the present would have had
+nothing to fix. The pane heals at park through the unbudgeted completion
+pass.
 
 The loop also keeps per-frame status counts for field debugging.
 
-### The width it asks for is the model's own pivot (fr-fniy)
+### The width it asks for is the model's own pivot
 
-fr-fniy opened as a march-loop question — a kaleidoscope-4D scene at
-symmetry order 6 that the compute arm settled in minutes — and the first
-thing that had to happen was an accounting, because every suspect in the
-bead was a guess. `?surfacecompute` (fr-b8o5's own follow-up) made the arm
-reachable on that shape; `--params=` carried it into
+This opened as a march-loop question — a kaleidoscope-4D scene at symmetry
+order 6 that the compute arm settled in minutes — and the first thing that
+had to happen was an accounting, because every suspect named up front was a
+guess. `?surfacecompute` (the off-centre-slice work's own follow-up) made
+the arm reachable on that shape; `--params=` carried it into
 `scripts/march-readback-ab.mjs`. MEASURED, real Iris Xe / Mesa 25.2.8,
 `kaleido4` (two maps, order 6, twist 1) at 1024x640, production build,
 identity rotor, compute arm forced, 655360 rays, ten frames (two previews
@@ -743,17 +740,17 @@ and eight supersampling passes), 180.1 s to the settle latch:
 | unaccounted (host)     | —          | ~3460    | 1.9%      |
 
 **The march loop is not the cost, and neither is the host.** 98.1% of the
-settle is GPU submissions, the whole compaction/readback story fr-si66
-rewrote is 0.06%, and the step ramp works: 75 sweeps over ten frames, 1.7
-march dispatches per sweep, `stepsThisPass` climbing 1→2→4→8→16→32 as the
-active list drains (60/16/17/15/10/10 dispatches at each). The march's own
-dispatches do carry a fixed cost — 40k rays cost 9.9 ms against 170k rays'
-12.7 ms at one step, so ~9 ms of each is width-independent — but 128
-dispatches of it is ~1.2 s, 2% of the settle. That is fr-2ojg's "price the
-march the way we priced the shade" answered and refused with a number
-rather than by assertion. Levers (a) and (c) of the bead go the same way:
-no preview truncated in that run, and the 500 ms presents cost 215 ms in
-total.
+settle is GPU submissions, the whole compaction/readback story the status
+side channel rewrote is 0.06%, and the step ramp works: 75 sweeps over ten
+frames, 1.7 march dispatches per sweep, `stepsThisPass` climbing
+1→2→4→8→16→32 as the active list drains (60/16/17/15/10/10 dispatches at
+each). The march's own dispatches do carry a fixed cost — 40k rays cost 9.9
+ms against 170k rays' 12.7 ms at one step, so ~9 ms of each is
+width-independent — but 128 dispatches of it is ~1.2 s, 2% of the settle.
+That is the cost model's "price the march the way we priced the shade"
+answered and refused with a number rather than by assertion. Levers (a) and
+(c) of the original suspect list go the same way: no preview truncated in
+that run, and the 500 ms presents cost 215 ms in total.
 
 So the residual was the hit sizer, and forcing its width — the lever the
 sizer's own estimate normally decides, `?surfaceshadehits=N` — says why.
@@ -788,17 +785,17 @@ width. Two parameters, one measurement per dispatch, an exact fit — the
 RATIO is fixed by the attribution weight and the data only ever moves the
 scale.
 
-That is not a defect in the model, which reproduces the cost at the width
-it measured and predicts a doubling within a factor of two. It is a defect
-in a SIZING rule written in terms of `intercept` alone:
-`shadeHitAllowanceUs`'s middle branch divided an allowance proportional to
-`I` by `m`, so it returned `K · PIVOT` hits on every scene in the project
-and nothing about the scene survived into the answer. At fr-2ojg's `K = 1`
+That is not a defect in the model, which reproduces the cost at the width it
+measured and predicts a doubling within a factor of two. It is a defect in a
+SIZING rule written in terms of `intercept` alone: `shadeHitAllowanceUs`'s
+middle branch divided an allowance proportional to `I` by `m`, so it
+returned `K · PIVOT` hits on every scene in the project and nothing about
+the scene survived into the answer. At the cost model's original `K = 1`
 that is 512 — the number the table above measured leaving 90% of the
 dispatch on fixed cost. The capacity ladder could not push past it either,
 since its growth threshold was `shadeHitBudgetUs(I)` = the model's own
-prediction of that same width: it stopped at exactly where the model
-wanted to be.
+prediction of that same width: it stopped at exactly where the model wanted
+to be.
 
 **The word "unclamped" is load-bearing, and a first draft of this section
 did not have it.** The marginal's decay floor
@@ -836,22 +833,22 @@ worst dispatch. MEASURED on the shipped build, same scene and machine:
 | batch width               | 512                                  | 3583 widest, 2464 mean   |
 | **worst single dispatch** | **397.3 ms @ 512**                   | **417.5 ms @ 3583**      |
 
-The last row is the watchdog answer a mean cannot give: the settle fell
-3.3x and the worst submission grew 5%, because the fold monster's worst
-dispatch is its deepest ray and not the sizer's width — the same shape
-fr-2ojg measured one regime over.
+The last row is the watchdog answer a mean cannot give: the settle fell 3.3x
+and the worst submission grew 5%, because the fold monster's worst dispatch
+is its deepest ray and not the sizer's width — the same shape the cost model
+measured one regime over.
 
 The shipped 55.1 s is above the 40.2 s the forced 4096 reached, and the
 difference is disclosed rather than tuned away: 17 dispatches of the
 capacity ladder's climb out of one workgroup, and batches the sweep could
 not fill (105 dispatches carried 258752 hits, a mean of 2464 against the
 3583 asked for) because the partial-batch HOLD releases after one
-progressive-present interval. Both are the pacing fr-2ojg put there on
-purpose.
+progressive-present interval. Both are the pacing the cost model put there
+on purpose.
 
 `mandelboxKifs` — the hardest scene here, and the one whose intercept the
-ceiling term governs — gains the same way, on fr-2ojg's own protocol for
-it (800x520, a 150 s fixed window, since it does not settle):
+ceiling term governs — gains the same way, on the cost model's own protocol
+for it (800x520, a 150 s fixed window, since it does not settle):
 
 |                      | before          | after              |
 | -------------------- | --------------- | ------------------ |
@@ -861,39 +858,39 @@ it (800x520, a 150 s fixed window, since it does not settle):
 | worst dispatch       | 1744.5 ms @ 512 | 2056.5 ms @ 3583   |
 | p95                  | 1611 ms         | 1952.8 ms          |
 
-That "before" cell was taken on this build with `?surfaceshadehits=512`
-and reads 387.3 hits/s against the 379.0 fr-2ojg recorded for the shipped
-sizer months earlier — a cross-session control on the protocol itself,
-not just on the change. The worst dispatch is now the CEILING's number
-rather than the pivot's: predicted total 2000 ms, measured 2056.5, a 2.8%
-model error, and 3.6x under the ~7.5 s i915 watchdog where fr-2ojg's
-1731 ms was 4.3x under.
+That "before" cell was taken on this build with `?surfaceshadehits=512` and
+reads 387.3 hits/s against the 379.0 the cost model recorded for the shipped
+sizer months earlier — a cross-session control on the protocol itself, not
+just on the change. The worst dispatch is now the CEILING's number rather
+than the pivot's: predicted total 2000 ms, measured 2056.5, a 2.8% model
+error, and 3.6x under the ~7.5 s i915 watchdog where the cost model's 1731
+ms was 4.3x under.
 
 REGRESSION, `scripts/surface-repro.verify.mjs --scenario=all --runs=2
---mode=x11::0`, 1280x720, against fr-2ojg's own recorded figures for the
-same scenes: boxfold3 8.6/8.7 s (was 9.2/9.4), pentatope4 7.7/7.7 (7.8/7.7),
-pentatope4direct 7.6/7.6 (7.6/7.6), lens3 21.3/21.3 (21.7/21.4),
+--mode=x11::0`, 1280x720, against the cost model's own recorded figures for
+the same scenes: boxfold3 8.6/8.7 s (was 9.2/9.4), pentatope4 7.7/7.7
+(7.8/7.7), pentatope4direct 7.6/7.6 (7.6/7.6), lens3 21.3/21.3 (21.7/21.4),
 sierpinski3 13.3/5.3 on the WebGL control (12.1/5.4). Every scenario
-DETERMINISTIC, 0 differing pixels. Those scenes barely move, and that is
-the shape to expect: the change only reaches a dispatch whose fixed cost
-is worth more than an eighth of the pass target, and `lens3` is still held
-by `SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH` — see the headroom note above,
-which stands unchanged.
+DETERMINISTIC, 0 differing pixels. Those scenes barely move, and that is the
+shape to expect: the change only reaches a dispatch whose fixed cost is
+worth more than an eighth of the pass target, and `lens3` is still held by
+`SURFACE_COMPUTE_MAX_HIT_SHADE_BATCH` — see the headroom note above, which
+stands unchanged.
 
 ### Presentation and routing
 
-`scene.ts` presents frames as a DataTexture through the shared surface
-blit (the one WebGL canvas — capture/recorder unchanged) and assembles
-specs with uniform-exact camera/eps/tier quantities (acceptance eps
-stays native-height, fr-7xgi). `main.ts` routes and choreographs it: the
-same tier clock and preview governor, latest-wins preview coalescing,
-plus fr-ud7n's unbudgeted completion pass — the preview frame is the one
-an invalidation must CANCEL rather than wait out, since it is the only
-one with no wall budget to expire. Offline force frames are memoized.
-Fallback is one-way: a create failure or device loss re-enters through
-the untouched WebGL path; `?surfacegl` forces WebGL.
+`scene.ts` presents frames as a DataTexture through the shared surface blit
+(the one WebGL canvas — capture/recorder unchanged) and assembles specs with
+uniform-exact camera/eps/tier quantities (acceptance eps stays native-height
+— the tier-pinned acceptance rule). `main.ts` routes and choreographs it:
+the same tier clock and preview governor, latest-wins preview coalescing,
+plus the unbudgeted completion pass — the preview frame is the one an
+invalidation must CANCEL rather than wait out, since it is the only one with
+no wall budget to expire. Offline force frames are memoized. Fallback is
+one-way: a create failure or device loss re-enters through the untouched
+WebGL path; `?surfacegl` forces WebGL.
 
-## The Mesa park (fr-d6g5)
+## The Mesa park
 
 See "The frame loop and batch sizing" above for the mechanism. In short:
 a batch-sizing policy that let ray-unit doubling inflate capacity ahead
@@ -908,28 +905,27 @@ submission-wall safety). `?surfacetrace` and
 `scripts/fold-settle-park.repro.mjs` are the kept diagnostic instruments
 for this failure mode.
 
-fr-2ojg is this diagnosis finished. The floor cured the degenerate case
-and left the mechanism running everywhere else: the flat region reaches
-at least EIGHT workgroups, so every width below that was re-measuring
-latency as per-hit cost, just less catastrophically. The EMA it latched
-is gone — see "The hit half is not work either" above for the model that
-replaced it, and for the fold-monster re-run of this same probe.
+The two-term cost model is this diagnosis finished. The floor cured the
+degenerate case and left the mechanism running everywhere else: the flat
+region reaches at least EIGHT workgroups, so every width below that was
+re-measuring latency as per-hit cost, just less catastrophically. The EMA it
+latched is gone — see "The hit half is not work either" above for the model
+that replaced it, and for the fold-monster re-run of this same probe.
 
-## Supersampling (fr-vpbq, fr-jf9y)
+## Supersampling
 
-SUPERSAMPLING (fr-vpbq) rides the frame loop as `opts.samples`: N passes
-of the same frame at N sub-pixel offsets (`subPixelSample` — pass 0 is
-the pixel CENTRE exactly, the rest the R2 low-discrepancy sequence).
-Passes are averaged in LINEAR light, because both tracers end with a
-`pow(lit, 1/2.2)` encode and averaging the gamma-encoded bytes is the
-edge-darkening bug.
+SUPERSAMPLING rides the frame loop as `opts.samples`: N passes of the same
+frame at N sub-pixel offsets (`subPixelSample` — pass 0 is the pixel CENTRE
+exactly, the rest the R2 low-discrepancy sequence). Passes are averaged in
+LINEAR light, because both tracers end with a `pow(lit, 1/2.2)` encode and
+averaging the gamma-encoded bytes is the edge-darkening bug.
 
-It is N FRAMES, not N rays per frame, so the five per-ray buffers and
-every watchdog bound stay exactly as measured, and fr-biox's device ray
-ceiling is not met N times sooner. The result is PROGRESSIVE: pass 0 is
-the pre-fr-vpbq frame, arriving when it always did and presenting its
-own partials; every later pass only refines and presents when it lands;
-a superseded job keeps what it finished.
+It is N FRAMES, not N rays per frame, so the five per-ray buffers and every
+watchdog bound stay exactly as measured, and the device ray ceiling is not
+met N times sooner. The result is PROGRESSIVE: pass 0 is the
+pre-supersampling frame, arriving when it always did and presenting its own
+partials; every later pass only refines and presents when it lands; a
+superseded job keeps what it finished.
 
 The speckle supersampling removes is sub-pixel STRUCTURE — measured, not
 march undersampling (`exhausted` reads 0.00% at 20x the step budget) and
@@ -939,15 +935,15 @@ six-link chain, at 128/256/512px). 39-55% of pixels still move by more
 than 24/255 between the 1-sample and the 16-sample render, against a
 smooth sphere's 0.29% through the same marcher.
 
-fr-azjk re-measured that sheet on a corrected fitted radius and moved one
-leg of it: the partial-coverage exponents read -0.34 (single map) and
--0.73 (six links) against the sphere's -0.98 — not the earlier
--0.21..-0.36 — because partial coverage counts SILHOUETTE pixels, and the
-old, inflated marching ball drew these objects far smaller than they
-actually are. It is the weaker leg either way: a frame-filling object
-keeps its structure in its interior, where a silhouette statistic cannot
-see it, which is why the six-link row's coverage fell to the sphere's
-while its impulse rate rose ABOVE the single map's.
+The set-extent correction re-measured that sheet on a corrected fitted
+radius and moved one leg of it: the partial-coverage exponents read -0.34
+(single map) and -0.73 (six links) against the sphere's -0.98 — not the
+earlier -0.21..-0.36 — because partial coverage counts SILHOUETTE pixels,
+and the old, inflated marching ball drew these objects far smaller than they
+actually are. It is the weaker leg either way: a frame-filling object keeps
+its structure in its interior, where a silhouette statistic cannot see it,
+which is why the six-link row's coverage fell to the sphere's while its
+impulse rate rose ABOVE the single map's.
 
 `main.ts` spends supersampling on the live SETTLE and on Save-PNG, at 8
 samples — never on a preview (cheap by definition) and never on offline
@@ -955,16 +951,16 @@ VIDEO force frames (the cost would multiply by the frame count). The
 progress row discloses the pass as a trailing `antialiasing pass k/8`,
 silent through pass 1.
 
-THE WEBGL STRIP ARM NOW DOES THE SAME THING (fr-jf9y), and by the same
-algorithm rather than a parallel one: it imports `subPixelSample` from
-here, averages in linear light, and spends 8 samples on the settle and on
-Save-PNG, so "8 samples" has ONE meaning whichever engine a machine has.
-An in-shader accumulation loop stayed refused for the reason above
-(all-or-nothing per-strip cost fighting the fr-096u/fr-id9r machinery);
-instead the settle opens a SEQUENCE of N whole-frame strip jobs, each
-armed exactly the way pass 0 is, so the pump, planner, fence groups and
-evidence chain are untouched — measured flat per-pass strip counts on
-real Iris: 152/258/258/300/258/258/258/258.
+THE WEBGL STRIP ARM NOW DOES THE SAME THING, and by the same algorithm
+rather than a parallel one: it imports `subPixelSample` from here, averages
+in linear light, and spends 8 samples on the settle and on Save-PNG, so "8
+samples" has ONE meaning whichever engine a machine has. An in-shader
+accumulation loop stayed refused for the reason above (all-or-nothing
+per-strip cost fighting the strip pump's own bounding and evidence
+machinery); instead the settle opens a SEQUENCE of N whole-frame strip jobs,
+each armed exactly the way pass 0 is, so the pump, planner, fence groups and
+evidence chain are untouched — measured flat per-pass strip counts on real
+Iris: 152/258/258/300/258/258/258/258.
 
 The accumulator is HOST-SIDE f32, not a float render target: ~2.1ms
 against a ~390ms pass, one sync point per pass and outside any job, so
@@ -972,76 +968,73 @@ strip-planner never sees it. This is deliberate — the WebGL arm is the
 FALLBACK arm and must not acquire an `EXT_color_buffer_float` dependency
 on the devices that have the least capability.
 
-Pass 0 is BYTE-IDENTICAL to the pre-supersampling frame, proved by
-building twice and diffing: 0 of 120000 pixels differ on SwiftShader AND
-on real Iris, max channel delta 0, the PNGs identical to the byte. That
-second run is not ceremony — fr-dlxh's lesson is that a classifier passed
-SwiftShader clean and then real Iris flipped six "stable" rows, so
-whether Mesa contracts `(vUv + 0.0) * 2.0 - 1.0` differently is a
-question only that driver can answer. Edge energy falls 0.846x / 0.851x
-on the two adapters, so the supersampling win is the object's own and not
-an artifact of the rasterizer.
+Pass 0 is BYTE-IDENTICAL to the pre-supersampling frame, proved by building
+twice and diffing: 0 of 120000 pixels differ on SwiftShader AND on real
+Iris, max channel delta 0, the PNGs identical to the byte. That second run
+is not ceremony — the escape port's lesson is that a classifier passed
+SwiftShader clean and then real Iris flipped six "stable" rows, so whether
+Mesa contracts `(vUv + 0.0) * 2.0 - 1.0` differently is a question only that
+driver can answer. Edge energy falls 0.846x / 0.851x on the two adapters, so
+the supersampling win is the object's own and not an artifact of the
+rasterizer.
 
 `?surfacesamples=N` is the escape hatch and the A/B instrument (N=1
 restores the exact single-pass behaviour).
 
-## Raster limits and tiled export (fr-biox)
+## Raster limits and tiled export
 
-A frame's RASTER is bounded by the device, not the caller (fr-biox). The
-six per-ray buffers cost 36 B/ray (44 across five before fr-si66 dropped
+A frame's RASTER is bounded by the device, not the caller. The six per-ray
+buffers cost 36 B/ray (44 across five before the status side channel dropped
 the ray state's MAP_READ twin), and it is the 16 B ray state as a BOUND
 STORAGE buffer that a limit actually bites on. So `maxFrameRays =
-min(maxBufferSize, maxStorageBufferBindingSize) / 16` — unchanged by
-fr-si66, which is worth stating because the bead expected otherwise: a
-cheaper readback cuts what a frame COMMITS, but the ceiling was never the
-total, only the widest bound buffer. A frame that would exceed it
-throws `SurfaceComputeFrameSizeError` up front, before reaching the
-kernels — because WebGPU refuses SILENTLY here: an over-limit
-`createBuffer` call returns an invalid buffer plus a validation error,
-and the first actual REJECTION shows up at a staging `mapAsync` call
-("Mapping WebGPU buffer failed: Invalid buffer"). That was the field
-report: a 4x Save-PNG whose 32.5M rays wanted a 520 MB state buffer
-inside a ~1.4 GB frame, with the size that caused it appearing nowhere in
-the error.
+min(maxBufferSize, maxStorageBufferBindingSize) / 16` — unchanged by that
+change, which is worth stating because it was expected to move: a cheaper
+readback cuts what a frame COMMITS, but the ceiling was never the total,
+only the widest bound buffer. A frame that would exceed it throws
+`SurfaceComputeFrameSizeError` up front, before reaching the kernels —
+because WebGPU refuses SILENTLY here: an over-limit `createBuffer` call
+returns an invalid buffer plus a validation error, and the first actual
+REJECTION shows up at a staging `mapAsync` call ("Mapping WebGPU buffer
+failed: Invalid buffer"). That was the field report: a 4x Save-PNG whose
+32.5M rays wanted a 520 MB state buffer inside a ~1.4 GB frame, with the
+size that caused it appearing nowhere in the error.
 
-That ceiling is NOT met against the per-dispatch one (fr-257o's
-`surfaceComputeMaxDispatchRays`, 4,194,240 rays at the workgroup limit
-this renderer never raises) even though the dispatch ceiling is the lower
-of the two on a spec-minimum device. They answer different questions —
-how much memory may a frame commit, versus how much work may one
-submission carry — and meeting them here would make a 4K pane trace soft
-for a bound no single dispatch has to meet. The march slice and the free
-shade batch clamp at the dispatch ceiling themselves; see "The free shade
-queue drains whole" above.
+That ceiling is NOT met against the per-dispatch one
+(`surfaceComputeMaxDispatchRays`, 4,194,240 rays at the workgroup limit this
+renderer never raises) even though the dispatch ceiling is the lower of the
+two on a spec-minimum device. They answer different questions — how much
+memory may a frame commit, versus how much work may one submission carry —
+and meeting them here would make a 4K pane trace soft for a bound no single
+dispatch has to meet. The march slice and the free shade batch clamp at the
+dispatch ceiling themselves; see "The free shade queue drains whole" above.
 
 Both callers size against the ceiling. The live pane FITS
-(`fitSurfaceComputeRaster`): one frame IS the image, so a hidpi raster
-past the ceiling traces soft and blits up — the preview tier's own
-mechanism, disclosed once per session. A capture TILES
-(`surfaceComputeTileRows`), also capped at
-`SURFACE_COMPUTE_MAX_TILE_RAYS`, so a device reporting gigabytes of
-headroom still exports in ~144 MB pieces (~176 MB before fr-si66; the
-4M-ray cap itself is unchanged — it was chosen against the watchdog and
-the allocator, not against the byte count).
+(`fitSurfaceComputeRaster`): one frame IS the image, so a hidpi raster past
+the ceiling traces soft and blits up — the preview tier's own mechanism,
+disclosed once per session. A capture TILES (`surfaceComputeTileRows`), also
+capped at `SURFACE_COMPUTE_MAX_TILE_RAYS`, so a device reporting gigabytes
+of headroom still exports in ~144 MB pieces (~176 MB before the ray state's
+staging twin went away; the 4M-ray cap itself is unchanged — it was chosen
+against the watchdog and the allocator, not against the byte count).
 
 `scene.ts`'s `captureSurfaceComputeFrame` traces the export as full-width
 BANDS. Every band's spec is assembled in ONE synchronous span, because a
 tiled export must outlive an auto-orbit/drift camera move — this is the
-compute answer to the WebGL drain's frozen-uniforms approach. Each band
-is a `camera.setViewOffset` sub-frustum, traced at the FULL image's trace
-eps, with the backdrop pair left as the WHOLE image's stops and a
-`bgOffset`/`bgExtent` pair (fr-xn9s) carrying the band's own place in
-that image instead — `fractal/background-shape.ts`'s shared shape reads
-FULL-IMAGE coordinates, so a band just reports where it sits rather than
-re-deriving its own two-stop sub-range. This retired
-`surfaceComputeBandStops`, which existed only because a LINEAR ramp
-restricted to a sub-rectangle is still linear; a non-linear shape has no
-such restriction to remap onto, while re-deriving `imageUv` per pixel
-from the full extent works for every shape, linear included. Band frames
-run with `capture: true`, outside the live pane's seed chain. One band is
-the whole image on an ordinary export, and that path is byte-identical to
-the untiled path (an absent `bgOffset`/`bgExtent` defaults to offset
-`(0, 0)` and extent equal to the frame's own raster).
+compute answer to the WebGL drain's frozen-uniforms approach. Each band is a
+`camera.setViewOffset` sub-frustum, traced at the FULL image's trace eps,
+with the backdrop pair left as the WHOLE image's stops and a
+`bgOffset`/`bgExtent` pair carrying the band's own place in that image
+instead — `fractal/background-shape.ts`'s shared shape reads FULL-IMAGE
+coordinates, so a band just reports where it sits rather than re-deriving
+its own two-stop sub-range. This retired `surfaceComputeBandStops`, which
+existed only because a LINEAR ramp restricted to a sub-rectangle is still
+linear; a non-linear shape has no such restriction to remap onto, while
+re-deriving `imageUv` per pixel from the full extent works for every shape,
+linear included. Band frames run with `capture: true`, outside the live
+pane's seed chain. One band is the whole image on an ordinary export, and
+that path is byte-identical to the untiled path (an absent
+`bgOffset`/`bgExtent` defaults to offset `(0, 0)` and extent equal to the
+frame's own raster).
 
 `?surfacemaxrays=N` pretends a device ceiling for testing.
 `scripts/surface-export-tile.verify.mjs` is the gate: tiled vs untiled
@@ -1049,7 +1042,7 @@ export of one pinned pose measures a mean difference of 0.002/255, with
 0.006% of pixels off by more than 8 — the march-start dither's own
 per-raster hash phase, nothing structural.
 
-### Radial vignette + bands (fr-h3mp)
+### Radial vignette + bands
 
 `SurfaceComputeFrameSpec` grows an optional `bgShape` — the same
 optional/required split as `bgOffset`/`bgExtent`: absent defaults to
@@ -1078,14 +1071,14 @@ keys on `bgCenter`/`bgScale` alongside the existing `shapeKind`/
 session (which moves `scale` without moving `shapeKind`) still
 invalidates the cached rows instead of serving a stale ellipse.
 
-## Teardown (fr-uec4)
+## Teardown
 
-`destroy()` defers the real `device.destroy()` until every in-flight
-frame unwinds. fr-uec4: a frame parks on LIVE submitted GPU work —
-`mapAsync` over a submitted `copyBufferToBuffer`, or
-`onSubmittedWorkDone` over a submitted dispatch — and tearing the device
-down under one of those took down the WHOLE Firefox process, not just a
-tab crash or a device-loss toast.
+`destroy()` defers the real `device.destroy()` until every in-flight frame
+unwinds. The failure it exists for: a frame parks on LIVE submitted GPU work
+— `mapAsync` over a submitted `copyBufferToBuffer`, or `onSubmittedWorkDone`
+over a submitted dispatch — and tearing the device down under one of those
+took down the WHOLE Firefox process, not just a tab crash or a device-loss
+toast.
 
 `destroyed` now means "teardown requested" and `deviceDestroyed` means
 "device gone" — the guard that stops both the idle path (`destroy()`
@@ -1096,25 +1089,25 @@ one-device-alive-at-a-time invariant and `RenderSession.terminate()`'s
 `void` contract untouched.
 
 The same shape was open one module over and is now closed with the same
-vocabulary: `flame-gpu-backend.ts` (fr-mxkk) counts OPS where this module
-counts frames.
+vocabulary: `flame-gpu-backend.ts` counts OPS where this module counts
+frames.
 
-Pinned by `surface-compute.test.ts` (fr-t2iq) over a fake GPUDevice — the
+Pinned by `surface-compute.test.ts` over a fake GPUDevice — the
 `flame-gpu-backend.test.ts` idiom one module over, and the reason
 `SurfaceComputeRenderer`'s constructor is PUBLIC over the named
-`SurfaceComputeRendererInit` object: sixteen positional GPU resources
-behind an adapter-acquiring `create()` left the whole state machine with
-no injection point, so the only cover it had was a manual real-Firefox
-gate. The fake CONFIGURES outcomes (a settle-on-demand device round trip,
-a `destroy` spy) and implements no GPU behavior. What it pins is the
-COUNTED SPAN — `renderFrame`'s increment to its `.finally` release — and
-the four decisions hanging off it: the deferred teardown, the inline one
-when the device is idle, exactly ONE `device.destroy()` across the
-`destroyed`/`deviceDestroyed` split, and a drain that waits for the LAST
-of two in-flight frames rather than the first (the plural case that
-matters, since a latest-wins request during a live frame counts two).
-Each of those was verified to FAIL under a matching mutation of the state
-machine, and only that one.
+`SurfaceComputeRendererInit` object: sixteen positional GPU resources behind
+an adapter-acquiring `create()` left the whole state machine with no
+injection point, so the only cover it had was a manual real-Firefox gate.
+The fake CONFIGURES outcomes (a settle-on-demand device round trip, a
+`destroy` spy) and implements no GPU behavior. What it pins is the COUNTED
+SPAN — `renderFrame`'s increment to its `.finally` release — and the four
+decisions hanging off it: the deferred teardown, the inline one when the
+device is idle, exactly ONE `device.destroy()` across the
+`destroyed`/`deviceDestroyed` split, and a drain that waits for the LAST of
+two in-flight frames rather than the first (the plural case that matters,
+since a latest-wins request during a live frame counts two). Each of those
+was verified to FAIL under a matching mutation of the state machine, and
+only that one.
 
 What it cannot pin is the crash itself. The fake parks a frame at the
 allocation error-scope round trip, where a real frame parks deeper on
