@@ -354,13 +354,13 @@ describe("the 4D tracer's variant arms", () => {
   // 3D file's resolver), which is what makes OFF byte-identical to the
   // shipped tracer AND keeps every variant the driver sees far under the
   // Mesa source cliff. MEASURED raw resolved / what the driver gets: off
-  // 62804 B (61.3KB) / 62804 B — under the 64KB threshold, so NOT
+  // 62388 B (60.9KB) / 62388 B — under the 64KB threshold, so NOT
   // stripped, i.e. the shipped bytes exactly (the radial backdrop branch
-  // moved this from 62711 B); balloon 69399 B (67.8KB) / 17274 B (16.9KB)
-  // (the echo tint moved this from 68176 B / 17086 B); plane 70588 B
-  // (68.9KB) / 18159 B (17.7KB). The assertions below pin the CONTRACT
-  // (under threshold, arms present or absent) rather than those figures,
-  // which any shader edit moves.
+  // had moved this from 62711 B to 62804 B); balloon 68865 B (67.3KB) /
+  // 17274 B (16.9KB) (the echo tint had moved this from 68176 B / 17086 B
+  // to 69399 B / 17274 B); plane 70150 B (68.5KB) / 18159 B (17.7KB). The
+  // assertions below pin the CONTRACT (under threshold, arms present or
+  // absent) rather than those figures, which any shader edit moves.
   it("resolves the shipped source verbatim when both arms are off", () => {
     const glsl = surface4FragmentFor();
     expect(glsl).toBe(createSurfaceMaterial4().fragmentShader);

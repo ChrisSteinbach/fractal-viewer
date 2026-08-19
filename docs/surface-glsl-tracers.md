@@ -405,8 +405,12 @@ tokens behind. (`surface-material-4d.ts`'s own pinned raw/stripped figure
 above `surface4FragmentFor` carries that pair.)
 
 That leaves 3D escape+balloon as the pairing to watch, per this doc's own
-MEASURE-BEFORE-ADDING-THE-NEXT-PARAGRAPH rule: it now sits at 63913B, 1623B
-under the 65,536B (64KB) `SURFACE_GLSL_STRIP_BYTES` threshold. Crossing it
+MEASURE-BEFORE-ADDING-THE-NEXT-PARAGRAPH rule: it now sits at 64667B, 869B
+under the 65,536B (64KB) `SURFACE_GLSL_STRIP_BYTES` threshold. The margin
+is SMALLER than the +1206B line above implies, and the gap is unexplained:
+between that measurement and this one the variant grew ~1.3KB that nobody
+recorded, and the tracker-id sweep then handed ~570B back. Trust the 869B,
+not the arithmetic — which is the rule working, not a footnote to it. Crossing it
 is NOT a cliff — the threshold is only where the STRIP engages, and a
 stripped source runs a fraction of its raw size (the descent-family variants
 measured earlier in this section stripped from ~83-92KB raw down to
@@ -539,8 +543,8 @@ is in `docs/surface-compute-renderer.md`.
 
 TWO VARIANT ARMS exist — the balloon inverted-union and the ground plane,
 each lifted from its 3D original and mirroring it term for term — and the
-MECHANISM is the one deviation, forced by measurement: this source is 62,804
-B with 2,732 B of headroom under the 64KB strip threshold (with the
+MECHANISM is the one deviation, forced by measurement: this source is 62,388
+B with 3,148 B of headroom under the 64KB strip threshold (62,804 B with the
 radial-vignette branch, re-measured after the shared `backgroundShapeT`
 splice — 62,711 B before the vignette, 62,251 B before the splice, 61,751 B
 before the environment light), and the arms are ~5.4KB and ~7.8KB, so one
