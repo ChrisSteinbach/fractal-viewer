@@ -308,20 +308,31 @@ function paintBackdropGradient(
   ctx.putImageData(image, 0, 0);
 }
 
-/** The backdrop canvas's own pixel size per shape (fr-h3mp): linear keeps
- * its shipped 4x256 vertical-ramp-trick size; radial needs a square-ish
- * canvas so the vignette isn't blurred out along one axis before the
- * viewport-correct {@link backgroundRadialScale} even applies — see
- * {@link paintBackdropGradient}'s doc for why the canvas's own resolution
- * is otherwise unconstrained. */
-function backdropCanvasSize(shape: BackgroundShape): {
-  width: number;
-  height: number;
-} {
-  return shape === "radial"
-    ? { width: 256, height: 256 }
-    : { width: 4, height: 256 };
-}
+/**
+ * The backdrop canvas's pixel size — ONE size for every shape (fr-h3mp),
+ * and the "one" is the load-bearing word.
+ *
+ * The obvious design gives each shape the canvas it wants: linear keeps its
+ * shipped 4x256 vertical-ramp trick, radial gets a square. THAT IS A BUG,
+ * and a silent one. three.js allocates a CanvasTexture's GPU storage with
+ * IMMUTABLE `texStorage2D` (`useTexStorage = texture.isVideoTexture !==
+ * true`, WebGLTextures), so the very first upload fixes the texture's
+ * dimensions for its lifetime. Resizing the source canvas afterwards
+ * repaints the 2D context and sets `needsUpdate`, and the new pixels simply
+ * never reach the GPU: the points explorer and the flame composite keep
+ * rendering the FIRST shape's backdrop forever, with no error anywhere.
+ * MEASURED before the fix: switching Shape to Radial moved the solid
+ * tracer's four corner luminances to a single value (a vignette) while the
+ * points and flame backdrops kept the vertical ramp's top-dark/bottom-light
+ * split unchanged, 14.7/15.0 against 32.9/32.9.
+ *
+ * So the canvas is 256x256 always. The cost is a 256 KB canvas instead of a
+ * 4 KB one, once; the linear ramp is unchanged where it is sampled, since
+ * `createLinearGradient` still runs down the same 256 rows and every column
+ * of the result is identical — 4 identical columns and 256 identical
+ * columns sample the same under any filtering.
+ */
+const BACKDROP_CANVAS_PX = 256;
 
 // Out-of-focus points are spread wider and faded; in-focus points stay crisp.
 // A cheap circle-of-confusion stand-in for true bokeh that works on points.
@@ -1272,11 +1283,16 @@ export class FractalScene {
     // cloud floats in a sense of depth instead of a flat fill. One texture,
     // repainted in place when the Background control moves (fr-5ps1).
     this.backdropCanvas = document.createElement("canvas");
-    this.backdropCanvas.width = 4;
-    this.backdropCanvas.height = 256;
+    this.backdropCanvas.width = BACKDROP_CANVAS_PX;
+    this.backdropCanvas.height = BACKDROP_CANVAS_PX;
     this.backdropCtx = this.backdropCanvas.getContext("2d");
     if (this.backdropCtx) {
-      paintBackdropGradient(this.backdropCtx, 4, 256, this.backdrop);
+      paintBackdropGradient(
+        this.backdropCtx,
+        BACKDROP_CANVAS_PX,
+        BACKDROP_CANVAS_PX,
+        this.backdrop,
+      );
     }
     this.backdropTexture = new THREE.CanvasTexture(this.backdropCanvas);
     this.scene.background = this.backdropTexture;
@@ -2167,19 +2183,11 @@ export class FractalScene {
     this.backdrop = stops;
     this.backdropShape = shape;
     this.renderNeeded = true;
-    const size = backdropCanvasSize(shape);
-    if (
-      this.backdropCanvas.width !== size.width ||
-      this.backdropCanvas.height !== size.height
-    ) {
-      this.backdropCanvas.width = size.width;
-      this.backdropCanvas.height = size.height;
-    }
     if (this.backdropCtx) {
       paintBackdropGradient(
         this.backdropCtx,
-        size.width,
-        size.height,
+        BACKDROP_CANVAS_PX,
+        BACKDROP_CANVAS_PX,
         stops,
         this.backgroundShapeSpecForImage(
           this.viewportWidth,
@@ -2226,11 +2234,10 @@ export class FractalScene {
       this.viewportHeight,
     );
     if (this.backdropCtx) {
-      const size = backdropCanvasSize(this.backdropShape);
       paintBackdropGradient(
         this.backdropCtx,
-        size.width,
-        size.height,
+        BACKDROP_CANVAS_PX,
+        BACKDROP_CANVAS_PX,
         this.backdrop,
         spec,
       );
