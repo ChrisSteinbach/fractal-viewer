@@ -95,7 +95,9 @@
  *    where the echo is a fifth of the frame. Phase P asserts it is in frame
  *    before any tint claim is read, whatever radius a run is given.
  *
- * THE RASTER IS DELIBERATELY TINY, and that is a measurement too. The
+ * THE RASTER IS DELIBERATELY TINY ON SOFTWARE, and that shrinkage is a
+ * measurement too — 0.12 (this file's `--scale=` default) is what
+ * SwiftShader FORCES on this gate, not what the tint claims need. The
  * balloon's union DE is worth two orders of magnitude on this stack —
  * MEASURED on SwiftShader compute, full raster: this system settles in 112s
  * at 720x400 with the balloon OFF, and with it ON reaches 0.3% of one
@@ -108,16 +110,20 @@
  * `scripts/balloon-real-driver.verify.mjs` is the instrument for this
  * number on a REAL driver, where it is deliberately an on/off RATIO on one
  * machine state rather than an absolute; read the two together rather than
- * re-deriving either.) So the gate shrinks the RAY COUNT rather than the
- * claim: `deviceScaleFactor` 0.12 traces a ~108x67 buffer inside a full
- * desktop layout (the CSS viewport stays past `MOBILE_BREAKPOINT`, so the
- * mode buttons are where a user's are). Both engines take the same lever,
- * both sides of every leg take the same raster, and a colour claim does not
- * need resolution — a misaligned uniform is wrong on every pixel. The
- * WebGL legs additionally pass `?surfacesamples=1` (fr-jf9y's A/B override,
- * read by the STRIP arm only — it is not a knob the compute arm has), which
- * is why the two engines' legs are not comparable to each other in cost and
- * are never compared here.
+ * re-deriving either.) So on software the gate shrinks the RAY COUNT rather
+ * than the claim: the default `--scale=0.12` traces a ~108x67 buffer inside
+ * a full desktop layout (the CSS viewport stays past `MOBILE_BREAKPOINT`,
+ * so the mode buttons are where a user's are). Both engines take the same
+ * lever, both sides of every leg take the same raster, and a colour claim
+ * does not need resolution — a misaligned uniform is wrong on every pixel.
+ * A REAL DRIVER DOES NOT NEED THE SHRINKAGE: `--scale=1` traces every leg
+ * at a real raster instead of tracing the same postage stamp faster, which
+ * is the row only real hardware buys — that is why this is a `parseArgs`
+ * flag and not a second hardcoded constant that could go stale beside this
+ * one. The WebGL legs additionally pass `?surfacesamples=1` (fr-jf9y's A/B
+ * override, read by the STRIP arm only — it is not a knob the compute arm
+ * has), which is why the two engines' legs are not comparable to each other
+ * in cost and are never compared here.
  *
  * THE CAMERA IS PINNED INTO EVERY DOCUMENT, and it is the app's OWN
  * auto-frame: the script boots each system once with no pose, reads the
@@ -144,8 +150,8 @@
  * flaky environment must never read as a product verdict.
  *
  * MEASURED, this file's own successful run (SwiftShader WebGPU + ANGLE
- * SwiftShader GL, headless, CSS 900x560 at deviceScaleFactor 0.12 → 108x67
- * device px, scene region 70x67 = 4690 px, balloonRadius 0.50x):
+ * SwiftShader GL, headless, CSS 900x560 at the default `--scale=0.12` →
+ * 108x67 device px, scene region 70x67 = 4690 px, balloonRadius 0.50x):
  *
  *   P  echo on screen (3D)      29.041% changed  meanAbs 13.174  max 222
  *   L1 tint reaches compute     26.802% changed  meanAbs 18.529  max 206
@@ -189,11 +195,15 @@ import { chromium } from "playwright-core";
  * the panel becomes a closed drawer and `#modeSurfaceBtn` is not clickable,
  * so the layout — not the render — would decide whether this gate runs. */
 const VIEWPORT = { width: 900, height: 560 };
-/** The ray-count lever. `scene.ts`'s `basePixelRatio()` is
- * `min(devicePixelRatio, 2)` with no floor, so this scales the surface
- * trace buffer directly while every CSS box stays where a user's is. See
- * the header for why the raster has to be this small. */
-const DEVICE_SCALE = 0.12;
+/** The ray-count lever's DEFAULT, overridable with `--scale=`. `scene.ts`'s
+ * `basePixelRatio()` is `min(devicePixelRatio, 2)` with no floor, so this
+ * scales the surface trace buffer directly while every CSS box stays where
+ * a user's is. 0.12 is what SOFTWARE forces on this gate, not what the
+ * feature needs — see the header for the settle-budget arithmetic that
+ * makes SwiftShader need it. A real driver does not: `--scale=1` traces
+ * the same claims at a real raster instead of the same postage stamp
+ * faster, which is the row only real hardware buys. */
+const DEFAULT_DEVICE_SCALE = 0.12;
 /** Normalized balloon radius (multiples of the raw ball radius,
  * `buildBalloon`'s `rMult`). 0.50x rather than the document's shipped
  * 1.60x because the tint's own signal there is 66x stronger in the mean —
@@ -323,6 +333,11 @@ function parseArgs(argv) {
     // in frame at 0.50x" instead of taking this file's word for it. The
     // gate's own verdict is only ever read at BALLOON_RADIUS.
     radius: BALLOON_RADIUS,
+    // `--scale=` REPLACES the old DEVICE_SCALE constant outright: 0.12 is
+    // the software-forced default (DEFAULT_DEVICE_SCALE's own comment), and
+    // `--scale=1` is how a real-driver run asks for a real raster instead
+    // of tracing the same postage stamp faster.
+    scale: DEFAULT_DEVICE_SCALE,
   };
   for (const raw of argv) {
     const m = raw.match(/^--([^=]+)(?:=(.*))?$/);
@@ -333,6 +348,7 @@ function parseArgs(argv) {
     else if (key === "settle" && value) out.settleMs = Number(value);
     else if (key === "only" && value) out.only = value;
     else if (key === "radius" && value) out.radius = Number(value);
+    else if (key === "scale" && value) out.scale = Number(value);
     else throw new Error(`Unknown argument: ${raw}`);
   }
   if (out.only !== null && out.only !== "3d" && out.only !== "4d") {
@@ -340,6 +356,9 @@ function parseArgs(argv) {
   }
   if (!Number.isFinite(out.radius) || out.radius <= 0) {
     throw new Error(`--radius takes a positive number, not ${out.radius}`);
+  }
+  if (!Number.isFinite(out.scale) || out.scale <= 0) {
+    throw new Error(`--scale takes a positive number, not ${out.scale}`);
   }
   return out;
 }
@@ -399,6 +418,13 @@ async function openScene(page, { url, tag, hash, gl }) {
     ? `?surfacestate&surfacegl&surfacesamples=1&leg=${tag}`
     : `?surfacestate&leg=${tag}`;
   await page.goto(`${url}/${query}${hash}`, { waitUntil: "load" });
+  // Mutter only sends frame callbacks to VISIBLE surfaces, and every
+  // capture below waits on the fr-opgk settle latch — an occluded window
+  // parks it at a deterministic percent (fr-j8uk measured 64%/99% stalls).
+  // Keep the window on top before anything polls it. This is the one
+  // navigation choke point in the file, so one call site covers every
+  // probe and capture.
+  await page.bringToFront();
   await page.waitForFunction(
     () => typeof window.__surfaceState === "function",
     undefined,
@@ -787,7 +813,7 @@ async function main() {
     const page = await browser.newPage({
       ignoreHTTPSErrors: true,
       viewport: VIEWPORT,
-      deviceScaleFactor: DEVICE_SCALE,
+      deviceScaleFactor: args.scale,
       // Auto-orbit and the 4D auto-tumble both follow this at boot, and a
       // rotor that advanced for a different number of frames between two
       // loads would make the 4D leg's two documents render different
