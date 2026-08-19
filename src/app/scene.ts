@@ -4830,8 +4830,6 @@ export class FractalScene {
       planner,
       msPerPxEstimate: priorMsPerPx,
       queueWorstMsPerPx: this.surfaceStripQueueWorstMsPerPx(),
-      measured: false,
-      lastSubmittedPx: 0,
       spentMs: 0,
       inFlight: [],
       inFlightPx: 0,
@@ -4994,7 +4992,13 @@ export class FractalScene {
           `[surfperf] preview complete ${String(width)}x${String(height)}` +
             ` spentMs=${job.spentMs.toFixed(1)}` +
             ` pxCost=${this.surfacePreviewPxCostMs.toFixed(4)}` +
-            ` worstSeen=${job.planner.observedWorstMsPerPx.toFixed(3)}`,
+            ` worstSeen=${job.planner.observedWorstMsPerPx.toFixed(3)}` +
+            // The fr-ado7 cost model, so a field run can tell a
+            // fixed-cost-dominated frame from an expensive one: an
+            // intercept past the tier target is the regime the sizer
+            // switches branches in.
+            ` fixedMs=${job.planner.cost.interceptMs.toFixed(1)}` +
+            ` marginal=${job.planner.cost.marginalMsPerPx.toFixed(4)}`,
         );
       }
     }
@@ -5771,10 +5775,13 @@ export class FractalScene {
    *   the queue last had work, attributed across the batch's pixels; poll
    *   timestamps quantize to the caller's clock, so cheap batches read
    *   high, which only over-queues cheap regions, and at saturation, where
-   *   pricing matters, it is accurate). The
-   *   estimate feeds the planner as `estimate x lastSubmittedPx` (the
-   *   shape its sizing formula expects) and spikes the moment a batch
-   *   lands in an expensive band, emptying the refill behind it. The
+   *   pricing matters, it is accurate). Each batch is reported to the
+   *   planner at the width it was measured at, where the two-term cost
+   *   model attributes it (fr-ado7) — the sizing call itself passes NO
+   *   measurement, since re-quoting a batch average at one strip's width
+   *   is what drove the old sizer to 1px strips. The estimate still
+   *   spikes the moment a batch lands in an expensive band, emptying the
+   *   refill behind it. The
    *   estimate is also one whole batch BEHIND reality, and fold frames
    *   are 100-1000x bimodal — so the refill ALSO prices the queue at the
    *   job's queue price, raised live by the planner's ratcheted
@@ -5832,7 +5839,22 @@ export class FractalScene {
       let submits = 0;
       let groupPx = 0;
       let groupStrips = 0;
-      const est = (): number => job.msPerPxEstimate ?? 0;
+      // PRICE THE PACING ON THE MARGINAL (fr-ado7), not on the batch
+      // average. A batch's wall carries its fixed cost — the fence
+      // service, and for a yielding drain one whole caller tick of poll
+      // quantization — and charging that to the pixels that happened to
+      // ride it collapses both lines below to a single strip on exactly
+      // the frames where the fixed cost dominates, which is where a
+      // pipeline is worth having (a queue one strip deep re-measures the
+      // same tick against fewer pixels, which is the fr-ado7 loop seen
+      // from the caller's side). On an ordinary frame the two agree
+      // within `(px + pivot)/px` and nothing moves. SAFETY IS NOT ON
+      // THIS LINE: the queue's real bound is `worst()` below, priced at
+      // the planner's raw ms/px ratchet and untouched.
+      const est = (): number =>
+        job.planner.cost.marginalMsPerPx > 0
+          ? job.planner.cost.marginalMsPerPx
+          : (job.msPerPxEstimate ?? 0);
       const worst = (): number =>
         Math.max(job.queueWorstMsPerPx, job.planner.observedWorstMsPerPx);
       const closeGroup = (): boolean => {
@@ -5865,14 +5887,23 @@ export class FractalScene {
         // alone, never a stall.
         (job.inFlightPx + groupPx) * worst() < SURFACE_STRIP_QUEUE_WORST_MS
       ) {
-        const strip = job.planner.next(seedStripMeasurement(job));
+        // NULL, NOT THE ESTIMATE (fr-ado7): this regime measures FENCE
+        // BATCHES, and {@link collectStripFences} already reports each
+        // one to `planner.observe` at the width it was measured at.
+        // Handing the same batch back here as
+        // `estimate x lastSubmittedPx` would be a fabricated measurement
+        // at a width nothing was measured at — the per-pixel-average
+        // re-quotation the two-term model exists to undo — and the
+        // planner would attribute it a second time. Its worst-price
+        // ratchet contribution was redundant anyway: identical ms/px, and
+        // the ratchet is a max.
+        const strip = job.planner.next(null);
         if (!strip) break;
         this.renderStripRects(target, strip.rects);
         // The flush hands the strip to the GPU as its own submission now —
         // without it the whole group would ride one oversized submission
         // with no preemption boundaries inside it.
         gl.flush();
-        job.lastSubmittedPx = strip.px;
         job.stat.strips += 1;
         groupPx += strip.px;
         groupStrips += 1;
@@ -5890,7 +5921,6 @@ export class FractalScene {
             job.spentMs += ms;
             job.msPerPxEstimate = ms / Math.max(1, groupPx);
             job.planner.observe(ms, groupPx);
-            job.measured = true;
             groupPx = 0;
             groupStrips = 0;
           }
@@ -5994,7 +6024,6 @@ export class FractalScene {
       // the batch that discovers the expensive band on frames traced
       // top-down toward the surface.
       job.planner.observe(marginalMs, completedPx);
-      job.measured = true;
       job.stat.polls += 1;
       if (SURFPERF && busyMs > SURFPERF_HEAVY_STRIP_MS) {
         console.log(
@@ -6027,7 +6056,6 @@ export class FractalScene {
       this.readStripCorner(gl, strip);
       lastMs = performance.now() - t0;
       job.spentMs += lastMs;
-      job.lastSubmittedPx = strip.px;
       // Measurement-time report (fr-id9r): the final strip's — and an
       // escaping strip's — measurement never reaches next().
       job.planner.observe(lastMs, strip.px);
@@ -6040,7 +6068,6 @@ export class FractalScene {
         job.msPerPxEstimate =
           Math.max(lastMs - SURFACE_STRIP_SYNC_TAX_MS, lastMs * 0.05) /
           Math.max(1, strip.px);
-        job.measured = true;
         this.resetScissor(target);
         return true;
       }
@@ -6763,18 +6790,6 @@ interface SurfaceFullFrameArm {
   priorPxCostMs: number | null;
 }
 
-/** The `prevMs` the planner's next sizing call gets: the estimate in the
- * planner's own units (`msPerPxEstimate x lastSubmittedPx`), or null while
- * nothing REAL has been measured yet — a prior-seeded estimate must never
- * reach the planner as a measurement (see {@link SurfaceStripJob.measured}),
- * and a job that already carries one (an adopted/re-armed one) sizes its
- * first strip from it instead of paying the probe again. */
-function seedStripMeasurement(job: SurfaceStripJob): number | null {
-  return job.measured && job.msPerPxEstimate !== null && job.lastSubmittedPx > 0
-    ? job.msPerPxEstimate * job.lastSubmittedPx
-    : null;
-}
-
 /** Traced-and-measured coverage of `job` in [0, 1]: planned pixels less the
  * ones still riding this job's OWN fences (an adopted backlog's pixels were
  * never in `plannedPx`, fr-7to5, so subtracting them too would report
@@ -6887,23 +6902,19 @@ interface SurfaceStripJob {
   planner: StripPlanner;
   /** Latest per-pixel cost estimate (ms): seeded from the probe prior
    * (null = no prior = the sync-collapse regime), batch-attributed by the
-   * pipelined pump thereafter. Times `lastSubmittedPx`, it is the
-   * `prevMs` the planner's sizing formula expects. */
+   * pipelined pump thereafter. It PRICES the pump's queue and its own
+   * regime marker, and since fr-ado7 it no longer sizes anything — the
+   * planner's two-term {@link StripPlanner.cost} does, off the same
+   * batch measurements reported through `observe` at their real widths,
+   * and the pump's queue prices off its marginal. A prior-seeded value
+   * therefore never reaches the planner as a measurement at all, which is
+   * what the job's old `measured` flag existed to guarantee (caught live
+   * once: worstSeen exactly 10.000 = STRIP_FOLD_PRIOR_MS_PER_PX). */
   msPerPxEstimate: number | null;
   /** Frozen-at-arm per-pixel price (ms) for the pump's in-flight queue
    * bound (fr-id9r; see surfaceStripQueueWorstMsPerPx) — the pump maxes
    * it live with the planner's own ratcheted observations. */
   queueWorstMsPerPx: number;
-  /** False until the estimate reflects a REAL measurement: the planner
-   * must never be fed the prior-seeded estimate as a measurement — its
-   * worst-price ratchet would record the PRIOR as an observation and the
-   * evidence chain would echo it forever (caught live: worstSeen exactly
-   * 10.000 = STRIP_FOLD_PRIOR_MS_PER_PX). */
-  measured: boolean;
-  /** Pixel count of the most recently PLANNED strip (the planner's
-   * `lastPx`, mirrored so the estimate can be handed back in its
-   * units). */
-  lastSubmittedPx: number;
   /** Accumulated GPU-busy wall time (ms) — the preview governor's sample,
    * the px-cost numerator, and the capture drains' spend ceiling. "Busy" is
    * measured as WALL WITH THE QUEUE OUTSTANDING, not as GPU time: a batch

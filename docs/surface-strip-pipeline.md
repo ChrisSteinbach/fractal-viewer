@@ -110,6 +110,123 @@ No-prior jobs (affine) keep the legacy sync-collapse behavior: serial
 joined strips that complete a whole light job in one call, escaping to the
 pipelined behavior past `SURFACE_STRIP_SYNC_ESCAPE_MS`.
 
+## The two-term cost model (fr-ado7)
+
+Subtracting a FLAT `SURFACE_STRIP_SYNC_TAX_MS` and dividing the rest by the
+batch's pixels was a calibration, and it had an absorbing state. When a
+batch's wall is dominated by fixed cost rather than by trace work,
+subtracting 80ms leaves the remainder attributed to the pixels; the sizer
+asks for fewer; the next batch is MORE fixed-dominated; and growing back
+needs a batch measuring under `targetMs`, which the fixed cost alone
+forbids. fr-kz2p measured it on a near-empty frame at extreme zoom: strips
+collapsed 990 → 484 → … → 1px and then oscillated at 1-6px, each batch
+still costing 500-1700ms REGARDLESS of pixel count, with a Save-PNG frozen
+at 59% for the last 5.5 minutes of a 480s run. Extrapolated remaining cost:
+hours to days for one pass of eight.
+
+**The fix is `surface-compute.ts`'s `ShadeHitCost` ported down** (fr-p8bc /
+fr-d6g5 / fr-2ojg had the identical pathology at hit dispatches):
+`StripCost = {interceptMs, marginalMsPerPx}`, each measurement's surprise
+split by WIDTH (`w = px/(px + pivot)` to the marginal, the rest to the
+intercept), sizing off the MARGINAL alone. The safety mechanisms are
+untouched: **the worst-case cap is still priced on the RAW ms/px ratchet
+and applied LAST**, so the set of sizes a strip may take is exactly what it
+was — only the choice within it moved. That precedence is load-bearing and
+is written at the clamp: the model cannot tell a monster pose from an
+overhead-bound batch (see the identity below), and the raw ratchet is the
+only thing that can.
+
+Three places the port had to DIVERGE from its compute twin, each measured
+or reasoned rather than copied:
+
+- **The pivot is a PRICE, not a width.** `SURFACE_COMPUTE_SHADE_COST_PIVOT`
+  = 512 hits is a HARDWARE knee (below it a dispatch's cost really is flat
+  in width). A scissored strip has no knee — its cost is linear in pixels
+  from pixel one — so "narrow" is a statement about the SCENE, and this
+  planner's two tiers are three orders of magnitude apart in natural strip
+  width (a light affine settle converges at ~35,000px; a heavy fold PREVIEW
+  at ~3px). A single pixel pivot cannot serve both. `STRIP_COST_PIVOT_MS_PER_PX`
+  = 0.6 (inside the measured heavy-fold band: fr-096u's 0.5-4ms/px on
+  mandelboxKifs, fr-du81's ~6ms/px SwiftShader preview) puts the settle
+  tier's pivot at 125px and the preview tier's at 20px.
+- **The rate limit is on the marginal's RISE, not its FALL.** Compute limits
+  the fall because a falling marginal INFLATES its batch width. Here a
+  RISING marginal SHRINKS strips, and shrinking is the direction with the
+  absorbing state at the bottom. Optimism needs no limit of its own: it
+  already has `STRIP_MAX_GROWTH` (8x per step) and the worst-case cap,
+  neither of which the compute sizer had.
+- **The floor is 32px, not "one workgroup".** There is no physical unit
+  here, so it is chosen against the clamps it sits between: below the fold
+  class's fresh cap (4000/50 = 80px), so it can never loosen a strip that
+  cap was holding; 32x fewer submissions than a 1px floor. It does NOT
+  apply to the probe or to a repeat of an unmeasured strip — that size is
+  the caller's PRIOR, fr-096u's one bound on an unmeasured submission.
+
+`scene.ts` changed in three ways. Both writers already reported at
+measurement time (fr-id9r's `observe` door), so they feed the model
+directly; the pipelined refill now passes **null** to `next()` instead of
+`estimate × lastSubmittedPx`, because re-quoting a batch average at one
+strip's width is a fabricated measurement at a width nothing was measured
+at — the exact conflation the model exists to undo (its worst-price ratchet
+contribution was redundant: same ms/px, and the ratchet is a max). That
+retired `seedStripMeasurement` and the job's `measured` / `lastSubmittedPx`
+fields with it. And the pump's two THROUGHPUT lines — the queue budget and
+the fence-group close — now price on the model's marginal rather than the
+batch average: with the average, the queue collapses to a single strip on
+exactly the frames where the fixed cost dominates, which is where a
+pipeline is worth having. The queue's SAFETY line (`worst()`, priced at the
+raw ratchet, `SURFACE_STRIP_QUEUE_WORST_MS`) is untouched.
+
+### Simulated, not yet driver-measured
+
+Every number below is the shipped planner run against synthetic cost
+functions (`intercept + px × marginal`), against a frozen copy of the
+pre-fr-ado7 sizer under the same probe, cap and row-snap. The frozen copy
+lives in `strip-planner.test.ts` so "ordinary frames are unmoved" stays a
+comparison rather than a memory. Converged strip, its cost, and the
+frame's submission count:
+
+| scene (cost function)               | new                        | old                        |
+| ----------------------------------- | -------------------------- | -------------------------- |
+| degenerate 500ms fixed (fr-kz2p)    | 222px / 500ms / 4,151 subs | 1px / 500ms / 921,600 subs |
+| degenerate 100ms fixed, 660x410     | 125px / 100ms / 2,165 subs | 1px / 100ms / 270,600 subs |
+| degenerate noisy 500-1700ms         | 1280px / 700ms / 720 subs  | 1px / 921,600 subs         |
+| healthy fold settle 5+0.05/px       | 1280px / 69ms / 720 subs   | identical                  |
+| cheap affine settle 1+0.002/px      | 35840px / 73ms / 26 subs   | identical                  |
+| fold settle at class cap 2+0.3/px   | 80px / 26ms                | identical                  |
+| settle behind a 5x-optimistic prior | 144px / 74ms               | 146px / 75ms               |
+| light preview 2+0.02/px, t12        | 384px / 10ms               | identical                  |
+| heavy preview 3+0.4/px, t12         | 32px / 16ms                | 22px / 12ms                |
+| monster preview 1+4/px, t12         | 64px / 257ms               | 3px / 13ms                 |
+| monster settle 500ms/px             | 7px / 3502ms               | 1px / 502ms                |
+
+**The two disclosed regressions are the last two rows, and they are the
+same one.** Where a scene's natural strip is far BELOW the pivot, the split
+reads its measurements as mostly fixed cost and the sizer stops tracking
+`targetMs`, converging instead against `STRIP_MIN_PX` and the worst-case
+cap. Both are bounded on both sides, so the cost is interruption
+granularity and present cadence, never watchdog headroom: no strip's
+worst-case predicted cost changed, because the cap is unchanged and applied
+last (the monster settle's 7px × 500ms/px = 3.5s IS the cap's own 4000ms
+promise; the old sizer's 1px was under it by accident, via the same
+misattribution this fix removes). `strip-planner.test.ts` pins the
+monster-preview case so it cannot drift unnoticed.
+
+The reason it cannot be fixed by tuning is the identity, carried down from
+the compute arm's own doc and re-proved for this shape: unclamped,
+`nextStripCost` preserves `interceptMs = pivotPx × marginalMsPerPx`
+IDENTICALLY, so the RATIO is the attribution weight's and only the SCALE is
+the data's. Two parameters, one measurement, an exact fit. That is what
+makes the fixed-cost branch's answer a constant width no measurement can
+walk down (the property that kills the absorbing state) and equally what
+makes the model unable to identify the two terms. Identification needs two
+widths far enough apart to be a lever; the sizer visits one at a time. A
+two-point slope estimator was prototyped over the same scenarios — it
+identifies the terms correctly on the clean cases (degenerate 2560px, heavy
+preview 32px) but is noise-sensitive on the ±40% measurement spread real
+batches show, so it is recorded here as the direction a future session
+would take, not as something shipped.
+
 ## Capture and export drains
 
 Capture/offline export runs the SAME pump (fr-y6m0). Before this, those
