@@ -515,6 +515,22 @@ export interface SurfaceComputeFrameSpec {
    * the pixel's own backdrop color alone; misses keep the pure untinted
    * backdrop either way. */
   fogTintStrength?: number;
+  /** The balloon echo's tint color (fr-j85n) — the ShadeParams tail
+   * (module doc in `fractal/surface-de-gpu.ts`): a SHELL hit's base
+   * albedo mixes toward it before lighting, so the inverted copy reads
+   * as an echo rather than as more of the same object. Re-read from
+   * scene state at every spec assembly like fogTint. Defaults to
+   * [0, 0, 0] when omitted, matching {@link packSurfaceGpuShade}'s own
+   * default — the document's `DEFAULT_BALLOON_TINT`, black, which is
+   * what makes the strength slider alone a dimmer. Unread by a session
+   * whose target was created without `balloon: true`. */
+  balloonTint?: Vec3;
+  /** The balloon echo's tint strength (fr-j85n), 0..1 — 0 (the default
+   * when omitted, matching {@link packSurfaceGpuShade}) is the identity,
+   * `mix(x, y, 0)` = x, so an unset pair renders the pre-fr-j85n frame
+   * byte for byte. The kernel gates it per-ray on the union argmin, so a
+   * FRACTAL-term hit is untouched at any strength. */
+  balloonTintStrength?: number;
   /** Ground plane block (fr-rhn5) — REQUIRED whenever the session's
    * target carried `groundPlane: true` (the kernels' 336-byte params
    * struct has no meaningful default; view4/balloon's required-throw
@@ -2493,6 +2509,8 @@ export class SurfaceComputeRenderer {
         dither: spec.dither,
         fogTint: spec.fogTint,
         fogTintStrength: spec.fogTintStrength,
+        balloonTint: spec.balloonTint,
+        balloonTintStrength: spec.balloonTintStrength,
         pixelJitter,
         envStrength: spec.envLight,
         bgOffset,

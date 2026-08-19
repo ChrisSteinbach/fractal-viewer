@@ -998,6 +998,15 @@ uniform vec3 uBalloonCenter;
 uniform float uBalloonR;
 uniform float uBalloonRho;
 uniform float uBalloonFar;
+// The echo's own tint (fr-j85n), packed by packSurfaceBalloonTint: mixed
+// into the BASE COLOUR of a shell hit, before lighting, so the shell still
+// shades as geometry and the specular stays untinted — the envTint
+// precedent. Declared inside this arm, the SURFACE_BULB precedent: no
+// other variant pays these bytes. Strength 0 is the default and
+// mix(x, y, 0.0) == x exactly, so an unset tint is today's frame byte for
+// byte.
+uniform vec3 uBalloonTint;
+uniform float uBalloonTintStrength;
 #define surfaceDE surfaceDEFractal
 #endif
 #if SURFACE_ESCAPE
@@ -2812,9 +2821,13 @@ ${foldValueFormGlsl(shadeDeWidth)}
   // ties -> fractal). The descent runs at the winning term's own query
   // point; colorPos reports that point so the height/radius color sources
   // read the shell's SOURCE geometry instead of clamping at the far wall.
+  // shell (fr-j85n) mirrors the same argmin as a 0/1 flag — 1.0 when the
+  // inverted echo term won, 0.0 on the fractal term or a tie — so the
+  // caller can restrict the tint mix to shell hits alone.
   float surfaceDEBalloonHitInfo(
     vec3 p,
     out vec3 colorPos,
+    out float shell,
     out int firstChoice,
     out float trap,
     out float rings,
@@ -2826,9 +2839,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
     float dS = scale * balloonInnerDE(q);
     if (dS < dF) {
       colorPos = q;
+      shell = 1.0;
       return scale * surfaceDEFractal(q, firstChoice, trap, rings, sheets);
     }
     colorPos = p;
+    shell = 0.0;
     return surfaceDEFractal(p, firstChoice, trap, rings, sheets);
   }
 
@@ -3136,7 +3151,8 @@ ${foldValueFormGlsl(shadeDeWidth)}
     // descent at its INVERTED query point, and cpos carries that point to
     // the height/radius color sources below.
     vec3 cpos;
-    surfaceDEBalloonHitInfo(pos, cpos, firstChoice, trap, rings, sheets);
+    float shell;
+    surfaceDEBalloonHitInfo(pos, cpos, shell, firstChoice, trap, rings, sheets);
 #else
     surfaceDE(pos, firstChoice, trap, rings, sheets);
 #endif
@@ -3187,6 +3203,14 @@ ${foldValueFormGlsl(shadeDeWidth)}
       }
       base = texture(uColorLUT, vec2(u, 0.5)).rgb;
     }
+#if SURFACE_BALLOON
+    // fr-j85n: the echo's own tint, on the BASE ALBEDO before lighting —
+    // shell restricts it to the inverted term (the oracle's own
+    // attribution; ties go to the fractal), so a fractal-term hit is
+    // untouched at any strength. strength 0 (the default) makes this
+    // mix(base, uBalloonTint, 0.0) == base — today's frame byte for byte.
+    base = mix(base, uBalloonTint, uBalloonTintStrength * shell);
+#endif
 
     // Soft shadow: classic DE penumbra toward the light — the shadow ray's
     // closest approach to a surface, sharpened by 8/ts, starting just off
@@ -3574,6 +3598,12 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uBalloonR: { value: 0 },
       uBalloonRho: { value: 1 },
       uBalloonFar: { value: 0 },
+      // The echo's independent tint (fr-j85n): inert default (strength 0,
+      // packSurfaceBalloonTint's own default) is a bit-exact identity —
+      // see the uBalloonTint declaration above. Unconditional like the
+      // rest of this block.
+      uBalloonTint: { value: new THREE.Vector3() },
+      uBalloonTintStrength: { value: 0 },
       // Ground plane (fr-rhn5): inert defaults; alive only under the
       // SURFACE_GROUND_PLANE define (ball radius 1 so a stray enabled
       // read could never divide by zero). Three.js ignores entries the
@@ -4191,6 +4221,31 @@ export function setSurfaceBalloon(
     );
     material.needsUpdate = true;
   }
+}
+
+/**
+ * Pack the balloon echo's independent tint (fr-j85n): the shell-hit mix
+ * `mix(base, uBalloonTint, uBalloonTintStrength * shell)` both tracers'
+ * `main()` applies before lighting, gated on `surfaceDEBalloonHitInfo`'s own
+ * argmin attribution. ONE helper serves BOTH dimensions — this module and
+ * `surface-material-4d.ts` declare the identical `uBalloonTint`/
+ * `uBalloonTintStrength` uniform names, the established direction of reuse
+ * this module already carries the other way (the 4D material imports
+ * {@link surfaceFragmentFor} and {@link SurfaceBalloonSpec} from here).
+ * Unlike {@link setSurfaceBalloon} this never touches `defines` or
+ * `fragmentShader`: the tint lives inside the existing `SURFACE_BALLOON`
+ * arm, so there is no recompile to guard against — every call is the
+ * radius slider's own per-drag-tick shape. Strength 0 (the default) is a
+ * bit-exact identity, matching `createSurfaceMaterial`'s inert uniform.
+ */
+export function packSurfaceBalloonTint(
+  material: THREE.ShaderMaterial,
+  tint: Vec3,
+  strength: number,
+): void {
+  const u = material.uniforms;
+  (u.uBalloonTint.value as THREE.Vector3).set(...tint);
+  u.uBalloonTintStrength.value = strength;
 }
 
 /** The ground plane's uniform payload (fr-rhn5), built by scene.ts from
