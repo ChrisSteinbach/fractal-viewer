@@ -9,6 +9,7 @@ import {
   SURFACE4_MAX_MAPS,
 } from "./surface-material-4d";
 import {
+  packSurfaceBalloonTint,
   SURFACE_GLSL_STRIP_BYTES,
   surfaceFragmentFor,
 } from "./surface-material";
@@ -355,8 +356,9 @@ describe("the 4D tracer's variant arms (fr-qxxw, fr-h0c3)", () => {
   // Mesa source cliff. MEASURED raw resolved / what the driver gets:
   // off 62804 B (61.3KB) / 62804 B — under the 64KB threshold, so NOT
   // stripped, i.e. the shipped bytes exactly (fr-h3mp's radial branch
-  // moved this from 62711 B); balloon 68176 B (66.6KB) / 17086 B (16.7KB);
-  // plane 70588 B (68.9KB) / 18159 B (17.7KB).
+  // moved this from 62711 B); balloon 69399 B (67.8KB) / 17274 B (16.9KB)
+  // (fr-j85n's echo tint moved this from 68176 B / 17086 B); plane
+  // 70588 B (68.9KB) / 18159 B (17.7KB).
   // The assertions below pin the CONTRACT (under threshold, arms present or
   // absent) rather than those figures, which any shader edit moves.
   it("resolves the shipped source verbatim when both arms are off", () => {
@@ -518,6 +520,57 @@ describe("the 4D tracer's variant arms (fr-qxxw, fr-h0c3)", () => {
       "return mix(vec3(1.0), e / max(max(e.r, max(e.g, e.b)), 1.0e-4), uEnvLight);",
     );
   });
+
+  it("packs the echo tint's uniforms and the shell-gated base-albedo mix when the balloon is on (fr-j85n)", () => {
+    const glsl = surface4FragmentFor(1, 0);
+    expect(glsl).toContain("uniform vec3 uBalloonTint;");
+    expect(glsl).toContain("uniform float uBalloonTintStrength;");
+    // Gated on shell, and on the BASE ALBEDO — the same line the 3D arm
+    // emits, character for character (see the cross-file pin below).
+    expect(glsl).toContain(
+      "base = mix(base, uBalloonTint, uBalloonTintStrength * shell);",
+    );
+    expect(glsl.length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+  });
+
+  it("pays nothing for the echo tint while the balloon is off (fr-j85n)", () => {
+    // uBalloonTint/uBalloonTintStrength both carry the uBalloonCenter etc.
+    // prefix the "resolves the shipped source verbatim" test above already
+    // nets for the off/off case; this pins the tint's own tokens
+    // independently, and across the plane arm too (the balloon's only
+    // other neighbor), so a future narrowing of that wider check cannot
+    // silently stop covering this one.
+    for (const glsl of [surface4FragmentFor(), surface4FragmentFor(0, 1)]) {
+      expect(glsl).not.toContain("uBalloonTint");
+      expect(glsl).not.toContain("uBalloonTintStrength");
+      expect(glsl).not.toContain("* shell");
+    }
+  });
+
+  it("surfaceDEBalloonHitInfo reports shell 1.0 on the inverted term and 0.0 on the fractal term/tie, right after colorPos, with sStar staying the trailing output", () => {
+    // The balloon arm always resolves over the 64KB strip threshold here
+    // (module doc: raw ~68KB), so this pin — unlike 3D's escape+balloon
+    // combo — reads the STRIPPED (indentation-free) token stream.
+    const glsl = surface4FragmentFor(1, 0);
+    expect(glsl).toContain(
+      "vec3 p,\nout vec3 colorPos,\nout float shell,\nout int firstChoice,",
+    );
+    expect(glsl).toContain("out float sheets,\nout float sStar\n) {");
+    expect(glsl).toContain("if (dS < dF) {\ncolorPos = q;\nshell = 1.0;");
+    expect(glsl).toContain(
+      "colorPos = p;\nshell = 0.0;\nreturn surfaceDEFractal(p, firstChoice, trap, rings, sheets, sStar);",
+    );
+  });
+
+  it("emits the same balloon tint mix line in both dimensions, character for character (fr-j85n)", () => {
+    // The bulbPow8 drift-prevention idiom (surface-material.test.ts), one
+    // feature over: both mirrors read shell and uBalloonTint the same way,
+    // so a one-sided edit to either fails here rather than in a browser.
+    const line =
+      "base = mix(base, uBalloonTint, uBalloonTintStrength * shell);";
+    expect(surfaceFragmentFor(0, 0, 1)).toContain(line);
+    expect(surface4FragmentFor(1, 0)).toContain(line);
+  });
 });
 
 describe("setSurfaceView4 (fr-33yb, fr-wa6o)", () => {
@@ -592,6 +645,28 @@ describe("setSurface4Balloon (fr-qxxw)", () => {
     expect(material.version).toBe(version);
     setSurface4Balloon(material, null);
     expect(material.version).toBeGreaterThan(version);
+  });
+
+  it("packSurfaceBalloonTint (surface-material.ts) packs this material's uniforms too — one helper, both dimensions (fr-j85n)", () => {
+    // No 4D-local pack helper exists: this material declares the same
+    // uBalloonTint/uBalloonTintStrength names as the 3D one, the
+    // established direction of reuse this module already runs the other
+    // way (surfaceFragmentFor, SurfaceBalloonSpec, both imported above).
+    const material = createSurfaceMaterial4();
+    packSurfaceBalloonTint(material, [0.2, 0.4, 0.6], 0.75);
+    const tint = material.uniforms.uBalloonTint.value as THREE.Vector3;
+    expect([tint.x, tint.y, tint.z]).toEqual([0.2, 0.4, 0.6]);
+    expect(material.uniforms.uBalloonTintStrength.value).toBe(0.75);
+  });
+
+  it("packSurfaceBalloonTint never touches the shader on this material either", () => {
+    const material = createSurfaceMaterial4();
+    setSurface4Balloon(material, balloonSpec());
+    const version = material.version;
+
+    packSurfaceBalloonTint(material, [1, 0, 0], 0.5);
+
+    expect(material.version).toBe(version);
   });
 });
 

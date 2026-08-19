@@ -488,6 +488,14 @@ uniform vec3 uBalloonCenter;
 uniform float uBalloonR;
 uniform float uBalloonRho;
 uniform float uBalloonFar;
+// The echo's own tint (fr-j85n), the 3D arm's uBalloonTint/
+// uBalloonTintStrength verbatim, packed by the SAME packSurfaceBalloonTint
+// (surface-material.ts — both materials declare these names). Mixed into
+// the BASE COLOUR of a shell hit, before lighting; strength 0 is the
+// default and mix(x, y, 0.0) == x exactly, so an unset tint is today's
+// frame byte for byte.
+uniform vec3 uBalloonTint;
+uniform float uBalloonTintStrength;
 #define surfaceDE surfaceDEFractal
 #endif
   /**
@@ -1426,10 +1434,15 @@ uniform float uBalloonFar;
   // wall. sStar rides out with the rest (fr-9c9e) and is the winning
   // descent's own segment parameter, so a shell hit's radius color lifts
   // through the w its source point sits at rather than the slab's centre
-  // plane — the one output the 3D wrapper has no counterpart for.
+  // plane — the one output the 3D wrapper has no counterpart for. shell
+  // (fr-j85n) mirrors the same argmin as a 0/1 flag — 1.0 when the inverted
+  // echo term won, 0.0 on the fractal term or a tie — so the caller can
+  // restrict the tint mix to shell hits alone; kept right after colorPos,
+  // with sStar staying the trailing output.
   float surfaceDEBalloonHitInfo(
     vec3 p,
     out vec3 colorPos,
+    out float shell,
     out int firstChoice,
     out float trap,
     out float rings,
@@ -1442,10 +1455,12 @@ uniform float uBalloonFar;
     float dS = scale * surfaceDEFractal(q);
     if (dS < dF) {
       colorPos = q;
+      shell = 1.0;
       return scale *
         surfaceDEFractal(q, firstChoice, trap, rings, sheets, sStar);
     }
     colorPos = p;
+    shell = 0.0;
     return surfaceDEFractal(p, firstChoice, trap, rings, sheets, sStar);
   }
 
@@ -1738,9 +1753,11 @@ uniform float uBalloonFar;
     // at its INVERTED query point, and cpos carries that point to the
     // height/radius color sources below.
     vec3 cpos;
+    float shell;
     surfaceDEBalloonHitInfo(
       pos,
       cpos,
+      shell,
       firstChoice,
       trap,
       rings,
@@ -1831,6 +1848,14 @@ uniform float uBalloonFar;
       }
       base = texture(uColorLUT, vec2(u, 0.5)).rgb;
     }
+#if SURFACE_BALLOON
+    // fr-j85n: the echo's own tint, on the BASE ALBEDO before lighting —
+    // shell restricts it to the inverted term (the oracle's own
+    // attribution; ties go to the fractal), so a fractal-term hit is
+    // untouched at any strength. strength 0 (the default) makes this
+    // mix(base, uBalloonTint, 0.0) == base — today's frame byte for byte.
+    base = mix(base, uBalloonTint, uBalloonTintStrength * shell);
+#endif
 
     // Soft shadow: classic DE penumbra toward the light — the shadow ray's
     // closest approach to a surface, sharpened by 8/ts, starting just off
@@ -1950,8 +1975,11 @@ uniform float uBalloonFar;
  *            new uniforms cost 93 B here even at "linear" defaults —
  *            docs/surface-glsl-tracers.md carries the fr-ehcj/fr-xn9s
  *            history this continues).
- * - balloon: 68176 B (66.6KB) / 17086 B (16.7KB) — past the threshold, so
- *            the size rule strips it.
+ * - balloon: 69399 B (67.8KB) / 17274 B (16.9KB) — past the threshold, so
+ *            the size rule strips it (fr-j85n's echo tint moved this from
+ *            68176 B / 17086 B: +1223 B raw, comments included, and +188 B
+ *            once stripped — the uniforms and the shell-gated mix are the
+ *            only bytes that survive the strip).
  * - plane:   70588 B (68.9KB) / 18159 B (17.7KB) — plane variants always
  *            strip (fr-rhn5).
  *
@@ -2062,6 +2090,13 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uBalloonR: { value: 0 },
       uBalloonRho: { value: 1 },
       uBalloonFar: { value: 0 },
+      // The echo's independent tint (fr-j85n): inert default (strength 0)
+      // is a bit-exact identity, matching the 3D twin. Packed by the
+      // SHARED packSurfaceBalloonTint (surface-material.ts) — this
+      // material declares the same uniform names, so no 4D-local pack
+      // helper is needed.
+      uBalloonTint: { value: new THREE.Vector3() },
+      uBalloonTintStrength: { value: 0 },
       // Ground plane (fr-h0c3): inert defaults; alive only under the
       // SURFACE_GROUND_PLANE arm (ball radius 1 so a stray enabled read
       // could never divide by zero, albedo white so a stray enabled floor

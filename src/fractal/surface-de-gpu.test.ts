@@ -932,14 +932,18 @@ function shadeParams(
 }
 
 describe("packSurfaceGpuShade", () => {
-  it("returns an ArrayBuffer of exactly SURFACE_GPU_SHADE_BYTES (208 bytes, per the module doc)", () => {
+  it("returns an ArrayBuffer of exactly SURFACE_GPU_SHADE_BYTES (224 bytes, per the module doc)", () => {
     // 144 through fr-5h5d's fog tint pair; 160 since fr-vpbq's pixelJitter
     // at 144 (a WGSL uniform struct rounds to its largest member's 16-byte
     // alignment, so the trailing vec2f costs a full stride); 176 since
     // fr-xn9s's bgOffset/bgExtent vec2f pair at 160/168; 208 since
     // fr-h3mp's bgCenter/bgScale vec2f pair at 176/184 plus bgShape u32 at
-    // 192, rounded up to the next 16-byte multiple.
-    expect(SURFACE_GPU_SHADE_BYTES).toBe(208);
+    // 192, rounded up to the next 16-byte multiple; and 224 since
+    // fr-j85n's balloonTint vec3f at 208 plus balloonTintStrength f32 at
+    // 220 — bgShape's 196..207 tail is 12 bytes a vec3f cannot use
+    // (AlignOf 16, 196 % 16 != 0), so the pair lands at the next
+    // 16-aligned offset and closes the struct with no pad at all.
+    expect(SURFACE_GPU_SHADE_BYTES).toBe(224);
     const buf = packSurfaceGpuShade(shadeParams());
     expect(buf).toBeInstanceOf(ArrayBuffer);
     expect(buf.byteLength).toBe(SURFACE_GPU_SHADE_BYTES);
@@ -1065,6 +1069,44 @@ describe("packSurfaceGpuShade", () => {
     expect(view.getFloat32(184, true)).toBe(1.5);
     expect(view.getFloat32(188, true)).toBe(0.75);
     expect(view.getUint32(192, true)).toBe(1);
+  });
+
+  it("round-trips balloonTint at offset 208 and balloonTintStrength at 220 (fr-j85n)", () => {
+    const view = new DataView(
+      packSurfaceGpuShade(
+        shadeParams({
+          balloonTint: [0.125, 0.5, 0.9375],
+          balloonTintStrength: 0.75,
+        }),
+      ),
+    );
+    expect(view.getFloat32(208, true)).toBe(0.125);
+    expect(view.getFloat32(212, true)).toBe(0.5);
+    expect(view.getFloat32(216, true)).toBe(0.9375);
+    expect(view.getFloat32(220, true)).toBe(0.75);
+  });
+
+  it("zero-fills the whole balloon tint pair when the caller omits it — mix(base, black, 0) is the pre-fr-j85n identity", () => {
+    const view = new DataView(packSurfaceGpuShade(shadeParams()));
+    expect(view.getFloat32(208, true)).toBe(0);
+    expect(view.getFloat32(212, true)).toBe(0);
+    expect(view.getFloat32(216, true)).toBe(0);
+    expect(view.getFloat32(220, true)).toBe(0);
+  });
+
+  it("leaves the 196..207 alignment pad untouched, so bgShape's tail is not what fr-j85n's vec3f landed in", () => {
+    // The tint could NOT sit at 196 (vec3f AlignOf 16, 196 % 16 != 0),
+    // which is the whole reason the struct grew rather than filling a pad
+    // the way fr-ehcj's envStrength did at 152.
+    const bytes = new Uint8Array(
+      packSurfaceGpuShade(
+        shadeParams({
+          balloonTint: [1, 1, 1],
+          balloonTintStrength: 1,
+        }),
+      ),
+    );
+    expect(Array.from(bytes.slice(196, 208))).toEqual(Array(12).fill(0));
   });
 });
 
@@ -1894,8 +1936,11 @@ describe("surfaceDeKernelWgsl balloon wrapper (balloon, fr-5wlv.5)", () => {
     expect(wgsl.split("fn surfaceDEHitInfoFractal(").length).toBe(2);
     expect(wgsl.split("fn surfaceDEHitInfo(").length).toBe(2);
     // The core's full-member constructor gained the zeroed colorPos —
-    // WGSL value constructors are all-or-none.
-    expect(wgsl).toContain("SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0, vec3f(0.0))");
+    // WGSL value constructors are all-or-none — and, since fr-j85n, the
+    // zeroed `shell` beside it.
+    expect(wgsl).toContain(
+      "SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0, vec3f(0.0), 0.0)",
+    );
     // Ties go to the fractal term (strict <, the oracle's attribution
     // convention), and colorPos carries the winner's query point.
     expect(wgsl).toContain("if (dS < dF) {");
@@ -1975,6 +2020,131 @@ describe("surfaceDeKernelWgsl balloon wrapper (balloon, fr-5wlv.5)", () => {
       // semantics slice-then-invert.
       expect(wgsl).toContain("fn balloonInvert(p: vec3f) -> vec4f {");
       expect(wgsl).toContain("fn surfaceDEFractal(");
+    }
+  });
+});
+
+describe("balloon echo tint (fr-j85n)", () => {
+  it("carries the oracle's shell attribution on SurfaceHitInfo, written 1.0 by the echo branch and 0.0 by the fractal fall-through", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 12, shadeDeWidth: 1, balloon: true }),
+    );
+    expect(wgsl).toContain("shell: f32,");
+    // Ties go to the FRACTAL term — the strict `dS < dF` the CPU oracle's
+    // BalloonDistance.shell uses — so the echo branch is the 1.0 side.
+    expect(wgsl).toContain(`  if (dS < dF) {
+    var hi = surfaceDEHitInfoFractal(inv.xyz, li);
+    hi.colorPos = inv.xyz;
+    hi.shell = 1.0;
+    return hi;
+  }
+  var hi = surfaceDEHitInfoFractal(p, li);
+  hi.colorPos = p;
+  hi.shell = 0.0;
+  return hi;`);
+    // WGSL value constructors are all-or-none, so the cores' full-member
+    // constructor zeroes the new member too — and a zeroed shell reads as
+    // the fractal term, the untinted direction.
+    expect(wgsl).toContain(
+      "SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0, vec3f(0.0), 0.0)",
+    );
+  });
+
+  it("mixes the tint into the BASE albedo, gated on hi.shell, before the sRGB decode the lighting rides", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 12, shadeDeWidth: 1, balloon: true }),
+    );
+    const mix =
+      "base = mix(base, shade.balloonTint, shade.balloonTintStrength * hi.shell);";
+    expect(wgsl).toContain(mix);
+    // Before lighting: the specular stays untinted and the shell still
+    // shades as geometry (the envTint rule, one feature over).
+    expect(wgsl.indexOf(mix)).toBeGreaterThan(
+      wgsl.indexOf("base = textureSampleLevel(lutTex, lutSamp,"),
+    );
+    expect(wgsl.indexOf(mix)).toBeLessThan(
+      wgsl.indexOf("let linBase = pow(base, vec3f(2.2));"),
+    );
+  });
+
+  it("emits the mix once per shade kernel and nowhere in the eval/march kernels, which have no base albedo", () => {
+    const shade = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 12, balloon: true }),
+    );
+    expect(
+      shade.split(
+        "base = mix(base, shade.balloonTint, shade.balloonTintStrength * hi.shell);",
+      ).length,
+    ).toBe(2);
+    for (const mode of ["eval", "march"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ mode, width: 12, balloon: true }),
+      );
+      expect(wgsl).not.toContain("shade.balloonTint");
+      // Neither mode emits SurfaceHitInfo at all — the attribution bit
+      // exists to be read by shading, so it costs the marcher nothing.
+      expect(wgsl).not.toContain("shell: f32,");
+      expect(wgsl).not.toContain("hi.shell");
+    }
+  });
+
+  it("reaches BOTH dimensions from ONE emission — the shade entry text is shared across cores", () => {
+    for (const core of ["fold", "affine", "affine4", "fold4"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, width: 12, balloon: true }),
+      );
+      expect(wgsl).toContain("shell: f32,");
+      expect(wgsl).toContain("hi.shell = 1.0;");
+      expect(wgsl).toContain("hi.shell = 0.0;");
+      expect(wgsl).toContain(
+        "base = mix(base, shade.balloonTint, shade.balloonTintStrength * hi.shell);",
+      );
+    }
+  });
+
+  it("adds NOTHING to a non-balloon kernel but the two unconditional ShadeParams members — the byte-identity bar", () => {
+    const cases: Partial<SurfaceGpuKernelOptions>[] = [
+      { mode: "shade", core: "fold", width: 12, shadeDeWidth: 1 },
+      { mode: "shade", core: "affine", width: 4 },
+      { mode: "shade", core: "escape", width: 4 },
+      { mode: "shade", core: "bulb", width: 4 },
+      { mode: "shade", core: "affine4", width: 4 },
+      { mode: "shade", core: "fold4", width: 12 },
+      { mode: "shade", core: "escape4", width: 4 },
+      { mode: "shade", core: "fold", width: 12, lens: true },
+      { mode: "shade", core: "fold", width: 12, groundPlane: true },
+      { mode: "march", rays: "unproject", width: 12 },
+      { mode: "eval", width: 12 },
+    ];
+    for (const overrides of cases) {
+      const wgsl = surfaceDeKernelWgsl(kernelOpts(overrides));
+      // No attribution member and no reader of one.
+      expect(wgsl).not.toContain("shell: f32,");
+      expect(wgsl).not.toContain("hi.shell");
+      expect(wgsl).not.toContain("shade.balloonTint");
+      // `balloonTint` occurs ONLY as the ShadeParams declaration — a
+      // uniform struct is one layout across every kernel, which is the
+      // single deliberate exception to "balloon:false adds no text".
+      const declared = wgsl.split("balloonTint").length - 1;
+      expect(declared).toBe(
+        wgsl.includes("struct ShadeParams") ? 2 : 0, // the vec3f + the …Strength f32
+      );
+    }
+  });
+
+  it("keeps every generated balloon kernel's braces and parens balanced across the core/mode matrix", () => {
+    for (const core of ["fold", "affine", "affine4", "fold4"] as const) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        const wgsl = surfaceDeKernelWgsl(
+          kernelOpts({ core, mode, width: 4, balloon: true }),
+        );
+        expect([...wgsl.matchAll(/\}/g)].length).toBe(
+          [...wgsl.matchAll(/\{/g)].length,
+        );
+        expect([...wgsl.matchAll(/\)/g)].length).toBe(
+          [...wgsl.matchAll(/\(/g)].length,
+        );
+      }
     }
   });
 });

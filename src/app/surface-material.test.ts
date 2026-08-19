@@ -4,6 +4,7 @@ import {
   buildSurfaceFragment,
   createSurfaceBlitMaterial,
   createSurfaceMaterial,
+  packSurfaceBalloonTint,
   setBulbSystem,
   setEscapeSystem,
   setSurfaceBalloon,
@@ -678,6 +679,73 @@ describe("SURFACE_BALLOON variant (fr-5wlv.4)", () => {
     setSurfaceBalloon(material, null);
     expect(material.defines.SURFACE_BALLOON).toBe(0);
     expect(material.fragmentShader).not.toContain("uBalloon");
+  });
+
+  it("packs the echo tint's uniforms and the shell-gated base-albedo mix into every variant the balloon composes with (fr-j85n)", () => {
+    for (const [escape, lens] of [
+      [0, 0],
+      [0, 1],
+      [1, 0],
+    ] as const) {
+      const resolved = surfaceFragmentFor(escape, lens, 1);
+      expect(resolved).toContain("uniform vec3 uBalloonTint;");
+      expect(resolved).toContain("uniform float uBalloonTintStrength;");
+      // Gated on shell, and on the BASE ALBEDO — before the linear-light
+      // lit/specular product a few lines below reads it.
+      expect(resolved).toContain(
+        "base = mix(base, uBalloonTint, uBalloonTintStrength * shell);",
+      );
+    }
+  });
+
+  it("pays nothing for the echo tint while the balloon is off (fr-j85n)", () => {
+    // uBalloonTint/uBalloonTintStrength both carry the uBalloon prefix the
+    // byte-identity test above already nets, but pinning the tint's own
+    // tokens independently means a future narrowing of that wider check
+    // cannot silently stop covering this one.
+    for (const [escape, lens] of [
+      [0, 0],
+      [0, 1],
+      [1, 0],
+    ] as const) {
+      const resolved = surfaceFragmentFor(escape, lens, 0);
+      expect(resolved).not.toContain("uBalloonTint");
+      expect(resolved).not.toContain("uBalloonTintStrength");
+      expect(resolved).not.toContain("* shell");
+    }
+  });
+
+  it("surfaceDEBalloonHitInfo reports shell 1.0 on the inverted term and 0.0 on the fractal term/tie, right after colorPos", () => {
+    // escape+balloon stays under the strip threshold (module doc: "the
+    // pairing to watch"), so this resolved source keeps its indentation —
+    // the one combo in this describe block worth an exact multi-line pin.
+    const resolved = surfaceFragmentFor(1, 0, 1);
+    expect(resolved).toContain(
+      "    vec3 p,\n    out vec3 colorPos,\n    out float shell,\n    out int firstChoice,",
+    );
+    expect(resolved).toContain(
+      "    if (dS < dF) {\n      colorPos = q;\n      shell = 1.0;\n      return scale * surfaceDEFractal(q, firstChoice, trap, rings, sheets);\n    }\n    colorPos = p;\n    shell = 0.0;\n    return surfaceDEFractal(p, firstChoice, trap, rings, sheets);",
+    );
+  });
+
+  it("packSurfaceBalloonTint writes the tint's three components and the strength onto a material's uniforms", () => {
+    const material = createSurfaceMaterial();
+    packSurfaceBalloonTint(material, [0.2, 0.4, 0.6], 0.75);
+    const tint = material.uniforms.uBalloonTint.value as THREE.Vector3;
+    expect([tint.x, tint.y, tint.z]).toEqual([0.2, 0.4, 0.6]);
+    expect(material.uniforms.uBalloonTintStrength.value).toBe(0.75);
+  });
+
+  it("packSurfaceBalloonTint never touches the shader — a value-only path like the radius slider's", () => {
+    const material = createSurfaceMaterial();
+    setSurfaceBalloon(material, specFor(de3([map3()]), 1.6));
+    const shader = material.fragmentShader;
+    const version = material.version;
+
+    packSurfaceBalloonTint(material, [1, 0, 0], 0.5);
+
+    expect(material.fragmentShader).toBe(shader);
+    expect(material.version).toBe(version);
   });
 });
 

@@ -700,7 +700,7 @@ import type { Vec3 } from "./types";
  * SURFACE_GPU_PARAMS_PLANE_BYTES} block (layout on the constant's doc).
  *
  * Shade uniform (march "unproject" + mode "shade") — {@link
- * SURFACE_GPU_SHADE_BYTES} = 208 bytes, WGSL `struct ShadeParams`:
+ * SURFACE_GPU_SHADE_BYTES} = 224 bytes, WGSL `struct ShadeParams`:
  *   offset 0..63 mat4x4f invProjView (column-major, the exact
  *                THREE.Matrix4.elements scene.ts uploads as uInvProjView)
  *          64  vec3f lightDir          76  f32 ambient
@@ -712,7 +712,8 @@ import type { Vec3 } from "./types";
  *         144  vec2f pixelJitter      152  f32 envStrength
  *         160  vec2f bgOffset         168  vec2f bgExtent
  *         176  vec2f bgCenter         184  vec2f bgScale
- *         192  u32  bgShape (+ 12 B tail pad to the 16-byte struct align)
+ *         192  u32  bgShape (+ a 196..207 pad no vec3f can use)
+ *         208  vec3f balloonTint      220  f32 balloonTintStrength
  * fogTint/fogTintStrength (fr-5h5d) retarget the shade entry's fog blend
  * to mix(bg, fogTint, fogTintStrength) — strength 0 (the default) is the
  * identity (fog blends toward bg alone), and misses never read it.
@@ -742,6 +743,19 @@ import type { Vec3 } from "./types";
  * shape-dependent scale either. All three ride the shared emitted
  * `backgroundShapeT` (`BACKGROUND_SHAPE_WGSL`'s `field` accessor reads
  * them as `shade.bgCenter`/`shade.bgScale`/`shade.bgShape`).
+ * balloonTint/balloonTintStrength (fr-j85n) are the ECHO's own colour: the
+ * shade entry mixes `base = mix(base, balloonTint, strength * hi.shell)`
+ * at the base-albedo site, BEFORE lighting — so the shell still shades as
+ * geometry and the specular stays untinted (the `envTint` note's rule) —
+ * and `hi.shell` restricts it to the rays the union's argmin gave to the
+ * inverted term, leaving a fractal-term hit untouched at any strength.
+ * Strength 0, the default and the absent-field value, is `mix(x, y, 0)` =
+ * x exactly: today's frame byte for byte. The pair rides THIS struct and
+ * NOT the frozen balloon DE params block (288 in 3D, 576 in 4D) because it
+ * LIGHTS a hit rather than moving geometry — the block those offsets
+ * belong to is read by the march, which must stay untouched, and the
+ * struct is declared unconditionally so a `balloon: false` kernel's own
+ * shade text is unchanged.
  *
  * Shade maps storage (mode "shade") — one vec4f per map slot:
  * (uMapColor rgb, uFoldParams.w trapIndex); one zero stride when empty,
@@ -854,10 +868,16 @@ export const SURFACE_GPU_MAP4_VEC4 = 9;
  * uniform struct rounds to its largest member's 16-byte alignment, so the
  * vec2f costs a full stride, leaving a 152..159 pad fr-ehcj's
  * `envStrength` filled at 152 — then 176 with fr-xn9s's `bgOffset`/
- * `bgExtent` vec2f pair appended at 160/168, and now 208 with fr-h3mp's
+ * `bgExtent` vec2f pair appended at 160/168, then 208 with fr-h3mp's
  * `bgCenter`/`bgScale` vec2f pair at 176/184 plus `bgShape` u32 at 192:
- * 192 + 4 = 196, rounded up to the next 16-byte multiple. */
-export const SURFACE_GPU_SHADE_BYTES = 208;
+ * 192 + 4 = 196, rounded up to the next 16-byte multiple. And now 224
+ * with fr-j85n's `balloonTint`/`balloonTintStrength` pair. That 196 tail
+ * is where the growth comes from: the 12 bytes it left are unusable by a
+ * `vec3f` (AlignOf 16, and 196 % 16 != 0 — the fr-ehcj trick of filling a
+ * pad in place does not repeat here), so the tint lands at the next
+ * 16-aligned offset, 208, with its f32 strength at 220 closing the struct
+ * exactly at 224 with no pad at all. */
+export const SURFACE_GPU_SHADE_BYTES = 224;
 /** Map slots a `mapsUniform: true` 4D kernel declares (fr-b72d probe):
  * uniform-address-space arrays need a creation-fixed footprint, so the
  * binding becomes `array<GpuMap4, 24>` and the HOST must bind a buffer of
@@ -2183,6 +2203,20 @@ export interface SurfaceGpuShadeParams {
    * 0 — the host always knows which shape it resolved.
    */
   bgShape: number;
+  /** The balloon echo's tint colour (fr-j85n), packed at offset 208
+   * (module doc): what a SHELL hit's base albedo mixes toward, before
+   * lighting. Default `[0, 0, 0]` when omitted — the document's own
+   * `DEFAULT_BALLOON_TINT`, black, which makes the strength slider alone
+   * a dimmer (`mix(base, black, s)` is `base * (1 - s)`); inert while
+   * balloonTintStrength is 0, and read by no kernel compiled without a
+   * balloon. */
+  balloonTint?: Vec3;
+  /** The balloon echo's tint strength (fr-j85n), 0..1, packed at offset
+   * 220 (module doc). Default 0 when omitted — the identity, `mix(x, y,
+   * 0)` = x, so an unset pair renders the pre-fr-j85n frame byte for
+   * byte. It is gated per-ray by the union argmin's `hi.shell`, so a
+   * FRACTAL-term hit is untouched at any strength. */
+  balloonTintStrength?: number;
 }
 
 /** Pack the ShadeParams uniform (march "unproject" + mode "shade";
@@ -2218,6 +2252,12 @@ export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
   view.setFloat32(184, shade.bgScale[0], true);
   view.setFloat32(188, shade.bgScale[1], true);
   view.setUint32(192, shade.bgShape, true);
+  // fr-j85n: the balloon echo's tint pair, at the next 16-aligned offset
+  // past bgShape's 196 tail (a vec3f cannot sit in that pad). Defaults —
+  // black at zero strength — are the identity the mix reduces to, so a
+  // host that never heard of the tint packs the pre-fr-j85n uniform.
+  writeVec3(view, 208, shade.balloonTint ?? [0, 0, 0]);
+  view.setFloat32(220, shade.balloonTintStrength ?? 0, true);
   return buf;
 }
 
@@ -2538,6 +2578,12 @@ struct ShadeParams {
   bgCenter: vec2f,
   bgScale: vec2f,
   bgShape: u32,
+  // fr-j85n: the balloon echo's tint pair, declared UNCONDITIONALLY — a
+  // uniform struct is one layout across every kernel, and only a balloon
+  // shade entry reads it. WGSL lands the vec3f at 208 (AlignOf 16 past
+  // bgShape's 196), the f32 at 220, closing the struct at 224.
+  balloonTint: vec3f,
+  balloonTintStrength: f32,
 }
 
 @group(0) @binding(4) var<uniform> shade: ShadeParams;`;
@@ -4450,9 +4496,11 @@ ${core4 ? lens4HitWrapText : lensHitWrapText}`
   // query point's hit-info descent runs — ties to the fractal term
   // (`dS < dF` strict, the oracle's attribution convention) — and
   // colorPos carries the winner's own query point to the height/radius
-  // color sources. The value form is the probe under fold shade configs
-  // (GLSL parity: its balloon hit-info rides the no-cutoff value form,
-  // which folds route to the probe — fr-p8bc's 23.8x shading verdict).
+  // color sources, while `shell` (fr-j85n) carries WHICH term that was,
+  // so the shade entry's echo tint reaches shell hits alone. The value
+  // form is the probe under fold shade configs (GLSL parity: its balloon
+  // hit-info rides the no-cutoff value form, which folds route to the
+  // probe — fr-p8bc's 23.8x shading verdict).
   const balloonValueDe =
     probeWidth === null ? "surfaceDEFractal" : "surfaceDEProbeFractal";
   const balloonHitWrapText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
@@ -4462,21 +4510,25 @@ ${core4 ? lens4HitWrapText : lensHitWrapText}`
   if (dS < dF) {
     var hi = surfaceDEHitInfoFractal(inv.xyz, li);
     hi.colorPos = inv.xyz;
+    hi.shell = 1.0;
     return hi;
   }
   var hi = surfaceDEHitInfoFractal(p, li);
   hi.colorPos = p;
+  hi.shell = 0.0;
   return hi;
 }`;
   const hitInfoText = balloon
     ? `${balloonRename(
         // WGSL value constructors are all-or-none, so the balloon-only
-        // colorPos member (struct below) must join the core's full-member
-        // constructor too — zeroed there; only the wrapper writes it.
+        // colorPos and shell members (struct below) must join the core's
+        // full-member constructor too — zeroed there; only the wrapper
+        // writes them. A zero `shell` there also reads as the fractal
+        // term, which is the safe direction: an untinted hit.
         balloonRename(
           lensedHitInfoText,
           "SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0)",
-          "SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0, vec3f(0.0))",
+          "SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0, vec3f(0.0), 0.0)",
         ),
         "fn surfaceDEHitInfo(",
         "fn surfaceDEHitInfoFractal(",
@@ -4538,6 +4590,22 @@ ${balloonHitWrapText}`
         : balloon
           ? `u = clamp(length(hi.colorPos) / visR, 0.0, 1.0);`
           : `u = clamp(length(pos) / visR, 0.0, 1.0);`;
+
+  // The echo's own tint (fr-j85n, balloon only), at the BASE-ALBEDO site
+  // — after the colour source resolves `base`, before the sRGB decode and
+  // the lighting product — so the inverted copy reads as an echo rather
+  // than as more of the same object, while the shell still shades as
+  // geometry and the specular stays untinted (the `envTint` rule two
+  // paragraphs down). `hi.shell` is the union argmin's attribution, so a
+  // FRACTAL-term hit is untouched at ANY strength; and strength 0 — the
+  // packer's default and the document's absent-field value — is
+  // `mix(x, y, 0)` = x exactly, today's frame byte for byte. A
+  // non-balloon kernel emits NOTHING here: it has no `shell` member to
+  // read, and its shade text must stay the shipped one.
+  const shadeBalloonTint = balloon
+    ? `
+  base = mix(base, shade.balloonTint, shade.balloonTintStrength * hi.shell);`
+    : "";
 
   // The march entry's gate (fr-5wlv.5): balloon mode drops the
   // visible-sphere gate (every ray can hit the enclosing shell) and caps
@@ -4740,7 +4808,14 @@ struct SurfaceHitInfo {
   // point — the pre-inversion geometry the height/radius color sources
   // read (the GLSL arm's cpos). Cores zero it; only the balloon
   // hit-info wrapper writes it.
-  colorPos: vec3f,`
+  colorPos: vec3f,
+  // fr-j85n (balloon only): WHICH union term won — the oracle's
+  // \`BalloonDistance.shell\` attribution, 1.0 when the echo term took
+  // the min STRICTLY (\`dS < dF\`) and 0.0 otherwise, so a tie goes to
+  // the fractal exactly as the CPU convention does. Cores zero it; only
+  // the balloon hit-info wrapper writes it, and the shade entry's tint
+  // mix is the one reader.
+  shell: f32,`
       : ""
   }
 }
@@ -4928,7 +5003,7 @@ ${shadeGate}
       u = hi.sheets;
     }
     base = textureSampleLevel(lutTex, lutSamp, vec2f(u, 0.5), 0.0).rgb;
-  }
+  }${shadeBalloonTint}
   // Normal from the DE gradient (tetrahedron taps), probed at the hit's
   // own resolution scale; a vanishing gradient faces the camera instead
   // of dividing by ~zero.
