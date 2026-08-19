@@ -15,9 +15,9 @@ concurrency:
 jobs:
   lint:
     runs-on: ubuntu-latest
-    # fr-vja8.8: without timeout-minutes the default is GitHub's 360min
-    # ceiling. Measured real duration is ~1m34s-1m54s; 10 keeps smoke's
-    # existing 5x-ish margin.
+    # Without timeout-minutes the default is GitHub's 360min ceiling.
+    # Measured real duration is ~1m34s-1m54s; 10 keeps smoke's existing
+    # 5x-ish margin.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -42,7 +42,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    # fr-vja8.8: see lint's identical comment above — same measured margin.
+    # See lint's identical comment above — same measured margin.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -59,7 +59,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    # fr-vja8.8: see lint's identical comment above — same measured margin.
+    # See lint's identical comment above — same measured margin.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -108,14 +108,14 @@ jobs:
 
       # playwright-core (the only Playwright package here) exposes the
       # `playwright-core` bin, NOT `playwright`; using `npx playwright` would
-      # auto-fetch an unpinned full package. NO --with-deps, deliberately
-      # (fr-lt3w): its apt call against azure.archive.ubuntu.com hung four
-      # jobs to their timeouts on one pull request, the runner image already
-      # ships the browser-library closure (it ships Chrome, Chromium and
-      # Edge), and the SwiftShader constraint lives in the BUNDLED BROWSER,
-      # not the OS libraries. The full verdict — and what to do if a
-      # slimmed-down future runner image ever makes the browser fail to
-      # launch — is on gpu-agreement.yml's identical step.
+      # auto-fetch an unpinned full package. NO --with-deps, deliberately:
+      # its apt call against azure.archive.ubuntu.com hung four jobs to their
+      # timeouts on one pull request, the runner image already ships the
+      # browser-library closure (it ships Chrome, Chromium and Edge), and the
+      # SwiftShader constraint lives in the BUNDLED BROWSER, not the OS
+      # libraries. The full verdict — and what to do if a slimmed-down future
+      # runner image ever makes the browser fail to launch — is on
+      # gpu-agreement.yml's identical step.
       - name: Install Playwright Chromium
         run: npx playwright-core install chromium
 

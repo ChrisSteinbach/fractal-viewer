@@ -1,19 +1,19 @@
 name: GPU agreement
 
-# fr-jnu: the GPU-flame agreement harness (src/app/gpu-bench/) as a CI
-# gate — the WGSL kernels are the one re-implementation of the fractal
-# core that vitest cannot execute (WebGPU needs a real browser), so this
-# job runs the REAL kernels on SwiftShader (Chromium's bundled software
-# Vulkan; no GPU on the runner needed) and pins them statistically against
-# their CPU oracles (accumulateFlame / accumulateFlame4). The runner
-# script exits non-zero on agreement FAILURE and — deliberately — on
-# "skipped" (no WebGPU adapter), so a runner that silently loses WebGPU
-# cannot keep passing while verifying nothing.
+# The GPU-flame agreement harness (src/app/gpu-bench/) as a CI gate — the
+# WGSL kernels are the one re-implementation of the fractal core that
+# vitest cannot execute (WebGPU needs a real browser), so this job runs
+# the REAL kernels on SwiftShader (Chromium's bundled software Vulkan; no
+# GPU on the runner needed) and pins them statistically against their CPU
+# oracles (accumulateFlame / accumulateFlame4). The runner script exits
+# non-zero on agreement FAILURE and — deliberately — on "skipped" (no
+# WebGPU adapter), so a runner that silently loses WebGPU cannot keep
+# passing while verifying nothing.
 #
-# fr-hzlm split this out of ci.yml for ONE reason: it is the whole critical
-# path. Measured on consecutive runs it takes 16m39s-19m32s where the
-# next-slowest job (smoke) takes 1m50s, so how fast this job answers IS how
-# fast a change can land. Its own workflow file is what buys the path
+# This workflow was split out of ci.yml for ONE reason: it is the whole
+# critical path. Measured on consecutive runs it takes 16m39s-19m32s where
+# the next-slowest job (smoke) takes 1m50s, so how fast this job answers IS
+# how fast a change can land. Its own workflow file is what buys the path
 # filter below — `paths-ignore` is a workflow-level trigger key, and
 # applying it in ci.yml would have skipped lint/test/build with it (the
 # docs-only change that prompted this was caught by `prettier --check .`,
@@ -52,11 +52,11 @@ jobs:
     name: gpu-agreement (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
     strategy:
-      # fr-hzlm: four shards over the scenario list, round-robin by index
-      # inside the page (see applyScenarioShard in gpu-bench/shard.ts). The
-      # count of scenarios is deliberately NOT written down here — that is
-      # the drift this design exists to prevent — but for scale, the sweep
-      # was sixteen when this landed and split 4/4/4/4.
+      # Four shards over the scenario list, round-robin by index inside the
+      # page (see applyScenarioShard in gpu-bench/shard.ts). The count of
+      # scenarios is deliberately NOT written down here — that is the drift
+      # this design exists to prevent — but for scale, the sweep was
+      # sixteen when this landed and split 4/4/4/4.
       # The count is NOT repeated in the --shard argument below — that reads
       # `strategy.job-total`, so adding a fifth entry here re-partitions the
       # sweep on its own and the two cannot drift apart.
@@ -70,13 +70,13 @@ jobs:
     # A runaway guard, deliberately looser than the runner script's own wait
     # cap (BENCH_TIMEOUT_MS, 20 min) so the script always trips FIRST and
     # reports which scenario hung, instead of the job being killed with no
-    # verdict. Raised 30 -> 40 by fr-hiyu: setup (checkout, npm ci, Playwright
-    # + system deps) is several minutes on top of a sweep measured at ~16 min
-    # for the fourteen scenarios it had then, which left the script's cap and
-    # the job's too close together to keep that ordering reliable. Sharding
-    # only widens that margin — measured at the split, the slowest of four
-    # shards is 6m27s against the same 20-minute script cap — so the number
-    # is left where fr-hiyu put it.
+    # verdict. Raised 30 -> 40: setup (checkout, npm ci, Playwright + system
+    # deps) is several minutes on top of a sweep measured at ~16 min for the
+    # fourteen scenarios it had then, which left the script's cap and the
+    # job's too close together to keep that ordering reliable. Sharding only
+    # widens that margin — measured at the split, the slowest of four shards
+    # is 6m27s against the same 20-minute script cap — so the number is left
+    # where that raise put it.
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -102,30 +102,30 @@ jobs:
       # Same hermetic browser as the smoke job: only the Playwright-bundled
       # Chromium is known to ship libvk_swiftshader.so.
       #
-      # NO --with-deps, deliberately (fr-lt3w). It ran apt on every run —
-      # apt caches nothing here — and apt against azure.archive.ubuntu.com
-      # was the one flaky fetch left in these jobs: measured 2026-08-19,
-      # four jobs across the two workflows hung in this step on ONE pull
-      # request (smoke plus shards 1/3/4; shard 1 twice in a row) and died
-      # at their job timeouts without reaching a line of test code. The
-      # SwiftShader constraint above is about the BROWSER BINARY, not the
-      # OS libraries: ubuntu-latest ships Chrome, Chromium and Edge, so the
-      # shared-library closure the bundled Chromium loads is already on the
-      # image. If a future runner image slims that down, this fails at
-      # browser LAUNCH within seconds, naming the missing library —
-      # strictly better than the silent multi-minute hang it replaces — and
-      # the fix is to re-add --with-deps or move the job into
+      # NO --with-deps, deliberately. It ran apt on every run — apt caches
+      # nothing here — and apt against azure.archive.ubuntu.com was the one
+      # flaky fetch left in these jobs: measured 2026-08-19, four jobs
+      # across the two workflows hung in this step on ONE pull request
+      # (smoke plus shards 1/3/4; shard 1 twice in a row) and died at their
+      # job timeouts without reaching a line of test code. The SwiftShader
+      # constraint above is about the BROWSER BINARY, not the OS libraries:
+      # ubuntu-latest ships Chrome, Chromium and Edge, so the shared-library
+      # closure the bundled Chromium loads is already on the image. If a
+      # future runner image slims that down, this fails at browser LAUNCH
+      # within seconds, naming the missing library — strictly better than
+      # the silent multi-minute hang it replaces — and the fix is to re-add
+      # --with-deps or move the job into
       # mcr.microsoft.com/playwright:v<lockfile version>-noble. That
       # container was considered and REFUSED for now: it swaps a solved,
       # cached browser download for an uncacheable ~1GB image pull on every
       # run of every job (the apt mirror's failure shape under a different
       # hostname), its tag has to track package-lock's playwright-core by
-      # hand, and its default user is root, which Chromium refuses to run
-      # as without --no-sandbox — a flag this bench's headless SwiftShader
+      # hand, and its default user is root, which Chromium refuses to run as
+      # without --no-sandbox — a flag this bench's headless SwiftShader
       # launch deliberately omits (scripts/gpu-flame-bench.mjs passes it
-      # only on the --display real-driver path), so the container would
-      # mean changing the launch flags of the very instrument this gate
-      # exists to hold still.
+      # only on the --display real-driver path), so the container would mean
+      # changing the launch flags of the very instrument this gate exists to
+      # hold still.
       - name: Install Playwright Chromium
         run: npx playwright-core install chromium
 

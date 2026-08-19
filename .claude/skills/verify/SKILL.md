@@ -14,7 +14,7 @@ the pinned `@playwright/mcp@latest` (resolved 0.0.79, HeadlessChrome 150):
 `webglAvailable()` guard passes, and the dev server's app boots and renders
 (default preset: 314,000 pts, full panel, all four Render buttons). A whole
 multi-scenario verification runs through `browser_navigate` / `browser_click` /
-`browser_evaluate` / `browser_take_screenshot` with no bespoke script (fr-k9nx).
+`browser_evaluate` / `browser_take_screenshot` with no bespoke script.
 
 The note this replaces said the MCP browser had **no** WebGL, which cost sessions
 a detour into scripting or into skipping the browser check entirely. Re-measure
@@ -33,11 +33,11 @@ Caveats the SwiftShader context brings, all measured on that pin:
   `null` — the MCP launch passes none of the SwiftShader-Vulkan flags
   `scripts/gpu-flame-bench.mjs` uses. Both render paths say so in the panel, which
   is the cheap way to check: Flame prints "CPU accumulation — no GPU API in this
-  browser", and the surface progress row's fr-tmgf engine label reads
-  "Preview · **WebGL** …%". So flame takes the CPU backend and surface takes the
-  **WebGL arms** (`SURFACE_FOLD_LENS`, `SURFACE_ESCAPE`, the 4D fragment tracer),
-  never `surface-compute.ts`. Anything that must exercise WebGPU goes through
-  `npm run bench:gpu` / `npm run bench:surface`, not this browser.
+  browser", and the surface progress row's engine label reads "Preview · **WebGL**
+  …%". So flame takes the CPU backend and surface takes the **WebGL arms**
+  (`SURFACE_FOLD_LENS`, `SURFACE_ESCAPE`, the 4D fragment tracer), never
+  `surface-compute.ts`. Anything that must exercise WebGPU goes through `npm run
+  bench:gpu` / `npm run bench:surface`, not this browser.
 - **The app announces the software renderer too.** A red "Software WebGL renderer
   — ANGLE (… SwiftShader …). The browser is not using the GPU, so renders run
   10–50× slower" block sits in the panel. Expected here, and it makes panel
@@ -138,9 +138,9 @@ Drive it with the Playwright MCP browser. Useful checks from
    `src/app/index.html`) and `npm run build` again — the changed precache
    manifest makes `sw.js` byte-different, which is what an update IS.
 3. In the open tab: `(await navigator.serviceWorker.getRegistration()).update()`
-   — the new worker installs and parks in `waiting` (fr-o13: no takeover),
-   which shows the update banner while the OLD worker keeps serving the old
-   precache (`fetch("./index.html")` should NOT contain your marker yet).
+   — the new worker installs and parks in `waiting` (no takeover), which shows
+   the update banner while the OLD worker keeps serving the old precache
+   (`fetch("./index.html")` should NOT contain your marker yet).
 4. Click the banner's Reload: the page posts `SKIP_WAITING`, the new worker
    activates and claims, and the page reloads once onto the new build (now
    the served HTML DOES contain the marker). Any other open tab is NOT
@@ -149,8 +149,8 @@ Drive it with the Playwright MCP browser. Useful checks from
 
 ## Touch gestures (pinch-zoom / panel scroll) under emulation
 
-Verified recipe from fr-vfk — a bespoke script on the SwiftShader launch above,
-with a touch context (`isMobile: true, hasTouch: true`) and a CDP session:
+Verified recipe — a bespoke script on the SwiftShader launch above, with a
+touch context (`isMobile: true, hasTouch: true`) and a CDP session:
 
 - **`isMobile` viewports come out oversized on this box** when combined with
   the SwiftShader flags: `window.innerWidth` reports ~1.5–1.9× the requested
@@ -171,7 +171,7 @@ with a touch context (`isMobile: true, hasTouch: true`) and a CDP session:
   producing a positive effect elsewhere on the page (e.g. pinch over
   `#container` must NOT zoom, the same pinch over `#panel` MUST) — otherwise
   a broken gesture pipeline reads as a pass.
-- **Park scrollers mid-range before asserting a swipe scrolls** (fr-zoi):
+- **Park scrollers mid-range before asserting a swipe scrolls**:
   `scrollIntoView({ block: "center" })` on a low element can pin the panel at
   max `scrollTop`, and a swipe in the only direction tested then reads
   "didn't scroll" when the truth is "no room". Set `scrollTop` to something
@@ -182,7 +182,7 @@ with a touch context (`isMobile: true, hasTouch: true`) and a CDP session:
   `touchcancel`), even when the scroller has no room to move.
   `src/app/slider-scroll-guard.ts` is built on exactly that sequence;
   page-side event-log listeners (`pointerdown … pointercancel touchmove…`)
-  are how it was established (fr-zoi).
+  are how it was established.
 
 ## Gotchas
 
@@ -196,4 +196,4 @@ with a touch context (`isMobile: true, hasTouch: true`) and a CDP session:
 - At mobile widths the open panel (z-index 99) covers bottom overlays like
   the update banner (z-index 20) by design. Close the panel by clicking
   `#menuToggle` (the top-right ☰/✕ button) — it is the one open/close
-  toggle; fr-ig0 removed the redundant, fully-covered `#panelClose`.
+  toggle; the redundant, fully-covered `#panelClose` was removed.
