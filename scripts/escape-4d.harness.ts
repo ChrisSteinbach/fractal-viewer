@@ -1,22 +1,22 @@
 /**
- * WHAT A 4D ESCAPE-TIME CHAIN LOOKS LIKE, BEFORE ANY PRESET SHIPS (fr-vag4).
+ * WHAT A 4D ESCAPE-TIME CHAIN LOOKS LIKE, BEFORE ANY PRESET SHIPS.
  *
  * `escape-de-4d.ts` exists; nothing renders it yet and no preset reaches it.
  * This sheet is the measurement that comes first — the project's standing
- * discipline, and the one fr-vag4 states outright. It asks the two questions
- * a preset choice needs answered: WHICH 4D KNOB BUYS AN OBJECT, and WHAT DOES
- * A ROTOR-POSED `w`-SLICE OF ONE ACTUALLY DRAW.
+ * discipline, and the one the 4D chain lift states outright. It asks the two
+ * questions a preset choice needs answered: WHICH 4D KNOB BUYS AN OBJECT, and
+ * WHAT DOES A ROTOR-POSED `w`-SLICE OF ONE ACTUALLY DRAW.
  *
- * THE KNOB UNDER TEST IS A `w` ROTATION, AND THAT IS THE WHOLE FRAMING.
- * fr-wuuu already measured the other one and came back negative: the
- * quaternion square's `k` component — a `w` TRANSLATION on a chain link —
- * "does not buy an object", behaving like a weaker fourth translation, with
- * every slice off `w = 0` an EROSION of the `w = 0` set (containment 94-98%,
- * nothing left to draw by `w0 = 0.8`). A translation cannot mix `w` with a
- * spatial axis; it can only slide the object along an axis the render then
- * cuts across. `w: { rotation: { xw, yw, zw } }` MIXES, which is the genuinely
- * four-dimensional deformation and the one nobody has measured. Every row
- * below turns that knob and nothing else.
+ * THE KNOB UNDER TEST IS A `w` ROTATION, AND THAT IS THE WHOLE FRAMING. The
+ * quaternion k-component sweep already measured the other one and came back
+ * negative: the quaternion square's `k` component — a `w` TRANSLATION on a
+ * chain link — "does not buy an object", behaving like a weaker fourth
+ * translation, with every slice off `w = 0` an EROSION of the `w = 0` set
+ * (containment 94-98%, nothing left to draw by `w0 = 0.8`). A translation
+ * cannot mix `w` with a spatial axis; it can only slide the object along an
+ * axis the render then cuts across. `w: { rotation: { xw, yw, zw } }` MIXES,
+ * which is the genuinely four-dimensional deformation and the one nobody has
+ * measured. Every row below turns that knob and nothing else.
  *
  * WHAT IT CONCLUDED, in order:
  *
@@ -66,15 +66,15 @@
  *     (b) are the honest caveat: their extents move only 5-8% with no clean
  *     trend, so the entry-pose drop there is NOT fully accounted for by size.)
  *
- *  3. THE `w0` SLICE IS NOT fr-wuuu's EROSION, AND THAT IS THIS SHEET'S
+ *  3. THE `w0` SLICE IS NOT THAT SWEEP'S EROSION, AND THAT IS THIS SHEET'S
  *     CONTRADICTION OF IT. Sliding `w0` over 0 / 0.1 / 0.2 / 0.4 / 0.8 / 1.2
  *     on the section-2 subject thins the slice hard — members 5444 -> 5240 ->
  *     5173 -> 4256 -> 2175 -> 429, slice fill 2.079 -> 0.163% — but the
  *     CONTAINMENT column reads 57.0 / 55.3 / 52.5 / 61.3 / 61.5%, where
- *     fr-wuuu's `k`-component sweep read 94-98%. Roughly half of every
+ *     the `k`-component sweep read 94-98%. Roughly half of every
  *     offset slice's members are NOT members of the `w0 = 0` slice, so these
  *     are genuinely different cuts and not a shrinking subset. And it never
- *     goes blank: fr-wuuu's `k` sweep drew 0.0% of its rays by `w0 = 0.8`,
+ *     goes blank: the `k` sweep drew 0.0% of its rays by `w0 = 0.8`,
  *     while a `w`-ROTATED chain still draws 16.0% at the entry pose and 47.9%
  *     at its own fitted frame at `w0 = 1.2`. A `w` ROTATION GIVES THE OBJECT
  *     REAL THICKNESS AND REAL VARIATION IN `w`; the translation knob gave it
@@ -588,7 +588,7 @@ function withRotation(
 
 // ------------------------------------------------------------------ tests
 
-describe("the 4D escape-time chain, measured before a preset ships (fr-vag4)", () => {
+describe("the 4D escape-time chain, measured before a preset ships", () => {
   it("anchors every row: a flat system's 4D estimate IS the 3D one, to the bit", () => {
     // The licence for everything below. `escape-de-4d.ts` appends the fourth
     // coordinate at the END of every term it joins, so a flat system's orbit
@@ -693,13 +693,14 @@ describe("the 4D escape-time chain, measured before a preset ships (fr-vag4)", (
     }
   });
 
-  it("sweeps a w ROTATION on one link — the knob fr-wuuu did NOT measure", () => {
-    // fr-wuuu measured a `w` TRANSLATION (the quaternion square's `k`) and
-    // found it does not buy an object: it is a weaker fourth translation, and
-    // every slice off `w = 0` erodes. A translation cannot MIX `w` with a
-    // spatial axis. `w: { rotation: { xw } }` does, so a flat query's orbit
-    // leaves the `w = 0` hyperplane at the very first link and the rendered
-    // slice is a genuinely 4D object's cut rather than a displaced 3D one.
+  it("sweeps a w ROTATION on one link — the knob the k sweep did NOT measure", () => {
+    // The k-component sweep measured a `w` TRANSLATION (the quaternion
+    // square's `k`) and found it does not buy an object: it is a weaker
+    // fourth translation, and every slice off `w = 0` erodes. A translation
+    // cannot MIX `w` with a spatial axis. `w: { rotation: { xw } }` does, so
+    // a flat query's orbit leaves the `w = 0` hyperplane at the very first
+    // link and the rendered slice is a genuinely 4D object's cut rather than
+    // a displaced 3D one.
     //
     // TWO HIT COLUMNS ON EVERY ROW, because they disagree and the
     // disagreement is the finding. `hits(R4)` is the FIXED bailout ball —
@@ -753,15 +754,15 @@ describe("the 4D escape-time chain, measured before a preset ships (fr-vag4)", (
     // gone into the record unchecked. Block (a)'s reach barely moves across
     // the whole sweep, so the fitted framing is essentially constant and its
     // hit column is flat, yet the same rows lose a quarter of their rays at
-    // the coarse bailout-ball pose. The tempting story is sub-pixel structure:
-    // the rotation makes the object FINER, so more of it falls below the pixel
-    // at the coarse framing, and the shipped tracer (which supersamples 8x on
-    // the settle, fr-vpbq/fr-jf9y) would recover it. If that were true,
+    // the coarse bailout-ball pose. The tempting story is sub-pixel
+    // structure: the rotation makes the object FINER, so more of it falls
+    // below the pixel at the coarse framing, and the shipped tracer (which
+    // supersamples 8x on the settle) would recover it. If that were true,
     // doubling the panel would recover more of the rotated row's rays than of
     // the flat row's. IT DOES NOT: both rows move together and slightly DOWN,
-    // and the gap between them is unchanged. So the drop is the object's
-    // own — the rotated set covers less of the fixed entry frame — and a
-    // preset cannot expect the renderer's antialiasing to give it back.
+    // and the gap between them is unchanged. So the drop is the object's own
+    // — the rotated set covers less of the fixed entry frame — and a preset
+    // cannot expect the renderer's antialiasing to give it back.
     console.log(
       `  the bailout-pose hit drop against RESOLUTION (block a, same pose, ` +
         `same DE) — a sub-pixel-structure story predicts the gap CLOSING:`,
@@ -791,11 +792,12 @@ describe("the 4D escape-time chain, measured before a preset ships (fr-vag4)", (
   });
 
   it("sweeps the w0 SLICE — does it resolve something new, or merely erode?", () => {
-    // fr-wuuu's question, asked of the ROTATION knob. Its own answer for the
-    // TRANSLATION knob was erosion: containment 94-98% on every row with
-    // members, and a genuine blank (0.0% of rays) by `w0 = 0.8`. Containment
-    // is what separates the two readings and IoU cannot — a set that SHRANK
-    // into its reference and a set that MOVED off it score the same IoU.
+    // The k-component sweep's question, asked of the ROTATION knob. Its own
+    // answer for the TRANSLATION knob was erosion: containment 94-98% on
+    // every row with members, and a genuine blank (0.0% of rays) by `w0 =
+    // 0.8`. Containment is what separates the two readings and IoU cannot — a
+    // set that SHRANK into its reference and a set that MOVED off it score
+    // the same IoU.
     const de4 = buildEscapeDE4(transformsOf(SUBJECT));
     const ref = memberMask(member4Of(de4, sliceLift(0)));
     console.log(

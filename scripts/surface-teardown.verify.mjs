@@ -1,5 +1,5 @@
 /**
- * fr-uec4: the regression gate for the WebGPU compute surface renderer's
+ * The regression gate for the WebGPU compute surface renderer's
  * teardown race. Renamed from fold-floor-crash.repro.mjs once the real
  * defect was found — see "WHY NOT fold-floor-ANYTHING" below — so this file
  * no longer hunts for a cause, it PINS the fix against ever regressing.
@@ -29,9 +29,9 @@
  *
  * WHY NOT fold-floor-ANYTHING: the field report read "adjust Min Radius /
  * Fixed Radius / Box Limit together with the Floor option until it goes",
- * which pointed straight at fr-s9ll's authored fold radii and fr-rhn5's
- * Floor option. Both were coincidence, and both were disproved before the
- * real defect surfaced:
+ * which pointed straight at the authored fold radii and the Floor option.
+ * Both were coincidence, and both were disproved before the real defect
+ * surfaced:
  *
  *   - The RADII are innocent. Classic (unauthored) lengths crash exactly as
  *     readily as any slider position, and the CPU sweep in
@@ -46,8 +46,8 @@
  *     both restart the renderer the same way a mode exit does.
  *
  * MEASURED, real Firefox 151, DISPLAY=:0, dom.webgpu.enabled, dev server, a
- * Sierpinski tetrahedron with a pure-mandelbox FINAL transform (fr-g58b's
- * fold lens, which routes the session onto the compute renderer):
+ * Sierpinski tetrahedron with a pure-mandelbox FINAL transform (the
+ * fold-FINAL lens, which routes the session onto the compute renderer):
  *
  * | trigger, mid-flight                          | before            | after       |
  * |---|---|---|
@@ -79,7 +79,7 @@
  *                 only and never exercises the teardown race. 18 triples x
  *                 {base map, lens}: never crashed, before or after the fix.
  *
- *   --lens        a pure-mandelbox FINAL transform (fr-g58b's descendLens),
+ *   --lens        a pure-mandelbox FINAL transform (descendLens),
  *                 which routes the session onto the compute renderer. A lens
  *                 has NO contraction gate, so every radius triple is
  *                 admissible here — unlike a base-map fold, where
@@ -178,10 +178,11 @@ function foldVariation(
  * gate then bounds the radii — only mR/fR > ~0.7075 is reachable at all.
  *
  * LENS (--lens): the tetra's maps stay plain affine and the FINAL transform
- * becomes a pure mandelbox fold (fr-g58b's descendLens). A lens is applied
+ * becomes a pure mandelbox fold (descendLens). A lens is applied
  * ONCE to the query point, so it carries NO contraction requirement — every
  * radius combination is admissible, which is the arm where a user really can
- * drag all three sliders freely, and the arm whose params block fr-s9ll moved.
+ * drag all three sliders freely, and the arm whose params block the authored
+ * fold lengths moved.
  */
 function sceneFor(radii, { lens = false, foldType = "mandelbox" } = {}) {
   const maps = tetra();
@@ -194,7 +195,7 @@ function sceneFor(radii, { lens = false, foldType = "mandelbox" } = {}) {
     showGuides: false,
     groundPlane: FLOOR,
     // Pinned pose: the surface renderer is only bit-reproducible run to run
-    // when the document pins its camera (fr-opgk), and an unpinned scene
+    // when the document pins its camera, and an unpinned scene
     // auto-frames off a random seed — which would make a crash unattributable.
     // phi just above the horizontal so plenty of rays go DOWN and cross the
     // floor's fade band, which is the whole point of the Floor arm.
@@ -350,7 +351,7 @@ async function runCase(browser, c) {
       if (s.row.includes("WebGPU")) result.engine = "WebGPU";
       else if (s.row.includes("WebGL")) result.engine = "WebGL";
       else if (s.probe?.engine) result.engine = s.probe.engine;
-      if (s.probe?.settled) break; // fr-opgk's settle latch: done
+      if (s.probe?.settled) break; // the `?surfacestate` settle latch: done
     }
     // A frame that rendered nothing looks identical to a frame that never
     // ran, so price the canvas: how many pixels are not the backdrop.

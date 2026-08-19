@@ -4,15 +4,17 @@
  * `countingDE` (the machine-independent inverse-map-VISIT counter) and the
  * four pure-fold system factories (`foldBoxfoldPair`,
  * `foldBoxfoldNegPlusAffine`, `foldSpherefoldPair`, `foldMandelboxPair`)
- * were born in `surface-beam.harness.ts`'s fr-5rvk section (4). They are
+ * were born in `surface-beam.harness.ts`'s pure-fold section (4). They are
  * extracted here VERBATIM — not reimplemented — so `surface-grid-cost.
- * harness.ts` (fr-aj4w) can reuse the IDENTICAL frozen profiles instead of
+ * harness.ts` can reuse the IDENTICAL frozen profiles instead of
  * drifting a second copy: a harness comparing costs across two files is
  * only meaningful if both measure the same systems with the same counter.
- * `countingDEFine` (fr-ck0w EXPERIMENT 2 follow-up) is `countingDE`'s
+ * `countingDEFine` (a follow-up to EXPERIMENT 2's cost split) is
+ * `countingDE`'s
  * element-granularity twin, added later, purely additively — `countingDE`
  * itself is untouched, so every existing caller's numbers are unaffected;
- * see its own doc for why per-visit counting is too coarse for fr-kidj.
+ * see its own doc for why per-visit counting is too coarse for the
+ * branch-and-bound work.
  *
  * This file is deliberately not named `*.harness.ts`: it carries no
  * `describe`/`it` blocks of its own, so importing it (from either harness,
@@ -34,12 +36,12 @@ export function countingDE(
   counter: { n: number };
 } {
   const counter = { n: 0 };
-  // Spread first, then re-define invM as the counting getter (later
-  // literal members win): every data field — INCLUDING ones added to
-  // SurfaceDEMap after this file was written — passes through untouched.
-  // An explicit field list here once silently dropped fr-kidj's new
-  // bound fields (scripts/ sits outside the root tsconfig's include, so
-  // tsc never caught it) and fed `undefined` into the descent.
+  // Spread first, then re-define invM as the counting getter (later literal
+  // members win): every data field — INCLUDING ones added to SurfaceDEMap
+  // after this file was written — passes through untouched. An explicit
+  // field list here once silently dropped the branch-and-bound's new bound
+  // fields (scripts/ sits outside the root tsconfig's include, so tsc never
+  // caught it) and fed `undefined` into the descent.
   const maps = de.maps.map((m): SurfaceDEMap => ({
     ...m,
     get invM() {
@@ -53,7 +55,8 @@ export function countingDE(
 /** Wrap a plain 3x3 `invM` array so every NUMERIC-INDEX element read
  * (`im[0]` through `im[8]`) bumps `counter.n` — the element-granularity
  * twin of {@link countingDE}'s per-VISIT counter, for measuring work that
- * counter cannot see (fr-ck0w EXPERIMENT 2 follow-up, for fr-kidj).
+ * counter cannot see (a follow-up to EXPERIMENT 2's cost split, for the
+ * branch-and-bound work).
  *
  * Must wrap the ARRAY the getter returns, not (only) the map object:
  * `descendFold` (`surface-de.ts`) hoists `const im = map.invM` ONCE per
@@ -136,7 +139,7 @@ export function countingDEFine(
 }
 
 // -----------------------------------------------------------------------
-// fr-5rvk: PURE-FOLD SYSTEMS. Every map below carries exactly ONE active
+// PURE-FOLD SYSTEMS. Every map below carries exactly ONE active
 // fold-family variation and nothing else, which is what makes it a genuine
 // composition `T = w.V(M p + t)` the descent can decompose into branches
 // (a BLENDED list is a weighted sum — no branch decomposition exists, so

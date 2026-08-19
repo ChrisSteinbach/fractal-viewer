@@ -1,18 +1,19 @@
 /**
- * fr-7u8t.4 visual proof: march `qjulia-de.ts`'s oracle on the CPU and write
- * the image out.
+ * Visual proof: march `qjulia-de.ts`'s oracle on the CPU and write the
+ * image out.
  *
  * The unit tests pin the estimator's SOUNDNESS (no overshoot at step scale
  * 1.0) and its CONJUGACY (the rendered set is the classic set translated by
  * `-c`), but neither answers the question that de-risks the rest of the
- * epic: does the estimator actually resolve a quaternion Julia set that
- * looks like the published ones? A wrong real-part convention, a `|v|`/`|y|`
- * mix-up, or a sign slip in the quaternion square all survive the numeric
- * tests as *some* consistent object; they do not survive a picture.
+ * quaternion Julia investigation: does the estimator actually resolve a
+ * quaternion Julia set that looks like the published ones? A wrong
+ * real-part convention, a `|v|`/`|y|` mix-up, or a sign slip in the
+ * quaternion square all survive the numeric tests as *some* consistent
+ * object; they do not survive a picture.
  *
- * This is also the reference image the GPU cores (fr-7u8t.5) are eyeballed
- * against — the `flame-gpu.ts` oracle discipline's visual half, the same
- * role `fold-phantom.harness.ts` plays for the fold descents.
+ * This is also the reference image the GPU cores are eyeballed against —
+ * the `flame-gpu.ts` oracle discipline's visual half, the same role
+ * `fold-phantom.harness.ts` plays for the fold descents.
  *
  * MEASURED VERDICT, and it is a product finding rather than a numeric one:
  * quaternion Julia sets of `q² + c` are SMOOTH. Every such set is a solid of
@@ -21,20 +22,19 @@
  * membership depends only on `(x, y, |(z, w)|)` and no choice of constant
  * escapes the lathe. The classic renders (Hart 1989, Crane 2005) look like
  * turned wood for exactly this reason. That is worth knowing before the
- * epic's later beads: this object is fast, mathematically clean and
+ * investigation's later cuts: this object is fast, mathematically clean and
  * genuinely 4D, but it is NOT where the intricate "3D fractal landscape"
- * look comes from — that is the Mandelbulb/Mandelbox family (fr-7u8t.7).
- * The panels below are chosen to show the real range, dendrite constants
- * included, so the judgement is made from pictures rather than from the
- * brief's framing.
+ * look comes from — that is the Mandelbulb/Mandelbox family. The panels
+ * below are chosen to show the real range, dendrite constants included, so
+ * the judgement is made from pictures rather than from a prior framing.
  *
- * Renders through `de-preview.ts`'s shared CPU tracer since fr-by0n: this
- * file predates that module and had grown its own tracer and PNG encoder,
- * with shading constants that had drifted independently of the rest of the
- * family, so its sheet was not comparable to a sibling's (fr-vpbq's review
- * caught it). The camera still recentres per panel on `-c`, matching where
- * the set actually sits (see above) — `eyeOffset` is derived from
- * `boundingRadius` so the original framing survives unchanged. Only the
+ * Renders through `de-preview.ts`'s shared CPU tracer: this file predates
+ * that module and had grown its own tracer and PNG encoder, with shading
+ * constants that had drifted independently of the rest of the family, so
+ * its sheet was not comparable to a sibling's (the supersampling work's
+ * pre-merge review caught it). The camera still recentres per panel on `-c`,
+ * matching where the set actually sits (see above) — `eyeOffset` is derived
+ * from `boundingRadius` so the original framing survives unchanged. Only the
  * marching/shading numbers — epsilon, AO, shadow, step budget — are now the
  * ones every sibling sheet uses.
  *
@@ -78,7 +78,7 @@ interface Panel {
   w0: number;
 }
 
-describe("fr-7u8t.4 quaternion Julia CPU preview", () => {
+describe("quaternion Julia CPU preview", () => {
   it("marches the oracle and writes a contact sheet", () => {
     const entries: Panel[] = [
       // Interior constants: the smooth lathe form the module doc describes.

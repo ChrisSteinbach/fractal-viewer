@@ -1,14 +1,15 @@
 /**
- * The escape-time family ACROSS ITS OWN BOUNDARY (fr-j231) — the sheet the
- * shipped estimator draws for a chain that mixes folds with powers, and the
+ * The escape-time family ACROSS ITS OWN BOUNDARY — the sheet the shipped
+ * estimator draws for a chain that mixes folds with powers, and the
  * prototype that asked for it, kept beside it as the control.
  *
  * THE HOLE IS CLOSED. This file opened as a prototype arguing for a shape no
  * gate admitted: `analyzeSurfaceSystem` refused a non-contracting map,
  * `analyzeEscapeSystem` admitted exactly one, `analyzeBulbSystem` admitted
  * exactly one triplex power, and a document holding a Mandelbox and a
- * Mandelbulb rendered as nothing at all. fr-za0n closed the fold-only half
- * (the transform LIST became the formula chain); fr-j231 closed this one.
+ * Mandelbulb rendered as nothing at all. The formula chain closed the
+ * fold-only half (the transform LIST became that chain); cross-family power
+ * links closed this one.
  * `escape-de.ts` now admits `bulb` and `qsquare` links in any chain of two
  * or more maps, resolves the estimate form per chain (`logEstimate`), and
  * both shader mirrors gained the two power bodies — appended PAST the
@@ -59,7 +60,7 @@
  * to 5.8e5 in one link, and {@link escapeLinkStiffnessLimit} is the closed
  * form of when a link keeps its own output inside the ball — 0.297 for a
  * unit-weight bulb at R = 4, 0.500 for the quaternion square. The prototype
- * measured exactly that, and the bead carried a second prediction beside it:
+ * measured exactly that, and a second prediction rode beside it:
  * that cycling would NOT help, since a cycled bulb link still sees `|v| <= 4`
  * and `4⁸ = 65536` still escapes.
  *
@@ -73,32 +74,33 @@
  *     mandelbox w=2 -> bulb, pre-scale   1     0.6    0.5    0.4    0.3    0.2
  *       fill, CYCLING @30 (shipped)      0.29   1.57   2.78   6.32  22.89  64.56 %
  *       fill, CHAINING @30 (equal work)  0.01   0.11   0.23   2.26  69.08  98.29 %
- *       fill, CHAINING @16 (bead budget) 0.01   0.12   0.24   6.40  72.88  98.32 %
+ *       fill, CHAINING @16 (as recorded) 0.01   0.12   0.24   6.40  72.88  98.32 %
  *       rays hit, shipped               11.0   26.9   39.1   55.0   64.8   14.4  %
  *
  *     mandelbox w=2 -> qsquare           1     0.6    0.5    0.4    0.3    0.2
  *       fill, CYCLING @30 (shipped)      0.01   0.33   1.59   5.01  17.61  44.41 %
  *       fill, CHAINING @30 (equal work)  0.00   0.36   6.77  27.60  64.18  88.99 %
- *       fill, CHAINING @16 (bead budget) 0.00   1.77  12.04  32.59  66.22  89.30 %
+ *       fill, CHAINING @16 (as recorded) 0.00   1.77  12.04  32.59  66.22  89.30 %
  *       rays hit, shipped               15.8   40.7   49.8   50.6   55.9   28.5  %
  *
  * THE VERDICT: chaining does not merely render less, it SKIPS THE USEFUL
  * RANGE. Over pre-scale 1 to 0.5 it is 12-29x emptier than cycling; one or
  * two steps later it is 3.0x and 1.5x FATTER, at 69% and 98% of the bailout
- * ball — a featureless crust, precisely the defect fr-7u8t.8 existed to fix,
- * arriving by the back door exactly as `escape-chain.harness.ts` measured it
- * arriving for fold-only chains. The quaternion square does the same one
- * notch earlier (5.5x fatter already at 0.4). Cycling climbs smoothly across
- * the whole sweep and reaches neither failure. The two chaining rows are
- * within noise of each other except at pre-scale 0.4, so THE BUDGET IS NOT
- * WHAT SHAPES THAT CURVE.
+ * ball — a featureless crust, precisely the defect the Mandelbrot form
+ * existed to fix, arriving by the back door exactly as
+ * `escape-chain.harness.ts` measured it arriving for fold-only chains. The
+ * quaternion square does the same one notch earlier (5.5x fatter already at
+ * 0.4). Cycling climbs smoothly across the whole sweep and reaches neither
+ * failure. The two chaining rows are within noise of each other except at
+ * pre-scale 0.4, so THE BUDGET IS NOT WHAT SHAPES THAT CURVE.
  *
  * AND THE CHAINING FIGURES ON RECORD ARE WRONG, which is a finding and not a
- * detail — the bead, and `escape-de.ts`'s module doc after it, quote
+ * detail — the original record, and `escape-de.ts`'s module doc after it,
+ * quote
  * 0.01 / 2.09 / 5.09 / 0.47% at pre-scale 1 / 0.5 / 0.3 / 0.2 for this arm.
- * Those came from the prototype's `scan()` (fr-azjk removed it; see section
- * 5), and holding the budget fixed at the bead's own 16 passes so the
- * instrument is the only difference, the same arm reads
+ * Those came from the prototype's `scan()` (the set-extent correction
+ * removed it; see section 5), and holding the budget fixed at the recorded
+ * 16 passes so the instrument is the only difference, the same arm reads
  * 0.01 / 0.24 / 72.88 / 98.32%. The record is 8.7x HIGH at
  * pre-scale 0.5 and then 14x and 209x LOW at 0.3 and 0.2 — it reports a
  * narrow band of usable fill with a collapse after it, where the truth is a
@@ -111,7 +113,7 @@
  * Nothing about the verdict changes; the shape of the curve underneath it
  * does.
  *
- * And the untuned pre-scale 1 — the exact case the bead calls a blank
+ * And the untuned pre-scale 1 — the exact case predicted to be a blank
  * frame — draws 11.0% of its rays for the bulb and 15.8% for the quaternion
  * square. It is not blank.
  *
@@ -121,28 +123,29 @@
  * inside — while the same system draws 15.8% of its rays at the framing
  * pose. That is `mandelboxRings`' exact signature (0.000% fill here, 44.9%
  * of rays) reproduced by a brand-new chain, and it is the whole of why
- * fr-17qu's first cut was wrong: A VOLUME PROBE MUST NEVER BE READ AS "WILL
- * IT RENDER". A thin fractal has a large surface and no measurable volume,
- * and the marcher finds the surface.
+ * the blank-frame notice's first cut was wrong: A VOLUME PROBE MUST NEVER BE
+ * READ AS "WILL IT RENDER". A thin fractal has a large surface and no
+ * measurable volume, and the marcher finds the surface.
  *
  * PUSHED THE OTHER WAY IT STAYS RENDERABLE. `-> bulb` pre-scaled 8, 27x past
  * the stiffness bound, still draws 0.75% of its rays through this marcher,
- * against 0.095% for fr-17qu's own degenerate system (a lone Mandelbox
- * pre-scaled by 8) and 38.9 / 44.9 / 48.2% for the shipped
+ * against 0.095% for the blank-frame notice's own degenerate system (a lone
+ * Mandelbox pre-scaled by 8) and 38.9 / 44.9 / 48.2% for the shipped
  * `mandelboxClassic` / `mandelboxRings` / `foldChain`. There is a real
  * blank regime and the cross chains are not in it.
  *
  * SO THERE IS NO AUTO-SCALE AND NO NEW SIGNAL, which is what the stiffness
  * bound was going to be used for. It declares hopeless a range that renders,
- * and fr-17qu's own lesson applies verbatim: a signal that fires on good
- * input is worse than the silence it replaced.
+ * and the blank-frame notice's own lesson applies verbatim: a signal that
+ * fires on good input is worse than the silence it replaced.
  *
  * ==================== 2. WHICH ESTIMATE FORM A CHAIN READS ================
  *
  * `escape-de.ts` reads the Böttcher form `0.5·r·ln r/dr` when some link is a
- * power map and the fold family's linear `r/dr` otherwise. fr-282c REFUSED
- * the log form for the folds, and this section's job is to show why neither
- * of its two arguments reaches a power chain — measured, not argued.
+ * power map and the fold family's linear `r/dr` otherwise. The log-form
+ * sweep REFUSED the log form for the folds, and this section's job is to
+ * show why neither of its two arguments reaches a power chain — measured,
+ * not argued.
  *
  * (a) IS log/linear PINNED? Both arms read one terminal radius through one
  * `dr`, so their ratio is exactly `0.5·ln r`. A fold orbit lands just
@@ -154,10 +157,10 @@
  *     mbox2 -> bulb(0.4)            p05 0.661 p25 0.733 p50 0.874 p95 1.786  NOT pinned
  *     mbox2 -> bulb(0.5)            p05 0.698 p25 0.761 p50 1.514 p95 2.675  NOT pinned
  *
- * (b) IS IT BOUNDARY-ADAPTIVE? fr-282c's decisive control: the ratio's
- * median over the nearest and farthest deciles of exterior queries. Flat
- * means a constant, i.e. not a different bound but a damping knob the mode
- * already exposes. Measured at THREE independent seeds, because the
+ * (b) IS IT BOUNDARY-ADAPTIVE? The log-form sweep's decisive control: the
+ * ratio's median over the nearest and farthest deciles of exterior queries.
+ * Flat means a constant, i.e. not a different bound but a damping knob the
+ * mode already exposes. Measured at THREE independent seeds, because the
  * DIRECTION of the spread is what is being read and one seed cannot say
  * whether a direction belongs to the system or to that seed's decile
  * membership; the verdict column requires all three to agree.
@@ -203,19 +206,19 @@
  *     CONTROL mbox2 -> boxfold1.6    linear  8.0/ 3.4%   log  6.6/ 2.9%  1.2x
  *
  * The rows where the ratio is NOT flat are exactly the rows where the log
- * form wins big; where it IS flat it buys the ~1.2x fr-282c already refused
- * for the fold family, on the grounds that one constant reproduces it. That
- * is the honest reading and it is the whole argument: THE FORM IS TAKEN FOR
- * THE ADAPTIVE ROWS, and a chain carrying a power link is where they are —
- * not every such chain, as (b)'s last two rows show, but only ever such a
- * chain, which is exactly what `logEstimate` keys on.
+ * form wins big; where it IS flat it buys the ~1.2x the log-form sweep
+ * already refused for the fold family, on the grounds that one constant
+ * reproduces it. That is the honest reading and it is the whole argument:
+ * THE FORM IS TAKEN FOR THE ADAPTIVE ROWS, and a chain carrying a power link
+ * is where they are — not every such chain, as (b)'s last two rows show, but
+ * only ever such a chain, which is exactly what `logEstimate` keys on.
  *
- * fr-282c's DIMENSIONAL argument does not reach here either, and that is
- * structural rather than lucky: the folds are uniform-rescale equivariant, so
- * `ln r` (which needs `r` dimensionless) breaks `DE_λ(λp) = λ·DE(p)` for
- * them. A power map is not equivariant — `V(λy) = λ^d V(y)` — so the
- * constraint that refused the log form for folds does not exist for a chain
- * containing one.
+ * The log-form sweep's DIMENSIONAL argument does not reach here either, and
+ * that is structural rather than lucky: the folds are uniform-rescale
+ * equivariant, so `ln r` (which needs `r` dimensionless) breaks
+ * `DE_λ(λp) = λ·DE(p)` for them. A power map is not equivariant —
+ * `V(λy) = λ^d V(y)` — so the constraint that refused the log form for folds
+ * does not exist for a chain containing one.
  *
  * At FRAME level, same pose, same step scale: `mbox2 -> bulb(0.4)` renders
  * 52.68% -> 54.95% of rays for 22.2 -> 19.5 steps/ray — MORE surface for
@@ -251,10 +254,10 @@
  *
  * COST is 0.8-3.7x the single Mandelbox on the same query set, measured
  * across three runs of this file — the same shape
- * `escape-chain.harness.ts` measures for fold-only chains, whose figures
- * fr-azjk re-took over the BAILOUT ball both engines march against
- * (0.07-0.23 against 0.18, i.e. at or below the map; over each row's own
- * FITTED ball, which crowds queries against the set, the same rows read
+ * `escape-chain.harness.ts` measures for fold-only chains, whose figures the
+ * set-extent correction re-took over the BAILOUT ball both engines march
+ * against (0.07-0.23 against 0.18, i.e. at or below the map; over each row's
+ * own FITTED ball, which crowds queries against the set, the same rows read
  * 0.28-1.27 against 0.22 — the domain decides the number, and the band
  * this file quotes is a fitted-ball one). One chain is CHEAPER than the map it composes with,
  * which is the stiffness result again from the cost side: an orbit that
@@ -284,9 +287,9 @@
  * printed. And `hybridChainCraters` fills 0.011% of its bailout ball while
  * drawing 18.5% of its rays: a thin fractal with a large surface, the same
  * shape `mandelboxRings` has (measured 0.000% fill here at 128k samples
- * against 44.9% of rays hit) and the exact confusion fr-17qu's first cut was
- * built on. VOLUME IS NOT VISIBILITY; do not reach for a fill number to
- * predict whether something renders.
+ * against 44.9% of rays hit) and the exact confusion the blank-frame
+ * notice's first cut was built on. VOLUME IS NOT VISIBILITY; do not reach
+ * for a fill number to predict whether something renders.
  *
  * ================== 5. THE FILL INSTRUMENT ITSELF ========================
  *
@@ -322,27 +325,28 @@
  * {@link escapeFillAtBudget} exists only because it has no budget parameter
  * and {@link chainFill} only because it cannot ask the prototype's orbit,
  * and both are pinned equal to it by assertion at two sample counts so they
- * cannot become a second definition of "fill". `scan()` IS GONE
- * (fr-azjk): the prototype's grid, and the five call sites that were still
- * printing an unlabelled `fill`/`ball fill` off it, are replaced by
- * {@link chainExtent} (fill EXACTLY {@link chainFill}'s number, reach a
+ * cannot become a second definition of "fill". `scan()` IS GONE (the
+ * set-extent correction): the prototype's grid, and the five call sites that
+ * were still printing an unlabelled `fill`/`ball fill` off it, are replaced
+ * by {@link chainExtent} (fill EXACTLY {@link chainFill}'s number, reach a
  * second seeded draw over the caller's own scan radius) and
  * {@link fitMarchRadius}, both built on `set-extent.ts`'s `sampleSetExtent`
  * over {@link chainMember} — so reach/extent and the marching-radius fit now
  * ask membership the same way every fill figure in this file already did,
  * and there is no second, looser definition left to label out of the way.
  *
- * ========= 6. THE QUATERNION SQUARE'S k COMPONENT (fr-wuuu) ==============
+ * ============== 6. THE QUATERNION SQUARE'S k COMPONENT ===================
  *
  * A MEASUREMENT THAT ENDS IN A WON'T-DO, and the CONTROL is what makes it
  * one. `analyzeEscapeSystem` refuses a map that extends into 4D, so a
  * `qsquare` link renders only the quaternion square's restriction to
  * span{1, i, j}: the Julia constant's k component — the 4th component of that
- * link's translation — cannot be authored. fr-7u8t.6 closed the qjulia 4D
- * lift won't-do because every cut it rendered was smooth, and the reason to
- * ask again is fr-j231's own result, that composition rescues a map that is
- * dull alone. THE ANSWER IS THAT IT DOES NOT BUY AN OBJECT: it behaves like a
- * fourth translation component, and per unit it is the WEAKER of the two.
+ * link's translation — cannot be authored. The quaternion Julia 4D lift
+ * closed won't-do because every cut it rendered was smooth, and the reason
+ * to ask again is the cross-family power links' own result, that composition
+ * rescues a map that is dull alone. THE ANSWER IS THAT IT DOES NOT BUY AN
+ * OBJECT: it behaves like a fourth translation component, and per unit it is
+ * the WEAKER of the two.
  *
  * THE ARM IS {@link runChain4}, {@link runChain} one dimension up with
  * `variations4.ts`'s forward maps read out of that file rather than
@@ -429,12 +433,12 @@
  * knob keeping a set structured where the control destroys it, or producing a
  * visibly different family at comparable fill.
  *
- * SO fr-wuuu IS A WON'T-DO. Authoring the k component would add a permanent
- * 4D degree of freedom to the document, a fourth number on a link's
+ * SO THE k COMPONENT IS A WON'T-DO. Authoring it would add a permanent 4D
+ * degree of freedom to the document, a fourth number on a link's
  * translation, a lift convention to get right in six mirrors, and an
  * eligibility gate to re-open — to buy a weaker version of a slider the panel
  * already has. `qjulia-de.ts`'s own verdict holds one composition further out
- * than fr-7u8t.6 could test it.
+ * than the refused quaternion Julia 4D lift could test it.
  *
  * THE SLICE IS THE SAME STORY, and it is the other thing a 3D-only mode
  * cannot reach. Same fixture at `k = 0`, `m_w = 1`, sweeping `w0`:
@@ -500,12 +504,13 @@
  *     `hybrid-chain-sequence.png` (+ `-close`) is the fold-only verdict, and
  *     on the shared bailout ball at equal work it is emphatic: at six links
  *     chaining fills 37.1% of it (a crust reaching to about 3.7 — most but
- *     not quite all of the radius-4 ball; fr-azjk's membership fix moved
- *     this reach figure down from an exact 4.00, which was section 5(b)'s
- *     leaky distance threshold falsely admitting near-boundary escapers, not
- *     a property of the object) where cycling fills 0.2% and draws in to
- *     about 1.3, and at four links 13.8% against 0.6% (reach about 3.8 vs
- *     about 1.4). `hybrid-chain-cross-sequence.png` is the cross-family one,
+ *     not quite all of the radius-4 ball; the set-extent correction's
+ *     membership fix moved this reach figure down from an exact 4.00, which
+ *     was section 5(b)'s leaky distance threshold falsely admitting
+ *     near-boundary escapers, not a property of the object) where cycling
+ *     fills 0.2% and draws in to about 1.3, and at four links 13.8% against
+ *     0.6% (reach about 3.8 vs about 1.4).
+ *     `hybrid-chain-cross-sequence.png` is the cross-family one,
  *     and section 1 above is the same fork measured against the code that
  *     shipped.
  *   - WHERE THE OFFSET GOES: per PASS or per LINK
@@ -530,8 +535,9 @@
  *   PROTOTYPE — `hybrid-chain.png` (the 12-panel sheet) and
  *         `hybrid-chain-close.png`; `hybrid-chain-sequence.png` and
  *         `hybrid-chain-sequence-close.png` (chaining vs cycling, the fork
- *         that decided fr-za0n); `hybrid-chain-cross-sequence.png` (the same
- *         fork on cross-family chains); `hybrid-chain-offset.png`;
+ *         that decided the formula chain);
+ *         `hybrid-chain-cross-sequence.png` (the same fork on cross-family
+ *         chains); `hybrid-chain-offset.png`;
  *         `hybrid-chain-march.png` and `hybrid-chain-march2.png`;
  *         `hybrid-chain-4d-k.png` (section 6's five sweeps — the k component
  *         and its `t_x` control under both lifts, then the w0 slice —
@@ -879,9 +885,9 @@ function chain(
 /**
  * Fill and reach of a chain's set — `set-extent.ts`'s `sampleSetExtent`
  * given the chain's own membership oracle ({@link chainMember}), replacing
- * the grid this file used before fr-azjk (module doc, section 5: a grid
- * lands a disproportionate share of its points on a fold's own walls, and
- * `de(p) < 1e-3` is a distance threshold, not membership).
+ * the grid this file used before the set-extent correction (module doc,
+ * section 5: a grid lands a disproportionate share of its points on a fold's
+ * own walls, and `de(p) < 1e-3` is a distance threshold, not membership).
  *
  * TWO SEPARATE DRAWS, not one merged sample. `fillPct` is EXACTLY
  * {@link chainFill}'s number — the fixed radius-`ESCAPE_TIME_RADIUS` ball
@@ -910,9 +916,9 @@ function chainExtent(
 /** Fit the preview's marching ball to the object, so every panel frames its
  * own set the same way and the sheet compares SHAPES. Over-estimates
  * deliberately (rays entering further out cost steps, never geometry).
- * Takes the CHAIN rather than a `DistanceEstimator`, since fr-azjk: reach is
- * a membership question asked of {@link chainMember} through
- * `sampleSetExtent`, never a distance threshold on a grid. */
+ * Takes the CHAIN rather than a `DistanceEstimator`, since the set-extent
+ * correction: reach is a membership question asked of {@link chainMember}
+ * through `sampleSetExtent`, never a distance threshold on a grid. */
 function fitMarchRadius(c: Chain, scanR: number): number {
   const { reachAbs } = sampleSetExtent((p) => chainMember(c, p), {
     fillRadius: scanR,
@@ -1046,7 +1052,7 @@ function printReport(i: number, c: Chain, r: PanelReport): void {
   );
 }
 
-// ------------------------------------ the 4D twin (fr-wuuu), and its one knob
+// ---------------------------------------------- the 4D twin, and its one knob
 //
 // `analyzeEscapeSystem` refuses a map that extends into 4D, so a chain
 // carrying a `qsquare` link renders only the quaternion square's restriction
@@ -1065,7 +1071,7 @@ function printReport(i: number, c: Chain, r: PanelReport): void {
  * A chain link one dimension up: the 3D link verbatim, plus the knob.
  *
  * The linear part is the 3D `M` LIFTED as `diag(M, m_w)`. No 4x4 rotation —
- * that would be a second new degree of freedom, and fr-wuuu asks about
+ * that would be a second new degree of freedom, and this sweep asks about
  * exactly one. `y_w = m_w · v_w + t_w` is the whole of the lift, and `m_w`
  * exists because THE REPO ALREADY HAS AN OPINION ABOUT WHAT IT SHOULD BE:
  * `affine4.ts`'s `embedTransform3` derives `scale_w` as the map's MEAN
@@ -1207,7 +1213,7 @@ function runChain4(
         // true 4D factor is `max(8r₃⁷, 1)`, but this bound is already the
         // heuristic `bulb-de.ts` ships and floors `dr` per link at `+ 1`
         // regardless. Keeping it verbatim is what makes the `w = 0` pin
-        // reach the bulb rows too. Not the subject of fr-wuuu either way.
+        // reach the bulb rows too. Not the k sweep's subject either way.
         const a = yx * yx + yy * yy;
         const z2 = yz * yz;
         const r2 = a + z2;
@@ -1374,7 +1380,8 @@ function fitMarchRadius4(reachAbs: number): number {
 }
 
 /**
- * The ONE query cloud every IoU column in the fr-wuuu sweep is taken over.
+ * The ONE query cloud every IoU column in the k-component sweep is taken
+ * over.
  *
  * `set-extent.ts`'s draw term for term — cbrt radius, cos-uniform polar — at
  * `ESCAPE_PROBE_SEED`, so the fill column's own 131072-point sample is
@@ -1434,9 +1441,9 @@ function setIoU(a: Uint8Array, b: Uint8Array): { iou: number; union: number } {
 // ------------------------------------------------- the SHIPPED estimator
 //
 // Everything above this line is the prototype, which is now the CONTROL.
-// Everything below runs `escape-de.ts` itself, which is now the subject —
-// the swap fr-j231 made, and the reason this file is a sibling of
-// `escape-chain.harness.ts` rather than a predecessor of it.
+// Everything below runs `escape-de.ts` itself, which is now the subject — the
+// swap the cross-family power links made, and the reason this file is a
+// sibling of `escape-chain.harness.ts` rather than a predecessor of it.
 
 /**
  * A single map in the DOCUMENT vocabulary — the shape all three gates read,
@@ -1548,15 +1555,17 @@ function escapeFillAtBudget(
  * same seed, the same ball, the same membership question, so the headline
  * table's arms differ by their ORBIT and by nothing else. The prototype's
  * old `scan()` grid, which must not have been read as a fill value, is gone
- * (fr-azjk); {@link chainExtent} and {@link fitMarchRadius} cover
- * reach/extent and the marching-radius fit now, both via `chainMember`. */
+ * (the set-extent correction); {@link chainExtent} and
+ * {@link fitMarchRadius} cover reach/extent and the marching-radius fit now,
+ * both via `chainMember`. */
 function chainFill(c: Chain, points = FILL_POINTS): number {
   return sampleFill((p) => chainMember(c, p), points);
 }
 
 /** The regular-grid fill this file used before the aliasing above was
  * measured. Kept because the figures quoted in `escape-de.ts`'s module doc
- * and in the bead are grid figures, and a harness that cannot reproduce the
+ * and in the original record are grid figures, and a harness that cannot
+ * reproduce the
  * record it is replacing has not replaced it. */
 function gridFill(de: EscapeDE, n = 29): number {
   let inside = 0;
@@ -1705,8 +1714,8 @@ const hitPct = (panel: PanelStats, size: number) =>
   (100 * panel.hits) / (size * size);
 
 /**
- * The three hybrid presets fr-j231 ships, IMPORTED rather than restated —
- * along with the fold-only {@link foldChain} and single-map
+ * The three hybrid presets the cross-family power links ship, IMPORTED rather
+ * than restated — along with the fold-only {@link foldChain} and single-map
  * {@link mandelboxClassic} controls beside them. A sheet that argues for a
  * menu entry has to draw the menu entry: restating the parameters here would
  * let a preset edit drift away from its own evidence silently, which is the
@@ -1721,11 +1730,12 @@ const HYBRID_PRESETS: [string, Transform[]][] = [
 describe("hybrid chains: the escape-time family across its own boundary", () => {
   it("tracks the CLOSED gate: which shapes compose, and which still do not", () => {
     // This test used to assert that the cross-family rows were refused
-    // EVERYWHERE — it was the hole's regression record. fr-j231 closed the
-    // hole, so it now asserts the other side of the same line, on the same
-    // rows, with every gate's verbatim reasons still printed: that is the
-    // part worth keeping either way, since a reader reaching this file wants
-    // to know what the three gates say, not what they said.
+    // EVERYWHERE — it was the hole's regression record. The cross-family
+    // power links closed the hole, so it now asserts the other side of the
+    // same line, on the same rows, with every gate's verbatim reasons still
+    // printed: that is the part worth keeping either way, since a reader
+    // reaching this file wants to know what the three gates say, not what
+    // they said.
     //
     // `admits` is the whole readout. Exactly one mode should claim each row
     // (or none, for the shapes that genuinely have no estimator), because
@@ -1738,7 +1748,7 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
       transforms: Transform[];
     }[] = [
       {
-        // fr-za0n's half of the hole: fold-only chains.
+        // The formula chain's half of the hole: fold-only chains.
         what: "two mandelbox w=2 maps",
         escape: "eligible",
         bulb: "ineligible",
@@ -1754,9 +1764,10 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
         transforms: [xmap(1, "mandelbox", 2), xmap(2, "boxfold", 1.6)],
       },
       {
-        // fr-j231's half, and the rows this whole file exists for. Note the
-        // pre-scale is 1: the UNTUNED cross-family chain is eligible, which
-        // is the feature (the headline test measures whether it RENDERS).
+        // The cross-family half, and the rows this whole file exists for.
+        // Note the pre-scale is 1: the UNTUNED cross-family chain is
+        // eligible, which is the feature (the headline test measures whether
+        // it RENDERS).
         what: "mandelbox w=2 + bulb (CROSS-FAMILY)",
         escape: "eligible",
         bulb: "ineligible",
@@ -1793,7 +1804,7 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
       {
         // The lone quaternion square is refused by all three, and that is
         // deliberate too: `qjulia-de.ts`'s object is production-dead by
-        // fr-7u8t.5's twenty smooth panels. As a LINK it is alive.
+        // the beauty sheet's twenty smooth panels. As a LINK it is alive.
         what: "ONE qsquare map (a lone quaternion square)",
         escape: "ineligible",
         bulb: "ineligible",
@@ -1903,15 +1914,15 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
     // two were reached by different routes, so an agreement is evidence
     // rather than a tautology.
     //
-    // fr-j231 extends it across the family boundary, which is where it is
-    // worth the most and costs the least. The cross-family rows exercise
-    // three things no fold-only row can reach: the two POWER bodies
-    // (`triplexPow8` and the quaternion square, each inlined in both files
-    // and each easy to transcribe subtly wrong), their local factors
-    // `8|y|⁷` and `2|y|`, and the Böttcher RETURN — `de.logEstimate` on one
-    // side, `estimate: "log"` on the other, both including the `r <= 1`
-    // clamp a converging orbit reaches. A later reader should NOT re-derive
-    // any of that by hand; this is the check.
+    // The cross-family power links extend it across the family boundary,
+    // which is where it is worth the most and costs the least. The
+    // cross-family rows exercise three things no fold-only row can reach: the
+    // two POWER bodies (`triplexPow8` and the quaternion square, each inlined
+    // in both files and each easy to transcribe subtly wrong), their local
+    // factors `8|y|⁷` and `2|y|`, and the Böttcher RETURN — `de.logEstimate`
+    // on one side, `estimate: "log"` on the other, both including the
+    // `r <= 1` clamp a converging orbit reaches. A later reader should NOT
+    // re-derive any of that by hand; this is the check.
     //
     // The prototype's arm is `cycle` + `offset: "link"`, which is the
     // shipped orbit exactly (module doc: under cycling a pass IS one link,
@@ -2030,7 +2041,7 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
     // and `escapeLinkStiffnessLimit` is the closed form of the condition for
     // a link to keep its own output inside the ball when the whole ball is
     // thrown at it. The prototype measured exactly what it predicts — the
-    // CHAINING columns below — and the bead this feature came from carried a
+    // CHAINING columns below — and the report this feature came from carried a
     // second prediction beside it: that cycling would not help, since a
     // cycled bulb link still sees `|v| <= 4` and `4⁸ = 65536` still escapes.
     //
@@ -2047,21 +2058,21 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
     //
     //   cycling@30      the shipped orbit
     //   chaining@30     the rejected per-PASS orbit at EQUAL WORK
-    //   chaining@16     the same orbit at the budget the bead recorded
+    //   chaining@16     the same orbit at the budget originally recorded
     //
-    // The last two exist separately because the bead's chaining figures
+    // The last two exist separately because the recorded chaining figures
     // changed under TWO edits at once — instrument (grid -> probe) and
     // budget (16 -> 30 passes) — and a table that applied both together
     // could not say which moved them. `chaining@16` holds the budget fixed
     // so the instrument is the only difference from the record.
     //
     // The prototype's own `scan()` grid does not appear here, or ANYWHERE
-    // ELSE IN THIS FILE any more (fr-azjk): it was a grid that thresholded
-    // the estimate rather than asking membership, and it is gone rather
-    // than merely unused by this table. {@link chainExtent} and
-    // {@link fitMarchRadius} now cover every reach/extent and
-    // marching-radius site it used to, both built on `set-extent.ts`'s
-    // `sampleSetExtent` over {@link chainMember}.
+    // ELSE IN THIS FILE any more (the set-extent correction): it was a grid
+    // that thresholded the estimate rather than asking membership, and it is
+    // gone rather than merely unused by this table. {@link chainExtent} and
+    // {@link fitMarchRadius} now cover every reach/extent and marching-radius
+    // site it used to, both built on `set-extent.ts`'s `sampleSetExtent` over
+    // {@link chainMember}.
     const panels: PanelStats[] = [];
     console.log(
       `  fills below are probeEscapeFill's own sampler at ${FILL_POINTS} ` +
@@ -2092,7 +2103,7 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
           iterations: ESCAPE_TIME_ITERATIONS,
         });
         // The prototype's recorded budget, unchanged (16 passes, log) — the
-        // arm the bead's figures came off, measured on THIS instrument.
+        // arm those figures came off, measured on THIS instrument.
         const recorded = chain("", links);
         const panel = shotShipped(de, CROSS);
         panels.push(panel);
@@ -2115,10 +2126,10 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
       )}`,
     );
     // The claim, asserted rather than merely printed: the UNTUNED
-    // cross-family chain — pre-scale 1, the exact case the bead calls a
-    // blank frame — renders. The bar is fr-17qu's own reading of what blank
-    // means (its degenerate system draws 0.095% of rays through this
-    // marcher), with an order of magnitude of margin.
+    // cross-family chain — pre-scale 1, the exact case predicted to be a blank
+    // frame — renders. The bar is the blank-frame notice's own reading of
+    // what blank means (its degenerate system draws 0.095% of rays through
+    // this marcher), with an order of magnitude of margin.
     for (const type of ["bulb", "qsquare"] as VariationType[]) {
       const de = buildEscapeDE([xmap(1, "mandelbox", 2), xmap(2, type, 1)]);
       expect(
@@ -2185,7 +2196,7 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
   });
 
   it("pushes the OTHER way: is any cross chain actually blank?", () => {
-    // The stiffness bound's own direction, and the control band fr-17qu's
+    // The stiffness bound's own direction, and the control band the empty-set
     // blank-frame notice has to be read against. Every row goes through ONE
     // marcher at ONE pose, so the shipped presets and the deliberately
     // degenerate system calibrate the scale rather than being asserted about.
@@ -2204,14 +2215,14 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
     }
     rows.push(
       ["mbox3 -> bulb(1)", [xmap(1, "mandelbox", 3), xmap(2, "bulb", 1)]],
-      // The controls: three shipped presets, and fr-17qu's own degenerate
-      // system (a Mandelbox pre-scaled by 8, which the app measures at
-      // 0.019% of rays against the presets' 5.0-10.3%).
+      // The controls: three shipped presets, and the blank-frame notice's own
+      // degenerate system (a Mandelbox pre-scaled by 8, which the app
+      // measures at 0.019% of rays against the presets' 5.0-10.3%).
       ["CONTROL mandelboxClassic (ships)", mandelboxClassic()],
       ["CONTROL mandelboxRings (ships)", mandelboxRings()],
       ["CONTROL foldChain (ships)", foldChain()],
       [
-        "CONTROL fr-17qu degenerate (mbox2 pre-scaled 8)",
+        "CONTROL blank-notice degenerate (mbox2 pre-scaled 8)",
         [xmap(1, "mandelbox", 2, { scale: 8 })],
       ],
     );
@@ -2307,9 +2318,9 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
     // `escape-de.ts` resolves this per chain (`logEstimate`, true exactly
     // when some link is a power map) and carries the answer on the wire so
     // six mirrors cannot each decide it differently. This is the measurement
-    // behind that rule, and it has to answer fr-282c — which REFUSED the log
-    // form for the fold family, on evidence that does not reach a power
-    // chain and must not be read as if it did.
+    // behind that rule, and it has to answer the log-form sweep — which
+    // REFUSED the log form for the fold family, on evidence that does not
+    // reach a power chain and must not be read as if it did.
     //
     // Bound- and damped-step violation rates over 900 exterior queries in
     // the bailout ball, 14 probe directions each, at ESCAPE_STEP_SCALE. The
@@ -2423,17 +2434,18 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
     );
   });
 
-  it("asks fr-282c's two questions of a POWER chain", () => {
-    // fr-282c refused the log form for the FOLD family on two measurements,
-    // and neither reaches a chain carrying a power link. This test runs both
-    // of them here so the difference is measured rather than argued.
+  it("asks the log-form sweep's two questions of a POWER chain", () => {
+    // That sweep refused the log form for the FOLD family on two
+    // measurements, and neither reaches a chain carrying a power link. This
+    // test runs both of them here so the difference is measured rather than
+    // argued.
     //
     //  (a) IS log/linear PINNED? The two arms read the same terminal radius
     //      through the same `dr`, so their ratio is exactly `0.5·ln r`. A
     //      fold orbit lands just outside its radius-4 bailout ball, which
     //      pins the ratio near `0.5·ln 4 = 0.693` — and a constant damping
     //      is a knob the mode already exposes, not a different bound.
-    //  (b) IS IT BOUNDARY-ADAPTIVE? fr-282c's decisive column: the ratio's
+    //  (b) IS IT BOUNDARY-ADAPTIVE? Its decisive column: the ratio's
     //      median in the nearest and farthest deciles of exterior queries.
     //      Flat means it carries no distance information at all.
     //
@@ -2640,7 +2652,7 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
 
   it("prices the budget and the cost of a cross-family chain", () => {
     // Two questions the mode's shipped constants depend on, asked of the
-    // chains fr-j231 admits.
+    // cross-family chains the gate admits.
     //
     // BUDGET: `ESCAPE_TIME_ITERATIONS` is 30 PASSES for a fold chain. A
     // power link escapes in two or three, so the budget could plausibly have
@@ -2709,11 +2721,11 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
   });
 
   it("renders the three SHIPPED hybrid presets beside their controls", () => {
-    // The sheet that argues for the menu entries, drawn by the estimator
-    // that renders them. Two controls anchor it: the fold-only `foldChain`
-    // (fr-za0n's hybrid — what composition looked like before it could cross
-    // the family boundary) and the single `mandelboxClassic` (what the mode
-    // rendered before it could compose at all).
+    // The sheet that argues for the menu entries, drawn by the estimator that
+    // renders them. Two controls anchor it: the fold-only `foldChain` (the
+    // formula chain's own hybrid — what composition looked like before it
+    // could cross the family boundary) and the single `mandelboxClassic`
+    // (what the mode rendered before it could compose at all).
     const rows: [string, Transform[]][] = [
       ...HYBRID_PRESETS,
       ["CONTROL foldChain (ships)", foldChain()],
@@ -2744,8 +2756,8 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
       `  wrote ${writeContactSheet(panels, 3, "hybrid-chain-presets.png")}`,
     );
     // A preset that opens on a blank pane is the one failure mode a menu
-    // entry must not have — fr-17qu's bar again, at the framing the app
-    // itself uses.
+    // entry must not have — the blank-frame notice's bar again, at the
+    // framing the app itself uses.
     panels.forEach((p, i) => {
       expect(hitPct(p, SIZE), `${rows[i][0]} renders`).toBeGreaterThan(1);
     });
@@ -2755,8 +2767,8 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
   // From here down: THE PROTOTYPE'S OWN SHEETS, which are now the CONTROL
   // arm. They measure `runChain`, not `escape-de.ts` — the rejected per-PASS
   // orbit, the offset fork, the bailout sweep and the fold-only sequence
-  // verdict that fr-za0n came off. They are kept executable rather than
-  // deleted (this project's discipline for a superseded arm), and every
+  // verdict that the formula chain came off. They are kept executable rather
+  // than deleted (this project's discipline for a superseded arm), and every
   // number they print is the arm the sections above are a refutation OF.
   // ======================================================================
 
@@ -3182,7 +3194,7 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
   });
 
   it("forks the sequence: CHAINING vs CYCLING", () => {
-    // The fr-za0n fork. CHAINING applies every link inside one pass;
+    // The formula chain's fork. CHAINING applies every link inside one pass;
     // CYCLING applies slot `i mod n` at pass `i` — Mandelbulber2's own
     // `seq->GetSequence(i)`. Cycling at the SAME iteration budget applies
     // each map a third as often, so each fixture is rendered three ways:
@@ -3403,7 +3415,7 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
     // (default eye, zoom 0.28), NOT this module's close-up: at the close pose
     // every panel reads ~100% hits and the metric is saturated, so it can
     // only compare textures. Here dropout speckle is the signal, exactly as
-    // it was for fr-7u8t.8's single map.
+    // it was for the Mandelbrot form's single map.
     const rot = (deg: number): Vec3 => [0, (deg * Math.PI) / 180, 0];
     const cases: [string, Chain][] = [
       ["CONTROL single mbox2", chain("", [link("mandelbox", 2)])],
@@ -3507,7 +3519,7 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
     }
   });
 
-  /* ---- fr-wuuu: the quaternion square's k component ------------------- */
+  /* ---- the quaternion square's k component ---------------------------- */
 
   it("pins the 4D twin BIT-EXACT against the 3D orbit at w = 0", () => {
     // The 4D arm's whole licence, and the first thing to run if a figure in
@@ -3551,7 +3563,7 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
         ],
       ],
       // Every qsquare-bearing fixture this file already measures somewhere,
-      // which is the set fr-wuuu's sweep is drawn from.
+      // which is the set the k-component sweep is drawn from.
       [
         "QSQ  mandelbox w=2 + qsquare (pre-scale 1)",
         [xmap(1, "mandelbox", 2), xmap(2, "qsquare", 1)],
@@ -3580,8 +3592,8 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
           xmap(3, "boxfold", 1.6, { rotY: 20 }),
         ],
       ],
-      // The bulb bodies too. Not fr-wuuu's subject, but the twin carries them
-      // and a silently broken branch is worse than an unmeasured one.
+      // The bulb bodies too. Not the k sweep's subject, but the twin carries
+      // them and a silently broken branch is worse than an unmeasured one.
       [
         "BULB boxfold 1.6 + bulb (0.3) + spherefold 1.2",
         [
@@ -3708,13 +3720,13 @@ describe("hybrid chains: the escape-time family across its own boundary", () => 
   });
 
   it("sweeps the quaternion square's k COMPONENT against an authorable control", () => {
-    // fr-wuuu's whole question. `analyzeEscapeSystem` refuses a map that
-    // extends into 4D, so a `qsquare` link renders only its restriction to
-    // span{1, i, j} and the Julia constant's k component — the 4th component
-    // of that link's translation — cannot be authored. Does it buy an OBJECT:
-    // a set that is meaningfully different and still structured? Or does it
-    // behave like a fourth translation component, i.e. more of the parameter
-    // space three knobs already cover?
+    // The k-component sweep's whole question. `analyzeEscapeSystem` refuses a
+    // map that extends into 4D, so a `qsquare` link renders only its
+    // restriction to span{1, i, j} and the Julia constant's k component — the
+    // 4th component of that link's translation — cannot be authored. Does it
+    // buy an OBJECT: a set that is meaningfully different and still
+    // structured? Or does it behave like a fourth translation component, i.e.
+    // more of the parameter space three knobs already cover?
     //
     // THE FIXTURE IS THE SHIPPED PRESET. `hybridChainQuaternion` is
     // `mandelbox w=2 -> qsquare` at pre-scale 0.5, and this sweep is exactly

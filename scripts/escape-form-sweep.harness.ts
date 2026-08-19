@@ -1,12 +1,11 @@
 /**
- * fr-7u8t.8: which escape-time FORM should the mode render, and does the
- * document's `t` survive the answer?
+ * Which escape-time FORM should the mode render, and does the document's
+ * `t` survive the answer?
  *
  * `escape-family-preview.harness.ts` established that the shipped Julia form
  * renders a near-sphere at the authored constant. This sheet decides the
- * question that bead left open — with pictures, per its own instruction —
- * and is the executable record of the verdict `escape-de.ts`'s module doc
- * carries:
+ * question it left open — with pictures — and is the executable record of
+ * the verdict `escape-de.ts`'s module doc carries:
  *
  *   1. Does the Mandelbrot form (`v <- w·V(Mv + t) + p`) resolve the classic
  *      objects through the REAL `estimateEscapeDistance`? (Row 1: yes — the
@@ -37,22 +36,23 @@
  * bailout ball each form's non-escaping set fills, and how close to the
  * ball's edge it comes.
  *
- * FR-AZJK RE-MEASURED THAT TABLE, and the figures below are the corrected
- * ones — the sheet's verdicts are all orderings and they survived, but the
- * numbers behind them moved. The old instrument was a grid thresholding the
- * distance estimate, wrong on both counts ({@link extent} carries the
- * argument); the Julia blob at `escMandelbox`'s own constant reads 89.407%
- * of the bailout ball rather than 94%, its `|t|` sweep at weight 2 reads
- * 87.185 / 71.796 / 32.602 / 2.148 / 0.005% rather than 97 / 93 / 77 / 60 /
- * 23%, and the "best Juliabox found" — the row the record priced at 6% fill
- * — has essentially NO volume (0.005%, six members in 131072 samples) while
- * still drawing 28.1% of its rays. That last row is the sheet's own reminder
- * that VOLUME IS NOT VISIBILITY: the shipped Mandelbrot `mandelbox w=3`
- * reads 0.000% here too and renders the holed ball at 31.7% of rays. The
- * verdict the sheet was written for is untouched and if anything sharper —
- * the Julia form is a near-solid ball across everything a user would author,
- * and where it finally thins it goes straight to a measure-zero dust, with
- * no band of usable structure in between.
+ * THE SET-EXTENT CORRECTION RE-MEASURED THAT TABLE, and the figures below
+ * are the corrected ones — the sheet's verdicts are all orderings and they
+ * survived, but the numbers behind them moved. The old instrument was a grid
+ * thresholding the distance estimate, wrong on both counts ({@link extent}
+ * carries the argument); the Julia blob at `escMandelbox`'s own constant
+ * reads 89.407% of the bailout ball rather than 94%, its `|t|` sweep at
+ * weight 2 reads 87.185 / 71.796 / 32.602 / 2.148 / 0.005% rather than 97 /
+ * 93 / 77 / 60 / 23%, and the "best Juliabox found" — the row the record
+ * priced at 6% fill — has essentially NO volume (0.005%, six members in
+ * 131072 samples) while still drawing 28.1% of its rays. That last row is
+ * the sheet's own reminder that VOLUME IS NOT VISIBILITY: the shipped
+ * Mandelbrot `mandelbox w=3` reads 0.000% here too and renders the holed
+ * ball at 31.7% of rays. The verdict the sheet was written for is untouched
+ * and if anything sharper — the Julia form is a near-solid ball across
+ * everything a user would author, and where it finally thins it goes
+ * straight to a measure-zero dust, with no band of usable structure in
+ * between.
  *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
  *        scripts/escape-form-sweep.harness.ts
@@ -101,17 +101,16 @@ function foldDE(type: VariationType, weight: number, t: Vec3): EscapeDE {
  * scratch by {@link runJuliaFormOrbit}. `escape-de.ts`'s own split, for its
  * reason: the estimate and the MEMBERSHIP question are two readers of one
  * loop, so they cannot disagree about what the orbit is — and a retired form
- * can then be measured with the same instrument as the shipped one
- * (fr-azjk). */
+ * can then be measured with the same instrument as the shipped one. */
 let juliaR = 0;
 let juliaDr = 1;
 
 /**
- * The REJECTED form (fr-kltj's, retired by fr-7u8t.8): `estimateEscapeDistance`
- * term for term with the query-point offset removed, so the per-iteration
- * offset is the document's `t` alone. Kept as a local because nothing in the
- * app computes it any more — the module doc's "why not both forms" paragraph
- * is what this function's panels measured.
+ * The REJECTED Julia form, retired when the mode took the Mandelbrot form:
+ * `estimateEscapeDistance` term for term with the query-point offset
+ * removed, so the per-iteration offset is the document's `t` alone. Kept as
+ * a local because nothing in the app computes it any more — the module doc's
+ * "why not both forms" paragraph is what this function's panels measured.
  */
 function runJuliaFormOrbit(de: EscapeDE, p: Vec3): void {
   const m = de.m;
@@ -165,13 +164,14 @@ function juliaFormMember(de: EscapeDE): (p: Vec3) => boolean {
 /**
  * How much of the bailout ball a form's set fills, and how far it reaches.
  *
- * FR-AZJK REPLACED THE INSTRUMENT UNDER THIS SHEET, and the old one was
- * wrong twice over: it scanned a regular GRID (which aliases against the
- * fold's own walls — see {@link sampleSetExtent}) and it decided membership
- * by THRESHOLDING the estimate at `1e-3`, which `escapeSetContains`'s doc
- * says cannot answer the question in either direction. Fill is now a seeded
- * uniform sample against the form's own membership oracle, so the Julia
- * column and the Mandelbrot column beside it are one measurement.
+ * THE SET-EXTENT CORRECTION REPLACED THE INSTRUMENT UNDER THIS SHEET, and
+ * the old one was wrong twice over: it scanned a regular GRID (which aliases
+ * against the fold's own walls — see {@link sampleSetExtent}) and it decided
+ * membership by THRESHOLDING the estimate at `1e-3`, which
+ * `escapeSetContains`'s doc says cannot answer the question in either
+ * direction. Fill is now a seeded uniform sample against the form's own
+ * membership oracle, so the Julia column and the Mandelbrot column beside it
+ * are one measurement.
  *
  * REACH IS NO LONGER MEASURED OVER A DOUBLE-RADIUS BOX, because under
  * membership that question is a tautology: both orbits test `|v| <= R`
@@ -214,7 +214,7 @@ function julia(label: string, de: EscapeDE): Entry {
   };
 }
 
-describe("fr-7u8t.8 escape-time form sweep", () => {
+describe("escape-time form sweep", () => {
   it("renders both forms of the fold escape-time set", () => {
     const entries: Entry[] = [
       // Row 1 — the shipped form at t = 0: the canonical objects.
@@ -292,17 +292,19 @@ describe("fr-7u8t.8 escape-time form sweep", () => {
   });
 
   it("checks ESCAPE_STEP_SCALE still fits the object the form changed", () => {
-    // fr-7u8t.8 turned an 89%-solid blob into a 3.5%-solid filamented set,
-    // and the step scale in force when it did was 0.7, picked against the
-    // blob. If 0.7 OVERSHOOTS thin features, damping further recovers
-    // surface a coarser march was stepping past — visible as hits climbing
-    // as the scale falls. A flat hit count means 0.7 is not the limiting
-    // factor and any residual speckle is sampling, not step damping.
+    // The Mandelbrot form turned an 89%-solid blob into a 3.5%-solid
+    // filamented set, and the step scale in force when it did was 0.7,
+    // picked against the blob. If 0.7 OVERSHOOTS thin features, damping
+    // further recovers surface a coarser march was stepping past — visible
+    // as hits climbing as the scale falls. A flat hit count means 0.7 is not
+    // the limiting factor and any residual speckle is sampling, not step
+    // damping.
     //
     // The sweep list is LITERAL. It used to open with `ESCAPE_STEP_SCALE`,
     // which silently stopped sweeping 0.7 and started measuring 0.35 twice
-    // the moment fr-za0n retuned that constant — a sweep whose own axis
-    // moves under it cannot be read against the run that decided it.
+    // the moment the hybrid formula chain retuned that constant — a sweep
+    // whose own axis moves under it cannot be read against the run that
+    // decided it.
     const de = foldDE("mandelbox", 2, [0, 0, 0]);
     const panels = [1, 0.7, 0.5, ESCAPE_STEP_SCALE, 0.2, 0.1].map(
       (stepScale) => {
@@ -337,7 +339,7 @@ describe("fr-7u8t.8 escape-time form sweep", () => {
     // round to 0.0: a set can have no measurable volume and still render
     // (`mandelbox w=3` does, in the SHIPPED form, at 31.7% of rays), and a
     // column that cannot separate "thin" from "empty" is the confusion
-    // fr-17qu's first cut shipped.
+    // the empty-set notice's first cut shipped.
     for (const w of [2, 3, -1.5]) {
       const row = [0.5, 1, 1.5, 2, 2.5, 3, 4, 5].map((mag) => {
         const fill = extent(

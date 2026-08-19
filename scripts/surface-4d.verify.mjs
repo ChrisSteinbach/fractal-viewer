@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * fr-dlxh (4D cut): real-driver browser verification of the 4D surface
+ * The 4D cut's real-driver browser verification of the 4D surface
  * session's TWO arms now that a 4D surface session PREFERS the WebGPU
  * compute renderer (the new affine4 kernel core, `kind: "ifs4"` in
  * `surface-compute.ts`) — the fragment 4D tracer (`surface-material-4d.ts`)
@@ -36,7 +36,7 @@
  *     case d (three contracting affine maps, one with a live `w` block),
  *     flat kaleidoscope (order 1).
  *   - "kaleido4": two maps with live `w` blocks + an order-6 `xz`
- *     kaleidoscope with a twist-1 double rotation (fr-q0h6) — order 6 +
+ *     kaleidoscope with a twist-1 double rotation — order 6 +
  *     twist 1 was accepted directly at mint time (verified against
  *     `analyzeSurfaceSystem4`/`systemPartsAreNonFlat`), so no fallback to
  *     order 3 was needed.
@@ -72,12 +72,12 @@
  *      intersect/union the two boolean masks. >= 0.8 reported as-is,
  *      [0.5, 0.8) as WARN (lighting/dither may legitimately differ),
  *      < 0.5 as FAIL.
- *      WHAT PARITY DOES NOT COVER, disclosed rather than fixed (fr-b8o5):
+ *      WHAT PARITY DOES NOT COVER, disclosed rather than fixed:
  *      the CENTRED slice is the only one it ever compares. Step (d) is a
  *      fresh navigation to the same hash, which carries no `FourDPose`, so
  *      both settled PNGs are taken at `w0 = 0` and step (c)'s off-centre
  *      session is discarded before the masks are built. An arm that drew a
- *      different object OFF centre — the region fr-b8o5's whole
+ *      different object OFF centre — the region the off-centre slice
  *      investigation is about — would pass this gate at IoU 1.0. Closing
  *      it means a third settle at a nonzero slice on each arm, which is
  *      the cost this script has so far declined to pay.
@@ -103,7 +103,7 @@ const OUT_DIR = path.resolve(__dirname, "..", ".playwright-mcp");
 const BASE = (process.argv[2] ?? "https://localhost:5173").replace(/\/+$/, "");
 const SCENE_FILTER = (process.argv[3] ?? "all").toLowerCase();
 
-// Long-window OBSERVE mode (fr-dlxh follow-up, kaleido4 A/B): bypasses the
+// Long-window OBSERVE mode (a 4D-cut follow-up, kaleido4 A/B): bypasses the
 // normal per-scene protocol (runArm/testLiveness/computeIoU) entirely and
 // instead watches ONE arm at a time for `minutes` (default 6) via a
 // gap-free MutationObserver log — a polling read of #surfaceProgress can
@@ -125,50 +125,50 @@ const ARM_FLAG = EXTRA_ARGS.find((a) => a.startsWith("--arm="));
 /** "compute" | "surfacegl" | "both" */
 const ARM_SELECT = ARM_FLAG ? ARM_FLAG.split("=")[1] : "both";
 
-// fr-1znb instruments: `--force-liveness` runs the w-slice drag leg even on
-// fragment-routed scenes (the leg normally pins the COMPUTE arm's per-frame
-// view4 re-read, so it skips scenes EXPECT_COMPUTE_BY_SCENE routes to the
-// fragment tracer — kaleido4's fragment-arm post-drag re-settle was
-// exactly fr-1znb's bug, so the repro needed the leg back). VESTIGIAL
-// SINCE fr-fniy: EXPECT_COMPUTE_BY_SCENE has no fragment-routed entry left
-// (routing no longer splits by symmetry order at all — see the table
-// below), so the skip this flag exists to bypass never fires today and
-// every scene's liveness leg already runs unconditionally; the flag stays
-// rather than getting deleted because it is still the fr-1znb repro
-// instrument the moment a future scene IS fragment-routed again.
-// `--query=<qs>` appends extra query params (no leading "?") to every
-// arm's URL — `--query=surfperf` turns on scene.ts's strip/evidence
-// logging, the fr-1znb diagnosis channel.
+// Post-drag re-settle instruments: `--force-liveness` runs the w-slice drag
+// leg even on fragment-routed scenes (the leg normally pins the COMPUTE
+// arm's per-frame view4 re-read, so it skips scenes EXPECT_COMPUTE_BY_SCENE
+// routes to the fragment tracer — kaleido4's fragment-arm post-drag
+// re-settle was exactly that bug, so the repro needed the leg back).
+// VESTIGIAL SINCE THE ROUTING RE-MEASUREMENT: EXPECT_COMPUTE_BY_SCENE has
+// no fragment-routed entry left (routing no longer splits by symmetry order
+// at all — see the table below), so the skip this flag exists to bypass
+// never fires today and every scene's liveness leg already runs
+// unconditionally; the flag stays rather than getting deleted because it is
+// still that repro instrument the moment a future scene IS fragment-routed
+// again. `--query=<qs>` appends extra query params (no leading "?") to
+// every arm's URL — `--query=surfperf` turns on scene.ts's strip/evidence
+// logging, that diagnosis' channel.
 const FORCE_LIVENESS = EXTRA_ARGS.includes("--force-liveness");
 const QUERY_FLAG = EXTRA_ARGS.find((a) => a.startsWith("--query="));
 const EXTRA_QUERY = QUERY_FLAG ? QUERY_FLAG.split("=").slice(1).join("=") : "";
 
-// ROUTING-VERIFY mode (fr-fniy; supersedes 916813c's shape-keyed split):
+// ROUTING-VERIFY mode (supersedes 916813c's shape-keyed split):
 // the 4D branch no longer routes by symmetry order at all. 916813c had
 // introduced `compute4Shaped = de.symmetry.order <= 1` — plain 4D (order
 // 1) preferring compute, kaleidoscope 4D (order > 1) going straight to
-// the fragment tracer as a "measured home, not a fallback" — and fr-fniy
-// REMOVED that split: main.ts now prefers the WebGPU compute renderer for
-// EVERY 4D session with an adapter, plain or kaleidoscope alike, and the
-// fragment 4D tracer is purely the FALLBACK arm (`?surfacegl` / no
-// adapter / device loss), exactly what the module doc's opening
-// paragraph already describes. MEASURED, real Iris Xe TGL GT2 through
-// ANGLE/Mesa, 1024x640, identity rotor, centred slice, production build,
-// one fresh session per cell, both arms FORCED via
+// the fragment tracer as a "measured home, not a fallback" — and the
+// shade-sizer width fix REMOVED that split: main.ts now prefers the WebGPU
+// compute renderer for EVERY 4D session with an adapter, plain or
+// kaleidoscope alike, and the fragment 4D tracer is purely the FALLBACK
+// arm (`?surfacegl` / no adapter / device loss), exactly what the module
+// doc's opening paragraph already describes. MEASURED, real Iris Xe TGL
+// GT2 through ANGLE/Mesa, 1024x640, identity rotor, centred slice,
+// production build, one fresh session per cell, both arms FORCED via
 // `?surfacegl`/`?surfacecompute` (`scripts/slice-cliff.probe.mjs ...
 // --arm=both --slices=0 --settle=1`): kaleido4 (2 maps, order 6, twist 1)
 // settled WebGL 637.5s against compute 53.1s — the order split was
 // costing this scene 12x, not the cheap "measured home" 916813c had
 // recorded — while plain4 (3 maps, order 1) settled WebGL 11.5s against
-// compute 3.0s either way. fr-fniy's own hit-shade batch sizer fix is why
+// compute 3.0s either way. That same fix's hit-shade batch sizer is why
 // compute is 3.3x faster than the 179s this file used to cite for it.
 // Always the PLAIN hash URL — no ?surfacegl, no navigator.gpu stub —
 // WebGPU genuinely available, so a real routing decision is being
 // exercised, not a forced fallback.
 const VERIFY_ROUTING_MODE = EXTRA_ARGS.includes("--verify-routing");
 /** name -> whether main.ts's routing should land this scene on compute.
- * ALL THREE read true now that fr-fniy removed the order-keyed split, but
- * for two different reasons kept distinct in this table on purpose:
+ * ALL THREE read true now the order-keyed split is gone, but for two
+ * different reasons kept distinct in this table on purpose:
  * plain4/kaleido4 have a real fragment fallback and compute is simply the
  * measured-faster PREFERENCE whenever an adapter exists (kaleido4's own
  * default-routing session measures engine=compute, settled 70.1s,
@@ -180,14 +180,14 @@ const VERIFY_ROUTING_MODE = EXTRA_ARGS.includes("--verify-routing");
  * it follows. */
 const EXPECT_COMPUTE_BY_SCENE = { plain4: true, kaleido4: true, fold4: true };
 /** Scenes whose ?surfacegl arm asserts the ELIGIBILITY REFUSAL instead of
- * a WebGL render (fr-rsp6: fold-shaped 4D systems have no fragment arm —
- * forcing WebGL makes compute unavailable, and the gate refuses with the
- * WebGPU reason rather than letting a fold-blind tracer render). UNTOUCHED
- * by fr-fniy — fold-shaped 4D was already compute-only for a reason that
- * has nothing to do with the order-keyed split fr-fniy removed. */
+ * a WebGL render (fold-shaped 4D systems have no fragment arm — forcing
+ * WebGL makes compute unavailable, and the gate refuses with the WebGPU
+ * reason rather than letting a fold-blind tracer render). UNTOUCHED by the
+ * routing change — fold-shaped 4D was already compute-only for a reason
+ * that has nothing to do with the order-keyed split it removed. */
 const EXPECT_WEBGL_REFUSAL_BY_SCENE = { fold4: true };
 
-// TUMBLE-PARK verify mode (fr-osgs, uncommitted working tree): the 4D
+// TUMBLE-PARK verify mode (uncommitted working tree): the 4D
 // ambient auto-tumble now PARKS during a live surface session
 // (main.ts's surface tick: `if (fourDTween.active) advanceFourDPose(dt4)`
 // — ambient ticks skipped, directed pose glides still live) and the panel
@@ -219,11 +219,11 @@ const PLAIN4_HASH =
   "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNSwwLDBdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV0sInciOnsicG9zaXRpb24iOjAuNSwicm90YXRpb24iOnsieHciOjAuM319fSx7InBvc2l0aW9uIjpbLTAuMjUsMC40MywwXSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdfSx7InBvc2l0aW9uIjpbLTAuMjUsLTAuNDMsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XX1dLCJudW1Qb2ludHMiOjEwMDAwMCwicG9pbnRTaXplIjoxLCJjb2xvck1vZGUiOiJ0cmFuc2Zvcm0iLCJjb2xvckdhbW1hIjoxLCJyYW1wUGFsZXR0ZUlkIjoibGVnYWN5IiwiZm91ckRDb2xvciI6IndCbHVlT3JhbmdlIiwiZm91ckREZXB0aEZhZGUiOmZhbHNlLCJyZW5kZXJTdHlsZSI6ImRlcHRoRmFkZSIsInNob3dHdWlkZXMiOnRydWUsImZsYW1lIjp7ImV4cG9zdXJlIjoxLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwiZ2FtbWEiOjIuNCwidmlicmFuY3kiOjEsInN1cGVyc2FtcGxlIjoyLCJlc3RpbWF0b3JSYWRpdXMiOjYsImVzdGltYXRvck1pbmltdW1SYWRpdXMiOjAsImVzdGltYXRvckN1cnZlIjowLjQsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInNvbGlkIjp7InJlc29sdXRpb24iOjE5MiwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsInRocmVzaG9sZCI6MC4zLCJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzdXJmYWNlIjp7ImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImNvbG9yU291cmNlIjoidHJhbnNmb3JtIiwicGFsZXR0ZUlkIjoic3BlY3RydW0iLCJjb2xvclNwZWVkIjowLjV9LCJzeW1tZXRyeSI6eyJvcmRlciI6MSwicGxhbmUiOiJ4eiJ9LCJnbG93QnJpZ2h0bmVzcyI6MX0";
 
 /** Scene B "kaleido4": two maps with live `w` blocks + an order-6 `xz`
- * kaleidoscope with a twist-1 double rotation (fr-q0h6). */
+ * kaleidoscope with a twist-1 double rotation. */
 const KALEIDO4_HASH =
   "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNCwwLjIsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidyI6eyJwb3NpdGlvbiI6MC40LCJyb3RhdGlvbiI6eyJ4dyI6MC4zfX19LHsicG9zaXRpb24iOlstMC40LC0wLjIsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidyI6eyJwb3NpdGlvbiI6LTAuNCwicm90YXRpb24iOnsieXciOjAuM319fV0sIm51bVBvaW50cyI6MTAwMDAwLCJwb2ludFNpemUiOjEsImNvbG9yTW9kZSI6InRyYW5zZm9ybSIsImNvbG9yR2FtbWEiOjEsInJhbXBQYWxldHRlSWQiOiJsZWdhY3kiLCJmb3VyRENvbG9yIjoid0JsdWVPcmFuZ2UiLCJmb3VyRERlcHRoRmFkZSI6ZmFsc2UsInJlbmRlclN0eWxlIjoiZGVwdGhGYWRlIiwic2hvd0d1aWRlcyI6dHJ1ZSwiZmxhbWUiOnsiZXhwb3N1cmUiOjEsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJnYW1tYSI6Mi40LCJ2aWJyYW5jeSI6MSwic3VwZXJzYW1wbGUiOjIsImVzdGltYXRvclJhZGl1cyI6NiwiZXN0aW1hdG9yTWluaW11bVJhZGl1cyI6MCwiZXN0aW1hdG9yQ3VydmUiOjAuNCwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic29saWQiOnsicmVzb2x1dGlvbiI6MTkyLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwidGhyZXNob2xkIjowLjMsImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInN1cmZhY2UiOnsibGlnaHRBemltdXRoIjoxMzUsImxpZ2h0RWxldmF0aW9uIjo1MCwiYW1iaWVudCI6MC4yNSwiY29sb3JTb3VyY2UiOiJ0cmFuc2Zvcm0iLCJwYWxldHRlSWQiOiJzcGVjdHJ1bSIsImNvbG9yU3BlZWQiOjAuNX0sInN5bW1ldHJ5Ijp7Im9yZGVyIjo2LCJwbGFuZSI6Inh6IiwidHdpc3QiOjF9LCJnbG93QnJpZ2h0bmVzcyI6MX0";
 
-// fr-rsp6 phase 3: the fold-4D scene — the CPU/GPU fold fixtures' pure-
+// The 4D fold-branch port's scene — the CPU/GPU fold fixtures' pure-
 // boxfold pair (two 0.5-scale maps with live w blocks, boxfold weight 1
 // each, order 1), minted the same initialState/toSnapshot/encodeScene way
 // as the two above. Fold-shaped 4D systems are COMPUTE-ONLY (the fragment
@@ -237,14 +237,14 @@ const FOLD4_HASH =
  * ~1-55s even for MUCH heavier systems, so this is generous headroom, not
  * a tight bound) — the default for every scene/arm pair except kaleido4's
  * fragment leg, which needs KALEIDO4_ARM_BUDGET_MS below. plain4 and
- * fold4 settle well inside this on either arm (fr-fniy: plain4 WebGL
+ * fold4 settle well inside this on either arm (measured: plain4 WebGL
  * 11.5s / compute 3.0s), and kaleido4's OWN compute arm does too — its
  * default (un-flagged) session measures engine=compute, settled 70.1s,
  * comfortably inside 90s. */
 const DEFAULT_ARM_BUDGET_MS = 90_000;
 /**
  * kaleido4's fragment arm is the one scene/arm pair DEFAULT_ARM_BUDGET_MS
- * cannot cover, and the number is measured, not guessed. fr-fniy's
+ * cannot cover, and the number is measured, not guessed. The width fix's
  * real-Iris probe (`scripts/slice-cliff.probe.mjs --arm=both --slices=0
  * --settle=1`, identity rotor, centred slice, production build, one
  * fresh session per cell, both arms FORCED via
@@ -356,7 +356,7 @@ async function main() {
     // compute-vs-fallback IoU comparison meaningful (same pose, not two
     // different camera angles of the same object). TUMBLE_PARK_MODE is
     // the deliberate exception: it exists specifically to verify the
-    // fr-osgs fix under NORMAL (non-reduced) motion, since reducedMotion
+    // tumble-park fix under NORMAL (non-reduced) motion, since reducedMotion
     // masked the bug in every other mode here.
     if (!TUMBLE_PARK_MODE) {
       await page.emulateMedia({ reducedMotion: "reduce" });
@@ -666,7 +666,7 @@ async function main() {
       await page.waitForTimeout(1_000);
 
       const disabled = await page.$eval("#modeSurfaceBtn", (b) => b.disabled);
-      // fr-rsp6: a fold-shaped 4D scene's ?surfacegl arm EXPECTS the
+      // A fold-shaped 4D scene's ?surfacegl arm EXPECTS the
       // refusal — compute is unavailable by the flag's own hand and no
       // fragment arm exists, so a disabled Surface control naming the
       // WebGPU reason IS the pass, and the arm ends here (nothing to
@@ -719,8 +719,8 @@ async function main() {
         // The un-flagged arm asserts main.ts's actual ROUTING DECISION for
         // this scene against EXPECT_COMPUTE_BY_SCENE — the same
         // expectation table --verify-routing uses, so a future routing
-        // change edits that one table and both modes follow. fr-fniy
-        // removed the order-keyed split this used to test (commit
+        // change edits that one table and both modes follow. The width
+        // fix removed the order-keyed split this used to test (commit
         // 85918b5's `order <= 1` -> compute / `order > 1` -> fragment
         // rule, re-verified as 916813c): every entry reads true today,
         // because a scene either prefers compute unconditionally or —
@@ -790,7 +790,7 @@ async function main() {
       // flag must carry NO trailing " — compute ..." caveat.
       //
       // THE ANTIALIASING TOKEN IS NOT THAT CAVEAT and has to be stripped
-      // before the question is asked. fr-jf9y gave the WebGL strip arm the
+      // before the question is asked. The WebGL strip arm was given the
       // same 8-sample supersampling the compute path has, and the progress
       // row discloses the pass as its own trailing
       // "— antialiasing pass k/8"; this assertion predates that and had
@@ -887,7 +887,7 @@ async function main() {
     }
 
     /**
-     * OBSERVE mode (fr-dlxh follow-up): watch ONE arm for `minutes`
+     * OBSERVE mode (a 4D-cut follow-up): watch ONE arm for `minutes`
      * (default 6, not this script's normal per-scene `budgetMs` --
      * DEFAULT_ARM_BUDGET_MS's 90s, or KALEIDO4_ARM_BUDGET_MS's 700s for
      * kaleido4's fragment leg) using window.__progressLog
@@ -1063,7 +1063,7 @@ async function main() {
     }
 
     /**
-     * ROUTING-VERIFY mode (fr-fniy; supersedes 916813c's shape-keyed
+     * ROUTING-VERIFY mode (supersedes 916813c's shape-keyed
      * split): loads the PLAIN hash URL (no ?surfacegl, no stub — WebGPU
      * genuinely available) and asserts main.ts's routing lands this scene
      * on the engine EXPECT_COMPUTE_BY_SCENE says it should:
@@ -1073,7 +1073,7 @@ async function main() {
      *     progress sample says "· WebGL" with NO trailing detail token
      *     (pins surfaceWebglDetail's null-before-checking-
      *     supported/block behavior). No scene currently sets
-     *     expectCompute=false — fr-fniy's routing prefers compute for
+     *     expectCompute=false — the routing prefers compute for
      *     every 4D session with an adapter, so kaleidoscope 4D on WebGL
      *     is the measured-slower FALLBACK now, not the "measured home"
      *     916813c had made it — so this branch only runs if a future
@@ -1174,7 +1174,7 @@ async function main() {
     }
 
     /**
-     * TUMBLE-PARK case 1 (fr-osgs), standalone and reusable: load the
+     * TUMBLE-PARK case 1, standalone and reusable: load the
      * scene fresh (gotoFresh), enter Surface, zero further input, assert
      * settled within budgetMs. This is the exact assertion that FAILED
      * before the fix (ambient tumble invalidated every frame, so the tier
@@ -1240,7 +1240,7 @@ async function main() {
     }
 
     /**
-     * TUMBLE-PARK cases 2-4 (fr-osgs), run on the ALREADY-SETTLED compute
+     * TUMBLE-PARK cases 2-4, run on the ALREADY-SETTLED compute
      * session case1 leaves behind (same page, zero navigation): the
      * tumble-row hidden state in-mode, the resume-on-exit behavior
      * (rows reappear, checkbox state survives, the EXPLORER projection
@@ -1449,7 +1449,7 @@ async function main() {
         routingResults.push(
           // Per-scene budget, not a flat routing-only constant: kaleido4's
           // own un-flagged session now measures a genuine compute settle
-          // at 70.1s (fr-fniy), which the OLD flat 60s
+          // at 70.1s, which the OLD flat 60s
           // ROUTING_VERIFY_BUDGET_MS this file used to carry here could
           // not cover — scene.budgetMs already sizes for the scene's
           // worst arm (see KALEIDO4_ARM_BUDGET_MS above) and giving the
@@ -1571,13 +1571,13 @@ async function main() {
       // The liveness leg pins the COMPUTE arm's per-frame view4 re-read
       // (the ifs4 live-uniform discipline across the WebGPU seam) against
       // whichever engine `runArm(scene, "compute", ...)` actually lands
-      // on. BEFORE fr-fniy that was not always the compute engine its
+      // on. BEFORE the width fix that was not always the compute engine its
       // label claimed: kaleido4's order-6 kaleidoscope shape-routed the
       // un-flagged arm to the FRAGMENT tracer, so this leg was re-testing
       // the long-proven WebGL live-uniform path at order-6 cost instead
       // (measured 2026-08-10: the post-drag re-settle blew the 90s poll
-      // window at 95.6s). fr-1znb's diagnosis (2026-08-11,
-      // --force-liveness + ?surfperf evidence logging): NOT the fr-id9r
+      // window at 95.6s). The post-drag diagnosis (2026-08-11,
+      // --force-liveness + ?surfperf evidence logging): NOT the
       // over-stripping residual this comment first suspected — the
       // evidence chain stayed clean (partial=0 throughout, strips
       // averaged ~67ms against the 75ms target) and the cost was
@@ -1586,21 +1586,21 @@ async function main() {
       // per pixel on it (one 0.01 slider step: preview 0.0041 -> 0.0795
       // ms/px, settle 2.1s -> 60.9s GPU; a FRESH session jumped straight
       // to the 30-step pose measured the same class: 0.0736 ms/px, 42.3s
-      // settle — fr-b8o5 has the numbers). A re-settle after any slice
-      // drag was an honest minute-plus grind at order 6 on the fragment
-      // arm, so the leg was skipped wherever routing said fragment unless
-      // --force-liveness asked. SINCE fr-fniy: routing never sends an
-      // un-flagged arm to the fragment tracer any more (see
-      // EXPECT_COMPUTE_BY_SCENE above), so `runArm(scene, "compute",
-      // ...)` means what its label always claimed for every scene
-      // including kaleido4, this leg always pins the GENUINE compute
-      // engine's view4 re-read, and the skip below never fires in
-      // practice — it stays, harmlessly, for the same forward-
-      // compatibility reason FORCE_LIVENESS itself does.
+      // settle — `scripts/slice-cliff.probe.mjs` has the numbers). A
+      // re-settle after any slice drag was an honest minute-plus grind at
+      // order 6 on the fragment arm, so the leg was skipped wherever
+      // routing said fragment unless --force-liveness asked. SINCE THE
+      // ROUTING CHANGE: routing never sends an un-flagged arm to the
+      // fragment tracer any more (see EXPECT_COMPUTE_BY_SCENE above), so
+      // `runArm(scene, "compute", ...)` means what its label always
+      // claimed for every scene including kaleido4, this leg always pins
+      // the GENUINE compute engine's view4 re-read, and the skip below
+      // never fires in practice — it stays, harmlessly, for the same
+      // forward-compatibility reason FORCE_LIVENESS itself does.
       if (FORCE_LIVENESS || (EXPECT_COMPUTE_BY_SCENE[scene.name] ?? true)) {
         if (FORCE_LIVENESS && !(EXPECT_COMPUTE_BY_SCENE[scene.name] ?? true)) {
           console.error(
-            `[surface-4d] ${scene.name}: liveness leg FORCED on a fragment-routed scene (--force-liveness, fr-1znb's repro).`,
+            `[surface-4d] ${scene.name}: liveness leg FORCED on a fragment-routed scene (--force-liveness, the post-drag re-settle repro).`,
           );
         }
         await testLiveness(scene, compute.settledShotBuf);

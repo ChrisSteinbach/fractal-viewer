@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * fr-z70m browser repro driver: boot the app, load a preset, enter Surface
- * mode, wait for the settle frame, screenshot. Based on webgl-smoke.mjs's
- * SwiftShader recipe (see .claude/skills/verify/SKILL.md); pass --gpu to run
+ * Surface-erosion browser repro driver: boot the app, load a preset, enter
+ * Surface mode, wait for the settle frame, screenshot. Based on
+ * webgl-smoke.mjs's SwiftShader recipe (see .claude/skills/verify/SKILL.md);
+ * pass --gpu to run
  * on the real GPU/display instead (this box has one).
  *
  * Usage:
@@ -30,7 +31,7 @@ function parseArgs(argv) {
     else if (key === "preset") args.preset = value;
     else if (key === "hash") {
       // Load an arbitrary scene via the #v1 share hash instead of a preset
-      // (fr-7xgi: repro systems that are edits of a preset, not a preset).
+      // (repro systems that are edits of a preset, not a preset).
       args.hash = value;
       args.preset = "";
     } else if (key === "out") args.out = value;
@@ -98,7 +99,7 @@ async function main() {
     });
     if (args.blockGrid) {
       // No-code-change bisector: abort the grid worker's module request —
-      // the client degrades to gridless marching by design (fr-55r5).
+      // the client degrades to gridless marching by design.
       await page.route("**/surface-grid-worker*", (route) => route.abort());
       console.error("[erosion] grid worker BLOCKED (gridless marching)");
     }
@@ -136,7 +137,7 @@ async function main() {
       // Canvas rect via evaluate, NOT locator.boundingBox(): the locator
       // carries Playwright's fixed ~30s actionability wait, which a
       // fold-system Surface entry under SwiftShader can exceed while the
-      // page main thread is wedged in shader compile (fr-7xgi).
+      // page main thread is wedged in shader compile.
       const canvasRect = () =>
         page.evaluate(() => {
           const c = document.querySelector("canvas");
@@ -174,7 +175,8 @@ async function main() {
       // Viewport-clipped page grabs, not element screenshots: Playwright's
       // element screenshot waits for element stability, which can block
       // for the whole shader-compile/settle it is trying to observe
-      // (fr-7xgi hit exactly that on the fold tracer under SwiftShader).
+      // (an earlier run hit exactly that on the fold tracer under
+      // SwiftShader).
       const clip = await canvasRect();
       for (;;) {
         await page.waitForTimeout(2500);

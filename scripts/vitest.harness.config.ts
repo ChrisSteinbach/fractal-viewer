@@ -1,6 +1,6 @@
 /**
  * Vitest config for on-demand measurement harnesses living under
- * `scripts/*.harness.ts` (e.g. surprise-residual.harness.ts, fr-b5x). Kept
+ * `scripts/*.harness.ts` (e.g. surprise-residual.harness.ts). Kept
  * separate from the repo's main vitest.config.ts -- whose `include` is
  * `src/**\/*.test.ts` only -- so these sweeps are never picked up by
  * `npm test` / CI and only run on demand:

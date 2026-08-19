@@ -1,7 +1,8 @@
 /**
- * fr-ck0w EXPERIMENT 2 measurement harness: march-steps vs DE-cost split for
- * pure-fold surface-DE systems (`docs/fold-de-performance-brief.md` §2 item
- * 2, "Instrument before optimising").
+ * EXPERIMENT 2 of the fold-DE cost instrumentation: march-steps vs DE-cost
+ * split for pure-fold surface-DE systems
+ * (`docs/fold-de-performance-brief.md` §2 item 2, "Instrument before
+ * optimising").
  *
  * THE QUESTION. Rendering cost for a fold system factors as
  *
@@ -41,8 +42,8 @@
  *    against `surface-material.ts`'s main() line for line above), so no new
  *    march discipline is invented here, only reused.
  *  - Count inverse-map APPLICATIONS the same way `surface-beam.harness.ts`
- *    (fr-v6yg) and `surface-grid-cost.harness.ts` (fr-aj4w) do: import
- *    `countingDE` from `harness-profiles.ts` (extracted there verbatim so
+ *    and `surface-grid-cost.harness.ts` do: import `countingDE` from
+ *    `harness-profiles.ts` (extracted there verbatim so
  *    every cost-measuring harness shares one counter, not a second copy
  *    that could drift) and reset-then-diff its `counter.n` around each
  *    `estimateDistance` call. As those harnesses document, this counts map
@@ -55,39 +56,40 @@
  *    factor explicitly so the reported numbers still answer the brief's
  *    original "~10^5 branch evaluations per march step" framing.
  *
- * TRANSFORMS APPLIED (fr-ck0w EXPERIMENT 2 follow-up, for fr-kidj). The
- * visit counter above is too COARSE for the upcoming branch-and-bound work:
+ * TRANSFORMS APPLIED (a follow-up to EXPERIMENT 2, for the branch-and-bound
+ * work). The visit counter above is too COARSE for that work:
  * `descendFold` hoists `const im = map.invM` once per visit and then
  * indexes `im[0]..im[8]` once per BRANCH TRANSFORM inside that visit (up to
- * 81 times for mandelbox) — fr-kidj's planned prune moves the floor-vs-best
- * test AHEAD of that indexing, skipping transforms WITHIN a visit, which a
- * per-visit counter cannot see move at all. `countingDEFine` (added to
- * `harness-profiles.ts` alongside, not instead of, `countingDE` — every
- * existing caller's numbers are unaffected, reverified below) wraps each
+ * 81 times for mandelbox) — the branch-and-bound prune moves the
+ * floor-vs-best test AHEAD of that indexing, skipping transforms WITHIN a
+ * visit, which a per-visit counter cannot see move at all. `countingDEFine`
+ * (added to `harness-profiles.ts` alongside, not instead of, `countingDE` —
+ * every existing caller's numbers are unaffected, reverified below) wraps
+ * each
  * map's `invM` ARRAY itself in a `get`-trapped Proxy, so every numeric-index
  * element read bumps a second, finer counter. Every full inverse-affine
  * application reads all nine `im[i]` elements exactly once (confirmed
  * against `descend`'s and `descendFold`'s own bodies, not assumed), so
  * `fineCounter.n / 9` is "transforms applied" — directly comparable across
- * the affine and fold paths, and a strict refinement of "apps": today (pre-
- * fr-kidj, every branch's transform still runs unconditionally — the prune
- * only decides whether the RESULT is kept for the next frontier level, not
- * whether the transform itself executes), transforms/call should closely
- * track apps/call times each system's mean branch fan-out, i.e. this
- * harness's own EXPERIMENT 2 "branch evaluations" reconstruction — the
- * per-system narrative below cross-checks the two directly, which is also a
- * correctness check on the new counter itself. After fr-kidj ships,
- * transforms/call is exactly the number expected to drop sharply while
- * apps/call (visit count) stays roughly flat — the numbers this file
- * records now are that BEFORE baseline.
+ * the affine and fold paths, and a strict refinement of "apps": at the time
+ * these baselines were taken, BEFORE the prune (every branch's transform
+ * still ran unconditionally — the prune only decided whether the RESULT is
+ * kept for the next frontier level, not whether the transform itself
+ * executes), transforms/call closely tracked apps/call times each system's
+ * mean branch fan-out, i.e. this harness's own EXPERIMENT 2 "branch
+ * evaluations" reconstruction — the per-system narrative below cross-checks
+ * the two directly, which is also a correctness check on the new counter
+ * itself. The prune has SINCE SHIPPED, and transforms/call is exactly the
+ * number that dropped sharply while apps/call (visit count) stayed roughly
+ * flat — the numbers this file records are that BEFORE baseline.
  *
  * WHICH ESTIMATOR. `estimateDistance` (refine = FALSE), not
  * `estimateDistanceRefined`. Two independent citations pin this down: (1)
  * `surface-de.ts`'s `descendFold` doc, "MIRROR NOTE: the GLSL fold tracer
  * marches this body's refine=FALSE path" — refine=false is the fold
  * production estimator everywhere (the GLSL variant, the WGSL fold core,
- * the fr-aj4w grid); refined-on-folds is harness/test-only and carries
- * fr-tikz's disclosed width-bound tail; (2) `surface-material.ts`'s own
+ * the grid); refined-on-folds is harness/test-only and carries the
+ * disclosed width-bound tail; (2) `surface-material.ts`'s own
  * march-loop comment above the `SURFACE_FOLDS` main() body, "The march runs
  * the plain DE overload". `fold-phantom.harness.ts`'s `acceptMarch` (the
  * existing fold-specific march emulator) independently confirms this by
@@ -135,8 +137,9 @@
  * (12 maps, 8 mandelbox + 4 boxfold, fan-out 63x) measures ~17.3k branch
  * evaluations per DE call, ~98.7k per ray — same order of magnitude as the
  * brief's estimate, undershooting it roughly 6x, most plausibly because (a)
- * this harness marches with a live cutoff (fr-55r5's early-out active,
- * unlike a raw uncut descent) and (b) `descendFold`'s floor-vs-best pruning
+ * this harness marches with a live cutoff (the march-epsilon early-out
+ * active, unlike a raw uncut descent) and (b) `descendFold`'s floor-vs-best
+ * pruning
  * already collapses naive 27/81 enumeration toward its documented 10-33
  * live-chain peak before a visit is ever counted — both of which are
  * exactly the mechanisms §3.1 would strengthen further, so the measured
@@ -153,15 +156,16 @@
  * mean-branch-fan-out reconstruction above (mandelboxKifs 17,408.4 vs
  * 17,407 reconstructed; boxfold pair 184.2 vs 184; boxfold-w+affine 80.7 vs
  * 81; spherefold pair 233.5 vs 234; mandelbox pair 6,739.7 vs 6,740) — the
- * expected result pre-fr-kidj (every branch's transform still runs
- * unconditionally today; the floor-vs-best prune only decides whether the
- * RESULT is kept, never whether the transform executes), and strong
- * evidence the element-counting Proxy counts the right thing. BASELINE
- * (fr-kidj's "before" numbers): boxfold pair 184.2 transforms/call / 613.7
- * /ray; boxfold-w+affine 80.7 /call / 157.0 /ray; spherefold pair 233.5
- * /call / 1,915.5 /ray; mandelbox pair 6,739.7 /call / 75,385.1 /ray (N=162
- * rays, hit its own hard cap — see below); mandelboxKifs 17,408.4 /call /
- * 99,493.9 /ray (N=144 rays). PERFORMANCE (the actual finding this follow-up
+ * expected result before the branch-and-bound prune (every branch's
+ * transform still ran unconditionally then; the floor-vs-best prune only
+ * decided whether the RESULT is kept, never whether the transform executes),
+ * and strong evidence the element-counting Proxy counts the right thing.
+ * BASELINE (the prune's "before" numbers): boxfold pair 184.2
+ * transforms/call / 613.7 /ray; boxfold-w+affine 80.7 /call / 157.0 /ray;
+ * spherefold pair 233.5 /call / 1,915.5 /ray; mandelbox pair 6,739.7 /call /
+ * 75,385.1 /ray (N=162 rays, hit its own hard cap — see below);
+ * mandelboxKifs 17,408.4 /call / 99,493.9 /ray (N=144 rays). PERFORMANCE
+ * (the actual finding this follow-up
  * exists to surface): the counting Proxy itself is expensive enough to
  * change the experiment. Direct microbenchmark on mandelboxKifs at a
  * representative near-object point (cutoff 1e-4): plain `estimateDistance`
@@ -416,8 +420,8 @@ function marchCounted(
     p[2] = ro[2] + rd[2] * t;
     const before = counter.n;
     const fineBefore = fineCounter.n;
-    // eps is the cutoff (fr-55r5), exactly what the shipped GLSL march
-    // passes. fr-3c0k's footprint cap is deliberately NOT passed: it is
+    // eps is the cutoff, exactly what the shipped GLSL march
+    // passes. The cone-footprint cap is deliberately NOT passed: it is
     // CPU-only (the shipped shader doesn't cap — surface-material.ts's
     // Mesa link-cliff note), so mirroring the GPU means leaving it off;
     // the footprint path is measured by its own unit tests instead.
@@ -557,8 +561,8 @@ interface SystemResult {
   totalApps: number;
   /** Element-granularity twin of `callMean`/`callMedian`/`callP95`, in
    * TRANSFORMS applied (`fineCounter.n / 9`) — see the module doc's
-   * TRANSFORMS APPLIED section. Today (pre-fr-kidj) every branch's
-   * transform runs unconditionally, so these should track `callMean *
+   * TRANSFORMS APPLIED section. Before the branch-and-bound prune every
+   * branch's transform ran unconditionally, so these tracked `callMean *
    * meanBranchFanout` etc. closely; the per-system narrative cross-checks
    * that directly. */
   xformCallMean: number;
@@ -787,8 +791,9 @@ function fmtRow2(r: SystemResult): string {
 
 /** Third table: TRANSFORMS APPLIED (element-granularity twin of table 1's
  * apps columns — see the module doc's TRANSFORMS APPLIED section and
- * fr-kidj's pre-optimization baseline ask). Same row order/labels as
- * tables 1-2 so a reader can align columns across all three by eye. */
+ * the branch-and-bound work's pre-optimization baseline ask). Same row
+ * order/labels as tables 1-2 so a reader can align columns across all three
+ * by eye. */
 function fmtHeader3(): string {
   return (
     `${"system".padEnd(24)}${"xformMu".padStart(11)}${"xformMd".padStart(10)}` +
@@ -804,16 +809,16 @@ function fmtRow3(r: SystemResult): string {
   );
 }
 
-describe("fr-ck0w fold-DE march-steps vs DE-cost split", () => {
+describe("fold-DE march-steps vs DE-cost split", () => {
   it("measures gridless full-tier march steps and inverse-map applications per pure-fold system", () => {
     const systems: { label: string; transforms: Transform[] }[] = [
       // Headline system (required): the shipped pure-fold preset, 12 maps
       // (8 mandelbox corners + 4 boxfold binders) — the acceptance-criterion
-      // system fr-5rvk itself measured against.
+      // system the pure-fold branch sweep itself measured against.
       { label: "mandelboxKifs preset", transforms: mandelboxKifs() },
       // Every synthetic pure-fold profile the fold harnesses share
       // (harness-profiles.ts, extracted verbatim from surface-beam.harness.ts's
-      // fr-5rvk section 4 so this harness measures the IDENTICAL systems
+      // pure-fold section 4 so this harness measures the IDENTICAL systems
       // surface-beam.harness.ts and surface-grid-cost.harness.ts do): the
       // three branch counts (27/3/81) plus the mixed negative-weight-fold
       // + affine profile.
@@ -827,7 +832,7 @@ describe("fr-ck0w fold-DE march-steps vs DE-cost split", () => {
     ];
 
     console.log(
-      `\n== fr-ck0w EXPERIMENT 2: march-steps vs DE-cost split ==\n` +
+      `\n== EXPERIMENT 2: march-steps vs DE-cost split ==\n` +
         `estimator=estimateDistance (refine=false, the fold GLSL's mirror) ` +
         `grid=null (gridless) budget=${SURFACE_FULL_MARCH_STEPS} steps ` +
         `hitFloor=${SURFACE_FULL_HIT_FLOOR.toExponential(1)} ` +
@@ -865,8 +870,7 @@ describe("fr-ck0w fold-DE march-steps vs DE-cost split", () => {
     console.log(
       `\n-- transforms applied (element-granularity twin of table 1's apps ` +
         `columns, fineCounter.n / 9 — see the module doc's TRANSFORMS ` +
-        `APPLIED section; the pre-fr-kidj baselines live in that doc and ` +
-        `on the fr-ck0w/fr-kidj beads) --`,
+        `APPLIED section; the pre-prune baselines live in that doc) --`,
     );
     console.log(fmtHeader3());
     for (const r of results) {
@@ -887,8 +891,8 @@ describe("fr-ck0w fold-DE march-steps vs DE-cost split", () => {
           `~${fmtInt(r.appsPerRayMean * r.meanBranchFanout)} branch evaluations/ray (reconstructed); ` +
           `DIRECTLY MEASURED (fine counter): ${r.xformCallMean.toFixed(1)} transforms/call, ` +
           `${r.xformPerRayMean.toFixed(1)} transforms/ray ` +
-          `(${xformCheckRatio.toFixed(3)}x the reconstruction — expect ~1.0x pre-fr-kidj, since every ` +
-          `branch's transform still runs unconditionally today); ` +
+          `(${xformCheckRatio.toFixed(3)}x the reconstruction — expect ~1.0x before the branch-and-bound ` +
+          `prune, since every branch's transform then ran unconditionally); ` +
           `wall=${(r.wallMs / 1000).toFixed(2)}s for ${r.rays} rays (side=${r.side})`,
       );
     }

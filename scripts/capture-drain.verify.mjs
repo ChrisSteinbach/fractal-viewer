@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * fr-y6m0 capture-drain measurement harness: same-machine, A/B-able numbers
- * for the asymmetry the bead reported — the surface render's live settle is
- * PIPELINED (fenced strip groups, scene.ts's pumpStrips/renderSurfaceStrips)
+ * Capture-drain measurement harness: same-machine, A/B-able numbers for the
+ * reported asymmetry — the surface render's live settle is PIPELINED
+ * (fenced strip groups, scene.ts's pumpStrips/renderSurfaceStrips)
  * while a Save-PNG capture of the SAME pose drained SERIALLY, one
  * forced-completion readback per strip at ~66-90ms of fixed sync tax each,
  * instead of once per fenced batch. Measured before the fix on SwiftShader
@@ -15,16 +15,17 @@
  * or the strip planner can be diffed directly. `capture-export.verify.mjs`
  * is the pass/fail gate beside it.
  *
- * NOTE ON SCALE. The 1280x720 default is the bead's configuration, not a
+ * NOTE ON SCALE. The 1280x720 default is the reported configuration, not a
  * universally affordable one: on a software-GL box a default-preset frame
  * at that size can be ~10 minutes of tracing, so both phases report
  * timeouts. That is a legitimate reading of a too-slow box, not a script
  * failure — but for an A/B you want a frame both phases can finish, so run
  * it somewhere the settle completes, or compare coverage-at-a-fixed-window
- * instead of totals. (Before fr-avf6 such a run ended in a `refused`
- * outcome instead, the predict ceiling rejecting the export up front; the
- * interactive capture carries no cost ceiling now, so `refused` is
- * reachable only if some future change puts one back.)
+ * instead of totals. (Before the interactive export's cost ceilings were
+ * dropped such a run ended in a `refused` outcome instead, the predict
+ * ceiling rejecting the export up front; the interactive capture carries no
+ * cost ceiling now, so `refused` is reachable only if some future change
+ * puts one back.)
  *
  * This is a MEASUREMENT harness, not a pass/fail gate: a refused or
  * timed-out export is a valid, reportable outcome, never a script failure.
@@ -77,7 +78,7 @@
  * forced a real reload on some Playwright/browser combination, the extra
  * reload just repeats an already-correct boot.
  *
- * ISOLATION RELOAD (fr-su3r). The production build's service worker injects
+ * ISOLATION RELOAD. The production build's service worker injects
  * COOP/COEP; a first-ever visit in this fresh browser context loads
  * non-isolated and self-reloads exactly once, the instant the worker takes
  * control (see register-sw.ts). This script waits out that reload
@@ -124,9 +125,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.resolve(__dirname, "..", ".playwright-mcp");
 const BASE = (process.argv[2] ?? "https://localhost:4173").replace(/\/+$/, "");
 
-/** ?surfacegl forces the WebGL tracer (this bead is about the WebGL strip
- * drain, never the WebGPU compute path — the default preset is plain affine
- * so it always runs WebGL regardless, but the flag is cheap, explicit
+/** ?surfacegl forces the WebGL tracer (this harness is about the WebGL
+ * strip drain, never the WebGPU compute path — the default preset is plain
+ * affine so it always runs WebGL regardless, but the flag is cheap, explicit
  * insurance). ?surfacestate publishes window.__surfaceState()'s settle
  * latch. ?surfperf logs strip-job costs, including the settle-complete and
  * capture lines this script parses. */
@@ -140,7 +141,7 @@ const ISOLATION_TIMEOUT_MS = 30_000;
  * buffer avoids a race against whatever's left of the fit tween. */
 const MINT_SETTLE_BUFFER_MS = 4_000;
 const SETTLE_DWELL_MS = 2_000;
-/** Generous per the bead's own worst case (a pre-fix capture grinds to the
+/** Generous per the measured worst case (a pre-fix capture grinds to the
  * 60s spend ceiling and refuses) — allow at least 180s/240s. */
 const SETTLE_TIMEOUT_MS = 180_000;
 const CAPTURE_TIMEOUT_MS = 240_000;
@@ -173,7 +174,7 @@ async function waitForBoot(page, timeoutMs = BOOT_TIMEOUT_MS) {
   );
 }
 
-/** Wait out the fr-su3r isolation reload. Non-fatal on timeout — Surface
+/** Wait out the isolation reload. Non-fatal on timeout — Surface
  * mode does not need SharedArrayBuffer, so a missing/slow dance does not by
  * itself prevent measurement; it is just logged. Playwright's
  * waitForFunction is proven (scripts/isolation-reload.verify.mjs) to survive
@@ -233,7 +234,7 @@ async function mintPinnedHash(page) {
 }
 
 /**
- * Wait for the TRUE settled state via window.__surfaceState() (fr-opgk),
+ * Wait for the TRUE settled state via window.__surfaceState(),
  * held continuously for dwellMs — see surface-repro.verify.mjs's module doc
  * for why neither the canvas nor the #surfaceProgress row can answer this
  * question. Never throws on timeout: returns {ok:false, ...} so the caller

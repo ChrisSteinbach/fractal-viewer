@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 /**
- * fr-npb: headless runner for the GPU-flame agreement/benchmark page
+ * Headless runner for the GPU-flame agreement/benchmark page
  * (src/app/gpu-bench/index.html) — the standing check that pins the
  * production WebGPU kernel (src/fractal/flame-gpu.ts) to accumulateFlame,
  * its CPU oracle. Drives the page in real Chrome via playwright-core (WebGPU
  * needs an actual browser — jsdom/Vitest can't run it), waits for the page
  * to finish every scenario, and dumps its JSON results + screenshots.
- * Ported from fr-53k's spike runner (`git show
- * spike/fr-53k-gpu-flame-accum:scripts/gpu-flame-bench.mjs`); CI-able via
- * this script's own exit code (see the `agreement` check below), which the
- * spike's throwaway version had no need for.
+ * Ported from the GPU flame-accumulation spike's throwaway runner, which
+ * lives on its own spike branch and whose record is
+ * docs/flame-gpu-accumulation-spike.md; CI-able via this script's own exit
+ * code (see the `agreement` check below), which the spike's throwaway
+ * version had no need for.
  *
  * Usage:
  *   node scripts/gpu-flame-bench.mjs [--duration=4] [--scenarios=a,b]
@@ -25,7 +26,7 @@
  *     [--surface-aff4-sweep=1] [--surface-plane-frame=1]
  *     [--surface-canary-trip=N]
  *
- * fr-q1f8: `--surface` runs the page's surface-DE kernel section AFTER the
+ * `--surface` runs the page's surface-DE kernel section AFTER the
  * flame scenarios (`?surface=1`); `--surface-only` runs it INSTEAD of them
  * (`?surface=only`). The `--surface-*` passthrough flags map 1:1 onto the
  * page's URL params (see `parseSurfaceConfig` in src/app/gpu-bench/main.ts
@@ -52,7 +53,7 @@
  * WGSL kernels — slowly, but bit-faithfully — instead of skipping the
  * agreement check. Together they are the CI invocation (see the
  * gpu-agreement workflow, .github/workflows/gpu-agreement.yml — its own
- * file since fr-hzlm, so a fail-safe paths-ignore can skip the ~18min
+ * file, so a fail-safe paths-ignore can skip the ~18min
  * sweep on changes that are entirely docs).
  *
  * Without --url, this spawns `npm run dev` itself and tears it down when
@@ -85,8 +86,8 @@ const DEV_SERVER_TIMEOUT_MS = 60_000;
  * Wait cap for the flame sweep — a HANG detector, not a budget: the run
  * polls for `__BENCH_DONE__` and exits the moment it lands, so a cap set
  * generously costs nothing on a healthy run and only avoids reporting a slow
- * host as a failure. Raised from 10 to 20 minutes by fr-hiyu, which added a
- * fourteenth scenario (`xform-color`): each scenario's fixed equal-N legs are
+ * host as a failure. Raised from 10 to 20 minutes when a fourteenth
+ * scenario (`xform-color`) landed: each scenario's fixed equal-N legs are
  * ~50.3M iterations PER SIDE, which SwiftShader measured at ~45-50s apiece on
  * a busy dev box — so thirteen already sat against the old 10-minute wall and
  * the fourteenth crossed it, failing a sweep whose every scenario agreed.
@@ -96,7 +97,7 @@ const BENCH_TIMEOUT_MS = 20 * 60_000;
  * (many kernel configs, multi-pass marches, a per-config wall cap of its
  * own) can legitimately run far past the flame sweep's own wait. */
 const SURFACE_BENCH_TIMEOUT_MS = 30 * 60_000;
-/** Wait cap when the fr-p8bc shade A/B leg is requested on top: its
+/** Wait cap when the shade A/B leg is requested on top: its
  * full-width BASELINE arms are the whole point of the comparison and
  * measured up to ~10-15 minutes EACH on Iris (two poses), on top of leg
  * B's own budget — a 30-minute ceiling measured a timeout mid-leg. */
@@ -115,23 +116,23 @@ const SURFACE_PASSTHROUGH_FLAGS = {
   "surface-timing": "surfaceTiming",
   "surface-wg": "surfaceWg",
   "surface-force": "surfaceForce",
-  // fr-p8bc shade A/B leg: comma list of cheap shade-probe widths to
+  // Shade A/B leg: comma list of cheap shade-probe widths to
   // measure against the shipped full-width baseline (e.g. "1,4"); absent =
   // the leg is skipped (see parseSurfaceConfig's doc).
   "surface-shade-width": "surfaceShadeWidth",
-  // fr-b72d opt-in leg: "1" times the affine4 eval kernel per
+  // 4D kernel-cost opt-in leg: "1" times the affine4 eval kernel per
   // kaleidoscope order (1,2,3,4,6), slab vs no-slab; absent/anything else
   // = the leg is skipped (see runSurfaceAff4SweepLeg's doc in main.ts).
   "surface-aff4-sweep": "surfaceAff4Sweep",
-  // fr-qjae opt-in leg: "1" renders one extra end-to-end frame through a
-  // fr-rhn5 groundPlane:true kernel and checks it against a strided CPU
+  // Opt-in leg: "1" renders one extra end-to-end frame through a
+  // groundPlane:true kernel and checks it against a strided CPU
   // sanity march in hit- AND plane-rate terms; absent/anything else = the
   // leg is skipped (see runSurfaceComputeFramePlaneLeg's doc in main.ts).
   // Deliberately NOT in the `surfaceHeavyLeg` timeout list below: it is one
   // cheap affine frame, and listing it there would claim a cost it does not
   // have.
   "surface-plane-frame": "surfacePlaneFrame",
-  // fr-76pp: synthetic device-sanity trip at the Nth canary check — a
+  // Synthetic device-sanity trip at the Nth canary check — a
   // rehearsal of the "device-unreliable" verdict path; absent = the canary
   // runs for real (see createSurfaceCanary's doc in main.ts).
   "surface-canary-trip": "surfaceCanaryTrip",
@@ -206,7 +207,7 @@ function parseArgs(argv) {
   return args;
 }
 
-/** One `unproj`/`unproj-lens` row (fr-tzdg leg A / fr-55s1 stage C),
+/** One `unproj`/`unproj-lens` row (compute leg A / the lens port's stage C),
  * formatted for stdout — shared by both legs in printSurfaceSummary below,
  * which differ only in which system built and which label prefixes the
  * line. */
@@ -232,7 +233,7 @@ function printSurfaceSummary(surfaceDe) {
   }
   const reason = surfaceDe.reason ? ` reason="${surfaceDe.reason}"` : "";
   console.log(`surfaceDe: verdict=${surfaceDe.verdict}${reason}`);
-  // fr-76pp: device-sanity canary state, printed as early as possible — a
+  // Device-sanity canary state, printed as early as possible — a
   // TRIPPED canary means every row below is suspect, not kernel evidence.
   const ds = surfaceDe.deviceSanity;
   if (ds) {
@@ -254,7 +255,7 @@ function printSurfaceSummary(surfaceDe) {
     // measure expected narrow-width erosion — labeled so a nonzero
     // "fail=" count there is not misread as kernel disagreement.
     const tag = r.gating === false ? "info " : "agree";
-    // fr-dlxh escape rows: the marginal-orbit exclusion count and any
+    // Escape rows: the marginal-orbit exclusion count and any
     // verified chaotic flips must be VISIBLE (a silently shrinking
     // stable set would read as clean).
     const excluded =
@@ -294,7 +295,7 @@ function printSurfaceSummary(surfaceDe) {
         truncated,
     );
   }
-  // fr-tzdg leg A: the march-unproject agreement gate (app ray path).
+  // Leg A: the march-unproject agreement gate (app ray path).
   const mu = surfaceDe.marchUnproject;
   if (mu) {
     if (mu.skipped) {
@@ -303,7 +304,7 @@ function printSurfaceSummary(surfaceDe) {
       console.log(formatSurfaceUnprojectRow("unproj", mu));
     }
   }
-  // fr-55s1 stage C: leg A over the lens field class.
+  // The lens port's stage C: leg A over the lens field class.
   const mul = surfaceDe.marchUnprojectLens;
   if (mul) {
     if (mul.skipped) {
@@ -312,7 +313,7 @@ function printSurfaceSummary(surfaceDe) {
       console.log(formatSurfaceUnprojectRow("unproj-lens", mul));
     }
   }
-  // fr-5wlv.5: leg A through the balloon inverted-union wrapper.
+  // Leg A through the balloon inverted-union wrapper.
   const mub = surfaceDe.marchUnprojectBalloon;
   if (mub) {
     if (mub.skipped) {
@@ -321,7 +322,7 @@ function printSurfaceSummary(surfaceDe) {
       console.log(formatSurfaceUnprojectRow("unproj-balloon", mub));
     }
   }
-  // fr-tzdg leg B: the end-to-end SurfaceComputeRenderer frame.
+  // Leg B: the end-to-end SurfaceComputeRenderer frame.
   const cf = surfaceDe.computeFrame;
   if (cf) {
     if (cf.skipped) {
@@ -335,7 +336,7 @@ function printSurfaceSummary(surfaceDe) {
       );
     }
   }
-  // fr-55s1 stage C: leg B over the lens field class (production
+  // The lens port's stage C: leg B over the lens field class (production
   // SurfaceComputeRenderer on lensMandelboxOverAffine).
   const cfl = surfaceDe.computeFrameLens;
   if (cfl) {
@@ -350,7 +351,7 @@ function printSurfaceSummary(surfaceDe) {
       );
     }
   }
-  // fr-dlxh: leg B over the escape class (production renderer on
+  // Leg B over the escape class (production renderer on
   // escMandelbox, forward-orbit core) + its CPU sanity-march rate band.
   const cfe = surfaceDe.computeFrameEscape;
   if (cfe) {
@@ -369,7 +370,7 @@ function printSurfaceSummary(surfaceDe) {
       );
     }
   }
-  // fr-p8bc shade A/B leg: cheap shading-probe-width vs the shipped
+  // Shade A/B leg: cheap shading-probe-width vs the shipped
   // full-width baseline — informational, never gates surfaceDe.verdict.
   for (const r of surfaceDe.shadeAb ?? []) {
     const ratio =
@@ -488,7 +489,7 @@ async function screenshotBestEffort(page, filePath) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const surfaceRequested = args.surface || args.surfaceOnly;
-  // fr-b72d's opt-in sweep leg is the same shape as fr-p8bc's shade A/B
+  // The 4D kernel-cost sweep leg is the same shape as the shade A/B
   // leg for this purpose — an extra heavy pass layered on top of the
   // standard surface section, capable of running long on a real driver
   // (the sweep's own point is to measure the slow end of the affine4
@@ -555,7 +556,7 @@ async function main() {
     );
     // Playwright's `headless: true` launches Chrome's OLD headless mode,
     // which has no GPU stack at all — navigator.gpu never exists there, so
-    // the agreement check could only ever report "skipped" (fr-2w5; same
+    // the agreement check could only ever report "skipped" (same
     // trap scripts/webgl-smoke.mjs documents). NEW headless mode must be
     // requested explicitly: `headless: false` stops Playwright injecting
     // the old flag, and `--headless=new` opts into the mode that keeps the
@@ -651,7 +652,7 @@ async function main() {
 
     // Per-canvas element screenshots (cpu/gpu/diff per scenario) — full-res
     // artifacts for eyeballing agreement, independent of page layout. The
-    // surface-DE section's canvases now outnumber `labels` (fr-p8bc's
+    // surface-DE section's canvases now outnumber `labels` (the
     // shade A/B leg adds a variable base/cheap/diff triple per pose ×
     // probe width), so each canvas's own `data-bench-label` attribute (set
     // by `surfaceLabeledCanvas` in main.ts) wins the filename suffix when
@@ -714,7 +715,7 @@ async function main() {
         );
         exitCode = 1;
       } else if (surfaceDe && surfaceDe.verdict === "device-unreliable") {
-        // fr-76pp: the device-sanity canary tripped mid-run — numeric rows
+        // The device-sanity canary tripped mid-run — numeric rows
         // above are not kernel evidence (see results.surfaceDe.deviceSanity).
         console.error(
           "[gpu-flame-bench] surface DE device UNRELIABLE mid-run — rerun on a quiet machine (idle CPU); this run's numeric failures are NOT evidence of a kernel defect, do not bisect on them (see results.surfaceDe.deviceSanity)",

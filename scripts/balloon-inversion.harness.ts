@@ -1,7 +1,7 @@
 /**
- * fr-5wlv.1 spike harness: the balloon inverted-union DE.
+ * Spike harness: the balloon inverted-union DE.
  *
- * The fr-5wlv epic wants the attractor enclosed by its own sphere-inverted
+ * The balloon epic wants the attractor enclosed by its own sphere-inverted
  * echo — `I(p) = c + R²(p−c)/|p−c|²` through a balloon of radius `R`
  * centered at the attractor center `c` — with the scene the UNION of the
  * attractor `S` and its echo `S' = I(S)`. This harness measures whether
@@ -20,7 +20,7 @@
  *
  * — conservative whenever `DE` is, certified relative to the same
  * bounding-ball provenance (`rho >= sup|s−c|`) the descent's own in-sphere
- * validity already stands on. `(c, rho)` is the DE's own ball: the fr-pjqw
+ * validity already stands on. `(c, rho)` is the DE's own ball: the
  * probe-fit `(boundCenter, boundingRadius)` for plain systems, the
  * analytic `([0,0,0], visibleBoundingRadius)` for lens systems (the
  * balloon encloses the VISIBLE set, which is what both the estimator
@@ -41,7 +41,7 @@
  * cannot share a bug in `invert`. All RNG streams are seeded; results are
  * reproducible bit-for-bit.
  *
- * The sections answer the fr-5wlv.1 bead directly:
+ * The sections answer the spike's question directly:
  *  (0) identity/involution self-check (hard assertions);
  *  (1) conservativeness (hard-zero on every off-set class; on-set probes
  *      read as EROSION, house style — see EXACT_EROSION discussion in
@@ -53,9 +53,9 @@
  *      (fold -> base, affine/lens -> refined), cutoff early-exit engaged;
  *  (3) cost: invM apps (countingDE, the house machine-independent unit)
  *      and wall-clock per eval, union vs plain.
- * Section (4), added later, answers a DIFFERENT bead (fr-8yad) — its own
- * question, method and verdict are in the paragraph below the fr-5wlv.1
- * MEASURED VERDICT.
+ * Section (4), added later, answers a DIFFERENT question — the balloon's
+ * empty-space-grid validity gate; its own question, method and verdict are
+ * in the paragraph below the spike's MEASURED VERDICT.
  *
  * R regimes, as multiples of `rho`: 0.35 (early inflation), 0.9
  * (mid-inflation interpenetration), 1.6 (rest — the fractal "fits well
@@ -63,8 +63,7 @@
  * bounds at ANY R) — what section (1) checks there is that the arithmetic
  * agrees, and sections (2)/(3) what the regime costs.
  *
- * MEASURED VERDICT (CLOUD=300k, RHO_MARGIN=1, recorded on fr-5wlv):
- * PROCEED.
+ * MEASURED VERDICT (CLOUD=300k, RHO_MARGIN=1): PROCEED.
  *  - CONSERVATIVENESS: 0 off-set violations across all 36 rows (6 systems
  *    x 3 R regimes x 2 estimators, 950 off-set queries per row), at
  *    margin 1 — the DE's own ball certifies the wrapper as-is at this
@@ -77,18 +76,18 @@
  *  - The ONE violation ever observed (CLOUD=60k dev run, mandelboxKifs
  *    refined j1@7.7e-4) attributed as plain-field: the estimator's
  *    disclosed width-bound tail at a query the house cube never sampled,
- *    reproduced on the UNMODIFIED surface-beam harness and filed as
- *    fr-tikz. Production fold paths march base; base columns are 0
- *    everywhere at both densities. fr-tikz has since re-gated the house
- *    harness onto the production row per class (this file's own shape)
- *    and re-sized its mandelboxKifs override for the base row (3e-3 ->
- *    1.2e-2, covering both recorded regimes).
+ *    reproduced on the UNMODIFIED surface-beam harness and became the
+ *    per-class production-estimator gate. Production fold paths march base;
+ *    base columns are 0 everywhere at both densities. That gate has since
+ *    re-gated the house harness onto the production row per class (this
+ *    file's own shape) and re-sized its mandelboxKifs override for the base
+ *    row (3e-3 -> 1.2e-2, covering both recorded regimes).
  *  - EROSION TRANSPORTS, NEVER AMPLIFIES: exactShell de-amplified ==
  *    exactOuter (the same outer-decile attractor points, uninverted) on
  *    every row — spherefold pair 1.3e-3 both (0.077%R, the plain
  *    descent's own extremity tail, 13x its whole-attractor house tail —
- *    fr-tikz evidence, not a balloon defect), mandelboxKifs 1.1-1.8e-3
- *    both, inside its 3e-3 budget.
+ *    production-estimator-gate evidence, not a balloon defect),
+ *    mandelboxKifs 1.1-1.8e-3 both, inside its 3e-3 budget.
  *  - TIGHTNESS: union DE/D p50 at rest (R=1.6rho) — default .762/.794
  *    (base/refined), spiral .794/.821, boxfold sym3 .442, spherefold
  *    .243, mandelboxKifs .551/.579, lens .745/.785 — the plain field's
@@ -112,11 +111,11 @@
  *    heavy systems (x0.93-1.04 where evals cost 80-2500us); sub-10us
  *    rows are timer/GC-noise-dominated and apps is the unit of record.
  *
- * fr-8yad (section 4): fr-5wlv shipped the empty-space grid OFF in
- * balloon mode — a stored floor is fractal-only, so it is not
+ * THE GRID QUESTION (section 4): the balloon shipped the empty-space grid
+ * OFF in balloon mode — a stored floor is fractal-only, so it is not
  * automatically a valid bound on distance to the UNION once the shell
- * exists. The epic recorded a re-enable rule (fractal-only floors stay
- * valid once the shell clears the grid box) and warned against itself
+ * exists. A re-enable rule was recorded (fractal-only floors stay valid
+ * once the shell clears the grid box) with a warning against itself
  * before anyone wrote that predicate: the balloon march spends most of
  * its steps in the CAVE GAP between the box and the shell, where a floor
  * was never stored regardless of validity. Section (4) measures that gap
@@ -143,16 +142,16 @@
  * ACTUALLY-BUILT grid, NEAREST-sampled exactly as the shader would, whose
  * stored floor clears the march's own acceptance eps — built for 5 of 6
  * systems; `mandelboxKifs` is too costly to build twice in this one run,
- * per fr-aj4w's own measured verdict, so its row reports the geometric
- * upper bound only and SAYS SO). A balloon march step calls the estimator
- * TWICE: the FRACTAL term at the ray sample `p` (the query the plain,
- * already-shipped, non-balloon grid check already reaches — this is what
- * "re-enable the grid" gets for free), and the SHELL term at
+ * per the grid build-cost measurement's own verdict, so its row reports
+ * the geometric upper bound only and SAYS SO). A balloon march step calls
+ * the estimator TWICE: the FRACTAL term at the ray sample `p` (the query
+ * the plain, already-shipped, non-balloon grid check already reaches —
+ * this is what "re-enable the grid" gets for free), and the SHELL term at
  * `invert(balloon, p)` (a DIFFERENT query point that would need the grid
  * read a second time plus a `|p-c|/rho` rescale before its floor bounds
- * anything — new march-loop work the bead does not propose and does not
- * cost). The two are tallied and reported SEPARATELY, never averaged, so
- * "what the bead as scoped buys" and "what a further extension could add"
+ * anything — new march-loop work the proposal neither includes nor
+ * costs). The two are tallied and reported SEPARATELY, never averaged, so
+ * "what the proposal as scoped buys" and "what a further extension adds"
  * stay distinguishable. The plain (non-balloon) march's fractal-term
  * tally, over the SAME rays, is the reference for what the grid buys
  * where it is already enabled. Section (4c) additionally checks, over the
@@ -192,17 +191,17 @@
  * COVERAGE (4b), rest (R=1.6rho), production estimator per class, cutoff
  * engaged, same rays as section (2), PER TERM, `gridSkip@64` as a
  * fraction of that term's own eval count (= the march's step count, one
- * fractal- and one shell-term eval per balloon step): bead-AS-SCOPED
+ * fractal- and one shell-term eval per balloon step): PROPOSAL-AS-SCOPED
  * (fractal-only) vs plain's fractal-only rate vs the ratio between them,
  * then the shell-term figure reported separately and labelled NOT
  * proposed/NOT costed — default 26.4% vs 50.5% (52.3%), shell 19.3%;
  * spiral 31.1% vs 43.7% (71.1%), shell 22.0%; boxfold sym3 18.6% vs 33.9%
  * (54.9%), shell 11.3%; spherefold 33.2% vs 43.5% (76.3%), shell 14.8%;
  * lens 25.8% vs 52.9% (48.7%), shell 27.5%. The FRACTAL term — the one
- * the bead actually proposes — is the LARGER of the two on 4 of 5
+ * actually proposed — is the LARGER of the two on 4 of 5
  * measured systems, not the smaller one a "far p, near-center invert(p)"
  * intuition would predict; lens is the one exception, and even there the
- * two are close (25.8% vs 27.5%). Bead-as-scoped realizes 48.7-76.3% of
+ * two are close (25.8% vs 27.5%). As scoped it realizes 48.7-76.3% of
  * the plain grid's own rate — CLOSER to the combined figure a first cut
  * of this section reported than a pessimistic reading of "two terms
  * averaged" would suggest, because the two terms are not that far apart
@@ -266,14 +265,14 @@
  * roughly HALF of a balloon march's evaluations still land outside the
  * grid box — but the SCOPE and SAFETY questions the review raised both
  * came back cleaner than the pessimistic reading of either would predict.
- * SCOPE: the bead's own proposal — re-enable the grid, gate it at rest —
+ * SCOPE: the proposal itself — re-enable the grid, gate it at rest —
  * reaches the FRACTAL-term query alone, and that alone would skip
  * 18.6-33.2% of a balloon march's STEPS at res 64 across the five
  * measured systems, realizing 48.7-76.3% of what the identical grid buys
  * the plain march over the identical rays. That is the number to build
  * against; the SHELL-term figure (11.3-27.5%) is a real but SEPARATE
  * opportunity this measurement did not cost, needing a second grid read
- * and a rescale the bead does not propose. SAFETY: the re-enable rule as
+ * and a rescale the proposal does not include. SAFETY: the re-enable rule as
  * literally stated (shell clears the box) is not automatically sufficient
  * for a per-cell floor guarantee — but measured directly over 5 systems x
  * 2 resolutions, under the `floor + cellRadius` condition rather than the
@@ -284,22 +283,21 @@
  * plus the mid-inflation transient (section (1)'s own disclosed soft
  * regime) it would need to stay clear of, or whether the shell-term
  * extension is worth building on top later — cost/benefit calls for the
- * bead, which this file informs but does not make.
+ * decision this file informs but does not make.
  *
- * fr-3vjd (section 5): the balloon's union DE is two estimator calls per
- * step, and the bead proposes a closed-form early-out for the second.
- * Every echo point is `I(s)` with `|I(s)-c| = R^2/|s-c|`, so for a source
- * set of radial extent `[rMin, rMax]` about `c` the WHOLE echo lies in
- * the annulus `ANN = {x : R^2/rMax <= |x-c| <= R^2/rMin}`, and
- * `dist(p, ANN)` — one hypot, two compares, no descent — lower-bounds
- * `dist(p, echo)`. Section (5) measures BOTH readings of "skip": the
- * bead's literal PER-RAY one (a ray whose whole marched segment misses
- * ANN cannot hit the shell anywhere, so the union may drop to the
- * fractal term for that entire ray) and the strictly stronger PER-STEP
- * one (`clearance(p) >= DE(p)` means the shell term cannot be the min, so
- * skipping it returns a value that is unchanged-or-larger and still
- * conservative — `descendLens`'s region-floor idiom, which the bead names
- * as the shape to copy).
+ * THE ANNULUS EARLY-OUT (section 5): the balloon's union DE is two estimator
+ * calls per step, and the proposal adds a closed-form early-out for the
+ * second. Every echo point is `I(s)` with `|I(s)-c| = R^2/|s-c|`, so for a
+ * source set of radial extent `[rMin, rMax]` about `c` the WHOLE echo lies in
+ * the annulus `ANN = {x : R^2/rMax <= |x-c| <= R^2/rMin}`, and `dist(p, ANN)`
+ * — one hypot, two compares, no descent — lower-bounds `dist(p, echo)`.
+ * Section (5) measures BOTH readings of "skip": the proposal's literal PER-RAY
+ * one (a ray whose whole marched segment misses ANN cannot hit the shell
+ * anywhere, so the union may drop to the fractal term for that entire ray)
+ * and the strictly stronger PER-STEP one (`clearance(p) >= DE(p)` means the
+ * shell term cannot be the min, so skipping it returns a value that is
+ * unchanged-or-larger and still conservative — `descendLens`'s region-floor
+ * idiom, which the proposal names as the shape to copy).
  *
  * THE TWO WALLS ARE NOT SYMMETRIC, and that decides the answer. The inner
  * wall `R^2/rho` needs an UPPER bound on `rMax` and the wrapper already
@@ -327,7 +325,7 @@
  * disclosed wall-clock column moved).
  *
  * AT REST (R=1.6rho, what the shipped render sits in):
- *  - PER-RAY, the bead as literally written: 0 of 144 rays miss ANN on
+ *  - PER-RAY, the proposal as literally written: 0 of 144 rays miss ANN on
  *    every system, both arms. 0.0% of shell evals, 0.0% of total evals.
  *    The camera sits at 1.35rho and the far cap at 10rho, so every ray
  *    sweeps `|p-c|` across the inner wall `R^2/rho = 2.56rho` and into
@@ -350,7 +348,7 @@
  *    the rest-state exclusion is the INNER hole — 32.8% of arc length, a
  *    scale-free constant of this camera — and the inner hole is where
  *    the fractal itself is, i.e. where the shell term was already cheap.
- *    So the bead's OWN mechanism (a missing ray creeping to the far cap
+ *    So the proposal's OWN mechanism (a missing ray creeping to the far cap
  *    on tiny shell-term steps, at `|p-c|` well OUTSIDE the inner wall)
  *    is the one thing ANN cannot touch.
  *  - TIGHTNESS: the inner wall is tight — the echo's measured inner
@@ -384,8 +382,8 @@
  * where 32 and 20 rays were so classified and none hit). No engaged
  * march lost a terminal hit.
  *
- * AND THE COST THIS WAS MEANT TO ATTACK IS SMALLER THAN THE BEAD SAYS.
- * fr-3vjd's own "~200x the plain fold per ray" headline compared balloon
+ * AND THE COST THIS WAS MEANT TO ATTACK IS SMALLER THAN CLAIMED.
+ * The "~200x the plain fold per ray" headline compared balloon
  * ON at 1024x640 against balloon OFF at 720x400 — DIFFERENT RASTERS, so a
  * ~2.3x ray count was baked in before the balloon was considered — on
  * SwiftShader. Same-raster on real Iris it reads single-digit x, and this
@@ -404,10 +402,11 @@
  * rule is the shell term's own share, 28.6-63.4% of apps, so the room
  * lost is not the annulus's fault: it is that the SKIPPABLE shell evals
  * are the cheap ones. IF someone revisits this it should be for the
- * INFLATION TRANSIENT alone (spherefold x0.712) and only after fr-p7wy
- * settles which engine the balloon should be on at all — and the
+ * INFLATION TRANSIENT alone (spherefold x0.712) — the engine question is
+ * SETTLED, by matched measurement on real Iris: compute is the better
+ * balloon arm, and relatively better WITH the balloon than without — and the
  * measurement to beat is not this one, it is the `dr`-tiny far-cap creep
- * the bead describes, which ANN provably cannot reach.
+ * the proposal describes, which ANN provably cannot reach.
  *
  * Usage:
  *   npx vitest run --config scripts/vitest.harness.config.ts scripts/balloon-inversion.harness.ts
@@ -476,7 +475,7 @@ const R_REGIMES = [0.35, 0.9, 1.6] as const;
  * overshoot — and the DE ball's radius is `probe.maxR * 1.05 + 1e-3` over
  * an 8192-point probe, which this harness's much denser cloud checks
  * directly (the `sampleMax/ballR` column). Default 1: measure the DE's
- * own ball as-is; the epic's production margin is DERIVED from what this
+ * own ball as-is; the production margin is DERIVED from what this
  * measures, not assumed. */
 const BALLOON_RHO_MARGIN = envFloat("RHO_MARGIN", 1);
 
@@ -503,9 +502,9 @@ const VOID_HIT_FACTOR = 0.01;
  * mandelboxKifs disclosure). Report-only here — the spike's hard gate is
  * the off-set classes — but printed against these so the tables read
  * pass/fail at a glance. The house mandelboxKifs override has since been
- * re-sized (fr-tikz: 1.2e-2, gating the base row over both recorded
- * regimes); this file keeps the fr-2v0y-era 3e-3 its recorded readings
- * (1.1-1.8e-3) were measured against. */
+ * re-sized (1.2e-2, gating the base row over both recorded regimes); this
+ * file keeps the earlier 3e-3 its recorded readings (1.1-1.8e-3) were
+ * measured against. */
 const EXACT_EROSION_BUDGET_R = 1e-4;
 const EXACT_EROSION_BUDGET_R_OVERRIDES: Record<string, number> = {
   "mandelboxKifs preset": 3e-3,
@@ -529,7 +528,7 @@ interface Balloon extends Ball {
 
 /** The ball the wrapper certifies against: the DE's own. Lens systems
  * (either final shape) descend to the VISIBLE set, so their ball is the
- * origin-centered visible bound; plain systems use the fr-pjqw fit. */
+ * origin-centered visible bound; plain systems use the probe-fit ball. */
 function balloonBall(de: SurfaceDE): Ball {
   if (de.final !== null || de.foldFinal !== null) {
     return { c: [0, 0, 0], rho: de.visibleBoundingRadius };
@@ -550,7 +549,7 @@ function invert(b: Balloon, p: Vec3): Vec3 {
 }
 
 /* ------------------------------------------------------------------ *
- * fr-3vjd: the shell-exclusion ANNULUS, and the asymmetry that decides
+ * The shell-exclusion ANNULUS, and the asymmetry that decides
  * whether it is worth anything.
  *
  * Every echo point is `I(s)` for some `s` in the set, and
@@ -579,7 +578,7 @@ function invert(b: Balloon, p: Vec3): Vec3 {
  * The sound source for `rMin` is the estimator's own region floor:
  * `DE(c)`, ONE evaluation at build time, conservative by exactly the
  * argument every other bound in this file stands on (`descendLens`'s
- * region-floor idiom, which the bead itself names as the shape to copy).
+ * region-floor idiom, which the proposal itself names as the shape to copy).
  * Section (5) reports BOTH — the certified `DE(c)` annulus, and the
  * OPTIMISTIC one built from the 300k cloud's own `min |s−c|`, a ceiling
  * no instrument could ever beat — so that "dead" and "dead only because
@@ -679,11 +678,11 @@ interface AnnulusRun {
 /**
  * The wrapper under test: `min(DE(p), (|p−c|/rho)·DE(I(p)))` over the
  * UNTOUCHED public estimator. The shell term's cutoff scales by the
- * inverse of its value factor (`cutoff·rho/|p−c|`), so the fr-55r5
- * early-exit contract survives verbatim: the outer value crosses `cutoff`
+ * inverse of its value factor (`cutoff·rho/|p−c|`), so the march-epsilon
+ * cutoff contract survives verbatim: the outer value crosses `cutoff`
  * exactly when the inner value crosses the scaled one.
  *
- * `ann` (fr-3vjd, section (5)) is a MEASUREMENT hook, off by default and
+ * `ann` (section (5)) is a MEASUREMENT hook, off by default and
  * inert when absent: the shell half moved into {@link balloonShellTerm}
  * unchanged so the app counter can be read either side of it — a
  * behavior-preserving extraction in the same sense as `runMarch`'s, and
@@ -718,7 +717,7 @@ function balloonEstimate(
 }
 
 /** {@link balloonEstimate}'s shell half, extracted verbatim (same
- * arithmetic, same order) so fr-3vjd's measurement can bracket it with
+ * arithmetic, same order) so section (5)'s measurement can bracket it with
  * the inverse-map counter instead of keeping a second copy of the
  * wrapper. */
 function balloonShellTerm(
@@ -941,8 +940,8 @@ function buildQueries(g: Ground, R: number): QueryB[] {
   // probe is `I(s)` and the control is the raw `s` — so the exactShell
   // column's de-amplified erosion can be read against what the plain
   // descent already erodes at that exact outer-decile attractor point
-  // (the house exact class spreads over the WHOLE attractor; the fr-pjqw
-  // record shows the on-set tail is ball-geometry-sensitive, so an
+  // (the house exact class spreads over the WHOLE attractor; the probe-fit
+  // ball's record shows the on-set tail is ball-geometry-sensitive, so an
   // extremity-only probe set needs its own extremity-only baseline).
   const exactShellRng = mulberry32(8);
   for (let i = 0; i < 60; i++) {
@@ -1205,7 +1204,7 @@ interface MarchResult {
  * (`balloonEstimate`, two evals/step: the fractal term at the ray sample
  * `p`, the shell term at the untouched `invert(balloon, p)`).
  *
- * `onEval`, when supplied (fr-8yad's section (4) only — section (2) omits
+ * `onEval`, when supplied (section (4) only — section (2) omits
  * it, so its output is exactly what the original inline `march` closure
  * produced), fires once per evaluation with the exact query point `fn` was
  * called at and which term produced it: the fractal term's `p` itself, or,
@@ -1226,7 +1225,7 @@ function runMarch(
   annulus?: AnnulusRun | null,
 ): MarchResult {
   const { de: counted, counter } = countingDE(de, de.beamWidth);
-  // fr-3vjd section (5): the run's stats are read off THIS march's own
+  // Section (5): the run's stats are read off THIS march's own
   // counter, so the shell term's apps can be separated from the fractal
   // term's. Absent (every other caller) nothing below changes.
   if (annulus) annulus.counter = counter;
@@ -1282,7 +1281,7 @@ function runMarch(
   };
 }
 
-/** fr-8yad section (4): per-TERM tally of where one term's DE evaluations
+/** Section (4): per-TERM tally of where one term's DE evaluations
  * land relative to the empty-space grid's cube (`inBox`), the sphere
  * inside which a cell could ever hold a positive floor (`posFloor64`/`32`,
  * one per shipped resolution since `pickSurfaceGridResolution` can
@@ -1291,7 +1290,7 @@ function runMarch(
  * balloon march step produces ONE fractal-term evaluation (at the ray
  * sample `p`) and ONE shell-term evaluation (at `invert(balloon, p)`), so
  * `n` here is directly a STEP count per term — `fractal.skip64/fractal.n`
- * is "fraction of march steps the bead-as-proposed re-enable could skip";
+ * is "fraction of march steps the proposed re-enable could skip";
  * `shell.skip64/shell.n` is a SEPARATE, unproposed opportunity (team-lead
  * review of the first cut of this section: a shell-term skip needs the
  * march loop to read the grid at a second, DIFFERENT point and rescale
@@ -1402,7 +1401,7 @@ function fmtTermTally(b: TermTally, gridBuilt: boolean): string {
   );
 }
 
-/** Systems whose grid build fr-aj4w already measured as too costly to pay
+/** Systems whose grid build was already measured as too costly to pay
  * twice (64^3 AND 32^3) inside one harness run — mandelboxKifs alone
  * (55.8s refined / 37.5s plain at 64^3 on the dev machine,
  * surface-grid-cost.harness.ts). Section (4) falls back to the geometric
@@ -1411,7 +1410,7 @@ function fmtTermTally(b: TermTally, gridBuilt: boolean): string {
  * its own output rather than silently mixing the two kinds of number. */
 const GRID_TOO_EXPENSIVE = new Set<string>(["mandelboxKifs preset"]);
 
-/** fr-8yad soundness check (team-lead review of the first cut of this
+/** Section (4)'s soundness check (team-lead review of the first cut of this
  * section): "the shell clears the grid box" bounds the box's FARTHEST
  * point from the shell's NEAREST point, in aggregate — it does not by
  * itself certify that any one cell's STORED FLOOR (built from the
@@ -1571,9 +1570,9 @@ function fmtSoundness(r: SoundnessResult): string {
   );
 }
 
-/** fr-g58b lens archetype for the wrapper's lens coverage: affine base
- * maps under a pure-boxfold FINAL — the descent runs `descendLens`, the
- * ball is the analytic visible bound. */
+/** Pure-fold-FINAL lens archetype for the wrapper's lens coverage: affine
+ * base maps under a pure-boxfold FINAL — the descent runs `descendLens`,
+ * the ball is the analytic visible bound. */
 function lensArchetype(): SystemB {
   return {
     label: "default + boxfold lens",
@@ -1602,7 +1601,7 @@ const SYSTEMS: SystemB[] = [
 ];
 
 /* ------------------------------------------------------------------ *
- * fr-3vjd section (5) instruments.
+ * Section (5) instruments.
  * ------------------------------------------------------------------ */
 
 /** Resolution of the membership oracle section (5) hands
@@ -1688,8 +1687,8 @@ interface RayAnnulusGeom {
   /** Does the segment meet the annulus AT ALL? `|p(t) − c|` is
    * continuous on `[0, tFar]`, so the radii it attains are exactly
    * `[dmin, dmax]` and the test is an interval overlap. A ray for which
-   * this is false can never hit the shell ANYWHERE, which is the bead's
-   * literal proposal. */
+   * this is false can never hit the shell ANYWHERE, which is the
+   * proposal's literal reading. */
   enters: boolean;
   /** Arc length of the marched segment strictly inside the annulus's
    * hole, and strictly beyond its outer wall. */
@@ -1779,7 +1778,7 @@ function fmtR(x: number): string {
   return Number.isFinite(x) ? x.toFixed(3) : "inf";
 }
 
-describe("fr-5wlv.1 balloon inversion harness", () => {
+describe("balloon inversion harness", () => {
   it("(0) inversion identity + involution self-check", () => {
     // Synthetic ball, seeded points spanning [1e-4, 10]·rho shells: the
     // identity `|p−I(s)| = |p−c|·|I(p)−s|/|s−c|` must hold to f64
@@ -1876,7 +1875,7 @@ describe("fr-5wlv.1 balloon inversion harness", () => {
         );
         // The production estimator for this system class: fold systems
         // march `base` (the estimator the fold GLSL/WGSL cores mirror,
-        // fr-aj4w/fr-q1f8); affine and lens systems march `refined`.
+        // and the grid prices); affine and lens systems march `refined`.
         const prodName = deHasFolds(g.de) ? "base" : "refined";
         for (const [name, fn] of [
           ["base", estimateDistance],
@@ -1894,7 +1893,7 @@ describe("fr-5wlv.1 balloon inversion harness", () => {
             `     ${name.padEnd(7)}: ${fmtRow(row, balloon.rho, budget)}`,
           );
           if (row.hardViolations > 0) {
-            // ATTRIBUTION (the bead's "report which"): a union violation
+            // ATTRIBUTION (the proposal's "report which"): a union violation
             // means both estimate terms exceed dUnion; the responsible
             // side is the one whose OWN reference is the min — plain-field
             // (`estF > dPlain`, the balloon merely re-measured the plain
@@ -1905,8 +1904,9 @@ describe("fr-5wlv.1 balloon inversion harness", () => {
             // the house harness's known refined-fold width-bound tail —
             // which is exactly what the one measured instance was:
             // mandelboxKifs refined j1@7.7e-4 at CLOUD=60k, reproduced on
-            // the UNMODIFIED surface-beam harness and filed as fr-tikz
-            // (the tail is not exact-class-only — fr-tikz corrected the
+            // the UNMODIFIED surface-beam harness and became the
+            // per-class production-estimator gate (the tail is not
+            // exact-class-only — that gate corrected the
             // record and re-gated the house harness onto the production
             // row; production fold paths march base, whose columns stay
             // 0).
@@ -1965,7 +1965,7 @@ describe("fr-5wlv.1 balloon inversion harness", () => {
           if (worstErosion > budget * balloon.rho) {
             // Report-only (house reads erosion via maxExcess): printed
             // loudly so the verdict can't miss it, but not a gate — the
-            // bead's gate is the off-set classes.
+            // gate here is the off-set classes.
             console.log(
               `     ^^ EROSION OVER HOUSE BUDGET: ` +
                 `${worstErosion.toExponential(2)} > ` +
@@ -2074,10 +2074,10 @@ describe("fr-5wlv.1 balloon inversion harness", () => {
     expect(true).toBe(true);
   }, 900_000);
 
-  it("(4) fr-8yad: could the empty-space grid help a REST-state balloon march?", () => {
+  it("(4) could the empty-space grid help a REST-state balloon march?", () => {
     const restMult = Math.max(...R_REGIMES);
     console.log(
-      `\n== (4) fr-8yad: grid coverage of balloon-march DE evaluations ` +
+      `\n== (4) grid coverage of balloon-march DE evaluations ` +
         `(REST regime = ${restMult}rho, the largest of R_REGIMES=` +
         `[${R_REGIMES.join(", ")}]) ==`,
     );
@@ -2206,7 +2206,7 @@ describe("fr-5wlv.1 balloon inversion harness", () => {
           pFractalRate64 > 0 ? bFractalRate64 / pFractalRate64 : NaN;
         const combinedRate64 = (bF.skip64 + bS.skip64) / (bF.n + bS.n);
         console.log(
-          `     -> bead AS SCOPED (fractal-term grid check only, @64): ` +
+          `     -> AS SCOPED (fractal-term grid check only, @64): ` +
             `balloon ${bF.skip64}/${bF.n} steps ` +
             `(${(bFractalRate64 * 100).toFixed(1)}%) vs plain's ` +
             `${pF.skip64}/${pF.n} (${(pFractalRate64 * 100).toFixed(1)}%)` +
@@ -2241,10 +2241,10 @@ describe("fr-5wlv.1 balloon inversion harness", () => {
     }
     expect(true).toBe(true);
   }, 900_000);
-  it("(5) fr-3vjd: is the shell-exclusion annulus tight enough to skip anything?", () => {
+  it("(5) is the shell-exclusion annulus tight enough to skip anything?", () => {
     const restMult = Math.max(...R_REGIMES);
     console.log(
-      `\n== (5) fr-3vjd: the annulus early-out. The whole echo lies in ` +
+      `\n== (5) the annulus early-out. The whole echo lies in ` +
         `ANN = {x : R^2/rho <= |x-c| <= R^2/rMin}, so dist(p, ANN) is a ` +
         `closed-form lower bound on dist(p, shell) and the shell term is ` +
         `skippable wherever that bound DOMINATES the fractal term. TWO ` +
@@ -2378,7 +2378,7 @@ describe("fr-5wlv.1 balloon inversion harness", () => {
         const tCert = tallyAnnulus(samples, annCert);
         const tBest = tallyAnnulus(samples, annBest);
 
-        // Per-RAY skip (the bead's literal proposal): shell evals on rays
+        // Per-RAY skip (the proposal's literal reading): shell evals on rays
         // that never enter ANN. One shell eval per step on a balloon
         // march, so a march of just those rays counts them exactly.
         const missSteps = (rs: Vec3[]): { steps: number; hitS: number } => {

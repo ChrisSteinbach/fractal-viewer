@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * fr-j85n's SURFACE-arm gate — the balloon echo's authored tint pair
+ * The SURFACE-arm gate for the balloon echo's authored tint pair
  * (`balloonTint` + `balloonTintStrength`) measured on real GPU frames.
  *
  *   npm run build && npm run preview &
@@ -33,7 +33,7 @@
  *
  * WHAT EACH LEG COMPARES. Every leg is two full page loads of two `#v1=`
  * DOCUMENTS that differ ONLY in the tint pair, each driven into Surface
- * FROM THE UI and captured on the fr-opgk settle latch:
+ * FROM THE UI and captured on the `?surfacestate` settle latch:
  *
  *   L1 tint reaches compute   balloon ON,  #00ff88 @1.0  vs  NO tint fields
  *   L2 tint reaches webgl     balloon ON,  #00ff88 @1.0  vs  NO tint fields
@@ -41,7 +41,7 @@
  *   L4 echo-off inert         balloon OFF, #00ff88 @1.0  vs  NO tint fields
  *   L5 tint reaches 4D        L1's pair on the 4D system — `core:"affine4"`
  *                             through the SAME shared shade entry, which is
- *                             why fr-j85n's 4D half was one emission and
+ *                             why the tint's 4D half was one emission and
  *                             not a lift, and why it is shown rather than
  *                             argued
  *   L6 tint reaches webgl-4D  L2's pair one dimension up —
@@ -58,7 +58,7 @@
  * hop exercises persist -> state -> scene -> packer/uniform, and there is
  * no event-dispatch to mistake for an effect. The UNTINTED side of every
  * leg carries NO `balloonTint`/`balloonTintStrength` AT ALL — it is
- * literally a pre-fr-j85n document decoding through the absent-field path,
+ * literally a pre-tint document decoding through the absent-field path,
  * which is what makes L3's `maxDelta === 0` the measured form of "absent
  * means classic" rather than an assertion about `mix(x, y, 0)`.
  *
@@ -103,11 +103,11 @@
  * at 720x400 with the balloon OFF, and with it ON reaches 0.3% of one
  * settle in 180s at 1024x640 (~2.3x the rays, so ~200x the per-ray cost).
  * THE MECHANISM IS ALGORITHMIC, not a software-adapter artefact: a ray that
- * MISSES the shell still marches to fr-5wlv's far cap, and it marches there
- * through a region where the inverted query sits near the ball centre — so
- * `DE(I(p))` is tiny, the union takes it, and the step length collapses in
- * exactly the directions that have nothing in them. (fr-j8uk's
- * `scripts/balloon-real-driver.verify.mjs` is the instrument for this
+ * MISSES the shell still marches to the balloon's far cap, and it marches
+ * there through a region where the inverted query sits near the ball
+ * centre — so `DE(I(p))` is tiny, the union takes it, and the step length
+ * collapses in exactly the directions that have nothing in them.
+ * (`scripts/balloon-real-driver.verify.mjs` is the instrument for this
  * number on a REAL driver, where it is deliberately an on/off RATIO on one
  * machine state rather than an absolute; read the two together rather than
  * re-deriving either.) So on software the gate shrinks the RAY COUNT rather
@@ -120,15 +120,15 @@
  * at a real raster instead of tracing the same postage stamp faster, which
  * is the row only real hardware buys — that is why this is a `parseArgs`
  * flag and not a second hardcoded constant that could go stale beside this
- * one. The WebGL legs additionally pass `?surfacesamples=1` (fr-jf9y's A/B
- * override, read by the STRIP arm only — it is not a knob the compute arm
- * has), which is why the two engines' legs are not comparable to each other
- * in cost and are never compared here.
+ * one. The WebGL legs additionally pass `?surfacesamples=1` (the strip
+ * arm's own A/B override, read by the STRIP arm only — it is not a knob the
+ * compute arm has), which is why the two engines' legs are not comparable
+ * to each other in cost and are never compared here.
  *
  * THE CAMERA IS PINNED INTO EVERY DOCUMENT, and it is the app's OWN
  * auto-frame: the script boots each system once with no pose, reads the
  * pose back out of the Copy-link handler's `#v1=`, and writes it into every
- * document of that system. fr-opgk's latch is bit-reproducible run to run
+ * document of that system. The settle latch is bit-reproducible run to run
  * ONLY for a document that pins its camera — a pose-less scene auto-frames
  * from a cloud and drifts — so without this L3 and L4 would be measuring
  * framing noise. Reading it rather than hardcoding it keeps the framing
@@ -168,7 +168,7 @@
  *   L6 tint reaches webgl-4D    16.738% changed  meanAbs  7.337  max 183
  *
  * EVERY ONE OF THOSE FIGURES REPRODUCED TO THE LAST DIGIT across independent
- * runs of the same build, which is the pinned camera and fr-opgk's latch
+ * runs of the same build, which is the pinned camera and the settle latch
  * doing exactly what they promise — worth stating, because it is what makes
  * L3's and L4's `max 0` a measurement rather than a coincidence.
  *
@@ -213,7 +213,7 @@ const BALLOON_RADIUS = 0.5;
 /** Deliberately far from anything this system's per-transform palette
  * produces, so a tinted shell cannot coincide with an untinted one. Same
  * hex as the sibling Points gate, so one colour means one thing across both
- * halves of fr-j85n. */
+ * halves of the tint work. */
 const TINT_HEX = "#00ff88";
 /** Strength 1.0 for the difference legs: `mix(base, tint, 1)` is the tint
  * exactly, the largest signal the pair can produce. Strength 0.0 is L3's
@@ -222,7 +222,7 @@ const TINT_ON = 1;
 const TINT_OFF = 0;
 /** A leg that must move the frame has to move MORE than the settle's own
  * run-to-run noise. There is none — a pinned-camera settle is
- * bit-reproducible (fr-opgk), and L3/L4 measure exactly 0.000% below — so
+ * bit-reproducible, and L3/L4 measure exactly 0.000% below — so
  * this is a floor against a leg that "passes" on a handful of edge pixels,
  * not a tolerance. */
 const MIN_CHANGED_FRACTION = 0.01;
@@ -257,12 +257,12 @@ const SYSTEM_3D = [
 ];
 
 /** The 4D system: the transforms of `surface-4d-lift.verify.mjs`'s
- * `ifs4balloon` scene — fr-qxxw's own balloon fixture — DECODED from that
+ * `ifs4balloon` scene — the 4D balloon lift's own fixture — DECODED from that
  * file's `#v1=` payload rather than retyped, so the two gates are asking
  * about the same object. A 4D session prefers compute at any symmetry order
- * (fr-fniy), and `deHasFolds4` is false here, so this leg lands on
+ * and `deHasFolds4` is false here, so this leg lands on
  * `core:"affine4"`: the same shared shade entry and the same `ShadeParams`
- * tail as the 3D cores, which is exactly why fr-j85n's 4D half was one
+ * tail as the 3D cores, which is exactly why the tint's 4D half was one
  * emission rather than a lift — and why it still has to be SHOWN drawing. */
 const SYSTEM_4D = [
   {
@@ -298,7 +298,7 @@ const enc = (scene) =>
 
 /**
  * One scene document. `tint === null` writes NO `balloonTint` and NO
- * `balloonTintStrength` at all — the pre-fr-j85n document every leg's
+ * `balloonTintStrength` at all — the pre-tint document every leg's
  * baseline is (see the header). `pose` carries the camera (and, for the 4D
  * system, the rotor/slice) read off the app's own share link.
  */
@@ -419,8 +419,8 @@ async function openScene(page, { url, tag, hash, gl }) {
     : `?surfacestate&leg=${tag}`;
   await page.goto(`${url}/${query}${hash}`, { waitUntil: "load" });
   // Mutter only sends frame callbacks to VISIBLE surfaces, and every
-  // capture below waits on the fr-opgk settle latch — an occluded window
-  // parks it at a deterministic percent (fr-j8uk measured 64%/99% stalls).
+  // capture below waits on the settle latch — an occluded window
+  // parks it at a deterministic percent (measured 64%/99% stalls).
   // Keep the window on top before anything polls it. This is the one
   // navigation choke point in the file, so one call site covers every
   // probe and capture.
@@ -502,10 +502,10 @@ async function readPose(page) {
 }
 
 /**
- * Enter Surface FROM THE UI and wait for a COMPLETED settle — fr-opgk's
- * latch, not "the pixels stopped changing", which strip pacing and the
- * compute arm's measured pass sizing both make a lie, and not the progress
- * row, which hides at both ends.
+ * Enter Surface FROM THE UI and wait for a COMPLETED settle — the
+ * `?surfacestate` latch, not "the pixels stopped changing", which strip
+ * pacing and the compute arm's measured pass sizing both make a lie, and
+ * not the progress row, which hides at both ends.
  */
 async function enterAndSettle(page, timeoutMs) {
   const started = Date.now();
@@ -637,7 +637,7 @@ async function sceneDiff(page, aPng, bPng) {
  * THE MASK HAS TO BE ERODED, and finding out why IS the measurement — the
  * derivation is left here in sequence so a later session can re-judge the
  * erosion instead of trusting it. The raw mask is byte-equality of an
- * EIGHT-SAMPLE AVERAGE (fr-vpbq), so a pixel whose subsamples straddle the
+ * EIGHT-SAMPLE AVERAGE, so a pixel whose subsamples straddle the
  * shell's edge can average to the same bytes with the balloon off and still
  * carry one tinted subsample. MEASURED, first run of this gate:
  *
@@ -663,12 +663,12 @@ async function sceneDiff(page, aPng, bPng) {
  *
  * The erosion may not swallow the question either. A pose where the balloon
  * repaints nearly everything leaves too few interior pixels to mean
- * anything, and 0 of 0 must never read as a pass — that is fr-5666's own
- * failure mode, one gate over, where a phase measured 0.000% because its
- * subject was off screen. Below {@link S_MIN_INTERIOR_FRACTION} of the
- * scene region the row REFUSES (to `uncovered`, exit 1, claim (iii) noted
- * as resting on L4 alone) rather than passing on nothing. The measured run
- * has 3006 of 4690 px — 64%, twelve times that floor.
+ * anything, and 0 of 0 must never read as a pass — that is the 4D echo
+ * gate's own failure mode, one gate over, where a phase measured 0.000%
+ * because its subject was off screen. Below {@link S_MIN_INTERIOR_FRACTION}
+ * of the scene region the row REFUSES (to `uncovered`, exit 1, claim (iii)
+ * noted as resting on L4 alone) rather than passing on nothing. The
+ * measured run has 3006 of 4690 px — 64%, twelve times that floor.
  *
  * THE KNOB THAT WOULD TRIP IT IS `--radius`, DOWNWARD: a smaller rMult
  * pulls the inversion's image in toward the frame and grows the echo, and
@@ -982,7 +982,7 @@ async function main() {
         );
       }
 
-      // L3 / claim B: strength 0 is the pre-fr-j85n frame, byte for byte.
+      // L3 / claim B: strength 0 is the pre-tint frame, byte for byte.
       const l3 = await sceneDiff(page, onZero.png, onPlain.png);
       reportDiff("L3 strength-0 identity", l3);
       if (l3.maxDelta !== 0) {
@@ -1152,7 +1152,7 @@ async function main() {
       if (l5.changedFraction < MIN_CHANGED_FRACTION) {
         fail(
           `L5: the authored tint moved ${(100 * l5.changedFraction).toFixed(3)}% ` +
-            `of scene pixels on the 4D compute core — fr-j85n's 4D half is ` +
+            `of scene pixels on the 4D compute core — the tint's 4D half is ` +
             `supposed to be the same shade entry, and it is not drawing`,
         );
       }
@@ -1164,7 +1164,7 @@ async function main() {
       // resolution, and therefore a second thing that can silently fail to
       // link. This system is plain-affine, so `?surfacegl` genuinely
       // reaches the 4D fragment tracer (a fold-shaped 4D session is
-      // compute-only by fr-rsp6 and could not be asked here at all).
+      // compute-only and could not be asked here at all).
       const gl4Plain = await capture({
         ...base4,
         tag: "gl4-on-plain",

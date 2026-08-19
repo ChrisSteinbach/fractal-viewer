@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * fr-p7wy's head-to-head — does the WebGPU COMPUTE arm settle a BALLOON
+ * The engine head-to-head — does the WebGPU COMPUTE arm settle a BALLOON
  * surface session dramatically slower than the WebGL STRIP arm, or is it
  * just slower here?
  *
  *   npm run build && npm run preview &
  *   node scripts/balloon-engine-ab.verify.mjs [--display=:0] [--scale=…] [--url=…]
  *
- * THE OBSERVATION THIS EXISTS TO REPLACE. fr-p7wy was filed off four
+ * THE OBSERVATION THIS EXISTS TO REPLACE was made off four
  * real-Iris legs that were NOT matched — boxfoldPair on WebGL WITH a
  * balloon settled in 25.4s while compute did NOT settle a mandelboxKifs
  * scene WITHOUT one in 300s — so the only honest reading of it was "two
@@ -21,10 +21,10 @@
  *   compute:webgl with the balloon ON    — how much slower is it WITH one
  *
  * If those two are close, compute is simply the slower arm on this system
- * and fr-3vjd's annulus early-out is worth doing on whichever arm ships.
+ * and the annulus early-out is worth doing on whichever arm ships.
  * If the balloon-ON ratio is much the worse, compute is PATHOLOGICAL FOR
  * THE BALLOON SPECIFICALLY and the fix is a routing predicate — which is
- * the decision fr-p7wy blocks fr-3vjd on. The per-engine balloon PENALTY
+ * the decision the early-out is blocked on. The per-engine balloon PENALTY
  * (on/off within one arm) is printed beside them, because that is the same
  * claim read the other way round and it is censoring-resistant in a
  * different place.
@@ -38,11 +38,11 @@
  * be read beside theirs. It is the LIGHT fold-frontier system on purpose:
  * `deHasFolds(de)` is what routes a 3D session to compute at all (a plain
  * affine IFS prefers WebGL and could not produce a compute leg), the
- * balloon is eligible on it (an IFS, not a forward orbit — fr-5wlv.4), and
+ * balloon is eligible on it (an IFS, not a forward orbit), and
  * every extra base map is another inverse-map branch the echo's descent
  * pays for TWICE, so the 12-map monster costs four legs where two boxfolds
  * cost one. `--system=mandelboxKifs` is the monster, kept because it is
- * the system half of fr-p7wy's own observation. Both are built as plain
+ * the system half of the original observation. Both are built as plain
  * objects through `persist.ts`'s encoder rather than pasted base64, so the
  * documents are readable in the diff and no preset table is involved: the
  * gate survives one changing under it (`surface-4d-lift.verify.mjs`'s
@@ -61,9 +61,9 @@
  * (A real-driver run that wants real numbers as well as a ratio should say
  * `--scale=1`; see WEAKNESSES below for why the small raster is not free.)
  *
- * ONE SUPERSAMPLING COUNT — the subtle one, and the one fr-p7wy calls out.
- * The two arms do NOT read the same knob: `?surfacesamples=N` (fr-jf9y) is
- * read by `scene.ts`'s `resolveSettleSamples()`, which is the STRIP arm
+ * ONE SUPERSAMPLING COUNT — the subtle one, and the one that observation
+ * calls out. The two arms do NOT read the same knob: `?surfacesamples=N`
+ * is read by `scene.ts`'s `resolveSettleSamples()`, which is the STRIP arm
  * only; the compute arm's count is main.ts's `SURFACE_COMPUTE_SETTLE_SAMPLES`,
  * a hardcoded 8 with no URL door at all. So THE COUNT CANNOT BE PINNED
  * DOWNWARD ON BOTH ARMS — passing `?surfacesamples=1` would give WebGL a
@@ -74,7 +74,7 @@
  * `?surfacesamples` at all, leaving both arms on their shipped 8, and then
  * MEASURES the count on every leg rather than assuming it: both arms
  * disclose the pass as a trailing `antialiasing pass k/N` token in
- * `#surfaceProgress` (fr-vpbq on compute, fr-jf9y on WebGL), and the run
+ * `#surfaceProgress` (deliberately the same words), and the run
  * FAILS if two legs report different N. A leg too fast — or too slow — to
  * ever show pass 2 reports `samples=?` and is disclosed as unverified
  * rather than assumed matched.
@@ -91,7 +91,7 @@
  * so the URL says which leg it is; the engine ASSERTION below is what
  * actually proves it.
  *
- * ── WHAT THE PERCENTAGE DENOMINATES (fr-p7wy's first alternative) ──────
+ * ── WHAT THE PERCENTAGE DENOMINATES (the first alternative) ────────────
  *
  * Read out of the source, and then MEASURED by this script rather than
  * left as a reading. Both arms' percentage spans the WHOLE 8-pass job, so
@@ -154,7 +154,7 @@
  *
  * REPORTS, and never fails on:
  *   whether each leg SETTLED — a leg that does not settle inside
- *   `--legTimeout` is a MEASUREMENT, not a crash (it is half of what fr-p7wy
+ *   `--legTimeout` is a MEASUREMENT, not a crash (it is half of what was
  *   observed), and its time enters the ratios as a CENSORED bound, printed
  *   `>=` or `<=` in the direction the censoring can only push it. Also
  *   reported: entry time (click -> first frame), the pass-0 checkpoint, the
@@ -191,7 +191,7 @@
  * pathological arm": compute:webgl x0.99 with the balloon off and <=x0.98
  * with it on, the balloon penalty x3.12 on compute against >=x3.15 on
  * WebGL. That is worth NOTHING as a verdict about real Iris — where
- * fr-p7wy's observation was made, and where the two arms' fixed costs are
+ * the original observation was made, and where the two arms' fixed costs are
  * entirely different — and is recorded only so a real-driver run has a
  * known-good shape to be compared against.
  *
@@ -205,11 +205,11 @@
  *
  * - A SMALL RASTER IS NOT NEUTRAL. Both arms carry per-frame fixed costs
  *   that do not shrink with the ray count — the strip pump's ~66-90ms sync
- *   tax per fence group (fr-096u) and the compute shade sizer's dispatch
- *   INTERCEPT (fr-2ojg) — so a tiny raster inflates whichever arm's fixed
- *   costs are larger and the measured ratio is not the per-ray ratio. The
- *   ratio's SIGN and its balloon-on-vs-off CONTRAST are what to read at a
- *   small scale; a headline number wants `--scale=1`.
+ *   tax per fence group and the compute shade sizer's dispatch INTERCEPT —
+ *   so a tiny raster inflates whichever arm's fixed costs are larger and
+ *   the measured ratio is not the per-ray ratio. The ratio's SIGN and its
+ *   balloon-on-vs-off CONTRAST are what to read at a small scale; a
+ *   headline number wants `--scale=1`.
  * - THE WEBGL ARM PAYS A FOLD LINK the compute arm does not: a fold
  *   session gates its first frame on `compileAsync` of the fold tracer,
  *   ~25s on Mesa. That lands entirely in `entered`, so the table prints
@@ -230,7 +230,7 @@
  *   spread across blocks is the machine and deserves to be seen rather
  *   than smoothed.
  * - THE POSE IS PINNED by reading the app's own share link once and
- *   writing that camera into all four documents (fr-opgk's latch is
+ *   writing that camera into all four documents (the settle latch is
  *   reproducible only for a document that pins its camera). If that read
  *   fails the run CONTINUES unpinned and says so loudly in every line of
  *   output — an unpinned run is still worth something, but the balloon
@@ -264,18 +264,18 @@ import { chromium } from "playwright-core";
  * the layout rather than the render would decide whether this runs. */
 const VIEWPORT = { width: 900, height: 560 };
 /** Ray-count lever's default — see the header. 0.25 of 900x560 is ~225x140
- * = 31.5k rays, roughly a fifth of the 512x320 the fr-p7wy observation
+ * = 31.5k rays, roughly a fifth of the 512x320 the original observation
  * used, which is what makes four legs affordable. */
 const DEFAULT_DEVICE_SCALE = 0.25;
 /** Normalized balloon radius (`buildBalloon`'s `rMult`, multiples of the
  * raw ball radius). 1.6 is the DOCUMENT's own shipped default and the one
- * fr-p7wy's observation ran at — this instrument compares engines, not
+ * the original observation ran at — this instrument compares engines, not
  * radii, so it stays on the shipped value. `--radius=` moves it (the tint
  * gate uses 0.50 for a different reason: to put the echo ON SCREEN, which
  * a cost measurement does not need). */
 const DEFAULT_BALLOON_RADIUS = 1.6;
 /** Per-leg soft budget. A leg that exceeds it is CENSORED, not failed —
- * 300s matches the budget fr-p7wy's own non-settling legs were given, so
+ * 300s matches the budget the original non-settling legs were given, so
  * "did not settle in 300s" means here what it meant there. */
 const DEFAULT_LEG_TIMEOUT_MS = 300_000;
 /** Poll cadence for the settle latch and the progress row. 200ms is fine
@@ -300,7 +300,7 @@ const BOXFOLD_PAIR = [
 ];
 
 /** The REAL `mandelboxKifs` preset (presets.ts), transform for transform —
- * the surface fold monster, and the system half of fr-p7wy's observation.
+ * the surface fold monster, and the system half of that observation.
  * Eligibility depends on these exact numbers. */
 const MANDELBOX_KIFS = (() => {
   const transforms = [];
@@ -510,8 +510,8 @@ function launchOptions(display) {
  * `page.bringToFront()` is MANDATORY and not politeness: Mutter withholds
  * frame callbacks from occluded surfaces and the settle machinery this
  * polls is present-gated, so an occluded window parks it at a
- * deterministic percent (fr-j8uk measured 64%/99% stalls; fr-0cw6 landed
- * the call in the 4D gate for the same reason).
+ * deterministic percent (measured 64%/99% stalls on the real driver; the
+ * same call landed in the 4D gate for the same reason).
  */
 async function openScene(page, { url, tag, hash, engine, surfperf }) {
   const force = engine === "webgl" ? "&surfacegl" : "&surfacecompute";
@@ -612,10 +612,10 @@ const PREVIEW_ORIGIN_NOISE =
  * column — the whole supersampled job's wall as the renderer measured it,
  * plus the TRACE raster (which is the canvas raster unless the device ray
  * cap bit) and the hit tally. Captured and printed because it independently
- * answers two of fr-p7wy's alternative explanations: whether the two arms
- * traced the same number of rays, and whether the balloon leg is doing more
- * work or the same work slower. A censored compute leg has no such line —
- * it is emitted on completion — which is itself worth seeing.
+ * answers two of the observation's alternative explanations: whether the
+ * two arms traced the same number of rays, and whether the balloon leg is
+ * doing more work or the same work slower. A censored compute leg has no
+ * such line — it is emitted on completion — which is itself worth seeing.
  */
 const COMPUTE_SETTLE_RE =
   /Surface compute settle (\d+)x(\d+): ([\d.]+)ms wall, (\d+) passes, hit (\d+) \/ miss (\d+) \/ exhausted (\d+)/;
@@ -623,8 +623,8 @@ const COMPUTE_SETTLE_RE =
 /** `#surfaceProgress`'s text, as main.ts writes it:
  * `"<Preview|Full detail> · <engine> <pct>%[ — <detail>]"`. */
 const ROW_RE = /^(Preview|Full detail) · (.+?) (\d+(?:\.\d+)?)%(?: — (.+))?$/;
-/** Both arms' supersampling disclosure — fr-vpbq on compute, fr-jf9y on
- * WebGL, deliberately the same words. Silent through pass 1, which is why
+/** Both arms' supersampling disclosure — compute and WebGL emit
+ * deliberately the same words. Silent through pass 1, which is why
  * a leg can legitimately report an unknown count. */
 const PASS_RE = /antialiasing pass (\d+)\/(\d+)/;
 
@@ -676,12 +676,12 @@ function resolvePass0(rec) {
 }
 
 /**
- * Drive ONE leg: enter Surface from the UI, then poll the fr-opgk settle
+ * Drive ONE leg: enter Surface from the UI, then poll the settle
  * latch and the progress row until the latch says COMPLETED or the soft
  * budget runs out. Never throws on slowness — a leg that does not settle
  * is this instrument's most important kind of measurement.
  *
- * The clock starts at the click, which is the quantity fr-p7wy's own
+ * The clock starts at the click, which is the quantity the original
  * observation reported. `enteredMs` (click -> first frame) is kept
  * separately because the WebGL arm pays a fold program link there that
  * compute never pays.
@@ -897,7 +897,7 @@ function reportBlock(records, args) {
   const wn = by["webgl/on"];
   const trace = (r) =>
     r.ms === null || r.enteredMs === null ? null : r.ms - r.enteredMs;
-  process.stdout.write("\n  RATIOS — the answer fr-p7wy asks for\n");
+  process.stdout.write("\n  RATIOS — the answer this instrument exists for\n");
   if (co && wo) {
     process.stdout.write(
       `    compute:webgl  balloon OFF   settle ${ratio(co, wo, (r) => r.ms)}` +

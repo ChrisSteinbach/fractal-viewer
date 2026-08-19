@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /**
- * fr-zqu8 shade-probe-width A/B: measures whether the new width-1 shading
- * probe DE (src/app/surface-material.ts's `SURFACE_SHADE_DE_WIDTH`, the
- * WebGL twin of fr-p8bc's compute-path verdict) actually costs less than
- * the pre-change full-width descent, on the REAL Mesa/Iris driver.
+ * Shade-probe-width A/B: measures whether the new width-1 shading probe DE
+ * (src/app/surface-material.ts's `SURFACE_SHADE_DE_WIDTH`, the WebGL twin
+ * of the compute path's probe-width verdict) actually costs less than the
+ * pre-change full-width descent, on the REAL Mesa/Iris driver.
  *
  * The A/B knob is the `?surfshadewidth=N` runtime query flag, not a source
  * edit: `resolveShadeDeWidth` (surface-material.ts) reads it once at module
  * load, and N equal to `SURFACE_FOLD_BEAM_WIDTH` (currently 12) short-circuits
  * `foldProbeGlsl`/`foldValueFormGlsl` to skip emitting the probe variant
- * entirely, reproducing the pre-fr-zqu8 fragment source byte for byte. That
+ * entirely, reproducing the pre-change fragment source byte for byte. That
  * means arms 12 (baseline) and 1 (shipped treatment) are a perfect A/B pair
  * on a SINGLE build+serve — unlike scripts/fold-width-sweep.mjs, which must
  * rebuild per point because its knob (`SURFACE_FOLD_BEAM_WIDTH`) is baked
@@ -40,11 +40,12 @@
  *       record;
  *   (b) settle lines (`[surfperf] settle complete <W>x<H> spentMs=<N> ...`)
  *       parsed into `settles`, suspect-flagged like fold-width-sweep.mjs.
- *       The regex is deliberately NOT end-anchored: fr-id9r added trailing
- *       ` wall=/strips=/polls=/calls=/presents=` fields after `spentMs=`
- *       that fold-width-sweep.mjs's own end-anchored regex would choke on;
+ *       The regex is deliberately NOT end-anchored: the strip-pump safety
+ *       pass added trailing ` wall=/strips=/polls=/calls=/presents=` fields
+ *       after `spentMs=` that fold-width-sweep.mjs's own end-anchored regex
+ *       would choke on;
  *   (c) link/compile lines (`[surfperf] surface compileAsync ms=<N>
- *       khr=<0|1>`, fr-zqu8's new gate metric for the fold program's Mesa
+ *       khr=<0|1>`, this A/B's own gate metric for the fold program's Mesa
  *       link cost) parsed into `linkEvents` — a session can log more than
  *       one if the program recompiles, so every occurrence is kept, not
  *       just the first;
@@ -65,7 +66,7 @@
  *     [--arms=12,1] [--repeats=3] [--scenarios=preset,hash] [--port=4791] \
  *     [--url=<existing base URL>] [--quiet-ms=90000] [--cap-ms=720000] \
  *     [--retries=3] [--out=/tmp/shade-width-ab.json] \
- *     [--outdir=/tmp/fr-zqu8-shots]
+ *     [--outdir=/tmp/shade-width-ab-shots]
  *
  *   --mode       REQUIRED. x11:<display> = headed on that X display (the
  *                real driver); gpu = headless (falls back to SwiftShader in
@@ -99,7 +100,7 @@
  * Exit code 1 if any session errored, lost context on every attempt, or
  * completed with zero settles observed.
  *
- * COLD-LINK measurement (the fr-zqu8 gate metric — first session after an
+ * COLD-LINK measurement (this A/B's gate metric — first session after an
  * app update): Mesa's disk shader cache makes every link after a source's
  * first ~1.5s warm REGARDLESS of arm, silently flattening the A/B. Run
  * with `MESA_SHADER_CACHE_DISABLE=true` in the environment for genuine
@@ -132,14 +133,14 @@ const BOXFOLD_HASH =
 
 /** Matches scene.ts's `[surfperf] settle complete <W>x<H> spentMs=<N>` line
  * PREFIX (see scene.ts's `renderSurfaceStrips`, guarded by `SURFPERF`).
- * Deliberately NOT end-anchored — fr-id9r appended trailing
- * ` wall=/strips=/polls=/calls=/presents=` fields this script doesn't need
- * to parse but must not fail to match because of. */
+ * Deliberately NOT end-anchored — the strip-pump safety pass appended
+ * trailing ` wall=/strips=/polls=/calls=/presents=` fields this script
+ * doesn't need to parse but must not fail to match because of. */
 const SURFPERF_SETTLE_RE =
   /^\[surfperf\] settle complete (\d+)x(\d+) spentMs=([\d.]+)/;
 
 /** Matches scene.ts's `[surfperf] surface compileAsync ms=<N> khr=<0|1>`
- * line verbatim (fr-zqu8's fold-program link/compile timing — this
+ * line verbatim (the fold-program link/compile timing — this
  * script's gate metric for whether the new probe variant grew the link
  * cost). */
 const SURFPERF_LINK_RE =
@@ -157,7 +158,7 @@ function parseArgs(argv) {
     capMs: 720_000,
     retries: 3,
     out: "/tmp/shade-width-ab.json",
-    outdir: "/tmp/fr-zqu8-shots",
+    outdir: "/tmp/shade-width-ab-shots",
   };
   for (const raw of argv) {
     if (!raw.startsWith("--")) {
@@ -500,7 +501,7 @@ async function driveSession(
     });
 
     // `?surfacegl` forces the WebGL fold tracer (fold sessions otherwise
-    // prefer the WebGPU compute path when an adapter exists, fr-tzdg) and
+    // prefer the WebGPU compute path when an adapter exists) and
     // `?surfperf` turns on the settle/compile logging this script parses;
     // `surfshadewidth` is this script's own A/B knob. For "hash", the query
     // goes BEFORE the `#v1=` scene hash, exactly like

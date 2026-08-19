@@ -1,5 +1,5 @@
 /**
- * The escape-time CHAIN, rendered by the code that ships (fr-za0n).
+ * The escape-time CHAIN, rendered by the code that ships.
  *
  * `hybrid-chain.harness.ts` asked whether the escape-time family composes,
  * from a local prototype. It does, and `escape-de.ts` now carries it: the
@@ -16,8 +16,8 @@
  *     kept executable here as {@link estimateChained} exactly as
  *     `escape-form-sweep.harness.ts` keeps the Julia form. The ball-fill
  *     column is the verdict: chaining's set fattens with every link added
- *     while cycling's draws IN, which is the defect fr-7u8t.8 existed to
- *     fix, reappearing as soon as the list grows.
+ *     while cycling's draws IN, which is the defect the Mandelbrot form
+ *     existed to fix, reappearing as soon as the list grows.
  *
  *  3. THE STEP SCALE — the sweep that KEPT `ESCAPE_STEP_SCALE` at 0.35 for
  *     chains as well as single maps, with the single map as the control
@@ -29,14 +29,15 @@
  *     the BAILOUT ball both engines march against, with each row's fitted
  *     ball priced beside it because the two disagree by up to 8x.
  *
- * FR-AZJK RE-MEASURED EVERY FILL AND REACH FIGURE THIS SHEET PRINTS, and
- * two things were wrong at once. The INSTRUMENT was a grid thresholding the
- * distance estimate — see {@link sampleSetExtent} for both defects and the
- * measurements behind them — and the BALL was each row's own FITTED radius
- * while the verdict it fed was written as "x% of a radius-4 ball", so a
- * compact arm was scored against a small ball and an inflated one against a
- * large one. Fill is now a seeded uniform sample against a membership
- * oracle over the shared bailout ball, for every row and both arms:
+ * THE SET-EXTENT CORRECTION RE-MEASURED EVERY FILL AND REACH FIGURE THIS
+ * SHEET PRINTS, and two things were wrong at once. The INSTRUMENT was a grid
+ * thresholding the distance estimate — see {@link sampleSetExtent} for both
+ * defects and the measurements behind them — and the BALL was each row's own
+ * FITTED radius while the verdict it fed was written as "x% of a radius-4
+ * ball", so a compact arm was scored against a small ball and an inflated one
+ * against a large one. Fill is now a seeded uniform sample against a
+ * membership oracle over the shared bailout ball, for every row and both
+ * arms:
  *
  *     fill % of the radius-4 bailout ball    cycling (ships)   chaining
  *       CONTROL single mbox2 (1 link)              3.6            3.6
@@ -129,7 +130,7 @@ const rot = (deg: number): Vec3 => [0, (deg * Math.PI) / 180, 0];
 
 /** The chains every sheet below is drawn from — fold-only, non-contracting,
  * exactly what the widened gate admits. The single map leads as the control
- * fr-7u8t.8 measured, so every sweep can be read against it. */
+ * the Mandelbrot form measured, so every sweep can be read against it. */
 const FIXTURES: [string, Transform[]][] = [
   ["CONTROL single mbox2", [foldMap(1, "mandelbox", 2)]],
   [
@@ -191,7 +192,7 @@ const FIXTURES: [string, Transform[]][] = [
  * reason: {@link estimateChained} and {@link chainedMember} are two readers
  * of ONE loop, so they cannot disagree about what the orbit is, and the
  * rejected arm can be asked for MEMBERSHIP rather than for a threshold on a
- * distance (fr-azjk; see {@link sampleSetExtent}). */
+ * distance (see {@link sampleSetExtent}). */
 let chainedR = 0;
 let chainedDr = 1;
 
@@ -274,10 +275,10 @@ function estimateChained(de: EscapeDE, p: Vec3): number {
 /** The rejected arm's MEMBERSHIP, asked of the same orbit —
  * {@link escapeSetContains} for a loop that does not ship. Without it the
  * chaining column could only be measured by thresholding its estimate, which
- * is precisely the reading fr-azjk found to be a different SHAPE rather than
- * a different number: chaining floors `dr` once per PASS, so a
- * hard-contracting chain returns O(1) distances at points whose orbits never
- * leave the ball. */
+ * is precisely the reading the set-extent correction found to be a different
+ * SHAPE rather than a different number: chaining floors `dr` once per PASS,
+ * so a hard-contracting chain returns O(1) distances at points whose orbits
+ * never leave the ball. */
 function chainedMember(de: EscapeDE, p: Vec3): boolean {
   runChainedOrbit(de, p);
   return chainedR <= ESCAPE_TIME_RADIUS;
@@ -290,8 +291,8 @@ const FILL_POINTS = SET_SAMPLE_POINTS;
 
 /**
  * Fill and reach of one arm's set, over the BAILOUT ball every row shares
- * (fr-azjk). Two things moved here at once and both were wrong in the same
- * direction:
+ * (the set-extent correction). Two things moved here at once and both were
+ * wrong in the same direction:
  *
  *  - the instrument, which was a grid thresholding a distance estimate. See
  *    {@link sampleSetExtent} for the two defects and the measurements.
@@ -409,11 +410,11 @@ function shippedDE(de: EscapeDE): DistanceEstimator {
 
 // ------------------------------------------------------------------ tests
 
-describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", () => {
+describe("the escape-time chain, rendered by the shipped estimator", () => {
   it("shows what the widened gate admits — and what it still refuses", () => {
-    // The hole fr-za0n closed, and its edges. The first four shapes had NO
-    // renderer at all before: the IFS gate refused them for not contracting
-    // and the escape gate for having more than one map.
+    // The hole the formula chain closed, and its edges. The first four shapes
+    // had NO renderer at all before: the IFS gate refused them for not
+    // contracting and the escape gate for having more than one map.
     const admitted: [string, Transform[], SymmetryParams?][] = [
       [
         "two mandelbox w=2 maps",
@@ -439,12 +440,12 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
           foldMap(2, "boxfold", 0.2, { scale: [0.5, 0.5, 0.5] }),
         ],
       ],
-      // fr-j231 widened the gate again, and this row moved up from REFUSED:
-      // a link need not be a fold. `scripts/hybrid-chain.harness.ts` is that
-      // decision's sheet; this row is here so the gate's own edge stays
-      // measured in the fold sheet too.
+      // Cross-family power links widened the gate again, and this row moved
+      // up from REFUSED: a link need not be a fold.
+      // `scripts/hybrid-chain.harness.ts` is that decision's sheet; this row
+      // is here so the gate's own edge stays measured in the fold sheet too.
       [
-        "mandelbox w=2 + bulb (cross-family, fr-j231)",
+        "mandelbox w=2 + bulb (cross-family)",
         [foldMap(1, "mandelbox", 2), foldMap(2, "bulb", 1)],
       ],
     ];
@@ -532,7 +533,7 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
       const n = escDe.links.length;
       // Each arm brings its own ESTIMATE and its own MEMBERSHIP oracle, read
       // off one orbit apiece, so the fill column compares two SETS rather
-      // than two thresholds (fr-azjk).
+      // than two thresholds.
       const arms: [string, DistanceEstimator, (p: Vec3) => boolean][] = [
         ["cycle (ships)", shippedDE(escDe), (p) => escapeSetContains(escDe, p)],
         [
@@ -570,11 +571,11 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
   });
 
   it("sweeps the march step scale a chain needs", () => {
-    // The sweep that REFUTED a chain-specific step scale (fr-za0n's
-    // verdict: one ESCAPE_STEP_SCALE, 0.35, at every chain length — see
-    // its doc). The single map leads as the
-    // control: its row is fr-7u8t.8's 0.35 verdict re-measured at this pose,
-    // so the chains' rows can be read against a scale that is known to fit.
+    // The sweep that REFUTED a chain-specific step scale (the formula chain's
+    // verdict: one ESCAPE_STEP_SCALE, 0.35, at every chain length — see its
+    // doc). The single map leads as the control: its row is the Mandelbrot
+    // form's 0.35 verdict re-measured at this pose, so the chains' rows can
+    // be read against a scale that is known to fit.
     const panels: PanelStats[] = [];
     for (const [label, transforms] of FIXTURES) {
       const escDe = buildEscapeDE(transforms);
@@ -735,10 +736,10 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
   });
 
   it("reports an EMPTY chain instead of leaving a blank frame unexplained", () => {
-    // fr-za0n's UX landmine. A chain whose composite expands too hard escapes
-    // everywhere on the first pass and renders nothing, with no clue why.
-    // `probeEscapeFill` is what a later UI pass can ask, so the answer can be
-    // "this chain's set is empty" rather than an empty pane.
+    // The chain's UX landmine. A chain whose composite expands too hard
+    // escapes everywhere on the first pass and renders nothing, with no clue
+    // why. `probeEscapeFill` is what a later UI pass can ask, so the answer
+    // can be "this chain's set is empty" rather than an empty pane.
     //
     // The sharpest case — a mandelbox followed by a triplex power, which
     // sends |v| ~ 7 to 5.8e5 in one link — is out of this gate's reach
@@ -794,7 +795,7 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
       ).toBeGreaterThan(0);
     }
 
-    // ONE INSTRUMENT, PINNED (fr-azjk). Every fill column in this sheet goes
+    // ONE INSTRUMENT, PINNED. Every fill column in this sheet goes
     // through {@link sampleSetExtent}, and the module's own emptiness probe
     // goes through `probeEscapeFill`. They must not be two definitions of
     // "fill" that happen to agree: the shared sampler draws `probeEscapeFill`'s
@@ -823,7 +824,7 @@ describe("the escape-time chain, rendered by the shipped estimator (fr-za0n)", (
     // escape early never pay the full budget).
     //
     // Queries are drawn in the BAILOUT ball, for {@link violationPct}'s
-    // reason and one more of its own (fr-azjk): the escape kernels pack that
+    // reason and one more of its own: the escape kernels pack that
     // ball as both the bounding AND the visible sphere, so it is the domain
     // the shipped marcher enters against, it is the same for every row, and
     // a cost figure then does not move when a FRAMING radius is refitted.

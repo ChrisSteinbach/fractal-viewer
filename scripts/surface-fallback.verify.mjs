@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * fr-yvcw: browser verification that entering Surface render mode in a
- * browser WITHOUT usable WebGPU (Firefox/Linux-shaped: `navigator.gpu` is
+ * Browser verification that entering Surface render mode in a browser
+ * WITHOUT usable WebGPU (Firefox/Linux-shaped: `navigator.gpu` is
  * undefined) paints a traced frame WITHOUT any camera/pointer nudge.
  *
  * THE BUG. `SurfaceComputeRenderer.supported()` is false whenever
@@ -34,7 +34,7 @@
  * exactly the Firefox/Linux code path. Three cases, in order:
  *
  *   a. default scene — the plain-affine WebGL arm.
- *   b. an escape-eligible scene (fr-kltj): one flat map, variations
+ *   b. an escape-eligible scene: one flat map, variations
  *      `[{type:"mandelbox", weight:2}]`, scale 1 -> lip =
  *      |w|*SPHEREFOLD_LIPSCHITZ*sigma_max = 2*4*1 = 8, comfortably past
  *      CONTRACTION_LIMIT (0.999) -> analyzeSurfaceSystem refuses (no IFS
@@ -59,18 +59,18 @@
  *      Surface through the exact same single action: clicking
  *      `#modeSurfaceBtn`.
  *
- *   d. (fr-dlxh 4D cut) a 4D scene: three contracting affine maps, one
+ *   d. (the 4D cut) a 4D scene: three contracting affine maps, one
  *      carrying a live `w` block (`w: {position, rotation: {xw}}`), flat
  *      kaleidoscope — `systemPartsAreNonFlat` true, `analyzeSurfaceSystem4`
- *      eligible (verified at mint time like b/c). Since the fr-dlxh 4D cut,
+ *      eligible (verified at mint time like b/c). Since the 4D cut,
  *      a 4D surface session PREFERS the WebGPU compute renderer (the
  *      affine4 kernel core) and the fragment 4D tracer
  *      (`surface-material-4d.ts`) is now the FALLBACK arm — exactly like
  *      the fold/escape 3D kinds already were — so with WebGPU disabled
  *      this case exercises that same fallback arm, one dimension up, and
- *      the fr-yvcw compile-gate fix (shared code — `compileSurfaceMaterial`
+ *      the compile-gate fix (shared code — `compileSurfaceMaterial`
  *      is reached from every WebGL-arm branch, 3D and 4D alike). ALSO
- *      carries the fr-tmgf disclosure token: `render-backend.ts`'s
+ *      carries the render-backend disclosure token: `render-backend.ts`'s
  *      `surfaceWebglDetail` treats any 4D system as `computeShaped`, so a
  *      WebGL 4D fallback session's progress row should trail
  *      `" — compute unavailable"` — checked and reported verbatim, not just
@@ -82,11 +82,11 @@
  * (src/app/state.ts, src/app/persist.ts) and round-tripped the result
  * through `decodeScene` before printing it — so each is exactly what the
  * app's own encoder produces and exactly what its own strict decoder
- * accepts (the throwaway script lived in /tmp, per the task's
- * constraints, and is not part of this repo). Case d's hash was minted the
- * same way, with the additional pre/post-decode check that
- * `systemPartsAreNonFlat` and `analyzeSurfaceSystem4` both agree the
- * DECODED document (not just the authored one) gates the same way.
+ * accepts (the throwaway script lived in /tmp deliberately, and is not part
+ * of this repo). Case d's hash was minted the same way, with the additional
+ * pre/post-decode check that `systemPartsAreNonFlat` and
+ * `analyzeSurfaceSystem4` both agree the DECODED document (not just the
+ * authored one) gates the same way.
  *
  * THE CORE ASSERTION, per case: screenshot the CANVAS ELEMENT ONLY (not
  * the full viewport — the control panel opens by default at this
@@ -137,22 +137,21 @@ const ESCAPE_HASH =
 const FOLD_HASH =
   "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNywwLjcsMC43XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC4xOSwwLjE5LDAuMTldLCJ2YXJpYXRpb25zIjpbeyJ0eXBlIjoibWFuZGVsYm94Iiwid2VpZ2h0IjoxLjJ9XX0seyJwb3NpdGlvbiI6WzAuNywwLjcsLTAuN10sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuMTksMC4xOSwwLjE5XSwidmFyaWF0aW9ucyI6W3sidHlwZSI6Im1hbmRlbGJveCIsIndlaWdodCI6MS4yfV19LHsicG9zaXRpb24iOlswLjcsLTAuNywwLjddLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjE5LDAuMTksMC4xOV0sInZhcmlhdGlvbnMiOlt7InR5cGUiOiJtYW5kZWxib3giLCJ3ZWlnaHQiOjEuMn1dfSx7InBvc2l0aW9uIjpbMC43LC0wLjcsLTAuN10sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuMTksMC4xOSwwLjE5XSwidmFyaWF0aW9ucyI6W3sidHlwZSI6Im1hbmRlbGJveCIsIndlaWdodCI6MS4yfV19LHsicG9zaXRpb24iOlstMC43LDAuNywwLjddLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjE5LDAuMTksMC4xOV0sInZhcmlhdGlvbnMiOlt7InR5cGUiOiJtYW5kZWxib3giLCJ3ZWlnaHQiOjEuMn1dfSx7InBvc2l0aW9uIjpbLTAuNywwLjcsLTAuN10sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuMTksMC4xOSwwLjE5XSwidmFyaWF0aW9ucyI6W3sidHlwZSI6Im1hbmRlbGJveCIsIndlaWdodCI6MS4yfV19LHsicG9zaXRpb24iOlstMC43LC0wLjcsMC43XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC4xOSwwLjE5LDAuMTldLCJ2YXJpYXRpb25zIjpbeyJ0eXBlIjoibWFuZGVsYm94Iiwid2VpZ2h0IjoxLjJ9XX0seyJwb3NpdGlvbiI6Wy0wLjcsLTAuNywtMC43XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC4xOSwwLjE5LDAuMTldLCJ2YXJpYXRpb25zIjpbeyJ0eXBlIjoibWFuZGVsYm94Iiwid2VpZ2h0IjoxLjJ9XX0seyJwb3NpdGlvbiI6WzAuNjIsMC42MiwwLjYyXSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC42NiwwLjY2LDAuNjZdLCJ2YXJpYXRpb25zIjpbeyJ0eXBlIjoiYm94Zm9sZCIsIndlaWdodCI6MX1dfSx7InBvc2l0aW9uIjpbMC42MiwtMC42MiwtMC42Ml0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNjYsMC42NiwwLjY2XSwidmFyaWF0aW9ucyI6W3sidHlwZSI6ImJveGZvbGQiLCJ3ZWlnaHQiOjF9XX0seyJwb3NpdGlvbiI6Wy0wLjYyLDAuNjIsLTAuNjJdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjY2LDAuNjYsMC42Nl0sInZhcmlhdGlvbnMiOlt7InR5cGUiOiJib3hmb2xkIiwid2VpZ2h0IjoxfV19LHsicG9zaXRpb24iOlstMC42MiwtMC42MiwwLjYyXSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC42NiwwLjY2LDAuNjZdLCJ2YXJpYXRpb25zIjpbeyJ0eXBlIjoiYm94Zm9sZCIsIndlaWdodCI6MX1dfV0sIm51bVBvaW50cyI6MTAwMDAwLCJwb2ludFNpemUiOjEsImNvbG9yTW9kZSI6InRyYW5zZm9ybSIsImNvbG9yR2FtbWEiOjEsInJhbXBQYWxldHRlSWQiOiJsZWdhY3kiLCJmb3VyRENvbG9yIjoid0JsdWVPcmFuZ2UiLCJmb3VyRERlcHRoRmFkZSI6ZmFsc2UsInJlbmRlclN0eWxlIjoiZGVwdGhGYWRlIiwic2hvd0d1aWRlcyI6dHJ1ZSwiZmxhbWUiOnsiZXhwb3N1cmUiOjEsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJnYW1tYSI6Mi40LCJ2aWJyYW5jeSI6MSwic3VwZXJzYW1wbGUiOjIsImVzdGltYXRvclJhZGl1cyI6NiwiZXN0aW1hdG9yTWluaW11bVJhZGl1cyI6MCwiZXN0aW1hdG9yQ3VydmUiOjAuNCwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic29saWQiOnsicmVzb2x1dGlvbiI6MTkyLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwidGhyZXNob2xkIjowLjMsImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInN1cmZhY2UiOnsibGlnaHRBemltdXRoIjoxMzUsImxpZ2h0RWxldmF0aW9uIjo1MCwiYW1iaWVudCI6MC4yNSwiY29sb3JTb3VyY2UiOiJ0cmFuc2Zvcm0iLCJwYWxldHRlSWQiOiJzcGVjdHJ1bSIsImNvbG9yU3BlZWQiOjAuNX0sInN5bW1ldHJ5Ijp7Im9yZGVyIjoxLCJwbGFuZSI6Inh6In0sImdsb3dCcmlnaHRuZXNzIjoxfQ";
 
-/** Case D (fr-dlxh 4D cut): three contracting affine maps (one carrying a
- * live `w` block: position 0.5, an xw rotation of 0.3), flat kaleidoscope
+/** Case D (the 4D cut): three contracting affine maps (one carrying a live
+ * `w` block: position 0.5, an xw rotation of 0.3), flat kaleidoscope
  * (order 1) -> systemPartsAreNonFlat true, analyzeSurfaceSystem4 eligible
  * (verified at mint time, including a POST-decode re-check with the same
  * gate functions). Routes to the 4D fragment tracer fallback arm when
- * WebGPU is unavailable (the fr-dlxh 4D cut's new preferred engine is the
+ * WebGPU is unavailable (the 4D cut's new preferred engine is the
  * WebGPU compute affine4 kernel; this hash exercises its fallback). */
 const PLAIN4_HASH =
   "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNSwwLDBdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV0sInciOnsicG9zaXRpb24iOjAuNSwicm90YXRpb24iOnsieHciOjAuM319fSx7InBvc2l0aW9uIjpbLTAuMjUsMC40MywwXSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdfSx7InBvc2l0aW9uIjpbLTAuMjUsLTAuNDMsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XX1dLCJudW1Qb2ludHMiOjEwMDAwMCwicG9pbnRTaXplIjoxLCJjb2xvck1vZGUiOiJ0cmFuc2Zvcm0iLCJjb2xvckdhbW1hIjoxLCJyYW1wUGFsZXR0ZUlkIjoibGVnYWN5IiwiZm91ckRDb2xvciI6IndCbHVlT3JhbmdlIiwiZm91ckREZXB0aEZhZGUiOmZhbHNlLCJyZW5kZXJTdHlsZSI6ImRlcHRoRmFkZSIsInNob3dHdWlkZXMiOnRydWUsImZsYW1lIjp7ImV4cG9zdXJlIjoxLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwiZ2FtbWEiOjIuNCwidmlicmFuY3kiOjEsInN1cGVyc2FtcGxlIjoyLCJlc3RpbWF0b3JSYWRpdXMiOjYsImVzdGltYXRvck1pbmltdW1SYWRpdXMiOjAsImVzdGltYXRvckN1cnZlIjowLjQsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInNvbGlkIjp7InJlc29sdXRpb24iOjE5MiwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsInRocmVzaG9sZCI6MC4zLCJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzdXJmYWNlIjp7ImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImNvbG9yU291cmNlIjoidHJhbnNmb3JtIiwicGFsZXR0ZUlkIjoic3BlY3RydW0iLCJjb2xvclNwZWVkIjowLjV9LCJzeW1tZXRyeSI6eyJvcmRlciI6MSwicGxhbmUiOiJ4eiJ9LCJnbG93QnJpZ2h0bmVzcyI6MX0";
 
-/** fr-rsp6 phase 3 (case e): the fold-4D scene — a pure-boxfold 4D pair,
- * the CPU/GPU fold fixtures' shape, order 1. Fold-shaped 4D systems are
- * COMPUTE-ONLY (no fold GLSL exists in the fragment 4D tracer), so with
- * navigator.gpu stubbed away the expected behavior is the REFUSAL: the
- * Surface control disabled with the WebGPU reason — never a fold-blind
- * render. */
+/** Case e: the fold-4D scene — a pure-boxfold 4D pair, the CPU/GPU fold
+ * fixtures' shape, order 1. Fold-shaped 4D systems are COMPUTE-ONLY (no
+ * fold GLSL exists in the fragment 4D tracer), so with navigator.gpu
+ * stubbed away the expected behavior is the REFUSAL: the Surface control
+ * disabled with the WebGPU reason — never a fold-blind render. */
 const FOLD4_HASH =
   "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuNCwwLjIsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidmFyaWF0aW9ucyI6W3sidHlwZSI6ImJveGZvbGQiLCJ3ZWlnaHQiOjF9XSwidyI6eyJwb3NpdGlvbiI6MC4zLCJyb3RhdGlvbiI6eyJ4dyI6MC4zfX19LHsicG9zaXRpb24iOlstMC40LC0wLjIsMF0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XSwidmFyaWF0aW9ucyI6W3sidHlwZSI6ImJveGZvbGQiLCJ3ZWlnaHQiOjF9XSwidyI6eyJwb3NpdGlvbiI6LTAuMywicm90YXRpb24iOnsieXciOjAuMjV9fX1dLCJudW1Qb2ludHMiOjEwMDAwMCwicG9pbnRTaXplIjoxLCJjb2xvck1vZGUiOiJ0cmFuc2Zvcm0iLCJjb2xvckdhbW1hIjoxLCJyYW1wUGFsZXR0ZUlkIjoibGVnYWN5IiwiZm91ckRDb2xvciI6IndCbHVlT3JhbmdlIiwiZm91ckREZXB0aEZhZGUiOmZhbHNlLCJyZW5kZXJTdHlsZSI6ImRlcHRoRmFkZSIsInNob3dHdWlkZXMiOnRydWUsImZsYW1lIjp7ImV4cG9zdXJlIjoxLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwiZ2FtbWEiOjIuNCwidmlicmFuY3kiOjEsInN1cGVyc2FtcGxlIjoyLCJlc3RpbWF0b3JSYWRpdXMiOjYsImVzdGltYXRvck1pbmltdW1SYWRpdXMiOjAsImVzdGltYXRvckN1cnZlIjowLjQsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInNvbGlkIjp7InJlc29sdXRpb24iOjE5MiwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsInRocmVzaG9sZCI6MC4zLCJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzdXJmYWNlIjp7ImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImNvbG9yU291cmNlIjoidHJhbnNmb3JtIiwicGFsZXR0ZUlkIjoic3BlY3RydW0iLCJjb2xvclNwZWVkIjowLjV9LCJzeW1tZXRyeSI6eyJvcmRlciI6MSwicGxhbmUiOiJ4eiJ9LCJnbG93QnJpZ2h0bmVzcyI6MX0";
 
@@ -168,7 +167,7 @@ const CASE_BUDGET_MS = 3 * 60_000;
 const POLL_MS = 1_500;
 
 /** Two screenshots of the SAME canvas count as materially different once
- * more than this fraction of PNG bytes differ (the brief's own threshold —
+ * more than this fraction of PNG bytes differ (the specified threshold —
  * coarse but robust: the discriminating cases are "still the frozen
  * point-cloud explorer frame" vs "now a traced sphere," not a subtle
  * pixel-level difference). */
@@ -475,7 +474,7 @@ async function main() {
         );
       }
 
-      // fr-tmgf's 4D disclosure token (fr-dlxh 4D cut widened
+      // The render-backend disclosure's 4D token (the 4D cut widened
       // surfaceWebglDetail's computeShaped test to every 4D system): a 4D
       // WebGL-fallback session's progress row should trail
       // " — compute unavailable". Scan EVERY recorded sample, visible or
@@ -522,11 +521,11 @@ async function main() {
 
     // Optional third CLI arg selects a subset of cases (substring match on
     // "a"/"b"/"c", e.g. "b" or "bc"); default "all" runs every case in
-    // order with the normal budget-descent gating. Exists for the fr-yvcw
-    // baseline A/B (main.ts pre-fix): rerunning the whole suite there
-    // would waste time re-proving cases a fresh compile-gate race is
-    // timing-dependent about — only case b (the user's original repro
-    // class) is worth re-running against the pre-fix tree.
+    // order with the normal budget-descent gating. Exists for the
+    // blank-until-nudge baseline A/B (main.ts pre-fix): rerunning the whole
+    // suite there would waste time re-proving cases a fresh compile-gate
+    // race is timing-dependent about — only case b (the user's original
+    // repro class) is worth re-running against the pre-fix tree.
     const CASE_FILTER = (process.argv[3] ?? "all").toLowerCase();
     const wantsA = CASE_FILTER === "all" || CASE_FILTER.includes("a");
     const wantsB = CASE_FILTER === "all" || CASE_FILTER.includes("b");
@@ -560,7 +559,7 @@ async function main() {
       );
     }
 
-    // ---- Case d: 4D scene — the fr-dlxh 4D cut's WebGL fallback arm --------
+    // ---- Case d: 4D scene — the 4D cut's WebGL fallback arm ----------------
     // Deliberately NOT chained to case c's budget outcome: c's cost driver
     // (the fold-descent GLSL link) has nothing to do with d's (the
     // fragment 4D tracer, a different program entirely), so a slow/failed
@@ -581,7 +580,7 @@ async function main() {
       });
     }
 
-    // ---- Case e: fold-4D scene — the fr-rsp6 REFUSAL arm -------------------
+    // ---- Case e: fold-4D scene — the fold-4D REFUSAL arm -------------------
     // Not a render case at all: fold-shaped 4D systems have no fragment
     // arm, so a browser without WebGPU must refuse the mode with the
     // reason — a disabled control here is the PASS, and an enabled one

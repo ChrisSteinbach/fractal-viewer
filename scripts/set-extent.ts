@@ -1,5 +1,5 @@
 /**
- * How big is a rendered set, measured the one way that works (fr-azjk).
+ * How big is a rendered set, measured the one way that works.
  *
  * Every sheet in the escape-time family wants the same two numbers: what
  * fraction of a ball a set fills, and how far out it reaches. Four harnesses
@@ -107,8 +107,8 @@ export interface SetExtentOpts {
  * That distinction matters more than it sounds, because reach is what a
  * sheet FITS ITS MARCHING BALL to and the fitted ball is the panel's
  * framing. An inflated reach draws the object SMALLER — which manufactures
- * sub-pixel speckle a correctly-framed panel resolves, and fr-azjk measured
- * exactly that happening in `chain-speckle.harness.ts`, where the old
+ * sub-pixel speckle a correctly-framed panel resolves, and exactly that
+ * was measured happening in `chain-speckle.harness.ts`, where the old
  * threshold-on-a-grid reach counted a halo of near-boundary ESCAPERS as
  * part of the object.
  */

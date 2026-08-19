@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * fr-mxkk: the regression gate for the WebGPU flame-accumulation backend's
+ * The regression gate for the WebGPU flame-accumulation backend's
  * teardown race — `GpuFlameBackend` (src/app/flame-gpu-backend.ts), the
- * module one dimension over from fr-uec4's `SurfaceComputeRenderer`
+ * module one dimension over from `SurfaceComputeRenderer`
  * (scripts/surface-teardown.verify.mjs), which this script is a close
  * sibling of: same launch, same toggle-storm shape, same crash-detection
  * idiom, same exit-code family. Read that file first if this one is
@@ -28,10 +28,11 @@
  * backend — which means every ordinary palette swap during a long GPU render
  * used to tear the device down out from under whichever op was in flight at
  * that instant. Tearing a WebGPU device down under live submitted work is
- * what killed the WHOLE Firefox process in fr-uec4's sibling module, not a
- * tab crash and not a device-loss toast. The fix mirrors fr-uec4's exactly:
- * `destroy()` defers the real `device.destroy()` until every in-flight op
- * unwinds (an `opsInFlight` counter incremented by `beginOp` and released in
+ * what killed the WHOLE Firefox process in that sibling module, not a
+ * tab crash and not a device-loss toast. The fix mirrors that module's
+ * exactly: `destroy()` defers the real `device.destroy()` until every
+ * in-flight op unwinds (an `opsInFlight` counter incremented by `beginOp`
+ * and released in
  * a `finally`), while keeping the synchronous teardown path when the backend
  * IS idle. See that class's own doc for the full state-machine account.
  *
@@ -48,7 +49,7 @@
  *   actually reaches the code path (12/12 restarts observed, each one a
  *   fresh `Flame GPU: backend up on ...` line, GPU backend confirmed and
  *   never flipping to CPU) and that the teardown survives it — without
- *   claiming the browser-process kill fr-uec4 measured one module over is
+ *   claiming the browser-process kill measured one module over is
  *   reachable from here. Whether another implementation, adapter or timing
  *   reproduces it is untested, which is exactly why the fix is not
  *   conditioned on a browser: freeing a mapped buffer, or a device, under
@@ -87,7 +88,7 @@
  *                 through a completely different mechanism (the worker
  *                 thread itself disappears out from under the pending
  *                 promise, rather than the device being destroyed under it).
- *                 That is a SEPARATE vector fr-mxkk's fix cannot cover by
+ *                 That is a SEPARATE vector this fix cannot cover by
  *                 construction. It is included here for information only:
  *                 if this arm crashes while the palette arm stays clean,
  *                 that is a NEW finding to file, not a regression of this
@@ -141,7 +142,7 @@
  * purposes even though the code path is nominally "gpu") — read once right
  * after entering Flame mode, and (2) actually observing restarts land: each
  * `createBackendForProgram` success prints exactly one
- * "Flame GPU: backend up on ..." console line (fr-2w5's create-time
+ * "Flame GPU: backend up on ..." console line (the create-time
  * breadcrumb), so counting THOSE across the storm is a direct count of how
  * many times `GpuFlameBackend.destroy()` actually got called against a live
  * successor. Both must hold for exit 0; see the EXIT CODES paragraph above
@@ -164,7 +165,7 @@
  * opposite of a false pass, but still a wrong number, which is why it is
  * not what gates the exit code.
  *
- * The backend note is re-written after every restart (fr-2w5's
+ * The backend note is re-written after every restart (the
  * one-time-per-backend `"backend"` event), so it is also resampled per
  * toggle to catch the worker's own GPU-failure ladder falling back to CPU
  * mid-storm — reported as an anomaly in the summary row, not folded into
@@ -347,7 +348,7 @@ async function runFlameStorm(browser) {
   const lines = [];
   // Bumped by the console listener below on every
   // "Flame GPU: backend up on ..." line (createBackendForProgram's one
-  // create-time breadcrumb, fr-2w5) — see this function's doc for why this,
+  // create-time breadcrumb) — see this function's doc for why this,
   // and not the #flameProgress percentage, is the restart signal that
   // actually gates exit 0/2.
   let backendUpCount = 0;

@@ -1,6 +1,6 @@
 {
   // Type-checks scripts/*.harness.ts (the project's measurement record) and
-  // vitest.harness.config.ts against the same src/ they import from (fr-dyof):
+  // vitest.harness.config.ts against the same src/ they import from:
   // the root tsconfig.json's "include": ["src"] never sees this directory, so
   // a harness could silently stop compiling against a source change it
   // measures. `npm run lint` type-checks it via a second `tsc -p scripts`,

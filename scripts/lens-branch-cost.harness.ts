@@ -1,6 +1,6 @@
 /**
- * fr-ybtq measurement harness: how much of a fold-LENS system's DE cost is
- * the branch SWEEP, and how much of that sweep is avoidable.
+ * Measurement harness: how much of a fold-LENS system's DE cost is the
+ * branch SWEEP, and how much of that sweep is avoidable.
  *
  * THE QUESTION. `descendLens` (`surface-de.ts`) estimates a fold FINAL
  * lens by sweeping the fold's inverse branches (27/3/81) around the
@@ -13,20 +13,20 @@
  * `0..branchCount-1`, so branch 0 always pays a full descent and every later
  * prune inherits whatever `best` that first descent happened to produce.
  *
- * fr-ybtq measured the consequence in the field: the fr-55s1 lens archetype
- * (tetra base, shrunk/offset mandelbox lens) settles a 1280x720 frame in
- * 9.4s on compute, while the user's own scene — the DEFAULT four-map base
- * (spread +-0.5, per-map pi/4 rotations) under a mandelbox lens at IDENTITY
- * affine part, weight 1 — is a 5-6 MINUTE settle at 1080p. The bead's
- * hypothesis for the gap: an identity lens neither shrinks nor displaces the
- * attractor, so much of it sits near the fold-plane boundaries where region
- * floors go to zero and `rq ~ R` makes the sphere certificate vacuous, and
- * "most of the 81 branches survive the prunes per eval".
+ * The heavy-lens field report measured the consequence: the fold-lens compute
+ * port's archetype (tetra base, shrunk/offset mandelbox lens) settles a
+ * 1280x720 frame in 9.4s on compute, while the user's own scene — the DEFAULT
+ * four-map base (spread +-0.5, per-map pi/4 rotations) under a mandelbox lens
+ * at IDENTITY affine part, weight 1 — is a 5-6 MINUTE settle at 1080p. The
+ * bead's hypothesis for the gap: an identity lens neither shrinks nor
+ * displaces the attractor, so much of it sits near the fold-plane boundaries
+ * where region floors go to zero and `rq ~ R` makes the sphere certificate
+ * vacuous, and "most of the 81 branches survive the prunes per eval".
  *
  * This harness tests that hypothesis directly, and sizes the headroom a
  * better branch ORDER could reach.
  *
- * VERDICT (2026-07-30, fr-ybtq). Both halves of the hypothesis are wrong,
+ * VERDICT (2026-07-30). Both halves of the hypothesis are wrong,
  * and the lever it implied is CLOSED — measured, not argued:
  *
  *  - Survival is 5.5% (archetype) / 8.4% (field class) of 81 branches, not
@@ -46,14 +46,19 @@
  *    (frame-lens 3425 -> 4986ms; unproj-lens 184 -> 283ms, that leg
  *    thermally stable across flag sets). The ordering pass re-enumerates
  *    all 81 branch preimages to save ~16% of descent transforms, and the
- *    GPU cannot buy that trade — the same verdict fr-kidj's stage-2 B&B
- *    got, one level up. The residual survivors are branches whose
- *    preimages land INSIDE the bounding ball, where a depth-0 sphere test
- *    is vacuous at any visit order; ordering was already at its ceiling.
+ *    GPU cannot buy that trade — the same verdict the fold descent's
+ *    stage-2 branch-and-bound got, one level up. The residual survivors are
+ *    branches whose preimages land INSIDE the bounding ball, where a
+ *    depth-0 sphere test is vacuous at any visit order; ordering was
+ *    already at its ceiling.
  *
  * So the remaining prize (the lens sweep is a ~4.3x tax over the same
  * system un-lensed) needs a genuinely stronger IN-BALL certificate, not a
- * cheaper way to reach the existing one. See fr-ybtq's notes.
+ * cheaper way to reach the existing one — and the surface-optimization seam
+ * was CLOSED BY DECISION on exactly that reading, once two independent
+ * attempts to trade cheap arithmetic for skipped descent work (the fold
+ * descent's stage-2 branch-and-bound and this ordering pass) had both been
+ * refuted on the real GPU with a mechanism rather than by luck.
  *
  * WHAT IS COUNTED. Two independent instruments ride one march:
  *
@@ -73,24 +78,25 @@
  *    numbers already on record.
  *
  * WHICH ESTIMATOR. `estimateDistanceRefined`, not plain `estimateDistance`:
- * every system below is lens-over-AFFINE, and fr-55s1 pinned that class's
- * marched estimator as the refined one (`descendLens(refine=true) ->
- * descend`) — it is what the affine GLSL body mirrors line for line and what
- * `surface-de-gpu.ts`'s `core:"affine"` kernel emits. Measuring the plain
+ * every system below is lens-over-AFFINE, and the fold-lens compute port
+ * pinned that class's marched estimator as the refined one
+ * (`descendLens(refine=true) -> descend`) — it is what the affine GLSL body
+ * mirrors line for line and what `surface-de-gpu.ts`'s `core:"affine"`
+ * kernel emits. Measuring the plain
  * overload here would price an estimator no lens-over-affine session runs.
  *
  * SYSTEMS. Four, chosen so the archetype/field-class gap is visible in one
  * table and neither end is confounded:
  *
- *  - `lensMandelboxOverTetra` — the fr-55s1 M1b bench row verbatim (the
- *    9.4s-settle archetype). 81 branches, lens affine part rotated/offset
- *    and shrunk 0.85.
- *  - `lensMandelboxIdentityOverDefault` — fr-ybtq's field class. Same fold,
- *    same weight, IDENTITY affine part, over the shipped default system.
- *    The single controlled difference from the row above is the lens's
- *    affine part plus the base's spread/rotations.
- *  - `lensBoxfoldOverTetra` — the fr-55s1 M1a row: 27 branches, so the
- *    survival rate is read at a second branch count and cannot be an
+ *  - `lensMandelboxOverTetra` — the fold-lens port's M1b bench row verbatim
+ *    (the 9.4s-settle archetype). 81 branches, lens affine part
+ *    rotated/offset and shrunk 0.85.
+ *  - `lensMandelboxIdentityOverDefault` — the heavy-lens field class. Same
+ *    fold, same weight, IDENTITY affine part, over the shipped default
+ *    system. The single controlled difference from the row above is the
+ *    lens's affine part plus the base's spread/rotations.
+ *  - `lensBoxfoldOverTetra` — the fold-lens port's M1a row: 27 branches, so
+ *    the survival rate is read at a second branch count and cannot be an
  *    artifact of the mandelbox's composite structure.
  *  - `noLensDefault` — the default system with NO lens. Its transforms/call
  *    is one core descent's cost, which turns the lens rows' transforms/call
@@ -191,7 +197,8 @@ function lensBoxfoldFinal(): Transform {
   };
 }
 
-/** fr-ybtq's field class: `defaultFinalTransform()`'s identity affine part
+/** The heavy-lens field class: `defaultFinalTransform()`'s identity affine
+ * part
  * (unit scale, no rotation, no offset — the lens as the UI first enables it)
  * carrying a weight-1 mandelbox. No shrink, no displacement: the case the
  * bead names as the reason the prunes go weak. */
@@ -209,7 +216,8 @@ interface Profile {
   name: string;
   transforms: Transform[];
   finalTransform: Transform | null;
-  /** What the bead expects, for the report's own narrative. */
+  /** What this scenario is expected to show, for the report's own
+   * narrative. */
   note: string;
 }
 
@@ -218,19 +226,19 @@ const PROFILES: Profile[] = [
     name: "lensMandelboxOverTetra",
     transforms: affineTetra(),
     finalTransform: lensMandelboxFinal(),
-    note: "fr-55s1 M1b archetype (9.4s settle @720p on compute)",
+    note: "M1b bench archetype (9.4s settle @720p on compute)",
   },
   {
     name: "lensMandelboxIdentityOverDefault",
     transforms: defaultTransforms(),
     finalTransform: lensMandelboxIdentityFinal(),
-    note: "fr-ybtq field class (5-6min settle @1080p on compute)",
+    note: "heavy-lens field class (5-6min settle @1080p on compute)",
   },
   {
     name: "lensBoxfoldOverTetra",
     transforms: affineTetra(),
     finalTransform: lensBoxfoldFinal(),
-    note: "fr-55s1 M1a archetype, 27 branches",
+    note: "M1a bench archetype, 27 branches",
   },
   {
     name: "noLensDefault",
@@ -362,10 +370,10 @@ interface SystemStats {
   entered: number;
   hits: number;
   /** Rays that consumed the whole march budget without hitting and without
-   * leaving the visible sphere — the "grind" class. fr-ybtq's field report
-   * (hit=9 of 10184 rays, 2840 still active at the preview's budget) is a
-   * frame made almost entirely of these, so they, not hits, are what the
-   * bead's minutes-class settle is actually paying for. */
+   * leaving the visible sphere — the "grind" class. The heavy-lens field
+   * report (hit=9 of 10184 rays, 2840 still active at the preview's budget)
+   * is a frame made almost entirely of these, so they, not hits, are what
+   * a minutes-class lens settle is actually paying for. */
   exhausted: number;
   deCalls: number;
   descents: number;
@@ -377,7 +385,7 @@ interface SystemStats {
  * `uVisibleRadius * 1.02`, `eps = max(uAcceptPixelEps * t, uBoundingRadius *
  * uHitFloor)`, `d = surfaceDE(p, eps)`, `t += d * uStepScale`), GRIDLESS —
  * the compute path the lens class actually runs is gridless by decision
- * (fr-tzdg), so this is the shipped shape, not a simplification. */
+ * so this is the shipped shape, not a simplification. */
 function measure(profile: Profile, distFactor = POSE_DIST_FACTOR): SystemStats {
   const built = buildSurfaceDE(profile.transforms, profile.finalTransform);
   const fine = countingDEFine(built, built.beamWidth);
@@ -461,7 +469,7 @@ function fmt(n: number, digits = 1): string {
   });
 }
 
-describe("fr-ybtq fold-lens branch sweep cost", () => {
+describe("fold-lens branch sweep cost", () => {
   it("measures lens branch survivors and transforms per DE call", () => {
     // NOT `PROFILES.map(measure)`: Array.map passes (element, INDEX, array),
     // which would silently feed the index in as `distFactor`.
@@ -469,8 +477,8 @@ describe("fr-ybtq fold-lens branch sweep cost", () => {
     const lines: string[] = [];
     lines.push("");
     lines.push(
-      `fr-ybtq LENS BRANCH SWEEP COST — estimator=estimateDistanceRefined ` +
-        `(the lens-over-affine class's marched estimator, fr-55s1), gridless, ` +
+      `LENS BRANCH SWEEP COST — estimator=estimateDistanceRefined ` +
+        `(the lens-over-affine class's marched estimator), gridless, ` +
         `${GRID_SIDE}x${GRID_SIDE} rays at theta=${POSE_THETA} phi=${POSE_PHI} ` +
         `r=${POSE_DIST_FACTOR}x visibleR, full tier (${SURFACE_FULL_MARCH_STEPS} steps).`,
     );
@@ -516,8 +524,8 @@ describe("fr-ybtq fold-lens branch sweep cost", () => {
 
   /**
    * THE OTHER FACTOR. The table above prices ONE DE call. A frame's cost is
-   * that times the march steps a ray takes, and fr-ybtq's field report is a
-   * frame of 10184 rays with NINE hits and 2840 still active at the
+   * that times the march steps a ray takes, and the heavy-lens field report
+   * is a frame of 10184 rays with NINE hits and 2840 still active at the
    * preview's budget — a frame made of misses and grinders, not of hits.
    * Cost per ray is bounded by the march budget, so the question this leg
    * answers is: at what camera framing does a fold-lens system stop
@@ -538,7 +546,7 @@ describe("fr-ybtq fold-lens branch sweep cost", () => {
     const lines: string[] = [];
     lines.push("");
     lines.push(
-      `fr-ybtq MARCH-STEP EXHAUSTION vs CAMERA FRAMING — ${GRID_SIDE}x${GRID_SIDE} rays, ` +
+      `MARCH-STEP EXHAUSTION vs CAMERA FRAMING — ${GRID_SIDE}x${GRID_SIDE} rays, ` +
         `full tier (${SURFACE_FULL_MARCH_STEPS} steps), gridless.`,
     );
     lines.push("");

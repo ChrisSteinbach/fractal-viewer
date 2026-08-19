@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * fr-si66 march-readback A/B: measures the REAL-DRIVER cost of the WebGPU
- * compute surface renderer's per-sweep host readback, before and after the
- * change that swaps a whole-ray-state readback for a per-active-ray status
- * side channel.
+ * March-readback A/B: measures the REAL-DRIVER cost of the WebGPU compute
+ * surface renderer's per-sweep host readback, before and after the change
+ * that swaps a whole-ray-state readback for a per-active-ray status side
+ * channel.
  *
  * THE TWO ARMS ARE THE TRACE VOCABULARY, NOT A SCRIPT FLAG. `runFrame` in
  * src/app/surface-compute.ts used to read the ENTIRE 16 B/ray `states`
@@ -30,8 +30,8 @@
  * MODELED ON scripts/fold-settle-park.repro.mjs: the headed-Chrome-on-:0
  * launch recipe (real Vulkan, not headless SwiftShader — a software device
  * has nothing worth timing here), the `enc()` scene-hash encoder, the
- * embedded mandelboxKifs preset (the surface fold monster fr-si66's own
- * bead measures against), the `#modeSurfaceBtn` click, and the
+ * embedded mandelboxKifs preset (the surface fold monster the status
+ * side channel was measured against), the `#modeSurfaceBtn` click, and the
  * `?surfacestate` / `window.__surfaceState()` settle-latch poll — copied
  * close to verbatim. The header-comment style (what/why/how-to-read the
  * output) follows scripts/shade-width-ab.mjs.
@@ -66,16 +66,17 @@
  *
  * READING THE OUTPUT: the per-kind table's "sweep" row (`states` or
  * `status`, whichever the running arm actually emitted — never both) is the
- * number fr-si66 is about: its totalMs is host time blocked on readbacks
+ * number this A/B is about: its totalMs is host time blocked on readbacks
  * this change avoids, its totalMiB the PCIe/host-copy traffic saved. Divide
  * the two arms' sweep totalMs/totalMiB to get the speedup/reduction
  * directly; the sweep COUNT should match closely across arms (same march
- * schedule either side of fr-si66) so it doubles as a sanity check that
+ * schedule either side of the change) so it doubles as a sanity check that
  * both runs did comparable work. `present` is the unrelated progressive-
- * present readback, reported as a control — unaffected by fr-si66, so it
- * should read ~equal across arms. `final` is the once-per-frame terminal
- * color readback: counted (and sized, from the same rays*4 formula as
- * `present`) but never timed, since it has no END trace line by design.
+ * present readback, reported as a control — unaffected by the change, so
+ * it should read ~equal across arms. `final` is the once-per-frame
+ * terminal color readback: counted (and sized, from the same rays*4
+ * formula as `present`) but never timed, since it has no END trace line by
+ * design.
  *
  * WHERE THE TIME WENT: the report closes with the settle's GPU-submission
  * time split MARCH vs SHADE beside the sweep-readback total, and each as a
@@ -86,7 +87,7 @@
  * frame-filling one shade-bound, and the readback's SHARE differs by an
  * order of magnitude between them).
  *
- * MARCH SWEEP SHAPE (fr-fniy): WHERE THE TIME WENT above answers "march or
+ * MARCH SWEEP SHAPE: WHERE THE TIME WENT above answers "march or
  * shade" but not "why is march slow", and for march the answer is usually
  * the SWEEP schedule rather than the marching itself. One sweep is a full
  * pass over the active ray list — however many march BEGIN/END slices it
@@ -108,10 +109,10 @@
  * `states` line sizes itself off the whole ray count instead, so that
  * second mean reads "n/a" under that arm, correctly — not missing data).
  *
- * MARCH COST vs WIDTH (fr-fniy): the slice sizer prices a dispatch by
+ * MARCH COST vs WIDTH: the slice sizer prices a dispatch by
  * dividing its whole time by `len * steps` — a per-ray-step cost — which
  * is only the right quantity if a dispatch has NO fixed per-dispatch
- * INTERCEPT, the same question fr-2ojg asked of hit shade batches. So
+ * INTERCEPT, the same question already asked of hit shade batches. So
  * march dispatches are bucketed by `len` on a ladder wide enough for a
  * march slice (hundreds of thousands of rays, where a hit batch tops out
  * in the low thousands) and reported as ns PER RAY-STEP: FALLING as width
@@ -123,7 +124,7 @@
  * and answer neither question — and a steps value with fewer than 3
  * dispatches is skipped as too few to read a trend into.
  *
- * HIT SHADE COST vs BATCH SIZE (fr-257o): the free queue's share turned
+ * HIT SHADE COST vs BATCH SIZE: the free queue's share turned
  * out to be per-submission wall with no work in it, and the table after
  * WHERE THE TIME WENT asks the same question of the HIT queue, which no
  * cap change touches. Hit dispatches are bucketed by batch size and
@@ -133,9 +134,9 @@
  * real per-hit probe work. Printed only when some hit dispatch carried a
  * parsable `len=`.
  *
- * WORST SINGLE DISPATCH (fr-2ojg): a MEAN cannot answer the watchdog
+ * WORST SINGLE DISPATCH: a MEAN cannot answer the watchdog
  * question. No submission may outrun the i915 watchdog (surface-compute.ts's
- * own fr-d6g5 history is the reason every march slice and shade batch is
+ * own settle-park history is the reason every march slice and shade batch is
  * bounded in the first place), and a mean is exactly the statistic in which
  * one pathological dispatch hides — a thousand 2ms dispatches and one 400ms
  * one average out to under 2.5ms, and the mean column would never tell you
@@ -149,7 +150,7 @@
  * out of the block silently; the whole block is skipped if none of the
  * three ever fired at all.
  *
- * HIT DISPATCHES PER FRAME (fr-2ojg): the hit batch sizer's state — its
+ * HIT DISPATCHES PER FRAME: the hit batch sizer's state — its
  * intercept/marginal cost model and its capacity cap — lives in
  * surface-compute.ts's `sizer` local, which a SUPERSAMPLING JOB hands from
  * pass to pass (same pose, same raster) and nothing else shares, so a
@@ -166,7 +167,7 @@
  * first 6 and the last 6 with the middle elided: once the sizer has
  * converged, frame 40's ramp shape is frame 20's asked again.
  *
- * PER-FRAME WALL ACCOUNTING (fr-fniy): every other block prices GPU
+ * PER-FRAME WALL ACCOUNTING: every other block prices GPU
  * submissions; this one prices the gaps between them. `frame done`'s own
  * `[<ms>ms]` timestamp IS that frame's wall-clock duration (`traceT0`
  * resets at each "frame start"), so `wallMs - marchMs - shadeMs -
@@ -197,13 +198,13 @@
  * missed when a run did not settle.
  *
  * SCENE CHOICE: `--scene` picks which embedded document to load — all
- * three take the SAME WebGPU compute path fr-si66 touches (fr-tzdg's
+ * three take the SAME WebGPU compute path the side channel touches (its
  * routing: base-map folds OR a fold-FINAL lens, i.e. `deHasFolds(de) ||
  * foldFinal`), so any one is a valid arm subject, but they trade
  * completeness, cost and HIT COVERAGE against each other:
- *   mandelboxKifs (default) — the surface fold monster fr-si66's own bead
- *     measures against, 14 maps. Thorough, but heavy: at a 1400x900 window
- *     it was measured reaching only ~9% of one settle in 90s on the
+ *   mandelboxKifs (default) — the surface fold monster the side channel
+ *     was measured against, 14 maps. Thorough, but heavy: at a 1400x900
+ *     window it was measured reaching only ~9% of one settle in 90s on the
  *     hardware this was written for, which makes a COMPLETED settle
  *     impractical per arm and pushes every run to the `--capMs` fallback.
  *   boxfoldPair — scripts/surface-repro.verify.mjs's `SCENARIOS` boxfold3
@@ -215,10 +216,10 @@
  *     pose means the two arms trace the IDENTICAL pose too, so sweep
  *     counts and totals compare exactly, not just their per-sweep means.
  *     Its render is thin dust (that script measures ~1.8k hit pixels), so
- *     it says little about the HIT batch sizer fr-2ojg cares about — most
+ *     it says little about the HIT batch sizer's own cost model — most
  *     of a settle here is march and free-queue background, not hit shade.
  *   lens3 — scripts/surface-repro.verify.mjs's `SCENARIOS` lens3 entry:
- *     fr-g58b's fold-FINAL lens archetype, a Sierpinski-shaped 4-map
+ *     the fold-FINAL lens archetype, a Sierpinski-shaped 4-map
  *     affine base under a boxfold FINAL transform, so it reaches the
  *     compute path through `foldFinal` rather than `deHasFolds` — a
  *     genuinely different eligibility arm from the other two scenes, not
@@ -227,7 +228,7 @@
  *     scenario here that FILLS THE FRAME (~61k hit pixels of fine crease
  *     detail, per that script's own measurement) rather than tracing thin
  *     dust — i.e. the one with enough HIT dispatches for a batch-size A/B
- *     (fr-2ojg's "HIT SHADE COST vs BATCH SIZE" / "WORST SINGLE DISPATCH"
+ *     (the "HIT SHADE COST vs BATCH SIZE" / "WORST SINGLE DISPATCH"
  *     / "HIT DISPATCHES PER FRAME" sections below) to say anything at all.
  *
  * Usage:
@@ -316,14 +317,15 @@ const SCENE_ID = HASH_OVERRIDE !== null ? "custom" : SCENE;
  * bare `&`-joined string (a leading `&` is added when absent, so both
  * `--params=surfacecompute` and `--params=&surfacecompute` work).
  *
- * IT IS WHAT LET fr-fniy REACH THE ARM ITS OWN BEAD WAS ABOUT. main.ts
- * routed kaleidoscope-4D (non-fold, symmetry order > 1) to the FRAGMENT
- * tracer at the time, and `?surfacetrace` only instruments the WebGPU
- * frame loop — so a `--hash=<kaleido4>` run collected nothing and reported
- * the WebGL engine until `--params=surfacecompute` forced the other arm.
+ * IT IS WHAT LET THE SHADE-SIZER WIDTH FIX REACH THE ARM IT WAS ABOUT.
+ * main.ts routed kaleidoscope-4D (non-fold, symmetry order > 1) to the
+ * FRAGMENT tracer at the time, and `?surfacetrace` only instruments the
+ * WebGPU frame loop — so a `--hash=<kaleido4>` run collected nothing and
+ * reported the WebGL engine until `--params=surfacecompute` forced the
+ * other arm.
  * That measurement is what moved the routing rule, so kaleido4 now needs
  * no flag; `--params=surfacegl` is how you get back to the arm it left.
- * The same door reaches `surfacesamples=N` and the fr-fniy schedule pins
+ * The same door reaches `surfacesamples=N` and the schedule pins
  * (`surfacemarchchunk=N`, `surfacemarchsteps=S`, `surfaceshadehits=H`) —
  * that last one is the cost-vs-WIDTH lever, and the reason this file has
  * a MARCH COST vs WIDTH table to compare against.
@@ -390,7 +392,7 @@ const mandelboxKifs = (() => {
 /** scripts/surface-repro.verify.mjs's `SCENARIOS` table, the `boxfold3`
  * entry's minted hash — copied verbatim. The CHEAP scene
  * (`--scene=boxfoldPair`, see the module doc's "SCENE CHOICE"): the same
- * fr-jmat 2-map boxfold pair as surface-fold.verify.mjs's `BOXFOLD_HASH`
+ * 2-map boxfold pair as surface-fold.verify.mjs's `BOXFOLD_HASH`
  * (this constant's transforms are bit-identical to it), fold-shaped like
  * mandelboxKifs (`deHasFolds(de) === true`, same WebGPU compute path) but
  * settling in a fraction of the time — EXCEPT that hash is pose-less,
@@ -402,7 +404,7 @@ const mandelboxKifs = (() => {
  * from a `Math.random()`-seeded point cloud, so its auto-frame lands on a
  * slightly different camera (radius/target a few tenths of a percent
  * apart) on every load — the exact drift surface-repro.verify.mjs's own
- * module doc measures and its fr-opgk pinned-pose discipline exists to
+ * module doc measures and its pinned-pose discipline exists to
  * remove. A different pose marches a different set of rays through a
  * different empty-space/fold-branch mix, so two `git stash` arms loading
  * a pose-less scene would not be tracing the same work end to end — only
@@ -422,13 +424,13 @@ const BOXFOLD_PINNED_HASH =
  * BOXFOLD_PINNED_HASH above is (see its comment): a pose-less boot
  * auto-frames from a `Math.random()`-seeded cloud, so two `git stash` arms
  * would trace two different sets of rays rather than the identical work.
- * fr-g58b's fold-FINAL lens archetype — a Sierpinski-shaped 4-map affine
+ * The fold-FINAL lens archetype — a Sierpinski-shaped 4-map affine
  * base under a boxfold FINAL transform, eligible through `foldFinal`
  * rather than `deHasFolds` (see the module doc's "SCENE CHOICE") — and,
  * per that script's own module doc, the one scenario there that FILLS THE
  * FRAME (~61k hit pixels of fine crease detail) where boxfoldPair above is
  * thin dust (~1.8k). That is what makes it worth adding here: a hit-shade
- * batch-size A/B (fr-2ojg) needs hits to batch, and boxfoldPair barely has
+ * batch-size A/B needs hits to batch, and boxfoldPair barely has
  * any.
  *
  * Already a full `#v1=` hash rather than a JS scene object, so it is used
@@ -470,8 +472,8 @@ const FRAME_DONE_RE = /^frame done passes=(\d+) truncated=(\S+)/;
  * {@link READBACK_RE}/{@link SWEEP_LABELS} key off), which is exactly why
  * sweep counting reads off THIS line instead of either readback label: it
  * is the one marker guaranteed to exist and mean the same thing whichever
- * arm produced the trace, so the fr-si66 A/B this script was built for and
- * the fr-fniy sweep-shape questions it now also answers share one signal.
+ * arm produced the trace, so the readback A/B this script was built for
+ * and the sweep-shape questions it now also answers share one signal.
  * Only `active=` is captured — the line's other fields (hitQ/freeQ/
  * sweepSteps/stepsThisPass) belong to questions this script does not ask,
  * the same restraint {@link FRAME_DONE_RE} already takes with "frame
@@ -495,7 +497,7 @@ const DISPATCH_END_RE = /^(march|shade) END ms=([0-9.]+)$/;
  * dispatch carries no `isFree` flag to key off — there is only one kind
  * of march. */
 const MARCH_BEGIN_RE = /^march BEGIN\b/;
-/** Which QUEUE a shade dispatch drained (fr-257o). The two are different
+/** Which QUEUE a shade dispatch drained. The two are different
  * animals — a FREE batch does one background write per ray and takes its
  * WHOLE queue in one dispatch (there is no cost to model, so no cap but
  * the device's own dispatch ceiling), a HIT batch pays the on-surface
@@ -515,7 +517,7 @@ const SHADE_BEGIN_RE = /^shade BEGIN isFree=(true|false)\b/;
 const LEN_RE = /\blen=(\d+)\b/;
 /** `march BEGIN`'s `steps=` field — the per-ray step budget
  * (`stepsThisPass`) this dispatch marched with, read by name for the same
- * reason {@link LEN_RE} is (fr-2ojg's "WORST SINGLE DISPATCH"). */
+ * reason {@link LEN_RE} is (the module doc's "WORST SINGLE DISPATCH"). */
 const STEPS_RE = /\bsteps=(\d+)\b/;
 /** Batch-size buckets for the hit table, half-open on powers of two: the
  * question is whether cost per HIT falls as the batch widens, and a
@@ -534,8 +536,8 @@ const HIT_SIZE_BUCKETS = [
 function hitSizeBucket(len) {
   return HIT_SIZE_BUCKETS.find((b) => len >= b.min && len <= b.max) ?? null;
 }
-/** Batch-size buckets for the march cost-vs-width table (fr-fniy's "MARCH
- * COST vs WIDTH"), wider than {@link HIT_SIZE_BUCKETS} because a march
+/** Batch-size buckets for the march cost-vs-width table (the module doc's
+ * "MARCH COST vs WIDTH"), wider than {@link HIT_SIZE_BUCKETS} because a march
  * slice runs to hundreds of thousands of rays where a hit shade batch tops
  * out in the low thousands (the sizer's own capacity ladder) — the
  * question is whether ns PER RAY-STEP falls as the slice widens, which
@@ -586,9 +588,9 @@ function summarize(rawLines) {
   let unparsedLines = 0;
   /** GPU-submission time by half of the frame loop, so the readback
    * totals can be read as a SHARE of the settle rather than in a vacuum.
-   * `worstMs`/`worstLen` (plus march's own `worstSteps`) are fr-2ojg's
-   * "WORST SINGLE DISPATCH" — the single highest-ms dispatch seen for
-   * that kind, beside the size it ran at, which a mean cannot report. */
+   * `worstMs`/`worstLen` (plus march's own `worstSteps`) are the module
+   * doc's "WORST SINGLE DISPATCH" — the single highest-ms dispatch seen
+   * for that kind, beside the size it ran at, which a mean cannot report. */
   const dispatch = {
     march: {
       count: 0,
@@ -596,14 +598,14 @@ function summarize(rawLines) {
       worstMs: null,
       worstLen: null,
       worstSteps: null,
-      /** fr-fniy "MARCH SWEEP SHAPE"'s stepsThisPass distribution — one
+      /** "MARCH SWEEP SHAPE"'s stepsThisPass distribution — one
        * entry per distinct `steps=` value seen on `march BEGIN`, keyed by
        * that number (a `Map`, not the fixed string labels
        * {@link HIT_SIZE_BUCKETS} uses, since the key is numeric and
        * unbounded). Answers "how much of the march half's time went to
        * each rung of the steps ramp", independent of ray count. */
       byStep: new Map(), // steps -> { count, totalLen, totalMs }
-      /** fr-fniy "MARCH COST vs WIDTH": the same dispatches bucketed by
+      /** "MARCH COST vs WIDTH": the same dispatches bucketed by
        * BOTH steps and length — steps FIRST, because ns/ray-step is only
        * comparable within one step count (see {@link MARCH_SIZE_BUCKETS}'s
        * own comment); a length bucket pooling two different steps values
@@ -612,9 +614,9 @@ function summarize(rawLines) {
       byStepAndSize: new Map(), // steps -> Map(bucketLabel -> {count, totalLen, totalSteps, totalMs})
     },
     shade: { count: 0, totalMs: 0 },
-    // fr-257o: the same shade time split by which queue it drained.
+    // The same shade time split by which queue it drained.
     shadeFree: { count: 0, totalMs: 0, worstMs: null, worstLen: null },
-    /** `msList` is the RAW per-dispatch hit time list (fr-2ojg) — the p95
+    /** `msList` is the RAW per-dispatch hit time list — the p95
      * line needs the actual sorted sample, not anything derivable from
      * the bucketed means `shadeHitBySize` below already collapses. */
     shadeHit: {
@@ -624,7 +626,7 @@ function summarize(rawLines) {
       worstLen: null,
       msList: [],
     },
-    /** fr-257o: hit dispatches bucketed by BATCH SIZE — `{count, hits,
+    /** Hit dispatches bucketed by BATCH SIZE — `{count, hits,
      * totalMs}` per bucket label, where `hits` is the SUM of the batch
      * lengths (never count x meanLen), since µs/hit is the column the
      * work-or-wall question turns on. */
@@ -632,7 +634,7 @@ function summarize(rawLines) {
       HIT_SIZE_BUCKETS.map((b) => [b.label, { count: 0, hits: 0, totalMs: 0 }]),
     ),
   };
-  /** fr-fniy "MARCH SWEEP SHAPE": one march SWEEP is a full pass over the
+  /** "MARCH SWEEP SHAPE": one march SWEEP is a full pass over the
    * active ray list, closed by a "sweep done" line (see SWEEP_DONE_RE's own
    * comment for why counting keys off that line rather than either
    * readback label). `activeSum`/`activeMax` are the sweep's own reported
@@ -655,7 +657,7 @@ function summarize(rawLines) {
   let pendingShadeLen = null;
   let pendingMarchLen = null;
   let pendingMarchSteps = null;
-  /** fr-2ojg: one record per "frame start" seen, its ramp stats
+  /** One record per "frame start" seen, its ramp stats
    * accumulated as that frame's OWN hit dispatches parse, `completed`
    * flipped true by the matching "frame done" — see the module doc's
    * "HIT DISPATCHES PER FRAME". A frame whose "frame done" the trace
@@ -693,18 +695,18 @@ function summarize(rawLines) {
         rays: lastFrameRays,
         hitDispatches: 0,
         hits: 0,
-        // HIT-shade time only (fr-2ojg's own field, feeding "HIT
-        // DISPATCHES PER FRAME" below) — distinct from `shadeMs` below,
-        // which is fr-fniy's ALL-shade (hit+free) total feeding "PER-FRAME
-        // WALL ACCOUNTING". Two different questions kept as two fields
-        // rather than one overloaded one.
+        // HIT-shade time only (feeding "HIT DISPATCHES PER FRAME" below)
+        // — distinct from `shadeMs` below, which is the ALL-shade
+        // (hit+free) total feeding "PER-FRAME WALL ACCOUNTING". Two
+        // different questions kept as two fields rather than one
+        // overloaded one.
         totalMs: 0,
         firstLen: null,
         maxLen: null,
         completed: false,
-        // fr-fniy "MARCH SWEEP SHAPE"'s per-frame sweep count.
+        // "MARCH SWEEP SHAPE"'s per-frame sweep count.
         sweeps: 0,
-        // fr-fniy "PER-FRAME WALL ACCOUNTING": wallMs comes off "frame
+        // "PER-FRAME WALL ACCOUNTING": wallMs comes off "frame
         // done"'s own timestamp (set there, once traceT0's reset makes it
         // meaningful); marchMs/shadeMs/readbackMs are this frame's own
         // summed dispatch/readback times, accumulated dispatch by
@@ -723,7 +725,7 @@ function summarize(rawLines) {
       lastFrameTruncated = frameDone[2] === "true";
       if (currentFrame) {
         currentFrame.completed = true;
-        // fr-fniy: "frame done"'s OWN [<ms>ms] IS this frame's wall-clock
+        // "frame done"'s OWN [<ms>ms] IS this frame's wall-clock
         // duration — traceT0 resets at "frame start", so nothing needs
         // subtracting (see the module doc's "PER-FRAME WALL ACCOUNTING").
         currentFrame.wallMs = ms;
@@ -755,18 +757,18 @@ function summarize(rawLines) {
       half.count++;
       half.totalMs += ms;
       if (dispatchEnd[1] === "march") {
-        // fr-2ojg: worst SINGLE march dispatch — `len`/`steps` come off
+        // Worst SINGLE march dispatch — `len`/`steps` come off
         // the matching "march BEGIN" line captured just above.
         if (dispatch.march.worstMs === null || ms > dispatch.march.worstMs) {
           dispatch.march.worstMs = ms;
           dispatch.march.worstLen = pendingMarchLen;
           dispatch.march.worstSteps = pendingMarchSteps;
         }
-        // fr-fniy "PER-FRAME WALL ACCOUNTING": this frame's own march
+        // "PER-FRAME WALL ACCOUNTING": this frame's own march
         // total, summed slice by slice exactly like `totalMs` already
         // sums hit-shade time below.
         if (currentFrame) currentFrame.marchMs += ms;
-        // fr-fniy "MARCH SWEEP SHAPE"'s steps distribution and "MARCH
+        // "MARCH SWEEP SHAPE"'s steps distribution and "MARCH
         // COST vs WIDTH"'s steps x size buckets both need len AND steps
         // off the same BEGIN line (the trace always carries both
         // together — see MARCH_BEGIN_RE's own comment); a dispatch
@@ -810,19 +812,19 @@ function summarize(rawLines) {
           : dispatch.shadeHit;
         queue.count++;
         queue.totalMs += ms;
-        // fr-fniy "PER-FRAME WALL ACCOUNTING": ALL shade this frame, hit
+        // "PER-FRAME WALL ACCOUNTING": ALL shade this frame, hit
         // and free alike — unlike `currentFrame.totalMs` below, which
-        // stays hit-only for fr-2ojg's ramp table.
+        // stays hit-only for the ramp table.
         if (currentFrame) currentFrame.shadeMs += ms;
         if (queue.worstMs === null || ms > queue.worstMs) {
           queue.worstMs = ms;
           queue.worstLen = pendingShadeLen;
         }
         if (!pendingShadeIsFree) {
-          // p95 needs the raw list, not the bucketed means (fr-2ojg) —
+          // p95 needs the raw list, not the bucketed means —
           // see the module doc's "WORST SINGLE DISPATCH".
           queue.msList.push(ms);
-          // This frame's ramp (fr-2ojg) — a single-sample frame gets a
+          // This frame's ramp — a single-sample frame gets a
           // fresh sizer, but a supersampled job shares one across its
           // passes, so how far it climbed by the frame's LAST hit
           // dispatch is a per-frame question only within that job. See
@@ -885,7 +887,7 @@ function summarize(rawLines) {
           : lastFrameRays; // present/final: no field of their own, R comes
       // from the enclosing frame's own "frame start rays=" line.
 
-      // fr-fniy "MARCH SWEEP SHAPE": the mean `active=` a SWEEP-LABEL
+      // "MARCH SWEEP SHAPE": the mean `active=` a SWEEP-LABEL
       // readback reports about ITSELF — guarded on SWEEP_LABELS (not the
       // literal "status") for the same reason SWEEP_DONE_RE is, so
       // whichever arm is running this only ever sums that arm's own
@@ -927,7 +929,7 @@ function summarize(rawLines) {
     s.timedCount++;
     s.totalMs += ms - begin.ms;
     s.totalBytes += bytesForReadback(label, begin.extra);
-    // fr-fniy "PER-FRAME WALL ACCOUNTING": every readback that reaches
+    // "PER-FRAME WALL ACCOUNTING": every readback that reaches
     // this branch is by construction a TIMED one (UNTIMED_READBACK_LABEL
     // took the early `continue` above and never opened) — the sweep
     // readback and the progressive present, never "final".
@@ -943,7 +945,7 @@ function summarize(rawLines) {
     s.totalBytes += bytesForReadback(label, begin.extra);
   }
 
-  // fr-2ojg: only COMPLETED frames earn a row (see `frameRecords`'s own
+  // Only COMPLETED frames earn a row (see `frameRecords`'s own
   // comment above) — `completed` itself is bookkeeping for THIS function,
   // not part of the reported shape, so it is dropped here rather than
   // carried into every consumer.
@@ -956,7 +958,7 @@ function summarize(rawLines) {
       totalMs: f.totalMs,
       firstLen: f.firstLen,
       maxLen: f.maxLen,
-      // fr-fniy: rays/sweeps feed "MARCH SWEEP SHAPE"'s per-frame sweep
+      // Rays/sweeps feed "MARCH SWEEP SHAPE"'s per-frame sweep
       // count; wallMs/marchMs/shadeMs/readbackMs feed "PER-FRAME WALL
       // ACCOUNTING" — see `currentFrame`'s own comment above for what each
       // one sums.
@@ -1146,7 +1148,7 @@ function fmtMiB(bytes) {
 function round2(x) {
   return x === null || x === undefined ? null : Math.round(x * 100) / 100;
 }
-/** fr-2ojg's "WORST SINGLE DISPATCH" p95 — NEAREST-RANK over the raw
+/** The "WORST SINGLE DISPATCH" p95 — NEAREST-RANK over the raw
  * per-dispatch list (never the bucketed means in `shadeHitBySize`, which
  * would answer a coarser, bucket-diluted question): sort ascending and
  * take `sorted[ceil(0.95*N) - 1]`. `null` on an empty list rather than
@@ -1170,7 +1172,7 @@ function meanOf(values) {
 }
 /** Generic one-decimal formatter for non-millisecond quantities (ray
  * counts, sweep counts, dispatch counts) — {@link fmtMs} reads as "this is
- * a timing" even beside a number that is not one, so every fr-fniy table
+ * a timing" even beside a number that is not one, so every table
  * below uses this instead. Also replaces "HIT DISPATCHES PER FRAME"'s own
  * MEAN row, which used to keep a private copy of exactly this function. */
 function fmt1(x) {
@@ -1178,7 +1180,7 @@ function fmt1(x) {
     ? "n/a"
     : x.toFixed(1);
 }
-/** fr-fniy "PER-FRAME WALL ACCOUNTING": `otherMs` is what is left of a
+/** "PER-FRAME WALL ACCOUNTING": `otherMs` is what is left of a
  * frame's own wall time once its march/shade/readback totals are
  * subtracted — host time the GPU sat idle. Clamped at 0 rather than
  * printed negative: the four components are measured independently
@@ -1194,7 +1196,7 @@ function frameOtherMs(f) {
   const raw = f.wallMs - f.marchMs - f.shadeMs - f.readbackMs;
   return { otherMs: Math.max(0, raw), negative: raw < 0 };
 }
-/** fr-fniy "MARCH SWEEP SHAPE"'s headline numbers — shared by printReport
+/** "MARCH SWEEP SHAPE"'s headline numbers — shared by printReport
  * and buildJsonSummary so the printed line and the JSON field can never
  * disagree. `meanSweepsPerFrame` averages over ALL completed frames,
  * including a legitimate zero-sweep one: unlike {@link meanOf}'s other
@@ -1219,7 +1221,7 @@ function marchSweepStats(summary) {
         : null,
   };
 }
-/** fr-fniy "MARCH SWEEP SHAPE"'s stepsThisPass distribution table — one
+/** "MARCH SWEEP SHAPE"'s stepsThisPass distribution table — one
  * row per distinct `steps=` value seen on `march BEGIN`, SORTED ascending
  * (Map iteration order is first-seen order, not numeric order, and the
  * steps ramp resets every sweep, so first-seen is not even mostly
@@ -1237,7 +1239,7 @@ function marchStepRows(summary) {
         marchTotalMs > 0 ? (s.totalMs / marchTotalMs) * 100 : null,
     }));
 }
-/** fr-fniy "MARCH COST vs WIDTH": march dispatches bucketed by length,
+/** "MARCH COST vs WIDTH": march dispatches bucketed by length,
  * broken out one table per distinct `steps=` value (ns/ray-step is only
  * comparable within one step count — see the module doc). A steps value
  * with fewer than 3 dispatches TOTAL is dropped entirely — too few to
@@ -1274,7 +1276,7 @@ function marchWidthTables(summary) {
     })
     .filter((t) => t !== null);
 }
-/** fr-fniy "PER-FRAME WALL ACCOUNTING"'s closing totals — the TOTAL line
+/** "PER-FRAME WALL ACCOUNTING"'s closing totals — the TOTAL line
  * in printReport and the `wallAccounting` JSON field are the same numbers
  * by construction, since both call this. `null` when there are no
  * completed frames to total, the same "print/report nothing" rule every
@@ -1429,7 +1431,7 @@ function printReport(summary, runResult) {
     `  sweep readbacks  : ${String(sweepLabels.reduce((a, l) => a + (kinds.get(l)?.count ?? 0), 0)).padStart(5)}  ${fmtMs(sweepMs).padStart(9)} ms  ${pct(sweepMs)}`,
   );
 
-  // fr-fniy: how the march half SHAPES itself sweep to sweep — see the
+  // How the march half SHAPES itself sweep to sweep — see the
   // module doc's "MARCH SWEEP SHAPE". Skipped whole when no "sweep done"
   // line was ever seen (a march-less truncation, or a settle that never
   // left its first outer-loop iteration).
@@ -1452,7 +1454,7 @@ function printReport(summary, runResult) {
           : ""),
     );
 
-    // The headline table for fr-fniy: a frame whose steps stays PINNED AT
+    // The headline table: a frame whose steps stays PINNED AT
     // 1 pays a WHOLE sweep's host cost (readback + active-list
     // rebuild/upload) per SINGLE DE step; a frame that ramps to 32 pays it
     // once per 32. If the dispatch count/totalMs mass sits at low steps
@@ -1475,7 +1477,7 @@ function printReport(summary, runResult) {
       }
     }
 
-    // fr-fniy: does a march dispatch have a fixed per-dispatch cost the
+    // Does a march dispatch have a fixed per-dispatch cost the
     // slice sizer's len*steps division hides? FALLING ns/ray-step = yes,
     // an intercept is being amortised as width grows; FLAT = real
     // per-ray-step work, which no sizing change reaches. One table per
@@ -1504,12 +1506,12 @@ function printReport(summary, runResult) {
     }
   }
 
-  // fr-257o's second half: the free queue's time was per-submission wall,
-  // and this is the same question asked of the HIT queue, which the cap
-  // change does not touch. A hit batch is ~178 rays — under 3 workgroups
-  // — so if µs/hit FALLS as batches widen, part of that 55% is wall and
-  // under-utilization and there is a lever; if it stays FLAT, it is real
-  // per-hit probe work and there is not.
+  // The free/hit split's second half: the free queue's time was
+  // per-submission wall, and this is the same question asked of the HIT
+  // queue, which the cap change does not touch. A hit batch is ~178 rays
+  // — under 3 workgroups — so if µs/hit FALLS as batches widen, part of
+  // that 55% is wall and under-utilization and there is a lever; if it
+  // stays FLAT, it is real per-hit probe work and there is not.
   const bySize = summary.dispatch.shadeHitBySize ?? {};
   const sizedBuckets = HIT_SIZE_BUCKETS.filter(
     (b) => (bySize[b.label]?.count ?? 0) > 0,
@@ -1540,7 +1542,7 @@ function printReport(summary, runResult) {
     );
   }
 
-  // fr-2ojg: the watchdog question a MEAN cannot answer — see the module
+  // The watchdog question a MEAN cannot answer — see the module
   // doc's "WORST SINGLE DISPATCH". One line per kind, printed only for a
   // kind that actually dispatched at least once (a --capMs cut may end a
   // run before it ever reaches march, or keep it hit-bound the whole run
@@ -1587,7 +1589,7 @@ function printReport(summary, runResult) {
     }
   }
 
-  // fr-2ojg: how much of a frame is spent re-climbing the hit batch
+  // How much of a frame is spent re-climbing the hit batch
   // sizer's own ramp — see the module doc's "HIT DISPATCHES PER FRAME".
   // One row per COMPLETED frame (summarize()'s own filter — see `frames`'
   // construction there); skipped entirely if the trace never completed one
@@ -1639,7 +1641,7 @@ function printReport(summary, runResult) {
     );
   }
 
-  // fr-fniy "PER-FRAME WALL ACCOUNTING": otherMs is host time the GPU sat
+  // "PER-FRAME WALL ACCOUNTING": otherMs is host time the GPU sat
   // idle while the frame was open (JS active-list rebuild, writeBuffer
   // uploads, the Uint32Array.from allocations, promise/microtask latency,
   // per-submission overhead) — a large other% means the frame loop's own
@@ -1803,7 +1805,7 @@ function buildJsonSummary(summary, runResult) {
     renderError: runResult.renderErrorText,
     sweepLabels,
     kinds: kindsObj,
-    // fr-fniy "MARCH SWEEP SHAPE"'s headline numbers — see
+    // "MARCH SWEEP SHAPE"'s headline numbers — see
     // `marchSweepStats`'s own comment. `null` fields (e.g.
     // `meanReadbackActive` under the OLD `states` arm) mean the
     // underlying trace never carried that number, not that it was 0.
@@ -1822,7 +1824,7 @@ function buildJsonSummary(summary, runResult) {
       march: {
         count: summary.dispatch.march.count,
         totalMs: round2(summary.dispatch.march.totalMs),
-        // fr-fniy "MARCH SWEEP SHAPE"'s stepsThisPass distribution — see
+        // "MARCH SWEEP SHAPE"'s stepsThisPass distribution — see
         // `marchStepRows`'s own comment; array (not an object keyed by
         // steps) so a consumer does not have to know JSON stringifies
         // numeric keys as strings.
@@ -1834,7 +1836,7 @@ function buildJsonSummary(summary, runResult) {
           shareOfMarchMsPct:
             r.shareOfMarchMs === null ? null : round2(r.shareOfMarchMs),
         })),
-        // fr-fniy "MARCH COST vs WIDTH" — see `marchWidthTables`'s own
+        // "MARCH COST vs WIDTH" — see `marchWidthTables`'s own
         // comment for the per-steps split and the <3-dispatch cutoff.
         widthByStep: marchWidthTables(summary).map((t) => ({
           steps: t.steps,
@@ -1862,7 +1864,7 @@ function buildJsonSummary(summary, runResult) {
         count: summary.dispatch.shadeHit.count,
         totalMs: round2(summary.dispatch.shadeHit.totalMs),
       },
-      // fr-257o: only the buckets that saw a dispatch, so an arm's JSON
+      // Only the buckets that saw a dispatch, so an arm's JSON
       // does not carry five zero rows for sizes its sizing never picked.
       shadeHitBySize: Object.fromEntries(
         Object.entries(summary.dispatch.shadeHitBySize)
@@ -1876,7 +1878,7 @@ function buildJsonSummary(summary, runResult) {
     unmatchedBeginCount: summary.unmatchedBegins.length,
     unparsedLines: summary.unparsedLines,
     consoleIssueCount: runResult.consoleIssues.length,
-    // fr-2ojg: the watchdog question a MEAN cannot answer (see the module
+    // The watchdog question a MEAN cannot answer (see the module
     // doc's "WORST SINGLE DISPATCH") — a `null` field means that kind
     // never dispatched in this run, not that it dispatched for 0ms.
     worst: {
@@ -1897,7 +1899,7 @@ function buildJsonSummary(summary, runResult) {
       marchLen: summary.dispatch.march.worstLen,
       marchSteps: summary.dispatch.march.worstSteps,
     },
-    // fr-2ojg/fr-fniy: one entry per COMPLETED frame — see the module
+    // One entry per COMPLETED frame — see the module
     // doc's "HIT DISPATCHES PER FRAME" and "PER-FRAME WALL ACCOUNTING",
     // and summarize()'s own `frames` construction (already this exact
     // shape; the ms fields want rounding, and otherMs/otherPct are
@@ -1917,7 +1919,7 @@ function buildJsonSummary(summary, runResult) {
         otherNegativeBeforeClamp: negative,
       };
     }),
-    // fr-fniy "PER-FRAME WALL ACCOUNTING"'s closing totals — see
+    // "PER-FRAME WALL ACCOUNTING"'s closing totals — see
     // `wallAccountingTotals`'s own comment. `null` when no frame
     // completed (mirrors the printed report's own "skip the block"
     // rule).

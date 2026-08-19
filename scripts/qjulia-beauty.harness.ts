@@ -1,8 +1,8 @@
 /**
- * fr-7u8t.5/.6 decision sheet: is there anything STUNNING in the quaternion
+ * Decision sheet for the quaternion Julia epic's two shader beads — the
+ * kernels and the 4D lift: is there anything STUNNING in the quaternion
  * Julia family, or does `qjulia-preview.harness.ts`'s "solid of revolution,
- * visually monotonous" verdict close the epic before its two shader beads are
- * built?
+ * visually monotonous" verdict settle it before either is built?
  *
  * WHAT THE EXISTING VERDICT PROVES, AND WHAT IT DOES NOT. Every automorphism
  * of the quaternions is a conjugation, which rotates the imaginary 3-space and
@@ -19,14 +19,15 @@
  *      step scale stays sound) and is not conjugate to any plain map.
  *   2. A ROTOR-POSED SLICE. `estimateQJuliaDistance` already takes a `Vec4`,
  *      so `q = R·(p, w0)` for an SO(4) rotor `R` renders an arbitrary
- *      orientation cut through the 4D set with NO shader work — what fr-7u8t.6
- *      would show, and what nobody had looked at.
+ *      orientation cut through the 4D set with NO shader work — what the 4D
+ *      lift would show, and what nobody had looked at.
  *
  * The rotor slice needs no soundness argument beyond the one the estimator
  * already carries: `R` is an isometry, so the estimate at `R·(p, w0)` is a
  * lower bound on the 4D distance, which is a lower bound on the distance
- * WITHIN the 3-plane. (This is not the fr-wa6o slab, which is a segment-valued
- * bound a squaring map would break — that landmine stays live for fr-7u8t.6.)
+ * WITHIN the 3-plane. (This is not the 4D slice-thickness slab, which is a
+ * segment-valued bound a squaring map would break — that landmine stays live
+ * for the 4D lift.)
  *
  * WHAT THE SHEET ADDS TO THE ARGUMENT. `lathe` is the numeric form of "solid
  * of revolution", not a proxy for it. If a rotation `rho` of the orbit space
@@ -57,29 +58,29 @@
  * against it. `reach` follows `escape-form-sweep.harness.ts`'s `extent()`
  * convention (a grid over a box twice the view ball, so a set that outgrew
  * the frame reads as `reach > 1` instead of silently clipping). `fill%` is
- * VOLUME, and since fr-azjk it is answered by a seeded uniform sample
- * against the orbit's own membership test (`qjuliaSetContains`, this file's
- * own copy of `estimateQJuliaDistance`'s recurrence, composed through the
- * SAME rotor/slice/anchor transform each panel is built from) rather than by
- * thresholding the DE — `set-extent.ts`'s module doc has the general
- * argument. `occ%`/`rough` stay GRID measures at the box's cell scale, kept
- * for what a volume sampler cannot see: a dendrite constant has EMPTY
- * interior, so `fill%` alone would report the most intricate objects as
- * nothing — `occ%` counts cells the set comes within a cell radius of
- * (never a volume fraction, however fine the grid), and `rough` is that
- * occupancy's surface area over the area of an equal-volume ball rasterised
- * on the same grid (1.0 = as smooth as a ball, itself a rasterised property
- * rather than a volume one).
+ * VOLUME, and since the set-extent correction it is answered by a seeded
+ * uniform sample against the orbit's own membership test
+ * (`qjuliaSetContains`, this file's own copy of `estimateQJuliaDistance`'s
+ * recurrence, composed through the SAME rotor/slice/anchor transform each
+ * panel is built from) rather than by thresholding the DE — `set-extent.ts`'s
+ * module doc has the general argument. `occ%`/`rough` stay GRID measures at
+ * the box's cell scale, kept for what a volume sampler cannot see: a dendrite
+ * constant has EMPTY interior, so `fill%` alone would report the most
+ * intricate objects as nothing — `occ%` counts cells the set comes within a
+ * cell radius of (never a volume fraction, however fine the grid), and
+ * `rough` is that occupancy's surface area over the area of an equal-volume
+ * ball rasterised on the same grid (1.0 = as smooth as a ball, itself a
+ * rasterised property rather than a volume one).
  *
  * MEASURED VERDICT (2026-08-14, f64 CPU; fill% re-measured 2026-08-16 under
- * fr-azjk's corrected instrument, see the closing paragraph below): THE
+ * the corrected set-extent instrument, see the closing paragraph below): THE
  * EXISTING VERDICT SURVIVES, and the narrower reading of it does not change
  * the answer.
  *
  *   - The theorem is confirmed numerically, and SHARPENED. `lathe` is 2e-16 —
  *     machine zero — at every plain constant tried, the gallery ones included.
  *     It is ALSO machine zero for a map rotation in the `(1,i)` or `(j,k)`
- *     planes, which the bead's "rotation is a genuinely second family" note
+ *     planes, which the "rotation is a genuinely second family" claim
  *     does not distinguish: those rotations commute with the revolution and
  *     fix a complex `c`, so they buy a different-looking object out of the
  *     SAME lathe. Only the other four planes break it (`lathe` 0.02-0.10).
@@ -99,7 +100,7 @@
  *     CONTAINS the revolution — renders a near-perfect grooved SPHERE, the
  *     dullest panel here. So the 4D lift's honest promise is a different
  *     section, not a different kind of object, and one of its orientations is
- *     worse than the fixed slice fr-7u8t.5 would have shipped.
+ *     worse than the fixed slice the shader cores would have shipped.
  *   - The close-up sheet answers the question the wide frames cannot: the
  *     detail is real (laminated plates persist to 64x — this is a fractal,
  *     not a blob) but it is ONE MOTIF at every scale, every constant and both
@@ -123,29 +124,28 @@
  *     sculptures — a looping torus, a coiled shell — with no fine structure
  *     at all. That is the family's ceiling, and it was found by search
  *     rather than by taste.
- *   - FILL'S INSTRUMENT CHANGED UNDER fr-azjk, mid-epic, and every fill%
- *     figure above is the re-measured one: `fill%` is now a seeded uniform
- *     sample against the orbit's own membership test rather than a
- *     `d < 1e-3` threshold on the DE (`set-extent.ts`'s module doc; `occ%`
- *     and `rough` are untouched, since they were already grid measures and
- *     are now only labelled as such rather than implied to be volume). Every
- *     panel and scan `fill%` moved by a few tenths of a point at most — three
- *     panels rounded down to exactly 0.0%: the plain dendrite and its
+ *   - FILL'S INSTRUMENT CHANGED under the set-extent correction, mid-epic,
+ *     and every fill% figure above is the re-measured one: `fill%` is now a
+ *     seeded uniform sample against the orbit's own membership test rather
+ *     than a `d < 1e-3` threshold on the DE (`set-extent.ts`'s module doc;
+ *     `occ%` and `rough` are untouched, since they were already grid measures
+ *     and are now only labelled as such rather than implied to be volume).
+ *     Every panel and scan `fill%` moved by a few tenths of a point at most —
+ *     three panels rounded down to exactly 0.0%: the plain dendrite and its
  *     `rx=60`-rotated, `xw`-sliced sibling (this doc's own prediction for a
  *     known-empty interior, working as intended rather than regressing) and
  *     the plain rabbit rotated `rx=90` (a thin husk, `rough` 1.39, with no
  *     measurable interior of its own). The search loop is where it mattered:
- *     re-run at the same 240 rolls, 45 land as bodies (was 59), 164 read
- *     dust (was 142), 10 outgrow the frame (was 18) — fewer bodies because
- *     the corrected sampler no longer counts a near-boundary ESCAPER as
- *     interior, so the dust gate now catches what the threshold used to
- *     wave through. The clearest single case is the roll that used to TOP
- *     the ranking: `rough` 1.39, similarity, `c=(0.81,-0.81,0.18,-0.22)`,
- *     read `fill` 2.6% on the broken instrument and reads 0.20% on the
- *     fixed one — below the 0.5% cutoff, and now correctly excluded as
- *     dust. Its exclusion is what moves the THIRD LEVER bullet above: with
- *     the false top gone, the two roughest surviving bodies are both
- *     deformed.
+ *     re-run at the same 240 rolls, 45 land as bodies (was 59), 164 read dust
+ *     (was 142), 10 outgrow the frame (was 18) — fewer bodies because the
+ *     corrected sampler no longer counts a near-boundary ESCAPER as interior,
+ *     so the dust gate now catches what the threshold used to wave through.
+ *     The clearest single case is the roll that used to TOP the ranking:
+ *     `rough` 1.39, similarity, `c=(0.81,-0.81,0.18,-0.22)`, read `fill` 2.6%
+ *     on the broken instrument and reads 0.20% on the fixed one — below the
+ *     0.5% cutoff, and now correctly excluded as dust. Its exclusion is what
+ *     moves the THIRD LEVER bullet above: with the false top gone, the two
+ *     roughest surviving bodies are both deformed.
  *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
  *        scripts/qjulia-beauty.harness.ts
@@ -314,7 +314,7 @@ function solve4(m: number[], b: Vec4): Vec4 {
 
 // ------------------------------------------------------------- the slices
 
-/** How a 3D query is lifted into the 4D set (fr-7u8t.6's own question). */
+/** How a 3D query is lifted into the 4D set (the 4D lift's own question). */
 interface SliceSpec {
   /** Rotor turns composed in order, in DEGREES — fed through `rotor4.ts`'s
    * own `rotateInPlane`, so this is the same SO(4) the 4D view uses. */
@@ -331,7 +331,7 @@ function sliceMatrix(spec: SliceSpec): number[] {
   return rotorMatrix(pair);
 }
 
-/** `q = R·(p, w0)` — the lift, and the whole of fr-7u8t.6's geometry. */
+/** `q = R·(p, w0)` — the lift, and the whole of its geometry. */
 function sliceQuery(r: number[], p: Vec3, w0: number): Vec4 {
   return apply4(r, [p[0], p[1], p[2], w0]);
 }
@@ -369,12 +369,12 @@ function panelDE(
 
 /** The orbit's terminal radius, left in module scratch by
  * {@link runQJuliaOrbit} — `escape-de.ts`'s `runEscapeOrbit` split, for its
- * reason: a fill measurement (fr-azjk) has to ask the orbit ITSELF whether
+ * reason: a fill measurement has to ask the orbit ITSELF whether
  * it escaped, never a threshold on the distance estimate — `d < eps` reads
  * small for a near-boundary ESCAPER exactly as it does near one the orbit
  * stays inside of, which is DEFECT 2 in `set-extent.ts`'s module doc.
- * `qjulia-de.ts` exports no membership reader of its own (fr-7u8t.5 is
- * closed won't-do, so no renderer has ever needed one), so this is the
+ * `qjulia-de.ts` exports no membership reader of its own (the shader cores
+ * are closed won't-do, so no renderer has ever needed one), so this is the
  * harness's own copy of {@link estimateQJuliaDistance}'s position
  * recurrence, term for term, minus the `dr` accumulator — `dr` feeds only
  * the DISTANCE and never the escape test `r <= de.bailout` below, so
@@ -657,7 +657,7 @@ function latheDefect(de: QJuliaDE, seed = 0x51ce): number {
 interface ShapeStats {
   /** Percent of the view ball whose points are MEMBERS — a seeded uniform
    * sample against the orbit's own escape test ({@link qjuliaSetContains}),
-   * not a threshold on the DE (fr-azjk). This is the one VOLUME measure of
+   * not a threshold on the DE. This is the one VOLUME measure of
    * the four; the other three stay grid measures (see `shapeStats`'s doc). */
   fillPct: number;
   /** Percent of the view ball the set comes within one grid-cell radius of,
@@ -677,7 +677,7 @@ interface ShapeStats {
  * Shape measures over a box TWICE the view ball (`extent()`'s convention, so
  * a set that outgrew the frame reads in `reach > 1` rather than clipping
  * silently) — from TWO DIFFERENT INSTRUMENTS that must not be read as
- * interchangeable (fr-azjk).
+ * interchangeable.
  *
  * `fillPct` is VOLUME, and it is the only one of the four numbers that is:
  * a seeded uniform sample against `member`, the panel's own membership
@@ -687,16 +687,16 @@ interface ShapeStats {
  * exactly as it does near one an orbit stays inside of, so `d < eps` cannot
  * tell the two apart, which is what the old `d < 1e-3` reading here did.
  *
- * `occPct` and `rough` stay GRID measures, at the cell scale `cells`
- * resolves the box into — a deliberate, different choice from `fillPct`,
- * not an oversight fr-azjk missed: a dendrite constant has EMPTY interior,
- * so a volume sampler reads `fillPct` near zero for the most intricate
- * object on the sheet, and `occPct` ("does the set come within one cell of
- * this point") is the only column that shows up for one at all. NEITHER IS
- * A VOLUME FRACTION however fine `cells` gets — `occPct` counts cells the
- * set merely comes close to (a generous, cell-radius-wide test), and
- * `rough` is a rasterised surface-area ratio, a property of the grid it is
- * measured on rather than of the set alone.
+ * `occPct` and `rough` stay GRID measures, at the cell scale `cells` resolves
+ * the box into — a deliberate, different choice from `fillPct`, not an
+ * oversight the set-extent correction missed: a dendrite constant has EMPTY
+ * interior, so a volume sampler reads `fillPct` near zero for the most
+ * intricate object on the sheet, and `occPct` ("does the set come within one
+ * cell of this point") is the only column that shows up for one at all.
+ * NEITHER IS A VOLUME FRACTION however fine `cells` gets — `occPct` counts
+ * cells the set merely comes close to (a generous, cell-radius-wide test),
+ * and `rough` is a rasterised surface-area ratio, a property of the grid it
+ * is measured on rather than of the set alone.
  */
 function shapeStats(
   de: DistanceEstimator,
@@ -896,7 +896,7 @@ function renderPanel(panel: Panel, cells: number): PanelStats & ShapeStats {
   return { ...stats, ...shape };
 }
 
-describe("fr-7u8t.5/.6 quaternion Julia beauty sweep", () => {
+describe("quaternion Julia beauty sweep", () => {
   it("is a solid of revolution exactly where the theorem says", () => {
     // The theorem: the plain map is a lathe at EVERY constant.
     for (const c of [CONTROL_C, RABBIT_C, DENDRITE_C, FOURD_C]) {

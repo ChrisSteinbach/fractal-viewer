@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * fr-2w5: WebGPU capability/allocation probe — the experimental half of the
+ * WebGPU capability/allocation probe — the experimental half of the
  * flame GPU/CPU selection-flakiness investigation. Launches a real browser
  * and measures, from inside the page:
  *
@@ -16,7 +16,7 @@
  *     too-big allocation fails (create-scope? mapAsync? silently?) and with
  *     what error type/message, per browser. This is the experiment that
  *     distinguishes "the limit guard would have caught it" from "the
- *     allocator refused an allocation the limits permit" (fr-e07's Firefox
+ *     allocator refused an allocation the limits permit" (the Firefox
  *     finding) and tells us whether error scopes surface it at create time.
  *
  * Usage:

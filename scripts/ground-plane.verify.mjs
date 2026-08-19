@@ -1,5 +1,5 @@
 /**
- * Ground-plane real-driver verification (fr-rhn5, not an npm script).
+ * Ground-plane real-driver verification (not an npm script).
  *
  * Drives the dev-server app on a REAL X display (real GPU: WebGPU through
  * Vulkan, WebGL through the native driver) and checks the floor feature
@@ -123,7 +123,7 @@ try {
     failed = true;
     log("FAIL: surface mode never became clickable (leg 1)");
   }
-  // The fr-tmgf engine label must say WebGPU — the compute path owns
+  // The engine label must say WebGPU — the compute path owns
   // fold-shaped sessions when an adapter exists, plane included. On a
   // fast driver the row can hide before a 1s poll sees it, so poll fast
   // and accept a seen-then-hidden label.

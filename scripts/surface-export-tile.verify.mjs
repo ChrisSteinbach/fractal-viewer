@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 /**
- * fr-biox export-tiling gate: does a TILED compute capture reproduce the
+ * Export-tiling gate: does a TILED compute capture reproduce the
  * untiled one, pixel for pixel?
  *
  * THE BUG THIS EXISTS TO CATCH. `SurfaceComputeRenderer` allocates six
- * per-ray buffers for a whole frame (36 B/ray since fr-si66, 44 across
- * five before it; the ray state alone is
- * 16 B), and a capture's rays scale with exportScale SQUARED — a 4x export
- * of a 1920x1057 pane is 32.5M rays, a 520 MB ray-state buffer inside a
- * ~1.2 GB frame. Devices refuse that, and WebGPU does not throw for it:
+ * per-ray buffers for a whole frame (36 B/ray since the march status
+ * side-channel replaced the whole-states readback, 44 across five before
+ * it; the ray state alone is 16 B), and a capture's rays scale with
+ * exportScale SQUARED — a 4x export of a 1920x1057 pane is 32.5M rays, a
+ * 520 MB ray-state buffer inside a ~1.2 GB frame. Devices refuse that, and
+ * WebGPU does not throw for it:
  * `createBuffer` returns an INVALID buffer plus a validation error, and
  * the first REJECTION comes from a staging `mapAsync` several awaits later
  * — which is exactly how the bug reached a user, as a failed Save-PNG and
@@ -33,7 +34,7 @@
  * TWO ARMS, one pinned scene (a 2-map pure-boxfold pair — compute-shaped,
  * so the session runs the WebGPU tracer, and cheap enough to settle under
  * SwiftShader; the hash carries an explicit `camera`, which is what makes
- * the render reproducible run to run, fr-opgk):
+ * the render reproducible run to run):
  *   A. no flag           -> the export fits one frame: ONE tile.
  *   B. ?surfacemaxrays=N -> the same export under a pretended device
  *                           ceiling: MANY tiles, same pixels.
@@ -81,15 +82,15 @@ const DISPLAY = args.display;
  * export is a 66-row band, so the 560-row export tiles into 9. */
 const MAX_RAYS = Number(args.maxrays ?? 60_000);
 
-/** The fr-5rvk boxfold PAIR (surface-fold.verify.mjs's BOXFOLD_HASH: two
+/** The boxfold PAIR (surface-fold.verify.mjs's BOXFOLD_HASH: two
  * single-variation boxfold maps, `deHasFolds` true, eligibility
  * "eligible") with three things pinned on top:
  *   - an explicit CAMERA, because auto-framing seeds from a
- *     `Math.random()` cloud and drifts ~0.3% per load (fr-opgk), which
+ *     `Math.random()` cloud and drifts ~0.3% per load, which
  *     would swamp the diff this gate exists to read;
  *   - the RINGS color source, so the comparison covers a LUT-sampled
  *     palette rather than flat per-slot colors;
- *   - the GROUND PLANE (fr-rhn5), which is what makes the frame worth
+ *   - the GROUND PLANE, which is what makes the frame worth
  *     comparing at all. This attractor is a sparse dust — ~1500 of
  *     504k pixels hit it — and a diff over a frame that is 99.7%
  *     backdrop barely moves when the geometry does: the flipped-band
@@ -146,7 +147,7 @@ async function runArm(ctx, label, maxRays) {
   page.on("console", (m) => {
     const t = m.text();
     if (t.includes("WebGPU compute tracer active")) computeActive = true;
-    // The live pane's own fit under the same ceiling (fr-biox) — a
+    // The live pane's own fit under the same device ray ceiling — a
     // capture tiles, a live frame cannot, so it traces smaller and blits
     // up, disclosing itself once per session.
     if (/^Surface compute: tracing \d+x\d+ for a/.test(t)) fitted = true;

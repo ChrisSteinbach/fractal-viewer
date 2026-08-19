@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * fr-vja8 campaign: post-deploy LIVE-SITE smoke test.
+ * Post-deploy LIVE-SITE smoke test.
  *
  * Deployment to GitHub Pages is `workflow_dispatch`-only (see CLAUDE.md's
  * Branching & Deployment section) — nothing runs it automatically on merge,

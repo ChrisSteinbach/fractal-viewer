@@ -1,18 +1,18 @@
 /**
- * fr-7u8t.1 follow-up: how good a JULIA-FAMILY FLAME can this app already
- * make, with no new variation, no new render mode and no core change?
+ * How good a JULIA-FAMILY FLAME can this app already make, with no new
+ * variation, no new render mode and no core change?
  *
  * `juliaSet`/`juliaDust` are deliberately austere — ONE transform, weight 1,
  * no blend, `scale.z = 0` — because they exist to PROVE the Inverse
  * Iteration recipe (`docs/julia-sets.md`) and are pinned as such by
  * presets.test.ts. That is a demonstration, not an artwork, and it undersells
- * the reference class the epic was motivated by: Apophysis/flam3 flames built
- * on the `julia` family, BLENDED. This sheet decides whether the gap is the
- * app's or the preset's, by rendering candidates through the SHIPPED flame
- * pipeline (`accumulateFlame` -> `adaptiveDownsampleFlame` -> `tonemapFlame`,
- * at `state.ts`'s own defaults) beside two controls the answer has to beat:
- * the shipped `juliaSet` rendered as a flame, and the repo's existing flame
- * showcases (`radiolarian`, `swirlFlame`).
+ * the reference class that motivated the question: Apophysis/flam3 flames
+ * built on the `julia` family, BLENDED. This sheet decides whether the gap
+ * is the app's or the preset's, by rendering candidates through the SHIPPED
+ * flame pipeline (`accumulateFlame` -> `adaptiveDownsampleFlame` ->
+ * `tonemapFlame`, at `state.ts`'s own defaults) beside two controls the
+ * answer has to beat: the shipped `juliaSet` rendered as a flame, and the
+ * repo's existing flame showcases (`radiolarian`, `swirlFlame`).
  *
  * Every candidate is written as a full transform literal so any panel that
  * earns it can be lifted verbatim. Only the `doc: "transforms"` ones are
@@ -754,7 +754,7 @@ const COMPOSITIONS: Composition[] = [
   },
 ];
 
-describe("fr-7u8t.1 julia-family flame sheet", () => {
+describe("julia-family flame sheet", () => {
   it("renders the candidates beside the shipped preset and the bar", () => {
     const panels = COMPOSITIONS.map((c) => {
       const panel = renderComposition(c);

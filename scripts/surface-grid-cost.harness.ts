@@ -1,5 +1,5 @@
 /**
- * fr-aj4w measurement harness: what does an empty-space-grid build
+ * Grid-build cost harness: what does an empty-space-grid build
  * (`buildSurfaceGrid`, `src/fractal/surface-grid.ts`) actually cost on a
  * pure-fold system (boxfold/spherefold/mandelbox variations)?
  *
@@ -8,12 +8,12 @@
  * estimator is a beam of inverse-map descents (up to `de.maxDepth` levels),
  * and on fold systems each descent LEVEL fans one visited map out into
  * 27/3/81 branches (`SURFACE_FOLD_*`) instead of the affine ladder's single
- * child. The bead suspects — UNMEASURED before this harness — that this
+ * child. It was suspected — UNMEASURED before this harness — that this
  * makes a fold-system grid build take minutes instead of the ~2s an affine
  * system pays. This file produces the numbers behind that split: this
  * harness itself changes no production code, only measures it, but
  * `buildSurfaceGridSlab`/`buildSurfaceGrid`'s `estimator` parameter
- * (fr-aj4w, `surface-grid.ts`) now defaults to `surfaceGridEstimator`'s
+ * (`surface-grid.ts`) now defaults to `surfaceGridEstimator`'s
  * per-system choice — `"plain"` for fold systems, `"refined"` for affine —
  * rather than the flat `"refined"` it shipped with before this harness's
  * verdict (below) justified the split.
@@ -22,13 +22,14 @@
  * cheap baseline, the four synthetic pure-fold pairs from
  * `harness-profiles.ts` (`foldBoxfoldPair`, `foldBoxfoldNegPlusAffine`,
  * `foldSpherefoldPair`, `foldMandelboxPair` — extracted verbatim from
- * `surface-beam.harness.ts`'s fr-5rvk section so both harnesses measure the
- * IDENTICAL frozen profiles), and the shipped `mandelboxKifs` preset (12
+ * `surface-beam.harness.ts`'s pure-fold section so both harnesses measure
+ * the IDENTICAL frozen profiles), and the shipped `mandelboxKifs` preset (12
  * maps: 8 mandelbox corners + 4 boxfold binders) — the acceptance-criterion
- * system fr-5rvk itself measured against, and the row that matters most
- * here. `mandelboxKifs` is measured right after the two cheap affine rows,
- * ahead of the four synthetic pairs, so it gets first claim on the time
- * budget below rather than risking starvation if an earlier row runs long.
+ * system the pure-fold branch sweep itself measured against, and the row
+ * that matters most here. `mandelboxKifs` is measured right after the two
+ * cheap affine rows, ahead of the four synthetic pairs, so it gets first
+ * claim on the time budget below rather than risking starvation if an
+ * earlier row runs long.
  *
  * For each system x estimator (`"plain"` = {@link estimateDistance},
  * `"refined"` = {@link estimateDistanceRefined}) x resolution (32, 48, 64),
@@ -45,21 +46,21 @@
  * the proxy for what a weaker (`"plain"`) estimator gives up: fewer, and
  * shorter, marcher skips.
  *
- * TIMEOUT GUARD (per the bead's ask). Resolution 32 always runs, for every
+ * TIMEOUT GUARD (as specified). Resolution 32 always runs, for every
  * system x estimator. Its wall time projects 48 (`x3.375 = (48/32)^3`) and
  * 64 (`x8 = (64/32)^3`) under a constant-cost-per-cell assumption; a
  * resolution whose PROJECTION exceeds `PROJECTION_CUTOFF_MS` (240s) is
- * never run — its row prints `PROJECTED <s>` instead, which the bead can
- * read as a measurement in its own right (a system that projects to
+ * never run — its row prints `PROJECTED <s>` instead, which reads as a
+ * measurement in its own right (a system that projects to
  * multiple minutes at 64^3 already answers the "does this take minutes"
  * question without spending the minutes). The projection is a heuristic
  * (constant per-cell cost), not a certified bound — a smaller `cellRadius`
  * at finer resolutions gives the early-out cutoff less slack, so real
- * scaling could run somewhat above cubic — but it is the bead's specified
+ * scaling could run somewhat above cubic — but it is the specified
  * methodology and cheap to compute.
  *
- * GLOBAL TIME BUDGET (added beyond the bead's ask, for this harness's own
- * safety). The per-resolution guard bounds any ONE build, but does not
+ * GLOBAL TIME BUDGET (added beyond the specified guard, for this harness's
+ * own safety). The per-resolution guard bounds any ONE build, but does not
  * bound the SUM across 7 systems x 2 estimators x up to 3 resolutions each
  * — a run of merely-under-cutoff builds could still add up past what the
  * runner invoking this harness can wait for. `GLOBAL_BUDGET_MS` (5 minutes
@@ -263,7 +264,7 @@ interface CostSystem {
   transforms: Transform[];
 }
 
-describe("fr-aj4w surface grid cost harness", () => {
+describe("surface grid cost harness", () => {
   it("sanity: identical specs and plain<=refined monotonicity per cell", () => {
     const sanitySystems: CostSystem[] = [
       { label: "default", transforms: defaultTransforms() },
@@ -337,7 +338,7 @@ describe("fr-aj4w surface grid cost harness", () => {
       { label: "mandelbox pair", transforms: foldMandelboxPair() },
     ];
     console.log(
-      `\n== fr-aj4w surface-grid cost (resolutions 32/48/64;` +
+      `\n== surface-grid cost (resolutions 32/48/64;` +
         ` global budget ${(GLOBAL_BUDGET_MS / 1000).toFixed(0)}s,` +
         ` per-cell projection cutoff ${(PROJECTION_CUTOFF_MS / 1000).toFixed(0)}s) ==`,
     );
