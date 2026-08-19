@@ -138,6 +138,27 @@ npm run bench:gpu     # Headless WebGPU flame agreement/bench (real Chrome) — 
 npm run bench:surface # WebGPU fold-DE kernel agreement/timing — pins surface-de-gpu.ts (all seven cores; eval/march baselines + fr-tzdg's march-unproject/shade app path) to its CPU oracles; add --display=:0 for real-driver timing. Run it on a QUIET machine, never beside the test suite: a contended software device corrupts mid-run readbacks, which the fr-76pp canary reports as verdict=device-unreliable (exit 2, rerun). JUDGE THE ESCAPE ROWS ON --display=:0 — escChainKaleido carries a known SwiftShader-only false failure (fr-jtd4) and the flip cap must NOT be raised to make it green. Fixtures, caps and measured rows: docs/gpu-bench-surface.md
 ```
 
+**`--display=:0` NEEDS AN X COOKIE, and without it every gate that offers it
+falls back to SwiftShader SILENTLY.** This machine has the real Iris — the
+driver this file keeps calling the authority — but an agent/SSH shell arrives
+with a forwarded `DISPLAY` (`localhost:10.0`) and no authorization for `:0`, so
+`--display=:0` gets "Authorization required" and the run quietly measures a CPU
+rasterizer instead. Nothing fails; the numbers are just not the ones you asked
+for. The credential is Xwayland's, and its suffix changes every login, so glob
+it rather than pasting a path:
+
+```bash
+export XAUTHORITY=$(ls -t /run/user/$(id -u)/.mutter-Xwaylandauth.* | head -1)
+export DISPLAY=:0
+glxinfo -B | grep "OpenGL renderer"   # MUST say Mesa Intel(R) Iris(R) Xe, not SwiftShader
+```
+
+CHECK THAT LINE BEFORE BELIEVING A REAL-DRIVER ROW. A SwiftShader run that was
+meant to be an Iris run is the failure mode this note exists to stop — fr-j85n
+shipped its whole measurement set on software before noticing, and the gates it
+could not complete at all (`bench:surface`) were the ones the software adapter
+is too slow for rather than the ones that were broken.
+
 Run a single test file: `npx vitest run src/fractal/chaos-game.test.ts`
 
 The escape-time family's in-app gate (fr-tdin, not an npm script — it drives a
