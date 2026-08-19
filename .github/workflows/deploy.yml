@@ -65,6 +65,13 @@ jobs:
       # repo's check-runs endpoint returns 200 with no token at all), so no
       # extra `checks: read` permission is added beyond this job's existing
       # contents: read.
+      #
+      # fr-lt3w: a REBASE merge mints NEW SHAs on main, so a PR's green
+      # checks do not transfer to the merged commits — a dispatch fired
+      # straight after `gh pr merge --rebase` is refused here until main's
+      # own CI finishes on the new tip (measured: refused at merge+14s).
+      # That refusal is this gate working as designed; wait for main's CI,
+      # then re-dispatch.
       - name: Require green CI for this commit
         env:
           GH_TOKEN: ${{ github.token }}

@@ -1942,6 +1942,13 @@ DO NOT infer the method from what recent PRs did. As of this writing every
 merged PR on `main` landed as a single squashed commit — that is the mistake
 this note exists to stop, not the convention to copy.
 
+**Merge, then WAIT for main's CI before dispatching a deploy.** A rebase merge
+mints NEW SHAs on main, so the PR's green checks do not transfer to the merged
+commits: deploy.yml's gate reads the dispatched commit's own check runs, and a
+dispatch fired straight after `gh pr merge --rebase` is refused (measured: at
+merge+14s, fr-lt3w). The refusal is the gate working, not a bug — watch main's
+CI finish on the new tip (`gh run watch`), then dispatch.
+
 ## Session Completion
 
 When ending a work session, work is NOT complete until `git push` succeeds.
