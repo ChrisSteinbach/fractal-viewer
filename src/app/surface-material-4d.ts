@@ -313,6 +313,11 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   uniform mat4 uInvProjView;
   uniform vec3 uBgTop;
   uniform vec3 uBgBottom;
+  /** Backdrop gradient SHAPE (fr-h3mp): mirrors the 3D tracer's
+   * uBgShape/uBgCenter/uBgScale line for line — see the 3D twin. */
+  uniform int uBgShape;
+  uniform vec2 uBgCenter;
+  uniform vec2 uBgScale;
   /** Depth-fog density multiplier (fr-5h5d): scales the traveled-distance
    * term of the fog blend below (main()'s float fog computation),
    * mirroring the 3D tracer's uFogDensity line for line — 1 is the
@@ -1939,15 +1944,15 @@ uniform float uBalloonFar;
  * crashed the compiler outright, empty info log, lost context). MEASURED
  * here, raw resolved / what the driver gets:
  *
- * - off:     62711 B (61.2KB) / 62711 B — under 64KB, so NOT stripped
- *            (2825 B of headroom as of fr-xn9s's shared backgroundShapeT
- *            splice — down from 3285 B, since the emitted function costs
- *            460 B here even at its one-shape "linear" size —
- *            docs/surface-glsl-tracers.md carries the fr-ehcj history this
- *            continues).
- * - balloon: 68105 B (66.5KB) / 16899 B (16.5KB) — past the threshold, so
+ * - off:     62804 B (61.3KB) / 62804 B — under 64KB, so NOT stripped
+ *            (2732 B of headroom as of fr-h3mp's radial branch — down from
+ *            2825 B, since the shared backgroundShapeT body and its three
+ *            new uniforms cost 93 B here even at "linear" defaults —
+ *            docs/surface-glsl-tracers.md carries the fr-ehcj/fr-xn9s
+ *            history this continues).
+ * - balloon: 68176 B (66.6KB) / 17086 B (16.7KB) — past the threshold, so
  *            the size rule strips it.
- * - plane:   70517 B (68.9KB) / 17972 B (17.6KB) — plane variants always
+ * - plane:   70588 B (68.9KB) / 18159 B (17.7KB) — plane variants always
  *            strip (fr-rhn5).
  *
  * A single monolithic source carrying both arms would be ~74KB and every
@@ -2076,6 +2081,10 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uInvProjView: { value: new THREE.Matrix4() },
       uBgTop: { value: BG_TOP.clone() },
       uBgBottom: { value: BG_BOTTOM.clone() },
+      // fr-h3mp: linear defaults, matching the 3D twin.
+      uBgShape: { value: 0 },
+      uBgCenter: { value: new THREE.Vector2(0.5, 0.5) },
+      uBgScale: { value: new THREE.Vector2(1, 1) },
       uFogDensity: { value: 1 },
       uFogTint: { value: new THREE.Vector3(1, 1, 1) },
       uFogTintStrength: { value: 0 },
@@ -2119,10 +2128,10 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       SURFACE4_GROUND_PLANE: 0,
     },
     vertexShader: SURFACE4_VERTEX,
-    // Both arms off resolves to SURFACE4_FRAGMENT verbatim (62711 B, under
+    // Both arms off resolves to SURFACE4_FRAGMENT verbatim (62804 B, under
     // the 64KB strip threshold), so a plain 4D session hands the driver
     // exactly the source it did before fr-qxxw/fr-h0c3 (plus fr-ehcj's
-    // envTint and fr-xn9s's shared backgroundShapeT splice).
+    // envTint and fr-xn9s/fr-h3mp's shared backgroundShapeT splice).
     fragmentShader: surface4FragmentFor(),
     depthTest: false,
     depthWrite: false,

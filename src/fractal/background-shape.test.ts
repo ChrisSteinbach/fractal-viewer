@@ -5,11 +5,12 @@ import {
   backgroundColorAt,
   backgroundImageUv,
   backgroundMeanColor,
+  backgroundRadialScale,
   backgroundShapeCode,
   backgroundShapeSource,
   backgroundShapeT,
 } from "./background-shape";
-import type { BackgroundStops } from "./background-shape";
+import type { BackgroundShapeSpec, BackgroundStops } from "./background-shape";
 
 describe("backgroundImageUv", () => {
   it("reproduces (py + 0.5) / h exactly at zero offset for a spread of rows", () => {
@@ -140,16 +141,130 @@ describe("backgroundShapeSource", () => {
     expect(source).toContain("fn backgroundShapeT(p: vec2f) -> f32");
   });
 
-  it("emits character-for-character identical function bodies in both dialects", () => {
+  it("emits identical function bodies in both dialects once the per-dialect tokens are normalized away", () => {
+    // fr-h3mp: the radial branch reads uniforms through each dialect's own
+    // `field` accessor (GLSL flat uniforms vs WGSL's `shade.` struct
+    // field), WGSL declares its local with `let` rather than a type prefix,
+    // and WGSL requires an unsigned literal suffix GLSL does not — the
+    // three token differences background-shape.ts's own doc calls out at
+    // backgroundShapeBody. Every other character, radial arithmetic
+    // included, must still be one shared template.
     const bodyOf = (source: string): string => {
       const start = source.indexOf("{");
       const end = source.lastIndexOf("}");
       return source.slice(start + 1, end);
     };
+    const normalize = (body: string): string =>
+      body
+        .replaceAll("shade.bg", "uBg")
+        .replaceAll(" == 1u)", " == 1)")
+        .replaceAll("let r", "float r")
+        .replaceAll("f32", "float");
     const glslBody = bodyOf(backgroundShapeSource(BACKGROUND_SHAPE_GLSL));
     const wgslBody = bodyOf(backgroundShapeSource(BACKGROUND_SHAPE_WGSL));
-    expect(glslBody).toBe(wgslBody);
+    expect(normalize(glslBody)).toBe(normalize(wgslBody));
     expect(glslBody.length).toBeGreaterThan(0);
+  });
+
+  it("emits valid WGSL local-declaration syntax (let, not a type-prefixed decl)", () => {
+    // The bug this test exists to catch: WGSL has no `f32 r = …` form (that
+    // is GLSL/C-style and fails to parse — "expected '=' for assignment").
+    const source = backgroundShapeSource(BACKGROUND_SHAPE_WGSL);
+    expect(source).toContain("let r =");
+    expect(source).not.toMatch(/f32\s+r\s*=/);
+  });
+
+  it("declares uBgShape/uBgCenter/uBgScale as the GLSL field spellings", () => {
+    const source = backgroundShapeSource(BACKGROUND_SHAPE_GLSL);
+    expect(source).toContain("uBgShape");
+    expect(source).toContain("uBgCenter");
+    expect(source).toContain("uBgScale");
+  });
+
+  it("declares shade.bgShape/shade.bgCenter/shade.bgScale as the WGSL field spellings", () => {
+    const source = backgroundShapeSource(BACKGROUND_SHAPE_WGSL);
+    expect(source).toContain("shade.bgShape");
+    expect(source).toContain("shade.bgCenter");
+    expect(source).toContain("shade.bgScale");
+  });
+});
+
+describe("radial backgroundShapeT", () => {
+  it("returns 0 at the center", () => {
+    expect(
+      backgroundShapeT(0.5, 0.5, {
+        kind: "radial",
+        center: [0.5, 0.5],
+        scale: [2, 2],
+      }),
+    ).toBe(0);
+  });
+
+  it("reaches 1 at every corner of a non-square image via backgroundRadialScale", () => {
+    const width = 1920;
+    const height = 1080;
+    const scale = backgroundRadialScale(width, height);
+    const corners: Array<[number, number]> = [
+      [0, 0],
+      [1, 0],
+      [0, 1],
+      [1, 1],
+    ];
+    for (const [u, v] of corners) {
+      const t = backgroundShapeT(u, v, {
+        kind: "radial",
+        center: [0.5, 0.5],
+        scale,
+      });
+      expect(t).toBeCloseTo(1, 9);
+    }
+  });
+
+  it("ignores center/scale for linear", () => {
+    const withDefaults = backgroundShapeT(0.9, 0.25, { kind: "linear" });
+    const withGeometry = backgroundShapeT(0.9, 0.25, {
+      kind: "linear",
+      center: [0.1, 0.1],
+      scale: [5, 5],
+    });
+    expect(withDefaults).toBe(withGeometry);
+  });
+});
+
+describe("backgroundRadialScale", () => {
+  it("returns equal per-axis scale for a square image", () => {
+    const [sx, sy] = backgroundRadialScale(500, 500);
+    expect(sx).toBe(sy);
+  });
+
+  it("scales each axis proportionally to that axis's own pixel dimension", () => {
+    const [sx, sy] = backgroundRadialScale(1920, 1080);
+    expect(sx / sy).toBeCloseTo(1920 / 1080, 9);
+    expect(sx).toBeGreaterThan(sy);
+  });
+});
+
+describe("radial backgroundMeanColor", () => {
+  it("lies strictly between the two stops per channel and nearer the corner stop than the center stop", () => {
+    const stops: BackgroundStops = {
+      top: [0.06, 0.06, 0.06], // the corner (t = 1) color
+      bottom: [0.14, 0.14, 0.14], // the center (t = 0) color
+    };
+    const scale = backgroundRadialScale(1024, 768);
+    const shape: BackgroundShapeSpec = {
+      kind: "radial",
+      center: [0.5, 0.5],
+      scale,
+    };
+    const [r] = backgroundMeanColor(stops, shape);
+    expect(r).toBeGreaterThan(stops.top[0]);
+    expect(r).toBeLessThan(stops.bottom[0]);
+    // A rectangle has more area away from its center than near it, so the
+    // mean should sit closer to the corner (top) stop than the center
+    // (bottom) stop.
+    const distToTop = Math.abs(r - stops.top[0]);
+    const distToBottom = Math.abs(r - stops.bottom[0]);
+    expect(distToTop).toBeLessThan(distToBottom);
   });
 });
 
@@ -162,5 +277,9 @@ describe("BACKGROUND_SHAPES / backgroundShapeCode", () => {
 
   it("assigns linear code 0", () => {
     expect(backgroundShapeCode("linear")).toBe(0);
+  });
+
+  it("assigns radial code 1", () => {
+    expect(backgroundShapeCode("radial")).toBe(1);
   });
 });

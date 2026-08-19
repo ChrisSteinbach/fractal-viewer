@@ -924,6 +924,19 @@
             </label>
           </div>
 
+          <!-- The backdrop's gradient SHAPE (fr-h3mp): orthogonal to the
+               Background select above — every mode can be linear or radial.
+               See fractal/background-shape.ts's BACKGROUND_SHAPES. -->
+          <div id="backgroundShapeRow">
+            <label class="select-label">
+              Shape
+              <select id="backgroundShape">
+                <option value="linear">Vertical</option>
+                <option value="radial">Radial</option>
+              </select>
+            </label>
+          </div>
+
           <!-- Custom backdrop stops (fr-5ps1); reuses the position-axis
                picker-row styling — same titled-row-of-swatches shape. -->
           <div id="backgroundCustomRow" class="position-axis-row hidden">

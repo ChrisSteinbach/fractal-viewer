@@ -18,6 +18,7 @@ import {
 } from "./state";
 import type { AppState, ParamSpec } from "./state";
 import { BACKGROUND_MODES } from "./background";
+import { BACKGROUND_SHAPES } from "../fractal/background-shape";
 import { applyScalarControl } from "./control-spec";
 import type { ScalarControlSpec } from "./control-spec";
 import { defaultTransforms, PRESET_NAMES } from "../fractal/presets";
@@ -6935,6 +6936,18 @@ describe("background select menu", () => {
       document.querySelectorAll<HTMLOptionElement>("#background option"),
     ).map((o) => o.value);
     expect(values).toEqual([...BACKGROUND_MODES]);
+  });
+});
+
+describe("background shape select menu (fr-h3mp)", () => {
+  // Same discipline as the background mode menu above, pinned against
+  // BACKGROUND_SHAPES (fractal/background-shape.ts) rather than
+  // BACKGROUND_MODES — the shape is a separate, orthogonal vocabulary.
+  it("offers exactly the registered background shapes, in order", () => {
+    const values = Array.from(
+      document.querySelectorAll<HTMLOptionElement>("#backgroundShape option"),
+    ).map((o) => o.value);
+    expect(values).toEqual([...BACKGROUND_SHAPES]);
   });
 });
 

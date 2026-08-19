@@ -168,6 +168,14 @@ describe("applyScalarControl: parsing/mapping", () => {
     );
   });
 
+  it("backgroundShape select apply sets background.shape from the option value", () => {
+    const spec = specById("backgroundShape");
+
+    const state = applyScalarControl(initialState(true), spec, "radial");
+
+    expect(state.background.shape).toBe("radial");
+  });
+
   it("showGuides checkbox apply sets showGuides from the checked flag", () => {
     const spec = specById("showGuides");
 
@@ -408,6 +416,20 @@ describe("effects", () => {
       // endpoint), so this control must route through applyBackground alone
       // — a direct scene.* call here would desync the tween (see
       // ControlEffects.applyBackground's doc in control-spec.ts).
+      for (const sceneMethod of Object.values(fx.scene)) {
+        expect(sceneMethod).not.toHaveBeenCalled();
+      }
+    });
+
+    it("backgroundShape effect invokes applyBackground exactly once and touches no scene method", () => {
+      const spec = specById("backgroundShape");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "radial");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.applyBackground).toHaveBeenCalledTimes(1);
       for (const sceneMethod of Object.values(fx.scene)) {
         expect(sceneMethod).not.toHaveBeenCalled();
       }

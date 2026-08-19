@@ -959,7 +959,11 @@ function main(): void {
   let liveBackground: BackgroundGradient = resolveBackground({ mode: "dark" });
   function pushBackground(stops: BackgroundGradient): void {
     liveBackground = stops;
-    scene.setBackground(stops);
+    // fr-h3mp: the shape always reads the CURRENT document's — a
+    // crossfade interpolates only the colors (background.ts's
+    // BackgroundTween doc), so the shape pops to the target's at the
+    // leg's first pushBackground call, exactly like every other caller.
+    scene.setBackground(stops, state.background.shape ?? "linear");
   }
   /** Snap the scene to the CURRENT document's backdrop, discarding any
    * in-flight crossfade — control edits and non-morph loads land instantly.

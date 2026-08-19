@@ -6985,6 +6985,11 @@ async function runSurfaceUnprojectLeg(
         // the whole width x height raster, so offset is the origin.
         bgOffset: [0, 0],
         bgExtent: [width, height],
+        // fr-h3mp: also inert in march mode; linear (0) needs no real
+        // center/scale.
+        bgCenter: [0.5, 0.5],
+        bgScale: [1, 1],
+        bgShape: 0,
       }),
     );
     const bindGroup = device.createBindGroup({

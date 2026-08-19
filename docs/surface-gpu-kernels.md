@@ -460,6 +460,38 @@ worked only because a LINEAR ramp restricted to a sub-rectangle is still
 linear, where re-deriving `imageUv` per pixel from the full extent works
 for any shape.
 
+## Radial vignette (fr-h3mp)
+
+`ShadeParams` grows a further `vec2f` + `vec2f` + `u32` — `bgCenter` at
+176, `bgScale` at 184, `bgShape` at 192 — `SURFACE_GPU_SHADE_BYTES` 176 ->
+208 (192 + 4 = 196, rounded up to the struct's 16-byte alignment). These
+carry `fractal/background-shape.ts`'s second shape, `"radial"`: `bgShape`
+is `backgroundShapeCode`'s numeric kind (0 linear, 1 radial), `bgCenter`
+the shape's normalized-image centre, `bgScale` `backgroundRadialScale` of
+whatever full image `bgExtent` names — the per-axis correction that keeps
+the vignette circular in real pixels rather than elliptical in normalized
+UV space. All three are REQUIRED on `SurfaceGpuShadeParams`, the same
+precedent as `bgOffset`/`bgExtent`: there is no universally-safe default
+for a field whose meaning depends on a sibling field's (`bgShape`) value.
+
+The shared `backgroundShapeT` body itself stops being LITERALLY
+byte-identical between the GLSL and WGSL emissions here: the radial branch
+reads `bgShape`/`bgCenter`/`bgScale` through each dialect's own
+`BackgroundShapeDialect.field` accessor, and WGSL's `shade.bgCenter`
+struct-field spelling cannot match GLSL's flat `uBgCenter` uniform. The two
+emitted bodies diverge in exactly four tokens (the field accessor prefix,
+the local-declaration keyword — WGSL's `let r` has no GLSL equivalent, a
+type-prefixed local declaration has no WGSL one — the `float`/`f32` type
+spelling, and WGSL's mandatory `u` suffix on the `bgShape == 1`
+comparison); `background-shape.test.ts` pins the two bodies identical once
+those tokens are normalized away, so the shared arithmetic still cannot
+drift between dialects.
+
+Every kernel core that shades (mode `"shade"` and march's `"unproject"`
+rays arm) reads the new fields through the same `ShadeParams` binding as
+`bgOffset`/`bgExtent` — no core-specific change, since the shade entry's
+`imageUv`/`bg` computation is shared text across all seven cores.
+
 ## Modes
 
 `eval` (per-query distances) and `march` (bounded-dispatch ray march,

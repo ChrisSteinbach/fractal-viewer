@@ -22,6 +22,7 @@ import type {
   BackgroundGradient,
   BackgroundMode,
   BackgroundParams,
+  BackgroundShape,
 } from "./background";
 import type {
   ColorMode,
@@ -2091,6 +2092,19 @@ export function setBackgroundCustom(
   custom: BackgroundGradient,
 ): AppState {
   return { ...state, background: { ...state.background, custom } };
+}
+
+/**
+ * Set the backdrop's gradient SHAPE (fr-h3mp) — orthogonal to `mode` (see
+ * {@link BackgroundParams.shape}). Not clamped, same enum discipline as
+ * {@link setBackgroundMode} (`background-shape.ts`'s `BACKGROUND_SHAPES`;
+ * persistence validates untrusted input). Leaves `mode`/`custom` untouched.
+ */
+export function setBackgroundShape(
+  state: AppState,
+  shape: BackgroundShape,
+): AppState {
+  return { ...state, background: { ...state.background, shape } };
 }
 
 /**

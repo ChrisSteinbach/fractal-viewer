@@ -3933,6 +3933,84 @@ describe("decodeScene background (fr-5ps1)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Background shape (fr-h3mp): orthogonal to mode, absent means "linear".
+// ---------------------------------------------------------------------------
+
+describe("decodeScene background shape (fr-h3mp)", () => {
+  it("encodes byte-identically to a pre-fr-h3mp document when the shape is the default linear", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: { mode: "haze", shape: "linear" },
+    };
+    const withoutShape: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: { mode: "haze" },
+    };
+    expect(encodeScene(s)).toBe(encodeScene(withoutShape));
+  });
+
+  it("round-trips the radial shape", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: { mode: "haze", shape: "radial" },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.background).toEqual({ mode: "haze", shape: "radial" });
+  });
+
+  it("writes the shape key alongside mode/custom", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: {
+        mode: "custom",
+        custom: { top: [0.2, 0.4, 0.6], bottom: [0.8, 1, 0] },
+        shape: "radial",
+      },
+    };
+    const payload = decodePayload(encodeScene(s));
+    expect(payload.background).toEqual({
+      mode: "custom",
+      top: "#336699",
+      bottom: "#ccff00",
+      shape: "radial",
+    });
+  });
+
+  it("omits shape from the encoded payload when it is the pristine linear default", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: { mode: "haze", shape: "linear" },
+    };
+    const payload = decodePayload(encodeScene(s));
+    expect(payload.background).toEqual({ mode: "haze" });
+  });
+
+  it("falls back to linear for an unrecognized shape id", () => {
+    const raw = {
+      ...baseSnapshot(),
+      background: { mode: "haze", shape: "swirl" },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.background).toEqual({ mode: "haze" });
+  });
+
+  it("falls back to linear when shape is entirely the wrong type", () => {
+    const raw = {
+      ...baseSnapshot(),
+      background: { mode: "haze", shape: 42 },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.background).toEqual({ mode: "haze" });
+  });
+
+  it("decodes a document with no shape key as linear (the legacy migration)", () => {
+    const raw = { ...baseSnapshot(), background: { mode: "haze" } };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.background).toEqual({ mode: "haze" });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Balloon pair (fr-5wlv.6) — the balloon echo/surface-balloon on-flag and its
 // normalized radius, persisted since epic fr-5wlv's "mode persists"
 // acceptance. decodeScene follows camera/fourD's exact quiet-drop contract

@@ -73,7 +73,9 @@
 import {
   backgroundColorAt,
   backgroundImageUv,
+  backgroundShapeCode,
   DEFAULT_BACKGROUND_SHAPE,
+  DEFAULT_BACKGROUND_SHAPE_CENTER,
   type BackgroundShapeSpec,
   type BackgroundStops,
 } from "../fractal/background-shape";
@@ -458,6 +460,16 @@ export interface SurfaceComputeFrameSpec {
    * compiling unchanged. A capture band passes both explicitly. */
   bgOffset?: [number, number];
   bgExtent?: [number, number];
+  /** The shared background shape (fr-h3mp) — `fractal/background-shape.ts`'s
+   * `BackgroundShapeSpec`, forwarded to the shade kernel's
+   * `bgShape`/`bgCenter`/`bgScale` and to
+   * {@link buildSurfaceComputeBackground}'s host prefill. OPTIONAL, same
+   * discipline as `bgOffset`/`bgExtent`: absent defaults to `{kind:
+   * "linear"}`, keeping gpu-bench's spec literals compiling unchanged. A
+   * radial shape's `scale` must already be `backgroundRadialScale` of the
+   * FULL image `bgExtent` names — see `scene.ts`'s
+   * `surfaceComputeFrameSpecAt`. */
+  bgShape?: BackgroundShapeSpec;
   /** Index into SURFACE_COLOR_SOURCES — the shader's dispatch integer. */
   colorSource: number;
   colorSpeed: number;
@@ -1936,6 +1948,14 @@ export class SurfaceComputeRenderer {
     bgOffset: [number, number];
     bgExtent: [number, number];
     shapeKind: BackgroundShapeSpec["kind"];
+    /** The radial shape's own geometry (fr-h3mp) — a centre/scale change
+     * (a viewport resize under the SAME shapeKind) must invalidate the
+     * cache too, not just a shapeKind flip. Unread while shapeKind is
+     * "linear", but still compared so a stale radial reading can never
+     * survive a later switch back to "linear" and then to "radial" again
+     * at a different aspect. */
+    bgCenter: [number, number];
+    bgScale: [number, number];
     rows: Uint8Array<ArrayBuffer>;
   } | null = null;
 
@@ -2330,6 +2350,9 @@ export class SurfaceComputeRenderer {
     bgExtent: [number, number],
     shape: BackgroundShapeSpec,
   ): Uint8Array<ArrayBuffer> {
+    const bgCenter: [number, number] =
+      shape.center ?? DEFAULT_BACKGROUND_SHAPE_CENTER;
+    const bgScale: [number, number] = shape.scale ?? [1, 1];
     const cached = this.background;
     if (
       cached &&
@@ -2339,7 +2362,9 @@ export class SurfaceComputeRenderer {
       cached.bgBottom.every((c, i) => c === bgBottom[i]) &&
       cached.bgOffset.every((c, i) => c === bgOffset[i]) &&
       cached.bgExtent.every((c, i) => c === bgExtent[i]) &&
-      cached.shapeKind === shape.kind
+      cached.shapeKind === shape.kind &&
+      cached.bgCenter.every((c, i) => c === bgCenter[i]) &&
+      cached.bgScale.every((c, i) => c === bgScale[i])
     ) {
       return cached.rows;
     }
@@ -2360,6 +2385,8 @@ export class SurfaceComputeRenderer {
       bgOffset: [...bgOffset],
       bgExtent: [...bgExtent],
       shapeKind: shape.kind,
+      bgCenter,
+      bgScale,
       rows,
     };
     return rows;
@@ -2430,7 +2457,13 @@ export class SurfaceComputeRenderer {
     // raster IS the full image (module doc on SurfaceComputeFrameSpec).
     const bgOffset: [number, number] = spec.bgOffset ?? [0, 0];
     const bgExtent: [number, number] = spec.bgExtent ?? [width, height];
-    const bgShape: BackgroundShapeSpec = { kind: DEFAULT_BACKGROUND_SHAPE };
+    // fr-h3mp: an absent bgShape means linear, the pre-fr-h3mp shape.
+    const bgShape: BackgroundShapeSpec = spec.bgShape ?? {
+      kind: DEFAULT_BACKGROUND_SHAPE,
+    };
+    const bgCenter: [number, number] =
+      bgShape.center ?? DEFAULT_BACKGROUND_SHAPE_CENTER;
+    const bgScale: [number, number] = bgShape.scale ?? [1, 1];
 
     if (spec.lutVersion !== this.uploadedLutVersion) {
       device.queue.writeTexture(
@@ -2464,6 +2497,9 @@ export class SurfaceComputeRenderer {
         envStrength: spec.envLight,
         bgOffset,
         bgExtent,
+        bgCenter,
+        bgScale,
+        bgShape: backgroundShapeCode(bgShape.kind),
       }),
     );
     // Host prefill contract (module doc of surface-de-gpu.ts): rays still

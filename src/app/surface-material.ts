@@ -687,6 +687,14 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   uniform mat4 uInvProjView;
   uniform vec3 uBgTop;
   uniform vec3 uBgBottom;
+  /** The backdrop's gradient SHAPE (fr-h3mp): 0 = linear (vertical ramp,
+   * the shipped shape), 1 = radial (vignette). uBgCenter/uBgScale are the
+   * radial branch's normalized-image centre and per-axis scale (see
+   * fractal/background-shape.ts's backgroundRadialScale); linear ignores
+   * both. Read by the shared backgroundShapeT body spliced in below. */
+  uniform int uBgShape;
+  uniform vec2 uBgCenter;
+  uniform vec2 uBgScale;
   /** Depth-fog density multiplier (fr-5h5d): scales the traveled-distance
    * term of the fog blend below (main()'s float fog computation) — 1 is
    * the pre-fr-5h5d fixed fog, 0 (scene-set floor) fades it away entirely.
@@ -3585,6 +3593,11 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uInvProjView: { value: new THREE.Matrix4() },
       uBgTop: { value: BG_TOP.clone() },
       uBgBottom: { value: BG_BOTTOM.clone() },
+      // fr-h3mp: linear defaults — 0 is inert, center/scale unread by
+      // "linear" — so a stray enabled read could never divide by zero.
+      uBgShape: { value: 0 },
+      uBgCenter: { value: new THREE.Vector2(0.5, 0.5) },
+      uBgScale: { value: new THREE.Vector2(1, 1) },
       uFogDensity: { value: 1 },
       uFogTint: { value: new THREE.Vector3(1, 1, 1) },
       uFogTintStrength: { value: 0 },

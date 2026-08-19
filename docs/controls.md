@@ -967,6 +967,18 @@ morphs into place instead of snapping (see **Presets** below).
   baked colors, so a shared link keeps tracking its scene's palette; a link
   saved before this control existed still renders exactly as it always did —
   Haze if its Depth Style was Aerial, Dark otherwise.
+- **Shape** (fr-h3mp) — the backdrop's gradient shape, orthogonal to
+  **Background** above: **Vertical** (the default — the original top-to-
+  bottom ramp) or **Radial**, a soft vignette centered behind the
+  attractor, darkened corners fading toward a lighter glow at the middle.
+  Every **Background** choice — Dark, Haze, Auto, or Custom — can be either
+  shape, since on all four the derived/authored top stop is the darker one
+  and the bottom stop the lighter one, which is exactly what a vignette
+  needs; nothing about **Background** itself changes when you switch
+  shapes. Reaches the same renders **Background** does (Points, Flame,
+  Solid, Surface, and every capture), stays circular as the window resizes
+  or an export scales up, and persists in the link and scene file — absent
+  (every link saved before this control existed) means Vertical.
 - **Fog** (fr-5h5d) — the depth fog's density, 0×–2.50×: how much atmosphere
   sits between you and the shape. 1.00× (the default) is exactly the fixed
   fog the app always had — links and scene files saved before the control

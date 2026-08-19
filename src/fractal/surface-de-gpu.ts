@@ -700,7 +700,7 @@ import type { Vec3 } from "./types";
  * SURFACE_GPU_PARAMS_PLANE_BYTES} block (layout on the constant's doc).
  *
  * Shade uniform (march "unproject" + mode "shade") — {@link
- * SURFACE_GPU_SHADE_BYTES} = 176 bytes, WGSL `struct ShadeParams`:
+ * SURFACE_GPU_SHADE_BYTES} = 208 bytes, WGSL `struct ShadeParams`:
  *   offset 0..63 mat4x4f invProjView (column-major, the exact
  *                THREE.Matrix4.elements scene.ts uploads as uInvProjView)
  *          64  vec3f lightDir          76  f32 ambient
@@ -711,6 +711,8 @@ import type { Vec3 } from "./types";
  *         128  vec3f fogTint          140  f32 fogTintStrength
  *         144  vec2f pixelJitter      152  f32 envStrength
  *         160  vec2f bgOffset         168  vec2f bgExtent
+ *         176  vec2f bgCenter         184  vec2f bgScale
+ *         192  u32  bgShape (+ 12 B tail pad to the 16-byte struct align)
  * fogTint/fogTintStrength (fr-5h5d) retarget the shade entry's fog blend
  * to mix(bg, fogTint, fogTintStrength) — strength 0 (the default) is the
  * identity (fog blends toward bg alone), and misses never read it.
@@ -731,6 +733,15 @@ import type { Vec3 } from "./types";
  * ordinary frame packs offset (0, 0) and extent (rasterWidth,
  * rasterHeight); a capture band packs offset (0, bandBottom) and extent
  * (fullWidth, fullHeight) — see `surface-compute.ts`.
+ * bgCenter/bgScale/bgShape (fr-h3mp) are the shared background shape's own
+ * geometry, appended past bgExtent following the SAME required-no-default
+ * precedent: bgShape 0 selects "linear" (bgCenter/bgScale unread), 1
+ * selects "radial", whose center/scale the host must have already
+ * resolved through `background-shape.ts`'s `backgroundRadialScale` for
+ * whatever full image bgExtent names — there is no safe default for a
+ * shape-dependent scale either. All three ride the shared emitted
+ * `backgroundShapeT` (`BACKGROUND_SHAPE_WGSL`'s `field` accessor reads
+ * them as `shade.bgCenter`/`shade.bgScale`/`shade.bgShape`).
  *
  * Shade maps storage (mode "shade") — one vec4f per map slot:
  * (uMapColor rgb, uFoldParams.w trapIndex); one zero stride when empty,
@@ -842,9 +853,11 @@ export const SURFACE_GPU_MAP4_VEC4 = 9;
  * tint pair, then 160 with fr-vpbq's `pixelJitter` at 144 — a WGSL
  * uniform struct rounds to its largest member's 16-byte alignment, so the
  * vec2f costs a full stride, leaving a 152..159 pad fr-ehcj's
- * `envStrength` filled at 152 — and now 176 with fr-xn9s's `bgOffset`/
- * `bgExtent` vec2f pair appended at 160/168, still 16-aligned. */
-export const SURFACE_GPU_SHADE_BYTES = 176;
+ * `envStrength` filled at 152 — then 176 with fr-xn9s's `bgOffset`/
+ * `bgExtent` vec2f pair appended at 160/168, and now 208 with fr-h3mp's
+ * `bgCenter`/`bgScale` vec2f pair at 176/184 plus `bgShape` u32 at 192:
+ * 192 + 4 = 196, rounded up to the next 16-byte multiple. */
+export const SURFACE_GPU_SHADE_BYTES = 208;
 /** Map slots a `mapsUniform: true` 4D kernel declares (fr-b72d probe):
  * uniform-address-space arrays need a creation-fixed footprint, so the
  * binding becomes `array<GpuMap4, 24>` and the HOST must bind a buffer of
@@ -2147,6 +2160,29 @@ export interface SurfaceGpuShadeParams {
    * for a capture band.
    */
   bgExtent: [number, number];
+  /**
+   * The shared background shape's normalized-image centre (fr-h3mp),
+   * packed at offset 176 — `background-shape.ts`'s `BackgroundShapeSpec.
+   * center`. REQUIRED, same precedent as `bgOffset`/`bgExtent`: unread by
+   * `bgShape === 0` ("linear") but there is no universally-safe default
+   * for a field whose meaning depends on a sibling field's value.
+   */
+  bgCenter: [number, number];
+  /**
+   * The shared background shape's per-axis scale (fr-h3mp), packed at
+   * offset 184 — `background-shape.ts`'s `backgroundRadialScale` of
+   * whatever full image `bgExtent` names. REQUIRED for the same reason as
+   * `bgCenter`; unread by `bgShape === 0`.
+   */
+  bgScale: [number, number];
+  /**
+   * The shared background shape's numeric kind (fr-h3mp), packed at
+   * offset 192 — `background-shape.ts`'s `backgroundShapeCode` (0 =
+   * "linear", 1 = "radial"). REQUIRED, no safe default: an absent shape
+   * is not "linear" by convention here the way an absent `envStrength` is
+   * 0 — the host always knows which shape it resolved.
+   */
+  bgShape: number;
 }
 
 /** Pack the ShadeParams uniform (march "unproject" + mode "shade";
@@ -2177,6 +2213,11 @@ export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
   view.setFloat32(164, shade.bgOffset[1], true);
   view.setFloat32(168, shade.bgExtent[0], true);
   view.setFloat32(172, shade.bgExtent[1], true);
+  view.setFloat32(176, shade.bgCenter[0], true);
+  view.setFloat32(180, shade.bgCenter[1], true);
+  view.setFloat32(184, shade.bgScale[0], true);
+  view.setFloat32(188, shade.bgScale[1], true);
+  view.setUint32(192, shade.bgShape, true);
   return buf;
 }
 
@@ -2494,6 +2535,9 @@ struct ShadeParams {
   envStrength: f32,
   bgOffset: vec2f,
   bgExtent: vec2f,
+  bgCenter: vec2f,
+  bgScale: vec2f,
+  bgShape: u32,
 }
 
 @group(0) @binding(4) var<uniform> shade: ShadeParams;`;

@@ -924,17 +924,22 @@ function shadeParams(
     dither: true,
     bgOffset: [12, 34],
     bgExtent: [640, 480],
+    bgCenter: [0.5, 0.5],
+    bgScale: [1.25, 0.8],
+    bgShape: 1,
     ...overrides,
   };
 }
 
 describe("packSurfaceGpuShade", () => {
-  it("returns an ArrayBuffer of exactly SURFACE_GPU_SHADE_BYTES (176 bytes, per the module doc)", () => {
+  it("returns an ArrayBuffer of exactly SURFACE_GPU_SHADE_BYTES (208 bytes, per the module doc)", () => {
     // 144 through fr-5h5d's fog tint pair; 160 since fr-vpbq's pixelJitter
     // at 144 (a WGSL uniform struct rounds to its largest member's 16-byte
     // alignment, so the trailing vec2f costs a full stride); 176 since
-    // fr-xn9s's bgOffset/bgExtent vec2f pair at 160/168.
-    expect(SURFACE_GPU_SHADE_BYTES).toBe(176);
+    // fr-xn9s's bgOffset/bgExtent vec2f pair at 160/168; 208 since
+    // fr-h3mp's bgCenter/bgScale vec2f pair at 176/184 plus bgShape u32 at
+    // 192, rounded up to the next 16-byte multiple.
+    expect(SURFACE_GPU_SHADE_BYTES).toBe(208);
     const buf = packSurfaceGpuShade(shadeParams());
     expect(buf).toBeInstanceOf(ArrayBuffer);
     expect(buf.byteLength).toBe(SURFACE_GPU_SHADE_BYTES);
@@ -1043,6 +1048,23 @@ describe("packSurfaceGpuShade", () => {
     expect(view.getFloat32(164, true)).toBe(1057);
     expect(view.getFloat32(168, true)).toBe(1920);
     expect(view.getFloat32(172, true)).toBe(3169);
+  });
+
+  it("round-trips bgCenter/bgScale/bgShape at offsets 176/184/192 (fr-h3mp)", () => {
+    const view = new DataView(
+      packSurfaceGpuShade(
+        shadeParams({
+          bgCenter: [0.5, 0.4375],
+          bgScale: [1.5, 0.75],
+          bgShape: 1,
+        }),
+      ),
+    );
+    expect(view.getFloat32(176, true)).toBe(0.5);
+    expect(view.getFloat32(180, true)).toBe(0.4375);
+    expect(view.getFloat32(184, true)).toBe(1.5);
+    expect(view.getFloat32(188, true)).toBe(0.75);
+    expect(view.getUint32(192, true)).toBe(1);
   });
 });
 

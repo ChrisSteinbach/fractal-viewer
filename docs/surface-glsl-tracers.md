@@ -37,6 +37,36 @@ rather than tracing a smaller one — so no `uBgOffset`/`uBgExtent`
 uniforms were added here; the compute kernel, which traces capture BANDS
 of a larger image, carries that pair instead (`docs/surface-gpu-kernels.md`).
 
+### Radial vignette (fr-h3mp)
+
+The second shape (`BACKGROUND_SHAPES[1]`, `"radial"`): a soft vignette,
+smoothstep of the normalized distance from a centre, darkened corners with
+a lighter glow behind the attractor on every shipped backdrop (the
+`background-shape.ts` module doc's darker-top-lighter-bottom argument).
+Three new uniforms carry it, declared right beside `uBgTop`/`uBgBottom` in
+both tracers: `uBgShape` (int, 0 = linear / 1 = radial — the shipped
+`backgroundShapeCode` mapping), `uBgCenter` (vec2, normalized image
+coordinates, `(0.5, 0.5)` by every caller today), and `uBgScale` (vec2,
+`background-shape.ts`'s `backgroundRadialScale` of whatever full image
+`vUv` spans — the per-axis correction that keeps the vignette CIRCULAR in
+real pixels rather than elliptical in normalized UV space on a non-square
+viewport). `scene.ts`'s `setBackground` pushes all three to both tracers
+(and to the voxel raymarcher) alongside the existing stops; a live viewport
+resize re-derives `uBgScale` and re-pushes it even when neither the stops
+nor the shape kind moved, since the correction is aspect-dependent.
+
+The shared `backgroundShapeT` body itself is no longer LITERALLY
+byte-identical between the GLSL and WGSL emissions once the radial branch
+reads through `BackgroundShapeDialect.field` — GLSL's flat `uBgCenter`
+cannot share a spelling with WGSL's `shade.bgCenter` struct field. The two
+emitted bodies diverge in exactly four tokens (the field accessor prefix,
+the local-declaration keyword — WGSL's `let r` has no GLSL equivalent, a
+type-prefixed local declaration has no WGSL one — the `float`/`f32` type
+spelling, and WGSL's mandatory `u` suffix on the `uBgShape == 1`
+comparison) and are pinned identical everywhere else by
+`background-shape.test.ts`'s own normalizing test — the shared math still
+cannot drift between dialects, only its per-dialect spelling can differ.
+
 ## Environment-lit ambient (fr-ehcj)
 
 The backdrop tints the light, hue-preserving, so the render sits IN its
@@ -301,6 +331,15 @@ equals raw — unstripped, same as before this addition): affine 82939B /
 none crosses the 64KB strip threshold in either direction — nothing here
 changes the strip/no-strip decision for any variant.
 
+fr-h3mp's radial vignette grew `backgroundShapeT`'s body (a branch reading
+three new uniforms, `uBgShape`/`uBgCenter`/`uBgScale`, declared beside
+`uBgTop`/`uBgBottom`) and cost every 3D variant a further handful of
+bytes, measured "what the driver gets": affine 29194B (+187), lens 28958B
+(+187), balloon 30555B (+187), plane 31531B (+187), escape 56105B (+343),
+escape+balloon 62707B (+317), bulb 39569B (+408). Every arm still stays
+far under the 82.2KB crash cliff and no variant's strip/no-strip decision
+moved.
+
 ## The probe-width verdict
 
 The three shading taps (normal/shadow/AO) ride the value form, which fold
@@ -397,12 +436,12 @@ one. Nothing about this tracer regressed; the other arm stopped wasting
 TWO VARIANT ARMS exist since fr-qxxw/fr-h0c3 — the balloon inverted-union
 and the ground plane, each mirroring its 3D original term for term — and
 the MECHANISM is the one deviation, forced by measurement: this source is
-62,711 B with 2,825 B of headroom under the 64KB strip threshold (fr-xn9s's
-shared `backgroundShapeT` splice, re-measured after fr-ehcj's `envTint`
-addition — 62,251 B before fr-xn9s, 61,751 B before fr-ehcj), and the arms
-are ~5.4KB and ~7.8KB, so one monolithic `#if` source would be ~74KB and
-EVERY 4D session would pay it, in the band where the 3D fold program takes
-~25s to link.
+62,804 B with 2,732 B of headroom under the 64KB strip threshold (fr-h3mp's
+radial-vignette branch, re-measured after fr-xn9s's shared `backgroundShapeT`
+splice — 62,711 B before fr-h3mp, 62,251 B before fr-xn9s, 61,751 B before
+fr-ehcj), and the arms are ~5.4KB and ~7.8KB, so one monolithic `#if` source
+would be ~75KB and EVERY 4D session would pay it, in the band where the 3D
+fold program takes ~25s to link.
 
 So the arms resolve JS-side, through `surfaceFragmentFor` ITSELF rather
 than a second preprocessor (`surface4FragmentFor` is a two-line wrapper),
@@ -410,9 +449,9 @@ and the `defines` keys are `SURFACE4_*` while the GLSL directives stay
 the 3D names — deliberate, called out at both sites, and renaming them
 would break resolution.
 
-Measured after fr-xn9s's shared `backgroundShapeT` splice: off, 62,711 B
-(under threshold, so NOT stripped); balloon 68,105 -> 16,899 B stripped;
-plane 70,517 -> 17,972 B stripped.
+Measured after fr-h3mp's radial-vignette branch: off, 62,804 B (under
+threshold, so NOT stripped); balloon 68,176 -> 17,086 B stripped; plane
+70,588 -> 18,159 B stripped.
 
 ## What could not be copied
 

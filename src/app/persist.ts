@@ -77,7 +77,12 @@ import type {
   BackgroundGradient,
   BackgroundMode,
   BackgroundParams,
+  BackgroundShape,
 } from "./background";
+import {
+  BACKGROUND_SHAPES,
+  DEFAULT_BACKGROUND_SHAPE,
+} from "../fractal/background-shape";
 import type { FourDPose } from "./four-d-view";
 import { normalizeRotorPair } from "./rotor4";
 import { DEFAULT_COLOR_SPEED, MAX_TRANSFORMS } from "../fractal/chaos-game";
@@ -456,6 +461,10 @@ const VALID_SURFACE_COLOR_SOURCES = new Set<string>(SURFACE_COLOR_SOURCES);
  * field.
  */
 const VALID_BACKGROUND_MODES = new Set<string>(BACKGROUND_MODES);
+
+/** Exact set of valid BackgroundShape values (fr-h3mp), the same
+ * quiet-fallback discipline as {@link VALID_BACKGROUND_MODES}. */
+const VALID_BACKGROUND_SHAPES = new Set<string>(BACKGROUND_SHAPES);
 
 /**
  * Cap on variations per transform when decoding untrusted input: one lane per
@@ -855,6 +864,14 @@ function decodePositionAxisColors(
  * the payload drops whole. A `"custom"` mode with no surviving payload
  * can't be honored and takes the legacy fallback, mirroring the `"custom"`
  * paletteId rule in {@link decodeFlameParams}.
+ *
+ * `shape` (fr-h3mp) decodes independently of `mode`/`custom` too — it is
+ * ORTHOGONAL, not a fourth thing that can fail alongside them — and falls
+ * back QUIETLY to `DEFAULT_BACKGROUND_SHAPE` ("linear") on anything not in
+ * {@link VALID_BACKGROUND_SHAPES}: absent (every pre-fr-h3mp document),
+ * malformed, or a shape id from a future build. Never written when it
+ * resolves to the default (see the encoder), so this fallback is also what
+ * keeps a linear-only document decoding to exactly the pre-fr-h3mp shape.
  */
 function decodeBackground(
   raw: unknown,
@@ -877,7 +894,16 @@ function decodeBackground(
       : fallback;
   if (mode === "custom" && custom === undefined) mode = fallback;
 
-  return custom === undefined ? { mode } : { mode, custom };
+  const shape: BackgroundShape =
+    typeof b.shape === "string" && VALID_BACKGROUND_SHAPES.has(b.shape)
+      ? (b.shape as BackgroundShape)
+      : DEFAULT_BACKGROUND_SHAPE;
+
+  return {
+    mode,
+    ...(custom === undefined ? {} : { custom }),
+    ...(shape === DEFAULT_BACKGROUND_SHAPE ? {} : { shape }),
+  };
 }
 
 /**
@@ -1511,7 +1537,12 @@ export function encodeScene(s: SceneSnapshot): string {
     fogTint: string;
     fogTintStrength: number;
     groundPlane: boolean;
-    background?: { mode: BackgroundMode; top?: string; bottom?: string };
+    background?: {
+      mode: BackgroundMode;
+      top?: string;
+      bottom?: string;
+      shape?: BackgroundShape;
+    };
     customPalette?: { stops: string[] };
     positionAxisColors?: { x: string; y: string; z: string };
     camera?: {
@@ -1615,19 +1646,25 @@ export function encodeScene(s: SceneSnapshot): string {
     // toSnapshot (which always supplies it). A boolean, so no rounding.
     groundPlane: s.groundPlane ?? false,
   };
-  // background (fr-5ps1): omitted while pristine (`dark`, nothing authored)
-  // so never-touched scenes keep their short URLs AND pre-fr-5ps1 documents'
-  // encoded bytes stay identical — EXCEPT under the aerial render style,
-  // where even the pristine default is written out: an absent field is what
-  // a legacy document looks like, and the decoder reads legacy-aerial as
-  // haze (the backdrop the style used to force), so an aerial scene that
-  // means "dark" must say so. The custom gradient is written whenever
-  // authored, selected or not — the slot survives like customPalette — as
-  // hex strings for URL compactness (see rgbToHex).
+  // background (fr-5ps1): omitted while pristine (`dark`, nothing authored,
+  // shape linear) so never-touched scenes keep their short URLs AND
+  // pre-fr-5ps1 documents' encoded bytes stay identical — EXCEPT under the
+  // aerial render style, where even the pristine default is written out: an
+  // absent field is what a legacy document looks like, and the decoder
+  // reads legacy-aerial as haze (the backdrop the style used to force), so
+  // an aerial scene that means "dark" must say so. The custom gradient is
+  // written whenever authored, selected or not — the slot survives like
+  // customPalette — as hex strings for URL compactness (see rgbToHex).
+  // `shape` (fr-h3mp) is written only when it is NOT the default "linear" —
+  // a linear-only document, radial-authored or not, encodes byte-identical
+  // to a pre-fr-h3mp one, the same absent-means-identity discipline as
+  // finalTransform/weight/shear.
   if (
     s.background.mode !== "dark" ||
     s.background.custom !== undefined ||
-    s.renderStyle === "aerial"
+    s.renderStyle === "aerial" ||
+    (s.background.shape ?? DEFAULT_BACKGROUND_SHAPE) !==
+      DEFAULT_BACKGROUND_SHAPE
   ) {
     payload.background = {
       mode: s.background.mode,
@@ -1636,6 +1673,9 @@ export function encodeScene(s: SceneSnapshot): string {
             top: rgbToHex(s.background.custom.top),
             bottom: rgbToHex(s.background.custom.bottom),
           }
+        : {}),
+      ...(s.background.shape && s.background.shape !== DEFAULT_BACKGROUND_SHAPE
+        ? { shape: s.background.shape }
         : {}),
     };
   }

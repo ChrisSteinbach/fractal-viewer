@@ -19,6 +19,7 @@ import {
   setAdaptiveResolution,
   setAutoUpdate,
   setBackgroundMode,
+  setBackgroundShape,
   setBalloonEcho,
   setBalloonRadius,
   setColorGamma,
@@ -72,7 +73,7 @@ import type {
   SurfaceColorSource,
   SurfaceParams,
 } from "./state";
-import type { BackgroundMode } from "./background";
+import type { BackgroundMode, BackgroundShape } from "./background";
 
 /**
  * Declarative specs for the panel's SIMPLE SCALAR controls (fr-dig): every
@@ -590,6 +591,19 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     id: "background",
     read: (s) => s.background.mode,
     apply: (s, raw) => setBackgroundMode(s, raw as BackgroundMode),
+    effect: (s, fx) => fx.applyBackground(),
+  },
+  {
+    // The Shape select (fr-h3mp): the backdrop's gradient SHAPE — linear
+    // ramp or radial vignette — orthogonal to the Background select above
+    // (see background.ts's BackgroundParams doc). Same no-`view`-guard,
+    // same fx.applyBackground() push: one shared effect moves both mode
+    // and shape edits through pushBackground, which reads the shape off
+    // state itself.
+    kind: "select",
+    id: "backgroundShape",
+    read: (s) => s.background.shape ?? "linear",
+    apply: (s, raw) => setBackgroundShape(s, raw as BackgroundShape),
     effect: (s, fx) => fx.applyBackground(),
   },
   {

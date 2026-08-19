@@ -108,6 +108,39 @@ describe("buildSurfaceComputeBackground", () => {
       }
     }
   });
+
+  it("falls to the per-pixel loop and paints a centered vignette for the radial shape (fr-h3mp)", () => {
+    const width = 8;
+    const height = 4;
+    const top = hexToRgb01(DARK_BACKDROP.top); // the corner color
+    const bottom = hexToRgb01(DARK_BACKDROP.bottom); // the center color
+    const rows = buildSurfaceComputeBackground(
+      width,
+      height,
+      top,
+      bottom,
+      [0, 0],
+      [width, height],
+      { kind: "radial", center: [0.5, 0.5], scale: [1, 2] },
+    );
+    expect(rows.length).toBe(width * height * 4);
+    // The center pixel row (nearest v = 0.5) reads closer to the center
+    // (bottom) stop than the corner (top, y = 0) row does, on the red
+    // channel — proof the per-pixel loop actually varies with position
+    // instead of falling through to the linear fast path.
+    const at = (px: number, py: number, c: number): number =>
+      rows[(py * width + px) * 4 + c];
+    const centerRow = at(width / 2, height / 2, 0);
+    const cornerRow = at(0, 0, 0);
+    const distToBottom = Math.abs(centerRow - Math.round(bottom[0] * 255));
+    const distToTop = Math.abs(cornerRow - Math.round(top[0] * 255));
+    expect(distToBottom).toBeLessThan(
+      Math.abs(centerRow - Math.round(top[0] * 255)),
+    );
+    expect(distToTop).toBeLessThan(
+      Math.abs(cornerRow - Math.round(bottom[0] * 255)),
+    );
+  });
 });
 
 describe("surfaceComputeMaxDispatchRays", () => {

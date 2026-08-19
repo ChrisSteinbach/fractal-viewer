@@ -4,7 +4,15 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
 import { shearMatrix } from "../fractal/affine";
-import { backgroundMeanColor } from "../fractal/background-shape";
+import {
+  backgroundColorAt,
+  backgroundImageUv,
+  backgroundMeanColor,
+  backgroundRadialScale,
+  backgroundShapeCode,
+  DEFAULT_BACKGROUND_SHAPE_CENTER,
+} from "../fractal/background-shape";
+import type { BackgroundShapeSpec } from "../fractal/background-shape";
 import {
   BALLOON_FAR_CAP_RHO,
   BALLOON_RHO_MARGIN,
@@ -31,7 +39,7 @@ import {
   DEFAULT_BACKGROUND,
   resolveBackground,
 } from "./background";
-import type { BackgroundGradient } from "./background";
+import type { BackgroundGradient, BackgroundShape } from "./background";
 import { rgbToHex } from "../fractal/palette";
 import type { RenderStyle, SolidParams } from "./state";
 import {
@@ -120,9 +128,14 @@ THREE.ColorManagement.enabled = false;
  * to a single value. The shape is the INTEGRATED-AWAY one (fr-xn9s):
  * `backgroundMeanColor`'s `"linear"` branch is the exact closed form
  * `(top + bottom) / 2`, byte-identical to what this function used to
- * compute inline. */
-function backdropMidpoint(stops: BackgroundGradient): THREE.Color {
-  const [r, g, b] = backgroundMeanColor(stops, { kind: "linear" });
+ * compute inline; its `"radial"` branch (fr-h3mp) is the area-weighted mean
+ * over the current shape's own geometry, so the fog picks up a vignette's
+ * darker edges rather than staying pinned to the linear midpoint. */
+function backdropMidpoint(
+  stops: BackgroundGradient,
+  shape: BackgroundShapeSpec,
+): THREE.Color {
+  const [r, g, b] = backgroundMeanColor(stops, shape);
   return new THREE.Color(r, g, b);
 }
 
@@ -232,37 +245,82 @@ function sprite(
 }
 
 /**
- * Paint a top→bottom two-stop gradient across a whole canvas — the one
+ * Paint the backdrop gradient across a whole canvas — the one
  * gradient-drawing routine the backdrop texture, the flame capture underlay
  * and the thumbnail underlay share (fr-5ps1), so no capture path can render
- * a different ramp than the live scene. Authored in sRGB and left
+ * a different shape than the live scene. Authored in sRGB and left
  * unconverted to match the rest of the pipeline (ColorManagement is off);
- * canvas gradients interpolate in the same space.
+ * canvas gradients/pixels are written in the same space.
  *
- * This is the shared shape's (fr-xn9s, `fractal/background-shape.ts`)
- * `"linear"` case taking the LINEAR FAST PATH: the canvas 2D API has a
- * vertical ramp natively, so painting it as one `createLinearGradient`
- * call is cheaper than looping `backgroundColorAt` per pixel and produces
- * the same result for a shape that ignores `u` and is monotonic in `v`. A
- * future shape the API has no native primitive for (fr-h3mp's radial) must
- * fall to a per-pixel `backgroundColorAt` loop instead, the way {@link
- * buildSurfaceComputeBackground}'s non-linear branch already does.
- * DELIBERATE Y-FLIP: canvas row 0 is the TOP of the frame, i.e. `t = 1`
- * (`addColorStop(0, ...top)` below) — the opposite of every GPU site's
- * `imageUv.y`, where row 0 is `t = 0`. Both are correct for their own
- * coordinate system; this is the one place that has to remember it flips.
+ * `shape.kind === "linear"` (the default) takes the LINEAR FAST PATH: the
+ * canvas 2D API has a vertical ramp natively, so painting it as one
+ * `createLinearGradient` call is cheaper than looping `backgroundColorAt`
+ * per pixel and produces the same result for a shape that ignores `u` and
+ * is monotonic in `v`. DELIBERATE Y-FLIP: canvas row 0 is the TOP of the
+ * frame, i.e. `t = 1` (`addColorStop(0, ...top)` below) — the opposite of
+ * every GPU site's `imageUv.y`, where row 0 is `t = 0`. Both are correct
+ * for their own coordinate system; this is the one place that has to
+ * remember it flips.
+ *
+ * `"radial"` (fr-h3mp) falls to a per-pixel `backgroundColorAt` loop
+ * instead, the way {@link buildSurfaceComputeBackground}'s non-linear
+ * branch already does — the canvas 2D API's own `createRadialGradient` has
+ * no `smoothstep` easing and no per-axis scale, so it can't express this
+ * shape directly. The linear fast path's Y-flip does NOT need reproducing
+ * here: a radial `t` depends only on distance from a `v = 0.5`-centered
+ * `center`, which is exactly symmetric under `v -> 1 - v`, so the flipped
+ * and unflipped canvas conventions evaluate to the identical `t` at every
+ * pixel. `width`/`height` are THIS CANVAS's own pixel dimensions — not
+ * necessarily the viewport's, since the live backdrop texture is a small
+ * proxy stretched to fit (see {@link FractalScene.setBackground}) while a
+ * capture/thumbnail underlay paints at its own final size directly; either
+ * way `shape.scale` must already be `backgroundRadialScale` of whatever
+ * FULL IMAGE this canvas represents, computed by the caller.
  */
 function paintBackdropGradient(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
   stops: BackgroundGradient,
+  shape: BackgroundShapeSpec = { kind: "linear" },
 ): void {
-  const g = ctx.createLinearGradient(0, 0, 0, height);
-  g.addColorStop(0, rgbToHex(stops.top));
-  g.addColorStop(1, rgbToHex(stops.bottom));
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, width, height);
+  if (shape.kind === "linear") {
+    const g = ctx.createLinearGradient(0, 0, 0, height);
+    g.addColorStop(0, rgbToHex(stops.top));
+    g.addColorStop(1, rgbToHex(stops.bottom));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, width, height);
+    return;
+  }
+  const image = ctx.createImageData(width, height);
+  const data = image.data;
+  for (let py = 0; py < height; py++) {
+    for (let px = 0; px < width; px++) {
+      const [u, v] = backgroundImageUv(px, py, [0, 0], [width, height]);
+      const [rf, gf, bf] = backgroundColorAt(u, v, stops, shape);
+      const o = (py * width + px) * 4;
+      data[o] = Math.round(clamp(rf, 0, 1) * 255);
+      data[o + 1] = Math.round(clamp(gf, 0, 1) * 255);
+      data[o + 2] = Math.round(clamp(bf, 0, 1) * 255);
+      data[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(image, 0, 0);
+}
+
+/** The backdrop canvas's own pixel size per shape (fr-h3mp): linear keeps
+ * its shipped 4x256 vertical-ramp-trick size; radial needs a square-ish
+ * canvas so the vignette isn't blurred out along one axis before the
+ * viewport-correct {@link backgroundRadialScale} even applies — see
+ * {@link paintBackdropGradient}'s doc for why the canvas's own resolution
+ * is otherwise unconstrained. */
+function backdropCanvasSize(shape: BackgroundShape): {
+  width: number;
+  height: number;
+} {
+  return shape === "radial"
+    ? { width: 256, height: 256 }
+    : { width: 4, height: 256 };
 }
 
 // Out-of-focus points are spread wider and faded; in-focus points stay crisp.
@@ -744,6 +802,11 @@ export class FractalScene {
   // same `backdrop` stops, so no path can disagree about what's behind the
   // attractor.
   private backdrop: BackgroundGradient = resolveBackground(DEFAULT_BACKGROUND);
+  // The backdrop's gradient SHAPE (fr-h3mp) — orthogonal to `backdrop`'s
+  // colors, see setBackground. Kept alongside it for the same reason:
+  // applyFogColor, resize and every GLSL push need to know the CURRENT
+  // shape, not just the current stops.
+  private backdropShape: BackgroundShape = "linear";
   private readonly backdropCanvas: HTMLCanvasElement;
   private readonly backdropCtx: CanvasRenderingContext2D | null;
   private readonly backdropTexture: THREE.CanvasTexture;
@@ -1224,7 +1287,11 @@ export class FractalScene {
         depthWrite: false,
       }),
     );
-    this.fog = new THREE.Fog(backdropMidpoint(this.backdrop), 1, 10);
+    this.fog = new THREE.Fog(
+      backdropMidpoint(this.backdrop, { kind: "linear" }),
+      1,
+      10,
+    );
     this.scene.fog = this.fog;
 
     this.camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
@@ -2047,24 +2114,85 @@ export class FractalScene {
   }
 
   /**
-   * Set the scene backdrop (fr-5ps1): repaint the gradient texture in place,
-   * re-derive the fog color from the new midpoint (fr-1lj — surfaces must
-   * haze into what's actually behind them), and push the miss-gradient
-   * uniforms to the three GLSL tracers. The flame composite, the capture/
-   * thumbnail underlays and the WebGPU compute frame spec all read
-   * `this.backdrop`, so one call moves every renderer at once. Cheap and
-   * live-reactive (a uniform write + a 4×256 canvas repaint) — safe to call
-   * per frame during a background crossfade.
+   * The current backdrop shape as a {@link BackgroundShapeSpec} for a canvas
+   * (or GLSL fragment shader viewport) whose own pixel dimensions ARE the
+   * full image it represents — the live viewport, a flame capture canvas
+   * at its own accumulation size, a downscaled thumbnail — so `scale`
+   * comes from {@link backgroundRadialScale} of THAT `width`/`height`, not
+   * some other buffer's. Linear ignores both and returns the bare kind.
    */
-  setBackground(stops: BackgroundGradient): void {
-    if (backgroundGradientsEqual(this.backdrop, stops)) return;
+  private backgroundShapeSpecForImage(
+    width: number,
+    height: number,
+  ): BackgroundShapeSpec {
+    return this.backdropShape === "linear"
+      ? { kind: "linear" }
+      : {
+          kind: "radial",
+          center: DEFAULT_BACKGROUND_SHAPE_CENTER,
+          scale: backgroundRadialScale(width, height),
+        };
+  }
+
+  /**
+   * Set the scene backdrop (fr-5ps1, shape fr-h3mp): repaint the gradient
+   * texture in place, re-derive the fog color from the new midpoint
+   * (fr-1lj — surfaces must haze into what's actually behind them), and
+   * push the miss-gradient uniforms to the three GLSL tracers. The flame
+   * composite, the capture/thumbnail underlays and the WebGPU compute frame
+   * spec all read `this.backdrop`/`this.backdropShape`, so one call moves
+   * every renderer at once. Cheap and live-reactive (a uniform write + a
+   * small canvas repaint) — safe to call per frame during a background
+   * crossfade (which never changes `shape` mid-fade — see
+   * `background.ts`'s `BackgroundTween` doc).
+   *
+   * `shape`'s SCALE is derived from the LIVE VIEWPORT (fr-h3mp), not the
+   * small backdrop canvas's own resolution — see
+   * {@link backgroundShapeSpecForImage} and {@link paintBackdropGradient}'s
+   * doc for why that is what keeps the vignette circular in real pixels
+   * once the canvas is stretched to fit. `resize` re-applies this same
+   * geometry when the viewport's aspect moves without the stops/shape
+   * changing.
+   */
+  setBackground(
+    stops: BackgroundGradient,
+    shape: BackgroundShape = "linear",
+  ): void {
+    if (
+      backgroundGradientsEqual(this.backdrop, stops) &&
+      this.backdropShape === shape
+    ) {
+      return;
+    }
     this.backdrop = stops;
+    this.backdropShape = shape;
     this.renderNeeded = true;
+    const size = backdropCanvasSize(shape);
+    if (
+      this.backdropCanvas.width !== size.width ||
+      this.backdropCanvas.height !== size.height
+    ) {
+      this.backdropCanvas.width = size.width;
+      this.backdropCanvas.height = size.height;
+    }
     if (this.backdropCtx) {
-      paintBackdropGradient(this.backdropCtx, 4, 256, stops);
+      paintBackdropGradient(
+        this.backdropCtx,
+        size.width,
+        size.height,
+        stops,
+        this.backgroundShapeSpecForImage(
+          this.viewportWidth,
+          this.viewportHeight,
+        ),
+      );
       this.backdropTexture.needsUpdate = true;
     }
     this.applyFogColor();
+    const spec = this.backgroundShapeSpecForImage(
+      this.viewportWidth,
+      this.viewportHeight,
+    );
     for (const material of [
       this.surfaceMaterial,
       this.surfaceMaterial4,
@@ -2073,6 +2201,51 @@ export class FractalScene {
       const u = material.uniforms;
       (u.uBgTop.value as THREE.Vector3).set(...stops.top);
       (u.uBgBottom.value as THREE.Vector3).set(...stops.bottom);
+      u.uBgShape.value = backgroundShapeCode(shape);
+      (u.uBgCenter.value as THREE.Vector2).set(
+        ...(spec.center ?? DEFAULT_BACKGROUND_SHAPE_CENTER),
+      );
+      (u.uBgScale.value as THREE.Vector2).set(...(spec.scale ?? [1, 1]));
+    }
+  }
+
+  /**
+   * Re-apply the CURRENT backdrop shape's geometry to the live viewport's
+   * new aspect (fr-h3mp) — called from {@link resize}. A no-op under
+   * `"linear"`, whose shape has no notion of aspect at all; under
+   * `"radial"` this repaints the backdrop canvas and re-pushes
+   * `uBgCenter`/`uBgScale` with a freshly computed
+   * {@link backgroundRadialScale}, so the vignette stays circular in real
+   * pixels as the window/canvas resizes instead of stretching into an
+   * ellipse between background pushes.
+   */
+  private refreshBackgroundShapeForViewport(): void {
+    if (this.backdropShape !== "radial") return;
+    const spec = this.backgroundShapeSpecForImage(
+      this.viewportWidth,
+      this.viewportHeight,
+    );
+    if (this.backdropCtx) {
+      const size = backdropCanvasSize(this.backdropShape);
+      paintBackdropGradient(
+        this.backdropCtx,
+        size.width,
+        size.height,
+        this.backdrop,
+        spec,
+      );
+      this.backdropTexture.needsUpdate = true;
+    }
+    for (const material of [
+      this.surfaceMaterial,
+      this.surfaceMaterial4,
+      this.voxelMaterial,
+    ]) {
+      const u = material.uniforms;
+      (u.uBgCenter.value as THREE.Vector2).set(
+        ...(spec.center ?? DEFAULT_BACKGROUND_SHAPE_CENTER),
+      );
+      (u.uBgScale.value as THREE.Vector2).set(...(spec.scale ?? [1, 1]));
     }
   }
 
@@ -2442,7 +2615,15 @@ export class FractalScene {
    * setting meaningful. Strength 0 leaves the midpoint untouched.
    */
   private applyFogColor(): void {
-    this.fog.color.copy(backdropMidpoint(this.backdrop));
+    this.fog.color.copy(
+      backdropMidpoint(
+        this.backdrop,
+        this.backgroundShapeSpecForImage(
+          this.viewportWidth,
+          this.viewportHeight,
+        ),
+      ),
+    );
     if (this.fogTintStrength > 0) {
       this.fog.color.lerp(
         FOG_TINT_COLOR.setRGB(...this.fogTint),
@@ -2560,6 +2741,12 @@ export class FractalScene {
     this.renderNeeded = true;
     this.viewportWidth = width;
     this.viewportHeight = height;
+    // fr-h3mp: a radial vignette's SCALE is derived from the viewport's own
+    // aspect (backgroundRadialScale), so a resize that changes that aspect
+    // must repaint the backdrop canvas and re-push uBgScale even though
+    // neither the stops nor the shape KIND moved — linear has no such
+    // dependency and this is a no-op for it.
+    this.refreshBackgroundShapeForViewport();
     // A resize deliberately does NOT clear {@link solidCapturePxCostMs}:
     // the field is per-PIXEL, so the pixel count is already the
     // prediction's own multiplier, and the aspect's re-apportioning of
@@ -2780,7 +2967,13 @@ export class FractalScene {
       // (main.ts prefers the explorer capture during the first-frame gap,
       // so this is belt-and-braces.)
       return this.flameCanvas.width > 0
-        ? thumbnailFrom(this.flameCanvas, maxDim, this.backdrop, "screen")
+        ? thumbnailFrom(
+            this.flameCanvas,
+            maxDim,
+            this.backdrop,
+            this.backdropShape,
+            "screen",
+          )
         : "";
     }
     if (mode === "surface" && this.surfaceComputeActive) {
@@ -2795,11 +2988,21 @@ export class FractalScene {
       // (projection-dependent) explorer cloud, and that path takes the
       // wrapper like every other painting arm.
       if (this.representSurfaceComputeFrame()) {
-        return thumbnailFrom(this.renderer.domElement, maxDim, this.backdrop);
+        return thumbnailFrom(
+          this.renderer.domElement,
+          maxDim,
+          this.backdrop,
+          this.backdropShape,
+        );
       }
       return this.withCenteredProjection(() => {
         this.render();
-        return thumbnailFrom(this.renderer.domElement, maxDim, this.backdrop);
+        return thumbnailFrom(
+          this.renderer.domElement,
+          maxDim,
+          this.backdrop,
+          this.backdropShape,
+        );
       });
     }
     return this.withCenteredProjection(() => {
@@ -2822,7 +3025,12 @@ export class FractalScene {
           this.render();
         }
       } else this.render();
-      return thumbnailFrom(this.renderer.domElement, maxDim, this.backdrop);
+      return thumbnailFrom(
+        this.renderer.domElement,
+        maxDim,
+        this.backdrop,
+        this.backdropShape,
+      );
     });
   }
 
@@ -2931,7 +3139,13 @@ export class FractalScene {
     out.height = height;
     const ctx = out.getContext("2d");
     if (!ctx) return Promise.resolve(null);
-    paintBackdropGradient(ctx, width, height, this.backdrop);
+    paintBackdropGradient(
+      ctx,
+      width,
+      height,
+      this.backdrop,
+      this.backgroundShapeSpecForImage(width, height),
+    );
     ctx.globalCompositeOperation = "screen";
     ctx.drawImage(this.flameCanvas, 0, 0);
     return exportImageFrom(out);
@@ -3883,6 +4097,23 @@ export class FractalScene {
       ],
       bgOffset,
       bgExtent,
+      // The live backdrop SHAPE (fr-h3mp), mirroring the GLSL tracers'
+      // uBgShape/uBgCenter/uBgScale push in setBackground. Radial's scale
+      // is backgroundRadialScale of bgExtent — the FULL image bgOffset/
+      // bgExtent already name above — and deliberately NOT of `width`/
+      // `height`: a capture band's own raster is a slice of that full
+      // image, and scaling by the slice's own dimensions would draw a
+      // different ellipse per band instead of one consistent vignette
+      // across the whole tiled export (the same reason
+      // `surfaceComputeBandStops` had to go — see this method's own doc).
+      bgShape:
+        this.backdropShape === "linear"
+          ? { kind: "linear" }
+          : {
+              kind: "radial",
+              center: DEFAULT_BACKGROUND_SHAPE_CENTER,
+              scale: backgroundRadialScale(bgExtent[0], bgExtent[1]),
+            },
       colorSource: SURFACE_COLOR_SOURCES.indexOf(params.colorSource),
       colorSpeed: params.colorSpeed,
       lut:
@@ -6646,11 +6877,18 @@ function shearMatrix4(shear: Vec3): THREE.Matrix4 {
  * already-opaque WebGL canvas the underlay is fully covered and the default
  * `"source-over"` changes nothing. Returns `""` when a 2D context is
  * unavailable.
+ *
+ * `shape`'s scale (fr-h3mp) is derived from THIS OUTPUT canvas's own `w`/`h`
+ * — the downscale keeps `src`'s aspect ratio (both axes scale by the same
+ * factor), so the vignette painted here stays circular in the thumbnail's
+ * own pixels, matching what a full-resolution capture of the same frame
+ * would show.
  */
 function thumbnailFrom(
   src: HTMLCanvasElement,
   maxDim: number,
   backdrop: BackgroundGradient,
+  shape: BackgroundShape,
   composite: GlobalCompositeOperation = "source-over",
 ): string {
   const longSide = Math.max(src.width, src.height);
@@ -6662,7 +6900,19 @@ function thumbnailFrom(
   out.height = h;
   const ctx = out.getContext("2d");
   if (!ctx) return "";
-  paintBackdropGradient(ctx, w, h, backdrop);
+  paintBackdropGradient(
+    ctx,
+    w,
+    h,
+    backdrop,
+    shape === "radial"
+      ? {
+          kind: "radial",
+          center: DEFAULT_BACKGROUND_SHAPE_CENTER,
+          scale: backgroundRadialScale(w, h),
+        }
+      : { kind: "linear" },
+  );
   ctx.globalCompositeOperation = composite;
   ctx.drawImage(src, 0, 0, w, h);
   return out.toDataURL("image/jpeg", 0.72);
