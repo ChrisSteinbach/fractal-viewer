@@ -13,12 +13,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    # Majors are EXCLUDED from both groups (fr-vja8.40): a major must open
-    # as its own PR, one package per PR with the major in the title, so it
-    # can never ride into an unattended merge inside a "9 updates" group —
-    # which is exactly how jsdom 30 slipped past the majors-queue-for-review
-    # rule. Excluding beats ignoring: nothing is suppressed (security majors
-    # included), and there is no per-package list to drift.
+    # Majors are EXCLUDED from both groups: a major must open as its own PR,
+    # one package per PR with the major in the title, so it can never ride
+    # into an unattended merge inside a "9 updates" group — which is exactly
+    # how jsdom 30 slipped past the majors-queue-for-review rule. Excluding
+    # beats ignoring: nothing is suppressed (security majors included), and
+    # there is no per-package list to drift.
     groups:
       dev-dependencies:
         dependency-type: development

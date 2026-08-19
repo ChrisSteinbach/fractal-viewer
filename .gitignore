@@ -14,11 +14,11 @@ coverage/
 # Local benchmark artifacts (gpu-bench runner output, ad-hoc result dumps).
 bench-results/
 /result.json
-# fr-7su phone soak monitor output (gpu-flame-soak.mjs).
+# Phone soak monitor output (gpu-flame-soak.mjs).
 soak-log/
 # Harness image output (qjulia-preview.harness.ts and friends) — regenerate
 # by re-running the harness rather than committing megabytes of PNG.
 scripts/out/
 
-# Generated at build time by scripts/collect-third-party-licenses.mjs (fr-a2l).
+# Generated at build time by scripts/collect-third-party-licenses.mjs.
 src/app/public/THIRD-PARTY-LICENSES.txt

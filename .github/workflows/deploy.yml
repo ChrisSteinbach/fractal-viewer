@@ -1,8 +1,8 @@
 name: Deploy to GitHub Pages
 
-# fr-vja8.7: the github-pages environment's deployment branch policy allows
-# main only (confirmed via the API: custom_branch_policies has exactly one
-# entry, "main") — this workflow CANNOT deploy any other ref, and
+# The github-pages environment's deployment branch policy allows main only
+# (confirmed via the API: custom_branch_policies has exactly one entry,
+# "main") — this workflow CANNOT deploy any other ref, and
 # "workflow_dispatch --ref <old tag/sha>" is refused at the environment gate
 # rather than at dispatch, so it looks viable until it isn't. Rollback is
 # therefore: land a revert of the bad commit(s) on main, then dispatch a
@@ -12,14 +12,14 @@ name: Deploy to GitHub Pages
 # github.sha), so it can only retry a transient failure on today's commit,
 # never substitute yesterday's.
 #
-# fr-vja8.31: main is protected by a ruleset (pull_request + the four
-# required ci.yml checks + rebase-only), so "land a revert" means a revert
-# BRANCH taken through an ordinary PR — a direct push to main is refused.
-# That adds one CI wait (~2min) to a rollback, which is the trade the
-# protection makes on purpose: the same gate that slows a revert by two
-# minutes is the one that stops an untested commit reaching main at all.
-# The ruleset carries no bypass actors; in a genuine emergency the repo
-# admin can deactivate it from the repo's Rules settings, eyes open.
+# main is protected by a ruleset (pull_request + the four required ci.yml
+# checks + rebase-only), so "land a revert" means a revert BRANCH taken
+# through an ordinary PR — a direct push to main is refused. That adds one
+# CI wait (~2min) to a rollback, which is the trade the protection makes
+# on purpose: the same gate that slows a revert by two minutes is the one
+# that stops an untested commit reaching main at all. The ruleset carries
+# no bypass actors; in a genuine emergency the repo admin can deactivate
+# it from the repo's Rules settings, eyes open.
 on:
   workflow_dispatch:
 
@@ -40,49 +40,49 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # fr-vja8.46: load-bearing now that cancel-in-progress is false — a hung
-    # run (npm ci stall, runner loss, a gh api hang in the gate step) would
-    # otherwise hold the pages concurrency group for GitHub's 360min default,
-    # and the rollback flow (revert + fresh dispatch) queues BEHIND the
-    # zombie. Measured deploys run 34s-2min; 10 is the ci.yml margin.
+    # Load-bearing now that cancel-in-progress is false — a hung run (npm ci
+    # stall, runner loss, a gh api hang in the gate step) would otherwise
+    # hold the pages concurrency group for GitHub's 360min default, and the
+    # rollback flow (revert + fresh dispatch) queues BEHIND the zombie.
+    # Measured deploys run 34s-2min; 10 is the ci.yml margin.
     timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      # fr-vja8.5: the only quality gate before this job existed was
-      # `npm run build` below — a commit that compiles but fails lint or
-      # tests could reach production with zero automated objection (no
-      # branch protection either). This queries ci.yml's check runs for the
-      # exact dispatched commit and fails fast, naming whatever is missing
-      # or not green, rather than waiting for in-flight CI — a dispatch on a
-      # commit CI hasn't finished with should be re-dispatched once it has,
-      # not blocked here. gpu-agreement.yml is deliberately NOT required:
-      # its paths-ignore filter means it legitimately never runs for some
+      # The only quality gate before this job existed was `npm run build`
+      # below — a commit that compiles but fails lint or tests could reach
+      # production with zero automated objection (no branch protection
+      # either). This queries ci.yml's check runs for the exact dispatched
+      # commit and fails fast, naming whatever is missing or not green,
+      # rather than waiting for in-flight CI — a dispatch on a commit CI
+      # hasn't finished with should be re-dispatched once it has, not
+      # blocked here. gpu-agreement.yml is deliberately NOT required: its
+      # paths-ignore filter means it legitimately never runs for some
       # commits, which would make "missing" indistinguishable from "red".
       # Reads check-runs unauthenticated-equivalent (verified: this public
       # repo's check-runs endpoint returns 200 with no token at all), so no
       # extra `checks: read` permission is added beyond this job's existing
       # contents: read.
       #
-      # fr-lt3w: a REBASE merge mints NEW SHAs on main, so a PR's green
-      # checks do not transfer to the merged commits — a dispatch fired
-      # straight after `gh pr merge --rebase` is refused here until main's
-      # own CI finishes on the new tip (measured: refused at merge+14s).
-      # That refusal is this gate working as designed; wait for main's CI,
-      # then re-dispatch.
+      # A REBASE merge mints NEW SHAs on main, so a PR's green checks do
+      # not transfer to the merged commits — a dispatch fired straight
+      # after `gh pr merge --rebase` is refused here until main's own CI
+      # finishes on the new tip (measured: refused at merge+14s). That
+      # refusal is this gate working as designed; wait for main's CI, then
+      # re-dispatch.
       - name: Require green CI for this commit
         env:
           GH_TOKEN: ${{ github.token }}
           COMMIT_SHA: ${{ github.sha }}
         run: |
           required="lint build test smoke"
-          # --paginate (fr-vja8.47): the default page is 30 newest-first, and
-          # every dispatch of this workflow mints another check suite on the
-          # same commit — enough dispatches and the REQUIRED runs (the oldest
-          # ids) truncate off the first page, false-refusing a green commit
-          # and amplifying with each retry.
+          # --paginate: the default page is 30 newest-first, and every
+          # dispatch of this workflow mints another check suite on the same
+          # commit — enough dispatches and the REQUIRED runs (the oldest ids)
+          # truncate off the first page, false-refusing a green commit and
+          # amplifying with each retry.
           runs=$(gh api --paginate "repos/${{ github.repository }}/commits/$COMMIT_SHA/check-runs" --jq '.check_runs' | jq -s 'add')
 
           missing=""
@@ -120,7 +120,7 @@ jobs:
       - name: Build app
         run: npm run build
 
-      # fr-vja8.4: GitHub's "Re-run failed jobs" reuses the run ID but bumps
+      # GitHub's "Re-run failed jobs" reuses the run ID but bumps
       # github.run_attempt, so a retry after a post-upload failure re-uploads
       # a second "github-pages" artifact under the same run and fails with
       # "Artifact count is 2" (2026-08-17, run 32052676809: upload succeeded,
