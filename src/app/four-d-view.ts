@@ -22,14 +22,13 @@ import { smoothstep } from "./orbit";
  * voxel render snapshot (main.ts's `fourDRenderSnapshot`) freezes for a
  * worker. The rotor pair itself stays PRIVATE: rotor4.ts's renormalization
  * invariant (see its module doc comment) only holds if every mutation goes
- * through `rotateInPlane` — or, since fr-pnek, through rotor4.ts's
- * `normalizeRotorPair` — so this class exposes the pair only indirectly — via
- * `matrix()`, `reset()`, `tick()`, `rotate()`, and (fr-pnek) `pose()` /
- * `applyPose()` — unlike `tumbleOn`/`tumbleSpeed`/`sliceOn`/`sliceCenter`/
- * `sliceThickness`/`sliceRelColor`, which are plain session data with no
- * invariant to protect, so the animate loop and UI handlers read and write
- * them directly. One
- * exception since fr-g98: the UI's tumble CHECKBOX flows through
+ * through `rotateInPlane` — or through rotor4.ts's `normalizeRotorPair` —
+ * so this class exposes the pair only indirectly, via `matrix()`,
+ * `reset()`, `tick()`, `rotate()`, `pose()` / `applyPose()` — unlike
+ * `tumbleOn`/`tumbleSpeed`/`sliceOn`/`sliceCenter`/`sliceThickness`/
+ * `sliceRelColor`, which are plain session data with no invariant to
+ * protect, so the animate loop and UI handlers read and write them
+ * directly. One exception: the UI's tumble CHECKBOX flows through
  * `setTumbleUserChoice`, not a bare `tumbleOn` write, because a manual toggle
  * must also be remembered as the sticky choice that future `reset()`s
  * respect.
@@ -85,18 +84,18 @@ export function viewTransition(
 }
 
 /**
- * The persistable 4D VIEW pose (fr-pnek) — the 4D sibling of orbit.ts's
- * `CameraPose` (fr-1k4): the accumulated view rotor plus the soft w-slice
+ * The persistable 4D VIEW pose — the 4D sibling of orbit.ts's
+ * `CameraPose`: the accumulated view rotor plus the soft w-slice
  * window, everything needed to reproduce a saved 4D framing. Deliberately
  * EXCLUDES `tumbleOn`/`tumbleSpeed`: auto-motion is a viewer PREFERENCE
- * (fr-0ya's combined auto-motion pref), never document state.
+ * (the combined auto-motion pref), never document state.
  */
 export interface FourDPose {
   pair: RotorPair;
   sliceOn: boolean;
   sliceCenter: number;
   /** Slab half-thickness in the same normalized rotated-w units as
-   * {@link FourDView.sliceThickness} (fr-wa6o); 0 for every pose saved
+   * {@link FourDView.sliceThickness}; 0 for every pose saved
    * before the control existed, which is exactly the cross-section those
    * documents were framed with. */
   sliceThickness: number;
@@ -107,9 +106,9 @@ export interface FourDPose {
  * Session-only 4D projection VIEW state: the accumulated rotor (tumble +
  * Shift-drag/wheel all compose into it), the tumble pause/speed, and the soft
  * w-slice. The live instance itself is never persisted, never part of
- * AppState/undo — but since fr-pnek a `pose()` snapshot ({@link FourDPose})
+ * AppState/undo — but a `pose()` snapshot ({@link FourDPose})
  * IS persisted via the document (a saved/shared scene, a timeline keyframe),
- * restored on load through `applyPose()`, and since fr-gq99 the same snapshot
+ * restored on load through `applyPose()`, and the same snapshot
  * rides undo-history entries OUT OF BAND (history.ts's `ViewPose`), so
  * undo/redo across a whole-system replace restores the rotor/slice like the
  * orbit camera. main.ts owns pushing matrix()/slice
@@ -119,7 +118,7 @@ export class FourDView {
   private pair: RotorPair = identityRotorPair();
 
   /** The user's explicit tumble on/off choice, once they have ever touched
-   * the checkbox (fr-g98). `null` = untouched, so reset() follows the
+   * the checkbox. `null` = untouched, so reset() follows the
    * reduced-motion default; after a manual toggle reset() follows this
    * instead — a fresh visit must not re-enable a tumble the user turned off
    * (nor re-pause a reduced-motion user's explicit opt-in). Session-only,
@@ -136,7 +135,7 @@ export class FourDView {
   sliceCenter: number = 0;
   /** Slab half-thickness in the same normalized rotated-w units as
    * {@link sliceCenter}; 0 is the zero-thickness cross-section every 4D
-   * surface render was before fr-wa6o. */
+   * surface render was before the thickness control. */
   sliceThickness: number = 0;
   /** Recolor the w-ramp modes relative to the slice window? */
   sliceRelColor: boolean = false;
@@ -164,7 +163,7 @@ export class FourDView {
   }
 
   /** The user flipped the tumble checkbox: apply it AND remember it as the
-   * sticky session choice that future reset()s preserve (fr-g98). Programmatic
+   * sticky session choice that future reset()s preserve. Programmatic
    * writes (reset itself, the animate loop) must NOT come through here — only
    * a real user toggle earns stickiness. */
   setTumbleUserChoice(on: boolean): void {
@@ -173,7 +172,7 @@ export class FourDView {
   }
 
   /** Seed the sticky tumble choice at boot from a REMEMBERED viewer preference
-   * (fr-0ya) — the combined auto-motion pref that persist.ts deliberately keeps
+   * — the combined auto-motion pref that persist.ts deliberately keeps
    * out of the scene document / share URL (see viewer-prefs.ts). Sets ONLY the
    * remembered choice, not the live `tumbleOn`: the boot-time reset() that
    * follows on the first 4D entry reads it as `tumbleUserChoice ?? !reducedMotion`
@@ -214,8 +213,8 @@ export class FourDView {
     return rotorMatrix(this.pair);
   }
 
-  /** Snapshot the current view as a persistable {@link FourDPose} (fr-pnek):
-   * the rotor pair plus the four slice fields (thickness since fr-wa6o) —
+  /** Snapshot the current view as a persistable {@link FourDPose}:
+   * the rotor pair plus the four slice fields (thickness included) —
    * everything `applyPose` needs to reproduce this exact framing later (a
    * save, a share link, a timeline keyframe). The quaternions are
    * deep-copied into fresh arrays: the private `pair` must never leak by
@@ -234,7 +233,7 @@ export class FourDView {
     };
   }
 
-  /** Restore a {@link FourDPose} (fr-pnek) — the ONE sanctioned way to set
+  /** Restore a {@link FourDPose} — the ONE sanctioned way to set
    * the rotor pair directly rather than composing it via `rotateInPlane`:
    * `pose.pair`'s halves are run through rotor4.ts's `normalizeRotorPair`,
    * which re-establishes the same unit-length invariant a `rotateInPlane`
@@ -257,10 +256,10 @@ export class FourDView {
   }
 }
 
-/** In-flight rotor/slice glide (fr-pnek): a directed smoothstep to a SAVED
+/** In-flight rotor/slice glide: a directed smoothstep to a SAVED
  * {@link FourDPose} — the 4D sibling of `camera-tween.ts`'s `PoseTween`. Only
- * the rotor and the two continuous slice scalars — CENTER and, since
- * fr-wa6o, THICKNESS — are interpolated over the glide; `sliceOn`/
+ * the rotor and the two continuous slice scalars — CENTER and
+ * THICKNESS — are interpolated over the glide; `sliceOn`/
  * `sliceRelColor` apply from the target immediately (see
  * `FourDTween.advance`) since a binary can't fade partway. */
 interface FourDGlide {
@@ -273,7 +272,7 @@ interface FourDGlide {
 }
 
 /**
- * The directed rotor/slice glide a timeline leg drives (fr-pnek) — the 4D
+ * The directed rotor/slice glide a timeline leg drives — the 4D
  * sibling of `camera-tween.ts`'s `CameraTween.glideToPose`: a self-timed
  * smoothstep from the view's current rotor/slice to a SAVED {@link
  * FourDPose}, mutating an injected {@link FourDView} in place via {@link
@@ -307,7 +306,7 @@ export class FourDTween {
   }
 
   /**
-   * Glide the view to a SAVED {@link FourDPose} (fr-pnek) — a timeline leg's
+   * Glide the view to a SAVED {@link FourDPose} — a timeline leg's
    * 4D camera move — over `durationMs`, the leg's own morph length (not a
    * fixed constant, mirroring `CameraTween.glideToPose`). Under reduced
    * motion, or a non-positive `durationMs` (a zero-length glide's first

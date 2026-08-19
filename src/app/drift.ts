@@ -1,5 +1,5 @@
 /**
- * The "Drift" ambient-show timing loop (fr-wavo): a pure dwell/advance state
+ * The "Drift" ambient-show timing loop: a pure dwell/advance state
  * machine that turns the viewer into an ever-evolving display (the
  * Electric-Sheep-on-a-TV use case). Dwell on the current attractor for
  * {@link DRIFT_DWELL_MS}, then spend {@link DRIFT_MORPH_MS} morphing to a
@@ -41,7 +41,7 @@
  * cadence from wherever the viewer actually is, rather than replaying a
  * backlog of missed legs.
  *
- * ## Held legs: dwells that end on a SIGNAL, not a clock (fr-w2ve)
+ * ## Held legs: dwells that end on a SIGNAL, not a clock
  *
  * The collection-sourced show (main.ts's gallery slideshow) can display each
  * item as a converging flame/solid render, and "how long until this item is
@@ -83,7 +83,7 @@ export const DRIFT_DWELL_MS = 5000;
  * not feedback on a click. main.ts passes this to MorphTween.start. */
 export const DRIFT_MORPH_MS = 5000;
 /** How long a held show lingers on a JUST-COMPLETED flame/solid render
- * before departing (fr-w2ve): main.ts passes this to
+ * before departing: main.ts passes this to
  * {@link DriftShow.resumeAfter} when the render a hold was waiting on meets
  * its iteration budget — "render complete, one second longer, move on". */
 export const DRIFT_RENDER_LINGER_MS = 1000;
@@ -130,7 +130,7 @@ export class DriftShow {
    * firing until {@link resumeAfter} re-arms it (or {@link start} re-arms
    * the dwell, or {@link stop} ends the show). The caller's "the current
    * item is a converging render — depart on its completion signal, not on a
-   * clock" state (fr-w2ve; see the module header). A no-op while idle:
+   * clock" state (see the module header). A no-op while idle:
    * holding is a way of BEING active, never a way of becoming it.
    */
   hold(): void {

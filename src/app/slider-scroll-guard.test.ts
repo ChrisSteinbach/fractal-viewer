@@ -73,7 +73,7 @@ function setup(opts: {
   return { panel, slider, inputs, changes };
 }
 
-describe("installSliderScrollGuard (fr-xu4u)", () => {
+describe("installSliderScrollGuard", () => {
   it("leaves the value and the edit pipeline completely alone when a touch scroll starts on a slider", () => {
     const { slider, inputs, changes } = setup({
       min: "0",
@@ -260,7 +260,7 @@ describe("installSliderScrollGuard (fr-xu4u)", () => {
     expect(inputs).toHaveBeenCalledTimes(1);
   });
 
-  it("fires the trailing change on release that commit-on-release specs need (fr-2c27)", () => {
+  it("fires the trailing change on release that commit-on-release specs need", () => {
     const { slider, changes } = setup({
       min: "0",
       max: "4",

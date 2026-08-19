@@ -18,12 +18,12 @@
  */
 
 /**
- * The render mode a scene was SAVED from, when it wasn't the points explorer
- * (fr-75sq). Absent means points — which also keeps every entry saved before
+ * The render mode a scene was SAVED from, when it wasn't the points explorer.
+ * Absent means points — which also keeps every entry saved before
  * this field existed valid as-is. Deliberately a field on the collection ENTRY, never inside
  * `encoded`: the document (and with it share links, the autosave, and undo
- * history) stays render-mode-less per fr-39y; only the user's own gallery
- * remembers how a keeper was meant to be displayed.
+ * history) stays render-mode-less under the unified render-mode model; only
+ * the user's own gallery remembers how a keeper was meant to be displayed.
  */
 export type SavedSceneMode = "flame" | "solid" | "surface";
 
@@ -47,7 +47,7 @@ export interface SavedScene {
 
 /**
  * What a backup file hands to {@link SceneCollection.importScenes} — a
- * {@link SavedScene} minus its `id` (fr-de9t). Ids are storage-internal,
+ * {@link SavedScene} minus its `id`. Ids are storage-internal,
  * minted per `SceneCollection` instance (see `counter` below); a backup
  * produced by a different session or device carries ids that mean nothing
  * here, so a merge always mints fresh ones rather than trusting the file's.
@@ -100,7 +100,7 @@ function isSavedScene(v: unknown): v is SavedScene {
 
 /** The entry's `mode` if it is a known {@link SavedSceneMode}, else
  * undefined (= points) — see `isSavedScene` on why this never rejects.
- * Exported for `timeline.ts`'s loader to reuse (fr-v3au) — the one
+ * Exported for `timeline.ts`'s loader to reuse — the one
  * validator for a persisted `SavedSceneMode`. */
 export function sanitizedMode(v: unknown): SavedSceneMode | undefined {
   return v === "flame" || v === "solid" || v === "surface" ? v : undefined;
@@ -197,7 +197,7 @@ export class SceneCollection {
 
   /**
    * Replace one entry's thumbnail, leaving everything else — `id`, `encoded`,
-   * `createdAt`, `mode` — exactly as it was (fr-r777). The one field a save
+   * `createdAt`, `mode` — exactly as it was. The one field a save
    * can get wrong after the fact: a save taken during a flame/solid/surface
    * render's first-frame gap files a POINT-CLOUD picture under that render's
    * tag (the screen honestly still showed the explorer), and main.ts
@@ -226,8 +226,8 @@ export class SceneCollection {
   }
 
   /**
-   * Re-insert a previously removed entry — the undo side of {@link remove}
-   * (fr-ifts): a delete-confirmation toast's "Undo" action calls this with
+   * Re-insert a previously removed entry — the undo side of {@link remove}:
+   * a delete-confirmation toast's "Undo" action calls this with
    * the exact `SavedScene` `remove` took out, rather than re-deriving one —
    * there is nothing to re-derive `id`/`createdAt`/`mode` from once an entry
    * is gone. Reinserted at the position its OWN `createdAt` sorts to
@@ -252,7 +252,7 @@ export class SceneCollection {
   }
 
   /**
-   * Merge a backup file's entries into the collection (fr-de9t) — the batch
+   * Merge a backup file's entries into the collection — the batch
    * counterpart to {@link add}/{@link restore}. Processes `entries` in the
    * given order:
    *
@@ -324,7 +324,7 @@ export class SceneCollection {
    * The entry FOLLOWING the one with this id in gallery order (newest-first,
    * the order `all` returns and the gallery grid displays), wrapping past
    * the oldest back to the front — the collection-sourced drift show's loop
-   * cursor (fr-w2ve). `null` for `id` asks for the front entry (a fresh
+   * cursor. `null` for `id` asks for the front entry (a fresh
    * show's first departure); an id no longer present (deleted mid-show)
    * also yields the front entry, restarting the loop from the top rather
    * than guessing where the vanished entry used to sit. Returns `null` only

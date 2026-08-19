@@ -135,7 +135,7 @@ describe("SceneHistory canUndo / canRedo", () => {
   });
 });
 
-describe("SceneHistory view pose (fr-uf3, fr-gq99)", () => {
+describe("SceneHistory view pose", () => {
   const poseA: ViewPose = {
     camera: { target: [1, 0, 0], radius: 10, theta: 0, phi: 1 },
   };
@@ -185,7 +185,7 @@ describe("SceneHistory view pose (fr-uf3, fr-gq99)", () => {
     expect(history.undo("b")?.pose).toBeUndefined();
   });
 
-  it("the 4D half of a checkpoint's pose travels back through undo (fr-gq99)", () => {
+  it("the 4D half of a checkpoint's pose travels back through undo", () => {
     const history = new SceneHistory();
     const fourD: FourDPose = {
       pair: { p: [1, 0, 0, 0], q: [1, 0, 0, 0] },

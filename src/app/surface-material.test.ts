@@ -44,12 +44,12 @@ import type { Transform, Vec3 } from "../fractal/types";
 
 /**
  * The tracer itself is verified by running the app, but its kaleidoscope
- * PACKER is pinned here (fr-x029). The descent sweeps symmetry sectors
- * instead of expanding them into map slots, so the whole kaleidoscope
- * crosses into GLSL as three scalars — an order, a PLANE CODE, and one
- * (cos, sin) step. A plane mapped to the wrong int, or a step of the wrong
- * sign, rotates the estimator's sectors away from the plotted attractor and
- * is invisible until someone loads a kaleidoscope in a browser. These are
+ * PACKER is pinned here. The descent sweeps symmetry sectors instead of
+ * expanding them into map slots, so the whole kaleidoscope crosses into
+ * GLSL as three scalars — an order, a PLANE CODE, and one (cos, sin)
+ * step. A plane mapped to the wrong int, or a step of the wrong sign,
+ * rotates the estimator's sectors away from the plotted attractor and is
+ * invisible until someone loads a kaleidoscope in a browser. These are
  * pure uniform reads: no GL context involved.
  */
 
@@ -110,7 +110,7 @@ describe("setSurfaceSystem kaleidoscope packing", () => {
     expect((u.uSymStep.value as THREE.Vector2).y).toBe(0);
   });
 
-  it("passes the bounding ball's center through (fr-pjqw)", () => {
+  it("passes the bounding ball's center through", () => {
     const material = createSurfaceMaterial();
     const de = de3([map3()]);
     setSurfaceSystem(material, { ...de, boundCenter: [0.5, -1.25, 2] }, [
@@ -127,7 +127,7 @@ describe("setSurfaceSystem kaleidoscope packing", () => {
     expect(center.z).toBe(0);
   });
 
-  it("codes the yz plane as 0, xz as 1 and xy as 2 — the frozen pre-fr-q0h6 axis codes", () => {
+  it("codes the yz plane as 0, xz as 1 and xy as 2 — the frozen pre-4D axis codes", () => {
     const material = createSurfaceMaterial();
     for (const [plane, code] of [
       ["yz", 0],
@@ -166,7 +166,8 @@ describe("setSurfaceSystem kaleidoscope packing", () => {
 
   it("accepts an order that would have overflowed the expanded slot budget", () => {
     const material = createSurfaceMaterial();
-    // 4 base maps x order 9 = 36 copies: refused outright before fr-x029.
+    // 4 base maps x order 9 = 36 copies: refused outright before the
+    // sector sweep.
     const de = buildSurfaceDE(sierpinskiTetrahedron(), null, {
       order: 9,
       plane: "xz",
@@ -190,7 +191,7 @@ describe("setSurfaceSystem kaleidoscope packing", () => {
   });
 });
 
-describe("the fold's authored lengths in the GLSL tracer (fr-s9ll)", () => {
+describe("the fold's authored lengths in the GLSL tracer", () => {
   it("packs each map's own three lengths into uFoldRadii, in resolveFoldRadii's raw (not squared) form", () => {
     const material = createSurfaceMaterial();
     setSurfaceSystem(
@@ -282,7 +283,7 @@ describe("the fold's authored lengths in the GLSL tracer (fr-s9ll)", () => {
     expect([escRadii[1].x, escRadii[1].y, escRadii[1].z]).toEqual([0.25, 1, 3]);
   });
 
-  it("leaves no classic fold length baked into the emitted GLSL — the divergence fr-xb8o filed", () => {
+  it("leaves no classic fold length baked into the emitted GLSL — the divergence that used to render one object on the CPU and another on every GPU path", () => {
     for (const src of [surfaceFragmentFor(0, 0), surfaceFragmentFor(0, 1)]) {
       expect(src).toContain("FoldRadii foldRadiiOf(vec3 f)");
       expect(src).not.toContain("pre1 = 2.0 - u;");
@@ -317,7 +318,7 @@ describe("the fold's authored lengths in the GLSL tracer (fr-s9ll)", () => {
   });
 });
 
-describe("the supersampling jitter uniform (fr-jf9y)", () => {
+describe("the supersampling jitter uniform", () => {
   const variants: [string, string][] = [
     ["affine", surfaceFragmentFor(0, 0)],
     ["fold lens", surfaceFragmentFor(0, 1)],
@@ -328,7 +329,7 @@ describe("the supersampling jitter uniform (fr-jf9y)", () => {
     ["bulb", surfaceFragmentFor(0, 0, 0, 0, 1)],
   ];
 
-  it("defaults to the pixel CENTRE, which is what makes a single-pass trace the pre-fr-jf9y one", () => {
+  it("defaults to the pixel CENTRE, which is what makes a single-pass trace the pre-supersampling one", () => {
     // The whole byte-identity argument rests here: at (0,0,0,0) the two
     // reads below add exactly 0.0, and IEEE addition of +0.0 is exact. A
     // preview, a thumbnail, an offline force frame and pass 0 of a
@@ -361,7 +362,7 @@ describe("the supersampling jitter uniform (fr-jf9y)", () => {
   });
 });
 
-describe("setSurfaceSystem fold final lens packing (fr-g58b)", () => {
+describe("setSurfaceSystem fold final lens packing", () => {
   it("packs the lens uniforms, flips SURFACE_FOLD_LENS, and keeps the cores' uFinal* at identity", () => {
     const material = createSurfaceMaterial();
     const de = de3([map3()]);
@@ -391,9 +392,9 @@ describe("setSurfaceSystem fold final lens packing (fr-g58b)", () => {
   });
 
   it("keeps every variant's fragment source free of the other variants' text", () => {
-    // The measured Mesa edge (fr-kltj follow-up): the fold variant's
-    // compiler crashed when the source merely GREW past ~80KB with
-    // preprocessor-dead lens/escape arms — so the arms are resolved
+    // The measured Mesa edge (the escape arm's own follow-up): the fold
+    // variant's compiler crashed when the source merely GREW past ~80KB
+    // with preprocessor-dead lens/escape arms — so the arms are resolved
     // JS-side and each variant's source carries only its own bodies.
     const material = createSurfaceMaterial();
     // Default: no lens wrapper, no escape loop, SURFACE_FOLDS still a
@@ -444,7 +445,7 @@ function countOccurrences(source: string, needle: string): number {
   return source.split(needle).length - 1;
 }
 
-describe("buildSurfaceFragment shade probe (fr-zqu8)", () => {
+describe("buildSurfaceFragment shade probe", () => {
   it("keeps every variant free of the probe when built at the beam width (A/A)", () => {
     const source = buildSurfaceFragment(SURFACE_FOLD_BEAM_WIDTH);
     expect(surfaceFragmentFor(0, 0, 0, 0, 0, source)).not.toContain(
@@ -514,7 +515,7 @@ describe("buildSurfaceFragment shade probe (fr-zqu8)", () => {
   });
 });
 
-describe("SURFACE_BALLOON variant (fr-5wlv.4)", () => {
+describe("SURFACE_BALLOON variant", () => {
   /** The spec scene.ts builds — fractal/balloon-de.ts's buildBalloon
    * convention (margined rho, world-unit R) plus the oracle's far cap. */
   function specFor(de: SurfaceDE, rMult: number): SurfaceBalloonSpec {
@@ -683,7 +684,7 @@ describe("SURFACE_BALLOON variant (fr-5wlv.4)", () => {
     expect(material.fragmentShader).not.toContain("uBalloon");
   });
 
-  it("packs the echo tint's uniforms and the shell-gated base-albedo mix into every variant the balloon composes with (fr-j85n)", () => {
+  it("packs the echo tint's uniforms and the shell-gated base-albedo mix into every variant the balloon composes with", () => {
     for (const [escape, lens] of [
       [0, 0],
       [0, 1],
@@ -700,7 +701,7 @@ describe("SURFACE_BALLOON variant (fr-5wlv.4)", () => {
     }
   });
 
-  it("pays nothing for the echo tint while the balloon is off (fr-j85n)", () => {
+  it("pays nothing for the echo tint while the balloon is off", () => {
     // uBalloonTint/uBalloonTintStrength both carry the uBalloon prefix the
     // byte-identity test above already nets, but pinning the tint's own
     // tokens independently means a future narrowing of that wider check
@@ -751,7 +752,7 @@ describe("SURFACE_BALLOON variant (fr-5wlv.4)", () => {
   });
 });
 
-describe("SURFACE_GROUND_PLANE variant (fr-rhn5)", () => {
+describe("SURFACE_GROUND_PLANE variant", () => {
   it("strips every ground-plane token from every variant while the flag is off — the byte-identity mechanism", () => {
     for (const [escape, lens, balloon] of [
       [0, 0, 0],
@@ -892,7 +893,7 @@ describe("SURFACE_GROUND_PLANE variant (fr-rhn5)", () => {
   });
 });
 
-describe("SURFACE_ESCAPE orbit trap (fr-byxb)", () => {
+describe("SURFACE_ESCAPE orbit trap", () => {
   it("normalizes the escape count by the PASS budget, so a chain reaches the same ramp a single map does", () => {
     const resolved = surfaceFragmentFor(1, 0);
     // uMaxDepth, never uMaxDepth * uMapCount: escapedAt counts single-link
@@ -908,9 +909,10 @@ describe("SURFACE_ESCAPE orbit trap (fr-byxb)", () => {
   it("keeps the step BUDGET as the loop bound and the escaped test, which are per-link quantities", () => {
     const resolved = surfaceFragmentFor(1, 0);
     // Only the trap's denominator moved: the orbit still runs uMaxDepth
-    // passes of the whole chain, and "did it escape" still compares against
-    // that same step count. (fr-j231 split the growth guard out into the
-    // two interpolant arms below it; the escape test itself is unmoved.)
+    // passes of the whole chain, and "did it escape" still compares
+    // against that same step count. (The power links split the growth
+    // guard out into the two interpolant arms below it; the escape test
+    // itself is unmoved.)
     expect(resolved).toContain("int steps = uMaxDepth * n;");
     expect(resolved).toContain("if (escapedAt < steps) {");
     expect(resolved).toContain("} else if (growth > 1.0) {");
@@ -926,12 +928,13 @@ describe("SURFACE_ESCAPE orbit trap (fr-byxb)", () => {
   });
 });
 
-describe("SURFACE_ESCAPE variant packing (fr-kltj, chain since fr-s04t)", () => {
+describe("SURFACE_ESCAPE variant packing, one uniform slot per chain link", () => {
   /** A three-link chain whose links genuinely differ — fold kind, weight,
    * matrix and translation all vary — plus one inactive (weight 0) map, so
    * uMapCount can be shown to count LINKS rather than document transforms.
-   * fr-s04t's own lesson: identical links make every packing mutation pass
-   * vacuously, so no two links here share a fold kind, a weight or a
+   * The chain mirror's own lesson: identical links make every packing
+   * mutation pass vacuously, so no two links here share a fold kind, a
+   * weight or a
    * matrix. */
   function chain(): Transform[] {
     return [
@@ -1041,7 +1044,7 @@ describe("SURFACE_ESCAPE variant packing (fr-kltj, chain since fr-s04t)", () => 
     for (let i = 0; i < 2; i++) {
       const callIdx = resolved.indexOf(callSite, from);
       const loopIdx = resolved.indexOf(loopHead, from);
-      // Both bodies end on the fr-j231 form switch, which is the last
+      // Both bodies end on the estimate-form switch, which is the last
       // statement either one runs.
       const bodyEnd = resolved.indexOf("return uEscLogForm == 0", loopIdx);
       expect(bodyEnd).toBeGreaterThan(loopIdx);
@@ -1097,8 +1100,9 @@ describe("SURFACE_ESCAPE variant packing (fr-kltj, chain since fr-s04t)", () => 
   });
 });
 
-describe("SURFACE_ESCAPE cross-family links (fr-j231)", () => {
-  /** A fold-only chain: the pre-fr-j231 shape, which must keep the linear
+describe("SURFACE_ESCAPE cross-family links", () => {
+  /** A fold-only chain: the shape that predates the power links, which
+   * must keep the linear
    * estimate form to the bit. */
   function foldChain(): Transform[] {
     return [
@@ -1120,7 +1124,7 @@ describe("SURFACE_ESCAPE cross-family links (fr-j231)", () => {
   }
 
   /** The same chain with its tail link swapped for the triplex power —
-   * the cross-family shape this bead exists for. A LONE power map is
+   * the cross-family shape the power link exists for. A LONE power map is
    * refused by the gate (the Mandelbulb render owns it), so the fold link
    * ahead of it is load-bearing, not decoration. */
   function powerChain(): Transform[] {
@@ -1133,7 +1137,7 @@ describe("SURFACE_ESCAPE cross-family links (fr-j231)", () => {
     const material = createSurfaceMaterial();
 
     // The default is the linear form, so a material that never sees an
-    // escape system reads the pre-fr-j231 behaviour.
+    // escape system reads the fold-only behaviour.
     expect(material.uniforms.uEscLogForm.value).toBe(0);
 
     const folds = buildEscapeDE(foldChain());
@@ -1194,8 +1198,8 @@ describe("SURFACE_ESCAPE cross-family links (fr-j231)", () => {
     const resolved = surfaceFragmentFor(1, 0);
     // A pre-scaled power link routinely has growth = |w|*sigma_max below
     // 1, so the constant-factor guard fires and escFrac falls to 0 — the
-    // raw integer step function, fr-7u8t.8's palette confetti, through the
-    // back door. The degree is tracked per step beside growth.
+    // raw integer step function, the palette confetti, through the back
+    // door. The degree is tracked per step beside growth.
     expect(resolved).toContain(
       "lastPower = kind == 4 ? 8.0 : (kind == 5 ? 2.0 : 0.0);",
     );
@@ -1238,7 +1242,7 @@ describe("SURFACE_ESCAPE cross-family links (fr-j231)", () => {
   });
 
   it("keeps the widened escape variant far under the source size that crashed Mesa", () => {
-    // fr-j231 costs this arm the two power branches (twice, both bodies),
+    // The power links cost this arm two branches (twice, both bodies),
     // the duplicated bulbPow8 and two comment paragraphs. The strip
     // threshold is 64KB and the measured crash was 82.2KB — the escape
     // arm's commentary is worth keeping only while it stays under the
@@ -1248,7 +1252,7 @@ describe("SURFACE_ESCAPE cross-family links (fr-j231)", () => {
   });
 });
 
-describe("SURFACE_BULB variant (fr-7u8t.9)", () => {
+describe("SURFACE_BULB variant", () => {
   /** The classic Mandelbulb shape `analyzeBulbSystem` admits, with a
    * NON-UNIT uniform scale so `sigmaMax` is a value distinguishable from
    * 1 — dropping either of the estimator's two `sigma_max(M)` terms is a
@@ -1273,11 +1277,11 @@ describe("SURFACE_BULB variant (fr-7u8t.9)", () => {
     ] as const) {
       const resolved = surfaceFragmentFor(escape, lens, balloon, 0, 0);
       expect(resolved).not.toContain("uBulb");
-      // bulbPow8 is the ONE exception since fr-j231, and only for the
-      // escape arm: a chain link of kind 4 applies the triplex power, and
-      // the two forward-orbit arms are alternatives, so the escape arm
-      // carries its own copy of the function rather than reading this
-      // one. The descent variants still see neither.
+      // bulbPow8 is the ONE exception, and only for the escape arm: a
+      // chain link of kind 4 applies the triplex power, and the two
+      // forward-orbit arms are alternatives, so the escape arm carries
+      // its own copy of the function rather than reading this one. The
+      // descent variants still see neither.
       if (escape === 0) {
         expect(resolved).not.toContain("bulbPow8");
       }
@@ -1390,11 +1394,11 @@ describe("SURFACE_BULB variant (fr-7u8t.9)", () => {
   });
 });
 
-describe("the present blit strips coverage alpha (fr-1wbv)", () => {
-  // The tracers write the fr-7k0o COVERAGE flag into alpha (miss = 0), a
-  // private side-channel of the trace targets. three r163+ creates the
-  // canvas WebGL context alpha:true regardless of the renderer's `alpha`
-  // param, so a coverage-0 pixel that reaches the canvas makes the
+describe("the present blit strips coverage alpha", () => {
+  // The tracers write the COVERAGE flag into alpha (miss = 0), a private
+  // side-channel of the trace targets. three r163+ creates the canvas
+  // WebGL context alpha:true regardless of the renderer's `alpha` param,
+  // so a coverage-0 pixel that reaches the canvas makes the
   // premultiplied compositor ADD the page background to the pane —
   // measured as exactly +#0f1018 on every miss pixel of a WebGL surface
   // settle, the whole of the two 4D arms' IoU 0.24/0.35 divergence. The
@@ -1454,7 +1458,7 @@ function boxBranchDecodes(glsl: string): string[] {
   }
 }
 
-describe("box-branch decode duplication (fr-ep0w)", () => {
+describe("box-branch decode duplication", () => {
   it("emits the box-branch decode character for character in all four descents that carry one, so a branch fix landing in the beam descent and not the lens wrappers cannot ship", () => {
     // At the beam width the probe instance is not emitted (foldDescentGlsl's
     // own contract), which leaves the four hand-written copies: the fold
@@ -1514,7 +1518,7 @@ describe("box-branch decode duplication (fr-ep0w)", () => {
   });
 });
 
-describe("the balloon's empty-space-grid gate (fr-8yad)", () => {
+describe("the balloon's empty-space-grid gate", () => {
   it("keeps the out-of-box refusal inside the balloon arm, so every other variant's source is untouched", () => {
     // The guard exists because a balloon ray marches from the camera to
     // the far cap and leaves the grid cube, where an edge-clamped read
@@ -1522,7 +1526,7 @@ describe("the balloon's empty-space-grid gate (fr-8yad)", () => {
     // confined to the traced sphere inside the cube and never meet it —
     // so the text lives in a resolver-owned SURFACE_BALLOON arm and the
     // shipped fold/affine/escape programs are byte-identical to their
-    // pre-fr-8yad selves.
+    // pre-gate selves.
     for (const [escape, lens] of [
       [0, 0],
       [0, 1],

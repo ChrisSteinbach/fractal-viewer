@@ -3,8 +3,8 @@ import {
   STRIP_WORST_EVIDENCE_SAFETY,
 } from "./strip-evidence";
 
-// The fr-096u evidence chain's rules, each pinned in the direction whose
-// regression the docs record as a real incident (fr-vja8.66): these were
+// The evidence chain's rules, each pinned in the direction whose
+// regression the docs record as a real incident: these were
 // previously testable only by minutes-long real-browser capture gates.
 
 describe("StripCostEvidence", () => {
@@ -14,7 +14,7 @@ describe("StripCostEvidence", () => {
   });
 
   it("a completed job's observation replaces the floor DOWNWARD", () => {
-    // The direction the fr-096u review regression was about: a
+    // The direction the review regression was about: a
     // measured-cheap fold system pinned to the monster-class floor forever
     // dissolves its settle into readback-bound micro-strips.
     const evidence = new StripCostEvidence();
@@ -47,7 +47,7 @@ describe("StripCostEvidence", () => {
   });
 
   it("a superseded job kills completed evidence — the pose moved on", () => {
-    // The fr-096u validation incident: a far-pose preview completed cheap
+    // The validation incident: a far-pose preview completed cheap
     // during the entry glide, and its stale relaxed floor let the parked
     // monster pose plan 16-22s strip groups.
     const evidence = new StripCostEvidence();
@@ -75,7 +75,7 @@ describe("StripCostEvidence", () => {
     expect(evidence.price(50)).toBe(1 * STRIP_WORST_EVIDENCE_SAFETY);
   });
 
-  it("a completed capture SEEDS an empty chain (fr-y1m7)", () => {
+  it("a completed capture SEEDS an empty chain", () => {
     // Offline export is the one caller that never produces live evidence;
     // without the seed every frame of a fold-scene video paid class-prior
     // micro-strips.

@@ -1,5 +1,5 @@
 /**
- * The offline export's WebCodecs encode session (fr-92t9): each frame the
+ * The offline export's WebCodecs encode session: each frame the
  * driver loop (`offline-export.ts`) finishes painting is read off the shared
  * canvas as a `VideoFrame`, handed to an H.264 `VideoEncoder`, and collected
  * as a per-chunk Blob + `mp4-mux.ts` sample row; `finish()` flushes the
@@ -19,8 +19,8 @@
  * bitstream parsing anywhere. Timestamps are authored (`frameTimestampUs`)
  * and echoed back on each chunk; the chunks themselves arrive in DECODE
  * order, which a B-frame encoder REORDERS relative to presentation —
- * Firefox's H.264 encoder does this whatever `latencyMode` asks (fr-7dm2;
- * Chrome's encoders never do) — so each sample records its presentation
+ * Firefox's H.264 encoder does this whatever `latencyMode` asks (Chrome's
+ * encoders never do) — so each sample records its presentation
  * timestamp and `mp4-mux.ts` writes the ctts/elst boxes that represent the
  * reordering.
  *
@@ -186,7 +186,7 @@ export async function createOfflineEncoder(opts: {
       chunk.copyTo(bytes);
       parts.push(new Blob([bytes]));
       // Chunks arrive in DECODE order; `timestamp` is the presentation
-      // time. A B-frame encoder (Firefox — fr-7dm2) hands them back
+      // time. A B-frame encoder (Firefox) hands them back
       // reordered, which the muxer represents via ctts/elst; recording the
       // timestamp per sample is all it needs from here.
       samples.push({

@@ -105,7 +105,7 @@ describe("generateCloud 3D", () => {
     expect(result.colors).toEqual(expectedColors);
   });
 
-  it("bakes the request's ramp palette into the height/radius colors (fr-3b6, oracle)", () => {
+  it("bakes the request's ramp palette into the height/radius colors (oracle)", () => {
     const req = cloudRequest({ colorMode: "radius", rampPalette: "spectrum" });
     const result = as3D(generateCloud(req));
 
@@ -132,7 +132,7 @@ describe("generateCloud 3D", () => {
     );
   });
 
-  it("bakes the request's custom position axis colors into the colors (fr-8k7, oracle)", () => {
+  it("bakes the request's custom position axis colors into the colors (oracle)", () => {
     const axes: PositionAxisColors = {
       x: [1, 0.5, 0],
       y: [0, 0.5, 1],
@@ -236,7 +236,7 @@ describe("generateCloud 3D", () => {
     });
   });
 
-  it("isolates iteration-local randomness from the pick stream, keeping ε-different same-seed requests correspondent (fr-2wfw)", () => {
+  it("isolates iteration-local randomness from the pick stream, keeping ε-different same-seed requests correspondent", () => {
     // The morph streams per-frame requests that differ only by a tiny
     // parameter step, under ONE pinned seed (morph-tween.ts). This system
     // exercises every desynchronization source: a non-1 weight (weighted

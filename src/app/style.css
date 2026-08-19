@@ -14,16 +14,16 @@
   --accent: #5b9dff;
   --accent-strong: #3b82f6;
 
-  /* The accent pair BEHIND WHITE TEXT (fr-vja8.20) — the fills of .btn-blue,
-     the active render-mode segment, and a pressed mirror toggle, and nothing
-     else. --accent/--accent-strong compute 2.72:1 / 3.68:1 against #fff,
-     under the 4.5:1 AA floor at these text sizes, but they pass in their own
-     contexts (focus ring, links, borders) — so the text-bearing fills get
-     their own darker pair rather than moving the whole family. Same hues
-     (216°/217°), same saturation, darkened to 4.83:1 / 6.64:1; the hover
-     stops inlined at the three sites lighten by the same ~2 points the old
-     hover did and still clear 4.5:1 (4.56 / 6.21). #06f is #0066ff — the
-     short form is stylelint's. */
+  /* The accent pair BEHIND WHITE TEXT — the fills of .btn-blue, the active
+     render-mode segment, and a pressed mirror toggle, and nothing else.
+     --accent/--accent-strong compute 2.72:1 / 3.68:1 against #fff, under the
+     4.5:1 AA floor at these text sizes, but they pass in their own contexts
+     (focus ring, links, borders) — so the text-bearing fills get their own
+     darker pair rather than moving the whole family. Same hues (216°/217°),
+     same saturation, darkened to 4.83:1 / 6.64:1; the hover stops inlined at
+     the three sites lighten by the same ~2 points the old hover did and still
+     clear 4.5:1 (4.56 / 6.21). #06f is #0066ff — the short form is
+     stylelint's. */
   --accent-fill: #06f;
   --accent-fill-strong: #0a54cd;
   --good: #34d399;
@@ -39,7 +39,7 @@
   box-sizing: border-box;
 }
 
-/* ── Keyboard focus (fr-gw1f) ─────────────────────────────────────────────
+/* ── Keyboard focus ───────────────────────────────────────────────────────
    ONE accent-colored focus ring for every interactive control — buttons,
    segments, sliders, checkboxes, selects, summaries, links — instead of a
    grab-bag of UA defaults. :focus-visible matches keyboard-driven focus
@@ -54,15 +54,15 @@
   outline-offset: 1px;
 }
 
-/* The viewport canvas is a focus target since fr-vja8.37 (the camera keys
-   live on it) and fills the window, so the shared ring's outside offset
-   would render entirely offscreen — restate it inset, the
-   clipped-ancestor reasoning above applied to the window itself. Bare
-   `canvas` on purpose: the app's other canvases (mutation cells, gallery
-   thumbnails) are not focusable, so :focus-visible can only ever match
-   the viewport one — and an id-scoped selector here would trip
-   no-descending-specificity against later plain-canvas rules. Inherits
-   the shared ring's color/width; only the offset moves. */
+/* The viewport canvas is a focus target (the camera keys live on it) and
+   fills the window, so the shared ring's outside offset would render
+   entirely offscreen — restate it inset, the clipped-ancestor reasoning
+   above applied to the window itself. Bare `canvas` on purpose: the
+   app's other canvases (mutation cells, gallery thumbnails) are not
+   focusable, so :focus-visible can only ever match the viewport one —
+   and an id-scoped selector here would trip no-descending-specificity
+   against later plain-canvas rules. Inherits the shared ring's
+   color/width; only the offset moves. */
 canvas:focus-visible {
   outline-offset: -3px;
 }
@@ -72,12 +72,12 @@ canvas:focus-visible {
    EXPANDS the layout viewport to contain such overflow (measured: 393×727 →
    693×1282 shortly after the panel slides shut), silently sinking every
    bottom-fixed overlay — replay caption, toast, legend, update banner —
-   below the visible screen (fr-q5c). Root-level `overflow: hidden` is not
-   enough: it only hides the scrollbars, while the overflow region still
-   exists and still feeds that viewport sizing. The fix is geometric: size
-   body to the viewport and make it the panel's containing block (position:
-   relative), so body's own overflow: hidden actually CLIPS the parked panel
-   and the root never overflows at all. */
+   below the visible screen. Root-level `overflow: hidden` is not enough: it
+   only hides the scrollbars, while the overflow region still exists and
+   still feeds that viewport sizing. The fix is geometric: size body to the
+   viewport and make it the panel's containing block (position: relative), so
+   body's own overflow: hidden actually CLIPS the parked panel and the root
+   never overflows at all. */
 html {
   height: 100%;
   overflow: hidden;
@@ -91,11 +91,11 @@ body {
   background: var(--bg);
   overflow: hidden;
 
-  /* Pinch-zoom must stay available for WCAG 1.4.4 (fr-vfk), so no blanket
-     `none` here — browsers check every ancestor up to the root for viewport
-     zoom, and `none` on <body> would veto pinch everywhere, even over the
-     panel. `manipulation` keeps pan + pinch-zoom but drops double-tap-zoom,
-     so rapid taps on panel buttons don't lurch the page. The canvas opts
+  /* Pinch-zoom must stay available for WCAG 1.4.4, so no blanket `none`
+     here — browsers check every ancestor up to the root for viewport zoom,
+     and `none` on <body> would veto pinch everywhere, even over the panel.
+     `manipulation` keeps pan + pinch-zoom but drops double-tap-zoom, so
+     rapid taps on panel buttons don't lurch the page. The canvas opts
      itself out below. */
   touch-action: manipulation;
 }
@@ -109,7 +109,7 @@ body {
   /* The canvas owns every touch gesture — 1-finger orbit, 2-finger camera
      pan/zoom (interactions.ts relies on this, not preventDefault, in camera
      mode). Scoped here rather than on <body> so browser pinch-zoom still
-     works over the panel and help overlays (fr-vfk). */
+     works over the panel and help overlays. */
   touch-action: none;
 }
 
@@ -162,7 +162,7 @@ body {
      top-corner chrome out from under the status bar / Dynamic Island (top) and
      a landscape notch (left/right) when the installed PWA draws edge-to-edge
      (viewport-fit=cover); 0 in a plain browser tab and on desktop — the
-     top-band mirror of the bottom band's fr-q5c terms (fr-nde). */
+     top-band mirror of the bottom band's own safe-area terms. */
   top: calc(16px + env(safe-area-inset-top));
   left: calc(16px + env(safe-area-inset-left));
   max-width: 220px;
@@ -195,7 +195,7 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* ── Color-mode legend (bottom-left, fr-dsz) ──────────────────────────────
+/* ── Color-mode legend (bottom-left) ──────────────────────────────────────
    A bare gradient or swatch strip doesn't say which end is high, or whether
    warm is the center or the edge — this is the key. Mirrors #help's chip
    styling so the two overlays read as one visual language. */
@@ -204,8 +204,8 @@ body {
 
   /* safe-area terms (here and on #legend's mobile override, .toast, and
      .replay-caption): keep the bottom-band overlays above the home-indicator
-     strip when the installed PWA draws edge-to-edge (viewport-fit=cover);
-     0 in a plain browser tab and on desktop (fr-q5c). */
+     strip when the installed PWA draws edge-to-edge (viewport-fit=cover); 0
+     in a plain browser tab and on desktop. */
   bottom: calc(16px + env(safe-area-inset-bottom));
   left: 16px;
   max-width: 220px;
@@ -299,7 +299,7 @@ body {
   }
 }
 
-/* ── Floating notices (fr-k1z update banner + fr-ssa render error) ─────────
+/* ── Floating notices (update banner + render error) ───────────────────────
    Small dismissible pills that report lifecycle events over the canvas.
    #updateBanner (bottom-center) is shown when register-sw.ts reports that a
    deploy's service worker replaced this tab's controller while it was open;
@@ -351,9 +351,9 @@ body {
 }
 
 /* Also the ✕ of the About/Gallery/Mutation dialog headers. The 24px minima
-   (WCAG 2.5.8, fr-vja8.28) lift the ~22px box padding+font metrics produce
-   (14px glyph line + 2×4px padding); the glyph stays put — buttons center
-   their content natively. */
+   (WCAG 2.5.8) lift the ~22px box padding+font metrics produce (14px glyph
+   line + 2×4px padding); the glyph stays put — buttons center their
+   content natively. */
 .notice-dismiss {
   min-width: 24px;
   min-height: 24px;
@@ -426,7 +426,7 @@ body {
   overflow-y: auto;
 
   /* Don't chain an overshooting panel scroll to the viewport — on mobile
-     that gesture becomes pull-to-refresh and reloads the app (fr-zoi). */
+     that gesture becomes pull-to-refresh and reloads the app. */
   overscroll-behavior: contain;
   z-index: 99;
 }
@@ -447,7 +447,7 @@ body {
   letter-spacing: 0.01em;
 }
 
-/* ── About link (fr-1zb) ──────────────────────────────────────────────────
+/* ── About link ───────────────────────────────────────────────────────────
    A quiet inline affordance under the panel title — negative top margin
    pulls it up against the h2 above instead of reading as its own row. */
 .about-link {
@@ -466,15 +466,15 @@ body {
   text-decoration: underline;
 }
 
-/* ── Accordion sections (fr-zoi) ──────────────────────────────────────────
-   The panel's categories are native exclusive-open disclosures
-   (<details name="panel-section">): opening one closes the rest, so the
-   panel stays about one phone-screen tall instead of demanding a long —
-   and accident-prone, see the range-input touch-action below — scroll.
-   Browsers without the name attribute degrade to independently collapsible
-   sections. The summaries inherit the look of the h3 headings they replaced;
-   the native marker is the collapsed/expanded affordance, same as the
-   editor's "4D" group (fr-bf6.3). */
+/* ── Accordion sections ───────────────────────────────────────────────────
+   The panel's categories are native exclusive-open disclosures (<details
+   name="panel-section">): opening one closes the rest, so the panel stays
+   about one phone-screen tall instead of demanding a long — and
+   accident-prone, see the range-input touch-action below — scroll. Browsers
+   without the name attribute degrade to independently collapsible sections.
+   The summaries inherit the look of the h3 headings they replaced; the
+   native marker is the collapsed/expanded affordance, same as the editor's
+   "4D" group. */
 .panel-section > summary {
   margin: 20px 0 9px;
   color: var(--text-faint);
@@ -491,7 +491,7 @@ body {
   color: var(--text-dim);
 }
 
-/* ── Section chip strip (fr-vha5) ─────────────────────────────────────────
+/* ── Section chip strip ───────────────────────────────────────────────────
    Measured on a 393x727 phone: the panel carried 661px of fixed overhead
    before a single control was visible, 473px of it NINE collapsed section
    headers at ~59px each — two-thirds of a screen spent advertising sections,
@@ -669,10 +669,10 @@ body {
   flex: 1;
 }
 
-/* Render-mode segmented control (fr-39y): the one switch between the three
-   sibling renderers (Points / Flame / Solid). A joined button group rather
-   than three stacked buttons, so it reads as one mutually-exclusive choice;
-   the active segment gets the accent treatment `.btn-blue` uses. */
+/* Render-mode segmented control: the one switch between the three sibling
+   renderers (Points / Flame / Solid). A joined button group rather than
+   three stacked buttons, so it reads as one mutually-exclusive choice; the
+   active segment gets the accent treatment `.btn-blue` uses. */
 .segmented {
   display: flex;
   overflow: hidden;
@@ -760,11 +760,11 @@ input[type="range"] {
 
   /* Sliders span the panel's full width, so most scroll swipes start on one —
      without this, the thumb grabs the touch and the value changes instead of
-     the panel scrolling (fr-zoi). pan-y hands vertical pans to the scroll
-     container; horizontal drags reach ui.ts's slider-scroll-guard.ts, which
-     drives the thumb itself since fr-xu4u — Blink commits the tap-jump in the
-     TOUCHSTART default action, so the guard hides the slider from that one
-     handler rather than letting the jump land and undoing it. */
+     the panel scrolling. pan-y hands vertical pans to the scroll container;
+     horizontal drags reach ui.ts's slider-scroll-guard.ts, which drives the
+     thumb itself — Blink commits the tap-jump in the TOUCHSTART default
+     action, so the guard hides the slider from that one handler rather than
+     letting the jump land and undoing it. */
   touch-action: pan-y;
 }
 
@@ -801,8 +801,8 @@ input[type="range"] {
 }
 
 /* Every select inside the panel gets the dark theme — including the
-   dynamically created .variation-add (fr-9obp), which lives in #panel too,
-   so a single tag-scoped rule covers it without a separate class entry. */
+   dynamically created .variation-add, which lives in #panel too, so a
+   single tag-scoped rule covers it without a separate class entry. */
 #panel select {
   width: 100%;
   margin-top: 5px;
@@ -824,7 +824,7 @@ input[type="range"] {
   overflow-y: auto;
 
   /* Same trap as #panel: flicking past the list's end shouldn't scroll the
-     panel underneath it (fr-zoi). */
+     panel underneath it. */
   overscroll-behavior: contain;
 }
 
@@ -856,12 +856,12 @@ input[type="range"] {
   outline-offset: -2px;
 }
 
-/* The selection indicator is the RING, not the fill (fr-vja8.22): the 14%
-   tint reads ~1.06:1 against the unselected fill, so the state has to be
-   carried by the full-opacity accent ring — measured 5.4:1 against this
-   fill and 5.7:1 against the unselected one (≥3:1, WCAG 1.4.11). Inset, so
-   it sits inside the border and leaves the per-transform color-coded left
-   border untouched. */
+/* The selection indicator is the RING, not the fill: the 14% tint reads
+   ~1.06:1 against the unselected fill, so the state has to be carried by
+   the full-opacity accent ring — measured 5.4:1 against this fill and
+   5.7:1 against the unselected one (≥3:1, WCAG 1.4.11). Inset, so it sits
+   inside the border and leaves the per-transform color-coded left border
+   untouched. */
 .transform-btn.selected {
   background: rgb(91 157 255 / 14%);
   box-shadow: inset 0 0 0 2px var(--accent);
@@ -897,9 +897,9 @@ input[type="range"] {
   font-weight: 600;
 }
 
-/* The "4D" group is a native <details>/<summary> disclosure (fr-bf6.3): the
-   marker triangle is the built-in collapsed/expanded affordance, so this just
-   makes the summary read as clickable like every other panel control. */
+/* The "4D" group is a native <details>/<summary> disclosure: the marker
+   triangle is the built-in collapsed/expanded affordance, so this just makes
+   the summary read as clickable like every other panel control. */
 summary.editor-group-title {
   cursor: pointer;
   user-select: none;
@@ -932,7 +932,7 @@ summary.editor-group-title {
   font-variant-numeric: tabular-nums;
 }
 
-/* The Color group's rows (fr-hiyu) are labelled "Index"/"Speed", not with the
+/* The Color group's rows are labelled "Index"/"Speed", not with the
    single-letter axis names the 12px column was sized for — the same escape the
    variation rows take below. */
 .color-row .axis {
@@ -955,13 +955,13 @@ summary.editor-group-title {
   width: 40px;
 }
 
-/* The fold family's authored lengths (fr-s9ll) sit under their own
-   variation's weight row: indented so the group reads as belonging to the
-   fold above it, and padded on the right by the remove button's column
-   (20px + the row's 9px gap) so its slider still lines up with the weight
-   slider instead of running past where that row ends. The label loses the
-   indent back out of its own min-width, keeping all the sliders on one
-   left edge. */
+/* The fold family's authored lengths sit under their own variation's
+   weight row: indented so the group reads as belonging to the fold above
+   it, and padded on the right by the remove button's column (20px + the
+   row's 9px gap) so its slider still lines up with the weight slider
+   instead of running past where that row ends. The label loses the indent
+   back out of its own min-width, keeping all the sliders on one left
+   edge. */
 .variation-fold-row {
   padding-left: 14px;
   padding-right: 29px;
@@ -975,11 +975,11 @@ summary.editor-group-title {
   color: var(--text-faint);
 }
 
-/* 24×24 hit box (WCAG 2.5.8, fr-vja8.27) on a 20×20 layout footprint: the
-   -2px margins let the touch target grow without moving anything — the row's
-   9px flex gap and .variation-fold-row's 29px right pad are both computed
-   from the 20px column this button still occupies. The face is transparent,
-   so only the hover highlight shows the bigger box. */
+/* 24×24 hit box (WCAG 2.5.8) on a 20×20 layout footprint: the -2px margins
+   let the touch target grow without moving anything — the row's 9px flex gap
+   and .variation-fold-row's 29px right pad are both computed from the 20px
+   column this button still occupies. The face is transparent, so only the
+   hover highlight shows the bigger box. */
 .variation-remove {
   flex: 0 0 auto;
   width: 24px;
@@ -1000,8 +1000,8 @@ summary.editor-group-title {
   background: rgb(255 107 107 / 12%);
 }
 
-/* The Scale group's per-axis mirror toggles (fr-lca): pressed = that axis
-   is reflected (negative scale). Pressed state borrows the segmented
+/* The Scale group's per-axis mirror toggles: pressed = that axis is
+   reflected (negative scale). Pressed state borrows the segmented
    control's active gradient so "on" reads the same everywhere. */
 .mirror-row .axis {
   width: auto;
@@ -1043,9 +1043,9 @@ summary.editor-group-title {
   display: none;
 }
 
-/* Screen-reader-only content (the page-level h1, fr-vja8.29): rendered for
-   assistive tech, invisible on screen — unlike `.hidden`, which removes the
-   element from both. The standard 1px clip pattern. */
+/* Screen-reader-only content (the page-level h1): rendered for assistive
+   tech, invisible on screen — unlike `.hidden`, which removes the element
+   from both. The standard 1px clip pattern. */
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -1066,9 +1066,9 @@ summary.editor-group-title {
 }
 
 /* The same hint paragraph, tightened for use INSIDE an editor group (the
-   Color group's scope note, fr-hiyu): 12px of margin there would push the two
-   rows away from the title they belong to. Kept immediately after the base
-   rule — stylelint's no-descending-specificity wants the plainer selector
+   Color group's scope note): 12px of margin there would push the two rows
+   away from the title they belong to. Kept immediately after the base rule
+   — stylelint's no-descending-specificity wants the plainer selector
    first. */
 .editor-group .flame-hint {
   margin: 0 0 4px;
@@ -1084,7 +1084,7 @@ summary.editor-group-title {
   text-align: center;
 }
 
-/* Thin progress-bar underline (fr-dshq): a pseudo-element so no extra DOM or
+/* Thin progress-bar underline: a pseudo-element so no extra DOM or
    layout jump is needed — its width just tracks the --progress custom
    property the setFlameProgress/setSolidProgress setters write on every
    call (including resets, which pass 0). Left-aligned track spanning the
@@ -1101,7 +1101,7 @@ summary.editor-group-title {
   transition: width 0.15s ease;
 }
 
-/* Busy indicator (fr-99z) while the worker runs its synchronous adaptive
+/* Busy indicator while the worker runs its synchronous adaptive
    density-estimation pass — cleared as soon as the next progress/sharedFrame
    event calls setFlameProgress. */
 .flame-progress-estimating {
@@ -1129,8 +1129,8 @@ summary.editor-group-title {
    — the supersample/resolution memory clamps (see main.ts's
    clampSupersampleToBudget) and the symmetry order's transform-count clamp.
    --bad flags these as "not quite what you asked for". Purely informational
-   notes (e.g. which backend is rendering, fr-cri1) use .flame-note-info
-   instead — that's a normal, expected condition, not a warning. */
+   notes (e.g. which backend is rendering) use .flame-note-info instead —
+   that's a normal, expected condition, not a warning. */
 .flame-note {
   margin: -6px 0 10px;
   color: var(--bad);
@@ -1145,11 +1145,11 @@ summary.editor-group-title {
   line-height: 1.4;
 }
 
-/* The five status-note live regions (fr-vja8.48) stay RENDERED at all times
-   — a live region entering the accessibility tree already populated is
-   announced unreliably, so their setters toggle only TEXT and never the
-   .hidden class. Empty IS the hidden state: no content means no line box,
-   and zeroing the box model here makes an empty note occupy nothing.
+/* The five status-note live regions stay RENDERED at all times — a live
+   region entering the accessibility tree already populated is announced
+   unreliably, so their setters toggle only TEXT and never the .hidden
+   class. Empty IS the hidden state: no content means no line box, and
+   zeroing the box model here makes an empty note occupy nothing.
    (#symmetryNote keeps its .hidden toggle — deliberately not a live
    region.) */
 .flame-note:empty,
@@ -1159,8 +1159,8 @@ summary.editor-group-title {
   border: 0;
 }
 
-/* Custom palette gradient editor (fr-55k): shown under a palette <select>
-   once it's set to Custom — a live strip preview, one color swatch per
+/* Custom palette gradient editor: shown under a palette <select> once
+   it's set to Custom — a live strip preview, one color swatch per
    stop, and the add/remove-stop buttons. */
 .custom-palette-row {
   display: flex;
@@ -1177,7 +1177,8 @@ summary.editor-group-title {
    select, and a stale stop strip lingering after switching Custom → a
    preset). Restate the hide at two-class specificity so it wins — the same
    trap the `.gallery-modal.hidden` / `#updateBanner.hidden` notices
-   document (found while browser-verifying fr-6ue). */
+   document (found while browser-verifying the 4D radius mode's ramp
+   palette). */
 .custom-palette-row.hidden {
   display: none;
 }
@@ -1214,8 +1215,8 @@ summary.editor-group-title {
   flex: 1;
 }
 
-/* Position mode axis-color pickers (fr-8k7): three swatches under Color Mode
-   once it's set to Position, plus a Reset to the classic XYZ→RGB mapping. */
+/* Position mode axis-color pickers: three swatches under Color Mode once
+   it's set to Position, plus a Reset to the classic XYZ→RGB mapping. */
 .position-axis-row {
   display: flex;
   flex-direction: column;
@@ -1254,12 +1255,11 @@ summary.editor-group-title {
   cursor: pointer;
 }
 
-/* Fog tint row (fr-5h5d) and the balloon tint rows (fr-j85n, same
-   position-axis-row shape, one shared state pair seen from the Points and
-   Surface sections): the strength slider shares its row with the
-   fixed-width swatch beside it, so it needs to grow into the remaining
-   space instead of fighting the swatch under the global input[type="range"]
-   100%-width rule. */
+/* Fog tint row and the balloon tint rows (same position-axis-row shape, one
+   shared state pair seen from the Points and Surface sections): the
+   strength slider shares its row with the fixed-width swatch beside it, so
+   it needs to grow into the remaining space instead of fighting the swatch
+   under the global input[type="range"] 100%-width rule. */
 #fogTintRow input[type="range"],
 #balloonTintRow input[type="range"],
 #surfaceBalloonTintRow input[type="range"] {
@@ -1287,10 +1287,10 @@ summary.editor-group-title {
 
 /* On phones the open panel covers most of the viewport (86vw), and the
    backdrop scrim dims what little is left — together they hide the render
-   the controls are live-updating (fr-8x4). Ease both so the fractal stays
-   visible: a thinner surface + lighter blur on the panel, and a scrim that
-   only hints "tap to close" instead of blacking out the scene.
-   Breakpoint must match MOBILE_BREAKPOINT in constants.ts. */
+   the controls are live-updating. Ease both so the fractal stays visible:
+   a thinner surface + lighter blur on the panel, and a scrim that only
+   hints "tap to close" instead of blacking out the scene. Breakpoint must
+   match MOBILE_BREAKPOINT in constants.ts. */
 @media (width <= 640px) {
   #panel {
     background: rgb(20 22 33 / 52%);
@@ -1303,7 +1303,7 @@ summary.editor-group-title {
   }
 }
 
-/* ── Collection gallery (fr-cai) ──────────────────────────────────────────────
+/* ── Collection gallery ───────────────────────────────────────────────────────
    A full-screen modal over the whole app (above the #panel at z-index 99) that
    lays the saved scenes out as a thumbnail grid. Its own scrim/backdrop, so it
    reads as a distinct layer rather than part of the side panel. */
@@ -1340,7 +1340,7 @@ summary.editor-group-title {
   /* 100% = the modal's padded box, i.e. the viewport the browser actually
      shows. Not vh: mobile browsers size vh against the LARGEST viewport, so
      a vh-based dialog can outgrow the screen while toolbars are visible —
-     and this app never scrolls, so they never collapse (fr-q5c). */
+     and this app never scrolls, so they never collapse. */
   max-height: min(100%, 680px);
   padding: 18px 18px 22px;
   overflow: hidden;
@@ -1366,7 +1366,7 @@ summary.editor-group-title {
   letter-spacing: 0.01em;
 }
 
-/* The header's "▶ Drift collection" (fr-w2ve): .btn is built for the panel's
+/* The header's "▶ Drift collection": .btn is built for the panel's
    stacked column (block, full-width), so size it down to an inline header
    action beside the ✕. */
 .gallery-drift-btn {
@@ -1479,7 +1479,7 @@ summary.editor-group-title {
   outline: none;
 }
 
-/* ── Animation timeline (fr-8v41) ──────────────────────────────────────────
+/* ── Animation timeline ────────────────────────────────────────────────────
    The panel's authored keyframe sequence: a compact list of thumbnail rows,
    each with its own morph/hold timing and reorder/delete actions — reuses
    the gallery card's thumbnail/placeholder treatment at a smaller size. */
@@ -1541,7 +1541,7 @@ summary.editor-group-title {
   font-size: 16px;
 }
 
-/* Flame/solid keyframe glyph (fr-v3au) — mirrors the gallery card's mode
+/* Flame/solid keyframe glyph — mirrors the gallery card's mode
    caption color, sized to sit quietly beside the thumbnail. */
 .timeline-step-mode {
   flex: 0 0 auto;
@@ -1615,7 +1615,7 @@ summary.editor-group-title {
   color: var(--bad);
 }
 
-/* ── Mutation grid (fr-3vly) ───────────────────────────────────────────────
+/* ── Mutation grid ─────────────────────────────────────────────────────────
    Reuses the gallery modal's chrome (backdrop, dialog, header); only the
    3×3 grid itself is mutation-specific. Sized so the square dialog fits a
    phone: the grid is always exactly three columns — the layout IS the
@@ -1705,7 +1705,7 @@ summary.editor-group-title {
   text-transform: uppercase;
 }
 
-/* ── About dialog (fr-1zb) ─────────────────────────────────────────────────
+/* ── About dialog ──────────────────────────────────────────────────────────
    Reuses the gallery modal's dialog chrome (backdrop, header, close button)
    for a plain-language explanation of the IFS / chaos game — narrower than
    the gallery's thumbnail-grid dialog since this one is just prose. */
@@ -1715,8 +1715,8 @@ summary.editor-group-title {
 
 /* The prose outgrows a phone screen, and the dialog column clips (overflow:
    hidden) — without a scrollable body the tail (the Learn-more links) is
-   unreachable (fr-q5c). `auto` also lifts the flex min-content floor, letting
-   the body shrink to the dialog's cap (same trick as .gallery-grid). */
+   unreachable. `auto` also lifts the flex min-content floor, letting the
+   body shrink to the dialog's cap (same trick as .gallery-grid). */
 .about-body {
   overflow-y: auto;
 }
@@ -1747,7 +1747,7 @@ summary.editor-group-title {
   margin: 14px 0 12px;
 }
 
-/* ── Export progress modal (fr-7mfx) ───────────────────────────────────────
+/* ── Export progress modal ─────────────────────────────────────────────────
    Reuses the gallery modal's chrome (backdrop, dialog, header) — see
    index.html for the two deliberate deviations (no backdrop-click/✕, Cancel
    routed through a handler). Only the delta below is new: a narrower dialog
@@ -1774,9 +1774,9 @@ summary.editor-group-title {
   margin: 4px auto 0;
 }
 
-/* ── Toast (fr-cai) ───────────────────────────────────────────────────────────
+/* ── Toast ────────────────────────────────────────────────────────────────────
    Transient bottom-center confirmation for "Saved" / "Link copied". Sits above
-   everything, briefly, then hides. Deliberately NOT `display: flex` (fr-ifts):
+   everything, briefly, then hides. Deliberately NOT `display: flex`:
    `.hidden`'s `display: none` (above) and this rule have equal selector
    specificity, so with both classes on the element the one declared LATER in
    this file wins — `.toast` must never set `display` itself, or it would
@@ -1803,21 +1803,21 @@ summary.editor-group-title {
   animation: toast-in 0.18s ease;
 }
 
-/* An ACTION toast opts its whole pill back into pointer events
-   (fr-vja8.21): hovering it pauses the auto-hide countdown — WCAG 2.2.1's
-   escape for the Undo toast that is the only recovery path after a delete —
-   which `pointer-events: none` would make unreachable before the pointer
-   ever arrived at the button. Plain toasts keep the click-through above;
-   the class rides each flashToast call (ui.ts). */
+/* An ACTION toast opts its whole pill back into pointer events: hovering it
+   pauses the auto-hide countdown — WCAG 2.2.1's escape for the Undo toast
+   that is the only recovery path after a delete — which `pointer-events:
+   none` would make unreachable before the pointer ever arrived at the button.
+   Plain toasts keep the click-through above; the class rides each flashToast
+   call (ui.ts). */
 .toast.toast-actionable {
   pointer-events: auto;
 }
 
-/* The optional call-to-action inside a toast (e.g. "Undo" after a delete,
-   fr-ifts): an inline-block sibling of the message text, so it sits on the
-   same line without the parent needing `display: flex` (see the note above).
-   The toast itself stays click-through (`pointer-events: none`); this button
-   opts back in — it's the only interactive part of a toast. */
+/* The optional call-to-action inside a toast (e.g. "Undo" after a delete): an
+   inline-block sibling of the message text, so it sits on the same line
+   without the parent needing `display: flex` (see the note above). The toast
+   itself stays click-through (`pointer-events: none`); this button opts back
+   in — it's the only interactive part of a toast. */
 .toast-action {
   display: inline-block;
   margin-left: 10px;
@@ -1856,7 +1856,7 @@ summary.editor-group-title {
   }
 }
 
-/* ── Replay caption (fr-1zb) ──────────────────────────────────────────────
+/* ── Replay caption ───────────────────────────────────────────────────────
    Narrates the "Watch it build" replay in a pill styled like .toast, but
    pinned higher so the two can never collide if a toast fires mid-replay,
    and inert to pointer events since it's pure narration. Unlike .toast it
@@ -1873,7 +1873,7 @@ summary.editor-group-title {
   /* Centered via left: 50% + translateX, so shrink-to-fit would size the box
      against the half-viewport right of the 50% line — on phones that wrapped
      the caption into a 3-line sliver. max-content + the max-width cap sizes
-     it like static text instead (same fix on .toast and .notice; fr-q5c). */
+     it like static text instead (same fix on .toast and .notice). */
   width: max-content;
   max-width: min(90vw, 480px);
   padding: 9px 16px;
@@ -1891,12 +1891,12 @@ summary.editor-group-title {
   pointer-events: none;
 }
 
-/* Phones: lift the caption clear of the legend (they nearly touch at
-   phone widths) and of mobile-browser bottom toolbars, which overlay the
-   bottom band and never retract here — the app doesn't scroll (fr-q5c).
-   At these widths the text wraps to 2–3 lines, which a hairpin radius
-   renders as a blob, so square it off to read as a subtitle card.
-   Breakpoint must match MOBILE_BREAKPOINT in constants.ts. */
+/* Phones: lift the caption clear of the legend (they nearly touch at phone
+   widths) and of mobile-browser bottom toolbars, which overlay the bottom
+   band and never retract here — the app doesn't scroll. At these widths the
+   text wraps to 2–3 lines, which a hairpin radius renders as a blob, so
+   square it off to read as a subtitle card. Breakpoint must match
+   MOBILE_BREAKPOINT in constants.ts. */
 @media (width <= 640px) {
   .replay-caption {
     bottom: calc(88px + env(safe-area-inset-bottom));
@@ -1915,7 +1915,7 @@ summary.editor-group-title {
   }
 }
 
-/* ── Forced colors (Windows High Contrast, fr-vja8.36) ────────────────────
+/* ── Forced colors (Windows High Contrast) ────────────────────────────────
    Confirmed by real Chromium forcedColors:active screenshots: forced-colors
    mode suppresses `background` (gradients included) and `box-shadow`
    outright rather than remapping them, which erases two state signals that

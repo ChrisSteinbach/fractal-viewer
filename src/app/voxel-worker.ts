@@ -1,5 +1,5 @@
 /**
- * The solid render's actual Web Worker entry point (fr-v4f): thin
+ * The solid render's actual Web Worker entry point: thin
  * `self.onmessage` / `postMessage` glue around {@link VoxelWorkerSession},
  * which owns all the real logic. Nothing here is unit-tested directly — it
  * is verified by running the app, same as `flame-worker.ts`, whose structure

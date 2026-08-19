@@ -90,7 +90,7 @@ describe("RenderSession enter", () => {
   });
 });
 
-describe("RenderSession onFirstFrame (fr-r777)", () => {
+describe("RenderSession onFirstFrame", () => {
   it("fires when the first frame is marked", () => {
     const h = harness();
     h.session.enter();

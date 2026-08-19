@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>GPU Flame Agreement Check (fr-npb)</title>
+    <title>GPU Flame Agreement Check</title>
     <style>
       :root {
         color-scheme: dark;
@@ -217,14 +217,15 @@
       <span id="activityLabel">Idle</span>
     </div>
 
-    <h1>GPU Flame Accumulation — Agreement Check (fr-npb)</h1>
+    <h1>GPU Flame Accumulation — Agreement Check</h1>
     <p class="subtitle">
       Compares the CPU flame worker's chaos-game accumulation
       (<code>accumulateFlame</code>) against the production WebGPU
       compute-shader backend (<code>src/fractal/flame-gpu.ts</code>, driven by
       <code>src/app/flame-gpu-backend.ts</code>) on the same systems and
-      seed-class. The standing statistical-agreement harness from fr-53k's spike
-      (<code>docs/spike-fr-53k-gpu-flame-accum.md</code>), now pinned to the
+      seed-class. The standing statistical-agreement harness from the GPU
+      flame-accumulation spike
+      (<code>docs/flame-gpu-accumulation-spike.md</code>), now pinned to the
       shipped kernel — dev-only, not part of the production build.
     </p>
 

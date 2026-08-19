@@ -1,5 +1,5 @@
 /**
- * The timeline's playback clock (fr-8v41): a pure state machine that tells
+ * The timeline's playback clock: a pure state machine that tells
  * main.ts WHEN to launch each leg of a `timeline.ts` run — "leg i" meaning
  * "start morphing into step i now" — and when the whole run has finished.
  * Where `drift.ts`'s `DriftShow` is the ambient, unending show, this is its
@@ -23,14 +23,14 @@
  * fires. DriftShow can afford that: an ambient show has no total duration to
  * protect, so resuming its cadence from wherever the viewer refocused is
  * strictly better than replaying a backlog. A timeline has the opposite
- * requirement — it's the thing fr-8v41's video export RECORDS, and a
+ * requirement — it's the thing the video export RECORDS, and a
  * recorded clip must come out the authored length every time (points-only —
  * see "Held legs" below for the render-keyframe exception), so a leg's poll
  * landing a frame late must never stretch the schedule for the legs after
  * it. Anchoring every due time to the original `startMs` is what makes that
  * true: a late poll fires late and the rest of the run is unaffected.
  *
- * ## Held legs: schedule segments that end on a SIGNAL (fr-v3au)
+ * ## Held legs: schedule segments that end on a SIGNAL
  *
  * A keyframe that plays as a converging flame/solid render has no
  * deterministic duration for the absolute schedule above to price in — "how
@@ -48,12 +48,12 @@
  * of `startMs`, so every leg after the held one keeps its authored RELATIVE
  * spacing no matter how long the hold lasted — re-anchoring the same way
  * `start()` anchors once at the top of the run, just done again at resume
- * time. The consequence lands on fr-8v41's REALTIME export: a recorded
+ * time. The consequence lands on the REALTIME export: a recorded
  * clip's length becomes content-dependent once render keyframes are in the
- * mix — an accepted trade (fr-v3au), since the recorder is then honestly
+ * mix — an accepted trade, since the recorder is then honestly
  * capturing however long convergence actually took, and a pure-points
  * timeline (which never holds) keeps its authored-length guarantee
- * unchanged. The offline export escapes the trade (fr-6jic): its driver
+ * unchanged. The offline export escapes the trade: its driver
  * runs this player on a VIRTUAL clock and parks that clock through the
  * hold — the render converges in real time, no frames are captured, and
  * `resume()`'s re-anchor lands against the parked reading — so even a

@@ -1,5 +1,5 @@
 /**
- * The JSON **file** codec for scene import/export (fr-de9t) — distinct from
+ * The JSON **file** codec for scene import/export — distinct from
  * `persist.ts`'s `v1=<base64url>` wire format (which this module wraps, not
  * replaces) and from `collection.ts`'s localStorage persistence (which this
  * module only ever feeds via {@link ImportableScene}, never touches
@@ -148,8 +148,8 @@ export function encodeCollectionFile(
 }
 
 /**
- * Serialize the authored timeline for a "⬇ Back up timeline" download
- * (fr-h9rk). Pass `TimelineStore.all()`'s result (playback order —
+ * Serialize the authored timeline for a "⬇ Back up timeline" download.
+ * Pass `TimelineStore.all()`'s result (playback order —
  * preserved exactly, never re-sorted). `seed` is the timeline's persisted
  * determinism root (see `timeline.ts`'s `legSeed`): carrying it means a
  * re-imported timeline replays — and video-exports — the exact same

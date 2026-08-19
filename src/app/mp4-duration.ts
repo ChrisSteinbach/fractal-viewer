@@ -4,11 +4,11 @@
 // moof fragments: moov/mvhd.duration stays 0 and tkhd/mdhd keep stale
 // first-fragment values. Players tolerate this (they sum the fragments), but
 // social-media upload probes read the moov metadata and refuse the file —
-// Bluesky's "failed to get video duration" (fr-ex2). A recording knows its
+// Bluesky's "failed to get video duration". A recording knows its
 // wall-clock duration when it stops, so we write that into every duration
 // field in place: no re-muxing, no dependencies. Box layout per
 // ISO/IEC 14496-12; the fixed field offsets below were verified against a
-// real Chrome recording during the fr-ex2 diagnosis.
+// real Chrome recording during that diagnosis.
 
 interface Box {
   type: string;

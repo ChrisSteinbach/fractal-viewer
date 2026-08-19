@@ -1,10 +1,10 @@
 /**
- * The pending load-hint policy (fr-vja8.34): a whole-system load arms up to
+ * The pending load-hint policy: a whole-system load arms up to
  * three hints that wait for the loaded cloud to actually LAND before they
  * fire — the render mode a preset/gallery entry/timeline step was authored
- * for (fr-39y/fr-75sq), the deterministic accumulator seed a timeline render
- * keyframe pins (fr-4ff7), and the saved 4D rotor/slice pose a document
- * carries (fr-pnek). Deferring them to arrival is the point: entering the
+ * for, the deterministic accumulator seed a timeline render
+ * keyframe pins, and the saved 4D rotor/slice pose a document
+ * carries. Deferring them to arrival is the point: entering the
  * hinted renderer THEN — not at click time — lets the flame's frozen
  * projection snapshot a camera already fitted to the NEW attractor, and
  * applying the pose THEN lands it on top of the fresh-visit reset instead of
@@ -60,7 +60,7 @@
  * before.
  *
  * Pure and DOM-free so the interleaving is pinned by unit tests — the
- * fr-vja8.66/.67 extraction discipline; main.ts keeps only the wiring.
+ * standing extraction discipline; main.ts keeps only the wiring.
  */
 import type { RenderMode } from "./state";
 import type { FourDPose } from "./four-d-view";
@@ -102,12 +102,12 @@ export class PendingLoadHints {
     this.modeHint = mode;
   }
 
-  /** Arm the deterministic accumulator seed (fr-4ff7, timeline legs only). */
+  /** Arm the deterministic accumulator seed (timeline legs only). */
   armSeed(seed: number): void {
     this.seedHint = seed;
   }
 
-  /** Arm the loaded document's 4D pose (fr-pnek). */
+  /** Arm the loaded document's 4D pose. */
   armPose(pose: FourDPose): void {
     this.poseHint = pose;
   }

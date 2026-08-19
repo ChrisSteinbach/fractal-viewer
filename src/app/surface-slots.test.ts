@@ -62,7 +62,7 @@ describe("surfaceTrapIndices", () => {
     expect(surfaceTrapIndices(transforms, slots)).toEqual([0, 0, 1]);
   });
 
-  it("parks a lone unauthored map at the ramp start, NOT the flame's mid-ramp derivedColorIndex(0, 1) slot (fr-c6yd)", () => {
+  it("parks a lone unauthored map at the ramp start, NOT the flame's mid-ramp derivedColorIndex(0, 1) slot", () => {
     // Deliberate divergence from chaos-game.ts: the flame parks a lone map
     // mid-ramp (0.5, there being no spread to speak of), but adopting that
     // here would repaint every existing single-map surface scene, so the
@@ -132,7 +132,7 @@ describe("surfaceSlotColors", () => {
     ]);
   });
 
-  it("honors an authored colorIndex as the slot's hue, matching transformColors directly (fr-axxl)", () => {
+  it("honors an authored colorIndex as the slot's hue, matching transformColors directly", () => {
     const transforms = [
       transform({ id: 0 }),
       transform({ id: 1, colorIndex: 0.9 }),

@@ -72,7 +72,7 @@ describe("SceneCollection add", () => {
   });
 });
 
-describe("SceneCollection setThumbnail (fr-r777)", () => {
+describe("SceneCollection setThumbnail", () => {
   it("replaces the entry's thumbnail and persists it", () => {
     const storage = fakeStorage();
     const collection = new SceneCollection({ storage });
@@ -149,7 +149,7 @@ describe("SceneCollection remove", () => {
   });
 });
 
-describe("SceneCollection restore (fr-ifts)", () => {
+describe("SceneCollection restore", () => {
   it("puts a removed entry back into its newest-first position by createdAt", () => {
     const storage = fakeStorage();
     let t = 0;
@@ -283,7 +283,7 @@ describe("SceneCollection persistence", () => {
   });
 });
 
-describe("SceneCollection persist error handling (fr-vhpt)", () => {
+describe("SceneCollection persist error handling", () => {
   it("a) recovers from a quota error by evicting the oldest entry, keeps newer entries plus the new save in both memory and storage, and reports the eviction via onEvicted", () => {
     const store: Record<string, string> = {};
     let throwNext = false;
@@ -486,7 +486,7 @@ describe("SceneCollection after (the drift show's loop cursor)", () => {
   });
 });
 
-describe("SceneCollection saved-from mode (fr-75sq)", () => {
+describe("SceneCollection saved-from mode", () => {
   it("round-trips a flame/solid mode tag through storage", () => {
     const storage = fakeStorage();
     new SceneCollection({ storage }).add("v1=a", "", "flame");
@@ -534,7 +534,7 @@ describe("SceneCollection saved-from mode (fr-75sq)", () => {
   });
 });
 
-describe("SceneCollection importScenes (fr-de9t)", () => {
+describe("SceneCollection importScenes", () => {
   it("merges new entries into createdAt order among existing entries", () => {
     const storage = fakeStorage();
     let t = 100;

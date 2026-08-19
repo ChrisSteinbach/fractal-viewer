@@ -4,7 +4,7 @@
  *
  * `persist.ts`'s scene doc lives under `fractal-viewer:scene` in localStorage
  * AND in the `#`-hash share URL — anything that lands there travels with a
- * shared link. Viewer prefs must never do that (fr-0ya): a preference like
+ * shared link. Viewer prefs must never do that: a preference like
  * "I turned auto-motion off" belongs to the person sitting at this browser,
  * not to whoever opens a link they share. So this module keeps its own
  * localStorage key (`STORAGE_KEY` below) and never touches the URL, hash, or
@@ -27,18 +27,18 @@
 // Public types
 // ---------------------------------------------------------------------------
 
-/** The persistent viewer-preferences document (fr-0ya). */
+/** The persistent viewer-preferences document. */
 export interface ViewerPrefs {
-  /** The combined auto-motion on/off preference (fr-0ya): the 3D auto-orbit
+  /** The combined auto-motion on/off preference: the 3D auto-orbit
    * and 4D auto-tumble share ONE remembered choice across reloads. `undefined`
    * = never chosen, so boot follows the prefers-reduced-motion default. Set to
    * true/false once the user flips EITHER motion toggle; seeds BOTH on next load. */
   autoMotion?: boolean;
-  /** The surface mode's quick-preview tier on/off (fr-37c6): `false` means
+  /** The surface mode's quick-preview tier on/off: `false` means
    * invalidations never trace the cheap preview — the pane holds its last
    * frame while the view moves and the full-detail render starts the moment
    * it parks. A patience preference, so it belongs to the person at this
-   * browser (the fr-24to/fr-zx34 line: the mode never guesses willingness
+   * browser (the no-patience-guessing line: the mode never guesses willingness
    * to wait). `undefined` = never chosen = previews on, today's behavior. */
   surfacePreview?: boolean;
 }

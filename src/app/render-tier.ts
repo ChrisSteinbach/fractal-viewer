@@ -1,5 +1,5 @@
 /**
- * Interaction render-tier scheduler (fr-5ne3): decides, frame by frame,
+ * Interaction render-tier scheduler: decides, frame by frame,
  * whether the surface render should trace a cheap PREVIEW or the FULL-quality
  * image — cheap while the view is moving, pristine the moment it parks.
  *
@@ -22,12 +22,12 @@
  * that never freezes. Quiet frames in between return null: render-on-demand
  * stays honest, nothing is painted.
  *
- * HOW EXPENSIVE the preview is, in turn, is not fixed: fr-5ne3 shipped one
- * scale for every device and system, and {@link createPreviewGovernor}
- * (fr-hith) replaces it with a measured ladder of (scale, depth) rungs —
- * see that factory for why a fixed scale is wrong in both directions at
- * once, and {@link previewMaxDepth} for why the two knobs must move
- * together.
+ * HOW EXPENSIVE the preview is, in turn, is not fixed: the tier originally
+ * shipped one scale for every device and system, and {@link
+ * createPreviewGovernor} replaces it with a measured ladder of (scale,
+ * depth) rungs — see that factory for why a fixed scale is wrong in both
+ * directions at once, and {@link previewMaxDepth} for why the two knobs
+ * must move together.
  *
  * Pure and clock-free like `resolution-governor.ts` and `morph-budget.ts`:
  * `now` arrives as a plain number measured by the caller, so tests drive the
@@ -57,7 +57,7 @@ export interface RenderTierScheduler {
 }
 
 /**
- * Preview-tier resolution ladder (fr-hith), best rung first — the same
+ * Preview-tier resolution ladder, best rung first — the same
  * shape as `resolution-governor.ts`'s `RESOLUTION_SCALE_STEPS`, and read
  * the same way: index 0 is the most expensive rung, the last index is the
  * floor. Each entry is the fraction of the drawing buffer per side that
@@ -70,28 +70,28 @@ export interface RenderTierScheduler {
  * difference, and the hysteresis band below is sized against the LARGEST
  * of these ratios.
  *
- * `0.3` is deliberately mid-ladder: it is the fixed scale fr-5ne3 shipped
+ * `0.3` is deliberately mid-ladder: it is the fixed scale the tier shipped
  * (`SURFACE_PREVIEW_SCALE`) and {@link PREVIEW_START_SCALE} starts every
- * session there, so the shipped behavior is what an unmeasured device
- * gets and measurement only moves it. Above it lie the rungs a capable GPU
- * on a light system earns — the bead's headline: 4D auto-tumble, which
- * invalidates every frame and therefore NEVER reaches the settle tier, now
- * tumbles at up to full resolution instead of being pinned at 0.3 forever.
- * Below it lie the rungs a phone on a 24-map system needs; 0.15 is a
- * further 4x fewer rays than the old fixed floor, and the 0.1 / 0.07
- * emergency rungs (fr-du81) exist for the fold-frontier DEs (fr-5rvk),
- * whose per-pixel cost runs 10^2-10^4x an affine descent: on a mid GPU
- * the 0.15 rung still means minutes of strip-paced fill-in, and each
- * emergency step buys ~2x fewer rays AND a shallower depth clamp on top
- * ({@link previewMaxDepth} couples depth to scale), which is where the
- * real fold savings live. Light systems never reach them — the sustain
- * ladder only walks down under sustained over-budget measurements.
+ * session there, so the shipped behavior is what an unmeasured device gets
+ * and measurement only moves it. Above it lie the rungs a capable GPU on a
+ * light system earns — the headline case: 4D auto-tumble, which invalidates
+ * every frame and therefore NEVER reaches the settle tier, now tumbles at
+ * up to full resolution instead of being pinned at 0.3 forever. Below it
+ * lie the rungs a phone on a 24-map system needs; 0.15 is a further 4x
+ * fewer rays than the old fixed floor, and the 0.1 / 0.07 emergency rungs
+ * exist for the fold-frontier DEs, whose per-pixel cost runs 10^2-10^4x an
+ * affine descent: on a mid GPU the 0.15 rung still means minutes of
+ * strip-paced fill-in, and each emergency step buys ~2x fewer rays AND a
+ * shallower depth clamp on top ({@link previewMaxDepth} couples depth to
+ * scale), which is where the real fold savings live. Light systems never
+ * reach them — the sustain ladder only walks down under sustained
+ * over-budget measurements.
  */
 export const PREVIEW_SCALE_RUNGS = [
   1, 0.75, 0.55, 0.4, 0.3, 0.22, 0.15, 0.1, 0.07,
 ] as const;
 
-/** The rung every surface session starts on — fr-5ne3's shipped fixed
+/** The rung every surface session starts on — the tier's original fixed
  * scale, and the anchor {@link previewMaxDepth}'s depth coupling is pinned
  * to. Starting mid-ladder (rather than optimistically at 1, or timidly at
  * the floor) means the first frames of a session cost exactly what they
@@ -105,32 +105,32 @@ export const PREVIEW_START_SCALE = 0.3;
  * that {@link previewMaxDepth} inverts. */
 const DEPTH_RESOLUTION_DECADES = 4;
 
-/** Depth fraction at {@link PREVIEW_START_SCALE} — fr-ttg5's measured
+/** Depth fraction at {@link PREVIEW_START_SCALE} — the measured
  * anchor, kept EXACT (see {@link previewMaxDepth}). */
 const ANCHOR_DEPTH_FRACTION = 0.5;
 
 /**
  * Preview-tier descent-depth clamp on the surface tracer's `uMaxDepth`,
- * sized relative to the system's OWN full-quality depth (fr-ttg5) and to
- * the rung the preview is being traced at (fr-hith).
+ * sized relative to the system's OWN full-quality depth and to the rung
+ * the preview is being traced at.
  *
- * Depth MUST couple to scale, or fr-ttg5's bug returns in adaptive form.
- * `buildSurfaceDE`/`buildSurfaceDE4` size `fullMaxDepth` so the SLOWEST
- * contraction chain resolves features below `DEPTH_RESOLUTION` (1e-4) —
- * `ceil(log(DEPTH_RESOLUTION) / log(sigma))` — so tracing only a FRACTION
- * `f` of those levels resolves that chain to `(1e-4)^f` instead. The
- * preview's own pixel coarseness (`uPixelEps * t`, ~0.0125 at a typical
+ * Depth MUST couple to scale, or the core-ball bug returns in adaptive
+ * form. `buildSurfaceDE`/`buildSurfaceDE4` size `fullMaxDepth` so the
+ * SLOWEST contraction chain resolves features below `DEPTH_RESOLUTION`
+ * (1e-4) — `ceil(log(DEPTH_RESOLUTION) / log(sigma))` — so tracing only a
+ * FRACTION `f` of those levels resolves that chain to `(1e-4)^f` instead.
+ * The preview's own pixel coarseness (`uPixelEps * t`, ~0.0125 at a typical
  * hit distance) goes as `1 / scale`. Rendering MORE pixels while tracing
  * the same few levels would put the unresolved core blob back on screen at
- * a size the finer pixels can now see: the giant smooth ball fr-ttg5
- * removed.
+ * a size the finer pixels can now see: the giant smooth ball the
+ * contraction-aware clamp removed.
  *
  * So the clamp is the larger of two closed forms, which cross EXACTLY at
  * the anchor rung:
  *
  * - **pixel-matched** — `f = 0.5 + log10(scale / 0.3) / 4`, the fraction
  *   that keeps the resolved feature size in the same ratio to the pixel
- *   size that fr-ttg5 measured at 0.3. It governs BELOW the anchor, where
+ *   size that was measured at 0.3. It governs BELOW the anchor, where
  *   it is the floor that stops a cheap rung from blobbing. It is shallow
  *   in `scale` because resolution is EXPONENTIAL in depth: 3.3x finer
  *   pixels only buy `log10(3.3)/4 = 0.13` more depth fraction.
@@ -144,7 +144,7 @@ const ANCHOR_DEPTH_FRACTION = 0.5;
  * Both branches pass through `0.5` at 0.3 by construction (the `log10` of
  * `scale / PREVIEW_START_SCALE` is exactly 0 there), so the anchor is
  * exact from either side and `previewMaxDepth(full)` still reproduces
- * fr-ttg5's `max(4, ceil(full / 2))` bit for bit — not by a branch
+ * the original `max(4, ceil(full / 2))` bit for bit — not by a branch
  * condition, but because the two curves genuinely meet.
  *
  * Systems pinned at `MAX_DESCENT_DEPTH` (sigma above ~0.931, deeper than
@@ -212,8 +212,8 @@ export const PREVIEW_EMA_ALPHA = 0.2;
 /** Trace cost (ms) the ladder aims to hold preview frames under — a ~30fps
  * budget. Above this the EMA counts toward stepping DOWN. Interaction only
  * has to feel continuous, not smooth: 30fps of preview under the finger is
- * the trade fr-5ne3 already made, and buying it with resolution is what
- * this ladder is for. */
+ * the trade the preview tier already made, and buying it with resolution
+ * is what this ladder is for. */
 export const PREVIEW_TARGET_MS = 33;
 /**
  * EMA below this (ms) counts toward stepping UP. The dead band it opens
@@ -245,7 +245,7 @@ export const PREVIEW_HOLDOFF_MS = 400;
  * A single trace this expensive (ms) drops straight to the floor rung
  * without waiting for any EMA or sustain. The preview is one unbounded
  * draw by design — it has no strip planner bounding its submissions the
- * way the full tier does (fr-sjff) — so a frame this slow is not a data
+ * way the full tier does — so a frame this slow is not a data
  * point to average, it is the last warning before a close-up on a weak
  * iGPU hands the GPU watchdog a submission it will kill the context over.
  * Averaging costs several more frames at that size; the ladder cannot
@@ -279,7 +279,7 @@ export interface PreviewGovernor {
    * null.
    *
    * `truncated` marks a trace the renderer CUT OFF at its wall budget with
-   * work unresolved (the compute path's preview budget, fr-khxy round 3):
+   * work unresolved (the compute path's preview budget):
    * such a sample bypasses the warm-up's decide-nothing rule and panics
    * immediately. Warm-up exists because a session's FIRST trace carries
    * compile/allocation overhead a capable GPU then never pays again — but
@@ -299,7 +299,7 @@ export interface PreviewGovernor {
    * (`surface-de.ts`'s `surfaceDescentCostWeight`; default 1 = the plain
    * {@link PREVIEW_START_SCALE} entry). The mid-ladder start bakes in the
    * assumption that a session's first frames cost what they cost at the
-   * shipped fixed scale — fold-frontier systems (fr-5rvk) break it by
+   * shipped fixed scale — fold-frontier systems break it by
    * orders of magnitude, and the FIRST trace has no sample for the panic
    * path to act on, so the entry rung itself must absorb what is known
    * STATICALLY: enter at the highest rung whose area discount covers the
@@ -311,12 +311,12 @@ export interface PreviewGovernor {
 }
 
 /**
- * Adaptive preview-rung governor (fr-hith): turns measured preview trace
- * cost into the (scale, depth) pair this device can hold at ~30fps for
- * THIS system — `morph-budget.ts`'s "measure it, don't guess it" applied
- * to the one tier fr-5ne3 left fixed.
+ * Adaptive preview-rung governor: turns measured preview trace cost into
+ * the (scale, depth) pair this device can hold at ~30fps for THIS
+ * system — `morph-budget.ts`'s "measure it, don't guess it" applied to the
+ * one tier the original scheduler left fixed.
  *
- * The problem being solved: fr-5ne3's preview tier is a FIXED 0.3 scale,
+ * The problem being solved: the shipped preview tier is a FIXED 0.3 scale,
  * chosen so the worst plausible system stays interactive on the worst
  * plausible device. Every other combination pays for that choice. A
  * capable GPU on a light system traces a 0.3-scale preview in a couple of

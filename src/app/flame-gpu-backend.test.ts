@@ -1,5 +1,5 @@
 /**
- * Pins `GpuFlameBackend`'s deferred-teardown state machine (fr-mxkk): a
+ * Pins `GpuFlameBackend`'s deferred-teardown state machine: a
  * `destroy()` call while an op is parked on live submitted GPU work must not
  * touch the device until that op unwinds, must never explicitly destroy a
  * buffer (the device reclaims them), and must still refuse new work the
@@ -54,8 +54,8 @@ function flushMicrotasks(): Promise<void> {
  * `mapAsync` on directly — overridable for the two staging buffers a test
  * needs to park and later resolve/reject. `getMappedRange` returns a real,
  * 4-byte-aligned `ArrayBuffer` since the class immediately wraps it in a
- * `Uint32Array`/`Float32Array` view. `destroy` is a spy: the fix under test
- * (fr-mxkk) means production code must never call it — every buffer-destroy
+ * `Uint32Array`/`Float32Array` view. `destroy` is a spy: the fix under
+ * test means production code must never call it — every buffer-destroy
  * assertion in this file reads this spy. */
 function createFakeBuffer(
   mapAsync: () => Promise<undefined> = () => new Promise(() => {}),
@@ -73,7 +73,7 @@ function createFakeBuffer(
 interface Harness {
   backend: GpuFlameBackend;
   /** Spy on the fake device's own `destroy()` — the one call the whole
-   * fr-mxkk state machine exists to time correctly. */
+   * deferred-teardown state machine exists to time correctly. */
   deviceDestroy: ReturnType<typeof vi.fn>;
   /** Spy on the fake queue's `submit()` — lets a test prove a refused op
    * never reached the GPU at all, not just that it rejected. */

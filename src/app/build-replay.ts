@@ -1,5 +1,5 @@
 /**
- * "Watch it build" replay controller (fr-1zb): a pure timing/phase state
+ * "Watch it build" replay controller: a pure timing/phase state
  * machine over the live point cloud's buffer order.
  *
  * The chaos game appends points to the cloud buffer in the exact order they

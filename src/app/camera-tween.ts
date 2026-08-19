@@ -1,10 +1,10 @@
 /**
- * The auto-fit camera GLIDE (fr-0b8): a short smoothstep tween of the orbit
+ * The auto-fit camera GLIDE: a short smoothstep tween of the orbit
  * camera's target + radius that frames a freshly-generated attractor, extracted
  * from main.ts's closure so the pure interpolation is unit-tested without a
  * browser — the same way `orbit.ts` is for the rest of the camera math.
- * Since fr-cfoc it also owns the morph-tracking CHASE, the glide's sibling
- * that follows a MOVING fit, and since fr-8v41 the directed POSE GLIDE to a
+ * It also owns the morph-tracking CHASE, the glide's sibling
+ * that follows a MOVING fit, and the directed POSE GLIDE to a
  * saved camera pose — see {@link CameraTween}'s doc for how the three
  * motions relate.
  *
@@ -37,7 +37,7 @@ import {
 export const CAMERA_TWEEN_MS = 600;
 
 /**
- * Time constant of the tracking chase (fr-cfoc), in milliseconds: each
+ * Time constant of the tracking chase, in milliseconds: each
  * {@link CameraTween.advance} closes `1 - exp(-dt/τ)` of the remaining
  * distance to the tracked fit, so the camera follows a morphing attractor
  * with ~this much lag — fast enough to keep it framed across a multi-second
@@ -93,7 +93,7 @@ interface Tween {
   toTarget: Vec3;
 }
 
-/** In-flight tracking chase (fr-cfoc): the fit currently being chased + the
+/** In-flight tracking chase: the fit currently being chased + the
  * clock reading of the last advance (for the dt-aware step). Retargeted in
  * place by every {@link CameraTween.track} call; never self-terminating —
  * a fit glide, a cancel, or a finish ends it. */
@@ -103,7 +103,7 @@ interface Chase {
   lastMs: number;
 }
 
-/** In-flight pose glide (fr-8v41): a directed smoothstep to a SAVED camera
+/** In-flight pose glide: a directed smoothstep to a SAVED camera
  * pose — unlike Tween/Chase it moves theta/phi too, and it times itself
  * (durationMs is the timeline leg's own morph length, not CAMERA_TWEEN_MS). */
 interface PoseTween {
@@ -126,7 +126,7 @@ interface PoseTween {
  * and {@link cancel} on the next user gesture so grabbing the camera mid-glide
  * feels like a normal orbit rather than a fight with the animation.
  *
- * Three mutually exclusive motions (fr-cfoc, fr-8v41):
+ * Three mutually exclusive motions:
  *
  * - The **glide** ({@link fitToBounds}): a one-shot {@link CAMERA_TWEEN_MS}
  *   smoothstep to a fixed fit — a whole-system load's landing.
@@ -139,8 +139,8 @@ interface PoseTween {
  *   from the chase for the settle: from an already-tracking pose that final
  *   glide is a short touch-down rather than a leap.
  * - The **pose glide** ({@link glideToPose}): a directed, self-timed
- *   smoothstep to a SAVED {@link CameraPose} — a timeline leg's camera move
- *   (fr-8v41). The one motion that moves theta/phi: the fit glide and chase
+ *   smoothstep to a SAVED {@link CameraPose} — a timeline leg's camera
+ *   move. The one motion that moves theta/phi: the fit glide and chase
  *   deliberately leave the orbit ANGLES to the user (see the module header),
  *   but a timeline keyframe's saved pose IS the author's framing, angles
  *   included.
@@ -173,7 +173,7 @@ export class CameraTween {
     );
   }
 
-  /** Whether the in-flight motion is a pose glide (fr-8v41). main.ts reads
+  /** Whether the in-flight motion is a pose glide. main.ts reads
    * this to suppress the auto-orbit's per-frame theta advance while a glide
    * owns theta — the fit glide/chase never touch theta, so they compose with
    * the auto-orbit and deliberately do NOT set this. */
@@ -253,7 +253,7 @@ export class CameraTween {
   }
 
   /**
-   * Chase the fit for `bounds` (fr-cfoc): start — or retarget in place — the
+   * Chase the fit for `bounds`: start — or retarget in place — the
    * exponential follow {@link advance} steps toward every frame. Call once
    * per morph-intermediate arrival with that result's live bounds; the chase
    * keeps its own pace ({@link CAMERA_TRACK_TAU_MS}), so however irregular
@@ -280,7 +280,7 @@ export class CameraTween {
   }
 
   /**
-   * Glide the orbit camera to a SAVED {@link CameraPose} (fr-8v41): a
+   * Glide the orbit camera to a SAVED {@link CameraPose}: a
    * timeline leg's directed camera move from wherever the camera currently
    * is to the arriving step's authored framing, over `durationMs` — the
    * leg's own morph length, NOT {@link CAMERA_TWEEN_MS}. Unlike {@link
@@ -402,7 +402,7 @@ export class CameraTween {
   /**
    * Complete any in-flight motion instantly: jump the camera to its end
    * pose (or target/radius) and clear it. A no-op when idle. Used when a
-   * preset's render-mode hint (fr-39y) enters the flame render right as the
+   * preset's render-mode hint enters the flame render right as the
    * fresh cloud lands — the flame freezes the camera into its projection
    * snapshot at enter time, so the fit (or pose glide) must have LANDED by
    * then, not still be gliding toward frame.

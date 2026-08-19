@@ -225,9 +225,9 @@ function showError(message: string): void {
 
 /**
  * Shown when register-sw.ts reports an update. Usually that means the new
- * worker is still WAITING for this page to say go (fr-o13) — so the banner
- * now appears before anything breaks, not after — but it also still covers
- * the rarer took-over-without-asking case (another tab already accepted).
+ * worker is still WAITING for this page to say go — so the banner now
+ * appears before anything breaks, not after — but it also still covers the
+ * rarer took-over-without-asking case (another tab already accepted).
  * Reload hands off to register-sw.ts's accept dance: message the waiting
  * worker and reload once it takes over, or, in the already-took-over case,
  * just reload. Dismissible either way; never forces the reload.
@@ -245,7 +245,7 @@ function showUpdateBanner(acceptUpdate: () => void): void {
   banner.classList.remove("hidden");
 }
 
-// User-facing note for a runtime accumulate failure (fr-09w), shared by the
+// User-facing note for a runtime accumulate failure, shared by the
 // flame and solid worker "error" handlers. Distinct from showRenderError's
 // default "try reloading" hint: a reload won't reliably fix a compute fault,
 // so this just states what happened rather than over-promising.
@@ -257,12 +257,12 @@ const RENDER_ACCUMULATE_ERROR = "Render failed — returning to the explorer.";
  * back to the explorer — otherwise the fallback just looks like "nothing
  * happens" on Render. Two triggers, two messages:
  *
- *  - Default ("try reloading", fr-ssa): a worker that fails to LOAD or
+ *  - Default ("try reloading"): a worker that fails to LOAD or
  *    crashes (`worker.onerror`). A reload often clears this (a stale-deploy
- *    404 — which fr-k1z's update banner also covers proactively — or a
+ *    404 — which the update banner also covers proactively — or a
  *    transient load fault). The bare load-failure Event carries nothing
  *    worker-specific to show, so the fixed hint is all we can offer.
- *  - Custom (fr-09w): a loaded worker posts an "error" event because an
+ *  - Custom: a loaded worker posts an "error" event because an
  *    accumulate step failed at runtime. A reload won't reliably fix a compute
  *    fault, so callers pass a message that states what happened. (The
  *    technical detail stays in the console.error alongside the call.)
@@ -294,11 +294,11 @@ function webglAvailable(): boolean {
 }
 
 /**
- * Copy `text` to the clipboard, resolving `true` on success (fr-cai's "Copy
- * link"). Uses the async Clipboard API — available in the app's HTTPS/secure
- * contexts under the button's user gesture — and resolves `false` when it's
- * unavailable or rejects, so the caller can flash a fallback message instead
- * of throwing.
+ * Copy `text` to the clipboard, resolving `true` on success (the collection
+ * gallery's "Copy link"). Uses the async Clipboard API — available in the
+ * app's HTTPS/secure contexts under the button's user gesture — and
+ * resolves `false` when it's unavailable or rejects, so the caller can
+ * flash a fallback message instead of throwing.
  */
 async function copyToClipboard(text: string): Promise<boolean> {
   try {
@@ -313,7 +313,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
 /**
  * Hand a Blob to the browser as a named download: a temporary object URL
  * clicked through a detached `<a download>`. Shared by the PNG export and
- * the fr-de9t scene/collection file exports. Revocation is delayed because
+ * the JSON scene/collection file exports. Revocation is delayed because
  * the download latches onto the blob URL asynchronously, and revoking
  * synchronously aborts it in some engines — 10s is comfortably past that
  * latch on any of them.
@@ -337,10 +337,10 @@ function prefersReducedMotion(): boolean {
 }
 
 /**
- * fr-ul2: `?flameperf` (present with or without a value) opts the flame render
+ * `?flameperf` (present with or without a value) opts the flame render
  * into per-chunk throughput instrumentation — see the flame `start` command's
  * `instrument` field. Diagnostics only, off unless the URL asks, so a phone
- * soak (fr-7su) can log the accumulate / readback / scheduling-gap split that
+ * soak can log the accumulate / readback / scheduling-gap split that
  * pins the real-app mobile-GPU throughput deficit without shipping the timing
  * overhead to every render.
  */
@@ -349,8 +349,8 @@ function flamePerfEnabled(): boolean {
 }
 
 /**
- * fr-opgk: the shape `?surfacestate` publishes as `window.__surfaceState()`
- * — a read-only snapshot of the surface render's settle machinery, so a
+ * The shape `?surfacestate` publishes as `window.__surfaceState()` — a
+ * read-only snapshot of the surface render's settle machinery, so a
  * verification script can wait for the TRUE settled state instead of
  * inferring it from the canvas.
  *
@@ -393,7 +393,7 @@ interface SurfaceStateProbe {
 declare global {
   interface Window {
     __surfaceState?: () => SurfaceStateProbe;
-    /** fr-d6g5: `?surfacetrace`'s ring buffer of frame-loop trace lines —
+    /** `?surfacetrace`'s ring buffer of frame-loop trace lines —
      * see setSurfaceComputeTrace. Diagnostics only, absent unless the URL
      * asks. */
     __surfaceTraceLog?: string[];
@@ -401,7 +401,7 @@ declare global {
 }
 
 /**
- * Auto-orbit BASE rate for the 3D view (fr-1yn): camera theta in rad/s at the
+ * Auto-orbit BASE rate for the 3D view: camera theta in rad/s at the
  * default 1× orbit speed (the user's speed slider multiplies it — see
  * `autoOrbitSpeed`). One revolution every ~52 s — stately, not a spinner —
  * and in the same family as the 4D tumble rates (see `four-d-view.ts`).
@@ -411,40 +411,40 @@ declare global {
 const AUTO_ORBIT_RATE = 0.12;
 
 /**
- * Ceiling for the SYNCHRONOUS boot generation (fr-t3gl). Boot generates
- * inline so the first paint includes the cloud — but a persisted or shared
- * scene can carry up to MAX_NUM_POINTS (5M), which would block first paint
- * for seconds on weak hardware. Boot therefore runs at most this many points
+ * Ceiling for the SYNCHRONOUS boot generation. Boot generates inline so the
+ * first paint includes the cloud — but a persisted or shared scene can
+ * carry up to MAX_NUM_POINTS (5M), which would block first paint for
+ * seconds on weak hardware. Boot therefore runs at most this many points
  * synchronously and immediately requests the full count through the worker;
- * with the SAME seed, the chaos game makes the boot cloud a bit-exact prefix
- * of the upgrade, so the extra points pour in without a reshuffle. 30K is
- * plenty for the boot camera fit: the trimmed-quantile frameBounds
+ * with the SAME seed, the chaos game makes the boot cloud a bit-exact
+ * prefix of the upgrade, so the extra points pour in without a reshuffle.
+ * 30K is plenty for the boot camera fit: the trimmed-quantile frameBounds
  * (framing-bounds.ts) are statistically stable well below that.
  */
 const BOOT_SYNC_MAX_POINTS = 30_000;
 
 /**
- * Seed for the BOOT generation (fr-chj9). Every later request rolls a fresh
- * random seed (rollSeed) — sampling variety where the user is editing — but
- * the boot generation is what a pose-less document auto-frames FROM
+ * Seed for the BOOT generation. Every later request rolls a fresh random
+ * seed (rollSeed) — sampling variety where the user is editing — but the
+ * boot generation is what a pose-less document auto-frames FROM
  * (fitCameraToAttractor over the boot cloud's frameBounds), and a random
  * boot seed made that framing drift ~0.3% per load: the same shared link
  * opened twice showed measurably different cameras, and run-to-run visual
- * diffs of pose-less scenes carried no signal (fr-opgk's harness measured
- * 1-9% of pixels lighting up on identical documents). One pinned seed makes
- * boot a pure function of the document — same link, same cloud, same
- * framing — at no cost anywhere else: a seed only picks WHICH points sample
- * the attractor, and every edit/preset/surprise-me still rolls fresh.
+ * diffs of pose-less scenes carried no signal (the settle-latch harness
+ * measured 1-9% of pixels lighting up on identical documents). One pinned
+ * seed makes boot a pure function of the document — same link, same cloud,
+ * same framing — at no cost anywhere else: a seed only picks WHICH points
+ * sample the attractor, and every edit/preset/surprise-me still rolls
+ * fresh.
  */
 const BOOT_SEED = 0x5eedb007;
 
 function main(): void {
-  // Field-diagnosability breadcrumb (fr-khxy): the ONE line that says which
-  // build this page actually runs. The service worker keeps serving a
-  // deploy's precache for as long as any tab stays open (fr-o13's
-  // wait-for-consent update), so two browsers can honestly run builds days
-  // apart — every "works in browser A, not in browser B" report starts by
-  // comparing these two stamps.
+  // Field-diagnosability breadcrumb: the ONE line that says which build this
+  // page actually runs. The service worker keeps serving a deploy's precache
+  // for as long as any tab stays open (the wait-for-consent update flow), so
+  // two browsers can honestly run builds days apart — every "works in browser
+  // A, not in browser B" report starts by comparing these two stamps.
   console.info(`Fractal Explorer build ${__BUILD_ID__}`);
   const container = document.getElementById("container");
   if (!container) {
@@ -473,11 +473,11 @@ function main(): void {
     : initialState(panelOpen);
   const orbit = new OrbitCamera(BOOT_CAMERA_POSITION);
   const ui = new Ui(document);
-  // The still-export disclosure driver (fr-7mfx). A Save-PNG on a surface
-  // render can be minutes of GPU work; it used to be indistinguishable
-  // from a mis-click until the download toast landed. One grace-deferred
-  // modal now covers every engine — the grace period is what keeps the
-  // instant cases (explorer, flame) from flashing one.
+  // The still-export disclosure driver. A Save-PNG on a surface render can be
+  // minutes of GPU work; it used to be indistinguishable from a mis-click
+  // until the download toast landed. One grace-deferred modal now covers
+  // every engine — the grace period is what keeps the instant cases
+  // (explorer, flame) from flashing one.
   const exportProgress = createExportProgress({
     now: () => performance.now(),
     setTimer: (fn, ms) => window.setTimeout(fn, ms),
@@ -487,13 +487,13 @@ function main(): void {
     view: ui,
   });
 
-  // fr-tmgf: the device-level software-rasterizer disclosure. Read ONCE at
-  // boot — the renderer string is stable for the context's life — and shown
-  // immediately: the incident behind the bead was a browser that silently
-  // blocklisted the GPU, so every mode ran on SwiftShader for a day with
-  // nothing on screen saying so. The surface compute session's own verdict
-  // recomposes the same note via updateSoftwareRendererNote (declared with
-  // the compute state below, which it reads — not callable this early).
+  // The device-level software-rasterizer disclosure. Read ONCE at boot — the
+  // renderer string is stable for the context's life — and shown immediately:
+  // the incident behind it was a browser that silently blocklisted the GPU,
+  // so every mode ran on SwiftShader for a day with nothing on screen saying
+  // so. The surface compute session's own verdict recomposes the same note
+  // via updateSoftwareRendererNote (declared with the compute state below,
+  // which it reads — not callable this early).
   const webglRendererLabel = scene.unmaskedRendererLabel();
   const webglSoftware =
     webglRendererLabel !== null && isSoftwareRendererLabel(webglRendererLabel);
@@ -506,13 +506,13 @@ function main(): void {
     );
   }
 
-  // Whether a video capture is running (fr-py7z): canvas capture streams only
+  // Whether a video capture is running: canvas capture streams only
   // emit frames when the canvas actually paints, so the render-on-demand gate
   // in animate() must keep rendering every frame while this is true — a
   // static scene must still record as a video of that scene, not a stall.
   let recorderActive = false;
 
-  // Whether the current timeline playback is an EXPORT run (fr-8v41):
+  // Whether the current timeline playback is an EXPORT run:
   // onTimelineExport started the recorder alongside the playback, and
   // whatever ends the playback — its natural finish, a stop-on-edit, the
   // toggle — hands the recorder its stop so the clip finalizes and
@@ -523,7 +523,7 @@ function main(): void {
   // recorder that isn't running and toasting a clip that never saved.
   let timelineExporting = false;
 
-  // ── Offline frame-exact export (fr-92t9) ────────────────────────────
+  // ── Offline frame-exact export ──────────────────────────────────────
   // While an offline export runs, the whole playback pipeline ticks on a
   // VIRTUAL clock stepped by the export driver (offline-export.ts) instead
   // of performance.now(): every clock consumer on the playback path — the
@@ -542,16 +542,16 @@ function main(): void {
   // encoder probe (before the player is active) and doubles as the "the
   // Export button is currently a cancel affordance" flag.
   let offlineExportPending = false;
-  // Wakes the offline export driver's render-keyframe park (fr-6jic):
-  // non-null only while the driver awaits nextParkSignal with the virtual
-  // clock parked on a converging flame/solid still. Resolved on every
-  // signal that could end the park — render progress (noteRenderProgress,
-  // whose budget-met resume is what actually unparks), a render session
-  // exiting early (the deactivate deps), the playback stopping (the
-  // policy's onStopped) — and the driver re-checks its park condition and
-  // re-arms after each, so spurious wakes are harmless.
+  // Wakes the offline export driver's render-keyframe park: non-null only
+  // while the driver awaits nextParkSignal with the virtual clock parked on a
+  // converging flame/solid still. Resolved on every signal that could end the
+  // park — render progress (noteRenderProgress, whose budget-met resume is
+  // what actually unparks), a render session exiting early (the deactivate
+  // deps), the playback stopping (the policy's onStopped) — and the driver
+  // re-checks its park condition and re-arms after each, so spurious wakes
+  // are harmless.
   let offlineParkWaiter: (() => void) | null = null;
-  // The same signal's second consumer (fr-61a2): a Save-PNG parked until the
+  // The same signal's second consumer: a Save-PNG parked until the
   // renderer it was pressed in IS the picture it will export. A list drained
   // on every fire rather than the park's single slot, because these are
   // ordinary awaits inside savePng rather than one driver's loop — and, like
@@ -573,7 +573,7 @@ function main(): void {
     });
   }
 
-  // Adaptive resolution (fr-4lyt): a pure frame-time governor decides when
+  // Adaptive resolution: a pure frame-time governor decides when
   // sustained slow frames should trade pixels for frame rate (and when the
   // device has earned them back); animate() feeds it the dt between
   // consecutively rendered frames via governResolution below.
@@ -583,41 +583,41 @@ function main(): void {
   // where sampling is off), so a gap never reads as one huge dt.
   let lastGovernedFrameMs: number | null = null;
   // Timestamp of the last RENDERED frame, independent of the sample chain
-  // above (fr-vxbo): render-on-demand means a parked still produces no more
+  // above: render-on-demand means a parked still produces no more
   // frames to sample at all, so this is what governResolution measures quiet
   // time against for the idle-restore path below. Unlike lastGovernedFrameMs
   // it survives across the idle frames in between — reset only when a
   // restore actually fires or governing stops.
   let lastRenderedFrameAtMs: number | null = null;
-  // Surface-mode interaction tier (fr-5ne3): cheap preview traces while the
-  // view is moving, one full-quality settle frame once it parks. Owns the
-  // surface render's cost outright — the resolution governor takes its
-  // flame-style restore path there (see governResolution).
+  // Surface-mode interaction tier: cheap preview traces while the view is
+  // moving, one full-quality settle frame once it parks. Owns the surface
+  // render's cost outright — the resolution governor takes its flame-style
+  // restore path there (see governResolution).
   const surfaceRenderTier = createRenderTierScheduler();
   // Whether the settle target holds a COMPLETED full-quality frame for the
   // CURRENT (uninvalidated) view — the recorder's parked repaints re-present
-  // it instead of re-tracing seconds of identical pixels (fr-sjff). Any
+  // it instead of re-tracing seconds of identical pixels. Any
   // invalidation clears it.
   let surfaceSettled = false;
   // A settle verdict the tier scheduler fired while a preview strip job was
-  // still mid-flight (fr-du81): held here until the preview completes, then
+  // still mid-flight: held here until the preview completes, then
   // begun. A fresh invalidation supersedes it.
   let surfaceSettlePending = false;
-  // The WebGL compile gate owes the session its first traced frame
-  // (fr-yvcw): the gate's one-shot scene.invalidate() can be consumed by
-  // another draw before the tier clock reads it — 2ca508b's race, on the
-  // fallback arm — and on a re-enter after a failed compute create() the
-  // entry glide has already spent itself, so no camera motion follows to
-  // mask the loss. OR'd into the tier read until the preview actually
-  // traces; the tier answers "preview" to any invalidated frame, so one
-  // surviving read is a guaranteed first frame.
+  // The WebGL compile gate owes the session its first traced frame: the
+  // gate's one-shot scene.invalidate() can be consumed by another draw
+  // before the tier clock reads it — 2ca508b's race, on the fallback arm
+  // — and on a re-enter after a failed compute create() the entry glide
+  // has already spent itself, so no camera motion follows to mask the
+  // loss. OR'd into the tier read until the preview actually traces; the
+  // tier answers "preview" to any invalidated frame, so one surviving
+  // read is a guaranteed first frame.
   let surfaceWebglPreviewPending = false;
   const recorder = createCanvasRecorder(scene.canvas, {
     onStateChange: (recording) => {
       recorderActive = recording;
       ui.setRecordingState(recording ? formatElapsed(0) : null);
       // A finalized clip ends an export run's recording half however it
-      // stopped (fr-8v41) — see timelineExporting's doc.
+      // stopped — see timelineExporting's doc.
       if (!recording) timelineExporting = false;
     },
     onTick: (seconds) => {
@@ -627,20 +627,20 @@ function main(): void {
       console.error(`Video recording: ${message}`);
       // An export run whose recording failed (or never started) keeps
       // playing as a plain run — the flag clears so its finish doesn't
-      // claim a clip was saved (fr-8v41).
+      // claim a clip was saved.
       timelineExporting = false;
     },
   });
 
-  // The saved-scene collection (fr-cai): a persistent multi-slot library the
-  // user explicitly saves into, layered over the SAME encodeScene codec the
+  // The saved-scene collection: a persistent multi-slot library the user
+  // explicitly saves into, layered over the SAME encodeScene codec the
   // single-scene autosave and undo history use — so a saved entry is just an
   // immutable encoded string plus a thumbnail, and loading one is a
   // whole-system replacement like a preset (see loadEncodedScene). Distinct
   // localStorage key, so it never disturbs the live scene or its history.
-  // onEvicted is the quota disclosure (fr-vhpt): a save that only fit by
-  // evicting the oldest entries must not hide behind the unconditional
-  // "Saved to collection" toast — data loss reported as success.
+  // onEvicted is the quota disclosure: a save that only fit by evicting the
+  // oldest entries must not hide behind the unconditional "Saved to
+  // collection" toast — data loss reported as success.
   const collection = new SceneCollection({
     onEvicted: (count) =>
       ui.flashToast(
@@ -653,38 +653,38 @@ function main(): void {
   // The most recently ARRIVED generation (cached by applyCloudResult), so
   // a color-mode change can recolor the existing cloud (see `recolor`) instead
   // of re-rolling the RNG and drawing a brand-new random sample of the
-  // attractor. While a generation is in flight (fr-5kx) this still holds the
+  // attractor. While a generation is in flight this still holds the
   // cloud actually on screen — exactly what its readers want. Typed as the
   // WORKER result (not the bare chaos-game run) because the camera fit reads
-  // the worker-baked `frameBounds` off it (fr-3xfk).
+  // the worker-baked `frameBounds` off it.
   let lastResult: CloudResult3D | null = null;
 
   // Whether the DISPLAYED cloud is the 4D projection view — a DERIVED
-  // property of the system that produced it (fr-bf6; see state.ts's
-  // systemIsNonFlat), not a mode the user enters/exits. Written only by
-  // applyCloudResult when a generation lands (fr-5kx), so it always matches
-  // what is on screen — during the brief in-flight window after an edit flips
-  // flatness, the view (material, guides, gestures) deliberately stays with
-  // the old cloud until the new one arrives. animate()'s tumble tick, the
-  // interactions predicate, and guide-box suppression all read it.
+  // property of the system that produced it (see state.ts's systemIsNonFlat),
+  // not a mode the user enters/exits. Written only by applyCloudResult when a
+  // generation lands, so it always matches what is on screen — during the
+  // brief in-flight window after an edit flips flatness, the view (material,
+  // guides, gestures) deliberately stays with the old cloud until the new one
+  // arrives. animate()'s tumble tick, the interactions predicate, and
+  // guide-box suppression all read it.
   let viewIs4D = false;
 
   // The most recent 4D generation — mirrors `lastResult` for the 3D path,
   // so a whole-system replacement (preset load / Surprise Me) can auto-frame
   // the camera on it right after regenerate() lands a fresh run (see
-  // fitCameraToAttractor; the fit reads the worker-baked `frameRadius`,
-  // fr-3xfk). Null whenever the view isn't showing 4D.
+  // fitCameraToAttractor; the fit reads the worker-baked `frameRadius`).
+  // Null whenever the view isn't showing 4D.
   let fourDResult: CloudResult4D | null = null;
 
   // The pending load hints (load-hints.ts, where the policy and its history
-  // live): a preset/gallery/timeline load's render-mode hint (fr-39y,
-  // fr-75sq), a timeline render keyframe's deterministic accumulator seed
-  // (fr-4ff7), and a loaded document's 4D pose (fr-pnek) — each armed right
-  // after the load's applyDecodedSnapshot/applyEdit (which clears all three
-  // on every load's behalf) and consumed when the load's OWN cloud lands
+  // live): a preset/gallery/timeline load's render-mode hint, a timeline
+  // render keyframe's deterministic accumulator seed, and a loaded
+  // document's persisted 4D pose — each armed right after the load's
+  // applyDecodedSnapshot/applyEdit (which clears all three on every load's
+  // behalf) and consumed when the load's OWN cloud lands
   // (applyCloudResult), keyed to the request id the load awaits so an
-  // in-flight arrival from a superseded load can neither fire them early nor
-  // discard them (fr-vja8.34). The id read is deferred — cloudGenerator is
+  // in-flight arrival from a superseded load can neither fire them early
+  // nor discard them. The id read is deferred — cloudGenerator is
   // constructed below, and no arm can run before boot reaches it.
   const loadHints = new PendingLoadHints(() => cloudGenerator.peekNextId());
 
@@ -699,35 +699,36 @@ function main(): void {
     return loadHints.takeSeed() ?? Math.floor(Math.random() * 0xffffffff);
   }
 
-  // The session-only 4D VIEW state (fr-woc/fr-6x2/fr-nn6): the accumulated
-  // rotor (tumble ticks and Shift-drag/Shift-wheel deltas all compose into it),
-  // the tumble pause/speed, and the soft w-slice. Reset to a fresh-visit
-  // baseline by resetFourDView() whenever the view starts showing a genuinely
-  // new 4D system; the live instance is never persisted, though a pose()
-  // snapshot of it rides the saved document (fr-pnek — see currentDocument).
-  // The state machine + its math live in four-d-view.ts; this file just
-  // pushes matrix()/slice fields to the scene.
+  // The session-only 4D VIEW state: the accumulated rotor (tumble ticks and
+  // Shift-drag/Shift-wheel deltas all compose into it), the tumble
+  // pause/speed, and the soft w-slice. Reset to a fresh-visit baseline by
+  // resetFourDView() whenever the view starts showing a genuinely new 4D
+  // system; the live instance is never persisted, though a pose() snapshot of
+  // it rides the saved document (see currentDocument). The state machine +
+  // its math live in four-d-view.ts; this file just pushes matrix()/slice
+  // fields to the scene.
   const fourDView = new FourDView();
 
-  // The directed rotor/slice glide a timeline playback leg drives (fr-pnek):
-  // the 4D sibling of cameraTween.glideToPose, easing the view from wherever
-  // the tumble left it onto the arriving keyframe's saved FourDPose over the
+  // The directed rotor/slice glide a timeline playback leg drives: the 4D
+  // sibling of cameraTween.glideToPose, easing the view from wherever the
+  // tumble left it onto the arriving keyframe's saved FourDPose over the
   // leg's own morph duration. While it is active, animate() suspends the
   // auto-tumble tick — the glide owns the rotor — and applyCloudResult's
   // fresh-visit reset stands aside (see the transition block there); the
   // tumble resumes for the hold once the glide lands, which keeps playback
   // alive between keyframes exactly the way the 3D auto-orbit keeps spinning
   // after a camera pose glide. Arrival ORIENTATIONS stay pinned to the saved
-  // poses either way — that is the deterministic half fr-pnek needs.
+  // poses either way — that is the deterministic half a persisted 4D pose
+  // needs.
   const fourDTween = new FourDTween(
     fourDView,
     // nowMs, not performance.now(): a timeline leg's rotor glide must step
-    // on the offline export's virtual clock (fr-92t9).
+    // on the offline export's virtual clock.
     nowMs,
     prefersReducedMotion,
   );
 
-  // A loaded document's 4D pose (fr-pnek) rides loadHints above — the
+  // A loaded document's 4D pose rides loadHints above — the
   // render-mode-hint pattern applied to the VIEW: loadEncodedScene /
   // restoreSnapshot / launchTimelineLeg arm it right after
   // applyDecodedSnapshot, and applyCloudResult applies it wherever the
@@ -736,17 +737,17 @@ function main(): void {
   // otherwise stomp a just-restored pose back to the identity baseline),
   // releasing it once the awaited replaced request lands.
 
-  // The 3D auto-orbit (fr-1yn): the camera-side sibling of the 4D tumble
-  // above — a slow turntable on the orbit camera's theta, so a flat system's
-  // cloud reads as 3D at a glance the way the tumble sells 4D. Session-only
-  // like the tumble (never persisted, never in AppState/undo), reset by
+  // The 3D auto-orbit: the camera-side sibling of the 4D tumble above — a
+  // slow turntable on the orbit camera's theta, so a flat system's cloud
+  // reads as 3D at a glance the way the tumble sells 4D. Session-only like
+  // the tumble (never persisted, never in AppState/undo), reset by
   // resetAutoOrbitView() on a fresh visit to the 3D view. Unlike the tumble
   // it shares its degree of freedom with the plain drag gesture, so animate()
   // additionally pauses it while interactions reports a gesture in progress.
   let autoOrbitOn = true;
   let autoOrbitSpeed = 1;
   // The user's explicit auto-orbit on/off choice, once they have ever touched
-  // the toggle (fr-g98). null = untouched, so fresh-visit resets follow the
+  // the toggle. null = untouched, so fresh-visit resets follow the
   // reduced-motion default; after a manual toggle they follow this instead —
   // a preset load / Surprise Me / 4D→3D flip must not re-enable an orbit the
   // user turned off (nor re-pause a reduced-motion user's explicit opt-in).
@@ -754,40 +755,41 @@ function main(): void {
   // FourDView (setTumbleUserChoice).
   let autoOrbitUserChoice: boolean | null = null;
 
-  // The balloon echo's "Inflate" replay (fr-5wlv.2): non-null while the
-  // radius sweep is animating, holding the ms timestamp it started at
-  // (nowMs() — see onBalloonInflate and the push in tickRender). Cleared on
-  // completion (t >= 1) or by a genuine user edit to the checkbox/slider
-  // (control-spec.ts's cancelBalloonSweep effect) — never by the sweep's
-  // own per-frame reducer calls, which bypass that effect entirely.
+  // The balloon echo's "Inflate" replay: non-null while the radius sweep is
+  // animating, holding the ms timestamp it started at (nowMs() — see
+  // onBalloonInflate and the push in tickRender). Cleared on completion (t >=
+  // 1) or by a genuine user edit to the checkbox/slider (control-spec.ts's
+  // cancelBalloonSweep effect) — never by the sweep's own per-frame reducer
+  // calls, which bypass that effect entirely.
   let balloonSweepStartMs: number | null = null;
 
-  // Restore the COMBINED auto-motion preference (fr-0ya): a viewer who turned
-  // auto-orbit or 4D-tumble off keeps it off across RELOADS, not merely within
-  // the session (fr-g98's stickiness). The one shared choice seeds BOTH the 3D
-  // orbit and the 4D tumble here — before the boot cloud generation
-  // (generateSync) and the boot resetAutoOrbitView() below both read these
-  // choices. Stored SEPARATELY from the scene (viewer-prefs.ts, its own
-  // localStorage key), never in the share URL — a shared link must not carry
-  // the author's motion preference. Absent = never chosen = follow the
-  // reduced-motion default, exactly like the session-only null / FourDView's
-  // `tumbleUserChoice = null` do. Session independence is unchanged: this only
-  // seeds the two sticky choices; it does not couple the live toggles.
+  // Restore the COMBINED auto-motion preference: a viewer who turned
+  // auto-orbit or 4D-tumble off keeps it off across RELOADS, not merely
+  // within the session (where the choice is already sticky). The one shared
+  // choice seeds BOTH the 3D orbit and the 4D tumble here — before the boot
+  // cloud generation (generateSync) and the boot resetAutoOrbitView() below
+  // both read these choices. Stored SEPARATELY from the scene
+  // (viewer-prefs.ts, its own localStorage key), never in the share URL — a
+  // shared link must not carry the author's motion preference. Absent = never
+  // chosen = follow the reduced-motion default, exactly like the session-only
+  // null / FourDView's `tumbleUserChoice = null` do. Session independence is
+  // unchanged: this only seeds the two sticky choices; it does not couple the
+  // live toggles.
   const viewerPrefs = loadViewerPrefs();
   if (viewerPrefs.autoMotion !== undefined) {
     autoOrbitUserChoice = viewerPrefs.autoMotion;
     fourDView.seedTumbleUserChoice(viewerPrefs.autoMotion);
   }
 
-  // The surface preview tier under user control (fr-37c6): `false` means
-  // invalidations never trace the cheap preview — the pane freezes on its
-  // last frame while the view moves, and the full-detail render starts the
-  // moment it parks. The fr-24to/fr-zx34 principle (the mode never guesses
-  // willingness to wait) applied to the preview itself, which the governor's
-  // rung ladder still guessed at. A patience preference, so per-BROWSER
-  // (viewer-prefs.ts) like autoMotion above, never the share URL; absent =
-  // never chosen = previews on. Both engines honor it — the compute and
-  // strip paths share the same two-tier choreography.
+  // The surface preview tier under user control: `false` means invalidations
+  // never trace the cheap preview — the pane freezes on its last frame while
+  // the view moves, and the full-detail render starts the moment it parks.
+  // The no-automatic-give-up principle (the mode never guesses willingness to
+  // wait) applied to the preview itself, which the governor's rung ladder
+  // still guessed at. A patience preference, so per-BROWSER (viewer-prefs.ts)
+  // like autoMotion above, never the share URL; absent = never chosen =
+  // previews on. Both engines honor it — the compute and strip paths share
+  // the same two-tier choreography.
   let surfacePreviewsEnabled = viewerPrefs.surfacePreview !== false;
   // Programmatic `checked` writes fire no change event, so this seed cannot
   // re-enter the handler (which would re-save the pref at boot).
@@ -800,7 +802,7 @@ function main(): void {
   // early), which the dt clamp in animate() absorbs on exit.
   let lastMotionTickMs = performance.now();
 
-  // fr-936q: on desktop the 300px control panel overlays the canvas's right
+  // On desktop the 300px control panel overlays the canvas's right
   // edge, so the projection is aimed at the UNCOVERED region instead
   // (scene.setRightInset) — every auto-fit (preset glide, Surprise Me, morph
   // chase) then frames the attractor clear of the panel rather than half
@@ -816,7 +818,7 @@ function main(): void {
   let lastInsetTickMs = performance.now();
   scene.setRightInset(sceneRightInset);
 
-  // The "Watch it build" replay (fr-1zb): reveals the displayed cloud in
+  // The "Watch it build" replay: reveals the displayed cloud in
   // chaos-game generation order — the buffers arrive in exactly the order
   // the orbit plotted them — so the app can SHOW what the About dialog
   // explains: one point hopping between random transforms, its landings
@@ -831,25 +833,25 @@ function main(): void {
   // poll touches the DOM only when the phase actually flips — and doubles as
   // the "display is still dirty" flag after the replay goes idle on its own.
   let replayCaption: string | null = null;
-  // The map index whose spotlight colors are currently painted over the
-  // point buffer (fr-01kf), or null while the cloud wears its ordinary
-  // colors. Compared against the frame's `spotlight` each poll so the color
-  // re-bake runs once per step, not once per frame; endReplayDisplay reads
-  // it to know a repaint is owed even when the showcase's own color
-  // override never armed (the user's mode already was "transform").
+  // The map index whose spotlight colors are currently painted over the point
+  // buffer, or null while the cloud wears its ordinary colors. Compared
+  // against the frame's `spotlight` each poll so the color re-bake runs once
+  // per step, not once per frame; endReplayDisplay reads it to know a repaint
+  // is owed even when the showcase's own color override never armed (the
+  // user's mode already was "transform").
   let replaySpotlight: number | null = null;
-  // Whether the panel was open the moment "Watch it build" closed it
-  // (fr-vpka), so endReplayDisplay can restore it once the replay ends —
-  // null while no replay's close is pending restoration. Set once, in
-  // onWatchBuild, right before the panel is forced shut; consumed (and
-  // reset to null) the first time endReplayDisplay runs afterward, whichever
-  // of natural completion or cancellation gets there first.
+  // Whether the panel was open the moment "Watch it build" closed it, so
+  // endReplayDisplay can restore it once the replay ends — null while no
+  // replay's close is pending restoration. Set once, in onWatchBuild, right
+  // before the panel is forced shut; consumed (and reset to null) the first
+  // time endReplayDisplay runs afterward, whichever of natural completion or
+  // cancellation gets there first.
   let panelOpenBeforeReplay: boolean | null = null;
-  // The replay's showcase overrides (fr-hpci): while a replay plays, the
-  // display presents its most didactic view regardless of the user's current
-  // settings — by-transform coloring (each landing's parent map is legible),
-  // guide boxes visible (the point visibly hops BETWEEN the transforms), and
-  // the view's automatic motion running (auto-orbit in 3D, tumble in 4D; not
+  // The replay's showcase overrides: while a replay plays, the display
+  // presents its most didactic view regardless of the user's current settings
+  // — by-transform coloring (each landing's parent map is legible), guide
+  // boxes visible (the point visibly hops BETWEEN the transforms), and the
+  // view's automatic motion running (auto-orbit in 3D, tumble in 4D; not
   // forced under reduced motion — unlike the replay itself, ambient spin is
   // not what the click asked for). Armed by onWatchBuild, disarmed exactly
   // once in endReplayDisplay, panelOpenBeforeReplay's lifecycle exactly.
@@ -859,9 +861,9 @@ function main(): void {
   // refreshGuides() fold this flag into what they derive instead — so undo
   // snapshots, the debounced save, share links, and the pagehide flush can
   // never capture the temporary values, by construction. The motion flags
-  // (autoOrbitOn / fourDView.tumbleOn) ARE session state, so their priors
-  // are remembered here; the sticky user choice (fr-g98) stays untouched —
-  // a showcase is a programmatic write, not a user toggle.
+  // (autoOrbitOn / fourDView.tumbleOn) ARE session state, so their priors are
+  // remembered here; the sticky user choice stays untouched — a showcase is a
+  // programmatic write, not a user toggle.
   let replayShowcase: {
     /** Bake by-transform colors while set (skipped — and no re-bake owed —
      * when the user's own mode already was "transform"). */
@@ -884,14 +886,14 @@ function main(): void {
     ui.setReplayCaption(null);
     replayCaption = null;
     // The spotlight phase paints dimmed colors straight over the point
-    // buffer (fr-01kf); if one was showing, a repaint is owed below even
-    // when the showcase's color override never armed (the user's own mode
-    // already was "transform", so `showcase.color` alone wouldn't re-bake).
+    // buffer; if one was showing, a repaint is owed below even when the
+    // showcase's color override never armed (the user's own mode already was
+    // "transform", so `showcase.color` alone wouldn't re-bake).
     const spotlightWasShowing = replaySpotlight !== null;
     replaySpotlight = null;
     const count = viewIs4D ? fourDResult?.count : lastResult?.count;
     if (count !== undefined) ui.setPointCount(count);
-    // Disarm the showcase overrides (fr-hpci): put the motion flag back and
+    // Disarm the showcase overrides: put the motion flag back and
     // re-derive guides/colors from the (never-touched) document. Cleared
     // BEFORE the refreshers run so they fold the user's own settings again.
     if (replayShowcase !== null) {
@@ -900,7 +902,7 @@ function main(): void {
       if (showcase.motionWasOn !== null) {
         if (showcase.fourD) {
           fourDView.tumbleOn = showcase.motionWasOn;
-          // Put the help box's motion wording back with it (fr-k9nx) — the
+          // Put the help box's motion wording back with it — the
           // showcase forced it on without the user's checkbox knowing.
           ui.setFourDTumbleActive(showcase.motionWasOn);
         } else autoOrbitOn = showcase.motionWasOn;
@@ -913,14 +915,14 @@ function main(): void {
       ui.setReplayShowcaseLegend(false);
       ui.updateLabels(state);
     }
-    // Reopen the panel "Watch it build" closed to clear the stage (fr-vpka)
-    // — but only above the mobile breakpoint, where the panel is the
-    // primary always-open surface; a phone genuinely wants it gone over the
-    // small canvas, so it stays closed there even once the replay ends.
-    // Covers BOTH exits: natural completion (this runs from animate()'s own
-    // idle transition) and cancellation (a regeneration landing, or a
-    // render-mode switch, both via cancelReplay) — endReplayDisplay is the
-    // one chokepoint all three already share.
+    // Reopen the panel "Watch it build" closed to clear the stage — but only
+    // above the mobile breakpoint, where the panel is the primary always-open
+    // surface; a phone genuinely wants it gone over the small canvas, so it
+    // stays closed there even once the replay ends. Covers BOTH exits:
+    // natural completion (this runs from animate()'s own idle transition) and
+    // cancellation (a regeneration landing, or a render-mode switch, both via
+    // cancelReplay) — endReplayDisplay is the one chokepoint all three
+    // already share.
     if (panelOpenBeforeReplay !== null) {
       if (window.innerWidth > MOBILE_BREAKPOINT) {
         state = setPanelOpen(state, panelOpenBeforeReplay);
@@ -940,16 +942,16 @@ function main(): void {
     endReplayDisplay();
   }
 
-  // The replace-load system morph (fr-a04l): when a preset load / Surprise Me
-  // / gallery load replaces the system, the attractor tweens from the old
-  // shape to the new one instead of snapping — see regenerateReplaced. The
-  // morph is DISPLAY-ONLY session view state like the replay above: the
-  // document becomes the target immediately (one "replace" undo checkpoint,
-  // debounced save, URL hash all see only the target); only the stream of
-  // generation requests is interpolated, sampled once per frame by animate()
+  // The replace-load system morph: when a preset load / Surprise Me / gallery
+  // load replaces the system, the attractor tweens from the old shape to the
+  // new one instead of snapping — see regenerateReplaced. The morph is
+  // DISPLAY-ONLY session view state like the replay above: the document
+  // becomes the target immediately (one "replace" undo checkpoint, debounced
+  // save, URL hash all see only the target); only the stream of generation
+  // requests is interpolated, sampled once per frame by animate()
   // (morph-tween.ts holds the timing/chaining; morph.ts the interpolation).
   const morphTween = new MorphTween();
-  // The backdrop's own replace-load crossfade (fr-5ps1) — the fourth motion
+  // The backdrop's own replace-load crossfade — the fourth motion
   // beside the system morph, camera glide and 4D rotor glide, armed by
   // applyDecodedSnapshot's morph path and polled in tickLogic. Display-only,
   // like the morph above: the document becomes the target immediately; only
@@ -962,22 +964,22 @@ function main(): void {
   let liveBackground: BackgroundGradient = resolveBackground({ mode: "dark" });
   function pushBackground(stops: BackgroundGradient): void {
     liveBackground = stops;
-    // fr-h3mp: the shape always reads the CURRENT document's — a
-    // crossfade interpolates only the colors (background.ts's
-    // BackgroundTween doc), so the shape pops to the target's at the
-    // leg's first pushBackground call, exactly like every other caller.
+    // The shape always reads the CURRENT document's — a crossfade
+    // interpolates only the colors (background.ts's BackgroundTween doc), so
+    // the shape pops to the target's at the leg's first pushBackground call,
+    // exactly like every other caller.
     scene.setBackground(stops, state.background.shape ?? "linear");
   }
   /** Snap the scene to the CURRENT document's backdrop, discarding any
    * in-flight crossfade — control edits and non-morph loads land instantly.
    * Resolves through resolveSceneBackground so `"auto"` derives from the
-   * active render's palette (fr-mz2u). */
+   * active render's palette. */
   function applyBackgroundNow(): void {
     backgroundTween.cancel();
     pushBackground(resolveSceneBackground(state));
   }
   /**
-   * The `"auto"` backdrop's live tracking (fr-mz2u): re-derive and push when
+   * The `"auto"` backdrop's live tracking: re-derive and push when
    * the palette it follows may have moved — palette select edits, gradient
    * editor drags, render-mode switches. A no-op for the static modes, and
    * value-guarded so an edit to an INACTIVE render's palette (or one that
@@ -999,15 +1001,15 @@ function main(): void {
   // real replaced one). Overwritten — not OR-merged — by a chained restart:
   // the flag describes the CURRENT target's landing.
   let morphFinalFit = false;
-  // The morph's adaptive intermediate point budget (fr-a5gu): every
-  // delivered generation's measured latency feeds it (see the cloudGenerator
-  // wiring), and cloudParams sizes morph intermediates from it, so the morph
-  // updates at ~frame rate on whatever device this is instead of stuttering
-  // behind a fixed cap.
+  // The morph's adaptive intermediate point budget: every delivered
+  // generation's measured latency feeds it (see the cloudGenerator wiring),
+  // and cloudParams sizes morph intermediates from it, so the morph updates
+  // at ~frame rate on whatever device this is instead of stuttering behind a
+  // fixed cap.
   const morphBudget = new MorphBudget();
 
-  // The ambient drift show (fr-wavo): dwell on the current attractor, glide
-  // to a fresh Surprise-Me roll over DRIFT_MORPH_MS, dwell, repeat — the
+  // The ambient drift show: dwell on the current attractor, glide to a fresh
+  // Surprise-Me roll over DRIFT_MORPH_MS, dwell, repeat — the
   // Electric-Sheep-on-a-TV use case. Session-only motion like the auto-orbit
   // and tumble, never persisted. drift.ts owns the timing loop;
   // drift-policy.ts the stop/advance conduct (driftPolicy below); this file
@@ -1015,8 +1017,8 @@ function main(): void {
   // choreography around renders, and the reduced-motion gate
   // (syncMotionAvailability).
   const driftShow = new DriftShow(() => performance.now());
-  // What a leg departs TOWARD (fr-w2ve): a fresh Surprise-Me roll ("random",
-  // the original show), or the next saved scene in the gallery's own order,
+  // What a leg departs TOWARD: a fresh Surprise-Me roll ("random", the
+  // original show), or the next saved scene in the gallery's own order,
   // looping ("collection" — see advanceCollectionLeg). Set by whichever
   // affordance starts the show; meaningless (and untouched) while idle.
   let driftSource: "random" | "collection" = "random";
@@ -1024,29 +1026,28 @@ function main(): void {
   // SceneCollection.after's loop cursor. Null'd when a collection show
   // starts, so every show plays from the gallery's front.
   let driftLastPlayedId: string | null = null;
-  // The show's stop/advance conductor (drift-policy.ts, fr-4otp): the
-  // own-leg guard that exempts a leg's own replace-load from the
-  // stop-on-edit rule, and the leg-boundary exits (reduced motion, a
-  // dried-up collection). Every "the user reached in" moment stops the
-  // show — applyEdit and the bespoke beginEdit handlers (any undoable
-  // edit), time travel and MANUAL gallery loads (applyDecodedSnapshot),
-  // starting a build replay, and the toggle itself; since fr-8v41 the
-  // shared chokepoints call stopShows, which routes the stop to this
-  // policy AND the timeline playback's (at most one show is ever active).
-  // Leaving the points view (switchRenderMode) stops a RANDOM show too,
-  // while a collection show survives it as a held slideshow (fr-w2ve — see
-  // switchRenderMode). Camera input deliberately never calls it — the
-  // camera is independent of the show, exactly like the auto-orbit's
+  // The show's stop/advance conductor (drift-policy.ts): the own-leg guard
+  // that exempts a leg's own replace-load from the stop-on-edit rule, and the
+  // leg-boundary exits (reduced motion, a dried-up collection). Every "the
+  // user reached in" moment stops the show — applyEdit and the bespoke
+  // beginEdit handlers (any undoable edit), time travel and MANUAL gallery
+  // loads (applyDecodedSnapshot), starting a build replay, and the toggle
+  // itself; the shared chokepoints call stopShows, which routes the stop to
+  // this policy AND the timeline playback's (at most one show is ever
+  // active). Leaving the points view (switchRenderMode) stops a RANDOM show
+  // too, while a collection show survives it as a held slideshow (see
+  // switchRenderMode). Camera input deliberately never calls it — the camera
+  // is independent of the show, exactly like the auto-orbit's
   // pause-while-dragging policy.
   //
-  // `notify` (fr-ygr1) flashes "Drift stopped" for an IMPLICIT stop — one
-  // caused by something else entirely (an edit, undo/redo, a manual
-  // gallery load, starting a build replay) where the drift toggle is
-  // usually buried inside a collapsed accordion section, so the show would
-  // otherwise die silently. Left off at the explicit drift-button toggle
-  // (the user is looking right at it), the reduced-motion sync, and a
-  // render-mode switch — see each call site for its own reasoning. The
-  // policy's guards mean it can never fire for a stop that didn't happen.
+  // `notify` flashes "Drift stopped" for an IMPLICIT stop — one caused by
+  // something else entirely (an edit, undo/redo, a manual gallery load,
+  // starting a build replay) where the drift toggle is usually buried inside
+  // a collapsed accordion section, so the show would otherwise die silently.
+  // Left off at the explicit drift-button toggle (the user is looking right
+  // at it), the reduced-motion sync, and a render-mode switch — see each call
+  // site for its own reasoning. The policy's guards mean it can never fire
+  // for a stop that didn't happen.
   const driftPolicy = new DriftPolicy({
     show: driftShow,
     reducedMotion: prefersReducedMotion,
@@ -1056,14 +1057,14 @@ function main(): void {
     },
   });
 
-  // One drift leg (fr-wavo), passed to driftPolicy.advance at the poll site:
-  // press Surprise Me — or, for a collection show (fr-w2ve), load the next
-  // saved scene — on the show's behalf: the same "replace" undo checkpoint a
-  // manual press/load cuts (undo walks back through the show; history.ts's
-  // cap bounds it), the same camera auto-fit, but gliding the display morph
-  // over DRIFT_MORPH_MS instead of the snappier click-feedback default. A
-  // surprise roll always launches; a collection leg reports whether anything
-  // was left to play — false ends the show once the leg unwinds (fr-4otp).
+  // One drift leg, passed to driftPolicy.advance at the poll site: press
+  // Surprise Me — or, for a collection show, load the next saved scene — on
+  // the show's behalf: the same "replace" undo checkpoint a manual press/load
+  // cuts (undo walks back through the show; history.ts's cap bounds it), the
+  // same camera auto-fit, but gliding the display morph over DRIFT_MORPH_MS
+  // instead of the snappier click-feedback default. A surprise roll always
+  // launches; a collection leg reports whether anything was left to play —
+  // false ends the show once the leg unwinds.
   function launchDriftLeg(): boolean {
     if (driftSource === "collection") return advanceCollectionLeg();
     rollSurpriseSystem(DRIFT_MORPH_MS);
@@ -1071,7 +1072,7 @@ function main(): void {
   }
 
   /**
-   * The next playable stop on the collection show's loop (fr-w2ve): walk
+   * The next playable stop on the collection show's loop: walk
    * `SceneCollection.after` from the last-departed id through gallery order
    * (newest-first, wrapping), skipping entries that fail to decode — the
    * collection is untrusted localStorage, and an ambient show should step
@@ -1094,30 +1095,30 @@ function main(): void {
     return null;
   }
 
-  // One COLLECTION-sourced drift leg (fr-w2ve): a gallery load on the show's
-  // behalf — the same "replace" checkpoint + morphing applyDecodedSnapshot
-  // as loadEncodedScene, stretched over the drift glide. One deliberate
-  // difference from a manual load: the camera always auto-fits and CHASES
-  // the morph (fr-cfoc) rather than snapping to the entry's saved pose — a
-  // hard pose cut every leg would break the ambience the show exists for.
-  // Returns whether a leg actually launched: an emptied-out (or fully
-  // corrupt) collection reports false, and DriftPolicy.advance ends the
-  // show at the leg boundary — like reduced motion does (fr-4otp).
+  // One COLLECTION-sourced drift leg: a gallery load on the show's behalf —
+  // the same "replace" checkpoint + morphing applyDecodedSnapshot as
+  // loadEncodedScene, stretched over the drift glide. One deliberate
+  // difference from a manual load: the camera always auto-fits and CHASES the
+  // morph rather than snapping to the entry's saved pose — a hard pose cut
+  // every leg would break the ambience the show exists for. Returns whether a
+  // leg actually launched: an emptied-out (or fully corrupt) collection
+  // reports false, and DriftPolicy.advance ends the show at the leg boundary
+  // — like reduced motion does.
   //
-  // Every entry plays in the mode it was SAVED from (fr-75sq): a tagged
-  // entry re-enters its renderer when the terminal cloud lands (the
-  // preset-hint path, applyCloudResult) with the scene's own saved
-  // flame/solid settings; an untagged entry is a points save and plays as
-  // the classic morphing cloud — applyDecodedSnapshot already dropped the
-  // view to points, and no hint is armed. A manual mode switch mid-show is
-  // a look-around: it survives (switchRenderMode holds the show for the
-  // entering render), but the next leg reasserts its own entry's mode.
+  // Every entry plays in the mode it was SAVED from: a tagged entry re-enters
+  // its renderer when the terminal cloud lands (the preset-hint path,
+  // applyCloudResult) with the scene's own saved flame/solid settings; an
+  // untagged entry is a points save and plays as the classic morphing cloud —
+  // applyDecodedSnapshot already dropped the view to points, and no hint is
+  // armed. A manual mode switch mid-show is a look-around: it survives
+  // (switchRenderMode holds the show for the entering render), but the next
+  // leg reasserts its own entry's mode.
   function advanceCollectionLeg(): boolean {
     const next = nextCollectionScene();
     // Nothing left to play: just report it. The stop belongs to
     // DriftPolicy.advance, AFTER this leg unwinds — issued from in here it
     // would be swallowed by the policy's own-leg guard, letting an emptied
-    // collection's show keep running forever (fr-4otp).
+    // collection's show keep running forever.
     if (!next) return false;
     editSession.beginEdit("replace");
     applyDecodedSnapshot(next.snap, true, true, DRIFT_MORPH_MS);
@@ -1131,38 +1132,37 @@ function main(): void {
 
   // Whether each renderer's CURRENT session has met its iteration budget —
   // maintained by noteRenderProgress below and reset by the sessions' own
-  // resetProgress deps (which run on every enter), so it can never describe
-  // a previous session. Read by onDriftCollection: a show started from
-  // INSIDE a converging render (the Collection section is reachable there
-  // since fr-75sq) must hold for that render's completion rather than
-  // dwell-and-yank it — and, since fr-61a2, by the flame Save-PNG, which
-  // waits for the accumulation it is going to save.
+  // resetProgress deps (which run on every enter), so it can never describe a
+  // previous session. Read by onDriftCollection: a show started from INSIDE a
+  // converging render (the Collection section is reachable there from the
+  // render modes) must hold for that render's completion rather than
+  // dwell-and-yank it — and by the flame Save-PNG, which waits for the
+  // accumulation it is going to save.
   const renderComplete = { flame: false, solid: false, surface: false };
   // The same (done, budget) pair as a 0..1 fraction, for the export modal's
-  // readout while a Save-PNG waits (fr-61a2). Written and cleared in exactly
-  // the places renderComplete is, so the two can never describe different
-  // sessions.
+  // readout while a Save-PNG waits. Written and cleared in exactly the places
+  // renderComplete is, so the two can never describe different sessions.
   const renderCoverage = { flame: 0, solid: 0, surface: 0 };
 
   // A converging flame/solid render reported progress: record whether its
   // budget is met (a budget raised on a finished render genuinely
   // un-completes it — the worker resumes accumulating), and, when the
   // collection show is HOLDING for this render (switchRenderMode held it on
-  // the way in), re-arm the next departure a beat out — "wait for the
-  // render to complete, then a second longer" (fr-w2ve). resumeAfter acts
-  // only while holding, so ordinary renders, a stopped show, and an
-  // already-resumed one are all untouched by stray progress.
+  // the way in), re-arm the next departure a beat out — "wait for the render
+  // to complete, then a second longer". resumeAfter acts only while holding,
+  // so ordinary renders, a stopped show, and an already-resumed one are all
+  // untouched by stray progress.
   //
-  // A timeline playback holding on a render keyframe (fr-v3au) departs on
-  // the same signal — resume() re-arms the schedule with the step's own
-  // holdMs as the post-convergence dwell (timeline-player.ts's "Held
-  // legs"), and like resumeAfter it no-ops unless holding. The extra
-  // renderMode gate is because a timeline hold spans the leg's whole
-  // points-mode morph, not just the render (launchTimelineLeg holds at
-  // launch): a terminated session's trailing completion event arriving in
-  // that window — the exited render's worker posts from a task queue
-  // terminate() can't unsend — must not start the departure clock while
-  // the step's own render is still converging or yet to enter.
+  // A timeline playback holding on a render keyframe departs on the same
+  // signal — resume() re-arms the schedule with the step's own holdMs as the
+  // post-convergence dwell (timeline-player.ts's "Held legs"), and like
+  // resumeAfter it no-ops unless holding. The extra renderMode gate is
+  // because a timeline hold spans the leg's whole points-mode morph, not just
+  // the render (launchTimelineLeg holds at launch): a terminated session's
+  // trailing completion event arriving in that window — the exited render's
+  // worker posts from a task queue terminate() can't unsend — must not start
+  // the departure clock while the step's own render is still converging or
+  // yet to enter.
   function noteRenderProgress(
     mode: "flame" | "solid" | "surface",
     done: number,
@@ -1174,32 +1174,31 @@ function main(): void {
       driftShow.resumeAfter(DRIFT_RENDER_LINGER_MS);
       if (state.renderMode === mode) timelinePlayer.resume();
     }
-    // An offline export parked on this render (fr-6jic) re-checks on every
+    // An offline export parked on this render re-checks on every
     // progress event: a budget-met resume above unparks it (the schedule is
     // re-armed against the parked virtual clock), and a still-converging
     // chunk repaints the canvas so the park is visible.
     notifyRenderSignal();
   }
 
-  // ── Animation timeline (fr-8v41) ─────────────────────────────────────
-  // The drift show's DIRECTED counterpart: an authored, persistent sequence
-  // of keyframe steps — each a frozen scene document + thumbnail + its own
-  // morph/hold timing, and since fr-v3au optionally the flame/solid mode it
-  // was captured from (timeline.ts) — played back as a chain of the same
-  // replace-load morphs a drift leg uses, and optionally recorded to a
-  // video clip (onTimelineExport). timeline-player.ts owns WHEN each leg
-  // fires (an absolute schedule, so a recorded clip keeps its authored
-  // length — with render keyframes excepted: their legs hold the schedule
-  // until the render converges, so a clip's length becomes
-  // content-dependent, the fr-v3au trade); launchTimelineLeg below owns
-  // what a leg does; and a second DriftPolicy instance conducts it with the
-  // exact same stop-on-edit / own-leg-guard semantics as the drift show.
-  // The two shows are mutually exclusive: each start stops the other, and
-  // stopShows() is the one helper every shared "user reached in"
-  // chokepoint calls.
+  // ── Animation timeline ───────────────────────────────────────────────
+  // The drift show's DIRECTED counterpart: an authored, persistent sequence of
+  // keyframe steps — each a frozen scene document + thumbnail + its own
+  // morph/hold timing, and optionally the flame/solid mode it was captured
+  // from (timeline.ts) — played back as a chain of the same replace-load
+  // morphs a drift leg uses, and optionally recorded to a video clip
+  // (onTimelineExport). timeline-player.ts owns WHEN each leg fires (an
+  // absolute schedule, so a recorded clip keeps its authored length — with
+  // render keyframes excepted: their legs hold the schedule until the render
+  // converges, so a clip's length becomes content-dependent, the
+  // render-keyframe trade); launchTimelineLeg below owns what a leg does; and
+  // a second DriftPolicy instance conducts it with the exact same
+  // stop-on-edit / own-leg-guard semantics as the drift show. The two shows
+  // are mutually exclusive: each start stops the other, and stopShows() is
+  // the one helper every shared "user reached in" chokepoint calls.
   const timeline = new TimelineStore();
   // nowMs, not performance.now(): an offline export drives the same player
-  // on the virtual clock (fr-92t9).
+  // on the virtual clock.
   const timelinePlayer = new TimelinePlayer(nowMs);
   const timelinePolicy = new DriftPolicy({
     show: timelinePlayer,
@@ -1207,11 +1206,11 @@ function main(): void {
     onStopped: (notify) => {
       ui.setTimelineActive(false);
       if (notify) ui.flashToast("Timeline stopped");
-      // An OFFLINE export run needs nothing here beyond a park wake
-      // (fr-92t9): its driver notices the player went inactive, finalizes
-      // the partial clip itself, and owns the toast. The wake matters when
-      // the stop lands mid-park (fr-6jic) — a driver awaiting a render
-      // signal that will never resume must still learn the run ended.
+      // An OFFLINE export run needs nothing here beyond a park wake: its
+      // driver notices the player went inactive, finalizes the partial clip
+      // itself, and owns the toast. The wake matters when the stop lands
+      // mid-park — a driver awaiting a render signal that will never resume
+      // must still learn the run ended.
       if (offlineExport !== null) {
         notifyRenderSignal();
         return;
@@ -1239,8 +1238,8 @@ function main(): void {
   }
 
   /**
-   * One timeline playback leg (fr-8v41): load step `index`'s frozen scene
-   * as a replace-load morphing over the step's own `morphMs` — the same
+   * One timeline playback leg: load step `index`'s frozen scene as a
+   * replace-load morphing over the step's own `morphMs` — the same
    * "replace" undo checkpoint + morphing applyDecodedSnapshot path as a
    * collection drift leg (advanceCollectionLeg), with two directed
    * differences. The morph seed is pinned from the timeline's stored seed
@@ -1251,34 +1250,33 @@ function main(): void {
    * arrival can't fight it): the author's framing IS the shot, where a
    * drift leg deliberately auto-fits instead. A step saved without a pose
    * falls back to exactly the drift leg's fit-and-chase. A step saved from
-   * a non-flat system additionally carries its 4D view pose (fr-pnek) —
-   * the rotor orientation and w-slice the author framed — and the 4D view
+   * a non-flat system additionally carries its persisted 4D view pose — the
+   * rotor orientation and w-slice the author framed — and the 4D view
    * glides onto it the same way (FourDTween, rotor slerp + slice-center
    * lerp over the leg's own duration); the pose is ALSO armed as the
    * pending pose hint so the arrival that lands the replaced request
    * re-applies it exactly, covering both a glide that finished a beat
-   * before the cloud landed and one a user gesture cancelled out from
-   * under the show. Steps resolve by
-   * index at leg time, which is why every timeline EDIT stops a running
-   * playback first (see the onTimeline* handlers). Returns false on a
-   * vanished or undecodable step (untrusted localStorage), ending the show
-   * at the leg boundary like a dried-up collection (fr-4otp).
+   * before the cloud landed and one a user gesture cancelled out from under
+   * the show. Steps resolve by index at leg time, which is why every
+   * timeline EDIT stops a running playback first (see the onTimeline*
+   * handlers). Returns false on a vanished or undecodable step (untrusted
+   * localStorage), ending the show at the leg boundary like a dried-up
+   * collection.
    *
-   * A RENDER keyframe (fr-v3au) — a step tagged with the flame/solid mode
-   * it was captured from — additionally re-enters that renderer when the
-   * morph's terminal cloud lands (the mode hint, exactly
-   * advanceCollectionLeg's re-arm) and self-holds the player's schedule
-   * right here at launch: the next departure has no clock until this
-   * step's render meets its iteration budget (noteRenderProgress resumes
-   * it), with the step's own holdMs serving as the post-convergence dwell
-   * (timeline-player.ts's "Held legs"). Holding from launch rather than
-   * from the render's entry means no schedule deadline can slip through
-   * during the morph or the terminal request's in-flight gap — even a
-   * holdMs: 0 render step converges before departing. The render's
-   * accumulator seed is pinned too (fr-4ff7): the pending seed hint carries
-   * the leg's own legSeed draw into that session start, so the converged
-   * still — not just the morph into it — is identical run to run,
-   * residual noise included.
+   * A RENDER keyframe — a step tagged with the flame/solid mode it was
+   * captured from — additionally re-enters that renderer when the morph's
+   * terminal cloud lands (the mode hint, exactly advanceCollectionLeg's
+   * re-arm) and self-holds the player's schedule right here at launch: the
+   * next departure has no clock until this step's render meets its
+   * iteration budget (noteRenderProgress resumes it), with the step's own
+   * holdMs serving as the post-convergence dwell (timeline-player.ts's
+   * "Held legs"). Holding from launch rather than from the render's entry
+   * means no schedule deadline can slip through during the morph or the
+   * terminal request's in-flight gap — even a holdMs: 0 render step
+   * converges before departing. The render's accumulator seed is pinned
+   * too: the pending seed hint carries the leg's own legSeed draw into that
+   * session start, so the converged still — not just the morph into it — is
+   * identical run to run, residual noise included.
    */
   function launchTimelineLeg(index: number): boolean {
     const step = timeline.all()[index];
@@ -1291,7 +1289,7 @@ function main(): void {
     applyDecodedSnapshot(snap, pose === undefined, true, step.morphMs, seed);
     if (pose) cameraTween.glideToPose(pose, step.morphMs);
     // Armed AFTER applyDecodedSnapshot, which clears the pose hint on
-    // every load's behalf (the render-mode-hint pattern, fr-pnek).
+    // every load's behalf (the render-mode-hint pattern).
     if (snap.fourD) {
       fourDTween.glideToPose(snap.fourD, step.morphMs);
       loadHints.armPose(snap.fourD);
@@ -1299,7 +1297,7 @@ function main(): void {
     if (step.mode) {
       loadHints.armMode(step.mode);
       // The render's accumulator seed is pinned to the same per-leg draw
-      // as the morph (fr-4ff7): distinct consumers (cloud-worker point
+      // as the morph: distinct consumers (cloud-worker point
       // correspondence vs flame/solid accumulation), so sharing the value
       // is harmless, and one draw per leg keeps the determinism story
       // simple. Consumed by the session start the arrival's mode-hint
@@ -1311,19 +1309,19 @@ function main(): void {
   }
 
   /**
-   * A timeline run reached its natural end (fr-8v41): the player has
-   * already deactivated itself (its `done` event is what got us here), so
-   * the policy's stop would no-op — un-light the toggle directly, and for
-   * an export run hand the recorder its stop so the clip finalizes and
+   * A timeline run reached its natural end: the player has already
+   * deactivated itself (its `done` event is what got us here), so the
+   * policy's stop would no-op — un-light the toggle directly, and for an
+   * export run hand the recorder its stop so the clip finalizes and
    * downloads. The toast tells the user WHY the motion just stopped: the
    * panel closed when playback started, so nothing else on screen says so.
    */
   function finishTimelinePlayback(): void {
     ui.setTimelineActive(false);
     if (offlineExport !== null) {
-      // The offline export's natural end (fr-92t9): the driver sees the
-      // player inactive after this step, finalizes the clip, and toasts —
-      // just record that the run COMPLETED (vs. was stopped) for its copy.
+      // The offline export's natural end: the driver sees the player inactive
+      // after this step, finalizes the clip, and toasts — just record that
+      // the run COMPLETED (vs. was stopped) for its copy.
       offlineExport.completed = true;
     } else if (timelineExporting) {
       timelineExporting = false;
@@ -1335,15 +1333,15 @@ function main(): void {
   }
 
   /**
-   * Arm a playback run over the timeline's current steps (fr-8v41) —
-   * shared by ▶ Play and ⏺ Export (which additionally starts the recorder;
-   * `exporting` tags the run so whatever ends it also stops the recorder).
-   * Starting the directed show ends the ambient one — with the toast
-   * (fr-ygr1): the user is looking at the Timeline buttons, not the Drift
-   * toggle. Closes the panel like the drift toggle does: the show owns the
-   * stage — which also glides the desktop projection inset back to center
-   * (fr-936q), exactly what an exported clip should record. Callers guard
-   * emptiness/reduced motion; leg 0 fires on the next animate frame.
+   * Arm a playback run over the timeline's current steps — shared by ▶ Play
+   * and ⏺ Export (which additionally starts the recorder; `exporting` tags
+   * the run so whatever ends it also stops the recorder). Starting the
+   * directed show ends the ambient one — with the toast, since the user is
+   * looking at the Timeline buttons, not the Drift toggle. Closes the panel
+   * like the drift toggle does: the show owns the stage — which also glides
+   * the desktop projection inset back to center clear of the panel, exactly
+   * what an exported clip should record. Callers guard emptiness/reduced
+   * motion; leg 0 fires on the next animate frame.
    */
   function startTimelinePlayback(exporting: boolean): void {
     driftPolicy.stop({ notify: true });
@@ -1355,7 +1353,7 @@ function main(): void {
   }
 
   /**
-   * The offline frame-exact export's entry (fr-92t9): probe for a WebCodecs
+   * The offline frame-exact export's entry: probe for a WebCodecs
    * H.264 encoder sized to the canvas, then hand the run to
    * {@link driveOfflineExport}. When no encodable config exists (Firefox
    * without H.264 encode, an exotic canvas size), fall back to the realtime
@@ -1364,7 +1362,7 @@ function main(): void {
    * async probe, so a second Export click can't double-start (the handler
    * turns those clicks into the cancel affordance instead).
    */
-  /** The ONE wording for an export-failure toast (fr-vja8.51): the setup
+  /** The ONE wording for an export-failure toast: the setup
    * catch and the run catch both speak through it, so a rewording cannot
    * make the same failure class report differently depending on where the
    * encoder died — the session-error report keeps its own inline wording on
@@ -1390,11 +1388,10 @@ function main(): void {
         fps: OFFLINE_EXPORT_FPS,
       });
       // The probe awaited: a raced show start (or a timeline emptied by
-      // edits) wins — abandon the export rather than double-starting a
-      // run, and SAY so (fr-vja8.12: the silent abort read as a dead
-      // Export button). Above BOTH branches on purpose: the no-H.264
-      // fallback below used to restart the raced run from leg 0 as a
-      // recorded export.
+      // edits) wins — abandon the export rather than double-starting a run,
+      // and SAY so — the silent abort read as a dead Export button. Above
+      // BOTH branches on purpose: the no-H.264 fallback below used to
+      // restart the raced run from leg 0 as a recorded export.
       if (timelinePlayer.active || timeline.size === 0) {
         session?.abort();
         ui.flashToast(
@@ -1413,9 +1410,9 @@ function main(): void {
       await driveOfflineExport(session);
     } catch (err) {
       // A rejecting encoder probe must land in a toast, not an unhandled
-      // rejection — onTimelineExport fire-and-forgets this promise
-      // (fr-vja8.12). driveOfflineExport's own catch covers the run;
-      // this covers the setup.
+      // rejection — onTimelineExport fire-and-forgets this promise.
+      // driveOfflineExport's own catch covers the run; this covers the
+      // setup.
       exportFailedToast(err);
     } finally {
       offlineExportPending = false;
@@ -1423,25 +1420,24 @@ function main(): void {
   }
 
   /**
-   * One offline export run (fr-92t9): flip the app onto the virtual clock,
-   * start the ordinary timeline playback, and let `offline-export.ts`'s
-   * driver loop step it one exported frame at a time — each frame's logic
-   * ticked at its exact virtual time, its generation settled, its render
-   * forced, its pixels encoded — until the player finishes, a stop reaches
-   * it (every existing chokepoint works unchanged: the driver just notices
-   * the player went inactive and finalizes the partial clip), or the
-   * recorder-parity frame cap cuts it. A render keyframe's leg (fr-6jic)
-   * parks the driver instead of holding the clip open: the leg's morph
-   * captures as points, the flame/solid session converges to its budget in
-   * real time with the virtual clock (and the frame counter) standing
-   * still, and the step's holdMs then dwells on the CONVERGED still — so
-   * the clip comes out the authored length, unlike the realtime capture,
-   * which honestly records however long convergence took (fr-v3au). The
-   * `finally` unwinds the virtual clock: real time may be BEHIND it (a
-   * hold-heavy run exports faster than realtime), so anything still timed
-   * against it — pose glides, a mid-flight morph, the dt baselines — is
-   * snapped/reset rather than left to freeze until the wall clock catches
-   * up.
+   * One offline export run: flip the app onto the virtual clock, start the
+   * ordinary timeline playback, and let `offline-export.ts`'s driver loop
+   * step it one exported frame at a time — each frame's logic ticked at its
+   * exact virtual time, its generation settled, its render forced, its
+   * pixels encoded — until the player finishes, a stop reaches it (every
+   * existing chokepoint works unchanged: the driver just notices the player
+   * went inactive and finalizes the partial clip), or the recorder-parity
+   * frame cap cuts it. A render keyframe's leg parks the driver instead of
+   * holding the clip open: the leg's morph captures as points, the
+   * flame/solid session converges to its budget in real time with the
+   * virtual clock (and the frame counter) standing still, and the step's
+   * holdMs then dwells on the CONVERGED still — so the clip comes out the
+   * authored length, unlike the realtime capture, which honestly records
+   * however long convergence took. The `finally` unwinds the virtual clock:
+   * real time may be BEHIND it (a hold-heavy run exports faster than
+   * realtime), so anything still timed against it — pose glides, a
+   * mid-flight morph, the dt baselines — is snapped/reset rather than left
+   * to freeze until the wall clock catches up.
    */
   async function driveOfflineExport(
     session: OfflineEncoderSession,
@@ -1493,16 +1489,16 @@ function main(): void {
           virtualNowMs = frameNowMs;
           tickLogic(frameNowMs);
           await cloudGenerator.settle();
-          // Frame-exactness for surface keyframes (fr-55r5 part 2): the
-          // empty-space grid arrives on a REAL-time worker against this
-          // VIRTUAL clock, so whether a frame traces with or without it
-          // would otherwise depend on machine speed. Waiting out the build
-          // pins every exported surface frame to the same (grid-assisted,
-          // deterministically built) march.
+          // Frame-exactness for surface keyframes: the empty-space grid
+          // arrives on a REAL-time worker against this VIRTUAL clock, so
+          // whether a frame traces with or without it would otherwise depend
+          // on machine speed. Waiting out the build pins every exported
+          // surface frame to the same (grid-assisted, deterministically
+          // built) march.
           if (state.renderMode === "surface") await surfaceGrid.settle();
         },
         running: () => timelinePlayer.active,
-        // Parked while a render keyframe converges (fr-6jic): the player is
+        // Parked while a render keyframe converges: the player is
         // holding (launchTimelineLeg held at launch) AND the leg's terminal
         // cloud has entered its flame/solid session. During the leg's
         // points-mode morph the hold is already on but the mode is still
@@ -1574,7 +1570,7 @@ function main(): void {
       virtualNowMs = null;
       // Hygiene: the run is over, so no park can be pending — drop the last
       // (already-resolved) waiter rather than letting an ordinary render's
-      // progress keep poking it (fr-6jic).
+      // progress keep poking it.
       offlineParkWaiter = null;
       // Unwind the virtual clock (see the doc comment): snap anything still
       // timed against it and restart the dt chains from real time.
@@ -1592,7 +1588,7 @@ function main(): void {
   // Reflect the timeline document in its panel section — rows, count, and
   // the total-duration label (the recorder's own m:ss formatter, so the
   // status line and the recording button speak the same dialect). A render
-  // keyframe (fr-v3au) holds playback for however long its render takes to
+  // keyframe holds playback for however long its render takes to
   // converge, so once any step carries a mode the authored total is only a
   // floor — the "+" says so.
   function refreshTimelineUi(): void {
@@ -1609,8 +1605,9 @@ function main(): void {
   // captureCurrentThumbnail falls through to the explorer capture. null
   // whenever the capture already matches the tag (the points explorer, or a
   // render that has produced its picture), so there is nothing to correct
-  // later. The two are one predicate deliberately: fr-r777's correction must
-  // arm exactly when the fall-through happens and never otherwise.
+  // later. The two are one predicate deliberately: the late thumbnail
+  // correction must arm exactly when the fall-through happens and never
+  // otherwise.
   function thumbnailGapMode(): SavedSceneMode | null {
     if (state.renderMode === "points") return null;
     const session =
@@ -1623,15 +1620,15 @@ function main(): void {
   }
 
   // The displayed frame as a small gallery/timeline thumbnail: mode-aware
-  // (fr-75sq) — a capture from a flame/solid render reads the rendered
-  // frame, except during the render's first-frame gap, when the screen
-  // honestly still shows the explorer. Shared by "★ Save to collection"
-  // and "📍 Add keyframe" (fr-8v41).
+  // — a capture from a flame/solid render reads the rendered frame, except
+  // during the render's first-frame gap, when the screen honestly still
+  // shows the explorer. Shared by "★ Save to collection" and "📍 Add
+  // keyframe".
   //
   // The gap capture is CORRECT and stays the immediate answer — a thumbnail
   // must be instant, so a save is never blocked on a convergence the way
-  // fr-61a2's Save-PNG waits behind its export modal. What fr-r777 added is a
-  // later correction: a save made in the gap records a pending patch
+  // Save-PNG waits behind its export modal. Beside it sits a later
+  // correction: a save made in the gap records a pending patch
   // (notePendingThumbnailPatch) that re-photographs the entry once the
   // render's own first frame lands, if the document has not moved on
   // meanwhile. See thumbnail-patch.ts.
@@ -1643,7 +1640,7 @@ function main(): void {
     return scene.captureThumbnail(mode);
   }
 
-  // fr-r777's corrections in flight: entries saved during a render's
+  // The late thumbnail corrections in flight: entries saved during a render's
   // first-frame gap, each waiting for its own render mode's first frame.
   // Session state by decision — never persisted, since a reload legitimately
   // abandons them (the live document it comes back to may not be the one they
@@ -1686,7 +1683,7 @@ function main(): void {
   // non-obvious half: a saved entry froze a DOCUMENT, so a correction is only
   // the same picture while the live one still encodes to the same string AND
   // the live render mode is still the tag. An edit, a preset load, an undo, a
-  // camera move (the pose rides the document, fr-1k4) or leaving the mode all
+  // camera move (the pose rides the document) or leaving the mode all
   // drop the patch and leave the point-cloud thumbnail alone — stale but
   // honest beats sharp and wrong.
   //
@@ -1725,8 +1722,8 @@ function main(): void {
   // resetFourDView() and the three slice handlers that have a POINT-CLOUD
   // meaning — on/center/relative-color — each of which mutates a fourDView
   // slice field and then re-uploads the trio. The fourth, slab thickness
-  // (fr-wa6o), deliberately does not come here: it is surface-tracer-only,
-  // and the cloud's slice has a fixed Gaussian width of its own.
+  // deliberately does not come here: it is surface-tracer-only, and the
+  // cloud's slice has a fixed Gaussian width of its own.
   function pushFourDSlice(): void {
     scene.setFourDSlice(
       fourDView.sliceOn,
@@ -1737,32 +1734,33 @@ function main(): void {
 
   // Reset the 4D VIEW state to a "fresh visit" baseline (rotor to identity,
   // tumble at default speed — running unless reduced motion or the user's
-  // sticky toggle choice (fr-g98) says paused — slice off; the baseline
-  // itself, plus the paused-view rotor seeding, lives in FourDView.reset) and
-  // push it to the scene + UI. Now that "4D" is a property of the system rather than a mode, this
-  // fires from regenerate() on (a) a flat→non-flat transition and (b) a
-  // whole-system replacement (preset load / Surprise Me) that lands on a
-  // non-flat system — never on a subsequent edit to an already-4D system, so
-  // nudging a slider can't throw away an in-progress tumble/slice.
+  // sticky toggle choice says paused — slice off; the baseline itself, plus
+  // the paused-view rotor seeding, lives in FourDView.reset) and push it to
+  // the scene + UI. Now that "4D" is a property of the system rather than a
+  // mode, this fires from regenerate() on (a) a flat→non-flat transition and
+  // (b) a whole-system replacement (preset load / Surprise Me) that lands on
+  // a non-flat system — never on a subsequent edit to an already-4D system,
+  // so nudging a slider can't throw away an in-progress tumble/slice.
   function resetFourDView(): void {
     fourDView.reset(prefersReducedMotion());
     pushFourDSlice();
     ui.resetFourDSlice();
     ui.resetFourDTumble(fourDView.tumbleOn);
     // The reset can PARK the tumble (reduced motion, or a sticky "off"
-    // choice), and the help box opens by naming the motion (fr-k9nx). The
+    // choice), and the help box opens by naming the motion. The
     // flatness flip that brings us here painted that box BEFORE the reset ran
     // — against the outgoing view's flag — so it owes a repaint now.
     ui.updateLabels(state);
   }
 
-  // Restore a saved 4D view pose (fr-pnek) — resetFourDView's document-
-  // driven sibling, and the 4D mirror of applyCameraPose: rotor + slice
-  // snap to the pose, and the same scene/UI pushes the reset does keep the
-  // shader uniforms and the panel's slice controls in step. Tumble on/off/
-  // speed are deliberately untouched — they're not in the pose (fr-0ya).
-  // The explicit setRot4 matters on the paths where animate()'s own per-4D-
-  // frame push hasn't run yet (boot's synchronous first paint).
+  // Restore a saved 4D view pose — resetFourDView's document-driven
+  // sibling, and the 4D mirror of applyCameraPose: rotor + slice snap to
+  // the pose, and the same scene/UI pushes the reset does keep the shader
+  // uniforms and the panel's slice controls in step. Tumble on/off/speed
+  // are deliberately untouched — they're not in the pose (they are a
+  // per-browser viewer preference). The explicit setRot4 matters on the
+  // paths where animate()'s own per-4D-frame push hasn't run yet (boot's
+  // synchronous first paint).
   function applyFourDPose(pose: FourDPose): void {
     fourDTween.cancel();
     fourDView.applyPose(pose);
@@ -1784,53 +1782,53 @@ function main(): void {
   }
 
   // The user's hand landing on the 4D view (a Shift-drag/-wheel rotor
-  // gesture, a slice control) takes it back from the document (fr-pnek):
-  // cancel an in-flight pose glide — its per-frame applyPose would overwrite
-  // the gesture on the very next frame — AND drop a pose still waiting for
-  // its cloud, which would otherwise re-stomp the gesture at arrival. The
-  // 4D sibling of cancelTween on a camera grab; deliberately does NOT stop
-  // a running show (neither does grabbing the camera).
+  // gesture, a slice control) takes it back from the document: cancel an
+  // in-flight pose glide — its per-frame applyPose would overwrite the
+  // gesture on the very next frame — AND drop a pose still waiting for its
+  // cloud, which would otherwise re-stomp the gesture at arrival. The 4D
+  // sibling of cancelTween on a camera grab; deliberately does NOT stop a
+  // running show (neither does grabbing the camera).
   function releaseFourDPoseControl(): void {
     fourDTween.cancel();
     loadHints.clearPose();
   }
 
-  // The ONE auto-motion toggle logic per dimension (fr-vja8.37): the panel
-  // checkboxes and the canvas Space key both land here, so the session
-  // state, the sticky user choice, the help-box wording and the persisted
-  // viewer pref (fr-0ya) can never disagree about which input flipped them.
-  // The checkbox path's DOM side ran in ui.ts before its handler fired; the
-  // Space path mirrors that with ui.setAutoMotionToggle before calling in.
+  // The ONE auto-motion toggle logic per dimension: the panel checkboxes
+  // and the canvas Space key both land here, so the session state, the
+  // sticky user choice, the help-box wording and the persisted viewer pref
+  // can never disagree about which input flipped them. The checkbox path's
+  // DOM side ran in ui.ts before its handler fired; the Space path mirrors
+  // that with ui.setAutoMotionToggle before calling in.
   function applyAutoOrbitToggle(checked: boolean): void {
     autoOrbitOn = checked;
     autoOrbitUserChoice = checked;
-    // Persist the COMBINED auto-motion pref (fr-0ya) — the orbit sibling of
+    // Persist the COMBINED auto-motion pref — the orbit sibling of
     // applyFourDTumbleToggle below; both write the one shared choice.
     updateViewerPrefs({ autoMotion: checked });
   }
   function applyFourDTumbleToggle(checked: boolean): void {
     fourDView.setTumbleUserChoice(checked);
-    // The canvas help box opens by naming the motion (fr-k9nx), so a pause
-    // has to reach it — ui.ts has already recorded the flag, this is the
-    // repaint. The panel's own row visibility is ui.ts's own business.
+    // The canvas help box opens by naming the motion, so a pause has to reach
+    // it — ui.ts has already recorded the flag, this is the repaint. The
+    // panel's own row visibility is ui.ts's own business.
     ui.updateLabels(state);
-    // Persist the COMBINED auto-motion pref (fr-0ya): the last motion toggle
-    // the user flips — tumble or orbit — becomes the one shared choice both
-    // seed from on the next reload. Separate viewer-prefs key, never the
-    // scene / share-URL document; merge-written so the other prefs survive.
+    // Persist the COMBINED auto-motion pref: the last motion toggle the user
+    // flips — tumble or orbit — becomes the one shared choice both seed from
+    // on the next reload. Separate viewer-prefs key, never the scene /
+    // share-URL document; merge-written so the other prefs survive.
     updateViewerPrefs({ autoMotion: checked });
   }
 
   // The 3D sibling of resetFourDView(): return the auto-orbit to its "fresh
   // visit" baseline — running (paused under reduced motion, still an explicit
-  // opt-in there) at default speed, except that a manual toggle is sticky
-  // (fr-g98): once the user has chosen, fresh visits keep their choice and
-  // only re-center the speed. Fires from regenerate() on the mirrored
-  // triggers — (a) a non-flat→flat transition and (b) a whole-system
-  // replacement that lands on a flat system — plus once at boot, so a paused
-  // or re-sped orbit survives ordinary edits exactly like the tumble does.
-  // No orientation to reset: theta IS the live camera, and yanking it would
-  // discard the user's framing.
+  // opt-in there) at default speed, except that a manual toggle is sticky —
+  // once the user has chosen, fresh visits keep their choice and only
+  // re-center the speed. Fires from regenerate() on the mirrored triggers —
+  // (a) a non-flat→flat transition and (b) a whole-system replacement that
+  // lands on a flat system — plus once at boot, so a paused or re-sped orbit
+  // survives ordinary edits exactly like the tumble does. No orientation to
+  // reset: theta IS the live camera, and yanking it would discard the user's
+  // framing.
   function resetAutoOrbitView(): void {
     autoOrbitOn = autoOrbitUserChoice ?? !prefersReducedMotion();
     autoOrbitSpeed = 1;
@@ -1841,17 +1839,17 @@ function main(): void {
   // this for geometry edits, add/remove, presets, and explicit regenerate —
   // never for a mere palette change.
   //
-  // Generation runs OFF the main thread as of fr-5kx: this snapshots the
-  // current state into a request and hands it to cloudGenerator (at most one
-  // in flight, latest wins — see cloud-generator.ts); everything that used to
-  // happen synchronously after the chaos game — the 4D/3D view flip, the
-  // "fresh visit" resets, the scene upload, the camera auto-fit — happens in
+  // Generation runs OFF the main thread: this snapshots the current state
+  // into a request and hands it to cloudGenerator (at most one in flight,
+  // latest wins — see cloud-generator.ts); everything that used to happen
+  // synchronously after the chaos game — the 4D/3D view flip, the "fresh
+  // visit" resets, the scene upload, the camera auto-fit — happens in
   // applyCloudResult when the result lands. During a drag the UI/camera stay
   // at full frame rate and the cloud is merely one generation behind, instead
   // of the whole app stalling for a synchronous O(numPoints) run per frame
-  // (fr-acc's residual problem at high point counts).
+  // (the residual problem at high point counts before the worker landed).
   //
-  // Routes on the system's FLATNESS (fr-bf6; see affine4.ts's systemIsFlat/
+  // Routes on the system's FLATNESS (see affine4.ts's systemIsFlat/
   // isFlatTransform via state.ts's systemIsNonFlat): a flat system — no
   // transform's `w` block in play, final transform included per its own
   // enabled semantics — takes the untouched 3D path, bit-identical to before
@@ -1865,7 +1863,7 @@ function main(): void {
   // from the double-rotation spiral straight to the pentatope). `fit` asks
   // the arrival handler to auto-frame the camera on the fresh result.
   function regenerate(replaced = false, fit = false): void {
-    // A document-true generation declares any in-flight morph over (fr-a04l):
+    // A document-true generation declares any in-flight morph over:
     // snap it — its terminal request goes out first, then this request
     // supersedes it (parking in the generator's latest-wins slot, whose
     // OR-merge keeps the terminal request's replaced/fit if they collapse).
@@ -1873,35 +1871,35 @@ function main(): void {
     // and every other edit path that regenerates. No-op when no morph runs.
     snapMorph();
     // This request supersedes any coalesced run a drag/slider burst left
-    // queued for the next frame (fr-acc) — drop it so it can't fire a
-    // redundant second request; the generator's own latest-wins slot handles
-    // anything already in flight. Harmlessly a no-op when nothing is pending,
-    // including when this call IS the coalesced run (the coalescer clears its
-    // handle before invoking us).
+    // queued for the next frame — drop it so it can't fire a redundant second
+    // request; the generator's own latest-wins slot handles anything already
+    // in flight. Harmlessly a no-op when nothing is pending, including when
+    // this call IS the coalesced run (the coalescer clears its handle before
+    // invoking us).
     regenScheduler.cancel();
     cloudGenerator.request(cloudParams(replaced, fit));
   }
 
   /**
-   * The whole-system-replacement regeneration (fr-a04l): where a plain
+   * The whole-system-replacement regeneration: where a plain
    * `regenerate(true, fit)` would snap the display to the freshly loaded
    * system, this tweens it there — start (or chain-restart, see
-   * MorphTween.start) a morph from the pre-load system toward the document's
-   * new one, and let animate()'s per-frame poll stream the interpolated
-   * generation requests. `from` must be captured BEFORE the load mutated the
-   * document; `state` already IS the target here. `durationMs` is the
-   * morph's length — the click-feedback default unless a drift leg asks for
-   * its slower glide (fr-wavo). Reduced motion opts out entirely: the
-   * current snap behavior IS the reduced-motion path (the `finish()`
-   * discard covers a morph left in flight when the OS preference flipped
-   * mid-tween — the plain replaced request supersedes it whole).
+   * MorphTween.start) a morph from the pre-load system toward the
+   * document's new one, and let animate()'s per-frame poll stream the
+   * interpolated generation requests. `from` must be captured BEFORE the
+   * load mutated the document; `state` already IS the target here.
+   * `durationMs` is the morph's length — the click-feedback default unless
+   * a drift leg asks for its slower glide. Reduced motion opts out
+   * entirely: the current snap behavior IS the reduced-motion path (the
+   * `finish()` discard covers a morph left in flight when the OS preference
+   * flipped mid-tween — the plain replaced request supersedes it whole).
    *
-   * `seed` pins the morph's generation seed (fr-8v41): a timeline playback
-   * leg passes its deterministic per-leg seed (timeline.ts's legSeed) so
-   * every run of the same timeline generates the same content stream;
-   * omitted, a fresh random seed is rolled as ever. (A chained restart
-   * keeps the in-flight morph's seed regardless — see MorphTween.start —
-   * which is itself the timeline's own earlier leg seed during playback.)
+   * `seed` pins the morph's generation seed: a timeline playback leg passes
+   * its deterministic per-leg seed (timeline.ts's legSeed) so every run of
+   * the same timeline generates the same content stream; omitted, a fresh
+   * random seed is rolled as ever. (A chained restart keeps the in-flight
+   * morph's seed regardless — see MorphTween.start — which is itself the
+   * timeline's own earlier leg seed during playback.)
    */
   function regenerateReplaced(
     from: MorphSystem,
@@ -1922,8 +1920,8 @@ function main(): void {
       currentMorphSystem(),
       seed ?? rollSeed(),
       // nowMs, not performance.now(): a timeline leg's morph must start on
-      // the offline export's virtual clock (fr-92t9), and animate() samples
-      // it with the same clock.
+      // the offline export's virtual clock, and animate() samples it with the
+      // same clock.
       nowMs(),
       durationMs,
     );
@@ -1947,8 +1945,8 @@ function main(): void {
     return Math.floor(Math.random() * 0xffffffff);
   }
 
-  // Send one morph sample as a generation request (fr-a04l). Intermediates go
-  // out replaced:false / fit:false at a capped point count, so the fresh-visit
+  // Send one morph sample as a generation request. Intermediates go out
+  // replaced:false / fit:false at a capped point count, so the fresh-visit
   // view resets, the camera fit, and a preset's render-mode hint all fire
   // exactly once — on the terminal sample's request, which is the REAL
   // replaced request the suppressed load regenerate would have sent: full
@@ -1980,13 +1978,13 @@ function main(): void {
   // generation a reproducible pure function of its request, exactly like the
   // flame/voxel renders' start commands.
   //
-  // A morph sample (fr-a04l) overrides only the attractor-shaping fields and
-  // pins the seed; everything else — point count, color-bake inputs — derives
-  // from live state as usual. The 4D routing flag follows the SAMPLED
-  // system's own flatness, not the document's: mid-morph a flat↔4D pair
-  // takes the 4D path exactly while the interpolated maps carry live w
-  // blocks (systemPartsAreNonFlat is systemIsNonFlat's formula over bare
-  // parts, so plain requests route identically to before).
+  // A morph sample overrides only the attractor-shaping fields and pins the
+  // seed; everything else — point count, color-bake inputs — derives from
+  // live state as usual. The 4D routing flag follows the SAMPLED system's own
+  // flatness, not the document's: mid-morph a flat↔4D pair takes the 4D path
+  // exactly while the interpolated maps carry live w blocks
+  // (systemPartsAreNonFlat is systemIsNonFlat's formula over bare parts, so
+  // plain requests route identically to before).
   function cloudParams(
     replaced: boolean,
     fit: boolean,
@@ -1999,15 +1997,15 @@ function main(): void {
       finalTransform,
       // Intermediates run at the adaptive budget — sized from measured
       // generation latency so each frame's request fits in roughly one
-      // animation frame on this device (morph-budget.ts, fr-a5gu), scaled by
-      // the user's Morph Detail preference (fr-jonj); the terminal sample
-      // and every non-morph request use the full count.
+      // animation frame on this device (morph-budget.ts), scaled by the
+      // user's Morph Detail preference; the terminal sample and every
+      // non-morph request use the full count.
       numPoints:
         morph && !morph.final
           ? morphBudget.budget(
               state.numPoints,
               // An offline export runs every intermediate at the scene's own
-              // count (fr-92t9): the adaptive budget is sized from MEASURED
+              // count: the adaptive budget is sized from MEASURED
               // device speed — exactly the nondeterminism the frame-exact
               // path exists to remove — and the driver awaits each
               // generation anyway, so there is no frame rate to protect.
@@ -2030,12 +2028,12 @@ function main(): void {
   }
 
   // Land a finished generation on the scene — everything that happens once
-  // the chaos game result is in hand (fr-5kx). Runs on
-  // the worker's reply, or inline for the boot/fallback synchronous paths, so
-  // every step keys off the RESULT (and the request that produced it), never
-  // off "whatever the document looks like now" — except where reading live
-  // state is the point: the stale-color guard and applyFourDColor's mode
-  // dispatch, which deliberately let an edit that landed mid-flight win.
+  // the chaos game result is in hand. Runs on the worker's reply, or inline
+  // for the boot/fallback synchronous paths, so every step keys off the
+  // RESULT (and the request that produced it), never off "whatever the
+  // document looks like now" — except where reading live state is the point:
+  // the stale-color guard and applyFourDColor's mode dispatch, which
+  // deliberately let an edit that landed mid-flight win.
   function applyCloudResult(result: CloudResult, request: CloudRequest): void {
     // A landing generation replaces the buffers a replay was revealing —
     // stop it and show the fresh cloud whole. (scene.setPoints* also clears
@@ -2053,37 +2051,37 @@ function main(): void {
       // must refresh them again. Harmlessly idempotent for the paths that
       // refresh anyway (applyEdit); essential for the per-slider geometry
       // path (onTransformGeometry / onFinalTransformGeometry), where a
-      // w-slider drag is a geometry edit that CAN flip flatness (fr-bf6.3).
+      // w-slider drag is a geometry edit that CAN flip flatness.
       ui.updateLabels(state);
       refreshGuides();
     }
 
     // Decide what this flatness/replacement change resets (four-d-view.ts):
     // a fresh visit to the 4D view, the mirrored fresh visit to the 3D
-    // auto-orbit (fr-1yn), and/or clearing a leftover 4D scaffold. The three
+    // auto-orbit, and/or clearing a leftover 4D scaffold. The three
     // outcomes are mutually exclusive-ish (resetFourD needs nonFlat, the other
     // two need !nonFlat), so they read as independent guards here.
     const transition = viewTransition(nonFlat, wasNonFlat, request.replaced);
     // The awaited load's pending pose, or null — null too for an arrival
     // still in flight from a PREVIOUS load, which must not apply (nor, via
     // releasePose below, discard) a pose the NEXT load is waiting to land
-    // (load-hints.ts, fr-vja8.34).
+    // (load-hints.ts).
     const pendingPose = loadHints.poseFor(request);
     if (transition.resetFourD) {
       if (fourDTween.active) {
-        // A timeline leg's rotor glide owns the view (fr-pnek): the fresh-
-        // visit reset would stomp it mid-flight (and the glide's next
-        // advance would overwrite the reset anyway — a pointless flicker).
-        // The glide lands the saved pose itself; nothing to do here.
+        // A timeline leg's rotor glide owns the view: the fresh-visit reset
+        // would stomp it mid-flight (and the glide's next advance would
+        // overwrite the reset anyway — a pointless flicker). The glide lands
+        // the saved pose itself; nothing to do here.
       } else if (pendingPose) {
-        // The loaded document carries its own 4D framing (fr-pnek): apply
-        // it where the fresh-visit baseline would otherwise land — the
-        // first non-flat arrival of a morphing load shows the destination
-        // orientation immediately, and the terminal replaced arrival
-        // re-applies it rather than resetting a pose the load (or a
-        // just-finished timeline glide) put there. Not consumed here: the
-        // release below keys off the replaced request itself, so a morph's
-        // in-between arrivals can't strand the terminal one pose-less.
+        // The loaded document carries its own 4D framing: apply it where the
+        // fresh-visit baseline would otherwise land — the first non-flat
+        // arrival of a morphing load shows the destination orientation
+        // immediately, and the terminal replaced arrival re-applies it rather
+        // than resetting a pose the load (or a just-finished timeline glide)
+        // put there. Not consumed here: the release below keys off the
+        // replaced request itself, so a morph's in-between arrivals can't
+        // strand the terminal one pose-less.
         applyFourDPose(pendingPose);
       } else {
         resetFourDView();
@@ -2149,10 +2147,10 @@ function main(): void {
       ui.setPointCount(result.count);
     }
 
-    // Auto-frame the camera on a whole-system load's fresh attractor
-    // (fr-0b8) — deferred to arrival with everything else, so it frames the
-    // cloud actually going on screen. While a fit-intent morph is still in
-    // flight (fr-cfoc), its intermediates instead TRACK the camera onto the
+    // Auto-frame the camera on a whole-system load's fresh attractor —
+    // deferred to arrival with everything else, so it frames the cloud
+    // actually going on screen. While a fit-intent morph is still in
+    // flight, its intermediates instead TRACK the camera onto the
     // morphing attractor's live bounds — the terminal sample's fit then
     // settles from an already-following pose instead of yanking across
     // however far the shape wandered during the tween. Deliberately reads
@@ -2173,19 +2171,19 @@ function main(): void {
       trackCameraToAttractor();
     }
 
-    // A preset that declares a render-mode hint (fr-39y) enters its renderer
+    // A preset that declares a render-mode hint enters its renderer
     // HERE, when its whole-system replacement actually lands — not at click
     // time, when the camera still framed the previous attractor.
     // enterLoadedRenderMode carries the camera discipline that entry needs.
     // takeMode only yields for the awaited load's own replaced landing — a
-    // stale replaced arrival leaves the hint armed (fr-vja8.34).
+    // stale replaced arrival leaves the hint armed.
     const target = loadHints.takeMode(request);
     if (target !== null) {
       enterLoadedRenderMode(target);
     }
   }
 
-  // The off-main-thread generation pipeline (fr-5kx): a dedicated Worker runs
+  // The off-main-thread generation pipeline: a dedicated Worker runs
   // the chaos game (cloud-worker.ts around cloud-worker-core.ts's pure
   // generateCloud) and posts back transferable buffers — zero-copy, no SAB
   // needed since each result is consumed once (contrast the flame's live
@@ -2237,24 +2235,24 @@ function main(): void {
     onResult: (result, request, elapsedMs) => {
       // Every generation calibrates the morph budget's per-point cost —
       // ordinary edits and boot included, so the FIRST morph intermediate
-      // is already sized for this device (morph-budget.ts, fr-a5gu).
+      // is already sized for this device (morph-budget.ts).
       morphBudget.note(elapsedMs, request.numPoints);
       applyCloudResult(result, request);
     },
   });
 
-  // The surface render's empty-space-skipping grid builder (fr-55r5 part 2):
-  // a worker-side buildSurfaceGrid whose result the sphere tracer samples to
-  // skip provably empty space. One request per 3D surface-session enter
-  // (the session freezes its DE at start, so nothing invalidates a grid
-  // mid-session); every session boundary re-stamps or cancels the
-  // outstanding id, so a late build can never land on the wrong system.
-  // Unlike the cloud there is NO sync fallback — a lost worker just means
-  // gridless (correct, slower) marching, and the client stays quiet.
+  // The surface render's empty-space-skipping grid builder: a worker-side
+  // buildSurfaceGrid whose result the sphere tracer samples to skip provably
+  // empty space. One request per 3D surface-session enter (the session
+  // freezes its DE at start, so nothing invalidates a grid mid-session);
+  // every session boundary re-stamps or cancels the outstanding id, so a late
+  // build can never land on the wrong system. Unlike the cloud there is NO
+  // sync fallback — a lost worker just means gridless (correct, slower)
+  // marching, and the client stays quiet.
   //
-  // A build that lands while a capture owns the tracer waits here first
-  // (fr-p0mr): the grid is a live uniform write, and a capture's frame is
-  // traced across many task turns.
+  // A build that lands while a capture owns the tracer waits here first:
+  // the grid is a live uniform write, and a capture's frame is traced
+  // across many task turns.
   let pendingSurfaceGrid: SurfaceGrid | null = null;
   const applySurfaceGrid = (grid: SurfaceGrid): void => {
     scene.setSurfaceGrid(grid);
@@ -2288,10 +2286,10 @@ function main(): void {
       };
     },
     onGrid: (grid) => {
-      // A capture owns the tracer's uniforms for the whole of its drain
-      // (fr-p0mr). Uploading a grid mid-drain keeps the SURFACE identical
-      // — the floors are conservative either way — but changes the
-      // march-step/skip-cap regime (fr-z70m's erosion class) partway down
+      // A capture owns the tracer's uniforms for the whole of its drain.
+      // Uploading a grid mid-drain keeps the SURFACE identical — the
+      // floors are conservative either way — but changes the
+      // march-step/skip-cap regime (the eroded-detail class) partway down
       // the frame, so rows traced before the upload sample it differently
       // from rows traced after. Hold it for the tick that owns the
       // uniforms again; the export is the only thing waiting on them.
@@ -2310,14 +2308,14 @@ function main(): void {
   });
 
   // Coalesce the high-frequency regenerate() triggers — a guide-box drag's
-  // pointermove and a panel slider's input both fire many times per frame — to
-  // at most ONE generation request per animation frame (fr-acc). With the
-  // worker pipeline (fr-5kx) this bounds request-building and postMessage
-  // traffic to frame rate — and, in the generator's synchronous fallback
-  // mode, it is again all that stops a single drag from running a whole chaos
-  // game on every input event. Only the drag/slider sites schedule() through
-  // here; every one-shot path still calls regenerate() directly (which
-  // cancels any pending frame it has just superseded).
+  // pointermove and a panel slider's input both fire many times per frame —
+  // to at most ONE generation request per animation frame. With the worker
+  // pipeline this bounds request-building and postMessage traffic to frame
+  // rate — and, in the generator's synchronous fallback mode, it is again all
+  // that stops a single drag from running a whole chaos game on every input
+  // event. Only the drag/slider sites schedule() through here; every one-shot
+  // path still calls regenerate() directly (which cancels any pending frame
+  // it has just superseded).
   const regenScheduler = createFrameCoalescer(
     () => regenerate(),
     (cb) => requestAnimationFrame(cb),
@@ -2335,9 +2333,9 @@ function main(): void {
     const colors = buildColors(
       lastResult,
       state.transforms,
-      // The replay showcase (fr-hpci) presents by-transform coloring without
-      // ever writing the document — folded here, the one place the displayed
-      // 3D mode is derived.
+      // The replay showcase presents by-transform coloring without ever
+      // writing the document — folded here, the one place the displayed 3D
+      // mode is derived.
       replayShowcase?.color ? "transform" : state.colorMode,
       state.colorGamma,
       resolvePalette(state.rampPaletteId, state.customPalette),
@@ -2346,21 +2344,21 @@ function main(): void {
     scene.setColors(colors);
   }
 
-  // Point the 4D shader's color at the current fourDColor mode's source
-  // (fr-d47): the w-depth modes are pure shader work (a side-color uniform
-  // pair from W_SIDE_PALETTES), while the baked modes build a rotation-
-  // invariant per-point attribute from the cached 4D result — the 4D sibling
-  // of recolor(), and like it never re-runs the chaos game. No-op before the
+  // Point the 4D shader's color at the current fourDColor mode's source — the
+  // w-depth modes are pure shader work (a side-color uniform pair from
+  // W_SIDE_PALETTES), while the baked modes build a rotation-invariant
+  // per-point attribute from the cached 4D result — the 4D sibling of
+  // recolor(), and like it never re-runs the chaos game. No-op before the
   // first 4D generation.
   function applyFourDColor(): void {
     if (!viewIs4D || !fourDResult) return;
-    // The replay showcase's by-transform override (fr-hpci) — the 4D sibling
-    // of recolor()'s fold, same display-only rationale.
+    // The replay showcase's by-transform override — the 4D sibling of
+    // recolor()'s fold, same display-only rationale.
     const mode = replayShowcase?.color ? "transform" : state.fourDColor;
     if (fourDColorNeedsAttribute(mode)) {
       scene.setFourDColorSource({
         // The radius mode's ramp follows the same rampPaletteId selection as
-        // the 3D height/radius ramps (fr-6ue); the transform mode ignores it.
+        // the 3D height/radius ramps; the transform mode ignores it.
         colors: buildColors4(
           fourDResult,
           state.transforms.length,
@@ -2374,16 +2372,16 @@ function main(): void {
     }
   }
 
-  // Paint the replay's spotlight step (fr-01kf): by-transform colors with
-  // every map EXCEPT `spotlight` dimmed to a ghost, so that one map's
-  // landings — a shrunken copy of the whole attractor — read alone. Bakes
-  // "transform" mode explicitly rather than through recolor()'s showcase
-  // fold: the fold is a no-op override when the user's own mode already is
-  // "transform", but the spotlight's dim must apply either way. `null`
-  // restores the showcase's ordinary colors (the fr-hpci refreshers, which
-  // are what the natural spotlight→done transition wears into the finale).
-  // Display-layer only, like everything else the replay touches: the baked
-  // buffer goes straight to the scene, never through AppState.
+  // Paint the replay's spotlight step: by-transform colors with every map
+  // EXCEPT `spotlight` dimmed to a ghost, so that one map's landings — a
+  // shrunken copy of the whole attractor — read alone. Bakes "transform" mode
+  // explicitly rather than through recolor()'s showcase fold: the fold is a
+  // no-op override when the user's own mode already is "transform", but the
+  // spotlight's dim must apply either way. `null` restores the showcase's
+  // ordinary colors (the showcase refreshers, which are what the natural
+  // spotlight→done transition wears into the finale). Display-layer only,
+  // like everything else the replay touches: the baked buffer goes straight
+  // to the scene, never through AppState.
   function applyReplaySpotlight(spotlight: number | null): void {
     replaySpotlight = spotlight;
     if (spotlight === null) {
@@ -2429,13 +2427,13 @@ function main(): void {
     }
   }
 
-  // The base map whose landing the replay's hop cursor is sitting on
-  // (fr-01kf), read off the displayed result's per-point transformIndices —
-  // base-map indexed on both paths (each folds its kaleidoscope copies back
-  // to their base map — fr-q0h6), exactly like by-transform coloring,
-  // so the index lines up with the guide boxes. Null when the buffer isn't
-  // there to ask (a replay can only have started over an arrived cloud, but
-  // the poll shares frames with landings — stay defensive, not clever).
+  // The base map whose landing the replay's hop cursor is sitting on, read
+  // off the displayed result's per-point transformIndices — base-map indexed
+  // on both paths (each folds its kaleidoscope copies back to their base
+  // map), exactly like by-transform coloring, so the index lines up with the
+  // guide boxes. Null when the buffer isn't there to ask (a replay can only
+  // have started over an arrived cloud, but the poll shares frames with
+  // landings — stay defensive, not clever).
   function replayLandingMap(cursor: number | null): number | null {
     if (cursor === null) return null;
     const indices = viewIs4D
@@ -2444,24 +2442,24 @@ function main(): void {
     return indices?.[cursor] ?? null;
   }
 
-  // Auto-fit the camera to a freshly-generated attractor (fr-0b8): a
-  // whole-system replacement (preset load / Surprise Me) can leave the
-  // previous camera pointed at empty space or buried inside the new cloud,
-  // so glide target/radius to frame it instead of leaving first impressions
-  // to luck. theta/phi are left untouched — only the distance and the point
-  // being orbited move, so the fractal swaps in place and the camera glides
-  // to meet it. Never triggered by Regenerate or a geometry edit (those
-  // would fight the user's own framing) — the whole-system-load paths set
-  // the generation request's `fit` flag, and applyCloudResult calls
-  // fitCameraToAttractor when that result lands (fr-5kx), so the glide
-  // frames the cloud actually going on screen. The glide itself —
-  // interpolation, reduced-motion snap, and the 4D framing box
-  // (fourDFramingBounds) — lives in camera-tween.ts; this file only decides
-  // WHICH bounds to frame and hands it the live camera fov/aspect.
+  // Auto-fit the camera to a freshly-generated attractor: a whole-system
+  // replacement (preset load / Surprise Me) can leave the previous camera
+  // pointed at empty space or buried inside the new cloud, so glide
+  // target/radius to frame it instead of leaving first impressions to luck.
+  // theta/phi are left untouched — only the distance and the point being
+  // orbited move, so the fractal swaps in place and the camera glides to meet
+  // it. Never triggered by Regenerate or a geometry edit (those would fight
+  // the user's own framing) — the whole-system-load paths set the generation
+  // request's `fit` flag, and applyCloudResult calls fitCameraToAttractor
+  // when that result lands, so the glide frames the cloud actually going on
+  // screen. The glide itself — interpolation, reduced-motion snap, and the 4D
+  // framing box (fourDFramingBounds) — lives in camera-tween.ts; this file
+  // only decides WHICH bounds to frame and hands it the live camera
+  // fov/aspect.
   const cameraTween = new CameraTween(
     orbit,
     // nowMs, not performance.now(): a timeline leg's pose glide must step
-    // on the offline export's virtual clock (fr-92t9).
+    // on the offline export's virtual clock.
     nowMs,
     prefersReducedMotion,
   );
@@ -2470,7 +2468,7 @@ function main(): void {
   // synthesizes a rotation-invariant box (fourDFramingBounds — the framing
   // radius is a distance-from-center quantile, so one framing holds at every
   // tumble angle); the 3D branch is the latest run's trimmed-quantile box.
-  // Both are the result's outlier-robust frame fields (fr-3xfk), NOT the raw
+  // Both are the result's outlier-robust frame fields, NOT the raw
   // min/max bounds — a nonlinear variation's sparse flung points used to
   // inflate those until the attractor fit several times too small. Null
   // until a run exists.
@@ -2494,11 +2492,10 @@ function main(): void {
     });
   }
 
-  // The fit's morph-time sibling (fr-cfoc): retarget the tracking chase at
-  // the current view's bounds, so the camera follows the morphing attractor
-  // frame by frame instead of letting it wander off-screen until the
-  // terminal fit yanks it back. Called per intermediate arrival — see
-  // applyCloudResult.
+  // The fit's morph-time sibling: retarget the tracking chase at the current
+  // view's bounds, so the camera follows the morphing attractor frame by
+  // frame instead of letting it wander off-screen until the terminal fit
+  // yanks it back. Called per intermediate arrival — see applyCloudResult.
   function trackCameraToAttractor(): void {
     const bounds = attractorFramingBounds();
     if (!bounds) return;
@@ -2509,9 +2506,9 @@ function main(): void {
   }
 
   /**
-   * The live orbit pose as a persistable document field (fr-1k4). Attached
-   * by {@link currentDocument} to every saved / shared / collection document
-   * — never to undo-history snapshots (see SceneSnapshot.camera's doc).
+   * The live orbit pose as a persistable document field. Attached by {@link
+   * currentDocument} to every saved / shared / collection document — never
+   * to undo-history snapshots (see SceneSnapshot.camera's doc).
    */
   function cameraPose(): CameraPose {
     return {
@@ -2523,9 +2520,9 @@ function main(): void {
   }
 
   /**
-   * Restore a persisted orbit pose (fr-1k4) — the mirror of
-   * {@link cameraPose}. Cancels any in-flight fit glide first: a restored
-   * pose IS the framing, so nothing should keep gliding somewhere else.
+   * Restore a persisted orbit pose — the mirror of {@link cameraPose}.
+   * Cancels any in-flight fit glide first: a restored pose IS the framing,
+   * so nothing should keep gliding somewhere else.
    */
   function applyCameraPose(pose: CameraPose): void {
     cameraTween.cancel();
@@ -2540,10 +2537,10 @@ function main(): void {
   // Grabbing the camera mid-glide should feel like a normal orbit, not a
   // fight with the animation — cancel outright on the next user gesture.
   // Capture phase so this runs before interactions.ts's own (bubble-phase)
-  // listeners on the same canvas. (The auto-orbit — fr-1yn — needs no
-  // listener of its own here: it polls interactions' gestureActive() each
-  // frame instead, and composes with the tween anyway — theta vs.
-  // radius/target, disjoint fields.)
+  // listeners on the same canvas. (The auto-orbit needs no listener of its
+  // own here: it polls interactions' gestureActive() each frame instead, and
+  // composes with the tween anyway — theta vs. radius/target, disjoint
+  // fields.)
   const cancelTween = (): void => cameraTween.cancel();
   const cancelTweenOptions: AddEventListenerOptions = {
     capture: true,
@@ -2553,25 +2550,25 @@ function main(): void {
   scene.canvas.addEventListener("wheel", cancelTween, cancelTweenOptions);
   scene.canvas.addEventListener("touchstart", cancelTween, cancelTweenOptions);
 
-  // Flame render session (fr-o7s/fr-ucs/fr-73y): a dedicated Worker owns the
-  // supersampled accumulation, the OOM guard, the throttled downsample, and
-  // (in transfer mode) the tone-map (see flame-worker-core.ts) — this is
-  // thin glue that spins one up per render and forwards UI events as
-  // messages. When the page is cross-origin isolated (fr-96i: natively in
-  // dev via vite's server headers; in production via the COOP/COEP-injecting
-  // service worker in sw/sw.ts, since GitHub Pages cannot send those headers
-  // itself), the render upgrades to a SharedArrayBuffer transport: the worker
-  // downsamples into shared display-resolution buckets and THIS thread
-  // tone-maps a live view of them (see presentSharedFrame), so
-  // exposure/gamma/vibrancy changes land instantly with no worker round trip
-  // and nothing per-tick crosses but a few scalars. Without isolation it
-  // falls back to fr-73y's postMessage transfer of a tone-mapped image.
-  // Either way the big oversampled accumulator never leaves the worker.
-  // The shared-transport session (fr-96i): the two SAB-backed frame slots
-  // this side allocated for the current render, plus which slot the worker
-  // most recently told us to read (and its maxHits — the one tonemapFlame
-  // input that isn't in the shared arrays). null whenever the current render
-  // runs in transfer mode (not isolated, or the slots failed to allocate).
+  // Flame render session: a dedicated Worker owns the supersampled
+  // accumulation, the OOM guard, the throttled downsample, and (in transfer
+  // mode) the tone-map (see flame-worker-core.ts) — this is thin glue that
+  // spins one up per render and forwards UI events as messages. When the page
+  // is cross-origin isolated (natively in dev via vite's server headers; in
+  // production via the COOP/COEP-injecting service worker in sw/sw.ts, since
+  // GitHub Pages cannot send those headers itself), the render upgrades to a
+  // SharedArrayBuffer transport: the worker downsamples into shared
+  // display-resolution buckets and THIS thread tone-maps a live view of them
+  // (see presentSharedFrame), so exposure/gamma/vibrancy changes land
+  // instantly with no worker round trip and nothing per-tick crosses but a
+  // few scalars. Without isolation it falls back to the postMessage transfer
+  // of a tone-mapped image. Either way the big oversampled accumulator never
+  // leaves the worker. The shared-transport session: the two SAB-backed frame
+  // slots this side allocated for the current render, plus which slot the
+  // worker most recently told us to read (and its maxHits — the one
+  // tonemapFlame input that isn't in the shared arrays). null whenever the
+  // current render runs in transfer mode (not isolated, or the slots failed
+  // to allocate).
   interface FlameSharedSession {
     frames: [SharedFrameBuffers, SharedFrameBuffers];
     width: number;
@@ -2580,7 +2577,7 @@ function main(): void {
   }
   let flameShared: FlameSharedSession | null = null;
   // What the CURRENT flame session actually accumulates at, i.e. what a
-  // Save-PNG from it will actually be (fr-61a2). Not the same number as
+  // Save-PNG from it will actually be. Not the same number as
   // `scene.flameRenderSize(state.exportScale)`: `start` below shrinks that
   // target until the histogram fits the accumulator memory budget, and it is
   // the shrunken canvas the export composites. null between sessions.
@@ -2589,8 +2586,8 @@ function main(): void {
   // Why the CURRENT render's worker gave up on GPU (null while it hasn't):
   // remembered from the `gpuUnavailable` event so the subsequent `backend`
   // event's CPU note can say WHY it reads "CPU accumulation" — the absence of
-  // that why is what made field reports of this flakiness undiagnosable
-  // (fr-2w5). Cleared by `clearNotes` on every fresh session start.
+  // that why is what made field reports of this flakiness undiagnosable.
+  // Cleared by `clearNotes` on every fresh session start.
   let flameGpuUnavailableReason: "no-webgpu" | "error" | null = null;
 
   // Allocate the two shared display-resolution frame slots, or null to fall
@@ -2675,8 +2672,8 @@ function main(): void {
         // The worker just discarded its accumulation (a live palette/
         // supersample/symmetry restart, or the OOM fallback) — zero the
         // readout NOW instead of showing the stale pre-restart count until
-        // the first post-restart chunk reports, seconds away on CPU
-        // (fr-h6sn). No markFirstFrame: there is no frame yet.
+        // the first post-restart chunk reports, seconds away on CPU. No
+        // markFirstFrame: there is no frame yet.
         ui.setFlameProgress(0, event.iterationsBudget);
         noteRenderProgress("flame", 0, event.iterationsBudget);
         break;
@@ -2690,25 +2687,25 @@ function main(): void {
           // A CPU backend AFTER a gpuUnavailable is a fallback — say why,
           // briefly. A CPU backend with no preceding gpuUnavailable is just
           // a CPU render (GPU never attempted): no reason to show. Wording
-          // per the fr-tmgf legibility lesson: no API names inside
-          // negations — "WebGPU unavailable" was field-misread as a
-          // positive WebGPU indicator (the eye catches the API name, not
-          // the negation).
+          // per the render-backend disclosure's legibility lesson: no API
+          // names inside negations — "WebGPU unavailable" was field-misread
+          // as a positive WebGPU indicator (the eye catches the API name,
+          // not the negation).
           event.backend === "cpu" && flameGpuUnavailableReason !== null
             ? flameGpuUnavailableReason === "no-webgpu"
               ? "no GPU API in this browser"
               : "GPU failed"
             : undefined,
           // Software adapters escalate the note to the warning tier
-          // (fr-tmgf): SwiftShader accumulation must not pass as the GPU.
+          // — SwiftShader accumulation must not pass as the GPU.
           event.software === true,
         );
         break;
       case "gpuUnavailable":
-        // The worker's GPU recovery ladder is exhausted — it will fall back to
-        // CPU accumulation. Record the reason so the subsequent "backend"
-        // event's CPU note can say WHY (fr-2w5). No escalation: the worker's
-        // CPU path is the correct, universal fallback (fr-27h).
+        // The worker's GPU recovery ladder is exhausted — it will fall back
+        // to CPU accumulation. Record the reason so the subsequent "backend"
+        // event's CPU note can say WHY. No escalation: the worker's CPU path
+        // is the correct, universal fallback.
         flameGpuUnavailableReason = event.reason;
         break;
       case "estimating":
@@ -2753,15 +2750,16 @@ function main(): void {
     };
   }
 
-  // Snapshot the frozen 4D view for a render worker (fr-5b3/fr-4wd): the
-  // current rotor + the cloud's center/support amplitude, the slice window,
-  // and the "legacy"-palette color dispatch inputs. The flame and voxel
-  // start commands declare structurally identical `fourD` blocks, so the one
+  // Snapshot the frozen 4D view for a render worker: the current rotor + the
+  // cloud's center/support amplitude, the slice window, and the
+  // "legacy"-palette color dispatch inputs. The flame and voxel start
+  // commands declare structurally identical `fourD` blocks, so the one
   // snapshot feeds both. Undefined while the view is 3D — the workers then
   // take their unchanged 3D paths. The tumble needs no explicit pause here:
   // animate() early-returns past the whole 4D block while either render is
   // active, so fourDView's rotor simply stops advancing (and onFourDRotate is
-  // gated the same way), making this snapshot valid for the render's whole life.
+  // gated the same way), making this snapshot valid for the render's whole
+  // life.
   function fourDRenderSnapshot():
     | NonNullable<Extract<FlameWorkerCommand, { type: "start" }>["fourD"]>
     | undefined {
@@ -2809,16 +2807,16 @@ function main(): void {
       colorMode: state.fourDColor,
       radiusMin,
       radiusMax,
-      // The radius mode's ramp palette (fr-6ue), resolved exactly like the
+      // The radius mode's ramp palette, resolved exactly like the
       // explorer's own bake (applyFourDColor) so the render's ramp matches
       // the explorer's colors — snapshotted here like colorMode itself.
       rampPalette: resolvePalette(state.rampPaletteId, state.customPalette),
     };
   }
 
-  // The flame render session (fr-o7s): freeze the current camera and converge
-  // a flame render of it in a fresh dedicated Worker. Entered only from the
-  // Render button — never automatically — so the explorer stays the default,
+  // The flame render session: freeze the current camera and converge a flame
+  // render of it in a fresh dedicated Worker. Entered only from the Render
+  // button — never automatically — so the explorer stays the default,
   // always-interactive experience; exited on Back, on a render error, or on
   // an undo/redo. The enter/exit/terminate + first-frame-gate choreography is
   // shared with the solid session below through RenderSession
@@ -2831,7 +2829,7 @@ function main(): void {
       // Phone/tablet-class devices: shared with the memory-budget computation
       // below, so only read matchMedia once.
       const coarse = window.matchMedia("(pointer: coarse)").matches;
-      // Device-aware memory budget for the supersampled accumulator (fr-7c8).
+      // Device-aware memory budget for the supersampled accumulator.
       // Computed here because its inputs — deviceMemory (Chromium-only,
       // hence the cast; absent from TS's DOM lib) and pointer coarseness —
       // are main-thread/window facilities a worker can't reliably read.
@@ -2841,11 +2839,11 @@ function main(): void {
       );
 
       // The render target: the screen buffer × the Export-size multiple
-      // (fr-2urv; scene clamps to its texture ceilings), then shrunk until
-      // the histogram fits the accumulation budget even at supersample 1 —
-      // the worker's own clampSupersampleToBudget can't go below 1×, and on
-      // a phone overshooting the budget kills the tab rather than throwing
-      // (see FLAME_ACCUM_FLOOR_BYTES). At 1× this is exactly the screen.
+      // (scene clamps to its texture ceilings), then shrunk until the
+      // histogram fits the accumulation budget even at supersample 1 — the
+      // worker's own clampSupersampleToBudget can't go below 1×, and on a
+      // phone overshooting the budget kills the tab rather than throwing (see
+      // FLAME_ACCUM_FLOOR_BYTES). At 1× this is exactly the screen.
       const base = scene.flameRenderSize();
       let { width, height } = scene.flameRenderSize(state.exportScale);
       const over = Math.sqrt((width * height) / maxAccumBuckets);
@@ -2864,7 +2862,7 @@ function main(): void {
       const projection = scene.flameProjectionMatrix();
 
       // Post-clamp, so the export modal quotes the size that will actually
-      // save rather than the size that was asked for (fr-61a2).
+      // save rather than the size that was asked for.
       flameRenderDims = { width, height };
       flameShared = tryCreateFlameSharedSession(width, height);
       console.info(
@@ -2885,7 +2883,7 @@ function main(): void {
         width,
         height,
         // Rolled through the shared helper so a timeline render keyframe
-        // can pin it (fr-4ff7) — see nextRenderSeed's doc.
+        // can pin it — see nextRenderSeed's doc.
         seed: nextRenderSeed(),
         requestedSupersample: state.flame.supersample,
         maxAccumBuckets,
@@ -2904,18 +2902,18 @@ function main(): void {
         // SAB-backed views structured-clone by SHARING their buffers — the
         // worker sees the same memory these frames wrap, nothing is copied.
         sharedFrames: flameShared?.frames,
-        // WebGPU accumulation (fr-npb/fr-hs9): "auto" everywhere — try GPU
-        // first, fall back to CPU automatically via the worker's gpuFailed
-        // ratchet. A device whose maxStorageBufferBindingSize can't fit the
-        // histogram fails backend creation cleanly into that same CPU fallback
-        // (see flame-gpu-backend.ts's limit guard). A 4D session (fourD below)
+        // WebGPU accumulation: "auto" everywhere — try GPU first, fall back
+        // to CPU automatically via the worker's gpuFailed ratchet. A device
+        // whose maxStorageBufferBindingSize can't fit the histogram fails
+        // backend creation cleanly into that same CPU fallback (see
+        // flame-gpu-backend.ts's limit guard). A 4D session (fourD below)
         // takes the same auto-with-fallback path through the 4D kernel
-        // (fr-e26, flame-gpu-4d.ts).
+        // (flame-gpu-4d.ts).
         gpuPreference: "auto",
-        // Per-chunk throughput instrumentation, off unless `?flameperf` asks
-        // (fr-ul2).
+        // Per-chunk throughput instrumentation, off unless `?flameperf`
+        // asks.
         instrument: flamePerfEnabled(),
-        // The frozen 4D view, or undefined for the unchanged 3D path (fr-5b3).
+        // The frozen 4D view, or undefined for the unchanged 3D path.
         fourD: fourDRenderSnapshot(),
       });
       return host;
@@ -2927,57 +2925,57 @@ function main(): void {
     },
     resetProgress: () => {
       ui.setFlameProgress(0, state.flame.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first progress event.
-      renderComplete.flame = false; // ...and the completion flag with it (fr-75sq): this fresh session hasn't met any budget yet.
-      renderCoverage.flame = 0; // ...and its fraction form (fr-61a2), so a waiting export reads 0% rather than the previous session's coverage.
+      renderComplete.flame = false; // ...and the completion flag with it: this fresh session hasn't met any budget yet.
+      renderCoverage.flame = 0; // ...and its fraction form, so a waiting export reads 0% rather than the previous session's coverage.
     },
     activate: () => {
       state = setRenderMode(state, "flame");
-      // The "auto" backdrop follows the active render's palette (fr-mz2u),
-      // so every render-mode landing re-derives it — here and in the other
-      // sessions' activate/deactivate.
+      // The "auto" backdrop follows the active render's palette, so every
+      // render-mode landing re-derives it — here and in the other sessions'
+      // activate/deactivate.
       trackAutoBackground();
       refreshUi();
     },
     deactivate: () => {
       flameShared = null; // drop our half of the shared buffers; with the worker's half gone too, the SABs are collectable.
-      flameRenderDims = null; // no session, no accumulation size (fr-61a2).
+      flameRenderDims = null; // no session, no accumulation size.
       // Reset only the mode this session owns — the exact semantics the old
       // per-mode boolean had (clearing flameActive could never touch
       // solidActive), so an idempotent exit() while some OTHER mode is
       // showing can't yank the app out of it via a blind write.
       if (state.renderMode === "flame") {
         state = setRenderMode(state, "points");
-        trackAutoBackground(); // the explorer's palette owns the backdrop again (fr-mz2u)
-        // Force the explorer to repaint over the frozen flame image (fr-w9wl):
-        // flame and points share the one canvas, and returning to points is a
+        trackAutoBackground(); // the explorer's palette owns the backdrop again
+        // Force the explorer to repaint over the frozen flame image: flame
+        // and points share the one canvas, and returning to points is a
         // visible change that goes through no scene mutator — so with
-        // auto-orbit off nothing else marks the frame dirty and render-on-
-        // demand (fr-py7z) would leave the stale flame frame on screen until
+        // auto-orbit off nothing else marks the frame dirty and
+        // render-on-demand would leave the stale flame frame on screen until
         // the next camera move.
         scene.invalidate();
-        // Release the export-scale accumulator canvas + GPU texture
-        // (fr-vja8.35) — the flame sibling of exitSurfaceComputeSession's
-        // release-on-exit, and the one chokepoint every LEAVE-THE-MODE exit
-        // passes through: a manual mode switch and the worker error paths
-        // both call exit(). An Export-size RESTART deliberately never gets
-        // here — restartFlameRender calls enter(), whose re-entry path
-        // terminates the old handle without running deactivate — so a
-        // restart keeps the warm canvas and repaints seamlessly, and only a
-        // genuine departure from flame mode pays the release.
+        // Release the export-scale accumulator canvas + GPU texture — the
+        // flame sibling of exitSurfaceComputeSession's release-on-exit, and
+        // the one chokepoint every LEAVE-THE-MODE exit passes through: a
+        // manual mode switch and the worker error paths both call exit(). An
+        // Export-size RESTART deliberately never gets here —
+        // restartFlameRender calls enter(), whose re-entry path terminates
+        // the old handle without running deactivate — so a restart keeps the
+        // warm canvas and repaints seamlessly, and only a genuine departure
+        // from flame mode pays the release.
         scene.exitFlameSession();
       }
-      // Whatever this render still owed a thumbnail (fr-r777) is owed
+      // Whatever late thumbnail correction this render still owed is owed
       // nothing now — the mode is over.
       dropStalePendingThumbnails();
       refreshUi();
-      // An offline export parked on this render (fr-6jic): an early exit —
-      // worker error, Back — terminated the worker, so no further progress
-      // event will ever wake the driver; this is its signal to re-check
-      // (renderMode left flame) and fall back to capturing points.
+      // An offline export parked on this render: an early exit — worker
+      // error, Back — terminated the worker, so no further progress event
+      // will ever wake the driver; this is its signal to re-check (renderMode
+      // left flame) and fall back to capturing points.
       notifyRenderSignal();
     },
     // The flame's first image lands: any entry saved during the startup gap
-    // can now be re-photographed as the flame it was tagged with (fr-r777).
+    // can now be re-photographed as the flame it was tagged with.
     onFirstFrame: () => applyPendingThumbnailPatches("flame"),
   });
 
@@ -3014,7 +3012,7 @@ function main(): void {
         break;
       case "restarted":
         // Same contract as the flame's "restarted" case: zero the readout
-        // the moment the worker discards its accumulation (fr-h6sn).
+        // the moment the worker discards its accumulation.
         ui.setSolidProgress(0, event.iterationsBudget);
         noteRenderProgress("solid", 0, event.iterationsBudget);
         break;
@@ -3032,7 +3030,7 @@ function main(): void {
     }
   }
 
-  // The solid voxel render session (fr-v4f): accumulate a world-space density
+  // The solid voxel render session: accumulate a world-space density
   // volume of the current system in a fresh worker. Its enter/exit/terminate +
   // first-frame-gate choreography is shared with the flame session above
   // through RenderSession (render-session.ts); its genuine differences are that
@@ -3058,7 +3056,7 @@ function main(): void {
         post: (command: VoxelWorkerCommand) => worker.postMessage(command),
         terminate: () => {
           // Detach the handlers BEFORE terminating — the flame host's idiom
-          // (fr-mps8): terminate() discards the WORKER's queue, not
+          // — terminate() discards the WORKER's queue, not
           // MessageEvents already queued on THIS thread, and the voxel worker
           // posts a grid per chunk, so one is nearly always in flight. A
           // stale grid arriving after exit uploaded the dead session's
@@ -3079,28 +3077,28 @@ function main(): void {
         transforms: state.transforms,
         finalTransform: state.finalTransform ?? null,
         resolution: state.solid.resolution,
-        // The explorer's Color Mode carries into the voxel colors (fr-c1d);
+        // The explorer's Color Mode carries into the voxel colors;
         // entering the mode snapshots it, exactly like the transform set.
         colorMode: state.colorMode,
-        // Snapshotted alongside colorMode (fr-8sk) so the solid render's
+        // Snapshotted alongside colorMode so the solid render's
         // baked-in LUT/position coloring matches the explorer's contrast.
         colorGamma: state.colorGamma,
         palette: resolvePalette(state.solid.paletteId, state.customPalette),
-        // The height/radius ramps' gradient palette (fr-3b6), snapshotted at
+        // The height/radius ramps' gradient palette, snapshotted at
         // entry exactly like colorMode/colorGamma above — it only matters
         // while `palette` is "legacy" (the colorMode-driven path), and the
         // ramp select is unreachable while this render is active, so there
         // is no live command for it.
         rampPalette: resolvePalette(state.rampPaletteId, state.customPalette),
-        // Snapshotted at entry like colorMode/rampPalette above (fr-8k7).
+        // Snapshotted at entry like colorMode/rampPalette above.
         positionAxisColors: state.positionAxisColors,
         iterationsBudget: state.solid.iterations,
         // Rolled through the shared helper so a timeline render keyframe
-        // can pin it (fr-4ff7) — see nextRenderSeed's doc.
+        // can pin it — see nextRenderSeed's doc.
         seed: nextRenderSeed(),
-        // Device-aware memory budget for the voxel grid + texture (fr-8x7) —
-        // the same two main-thread-only signals, for the same reasons, as the
-        // flame render's maxAccumBuckets above (fr-7c8).
+        // Device-aware memory budget for the voxel grid + texture — the
+        // same two main-thread-only signals, for the same reasons, as the
+        // flame render's maxAccumBuckets above.
         maxVoxels: voxelAccumBudgetVoxels(
           (navigator as Navigator & { deviceMemory?: number }).deviceMemory,
           window.matchMedia("(pointer: coarse)").matches,
@@ -3108,7 +3106,7 @@ function main(): void {
         order: state.symmetry.order,
         plane: state.symmetry.plane,
         twist: state.symmetry.twist ?? 0,
-        // The frozen 4D view, or undefined for the unchanged 3D path (fr-4wd).
+        // The frozen 4D view, or undefined for the unchanged 3D path.
         fourD: fourDRenderSnapshot(),
       });
       return handle;
@@ -3118,15 +3116,15 @@ function main(): void {
     },
     resetProgress: () => {
       ui.setSolidProgress(0, state.solid.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first grid event.
-      renderComplete.solid = false; // ...and the completion flag with it (fr-75sq), like the flame session's resetProgress.
-      renderCoverage.solid = 0; // ...and its fraction form (fr-61a2), likewise.
+      renderComplete.solid = false; // ...and the completion flag with it, like the flame session's resetProgress.
+      renderCoverage.solid = 0; // ...and its fraction form, likewise.
     },
     activate: () => {
       // Drop any transform selection: the lens has no guide box in this mode,
       // so a raycast drag should orbit the camera, not grab a hidden box.
       state = selectTransform(state, null);
       state = setRenderMode(state, "solid");
-      trackAutoBackground(); // see the flame session's activate (fr-mz2u)
+      trackAutoBackground(); // see the flame session's activate
       refreshGuides();
       refreshUi();
     },
@@ -3135,85 +3133,83 @@ function main(): void {
       // deactivate for why this is not a blind write.
       if (state.renderMode === "solid") {
         state = setRenderMode(state, "points");
-        trackAutoBackground(); // see the flame session's deactivate (fr-mz2u)
-        // Repaint the explorer over the last raymarched frame (fr-w9wl) — see
-        // the flame session's deactivate; the solid volume shares the same one
-        // canvas and the same render-on-demand gate.
+        trackAutoBackground(); // see the flame session's deactivate
+        // Repaint the explorer over the last raymarched frame — see the flame
+        // session's deactivate; the solid volume shares the same one canvas
+        // and the same render-on-demand gate.
         scene.invalidate();
       }
-      dropStalePendingThumbnails(); // see the flame session's deactivate (fr-r777)
+      dropStalePendingThumbnails(); // see the flame session's deactivate
       refreshUi();
-      // A parked offline export's early-exit wake (fr-6jic) — see the flame
+      // A parked offline export's early-exit wake — see the flame
       // session's deactivate.
       notifyRenderSignal();
     },
     // The first accumulated grid: the solid twin of the flame session's own
-    // late-thumbnail correction (fr-r777).
+    // late-thumbnail correction.
     onFirstFrame: () => applyPendingThumbnailPatches("solid"),
   });
 
-  // The surface render session (epic fr-7jlk): sphere-trace the attractor as
-  // an implicit surface against the analytic distance estimator. No worker
-  // and no accumulation — buildSurfaceDE is pure math (analytic inverses +
-  // a small seeded bounding probe, a few ms) and the whole "session" is GPU
-  // uniforms, so the render is ready the moment start() returns. The
-  // RenderSession skeleton still buys the choreography every render shares:
+  // The surface render session: sphere-trace the attractor as an implicit
+  // surface against the analytic distance estimator. No worker and no
+  // accumulation — buildSurfaceDE is pure math (analytic inverses + a small
+  // seeded bounding probe, a few ms) and the whole "session" is GPU uniforms,
+  // so the render is ready the moment start() returns. The RenderSession
+  // skeleton still buys the choreography every render shares:
   // exit-on-undo/redo (via applyDecodedSnapshot's switchRenderMode), error →
-  // exit, and the repaint-on-leaving discipline (fr-w9wl). Like the solid
-  // render the DE is world-space, so the camera stays LIVE.
+  // exit, and the repaint-on-leaving discipline. Like the solid render the DE
+  // is world-space, so the camera stays LIVE.
 
   // Whether the ACTIVE surface session traces the 4D DE — frozen at start()
   // together with the DE itself (the session snapshots geometry at enter;
   // the live document's flatness may drift until the next enter). Gates
   // tickRender's per-frame rotor/slice push.
   let surfaceSessionIs4D = false;
-  // fr-rsp6: false while the live 4D surface session's fold set breaks
-  // segment exactness (spherefold/mandelbox — slabExact4), where every
-  // view push clamps the fr-wa6o thickness to 0 and the panel hides the
-  // row. Session-scoped like the flag above.
+  // False while the live 4D surface session's fold set breaks segment
+  // exactness (spherefold/mandelbox — slabExact4), where every view push
+  // clamps the slice thickness to 0 and the panel hides the row.
+  // Session-scoped like the flag above.
   let surface4SlabExact = true;
 
-  // Monotonic token guarding the async shader-compile gate (fr-du81): each
+  // Monotonic token guarding the async shader-compile gate: each
   // start() takes a fresh one, and a compile promise resolving for a
   // superseded session (exited, or re-entered with a different system) must
   // not mark the CURRENT session's first frame or report its progress.
   let surfaceCompileToken = 0;
 
-  // --- The WebGPU compute path for FOLD 3D surface sessions (fr-tzdg) ---
+  // --- The WebGPU compute path for FOLD 3D surface sessions ---
   //
-  // fr-q1f8's measured verdict on real Iris Xe: the WGSL image kernel
+  // The spike's measured verdict on real Iris Xe: the WGSL image kernel
   // traces mandelboxKifs at ~49µs/ray where the WebGL fragment tracer is
-  // unbounded (>1300µs/ray), compiles in ~0.1-0.3s where the fold GLSL
-  // links in ~25s on Mesa, and its bounded multi-pass dispatch respects
-  // the i915 watchdog by construction — so fold sessions PREFER compute
-  // when a WebGPU adapter exists, and the WebGL fragment tracer stays THE
-  // fallback (affine/escape/lens/4D sessions never route here at all).
-  // `?surfacegl` forces the WebGL path (the ?flameperf-style escape
-  // hatch); any create failure or a device loss sets the one-way session
-  // memo and re-enters, which routes the same system through the WebGL
-  // branch — grid build included, since the compute path skips the grid
-  // request on purpose (49µs/ray was measured gridless; the multi-second
-  // fold grid build buys nothing this path needs — measure before wiring,
-  // see the fr-tzdg follow-ups).
-  // fr-tmgf: the block carries its REASON so the WebGL session's detail
-  // token can say why compute passed — "flag" is the user's own ?surfacegl
-  // escape hatch (a deliberate choice needs no caveat), "unavailable" is a
-  // missing adapter, "failed" a create failure or device loss. One-way for
-  // the page's life, like the boolean it replaced.
+  // unbounded (>1300µs/ray), compiles in ~0.1-0.3s where the fold GLSL links
+  // in ~25s on Mesa, and its bounded multi-pass dispatch respects the i915
+  // watchdog by construction — so fold sessions PREFER compute when a WebGPU
+  // adapter exists, and the WebGL fragment tracer stays THE fallback
+  // (affine/escape/lens/4D sessions never route here at all). `?surfacegl`
+  // forces the WebGL path (the ?flameperf-style escape hatch); any create
+  // failure or a device loss sets the one-way session memo and re-enters,
+  // which routes the same system through the WebGL branch — grid build
+  // included, since the compute path skips the grid request on purpose
+  // (49µs/ray was measured gridless; the multi-second fold grid build buys
+  // nothing this path needs — measure before wiring). The block carries its
+  // REASON so the WebGL session's detail token can say why compute passed —
+  // "flag" is the user's own ?surfacegl escape hatch (a deliberate choice
+  // needs no caveat), "unavailable" is a missing adapter, "failed" a create
+  // failure or device loss. One-way for the page's life, like the boolean it
+  // replaced.
   let surfaceComputeBlock: SurfaceComputeBlock | null = new URLSearchParams(
     window.location.search,
   ).has("surfacegl")
     ? "flag"
     : null;
-  // `?surfacecompute` is `?surfacegl`'s mirror: it makes a session PREFER
-  // the compute tracer on the shapes whose routing rule sends them to WebGL.
-  // That is plain affine 3D alone since fr-fniy — 4D above symmetry order 1
-  // used to be the other one, and this flag is how it stopped being: the
-  // rule sending it to WebGL could not be re-measured until the flag
-  // existed, and once it could, it was 12x wrong. The remaining rule is a
-  // performance verdict, not a capability one (`core:"affine"` serves that
-  // shape in production already), so this selects a supported path and
-  // never a new one.
+  // `?surfacecompute` is `?surfacegl`'s mirror: it makes a session PREFER the
+  // compute tracer on the shapes whose routing rule sends them to WebGL. That
+  // is plain affine 3D alone — 4D above symmetry order 1 used to be the other
+  // one, and this flag is how it stopped being: the rule sending it to WebGL
+  // could not be re-measured until the flag existed, and once it could, it
+  // was 12x wrong. The remaining rule is a performance verdict, not a
+  // capability one (`core:"affine"` serves that shape in production already),
+  // so this selects a supported path and never a new one.
   //
   // It exists because a routing verdict that cannot be re-measured cannot be
   // maintained. Without it the two arms are comparable only on the shapes
@@ -3224,13 +3220,13 @@ function main(): void {
   const surfaceComputeForced = new URLSearchParams(window.location.search).has(
     "surfacecompute",
   );
-  // fr-biox: `?surfacemaxrays=N` stands in for the device's own per-frame
-  // ray ceiling — the ?surfshadewidth-style escape hatch for the sizing
-  // that ceiling drives. A real device only bands an export at 2-4x
-  // (~8-32M rays), which is minutes of tracing to look at; pretending the
-  // ceiling is small bands a CHEAP export the same way, which is what
-  // scripts/surface-export-tile.verify.mjs measures against the untiled
-  // arm — and what turns a field report into an answer.
+  // `?surfacemaxrays=N` stands in for the device's own per-frame ray ceiling
+  // — the ?surfshadewidth-style escape hatch for the sizing that ceiling
+  // drives. A real device only bands an export at 2-4x (~8-32M rays), which
+  // is minutes of tracing to look at; pretending the ceiling is small bands a
+  // CHEAP export the same way, which is what
+  // scripts/surface-export-tile.verify.mjs measures against the untiled arm —
+  // and what turns a field report into an answer.
   const surfaceComputeMaxRaysFlag = ((): number | null => {
     const raw = new URLSearchParams(window.location.search).get(
       "surfacemaxrays",
@@ -3238,17 +3234,16 @@ function main(): void {
     const n = raw === null ? NaN : Number.parseInt(raw, 10);
     return Number.isFinite(n) && n > 0 ? n : null;
   })();
-  // fr-khxy: modern Firefox EXPOSES navigator.gpu while requestAdapter()
-  // can still return null (WebGPU ships progressively per platform), so
-  // the sync supported() gate admits fold-4D entry on the OBJECT alone
-  // and the failure then surfaces as a mid-entry toast + mode exit — a
-  // user who misses the toast just sees no preview ever appear. Probe a
-  // real adapter once at boot and latch the same one-way block a failed
-  // create() would have set: the eligibility gate then refuses fold-4D
-  // up front with the honest note, and every compute-preferring shape
-  // routes its WebGL fallback directly instead of through a doomed
-  // create(). A session already mid-entry when the probe lands keeps
-  // its own create() verdict — same end state, narrower window.
+  // Modern Firefox EXPOSES navigator.gpu while requestAdapter() can still
+  // return null (WebGPU ships progressively per platform), so the sync
+  // supported() gate admits fold-4D entry on the OBJECT alone and the failure
+  // then surfaces as a mid-entry toast + mode exit — a user who misses the
+  // toast just sees no preview ever appear. Probe a real adapter once at boot
+  // and latch the same one-way block a failed create() would have set: the
+  // eligibility gate then refuses fold-4D up front with the honest note, and
+  // every compute-preferring shape routes its WebGL fallback directly instead
+  // of through a doomed create(). A session already mid-entry when the probe
+  // lands keeps its own create() verdict — same end state, narrower window.
   if (surfaceComputeBlock === null && SurfaceComputeRenderer.supported()) {
     void SurfaceComputeRenderer.probeAdapter().then((ok) => {
       if (!ok && surfaceComputeBlock === null) {
@@ -3264,9 +3259,9 @@ function main(): void {
   // freshest camera, instead of restarting (and never finishing) per rAF.
   let surfaceComputePreviewFlight = false;
   let surfaceComputePreviewPending = false;
-  // The preview in flight is the unbudgeted COMPLETION pass (fr-ud7n) —
-  // the one preview frame that can outlive an invalidation, so the kick
-  // path cancels it explicitly instead of waiting out a wall budget.
+  // The preview in flight is the unbudgeted COMPLETION pass — the one preview
+  // frame that can outlive an invalidation, so the kick path cancels it
+  // explicitly instead of waiting out a wall budget.
   let surfaceComputePreviewCompleting = false;
   let surfaceComputeSettleFlight = false;
   // Memo key of the last completed offline-export force frame: dwell
@@ -3274,32 +3269,32 @@ function main(): void {
   // pixels (the strip path re-traces per frame — affordable there only
   // because affine systems are cheap; a fold settle is not).
   let surfaceComputeForceKey: string | null = null;
-  // Fraction of the in-flight compute SETTLE's rays fully resolved
-  // (fr-tmgf: the progress row's compute-path feed — null outside a
-  // settle, so the row hides exactly like the strip path's idle state).
+  // Fraction of the in-flight compute SETTLE's rays fully resolved (the
+  // progress row's compute-path feed — null outside a settle, so the row
+  // hides exactly like the strip path's idle state).
   let surfaceComputeSettleProgress: number | null = null;
-  /** What to say if this session's first settle renders NOTHING (fr-17qu) —
+  /** What to say if this session's first settle renders NOTHING —
    * armed by the routing that knows which object is being marched, fired by
    * the settle that knows whether any ray hit it. Null for the IFS arms,
    * whose attractors are non-empty by the gate's own contraction test, and
    * outside a surface session. */
   let surfaceBlankNotice: (() => void) | null = null;
   /**
-   * Samples per pixel the compute SETTLE traces (fr-vpbq). Previews stay
-   * at 1 — a preview exists to be cheap, and its whole job is to be
-   * replaced.
+   * Samples per pixel the compute SETTLE traces. Previews stay at 1 — a
+   * preview exists to be cheap, and its whole job is to be replaced.
    *
    * WHY IT IS ON BY DEFAULT, with no setting to turn it off. Pass 0 is the
-   * pre-fr-vpbq settle exactly — same rays, same wall, same image, and it
-   * presents its partials the way it always did — so nothing a user had
-   * before arrives later or looks different. Every pass after it only
+   * pre-supersampling settle exactly — same rays, same wall, same image,
+   * and it presents its partials the way it always did — so nothing a
+   * user had before arrives later or looks different. Every pass after it only
    * refines, presents when it lands, and dies the instant the camera moves
    * (the renderer's own token). So the cost is paid only by a parked view,
    * which is the one case where the extra quality is what the user is
    * waiting for, and the progress row discloses the passes as they run
-   * rather than guessing at anyone's patience (the fr-24to/fr-zx34 line).
+   * rather than guessing at anyone's patience (the no-automatic-give-up
+   * line).
    *
-   * EIGHT, not sixteen: fr-vpbq measured 16 spp removing 67-73% of the
+   * EIGHT, not sixteen: 16 spp was measured removing 67-73% of the
    * impulse rate, but its own coverage curve is steepest early — the
    * distribution's tail is what the last doublings buy — and eight keeps a
    * settle's total wall inside the same order of magnitude as the frame the
@@ -3308,11 +3303,11 @@ function main(): void {
   const SURFACE_COMPUTE_SETTLE_SAMPLES = 8;
   /**
    * Below this fraction of a settle's rays hitting anything, the session
-   * says so (fr-17qu). NOT zero, which was the second cut's mistake and
-   * would essentially never fire: the marcher accepts a hit at
-   * `uAcceptPixelEps` — the settle frame's pixel footprint, far coarser
-   * than any analytic epsilon — so a few rays catch even a system scaled
-   * so hard that every orbit escapes on its first pass.
+   * says so. NOT zero, which was the second cut's mistake and would
+   * essentially never fire: the marcher accepts a hit at `uAcceptPixelEps`
+   * — the settle frame's pixel footprint, far coarser than any analytic
+   * epsilon — so a few rays catch even a system scaled so hard that every
+   * orbit escapes on its first pass.
    *
    * MEASURED at the entry pose, 1024x640 = 655360 rays. The nine shipped
    * Escape-time presets hit 32752-67313 rays (5.0-10.3%), the thinnest of
@@ -3326,29 +3321,28 @@ function main(): void {
   const SURFACE_BLANK_HIT_FRACTION = 0.001;
   // Which of those passes is in flight (1-based), for the row's trailing
   // detail token — null outside a settle, and left null through pass 1, so
-  // an ordinary settle's row reads exactly as it did before fr-vpbq.
+  // an ordinary settle's row reads exactly as it did before supersampling.
   let surfaceComputeSettleSample: number | null = null;
-  // The same for the preview loop's COMPLETION pass (fr-ud7n). Separate
-  // field rather than a phase-tagged one, because the two loops overlap
-  // for exactly as long as a superseded settle takes to notice its
-  // cancel(): a shared field would let that settle's teardown null the
-  // fresh preview's coverage. The preview wins that tie in the row —
-  // it is the trace still running.
+  // The same for the preview loop's COMPLETION pass. Separate field rather
+  // than a phase-tagged one, because the two loops overlap for exactly as
+  // long as a superseded settle takes to notice its cancel(): a shared field
+  // would let that settle's teardown null the fresh preview's coverage. The
+  // preview wins that tie in the row — it is the trace still running.
   let surfaceComputePreviewProgress: number | null = null;
-  // The surface progress row's trailing WebGL detail token (fr-tmgf):
-  // why THIS session runs the WebGL tracer when compute would have been
-  // its home ("compute unavailable" / "compute failed"), null when WebGL
-  // is the natural engine (affine/4D, or the ?surfacegl flag — escape
-  // joined the compute-homed set with fr-dlxh).
-  // Session-scoped: set by start()'s routing, cleared with the session.
+  // The surface progress row's trailing WebGL detail token: why THIS session
+  // runs the WebGL tracer when compute would have been its home ("compute
+  // unavailable" / "compute failed"), null when WebGL is the natural engine
+  // (affine/4D, or the ?surfacegl flag — escape sessions belong to the
+  // compute-homed set). Session-scoped: set by start()'s routing, cleared
+  // with the session.
   let surfaceWebglDetailToken: string | null = null;
-  // A Save-PNG capture owns the surface tracer (fr-7mfx). Both engines
-  // yield mid-capture now, so the rAF loop runs DURING an export — and
-  // every path below would fight it: the compute arms all open with
-  // renderer.cancel(), and the strip arms would re-size the target being
-  // drained and overwrite the frozen full-tier uniforms. Everything that
-  // touches the tracer stands aside on this flag, which is what lets a
-  // multi-minute export survive its own responsiveness.
+  // A Save-PNG capture owns the surface tracer. Both engines yield
+  // mid-capture now, so the rAF loop runs DURING an export — and every path
+  // below would fight it: the compute arms all open with renderer.cancel(),
+  // and the strip arms would re-size the target being drained and overwrite
+  // the frozen full-tier uniforms. Everything that touches the tracer stands
+  // aside on this flag, which is what lets a multi-minute export survive its
+  // own responsiveness.
   let surfaceCaptureFlight = false;
 
   // Preview frames carry a wall budget so a rung too heavy for this
@@ -3357,45 +3351,43 @@ function main(): void {
   // Without it, continuous motion could cancel every over-heavy preview
   // before a single measurement existed and the ladder would never learn.
   //
-  // It is a MEASUREMENT device and nothing more (fr-ud7n). A truncated
-  // frame is a verdict about the rung, never a verdict about the pose:
-  // when the ladder has no cheaper rung left and no invalidation is
-  // waiting, the loop re-runs the frame UNBUDGETED and lets it finish —
-  // see runSurfaceComputePreviewLoop's completion pass. Budgeting the
-  // last preview of a parked session is the automatic give-up fr-24to/
-  // fr-zx34 removed from the WebGL tier, and on a Firefox-class adapter
-  // (~10-20x slower WebGPU) it was every preview of every fold session.
+  // It is a MEASUREMENT device and nothing more. A truncated frame is a
+  // verdict about the rung, never a verdict about the pose: when the ladder
+  // has no cheaper rung left and no invalidation is waiting, the loop re-runs
+  // the frame UNBUDGETED and lets it finish — see
+  // runSurfaceComputePreviewLoop's completion pass. Budgeting the last
+  // preview of a parked session is the automatic give-up that was removed
+  // from the WebGL tier, and on a Firefox-class adapter (~10-20x slower
+  // WebGPU) it was every preview of every fold session.
   const SURFACE_COMPUTE_PREVIEW_BUDGET_MS = 2000;
 
-  // Progress cadence for an EXPORT-scale compute frame (fr-7mfx): twice
-  // the renderer's live default, because each tick pays a full-frame
-  // readback and an export is 1-16x the live frame's pixels. The modal
-  // discloses coverage, not the instantaneous rate — a second between
-  // updates reads the same.
+  // Progress cadence for an EXPORT-scale compute frame: twice the renderer's
+  // live default, because each tick pays a full-frame readback and an export
+  // is 1-16x the live frame's pixels. The modal discloses coverage, not the
+  // instantaneous rate — a second between updates reads the same.
   const SURFACE_COMPUTE_EXPORT_PROGRESS_MS = 1000;
 
-  // How long nextPaint() waits on rAF before starting the work anyway
-  // (fr-7mfx). Long enough for a real compositor frame at 60Hz, short
-  // enough that a hidden tab's paused rAF costs the export nothing worth
-  // noticing.
+  // How long nextPaint() waits on rAF before starting the work anyway Long
+  // enough for a real compositor frame at 60Hz, short enough that a hidden
+  // tab's paused rAF costs the export nothing worth noticing.
   const NEXT_PAINT_FALLBACK_MS = 120;
 
-  // Compute is on the table at all — no block latched, an API present.
-  // The escape branch consults this alone (fr-dlxh: a pure-fold map is
-  // always compute-shaped, and so is a CHAIN of them — fr-s04t, whose
-  // kernel cycles the list); the 3D IFS branch adds its shape
-  // test below. The 4D branch consults this alone too since fr-fniy —
-  // EVERY 4D system is compute-shaped, kaleidoscope included, and the
-  // measurement that moved that line is at the branch itself.
+  // Compute is on the table at all — no block latched, an API present. The
+  // escape branch consults this alone (a pure-fold map is always
+  // compute-shaped, and so is a CHAIN of them — the kernel cycles the
+  // list); the 3D IFS branch adds its shape test below. The 4D branch
+  // consults this alone too — EVERY 4D system is compute-shaped,
+  // kaleidoscope included, and the measurement that moved that line is at
+  // the branch itself.
   function surfaceComputeAvailable(): boolean {
     return surfaceComputeBlock === null && SurfaceComputeRenderer.supported();
   }
 
-  // Fold 3D IFS sessions — base-map folds OR a fold FINAL lens (fr-55s1:
-  // the kernel wraps either core in descendLens's branch sweep, so
-  // fr-zx34's lens-over-affine field class now routes here too, off the
-  // fragile fold GLSL entirely). Plain affine systems stay on the WebGL
-  // tracer (fast there, with the refined estimator and the grid).
+  // Fold 3D IFS sessions — base-map folds OR a fold FINAL lens (the kernel
+  // wraps either core in descendLens's branch sweep, so the lens-over-affine
+  // field class routes here too, off the fragile fold GLSL entirely). Plain
+  // affine systems stay on the WebGL tracer (fast there, with the refined
+  // estimator and the grid).
   function surfaceComputeEligible(de: SurfaceDE): boolean {
     return (
       surfaceComputeAvailable() &&
@@ -3404,12 +3396,12 @@ function main(): void {
   }
 
   /** A FORWARD-ORBIT session's one shade slot: the first active map's
-   * explorer color — the exact pick `setEscapeSystem`'s (and, since
-   * fr-tdin, `setBulbSystem`'s) GLSL packing takes. The bulb gate is
-   * single-map, and an escape CHAIN (fr-s04t) still shades from one slot:
-   * a forward orbit applies every link in turn and CHOOSES none, so its
-   * hit-info reports `firstChoice = 0` at any chain length and the head
-   * link's color is the one the "By Transform" source can honestly use. */
+   * explorer color — the exact pick `setEscapeSystem`'s (and
+   * `setBulbSystem`'s) GLSL packing takes. The bulb gate is single-map, and
+   * an escape CHAIN still shades from one slot: a forward orbit applies
+   * every link in turn and CHOOSES none, so its hit-info reports
+   * `firstChoice = 0` at any chain length and the head link's color is the
+   * one the "By Transform" source can honestly use. */
   function escapeSlotColor(): Vec3 {
     const active = Math.max(
       0,
@@ -3434,7 +3426,7 @@ function main(): void {
     updateSoftwareRendererNote();
   }
 
-  // fr-tmgf: ONE warning element, two possible facts — the boot-time WebGL
+  // ONE warning element, two possible facts — the boot-time WebGL
   // renderer string (device-level and permanent, so it wins) and the live
   // surface compute session's software adapter (session-scoped; its row
   // token also carries "(software)"). Recomposed at every compute
@@ -3473,11 +3465,10 @@ function main(): void {
   ): void {
     SurfaceComputeRenderer.create(
       target,
-      // Per-slot shading inputs by kind: the IFS sessions (3D and 4D
-      // alike) shade de.maps[j] (fr-c6yd's shared derivation); the two
-      // FORWARD sessions (escape, and fr-tdin's bulb) have ONE slot —
-      // the active map's color, trap index 0, the GLSL
-      // setEscapeSystem/setBulbSystem shape.
+      // Per-slot shading inputs by kind: the IFS sessions (3D and 4D alike)
+      // shade de.maps[j] (the shared slot derivation); the two FORWARD
+      // sessions (escape and bulb) have ONE slot — the active map's color,
+      // trap index 0, the GLSL setEscapeSystem/setBulbSystem shape.
       isForwardTarget(target)
         ? [escapeSlotColor()]
         : surfaceSlotColors(state.transforms, target.de.maps),
@@ -3491,10 +3482,10 @@ function main(): void {
           return;
         }
         surfaceComputeRenderer = renderer;
-        // What this device can allocate for ONE frame (fr-biox): the
-        // scene sizes every frame it asks for against it — the live pane
-        // fits under it, a capture tiles under it. Only knowable now,
-        // since the enters above all ran while create() was in flight.
+        // What this device can allocate for ONE frame: the scene sizes every
+        // frame it asks for against it — the live pane fits under it, a
+        // capture tiles under it. Only knowable now, since the enters above
+        // all ran while create() was in flight.
         scene.setSurfaceComputeRayCap(
           surfaceComputeMaxRaysFlag ?? renderer.maxFrameRays,
         );
@@ -3520,19 +3511,18 @@ function main(): void {
         surfaceSession.markFirstFrame();
         noteRenderProgress("surface", 1, 1);
         scene.invalidate();
-        // First frame without waiting for a camera nudge: entry
-        // invalidations (the escape branch's framing glide included) fire
-        // while create() is still in flight, where the preview kick
-        // no-ops for want of a renderer, and the one-shot invalidate
-        // above can be consumed by the scene's own draw before the tier
-        // clock reads it — so a session could sit blank until the next
-        // camera motion. Kick directly now that the renderer exists;
-        // the preview loop's latest-wins coalescing makes a redundant
-        // kick free, and the tier clock's settle follows as usual.
-        // Previews off (fr-37c6): arm the settle directly instead — an
-        // entry IS a parked view, and the pending latch is exactly as
-        // un-losable as the kick (surfaceComputeTick consumes it, and a
-        // glide's invalidations supersede it through the same latch).
+        // First frame without waiting for a camera nudge: entry invalidations
+        // (the escape branch's framing glide included) fire while create() is
+        // still in flight, where the preview kick no-ops for want of a
+        // renderer, and the one-shot invalidate above can be consumed by the
+        // scene's own draw before the tier clock reads it — so a session
+        // could sit blank until the next camera motion. Kick directly now
+        // that the renderer exists; the preview loop's latest-wins coalescing
+        // makes a redundant kick free, and the tier clock's settle follows as
+        // usual. Previews off: arm the settle directly instead — an entry IS
+        // a parked view, and the pending latch is exactly as un-losable as
+        // the kick (surfaceComputeTick consumes it, and a glide's
+        // invalidations supersede it through the same latch).
         if (surfacePreviewsEnabled) kickSurfaceComputePreview();
         else surfaceSettlePending = true;
       })
@@ -3546,7 +3536,7 @@ function main(): void {
         );
         // "unavailable" (no adapter for this context) vs "failed" (device/
         // pipeline creation died) — the progress row's detail token tells
-        // them apart (fr-tmgf).
+        // them apart.
         surfaceComputeBlock =
           error instanceof SurfaceComputeUnavailableError
             ? "unavailable"
@@ -3558,13 +3548,13 @@ function main(): void {
   function kickSurfaceComputePreview(): void {
     surfaceComputePreviewPending = true;
     if (surfaceComputePreviewFlight) {
-      // The completion pass (fr-ud7n) is the one preview frame with no
-      // wall budget, so a fresh invalidation cannot simply wait it out —
-      // supersede it here and let the loop pick the new pose up on its
-      // next turn. Budgeted frames are deliberately left alone: they
-      // resolve within SURFACE_COMPUTE_PREVIEW_BUDGET_MS anyway, and
-      // cancelling one would throw away the governor sample the ladder
-      // needs most while the view is moving.
+      // The completion pass is the one preview frame with no wall budget, so
+      // a fresh invalidation cannot simply wait it out — supersede it here
+      // and let the loop pick the new pose up on its next turn. Budgeted
+      // frames are deliberately left alone: they resolve within
+      // SURFACE_COMPUTE_PREVIEW_BUDGET_MS anyway, and cancelling one would
+      // throw away the governor sample the ladder needs most while the view
+      // is moving.
       if (surfaceComputePreviewCompleting) surfaceComputeRenderer?.cancel();
       return;
     }
@@ -3573,9 +3563,9 @@ function main(): void {
 
   /**
    * The compute path's preview driver: one frame per invalidation,
-   * latest-wins — plus the COMPLETION pass (fr-ud7n), the frame that runs
-   * with NO wall budget when the ladder has nothing cheaper left and the
-   * view has parked.
+   * latest-wins — plus the COMPLETION pass, the frame that runs with NO
+   * wall budget when the ladder has nothing cheaper left and the view has
+   * parked.
    *
    * Why the pass exists: {@link SURFACE_COMPUTE_PREVIEW_BUDGET_MS} cuts a
    * preview the device cannot afford so the governor gets a sample and
@@ -3583,13 +3573,13 @@ function main(): void {
    * truncated floor frame used to be the preview's last word — the loop
    * drained, the settle fired, and the user was handed a mostly-backdrop
    * pane and a multi-minute full render nobody asked for. That is the
-   * automatic give-up fr-24to/fr-zx34 removed from the WebGL tier and
-   * fr-37c6 gave a Skip button instead, and on a Firefox-class adapter
-   * (~10-20x slower WebGPU) it was EVERY preview of every fold session.
-   * So the truncated frame stays an intermediate paint, and the pass
-   * re-runs the same rung to completion: progressive presents as rays
-   * resolve, honest coverage in the progress row, and the Skip button
-   * live throughout for the user who would rather have the settle now.
+   * automatic give-up that was removed from the WebGL tier and replaced by
+   * a Skip button, and on a Firefox-class adapter (~10-20x slower WebGPU)
+   * it was EVERY preview of every fold session. So the truncated frame
+   * stays an intermediate paint, and the pass re-runs the same rung to
+   * completion: progressive presents as rays resolve, honest coverage in
+   * the progress row, and the Skip button live throughout for the user who
+   * would rather have the settle now.
    *
    * Dropping the budget costs no safety: every submission the renderer
    * makes is bounded by its own measured pass sizing (the i915 watchdog
@@ -3617,13 +3607,13 @@ function main(): void {
     // invalidation behind it.
     let completionDue = false;
     try {
-      // A loop already in flight when a capture starts would resume from
-      // its await and cancel the export (fr-7mfx); leave `pending` latched —
-      // a >1x capture's ratio restore raises an invalidation that re-kicks
-      // it, a mid-capture pose change stays latched in scene.needsRender
-      // (the capture tick never clears it), and a 1x capture raises nothing
-      // by design (fr-vja8.45) but presents its own full-detail frame of the
-      // same pose in place of the interrupted preview.
+      // A loop already in flight when a capture starts would resume from its
+      // await and cancel the export; leave `pending` latched — a >1x
+      // capture's ratio restore raises an invalidation that re-kicks it, a
+      // mid-capture pose change stays latched in scene.needsRender (the
+      // capture tick never clears it), and a 1x capture raises nothing by
+      // design but presents its own full-detail frame of the same pose in
+      // place of the interrupted preview.
       while (
         (surfaceComputePreviewPending || completionDue) &&
         !surfaceCaptureFlight
@@ -3649,7 +3639,7 @@ function main(): void {
                 // resolved rays shade in over the truncated frame this
                 // pass re-runs (the renderer prefills from it), and the
                 // ray tallies feed "Preview · WebGPU N%" + the Skip
-                // button (fr-37c6) through syncSurfaceProgress.
+                // button through syncSurfaceProgress.
                 onProgress: (pixels, done, total) => {
                   if (
                     surfaceComputeRenderer !== renderer ||
@@ -3695,15 +3685,15 @@ function main(): void {
             );
             if (frame.truncated) {
               // A truncated preview that just dropped the rung must be
-              // RE-RUN (fr-khxy round 3): a parked entry has no further
-              // invalidations coming, so without this re-kick the panic
-              // verdict would fire after the session's last preview and
-              // the pane would hold the truncated frame's backdrop until
-              // the full settle lands (measured 45s of black on Firefox's
-              // ~10-20x slower WebGPU where Chrome's preview completes in
-              // 0.4s). At the dropped rung the re-run usually completes
-              // inside the same wall budget and paints real content, which
-              // the settle's prefill then carries.
+              // RE-RUN: a parked entry has no further invalidations coming,
+              // so without this re-kick the panic verdict would fire after
+              // the session's last preview and the pane would hold the
+              // truncated frame's backdrop until the full settle lands
+              // (measured 45s of black on Firefox's ~10-20x slower WebGPU
+              // where Chrome's preview completes in 0.4s). At the dropped
+              // rung the re-run usually completes inside the same wall budget
+              // and paints real content, which the settle's prefill then
+              // carries.
               //
               // No drop means the floor rung (any truncation panics, and
               // panic saturates there), so the ladder has answered as far
@@ -3738,10 +3728,10 @@ function main(): void {
       renderer.cancel();
       const spec = scene.surfaceComputeFrameSpec("full");
       const frame = await renderer.renderFrame(spec, {
-        // fr-vpbq: the settle is the one frame worth supersampling — it is
-        // what a parked view finally shows, and the escape-time objects'
-        // speckle is sub-pixel structure no march budget or viewport
-        // reaches. Pass 0 is the pre-fr-vpbq settle exactly.
+        // The settle is the one frame worth supersampling — it is what a
+        // parked view finally shows, and the escape-time objects' speckle
+        // is sub-pixel structure no march budget or viewport reaches.
+        // Pass 0 is the pre-supersampling settle exactly.
         samples: SURFACE_COMPUTE_SETTLE_SAMPLES,
         // Progressive presents: a full-resolution fold settle is tens of
         // seconds of bounded passes — the image develops on screen
@@ -3783,11 +3773,11 @@ function main(): void {
           frame.width,
           frame.height,
         );
-        // fr-17qu, second cut. The FIRST completed settle of a session is
-        // the honest place to say "there is nothing here", and its own hit
-        // count is the honest evidence: a frame that drew essentially
-        // nothing at the entry pose IS blank, by the renderer's own
-        // arithmetic, so this cannot disagree with what the user is
+        // The empty-set notice, second cut. The FIRST completed settle of a
+        // session is the honest place to say "there is nothing here", and
+        // its own hit count is the honest evidence: a frame that drew
+        // essentially nothing at the entry pose IS blank, by the renderer's
+        // own arithmetic, so this cannot disagree with what the user is
         // looking at.
         //
         // The first cut asked `probeEscapeFill` instead, before rendering,
@@ -3803,14 +3793,14 @@ function main(): void {
         // the bounding ball (see fitToBounds above), so the whole object is
         // in view and zero hits means there is no object.
         //
-        // BOTH ENGINES ANSWER THIS SINCE fr-7k0o. This arm counts ray
-        // STATUSES the kernel already reports; the WebGL strip arm counts
-        // the COVERAGE flag its tracer writes into alpha, in the readback
-        // fr-jf9y's accumulator already pays for (`scene.ts`'s
+        // BOTH ENGINES ANSWER THIS. This arm counts ray STATUSES the
+        // kernel already reports; the WebGL strip arm counts the COVERAGE
+        // flag its tracer writes into alpha, in the readback the strip
+        // arm's supersampling accumulator already pays for (`scene.ts`'s
         // `surfaceCoveredFraction`, fired from tickRender). Same fraction
         // of the same settle frame, and `plane` counts as drawn on both —
         // a fallback session used to render an empty set in silence, which
-        // was fr-17qu's original complaint surviving inside its own fix.
+        // was the notice's original complaint surviving inside its own fix.
         const firstSettle = !surfaceSettled;
         surfaceSettled = true;
         const drawn = frame.counts.hit + frame.counts.plane;
@@ -3838,11 +3828,10 @@ function main(): void {
     }
   }
 
-  // Offline-export force frames (fr-tzdg): trace the full-quality frame on
-  // the compute path's own async clock BEFORE tickRender(force) paints —
-  // the awaitable renderFrame dep — and memoize by view/params so the
-  // step's dwell frames re-present instead of re-tracing an identical
-  // settle per exported frame.
+  // Offline-export force frames: trace the full-quality frame on the compute
+  // path's own async clock BEFORE tickRender(force) paints — the awaitable
+  // renderFrame dep — and memoize by view/params so the step's dwell frames
+  // re-present instead of re-tracing an identical settle per exported frame.
   async function ensureSurfaceComputeForceFrame(): Promise<void> {
     const renderer = surfaceComputeRenderer;
     if (!renderer) return;
@@ -3850,35 +3839,34 @@ function main(): void {
     const key = surfaceComputeForceFrameKey(spec);
     if (key === surfaceComputeForceKey) return;
     renderer.cancel();
-    // Single-sampled on purpose (fr-vpbq): this is the OFFLINE VIDEO path,
-    // and its cost multiplies by the frame count — a clip is hundreds of
-    // these, where the live settle and the Save-PNG are one apiece. Motion
-    // also hides per-frame aliasing that a still cannot. Revisit if the
-    // exporter ever grows a quality tier to hang it on.
+    // Single-sampled on purpose: this is the OFFLINE VIDEO path, and its cost
+    // multiplies by the frame count — a clip is hundreds of these, where the
+    // live settle and the Save-PNG are one apiece. Motion also hides
+    // per-frame aliasing that a still cannot. Revisit if the exporter ever
+    // grows a quality tier to hang it on.
     const frame = await renderer.renderFrame(spec);
     if (!frame || surfaceComputeRenderer !== renderer) return;
     scene.presentSurfaceComputeFrame(frame.pixels, frame.width, frame.height);
     surfaceComputeForceKey = key;
   }
 
-  // Save-PNG while a compute surface session is live: trace at export
-  // size off-canvas — in device-sized bands since fr-biox — then present
-  // + read in one synchronous span (scene.captureSurfaceComputeFrame).
+  // Save-PNG while a compute surface session is live: trace at export size
+  // off-canvas — in device-sized bands — then present + read in one
+  // synchronous span (scene.captureSurfaceComputeFrame).
   function captureSurfaceComputePng(
     renderer: SurfaceComputeRenderer,
     scale: number,
     run: ExportRun,
   ): Promise<ExportImage | null> {
     return scene.captureSurfaceComputeFrame(scale, async (spec, tile) => {
-      // Cancel lands BETWEEN tiles as readily as inside one (fr-biox):
-      // the modal's onCancel supersedes the frame in flight, but the next
-      // tile would open a fresh one — an export that kept tracing after
-      // its own cancellation.
+      // Cancel lands BETWEEN tiles as readily as inside one: the modal's
+      // onCancel supersedes the frame in flight, but the next tile would open
+      // a fresh one — an export that kept tracing after its own cancellation.
       if (run.cancelled) return null;
       renderer.cancel();
       const t0 = performance.now();
       const frame = await renderer.renderFrame(spec, {
-        // The fr-tmgf disclosure hook the live settle already uses,
+        // The engine-disclosure hook the live settle already uses,
         // pointed at the export modal instead of the progress row. The
         // partial pixels are deliberately ignored: the capture presents
         // exactly once, at export pixel ratio, inside
@@ -3893,16 +3881,15 @@ function main(): void {
         // 1-16x the live frame's rays, so halve the live cadence: the
         // modal reads coverage, it doesn't need the live rate.
         progressIntervalMs: SURFACE_COMPUTE_EXPORT_PROGRESS_MS,
-        // Neither seeded by the live pane nor the seed for it (fr-biox).
+        // Neither seeded by the live pane nor the seed for it.
         capture: true,
-        // fr-vpbq: a saved PNG gets the same supersampling the pane it was
-        // saved from does — the aliasing is scale-invariant (measured
-        // exponent -0.21..-0.36 against output resolution, where a sphere's
-        // perimeter law is -0.98), so exporting larger does not fix it and
-        // an unsampled export would be visibly worse than the screen it
-        // came from. The modal's coverage report already spans the passes
-        // (`done`/`total` are the whole job's), and Cancel still lands
-        // between them.
+        // A saved PNG gets the same supersampling the pane it was saved from
+        // does — the aliasing is scale-invariant (measured exponent
+        // -0.21..-0.36 against output resolution, where a sphere's perimeter
+        // law is -0.98), so exporting larger does not fix it and an unsampled
+        // export would be visibly worse than the screen it came from. The
+        // modal's coverage report already spans the passes (`done`/`total`
+        // are the whole job's), and Cancel still lands between them.
         samples: SURFACE_COMPUTE_SETTLE_SAMPLES,
       });
       if (frame) {
@@ -3918,14 +3905,14 @@ function main(): void {
   }
 
   /** What a Save-PNG is about to do, resolved once so the modal and the
-   * capture cannot disagree about which engine is tracing (fr-7mfx). */
+   * capture cannot disagree about which engine is tracing. */
   interface PngExportPlan {
     /** The modal's subtitle: what actually saves, and on which engine. */
     detail: string;
     /** Measured evidence, feeding ONE decision — whether to skip the
      * modal's grace period. Never displayed: the surface predictor
      * over-predicts ~4x off preview evidence, and a wrong "~90s" is the
-     * patience-guessing fr-zx34 reverted. Null = let the grace period
+     * patience-guessing that was reverted. Null = let the grace period
      * decide, which is right whenever the capture yields. */
     predictedMs: number | null;
     /** False states honestly that the work cannot be interrupted, and
@@ -3938,12 +3925,12 @@ function main(): void {
      * instead, so its plan leaves this out. */
     onCancel?: () => void;
     /** Block until the mode's own render IS the picture this plan will
-     * capture (fr-61a2). Resolves null when it is, or a user-presentable
-     * note when it never will be. `savePng` stands `holdsSurfaceTracer`
-     * down for its duration — a surface export that held the tracer here
-     * would be waiting for a first frame it had itself prevented. */
+     * capture. Resolves null when it is, or a user-presentable note when it
+     * never will be. `savePng` stands `holdsSurfaceTracer` down for its
+     * duration — a surface export that held the tracer here would be
+     * waiting for a first frame it had itself prevented. */
     awaitReady?: (run: ExportRun) => Promise<string | null>;
-    /** The export modal's second action (fr-2fbs), present only for a wait
+    /** The export modal's second action, present only for a wait
      * with a partial to hand over — see export-wait.ts's
      * `renderExportOffersEarlySave`. `taken()` is read back AFTER the
      * capture: it answers what actually happened rather than what was
@@ -3957,15 +3944,14 @@ function main(): void {
     capture: (run: ExportRun) => Promise<ExportImage | null>;
   }
 
-  // The wait policy itself — the readiness rule (flame waits for its
-  // BUDGET, solid/surface for a first frame), the fr-2fbs early-save
-  // affordance with its restart-gap latch, and the ties-go-to-budget
-  // awaitReady loop — is `export-wait.ts` (fr-vja8.67), extracted on the
-  // export-progress.ts precedent so those order-sensitive rules are
-  // unit-tested instead of resting on the browser gate alone. This wiring
-  // contributes exactly the live signals the module cannot own; every dep
-  // is read at wait time, never captured here, so this sits safely above
-  // the surfaceSession const it names.
+  // The wait policy itself — the readiness rule (flame waits for its BUDGET,
+  // solid/surface for a first frame), the early-save affordance with its
+  // restart-gap latch, and the ties-go-to-budget awaitReady loop — is
+  // `export-wait.ts`, extracted on the export-progress.ts precedent so those
+  // order-sensitive rules are unit-tested instead of resting on the browser
+  // gate alone. This wiring contributes exactly the live signals the module
+  // cannot own; every dep is read at wait time, never captured here, so this
+  // sits safely above the surfaceSession const it names.
   const exportWait = createExportWait({
     flameComplete: () => renderComplete.flame,
     flameCoverage: () => renderCoverage.flame,
@@ -3982,7 +3968,7 @@ function main(): void {
 
   /**
    * Pick the capture arm for the current mode. The arm is the MODE's, full
-   * stop (fr-61a2): a render that has not produced its picture yet is waited
+   * stop: a render that has not produced its picture yet is waited
    * for through `awaitReady`, never silently swapped for the explorer's. The
    * explorer arm is reached by being in points mode, and by nothing else.
    */
@@ -3993,8 +3979,8 @@ function main(): void {
       // WHICH tracer owns the session is settled at the same instant as its
       // first frame — the compute gate's resolution marks both — so before
       // then there is no engine to name, and the detail line says only the
-      // size rather than guessing one (fr-tmgf's rule: a label must not
-      // assert an engine).
+      // size rather than guessing one (the disclosure rule: a label must
+      // not assert an engine).
       const engine = !surfaceSession.hasFirstFrame
         ? ""
         : surfaceComputeRenderer
@@ -4003,7 +3989,7 @@ function main(): void {
       return {
         detail: `${dims}${engine}`,
         // Used for ONE thing: whether the modal skips its grace period and
-        // shows at once. Nothing is refused on it (fr-avf6). Bounded compute
+        // shows at once. Nothing is refused on it. Bounded compute
         // passes yield by construction, so for those the grace period alone
         // decides — a cheap frame never flashes a modal and an expensive one
         // shows without having to be predicted; the WebGL drain has a
@@ -4039,15 +4025,14 @@ function main(): void {
       const size = scene.exportSize(scale);
       return {
         detail: `${String(size.width)} × ${String(size.height)}`,
-        // One synchronous raymarch at export scale: it can report no
-        // coverage mid-draw, so this decides the ONE thing left — whether
-        // the modal skips its grace period. Since fr-2q01 that decision is
-        // MEASURED: the previous export's own ms/px at this volume, pose
-        // and threshold, times this export's pixels. `scale > 1` alone had
-        // opened a modal on a 320×240 scale-2 export that finished in
-        // 274ms, flashing it for ~270ms — precisely the noise the grace
-        // period exists to absorb — while being right about the 1920×1080
-        // case it was written for.
+        // One synchronous raymarch at export scale: it can report no coverage
+        // mid-draw, so this decides the ONE thing left — whether the modal
+        // skips its grace period. That decision is MEASURED: the previous
+        // export's own ms/px at this volume, pose and threshold, times this
+        // export's pixels. `scale > 1` alone had opened a modal on a 320×240
+        // scale-2 export that finished in 274ms, flashing it for ~270ms —
+        // precisely the noise the grace period exists to absorb — while being
+        // right about the 1920×1080 case it was written for.
         //
         // The fallback is TODAY'S HEURISTIC verbatim rather than a
         // pessimistic class prior, and deliberately: a solid march has no
@@ -4063,13 +4048,12 @@ function main(): void {
         predictedMs:
           scene.predictSolidCaptureMs(scale) ??
           (scale > 1 ? EXPORT_MODAL_SLOW_PREDICTION_MS + 1 : null),
-        // Cancellable for the WAIT, not the raymarch (fr-61a2). This arm
-        // read `false` while it could only ever BE that one uninterruptible
-        // submission, and hiding a dead button was right. Now the long pole
-        // is a fresh session's voxel grid, which a Cancel genuinely ends —
-        // and a Cancel landing in the raymarch that follows still has an
-        // effect, since the finished frame is then discarded rather than
-        // downloaded.
+        // Cancellable for the WAIT, not the raymarch. This arm read `false`
+        // while it could only ever BE that one uninterruptible submission,
+        // and hiding a dead button was right. Now the long pole is a fresh
+        // session's voxel grid, which a Cancel genuinely ends — and a Cancel
+        // landing in the raymarch that follows still has an effect, since the
+        // finished frame is then discarded rather than downloaded.
         cancellable: true,
         holdsSurfaceTracer: false,
         ...exportWait.planRenderWait("solid"),
@@ -4077,12 +4061,12 @@ function main(): void {
       };
     }
     if (state.renderMode === "flame") {
-      // A flame session ACCUMULATES at the export size (fr-2urv), so the
-      // capture is a 2D composite of the canvas the worker has been filling
-      // plus the PNG encode — nothing is rendered here. What this arm waits
-      // for instead is that accumulation meeting its budget; see
-      // export-wait.ts's renderExportReady for why a mid-accumulation frame
-      // is the wrong picture rather than merely an early one.
+      // A flame session ACCUMULATES at the export size, so the capture is a
+      // 2D composite of the canvas the worker has been filling plus the PNG
+      // encode — nothing is rendered here. What this arm waits for instead is
+      // that accumulation meeting its budget; see export-wait.ts's
+      // renderExportReady for why a mid-accumulation frame is the wrong
+      // picture rather than merely an early one.
       const size = flameRenderDims ?? scene.flameRenderSize(state.exportScale);
       return {
         detail: `${String(size.width)} × ${String(size.height)}`,
@@ -4093,7 +4077,7 @@ function main(): void {
         predictedMs: null,
         cancellable: true,
         holdsSurfaceTracer: false,
-        // The one wait that offers the early save (fr-2fbs): this canvas is
+        // The one wait that offers the early save: this canvas is
         // already the export, at the export size, so stopping the wait
         // delivers what is on screen at the resolution asked for — and the
         // budget it is waiting out scales with the export AREA, so 4x is
@@ -4114,9 +4098,9 @@ function main(): void {
   }
 
   /** Hand a captured still to the browser as a timestamped download.
-   * `rough` says the user cut a render's wait short (fr-2fbs) and this file
-   * is the unfinished picture they asked for — the toast is the only record
-   * of that once the modal is gone, and a file that looks noisier than the
+   * `rough` says the user cut a render's wait short and this file is the
+   * unfinished picture they asked for — the toast is the only record of
+   * that once the modal is gone, and a file that looks noisier than the
    * screen it came from should not have to be explained by memory. */
   function deliverPng(image: ExportImage | null, rough = false): void {
     if (!image) {
@@ -4133,11 +4117,11 @@ function main(): void {
   }
 
   /**
-   * Capture a still behind the export modal (fr-7mfx): the modal discloses
-   * measured coverage, Cancel stops the work, and nothing else decides
-   * when an export has gone on long enough (fr-avf6 — the surface arms
-   * carry no cost ceiling, so there is no refusal to escalate past and no
-   * consented retry to disclose).
+   * Capture a still behind the export modal: the modal discloses measured
+   * coverage, Cancel stops the work, and nothing else decides when an
+   * export has gone on long enough — the surface arms carry no cost
+   * ceiling, so there is no refusal to escalate past and no consented retry
+   * to disclose.
    */
   async function savePng(scale: number): Promise<void> {
     const plan = planPngExport(scale);
@@ -4146,15 +4130,15 @@ function main(): void {
       detail: plan.detail,
       predictedMs: plan.predictedMs,
       cancellable: plan.cancellable,
-      // Absent on every arm but flame's (fr-2fbs), which is what keeps the
-      // modal a one-button dialog everywhere else.
+      // Absent on every arm but flame's, which is what keeps the modal a
+      // one-button dialog everywhere else.
       deliverEarly: plan.deliverEarly,
       onCancel: () => {
         plan.onCancel?.();
-        // Wake a wait parked in export-wait.ts's awaitRenderExportable
-        // (fr-61a2): its only other wake-ups are the render's own signals,
-        // and a solid grid or a flame chunk can be seconds away — a Cancel
-        // must not have to wait one out before it takes effect.
+        // Wake a wait parked in export-wait.ts's awaitRenderExportable — its
+        // only other wake-ups are the render's own signals, and a solid grid
+        // or a flame chunk can be seconds away — a Cancel must not have to
+        // wait one out before it takes effect.
         notifyRenderSignal();
       },
     });
@@ -4167,12 +4151,12 @@ function main(): void {
       // paint after the render it exists to disclose.
       await nextPaint();
       // Wait for the mode's own render to BE the picture this export will
-      // save (fr-61a2), with the surface-tracer claim STOOD DOWN for the
+      // save, with the surface-tracer claim STOOD DOWN for the
       // duration: a surface session's first frame arrives on the very tick
       // that claim tells to stand aside, so holding it across the wait would
       // be waiting for a frame we had just prevented. Nothing but a
       // microtask passes here when the render is already exportable, which
-      // is every export that could reach this code before fr-61a2.
+      // is every export that could reach this code before the wait existed.
       if (plan.awaitReady) {
         surfaceCaptureFlight = false;
         const blocked = await plan.awaitReady(run);
@@ -4200,11 +4184,11 @@ function main(): void {
         ui.flashToast("Export cancelled");
         return;
       }
-      // No surface arm refuses on cost any more (fr-avf6), so anything
-      // reaching here is a genuine failure. A SurfaceCaptureCostError
-      // still carries a user-presentable message — only the synchronous
-      // drain raises one now, which this path cannot reach, but honouring
-      // the message costs nothing and beats swallowing it.
+      // No surface arm refuses on cost any more, so anything reaching here is
+      // a genuine failure. A SurfaceCaptureCostError still carries a
+      // user-presentable message — only the synchronous drain raises one now,
+      // which this path cannot reach, but honouring the message costs nothing
+      // and beats swallowing it.
       ui.flashToast(
         err instanceof SurfaceCaptureCostError
           ? err.message
@@ -4261,12 +4245,12 @@ function main(): void {
       if (surfacePreviewsEnabled) {
         kickSurfaceComputePreview();
       } else {
-        // Previews off (fr-37c6): the pane freezes on its last presented
-        // frame while the view moves. Cancel the in-flight settle
-        // directly — the preview loop's supersede cancel() is the one
-        // that normally does this — so a stale-pose settle stops burning
-        // GPU and stops presenting over the frozen frame; the tier
-        // clock re-arms the full render once the view parks.
+        // Previews off: the pane freezes on its last presented frame while
+        // the view moves. Cancel the in-flight settle directly — the preview
+        // loop's supersede cancel() is the one that normally does this — so a
+        // stale-pose settle stops burning GPU and stops presenting over the
+        // frozen frame; the tier clock re-arms the full render once the view
+        // parks.
         surfaceComputeRenderer?.cancel();
       }
     } else if (tier === "full") {
@@ -4287,13 +4271,12 @@ function main(): void {
 
   /**
    * Abandon the in-flight preview and start the full-detail render of the
-   * current view NOW (fr-37c6) — the one-shot escape from a grinding
-   * preview (the progress row's Skip button), and the immediate effect of
-   * flipping the Quick previews pref off mid-grind. One-shot by
-   * construction: nothing here touches the pref, so the next invalidation
-   * previews as usual. No-op outside a live surface session or when no
-   * preview is actually in flight (skipping a running settle would only
-   * restart it).
+   * current view NOW — the one-shot escape from a grinding preview (the
+   * progress row's Skip button), and the immediate effect of flipping the
+   * Quick previews pref off mid-grind. One-shot by construction: nothing
+   * here touches the pref, so the next invalidation previews as usual.
+   * No-op outside a live surface session or when no preview is actually in
+   * flight (skipping a running settle would only restart it).
    */
   function skipSurfacePreviewNow(): void {
     if (state.renderMode !== "surface" || !surfaceSession.hasFirstFrame) {
@@ -4306,9 +4289,9 @@ function main(): void {
       // Latest-wins in reverse: drop the pending latch so the loop drains,
       // cancel the frame it is awaiting, and arm the settle — which
       // surfaceComputeTick fires the moment the flight clears. A budgeted
-      // frame is seconds at most, but the completion pass (fr-ud7n) is
-      // exactly as unbounded as a WebGL preview job — this is the arm the
-      // Skip button drives there, not just the pref flip.
+      // frame is seconds at most, but the completion pass is exactly as
+      // unbounded as a WebGL preview job — this is the arm the Skip button
+      // drives there, not just the pref flip.
       surfaceComputePreviewPending = false;
       surfaceComputeRenderer.cancel();
       surfaceSettlePending = true;
@@ -4325,17 +4308,16 @@ function main(): void {
 
   const surfaceSession = new RenderSession<never>({
     start: () => {
-      // Set when this session routes to the WebGPU compute path (fr-tzdg;
-      // fr-dlxh widened it to the escape kind, then — the 4D cut — to
-      // ifs4, and fr-tdin to the bulb) — the gate below then awaits
+      // Set when this session routes to the WebGPU compute path — fold 3D,
+      // escape, ifs4 and bulb kinds alike — the gate below then awaits
       // device + pipeline instead of the GLSL link.
       let computeTarget: SurfaceComputeTarget | null = null;
-      // Recomputed by the routing below (fr-tmgf); only the plain-affine
-      // 3D branch keeps null unconditionally — WebGL is its natural
-      // engine, nothing to explain.
+      // Recomputed by the routing below; only the plain-affine 3D branch
+      // keeps null unconditionally — WebGL is its natural engine, nothing to
+      // explain.
       surfaceWebglDetailToken = null;
-      // A grid the PREVIOUS session parked behind a capture (fr-p0mr) must
-      // not greet this one either (fr-vja8.11): a surface→surface restart
+      // A grid the PREVIOUS session parked behind a capture must not greet
+      // this one either: a surface→surface restart
       // (restartSurfaceRender — the balloon toggle's path) re-enters
       // without ever running deactivate, so its boundary clear can't
       // cover this door.
@@ -4348,20 +4330,18 @@ function main(): void {
             state.symmetry,
           )
         ) {
-          // A 4D system: the w = sliceCenter cross-section (or fr-wa6o
-          // slab) of the rotor-posed attractor. Rotor + slice are LIVE
-          // per frame (tickRender pushes them every tick): unlike
-          // flame/solid-4D's frozen pose snapshot — frozen there because
-          // a pose change invalidates their whole accumulation — the
-          // surface recomputes every pixel every frame, so the 4D pose
-          // stays exactly as live as the camera. The document's
-          // kaleidoscope rides into the DE (fr-u91x): the 4D descent
-          // sweeps its sectors — w-planes and twists included — so the
-          // surfaced set is the plotted set. Since fr-dlxh's 4D cut the
-          // 4D kind PREFERS the compute renderer (the affine4 kernel
-          // core; rotor/slice ride every frame spec); the fragment
-          // tracer (fr-vxoj) is the fallback arm (?surfacegl / no
-          // adapter / device loss).
+          // A 4D system: the w = sliceCenter cross-section (or slab) of the
+          // rotor-posed attractor. Rotor + slice are LIVE per frame
+          // (tickRender pushes them every tick): unlike flame/solid-4D's
+          // frozen pose snapshot — frozen there because a pose change
+          // invalidates their whole accumulation — the surface recomputes
+          // every pixel every frame, so the 4D pose stays exactly as live as
+          // the camera. The document's kaleidoscope rides into the DE: the 4D
+          // descent sweeps its sectors — w-planes and twists included — so
+          // the surfaced set is the plotted set. The 4D kind PREFERS the
+          // compute renderer (the affine4 kernel core; rotor/slice ride every
+          // frame spec); the fragment tracer is the fallback arm (?surfacegl
+          // / no adapter / device loss).
           surfaceSessionIs4D = true;
           if (
             analyzeSurfaceSystem4(
@@ -4369,21 +4349,21 @@ function main(): void {
               state.finalTransform ?? null,
             ).status === "ineligible"
           ) {
-            // fr-vag4: the 4D IFS gate refused, so the FORWARD-ORBIT
-            // complement one dimension up — `analyzeEscapeSystem4`'s
-            // chain of non-contracting folds and quaternion squares. The
-            // 3D branch below reads the two gates in exactly this order
-            // for exactly this reason; there is no 4D Mandelbulb arm
-            // beside it, because a triplex power has no fourth component
-            // (bulb-de.ts's model refusal, which the 4D escape gate
-            // inherits by refusing a bulb LINK).
+            // The 4D IFS gate refused, so the FORWARD-ORBIT complement one
+            // dimension up — `analyzeEscapeSystem4`'s chain of
+            // non-contracting folds and quaternion squares. The 3D branch
+            // below reads the two gates in exactly this order for exactly
+            // this reason; there is no 4D Mandelbulb arm beside it, because a
+            // triplex power has no fourth component (bulb-de.ts's model
+            // refusal, which the 4D escape gate inherits by refusing a bulb
+            // LINK).
             //
             // COMPUTE-ONLY, and by the shipped precedent rather than a
-            // shortcut: the fragment 4D tracer carries no fold GLSL
-            // (fr-rsp6), and an escape chain is fold-shaped by nature —
-            // so, exactly like a fold-shaped 4D session, entry is refused
-            // when compute is unavailable rather than handed to a tracer
-            // that cannot render it.
+            // shortcut: the fragment 4D tracer carries no fold GLSL and an
+            // escape chain is fold-shaped by nature — so, exactly like a
+            // fold-shaped 4D session, entry is refused when compute is
+            // unavailable rather than handed to a tracer that cannot render
+            // it.
             const de = buildEscapeDE4(
               state.transforms,
               state.finalTransform ?? null,
@@ -4451,21 +4431,21 @@ function main(): void {
               state.finalTransform ?? null,
               state.symmetry,
             );
-            // fr-5wlv.6 / fr-qxxw: an IFS-shaped 4D session — the balloon's
-            // live shape one dimension up, so its rows stay reachable.
+            // An IFS-shaped 4D session — the balloon's live shape one
+            // dimension up, so its rows stay reachable.
             ui.setSurfaceSessionKind("ifs");
-            // The fr-wa6o thickness slider is live only where the slab is
-            // SOUND (fr-rsp6): spherefold/mandelbox branches take segments
-            // to arcs, so those sessions clamp sliceHalfW to 0 at every
-            // view push below (the packer's own guard would throw) and the
-            // panel hides the thickness row.
+            // The slice-thickness slider is live only where the slab is
+            // SOUND: spherefold/mandelbox branches take segments to arcs, so
+            // those sessions clamp sliceHalfW to 0 at every view push below
+            // (the packer's own guard would throw) and the panel hides the
+            // thickness row.
             surface4SlabExact = slabExact4(de);
             ui.setFourDSlabAvailable(surface4SlabExact);
-            // Routing by MEASURED verdict: PLAIN 4D prefers compute,
-            // EVERY 4D SESSION PREFERS COMPUTE, kaleidoscope included since
-            // fr-fniy. The fragment 4D tracer is the fallback arm
-            // (`?surfacegl` / no adapter / device loss), which is the 3D
-            // fold/escape arrangement one dimension up.
+            // Routing by MEASURED verdict: PLAIN 4D prefers compute, EVERY 4D
+            // SESSION PREFERS COMPUTE, kaleidoscope included. The fragment 4D
+            // tracer is the fallback arm (`?surfacegl` / no adapter / device
+            // loss), which is the 3D fold/escape arrangement one dimension
+            // up.
             //
             // MEASURED 2026-08-17 on real Iris Xe (TGL GT2) through
             // ANGLE/Mesa, 1024x640, identity rotor, centred slice,
@@ -4484,8 +4464,8 @@ function main(): void {
             // nominally identical conditions, because the strip pump's cost
             // evidence starts class-pessimistic and ratchets off the job's
             // own measurements, so an expensive scene's total is
-            // path-dependent), so the rule stood on a null result. fr-fniy
-            // then found the compute arm's hit-shade sizer asking for a
+            // path-dependent), so the rule stood on a null result. A
+            // later pass found the compute arm's hit-shade sizer asking for a
             // batch width that was its own cost model's attribution pivot
             // rather than anything about the scene, and fixing that took the
             // compute row to 53.1s. That is 2.8x faster than the FASTEST run
@@ -4500,17 +4480,17 @@ function main(): void {
             // `scripts/surface-4d.verify.mjs` step (e) holds them to an
             // object-mask IoU on BOTH scenes.
             //
-            // FOLD-shaped 4D systems (fr-rsp6) remain compute-ONLY rather
-            // than compute-PREFERRING: the fragment 4D tracer carries no
-            // fold GLSL (deliberately — the 3D fold GLSL already sits at
-            // Mesa's link cliff, and a 243-branch 4D body there would be
-            // unshippable), so there is no fragment arm to fall back to.
-            // That is the one thing `foldShaped4` still decides here. At
-            // order > 1 the DE's own superlinear order cost (fr-b72d:
-            // x13.5 per query at order 6 on the CPU oracle, matched on the
-            // GPU, and paid identically by BOTH arms) is disclosed by the
-            // honest progress row, never a refusal — which is why the
-            // kaleido4 row is still tens of seconds after a 12x.
+            // FOLD-shaped 4D systems remain compute-ONLY rather than
+            // compute-PREFERRING: the fragment 4D tracer carries no fold GLSL
+            // (deliberately — the 3D fold GLSL already sits at Mesa's link
+            // cliff, and a 243-branch 4D body there would be unshippable), so
+            // there is no fragment arm to fall back to. That is the one thing
+            // `foldShaped4` still decides here. At order > 1 the DE's own
+            // superlinear order cost (x13.5 per query at order 6 on the CPU
+            // oracle, matched on the GPU, and paid identically by BOTH arms)
+            // is disclosed by the honest progress row, never a refusal —
+            // which is why the kaleido4 row is still tens of seconds after a
+            // 12x.
             //
             // `?surfacegl` is the escape hatch that keeps this
             // re-measurable: rerun the two commands before changing this
@@ -4518,11 +4498,11 @@ function main(): void {
             const foldShaped4 = deHasFolds4(de) || de.foldFinal !== null;
             if (surfaceComputeAvailable()) {
               // No GLSL system upload — the enter twin owns the session
-              // resets, and the live view flows through setSurface4View
-              // into the scene state every frame spec re-reads.
-              // fr-qxxw/fr-h0c3: the balloon and the floor lift with the
-              // session, and their precedence is the 3D compute arm's —
-              // the two never compile together, and the balloon wins.
+              // resets, and the live view flows through setSurface4View into
+              // the scene state every frame spec re-reads. The balloon and
+              // the floor lift with the session, and their precedence is the
+              // 3D compute arm's — the two never compile together, and the
+              // balloon wins.
               const groundPlane4 = state.groundPlane && !state.balloonEcho;
               computeTarget = {
                 kind: "ifs4",
@@ -4550,11 +4530,10 @@ function main(): void {
               );
               queueMicrotask(() => surfaceSession.exit());
             } else {
-              // fr-tmgf: the WebGL session says why compute passed. Every
-              // 4D system is compute-shaped since fr-fniy, so this arm is
-              // always an explanation owed — except for the deliberate
-              // `?surfacegl` flag, which `surfaceWebglDetail` returns null
-              // for on its own.
+              // The WebGL session says why compute passed. Every 4D system is
+              // compute-shaped, so this arm is always an explanation owed —
+              // except for the deliberate `?surfacegl` flag, which
+              // `surfaceWebglDetail` returns null for on its own.
               surfaceWebglDetailToken = surfaceWebglDetail({
                 computeShaped: true,
                 supported: SurfaceComputeRenderer.supported(),
@@ -4581,24 +4560,23 @@ function main(): void {
             .status === "ineligible"
         ) {
           // The IFS gate refused — so one of the two FORWARD-ORBIT
-          // complements (fr-kltj's escape-time folds, fr-tdin's
-          // Mandelbulb). Neither map has an attractor to descend onto;
-          // each has an escape-time set whose boundary Surface marches by
-          // iterating the map FORWARD from every query, and that is what
-          // the mode renders for them. Both kinds PREFER the compute
-          // renderer like every fold-shaped session (the kernels'
-          // forward-orbit cores, fr-dlxh and fr-7u8t.9); the
-          // SURFACE_ESCAPE/SURFACE_BULB GLSL variants are the fallback
-          // arms (?surfacegl / no adapter / device loss). No grid for
-          // either — the empty-space chain's validity argument is
-          // IFS-specific. The order of the two tests below MATTERS only
-          // in the sense that the gates are disjoint by construction
-          // (a pure fold is not a pure triplex power), so it reads as
-          // the eligibility function's own order and nothing more.
+          // complements (the escape-time folds, or the Mandelbulb). Neither
+          // map has an attractor to descend onto; each has an escape-time
+          // set whose boundary Surface marches by iterating the map FORWARD
+          // from every query, and that is what the mode renders for them.
+          // Both kinds PREFER the compute renderer like every fold-shaped
+          // session (the kernels' forward-orbit cores); the
+          // SURFACE_ESCAPE/SURFACE_BULB GLSL variants are the fallback arms
+          // (?surfacegl / no adapter / device loss). No grid for either —
+          // the empty-space chain's validity argument is IFS-specific. The
+          // order of the two tests below MATTERS only in the sense that the
+          // gates are disjoint by construction (a pure fold is not a pure
+          // triplex power), so it reads as the eligibility function's own
+          // order and nothing more.
           surfaceSessionIs4D = false;
-          // fr-tmgf: both shapes are compute-shaped — compute is their
-          // home, so a WebGL session says why it passed (null for the
-          // deliberate ?surfacegl flag).
+          // Both shapes are compute-shaped — compute is their home, so a
+          // WebGL session says why it passed (null for the deliberate
+          // ?surfacegl flag).
           const forwardWebglDetail = (): void => {
             surfaceWebglDetailToken = surfaceWebglDetail({
               computeShaped: true,
@@ -4606,18 +4584,17 @@ function main(): void {
               block: surfaceComputeBlock,
             });
           };
-          // Neither forward session ever takes the balloon (fr-5wlv.4 and
-          // fr-tdin, both measured: a filled solid's interior reaches the
-          // ball center, so its echo swallows the camera — scene.ts nulls
-          // the ball and renders plain), so their compute preference
-          // stands regardless of the shared toggle, and the panel hides
-          // the rows outright rather than leaving them visible-but-inert
-          // (fr-5wlv.6, ui.setSurfaceSessionKind).
+          // Neither forward session ever takes the balloon (measured for
+          // the folds and for the bulb alike: a filled solid's interior
+          // reaches the ball center, so its echo swallows the camera —
+          // scene.ts nulls the ball and renders plain), so their compute
+          // preference stands regardless of the shared toggle, and the
+          // panel hides the rows outright rather than leaving them
+          // visible-but-inert (ui.setSurfaceSessionKind).
           //
-          // The GROUND PLANE (fr-rhn5) survives where the balloon
-          // degenerates, for both — and since neither balloons there is
-          // no precedence to resolve here, unlike the IFS compute arm
-          // below.
+          // The GROUND PLANE survives where the balloon degenerates, for
+          // both — and since neither balloons there is no precedence to
+          // resolve here, unlike the IFS compute arm below.
           let R: number;
           if (
             analyzeEscapeSystem(
@@ -4633,27 +4610,27 @@ function main(): void {
               state.symmetry,
             );
             R = de.boundingRadius;
-            // fr-17qu: the gate admits shapes whose non-escaping set is
-            // EMPTY, and this mode then draws a background gradient with a
-            // live progress row and nothing anywhere saying why — the
-            // silent-failure class fr-096u's blanked lens settles belong
-            // to. A chain whose composite expands too hard escapes on its
-            // first pass everywhere: `mbox2 pre-scale 4`, `boxfold6 x3`,
-            // and a lone spherefold at any weight (fr-kkb9's shape, which
-            // this covers too). Armed here, where the chain length is
-            // known; FIRED by the settle, on the evidence below.
+            // The gate admits shapes whose non-escaping set is EMPTY, and
+            // this mode then draws a background gradient with a live
+            // progress row and nothing anywhere saying why — the same
+            // silent-failure class as a blanked lens settle. A chain whose
+            // composite expands too hard escapes on its first pass
+            // everywhere: `mbox2 pre-scale 4`, `boxfold6 x3`, and a lone
+            // spherefold at any weight (which this covers too). Armed here,
+            // where the chain length is known; FIRED by the settle, on the
+            // evidence below.
             surfaceBlankNotice = () => {
               ui.flashToast(
                 de.links.length > 1
-                  ? // fr-j231 widened the chain to POWER links and the
-                    // wording with it ("weight or scale", not "fold
-                    // weight"): a triplex power carries no fold weight,
-                    // and its SCALE is the knob that matters. Deliberately
-                    // no cross-family special case beyond that — the
-                    // closed-form stiffness bound that would have named
-                    // the offending link fires across a whole range that
-                    // measurably renders (escape-de.ts's POWER LINKS
-                    // paragraph), which is fr-17qu's own second-cut lesson.
+                  ? // The chain admits POWER links, and the wording
+                    // follows ("weight or scale", not "fold weight"): a
+                    // triplex power carries no fold weight, and its SCALE is
+                    // the knob that matters. Deliberately no cross-family
+                    // special case beyond that — the closed-form stiffness
+                    // bound that would have named the offending link fires
+                    // across a whole range that measurably renders
+                    // (escape-de.ts's POWER LINKS paragraph), which is the
+                    // blank notice's own second-cut lesson.
                     "This chain rendered almost nothing — fewer than one ray in a thousand hit it. Its escape-time set may be empty or too thin to see; try a smaller weight or scale on one of the links."
                   : "This fold rendered almost nothing — fewer than one ray in a thousand hit it. Its escape-time set may be empty or too thin to see; try a smaller fold weight or scale.",
               );
@@ -4673,7 +4650,7 @@ function main(): void {
               scene.setEscapeSystem(de, escapeSlotColor());
             }
           } else {
-            // The Mandelbulb (fr-tdin) — the escape arm one formula over.
+            // The Mandelbulb — the escape arm one formula over.
             // buildBulbDE throws on a system analyzeBulbSystem refuses,
             // which the eligibility gate has already excluded; the outer
             // catch is the backstop either way.
@@ -4714,8 +4691,8 @@ function main(): void {
           // to frame the bailout ball instead; the user dives back in
           // from a view that shows the object. (Exactly as true of the
           // Mandelbulb, whose chaos-game cloud is the same debris and
-          // whose solid likewise contains the origin — fr-tdin measured
-          // 100% of a 0.1R neighbourhood of the centre interior.)
+          // whose solid likewise contains the origin — measured 100% of a
+          // 0.1R neighbourhood of the centre interior.)
           cameraTween.fitToBounds(
             {
               minX: -R,
@@ -4731,9 +4708,8 @@ function main(): void {
           );
         } else {
           surfaceSessionIs4D = false;
-          // fr-5wlv.6: an ordinary IFS session — the balloon's live shape,
-          // so its controls stay reachable (subject to the 4D/off gates
-          // elsewhere).
+          // An ordinary IFS session — the balloon's live shape, so its
+          // controls stay reachable (subject to the 4D/off gates elsewhere).
           ui.setSurfaceSessionKind("ifs");
           const de = buildSurfaceDE(
             state.transforms,
@@ -4741,33 +4717,31 @@ function main(): void {
             state.symmetry,
           );
           if (surfaceComputeEligible(de)) {
-            // The WebGPU compute path (fr-tzdg): no GLSL system upload —
-            // the fold variant must never compile here (its ~25s Mesa
-            // link / fr-096u entry hazards are what this path removes) —
-            // and no grid request: the kernel marches gridless by
-            // decision (49µs/ray was measured without it; the fallback
-            // re-enter requests one when it routes the WebGL branch).
-            // Balloon sessions PREFER compute again since fr-5wlv.5 (the
-            // kernels carry the inverted-union wrapper; the GLSL arm
-            // remains the ?surfacegl/no-adapter fallback): the flag on
-            // the target compiles the wrapper, and the scene stores the
-            // same value at enterSurfaceComputeSession so every frame
-            // spec attaches the live balloon block — state.balloonEcho
-            // is the one source both reads come from, at the same
-            // moment. fr-8yad's balloon grid rule therefore has NOTHING
-            // to gate on this route: no core in surface-de-gpu.ts reads a
-            // grid in either dimension, so a compute balloon session is
-            // gridless for the reason every compute session is, not for
-            // fr-5wlv.3's. The rule reaches these systems only through
-            // the fallback re-enter below (?surfacegl / no adapter /
-            // device loss).
+            // The WebGPU compute path: no GLSL system upload — the fold
+            // variant must never compile here (its ~25s Mesa link and the
+            // kernel-confirmed i915 preemption hang at entry are what this
+            // path removes) — and no grid request: the kernel marches
+            // gridless by decision (49µs/ray was measured without it; the
+            // fallback re-enter requests one when it routes the WebGL
+            // branch). Balloon sessions PREFER compute (the kernels carry
+            // the inverted-union wrapper; the GLSL arm remains the
+            // ?surfacegl/no-adapter fallback): the flag on the target
+            // compiles the wrapper, and the scene stores the same value at
+            // enterSurfaceComputeSession so every frame spec attaches the
+            // live balloon block — state.balloonEcho is the one source both
+            // reads come from, at the same moment. The balloon's
+            // grid-validity rule therefore has NOTHING to gate on this
+            // route: no core in surface-de-gpu.ts reads a grid in either
+            // dimension, so a compute balloon session is gridless for the
+            // reason every compute session is, not for the balloon's. The
+            // rule reaches these systems only through the fallback re-enter
+            // below (?surfacegl / no adapter / device loss).
             //
-            // The ground plane (fr-rhn5) yields to an active balloon: the
-            // two never compile together (surface-de-gpu.ts's
-            // groundPlane+balloon codegen throw), so this is the one
-            // place both reads resolve down to a single flag, at the same
-            // moment — fed to both the compute target and the scene's
-            // stored intent below.
+            // The ground plane yields to an active balloon: the two never
+            // compile together (surface-de-gpu.ts's groundPlane+balloon
+            // codegen throw), so this is the one place both reads resolve
+            // down to a single flag, at the same moment — fed to both the
+            // compute target and the scene's stored intent below.
             const groundPlane = state.groundPlane && !state.balloonEcho;
             computeTarget = {
               kind: "ifs",
@@ -4781,9 +4755,9 @@ function main(): void {
               groundPlane,
             );
           } else {
-            // fr-tmgf: this session runs the WebGL tracer — the progress
-            // row says why compute passed, when it did (null for affine
-            // systems and the ?surfacegl flag: deliberate choices).
+            // This session runs the WebGL tracer — the progress row says why
+            // compute passed, when it did (null for affine systems and the
+            // ?surfacegl flag: deliberate choices).
             surfaceWebglDetailToken = surfaceWebglDetail({
               computeShaped: deHasFolds(de) || de.foldFinal !== null,
               supported: SurfaceComputeRenderer.supported(),
@@ -4794,28 +4768,26 @@ function main(): void {
               surfaceSlotColors(state.transforms, de.maps),
               surfaceTrapIndices(state.transforms, de.maps),
             );
-            // Kick the empty-space grid build (fr-55r5 part 2). Async and
-            // optional: the session renders gridless until it lands, and a
-            // superseding session boundary drops it by id.
+            // Kick the empty-space grid build. Async and optional: the
+            // session renders gridless until it lands, and a superseding
+            // session boundary drops it by id.
             //
-            // In balloon mode it is CONDITIONAL (fr-8yad, re-opening
-            // fr-5wlv.3's blanket refusal): the grid's floors bound the
-            // FRACTAL alone, not the union, and the shell can be nearer
-            // than any floor admits — but exactly while the shell CLEARS
-            // the grid box those floors are valid again, which the rest
-            // state satisfies on every measured system and both inflation
-            // regimes fail. This is the REQUEST half of that decision and
-            // it is asked ONCE, at the entry radius: a built grid stays
-            // valid at every radius the predicate admits, so a radius
-            // sweep re-answers only the per-frame enable
-            // (scene.setSurfaceBalloonRadius -> the uGridEnabled write),
-            // never this. `surfaceGridSpec`'s halfExtent is
-            // resolution-independent (visibleBoundingRadius * 1.03), so a
-            // worker downshift cannot move the predicate under the
-            // decision made here. The cancel keeps the session-boundary
-            // invariant (re-stamp or cancel the outstanding id) so an
-            // earlier enter's in-flight build can't land in a session
-            // that refused one.
+            // In balloon mode it is CONDITIONAL (re-opening the balloon's
+            // earlier blanket refusal): the grid's floors bound the FRACTAL
+            // alone, not the union, and the shell can be nearer than any
+            // floor admits — but exactly while the shell CLEARS the grid box
+            // those floors are valid again, which the rest state satisfies on
+            // every measured system and both inflation regimes fail. This is
+            // the REQUEST half of that decision and it is asked ONCE, at the
+            // entry radius: a built grid stays valid at every radius the
+            // predicate admits, so a radius sweep re-answers only the
+            // per-frame enable (scene.setSurfaceBalloonRadius -> the
+            // uGridEnabled write), never this. `surfaceGridSpec`'s halfExtent
+            // is resolution-independent (visibleBoundingRadius * 1.03), so a
+            // worker downshift cannot move the predicate under the decision
+            // made here. The cancel keeps the session-boundary invariant
+            // (re-stamp or cancel the outstanding id) so an earlier enter's
+            // in-flight build can't land in a session that refused one.
             //
             // The disclosed cost of asking once: a session ENTERED
             // mid-inflation marches gridless for its whole life, even
@@ -4837,21 +4809,21 @@ function main(): void {
             }
           }
         }
-        // The surface balloon (fr-5wlv.4) — 4D since fr-qxxw, so no
-        // dimension gate here any more. This stores the live on/rMult
-        // pair (the compute frame specs and both fragment tracers' uniforms
-        // derive from it); the scene's own gate is what keeps it off where
-        // there is no ball to certify against — a forward-orbit session in
-        // either dimension nulls that ball, because a filled solid's echo
-        // swallows the camera. On the compute route the fragment materials
-        // stay untouched by the session, so the uniform write is inert
-        // until a fallback re-enter compiles one.
+        // The surface balloon — lifted to 4D as well, so no dimension gate
+        // here any more. This stores the live on/rMult pair (the compute
+        // frame specs and both fragment tracers' uniforms derive from it);
+        // the scene's own gate is what keeps it off where there is no ball to
+        // certify against — a forward-orbit session in either dimension nulls
+        // that ball, because a filled solid's echo swallows the camera. On
+        // the compute route the fragment materials stay untouched by the
+        // session, so the uniform write is inert until a fallback re-enter
+        // compiles one.
         scene.setSurfaceBalloon(state.balloonEcho, state.balloonRadius);
-        // The ground plane (fr-rhn5) — 4D since fr-h0c3, likewise. This
-        // stores the live intent; the scene's own gate keeps it off under
-        // the balloon variant (the pack layer force-drops the plane define
-        // when the balloon lands) and re-asserts it per install, so this
-        // needs no `&& !state.balloonEcho`.
+        // The ground plane — lifted to 4D likewise. This stores the live
+        // intent; the scene's own gate keeps it off under the balloon variant
+        // (the pack layer force-drops the plane define when the balloon
+        // lands) and re-asserts it per install, so this needs no `&&
+        // !state.balloonEcho`.
         scene.setSurfaceGroundPlane(state.groundPlane);
         // Lighting/color settings + (when the colorSource needs one) the
         // ramp LUT: pushed at entry so a fresh session reflects the
@@ -4860,8 +4832,8 @@ function main(): void {
         scene.setSurfaceParams(state.surface);
         const lut = surfaceColorLUT(state);
         if (lut) scene.setSurfaceColorLUT(lut);
-        // Gate the first frame on the tracer's program compile (fr-du81):
-        // the fold-frontier variant links in ~25s on desktop Mesa (worse on
+        // Gate the first frame on the tracer's program compile: the
+        // fold-frontier variant links in ~25s on desktop Mesa (worse on
         // mobile drivers), and drawing before it is ready would spend that
         // stall INSIDE a frame with the main thread blocked. compileAsync
         // uses KHR_parallel_shader_compile where available; meanwhile
@@ -4907,16 +4879,16 @@ function main(): void {
             surfaceSession.markFirstFrame();
             noteRenderProgress("surface", 1, 1);
             scene.invalidate();
-            // First frame without waiting for a camera nudge (fr-yvcw):
-            // the invalidate above is one-shot, and any other draw can
-            // consume it before the tier clock reads it — 2ca508b's race
-            // on this arm. On the fallback re-enter (compute create()
-            // failed, or no WebGPU at all) the entry glide already spent
-            // itself during the first entry, so no camera motion follows
-            // to mask the loss and the session sits on the live explorer
-            // frame until a nudge. The pending flag rides the tier read
-            // until the preview actually traces — un-losable by
-            // construction, and a redundant preview is free.
+            // First frame without waiting for a camera nudge: the invalidate
+            // above is one-shot, and any other draw can consume it before the
+            // tier clock reads it — 2ca508b's race on this arm. On the
+            // fallback re-enter (compute create() failed, or no WebGPU at
+            // all) the entry glide already spent itself during the first
+            // entry, so no camera motion follows to mask the loss and the
+            // session sits on the live explorer frame until a nudge. The
+            // pending flag rides the tier read until the preview actually
+            // traces — un-losable by construction, and a redundant preview is
+            // free.
             surfaceWebglPreviewPending = true;
           })
           .catch((error: unknown) => {
@@ -4955,90 +4927,87 @@ function main(): void {
     },
     resetProgress: () => {
       // Instant render, but the flag must never carry stale-true across
-      // sessions (fr-75sq), like the flame/solid resets.
+      // sessions, like the flame/solid resets.
       renderComplete.surface = false;
-      renderCoverage.surface = 0; // ...and its fraction form (fr-61a2), like the flame/solid resets.
+      renderCoverage.surface = 0; // ...and its fraction form, like the flame/solid resets.
     },
     activate: () => {
-      // NOTE the selection/guide handling other sessions do here happens
-      // in the compile gate's resolution instead (see start()): until the
-      // tracer program is ready the canvas keeps showing the explorer,
-      // which should stay EXACTLY as it was — visually and in program
-      // terms, since a guide rebuild's re-links would queue behind the
-      // fold compile on serializing drivers.
-      // A fresh session must not inherit the previous one's pending settle
-      // timer (fr-5ne3), a completed frame's validity (fr-sjff), or a
-      // deferred settle verdict (fr-du81). No refreshGuides here either:
-      // updateGuides disposes and rebuilds the guide materials, whose
-      // re-links the gated explorer's next frame would then JOIN — behind
-      // the whole fold compile on serializing drivers. Nothing the guides
-      // reflect has changed yet; the compile gate's resolution refreshes
-      // them together with the selection drop.
+      // NOTE the selection/guide handling other sessions do here happens in
+      // the compile gate's resolution instead (see start()): until the tracer
+      // program is ready the canvas keeps showing the explorer, which should
+      // stay EXACTLY as it was — visually and in program terms, since a guide
+      // rebuild's re-links would queue behind the fold compile on serializing
+      // drivers. A fresh session must not inherit the previous one's pending
+      // settle timer, a completed frame's validity, or a deferred settle
+      // verdict. No refreshGuides here either: updateGuides disposes and
+      // rebuilds the guide materials, whose re-links the gated explorer's
+      // next frame would then JOIN — behind the whole fold compile on
+      // serializing drivers. Nothing the guides reflect has changed yet; the
+      // compile gate's resolution refreshes them together with the selection
+      // drop.
       surfaceRenderTier.reset();
       surfaceWebglPreviewPending = false;
       surfaceSettled = false;
       surfaceSettlePending = false;
       state = setRenderMode(state, "surface");
-      trackAutoBackground(); // see the flame session's activate (fr-mz2u)
+      trackAutoBackground(); // see the flame session's activate
       refreshUi();
       // The render-complete signal — the budget-met event a holding
       // collection show or timeline render keyframe departs on — fires
       // when the compile gate in start() resolves and marks the first
       // frame, not here: the DE upload is instant, but the tracer program
-      // may still be linking (fr-du81).
+      // may still be linking.
       if (surfaceSession.hasFirstFrame) noteRenderProgress("surface", 1, 1);
     },
     deactivate: () => {
       // The 4D flag dies with the session (tickRender's surface branch is
       // unreachable once the mode resets, but stale-true costs nothing to
-      // preclude). So do in-flight settle/preview strip jobs (fr-sjff /
-      // fr-du81) — nothing steps them outside this mode, and a stale
-      // planner must not greet the next session.
+      // preclude). So do in-flight settle/preview strip jobs — nothing steps
+      // them outside this mode, and a stale planner must not greet the next
+      // session.
       scene.abandonSurfaceSettle();
       scene.abandonSurfacePreview();
-      // Progress is pose state, not document state (fr-zx34) — a dead
-      // session's percent must not greet the next one. Neither must its
-      // backend detail token (fr-tmgf).
+      // Progress is pose state, not document state — a dead session's
+      // percent must not greet the next one. Neither must its backend
+      // detail token.
       ui.setSurfaceProgress(null);
       surfaceWebglDetailToken = null;
-      // A grid still building for this session is nobody's business once
-      // the session ends — drop it so its late arrival can't touch the
-      // next mode's frame (fr-55r5 part 2). The next 3D session's request
-      // supersedes by id anyway; this just keeps settle() honest for the
-      // offline exporter.
+      // A grid still building for this session is nobody's business once the
+      // session ends — drop it so its late arrival can't touch the next
+      // mode's frame. The next 3D session's request supersedes by id anyway;
+      // this just keeps settle() honest for the offline exporter.
       surfaceGrid.cancel();
-      // ...and one that already LANDED but parked behind a capture
-      // (fr-p0mr) dies with the session too (fr-vja8.11): tickRender
-      // applies whatever is parked in ANY later surface session — AFTER
-      // that session's own grid clear — so a stale park would hand e.g. a
-      // balloon session the fold grid fr-5wlv.3's gridless rule exists to
-      // keep away from the shell.
+      // ...and one that already LANDED but parked behind a capture dies
+      // with the session too: tickRender applies whatever is parked in ANY
+      // later surface session — AFTER that session's own grid clear — so a
+      // stale park would hand e.g. a balloon session the fold grid the
+      // balloon's own gridless rule exists to keep away from the shell.
       pendingSurfaceGrid = null;
       surfaceSessionIs4D = false;
       surface4SlabExact = true;
       ui.setFourDSlabAvailable(true);
-      // fr-5wlv.6: a dead session's shape must not greet the next one —
-      // the same "session-scoped progress/detail, not document state"
-      // reset every other routing flag on this line gets.
+      // A dead session's shape must not greet the next one — the same
+      // "session-scoped progress/detail, not document state" reset every
+      // other routing flag on this line gets.
       ui.setSurfaceSessionKind(null);
       surfaceBlankNotice = null;
       // Reset only the mode this session owns — see the flame session's
       // deactivate for why this is not a blind write.
       if (state.renderMode === "surface") {
         state = setRenderMode(state, "points");
-        trackAutoBackground(); // see the flame session's deactivate (fr-mz2u)
-        // Repaint the explorer over the last traced frame (fr-w9wl): the
-        // tracer shares the one canvas and the same render-on-demand gate.
+        trackAutoBackground(); // see the flame session's deactivate
+        // Repaint the explorer over the last traced frame: the tracer shares
+        // the one canvas and the same render-on-demand gate.
         scene.invalidate();
       }
-      dropStalePendingThumbnails(); // see the flame session's deactivate (fr-r777)
+      dropStalePendingThumbnails(); // see the flame session's deactivate
       refreshUi();
-      // A parked offline export's early-exit wake (fr-6jic) — see the flame
+      // A parked offline export's early-exit wake — see the flame
       // session's deactivate.
       notifyRenderSignal();
     },
-    // The surface twin of the flame session's late-thumbnail correction
-    // (fr-r777). This session's first frame is its TRACER coming up — the
+    // The surface twin of the flame session's late-thumbnail
+    // correction. This session's first frame is its TRACER coming up — the
     // compile gate resolving, or the compute renderer's create — so a
     // re-capture reads whatever has presented by then, which is exactly the
     // rule captureThumbnail("surface") already follows for a save made here:
@@ -5047,14 +5016,13 @@ function main(): void {
     onFirstFrame: () => applyPendingThumbnailPatches("surface"),
   });
 
-  // The one path between the render modes (fr-39y): exit whichever
-  // converging render is active, then enter the target's session. Driving
-  // both steps through the sessions' own enter/exit keeps their choreography
-  // (worker teardown, note/progress resets, the active flag + UI refresh)
-  // authoritative, so a direct flame↔solid switch is exactly an exit
-  // followed by an enter — no third path to keep correct. A no-op when the
-  // target is already active (clicking the lit segment must not restart a
-  // converging render).
+  // The one path between the render modes: exit whichever converging render
+  // is active, then enter the target's session. Driving both steps through
+  // the sessions' own enter/exit keeps their choreography (worker teardown,
+  // note/progress resets, the active flag + UI refresh) authoritative, so a
+  // direct flame↔solid switch is exactly an exit followed by an enter — no
+  // third path to keep correct. A no-op when the target is already active
+  // (clicking the lit segment must not restart a converging render).
   function switchRenderMode(target: RenderMode): void {
     if (target === state.renderMode) return;
     // The replay lives in the points view; leaving it mid-replay must not
@@ -5062,50 +5030,48 @@ function main(): void {
     // render.
     if (target !== "points") {
       cancelReplay();
-      // The RANDOM drift show still ends here (fr-wavo): its legs are rolled
-      // for the live explorer, so a flame/solid render stops it cleanly (a
-      // STOP, not a pause). A COLLECTION show instead survives as a
-      // slideshow (fr-w2ve) — the render mode is how the show displays, not
-      // a reach into it — but HELD: the clock deadline is void while the
-      // entering render converges; the render's own completed-progress
-      // signal re-arms the departure (noteRenderProgress), so a leg can
-      // never yank a still that is mid-convergence. This runs for a manual
-      // switch AND for the show's own per-leg re-entry (the mode-hint
-      // consumption in applyCloudResult) — both want exactly this hold.
+      // The RANDOM drift show still ends here: its legs are rolled for the
+      // live explorer, so a flame/solid render stops it cleanly (a STOP, not
+      // a pause). A COLLECTION show instead survives as a slideshow — the
+      // render mode is how the show displays, not a reach into it — but HELD:
+      // the clock deadline is void while the entering render converges; the
+      // render's own completed-progress signal re-arms the departure
+      // (noteRenderProgress), so a leg can never yank a still that is
+      // mid-convergence. This runs for a manual switch AND for the show's own
+      // per-leg re-entry (the mode-hint consumption in applyCloudResult) —
+      // both want exactly this hold.
       if (driftShow.active && driftSource === "collection") {
         driftShow.hold();
       } else {
-        // Silent (fr-ygr1): an explicit render-mode switch, not an edit
-        // reaching in from elsewhere — the user is looking right at the
-        // segmented control they just clicked.
+        // Silent: an explicit render-mode switch, not an edit reaching in
+        // from elsewhere — the user is looking right at the segmented control
+        // they just clicked.
         driftPolicy.stop();
       }
-      // Timeline playback survives this switch only while HELD (fr-v3au):
-      // holding means a render keyframe owns the display — the entry
-      // arriving here is the show's own (the leg armed the mode hint
-      // and held the schedule at launch), or a manual mid-hold look-around,
-      // which survives for the same reason a collection show's does — the
-      // render mode is how the keyframe displays, not a reach into the
-      // show, and whichever render converges resumes the schedule
-      // (noteRenderProgress). During a points phase (a plain keyframe's
-      // morph or dwell — not holding), a manual switch away from the
-      // explorer still ends playback: there is no deterministic duration
-      // for the absolute schedule to hold across an uninvited render
-      // (fr-8v41). A STOP like the random drift show's, and silent for the
-      // same reason as above. A leg's own applyDecodedSnapshot never
+      // Timeline playback survives this switch only while HELD: holding means
+      // a render keyframe owns the display — the entry arriving here is the
+      // show's own (the leg armed the mode hint and held the schedule at
+      // launch), or a manual mid-hold look-around, which survives for the
+      // same reason a collection show's does — the render mode is how the
+      // keyframe displays, not a reach into the show, and whichever render
+      // converges resumes the schedule (noteRenderProgress). During a points
+      // phase (a plain keyframe's morph or dwell — not holding), a manual
+      // switch away from the explorer still ends playback: there is no
+      // deterministic duration for the absolute schedule to hold across an
+      // uninvited render. A STOP like the random drift show's, and silent for
+      // the same reason as above. A leg's own applyDecodedSnapshot never
       // reaches here: playback keeps renderMode at "points" between render
       // keyframes, so its switch is the no-op early return.
       if (!timelinePlayer.holding) timelinePolicy.stop();
-      // So does the morph (fr-a04l): the flame/solid start commands snapshot
-      // the DOCUMENT's system, so snap the display to it — and animate()
-      // stops polling the tween during a render, so an unsnapped morph would
+      // So does the morph: the flame/solid start commands snapshot the
+      // DOCUMENT's system, so snap the display to it — and animate() stops
+      // polling the tween during a render, so an unsnapped morph would
       // otherwise resume, stale, on exit.
       snapMorph();
-      // And a 4D pose glide (fr-pnek), for the same freeze: the render's
-      // worker snapshot reads fourDView.matrix() at enter (see
-      // fourDRenderSnapshot), so an in-flight glide must LAND first — the
-      // exact mirror of cameraTween.finish() on the flame path in
-      // applyCloudResult.
+      // And a 4D pose glide, for the same freeze: the render's worker
+      // snapshot reads fourDView.matrix() at enter (see fourDRenderSnapshot),
+      // so an in-flight glide must LAND first — the exact mirror of
+      // cameraTween.finish() on the flame path in applyCloudResult.
       fourDTween.finish();
     }
     if (state.renderMode === "flame") flameSession.exit();
@@ -5147,7 +5113,7 @@ function main(): void {
   }
 
   // The guides' DISPLAYED visibility: the document's showGuides, or forced on
-  // while the replay showcase is armed (fr-hpci) — display-only, so the
+  // while the replay showcase is armed — display-only, so the
   // document's showGuides (and its checkbox) stays the user's own. The ONE
   // formula refreshGuides pushes to every guide visual.
   function guidesShown(): boolean {
@@ -5182,29 +5148,28 @@ function main(): void {
         : sel === "final"
           ? (state.finalTransform ?? null)
           : state.transforms[sel];
-    // The map count rides along because the editor's derived palette slot
-    // (fr-hiyu) is a property of the map's position among ALL the base maps,
-    // not of the map itself.
+    // The map count rides along because the editor's derived palette slot is
+    // a property of the map's position among ALL the base maps, not of the
+    // map itself.
     ui.renderTransformEditor(editing, sel, state.transforms.length);
     refreshSurfaceEligibility();
   }
 
   /**
-   * Keep the Surface mode button's gate tracking the DOCUMENT (epic
-   * fr-7jlk). The classification itself — five analyzers, the tracers'
-   * uniform caps, and every user-facing sentence — is
-   * `surface-eligibility.ts`'s pure `deriveSurfaceEligibility` (fr-dp50),
-   * tested over the shipped presets; this wrapper contributes exactly the
-   * two live inputs the document cannot answer (the current state and this
-   * machine's compute availability) and the ui call. Rides refreshUi — the
-   * chokepoint every whole-system edit, snapshot load, and undo/redo
-   * funnels through — PLUS direct calls from the drag paths that
-   * deliberately skip refreshUi (fr-vja8.10: transform/final geometry
-   * sliders, guide-box drags, and the symmetry effects in
-   * control-spec.ts), so the button enables/disables live as variations,
-   * 4D blocks, scales, weights, or symmetry orders change — mid-drag
-   * included, where a stale-enabled button routed a plainly ineligible
-   * system into a render-failure toast.
+   * Keep the Surface mode button's gate tracking the DOCUMENT. The
+   * classification itself — five analyzers, the tracers' uniform caps, and
+   * every user-facing sentence — is `surface-eligibility.ts`'s pure
+   * `deriveSurfaceEligibility`, tested over the shipped presets; this
+   * wrapper contributes exactly the two live inputs the document cannot
+   * answer (the current state and this machine's compute availability) and
+   * the ui call. Rides refreshUi — the chokepoint every whole-system edit,
+   * snapshot load, and undo/redo funnels through — PLUS direct calls from
+   * the drag paths that deliberately skip refreshUi (transform/final
+   * geometry sliders, guide-box drags, and the symmetry effects in
+   * control-spec.ts), so the button enables/disables live as variations, 4D
+   * blocks, scales, weights, or symmetry orders change — mid-drag included,
+   * where a stale-enabled button routed a plainly ineligible system into a
+   * render-failure toast.
    */
   function refreshSurfaceEligibility(): void {
     const eligibility = deriveSurfaceEligibility(
@@ -5217,36 +5182,36 @@ function main(): void {
   }
 
   /**
-   * Apply an already-decoded snapshot to the live app with whole-system-
-   * replacement semantics, the same path a boot-time hash/localStorage load
-   * takes. Any active flame/solid render is exited first (they are
-   * session-only overlays OF the document; the app "boots into the explorer"
-   * and so does time travel / a gallery load). View state stays live except
-   * where the restored document invalidates it: the selection is
-   * clamped/cleared exactly like removeTransform does, and the preset scaffold
-   * is cleared (preset-load decoration, not document state). `refit` re-frames
-   * the camera when the load is a whole-system replacement — symmetric with
-   * how the camera moved when that replacement was first applied; it rides
-   * the generation request (fr-5kx) so the fit happens when the restored
-   * cloud actually arrives.
+   * Apply an already-decoded snapshot to the live app with
+   * whole-system-replacement semantics, the same path a boot-time
+   * hash/localStorage load takes. Any active flame/solid render is exited
+   * first (they are session-only overlays OF the document; the app "boots
+   * into the explorer" and so does time travel / a gallery load). View
+   * state stays live except where the restored document invalidates it: the
+   * selection is clamped/cleared exactly like removeTransform does, and the
+   * preset scaffold is cleared (preset-load decoration, not document
+   * state). `refit` re-frames the camera when the load is a whole-system
+   * replacement — symmetric with how the camera moved when that replacement
+   * was first applied; it rides the generation request so the fit happens
+   * when the restored cloud actually arrives.
    *
    * Cutting (or not) an undo checkpoint is the CALLER's business, not this
    * function's: {@link restoreSnapshot} (EditSession's `restore`) must not
    * checkpoint, while {@link loadEncodedScene} (a gallery load, a genuine
    * user edit) checkpoints via `beginEdit("replace")` before calling in.
    *
-   * So is morphing (fr-a04l), via `morph`: a gallery load tweens the display
-   * to the restored system like a preset load does (regenerateReplaced),
-   * while time travel deliberately snaps — undo/redo should feel mechanical,
-   * and it avoids edit-session re-entrancy. The snap DISCARDS any in-flight
+   * So is morphing, via `morph`: a gallery load tweens the display to the
+   * restored system like a preset load does (regenerateReplaced), while
+   * time travel deliberately snaps — undo/redo should feel mechanical, and
+   * it avoids edit-session re-entrancy. The snap DISCARDS any in-flight
    * morph rather than sending its terminal request: the replaced request
    * below already covers the display with the restored document, and the
    * terminal request's remembered `fit` could otherwise glide the camera
-   * away from a pose the caller is about to restore (fr-uf3). `morphMs`
-   * stretches that tween for a collection drift leg (fr-w2ve), exactly like
-   * applyEdit's own `morphMs`; omitted, the click-feedback default governs.
-   * `morphSeed` pins the morph's generation seed for a timeline playback
-   * leg (fr-8v41; see regenerateReplaced).
+   * away from a pose the caller is about to restore. `morphMs` stretches
+   * that tween for a collection drift leg, exactly like applyEdit's own
+   * `morphMs`; omitted, the click-feedback default governs. `morphSeed`
+   * pins the morph's generation seed for a timeline playback leg (see
+   * regenerateReplaced).
    */
   function applyDecodedSnapshot(
     snap: SceneSnapshot,
@@ -5256,28 +5221,28 @@ function main(): void {
     morphSeed?: number,
   ): void {
     // Undo/redo and a gallery load are the user reaching in: both end the
-    // drift show (fr-wavo) — this is the one chokepoint on their shared path.
-    // Notify (fr-ygr1): the show's own collection legs also pass through
-    // here, but under the policy's own-leg guard the stop no-ops before
-    // ever reaching the toast — only a genuine undo/redo or manual load
-    // actually stops (and announces) anything.
+    // drift show — this is the one chokepoint on their shared path. Notify:
+    // the show's own collection legs also pass through here, but under the
+    // policy's own-leg guard the stop no-ops before ever reaching the toast —
+    // only a genuine undo/redo or manual load actually stops (and announces)
+    // anything.
     stopShows({ notify: true });
     switchRenderMode("points");
     // A restored document must not trigger a preset hint armed just before
-    // the time travel / gallery load — nor inherit a 4D pose armed for a
-    // load it just superseded (fr-pnek; callers that WANT a pose re-arm it
-    // right after this returns, mirroring the mode hint). The pose
-    // GLIDE is superseded the same way: left alive, a leg's still-flying
-    // glide would freeze when this load lands flat (animate()'s 4D block
-    // stops advancing it) and then snap its stale pose onto the NEXT
-    // non-flat visit. A timeline leg re-arms its own glide right after.
+    // the time travel / gallery load — nor inherit a 4D pose armed for a load
+    // it just superseded (callers that WANT a pose re-arm it right after this
+    // returns, mirroring the mode hint). The pose GLIDE is superseded the
+    // same way: left alive, a leg's still-flying glide would freeze when this
+    // load lands flat (animate()'s 4D block stops advancing it) and then snap
+    // its stale pose onto the NEXT non-flat visit. A timeline leg re-arms its
+    // own glide right after.
     loadHints.clearAll();
     fourDTween.cancel();
-    // The balloon "Inflate" sweep (fr-5wlv.6) is session-only replay motion
-    // over a now-superseded document — the user just jumped states, so any
-    // in-flight sweep is cancelled exactly like a genuine control edit
-    // would (control-spec.ts's cancelBalloonSweep effect), rather than
-    // continuing to animate a radius the restored document didn't author.
+    // The balloon "Inflate" sweep is session-only replay motion over a
+    // now-superseded document — the user just jumped states, so any in-flight
+    // sweep is cancelled exactly like a genuine control edit would
+    // (control-spec.ts's cancelBalloonSweep effect), rather than continuing
+    // to animate a radius the restored document didn't author.
     balloonSweepStartMs = null;
     // The pre-load display target — the morph's `from` endpoint (a chained
     // restart ignores it and resumes from the live sample; see
@@ -5286,9 +5251,9 @@ function main(): void {
     // Captured for the balloon re-entry check below — fromSnapshot is about
     // to overwrite state.balloonEcho with the restored document's value.
     const previousBalloonEcho = state.balloonEcho;
-    // Captured for the ground plane re-entry check below (fr-rhn5), the
-    // balloon's own precedent — fromSnapshot is about to overwrite
-    // state.groundPlane with the restored document's value.
+    // Captured for the ground plane re-entry check below, the balloon's own
+    // precedent — fromSnapshot is about to overwrite state.groundPlane with
+    // the restored document's value.
     const previousGroundPlane = state.groundPlane;
     state = fromSnapshot(snap, state);
     if (
@@ -5302,16 +5267,16 @@ function main(): void {
     }
     if (morph) {
       regenerateReplaced(morphFrom, refit, morphMs, morphSeed);
-      // The backdrop crossfade (fr-5ps1): fade from the on-screen backdrop
-      // to the restored document's over the same duration as the system
-      // morph — a timeline/drift leg or gallery load moves the background
-      // like everything else. Reduced motion snaps, exactly as
-      // regenerateReplaced itself does for the system. An `"auto"` target
-      // resolves from the restored document's palette (fr-mz2u) — the morph
-      // adopts the target's palette instantly, so the crossfade IS the
-      // smooth re-derivation between the two scenes' derived backdrops; a
-      // leg that also switches render mode re-derives when that mode lands
-      // (trackAutoBackground via the session's activate).
+      // The backdrop crossfade: fade from the on-screen backdrop to the
+      // restored document's over the same duration as the system morph — a
+      // timeline/drift leg or gallery load moves the background like
+      // everything else. Reduced motion snaps, exactly as regenerateReplaced
+      // itself does for the system. An `"auto"` target resolves from the
+      // restored document's palette — the morph adopts the target's palette
+      // instantly, so the crossfade IS the smooth re-derivation between the
+      // two scenes' derived backdrops; a leg that also switches render mode
+      // re-derives when that mode lands (trackAutoBackground via the
+      // session's activate).
       const target = resolveSceneBackground(state);
       if (
         prefersReducedMotion() ||
@@ -5340,41 +5305,39 @@ function main(): void {
     scene.setPointSize(state.pointSize);
     scene.setFourDDepthFade(state.fourDDepthFade);
     scene.setSolidParams(state.solid);
-    // The balloon pair (fr-5wlv.6): pushed unconditionally, like solid
-    // above — both scene channels are equality-guarded and inert for
-    // whichever renderer isn't active, so there is no harm in keeping both
-    // in sync with every load regardless of state.renderMode. A live
-    // surface session whose EFFECTIVE balloon on/off just changed needs a
-    // full re-enter to pick it up (a variant-level change — SURFACE_BALLOON
-    // compile / compute routing / grid on-off — not a uniform write), the
-    // same seam the surfaceBalloonCheckbox effect uses
-    // (restartSurfaceRender in control-spec.ts). In practice this branch is
-    // unreachable HERE today: switchRenderMode("points") above has already
-    // exited any active surface session by this point, so state.renderMode
-    // is always "points" below — kept anyway as the honest invariant for
-    // this function (a surface session entered afterward re-derives the
-    // balloon fresh from state regardless of this branch — see
+    // The balloon pair: pushed unconditionally, like solid above — both scene
+    // channels are equality-guarded and inert for whichever renderer isn't
+    // active, so there is no harm in keeping both in sync with every load
+    // regardless of state.renderMode. A live surface session whose EFFECTIVE
+    // balloon on/off just changed needs a full re-enter to pick it up (a
+    // variant-level change — SURFACE_BALLOON compile / compute routing / grid
+    // on-off — not a uniform write), the same seam the surfaceBalloonCheckbox
+    // effect uses (restartSurfaceRender in control-spec.ts). In practice this
+    // branch is unreachable HERE today: switchRenderMode("points") above has
+    // already exited any active surface session by this point, so
+    // state.renderMode is always "points" below — kept anyway as the honest
+    // invariant for this function (a surface session entered afterward
+    // re-derives the balloon fresh from state regardless of this branch — see
     // surfaceSession's start()).
     scene.setBalloonEchoEnabled(state.balloonEcho);
     scene.setBalloonEchoRadius(state.balloonRadius);
     scene.setSurfaceBalloonRadius(state.balloonRadius);
-    // The balloon tint pair (fr-j85n): pushed unconditionally, right beside
-    // the radius it rides with — a restored document with a non-default
-    // tint would otherwise render untinted until an edit first moved it.
+    // The balloon tint pair: pushed unconditionally, right beside the radius
+    // it rides with — a restored document with a non-default tint would
+    // otherwise render untinted until an edit first moved it.
     scene.setBalloonTint(
       hexToRgb01(state.balloonTint),
       state.balloonTintStrength,
     );
-    // The fog density (fr-5h5d): pushed unconditionally, like the balloon
-    // pair just above — a restored document with a non-default density
-    // would otherwise render at the scene's default until a Fog edit
-    // first moved it.
+    // The fog density: pushed unconditionally, like the balloon pair just
+    // above — a restored document with a non-default density would otherwise
+    // render at the scene's default until a Fog edit first moved it.
     scene.setFogDensity(state.fogDensity);
-    // Same push for the restored fog tint pair (fr-5h5d), right beside the
+    // Same push for the restored fog tint pair, right beside the
     // density it rides with.
     scene.setFogTint(hexToRgb01(state.fogTint), state.fogTintStrength);
-    // No unconditional scene push for the restored ground plane (fr-rhn5)
-    // here, unlike the balloon/fog pairs above: it has no explorer-mode
+    // No unconditional scene push for the restored ground plane here,
+    // unlike the balloon/fog pairs above: it has no explorer-mode
     // presence to keep in sync while renderMode is "points" (switchRenderMode
     // above already left it there) — a live surface session's flip is
     // instead covered by the restart condition right below, and a session
@@ -5402,17 +5365,18 @@ function main(): void {
    *
    * Camera handling matches how the framing moved when the step's edit was
    * first applied: an ordinary parameter edit (`replaced` false) leaves it
-   * alone, while a step that crosses a whole-system replacement restores the
-   * exact pre-replace `pose` the checkpoint captured out of band (fr-uf3) —
-   * the same applyDecodedSnapshot-then-applyCameraPose shape as
-   * {@link loadEncodedScene}. When that captured pose carries a 4D half
-   * (fr-gq99 — the checkpointed system was non-flat), the rotor/slice come
-   * back the same way the gallery load's saved 4D pose does: armed as the
-   * pending pose hint, so applyCloudResult lands it with the restored cloud
-   * where the fresh-visit reset would otherwise fire — an immediate
-   * applyFourDPose here would just be stomped at arrival. A `replaced` step
-   * with no captured pose (defensive — the app always supplies one via the
-   * EditSession `pose` dep) falls back to auto-fitting the restored attractor.
+   * alone, while a step that crosses a whole-system replacement restores
+   * the exact pre-replace `pose` the checkpoint captured out of band — the
+   * same applyDecodedSnapshot-then-applyCameraPose shape as {@link
+   * loadEncodedScene}. When that captured pose carries a 4D half (the
+   * checkpointed system was non-flat), the rotor/slice come back the same
+   * way the gallery load's saved 4D pose does: armed as the pending pose
+   * hint, so applyCloudResult lands it with the restored cloud where the
+   * fresh-visit reset would otherwise fire — an immediate applyFourDPose
+   * here would just be stomped at arrival. A `replaced` step with no
+   * captured pose (defensive — the app always supplies one via the
+   * EditSession `pose` dep) falls back to auto-fitting the restored
+   * attractor.
    */
   function restoreSnapshot(
     snapshot: string,
@@ -5425,7 +5389,7 @@ function main(): void {
       applyDecodedSnapshot(snap, false, false);
       applyCameraPose(pose.camera);
       // Armed AFTER applyDecodedSnapshot, which clears the pose hint on
-      // every load's behalf (the render-mode-hint pattern, fr-pnek).
+      // every load's behalf (the render-mode-hint pattern).
       if (pose.fourD) loadHints.armPose(pose.fourD);
     } else {
       applyDecodedSnapshot(snap, replaced, false);
@@ -5433,12 +5397,12 @@ function main(): void {
   }
 
   /**
-   * The live view framing — the orbit camera (fr-1k4) plus, while the
-   * displayed system is non-flat, the 4D rotor/slice pose (fr-pnek). The ONE
-   * definition of "how this scene is being looked at right now", shared by
-   * the persisted document ({@link currentDocument}, whose `camera`/`fourD`
-   * fields this deliberately mirrors) and the out-of-band capture onto each
-   * undo-history entry (the EditSession `pose` dep below; fr-uf3, fr-gq99).
+   * The live view framing — the orbit camera plus, while the displayed
+   * system is non-flat, the 4D rotor/slice pose. The ONE definition of "how
+   * this scene is being looked at right now", shared by the persisted
+   * document ({@link currentDocument}, whose `camera`/`fourD` fields this
+   * deliberately mirrors) and the out-of-band capture onto each
+   * undo-history entry (the EditSession `pose` dep below).
    */
   function viewPose(): ViewPose {
     return {
@@ -5449,14 +5413,15 @@ function main(): void {
 
   /**
    * The full persistable document: the scene ({@link toSnapshot}) plus the
-   * live view framing ({@link viewPose}: camera pose fr-1k4, 4D view pose
-   * fr-pnek), so a saved/shared scene (and, crucially, a timeline keyframe,
-   * which freezes this exact document) reproduces its tumble orientation and
-   * w-slice, not just its 3D framing. Used for the autosave/hash, the
+   * live view framing ({@link viewPose}: the camera pose and the 4D view
+   * pose), so a saved/shared scene (and, crucially, a timeline keyframe,
+   * which freezes this exact document) reproduces its tumble orientation
+   * and w-slice, not just its 3D framing. Used for the autosave/hash, the
    * collection, share links, and timeline keyframes. Undo-history snapshots
-   * deliberately stay camera-less AND pose-less (see SceneSnapshot.camera's/
-   * fourD's docs) — that's why `snapshot` below does NOT use this; history
-   * carries the same framing OUT OF BAND instead (fr-uf3, fr-gq99).
+   * deliberately stay camera-less AND pose-less (see
+   * SceneSnapshot.camera's/ fourD's docs) — that's why `snapshot` below
+   * does NOT use this; history carries the same framing OUT OF BAND
+   * instead.
    */
   function currentDocument(): SceneSnapshot {
     return { ...toSnapshot(state), ...viewPose() };
@@ -5466,7 +5431,7 @@ function main(): void {
   // over it (see edit-session.ts). The injected deps are the app's real
   // capabilities: encode and persist the live scene document, apply a restored
   // snapshot (restoreSnapshot above — which must not checkpoint), read the live
-  // view pose (captured out of band per history entry, fr-uf3/fr-gq99), reflect
+  // view pose (captured out of band per history entry), reflect
   // undo/redo availability in the UI, and the debounced save-timer itself. Edit
   // handlers call editSession.beginEdit() BEFORE mutating the document; Ctrl+Z/
   // Ctrl+Shift+Z call undo()/redo(); the page-hide handlers below call flush().
@@ -5474,10 +5439,10 @@ function main(): void {
     snapshot: () => encodeScene(toSnapshot(state)),
     persist: () => saveScene(currentDocument()),
     restore: restoreSnapshot,
-    // The live view pose — orbit camera (fr-uf3) plus the 4D rotor/slice
-    // while non-flat (fr-gq99) — captured out of band onto each history entry
-    // so undo/redo across a replace restores the exact framing — never into
-    // the snapshot string, which stays camera-less for the dedup.
+    // The live view pose — orbit camera plus the 4D rotor/slice while
+    // non-flat — captured out of band onto each history entry so undo/redo
+    // across a replace restores the exact framing — never into the snapshot
+    // string, which stays camera-less for the dedup.
     pose: viewPose,
     syncUi: (canUndo, canRedo) => ui.setUndoRedo(canUndo, canRedo),
     schedule: (fn) => {
@@ -5496,22 +5461,22 @@ function main(): void {
   window.addEventListener("pagehide", () => editSession.flush());
 
   /**
-   * Load a saved (encoded) scene from the collection gallery (fr-cai) as a
-   * whole-system replacement — the same treatment a preset load / Surprise Me
-   * gets. Unlike {@link restoreSnapshot} (EditSession's checkpoint-free
+   * Load a saved (encoded) scene from the collection gallery as a
+   * whole-system replacement — the same treatment a preset load / Surprise
+   * Me gets. Unlike {@link restoreSnapshot} (EditSession's checkpoint-free
    * `restore`), a gallery load IS a genuine user edit, so it cuts its own
    * "replace" undo checkpoint (making the load undoable and arming the
-   * debounced save) via `beginEdit("replace")` before applying, and restores
-   * the framing: the pose saved with the scene when there is one (fr-1k4),
+   * debounced save) via `beginEdit("replace")` before applying, and
+   * restores the framing: the pose saved with the scene when there is one,
    * an auto-fit for entries with no stored pose — and the saved 4D view
-   * pose when the document carries one (fr-pnek), armed as the pose hint
-   * so it lands with the restored cloud (the fresh-visit reset at arrival
-   * would stomp an immediate apply; see applyCloudResult). A corrupt entry
-   * (decode returns null — can't happen for our own encodeScene output, but
-   * the collection is untrusted localStorage) is ignored rather than
-   * blanking the current scene; the boolean return says whether the load
-   * actually applied, so onLoadFromCollection never arms a render-mode hint
-   * (fr-75sq) for a load that never happened.
+   * pose when the document carries one, armed as the pose hint so it lands
+   * with the restored cloud (the fresh-visit reset at arrival would stomp
+   * an immediate apply; see applyCloudResult). A corrupt entry (decode
+   * returns null — can't happen for our own encodeScene output, but the
+   * collection is untrusted localStorage) is ignored rather than blanking
+   * the current scene; the boolean return says whether the load actually
+   * applied, so onLoadFromCollection never arms a render-mode hint for a
+   * load that never happened.
    */
   function loadEncodedScene(encoded: string): boolean {
     const snap = decodeScene(encoded);
@@ -5520,24 +5485,23 @@ function main(): void {
     applyDecodedSnapshot(snap, snap.camera === undefined, true);
     if (snap.camera) applyCameraPose(snap.camera);
     // Armed AFTER applyDecodedSnapshot, which clears the pose hint on
-    // every load's behalf (the render-mode-hint pattern, fr-pnek).
+    // every load's behalf (the render-mode-hint pattern).
     if (snap.fourD) loadHints.armPose(snap.fourD);
     return true;
   }
 
   /**
-   * Import a picked or dropped JSON export file (fr-de9t) — the shared sink
-   * behind the panel's "⬆ Import file" and the window drop listeners. A
-   * `"scene"` file loads through the exact gallery-load path above
-   * ({@link loadEncodedScene}: an undoable replace, morphing in, framed by
-   * its saved camera pose); a `"collection"` backup merges into the
-   * saved-scene library (`SceneCollection.importScenes` — deduped against
-   * what's already saved) and opens the gallery so the merge is visible,
-   * not just claimed by a toast; a `"timeline"` backup (fr-h9rk) REPLACES
-   * the authored timeline wholesale (`TimelineStore.replaceAll` — a
-   * sequence isn't mergeable the way a grab-bag collection is), with an
-   * Undo toast handing the outgoing sequence back when there was one.
-   * The bytes are untrusted
+   * Import a picked or dropped JSON export file — the shared sink behind
+   * the panel's "⬆ Import file" and the window drop listeners. A `"scene"`
+   * file loads through the exact gallery-load path above ({@link
+   * loadEncodedScene}: an undoable replace, morphing in, framed by its
+   * saved camera pose); a `"collection"` backup merges into the saved-scene
+   * library (`SceneCollection.importScenes` — deduped against what's
+   * already saved) and opens the gallery so the merge is visible, not just
+   * claimed by a toast; a `"timeline"` backup REPLACES the authored
+   * timeline wholesale (`TimelineStore.replaceAll` — a sequence isn't
+   * mergeable the way a grab-bag collection is), with an Undo toast handing
+   * the outgoing sequence back when there was one. The bytes are untrusted
    * (`scene-file.ts`'s `decodeImportFile` is the validation boundary), so
    * every failure lands as a toast, never a throw — including a file too
    * large to be a plausible export, rejected before it is read into memory.
@@ -5557,8 +5521,8 @@ function main(): void {
     const imported = decodeImportFile(text);
     if (imported === null) {
       // Not our JSON envelope — maybe a flam3/Apophysis .flame file
-      // (fr-8uy5). Its decoder is the same kind of never-throwing trust
-      // boundary, so trying it on arbitrary text is safe and cheap.
+      // Its decoder is the same kind of never-throwing trust boundary, so
+      // trying it on arbitrary text is safe and cheap.
       if (importFlameText(text)) return;
       ui.flashToast("Not a scene, collection, timeline, or .flame file");
       return;
@@ -5581,7 +5545,7 @@ function main(): void {
       // show from what it's playing).
       timelinePolicy.stop({ notify: true });
       // Snapshot the outgoing timeline for the Undo toast below (the
-      // fr-ifts delete-toast pattern): replaceAll is a wholesale swap, and
+      // gallery delete-toast pattern): replaceAll is a wholesale swap, and
       // the replaced sequence may hold the only copy of its scenes
       // anywhere.
       const prevSteps = timeline.all();
@@ -5626,23 +5590,22 @@ function main(): void {
   }
 
   /**
-   * Try `text` as a flam3/Apophysis `.flame` file (fr-8uy5) — the fallback
+   * Try `text` as a flam3/Apophysis `.flame` file — the fallback
    * branch of {@link importSceneFile} once the JSON envelope has been ruled
    * out. Returns whether the text WAS a flame file, even an unusable one
    * (the toast then says why nothing loaded and the caller must not fall
    * through to the "not a recognized file" message).
    *
-   * One flame loads exactly like an imported scene file
-   * ({@link loadEncodedScene}) and then arms the flame render for the
-   * arriving cloud — the mode the artifact was authored for, same as a
-   * collection entry tagged "flame" (fr-75sq) — re-armed AFTER the load,
-   * which clears any stale hint (advanceCollectionLeg orders it the same
-   * way). A multi-flame file (an Apophysis batch) merges into the
-   * collection tagged mode "flame" instead, so nothing is silently
-   * dropped; thumbnails start blank exactly like a JSON backup entry whose
-   * thumbnail was stripped. Mapping compromises (dropped posts, unknown
-   * variations, …) surface as a toast suffix + the full list on the
-   * console — fidelity notes, not errors.
+   * One flame loads exactly like an imported scene file ({@link
+   * loadEncodedScene}) and then arms the flame render for the arriving
+   * cloud — the mode the artifact was authored for, same as a collection
+   * entry tagged "flame" — re-armed AFTER the load, which clears any stale
+   * hint (advanceCollectionLeg orders it the same way). A multi-flame file
+   * (an Apophysis batch) merges into the collection tagged mode "flame"
+   * instead, so nothing is silently dropped; thumbnails start blank exactly
+   * like a JSON backup entry whose thumbnail was stripped. Mapping
+   * compromises (dropped posts, unknown variations, …) surface as a toast
+   * suffix + the full list on the console — fidelity notes, not errors.
    */
   function importFlameText(text: string): boolean {
     const flame = decodeFlameFile(text);
@@ -5686,7 +5649,7 @@ function main(): void {
   }
 
   /** One terse toast suffix for the flame codec's fidelity warnings, with
-   * the full list on the console for the curious (fr-8uy5). */
+   * the full list on the console for the curious. */
   function flameNotesSuffix(
     direction: "import" | "export",
     warnings: string[],
@@ -5698,12 +5661,12 @@ function main(): void {
       : ` (${warnings.length} notes — see console)`;
   }
 
-  // Drag-and-drop import (fr-de9t): dropping an exported .json anywhere on
-  // the page feeds the same sink as "⬆ Import file". preventDefault runs for
-  // EVERY file drag, not just ones that turn out to be scene files — the
-  // browser's default drop action is navigating to the file, which would
-  // discard the whole session over a stray drop. Non-file drags (text
-  // selections onto inputs) are left alone.
+  // Drag-and-drop import: dropping an exported .json anywhere on the page
+  // feeds the same sink as "⬆ Import file". preventDefault runs for EVERY
+  // file drag, not just ones that turn out to be scene files — the browser's
+  // default drop action is navigating to the file, which would discard the
+  // whole session over a stray drop. Non-file drags (text selections onto
+  // inputs) are left alone.
   window.addEventListener("dragover", (e) => {
     if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
   });
@@ -5726,18 +5689,18 @@ function main(): void {
    * (its `replaced` flag — see regenerate()'s doc), so a freshly loaded
    * non-flat preset always gets resetFourDView()'s "fresh visit" treatment,
    * even switching directly between two non-flat presets — and asks the
-   * arrival handler to auto-frame the camera on the fresh cloud (fr-0b8),
+   * arrival handler to auto-frame the camera on the fresh cloud,
    * which is why onPreset/onSurprise no longer call fitCameraToAttractor
    * themselves.
    *
-   * regenerate() is asynchronous (fr-5kx): the new cloud — and with it the
+   * regenerate() is asynchronous: the new cloud — and with it the
    * `viewIs4D` flip, the fresh-visit resets, and the camera fit — lands in
    * applyCloudResult when the generation completes. The refreshGuides()/
    * refreshUi() here therefore render the CURRENT (pre-arrival) view, which
    * is correct — the old cloud is still on screen — and applyCloudResult
    * re-refreshes both when an arriving result flips flatness.
    *
-   * "always" is also the system-morph trigger (fr-a04l): instead of the plain
+   * "always" is also the system-morph trigger: instead of the plain
    * `regenerate(true, true)` snap, the display tweens from the pre-load
    * system (captured before the reducer runs) to the freshly loaded one —
    * see regenerateReplaced. An ordinary ("auto") edit instead snaps any
@@ -5749,26 +5712,26 @@ function main(): void {
    * geometry edit refreshes the guide boxes and the UI, then schedules a
    * debounced save (see `editSession.beginEdit`).
    *
-   * Every edit through here also ends the ambient drift show (fr-wavo) —
-   * except the show's own leg, which is this exact path with `morphMs` set
-   * to its slower glide (see driftPolicy's launchLeg and the own-leg guard
-   * in drift-policy.ts).
+   * Every edit through here also ends the ambient drift show — except the
+   * show's own leg, which is this exact path with `morphMs` set to its
+   * slower glide (see driftPolicy's launchLeg and the own-leg guard in
+   * drift-policy.ts).
    */
   function applyEdit(
     applyReducer: () => void,
     effect: "auto" | "always" = "auto",
     morphMs?: number,
   ): void {
-    // Notify (fr-ygr1): every ordinary document edit (add/remove transform,
+    // Notify: every ordinary document edit (add/remove transform,
     // preset load, Surprise Me, toggles) flows through here. The show's own
     // roll (driftPolicy.advance → rollSurpriseSystem) takes this exact path
     // too, but under the policy's own-leg guard the stop no-ops before the
     // toast — only a genuine user edit actually stops (and announces)
     // anything.
     stopShows({ notify: true });
-    // Any fresh edit supersedes a preset hint still waiting for its cloud
-    // (fr-39y) — onPreset re-arms it right after this returns — and a 4D
-    // pose still waiting for its load's cloud (fr-pnek), same staleness.
+    // Any fresh edit supersedes a preset hint still waiting for its cloud —
+    // onPreset re-arms it right after this returns — and a 4D pose still
+    // waiting for its load's cloud, same staleness.
     loadHints.clearAll();
     if (effect === "auto") snapMorph();
     const morphFrom = currentMorphSystem();
@@ -5784,25 +5747,25 @@ function main(): void {
   }
 
   /**
-   * applyEdit's DRAG SIBLING (fr-vja8.53) — the one chokepoint for the
-   * mid-gesture edit paths (slider drags, the lens sliders, the guide-box
-   * drag) that cannot use applyEdit itself: its refreshUi would rebuild the
-   * transform editor and tear the dragged slider out from under the pointer.
-   * Those paths each used to restate the same bookkeeping tail by hand, and
-   * the next hand-rolled copy that forgot refreshSurfaceEligibility would
-   * silently reintroduce the stale-Surface-button bug fr-vja8.10 fixed — no
-   * test, no error, just a gate reading a document it stopped tracking.
+   * applyEdit's DRAG SIBLING — the one chokepoint for the mid-gesture edit
+   * paths (slider drags, the lens sliders, the guide-box drag) that cannot
+   * use applyEdit itself: its refreshUi would rebuild the transform editor
+   * and tear the dragged slider out from under the pointer. Those paths
+   * each used to restate the same bookkeeping tail by hand, and the next
+   * hand-rolled copy that forgot refreshSurfaceEligibility would silently
+   * reintroduce the stale-Surface-button bug the refresh fixed — no test,
+   * no error, just a gate reading a document it stopped tracking.
    *
-   * Same shape as applyEdit minus what a drag must not do: no refreshUi (the
-   * tear above) and no renderTransformEditor here EVER — the guide-box path
-   * adds its own rebuild after this returns, which is safe only because that
-   * gesture's pointer is on the CANVAS, not on a panel slider. Two more
-   * deliberate differences, decided rather than inherited (fr-vja8.53's
-   * triage): the pending load hints are NOT cleared — a drag is not a load,
-   * and today's drag paths never cleared them (an armed preset hint still
-   * fires when its snapped morph's terminal request lands, exactly as
-   * before) — and there is no snapMorph, because regenerate() (the
-   * scheduled run below) snaps any in-flight morph itself.
+   * Same shape as applyEdit minus what a drag must not do: no refreshUi
+   * (the tear above) and no renderTransformEditor here EVER — the guide-box
+   * path adds its own rebuild after this returns, which is safe only
+   * because that gesture's pointer is on the CANVAS, not on a panel slider.
+   * Two more deliberate differences, decided rather than inherited: the
+   * pending load hints are NOT cleared — a drag is not a load, and today's
+   * drag paths never cleared them (an armed preset hint still fires when
+   * its snapped morph's terminal request lands, exactly as before) — and
+   * there is no snapMorph, because regenerate() (the scheduled run below)
+   * snaps any in-flight morph itself.
    *
    * `applyChange` mutates the document (and pushes any per-path scene
    * geometry, e.g. setGuideGeometry); this wraps it in the shared
@@ -5811,8 +5774,8 @@ function main(): void {
    * stale mid-drag), and the auto-update schedule.
    */
   function applyDragEdit(applyChange: () => void): void {
-    // Notify (fr-ygr1): a mid-gesture edit is a document edit like any
-    // other — it ends a running show, announced.
+    // Notify: a mid-gesture edit is a document edit like any other — it ends
+    // a running show, announced.
     stopShows({ notify: true });
     editSession.beginEdit();
     applyChange();
@@ -5822,22 +5785,22 @@ function main(): void {
       state.finalTransform ?? null,
     );
     // The Surface gate reads the DOCUMENT, and a geometry drag can carry it
-    // across an analyzer seam (fr-vja8.10) — a scale reaching 1.0 stops
-    // contracting mid-drag, and a stale-enabled button then routes a plainly
-    // ineligible system into a render-failure toast. This list+gate pair
-    // mirrors refreshUi's own tail (with the editor rebuild omitted between
-    // them) — an edit to either sequence should visit its twin.
+    // across an analyzer seam — a scale reaching 1.0 stops contracting
+    // mid-drag, and a stale-enabled button then routes a plainly ineligible
+    // system into a render-failure toast. This list+gate pair mirrors
+    // refreshUi's own tail (with the editor rebuild omitted between them) —
+    // an edit to either sequence should visit its twin.
     refreshSurfaceEligibility();
     if (state.autoUpdate) regenScheduler.schedule();
   }
 
   /**
    * Roll a fresh random system into the document — the shared body of the
-   * Surprise Me button and a drift leg (fr-wavo): the same
-   * quality-gated roll (random-system.ts), the same "replace" undo
-   * checkpoint and camera auto-fit (via applyEdit "always"), differing only
-   * in `morphMs` — a drift leg glides at DRIFT_MORPH_MS where a button
-   * press keeps the snappier click-feedback default.
+   * Surprise Me button and a drift leg: the same quality-gated roll
+   * (random-system.ts), the same "replace" undo checkpoint and camera
+   * auto-fit (via applyEdit "always"), differing only in `morphMs` — a
+   * drift leg glides at DRIFT_MORPH_MS where a button press keeps the
+   * snappier click-feedback default.
    */
   function rollSurpriseSystem(morphMs?: number): void {
     applyEdit(
@@ -5848,13 +5811,13 @@ function main(): void {
         // null as "clear" (stores undefined), so a previous session's lens
         // never survives a roll that landed on no final transform.
         state = setFinalTransform(state, sys.finalTransform);
-        // sys.symmetry is SymmetryParams | null (fr-d61; rolled for flat
-        // systems only) — same discipline as the lens above: a null roll
-        // RESETS the order, so a kaleidoscope left over from earlier play
-        // never multiplies a fresh surprise in a way its quality gate never
-        // probed. regenerate() (via applyEdit "always") reads state.symmetry
-        // for both the point cloud and the flame worker's restart payload,
-        // and refreshUi() syncs the slider/plane controls.
+        // sys.symmetry is SymmetryParams | null (rolled for flat systems
+        // only) — same discipline as the lens above: a null roll RESETS the
+        // order, so a kaleidoscope left over from earlier play never
+        // multiplies a fresh surprise in a way its quality gate never probed.
+        // regenerate() (via applyEdit "always") reads state.symmetry for both
+        // the point cloud and the flame worker's restart payload, and
+        // refreshUi() syncs the slider/plane controls.
         state = setSymmetryOrder(
           state,
           sys.symmetry?.order ?? DEFAULT_SYMMETRY_ORDER,
@@ -5863,12 +5826,12 @@ function main(): void {
           state,
           sys.symmetry?.plane ?? DEFAULT_SYMMETRY_PLANE,
         );
-        // The twist resets with the rest of the kaleidoscope (fr-q0h6 P6):
-        // the order/plane setters spread the previous symmetry, so without
-        // this a twist authored before the roll would silently ride into the
-        // fresh surprise — a 4D double rotation its quality gate never
-        // probed. (Rolled systems never carry one today, so this is always
-        // the DEFAULT_SYMMETRY_TWIST reset.)
+        // The twist resets with the rest of the kaleidoscope: the order/plane
+        // setters spread the previous symmetry, so without this a twist
+        // authored before the roll would silently ride into the fresh
+        // surprise — a 4D double rotation its quality gate never probed.
+        // (Rolled systems never carry one today, so this is always the
+        // DEFAULT_SYMMETRY_TWIST reset.)
         state = setSymmetryTwist(
           state,
           sys.symmetry?.twist ?? DEFAULT_SYMMETRY_TWIST,
@@ -5884,7 +5847,7 @@ function main(): void {
     scene.setFourDScaffold(null);
   }
 
-  // ── Mutation grid (fr-3vly) ────────────────────────────────────────────
+  // ── Mutation grid ──────────────────────────────────────────────────────
   // Directed exploration AROUND the current system — the gap between the
   // precise sliders and Surprise Me's total reroll: eight quality-gated
   // small perturbations (the last one a bolder wildcard) in a 3×3 modal
@@ -5987,12 +5950,12 @@ function main(): void {
   // control-spec.ts's SCALAR_CONTROLS table. Its `view` guard replaces the
   // old per-handler viewIs4D checks — belt-and-braces for controls whose row
   // is hidden in the other view (color mode/contrast, depth style, the 4D
-  // color/fade — symmetry left the guarded set with fr-q0h6 P6, live in both
-  // views), so a stray event can't mutate a concern that isn't even on
-  // screen. Everything that edits the system, loads a preset/
-  // Surprise-Me system, or selects a transform stays a bespoke handler and is
-  // UNGUARDED (fr-bf6): the single editor and transform list are live for a
-  // non-flat system exactly like a flat one.
+  // color/fade — symmetry left the guarded set once 4D gained its own
+  // kaleidoscope, live in both views), so a stray event can't mutate a
+  // concern that isn't even on screen. Everything that edits the system,
+  // loads a preset/ Surprise-Me system, or selects a transform stays a
+  // bespoke handler and is UNGUARDED: the single editor and transform list
+  // are live for a non-flat system exactly like a flat one.
   ui.bind({
     onAdd: () => {
       applyEdit(() => {
@@ -6009,17 +5972,17 @@ function main(): void {
     onPreset: (preset) => {
       applyEdit(() => {
         state = setTransforms(state, presetTransforms(preset));
-        // The final-transform lens (fr-7u8t.5, PRESET_FINALS): a preset
-        // authored AROUND a plot-time lens installs it, and — the half
-        // that is a bug fix — every other preset CLEARS it. A preset load
-        // is a whole-system replacement, so a lens left over from the
-        // previous one would silently re-pose the arriving attractor, and
-        // for the escape-time / Mandelbulb presets would take their render
-        // mode away outright (both gates refuse a final transform, so the
-        // Surface button would just go dark).
+        // The final-transform lens (PRESET_FINALS): a preset authored AROUND
+        // a plot-time lens installs it, and — the half that is a bug fix —
+        // every other preset CLEARS it. A preset load is a whole-system
+        // replacement, so a lens left over from the previous one would
+        // silently re-pose the arriving attractor, and for the escape-time /
+        // Mandelbulb presets would take their render mode away outright (both
+        // gates refuse a final transform, so the Surface button would just go
+        // dark).
         state = setFinalTransform(state, PRESET_FINALS[preset]?.() ?? null);
-        // The kaleidoscope a preset was composed under (fr-za0n,
-        // PRESET_SYMMETRIES) — the same shape as the lens above, and the
+        // The kaleidoscope a preset was composed under
+        // (PRESET_SYMMETRIES) — the same shape as the lens above, and the
         // same both-directions rule: a preset that IS its symmetry
         // (foldChainFlower) installs it, and every other preset turns it
         // OFF. A leftover kaleidoscope would replicate the arriving system
@@ -6040,8 +6003,8 @@ function main(): void {
           symmetry?.plane ?? DEFAULT_SYMMETRY_PLANE,
         );
         state = setSymmetryTwist(state, 0);
-        // The flame palette a preset was composed against (fr-7u8t.5,
-        // PRESET_PALETTES) — set, never cleared: absent means "the user's
+        // The flame palette a preset was composed against
+        // (PRESET_PALETTES) — set, never cleared: absent means "the user's
         // palette is fine", which is every preset that predates the table.
         const palette = PRESET_PALETTES[preset];
         if (palette) state = setFlamePaletteId(state, palette);
@@ -6051,7 +6014,7 @@ function main(): void {
       // preset (flat or non-flat) clears whatever the previous one left.
       // (The camera auto-fit rides the generation request — see applyEdit.)
       scene.setFourDScaffold(PRESET_SCAFFOLDS[preset]?.() ?? null);
-      // A preset authored for a specific renderer (fr-39y: the Flame optgroup)
+      // A preset authored for a specific renderer (the Flame optgroup)
       // arms its render-mode hint AFTER applyEdit (which clears it); the
       // arriving cloud consumes it — see applyCloudResult — so the showcase
       // preset actually shows up in the renderer its menu group promises.
@@ -6061,7 +6024,7 @@ function main(): void {
     // ends a running drift show — the show's own legs take the same path
     // with a longer morph (see driftPolicy's launchLeg).
     onSurprise: () => rollSurpriseSystem(),
-    // The mutation grid (fr-3vly): open + build, pick (replace-load + re-seed),
+    // The mutation grid: open + build, pick (replace-load + re-seed),
     // and reroll all share buildMutationGrid's token, so each supersedes any
     // build still filling cells.
     onOpenMutations: () => {
@@ -6070,25 +6033,25 @@ function main(): void {
     },
     onMutationPick: (index) => pickMutation(index),
     onMutateAgain: () => buildMutationGrid(),
-    // The ambient drift show's toggle (fr-wavo). Session-only, never
-    // persisted; the button is disabled under reduced motion
-    // (syncMotionAvailability), and the guard here covers a preference flip
-    // that raced the disable. Starting the show closes the panel like
-    // "Watch it build" does — it's a lean-back display; the current
-    // attractor gets a full dwell before the first departure (drift.ts).
-    // Stopping keeps the display exactly where it is: a mid-glide morph
-    // finishes on its own (MorphTween has no cancel, by design).
+    // The ambient drift show's toggle. Session-only, never persisted; the
+    // button is disabled under reduced motion (syncMotionAvailability), and
+    // the guard here covers a preference flip that raced the disable.
+    // Starting the show closes the panel like "Watch it build" does — it's a
+    // lean-back display; the current attractor gets a full dwell before the
+    // first departure (drift.ts). Stopping keeps the display exactly where it
+    // is: a mid-glide morph finishes on its own (MorphTween has no cancel, by
+    // design).
     onDriftToggle: () => {
       if (driftShow.active) {
-        // Silent (fr-ygr1): the explicit drift-button toggle itself — the
-        // user is looking right at the button reverting, so no toast needed.
+        // Silent: the explicit drift-button toggle itself — the user is
+        // looking right at the button reverting, so no toast needed.
         driftPolicy.stop();
         return;
       }
       if (prefersReducedMotion()) return;
       // Starting the ambient show ends a running timeline playback — with
-      // the toast (fr-ygr1): the user is looking at the Drift toggle, not
-      // the timeline's lit Play button (fr-8v41).
+      // the toast: the user is looking at the Drift toggle, not the
+      // timeline's lit Play button.
       timelinePolicy.stop({ notify: true });
       driftSource = "random";
       driftShow.start();
@@ -6096,7 +6059,7 @@ function main(): void {
       state = setPanelOpen(state, false);
       ui.updateLabels(state);
     },
-    // The generic scalar pipeline (fr-dig): view guard → undo checkpoint +
+    // The generic scalar pipeline: view guard → undo checkpoint +
     // debounced save for document edits → the spec's own parse + reducer →
     // label sync → the spec's declared side effects. Per-control semantics
     // (worker forwards, restarts, live tone-maps) live on the SCALAR_CONTROLS
@@ -6104,8 +6067,8 @@ function main(): void {
     onScalarControl: (spec, raw, phase = "input") => {
       if (spec.view === "flat" && viewIs4D) return;
       if (spec.view === "nonFlat" && !viewIs4D) return;
-      // Commit-on-release (fr-2c27): the drag's own "input" events already
-      // ran the branch below for every intermediate value — each its own
+      // Commit-on-release: the drag's own "input" events already ran the
+      // branch below for every intermediate value — each its own
       // undo-coalesced edit — so by the time the trailing "change" reports
       // this commit, the settled value is already live. Route it straight to
       // the spec's `commit` effect and stop: re-applying the reducer here
@@ -6117,11 +6080,10 @@ function main(): void {
         return;
       }
       const previous = state;
-      // Undoable document edits end the drift show (fr-wavo); the
-      // session-only specs (persisted: false — e.g. autoUpdate) are view
-      // preferences and leave it running, like camera input. Notify
-      // (fr-ygr1): a slider/select/checkbox edit is exactly the "the user
-      // was doing something else" case.
+      // Undoable document edits end the drift show; the session-only specs
+      // (persisted: false — e.g. autoUpdate) are view preferences and leave
+      // it running, like camera input. Notify: a slider/select/ checkbox edit
+      // is exactly the "the user was doing something else" case.
       if (spec.persisted !== false) {
         stopShows({ notify: true });
         editSession.beginEdit();
@@ -6130,7 +6092,7 @@ function main(): void {
       ui.updateLabels(state);
       spec.effect?.(state, controlEffects, previous);
     },
-    // The gradient editor (fr-55k) is a bespoke widget like the transform
+    // The gradient editor is a bespoke widget like the transform
     // sliders, not a table-driven scalar: its value is a stop LIST. Same
     // pipeline shape as onScalarControl — undo checkpoint + debounced save,
     // reducer, label sync, then the render-worker forward — except the
@@ -6140,9 +6102,9 @@ function main(): void {
     // coalesces them into one undo step exactly like a slider drag, and the
     // worker's setPalette restart re-accumulates the preview live. The live
     // point cloud's height/radius ramps can select the custom gradient too
-    // (fr-3b6) — a recolor over the cached run, never a regenerate.
+    // — a recolor over the cached run, never a regenerate.
     onCustomPaletteStops: (stops) => {
-      // Notify (fr-ygr1): a gradient-editor edit, same bucket as any other
+      // Notify: a gradient-editor edit, same bucket as any other
       // document edit.
       stopShows({ notify: true });
       editSession.beginEdit();
@@ -6154,12 +6116,11 @@ function main(): void {
       if (state.solid.paletteId === CUSTOM_PALETTE_ID)
         solidSession.post({ type: "setPalette", palette });
       // The surface tracer's LUT bakes whichever palette its colorSource
-      // samples — the surface palette (orbit trap, rings, or sheets —
-      // fr-rl4b's rings/sheets ride the same paletteId as the orbit trap) or
-      // the explorer ramp (height/radius) — so re-upload it whenever the
-      // edited gradient is the one it currently samples (fr-ibcm). Pure
-      // uniforms: the change lands next frame, mid-render, with nothing to
-      // restart.
+      // samples — the surface palette (orbit trap, rings, or sheets — rings
+      // and sheets ride the same paletteId as the orbit trap) or the explorer
+      // ramp (height/radius) — so re-upload it whenever the edited gradient
+      // is the one it currently samples. Pure uniforms: the change lands next
+      // frame, mid-render, with nothing to restart.
       const surfaceSource = state.surface.colorSource;
       if (
         ((surfaceSource === "palette" ||
@@ -6175,7 +6136,7 @@ function main(): void {
       // The edited gradient is baked into the live cloud's color buffer
       // whenever the ramp palette selects it and the active view's ramp mode
       // shows it — the 3D height/radius modes (colorModeUsesRampPalette) or
-      // the 4D radius mode (fr-6ue) — even while a flame/solid render is
+      // the 4D radius mode — even while a flame/solid render is
       // showing, so the explorer never returns stale-colored. recolor and
       // applyFourDColor each no-op in the other view, so both bakes can be
       // requested and exactly the displayed cloud's one runs.
@@ -6183,29 +6144,29 @@ function main(): void {
         if (colorModeUsesRampPalette(state.colorMode)) recolor();
         if (state.fourDColor === "radius") applyFourDColor();
       }
-      // The `"auto"` backdrop tracks a custom-gradient drag live (fr-mz2u)
+      // The `"auto"` backdrop tracks a custom-gradient drag live
       // whenever the active render's palette selects the edited gradient —
       // trackAutoBackground's own guards make this free otherwise.
       trackAutoBackground();
     },
-    // The axis-color pickers (fr-8k7) are a bespoke widget like the gradient
+    // The axis-color pickers are a bespoke widget like the gradient
     // editor: undo checkpoint + debounced save, reducer, label sync, then a
     // recolor over the cached run — never a regenerate. No worker forward:
     // the flame/solid renders snapshot the colors at entry, and the pickers
     // are unreachable while a render is active (the explorer block hides).
     onPositionAxisColors: (colors) => {
-      // Notify (fr-ygr1): an axis-color-picker edit, same bucket as any
-      // other document edit.
+      // Notify: an axis-color-picker edit, same bucket as any other document
+      // edit.
       stopShows({ notify: true });
       editSession.beginEdit();
       state = setPositionAxisColors(state, colors);
       ui.updateLabels(state);
       if (state.colorMode === "position") recolor();
     },
-    // Custom backdrop pickers (fr-5ps1): the same shape as the axis colors
-    // above — one undo checkpoint per drag burst (beginEdit coalesces),
-    // then an instant push to every renderer. No worker forward: the
-    // backdrop is composited scene-side in every mode.
+    // Custom backdrop pickers: the same shape as the axis colors above — one
+    // undo checkpoint per drag burst (beginEdit coalesces), then an instant
+    // push to every renderer. No worker forward: the backdrop is composited
+    // scene-side in every mode.
     onBackgroundCustom: (custom) => {
       stopShows({ notify: true });
       editSession.beginEdit();
@@ -6213,11 +6174,11 @@ function main(): void {
       ui.updateLabels(state);
       applyBackgroundNow();
     },
-    // Fog tint color (fr-5h5d): the color half of the atmosphere pair, the
-    // same shape as the backdrop pickers above — one undo checkpoint per
-    // drag burst, then an instant push to every renderer fog reaches. The
-    // strength half rides the table-driven onScalarControl pipeline
-    // instead (control-spec.ts's fogTintStrength entry).
+    // Fog tint color: the color half of the atmosphere pair, the same shape
+    // as the backdrop pickers above — one undo checkpoint per drag burst,
+    // then an instant push to every renderer fog reaches. The strength half
+    // rides the table-driven onScalarControl pipeline instead
+    // (control-spec.ts's fogTintStrength entry).
     onFogTint: (hex) => {
       stopShows({ notify: true });
       editSession.beginEdit();
@@ -6225,13 +6186,13 @@ function main(): void {
       ui.updateLabels(state);
       scene.setFogTint(hexToRgb01(state.fogTint), state.fogTintStrength);
     },
-    // Balloon tint color (fr-j85n): the color half of the balloon tint
-    // pair, mirroring onFogTint just above exactly — one undo checkpoint
-    // per drag burst, then an instant push to every renderer the balloon
-    // reaches. ONE handler serves BOTH pickers (ui.ts wires it from the
-    // Points section's balloonTintColorInput AND the Surface section's
-    // surfaceBalloonTintColorInput). The strength half rides the
-    // table-driven onScalarControl pipeline instead (control-spec.ts's
+    // Balloon tint color: the color half of the balloon tint pair, mirroring
+    // onFogTint just above exactly — one undo checkpoint per drag burst, then
+    // an instant push to every renderer the balloon reaches. ONE handler
+    // serves BOTH pickers (ui.ts wires it from the Points section's
+    // balloonTintColorInput AND the Surface section's
+    // surfaceBalloonTintColorInput). The strength half rides the table-driven
+    // onScalarControl pipeline instead (control-spec.ts's
     // balloonTintStrength/surfaceBalloonTintStrength entries).
     onBalloonTint: (hex) => {
       stopShows({ notify: true });
@@ -6244,42 +6205,42 @@ function main(): void {
       );
     },
     onRegenerate: () => regenerate(),
-    // "▶ Watch it build" (fr-1zb): replay the DISPLAYED cloud's own
-    // generation order — no regeneration, no RNG roll, so the shape the user
-    // has been looking at is exactly the one that re-accretes. Leaves any
-    // flame/solid render (the replay lives in the points view) and closes
-    // the About dialog + panel so the stage is actually watchable.
+    // "▶ Watch it build": replay the DISPLAYED cloud's own generation order —
+    // no regeneration, no RNG roll, so the shape the user has been looking at
+    // is exactly the one that re-accretes. Leaves any flame/solid render (the
+    // replay lives in the points view) and closes the About dialog + panel so
+    // the stage is actually watchable.
     onWatchBuild: () => {
       switchRenderMode("points");
       // A replay and the drift show can't share the stage: a drift leg's
-      // regeneration would kill the replay a few seconds in (fr-wavo).
-      // Notify (fr-ygr1): "Watch it build" is its own action, not the drift
-      // control — the drift show ending is a side effect the user didn't
-      // ask for, same bucket as an edit reaching in from elsewhere (see
-      // the driftPolicy wiring's doc, which groups "starting a build replay" with
+      // regeneration would kill the replay a few seconds in. Notify:
+      // "Watch it build" is its own action, not the drift control — the
+      // drift show ending is a side effect the user didn't ask for, same
+      // bucket as an edit reaching in from elsewhere (see the driftPolicy
+      // wiring's doc, which groups "starting a build replay" with
       // applyEdit/time-travel/gallery-loads as "the user reached in").
       stopShows({ notify: true });
-      // Snap any in-flight morph before replaying (fr-a04l): the replay
-      // reveals the displayed buffer, which should be the settled target,
-      // not a mid-morph intermediate. (Morph landings cancel a replay
-      // naturally via applyCloudResult, so an unsnapped morph would kill the
-      // replay a frame in anyway.)
+      // Snap any in-flight morph before replaying: the replay reveals the
+      // displayed buffer, which should be the settled target, not a mid-morph
+      // intermediate. (Morph landings cancel a replay naturally via
+      // applyCloudResult, so an unsnapped morph would kill the replay a frame
+      // in anyway.)
       snapMorph();
       ui.closeAbout();
       // Remember whether the panel was open so endReplayDisplay can restore
-      // it once the replay ends (fr-vpka) — closed here unconditionally so
-      // the stage is watchable, same as ever. ??= so a restart mid-replay
-      // (the About dialog's button is still reachable) keeps the FIRST
-      // start's memory instead of overwriting it with the forced-closed
-      // state (fr-hpci; the showcase guard below is its twin).
+      // it once the replay ends — closed here unconditionally so the stage is
+      // watchable, same as ever. ??= so a restart mid-replay (the About
+      // dialog's button is still reachable) keeps the FIRST start's memory
+      // instead of overwriting it with the forced-closed state (the showcase
+      // guard below is its twin).
       panelOpenBeforeReplay ??= state.panelOpen;
       state = setPanelOpen(state, false);
       ui.updateLabels(state);
       const count = viewIs4D ? fourDResult?.count : lastResult?.count;
-      // The map count sizes the spotlight tour (fr-01kf): one step per base
+      // The map count sizes the spotlight tour: one step per base
       // transform, skipped entirely by BuildReplay for single-map systems.
       buildReplay.start(count ?? 0, state.transforms.length);
-      // Arm the showcase overrides (fr-hpci; see replayShowcase's doc): by-
+      // Arm the showcase overrides (see replayShowcase's doc): by-
       // transform colors, guides on, and the view's auto-motion running for
       // the duration of the replay, restored by endReplayDisplay. Only when
       // the replay actually started (a 0-point cloud leaves it idle, and an
@@ -6292,16 +6253,16 @@ function main(): void {
           (fourD ? state.fourDColor : state.colorMode) !== "transform";
         // Motion is a showcase EXTRA, not what the click asked for, so unlike
         // the replay itself it stays off under reduced motion. The sticky
-        // auto-motion choice (fr-g98) is deliberately not consulted or
-        // written: this is a programmatic write, not a user toggle, and the
-        // prior flag comes back verbatim on disarm.
+        // auto-motion choice is deliberately not consulted or written: this
+        // is a programmatic write, not a user toggle, and the prior flag
+        // comes back verbatim on disarm.
         let motionWasOn: boolean | null = null;
         if (!prefersReducedMotion()) {
           if (fourD) {
             motionWasOn = fourDView.tumbleOn;
             fourDView.tumbleOn = true;
             // A showcase write never touches the user's checkbox, so the help
-            // box's motion wording is told separately (fr-k9nx) — the
+            // box's motion wording is told separately — the
             // updateLabels below repaints it.
             ui.setFourDTumbleActive(true);
           } else {
@@ -6322,19 +6283,18 @@ function main(): void {
         ui.updateLabels(state);
       }
     },
-    // "Inflate" (fr-5wlv.2, surface entry point fr-5wlv.6): animate the
-    // balloon's radius from a crumpled near-center ball out to its rest
-    // size — tickLogic's absolute-time poll pushes the sweep every frame
-    // while balloonSweepStartMs is set, in BOTH points and surface modes.
-    // Turns the balloon on first if it wasn't already, mirroring the
-    // checkbox effects' own enabled(+radius) push (control-spec.ts), so a
-    // click from off plays the whole sweep instead of silently jumping
-    // straight to rest — the explorer and surface checkboxes share this
-    // same on-first behavior via the mode-appropriate path below. Session-
-    // only view motion, like auto-orbit: no undo checkpoint, no stopShows
-    // (the balloon pair's OWN persistence, fr-5wlv.6, still applies at
-    // whatever the sweep is left resting on, via the next ordinary edit's
-    // debounced save — this handler itself just never cuts one).
+    // "Inflate": animate the balloon's radius from a crumpled near-center
+    // ball out to its rest size — tickLogic's absolute-time poll pushes the
+    // sweep every frame while balloonSweepStartMs is set, in BOTH points and
+    // surface modes. Turns the balloon on first if it wasn't already,
+    // mirroring the checkbox effects' own enabled(+radius) push
+    // (control-spec.ts), so a click from off plays the whole sweep instead of
+    // silently jumping straight to rest — the explorer and surface checkboxes
+    // share this same on-first behavior via the mode-appropriate path below.
+    // Session-only view motion, like auto-orbit: no undo checkpoint, no
+    // stopShows (the balloon pair's OWN persistence still applies at whatever
+    // the sweep is left resting on, via the next ordinary edit's debounced
+    // save — this handler itself just never cuts one).
     onBalloonInflate: () => {
       if (!state.balloonEcho) {
         state = setBalloonEcho(state, true);
@@ -6363,19 +6323,19 @@ function main(): void {
     onRecordVideoToggle: () => {
       recorder.toggle();
     },
-    // Saved-scene collection (fr-cai). Save/copy act on the CURRENT document
-    // (the same encodeScene(currentDocument()) the autosave uses — camera
-    // pose included, fr-1k4, so a loaded entry restores its framing); the
-    // thumbnail is a downsampled snapshot of what is actually showing —
-    // reachable in every render mode since fr-75sq, so a save made from a
-    // flame/solid render captures the rendered frame and tags the entry
-    // with the mode it came from (loading it re-enters that renderer, and a
-    // drift-collection leg plays it there). During a render's first-frame
-    // gap the screen still shows the explorer (the sessions' first-frame
-    // gate), so the thumbnail honestly captures that instead — the tag
-    // stays the render's, which is what the save meant — and fr-r777 comes
-    // back once that render's first frame lands and re-photographs the entry,
-    // so the gap costs a briefly-wrong picture rather than a permanent one.
+    // Saved-scene collection. Save/copy act on the CURRENT document (the same
+    // encodeScene(currentDocument()) the autosave uses — camera pose
+    // included, so a loaded entry restores its framing); the thumbnail is a
+    // downsampled snapshot of what is actually showing — reachable in every
+    // render mode, so a save made from a flame/solid render captures the
+    // rendered frame and tags the entry with the mode it came from (loading
+    // it re-enters that renderer, and a drift-collection leg plays it there).
+    // During a render's first-frame gap the screen still shows the explorer
+    // (the sessions' first-frame gate), so the thumbnail honestly captures
+    // that instead — the tag stays the render's, which is what the save meant
+    // — and the late correction comes back once that render's first frame
+    // lands and re-photographs the entry, so the gap costs a briefly-wrong
+    // picture rather than a permanent one.
     onSaveToCollection: () => {
       const encoded = encodeScene(currentDocument());
       const gapMode = thumbnailGapMode();
@@ -6393,25 +6353,25 @@ function main(): void {
     onOpenGallery: () => {
       ui.openGallery(collection.all());
     },
-    // The gallery modal's "▶ Drift collection" (fr-w2ve): the same ambient
-    // show as onDriftToggle — same lean-back panel close, same full dwell on
-    // the current attractor before the first departure, same Stop-drifting
-    // toggle to end it — but its legs walk the saved collection in gallery
-    // order, looping (advanceCollectionLeg), instead of rolling surprises.
-    // Restarted shows play from the front again (the cursor resets). The
-    // button is disabled while the collection is empty or motion is reduced;
-    // the guard covers a click racing either change.
+    // The gallery modal's "▶ Drift collection": the same ambient show as
+    // onDriftToggle — same lean-back panel close, same full dwell on the
+    // current attractor before the first departure, same Stop-drifting toggle
+    // to end it — but its legs walk the saved collection in gallery order,
+    // looping (advanceCollectionLeg), instead of rolling surprises. Restarted
+    // shows play from the front again (the cursor resets). The button is
+    // disabled while the collection is empty or motion is reduced; the guard
+    // covers a click racing either change.
     onDriftCollection: () => {
       if (prefersReducedMotion() || collection.size === 0) return;
       // Same mutual exclusion as onDriftToggle: the slideshow ends a
-      // running timeline playback, with the toast (fr-8v41).
+      // running timeline playback, with the toast.
       timelinePolicy.stop({ notify: true });
       driftSource = "collection";
       driftLastPlayedId = null;
       driftShow.start();
       // Started from inside a CONVERGING flame/solid render (the gallery is
-      // reachable there since fr-75sq): hold the first departure for that
-      // render's completion — start()'s plain dwell would yank a still
+      // reachable there in every render mode): hold the first departure for
+      // that render's completion — start()'s plain dwell would yank a still
       // mid-convergence. A render that already met its budget sends no
       // further progress, so it keeps the dwell instead (renderComplete).
       if (state.renderMode !== "points" && !renderComplete[state.renderMode]) {
@@ -6422,21 +6382,20 @@ function main(): void {
       state = setPanelOpen(state, false);
       ui.updateLabels(state);
     },
-    // Animation timeline (fr-8v41). Authoring edits (add/remove/move/
-    // retime) act on the persistent TimelineStore and re-render the
-    // section — and each one stops a running playback FIRST: the run
-    // captured its schedule at start and launchTimelineLeg resolves steps
-    // by index at leg time, so editing under it would desynchronize the
-    // show from the sequence it's playing. Those stops notify (fr-ygr1):
-    // mid-playback the panel is the user reaching in from a control that
-    // isn't the lit Play toggle. While nothing is playing they no-op, like
-    // every policy stop.
+    // Animation timeline. Authoring edits (add/remove/move/ retime) act on
+    // the persistent TimelineStore and re-render the section — and each one
+    // stops a running playback FIRST: the run captured its schedule at start
+    // and launchTimelineLeg resolves steps by index at leg time, so editing
+    // under it would desynchronize the show from the sequence it's playing.
+    // Those stops notify: mid-playback the panel is the user reaching in from
+    // a control that isn't the lit Play toggle. While nothing is playing they
+    // no-op, like every policy stop.
     onTimelineAddKeyframe: () => {
       timelinePolicy.stop({ notify: true });
       // A keyframe added from a flame/solid render is tagged with that mode
-      // (fr-v3au) — the same capture rule as onSaveToCollection's (fr-75sq):
-      // playback re-enters the renderer and holds until it converges. And the
-      // same first-frame-gap correction (fr-r777).
+      // — the same capture rule as onSaveToCollection's: playback
+      // re-enters the renderer and holds until it converges. And the same
+      // first-frame-gap correction.
       const encoded = encodeScene(currentDocument());
       const gapMode = thumbnailGapMode();
       const step = timeline.add(
@@ -6456,40 +6415,38 @@ function main(): void {
       refreshTimelineUi();
       ui.flashToast("Keyframe added");
     },
-    // ▶ Play / ■ Stop. The stop branch is silent (fr-ygr1): the explicit
-    // toggle itself, the user is looking right at it — mirroring
-    // onDriftToggle. The reduced-motion/empty guards cover a click racing
-    // the disabled-state sync, like the drift toggle's own guard.
+    // ▶ Play / ■ Stop. The stop branch is silent: the explicit toggle itself,
+    // the user is looking right at it — mirroring onDriftToggle. The
+    // reduced-motion/empty guards cover a click racing the disabled-state
+    // sync, like the drift toggle's own guard.
     onTimelinePlayToggle: () => {
       if (timelinePlayer.active) {
         timelinePolicy.stop();
         return;
       }
-      // An offline export owns the player for its whole pending span
-      // (fr-vja8.12). Pre-run (the encoder-probe gap) a plain run started
-      // here would make startOfflineExport's raced-show guard abandon the
-      // export the user just asked for; post-run (the encode flush) it
-      // would start against a virtual clock nothing advances until the
-      // export's finally unwinds it. Either way the click loses to the
-      // export in flight — swallow it.
+      // An offline export owns the player for its whole pending span. Pre-run
+      // (the encoder-probe gap) a plain run started here would make
+      // startOfflineExport's raced-show guard abandon the export the user
+      // just asked for; post-run (the encode flush) it would start against a
+      // virtual clock nothing advances until the export's finally unwinds it.
+      // Either way the click loses to the export in flight — swallow it.
       if (offlineExportPending) return;
       if (prefersReducedMotion() || timeline.size === 0) return;
       startTimelinePlayback(false);
     },
-    // ⏺ Export clip: the same playback run with the recorder rolling
-    // (fr-8v41) — whatever ends the run also stops the recorder, so the
-    // clip downloads (see timelineExporting). If a manual recording is
-    // already running, adopt it rather than toggling it off — the run's
-    // end will finalize it exactly the same way. On the REALTIME path,
-    // render keyframes in the sequence (fr-v3au) make the clip run longer
-    // than the authored total — each one records its render converging for
-    // however long that takes on this device — so the cap warning below
-    // fires on what is then only a floor; the recorder's own cap still
-    // cuts an overlong run honestly. The offline path instead parks its
-    // clock through convergence (fr-6jic), so there the authored total is
-    // exact.
+    // ⏺ Export clip: the same playback run with the recorder rolling —
+    // whatever ends the run also stops the recorder, so the clip downloads
+    // (see timelineExporting). If a manual recording is already running,
+    // adopt it rather than toggling it off — the run's end will finalize it
+    // exactly the same way. On the REALTIME path, render keyframes in the
+    // sequence make the clip run longer than the authored total — each one
+    // records its render converging for however long that takes on this
+    // device — so the cap warning below fires on what is then only a floor;
+    // the recorder's own cap still cuts an overlong run honestly. The offline
+    // path instead parks its clock through convergence, so there the authored
+    // total is exact.
     onTimelineExport: () => {
-      // While an offline export runs (fr-92t9), the button is the cancel
+      // While an offline export runs, the button is the cancel
       // affordance: stop the show and the driver saves the partial clip.
       // During the pre-playback probe gap the stop no-ops — the click just
       // can't double-start (offlineExportPending gates below).
@@ -6510,13 +6467,13 @@ function main(): void {
           `Clips cap at ${formatElapsed(MAX_RECORDING_SECONDS)} — the end will be cut off`,
         );
       }
-      // Frame-exact offline export (fr-92t9) whenever WebCodecs can encode
-      // it — render keyframes included (fr-6jic): their legs park the
-      // driver's virtual clock while the flame/solid render converges and
-      // capture only the converged still for the step's holdMs. A run
-      // started with a manual recording already rolling keeps the realtime
-      // MediaRecorder capture (it owns the canvas stream — adopt it, as
-      // before); so does a browser without an encodable H.264 config.
+      // Frame-exact offline export whenever WebCodecs can encode it — render
+      // keyframes included: their legs park the driver's virtual clock while
+      // the flame/solid render converges and capture only the converged still
+      // for the step's holdMs. A run started with a manual recording already
+      // rolling keeps the realtime MediaRecorder capture (it owns the canvas
+      // stream — adopt it, as before); so does a browser without an encodable
+      // H.264 config.
       if (offlineExportSupported() && !recorderActive) {
         void startOfflineExport();
         return;
@@ -6532,7 +6489,7 @@ function main(): void {
       const step = steps[at];
       timeline.remove(id);
       refreshTimelineUi();
-      // Undo (the collection delete's fr-ifts pattern): a removed keyframe
+      // Undo (the collection delete's own pattern): a removed keyframe
       // may be the only copy of its scene anywhere — the live document has
       // long since moved on — so the toast hands the exact step back to
       // TimelineStore.restore at its old index.
@@ -6559,15 +6516,15 @@ function main(): void {
       if (!entry) return; // deleted between render and click — nothing to load.
       ui.closeGallery();
       // A tagged entry re-enters the renderer it was saved from when its
-      // restored cloud lands (fr-75sq) — the preset-hint path. Armed only
-      // when the load actually applied (a corrupt entry must not leave a
-      // stale hint), and AFTER it: applyDecodedSnapshot clears the hint.
+      // restored cloud lands — the preset-hint path. Armed only when the load
+      // actually applied (a corrupt entry must not leave a stale hint), and
+      // AFTER it: applyDecodedSnapshot clears the hint.
       if (loadEncodedScene(entry.encoded) && entry.mode) {
         loadHints.armMode(entry.mode);
       }
     },
     onDeleteFromCollection: (id) => {
-      // Snapshot the entry before removing it (fr-ifts): the Undo toast's
+      // Snapshot the entry before removing it: the Undo toast's
       // collection.restore(entry) needs the exact object back — id, encoded,
       // thumbnail, createdAt, mode — and once it's gone from the collection
       // there's nothing left to re-derive that from. A stale id (already
@@ -6594,7 +6551,7 @@ function main(): void {
       // Build the link from CURRENT state rather than reading location.hash,
       // which the autosave only writes on its 300ms debounce (so it can lag a
       // just-made edit). origin + pathname drops any existing hash/query.
-      // currentDocument() includes the camera pose (fr-1k4): the link opens
+      // currentDocument() includes the camera pose: the link opens
       // framed exactly as the sender sees it.
       const link = `${location.origin}${location.pathname}#${encodeScene(
         currentDocument(),
@@ -6603,7 +6560,7 @@ function main(): void {
         ui.flashToast(ok ? "Link copied" : "Couldn't copy the link"),
       );
     },
-    // The file counterpart of Copy link (fr-de9t): the SAME document bytes —
+    // The file counterpart of Copy link: the SAME document bytes —
     // camera pose included — wrapped in the JSON file envelope instead of a
     // URL, for keeping scenes where a link doesn't fit (archives, email
     // attachments, version control).
@@ -6615,10 +6572,10 @@ function main(): void {
       );
       ui.flashToast("Scene file saved");
     },
-    // flam3/Apophysis interop (fr-8uy5): the system's XY shadow as a .flame
-    // file (flame-file.ts; docs/flame-interop.md). Projection compromises —
-    // 3D/4D structure, x/y-axis kaleidoscopes — surface exactly like the
-    // import path's notes: a toast suffix + the console list.
+    // flam3/Apophysis interop: the system's XY shadow as a .flame file
+    // (flame-file.ts; docs/flame-interop.md). Projection compromises — 3D/4D
+    // structure, x/y-axis kaleidoscopes — surface exactly like the import
+    // path's notes: a toast suffix + the console list.
     onSaveFlameFile: () => {
       const stamp = Date.now();
       const { xml, warnings } = encodeFlameFile(
@@ -6631,7 +6588,7 @@ function main(): void {
       );
       ui.flashToast(`Flame file saved${flameNotesSuffix("export", warnings)}`);
     },
-    // The collection's escape hatch from this browser profile (fr-de9t):
+    // The collection's escape hatch from this browser profile:
     // everything the gallery holds — encoded scenes, mode tags, thumbnails —
     // as one JSON backup file importSceneFile can merge back anywhere.
     onExportCollection: () => {
@@ -6646,12 +6603,12 @@ function main(): void {
       const n = collection.size;
       ui.flashToast(n === 1 ? "Exported 1 scene" : `Exported ${n} scenes`);
     },
-    // The timeline's own escape hatch (fr-h9rk) — the collection backup's
-    // exact pattern one section over: the authored sequence (steps,
-    // timings, render-mode tags) PLUS its determinism seed, as one JSON
-    // file the shared import sink restores anywhere. Carrying the seed
-    // means the restored timeline replays — and video-exports — the same
-    // morphs, not just the same scenes.
+    // The timeline's own escape hatch — the collection backup's exact pattern
+    // one section over: the authored sequence (steps, timings, render-mode
+    // tags) PLUS its determinism seed, as one JSON file the shared import
+    // sink restores anywhere. Carrying the seed means the restored timeline
+    // replays — and video-exports — the same morphs, not just the same
+    // scenes.
     onExportTimeline: () => {
       // The button disables at zero, but guard the race anyway (an edit
       // landing between the last renderTimeline sync and this click).
@@ -6674,9 +6631,9 @@ function main(): void {
       void importSceneFile(file);
     },
     onSavePng: () => {
-      // One capture at a time (fr-7mfx): the modal's scrim blocks the
-      // button once it is up, but the grace period leaves a window where a
-      // second press would start a second export over the first.
+      // One capture at a time: the modal's scrim blocks the button once it is
+      // up, but the grace period leaves a window where a second press would
+      // start a second export over the first.
       if (exportProgress.active) return;
       // Recording pins 1x: a hi-res capture resizes the shared canvas
       // mid-stream, which MediaRecorder capture doesn't survive (the flame
@@ -6696,7 +6653,7 @@ function main(): void {
     },
     onTransformGeometry: (index, geometry) => {
       // A panel-slider transform edit: the drag chokepoint owns the
-      // bookkeeping (fr-vja8.53); this path adds only its own guide push.
+      // bookkeeping; this path adds only its own guide push.
       applyDragEdit(() => {
         state = updateTransform(state, index, geometry);
         scene.setGuideGeometry(index, geometry);
@@ -6721,21 +6678,21 @@ function main(): void {
       });
     },
     onFinalTransformGeometry: (geometry) => {
-      // A panel-slider final-transform edit — the gate tracks lens edits
-      // too (fr-vja8.10): a near-zero scale, a non-fold variation or a w
-      // block on the final all move the analyzers.
+      // A panel-slider final-transform edit — the gate tracks lens edits too:
+      // a near-zero scale, a non-fold variation or a w block on the final all
+      // move the analyzers.
       applyDragEdit(() => {
         state = setFinalTransform(state, { id: 0, ...geometry });
       });
     },
     onTogglePanel: () => {
-      // Opening the panel mid-replay is reaching back in (fr-hpci): end the
+      // Opening the panel mid-replay is reaching back in: end the
       // replay first — same philosophy as the drift show's stop-on-edit —
       // so the controls the panel reveals always show settings that are
       // actually in effect (the showcase overrides disarm with the replay).
       // The replay's own panel memory is consumed un-applied: the user just
       // took manual control of the panel, so their toggle wins over both
-      // the fr-vpka restore and this handler's flip-from-closed below.
+      // the replay's own restore and this handler's flip-from-closed below.
       if (!state.panelOpen && (buildReplay.active || replayCaption !== null)) {
         panelOpenBeforeReplay = null;
         cancelReplay();
@@ -6749,14 +6706,14 @@ function main(): void {
     },
     onRenderMode: (mode) => {
       // A manual switch outranks a preset hint still waiting for its cloud —
-      // and drops a 4D pose waiting for one (fr-pnek): whatever load armed
-      // it, the user just reached in over it.
+      // and drops a 4D pose waiting for one: whatever load armed it, the user
+      // just reached in over it.
       loadHints.clearAll();
       switchRenderMode(mode);
     },
-    // Slice state is session-only view state (like the tumble clock): it never
-    // touches AppState or persistence AS STATE — though a snapshot of it rides
-    // the saved document as part of the 4D pose (fr-pnek, currentDocument) —
+    // Slice state is session-only view state (like the tumble clock): it
+    // never touches AppState or persistence AS STATE — though a snapshot of
+    // it rides the saved document as part of the 4D pose (currentDocument) —
     // so these write straight to fourDView and re-upload the slice trio to
     // the scene (see pushFourDSlice). Each first cancels an in-flight pose
     // glide and drops a pending pose (releaseFourDPoseControl): the glide
@@ -6773,11 +6730,11 @@ function main(): void {
       fourDView.sliceCenter = value;
       pushFourDSlice();
     },
-    // Slab thickness (fr-wa6o) is the one slice field with NO point-cloud
-    // meaning — the cloud's own slice is a fixed-width Gaussian — so it
-    // deliberately skips pushFourDSlice(). Its only consumer is the 4D
-    // surface tracer, which animate()'s per-frame setSurface4View push picks
-    // it up from on the very next frame.
+    // Slab thickness is the one slice field with NO point-cloud meaning — the
+    // cloud's own slice is a fixed-width Gaussian — so it deliberately skips
+    // pushFourDSlice(). Its only consumer is the 4D surface tracer, which
+    // animate()'s per-frame setSurface4View push picks it up from on the very
+    // next frame.
     onFourDSliceThicknessInput: (value) => {
       releaseFourDPoseControl();
       fourDView.sliceThickness = value;
@@ -6787,27 +6744,27 @@ function main(): void {
       fourDView.sliceRelColor = checked;
       pushFourDSlice();
     },
-    // Tumble pause/resume + speed (fr-woc): also session-only view state, no
+    // Tumble pause/resume + speed: also session-only view state, no
     // save — animate() reads these fields off fourDView directly every frame,
     // so there is nothing else to push here. The toggle goes through
     // setTumbleUserChoice (not a bare tumbleOn write) so the choice is sticky
-    // across fresh-visit resets (fr-g98).
+    // across fresh-visit resets.
     onFourDTumbleToggle: applyFourDTumbleToggle,
     onFourDTumbleSpeedInput: (value) => {
       fourDView.tumbleSpeed = value;
     },
-    // Auto-orbit pause/resume + speed (fr-1yn): the 3D siblings of the tumble
-    // handlers above, same session-only pattern — the toggle also records the
-    // sticky user choice resetAutoOrbitView() honors (fr-g98).
+    // Auto-orbit pause/resume + speed: the 3D siblings of the tumble
+    // handlers above, same session-only pattern — the toggle also records
+    // the sticky user choice resetAutoOrbitView() honors.
     onAutoOrbitToggle: applyAutoOrbitToggle,
     onAutoOrbitSpeedInput: (value) => {
       autoOrbitSpeed = value;
     },
-    // The surface preview tier under user control (fr-37c6). Off takes
-    // effect IMMEDIATELY: a preview already grinding is abandoned and the
-    // full render starts now — the flip is itself the skip, just sticky.
-    // On re-invalidates so a parked view previews (and then settles)
-    // fresh rather than waiting for the next camera nudge.
+    // The surface preview tier under user control. Off takes effect
+    // IMMEDIATELY: a preview already grinding is abandoned and the full
+    // render starts now — the flip is itself the skip, just sticky. On
+    // re-invalidates so a parked view previews (and then settles) fresh
+    // rather than waiting for the next camera nudge.
     onSurfacePreviewToggle: (checked) => {
       surfacePreviewsEnabled = checked;
       updateViewerPrefs({ surfacePreview: checked });
@@ -6824,8 +6781,8 @@ function main(): void {
     frozen: () => state.renderMode === "flame",
     onTransformChange: (index, geometry) => {
       // A guide-box drag is a system edit (unlike a camera drag): it ends
-      // the drift show like every other undoable edit (fr-wavo), through
-      // the same drag chokepoint as the panel sliders (fr-vja8.53).
+      // the drift show like every other undoable edit, through the same
+      // drag chokepoint as the panel sliders.
       applyDragEdit(() => {
         state = updateTransform(state, index, geometry);
       });
@@ -6848,13 +6805,13 @@ function main(): void {
       // surface as a surprise orientation jump on exit. `frozen` already
       // blocks all drags during the flame render; the solid render keeps its
       // camera gestures live, so the w-plane gesture needs this gate. The 4D
-      // surface session's pose is LIVE (fr-vxoj — tickRender pushes it every
+      // surface session's pose is LIVE (tickRender pushes it every
       // frame), so the gesture stays live there; gate on the session flag,
       // not the mode, so a 3D surface session (doc drifted 4D mid-session)
       // still blocks the invisible mutation.
       if (state.renderMode !== "points" && !surfaceSessionIs4D) return;
-      // Grabbing the rotor cancels a pose glide / pending pose (fr-pnek) —
-      // the user's hand wins, same as a camera grab cancelling cameraTween.
+      // Grabbing the rotor cancels a pose glide / pending pose — the user's
+      // hand wins, same as a camera grab cancelling cameraTween.
       releaseFourDPoseControl();
       fourDView.rotate(xw, yw, zw);
       // animate() pushes fourDView.matrix() next frame; nothing else to do.
@@ -6866,7 +6823,7 @@ function main(): void {
     // alone left the keys dead in the one mode where the slice always
     // means something (wave-5 review finding).
     fourDSliceOn: () => fourDView.sliceOn || surfaceSessionIs4D,
-    // The [ / ] keys (fr-vja8.37): the slice slider's own handler logic —
+    // The [ / ] keys: the slice slider's own handler logic —
     // pose-control release, center write, push — plus the panel sync the
     // slider never needs (it IS the panel; a key nudge must reflect back
     // into it or the slider goes stale until the next reopen).
@@ -6879,18 +6836,18 @@ function main(): void {
       pushFourDSlice();
       syncFourDSliceUi();
     },
-    // Space (fr-vja8.37): the same toggle logic as the panel checkboxes —
-    // never a bare flag flip — with ui.setAutoMotionToggle standing in for
-    // the DOM-side recording the checkbox change listener does before its
-    // handler fires (checkbox, row visibility, help-box flag; deliberately
-    // NOT the fresh-visit reset methods, which would stomp a chosen speed).
+    // Space: the same toggle logic as the panel checkboxes — never a bare
+    // flag flip — with ui.setAutoMotionToggle standing in for the DOM-side
+    // recording the checkbox change listener does before its handler fires
+    // (checkbox, row visibility, help-box flag; deliberately NOT the
+    // fresh-visit reset methods, which would stomp a chosen speed).
     onToggleAutoMotion: () => {
       // Points mode only (wave-5 review finding): the renders park the
-      // auto-motion and HIDE its checkbox rows (fr-osgs), so a Space here
-      // would flip the sticky choice and rewrite the persisted pref with
-      // zero visible effect — surfacing as a surprise motion start on mode
-      // exit and seeding every future reload. The neighbouring
-      // onFourDRotate carries its own version of this gate.
+      // auto-motion and HIDE its checkbox rows, so a Space here would flip
+      // the sticky choice and rewrite the persisted pref with zero visible
+      // effect — surfacing as a surprise motion start on mode exit and
+      // seeding every future reload. The neighbouring onFourDRotate carries
+      // its own version of this gate.
       if (state.renderMode !== "points") return;
       if (viewIs4D) {
         const on = !fourDView.tumbleOn;
@@ -6943,7 +6900,7 @@ function main(): void {
   if (loading) loading.style.display = "none";
   scene.setRenderStyle(state.renderStyle);
   scene.setPointSize(state.pointSize);
-  // Same push for the restored 4D depth-fade toggle (fr-3e0): the uniform
+  // Same push for the restored 4D depth-fade toggle: the uniform
   // defaults to off, so a scene restored with the fade on would render
   // without it until the checkbox first moved.
   scene.setFourDDepthFade(state.fourDDepthFade);
@@ -6951,64 +6908,63 @@ function main(): void {
   // this, a scene restored with non-default solid params would render with
   // voxel-material.ts's hardcoded defaults until a solid slider first moved.
   scene.setSolidParams(state.solid);
-  // Same push for the restored backdrop (fr-5ps1): the scene constructs on
-  // the dark default, so a document restored with haze/custom would render
-  // dark until the Background select first moved.
+  // Same push for the restored backdrop: the scene constructs on the dark
+  // default, so a document restored with haze/custom would render dark until
+  // the Background select first moved.
   applyBackgroundNow();
-  // Same push for the restored balloon pair (fr-5wlv.6): the scene
-  // constructs with the echo off / the surface balloon at its own default
-  // radius, so a document restored with the balloon on would render
-  // without it (or at the wrong size) until a balloon control first moved.
-  // Both channels pushed unconditionally like setSolidParams above — the
-  // boot render mode is always "points" (renderMode is never persisted),
-  // so setSurfaceBalloonRadius is inert here until a later surface entry,
-  // which re-derives the on/off flag itself from state.balloonEcho.
+  // Same push for the restored balloon pair: the scene constructs with the
+  // echo off / the surface balloon at its own default radius, so a document
+  // restored with the balloon on would render without it (or at the wrong
+  // size) until a balloon control first moved. Both channels pushed
+  // unconditionally like setSolidParams above — the boot render mode is
+  // always "points" (renderMode is never persisted), so
+  // setSurfaceBalloonRadius is inert here until a later surface entry, which
+  // re-derives the on/off flag itself from state.balloonEcho.
   scene.setBalloonEchoEnabled(state.balloonEcho);
   scene.setBalloonEchoRadius(state.balloonRadius);
   scene.setSurfaceBalloonRadius(state.balloonRadius);
-  // Same push for the restored balloon tint pair (fr-j85n), right beside
-  // the radius it rides with: a document restored with a non-default tint
-  // would otherwise render untinted until an edit first moved it.
+  // Same push for the restored balloon tint pair, right beside the radius it
+  // rides with: a document restored with a non-default tint would otherwise
+  // render untinted until an edit first moved it.
   scene.setBalloonTint(
     hexToRgb01(state.balloonTint),
     state.balloonTintStrength,
   );
-  // Same push for the restored fog density (fr-5h5d): the scene constructs
-  // at density 1, so a document restored with a non-default value would
-  // render at the wrong density until a Fog edit first moved it.
+  // Same push for the restored fog density: the scene constructs at density
+  // 1, so a document restored with a non-default value would render at the
+  // wrong density until a Fog edit first moved it.
   scene.setFogDensity(state.fogDensity);
-  // Same push for the restored fog tint pair (fr-5h5d), right beside the
-  // density it rides with.
+  // Same push for the restored fog tint pair, right beside the density it
+  // rides with.
   scene.setFogTint(hexToRgb01(state.fogTint), state.fogTintStrength);
   // Boot generation runs SYNCHRONOUSLY (generateSync) even though every later
-  // regeneration goes through the worker (fr-5kx): the first paint should
+  // regeneration goes through the worker: the first paint should
   // include the cloud, not an empty backdrop for a worker round-trip — and
   // the inline delivery sets `viewIs4D` for a possibly-restored non-flat
   // scene before the refreshGuides()/resetAutoOrbitView() reads just below,
   // which need it current, not defaulted to `false`.
-  // Capped (fr-t3gl): the sync path exists for first paint, not for the
-  // full density — see BOOT_SYNC_MAX_POINTS. bootParams is built ONCE so the
-  // async upgrade below reuses the same seed — the PINNED boot seed
-  // (fr-chj9), so a pose-less document's auto-frame lands on the same
-  // camera every load.
+  // Capped: the sync path exists for first paint, not for the full
+  // density — see BOOT_SYNC_MAX_POINTS. bootParams is built ONCE so the
+  // async upgrade below reuses the same seed — the PINNED boot seed, so a
+  // pose-less document's auto-frame lands on the same camera every load.
   const bootParams = { ...cloudParams(false, false), seed: BOOT_SEED };
   const bootCount = Math.min(bootParams.numPoints, BOOT_SYNC_MAX_POINTS);
   cloudGenerator.generateSync({ ...bootParams, numPoints: bootCount });
-  // Restore the framing the restored scene was last seen with (fr-1k4): a
+  // Restore the framing the restored scene was last seen with: a
   // reopened PWA / reloaded tab with a saved camera pose reapplies it
   // instead, so the cloud stays centred and the orbit pivots around it. Any
   // pose-less boot — an older save with no stored pose, or a genuinely fresh
   // visit — auto-frames the attractor instead, instantly, not the
   // preset-load glide: a boot is a cut, not a transition. The fit keeps the
   // default boot camera's viewing ANGLE (theta/phi) and only dollies in to
-  // frame (fr-3xfk).
+  // frame.
   if (saved?.camera) {
     applyCameraPose(saved.camera);
   } else {
     fitCameraToAttractor();
     cameraTween.finish();
   }
-  // The 4D sibling (fr-pnek): a restored non-flat scene reapplies the tumble
+  // The 4D sibling: a restored non-flat scene reapplies the tumble
   // orientation + w-slice it was saved with. AFTER the synchronous boot
   // generation above — its inline arrival runs the fresh-visit reset this
   // apply must land on top of, not under. Applied directly rather than via
@@ -7029,7 +6985,7 @@ function main(): void {
   refreshUi();
   editSession.syncUi();
   ui.setCollectionCount(collection.size);
-  // The async upgrade to the document's real density (fr-t3gl): same request
+  // The async upgrade to the document's real density: same request
   // (same seed) at the full count, through the worker, now that the capped
   // boot cloud has painted and the camera is framed. The boot cloud is this
   // request's exact prefix, so the arrival only adds points; fit stays
@@ -7039,7 +6995,7 @@ function main(): void {
   if (bootCount < bootParams.numPoints) {
     cloudGenerator.request(bootParams);
   }
-  // The cross-origin-isolation reload's handoff (fr-su3r). On GitHub Pages a
+  // The cross-origin-isolation reload's handoff. On GitHub Pages a
   // first-ever visit necessarily loads non-isolated, and register-sw.ts
   // reloads it once as soon as the service worker takes control. Whatever the
   // user authored inside that window comes back through the document above —
@@ -7057,13 +7013,12 @@ function main(): void {
   if (isolationHandoff) enterLoadedRenderMode(isolationHandoff.renderMode);
 
   // Drift and timeline playback are unavailable under reduced motion — no
-  // motion means no show (fr-wavo, fr-8v41): both toggles disable
-  // themselves with an explanation rather than silently doing nothing
-  // (timeline AUTHORING stays available — adding keyframes isn't motion).
-  // Tracked live, so flipping the OS preference mid-session both disables
-  // the toggles and ends a running show immediately (DriftPolicy.advance's
-  // leg-boundary check is the belt-and-braces for engines that never fire
-  // the change event).
+  // motion means no show: both toggles disable themselves with an explanation
+  // rather than silently doing nothing (timeline AUTHORING stays available —
+  // adding keyframes isn't motion). Tracked live, so flipping the OS
+  // preference mid-session both disables the toggles and ends a running show
+  // immediately (DriftPolicy.advance's leg-boundary check is the
+  // belt-and-braces for engines that never fire the change event).
   const reducedMotionQuery = window.matchMedia?.(
     "(prefers-reduced-motion: reduce)",
   );
@@ -7071,15 +7026,15 @@ function main(): void {
     const available = !prefersReducedMotion();
     ui.setDriftAvailable(available);
     ui.setTimelineAvailable(available);
-    // Silent (fr-ygr1): the reduced-motion availability sync itself.
+    // Silent: the reduced-motion availability sync itself.
     if (!available) stopShows();
   }
   syncMotionAvailability();
   reducedMotionQuery?.addEventListener("change", syncMotionAvailability);
 
-  // Boot-time render of the timeline section (fr-8v41): the store loaded
-  // whatever the last session authored; every later edit re-renders through
-  // the same helper.
+  // Boot-time render of the timeline section: the store loaded whatever the
+  // last session authored; every later edit re-renders through the same
+  // helper.
   refreshTimelineUi();
 
   // While a flame render is active, accumulation/downsample/tone-map all
@@ -7087,24 +7042,24 @@ function main(): void {
   // events (handleFlameEvent) — this loop just keeps redrawing whatever
   // image was most recently uploaded via scene.setFlameImage.
   /**
-   * Per-frame adaptive-resolution bookkeeping (fr-4lyt). Feeds the governor
-   * the dt between consecutively RENDERED frames — a skipped frame (fr-py7z)
-   * breaks the chain instead of reading as one huge dt. Sampling pauses (and
+   * Per-frame adaptive-resolution bookkeeping. Feeds the governor the dt
+   * between consecutively RENDERED frames — a skipped frame breaks the
+   * chain instead of reading as one huge dt. Sampling pauses (and
    * resolution snaps back to full) whenever the checkbox is off, a video
    * capture is running (recordings are keepsakes — capture at full quality
-   * and let the frame rate be whatever it is), a flame render is showing
-   * (a frozen still exerts no per-frame GPU pressure worth reacting to, and
+   * and let the frame rate be whatever it is), a flame render is showing (a
+   * frozen still exerts no per-frame GPU pressure worth reacting to, and
    * SHOULD display at full resolution), or the surface render is active
-   * (the preview/settle tier owns its cost — fr-5ne3 — and the settled
-   * still must display at full resolution; the ladder would fight the tier,
-   * and render-on-demand starves it of the step-up samples it needs to
-   * recover, parking stills blurry). The governed points/solid modes have
-   * their own version of that same starvation (fr-vxbo): interaction can
-   * stop with the scale stepped down, and render-on-demand then produces no
-   * more frames to sample at all — so the `!rendered` branch below tracks
-   * quiet time since the last rendered frame and calls
-   * resolutionGovernor.idleRestore to snap a parked still back to full once
-   * that quiet stretch runs long enough.
+   * (the preview/settle tier owns its cost, and the settled still must
+   * display at full resolution; the ladder would fight the tier, and
+   * render-on-demand starves it of the step-up samples it needs to recover,
+   * parking stills blurry). The governed points/solid modes have their own
+   * version of that same starvation: interaction can stop with the scale
+   * stepped down, and render-on-demand then produces no more frames to
+   * sample at all — so the `!rendered` branch below tracks quiet time since
+   * the last rendered frame and calls resolutionGovernor.idleRestore to
+   * snap a parked still back to full once that quiet stretch runs long
+   * enough.
    */
   function governResolution(now: number, rendered: boolean): void {
     if (
@@ -7155,7 +7110,7 @@ function main(): void {
 
   function animate(): void {
     requestAnimationFrame(animate);
-    // While an offline export runs (fr-92t9), its driver owns the ticking —
+    // While an offline export runs, its driver owns the ticking —
     // stepping tickLogic/tickRender below on the VIRTUAL clock, one exported
     // frame at a time, awaiting each frame's generation between the two.
     // This loop running as well would double-tick every state machine
@@ -7169,25 +7124,25 @@ function main(): void {
   }
 
   /**
-   * The animate loop's LOGIC phase (split out for fr-92t9): everything that
-   * decides WHAT this frame shows — camera/pose tween advance, the panel
-   * inset ease, the morph sample (which issues this frame's generation
-   * request), the drift/timeline show polls (which may launch a leg or
-   * finish a run), and the balloon "Inflate" sweep (fr-5wlv.6 — absolute-
-   * time motion like the tweens above, mode-independent so it reaches both
-   * the explorer and a live surface session). The realtime loop runs it
-   * back-to-back with {@link tickRender}; the offline export driver runs it
-   * at each frame's virtual time and AWAITS the generator settling in
-   * between, so the frame's own sample — not the previous frame's — is what
-   * gets rendered and encoded.
+   * The animate loop's LOGIC phase (split out for the offline export):
+   * everything that decides WHAT this frame shows — camera/pose tween
+   * advance, the panel inset ease, the morph sample (which issues this
+   * frame's generation request), the drift/timeline show polls (which may
+   * launch a leg or finish a run), and the balloon "Inflate" sweep
+   * (absolute-time motion like the tweens above, mode-independent so it
+   * reaches both the explorer and a live surface session). The realtime
+   * loop runs it back-to-back with {@link tickRender}; the offline export
+   * driver runs it at each frame's virtual time and AWAITS the generator
+   * settling in between, so the frame's own sample — not the previous
+   * frame's — is what gets rendered and encoded.
    */
   function tickLogic(now: number): void {
     cameraTween.advance();
-    // Ease the projection toward the panel-aware inset (fr-936q). Skipped
-    // while a flame render is showing — its view is frozen by contract, and
-    // the projection must not drift under the baked image; the ease resumes
-    // (and catches up) on the way back to points/solid. dt-aware like the
-    // motion tick below, so a background-tab catch-up frame can't snap it.
+    // Ease the projection toward the panel-aware inset. Skipped while a flame
+    // render is showing — its view is frozen by contract, and the projection
+    // must not drift under the baked image; the ease resumes (and catches up)
+    // on the way back to points/solid. dt-aware like the motion tick below,
+    // so a background-tab catch-up frame can't snap it.
     const insetTarget = panelInsetTarget();
     if (sceneRightInset !== insetTarget && state.renderMode !== "flame") {
       const dtInset = Math.min((now - lastInsetTickMs) / 1000, 0.1);
@@ -7199,28 +7154,28 @@ function main(): void {
       scene.setRightInset(sceneRightInset);
     }
     lastInsetTickMs = now;
-    // The replace-load morph (fr-a04l): while one is in flight, send this
-    // frame's interpolated system as a generation request — the same
-    // once-per-frame poll pattern as cameraTween/buildReplay. Deliberately
-    // NOT routed through regenScheduler (this loop is already once per
-    // frame); cloudGenerator's at-most-one-in-flight latest-wins slot
-    // absorbs frames that outrun the worker. The terminal sample sends the
-    // real replaced/fit request and deactivates the tween (see
-    // requestMorphSample). Polled ABOVE the render modes' early returns —
-    // harmlessly: switchRenderMode snaps the tween on the way INTO a
-    // flame/solid render, so it is always idle there.
+    // The replace-load morph: while one is in flight, send this frame's
+    // interpolated system as a generation request — the same once-per-frame
+    // poll pattern as cameraTween/buildReplay. Deliberately NOT routed
+    // through regenScheduler (this loop is already once per frame);
+    // cloudGenerator's at-most-one-in-flight latest-wins slot absorbs frames
+    // that outrun the worker. The terminal sample sends the real replaced/fit
+    // request and deactivates the tween (see requestMorphSample). Polled
+    // ABOVE the render modes' early returns — harmlessly: switchRenderMode
+    // snaps the tween on the way INTO a flame/solid render, so it is always
+    // idle there.
     const morphSample = morphTween.sample(now);
     if (morphSample) requestMorphSample(morphSample);
-    // The backdrop crossfade (fr-5ps1): same once-per-frame poll as the
-    // morph sample above, same clock (nowMs — so the offline export's
-    // virtual steps drive it deterministically). The terminal sample lands
-    // exactly on the target document's backdrop.
+    // The backdrop crossfade: same once-per-frame poll as the morph sample
+    // above, same clock (nowMs — so the offline export's virtual steps drive
+    // it deterministically). The terminal sample lands exactly on the target
+    // document's backdrop.
     const backgroundSample = backgroundTween.sample(now);
     if (backgroundSample) {
       pushBackground(backgroundSample.gradient);
       // An `"auto"` derivation can move while the crossfade flies — a
       // render-mode switch landing mid-fade re-points the palette it tracks
-      // (fr-mz2u). trackAutoBackground skips while the tween is active, so
+      // it tracks. trackAutoBackground skips while the tween is active, so
       // the landing sample re-checks here and settles any drift.
       if (backgroundSample.final) trackAutoBackground();
     }
@@ -7232,22 +7187,21 @@ function main(): void {
     // firing the new leg first would chain off the stale tween and swallow
     // that landing. Between legs this is a single comparison (drift.ts), so
     // a dwelling show costs no per-frame work. Polled above the render
-    // modes' early returns (fr-w2ve): a collection show runs THROUGH a
+    // modes' early returns: a collection show runs THROUGH a
     // flame/solid still — held while it converges, due again a beat after
     // it completes — while a random show is stopped by switchRenderMode
-    // before those modes can even show (fr-wavo).
+    // before those modes can even show.
     if (driftShow.frame()) driftPolicy.advance(launchDriftLeg);
-    // The timeline playback (fr-8v41): same conductor pattern as the drift
-    // show above (and the same after-the-morph-poll ordering rationale) —
-    // when a leg comes due, load that keyframe under the own-leg guard;
-    // when the run's schedule completes, finish the playback (un-light the
-    // toggle, stop an export run's recorder so the clip downloads). Also
-    // polled above the render modes' early returns on purpose: a run
-    // holding on a render keyframe (fr-v3au) lives THROUGH the flame/solid
-    // still, and its resumed departure must fire from inside that mode —
-    // the leg's own applyDecodedSnapshot is what exits back to points. At
-    // most one of the two shows is ever active, and between events this
-    // poll is one comparison (timeline-player.ts).
+    // The timeline playback: same conductor pattern as the drift show above
+    // (and the same after-the-morph-poll ordering rationale) — when a leg
+    // comes due, load that keyframe under the own-leg guard; when the run's
+    // schedule completes, finish the playback (un-light the toggle, stop an
+    // export run's recorder so the clip downloads). Also polled above the
+    // render modes' early returns on purpose: a run holding on a render
+    // keyframe lives THROUGH the flame/solid still, and its resumed departure
+    // must fire from inside that mode — the leg's own applyDecodedSnapshot is
+    // what exits back to points. At most one of the two shows is ever active,
+    // and between events this poll is one comparison (timeline-player.ts).
     const timelineEvent = timelinePlayer.frame();
     if (timelineEvent) {
       if (timelineEvent.kind === "leg") {
@@ -7256,39 +7210,38 @@ function main(): void {
         finishTimelinePlayback();
       }
     }
-    // The balloon's "Inflate" replay (fr-5wlv.2, surface fr-5wlv.6): while a
-    // sweep is running, ease its radius from MIN_BALLOON_RADIUS up to the
-    // rest target over BALLOON_SWEEP_MS. Lives HERE rather than in
-    // tickRender (fr-5wlv.6 moved it) because it keys off ABSOLUTE time
-    // (now - balloonSweepStartMs) exactly like the tween samples above, not
-    // a per-mode render dt — and tickLogic runs unconditionally every frame
-    // where tickRender's per-mode branches early-return, so one poll here
-    // covers both points and surface (and costs nothing in flame/solid,
-    // where the balloon has no renderer to reach anyway). Direct reducer +
-    // scene calls, not the onScalarControl pipeline (this is session-only
-    // replay motion, not a user edit — no undo checkpoint, no save, and
-    // critically it can never reach the control-spec.ts effects that call
-    // cancelBalloonSweep, or the sweep would cancel itself every tick).
-    // Both scene channels are pushed every tick — setBalloonEchoRadius for
-    // the explorer echo, setSurfaceBalloonRadius for the surface balloon —
-    // each equality-guarded and inert for whichever renderer isn't active,
-    // exactly the same "push both, let the setters no-op" idiom as
-    // applyDecodedSnapshot's load-time push; the surface compute path reads
-    // the scene's stored rMult from its own per-frame spec, so this is the
-    // complete set with nothing extra to wire for that path. No tier
-    // changes needed for the surface march during a sweep (fr-5wlv.1's
-    // analysis): a sweeping frame is a PREVIEW under the budget-capped
-    // rungs the interaction tier already uses, and settle only ever arms
-    // once the view (and now the radius) is parked — the sweep's own
-    // motion keeps invalidating the frame exactly like a camera drag does.
-    // The rest pose fits the full-tier budget (fr-5wlv.1 measured mandelbox-
-    // lens p95 131 steps < the 160-step full-tier cap), so an unattended
-    // Inflate click always settles cleanly; only a user who manually PARKS
-    // the slider mid-sweep on a lens monster (fr-5wlv.1's early-inflation
-    // transient, p95 215 steps at R=0.35rho) can reach a settle whose
-    // deepest creases exhaust the budget — disclosed as softer detail
-    // there, never a watchdog exposure (the bounded strip pump owns that
-    // safety regardless of how expensive the frame gets).
+    // The balloon's "Inflate" replay: while a sweep is running, ease its
+    // radius from MIN_BALLOON_RADIUS up to the rest target over
+    // BALLOON_SWEEP_MS. Lives HERE rather than in tickRender because it keys
+    // off ABSOLUTE time (now - balloonSweepStartMs) exactly like the tween
+    // samples above, not a per-mode render dt — and tickLogic runs
+    // unconditionally every frame where tickRender's per-mode branches
+    // early-return, so one poll here covers both points and surface (and
+    // costs nothing in flame/solid, where the balloon has no renderer to
+    // reach anyway). Direct reducer + scene calls, not the onScalarControl
+    // pipeline (this is session-only replay motion, not a user edit — no undo
+    // checkpoint, no save, and critically it can never reach the
+    // control-spec.ts effects that call cancelBalloonSweep, or the sweep
+    // would cancel itself every tick). Both scene channels are pushed every
+    // tick — setBalloonEchoRadius for the explorer echo,
+    // setSurfaceBalloonRadius for the surface balloon — each equality-guarded
+    // and inert for whichever renderer isn't active, exactly the same "push
+    // both, let the setters no-op" idiom as applyDecodedSnapshot's load-time
+    // push; the surface compute path reads the scene's stored rMult from its
+    // own per-frame spec, so this is the complete set with nothing extra to
+    // wire for that path. No tier changes needed for the surface march during
+    // a sweep (the balloon spike's analysis): a sweeping frame is a PREVIEW
+    // under the budget-capped rungs the interaction tier already uses, and
+    // settle only ever arms once the view (and now the radius) is parked —
+    // the sweep's own motion keeps invalidating the frame exactly like a
+    // camera drag does. The rest pose fits the full-tier budget (measured
+    // mandelbox-lens p95 131 steps < the 160-step full-tier cap), so an
+    // unattended Inflate click always settles cleanly; only a user who
+    // manually PARKS the slider mid-sweep on a lens monster (the
+    // early-inflation transient, p95 215 steps at R=0.35rho) can reach a
+    // settle whose deepest creases exhaust the budget — disclosed as softer
+    // detail there, never a watchdog exposure (the bounded strip pump owns
+    // that safety regardless of how expensive the frame gets).
     if (balloonSweepStartMs !== null) {
       const t = (now - balloonSweepStartMs) / BALLOON_SWEEP_MS;
       if (t >= 1) {
@@ -7309,25 +7262,25 @@ function main(): void {
   }
 
   /**
-   * The animate loop's RENDER phase (split out for fr-92t9): the per-mode
-   * scene painting plus everything display-side that rides it — the motion
-   * dt tick (auto-orbit / 4D tumble), glow exposure, the build replay's
-   * reveal, and the adaptive-resolution governor. `force` is the offline
-   * export driver's flag: render-on-demand would skip a visually-identical
-   * dwell frame, but the encoder needs a painted canvas for every
-   * timestamp — and the governor is skipped on those forced frames (the
-   * export pinned the scale to 1, and "frame time" between virtual steps
-   * measures nothing the ladder should react to).
+   * The animate loop's RENDER phase (split out for the offline export): the
+   * per-mode scene painting plus everything display-side that rides it —
+   * the motion dt tick (auto-orbit / 4D tumble), glow exposure, the build
+   * replay's reveal, and the adaptive-resolution governor. `force` is the
+   * offline export driver's flag: render-on-demand would skip a
+   * visually-identical dwell frame, but the encoder needs a painted canvas
+   * for every timestamp — and the governor is skipped on those forced
+   * frames (the export pinned the scale to 1, and "frame time" between
+   * virtual steps measures nothing the ladder should react to).
    */
   /**
    * One step of automatic 4D pose motion. While a timeline leg's pose glide
-   * is in flight (fr-pnek) it owns the rotor — the tumble stands aside
-   * instead of composing on top and jittering the approach — and the slice
-   * uniforms follow the glide's per-frame center lerp; the tumble resumes
-   * on the frame after the glide lands (fourDView.tick is a no-op while
-   * paused). Shared by the explorer's 4D frame path and the 4D surface
-   * render's live-pose push (fr-vxoj) — the two per-frame consumers of the
-   * pose, each pushing to its own shader afterwards.
+   * is in flight it owns the rotor — the tumble stands aside instead of
+   * composing on top and jittering the approach — and the slice uniforms
+   * follow the glide's per-frame center lerp; the tumble resumes on the
+   * frame after the glide lands (fourDView.tick is a no-op while paused).
+   * Shared by the explorer's 4D frame path and the 4D surface render's
+   * live-pose push — the two per-frame consumers of the pose, each pushing
+   * to its own shader afterwards.
    */
   function advanceFourDPose(dt: number): void {
     if (fourDTween.active) {
@@ -7346,34 +7299,34 @@ function main(): void {
   }
 
   /**
-   * The fr-zx34 verdict's legibility affordance: honest coverage of the
-   * in-flight preview/settle, so the user — not a prediction — decides
-   * whether a heavy pose is worth the wait. Called every surface tick on
-   * both paths; null hides the row (instant renders and settled frames,
-   * the common case). Compute settles — and compute previews that outrun
-   * their wall budget at the floor rung (fr-ud7n) — feed it from
-   * onProgress ray tallies; the label's backend token (fr-tmgf) says
-   * which engine owns the session — WebGPU compute vs the WebGL tracer.
+   * The no-automatic-give-up verdict's legibility affordance: honest
+   * coverage of the in-flight preview/settle, so the user — not a
+   * prediction — decides whether a heavy pose is worth the wait. Called
+   * every surface tick on both paths; null hides the row (instant renders
+   * and settled frames, the common case). Compute settles — and compute
+   * previews that outrun their wall budget at the floor rung — feed it from
+   * onProgress ray tallies; the label's backend token says which engine
+   * owns the session — WebGPU compute vs the WebGL tracer.
    */
   function syncSurfaceProgress(): void {
-    // The label's backend token is fr-tmgf's minimal cut: after a day of
-    // silently software-rendered sessions, "which engine is this?" must
+    // The label's backend token is the disclosure's minimal cut: after a day
+    // of silently software-rendered sessions, "which engine is this?" must
     // not require the console breadcrumb.
     if (surfaceComputeRenderer !== null) {
       // Compute sessions: onProgress ray tallies feed the row, from the
-      // settle and from the preview loop's unbudgeted completion pass
-      // (fr-ud7n) alike. Budgeted previews still never reach it — bounded
-      // work needs no disclosure, and at 2s the first onProgress would
-      // barely fire before the frame did, flickering the row through every
-      // drag. The preview wins the tie: while a superseded settle is still
-      // noticing its cancel(), the preview is the trace actually running.
+      // settle and from the preview loop's unbudgeted completion pass alike.
+      // Budgeted previews still never reach it — bounded work needs no
+      // disclosure, and at 2s the first onProgress would barely fire before
+      // the frame did, flickering the row through every drag. The preview
+      // wins the tie: while a superseded settle is still noticing its
+      // cancel(), the preview is the trace actually running.
       const preview = surfaceComputePreviewProgress;
       const fraction = preview ?? surfaceComputeSettleProgress;
       if (fraction === null) {
         ui.setSurfaceProgress(null);
         return;
       }
-      // "(software)" rides the engine token (fr-tmgf): a SwiftShader-class
+      // "(software)" rides the engine token: a SwiftShader-class
       // adapter must not read as the real GPU; the warning note carries
       // the full story.
       const engine = surfaceComputeRenderer.software
@@ -7381,12 +7334,11 @@ function main(): void {
         : "WebGPU";
       ui.setSurfaceProgress({
         label: `${preview !== null ? "Preview" : "Full detail"} · ${engine}`,
-        // fr-vpbq's supersampling passes, disclosed the way fr-tmgf's
-        // engine reason is — TRAILING, so the coverage percentage stays
-        // the prominent read. Silent through pass 1, which is the frame
-        // this row has always described; from pass 2 it says why the
-        // percentage is still climbing under an image that already looks
-        // finished.
+        // The supersampling passes, disclosed the way the engine reason is —
+        // TRAILING, so the coverage percentage stays the prominent read.
+        // Silent through pass 1, which is the frame this row has always
+        // described; from pass 2 it says why the percentage is still climbing
+        // under an image that already looks finished.
         detail:
           preview === null &&
           surfaceComputeSettleSample !== null &&
@@ -7394,9 +7346,9 @@ function main(): void {
             ? `antialiasing pass ${String(surfaceComputeSettleSample)}/${String(SURFACE_COMPUTE_SETTLE_SAMPLES)}`
             : undefined,
         pct: formatRenderPercent(fraction),
-        // The fr-37c6 Skip button, on the engine the bead's own comment
-        // said it would never show on: a completion pass is a preview
-        // with a full render to skip TO, which is the whole rule.
+        // The Skip button, on the engine it was originally reasoned would
+        // never show one: a completion pass is a preview with a full render
+        // to skip TO, which is the whole rule.
         skippable: preview !== null,
       });
       return;
@@ -7407,18 +7359,17 @@ function main(): void {
       return;
     }
     const pct = formatRenderPercent(progress.fraction);
-    // The trailing detail token (fr-tmgf) says why compute passed on a
-    // fold system — "compute unavailable" / "compute failed" — and stays
-    // absent when WebGL is the natural engine. Trailing, so the engine
-    // token and percentage keep the prominent read. A grinding preview is
-    // skippable (fr-37c6): the Skip button rides the row exactly while
-    // there is a full render to skip TO — never during settles.
-    // fr-jf9y: the strip arm's supersampling passes, disclosed exactly as
-    // the compute arm's are (fr-vpbq) — trailing, silent through pass 1,
-    // and BEHIND the engine-reason token when both apply, since why this
-    // session is on WebGL at all outranks which pass it is on. `fraction`
-    // already spans the whole sequence, so the percentage stays monotone
-    // instead of resetting eight times.
+    // The trailing detail token says why compute passed on a fold system —
+    // "compute unavailable" / "compute failed" — and stays absent when WebGL
+    // is the natural engine. Trailing, so the engine token and percentage
+    // keep the prominent read. A grinding preview is skippable: the Skip
+    // button rides the row exactly while there is a full render to skip TO —
+    // never during settles. The strip arm's supersampling passes are
+    // disclosed exactly as the compute arm's are — trailing, silent through
+    // pass 1, and BEHIND the engine-reason token when both apply, since why
+    // this session is on WebGL at all outranks which pass it is on.
+    // `fraction` already spans the whole sequence, so the percentage stays
+    // monotone instead of resetting eight times.
     const detail = [
       surfaceWebglDetailToken,
       progress.phase === "settle" && progress.sample > 1
@@ -7463,7 +7414,7 @@ function main(): void {
       // failed-build window — the uniforms are uploaded synchronously in
       // enter() — but keeping it preserves the sessions' shared contract.
       scene.applyCamera(orbit);
-      // A 4D session's rotor + w-slice stay LIVE too (fr-vxoj): advance the
+      // A 4D session's rotor + w-slice stay LIVE too: advance the
       // tumble/glide and push the pose every frame — the one funnel that
       // keeps slice-slider drags, rotor gestures, and timeline pose glides
       // live in-mode with zero per-control wiring (setSurface4View's
@@ -7474,18 +7425,17 @@ function main(): void {
       if (surfaceSessionIs4D) {
         const dt4 = Math.min((now - lastMotionTickMs) / 1000, 0.1);
         lastMotionTickMs = now;
-        // The ambient tumble PARKS in surface mode (fr-osgs): every tick
-        // would invalidate the frame, pinning the tier scheduler in
-        // preview so the settle never arms — on non-trivial systems not
-        // even the preview completes between ticks. Directed pose glides
-        // (timeline legs) stay live — they are finite, and the settle
-        // arms the moment one lands — and user motion (Shift-drag rotor,
-        // slice slider) still flows through setSurface4View below. The
-        // user's tumble preference is untouched; the projection view
-        // resumes it on exit. The panel hides the tumble controls
-        // in-mode (ui.ts's syncFourDViewRows).
+        // The ambient tumble PARKS in surface mode: every tick would
+        // invalidate the frame, pinning the tier scheduler in preview so the
+        // settle never arms — on non-trivial systems not even the preview
+        // completes between ticks. Directed pose glides (timeline legs) stay
+        // live — they are finite, and the settle arms the moment one lands —
+        // and user motion (Shift-drag rotor, slice slider) still flows
+        // through setSurface4View below. The user's tumble preference is
+        // untouched; the projection view resumes it on exit. The panel hides
+        // the tumble controls in-mode (ui.ts's syncFourDViewRows).
         if (fourDTween.active) advanceFourDPose(dt4);
-        // A capture owns the tracer's uniforms (fr-p0mr): pushing a live
+        // A capture owns the tracer's uniforms: pushing a live
         // rotor/w-slice between two pump calls of a drain would trace the
         // frame's remaining rows at a DIFFERENT hyperplane from the ones
         // already written, and the export would be a PNG split across two
@@ -7497,52 +7447,51 @@ function main(): void {
           scene.setSurface4View(
             fourDView.matrix(),
             fourDView.sliceCenter,
-            // fr-rsp6: sessions whose fold set breaks segment exactness
-            // clamp the fr-wa6o thickness to 0 (the row is hidden too).
+            // Sessions whose fold set breaks segment exactness clamp
+            // the slab thickness to 0 (the row is hidden too).
             surface4SlabExact ? fourDView.sliceThickness : 0,
           );
         }
       }
-      // A grid the worker delivered while a capture held the tracer
-      // (fr-p0mr) lands on the first tick that owns the uniforms again —
-      // before this frame's arms, so nothing traces half-gridded.
+      // A grid the worker delivered while a capture held the tracer lands on
+      // the first tick that owns the uniforms again — before this frame's
+      // arms, so nothing traces half-gridded.
       if (!surfaceCaptureFlight && pendingSurfaceGrid !== null) {
         const grid = pendingSurfaceGrid;
         pendingSurfaceGrid = null;
         applySurfaceGrid(grid);
       }
       if (surfaceSession.hasFirstFrame) {
-        // The interaction tier split (fr-5ne3; strips fr-sjff): an
-        // invalidated frame traces the cheap preview immediately — a
-        // drag's first tick can never hitch on a full trace — and once the
-        // view has been quiet for TIER_SETTLE_MS the full-quality frame
-        // renders as an INTERRUPTIBLE strip job spread across animation
-        // frames, sharpening the parked preview progressively; any fresh
-        // invalidation abandons it and previews instead. Offline-export
-        // frames (force) bypass the scheduler — they run on the virtual
-        // clock and are keepsakes, always full (renderSurface's full tier
-        // strips synchronously, so even those submissions stay bounded).
-        // A recorder repaint of a PARKED view re-presents the settled
-        // image when one exists (a re-trace would spend seconds of GPU on
-        // an identical frame) and repaints the preview otherwise; a
-        // recorded drag captures the preview frames the user actually
-        // saw.
+        // The interaction tier split (strips and all): an invalidated frame
+        // traces the cheap preview immediately — a drag's first tick can
+        // never hitch on a full trace — and once the view has been quiet for
+        // TIER_SETTLE_MS the full-quality frame renders as an INTERRUPTIBLE
+        // strip job spread across animation frames, sharpening the parked
+        // preview progressively; any fresh invalidation abandons it and
+        // previews instead. Offline-export frames (force) bypass the
+        // scheduler — they run on the virtual clock and are keepsakes, always
+        // full (renderSurface's full tier strips synchronously, so even those
+        // submissions stay bounded). A recorder repaint of a PARKED view
+        // re-presents the settled image when one exists (a re-trace would
+        // spend seconds of GPU on an identical frame) and repaints the
+        // preview otherwise; a recorded drag captures the preview frames the
+        // user actually saw.
         if (surfaceCaptureFlight) {
-          // A Save-PNG capture owns the tracer (fr-7mfx). It yields so its
-          // modal can paint and its Cancel can be clicked, which means
-          // this tick runs DURING the export — and every arm below would
-          // fight it (the compute arms open with renderer.cancel(); the
-          // strip arms re-size the target being drained and overwrite the
-          // frozen full-tier uniforms). The progress sync still runs so
-          // the in-panel row clears: while the modal is up, IT owns the
-          // disclosure, and a stale "Full detail 43%" behind the scrim
-          // would outlive the job it described.
+          // A Save-PNG capture owns the tracer. It yields so its modal can
+          // paint and its Cancel can be clicked, which means this tick runs
+          // DURING the export — and every arm below would fight it (the
+          // compute arms open with renderer.cancel(); the strip arms re-size
+          // the target being drained and overwrite the frozen full-tier
+          // uniforms). The progress sync still runs so the in-panel row
+          // clears: while the modal is up, IT owns the disclosure, and a
+          // stale "Full detail 43%" behind the scrim would outlive the job it
+          // described.
           syncSurfaceProgress();
         } else if (surfaceComputeRenderer) {
-          // The WebGPU compute path (fr-tzdg): async bounded-pass frames
-          // instead of scissor strips — same tier clock, same
-          // preview/settle choreography, presented through the shared
-          // blit. The strip machinery below never arms in this mode.
+          // The WebGPU compute path: async bounded-pass frames instead of
+          // scissor strips — same tier clock, same preview/settle
+          // choreography, presented through the shared blit. The strip
+          // machinery below never arms in this mode.
           surfaceComputeTick(now, force);
           syncSurfaceProgress();
         } else if (force) {
@@ -7560,14 +7509,14 @@ function main(): void {
             surfaceSettled = false;
             surfaceSettlePending = false;
             if (!surfacePreviewsEnabled) {
-              // Previews off (fr-37c6): the pane freezes on its last
-              // frame while the view moves — consume the invalidation so
-              // the tier clock can quiet, and let the settle below
-              // develop the new pose over the held image once it fires.
+              // Previews off: the pane freezes on its last frame while the
+              // view moves — consume the invalidation so the tier clock can
+              // quiet, and let the settle below develop the new pose over the
+              // held image once it fires.
               surfaceWebglPreviewPending = false;
               scene.clearRenderNeeded();
             } else if (scene.surfacePreviewActive) {
-              // Latest-wins COALESCING (fr-nl32) — kickSurfaceComputePreview's
+              // Latest-wins COALESCING — kickSurfaceComputePreview's
               // rule, which the strip path never got. renderSurface("preview")
               // ARMS a fresh job, discarding the in-flight one's partial, so
               // on a renderer where a preview spans frames every invalidation
@@ -7596,7 +7545,7 @@ function main(): void {
             }
           } else {
             // The settle verdict fires on the tier clock, but on systems
-            // whose previews span frames (fr-du81's strip jobs) the
+            // whose previews span frames (the bounded strip jobs) the
             // preview may still be mid-flight — let it finish first: it
             // is the cheapest route to a COMPLETE image of the parked
             // view, and beginning the full-resolution job now would both
@@ -7604,10 +7553,10 @@ function main(): void {
             if (tier === "full") surfaceSettlePending = true;
             if (scene.surfacePreviewActive) scene.stepSurfacePreview();
           }
-          // The !surfaceSettleActive guard exists for the skip path
-          // (fr-37c6): a skip inside the TIER_SETTLE_MS window begins the
-          // settle at once, and the clock's own late "full" verdict must
-          // not restart the running job it was a duplicate of.
+          // The !surfaceSettleActive guard exists for the skip path — a skip
+          // inside the TIER_SETTLE_MS window begins the settle at once, and
+          // the clock's own late "full" verdict must not restart the running
+          // job it was a duplicate of.
           if (
             !scene.surfacePreviewActive &&
             surfaceSettlePending &&
@@ -7623,14 +7572,14 @@ function main(): void {
           syncSurfaceProgress();
           if (scene.surfaceSettleActive) {
             if (scene.stepSurfaceSettle()) {
-              // The WebGL arm's half of the blank-frame notice (fr-7k0o).
-              // Same question, same units and the same five conditions as
-              // the compute arm's (see runSurfaceComputeSettle): the first
-              // settle only, and only a frame that FINISHED — which here is
-              // what a true return means, the strip settle having no cost
-              // ceiling to truncate against. The coverage fraction comes
-              // off the alpha flag the tracer writes, counted in the
-              // readback the supersampling accumulator already pays for.
+              // The WebGL arm's half of the blank-frame notice. Same
+              // question, same units and the same five conditions as the
+              // compute arm's (see runSurfaceComputeSettle): the first settle
+              // only, and only a frame that FINISHED — which here is what a
+              // true return means, the strip settle having no cost ceiling to
+              // truncate against. The coverage fraction comes off the alpha
+              // flag the tracer writes, counted in the readback the
+              // supersampling accumulator already pays for.
               const firstSettle = !surfaceSettled;
               surfaceSettled = true;
               const drawn = scene.surfaceCoveredFraction;
@@ -7676,23 +7625,22 @@ function main(): void {
       return;
     }
     // A collection show left HOLDING in the points view means the render it
-    // was waiting on went away without completing — the user pressed Back,
-    // or the render errored out (both land here via the sessions' exits,
-    // whichever path they took). Resume it as the points show it now is,
-    // with a fresh dwell on whatever is on screen (fr-w2ve). One comparison
-    // per frame, and unreachable while the show is genuinely waiting — a
-    // hold is only ever taken together with a flame/solid mode, whose early
-    // returns sit above.
+    // was waiting on went away without completing — the user pressed Back, or
+    // the render errored out (both land here via the sessions' exits,
+    // whichever path they took). Resume it as the points show it now is, with
+    // a fresh dwell on whatever is on screen. One comparison per frame, and
+    // unreachable while the show is genuinely waiting — a hold is only ever
+    // taken together with a flame/solid mode, whose early returns sit above.
     if (driftShow.holding) driftShow.resumeAfter(DRIFT_DWELL_MS);
-    // The timeline's twin (fr-v3au), with one more condition: a timeline
-    // hold starts at the render keyframe's LAUNCH (launchTimelineLeg), so
-    // holding-in-points is also the leg's ordinary morph and the terminal
-    // request's in-flight gap — phases where the mode hint is still
-    // armed for the render this hold awaits. Only once it has been consumed
-    // (the render entered, then exited early: Back, or a worker error) does
-    // a points-mode hold mean the completion signal is never coming —
-    // resume, so the schedule dwells the step's own holdMs on the points
-    // cloud now showing and the show goes on (the drift stance above).
+    // The timeline's twin, with one more condition: a timeline hold starts at
+    // the render keyframe's LAUNCH (launchTimelineLeg), so holding-in-points
+    // is also the leg's ordinary morph and the terminal request's in-flight
+    // gap — phases where the mode hint is still armed for the render this
+    // hold awaits. Only once it has been consumed (the render entered, then
+    // exited early: Back, or a worker error) does a points-mode hold mean the
+    // completion signal is never coming — resume, so the schedule dwells the
+    // step's own holdMs on the points cloud now showing and the show goes on
+    // (the drift stance above).
     if (timelinePlayer.holding && loadHints.mode === null) {
       timelinePlayer.resume();
     }
@@ -7709,13 +7657,13 @@ function main(): void {
       !gestures.gestureActive() &&
       !cameraTween.poseGliding
     ) {
-      // Turntable (fr-1yn): a slow rightward-drag-signed theta advance,
-      // before applyCamera so it lands on this frame. Pure camera motion —
-      // no RNG, no regenerate, no save (camera is never persisted).
-      // Paused while the user's hand is on the canvas (same theta a drag
-      // writes); composes freely with the auto-fit tween (radius/target) —
-      // but NOT with a timeline leg's pose glide (fr-8v41), the one camera
-      // motion that owns theta itself, so it pauses for that too.
+      // Turntable: a slow rightward-drag-signed theta advance, before
+      // applyCamera so it lands on this frame. Pure camera motion — no RNG,
+      // no regenerate, no save (camera is never persisted). Paused while the
+      // user's hand is on the canvas (same theta a drag writes); composes
+      // freely with the auto-fit tween (radius/target) — but NOT with a
+      // timeline leg's pose glide, the one camera motion that owns theta
+      // itself, so it pauses for that too.
       orbit.spherical.theta -= dt * AUTO_ORBIT_RATE * autoOrbitSpeed;
     }
     scene.applyCamera(orbit);
@@ -7731,15 +7679,15 @@ function main(): void {
       scene.setRot4(fourDView.matrix());
     } else if (state.renderStyle === "glow" && lastResult) {
       // Density-adaptive glow brightness: dim dense clouds, brighten sparse
-      // ones. state.glowBrightness (fr-8b1) then layers the user's manual
-      // override on top — auto-exposure only sees the *average* screen
-      // density, so local density swings still need a hand-tuned correction.
-      // Skipped in 4D: it would touch glowMaterial, which isn't rendering there.
-      // The density estimate reads the outlier-trimmed frameBounds (fr-2b82),
-      // not the raw min/max bounds: it wants the box where the mass actually
-      // is, and on an outlier-heavy system the raw box's flung stragglers
-      // inflate the projected area, under-estimating density and blowing the
-      // glow out toward white.
+      // ones. state.glowBrightness then layers the user's manual override on
+      // top — auto-exposure only sees the *average* screen density, so local
+      // density swings still need a hand-tuned correction. Skipped in 4D: it
+      // would touch glowMaterial, which isn't rendering there. The density
+      // estimate reads the outlier-trimmed frameBounds, not the raw min/max
+      // bounds: it wants the box where the mass actually is, and on an
+      // outlier-heavy system the raw box's flung stragglers inflate the
+      // projected area, under-estimating density and blowing the glow out
+      // toward white.
       const b = lastResult.frameBounds;
       const dx = b.maxX - b.minX;
       const dy = b.maxY - b.minY;
@@ -7755,13 +7703,13 @@ function main(): void {
         ) * state.glowBrightness,
       );
     }
-    // The "Watch it build" replay (fr-1zb): while one is active, draw only
-    // the buffer's first `revealed` points (generation order — see
+    // The "Watch it build" replay: while one is active, draw only the
+    // buffer's first `revealed` points (generation order — see
     // scene.setDrawCount), ride the cursor on the newest landing (re-posed
     // every frame, so in 4D it follows the tumble), tick the visible point
     // count, and narrate the current phase. Once the replay's done-linger
-    // expires it goes idle by itself; the still-set caption marks the
-    // display as needing that one final cleanup.
+    // expires it goes idle by itself; the still-set caption marks the display
+    // as needing that one final cleanup.
     const replayFrame = buildReplay.frame();
     if (replayFrame !== null) {
       scene.setDrawCount(
@@ -7769,15 +7717,15 @@ function main(): void {
       );
       scene.setReplayCursor(replayFrame.cursor);
       ui.setPointCount(replayFrame.revealed);
-      // The spotlight tour (fr-01kf): re-bake the dimmed colors only when
-      // the spotlighted map changes (once per step, and once more for the
-      // null that restores the finale's full colors — never per frame).
+      // The spotlight tour: re-bake the dimmed colors only when the
+      // spotlighted map changes (once per step, and once more for the null
+      // that restores the finale's full colors — never per frame).
       if (replayFrame.spotlight !== replaySpotlight) {
         applyReplaySpotlight(replayFrame.spotlight);
       }
-      // Guide-box emphasis rides the story (fr-01kf): the hop phase flashes
-      // the box of the map the cursor point just landed in, the spotlight
-      // phase pins it on the spotlighted map; every other phase clears it.
+      // Guide-box emphasis rides the story: the hop phase flashes the box of
+      // the map the cursor point just landed in, the spotlight phase pins it
+      // on the spotlighted map; every other phase clears it.
       // setGuideHighlight compares first, so the per-frame repeats are free.
       scene.setGuideHighlight(
         replayFrame.phase === "hop"
@@ -7791,7 +7739,7 @@ function main(): void {
     } else if (replayCaption !== null) {
       endReplayDisplay();
     }
-    // Render on demand (fr-py7z): every visual change above marked the scene
+    // Render on demand: every visual change above marked the scene
     // dirty through its setter (per-frame setters compare first), so a frame
     // where nothing moved skips the GPU entirely — the compositor keeps
     // showing the last painted frame. Recording forces painting: the canvas
@@ -7800,8 +7748,8 @@ function main(): void {
     if (rendered) scene.render();
     if (!force) governResolution(now, rendered);
   }
-  // Service-worker registration closes the boot (fr-su3r moved it inside
-  // main): the isolation reload discards this page, so it is handed a
+  // Service-worker registration closes the boot, inside main rather than
+  // at module scope: the isolation reload discards this page, so it is handed a
   // callback that captures what the reloaded one cannot recover on its own —
   // a flush so the document in the hash is the CURRENT one rather than
   // whatever survived the save debounce, and the session-only render mode
@@ -7818,7 +7766,7 @@ function main(): void {
     },
   });
 
-  // fr-opgk: `?surfacestate`'s read-only settle disclosure — see
+  // `?surfacestate`'s read-only settle disclosure — see
   // SurfaceStateProbe. Installed last so every piece of state it closes
   // over exists; the query survives the isolation reload with the rest of
   // the URL, so a script that asked for it keeps it.
@@ -7845,7 +7793,7 @@ function main(): void {
     });
   }
 
-  // fr-d6g5: `?surfacetrace` opts the compute renderer's frame loop into
+  // `?surfacetrace` opts the compute renderer's frame loop into
   // per-frame tracing (setSurfaceComputeTrace) — a capped ring buffer plus
   // a live console.debug feed, so a wedged frame's stuck await shows up
   // without shipping the instrumentation to every render. Diagnostics
@@ -7860,13 +7808,13 @@ function main(): void {
     window.__surfaceTraceLog = traceLog;
   }
 
-  // fr-fniy: `?surfacemarchchunk=N` / `?surfacemarchsteps=S` /
-  // `?surfaceshadehits=H` pin the compute frame loop's three sizing dials so
-  // each one's cost can be priced against the width it runs at,
-  // independently of the estimate that normally picks that width — the
-  // discriminating experiment fr-2ojg's own record demands of any per-unit
-  // cost claim. Diagnostics only, same URL convention as ?surfacetrace
-  // above; see setSurfaceComputeSchedulePins.
+  // `?surfacemarchchunk=N` / `?surfacemarchsteps=S` / `?surfaceshadehits=H`
+  // pin the compute frame loop's three sizing dials so each one's cost can be
+  // priced against the width it runs at, independently of the estimate that
+  // normally picks that width — the discriminating experiment the two-term
+  // shade cost model's own record demands of any per-unit cost claim.
+  // Diagnostics only, same URL convention as ?surfacetrace above; see
+  // setSurfaceComputeSchedulePins.
   {
     const params = new URLSearchParams(window.location.search);
     const pin = (name: string): number | null => {

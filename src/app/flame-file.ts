@@ -1,5 +1,5 @@
 /**
- * The flam3/Apophysis `.flame` XML codec (fr-8uy5) — file interop with the
+ * The flam3/Apophysis `.flame` XML codec — file interop with the
  * wider fractal-flame ecosystem, sitting beside `scene-file.ts`'s JSON
  * envelope as a second import/export format.
  *
@@ -21,9 +21,9 @@
  *    names, with matching formulas at `z = 0` and the same unnormalized
  *    weighted-sum blend (`variations.ts`'s `composeVariations` ≡ flam3's
  *    variation sum), so those pass through by name in both directions. The
- *    other three — the Mandelbox fold family (fr-p7nu) — are ours, not
+ *    other three — the Mandelbox fold family — are ours, not
  *    flam3's; see `docs/flame-interop.md` for the round-trip consequences
- *    (their `minRadius`/`fixedRadius`/`boxLimit`, fr-s9ll, have no XML slot
+ *    (their `minRadius`/`fixedRadius`/`boxLimit` have no XML slot
  *    at all and export with a warning whenever they're not the classic
  *    lengths).
  *  - flam3's `<finalxform>` is a plot-time lens that never feeds back into
@@ -32,7 +32,7 @@
  *    a flame's structural color coordinate is pulled toward whenever the map
  *    is picked, at the map's `color_speed` (deprecated spelling: `symmetry
  *    = 1 - 2·speed`). Those are exactly `Transform.colorIndex` /
- *    `Transform.colorSpeed` (fr-hiyu) — same `[0, 1]` range, same blend
+ *    `Transform.colorSpeed` — same `[0, 1]` range, same blend
  *    `c ← c·(1 - speed) + color·speed` (`flame.ts`'s `accumulateFlame`) — so
  *    a file's authored color structure crosses in both directions.
  *
@@ -135,7 +135,7 @@ const VARIATION_NAMES = new Set<string>(VARIATION_TYPES);
 /**
  * Standard xform attributes that are NOT variation weights and need no
  * warning when skipped: either handled elsewhere in this module (`weight`,
- * `coefs`, `post`, `opacity`, `chaos`, and — since fr-hiyu — the per-xform
+ * `coefs`, `post`, `opacity`, `chaos`, and the per-xform
  * color trio `color` / `color_speed` / `symmetry`) or genuinely inert for us
  * (animation flags, editor labels, `var_color`'s per-variation color
  * weighting). Anything outside this set and {@link VARIATION_NAMES} is
@@ -231,9 +231,10 @@ function clampUnit(v: number): number {
  *
  * The conversion checks out on its fixed point: flam3's default
  * `symmetry="0"` is speed `0.5` — exactly {@link DEFAULT_COLOR_SPEED}, and
- * exactly the halfway blend every flame render hard-coded before fr-hiyu. Its
- * other landmark agrees too: a flam3 "symmetry xform" (`symmetry="1"`, which
- * shades without recoloring) is speed `0`, our pinned coordinate.
+ * exactly the halfway blend every flame render hard-coded before the
+ * per-xform color trio landed. Its other landmark agrees too: a flam3
+ * "symmetry xform" (`symmetry="1"`, which shades without recoloring) is
+ * speed `0`, our pinned coordinate.
  *
  * `color_speed` WINS when both are present. That is a choice, not a copy of
  * flam3: its parser walks the attribute list in DOCUMENT ORDER
@@ -351,7 +352,7 @@ function mul3(a: number[], b: number[]): number[] {
 
 /** The rotation matrix of one kaleidoscope copy (`chaos-game.ts`'s
  * `symmetryRotation`, reproduced via the same one-angle Euler call — the same
- * plane → Euler mapping fr-q0h6's axis migration pins there). Throws on a
+ * plane → Euler mapping the axis → plane migration pins there). Throws on a
  * `w`-plane: a 4D kaleidoscope has no 3x3, and this exporter writes a flat 2D
  * shadow. */
 function symmetryRotation(plane: SymmetryPlane, angle: number): number[] {
@@ -487,7 +488,7 @@ function xformToTransform(
   if (Math.abs(shear) > 1e-9) transform.shear = [shear, 0, 0];
   if (variations.length > 0) transform.variations = variations;
 
-  // Per-xform color (fr-hiyu): `color` is the palette slot and
+  // Per-xform color: `color` is the palette slot and
   // `color_speed`/`symmetry` the blend rate — our `colorIndex`/`colorSpeed`
   // outright (see the module doc). Store only what the file actually says: an
   // absent or malformed attribute leaves the key OFF, so `chaos-game.ts`'s
@@ -779,7 +780,7 @@ function isAffineBlend(merged: Map<VariationType, number>): boolean {
 }
 
 /**
- * Whether `v`'s fold lengths (fr-s9ll — `variations.ts`'s
+ * Whether `v`'s fold lengths (`variations.ts`'s
  * `resolveFoldRadii`) are anything but the classic Mandelbox lengths, i.e.
  * whether writing it to flam3 XML — which has no per-variation radius
  * concept at all, just a bare `type="weight"` attribute — would lose real
@@ -836,8 +837,8 @@ function variationAttrs(merged: Map<VariationType, number>): string {
  * `center 0 0 / scale 240` for degenerate clouds.
  *
  * `symmetry` is the kaleidoscope the export actually EMITS, not the
- * document's — they differ only for a 4D one, which `encodeFlameFile` drops
- * (fr-q0h6). Framing the probe on what is written is what keeps the two in
+ * document's — they differ only for a 4D one, which `encodeFlameFile` drops.
+ * Framing the probe on what is written is what keeps the two in
  * agreement; for every w-free document the two are the same value, since the
  * caller's order is already `effectiveSymmetryOrder`'s, which is exactly what
  * `runChaosGame` would have clamped the document's to.
@@ -897,7 +898,7 @@ function probeFraming(
  * for the `"legacy"` per-transform mode, which has no gradient — the
  * per-transform hues laid out as equal blocks so each xform's `color` index
  * lands on its own hue. The block hues themselves come from `transformColors`,
- * so an authored `colorIndex` (fr-axxl) picks a block's hue exactly like it
+ * so an authored `colorIndex` picks a block's hue exactly like it
  * does for the in-app legacy-palette render this file exports — independent
  * of the block BOUNDARIES below, which stay evenly spaced (they only need to
  * agree with the xform `color` attribute's own derived-spread fallback,
@@ -955,7 +956,7 @@ export function encodeFlameFile(
   const transforms = s.transforms;
   const n = transforms.length;
 
-  // A 4D kaleidoscope (fr-q0h6: a w-plane) has no 3x3 to compose into
+  // A 4D kaleidoscope (a w-plane) has no 3x3 to compose into
   // `coefs`, so it DROPS here rather than throwing — this exporter's whole
   // contract is a lossy XY projection that warns about what it loses (see
   // the 3D/4D flattening warnings just below), and refusing the export would
@@ -972,7 +973,7 @@ export function encodeFlameFile(
   }
   // A twist turns each copy in the plane's orthogonal complement too — for
   // every w-free plane that complement mixes w, so no 2D xform can carry it
-  // (fr-q0h6). The in-plane copies still export above; only the second
+  // The in-plane copies still export above; only the second
   // rotation is lost, and when the whole kaleidoscope drops (`drops4D`) the
   // twist rides that warning instead of adding a second one.
   if (!drops4D && order > 1 && (s.symmetry.twist ?? 0) !== 0) {
@@ -994,7 +995,7 @@ export function encodeFlameFile(
     warnings.add("4D structure was flattened onto the XY plane");
   }
 
-  // fr-s9ll: flam3 XML has no per-variation radius concept, so a fold's
+  // flam3 XML has no per-variation radius concept, so a fold's
   // minRadius/fixedRadius/boxLimit never gets a slot to write into (see
   // hasNonClassicFoldRadii and docs/flame-interop.md's "deliberate
   // deviation" section) — only worth a warning when the document's lengths
@@ -1025,7 +1026,7 @@ export function encodeFlameFile(
       const affine = affines[i];
       const merged = mergedVariations(t);
       const weight = t.weight ?? 1;
-      // The map's RESOLVED palette slot and blend speed (fr-hiyu): what it
+      // The map's RESOLVED palette slot and blend speed: what it
       // authors, else the same fallbacks the render resolves through
       // (`chaos-game.ts`'s `prepareChaosGame`), so the file always states
       // outright what we draw. Both key on the BASE map index `i`, never the
@@ -1065,7 +1066,7 @@ export function encodeFlameFile(
 
   if (finalAffine !== null && s.finalTransform) {
     const merged = mergedVariations(s.finalTransform);
-    // The lens does not recolor (fr-hiyu): `flame.ts` walks the color
+    // The lens does not recolor: `flame.ts` walks the color
     // coordinate on the BASE map it picked and applies `finalTransform` at
     // plot time only. flam3 DOES blend through its final xform, at
     // `color_speed` — defaulting to 0.5, which would pull every plotted point

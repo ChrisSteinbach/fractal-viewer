@@ -356,7 +356,7 @@ describe("buildMp4Header", () => {
     expect(patchMp4Duration(header, 12345)).toBe(true);
   });
 
-  // ── B-frame reordering (fr-7dm2) ─────────────────────────────────────
+  // ── B-frame reordering ───────────────────────────────────────────────
   // Firefox's H.264 encoder hands chunks back in decode order with
   // REORDERED presentation timestamps (an IPBB cadence), whatever
   // latencyMode asked. The observed pattern for the authored 30fps grid:

@@ -85,7 +85,7 @@ describe("webgpuAdapterStatus", () => {
     });
   });
 
-  it("marks software from a string tell in architecture even when isFallbackAdapter is absent (fr-tmgf field case)", () => {
+  it("marks software from a string tell in architecture even when isFallbackAdapter is absent (the field case)", () => {
     const result = webgpuAdapterStatus({
       vendor: "Google",
       architecture: "SwiftShader",

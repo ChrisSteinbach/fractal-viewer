@@ -727,7 +727,7 @@ describe("decodeScene transform variations", () => {
     );
   });
 
-  it("returns null for a blend longer than the variation vocabulary (fr-qgxi)", () => {
+  it("returns null for a blend longer than the variation vocabulary", () => {
     // No producer can author this — the editor's add-dropdown hides types the
     // transform already carries — and it is one lane more than the flame GPU
     // Slot carries, so the decoder refuses it rather than handing the packer
@@ -750,7 +750,7 @@ describe("decodeScene transform variations", () => {
   });
 });
 
-describe("decodeScene transform variation fold radii (fr-s9ll)", () => {
+describe("decodeScene transform variation fold radii", () => {
   it("round-trips a variation with all three fold lengths set", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),
@@ -1068,7 +1068,7 @@ describe("decodeScene final transform", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Per-transform w (optional 4D extension, fr-bf6.1 — see fractal/types.ts's
+// Per-transform w (optional 4D extension — see fractal/types.ts's
 // WExtension). Follows the weight/shear/variations discipline: absent stays
 // quietly flat, present-but-malformed rejects the whole scene, finite values
 // clamp into range, and an all-identity block is canonicalized away on encode
@@ -1388,7 +1388,7 @@ describe("decodeScene transform w (4D extension)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Per-transform colorIndex / colorSpeed (fr-hiyu — flam3 xform color parity;
+// Per-transform colorIndex / colorSpeed (flam3 xform color parity;
 // see fractal/types.ts's Transform.colorIndex/colorSpeed doc comments and
 // fractal/chaos-game.ts's DEFAULT_COLOR_SPEED/derivedColorIndex). colorSpeed
 // follows the weight/shear discipline (omit-the-default on encode); colorIndex
@@ -1845,7 +1845,7 @@ describe("decodeScene flame params", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Solid render params (fr-v4f — same "absent defaults quietly, malformed
+// Solid render params (same "absent defaults quietly, malformed
 // rejects" contract as the flame block above)
 // ---------------------------------------------------------------------------
 
@@ -1960,7 +1960,7 @@ describe("decodeScene solid params", () => {
     ).toBe(MAX_SOLID_RESOLUTION);
   });
 
-  it("round-trips the full 512 resolution ceiling (fr-8x7)", () => {
+  it("round-trips the full 512 resolution ceiling", () => {
     // 512 is within MAX_SOLID_RESOLUTION, so it survives decode unclamped.
     const s: SceneSnapshot = {
       ...baseSnapshot(),
@@ -2019,7 +2019,7 @@ describe("decodeScene solid params", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Surface render params (fr-7jlk — same "absent defaults quietly, malformed
+// Surface render params (same "absent defaults quietly, malformed
 // numeric field rejects" contract as the flame/solid blocks above; unlike
 // those numeric fields, `colorSource` is a QUIET-fallback enum, like
 // symmetry.plane, not a reject-the-scene field)
@@ -2130,7 +2130,7 @@ describe("decodeScene surface params", () => {
     expect(decodeScene(encodeScene(s))!.surface.colorSource).toBe("height");
   });
 
-  it('round-trips the "rings" colorSource (fr-rl4b)', () => {
+  it('round-trips the "rings" colorSource', () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),
       surface: { ...baseSnapshot().surface, colorSource: "rings" },
@@ -2138,7 +2138,7 @@ describe("decodeScene surface params", () => {
     expect(decodeScene(encodeScene(s))!.surface.colorSource).toBe("rings");
   });
 
-  it('round-trips the "sheets" colorSource (fr-rl4b)', () => {
+  it('round-trips the "sheets" colorSource', () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),
       surface: { ...baseSnapshot().surface, colorSource: "sheets" },
@@ -2227,7 +2227,7 @@ describe("decodeScene surface params", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Custom palette (fr-55k) — the one user-authored gradient slot. Absent,
+// Custom palette — the one user-authored gradient slot. Absent,
 // malformed, or an out-of-range stop count all quietly decode to `undefined`
 // rather than rejecting the scene; flame.paletteId / solid.paletteId accept
 // "custom" only when a valid payload decoded alongside it (see
@@ -2445,12 +2445,12 @@ describe("decodeScene customPalette", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Position axis colors (fr-8k7) — the "by position" color mode's three
+// Position axis colors — the "by position" color mode's three
 // user-picked axis colors. Optional like customPalette, and shares its
 // quiet-fallback decode contract; see color.ts's PositionAxisColors.
 // ---------------------------------------------------------------------------
 
-describe("decodeScene positionAxisColors (fr-8k7)", () => {
+describe("decodeScene positionAxisColors", () => {
   it("round-trips the three axis colors", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),
@@ -2510,7 +2510,7 @@ describe("decodeScene positionAxisColors (fr-8k7)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Ramp palette (fr-3b6) — the height/radius color-mode ramps' gradient
+// Ramp palette — the height/radius color-mode ramps' gradient
 // selection. A top-level sibling of colorGamma, not nested under flame/solid,
 // but sharing their exact quiet-fallback contract and the one customPalette
 // slot (see decodeFlameParams / decodeCustomPalette).
@@ -2584,7 +2584,7 @@ describe("decodeScene rampPaletteId", () => {
 });
 
 // ---------------------------------------------------------------------------
-// toSnapshot / fromSnapshot (fr-55k) — customPalette carry/clear. These two
+// toSnapshot / fromSnapshot — customPalette carry/clear. These two
 // projection functions had no direct tests before this field; the second
 // test pins the spread-overwrite behavior undo (edit-session.ts) relies on.
 // ---------------------------------------------------------------------------
@@ -2628,7 +2628,7 @@ describe("toSnapshot / fromSnapshot customPalette", () => {
 });
 
 // ---------------------------------------------------------------------------
-// toSnapshot / fromSnapshot (fr-8k7) — positionAxisColors carry/clear, the
+// toSnapshot / fromSnapshot — positionAxisColors carry/clear, the
 // same pairing as the customPalette block above. Unlike that block's
 // "clears" test, this one builds the incoming snapshot from the bare
 // baseSnapshot() helper rather than routing it through toSnapshot, so it
@@ -2636,7 +2636,7 @@ describe("toSnapshot / fromSnapshot customPalette", () => {
 // object never declares the key at all (see fromSnapshot's own doc comment).
 // ---------------------------------------------------------------------------
 
-describe("toSnapshot / fromSnapshot positionAxisColors (fr-8k7)", () => {
+describe("toSnapshot / fromSnapshot positionAxisColors", () => {
   it("toSnapshot carries the positionAxisColors slot", () => {
     const state: AppState = {
       ...initialState(true),
@@ -2686,7 +2686,7 @@ describe("toSnapshot / fromSnapshot positionAxisColors (fr-8k7)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Symmetry params (fr-6im) — deliberately MORE lenient than flame/solid: a
+// Symmetry params — deliberately MORE lenient than flame/solid: a
 // malformed field never rejects the scene, it just falls back to a default.
 // ---------------------------------------------------------------------------
 
@@ -2760,7 +2760,7 @@ describe("decodeScene symmetry", () => {
     expect(result!.transforms).toHaveLength(1);
   });
 
-  // ——— fr-q0h6: the axis -> plane migration ———
+  // ——— the axis -> plane migration ———
 
   it("reads a legacy axis: y document as the xz plane", () => {
     const raw = { ...baseSnapshot(), symmetry: { order: 3, axis: "y" } };
@@ -2815,7 +2815,7 @@ describe("decodeScene symmetry", () => {
   });
 
   it("round-trips the symmetry an order drop leaves behind", () => {
-    // fr-4jyg: reached through the REAL reducers, not a hand-built payload —
+    // Reached through the REAL reducers, not a hand-built payload —
     // order 12, twist 7, then order 3. The decoder caps a twist at `order - 1`,
     // so if `setSymmetryOrder` let the stale 7 stand, the reloaded scene would
     // draw a different attractor than the live one.
@@ -2856,7 +2856,7 @@ describe("decodeScene symmetry", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Glow brightness (fr-8b1) — same lenient, never-rejects contract as
+// Glow brightness — same lenient, never-rejects contract as
 // symmetry above: a malformed value falls back to the default instead of
 // nuking the whole scene.
 // ---------------------------------------------------------------------------
@@ -2911,7 +2911,7 @@ describe("decodeScene glow brightness", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Color contrast (fr-8sk) — same lenient, never-rejects contract as
+// Color contrast — same lenient, never-rejects contract as
 // glowBrightness above: a malformed value falls back to the default instead
 // of nuking the whole scene.
 // ---------------------------------------------------------------------------
@@ -2963,7 +2963,7 @@ describe("decodeScene color contrast", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4D projection color mode (fr-d47)
+// 4D projection color mode
 // ---------------------------------------------------------------------------
 
 describe("decodeScene fourDColor", () => {
@@ -3139,7 +3139,7 @@ describe("loadScene", () => {
 });
 
 // ---------------------------------------------------------------------------
-// saveScene — history + storage writes (fr-532t: history is injectable via
+// saveScene — history + storage writes (history is injectable via
 // PersistDeps, mirroring location/storage)
 // ---------------------------------------------------------------------------
 
@@ -3196,7 +3196,7 @@ describe("saveScene", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Camera pose (fr-1k4) — the optional orbit-camera view a saved/shared/
+// Camera pose — the optional orbit-camera view a saved/shared/
 // collection document was framed with. Deliberately absent from undo-history
 // snapshots (see SceneSnapshot.camera's doc), so `fromSnapshot` must strip it
 // rather than let it leak into AppState. Its decode policy is even more
@@ -3359,7 +3359,7 @@ describe("fromSnapshot camera", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4D view pose (fr-pnek) — the optional tumble rotor + soft w-slice window a
+// 4D view pose — the optional tumble rotor + soft w-slice window a
 // saved/shared/collection document was framed with (see SceneSnapshot.fourD's
 // doc): the 4D sibling of the camera-pose block above. Same quiet-fallback
 // decode policy as camera: anything malformed drops ONLY the pose, never the
@@ -3615,7 +3615,7 @@ describe("decodeScene fourD", () => {
     expect(result!.fourD!.sliceCenter).toBeCloseTo(0.2, 4);
   });
 
-  // Slab thickness (fr-wa6o) is the one field in this block that does NOT
+  // Slab thickness is the one field in this block that does NOT
   // follow sliceCenter's all-or-nothing rule: every document written before
   // the slider existed carries no such key, so absent/malformed defaults to
   // 0 — the zero-thickness cross-section those documents were framed with —
@@ -3637,9 +3637,9 @@ describe("decodeScene fourD", () => {
   });
 
   it("keeps a pose saved before the thickness slider existed, reading it as a zero-thickness slice", () => {
-    // The regression that matters: a hand-built payload with every fr-pnek
+    // The regression that matters: a hand-built payload with every 4D-pose
     // field but no `sliceThickness` key at all — exactly what every shared
-    // link and saved scene from before fr-wa6o looks like.
+    // link and saved scene from before that slider existed looks like.
     const raw = {
       ...baseSnapshot(),
       fourD: {
@@ -3746,14 +3746,14 @@ describe("fromSnapshot fourD", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Background (fr-5ps1) — the scene backdrop. Omitted from the wire payload
+// Background — the scene backdrop. Omitted from the wire payload
 // while pristine (dark, nothing authored) EXCEPT under the aerial render
-// style, where an absent field is what a pre-fr-5ps1 document looks like and
-// decodes through the legacy migration (aerial forced haze). See
+// style, where an absent field is what a document predating the field looks
+// like, and decodes through the legacy migration (aerial forced haze). See
 // background.ts / decodeBackground's own doc comments.
 // ---------------------------------------------------------------------------
 
-describe("decodeScene background (fr-5ps1)", () => {
+describe("decodeScene background", () => {
   it("round-trips the haze mode", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),
@@ -3833,7 +3833,7 @@ describe("decodeScene background (fr-5ps1)", () => {
     expect(decodeScene(encodeScene(s))!.background).toEqual({ mode: "dark" });
   });
 
-  // ——— fr-5ps1: the pre-existing-document legacy migration ———
+  // ——— the pre-existing-document legacy migration ———
 
   it("decodes a document with no background key as dark under a non-aerial style", () => {
     const raw = { ...baseSnapshot() };
@@ -3937,11 +3937,11 @@ describe("decodeScene background (fr-5ps1)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Background shape (fr-h3mp): orthogonal to mode, absent means "linear".
+// Background shape: orthogonal to mode, absent means "linear".
 // ---------------------------------------------------------------------------
 
-describe("decodeScene background shape (fr-h3mp)", () => {
-  it("encodes byte-identically to a pre-fr-h3mp document when the shape is the default linear", () => {
+describe("decodeScene background shape", () => {
+  it("encodes byte-identically to a document predating the shape field when the shape is the default linear", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),
       background: { mode: "haze", shape: "linear" },
@@ -4015,8 +4015,8 @@ describe("decodeScene background shape (fr-h3mp)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Balloon pair (fr-5wlv.6) — the balloon echo/surface-balloon on-flag and its
-// normalized radius, persisted since epic fr-5wlv's "mode persists"
+// Balloon pair — the balloon echo/surface-balloon on-flag and its
+// normalized radius, persisted since the balloon epic's "mode persists"
 // acceptance. decodeScene follows camera/fourD's exact quiet-drop contract
 // (malformed or absent drops ONLY the field to undefined, never the whole
 // scene), but — unlike camera/fourD, which have no AppState counterpart at
@@ -4049,7 +4049,7 @@ describe("decodeScene balloon", () => {
 
   it("keeps decoding a scene with no balloon fields at all as a valid, non-null scene", () => {
     // A hand-built payload with no balloonEcho/balloonRadius keys — what
-    // every pre-fr-5wlv.6 link looks like.
+    // every link predating the pair looks like.
     const raw = {
       transforms: baseSnapshot().transforms,
       numPoints: 100_000,
@@ -4113,7 +4113,7 @@ describe("decodeScene balloon", () => {
   });
 });
 
-describe("toSnapshot / fromSnapshot balloon (fr-5wlv.6)", () => {
+describe("toSnapshot / fromSnapshot balloon", () => {
   it("toSnapshot carries the balloon pair", () => {
     const state: AppState = {
       ...initialState(true),
@@ -4125,8 +4125,8 @@ describe("toSnapshot / fromSnapshot balloon (fr-5wlv.6)", () => {
   });
 
   it("fromSnapshot defaults balloonEcho/balloonRadius when the snapshot lacks them", () => {
-    // baseSnapshot() carries neither key at all — what a pre-fr-5wlv.6
-    // snapshot (or a decode of one) looks like — so this also pins that
+    // baseSnapshot() carries neither key at all — what a snapshot predating
+    // the pair (or a decode of one) looks like — so this also pins that
     // fromSnapshot supplies the real default rather than merely clearing.
     const base: AppState = {
       ...initialState(true),
@@ -4151,7 +4151,7 @@ describe("toSnapshot / fromSnapshot balloon (fr-5wlv.6)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Balloon tint (fr-j85n) — persisted alongside the balloon pair the
+// Balloon tint — persisted alongside the balloon pair the
 // identical way: optional on SceneSnapshot, always written by
 // toSnapshot/encodeScene, quiet-drop/clamp on decode, with fromSnapshot
 // supplying the real defaults.
@@ -4171,7 +4171,7 @@ describe("decodeScene balloon tint", () => {
 
   it("keeps decoding a scene with no balloon tint fields at all as a valid, non-null scene", () => {
     // A hand-built payload with no balloonTint/balloonTintStrength keys —
-    // what every pre-fr-j85n link looks like.
+    // what every link predating the tint pair looks like.
     const raw = {
       transforms: baseSnapshot().transforms,
       numPoints: 100_000,
@@ -4243,7 +4243,7 @@ describe("decodeScene balloon tint", () => {
   });
 });
 
-describe("toSnapshot / fromSnapshot balloon tint (fr-j85n)", () => {
+describe("toSnapshot / fromSnapshot balloon tint", () => {
   it("toSnapshot carries balloonTint and balloonTintStrength", () => {
     const state: AppState = {
       ...initialState(true),
@@ -4256,7 +4256,8 @@ describe("toSnapshot / fromSnapshot balloon tint (fr-j85n)", () => {
 
   it("fromSnapshot defaults the balloon tint pair when the snapshot lacks it", () => {
     // baseSnapshot() carries no balloonTint/balloonTintStrength keys at
-    // all — what a pre-fr-j85n snapshot (or a decode of one) looks like.
+    // all — what a snapshot predating the tint pair (or a decode of one)
+    // looks like.
     const base: AppState = {
       ...initialState(true),
       balloonTint: "#336699",
@@ -4280,7 +4281,7 @@ describe("toSnapshot / fromSnapshot balloon tint (fr-j85n)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Fog density (fr-5h5d) — persisted alongside the balloon pair the identical
+// Fog density — persisted alongside the balloon pair the identical
 // way: optional on SceneSnapshot, always written by toSnapshot/encodeScene,
 // quiet-drop/clamp on decode, with fromSnapshot supplying the real default.
 // ---------------------------------------------------------------------------
@@ -4293,8 +4294,8 @@ describe("decodeScene fog", () => {
   });
 
   it("keeps decoding a scene with no fogDensity field at all as a valid, non-null scene", () => {
-    // A hand-built payload with no fogDensity key — what every pre-fr-5h5d
-    // link looks like.
+    // A hand-built payload with no fogDensity key — what every link
+    // predating the fog controls looks like.
     const raw = {
       transforms: baseSnapshot().transforms,
       numPoints: 100_000,
@@ -4340,16 +4341,17 @@ describe("decodeScene fog", () => {
   });
 });
 
-describe("toSnapshot / fromSnapshot fog (fr-5h5d)", () => {
+describe("toSnapshot / fromSnapshot fog", () => {
   it("toSnapshot carries fogDensity", () => {
     const state: AppState = { ...initialState(true), fogDensity: 0.5 };
     expect(toSnapshot(state).fogDensity).toBe(0.5);
   });
 
   it("fromSnapshot defaults fogDensity when the snapshot lacks it", () => {
-    // baseSnapshot() carries no fogDensity key at all — what a pre-fr-5h5d
-    // snapshot (or a decode of one) looks like — so this also pins that
-    // fromSnapshot supplies the real default rather than merely clearing.
+    // baseSnapshot() carries no fogDensity key at all — what a snapshot
+    // predating the fog controls (or a decode of one) looks like — so this
+    // also pins that fromSnapshot supplies the real default rather than
+    // merely clearing.
     const base: AppState = { ...initialState(true), fogDensity: 0.5 };
     const result = fromSnapshot(baseSnapshot(), base);
     expect(result.fogDensity).toBe(DEFAULT_FOG_DENSITY);
@@ -4363,7 +4365,7 @@ describe("toSnapshot / fromSnapshot fog (fr-5h5d)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Fog tint (fr-5h5d) — persisted alongside fogDensity the identical way:
+// Fog tint — persisted alongside fogDensity the identical way:
 // optional on SceneSnapshot, always written by toSnapshot/encodeScene,
 // quiet-drop/clamp on decode, with fromSnapshot supplying the real defaults.
 // ---------------------------------------------------------------------------
@@ -4382,7 +4384,7 @@ describe("decodeScene fog tint", () => {
 
   it("keeps decoding a scene with no fog tint fields at all as a valid, non-null scene", () => {
     // A hand-built payload with no fogTint/fogTintStrength keys — what
-    // every pre-fr-5h5d link looks like.
+    // every link predating the fog controls looks like.
     const raw = {
       transforms: baseSnapshot().transforms,
       numPoints: 100_000,
@@ -4454,7 +4456,7 @@ describe("decodeScene fog tint", () => {
   });
 });
 
-describe("toSnapshot / fromSnapshot fog tint (fr-5h5d)", () => {
+describe("toSnapshot / fromSnapshot fog tint", () => {
   it("toSnapshot carries fogTint and fogTintStrength", () => {
     const state: AppState = {
       ...initialState(true),
@@ -4467,7 +4469,7 @@ describe("toSnapshot / fromSnapshot fog tint (fr-5h5d)", () => {
 
   it("fromSnapshot defaults the fog tint pair when the snapshot lacks it", () => {
     // baseSnapshot() carries no fogTint/fogTintStrength keys at all — what
-    // a pre-fr-5h5d snapshot (or a decode of one) looks like.
+    // a snapshot predating the fog controls (or a decode of one) looks like.
     const base: AppState = {
       ...initialState(true),
       fogTint: "#336699",
@@ -4491,7 +4493,7 @@ describe("toSnapshot / fromSnapshot fog tint (fr-5h5d)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Ground plane (fr-rhn5) — persisted alongside the balloon pair the
+// Ground plane — persisted alongside the balloon pair the
 // identical way: optional on SceneSnapshot, always written by
 // toSnapshot/encodeScene, quiet-drop on decode (no clamping — a plain
 // boolean, not a PARAM-backed numeric like balloonRadius), with
@@ -4512,8 +4514,8 @@ describe("decodeScene ground plane", () => {
   });
 
   it("keeps decoding a scene with no groundPlane field at all as a valid, non-null scene", () => {
-    // A hand-built payload with no groundPlane key — what every
-    // pre-fr-rhn5 link looks like.
+    // A hand-built payload with no groundPlane key — what every link
+    // predating the ground plane looks like.
     const raw = {
       transforms: baseSnapshot().transforms,
       numPoints: 100_000,
@@ -4549,15 +4551,15 @@ describe("decodeScene ground plane", () => {
   });
 });
 
-describe("toSnapshot / fromSnapshot ground plane (fr-rhn5)", () => {
+describe("toSnapshot / fromSnapshot ground plane", () => {
   it("toSnapshot carries groundPlane", () => {
     const state: AppState = { ...initialState(true), groundPlane: true };
     expect(toSnapshot(state).groundPlane).toBe(true);
   });
 
   it("fromSnapshot defaults groundPlane to false when the snapshot lacks it", () => {
-    // baseSnapshot() carries no groundPlane key at all — what a
-    // pre-fr-rhn5 snapshot (or a decode of one) looks like.
+    // baseSnapshot() carries no groundPlane key at all — what a snapshot
+    // predating the ground plane (or a decode of one) looks like.
     const base: AppState = { ...initialState(true), groundPlane: true };
     const result = fromSnapshot(baseSnapshot(), base);
     expect(result.groundPlane).toBe(false);

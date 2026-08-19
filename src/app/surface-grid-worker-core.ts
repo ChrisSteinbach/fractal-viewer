@@ -1,28 +1,29 @@
 /**
- * The surface render's empty-space-skipping grid, worker-side compute
- * (fr-55r5 part 2): one pure function from a {@link SurfaceGridRequest} to a
+ * The surface render's empty-space-skipping grid, worker-side compute: one
+ * pure function from a {@link SurfaceGridRequest} to a
  * {@link SurfaceGridResult}. `surface-grid-worker.ts` is the thin
- * `self.onmessage`/`postMessage` glue that runs this inside the real Worker;
- * `surface-grid-client.ts` is the main-thread client that posts requests.
+ * `self.onmessage`/`postMessage` glue that runs this inside the real
+ * Worker; `surface-grid-client.ts` is the main-thread client that posts
+ * requests.
  *
- * THE PILOT SLAB (fr-aj4w). A build's cost spans two orders of magnitude by
- * system: affine presets price a `64 ** 3` cube in ~0.3s where fold systems
+ * THE PILOT SLAB. A build's cost spans two orders of magnitude by system:
+ * affine presets price a `64 ** 3` cube in ~0.3s where fold systems
  * (boxfold/spherefold/mandelbox variations) measured up to ~40s on the same
  * machine — a pegged worker core for a minute-class stall on mid hardware,
  * and offline timeline export AWAITS this build (`main.ts`'s
  * `surfaceGrid.settle()`), so the cost is a render-keyframe stall, not just
  * background heat. Instead of guessing from system shape, the worker
  * MEASURES: build the requested cube's mid z-layer first (the equator — the
- * most expensive layer), time it, and let
- * `surface-grid.ts`'s {@link pickSurfaceGridResolution} project the full
- * cost and downshift the resolution until the projection fits
- * `SURFACE_GRID_BUDGET_MS` (floored, never skipped — a coarse grid still
- * beats gridless marching on exactly the systems that are expensive to
- * march). When no downshift is needed — every affine preset — the pilot
- * layer is simply the first slab of the final build: zero waste. When one
- * is, the discarded pilot cost `1/requested` of the full build it avoided.
- * The request's `resolution` is therefore a CEILING; the result's
- * `resolution` says what was actually built.
+ * most expensive layer), time it, and let `surface-grid.ts`'s
+ * {@link pickSurfaceGridResolution} project the full cost and downshift the
+ * resolution until the projection fits `SURFACE_GRID_BUDGET_MS` (floored,
+ * never skipped — a coarse grid still beats gridless marching on exactly
+ * the systems that are expensive to march). When no downshift is needed —
+ * every affine preset — the pilot layer is simply the first slab of the
+ * final build: zero waste. When one is, the discarded pilot cost
+ * `1/requested` of the full build it avoided. The request's `resolution` is
+ * therefore a CEILING; the result's `resolution` says what was actually
+ * built.
  *
  * Unlike `cloud-worker-core.ts` there is no synchronous-fallback path here:
  * even a downshifted build costs real CPU time (hence a dedicated worker in

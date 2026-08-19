@@ -179,7 +179,7 @@ describe("initialState", () => {
     expect(initialState(true).renderMode).toBe("points");
   });
 
-  // The balloon echo (fr-5wlv.2) starts off, like every other session-only
+  // The balloon echo starts off, like every other session-only
   // view toggle, so a shared link never surprises a viewer with an extra
   // cloud; its radius still carries a sane rest-pose default for the moment
   // it's first turned on.
@@ -189,7 +189,7 @@ describe("initialState", () => {
     expect(state.balloonRadius).toBe(DEFAULT_BALLOON_RADIUS);
   });
 
-  // The balloon tint (fr-j85n) starts fully off too: black at strength 0,
+  // The balloon tint starts fully off too: black at strength 0,
   // which every arm's mix collapses to today's untinted rendering exactly.
   it("boots with the balloon tint at its default color and zero strength", () => {
     const state = initialState(true);
@@ -225,7 +225,7 @@ describe("initialState", () => {
     });
   });
 
-  // fr-7jlk: the surface render's lighting reuses the solid render's own
+  // The surface render's lighting reuses the solid render's own
   // MIN_/MAX_/DEFAULT_ constants (same physical meaning), and its default
   // colorSource is "transform" — not "palette" — so a fresh session's
   // surface render shows each map's own color, not the (still-primed)
@@ -243,7 +243,7 @@ describe("initialState", () => {
     });
   });
 
-  // fr-9mw: a fresh session's first flame/solid render should show the
+  // A fresh session's first flame/solid render should show the
   // iridescent cosine-gradient look, not "legacy" flat per-transform hue.
   // Pinned to the literal id (not the DEFAULT_ constants) so reverting the
   // default back to "legacy" fails here, not just in the field docs. Old
@@ -254,7 +254,7 @@ describe("initialState", () => {
     expect(state.solid.paletteId).toBe("spectrum");
   });
 
-  // fr-3b6: unlike the flame/solid palettes (spectrum by default, fr-9mw),
+  // Unlike the flame/solid palettes (spectrum by default),
   // the height/radius ramp palette defaults to "legacy" — the built-in
   // coordinate ramps are a designed look in their own right, not a
   // placeholder to upgrade to a gradient.
@@ -293,7 +293,7 @@ describe("initialState", () => {
     expect(initialState(true).fourDDepthFade).toBe(false);
   });
 
-  // fr-55k: absent, not an empty stop list — "never authored" is a distinct
+  // Absent, not an empty stop list — "never authored" is a distinct
   // state from "authored an empty gradient" (which isn't even valid, per
   // MIN_CUSTOM_PALETTE_STOPS).
   it("boots with no custom palette", () => {
@@ -338,7 +338,7 @@ describe("setNumPoints clamps to PARAM.numPoints", () => {
 // slider exposes: PARAM.numPoints.min is the DATA floor (0), deliberately
 // below MIN_NUM_POINTS (the log-scaled slider's own floor, which needs a
 // positive value since log 0 is -Infinity). This pins that intentional gap.
-describe("numPoints floor divergence (fr-2v7)", () => {
+describe("numPoints floor divergence", () => {
   it("keeps the data floor at 0, strictly below the UI slider floor", () => {
     expect(PARAM.numPoints.min).toBe(0);
     expect(MIN_NUM_POINTS).toBeGreaterThan(PARAM.numPoints.min);
@@ -392,7 +392,7 @@ describe("setAdaptiveResolution", () => {
   });
 });
 
-describe("setBalloonEcho (fr-5wlv.2)", () => {
+describe("setBalloonEcho", () => {
   it("toggles the balloon echo immutably, defaulting to off", () => {
     const state = initialState(true);
     const next = setBalloonEcho(state, true);
@@ -401,7 +401,7 @@ describe("setBalloonEcho (fr-5wlv.2)", () => {
   });
 });
 
-describe("setBalloonRadius (fr-5wlv.2)", () => {
+describe("setBalloonRadius", () => {
   it("sets the balloon echo's radius immutably", () => {
     const state = initialState(true);
     const next = setBalloonRadius(state, 0.9);
@@ -422,7 +422,7 @@ describe("setBalloonRadius (fr-5wlv.2)", () => {
   });
 });
 
-describe("setBalloonTint (fr-j85n)", () => {
+describe("setBalloonTint", () => {
   it("sets the balloon tint color immutably", () => {
     const state = initialState(true);
     const next = setBalloonTint(state, "#336699");
@@ -455,7 +455,7 @@ describe("setBalloonTint (fr-j85n)", () => {
   });
 });
 
-describe("setBalloonTintStrength (fr-j85n)", () => {
+describe("setBalloonTintStrength", () => {
   it("sets the balloon tint strength immutably", () => {
     const state = initialState(true);
     const next = setBalloonTintStrength(state, 0.5);
@@ -476,7 +476,7 @@ describe("setBalloonTintStrength (fr-j85n)", () => {
   });
 });
 
-describe("setGroundPlane (fr-rhn5)", () => {
+describe("setGroundPlane", () => {
   it("toggles the ground plane immutably, defaulting to off", () => {
     const state = initialState(true);
     const next = setGroundPlane(state, true);
@@ -585,7 +585,7 @@ describe("updateTransform", () => {
     expect(next.transforms[0]).toBe(state.transforms[0]);
   });
 
-  // fr-bf6.3: the single editor emits a `w` key only when its own working
+  // The single editor emits a `w` key only when its own working
   // copy is non-empty (see ui.ts's emitGeometry), so this plain object
   // spread over the patch is exactly what gives "sparse write" its meaning —
   // a `w`-carrying patch replaces the stored block outright (never a
@@ -805,7 +805,7 @@ describe("setFlamePaletteId", () => {
     expect(next.flame.supersample).toBe(state.flame.supersample);
   });
 
-  // fr-55k: the first switch to Custom seeds a tweakable copy of whatever
+  // The first switch to Custom seeds a tweakable copy of whatever
   // gradient the user was just looking at — "ember", not the "spectrum"
   // default, to prove it seeds from the ACTUAL previous id rather than some
   // hardcoded fallback.
@@ -1083,7 +1083,7 @@ describe("setSolidPaletteId", () => {
     expect(next.solid.iterations).toBe(state.solid.iterations);
   });
 
-  // fr-55k: the solid twin of setFlamePaletteId's seeding test — "moss", not
+  // The solid twin of setFlamePaletteId's seeding test — "moss", not
   // the "spectrum" default, to prove it seeds from the ACTUAL previous SOLID
   // id (independent of the flame palette's own selection).
   it("seeds customPalette from the previous solid palette on first switch to custom", () => {
@@ -1238,7 +1238,7 @@ describe("setSurfacePaletteId", () => {
     expect(next.surface.colorSource).toBe(state.surface.colorSource);
   });
 
-  // fr-55k: the surface twin of setSolidPaletteId's seeding test — "moss",
+  // The surface twin of setSolidPaletteId's seeding test — "moss",
   // not the "spectrum" default, to prove it seeds from the ACTUAL previous
   // SURFACE id (independent of the flame/solid palettes' own selections).
   it("seeds customPalette from the previous surface palette on first switch to custom", () => {
@@ -1433,7 +1433,7 @@ describe("setSymmetryOrder", () => {
     expect(next.flame).toBe(state.flame);
   });
 
-  // fr-4jyg: setSymmetryTwist's cap is against the order at the time of the
+  // setSymmetryTwist's cap is against the order at the time of the
   // twist edit, so lowering the order has to re-apply it — otherwise the live
   // render draws a twist persist.ts's decoder caps away on reload.
   it("re-caps a twist the lowered order no longer allows", () => {
@@ -1540,7 +1540,7 @@ describe("setGlowBrightness", () => {
   });
 });
 
-describe("setFogDensity (fr-5h5d)", () => {
+describe("setFogDensity", () => {
   it("sets the fog density multiplier immutably", () => {
     const state = initialState(true);
     const next = setFogDensity(state, 0.5);
@@ -1561,7 +1561,7 @@ describe("setFogDensity (fr-5h5d)", () => {
   });
 });
 
-describe("setFogTint (fr-5h5d)", () => {
+describe("setFogTint", () => {
   it("sets the fog tint color immutably", () => {
     const state = initialState(true);
     const next = setFogTint(state, "#336699");
@@ -1590,7 +1590,7 @@ describe("setFogTint (fr-5h5d)", () => {
   });
 });
 
-describe("setFogTintStrength (fr-5h5d)", () => {
+describe("setFogTintStrength", () => {
   it("sets the fog tint strength immutably", () => {
     const state = initialState(true);
     const next = setFogTintStrength(state, 0.5);
@@ -1668,7 +1668,7 @@ describe("setRampPaletteId", () => {
     expect(next.surface.paletteId).toBe(state.surface.paletteId);
   });
 
-  // fr-3b6: the first switch to Custom seeds a tweakable copy of whatever
+  // The first switch to Custom seeds a tweakable copy of whatever
   // ramp gradient the user was just looking at — "ember", not the "legacy"
   // default, to prove it seeds from the ACTUAL previous id rather than some
   // hardcoded fallback.
@@ -1698,7 +1698,7 @@ describe("setRampPaletteId", () => {
   });
 });
 
-describe("initialState background (fr-5ps1)", () => {
+describe("initialState background", () => {
   it("boots with the dark background and no authored custom slot", () => {
     expect(initialState(true).background).toEqual({ mode: "dark" });
   });
@@ -1725,7 +1725,7 @@ describe("setBackgroundMode", () => {
     expect(next.background.custom).toEqual(resolveBackground({ mode: "haze" }));
   });
 
-  // fr-mz2u: an "auto" predecessor's seed is the DERIVED stops (the palette
+  // An "auto" predecessor's seed is the DERIVED stops (the palette
   // the scene was actually showing), not a flat built-in gradient — "sunset",
   // not a default palette, so a wrong (e.g. always-spectrum) derivation would
   // fail this rather than accidentally matching.

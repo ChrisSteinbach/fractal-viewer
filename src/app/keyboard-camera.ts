@@ -1,5 +1,5 @@
 /**
- * The canvas keyboard vocabulary (fr-vja8.37): a pure map from a keydown on
+ * The canvas keyboard vocabulary: a pure map from a keydown on
  * the FOCUSED canvas to a typed camera/view action, so the viewpoint —
  * 3D orbit and, per the dimensional-parity rule, the 4D rotor/slice — is
  * reachable without a pointer (WCAG 2.1.1; the document was always
@@ -20,7 +20,7 @@
  * Shift-wheel (rotor zw), +/- = the wheel (dolly, same 1.1 notch), [ / ] =
  * the w-slice slider (same 0.01-per-step grain, x2 for key travel), Space =
  * the auto-motion toggle both panel checkboxes drive (the 3D orbit / 4D
- * tumble shared preference, fr-0ya). Rotor/slice actions are only produced
+ * tumble shared preference). Rotor/slice actions are only produced
  * while the view is non-flat, exactly as the pointer gestures gate on
  * `fourDView()` — in a flat view those keys fall through unhandled (and
  * unprevented, so the page keeps its own semantics for them).

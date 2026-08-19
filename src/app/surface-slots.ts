@@ -25,7 +25,7 @@ import type { Transform, Vec3 } from "../fractal/types";
  * sparse (`[0, 2]` for a middle map at weight 0) and `maps.length` is the
  * wrong denominator for anything keyed on it. Slots are base maps 1:1 in
  * both dimensions — 4D has no kaleidoscope at all, and 3D sweeps its sectors
- * from scalar uniforms rather than expanding them into slots (fr-x029) — so
+ * from scalar uniforms rather than expanding them into slots — so
  * a kaleidoscope copy is shaded by the base map it sweeps around, for free.
  */
 export interface SurfaceSlot {
@@ -37,7 +37,7 @@ export interface SurfaceSlot {
  * `color.ts`'s {@link transformColors}, the same palette — keyed on the same
  * authored transform count — that colors the explorer's point cloud and the
  * legend, so a map is the same color in the tracer as in the cloud it was
- * framed from. Since fr-axxl this palette honors each map's authored
+ * framed from. This palette honors each map's authored
  * {@link Transform.colorIndex} over the even hue spread, exactly like
  * {@link surfaceTrapIndices} below already lets an authored `colorIndex` win
  * over its own derived spread — By Transform and the orbit-trap coordinate
@@ -61,7 +61,7 @@ export function surfaceSlotColors(
  * speed" slider) and uses the normalized result as the LUT coordinate — but
  * only under the "Palette" color source; every other source ignores them.
  *
- * A map's authored {@link Transform.colorIndex} wins (fr-c6yd), so the flam3
+ * A map's authored {@link Transform.colorIndex} wins, so the flam3
  * per-xform `color` that already steers the flame and solid renders steers
  * this one too, imported `.flame` files included. Absent — the documented
  * meaning of the optional field — the slot falls back to the even spread over
@@ -74,7 +74,8 @@ export function surfaceSlotColors(
  * and the surface's parks it at the ramp start (`0`). Adopting the flame's
  * would repaint every existing single-map surface scene — and a single map is
  * exactly the fold shape this mode exists for. Authoring a `colorIndex` is now
- * the way to move such a system off slot 0, which is the point of fr-c6yd.
+ * the way to move such a system off slot 0, which is the point of the
+ * authored-wins rule.
  *
  * There is deliberately no `colorSpeed` twin. That field is how far a PICK
  * moves the structural color coordinate, and the surface never picks a map —

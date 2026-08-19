@@ -1,9 +1,9 @@
 /**
- * The strip pump's COST EVIDENCE CHAIN (fr-096u), extracted from scene.ts
- * (fr-vja8.66) per the capture-cost.ts precedent (fr-2q01): the rules here
- * carry four beads of measured verdicts — completed observations replace
- * the class floor in BOTH directions, partials raise only, captures raise
- * but never own, fr-y1m7's seed-only-empty exception — and every one has a
+ * The strip pump's COST EVIDENCE CHAIN, extracted from scene.ts per the
+ * capture-cost.ts precedent: the rules here carry four separate measured
+ * verdicts — completed observations replace the class floor in BOTH
+ * directions, partials raise only, captures raise but never own, and a
+ * completed capture may SEED an empty chain — and every one has a
  * failure mode a one-line regression would reintroduce silently, with the
  * only nets being minutes-long real-browser capture gates. Pure state and
  * arithmetic, so `strip-evidence.test.ts` pins each documented direction
@@ -13,7 +13,7 @@
  */
 
 /** Multiplier from a completed job's observed worst px cost to the next
- * job's worst-case price floor (fr-096u): covers the preview-to-settle
+ * job's worst-case price floor: covers the preview-to-settle
  * tier gap (~4-6x measured px cost). Crease structure the coarser trace
  * under-sampled is the accepted residual — the cap's own headroom under
  * the watchdog absorbs it; pricing it here as well (the first cut used
@@ -27,7 +27,7 @@ export type StripJobOutcome =
   "completed" | "superseded" | "capture" | "capture-completed";
 
 /**
- * The fr-096u evidence chain: what the strip pump has MEASURED about the
+ * The evidence chain: what the strip pump has MEASURED about the
  * current system's worst per-pixel cost, and the rules for how new
  * observations move the price. Reset on every system upload — a new DE is
  * a new cost class.
@@ -42,7 +42,7 @@ export class StripCostEvidence {
    * forever would dissolve its settle into tens of thousands of
    * readback-bound micro-strips — and feed the settle cost gate an
    * overhead-inflated prediction that silently skips a perfectly
-   * affordable frame (the fr-096u review regression). */
+   * affordable frame (the review regression that put this rule here). */
   private evidencedWorstMsPerPx: number | null = null;
 
   /** Worst per-pixel strip cost (ms) observed by PARTIAL (superseded) jobs
@@ -60,7 +60,7 @@ export class StripCostEvidence {
   }
 
   /** RAW completed-job floor for the ?surfacetrace diagnosis line
-   * (fr-1znb) — before {@link STRIP_WORST_EVIDENCE_SAFETY} scales it into
+   * — before {@link STRIP_WORST_EVIDENCE_SAFETY} scales it into
    * the worst price. Null until a job completes. */
   get evidencedRawMsPerPx(): number | null {
     return this.evidencedWorstMsPerPx;
@@ -97,12 +97,12 @@ export class StripCostEvidence {
    * Retire a strip job's observation into the chain. A "completed" LIVE
    * job's observation replaces the evidence (and clears the partial
    * raise); a "superseded" job's observation can only raise; a "capture"
-   * drain (fr-id9r) can only raise WITHOUT killing the evidence — the pose
+   * drain can only raise WITHOUT killing the evidence — the pose
    * did not move, so live settle/preview evidence is still the truth a
    * live job should price from, and an export-scale observation must
    * tighten that floor, never own it. "capture-completed" adds the one
-   * thing a capture may do beyond raising: SEED a chain that is empty
-   * (fr-y1m7). A job that measured NOTHING (superseded before its first
+   * thing a capture may do beyond raising: SEED a chain that is empty.
+   * A job that measured NOTHING (superseded before its first
    * strip completed, or done in a single strip) carries no information
    * and changes nothing.
    */
@@ -115,7 +115,7 @@ export class StripCostEvidence {
       }
       return;
     }
-    // A capture that COMPLETED may SEED an empty evidence chain (fr-y1m7),
+    // A capture that COMPLETED may SEED an empty evidence chain,
     // never replace a live one. The seed matters because an offline export
     // is the one caller that never produces live evidence at all: a system
     // upload clears the chain, force frames bypass the preview, and a
@@ -136,7 +136,7 @@ export class StripCostEvidence {
     }
     // A SUPERSEDED job means the pose moved on — and with it whatever a
     // completed predecessor proved cheap. Keeping stale evidence bit
-    // live (fr-096u validation): a far-pose preview completed cheap
+    // live, as validation measured: a far-pose preview completed cheap
     // during the entry glide, its relaxed floor let the PARKED monster
     // pose plan 2220px strips, and the first groups ran 16-22s. Evidence
     // relaxation lives exactly one completed-preview -> settle handoff

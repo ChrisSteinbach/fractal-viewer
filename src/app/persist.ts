@@ -103,26 +103,26 @@ export interface SceneSnapshot {
   pointSize: number;
   colorMode: ColorMode;
   /**
-   * Color-contrast exponent (fr-8sk, see {@link AppState.colorGamma}).
+   * Color-contrast exponent (see {@link AppState.colorGamma}).
    * Persists like `colorMode`/`renderStyle`/`glowBrightness` — always
    * present, not session-only.
    */
   colorGamma: number;
   /**
-   * Ramp palette for the height/radius color modes (fr-3b6, see
+   * Ramp palette for the height/radius color modes (see
    * {@link AppState.rampPaletteId}). Persists like `colorMode`/`colorGamma`
    * — always present in the snapshot; the decoder's quiet fallback for
    * absent/unknown values is `"legacy"` (see decodeScene).
    */
   rampPaletteId: PaletteSelection;
   /**
-   * 4D projection color mode (fr-d47, see {@link AppState.fourDColor}).
+   * 4D projection color mode (see {@link AppState.fourDColor}).
    * Persists like `colorMode` — always present, not session-only (unlike the
    * tumble/slice view state, which never persists).
    */
   fourDColor: FourDColorMode;
   /**
-   * 4D camera-depth fade toggle (fr-3e0, see {@link AppState.fourDDepthFade}).
+   * 4D camera-depth fade toggle (see {@link AppState.fourDDepthFade}).
    * Persists like `fourDColor` — always present, not session-only (unlike the
    * tumble/slice view state, which never persists).
    */
@@ -144,31 +144,31 @@ export interface SceneSnapshot {
    * snapshot. */
   surface: SurfaceParams;
   /**
-   * Rotational/mirror symmetry (fr-6im, see {@link AppState.symmetry}).
+   * Rotational/mirror symmetry (see {@link AppState.symmetry}).
    * Persists like `colorMode`/`renderStyle` — always present, unlike the
    * optional `finalTransform`.
    */
   symmetry: SymmetryParams;
   /**
-   * Manual glow-brightness override (fr-8b1, see {@link AppState.glowBrightness}).
+   * Manual glow-brightness override (see {@link AppState.glowBrightness}).
    * Persists like `colorMode`/`renderStyle`/`symmetry` — always present, not
    * session-only.
    */
   glowBrightness: number;
   /**
-   * The scene backdrop (fr-5ps1, see {@link AppState.background}). Always
+   * The scene backdrop (see {@link AppState.background}). Always
    * present in the snapshot like `symmetry`, but the WIRE form omits the
    * pristine default (`{ mode: "dark" }`, nothing authored) so never-touched
    * scenes keep their short URLs — except under the aerial render style,
-   * where it is always written: an ABSENT field is what a pre-fr-5ps1
-   * document looks like, and the decoder reads that as the LEGACY coupling
-   * (aerial forced the haze backdrop), so an aerial scene that genuinely
-   * means "dark" must say so explicitly to round-trip. See
-   * {@link decodeBackground}.
+   * where it is always written: an ABSENT field is what a document
+   * predating the persisted backdrop looks like, and the decoder reads that
+   * as the LEGACY coupling (aerial forced the haze backdrop), so an aerial
+   * scene that genuinely means "dark" must say so explicitly to round-trip.
+   * See {@link decodeBackground}.
    */
   background: BackgroundParams;
   /**
-   * The one user-authored gradient slot (fr-55k, see
+   * The one user-authored gradient slot (see
    * {@link AppState.customPalette}). Optional like `finalTransform` — absent
    * until a palette selection first lands on Custom — unlike the always-
    * present settings blocks above (`flame`/`solid`/`symmetry`/
@@ -176,14 +176,14 @@ export interface SceneSnapshot {
    */
   customPalette?: CustomPalette;
   /**
-   * The position mode's custom axis colors (fr-8k7, see
+   * The position mode's custom axis colors (see
    * {@link AppState.positionAxisColors}). Optional like `customPalette` —
    * absent = the legacy XYZ→RGB mapping — and like it never worth rejecting
    * a scene over; see {@link decodePositionAxisColors}.
    */
   positionAxisColors?: PositionAxisColors;
   /**
-   * Optional orbit-camera pose (fr-1k4): the view a saved/shared/collection
+   * Optional orbit-camera pose: the view a saved/shared/collection
    * scene was framed with (see {@link CameraPose}). Optional like
    * `customPalette` — and DELIBERATELY absent from the ENCODED undo-history
    * snapshot STRING: `history.ts` dedupes checkpoints by comparing
@@ -191,14 +191,14 @@ export interface SceneSnapshot {
    * otherwise-identical states would defeat that dedup. `main.ts` (not this
    * module) attaches `camera` only when writing a persisted / shared /
    * collection document, never to an in-session undo checkpoint. (Undo/redo
-   * across a whole-system replace DOES restore the pre-replace framing —
-   * fr-uf3 — but carries that pose OUT OF BAND on `history.ts`'s
+   * across a whole-system replace DOES restore the pre-replace framing,
+   * but carries that pose OUT OF BAND on `history.ts`'s
    * `HistoryEntry.pose`, never in this encoded string, precisely so the
    * dedup keeps comparing camera-less bytes.)
    */
   camera?: CameraPose;
   /**
-   * Optional 4D view pose (fr-pnek): the tumble rotor + soft w-slice window
+   * Optional 4D view pose: the tumble rotor + soft w-slice window
    * a saved/shared/collection scene was framed with (see {@link FourDPose})
    * — the 4D sibling of `camera` just above. Optional like `camera` — and
    * DELIBERATELY absent from the ENCODED undo-history snapshot STRING for
@@ -209,31 +209,31 @@ export interface SceneSnapshot {
    * when writing a persisted / shared / collection document, and only while
    * the system is non-flat — never to an in-session undo checkpoint. (Like
    * `camera`, undo/redo across a whole-system replace DOES restore the
-   * pre-replace rotor/slice — fr-gq99 — via the same out-of-band
+   * pre-replace rotor/slice, via the same out-of-band
    * `HistoryEntry.pose` channel, never these encoded bytes.) Tumble
    * on/off + speed are deliberately NOT part of the pose — a viewer
-   * PREFERENCE (fr-0ya), never document state; see `FourDPose`'s own doc
+   * PREFERENCE, never document state; see `FourDPose`'s own doc
    * comment.
    */
   fourD?: FourDPose;
   /**
-   * Whether the balloon echo/surface-balloon toggle is on (fr-5wlv.6, see
-   * `state.ts`'s `AppState.balloonEcho`): scene content since the epic's
-   * "mode persists" acceptance, unlike `camera`/`fourD` above (which have
+   * Whether the balloon echo/surface-balloon toggle is on (see
+   * `state.ts`'s `AppState.balloonEcho`): scene content, by the balloon's
+   * own "mode persists" rule, unlike `camera`/`fourD` above (which have
    * no `AppState` counterpart at all — this field DOES, and `fromSnapshot`
    * merges it in with a real default rather than just excluding it).
    * Optional for the same reason `camera` is optional rather than always
    * present like `background`: `toSnapshot` always WRITES a defined
    * boolean (there is no "pristine" value worth omitting — see
-   * `encodeScene`), but a document decoded from a pre-fr-5wlv.6 link, or
-   * from hand-crafted/malformed input, quietly comes back with this field
-   * absent (see `decodeScene`) — the CameraPose/FourDPose "malformed drops
-   * the field, never the scene" precedent, applied to a field with a real
-   * fallback instead of no counterpart at all.
+   * `encodeScene`), but a document decoded from a link predating the
+   * balloon pair, or from hand-crafted/malformed input, quietly comes back
+   * with this field absent (see `decodeScene`) — the CameraPose/FourDPose
+   * "malformed drops the field, never the scene" precedent, applied to a
+   * field with a real fallback instead of no counterpart at all.
    */
   balloonEcho?: boolean;
   /**
-   * The balloon's normalized radius (fr-5wlv.6, see
+   * The balloon's normalized radius (see
    * `state.ts`'s `AppState.balloonRadius`) — persisted alongside
    * `balloonEcho` exactly the same way, right down to the optionality
    * rationale. Decoded values are clamped through `PARAM.balloonRadius`,
@@ -243,7 +243,7 @@ export interface SceneSnapshot {
    */
   balloonRadius?: number;
   /**
-   * The balloon shell's tint color (fr-j85n, see `state.ts`'s
+   * The balloon shell's tint color (see `state.ts`'s
    * {@link AppState.balloonTint}) — persisted alongside `balloonRadius` the
    * identical way: optional here even though `toSnapshot`/`encodeScene`
    * always WRITE a defined value once `AppState` carries one. Decoded
@@ -251,70 +251,70 @@ export interface SceneSnapshot {
    * as the validator, like `fogTint`'s own field just below); absent or
    * malformed decodes to `undefined`, and `fromSnapshot` supplies
    * {@link DEFAULT_BALLOON_TINT} for whichever comes back that way — so a
-   * pre-fr-j85n link decodes with the field absent and still boots with the
-   * shell untinted.
+   * link predating the tint pair decodes with the field absent and still
+   * boots with the shell untinted.
    */
   balloonTint?: string;
   /**
-   * The balloon tint's blend strength (fr-j85n, see `state.ts`'s
+   * The balloon tint's blend strength (see `state.ts`'s
    * {@link AppState.balloonTintStrength}) — persisted alongside
    * `balloonTint`, clamping through {@link PARAM}.balloonTintStrength
    * exactly like `fogTintStrength` clamps through `PARAM.fogTintStrength`.
    * Absent or malformed decodes to `undefined`; `fromSnapshot` supplies
    * {@link DEFAULT_BALLOON_TINT_STRENGTH} — `0`, the untinted identity — so
-   * a pre-fr-j85n link's absent pair reproduces today's balloon rendering
-   * exactly.
+   * the absent pair of a link predating them reproduces today's balloon
+   * rendering exactly.
    */
   balloonTintStrength?: number;
   /**
-   * Depth-fog density multiplier (fr-5h5d, see `state.ts`'s
+   * Depth-fog density multiplier (see `state.ts`'s
    * {@link AppState.fogDensity}) — persisted alongside `balloonRadius`
-   * exactly the same way: optional here (so a hand-built/pre-fr-5h5d
-   * `SceneSnapshot` need not supply it) even though `toSnapshot`/
-   * `encodeScene` always WRITE a defined value once `AppState` carries one —
-   * there is no legacy meaning tied to this field's absence, so the
-   * `balloonRadius` "always written, `??` only for hand-built input" shape
-   * applies rather than `background`'s omit-while-pristine dance. Decoded
-   * values clamp through {@link PARAM}.fogDensity, like every other
+   * exactly the same way: optional here (so a hand-built `SceneSnapshot`,
+   * or one predating the fog controls, need not supply it) even though
+   * `toSnapshot`/`encodeScene` always WRITE a defined value once `AppState`
+   * carries one — there is no legacy meaning tied to this field's absence,
+   * so the `balloonRadius` "always written, `??` only for hand-built input"
+   * shape applies rather than `background`'s omit-while-pristine dance.
+   * Decoded values clamp through {@link PARAM}.fogDensity, like every other
    * PARAM-backed numeric field; absent or malformed decodes to `undefined`,
    * and `fromSnapshot` supplies {@link DEFAULT_FOG_DENSITY} for whichever
-   * comes back that way — so a pre-fr-5h5d link decodes with the field
-   * absent and still boots at density 1, reproducing today's fixed fog
-   * exactly.
+   * comes back that way — so a link predating the fog controls decodes
+   * with the field absent and still boots at density 1, reproducing the
+   * fixed fog exactly.
    */
   fogDensity?: number;
   /**
-   * Fog tint color (fr-5h5d, see `state.ts`'s {@link AppState.fogTint}) —
+   * Fog tint color (see `state.ts`'s {@link AppState.fogTint}) —
    * persisted alongside `fogDensity` the identical way: optional here even
    * though `toSnapshot`/`encodeScene` always WRITE a defined value once
    * `AppState` carries one. Decoded values must match the `#rrggbb` hex
    * pattern (reusing {@link hexToRgb} as the validator, like `background`'s
    * custom stops); absent or malformed decodes to `undefined`, and
    * `fromSnapshot` supplies {@link DEFAULT_FOG_TINT} for whichever comes
-   * back that way — so a pre-fr-5h5d link decodes with the field absent and
-   * still boots at the untinted white default.
+   * back that way — so a link predating the fog controls decodes with the
+   * field absent and still boots at the untinted white default.
    */
   fogTint?: string;
   /**
-   * Fog tint blend strength (fr-5h5d, see `state.ts`'s
+   * Fog tint blend strength (see `state.ts`'s
    * {@link AppState.fogTintStrength}) — persisted alongside `fogTint`,
    * clamping through {@link PARAM}.fogTintStrength exactly like
    * `fogDensity` clamps through `PARAM.fogDensity`. Absent or malformed
    * decodes to `undefined`; `fromSnapshot` supplies
-   * {@link DEFAULT_FOG_TINT_STRENGTH} — `0`, the untinted identity — so a
-   * pre-fr-5h5d link's absent pair reproduces today's fog exactly.
+   * {@link DEFAULT_FOG_TINT_STRENGTH} — `0`, the untinted identity — so
+   * the absent pair of a link predating them reproduces today's fog exactly.
    */
   fogTintStrength?: number;
   /**
-   * Whether the surface ground plane is on (fr-rhn5, see `state.ts`'s
+   * Whether the surface ground plane is on (see `state.ts`'s
    * {@link AppState.groundPlane}): scene content, the same treatment as
-   * `balloonEcho` above — optional here (so a hand-built/pre-fr-rhn5
-   * `SceneSnapshot` need not supply it) even though `toSnapshot`/
-   * `encodeScene` always WRITE a defined value once `AppState` carries one;
-   * `fromSnapshot` merges it in with a real default (`false`) rather than
-   * just excluding it. A malformed value (anything but a real boolean)
-   * decodes to `undefined` rather than rejecting the scene, `balloonEcho`'s
-   * own no-coercion stance.
+   * `balloonEcho` above — optional here (so a hand-built `SceneSnapshot`,
+   * or one predating the ground plane, need not supply it) even though
+   * `toSnapshot`/`encodeScene` always WRITE a defined value once `AppState`
+   * carries one; `fromSnapshot` merges it in with a real default (`false`)
+   * rather than just excluding it. A malformed value (anything but a real
+   * boolean) decodes to `undefined` rather than rejecting the scene,
+   * `balloonEcho`'s own no-coercion stance.
    */
   groundPlane?: boolean;
 }
@@ -357,7 +357,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     background: state.background,
     customPalette: state.customPalette,
     positionAxisColors: state.positionAxisColors,
-    // Always written (fr-5wlv.6): AppState's own fields are always defined
+    // Always written: AppState's own fields are always defined
     // — false/DEFAULT_BALLOON_RADIUS is a perfectly ordinary pair to carry
     // — matching how `background`'s own `state.background` copy above is
     // unconditional here too. Unlike `background`, encodeScene below does
@@ -367,22 +367,22 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     // applies instead of `background`'s omit-while-pristine dance.
     balloonEcho: state.balloonEcho,
     balloonRadius: state.balloonRadius,
-    // Always written (fr-j85n), the identical balloonRadius shape just
+    // Always written, the identical balloonRadius shape just
     // above: AppState.balloonTint/balloonTintStrength are always defined,
     // and there is no legacy document whose meaning depends on either
     // field's absence.
     balloonTint: state.balloonTint,
     balloonTintStrength: state.balloonTintStrength,
-    // Always written (fr-5h5d), the identical balloonRadius shape just
+    // Always written, the identical balloonRadius shape just
     // above: AppState.fogDensity is always defined, and there is no legacy
     // document whose meaning depends on this field's absence.
     fogDensity: state.fogDensity,
-    // Always written (fr-5h5d), the identical fogDensity shape just above:
+    // Always written, the identical fogDensity shape just above:
     // AppState.fogTint/fogTintStrength are always defined, and there is no
     // legacy document whose meaning depends on either field's absence.
     fogTint: state.fogTint,
     fogTintStrength: state.fogTintStrength,
-    // Always written (fr-rhn5), the identical fogTintStrength shape just
+    // Always written, the identical fogTintStrength shape just
     // above: AppState.groundPlane is always defined, and there is no
     // legacy document whose meaning depends on this field's absence.
     groundPlane: state.groundPlane,
@@ -393,28 +393,28 @@ export function toSnapshot(state: AppState): SceneSnapshot {
  * Merge a restored snapshot over a base AppState (typically `initialState`),
  * overwriting exactly the persisted fields while leaving session-only state
  * (selection, autoUpdate, panel) from `base` intact. `camera` and `fourD`
- * (fr-pnek) are document-only fields with no `AppState` counterpart (they're
+ * are document-only fields with no `AppState` counterpart (they're
  * applied instead by `main.ts`'s boot/load call sites), so both are
  * explicitly destructured out and never spread. The rest stays the exact
  * inverse of `toSnapshot`, with nothing else to hand-sync.
- * `positionAxisColors` (fr-8k7) is read explicitly off `snapshot` rather than
+ * `positionAxisColors` is read explicitly off `snapshot` rather than
  * relying on the `rest` spread, so its absence always clears `base`'s value
  * even when the incoming snapshot object never declares the key at all —
  * unlike `customPalette`, which only clears because `toSnapshot`/
  * `decodeScene` happen to always emit that key.
  *
- * `balloonEcho`/`balloonRadius` (fr-5wlv.6) are read explicitly off
+ * `balloonEcho`/`balloonRadius` are read explicitly off
  * `snapshot` for the same reason, one step further than
  * `positionAxisColors`: both HAVE a real `AppState` default
  * (`false`/`DEFAULT_BALLOON_RADIUS`) to fall back to rather than merely
  * clearing to `undefined`, so a `??` supplies it whenever the decoded (or
  * hand-built) snapshot came back without one. `balloonTint`/
- * `balloonTintStrength` (fr-j85n) follow the identical shape, falling back
+ * `balloonTintStrength` follow the identical shape, falling back
  * to {@link DEFAULT_BALLOON_TINT} / {@link DEFAULT_BALLOON_TINT_STRENGTH} —
- * as does `fogDensity` (fr-5h5d), falling back to
+ * as does `fogDensity`, falling back to
  * {@link DEFAULT_FOG_DENSITY} — as do `fogTint`/`fogTintStrength`, falling
  * back to {@link DEFAULT_FOG_TINT} / {@link DEFAULT_FOG_TINT_STRENGTH} —
- * and `groundPlane` (fr-rhn5), falling back to `false`.
+ * and `groundPlane`, falling back to `false`.
  */
 export function fromSnapshot(
   snapshot: SceneSnapshot,
@@ -451,7 +451,7 @@ const STORAGE_KEY = "fractal-viewer:scene";
 /** Exact set of valid ColorMode values for strict validation of untrusted input. */
 const VALID_COLOR_MODES = new Set<string>(COLOR_MODES);
 
-/** Exact set of valid FourDColorMode values (fr-d47). */
+/** Exact set of valid FourDColorMode values. */
 const VALID_FOUR_D_COLOR_MODES = new Set<string>(FOUR_D_COLOR_MODES);
 
 /** Exact set of valid RenderStyle values. */
@@ -463,8 +463,8 @@ const VALID_VARIATION_TYPES = new Set<string>(VARIATION_TYPES);
 /**
  * Exact set of valid BUILT-IN palette ids (see `palette.ts`'s
  * `FLAME_PALETTES`), shared by the flame (`flame.paletteId`) and solid
- * (`solid.paletteId`, fr-1kt) validators. Deliberately excludes
- * {@link CUSTOM_PALETTE_ID} (fr-55k): `"custom"` is only ever valid alongside
+ * (`solid.paletteId`) validators. Deliberately excludes
+ * {@link CUSTOM_PALETTE_ID}: `"custom"` is only ever valid alongside
  * an actually-decoded `customPalette` payload, a condition this fixed set
  * can't express — `decodeFlameParams`/`decodeSolidParams` check for that
  * separately via their `hasCustomPalette` parameter.
@@ -475,7 +475,7 @@ const VALID_PALETTE_IDS = new Set<string>(FLAME_PALETTE_IDS);
 const VALID_SYMMETRY_PLANES = new Set<string>(SYMMETRY_PLANES);
 
 /**
- * The pre-fr-q0h6 `symmetry.axis` vocabulary, as the plane each axis named
+ * The legacy `symmetry.axis` vocabulary, as the plane each axis named
  * from the other side (a simple rotation ABOUT an axis is a rotation IN the
  * orthogonal plane). Every mapping is the SAME matrix, same sign — see
  * `chaos-game.ts`'s `symmetryRotation` — so a legacy document decoded through
@@ -487,11 +487,11 @@ const LEGACY_AXIS_PLANE: Readonly<Record<string, SymmetryPlane>> = {
   z: "xy",
 };
 
-/** Exact set of valid SurfaceColorSource values (fr-7jlk). */
+/** Exact set of valid SurfaceColorSource values. */
 const VALID_SURFACE_COLOR_SOURCES = new Set<string>(SURFACE_COLOR_SOURCES);
 
 /**
- * Exact set of valid BackgroundMode values (fr-5ps1). Unlike
+ * Exact set of valid BackgroundMode values. Unlike
  * {@link VALID_PALETTE_IDS}, `"custom"` IS a member — the "only alongside a
  * payload" condition is checked separately in {@link decodeBackground},
  * where the payload lives inside the same block rather than in a sibling
@@ -499,7 +499,7 @@ const VALID_SURFACE_COLOR_SOURCES = new Set<string>(SURFACE_COLOR_SOURCES);
  */
 const VALID_BACKGROUND_MODES = new Set<string>(BACKGROUND_MODES);
 
-/** Exact set of valid BackgroundShape values (fr-h3mp), the same
+/** Exact set of valid BackgroundShape values, the same
  * quiet-fallback discipline as {@link VALID_BACKGROUND_MODES}. */
 const VALID_BACKGROUND_SHAPES = new Set<string>(BACKGROUND_SHAPES);
 
@@ -508,7 +508,7 @@ const VALID_BACKGROUND_SHAPES = new Set<string>(BACKGROUND_SHAPES);
  * distinct warp. Every producer treats a variation list as a type -> weight map
  * (see `types.ts`'s {@link Variation}), so a longer list is either redundant or
  * hand-crafted — and it has to be exactly this tight rather than generous
- * headroom (fr-qgxi): `flame-gpu.ts`'s Slot carries `MAX_SLOT_VARIATIONS`
+ * headroom: `flame-gpu.ts`'s Slot carries `MAX_SLOT_VARIATIONS`
  * variation lanes, itself `VARIATION_TYPES.length`, and its packer throws past
  * that, so a longer blend would decode fine, render fine on every CPU path,
  * and then knock a flame session off the GPU onto its permanent CPU fallback.
@@ -519,7 +519,7 @@ const MAX_VARIATIONS = VARIATION_TYPES.length;
 const MAX_VARIATION_WEIGHT = 100;
 
 /**
- * Sanity bound on each component of an untrusted `camera.target` (fr-1k4):
+ * Sanity bound on each component of an untrusted `camera.target`:
  * real attractor targets sit within a few units of the origin, and
  * `orbit.ts`'s own {@link MAX_RADIUS} (the orbit-distance ceiling) is only
  * 100 — so 1000 is generous headroom while still rejecting a wildly
@@ -559,7 +559,7 @@ function isVec3(v: unknown): v is Vec3 {
 
 /**
  * Decode one optional fold-length leaf on an untrusted variation entry —
- * `minRadius`, `fixedRadius`, or `boxLimit` (fr-s9ll, see `types.ts`'s
+ * `minRadius`, `fixedRadius`, or `boxLimit` (see `types.ts`'s
  * {@link Variation}). QUIET fallback like {@link decodeTransform}'s
  * `colorIndex`/`colorSpeed`: a malformed value never rejects the whole
  * scene, it just leaves the field absent, exactly as if it had never been
@@ -581,7 +581,7 @@ function decodeFoldRadius(raw: unknown): number | undefined {
  * Validate one transform's untrusted `variations` field: an array (capped at
  * {@link MAX_VARIATIONS}) of `{ type, weight }` with a known {@link VariationType}
  * and a finite weight (clamped to ±{@link MAX_VARIATION_WEIGHT}), plus the
- * fold's three optional lengths (fr-s9ll — `minRadius`/`fixedRadius`/
+ * fold's three optional lengths (`minRadius`/`fixedRadius`/
  * `boxLimit`), each decoded independently via {@link decodeFoldRadius} and
  * never gated on `type`, matching how `weight` itself isn't type-checked
  * here either. Returns the parsed list, or `null` when the `type`/`weight`
@@ -638,8 +638,8 @@ function decodeWField(raw: unknown, min: number, max: number): number | null {
 
 /**
  * Decode the one SIGNED `w` leaf: `w.scale`, whose sign is a 4D reflection
- * (fr-icy — the editor expresses it as a magnitude slider plus a Mirror W
- * toggle, the 4D counterpart of the 3D scale channel's fr-lca treatment).
+ * (the editor expresses it as a magnitude slider plus a Mirror W
+ * toggle, the 4D counterpart of the 3D scale channel's own treatment).
  * Same coerce/reject contract as {@link decodeWField}, but the
  * [`MIN_W_SCALE`, `MAX_W_SCALE`] clamp applies to the MAGNITUDE with the
  * sign preserved, so a hand-authored negative w.scale survives decode
@@ -687,7 +687,7 @@ function decodeWPlanes(
  * Requires three valid Vec3 fields; `weight` / `shear` / `variations` / `w` are
  * optional and validated exactly as they encode (`w`'s own presence/clamp
  * contract is spelled out inline below, in {@link WExtension}'s terms).
- * `colorIndex` / `colorSpeed` (fr-hiyu) are optional too, but — unlike every
+ * `colorIndex` / `colorSpeed` are optional too, but — unlike every
  * other field here — a malformed value never rejects the whole scene; see
  * their own block below for why. Shared by the transform list (id = array
  * index) and the final transform (id = 0) so neither can drift — including
@@ -712,7 +712,7 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
     if (!Number.isFinite(w)) return null;
     decoded.weight = clamp(w, 0.0001, 10000);
   }
-  // colorIndex / colorSpeed: optional, [0, 1] (fr-hiyu). Unlike every other
+  // colorIndex / colorSpeed: optional, [0, 1]. Unlike every other
   // field in this function, a malformed value does NOT reject the whole
   // scene — it just leaves the field absent, exactly as if it had never been
   // supplied. Both are narrowly cosmetic (flame structural coloring only,
@@ -807,7 +807,7 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
 }
 
 /**
- * Validate the untrusted `customPalette` scene field (fr-55k): the one
+ * Validate the untrusted `customPalette` scene field: the one
  * user-authored gradient slot (see `state.ts`'s `AppState.customPalette`).
  * QUIET fallback semantics, like `symmetry`/`glowBrightness` rather than
  * `transforms`'s reject-the-scene rule — a custom gradient is cosmetic, never
@@ -850,7 +850,7 @@ function decodeCustomPalette(raw: unknown): CustomPalette | undefined {
 }
 
 /**
- * Validate the untrusted `positionAxisColors` scene field (fr-8k7): the
+ * Validate the untrusted `positionAxisColors` scene field: the
  * position color mode's three axis colors (see `state.ts`'s
  * {@link AppState.positionAxisColors}). QUIET fallback semantics exactly
  * like {@link decodeCustomPalette} — absent, malformed, or any
@@ -877,22 +877,23 @@ function decodePositionAxisColors(
 }
 
 /**
- * Validate the untrusted `background` scene field (fr-5ps1): which backdrop
+ * Validate the untrusted `background` scene field: which backdrop
  * the scene renders (see `background.ts`). QUIET fallback semantics
  * throughout, like {@link decodeSymmetry} — a backdrop is cosmetic, never
  * worth losing an otherwise-valid shared link over — and this function is
  * also the LEGACY MIGRATION: every document written before the field existed
  * carries no `background` at all, and those documents rendered the haze
  * backdrop exactly when their render style was `"aerial"` (the style used to
- * force it — see scene.ts pre-fr-5ps1). So the fallback for an absent or
- * malformed block is keyed on `legacyAerial` (the already-validated render
- * style), and a pre-fr-5ps1 aerial link keeps rendering the haze it always
- * rendered. The same fallback covers an unrecognized mode, so a link from a
- * future build (fr-4vi7's curated presets) degrades to the legacy
- * resolution rather than costing the scene — exactly how pre-fr-mz2u
- * builds degrade the now-valid `"auto"`. `"auto"` itself round-trips as
- * the bare mode (fr-mz2u): the derived colors are never written, so the
- * backdrop keeps tracking palette edits after a link round-trip.
+ * force it — see scene.ts before the backdrop was persisted). So the
+ * fallback for an absent or malformed block is keyed on `legacyAerial` (the
+ * already-validated render style), and an aerial link predating the field
+ * keeps rendering the haze it always rendered. The same fallback covers an
+ * unrecognized mode, so a link from a future build's curated presets
+ * degrades to the legacy resolution rather than costing the scene — exactly
+ * how builds predating the auto backdrop degrade the now-valid `"auto"`.
+ * `"auto"` itself round-trips as the bare mode: the derived colors are
+ * never written, so the backdrop keeps tracking palette edits after a link
+ * round-trip.
  *
  * The custom gradient (`top`/`bottom` hex strings, {@link hexToRgb}-strict
  * like {@link decodePositionAxisColors}) decodes independently of the mode
@@ -902,13 +903,14 @@ function decodePositionAxisColors(
  * can't be honored and takes the legacy fallback, mirroring the `"custom"`
  * paletteId rule in {@link decodeFlameParams}.
  *
- * `shape` (fr-h3mp) decodes independently of `mode`/`custom` too — it is
+ * `shape` decodes independently of `mode`/`custom` too — it is
  * ORTHOGONAL, not a fourth thing that can fail alongside them — and falls
  * back QUIETLY to `DEFAULT_BACKGROUND_SHAPE` ("linear") on anything not in
- * {@link VALID_BACKGROUND_SHAPES}: absent (every pre-fr-h3mp document),
- * malformed, or a shape id from a future build. Never written when it
- * resolves to the default (see the encoder), so this fallback is also what
- * keeps a linear-only document decoding to exactly the pre-fr-h3mp shape.
+ * {@link VALID_BACKGROUND_SHAPES}: absent (every document predating the
+ * shape field), malformed, or a shape id from a future build. Never written
+ * when it resolves to the default (see the encoder), so this fallback is
+ * also what keeps a linear-only document decoding to exactly the shape it
+ * always had.
  */
 function decodeBackground(
   raw: unknown,
@@ -953,14 +955,14 @@ function decodeBackground(
  * an integer, matching `setFlameSupersample`; the estimator radii/curve are
  * NOT (continuous like gamma/vibrancy, matching their own setters).
  *
- * `paletteId` (fr-6us) is the one exception to the reject-on-malformed rule:
+ * `paletteId` is the one exception to the reject-on-malformed rule:
  * an unknown OR missing id decodes to {@link DEFAULT_FLAME_PALETTE} rather
  * than rejecting the scene, so a link carrying a palette this build doesn't
  * know keeps the rest of its scene instead of being thrown away over one
  * cosmetic field — the enum equivalent of the finite-but-out-of-range clamp
  * the numeric fields already use.
  *
- * `hasCustomPalette` (fr-55k) is the caller's answer to "did a valid
+ * `hasCustomPalette` is the caller's answer to "did a valid
  * `customPalette` payload actually decode alongside this block" (see
  * {@link decodeCustomPalette}, called BEFORE this function in `decodeScene`).
  * {@link CUSTOM_PALETTE_ID} is deliberately absent from `VALID_PALETTE_IDS`
@@ -1030,7 +1032,7 @@ function decodeFlameParams(
     if (!Number.isFinite(estimatorCurve)) return null;
   }
   // paletteId: unknown or missing quietly becomes the default (see the doc
-  // above) rather than rejecting the scene. "custom" (fr-55k) is accepted
+  // above) rather than rejecting the scene. "custom" is accepted
   // only alongside a valid decoded customPalette payload.
   const paletteId: PaletteSelection =
     typeof f.paletteId === "string" &&
@@ -1056,7 +1058,7 @@ function decodeFlameParams(
 }
 
 /**
- * Validate the untrusted `solid` render-settings block (fr-v4f), following
+ * Validate the untrusted `solid` render-settings block, following
  * `decodeFlameParams`' presence rules exactly: an absent block — or an
  * absent field within a present block — decodes quietly to its default,
  * while a present-but-malformed (non-finite) value rejects the whole scene.
@@ -1064,10 +1066,10 @@ function decodeFlameParams(
  * snapped to the voxel step and `iterations` rounded, matching their
  * setters.
  *
- * `paletteId` (fr-1kt) is the one exception to the reject-on-malformed rule,
+ * `paletteId` is the one exception to the reject-on-malformed rule,
  * mirroring `flame.paletteId`: an unknown or missing id decodes to
  * {@link DEFAULT_SOLID_PALETTE} rather than rejecting the scene.
- * `hasCustomPalette` (fr-55k) extends that mirror exactly like
+ * `hasCustomPalette` extends that mirror exactly like
  * `decodeFlameParams`'s own parameter: a `"custom"` id is accepted only when
  * a valid `customPalette` payload actually decoded alongside it (see
  * {@link decodeCustomPalette}), otherwise it takes the same quiet fallback
@@ -1106,9 +1108,9 @@ function decodeSolidParams(
     out[key] = value;
   }
 
-  // paletteId (fr-1kt): unknown or missing quietly becomes the default —
+  // paletteId: unknown or missing quietly becomes the default —
   // same quiet-fallback contract as flame.paletteId (see decodeFlameParams).
-  // "custom" (fr-55k) is accepted only alongside a valid decoded
+  // "custom" is accepted only alongside a valid decoded
   // customPalette payload.
   const paletteId: PaletteSelection =
     typeof s.paletteId === "string" &&
@@ -1129,7 +1131,7 @@ function decodeSolidParams(
 }
 
 /**
- * Validate the untrusted `surface` render-settings block (fr-7jlk),
+ * Validate the untrusted `surface` render-settings block,
  * following `decodeSolidParams`'s presence rules exactly: an absent block —
  * or an absent field within a present block — decodes quietly to its
  * default, while a present-but-malformed (non-finite) value rejects the
@@ -1140,11 +1142,11 @@ function decodeSolidParams(
  * `"transform"` rather than rejecting the scene — a base-color choice is
  * cosmetic, not worth losing an otherwise-valid shared link over.
  *
- * `paletteId` (fr-7jlk) mirrors `flame.paletteId`/`solid.paletteId` exactly:
+ * `paletteId` mirrors `flame.paletteId`/`solid.paletteId` exactly:
  * an unknown or missing id decodes to {@link DEFAULT_SOLID_PALETTE} — the
  * surface render's own default, reused from the solid render rather than
  * redeclared, see `state.ts`'s `SurfaceParams` — rather than rejecting the
- * scene. `hasCustomPalette` (fr-55k) extends that mirror exactly like the
+ * scene. `hasCustomPalette` extends that mirror exactly like the
  * other two blocks' own parameter: a `"custom"` id is accepted only when a
  * valid `customPalette` payload actually decoded alongside it (see
  * {@link decodeCustomPalette}), otherwise it takes the same quiet fallback an
@@ -1161,9 +1163,9 @@ function decodeSurfaceParams(
     colorSource: "transform",
     paletteId: DEFAULT_SOLID_PALETTE,
     colorSpeed: PARAM.surfaceColorSpeed.default,
-    // fr-ehcj: absent (every pre-fr-ehcj document) decodes to the default,
-    // which is the intended on-by-default behaviour — those links render
-    // slightly differently now, on purpose.
+    // envLight: absent (every document predating the environment light)
+    // decodes to the default, which is the intended on-by-default
+    // behaviour — those links render slightly differently now, on purpose.
     envLight: PARAM.surfaceEnvLight.default,
   };
   if (raw === undefined) return defaults;
@@ -1185,7 +1187,7 @@ function decodeSurfaceParams(
     out[key] = value;
   }
 
-  // colorSource (fr-7jlk): unknown or missing quietly becomes "transform" —
+  // colorSource: unknown or missing quietly becomes "transform" —
   // the same quiet-fallback contract as symmetry.plane just below.
   const colorSource: SurfaceColorSource =
     typeof s.colorSource === "string" &&
@@ -1193,9 +1195,9 @@ function decodeSurfaceParams(
       ? (s.colorSource as SurfaceColorSource)
       : "transform";
 
-  // paletteId (fr-7jlk): unknown or missing quietly becomes the default —
+  // paletteId: unknown or missing quietly becomes the default —
   // same quiet-fallback contract as flame.paletteId/solid.paletteId (see
-  // decodeFlameParams). "custom" (fr-55k) is accepted only alongside a valid
+  // decodeFlameParams). "custom" is accepted only alongside a valid
   // decoded customPalette payload.
   const paletteId: PaletteSelection =
     typeof s.paletteId === "string" &&
@@ -1219,7 +1221,7 @@ function decodeSurfaceParams(
 }
 
 /**
- * Validate the untrusted `symmetry` block (fr-6im). Unlike `flame`/`solid`, a
+ * Validate the untrusted `symmetry` block. Unlike `flame`/`solid`, a
  * malformed field never rejects the whole scene: `order` coerces and clamps
  * (an out-of-range or non-finite request quietly becomes the nearest valid
  * value, the same spirit as `weight`'s clamp) and an unrecognized/missing
@@ -1230,11 +1232,11 @@ function decodeSurfaceParams(
  * defaults quietly to `{ order: 1, plane: "xz" }`; order 1 is the
  * unreplicated system.
  *
- * ## Reading a pre-fr-q0h6 document
+ * ## Reading a legacy document
  *
- * The field was `axis: "x" | "y" | "z"` before fr-q0h6. This decoder is the
- * migration, and it is the ONLY one — nothing downstream ever sees an `axis`
- * again:
+ * The field was `axis: "x" | "y" | "z"` before the 4D kaleidoscope replaced
+ * it with `plane`. This decoder is the migration, and it is the ONLY one —
+ * nothing downstream ever sees an `axis` again:
  *
  * - a modern `plane` wins whenever it is present and recognized;
  * - otherwise a legacy `axis` maps through {@link LEGACY_AXIS_PLANE}
@@ -1244,7 +1246,7 @@ function decodeSurfaceParams(
  *   — falls back to `"xz"`, which is exactly what the legacy default axis
  *   `"y"` meant, so the fallback did not change meaning either.
  *
- * `twist` (fr-q0h6, the second angle of a 4D double rotation) coerces to an
+ * `twist` (the second angle of a 4D double rotation) coerces to an
  * integer and clamps into `[0, order)` against the ALREADY-clamped order,
  * defaulting to `0` — a simple rotation, which is what every document
  * written before this field existed decodes to.
@@ -1283,7 +1285,7 @@ function decodeSymmetry(raw: unknown): SymmetryParams {
 }
 
 /**
- * Validate the untrusted `camera` scene field (fr-1k4): the orbit-camera
+ * Validate the untrusted `camera` scene field: the orbit-camera
  * pose a save/share/collection document was written with (see
  * {@link CameraPose}). Its validation policy is deliberately DIFFERENT from
  * the core fields above (`transforms`/`colorMode`/`renderStyle`/...): those
@@ -1329,7 +1331,7 @@ function decodeCameraPose(raw: unknown): CameraPose | undefined {
 }
 
 /**
- * Validate the untrusted `fourD` scene field (fr-pnek): the 4D view pose a
+ * Validate the untrusted `fourD` scene field: the 4D view pose a
  * save/share/collection document was written with (see {@link FourDPose}) —
  * the 4D sibling of `camera`/{@link decodeCameraPose} just above, and its
  * validation policy is identical in spirit: a 4D pose is view state, not
@@ -1355,7 +1357,7 @@ function decodeCameraPose(raw: unknown): CameraPose | undefined {
  * `showGuides`/`fourDDepthFade` use elsewhere in this file — absent
  * coerces to off.
  *
- * `sliceThickness` (fr-wa6o) is the one field here that DOESN'T follow
+ * `sliceThickness` is the one field here that DOESN'T follow
  * `sliceCenter`'s all-or-nothing rule, and deliberately so: every document
  * written before that slider existed carries no such key at all, and those
  * poses must keep decoding. So it takes the TOLERANT contract
@@ -1397,7 +1399,7 @@ function decodeFourDPose(raw: unknown): FourDPose | undefined {
 
 /**
  * The compact wire form of one variation entry: `{ type, weight }` plus the
- * fold's three optional lengths (fr-s9ll), each present only when the
+ * fold's three optional lengths, each present only when the
  * source field is finite (see `encodeTransform`'s `encodeFoldRadius`).
  */
 interface EncodedVariation {
@@ -1427,7 +1429,7 @@ interface EncodedTransform {
 }
 
 /**
- * Round one of the fold's three lengths (fr-s9ll) for the wire IFF it's
+ * Round one of the fold's three lengths for the wire IFF it's
  * present and finite — `encodeTransform`'s counterpart to
  * {@link decodeFoldRadius}: `undefined` in, `undefined` out, so an absent
  * `minRadius`/`fixedRadius`/`boxLimit` writes nothing and a document that
@@ -1445,7 +1447,7 @@ function encodeFoldRadius(n: number | undefined): number | undefined {
  * are all omitted. Shared by the transform list and the final transform so
  * their wire forms can't drift.
  *
- * `colorIndex` (fr-hiyu) is the one deliberate exception to the
+ * `colorIndex` is the one deliberate exception to the
  * omit-the-default rule: it is written whenever present, regardless of
  * value. Every other optional field here has one fixed default it can
  * compare against (1 for weight, {@link DEFAULT_COLOR_SPEED} for colorSpeed,
@@ -1501,7 +1503,7 @@ function encodeTransform(t: Transform): EncodedTransform {
           type: v.type,
           weight: round4(v.weight),
         };
-        // The fold's three lengths (fr-s9ll): written ONLY when present and
+        // The fold's three lengths: written ONLY when present and
         // finite, so a document that never authored them encodes
         // byte-identically to one predating the fields entirely — see
         // encodeFoldRadius.
@@ -1606,14 +1608,14 @@ export function encodeScene(s: SceneSnapshot): string {
     // Always written, like glowBrightness — a small, always-present setting,
     // not a per-transform optional feature like finalTransform/weight/shear.
     colorGamma: round4(s.colorGamma),
-    // Always written, like colorGamma above (fr-3b6) — even while a color
+    // Always written, like colorGamma above — even while a color
     // mode it doesn't affect is active, where it is inert exactly the way
     // colorGamma is.
     rampPaletteId: s.rampPaletteId,
     // Always written for the same reason — even for a flat system, where it
     // is inert exactly the way colorMode is inert for a non-flat one.
     fourDColor: s.fourDColor,
-    // Always written, exactly like fourDColor above (fr-3e0).
+    // Always written, exactly like fourDColor above.
     fourDDepthFade: s.fourDDepthFade,
     renderStyle: s.renderStyle,
     showGuides: s.showGuides,
@@ -1652,7 +1654,7 @@ export function encodeScene(s: SceneSnapshot): string {
     symmetry: {
       order: Math.round(s.symmetry.order),
       plane: s.symmetry.plane,
-      // Written only when nonzero (fr-q0h6), so an ordinary simple-rotation
+      // Written only when nonzero, so an ordinary simple-rotation
       // document's encoded form gains nothing but the renamed field — the
       // same absent-means-identity discipline as finalTransform/weight/shear.
       ...(s.symmetry.twist ? { twist: Math.round(s.symmetry.twist) } : {}),
@@ -1660,9 +1662,9 @@ export function encodeScene(s: SceneSnapshot): string {
     // Always written, like symmetry — a small, always-present setting, not a
     // per-transform optional feature like finalTransform/weight/shear.
     glowBrightness: round4(s.glowBrightness),
-    // Always written (fr-5wlv.6), like glowBrightness just above — NOT
+    // Always written, like glowBrightness just above — NOT
     // conditionally omitted at the pristine default the way `background`
-    // is below: there is no pre-fr-5wlv.6 document whose meaning depends
+    // is below: there is no document predating the pair whose meaning depends
     // on this field's absence (unlike background's aerial-coupling
     // legacy), so the simpler always-written rule applies and a
     // false/DEFAULT_BALLOON_RADIUS pair costs nothing to carry. The `??`
@@ -1670,7 +1672,7 @@ export function encodeScene(s: SceneSnapshot): string {
     // toSnapshot (which always supplies both) — see toSnapshot's own note.
     balloonEcho: s.balloonEcho ?? false,
     balloonRadius: round4(s.balloonRadius ?? DEFAULT_BALLOON_RADIUS),
-    // Always written (fr-j85n), the identical balloonRadius shape just
+    // Always written, the identical balloonRadius shape just
     // above — the `??` fallbacks only matter for a hand-built SceneSnapshot
     // that skipped toSnapshot. balloonTint is a hex string already (no
     // rounding); balloonTintStrength rounds like every other float in this
@@ -1679,34 +1681,34 @@ export function encodeScene(s: SceneSnapshot): string {
     balloonTintStrength: round4(
       s.balloonTintStrength ?? DEFAULT_BALLOON_TINT_STRENGTH,
     ),
-    // Always written (fr-5h5d), like balloonRadius just above — the `??`
+    // Always written, like balloonRadius just above — the `??`
     // fallback only matters for a hand-built SceneSnapshot that skipped
     // toSnapshot (which always supplies it).
     fogDensity: round4(s.fogDensity ?? DEFAULT_FOG_DENSITY),
-    // Always written (fr-5h5d), the identical fogDensity shape just above —
+    // Always written, the identical fogDensity shape just above —
     // the `??` fallbacks only matter for a hand-built SceneSnapshot that
     // skipped toSnapshot. fogTint is a hex string already (no rounding);
     // fogTintStrength rounds like every other float in this payload.
     fogTint: s.fogTint ?? DEFAULT_FOG_TINT,
     fogTintStrength: round4(s.fogTintStrength ?? DEFAULT_FOG_TINT_STRENGTH),
-    // Always written (fr-rhn5), like fogTintStrength just above — the `??`
+    // Always written, like fogTintStrength just above — the `??`
     // fallback only matters for a hand-built SceneSnapshot that skipped
     // toSnapshot (which always supplies it). A boolean, so no rounding.
     groundPlane: s.groundPlane ?? false,
   };
-  // background (fr-5ps1): omitted while pristine (`dark`, nothing authored,
+  // background: omitted while pristine (`dark`, nothing authored,
   // shape linear) so never-touched scenes keep their short URLs AND
-  // pre-fr-5ps1 documents' encoded bytes stay identical — EXCEPT under the
-  // aerial render style, where even the pristine default is written out: an
-  // absent field is what a legacy document looks like, and the decoder
-  // reads legacy-aerial as haze (the backdrop the style used to force), so
-  // an aerial scene that means "dark" must say so. The custom gradient is
-  // written whenever authored, selected or not — the slot survives like
-  // customPalette — as hex strings for URL compactness (see rgbToHex).
-  // `shape` (fr-h3mp) is written only when it is NOT the default "linear" —
+  // documents predating the field keep identical encoded bytes — EXCEPT
+  // under the aerial render style, where even the pristine default is
+  // written out: an absent field is what a legacy document looks like, and
+  // the decoder reads legacy-aerial as haze (the backdrop the style used to
+  // force), so an aerial scene that means "dark" must say so. The custom
+  // gradient is written whenever authored, selected or not — the slot
+  // survives like customPalette — as hex strings for URL compactness (see
+  // rgbToHex). `shape` is written only when it is NOT the default "linear" —
   // a linear-only document, radial-authored or not, encodes byte-identical
-  // to a pre-fr-h3mp one, the same absent-means-identity discipline as
-  // finalTransform/weight/shear.
+  // to one predating the shape field, the same absent-means-identity
+  // discipline as finalTransform/weight/shear.
   if (
     s.background.mode !== "dark" ||
     s.background.custom !== undefined ||
@@ -1731,7 +1733,7 @@ export function encodeScene(s: SceneSnapshot): string {
   if (s.finalTransform)
     payload.finalTransform = encodeTransform(s.finalTransform);
   // Written only when present, like finalTransform above — never-authored
-  // scenes keep their short URLs. Encoded as hex strings (fr-55k) for URL
+  // scenes keep their short URLs. Encoded as hex strings for URL
   // compactness — see rgbToHex.
   if (s.customPalette)
     payload.customPalette = { stops: s.customPalette.stops.map(rgbToHex) };
@@ -1756,15 +1758,15 @@ export function encodeScene(s: SceneSnapshot): string {
       phi: round4(s.camera.phi),
     };
   }
-  // Written only when present, like camera above (fr-pnek) — an undo-history
+  // Written only when present, like camera above — an undo-history
   // snapshot (which never carries a 4D pose either — see SceneSnapshot.fourD's
   // doc) stays byte-identical. Wire form flattens the rotor pair to p/q (URL
   // compactness — no nested `pair` object). Quaternion components +
   // sliceCenter/sliceThickness are rounded to 4 decimals like every other
   // float in this file: the resulting angle error is far below visibility,
-  // and the decoder renormalizes the pair anyway. sliceThickness (fr-wa6o)
+  // and the decoder renormalizes the pair anyway. sliceThickness
   // is written unconditionally, like the two booleans beside it — its
-  // absence is what a pre-fr-wa6o document looks like, and the decoder
+  // absence is what a document predating the slab looks like, and the decoder
   // already reads that as 0.
   if (s.fourD) {
     payload.fourD = {
@@ -1802,7 +1804,7 @@ export function encodeScene(s: SceneSnapshot): string {
  * and flame.estimatorCurve to [{@link MIN_ESTIMATOR_CURVE},
  * {@link MAX_ESTIMATOR_CURVE}]. An unknown/missing flame.paletteId falls back
  * to {@link DEFAULT_FLAME_PALETTE} (see {@link decodeFlameParams});
- * rampPaletteId (fr-3b6) follows the identical quiet-fallback shape at the
+ * rampPaletteId follows the identical quiet-fallback shape at the
  * top level, falling back to {@link DEFAULT_RAMP_PALETTE} instead. Likewise,
  * symmetry.order clamps to [{@link MIN_SYMMETRY_ORDER},
  * {@link MAX_SYMMETRY_ORDER}] and an
@@ -1813,16 +1815,16 @@ export function encodeScene(s: SceneSnapshot): string {
  * spirit for glowBrightness: it clamps to [{@link MIN_GLOW_BRIGHTNESS},
  * {@link MAX_GLOW_BRIGHTNESS}], falling back to
  * {@link DEFAULT_GLOW_BRIGHTNESS} when absent or non-finite rather than
- * rejecting the scene. colorGamma (fr-8sk) follows the identical contract:
+ * rejecting the scene. colorGamma follows the identical contract:
  * clamps to [{@link MIN_COLOR_GAMMA}, {@link MAX_COLOR_GAMMA}], falling back
  * to {@link DEFAULT_COLOR_GAMMA} when absent or non-finite rather than
- * rejecting the scene. fourDColor (fr-d47) is enum-shaped like symmetry.plane
+ * rejecting the scene. fourDColor is enum-shaped like symmetry.plane
  * and shares its quiet fallback: absent or unrecognized values become
- * {@link DEFAULT_FOUR_D_COLOR}, never a rejection. fourDDepthFade (fr-3e0)
+ * {@link DEFAULT_FOUR_D_COLOR}, never a rejection. fourDDepthFade
  * follows showGuides's boolean-coercion contract: any truthy value is on,
  * and absent coerces to off — the default.
  *
- * customPalette (fr-55k) is the one user-authored gradient slot: optional
+ * customPalette is the one user-authored gradient slot: optional
  * like finalTransform rather than always-present like flame/solid/symmetry,
  * and never rejects the scene — absent, malformed, or an out-of-range stop
  * count all quietly decode to `undefined` (see {@link decodeCustomPalette}),
@@ -1833,26 +1835,26 @@ export function encodeScene(s: SceneSnapshot): string {
  * paletteId exactly like any other unrecognized id (see
  * {@link decodeFlameParams}).
  *
- * positionAxisColors (fr-8k7) follows the identical quiet-fallback contract:
+ * positionAxisColors follows the identical quiet-fallback contract:
  * absent or malformed decodes to `undefined` — the legacy axis mapping —
  * never a rejection.
  *
- * camera (fr-1k4) is the optional orbit-camera pose (see {@link CameraPose}).
+ * camera is the optional orbit-camera pose (see {@link CameraPose}).
  * Its policy is stricter than customPalette's in one way (no `Number(x)`
  * string coercion — see {@link decodeCameraPose}) but the same in spirit:
  * absent or malformed NEVER rejects the scene, it just decodes to
  * `undefined`, same as customPalette above.
  *
- * fourD (fr-pnek) is the optional 4D view pose — the tumble rotor plus the
+ * fourD is the optional 4D view pose — the tumble rotor plus the
  * soft w-slice window (see {@link FourDPose}), the 4D sibling of `camera`
  * just above. Same policy as `camera`, including its stricter no-coercion
  * stance on the numeric fields (see {@link decodeFourDPose}): absent or
  * malformed never rejects the scene, it just decodes to `undefined`. Its
- * one tolerant field is `sliceThickness` (fr-wa6o), which defaults to 0
+ * one tolerant field is `sliceThickness`, which defaults to 0
  * rather than dropping the pose — every document written before that
  * slider existed lacks the key entirely.
  *
- * balloonEcho / balloonRadius (fr-5wlv.6) follow camera/fourD's exact
+ * balloonEcho / balloonRadius follow camera/fourD's exact
  * quiet-drop contract — a malformed value (balloonEcho not literally a
  * boolean, balloonRadius not finite) decodes to `undefined` rather than
  * rejecting the scene — with one difference: unlike camera/fourD, both
@@ -1861,44 +1863,45 @@ export function encodeScene(s: SceneSnapshot): string {
  * {@link PARAM}.balloonRadius's range like any other PARAM-backed numeric
  * field. `fromSnapshot` (not this function) supplies the true defaults —
  * `false` / {@link DEFAULT_BALLOON_RADIUS} — for whichever comes back
- * `undefined`, so a pre-fr-5wlv.6 link decodes here with both fields
+ * `undefined`, so a link predating the pair decodes here with both fields
  * absent and still boots with the balloon off, exactly as it always did.
  *
- * balloonTint/balloonTintStrength (fr-j85n) are `balloonRadius`'s tint-pair
+ * balloonTint/balloonTintStrength are `balloonRadius`'s tint-pair
  * siblings, same never-rejects contract: `balloonTintStrength` coerces/
  * clamps into {@link PARAM}.balloonTintStrength's range exactly like
  * `fogTintStrength` clamps into `PARAM.fogTintStrength`; `balloonTint` must
  * be a string matching the `#rrggbb` hex pattern ({@link hexToRgb} is the
  * validator, reused from `fogTint`'s own field below) or it decodes to
  * `undefined`. `fromSnapshot` supplies {@link DEFAULT_BALLOON_TINT} /
- * {@link DEFAULT_BALLOON_TINT_STRENGTH}, so a pre-fr-j85n link decodes with
- * the pair absent and still boots with the shell untinted, reproducing
- * today's balloon rendering exactly.
+ * {@link DEFAULT_BALLOON_TINT_STRENGTH}, so a link predating the tint pair
+ * decodes with the pair absent and still boots with the shell untinted,
+ * reproducing today's balloon rendering exactly.
  *
- * fogDensity (fr-5h5d) follows the identical quiet-drop/clamp contract as
+ * fogDensity follows the identical quiet-drop/clamp contract as
  * balloonRadius just above: coerce, reject non-finite to `undefined`, clamp
  * a finite value into {@link PARAM}.fogDensity's range, never rejecting the
  * scene. `fromSnapshot` supplies the true default, {@link
- * DEFAULT_FOG_DENSITY}, so a pre-fr-5h5d link decodes here with the field
- * absent and still boots at density 1, reproducing today's fixed fog
- * exactly.
+ * DEFAULT_FOG_DENSITY}, so a link predating the fog controls decodes here
+ * with the field absent and still boots at density 1, reproducing the fixed
+ * fog exactly.
  *
- * fogTint/fogTintStrength (fr-5h5d) are `fogDensity`'s atmosphere-pair
+ * fogTint/fogTintStrength are `fogDensity`'s atmosphere-pair
  * siblings, same never-rejects contract: `fogTintStrength` coerces/clamps
  * into {@link PARAM}.fogTintStrength's range exactly like `fogDensity`;
  * `fogTint` must be a string matching the `#rrggbb` hex pattern ({@link
  * hexToRgb} is the validator, reused from `background`'s custom stops) or
  * it decodes to `undefined`. `fromSnapshot` supplies {@link DEFAULT_FOG_TINT}
- * / {@link DEFAULT_FOG_TINT_STRENGTH}, so a pre-fr-5h5d link decodes with
- * the pair absent and still boots untinted, reproducing today's fog exactly.
+ * / {@link DEFAULT_FOG_TINT_STRENGTH}, so a link predating the fog controls
+ * decodes with the pair absent and still boots untinted, reproducing today's
+ * fog exactly.
  *
- * groundPlane (fr-rhn5) follows `balloonEcho`'s exact quiet-drop contract:
+ * groundPlane follows `balloonEcho`'s exact quiet-drop contract:
  * it requires a REAL boolean (no `Boolean(x)` coercion — a stray truthy
  * value must not silently turn the floor on), and a malformed or absent
  * value decodes to `undefined` rather than rejecting the scene.
- * `fromSnapshot` supplies the true default, `false`, so a pre-fr-rhn5 link
- * decodes here with the field absent and still boots with the floor off,
- * exactly as it always rendered.
+ * `fromSnapshot` supplies the true default, `false`, so a link predating
+ * the ground plane decodes here with the field absent and still boots with
+ * the floor off, exactly as it always rendered.
  */
 export function decodeScene(raw: string): SceneSnapshot | null {
   if (!raw.startsWith("v1=")) return null;
@@ -1958,12 +1961,12 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     if (!Number.isFinite(rawPointSize)) return null;
     const pointSize = clampToSpec(PARAM.pointSize, rawPointSize);
 
-    // customPalette (fr-55k): decoded BEFORE flame/solid so their paletteId
+    // customPalette: decoded BEFORE flame/solid so their paletteId
     // logic can tell whether a "custom" selection actually has a payload to
     // back it. Never rejects the scene — see decodeCustomPalette.
     const customPalette = decodeCustomPalette(o.customPalette);
 
-    // positionAxisColors (fr-8k7): the position color mode's custom axis
+    // positionAxisColors: the position color mode's custom axis
     // colors. Never rejects the scene — see decodePositionAxisColors.
     const positionAxisColors = decodePositionAxisColors(o.positionAxisColors);
 
@@ -1982,7 +1985,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     // falls back to its default. See decodeSymmetry.
     const symmetry = decodeSymmetry(o.symmetry);
 
-    // glowBrightness (fr-8b1): manual override on top of the glow render's
+    // glowBrightness: manual override on top of the glow render's
     // density-adaptive auto-exposure (see exposure.ts's glowExposure). Like
     // symmetry.order, an absent or non-finite value falls back to the
     // neutral default (1) rather than rejecting the scene — a brightness
@@ -1994,7 +1997,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     if (Number.isFinite(rawGlowBrightness)) glowBrightness = rawGlowBrightness;
     glowBrightness = clampToSpec(PARAM.glowBrightness, glowBrightness);
 
-    // colorGamma (fr-8sk): color-contrast exponent for the height/radius/
+    // colorGamma: color-contrast exponent for the height/radius/
     // position color modes (see color.ts's colorModeUsesGamma). Same
     // never-rejects contract as glowBrightness just above — a contrast tweak
     // is cosmetic, not worth losing a shared link over.
@@ -2003,7 +2006,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     if (Number.isFinite(rawColorGamma)) colorGamma = rawColorGamma;
     colorGamma = clampToSpec(PARAM.colorGamma, colorGamma);
 
-    // fourDColor (fr-d47): how the 4D projection colors points. Same quiet-
+    // fourDColor: how the 4D projection colors points. Same quiet-
     // fallback contract as symmetry.plane / flame.paletteId, NOT colorMode's
     // strict reject: an absent or unrecognized value falls back to the
     // default blue/orange ramp — a 4D palette choice is cosmetic, not worth
@@ -2014,7 +2017,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
         ? (o.fourDColor as FourDColorMode)
         : DEFAULT_FOUR_D_COLOR;
 
-    // rampPaletteId (fr-3b6): the height/radius ramps' gradient palette. The
+    // rampPaletteId: the height/radius ramps' gradient palette. The
     // same quiet-fallback shape as flame.paletteId / solid.paletteId (see
     // decodeFlameParams): absent or unknown falls back to "legacy" — the
     // built-in ramps — and "custom" is honored only alongside the valid
@@ -2026,26 +2029,26 @@ export function decodeScene(raw: string): SceneSnapshot | null {
         ? (o.rampPaletteId as PaletteSelection)
         : DEFAULT_RAMP_PALETTE;
 
-    // background (fr-5ps1): never rejects — absent, malformed, or unknown
+    // background: never rejects — absent, malformed, or unknown
     // falls back to the LEGACY resolution (haze under the aerial style, dark
-    // otherwise), which is also the pre-fr-5ps1 migration. Safe to key on
+    // otherwise), which is also the legacy migration. Safe to key on
     // renderStyle here: it was strictly validated above. See
     // decodeBackground.
     const background = decodeBackground(o.background, renderStyle === "aerial");
 
-    // camera (fr-1k4): the optional orbit-camera pose. Never rejects the
+    // camera: the optional orbit-camera pose. Never rejects the
     // scene — a malformed or absent value quietly decodes to undefined,
     // exactly like customPalette above. See decodeCameraPose.
     const camera = decodeCameraPose(o.camera);
 
-    // fourD (fr-pnek): the optional 4D view pose (tumble rotor + soft
+    // fourD: the optional 4D view pose (tumble rotor + soft
     // w-slice). Never rejects the scene — a malformed or absent value
     // quietly decodes to undefined, exactly like camera above. See
     // decodeFourDPose.
     const fourD = decodeFourDPose(o.fourD);
 
-    // balloonEcho / balloonRadius (fr-5wlv.6): the balloon pair, persisted
-    // since the epic's "mode persists" acceptance. Same quiet-fallback
+    // balloonEcho / balloonRadius: the balloon pair, persisted
+    // by the balloon's own "mode persists" rule. Same quiet-fallback
     // policy as camera/fourD just above — malformed or absent drops ONLY
     // the field to undefined, never the whole scene — but no sub-object to
     // open, so no dedicated decodeX helper: balloonEcho requires a REAL
@@ -2064,7 +2067,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       ? clampToSpec(PARAM.balloonRadius, rawBalloonRadius)
       : undefined;
 
-    // balloonTint (fr-j85n): a #rrggbb string. Validated with hexToRgb, the
+    // balloonTint: a #rrggbb string. Validated with hexToRgb, the
     // same strict validator fogTint uses below — but only its "did this
     // parse" verdict matters here: like fogTint, AppState stores the hex
     // STRING itself (not an RgbStop), so the parsed triple is discarded and
@@ -2076,7 +2079,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
         ? o.balloonTint
         : undefined;
 
-    // balloonTintStrength (fr-j85n): same coerce/clamp/never-reject
+    // balloonTintStrength: same coerce/clamp/never-reject
     // contract as balloonRadius just above. fromSnapshot supplies
     // DEFAULT_BALLOON_TINT_STRENGTH when this comes back undefined.
     const rawBalloonTintStrength = Number(o.balloonTintStrength);
@@ -2086,7 +2089,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       ? clampToSpec(PARAM.balloonTintStrength, rawBalloonTintStrength)
       : undefined;
 
-    // fogDensity (fr-5h5d): same coerce/clamp/never-reject contract as
+    // fogDensity: same coerce/clamp/never-reject contract as
     // balloonRadius just above. fromSnapshot supplies DEFAULT_FOG_DENSITY
     // when this comes back undefined.
     const rawFogDensity = Number(o.fogDensity);
@@ -2094,7 +2097,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       ? clampToSpec(PARAM.fogDensity, rawFogDensity)
       : undefined;
 
-    // fogTint (fr-5h5d): a #rrggbb string. Validated with hexToRgb, the
+    // fogTint: a #rrggbb string. Validated with hexToRgb, the
     // same strict validator background's custom stops use — but only its
     // "did this parse" verdict matters here: unlike background/
     // customPalette/positionAxisColors, AppState stores the hex STRING
@@ -2106,7 +2109,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
         ? o.fogTint
         : undefined;
 
-    // fogTintStrength (fr-5h5d): same coerce/clamp/never-reject contract as
+    // fogTintStrength: same coerce/clamp/never-reject contract as
     // fogDensity just above. fromSnapshot supplies
     // DEFAULT_FOG_TINT_STRENGTH when this comes back undefined.
     const rawFogTintStrength = Number(o.fogTintStrength);
@@ -2116,7 +2119,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       ? clampToSpec(PARAM.fogTintStrength, rawFogTintStrength)
       : undefined;
 
-    // groundPlane (fr-rhn5): same quiet-drop contract as balloonEcho above
+    // groundPlane: same quiet-drop contract as balloonEcho above
     // — a real boolean or undefined, never a rejected scene. fromSnapshot
     // supplies `false` when this comes back undefined.
     const groundPlane: boolean | undefined =

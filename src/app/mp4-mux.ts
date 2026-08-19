@@ -1,4 +1,4 @@
-// Pure MP4 (ISO BMFF) container muxing for offline video export (fr-92t9).
+// Pure MP4 (ISO BMFF) container muxing for offline video export.
 //
 // WebCodecs' VideoEncoder hands back H.264 EncodedVideoChunks with no
 // container around them — playable video needs a moov box describing every
@@ -17,11 +17,11 @@
 // "faststart" file), and the layout matches a conventional
 // single-video-track, single-chunk file — one avc1 sample entry, one
 // contiguous run of samples in one chunk. B-frame streams (Firefox's H.264
-// encoder reorders regardless of latencyMode — fr-7dm2) are represented the
+// encoder reorders regardless of latencyMode) are represented the
 // standard way: decode timestamps synthesized on the constant frame cadence,
 // a version-0 ctts carrying the bias-shifted composition offsets, and an
 // elst edit trimming the shift's lead-in; a monotonic stream gets neither
-// box and its file is byte-identical to the pre-fr-7dm2 layout. Box layout
+// box and its file is byte-identical to the pre-B-frame layout. Box layout
 // per ISO/IEC 14496-12.
 
 /** One encoded H.264 sample (video frame) in decode order. */
@@ -33,7 +33,7 @@ export interface Mp4Sample {
   /**
    * Presentation timestamp in microseconds (`EncodedVideoChunk.timestamp`).
    * Decode order is the array position; an encoder that emits B-frames
-   * (Firefox's H.264 encoder does, whatever `latencyMode` asks — fr-7dm2)
+   * (Firefox's H.264 encoder does, whatever `latencyMode` asks)
    * hands samples back with these REORDERED relative to that position, and
    * the muxer represents the reordering with a `ctts` composition-offset
    * table plus an `elst` edit trimming the reorder lead-in. Monotonic
@@ -434,7 +434,7 @@ function buildStbl(
   const stts = buildStts(spec);
   // ctts sits between stts and stss (decode timing, then composition
   // offsets, then sync samples) only when the stream was reordered — a
-  // monotonic stream's stbl is byte-identical to the pre-fr-7dm2 layout.
+  // monotonic stream's stbl is byte-identical to the pre-B-frame layout.
   const ctts =
     composition === null ? null : buildCtts(composition.offsetsTicks);
   const stss = buildStss(spec);

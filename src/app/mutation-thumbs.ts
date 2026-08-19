@@ -1,5 +1,5 @@
 /**
- * Pure, canvas-free pixel renderer for the mutation grid's (fr-3vly) preview
+ * Pure, canvas-free pixel renderer for the mutation grid's preview
  * thumbnails: turns an IFS system into a small square RGBA scatter-plot image
  * — a mini point-cloud rendering — with no dependency on Three.js or the DOM.
  *
@@ -82,7 +82,7 @@ const BG_B = 14;
  * otherwise every map (and the lens, if any) is lifted through
  * {@link toTransform4} and run through the 4D chaos game, reading its xyz
  * `positions` and `transformIndices` the same way, with `system.symmetry`
- * passed straight through on BOTH branches (fr-4ao9) — an order-1 symmetry is
+ * passed straight through on BOTH branches — an order-1 symmetry is
  * the identity, so passing it unconditionally is always safe, and it's the 4D
  * branch that actually renders a w-plane or twisted symmetry's kaleidoscope,
  * since a non-flat symmetry always routes there.
@@ -109,10 +109,10 @@ export function renderSystemThumb(
   let transformIndices: Uint8Array;
   let count: number;
 
-  // Routed on the SYSTEM's flatness, symmetry included (fr-q0h6): a
+  // Routed on the SYSTEM's flatness, symmetry included: a
   // kaleidoscope turning in a w-plane (or carrying a twist) is 4D structure
   // with no 3D expansion, so it belongs on the 4D branch below exactly as a
-  // transform's w block does. Every pre-fr-q0h6 symmetry is w-free and
+  // transform's w block does. Every 3D-only symmetry is w-free and
   // twist-free, so `symmetryIsNonFlat` is false for all of them and this
   // routes identically to the bare `systemIsFlat` test it replaces.
   if (systemIsFlat(transforms) && !symmetryIsNonFlat(symmetry)) {

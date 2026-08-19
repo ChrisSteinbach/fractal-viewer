@@ -151,7 +151,7 @@ describe("cameraKeyAction", () => {
   });
 
   describe("Space — the shared auto-motion toggle", () => {
-    it("toggles in both dimensions (orbit in 3D, tumble in 4D — one preference, fr-0ya)", () => {
+    it("toggles in both dimensions (orbit in 3D, tumble in 4D — one preference)", () => {
       expect(cameraKeyAction(press(" "), FLAT)).toEqual({
         kind: "toggleMotion",
       });

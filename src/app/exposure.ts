@@ -12,7 +12,7 @@
  * Calibration density (points per pixel) at which the exposure factor is
  * exactly 1 — i.e. the glow material keeps its authored opacity unchanged.
  * Tuned so the Radiolarian preset at its natural framing preserves the
- * "luminous stardust" appearance from fr-x2z.
+ * "luminous stardust" appearance the Glow + Bloom tuning settled on.
  */
 export const CALIBRATION_DENSITY = 0.5;
 
@@ -21,9 +21,9 @@ export const CALIBRATION_DENSITY = 0.5;
  *
  * @param numPoints       Rendered point count (`lastResult.count`).
  * @param boundsRadiusWorld  Half the bounding-box diagonal (world units) —
- *   since fr-2b82 the caller derives it from the outlier-trimmed
- *   `frameBounds`, so the density estimate models where the mass actually is
- *   rather than a raw box one flung straggler can inflate.
+ *   the caller derives it from the outlier-trimmed `frameBounds`, so the
+ *   density estimate models where the mass actually is rather than a raw
+ *   box one flung straggler can inflate.
  * @param cameraDistance   Distance from camera to the cloud centre.
  * @param fovYRadians      Vertical field-of-view in radians.
  * @param viewportHeightPx Canvas height in CSS pixels.

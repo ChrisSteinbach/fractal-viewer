@@ -6,7 +6,7 @@ import {
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 
 /**
- * The solid render's GPU raymarcher (fr-v4f): a full-screen-quad
+ * The solid render's GPU raymarcher: a full-screen-quad
  * ShaderMaterial that marches camera rays through the chaos game's packed
  * density volume (`voxelTextureData` → `Data3DTexture`) and shades the
  * log-density isosurface like a raytraced solid — gradient normals, one hard
@@ -20,21 +20,19 @@ import { DARK_BACKDROP, hexToRgb01 } from "./constants";
  * `sampler3D` requires it; Three injects the built-in vertex attributes and
  * matrix uniforms for GLSL3 ShaderMaterials automatically.
  *
- * DELIBERATELY NOT ENVIRONMENT-LIT (fr-ehcj scoped it out): the surface
- * tracers (`surface-material.ts` / `-4d.ts`) and their WGSL mirror
- * (`fractal/surface-de-gpu.ts`) tint the WHOLE lit term toward the backdrop
- * sampled along the shading normal, so those renders sit IN their
- * background; this raymarcher's `uAmbient` blend below stays a plain
+ * DELIBERATELY NOT ENVIRONMENT-LIT (the environment-lit shading work scoped
+ * it out): the surface tracers (`surface-material.ts` / `-4d.ts`) and their
+ * WGSL mirror (`fractal/surface-de-gpu.ts`) tint the WHOLE lit term toward
+ * the backdrop sampled along the shading normal, so those renders sit IN
+ * their background; this raymarcher's `uAmbient` blend below stays a plain
  * scalar. That leaves the solid render as the one mode still floating in
- * front of its backdrop — a known, accepted gap, not an oversight a
- * future reader should "fix" by copying the tint in without a bead behind
- * it.
+ * front of its backdrop — a known, accepted gap, not an oversight a future
+ * reader should "fix" by copying the tint in without a bead behind it.
  *
- * The miss-pixel gradient shares its shape with every other tracer
- * (fr-xn9s): `backgroundShapeT`, spliced in from
- * `../fractal/background-shape.ts`, is the one place that shape is
- * defined — this module only supplies the two stops and the pixel's
- * full-image UV.
+ * The miss-pixel gradient shares its shape with every other tracer:
+ * `backgroundShapeT`, spliced in from `../fractal/background-shape.ts`, is
+ * the one place that shape is defined — this module only supplies the two
+ * stops and the pixel's full-image UV.
  */
 
 /** Screen-space gradient the raymarcher paints on a miss — the same authored
@@ -71,7 +69,7 @@ const VOXEL_FRAGMENT = /* glsl */ `
   uniform mat4 uInvProjView;
   uniform vec3 uBgTop;
   uniform vec3 uBgBottom;
-  /** Backdrop gradient SHAPE (fr-h3mp): mirrors the surface tracers'
+  /** Backdrop gradient SHAPE: mirrors the surface tracers'
    * uBgShape/uBgCenter/uBgScale — see surface-material.ts. */
   uniform int uBgShape;
   uniform vec2 uBgCenter;
@@ -79,11 +77,11 @@ const VOXEL_FRAGMENT = /* glsl */ `
   /** Primary march step count, scaled with the bound grid so the stride
    * stays ~1.16 voxels (see marchStepsForGrid). */
   uniform int uMarchSteps;
-  /** Depth-fog density multiplier (fr-5h5d): scales the fog distance unit,
+  /** Depth-fog density multiplier: scales the fog distance unit,
    * mirroring the surface tracers' uFogDensity — 1 is the neutral default,
    * 0 disables depth fog. */
   uniform float uFogDensity;
-  /** Fog tint (fr-5h5d): what the depth fog blends toward is
+  /** Fog tint: what the depth fog blends toward is
    * mix(background, uFogTint, uFogTintStrength), mirroring the surface
    * tracers' uFogTint — strength 0 (the default) is a bit-exact
    * identity, the pre-tint fog toward the pixel's own backdrop color.
@@ -136,7 +134,7 @@ const VOXEL_FRAGMENT = /* glsl */ `
 
   ${backgroundShapeSource(BACKGROUND_SHAPE_GLSL)}
   void main() {
-    // fr-xn9s: shared shape at full-image coordinates; see surface-material.ts.
+    // Shared shape at full-image coordinates; see surface-material.ts.
     vec3 background = mix(uBgBottom, uBgTop, backgroundShapeT(vUv));
 
     // Reconstruct the camera ray by unprojecting this pixel on the near and
@@ -229,10 +227,10 @@ const VOXEL_FRAGMENT = /* glsl */ `
     vec3 halfVec = normalize(uLightDir - rd);
     float specular = pow(max(dot(n, halfVec), 0.0), 32.0) * 0.4;
 
-    // Plain scalar ambient, deliberately NOT environment-tinted (fr-ehcj
-    // scoped the solid render out — see the module doc).
+    // Plain scalar ambient, deliberately NOT environment-tinted (the
+    // solid render was scoped out — see the module doc).
     float lit = uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow;
-    // Light in linear space (fr-8id): base is sRGB-authored (color.ts), so
+    // Light in linear space: base is sRGB-authored (color.ts), so
     // decode with gamma 2.2, apply the light/specular product there, and
     // re-encode for the pass-through canvas (ColorManagement is off). A fully
     // lit, specular-free surface round-trips to base verbatim — the authored-
@@ -241,7 +239,7 @@ const VOXEL_FRAGMENT = /* glsl */ `
     vec3 linBase = pow(base, vec3(2.2));
     vec3 col = pow(linBase * lit + vec3(specular * shadow), vec3(1.0 / 2.2));
 
-    // Depth fog toward the backdrop (fr-5h5d): squared-exponential in the
+    // Depth fog toward the backdrop: squared-exponential in the
     // distance traveled inside the volume box, mirroring the surface
     // tracers' fog term (surface-material.ts) — same -0.12 constant, with
     // the box's half-diagonal standing in for the bounding sphere's
@@ -303,7 +301,7 @@ export function lightDirection(
  * between refine hits. The 220 floor means grids at or below 256³ render
  * exactly as before — never coarser than the tuned baseline. The cost is
  * deliberate: per-pixel march work scales with resolution exactly on the
- * machines that opted into big grids (fr-2ul).
+ * machines that opted into big grids.
  */
 export function marchStepsForGrid(gridSize: number): number {
   return Math.max(220, Math.ceil((gridSize * 220) / 256));
@@ -326,16 +324,16 @@ export function createVoxelMaterial(
       uInvProjView: { value: new THREE.Matrix4() },
       uBgTop: { value: BG_TOP.clone() },
       uBgBottom: { value: BG_BOTTOM.clone() },
-      // fr-h3mp: linear defaults, matching the surface tracers.
+      // Linear defaults, matching the surface tracers.
       uBgShape: { value: 0 },
       uBgCenter: { value: new THREE.Vector2(0.5, 0.5) },
       uBgScale: { value: new THREE.Vector2(1, 1) },
       // Matches the placeholder 1³ texture era; a real value arrives with
       // the first uploaded volume (setVoxelGrid → marchStepsForGrid).
       uMarchSteps: { value: 220 },
-      uFogDensity: { value: 1 }, // fr-5h5d; scene.setFogDensity keeps it current.
+      uFogDensity: { value: 1 }, // scene.setFogDensity keeps it current.
       uFogTint: { value: new THREE.Vector3(1, 1, 1) },
-      uFogTintStrength: { value: 0 }, // fr-5h5d; scene.setFogTint keeps both current.
+      uFogTintStrength: { value: 0 }, // scene.setFogTint keeps both current.
     },
     vertexShader: VOXEL_VERTEX,
     fragmentShader: VOXEL_FRAGMENT,

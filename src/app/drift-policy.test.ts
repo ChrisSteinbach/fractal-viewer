@@ -146,7 +146,7 @@ describe("DriftPolicy own-leg guard", () => {
     expect(stops).toEqual([false]);
   });
 
-  it("fr-4otp: a collection that runs dry mid-show actually ends the show, not just no-ops forever", () => {
+  it("a collection that runs dry mid-show actually ends the show, not just no-ops forever", () => {
     let t = 0;
     const show = new DriftShow(() => t);
     show.start();

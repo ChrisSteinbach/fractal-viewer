@@ -54,7 +54,7 @@ function lutRgb(lut: Float32Array, index: number): string {
   return `rgb(${to255(lut[o])}, ${to255(lut[o + 1])}, ${to255(lut[o + 2])})`;
 }
 
-describe("deriveLegend color-mode ramps (fr-dsz)", () => {
+describe("deriveLegend color-mode ramps", () => {
   it("keys height mode as a gradient bar labeled low/high", () => {
     const spec = legendOf({ ...initialState(true), colorMode: "height" });
 
@@ -140,8 +140,8 @@ describe("deriveLegend color-mode ramps (fr-dsz)", () => {
     );
 
     // Endpoints derived from the same rampPalette-aware LUT the height mode
-    // now samples (buildColorModeLUT's third argument), in left-to-right
-    // order — the fr-dsz can't-drift bar, extended to fr-3b6's gradient ramps.
+    // now samples (buildColorModeLUT's third argument), in left-to-right order
+    // — the legend's can't-drift bar, extended to the gradient ramps.
     expect(spec.gradient).not.toBe(legacy);
     const lut = buildColorModeLUT("height", 1, "ember");
     const lowRgb = lutRgb(lut, 0);
@@ -237,10 +237,10 @@ describe("deriveLegend transform + position keys", () => {
   });
 });
 
-describe("deriveLegend surface render (fr-7jlk)", () => {
+describe("deriveLegend surface render", () => {
   it("keys the legend on the SURFACE colorSource while the surface render is active", () => {
-    // fr-7jlk follow-up: the legend must narrate the tracer's own coloring,
-    // not the explorer colorMode the panel left behind.
+    // The legend must narrate the tracer's own coloring, not the explorer
+    // colorMode the panel left behind.
     const base = initialState(true);
 
     const spec = legendOf({
@@ -253,7 +253,7 @@ describe("deriveLegend surface render (fr-7jlk)", () => {
     expect(spec.kind).toBe("swatches");
   });
 
-  it("keys the legend on the surface colorSource for a 4D DOCUMENT too (fr-skhv round 2)", () => {
+  it("keys the legend on the surface colorSource for a 4D DOCUMENT too", () => {
     // The old order tested document 4D-ness before the render mode, so a
     // 4D surface session rendered by-transform colors under the explorer's
     // −w/+w ramp — a legend describing nothing on screen (the user-reported
@@ -301,7 +301,7 @@ describe("deriveLegend surface render (fr-7jlk)", () => {
     expect(spec.gradient).toContain(lutRgb(lut as Float32Array, 255));
   });
 
-  it('renders the same named-gradient bar as "palette" for the "rings" source (fr-rl4b)', () => {
+  it('renders the same named-gradient bar as "palette" for the "rings" source', () => {
     // rings rides the same descent hit-info as palette, just reading a
     // different coordinate off it — same named-gradient legend, not the
     // swatch strip or a ramp.
@@ -325,7 +325,7 @@ describe("deriveLegend surface render (fr-7jlk)", () => {
     expect(spec.gradient).toContain(lutRgb(lut as Float32Array, 255));
   });
 
-  it('renders the same named-gradient bar as "palette" for the "sheets" source (fr-rl4b)', () => {
+  it('renders the same named-gradient bar as "palette" for the "sheets" source', () => {
     const base = initialState(true);
     const state = {
       ...base,
@@ -438,7 +438,7 @@ describe("deriveLegend palette-driven renders", () => {
     expect(spec.mid).toBe("ember palette");
     expect(spec.high).toBe("");
     // Endpoints derived from the very LUT the flame render indexes
-    // (buildPaletteLUT), in left-to-right order — the fr-dsz can't-drift bar.
+    // (buildPaletteLUT), in left-to-right order — the can't-drift bar.
     const lut = buildPaletteLUT("ember");
     if (lut === null) throw new Error("ember must have a LUT");
     const lowRgb = lutRgb(lut, 0);
@@ -527,7 +527,7 @@ describe("deriveLegend palette-driven renders", () => {
   });
 });
 
-describe("deriveLegend 4D projection (fr-a3q, fr-d47)", () => {
+describe("deriveLegend 4D projection", () => {
   it("shows the diverging w ramp with signed end labels for a 4D system", () => {
     const spec = bar(legendOf(initialState(true), { nonFlat: true }));
 
@@ -539,7 +539,7 @@ describe("deriveLegend 4D projection (fr-a3q, fr-d47)", () => {
   it("draws the wBlueOrange ramp blue → gray notch → orange", () => {
     const spec = bar(legendOf(initialState(true), { nonFlat: true }));
 
-    // Hardcoded on purpose: since fr-d47 the side COLORS are shared DATA
+    // Hardcoded on purpose: the side COLORS are shared DATA
     // (color.ts's W_SIDE_PALETTES.wBlueOrange, fed to both the shader's
     // uSideNeg/uSidePos uniforms and this legend) so they can't drift from
     // each other — but the ramp's SHAPE is still hand-mirrored from
@@ -586,7 +586,7 @@ describe("deriveLegend 4D projection (fr-a3q, fr-d47)", () => {
       ),
     ).gradient;
 
-    // Unlike the height/radius ramps (fr-8sk), the shader never applies
+    // Unlike the height/radius ramps, the shader never applies
     // colorGamma to the w palette — the legend must not pretend it does.
     expect(contrasted).toBe(neutral);
   });
@@ -685,7 +685,7 @@ describe("deriveLegend 4D projection (fr-a3q, fr-d47)", () => {
     expect(contrasted).toBe(neutral);
   });
 
-  it("shows the ramp palette's own colors in the 4D radius legend when rampPaletteId is a gradient (fr-6ue)", () => {
+  it("shows the ramp palette's own colors in the 4D radius legend when rampPaletteId is a gradient", () => {
     const legacy = bar(
       legendOf(
         {
@@ -724,7 +724,7 @@ describe("deriveLegend 4D projection (fr-a3q, fr-d47)", () => {
   });
 });
 
-describe("deriveLegend build-replay showcase (fr-hpci)", () => {
+describe("deriveLegend build-replay showcase", () => {
   it("narrates the showcase's by-transform recoloring, whatever the document says", () => {
     // The showcase recolors the DISPLAY by transform without touching the
     // document, so a uniform colorMode — which would otherwise hide the

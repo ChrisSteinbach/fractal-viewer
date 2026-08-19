@@ -128,10 +128,10 @@ THREE.ColorManagement.enabled = false;
  * Kept as its own function (rather than inlining {@link backgroundMeanColor}
  * at its two call sites) so THREE.Fog's ONE scalar color has one derivation
  * to read, matching the module's shape wherever else a stop pair collapses
- * to a single value. The shape is the INTEGRATED-AWAY one (fr-xn9s):
+ * to a single value. The shape is the INTEGRATED-AWAY one:
  * `backgroundMeanColor`'s `"linear"` branch is the exact closed form
  * `(top + bottom) / 2`, byte-identical to what this function used to
- * compute inline; its `"radial"` branch (fr-h3mp) is the area-weighted mean
+ * compute inline; its `"radial"` branch is the area-weighted mean
  * over the current shape's own geometry, so the fog picks up a vignette's
  * darker edges rather than staying pinned to the linear midpoint. */
 function backdropMidpoint(
@@ -144,9 +144,9 @@ function backdropMidpoint(
 
 // The fog color is derived from the ACTIVE backdrop gradient rather than
 // authored separately, so fogged points always veil toward what's actually
-// behind them and can't drift when the backdrop changes (fr-1lj) — since
-// fr-5ps1 that includes the live Background control: setBackground recomputes
-// the midpoint on every backdrop change.
+// behind them and can't drift when the backdrop changes — including the
+// live Background control: setBackground recomputes the midpoint on every
+// backdrop change.
 const FOG_MARGIN = 1.2;
 
 // Authored base point size per render style. The UI scales all of them by a
@@ -156,12 +156,12 @@ const BASE_POINT_SIZE = 0.02; // depthFade + aerial
 const DISC_POINT_SIZE = 0.025; // edl
 const GLOW_POINT_SIZE = 0.042; // glow
 const DOF_POINT_SIZE = 0.024; // dof
-// The balloon echo (fr-5wlv.2, see setBalloonEchoEnabled): its own fixed
+// The balloon echo (see setBalloonEchoEnabled): its own fixed
 // point size and color-dim multiplier — deliberately NOT wired into
 // setPointSize's per-style scaling, so the echo reads as a distinct, dimmer
 // backdrop cloud regardless of the main cloud's point-size slider.
-// BALLOON_ECHO_DIM stays a MODULE CONSTANT rather than becoming a slider
-// (fr-j85n): it is this additive-points arm's own baseline — an additive
+// BALLOON_ECHO_DIM stays a MODULE CONSTANT rather than becoming a
+// slider: it is this additive-points arm's own baseline — an additive
 // cloud drawn at full source brightness blows out against the main cloud —
 // not a user knob. The authored knob is the tint pair (uEchoTint/
 // uEchoTintStrength, see BALLOON_ECHO_VERTEX and setBalloonTint), which
@@ -169,7 +169,7 @@ const DOF_POINT_SIZE = 0.024; // dof
 // base * (1 - s).
 const BALLOON_ECHO_POINT_SIZE = 0.016;
 const BALLOON_ECHO_DIM = 0.5;
-/** Ground plane (fr-rhn5) geometry, in multiples of the session ball's
+/** Ground plane geometry, in multiples of the session ball's
  * radius — the ONE place the floor's shape is decided; both the GLSL
  * uniforms and the compute frame spec derive from these through
  * {@link FractalScene.setSurfaceGroundPlane}'s spec. The drop keeps the
@@ -186,14 +186,14 @@ const GROUND_PLANE_FADE_END = 10;
  * that is this feature's point). */
 const GROUND_PLANE_ALBEDO: Vec3 = [0.62, 0.62, 0.62];
 const GLOW_BASE_OPACITY = 0.28; // glow additive blend
-// The "Watch it build" replay cursor (fr-1zb): the bright spark pinned to the
+// The "Watch it build" replay cursor: the bright spark pinned to the
 // newest revealed point. Sized well above every per-style point size so the
 // current chaos-game landing reads as THE point even over a dense cloud (or
 // against a translucent guide-box face).
 const REPLAY_CURSOR_SIZE = 0.14;
 // Guide-box wireframe/face opacity a box is built with (updateGuides'
 // unselected branch) and the "Watch it build" replay's spotlight/hop
-// emphasis on top of it (fr-01kf, see setGuideHighlight): HIGHLIGHT marks the
+// emphasis on top of it (see setGuideHighlight): HIGHLIGHT marks the
 // map currently landing points, DIMMED recedes every other map so the
 // highlighted one reads clearly.
 const GUIDE_LINE_OPACITY = 0.9;
@@ -209,8 +209,8 @@ const GUIDE_DIMMED_FACE_OPACITY = 0.04;
 // palette only reads while the sum stays below saturation — density then shows
 // up as brightness, exactly like the flame's log-density display.
 const FOUR_D_BASE_INTENSITY = 0.055;
-// Exported since fr-5b3/fr-4wd: main.ts sends this same width into the flame/
-// solid render workers, so their CPU slice windows match the shader's exactly.
+// Exported for the 4D flame and solid renders: main.ts sends this same width
+// into those workers, so their CPU slice windows match the shader's exactly.
 export const FOUR_D_SLICE_WIDTH = 0.12;
 
 function color(rgb: Vec3): THREE.Color {
@@ -257,7 +257,7 @@ function sprite(
 /**
  * Paint the backdrop gradient across a whole canvas — the one
  * gradient-drawing routine the backdrop texture, the flame capture underlay
- * and the thumbnail underlay share (fr-5ps1), so no capture path can render
+ * and the thumbnail underlay share, so no capture path can render
  * a different shape than the live scene. Authored in sRGB and left
  * unconverted to match the rest of the pipeline (ColorManagement is off);
  * canvas gradients/pixels are written in the same space.
@@ -272,7 +272,7 @@ function sprite(
  * for their own coordinate system; this is the one place that has to
  * remember it flips.
  *
- * `"radial"` (fr-h3mp) falls to a per-pixel `backgroundColorAt` loop
+ * `"radial"` falls to a per-pixel `backgroundColorAt` loop
  * instead, the way {@link buildSurfaceComputeBackground}'s non-linear
  * branch already does — the canvas 2D API's own `createRadialGradient` has
  * no `smoothstep` easing and no per-axis scale, so it can't express this
@@ -319,7 +319,7 @@ function paintBackdropGradient(
 }
 
 /**
- * The backdrop canvas's pixel size — ONE size for every shape (fr-h3mp),
+ * The backdrop canvas's pixel size — ONE size for every shape,
  * and the "one" is the load-bearing word.
  *
  * The obvious design gives each shape the canvas it wants: linear keeps its
@@ -386,7 +386,7 @@ const DOF_FRAGMENT = /* glsl */ `
   }
 `;
 
-// 4D projection point shader (fr-cbg spike). A 4D IFS cloud is rotated in 4D
+// 4D projection point shader. A 4D IFS cloud is rotated in 4D
 // about its own center, then orthographically projected to 3D (drop the rotated
 // w), and colored in-shader by that rotated w. Modeled on DOF_VERTEX's raw
 // ShaderMaterial pipeline (there is deliberately no onBeforeCompile in this
@@ -411,19 +411,19 @@ const DOF_FRAGMENT = /* glsl */ `
 //   white: color mixtures that exist nowhere in the palette flag genuine 4D
 //   overlap.
 //
-// The baked 4D color modes (fr-d47 — "by transform" / "by 4D radius", both
+// The baked 4D color modes ("by transform" / "by 4D radius", both
 // rotation-invariant) swap only WHERE the side color comes from: uUseAttrColor
 // selects a per-point `color` attribute (color.ts's buildColors4) over the
 // sign-picked pair. The gray-notch magnitude modulation below applies either
 // way, so the fourth dimension stays legible in brightness while hue carries
 // the structural information.
 //
-// The soft w-slice (fr-6x2) rides the same alpha path: a Gaussian opacity
+// The soft w-slice rides the same alpha path: a Gaussian opacity
 // window in the signed rotated w, swept by a slider — depth-of-field in the
 // fourth dimension. Points outside the slice keep a floor of visibility so the
 // full projection stays as ghost context around the vivid cross-section.
 //
-// The opt-in camera-depth fade (fr-3e0) rides it too: attenuating each point's
+// The opt-in camera-depth fade rides it too: attenuating each point's
 // contribution with CAMERA distance is the one 3D depth style whose mechanism
 // survives additive blending — fading toward black IS attenuation, which
 // composes under addition, whereas fading toward any brighter fog color would
@@ -436,7 +436,7 @@ const DOF_FRAGMENT = /* glsl */ `
 // rendered frame (updateFourDFade), mirroring updateFog's band for the 3D
 // styles.
 // The 4D point transform/color/slice shared by the main projection and the
-// balloon echo (fr-5666). Keeping the dimensional-reduction step in ONE GLSL
+// balloon echo. Keeping the dimensional-reduction step in ONE GLSL
 // block is the semantic guard: the echo inverts the exact projected point the
 // main cloud draws, with the same signed-w color and soft-slice weight, rather
 // than projecting a separately inverted 4D point.
@@ -471,27 +471,27 @@ const FOUR_D_PROJECT_POINT_GLSL = /* glsl */ `
     // rotated-w direction — recomputed CPU-side whenever the tumble advances,
     // see updateWAmp4). Dividing by the rotation-INVARIANT 4D radius instead
     // would never need updating, but anisotropic clouds (w-spread far below
-    // xyz-spread) would hug s = 0 at most tumble angles and wash out to gray
-    // (fr-9bk); the support bound keeps the full diverging ramp in play at
+    // xyz-spread) would hug s = 0 at most tumble angles and wash out to
+    // gray; the support bound keeps the full diverging ramp in play at
     // every angle. The clamp only swallows Float32 rounding dust — the
     // support function bounds every stored point.
     float s = clamp(q.w * uInvWAmp4, -1.0, 1.0);
 
-    // Diverging palette: sign picks the side (or, for the baked fr-d47 modes,
-    // uUseAttrColor swaps in the per-point attribute), magnitude drives
+    // Diverging palette: sign picks the side (or, for the baked attribute
+    // modes, uUseAttrColor swaps in the per-point attribute), magnitude drives
     // saturation AND brightness (the 0.6 exponent lifts the mid-range, where
     // heavy-tailed w-distributions still cluster even after the support
     // normalization spreads the cloud over the full [-1, 1]). Near-zero w —
     // the part of the cloud passing through our own 3-space — stays dim gray
     // and recedes. (The side pair comes from color.ts's W_SIDE_PALETTES via
     // uniforms; the ramp SHAPE constants — the exponent, gray notch, and
-    // brightness floor — are interpolated from color.ts's W_RAMP_* exports
-    // (fr-3o2), so neither can drift from the CPU twin or the legend.)
-    // Optional slice-relative recolor (fr-nn6): the w-ramp path evaluates the
+    // brightness floor — are interpolated from color.ts's W_RAMP_* exports,
+    // so neither can drift from the CPU twin or the legend.)
+    // Optional slice-relative recolor: the w-ramp path evaluates the
     // ramp at an affine remap of s — recentered on the slice window, see
     // project4.ts's sliceColorRemap, whose (shift, invScale) these two
     // uniforms carry (identity 0/1 when off, making sc == s exactly). The
-    // baked fr-d47 attribute modes keep the raw s: their hue is the
+    // baked attribute modes keep the raw s: their hue is the
     // attribute, and their gray-notch brightness stays faithful to the
     // actual |w|. The slice WEIGHT below always uses the raw s — the remap
     // changes color only.
@@ -535,7 +535,7 @@ const FOUR_D_VERTEX = /* glsl */ `
     vec4 mv = modelViewMatrix * vec4(projected, 1.0);
     float dist = -mv.z;
 
-    // Opt-in camera-depth fade (fr-3e0, see the header comment): attenuate
+    // Opt-in camera-depth fade (see the header comment): attenuate
     // the contribution toward zero across the [uFadeNear, uFadeFar] band —
     // fade-to-black is the additive-blending-safe analog of the 3D depthFade
     // style's fog. smoothstep rather than fog's linear ramp so the band's
@@ -558,13 +558,13 @@ const FOUR_D_FRAGMENT = /* glsl */ `
   }
 `;
 
-// The balloon echo (fr-5wlv.2; 4D since fr-5666 — epic fr-5wlv), the
-// sphere-inverted "cave" twin of the explorer cloud. In 3D each vertex inverts
-// the shared position buffer directly. In 4D projectPoint4 first produces the
-// SAME rotor-posed, w-colored, soft-sliced 3D point the main cloud draws, and
-// the echo inverts that projected point: PROJECT THEN INVERT. That preserves
-// the feature's promise — an echo of exactly what is on screen — rather than
-// projecting a 4D inversion, which is a different object.
+// The balloon echo, the sphere-inverted "cave" twin of the explorer cloud. In
+// 3D each vertex inverts the shared position buffer directly. In 4D
+// projectPoint4 first produces the SAME rotor-posed, w-colored, soft-sliced
+// 3D point the main cloud draws, and the echo inverts that projected point:
+// PROJECT THEN INVERT. That preserves the feature's promise — an echo of
+// exactly what is on screen — rather than projecting a 4D inversion, which is
+// a different object.
 //
 // Both paths invert about the cloud's enclosing ball,
 // `I(p) = c + R²(p−c)/|p−c|²` (see fractal/balloon-de.ts's module doc for
@@ -583,7 +583,7 @@ const BALLOON_ECHO_VERTEX = /* glsl */ `
   uniform float uEchoFadeStart;
   uniform float uEchoFadeEnd;
   uniform float uEchoDim;
-  // Independent balloon color (fr-j85n): the echo's own base-albedo tint —
+  // Independent balloon color: the echo's own base-albedo tint —
   // see the mix at vColor's assignment below. Default black at strength 0
   // is the untinted identity.
   uniform vec3 uEchoTint;
@@ -593,11 +593,12 @@ const BALLOON_ECHO_VERTEX = /* glsl */ `
   varying vec3 vColor;
   varying float vFade;
   void main() {
-    // The flat path stays byte-for-expression identical to fr-5wlv.2. A live
-    // 4D view replaces only the inversion's source/color/weight with the main
-    // shader's shared projection result. uIntensity belongs in RGB rather than
-    // vFade: putting 0.055 in alpha would make the fragment's a < 0.01 discard
-    // erase the soft slice's 0.06 ghost floor completely.
+    // The flat path stays byte-for-expression identical to the original
+    // 3D-only echo. A live 4D view replaces only the inversion's
+    // source/color/weight with the main shader's shared projection result.
+    // uIntensity belongs in RGB rather than vFade: putting 0.055 in alpha
+    // would make the fragment's a < 0.01 discard erase the soft slice's
+    // 0.06 ghost floor completely.
     vec3 source = position;
     vec3 sourceColor = color;
     float slice = 1.0;
@@ -632,7 +633,7 @@ const BALLOON_ECHO_VERTEX = /* glsl */ `
     // light, and without the dilution the additive wall blows out to
     // white where its enlarged points overlap.
     float mag = clamp(rr * rr / (uEchoR * uEchoR), 0.35, 8.0);
-    // Independent balloon color (fr-j85n): tint the echo's own base albedo
+    // Independent balloon color: tint the echo's own base albedo
     // toward uEchoTint before the dim/fade/magnification terms apply. This
     // sits AFTER the 3D/4D branch above, on sourceColor both paths have
     // already produced — uFourDActive is a uniform branch inside this ONE
@@ -720,7 +721,7 @@ const EDL_FRAGMENT = /* glsl */ `
 `;
 
 /**
- * Hard cap on an export's drawing-buffer long side (fr-2urv), on top of the
+ * Hard cap on an export's drawing-buffer long side, on top of the
  * device's own `maxTextureSize`: the glow composer chain re-allocates
  * half-float targets at the export size, so an unbounded multiple could
  * transiently demand gigabytes of GPU memory and lose the WebGL context.
@@ -729,7 +730,7 @@ const EDL_FRAGMENT = /* glsl */ `
 const EXPORT_MAX_LONG_SIDE = 8192;
 
 /**
- * A finished still export (fr-2urv): the encoded PNG plus its actual pixel
+ * A finished still export: the encoded PNG plus its actual pixel
  * size — which the device ceilings in {@link FractalScene.captureFrame}'s
  * clamp may have held below the requested multiple, so callers report the
  * real dimensions rather than the asked-for ones.
@@ -758,11 +759,11 @@ export class FractalScene {
   private readonly axes: THREE.AxesHelper;
   private readonly pointGeometry: THREE.BufferGeometry;
   private readonly pointCloud: THREE.Points;
-  // The "Watch it build" replay cursor (fr-1zb): one bright sprite riding the
+  // The "Watch it build" replay cursor: one bright sprite riding the
   // newest revealed point (see setReplayCursor). Hidden whenever no replay is
   // running.
   private readonly replayCursor: THREE.Points;
-  // The balloon echo (fr-5wlv.2): a second Points object SHARING
+  // The balloon echo: a second Points object SHARING
   // pointGeometry by reference (see BALLOON_ECHO_VERTEX's header) — setPoints
   // replacing its attributes updates both clouds for free. Created once,
   // toggled with `.visible` (see syncBalloonEchoVisibility), exactly like
@@ -790,7 +791,7 @@ export class FractalScene {
   // setBalloonEchoEnabled(true)), and control-spec.ts's checkbox effect
   // pushes the real slider value the moment it turns on.
   private balloonEchoRadius = 1.6;
-  // Depth-fog density multiplier (fr-5h5d): scales the fog distance unit
+  // Depth-fog density multiplier: scales the fog distance unit
   // for this.fog (updateFog), the balloon echo's radial fade
   // (syncBalloonEchoUniforms), and both surface tracers' uFogDensity — see
   // setFogDensity. Mirrors state.ts's DEFAULT_FOG_DENSITY as a plain
@@ -799,14 +800,14 @@ export class FractalScene {
   // every snapshot load regardless, so this default only matters for the
   // instant before that first push.
   private fogDensity = 1;
-  // Fog tint (fr-5h5d): rgb01 color + 0..1 strength shifting what depth
-  // fog blends toward, applied AFTER the fr-1lj midpoint derivation
+  // Fog tint: rgb01 color + 0..1 strength shifting what depth
+  // fog blends toward, applied AFTER the backdrop-derived midpoint
   // (applyFogColor) and pushed to the three fog-bearing materials — see
   // setFogTint. Mirrors state.ts's defaults as plain literals exactly
   // like fogDensity above; strength 0 is the untinted identity.
   private fogTint: [number, number, number] = [1, 1, 1];
   private fogTintStrength = 0;
-  // Balloon tint (fr-j85n): rgb01 color + 0..1 strength blended onto the
+  // Balloon tint: rgb01 color + 0..1 strength blended onto the
   // shell's BASE ALBEDO — the explorer echo (BALLOON_ECHO_VERTEX's
   // uEchoTint/uEchoTintStrength) AND both surface tracers
   // (packSurfaceBalloonTint on surfaceMaterial/surfaceMaterial4) — ONE
@@ -821,7 +822,8 @@ export class FractalScene {
   // actually changed (position/rotation/scale ride the Object3D's TRS instead).
   private guideShears: Vec3[] = [];
   // The index setGuideHighlight last spotlighted, or null; compared against
-  // on every call so a replay's per-frame repeats stay free (fr-py7z).
+  // on every call so render-on-demand keeps a replay's per-frame repeats
+  // free.
   private guideHighlight: number | null = null;
 
   private renderStyle: RenderStyle = "depthFade";
@@ -831,8 +833,8 @@ export class FractalScene {
   private readonly discMaterial: THREE.PointsMaterial; // edl
   private readonly glowMaterial: THREE.PointsMaterial; // glow
   private readonly dofMaterial: THREE.ShaderMaterial; // dof
-  private readonly fourDMaterial: THREE.ShaderMaterial; // 4D projection (fr-cbg)
-  private readonly balloonEchoMaterial: THREE.ShaderMaterial; // balloon echo (fr-5wlv.2)
+  private readonly fourDMaterial: THREE.ShaderMaterial; // 4D projection
+  private readonly balloonEchoMaterial: THREE.ShaderMaterial; // balloon echo
   // True while the 4D projection owns the point cloud, so setRenderStyle records
   // the requested style without clobbering fourDMaterial (see setFourDActive).
   private fourDActive = false;
@@ -850,13 +852,13 @@ export class FractalScene {
   private fourDHalfExtents: Vec4 = [0, 0, 0, 0];
 
   private readonly fog: THREE.Fog;
-  // The scene backdrop (fr-5ps1): ONE mutable canvas-backed gradient texture,
+  // The scene backdrop: ONE mutable canvas-backed gradient texture,
   // repainted in place by setBackground — every render style shows it, and
   // the flame composite / capture underlays / compute frame spec all read the
   // same `backdrop` stops, so no path can disagree about what's behind the
   // attractor.
   private backdrop: BackgroundGradient = resolveBackground(DEFAULT_BACKGROUND);
-  // The backdrop's gradient SHAPE (fr-h3mp) — orthogonal to `backdrop`'s
+  // The backdrop's gradient SHAPE — orthogonal to `backdrop`'s
   // colors, see setBackground. Kept alongside it for the same reason:
   // applyFogColor, resize and every GLSL push need to know the CURRENT
   // shape, not just the current stops.
@@ -875,7 +877,7 @@ export class FractalScene {
   private readonly edlResolution: THREE.Vector2;
   private readonly edlQuad: FullScreenQuad;
 
-  // The flame render (fr-o7s): a plain 2D canvas holds the tone-mapped RGBA
+  // The flame render: a plain 2D canvas holds the tone-mapped RGBA
   // image (see `setFlameImage`) and doubles as both the CanvasTexture source
   // for on-screen display AND the Save-PNG export source (`captureFlameFrame`).
   // The 2D canvas retains true per-pixel alpha (transparent where the histogram
@@ -886,7 +888,7 @@ export class FractalScene {
   private readonly flameMaterial: THREE.MeshBasicMaterial;
   private readonly flameQuad: FullScreenQuad;
 
-  // The solid render (fr-v4f): the chaos game's density volume raymarched on
+  // The solid render: the chaos game's density volume raymarched on
   // the GPU with lighting/shadows/AO (see voxel-material.ts). The volume is
   // world-space and camera-independent, so — unlike the flame's frozen view —
   // renderSolid reads the LIVE camera every frame and the user keeps orbiting.
@@ -896,7 +898,7 @@ export class FractalScene {
   /**
    * Measured per-pixel cost (ms) of the last COMPLETED
    * {@link captureSolidFrame} — the solid twin of
-   * {@link surfaceFullPxCostMs} (fr-2q01), and the only evidence
+   * {@link surfaceFullPxCostMs}, and the only evidence
    * {@link predictSolidCaptureMs} answers from. Null until an export has
    * run, and again the moment anything below makes the last one a lie.
    *
@@ -912,7 +914,7 @@ export class FractalScene {
    * STALE WHEN THE MARCH'S OWN WORK CHANGES, which is two things and not
    * the solid render's whole settings surface:
    *  - {@link setVoxelGrid}: the grid's resolution sets `uMarchSteps`
-   *    (fr-2ul deliberately scales stride count with it) and its density
+   *    (the stride count deliberately scales with it) and its density
    *    field decides where each ray breaks out of that loop. A new volume
    *    is a new cost, in both factors at once.
    *  - {@link setSolidParams}: `uThreshold` IS the break condition of the
@@ -935,10 +937,11 @@ export class FractalScene {
    * re-prices a ray by 2x or 5x still lands the same side of that
    * threshold nearly always.
    *
-   * Second, clearing costs the bead itself. Open a scene, ORBIT to frame
-   * the shot, Save PNG — the ordinary sequence — would then arrive with
-   * no evidence every single time, fall back to the `scale > 1`
-   * heuristic, and flash the modal on a 274ms export exactly as before.
+   * Second, clearing costs the very case this field exists for. Open a
+   * scene, ORBIT to frame the shot, Save PNG — the ordinary sequence —
+   * would then arrive with no evidence every single time, fall back to the
+   * `scale > 1` heuristic, and flash the modal on a 274ms export exactly
+   * as before.
    * The win would narrow to "two exports from a pixel-identical pose",
    * which is not how anyone uses it.
    *
@@ -975,8 +978,8 @@ export class FractalScene {
    *   AFTER ORBITING         +645ms          +1ms   <- the whole point
    *   same new pose again    +678ms          +618ms
    *
-   * At the bead's own 320x240 the same result reads as modal vs no modal:
-   * the first export flashes at 273ms (its recorded 274ms, reproduced) and
+   * At the reported 320x240 the same result reads as modal vs no modal:
+   * the first export flashes at 273ms (the recorded 274ms, reproduced) and
    * every export after it is silent, ORBIT INCLUDED.
    *
    * {@link resize} survives for the same reason and a stronger one, which
@@ -999,12 +1002,12 @@ export class FractalScene {
    */
   private solidCapturePxCostMs: number | null = null;
 
-  // The surface render (epic fr-7jlk): the IFS attractor sphere-traced as an
+  // The surface render: the IFS attractor sphere-traced as an
   // implicit surface against an analytic distance estimator (see
   // surface-material.ts / surface-de.ts). No volume, no worker — the whole
   // "session" is uniforms, so like the solid render the camera stays LIVE.
   private readonly surfaceMaterial: THREE.ShaderMaterial;
-  /** The 4D twin (fr-vxoj): same tracer one dimension up, marching the
+  /** The 4D twin: same tracer one dimension up, marching the
    * w = w0 slice of the rotor-posed 4D attractor (surface-material-4d.ts /
    * surface-de-4d.ts). Shares {@link surfaceQuad}. */
   private readonly surfaceMaterial4: THREE.ShaderMaterial;
@@ -1015,13 +1018,13 @@ export class FractalScene {
   private readonly surfaceQuad: FullScreenQuad;
   /** Last rotor + w0 pushed to the 4D tracer — {@link setSurface4View} is
    * called every 4D-surface frame (paused tumble included), so equality
-   * short-circuits the dirty flag exactly like {@link setRot4} (fr-py7z). */
+   * short-circuits the dirty flag exactly like {@link setRot4}. */
   private readonly surface4Rot = new Array<number>(16).fill(NaN);
   private surface4W0 = NaN;
-  /** Last slab half-thickness pushed alongside {@link surface4W0} (fr-wa6o),
+  /** Last slab half-thickness pushed alongside {@link surface4W0},
    * in the same world w units — part of the same equality guard. */
   private surface4HalfW = NaN;
-  /** The 3D empty-space-skipping grid texture (fr-55r5 part 2) the march
+  /** The 3D empty-space-skipping grid texture the march
    * samples before paying a descent, or null while none is uploaded —
    * gridless marching is always correct, just slower. Owned here (created
    * in {@link setSurfaceGrid}, disposed on every system change and on the
@@ -1029,29 +1032,29 @@ export class FractalScene {
   private surfaceGridTexture: THREE.Data3DTexture | null = null;
 
   /** The installed grid cube's half side, kept beside the texture because
-   * {@link applySurfaceGridEnable} re-answers fr-8yad's balloon validity
+   * {@link applySurfaceGridEnable} re-answers the balloon's grid-validity
    * predicate against it at every balloon change — the grid itself never
    * moves, only `R` does. `null` exactly when no grid is installed. */
   private surfaceGridHalfExtent: number | null = null;
-  /** The surface balloon (fr-5wlv.4): the DE ball of the INSTALLED 3D
-   * surface system — balloonBall(de) for IFS systems, the origin-centered
-   * bailout ball for escape systems — recorded by
-   * {@link setSurfaceSystem}/{@link setEscapeSystem} so
-   * {@link setSurfaceBalloon} can derive the uniform spec from whatever
-   * system is actually live (and a new install re-derives under a stored
-   * on flag). Null until the first 3D surface install; the 4D install
-   * path neither stores nor applies (the variant only exists in the 3D
-   * material — fr-5wlv's 4D lift is a later child). */
+  /** The surface balloon: the DE ball of the INSTALLED surface system —
+   * balloonBall(de) for IFS systems, the origin-centered bailout ball for
+   * escape systems — recorded by {@link setSurfaceSystem} and {@link
+   * setEscapeSystem} so {@link setSurfaceBalloon} can derive the uniform spec
+   * from whatever system is actually live (and a new install re-derives under
+   * a stored on flag). Null until the first surface install; the 4D install
+   * path stores `balloonBall4(de)` and applies through these same methods
+   * (see {@link setSurfaceSystem4}). */
   private surfaceBalloonBall: { center: Vec3; radius: number } | null = null;
   private surfaceBalloonOn = false;
-  /** The ground plane's session ball (fr-rhn5): balloonBall(de) for IFS
+  /** The ground plane's session ball: balloonBall(de) for IFS
    * installs, the origin bailout ball for escape — a SEPARATE field from
    * {@link surfaceBalloonBall} because escape sessions null that one
    * (the balloon degenerates there) while the classic Mandelbox floor is
-   * exactly an escape session's look. Null until a 3D surface install;
-   * 4D installs null it (the floor's 4D lift is out of fr-rhn5's scope). */
+   * exactly an escape session's look. Null until the first surface
+   * install; the 4D install path sets it from `balloonBall4(de)` like the
+   * balloon's. */
   private surfaceGroundBall: { center: Vec3; radius: number } | null = null;
-  /** The persisted Floor toggle's stored intent (fr-rhn5), pushed by
+  /** The persisted Floor toggle's stored intent, pushed by
    * {@link setSurfaceGroundPlane} and re-asserted against the installed
    * system after every install/toggle — the {@link surfaceBalloonOn}
    * discipline. The material define may sit BELOW this intent (the
@@ -1066,11 +1069,11 @@ export class FractalScene {
    * radius color sources — dimensions never change, so one texture is
    * mutated in place (see {@link setSurfaceColorLUT}). */
   private surfaceLUTTexture: THREE.DataTexture | null = null;
-  /** Preview-tier target (fr-5ne3): while the view moves, the tracer
+  /** Preview-tier target: while the view moves, the tracer
    * renders here at {@link surfacePreviewGovernor}'s current rung of the
    * drawing buffer and {@link surfaceBlitQuad} stretches it over the
    * canvas. Lazily sized in {@link renderSurface} so resizes/DPR changes —
-   * and rung changes (fr-hith) — are absorbed without a per-frame
+   * and adaptive rung changes — are absorbed without a per-frame
    * reallocation. */
   private readonly surfacePreviewTarget: THREE.WebGLRenderTarget;
   private readonly surfaceBlitMaterial: THREE.ShaderMaterial;
@@ -1078,39 +1081,40 @@ export class FractalScene {
   /** The ACTIVE DE's own descent depth cap, recorded by
    * {@link setSurfaceSystem}/{@link setSurfaceSystem4}: the preview tier
    * clamps `uMaxDepth` below it and the full tier restores it, so the two
-   * tiers can interleave freely (fr-5ne3). */
+   * tiers can interleave freely. */
   private surfaceFullMaxDepth = 0;
-  /** Which (scale, depth) rung preview traces currently cost (fr-hith),
-   * driven by the measured cost of the traces themselves. Reset by
+  /** Which (scale, depth) rung preview traces currently cost, driven by
+   * the measured cost of the traces themselves. Reset by
    * {@link setSurfaceSystem}/{@link setSurfaceSystem4}: a new DE is a new
    * cost profile, so the ladder re-adapts from the shipped 0.3 rung rather
    * than inheriting a verdict measured on the previous system. The rung's
    * depth is derived per frame in {@link setSurfaceFrameUniforms} rather
    * than cached, so it always matches both the live rung and the active
-   * DE's own full depth (fr-ttg5). */
+   * DE's own full depth — the contraction-aware clamp that keeps a
+   * slow-map system from previewing as one giant core ball. */
   private readonly surfacePreviewGovernor = createPreviewGovernor();
   /** Full-resolution target every FULL-quality trace renders into as
-   * adaptive scissored strips (fr-sjff): a forced-completion readback
+   * adaptive scissored strips: a forced-completion readback
    * between strips keeps every GPU submission bounded, so a pathological
    * close-up can no longer wedge the GPU process — the failure that used
    * to require a browser restart. The async settle job spreads the strips
    * across animation frames; {@link renderSurface}'s full tier runs them
    * to completion synchronously (offline export, thumbnails), and
-   * {@link captureSurfaceFrame} drains them while yielding (fr-7mfx). */
+   * {@link captureSurfaceFrame} drains them while yielding. */
   private readonly surfaceSettleTarget: THREE.WebGLRenderTarget;
   /** In-flight strip job over {@link surfaceSettleTarget}, or null. */
   private surfaceStripJob: SurfaceStripJob | null = null;
-  /** Passes the ACTIVE {@link surfaceSettleTarget} sequence wants (fr-jf9y)
-   * — {@link SURFACE_STRIP_SETTLE_SAMPLES} for a settle or an interactive
-   * Save-PNG, 1 for everything else, which is every path that existed
-   * before supersampling. */
+  /** Passes the ACTIVE {@link surfaceSettleTarget} supersampling sequence
+   * wants — {@link SURFACE_STRIP_SETTLE_SAMPLES} for a settle or an
+   * interactive Save-PNG, 1 for everything else, which is every path that
+   * existed before supersampling. */
   private surfaceSampleTotal = 1;
   /** Which pass of that sequence is IN FLIGHT (0-based). */
   private surfaceSampleIndex = 0;
   /** Passes already folded into {@link surfaceSampleAccum}. */
   private surfaceSampleTaken = 0;
-  /** Linear-light sum of the completed passes, 3 floats per pixel
-   * (fr-jf9y). f32 rather than a float render target: this arm is the
+  /** Linear-light sum of the completed passes, 3 floats per pixel.
+   * f32 rather than a float render target: this arm is the
    * FALLBACK one — no adapter, `?surfacegl`, a lost device — so it may
    * not assume `EXT_color_buffer_float`, and the sum then costs no
    * precision at all. See {@link foldSurfaceSample} for where the gamma
@@ -1129,7 +1133,7 @@ export class FractalScene {
   private surfaceSampleMeanReady = false;
   /** Share of the last COMPLETED settle pass's pixels that drew something
    * — a hit, or a lit ground plane — or null when no pass of the current
-   * settle has completed (fr-7k0o). Read off the coverage flag the
+   * settle has completed. Read off the coverage flag the
    * tracers write into alpha, in the readback the accumulator already
    * pays for; see {@link surfaceCoveredFraction}. */
   private surfaceCovered: number | null = null;
@@ -1137,28 +1141,27 @@ export class FractalScene {
    * {@link surfaceSettleTarget} and the full-tier uniforms — see
    * {@link surfaceCaptureBusy} for who has to respect it. */
   private surfaceCaptureFlight = false;
-  /** In-flight strip job over {@link surfacePreviewTarget} (fr-du81), or
-   * null. Preview traces used to be ONE unbounded GPU submission — the one
-   * path fr-sjff left unarmored, and on fold-frontier systems (fr-5rvk,
-   * 10^2-10^4x an affine descent per pixel) or software GL the FIRST frame
-   * of a session could hand the GPU watchdog a minutes-long submission
-   * before the preview governor had any sample to act on. Now every
-   * preview renders as the same forced-completion scissor strips as the
-   * settle/capture tiers, advanced by a per-frame budget: a frame too
-   * heavy to finish presents its partial progress and continues (or is
-   * superseded by the next invalidation, feeding the governor an
-   * extrapolated cost so the ladder still learns). `spentMs` accumulates
-   * the job's own measured strip time across frames — the governor sample
-   * on completion. */
+  /** In-flight strip job over {@link surfacePreviewTarget}, or null. Preview
+   * traces used to be ONE unbounded GPU submission — the one path the
+   * settle/capture tiers' strips left unarmored, and on fold-frontier systems
+   * (10^2-10^4x an affine descent per pixel) or software GL the FIRST frame
+   * of a session could hand the GPU watchdog a minutes-long submission before
+   * the preview governor had any sample to act on. Now every preview renders
+   * as the same forced-completion scissor strips as the settle/capture tiers,
+   * advanced by a per-frame budget: a frame too heavy to finish presents its
+   * partial progress and continues (or is superseded by the next
+   * invalidation, feeding the governor an extrapolated cost so the ladder
+   * still learns). `spentMs` accumulates the job's own measured strip time
+   * across frames — the governor sample on completion. */
   private surfacePreviewJob: SurfaceStripJob | null = null;
-  /** In-flight fences a superseded/abandoned strip job left behind
-   * (fr-7to5), awaiting adoption by the next job to arm. Deleting them
-   * (the old behavior) forgot that the submitted GPU work still executes
-   * FIFO ahead of everything a successor submits: the successor's refill
+  /** In-flight fences a superseded/abandoned strip job left behind,
+   * awaiting adoption by the next job to arm. Deleting them (the old
+   * behavior) forgot that the submitted GPU work still executes FIFO ahead of
+   * everything a successor submits: the successor's refill
    * ceiling under-counted the queue (each re-arm in a drag burst stacked
    * another mispriced probe behind the grinding backlog) and its FIRST
    * fence attributed the whole backlog's GPU time to its own strip's
-   * pixels (measured ~90x on the fr-b8o5 kaleido4 leg), poisoning the
+   * pixels (measured ~90x on an order-6 4D kaleidoscope leg), poisoning the
    * preview px-cost field and the settle's evidence caps. Pooled entries
    * keep submission order — everything rides the ONE GL queue — and
    * `busyMark` keeps the oldest job's busy continuity so the successor's
@@ -1172,8 +1175,8 @@ export class FractalScene {
     px: number;
     busyMark: number;
     /** Predicted GPU cost (ms) of `px` at the pooling jobs' own estimates
-     * — the bound on how much busy wall this pool can honestly still owe
-     * (fr-y6m0). A pool has a timestamp, not a clock: nothing observes it
+     * — the bound on how much busy wall this pool can honestly still
+     * owe. A pool has a timestamp, not a clock: nothing observes it
      * while it waits, so an adoption minutes later would otherwise carry
      * a busy origin from work that finished in the first second, and the
      * adopting job's first batch would read (and TEACH) that whole idle
@@ -1181,24 +1184,23 @@ export class FractalScene {
     predictedMs: number;
   } | null = null;
   /** Scene holding a throwaway mesh that shares the active surface
-   * material, for {@link compileSurfaceMaterial}'s async program compile
-   * (fr-du81). Lazily built once. */
+   * material, for {@link compileSurfaceMaterial}'s async program compile.
+   * Lazily built once. */
   private surfaceCompileScene: THREE.Scene | null = null;
   private surfaceCompileMesh: THREE.Mesh | null = null;
-  /** Measured per-pixel cost (ms) of the FRESHEST preview evidence for
-   * the current system — the last completed preview trace, or a
-   * superseded job's partial attribution when a re-arm interrupted one
-   * that had measured (fr-b8o5: fresher pose wins; see
-   * {@link armSurfacePreview}) — or null before any. SIZES the next
-   * job's probe strip (fr-096u: the planner turns a prior into a
+  /** Measured per-pixel cost (ms) of the FRESHEST preview evidence for the
+   * current system — the last completed preview trace, or a superseded job's
+   * partial attribution when a re-arm interrupted one that had measured
+   * (fresher pose wins; see {@link armSurfacePreview}) — or null before any.
+   * SIZES the next job's probe strip (the planner turns a prior into a
    * pixel-bounded probe), so a heavy DE's first submission is target-sized
    * from its very first strip, and prices the pipelined queue's est-side
-   * admission. Reset with the governor on every system upload — a new DE
-   * is a new cost profile. */
+   * admission. Reset with the governor on every system upload — a new DE is a
+   * new cost profile. */
   private surfacePreviewPxCostMs: number | null = null;
   /** Measured per-pixel cost (ms) of the last COMPLETED full-tier frame —
    * a finished settle job or a finished capture drain — for the CURRENT
-   * pose, or null. The capture cost ceiling's best predictor (fr-id9r):
+   * pose, or null. The capture cost ceiling's best predictor:
    * unlike {@link surfacePreviewPxCostMs} it needs no tier-gap scaling.
    * Cleared wherever the pose-validity of a settle dies — every
    * {@link abandonSurfaceSettle} (each preview invalidation lands there)
@@ -1209,33 +1211,31 @@ export class FractalScene {
    * exists, its strip probes are sized from the pessimistic
    * {@link STRIP_FOLD_PRIOR_MS_PER_PX} instead of the rows-fraction
    * default. The unprimed rows-fraction probe on a fold system was
-   * fr-096u's kernel-confirmed i915 preemption hang: 0.5-4ms/px at full
+   * the kernel-confirmed i915 preemption hang: 0.5-4ms/px at full
    * resolution put the one submission that runs before measurement past
    * the 7.5s watchdog. Affine and escape-time systems (microseconds per
    * pixel) keep the legacy probe. */
   private surfaceDeFoldClass = false;
-  /** The fr-096u cost evidence chain — completed observations own the
-   * price in both directions, partials raise only, captures seed-or-raise
-   * (fr-y1m7). The rules and their measured verdicts live in
-   * strip-evidence.ts (fr-vja8.66, extracted per the capture-cost.ts
-   * precedent so they test without a WebGL context); reset on every
-   * system upload. */
+  /** The strip cost evidence chain — completed observations own the
+   * price in both directions, partials raise only, captures seed-or-raise.
+   * The rules and their measured verdicts live in strip-evidence.ts
+   * (extracted per the capture-cost.ts precedent so they test without a
+   * WebGL context); reset on every system upload. */
   private readonly stripEvidence = new StripCostEvidence();
   /** Whether the ACTIVE surface session renders on the WebGPU compute path
-   * (fr-tzdg) — set by {@link enterSurfaceComputeSession}. While true the
+   * — set by {@link enterSurfaceComputeSession}. While true the
    * fold GLSL is never compiled: {@link renderSurface} degrades to a
    * re-present so a stray call cannot trigger the ~25s Mesa link the
    * compute path exists to avoid, and {@link captureThumbnail} reads the
    * last presented frame instead of tracing. */
   private surfaceComputeActive = false;
-  /** Whether that compute session is the 4D kind (fr-dlxh's 4D cut) —
-   * set by {@link enterSurfaceCompute4Session}. While true every frame
-   * spec carries the live rotor/slice view4 for the affine4 kernel's
-   * params tail (per-frame, the fragment tracer's live-uniform
-   * discipline across the WebGPU seam). */
+  /** Whether that compute session is the 4D kind — set by {@link
+   * enterSurfaceCompute4Session}. While true every frame spec carries the
+   * live rotor/slice view4 for the affine4 kernel's params tail (per-frame,
+   * the fragment tracer's live-uniform discipline across the WebGPU seam). */
   private surfaceCompute4 = false;
   /** Whether that compute session's kernels carry the balloon
-   * inverted-union wrapper (fr-5wlv.5) — the SESSION's record, frozen at
+   * inverted-union wrapper — the SESSION's record, frozen at
    * {@link enterSurfaceComputeSession} beside the create-target's flag,
    * deliberately distinct from the live {@link surfaceBalloonOn} toggle:
    * a balloon kernel's 320-byte params struct needs the spec's balloon
@@ -1246,14 +1246,14 @@ export class FractalScene {
    * the R slider's per-frame door, view4's discipline. */
   private surfaceComputeBalloon = false;
   /** Whether the ACTIVE compute session's kernels carry the ground-plane
-   * arm (fr-rhn5) — the {@link surfaceComputeBalloon} discipline:
+   * arm — the {@link surfaceComputeBalloon} discipline:
    * created-with is what the 336-byte params struct needs on EVERY frame
    * of the session, however the toggle moves before the restart lands.
    * While true every frame spec carries the live floor block re-derived
    * from the stored ball. */
   private surfaceComputeGroundPlane = false;
   /** Rays the ACTIVE compute session's device can trace as ONE frame
-   * (fr-biox) — `SurfaceComputeRenderer.maxFrameRays`, handed over at
+   * — `SurfaceComputeRenderer.maxFrameRays`, handed over at
    * create by {@link setSurfaceComputeRayCap}. Infinity until then (and
    * again after exit), which reads as "unbounded" everywhere it is
    * consulted: {@link captureSurfaceComputeFrame} still tiles at
@@ -1279,13 +1279,13 @@ export class FractalScene {
    * re-uploads its LUT texture only when the ramp actually changed. */
   private surfaceLUTVersion = 0;
 
-  /** Live viewport size, kept for {@link syncProjection} (fr-936q). */
+  /** Live viewport size, kept for {@link syncProjection}. */
   private viewportWidth: number;
   private viewportHeight: number;
 
   /**
    * Horizontal strip (CSS px) on the right edge covered by the control-panel
-   * overlay (fr-936q). While non-zero, {@link syncProjection} designs the
+   * overlay. While non-zero, {@link syncProjection} designs the
    * projection for the UNCOVERED region — the camera's `aspect` (which the
    * fit math in orbit.ts/camera-tween.ts reads) describes that visible
    * region, and a `setViewOffset` extension keeps rendering the full canvas
@@ -1296,7 +1296,7 @@ export class FractalScene {
   private rightInsetPx = 0;
 
   /**
-   * Whether anything visible changed since the last render (fr-py7z). Set by
+   * Whether anything visible changed since the last render. Set by
    * every mutating method — the per-frame setters (applyCamera, setRot4,
    * setGlowExposure, setDrawCount, setReplayCursor) compare first, so a frame
    * where nothing moved marks nothing — and cleared by the render methods.
@@ -1313,7 +1313,7 @@ export class FractalScene {
     [number, number, number, number, number, number] | null = null;
 
   /**
-   * Adaptive-resolution scale (fr-4lyt) multiplied into the base pixel ratio:
+   * Adaptive-resolution scale multiplied into the base pixel ratio:
    * 1 = native (capped) resolution, lower = fewer pixels for slow hardware.
    * Driven by main.ts's resolution governor via {@link setResolutionScale};
    * exports and the flame render target deliberately ignore it (see
@@ -1330,7 +1330,7 @@ export class FractalScene {
     this.scene = new THREE.Scene();
     // A camera-independent vertical gradient as the scene backdrop, so the
     // cloud floats in a sense of depth instead of a flat fill. One texture,
-    // repainted in place when the Background control moves (fr-5ps1).
+    // repainted in place when the Background control moves.
     this.backdropCanvas = document.createElement("canvas");
     this.backdropCanvas.width = BACKDROP_CANVAS_PX;
     this.backdropCanvas.height = BACKDROP_CANVAS_PX;
@@ -1363,7 +1363,7 @@ export class FractalScene {
     this.camera.position.set(5, 4, 5);
     this.camera.lookAt(0, 0, 0);
 
-    // MSAA is a context-creation-time choice (fr-rr2m): on at low DPR where
+    // MSAA is a context-creation-time choice: on at low DPR where
     // aliasing shows, off at DPR >= 2 where the buffer already oversamples
     // and the samples would quadruple fill/memory. `?msaa=0|1` overrides for
     // on-device profiling.
@@ -1380,11 +1380,11 @@ export class FractalScene {
     // (glow) path re-applies an sRGB encode and lifts the blacks to grey.
     this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     container.appendChild(this.renderer.domElement);
-    // The canvas is a focus target (fr-vja8.37): interactions.ts binds the
+    // The canvas is a focus target: interactions.ts binds the
     // camera keys to it, and element-scoped keydown is what keeps arrows/
     // Space from ever shadowing the panel's own controls. The accessible
     // identity lives HERE, on the widget — index.html's container div
-    // carries no role since this feature (its old fr-vja8.23 role="img"
+    // carries no role since this feature (its old role="img"
     // would prune this focusable canvas from the accessibility tree) — and
     // the label doubles as the discoverability channel: a screen reader
     // teaches the keys on focus. role="application" is what makes those
@@ -1404,7 +1404,7 @@ export class FractalScene {
         "and the bracket keys move the w slice.",
     );
     // A restored WebGL context comes back with an undefined drawing buffer;
-    // make sure the render-on-demand gate (fr-py7z) repaints it even if the
+    // make sure the render-on-demand gate repaints it even if the
     // scene is otherwise static.
     this.renderer.domElement.addEventListener("webglcontextrestored", () => {
       this.invalidate();
@@ -1500,7 +1500,7 @@ export class FractalScene {
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
-    // The balloon echo (fr-5wlv.2): uEchoCenter/uEchoR/uEchoFloor2/
+    // The balloon echo: uEchoCenter/uEchoR/uEchoFloor2/
     // uEchoFadeStart/uEchoFadeEnd are all derived from the live cloud's
     // enclosing ball — placeholder zeros until the first setPoints call
     // (syncBalloonEchoUniforms) fills them in. Same additive, non-depth-
@@ -1509,7 +1509,7 @@ export class FractalScene {
     this.balloonEchoMaterial = new THREE.ShaderMaterial({
       uniforms: {
         // Alias the main 4D material's uniform OBJECTS, not merely their
-        // current values (fr-5666): rotor ticks, a fresh center/support, color
+        // current values: rotor ticks, a fresh center/support, color
         // changes, and slice sweeps then reach both shaders through the one
         // existing write path and cannot drift a frame apart.
         uRot4: this.fourDMaterial.uniforms.uRot4,
@@ -1531,7 +1531,7 @@ export class FractalScene {
         uEchoFadeStart: { value: 0 },
         uEchoFadeEnd: { value: 0 },
         uEchoDim: { value: BALLOON_ECHO_DIM },
-        // Balloon tint (fr-j85n): NOT aliased to fourDMaterial's uniforms
+        // Balloon tint: NOT aliased to fourDMaterial's uniforms
         // above — every entry above IS an alias (the main cloud and its
         // echo must track the same rotor/slice/color state), but tint is
         // echo-only BY DEFINITION: the whole feature is the echo diverging
@@ -1557,7 +1557,7 @@ export class FractalScene {
     this.pointCloud = new THREE.Points(this.pointGeometry, this.baseMaterial);
     this.scene.add(this.pointCloud);
 
-    // The balloon echo (fr-5wlv.2): SHARES pointGeometry by reference (its
+    // The balloon echo: SHARES pointGeometry by reference (its
     // header comment) rather than cloning it, so a fresh setPoints upload —
     // regen, morph tick, draw-range change — updates both clouds for free.
     // frustumCulled off: inverted points can land far outside the shared
@@ -1609,7 +1609,7 @@ export class FractalScene {
     // purpose: handing one over pins the composer's internal pixel ratio to
     // 1, after which the first resize() silently drops the whole glow chain
     // to CSS resolution on hi-DPI displays. Sizing itself from the renderer
-    // keeps that bookkeeping right, and setResolutionScale (fr-4lyt) keeps
+    // keeps that bookkeeping right, and setResolutionScale keeps
     // it in step with every adaptive ratio change from then on.
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
@@ -1659,12 +1659,12 @@ export class FractalScene {
       depthTest: false,
       depthWrite: false,
       // SCREEN-composite the flame over the backdrop quad renderFlame draws
-      // first (fr-5ps1): out = flame + bg·(1 − flame), per channel. Over a
-      // black backdrop this reduces to the flame bytes exactly (the
-      // pre-fr-5ps1 look), zero-hit pixels show pure backdrop, and near-zero
-      // densities fade smoothly into it — no coverage/alpha needed, which
-      // matters because tonemapFlame writes binary alpha (255 wherever any
-      // density landed). The same composite is exactly expressible in the
+      // first: out = flame + bg·(1 − flame), per channel. Over a black
+      // backdrop this reduces to the flame bytes exactly (the look before the
+      // backdrop was persisted), zero-hit pixels show pure backdrop, and
+      // near-zero densities fade smoothly into it — no coverage/alpha needed,
+      // which matters because tonemapFlame writes binary alpha (255 wherever
+      // any density landed). The same composite is exactly expressible in the
       // 2D-canvas capture paths (globalCompositeOperation "screen" — see
       // captureFlameFrame/thumbnailFrom), so captures match the live view
       // byte for byte.
@@ -1712,7 +1712,7 @@ export class FractalScene {
   }
 
   /**
-   * Whether the next animation frame must actually render (fr-py7z) — true
+   * Whether the next animation frame must actually render — true
    * whenever something visible changed since the last render. main.ts's
    * animate loop is the consumer; the render methods clear it.
    */
@@ -1722,10 +1722,10 @@ export class FractalScene {
 
   /**
    * Force the next animation frame to repaint even if none of the per-frame
-   * setters detect a change (fr-py7z). The public form of the internal dirty
+   * setters detect a change. The public form of the internal dirty
    * flag, for the callers whose visible change is NOT expressed through one of
    * this scene's own mutators: returning to the live explorer from a
-   * flame/solid render (fr-w9wl) — all three modes paint the one canvas, so
+   * flame/solid render — all three modes paint the one canvas, so
    * the point cloud must repaint over the lingering render image, which with
    * auto-orbit off no camera motion would otherwise trigger — and a restored
    * WebGL context (below).
@@ -1749,7 +1749,7 @@ export class FractalScene {
     // (possibly shorter) w buffer never lingers on the 3D cloud.
     this.pointGeometry.deleteAttribute("w");
     // A fresh cloud always shows whole: clear any "Watch it build" prefix
-    // limit (fr-1zb) a replay left on the shared geometry. main.ts cancels
+    // limit a replay left on the shared geometry. main.ts cancels
     // the replay on arrival too — this keeps the upload self-consistent even
     // if a future caller forgets.
     this.setDrawCount(null);
@@ -1764,13 +1764,13 @@ export class FractalScene {
     }
     // The balloon echo's uEcho* uniforms are all derived from the cloud's
     // own enclosing ball, which just moved — re-derive them regardless of
-    // whether the echo is currently enabled (fr-5wlv.2), so it never shows
-    // stale geometry for one frame after a delayed enable.
+    // whether the echo is currently enabled, so it never shows stale
+    // geometry for one frame after a delayed enable.
     this.syncBalloonEchoUniforms();
   }
 
   /**
-   * Upload a freshly generated 4D cloud (fr-cbg spike): the projected-to-3D
+   * Upload a freshly generated 4D cloud: the projected-to-3D
    * `xyz` positions plus the separate `w` coordinate the shader colors by, and
    * the 4D `center`/`halfExtents` that drive the shader's rotation pivot and
    * w-color normalization. `radius` is the exact rotation-invariant ball used
@@ -1795,7 +1795,7 @@ export class FractalScene {
     );
     this.pointGeometry.setAttribute("w", new THREE.BufferAttribute(w, 1));
     this.pointGeometry.deleteAttribute("color");
-    // Same replay-reset as setPoints (fr-1zb): a fresh upload shows whole.
+    // Same replay-reset as setPoints: a fresh upload shows whole.
     this.setDrawCount(null);
     this.setReplayCursor(null);
 
@@ -1850,7 +1850,7 @@ export class FractalScene {
 
   /**
    * Draw only the first `count` points of the cloud — the "Watch it build"
-   * replay (fr-1zb). The buffers arrive in chaos-game generation order (one
+   * replay. The buffers arrive in chaos-game generation order (one
    * point per orbit step, for the 3D and 4D paths alike), so the growing
    * prefix IS a faithful replay of how the attractor was drawn. `null`
    * restores the full cloud. Positions, colors, and the bounding sphere are
@@ -1859,7 +1859,7 @@ export class FractalScene {
    */
   setDrawCount(count: number | null): void {
     // Per-frame caller (the replay's done-linger repeats `null`): skip the
-    // dirty mark when the range is already what's asked for (fr-py7z).
+    // dirty mark when the range is already what's asked for.
     const target = count ?? Infinity;
     if (this.pointGeometry.drawRange.count === target) return;
     this.pointGeometry.setDrawRange(0, target);
@@ -1902,7 +1902,7 @@ export class FractalScene {
       z = m[8] * dx + m[9] * dy + m[10] * dz + m[11] * dw + c.z;
     }
     // Per-frame caller: an idle replay (paused phase) re-pins the same spot —
-    // don't mark the frame dirty for it (fr-py7z).
+    // don't mark the frame dirty for it.
     if (
       this.replayCursor.visible &&
       this.replayCursor.position.x === x &&
@@ -1917,7 +1917,7 @@ export class FractalScene {
   }
 
   /**
-   * Point the 4D shader's color at its source (fr-d47): either a diverging
+   * Point the 4D shader's color at its source: either a diverging
    * side-color pair (the "w depth" modes — pure shader work on the signed
    * rotated w; see `color.ts`'s `W_SIDE_PALETTES`) or a baked per-point
    * attribute (`buildColors4`'s rotation-invariant transform / 4D-radius
@@ -1954,7 +1954,7 @@ export class FractalScene {
   ): void {
     this.renderNeeded = true;
     // A rebuild disposes the cubes and constructs fresh ones at default
-    // opacity (fr-01kf): the stored index must not go on claiming a
+    // opacity: the stored index must not go on claiming a
     // highlight is showing once the boxes it pointed at are gone.
     this.guideHighlight = null;
     for (const cube of this.guideCubes) {
@@ -2020,7 +2020,7 @@ export class FractalScene {
 
   /**
    * Spotlight/dim the guide boxes for the "Watch it build" replay's
-   * spotlight/hop guide-box emphasis (fr-01kf): the hop phase flashes the
+   * spotlight/hop guide-box emphasis: the hop phase flashes the
    * box of the map the point just landed in, the spotlight phase pins it on
    * the map whose landings are lit. `null` restores every box to its built
    * default. Deliberate simplification: restoring ignores updateGuides's
@@ -2030,7 +2030,7 @@ export class FractalScene {
    */
   setGuideHighlight(index: number | null): void {
     // Per-frame caller (the hop phase repeats the same index): skip the
-    // dirty mark when nothing changed (fr-py7z).
+    // dirty mark when nothing changed.
     if (index === this.guideHighlight) return;
     this.guideHighlight = index;
     this.renderNeeded = true;
@@ -2120,7 +2120,7 @@ export class FractalScene {
     const ty = orbit.target[1];
     const tz = orbit.target[2];
     // Per-frame caller: a static orbit hands back the identical pose every
-    // frame — don't mark the frame dirty for it (fr-py7z). Every camera
+    // frame — don't mark the frame dirty for it. Every camera
     // motion source (gesture, wheel, tween, auto-orbit) mutates the orbit,
     // so this one compare covers them all.
     const last = this.lastCameraPose;
@@ -2155,13 +2155,13 @@ export class FractalScene {
     // also guards its onRenderStyle handler, but the scene must not be
     // corruptible from here either.
     if (this.fourDActive) return;
-    // The backdrop itself no longer varies by style (fr-5ps1): every style
+    // The backdrop itself no longer varies by style: every style
     // shows the one Background-control gradient (`this.backdropTexture`,
     // already installed as scene.background), and the fog color tracks its
     // midpoint via setBackground. A style only picks its material and
     // whether fog applies — "aerial" used to force the haze backdrop, and
-    // pre-fr-5ps1 documents still get it, via persist.ts's decode migration
-    // rather than anything here.
+    // documents predating the persisted backdrop still get it, via
+    // persist.ts's decode migration rather than anything here.
     switch (style) {
       case "depthFade":
         this.pointCloud.material = this.baseMaterial;
@@ -2208,9 +2208,9 @@ export class FractalScene {
   }
 
   /**
-   * Set the scene backdrop (fr-5ps1, shape fr-h3mp): repaint the gradient
+   * Set the scene backdrop and its shape: repaint the gradient
    * texture in place, re-derive the fog color from the new midpoint
-   * (fr-1lj — surfaces must haze into what's actually behind them), and
+   * (surfaces must haze into what's actually behind them), and
    * push the miss-gradient uniforms to the three GLSL tracers. The flame
    * composite, the capture/thumbnail underlays and the WebGPU compute frame
    * spec all read `this.backdrop`/`this.backdropShape`, so one call moves
@@ -2219,7 +2219,7 @@ export class FractalScene {
    * crossfade (which never changes `shape` mid-fade — see
    * `background.ts`'s `BackgroundTween` doc).
    *
-   * `shape`'s SCALE is derived from the LIVE VIEWPORT (fr-h3mp), not the
+   * `shape`'s SCALE is derived from the LIVE VIEWPORT, not the
    * small backdrop canvas's own resolution — see
    * {@link backgroundShapeSpecForImage} and {@link paintBackdropGradient}'s
    * doc for why that is what keeps the vignette circular in real pixels
@@ -2276,7 +2276,7 @@ export class FractalScene {
 
   /**
    * Re-apply the CURRENT backdrop shape's geometry to the live viewport's
-   * new aspect (fr-h3mp) — called from {@link resize}. A no-op under
+   * new aspect — called from {@link resize}. A no-op under
    * `"linear"`, whose shape has no notion of aspect at all; under
    * `"radial"` this repaints the backdrop canvas and re-pushes
    * `uBgCenter`/`uBgScale` with a freshly computed
@@ -2314,7 +2314,7 @@ export class FractalScene {
   }
 
   /**
-   * Enter or exit the 4D projection view (fr-cbg spike). Swaps the point cloud
+   * Enter or exit the 4D projection view. Swaps the point cloud
    * to fourDMaterial on entry; on exit, restores the current render style's
    * material by re-running {@link setRenderStyle} (which owns the style→material
    * mapping) rather than duplicating it here.
@@ -2335,7 +2335,7 @@ export class FractalScene {
   }
 
   /**
-   * Toggle the balloon echo (fr-5wlv.2): a second point cloud sharing the
+   * Toggle the balloon echo: a second point cloud sharing the
    * explorer's own geometry, sphere-inverted about its enclosing ball — see
    * {@link syncBalloonEchoUniforms} and fractal/balloon-de.ts's module doc.
    * Visible exactly when `on`; the shader itself selects direct 3D inversion
@@ -2396,7 +2396,7 @@ export class FractalScene {
     // echo cloud's own radial fade dissolves it against the SAME horizon
     // rather than an unrelated number.
     //
-    // fr-5h5d: the Fog control stretches this same fade, so "thin fog"
+    // The Fog control stretches this same fade, so "thin fog"
     // reads consistently between the explorer's depth fog and the
     // balloon. Bounded at density 0.15 (~6.7x stretch) rather than
     // following fogDensity all the way to 0: the fade also bounds the
@@ -2412,7 +2412,7 @@ export class FractalScene {
   /**
    * Recompute {@link balloonEchoPoints}'s visibility from
    * {@link balloonEchoEnabled}, equality-guarded like every other per-frame
-   * setter (fr-py7z). Dimensionality changes the echo shader's source mapping,
+   * setter. Dimensionality changes the echo shader's source mapping,
    * not whether the authored echo exists.
    */
   private syncBalloonEchoVisibility(): void {
@@ -2423,7 +2423,7 @@ export class FractalScene {
   }
 
   /**
-   * Set the 4D rotation uniform (fr-cbg spike). `m` is a row-major 16-entry
+   * Set the 4D rotation uniform. `m` is a row-major 16-entry
    * array — the format affine4.ts's `rotationMatrix4` produces.
    * `THREE.Matrix4.set()` takes its arguments in row-major order and stores them
    * column-major internally (exactly the WebGL layout the shader's `mat4 uRot4`
@@ -2432,7 +2432,7 @@ export class FractalScene {
    */
   setRot4(m: number[]): void {
     // Per-frame caller (the 4D tumble tick): a paused tumble hands back the
-    // same matrix — don't mark the frame dirty for it (fr-py7z).
+    // same matrix — don't mark the frame dirty for it.
     const prev = this.fourDRot;
     let changed = false;
     for (let i = 0; i < 16; i++) {
@@ -2460,7 +2460,7 @@ export class FractalScene {
   }
 
   /**
-   * Show a 4D wireframe scaffold (fr-6d5) — line segments given by their 4D
+   * Show a 4D wireframe scaffold — line segments given by their 4D
    * endpoints, projected through the SAME rotation/center as the point cloud so
    * the two can never drift. A preset's tumbling edges (the pentatope's ten,
    * the tesseract's thirty-two) are what make the 4D rotation legible at a
@@ -2533,7 +2533,7 @@ export class FractalScene {
 
   /** Re-aim the w-color normalization at the current rotation: 1 / (the 4D
    * bounds box's support in the rotated-w direction) — the exact max
-   * |rotated w| any stored point can reach at this tumble angle (fr-9bk).
+   * |rotated w| any stored point can reach at this tumble angle.
    * Called on every rotation change and cloud upload; four |m_wi|*h_i terms,
    * so the per-frame cost is noise next to the scaffold re-pose that shares
    * the trigger. The 1e-6 floor covers empty or w-flat clouds, whose q.w is
@@ -2544,16 +2544,16 @@ export class FractalScene {
   }
 
   /**
-   * Configure the soft w-slice (fr-6x2): a Gaussian opacity window around
+   * Configure the soft w-slice: a Gaussian opacity window around
    * `center` in SIGNED normalized rotated-w units (the [-1, 1] range the
    * shader's diverging palette uses), with a fixed width and a visibility floor
    * so the unsliced projection stays as ghost context. The normalization
-   * tracks the cloud's w-amplitude at the current rotation (fr-9bk), so
+   * tracks the cloud's w-amplitude at the current rotation, so
    * [-1, 1] always spans the occupied w-range — the slider has no dead zones
    * on anisotropic clouds. A handful of uniform writes, so sweeping the
    * slider costs nothing per frame.
    *
-   * `relativeColor` (fr-nn6) recenters the w-ramp color modes' diverging
+   * `relativeColor` recenters the w-ramp color modes' diverging
    * palette on the slice window — `sliceColorRemap` owns the gate and the
    * mapping (identity uniforms when the slice is off or the option unchosen),
    * so the shader's remap can't drift from the flame/solid renders'.
@@ -2573,7 +2573,7 @@ export class FractalScene {
   }
 
   /**
-   * Enable/disable the 4D projection's camera-depth fade (fr-3e0): dim each
+   * Enable/disable the 4D projection's camera-depth fade: dim each
    * point's additive contribution with camera distance — see FOUR_D_VERTEX's
    * header for why fade-to-black is the only 3D depth style that survives
    * additive blending. One uniform write; the near/far band itself follows
@@ -2603,7 +2603,7 @@ export class FractalScene {
    */
   setGlowExposure(factor: number): void {
     // Per-frame caller: static inputs produce the identical factor every
-    // frame — don't mark the frame dirty for it (fr-py7z).
+    // frame — don't mark the frame dirty for it.
     const opacity = GLOW_BASE_OPACITY * factor;
     if (this.glowMaterial.opacity === opacity) return;
     this.glowMaterial.opacity = opacity;
@@ -2611,7 +2611,7 @@ export class FractalScene {
   }
 
   /**
-   * Set the depth-fog density multiplier (fr-5h5d) — see state.ts's
+   * Set the depth-fog density multiplier — see state.ts's
    * `AppState.fogDensity` for what `0`/`1` mean. Pushes `uFogDensity` to
    * both surface tracers and the solid render's voxel raymarcher (the
    * {@link setSurfaceParams} push-to-both pattern: whichever the next
@@ -2636,13 +2636,13 @@ export class FractalScene {
   }
 
   /**
-   * Set the fog tint (fr-5h5d) — `tint` an rgb01 tuple, `strength` its
+   * Set the fog tint — `tint` an rgb01 tuple, `strength` its
    * 0..1 blend weight; see state.ts's `AppState` fields for what they
    * mean. Pushes `uFogTint`/`uFogTintStrength` to both surface tracers
    * and the solid render's voxel raymarcher (the {@link setSurfaceParams}
    * push-to-both pattern, exactly like {@link setFogDensity}), then
    * re-derives the points explorer's fog color ({@link applyFogColor}) —
-   * the tint applies AFTER the fr-1lj midpoint derivation, so changing
+   * the tint applies AFTER the backdrop-midpoint derivation, so changing
    * background keeps the atmosphere setting meaningful. Strength 0 (the
    * default) is the bit-exact identity in every renderer; the WebGPU
    * compute path reads the stored pair at spec assembly instead.
@@ -2673,8 +2673,8 @@ export class FractalScene {
 
   /**
    * Re-derive the points explorer's fog color: the backdrop midpoint
-   * (fr-1lj — fogged points veil toward what's actually behind them),
-   * then the fog tint lerped on top (fr-5h5d) — the tint applies AFTER
+   * (fogged points veil toward what's actually behind them),
+   * then the fog tint lerped on top — the tint applies AFTER
    * the midpoint derivation, so changing background keeps the atmosphere
    * setting meaningful. Strength 0 leaves the midpoint untouched.
    */
@@ -2697,7 +2697,7 @@ export class FractalScene {
   }
 
   /**
-   * Set the balloon tint (fr-j85n) — `tint` an rgb01 tuple, `strength` its
+   * Set the balloon tint — `tint` an rgb01 tuple, `strength` its
    * 0..1 blend weight; see state.ts's `AppState` fields for what they mean.
    * ONE setter feeds BOTH renderers: the explorer echo
    * (balloonEchoMaterial's uEchoTint/uEchoTintStrength) and the surface
@@ -2736,7 +2736,7 @@ export class FractalScene {
    * Tighten the fog band to bracket the point cloud at the current distance.
    * No-op unless a depth-fading style (depthFade/aerial) is active.
    *
-   * `fogDensity` (fr-5h5d) scales the fog DISTANCE UNIT: a larger density
+   * `fogDensity` scales the fog DISTANCE UNIT: a larger density
    * packs both edges tighter around the camera (fog reaches full strength
    * over a shorter span), a smaller one pushes `far` out, thinning the fog
    * toward nothing. `near` deliberately does NOT keep retreating below its
@@ -2805,7 +2805,7 @@ export class FractalScene {
   }
 
   /**
-   * Reserve `px` of the right edge for the panel overlay (fr-936q) — see
+   * Reserve `px` of the right edge for the panel overlay — see
    * {@link rightInsetPx}. Values are clamped so at least half the viewport
    * stays visible; 0 restores the plain full-canvas projection.
    */
@@ -2841,7 +2841,7 @@ export class FractalScene {
     this.renderNeeded = true;
     this.viewportWidth = width;
     this.viewportHeight = height;
-    // fr-h3mp: a radial vignette's SCALE is derived from the viewport's own
+    // A radial vignette's SCALE is derived from the viewport's own
     // aspect (backgroundRadialScale), so a resize that changes that aspect
     // must repaint the backdrop canvas and re-push uBgScale even though
     // neither the stops nor the shape KIND moved — linear has no such
@@ -2855,12 +2855,12 @@ export class FractalScene {
     this.syncProjection();
     this.renderer.setSize(width, height);
     this.composer.setSize(width, height);
-    // Re-read the LIVE devicePixelRatio (fr-vja8.15): browser zoom and a
+    // Re-read the LIVE devicePixelRatio: browser zoom and a
     // monitor move change it and fire this resize, but three derives the
     // drawing buffer from its STORED ratio — without this the app renders
     // persistently soft on a denser display (or wastefully oversampled on
     // a sparser one) until a Save-PNG or governor rung change happens to
-    // re-apply it. Equality-guarded (fr-vja8.50): three's setPixelRatio
+    // re-apply it. Equality-guarded: three's setPixelRatio
     // re-runs setSize unconditionally, so an unguarded re-apply paid the
     // whole renderer+composer resize path twice per event through every
     // ordinary drag-resize where the ratio never moved.
@@ -2896,7 +2896,7 @@ export class FractalScene {
   }
 
   /**
-   * Scale the rendering resolution (fr-4lyt): the effective pixel ratio
+   * Scale the rendering resolution: the effective pixel ratio
    * becomes `basePixelRatio() * scale`, shrinking the drawing buffer, the
    * glow composer chain, and the EDL target together — the point sizes'
    * buffer-height uniforms follow, so points keep their on-screen size and
@@ -2928,8 +2928,8 @@ export class FractalScene {
   /**
    * Run a synchronous render-and-read at an explicit pixel ratio: exports
    * are keepsakes, and they shouldn't inherit whatever transient downscale
-   * the adaptive governor (fr-4lyt) happens to be at — and a hi-res export
-   * (fr-2urv) renders ABOVE the live ratio the same way. No-op when the live
+   * the adaptive governor happens to be at — and a hi-res export
+   * renders ABOVE the live ratio the same way. No-op when the live
    * ratio already matches; the next live frame re-renders at the restored
    * ratio, so nothing soft (or giant) ever reaches the screen.
    */
@@ -2946,7 +2946,7 @@ export class FractalScene {
 
   /**
    * The effective pixel ratio for a still export at `exportScale` × the
-   * screen resolution (fr-2urv): the base ratio times the requested
+   * screen resolution: the base ratio times the requested
    * multiple, clamped so the resulting drawing buffer's long side fits both
    * the device's texture ceiling (the EDL/composer targets and the flame
    * display texture are all textures) and {@link EXPORT_MAX_LONG_SIDE} —
@@ -2965,12 +2965,12 @@ export class FractalScene {
 
   render(): void {
     this.renderNeeded = false;
-    // The 4D projection (fr-cbg spike) always renders plain: its material is
+    // The 4D projection always renders plain: its material is
     // designed to look like the base style, and layering the recorded render
     // style's post-processing (bloom / EDL / DOF focus) over it would restyle
     // the projection unpredictably — including in captureFrame's PNG export.
     // The recorded style still drives fog/background until the user exits.
-    // The camera-depth fade (fr-3e0) is part of the 4D material itself, not
+    // The camera-depth fade is part of the 4D material itself, not
     // post-processing, so "plain" rendering still carries it.
     if (this.fourDActive) {
       this.updateFourDFade();
@@ -2994,7 +2994,7 @@ export class FractalScene {
   }
 
   /**
-   * Render one frame at the export resolution (fr-2urv: `exportScale` × the
+   * Render one frame at the export resolution (`exportScale` × the
    * screen buffer, device-clamped — see {@link exportPixelRatio}) and read it
    * back as an encoded PNG. Renders synchronously right before the read so
    * the drawing buffer is still intact (the renderer runs without
@@ -3014,19 +3014,19 @@ export class FractalScene {
   }
 
   /**
-   * Run a synchronous render-and-read with the panel inset lifted (fr-936q):
+   * Run a synchronous render-and-read with the panel inset lifted:
    * exports and thumbnails should compose the fractal centered in the full
    * frame, not shifted for an overlay the image doesn't contain. Restores
-   * the inset projection afterwards AND, by default, marks the frame dirty
-   * (fr-vja8.14): the render paths clear {@link renderNeeded} before
-   * painting, so a centered frame a readback painted onto the canvas would
-   * otherwise STAY on screen for a parked camera — render-on-demand only
-   * repaints on an invalidation, and a capture must supply its own.
-   * `invalidate: false` is for readbacks that only ASSEMBLE capture state
-   * under the centered camera and never paint the live canvas (the compute
-   * export's band specs, the WebGL capture's job arm — fr-vja8.45): for
-   * those the latch is a phantom pose change that hands the surface tier a
-   * full re-settle for a byte-identical canvas.
+   * the inset projection afterwards AND, by default, marks the frame dirty:
+   * the render paths clear {@link renderNeeded} before painting, so a
+   * centered frame a readback painted onto the canvas would otherwise STAY
+   * on screen for a parked camera — render-on-demand only repaints on an
+   * invalidation, and a capture must supply its own. `invalidate: false` is
+   * for readbacks that only ASSEMBLE capture state under the centered
+   * camera and never paint the live canvas (the compute export's band
+   * specs, the WebGL capture's job arm): for those the latch is a phantom
+   * pose change that hands the surface tier a full re-settle for a
+   * byte-identical canvas.
    */
   private withCenteredProjection<T>(readback: () => T, invalidate = true): T {
     const inset = this.rightInsetPx;
@@ -3044,8 +3044,8 @@ export class FractalScene {
 
   /**
    * Read the current display back as a small JPEG data URL — the thumbnail
-   * source for the saved-scene collection (fr-cai). `mode` picks the source
-   * the way the Save-PNG export does (fr-75sq): `"points"` renders the live
+   * source for the saved-scene collection. `mode` picks the source
+   * the way the Save-PNG export does: `"points"` renders the live
    * explorer scene, `"solid"` re-marches the voxel volume, both with the
    * same synchronous-render-then-read trick as {@link captureFrame} (the
    * renderer runs without `preserveDrawingBuffer`); `"flame"` reads the
@@ -3079,12 +3079,12 @@ export class FractalScene {
     if (mode === "surface" && this.surfaceComputeActive) {
       // A compute session's thumbnail re-presents the last traced frame —
       // a projection-independent blit, so the centered wrapper has nothing
-      // to lift and its capture invalidation (fr-vja8.14) would only hand
+      // to lift and its capture invalidation would only hand
       // the surface tier a phantom pose change: a full preview plus
       // supersampled settle re-run for a byte-identical canvas after every
-      // ★ save (fr-vja8.45). Tracing here would be renderSurface's
+      // ★ save. Tracing here would be renderSurface's
       // fold-GLSL path, which a compute session deliberately never
-      // compiles (fr-tzdg). Only the not-yet-presented fallback paints the
+      // compiles. Only the not-yet-presented fallback paints the
       // (projection-dependent) explorer cloud, and that path takes the
       // wrapper like every other painting arm.
       if (this.representSurfaceComputeFrame()) {
@@ -3115,7 +3115,7 @@ export class FractalScene {
           this.renderSurface();
         } catch (err) {
           // A save-to-collection must never freeze the tab for a
-          // monster pose's full-tier trace (fr-id9r): when the cost
+          // monster pose's full-tier trace: when the cost
           // ceiling refuses, the explorer render is the honest
           // fallback — the compute branch's own stance — and the
           // dirty flag makes the next live tick re-preview the
@@ -3137,19 +3137,19 @@ export class FractalScene {
   /**
    * Physical pixel size of the drawing buffer (accounts for
    * `devicePixelRatio`) — the resolution a flame render should target so it
-   * matches what is currently on screen 1:1. A hi-res export session
-   * (fr-2urv) passes its `exportScale` so the WHOLE flame accumulation runs
-   * at the export size (the converging on-screen image IS the export);
+   * matches what is currently on screen 1:1. A hi-res export session passes
+   * its `exportScale` so the WHOLE flame accumulation runs at the export
+   * size (the converging on-screen image IS the export);
    * clamped like every export (see {@link exportPixelRatio}) so the display
    * texture stays under the device ceiling — main.ts additionally clamps
    * to the flame accumulation-memory budget.
    */
   flameRenderSize(exportScale = 1): { width: number; height: number } {
-    // Deliberately NOT the live drawing buffer: the adaptive governor
-    // (fr-4lyt) may have that scaled down under load, but a flame render is
-    // a converging still — its quality shouldn't inherit a transient
-    // live-cloud slowdown. Floor matches how the renderer itself derives the
-    // buffer from a pixel ratio.
+    // Deliberately NOT the live drawing buffer: the adaptive governor may
+    // have that scaled down under load, but a flame render is a converging
+    // still — its quality shouldn't inherit a transient live-cloud
+    // slowdown. Floor matches how the renderer itself derives the buffer
+    // from a pixel ratio.
     const ratio = this.exportPixelRatio(exportScale);
     return {
       width: Math.floor(this.viewportWidth * ratio),
@@ -3205,7 +3205,7 @@ export class FractalScene {
 
   /**
    * Render the backdrop quad, then the flame quad screen-blended over it
-   * (fr-5ps1; see the flame material's blending doc in the constructor) —
+   * (see the flame material's blending doc in the constructor) —
    * used in place of {@link render} while a flame render is active, so the
    * (frozen) 3D scene never draws. autoClear is suspended for the second
    * draw: the flame quad renders through its own pass, which would
@@ -3227,7 +3227,7 @@ export class FractalScene {
    * `flame + bg·(1 − flame)` blend {@link renderFlame} draws (see the flame
    * material's constructor doc), via canvas 2D's own "screen" operation, so
    * the exported PNG matches the on-screen appearance for any Background
-   * choice (fr-5ps1). No `exportScale` parameter on purpose (fr-2urv): a
+   * choice. No `exportScale` parameter on purpose: a
    * flame session ACCUMULATES at the export size (see
    * {@link flameRenderSize}), so its canvas already is the export —
    * re-scaling here would only interpolate.
@@ -3255,10 +3255,10 @@ export class FractalScene {
    * Leave the flame render session (a mode switch away from "flame"):
    * shrink the accumulator canvas back to its 1x1 placeholder (see the
    * constructor) and drop the texture's uploaded GPU copy — a flame
-   * session ACCUMULATES AT EXPORT SIZE (fr-2urv, see {@link setFlameImage}
-   * and {@link captureFlameFrame}'s doc), so a 4x export leaves ~132MB of
+   * session ACCUMULATES AT EXPORT SIZE (see {@link setFlameImage} and
+   * {@link captureFlameFrame}'s doc), so a 4x export leaves ~132MB of
    * canvas + GPU texture resident for the rest of the page's life once
-   * nothing shrinks it back down (fr-vja8.35). Mirrors
+   * nothing shrinks it back down. Mirrors
    * {@link exitSurfaceComputeSession}'s dispose+null shape; `flameTexture`
    * itself stays (it is `readonly`, and `flameMaterial.map` keeps pointing
    * at it) — `dispose()` only releases the renderer's uploaded copy, which
@@ -3306,9 +3306,9 @@ export class FractalScene {
     );
     u.uTexel.value = 1 / size;
     u.uMarchSteps.value = marchStepsForGrid(size);
-    // Both factors of a solid capture's per-pixel cost just moved
-    // (fr-2q01): the step count above, and the density that decides where
-    // a ray leaves the loop. See {@link solidCapturePxCostMs}.
+    // Both factors of a solid capture's per-pixel cost just moved: the
+    // step count above, and the density that decides where a ray leaves
+    // the loop. See {@link solidCapturePxCostMs}.
     this.solidCapturePxCostMs = null;
   }
 
@@ -3327,7 +3327,7 @@ export class FractalScene {
       lightDirection(params.lightAzimuth, params.lightElevation),
     );
     // uThreshold is where both marches stop, so an edit here re-prices
-    // every ray (fr-2q01). See {@link solidCapturePxCostMs} for why the
+    // every ray. See {@link solidCapturePxCostMs} for why the
     // whole setter clears rather than the threshold alone.
     this.solidCapturePxCostMs = null;
   }
@@ -3356,10 +3356,10 @@ export class FractalScene {
    * Save-PNG source while the solid render is active: render synchronously
    * right before the read so the drawing buffer is intact, exactly like
    * {@link captureFrame} (the renderer runs without `preserveDrawingBuffer`)
-   * — including its export-resolution raymarch (fr-2urv: the volume is
+   * — including its export-resolution raymarch (the volume is
    * camera-independent, so one bigger frame is just more rays).
    *
-   * Times itself into {@link solidCapturePxCostMs} (fr-2q01), so the NEXT
+   * Times itself into {@link solidCapturePxCostMs}, so the NEXT
    * export's modal decides from evidence instead of from export scale. The
    * clock spans the whole promise — a capture's wall is what the modal is
    * about, and the readback and PNG encode are part of the wait whether or
@@ -3393,7 +3393,7 @@ export class FractalScene {
    * cost, or null when none survives (nothing exported yet against this
    * volume and isosurface — the POSE is deliberately not an invalidator,
    * see {@link solidCapturePxCostMs}) — the solid twin of
-   * {@link predictSurfaceCaptureMs} (fr-2q01), feeding the same ONE
+   * {@link predictSurfaceCaptureMs}, feeding the same ONE
    * decision: whether the export modal skips its grace period and shows
    * at once. Never displayed, for the same reason its surface sibling
    * isn't — coverage and elapsed are measured, a predicted total is a
@@ -3414,7 +3414,7 @@ export class FractalScene {
   }
 
   /**
-   * Upload a freshly built surface distance estimator (epic fr-7jlk) so the
+   * Upload a freshly built surface distance estimator so the
    * next {@link renderSurface} call sphere-traces it. `colors[j]` is the
    * sRGB base color and `trapIndices[j]` the orbit-trap palette coordinate
    * for `de.maps[j]` — main.ts keys both by each slot's `baseIndex`, so
@@ -3424,16 +3424,16 @@ export class FractalScene {
   setSurfaceSystem(de: SurfaceDE, colors: Vec3[], trapIndices: number[]): void {
     this.renderNeeded = true;
     // packSurfaceSystem resets the material's grid uniforms; the texture
-    // itself is ours to free (fr-55r5 part 2).
+    // itself is ours to free.
     this.dropSurfaceGridTexture();
     packSurfaceSystem(this.surfaceMaterial, de, colors, trapIndices);
-    // The balloon (fr-5wlv.4) certifies against the DE's OWN ball, so a
+    // The balloon certifies against the DE's OWN ball, so a
     // new system re-derives it and re-applies the stored on/rMult — a
     // session entered with the balloon already on wraps the new system's
     // ball, not the previous one's.
     this.surfaceBalloonBall = balloonBall(de);
     this.applySurfaceBalloon();
-    // The ground plane (fr-rhn5) drops under the same ball, re-derived
+    // The ground plane drops under the same ball, re-derived
     // and re-asserted per install exactly like the balloon above — AFTER
     // it, so the eligibility gate reads the final balloon define.
     this.surfaceGroundBall = balloonBall(de);
@@ -3441,11 +3441,11 @@ export class FractalScene {
     this.activeSurfaceMaterial = this.surfaceMaterial;
     this.surfaceQuad.material = this.surfaceMaterial;
     this.surfaceFullMaxDepth = de.maxDepth;
-    // Cost-weighted ladder entry (fr-5rvk): a fold-frontier DE's per-pixel
+    // Cost-weighted ladder entry: a fold-frontier DE's per-pixel
     // cost is a known static multiple of an affine system's, and the FIRST
     // trace has no measurement for the panic path to act on — the entry
     // rung must absorb what is known up front. The same "known up front"
-    // marks the system fold-class for strip-probe sizing (fr-096u).
+    // marks the system fold-class for strip-probe sizing.
     const costWeight = surfaceDescentCostWeight(de);
     this.surfacePreviewGovernor.reset(costWeight);
     this.surfacePreviewPxCostMs = null;
@@ -3453,15 +3453,15 @@ export class FractalScene {
     this.surfaceDeFoldClass = costWeight > 1;
     this.stripEvidence.reset();
     // A new DE is a new cost class: a predecessor system's pooled fences
-    // must not seed this evidence chain (fr-7to5 declines cross-system
-    // inheritance — the backlog still drains FIFO, unpriced, as before
-    // the pool existed).
+    // must not seed this evidence chain (the fence pool declines
+    // cross-system inheritance — the backlog still drains FIFO, unpriced,
+    // as before the pool existed).
     this.flushStripBacklog();
   }
 
   /**
-   * Escape-time sibling of {@link setSurfaceSystem} (fr-kltj): upload the
-   * fold CHAIN's forward affines + fold params (fr-s04t — one slot per
+   * Escape-time sibling of {@link setSurfaceSystem}: upload the
+   * fold CHAIN's forward affines + fold params (one slot per
    * link, the document's transform list being the formula sequence) and
    * flip the material onto the SURFACE_ESCAPE variant. Everything else
    * about the mode — tiers, strips, compile gate, capture — runs unchanged
@@ -3474,7 +3474,7 @@ export class FractalScene {
     this.renderNeeded = true;
     this.dropSurfaceGridTexture();
     packEscapeSystem(this.surfaceMaterial, de, color);
-    // NO balloon ball for escape sessions (fr-5wlv.4, measured): the
+    // NO balloon ball for escape sessions (measured): the
     // escape set is a FILLED solid whose interior reaches the ball
     // center (never-escaping orbits return DE ~ 0 throughout), and the
     // sphere-inverted echo of a solid containing its own center is a
@@ -3487,7 +3487,7 @@ export class FractalScene {
     // shared toggle is set, so escape sessions render plain.
     this.surfaceBalloonBall = null;
     this.applySurfaceBalloon();
-    // The floor (fr-rhn5) survives where the balloon degenerates: the
+    // The floor survives where the balloon degenerates: the
     // escape solid is bounded by its origin bailout ball, and a plane
     // under a Mandelbox is the mode's classic look.
     this.surfaceGroundBall = { center: [0, 0, 0], radius: de.boundingRadius };
@@ -3506,7 +3506,7 @@ export class FractalScene {
   }
 
   /**
-   * Mandelbulb sibling of {@link setEscapeSystem} (fr-tdin): upload the
+   * Mandelbulb sibling of {@link setEscapeSystem}: upload the
    * single triplex-power map's forward affine and flip the material onto
    * the SURFACE_BULB variant. Everything else about the mode — tiers,
    * strips, compile gate, capture — runs unchanged on the same material,
@@ -3524,20 +3524,20 @@ export class FractalScene {
     this.dropSurfaceGridTexture();
     packBulbSystem(this.surfaceMaterial, de, color);
     // NO balloon ball, for the escape solid's reason re-measured on this
-    // object (fr-tdin): the Mandelbulb is a FILLED solid whose interior
+    // object: the Mandelbulb is a FILLED solid whose interior
     // reaches the ball centre — DE(0) = 0 and 100% of a 0.1R neighbourhood
     // of the centre is interior, against 0.1% for the Mandelbox at its own
     // (much larger) bailout ball — so the sphere-inverted echo contains
     // infinity, the camera sits inside it (measured union DE at the
     // session's own opening eye: exactly 0 at R = 0.35 and 0.9 raw-ball
     // radii), and every ray hits at t ~ 0 with degenerate normals: a flat,
-    // featureless frame at every R, exactly what fr-5wlv.4 observed one
-    // object over. Nulling the ball keeps applySurfaceBalloon packing the
+    // featureless frame at every R, exactly what the escape solid showed
+    // one object over. Nulling the ball keeps applySurfaceBalloon packing the
     // variant OFF however the shared toggle is set, so bulb sessions
     // render plain.
     this.surfaceBalloonBall = null;
     this.applySurfaceBalloon();
-    // The floor (fr-rhn5) survives where the balloon degenerates, exactly
+    // The floor survives where the balloon degenerates, exactly
     // as it does for the escape solid — and a plane under a Mandelbulb is
     // the mode's classic look too.
     this.surfaceGroundBall = { center: [0, 0, 0], radius: de.boundingRadius };
@@ -3557,7 +3557,7 @@ export class FractalScene {
   }
 
   /**
-   * Turn the surface balloon (fr-5wlv.4) on or off at a normalized radius
+   * Turn the surface balloon on or off at a normalized radius
    * `rMult` (multiples of the raw DE-ball radius — buildBalloon's rMult,
    * the same continuous parameter as the explorer echo's slider). Applies
    * immediately when a 3D surface system is installed; the stored pair
@@ -3576,16 +3576,16 @@ export class FractalScene {
     // A balloon flip changes the floor's eligibility (the two never
     // compile together; packSurfaceBalloon force-drops the plane define
     // when the balloon lands) — re-assert the stored floor intent under
-    // the new define state (fr-rhn5).
+    // the new define state.
     this.applySurfaceGroundPlane();
   }
 
   /**
-   * The radius slider's cheap path (fr-5wlv.4): recompute R and rewrite
+   * The radius slider's cheap path: recompute R and rewrite
    * uniforms only — packSurfaceBalloon guarantees a no-shader-touch when
    * the flag doesn't flip, so every drag tick may call this. Equality
    * guard keeps render-on-demand honest, like {@link setBalloonEchoRadius}.
-   * The compute path (fr-5wlv.5) needs nothing more than the field update
+   * The compute path needs nothing more than the field update
    * + renderNeeded: frame specs re-derive the balloon block from the
    * stored rMult at every assembly, exactly {@link setSurface4View}'s
    * live-pose discipline.
@@ -3601,7 +3601,7 @@ export class FractalScene {
   /** The live balloon parameter block derived from the stored ball +
    * rMult — ONE definition (fractal/balloon-de.ts's buildBalloon
    * convention with the march far cap alongside) for both the GLSL
-   * uniforms and the compute frame spec (fr-5wlv.5): rho takes the
+   * uniforms and the compute frame spec: rho takes the
    * certification margin, R is the normalized radius in world units, and
    * the far cap is the oracle's shared horizon. Null without an
    * installed ball. */
@@ -3623,7 +3623,7 @@ export class FractalScene {
 
   /** Re-derive the balloon uniform spec from the stored on/rMult and the
    * installed system's ball (null clears) and pack it into the ACTIVE
-   * fragment material, clearing the other (fr-qxxw gave the 4D tracer its
+   * fragment material, clearing the other (the 4D tracer has its
    * own arm, so the stored intent must not leave a stale one compiled
    * into the material underneath — `setSurfaceSystem4`'s original move,
    * now needed in both directions). */
@@ -3632,14 +3632,14 @@ export class FractalScene {
     const on4 = this.activeSurfaceMaterial === this.surfaceMaterial4;
     packSurfaceBalloon(this.surfaceMaterial, on4 ? null : spec);
     packSurface4Balloon(this.surfaceMaterial4, on4 ? spec : null);
-    // The balloon is the only live input to the grid's validity gate
-    // (fr-8yad), so every path that moves it — the toggle, a radius drag,
-    // a system install re-asserting the stored pair — re-answers it here.
+    // The balloon is the only live input to the grid's validity gate, so
+    // every path that moves it — the toggle, a radius drag, a system
+    // install re-asserting the stored pair — re-answers it here.
     this.applySurfaceGridEnable();
   }
 
   /**
-   * Re-answer fr-8yad's balloon validity predicate for the INSTALLED grid
+   * Re-answer the balloon's grid-validity predicate for the INSTALLED grid
    * and write the march's enable flag — a uniform write, never a rebuild:
    * the cube and its floors are frozen with the session's DE, and only the
    * balloon radius moves.
@@ -3649,7 +3649,8 @@ export class FractalScene {
    * cube ({@link balloonClearsGridBox}, whose module doc carries the
    * derivation, the six-system measurement and the per-cell soundness
    * check). A compiled balloon that fails the predicate marches gridless —
-   * the fr-5wlv state — and one that passes gets its floors back.
+   * the balloon's original state — and one that passes gets its floors
+   * back.
    *
    * `spec === null` is the no-balloon case in both directions: either the
    * toggle is off, or the installed system has no ball to certify against
@@ -3667,7 +3668,7 @@ export class FractalScene {
   }
 
   /**
-   * Turn the ground plane (fr-rhn5) on or off — the persisted Floor
+   * Turn the ground plane on or off — the persisted Floor
    * toggle's scene entry, {@link setSurfaceBalloon}'s discipline: store
    * the intent, then re-assert it against whatever system is installed.
    * The WebGL material only compiles the plane arm where it is eligible
@@ -3701,7 +3702,7 @@ export class FractalScene {
     };
   }
 
-  /** Re-assert the stored floor intent (fr-rhn5) against the installed
+  /** Re-assert the stored floor intent against the installed
    * system: packs the plane arm into the 3D material exactly where it is
    * eligible — a ball exists and the balloon variant is not compiled
    * (no horizon inside the shell; every other variant carries the plane
@@ -3717,13 +3718,13 @@ export class FractalScene {
     const eligible = this.surfaceGroundPlaneOn && balloonDefine !== 1;
     const spec = eligible ? this.surfaceGroundPlaneSpec() : null;
     // Clear the inactive material's arm for the reason applySurfaceBalloon
-    // does (fr-h0c3): a stale floor must not survive a 3D <-> 4D swap.
+    // does: a stale floor must not survive a 3D <-> 4D swap.
     packSurfaceGroundPlane(this.surfaceMaterial, on4 ? null : spec);
     packSurface4GroundPlane(this.surfaceMaterial4, on4 ? spec : null);
   }
 
   /**
-   * Upload a finished empty-space-skipping grid (fr-55r5 part 2) for the
+   * Upload a finished empty-space-skipping grid for the
    * CURRENT 3D surface system — the async worker build main.ts kicked off
    * alongside {@link setSurfaceSystem}. Marks the frame dirty so the tier
    * loop re-previews and re-settles with the faster march; an in-flight
@@ -3750,7 +3751,7 @@ export class FractalScene {
     this.surfaceGridHalfExtent = grid.halfExtent;
     packSurfaceGrid(this.surfaceMaterial, texture, grid.halfExtent);
     // packSurfaceGrid enables the reads; the balloon gate may take them
-    // straight back off (fr-8yad) — a grid that arrives mid-inflation is
+    // straight back off — a grid that arrives mid-inflation is
     // installed and inert until the radius clears the box.
     this.applySurfaceGridEnable();
     this.renderNeeded = true;
@@ -3762,13 +3763,13 @@ export class FractalScene {
     packSurfaceGrid(this.surfaceMaterial, null);
     this.surfaceGridTexture?.dispose();
     this.surfaceGridTexture = null;
-    // No grid installed, so nothing for the balloon gate to re-enable
-    // (fr-8yad) — packSurfaceGrid already dropped the flag.
+    // No grid installed, so nothing for the balloon gate to re-enable —
+    // packSurfaceGrid already dropped the flag.
     this.surfaceGridHalfExtent = null;
   }
 
   /**
-   * 4D twin of {@link setSurfaceSystem} (fr-vxoj): upload the 4D DE and
+   * 4D twin of {@link setSurfaceSystem}: upload the 4D DE and
    * point the shared quad at the 4D tracer. The rotor/slice VIEW state
    * arrives separately ({@link setSurface4View}) — the DE is
    * pose-independent, exactly as the 3D DE is camera-independent.
@@ -3786,12 +3787,12 @@ export class FractalScene {
     packSurfaceSystem4(this.surfaceMaterial4, de, colors, trapIndices);
     this.activeSurfaceMaterial = this.surfaceMaterial4;
     this.surfaceQuad.material = this.surfaceMaterial4;
-    // The floor (fr-h0c3) and the balloon (fr-qxxw) now install here
-    // exactly as they do for a 3D system — both live in the SLICED 3D
-    // world space, so their balls are the 4D ball projected
-    // (`balloonBall4`: the origin, and the FULL 4D visible radius, so
-    // neither slides as the slice slider scrubs). The apply methods
-    // dispatch on the active material, which is why it is set above them.
+    // The floor and the balloon install here exactly as they do for a 3D
+    // system — both live in the SLICED 3D world space, so their balls are the
+    // 4D ball projected (`balloonBall4`: the origin, and the FULL 4D visible
+    // radius, so neither slides as the slice slider scrubs). The apply
+    // methods dispatch on the active material, which is why it is set above
+    // them.
     this.surfaceBalloonBall = balloonBall4(de);
     this.surfaceGroundBall = balloonBall4(de);
     this.applySurfaceBalloon();
@@ -3809,7 +3810,7 @@ export class FractalScene {
   /**
    * Per-frame rotor + w-slice for the 4D surface tracer — the live-pose
    * analogue of {@link setRot4}, with the same "same matrix, don't dirty
-   * the frame" guard (fr-py7z): main.ts pushes every 4D-surface frame,
+   * the frame" guard: main.ts pushes every 4D-surface frame,
    * paused tumble included, and equality keeps render-on-demand honest.
    * `m` is the row-major world rotor from `fourDView.matrix()`; the packer
    * transposes it into the tracer's inverse-rotor uniform.
@@ -3818,13 +3819,13 @@ export class FractalScene {
    * slider spans — the same [-1, 1] the cloud shader compares against
    * `q.w * uInvWAmp4` and the flame/solid slice windows share — while the
    * tracer's `uW0` is a LITERAL world w (it marches `vec4(p, uW0)` and gates
-   * the visible ball against the attractor's own 4D radius). fr-33yb: those
-   * two readings put one slider position on two different hyperplanes, so
-   * the conversion happens HERE, through {@link updateWAmp4}'s own
-   * `wSupport` — one expression defines the convention and there is nothing
-   * left to drift.
+   * the visible ball against the attractor's own 4D radius). Those two
+   * readings would otherwise put one slider position on two different
+   * hyperplanes, so the conversion happens HERE, through
+   * {@link updateWAmp4}'s own `wSupport` — one expression defines the
+   * convention and there is nothing left to drift.
    *
-   * `sliceThickness` (fr-wa6o) is the slab's HALF-thickness and rides the
+   * `sliceThickness` is the slab's HALF-thickness and rides the
    * identical normalized→world conversion — one `wSupport` call feeds both —
    * so the slab's two edges land on real hyperplanes the position slider
    * could itself have selected, rather than on a plane pair whose spacing
@@ -3834,7 +3835,7 @@ export class FractalScene {
    * Before the first 4D cloud upload the half-extents are still zero, so the
    * amplitude is 0 and the tracer marches `w = 0` — the centered slice a
    * fresh visit means anyway, with a zero-thickness slab, which is the
-   * cross-section every 4D surface render was before fr-wa6o — and the
+   * cross-section every 4D surface render was before the slab — and the
    * cloud's arrival re-packs by itself, since the guard below compares the
    * CONVERTED w0/half-thickness (a half-extent change that moves the plane
    * is a change).
@@ -3869,8 +3870,8 @@ export class FractalScene {
    */
   setSurfaceParams(params: SurfaceParams): void {
     this.renderNeeded = true;
-    // The compute path reads the same document at frame-spec assembly
-    // (fr-tzdg) — snapshot it beside the uniform writes.
+    // The compute path reads the same document at frame-spec assembly —
+    // snapshot it beside the uniform writes.
     this.surfaceComputeParams = params;
     // Both tracers share the one SurfaceParams document — push to both so
     // whichever the next session activates is already current.
@@ -3916,20 +3917,21 @@ export class FractalScene {
       data[i * 4 + 3] = 255;
     }
     this.surfaceLUTTexture.needsUpdate = true;
-    // The compute renderer shares these exact quantized bytes (fr-tzdg) —
+    // The compute renderer shares these exact quantized bytes —
     // one ramp definition, bit-identical on both tracers.
     this.surfaceLUTVersion++;
   }
 
   /**
    * Enter the WebGPU compute presentation for the surface session being
-   * started (fr-tzdg): the same session-entry resets as
-   * {@link setSurfaceSystem} — cost-weighted governor entry rung, the DE's
-   * own full depth for the preview clamp — without touching the GLSL
-   * material, whose fold variant must never compile on this path (the
-   * ~25s Mesa link / fr-096u entry hazards are the point of the mode).
+   * started: the same session-entry resets as {@link setSurfaceSystem} —
+   * cost-weighted governor entry rung, the DE's own full depth for the
+   * preview clamp — without touching the GLSL material, whose fold variant
+   * must never compile on this path (the ~25s Mesa link and the
+   * kernel-confirmed i915 preemption hang at entry are the point of the
+   * mode).
    *
-   * `balloon` (fr-5wlv.5) records whether this session's kernels carry
+   * `balloon` records whether this session's kernels carry
    * the inverted-union wrapper — pass exactly the create-target's flag —
    * and re-derives the ball from the DE (the WebGL install path's
    * {@link setSurfaceSystem} move, which never runs here), so every
@@ -3946,7 +3948,7 @@ export class FractalScene {
     this.surfaceCompute4 = false;
     this.surfaceBalloonBall = balloonBall(de);
     this.surfaceComputeBalloon = balloon;
-    // The floor flag (fr-rhn5) records the create-target's choice exactly
+    // The floor flag records the create-target's choice exactly
     // like `balloon` above; the ball it drops under is re-derived from
     // the DE so every frame spec can attach the live floor block the
     // 336-byte params struct expects.
@@ -3957,13 +3959,13 @@ export class FractalScene {
     this.surfacePreviewPxCostMs = null;
     // A previous strip session's pooled fences must not linger into (or
     // past) a compute session — the strip machinery never arms here, so
-    // nothing would ever adopt them (fr-7to5).
+    // nothing would ever adopt them.
     this.flushStripBacklog();
   }
 
   /**
-   * {@link enterSurfaceComputeSession}'s FORWARD-ORBIT twin (fr-dlxh, and
-   * one object wider since fr-tdin): the same session-entry resets
+   * {@link enterSurfaceComputeSession}'s FORWARD-ORBIT twin — escape-time
+   * chains and the Mandelbulb alike: the same session-entry resets
    * {@link setEscapeSystem}/{@link setBulbSystem} make — the orbit's
    * iteration budget as the preview depth clamp, a plain governor reset
    * (both forward loops are phone-cheap; no descent cost weight exists) —
@@ -3983,13 +3985,13 @@ export class FractalScene {
     this.renderNeeded = true;
     this.surfaceComputeActive = true;
     this.surfaceCompute4 = false;
-    // Forward-orbit sessions never balloon (fr-5wlv.4's measured
-    // degeneracy, re-measured on the Mandelbulb by fr-tdin —
-    // setEscapeSystem's and setBulbSystem's comments) — null the ball
+    // Forward-orbit sessions never balloon (the escape solid's measured
+    // degeneracy, re-measured on the Mandelbulb — see setEscapeSystem's
+    // and setBulbSystem's comments) — null the ball
     // exactly like the WebGL install path, and the session flag with it.
     this.surfaceBalloonBall = null;
     this.surfaceComputeBalloon = false;
-    // The floor (fr-rhn5) survives where the balloon degenerates — the
+    // The floor survives where the balloon degenerates — the
     // WebGL path's setEscapeSystem/setBulbSystem move.
     this.surfaceGroundBall = groundPlane
       ? { center: [0, 0, 0], radius: ballRadius }
@@ -4001,7 +4003,7 @@ export class FractalScene {
     this.flushStripBacklog();
   }
 
-  /** The escape-time forward orbit's compute entry (fr-dlxh) — see
+  /** The escape-time forward orbit's compute entry — see
    * {@link enterSurfaceComputeForwardSession}. */
   enterSurfaceComputeEscapeSession(groundPlane = false, ballRadius = 1): void {
     this.enterSurfaceComputeForwardSession(
@@ -4011,7 +4013,7 @@ export class FractalScene {
     );
   }
 
-  /** The Mandelbulb forward orbit's compute entry (fr-tdin) — see
+  /** The Mandelbulb forward orbit's compute entry — see
    * {@link enterSurfaceComputeForwardSession}. */
   enterSurfaceComputeBulbSession(groundPlane = false, ballRadius = 1): void {
     this.enterSurfaceComputeForwardSession(
@@ -4022,7 +4024,7 @@ export class FractalScene {
   }
 
   /**
-   * {@link enterSurfaceComputeSession}'s 4D twin (fr-dlxh's 4D cut): the
+   * {@link enterSurfaceComputeSession}'s 4D twin: the
    * same session-entry resets {@link setSurfaceSystem4} makes — the 4D
    * DE's own full depth for the preview clamp, a plain governor reset
    * (no 4D descent cost weight exists yet; the governor's EMA re-prices
@@ -4039,7 +4041,7 @@ export class FractalScene {
     this.renderNeeded = true;
     this.surfaceComputeActive = true;
     this.surfaceCompute4 = true;
-    // fr-qxxw / fr-h0c3: both wrappers lifted, and both balls are the 4D
+    // Both wrappers are lifted to 4D, and both balls are the 4D
     // ball projected into the sliced world space (`balloonBall4`) — the
     // 3D entry's move with its own ball choice. The flags record the
     // create-target's choice exactly as the 3D entry's do, so every frame
@@ -4055,13 +4057,13 @@ export class FractalScene {
   }
 
   /**
-   * {@link enterSurfaceCompute4Session}'s FORWARD-ORBIT sibling (fr-vag4)
-   * — the 4D escape chain, which is compute-only (the fragment 4D tracer
-   * carries no escape GLSL, fr-rsp6's verdict for fold-shaped 4D sessions
-   * one family over). Structurally
-   * {@link enterSurfaceComputeForwardSession} with the 4D preview clamp:
-   * the orbit's PASS budget, no balloon ever (a forward solid's echo
-   * swallows the camera), and the floor dropping under the bailout ball.
+   * {@link enterSurfaceCompute4Session}'s FORWARD-ORBIT sibling — the 4D
+   * escape chain, which is compute-only (the fragment 4D tracer carries no
+   * escape GLSL, the same verdict fold-shaped 4D sessions took one family
+   * over). Structurally {@link enterSurfaceComputeForwardSession} with the 4D
+   * preview clamp: the orbit's PASS budget, no balloon ever (a forward
+   * solid's echo swallows the camera), and the floor dropping under the
+   * bailout ball.
    */
   enterSurfaceComputeEscape4Session(groundPlane = false, ballRadius = 1): void {
     this.renderNeeded = true;
@@ -4080,7 +4082,7 @@ export class FractalScene {
   }
 
   /**
-   * Record what the session's device can allocate for ONE frame (fr-biox):
+   * Record what the session's device can allocate for ONE frame:
    * `SurfaceComputeRenderer.maxFrameRays`, set once the renderer exists —
    * the enters above all run while `create()` is still in flight. Frames
    * are sized against it from here on: the live pane fits under it, a
@@ -4115,19 +4117,18 @@ export class FractalScene {
    * {@link setSurfaceFrameUniforms} writes as uniforms, handed across the
    * WebGPU seam as plain data. Preview frames raster at the governor's
    * rung of the drawing buffer and clamp depth via previewMaxDepth, the
-   * fr-hith/fr-ttg5 coupling; acceptance eps ALWAYS derives from the
-   * native buffer height (fr-7xgi — a tier coarsens sampling, never
+   * adaptive rung's scale/depth coupling; acceptance eps ALWAYS derives
+   * from the native buffer height (a tier coarsens sampling, never
    * acceptance).
    */
   surfaceComputeFrameSpec(tier: RenderTier): SurfaceComputeFrameSpec {
     const size = this.renderer.getDrawingBufferSize(DRAW_SIZE);
     const scale = tier === "preview" ? this.surfacePreviewGovernor.scale : 1;
-    // fr-biox: a live frame IS the image — it cannot tile the way a
+    // A live frame IS the image — it cannot tile the way a
     // capture does — so an enormous drawing buffer traces at the largest
     // raster the device can allocate for and blits up (the preview tier's
     // own mechanism) rather than failing to allocate. A no-op on every
-    // ordinary display; acceptance eps stays native-height either way
-    // (fr-7xgi).
+    // ordinary display; acceptance eps stays native-height either way.
     const w = Math.max(1, Math.round(size.x * scale));
     const h = Math.max(1, Math.round(size.y * scale));
     const fit = fitSurfaceComputeRaster(w, h, this.surfaceComputeRayCap);
@@ -4148,13 +4149,13 @@ export class FractalScene {
     height: number,
     acceptHeight: number,
     /** The horizontal BAND of a taller image this raster covers, when it
-     * is one capture tile of several (fr-biox): `bottom` rows above the
+     * is one capture tile of several: `bottom` rows above the
      * full image's bottom row, out of `fullHeight`. The camera's
      * sub-frustum ({@link withViewBand}) already aims the rays; what the
      * band changes HERE is everything derived from the raster's height —
      * the trace eps (a tile's pixels are the full image's pixels, so its
      * cone footprint is the full image's) and the backdrop's `bgOffset`/
-     * `bgExtent` (fr-xn9s: the shared shape reads the FULL image's
+     * `bgExtent` (the shared shape reads the FULL image's
      * coordinates — see `fractal/background-shape.ts` — so a band passes
      * its own place in that image rather than a remapped pair of stops;
      * this retired `surfaceComputeBandStops`, which existed only because a
@@ -4178,7 +4179,7 @@ export class FractalScene {
     // A band traces the full image's pixels through a sub-frustum, so its
     // per-pixel cone footprint is the full image's, not its own raster's.
     const traceHeight = band ? band.fullHeight : height;
-    // fr-xn9s: this raster's place in the full image the shared shape is
+    // This raster's place in the full image the shared shape is
     // evaluated over — (0, 0)/(width, height) for an ordinary frame,
     // (0, band.bottom)/(width, band.fullHeight) for one capture tile of
     // several (bands are always full-width — surfaceComputeTileRows).
@@ -4211,19 +4212,19 @@ export class FractalScene {
       hitFloor: preview ? SURFACE_PREVIEW_HIT_FLOOR : SURFACE_FULL_HIT_FLOOR,
       lightDir: [light.x, light.y, light.z],
       ambient: params.ambient,
-      // The environment-light strength (fr-ehcj), mirroring uEnvLight.
+      // The environment-light strength, mirroring uEnvLight.
       envLight: params.envLight,
-      // The live fog density (fr-5h5d) — re-read at every spec assembly
+      // The live fog density — re-read at every spec assembly
       // exactly like the lighting/backdrop fields around it, so a live
       // Fog slider drag tracks the compute path the same frame the GLSL
       // uniform does.
       fogDensity: this.fogDensity,
-      // The live fog tint (fr-5h5d) — re-read at every spec assembly
+      // The live fog tint — re-read at every spec assembly
       // exactly like fogDensity above; strength 0 keeps the shade
       // kernel's fog toward the pixel's own backdrop alone.
       fogTint: [this.fogTint[0], this.fogTint[1], this.fogTint[2]],
       fogTintStrength: this.fogTintStrength,
-      // The live balloon tint (fr-j85n) — re-read at every spec assembly
+      // The live balloon tint — re-read at every spec assembly
       // like the fog pair above, and unconditional like it: the kernel
       // reads balloonTint/balloonTintStrength only under the balloon
       // wrapper, where hi.shell gates the mix, so a non-balloon session is
@@ -4234,10 +4235,10 @@ export class FractalScene {
         this.balloonTint[2],
       ],
       balloonTintStrength: this.balloonTintStrength,
-      // The live backdrop stops (fr-5ps1) — the same pair the GLSL tracers
+      // The live backdrop stops — the same pair the GLSL tracers
       // carry as uBgTop/uBgBottom, read fresh at every spec assembly so the
       // compute frames track a background change/crossfade exactly like a
-      // lighting change. ALWAYS the full-image stops now (fr-xn9s) — a
+      // lighting change. ALWAYS the full-image stops — a
       // capture tile's own place in the image rides bgOffset/bgExtent
       // below instead of a remapped pair.
       bgTop: [this.backdrop.top[0], this.backdrop.top[1], this.backdrop.top[2]],
@@ -4248,7 +4249,7 @@ export class FractalScene {
       ],
       bgOffset,
       bgExtent,
-      // The live backdrop SHAPE (fr-h3mp), mirroring the GLSL tracers'
+      // The live backdrop SHAPE, mirroring the GLSL tracers'
       // uBgShape/uBgCenter/uBgScale push in setBackground. Radial's scale
       // is backgroundRadialScale of bgExtent — the FULL image bgOffset/
       // bgExtent already name above — and deliberately NOT of `width`/
@@ -4271,11 +4272,11 @@ export class FractalScene {
         (this.surfaceLUTTexture?.image.data as Uint8Array | undefined) ?? null,
       lutVersion: this.surfaceLUTVersion,
       dither: true,
-      // The 4D session's live pose (fr-dlxh 4D cut): the same
-      // (rotor, w0, halfW) state setSurface4View maintains — already
-      // CONVERTED to literal world w (fr-33yb happens at the setter),
-      // re-read at every spec assembly so the compute frames track the
-      // tumble/slider exactly as the fragment tracer's uniforms would.
+      // The 4D session's live pose: the same (rotor, w0, halfW) state
+      // setSurface4View maintains — already CONVERTED to literal world w
+      // (that happens at the setter), re-read at every spec assembly so the
+      // compute frames track the tumble/slider exactly as the fragment
+      // tracer's uniforms would.
       ...(this.surfaceCompute4
         ? {
             view4: {
@@ -4285,7 +4286,7 @@ export class FractalScene {
             },
           }
         : {}),
-      // The balloon session's live block (fr-5wlv.5): keyed on the
+      // The balloon session's live block: keyed on the
       // SESSION flag — the kernels were compiled with the wrapper and
       // their 320-byte params struct — with values re-derived from the
       // stored ball + rMult at every assembly, so the R slider is live
@@ -4295,7 +4296,7 @@ export class FractalScene {
         const balloon = this.surfaceBalloonSpec();
         return balloon ? { balloon } : {};
       })(),
-      // The floor session's live block (fr-rhn5): keyed on the SESSION
+      // The floor session's live block: keyed on the SESSION
       // flag — the kernels were compiled with the plane arm and their
       // 336-byte params struct — with values re-derived from the stored
       // ball at every assembly, the balloon block's discipline above.
@@ -4351,10 +4352,10 @@ export class FractalScene {
    * compute path's analogue of the strip jobs' completed-trace samples. */
   /** Feed a compute preview's measured wall cost to the preview governor.
    * `truncated` marks a budget-cut frame (unresolved rays remained): the
-   * governor then panics through its warm-up (fr-khxy round 3 — see
-   * PreviewGovernor.sample). Returns the new scale when the sample tipped
-   * a rung, else null — the caller re-kicks a truncated preview exactly
-   * when a drop happened. */
+   * governor then panics through its warm-up (the truncated-preview
+   * panic — see PreviewGovernor.sample). Returns the new scale when the
+   * sample tipped a rung, else null — the caller re-kicks a truncated
+   * preview exactly when a drop happened. */
   sampleSurfaceComputeCost(traceMs: number, truncated = false): number | null {
     return this.surfacePreviewGovernor.sample(traceMs, { truncated });
   }
@@ -4366,18 +4367,18 @@ export class FractalScene {
   }
 
   /**
-   * Compute-path Save-PNG (fr-tzdg): trace at the export raster fully
+   * Compute-path Save-PNG: trace at the export raster fully
    * off-canvas (`trace` runs the async compute frame), then present and
    * read back in ONE synchronous span at the export pixel ratio — the
    * paint and the `toBlob` snapshot share a task, the same discipline as
    * {@link captureSurfaceFrame}. The spec is assembled under the centered
    * projection so the export composes like every other capture
-   * (fr-936q), at the export buffer's own eps (finer resolution traces
-   * finer, exactly like the GLSL capture).
+   * (the panel inset is lifted), at the export buffer's own eps (finer
+   * resolution traces finer, exactly like the GLSL capture).
    *
-   * TILED since fr-biox, because a frame's cost in GPU memory scales with
-   * its rays (36 B/ray across six buffers since fr-si66; 44 across five
-   * before it) and an export's rays scale
+   * TILED, because a frame's cost in GPU memory scales with its rays
+   * (36 B/ray across six buffers once the march status moved to its own
+   * side channel; 44 across five before that) and an export's rays scale
    * with exportScale SQUARED: a 4x export of a 1920x1057 pane is 32.5M
    * rays — a 520 MB ray-state buffer inside a ~1.2 GB frame — which
    * devices refuse. WebGPU does not throw for it either; `createBuffer`
@@ -4413,12 +4414,12 @@ export class FractalScene {
     // camera can move through it (auto-orbit, a drift leg, a tween still
     // gliding): re-reading the pose per band would compose each stripe
     // from a different one. This is the compute path's answer to the
-    // WebGL drain's frozen full-tier uniforms (fr-7mfx) — and it freezes
+    // WebGL drain's frozen full-tier uniforms — and it freezes
     // the live lighting/backdrop/palette inputs with it.
     // invalidate: false — this readback only assembles band specs under the
     // centered camera; nothing paints the live canvas, so the wrapper's
     // capture invalidation would be a phantom pose change costing a full
-    // re-settle after every compute Save-PNG (fr-vja8.45).
+    // re-settle after every compute Save-PNG.
     const bands = this.withCenteredProjection(() => {
       const specs: SurfaceComputeFrameSpec[] = [];
       for (let bottom = 0; bottom < height; bottom += rows) {
@@ -4475,7 +4476,7 @@ export class FractalScene {
   /**
    * Assemble something under a SUB-FRUSTUM of the live projection: the
    * band of `bandHeight` rows sitting `bandBottom` rows above the bottom
-   * of a `fullWidth` x `fullHeight` image (fr-biox). Three.js's view
+   * of a `fullWidth` x `fullHeight` image. Three.js's view
    * offset is exactly this — a sub-view of a notional full image, with
    * its own y measured from the TOP — so a band's rays are the full
    * image's rays, no reprojection of our own. Restores through
@@ -4515,11 +4516,11 @@ export class FractalScene {
    * buffer (see {@link captureSurfaceFrame}) traces at its own, finer
    * resolution rather than the on-screen one.
    *
-   * `tier` (fr-5ne3) is main.ts's interaction split: "full" (the default —
+   * `tier` is main.ts's interaction split: "full" (the default —
    * offline export and thumbnails land here by construction) traces at full
    * quality SYNCHRONOUSLY, through the same adaptive scissored strips and
-   * the same pump the async settle job uses (fr-sjff: every strip is its
-   * own flushed submission, so even a pathological close-up export cannot
+   * the same pump the async settle job uses (every strip is its own
+   * flushed submission, so even a pathological close-up export cannot
    * wedge the GPU process), then presents the completed frame; "preview" traces
    * {@link surfacePreviewTarget} at {@link surfacePreviewGovernor}'s
    * measured rung with the preview-tier quality knobs (depth clamp,
@@ -4528,13 +4529,13 @@ export class FractalScene {
    * carries the quality. Every knob is a plain uniform write restored by
    * the next full-tier call, so the shader bodies (and their CPU-oracle
    * discipline) are untouched. Each preview trace also feeds its own
-   * measured cost back to the governor (fr-hith), so the rung tracks what
+   * measured cost back to the governor, so the rung tracks what
    * this device actually manages on this system — and only preview frames
    * are sampled, never the settle or capture paths.
    */
   renderSurface(tier: RenderTier = "full"): void {
-    // A yielding capture owns the target and the frozen full-tier uniforms
-    // (fr-7mfx). main.ts's tick already stands aside on
+    // A yielding capture owns the target and the frozen full-tier
+    // uniforms. main.ts's tick already stands aside on
     // {@link surfaceCaptureBusy}; leaving renderNeeded set means the
     // invalidation this call carried is honoured once the capture lets go,
     // rather than being swallowed here.
@@ -4543,7 +4544,7 @@ export class FractalScene {
     if (this.surfaceComputeActive) {
       // A compute session never compiled the fold GLSL — a stray call
       // through this path must not trigger the ~25s Mesa link the mode
-      // exists to avoid (fr-tzdg). main.ts routes ticks and captures
+      // exists to avoid. main.ts routes ticks and captures
       // before this can matter; re-presenting keeps an accidental caller
       // harmless.
       this.representSurfaceComputeFrame();
@@ -4558,24 +4559,24 @@ export class FractalScene {
       // fold-free system on a healthy GPU — the job completes right here
       // and this call is behaviorally the old single-draw path; on heavy
       // systems the partial presents and stepSurfacePreview continues it
-      // next frame (fr-du81).
+      // next frame.
       this.armSurfacePreview(size);
       this.stepSurfacePreview();
       return;
     }
     // Full quality, synchronously — but never as one unbounded GPU
-    // submission (fr-sjff): the same adaptive strips through the same
-    // pipelined pump as the async settle job (fr-y6m0), run to completion
+    // submission: the same adaptive strips through the same
+    // pipelined pump as the async settle job, run to completion
     // right here. Offline export and thumbnails land on this path, so a
     // pathological close-up export is watchdog-safe
-    // too — and COST-BOUNDED (fr-id9r): a monster fold pose prices a
+    // too — and COST-BOUNDED: a monster fold pose prices a
     // full-tier frame in minutes to HOURS of frozen tab, so the frame
     // refuses up front when measured evidence predicts past the export
     // ceiling (checked before any live job is disturbed), and the drain
     // below aborts when an unpredicted pose lies. Both throw
     // {@link SurfaceCaptureCostError}; callers own the surface (offline
     // "Export failed", thumbnail's explorer fallback). This is where the
-    // ceilings live NOW and only here (fr-avf6): these callers freeze the
+    // ceilings live NOW and only here: these callers freeze the
     // tab for the frame's whole duration and offer no way to stop it, so a
     // predicted monster has to be refused for them. The interactive
     // Save-PNG has a modal, a percentage and a Cancel, so it is refused
@@ -4596,7 +4597,7 @@ export class FractalScene {
    * front when measured evidence prices the frame past the export ceiling,
    * clear the live jobs out of the way, size the settle target and freeze
    * this frame's uniforms into it. Split out of {@link renderSurface} so
-   * the synchronous drain and the yielding capture drain (fr-7mfx) arm
+   * the synchronous drain and the yielding capture drain arm
    * IDENTICALLY — the refusal, the abandon trio and the uniform freeze are
    * the parts that must not drift between them.
    *
@@ -4607,14 +4608,14 @@ export class FractalScene {
    * {@link setSurfaceFrameUniforms} snapshots the camera into uniforms and
    * nothing after it reads the camera again.
    *
-   * `costCeilings` is the fr-avf6 split. The SYNCHRONOUS callers pass true:
-   * offline export and thumbnails run with nobody watching and no way to
-   * interrupt a frame, so a predicted monster is refused here — BEFORE any
-   * live job is disturbed, so a refused export leaves the pane exactly as
-   * it was — with {@link SurfaceCaptureCostError}. The interactive capture
-   * passes false and is never refused: it has a modal disclosing measured
-   * coverage and a Cancel that works, which is a better answer than a
-   * prediction that over-predicts ~4x, and the same button already behaves
+   * `costCeilings` is the interactive/synchronous split. The SYNCHRONOUS
+   * callers pass true: offline export and thumbnails run with nobody watching
+   * and no way to interrupt a frame, so a predicted monster is refused here —
+   * BEFORE any live job is disturbed, so a refused export leaves the pane
+   * exactly as it was — with {@link SurfaceCaptureCostError}. The interactive
+   * capture passes false and is never refused: it has a modal disclosing
+   * measured coverage and a Cancel that works, which is a better answer than
+   * a prediction that over-predicts ~4x, and the same button already behaves
    * that way on the WebGPU arm.
    */
   private beginSurfaceFullFrame(
@@ -4641,7 +4642,7 @@ export class FractalScene {
     this.abandonSurfacePreview();
     sizeTarget(this.surfaceSettleTarget, width, height);
     this.setSurfaceFrameUniforms("full", height, height);
-    // Single-pass by default (fr-jf9y), which is what the synchronous
+    // Single-pass by default, which is what the synchronous
     // callers of this — offline export force frames and thumbnails — stay
     // at: an export's cost would multiply by the frame count, and a
     // thumbnail is already cheap and small. The interactive Save-PNG
@@ -4656,14 +4657,15 @@ export class FractalScene {
         worstMsPerPx: this.surfaceStripWorstMsPerPx(),
       }),
       this.surfaceStripPriorMsPerPx(),
-      // A capture NEVER presents: the export-scale target must not reach
-      // the canvas mid-drain (fr-7mfx keeps the giant buffer off screen),
-      // and a present-on-drain gap would only idle the GPU for a blit
-      // nobody sees. An unreachable present due keeps the pump refilling.
+      // A capture NEVER presents: the export-scale target must not reach the
+      // canvas mid-drain (the export modal keeps the giant buffer off
+      // screen), and a present-on-drain gap would only idle the GPU for a
+      // blit nobody sees. An unreachable present due keeps the pump
+      // refilling.
       Number.POSITIVE_INFINITY,
     );
-    // Adopt whatever the jobs just abandoned still have executing (fr-7to5)
-    // rather than flushing it: since fr-y6m0 the drains pipeline, so their
+    // Adopt whatever the jobs just abandoned still have executing
+    // rather than flushing it: the drains pipeline, so their
     // refill ceiling has to price the REAL GL queue, and their first fence
     // batch has to attribute its busy wall over backlog + own pixels
     // instead of charging a predecessor's queue to this frame. Inherited
@@ -4677,20 +4679,20 @@ export class FractalScene {
    * Retire a full-tier job and record what it taught. The shared tail of
    * {@link renderSurface} and {@link captureSurfaceFrame}; throws
    * {@link SurfaceCaptureCostError} on the spend ceiling, which only the
-   * synchronous drain can reach (fr-avf6), and the caller surfaces the
+   * synchronous drain can reach, and the caller surfaces the
    * refusal.
    *
    * A frame that did not finish teaches nothing about its own cost — a
    * partial's per-pixel figure understates a frame whose expensive rows
-   * it never reached, and strip cost is bimodal enough (fr-id9r measured
-   * a 100-1000x band) that under-predicting is the direction that freezes
+   * it never reached, and strip cost is bimodal enough (a measured
+   * 100-1000x band) that under-predicting is the direction that freezes
    * a tab. But the evidence the ARMING threw away is still good: the pose
    * has not moved, so what priced this view a moment ago prices it now.
    * Restoring it keeps a cancelled export from sending the next one to the
-   * preview fallback's ~5x over-prediction (fr-7mfx) — which since fr-avf6
-   * decides only whether the modal skips its grace period for an
-   * interactive save, but still decides whether a thumbnail or an offline
-   * frame is refused outright.
+   * preview fallback's ~5x over-prediction — which now decides only
+   * whether the modal skips its grace period for an interactive save, but
+   * still decides whether a thumbnail or an offline frame is refused
+   * outright.
    */
   private finishSurfaceFullFrame(
     arm: SurfaceFullFrameArm,
@@ -4701,7 +4703,7 @@ export class FractalScene {
     // TIGHTEN the live evidence but never own it — the pose did not move,
     // so the completed live settle/preview evidence is still the truth the
     // next live job should price from. A COMPLETED one may additionally
-    // SEED an empty chain (fr-y1m7), which is the only evidence an offline
+    // SEED an empty chain, which is the only evidence an offline
     // export ever gets.
     this.retireStripJob(
       arm.job,
@@ -4750,13 +4752,13 @@ export class FractalScene {
 
   /**
    * Best per-pixel cost estimate (ms) available BEFORE a strip job's probe
-   * runs — the planner sizes the probe from it (fr-096u). A completed
+   * runs — the planner sizes the probe from it. A completed
    * preview's measurement when one exists (it understates the full tier's
    * deeper depth clamp and richer budgets by a small factor, which the
    * probe's target absorbs); else the pessimistic fold-class prior, so a
    * fold session's very FIRST submission is bounded the way the compute
-   * path's first slice is (fr-p8bc's discipline); else null — affine-cheap
-   * systems keep the legacy rows-fraction probe.
+   * path's first slice is (the shade-batch discipline); else null —
+   * affine-cheap systems keep the legacy rows-fraction probe.
    */
   private surfaceStripPriorMsPerPx(): number | null {
     return (
@@ -4765,12 +4767,12 @@ export class FractalScene {
     );
   }
 
-  /** Worst-case per-pixel price (ms) for the planner's strip cap
-   * (fr-096u's second mechanism): {@link StripCostEvidence.price} on the
-   * class-pessimistic WORST constants — a single strip that plans into
-   * the frame's most expensive band must still fit the watchdog, so
-   * before evidence exists the fold floor assumes band prices
-   * ({@link STRIP_FOLD_WORST_MS_PER_PX}'s doc). Without the evidence
+  /** Worst-case per-pixel price (ms) for the planner's strip cap — the second
+   * mechanism guarding against the preemption hang: {@link
+   * StripCostEvidence.price} on the class-pessimistic WORST constants — a
+   * single strip that plans into the frame's most expensive band must still
+   * fit the watchdog, so before evidence exists the fold floor assumes band
+   * prices ({@link STRIP_FOLD_WORST_MS_PER_PX}'s doc). Without the evidence
    * relaxation, measured-cheap fold settles would crawl through tens of
    * thousands of class-floor micro-strips of pure readback overhead. */
   private surfaceStripWorstMsPerPx(): number {
@@ -4781,7 +4783,7 @@ export class FractalScene {
     );
   }
 
-  /** Per-pixel price (ms) for the pump's in-flight queue bound (fr-id9r)
+  /** Per-pixel price (ms) for the pump's in-flight queue bound
    * — {@link StripCostEvidence.price} on the TYPICAL-cost class floors (the
    * fold probe prior, not the fold worst constant), still raised live by
    * the job's own ratcheted observations in the pump. The two bounds
@@ -4797,7 +4799,7 @@ export class FractalScene {
    * first expensive batch ratchets the price is ~one
    * {@link SURFACE_STRIP_QUEUE_WORST_MS} of prior-priced pixels — the
    * measured 0.5-4ms/px transition class lands that at low seconds, the
-   * bead's irreducible per-monster-pixel floor. */
+   * irreducible per-monster-pixel floor. */
   private surfaceStripQueueWorstMsPerPx(): number {
     return this.stripEvidence.price(
       this.surfaceDeFoldClass
@@ -4807,9 +4809,10 @@ export class FractalScene {
   }
 
   /** Retire a strip job into the evidence chain — the rules (completed
-   * replaces both directions, superseded raises only, capture never owns,
-   * fr-y1m7's seed) live in {@link StripCostEvidence.retire}; this adapter
-   * contributes only the job's observed worst px cost. */
+   * replaces both directions, superseded raises only, capture never owns, a
+   * completed capture may seed an empty chain) live in {@link
+   * StripCostEvidence.retire}; this adapter contributes only the job's
+   * observed worst px cost. */
   private retireStripJob(job: SurfaceStripJob, outcome: StripJobOutcome): void {
     this.stripEvidence.retire(outcome, job.planner.observedWorstMsPerPx);
   }
@@ -4817,8 +4820,8 @@ export class FractalScene {
   /** Build a strip job around `planner`: the cost estimate starts at the
    * probe prior (null for affine-cheap systems — the sync-collapse
    * regime's marker, see pumpStrips), the in-flight queue prices at the
-   * frozen {@link surfaceStripQueueWorstMsPerPx} (fr-id9r — frozen like
-   * the planner's floor, and raised live by the planner's own ratchet),
+   * frozen {@link surfaceStripQueueWorstMsPerPx} (frozen like the
+   * planner's floor, and raised live by the planner's own ratchet),
    * and presents pace at `presentIntervalMs` (see present-on-drain in
    * pumpStrips; `Infinity` for the capture jobs, which never present). */
   private newStripJob(
@@ -4866,7 +4869,7 @@ export class FractalScene {
       // Pixels still riding in-flight fences were planned but never
       // accounted — extrapolate from the MEASURED pixels only, or the
       // estimate would read low by the whole queued cost. Own pixels
-      // only (fr-7to5): fences this job itself inherited were never in
+      // only: fences this job itself inherited were never in
       // its planner's plannedPx, so counting them would deflate (or
       // negate) the traced share. Computed BEFORE the harvest below
       // zeroes the counters.
@@ -4877,7 +4880,7 @@ export class FractalScene {
         this.surfacePreviewGovernor.sample(
           (job.spentMs * job.planner.totalPx) / tracedPx,
         );
-        // FRESHER WINS (fr-b8o5): the superseded job measured the pose
+        // FRESHER WINS: the superseded job measured the pose
         // the view is at (or just left), while surfacePreviewPxCostMs can
         // predate the whole gesture. 4D slice moves shift per-pixel cost
         // 20-40x pose to pose, and re-arming at the stale-cheap completed
@@ -4898,7 +4901,7 @@ export class FractalScene {
     // uPixelEps derives from the TARGET's height (shading probes match
     // the preview pixels), but ACCEPTANCE derives from the native height
     // — a preview must never accept a hit the settle frame would reject
-    // (fr-7xgi; see setSurfaceFrameUniforms).
+    // (see setSurfaceFrameUniforms).
     const scale = this.surfacePreviewGovernor.scale;
     const w = Math.max(1, Math.round(size.x * scale));
     const h = Math.max(1, Math.round(size.y * scale));
@@ -4915,20 +4918,21 @@ export class FractalScene {
       this.renderer.setRenderTarget(null);
     }
     this.setSurfaceFrameUniforms("preview", h, size.y);
-    // Probe SIZED from the prior (fr-096u): a measured px cost when one
+    // Probe SIZED from the prior: a measured px cost when one
     // exists, else the pessimistic fold-class prior. Either way the probe
     // plans at most ~one strip target of predicted GPU — during a drag on
     // a heavy fold system every frame re-arms, and each re-arm's first
-    // submission stays bounded (fr-du81's pacing-only priming used to
-    // leave the probe's SIZE fixed at a rows fraction, which on fold
-    // systems was seconds of GPU in the one unmeasured submission).
+    // submission stays bounded (priming the PACING alone used to leave
+    // the probe's SIZE fixed at a rows fraction, which on fold systems
+    // was seconds of GPU in the one unmeasured submission).
     const previewPrior =
       pxCostMs ?? (this.surfaceDeFoldClass ? STRIP_FOLD_PRIOR_MS_PER_PX : null);
     if (SURFPERF) {
-      // The evidence-chain components behind worst= (fr-1znb diagnosis):
-      // evidenced= is the completed-job floor (null until one completes),
-      // partial= the superseded-job term — both RAW, before
-      // STRIP_WORST_EVIDENCE_SAFETY scales them into worst.
+      // The evidence-chain components behind worst= (the instruments the
+      // off-centre-slice cost diagnosis shipped): evidenced= is the
+      // completed-job floor (null until one completes), partial= the
+      // superseded-job term — both RAW, before STRIP_WORST_EVIDENCE_SAFETY
+      // scales them into worst.
       console.log(
         `[surfperf] preview armed ${String(w)}x${String(h)}` +
           ` prior=${String(previewPrior)}` +
@@ -4947,7 +4951,7 @@ export class FractalScene {
       SURFACE_PREVIEW_PRESENT_MS,
     );
     // Inherit whatever the superseded job (or an abandoned settle — one
-    // GL queue, whichever target owned it) still has executing (fr-7to5):
+    // GL queue, whichever target owned it) still has executing:
     // the refill ceiling then sees the real queue instead of stacking
     // another probe behind the backlog, and the first fence batch
     // attributes over backlog + own pixels.
@@ -4959,9 +4963,9 @@ export class FractalScene {
    * in the pump's sync-collapse regime, heavy ones ride the pipelined
    * queue — and repaint the canvas on its present-on-drain cadence. On
    * completion the job's accumulated GPU-busy cost feeds the governor
-   * (fr-hith), and true is returned (no-op true when no job is running).
-   * However expensive the pose, the job runs to COMPLETION — the
-   * fr-24to/fr-zx34 verdict: an automatic give-up (bail, sub-floor
+   * and true is returned (no-op true when no job is running).
+   * However expensive the pose, the job runs to COMPLETION — the standing
+   * no-automatic-give-up verdict: an automatic give-up (bail, sub-floor
    * rung, or spend/prediction truncation — two shipped rounds of the
    * latter each clipped a completable heavy-lens preview) decides for
    * the user what only the user can weigh, so the mode instead
@@ -4993,7 +4997,7 @@ export class FractalScene {
             ` spentMs=${job.spentMs.toFixed(1)}` +
             ` pxCost=${this.surfacePreviewPxCostMs.toFixed(4)}` +
             ` worstSeen=${job.planner.observedWorstMsPerPx.toFixed(3)}` +
-            // The fr-ado7 cost model, so a field run can tell a
+            // The two-term cost model, so a field run can tell a
             // fixed-cost-dominated frame from an expensive one: an
             // intercept past the tier target is the regime the sizer
             // switches branches in.
@@ -5014,7 +5018,7 @@ export class FractalScene {
   /** Discard the in-flight preview job (a full-tier trace or a session
    * exit supersedes it). No governor sample: the discard is not evidence
    * about trace cost. Its in-flight fences pool for the next job to arm
-   * (fr-7to5) — the entry points that must not inherit flush the pool
+   * — the entry points that must not inherit flush the pool
    * themselves. */
   abandonSurfacePreview(): void {
     this.poolStripBacklog(this.surfacePreviewJob);
@@ -5028,19 +5032,19 @@ export class FractalScene {
   }
 
   /** Honest coverage of the in-flight surface trace, for main.ts's
-   * progress readout (fr-zx34's verdict: the mode never gives up on a
+   * progress readout (the standing verdict: the mode never gives up on a
    * frame — it reports progress and the USER decides whether the pose
    * is worth the wait). Traced-and-measured pixels over the job's
    * total: the preview job when one is mid-flight, else the settle
    * job, else null (nothing grinding — settled, superseded, or not in
    * surface mode). No time predictions here by design: two shipped
    * rounds of prediction-driven truncation each misjudged a
-   * completable preview (fr-zx34); a moving percent lets the user
+   * completable preview; a moving percent lets the user
    * read the rate themselves. */
   surfaceRenderProgress(): {
     phase: "preview" | "settle";
     fraction: number;
-    /** Which supersampling pass is tracing, 1-based (fr-jf9y), and how
+    /** Which supersampling pass is tracing, 1-based, and how
      * many the sequence wants. Always 1/1 for a preview and for every
      * single-pass settle, so a caller that ignores them reads exactly what
      * it read before. */
@@ -5060,7 +5064,7 @@ export class FractalScene {
     if (settle) {
       // Coverage spans the WHOLE sequence, so the row's percentage stays
       // monotone across the passes instead of resetting to 0% eight times
-      // (the compute arm's `done`/`total` convention, fr-vpbq).
+      // (the compute arm's `done`/`total` convention).
       const samples = this.surfaceSampleTotal;
       return {
         phase: "settle",
@@ -5074,22 +5078,21 @@ export class FractalScene {
     return null;
   }
 
-  /** The unmasked WebGL renderer string (fr-tmgf):
-   * WEBGL_debug_renderer_info where the browser exposes it, else the
-   * masked RENDERER. main.ts matches it against the software-rasterizer
-   * tells ONCE at boot — the incident behind the bead was a browser that
-   * silently blocklisted the GPU, so every mode rendered on SwiftShader
-   * for a day with nothing on screen saying so. Lives here because raw-GL
-   * access stays inside FractalScene. */
+  /** The unmasked WebGL renderer string: WEBGL_debug_renderer_info where the
+   * browser exposes it, else the masked RENDERER. main.ts matches it against
+   * the software-rasterizer tells ONCE at boot — the incident behind it was a
+   * browser that silently blocklisted the GPU, so every mode rendered on
+   * SwiftShader for a day with nothing on screen saying so. Lives here
+   * because raw-GL access stays inside FractalScene. */
   unmaskedRendererLabel(): string | null {
     return unmaskedWebglRenderer(this.renderer.getContext());
   }
 
   /**
-   * Compile the ACTIVE surface material's program off the critical path
-   * (fr-du81). The fold-frontier variant (fr-5rvk's SURFACE_FOLDS define)
-   * is a large program measured at ~25s of driver compile on desktop Mesa
-   * — synchronous at first draw, it blocks the main thread for the whole
+   * Compile the ACTIVE surface material's program off the critical path.
+   * The fold-frontier variant (the SURFACE_FOLDS define) is a large
+   * program measured at ~25s of driver compile on desktop Mesa —
+   * synchronous at first draw, it blocks the main thread for the whole
    * stall. `WebGLRenderer.compileAsync` compiles via
    * KHR_parallel_shader_compile where the driver offers it (polling
    * completion instead of blocking); where it doesn't, this degrades to
@@ -5137,11 +5140,11 @@ export class FractalScene {
     await this.renderer.compileAsync(this.surfaceCompileScene, this.camera);
     if (SURFPERF) {
       // Wall time of the driver's program compile+link — the fold variant's
-      // measured ~25s Mesa cliff, and fr-zqu8's gate metric for growing the
+      // measured ~25s Mesa cliff, and the gate metric for growing the
       // fold source. `khr` reports whether the async path
-      // (KHR_parallel_shader_compile) was even on offer: fr-f21s's
-      // session-death lottery is sessions that come up without it and pay
-      // the link synchronously.
+      // (KHR_parallel_shader_compile) was even on offer: the session-death
+      // lottery is sessions that come up without it and pay the link
+      // synchronously.
       const khr = this.renderer.extensions.has("KHR_parallel_shader_compile")
         ? 1
         : 0;
@@ -5154,10 +5157,10 @@ export class FractalScene {
   }
 
   /**
-   * One-pixel proof that the compiled tracer actually DRAWS (fr-du81):
+   * One-pixel proof that the compiled tracer actually DRAWS:
    * `compileAsync` resolves when the program's compile completes, not when
    * it succeeds — a driver that crashed its compiler thread (observed on
-   * Mesa/Iris under the 68KB fold program pre-fr-5rvk) reports link
+   * Mesa/Iris under the 68KB fold program) reports link
    * failure only at first use, as an INVALID_OPERATION on the draw. A
    * 1x1 scissored trace into the preview target is one DE evaluation —
    * microseconds — and `getError` after it is the verdict main.ts's gate
@@ -5187,8 +5190,8 @@ export class FractalScene {
 
   /**
    * Open a supersampling sequence over a `width` x `height` frame in
-   * {@link surfaceSettleTarget} (fr-jf9y — fr-vpbq's compute-arm shape
-   * said in strip vocabulary).
+   * {@link surfaceSettleTarget} — the compute arm's supersampling shape
+   * said in strip vocabulary.
    *
    * `samples` PASSES, each a whole-frame strip job through the untouched
    * pump, at {@link subPixelSample}'s offsets — the SAME R2 sequence the
@@ -5196,15 +5199,15 @@ export class FractalScene {
    * alternative, an N-loop inside the fragment, multiplies EVERY strip's
    * cost by N: the planner would ratchet and shrink strips to stay
    * watchdog-safe, so it would be safe, but a 3s settle would become 24s
-   * with nothing to show at 3s — against fr-096u/fr-id9r's bounded-strip
-   * tuning and against fr-24to's verdict that this renderer discloses
-   * progress rather than making the user wait blind.
+   * with nothing to show at 3s — against the bounded-strip tuning the
+   * preemption hang forced and against the standing verdict that this
+   * renderer discloses progress rather than making the user wait blind.
    *
    * `samples <= 1` is every path that existed before this: previews (cheap
    * by definition and replaced anyway), thumbnails, and offline video force
    * frames (whose cost would multiply by the frame count). It releases the
    * accumulator and leaves the jitter at the pixel centre, so those traces
-   * are the pre-fr-jf9y ones value for value.
+   * are the pre-supersampling ones value for value.
    */
   private beginSurfaceSamples(
     samples: number,
@@ -5247,7 +5250,7 @@ export class FractalScene {
   }
 
   /** Point the active tracer at the CURRENT pass's spot inside the pixel
-   * and arm a whole-frame strip job for it (fr-jf9y). Priors and worst
+   * and arm a whole-frame strip job for it. Priors and worst
    * prices come from the same accessors {@link beginSurfaceSettle} uses,
    * so a later pass paces exactly like the first — except that pass 0's
    * completed retire has by now put a MEASURED observation in the evidence
@@ -5259,12 +5262,12 @@ export class FractalScene {
    * that never takes a gap keeps ~{@link SURFACE_STRIP_QUEUE_MS} of work
    * permanently in flight for whatever interrupts it to wait behind.
    * MEASURED (scripts/surface-tier.verify.mjs, SwiftShader, default
-   * system): with the gaps suppressed the mid-drag preview took longer
-   * than the gate's 1.5s to reach the canvas and its softness check read
-   * 1.03 against a 0.81 control — i.e. a drag mid-settle showed the
-   * settled frame instead of a preview, which is fr-nl32's symptom
-   * arriving by another route. What a later pass presents INTO that gap
-   * is the last COMPLETED image ({@link presentSurfaceSampleImage}), never
+   * system): with the gaps suppressed the mid-drag preview took longer than
+   * the gate's 1.5s to reach the canvas and its softness check read 1.03
+   * against a 0.81 control — i.e. a drag mid-settle showed the settled frame
+   * instead of a preview — the re-arm-discards-partials symptom arriving by
+   * another route. What a later pass presents INTO that gap is the last
+   * COMPLETED image ({@link presentSurfaceSampleImage}), never
    * the half-traced pass being written over it. */
   private armSurfaceSamplePass(width: number, height: number): SurfaceStripJob {
     const [sx, sy] = subPixelSample(this.surfaceSampleIndex);
@@ -5285,7 +5288,7 @@ export class FractalScene {
 
   /**
    * Fold the completed pass sitting in {@link surfaceSettleTarget} into the
-   * running linear-light sum (fr-jf9y).
+   * running linear-light sum.
    *
    * THE GAMMA DECODE HAPPENS HERE, on the way in, and the re-encode in
    * {@link encodeSurfaceSampleMean} on the way out. Both tracers end with
@@ -5319,7 +5322,7 @@ export class FractalScene {
     );
     const tRead = SURFPERF ? performance.now() : 0;
     const px = width * height;
-    // Coverage rides this loop (fr-7k0o): one byte compare per pixel in a
+    // Coverage rides this loop: one byte compare per pixel in a
     // pass that is already reading every pixel back, against a channel the
     // tracers write and nothing displays. It is measured on the FIRST
     // completed pass — the frame the blank-frame question is about is the
@@ -5352,7 +5355,7 @@ export class FractalScene {
 
   /**
    * Count the completed settle target's COVERED pixels when the sample
-   * accumulator is not there to count them for free (fr-7k0o).
+   * accumulator is not there to count them for free.
    *
    * "Covered" is the alpha flag the tracers write: 1 for a hit or a lit
    * ground plane, 0 for a miss, an exhausted ray, or backdrop — the WebGPU
@@ -5379,9 +5382,9 @@ export class FractalScene {
 
   /**
    * Share of the completed settle frame that drew something, or null if no
-   * settle pass has completed since the last {@link beginSurfaceSettle}
-   * (fr-7k0o). main.ts's blank-frame notice reads this on the WebGL arm,
-   * where `surface-compute.ts` hands it `(hit + plane) / rays` directly.
+   * settle pass has completed since the last {@link beginSurfaceSettle}.
+   * main.ts's blank-frame notice reads this on the WebGL arm, where
+   * `surface-compute.ts` hands it `(hit + plane) / rays` directly.
    * Same units — a fraction of the settle frame's pixels — and the same
    * classification, so the two engines cannot disagree about whether a
    * document rendered.
@@ -5392,18 +5395,17 @@ export class FractalScene {
 
   /**
    * Re-encode the mean of the folded passes over the readback buffer it was
-   * accumulated from (fr-jf9y) — the gamma decode's inverse, see
+   * accumulated from — the gamma decode's inverse, see
    * {@link foldSurfaceSample}. In place, so a pass costs one full-frame
    * readback and one upload with no copy between them; alpha is left as the
-   * trace wrote it — since fr-7k0o that is the last folded pass's COVERAGE
-   * flag rather than an opacity, which is invisible because the present
-   * blit strips alpha to 1 (fr-1wbv: three r163+ creates the canvas
-   * `alpha: true` regardless of the renderer's `alpha` param, so a
-   * coverage-0 pixel that DID reach the canvas composited the page
-   * background into the pane — the earlier "canvas is alpha:false" claim
-   * here was wrong) and is nothing this path reads. A no-op at one pass,
-   * where the buffer already holds that pass verbatim and a round trip
-   * through the table could only lose a least significant bit.
+   * trace wrote it — the last folded pass's COVERAGE flag rather than an
+   * opacity, which is invisible because the present blit strips alpha to 1
+   * (three r163+ creates the canvas `alpha: true` regardless of the
+   * renderer's `alpha` param, so a coverage-0 pixel that DID reach the canvas
+   * composited the page background into the pane — the earlier "canvas is
+   * alpha:false" claim here was wrong) and is nothing this path reads. A
+   * no-op at one pass, where the buffer already holds that pass verbatim and
+   * a round trip through the table could only lose a least significant bit.
    */
   private encodeSurfaceSampleMean(): void {
     const accum = this.surfaceSampleAccum;
@@ -5425,7 +5427,7 @@ export class FractalScene {
    * (null = the canvas): the mean of the folded passes, or pass 0 verbatim
    * while it is the only one. False — and nothing drawn — before any pass
    * has landed, which is the single-pass caller's whole path: it presents
-   * its traced target directly, byte for byte as before fr-jf9y.
+   * its traced target directly, byte for byte as before supersampling.
    */
   private presentSurfaceSampleImage(
     target: THREE.WebGLRenderTarget | null = null,
@@ -5438,7 +5440,7 @@ export class FractalScene {
   }
 
   /**
-   * Start the ASYNC full-quality settle job (fr-sjff): freeze the camera +
+   * Start the ASYNC full-quality settle job: freeze the camera +
    * full-tier quality uniforms (main.ts abandons the job on any
    * invalidation, so they cannot go stale mid-job), seed the settle target
    * with the parked preview stretched to full size — per-step progress
@@ -5448,7 +5450,7 @@ export class FractalScene {
    * animation frame. It always ARMS — however expensive the frame, the
    * planner's caps keep every submission bounded and the progressive
    * blits keep the grind visible and interruptible; a silent refusal
-   * would read as a broken render (the fr-096u review lesson).
+   * would read as a broken render (the preemption hang's review lesson).
    */
   beginSurfaceSettle(seed: "preview" | "hold" = "preview"): void {
     // main.ts holds the settle off until the preview job completes; a
@@ -5460,7 +5462,7 @@ export class FractalScene {
     this.setSurfaceFrameUniforms("full", size.y, size.y);
     // Seed for the rows the strips haven't traced yet. "preview" — the
     // normal choreography — upscales the completed preview of THIS pose.
-    // "hold" (fr-37c6, previews off) keeps the target's own stale pixels:
+    // "hold" (the previews-off pref) keeps the target's own stale pixels:
     // no preview of this pose exists, and the previous settled frame is the
     // exact image the frozen pane is already showing, so the develop stays
     // seamless — the compute path's prefill-from-last-frame discipline.
@@ -5482,13 +5484,13 @@ export class FractalScene {
     gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, SYNC_PIXEL);
     this.renderer.setRenderTarget(null);
     // The barrier above just drained any pooled backlog with the queue —
-    // its fences carry nothing the settle needs (fr-7to5: the normal
+    // its fences carry nothing the settle needs (the normal
     // choreography completes the preview before this runs, so a pool
     // here is the rare defensive-abandon case). Flush so the settle's
     // clean-probe invariant holds exactly as before inheritance existed.
     this.flushStripBacklog();
     // Probe SIZED from the completed preview's measured per-pixel cost —
-    // or the pessimistic fold prior when none exists (fr-096u). The
+    // or the pessimistic fold prior when none exists. The
     // rows-fraction probe this replaces was the settle's one unmeasured
     // submission: at full resolution on a fold system it measured up to
     // ~15s of GPU, past the i915 7.5s preemption window — the
@@ -5503,10 +5505,10 @@ export class FractalScene {
           ` partial=${this.stripEvidence.partialRawMsPerPx.toFixed(3)}`,
       );
     }
-    // fr-jf9y: the settle is the one live frame worth supersampling — it
-    // is what a parked view finally shows, and the escape-time objects'
-    // speckle is sub-pixel structure no march budget or viewport reaches
-    // (fr-vpbq's measurement, on the engine this arm stands in for). Pass
+    // The settle is the one live frame worth supersampling — it is what a
+    // parked view finally shows, and the escape-time objects' speckle is
+    // sub-pixel structure no march budget or viewport reaches (measured on
+    // the compute engine this arm stands in for). Pass
     // 0 is armed exactly as it always was, below.
     this.beginSurfaceSamples(SURFACE_STRIP_SETTLE_SAMPLES, size.x, size.y);
     this.surfaceCovered = null;
@@ -5527,7 +5529,7 @@ export class FractalScene {
    * Returns true when the frame is complete (the job is then disarmed).
    * No-op true when no job is running.
    *
-   * "Complete" means the whole SUPERSAMPLING SEQUENCE since fr-jf9y: a
+   * "Complete" means the whole SUPERSAMPLING SEQUENCE: a
    * finished pass folds itself into the running mean and arms the next
    * one here, so the caller's loop is unchanged and its own settled flag
    * still means "this is the final image". Pass 0 lands exactly when it
@@ -5539,7 +5541,7 @@ export class FractalScene {
     if (!done) {
       // Present into the pump's drain gap. Pass 0 shows its own strips
       // sharpening over the preview seed, exactly as this always did; a
-      // LATER pass repaints the last completed image instead (fr-jf9y) —
+      // LATER pass repaints the last completed image instead —
       // the gap itself is what keeps the queue from running permanently
       // full, but the pass being traced over the target must not be shown
       // half-done.
@@ -5557,11 +5559,11 @@ export class FractalScene {
   }
 
   /**
-   * A settle pass just completed (fr-jf9y): fold it in, present, and arm
+   * A settle pass just completed: fold it in, present, and arm
    * the next one — or report the sequence finished.
    *
-   * PASS 0 IS THE PRE-fr-jf9y SETTLE and is presented as one: the traced
-   * target itself, at the moment it always arrived. Everything after it
+   * PASS 0 IS THE PRE-SUPERSAMPLING SETTLE and is presented as one: the
+   * traced target itself, at the moment it always arrived. Everything after it
    * only refines, and an abandon between passes leaves the canvas showing
    * the mean of what completed — never a partially traced pass, which is
    * why the later jobs repaint that mean into their drain gaps rather than
@@ -5571,7 +5573,7 @@ export class FractalScene {
     const target = this.surfaceSettleTarget;
     if (this.surfaceSampleTotal <= 1) {
       // `?surfacesamples=1` — no accumulator, so the coverage count has to
-      // buy its own readback (fr-7k0o). One frame, once per settle, on a
+      // buy its own readback. One frame, once per settle, on a
       // debug path: the alternative is a blank-frame notice that silently
       // stops working under the flag that exists to A/B this arm.
       this.measureSurfaceCoverage(target.width, target.height);
@@ -5582,8 +5584,8 @@ export class FractalScene {
     this.foldSurfaceSample();
     this.encodeSurfaceSampleMean();
     if (first || !this.presentSurfaceSampleImage()) {
-      // Pass 0 presents its own TARGET — the pre-fr-jf9y settle, at the
-      // moment it always arrived — and never the readback of it.
+      // Pass 0 presents its own TARGET — the pre-supersampling settle, at
+      // the moment it always arrived — and never the readback of it.
       this.blitSurface(target.texture, null);
     }
     this.surfaceSampleIndex += 1;
@@ -5604,11 +5606,11 @@ export class FractalScene {
   /** Discard the in-flight settle job (a fresh invalidation supersedes
    * it). The settle target keeps its stale pixels; nothing reads them
    * until a new job re-seeds it. The completed-full-frame cost dies with
-   * the pose too (fr-id9r): every invalidation lands here, so the
+   * the pose too: every invalidation lands here, so the
    * capture predictor can never price a pose the measurement didn't
    * see. */
   abandonSurfaceSettle(): void {
-    // Settle fences pool for the NEXT preview to adopt (fr-7to5): the
+    // Settle fences pool for the NEXT preview to adopt: the
     // abandon crosses render targets, but the GL queue is one — the
     // re-armed preview's strips execute behind these exact submissions.
     this.poolStripBacklog(this.surfaceStripJob);
@@ -5629,7 +5631,7 @@ export class FractalScene {
    */
   presentSettledSurface(): void {
     // The supersampled settle's own image is the MEAN, not the last pass
-    // left in the target (fr-jf9y) — a re-present has to repaint what the
+    // left in the target — a re-present has to repaint what the
     // pane is already showing, or a recorder frame of a parked view would
     // be visibly noisier than the view it recorded.
     if (this.surfaceSampleMeanReady && this.presentSurfaceSampleImage()) return;
@@ -5641,11 +5643,11 @@ export class FractalScene {
    * a trace whose buffer is `height` pixels tall. `acceptHeight` is the
    * height of the FULL-RESOLUTION frame this trace stands in for (the
    * settle/capture buffer): hit acceptance derives its epsilon from THAT,
-   * tier-independently, so a preview can never accept a hit the settle
-   * frame would reject (fr-7xgi — the fold-phantom fix; see
-   * uAcceptPixelEps's doc in surface-material.ts). The tier knobs are all
-   * tracer-side (march/shadow/AO budgets, hit floor, depth clamp — plain
-   * uniform writes); the oracle-mirrored DE bodies never change.
+   * tier-independently, so a preview can never accept a hit the settle frame
+   * would reject (the fold-phantom fix; see uAcceptPixelEps's doc in
+   * surface-material.ts). The tier knobs are all tracer-side (march/shadow/AO
+   * budgets, hit floor, depth clamp — plain uniform writes); the
+   * oracle-mirrored DE bodies never change.
    */
   private setSurfaceFrameUniforms(
     tier: RenderTier,
@@ -5664,18 +5666,18 @@ export class FractalScene {
     const angularPerPixel = 2 * Math.tan((this.camera.fov * Math.PI) / 360);
     u.uPixelEps.value = angularPerPixel / Math.max(height, 1);
     u.uAcceptPixelEps.value = angularPerPixel / Math.max(acceptHeight, 1);
-    // Every freshly armed job aims at the pixel CENTRE (fr-jf9y). This is
+    // Every freshly armed job aims at the pixel CENTRE. This is
     // the ONE funnel each of them goes through, so resetting here is what
     // makes an abandoned supersampling pass unable to leak its jitter into
     // the preview, thumbnail or export that follows — and what keeps every
-    // single-pass trace value-identical to the pre-fr-jf9y one. Only
+    // single-pass trace value-identical to the pre-supersampling one. Only
     // {@link armSurfaceSamplePass} sets it otherwise, and only after this
     // has run for the sequence's first pass.
     (u.uPixelJitter.value as THREE.Vector4).set(0, 0, 0, 0);
     const preview = tier === "preview";
     // Derived per frame, never cached: the clamp depends on BOTH the
-    // active DE's own full depth (fr-ttg5) and the live rung (fr-hith),
-    // and the two change independently. A finer rung resolves smaller
+    // active DE's own full depth and the live governor rung, and the two
+    // change independently. A finer rung resolves smaller
     // pixels, so it must trace deeper or its unresolved core becomes a
     // visible blob — see previewMaxDepth.
     u.uMaxDepth.value = preview
@@ -5719,7 +5721,7 @@ export class FractalScene {
     if (done) {
       this.retireStripJob(job, "completed");
       // The completed settle's whole-frame cost is the capture
-      // predictor's best evidence (fr-id9r) — same tier, same pose;
+      // predictor's best evidence — same tier, same pose;
       // it dies with the pose in abandonSurfaceSettle.
       this.surfaceFullPxCostMs = job.spentMs / Math.max(1, job.planner.totalPx);
       if (SURFPERF) {
@@ -5738,20 +5740,20 @@ export class FractalScene {
   }
 
   /**
-   * The shared strip pump under both the settle job and the preview job
-   * (fr-du81/fr-096u): collect completed strips, submit new ones, report
-   * completion and when the caller should present. THE cost model this
-   * pump exists for, measured on Mesa/Iris (fr-096u's perf review): a
-   * forced-completion readback costs ~10-25ms REGARDLESS of strip size,
-   * so per-strip joins multiply that floor by the planner's strip count —
-   * the capped fold frames that keep submissions watchdog-safe plan
-   * THOUSANDS of strips, and joining each one turned a measured ~2s of
-   * GPU into ~55s of drains where main's ~50 uncapped strips paid ~1s.
-   * Fences amortize the floor to ~50us/strip; the caps become free.
+   * The shared strip pump under both the settle job and the preview job — the
+   * bounded-submission answer to the kernel-confirmed i915 preemption hang:
+   * collect completed strips, submit new ones, report completion and when the
+   * caller should present. THE cost model this pump exists for, measured on
+   * Mesa/Iris: a forced-completion readback costs ~10-25ms REGARDLESS of
+   * strip size, so per-strip joins multiply that floor by the planner's strip
+   * count — the capped fold frames that keep submissions watchdog-safe plan
+   * THOUSANDS of strips, and joining each one turned a measured ~2s of GPU
+   * into ~55s of drains where main's ~50 uncapped strips paid ~1s. Fences
+   * amortize the floor to ~50us/strip; the caps become free.
    *
    * EVERY surface trace runs through this pump: the live preview and settle
    * one budget per rAF, the capture and offline drains in their own loops
-   * (fr-y6m0 — they used to join every strip themselves, which is the same
+   * (they used to join every strip themselves, which is the same
    * multiplication in export clothing). The drains differ from the live
    * callers in exactly two ways: how they WAIT between pump calls (a
    * blocking {@link joinStripQueue} for the synchronous one, a hand-back for
@@ -5777,7 +5779,7 @@ export class FractalScene {
    *   high, which only over-queues cheap regions, and at saturation, where
    *   pricing matters, it is accurate). Each batch is reported to the
    *   planner at the width it was measured at, where the two-term cost
-   *   model attributes it (fr-ado7) — the sizing call itself passes NO
+   *   model attributes it — the sizing call itself passes NO
    *   measurement, since re-quoting a batch average at one strip's width
    *   is what drove the old sizer to 1px strips. The estimate still
    *   spikes the moment a batch lands in an expensive band, emptying the
@@ -5785,10 +5787,10 @@ export class FractalScene {
    *   estimate is also one whole batch BEHIND reality, and fold frames
    *   are 100-1000x bimodal — so the refill ALSO prices the queue at the
    *   job's queue price, raised live by the planner's ratcheted
-   *   observations ({@link SURFACE_STRIP_QUEUE_WORST_MS}; fr-id9r): an
+   *   observations ({@link SURFACE_STRIP_QUEUE_WORST_MS}): an
    *   est-lagged cost-band entry used to ride the queue as whole seconds
-   *   of unpredicted work (measured 16-22s groups in the fr-096u
-   *   stale-evidence incident, ~3s main-thread stalls once per crease
+   *   of unpredicted work (measured 16-22s groups in the stale-evidence
+   *   incident, ~3s main-thread stalls once per crease
    *   pixel) that everything touching the GL stream then stalled behind;
    *   queue-pricing bounds that exposure at ~one worst-capped strip
    *   beyond the strip executing, while the evidence-relaxed price keeps
@@ -5812,7 +5814,7 @@ export class FractalScene {
     }
     job.stat.calls += 1;
     // Sync collapse only with an EMPTY queue: a no-prior job that
-    // adopted a backlog (fr-7to5) must poll the inherited fences out
+    // adopted a backlog must poll the inherited fences out
     // first — a forced-completion join here would block the main thread
     // behind the whole backlog and attribute it to one strip. The first
     // completed batch below seeds the estimate, and the job continues
@@ -5839,15 +5841,15 @@ export class FractalScene {
       let submits = 0;
       let groupPx = 0;
       let groupStrips = 0;
-      // PRICE THE PACING ON THE MARGINAL (fr-ado7), not on the batch
+      // PRICE THE PACING ON THE MARGINAL, not on the batch
       // average. A batch's wall carries its fixed cost — the fence
       // service, and for a yielding drain one whole caller tick of poll
       // quantization — and charging that to the pixels that happened to
       // ride it collapses both lines below to a single strip on exactly
       // the frames where the fixed cost dominates, which is where a
       // pipeline is worth having (a queue one strip deep re-measures the
-      // same tick against fewer pixels, which is the fr-ado7 loop seen
-      // from the caller's side). On an ordinary frame the two agree
+      // same tick against fewer pixels, which is the one-way-ratchet loop
+      // seen from the caller's side). On an ordinary frame the two agree
       // within `(px + pivot)/px` and nothing moves. SAFETY IS NOT ON
       // THIS LINE: the queue's real bound is `worst()` below, priced at
       // the planner's raw ms/px ratchet and untouched.
@@ -5869,7 +5871,7 @@ export class FractalScene {
         return true;
       };
       while (
-        // No refill while an adopted backlog rides unmeasured (fr-7to5):
+        // No refill while an adopted backlog rides unmeasured:
         // est() would read 0 and admit unbounded strips behind a queue
         // whose cost nothing has priced yet. The first completed batch
         // seeds the estimate and refill resumes. Every other path into
@@ -5879,7 +5881,7 @@ export class FractalScene {
         now < job.presentDue &&
         submits < SURFACE_STRIP_MAX_SUBMITS_PER_PUMP &&
         (job.inFlightPx + groupPx) * est() < queueBudgetMs &&
-        // Queue-priced twin of the line above (fr-id9r): the estimate
+        // Queue-priced twin of the line above: the estimate
         // lags a cost-band entry by a whole fence batch, so the queue is
         // ALSO bounded at the job's queue price raised by the planner's
         // own ratcheted observations — an empty queue always admits one
@@ -5887,7 +5889,7 @@ export class FractalScene {
         // alone, never a stall.
         (job.inFlightPx + groupPx) * worst() < SURFACE_STRIP_QUEUE_WORST_MS
       ) {
-        // NULL, NOT THE ESTIMATE (fr-ado7): this regime measures FENCE
+        // NULL, NOT THE ESTIMATE: this regime measures FENCE
         // BATCHES, and {@link collectStripFences} already reports each
         // one to `planner.observe` at the width it was measured at.
         // Handing the same batch back here as
@@ -5969,7 +5971,7 @@ export class FractalScene {
    *
    * - `spentMs` — THIS frame's cost (the governor sample, the px-cost
    *   fields, the capture spend ceiling) — takes only the OWN-pixel share:
-   *   inherited fences traced a superseded pose's frame (fr-7to5).
+   *   inherited fences traced a superseded pose's frame.
    * - the estimate and the planner's ratchet take the WHOLE batch: that
    *   wall really did trace that many pixels of this system, and the
    *   ratchet is a max, so a cheap inherited batch cannot lower it.
@@ -6019,7 +6021,7 @@ export class FractalScene {
         busyMs * 0.05,
       );
       job.msPerPxEstimate = marginalMs / Math.max(1, completedPx);
-      // Report at measurement time (fr-id9r): the `prevMs` door on
+      // Report at measurement time: the `prevMs` door on
       // next() never hears about a job's LAST batch — which is exactly
       // the batch that discovers the expensive band on frames traced
       // top-down toward the surface.
@@ -6056,7 +6058,7 @@ export class FractalScene {
       this.readStripCorner(gl, strip);
       lastMs = performance.now() - t0;
       job.spentMs += lastMs;
-      // Measurement-time report (fr-id9r): the final strip's — and an
+      // Measurement-time report: the final strip's — and an
       // escaping strip's — measurement never reaches next().
       job.planner.observe(lastMs, strip.px);
       if (SURFPERF && lastMs > SURFPERF_HEAVY_STRIP_MS) {
@@ -6081,7 +6083,7 @@ export class FractalScene {
    * The capture/offline drain ({@link renderSurface}'s full tier calls
    * this): run the job to completion right here, through the same
    * {@link pumpStrips} the live settle rides — pipelined fence groups, not
-   * the per-strip forced-completion joins this drain used to pay (fr-y6m0).
+   * the per-strip forced-completion joins this drain used to pay.
    * The old shape bought exact per-strip measurements at one
    * ~{@link SURFACE_STRIP_SYNC_TAX_MS} sync point PER STRIP, and a capped
    * frame plans hundreds to thousands of them: measured on SwiftShader at
@@ -6090,13 +6092,13 @@ export class FractalScene {
    * the frame and a synchronous caller pays ONE sync point per queueful
    * ({@link joinStripQueue}) — the wait it has instead of a yield.
    *
-   * Tolerate is not "forever" (fr-id9r): a monster fold pose prices a frame
+   * Tolerate is not "forever": a monster fold pose prices a frame
    * in hours of frozen tab, and THIS drain really does freeze it — its
    * callers have no modal, no percentage and no Cancel — so past
    * `spendCeilingMs` ({@link SURFACE_CAPTURE_SPEND_CEILING_MS}) of measured
    * spend it gives up and returns false, and the caller surfaces the
    * refusal. The yielding drain, which has all three, is bounded by the
-   * user instead (fr-avf6). Giving up winds the queue down first (see
+   * user instead. Giving up winds the queue down first (see
    * {@link windDownStrips} for why the fences cannot simply be left
    * behind).
    */
@@ -6124,7 +6126,7 @@ export class FractalScene {
   }
 
   /**
-   * {@link drainStripsSync}, yielding (fr-7mfx): the same pump, the same
+   * {@link drainStripsSync}, yielding: the same pump, the same
    * fence groups, the same spend backstop — but between pump calls it hands
    * the main thread back ({@link nextDrainTick}) instead of blocking on a
    * join, so the export modal can paint its coverage and its Cancel button
@@ -6139,21 +6141,21 @@ export class FractalScene {
    * duration ({@link surfaceCaptureBusy}), or a preview tick would clobber
    * the frozen full-tier uniforms and a settle would re-size the target
    * being drained. main.ts's tick does exactly that — for the tracing arms,
-   * and (fr-p0mr) for the two uniform writers that used to sit outside the
+   * and for the two uniform writers that used to sit outside the
    * guard: a live 4D view push, which would have split an exported frame
    * across two hyperplanes, and a late grid upload.
    *
-   * Since fr-y6m0 the main thread never blocks on GPU work at all, so
+   * The main thread never blocks on GPU work at all, so
    * responsiveness no longer bottoms out at one strip's cost (the planner
    * caps a strip at `STRIP_WORST_CASE_CAP_MS` of predicted GPU, and on a
    * monster fold pose single crease pixels have measured 1.7-3.1s): a
    * cancel is observed within a tick even while such a strip executes.
    * What a cancel still waits for is the queue it already submitted.
    *
-   * There is no spend ceiling here (fr-avf6). This drain runs exactly as
+   * There is no spend ceiling here. This drain runs exactly as
    * long as the user lets it: `cancelled` is the stop, `onProgress` is the
    * basis they stop on, and an abort the app decided for itself would be
-   * the same patience-guessing fr-zx34 reverted for the preview tier — and
+   * the same patience-guessing the preview tier already reverted — and
    * worse timed, since it would arrive after a minute of watching a
    * percentage climb. {@link drainStripsSync} keeps its ceiling: its
    * callers have neither a percentage nor a Cancel.
@@ -6180,7 +6182,7 @@ export class FractalScene {
 
   /**
    * Let an abandoned capture's already-submitted strips finish before the
-   * drain returns (fr-y6m0). The queued GPU work cannot be recalled, and an
+   * drain returns. The queued GPU work cannot be recalled, and an
    * export's leftovers are the last thing the live tier should inherit: the
    * strips write the EXPORT-SIZED settle target, which the next settle
    * re-sizes (reallocating texture and framebuffer) the moment it takes the
@@ -6189,12 +6191,12 @@ export class FractalScene {
    * Attribution is the sharper half: the fences are THIS frame's, so
    * collecting them here charges their wall to the frame that submitted
    * them rather than to whichever live job observes the queue next
-   * (fr-7to5's contamination, one queueful of it).
+   * (the pooled-fence contamination, one queueful of it).
    *
    * The wait costs the queue's own remaining time, with the main thread
    * free throughout. That is what a cancel waits for, and it is not free:
    * the refill admitted {@link SURFACE_STRIP_QUEUE_WORST_MS} of work priced
-   * at the job's QUEUE price (the typical-cost class floor, fr-id9r), so a
+   * at the job's QUEUE price (the typical-cost class floor), so a
    * queue that entered an expensive band before the planner's ratchet
    * caught it can hold several worst-capped strips — low seconds on the
    * measured transition class, the same order the per-strip drain's cancel
@@ -6217,7 +6219,7 @@ export class FractalScene {
    * queue must clear first (`gl.finish()` returns early on some
    * command-buffer paths — see {@link readStripCorner}). The synchronous
    * drain's wait, paid once per QUEUEFUL where that drain used to pay the
-   * same ~{@link SURFACE_STRIP_SYNC_TAX_MS} once per STRIP (fr-y6m0). */
+   * same ~{@link SURFACE_STRIP_SYNC_TAX_MS} once per STRIP. */
   private joinStripQueue(
     gl: WebGL2RenderingContext,
     target: THREE.WebGLRenderTarget,
@@ -6227,8 +6229,8 @@ export class FractalScene {
     this.renderer.setRenderTarget(null);
   }
 
-  /** Render one strip's 1-3 scissor rects (fr-096u: sub-row strips are
-   * what let the planner bound fold submissions below one row's cost).
+  /** Render one strip's 1-3 scissor rects (sub-row strips are what let
+   * the planner bound fold submissions below one row's cost).
    * All of a strip's rects belong to ONE submission — the bounded
    * quantity is the strip's pixel count, which the planner sized. */
   private renderStripRects(
@@ -6262,7 +6264,7 @@ export class FractalScene {
   }
 
   /** Move a superseded/abandoned job's in-flight fences into
-   * {@link surfaceStripBacklog} (fr-7to5) instead of deleting them — the
+   * {@link surfaceStripBacklog} instead of deleting them — the
    * queued GPU work cannot be recalled, so the next job to arm must see
    * it (queue admission) and attribute its completion honestly (busy
    * continuity). Entries append in submission order; the pool's busyMark
@@ -6279,7 +6281,7 @@ export class FractalScene {
     });
     pool.busyMark = Math.min(pool.busyMark, busyMark);
     // What this job's own estimate says its queue still owes — the clamp
-    // adoption needs on a pool nobody claimed promptly (fr-y6m0). A job
+    // adoption needs on a pool nobody claimed promptly. A job
     // with NO estimate can still hold fences (it adopted a backlog and was
     // superseded before a batch landed), and pricing that queue at zero
     // would hand the next adopter `busyMark = now`: a first batch measuring
@@ -6302,7 +6304,7 @@ export class FractalScene {
   /** Adopt the pooled backlog into a freshly armed `job`: its refill
    * ceiling starts against the REAL GL queue, and its first fence batch
    * attributes the busy wall over backlog + own pixels instead of
-   * charging the whole backlog to its own strips (fr-7to5's 90x
+   * charging the whole backlog to its own strips (the measured 90x
    * contamination). `spentMs` stays clean — the pump excludes the
    * inherited share (those pixels belong to a superseded pose's frame,
    * not this one's cost). */
@@ -6313,9 +6315,9 @@ export class FractalScene {
     job.inFlight = pool.entries.map((e) => ({ ...e, inherited: true }));
     job.inFlightPx = pool.px;
     job.inheritedPx = pool.px;
-    // Busy continuity, bounded by what the pooled work could still owe
-    // (fr-y6m0): the normal adoption is a frame or two after pooling, where
-    // the clamp is inert; the pathological one is a pool that waited out an
+    // Busy continuity, bounded by what the pooled work could still owe:
+    // the normal adoption is a frame or two after pooling, where the clamp
+    // is inert; the pathological one is a pool that waited out an
     // idle stretch (a cancelled export leaves the pane parked, and a parked
     // pane arms nothing), where crediting the whole wait as GPU busy would
     // spike the estimate and ratchet the planner's worst-price evidence off
@@ -6363,7 +6365,7 @@ export class FractalScene {
    * however a {@link captureSurfaceFrame} call ends (delivered, Cancelled,
    * or the viewport-mismatch refusal) — so an export-scale sample sequence
    * does not sit resident for a parked view that never arms another settle
-   * (fr-vja8.35: up to hundreds of MB at a large export scale). Mirrors
+   * (up to hundreds of MB at a large export scale). Mirrors
    * {@link exitSurfaceComputeSession}'s dispose+null shape.
    *
    * Safe against the LIVE settle path sharing these exact two fields:
@@ -6398,25 +6400,24 @@ export class FractalScene {
    * runs without `preserveDrawingBuffer`), but the TRACE must not, because
    * it can run for minutes.
    *
-   * That split is fr-7mfx's prerequisite. The drain used to run inside the
-   * ratio/projection wrappers with no yield, freezing the tab for its whole
-   * duration; now it hands the main thread back on every
-   * {@link nextDrainTick} between pump calls, so the export modal can
-   * disclose coverage and offer a working Cancel. Two consequences follow. The
-   * export pixel ratio is NOT held across the trace — the size is derived
-   * arithmetically instead (three.js floors a buffer out of a ratio the
-   * same way), so the live canvas keeps its own buffer and nothing giant
-   * ever reaches the screen mid-drain. And the centered projection
-   * (fr-936q) wraps only the arming call, because
-   * {@link setSurfaceFrameUniforms} snapshots the camera into uniforms and
-   * the drain never reads it again.
+   * That split is the export modal's prerequisite. The drain used to run
+   * inside the ratio/projection wrappers with no yield, freezing the tab for
+   * its whole duration; now it hands the main thread back on every {@link
+   * nextDrainTick} between pump calls, so the export modal can disclose
+   * coverage and offer a working Cancel. Two consequences follow. The export
+   * pixel ratio is NOT held across the trace — the size is derived
+   * arithmetically instead (three.js floors a buffer out of a ratio the same
+   * way), so the live canvas keeps its own buffer and nothing giant ever
+   * reaches the screen mid-drain. And the centered projection wraps only the
+   * arming call, because {@link setSurfaceFrameUniforms} snapshots the camera
+   * into uniforms and the drain never reads it again.
    *
    * `opts.onProgress` reports traced coverage in [0, 1]; `opts.cancelled`
    * is polled at every tick and resolves the capture `null` — the caller
    * knows it asked, so it owns the difference between "cancelled" and "the
    * browser refused the encode".
    *
-   * NO COST CEILING RUNS HERE (fr-avf6). fr-id9r's predict refusal and
+   * NO COST CEILING RUNS HERE. The predict refusal and the
    * spend abort were written for a drain that froze the tab for its whole
    * duration, where refusing was the only protection there was. This one
    * yields, discloses measured coverage and stops the instant the user
@@ -6434,7 +6435,7 @@ export class FractalScene {
       cancelled?: () => boolean;
     },
   ): Promise<ExportImage | null> {
-    // A compute session never compiled the fold GLSL (fr-tzdg). main.ts
+    // A compute session never compiled the fold GLSL. main.ts
     // routes captures to captureSurfaceComputeFrame before this can
     // matter; refusing keeps an accidental caller from paying the ~25s
     // Mesa link the mode exists to avoid.
@@ -6446,23 +6447,23 @@ export class FractalScene {
     // centered camera; a capture job never presents (strip-planner's own
     // rule), so nothing centered ever reaches the live canvas and the
     // wrapper's invalidation would re-arm a full settle for a frame that
-    // never changed (fr-vja8.45).
+    // never changed.
     const arm = this.withCenteredProjection(
       () => this.beginSurfaceFullFrame(width, height, false),
       false,
     );
-    // fr-jf9y: a saved PNG gets the same supersampling the pane it was
-    // saved from does, exactly as on the WebGPU arm (fr-vpbq) — the
-    // aliasing is scale-invariant, so exporting larger does not fix it and
-    // an unsampled export would be visibly worse than the screen it came
-    // from. Coverage below spans the passes, and Cancel lands between them.
+    // A saved PNG gets the same supersampling the pane it was saved from
+    // does, exactly as on the WebGPU arm — the aliasing is scale-invariant,
+    // so exporting larger does not fix it and an unsampled export would be
+    // visibly worse than the screen it came from. Coverage below spans the
+    // passes, and Cancel lands between them.
     this.beginSurfaceSamples(SURFACE_STRIP_SETTLE_SAMPLES, width, height);
     this.surfaceCaptureFlight = true;
     // Definite by the loop's first iteration; the initializer only tells
     // the compiler the `finally` cannot see it unassigned.
     let outcome!: SurfaceDrainOutcome;
     let job = arm.job;
-    // fr-vja8.35: HOWEVER this capture ends — delivered, Cancelled, the
+    // HOWEVER this capture ends — delivered, Cancelled, the
     // viewport-mismatch refusal, or a throw unwinding out of the drain or
     // the readback — the export-scale sample sequence is released on the
     // way out. One outer finally rather than a release on each exit path,
@@ -6516,7 +6517,7 @@ export class FractalScene {
         return null;
       }
       return await this.withPixelRatio(ratio, () => {
-        // The mean of the completed passes (fr-jf9y), or — for a single-pass
+        // The mean of the completed passes, or — for a single-pass
         // export, and for every caller that predates supersampling — the
         // traced target itself, byte for byte as before. The image reads the
         // CANVAS, already blitted synchronously, so nothing needs this
@@ -6534,7 +6535,7 @@ export class FractalScene {
   /**
    * The pixel dimensions a still export at `exportScale` will produce —
    * what the export progress modal names so the user can see what they
-   * asked for (fr-7mfx). Matches the arithmetic three.js applies when it
+   * asked for. Matches the arithmetic three.js applies when it
    * derives a drawing buffer from a pixel ratio.
    */
   exportSize(exportScale = 1): { width: number; height: number } {
@@ -6547,13 +6548,13 @@ export class FractalScene {
 
   /**
    * Measured evidence for what a surface capture at `exportScale` would
-   * cost, or null when nothing survives to predict from (fr-7mfx). The
+   * cost, or null when nothing survives to predict from. The
    * export modal uses it for ONE decision — whether to skip the grace
    * period and show at once — and deliberately never displays it: the same
    * number over-predicts by ~4x off preview evidence (see
    * {@link predictSurfaceFullCostMs}), which is exactly the patience-
-   * guessing fr-zx34 reverted. Coverage and elapsed are measured; a
-   * predicted total would not be.
+   * guessing the preview tier already reverted. Coverage and elapsed are
+   * measured; a predicted total would not be.
    */
   predictSurfaceCaptureMs(exportScale = 1): number | null {
     const { width, height } = this.exportSize(exportScale);
@@ -6561,7 +6562,7 @@ export class FractalScene {
   }
 
   /**
-   * Whether an async capture drain (fr-7mfx) currently owns the surface
+   * Whether an async capture drain currently owns the surface
    * tracer. It yields to the event loop, so the rAF loop runs DURING a
    * capture — main.ts's surface tick stands aside on this, which is what
    * keeps a preview from clobbering the frozen full-tier uniforms and a
@@ -6596,12 +6597,12 @@ export class FractalScene {
 
 const ZERO = new THREE.Vector3();
 const NO_SHEAR: Vec3 = [0, 0, 0];
-/** Scratch for `applyFogColor`'s tint lerp (fr-5h5d). */
+/** Scratch for `applyFogColor`'s tint lerp. */
 const FOG_TINT_COLOR = new THREE.Color();
 /** Scratch for `renderSurface`'s per-call drawing-buffer query. */
 const DRAW_SIZE = new THREE.Vector2();
 /** Predicted in-flight GPU work (ms) the pipelined strip pump keeps
- * queued (fr-096u): deep enough to saturate the GPU between rAF polls,
+ * queued: deep enough to saturate the GPU between rAF polls,
  * short enough that a present-on-drain gap or an interrupting
  * invalidation waits behind at most a few hundred milliseconds of stale
  * strips. */
@@ -6614,8 +6615,8 @@ const SURFACE_PREVIEW_PRESENT_MS = 200;
 const SURFACE_SETTLE_PRESENT_MS = 600;
 /**
  * Supersampling passes the WebGL settle and the interactive Save-PNG spend
- * (fr-jf9y) — main.ts's `SURFACE_COMPUTE_SETTLE_SAMPLES` for the WebGPU
- * arm, deliberately the same number: the two engines render the same
+ * — main.ts's `SURFACE_COMPUTE_SETTLE_SAMPLES` for the WebGPU arm,
+ * deliberately the same number: the two engines render the same
  * document, and "how much antialiasing does this app do" must not depend
  * on which one a machine happens to have. Pass 0 lands when the settle
  * always landed, so the count buys refinement time, never first-image
@@ -6624,7 +6625,7 @@ const SURFACE_SETTLE_PRESENT_MS = 600;
 const SURFACE_STRIP_SETTLE_SAMPLES = /* @__PURE__ */ resolveSettleSamples();
 
 /**
- * `?surfacesamples=N` (fr-jf9y): the A/B override for the supersampling
+ * `?surfacesamples=N`: the A/B override for the supersampling
  * count, `?surfshadewidth=N`'s precedent one module over — and for the
  * same reason. N=1 turns the settle and the Save-PNG back into the exact
  * single-pass traces this arm made before supersampling, on the SAME
@@ -6642,10 +6643,10 @@ function resolveSettleSamples(): number {
 }
 /** Gamma the surface tracers encode their output with — the
  * `pow(lit, 1/2.2)` that ends surface-material.ts's shade path and its 4D
- * twin. fr-jf9y's averaging has to undo it before summing and reapply it
- * after, or antialiased edges come out too dark (surface-compute.ts states
- * the same constant for the WebGPU arm's accumulator; if a third consumer
- * ever appears, hoist it). */
+ * twin. The supersampling average has to undo it before summing and
+ * reapply it after, or antialiased edges come out too dark
+ * (surface-compute.ts states the same constant for the WebGPU arm's
+ * accumulator; if a third consumer ever appears, hoist it). */
 const SURFACE_OUTPUT_GAMMA = 2.2;
 /** Decode table for that gamma: byte -> linear light. 256 entries, so a
  * pass costs a lookup per channel rather than a `Math.pow` per channel per
@@ -6661,8 +6662,8 @@ const SRGB_TO_LINEAR = /* @__PURE__ */ (() => {
  * CPU cost (draw setup + flush per strip) per animation frame when the
  * estimate prices strips near-free. */
 const SURFACE_STRIP_MAX_SUBMITS_PER_PUMP = 256;
-/** Predicted cost (ms) at which a fence group closes. MEASURED (fr-096u
- * A/B): every sync point — fence observation or forced-completion
+/** Predicted cost (ms) at which a fence group closes. MEASURED by A/B:
+ * every sync point — fence observation or forced-completion
  * readback alike — costs ~66-90ms of wall on this stack REGARDLESS of the
  * strips behind it, which made per-strip fences cost `strips x 80ms` (the
  * whole main-vs-branch settle gap: ~50 strips on main vs hundreds under
@@ -6681,7 +6682,7 @@ const SURFACE_STRIP_FENCE_GROUP_MS = 300;
 const SURFACE_STRIP_FENCE_GROUP_MAX = 8;
 /** Fixed cost (ms) of one sync-point observation on this stack — fence
  * service or forced-completion readback alike, measured ~66-90ms on
- * Iris/ANGLE/Chromium regardless of the work behind it (fr-096u A/B).
+ * Iris/ANGLE/Chromium regardless of the work behind it (measured A/B).
  * Batch measurements subtract it so the planner, the worst-price
  * evidence, and the queue all price MARGINAL trace work; leaving it in
  * inflated the evidence ~5x, which tightened the caps 5x, which
@@ -6695,23 +6696,22 @@ const SURFACE_STRIP_SYNC_TAX_MS = 80;
  * (light-system fast path) that measures a strip past this is not light —
  * it seeds the pipelined regime's estimate instead of paying a
  * ~10-25ms forced-completion drain per strip for thousands of strips
- * (the fr-096u perf-review regression). */
+ * (the perf-review regression that made the pump pipelined). */
 const SURFACE_STRIP_SYNC_ESCAPE_MS = 25;
-// STRIP_WORST_EVIDENCE_SAFETY moved to strip-evidence.ts with the chain
-// (fr-vja8.66); predictSurfaceFullCostMs still applies it below.
-/** Measured GPU time (ms) each preview strip aims for (fr-du81) — well
+// STRIP_WORST_EVIDENCE_SAFETY moved to strip-evidence.ts with the chain;
+// predictSurfaceFullCostMs still applies it below.
+/** Measured GPU time (ms) each preview strip aims for — well
  * under the settle tier's 75 so strips interleave with a live drag: a
  * preview frame's budget below fits two of these plus the probe. */
 const SURFACE_PREVIEW_STRIP_TARGET_MS = 12;
-/** Queue-price ceiling (ms) on the pipelined pump's in-flight work
- * (fr-id9r, fr-24to's safety half). The est-priced
- * {@link SURFACE_STRIP_QUEUE_MS} keeps the GPU fed, but the estimate is
- * one fence batch behind reality and fold+grid frames are 100-1000x
- * bimodal: at a cost-band entry the queue held `QUEUE_MS / est` pixels
- * of REAL monster work (measured 16-22s groups in the fr-096u
- * stale-evidence incident; ~3s main-thread stalls once per crease
- * pixel; ~46s pings at parked monster poses) and every main-thread
- * touch of the GL stream — draw submission backpressure, the seed
+/** Queue-price ceiling (ms) on the pipelined pump's in-flight work —
+ * the safety half of the no-automatic-give-up verdict. The est-priced {@link
+ * SURFACE_STRIP_QUEUE_MS} keeps the GPU fed, but the estimate is one fence
+ * batch behind reality and fold+grid frames are 100-1000x bimodal: at a
+ * cost-band entry the queue held `QUEUE_MS / est` pixels of REAL monster work
+ * (measured 16-22s groups in the stale-evidence incident; ~3s main-thread
+ * stalls once per crease pixel; ~46s pings at parked monster poses) and every
+ * main-thread touch of the GL stream — draw submission backpressure, the seed
  * join, the present — stalled behind it. The refill ALSO prices the
  * queue at the job's queue price (surfaceStripQueueWorstMsPerPx —
  * typical-cost class floor / completed-job evidence, raised mid-job by
@@ -6725,31 +6725,30 @@ const SURFACE_PREVIEW_STRIP_TARGET_MS = 12;
  * flight, which a 3s crease strip saturates anyway. */
 const SURFACE_STRIP_QUEUE_WORST_MS = STRIP_WORST_CASE_CAP_MS;
 /** Predicted-cost ceiling (ms) past which a full-tier SYNCHRONOUS frame
- * REFUSES up front (fr-id9r; sync-only since fr-avf6 — the interactive
- * capture discloses and lets the user stop it instead of predicting for
- * them). Prediction uses measured evidence only —
- * a completed settle's whole-frame cost, else the completed preview's
- * scaled by the tier gap; never the fold-class prior, which is
- * probe-sizing pessimism ~100x past typical fold pixels and would
- * refuse every fold export sight unseen. Generous by design:
- * prediction honesty is ~4x at worst (the fr-096u review measured a
- * floor-rung preview overpredicting the real grind 4x), so this only
- * catches the minutes-to-HOURS class that the spend ceiling below
- * would otherwise burn a real minute of frozen tab discovering. */
+ * REFUSES up front (sync callers only — the interactive capture discloses and
+ * lets the user stop it instead of predicting for them). Prediction uses
+ * measured evidence only — a completed settle's whole-frame cost, else the
+ * completed preview's scaled by the tier gap; never the fold-class prior,
+ * which is probe-sizing pessimism ~100x past typical fold pixels and would
+ * refuse every fold export sight unseen. Generous by design: prediction
+ * honesty is ~4x at worst (a floor-rung preview measured overpredicting the
+ * real grind 4x), so this only catches the minutes-to-HOURS class that the
+ * spend ceiling below would otherwise burn a real minute of frozen tab
+ * discovering. */
 export const SURFACE_CAPTURE_PREDICT_CEILING_MS = 120_000;
 /** Measured-spend ceiling (ms) at which an in-progress full-tier sync
- * drain gives up (fr-id9r) — the backstop for poses with no (or
+ * drain gives up — the backstop for poses with no (or
  * pose-stale) evidence: an offline export's fresh keyframe pose runs
  * un-predicted, and a monster pose there used to freeze the tab for
  * the frame's bounded-submission-but-hours-long duration. A minute of
  * genuine grind is the tolerated worst case — long enough for every
  * legitimately expensive export measured to date, short enough that a
  * user (or the browser's hang detector) still owns the tab. The yielding
- * capture drain has no equivalent (fr-avf6): nothing about it is frozen,
+ * capture drain has no equivalent: nothing about it is frozen,
  * so the tab is the user's throughout and Cancel is the backstop. */
 const SURFACE_CAPTURE_SPEND_CEILING_MS = 60_000;
 /** Pacing floor (ms) for the yielding capture drain's hand-back when the
- * page is HIDDEN (fr-y6m0) — see {@link nextDrainTick}. A visible page
+ * page is HIDDEN — see {@link nextDrainTick}. A visible page
  * paces on rAF, which leaves the main thread genuinely idle between polls;
  * a hidden one has no frame clock and cannot use timers either (throttled
  * to 1s, and to a minute past five minutes hidden), so it spins the
@@ -6762,7 +6761,7 @@ const SURFACE_CAPTURE_SPEND_CEILING_MS = 60_000;
  * at which the poll's own driver round trip competes with the tracing it is
  * waiting for. Far tighter than the ~600ms queue needs either way. */
 const SURFACE_CAPTURE_TICK_MS = 8;
-/** Timer backstop (ms) behind the visible page's rAF pacing (fr-y6m0): a
+/** Timer backstop (ms) behind the visible page's rAF pacing: a
  * frame, so the drain polls at a frame's cadence whether or not this page
  * is actually being ASKED for frames. Both halves of that matter. A page
  * that never gets a frame callback would otherwise hang the export
@@ -6775,13 +6774,13 @@ const SURFACE_CAPTURE_TICK_MS = 8;
  * timers are not throttled. */
 const SURFACE_CAPTURE_TICK_BACKSTOP_MS = 16;
 
-/** How a capture drain ended (fr-7mfx). "ceiling" is fr-id9r's spend
+/** How a capture drain ended. "ceiling" is the measured-spend
  * backstop — a refusal the caller reports; "cancelled" is the user's own
  * choice, which is not an error at all. */
 type SurfaceDrainOutcome = "done" | "ceiling" | "cancelled";
 
 /** A full-tier frame's arming state: the strip job, plus the measured
- * evidence the arming itself discarded (fr-7mfx). */
+ * evidence the arming itself discarded. */
 interface SurfaceFullFrameArm {
   job: SurfaceStripJob;
   /** {@link FractalScene.surfaceFullPxCostMs} as it stood before
@@ -6792,7 +6791,7 @@ interface SurfaceFullFrameArm {
 
 /** Traced-and-measured coverage of `job` in [0, 1]: planned pixels less the
  * ones still riding this job's OWN fences (an adopted backlog's pixels were
- * never in `plannedPx`, fr-7to5, so subtracting them too would report
+ * never in `plannedPx`, so subtracting them too would report
  * negative coverage). The one definition {@link
  * FractalScene.surfaceRenderProgress} and the capture drain's progress hook
  * share — a pipelined drain always has a queueful in flight, so reporting
@@ -6820,7 +6819,7 @@ function yieldToEventLoop(): Promise<void> {
 }
 
 /**
- * One tick of the yielding capture drain (fr-y6m0): hand the main thread
+ * One tick of the yielding capture drain: hand the main thread
  * back and give the submitted queue time to advance before the next pump.
  *
  * A visible page paces on rAF — the live pump's own clock. 60Hz is ~40x
@@ -6873,11 +6872,10 @@ async function spinYieldToEventLoop(ms: number): Promise<void> {
 
 /** Thrown by {@link FractalScene.renderSurface}'s full tier when a
  * frame's predicted or measured cost crosses the export ceilings
- * (fr-id9r) — the tab-freeze guard for the callers that really do freeze
- * the tab: offline export, which fails the run with it, and thumbnails,
- * which fall back to the explorer render. The message is
- * user-presentable. The interactive Save-PNG raises it no longer
- * (fr-avf6). */
+ * — the tab-freeze guard for the callers that really do freeze the tab:
+ * offline export, which fails the run with it, and thumbnails, which fall
+ * back to the explorer render. The message is user-presentable. The
+ * interactive Save-PNG raises it no longer. */
 export class SurfaceCaptureCostError extends Error {}
 
 /** "~Ns of GPU" / "~N min of GPU" / "~N hr of GPU" for
@@ -6903,7 +6901,7 @@ interface SurfaceStripJob {
   /** Latest per-pixel cost estimate (ms): seeded from the probe prior
    * (null = no prior = the sync-collapse regime), batch-attributed by the
    * pipelined pump thereafter. It PRICES the pump's queue and its own
-   * regime marker, and since fr-ado7 it no longer sizes anything — the
+   * regime marker, and it no longer sizes anything — the
    * planner's two-term {@link StripPlanner.cost} does, off the same
    * batch measurements reported through `observe` at their real widths,
    * and the pump's queue prices off its marginal. A prior-seeded value
@@ -6912,7 +6910,7 @@ interface SurfaceStripJob {
    * once: worstSeen exactly 10.000 = STRIP_FOLD_PRIOR_MS_PER_PX). */
   msPerPxEstimate: number | null;
   /** Frozen-at-arm per-pixel price (ms) for the pump's in-flight queue
-   * bound (fr-id9r; see surfaceStripQueueWorstMsPerPx) — the pump maxes
+   * bound (see surfaceStripQueueWorstMsPerPx) — the pump maxes
    * it live with the planner's own ratcheted observations. */
   queueWorstMsPerPx: number;
   /** Accumulated GPU-busy wall time (ms) — the preview governor's sample,
@@ -6922,19 +6920,19 @@ interface SurfaceStripJob {
    * observed it complete, so a queue that empties between polls bills the
    * idle remainder too (up to one caller tick). At saturation — the regime
    * the pacing aims for and the one where the numbers are used — the two
-   * agree; a queue pinned small by the fr-id9r worst-price bound over a
+   * agree; a queue pinned small by the worst-price bound over a
    * cheap band is where they diverge, and the drift is one-directional
    * (reads high, refuses early, never over-spends). */
   spentMs: number;
   /** Fenced strips submitted but not yet observed complete, in
    * submission order. `inherited` entries are a superseded predecessor's
-   * fences adopted at arm (fr-7to5) — same GL queue, so they complete
+   * fences adopted at arm — same GL queue, so they complete
    * ahead of everything this job submits; the pump prices the queue over
    * them but excludes their busy share from `spentMs` (they traced
    * another pose's pixels). */
   inFlight: { sync: WebGLSync; px: number; inherited: boolean }[];
   /** Sum of `inFlight` pixels — inherited backlog included, because the
-   * refill ceiling must see the REAL GL queue (fr-7to5). */
+   * refill ceiling must see the REAL GL queue. */
   inFlightPx: number;
   /** The inherited subset of `inFlightPx`. Own in-flight pixels — the
    * progress readout's and the superseded-job extrapolation's share —
@@ -6964,7 +6962,7 @@ interface SurfaceStripJob {
 /** Scratch for the strip renderer's forced-completion 1x1 readbacks. */
 const SYNC_PIXEL = new Uint8Array(4);
 
-/** `?surfperf` (fr-ck0w): diagnostics-only opt-in, the surface twin of
+/** `?surfperf`: diagnostics-only opt-in, the surface twin of
  * main.ts's `?flameperf`. When present, every completed surface strip job
  * logs its accumulated MEASURED GPU cost (`spentMs` — per-strip
  * forced-completion/fence timings, the planner's own bookkeeping), which
@@ -6974,7 +6972,7 @@ const SURFPERF =
   typeof window !== "undefined" &&
   new URLSearchParams(window.location.search).has("surfperf");
 /** `?surfperf` also logs any single strip whose MEASURED cost exceeded
- * this (ms) — the field signal for fr-096u's watchdog class: a healthy
+ * this (ms) — the field signal for the GPU-watchdog class: a healthy
  * planner never plans a strip past `STRIP_WORST_CASE_CAP_MS` of
  * worst-case cost, so a heavy-strip log is either the bounded
  * cheap-to-expensive transition (expected, rare, ~seconds at most) or
@@ -7033,14 +7031,14 @@ function shearMatrix4(shear: Vec3): THREE.Matrix4 {
 /**
  * Downscale a source canvas to at most `maxDim` px on the long side and
  * JPEG-encode it over the scene backdrop gradient — the shared tail of every
- * `captureThumbnail` mode (fr-75sq). The underlay + `composite` op are what
+ * `captureThumbnail` mode. The underlay + `composite` op are what
  * make the flame canvas match its on-screen appearance (`"screen"`, the same
  * blend `renderFlame` draws — see `captureFlameFrame`); for the
  * already-opaque WebGL canvas the underlay is fully covered and the default
  * `"source-over"` changes nothing. Returns `""` when a 2D context is
  * unavailable.
  *
- * `shape`'s scale (fr-h3mp) is derived from THIS OUTPUT canvas's own `w`/`h`
+ * `shape`'s scale is derived from THIS OUTPUT canvas's own `w`/`h`
  * — the downscale keeps `src`'s aspect ratio (both axes scale by the same
  * factor), so the vignette painted here stays circular in the thumbnail's
  * own pixels, matching what a full-resolution capture of the same frame
@@ -7081,7 +7079,7 @@ function thumbnailFrom(
 }
 
 /**
- * Encode a canvas as a PNG {@link ExportImage} (fr-2urv). `toBlob` snapshots
+ * Encode a canvas as a PNG {@link ExportImage}. `toBlob` snapshots
  * the bitmap synchronously at call time (only the encode runs async — see
  * `captureFrame`'s doc for why that timing matters against the
  * non-`preserveDrawingBuffer` renderer), and a Blob download skips the

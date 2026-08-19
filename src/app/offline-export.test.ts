@@ -69,7 +69,7 @@ describe("runOfflineExport", () => {
     expect(run).toEqual({ frames: 2, capped: false });
   });
 
-  it("awaits an async renderFrame before encoding its frame (fr-tzdg)", async () => {
+  it("awaits an async renderFrame before encoding its frame", async () => {
     // The surface compute path traces on the GPU inside renderFrame — the
     // encode must observe the completed paint, never race it.
     const { deps, log } = makeDeps({

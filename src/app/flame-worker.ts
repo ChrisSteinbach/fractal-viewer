@@ -1,5 +1,5 @@
 /**
- * The flame render's actual Web Worker entry point (fr-73y): thin
+ * The flame render's actual Web Worker entry point: thin
  * `self.onmessage` / `postMessage` glue around {@link FlameWorkerSession},
  * which owns all the real logic (see that module's doc). Nothing here is
  * unit-tested directly — it is verified by running the app, same as
@@ -9,7 +9,7 @@
  * Bundling: Vite's standard worker pattern (`new Worker(new URL(...,
  * import.meta.url), { type: "module" })` in `main.ts`) picks this file up
  * automatically as its own chunk — no vite.config change needed (verified
- * against the pinned Vite version during fr-73y's design).
+ * against the pinned Vite version when the worker was designed).
  *
  * `self` is deliberately NOT typed via the ambient `webworker` lib: this
  * project's tsconfig has no explicit `lib`, so (per `target: ES2022`) it
@@ -50,7 +50,7 @@ const session = new FlameWorkerSession({
       scope.postMessage(event, []);
     }
   },
-  // WebGPU accumulation (fr-npb; 4D in fr-e26): wiring these factories up is
+  // WebGPU accumulation, 3D and 4D: wiring these factories up is
   // what actually gates the session's GPU attempt — a `start` command's
   // `gpuPreference` alone does nothing without them (see
   // FlameWorkerDeps.createGpuBackend's doc). Real WebGPU calls live entirely

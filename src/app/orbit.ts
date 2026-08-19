@@ -30,8 +30,8 @@ export interface Spherical {
  * an exact framing (see {@link OrbitCamera}). Lives here, with the camera math,
  * rather than in `persist.ts`: it is a plain-data view of {@link OrbitCamera}'s
  * own fields, and both `persist.ts` (the save/share/collection codec's `camera`
- * document field, fr-1k4) and `history.ts` (the out-of-band undo/redo pose,
- * fr-uf3) carry it without either depending on the other.
+ * document field) and `history.ts` (the out-of-band undo/redo pose) carry
+ * it without either depending on the other.
  *
  * `radius`/`phi` are clamped to [{@link MIN_RADIUS}, {@link MAX_RADIUS}] /
  * [{@link MIN_PHI}, {@link MAX_PHI}] wherever a pose is applied or decoded;
@@ -124,7 +124,7 @@ export class OrbitCamera {
   }
 }
 
-// --- Auto-fit (fr-0b8): frame a freshly-generated attractor in view ---------
+// --- Auto-fit: frame a freshly-generated attractor in view ----------------
 //
 // Triggered only on whole-system replacement (a preset load or "Surprise Me"),
 // never on a geometry edit or Regenerate — see the call sites in main.ts.

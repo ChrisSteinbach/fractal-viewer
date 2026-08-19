@@ -1,5 +1,5 @@
 /**
- * The morph's adaptive point budget (fr-a5gu): how many points an in-flight
+ * The morph's adaptive point budget: how many points an in-flight
  * system morph's INTERMEDIATE generation requests should ask for, sized so
  * one generation fits in roughly one animation frame on THIS device.
  *

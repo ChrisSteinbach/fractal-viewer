@@ -2,7 +2,7 @@ import type { Rotation4, Vec4 } from "../fractal/types";
 import { clamp } from "../fractal/vec";
 
 /**
- * # SO(4) as a quaternion pair — the app-side rotor for the 4D view (fr-woc)
+ * # SO(4) as a quaternion pair — the app-side rotor for the 4D view
  *
  * `orbit.ts` is the pure (no Three.js), unit-tested math for the 3D camera;
  * this module is its analogue for the 4D projection's VIEW rotation — the
@@ -200,7 +200,7 @@ function isNormalizableHalf(values: readonly number[]): boolean {
 }
 
 /**
- * Validate and normalize a persisted rotor pair (fr-pnek) — the trust-
+ * Validate and normalize a persisted rotor pair — the trust-
  * boundary helper for restoring a {@link RotorPair} from OUTSIDE this
  * module's own composition chain (a JSON round trip through persist.ts, or a
  * timeline keyframe's saved pose). `rotateInPlane` keeps `p`/`q` unit length
@@ -274,7 +274,7 @@ function slerpQuat(a: Quat, b: Quat, t: number): Quat {
 }
 
 /**
- * SO(4) geodesic interpolation between two rotor pairs (fr-pnek), driving the
+ * SO(4) geodesic interpolation between two rotor pairs, driving the
  * directed rotor glide in four-d-view.ts's `FourDTween` — the 4D sibling of
  * `camera-tween.ts`'s pose-glide lerp.
  *
@@ -350,7 +350,7 @@ export function rotorMatrix(pair: RotorPair): number[] {
  * The largest |rotated w| any point of an axis-aligned 4D box centered on the
  * rotation pivot can reach under `m` (row-major, the `rotorMatrix` layout):
  * the box's support function in the rotated-w direction, sum_i |m_w,i| * h_i.
- * Feeds the 4D shader's w-color amplitude (fr-9bk): rotation-COVARIANT, so an
+ * Feeds the 4D shader's w-color amplitude: rotation-COVARIANT, so an
  * anisotropic cloud spans the full palette at every tumble angle, where the
  * rotation-invariant 4D radius would wash it out toward gray.
  */

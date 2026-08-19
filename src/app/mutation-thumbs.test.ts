@@ -174,7 +174,7 @@ describe("renderSystemThumb", () => {
     }
   });
 
-  it("carries a w-plane kaleidoscope into the 4D thumbnail render (fr-4ao9): a flat system with symmetry { order: 4, plane: zw } — which routes to the 4D branch purely because of the symmetry — renders differently than the same system with symmetry off", () => {
+  it("carries a w-plane kaleidoscope into the 4D thumbnail render: a flat system with symmetry { order: 4, plane: zw } — which routes to the 4D branch purely because of the symmetry — renders differently than the same system with symmetry off", () => {
     const size = 48;
     const transforms = sierpinskiTetrahedron();
     const plain: MorphSystem = {

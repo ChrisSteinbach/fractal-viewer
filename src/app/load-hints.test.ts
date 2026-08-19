@@ -23,7 +23,7 @@ function hintsAt(counter: { id: number }): PendingLoadHints {
 
 describe("PendingLoadHints", () => {
   describe("takeMode", () => {
-    it("survives a stale replaced arrival from the previous load — the fr-vja8.34 interleaving", () => {
+    it("survives a stale replaced arrival from the previous load — the load-hint interleaving", () => {
       // Load N's terminal replaced request went out with id 4; the
       // backgrounded-tab catch-up frame launches load N+1 in the same tick,
       // whose opening clear captures the key while ids 5+ are unposted.
@@ -106,7 +106,7 @@ describe("PendingLoadHints", () => {
   });
 
   describe("pose hints", () => {
-    it("a stale flat replaced arrival no longer discards the next load's pose — the silent 4D data loss fr-vja8.34 fixes", () => {
+    it("a stale flat replaced arrival no longer discards the next load's pose — the silent 4D data loss the await key fixes", () => {
       const counter = { id: 5 };
       const hints = hintsAt(counter);
       hints.clearAll();
@@ -127,7 +127,7 @@ describe("PendingLoadHints", () => {
       hints.armPose(pose(0.7)); // armed after the apply returns
       // The restore's own arrival must apply AND release the pose — with an
       // arm-time key it would be refused and the saved pose silently lost,
-      // the exact symptom fr-vja8.34 exists to fix (roast-found regression).
+      // the exact symptom the await key exists to fix (roast-found regression).
       expect(hints.poseFor({ id: 5, replaced: true })).not.toBeNull();
       hints.releasePose({ id: 5, replaced: true });
       expect(hints.poseFor({ id: 6, replaced: true })).toBeNull();

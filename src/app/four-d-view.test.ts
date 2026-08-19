@@ -75,7 +75,7 @@ describe("FourDView", () => {
       expect(view.tumbleSpeed).toBe(1);
     });
 
-    it("returns a widened slice slab to the zero-thickness cross-section (fr-wa6o)", () => {
+    it("returns a widened slice slab to the zero-thickness cross-section", () => {
       const view = new FourDView();
       view.sliceThickness = 0.3;
 
@@ -304,7 +304,7 @@ describe("FourDView", () => {
       expect(view.sliceRelColor).toBe(true);
     });
 
-    it("round-trips the slice slab's thickness through pose()/applyPose() (fr-wa6o)", () => {
+    it("round-trips the slice slab's thickness through pose()/applyPose()", () => {
       const source = new FourDView();
       source.reset(false);
       source.sliceThickness = 0.32;
@@ -480,7 +480,7 @@ describe("FourDTween", () => {
     expect(tween.active).toBe(true);
   });
 
-  it("interpolates the slice thickness partway through a normal glide (fr-wa6o)", () => {
+  it("interpolates the slice thickness partway through a normal glide", () => {
     const view = new FourDView();
     view.reset(false); // sliceThickness 0
     let clock = 0;
@@ -507,7 +507,7 @@ describe("FourDTween", () => {
     expect(tween.active).toBe(true);
   });
 
-  it("glides the slice thickness from a widened slab back down to a target cross-section (fr-wa6o)", () => {
+  it("glides the slice thickness from a widened slab back down to a target cross-section", () => {
     const view = new FourDView();
     view.reset(false);
     view.sliceThickness = 0.5;

@@ -4,7 +4,7 @@ import type { SavedSceneMode } from "./collection";
 
 /**
  * The timeline — an ordered, AUTHORED sequence of keyframe steps played back
- * as a chain of morphs, with deterministic video export (fr-8v41). Where
+ * as a chain of morphs, with deterministic video export. Where
  * `drift.ts`'s ambient show wanders a collection at random, the timeline is
  * the directed counterpart: a user arranges specific scenes in a specific
  * order, with per-step morph/hold timing they control.
@@ -14,7 +14,7 @@ import type { SavedSceneMode } from "./collection";
  * same reason: this module doesn't need `persist.ts` (or Three.js, or the
  * DOM) to move a step around. Each step is a frozen, independent copy (its
  * own `encoded` + `thumbnail` + its own `morphMs`/`holdMs` — and, since
- * fr-v3au, the render mode it plays in), NOT a reference into
+ * the render mode it plays in), NOT a reference into
  * `collection.ts`'s library — deleting a collection entry, or editing the
  * live scene, can never reach in and break a saved timeline.
  *
@@ -55,18 +55,18 @@ export interface TimelineStep {
   thumbnail: string;
   morphMs: number;
   holdMs: number;
-  /** Render mode this keyframe plays in (fr-v3au): the renderer that was
+  /** Render mode this keyframe plays in: the renderer that was
    * showing when it was captured; absent = the points explorer. Playback
    * enters this renderer on arrival and holds the schedule until the render
-   * meets its iteration budget — mirroring `SavedScene.mode` (fr-75sq), and
+   * meets its iteration budget — mirroring `SavedScene.mode`, and
    * like it stored on the STEP, never inside `encoded`, so the scene
-   * document itself stays render-mode-less (fr-39y). */
+   * document itself stays render-mode-less. */
   mode?: SavedSceneMode;
 }
 
 /**
  * What an import file hands to {@link TimelineStore.replaceAll} — a
- * {@link TimelineStep} minus its `id` (fr-h9rk). Ids are storage-internal,
+ * {@link TimelineStep} minus its `id`. Ids are storage-internal,
  * minted per `TimelineStore` instance (see `counter` below); a file produced
  * by a different session or device carries ids that mean nothing here, so
  * import always mints fresh ones rather than trusting the file's — the same
@@ -137,7 +137,7 @@ function isFiniteNumber(v: unknown): v is number {
  * The optional `mode` is NOT checked here either, the same stance
  * `collection.ts`'s `isSavedScene` takes on its own `mode` field: a garbage
  * value shouldn't cost the whole step, so `loadTimeline` sanitizes it
- * separately via the shared `sanitizedMode` (fr-v3au) instead of this
+ * separately via the shared `sanitizedMode` instead of this
  * function rejecting the step outright.
  */
 function isTimelineStep(v: unknown): v is TimelineStep {
@@ -246,7 +246,7 @@ export class TimelineStore {
    * unlike a collection save where a repeat is a re-bump of the same
    * keeper. The new step gets `DEFAULT_STEP_MORPH_MS`/`DEFAULT_STEP_HOLD_MS`
    * timings and an id minted the same way `SceneCollection.add` does
-   * (`${this.now()}-${this.counter++}`). `mode` (fr-v3au) is the renderer
+   * (`${this.now()}-${this.counter++}`). `mode` is the renderer
    * the capture came from; omit for the points explorer (see
    * {@link SavedSceneMode}). Returns `null` without persisting once the
    * timeline is already at `TIMELINE_CAP` — see the module doc for why this
@@ -280,7 +280,7 @@ export class TimelineStore {
   /**
    * Re-insert a previously removed step at the position it was removed
    * from — the undo side of {@link remove}, the same delete-toast pattern
-   * as `SceneCollection.restore` (fr-ifts): the caller hands back the exact
+   * as `SceneCollection.restore`: the caller hands back the exact
    * `TimelineStep` `remove` took out, plus its old index, because once a
    * step is gone there is nothing left to re-derive either from — and a
    * removed step may be the only copy of its scene anywhere. Unlike the
@@ -341,8 +341,8 @@ export class TimelineStore {
 
   /**
    * Replace one step's thumbnail, leaving everything else — `id`, `encoded`,
-   * `mode`, both timings, and its place in the sequence — exactly as it was
-   * (fr-r777). `SceneCollection.setThumbnail`'s twin, for the same reason: a
+   * `mode`, both timings, and its place in the sequence — exactly as it was.
+   * `SceneCollection.setThumbnail`'s twin, for the same reason: a
    * 📍 Add keyframe taken during a flame/solid/surface render's first-frame
    * gap files a POINT-CLOUD picture under that render's tag, and main.ts
    * re-photographs the step once the render's own first frame lands (see
@@ -361,7 +361,7 @@ export class TimelineStore {
 
   /**
    * Replace the ENTIRE timeline with `steps` and `seed` — the import file's
-   * whole-timeline REPLACEMENT (fr-h9rk), not a merge. An authored sequence
+   * whole-timeline REPLACEMENT, not a merge. An authored sequence
    * isn't mergeable the way a collection backup is: `SceneCollection.
    * importScenes` interleaves a backup's entries into whatever library
    * already exists, but a timeline IS its order — there's no sensible way to
@@ -435,7 +435,7 @@ export class TimelineStore {
  * mixing in 32-bit integer space the way the rest of the codebase's PRNG
  * code does — see `rng.ts`), so every playback run of the same timeline
  * hands each leg the same 32-bit morph seed. That per-run repeatability is
- * the deterministic half of fr-8v41's video export: re-rendering the same
+ * the deterministic half of the timeline's video export: re-rendering the same
  * timeline reproduces the exact same point-for-point morphs, frame for
  * frame.
  */
