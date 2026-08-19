@@ -18,6 +18,8 @@ import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
 import { MAX_PHI, MAX_RADIUS, MIN_PHI, MIN_RADIUS } from "./orbit";
 import {
   DEFAULT_BALLOON_RADIUS,
+  DEFAULT_BALLOON_TINT,
+  DEFAULT_BALLOON_TINT_STRENGTH,
   DEFAULT_COLOR_GAMMA,
   DEFAULT_ESTIMATOR_CURVE,
   DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
@@ -46,6 +48,7 @@ import {
   DEFAULT_SYMMETRY_PLANE,
   DEFAULT_SYMMETRY_ORDER,
   MAX_BALLOON_RADIUS,
+  MAX_BALLOON_TINT_STRENGTH,
   MAX_COLOR_GAMMA,
   MAX_ESTIMATOR_CURVE,
   MAX_ESTIMATOR_RADIUS,
@@ -67,6 +70,7 @@ import {
   MAX_W_SCALE,
   MAX_W_SHEAR,
   MIN_BALLOON_RADIUS,
+  MIN_BALLOON_TINT_STRENGTH,
   MIN_COLOR_GAMMA,
   MIN_ESTIMATOR_MINIMUM_RADIUS,
   MIN_FLAME_EXPOSURE,
@@ -4143,6 +4147,135 @@ describe("toSnapshot / fromSnapshot balloon (fr-5wlv.6)", () => {
     const result = fromSnapshot(snapshot, initialState(true));
     expect(result.balloonEcho).toBe(true);
     expect(result.balloonRadius).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Balloon tint (fr-j85n) — persisted alongside the balloon pair the
+// identical way: optional on SceneSnapshot, always written by
+// toSnapshot/encodeScene, quiet-drop/clamp on decode, with fromSnapshot
+// supplying the real defaults.
+// ---------------------------------------------------------------------------
+
+describe("decodeScene balloon tint", () => {
+  it("round-trips balloonTint and rounds balloonTintStrength to 4 decimal places", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      balloonTint: "#336699",
+      balloonTintStrength: 0.123456,
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.balloonTint).toBe("#336699");
+    expect(result!.balloonTintStrength).toBeCloseTo(0.1235, 4);
+  });
+
+  it("keeps decoding a scene with no balloon tint fields at all as a valid, non-null scene", () => {
+    // A hand-built payload with no balloonTint/balloonTintStrength keys —
+    // what every pre-fr-j85n link looks like.
+    const raw = {
+      transforms: baseSnapshot().transforms,
+      numPoints: 100_000,
+      pointSize: 1,
+      colorMode: "transform",
+      renderStyle: "depthFade",
+      showGuides: true,
+      flame: baseSnapshot().flame,
+      solid: baseSnapshot().solid,
+      symmetry: baseSnapshot().symmetry,
+      glowBrightness: baseSnapshot().glowBrightness,
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.balloonTint).toBeUndefined();
+    expect(result!.balloonTintStrength).toBeUndefined();
+  });
+
+  it("drops balloonTint when it is not a string", () => {
+    const raw = { ...baseSnapshot(), balloonTint: 12345 };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.balloonTint).toBeUndefined();
+  });
+
+  it("drops balloonTint when it does not match the #rrggbb hex pattern", () => {
+    const raw = { ...baseSnapshot(), balloonTint: "not-a-color" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.balloonTint).toBeUndefined();
+  });
+
+  it("accepts an uppercase hex balloonTint verbatim (decode does not normalize case)", () => {
+    const raw = { ...baseSnapshot(), balloonTint: "#AABBCC" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.balloonTint).toBe("#AABBCC");
+  });
+
+  it("drops balloonTintStrength when it is non-finite", () => {
+    const raw = { ...baseSnapshot(), balloonTintStrength: "not a number" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.balloonTintStrength).toBeUndefined();
+  });
+
+  it("clamps balloonTintStrength below the minimum up to MIN_BALLOON_TINT_STRENGTH", () => {
+    const raw = { ...baseSnapshot(), balloonTintStrength: -5 };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.balloonTintStrength).toBe(MIN_BALLOON_TINT_STRENGTH);
+  });
+
+  it("clamps balloonTintStrength above the maximum down to MAX_BALLOON_TINT_STRENGTH", () => {
+    const raw = { ...baseSnapshot(), balloonTintStrength: 50 };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.balloonTintStrength).toBe(MAX_BALLOON_TINT_STRENGTH);
+  });
+
+  it("does not reject the whole scene over a malformed balloon tint pair", () => {
+    const raw = {
+      ...baseSnapshot(),
+      balloonTint: "nope",
+      balloonTintStrength: "nope",
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms).toHaveLength(1);
+    expect(result!.balloonTint).toBeUndefined();
+    expect(result!.balloonTintStrength).toBeUndefined();
+  });
+});
+
+describe("toSnapshot / fromSnapshot balloon tint (fr-j85n)", () => {
+  it("toSnapshot carries balloonTint and balloonTintStrength", () => {
+    const state: AppState = {
+      ...initialState(true),
+      balloonTint: "#336699",
+      balloonTintStrength: 0.5,
+    };
+    expect(toSnapshot(state).balloonTint).toBe("#336699");
+    expect(toSnapshot(state).balloonTintStrength).toBe(0.5);
+  });
+
+  it("fromSnapshot defaults the balloon tint pair when the snapshot lacks it", () => {
+    // baseSnapshot() carries no balloonTint/balloonTintStrength keys at
+    // all — what a pre-fr-j85n snapshot (or a decode of one) looks like.
+    const base: AppState = {
+      ...initialState(true),
+      balloonTint: "#336699",
+      balloonTintStrength: 0.5,
+    };
+    const result = fromSnapshot(baseSnapshot(), base);
+    expect(result.balloonTint).toBe(DEFAULT_BALLOON_TINT);
+    expect(result.balloonTintStrength).toBe(DEFAULT_BALLOON_TINT_STRENGTH);
+  });
+
+  it("fromSnapshot lands the balloon tint pair on the state when the snapshot carries it", () => {
+    const snapshot: SceneSnapshot = {
+      ...baseSnapshot(),
+      balloonTint: "#336699",
+      balloonTintStrength: 0.5,
+    };
+    const result = fromSnapshot(snapshot, initialState(true));
+    expect(result.balloonTint).toBe("#336699");
+    expect(result.balloonTintStrength).toBe(0.5);
   });
 });
 

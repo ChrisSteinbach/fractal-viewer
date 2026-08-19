@@ -3,6 +3,8 @@ import {
   addTransform,
   clampToSpec,
   DEFAULT_BALLOON_RADIUS,
+  DEFAULT_BALLOON_TINT,
+  DEFAULT_BALLOON_TINT_STRENGTH,
   DEFAULT_COLOR_GAMMA,
   DEFAULT_ESTIMATOR_CURVE,
   DEFAULT_ESTIMATOR_MINIMUM_RADIUS,
@@ -34,6 +36,7 @@ import {
   FLAME_ITERATION_DETENTS,
   initialState,
   MAX_BALLOON_RADIUS,
+  MAX_BALLOON_TINT_STRENGTH,
   MAX_COLOR_GAMMA,
   MAX_ESTIMATOR_CURVE,
   MAX_ESTIMATOR_MINIMUM_RADIUS,
@@ -57,6 +60,7 @@ import {
   MAX_SURFACE_ENV_LIGHT,
   MAX_SYMMETRY_ORDER,
   MIN_BALLOON_RADIUS,
+  MIN_BALLOON_TINT_STRENGTH,
   MIN_COLOR_GAMMA,
   MIN_ESTIMATOR_CURVE,
   MIN_ESTIMATOR_MINIMUM_RADIUS,
@@ -92,6 +96,8 @@ import {
   setBackgroundShape,
   setBalloonEcho,
   setBalloonRadius,
+  setBalloonTint,
+  setBalloonTintStrength,
   setColorGamma,
   setCustomPaletteStops,
   setExportScale,
@@ -181,6 +187,14 @@ describe("initialState", () => {
     const state = initialState(true);
     expect(state.balloonEcho).toBe(false);
     expect(state.balloonRadius).toBe(DEFAULT_BALLOON_RADIUS);
+  });
+
+  // The balloon tint (fr-j85n) starts fully off too: black at strength 0,
+  // which every arm's mix collapses to today's untinted rendering exactly.
+  it("boots with the balloon tint at its default color and zero strength", () => {
+    const state = initialState(true);
+    expect(state.balloonTint).toBe(DEFAULT_BALLOON_TINT);
+    expect(state.balloonTintStrength).toBe(DEFAULT_BALLOON_TINT_STRENGTH);
   });
 
   it("boots with the flame render at its default settings", () => {
@@ -405,6 +419,60 @@ describe("setBalloonRadius (fr-5wlv.2)", () => {
     expect(setBalloonRadius(initialState(true), -5).balloonRadius).toBe(
       MIN_BALLOON_RADIUS,
     );
+  });
+});
+
+describe("setBalloonTint (fr-j85n)", () => {
+  it("sets the balloon tint color immutably", () => {
+    const state = initialState(true);
+    const next = setBalloonTint(state, "#336699");
+    expect(next.balloonTint).toBe("#336699");
+    expect(state.balloonTint).toBe(DEFAULT_BALLOON_TINT);
+  });
+
+  it("normalizes an uppercase hex string to lowercase", () => {
+    expect(setBalloonTint(initialState(true), "#AABBCC").balloonTint).toBe(
+      "#aabbcc",
+    );
+  });
+
+  it("rejects a string with too few hex digits, leaving state unchanged", () => {
+    const state = initialState(true);
+    expect(setBalloonTint(state, "#abc").balloonTint).toBe(
+      DEFAULT_BALLOON_TINT,
+    );
+    expect(setBalloonTint(state, "#abc")).toBe(state);
+  });
+
+  it("rejects a string with non-hex characters, leaving state unchanged", () => {
+    const state = initialState(true);
+    expect(setBalloonTint(state, "#zzzzzz")).toBe(state);
+  });
+
+  it("rejects a string missing the leading #, leaving state unchanged", () => {
+    const state = initialState(true);
+    expect(setBalloonTint(state, "336699")).toBe(state);
+  });
+});
+
+describe("setBalloonTintStrength (fr-j85n)", () => {
+  it("sets the balloon tint strength immutably", () => {
+    const state = initialState(true);
+    const next = setBalloonTintStrength(state, 0.5);
+    expect(next.balloonTintStrength).toBe(0.5);
+    expect(state.balloonTintStrength).toBe(DEFAULT_BALLOON_TINT_STRENGTH);
+  });
+
+  it("clamps above the maximum", () => {
+    expect(
+      setBalloonTintStrength(initialState(true), 999).balloonTintStrength,
+    ).toBe(MAX_BALLOON_TINT_STRENGTH);
+  });
+
+  it("clamps below the minimum", () => {
+    expect(
+      setBalloonTintStrength(initialState(true), -5).balloonTintStrength,
+    ).toBe(MIN_BALLOON_TINT_STRENGTH);
   });
 });
 

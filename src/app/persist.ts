@@ -42,6 +42,8 @@ import type {
 } from "../fractal/types";
 import {
   DEFAULT_BALLOON_RADIUS,
+  DEFAULT_BALLOON_TINT,
+  DEFAULT_BALLOON_TINT_STRENGTH,
   DEFAULT_FLAME_PALETTE,
   DEFAULT_FOG_DENSITY,
   DEFAULT_FOG_TINT,
@@ -241,6 +243,30 @@ export interface SceneSnapshot {
    */
   balloonRadius?: number;
   /**
+   * The balloon shell's tint color (fr-j85n, see `state.ts`'s
+   * {@link AppState.balloonTint}) — persisted alongside `balloonRadius` the
+   * identical way: optional here even though `toSnapshot`/`encodeScene`
+   * always WRITE a defined value once `AppState` carries one. Decoded
+   * values must match the `#rrggbb` hex pattern (reusing {@link hexToRgb}
+   * as the validator, like `fogTint`'s own field just below); absent or
+   * malformed decodes to `undefined`, and `fromSnapshot` supplies
+   * {@link DEFAULT_BALLOON_TINT} for whichever comes back that way — so a
+   * pre-fr-j85n link decodes with the field absent and still boots with the
+   * shell untinted.
+   */
+  balloonTint?: string;
+  /**
+   * The balloon tint's blend strength (fr-j85n, see `state.ts`'s
+   * {@link AppState.balloonTintStrength}) — persisted alongside
+   * `balloonTint`, clamping through {@link PARAM}.balloonTintStrength
+   * exactly like `fogTintStrength` clamps through `PARAM.fogTintStrength`.
+   * Absent or malformed decodes to `undefined`; `fromSnapshot` supplies
+   * {@link DEFAULT_BALLOON_TINT_STRENGTH} — `0`, the untinted identity — so
+   * a pre-fr-j85n link's absent pair reproduces today's balloon rendering
+   * exactly.
+   */
+  balloonTintStrength?: number;
+  /**
    * Depth-fog density multiplier (fr-5h5d, see `state.ts`'s
    * {@link AppState.fogDensity}) — persisted alongside `balloonRadius`
    * exactly the same way: optional here (so a hand-built/pre-fr-5h5d
@@ -341,6 +367,12 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     // applies instead of `background`'s omit-while-pristine dance.
     balloonEcho: state.balloonEcho,
     balloonRadius: state.balloonRadius,
+    // Always written (fr-j85n), the identical balloonRadius shape just
+    // above: AppState.balloonTint/balloonTintStrength are always defined,
+    // and there is no legacy document whose meaning depends on either
+    // field's absence.
+    balloonTint: state.balloonTint,
+    balloonTintStrength: state.balloonTintStrength,
     // Always written (fr-5h5d), the identical balloonRadius shape just
     // above: AppState.fogDensity is always defined, and there is no legacy
     // document whose meaning depends on this field's absence.
@@ -376,11 +408,13 @@ export function toSnapshot(state: AppState): SceneSnapshot {
  * `positionAxisColors`: both HAVE a real `AppState` default
  * (`false`/`DEFAULT_BALLOON_RADIUS`) to fall back to rather than merely
  * clearing to `undefined`, so a `??` supplies it whenever the decoded (or
- * hand-built) snapshot came back without one. `fogDensity` (fr-5h5d) follows
- * the identical shape, falling back to {@link DEFAULT_FOG_DENSITY} — as do
- * `fogTint`/`fogTintStrength`, falling back to {@link DEFAULT_FOG_TINT} /
- * {@link DEFAULT_FOG_TINT_STRENGTH} — and `groundPlane` (fr-rhn5), falling
- * back to `false`.
+ * hand-built) snapshot came back without one. `balloonTint`/
+ * `balloonTintStrength` (fr-j85n) follow the identical shape, falling back
+ * to {@link DEFAULT_BALLOON_TINT} / {@link DEFAULT_BALLOON_TINT_STRENGTH} —
+ * as does `fogDensity` (fr-5h5d), falling back to
+ * {@link DEFAULT_FOG_DENSITY} — as do `fogTint`/`fogTintStrength`, falling
+ * back to {@link DEFAULT_FOG_TINT} / {@link DEFAULT_FOG_TINT_STRENGTH} —
+ * and `groundPlane` (fr-rhn5), falling back to `false`.
  */
 export function fromSnapshot(
   snapshot: SceneSnapshot,
@@ -393,6 +427,9 @@ export function fromSnapshot(
     positionAxisColors: snapshot.positionAxisColors,
     balloonEcho: snapshot.balloonEcho ?? false,
     balloonRadius: snapshot.balloonRadius ?? DEFAULT_BALLOON_RADIUS,
+    balloonTint: snapshot.balloonTint ?? DEFAULT_BALLOON_TINT,
+    balloonTintStrength:
+      snapshot.balloonTintStrength ?? DEFAULT_BALLOON_TINT_STRENGTH,
     fogDensity: snapshot.fogDensity ?? DEFAULT_FOG_DENSITY,
     fogTint: snapshot.fogTint ?? DEFAULT_FOG_TINT,
     fogTintStrength: snapshot.fogTintStrength ?? DEFAULT_FOG_TINT_STRENGTH,
@@ -1533,6 +1570,8 @@ export function encodeScene(s: SceneSnapshot): string {
     glowBrightness: number;
     balloonEcho: boolean;
     balloonRadius: number;
+    balloonTint: string;
+    balloonTintStrength: number;
     fogDensity: number;
     fogTint: string;
     fogTintStrength: number;
@@ -1631,6 +1670,15 @@ export function encodeScene(s: SceneSnapshot): string {
     // toSnapshot (which always supplies both) — see toSnapshot's own note.
     balloonEcho: s.balloonEcho ?? false,
     balloonRadius: round4(s.balloonRadius ?? DEFAULT_BALLOON_RADIUS),
+    // Always written (fr-j85n), the identical balloonRadius shape just
+    // above — the `??` fallbacks only matter for a hand-built SceneSnapshot
+    // that skipped toSnapshot. balloonTint is a hex string already (no
+    // rounding); balloonTintStrength rounds like every other float in this
+    // payload.
+    balloonTint: s.balloonTint ?? DEFAULT_BALLOON_TINT,
+    balloonTintStrength: round4(
+      s.balloonTintStrength ?? DEFAULT_BALLOON_TINT_STRENGTH,
+    ),
     // Always written (fr-5h5d), like balloonRadius just above — the `??`
     // fallback only matters for a hand-built SceneSnapshot that skipped
     // toSnapshot (which always supplies it).
@@ -1815,6 +1863,17 @@ export function encodeScene(s: SceneSnapshot): string {
  * `false` / {@link DEFAULT_BALLOON_RADIUS} — for whichever comes back
  * `undefined`, so a pre-fr-5wlv.6 link decodes here with both fields
  * absent and still boots with the balloon off, exactly as it always did.
+ *
+ * balloonTint/balloonTintStrength (fr-j85n) are `balloonRadius`'s tint-pair
+ * siblings, same never-rejects contract: `balloonTintStrength` coerces/
+ * clamps into {@link PARAM}.balloonTintStrength's range exactly like
+ * `fogTintStrength` clamps into `PARAM.fogTintStrength`; `balloonTint` must
+ * be a string matching the `#rrggbb` hex pattern ({@link hexToRgb} is the
+ * validator, reused from `fogTint`'s own field below) or it decodes to
+ * `undefined`. `fromSnapshot` supplies {@link DEFAULT_BALLOON_TINT} /
+ * {@link DEFAULT_BALLOON_TINT_STRENGTH}, so a pre-fr-j85n link decodes with
+ * the pair absent and still boots with the shell untinted, reproducing
+ * today's balloon rendering exactly.
  *
  * fogDensity (fr-5h5d) follows the identical quiet-drop/clamp contract as
  * balloonRadius just above: coerce, reject non-finite to `undefined`, clamp
@@ -2005,6 +2064,28 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       ? clampToSpec(PARAM.balloonRadius, rawBalloonRadius)
       : undefined;
 
+    // balloonTint (fr-j85n): a #rrggbb string. Validated with hexToRgb, the
+    // same strict validator fogTint uses below — but only its "did this
+    // parse" verdict matters here: like fogTint, AppState stores the hex
+    // STRING itself (not an RgbStop), so the parsed triple is discarded and
+    // the original string survives. Absent or malformed decodes to
+    // undefined, never rejecting the scene; fromSnapshot supplies
+    // DEFAULT_BALLOON_TINT.
+    const balloonTint: string | undefined =
+      typeof o.balloonTint === "string" && hexToRgb(o.balloonTint) !== null
+        ? o.balloonTint
+        : undefined;
+
+    // balloonTintStrength (fr-j85n): same coerce/clamp/never-reject
+    // contract as balloonRadius just above. fromSnapshot supplies
+    // DEFAULT_BALLOON_TINT_STRENGTH when this comes back undefined.
+    const rawBalloonTintStrength = Number(o.balloonTintStrength);
+    const balloonTintStrength: number | undefined = Number.isFinite(
+      rawBalloonTintStrength,
+    )
+      ? clampToSpec(PARAM.balloonTintStrength, rawBalloonTintStrength)
+      : undefined;
+
     // fogDensity (fr-5h5d): same coerce/clamp/never-reject contract as
     // balloonRadius just above. fromSnapshot supplies DEFAULT_FOG_DENSITY
     // when this comes back undefined.
@@ -2065,6 +2146,8 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       fourD,
       balloonEcho,
       balloonRadius,
+      balloonTint,
+      balloonTintStrength,
       fogDensity,
       fogTint,
       fogTintStrength,
