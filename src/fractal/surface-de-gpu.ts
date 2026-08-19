@@ -1,4 +1,8 @@
 import {
+  BACKGROUND_SHAPE_WGSL,
+  backgroundShapeSource,
+} from "./background-shape";
+import {
   BULB_ITERATIONS,
   BULB_POWER,
   BULB_STEP_SCALE,
@@ -696,7 +700,7 @@ import type { Vec3 } from "./types";
  * SURFACE_GPU_PARAMS_PLANE_BYTES} block (layout on the constant's doc).
  *
  * Shade uniform (march "unproject" + mode "shade") — {@link
- * SURFACE_GPU_SHADE_BYTES} = 160 bytes, WGSL `struct ShadeParams`:
+ * SURFACE_GPU_SHADE_BYTES} = 176 bytes, WGSL `struct ShadeParams`:
  *   offset 0..63 mat4x4f invProjView (column-major, the exact
  *                THREE.Matrix4.elements scene.ts uploads as uInvProjView)
  *          64  vec3f lightDir          76  f32 ambient
@@ -706,7 +710,7 @@ import type { Vec3 } from "./types";
  *         120  u32  aoTaps            124  u32 flags (bit0 = dither)
  *         128  vec3f fogTint          140  f32 fogTintStrength
  *         144  vec2f pixelJitter      152  f32 envStrength
- *        (156..159 struct alignment pad)
+ *         160  vec2f bgOffset         168  vec2f bgExtent
  * fogTint/fogTintStrength (fr-5h5d) retarget the shade entry's fog blend
  * to mix(bg, fogTint, fogTintStrength) — strength 0 (the default) is the
  * identity (fog blends toward bg alone), and misses never read it.
@@ -715,10 +719,18 @@ import type { Vec3 } from "./types";
  * those derivations used to spell as a literal, so an unset jitter is the
  * pre-supersampling kernel value for value.
  * envStrength (fr-ehcj) landed in the FORMER alignment pad at 152 — the
- * struct's byte size (160) is unchanged. It is how far the shade entry's
- * AMBIENT term is tinted toward the backdrop sampled along the shading
- * normal (`envTint` at both `lit` sites): default/absent 0 is the
- * bit-exact pre-fr-ehcj identity (mix returns `vec3f(1.0)` at t=0).
+ * struct's byte size at the time (160) was unchanged. It is how far the
+ * shade entry's AMBIENT term is tinted toward the backdrop sampled along
+ * the shading normal (`envTint` at both `lit` sites): default/absent 0 is
+ * the bit-exact pre-fr-ehcj identity (mix returns `vec3f(1.0)` at t=0).
+ * bgOffset/bgExtent (fr-xn9s) are the shared background shape's pixel
+ * offset within, and pixel size of, the FULL image being traced —
+ * `background-shape.ts`'s coordinate contract, read by the emitted
+ * `backgroundShapeT` — REQUIRED on {@link SurfaceGpuShadeParams} (no safe
+ * default exists: an absent extent divides by zero or by one). An
+ * ordinary frame packs offset (0, 0) and extent (rasterWidth,
+ * rasterHeight); a capture band packs offset (0, bandBottom) and extent
+ * (fullWidth, fullHeight) — see `surface-compute.ts`.
  *
  * Shade maps storage (mode "shade") — one vec4f per map slot:
  * (uMapColor rgb, uFoldParams.w trapIndex); one zero stride when empty,
@@ -830,8 +842,9 @@ export const SURFACE_GPU_MAP4_VEC4 = 9;
  * tint pair, then 160 with fr-vpbq's `pixelJitter` at 144 — a WGSL
  * uniform struct rounds to its largest member's 16-byte alignment, so the
  * vec2f costs a full stride, leaving a 152..159 pad fr-ehcj's
- * `envStrength` now fills at 152 without moving this constant. */
-export const SURFACE_GPU_SHADE_BYTES = 160;
+ * `envStrength` filled at 152 — and now 176 with fr-xn9s's `bgOffset`/
+ * `bgExtent` vec2f pair appended at 160/168, still 16-aligned. */
+export const SURFACE_GPU_SHADE_BYTES = 176;
 /** Map slots a `mapsUniform: true` 4D kernel declares (fr-b72d probe):
  * uniform-address-space arrays need a creation-fixed footprint, so the
  * binding becomes `array<GpuMap4, 24>` and the HOST must bind a buffer of
@@ -2116,6 +2129,24 @@ export interface SurfaceGpuShadeParams {
    * replicated per component.
    */
   envStrength?: number;
+  /**
+   * The traced raster's pixel offset within the FULL image (fr-xn9s),
+   * packed at offset 160 — `background-shape.ts`'s coordinate contract.
+   * REQUIRED, not defaulted: there is no safe fallback, since an absent
+   * offset would silently shift every non-full-frame trace's backdrop.
+   * `[0, 0]` for an ordinary frame; `[0, bandBottom]` for a capture band.
+   */
+  bgOffset: [number, number];
+  /**
+   * The FULL image's pixel size (fr-xn9s), packed at offset 168 — the
+   * divisor in `background-shape.ts`'s `imageUv`. REQUIRED: an absent
+   * extent divides by zero (or, defaulted to 1, silently renders the
+   * wrong shape) rather than failing loudly, and a caller mid-band-trace
+   * is exactly the caller most likely to already have this value. Equal
+   * to the raster's own size for an ordinary frame; the full image's size
+   * for a capture band.
+   */
+  bgExtent: [number, number];
 }
 
 /** Pack the ShadeParams uniform (march "unproject" + mode "shade";
@@ -2142,6 +2173,10 @@ export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
   view.setFloat32(144, jitter[0], true);
   view.setFloat32(148, jitter[1], true);
   view.setFloat32(152, shade.envStrength ?? 0, true);
+  view.setFloat32(160, shade.bgOffset[0], true);
+  view.setFloat32(164, shade.bgOffset[1], true);
+  view.setFloat32(168, shade.bgExtent[0], true);
+  view.setFloat32(172, shade.bgExtent[1], true);
   return buf;
 }
 
@@ -2457,6 +2492,8 @@ struct ShadeParams {
   fogTintStrength: f32,
   pixelJitter: vec2f,
   envStrength: f32,
+  bgOffset: vec2f,
+  bgExtent: vec2f,
 }
 
 @group(0) @binding(4) var<uniform> shade: ShadeParams;`;
@@ -4665,6 +4702,7 @@ struct SurfaceHitInfo {
 }
 
 ${hitInfoText}
+${backgroundShapeSource(BACKGROUND_SHAPE_WGSL)}
 ${
   groundPlane
     ? `
@@ -4783,16 +4821,17 @@ fn shadeRays(
   // fr-vpbq: this pass's sub-pixel sample position, the march entry's own
   // (default (0.5, 0.5), the pixel centre these lines used to spell out).
   let sub = shade.pixelJitter;
-  // main()'s background gradient at this pixel's vUv.y (pixel center).
-  // Deliberately NOT jittered: the backdrop is a smooth vertical ramp with
-  // nothing to alias, it must agree with the host's own backgroundRows
-  // prefill, and holding it fixed keeps supersampling a no-op wherever the
-  // object is absent.
-  let bg = mix(
-    shade.bgBottom,
-    shade.bgTop,
-    clamp((f32(py) + 0.5) / f32(params.rasterHeight), 0.0, 1.0),
-  );
+  // fr-xn9s: the shared shape at this pixel's FULL-IMAGE coordinates.
+  // Deliberately NOT jittered: the backdrop shape has nothing to alias, it
+  // must agree with the host's own backgroundRows prefill, and holding it
+  // fixed keeps supersampling a no-op wherever the object is absent. For
+  // an ordinary frame bgOffset is (0,0) and bgExtent is (rasterWidth,
+  // rasterHeight), so the .y term is (f32(py) + 0.5 + 0.0) / f32(rasterHeight)
+  // — adding an exact 0.0 changes nothing — the shipping expression value
+  // for value.
+  let imageUv =
+    (vec2f(f32(px), f32(py)) + vec2f(0.5) + shade.bgOffset) / shade.bgExtent;
+  let bg = mix(shade.bgBottom, shade.bgTop, backgroundShapeT(imageUv));
 ${
   groundPlane
     ? `  if (st.y == ${SURFACE_GPU_RAY_PLANE}.0) {

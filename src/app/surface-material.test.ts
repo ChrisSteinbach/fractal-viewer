@@ -351,8 +351,9 @@ describe("the supersampling jitter uniform (fr-jf9y)", () => {
   it("leaves the background gradient on the UNJITTERED pixel", () => {
     for (const [name, src] of variants) {
       expect(src, name).toContain(
-        "mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0))",
+        "mix(uBgBottom, uBgTop, backgroundShapeT(vUv))",
       );
+      expect(src, name).toContain("float backgroundShapeT(vec2 p)");
     }
   });
 });

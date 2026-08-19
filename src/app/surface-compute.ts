@@ -70,6 +70,13 @@
  * re-enters via the WebGL path.
  */
 
+import {
+  backgroundColorAt,
+  backgroundImageUv,
+  DEFAULT_BACKGROUND_SHAPE,
+  type BackgroundShapeSpec,
+  type BackgroundStops,
+} from "../fractal/background-shape";
 import type { BulbDE } from "../fractal/bulb-de";
 import type { EscapeDE } from "../fractal/escape-de";
 import type { EscapeDE4 } from "../fractal/escape-de-4d";
@@ -114,7 +121,6 @@ import {
 } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import { deHasFolds4, slabExact4 } from "../fractal/surface-de-4d";
-import type { RgbStop } from "../fractal/palette";
 import type { Vec3 } from "../fractal/types";
 import { clamp } from "../fractal/vec";
 import { webgpuAdapterStatus } from "./render-backend";
@@ -441,6 +447,17 @@ export interface SurfaceComputeFrameSpec {
    * lighting. */
   bgTop: Vec3;
   bgBottom: Vec3;
+  /** The traced raster's pixel offset within, and pixel size of, the FULL
+   * image (fr-xn9s) — `fractal/background-shape.ts`'s coordinate
+   * contract, forwarded to the shade kernel's `bgOffset`/`bgExtent` and to
+   * {@link buildSurfaceComputeBackground}'s host prefill. OPTIONAL here,
+   * unlike {@link packSurfaceGpuShade}'s own required fields: the
+   * renderer knows the frame's own raster, so an absent pair defaults to
+   * offset `(0, 0)` and extent equal to `(width, height)` above — an
+   * ordinary frame — which is what keeps gpu-bench's spec literals
+   * compiling unchanged. A capture band passes both explicitly. */
+  bgOffset?: [number, number];
+  bgExtent?: [number, number];
   /** Index into SURFACE_COLOR_SOURCES — the shader's dispatch integer. */
   colorSource: number;
   colorSpeed: number;
@@ -575,35 +592,62 @@ export interface SurfaceComputeFrame {
  * The background gradient the kernel writes for miss rays, prefilled
  * host-side so rays still ACTIVE at a budget cut present backdrop instead
  * of stale memory (the kernel's documented host contract). Byte-for-byte
- * the kernel's own `pack4x8unorm(mix(bgBottom, bgTop, (py+0.5)/h))`:
+ * the kernel's own `pack4x8unorm(mix(bgBottom, bgTop, backgroundShapeT(imageUv)))`:
  * pack4x8unorm rounds `floor(0.5 + 255*clamp(v))`, which is Math.round on
  * the positive domain — so a truncated frame's active pixels are
  * indistinguishable from its miss pixels.
+ *
+ * `offset`/`extent` are `background-shape.ts`'s coordinate contract
+ * (default: an ordinary frame — offset `(0, 0)`, extent this raster's own
+ * size); `shape` defaults to `"linear"`, today's only shape. Byte
+ * identity at the defaults is by construction: `backgroundImageUv` at
+ * zero offset reproduces `(py + 0.5) / height` exactly (adding 0.0 is
+ * exact in IEEE754), and `backgroundShapeT`'s `"linear"` case is the same
+ * `clamp(v, 0, 1)` this function used to inline.
  */
 export function buildSurfaceComputeBackground(
   width: number,
   height: number,
   bgTop: Vec3,
   bgBottom: Vec3,
+  offset: readonly [number, number] = [0, 0],
+  extent: readonly [number, number] = [width, height],
+  shape: BackgroundShapeSpec = { kind: DEFAULT_BACKGROUND_SHAPE },
 ): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(width * height * 4);
+  const stops: BackgroundStops = { top: bgTop, bottom: bgBottom };
+  const writePixel = (o: number, u: number, v: number): void => {
+    const [rf, gf, bf] = backgroundColorAt(u, v, stops, shape);
+    out[o] = Math.round(clamp(rf, 0, 1) * 255);
+    out[o + 1] = Math.round(clamp(gf, 0, 1) * 255);
+    out[o + 2] = Math.round(clamp(bf, 0, 1) * 255);
+    out[o + 3] = 255;
+  };
+  if (shape.kind === "linear") {
+    // "linear" ignores u, so one shape evaluation covers the whole row —
+    // the pre-fr-xn9s loop's cost exactly. A shape that reads u (fr-h3mp's
+    // radial, eventually) cannot take this path and must fall to the
+    // per-pixel loop below.
+    for (let py = 0; py < height; py++) {
+      const [, v] = backgroundImageUv(0, py, offset, extent);
+      const [rf, gf, bf] = backgroundColorAt(0, v, stops, shape);
+      const r = Math.round(clamp(rf, 0, 1) * 255);
+      const g = Math.round(clamp(gf, 0, 1) * 255);
+      const b = Math.round(clamp(bf, 0, 1) * 255);
+      for (let px = 0; px < width; px++) {
+        const o = (py * width + px) * 4;
+        out[o] = r;
+        out[o + 1] = g;
+        out[o + 2] = b;
+        out[o + 3] = 255;
+      }
+    }
+    return out;
+  }
   for (let py = 0; py < height; py++) {
-    const v = clamp((py + 0.5) / height, 0, 1);
-    const r = Math.round(
-      clamp(bgBottom[0] + (bgTop[0] - bgBottom[0]) * v, 0, 1) * 255,
-    );
-    const g = Math.round(
-      clamp(bgBottom[1] + (bgTop[1] - bgBottom[1]) * v, 0, 1) * 255,
-    );
-    const b = Math.round(
-      clamp(bgBottom[2] + (bgTop[2] - bgBottom[2]) * v, 0, 1) * 255,
-    );
     for (let px = 0; px < width; px++) {
-      const o = (py * width + px) * 4;
-      out[o] = r;
-      out[o + 1] = g;
-      out[o + 2] = b;
-      out[o + 3] = 255;
+      const [u, v] = backgroundImageUv(px, py, offset, extent);
+      writePixel((py * width + px) * 4, u, v);
     }
   }
   return out;
@@ -1226,36 +1270,6 @@ export function surfaceComputeTileRows(
   const perTile = Math.max(1, Math.floor(cap / Math.max(1, width)));
   if (perTile >= height) return height;
   return Math.ceil(height / Math.ceil(height / perTile));
-}
-
-/**
- * The two gradient stops a horizontal BAND of a taller image carries
- * (fr-biox). Every tracer paints its backdrop — and fogs toward it — as
- * `mix(bgBottom, bgTop, (py + 0.5) / rasterHeight)` over its OWN raster,
- * so handing a band the whole image's stops would repeat the full
- * gradient in every tile and band the assembled export. Restricting the
- * stops to the band's own endpoints reproduces the full-image gradient
- * exactly: the pixel-center parameter maps affinely from band to image
- * (`v = bandBottom/fullHeight + u · bandHeight/fullHeight`), so matching
- * the endpoints matches every pixel between them. Pure so that identity
- * is unit-tested.
- */
-export function surfaceComputeBandStops(
-  bgTop: RgbStop,
-  bgBottom: RgbStop,
-  bandBottom: number,
-  bandHeight: number,
-  fullHeight: number,
-): { bgTop: Vec3; bgBottom: Vec3 } {
-  const at = (row: number): Vec3 => {
-    const v = clamp(row / Math.max(1, fullHeight), 0, 1);
-    return [
-      bgBottom[0] + (bgTop[0] - bgBottom[0]) * v,
-      bgBottom[1] + (bgTop[1] - bgBottom[1]) * v,
-      bgBottom[2] + (bgTop[2] - bgBottom[2]) * v,
-    ];
-  };
-  return { bgBottom: at(bandBottom), bgTop: at(bandBottom + bandHeight) };
 }
 
 /**
@@ -1916,6 +1930,12 @@ export class SurfaceComputeRenderer {
      * change/crossfade must invalidate the cache, not just a resize. */
     bgTop: Vec3;
     bgBottom: Vec3;
+    /** The band's own place in the full image (fr-xn9s) — a capture that
+     * tiles reuses this renderer across bands, so the key must catch a
+     * band boundary moving even when width/height/stops do not. */
+    bgOffset: [number, number];
+    bgExtent: [number, number];
+    shapeKind: BackgroundShapeSpec["kind"];
     rows: Uint8Array<ArrayBuffer>;
   } | null = null;
 
@@ -2306,6 +2326,9 @@ export class SurfaceComputeRenderer {
     height: number,
     bgTop: Vec3,
     bgBottom: Vec3,
+    bgOffset: [number, number],
+    bgExtent: [number, number],
+    shape: BackgroundShapeSpec,
   ): Uint8Array<ArrayBuffer> {
     const cached = this.background;
     if (
@@ -2313,16 +2336,30 @@ export class SurfaceComputeRenderer {
       cached.width === width &&
       cached.height === height &&
       cached.bgTop.every((c, i) => c === bgTop[i]) &&
-      cached.bgBottom.every((c, i) => c === bgBottom[i])
+      cached.bgBottom.every((c, i) => c === bgBottom[i]) &&
+      cached.bgOffset.every((c, i) => c === bgOffset[i]) &&
+      cached.bgExtent.every((c, i) => c === bgExtent[i]) &&
+      cached.shapeKind === shape.kind
     ) {
       return cached.rows;
     }
-    const rows = buildSurfaceComputeBackground(width, height, bgTop, bgBottom);
+    const rows = buildSurfaceComputeBackground(
+      width,
+      height,
+      bgTop,
+      bgBottom,
+      bgOffset,
+      bgExtent,
+      shape,
+    );
     this.background = {
       width,
       height,
       bgTop: [...bgTop],
       bgBottom: [...bgBottom],
+      bgOffset: [...bgOffset],
+      bgExtent: [...bgExtent],
+      shapeKind: shape.kind,
       rows,
     };
     return rows;
@@ -2389,6 +2426,12 @@ export class SurfaceComputeRenderer {
     const buffers = await this.allocateFrameBuffers(rays);
     if (token !== this.frameToken || this.isLost || this.destroyed) return null;
 
+    // fr-xn9s: an absent bgOffset/bgExtent means an ordinary frame — this
+    // raster IS the full image (module doc on SurfaceComputeFrameSpec).
+    const bgOffset: [number, number] = spec.bgOffset ?? [0, 0];
+    const bgExtent: [number, number] = spec.bgExtent ?? [width, height];
+    const bgShape: BackgroundShapeSpec = { kind: DEFAULT_BACKGROUND_SHAPE };
+
     if (spec.lutVersion !== this.uploadedLutVersion) {
       device.queue.writeTexture(
         { texture: this.lutTex },
@@ -2419,6 +2462,8 @@ export class SurfaceComputeRenderer {
         fogTintStrength: spec.fogTintStrength,
         pixelJitter,
         envStrength: spec.envLight,
+        bgOffset,
+        bgExtent,
       }),
     );
     // Host prefill contract (module doc of surface-de-gpu.ts): rays still
@@ -2434,7 +2479,15 @@ export class SurfaceComputeRenderer {
       buffers.color,
       0,
       last === null
-        ? this.backgroundRows(width, height, spec.bgTop, spec.bgBottom)
+        ? this.backgroundRows(
+            width,
+            height,
+            spec.bgTop,
+            spec.bgBottom,
+            bgOffset,
+            bgExtent,
+            bgShape,
+          )
         : last.width === width && last.height === height
           ? last.pixels
           : resampleSurfacePixels(

@@ -4,6 +4,7 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { FullScreenQuad } from "three/examples/jsm/postprocessing/Pass.js";
 import { shearMatrix } from "../fractal/affine";
+import { backgroundMeanColor } from "../fractal/background-shape";
 import {
   BALLOON_FAR_CAP_RHO,
   BALLOON_RHO_MARGIN,
@@ -102,7 +103,6 @@ import type { SurfaceComputeFrameSpec } from "./surface-compute";
 import {
   fitSurfaceComputeRaster,
   subPixelSample,
-  surfaceComputeBandStops,
   surfaceComputeTileRows,
 } from "./surface-compute";
 
@@ -112,14 +112,18 @@ THREE.ColorManagement.enabled = false;
 
 /** Midpoint of a backdrop's two stops — the single color that best stands in
  * for a vertical gradient across the whole frame. Numeric Color constructor
- * on purpose: it never applies color-space conversion. */
+ * on purpose: it never applies color-space conversion.
+ *
+ * Kept as its own function (rather than inlining {@link backgroundMeanColor}
+ * at its two call sites) so THREE.Fog's ONE scalar color has one derivation
+ * to read, matching the module's shape wherever else a stop pair collapses
+ * to a single value. The shape is the INTEGRATED-AWAY one (fr-xn9s):
+ * `backgroundMeanColor`'s `"linear"` branch is the exact closed form
+ * `(top + bottom) / 2`, byte-identical to what this function used to
+ * compute inline. */
 function backdropMidpoint(stops: BackgroundGradient): THREE.Color {
-  const { top, bottom } = stops;
-  return new THREE.Color(
-    (top[0] + bottom[0]) / 2,
-    (top[1] + bottom[1]) / 2,
-    (top[2] + bottom[2]) / 2,
-  );
+  const [r, g, b] = backgroundMeanColor(stops, { kind: "linear" });
+  return new THREE.Color(r, g, b);
 }
 
 // The fog color is derived from the ACTIVE backdrop gradient rather than
@@ -234,6 +238,19 @@ function sprite(
  * a different ramp than the live scene. Authored in sRGB and left
  * unconverted to match the rest of the pipeline (ColorManagement is off);
  * canvas gradients interpolate in the same space.
+ *
+ * This is the shared shape's (fr-xn9s, `fractal/background-shape.ts`)
+ * `"linear"` case taking the LINEAR FAST PATH: the canvas 2D API has a
+ * vertical ramp natively, so painting it as one `createLinearGradient`
+ * call is cheaper than looping `backgroundColorAt` per pixel and produces
+ * the same result for a shape that ignores `u` and is monotonic in `v`. A
+ * future shape the API has no native primitive for (fr-h3mp's radial) must
+ * fall to a per-pixel `backgroundColorAt` loop instead, the way {@link
+ * buildSurfaceComputeBackground}'s non-linear branch already does.
+ * DELIBERATE Y-FLIP: canvas row 0 is the TOP of the frame, i.e. `t = 1`
+ * (`addColorStop(0, ...top)` below) — the opposite of every GPU site's
+ * `imageUv.y`, where row 0 is `t = 0`. Both are correct for their own
+ * coordinate system; this is the one place that has to remember it flips.
  */
 function paintBackdropGradient(
   ctx: CanvasRenderingContext2D,
@@ -3782,9 +3799,12 @@ export class FractalScene {
      * sub-frustum ({@link withViewBand}) already aims the rays; what the
      * band changes HERE is everything derived from the raster's height —
      * the trace eps (a tile's pixels are the full image's pixels, so its
-     * cone footprint is the full image's) and the backdrop stops (every
-     * tracer spreads them over its OWN raster, so a band needs the two
-     * the full gradient holds at its edges). */
+     * cone footprint is the full image's) and the backdrop's `bgOffset`/
+     * `bgExtent` (fr-xn9s: the shared shape reads the FULL image's
+     * coordinates — see `fractal/background-shape.ts` — so a band passes
+     * its own place in that image rather than a remapped pair of stops;
+     * this retired `surfaceComputeBandStops`, which existed only because a
+     * LINEAR ramp restricted to a sub-rectangle is still linear). */
     band?: { bottom: number; fullHeight: number },
   ): SurfaceComputeFrameSpec {
     const params = this.surfaceComputeParams;
@@ -3804,15 +3824,12 @@ export class FractalScene {
     // A band traces the full image's pixels through a sub-frustum, so its
     // per-pixel cone footprint is the full image's, not its own raster's.
     const traceHeight = band ? band.fullHeight : height;
-    const stops = band
-      ? surfaceComputeBandStops(
-          this.backdrop.top,
-          this.backdrop.bottom,
-          band.bottom,
-          height,
-          band.fullHeight,
-        )
-      : { bgTop: this.backdrop.top, bgBottom: this.backdrop.bottom };
+    // fr-xn9s: this raster's place in the full image the shared shape is
+    // evaluated over — (0, 0)/(width, height) for an ordinary frame,
+    // (0, band.bottom)/(width, band.fullHeight) for one capture tile of
+    // several (bands are always full-width — surfaceComputeTileRows).
+    const bgOffset: [number, number] = [0, band ? band.bottom : 0];
+    const bgExtent: [number, number] = [width, band ? band.fullHeight : height];
     return {
       width,
       height,
@@ -3855,9 +3872,17 @@ export class FractalScene {
       // The live backdrop stops (fr-5ps1) — the same pair the GLSL tracers
       // carry as uBgTop/uBgBottom, read fresh at every spec assembly so the
       // compute frames track a background change/crossfade exactly like a
-      // lighting change (restricted to a capture tile's own band above).
-      bgTop: [stops.bgTop[0], stops.bgTop[1], stops.bgTop[2]],
-      bgBottom: [stops.bgBottom[0], stops.bgBottom[1], stops.bgBottom[2]],
+      // lighting change. ALWAYS the full-image stops now (fr-xn9s) — a
+      // capture tile's own place in the image rides bgOffset/bgExtent
+      // below instead of a remapped pair.
+      bgTop: [this.backdrop.top[0], this.backdrop.top[1], this.backdrop.top[2]],
+      bgBottom: [
+        this.backdrop.bottom[0],
+        this.backdrop.bottom[1],
+        this.backdrop.bottom[2],
+      ],
+      bgOffset,
+      bgExtent,
       colorSource: SURFACE_COLOR_SOURCES.indexOf(params.colorSource),
       colorSpeed: params.colorSpeed,
       lut:

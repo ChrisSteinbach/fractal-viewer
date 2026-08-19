@@ -13,6 +13,10 @@ import {
   SURFACE_FOLD_NONE,
   SYM_PLANE_CODE,
 } from "../fractal/surface-de";
+import {
+  BACKGROUND_SHAPE_GLSL,
+  backgroundShapeSource,
+} from "../fractal/background-shape";
 import type { Vec3 } from "../fractal/types";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 import { lightDirection } from "./voxel-material";
@@ -714,6 +718,7 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
     vec3 e = mix(uBgBottom, uBgTop, n.y * 0.5 + 0.5);
     return mix(vec3(1.0), e / max(max(e.r, max(e.g, e.b)), 1.0e-4), uEnvLight);
   }
+  ${backgroundShapeSource(BACKGROUND_SHAPE_GLSL)}
   /** Angular pixel footprint of the ACTIVE buffer (scene-set per frame):
    * sizes the shading probes (normal offsets, ray dither) to the pixels
    * actually being rendered. NOT the hit test's epsilon — see
@@ -2945,7 +2950,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
 
 #endif
   void main() {
-    vec3 background = mix(uBgBottom, uBgTop, clamp(vUv.y, 0.0, 1.0));
+    // fr-xn9s: the shared shape at FULL-IMAGE coordinates. This arm always
+    // traces the whole image (capture scissors strips out of a full-size
+    // target), so vUv IS imageUv — the compute arm, which traces capture
+    // BANDS, carries a bgOffset/bgExtent pair instead.
+    vec3 background = mix(uBgBottom, uBgTop, backgroundShapeT(vUv));
 
     // Reconstruct the camera ray by unprojecting this pixel on the near and
     // far clip planes — at the supersampling pass's own point inside the

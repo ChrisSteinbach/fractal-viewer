@@ -922,16 +922,19 @@ function shadeParams(
     shadowSteps: 24,
     aoTaps: 5,
     dither: true,
+    bgOffset: [12, 34],
+    bgExtent: [640, 480],
     ...overrides,
   };
 }
 
 describe("packSurfaceGpuShade", () => {
-  it("returns an ArrayBuffer of exactly SURFACE_GPU_SHADE_BYTES (160 bytes, per the module doc)", () => {
+  it("returns an ArrayBuffer of exactly SURFACE_GPU_SHADE_BYTES (176 bytes, per the module doc)", () => {
     // 144 through fr-5h5d's fog tint pair; 160 since fr-vpbq's pixelJitter
-    // at 144, because a WGSL uniform struct rounds to its largest member's
-    // 16-byte alignment and the trailing vec2f costs a full stride.
-    expect(SURFACE_GPU_SHADE_BYTES).toBe(160);
+    // at 144 (a WGSL uniform struct rounds to its largest member's 16-byte
+    // alignment, so the trailing vec2f costs a full stride); 176 since
+    // fr-xn9s's bgOffset/bgExtent vec2f pair at 160/168.
+    expect(SURFACE_GPU_SHADE_BYTES).toBe(176);
     const buf = packSurfaceGpuShade(shadeParams());
     expect(buf).toBeInstanceOf(ArrayBuffer);
     expect(buf.byteLength).toBe(SURFACE_GPU_SHADE_BYTES);
@@ -1028,6 +1031,18 @@ describe("packSurfaceGpuShade", () => {
     );
     const without = new Uint8Array(packSurfaceGpuShade(shadeParams()));
     expect(withField).toEqual(without);
+  });
+
+  it("round-trips bgOffset/bgExtent at offsets 160/168 (fr-xn9s)", () => {
+    const view = new DataView(
+      packSurfaceGpuShade(
+        shadeParams({ bgOffset: [7, 1057], bgExtent: [1920, 3169] }),
+      ),
+    );
+    expect(view.getFloat32(160, true)).toBe(7);
+    expect(view.getFloat32(164, true)).toBe(1057);
+    expect(view.getFloat32(168, true)).toBe(1920);
+    expect(view.getFloat32(172, true)).toBe(3169);
   });
 });
 

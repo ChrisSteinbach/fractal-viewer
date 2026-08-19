@@ -429,6 +429,37 @@ bench spec set a nonzero strength over that backdrop, `envTint`'s
 `NaN` (it would just read `vec3f(0.0)` and black out the ambient half),
 but no shipped spec reaches that case.
 
+## Shared background shape (fr-xn9s)
+
+`ShadeParams` grows two `vec2f` — `bgOffset` at offset 160, `bgExtent` at
+168, `SURFACE_GPU_SHADE_BYTES` 160 → 176 — the WGSL half of
+`fractal/background-shape.ts`'s coordinate contract: every tracer now
+evaluates the backdrop shape at the pixel's FULL-IMAGE normalized
+coordinates, `(px + 0.5 + bgOffset) / bgExtent`, rather than at a stop
+pair pre-remapped for its own raster. `BACKGROUND_SHAPE_WGSL` emits the
+shared `backgroundShapeT` body inside the shade-mode entry template only
+(kernels that never shade — `eval`, `march` — stay byte-identical); the
+shade entry's `bg` local becomes:
+
+```
+let imageUv = (vec2f(f32(px), f32(py)) + vec2f(0.5) + shade.bgOffset) / shade.bgExtent;
+let bg = mix(shade.bgBottom, shade.bgTop, backgroundShapeT(imageUv));
+```
+
+Both fields are REQUIRED on `SurfaceGpuShadeParams` (unlike `envStrength`
+et al.) — there is no safe default, since an absent extent divides by
+zero or by one and silently renders the wrong shape rather than failing
+loudly. An ordinary frame packs offset `(0, 0)` and extent equal to its
+own raster size, which is bit-identical to the pre-fr-xn9s expression:
+`imageUv.y` reduces to `(f32(py) + 0.5 + 0.0) / f32(rasterHeight)`, and
+adding an exact `0.0` is exact in IEEE754. A capture band
+(`surface-compute.ts`) packs offset `(0, bandBottom)` and extent equal to
+the FULL image — this is what retired `surfaceComputeBandStops`, the old
+affine remap of the two stops onto a band's own sub-range: that remap
+worked only because a LINEAR ramp restricted to a sub-rectangle is still
+linear, where re-deriving `imageUv` per pixel from the full extent works
+for any shape.
+
 ## Modes
 
 `eval` (per-query distances) and `march` (bounded-dispatch ray march,

@@ -6980,6 +6980,11 @@ async function runSurfaceUnprojectLeg(
         shadowSteps: 0,
         aoTaps: 0,
         dither: false,
+        // Inert in march mode (only invProjView and the dither flag
+        // reach it), but required on the interface — this leg traces
+        // the whole width x height raster, so offset is the origin.
+        bgOffset: [0, 0],
+        bgExtent: [width, height],
       }),
     );
     const bindGroup = device.createBindGroup({
