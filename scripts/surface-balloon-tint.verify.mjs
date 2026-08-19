@@ -100,9 +100,15 @@
  * MEASURED on SwiftShader compute, full raster: this system settles in 112s
  * at 720x400 with the balloon OFF, and with it ON reaches 0.3% of one
  * settle in 180s at 1024x640 (~2.3x the rays, so ~200x the per-ray cost).
- * A ray that misses the shell still marches to fr-5wlv's far cap through a
- * region where the inverted query sits near the ball centre and the
- * estimate is tiny. So the gate shrinks the RAY COUNT rather than the
+ * THE MECHANISM IS ALGORITHMIC, not a software-adapter artefact: a ray that
+ * MISSES the shell still marches to fr-5wlv's far cap, and it marches there
+ * through a region where the inverted query sits near the ball centre — so
+ * `DE(I(p))` is tiny, the union takes it, and the step length collapses in
+ * exactly the directions that have nothing in them. (fr-j8uk's
+ * `scripts/balloon-real-driver.verify.mjs` is the instrument for this
+ * number on a REAL driver, where it is deliberately an on/off RATIO on one
+ * machine state rather than an absolute; read the two together rather than
+ * re-deriving either.) So the gate shrinks the RAY COUNT rather than the
  * claim: `deviceScaleFactor` 0.12 traces a ~108x67 buffer inside a full
  * desktop layout (the CSS viewport stays past `MOBILE_BREAKPOINT`, so the
  * mode buttons are where a user's are). Both engines take the same lever,
@@ -209,6 +215,12 @@ const TINT_OFF = 0;
  * this is a floor against a leg that "passes" on a handful of edge pixels,
  * not a tolerance. */
 const MIN_CHANGED_FRACTION = 0.01;
+/** The share of the scene region the shell-gate instrument's ERODED mask
+ * must reach before its verdict counts. Below it the pose has left too
+ * little fractal-or-backdrop to measure and the row refuses instead of
+ * passing on nothing — see the instrument's own note. Measured: 3006 of
+ * 4690 px, 64%, twelve times this floor. */
+const S_MIN_INTERIOR_FRACTION = 0.05;
 /** Per-leg settle budget. Generous: see the header's cost note. */
 const DEFAULT_SETTLE_MS = 420_000;
 
@@ -595,21 +607,40 @@ async function sceneDiff(page, aPng, bPng) {
  * those pixels is then the sharpest reading available of "the mix is
  * gated", and it costs no extra capture.
  *
- * THE MASK HAS TO BE ERODED, and finding out why is the measurement. The
- * raw mask is byte-equality of an EIGHT-SAMPLE AVERAGE (fr-vpbq): a pixel
- * whose subsamples straddle the shell's edge can average to the same bytes
- * with the balloon off and still carry one tinted subsample, worth ~1/8 of
- * the tint's own step. MEASURED on the first run of this gate: of 3276 raw
- * mask pixels exactly FOUR moved (three by 1, one by 3, against the tint's
- * own max of 206 elsewhere in the same frame), and ALL FOUR were adjacent
- * to a pixel the balloon did change — 4 of 4, which is the signature of an
- * edge artefact and not of a leak, whose pixels would be interior and would
- * move by tens. Requiring the pixel AND its eight neighbours to be
- * balloon-unchanged drops 270 boundary pixels and takes the maximum to
- * EXACTLY 0 over the remaining 3006. So `interiorMax` is the gated number
- * and `rawMax`/`rawAdjacent` are reported beside it as the evidence for
- * that choice — a later session can see the artefact rather than wonder
- * whether the erosion is hiding something.
+ * THE MASK HAS TO BE ERODED, and finding out why IS the measurement — the
+ * derivation is left here in sequence so a later session can re-judge the
+ * erosion instead of trusting it. The raw mask is byte-equality of an
+ * EIGHT-SAMPLE AVERAGE (fr-vpbq), so a pixel whose subsamples straddle the
+ * shell's edge can average to the same bytes with the balloon off and still
+ * carry one tinted subsample. MEASURED, first run of this gate:
+ *
+ *   raw mask                    3276 px
+ *   of those, moved at all         4 px — three by 1, one by 3
+ *   of those movers, edge-adjacent 4 px — ALL of them
+ *   eroded (8-neighbour) mask   3006 px, max delta EXACTLY 0
+ *
+ * The SCALE is what settles it. The same frame carries the tint's own max
+ * of 206, and one subsample of eight is worth ~26 of that — so a single
+ * straddling subsample predicts a delta of a few units, and 3 is a few
+ * units. A leak would not look like this at all.
+ *
+ * WHAT WOULD FAIL, so the next reader knows which number to look at when
+ * this row goes red: a real ungating moves INTERIOR pixels, and by TENS,
+ * because a fractal-term hit would take the whole `mix` rather than an
+ * eighth of it — so `interiorMax` going nonzero is the regression this row
+ * exists to catch. The raw triple moving while the interior stays at 0 is
+ * an ANTI-ALIASING change (a different sample count, a different pose, a
+ * shifted edge), not a gating change, and is not this row's business. Both
+ * are printed on every run, green ones included: a number that only shows
+ * up on failure teaches nobody.
+ *
+ * The erosion may not swallow the question either. A pose where the balloon
+ * repaints nearly everything leaves too few interior pixels to mean
+ * anything, and 0 of 0 must never read as a pass — that is fr-5666's own
+ * failure mode, one gate over, where a phase measured 0.000% because its
+ * subject was off screen. Below {@link S_MIN_INTERIOR_FRACTION} of the
+ * scene region the row REFUSES and the run reports claim (iii) as resting
+ * on L4 alone. The measured run has 3006 of 4690 px, 64%.
  */
 async function shellGateDelta(page, { base, tinted, maskA, maskB }) {
   return page.evaluate(
@@ -951,18 +982,28 @@ async function main() {
           `${shell.rawMoved} moved of which ${shell.rawAdjacent} sit on the ` +
           `balloon's own edge)`,
       );
-      if (shell.interiorCount > 0 && shell.interiorMax !== 0) {
+      const interiorShare = shell.interiorCount / shell.pixels;
+      if (interiorShare < S_MIN_INTERIOR_FRACTION) {
+        // Refuse rather than pass on nothing: 0 of 0 unchanged pixels is
+        // not evidence that the mix is gated, it is evidence that this
+        // pose had no fractal-term hits left to ask about.
+        log(
+          `NOTE  S's eroded mask is ${shell.interiorCount}px, ` +
+            `${(100 * interiorShare).toFixed(1)}% of the scene region and ` +
+            `under the ${(100 * S_MIN_INTERIOR_FRACTION).toFixed(0)}% floor ` +
+            `— the balloon repainted too much of this pose for S to pose its ` +
+            `question. Claim (iii) rests on L4 alone in this run.`,
+        );
+        uncovered.push(
+          `S (the mix moves only the shell, measured inside a balloon ` +
+            `frame): only ${shell.interiorCount}px of eroded mask`,
+        );
+      } else if (shell.interiorMax !== 0) {
         fail(
           `S: the tint moved ${shell.interiorMax} on pixels INTERIOR to the ` +
             `region the balloon itself never changed — those are ` +
             `fractal-term or backdrop pixels, no supersample of them saw the ` +
             `shell, and the mix must be gated off them by hi.shell`,
-        );
-      }
-      if (shell.interiorCount === 0) {
-        log(
-          "NOTE  the balloon repainted every scene pixel at this pose, so S " +
-            "had nothing to measure — claim (iii) rests on L4 alone here.",
         );
       }
 
