@@ -2,6 +2,7 @@ import type * as THREE from "three";
 import {
   createSurfaceMaterial4,
   setSurface4Balloon,
+  setSurface4Finishes,
   setSurface4GroundPlane,
   setSurfaceSystem4,
   setSurfaceView4,
@@ -13,7 +14,13 @@ import {
   packSurfaceBalloonTint,
   SURFACE_GLSL_STRIP_BYTES,
   surfaceFragmentFor,
+  surfaceFragmentResolvedFor,
 } from "./surface-material";
+import {
+  CLASSIC_SURFACE_FINISH,
+  resolveSurfaceFinish,
+  surfaceFinishLanes,
+} from "../fractal/surface-finish";
 import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
 import type { SurfaceDE4, SurfaceDE4Map } from "../fractal/surface-de-4d";
 import { radiusBandInvRange } from "../fractal/surface-de-4d";
@@ -73,7 +80,7 @@ function de4(
   };
 }
 
-/** The four Float32Arrays behind the material's `SurfaceMaps4` block, in the
+/** The six Float32Arrays behind the material's `SurfaceMaps4` block, in the
  * order the fragment shader declares its members — the bytes the GPU reads.
  * Reached through the uniforms group because block members deliberately do
  * NOT appear in `material.uniforms`. */
@@ -82,6 +89,8 @@ function mapBlock(material: THREE.ShaderMaterial): {
   invT: Float32Array;
   colorSigma: Float32Array;
   trap: Float32Array;
+  finishA: Float32Array;
+  finishB: Float32Array;
 } {
   const group = material.uniformsGroups[0];
   const uniforms = group.uniforms as THREE.Uniform<Float32Array>[];
@@ -90,6 +99,8 @@ function mapBlock(material: THREE.ShaderMaterial): {
     invT: uniforms[1].value,
     colorSigma: uniforms[2].value,
     trap: uniforms[3].value,
+    finishA: uniforms[4].value,
+    finishB: uniforms[5].value,
   };
 }
 
@@ -340,6 +351,11 @@ const balloonSpec = () => ({
   far: 6,
 });
 
+/** Non-overlapping occurrence count — the 3D suite's helper, restated. */
+function countOccurrences(source: string, needle: string): number {
+  return source.split(needle).length - 1;
+}
+
 /** The same, for the floor. */
 const groundSpec = () => ({
   y: -1.5,
@@ -355,13 +371,14 @@ describe("the 4D tracer's variant arms", () => {
   // 3D file's resolver), which is what makes OFF byte-identical to the
   // shipped tracer AND keeps every variant the driver sees far under the
   // Mesa source cliff. MEASURED raw resolved / what the driver gets: off
-  // 62388 B (60.9KB) / 62388 B — under the 64KB threshold, so NOT
-  // stripped, i.e. the shipped bytes exactly (the radial backdrop branch
-  // had moved this from 62711 B to 62804 B); balloon 68865 B (67.3KB) /
-  // 17274 B (16.9KB) (the echo tint had moved this from 68176 B / 17086 B
-  // to 69399 B / 17274 B); plane 70150 B (68.5KB) / 18159 B (17.7KB). The
-  // assertions below pin the CONTRACT (under threshold, arms present or
-  // absent) rather than those figures, which any shader edit moves.
+  // 62765 B (61.3KB) / 62765 B — under the 64KB threshold, so NOT
+  // stripped (the finish lanes' two unconditional block members had moved
+  // this from 62388 B, the radial backdrop branch before them from 62711
+  // B to 62804 B); balloon 69242 B (67.6KB) / 17330 B (16.9KB) (the echo
+  // tint had moved this from 68176 B / 17086 B to 69399 B / 17274 B);
+  // plane 70527 B (68.9KB) / 18215 B (17.8KB). The assertions below pin
+  // the CONTRACT (under threshold, arms present or absent) rather than
+  // those figures, which any shader edit moves.
   it("resolves the shipped source verbatim when both arms are off", () => {
     const glsl = surface4FragmentFor();
     expect(glsl).toBe(createSurfaceMaterial4().fragmentShader);
@@ -372,7 +389,7 @@ describe("the 4D tracer's variant arms", () => {
     // RESOLVED length, not emitted: emitted stays byte-identical to
     // resolved only below the threshold, so an emitted-length assertion
     // would keep passing even after this arm crossed it and got stripped
-    // to a third. Today's figure: 62388 B, 3148 B under the threshold —
+    // to a third. Today's figure: 62765 B, 2771 B under the threshold —
     // the tightest margin of any shipped unstripped arm.
     expect(surface4FragmentResolvedFor().length).toBeLessThan(
       SURFACE_GLSL_STRIP_BYTES,
@@ -744,5 +761,237 @@ describe("balloon seniority over the floor", () => {
     expect(material.uniforms.uGroundBallR.value).toBe(1);
     expect(material.version).toBe(version);
     expect(material.fragmentShader).toContain("balloonInvert");
+  });
+});
+
+describe("the 4D tracer's finish arm", () => {
+  const fetchLine =
+    "vec3 col = finishShade(base, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot]);";
+
+  /** Every field away from classic and every field a different number, so
+   * a lane landing one float off in the std140 block is visible. */
+  const authored = resolveSurfaceFinish({
+    specular: 0.9,
+    shininess: 64,
+    metalness: 0.3,
+    reflect: 0.5,
+    transmit: 0.2,
+  });
+
+  it("declares the finish lanes as the block's two trailing members UNCONDITIONALLY, read only under the arm", () => {
+    // The block's member list is the std140 layout contract with the
+    // UniformsGroup, so the lanes must be there whether or not the arm
+    // is compiled — a member that came and went with the define would
+    // move every offset three derives from the group's order on each
+    // toggle. Off: declared, never read (finishShade absent). On: read.
+    for (const [balloon, plane] of [
+      [0, 0],
+      [1, 0],
+      [0, 1],
+    ] as const) {
+      const off = surface4FragmentFor(balloon, plane, 0);
+      expect(off).toContain("vec4 uMapFinishA[MAX_MAPS];");
+      expect(off).toContain("vec4 uMapFinishB[MAX_MAPS];");
+      expect(off).not.toContain("finishShade");
+      expect(off).not.toContain("uMapFinishA[fSlot]");
+      expect(off).not.toContain("SURFACE_FINISH");
+      // Omitted means explicit 0, resolved and emitted alike.
+      expect(surface4FragmentFor(balloon, plane)).toBe(off);
+      expect(surface4FragmentResolvedFor(balloon, plane)).toBe(
+        surface4FragmentResolvedFor(balloon, plane, 0),
+      );
+      // The members are the block's LAST two, in A-then-B order — the
+      // order the group appends its backing arrays in.
+      const block = off.match(
+        /layout\(std140\) uniform SurfaceMaps4 \{[\s\S]*?\n\s*\};/,
+      );
+      expect(block).not.toBeNull();
+      const members = block![0]
+        .split("\n")
+        .filter((line) => /^\s*(mat4|vec4) u/.test(line))
+        .map((line) => line.trim());
+      expect(members).toEqual([
+        "mat4 uInvM[MAX_MAPS];",
+        "vec4 uInvT[MAX_MAPS];",
+        "vec4 uMapColorSigma[MAX_MAPS];",
+        "vec4 uMapTrap[MAX_MAPS];",
+        "vec4 uMapFinishA[MAX_MAPS];",
+        "vec4 uMapFinishB[MAX_MAPS];",
+      ]);
+    }
+  });
+
+  it("compiles exactly one finishShade and the 3D tracer's fetch line, character for character, into every 4D variant with the arm on", () => {
+    for (const [balloon, plane] of [
+      [0, 0],
+      [1, 0],
+      [0, 1],
+    ] as const) {
+      const resolved = surface4FragmentResolvedFor(balloon, plane, 1);
+      expect(
+        countOccurrences(
+          resolved,
+          "vec3 finishShade(vec3 base, vec3 n, vec3 rd, float shadow, float ao, vec3 bg, vec4 fa, vec4 fb) {",
+        ),
+      ).toBe(1);
+      expect(resolved).toContain(
+        "int fSlot = clamp(firstChoice, 0, uMapCount - 1);",
+      );
+      expect(countOccurrences(resolved, fetchLine)).toBe(1);
+      expect(resolved).not.toContain("#if SURFACE_FINISH");
+      // The fixed formula was resolved away with the #else.
+      expect(resolved).not.toContain("32.0) * 0.4;");
+    }
+    // Cross-dimension parity: the 3D tracer emits the identical fetch
+    // line (both tracers name the pixel backdrop `background`).
+    expect(surfaceFragmentResolvedFor(0, 0, 0, 0, 0, 1)).toContain(fetchLine);
+    // And the identical finishShade body — one template in
+    // surface-finish.ts, spliced into both.
+    const body = (src: string): string => {
+      const match = src.match(/vec3 finishShade\([\s\S]*?\n\s*\}/);
+      expect(match).not.toBeNull();
+      return match![0].replace(/\s+/g, " ").trim();
+    };
+    // Both RESOLVED: the 3D base arm strips (its body comment would go),
+    // the 4D one does not.
+    expect(body(surface4FragmentResolvedFor(0, 0, 1))).toBe(
+      body(surfaceFragmentResolvedFor(0, 0, 0, 0, 0, 1)),
+    );
+    // The plane-over-balloon refusal holds with the finish on.
+    expect(() => surface4FragmentFor(1, 1, 1)).toThrow(RangeError);
+  });
+
+  it("keeps the plain 4D arm under the strip threshold with the finish on — this file's tightest margin", () => {
+    // Measured at landing: 63464 B resolved, 2072 B under. The RESOLVED
+    // length, for the reason the off-arm test above gives. The balloon
+    // and plane arms already strip, finish or not.
+    expect(surface4FragmentResolvedFor(0, 0, 1).length).toBeLessThan(
+      SURFACE_GLSL_STRIP_BYTES,
+    );
+    expect(surface4FragmentFor(0, 0, 1)).toContain(
+      "\n  precision highp float;",
+    );
+    expect(surface4FragmentResolvedFor(1, 0, 1).length).toBeGreaterThan(
+      SURFACE_GLSL_STRIP_BYTES,
+    );
+    expect(surface4FragmentFor(1, 0, 1)).not.toContain("//");
+  });
+
+  it("backs the block's two new members with classic-lane placeholders, in the group's last two slots", () => {
+    const material = createSurfaceMaterial4();
+    expect(material.defines.SURFACE4_FINISH).toBe(0);
+    const group = material.uniformsGroups[0];
+    expect(group.uniforms).toHaveLength(6);
+    const maps = mapBlock(material);
+    expect(maps.finishA).toHaveLength(SURFACE4_MAX_MAPS * 4);
+    expect(maps.finishB).toHaveLength(SURFACE4_MAX_MAPS * 4);
+    const classic = surfaceFinishLanes(CLASSIC_SURFACE_FINISH);
+    for (let j = 0; j < SURFACE4_MAX_MAPS; j++) {
+      expect(maps.finishA.subarray(j * 4, j * 4 + 4)).toEqual(
+        new Float32Array(classic.a),
+      );
+      expect(maps.finishB.subarray(j * 4, j * 4 + 4)).toEqual(
+        new Float32Array(classic.b),
+      );
+    }
+  });
+
+  it("setSurface4Finishes writes each slot's lanes into the block at j * 4, resets the rest to classic, flips the define and recompiles", () => {
+    const material = createSurfaceMaterial4();
+    const versionBefore = material.version;
+    setSurface4Finishes(material, [
+      authored,
+      resolveSurfaceFinish({ specular: 0.1, shininess: 8 }),
+    ]);
+    const maps = mapBlock(material);
+    expect(maps.finishA.subarray(0, 4)).toEqual(
+      new Float32Array([0.9, 64, 0.3, 0.5]),
+    );
+    expect(maps.finishB.subarray(0, 4)).toEqual(
+      new Float32Array([0.2, 0, 0, 0]),
+    );
+    expect(maps.finishA.subarray(4, 8)).toEqual(
+      new Float32Array([0.1, 8, 0, 0]),
+    );
+    expect(maps.finishB.subarray(4, 8)).toEqual(new Float32Array([0, 0, 0, 0]));
+    expect(maps.finishA.subarray(8, 12)).toEqual(
+      new Float32Array([0.4, 32, 0, 0]),
+    );
+    const last = (SURFACE4_MAX_MAPS - 1) * 4;
+    expect(maps.finishA.subarray(last, last + 4)).toEqual(
+      new Float32Array([0.4, 32, 0, 0]),
+    );
+    expect(material.defines.SURFACE4_FINISH).toBe(1);
+    expect(material.fragmentShader).toContain("vec3 finishShade(");
+    expect(material.fragmentShader).toContain(fetchLine);
+    expect(material.fragmentShader).not.toContain("32.0) * 0.4;");
+    expect(material.version).toBeGreaterThan(versionBefore);
+    // A float32 lane rounds an authored value to the GPU's own precision —
+    // which is the precision every other member of this block carries.
+    setSurface4Finishes(material, [{ ...authored, specular: 0.7 }]);
+    expect(maps.finishA[0]).toBeCloseTo(0.7, 6);
+  });
+
+  it("rewrites the lanes without touching the shader on a value-only change, and null hands the fixed formula back with every slot classic", () => {
+    const material = createSurfaceMaterial4();
+    setSurface4Finishes(material, [authored]);
+    const version = material.version;
+    const shader = material.fragmentShader;
+    setSurface4Finishes(material, [{ ...authored, reflect: 1 }]);
+    const maps = mapBlock(material);
+    expect(maps.finishA[3]).toBe(1);
+    expect(material.version).toBe(version);
+    expect(material.fragmentShader).toBe(shader);
+
+    setSurface4Finishes(material, null);
+    expect(material.defines.SURFACE4_FINISH).toBe(0);
+    expect(maps.finishA.subarray(0, 4)).toEqual(
+      new Float32Array([0.4, 32, 0, 0]),
+    );
+    expect(material.fragmentShader).toBe(surface4FragmentFor());
+    expect(material.fragmentShader).not.toContain("finishShade");
+    expect(material.version).toBeGreaterThan(version);
+  });
+
+  it("survives both scene arms' rebuilds in either direction, and reads them back when it rebuilds", () => {
+    const material = createSurfaceMaterial4();
+    setSurface4Finishes(material, [authored]);
+    const finished = (what: string) => {
+      expect(material.defines.SURFACE4_FINISH, what).toBe(1);
+      expect(material.fragmentShader, what).toContain(fetchLine);
+    };
+    setSurface4Balloon(material, balloonSpec());
+    expect(material.fragmentShader).toContain("balloonInvert");
+    finished("balloon on");
+    setSurface4Balloon(material, null);
+    finished("balloon off");
+    setSurface4GroundPlane(material, groundSpec());
+    expect(material.fragmentShader).toContain("shadeGroundPlane");
+    finished("plane on");
+    // Clearing the finish over a live floor keeps the floor.
+    setSurface4Finishes(material, null);
+    expect(material.defines.SURFACE4_GROUND_PLANE).toBe(1);
+    expect(material.fragmentShader).toContain("shadeGroundPlane");
+    expect(material.fragmentShader).not.toContain("finishShade");
+    // And re-enabling it over the floor composes both.
+    setSurface4Finishes(material, [authored]);
+    expect(material.fragmentShader).toContain("shadeGroundPlane");
+    finished("finish over plane");
+  });
+
+  it("refuses more finish slots than the block carries, and a material without a block", () => {
+    const material = createSurfaceMaterial4();
+    expect(() =>
+      setSurface4Finishes(
+        material,
+        Array.from({ length: SURFACE4_MAX_MAPS + 1 }, () => authored),
+      ),
+    ).toThrow(RangeError);
+    expect(() =>
+      setSurface4Finishes(
+        material,
+        Array.from({ length: SURFACE4_MAX_MAPS }, () => authored),
+      ),
+    ).not.toThrow();
   });
 });

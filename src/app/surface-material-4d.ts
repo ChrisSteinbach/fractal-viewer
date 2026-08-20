@@ -5,6 +5,13 @@ import {
 } from "../fractal/background-shape";
 import { radiusBandInvRange } from "../fractal/surface-de-4d";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
+import type { ResolvedSurfaceFinish } from "../fractal/surface-finish";
+import {
+  CLASSIC_SURFACE_FINISH,
+  SURFACE_FINISH_GLSL,
+  surfaceFinishLanes,
+  surfaceFinishShadeSource,
+} from "../fractal/surface-finish";
 import type { Vec3 } from "../fractal/types";
 import {
   configureSurfaceLUTTexture,
@@ -99,7 +106,13 @@ import { lightDirection } from "./voxel-material";
  * `material.defines` carries the pair for change detection and as a
  * program-cache key, never as driver-parsed text. They are mutually
  * exclusive for the 3D reason, unchanged in 4D: there is no horizon inside
- * an enclosing shell.
+ * an enclosing shell. A THIRD arm, the per-transform surface FINISH
+ * (`SURFACE_FINISH`, {@link setSurface4Finishes}), is the 3D arm itself
+ * rather than a lift — one shared shading site, one shared `finishShade`
+ * body from `fractal/surface-finish.ts` — and composes with both; its one
+ * 4D-specific decision is that the finish lanes are UNCONDITIONAL members
+ * of the `SurfaceMaps4` std140 block (see the block), so the layout never
+ * moves when the define flips.
  *
  * THE BALLOON IS SLICE-THEN-INVERT, and that single sentence is the whole
  * 4D content of the lift. `I(p) = c + R²(p−c)/|p−c|²` is a plain 3D
@@ -229,6 +242,13 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     /** x = per-slot palette coordinate in [0, 1] for the orbit trap
      * (CPU-precomputed from each slot's base-map index); yzw unused. */
     vec4 uMapTrap[MAX_MAPS];
+    /** Per-map surface FINISH lanes (surface-finish.ts: A = specular,
+     * shininess, metalness, reflect; B = transmit, reserved). UNCONDITIONAL
+     * members, read only by the finish arm in main(): a define-gated
+     * member would move the std140 offsets on every toggle — see the
+     * UniformsGroup. */
+    vec4 uMapFinishA[MAX_MAPS];
+    vec4 uMapFinishB[MAX_MAPS];
   };
   uniform int uMapCount;
   /** Kaleidoscope sectors swept around every base map (>= 1). 1 leaves the
@@ -341,6 +361,12 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     vec3 e = mix(uBgBottom, uBgTop, n.y * 0.5 + 0.5);
     return mix(vec3(1.0), e / max(max(e.r, max(e.g, e.b)), 1.0e-4), uEnvLight);
   }
+#if SURFACE_FINISH
+  /** surface-finish.ts's ONE lighting body, GLSL dialect — the 3D twin's
+   * splice line for line; define-gated because it is value- not
+   * byte-identical to the fixed formula at the classic lanes. */
+  ${surfaceFinishShadeSource(SURFACE_FINISH_GLSL)}
+#endif
   ${backgroundShapeSource(BACKGROUND_SHAPE_GLSL)}
   /** Angular pixel footprint of the ACTIVE buffer (scene-set per frame):
    * sizes the shading probes (normal offsets, ray dither) to the pixels
@@ -1899,6 +1925,12 @@ uniform float uBalloonTintStrength;
     }
     float ao = clamp(1.0 - 0.85 * occ / norm, 0.0, 1.0);
 
+#if SURFACE_FINISH
+    // The hit's depth-0 map picks its AUTHORED finish — the 3D twin's
+    // fetch line for line, over the std140 lanes.
+    int fSlot = clamp(firstChoice, 0, uMapCount - 1);
+    vec3 col = finishShade(base, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot]);
+#else
     float diffuse = max(dot(n, uLightDir), 0.0);
     vec3 halfVec = normalize(uLightDir - rd);
     float specular = pow(max(dot(n, halfVec), 0.0), 32.0) * 0.4;
@@ -1914,6 +1946,7 @@ uniform float uBalloonTintStrength;
     // ~2x by scaling the gamma encoding itself.
     vec3 linBase = pow(base, vec3(2.2));
     vec3 col = pow(linBase * lit + vec3(specular * shadow), vec3(1.0 / 2.2));
+#endif
 
 #if SURFACE_BALLOON
     // A shell hit can land NEARER than the sphere entry seeding the fog
@@ -1968,20 +2001,28 @@ uniform float uBalloonTintStrength;
  * crashed the compiler outright, empty info log, lost context). MEASURED
  * here, raw resolved / what the driver gets:
  *
- * - off:     62388 B (60.9KB) / 62388 B — under 64KB, so NOT stripped
- *            (3148 B of headroom, up from the radial backdrop branch's
- *            2732 B — itself down from 2825 B, since the shared
+ * - off:     62765 B (61.3KB) / 62765 B — under 64KB, so NOT stripped
+ *            (2771 B of headroom, down from 3148 B: the finish lanes'
+ *            two UNCONDITIONAL block members and their four-line doc
+ *            cost 377 B raw, 56 B of them live tokens, in every 4D
+ *            program — the price of a layout that does not move when
+ *            the finish define flips; before them the radial backdrop
+ *            branch's 2732 B, itself down from 2825 B, since the shared
  *            backgroundShapeT body and its three new uniforms cost 93 B
  *            here even at "linear" defaults — docs/surface-glsl-tracers.md
  *            carries the environment-light and shared-background-shape
  *            history this continues).
- * - balloon: 68865 B (67.3KB) / 17274 B (16.9KB) — past the threshold, so
+ * - balloon: 69242 B (67.6KB) / 17330 B (16.9KB) — past the threshold, so
  *            the size rule strips it (the echo tint had moved it from
  *            68176 B / 17086 B to 69399 B / 17274 B: +1223 B raw, comments
  *            included, and +188 B once stripped — the uniforms and the
  *            shell-gated mix are the only bytes that survive the strip).
- * - plane:   70150 B (68.5KB) / 18159 B (17.7KB) — plane variants always
+ * - plane:   70527 B (68.9KB) / 18215 B (17.8KB) — plane variants always
  *            strip.
+ * - finish:  +699 B raw over each of the three (the finishShade body and
+ *            the fetch, less the fixed formula they replace); the plain
+ *            arm stays unstripped at 63464 B (2072 B of headroom, this
+ *            file's tightest), balloon 18113 B and plane 18998 B emitted.
  *
  * ONLY THE RAW SIDE MOVES ON A COMMENT-ONLY EDIT: the strip deletes
  * comments anyway, so balloon's and plane's driver figures are invariant
@@ -1993,9 +2034,20 @@ uniform float uBalloonTintStrength;
  * for the first time putting this tracer in the band where the 3D fold
  * program takes 25 seconds to link. Resolved per variant instead, OFF
  * keeps its shipped bytes exactly and each arm pays only for itself.
+ *
+ * `finish` is the THIRD arm, the per-map surface finish
+ * ({@link setSurface4Finishes}): it threads to the 3D resolver's own
+ * `finish` slot, composes with both scene arms, and at 0 resolves
+ * byte-identical to the pre-finish build. Its sizes — the one arm that
+ * moves the plain 4D source, since the shading site is shared — are in
+ * `docs/surface-glsl-tracers.md`'s table.
  */
-export function surface4FragmentFor(balloon = 0, plane = 0): string {
-  return surfaceFragmentFor(0, 0, balloon, plane, 0, SURFACE4_FRAGMENT);
+export function surface4FragmentFor(
+  balloon = 0,
+  plane = 0,
+  finish = 0,
+): string {
+  return surfaceFragmentFor(0, 0, balloon, plane, 0, finish, SURFACE4_FRAGMENT);
 }
 
 /**
@@ -2003,11 +2055,23 @@ export function surface4FragmentFor(balloon = 0, plane = 0): string {
  * {@link surfaceFragmentResolvedFor} rather than restating it, so there is
  * one definition of what a variant arm means across both dimensions.
  */
-export function surface4FragmentResolvedFor(balloon = 0, plane = 0): string {
-  return surfaceFragmentResolvedFor(0, 0, balloon, plane, 0, SURFACE4_FRAGMENT);
+export function surface4FragmentResolvedFor(
+  balloon = 0,
+  plane = 0,
+  finish = 0,
+): string {
+  return surfaceFragmentResolvedFor(
+    0,
+    0,
+    balloon,
+    plane,
+    0,
+    finish,
+    SURFACE4_FRAGMENT,
+  );
 }
 
-/** CPU mirror of the `SurfaceMaps4` std140 block — the four Float32Arrays
+/** CPU mirror of the `SurfaceMaps4` std140 block — the six Float32Arrays
  * the renderer uploads verbatim, in the SAME ORDER as the block's members
  * in `SURFACE4_FRAGMENT`. Held per material rather than
  * module-wide so a second tracer would get its own buffer. */
@@ -2020,7 +2084,19 @@ interface Surface4MapBuffers {
   readonly colorSigma: Float32Array;
   /** MAX_MAPS * 4 floats: (trapIndex, unused, unused, unused). */
   readonly trap: Float32Array;
+  /** MAX_MAPS * 4 floats: the finish's A lane (specular, shininess,
+   * metalness, reflect) — `surfaceFinishLanes`' order, written by
+   * {@link setSurface4Finishes}; classic until it runs. */
+  readonly finishA: Float32Array;
+  /** MAX_MAPS * 4 floats: the finish's B lane (transmit, 0, 0, 0). */
+  readonly finishB: Float32Array;
 }
+
+/** The classic finish's two lanes, derived through `surfaceFinishLanes`
+ * rather than retyped — the 3D material's own constant, restated here
+ * because it is module-private there and the two files are twins by
+ * convention, not by import of each other's privates. */
+const CLASSIC_FINISH_LANES = surfaceFinishLanes(CLASSIC_SURFACE_FINISH);
 
 /** Which buffers back which material's map block. A WeakMap rather than
  * `material.uniforms` entries because block members must NOT appear as
@@ -2051,14 +2127,22 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
     invT: new Float32Array(SURFACE4_MAX_MAPS * 4),
     colorSigma: new Float32Array(SURFACE4_MAX_MAPS * 4),
     trap: new Float32Array(SURFACE4_MAX_MAPS * 4),
+    finishA: new Float32Array(SURFACE4_MAX_MAPS * 4),
+    finishB: new Float32Array(SURFACE4_MAX_MAPS * 4),
   };
   // Placeholder slots: identity inverse, unit contraction — the same "no
   // system yet" values the pre-block uniform arrays held. Nothing reads them
   // (uMapCount is 0), but a stray zero matrix / zero sigma is the kind of
-  // thing that turns a wiring bug into a silent black frame.
+  // thing that turns a wiring bug into a silent black frame. The finish
+  // lanes take the CLASSIC finish for the same reason: a stray
+  // SURFACE_FINISH read of an unwritten slot renders the fixed formula's
+  // own highlight rather than a matte black one (finishB's zeros ARE the
+  // classic B lane).
   for (let j = 0; j < SURFACE4_MAX_MAPS; j++) {
     for (let d = 0; d < 4; d++) buffers.invM[j * 16 + d * 4 + d] = 1;
     buffers.colorSigma[j * 4 + 3] = 1;
+    buffers.finishA.set(CLASSIC_FINISH_LANES.a, j * 4);
+    buffers.finishB.set(CLASSIC_FINISH_LANES.b, j * 4);
   }
   const maps = new THREE.UniformsGroup();
   // The name is how the renderer finds the block in the linked program
@@ -2073,6 +2157,16 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
   maps.add(new THREE.Uniform(buffers.invT));
   maps.add(new THREE.Uniform(buffers.colorSigma));
   maps.add(new THREE.Uniform(buffers.trap));
+  // The finish pair is a member of this group UNCONDITIONALLY — added here
+  // whether or not SURFACE4_FINISH is on, exactly as the block declares it
+  // whether or not SURFACE_FINISH is on. A member that came and went with
+  // the define would change the std140 offsets three derives from this
+  // list on every finish toggle, and a group built for one layout bound to
+  // a program compiled for the other is silent offset corruption, not an
+  // error. Two dead declarations in the unfinished program and 768 B of
+  // the block are the price; the unfinished program's VALUES are untouched.
+  maps.add(new THREE.Uniform(buffers.finishA));
+  maps.add(new THREE.Uniform(buffers.finishB));
   const material = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     uniforms: {
@@ -2171,16 +2265,20 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
     // an arm directive means); these SURFACE4_-prefixed keys are this
     // material's own state, and three.js prepends them as inert defines
     // over a source whose arms are already resolved. Renaming the
-    // directives to match would break the resolution.
+    // directives to match would break the resolution. SURFACE4_FINISH is
+    // the third key under the same rule (its directive is the 3D
+    // `SURFACE_FINISH`; setSurface4Finishes flips it).
     defines: {
       SURFACE4_BALLOON: 0,
       SURFACE4_GROUND_PLANE: 0,
+      SURFACE4_FINISH: 0,
     },
     vertexShader: SURFACE4_VERTEX,
-    // Both arms off resolves to SURFACE4_FRAGMENT verbatim (62388 B, under
+    // All arms off resolves to SURFACE4_FRAGMENT verbatim (62765 B, under
     // the 64KB strip threshold), so a plain 4D session hands the driver
     // exactly the source it did before the balloon and floor lifts (plus
-    // the envTint term and the shared backgroundShapeT splice).
+    // the envTint term, the shared backgroundShapeT splice, and the finish
+    // lanes' two unconditional block members).
     fragmentShader: surface4FragmentFor(),
     depthTest: false,
     depthWrite: false,
@@ -2418,7 +2516,13 @@ export function setSurface4Balloon(
       want === 1 ? 0 : material.defines.SURFACE4_GROUND_PLANE === 1 ? 1 : 0;
     material.defines.SURFACE4_BALLOON = want;
     material.defines.SURFACE4_GROUND_PLANE = plane;
-    material.fragmentShader = surface4FragmentFor(want, plane);
+    // The finish is orthogonal state its own setter owns — preserved
+    // through the rebuild, as in 3D.
+    material.fragmentShader = surface4FragmentFor(
+      want,
+      plane,
+      material.defines.SURFACE4_FINISH === 1 ? 1 : 0,
+    );
     material.needsUpdate = true;
   }
 }
@@ -2457,6 +2561,7 @@ export function setSurface4GroundPlane(
       : surface4FragmentFor(
           material.defines.SURFACE4_BALLOON === 1 ? 1 : 0,
           want,
+          material.defines.SURFACE4_FINISH === 1 ? 1 : 0,
         );
   const u = material.uniforms;
   if (spec) {
@@ -2480,6 +2585,63 @@ export function setSurface4GroundPlane(
   if (fragment !== null) {
     material.defines.SURFACE4_GROUND_PLANE = want;
     material.fragmentShader = fragment;
+    material.needsUpdate = true;
+  }
+}
+
+/**
+ * Install the per-map surface finishes — `finishes[j]` the RESOLVED finish
+ * for the transform in slot `j`, keyed exactly as `setSurfaceSystem4`'s
+ * `colors[j]` — or clear them with `null`. The 3D `setSurfaceFinishes`'s
+ * contract one dimension up: THE CALLER OWNS THE BYTE-IDENTITY GATE and
+ * passes `null` whenever `isClassicSurfaceFinish` holds for every slotted
+ * transform, which is what keeps an unauthored document on the fixed
+ * lighting formula (the arm is value-, not byte-identical to it at the
+ * classic lanes); a non-null list compiles the arm whatever its values.
+ *
+ * The lanes land in the std140 block's two trailing members — written
+ * through the group's backing arrays like every other per-map quantity,
+ * every slot on every call (listed ones to their lanes, the rest and all
+ * of them on `null` back to the CLASSIC lanes), so no previous system's
+ * finish can leak into an unfilled slot. The block members exist whether
+ * or not the arm is compiled (see the block and group comments), so
+ * writing them never touches the layout; only the define flip reassembles
+ * the source, through {@link surface4FragmentFor} with the material's
+ * CURRENT scene arms — a session-set-scale rebuild, and a lanes-only call
+ * (a finish slider's per-drag tick) never touches the shader. Throws past
+ * {@link SURFACE4_MAX_MAPS} slots.
+ */
+export function setSurface4Finishes(
+  material: THREE.ShaderMaterial,
+  finishes: readonly ResolvedSurfaceFinish[] | null,
+): void {
+  if (finishes && finishes.length > SURFACE4_MAX_MAPS) {
+    throw new RangeError(
+      `${finishes.length} surface finishes, but the material carries at most ${SURFACE4_MAX_MAPS}`,
+    );
+  }
+  const maps = mapBuffers.get(material);
+  if (!maps) {
+    throw new TypeError(
+      "surface material 4D has no map block — build it with createSurfaceMaterial4",
+    );
+  }
+  for (let j = 0; j < SURFACE4_MAX_MAPS; j++) {
+    const lanes =
+      finishes && j < finishes.length
+        ? surfaceFinishLanes(finishes[j])
+        : CLASSIC_FINISH_LANES;
+    maps.finishA.set(lanes.a, j * 4);
+    maps.finishB.set(lanes.b, j * 4);
+  }
+  const want = finishes ? 1 : 0;
+  if (material.defines.SURFACE4_FINISH !== want) {
+    material.defines.SURFACE4_FINISH = want;
+    material.fragmentShader = surface4FragmentFor(
+      material.defines.SURFACE4_BALLOON === 1 ? 1 : 0,
+      material.defines.SURFACE4_GROUND_PLANE === 1 ? 1 : 0,
+      want,
+    );
     material.needsUpdate = true;
   }
 }

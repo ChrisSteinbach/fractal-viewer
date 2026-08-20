@@ -298,6 +298,73 @@ byte for byte — and `shell` (the same `dS < dF` argmin the hit-info
 wrapper already computes) restricts the mix to the echo term alone, so a
 fractal-term hit is untouched at any strength.
 
+**`SURFACE_FINISH`**: `resolveVariantArms`' sixth JS-resolved key, the
+per-transform surface FINISH — `fractal/surface-finish.ts`'s five fields
+(specular, shininess, metalness, reflect, transmit) replacing the shading
+site's FIXED Blinn-Phong lines. It is the first arm that composes with
+EVERYTHING: `surfaceFragmentResolvedFor` refuses nothing new — escape,
+bulb, lens, balloon and floor all take it — because it touches only the
+lighting composition in `main()`, never the descent bodies. Three splice
+points, identical in both files:
+
+- `uniform vec4 uMapFinishA[MAX_MAPS]` / `uMapFinishB[MAX_MAPS]` — the
+  two wire lanes `surfaceFinishLanes` defines, A = (specular, shininess,
+  metalness, reflect) and B = (transmit, 0, 0, 0) with B's tail reserved
+  for the pattern fields — declared INSIDE the arm (the `SURFACE_BULB`
+  precedent, so an unfinished program pays no bytes) but in the SHARED
+  uniform section right after `uMapColor`, so the forward-orbit arms,
+  which replace the descent bodies wholesale, read them exactly as the
+  descents do. In 3D they are default-block arrays; in 4D they are the
+  std140 block's two TRAILING members, and UNCONDITIONAL — see the 4D
+  section for why.
+- `finishShade(...)`, spliced under the define right after `envTint` from
+  `surfaceFinishShadeSource(SURFACE_FINISH_GLSL)` — the ONE body template
+  the WGSL shade entry also emits, so the three mirrors cannot drift on
+  the arithmetic. It reads `uLightDir`/`uAmbient`/`uEnvLight`/`uBgTop`/
+  `uBgBottom`, all declared above it.
+- The shading site: `int fSlot = clamp(firstChoice, 0, uMapCount - 1);`
+  then `col` assigned from `finishShade` over the six locals, the pixel's
+  `background`, and `uMapFinishA[fSlot]` / `uMapFinishB[fSlot]` in the
+  arm's branch, today's fixed `diffuse`/`halfVec`/`specular`/`lit`/
+  `linBase`/`col` lines in its `#else`. The fog lines after it and the
+  balloon's `tEnter` clamp and base-albedo tint mix are untouched in both
+  branches. `bg` is the pixel's own `background` — the backdrop its miss
+  path would have written — which both tracers name identically, so the
+  fetch line is character for character the same in 3D and 4D (a test
+  pins it). The forward arms set `firstChoice` 0, so there the HEAD
+  transform's finish is the scene's; the caller packs it as the one live
+  slot.
+
+IT IS DEFINE-GATED BECAUSE IT IS NOT A BYTE-IDENTITY: at the classic
+lanes `finishShade` reproduces the fixed formula VALUE for value (every
+extra term reduces to `* 1.0`, `+ 0.0` or `mix(x, y, 0.0)` —
+`surface-finish.test.ts` pins the TS mirror exact in double precision),
+but `pow(x, fa.y)` against a uniform is not `pow(x, 32.0)` against a
+literal, and a driver may well compile them differently. So the
+CALLER owns the gate: `setSurfaceFinishes`/`setSurface4Finishes` take
+`null` whenever `isClassicSurfaceFinish` holds for every slotted
+transform, and an unauthored document compiles literally today's program
+text — with the arm OFF the resolved source is byte-identical to the
+pre-finish build on every one of the twelve 3D pairings (a test sweeps
+them). Every slot is written on every call, unlisted ones back to the
+CLASSIC lanes, and the slot DEFAULTS are the classic lanes rather than
+zero — a stray enabled read renders the fixed highlight, not matte
+black. A lanes-only call (a finish slider's drag tick) never touches the
+shader; only the define flip rebuilds, through `surfaceFragmentFor` with
+the material's CURRENT arms. Every recompose site in both files —
+`setSurfaceSystem`, `setEscapeSystem`, `setBulbSystem`,
+`setSurfaceBalloon`, `setSurfaceGroundPlane`, and the 4D balloon and
+plane setters — reads the finish define back and threads it, so no
+system swap, mode flip or scene-arm toggle silently hands an authored
+finish back to the fixed formula (one test per file walks all of them).
+
+COMPILED, NOT JUST COMPOSED: every finish-on program — all twelve 3D
+pairings under both `SURFACE_FOLDS` arms where the split exists, and the
+three 4D arms — plus the finish-off controls, 42 programs, compile clean
+as WebGL2 fragment shaders on headless Chromium's ANGLE (SwiftShader
+Vulkan). A compile is not a render, and no caller packs a finish yet;
+the in-app picture is the wiring slice's to verify.
+
 ## The Mesa link cliff and the source-size rule
 
 Turning the ground plane on would have pushed the shared fold/affine source
@@ -314,10 +381,13 @@ the next time one grows a paragraph.
 
 **Measure before adding the next paragraph** to any arm — two questions
 against two thresholds, not one:
-`surfaceFragmentResolvedFor(escape, lens, balloon, plane, bulb).length`
+`surfaceFragmentResolvedFor(escape, lens, balloon, plane, bulb, finish).length`
 against `SURFACE_GLSL_STRIP_BYTES` decides whether the strip engages, and
-`surfaceFragmentFor(escape, lens, balloon, plane, bulb).length` against
-the ~80KB Mesa cliff decides whether the driver can walk it.
+`surfaceFragmentFor(escape, lens, balloon, plane, bulb, finish).length`
+against the ~80KB Mesa cliff decides whether the driver can walk it. The
+4D wrapper pair, `surface4FragmentResolvedFor(balloon, plane, finish)` /
+`surface4FragmentFor(balloon, plane, finish)`, asks the same two
+questions of the 4D source through the same resolver.
 
 NOTE: the 4D fragment tracer needed no fold mirror at all — it carries no
 fold GLSL (the 4D fold-branch port made fold-shaped 4D sessions
@@ -550,6 +620,112 @@ by about a kilobyte, though the ~75KB monolithic-source conclusion it
 supports survives (76,627 B measured, and the argument was never close to
 its margin).
 
+### The finish arm's sizes
+
+The per-transform finish arm (`SURFACE_FINISH`, above) is the first
+addition measured across EVERY pairing in BOTH states at once — fifteen
+variants, arm off and arm on, resolved and emitted, against the
+previous table's figures. "Off" is the column every shipped session
+compiles until a document authors a finish; "on" is what it compiles
+then.
+
+| variant               | off resolved | off emitted | stripped | on resolved | on emitted | stripped | Δ resolved | Δ emitted |
+| --------------------- | ------------ | ----------- | -------- | ----------- | ---------- | -------- | ---------- | --------- |
+| 3D base (affine/fold) | 83022        | 29194       | yes      | 85055       | 30049      | yes      | +2033      | +855      |
+| 3D lens               | 86223        | 28958       | yes      | 88256       | 29813      | yes      | +2033      | +855      |
+| 3D escape             | 55845        | 55845       | no       | 57878       | 57878      | no       | +2033      | +2033     |
+| 3D bulb               | 39357        | 39357       | no       | 41390       | 41390      | no       | +2033      | +2033     |
+| 3D balloon            | 91670        | 30881       | yes      | 93703       | 31736      | yes      | +2033      | +855      |
+| 3D plane              | 89255        | 31531       | yes      | 91288       | 32386      | yes      | +2033      | +855      |
+| 3D lens+balloon       | 95281        | 30697       | yes      | 97314       | 31552      | yes      | +2033      | +855      |
+| 3D lens+plane         | 92456        | 31295       | yes      | 94489       | 32150      | yes      | +2033      | +855      |
+| 3D escape+balloon     | 64681        | 64681       | no       | 66714       | 13180      | **yes**  | +2033      | −51501    |
+| 3D escape+plane       | 62078        | 12803       | yes      | 64111       | 13658      | yes      | +2033      | +855      |
+| 3D bulb+balloon       | 48572        | 48572       | no       | 50605       | 50605      | no       | +2033      | +2033     |
+| 3D bulb+plane         | 45590        | 10918       | yes      | 47623       | 11773      | yes      | +2033      | +855      |
+| 4D base               | 62765        | 62765       | no       | 63464       | 63464      | no       | +699       | +699      |
+| 4D balloon            | 69242        | 17330       | yes      | 69941       | 18113      | yes      | +699       | +783      |
+| 4D plane              | 70527        | 18215       | yes      | 71226       | 18998      | yes      | +699       | +783      |
+
+Five things the table says, in the order they matter.
+
+**(1) The 3D "off" column is the previous table to the byte.** All
+twelve 3D rows — 83022, 86223, 55845, 39357, 91670, 89255, 95281, 92456,
+64681, 62078, 48572, 45590 — are the figures recorded before the arm
+existed, resolved AND emitted, which is the JS-side resolution doing
+what it is for: with the arm off not one byte of finish text reaches the
+resolved source, and a test asserts the omitted argument, the explicit
+0, and the pre-finish build are the same string across the sweep.
+
+**(2) The 3D "off" column is NOT what the 4D "off" column is.** The 4D
+rows moved without the arm: base 62388 → 62765 B (+377 raw), balloon
+68865 → 69242 B resolved and 17274 → 17330 B emitted (+56), plane 70150
+→ 70527 B and 18159 → 18215 B (+56). That +56 B of live tokens in every
+4D program is the two `vec4 uMapFinishA[MAX_MAPS]` /
+`uMapFinishB[MAX_MAPS]` block members, which are declared
+UNCONDITIONALLY — the 4D section below carries the layout argument — and
+the rest of the +377 is their four-line doc, which the strip deletes
+where it engages. The unfinished 4D program's VALUES are untouched
+(two dead declarations read by nothing), which is the envTint /
+backgroundShapeT growth precedent rather than the byte-identity the 3D
+default-block arrays keep; and it is the one place this slice spends
+the 4D plain arm's headroom on purpose, 3148 → 2771 B.
+
+**(3) The arm costs every 3D variant the same 2033 B of source and the
+same 855 B of live tokens.** The +2033/+855 split is the strip threshold
+again, exactly as the balloon tint's +1206/+188 was: `finishShade`'s
+body, the two uniform declarations, the fetch, and three comment
+paragraphs total 2033 B raw, of which the strip leaves 855 B of tokens
+wherever it engages. The unstripped arms — escape, bulb, bulb+balloon —
+carry the whole 2033 B, comments included. The delta is identical on
+all twelve rows because the arm lives entirely in the shared section
+and `main()`, which every variant emits once; nothing about it is
+per-variant.
+
+**(4) Exactly ONE pairing flips strip status, and it is the one this
+doc said would.** 3D escape+balloon, the "pairing to watch" at 64681 B
+with 855 B of headroom, crosses the 65536 B threshold with the arm on —
+66714 B resolved — and so reaches the driver STRIPPED at 13180 B, a
+fifth of its off size (the −51501 B in the emitted column is that
+crossing, not a saving). The crossing is benign in every way the
+previous record said it would be: stripped it is nowhere near the
+cliff, the token stream is identical, and the only thing lost is its
+commentary in a driver log — for a measurement-only pairing no shipped
+session compiles (balloon is IFS-only, escape is forward). A test pins
+the crossing as the contract (over the threshold, therefore stripped,
+therefore under a quarter of the threshold emitted) rather than as the
+figure. No other row changes column: every 3D descent variant stripped
+before and strips after; escape (7658 B of headroom left), bulb
+(24146 B) and bulb+balloon (14931 B) stay unstripped with the arm on;
+escape+plane and bulb+plane strip under the plane rule regardless. On
+the 4D side the plain arm stays unstripped in both states — 63464 B with
+the arm on, 2072 B of headroom, THIS FILE'S TIGHTEST MARGIN and the
+figure the "one-line comments" rule in `surface-finish.ts`'s emitted
+body was written against — and balloon/plane strip in both.
+
+**(5) Nothing approaches the emitted cliff.** The largest program any
+driver is handed is still 3D escape+balloon with the arm OFF at 64681 B;
+with it on the largest is 3D escape at 57878 B, then 3D bulb+balloon at
+50605 B. Every stripped variant sits between 10.9 and 32.4 KB. The whole
+UNRESOLVED 3D template, every arm's text live at once, grew 139164 →
+142130 B, still well under the ~190 KB a resolved source would need for
+its stripped third to reach the 82.2 KB that crashed Mesa.
+
+THE PAIRING TO WATCH, updated. With the arm off it is still 3D
+escape+balloon at 64681 B, 855 B under — unchanged, because the arm is
+off. With the arm on, escape+balloon has already crossed and there is
+nothing left to watch there; the nearest unstripped margins are now
+**4D plain + finish at 2072 B** (63464 B, the tightest unstripped arm in
+either file and a SHIPPED pairing once any 4D document authors a
+finish), then 4D plain at 2771 B, then 3D escape + finish at 7658 B.
+The Tier-2 pattern slice — which will grow `finishShade`'s body and is
+the reason `uMapFinishB`'s tail exists — lands its bytes on every one of
+those rows, and the 4D plain arm is where it should measure first.
+Crossing there is as benign as every other crossing in this section
+(strip, not cliff), but it is the first time a crossing would cost a
+SHIPPED 4D session its commentary, where escape+balloon's never cost a
+session anything.
+
 ## The probe-width verdict
 
 The three shading taps (normal/shadow/AO) ride the value form, which fold
@@ -679,28 +855,61 @@ is in `docs/surface-compute-renderer.md`.
 
 ### 4D variant arms and the resolution mechanism
 
-TWO VARIANT ARMS exist — the balloon inverted-union and the ground plane,
-each lifted from its 3D original and mirroring it term for term — and the
-MECHANISM is the one deviation, forced by measurement: this source is 62,388
-B with 3,148 B of headroom under the 64KB strip threshold (62,804 B with the
+THREE VARIANT ARMS exist — the balloon inverted-union and the ground plane,
+each lifted from its 3D original and mirroring it term for term, and the
+per-transform finish, which is the SAME arm as 3D's rather than a lift
+(one `#if SURFACE_FINISH` over one shared shading site, see the variant
+arms above) — and the MECHANISM is the one deviation, forced by
+measurement: this source was 62,388 B with 3,148 B of headroom under the
+64KB strip threshold when the two scene arms landed (62,804 B with the
 radial-vignette branch, re-measured after the shared `backgroundShapeT`
 splice — 62,711 B before the vignette, 62,251 B before the splice, 61,751 B
-before the environment light), and the arms cost 6,477 B and 7,762 B over
-the plain source (measured as resolved-with-arm minus resolved-without, the
-"~5.4KB and ~7.8KB" this paragraph carried until the full re-measurement
-above — the balloon figure understated its arm by about a kilobyte), so one
-monolithic `#if` source would be ~76,600 B and EVERY 4D session would pay
-it, in the band where the 3D fold program takes ~25s to link.
+before the environment light; 62,765 B with 2,771 B of headroom since the
+finish lanes' two unconditional block members), and the arms cost 6,477 B
+and 7,762 B over the plain source (measured as resolved-with-arm minus
+resolved-without, the "~5.4KB and ~7.8KB" this paragraph carried until
+the full re-measurement above — the balloon figure understated its arm by
+about a kilobyte), so one monolithic `#if` source would be ~76,600 B and
+EVERY 4D session would pay it, in the band where the 3D fold program
+takes ~25s to link.
 
 So the arms resolve JS-side, through `surfaceFragmentFor` ITSELF rather
-than a second preprocessor (`surface4FragmentFor` is a two-line wrapper),
-and the `defines` keys are `SURFACE4_*` while the GLSL directives stay
-the 3D names — deliberate, called out at both sites, and renaming them
-would break resolution.
+than a second preprocessor (`surface4FragmentFor` is a three-argument
+wrapper, `(balloon, plane, finish)`, threading each to the 3D resolver's
+own slot), and the `defines` keys are `SURFACE4_*` — `SURFACE4_FINISH`
+now the third — while the GLSL directives stay the 3D names — deliberate,
+called out at both sites, and renaming them would break resolution.
 
 Measured after the radial-vignette branch: off, 62,804 B (under threshold,
 so NOT stripped); balloon 68,176 -> 17,086 B stripped; plane 70,588 ->
-18,159 B stripped.
+18,159 B stripped. The finish arm's own rows — off and on, all three
+arms — are in the finish table above.
+
+THE FINISH LANES ARE UNCONDITIONAL BLOCK MEMBERS, where 3D's are
+define-gated arrays, and the reason is the std140 contract this file has
+always carried: the `SurfaceMaps4` block's MEMBER ORDER is the layout the
+`THREE.UniformsGroup` derives its offsets from (three walks the group's
+uniform list in order, each typed-array member at a 16-byte boundary with
+its own byte length as storage), so a member that came and went with the
+define would move every offset on every finish toggle, and a group built
+for one layout bound to a program compiled for the other is SILENT offset
+corruption — the wrong floats in the wrong lanes, no error. Declaring
+`vec4 uMapFinishA[MAX_MAPS]` / `uMapFinishB[MAX_MAPS]` unconditionally,
+APPENDED at the END of the block (after `uMapTrap`) and appended in the
+same A-then-B order at the end of the group, means the layout is one
+layout in both states; only the READ is define-gated. The price is
+measured, not estimated: 768 B of the 16 KB block (2688 → 3456 B, 24 × 2
+× 16), ZERO default-block uniform vectors, +56 B of live tokens in every
+4D program (the two declarations; +377 B raw with their doc before the
+strip), and the plain arm's headroom 3148 → 2771 B — against the
+value-identity of the unfinished program, which is untouched, since
+nothing reads the two members until the arm is compiled. The
+placeholders are the CLASSIC lanes (`(0.4, 32, 0, 0)` / `(0, 0, 0, 0)`),
+written by the same placeholder loop that seeds `colorSigma`'s unit
+sigma and for the same reason: a stray read of an unwritten slot
+renders the fixed highlight rather than a black one. A test pins the
+member list — all six, in order, A then B last — against the block
+text, and the group's length at six.
 
 ## What could not be copied
 
