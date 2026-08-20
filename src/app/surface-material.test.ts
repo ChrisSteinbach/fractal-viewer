@@ -13,6 +13,8 @@ import {
   setSurfaceGroundPlane,
   setSurfaceSystem,
   surfaceFragmentFor,
+  surfaceFragmentResolvedFor,
+  SURFACE_GLSL_STRIP_BYTES,
   SURFACE_MAX_MAPS,
   SURFACE_SHADE_DE_WIDTH,
 } from "./surface-material";
@@ -296,25 +298,66 @@ describe("the fold's authored lengths in the GLSL tracer", () => {
     expect(escape).not.toContain("clamp(y, -1.0, 1.0)");
   });
 
-  it("keeps every variant's source under the Mesa compiler cliff this file has crashed into twice", () => {
-    // 82.2KB crashed Mesa outright (resolveVariantArms); the fold's radii
-    // cost ~2.2KB of uniforms, a derivation helper and longer expressions,
-    // which took the BALLOON variant from 80.9KB past it. The strip rule
-    // is what buys the headroom back — so the assertion is on SIZE, the
-    // thing that actually crashed, not on whether a particular variant
-    // happens to be stripped.
+  it("the strip rule caps what the driver walks below the threshold, which is what puts the Mesa cliff out of reach", () => {
+    // The emitted length is bounded BY CONSTRUCTION, not by any property
+    // of a particular variant: a resolved source under 65536 B is emitted
+    // whole, and one over it is stripped to roughly a third (measured:
+    // 83022 B -> 29194 B for the affine/fold base). For an emitted source
+    // to reach the 82.2KB that crashed Mesa outright, the resolved source
+    // would have to pass ~190KB — and the whole UNRESOLVED template is
+    // only 139164 B, well short of that. So this assertion can only fail
+    // if stripGlslSource stops shrinking; it is NOT a check that any
+    // variant has stopped growing (that's surfaceFragmentResolvedFor's
+    // job, pinned separately below).
     const variants: [string, string][] = [
       ["affine", surfaceFragmentFor(0, 0)],
       ["fold lens", surfaceFragmentFor(0, 1)],
       ["balloon", surfaceFragmentFor(0, 0, 1)],
       ["ground plane", surfaceFragmentFor(0, 0, 0, 1)],
+      ["lens + balloon", surfaceFragmentFor(0, 1, 1)],
       ["lens + plane", surfaceFragmentFor(0, 1, 0, 1)],
       ["escape", surfaceFragmentFor(1, 0)],
+      ["escape + balloon", surfaceFragmentFor(1, 0, 1)],
+      ["escape + plane", surfaceFragmentFor(1, 0, 0, 1)],
       ["bulb", surfaceFragmentFor(0, 0, 0, 0, 1)],
+      ["bulb + balloon", surfaceFragmentFor(0, 0, 1, 0, 1)],
+      ["bulb + plane", surfaceFragmentFor(0, 0, 0, 1, 1)],
     ];
     for (const [name, src] of variants) {
-      expect(src.length, name).toBeLessThan(64 * 1024);
+      expect(src.length, name).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
     }
+  });
+
+  it("keeps the two shipped forward arms under the strip threshold, so their commentary survives into a driver log", () => {
+    // Crossing SURFACE_GLSL_STRIP_BYTES turns stripping ON, which drops
+    // the emitted length to roughly a third — so an assertion on the
+    // EMITTED length would keep passing at exactly the moment the
+    // property it guards (comments surviving into what the driver
+    // compiles) breaks. This has to read the RESOLVED length instead.
+    // Today's headroom: escape 55845 B (9691 B under), bulb 39357 B
+    // (26179 B under).
+    //
+    // Escape's headroom is worth watching at all because the power links
+    // cost that arm two branches (twice, both bodies), the duplicated
+    // bulbPow8 and two comment paragraphs — exactly the growth this gate
+    // exists to catch. What it protects is READABILITY, not safety: the
+    // 82.2KB that crashed Mesa is a long way above the threshold, and
+    // stripping is what keeps it out of reach (see the test above).
+    //
+    // No escape+balloon assertion: at 64681 B it sits only 855 B under
+    // the threshold, and crossing is BENIGN — stripped it comes down to
+    // ~15KB, far under the cliff — so gating it would fail CI for a
+    // non-hazard and teach whoever hits it to bump the number. It is
+    // also a measurement-only pairing: balloon is IFS-only and escape is
+    // forward, so no shipped session compiles it.
+    // docs/surface-glsl-tracers.md carries that figure as the pairing to
+    // watch.
+    expect(surfaceFragmentResolvedFor(1, 0).length).toBeLessThan(
+      SURFACE_GLSL_STRIP_BYTES,
+    );
+    expect(surfaceFragmentResolvedFor(0, 0, 0, 0, 1).length).toBeLessThan(
+      SURFACE_GLSL_STRIP_BYTES,
+    );
   });
 });
 
@@ -1239,16 +1282,6 @@ describe("SURFACE_ESCAPE cross-family links", () => {
     expect(countOccurrences(surfaceFragmentFor(1, 0), "vec3 bulbPow8(")).toBe(
       1,
     );
-  });
-
-  it("keeps the widened escape variant far under the source size that crashed Mesa", () => {
-    // The power links cost this arm two branches (twice, both bodies),
-    // the duplicated bulbPow8 and two comment paragraphs. The strip
-    // threshold is 64KB and the measured crash was 82.2KB — the escape
-    // arm's commentary is worth keeping only while it stays under the
-    // first of those.
-    expect(surfaceFragmentFor(1, 0).length).toBeLessThan(64 * 1024);
-    expect(surfaceFragmentFor(1, 0, 1).length).toBeLessThan(64 * 1024);
   });
 });
 
