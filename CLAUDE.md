@@ -502,7 +502,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `palette.ts` — Iq cosine-gradient palettes (`buildPaletteLUT` → 256×3 LUT)
     - user-authored `CustomPalette` (2–8 stops). `PaletteSelection` = UI/state,
       `PaletteSpec` = worker/GPU wire, `resolvePalette` = bridge.
-  - `presets.ts` — default + named systems + add-transform, plus five
+  - `presets.ts` — default + named systems (`fourFinishes` is the surface
+    FINISH showcase: four corner maps under a boxfold lens in three
+    finishes and one deliberately UNAUTHORED control, since a showcase
+    that authors every map cannot show what absence renders) +
+    add-transform, plus five
     `Partial<Record<Preset, …>>` SIDE TABLES main.ts's preset handler
     consumes: `PRESET_SCAFFOLDS` (4D wireframes), `PRESET_RENDER_HINTS`
     (the renderer a preset was authored for), and `PRESET_FINALS`
@@ -1436,6 +1440,25 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     slider's ceiling IS the fixed radius and moves with it — the fold's
     domain `0 < mR <= fR` enforced in the row, so the readout is never a
     length `resolveFoldRadii` would silently clamp.
+    A transform's FINISH group carries the same two rules one level up
+    (write-once-moved, remove-at-classic — to within half a slider step,
+    since a value round-trips through the slider's string and persist's
+    rounding), plus a bundle select that is UI VOCABULARY ONLY: it SETS
+    the five sliders through that same per-field write, so Classic clears
+    a finish outright, no bundle stores a classic-valued field, and the
+    document carries params a retuned bundle can never repaint (detection
+    reads RESOLVED values, so `{specular: 0}` alone reads "Matte"). The
+    forward-orbit disclosure reads the DOCUMENT's routing kind
+    (`deriveSurfaceEligibility`'s `kind`, which nothing consumed before) —
+    NOT the session kind, which is unobservable here because the transform
+    editor hides for the whole of a surface session. AND METALS READ AS
+    THEIR SURROUNDINGS: metalness damps the diffuse body away and the only
+    reflection source is the backdrop, so Metal/Chrome render very nearly
+    BLACK against the shipped dark stops (measured: a lobe that reads
+    bright red unauthored goes dark maroon under Chrome). Physically right
+    — a mirror in an unlit room — so the hint and `docs/controls.md`
+    DISCLOSE it rather than the BRDF fudging it, and the showcase preset
+    authors no metal.
   - `control-spec.ts` — declarative spec for panel scalar controls. Adding a
     setting = one spec entry + one index.html row (pure, tested).
   - `legend-spec.ts` — the color legend as DATA: `deriveLegend`
