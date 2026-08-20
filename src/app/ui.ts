@@ -5035,8 +5035,15 @@ export class Ui {
     // otherwise teach that the group is broken.
     const hint = this.doc.createElement("p");
     hint.className = "flame-hint";
+    // The metal caveat is DISCLOSURE, not a defect: metalness damps the
+    // diffuse body away and lights the surface from the backdrop alone, so
+    // a metal reads as its ENVIRONMENT — which, against the near-black
+    // default backdrop, means very nearly black (measured: a lobe that
+    // reads bright red unauthored goes dark maroon under Chrome). That is
+    // what a mirror does in an unlit room. Saying so here is cheaper than
+    // a user concluding the slider broke their render.
     hint.textContent =
-      "Surface renders only: how this map's part of the surface catches light. A bundle sets all five sliders; Classic clears them.";
+      "Surface renders only: how this map's part of the surface catches light. A bundle sets all five sliders; Classic clears them. Metals reflect the backdrop, so Metal and Chrome read best against a bright one.";
     group.appendChild(hint);
 
     // The forward-orbit disclosure — hidden until applyFinishDisclosure

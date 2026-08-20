@@ -2,6 +2,7 @@ import type { FlamePaletteId } from "./palette";
 import type { Rng } from "./rng";
 import type {
   Rotation4,
+  SurfaceFinish,
   SymmetryParams,
   Transform,
   Variation,
@@ -791,6 +792,102 @@ export function juliaSnowflake(): Transform[] {
 /** {@link juliaSnowflake}'s plot-time lens. Scale slightly under 1 so the
  * folded star sits inside the frame the island's own auto-fit finds; z
  * pinned to 0 like every map in this family. */
+/**
+ * "Four Finishes" — the surface FINISH feature's showcase, and the one
+ * preset whose subject is how a map's part of the surface CATCHES LIGHT
+ * rather than where it lands.
+ *
+ * The system is the fold-FINAL lens archetype: a Sierpinski-shaped
+ * four-map affine base under a `boxfold` final transform
+ * ({@link fourFinishesLens}), so the descent takes the same
+ * `descendLens` sweep the surface tracers' lens arm exists for, and the
+ * frame FILLS — a sparse object cannot show a material.
+ *
+ * WHY FOUR MAPS AND WHY THIS ONE. A finish is keyed on the hit's depth-0
+ * winning branch — exactly the partition the "By Transform" colour source
+ * paints — so a showcase has to be a system whose partition is already
+ * legible to the eye. Four corner maps of a tetrahedron are the most
+ * legible partition this project has: each owns a whole visible lobe, so
+ * four different finishes read as four MATERIALS of one object rather than
+ * as noise. More maps would be more impressive and less instructive;
+ * `mandelboxKifs`'s twelve would be a mosaic.
+ *
+ * The four are chosen to separate the BRDF's terms rather than to be
+ * pretty in isolation: GLASS (transmit 0.75 under a fresnel-weighted
+ * reflection) shows the thin-shell read, transmitting head-on and
+ * reflecting at grazing; GEMSTONE sits beside it, a hard pinpoint specular
+ * over a partial transmit; SATIN is the other end of the exponent, a broad
+ * soft sheen; and the fourth map is left UNAUTHORED
+ * — the classic formula, byte for byte — because the feature's whole
+ * claim is that an absent finish renders exactly as it always did, and a
+ * showcase that authors every map cannot show it. The comparison IS the
+ * fourth panel.
+ *
+ * Surface-hinted ({@link PRESET_RENDER_HINTS}): finishes are read by the
+ * surface tracers and by nothing else, so the preset opens where its
+ * subject exists.
+ */
+export function fourFinishes(): Transform[] {
+  const corners: Vec3[] = [
+    [0.35, 0.35, 0.35],
+    [-0.35, -0.35, 0.35],
+    [0.35, -0.35, -0.35],
+    [-0.35, 0.35, -0.35],
+  ];
+  // Glass, gemstone, satin — then the classic control. Every value is a
+  // named bundle from the panel's own Finish select (`ui.ts`'s
+  // FINISH_BUNDLES), spelled out here as the numbers the document stores:
+  // a bundle is UI vocabulary and never rides a scene, so a preset carries
+  // params exactly as a hand-authored scene does. Fields equal to their
+  // classic value are OMITTED, which is what the panel's own write rule
+  // does and what keeps the fourth map's absence meaningful.
+  //
+  // NO METAL HERE, and that is a MEASUREMENT rather than a taste: a
+  // metalness-1 finish damps the diffuse body away entirely and lights the
+  // surface from the backdrop alone, so against this app's SHIPPED dark
+  // backdrop (dark's stops are near-black) a chrome map renders very
+  // nearly BLACK — measured on this exact system, the lobe that reads
+  // bright red unauthored going dark maroon under Chrome. That is
+  // physically right (a mirror in an unlit room is dark) and it is exactly
+  // why the panel's Finish hint says metals show their backdrop; it is
+  // also useless as a showcase, which must read on the backdrop the app
+  // actually opens with. The three authored here keep `metalness` at its
+  // classic 0, so each shades its own albedo and the differences between
+  // them are differences the eye can attribute.
+  const finishes: (SurfaceFinish | undefined)[] = [
+    // Glass: transmits head-on, reflects at grazing.
+    { specular: 0.9, shininess: 96, reflect: 0.35, transmit: 0.75 },
+    // Gemstone: a hard pinpoint over a partial transmit.
+    { specular: 1, shininess: 128, reflect: 0.5, transmit: 0.35 },
+    // Satin: a broad, soft sheen — the other end of the exponent.
+    { specular: 0.25, shininess: 8, reflect: 0.08 },
+    undefined,
+  ];
+  return corners.map((position, i) => ({
+    id: i,
+    position,
+    rotation: [0, 0, 0] as Vec3,
+    scale: [0.5, 0.5, 0.5] as Vec3,
+    ...(finishes[i] ? { finish: finishes[i] } : {}),
+  }));
+}
+
+/** {@link fourFinishes}'s plot-time lens: the `boxfold` FINAL transform
+ * that turns four plain affine corners into a folded surface with enough
+ * area to show a material. Turned off-axis so no two lobes catch the light
+ * identically — with the fold square to the camera the chrome map and the
+ * gemstone map return the same highlight and the sheet reads as two
+ * materials, not four. */
+export function fourFinishesLens(): Transform {
+  return {
+    id: 0,
+    position: [0.15, -0.1, 0.05],
+    rotation: [0.2, 0.3, 0.1],
+    scale: [0.9, 0.9, 0.9],
+    variations: [{ type: "boxfold", weight: 0.55 }],
+  };
+}
+
 export function juliaSnowflakeLens(): Transform {
   return {
     id: 0,
@@ -1937,6 +2034,9 @@ const PRESETS = {
   juliaPinwheel,
   mandelbox: mandelboxLattice,
   mandelboxKifs,
+  // The surface FINISH showcase — four maps in four materials, one of
+  // them deliberately unauthored (see fourFinishes).
+  fourFinishes,
   // The escape-time set's own presets: the mode had none, so the
   // only route in was authoring a lone fold map by hand.
   mandelboxClassic,
@@ -2036,6 +2136,9 @@ export const PRESET_RENDER_HINTS: Partial<
   // The pure-fold twin exists to showcase the fold-branch surface descent
   // — as a point cloud it under-delivers the same way the flame presets do.
   mandelboxKifs: "surface",
+  // Finishes are read by the surface tracers and by nothing else, so the
+  // finish showcase opens where its subject exists.
+  fourFinishes: "surface",
   // The escape-time trio needs the hint more than any preset
   // here: the chaos-game cloud of a non-contracting map is escape-reset
   // debris, so as a point cloud these look BROKEN rather than merely
@@ -2099,6 +2202,7 @@ export const PRESET_RENDER_HINTS: Partial<
 export const PRESET_FINALS: Partial<Record<Preset, () => Transform>> = {
   juliaSnowflake: juliaSnowflakeLens,
   juliaPinwheel: juliaPinwheelLens,
+  fourFinishes: fourFinishesLens,
 };
 
 /**
