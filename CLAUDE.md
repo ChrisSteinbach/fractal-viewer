@@ -502,11 +502,11 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `palette.ts` — Iq cosine-gradient palettes (`buildPaletteLUT` → 256×3 LUT)
     - user-authored `CustomPalette` (2–8 stops). `PaletteSelection` = UI/state,
       `PaletteSpec` = worker/GPU wire, `resolvePalette` = bridge.
-  - `presets.ts` — default + named systems (`fourFinishes` is the surface
-    FINISH showcase: four corner maps under a boxfold lens in three
-    finishes and one deliberately UNAUTHORED control, since a showcase
-    that authors every map cannot show what absence renders) +
-    add-transform, plus five
+  - `presets.ts` — default + named systems (`fourFinishes` is the FINISH
+    showcase: four corner maps under a boxfold lens, three finishes and
+    one deliberately UNAUTHORED control, since a showcase that authors
+    every map cannot show what absence renders) + add-transform, plus
+    five
     `Partial<Record<Preset, …>>` SIDE TABLES main.ts's preset handler
     consumes: `PRESET_SCAFFOLDS` (4D wireframes), `PRESET_RENDER_HINTS`
     (the renderer a preset was authored for), and `PRESET_FINALS`
@@ -812,12 +812,12 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `forwardShadowFlipVerified` absolution capped at 7 flips).
     THE `finish` FLAG parametrizes the SHARED shade entry with per-slot
     authored finishes (`surface-finish.ts`'s lanes): shade-mode emission
-    only, shadeMaps stride 1 -> 3 vec4f, every read site's `* 3` emitted
-    through one token, and NO ShadeParams/params-block change anywhere.
-    Absent/false is byte-identical source (pinned against the pre-change
-    module, 208 emission pairs) — a compile gate, not a defaults claim,
-    because `pow(x, 32.0)` literal -> per-slot value is no exact identity.
-    Forward cores' slot 0 is their whole wire; the floor stays matte.
+    only, shadeMaps stride 1 -> 3 vec4f, and NO ShadeParams/params-block
+    change anywhere. Absent/false is byte-identical source, pinned
+    against the PRE-CHANGE module rather than against itself — a compile
+    gate, not a defaults claim, since `pow(x, 32.0)` literal -> per-slot
+    value is no exact identity. Forward cores' slot 0 is their whole
+    wire; the floor stays matte.
     Consumed by `src/app/surface-compute.ts` (the fold- and
     escape-shaped surface sessions' preferred tracer) and pinned
     by `src/app/gpu-bench/`'s surface section (`npm run bench:surface`;
@@ -839,28 +839,24 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     validity chain and the 3D-only refusal.
   - `surface-finish.ts` — the per-transform surface FINISH's meaning:
     `resolveSurfaceFinish` is the ONE absent-means-classic definition +
-    domain (classic = the tracers' fixed formula, 0.4/32/0/0/0; shininess
-    FLOORS at 0.01 — pow's domain — rather than falling back),
-    `isClassicSurfaceFinish` the shader compile gate's predicate,
+    domain (classic = the fixed formula's 0.4/32/0/0/0; shininess FLOORS
+    at 0.01, pow's domain, rather than falling back),
+    `isClassicSurfaceFinish` the compile gate's predicate,
     `surfaceFinishLanes` the one wire-lane order both engines pack, and
     `surfaceFinishShadeSource` emits the ONE finish BRDF body in both
     shader dialects (`background-shape.ts`'s discipline applied to
     lighting) with `finishShadeTs` as its TS mirror — EXACT at the classic
-    params against the fixed formula (324-case pin), which is the
-    value-true half of the byte-identity story; the compile gates are the
-    byte-true half. `Transform.finish` persists/morphs/mutates on the fold
-    lengths' exact treatment (`types.ts`/`persist.ts`/`morph.ts`/
-    `mutate-system.ts`; random-system deliberately never rolls one).
-    `surfaceFinishPatternAlbedo` is PRODUCTION-DEAD and kept as a
-    measurement's record (`qjulia-de.ts`'s stance): Tier-2 wood off the
-    descent's `rings` is a WON'T-DO on `scripts/finish-pattern.harness.ts`'s
-    own sheet — 74-79% edge density at 1x on every system is speckle, not
-    grain, because `rings` varies at the fractal's own detail frequency.
-    THE ZOOM PREMISE IS CONFIRMED though, decisively (menger 1x/8x/64x:
-    native holds and coarsens 78.5%/51.3%/10.4% while world-space noise
-    collapses to 1.1% and albedoVar 0.0039), which is why the survivor —
-    banding off `sheets`, 23-28% edges at every rung — is filed rather
-    than wired.
+    params against the fixed formula (324-case pin): the value-true half
+    of the byte-identity story, the compile gates being the byte-true
+    half. `Transform.finish` persists/morphs/mutates on the fold lengths'
+    exact treatment (random-system deliberately never rolls one).
+    `surfaceFinishPatternAlbedo` is PRODUCTION-DEAD, kept as a
+    measurement's record (`qjulia-de.ts`'s stance):
+    `scripts/finish-pattern.harness.ts` refused Tier-2 wood off `rings`
+    (at 1x it is speckle, not grain — `rings` varies at the fractal's own
+    detail frequency) while CONFIRMING the zoom premise that motivated it
+    (native coarsens into bands where world-space noise goes flat). The
+    survivor — banding off `sheets` — is filed, not wired.
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
     hybrids, for exactly the systems the IFS gate refuses (one or more
@@ -1451,24 +1447,20 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     domain `0 < mR <= fR` enforced in the row, so the readout is never a
     length `resolveFoldRadii` would silently clamp.
     A transform's FINISH group carries the same two rules one level up
-    (write-once-moved, remove-at-classic — to within half a slider step,
-    since a value round-trips through the slider's string and persist's
-    rounding), plus a bundle select that is UI VOCABULARY ONLY: it SETS
-    the five sliders through that same per-field write, so Classic clears
-    a finish outright, no bundle stores a classic-valued field, and the
-    document carries params a retuned bundle can never repaint (detection
-    reads RESOLVED values, so `{specular: 0}` alone reads "Matte"). The
-    forward-orbit disclosure reads the DOCUMENT's routing kind
-    (`deriveSurfaceEligibility`'s `kind`, which nothing consumed before) —
-    NOT the session kind, which is unobservable here because the transform
-    editor hides for the whole of a surface session. AND METALS READ AS
-    THEIR SURROUNDINGS: metalness damps the diffuse body away and the only
-    reflection source is the backdrop, so Metal/Chrome render very nearly
-    BLACK against the shipped dark stops (measured: a lobe that reads
-    bright red unauthored goes dark maroon under Chrome). Physically right
-    — a mirror in an unlit room — so the hint and `docs/controls.md`
-    DISCLOSE it rather than the BRDF fudging it, and the showcase preset
-    authors no metal.
+    (to within half a slider step — a value round-trips through the
+    slider's string and persist's rounding), plus a bundle select that is
+    UI VOCABULARY ONLY: it SETS the sliders through that same per-field
+    write, so Classic clears a finish outright and no bundle stores a
+    classic-valued field (detection reads RESOLVED values, so
+    `{specular: 0}` alone reads "Matte"). The forward-orbit disclosure
+    reads the DOCUMENT's routing kind (`deriveSurfaceEligibility`'s
+    `kind`) — NOT the session kind, unobservable here because the editor
+    hides for the whole of a surface session. AND METALS READ AS THEIR
+    SURROUNDINGS: metalness damps the diffuse away and the only
+    reflection source is the backdrop, so Metal/Chrome render nearly
+    BLACK against the dark stops (measured on `fourFinishes`' own
+    system). Physically right — a mirror in an unlit room — so the hint
+    and `docs/controls.md` DISCLOSE it rather than the BRDF fudging it.
   - `control-spec.ts` — declarative spec for panel scalar controls. Adding a
     setting = one spec entry + one index.html row (pure, tested).
   - `legend-spec.ts` — the color legend as DATA: `deriveLegend`
@@ -1630,11 +1622,13 @@ Frame` callback, which runs before paint so the disabled look never
     surface's own even spread — pure, shared by `main.ts` and `gpu-bench/`
     so neither drifts from it. `surfaceSlotsAuthorFinish` is the finish
     COMPILE GATE's predicate — keyed on the SLOT list, so a weight-0
-    transform's authored finish cannot force the parametric program; a
-    classic-resolving document compiles literally today's programs on both
-    engines, and main.ts derives the gated list ONCE per surface enter
-    (forward sessions pass ONE slot, the head transform's, matching
-    firstChoice 0).
+    transform's authored finish cannot force the parametric program;
+    main.ts derives the gated list ONCE per surface enter (forward
+    sessions pass ONE slot, the head transform's, matching firstChoice 0,
+    and EVERY routing arm must assign it — the 4D chain's shipped
+    unassigned for one review round, so the declaration now carries no
+    initializer and tsc's definite-assignment analysis refuses the next
+    one).
   - `surface-material.ts` — GLSL3 full-screen-quad sphere tracer mirroring
     `surface-de.ts`'s `estimateDistanceRefined` line for line, the same
     oracle discipline as `flame-gpu.ts`; BASE maps packed into fixed-size
@@ -1644,12 +1638,11 @@ Frame` callback, which runs before paint so the disabled look never
     bare active-map count first, so an over-cap count throws here rather
     than degrading silently.
     VARIANT ARMS, resolved by `surfaceFragmentFor`: `SURFACE_FINISH`
-    (per-map authored finishes — `surface-finish.ts`'s emitted body over
-    `uMapFinishA/B`, composes with EVERY variant, both dimensions in the
-    same change; the 4D pair rides the `SurfaceMaps4` std140 block as
-    UNCONDITIONAL members so the layout never moves on a define flip, and
-    every recompose site threads the define so no system swap drops an
-    authored finish); `SURFACE_FOLD_LENS`
+    (per-map authored finishes over `uMapFinishA/B`, composing with EVERY
+    variant in both dimensions; the 4D pair rides the `SurfaceMaps4`
+    std140 block as UNCONDITIONAL members so the layout never moves on a
+    define flip, and every recompose site threads the define);
+    `SURFACE_FOLD_LENS`
     (the descent bodies rename to `surfaceDECore`, the wrapper
     owns the public `surfaceDE` overloads mirroring `descendLens`, and the
     cores' own `uFinal*` lens uniforms pack IDENTITY while the wrapper
@@ -1695,11 +1688,10 @@ Frame` callback, which runs before paint so the disabled look never
     `surfaceFragmentFor` actually EMITS:
     `surfaceFragmentResolvedFor(escape, lens, balloon, plane, bulb).length`
     against `SURFACE_GLSL_STRIP_BYTES`, and `surfaceFragmentFor(...).length`
-    against the cliff. The finish arm costs every 3D pairing +2033 B
-    resolved and flips exactly ONE strip status (escape+balloon,
-    measurement-only, benign); the pairing to watch is now 4D PLAIN +
-    FINISH at 63464 B — 2072 B of headroom, the first crossing that would
-    cost a SHIPPED 4D session its commentary.
+    against the cliff. The finish arm flips ONE strip status
+    (escape+balloon, benign) and moves the pairing to watch to 4D PLAIN +
+    FINISH — the first crossing that would cost a SHIPPED 4D session its
+    commentary.
     Orbit-trap color blends descent choices TOP-DOWN (depth-0 copy
     dominates, flam3's convention); the per-level decay is the
     Color speed slider (default 0.5 = that original fixed behavior), and
@@ -1804,11 +1796,10 @@ Frame` callback, which runs before paint so the disabled look never
     `?surfacecompute`/`?surfacegl` keep this re-measurable (main.ts;
     `?surfacegl` wins if both are given).
     `create()`'s opts carry the session's gated finishes (null = classic
-    document = literally today's kernels; non-null compiles `finish: true`
-    and packs the stride-3 shadeMaps — create-time like the colors, and a
-    finish edit reaches a live session through the same re-enter a color
-    edit takes, while the frame spec DISCLOSES the list so the offline
-    force-frame memo key re-traces a finish-only timeline leg).
+    = literally today's kernels; non-null compiles `finish: true` and
+    packs the stride-3 shadeMaps — create-time like the colors, and the
+    frame spec DISCLOSES the list so the force-frame memo re-traces a
+    finish-only leg).
     `create()` takes a `SurfaceComputeTarget` union
     (`{kind:"ifs"|"escape"|"bulb"|"escape4"|"ifs4"}`) whose `kind` picks
     the kernel core (ifs4 → affine4 or fold4 off `deHasFolds4`, the 3D
