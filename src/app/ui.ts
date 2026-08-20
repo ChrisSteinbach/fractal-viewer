@@ -713,25 +713,14 @@ const FINISH_BUNDLES: readonly FinishBundle[] = [
     },
   },
   {
-    id: "gemstone",
-    label: "Gemstone",
+    id: "translucent",
+    label: "Translucent",
     finish: {
       specular: 1,
       shininess: 128,
       metalness: 0,
       reflect: 0.5,
       transmit: 0.35,
-    },
-  },
-  {
-    id: "glass",
-    label: "Glass",
-    finish: {
-      specular: 0.9,
-      shininess: 96,
-      metalness: 0,
-      reflect: 0.35,
-      transmit: 0.75,
     },
   },
 ];
