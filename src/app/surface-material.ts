@@ -492,16 +492,20 @@ const stripGlslComments = (glsl: string): string =>
     .filter((line) => line.length > 0)
     .join("\n");
 
-/** Whole-source stripper for the ground-plane variants: block comments
- * first (the uniform docs), then {@link stripGlslComments}'s
- * line-comment/blank/indent pass. Applied ONLY when SURFACE_GROUND_PLANE
- * resolves 1 — the plane arm's text would push the shared fold/affine
- * source (~76.5KB shipped) past the measured ~80KB Mesa crash cliff, and
- * raw SOURCE size is what that compiler prices, comments included (see
- * resolveVariantArms). Stripping emits the identical token stream, and the
- * plane variants are NEW programs with no shipped-bytes baseline to
- * preserve — the probe instance's exact precedent, one level up. Every OFF
- * variant keeps its shipped bytes: this function never runs for them.
+/** Whole-source stripper: block comments first (the uniform docs), then
+ * {@link stripGlslComments}'s line-comment/blank/indent pass. BORN for the
+ * ground-plane variants — the plane arm's text pushed the shared
+ * fold/affine source past the measured Mesa crash cliff, and raw SOURCE
+ * size is what that compiler prices, comments included (see
+ * resolveVariantArms) — and GENERALIZED to the size rule at
+ * {@link SURFACE_GLSL_STRIP_BYTES}, which is what a reader has to know
+ * before believing the rest of this comment: it runs for every DESCENT
+ * variant today, floor or no floor, because every one of them resolves
+ * past the threshold. Stripping emits the identical token stream, and the
+ * plane variants were NEW programs with no shipped-bytes baseline to
+ * preserve — the probe instance's exact precedent, one level up. The arms
+ * that stay UNDER the threshold are the ones that keep their commentary
+ * verbatim: escape, bulb, and the 4D tracer's plain arm.
  * Driver-side `#` directives survive (they are not comments; leading
  * whitespace before `#` was
  * legal anyway and the trim leaves them at column 0). */
@@ -510,12 +514,22 @@ function stripGlslSource(glsl: string): string {
 }
 
 /** The probe instance, emitted only when the width differs from
- * the beam's and only into the NON-lens source: the lens variant's source
- * already sits at the Mesa cliff (~79KB where ~80KB crashed — see
- * resolveVariantArms), its taps keep full-width cores through the public
- * wrapper, and the compute probe-width verdict never covered lenses (the
- * twin renders no foldFinal systems). Comments are stripped for the same
- * reason the lens arm is excluded: source size. */
+ * the beam's and only into the NON-lens source: its taps keep full-width
+ * cores through the public wrapper, and the compute probe-width verdict
+ * never covered lenses (the twin renders no foldFinal systems).
+ *
+ * A THIRD reason this exclusion used to give has RETIRED, and is written
+ * out so nobody reinstates it: that the lens source "already sits at the
+ * Mesa cliff". It does not. The lens variant resolves past
+ * {@link SURFACE_GLSL_STRIP_BYTES} and therefore reaches the driver
+ * STRIPPED, at about a third of its resolved size — measured 86223 B
+ * resolved against 28958 B emitted, where the cliff is ~80KB of EMITTED
+ * source. The argument was sound when it was written, before the strip
+ * became a size rule; reinstating one needs a fresh measurement of the
+ * emitted source, which is the only size Mesa ever walks. Comments are
+ * stripped in this body for the reason they always were — it is spliced
+ * INTO another variant's source and has no shipped-bytes baseline of its
+ * own, the precedent {@link stripGlslSource} later generalized. */
 const foldProbeGlsl = (shadeDeWidth: number): string =>
   shadeDeWidth === SURFACE_FOLD_BEAM_WIDTH
     ? ""
@@ -1017,8 +1031,8 @@ uniform float uBalloonTintStrength;
    * sequence (escape-de.ts's THE TRANSFORM LIST IS THE SEQUENCE).
    * Declared INSIDE the arm, the SURFACE_BULB precedent: an array per
    * link is the one uniform block the descent variants would pay real
-   * bytes for against the measured ~80KB Mesa source cliff and could
-   * never read. t is the PRE-fold offset; the per-iteration offset is the
+   * EMITTED bytes for (uniforms are live tokens; they survive the strip)
+   * and could never read. t is the PRE-fold offset; the per-iteration offset is the
    * query point (the Mandelbrot form). kind is escape-de.ts's
    * EscapeLinkKind — the three folds, plus the two POWER maps at 4 and 5.
    * BOTH TAILS ARE STILL UNUSED (uEscParams[i].w and uEscRadii[i].w): the
@@ -1469,8 +1483,8 @@ uniform float uBalloonTintStrength;
   /** Mandelbulb render: the FORWARD affine (M, t) of the single
    * triplex-power map and (sigma_max(M), bailout, unused, unused).
    * Declared INSIDE the arm, unlike the escape variant's uEsc* trio: the
-   * other variants would pay these bytes against the measured ~80KB Mesa
-   * source cliff for uniforms they can never read. t is the PRE-power
+   * other variants would pay these EMITTED bytes (uniforms are live
+   * tokens; they survive the strip) for uniforms they can never read. t is the PRE-power
    * offset, a live deformation knob with the textbook Mandelbulb at t =
    * 0; the per-iteration offset is derived from the query point (the
    * Mandelbrot form). The BAILOUT rides .y because it is the ORBIT's
@@ -3967,50 +3981,74 @@ function resolveVariantArms(
   return out.join("\n");
 }
 
-/** Compose the fragment source for a variant selection — the driver only
- * ever sees SURFACE_FOLDS conditionals (see resolveVariantArms). `balloon`
- * resolves the SURFACE_BALLOON wrapper arms the same JS-side way — with it
- * 0 the resolved source is byte-identical to the pre-balloon build, so the
- * lens variant's ~79KB never grows toward the measured Mesa cliff. `plane`
- * is the ground-plane arm under the same contract — 0 resolves
- * byte-identical to the pre-plane build — except that 1 additionally
- * strips comments/indentation from the WHOLE resolved source
- * ({@link stripGlslSource}): same token stream, new program, and the raw
- * size Mesa prices drops from the cliff's edge (~76.5KB shipped
- * fold/affine against the ~80KB measured crash) to roughly half, which is
- * what lets every variant carry the floor, the ~79KB lens included. Only
- * `balloon` refuses the pair (the enclosing shell has no horizon for a
- * floor to sit on; callers gate, so reaching the throw is a bug). `bulb`
- * is the SECOND forward-orbit variant under the same contract — 0 resolves
- * byte-identical to the pre-bulb build, and it refuses to compile
- * alongside `escape` (each replaces the descent bodies wholesale, so both
- * on would define surfaceDE twice). `source` defaults to the module's
- * assembled fragment; tests pass their own width-parameterized builds.
- *
- * THE STRIP IS A SIZE RULE, not the plane arm's private habit: any
- * resolved source past {@link SURFACE_GLSL_STRIP_BYTES} gets the same
- * treatment. The fold's authored radii cost this file ~2.2KB of uniforms,
- * a derivation helper and longer expressions, which took the BALLOON
- * variant from 80.9KB to 83.1KB — past the 82.2KB that crashed Mesa
- * outright. A size threshold is the honest predicate for a size cliff: a
- * hand-kept list of which variants strip is exactly what drifts
- * the next time one of them grows a paragraph. */
 /**
  * Resolved-source size past which {@link surfaceFragmentFor} strips
  * comments and indentation before handing the driver a program.
  *
- * The three measurements this file has paid for, all on Mesa/Iris:
- * ~68KB linked (in ~25s), ~80KB was called the cliff, and 82.2KB crashed
- * the compiler outright — empty info log, lost context. 64KB sits below
- * the first of those, so every DESCENT variant strips and the two
- * forward-orbit arms (escape ~40KB, bulb ~34KB) keep their comments,
- * which is where a reader most often wants to see the shipped source.
- * Stripping emits the identical token stream, so the choice is only ever
- * about how many bytes the compiler has to walk.
+ * TWO SIZES, AND EVERY FIGURE IN THIS FILE MUST SAY WHICH IT IS. The
+ * RESOLVED source — {@link surfaceFragmentResolvedFor} — is what this
+ * threshold is compared against. The EMITTED source —
+ * {@link surfaceFragmentFor} — is what the driver walks, and the ONLY
+ * size the Mesa cliff applies to. For the descent variants they differ by
+ * about 3x, so quoting one against the other's threshold is how a reader
+ * concludes there is 1KB of room where there are 50. That mistake was
+ * shipped in this file's own comments for weeks: the fold-lens variant
+ * was described as "~79KB" against an "~80KB" cliff when it resolves at
+ * 86223 B and reaches the driver at 28958 B.
+ *
+ * The three measurements this file has paid for, all on Mesa/Iris and all
+ * of EMITTED source: ~68KB linked (in ~25s), ~80KB was called the cliff,
+ * and 82.2KB crashed the compiler outright — empty info log, lost
+ * context. All three predate the strip, so for them the two sizes WERE
+ * the same number, which is how the distinction got lost. Stripping emits
+ * the identical token stream, so the choice is only ever about how many
+ * bytes the compiler has to walk.
+ *
+ * 64KB sits below the first of those, which is what makes the cliff
+ * structurally unreachable rather than merely distant: a resolved source
+ * under the threshold is emitted whole and so is under 64KB by
+ * definition, and one over it is stripped to roughly a third, so reaching
+ * 82.2KB emitted would take ~190KB resolved — where the whole UNRESOLVED
+ * template, every arm live at once, is 139164 B. The largest emitted
+ * source of any variant today is escape+balloon's 64681 B — a
+ * measurement-only pairing, since balloon is IFS-only and escape is
+ * forward — and it is unstripped precisely because it is under the
+ * threshold.
+ *
+ * So the threshold decides READABILITY, not safety. Every DESCENT variant
+ * resolves past it and strips; the two forward-orbit arms stay under it
+ * and keep their comments — escape 55845 B (9691 B of headroom), bulb
+ * 39357 B (26179 B) — which is where a reader most often wants to see the
+ * shipped source. A test gates those two — not the figures, which any
+ * edit moves, but the property they buy: "keeps the two shipped forward
+ * arms under the strip threshold". It has to read the RESOLVED length to
+ * do it, because crossing the threshold turns stripping ON and drops the
+ * emitted length to a third, so an emitted-length assertion passes MORE
+ * comfortably at exactly the moment the property breaks. Every other
+ * current size lives in `docs/surface-glsl-tracers.md`, measured per
+ * change — the split that kept the 4D tracer's table right while this
+ * file's prose rotted.
  */
 export const SURFACE_GLSL_STRIP_BYTES = 64 * 1024;
 
-export function surfaceFragmentFor(
+/**
+ * Resolve the variant arms and return the raw composed source, before the
+ * strip decision — the quantity {@link SURFACE_GLSL_STRIP_BYTES} is
+ * compared against, and therefore the number the "measure before adding
+ * the next paragraph" rule is about.
+ *
+ * Exported so that rule is executable rather than requiring a throwaway
+ * copy of this module with `export` added to its privates, which is what
+ * every previous measurement of these sizes actually did.
+ * {@link buildSurfaceFragment} is the precedent for exporting a build for
+ * tests.
+ *
+ * Both refusals — plane+balloon (no horizon inside the shell) and
+ * escape+bulb (both would define surfaceDE twice) — live here rather than
+ * in {@link surfaceFragmentFor}, so the two entry points cannot disagree
+ * about which variant pairs are legal.
+ */
+export function surfaceFragmentResolvedFor(
   escape: number,
   lens: number,
   balloon = 0,
@@ -4030,13 +4068,63 @@ export function surfaceFragmentFor(
     // either fold-shaped or bulb-shaped), so reaching this is a bug.
     throw new RangeError("SURFACE_BULB and SURFACE_ESCAPE are exclusive");
   }
-  const resolved = resolveVariantArms(source, {
+  return resolveVariantArms(source, {
     SURFACE_ESCAPE: escape,
     SURFACE_BULB: bulb,
     SURFACE_FOLD_LENS: lens,
     SURFACE_BALLOON: balloon,
     SURFACE_GROUND_PLANE: plane,
   });
+}
+
+/** Compose the fragment source for a variant selection — the driver only
+ * ever sees SURFACE_FOLDS conditionals (see resolveVariantArms). `balloon`
+ * resolves the SURFACE_BALLOON wrapper arms the same JS-side way — with it
+ * 0 the resolved source is byte-identical to the pre-balloon build.
+ * `plane` is the ground-plane arm under the same contract — 0 resolves
+ * byte-identical to the pre-plane build — except that 1 additionally
+ * strips comments/indentation from the WHOLE resolved source
+ * ({@link stripGlslSource}): same token stream, new program, and the size
+ * Mesa prices drops to roughly a THIRD (measured: the affine/fold base
+ * 83022 B resolved, 29194 B emitted), which is what lets every variant
+ * carry the floor, the lens included. Only `balloon` refuses the pair (the enclosing shell has no horizon for a
+ * floor to sit on; callers gate, so reaching the throw is a bug). `bulb`
+ * is the SECOND forward-orbit variant under the same contract — 0 resolves
+ * byte-identical to the pre-bulb build, and it refuses to compile
+ * alongside `escape` (each replaces the descent bodies wholesale, so both
+ * on would define surfaceDE twice). `source` defaults to the module's
+ * assembled fragment; tests pass their own width-parameterized builds.
+ *
+ * THE STRIP IS A SIZE RULE, not the plane arm's private habit: any
+ * resolved source past {@link SURFACE_GLSL_STRIP_BYTES} gets the same
+ * treatment. The rule was bought by a measurement — the fold's authored
+ * radii cost this file ~2.2KB of uniforms, a derivation helper and longer
+ * expressions, which took the BALLOON variant from 80.9KB to 83.1KB, past
+ * the 82.2KB that crashed Mesa outright. A size threshold is the honest
+ * predicate for a size cliff: a hand-kept list of which variants strip is
+ * exactly what drifts the next time one of them grows a paragraph.
+ *
+ * Read the length THIS returns against the ~80KB cliff, and
+ * {@link surfaceFragmentResolvedFor}'s against
+ * {@link SURFACE_GLSL_STRIP_BYTES}. Reading this one against the
+ * threshold proves nothing: the strip rule caps it there by construction,
+ * so the comparison holds however far any arm grows. */
+export function surfaceFragmentFor(
+  escape: number,
+  lens: number,
+  balloon = 0,
+  plane = 0,
+  bulb = 0,
+  source: string = SURFACE_FRAGMENT,
+): string {
+  const resolved = surfaceFragmentResolvedFor(
+    escape,
+    lens,
+    balloon,
+    plane,
+    bulb,
+    source,
+  );
   return plane !== 0 || resolved.length > SURFACE_GLSL_STRIP_BYTES
     ? stripGlslSource(resolved)
     : resolved;
