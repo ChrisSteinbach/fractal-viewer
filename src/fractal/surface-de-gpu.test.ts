@@ -64,6 +64,10 @@ import {
 import type { SurfaceDE } from "./surface-de";
 import { buildSurfaceDE4, radiusBandInvRange } from "./surface-de-4d";
 import type { SurfaceDE4 } from "./surface-de-4d";
+import {
+  CLASSIC_SURFACE_FINISH,
+  type ResolvedSurfaceFinish,
+} from "./surface-finish";
 import type { Transform } from "./types";
 
 /** Two-map pure-boxfold system (the pure-fold shape used throughout
@@ -1142,6 +1146,87 @@ describe("packSurfaceGpuShadeMaps", () => {
     const out = packSurfaceGpuShadeMaps([], []);
     expect(out.length).toBe(4);
     expect(Array.from(out)).toEqual([0, 0, 0, 0]);
+  });
+
+  it("absent finishes returns the 1-vec4-stride buffer byte for byte — every caller predating the finish is unmoved", () => {
+    const colors: [number, number, number][] = [
+      [0.125, 0.25, 0.375],
+      [0.5, 0.625, 0.75],
+    ];
+    const traps = [0.25, 0.75];
+    // The pre-finish packer's exact output, constructed here as the
+    // expectation: stride 4, (rgb, trapIndex) per slot, nothing else.
+    const expected = new Float32Array(colors.length * 4);
+    colors.forEach((c, j) => {
+      expected[j * 4 + 0] = c[0];
+      expected[j * 4 + 1] = c[1];
+      expected[j * 4 + 2] = c[2];
+      expected[j * 4 + 3] = traps[j];
+    });
+    expect(packSurfaceGpuShadeMaps(colors, traps)).toEqual(expected);
+    expect(packSurfaceGpuShadeMaps(colors, traps, undefined)).toEqual(expected);
+  });
+
+  it("packs stride 3 under finishes — [0] the (rgb, trap) vec4 unchanged, [1] lanes a, [2] lanes b with the Tier-2 tail zero-filled — at exact indices", () => {
+    const finishes: ResolvedSurfaceFinish[] = [
+      {
+        specular: 0.75,
+        shininess: 96,
+        metalness: 0.25,
+        reflect: 0.5,
+        transmit: 0.125,
+      },
+      CLASSIC_SURFACE_FINISH,
+    ];
+    const out = packSurfaceGpuShadeMaps(
+      [
+        [0.125, 0.25, 0.375],
+        [0.5, 0.625, 0.75],
+      ],
+      [0.25, 0.75],
+      finishes,
+    );
+    expect(out.length).toBe(24);
+    // Slot 0: today's vec4, then a = (specular, shininess, metalness,
+    // reflect), then b = (transmit, 0, 0, 0) — surfaceFinishLanes' order.
+    expect(Array.from(out.subarray(0, 12))).toEqual([
+      0.125, 0.25, 0.375, 0.25, 0.75, 96, 0.25, 0.5, 0.125, 0, 0, 0,
+    ]);
+    // Slot 1: the classic lanes (0.4 is f32-exact only after fround, so
+    // compare the rounded value).
+    expect(Array.from(out.subarray(12, 24))).toEqual([
+      0.5,
+      0.625,
+      0.75,
+      0.75,
+      Math.fround(0.4),
+      32,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+    ]);
+  });
+
+  it("throws RangeError when finishes does not cover every color slot — a caller bug, like the module's other pack throws", () => {
+    expect(() =>
+      packSurfaceGpuShadeMaps(
+        [
+          [1, 0, 0],
+          [0, 1, 0],
+        ],
+        [0, 0],
+        [CLASSIC_SURFACE_FINISH],
+      ),
+    ).toThrow(RangeError);
+  });
+
+  it("pads one zero stride of 12 floats for empty colors under finishes — the slot clamp keeps reads inside real slots, so zeros are safe", () => {
+    const out = packSurfaceGpuShadeMaps([], [], []);
+    expect(out.length).toBe(12);
+    expect(Array.from(out)).toEqual(Array<number>(12).fill(0));
   });
 });
 
@@ -2351,6 +2436,186 @@ describe("groundPlane wrapper", () => {
     );
     expect(omitted.byteLength).toBe(SURFACE_GPU_PARAMS_BYTES);
     expect(explicit).toEqual(omitted);
+  });
+});
+
+describe("surfaceDeKernelWgsl per-slot finishes (finish)", () => {
+  it("omitted and explicit finish:false produce identical source across every mode/core/variant — the byte-identical off state", () => {
+    const cases: Partial<SurfaceGpuKernelOptions>[] = [
+      // The lens/balloon/plane sweeps' own config lists, unioned…
+      { mode: "eval", width: 12, sharedFrontier: true, bnbStage2: true },
+      { mode: "eval", core: "affine", width: 4 },
+      { mode: "eval", core: "escape", width: 4 },
+      { mode: "march", width: 12 },
+      { mode: "march", rays: "unproject", width: 12 },
+      { mode: "march", rays: "unproject", width: 12, statusOut: true },
+      { mode: "march", core: "affine" },
+      { mode: "shade", width: 12 },
+      { mode: "shade", width: 12, shadeDeWidth: 1 },
+      { mode: "shade", core: "fold", lens: true },
+      { mode: "shade", lens: true, width: 12, shadeDeWidth: 1, balloon: true },
+      { mode: "shade", core: "escape" },
+      { mode: "shade", core: "escape", groundPlane: true },
+      { mode: "shade", core: "bulb" },
+      // …and the 4D half, scoped up front (Dimensional Parity).
+      { mode: "shade", core: "affine4" },
+      { mode: "shade", core: "fold4", width: 12, shadeDeWidth: 1 },
+      { mode: "shade", core: "escape4" },
+      { mode: "shade", core: "affine4", balloon: true },
+      { mode: "shade", core: "fold4", lens: true },
+    ];
+    for (const overrides of cases) {
+      const omitted = surfaceDeKernelWgsl(kernelOpts(overrides));
+      const explicit = surfaceDeKernelWgsl(
+        kernelOpts({ ...overrides, finish: false }),
+      );
+      expect(explicit).toBe(omitted);
+      expect(omitted).not.toContain("finishShade");
+      expect(omitted).not.toContain("fSlot");
+    }
+  });
+
+  it("is inert in march and eval modes — finish:true emits byte-identical source for every core (those kernels never read shadeMaps), so one options object builds a session's march and shade kernels", () => {
+    const cores = [
+      "fold",
+      "affine",
+      "escape",
+      "bulb",
+      "affine4",
+      "fold4",
+      "escape4",
+    ] as const;
+    for (const core of cores) {
+      for (const mode of ["eval", "march"] as const) {
+        const off = surfaceDeKernelWgsl(kernelOpts({ mode, core, width: 4 }));
+        const on = surfaceDeKernelWgsl(
+          kernelOpts({ mode, core, width: 4, finish: true }),
+        );
+        expect(on).toBe(off);
+      }
+    }
+  });
+
+  it("shade + finish emits exactly one finishShade with the fa/fb lane fetches, replacing the fixed lighting lines ahead of the fog", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 12, finish: true }),
+    );
+    expect(wgsl.split("fn finishShade(").length).toBe(2);
+    expect(wgsl.indexOf("fn finishShade(")).toBeLessThan(
+      wgsl.indexOf("fn shadeRays("),
+    );
+    expect(wgsl).toContain(
+      "let fSlot = clamp(hi.firstChoice, 0, i32(params.mapCount) - 1);",
+    );
+    expect(wgsl).toContain("let fa = shadeMaps[fSlot * 3 + 1];");
+    expect(wgsl).toContain("let fb = shadeMaps[fSlot * 3 + 2];");
+    expect(wgsl).toContain(
+      "var col = finishShade(base, n, rd, shadow, ao, bg, fa, fb);",
+    );
+    expect(wgsl).toContain("base = shadeMaps[fSlot * 3].rgb;");
+    // REPLACED, not kept beside the call: the fixed specular literal and
+    // the shade entry's own envTint block are gone (shadeGroundPlane keeps
+    // its separate envTint — the floor's own matte formula).
+    expect(wgsl).not.toContain("pow(max(dot(n, halfVec), 0.0), 32.0) * 0.4");
+    // The fog lines after the call still read col/t/tEnter/bg.
+    expect(wgsl).toContain(
+      "let fog = 1.0 - exp(-0.12 * pow((t - tEnter) * params.fogDensity / max(visR, 1.0e-6), 2.0));",
+    );
+  });
+
+  it("leaves NO stride-1 shadeMaps read behind under finish — every read site's index carries * 3, across cores and wrappers", () => {
+    const cases: Partial<SurfaceGpuKernelOptions>[] = [
+      { mode: "shade", width: 12, shadeDeWidth: 1 },
+      { mode: "shade", core: "affine" },
+      { mode: "shade", core: "escape" },
+      { mode: "shade", core: "bulb" },
+      { mode: "shade", core: "affine4" },
+      { mode: "shade", core: "fold4", width: 12 },
+      { mode: "shade", core: "escape4" },
+      { mode: "shade", lens: true, width: 12 },
+      { mode: "shade", core: "affine4", lens: true },
+      { mode: "shade", balloon: true, width: 12 },
+      { mode: "shade", groundPlane: true, width: 12 },
+    ];
+    for (const overrides of cases) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ ...overrides, finish: true }),
+      );
+      const reads = [...wgsl.matchAll(/shadeMaps\[([^\]]*)\]/g)];
+      // Every shade kernel reads at least the two lanes + the map-color
+      // base; the descent cores add their hit-info trap read.
+      expect(reads.length).toBeGreaterThanOrEqual(3);
+      for (const read of reads) {
+        expect(read[1]).toContain("* 3");
+      }
+    }
+  });
+
+  it("composes with every core — no new throws, one finishShade each, braces balanced", () => {
+    const cores = [
+      "fold",
+      "affine",
+      "escape",
+      "bulb",
+      "affine4",
+      "fold4",
+      "escape4",
+    ] as const;
+    for (const core of cores) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, width: 4, finish: true }),
+      );
+      expect(wgsl.split("fn finishShade(").length).toBe(2);
+      expect([...wgsl.matchAll(/\}/g)].length).toBe(
+        [...wgsl.matchAll(/\{/g)].length,
+      );
+    }
+  });
+
+  it("composes with lens, balloon and groundPlane; the floor stays matte and the echo tint keeps its albedo-side ordering", () => {
+    for (const extra of [
+      { lens: true },
+      { balloon: true },
+      { groundPlane: true },
+    ] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", width: 12, finish: true, ...extra }),
+      );
+      expect(wgsl).toContain("fn finishShade(");
+      expect([...wgsl.matchAll(/\}/g)].length).toBe(
+        [...wgsl.matchAll(/\{/g)].length,
+      );
+    }
+    // Ground plane stays MATTE: the whole source holds the finishShade
+    // definition plus exactly ONE call — the hit path's — so
+    // shadeGroundPlane's "lighting minus specular" body never reaches it.
+    const plane = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 12, groundPlane: true, finish: true }),
+    );
+    expect(plane.split("finishShade(").length).toBe(3);
+    // Balloon: the echo tint mixes into `base` BEFORE finishShade reads
+    // it, so a shell hit inherits its source map's finish over the tinted
+    // albedo — balloonTint's ordering unchanged.
+    const balloon = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 12, balloon: true, finish: true }),
+    );
+    const tintAt = balloon.indexOf("base = mix(base, shade.balloonTint");
+    expect(tintAt).toBeGreaterThan(0);
+    expect(tintAt).toBeLessThan(balloon.indexOf("finishShade(base, n, rd"));
+  });
+
+  it("keeps ShadeParams untouched — SURFACE_GPU_SHADE_BYTES stays 224 and the struct gains no member: the wire is the per-slot shadeMaps lane alone", () => {
+    expect(SURFACE_GPU_SHADE_BYTES).toBe(224);
+    const on = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 12, finish: true }),
+    );
+    const off = surfaceDeKernelWgsl(kernelOpts({ mode: "shade", width: 12 }));
+    const struct = (src: string): string =>
+      src.slice(
+        src.indexOf("struct ShadeParams"),
+        src.indexOf("}", src.indexOf("struct ShadeParams")) + 1,
+      );
+    expect(struct(on)).toBe(struct(off));
   });
 });
 

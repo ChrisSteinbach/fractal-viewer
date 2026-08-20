@@ -25,6 +25,12 @@ import {
   slabExact4,
   type SurfaceDE4,
 } from "./surface-de-4d";
+import {
+  SURFACE_FINISH_WGSL,
+  surfaceFinishLanes,
+  surfaceFinishShadeSource,
+  type ResolvedSurfaceFinish,
+} from "./surface-finish";
 import type { Vec3 } from "./types";
 
 /**
@@ -765,7 +771,15 @@ import type { Vec3 } from "./types";
  *
  * Shade maps storage (mode "shade") — one vec4f per map slot:
  * (uMapColor rgb, uFoldParams.w trapIndex); one zero stride when empty,
- * like {@link packSurfaceGpuMaps}.
+ * like {@link packSurfaceGpuMaps}. Under `finish: true` the stride is
+ * THREE vec4f per slot instead — `[0]` the pair above unchanged, `[1]` =
+ * (specular, shininess, metalness, reflect) and `[2]` = (transmit, 0, 0,
+ * 0), `surfaceFinishLanes`' a/b order with `[2].yzw` zero-filled for the
+ * Tier-2 pattern fields — packed by {@link packSurfaceGpuShadeMaps}'
+ * `finishes` argument, whose presence must match the kernel's flag (the
+ * binding stays a runtime-sized `array<vec4f>`, so the stride is a
+ * convention the two sides keep in sync, `slabExt`'s host-contract
+ * shape).
  *
  * Bindings per mode — eval and march "pose" bind 0-3 (params, maps, the
  * mode's own pair at 2/3); march "unproject" binds 0-4, the march set
@@ -1027,6 +1041,43 @@ export interface SurfaceGpuKernelOptions {
    * and `lens` composes exactly as the GLSL side's stripped lens+plane
    * program does. Inert in eval mode (no rays terminate). */
   groundPlane?: boolean;
+  /** Per-slot surface FINISHES (surface-finish.ts): replace the shade
+   * entry's fixed Blinn-Phong lines with the emitted `finishShade`
+   * (`surfaceFinishShadeSource(SURFACE_FINISH_WGSL)`) reading each hit
+   * slot's authored lanes. Absent or false reproduces today's source
+   * BYTE FOR BYTE across every mode/core/variant — and that is the
+   * feature's byte-identity MECHANISM, not a convenience: `pow(x, 32.0)`
+   * literal -> a per-slot uniform value is NOT an exact identity, so the
+   * parametric path is compile-gated and an unauthored document compiles
+   * literally today's program text (`foldVariationFn`'s
+   * same-function-object philosophy applied to shaders; the classic
+   * params reproduce the fixed formula's VALUES, never its bytes).
+   * `finish: true` changes SHADE-MODE emission alone: march/eval kernels
+   * never read `shadeMaps`, so their source stays byte-identical even
+   * with the flag on — one options object can build a session's march
+   * and shade kernels. Under shade + finish the `shadeMaps` stride grows
+   * 1 -> 3 vec4f per slot: `[0]` (rgb, trapIndex) unchanged, `[1]` =
+   * (specular, shininess, metalness, reflect), `[2]` = (transmit, 0, 0,
+   * 0) with `.yzw` ZERO-FILLED, reserved for the Tier-2 pattern fields
+   * so Tier 2 lands without a second stride change (the 3D-freezes-
+   * layout lesson applied in advance); the lane order is
+   * `surfaceFinishLanes`' — the ONE definition, shared with the GLSL
+   * uniform pair. Pack the buffer with {@link packSurfaceGpuShadeMaps}'
+   * `finishes` argument, present exactly when this flag is set.
+   * Deliberately NO `ShadeParams` append ({@link SURFACE_GPU_SHADE_BYTES}
+   * stays 224) and NO frozen params-block change at any offset in either
+   * dimension — the wire is the per-slot shadeMaps lane alone. The
+   * FORWARD cores (escape/bulb/escape4) leave `hi.firstChoice` at its
+   * constructed 0, so slot 0 IS their wire: the HEAD transform's finish
+   * is the scene's, deterministic and disclosed. Under `balloon` a shell
+   * hit's `firstChoice` comes from the hit-info descent at the INVERTED
+   * point, so the echo inherits its source map's finish for free —
+   * `balloonTint`'s albedo-side mix and its ordering are unchanged (the
+   * tint applies to `base` BEFORE `finishShade` sees it). The ground
+   * plane stays MATTE: `shadeGroundPlane` is untouched by this flag (its
+   * own recorded "lighting minus specular" decision). Composes with
+   * every core and with lens/balloon/groundPlane — no new throws. */
+  finish?: boolean;
   /** March-mode ray derivation. "pose" (default) keeps the bench baseline:
    * NDC pixel centers against the pose basis — byte-identical output to
    * the pre-shade-split generator. "unproject" derives rays the GLSL
@@ -2269,17 +2320,49 @@ export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
 /** Per-map shading storage for mode "shade": one vec4f per map slot,
  * (color.r, color.g, color.b, trapIndex) — uMapColor + the uFoldParams .w
  * trap component, which GpuMap does not carry. Pads to one zero stride
- * when empty, like packSurfaceGpuMaps. */
+ * when empty, like packSurfaceGpuMaps.
+ *
+ * `finishes` — present exactly when the kernel was generated with
+ * `finish: true` (the option doc) — grows the stride to THREE vec4f per
+ * slot: the vec4 above unchanged at `[0]`, then the slot's two finish
+ * lanes in `surfaceFinishLanes`' order — `[1]` = (specular, shininess,
+ * metalness, reflect), `[2]` = (transmit, 0, 0, 0), `.yzw` zero-filled
+ * for the Tier-2 pattern fields. Absent — every caller predating the
+ * finish — returns the 1-vec4-stride buffer byte for byte. Empty colors
+ * still pad one zero stride (12 floats here); the shader's slot clamp
+ * keeps reads inside real slots, so zero-filled padding is safe. Throws
+ * `RangeError` when `finishes` is present but does not cover every color
+ * slot — a caller bug, like the module's other pack throws. */
 export function packSurfaceGpuShadeMaps(
   colors: Vec3[],
   trapIndices: number[],
+  finishes?: readonly ResolvedSurfaceFinish[],
 ): Float32Array {
-  const out = new Float32Array(Math.max(colors.length, 1) * 4);
+  if (!finishes) {
+    const out = new Float32Array(Math.max(colors.length, 1) * 4);
+    colors.forEach((c, j) => {
+      out[j * 4 + 0] = c[0];
+      out[j * 4 + 1] = c[1];
+      out[j * 4 + 2] = c[2];
+      out[j * 4 + 3] = trapIndices[j] ?? 0;
+    });
+    return out;
+  }
+  if (finishes.length !== colors.length) {
+    throw new RangeError(
+      `surface-de-gpu: ${finishes.length} finishes for ${colors.length} ` +
+        "map colors — a finish list must cover every slot",
+    );
+  }
+  const out = new Float32Array(Math.max(colors.length, 1) * 12);
   colors.forEach((c, j) => {
-    out[j * 4 + 0] = c[0];
-    out[j * 4 + 1] = c[1];
-    out[j * 4 + 2] = c[2];
-    out[j * 4 + 3] = trapIndices[j] ?? 0;
+    out[j * 12 + 0] = c[0];
+    out[j * 12 + 1] = c[1];
+    out[j * 12 + 2] = c[2];
+    out[j * 12 + 3] = trapIndices[j] ?? 0;
+    const lanes = surfaceFinishLanes(finishes[j]);
+    out.set(lanes.a, j * 12 + 4);
+    out.set(lanes.b, j * 12 + 8);
   });
   return out;
 }
@@ -2449,6 +2532,20 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
         "arm refuses the same pair)",
     );
   }
+  // Per-slot surface finishes (option doc). Absent means the fixed
+  // Blinn-Phong lines, so every config predating the option generates
+  // byte-identical source; no throw anywhere — the flag composes with
+  // every core and wrapper, and is STRUCTURALLY inert outside shade mode
+  // (every splice below lands in shade-emitted text alone).
+  const finish = opts.finish ?? false;
+  // The shadeMaps stride token: under finish the buffer is 3 vec4f per
+  // slot ([0] rgb+trap unchanged, [1]/[2] the finish lanes), so EVERY
+  // shadeMaps read site's index gains " * 3" through this one string —
+  // the four hit-info trap reads and the shade entry's base-color read.
+  // Empty when off, keeping the stride-1 text character-identical; a new
+  // read site spelled without the token silently reads a finish lane as
+  // a trap index, which is what the emitted-source stride test scans for.
+  const shadeStride = finish ? " * 3" : "";
   // The 4D tail's VARIANT block (464..575) is declared whenever
   // anything is appended past it, so the shared
   // plane/balloon block lands at ONE offset (576) across every 4D core —
@@ -2845,7 +2942,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     if (depth == 0u) {
       info.firstChoice = i32(lbMap);
     }
-    trapAcc += trapW * shadeMaps[lbMap].w;
+    trapAcc += trapW * shadeMaps[lbMap${shadeStride}].w;
     trapNorm += trapW;
     trapW *= shade.colorSpeed;
     info.rings = min(info.rings, lbR / R);
@@ -3013,7 +3110,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     if (depth == 0u) {
       info.firstChoice = i32(c1Map);
     }
-    trapAcc += trapW * shadeMaps[c1Map].w;
+    trapAcc += trapW * shadeMaps[c1Map${shadeStride}].w;
     trapNorm += trapW;
     trapW *= shade.colorSpeed;
     info.rings = min(info.rings, c1R / R);
@@ -3437,7 +3534,7 @@ ${
     if (depth == 0u) {
       info.firstChoice = i32(c1Map);
     }
-    trapAcc += trapW * shadeMaps[c1Map].w;
+    trapAcc += trapW * shadeMaps[c1Map${shadeStride}].w;
     trapNorm += trapW;
     trapW *= shade.colorSpeed;
 ${
@@ -3822,7 +3919,7 @@ ${
     if (depth == 0u) {
       info.firstChoice = i32(lbMap);
     }
-    trapAcc += trapW * shadeMaps[lbMap].w;
+    trapAcc += trapW * shadeMaps[lbMap${shadeStride}].w;
     trapNorm += trapW;
     trapW *= shade.colorSpeed;
 ${
@@ -4719,6 +4816,60 @@ ${balloonHitWrapText}`
   // public union names.
   const shadowDe = balloon ? `${probeDe}Fractal` : probeDe;
 
+  // Per-slot surface finishes (option doc) — the shade entry's four
+  // finish splices, every one empty (or today's text verbatim) when the
+  // flag is off. ONE finishShade emission serves all seven cores: the
+  // shade entry below is shared text, which is why the 4D half of this
+  // feature costs no extra emission.
+  const finishFnText = finish
+    ? `
+// Per-slot finish lighting — surface-finish.ts's surfaceFinishShadeSource,
+// ONE emission shared by every core (the shade entry is shared text).
+${surfaceFinishShadeSource(SURFACE_FINISH_WGSL)}`
+    : "";
+  // The hit slot's two finish lanes, hoisted ahead of the color-source
+  // branch: the stride-3 slot index the base read used to spell inline,
+  // now needed by three reads. The FORWARD cores' hit-info leaves
+  // firstChoice at its constructed 0, so slot 0 — the HEAD transform —
+  // is their wire (option doc); under balloon, firstChoice comes from
+  // the descent at the INVERTED point, so a shell hit inherits its
+  // source map's finish for free.
+  const finishLanesFetch = finish
+    ? `
+  // The hit slot's finish lanes (surfaceFinishLanes' a/b order).
+  let fSlot = clamp(hi.firstChoice, 0, i32(params.mapCount) - 1);
+  let fa = shadeMaps[fSlot * 3 + 1];
+  let fb = shadeMaps[fSlot * 3 + 2];`
+    : "";
+  const shadeBaseRead = finish
+    ? `base = shadeMaps[fSlot * 3].rgb;`
+    : `base = shadeMaps[clamp(hi.firstChoice, 0, i32(params.mapCount) - 1)].rgb;`;
+  // The lighting composition: under finish, the emitted finishShade over
+  // the hit slot's lanes (fa/fb fetched above; base already carries
+  // shadeBalloonTint's albedo-side mix, so the echo tint's ordering is
+  // unchanged); otherwise the fixed Blinn-Phong lines, byte for byte.
+  // The fog lines after it are shared — they read col/t/tEnter/bg only.
+  const shadeLighting = finish
+    ? `  // Parametric finish lighting — surface-finish.ts's finishShade.
+  var col = finishShade(base, n, rd, shadow, ao, bg, fa, fb);`
+    : `  let diffuse = max(dot(n, shade.lightDir), 0.0);
+  let halfVec = normalize(shade.lightDir - rd);
+  let specular = pow(max(dot(n, halfVec), 0.0), 32.0) * 0.4;
+  // Environment tint: the whole light, toward the backdrop
+  // sampled along the shading normal, hue-normalized so strength moves
+  // color and never brightness; strength 0 is vec3f(1.0), the bit-exact
+  // identity (surface-material.ts's envTint, inlined here rather than
+  // as a helper). SPECULAR STAYS UNTINTED — the highlight is what keeps
+  // a strongly-tinted render from reading monochrome.
+  let envE = mix(shade.bgBottom, shade.bgTop, n.y * 0.5 + 0.5);
+  let envTint =
+    mix(vec3f(1.0), envE / max(max(envE.r, max(envE.g, envE.b)), 1.0e-4), shade.envStrength);
+  let lit = (shade.ambient * ao + (1.0 - shade.ambient) * diffuse * shadow) * envTint;
+  // Light in linear space: decode the sRGB base, apply the
+  // light/specular product there, re-encode for the canvas.
+  let linBase = pow(base, vec3f(2.2));
+  var col = pow(linBase * lit + vec3f(specular * shadow), vec3f(1.0 / 2.2));`;
+
   const entry =
     mode === "eval"
       ? `
@@ -4925,7 +5076,7 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> vec3f {
 }
 `
     : ""
-}
+}${finishFnText}
 @compute @workgroup_size(${workgroupSize})
 fn shadeRays(
   @builtin(global_invocation_id) gid: vec3u,
@@ -4992,11 +5143,11 @@ ${
 ${shadeGate}
   let R = params.boundingRadius;
   let visR = params.visibleRadius;
-  let hi = surfaceDEHitInfo(pos, li);
+  let hi = surfaceDEHitInfo(pos, li);${finishLanesFetch}
   // Base color by source; sources 1-5 sample the CPU-built LUT.
   var base: vec3f;
   if (shade.colorSource == 0u) {
-    base = shadeMaps[clamp(hi.firstChoice, 0, i32(params.mapCount) - 1)].rgb;
+    ${shadeBaseRead}
   } else {
     var u: f32;
     if (shade.colorSource == 1u) {
@@ -5048,23 +5199,7 @@ ${shadeGate}
     wgt *= 0.6;
   }
   let ao = clamp(1.0 - 0.85 * occ / norm, 0.0, 1.0);
-  let diffuse = max(dot(n, shade.lightDir), 0.0);
-  let halfVec = normalize(shade.lightDir - rd);
-  let specular = pow(max(dot(n, halfVec), 0.0), 32.0) * 0.4;
-  // Environment tint: the whole light, toward the backdrop
-  // sampled along the shading normal, hue-normalized so strength moves
-  // color and never brightness; strength 0 is vec3f(1.0), the bit-exact
-  // identity (surface-material.ts's envTint, inlined here rather than
-  // as a helper). SPECULAR STAYS UNTINTED — the highlight is what keeps
-  // a strongly-tinted render from reading monochrome.
-  let envE = mix(shade.bgBottom, shade.bgTop, n.y * 0.5 + 0.5);
-  let envTint =
-    mix(vec3f(1.0), envE / max(max(envE.r, max(envE.g, envE.b)), 1.0e-4), shade.envStrength);
-  let lit = (shade.ambient * ao + (1.0 - shade.ambient) * diffuse * shadow) * envTint;
-  // Light in linear space: decode the sRGB base, apply the
-  // light/specular product there, re-encode for the canvas.
-  let linBase = pow(base, vec3f(2.2));
-  var col = pow(linBase * lit + vec3f(specular * shadow), vec3f(1.0 / 2.2));
+${shadeLighting}
   // Depth fog toward the backdrop: squared-exponential in the distance
   // traveled inside the bounding sphere. params.fogDensity scales the
   // traveled distance, mirroring the GLSL tracers' uFogDensity
