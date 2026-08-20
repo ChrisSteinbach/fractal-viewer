@@ -167,3 +167,71 @@ describe("surfaceComputeForceFrameKey", () => {
     expect(groundPlaneOnly).not.toBe(bothPresent);
   });
 });
+
+describe("surfaceComputeForceFrameKey finishes block", () => {
+  const chrome = {
+    specular: 1,
+    shininess: 128,
+    metalness: 1,
+    reflect: 0.8,
+    transmit: 0,
+  };
+  const matte = {
+    specular: 0,
+    shininess: 32,
+    metalness: 0,
+    reflect: 0,
+    transmit: 0,
+  };
+
+  it("keys a finish change — a timeline leg re-authoring one slot under a parked camera must re-trace", () => {
+    const a = surfaceComputeForceFrameKey(
+      baseSpec({ finishes: [chrome, matte] }),
+    );
+    const b = surfaceComputeForceFrameKey(
+      baseSpec({ finishes: [chrome, { ...matte, transmit: 0.5 }] }),
+    );
+    expect(a).not.toBe(b);
+  });
+
+  it("keys presence itself: an authored session never collides with a classic one", () => {
+    const classic = surfaceComputeForceFrameKey(baseSpec());
+    const authored = surfaceComputeForceFrameKey(
+      baseSpec({ finishes: [matte] }),
+    );
+    expect(classic).not.toBe(authored);
+  });
+
+  it("absent finishes keys byte-identically to a spec predating the field — the packer's own absent default", () => {
+    expect(surfaceComputeForceFrameKey(baseSpec({ finishes: undefined }))).toBe(
+      surfaceComputeForceFrameKey(baseSpec()),
+    );
+  });
+
+  it("cannot be re-partitioned into its neighbor blocks: the slot count delimits it ahead of bgShape's tag", () => {
+    // One slot of finishes followed by a bgShape block, against two slots
+    // where the second slot's tuple could otherwise masquerade as the
+    // shape block's opening fields — the tag + count prefix keeps the two
+    // parses distinct.
+    const a = surfaceComputeForceFrameKey(
+      baseSpec({
+        finishes: [chrome],
+        bgShape: { kind: "radial", center: [0.5, 0.5], scale: [1, 1] },
+      }),
+    );
+    const b = surfaceComputeForceFrameKey(
+      baseSpec({ finishes: [chrome, matte] }),
+    );
+    expect(a).not.toBe(b);
+  });
+
+  it("keys slot ORDER — two sessions swapping the same two finishes differ", () => {
+    const a = surfaceComputeForceFrameKey(
+      baseSpec({ finishes: [chrome, matte] }),
+    );
+    const b = surfaceComputeForceFrameKey(
+      baseSpec({ finishes: [matte, chrome] }),
+    );
+    expect(a).not.toBe(b);
+  });
+});

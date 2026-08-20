@@ -1,7 +1,13 @@
 import { derivedColorIndex } from "../fractal/chaos-game";
 import { transformColors } from "../fractal/color";
 import type { Transform } from "../fractal/types";
-import { surfaceSlotColors, surfaceTrapIndices } from "./surface-slots";
+import { CLASSIC_SURFACE_FINISH } from "../fractal/surface-finish";
+import {
+  surfaceSlotColors,
+  surfaceSlotFinishes,
+  surfaceSlotsAuthorFinish,
+  surfaceTrapIndices,
+} from "./surface-slots";
 import type { SurfaceSlot } from "./surface-slots";
 
 function transform(overrides: Partial<Transform> = {}): Transform {
@@ -149,5 +155,68 @@ describe("surfaceSlotColors", () => {
       palette[1],
       palette[2],
     ]);
+  });
+});
+
+describe("surfaceSlotFinishes", () => {
+  it("resolves each slot's base-map finish, sparse baseIndex included", () => {
+    const transforms = [
+      transform({ id: 0, finish: { metalness: 1, reflect: 0.5 } }),
+      transform({ id: 1, weight: 0 }),
+      transform({ id: 2 }),
+    ];
+    const slots: SurfaceSlot[] = [{ baseIndex: 0 }, { baseIndex: 2 }];
+    expect(surfaceSlotFinishes(transforms, slots)).toEqual([
+      { ...CLASSIC_SURFACE_FINISH, metalness: 1, reflect: 0.5 },
+      CLASSIC_SURFACE_FINISH,
+    ]);
+  });
+
+  it("resolves an unauthored slot to the classic lanes explicitly, never a hole", () => {
+    const transforms = [transform({ id: 0 })];
+    expect(surfaceSlotFinishes(transforms, [{ baseIndex: 0 }])).toEqual([
+      CLASSIC_SURFACE_FINISH,
+    ]);
+  });
+});
+
+describe("surfaceSlotsAuthorFinish", () => {
+  it("is false when no transform authors a finish", () => {
+    const transforms = [transform({ id: 0 }), transform({ id: 1 })];
+    const slots: SurfaceSlot[] = [{ baseIndex: 0 }, { baseIndex: 1 }];
+    expect(surfaceSlotsAuthorFinish(transforms, slots)).toBe(false);
+  });
+
+  it("is false when the authored finish RESOLVES to classic — explicit classic values must not force the parametric program", () => {
+    const transforms = [
+      transform({
+        id: 0,
+        finish: { specular: 0.4, shininess: 32, metalness: 0 },
+      }),
+    ];
+    expect(surfaceSlotsAuthorFinish(transforms, [{ baseIndex: 0 }])).toBe(
+      false,
+    );
+  });
+
+  it("is true when any slotted transform resolves away from classic", () => {
+    const transforms = [
+      transform({ id: 0 }),
+      transform({ id: 1, finish: { transmit: 0.7 } }),
+    ];
+    const slots: SurfaceSlot[] = [{ baseIndex: 0 }, { baseIndex: 1 }];
+    expect(surfaceSlotsAuthorFinish(transforms, slots)).toBe(true);
+  });
+
+  it("ignores an authored finish on a transform that contributes no slot — weight-0 maps must not force the parametric program", () => {
+    const transforms = [
+      transform({ id: 0 }),
+      transform({ id: 1, weight: 0, finish: { metalness: 1 } }),
+      transform({ id: 2 }),
+    ];
+    // The slot list skips the weight-0 middle map, exactly as buildSurfaceDE
+    // builds it.
+    const slots: SurfaceSlot[] = [{ baseIndex: 0 }, { baseIndex: 2 }];
+    expect(surfaceSlotsAuthorFinish(transforms, slots)).toBe(false);
   });
 });

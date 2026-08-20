@@ -36,7 +36,10 @@ import type { SurfaceComputeFrameSpec } from "./surface-compute";
  * combination of present/absent optional blocks can be re-partitioned into a
  * DIFFERENT combination that reads the same —
  * `surface-force-frame-key.test.ts`'s collision case pins exactly that for
- * the new `bgShape` block against its neighbors.
+ * the new `bgShape` block against its neighbors. The `finish` block relaxes
+ * "fixed-length when present" to SELF-DELIMITING: it opens with its tag and
+ * then its own slot COUNT, so a parse knows exactly where it ends however
+ * many slots a session has — the same injectivity, one indirection later.
  */
 export function surfaceComputeForceFrameKey(
   spec: SurfaceComputeFrameSpec,
@@ -68,6 +71,26 @@ export function surfaceComputeForceFrameKey(
     spec.fogDensity ?? 1,
     (spec.fogTint ?? [1, 1, 1]).join(","),
     spec.fogTintStrength ?? 0,
+    // The session's authored finishes: a timeline leg whose document
+    // authors a different finish on some transform repaints every hit
+    // pixel under a parked camera — fog's own rationale, per slot. Keyed
+    // on spec.finishes' OWN presence, which matches the shadeMaps
+    // packer's absent default exactly (absent spec = the classic kernels
+    // = the pre-finish buffer); the RESOLVED five-number lanes per slot
+    // need no further defaulting because resolution is total. Tag + slot
+    // COUNT then one comma-tuple per slot — self-delimiting rather than
+    // fixed-length; see the module doc's collision argument.
+    ...(spec.finishes
+      ? [
+          "finish",
+          spec.finishes.length,
+          ...spec.finishes.map((f) =>
+            [f.specular, f.shininess, f.metalness, f.reflect, f.transmit].join(
+              ",",
+            ),
+          ),
+        ]
+      : []),
     // The background SHAPE: linear vs radial, or a radial
     // recenter/rescale, changes every miss and fog-blended pixel exactly
     // like the stops above. A distinct "bgShape" tag plus a fixed
