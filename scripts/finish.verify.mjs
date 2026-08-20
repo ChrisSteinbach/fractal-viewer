@@ -169,6 +169,25 @@
  * this is ~20 minutes on SwiftShader (each leg runs to its budget, and the
  * settle never completes there); `--stage=1` is a few minutes; the real
  * driver settles in seconds.
+ *
+ * MEASURED (this script's own run, `--arm=both --mode=sw`, 640x360; neither
+ * engine reaches the settled latch inside the default 300s/leg budget on
+ * this box, so both arms compared at the common stage they actually
+ * reached, 3/8 passes): compute (engine=compute/compute) 9.283%
+ * central-region structural (10046 differing, max delta 190), 4.732% full
+ * canvas; webgl (engine=webgl/webgl) 9.275% central-region structural
+ * (10035 differing, max delta 192), 4.728% full canvas — both several times
+ * over the 1.5% floor and within 0.01 points of each other, the CPU/GPU
+ * parity the fold's authored-finish wire is built on, and consistent with
+ * the wave-1 prototype's full-canvas 4.858%/5.454% pair above. Total wall
+ * time 1113s (~18.5 min) for both arms in one browser. BEFORE THE FIX
+ * DESCRIBED IN "THE ENGINE IS SAMPLED AT CAPTURE TIME" above, this same
+ * scene reported the compute arm as "ran engine=webgl, expected compute"
+ * on both legs, even though the console showed
+ * "Surface render: WebGPU compute tracer active" and the progress row
+ * showed "WebGPU (software)" throughout — the leg had locked its verdict
+ * onto its opening poll, taken while `surfaceComputeRenderer` was still
+ * null mid-gate.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
