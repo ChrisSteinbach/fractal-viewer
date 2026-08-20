@@ -1988,7 +1988,7 @@ uniform float uBalloonTintStrength;
  * under one, and `off` — the row that never strips — is the only one whose
  * driver bytes such an edit can reach at all.
  *
- * A single monolithic source carrying both arms would be ~74KB and every
+ * A single monolithic source carrying both arms would be ~76,600 B and every
  * 4D surface session — balloon or not, floor or not — would pay for it,
  * for the first time putting this tracer in the band where the 3D fold
  * program takes 25 seconds to link. Resolved per variant instead, OFF
