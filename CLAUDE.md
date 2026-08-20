@@ -851,6 +851,16 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     byte-true half. `Transform.finish` persists/morphs/mutates on the fold
     lengths' exact treatment (`types.ts`/`persist.ts`/`morph.ts`/
     `mutate-system.ts`; random-system deliberately never rolls one).
+    `surfaceFinishPatternAlbedo` is PRODUCTION-DEAD and kept as a
+    measurement's record (`qjulia-de.ts`'s stance): Tier-2 wood off the
+    descent's `rings` is a WON'T-DO on `scripts/finish-pattern.harness.ts`'s
+    own sheet — 74-79% edge density at 1x on every system is speckle, not
+    grain, because `rings` varies at the fractal's own detail frequency.
+    THE ZOOM PREMISE IS CONFIRMED though, decisively (menger 1x/8x/64x:
+    native holds and coarsens 78.5%/51.3%/10.4% while world-space noise
+    collapses to 1.1% and albedoVar 0.0039), which is why the survivor —
+    banding off `sheets`, 23-28% edges at every rung — is filed rather
+    than wired.
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
     hybrids, for exactly the systems the IFS gate refuses (one or more
