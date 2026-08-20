@@ -991,6 +991,314 @@ describe("decodeScene transform variation fold radii", () => {
   });
 });
 
+describe("decodeScene transform finish", () => {
+  it("round-trips a transform with a full finish", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          finish: {
+            specular: 0.8,
+            shininess: 64,
+            metalness: 0.5,
+            reflect: 0.3,
+            transmit: 0.1,
+          },
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].finish).toEqual({
+      specular: 0.8,
+      shininess: 64,
+      metalness: 0.5,
+      reflect: 0.3,
+      transmit: 0.1,
+    });
+  });
+
+  it("round-trips a transform with only one finish field set, leaving the others absent", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          finish: { metalness: 0.6 },
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].finish).toEqual({ metalness: 0.6 });
+  });
+
+  it("leaves finish absent when the payload never carried it", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+        },
+      ],
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].finish).toBeUndefined();
+  });
+
+  it("leaves finish absent when decoding a document with no finish key at all", () => {
+    // A hand-built payload, not one round-tripped through encodeScene — the
+    // shape of a document written before this field existed.
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        { position: [0, 0, 0], rotation: [0, 0, 0], scale: [0.5, 0.5, 0.5] },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms[0].finish).toBeUndefined();
+  });
+
+  it("encodes with no finish key at all when the transform carries none", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+        },
+      ],
+    };
+    const payload = decodePayload(encodeScene(s));
+    const transforms = payload.transforms as Record<string, unknown>[];
+    expect("finish" in transforms[0]).toBe(false);
+  });
+
+  it("encodes byte-identically whether finish is omitted or every field is explicitly undefined", () => {
+    const withoutField: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+        },
+      ],
+    };
+    const withUndefinedFields: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          finish: {
+            specular: undefined,
+            shininess: undefined,
+            metalness: undefined,
+            reflect: undefined,
+            transmit: undefined,
+          },
+        },
+      ],
+    };
+    expect(encodeScene(withUndefinedFields)).toBe(encodeScene(withoutField));
+  });
+
+  it("leaves the whole finish absent for a non-object raw value — string, array, or null", () => {
+    const buildRaw = (finish: unknown) => ({
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          finish,
+        },
+      ],
+    });
+    for (const finish of ["shiny", [0.4, 32, 0, 0, 0], null]) {
+      const result = decodeScene(
+        "v1=" + b64url(JSON.stringify(buildRaw(finish))),
+      );
+      expect(result, `finish = ${JSON.stringify(finish)}`).not.toBeNull();
+      expect(
+        result!.transforms[0].finish,
+        `finish = ${JSON.stringify(finish)}`,
+      ).toBeUndefined();
+    }
+  });
+
+  it("leaves finish fields absent for non-numeric garbage, without rejecting the scene", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          finish: {
+            specular: "bright",
+            shininess: "big",
+            metalness: "half",
+            reflect: "some",
+            transmit: "none",
+          },
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms[0].finish).toBeUndefined();
+  });
+
+  it("leaves finish fields absent for an explicit null, rather than decoding Number(null)'s 0", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          finish: {
+            specular: null,
+            shininess: null,
+            metalness: null,
+            reflect: null,
+            transmit: null,
+          },
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms[0].finish).toBeUndefined();
+  });
+
+  it("leaves finish fields absent for a boolean, without coercing true to 1", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          finish: {
+            specular: true,
+            shininess: false,
+            metalness: true,
+            reflect: false,
+            transmit: true,
+          },
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms[0].finish).toBeUndefined();
+  });
+
+  it("leaves finish fields absent for an array/object value, without rejecting the scene", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          finish: {
+            specular: [0.8],
+            shininess: { value: 64 },
+            metalness: [0.5],
+            reflect: { value: 0.3 },
+            transmit: [0.1],
+          },
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms[0].finish).toBeUndefined();
+  });
+
+  it("keeps a sibling field intact when only some fields in an otherwise-valid finish are malformed", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          finish: { specular: 0.9, shininess: "big", metalness: true },
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms[0].finish).toEqual({ specular: 0.9 });
+  });
+
+  it("keeps an out-of-domain but finite finish field through decode untouched, without clamping", () => {
+    // resolveSurfaceFinish (surface-finish.ts) owns the domain, not persist —
+    // so a negative specular and an out-of-range metalness survive the
+    // decode exactly as authored rather than being clamped or rejected.
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          finish: { specular: -5, metalness: 3 },
+        },
+      ],
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.transforms[0].finish).toEqual({
+      specular: -5,
+      metalness: 3,
+    });
+  });
+
+  it("an all-fields-invalid finish encodes to no finish key at all", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          finish: {
+            specular: NaN,
+            shininess: Infinity,
+            metalness: NaN,
+            reflect: -Infinity,
+            transmit: NaN,
+          },
+        },
+      ],
+    };
+    const payload = decodePayload(encodeScene(s));
+    const transforms = payload.transforms as Record<string, unknown>[];
+    expect("finish" in transforms[0]).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Final transform (optional field)
 // ---------------------------------------------------------------------------

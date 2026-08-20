@@ -127,6 +127,67 @@ export interface Variation {
 }
 
 /**
+ * Optional per-transform surface FINISH: how this map's part of the
+ * attractor responds to light in Surface mode — a Blinn-Phong specular lobe
+ * plus three physically-flavored knobs (metalness, image-based reflection,
+ * thin-shell transmission) layered over it. Read by Surface mode's tracers
+ * ONLY (`surface-material.ts`/`-4d.ts`, `surface-de-gpu.ts`'s shade entry);
+ * every other render mode — points, flame, solid — never looks at it.
+ *
+ * Like the fold's three lengths ({@link Variation.minRadius} et al., one
+ * feature over), `finish` deliberately breaks the "a transform's
+ * per-variation data is a type -> weight map" model rather than pretending
+ * to fit it — except it breaks a DIFFERENT model: these are per-TRANSFORM
+ * shading parameters, not per-variation warp parameters, which is why the
+ * field lives on {@link Transform} directly rather than inside a
+ * {@link Variation} entry.
+ *
+ * ABSENT MEANS THE CLASSIC VALUES — today's hardcoded lighting formula
+ * (specular 0.4, shininess 32, metalness/reflect/transmit all 0) — BYTE-
+ * IDENTICALLY: an unauthored document, and every document predating this
+ * field, renders exactly today's frame. Each field is independently
+ * optional too, so a document may author `metalness` alone and leave the
+ * rest classic. `surface-finish.ts`'s
+ * {@link import("./surface-finish").resolveSurfaceFinish} is the one place
+ * that rule is written down; nothing else may re-derive it.
+ *
+ * Tier-2 procedural-pattern fields (e.g. a future `patternKind`) are
+ * deliberately NOT here — this is lighting response only, and a later slice
+ * owns pattern.
+ */
+export interface SurfaceFinish {
+  /**
+   * Blinn-Phong specular strength, the highlight's brightness multiplier.
+   * Absent ⇒ 0.4, today's fixed value. Clamped only from below (`>= 0`) at
+   * resolve time — an overdriven highlight past the classic value is legal
+   * authoring.
+   */
+  specular?: number;
+  /**
+   * Blinn-Phong specular exponent, the highlight's tightness (higher ⇒
+   * smaller and sharper). Absent ⇒ 32, today's fixed value. Floored
+   * strictly above 0 at resolve time — never at the classic value — so the
+   * knob stays continuous down to a near-flat highlight instead of jumping.
+   */
+  shininess?: number;
+  /**
+   * How strongly this part of the surface reads as metal, `[0, 1]`. Absent
+   * ⇒ 0, today's fully dielectric shading.
+   */
+  metalness?: number;
+  /**
+   * Image-based reflection weight, `[0, 1]`. Absent ⇒ 0 — today's shading
+   * carries no reflection term at all.
+   */
+  reflect?: number;
+  /**
+   * Thin-shell transparency weight, `[0, 1]`. Absent ⇒ 0 — today's shading
+   * is fully opaque.
+   */
+  transmit?: number;
+}
+
+/**
  * One affine map in the iterated function system. Position, rotation (Euler
  * angles in radians, applied in XYZ order), and per-axis scale together define
  * a 4x4 transform — see {@link composeAffine}.
@@ -221,6 +282,17 @@ export interface Transform {
    * `embedTransform3`'s embedding).
    */
   w?: WExtension;
+  /**
+   * Optional per-transform surface finish (see {@link SurfaceFinish}): how
+   * this map's part of the attractor responds to light in Surface mode.
+   * Omitted (or present with every field absent) ⇒ the classic hardcoded
+   * Blinn-Phong formula, leaving every existing system byte-for-byte
+   * unchanged — the same absent-means-identity convention as
+   * {@link Transform.weight}/{@link Transform.shear}/
+   * {@link Transform.variations}. Read by Surface mode's tracers only;
+   * every other render mode ignores it.
+   */
+  finish?: SurfaceFinish;
 }
 
 /**

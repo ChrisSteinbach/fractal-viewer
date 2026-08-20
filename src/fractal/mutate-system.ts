@@ -25,8 +25,10 @@
 import type { MorphSystem } from "./morph";
 import { MIN_OCCUPIED_CELLS, scoreSystem } from "./random-system";
 import type { Rng } from "./rng";
+import { SURFACE_FINISH_SHININESS_FLOOR } from "./surface-finish";
 import { VARIATION_TYPES } from "./types";
 import type {
+  SurfaceFinish,
   SymmetryParams,
   Transform,
   Variation,
@@ -201,6 +203,53 @@ const FOLD_RADIUS_CLAMP_MAX = 2;
  * can still move under a mutation instead of multiplying to a permanent 0.
  */
 const BOX_LIMIT_JITTER = 0.08;
+
+/**
+ * Multiplicative jitter half-range for `finish.specular`: `U(0.92, 1.08)`,
+ * the same order as {@link FOLD_RADIUS_JITTER_HALF_RANGE} — both are
+ * positive magnitudes on the map's own rough scale with no sign to
+ * preserve, better nudged proportionally than additively.
+ */
+const FINISH_SPECULAR_JITTER_HALF_RANGE = 0.08;
+/**
+ * `finish.specular` magnitude clamp: mirrors {@link FOLD_RADIUS_CLAMP_MIN}/
+ * {@link FOLD_RADIUS_CLAMP_MAX} — there is no editor slider for `specular`
+ * yet to mirror instead, the same placeholder precedent those two set for
+ * the fold radii. Floored at 0 rather than a small positive value: a
+ * vanished highlight is a legitimate authored look, not a domain edge case.
+ */
+const FINISH_SPECULAR_CLAMP_MIN = 0;
+const FINISH_SPECULAR_CLAMP_MAX = 2;
+
+/**
+ * Multiplicative jitter half-range for `finish.shininess`: matches
+ * {@link FINISH_SPECULAR_JITTER_HALF_RANGE} — a specular exponent is also a
+ * positive magnitude, nudged the same proportional way.
+ */
+const FINISH_SHININESS_JITTER_HALF_RANGE = 0.08;
+/**
+ * `finish.shininess` clamp: floored at `surface-finish.ts`'s own
+ * {@link SURFACE_FINISH_SHININESS_FLOOR} — imported rather than re-typed, so
+ * a mutation can never push a shininess value outside what the resolver
+ * itself would accept — and ceiled at 256, a conventional Blinn-Phong
+ * exponent ceiling past which a tighter highlight reads no differently at
+ * this app's viewing distances.
+ */
+const FINISH_SHININESS_CLAMP_MIN = SURFACE_FINISH_SHININESS_FLOOR;
+const FINISH_SHININESS_CLAMP_MAX = 256;
+
+/**
+ * Additive jitter half-range for `finish.metalness`/`reflect`/`transmit`:
+ * `U(-0.05, 0.05)`, matching {@link COLOR_INDEX_JITTER} — all three, like
+ * `colorIndex`/`colorSpeed`, are `[0, 1]`-authored blend controls, not free
+ * strengths, so the same gentle additive nudge fits.
+ */
+const FINISH_UNIT_JITTER = 0.05;
+/** `finish.metalness`/`reflect`/`transmit` clamp: the fields' own authored
+ * span, `[0, 1]` (see `types.ts`'s `SurfaceFinish`), mirroring
+ * {@link COLOR_INDEX_CLAMP_MIN}/`_MAX`. */
+const FINISH_UNIT_CLAMP_MIN = 0;
+const FINISH_UNIT_CLAMP_MAX = 1;
 
 /**
  * How much wider every jitter half-range above gets on the grid's one
@@ -481,16 +530,102 @@ function jitterW(rng: Rng, base: WExtension, spread: number): WExtension {
   return w;
 }
 
+/** Jitter a present `finish.specular`: multiplicative like a fold radius
+ * ({@link jitterFoldRadius}) — a positive magnitude, no sign game needed —
+ * clamped into [{@link FINISH_SPECULAR_CLAMP_MIN},
+ * {@link FINISH_SPECULAR_CLAMP_MAX}]. */
+function jitterFinishSpecular(rng: Rng, value: number, spread: number): number {
+  return clamp(
+    value *
+      uniform(
+        rng,
+        1 - FINISH_SPECULAR_JITTER_HALF_RANGE * spread,
+        1 + FINISH_SPECULAR_JITTER_HALF_RANGE * spread,
+      ),
+    FINISH_SPECULAR_CLAMP_MIN,
+    FINISH_SPECULAR_CLAMP_MAX,
+  );
+}
+
+/** Jitter a present `finish.shininess`: the identical multiplicative shape
+ * as {@link jitterFinishSpecular}, clamped into
+ * [{@link FINISH_SHININESS_CLAMP_MIN}, {@link FINISH_SHININESS_CLAMP_MAX}]. */
+function jitterFinishShininess(
+  rng: Rng,
+  value: number,
+  spread: number,
+): number {
+  return clamp(
+    value *
+      uniform(
+        rng,
+        1 - FINISH_SHININESS_JITTER_HALF_RANGE * spread,
+        1 + FINISH_SHININESS_JITTER_HALF_RANGE * spread,
+      ),
+    FINISH_SHININESS_CLAMP_MIN,
+    FINISH_SHININESS_CLAMP_MAX,
+  );
+}
+
+/** Jitter a present `finish.metalness`/`reflect`/`transmit`: additive,
+ * matching {@link jitterWShearComponent}'s shape — a `[0, 1]`-authored blend
+ * control, not a free strength (the same reasoning
+ * {@link COLOR_INDEX_JITTER} documents). */
+function jitterFinishUnit(rng: Rng, value: number, spread: number): number {
+  return clamp(
+    value +
+      uniform(rng, -FINISH_UNIT_JITTER * spread, FINISH_UNIT_JITTER * spread),
+    FINISH_UNIT_CLAMP_MIN,
+    FINISH_UNIT_CLAMP_MAX,
+  );
+}
+
+/** Jitter a present `finish`: only its present fields move (absent stays
+ * absent — a finish with only `metalness` authored stays a metalness-only
+ * object, never gains the other four), each per the field-specific rules
+ * documented on this module's `FINISH_*` constants above. Mirrors
+ * {@link jitterW}'s "only present subfields move" shape, one field family
+ * over, on {@link jitterVariationEntry}'s COPY-rather-than-rebuild
+ * discipline: `finish` is spread first so a field this function has no rule
+ * for (there are none today, but `types.ts`'s own `SurfaceFinish` doc notes
+ * a later slice will add Tier-2 pattern fields) rides through untouched
+ * instead of silently vanishing. */
+function jitterFinish(
+  rng: Rng,
+  base: SurfaceFinish,
+  spread: number,
+): SurfaceFinish {
+  const finish: SurfaceFinish = { ...base };
+  if (base.specular !== undefined) {
+    finish.specular = jitterFinishSpecular(rng, base.specular, spread);
+  }
+  if (base.shininess !== undefined) {
+    finish.shininess = jitterFinishShininess(rng, base.shininess, spread);
+  }
+  if (base.metalness !== undefined) {
+    finish.metalness = jitterFinishUnit(rng, base.metalness, spread);
+  }
+  if (base.reflect !== undefined) {
+    finish.reflect = jitterFinishUnit(rng, base.reflect, spread);
+  }
+  if (base.transmit !== undefined) {
+    finish.transmit = jitterFinishUnit(rng, base.transmit, spread);
+  }
+  return finish;
+}
+
 /**
  * Jitter one base map: every field nudged per this module's documented
  * ranges, scaled by `spread` (`1` for a plain cell, {@link WILDCARD_SPREAD}
  * for the wildcard cell). `id` is preserved (never reassigned — the map
  * identity a mutation grid cell shows must trace back to the base system's
  * own map), and every optional field (`shear`/`variations`/`w`/`colorIndex`/
- * `colorSpeed`) stays exactly as present or absent as it is on `base` — no
- * key is ever invented or dropped, fold-family lengths included:
+ * `colorSpeed`/`finish`) stays exactly as present or absent as it is on
+ * `base` — no key is ever invented or dropped, fold-family lengths included:
  * see {@link jitterVariationEntry} for why a mutation may perturb a present
- * `minRadius`/`fixedRadius`/`boxLimit` but never materializes an absent one.
+ * `minRadius`/`fixedRadius`/`boxLimit` but never materializes an absent one,
+ * and {@link jitterFinish} for the identical rule applied field-by-field to
+ * `finish`.
  */
 function jitterTransform(rng: Rng, base: Transform, spread: number): Transform {
   const rotation: Vec3 = [
@@ -598,6 +733,14 @@ function jitterTransform(rng: Rng, base: Transform, spread: number): Transform {
     );
   }
 
+  // finish placed last for the identical reason colorIndex/colorSpeed sit
+  // above shear/variations/w: an existing base map without a `finish` draws
+  // no extra RNG here, so every RNG sequence recorded before this field
+  // existed stays exactly as it was.
+  if (base.finish) {
+    result.finish = jitterFinish(rng, base.finish, spread);
+  }
+
   return result;
 }
 
@@ -666,14 +809,14 @@ function applyStructuralKick(
  * for a fold-family variation, its PRESENT fold lengths only, never a
  * materialized absent one — move (via {@link jitterVariationEntry}, the same
  * rule a base map's variations follow); its affine fields
- * (position/rotation/scale/shear), `id`, and `colorIndex`/`colorSpeed`
+ * (position/rotation/scale/shear), `id`, `colorIndex`/`colorSpeed`
  * (inert on a lens the chaos game never picks, see `morph.ts`'s
- * `lerpFinalTransform`) all ride by reference, untouched — the lens's warp
- * can strengthen, weaken, or (for `boxfold`, the one fold type the roll ever
- * gives a lens — see `random-system.ts`'s `FINAL_VARIATION_TYPES`) reshape
- * an authored length, but a mutation never relocates, resizes, or recolors
- * it, and never gives it a fold length it didn't already have. Absent
- * `variations` stays absent. */
+ * `lerpFinalTransform`), and `finish` all ride by reference, untouched — the
+ * lens's warp can strengthen, weaken, or (for `boxfold`, the one fold type
+ * the roll ever gives a lens — see `random-system.ts`'s
+ * `FINAL_VARIATION_TYPES`) reshape an authored length, but a mutation never
+ * relocates, resizes, recolors, or reshades it, and never gives it a fold
+ * length it didn't already have. Absent `variations` stays absent. */
 function jitterFinalTransform(
   rng: Rng,
   base: Transform,
@@ -725,17 +868,19 @@ function buildMutant(
  * per field — each clamp mirrors an editor slider's own bound, so a mutant
  * never lands outside what the manual editor could express). Maps are never
  * added or removed, and each keeps its base `id`; every optional field
- * (`shear`/`variations`/`w`, each of `w`'s own subfields, and `colorIndex`/
- * `colorSpeed`) stays exactly as present or absent as it is on
- * `base`, so a flat base system stays flat and a purely-affine map stays
- * purely affine. A fold-family variation's `minRadius`/`fixedRadius`/
- * `boxLimit` follow that same rule strictly — perturbed when present, but
- * NEVER materialized when absent, `wildcard` included (see
- * {@link jitterVariationEntry} for why: a mutation grid stays a grid of the
- * system you brought it). `symmetry` passes through unchanged, and the
+ * (`shear`/`variations`/`w`, each of `w`'s own subfields, `colorIndex`/
+ * `colorSpeed`, and `finish`, each of `finish`'s own subfields) stays
+ * exactly as present or absent as it is on `base`, so a flat base system
+ * stays flat, a purely-affine map stays purely affine, and an unshaded map
+ * stays unshaded. A fold-family variation's `minRadius`/`fixedRadius`/
+ * `boxLimit`, and a present `finish`'s own present fields, follow that same
+ * rule strictly — perturbed when present, but NEVER materialized when
+ * absent, `wildcard` included (see {@link jitterVariationEntry} and
+ * {@link jitterFinish} for why: a mutation grid stays a grid of the system
+ * you brought it). `symmetry` passes through unchanged, and the
  * final-transform lens
  * (if any) has its variations nudged the same way (its own `colorIndex`/
- * `colorSpeed`, like its affine fields, ride by reference — see
+ * `colorSpeed`/`finish`, like its affine fields, ride by reference — see
  * {@link jitterFinalTransform}).
  *
  * `options.wildcard` widens every jitter range ({@link WILDCARD_SPREAD}) and
