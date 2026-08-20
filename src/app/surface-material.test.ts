@@ -10,6 +10,7 @@ import {
   setSurfaceBalloon,
   setSurfaceGrid,
   setSurfaceGridEnabled,
+  setSurfaceFinishes,
   setSurfaceGroundPlane,
   setSurfaceSystem,
   surfaceFragmentFor,
@@ -18,6 +19,11 @@ import {
   SURFACE_MAX_MAPS,
   SURFACE_SHADE_DE_WIDTH,
 } from "./surface-material";
+import {
+  CLASSIC_SURFACE_FINISH,
+  resolveSurfaceFinish,
+  surfaceFinishLanes,
+} from "../fractal/surface-finish";
 import {
   buildBulbDE,
   BULB_ITERATIONS,
@@ -305,7 +311,7 @@ describe("the fold's authored lengths in the GLSL tracer", () => {
     // 83022 B -> 29194 B for the affine/fold base). For an emitted source
     // to reach the 82.2KB that crashed Mesa outright, the resolved source
     // would have to pass ~190KB — and the whole UNRESOLVED template is
-    // only 139164 B, well short of that. So this assertion can only fail
+    // 142130 B, well short of that. So this assertion can only fail
     // if stripGlslSource stops shrinking; it is NOT a check that any
     // variant has stopped growing (that's surfaceFragmentResolvedFor's
     // job, pinned separately below).
@@ -322,6 +328,20 @@ describe("the fold's authored lengths in the GLSL tracer", () => {
       ["bulb", surfaceFragmentFor(0, 0, 0, 0, 1)],
       ["bulb + balloon", surfaceFragmentFor(0, 0, 1, 0, 1)],
       ["bulb + plane", surfaceFragmentFor(0, 0, 0, 1, 1)],
+      // The same twelve with the finish arm on — it composes with all of
+      // them, so all of them are programs the driver can be handed.
+      ["affine + finish", surfaceFragmentFor(0, 0, 0, 0, 0, 1)],
+      ["fold lens + finish", surfaceFragmentFor(0, 1, 0, 0, 0, 1)],
+      ["balloon + finish", surfaceFragmentFor(0, 0, 1, 0, 0, 1)],
+      ["ground plane + finish", surfaceFragmentFor(0, 0, 0, 1, 0, 1)],
+      ["lens + balloon + finish", surfaceFragmentFor(0, 1, 1, 0, 0, 1)],
+      ["lens + plane + finish", surfaceFragmentFor(0, 1, 0, 1, 0, 1)],
+      ["escape + finish", surfaceFragmentFor(1, 0, 0, 0, 0, 1)],
+      ["escape + balloon + finish", surfaceFragmentFor(1, 0, 1, 0, 0, 1)],
+      ["escape + plane + finish", surfaceFragmentFor(1, 0, 0, 1, 0, 1)],
+      ["bulb + finish", surfaceFragmentFor(0, 0, 0, 0, 1, 1)],
+      ["bulb + balloon + finish", surfaceFragmentFor(0, 0, 1, 0, 1, 1)],
+      ["bulb + plane + finish", surfaceFragmentFor(0, 0, 0, 1, 1, 1)],
     ];
     for (const [name, src] of variants) {
       expect(src.length, name).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
@@ -346,12 +366,13 @@ describe("the fold's authored lengths in the GLSL tracer", () => {
     //
     // No escape+balloon assertion: at 64681 B it sits only 855 B under
     // the threshold, and crossing is BENIGN — stripped it comes down to
-    // ~15KB, far under the cliff — so gating it would fail CI for a
+    // ~13KB, far under the cliff — so gating it would fail CI for a
     // non-hazard and teach whoever hits it to bump the number. It is
     // also a measurement-only pairing: balloon is IFS-only and escape is
-    // forward, so no shipped session compiles it.
-    // docs/surface-glsl-tracers.md carries that figure as the pairing to
-    // watch.
+    // forward, so no shipped session compiles it. With the FINISH arm on
+    // it does cross (66714 B), and the SURFACE_FINISH suite below pins
+    // that crossing as exactly the benign event this comment predicts.
+    // docs/surface-glsl-tracers.md carries both figures.
     expect(surfaceFragmentResolvedFor(1, 0).length).toBeLessThan(
       SURFACE_GLSL_STRIP_BYTES,
     );
@@ -491,19 +512,27 @@ function countOccurrences(source: string, needle: string): number {
 describe("buildSurfaceFragment shade probe", () => {
   it("keeps every variant free of the probe when built at the beam width (A/A)", () => {
     const source = buildSurfaceFragment(SURFACE_FOLD_BEAM_WIDTH);
-    expect(surfaceFragmentFor(0, 0, 0, 0, 0, source)).not.toContain(
+    expect(surfaceFragmentFor(0, 0, 0, 0, 0, 0, source)).not.toContain(
       "surfaceDEProbe",
     );
-    expect(surfaceFragmentFor(0, 1, 0, 0, 0, source)).not.toContain(
+    expect(surfaceFragmentFor(0, 1, 0, 0, 0, 0, source)).not.toContain(
       "surfaceDEProbe",
     );
-    expect(surfaceFragmentFor(1, 0, 0, 0, 0, source)).not.toContain(
+    expect(surfaceFragmentFor(1, 0, 0, 0, 0, 0, source)).not.toContain(
       "surfaceDEProbe",
     );
   });
 
   it("compiles exactly one width-1 probe, routed as the shading taps' value form", () => {
-    const resolved = surfaceFragmentFor(0, 0, 0, 0, 0, buildSurfaceFragment(1));
+    const resolved = surfaceFragmentFor(
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      buildSurfaceFragment(1),
+    );
     expect(
       countOccurrences(resolved, "float surfaceDEProbe(vec3 p, float cutoff)"),
     ).toBe(1);
@@ -511,15 +540,32 @@ describe("buildSurfaceFragment shade probe", () => {
   });
 
   it("strips the probe body's comments and indentation, unlike the public descent body", () => {
-    const resolved = surfaceFragmentFor(0, 0, 0, 0, 0, buildSurfaceFragment(1));
+    const resolved = surfaceFragmentFor(
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      buildSurfaceFragment(1),
+    );
     expect(resolved).toContain("\nvec3 fcQ[1];");
     expect(resolved).toContain("vec3 fcQ[FOLD_W];");
   });
 
   it("never changes the escape variant's source across probe widths", () => {
-    const atWidth1 = surfaceFragmentFor(1, 0, 0, 0, 0, buildSurfaceFragment(1));
+    const atWidth1 = surfaceFragmentFor(
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      buildSurfaceFragment(1),
+    );
     const atBeamWidth = surfaceFragmentFor(
       1,
+      0,
       0,
       0,
       0,
@@ -530,15 +576,32 @@ describe("buildSurfaceFragment shade probe", () => {
   });
 
   it("carries no probe under the fold lens, which keeps its surfaceDECore rename", () => {
-    const resolved = surfaceFragmentFor(0, 1, 0, 0, 0, buildSurfaceFragment(1));
+    const resolved = surfaceFragmentFor(
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      buildSurfaceFragment(1),
+    );
     expect(resolved).not.toContain("surfaceDEProbe");
     expect(resolved).toContain("surfaceDECore");
   });
 
   it("adds the probe as a new name rather than another surfaceDE overload", () => {
     const needle = "float surfaceDE(vec3 p, float cutoff) {";
-    const atWidth1 = surfaceFragmentFor(0, 0, 0, 0, 0, buildSurfaceFragment(1));
+    const atWidth1 = surfaceFragmentFor(
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      buildSurfaceFragment(1),
+    );
     const atBeamWidth = surfaceFragmentFor(
+      0,
       0,
       0,
       0,
@@ -1599,5 +1662,338 @@ describe("the balloon's empty-space-grid gate", () => {
     expect(material.uniforms.uGridEnabled.value).toBe(1);
     expect(material.uniforms.uGridTex.value).toBe(texture);
     expect(material.uniforms.uGridInvSpan.value).toBe(1 / 8);
+  });
+});
+
+describe("SURFACE_FINISH variant", () => {
+  /** Every legal variant pairing — the twelve the strip-rule test above
+   * enumerates — as (escape, lens, balloon, plane, bulb) tuples, so the
+   * finish arm is checked against ALL of them rather than a sample. */
+  const pairings: [string, [number, number, number, number, number]][] = [
+    ["affine", [0, 0, 0, 0, 0]],
+    ["fold lens", [0, 1, 0, 0, 0]],
+    ["balloon", [0, 0, 1, 0, 0]],
+    ["ground plane", [0, 0, 0, 1, 0]],
+    ["lens + balloon", [0, 1, 1, 0, 0]],
+    ["lens + plane", [0, 1, 0, 1, 0]],
+    ["escape", [1, 0, 0, 0, 0]],
+    ["escape + balloon", [1, 0, 1, 0, 0]],
+    ["escape + plane", [1, 0, 0, 1, 0]],
+    ["bulb", [0, 0, 0, 0, 1]],
+    ["bulb + balloon", [0, 0, 1, 0, 1]],
+    ["bulb + plane", [0, 0, 0, 1, 1]],
+  ];
+
+  const fetchLine =
+    "vec3 col = finishShade(base, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot]);";
+
+  /** A finish with every field away from classic and every field a
+   * different number, so a lane landing one component off is visible. */
+  const authored = resolveSurfaceFinish({
+    specular: 0.9,
+    shininess: 64,
+    metalness: 0.3,
+    reflect: 0.5,
+    transmit: 0.2,
+  });
+
+  it("strips every finish token from every variant while the flag is off — the byte-identity mechanism", () => {
+    // With finish 0 the resolved source must be byte-identical to the
+    // pre-finish build: every added line lives in a resolver-owned
+    // SURFACE_FINISH arm, so no finishShade/uMapFinish token may survive,
+    // and the omitted argument must mean exactly the explicit 0.
+    for (const [name, [escape, lens, balloon, plane, bulb]] of pairings) {
+      const explicit = surfaceFragmentResolvedFor(
+        escape,
+        lens,
+        balloon,
+        plane,
+        bulb,
+        0,
+      );
+      expect(explicit, name).not.toContain("finishShade");
+      expect(explicit, name).not.toContain("uMapFinish");
+      expect(explicit, name).not.toContain("SURFACE_FINISH");
+      expect(
+        surfaceFragmentResolvedFor(escape, lens, balloon, plane, bulb),
+        name,
+      ).toBe(explicit);
+      expect(surfaceFragmentFor(escape, lens, balloon, plane, bulb), name).toBe(
+        surfaceFragmentFor(escape, lens, balloon, plane, bulb, 0),
+      );
+    }
+  });
+
+  it("compiles exactly one finishShade and the per-map fetch into EVERY variant with the flag on — the forward arms included, with no refusal of its own", () => {
+    for (const [name, [escape, lens, balloon, plane, bulb]] of pairings) {
+      const resolved = surfaceFragmentResolvedFor(
+        escape,
+        lens,
+        balloon,
+        plane,
+        bulb,
+        1,
+      );
+      // The arrays are declared in the SHARED uniform section, so the
+      // escape and bulb arms — which replace the descent bodies
+      // wholesale — read them exactly as the descents do.
+      expect(resolved, name).toContain("uniform vec4 uMapFinishA[MAX_MAPS];");
+      expect(resolved, name).toContain("uniform vec4 uMapFinishB[MAX_MAPS];");
+      expect(
+        countOccurrences(
+          resolved,
+          "vec3 finishShade(vec3 base, vec3 n, vec3 rd, float shadow, float ao, vec3 bg, vec4 fa, vec4 fb) {",
+        ),
+        name,
+      ).toBe(1);
+      expect(resolved, name).toContain(
+        "int fSlot = clamp(firstChoice, 0, uMapCount - 1);",
+      );
+      expect(countOccurrences(resolved, fetchLine), name).toBe(1);
+      // The JS-resolved directive is gone; only SURFACE_FOLDS may remain.
+      expect(resolved, name).not.toContain("#if SURFACE_FINISH");
+      // The #else branch — today's fixed formula — was resolved away: its
+      // literal highlight is the one line no other arm shares.
+      expect(resolved, name).not.toContain("32.0) * 0.4;");
+      expect(resolved, name).not.toContain(
+        "vec3 col = pow(linBase * lit + vec3(specular * shadow), vec3(1.0 / 2.2));",
+      );
+    }
+    // The two existing refusals hold with the finish on; the finish adds
+    // none.
+    expect(() => surfaceFragmentFor(0, 0, 1, 1, 0, 1)).toThrow(RangeError);
+    expect(() => surfaceFragmentFor(1, 0, 0, 0, 1, 1)).toThrow(RangeError);
+  });
+
+  it("leaves the fixed formula in place with the flag off, so the unfinished program is today's program", () => {
+    for (const [name, [escape, lens, balloon, plane, bulb]] of pairings) {
+      const resolved = surfaceFragmentResolvedFor(
+        escape,
+        lens,
+        balloon,
+        plane,
+        bulb,
+        0,
+      );
+      expect(resolved, name).toContain(
+        "float specular = pow(max(dot(n, halfVec), 0.0), 32.0) * 0.4;",
+      );
+    }
+  });
+
+  it("tips the escape+balloon pairing over the strip threshold — benignly: the emitted program is the stripped token stream, a fifth of the size", () => {
+    // Measured at the finish arm's landing: 64681 B -> 66714 B resolved,
+    // the one pairing whose strip status the arm flips. It is a
+    // measurement-only pairing (balloon is IFS-only, escape is forward),
+    // and crossing costs it nothing but its commentary in a driver log.
+    // Pinned as the CONTRACT — over the threshold, therefore stripped —
+    // rather than as the figures.
+    const resolved = surfaceFragmentResolvedFor(1, 0, 1, 0, 0, 1);
+    expect(resolved.length).toBeGreaterThan(SURFACE_GLSL_STRIP_BYTES);
+    const emitted = surfaceFragmentFor(1, 0, 1, 0, 0, 1);
+    expect(emitted).not.toContain("//");
+    expect(emitted).not.toContain("/*");
+    expect(emitted.length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES / 4);
+    // Off, the same pairing is still emitted whole (the pre-finish
+    // record's "pairing to watch", unmoved by an arm that is off).
+    expect(surfaceFragmentResolvedFor(1, 0, 1, 0, 0, 0).length).toBeLessThan(
+      SURFACE_GLSL_STRIP_BYTES,
+    );
+  });
+
+  it("keeps the two shipped forward arms under the strip threshold with the finish on, so a finished escape or bulb session still reads as source in a driver log", () => {
+    // The same readability property the flag-off test above gates, one
+    // arm over: measured 57878 B (escape) and 41390 B (bulb) at landing.
+    expect(surfaceFragmentResolvedFor(1, 0, 0, 0, 0, 1).length).toBeLessThan(
+      SURFACE_GLSL_STRIP_BYTES,
+    );
+    expect(surfaceFragmentResolvedFor(0, 0, 0, 0, 1, 1).length).toBeLessThan(
+      SURFACE_GLSL_STRIP_BYTES,
+    );
+  });
+
+  it("defaults every finish slot to the CLASSIC lanes, never zero, so a stray enabled read renders the fixed highlight rather than matte black", () => {
+    const material = createSurfaceMaterial();
+    expect(material.defines.SURFACE_FINISH).toBe(0);
+    const laneA = material.uniforms.uMapFinishA.value as THREE.Vector4[];
+    const laneB = material.uniforms.uMapFinishB.value as THREE.Vector4[];
+    expect(laneA).toHaveLength(SURFACE_MAX_MAPS);
+    expect(laneB).toHaveLength(SURFACE_MAX_MAPS);
+    const classic = surfaceFinishLanes(CLASSIC_SURFACE_FINISH);
+    expect(classic.a).toEqual([0.4, 32, 0, 0]);
+    for (let j = 0; j < SURFACE_MAX_MAPS; j++) {
+      expect(laneA[j].toArray()).toEqual(classic.a);
+      expect(laneB[j].toArray()).toEqual(classic.b);
+    }
+  });
+
+  it("setSurfaceFinishes packs each slot's lanes in surfaceFinishLanes' order, resets the rest to classic, flips the define and recompiles", () => {
+    const material = createSurfaceMaterial();
+    const versionBefore = material.version;
+    const second = resolveSurfaceFinish({ specular: 0.1, shininess: 8 });
+    setSurfaceFinishes(material, [authored, second]);
+
+    const laneA = material.uniforms.uMapFinishA.value as THREE.Vector4[];
+    const laneB = material.uniforms.uMapFinishB.value as THREE.Vector4[];
+    expect(laneA[0].toArray()).toEqual([0.9, 64, 0.3, 0.5]);
+    expect(laneB[0].toArray()).toEqual([0.2, 0, 0, 0]);
+    expect(laneA[1].toArray()).toEqual([0.1, 8, 0, 0]);
+    expect(laneB[1].toArray()).toEqual([0, 0, 0, 0]);
+    // Slot 2 onward: the classic lanes, not a leftover and not zero.
+    expect(laneA[2].toArray()).toEqual([0.4, 32, 0, 0]);
+    expect(laneA[SURFACE_MAX_MAPS - 1].toArray()).toEqual([0.4, 32, 0, 0]);
+
+    expect(material.defines.SURFACE_FINISH).toBe(1);
+    expect(material.fragmentShader).toContain("vec3 finishShade(");
+    expect(material.fragmentShader).toContain(
+      "uniform vec4 uMapFinishA[MAX_MAPS];",
+    );
+    expect(material.fragmentShader).not.toContain("32.0) * 0.4;");
+    expect(material.version).toBeGreaterThan(versionBefore);
+  });
+
+  it("rewrites the lanes without touching the shader on a value-only change, and null hands the fixed formula back with every slot classic", () => {
+    const material = createSurfaceMaterial();
+    setSurfaceFinishes(material, [authored]);
+    const version = material.version;
+    const shader = material.fragmentShader;
+
+    // A finish slider's per-drag tick: lanes move, the program does not.
+    setSurfaceFinishes(material, [{ ...authored, reflect: 1 }]);
+    const laneA = material.uniforms.uMapFinishA.value as THREE.Vector4[];
+    expect(laneA[0].toArray()).toEqual([0.9, 64, 0.3, 1]);
+    expect(material.version).toBe(version);
+    expect(material.fragmentShader).toBe(shader);
+
+    // null: the caller's gate says the document is classic.
+    setSurfaceFinishes(material, null);
+    expect(material.defines.SURFACE_FINISH).toBe(0);
+    expect(laneA[0].toArray()).toEqual([0.4, 32, 0, 0]);
+    expect(material.fragmentShader).not.toContain("finishShade");
+    expect(material.fragmentShader).toContain("32.0) * 0.4;");
+    expect(material.fragmentShader).toBe(surfaceFragmentFor(0, 0));
+    expect(material.version).toBeGreaterThan(version);
+    // A second null is a no-op on the program.
+    const settled = material.version;
+    setSurfaceFinishes(material, null);
+    expect(material.version).toBe(settled);
+  });
+
+  it("survives every recompose site: a system swap, the lens, the forward arms, the balloon and the floor all preserve the finish define and its text", () => {
+    const material = createSurfaceMaterial();
+    setSurfaceFinishes(material, [authored]);
+    const finished = (what: string) => {
+      expect(material.defines.SURFACE_FINISH, what).toBe(1);
+      expect(material.fragmentShader, what).toContain(fetchLine);
+      expect(material.fragmentShader, what).not.toContain("32.0) * 0.4;");
+    };
+
+    // setSurfaceSystem, affine then lens (a variant rebuild).
+    setSurfaceSystem(material, de3([map3()]), [black]);
+    finished("affine system");
+    const withLens = de3([map3()]);
+    withLens.foldFinal = {
+      invM: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      invT: [0, 0, 0],
+      sigmaMin: 1,
+      foldKind: 1,
+      invW: 1,
+      absW: 1,
+      foldRadii: CLASSIC_SURFACE_FOLD_RADII,
+    };
+    setSurfaceSystem(material, withLens, [black]);
+    expect(material.fragmentShader).toContain("surfaceDECore");
+    finished("lens system");
+
+    // The forward arms: escape, then bulb (each replaces the descent
+    // bodies wholesale, so each is a full rebuild).
+    setEscapeSystem(
+      material,
+      buildEscapeDE([
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+      ]),
+      black,
+    );
+    expect(material.defines.SURFACE_ESCAPE).toBe(1);
+    finished("escape system");
+    setBulbSystem(
+      material,
+      buildBulbDE([
+        {
+          id: 0,
+          position: [0.05, -0.1, 0.02],
+          rotation: [0, 0, 0],
+          scale: [1.3, 1.3, 1.3],
+          variations: [{ type: "bulb", weight: 1 }],
+        },
+      ]),
+      black,
+    );
+    expect(material.defines.SURFACE_BULB).toBe(1);
+    finished("bulb system");
+
+    // Back to a descent, then the two scene arms on and off.
+    const de = de3([map3()]);
+    setSurfaceSystem(material, de, [black]);
+    const ball = balloonBall(de);
+    setSurfaceBalloon(material, {
+      center: ball.center,
+      rho: ball.radius * BALLOON_RHO_MARGIN,
+      R: 1.6 * ball.radius,
+      far: BALLOON_FAR_CAP_RHO * ball.radius,
+    });
+    expect(material.defines.SURFACE_BALLOON).toBe(1);
+    finished("balloon on");
+    setSurfaceBalloon(material, null);
+    finished("balloon off");
+    setSurfaceGroundPlane(material, {
+      y: -1.2,
+      fadeStart: 4,
+      fadeEnd: 10,
+      ballCenter: [0, 0, 0],
+      ballRadius: 1,
+      albedo: [0.62, 0.62, 0.62],
+    });
+    expect(material.defines.SURFACE_GROUND_PLANE).toBe(1);
+    finished("plane on");
+    setSurfaceGroundPlane(material, null);
+    finished("plane off");
+
+    // And the finish setter reads the CURRENT arms back: clearing it over
+    // a live floor keeps the floor.
+    setSurfaceGroundPlane(material, {
+      y: -1.2,
+      fadeStart: 4,
+      fadeEnd: 10,
+      ballCenter: [0, 0, 0],
+      ballRadius: 1,
+      albedo: [0.62, 0.62, 0.62],
+    });
+    setSurfaceFinishes(material, null);
+    expect(material.defines.SURFACE_GROUND_PLANE).toBe(1);
+    expect(material.fragmentShader).toContain("shadeGroundPlane");
+    expect(material.fragmentShader).not.toContain("finishShade");
+  });
+
+  it("refuses more finish slots than the per-map arrays carry", () => {
+    const material = createSurfaceMaterial();
+    expect(() =>
+      setSurfaceFinishes(
+        material,
+        Array.from({ length: SURFACE_MAX_MAPS + 1 }, () => authored),
+      ),
+    ).toThrow(RangeError);
+    expect(() =>
+      setSurfaceFinishes(
+        material,
+        Array.from({ length: SURFACE_MAX_MAPS }, () => authored),
+      ),
+    ).not.toThrow();
   });
 });

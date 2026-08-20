@@ -17,6 +17,13 @@ import {
   BACKGROUND_SHAPE_GLSL,
   backgroundShapeSource,
 } from "../fractal/background-shape";
+import type { ResolvedSurfaceFinish } from "../fractal/surface-finish";
+import {
+  CLASSIC_SURFACE_FINISH,
+  SURFACE_FINISH_GLSL,
+  surfaceFinishLanes,
+  surfaceFinishShadeSource,
+} from "../fractal/surface-finish";
 import type { Vec3 } from "../fractal/types";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 import { lightDirection } from "./voxel-material";
@@ -609,6 +616,20 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   uniform float uSigmaMin[MAX_MAPS];
   /** sRGB 0..1 base color per map slot (keyed to base maps caller-side). */
   uniform vec3 uMapColor[MAX_MAPS];
+#if SURFACE_FINISH
+  /** Per-map surface FINISH, in fractal/surface-finish.ts's two wire
+   * lanes (surfaceFinishLanes, the ONE lane definition the WGSL shade
+   * stride shares): A = (specular, shininess, metalness, reflect), B =
+   * (transmit, 0, 0, 0 — the trailing three reserved for the pattern
+   * fields). Keyed to base maps like uMapColor and read at the shading
+   * site through the hit's depth-0 map. Declared INSIDE the arm (the
+   * SURFACE_BULB precedent), so an unfinished document's program pays no
+   * bytes for them — and in this SHARED section rather than any other
+   * arm, so every variant, the forward-orbit escape and bulb arms
+   * included, can read them. */
+  uniform vec4 uMapFinishA[MAX_MAPS];
+  uniform vec4 uMapFinishB[MAX_MAPS];
+#endif
 #if SURFACE_FOLDS
   /** Fold-branch sweep, compiled in only for systems with pure-fold maps
    * (the SURFACE_FOLDS define; affine systems keep the ladder bodies
@@ -739,6 +760,16 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
     vec3 e = mix(uBgBottom, uBgTop, n.y * 0.5 + 0.5);
     return mix(vec3(1.0), e / max(max(e.r, max(e.g, e.b)), 1.0e-4), uEnvLight);
   }
+#if SURFACE_FINISH
+  /** The parametric lighting composition — fractal/surface-finish.ts's
+   * ONE body template, emitted in the GLSL dialect (the WGSL shade entry
+   * emits the same text in its own), so the three shader mirrors cannot
+   * drift on the arithmetic. It reads uLightDir/uAmbient/uEnvLight and
+   * the uBgTop/uBgBottom pair above, and at the classic lanes reproduces
+   * the fixed formula in main()'s #else branch VALUE for value — never
+   * byte for byte, which is why it is define-gated rather than shipped. */
+  ${surfaceFinishShadeSource(SURFACE_FINISH_GLSL)}
+#endif
   ${backgroundShapeSource(BACKGROUND_SHAPE_GLSL)}
   /** Angular pixel footprint of the ACTIVE buffer (scene-set per frame):
    * sizes the shading probes (normal offsets, ray dither) to the pixels
@@ -3298,6 +3329,16 @@ ${foldValueFormGlsl(shadeDeWidth)}
     }
     float ao = clamp(1.0 - 0.85 * occ / norm, 0.0, 1.0);
 
+#if SURFACE_FINISH
+    // The hit's depth-0 map picks its AUTHORED finish — surface-finish.ts's
+    // finishShade, the fixed formula of the #else branch made parametric,
+    // handed this pixel's own backdrop for its reflection and transmission
+    // terms. The forward arms (escape, bulb) set firstChoice 0, so there
+    // the HEAD transform's finish is the scene's; the caller packs it as
+    // the one live slot.
+    int fSlot = clamp(firstChoice, 0, uMapCount - 1);
+    vec3 col = finishShade(base, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot]);
+#else
     float diffuse = max(dot(n, uLightDir), 0.0);
     vec3 halfVec = normalize(uLightDir - rd);
     float specular = pow(max(dot(n, halfVec), 0.0), 32.0) * 0.4;
@@ -3313,6 +3354,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
     // ~2x by scaling the gamma encoding itself.
     vec3 linBase = pow(base, vec3(2.2));
     vec3 col = pow(linBase * lit + vec3(specular * shadow), vec3(1.0 / 2.2));
+#endif
 
 #if SURFACE_BALLOON
     // A shell hit can land NEARER than the sphere entry seeding the fog
@@ -3538,6 +3580,14 @@ export function setSurfaceGridEnabled(
   material.uniforms.uGridEnabled.value = enabled ? 1 : 0;
 }
 
+/** The classic finish's two wire lanes — `(0.4, 32, 0, 0)` / `(0, 0, 0,
+ * 0)`, derived through `surfaceFinishLanes` rather than retyped so the
+ * slot default and the packer can never disagree about lane order. The
+ * value every `uMapFinishA`/`uMapFinishB` slot holds until
+ * {@link setSurfaceFinishes} writes it, and the value unreached slots are
+ * reset to. */
+const CLASSIC_FINISH_LANES = surfaceFinishLanes(CLASSIC_SURFACE_FINISH);
+
 export function createSurfaceMaterial(): THREE.ShaderMaterial {
   // A 1x1 white placeholder LUT so the material is complete (and compiled)
   // before the scene uploads a real 256x1 ramp — the ramps themselves are
@@ -3569,6 +3619,24 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
         value: Array.from(
           { length: SURFACE_MAX_MAPS },
           () => new THREE.Vector3(),
+        ),
+      },
+      // Per-map surface finish, surface-finish.ts's two lanes; alive only
+      // under the SURFACE_FINISH define (setSurfaceFinishes). Unconditional
+      // entries like the balloon's — Three.js ignores entries the compiled
+      // program does not use — and DEFAULTED TO THE CLASSIC LANES rather
+      // than zero, so a stray enabled read renders the fixed formula's own
+      // highlight instead of a matte black surface.
+      uMapFinishA: {
+        value: Array.from(
+          { length: SURFACE_MAX_MAPS },
+          () => new THREE.Vector4(...CLASSIC_FINISH_LANES.a),
+        ),
+      },
+      uMapFinishB: {
+        value: Array.from(
+          { length: SURFACE_MAX_MAPS },
+          () => new THREE.Vector4(...CLASSIC_FINISH_LANES.b),
         ),
       },
       uTrapIndex: { value: new Array<number>(SURFACE_MAX_MAPS).fill(0) },
@@ -3728,7 +3796,10 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
     // SURFACE_BALLOON 1 wraps whichever variant compiled in the balloon
     // inverted-union (setSurfaceBalloon) — like the lens and escape names
     // it is resolved JS-side, so the entry here is change detection (and a
-    // program-cache key), never driver-parsed text.
+    // program-cache key), never driver-parsed text. SURFACE_FINISH 1
+    // (setSurfaceFinishes) swaps the shading site's fixed lighting formula
+    // for the per-map parametric one; it composes with EVERY variant and
+    // is resolved the same JS-side way.
     // setSurfaceSystem/setEscapeSystem flip these when the system's shape
     // changes — rare, session-enter-scale recompiles.
     defines: {
@@ -3738,6 +3809,7 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       SURFACE_BULB: 0,
       SURFACE_BALLOON: 0,
       SURFACE_GROUND_PLANE: 0,
+      SURFACE_FINISH: 0,
     },
     vertexShader: SURFACE_VERTEX,
     // The lens/escape arms are resolved JS-side (resolveVariantArms) so
@@ -3826,6 +3898,10 @@ export function setSurfaceSystem(
   // carries the plane arm: its programs resolve through stripGlslSource,
   // far under the Mesa cliff).
   const plane = material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0;
+  // The finish is orthogonal session state owned by setSurfaceFinishes —
+  // a system swap preserves it too, so a rebuild here can never silently
+  // hand an authored finish back to the fixed formula.
+  const finish = material.defines.SURFACE_FINISH === 1 ? 1 : 0;
   if (
     material.defines.SURFACE_FOLDS !== wantFolds ||
     material.defines.SURFACE_FOLD_LENS !== wantLens ||
@@ -3846,6 +3922,7 @@ export function setSurfaceSystem(
       balloon,
       plane,
       0,
+      finish,
     );
     material.needsUpdate = true;
   }
@@ -3912,9 +3989,10 @@ export function setSurfaceSystem(
 }
 
 /**
- * Resolve the SURFACE_ESCAPE / SURFACE_FOLD_LENS preprocessor arms
- * JS-SIDE, so the source each variant hands the driver contains ONLY its
- * own bodies. Measured necessity, not tidiness: Mesa's compiler sits on a
+ * Resolve the SURFACE_ESCAPE / SURFACE_FOLD_LENS preprocessor arms (and,
+ * since, the bulb, balloon, ground-plane and finish arms — every key
+ * surfaceFragmentResolvedFor passes) JS-SIDE, so the source each variant
+ * hands the driver contains ONLY its own bodies. Measured necessity, not tidiness: Mesa's compiler sits on a
  * knife's edge with the fold-frontier variant — the shipped ~68KB source
  * links (in ~25s), but the SAME compiled tokens preceded by the
  * lens/escape variants' preprocessor-dead text pushed the source past 80KB
@@ -4009,22 +4087,26 @@ function resolveVariantArms(
  * under the threshold is emitted whole and so is under 64KB by
  * definition, and one over it is stripped to roughly a third, so reaching
  * 82.2KB emitted would take ~190KB resolved — where the whole UNRESOLVED
- * template, every arm live at once, is 139164 B. The largest emitted
+ * template, every arm live at once, is 142130 B. The largest emitted
  * source of any variant today is escape+balloon's 64681 B — a
  * measurement-only pairing, since balloon is IFS-only and escape is
  * forward — and it is unstripped precisely because it is under the
- * threshold.
+ * threshold. With the FINISH arm on that same pairing is the one whose
+ * strip status flips (66714 B resolved, emitted stripped at 13180 B),
+ * which is the benign event the threshold exists to make benign.
  *
  * So the threshold decides READABILITY, not safety. Every DESCENT variant
  * resolves past it and strips; the two forward-orbit arms stay under it
  * and keep their comments — escape 55845 B (9691 B of headroom), bulb
- * 39357 B (26179 B) — which is where a reader most often wants to see the
- * shipped source. A test gates those two — not the figures, which any
- * edit moves, but the property they buy: "keeps the two shipped forward
- * arms under the strip threshold". It has to read the RESOLVED length to
- * do it, because crossing the threshold turns stripping ON and drops the
- * emitted length to a third, so an emitted-length assertion passes MORE
- * comfortably at exactly the moment the property breaks. Every other
+ * 39357 B (26179 B); with the finish arm on, escape 57878 B (7658 B) and
+ * bulb 41390 B (24146 B) — which is where a reader most often wants to
+ * see the shipped source. A test gates those two, finish on and off — not
+ * the figures, which any edit moves, but the property they buy: "keeps
+ * the two shipped forward arms under the strip threshold". It has to read
+ * the RESOLVED length to do it, because crossing the threshold turns
+ * stripping ON and drops the emitted length to a third, so an
+ * emitted-length assertion passes MORE comfortably at exactly the moment
+ * the property breaks. Every other
  * current size lives in `docs/surface-glsl-tracers.md`, measured per
  * change — the split that kept the 4D tracer's table right while this
  * file's prose rotted.
@@ -4046,7 +4128,10 @@ export const SURFACE_GLSL_STRIP_BYTES = 64 * 1024;
  * Both refusals — plane+balloon (no horizon inside the shell) and
  * escape+bulb (both would define surfaceDE twice) — live here rather than
  * in {@link surfaceFragmentFor}, so the two entry points cannot disagree
- * about which variant pairs are legal.
+ * about which variant pairs are legal. `finish` refuses NOTHING: the
+ * per-map finish arm replaces only the shading site's lighting lines and
+ * composes with every variant, the two forward-orbit arms, the lens, the
+ * balloon and the floor alike.
  */
 export function surfaceFragmentResolvedFor(
   escape: number,
@@ -4054,6 +4139,7 @@ export function surfaceFragmentResolvedFor(
   balloon = 0,
   plane = 0,
   bulb = 0,
+  finish = 0,
   source: string = SURFACE_FRAGMENT,
 ): string {
   if (plane !== 0 && balloon !== 0) {
@@ -4074,6 +4160,7 @@ export function surfaceFragmentResolvedFor(
     SURFACE_FOLD_LENS: lens,
     SURFACE_BALLOON: balloon,
     SURFACE_GROUND_PLANE: plane,
+    SURFACE_FINISH: finish,
   });
 }
 
@@ -4092,7 +4179,14 @@ export function surfaceFragmentResolvedFor(
  * is the SECOND forward-orbit variant under the same contract — 0 resolves
  * byte-identical to the pre-bulb build, and it refuses to compile
  * alongside `escape` (each replaces the descent bodies wholesale, so both
- * on would define surfaceDE twice). `source` defaults to the module's
+ * on would define surfaceDE twice). `finish` is the per-map surface
+ * finish arm (setSurfaceFinishes): 0 resolves byte-identical to the
+ * pre-finish build — the fixed lighting formula, which is what the
+ * caller's `isClassicSurfaceFinish` gate buys an unauthored document — and
+ * 1 compiles the `uMapFinishA`/`uMapFinishB` arrays and the shared
+ * `finishShade` body in their place. It composes with every variant and
+ * takes no strip rule of its own: its ~1.9KB of text rides the size rule
+ * below like any other paragraph. `source` defaults to the module's
  * assembled fragment; tests pass their own width-parameterized builds.
  *
  * THE STRIP IS A SIZE RULE, not the plane arm's private habit: any
@@ -4115,6 +4209,7 @@ export function surfaceFragmentFor(
   balloon = 0,
   plane = 0,
   bulb = 0,
+  finish = 0,
   source: string = SURFACE_FRAGMENT,
 ): string {
   const resolved = surfaceFragmentResolvedFor(
@@ -4123,6 +4218,7 @@ export function surfaceFragmentFor(
     balloon,
     plane,
     bulb,
+    finish,
     source,
   );
   return plane !== 0 || resolved.length > SURFACE_GLSL_STRIP_BYTES
@@ -4199,9 +4295,10 @@ export function setEscapeSystem(
   // Preserve the balloon flag exactly like setSurfaceSystem:
   // balloon-over-escape is a supported wrap. The ground plane is
   // preserved the same way — the classic Mandelbox floor is exactly an
-  // escape session's look.
+  // escape session's look — and so is the finish (the head link's, here).
   const balloon = material.defines.SURFACE_BALLOON === 1 ? 1 : 0;
   const plane = material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0;
+  const finish = material.defines.SURFACE_FINISH === 1 ? 1 : 0;
   if (
     material.defines.SURFACE_ESCAPE !== 1 ||
     material.defines.SURFACE_BULB !== 0 ||
@@ -4214,7 +4311,14 @@ export function setEscapeSystem(
     material.defines.SURFACE_BULB = 0;
     material.defines.SURFACE_FOLDS = 0;
     material.defines.SURFACE_FOLD_LENS = 0;
-    material.fragmentShader = surfaceFragmentFor(1, 0, balloon, plane, 0);
+    material.fragmentShader = surfaceFragmentFor(
+      1,
+      0,
+      balloon,
+      plane,
+      0,
+      finish,
+    );
     material.needsUpdate = true;
   }
 }
@@ -4270,10 +4374,11 @@ export function setBulbSystem(
   (u.uLensParams.value as THREE.Vector4).set(0, 1, 1, 1);
   (u.uLensInvM.value as THREE.Matrix3).identity();
   (u.uLensInvT.value as THREE.Vector3).set(0, 0, 0);
-  // Preserve the balloon and ground-plane flags exactly like
-  // setEscapeSystem — orthogonal session state its own setters own.
+  // Preserve the balloon, ground-plane and finish flags exactly like
+  // setEscapeSystem — orthogonal session state their own setters own.
   const balloon = material.defines.SURFACE_BALLOON === 1 ? 1 : 0;
   const plane = material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0;
+  const finish = material.defines.SURFACE_FINISH === 1 ? 1 : 0;
   if (
     material.defines.SURFACE_BULB !== 1 ||
     material.defines.SURFACE_ESCAPE !== 0 ||
@@ -4284,7 +4389,14 @@ export function setBulbSystem(
     material.defines.SURFACE_ESCAPE = 0;
     material.defines.SURFACE_FOLDS = 0;
     material.defines.SURFACE_FOLD_LENS = 0;
-    material.fragmentShader = surfaceFragmentFor(0, 0, balloon, plane, 1);
+    material.fragmentShader = surfaceFragmentFor(
+      0,
+      0,
+      balloon,
+      plane,
+      1,
+      finish,
+    );
     material.needsUpdate = true;
   }
 }
@@ -4353,6 +4465,7 @@ export function setSurfaceBalloon(
       want,
       plane,
       material.defines.SURFACE_BULB === 1 ? 1 : 0,
+      material.defines.SURFACE_FINISH === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -4451,6 +4564,70 @@ export function setSurfaceGroundPlane(
       material.defines.SURFACE_BALLOON === 1 ? 1 : 0,
       want,
       material.defines.SURFACE_BULB === 1 ? 1 : 0,
+      material.defines.SURFACE_FINISH === 1 ? 1 : 0,
+    );
+    material.needsUpdate = true;
+  }
+}
+
+/**
+ * Install the per-map surface finishes — `finishes[j]` is the RESOLVED
+ * finish (`fractal/surface-finish.ts`'s `resolveSurfaceFinish`) for the
+ * transform in slot `j`, keyed exactly as `setSurfaceSystem`'s `colors[j]`
+ * is — or clear them with `null`.
+ *
+ * THE CALLER OWNS THE BYTE-IDENTITY GATE: it passes `null` whenever
+ * `isClassicSurfaceFinish` holds for every slotted transform, and that is
+ * what keeps an unauthored document compiling literally the fixed
+ * lighting formula — the `SURFACE_FINISH` arm is NOT a byte-identity with
+ * it (`pow(x, 32.0)` literal against a uniform), so the gate lives in the
+ * caller's knowledge of the document rather than in a comparison here. A
+ * non-null list compiles the arm whatever its values. Forward-orbit
+ * sessions (escape, bulb) pass ONE slot, the head transform's: their
+ * hit-info reports `firstChoice` 0, so slot 0 is the finish the whole
+ * scene shades with.
+ *
+ * Every slot is written on every call — the listed ones to their own
+ * lanes, the rest (and all of them on `null`) back to the CLASSIC lanes —
+ * so a previous system's finish can never leak into a slot the next one
+ * does not fill, and a stray enabled read always has a sane highlight to
+ * render. Flipping the define reassembles the fragment source through
+ * {@link surfaceFragmentFor} with the material's CURRENT variant flags
+ * (a session-set-scale program rebuild, {@link setSurfaceBalloon}'s
+ * contract); a call that changes only the lanes — a finish slider's
+ * per-drag-tick path — never touches the shader. Throws past
+ * {@link SURFACE_MAX_MAPS} slots, the per-map arrays' own cap.
+ */
+export function setSurfaceFinishes(
+  material: THREE.ShaderMaterial,
+  finishes: readonly ResolvedSurfaceFinish[] | null,
+): void {
+  if (finishes && finishes.length > SURFACE_MAX_MAPS) {
+    throw new RangeError(
+      `${finishes.length} surface finishes, but the material carries at most ${SURFACE_MAX_MAPS}`,
+    );
+  }
+  const u = material.uniforms;
+  const laneA = u.uMapFinishA.value as THREE.Vector4[];
+  const laneB = u.uMapFinishB.value as THREE.Vector4[];
+  for (let j = 0; j < SURFACE_MAX_MAPS; j++) {
+    const lanes =
+      finishes && j < finishes.length
+        ? surfaceFinishLanes(finishes[j])
+        : CLASSIC_FINISH_LANES;
+    laneA[j].set(...lanes.a);
+    laneB[j].set(...lanes.b);
+  }
+  const want = finishes ? 1 : 0;
+  if (material.defines.SURFACE_FINISH !== want) {
+    material.defines.SURFACE_FINISH = want;
+    material.fragmentShader = surfaceFragmentFor(
+      material.defines.SURFACE_ESCAPE === 1 ? 1 : 0,
+      material.defines.SURFACE_FOLD_LENS === 1 ? 1 : 0,
+      material.defines.SURFACE_BALLOON === 1 ? 1 : 0,
+      material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0,
+      material.defines.SURFACE_BULB === 1 ? 1 : 0,
+      want,
     );
     material.needsUpdate = true;
   }
