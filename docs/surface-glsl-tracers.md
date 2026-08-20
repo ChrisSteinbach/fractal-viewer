@@ -532,6 +532,24 @@ NOT gated this way: crossing is benign (stripped it comes down to
 balloon is IFS-only, escape is forward, so no shipped session compiles
 it. A gate 855 B from firing would fail CI for a non-hazard.
 
+THE CONFLATION HAD SPREAD OUTSIDE THESE TWO MODULES, which a sweep for
+stale FIGURES would have missed and a sweep for the mistake found:
+`src/fractal/background-shape.ts` justified keeping one comment short
+because "`surface-material-4d.ts` has only ~2.8 KB of headroom under the
+`SURFACE_GLSL_STRIP_BYTES` 64 KB source-size cliff". The headroom is
+3,148 B, and the threshold is not a cliff — crossing it costs the 4D plain
+arm its commentary in a driver log and nothing else. A file three
+directories away was budgeting its prose against a hazard that does not
+exist, which is the clearest evidence that "the 64KB cliff" had become the
+project's working shorthand for two different numbers.
+
+Two more figures in this doc's own 4D section were off by the same
+re-measurement: the balloon and plane arms cost 6,477 B and 7,762 B over
+the plain source, not the "~5.4KB and ~7.8KB" recorded — an arm understated
+by about a kilobyte, though the ~75KB monolithic-source conclusion it
+supports survives (76,627 B measured, and the argument was never close to
+its margin).
+
 ## The probe-width verdict
 
 The three shading taps (normal/shadow/AO) ride the value form, which fold
@@ -667,9 +685,12 @@ MECHANISM is the one deviation, forced by measurement: this source is 62,388
 B with 3,148 B of headroom under the 64KB strip threshold (62,804 B with the
 radial-vignette branch, re-measured after the shared `backgroundShapeT`
 splice — 62,711 B before the vignette, 62,251 B before the splice, 61,751 B
-before the environment light), and the arms are ~5.4KB and ~7.8KB, so one
-monolithic `#if` source would be ~75KB and EVERY 4D session would pay it, in
-the band where the 3D fold program takes ~25s to link.
+before the environment light), and the arms cost 6,477 B and 7,762 B over
+the plain source (measured as resolved-with-arm minus resolved-without, the
+"~5.4KB and ~7.8KB" this paragraph carried until the full re-measurement
+above — the balloon figure understated its arm by about a kilobyte), so one
+monolithic `#if` source would be ~76,600 B and EVERY 4D session would pay
+it, in the band where the 3D fold program takes ~25s to link.
 
 So the arms resolve JS-side, through `surfaceFragmentFor` ITSELF rather
 than a second preprocessor (`surface4FragmentFor` is a two-line wrapper),

@@ -306,8 +306,12 @@ export const BACKGROUND_SHAPE_WGSL: BackgroundShapeDialect = {
  * those per-dialect tokens are normalized away, so a future edit to the
  * shared math cannot silently diverge between dialects.
  *
- * Comment kept to one short line: `surface-material-4d.ts` has only ~2.8 KB
- * of headroom under the `SURFACE_GLSL_STRIP_BYTES` 64 KB source-size cliff.
+ * Comment kept to one short line: `surface-material-4d.ts` has only 3,148 B
+ * of headroom under `SURFACE_GLSL_STRIP_BYTES`. That is a STRIP THRESHOLD
+ * and not a cliff — crossing it costs the 4D plain arm its commentary in a
+ * driver log, nothing more, since a stripped source runs about a third of
+ * its resolved size. The Mesa cliff is ~80KB of EMITTED source and is a
+ * different number about a different quantity.
  */
 function backgroundShapeBody(dialect: BackgroundShapeDialect): string {
   const isWgsl = dialect.language === "wgsl";
