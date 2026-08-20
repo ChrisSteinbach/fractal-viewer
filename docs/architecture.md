@@ -1031,6 +1031,54 @@ fixed-point factor just divides out on readback). The gpu-bench page's 4D
 scenarios pin it against `accumulateFlame4` across all four color modes and
 both slice states.
 
+## Save-PNG readiness
+
+`main.ts` decides, for each render mode, what a Save-PNG press is allowed to
+capture and when. The rule is simple to state and was not always followed:
+Save-PNG's arm is the render mode's, full stop. A render that has not
+produced its picture yet is waited for behind the export modal
+(`planPngExport`'s `awaitReady`, disclosed and cancellable) rather than
+silently swapped for the explorer's — `scene.captureFrame` is reached by
+being in points mode and by nothing else.
+
+The bug this replaced is worth keeping on record because of how easy it was
+to trigger by accident. Each render arm used to read `renderMode === X &&
+session.hasFirstFrame` and fall through to the point cloud whenever that
+gate failed. The Export-size select reached that fall-through on purpose:
+changing it restarts the flame session, so picking 2x or 4x and pressing
+Save right away found the flame gate still false and downloaded the
+explorer's point cloud instead — at the flame's own camera framing, not the
+export size just chosen. The fix routes all three arms through one shared
+`planRenderWait`, so no arm can restate (or misstate) the rule, and no
+future arm can offer a wait/rough-save action by copying a neighbour that
+forgot to wire it correctly.
+
+Flame's wait is not merely a startup gap: it waits for
+`renderComplete.flame`, the accumulation actually meeting its budget,
+because the flame canvas IS the export, and the worker's finishing chunk
+re-filters the histogram adaptively where every progressive frame in
+between uses the fixed-radius filter — a mid-accumulation PNG is a
+categorically coarser picture, not merely an earlier one. Solid and Surface
+wait only for their first frame, because both produce their export at
+capture time by re-tracing rather than by reading an accumulator.
+
+The flame wait carries a second exit besides Cancel: "Save now (rough)",
+which restores the "save what's on screen" behaviour the old fall-through
+bug used to provide by accident — offered only where the wait is genuinely
+long (the accumulation budget scales with export area, so 4x multiplies it
+by sixteen). It is flame only, because Solid's wait is the voxel grid build
+with no partial result to deliver.
+
+The rough-save press latches, and is honoured only once `hasFirstFrame` —
+which is the feature actually being "wait for the first frame instead of
+the whole budget". Without that latch, a press landing in the Export-size
+restart gap would deliver the PREVIOUS session's canvas at the PREVIOUS
+session's size: the same class of bug the fix above closed, reopened
+through a new door. Ties go to the budget — the wait loop re-checks
+readiness before honouring a rough-save press — so a press that the
+finished render beat to the line gets an ordinary toast rather than one
+labelled "rough".
+
 ## Why this split?
 
 Putting the IFS math, color mapping, presets, RNG, orbit camera, and state

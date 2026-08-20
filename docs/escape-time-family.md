@@ -294,3 +294,22 @@ it does not merely thin late — it goes from a third of the ball to a
 measure-zero dust in one step, with no usable band in between, and is a pitted
 ball even at its best. It does not earn the permanent document flag it would
 cost.
+
+## The 4D lift's presets
+
+`escape-de-4d.ts` reaches three shipped presets, from the 4D menu group
+rather than the Escape-time one. `mandelboxBrick` and `mandelboxColumn` are
+the same map (`mandelboxCube`'s) turned in `xw` and in `yw` — a pair chosen
+to show that the rotation plane picks the long axis: measured per-axis
+extents 3.13/2.00/2.00 for the `xw` turn and 2.00/2.49/2.00 for the `yw`
+turn, against the 3D cube's own 2.00/2.00/2.00. That is a 4D rotation
+legible as a 3D proportion, and the one place the rotor slider reads as
+geometry rather than as a tumble — posing the view with an `xw` rotor
+CANCELS the brick's own `xw` turn and hands back the exact cube
+proportions.
+
+`hybridChainShells` is `hybridChainQuaternion` with the rotation placed on
+its POWER link rather than its head link, chosen because that measured the
+cheapest link position to rotate: 43.7% of rays render against the 3D
+twin's 47.9%, where the same rotation placed on the head link instead costs
+a third of the rays that would otherwise render.
