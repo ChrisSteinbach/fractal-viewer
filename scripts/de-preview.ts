@@ -101,6 +101,18 @@ export interface PreviewScene {
    * existing multi-panel sheet pays the allocation. */
   collect?: boolean;
   /**
+   * Depth fog toward the backdrop — ON by default, which is the shipped
+   * marcher's look and what every sheet drawn before this option
+   * reproduces byte for byte. Set `false` for a sheet whose SUBJECT is
+   * the surface's own colour: fog mixes every panel toward the same
+   * backdrop, which is exactly the contrast a MATERIAL comparison is
+   * asking a reader to judge, so a finish sheet reads as milky and its
+   * panels converge (measured the hard way — a reflection A/B whose
+   * verdict was "I can't tell what I'm looking at with all the fog").
+   * Distance cues are the cost; a material sheet does not need them.
+   */
+  fog?: boolean;
+  /**
    * Per-hit SHADING HOOK (default absent). When set, the marcher still
    * does everything it did — march, tetrahedron normal, cone-traced
    * shadow, step-count AO — and then hands that {@link PreviewHit} to the
@@ -357,7 +369,10 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
             : 1;
           // Step count stands in for AO: deep steppers sit in creases.
           const ao = wantAo ? Math.max(0.25, 1 - used / AO_REFERENCE_STEPS) : 1;
-          const fog = Math.min(1, Math.max(0, (t - R * 0.5) / (R * 2.4)));
+          const fog =
+            scene.fog === false
+              ? 0
+              : Math.min(1, Math.max(0, (t - R * 0.5) / (R * 2.4)));
           if (scene.shade) {
             // Hook path: the caller lights the hit in OUTPUT space (see
             // PreviewScene.shade); fog mixes toward the encoded backdrop
