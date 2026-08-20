@@ -611,6 +611,44 @@ morphs into place instead of snapping (see **Presets** below).
     flame keep its authored color structure. The final transform has no Color
     group: it is applied to every plotted point rather than _picked_, so it
     never moves the coordinate.
+  - **Finish** — one group below **Color**: how this map's part of the
+    surface catches light in a **◈ Surface** render, and nowhere else (the
+    cloud, the flame and the solid never read it). Five sliders:
+    **Specular** (`0–2`, the highlight's brightness; classic `0.40`),
+    **Shininess** (`1–256`, the highlight's tightness — higher is smaller
+    and sharper; classic `32`), **Metalness** (`0–1`, the highlight takes on
+    the surface's own color; classic `0`), **Reflect** (`0–1`, how much of
+    the surroundings the surface mirrors; classic `0`) and **Transmit**
+    (`0–1`, how much light passes through it as a thin shell; classic `0`).
+    The _classic_ values are exactly the fixed lighting formula every
+    Surface render used before the group existed, so a scene that never
+    touches it renders byte-for-byte as it always did. Above the sliders a
+    **bundle** menu offers named starting points — **Classic**, **Matte**,
+    **Satin**, **Plastic**, **Metal**, **Chrome**, **Gemstone**, **Glass**
+    — and picking one sets all five sliders at once; the scene stores the
+    five numbers, never the name, so a bundle can be retuned in a later
+    version without repainting anything you saved, and sliders that match
+    no bundle read **Custom** (shown, never pickable). Like the Color pair
+    above and the fold lengths below, each field stays **unset** until you
+    move its own slider, and dragging one back to its classic value clears
+    it again — the whole finish with it once the last field goes, which is
+    also exactly what **Classic** does — so a scene you explored and returned
+    from is byte-identical to one that never carried a finish, and a bundle
+    stores only the fields that differ from classic (**Matte** is a lone
+    `specular: 0`). Every map's finish reaches an IFS surface, 3D or 4D, a
+    kaleidoscope copy or a balloon echo included (each shades as the map
+    that produced it). The **escape-time** and **Mandelbulb** surfaces are
+    the exception: they shade the whole object with the FIRST active
+    transform's finish, so on a system the Surface gate would route there
+    the other transforms' Finish rows are disabled, with a note saying why
+    — the rows come back the moment the system routes to an IFS surface
+    again, or that transform becomes the head. The final transform has no
+    Finish group: the tracers shade a hit by the map that produced it, and
+    the lens is not one. Like every transform edit it is made in **∴
+    Points** (a render takes over the panel) and shows the next time
+    **◈ Surface** is entered; the transform list names an authored finish
+    on its row, by bundle where it is one (`Finish: Chrome`) and as
+    `Finish: custom` otherwise.
   - **Variations → a fold's own lengths** — a `boxfold`,
     `spherefold` or `mandelbox` row carries the Mandelbox apparatus's three
     lengths nested under its weight slider: **Min radius** and **Fixed
