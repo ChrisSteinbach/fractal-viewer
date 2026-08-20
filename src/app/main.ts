@@ -5251,7 +5251,14 @@ function main(): void {
       state.symmetry,
       { computeAvailable: surfaceComputeAvailable() },
     );
-    ui.setSurfaceEligibility(eligibility.status, eligibility.note);
+    // The route kind rides along for the transform editor's Finish group:
+    // a forward-orbit route shades the whole object with the head
+    // transform's finish, and the panel says so on the rows it would skip.
+    ui.setSurfaceEligibility(
+      eligibility.status,
+      eligibility.note,
+      eligibility.kind,
+    );
   }
 
   /**

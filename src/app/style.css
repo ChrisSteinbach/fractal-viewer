@@ -941,6 +941,30 @@ summary.editor-group-title {
   min-width: 42px;
 }
 
+/* The Finish group's five rows are labelled by field name ("Shininess" is
+   the widest); fixed rather than min-width, like the fold-length rows, so
+   the five sliders share one left edge. */
+.finish-row .axis {
+  width: 64px;
+  min-width: 64px;
+}
+
+/* The bundle select sits inside the group like the variation-add menu, and
+   the group's rows follow it directly; the generic #panel select rule
+   already themes it, this only closes the gap the rows' own margins don't. */
+.finish-bundle {
+  margin-bottom: 4px;
+}
+
+/* A Finish group the document's surface route would never read (a
+   forward-orbit session shades with the head transform's finish alone):
+   its controls are disabled, and the whole group dims so the disclosure
+   note reads as the reason rather than as one more hint. */
+.finish-inert .finish-row,
+.finish-inert .finish-bundle {
+  opacity: 0.55;
+}
+
 /* Variation rows carry a full type name and a remove button, so the fixed
    12px axis column and 50px value column of the geometry rows don't fit. */
 .variation-row .axis {

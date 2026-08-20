@@ -29,7 +29,14 @@ import type {
 } from "../fractal/palette";
 import { VARIATION_TYPES } from "../fractal/types";
 import { CLASSIC_FOLD_RADII, isFoldVariationType } from "../fractal/variations";
+import {
+  CLASSIC_SURFACE_FINISH,
+  isClassicSurfaceFinish,
+  resolveSurfaceFinish,
+} from "../fractal/surface-finish";
+import type { ResolvedSurfaceFinish } from "../fractal/surface-finish";
 import type {
+  SurfaceFinish,
   Transform,
   Variation,
   VariationType,
@@ -57,6 +64,7 @@ import {
 } from "./state";
 import { formatIterationCount, SCALAR_CONTROLS } from "./control-spec";
 import type { ScalarControlSpec } from "./control-spec";
+import type { SurfaceRouteKind } from "./surface-eligibility";
 import { deriveLegend, lutGradient } from "./legend-spec";
 import type { LegendPaletteControl, LegendSpec } from "./legend-spec";
 import {
@@ -97,13 +105,20 @@ type Geometry = Pick<
   | "w"
   | "colorIndex"
   | "colorSpeed"
+  | "finish"
 >;
 
 /** The final transform's geometry — the same, minus the fields that only mean
  * something for a map the chaos game PICKS: the selection weight, and the two
  * structural-color fields, which move the color coordinate on each pick. A
- * lens applied to every plotted point has neither. */
-type FinalGeometry = Omit<Geometry, "weight" | "colorIndex" | "colorSpeed">;
+ * lens applied to every plotted point has neither — nor a surface finish:
+ * the tracers shade a hit by the SLOT that produced it, and a lens is not a
+ * slot (it is applied over every slot's output), so nothing would ever read
+ * one authored there. */
+type FinalGeometry = Omit<
+  Geometry,
+  "weight" | "colorIndex" | "colorSpeed" | "finish"
+>;
 
 /** The current edit target: a transform index, the final transform, or none. */
 type EditTarget = number | "final" | null;
@@ -459,6 +474,15 @@ function cloneW(w: WExtension | undefined): WExtension | undefined {
   return clone;
 }
 
+/** Sparse clone of a transform's optional finish — {@link cloneW}'s
+ * shape: `undefined` stays `undefined`, and only the fields actually
+ * present are copied (the object is flat, so a spread is exact). */
+function cloneFinish(
+  finish: SurfaceFinish | undefined,
+): SurfaceFinish | undefined {
+  return finish === undefined ? undefined : { ...finish };
+}
+
 /** The three w-mixing planes shared by `WExtension.rotation`/`.shear` (see
  * `types.ts`'s `Rotation4`/`Shear4`), in the 4D group's row order. One array
  * drives both the Rotation W and Shear W row-builders below since the two
@@ -538,6 +562,240 @@ const FOLD_RADIUS_MAX = 3;
 const BOX_LIMIT_MIN = 0;
 const BOX_LIMIT_MAX = 3;
 const FOLD_RADIUS_STEP = 0.005;
+
+/** The surface finish's five authored fields, in row order. */
+type FinishKey = keyof ResolvedSurfaceFinish;
+
+const FINISH_FIELDS: readonly FinishKey[] = [
+  "specular",
+  "shininess",
+  "metalness",
+  "reflect",
+  "transmit",
+];
+
+const FINISH_LABELS: Record<FinishKey, string> = {
+  specular: "Specular",
+  shininess: "Shininess",
+  metalness: "Metalness",
+  reflect: "Reflect",
+  transmit: "Transmit",
+};
+
+const FINISH_TITLES: Record<FinishKey, string> = {
+  specular:
+    "Highlight brightness — the Blinn-Phong specular strength. Classic 0.4; past it is an overdriven highlight.",
+  shininess:
+    "Highlight tightness — the Blinn-Phong exponent. Higher is a smaller, sharper highlight. Classic 32.",
+  metalness:
+    "How much this map's surface reads as metal: its highlight takes on the surface color. Classic 0.",
+  reflect:
+    "How much of the surroundings the surface mirrors — the environment reflection. Classic 0.",
+  transmit:
+    "How much light passes through as a thin shell — the transmission. Classic 0.",
+};
+
+/**
+ * Finish slider bounds. Three of the five are the fields' own `[0, 1]`
+ * authored span (`surface-finish.ts`'s resolver clamps there too, so the
+ * slider never shows a number the tracer is not using). `specular` reaches
+ * 2 — five times the classic highlight, already a glare — and `shininess`
+ * runs `1..256` in whole steps, a spread wide enough for the broad matte
+ * lobe at one end and a pinpoint at the other. STEPS MATTER HERE: every
+ * classic value and every bundle value below is exactly representable on
+ * its slider's step, which is what lets a drag back to classic REMOVE the
+ * field (see {@link Ui.writeFinishField}) rather than leave it authored
+ * one quantum off.
+ */
+const FINISH_RANGES: Record<
+  FinishKey,
+  { min: number; max: number; step: number }
+> = {
+  specular: { min: 0, max: 2, step: 0.01 },
+  shininess: { min: 1, max: 256, step: 1 },
+  metalness: { min: 0, max: 1, step: 0.01 },
+  reflect: { min: 0, max: 1, step: 0.01 },
+  transmit: { min: 0, max: 1, step: 0.01 },
+};
+
+/** Readout text for one finish field: whole numbers for the exponent, two
+ * decimals for the four unit-ish scalars. */
+function formatFinishValue(key: FinishKey, value: number): string {
+  return key === "shininess" ? value.toFixed(0) : value.toFixed(2);
+}
+
+/**
+ * Does `value` sit on this field's CLASSIC value, to within half a slider
+ * step? Half a step is the widest tolerance that cannot confuse two
+ * adjacent slider positions — and the comparison has to tolerate SOMETHING,
+ * because a slider's `value` string round-trips through `Number()` and a
+ * bundle's value through the persist layer's rounding, and an exact `===`
+ * against `0.4` would leave a field authored at the classic value one ULP
+ * off, which is not "absent" on the wire.
+ */
+function finishFieldIsClassic(key: FinishKey, value: number): boolean {
+  return (
+    Math.abs(value - CLASSIC_SURFACE_FINISH[key]) < FINISH_RANGES[key].step / 2
+  );
+}
+
+/**
+ * A named finish bundle — UI VOCABULARY ONLY. Picking one SETS the five
+ * sliders; the document stores the five numbers and never the name, so a
+ * bundle can be retuned later without repainting any saved scene (a scene
+ * authored under the old tuning keeps the old numbers and simply reads as
+ * Custom afterwards). "Classic" is the bundle whose values are the absent
+ * state's — applying it through the per-field write rule removes every
+ * field, which is how the select returns a document to byte-identity with
+ * one that never authored a finish, without a special case.
+ */
+interface FinishBundle {
+  id: string;
+  label: string;
+  finish: ResolvedSurfaceFinish;
+}
+
+const FINISH_BUNDLES: readonly FinishBundle[] = [
+  { id: "classic", label: "Classic", finish: CLASSIC_SURFACE_FINISH },
+  {
+    id: "matte",
+    label: "Matte",
+    finish: {
+      specular: 0,
+      shininess: 32,
+      metalness: 0,
+      reflect: 0,
+      transmit: 0,
+    },
+  },
+  {
+    id: "satin",
+    label: "Satin",
+    finish: {
+      specular: 0.25,
+      shininess: 8,
+      metalness: 0,
+      reflect: 0.08,
+      transmit: 0,
+    },
+  },
+  {
+    id: "plastic",
+    label: "Plastic",
+    finish: {
+      specular: 0.6,
+      shininess: 48,
+      metalness: 0,
+      reflect: 0.12,
+      transmit: 0,
+    },
+  },
+  {
+    id: "metal",
+    label: "Metal",
+    finish: {
+      specular: 0.8,
+      shininess: 24,
+      metalness: 1,
+      reflect: 0.45,
+      transmit: 0,
+    },
+  },
+  {
+    id: "chrome",
+    label: "Chrome",
+    finish: {
+      specular: 1,
+      shininess: 96,
+      metalness: 1,
+      reflect: 0.9,
+      transmit: 0,
+    },
+  },
+  {
+    id: "gemstone",
+    label: "Gemstone",
+    finish: {
+      specular: 1,
+      shininess: 128,
+      metalness: 0,
+      reflect: 0.5,
+      transmit: 0.35,
+    },
+  },
+  {
+    id: "glass",
+    label: "Glass",
+    finish: {
+      specular: 0.9,
+      shininess: 96,
+      metalness: 0,
+      reflect: 0.35,
+      transmit: 0.75,
+    },
+  },
+];
+
+/** The select's value while the five sliders match no bundle. */
+const FINISH_CUSTOM_ID = "custom";
+
+/**
+ * Which bundle, if any, these five RESOLVED values are — every field within
+ * half its slider step of the bundle's (the same tolerance as
+ * {@link finishFieldIsClassic}, for the same round-trip reason). Resolved
+ * rather than raw on purpose: a document carrying `{specular: 0}` alone
+ * resolves to Matte's five numbers exactly, and must read "Matte", not
+ * "Custom", because storing classic-valued fields as ABSENCE is how the
+ * write rule keeps documents minimal.
+ */
+function finishBundleOf(
+  finish: SurfaceFinish | undefined,
+): FinishBundle | null {
+  const resolved = resolveSurfaceFinish(finish);
+  return (
+    FINISH_BUNDLES.find((bundle) =>
+      FINISH_FIELDS.every(
+        (key) =>
+          Math.abs(resolved[key] - bundle.finish[key]) <
+          FINISH_RANGES[key].step / 2,
+      ),
+    ) ?? null
+  );
+}
+
+/**
+ * The list row's finish line — present only for a finish that RESOLVES away
+ * from classic (the same predicate the tracers' compile gate reads), named
+ * by bundle where the five numbers are one, "custom" otherwise. A finish
+ * authored at the classic values by hand is real data but renders nothing
+ * different, so the row says nothing — it is the frame, not the key, the
+ * line describes.
+ */
+function finishSummary(t: Transform): string[] {
+  if (isClassicSurfaceFinish(t.finish)) return [];
+  const bundle = finishBundleOf(t.finish);
+  return [`Finish: ${bundle ? bundle.label : "custom"}`];
+}
+
+/** The forward-orbit routes — the escape-time chain in either dimension and
+ * the Mandelbulb — which shade the WHOLE object with ONE finish, the first
+ * active transform's (main.ts's `escapeSlotFinish`, the kernels'
+ * `firstChoice` 0). Every other route shades each hit by the slot that
+ * produced it, so every transform's finish reaches the frame. */
+function routeShadesHeadOnly(kind: SurfaceRouteKind | null): boolean {
+  return kind === "escape" || kind === "bulb" || kind === "escape4";
+}
+
+/** The HEAD transform of a forward-orbit session — the first with a
+ * positive weight, clamped at 0 exactly as main.ts's `escapeSlotFinish` and
+ * `escapeSlotColor` clamp it, so the panel disables the rows that session
+ * would ignore and no others. */
+function forwardHeadIndex(transforms: readonly Transform[]): number {
+  return Math.max(
+    0,
+    transforms.findIndex((t) => (t.weight ?? 1) > 0),
+  );
+}
 
 /**
  * Display names for variation types whose identifier does not title-case into
@@ -682,6 +940,23 @@ interface ColorControls {
   derivedIndex: number;
 }
 
+/**
+ * Live handles into the "Finish" group: the bundle select, the five rows,
+ * and the head-only disclosure line the forward-orbit routes reveal.
+ */
+interface FinishControls {
+  /** The `<details>` group itself — the disclosure dims it as a whole. */
+  group: HTMLElement;
+  /** The named-bundle select: a bundle id, or {@link FINISH_CUSTOM_ID}
+   * (a disabled option, so it can be shown but never picked). */
+  bundle: HTMLSelectElement;
+  rows: Record<FinishKey, AxisControl>;
+  /** The "only the first transform's finish is read" line — hidden unless
+   * the document routes to a forward-orbit surface session AND this is
+   * not its head transform. */
+  note: HTMLElement;
+}
+
 /** One toggle in a {@link Ui.buildMirrorRow} "Mirror" row. */
 interface MirrorToggleSpec {
   /** Button text, e.g. "X" or "W". */
@@ -716,7 +991,27 @@ interface EditorState {
     /** Working copy of the transform's optional color speed —
      * {@link colorIndex}'s twin in every respect. */
     colorSpeed: number | undefined;
+    /** Working copy of the transform's optional surface finish — a CLONE
+     * of the document's object (the finish rows mutate it in place, and
+     * the document's transform must never be), `undefined` exactly when
+     * the transform authors no field. The same sparse discipline as
+     * `colorIndex`, applied per FIELD: a field exists here only once its
+     * own slider moved off classic, and leaves again when it returns
+     * there (see {@link Ui.writeFinishField}). */
+    finish: SurfaceFinish | undefined;
   };
+  /**
+   * Has the user moved a finish slider or picked a bundle since this
+   * editor was built or last synced? Until then the emitted geometry
+   * carries NO `finish` key at all, so `state.ts`'s merging
+   * `updateTransform` leaves the document's own finish alone through any
+   * other edit. Once touched, the working copy is emitted even when EMPTY
+   * — as an explicit `finish: undefined`, the `setFinalTransform` clearing
+   * idiom — because that merge is the only route by which dragging the last
+   * field back to classic can REMOVE the document's key. Reset on sync:
+   * after one, the working copy IS the document again.
+   */
+  finishTouched: boolean;
   controls: Record<Channel, AxisControl[]>;
   /** The Scale group's per-axis mirror toggles: pressed ⇔ that axis's
    * scale is negative (a reflection). */
@@ -726,6 +1021,9 @@ interface EditorState {
   /** The "Color" group's rows, or `null` for the final transform —
    * which is never PICKED, so it never moves the color coordinate. */
   colorControls: ColorControls | null;
+  /** The "Finish" group, or `null` for the final transform — the lens is
+   * not a shading slot, so no tracer reads a finish authored on it. */
+  finishControls: FinishControls | null;
   /** Working copy of the transform's variation blend, edited in place. */
   variations: Variation[];
   /** Container the variation rows are (re)built into on add/remove. */
@@ -1316,6 +1614,22 @@ export class Ui {
    * balloon rows.
    */
   private surfaceSessionKind: SurfaceSessionKind | null = null;
+  /**
+   * Where the DOCUMENT would route if Surface were entered now — the gate's
+   * own `kind`, pushed with every {@link setSurfaceEligibility}. This, and
+   * not {@link surfaceSessionKind}, drives the finish rows' head-only
+   * disclosure: the transform editor lives inside the explorer controls,
+   * which hide for the whole of a surface session (and entry drops the
+   * selection), so a session-scoped flag could never be seen from a row
+   * that exists only in Points mode. The gate re-derives on every edit,
+   * drags included, so the rows tell the truth about the session the NEXT
+   * click into Surface would start.
+   */
+  private surfaceRouteKind: SurfaceRouteKind | null = null;
+  /** The first positively-weighted transform — the one finish a
+   * forward-orbit session reads (see {@link forwardHeadIndex}); refreshed
+   * with every transform-list render, the panel's feed of the whole set. */
+  private forwardHead = 0;
   // Auto-tumble pause/resume + speed: same session-only pattern as the
   // slice controls above. The toggle's own wrapper row hides — with the
   // speed row — in a live 4D surface session, where the ambient tumble
@@ -4010,6 +4324,7 @@ export class Ui {
   setSurfaceEligibility(
     status: "eligible" | "degraded" | "ineligible",
     detail: string | null,
+    kind: SurfaceRouteKind | null = null,
   ): void {
     const button = this.modeButtons.surface;
     const blocked = status === "ineligible";
@@ -4022,6 +4337,11 @@ export class Ui {
     // the live region actually announces a degrade.
     this.surfaceNote.textContent =
       status === "degraded" && detail ? detail : "";
+    // The route kind reaches the transform editor's Finish group (see
+    // surfaceRouteKind's doc): re-applied to a live editor here because the
+    // gate refresh runs AFTER the editor build on every refresh path.
+    this.surfaceRouteKind = kind;
+    this.applyFinishDisclosure();
   }
 
   /**
@@ -4173,6 +4493,12 @@ export class Ui {
       }),
     );
 
+    // The list render is the panel's feed of the WHOLE transform set, so
+    // it is where the forward-orbit head is read off (a weight edit can move
+    // it); the finish disclosure re-applies in case the editor is live.
+    this.forwardHead = forwardHeadIndex(transforms);
+    this.applyFinishDisclosure();
+
     const palette = transformColors(
       transforms.length,
       transforms.map((t) => t.colorIndex),
@@ -4192,6 +4518,7 @@ export class Ui {
               ? [`Weight: ${t.weight.toFixed(2)}`]
               : []),
             ...colorSummary(t),
+            ...finishSummary(t),
             ...variationSummary(t),
           ],
           onClick: () => this.handlers?.onSelect(i),
@@ -4315,11 +4642,13 @@ export class Ui {
   ): void {
     this.transformEditor.replaceChildren();
 
-    // The final transform omits Weight and Color (see below), so a remembered
-    // choice of either would build an editor with nothing open at all.
+    // The final transform omits Weight, Color and Finish (see below), so a
+    // remembered choice of any would build an editor with nothing open at all.
     const remembered =
       target === "final" &&
-      (this.editorOpenGroup === "Weight" || this.editorOpenGroup === "Color")
+      (this.editorOpenGroup === "Weight" ||
+        this.editorOpenGroup === "Color" ||
+        this.editorOpenGroup === "Finish")
         ? null
         : this.editorOpenGroup;
     // Resolved per build and deliberately NOT written back to
@@ -4349,6 +4678,10 @@ export class Ui {
       // buildColorControls.
       colorIndex: transform.colorIndex,
       colorSpeed: transform.colorSpeed,
+      // Raw presence like the color pair, but CLONED: the finish rows edit
+      // this object in place, and the document's own must stay untouched
+      // until the edit is emitted through the handler.
+      finish: cloneFinish(transform.finish),
     };
     const controls: Record<Channel, AxisControl[]> = {
       position: [],
@@ -4430,6 +4763,15 @@ export class Ui {
             geometry.colorSpeed,
             openGroup,
           );
+    // Finish sits directly below Color: the other whole-map property a
+    // RENDERER reads off this map (the surface tracers shade a hit by the
+    // slot that produced it), beside the two the chaos game reads when it
+    // picks it, and above the per-variation warp parameters. Omitted for
+    // the final transform — see FinalGeometry.
+    const finishControls =
+      target === "final"
+        ? null
+        : this.buildFinishControls(geometry.finish, openGroup);
     const { list, add } = this.buildVariationsGroup(openGroup);
     // Placed last (after Variations): a deliberate choice to leave the
     // existing layout for every ordinary (flat) transform undisturbed — this
@@ -4441,10 +4783,12 @@ export class Ui {
     this.editor = {
       target,
       geometry,
+      finishTouched: false,
       controls,
       mirror,
       weightControl,
       colorControls,
+      finishControls,
       variations: (transform.variations ?? []).map((v) => ({ ...v })),
       variationList: list,
       variationAdd: add,
@@ -4452,6 +4796,9 @@ export class Ui {
     };
     this.renderVariationRows();
     this.refreshAddOptions();
+    // The rows were built from the working copy already; this applies the
+    // head-only disclosure, which needs `this.editor` to exist.
+    this.applyFinishDisclosure();
   }
 
   /** Build a Scale group's "Mirror" row of aria-pressed toggle buttons —
@@ -4653,6 +5000,226 @@ export class Ui {
     row.append(name, slider, readout);
     group.appendChild(row);
     return { slider, readout };
+  }
+
+  /**
+   * Build the "Finish" group: a scope hint, the named-bundle select, and one
+   * row per field of the transform's optional surface finish
+   * (`types.ts`'s `SurfaceFinish`) — the fold's authored lengths'
+   * construction ({@link appendFoldRadiusRows}) one level up, on the
+   * transform rather than a variation, because a finish is a property of
+   * the MAP's part of the surface, not of a warp it applies.
+   *
+   * The same two rules keep "absent means classic BYTE-IDENTICALLY" true
+   * through an editing session: a field is written into the document ONLY
+   * once its own slider moves (opening the group, picking the transform, or
+   * moving a neighbouring slider materializes nothing), and a slider dragged
+   * back to its classic value REMOVES the field again — the whole `finish`
+   * object with it once the last field goes. The bundle select is UI
+   * vocabulary over the same five sliders: picking one sets all five through
+   * the very same write rule, so "Classic" clears the finish outright and
+   * every other bundle stores only the fields that differ from classic.
+   *
+   * The rows display the RESOLVED value while a field is absent (the classic
+   * number `surface-finish.ts`'s resolver would use), exactly as the Color
+   * rows display the derived palette slot — only the working copy is empty.
+   */
+  private buildFinishControls(
+    finish: SurfaceFinish | undefined,
+    openGroup: string,
+  ): FinishControls {
+    const group = this.createEditorGroup("Finish", openGroup);
+
+    // The scope note, in the Color group's hint idiom: every other render
+    // mode ignores a finish, and a slider that moves nothing on screen would
+    // otherwise teach that the group is broken.
+    const hint = this.doc.createElement("p");
+    hint.className = "flame-hint";
+    hint.textContent =
+      "Surface renders only: how this map's part of the surface catches light. A bundle sets all five sliders; Classic clears them.";
+    group.appendChild(hint);
+
+    // The forward-orbit disclosure — hidden until applyFinishDisclosure
+    // finds the document routing to an escape-time chain or a Mandelbulb
+    // with this transform not at its head.
+    const note = this.doc.createElement("p");
+    note.className = "flame-hint finish-note hidden";
+    note.textContent =
+      "Escape-time and Mandelbulb surfaces shade the whole object with the FIRST active transform's finish, so this one is not read there. It still applies to an IFS surface.";
+    group.appendChild(note);
+
+    // The bundle select acts like the Presets menu over these five rows: a
+    // pick sets them all. Unlike the variation-add menu it does NOT snap
+    // back to a placeholder — it REFLECTS the rows, reading "Custom"
+    // (disabled, so it can be shown but never chosen) whenever the five
+    // values are nobody's bundle.
+    const bundle = this.doc.createElement("select");
+    bundle.className = "finish-bundle";
+    bundle.setAttribute("aria-label", "Finish bundle");
+    bundle.title =
+      "Named starting points for the five sliders below — the scene stores the numbers, never the name.";
+    for (const entry of FINISH_BUNDLES) {
+      const option = this.doc.createElement("option");
+      option.value = entry.id;
+      option.textContent = entry.label;
+      bundle.appendChild(option);
+    }
+    const custom = this.doc.createElement("option");
+    custom.value = FINISH_CUSTOM_ID;
+    custom.textContent = "Custom";
+    custom.disabled = true;
+    bundle.appendChild(custom);
+    bundle.addEventListener("change", () =>
+      this.onFinishBundleChange(bundle.value),
+    );
+    group.appendChild(bundle);
+
+    const resolved = resolveSurfaceFinish(finish);
+    const rows = {} as Record<FinishKey, AxisControl>;
+    for (const key of FINISH_FIELDS) {
+      const range = FINISH_RANGES[key];
+      const row = this.doc.createElement("div");
+      row.className = "editor-row finish-row";
+
+      const name = this.doc.createElement("span");
+      name.className = "axis";
+      name.textContent = FINISH_LABELS[key];
+
+      const slider = this.doc.createElement("input");
+      slider.type = "range";
+      slider.min = String(range.min);
+      slider.max = String(range.max);
+      slider.step = String(range.step);
+      slider.value = String(resolved[key]);
+      slider.setAttribute(
+        "aria-label",
+        `Finish ${FINISH_LABELS[key].toLowerCase()}`,
+      );
+      slider.title = FINISH_TITLES[key];
+
+      const readout = this.doc.createElement("span");
+      readout.className = "value";
+      readout.textContent = formatFinishValue(key, resolved[key]);
+
+      slider.addEventListener("input", () =>
+        this.onFinishInput(key, Number(slider.value)),
+      );
+
+      row.append(name, slider, readout);
+      group.appendChild(row);
+      rows[key] = { slider, readout };
+    }
+    this.syncFinishBundleSelect(bundle, finish);
+
+    this.transformEditor.appendChild(group);
+    return { group, bundle, rows, note };
+  }
+
+  /** Point the bundle select at whichever bundle the working copy IS, or at
+   * the disabled "Custom" entry when it is nobody's. */
+  private syncFinishBundleSelect(
+    bundle: HTMLSelectElement,
+    finish: SurfaceFinish | undefined,
+  ): void {
+    bundle.value = finishBundleOf(finish)?.id ?? FINISH_CUSTOM_ID;
+  }
+
+  /** Re-sync the Finish group's rows and select to the working copy — the
+   * finish counterpart to the Color rows' re-sync in {@link syncEditor}. */
+  private syncFinishControls(): void {
+    const editor = this.editor;
+    if (!editor || !editor.finishControls) return;
+    const { rows, bundle } = editor.finishControls;
+    const resolved = resolveSurfaceFinish(editor.geometry.finish);
+    for (const key of FINISH_FIELDS) {
+      rows[key].slider.value = String(resolved[key]);
+      rows[key].readout.textContent = formatFinishValue(key, resolved[key]);
+    }
+    this.syncFinishBundleSelect(bundle, editor.geometry.finish);
+    this.applyFinishDisclosure();
+  }
+
+  /**
+   * Disable the Finish group — and say why — on a transform whose finish the
+   * surface session this document would start could never read: the
+   * forward-orbit routes (the escape-time chain in either dimension, the
+   * Mandelbulb) shade the WHOLE object with the first active transform's
+   * finish and nobody else's. Disclosure rather than pretence: an enabled
+   * slider that moved nothing would teach that the feature is broken. The
+   * rows stay editable everywhere else, including on the head transform of
+   * such a document, and the document keeps whatever it carries — routing
+   * is a property of the system and a weight edit can hand the head to
+   * another map, at which point its rows re-enable through the same call.
+   */
+  private applyFinishDisclosure(): void {
+    const editor = this.editor;
+    if (!editor || !editor.finishControls) return;
+    const headOnly =
+      routeShadesHeadOnly(this.surfaceRouteKind) &&
+      editor.target !== this.forwardHead;
+    const { group, bundle, rows, note } = editor.finishControls;
+    bundle.disabled = headOnly;
+    for (const key of FINISH_FIELDS) rows[key].slider.disabled = headOnly;
+    note.classList.toggle("hidden", !headOnly);
+    group.classList.toggle("finish-inert", headOnly);
+  }
+
+  /**
+   * The ONE write into the finish working copy — {@link appendFoldRadiusRows}'
+   * `write` one level up: a value on the field's classic number (within half
+   * a slider step, see {@link finishFieldIsClassic}) DELETES the field, and
+   * deleting the last field drops the whole object, so a finish explored and
+   * returned from leaves the transform exactly as it found it. Any other
+   * value materializes the field (and the object, if this is its first).
+   * Marks the group touched either way — see EditorState.finishTouched for
+   * why a removal has to be emitted rather than merely omitted.
+   */
+  private writeFinishField(key: FinishKey, value: number): void {
+    const editor = this.editor;
+    if (!editor) return;
+    editor.finishTouched = true;
+    if (finishFieldIsClassic(key, value)) {
+      const finish = editor.geometry.finish;
+      if (!finish) return;
+      delete finish[key];
+      if (Object.keys(finish).length === 0) editor.geometry.finish = undefined;
+    } else {
+      (editor.geometry.finish ??= {})[key] = value;
+    }
+  }
+
+  /** One finish slider moved: write exactly its field, refresh its readout
+   * and the bundle select (the five may now be, or no longer be, a bundle),
+   * and emit. */
+  private onFinishInput(key: FinishKey, value: number): void {
+    const editor = this.editor;
+    if (!editor || !editor.finishControls) return;
+    this.writeFinishField(key, value);
+    editor.finishControls.rows[key].readout.textContent = formatFinishValue(
+      key,
+      value,
+    );
+    this.syncFinishBundleSelect(
+      editor.finishControls.bundle,
+      editor.geometry.finish,
+    );
+    this.emitGeometry();
+  }
+
+  /** A bundle was picked: set all five sliders through the per-field write
+   * rule (so Classic removes everything and no bundle stores a classic-valued
+   * field), refresh the rows, and emit once. The disabled Custom option can
+   * never arrive here; an unknown id is ignored rather than guessed at. */
+  private onFinishBundleChange(id: string): void {
+    const editor = this.editor;
+    if (!editor || !editor.finishControls) return;
+    const entry = FINISH_BUNDLES.find((bundle) => bundle.id === id);
+    if (!entry) return;
+    for (const key of FINISH_FIELDS) {
+      this.writeFinishField(key, entry.finish[key]);
+    }
+    this.syncFinishControls();
+    this.emitGeometry();
   }
 
   /**
@@ -5161,7 +5728,11 @@ export class Ui {
       // forget them too or the next unrelated edit would write them back.
       colorIndex: transform.colorIndex,
       colorSpeed: transform.colorSpeed,
+      finish: cloneFinish(transform.finish),
     };
+    // The working copy IS the document again, so the finish key goes back
+    // to riding only on presence (see EditorState.finishTouched).
+    editor.finishTouched = false;
     for (const channel of CHANNEL_ORDER) {
       const spec = CHANNELS[channel];
       editor.controls[channel].forEach((control, axis) => {
@@ -5195,6 +5766,7 @@ export class Ui {
       color.speed.slider.value = String(speed);
       color.speed.readout.textContent = speed.toFixed(2);
     }
+    this.syncFinishControls();
     this.syncFourDControls();
 
     // Variations rarely change under a stable selection (drags don't touch
@@ -5339,6 +5911,20 @@ export class Ui {
         ...(editor.geometry.colorSpeed !== undefined
           ? { colorSpeed: editor.geometry.colorSpeed }
           : {}),
+        // Sparse like the pair above while the group is untouched. Once a
+        // finish slider or the bundle select has fired, the working copy is
+        // the truth — and an EMPTY one is emitted as an explicit
+        // `finish: undefined` rather than omitted, because omission would
+        // leave the document's old finish in place under updateTransform's
+        // merge, and dragging the last field back to classic has to REMOVE
+        // the key (persist writes nothing for an undefined finish, so the
+        // saved scene is byte-identical to one that never authored it).
+        // See EditorState.finishTouched.
+        ...(editor.geometry.finish !== undefined
+          ? { finish: cloneFinish(editor.geometry.finish) }
+          : editor.finishTouched
+            ? { finish: undefined }
+            : {}),
       });
     }
   }

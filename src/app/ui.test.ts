@@ -1319,7 +1319,7 @@ describe("Ui record video button", () => {
 });
 
 describe("Ui.renderTransformEditor", () => {
-  it("builds position, rotation, scale, weight, color, and variation controls for the selection", () => {
+  it("builds position, rotation, scale, weight, color, finish, and variation controls for the selection", () => {
     const transforms = defaultTransforms();
     const ui = new Ui(document);
     ui.bind(noopHandlers());
@@ -1332,6 +1332,7 @@ describe("Ui.renderTransformEditor", () => {
       "Shear",
       "Weight",
       "Color",
+      "Finish",
       "Variations",
       "4D",
       "Position W",
@@ -1340,11 +1341,11 @@ describe("Ui.renderTransformEditor", () => {
       "Shear W",
     ]);
     // 12 axis sliders (4 channels × 3) + 1 weight slider + 2 color sliders
-    // (Index, Speed) + 8 in the 4D group (Position W, Scale W, 3 Rotation W,
-    // 3 Shear W — always built, just collapsed for a w-less transform like
-    // this one); a plain transform has no variations, so the Variations group
-    // adds no range sliders (just a menu).
-    expect(editorSliders()).toHaveLength(23);
+    // (Index, Speed) + 5 finish sliders + 8 in the 4D group (Position W,
+    // Scale W, 3 Rotation W, 3 Shear W — always built, just collapsed for a
+    // w-less transform like this one); a plain transform has no variations,
+    // so the Variations group adds no range sliders (just a menu).
+    expect(editorSliders()).toHaveLength(28);
   });
 
   it("opens only Position for a flat transform", () => {
@@ -1367,7 +1368,7 @@ describe("Ui.renderTransformEditor", () => {
     ui.bind(noopHandlers());
     ui.renderTransformEditor(transforms[0], 0, transforms.length);
 
-    // The eight top-level groups; the 4D sub-groups stay plain divs, since a
+    // The nine top-level groups; the 4D sub-groups stay plain divs, since a
     // second level of exclusivity inside 4D would close Position W to read
     // Rotation W.
     const names = [
@@ -1375,7 +1376,7 @@ describe("Ui.renderTransformEditor", () => {
         "#transformEditor > details",
       ),
     ].map((d) => d.getAttribute("name"));
-    expect(names).toHaveLength(8);
+    expect(names).toHaveLength(9);
     expect(new Set(names).size).toBe(1);
   });
 
@@ -1692,7 +1693,7 @@ describe("Ui.renderTransformEditor", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     ui.renderTransformEditor(transforms[0], 0, transforms.length);
-    expect(editorSliders()).toHaveLength(23);
+    expect(editorSliders()).toHaveLength(28);
 
     ui.renderTransformEditor(null, null, 1);
     expect(document.getElementById("transformEditor")?.children).toHaveLength(
@@ -2225,6 +2226,493 @@ describe("Ui variation editor", () => {
     expect(options).not.toContain("spherical");
     expect(options).toContain(""); // placeholder
     expect(options).toContain("swirl"); // other types still offered
+  });
+});
+
+// The "Finish" group: the single UI that can create or edit a transform's
+// optional surface `finish` (see fractal/types.ts's SurfaceFinish). The
+// contract under test is the fold-length rows' one level up: a field is
+// written only once its own slider moves, a slider back on classic REMOVES
+// it, and the document a user explored and returned from is byte-identical
+// to one that never carried a finish.
+describe("Ui finish editor", () => {
+  const plain: Transform = {
+    id: 0,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [0.5, 0.5, 0.5],
+  };
+
+  function bundleSelect(): HTMLSelectElement {
+    const select = document.querySelector<HTMLSelectElement>(
+      "#transformEditor .finish-bundle",
+    );
+    if (!select) throw new Error("No finish-bundle select");
+    return select;
+  }
+
+  function finishNote(): HTMLElement {
+    const note = document.querySelector<HTMLElement>(
+      "#transformEditor .finish-note",
+    );
+    if (!note) throw new Error("No finish-note");
+    return note;
+  }
+
+  function lastGeometry(handlers: UiHandlers) {
+    const calls = vi.mocked(handlers.onTransformGeometry).mock.calls;
+    return calls[calls.length - 1][1];
+  }
+
+  function drag(label: string, value: string): void {
+    const slider = editorSlider(label);
+    slider.value = value;
+    slider.dispatchEvent(new Event("input"));
+  }
+
+  function pickBundle(id: string): void {
+    const select = bundleSelect();
+    select.value = id;
+    select.dispatchEvent(new Event("change"));
+  }
+
+  it("offers the five fields at their classic values for a map that authors none, reading Classic", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(plain, 0, 1);
+
+    // The rows DISPLAY the classic numbers the resolver would use (the
+    // Color rows' derived-slot idiom); only the working copy is empty.
+    expect(editorSlider("Finish specular").value).toBe("0.4");
+    expect(editorSlider("Finish shininess").value).toBe("32");
+    expect(editorSlider("Finish metalness").value).toBe("0");
+    expect(editorSlider("Finish reflect").value).toBe("0");
+    expect(editorSlider("Finish transmit").value).toBe("0");
+    expect(editorReadout("Finish shininess").textContent).toBe("32");
+    expect(bundleSelect().value).toBe("classic");
+  });
+
+  it("seeds each row from the document, and from the classic value where the document is silent", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(
+      { ...plain, finish: { metalness: 1, reflect: 0.45 } },
+      0,
+      1,
+    );
+    expect(editorSlider("Finish metalness").value).toBe("1");
+    expect(editorSlider("Finish reflect").value).toBe("0.45");
+    expect(editorSlider("Finish specular").value).toBe("0.4");
+    expect(editorSlider("Finish shininess").value).toBe("32");
+  });
+
+  it("emits no finish key at all for an unrelated edit on a map that authors none", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(plain, 0, 1);
+
+    const scaleX = editorSlider("Scale X");
+    scaleX.value = "0.7";
+    scaleX.dispatchEvent(new Event("input"));
+
+    // Not `undefined`, not `{}`: NO key — building the group and displaying
+    // the classic numbers materializes nothing.
+    expect(lastGeometry(handlers)).not.toHaveProperty("finish");
+  });
+
+  it("writes a field into the document only once its own slider moves", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(plain, 0, 1);
+
+    drag("Finish metalness", "0.6");
+
+    // Only the field that moved: the other four stay ABSENT, which is what
+    // keeps "absent means the classic values byte-identically" true.
+    expect(lastGeometry(handlers).finish).toEqual({ metalness: 0.6 });
+    expect(editorReadout("Finish metalness").textContent).toBe("0.60");
+  });
+
+  it("carries an authored field through an unrelated edit, untouched and un-materialized beyond itself", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor({ ...plain, finish: { reflect: 0.3 } }, 0, 1);
+
+    drag("Finish specular", "1.2");
+    const scaleX = editorSlider("Scale X");
+    scaleX.value = "0.7";
+    scaleX.dispatchEvent(new Event("input"));
+
+    expect(lastGeometry(handlers).finish).toEqual({
+      reflect: 0.3,
+      specular: 1.2,
+    });
+  });
+
+  it("removes a field dragged back to its classic value", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      { ...plain, finish: { specular: 1, metalness: 0.5 } },
+      0,
+      1,
+    );
+
+    drag("Finish specular", "0.4");
+
+    expect(lastGeometry(handlers).finish).toEqual({ metalness: 0.5 });
+  });
+
+  it("removes the whole finish when its last field returns to classic, emitting the removal explicitly", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor({ ...plain, finish: { shininess: 96 } }, 0, 1);
+
+    drag("Finish shininess", "32");
+
+    // The key is PRESENT and undefined, not omitted: state.ts's
+    // updateTransform merges the emitted geometry over the transform, so an
+    // omitted key would leave the document's `{shininess: 96}` in place.
+    // persist writes nothing for an undefined finish, so the saved scene is
+    // byte-identical to one that never authored a finish.
+    const geometry = lastGeometry(handlers);
+    expect(geometry).toHaveProperty("finish");
+    expect(geometry.finish).toBeUndefined();
+    expect(bundleSelect().value).toBe("classic");
+  });
+
+  it("never leaves the document's own finish object mutated", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const finish = { metalness: 0.5 };
+    ui.renderTransformEditor({ ...plain, finish }, 0, 1);
+
+    drag("Finish metalness", "0.9");
+    drag("Finish reflect", "0.2");
+
+    // The editor edits a CLONE and hands back another: the document's own
+    // object is untouched by the drag, and the emitted one is not aliased
+    // to the working copy either.
+    expect(finish).toEqual({ metalness: 0.5 });
+    const emitted = lastGeometry(handlers).finish;
+    drag("Finish reflect", "0.7");
+    expect(emitted).toEqual({ metalness: 0.9, reflect: 0.2 });
+  });
+
+  it("sets all five sliders from a bundle, storing only the fields that differ from classic", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(plain, 0, 1);
+
+    pickBundle("chrome");
+
+    // Chrome is (1, 96, 1, 0.9, 0): four fields away from classic and
+    // transmit on it — which the per-field write rule stores as ABSENCE, so
+    // the document resolves to the bundle's five numbers exactly while
+    // carrying no classic-valued key.
+    expect(lastGeometry(handlers).finish).toEqual({
+      specular: 1,
+      shininess: 96,
+      metalness: 1,
+      reflect: 0.9,
+    });
+    expect(editorSlider("Finish specular").value).toBe("1");
+    expect(editorSlider("Finish shininess").value).toBe("96");
+    expect(editorSlider("Finish metalness").value).toBe("1");
+    expect(editorSlider("Finish reflect").value).toBe("0.9");
+    expect(editorSlider("Finish transmit").value).toBe("0");
+    expect(editorReadout("Finish reflect").textContent).toBe("0.90");
+    expect(bundleSelect().value).toBe("chrome");
+    expect(vi.mocked(handlers.onTransformGeometry)).toHaveBeenCalledTimes(1);
+  });
+
+  it("replaces a custom finish wholesale when a bundle is picked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      { ...plain, finish: { transmit: 0.9, metalness: 0.2 } },
+      0,
+      1,
+    );
+
+    pickBundle("matte");
+
+    // Matte is specular 0 and the rest classic: the stray transmit and
+    // metalness go, not merely the fields Matte happens to differ on.
+    expect(lastGeometry(handlers).finish).toEqual({ specular: 0 });
+    expect(bundleSelect().value).toBe("matte");
+  });
+
+  it("removes the finish entirely when Classic is picked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        ...plain,
+        finish: {
+          specular: 0.9,
+          shininess: 96,
+          reflect: 0.35,
+          transmit: 0.75,
+        },
+      },
+      0,
+      1,
+    );
+
+    pickBundle("classic");
+
+    const geometry = lastGeometry(handlers);
+    expect(geometry).toHaveProperty("finish");
+    expect(geometry.finish).toBeUndefined();
+    expect(editorSlider("Finish specular").value).toBe("0.4");
+    expect(editorSlider("Finish transmit").value).toBe("0");
+    expect(bundleSelect().value).toBe("classic");
+  });
+
+  it("reads the bundle a document's numbers are, on build and after a drag, and Custom otherwise", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    // Glass stored minimally (transmit, reflect, specular and shininess
+    // differ from classic; metalness does not) still reads as Glass.
+    ui.renderTransformEditor(
+      {
+        ...plain,
+        finish: {
+          specular: 0.9,
+          shininess: 96,
+          reflect: 0.35,
+          transmit: 0.75,
+        },
+      },
+      0,
+      1,
+    );
+    expect(bundleSelect().value).toBe("glass");
+
+    drag("Finish reflect", "0.5");
+    expect(bundleSelect().value).toBe("custom");
+    // The synthetic entry can be shown but never chosen.
+    const custom = bundleSelect().querySelector<HTMLOptionElement>(
+      "option[value='custom']",
+    );
+    expect(custom?.disabled).toBe(true);
+
+    drag("Finish reflect", "0.35");
+    expect(bundleSelect().value).toBe("glass");
+  });
+
+  it("keeps every bundle and every classic value on its slider's step, so a pick is exactly reversible", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(plain, 0, 1);
+
+    const ids = [...bundleSelect().options]
+      .filter((o) => !o.disabled)
+      .map((o) => o.value);
+    expect(ids).toEqual([
+      "classic",
+      "matte",
+      "satin",
+      "plastic",
+      "metal",
+      "chrome",
+      "gemstone",
+      "glass",
+    ]);
+    for (const id of ids) {
+      pickBundle(id);
+      expect(bundleSelect().value).toBe(id);
+      // Each slider's value survives the round trip through the slider's own
+      // step (jsdom does not quantize, but the app's sliders do): every
+      // bundle number is a multiple of its row's step.
+      for (const label of [
+        "Finish specular",
+        "Finish metalness",
+        "Finish reflect",
+        "Finish transmit",
+      ]) {
+        const v = Number(editorSlider(label).value);
+        expect(Math.abs(v * 100 - Math.round(v * 100))).toBeLessThan(1e-9);
+      }
+      expect(
+        Number.isInteger(Number(editorSlider("Finish shininess").value)),
+      ).toBe(true);
+    }
+    pickBundle("classic");
+    expect(lastGeometry(handlers).finish).toBeUndefined();
+  });
+
+  it("omits the Finish group for the final transform", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    // The lens is not a shading slot: the tracers shade a hit by the base
+    // map that produced it, so nothing would ever read a finish authored
+    // on the final transform.
+    ui.renderTransformEditor(plain, "final", 1);
+
+    expect(editorGroupTitles()).not.toContain("Finish");
+    expect(
+      document.querySelector("#transformEditor .finish-bundle"),
+    ).toBeNull();
+  });
+
+  it("picks up a finish that changed under a stable selection, instead of writing the stale one back", () => {
+    // An undo back past the first finish edit returns a transform with the
+    // key gone; the working copy has to forget it too, or the next unrelated
+    // edit would write it back.
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor({ ...plain, finish: { metalness: 1 } }, 0, 1);
+    ui.renderTransformEditor(plain, 0, 1);
+
+    expect(editorSlider("Finish metalness").value).toBe("0");
+    expect(bundleSelect().value).toBe("classic");
+    const scaleX = editorSlider("Scale X");
+    scaleX.value = "0.7";
+    scaleX.dispatchEvent(new Event("input"));
+    expect(lastGeometry(handlers)).not.toHaveProperty("finish");
+  });
+
+  it("names an authored finish on the transform list row, by bundle where it is one", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformList(
+      [
+        plain,
+        { ...plain, id: 1, finish: { specular: 0 } },
+        { ...plain, id: 2, finish: { reflect: 0.5 } },
+        // Authored AT classic: real data, but renders nothing different,
+        // so the row says nothing.
+        { ...plain, id: 3, finish: { specular: 0.4 } },
+      ],
+      null,
+      null,
+    );
+    const rows = [
+      ...document.querySelectorAll<HTMLElement>(
+        "#transformList .transform-btn",
+      ),
+    ].map((b) => b.textContent ?? "");
+    // Row 0 is the camera card.
+    expect(rows[1]).not.toContain("Finish");
+    expect(rows[2]).toContain("Finish: Matte");
+    expect(rows[3]).toContain("Finish: custom");
+    expect(rows[4]).not.toContain("Finish");
+  });
+
+  describe("forward-orbit disclosure", () => {
+    // An escape-time or Mandelbulb surface shades the WHOLE object with the
+    // first active transform's finish (main.ts's escapeSlotFinish, the
+    // kernels' firstChoice 0). The gate's route kind reaches the panel with
+    // every eligibility refresh, and the rows it would skip say so.
+    const two: Transform[] = [plain, { ...plain, id: 1, position: [1, 0, 0] }];
+
+    function finishInputsDisabled(): boolean[] {
+      return [
+        bundleSelect().disabled,
+        ...[
+          "Finish specular",
+          "Finish shininess",
+          "Finish metalness",
+          "Finish reflect",
+          "Finish transmit",
+        ].map((label) => editorSlider(label).disabled),
+      ];
+    }
+
+    it("disables a non-head transform's finish rows on an escape-shaped document, with the reason shown", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.renderTransformList(two, 1, null);
+      ui.renderTransformEditor(two[1], 1, 2);
+      ui.setSurfaceEligibility("eligible", null, "escape");
+
+      expect(finishInputsDisabled()).toEqual([
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+      ]);
+      expect(finishNote().classList.contains("hidden")).toBe(false);
+      expect(finishNote().textContent).toMatch(/FIRST active transform/);
+    });
+
+    it("keeps the head transform's rows live on the same document", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.renderTransformList(two, 0, null);
+      ui.renderTransformEditor(two[0], 0, 2);
+      ui.setSurfaceEligibility("eligible", null, "bulb");
+
+      expect(finishInputsDisabled()).toEqual([
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+      ]);
+      expect(finishNote().classList.contains("hidden")).toBe(true);
+    });
+
+    it("treats the first POSITIVELY weighted transform as the head, as the session does", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      const weighted: Transform[] = [{ ...two[0], weight: 0 }, two[1]];
+      ui.renderTransformList(weighted, 1, null);
+      ui.renderTransformEditor(weighted[1], 1, 2);
+      ui.setSurfaceEligibility("eligible", null, "escape4");
+
+      expect(finishInputsDisabled()).toEqual([
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+      ]);
+    });
+
+    it("re-enables the rows when the document routes back to an IFS surface, and applies to a later-built editor", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.renderTransformList(two, 1, null);
+      ui.setSurfaceEligibility("eligible", null, "escape");
+      // Built AFTER the gate pushed its kind: the disclosure applies at
+      // build, not only on the next refresh.
+      ui.renderTransformEditor(two[1], 1, 2);
+      expect(bundleSelect().disabled).toBe(true);
+
+      ui.setSurfaceEligibility("eligible", null, "ifs");
+      expect(finishInputsDisabled()).toEqual([
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+      ]);
+      expect(finishNote().classList.contains("hidden")).toBe(true);
+
+      // An ineligible document routes nowhere, and a refusal is not a
+      // reason to grey the rows — the gate's own note carries that.
+      ui.setSurfaceEligibility("ineligible", "not marchable", null);
+      expect(bundleSelect().disabled).toBe(false);
+    });
   });
 });
 
