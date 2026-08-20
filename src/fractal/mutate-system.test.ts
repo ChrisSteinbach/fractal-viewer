@@ -4,6 +4,7 @@ import type { MorphSystem } from "./morph";
 import { doubleRotation, sierpinskiTetrahedron, swirlFlame } from "./presets";
 import { MIN_OCCUPIED_CELLS, scoreSystem } from "./random-system";
 import { mulberry32 } from "./rng";
+import { SURFACE_FINISH_SHININESS_FLOOR } from "./surface-finish";
 import { VARIATION_TYPES } from "./types";
 import type { Transform } from "./types";
 
@@ -703,5 +704,122 @@ describe("mutateSystem fold radii", () => {
         }
       }
     }
+  });
+});
+
+describe("mutateSystem finish", () => {
+  it("perturbs a present finish's fields and keeps them within their clamped domains", () => {
+    const finishedMap: Transform = {
+      id: 0,
+      position: [0, 0.8, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+      finish: {
+        specular: 0.4,
+        shininess: 32,
+        metalness: 0.5,
+        reflect: 0.5,
+        transmit: 0.5,
+      },
+    };
+    const base = system({
+      transforms: [finishedMap, ...sierpinskiTetrahedron().slice(1)],
+    });
+
+    let sawChange = false;
+    for (let seed = 0; seed < 30; seed++) {
+      const mutant = mutateSystem(base, mulberry32(seed));
+      const f = mutant.transforms[0].finish!;
+      expect(f.specular, `seed ${seed}`).toBeGreaterThanOrEqual(0);
+      expect(f.specular, `seed ${seed}`).toBeLessThanOrEqual(2);
+      expect(f.shininess, `seed ${seed}`).toBeGreaterThanOrEqual(
+        SURFACE_FINISH_SHININESS_FLOOR,
+      );
+      expect(f.shininess, `seed ${seed}`).toBeLessThanOrEqual(256);
+      expect(f.metalness, `seed ${seed}`).toBeGreaterThanOrEqual(0);
+      expect(f.metalness, `seed ${seed}`).toBeLessThanOrEqual(1);
+      expect(f.reflect, `seed ${seed}`).toBeGreaterThanOrEqual(0);
+      expect(f.reflect, `seed ${seed}`).toBeLessThanOrEqual(1);
+      expect(f.transmit, `seed ${seed}`).toBeGreaterThanOrEqual(0);
+      expect(f.transmit, `seed ${seed}`).toBeLessThanOrEqual(1);
+      if (
+        f.specular !== 0.4 ||
+        f.shininess !== 32 ||
+        f.metalness !== 0.5 ||
+        f.reflect !== 0.5 ||
+        f.transmit !== 0.5
+      ) {
+        sawChange = true;
+      }
+    }
+    expect(sawChange).toBe(true);
+  });
+
+  it("leaves an absent finish absent for a non-wildcard mutation", () => {
+    const plainMap: Transform = {
+      id: 0,
+      position: [0, 0.8, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+    };
+    const base = system({
+      transforms: [plainMap, ...sierpinskiTetrahedron().slice(1)],
+    });
+
+    for (let seed = 0; seed < 30; seed++) {
+      const mutant = mutateSystem(base, mulberry32(seed));
+      expect("finish" in mutant.transforms[0], `seed ${seed}`).toBe(false);
+    }
+  });
+
+  it("still does not introduce an absent finish under wildcard", () => {
+    const plainMap: Transform = {
+      id: 0,
+      position: [0, 0.8, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+    };
+    const base = system({
+      transforms: [plainMap, ...sierpinskiTetrahedron().slice(1)],
+    });
+
+    for (let seed = 0; seed < 30; seed++) {
+      const mutant = mutateSystem(base, mulberry32(seed), { wildcard: true });
+      expect("finish" in mutant.transforms[0], `seed ${seed}`).toBe(false);
+    }
+  });
+
+  it("leaves an absent field of a present finish absent across mutation, wildcard included", () => {
+    const partialMap: Transform = {
+      id: 0,
+      position: [0, 0.8, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+      finish: { metalness: 0.5 },
+    };
+    const base = system({
+      transforms: [partialMap, ...sierpinskiTetrahedron().slice(1)],
+    });
+
+    let sawMetalnessChange = false;
+    for (let seed = 0; seed < 30; seed++) {
+      for (const wildcard of [false, true]) {
+        const mutant = mutateSystem(base, mulberry32(seed), { wildcard });
+        const f = mutant.transforms[0].finish!;
+        expect("specular" in f, `seed ${seed} wildcard=${wildcard}`).toBe(
+          false,
+        );
+        expect("shininess" in f, `seed ${seed} wildcard=${wildcard}`).toBe(
+          false,
+        );
+        expect("reflect" in f, `seed ${seed} wildcard=${wildcard}`).toBe(false);
+        expect("transmit" in f, `seed ${seed} wildcard=${wildcard}`).toBe(
+          false,
+        );
+        expect(f.metalness, `seed ${seed} wildcard=${wildcard}`).toBeDefined();
+        if (f.metalness !== 0.5) sawMetalnessChange = true;
+      }
+    }
+    expect(sawMetalnessChange).toBe(true);
   });
 });

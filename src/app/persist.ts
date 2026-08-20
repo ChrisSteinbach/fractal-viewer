@@ -32,6 +32,7 @@ import {
 import type {
   ColorMode,
   FourDColorMode,
+  SurfaceFinish,
   SymmetryParams,
   SymmetryPlane,
   Transform,
@@ -616,6 +617,55 @@ function decodeVariations(raw: unknown): Variation[] | null {
 }
 
 /**
+ * Decode one optional finish leaf on an untrusted transform — `specular`,
+ * `shininess`, `metalness`, `reflect`, or `transmit` (see `types.ts`'s
+ * {@link SurfaceFinish}). QUIET fallback like {@link decodeFoldRadius}: a
+ * malformed value never rejects the whole scene, it just leaves the field
+ * absent, exactly as if it had never been supplied. Same two deliberate
+ * deviations from every other optional-number decoder in this file: NO
+ * `Number(x)` coercion (a numeric string or boolean drops rather than
+ * becoming a finish value) and NO clamp — this field's domain belongs
+ * entirely to `surface-finish.ts`'s `resolveSurfaceFinish`; persist's job
+ * here is fidelity, not validation, so an out-of-domain but genuinely
+ * finite value (e.g. a negative `specular`) survives the decode untouched
+ * and is resolved at read time exactly as an authored one would be.
+ */
+function decodeFinishField(raw: unknown): number | undefined {
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+}
+
+/**
+ * Decode one transform's untrusted `finish` field (see `types.ts`'s
+ * {@link SurfaceFinish}). QUIET fallback like {@link decodeCustomPalette}:
+ * a non-object, an array, or `null` drops the WHOLE field to `undefined`
+ * rather than rejecting the scene — a finish is cosmetic shading data,
+ * never worth losing an otherwise-valid shared link over, the same spirit
+ * {@link decodeTransform} already applies per-field to `colorIndex`/
+ * `colorSpeed`. Each of the five fields decodes independently via
+ * {@link decodeFinishField}; an entry with nothing that survives
+ * (`finish: {}`, or every field malformed) decodes to `undefined`, matching
+ * how an all-zero-weight `variations` array decodes to `undefined` above.
+ */
+function decodeFinish(raw: unknown): SurfaceFinish | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  const f = raw as Record<string, unknown>;
+  const finish: SurfaceFinish = {};
+  const specular = decodeFinishField(f.specular);
+  if (specular !== undefined) finish.specular = specular;
+  const shininess = decodeFinishField(f.shininess);
+  if (shininess !== undefined) finish.shininess = shininess;
+  const metalness = decodeFinishField(f.metalness);
+  if (metalness !== undefined) finish.metalness = metalness;
+  const reflect = decodeFinishField(f.reflect);
+  if (reflect !== undefined) finish.reflect = reflect;
+  const transmit = decodeFinishField(f.transmit);
+  if (transmit !== undefined) finish.transmit = transmit;
+  return Object.keys(finish).length > 0 ? finish : undefined;
+}
+
+/**
  * Decode one optional numeric leaf inside an untrusted `w` block — a
  * position, a scale, or a single rotation/shear w-plane angle. All four kinds
  * share the identical "coerce, reject non-finite, clamp into `[min, max]`"
@@ -687,11 +737,12 @@ function decodeWPlanes(
  * Requires three valid Vec3 fields; `weight` / `shear` / `variations` / `w` are
  * optional and validated exactly as they encode (`w`'s own presence/clamp
  * contract is spelled out inline below, in {@link WExtension}'s terms).
- * `colorIndex` / `colorSpeed` are optional too, but — unlike every
- * other field here — a malformed value never rejects the whole scene; see
- * their own block below for why. Shared by the transform list (id = array
- * index) and the final transform (id = 0) so neither can drift — including
- * the `w` (4D lens) support this adds.
+ * `colorIndex` / `colorSpeed` / `finish` are optional too, but — unlike
+ * every other field here — a malformed value never rejects the whole scene;
+ * see their own block below for why (`finish`'s is {@link decodeFinish}).
+ * Shared by the transform list (id = array index) and the final transform
+ * (id = 0) so neither can drift — including the `w` (4D lens) support this
+ * adds.
  */
 function decodeTransform(raw: unknown, id: number): Transform | null {
   if (typeof raw !== "object" || raw === null) return null;
@@ -802,6 +853,14 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
     }
 
     if (Object.keys(wExt).length > 0) decoded.w = wExt;
+  }
+  // finish: optional per-transform surface shading (see SurfaceFinish).
+  // QUIET fallback exactly like colorIndex/colorSpeed above — a malformed
+  // value never rejects the whole scene, it just leaves the field absent
+  // (see decodeFinish).
+  if (tf.finish !== undefined) {
+    const finish = decodeFinish(tf.finish);
+    if (finish !== undefined) decoded.finish = finish;
   }
   return decoded;
 }
@@ -1414,7 +1473,10 @@ interface EncodedVariation {
  * The compact wire form of one transform: `id` dropped, floats rounded. `w`
  * mirrors {@link WExtension} field-for-field (same optional sub-object
  * shape) — see `encodeTransform`'s canonicalization rule for when it's
- * present at all.
+ * present at all. `finish` mirrors {@link SurfaceFinish} field-for-field the
+ * identical way, but on the fold-length rule instead — see
+ * `encodeTransform`'s `encodeFinish`: present only when at least one field
+ * survives.
  */
 interface EncodedTransform {
   position: number[];
@@ -1426,6 +1488,7 @@ interface EncodedTransform {
   shear?: number[];
   variations?: EncodedVariation[];
   w?: WExtension;
+  finish?: SurfaceFinish;
 }
 
 /**
@@ -1438,6 +1501,47 @@ interface EncodedTransform {
  */
 function encodeFoldRadius(n: number | undefined): number | undefined {
   return n !== undefined && Number.isFinite(n) ? round4(n) : undefined;
+}
+
+/**
+ * Round one of a finish's five fields for the wire IFF it's present and
+ * finite — `encodeFinish`'s counterpart to {@link decodeFinishField}, the
+ * identical shape as {@link encodeFoldRadius}: `undefined` in, `undefined`
+ * out, so an absent `specular`/`shininess`/`metalness`/`reflect`/`transmit`
+ * writes nothing.
+ */
+function encodeFinishField(n: number | undefined): number | undefined {
+  return n !== undefined && Number.isFinite(n) ? round4(n) : undefined;
+}
+
+/**
+ * Encode a transform's optional `finish` (see `types.ts`'s
+ * {@link SurfaceFinish}): each of the five fields written only when present
+ * and finite, mirroring {@link encodeFoldRadius}'s per-field omission on
+ * `Variation`'s own optional lengths rather than `w`'s single shared
+ * predicate — there is no `isFlatTransform`-style test for a finish, so
+ * each field stands on its own. Returns `undefined` when nothing survives,
+ * so a `finish` whose every field is absent or non-finite encodes with NO
+ * `finish` key at all — a document that never meaningfully authored one
+ * stays byte-identical to a document that predates the field, exactly like
+ * `encodeTransform`'s own `variations` omission just below.
+ */
+function encodeFinish(
+  finish: SurfaceFinish | undefined,
+): SurfaceFinish | undefined {
+  if (finish === undefined) return undefined;
+  const e: SurfaceFinish = {};
+  const specular = encodeFinishField(finish.specular);
+  if (specular !== undefined) e.specular = specular;
+  const shininess = encodeFinishField(finish.shininess);
+  if (shininess !== undefined) e.shininess = shininess;
+  const metalness = encodeFinishField(finish.metalness);
+  if (metalness !== undefined) e.metalness = metalness;
+  const reflect = encodeFinishField(finish.reflect);
+  if (reflect !== undefined) e.reflect = reflect;
+  const transmit = encodeFinishField(finish.transmit);
+  if (transmit !== undefined) e.transmit = transmit;
+  return Object.keys(e).length > 0 ? e : undefined;
 }
 
 /**
@@ -1476,6 +1580,11 @@ function encodeFoldRadius(n: number | undefined): number | undefined {
  * "derive from the 3D scale at lift time", see `WExtension.scale`'s doc), so
  * an explicitly authored value that happens to equal the derived mean must
  * still survive the round trip rather than silently reverting to "derived".
+ *
+ * `finish` (see {@link SurfaceFinish}) follows the fold length's PER-FIELD
+ * omission instead — see {@link encodeFinish} — because unlike `w` it has no
+ * single shared "is this the identity" predicate to key on: each of its five
+ * fields is independently classic-or-not, so each is dropped independently.
  */
 function encodeTransform(t: Transform): EncodedTransform {
   const e: EncodedTransform = {
@@ -1544,6 +1653,8 @@ function encodeTransform(t: Transform): EncodedTransform {
     }
     e.w = w;
   }
+  const finish = encodeFinish(t.finish);
+  if (finish !== undefined) e.finish = finish;
   return e;
 }
 

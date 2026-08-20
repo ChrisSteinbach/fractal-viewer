@@ -2,6 +2,7 @@ import { systemPartsAreNonFlat } from "./affine4";
 import { derivedColorIndex } from "./chaos-game";
 import { lerpSystem } from "./morph";
 import type { MorphSystem } from "./morph";
+import { CLASSIC_SURFACE_FINISH } from "./surface-finish";
 import { VARIATION_TYPES } from "./types";
 import type { Transform, VariationType } from "./types";
 import {
@@ -760,5 +761,106 @@ describe("lerpSystem colorIndex/colorSpeed", () => {
     for (const t of [0.1, 0.5, 0.9]) {
       expect(lerpSystem(a, b, t).transforms[1].colorIndex).toBe(0.42);
     }
+  });
+});
+
+describe("lerpSystem finish", () => {
+  it("returns a/b by reference at the endpoints when only one side has a finish", () => {
+    const a = system({
+      transforms: [transform({ finish: { metalness: 0.8 } })],
+    });
+    const b = system({ transforms: [transform({ position: [1, 1, 1] })] });
+    expect(lerpSystem(a, b, 0)).toBe(a);
+    expect(lerpSystem(a, b, 1)).toBe(b);
+  });
+
+  it("keeps finish absent at every t when both sides omit it", () => {
+    const a = system({ transforms: [transform()] });
+    const b = system({ transforms: [transform({ position: [1, 1, 1] })] });
+    for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+      expect(lerpSystem(a, b, t).transforms[0].finish).toBeUndefined();
+    }
+  });
+
+  it("morphs a present metalness against an absent side toward the classic 0 through the midpoint", () => {
+    const a = system({
+      transforms: [transform({ finish: { metalness: 1 } })],
+    });
+    const b = system({ transforms: [transform({ position: [1, 1, 1] })] });
+    const mid = lerpSystem(a, b, 0.5);
+    // b carries no finish at all, which resolves metalness through its
+    // classic value (0) exactly as an absent field on a present finish
+    // would: lerp(1, 0, 0.5) = 0.5.
+    expect(mid.transforms[0].finish!.metalness).toBeCloseTo(0.5, 10);
+  });
+
+  it("lerps two authored finish fields to their midpoint when both sides set them", () => {
+    const a = system({
+      transforms: [transform({ finish: { specular: 0.2, shininess: 16 } })],
+    });
+    const b = system({
+      transforms: [transform({ finish: { specular: 0.6, shininess: 48 } })],
+    });
+    const mid = lerpSystem(a, b, 0.5);
+    expect(mid.transforms[0].finish!.specular).toBeCloseTo(0.4, 10);
+    expect(mid.transforms[0].finish!.shininess).toBeCloseTo(32, 10);
+  });
+
+  it("keeps a field absent on both sides even though the finish object itself is present on one side", () => {
+    const a = system({
+      transforms: [transform({ finish: { metalness: 0.5 } })],
+    });
+    const b = system({ transforms: [transform({ position: [1, 1, 1] })] });
+    const mid = lerpSystem(a, b, 0.5);
+    // b has no `finish` at all, so `reflect` -- never authored on a either
+    // -- stays absent rather than resolving through a synthesized 0 on both
+    // sides.
+    expect(mid.transforms[0].finish!.reflect).toBeUndefined();
+    // Sanity: metalness DOES resolve, since a authored it.
+    expect(mid.transforms[0].finish!.metalness).toBeCloseTo(0.25, 10);
+  });
+
+  it("resolves each finish field independently through its own classic default when mixed present/absent in both directions", () => {
+    const a = system({
+      transforms: [transform({ finish: { specular: 0.9, metalness: 0.4 } })],
+    });
+    const b = system({
+      transforms: [transform({ finish: { shininess: 8 } })],
+    });
+    const mid = lerpSystem(a, b, 0.5);
+    const f = mid.transforms[0].finish!;
+    // a omits shininess (-> classic 32); b omits specular and metalness
+    // (-> their own classic 0.4/0). Each field resolves independently of
+    // what the other fields on the same object do.
+    expect(f.specular).toBeCloseTo(
+      (0.9 + CLASSIC_SURFACE_FINISH.specular) / 2,
+      10,
+    );
+    expect(f.shininess).toBeCloseTo(
+      (CLASSIC_SURFACE_FINISH.shininess + 8) / 2,
+      10,
+    );
+    expect(f.metalness).toBeCloseTo(
+      (0.4 + CLASSIC_SURFACE_FINISH.metalness) / 2,
+      10,
+    );
+  });
+
+  it("morphs two unparameterized systems to a result carrying no finish at all", () => {
+    const a = system({
+      transforms: [
+        transform({ variations: [{ type: "spherical", weight: 1 }] }),
+      ],
+    });
+    const b = system({
+      transforms: [
+        transform({
+          variations: [{ type: "spherical", weight: 1 }],
+          position: [1, 1, 1],
+        }),
+      ],
+    });
+    const mid = lerpSystem(a, b, 0.5);
+    expect(mid.transforms[0].finish).toBeUndefined();
   });
 });

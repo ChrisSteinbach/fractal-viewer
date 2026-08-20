@@ -50,10 +50,22 @@
  *   `minRadius: 0.3` against an absent side morphs 0.3 -> 0.5, not 0.3 -> 0.
  *   Both sides absent stays absent, keeping an unparameterized morph
  *   byte-identical to before those fields existed.
+ * - `Transform.finish` (the optional per-transform surface shading — see
+ *   `types.ts`'s {@link SurfaceFinish}) lerps the identical way, one field
+ *   family over: each of its five fields goes through {@link lerpOptional}
+ *   with ITS OWN classic value (`surface-finish.ts`'s
+ *   `CLASSIC_SURFACE_FINISH`) as the absent side's fallback, so
+ *   `metalness: 1` against a side that omits it (the field OR the whole
+ *   `finish` object) morphs 1 -> 0, never toward a synthesized hole, and a
+ *   field absent on both sides stays absent. Both `finish` objects absent
+ *   stays absent, keeping an unparameterized morph byte-identical to before
+ *   the field existed.
  */
 import { isFlatTransform, meanContraction } from "./affine4";
 import { DEFAULT_COLOR_SPEED, derivedColorIndex } from "./chaos-game";
+import { CLASSIC_SURFACE_FINISH } from "./surface-finish";
 import type {
+  SurfaceFinish,
   SymmetryParams,
   Transform,
   Variation,
@@ -304,6 +316,63 @@ function lerpW(a: Transform, b: Transform, t: number): WExtension | undefined {
   return result;
 }
 
+/**
+ * `Transform.finish` for a pair: each of the five fields lerps
+ * INDEPENDENTLY through {@link lerpOptional}, with that field's OWN
+ * `CLASSIC_SURFACE_FINISH` value (`surface-finish.ts`) as the absent side's
+ * fallback — `metalness: 1` against a side that omits `finish` entirely, or
+ * that carries a `finish` but omits `metalness`, morphs 1 -> 0 either way,
+ * never toward a synthesized hole. Same "build then drop if empty" shape as
+ * {@link lerpWPlanes} rather than {@link lerpW}'s flatness-gated shape (a
+ * finish has no cross-field identity predicate to key an early return on):
+ * `undefined` whenever nothing in the built object survives, which is
+ * exactly when every field was absent on BOTH sides — including when both
+ * `a`/`b` themselves have no `finish` at all.
+ */
+function lerpFinish(
+  a: SurfaceFinish | undefined,
+  b: SurfaceFinish | undefined,
+  t: number,
+): SurfaceFinish | undefined {
+  const result: SurfaceFinish = {};
+  const specular = lerpOptional(
+    a?.specular,
+    b?.specular,
+    CLASSIC_SURFACE_FINISH.specular,
+    t,
+  );
+  if (specular !== undefined) result.specular = specular;
+  const shininess = lerpOptional(
+    a?.shininess,
+    b?.shininess,
+    CLASSIC_SURFACE_FINISH.shininess,
+    t,
+  );
+  if (shininess !== undefined) result.shininess = shininess;
+  const metalness = lerpOptional(
+    a?.metalness,
+    b?.metalness,
+    CLASSIC_SURFACE_FINISH.metalness,
+    t,
+  );
+  if (metalness !== undefined) result.metalness = metalness;
+  const reflect = lerpOptional(
+    a?.reflect,
+    b?.reflect,
+    CLASSIC_SURFACE_FINISH.reflect,
+    t,
+  );
+  if (reflect !== undefined) result.reflect = reflect;
+  const transmit = lerpOptional(
+    a?.transmit,
+    b?.transmit,
+    CLASSIC_SURFACE_FINISH.transmit,
+    t,
+  );
+  if (transmit !== undefined) result.transmit = transmit;
+  return Object.keys(result).length === 0 ? undefined : result;
+}
+
 /** Lerp one paired transform, field by field, assigning `id` from the pair's
  * position rather than either side's own id (mid-morph ids are
  * display-only — see the module header). `colorIndexFallback` is the
@@ -353,12 +422,15 @@ function lerpTransformPair(
   const w = lerpW(a, b, t);
   if (w !== undefined) result.w = w;
 
+  const finish = lerpFinish(a.finish, b.finish, t);
+  if (finish !== undefined) result.finish = finish;
+
   return result;
 }
 
 /** A copy of `t` at resolved weight 0 — the padding a shorter `transforms`
  * side gets for the longer side's surplus maps (see the module header): same
- * geometry (position/rotation/scale/shear/variations/w unchanged), so
+ * geometry (position/rotation/scale/shear/variations/w/finish unchanged), so
  * {@link lerpTransformPair} lerps it against the genuine `t` bit-exactly,
  * and only the weight animates 0 <-> `t`'s own resolved weight. */
 function phantomTransform(t: Transform): Transform {
