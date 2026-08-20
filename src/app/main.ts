@@ -4357,10 +4357,17 @@ function main(): void {
       // device + pipeline instead of the GLSL link.
       let computeTarget: SurfaceComputeTarget | null = null;
       // The session's authored finishes, gated (null = classic document) —
-      // assigned by the same routing arms that build the DE, then applied
-      // once at the common tail below (scene.setSurfaceFinishes) and handed
-      // to the compute gate. ONE derivation per enter, three readers.
-      let sessionFinishes: readonly ResolvedSurfaceFinish[] | null = null;
+      // assigned by the same routing arms that build the DE (every arm,
+      // the 4D chain's included — it shipped one review round without its
+      // assignment, an authored head finish rendering classic there
+      // alone), then applied once at the common tail below
+      // (scene.setSurfaceFinishes) and handed to the compute gate. ONE
+      // derivation per enter, three readers. No initializer: every path
+      // to a read assigns first, and tsc's definite-assignment analysis
+      // is what PROVES a future arm cannot fall through to the tail
+      // classic-by-omission — the exact shape of the bug the initializer
+      // would hide.
+      let sessionFinishes: readonly ResolvedSurfaceFinish[] | null;
       // Recomputed by the routing below; only the plain-affine 3D branch
       // keeps null unconditionally — WebGL is its natural engine, nothing to
       // explain.
@@ -4418,6 +4425,12 @@ function main(): void {
               state.finalTransform ?? null,
               state.symmetry,
             );
+            // The head link's finish, exactly as the 3D escape/bulb arms
+            // take it: the 4D chain's kernels leave firstChoice at 0 too,
+            // so slot 0 is the whole wire one dimension up. This arm
+            // shipped without the assignment for one review round — an
+            // authored head finish rendered classic on a 4D chain alone.
+            sessionFinishes = escapeSlotFinish();
             ui.setSurfaceSessionKind("escape");
             // A forward orbit cannot thread a segment, so there is no
             // slab at any thickness (escape-de-4d.ts's NO SLAB
