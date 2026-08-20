@@ -552,6 +552,77 @@ across dimensions before the tint landed. And NO FORWARD KIND EVER BALLOONS:
 `core:"escape"`/`"bulb"`/`"escape4"` all throw on `balloon: true` (the
 balloon's IFS-only rule), so those three cores carry none of this.
 
+## Surface finish lanes (the `finish` codegen flag)
+
+`finish: true` swaps the shade entry's fixed Blinn-Phong lines — `diffuse`
+through the `linBase * lit + specular` encode — for one call into
+`finishShade`, the function `surface-finish.ts`'s
+`surfaceFinishShadeSource(SURFACE_FINISH_WGSL)` emits verbatim (Blinn-Phong
+with an authored specular/shininess pair, metalness tinting the highlight
+and damping the diffuse, Schlick fresnel driving an image-based reflection
+off the backdrop's two stops, and a thin-shell transmission mix after the
+encode). It is spliced ONCE, immediately ahead of `shadeRays`, for all
+seven cores — the shade entry is shared text, which is why the 4D half of
+the feature costs no second emission (the balloon tint's own precedent one
+section up).
+
+THE WIRE IS THE `shadeMaps` STRIDE AND NOTHING ELSE. Under shade + finish
+the buffer grows 1 -> 3 `vec4f` per slot: `[0]` keeps (rgb, trapIndex)
+unchanged, `[1]` = (specular, shininess, metalness, reflect), `[2]` =
+(transmit, 0, 0, 0) — the lane order is `surfaceFinishLanes`' (the ONE
+definition, shared with the GLSL tracers' `uMapFinishA`/`uMapFinishB`
+uniform pair, so the two shader dialects cannot disagree about which field
+rides which component), and `[2].yzw` is ZERO-FILLED, reserved for the
+Tier-2 pattern fields so Tier 2 lands without a second stride change — the
+3D-freezes-layout lesson applied in advance. `packSurfaceGpuShadeMaps`
+grows the matching optional `finishes` argument (absent -> today's
+1-vec4-stride buffer byte for byte; a length mismatch against `colors`
+throws `RangeError`), and the binding declaration stays a runtime-sized
+`array<vec4f>`, so keeping the packed stride in sync with the compiled flag
+is a host contract, `slabExt`'s shape. Deliberately NO `ShadeParams` append
+(`SURFACE_GPU_SHADE_BYTES` stays 224) and NO frozen params-block change at
+any offset in either dimension: the finish is per-SLOT data, and the
+per-slot buffer already existed.
+
+SHADE-MODE EMISSION ONLY. March/eval kernels never read `shadeMaps`, so
+their source is byte-identical even with the flag on — one options object
+can build a session's march and shade kernels, and the bench's baselines
+stay the kernels they were. Inside shade-mode text every `shadeMaps` read
+site gains its `* 3` through one interpolated stride token — the four
+hit-info trap reads (fold/affine/affine4/fold4) and the base-color read,
+which also hoists its slot clamp into an `fSlot` local the two lane
+fetches share; a site spelled without the token would silently read a
+finish lane as a trap index, and a codegen test regexes the emitted source
+so a missed site fails rather than miscolors.
+
+BYTE IDENTITY IS A COMPILE GATE, NOT A DEFAULT-VALUES CLAIM. `pow(x, 32.0)`
+with a literal exponent -> `pow(x, fa.y)` with a per-slot value is NOT an
+exact identity (the classic params reproduce the fixed formula's VALUES,
+never its bytes), so the parametric path is gated on the flag and an
+unauthored document compiles literally today's program text —
+`foldVariationFn`'s same-function-object philosophy applied to shaders.
+Absent or `false` reproduces today's source byte for byte across every
+mode, core and wrapper, pinned by the same omitted-vs-explicit sweep the
+lens, balloon and plane flags carry.
+
+Three composition rules, each inherited rather than invented:
+
+- FORWARD CORES (escape/bulb/escape4) leave `hi.firstChoice` at its
+  constructed 0, so slot 0 IS their wire — the HEAD transform's finish is
+  the scene's, deterministic and disclosed, exactly as their hit-info
+  already reads the head link's growth before a step has run.
+- BALLOON: a shell hit's `firstChoice` comes from the hit-info descent at
+  the INVERTED point, so the echo inherits its source map's finish for
+  free; `balloonTint`'s albedo-side mix keeps its ordering (the tint
+  applies to `base` BEFORE `finishShade` sees it), so a tinted shell
+  shades under its own map's finish.
+- GROUND PLANE STAYS MATTE: `shadeGroundPlane` is untouched by the flag —
+  its own recorded "lighting minus specular" decision — so the floor
+  carries no finish at any authoring.
+
+No new throws anywhere: `finish` composes with every core and with
+lens/balloon/groundPlane.
+
 ## Modes
 
 `eval` (per-query distances) and `march` (bounded-dispatch ray march,
