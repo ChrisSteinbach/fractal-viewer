@@ -1,12 +1,19 @@
 import {
   CLASSIC_SURFACE_FINISH,
+  MARBLE_VEIN_DARKEN,
+  MARBLE_VEIN_HALF_WIDTH,
   SURFACE_FINISH_GLSL,
   SURFACE_FINISH_SHININESS_FLOOR,
   SURFACE_FINISH_WGSL,
+  SURFACE_PATTERN_MARBLE,
+  SURFACE_PATTERN_NONE,
+  SURFACE_PATTERN_WOOD,
+  WOOD_LATEWOOD_DARKEN,
   finishShadeTs,
   isClassicSurfaceFinish,
   resolveSurfaceFinish,
   surfaceFinishLanes,
+  surfaceFinishPatternAlbedo,
   surfaceFinishShadeSource,
   type SurfaceFinishShadeEnv,
 } from "./surface-finish";
@@ -443,5 +450,168 @@ describe("finishShadeTs parametric behavior", () => {
     // remains: red-dominant like the albedo, not white like the classic.
     expect(got[0]).toBeGreaterThan(got[1] * 1.5);
     expect(got[0]).toBeGreaterThan(got[2] * 1.5);
+  });
+});
+
+describe("surfaceFinishPatternAlbedo", () => {
+  const base: Vec3 = [0.72, 0.5, 0.3];
+  const q = { rings: 0.37, sheets: 0.61, p: [0.1, -0.2, 0.3] as Vec3 };
+
+  it("kind none returns the base exactly", () => {
+    const got = surfaceFinishPatternAlbedo(
+      base,
+      { kind: SURFACE_PATTERN_NONE, scale: 12, strength: 1 },
+      q,
+    );
+    expect(got[0]).toBe(base[0]);
+    expect(got[1]).toBe(base[1]);
+    expect(got[2]).toBe(base[2]);
+  });
+
+  it("an unrecognized kind reads as none", () => {
+    expect(
+      surfaceFinishPatternAlbedo(base, { kind: 7, scale: 12, strength: 1 }, q),
+    ).toEqual(base);
+  });
+
+  it("strength 0 returns the base exactly for both kinds", () => {
+    for (const kind of [SURFACE_PATTERN_WOOD, SURFACE_PATTERN_MARBLE]) {
+      // Pick the trap value that lands ON the darkest part of the period, so
+      // the patterned albedo is as far from base as the kind allows and the
+      // identity is carried by the mix's spelling alone.
+      const dark =
+        kind === SURFACE_PATTERN_WOOD
+          ? { rings: 0.85 / 12, sheets: 0, p: q.p }
+          : { rings: 0, sheets: 0.5 / 12, p: q.p };
+      const got = surfaceFinishPatternAlbedo(
+        base,
+        { kind, scale: 12, strength: 0 },
+        dark,
+      );
+      expect(got[0]).toBe(base[0]);
+      expect(got[1]).toBe(base[1]);
+      expect(got[2]).toBe(base[2]);
+    }
+  });
+
+  it("stays inside [0, 1] for in-range inputs", () => {
+    const bases: Vec3[] = [
+      [0, 0, 0],
+      [1, 1, 1],
+      [0.72, 0.5, 0.3],
+      [0.05, 0.9, 0.4],
+    ];
+    let cases = 0;
+    for (const kind of [SURFACE_PATTERN_WOOD, SURFACE_PATTERN_MARBLE])
+      for (const scale of [0, 1, 7.3, 40])
+        for (const strength of [0, 0.5, 1])
+          for (const b of bases)
+            for (let i = 0; i <= 40; i++) {
+              const u = i / 40;
+              const got = surfaceFinishPatternAlbedo(
+                b,
+                { kind, scale, strength },
+                { rings: u, sheets: 1 - u, p: [0, 0, 0] },
+              );
+              for (const c of got) {
+                expect(c).toBeGreaterThanOrEqual(0);
+                expect(c).toBeLessThanOrEqual(1);
+                expect(Number.isFinite(c)).toBe(true);
+              }
+              cases++;
+            }
+    expect(cases).toBe(2 * 4 * 3 * 4 * 41);
+  });
+
+  it("scale sets the band frequency: wood is periodic in rings with period 1/scale", () => {
+    const at = (rings: number, scale: number): Vec3 =>
+      surfaceFinishPatternAlbedo(
+        base,
+        { kind: SURFACE_PATTERN_WOOD, scale, strength: 1 },
+        { rings, sheets: 0, p: [0, 0, 0] },
+      );
+    // One period on: the same albedo (up to fract's rounding).
+    for (const rings of [0.03, 0.2, 0.41, 0.77]) {
+      const a = at(rings, 8);
+      const b = at(rings + 1 / 8, 8);
+      expect(a[0]).toBeCloseTo(b[0], 9);
+      expect(a[1]).toBeCloseTo(b[1], 9);
+    }
+    // Two scales disagree at a fixed query: 0.41 * 8 sits in the dark ramp
+    // (fract 0.28), 0.41 * 12 sits at the ring's bright start (fract 0.92,
+    // past the fall).
+    const s8 = at(0.41, 8);
+    const s12 = at(0.41, 12);
+    expect(Math.abs(s8[0] - s12[0])).toBeGreaterThan(0.01);
+  });
+
+  it("wood: earlywood is the untouched base, latewood is the base times the darken factor", () => {
+    const early = surfaceFinishPatternAlbedo(
+      base,
+      { kind: SURFACE_PATTERN_WOOD, scale: 10, strength: 1 },
+      { rings: 0.05 / 10, sheets: 0, p: [0, 0, 0] },
+    );
+    expect(early).toEqual(base);
+    const late = surfaceFinishPatternAlbedo(
+      base,
+      { kind: SURFACE_PATTERN_WOOD, scale: 10, strength: 1 },
+      { rings: 0.85 / 10, sheets: 0, p: [0, 0, 0] },
+    );
+    expect(late[0]).toBeCloseTo(base[0] * WOOD_LATEWOOD_DARKEN, 12);
+    expect(late[1]).toBeCloseTo(base[1] * WOOD_LATEWOOD_DARKEN, 12);
+    expect(late[2]).toBeCloseTo(base[2] * WOOD_LATEWOOD_DARKEN, 12);
+  });
+
+  it("wood: the ring edge is sharp and the earlywood ramp is gradual", () => {
+    const factor = (t: number): number =>
+      surfaceFinishPatternAlbedo(
+        [1, 1, 1],
+        { kind: SURFACE_PATTERN_WOOD, scale: 1, strength: 1 },
+        { rings: t, sheets: 0, p: [0, 0, 0] },
+      )[0];
+    // Across the 10% fall the factor recovers the whole latewood drop...
+    expect(factor(0.9) - factor(0.999)).toBeCloseTo(
+      WOOD_LATEWOOD_DARKEN - 1,
+      3,
+    );
+    // ...while the same 10% of period inside the rise moves it far less.
+    expect(Math.abs(factor(0.45) - factor(0.35))).toBeLessThan(0.2);
+  });
+
+  it("marble: a vein darkens the band centre and leaves the rest of the period exactly untouched", () => {
+    const pat = { kind: SURFACE_PATTERN_MARBLE, scale: 5, strength: 1 };
+    const centre = surfaceFinishPatternAlbedo(base, pat, {
+      rings: 0,
+      sheets: 0.5 / 5,
+      p: [0, 0, 0],
+    });
+    expect(centre[0]).toBeCloseTo(base[0] * MARBLE_VEIN_DARKEN, 12);
+    // Past the half-width the smoothstep saturates and the weight is 0
+    // exactly, so the mix returns base bit for bit — the off-vein field of
+    // a marble is the plain albedo, not a faintly tinted one.
+    const off = surfaceFinishPatternAlbedo(base, pat, {
+      rings: 0,
+      sheets: (0.5 + MARBLE_VEIN_HALF_WIDTH * 1.5) / 5,
+      p: [0, 0, 0],
+    });
+    expect(off).toEqual(base);
+    const wrap = surfaceFinishPatternAlbedo(base, pat, {
+      rings: 0,
+      sheets: 0.01 / 5,
+      p: [0, 0, 0],
+    });
+    expect(wrap).toEqual(base);
+  });
+
+  it("strength scales the darkening linearly between base and the full pattern", () => {
+    const pat = (strength: number) => ({
+      kind: SURFACE_PATTERN_WOOD,
+      scale: 10,
+      strength,
+    });
+    const dark = { rings: 0.85 / 10, sheets: 0, p: [0, 0, 0] as Vec3 };
+    const half = surfaceFinishPatternAlbedo(base, pat(0.5), dark);
+    const full = surfaceFinishPatternAlbedo(base, pat(1), dark);
+    expect(half[0]).toBeCloseTo((base[0] + full[0]) / 2, 12);
   });
 });

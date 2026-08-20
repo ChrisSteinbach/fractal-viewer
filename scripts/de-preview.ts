@@ -23,12 +23,21 @@
  * harness is that a speckled sheet has three possible causes and the
  * defaults cannot tell them apart.
  *
+ * `finish-pattern.harness.ts` added the one hook the fixed lighting could
+ * not be bent into: an optional per-hit SHADING callback
+ * (`PreviewScene.shade`), handed the normal, shadow and AO the marcher
+ * already computed, so a sheet about SURFACE FINISH lights every hit with
+ * the shipped composition (`surface-finish.ts`'s `finishShadeTs`) rather
+ * than this file's fixed approximation of one. Absent — every other
+ * consumer — the fixed path runs textually unchanged.
+ *
  * Consumers: `escape-family-preview.harness.ts`, `escape-chain.harness.ts`,
  * `chain-speckle.harness.ts`, `escape-form-sweep.harness.ts`,
  * `bulb-preview.harness.ts`, `hybrid-chain.harness.ts`,
- * `qjulia-beauty.harness.ts` and `qjulia-preview.harness.ts` take the whole
- * thing; `julia-flame.harness.ts` takes `encodePng` alone and assembles its
- * own sheet (its panel stats do not fit `writeContactSheet`'s shape).
+ * `qjulia-beauty.harness.ts`, `qjulia-preview.harness.ts` and
+ * `finish-pattern.harness.ts` take the whole thing; `julia-flame.harness.ts`
+ * takes `encodePng` alone and assembles its own sheet (its panel stats do
+ * not fit `writeContactSheet`'s shape).
  *
  * KEEPING THAT LIST HONEST IS PART OF THE POINT, and it was wrong once:
  * `qjulia-preview.harness.ts` predates this module and had hand-rolled both
@@ -91,6 +100,54 @@ export interface PreviewScene {
   /** Fill {@link PanelStats}'s per-pixel arrays. Off by default so no
    * existing multi-panel sheet pays the allocation. */
   collect?: boolean;
+  /**
+   * Per-hit SHADING HOOK (default absent). When set, the marcher still
+   * does everything it did — march, tetrahedron normal, cone-traced
+   * shadow, step-count AO — and then hands that {@link PreviewHit} to the
+   * hook instead of running its own fixed lighting, so a sheet can light
+   * every hit with a REAL composition (`surface-finish.ts`'s
+   * `finishShadeTs` over a patterned albedo, say) rather than a ninth
+   * approximation of one. The hook returns the pixel's pre-fog color in the
+   * OUTPUT (gamma-encoded) space — the shipped tracers' `finishShade`
+   * convention, which encodes inside the shade function and fogs LAST in
+   * encoded space — and the marcher then fogs it toward the encoded
+   * backdrop and writes the bytes without a second encode. Absent, the
+   * fixed lighting path below runs textually unchanged, so every panel
+   * drawn before the hook existed reproduces byte for byte.
+   */
+  shade?: (hit: PreviewHit) => Vec3;
+}
+
+/** What {@link PreviewScene.shade} is handed for one hit pixel. */
+export interface PreviewHit {
+  /** Pixel coordinates of the hit, so a hook can keep per-pixel maps of
+   * whatever it computes (the marcher visits pixels in scanline order, but
+   * a hook should not have to rely on that). */
+  px: number;
+  py: number;
+  /** The surface point, in the marcher's own frame (a zoomed-by-similarity
+   * estimator's caller un-scales it). */
+  p: Vec3;
+  /** Tetrahedron-technique normal at `p`. */
+  n: Vec3;
+  /** Unit ray direction, eye -> `p`. */
+  rd: Vec3;
+  /** Ray parameter of the hit (distance from the eye). */
+  t: number;
+  /** The marcher's fixed light direction (unit). */
+  light: Vec3;
+  /** Cone-traced soft shadow in `[0, 1]` — `1` when {@link PreviewScene.shadow}
+   * is off. */
+  shadow: number;
+  /** The step-count AO stand-in in `[0.25, 1]` — `1` when
+   * {@link PreviewScene.ao} is off. */
+  ao: number;
+  /** Steps the primary ray spent reaching `p`. */
+  steps: number;
+  /** The pixel's own backdrop in the OUTPUT (gamma-encoded) space — what a
+   * miss at this pixel writes — so a hook can pass it as the `bg` a
+   * transmissive finish blends toward. */
+  bg: Vec3;
 }
 
 /** Per-pixel terminal state in {@link PanelStats.status}. */
@@ -125,6 +182,12 @@ export interface PanelStats {
 /** The step budget every panel predating `chain-speckle.harness.ts` marched
  * with, and still the default. */
 export const DEFAULT_MAX_STEPS = 600;
+/** Backdrop: a quiet vertical gradient, so silhouettes read. Exported (in
+ * the marcher's LINEAR space — `gam` them for output space) so a shading
+ * hook can hand the same two stops to a composition that samples its
+ * environment off the backdrop, as the shipped tracers' does. */
+export const PREVIEW_BG_TOP: Vec3 = [0.1, 0.12, 0.16];
+export const PREVIEW_BG_BOTTOM: Vec3 = [0.04, 0.045, 0.06];
 const MAX_STEPS = DEFAULT_MAX_STEPS;
 /** Step count at which the step-count AO stand-in bottoms out. Must track
  * MAX_STEPS: a DE that needs many small steps is not automatically occluded,
@@ -142,6 +205,9 @@ const cross = (a: Vec3, b: Vec3): Vec3 => [
   a[2] * b[0] - a[0] * b[2],
   a[0] * b[1] - a[1] * b[0],
 ];
+/** The output encode, one channel: linear -> the sRGB-ish 1/2.2 gamma every
+ * panel has always been written with (quantization stays at the write). */
+const gam = (x: number): number => Math.pow(Math.max(0, x), 1 / 2.2);
 
 /** Tetrahedron-technique normal — the four taps every shipped tracer uses. */
 function normalAt(de: DistanceEstimator, p: Vec3, h: number): Vec3 {
@@ -207,9 +273,8 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
   let evals = 0;
   let steps = 0;
   let exhausted = 0;
-  // Backdrop: a quiet vertical gradient, so silhouettes read.
-  const bgTop: Vec3 = [0.1, 0.12, 0.16];
-  const bgBot: Vec3 = [0.04, 0.045, 0.06];
+  const bgTop = PREVIEW_BG_TOP;
+  const bgBot = PREVIEW_BG_BOTTOM;
 
   for (let py = 0; py < size; py++) {
     for (let px = 0; px < size; px++) {
@@ -227,6 +292,8 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
         bgTop[1] + (bgBot[1] - bgTop[1]) * g,
         bgTop[2] + (bgBot[2] - bgTop[2]) * g,
       ];
+      // Set by the shading hook: `col` is already in output space.
+      let encoded = false;
 
       const o = sub(eye, target);
       const b = dot(o, dir);
@@ -290,43 +357,68 @@ export function renderPreview(scene: PreviewScene, size: number): PanelStats {
             : 1;
           // Step count stands in for AO: deep steppers sit in creases.
           const ao = wantAo ? Math.max(0.25, 1 - used / AO_REFERENCE_STEPS) : 1;
-          const sky = 0.5 + 0.5 * n[1];
-          const lit = 0.16 * sky * ao + 0.92 * diff * sh;
-          const half = norm([
-            n[0] + light[0],
-            n[1] + light[1],
-            n[2] + light[2],
-          ]);
-          const spec =
-            Math.pow(
-              Math.max(0, dot(half, norm([-dir[0], -dir[1], -dir[2]]))),
-              28,
-            ) *
-            sh *
-            0.35;
-          col = [
-            lit * (0.98 + 0.3 * n[0]) + spec,
-            lit * (0.8 + 0.12 * n[1]) + spec,
-            lit * (0.6 + 0.42 * n[2]) + spec,
-          ];
           const fog = Math.min(1, Math.max(0, (t - R * 0.5) / (R * 2.4)));
-          col = [
-            col[0] + (bgBot[0] - col[0]) * fog,
-            col[1] + (bgBot[1] - col[1]) * fog,
-            col[2] + (bgBot[2] - col[2]) * fog,
-          ];
+          if (scene.shade) {
+            // Hook path: the caller lights the hit in OUTPUT space (see
+            // PreviewScene.shade); fog mixes toward the encoded backdrop
+            // and the byte write below skips the encode.
+            const shaded = scene.shade({
+              px,
+              py,
+              p,
+              n,
+              rd: dir,
+              t,
+              light,
+              shadow: sh,
+              ao,
+              steps: used,
+              bg: [gam(col[0]), gam(col[1]), gam(col[2])],
+            });
+            const fogTo: Vec3 = [gam(bgBot[0]), gam(bgBot[1]), gam(bgBot[2])];
+            col = [
+              shaded[0] + (fogTo[0] - shaded[0]) * fog,
+              shaded[1] + (fogTo[1] - shaded[1]) * fog,
+              shaded[2] + (fogTo[2] - shaded[2]) * fog,
+            ];
+            encoded = true;
+          } else {
+            const sky = 0.5 + 0.5 * n[1];
+            const lit = 0.16 * sky * ao + 0.92 * diff * sh;
+            const half = norm([
+              n[0] + light[0],
+              n[1] + light[1],
+              n[2] + light[2],
+            ]);
+            const spec =
+              Math.pow(
+                Math.max(0, dot(half, norm([-dir[0], -dir[1], -dir[2]]))),
+                28,
+              ) *
+              sh *
+              0.35;
+            col = [
+              lit * (0.98 + 0.3 * n[0]) + spec,
+              lit * (0.8 + 0.12 * n[1]) + spec,
+              lit * (0.6 + 0.42 * n[2]) + spec,
+            ];
+            col = [
+              col[0] + (bgBot[0] - col[0]) * fog,
+              col[1] + (bgBot[1] - col[1]) * fog,
+              col[2] + (bgBot[2] - col[2]) * fog,
+            ];
+          }
         }
       }
 
       const enc = (x: number) =>
-        Math.max(
-          0,
-          Math.min(255, Math.round(255 * Math.pow(Math.max(0, x), 1 / 2.2))),
-        );
+        Math.max(0, Math.min(255, Math.round(255 * gam(x))));
+      const quant = (x: number) =>
+        Math.max(0, Math.min(255, Math.round(255 * x)));
       const idx = (py * size + px) * 3;
-      rgb[idx] = enc(col[0]);
-      rgb[idx + 1] = enc(col[1]);
-      rgb[idx + 2] = enc(col[2]);
+      rgb[idx] = encoded ? quant(col[0]) : enc(col[0]);
+      rgb[idx + 1] = encoded ? quant(col[1]) : enc(col[1]);
+      rgb[idx + 2] = encoded ? quant(col[2]) : enc(col[2]);
     }
   }
   return {

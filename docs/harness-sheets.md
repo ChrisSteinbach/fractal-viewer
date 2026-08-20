@@ -227,6 +227,48 @@ was measured at ~10% fewer march steps for 1.4-2.4x the work per
 evaluation and NOT shipped. Its app-level half is
 `scripts/slice-cliff.probe.mjs`.
 
+## The surface finish's sheet
+
+### finish-pattern
+
+The Tier-2 patterned-albedo sheet: does WOOD (or MARBLE) read as its
+material on fractal geometry, driven by the tracers' own `rings`/`sheets`
+hit-info traps rather than world-space coordinates, against a world-space
+noise fallback expected to plateau under zoom (`qjulia-beauty`'s own
+precedent — a contact sheet is allowed to refuse a whole feature). Getting
+the sheet to a verdict cost three real bugs beyond the pattern question
+itself: `zoomDE`'s reused anchor point needs a residual far below the
+harness's tightest zoom ball or the similarity trick magnifies that error
+into NaN; a fixed wide `eye`/`frame` cannot serve a sparse system's actual
+visible mass, which needs the frustum tightened AND recentred on the hit
+centroid, not just tightened; and a fixed pattern-scale sweep reads as
+invisible on one system's geometry and speckle on another's, so the sweep
+is calibrated per system from each one's own sampled `rings`/`sheets`
+range.
+
+MEASURED VERDICT: the zoom claim holds and the material claim does not.
+Native wood's contrast survives 1x/8x/64x magnification on menger
+(albedoVar 0.0139/0.0137/0.0151, edge density 78.5%/51.3%/10.4% — speckle
+COARSENING into bands, not vanishing) while a world-space fallback
+collapses over the same ladder (0.0138/0.0135/0.0039, edges to 1.1%) —
+confirmed on a second, structurally different estimator by
+mandelbox-pair's own 1x/8x pair (74.1% -> 68.0% edges). But at ordinary
+viewing scale every system sits at 74-79% edge density: the pattern
+changes on most adjacent hit pixels, which is speckle/corrosion texture,
+not the coherent banding wood needs, because `rings` varies at the
+fractal's own detail frequency — the same property that makes it keep
+resolving under zoom. WOOD is CLOSED won't-do on this evidence. MARBLE
+(keyed off `sheets` instead) survives as a genuinely different, band-like
+result (23-28% edge density at every system and every zoom level) and is
+filed as follow-on wiring work rather than shipped alongside the refusal.
+`foldBoxfoldPair` was dropped from the sheet's own system list after three
+independently different camera-fitting strategies — no fitting, NDC-extent
+bounding, hit-fraction-targeted tightening with centroid recentring — all
+converged on the same ~0.6-0.7% hit coverage: the signature of genuine
+geometric sparseness (a thin, dust-like fold pair) rather than a fixable
+framing bug, and too thin a panel to answer a material question either
+way.
+
 ## The Surprise Me generator's sheet
 
 ### surprise-residual
