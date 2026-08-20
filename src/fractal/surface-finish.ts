@@ -171,8 +171,8 @@ export function surfaceFinishLanes(finish: ResolvedSurfaceFinish): {
  */
 const SUN_DISC_TIGHTNESS = "400.0";
 const SUN_DISC_INTENSITY = "14.0";
-const SUN_GLOW_TIGHTNESS = "24.0";
-const SUN_GLOW_INTENSITY = "0.35";
+const SUN_GLOW_TIGHTNESS = "1.0";
+const SUN_GLOW_INTENSITY = "2.0";
 
 /**
  * One shader dialect's spelling for the emitted `finishShade` function —
