@@ -806,6 +806,14 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     the escape legs gate in LAYERS (a pre-hoc ensemble classifier
     `forwardQueryStable` with exclusions disclosed per row, and a post-hoc
     `forwardShadowFlipVerified` absolution capped at 7 flips).
+    THE `finish` FLAG parametrizes the SHARED shade entry with per-slot
+    authored finishes (`surface-finish.ts`'s lanes): shade-mode emission
+    only, shadeMaps stride 1 -> 3 vec4f, every read site's `* 3` emitted
+    through one token, and NO ShadeParams/params-block change anywhere.
+    Absent/false is byte-identical source (pinned against the pre-change
+    module, 208 emission pairs) — a compile gate, not a defaults claim,
+    because `pow(x, 32.0)` literal -> per-slot value is no exact identity.
+    Forward cores' slot 0 is their whole wire; the floor stays matte.
     Consumed by `src/app/surface-compute.ts` (the fold- and
     escape-shaped surface sessions' preferred tracer) and pinned
     by `src/app/gpu-bench/`'s surface section (`npm run bench:surface`;
@@ -825,6 +833,20 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     build itself from a measured pilot slab, downshifting a 64/48/32 ladder to
     fit a 3s budget (floored at 32, never skipped). Module doc carries the
     validity chain and the 3D-only refusal.
+  - `surface-finish.ts` — the per-transform surface FINISH's meaning:
+    `resolveSurfaceFinish` is the ONE absent-means-classic definition +
+    domain (classic = the tracers' fixed formula, 0.4/32/0/0/0; shininess
+    FLOORS at 0.01 — pow's domain — rather than falling back),
+    `isClassicSurfaceFinish` the shader compile gate's predicate,
+    `surfaceFinishLanes` the one wire-lane order both engines pack, and
+    `surfaceFinishShadeSource` emits the ONE finish BRDF body in both
+    shader dialects (`background-shape.ts`'s discipline applied to
+    lighting) with `finishShadeTs` as its TS mirror — EXACT at the classic
+    params against the fixed formula (324-case pin), which is the
+    value-true half of the byte-identity story; the compile gates are the
+    byte-true half. `Transform.finish` persists/morphs/mutates on the fold
+    lengths' exact treatment (`types.ts`/`persist.ts`/`morph.ts`/
+    `mutate-system.ts`; random-system deliberately never rolls one).
   - `escape-de.ts` — escape-time fold render's CPU oracle, and now a HYBRID
     FORMULA CHAIN: the canonical Mandelbox/Juliabox object and its
     hybrids, for exactly the systems the IFS gate refuses (one or more
@@ -1568,11 +1590,18 @@ Frame` callback, which runs before paint so the disabled look never
     at 32, never skipped; the result's own `resolution`/`halfExtent` are what
     was actually built.
   - `voxel-material.ts` — GLSL3 raymarcher `ShaderMaterial` for voxel volume.
-  - `surface-slots.ts` — the two per-slot shading inputs every surface tracer
-    takes (per-slot "By Transform" colors, orbit-trap palette coordinates),
-    keyed on `baseIndex` into the DOCUMENT's transforms. Honors an authored
-    `Transform.colorIndex`, else the surface's own even spread —
-    pure, shared by `main.ts` and `gpu-bench/` so neither drifts from it.
+  - `surface-slots.ts` — the three per-slot shading inputs every surface tracer
+    takes (per-slot "By Transform" colors, orbit-trap palette coordinates,
+    and RESOLVED finishes), keyed on `baseIndex` into the DOCUMENT's
+    transforms. Honors an authored `Transform.colorIndex`, else the
+    surface's own even spread — pure, shared by `main.ts` and `gpu-bench/`
+    so neither drifts from it. `surfaceSlotsAuthorFinish` is the finish
+    COMPILE GATE's predicate — keyed on the SLOT list, so a weight-0
+    transform's authored finish cannot force the parametric program; a
+    classic-resolving document compiles literally today's programs on both
+    engines, and main.ts derives the gated list ONCE per surface enter
+    (forward sessions pass ONE slot, the head transform's, matching
+    firstChoice 0).
   - `surface-material.ts` — GLSL3 full-screen-quad sphere tracer mirroring
     `surface-de.ts`'s `estimateDistanceRefined` line for line, the same
     oracle discipline as `flame-gpu.ts`; BASE maps packed into fixed-size
@@ -1581,7 +1610,13 @@ Frame` callback, which runs before paint so the disabled look never
     order no longer counts against the cap. Callers gate eligibility on the
     bare active-map count first, so an over-cap count throws here rather
     than degrading silently.
-    VARIANT ARMS, resolved by `surfaceFragmentFor`: `SURFACE_FOLD_LENS`
+    VARIANT ARMS, resolved by `surfaceFragmentFor`: `SURFACE_FINISH`
+    (per-map authored finishes — `surface-finish.ts`'s emitted body over
+    `uMapFinishA/B`, composes with EVERY variant, both dimensions in the
+    same change; the 4D pair rides the `SurfaceMaps4` std140 block as
+    UNCONDITIONAL members so the layout never moves on a define flip, and
+    every recompose site threads the define so no system swap drops an
+    authored finish); `SURFACE_FOLD_LENS`
     (the descent bodies rename to `surfaceDECore`, the wrapper
     owns the public `surfaceDE` overloads mirroring `descendLens`, and the
     cores' own `uFinal*` lens uniforms pack IDENTITY while the wrapper
@@ -1627,8 +1662,11 @@ Frame` callback, which runs before paint so the disabled look never
     `surfaceFragmentFor` actually EMITS:
     `surfaceFragmentResolvedFor(escape, lens, balloon, plane, bulb).length`
     against `SURFACE_GLSL_STRIP_BYTES`, and `surfaceFragmentFor(...).length`
-    against the cliff. The escape and bulb arms have the headroom left to
-    spend; escape+balloon is the pairing to watch.
+    against the cliff. The finish arm costs every 3D pairing +2033 B
+    resolved and flips exactly ONE strip status (escape+balloon,
+    measurement-only, benign); the pairing to watch is now 4D PLAIN +
+    FINISH at 63464 B — 2072 B of headroom, the first crossing that would
+    cost a SHIPPED 4D session its commentary.
     Orbit-trap color blends descent choices TOP-DOWN (depth-0 copy
     dominates, flam3's convention); the per-level decay is the
     Color speed slider (default 0.5 = that original fixed behavior), and
@@ -1732,6 +1770,12 @@ Frame` callback, which runs before paint so the disabled look never
     superlinear in ORDER, which no routing choice touches.
     `?surfacecompute`/`?surfacegl` keep this re-measurable (main.ts;
     `?surfacegl` wins if both are given).
+    `create()`'s opts carry the session's gated finishes (null = classic
+    document = literally today's kernels; non-null compiles `finish: true`
+    and packs the stride-3 shadeMaps — create-time like the colors, and a
+    finish edit reaches a live session through the same re-enter a color
+    edit takes, while the frame spec DISCLOSES the list so the offline
+    force-frame memo key re-traces a finish-only timeline leg).
     `create()` takes a `SurfaceComputeTarget` union
     (`{kind:"ifs"|"escape"|"bulb"|"escape4"|"ifs4"}`) whose `kind` picks
     the kernel core (ifs4 → affine4 or fold4 off `deHasFolds4`, the 3D
