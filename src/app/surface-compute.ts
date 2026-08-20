@@ -123,6 +123,7 @@ import {
   type SurfaceDE,
 } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
+import type { ResolvedSurfaceFinish } from "../fractal/surface-finish";
 import { deHasFolds4, slabExact4 } from "../fractal/surface-de-4d";
 import type { Vec3 } from "../fractal/types";
 import { clamp } from "../fractal/vec";
@@ -534,6 +535,17 @@ export interface SurfaceComputeFrameSpec {
    * for byte. The kernel gates it per-ray on the union argmin, so a
    * FRACTAL-term hit is untouched at any strength. */
   balloonTintStrength?: number;
+  /** The session's per-slot authored finishes — CREATE-TIME state (the
+   * `create()` opts' `finishes`, packed into the shadeMaps buffer once),
+   * disclosed on the spec so the offline force-frame memo key
+   * (`surface-force-frame-key.ts`) changes when a timeline leg's document
+   * authors different finishes under a parked camera. The renderer itself
+   * deliberately never reads it — a finish edit reaches a live session
+   * through the same session re-enter a color edit takes — so this is
+   * `lutVersion`'s role without the counter: the values themselves are
+   * the version. Absent exactly when the session compiled the classic
+   * (finish-less) kernels, matching the packer's absent default. */
+  finishes?: readonly ResolvedSurfaceFinish[];
   /** Ground plane block — REQUIRED whenever the session's target carried
    * `groundPlane: true` (the kernels' 336-byte params struct has no
    * meaningful default; view4/balloon's required-throw discipline),
@@ -1487,7 +1499,22 @@ export class SurfaceComputeRenderer {
     target: SurfaceComputeTarget,
     colors: Vec3[],
     trapIndices: number[],
-    opts: { shadeDeWidth?: number } = {},
+    opts: {
+      shadeDeWidth?: number;
+      /** Per-slot authored finishes (`surface-slots.ts`'s
+       * `surfaceSlotFinishes`), or null/absent for a classic document —
+       * THE COMPILE GATE: non-null builds the shade kernel with the
+       * `finish` codegen flag and packs the stride-3 shadeMaps buffer;
+       * absent compiles literally today's program text (the caller
+       * decides via `surfaceSlotsAuthorFinish`, since the parametric
+       * path is value- not byte-identical at the classic lanes). Must
+       * cover every color slot when present — the packer throws on a
+       * mismatch. Forward targets pass ONE slot, the head transform's
+       * (their kernels' `firstChoice` is 0). CREATE-TIME state, like the
+       * colors beside it: a finish edit reaches a live session through
+       * the same session re-enter a color edit takes. */
+      finishes?: readonly ResolvedSurfaceFinish[] | null;
+    } = {},
   ): Promise<SurfaceComputeRenderer> {
     if (!SurfaceComputeRenderer.supported()) {
       throw new SurfaceComputeUnavailableError(
@@ -1530,6 +1557,7 @@ export class SurfaceComputeRenderer {
         trapIndices,
         opts.shadeDeWidth ?? SURFACE_COMPUTE_SHADE_DE_WIDTH,
         adapterStatus,
+        opts.finishes ?? null,
       );
       return renderer;
     } catch (e) {
@@ -1547,6 +1575,7 @@ export class SurfaceComputeRenderer {
     trapIndices: number[],
     shadeDeWidth: number,
     adapterStatus: { label: string | undefined; software: boolean },
+    finishes: readonly ResolvedSurfaceFinish[] | null,
   ): Promise<SurfaceComputeRenderer> {
     // The error-scope pair (out-of-memory outside, validation inside):
     // WebGPU's createBuffer never throws on allocation failure — it
@@ -1628,6 +1657,11 @@ export class SurfaceComputeRenderer {
           // an ifs4 session compiles BOTH variants and runFrame picks per
           // frame by the live sliceHalfW. Inert for every other core.
           slabExt,
+          // Per-slot authored finishes: the compile gate made real on this
+          // engine (create()'s opts doc). Structurally inert in march mode
+          // — the march never reads shadeMaps — so one flag serves both
+          // kernels of the pair.
+          finish: finishes !== null,
         }),
       });
       const info = await module.getCompilationInfo();
@@ -1805,7 +1839,7 @@ export class SurfaceComputeRenderer {
     });
     device.queue.writeBuffer(mapsBuf, 0, mapsData);
     const shadeMapsData = new Float32Array(
-      packSurfaceGpuShadeMaps(colors, trapIndices),
+      packSurfaceGpuShadeMaps(colors, trapIndices, finishes ?? undefined),
     );
     const shadeMapsBuf = device.createBuffer({
       size: shadeMapsData.byteLength,

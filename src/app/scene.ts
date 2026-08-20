@@ -60,6 +60,7 @@ import {
   setEscapeSystem as packEscapeSystem,
   setSurfaceBalloon as packSurfaceBalloon,
   packSurfaceBalloonTint,
+  setSurfaceFinishes as packSurfaceFinishes,
   setSurfaceGroundPlane as packSurfaceGroundPlane,
   setSurfaceSystem as packSurfaceSystem,
   SURFACE_FULL_AO_TAPS,
@@ -94,6 +95,7 @@ import {
 import {
   createSurfaceMaterial4,
   setSurface4Balloon as packSurface4Balloon,
+  setSurface4Finishes as packSurface4Finishes,
   setSurface4GroundPlane as packSurface4GroundPlane,
   setSurfaceSystem4 as packSurfaceSystem4,
   setSurfaceView4 as packSurfaceView4,
@@ -105,6 +107,7 @@ import { BULB_ITERATIONS } from "../fractal/bulb-de";
 import type { SurfaceDE } from "../fractal/surface-de";
 import { surfaceDescentCostWeight } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
+import type { ResolvedSurfaceFinish } from "../fractal/surface-finish";
 import { balloonClearsGridBox } from "../fractal/surface-grid";
 import type { SurfaceGrid } from "../fractal/surface-grid";
 import { SURFACE_COLOR_SOURCES } from "./state";
@@ -807,6 +810,16 @@ export class FractalScene {
   // like fogDensity above; strength 0 is the untinted identity.
   private fogTint: [number, number, number] = [1, 1, 1];
   private fogTintStrength = 0;
+  // The live surface session's per-slot authored finishes, or null for a
+  // classic document — SESSION state set beside the system itself (main.ts
+  // computes it once per surface enter through surface-slots.ts's gate).
+  // Three readers: setSurfaceFinishes pushes it into both fragment
+  // materials' uniform lanes + SURFACE_FINISH defines, and
+  // surfaceComputeFrameSpecAt discloses it on every compute frame spec so
+  // the offline force-frame memo key re-traces when a timeline leg's
+  // document authors different finishes under a parked camera (the compute
+  // renderer's own copy is create-time, packed into its shadeMaps buffer).
+  private surfaceFinishes: readonly ResolvedSurfaceFinish[] | null = null;
   // Balloon tint: rgb01 color + 0..1 strength blended onto the
   // shell's BASE ALBEDO — the explorer echo (BALLOON_ECHO_VERTEX's
   // uEchoTint/uEchoTintStrength) AND both surface tracers
@@ -3460,6 +3473,27 @@ export class FractalScene {
   }
 
   /**
+   * Install the surface session's per-slot authored finishes — or clear
+   * them with `null`, the classic document's value. ONE call serves every
+   * session shape and both engines: the two fragment materials take their
+   * uniform lanes and `SURFACE_FINISH` defines here (inert until a session
+   * actually draws one of them — on the compute route the materials stay
+   * out of the scene graph, so the define flip costs no compile), and the
+   * stored list rides every compute frame spec for the offline
+   * force-frame memo key. main.ts calls this once per surface enter,
+   * beside {@link setSurfaceBalloon}/{@link setSurfaceGroundPlane}, with
+   * `surface-slots.ts`'s gate already applied — a classic-resolving
+   * document passes `null` and both engines compile literally today's
+   * programs. Forward-orbit sessions pass ONE slot, the head transform's.
+   */
+  setSurfaceFinishes(finishes: readonly ResolvedSurfaceFinish[] | null): void {
+    this.renderNeeded = true;
+    this.surfaceFinishes = finishes;
+    packSurfaceFinishes(this.surfaceMaterial, finishes);
+    packSurface4Finishes(this.surfaceMaterial4, finishes);
+  }
+
+  /**
    * Escape-time sibling of {@link setSurfaceSystem}: upload the
    * fold CHAIN's forward affines + fold params (one slot per
    * link, the document's transform list being the formula sequence) and
@@ -4235,6 +4269,13 @@ export class FractalScene {
         this.balloonTint[2],
       ],
       balloonTintStrength: this.balloonTintStrength,
+      // The session's authored finishes — create-time renderer state
+      // (its shadeMaps buffer), disclosed on the spec purely so the
+      // offline force-frame memo key changes when a timeline leg's
+      // document authors different finishes under a parked camera; see
+      // the field's doc on SurfaceComputeFrameSpec. Absent for a classic
+      // document, matching the packer's absent default.
+      finishes: this.surfaceFinishes ?? undefined,
       // The live backdrop stops — the same pair the GLSL tracers
       // carry as uBgTop/uBgBottom, read fresh at every spec assembly so the
       // compute frames track a background change/crossfade exactly like a

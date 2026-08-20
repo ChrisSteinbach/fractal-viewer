@@ -42,7 +42,17 @@ import {
   deHasFolds4,
   slabExact4,
 } from "../fractal/surface-de-4d";
-import { surfaceSlotColors, surfaceTrapIndices } from "./surface-slots";
+import {
+  surfaceSlotColors,
+  surfaceSlotFinishes,
+  surfaceSlotsAuthorFinish,
+  surfaceTrapIndices,
+} from "./surface-slots";
+import {
+  isClassicSurfaceFinish,
+  resolveSurfaceFinish,
+  type ResolvedSurfaceFinish,
+} from "../fractal/surface-finish";
 import { deriveSurfaceEligibility } from "./surface-eligibility";
 import {
   DEFAULT_GAMMA_THRESHOLD,
@@ -3413,6 +3423,35 @@ function main(): void {
     )[active];
   }
 
+  /** A FORWARD-ORBIT session's one finish slot, gated: the HEAD (first
+   * active) transform's resolved finish — {@link escapeSlotColor}'s exact
+   * pick, because it must match the same `firstChoice = 0` wire — or null
+   * when it resolves classic, so an unauthored chain compiles literally
+   * today's programs on both engines. */
+  function escapeSlotFinish(): ResolvedSurfaceFinish[] | null {
+    const active = Math.max(
+      0,
+      state.transforms.findIndex((t) => (t.weight ?? 1) > 0),
+    );
+    const finish = state.transforms[active]?.finish;
+    return isClassicSurfaceFinish(finish)
+      ? null
+      : [resolveSurfaceFinish(finish)];
+  }
+
+  /** An IFS session's per-slot finishes, gated by
+   * `surface-slots.ts`'s predicate: the resolved list when some SLOTTED
+   * transform authors a non-classic finish, null otherwise — the epic's
+   * byte-identity compile gate, one answer for both engines and both
+   * dimensions (the slot's `baseIndex` is all either derivation reads). */
+  function gatedSlotFinishes(
+    maps: readonly { baseIndex: number }[],
+  ): ResolvedSurfaceFinish[] | null {
+    return surfaceSlotsAuthorFinish(state.transforms, maps)
+      ? surfaceSlotFinishes(state.transforms, maps)
+      : null;
+  }
+
   function teardownSurfaceCompute(): void {
     surfaceComputeRenderer?.destroy();
     surfaceComputeRenderer = null;
@@ -3462,6 +3501,7 @@ function main(): void {
   function beginSurfaceComputeGate(
     token: number,
     target: SurfaceComputeTarget,
+    finishes: readonly ResolvedSurfaceFinish[] | null,
   ): void {
     SurfaceComputeRenderer.create(
       target,
@@ -3475,6 +3515,10 @@ function main(): void {
       isForwardTarget(target)
         ? [0]
         : surfaceTrapIndices(state.transforms, target.de.maps),
+      // The session's authored finishes — the caller's gated derivation
+      // (null for a classic document), which is what keeps the finish
+      // codegen flag and the stride-3 shadeMaps packing in lockstep.
+      { finishes },
     )
       .then((renderer) => {
         if (token !== surfaceCompileToken || state.renderMode !== "surface") {
@@ -4312,6 +4356,11 @@ function main(): void {
       // escape, ifs4 and bulb kinds alike — the gate below then awaits
       // device + pipeline instead of the GLSL link.
       let computeTarget: SurfaceComputeTarget | null = null;
+      // The session's authored finishes, gated (null = classic document) —
+      // assigned by the same routing arms that build the DE, then applied
+      // once at the common tail below (scene.setSurfaceFinishes) and handed
+      // to the compute gate. ONE derivation per enter, three readers.
+      let sessionFinishes: readonly ResolvedSurfaceFinish[] | null = null;
       // Recomputed by the routing below; only the plain-affine 3D branch
       // keeps null unconditionally — WebGL is its natural engine, nothing to
       // explain.
@@ -4431,6 +4480,7 @@ function main(): void {
               state.finalTransform ?? null,
               state.symmetry,
             );
+            sessionFinishes = gatedSlotFinishes(de.maps);
             // An IFS-shaped 4D session — the balloon's live shape one
             // dimension up, so its rows stay reachable.
             ui.setSurfaceSessionKind("ifs");
@@ -4610,6 +4660,7 @@ function main(): void {
               state.symmetry,
             );
             R = de.boundingRadius;
+            sessionFinishes = escapeSlotFinish();
             // The gate admits shapes whose non-escaping set is EMPTY, and
             // this mode then draws a background gradient with a live
             // progress row and nothing anywhere saying why — the same
@@ -4665,6 +4716,7 @@ function main(): void {
               state.finalTransform ?? null,
               state.symmetry,
             );
+            sessionFinishes = escapeSlotFinish();
             // NOT the orbit bailout: the bulb's marching ball is its own
             // query-space bound, the one number every radius here wants.
             R = de.boundingRadius;
@@ -4716,6 +4768,7 @@ function main(): void {
             state.finalTransform ?? null,
             state.symmetry,
           );
+          sessionFinishes = gatedSlotFinishes(de.maps);
           if (surfaceComputeEligible(de)) {
             // The WebGPU compute path: no GLSL system upload — the fold
             // variant must never compile here (its ~25s Mesa link and the
@@ -4819,6 +4872,13 @@ function main(): void {
         // session, so the uniform write is inert until a fallback re-enter
         // compiles one.
         scene.setSurfaceBalloon(state.balloonEcho, state.balloonRadius);
+        // The session's authored finishes — the arms' gated derivation
+        // applied once for both engines: the fragment materials' lanes +
+        // defines (inert until a WebGL session draws them) and the compute
+        // frame specs' disclosure both read the scene's stored value; the
+        // compute renderer's own copy rides create() below. null (a classic
+        // document) keeps every program literally today's text.
+        scene.setSurfaceFinishes(sessionFinishes);
         // The ground plane — lifted to 4D likewise. This stores the live
         // intent; the scene's own gate keeps it off under the balloon variant
         // (the pack layer force-drops the plane define when the balloon
@@ -4843,7 +4903,7 @@ function main(): void {
         // timeline render keyframes depart on) wait for it.
         const token = ++surfaceCompileToken;
         if (computeTarget) {
-          beginSurfaceComputeGate(token, computeTarget);
+          beginSurfaceComputeGate(token, computeTarget, sessionFinishes);
           return {
             post: () => {},
             terminate: () => {

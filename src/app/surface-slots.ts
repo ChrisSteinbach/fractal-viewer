@@ -1,4 +1,9 @@
 import { transformColors } from "../fractal/color";
+import {
+  isClassicSurfaceFinish,
+  resolveSurfaceFinish,
+  type ResolvedSurfaceFinish,
+} from "../fractal/surface-finish";
 import type { Transform, Vec3 } from "../fractal/types";
 
 /**
@@ -89,5 +94,47 @@ export function surfaceTrapIndices(
   const denom = Math.max(1, transforms.length - 1);
   return maps.map(
     (m) => transforms[m.baseIndex].colorIndex ?? m.baseIndex / denom,
+  );
+}
+
+/**
+ * Per-slot surface FINISHES — the third per-slot shading input, beside the
+ * colors and trap coordinates above: each slot takes its base map's
+ * authored {@link Transform.finish} through `surface-finish.ts`'s
+ * `resolveSurfaceFinish`, the one absent-means-classic definition, so an
+ * unauthored transform's slot carries the classic lanes explicitly.
+ * `baseIndex`-keyed exactly like {@link surfaceSlotColors} and
+ * dimension-agnostic for the same reason (a 4D slot differs from a 3D one
+ * in everything but the field this reads). Kaleidoscope copies inherit
+ * their base map's finish for free — slots are base maps in both
+ * dimensions.
+ */
+export function surfaceSlotFinishes(
+  transforms: readonly Transform[],
+  maps: readonly SurfaceSlot[],
+): ResolvedSurfaceFinish[] {
+  return maps.map((m) => resolveSurfaceFinish(transforms[m.baseIndex].finish));
+}
+
+/**
+ * The finish COMPILE GATE's predicate: does any SLOTTED transform author a
+ * finish that resolves away from classic? The parametric shader path is
+ * not a byte-identity with the fixed lighting formula (`pow(x, 32.0)`
+ * literal against a per-slot value), so an unauthored document must
+ * compile literally today's program text — callers pass the slot finishes
+ * only when this is true, and `null` otherwise, on BOTH engines (the WGSL
+ * `finish` codegen flag and the GLSL `SURFACE_FINISH` define).
+ *
+ * Keyed on the SLOT list deliberately: a weight-0 transform contributes no
+ * slot, so an authored finish on a map the descent never inverts must not
+ * force the parametric program — the slot list, not the transform list, is
+ * what the tracers shade from.
+ */
+export function surfaceSlotsAuthorFinish(
+  transforms: readonly Transform[],
+  maps: readonly SurfaceSlot[],
+): boolean {
+  return maps.some(
+    (m) => !isClassicSurfaceFinish(transforms[m.baseIndex].finish),
   );
 }
