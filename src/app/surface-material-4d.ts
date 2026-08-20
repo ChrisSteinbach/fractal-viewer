@@ -13,6 +13,7 @@ import {
   SURFACE_FULL_MARCH_STEPS,
   SURFACE_FULL_SHADOW_STEPS,
   surfaceFragmentFor,
+  surfaceFragmentResolvedFor,
 } from "./surface-material";
 import type {
   SurfaceBalloonSpec,
@@ -1995,6 +1996,15 @@ uniform float uBalloonTintStrength;
  */
 export function surface4FragmentFor(balloon = 0, plane = 0): string {
   return surfaceFragmentFor(0, 0, balloon, plane, 0, SURFACE4_FRAGMENT);
+}
+
+/**
+ * {@link surface4FragmentFor}'s resolved-but-unstripped twin — reuses
+ * {@link surfaceFragmentResolvedFor} rather than restating it, so there is
+ * one definition of what a variant arm means across both dimensions.
+ */
+export function surface4FragmentResolvedFor(balloon = 0, plane = 0): string {
+  return surfaceFragmentResolvedFor(0, 0, balloon, plane, 0, SURFACE4_FRAGMENT);
 }
 
 /** CPU mirror of the `SurfaceMaps4` std140 block — the four Float32Arrays
