@@ -628,7 +628,14 @@ morphs into place instead of snapping (see **Presets** below).
     — and picking one sets all five sliders at once; the scene stores the
     five numbers, never the name, so a bundle can be retuned in a later
     version without repainting anything you saved, and sliders that match
-    no bundle read **Custom** (shown, never pickable). Like the Color pair
+    no bundle read **Custom** (shown, never pickable). **A metal reads as its
+    surroundings**: raising **Metalness** damps the surface's own diffuse
+    colour away and lights it from the backdrop alone, so **Metal** and
+    **Chrome** need a bright backdrop to look like metal — against the
+    near-black default they render very nearly black, which is what a
+    mirror does in an unlit room rather than a fault (the panel's own hint
+    says so). Pair them with the **haze** backdrop, or a bright custom one.
+    Like the Color pair
     above and the fold lengths below, each field stays **unset** until you
     move its own slider, and dragging one back to its classic value clears
     it again — the whole finish with it once the last field goes, which is

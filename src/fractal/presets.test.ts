@@ -727,8 +727,12 @@ describe("PRESET_FINALS", () => {
   // ABSENT MEANS NONE (see the table's doc): main.ts clears the final on
   // every load with no entry, which is what keeps a lens from surviving a
   // preset load into a system whose render mode refuses one.
-  it("carries a lens only for the two compositions authored around one", () => {
+  it("carries a lens only for the compositions authored around one", () => {
     expect(Object.keys(PRESET_FINALS).sort()).toEqual([
+      // The finish showcase is the first non-flame composition built
+      // around a lens: its four affine corners have no surface area to
+      // show a material until the boxfold FINAL folds them.
+      "fourFinishes",
       "juliaPinwheel",
       "juliaSnowflake",
     ]);
