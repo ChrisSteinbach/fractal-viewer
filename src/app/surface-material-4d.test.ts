@@ -6,6 +6,7 @@ import {
   setSurfaceSystem4,
   setSurfaceView4,
   surface4FragmentFor,
+  surface4FragmentResolvedFor,
   SURFACE4_MAX_MAPS,
 } from "./surface-material-4d";
 import {
@@ -368,7 +369,14 @@ describe("the 4D tracer's variant arms", () => {
     // observable half of "a plain 4D session hands the driver the bytes it
     // always did".
     expect(glsl).toContain("\n  precision highp float;");
-    expect(glsl.length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+    // RESOLVED length, not emitted: emitted stays byte-identical to
+    // resolved only below the threshold, so an emitted-length assertion
+    // would keep passing even after this arm crossed it and got stripped
+    // to a third. Today's figure: 62388 B, 3148 B under the threshold —
+    // the tightest margin of any shipped unstripped arm.
+    expect(surface4FragmentResolvedFor().length).toBeLessThan(
+      SURFACE_GLSL_STRIP_BYTES,
+    );
     for (const token of [
       "uBalloonCenter",
       "uBalloonRho",
