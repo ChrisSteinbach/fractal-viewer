@@ -118,8 +118,8 @@ batch's pixels was a calibration, and it had an absorbing state. When a
 batch's wall is dominated by fixed cost rather than by trace work,
 subtracting 80ms leaves the remainder attributed to the pixels; the sizer
 asks for fewer; the next batch is MORE fixed-dominated; and growing back
-needs a batch measuring under `targetMs`, which the fixed cost alone
-forbids. The degenerate-zoom export stall measured it on a near-empty frame
+needs a batch measuring under `targetMs` (`STRIP_TARGET_MS` by default),
+which the fixed cost alone forbids. The degenerate-zoom export stall measured it on a near-empty frame
 at extreme zoom: strips collapsed 990 → 484 → … → 1px and then oscillated at
 1-6px, each batch still costing 500-1700ms REGARDLESS of pixel count, with a
 Save-PNG frozen at 59% for the last 5.5 minutes of a 480s run. Extrapolated
