@@ -1622,10 +1622,13 @@ Frame` callback, which runs before paint so the disabled look never
     stream. The cliff is real — Mesa crashes around 80KB — and a size
     threshold is the honest predicate for a size cliff, where a hand-kept
     list of which variants strip drifts the next time one grows a
-    paragraph. MEASURE BEFORE ADDING THE NEXT PARAGRAPH:
-    `surfaceFragmentFor(escape, lens, balloon, plane, bulb).length` against
-    `SURFACE_GLSL_STRIP_BYTES`. The escape and bulb arms have the headroom
-    left to spend; escape+balloon is the pairing to watch.
+    paragraph. MEASURE BEFORE ADDING THE NEXT PARAGRAPH — the strip
+    threshold is on the RESOLVED source, the ~80KB cliff on what
+    `surfaceFragmentFor` actually EMITS:
+    `surfaceFragmentResolvedFor(escape, lens, balloon, plane, bulb).length`
+    against `SURFACE_GLSL_STRIP_BYTES`, and `surfaceFragmentFor(...).length`
+    against the cliff. The escape and bulb arms have the headroom left to
+    spend; escape+balloon is the pairing to watch.
     Orbit-trap color blends descent choices TOP-DOWN (depth-0 copy
     dominates, flam3's convention); the per-level decay is the
     Color speed slider (default 0.5 = that original fixed behavior), and

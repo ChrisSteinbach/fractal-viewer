@@ -386,10 +386,14 @@ the runtime-mode verdict below discloses that grind as progress instead of
 bounding it —
 the pose still grinds, legibly), but equal 210s windows resolve ~2.3x more
 of the frame at width 1 (the shipped width). The fold-lens variant
-deliberately carries no probe: its ~79KB source sits at the
-resolveVariantArms-measured cliff, though the inlining discovery
-suggests a lens probe might SHRINK its link too — an open follow-up, not
-a shipped claim.
+deliberately carries no probe. The claim that its source "sits at the
+resolveVariantArms-measured cliff" has RETIRED — it resolves at 86223 B
+and reaches the driver STRIPPED at 28958 B, well under the ~80KB EMITTED
+cliff (docs/surface-glsl-tracers.md carries the full re-measurement and
+the reasons the exclusion itself survives on) — a SOURCE-SIZE question
+distinct from the inlining discovery's own: that discovery suggests a
+lens probe might SHRINK its LINK TIME too, an open follow-up and not a
+shipped claim.
 
 The runtime-mode verdict resolved what to do when a monster
 fold pose (mandelboxKifs's entry pose) makes even the bounded WebGL
@@ -511,11 +515,12 @@ passes, 0 exhausted) where the WebGL arm was 43% settled at 30s; the
 81-branch mandelbox field class previews in 1.5-2s at the governor's rung
 and settles in ~35-55s (thermally variable; 89% at t=30s cold) where the
 WebGL arm was 38% at 45s — a 2min+ class, before counting its silent lens
-link. No lens GLSL compiles at all on the compute route, so the ~79KB
-SURFACE_FOLD_LENS source and its link cliff are now fallback-only
-(`?surfacegl`, no-adapter, device-loss re-entry), which also lowers the
-stakes of that variant's un-ported shade probe — a port later closed BY
-DECISION with the rest of the surface-optimization tail.
+link. No lens GLSL compiles at all on the compute route, so the
+`SURFACE_FOLD_LENS` variant (86223 B resolved, 28958 B emitted — see
+docs/surface-glsl-tracers.md) is now fallback-only (`?surfacegl`,
+no-adapter, device-loss re-entry), which also lowers the stakes of that
+variant's un-ported shade probe — a port later closed BY DECISION with
+the rest of the surface-optimization tail.
 
 One session-adjacent discovery folds in: a day of Surface
 renders had silently fallen back to software in the user's desktop
