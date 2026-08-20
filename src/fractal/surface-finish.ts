@@ -140,6 +140,41 @@ export function surfaceFinishLanes(finish: ResolvedSurfaceFinish): {
 }
 
 /**
+ * THE REFLECTED SUN, and why the environment has one at all.
+ *
+ * An image-based reflection can only ever show what the environment
+ * contains, and this app's environment was a two-stop vertical gradient —
+ * which has no structure, so a mirror made of it reads as flat paint
+ * rather than as metal. MEASURED, on a Menger sponge at metalness 1 under
+ * the shipped dark backdrop: the surface renders very nearly black, and
+ * the fault is not the BRDF but the picture it is reflecting.
+ *
+ * So the environment gains the two features that make a reflection legible
+ * — a HORIZON (the backdrop's own two stops split about `dir.y` with the
+ * project's own smoothstep easing) and a SUN (a tight disc plus a broad
+ * glow along the scene's light direction). Both are derived from
+ * quantities every shading site ALREADY has — `bgTop`/`bgBottom` and
+ * `lightDir` — so this costs NO new uniform, no params-block byte, and no
+ * document state, and the reflected sun necessarily agrees with the
+ * specular highlight because they read the same light.
+ *
+ * The intensities are module constants rather than sliders, the balloon
+ * dim's stance: a second brightness knob for a term that already has
+ * `reflect` as its weight would be two controls over one quantity.
+ *
+ * NONE OF THIS TOUCHES THE CLASSIC PATH, by construction rather than by
+ * care: the environment is read only by the reflection term, which is
+ * weighted by `fa.w` (`reflect`), whose classic value is 0 — so
+ * `finishShadeTs`'s exact classic-params pin against the fixed formula
+ * holds unchanged, and an unauthored document still compiles literally
+ * today's program text through the compile gate.
+ */
+const SUN_DISC_TIGHTNESS = "400.0";
+const SUN_DISC_INTENSITY = "14.0";
+const SUN_GLOW_TIGHTNESS = "24.0";
+const SUN_GLOW_INTENSITY = "0.35";
+
+/**
  * One shader dialect's spelling for the emitted `finishShade` function —
  * `background-shape.ts`'s {@link import("./background-shape").BackgroundShapeDialect}
  * pattern applied to lighting. Unlike the backdrop shape's regular
@@ -240,8 +275,14 @@ function surfaceFinishBody(dialect: SurfaceFinishDialect): string {
   ${df} f0 = mix(0.04, 1.0, fa.z);
   ${df} fresnel = f0 + (1.0 - f0) * pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 5.0);
   ${dv3} reflDir = reflect(rd, n);
-  ${dv3} envR = mix(${dialect.bgBottom}, ${dialect.bgTop}, reflDir.y * 0.5 + 0.5);
-  ${dv3} refl = (fa.w * fresnel) * metalTint * pow(envR, ${v3}(2.2));
+  // The reflected ENVIRONMENT — the backdrop's own two stops split at a
+  // horizon, plus a sun disc along the scene's light. See SURFACE_FINISH_SUN.
+  ${df} horizon = clamp(reflDir.y * 0.5 + 0.5, 0.0, 1.0);
+  ${dv3} envBase = mix(${dialect.bgBottom}, ${dialect.bgTop}, horizon * horizon * (3.0 - 2.0 * horizon));
+  ${df} sunDot = max(dot(reflDir, ${dialect.lightDir}), 0.0);
+  ${df} sunAmt = pow(sunDot, ${SUN_DISC_TIGHTNESS}) * ${SUN_DISC_INTENSITY} + pow(sunDot, ${SUN_GLOW_TIGHTNESS}) * ${SUN_GLOW_INTENSITY};
+  ${dv3} envR = pow(envBase, ${v3}(2.2)) + ${v3}(sunAmt);
+  ${dv3} refl = (fa.w * fresnel) * metalTint * envR;
   ${dv3} col = pow(linBase * lit * (1.0 - fa.z) + metalTint * (spec * shadow) + refl, ${v3}(1.0 / 2.2));
   return mix(col, bg, fb.x * (1.0 - fresnel));
 `;
@@ -355,12 +396,21 @@ export function finishShadeTs(
     rd[1] - 2 * dNI * n[1],
     rd[2] - 2 * dNI * n[2],
   ];
-  const reflY = reflDir[1] * 0.5 + 0.5;
+  // The reflected environment, mirroring the shared body's own lines: the
+  // backdrop's two stops split at a horizon, plus the sun disc and glow
+  // along the light (see SUN_DISC_TIGHTNESS's doc for why it exists).
+  const horizon = clamp(reflDir[1] * 0.5 + 0.5, 0, 1);
+  const horizonT = horizon * horizon * (3 - 2 * horizon);
+  const sunDot = Math.max(dot3(reflDir, env.lightDir), 0);
+  const sunAmt =
+    Math.pow(sunDot, Number(SUN_DISC_TIGHTNESS)) * Number(SUN_DISC_INTENSITY) +
+    Math.pow(sunDot, Number(SUN_GLOW_TIGHTNESS)) * Number(SUN_GLOW_INTENSITY);
   const reflW = finish.reflect * fresnel;
   const out: Vec3 = [0, 0, 0];
   for (let i = 0 as 0 | 1 | 2; i < 3; i++) {
-    const envR = mix(env.bgBottom[i], env.bgTop[i], reflY);
-    const refl = reflW * metalTint[i] * Math.pow(envR, 2.2);
+    const envBase = mix(env.bgBottom[i], env.bgTop[i], horizonT);
+    const envR = Math.pow(envBase, 2.2) + sunAmt;
+    const refl = reflW * metalTint[i] * envR;
     const col = Math.pow(
       linBase[i] * lit[i] * (1 - finish.metalness) +
         metalTint[i] * (spec * shadow) +
