@@ -312,9 +312,12 @@ THE STRIP IS A SIZE RULE, not the plane arm's private habit:
 for a size cliff; a hand-kept list of which variants strip is what drifts
 the next time one grows a paragraph.
 
-**Measure before adding the next paragraph** to any arm:
+**Measure before adding the next paragraph** to any arm — two questions
+against two thresholds, not one:
+`surfaceFragmentResolvedFor(escape, lens, balloon, plane, bulb).length`
+against `SURFACE_GLSL_STRIP_BYTES` decides whether the strip engages, and
 `surfaceFragmentFor(escape, lens, balloon, plane, bulb).length` against
-`SURFACE_GLSL_STRIP_BYTES`.
+the ~80KB Mesa cliff decides whether the driver can walk it.
 
 NOTE: the 4D fragment tracer needed no fold mirror at all — it carries no
 fold GLSL (the 4D fold-branch port made fold-shaped 4D sessions
@@ -418,6 +421,117 @@ measured earlier in this section stripped from ~83-92KB raw down to
 keeps every variant far below it. And it is a MEASUREMENT pairing only:
 balloon is IFS-only, so no shipped session ever compiles this source.
 
+A FULL RE-MEASUREMENT of every variant closes out three stale figures in
+`surface-material.ts`'s own comments: the fold-lens variant was called
+"~79KB" against the ~80KB Mesa cliff, the escape arm "escape ~40KB", the
+bulb arm "bulb ~34KB". Per finding (a) below, all three were RESOLVED
+sizes read as though the cliff — an EMITTED threshold — applied to them
+directly.
+
+RESOLVED is the source after the JS-side variant arms resolve, before the
+strip decision — the quantity `SURFACE_GLSL_STRIP_BYTES` (65536 B) is
+compared against. EMITTED is what `surfaceFragmentFor` returns, i.e. what
+the driver walks — the quantity the Mesa cliff applies to. Measured today
+at every variant, both numbers. Three pairings appear here for the first
+time — 3D escape+plane, 3D bulb+balloon, 3D bulb+plane — and a fourth,
+3D lens+balloon, has had its emitted size recorded before (as
+`balloon+lens`, in the balloon-tint paragraph) but never its resolved
+one:
+
+| variant               | resolved B | emitted B | stripped |
+| --------------------- | ---------- | --------- | -------- |
+| 3D base (affine/fold) | 83022      | 29194     | yes      |
+| 3D lens               | 86223      | 28958     | yes      |
+| 3D escape             | 55845      | 55845     | no       |
+| 3D bulb               | 39357      | 39357     | no       |
+| 3D balloon            | 91670      | 30881     | yes      |
+| 3D plane              | 89255      | 31531     | yes      |
+| 3D lens+balloon       | 95281      | 30697     | yes      |
+| 3D lens+plane         | 92456      | 31295     | yes      |
+| 3D escape+balloon     | 64681      | 64681     | no       |
+| 3D escape+plane       | 62078      | 12803     | yes      |
+| 3D bulb+balloon       | 48572      | 48572     | no       |
+| 3D bulb+plane         | 45590      | 10918     | yes      |
+| 4D base               | 62388      | 62388     | no       |
+| 4D balloon            | 68865      | 17274     | yes      |
+| 4D plane              | 70150      | 18159     | yes      |
+
+This table supersedes the three module comments above and the 64667 B /
+869 B escape+balloon figure two paragraphs up: a comment correction inside
+the escape and bulb arms' own GLSL template text cost each arm +14 B,
+moving escape+balloon's watched margin to 64681 B, 855 B under the
+threshold.
+
+Every EMITTED size for a STRIPPED variant came back byte-identical across
+that edit — 3D base 29194, lens 28958, balloon 30881, plane 31531,
+lens+balloon 30697, lens+plane 31295, escape+plane 12803, bulb+plane
+10918 — while only the two unstripped arms moved. The strip deletes
+comments, so a comment-only edit cannot reach the driver at all;
+`surface-material-4d.ts`'s own module doc states this as ONLY THE RAW SIDE
+MOVES ON A COMMENT-ONLY EDIT, and this re-measurement is a second,
+independent instance of it.
+
+NO REAL-DRIVER RE-VERIFICATION IS OWED for that edit, and the reason is
+checked rather than assumed: dumping every one of the fifteen variants
+with comments and indentation removed, before and against after, gives
+fifteen byte-identical files. The two unstripped arms hand the compiler
+14 more bytes each, all of them comment; the token stream Mesa actually
+parses is unchanged everywhere. Three findings follow.
+
+**(a)** The stale figures were RESOLVED sizes read as if the cliff applied
+to them. The cliff applies to the EMITTED source — what the driver walks.
+The fold-lens variant resolves at 86223 B and reaches the driver at
+28958 B; a reader checking "~79KB against an ~80KB cliff" was comparing
+the wrong number to the wrong threshold, and would have concluded there
+was about 1KB of room where the true emitted headroom is over 50KB. Every
+figure in this family has to say which of the two sizes it is.
+
+**(b)** The cliff is structurally out of reach, and the strip rule is why.
+A resolved source under 65536 B is emitted whole; one over it is stripped
+to roughly a THIRD (measured: 83022 B -> 29194 B, 86223 -> 28958, 95281 ->
+30697). Two rows in the table above look like counterexamples and are
+not: 3D escape+plane (62078 -> 12803) and 3D bulb+plane (45590 -> 10918)
+strip despite resolving well under the threshold, because
+`surfaceFragmentFor` strips unconditionally whenever `plane !== 0` — the
+plane arm's own rule, sitting beside the size rule in the same return
+expression, not a consequence of it. For the size-triggered rows, the
+emitted size is capped near the strip threshold, and for an emitted
+source to reach the 82.2KB that crashed Mesa the resolved source would
+have to pass ~190KB — where the entire unresolved template, every arm's
+text live at once, is 139164 B. The largest emitted source of any variant
+today is 3D escape+balloon at 64681 B, unstripped precisely because it
+sits under the threshold. "Roughly half", which this doc and the module
+have both said, understates the strip: it is closer to a third.
+
+**(c)** The gate that should have caught the drift could not fail.
+`surface-material.test.ts` carried a test named "keeps every variant's
+source under the Mesa compiler cliff this file has crashed into twice",
+asserting `surfaceFragmentFor(...).length < 64 * 1024` — an assertion on
+the EMITTED length against the STRIP threshold, which the strip rule
+guarantees by construction. Worse, at the one moment it mattered it
+INVERTED: an arm growing past the threshold turns stripping ON, dropping
+the emitted length to a third, so the assertion passed MORE comfortably
+exactly when the property it was meant to guard — escape and bulb keeping
+their commentary — broke. It is renamed "the strip rule caps what the
+driver walks below the threshold, which is what puts the Mesa cliff out
+of reach" and kept for what it actually proves, now across all twelve
+3D pairings rather than seven; a
+redundant copy of the same assertion inside the `SURFACE_ESCAPE
+cross-family links` suite is gone rather than left beside it. A second,
+new test, "keeps the two shipped forward arms under the strip threshold,
+so their commentary survives into a driver log", gates the RESOLVED
+length of escape and bulb alone, through a new export,
+`surfaceFragmentResolvedFor` (a 4D twin, `surface4FragmentResolvedFor`,
+reuses it rather than restating it). Until now, reaching the resolved
+length at all required a throwaway copy of the module with `export`
+added to its privates — a measurement rule nobody could actually run,
+which is how three figures drifted 4.4-14.5KB without a failing test. 3D
+escape+balloon, at 64681 B and 855 B under the threshold, is deliberately
+NOT gated this way: crossing is benign (stripped it comes down to
+~15KB, nowhere near the cliff), and it is a measurement-only pairing —
+balloon is IFS-only, escape is forward, so no shipped session compiles
+it. A gate 855 B from firing would fail CI for a non-hazard.
+
 ## The probe-width verdict
 
 The three shading taps (normal/shadow/AO) ride the value form, which fold
@@ -436,8 +550,14 @@ resolved ~2.3x more mandelboxKifs frame per equal window (crease pixels stay
 march-bound; compute owns fold AND fold-lens sessions where an adapter
 exists).
 
-The fold-lens variant deliberately carries no probe — its ~79KB source sits
-at the `resolveVariantArms` cliff. The port was left UNDONE when the
+The fold-lens variant deliberately carries no probe: its taps keep
+full-width cores through the public wrapper, and the compute probe-width
+verdict never covered lenses (the twin renders no foldFinal systems). A
+size-cliff reason this exclusion once carried has RETIRED — the source
+resolves at 86223 B and reaches the driver STRIPPED at 28958 B, nowhere
+near the ~80KB EMITTED cliff (full re-measurement above, under "Measured
+sizes") — so reinstating it needs a fresh measurement of the emitted
+source, not the resolved one. The port itself was left UNDONE when the
 surface-optimization seam closed by decision: two independent attempts to
 trade cheap arithmetic for skipped descent work were both refuted on the
 real GPU, and the stakes were lower by then anyway, since
