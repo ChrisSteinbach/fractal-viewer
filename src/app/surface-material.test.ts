@@ -621,6 +621,45 @@ describe("buildSurfaceFragment shade probe", () => {
   });
 });
 
+describe("buildSurfaceFragment reflection proof isolation", () => {
+  it("keeps the shipped off path free of every disposable proof symbol", () => {
+    const source = buildSurfaceFragment(SURFACE_SHADE_DE_WIDTH);
+    expect(source).not.toContain("proofRoomRadiance");
+    expect(source).not.toContain("proofNormal");
+    expect(source).not.toContain("proofFinishShade");
+    expect(source).not.toContain("secondaryHit");
+  });
+
+  it("makes room-only and one-bounce modes structurally distinguishable", () => {
+    const room = buildSurfaceFragment(SURFACE_SHADE_DE_WIDTH, "room");
+    const trace = buildSurfaceFragment(SURFACE_SHADE_DE_WIDTH, "trace");
+    expect(room).toContain("proofRoomRadiance");
+    expect(room).toContain("proofFinishShade");
+    expect(room).not.toContain("secondaryHit");
+    expect(trace).toContain("bool secondaryHit = false;");
+    expect(trace).toContain("for (int i = 0; i < 96; i++)");
+  });
+
+  it("labels neutral Chrome in shader source without changing the off path", () => {
+    const normalOff = buildSurfaceFragment(SURFACE_SHADE_DE_WIDTH);
+    const neutralOff = buildSurfaceFragment(
+      SURFACE_SHADE_DE_WIDTH,
+      "off",
+      0.012,
+      true,
+    );
+    const neutralTrace = buildSurfaceFragment(
+      SURFACE_SHADE_DE_WIDTH,
+      "trace",
+      0.025,
+      true,
+    );
+    expect(neutralOff).toBe(normalOff);
+    expect(neutralTrace).toContain("base = vec3(0.72);");
+    expect(neutralTrace).toContain("uBoundingRadius * 0.025000");
+  });
+});
+
 describe("SURFACE_BALLOON variant", () => {
   /** The spec scene.ts builds — fractal/balloon-de.ts's buildBalloon
    * convention (margined rho, world-unit R) plus the oracle's far cap. */
