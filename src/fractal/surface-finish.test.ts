@@ -357,6 +357,12 @@ describe("finishShadeTs parametric behavior", () => {
     })();
     const dark: Vec3 = [0, 0, 0];
     const chrome = { ...CLASSIC_SURFACE_FINISH, specular: 0, reflect: 1 };
+    // The light points along +z here, AWAY from both reflected directions
+    // below: the environment now carries a sun along the light, and the
+    // first of these poses reflects straight up — which is where this
+    // test used to put the light, so the sun swamped the very stop it
+    // was checking. Aiming the light out of the way isolates the stops.
+    const sideLit = { ...env, envStrength: 0, lightDir: [0, 0, 1] as Vec3 };
     const upReflecting = finishShadeTs(
       dark,
       tilted,
@@ -365,7 +371,7 @@ describe("finishShadeTs parametric behavior", () => {
       1,
       bg,
       chrome,
-      { ...env, envStrength: 0 },
+      sideLit,
     );
     const sideReflecting = finishShadeTs(
       dark,
@@ -375,12 +381,51 @@ describe("finishShadeTs parametric behavior", () => {
       1,
       bg,
       chrome,
-      { ...env, envStrength: 0 },
+      sideLit,
     );
     // Up-reflection reads the pure red top stop: red-dominant, and redder
     // than the midpoint the sideways reflection reads.
     expect(upReflecting[0]).toBeGreaterThan(upReflecting[2] + 0.05);
     expect(upReflecting[0]).toBeGreaterThan(sideReflecting[0] + 0.02);
+  });
+
+  it("the reflected environment carries a SUN along the light — the structure that lets a metal read as metal", () => {
+    // Two mirror surfaces differing ONLY in whether their reflected
+    // direction points at the light. Against a near-black backdrop the
+    // stops alone cannot tell them apart; the sun disc must.
+    const dark: Vec3 = [0, 0, 0];
+    const nearBlack: SurfaceFinishShadeEnv = {
+      lightDir: [0, 1, 0],
+      ambient: 0.25,
+      envStrength: 0,
+      bgTop: [0.05, 0.05, 0.09],
+      bgBottom: [0.12, 0.13, 0.22],
+    };
+    const chrome = { ...CLASSIC_SURFACE_FINISH, specular: 0, reflect: 1 };
+    // Facing up, viewed straight down: reflect(rd, n) is +y — the sun.
+    const atSun = finishShadeTs(
+      dark,
+      [0, 1, 0],
+      [0, -1, 0],
+      1,
+      1,
+      [0, 0, 0],
+      chrome,
+      nearBlack,
+    );
+    // A tilted mirror whose reflection misses the sun entirely.
+    const away = finishShadeTs(
+      dark,
+      [0.7071, 0.7071, 0],
+      [0, -1, 0],
+      1,
+      1,
+      [0, 0, 0],
+      chrome,
+      nearBlack,
+    );
+    expect(atSun[0]).toBeGreaterThan(0.5);
+    expect(atSun[0]).toBeGreaterThan(away[0] + 0.3);
   });
 
   it("transmit 1 head-on approaches the pixel's own backdrop", () => {
