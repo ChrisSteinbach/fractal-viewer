@@ -624,7 +624,7 @@ morphs into place instead of snapping (see **Presets** below).
     Surface render used before the group existed, so a scene that never
     touches it renders byte-for-byte as it always did. Above the sliders a
     **bundle** menu offers named starting points — **Classic**, **Matte**,
-    **Satin**, **Plastic**, **Metal**, **Chrome**, **Gemstone**, **Glass**
+    **Satin**, **Plastic**, **Metal**, **Chrome**, **Translucent**
     — and picking one sets all five sliders at once; the scene stores the
     five numbers, never the name, so a bundle can be retuned in a later
     version without repainting anything you saved, and sliders that match

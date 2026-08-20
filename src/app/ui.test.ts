@@ -2482,24 +2482,25 @@ describe("Ui finish editor", () => {
   it("reads the bundle a document's numbers are, on build and after a drag, and Custom otherwise", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
-    // Glass stored minimally (transmit, reflect, specular and shininess
-    // differ from classic; metalness does not) still reads as Glass.
+    // Translucent stored minimally (transmit, reflect, specular and
+    // shininess differ from classic; metalness does not) still reads as
+    // Translucent.
     ui.renderTransformEditor(
       {
         ...plain,
         finish: {
-          specular: 0.9,
-          shininess: 96,
-          reflect: 0.35,
-          transmit: 0.75,
+          specular: 1,
+          shininess: 128,
+          reflect: 0.5,
+          transmit: 0.35,
         },
       },
       0,
       1,
     );
-    expect(bundleSelect().value).toBe("glass");
+    expect(bundleSelect().value).toBe("translucent");
 
-    drag("Finish reflect", "0.5");
+    drag("Finish reflect", "0.35");
     expect(bundleSelect().value).toBe("custom");
     // The synthetic entry can be shown but never chosen.
     const custom = bundleSelect().querySelector<HTMLOptionElement>(
@@ -2507,8 +2508,8 @@ describe("Ui finish editor", () => {
     );
     expect(custom?.disabled).toBe(true);
 
-    drag("Finish reflect", "0.35");
-    expect(bundleSelect().value).toBe("glass");
+    drag("Finish reflect", "0.5");
+    expect(bundleSelect().value).toBe("translucent");
   });
 
   it("keeps every bundle and every classic value on its slider's step, so a pick is exactly reversible", () => {
@@ -2527,8 +2528,7 @@ describe("Ui finish editor", () => {
       "plastic",
       "metal",
       "chrome",
-      "gemstone",
-      "glass",
+      "translucent",
     ]);
     for (const id of ids) {
       pickBundle(id);
