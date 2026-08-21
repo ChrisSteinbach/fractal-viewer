@@ -101,6 +101,12 @@ function de3(
     slowestSigma: 0.5,
     beamWidth: 4,
     stepScale: 1,
+    patternCalibration: {
+      ringsLow: 0,
+      ringsInvSpan: 0,
+      sheetsLow: 0,
+      sheetsInvSpan: 0,
+    },
     final: null,
     foldFinal: null,
   };
@@ -1125,6 +1131,19 @@ describe("SURFACE_ESCAPE variant packing, one uniform slot per chain link", () =
     expect(u.uMapCount.value).toBe(3);
   });
 
+  it("resets the shared pattern-frame bound center when switching from an off-center IFS", () => {
+    const material = createSurfaceMaterial();
+    const centered = de3([map3()]);
+    setSurfaceSystem(material, { ...centered, boundCenter: [0.5, -1.25, 2] }, [
+      black,
+    ]);
+    const center = material.uniforms.uBoundCenter.value as THREE.Vector3;
+    expect(center.toArray()).toEqual([0.5, -1.25, 2]);
+
+    setEscapeSystem(material, buildEscapeDE(chain()), black);
+    expect(center.toArray()).toEqual([0, 0, 0]);
+  });
+
   it("packs the kaleidoscope's own order and plane, and leaves uSymStep inert — never the descent's precomputed sector step", () => {
     const material = createSurfaceMaterial();
     const de = buildEscapeDE(chain(), null, { order: 5, plane: "xy" });
@@ -1486,6 +1505,18 @@ describe("SURFACE_BULB variant", () => {
     expect(u.uStepScale.value).toBe(BULB_STEP_SCALE);
     expect(u.uMapCount.value).toBe(1);
     expect(u.uSymOrder.value).toBe(1);
+  });
+
+  it("resets the shared pattern-frame bound center when switching from an off-center IFS", () => {
+    const material = createSurfaceMaterial();
+    const centered = de3([map3()]);
+    setSurfaceSystem(material, { ...centered, boundCenter: [0.5, -1.25, 2] }, [
+      black,
+    ]);
+    const center = material.uniforms.uBoundCenter.value as THREE.Vector3;
+
+    setBulbSystem(material, buildBulbDE([scaledBulb()]), black);
+    expect(center.toArray()).toEqual([0, 0, 0]);
   });
 
   it("hands the descent bodies back when a later system installs over it", () => {

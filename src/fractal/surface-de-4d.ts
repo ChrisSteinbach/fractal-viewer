@@ -3,6 +3,11 @@ import { effectiveSymmetryOrder } from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
 import { mulberry32 } from "./rng";
 import {
+  SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
+  calibrateSurfaceNativeCarriers,
+} from "./surface-pattern";
+import type { SurfaceNativeCalibration } from "./surface-pattern";
+import {
   CONFORMAL_RATIO,
   CONTRACTION_LIMIT,
   DEPTH_RESOLUTION,
@@ -953,6 +958,10 @@ export interface SurfaceDE4 {
   radiusBand: { center: Vec4; minD: number; maxD: number };
   /** `ESCAPE_FACTOR * boundingRadius` — descent past this cannot help. */
   escapeRadius: number;
+  /** Camera-independent p03/p97 calibration of the native rings/sheets
+   * carriers. Derived from 256 evenly-strided points of the RAW seeded probe;
+   * final lenses and the live rotor/slice never enter this compact wire. */
+  patternCalibration: SurfaceNativeCalibration;
   /** Descent depth cap, sized so the SLOWEST contraction chain resolves
    * features below `DEPTH_RESOLUTION`. */
   maxDepth: number;
@@ -997,6 +1006,19 @@ export interface SurfaceDE4 {
     foldRadii: SurfaceFoldRadii;
   } | null;
 }
+
+/** The two fractal-native carrier values produced by the 4D surface shade
+ * descent. They are normalized against the RAW attractor's origin-centred
+ * bounding radius, exactly like the GLSL/WGSL `rings` and `sheets` extras. */
+export interface SurfaceNativeCarriers4 {
+  rings: number;
+  sheets: number;
+}
+
+type SurfaceNativeCarrierFrame4 = Pick<
+  SurfaceDE4,
+  "maps" | "symmetry" | "boundingRadius" | "escapeRadius" | "maxDepth"
+>;
 
 /**
  * Precompute the {@link SurfaceDE4} for a system: every active map lifted
@@ -1184,6 +1206,38 @@ export function buildSurfaceDE4(
     Math.max(8, Math.ceil(Math.log(DEPTH_RESOLUTION) / Math.log(slowest))),
   );
 
+  // Native pattern calibration samples the RAW attractor in its production
+  // carrier frame: origin-centred radius, no view rotor/slice, and no final
+  // lens. The existing 8192-point seeded probe is already paid for by the DE
+  // build; take exactly 256 evenly-strided entries (8192 / 256 = 32) rather
+  // than launching another orbit or letting camera coverage bias the span.
+  const patternSamples: SurfaceNativeCarriers4[] = [];
+  const patternStride = PROBE_POINTS / SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT;
+  if (!Number.isInteger(patternStride) || probe.count !== PROBE_POINTS) {
+    throw new Error(
+      "surface-de-4d: native calibration requires the complete evenly-divisible raw probe",
+    );
+  }
+  const carrierFrame: SurfaceNativeCarrierFrame4 = {
+    maps,
+    symmetry: { order, stepBack },
+    boundingRadius,
+    escapeRadius: ESCAPE_FACTOR * boundingRadius,
+    maxDepth,
+  };
+  for (let i = 0; i < SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT; i++) {
+    const at = i * patternStride;
+    patternSamples.push(
+      surfaceNativeCarriers4Raw(carrierFrame, [
+        probe.positions[at * 3],
+        probe.positions[at * 3 + 1],
+        probe.positions[at * 3 + 2],
+        probe.w[at],
+      ]),
+    );
+  }
+  const patternCalibration = calibrateSurfaceNativeCarriers(patternSamples);
+
   // Final-transform lens, mirroring 3D's buildSurfaceDE lines 485-500: lift,
   // invert the composed 4x4, and derive invT with the same row-major
   // pattern as the per-map inversion above. The probe above never applies
@@ -1290,12 +1344,414 @@ export function buildSurfaceDE4(
       maxD,
     },
     escapeRadius: ESCAPE_FACTOR * boundingRadius,
+    patternCalibration,
     maxDepth,
     beamWidth: 4,
     stepScale: analysis.stepScale,
     final,
     foldFinal,
   };
+}
+
+/** Clamp a shader carrier to its documented `[0, 1]` range. */
+function clampCarrier4(x: number): number {
+  return x < 0 ? 0 : x > 1 ? 1 : x;
+}
+
+/**
+ * The affine4 shade body's carrier-only trajectory. This is deliberately not
+ * the distance oracle: the shaders' hit-info overload routes a width-4 beam
+ * by candidate key, records `rings`/`sheets` from the level winner, and uses
+ * only radius gates to decide which candidates continue. Certificates and
+ * the final lens never participate. Keeping that smaller contract here is
+ * what makes calibration match the values the eventual pattern shader reads.
+ */
+function surfaceAffineNativeCarriers4(
+  de: SurfaceNativeCarrierFrame4,
+  point: Vec4,
+): SurfaceNativeCarriers4 {
+  const R = de.boundingRadius;
+  const { order, stepBack } = de.symmetry;
+  const chainX = [point[0], 0, 0, 0];
+  const chainY = [point[1], 0, 0, 0];
+  const chainZ = [point[2], 0, 0, 0];
+  const chainW = [point[3], 0, 0, 0];
+  const chainScale = [1, 1, 1, 1];
+  let chainCount = 1;
+  let rings = 1;
+  let sheets = 1;
+
+  const key = new Array<number>(4);
+  const x = new Array<number>(4);
+  const y = new Array<number>(4);
+  const z = new Array<number>(4);
+  const w = new Array<number>(4);
+  const scale = new Array<number>(4);
+  const radius = new Array<number>(4);
+  const sector = [0, 0, 0, 0];
+
+  for (let depth = 0; depth < de.maxDepth && chainCount > 0; depth++) {
+    key.fill(1e30);
+    radius.fill(0);
+    for (let c = 0; c < chainCount; c++) {
+      let sx = chainX[c];
+      let sy = chainY[c];
+      let sz = chainZ[c];
+      let sw = chainW[c];
+      const pScale = chainScale[c];
+      for (let k = 0; k < order; k++) {
+        if (k > 0) {
+          stepSector4(stepBack, sx, sy, sz, sw, sector);
+          sx = sector[0];
+          sy = sector[1];
+          sz = sector[2];
+          sw = sector[3];
+        }
+        for (const map of de.maps) {
+          const im = map.invM;
+          const it = map.invT;
+          const ix = im[0] * sx + im[1] * sy + im[2] * sz + im[3] * sw + it[0];
+          const iy = im[4] * sx + im[5] * sy + im[6] * sz + im[7] * sw + it[1];
+          const iz =
+            im[8] * sx + im[9] * sy + im[10] * sz + im[11] * sw + it[2];
+          const iw =
+            im[12] * sx + im[13] * sy + im[14] * sz + im[15] * sw + it[3];
+          const r = Math.hypot(ix, iy, iz, iw);
+          const candidateKey = pScale * (r - R);
+          let slot = 0;
+          // Strict comparison preserves the shaders' sector-major tie rule:
+          // an equal later candidate stays behind the earlier one.
+          while (slot < 4 && !(candidateKey < key[slot])) slot++;
+          if (slot === 4) continue;
+          for (let q = 3; q > slot; q--) {
+            key[q] = key[q - 1];
+            x[q] = x[q - 1];
+            y[q] = y[q - 1];
+            z[q] = z[q - 1];
+            w[q] = w[q - 1];
+            scale[q] = scale[q - 1];
+            radius[q] = radius[q - 1];
+          }
+          key[slot] = candidateKey;
+          x[slot] = ix;
+          y[slot] = iy;
+          z[slot] = iz;
+          w[slot] = iw;
+          scale[slot] = pScale * map.sigmaMin;
+          radius[slot] = r;
+        }
+      }
+    }
+
+    rings = Math.min(rings, radius[0] / R);
+    sheets = Math.min(sheets, Math.abs(y[0]) / R);
+
+    chainCount = 0;
+    const keep = (slot: number, limit: number): void => {
+      if (key[slot] >= 1e29 || radius[slot] > limit) return;
+      chainX[chainCount] = x[slot];
+      chainY[chainCount] = y[slot];
+      chainZ[chainCount] = z[slot];
+      chainW[chainCount] = w[slot];
+      chainScale[chainCount] = scale[slot];
+      chainCount++;
+    };
+    keep(0, de.escapeRadius);
+    keep(1, de.escapeRadius);
+    keep(2, R);
+    keep(3, R);
+  }
+  return { rings: clampCarrier4(rings), sheets: clampCarrier4(sheets) };
+}
+
+/**
+ * The fold4 shade body's greedy carrier trajectory. It enumerates every
+ * sector/map/fold-branch triple, raises the candidate key by the branch
+ * region floor, and continues only the strict smallest candidate. This is
+ * the WGSL hit-info contract rather than the wider distance frontier.
+ */
+function surfaceFoldNativeCarriers4(
+  de: SurfaceNativeCarrierFrame4,
+  point: Vec4,
+): SurfaceNativeCarriers4 {
+  const R = de.boundingRadius;
+  const { order, stepBack } = de.symmetry;
+  let chX = point[0];
+  let chY = point[1];
+  let chZ = point[2];
+  let chW = point[3];
+  let chScale = 1;
+  let chFloor = 0;
+  let rings = 1;
+  let sheets = 1;
+  const sector = [0, 0, 0, 0];
+
+  for (let depth = 0; depth < de.maxDepth; depth++) {
+    let lbKey = 1e30;
+    let lbX = 0;
+    let lbY = 0;
+    let lbZ = 0;
+    let lbW = 0;
+    let lbR = 0;
+    let lbScale = 1;
+    let lbFloor = 0;
+    let sx = chX;
+    let sy = chY;
+    let sz = chZ;
+    let sw = chW;
+
+    for (let k = 0; k < order; k++) {
+      if (k > 0) {
+        stepSector4(stepBack, sx, sy, sz, sw, sector);
+        sx = sector[0];
+        sy = sector[1];
+        sz = sector[2];
+        sw = sector[3];
+      }
+      for (const map of de.maps) {
+        const kind = map.foldKind;
+        const branchCount = foldBranchCount4(kind);
+        const absW = map.foldSigma / map.sigmaMin;
+        const fr = map.foldRadii;
+        const wall2 = 2 * fr.wall;
+        let ux = 0;
+        let uy = 0;
+        let uz = 0;
+        let uw = 0;
+        let ru = 0;
+        let px0 = 0;
+        let px1 = 0;
+        let px2 = 0;
+        let py0 = 0;
+        let py1 = 0;
+        let py2 = 0;
+        let pz0 = 0;
+        let pz1 = 0;
+        let pz2 = 0;
+        let pw0 = 0;
+        let pw1 = 0;
+        let pw2 = 0;
+        let dxUp = 0;
+        let dxDn = 0;
+        let dyUp = 0;
+        let dyDn = 0;
+        let dzUp = 0;
+        let dzDn = 0;
+        let dwUp = 0;
+        let dwDn = 0;
+        let vx = 0;
+        let vy = 0;
+        let vz = 0;
+        let vw = 0;
+        let sfSigma = 1;
+        let sfRd = 0;
+        if (kind !== SURFACE_FOLD_NONE) {
+          ux = sx * map.foldInvW;
+          uy = sy * map.foldInvW;
+          uz = sz * map.foldInvW;
+          uw = sw * map.foldInvW;
+          if (kind === SURFACE_FOLD_BOXFOLD) {
+            px0 = ux;
+            px1 = wall2 - ux;
+            px2 = -wall2 - ux;
+            py0 = uy;
+            py1 = wall2 - uy;
+            py2 = -wall2 - uy;
+            pz0 = uz;
+            pz1 = wall2 - uz;
+            pz2 = -wall2 - uz;
+            pw0 = uw;
+            pw1 = wall2 - uw;
+            pw2 = -wall2 - uw;
+            dxUp = Math.max(ux - fr.wall, 0);
+            dxDn = Math.max(-fr.wall - ux, 0);
+            dyUp = Math.max(uy - fr.wall, 0);
+            dyDn = Math.max(-fr.wall - uy, 0);
+            dzUp = Math.max(uz - fr.wall, 0);
+            dzDn = Math.max(-fr.wall - uz, 0);
+            dwUp = Math.max(uw - fr.wall, 0);
+            dwDn = Math.max(-fr.wall - uw, 0);
+          } else {
+            ru = Math.hypot(ux, uy, uz, uw);
+          }
+        }
+
+        for (let b = 0; b < branchCount; b++) {
+          let cx: number;
+          let cy: number;
+          let cz: number;
+          let cw: number;
+          let branchSigma: number;
+          let branchRd = 0;
+          if (kind === SURFACE_FOLD_NONE) {
+            cx = sx;
+            cy = sy;
+            cz = sz;
+            cw = sw;
+            branchSigma = map.sigmaMin;
+          } else {
+            if (
+              kind === SURFACE_FOLD_SPHEREFOLD ||
+              (kind === SURFACE_FOLD_MANDELBOX && b % 81 === 0)
+            ) {
+              const sphereBranch =
+                kind === SURFACE_FOLD_SPHEREFOLD ? b : b / 81;
+              if (sphereBranch === 0) {
+                vx = ux;
+                vy = uy;
+                vz = uz;
+                vw = uw;
+                sfSigma = 1;
+                sfRd = Math.max(fr.fixedR - ru, 0);
+              } else if (sphereBranch === 1) {
+                vx = fr.innerScale * ux;
+                vy = fr.innerScale * uy;
+                vz = fr.innerScale * uz;
+                vw = fr.innerScale * uw;
+                sfSigma = fr.innerSigma;
+                sfRd = Math.max(ru - fr.outputR, 0);
+              } else {
+                if (ru < fr.midMinR) {
+                  if (kind === SURFACE_FOLD_MANDELBOX) b += 80;
+                  continue;
+                }
+                const invR2 = fr.fixedR2 / (ru * ru);
+                vx = ux * invR2;
+                vy = uy * invR2;
+                vz = uz * invR2;
+                vw = uw * invR2;
+                sfSigma = ru * fr.invFixedR;
+                sfRd = Math.max(fr.fixedR - ru, ru - fr.outputR, 0);
+              }
+              if (kind === SURFACE_FOLD_MANDELBOX) {
+                px0 = vx;
+                px1 = wall2 - vx;
+                px2 = -wall2 - vx;
+                py0 = vy;
+                py1 = wall2 - vy;
+                py2 = -wall2 - vy;
+                pz0 = vz;
+                pz1 = wall2 - vz;
+                pz2 = -wall2 - vz;
+                pw0 = vw;
+                pw1 = wall2 - vw;
+                pw2 = -wall2 - vw;
+                dxUp = Math.max(vx - fr.wall, 0);
+                dxDn = Math.max(-fr.wall - vx, 0);
+                dyUp = Math.max(vy - fr.wall, 0);
+                dyDn = Math.max(-fr.wall - vy, 0);
+                dzUp = Math.max(vz - fr.wall, 0);
+                dzDn = Math.max(-fr.wall - vz, 0);
+                dwUp = Math.max(vw - fr.wall, 0);
+                dwDn = Math.max(-fr.wall - vw, 0);
+              }
+            }
+
+            if (kind === SURFACE_FOLD_SPHEREFOLD) {
+              cx = vx;
+              cy = vy;
+              cz = vz;
+              cw = vw;
+              branchRd = sfRd;
+            } else {
+              const bb = kind === SURFACE_FOLD_BOXFOLD ? b : b % 81;
+              const selX = bb % 3;
+              const selY = ((bb / 3) | 0) % 3;
+              const selZ = ((bb / 9) | 0) % 3;
+              const selW = (bb / 27) | 0;
+              cx = selX === 0 ? px0 : selX === 1 ? px1 : px2;
+              cy = selY === 0 ? py0 : selY === 1 ? py1 : py2;
+              cz = selZ === 0 ? pz0 : selZ === 1 ? pz1 : pz2;
+              cw = selW === 0 ? pw0 : selW === 1 ? pw1 : pw2;
+              const ddx =
+                selX === 0 ? Math.max(dxUp, dxDn) : selX === 1 ? dxUp : dxDn;
+              const ddy =
+                selY === 0 ? Math.max(dyUp, dyDn) : selY === 1 ? dyUp : dyDn;
+              const ddz =
+                selZ === 0 ? Math.max(dzUp, dzDn) : selZ === 1 ? dzUp : dzDn;
+              const ddw =
+                selW === 0 ? Math.max(dwUp, dwDn) : selW === 1 ? dwUp : dwDn;
+              // This is the calibration builder's hottest loop on a
+              // mandelbox (up to 243 branches per map). `sqrt(sum sq)` is
+              // the shader's `length` arithmetic and avoids Math.hypot's
+              // general-purpose rescaling overhead for these finite,
+              // already-bounded fold coordinates.
+              const boxRd = Math.sqrt(
+                ddx * ddx + ddy * ddy + ddz * ddz + ddw * ddw,
+              );
+              branchRd =
+                kind === SURFACE_FOLD_BOXFOLD
+                  ? boxRd
+                  : Math.max(sfRd, sfSigma * boxRd);
+            }
+            branchSigma = map.foldSigma * sfSigma;
+          }
+
+          const im = map.invM;
+          const it = map.invT;
+          const ix = im[0] * cx + im[1] * cy + im[2] * cz + im[3] * cw + it[0];
+          const iy = im[4] * cx + im[5] * cy + im[6] * cz + im[7] * cw + it[1];
+          const iz =
+            im[8] * cx + im[9] * cy + im[10] * cz + im[11] * cw + it[2];
+          const iw =
+            im[12] * cx + im[13] * cy + im[14] * cz + im[15] * cw + it[3];
+          const r = Math.sqrt(ix * ix + iy * iy + iz * iz + iw * iw);
+          let candFloor = chFloor;
+          if (branchRd > 0) {
+            candFloor = Math.max(candFloor, chScale * absW * branchRd);
+          }
+          let candidateKey = chScale * (r - R);
+          if (candFloor > 0 && candFloor > candidateKey) {
+            candidateKey = candFloor;
+          }
+          if (candidateKey < lbKey) {
+            lbKey = candidateKey;
+            lbX = ix;
+            lbY = iy;
+            lbZ = iz;
+            lbW = iw;
+            lbR = r;
+            lbScale = chScale * branchSigma;
+            lbFloor = candFloor;
+          }
+        }
+      }
+    }
+
+    if (lbKey >= 1e29) break;
+    rings = Math.min(rings, lbR / R);
+    sheets = Math.min(sheets, Math.abs(lbY) / R);
+    if (lbR > de.escapeRadius) break;
+    chX = lbX;
+    chY = lbY;
+    chZ = lbZ;
+    chW = lbW;
+    chScale = lbScale;
+    chFloor = lbFloor;
+  }
+  return { rings: clampCarrier4(rings), sheets: clampCarrier4(sheets) };
+}
+
+/**
+ * Evaluate the exact native carrier pair the 4D shade core would produce for
+ * one RAW attractor-frame point. View rotor, w-slice and final lenses are
+ * intentionally absent: callers reconstruct/invert those before this seam,
+ * while system calibration samples the existing raw seeded probe directly.
+ */
+export function surfaceNativeCarriers4(
+  de: SurfaceDE4,
+  point: Vec4,
+): SurfaceNativeCarriers4 {
+  return surfaceNativeCarriers4Raw(de, point);
+}
+
+function surfaceNativeCarriers4Raw(
+  de: SurfaceNativeCarrierFrame4,
+  point: Vec4,
+): SurfaceNativeCarriers4 {
+  return de.maps.some((map) => map.foldKind !== SURFACE_FOLD_NONE)
+    ? surfaceFoldNativeCarriers4(de, point)
+    : surfaceAffineNativeCarriers4(de, point);
 }
 
 /**

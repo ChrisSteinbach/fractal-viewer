@@ -2,6 +2,14 @@ import { composeAffine } from "./affine";
 import { isFlatTransform, symmetryIsNonFlat } from "./affine4";
 import { effectiveSymmetryOrder, runChaosGame } from "./chaos-game";
 import { mulberry32 } from "./rng";
+import {
+  calibrateSurfaceNativeCarriers,
+  SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
+} from "./surface-pattern";
+import type {
+  SurfaceNativeCalibration,
+  SurfaceNativeCarrierSample,
+} from "./surface-pattern";
 import type {
   SymmetryParams,
   SymmetryPlane,
@@ -789,6 +797,10 @@ export interface SurfaceDE {
   /** Radius bounding the VISIBLE set `F(attractor)` — equals
    * `boundingRadius` when there is no final transform. */
   visibleBoundingRadius: number;
+  /** Camera-independent p03/p97 calibration of the greedy native rings and
+   * sheets carriers. Derived from the RAW pre-final probe, so neither an
+   * affine nor a pure-fold final lens can move these four wire values. */
+  patternCalibration: SurfaceNativeCalibration;
   /** `ESCAPE_FACTOR * boundingRadius` — descent past this cannot help. */
   escapeRadius: number;
   /** Descent depth cap, sized so the SLOWEST contraction chain resolves
@@ -838,6 +850,507 @@ export interface SurfaceDE {
      * the base maps carry. */
     foldRadii: SurfaceFoldRadii;
   } | null;
+}
+
+type SurfaceNativeCarrierContext = Pick<
+  SurfaceDE,
+  | "maps"
+  | "symmetry"
+  | "boundingRadius"
+  | "boundCenter"
+  | "escapeRadius"
+  | "maxDepth"
+>;
+
+/** Scratch triple for the native-carrier sector sweep. Calibration runs only
+ * during the synchronous DE build, and the public evaluator never re-enters
+ * itself, so one module-owned tuple keeps its inner loop allocation-free. */
+const NATIVE_CARRIER_SWEEP = [0, 0, 0];
+
+/**
+ * Production CPU oracle for the surface shaders' native-trap trajectories.
+ * `sourcePoint` is already in the RAW attractor frame: final-transform lenses
+ * are deliberately absent from this evaluator. Affine systems mirror the
+ * shader's width-4 ladder trajectory; any fold base map selects the fold
+ * shader's deliberately greedy width-1 shading path.
+ */
+export function evaluateSurfaceNativeCarriers(
+  de: SurfaceDE,
+  sourcePoint: Vec3,
+): SurfaceNativeCarrierSample {
+  return evaluateSurfaceNativeCarriersRaw(
+    de,
+    sourcePoint[0],
+    sourcePoint[1],
+    sourcePoint[2],
+  );
+}
+
+function evaluateSurfaceNativeCarriersRaw(
+  de: SurfaceNativeCarrierContext,
+  sourceX: number,
+  sourceY: number,
+  sourceZ: number,
+): SurfaceNativeCarrierSample {
+  for (const map of de.maps) {
+    if (map.foldKind !== SURFACE_FOLD_NONE) {
+      return evaluateFoldSurfaceNativeCarriersRaw(
+        de,
+        sourceX,
+        sourceY,
+        sourceZ,
+      );
+    }
+  }
+  return evaluateAffineSurfaceNativeCarriersRaw(de, sourceX, sourceY, sourceZ);
+}
+
+/** Width-4 affine shading trajectory: the primary chain's rings/sheets see
+ * every candidate carried by the top-2 plus rank-3/4 spill ladders. */
+function evaluateAffineSurfaceNativeCarriersRaw(
+  de: SurfaceNativeCarrierContext,
+  sourceX: number,
+  sourceY: number,
+  sourceZ: number,
+): SurfaceNativeCarrierSample {
+  const { order, plane, stepCos, stepSin } = de.symmetry;
+  const R = de.boundingRadius;
+  const [bcX, bcY, bcZ] = de.boundCenter;
+  let rings = 1;
+  let sheets = 1;
+  const chainX = [sourceX, 0, 0, 0];
+  const chainY = [sourceY, 0, 0, 0];
+  const chainZ = [sourceZ, 0, 0, 0];
+  const chainScale = [1, 1, 1, 1];
+  const chainLive = [true, false, false, false];
+  const key = [1e30, 1e30, 1e30, 1e30];
+  const pointX = [0, 0, 0, 0];
+  const pointY = [0, 0, 0, 0];
+  const pointZ = [0, 0, 0, 0];
+  const scale = [1, 1, 1, 1];
+  const radius = [0, 0, 0, 0];
+
+  for (let depth = 0; depth < de.maxDepth; depth++) {
+    if (!chainLive[0] && !chainLive[1] && !chainLive[2] && !chainLive[3]) {
+      break;
+    }
+    key.fill(1e30);
+    pointX.fill(0);
+    pointY.fill(0);
+    pointZ.fill(0);
+    scale.fill(1);
+    radius.fill(0);
+
+    for (let chain = 0; chain < 4; chain++) {
+      if (!chainLive[chain]) continue;
+      const parentScale = chainScale[chain];
+      let sectorX = chainX[chain];
+      let sectorY = chainY[chain];
+      let sectorZ = chainZ[chain];
+      for (let k = 0; k < order; k++) {
+        if (k > 0) {
+          stepSector(
+            plane,
+            stepCos,
+            stepSin,
+            sectorX,
+            sectorY,
+            sectorZ,
+            NATIVE_CARRIER_SWEEP,
+          );
+          sectorX = NATIVE_CARRIER_SWEEP[0];
+          sectorY = NATIVE_CARRIER_SWEEP[1];
+          sectorZ = NATIVE_CARRIER_SWEEP[2];
+        }
+        for (const map of de.maps) {
+          const im = map.invM;
+          const it = map.invT;
+          const imageX =
+            im[0] * sectorX + im[1] * sectorY + im[2] * sectorZ + it[0];
+          const imageY =
+            im[3] * sectorX + im[4] * sectorY + im[5] * sectorZ + it[1];
+          const imageZ =
+            im[6] * sectorX + im[7] * sectorY + im[8] * sectorZ + it[2];
+          const r = Math.hypot(imageX - bcX, imageY - bcY, imageZ - bcZ);
+          const candidateKey = parentScale * (r - R);
+          const childScale = parentScale * map.sigmaMin;
+          let evictedKey = candidateKey;
+          let evictedX = imageX;
+          let evictedY = imageY;
+          let evictedZ = imageZ;
+          let evictedScale = childScale;
+          let evictedR = r;
+
+          if (candidateKey < key[0]) {
+            evictedKey = key[1];
+            evictedX = pointX[1];
+            evictedY = pointY[1];
+            evictedZ = pointZ[1];
+            evictedScale = scale[1];
+            evictedR = radius[1];
+            key[1] = key[0];
+            pointX[1] = pointX[0];
+            pointY[1] = pointY[0];
+            pointZ[1] = pointZ[0];
+            scale[1] = scale[0];
+            radius[1] = radius[0];
+            key[0] = candidateKey;
+            pointX[0] = imageX;
+            pointY[0] = imageY;
+            pointZ[0] = imageZ;
+            scale[0] = childScale;
+            radius[0] = r;
+          } else if (candidateKey < key[1]) {
+            evictedKey = key[1];
+            evictedX = pointX[1];
+            evictedY = pointY[1];
+            evictedZ = pointZ[1];
+            evictedScale = scale[1];
+            evictedR = radius[1];
+            key[1] = candidateKey;
+            pointX[1] = imageX;
+            pointY[1] = imageY;
+            pointZ[1] = imageZ;
+            scale[1] = childScale;
+            radius[1] = r;
+          }
+
+          if (evictedKey < key[2]) {
+            key[3] = key[2];
+            pointX[3] = pointX[2];
+            pointY[3] = pointY[2];
+            pointZ[3] = pointZ[2];
+            scale[3] = scale[2];
+            radius[3] = radius[2];
+            key[2] = evictedKey;
+            pointX[2] = evictedX;
+            pointY[2] = evictedY;
+            pointZ[2] = evictedZ;
+            scale[2] = evictedScale;
+            radius[2] = evictedR;
+          } else if (evictedKey < key[3]) {
+            key[3] = evictedKey;
+            pointX[3] = evictedX;
+            pointY[3] = evictedY;
+            pointZ[3] = evictedZ;
+            scale[3] = evictedScale;
+            radius[3] = evictedR;
+          }
+        }
+      }
+    }
+
+    rings = Math.min(rings, radius[0] / R);
+    sheets = Math.min(sheets, Math.abs(pointY[0]) / R);
+    for (let chain = 0; chain < 4; chain++) chainLive[chain] = false;
+    if (key[0] < 1e29 && radius[0] <= de.escapeRadius) {
+      chainX[0] = pointX[0];
+      chainY[0] = pointY[0];
+      chainZ[0] = pointZ[0];
+      chainScale[0] = scale[0];
+      chainLive[0] = true;
+    }
+    if (key[1] < 1e29 && radius[1] <= de.escapeRadius) {
+      chainX[1] = pointX[1];
+      chainY[1] = pointY[1];
+      chainZ[1] = pointZ[1];
+      chainScale[1] = scale[1];
+      chainLive[1] = true;
+    }
+    if (key[2] < 1e29 && radius[2] <= R) {
+      chainX[2] = pointX[2];
+      chainY[2] = pointY[2];
+      chainZ[2] = pointZ[2];
+      chainScale[2] = scale[2];
+      chainLive[2] = true;
+    }
+    if (key[3] < 1e29 && radius[3] <= R) {
+      chainX[3] = pointX[3];
+      chainY[3] = pointY[3];
+      chainZ[3] = pointZ[3];
+      chainScale[3] = scale[3];
+      chainLive[3] = true;
+    }
+  }
+
+  return {
+    rings: Math.min(1, Math.max(0, rings)),
+    sheets: Math.min(1, Math.max(0, sheets)),
+  };
+}
+
+/** Width-1 fold shading trajectory: strict lowest floored candidate over the
+ * complete sector/base-map/fold-branch stream at every level. */
+function evaluateFoldSurfaceNativeCarriersRaw(
+  de: SurfaceNativeCarrierContext,
+  sourceX: number,
+  sourceY: number,
+  sourceZ: number,
+): SurfaceNativeCarrierSample {
+  const { order, plane, stepCos, stepSin } = de.symmetry;
+  const R = de.boundingRadius;
+  const [bcX, bcY, bcZ] = de.boundCenter;
+  let rings = 1;
+  let sheets = 1;
+  let chX = sourceX;
+  let chY = sourceY;
+  let chZ = sourceZ;
+  let chScale = 1;
+  let chFloor = 0;
+
+  for (let depth = 0; depth < de.maxDepth; depth++) {
+    let lowestKey = Infinity;
+    let lowestR = 0;
+    let lowestAbsY = 0;
+    let lowestX = 0;
+    let lowestY = 0;
+    let lowestZ = 0;
+    let lowestScale = 1;
+    let lowestFloor = 0;
+    const parentScale = chScale;
+    const parentFloor = chFloor;
+    let sectorX = chX;
+    let sectorY = chY;
+    let sectorZ = chZ;
+
+    for (let k = 0; k < order; k++) {
+      if (k > 0) {
+        stepSector(
+          plane,
+          stepCos,
+          stepSin,
+          sectorX,
+          sectorY,
+          sectorZ,
+          NATIVE_CARRIER_SWEEP,
+        );
+        sectorX = NATIVE_CARRIER_SWEEP[0];
+        sectorY = NATIVE_CARRIER_SWEEP[1];
+        sectorZ = NATIVE_CARRIER_SWEEP[2];
+      }
+
+      for (const map of de.maps) {
+        const im = map.invM;
+        const it = map.invT;
+        const kind = map.foldKind;
+        const branchCount = foldBranchCount(kind);
+        const absW = map.foldSigma / map.sigmaMin;
+        const fr = map.foldRadii;
+        const wall = fr.wall;
+        const wall2 = 2 * wall;
+
+        let ux = 0;
+        let uy = 0;
+        let uz = 0;
+        let ru = 0;
+        let px0 = 0;
+        let px1 = 0;
+        let px2 = 0;
+        let py0 = 0;
+        let py1 = 0;
+        let py2 = 0;
+        let pz0 = 0;
+        let pz1 = 0;
+        let pz2 = 0;
+        let dxUp = 0;
+        let dxDn = 0;
+        let dyUp = 0;
+        let dyDn = 0;
+        let dzUp = 0;
+        let dzDn = 0;
+        let vx = 0;
+        let vy = 0;
+        let vz = 0;
+        let sphereSigma = 1;
+        let sphereRegionDistance = 0;
+
+        if (kind !== SURFACE_FOLD_NONE) {
+          ux = sectorX * map.foldInvW;
+          uy = sectorY * map.foldInvW;
+          uz = sectorZ * map.foldInvW;
+          if (kind === SURFACE_FOLD_BOXFOLD) {
+            px0 = ux;
+            px1 = wall2 - ux;
+            px2 = -wall2 - ux;
+            py0 = uy;
+            py1 = wall2 - uy;
+            py2 = -wall2 - uy;
+            pz0 = uz;
+            pz1 = wall2 - uz;
+            pz2 = -wall2 - uz;
+            dxUp = Math.max(ux - wall, 0);
+            dxDn = Math.max(-wall - ux, 0);
+            dyUp = Math.max(uy - wall, 0);
+            dyDn = Math.max(-wall - uy, 0);
+            dzUp = Math.max(uz - wall, 0);
+            dzDn = Math.max(-wall - uz, 0);
+          } else {
+            ru = Math.hypot(ux, uy, uz);
+          }
+        }
+
+        for (let branch = 0; branch < branchCount; branch++) {
+          let preX: number;
+          let preY: number;
+          let preZ: number;
+          let branchSigma: number;
+          let branchRegionDistance = 0;
+
+          if (kind === SURFACE_FOLD_NONE) {
+            preX = sectorX;
+            preY = sectorY;
+            preZ = sectorZ;
+            branchSigma = map.sigmaMin;
+          } else {
+            if (
+              kind === SURFACE_FOLD_SPHEREFOLD ||
+              (kind === SURFACE_FOLD_MANDELBOX && branch % 27 === 0)
+            ) {
+              const piece =
+                kind === SURFACE_FOLD_SPHEREFOLD
+                  ? branch
+                  : Math.floor(branch / 27);
+              if (piece === 0) {
+                vx = ux;
+                vy = uy;
+                vz = uz;
+                sphereSigma = 1;
+                sphereRegionDistance = Math.max(fr.fixedR - ru, 0);
+              } else if (piece === 1) {
+                vx = fr.innerScale * ux;
+                vy = fr.innerScale * uy;
+                vz = fr.innerScale * uz;
+                sphereSigma = fr.innerSigma;
+                sphereRegionDistance = Math.max(ru - fr.outputR, 0);
+              } else {
+                if (ru < fr.midMinR) {
+                  if (kind === SURFACE_FOLD_MANDELBOX) branch += 26;
+                  continue;
+                }
+                const invR2 = fr.fixedR2 / (ru * ru);
+                vx = ux * invR2;
+                vy = uy * invR2;
+                vz = uz * invR2;
+                sphereSigma = ru * fr.invFixedR;
+                sphereRegionDistance = Math.max(
+                  Math.max(fr.fixedR - ru, ru - fr.outputR),
+                  0,
+                );
+              }
+
+              if (kind === SURFACE_FOLD_MANDELBOX) {
+                px0 = vx;
+                px1 = wall2 - vx;
+                px2 = -wall2 - vx;
+                py0 = vy;
+                py1 = wall2 - vy;
+                py2 = -wall2 - vy;
+                pz0 = vz;
+                pz1 = wall2 - vz;
+                pz2 = -wall2 - vz;
+                dxUp = Math.max(vx - wall, 0);
+                dxDn = Math.max(-wall - vx, 0);
+                dyUp = Math.max(vy - wall, 0);
+                dyDn = Math.max(-wall - vy, 0);
+                dzUp = Math.max(vz - wall, 0);
+                dzDn = Math.max(-wall - vz, 0);
+              }
+            }
+
+            if (kind === SURFACE_FOLD_SPHEREFOLD) {
+              preX = vx;
+              preY = vy;
+              preZ = vz;
+              branchRegionDistance = sphereRegionDistance;
+            } else {
+              const boxBranch =
+                kind === SURFACE_FOLD_BOXFOLD ? branch : branch % 27;
+              const selectX = boxBranch % 3;
+              const selectY = Math.floor(boxBranch / 3) % 3;
+              const selectZ = Math.floor(boxBranch / 9);
+              preX = selectX === 0 ? px0 : selectX === 1 ? px1 : px2;
+              preY = selectY === 0 ? py0 : selectY === 1 ? py1 : py2;
+              preZ = selectZ === 0 ? pz0 : selectZ === 1 ? pz1 : pz2;
+              const distX =
+                selectX === 0
+                  ? Math.max(dxUp, dxDn)
+                  : selectX === 1
+                    ? dxUp
+                    : dxDn;
+              const distY =
+                selectY === 0
+                  ? Math.max(dyUp, dyDn)
+                  : selectY === 1
+                    ? dyUp
+                    : dyDn;
+              const distZ =
+                selectZ === 0
+                  ? Math.max(dzUp, dzDn)
+                  : selectZ === 1
+                    ? dzUp
+                    : dzDn;
+              // Hot calibration path: the inputs are finite fold-region
+              // distances, so mirror shader `length` directly instead of
+              // paying Math.hypot's general-purpose rescaling cost.
+              const boxRegionDistance = Math.sqrt(
+                distX * distX + distY * distY + distZ * distZ,
+              );
+              branchRegionDistance =
+                kind === SURFACE_FOLD_BOXFOLD
+                  ? boxRegionDistance
+                  : Math.max(
+                      sphereRegionDistance,
+                      sphereSigma * boxRegionDistance,
+                    );
+            }
+            branchSigma = map.foldSigma * sphereSigma;
+          }
+
+          const imageX = im[0] * preX + im[1] * preY + im[2] * preZ + it[0];
+          const imageY = im[3] * preX + im[4] * preY + im[5] * preZ + it[1];
+          const imageZ = im[6] * preX + im[7] * preY + im[8] * preZ + it[2];
+          const dx = imageX - bcX;
+          const dy = imageY - bcY;
+          const dz = imageZ - bcZ;
+          const r = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          let candidateFloor = parentFloor;
+          if (branchRegionDistance > 0) {
+            candidateFloor = Math.max(
+              candidateFloor,
+              parentScale * absW * branchRegionDistance,
+            );
+          }
+          let key = parentScale * (r - R);
+          if (candidateFloor > 0 && candidateFloor > key) key = candidateFloor;
+          if (key < lowestKey) {
+            lowestKey = key;
+            lowestR = r;
+            lowestAbsY = Math.abs(imageY);
+            lowestX = imageX;
+            lowestY = imageY;
+            lowestZ = imageZ;
+            lowestScale = parentScale * branchSigma;
+            lowestFloor = candidateFloor;
+          }
+        }
+      }
+    }
+
+    if (lowestKey === Infinity) break;
+    rings = Math.min(rings, lowestR / R);
+    sheets = Math.min(sheets, lowestAbsY / R);
+    if (lowestR > de.escapeRadius) break;
+    chX = lowestX;
+    chY = lowestY;
+    chZ = lowestZ;
+    chScale = lowestScale;
+    chFloor = lowestFloor;
+  }
+
+  return {
+    rings: Math.min(1, Math.max(0, rings)),
+    sheets: Math.min(1, Math.max(0, sheets)),
+  };
 }
 
 /** Mirrors `composeVariations`' active filter exactly: a variation entry
@@ -1295,6 +1808,44 @@ export function buildSurfaceDE(
     Math.max(8, Math.ceil(Math.log(DEPTH_RESOLUTION) / Math.log(slowest))),
   );
 
+  // Camera-independent native-trap calibration from exactly 256 evenly
+  // strided points of the EXISTING seeded 8192-point RAW probe. 8192 / 256
+  // is exactly 32, so the pilot reads point indices 0, 32, ..., 8160 without
+  // running another chaos game or consulting the final lens below.
+  const nativeCarrierContext: SurfaceNativeCarrierContext = {
+    maps,
+    symmetry: {
+      order,
+      plane: symmetry.plane,
+      stepCos: Math.cos(step),
+      stepSin: Math.sin(step),
+    },
+    boundingRadius,
+    boundCenter,
+    escapeRadius: ESCAPE_FACTOR * boundingRadius,
+    maxDepth,
+  };
+  const nativeCarrierSamples = new Array<SurfaceNativeCarrierSample>(
+    SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
+  );
+  const nativeProbeStride =
+    PROBE_POINTS / SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT;
+  for (
+    let sample = 0;
+    sample < SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT;
+    sample++
+  ) {
+    const offset = sample * nativeProbeStride * 3;
+    nativeCarrierSamples[sample] = evaluateSurfaceNativeCarriersRaw(
+      nativeCarrierContext,
+      probe.positions[offset],
+      probe.positions[offset + 1],
+      probe.positions[offset + 2],
+    );
+  }
+  const patternCalibration =
+    calibrateSurfaceNativeCarriers(nativeCarrierSamples);
+
   let final: SurfaceDE["final"] = null;
   let foldFinal: SurfaceDE["foldFinal"] = null;
   let visibleBoundingRadius = boundingRadius;
@@ -1373,6 +1924,7 @@ export function buildSurfaceDE(
     boundingRadius,
     boundCenter,
     visibleBoundingRadius,
+    patternCalibration,
     escapeRadius: ESCAPE_FACTOR * boundingRadius,
     maxDepth,
     slowestSigma: slowest,

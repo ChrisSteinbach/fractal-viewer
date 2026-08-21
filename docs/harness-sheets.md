@@ -302,6 +302,24 @@ The CPU cost contract remains three value-noise octaves: macro samples cost
 48/48/24 lattice hashes and two-sample detail LOD costs 96/96/48 for
 Wood/Marble/Strata.
 
+The production coordinate/calibration contract landed in `fr-cmtl.3`.
+`surface-pattern-frame.ts` names the raw-attractor source hit and its exact
+reverse-routing order (balloon source, inverse 4D view at
+`w0 + sStar*sliceHalfW`, then the affine or winning fold-final inverse).
+`SurfaceDE`, `SurfaceDE4`, `EscapeDE`, `BulbDE`, and `EscapeDE4` each carry one
+camera-independent `patternCalibration` with the shader-ready order
+`(ringsLow, ringsInvSpan, sheetsLow, sheetsInvSpan)`; zero inverse-span is the
+only disable bit. IFS builders reuse 256 evenly strided points of their
+existing seeded 8192-point raw probe, while forward families use 256 seeded
+uniform queries of their existing origin-centred ball. Final lenses therefore
+leave calibration exactly unchanged. A dedicated session-entry gate builds a
+12-map, depth-100 4D mandelbox system (eight 243-branch Mandelbox maps plus four
+81-branch boxfold maps) in about 0.6-0.7 s on the development host and enforces
+a 2.5 s ceiling, including the existing extent probe. Its exact
+finite-coordinate hot loop uses the shader's `sqrt(sum-of-squares)` length
+arithmetic. No camera, rotor, slice, visible radius, or duplicate bound enters
+calibration.
+
 For comparison, the exact V2 constants were: scales
 Wood/Marble/Strata 3/1.35/2.6, three noise octaves, detail scale multipliers
 1/2.5/1, maximum dyadic octave 8, footprint full/off thresholds 0.009/0.012,

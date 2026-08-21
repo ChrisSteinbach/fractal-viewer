@@ -54,6 +54,20 @@ function canonicalMandelbox(overrides: Partial<Transform> = {}): Transform {
   };
 }
 
+function expectFinitePatternCalibration(
+  calibration: EscapeDE["patternCalibration"],
+): void {
+  for (const value of Object.values(calibration)) {
+    expect(Number.isFinite(value)).toBe(true);
+  }
+  expect(calibration.ringsLow).toBeGreaterThanOrEqual(0);
+  expect(calibration.ringsLow).toBeLessThanOrEqual(1);
+  expect(calibration.sheetsLow).toBeGreaterThanOrEqual(0);
+  expect(calibration.sheetsLow).toBeLessThanOrEqual(1);
+  expect(calibration.ringsInvSpan).toBeGreaterThanOrEqual(0);
+  expect(calibration.sheetsInvSpan).toBeGreaterThanOrEqual(0);
+}
+
 /** One pure-fold link, at the origin with no rotation unless asked — the
  * shape a chain fixture is built from. */
 function foldMap(
@@ -517,6 +531,19 @@ describe("analyzeEscapeSystem eligibility, widened to chains", () => {
 });
 
 describe("buildEscapeDE, widened to chains", () => {
+  it("builds finite normalized pattern calibration", () => {
+    expectFinitePatternCalibration(
+      buildEscapeDE([canonicalMandelbox()]).patternCalibration,
+    );
+  });
+
+  it("repeats pattern calibration exactly for the same system", () => {
+    const transforms = [canonicalMandelbox(), foldMap(1, "boxfold", 1.6)];
+    expect(buildEscapeDE(transforms).patternCalibration).toEqual(
+      buildEscapeDE(transforms).patternCalibration,
+    );
+  });
+
   it("carries the forward affine, the signed weight, and the derivative growth", () => {
     const de = buildEscapeDE([
       canonicalMandelbox({

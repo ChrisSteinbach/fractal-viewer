@@ -658,6 +658,14 @@ import { BULB_POWER } from "./bulb-de";
 import { effectiveSymmetryOrder } from "./chaos-game";
 import { mulberry32 } from "./rng";
 import {
+  SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
+  calibrateSurfaceNativeCarriers,
+} from "./surface-pattern";
+import type {
+  SurfaceNativeCalibration,
+  SurfaceNativeCarrierSample,
+} from "./surface-pattern";
+import {
   CONTRACTION_LIMIT,
   SURFACE_FOLD_BOXFOLD,
   SURFACE_FOLD_MANDELBOX,
@@ -868,7 +876,13 @@ export interface EscapeDE extends EscapeLink {
    * ball, so the sphere tracer enters/exits against this radius. The
    * kaleidoscope fold is an isometry, so it does not move this. */
   boundingRadius: number;
+  /** Camera-independent p03/p97 normalization of the shader's radial and
+   * y-plane orbit traps. Derived once by {@link buildEscapeDE}; zero inverse
+   * span is the disabled-carrier signal. */
+  patternCalibration: SurfaceNativeCalibration;
 }
+
+type EscapeCalibrationDE = Omit<EscapeDE, "patternCalibration">;
 
 /** `composeVariations`' active filter again (surface-de.ts keeps its own
  * copy private): the single active entry a LINK may carry — the fold
@@ -1068,7 +1082,7 @@ export function buildEscapeDE(
     );
   }
   const links = activeMaps(transforms).map(buildEscapeLink);
-  return {
+  const de: EscapeCalibrationDE = {
     // The head link's fields, flat — the wire the six mirrors read.
     ...links[0],
     links,
@@ -1076,6 +1090,10 @@ export function buildEscapeDE(
     symmetryOrder: effectiveSymmetryOrder(symmetry.order, transforms.length),
     symmetryPlane: symmetry.plane,
     boundingRadius: ESCAPE_TIME_RADIUS,
+  };
+  return {
+    ...de,
+    patternCalibration: calibrateEscapePattern(de),
   };
 }
 
@@ -1302,6 +1320,133 @@ function runEscapeOrbit(de: EscapeDE, p: Vec3, maxIterations: number): void {
   }
   orbitR = r;
   orbitDr = dr;
+}
+
+/**
+ * Calibration-only mirror of the shaders' escape hit-info orbit. It is kept
+ * separate from {@link runEscapeOrbit}: adding two min-tracked traps to the
+ * ordinary CPU distance oracle would charge every estimate for work used
+ * only once at session entry.
+ */
+function escapePatternCarrierSample(
+  de: EscapeCalibrationDE,
+  p: Vec3,
+): SurfaceNativeCarrierSample {
+  const links = de.links;
+  const n = links.length;
+  const q =
+    de.symmetryOrder > 1
+      ? foldQueryIntoSector(p, de.symmetryOrder, de.symmetryPlane, FOLDED)
+      : p;
+  const qx = q[0];
+  const qy = q[1];
+  const qz = q[2];
+  let vx = qx;
+  let vy = qy;
+  let vz = qz;
+  let r = Math.sqrt(vx * vx + vy * vy + vz * vz);
+  let rings = 1;
+  let sheets = 1;
+  const maxSteps = ESCAPE_TIME_ITERATIONS * n;
+  for (let step = 0; step < maxSteps && r <= de.boundingRadius; step++) {
+    const link = links[step % n];
+    const m = link.m;
+    const yx = m[0] * vx + m[1] * vy + m[2] * vz + link.t[0];
+    const yy = m[3] * vx + m[4] * vy + m[5] * vz + link.t[1];
+    const yz = m[6] * vx + m[7] * vy + m[8] * vz + link.t[2];
+    let fx: number;
+    let fy: number;
+    let fz: number;
+    const wall = link.boxLimit;
+    const mR2 = link.minRadius2;
+    const fR2 = link.fixedRadius2;
+    if (link.kind === ESCAPE_LINK_BOXFOLD) {
+      fx = foldAxis(yx, wall);
+      fy = foldAxis(yy, wall);
+      fz = foldAxis(yz, wall);
+    } else if (link.kind === ESCAPE_LINK_SPHEREFOLD) {
+      const r2 = yx * yx + yy * yy + yz * yz;
+      const f = fR2 / Math.max(mR2, Math.min(fR2, r2));
+      fx = yx * f;
+      fy = yy * f;
+      fz = yz * f;
+    } else if (link.kind === ESCAPE_LINK_MANDELBOX) {
+      const bx = foldAxis(yx, wall);
+      const by = foldAxis(yy, wall);
+      const bz = foldAxis(yz, wall);
+      const r2 = bx * bx + by * by + bz * bz;
+      const f = fR2 / Math.max(mR2, Math.min(fR2, r2));
+      fx = bx * f;
+      fy = by * f;
+      fz = bz * f;
+    } else if (link.kind === ESCAPE_LINK_BULB) {
+      const a = yx * yx + yy * yy;
+      const z2 = yz * yz;
+      const r2 = a + z2;
+      const r4 = r2 * r2;
+      fz =
+        128 * z2 * z2 * z2 * z2 -
+        256 * z2 * z2 * z2 * r2 +
+        160 * z2 * z2 * r4 -
+        32 * z2 * r4 * r2 +
+        r4 * r4;
+      const s =
+        128 * z2 * z2 * z2 * yz -
+        192 * z2 * z2 * yz * r2 +
+        80 * z2 * yz * r4 -
+        8 * yz * r4 * r2;
+      const rho = Math.sqrt(a);
+      const inv = rho > 0 ? 1 / rho : 0;
+      const u1 = yx * inv;
+      const v1 = yy * inv;
+      const u2 = u1 * u1 - v1 * v1;
+      const v2 = 2 * u1 * v1;
+      const u4 = u2 * u2 - v2 * v2;
+      const v4 = 2 * u2 * v2;
+      const u8 = u4 * u4 - v4 * v4;
+      const v8 = 2 * u4 * v4;
+      fx = rho * s * u8;
+      fy = rho * s * v8;
+    } else {
+      fx = yx * yx - yy * yy - yz * yz;
+      fy = 2 * yx * yy;
+      fz = 2 * yx * yz;
+    }
+    vx = link.w * fx + qx;
+    vy = link.w * fy + qy;
+    vz = link.w * fz + qz;
+    r = Math.sqrt(vx * vx + vy * vy + vz * vz);
+    rings = Math.min(rings, r / de.boundingRadius);
+    sheets = Math.min(sheets, Math.abs(vy) / de.boundingRadius);
+  }
+  return {
+    rings: Math.max(0, Math.min(1, rings)),
+    sheets: Math.max(0, Math.min(1, sheets)),
+  };
+}
+
+/** Fixed-seed, origin-ball pilot for the forward escape family. Every query
+ * contributes, including escaping points: membership-filtered volume probes
+ * miss the thin ray-visible sets this renderer exists to show. */
+function calibrateEscapePattern(
+  de: EscapeCalibrationDE,
+): SurfaceNativeCalibration {
+  const rng = mulberry32(ESCAPE_PROBE_SEED);
+  const samples = new Array<SurfaceNativeCarrierSample>(
+    SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
+  );
+  for (let i = 0; i < samples.length; i++) {
+    const radius = Math.cbrt(rng()) * de.boundingRadius;
+    const ct = 2 * rng() - 1;
+    const st = Math.sqrt(Math.max(0, 1 - ct * ct));
+    const phi = 2 * Math.PI * rng();
+    samples[i] = escapePatternCarrierSample(de, [
+      radius * st * Math.cos(phi),
+      radius * st * Math.sin(phi),
+      radius * ct,
+    ]);
+  }
+  return calibrateSurfaceNativeCarriers(samples);
 }
 
 /**
