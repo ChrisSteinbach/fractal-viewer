@@ -1,22 +1,27 @@
 #!/usr/bin/env node
 /**
  * Surface FINISH gate: does an AUTHORED per-transform finish visibly change
- * the settled Surface render, on BOTH engines, from a real `#v1=` document
- * driven through the real app?
+ * the settled Surface render, on every requested engine/scene route, from a
+ * real `#v1=` document driven through the real app?
  *
- * WHAT IT PROVES, and what it deliberately does not. `Transform.finish`
- * (types.ts) rides the document into `surface-slots.ts`'s gated slot list,
- * which main.ts hands to `surface-compute.ts`'s `create()` (the WGSL shade
- * entry compiled with `finish: true`, stride-3 shadeMaps) and to
- * `surface-material.ts`'s `SURFACE_FINISH` arm (the `uMapFinishA/B`
- * uniforms over the same emitted BRDF body). A finish that decodes, packs
- * and compiles but never reaches a PIXEL — a uniform never uploaded, a
- * stride the kernel does not read, a define a recompose site dropped — is
+ * WHAT IT PROVES, and what it deliberately does not. On inverse IFS/lens
+ * routes, `Transform.finish` (types.ts) rides the document into
+ * `surface-slots.ts`'s gated slot list, which main.ts hands to
+ * `surface-compute.ts`'s `create()` (the WGSL shade entry compiled with
+ * `finish: true`, stride-3 shadeMaps) and to `surface-material.ts`'s
+ * `SURFACE_FINISH` arm (the `uMapFinishA/B` uniforms over the same emitted
+ * BRDF body). Forward escape routes instead take the head transform through
+ * main.ts's `escapeSlotFinish()` and hand its one slot to the compute
+ * renderer. A finish that decodes, packs and compiles but never reaches a
+ * PIXEL — a uniform never uploaded, a stride the kernel does not read, a
+ * define a recompose site dropped — is
  * invisible to every unit test, because none of them traces a frame. This
- * gate traces the frame, on each engine, twice: once from the unauthored
- * lens3 document and once from the same document with two finishes
- * authored on it, and asserts the two frames differ STRUCTURALLY where the
- * object sits. The byte-identity control — "an unauthored document renders
+ * gate traces the frame twice per requested route: once from an unauthored
+ * document and once from its finish-authored twin, and asserts the two
+ * frames differ STRUCTURALLY where the object sits. The default lens3 scene
+ * runs on both engines. The optional escape4 scene exercises the compute-only
+ * 4D forward-orbit route and its head-transform finish wire. The
+ * byte-identity control — "an unauthored document renders
  * literally today's programs" — is NOT re-proved in a browser here, on
  * purpose: it is pinned where it is cheap and exact, by the emission
  * string-equality tests (`surface-de-gpu.ts`'s `finish:false` source
@@ -25,21 +30,36 @@
  * formula). A pixel diff can only say "nothing moved" to within a
  * screenshot; those tests say it to the byte.
  *
- * THE SCENE is `surface-repro.verify.mjs`'s lens3 — the fold-FINAL lens
- * archetype (a 4-map Sierpinski base under a boxfold final transform), so
+ * THE DEFAULT SCENE is `surface-repro.verify.mjs`'s lens3 — the fold-FINAL
+ * lens archetype (a 4-map Sierpinski base under a boxfold final transform), so
  * the compute path takes the `lens:true` wrapper and the WebGL arm compiles
  * SURFACE_FOLD_LENS, and the one scenario in that harness whose render
  * FILLS the frame (~61k hit pixels at 1280x720). boxfold3 is too sparse for
  * a colour question: its object is ~0.5% of the frame. The hash is the
- * POSE-PINNED mint, verbatim, which is what makes a cross-load comparison
- * sound at all (a pose-less scene auto-frames from a `Math.random()`-seeded
- * cloud and lights up every silhouette — measured there, 8.9% of pixels).
+ * POSE-PINNED mint, verbatim, retained so this comparison is independent of
+ * boot auto-frame policy. The original prototype predated the current
+ * pinned boot seed: its pose-less scene framed from a random cloud and lit
+ * up every silhouette — measured there, 8.9% of pixels.
  * The AUTHORED twin is derived IN THIS SCRIPT from that one embedded hash —
  * decode, set `transforms[0].finish = {metalness:1, reflect:1, specular:1,
  * shininess:96}` (chrome) and `transforms[2].finish = {transmit:0.65,
  * reflect:0.4}` (glass), re-encode — and the script asserts its own
  * decode/encode round trip reproduces the base hash byte for byte before it
  * opens a browser, so the pair can never drift apart.
+ *
+ * THE ESCAPE4 SCENE (`--scene=escape4`) is the shipped Mandelbox Brick's
+ * minimal document: one Mandelbox link at -1.5, rotated 1 radian in xw. A
+ * transform list is the escape formula chain even when its length is one,
+ * and the w rotation makes this one route through `core:"escape4"`. This is
+ * the dense 4D escape fixture (~41% of measured entry-pose rays hit), rather
+ * than Hybrid Shells' much thinner two-link object. Its authored twin puts
+ * the same strong chrome finish on transform 0 only. Forward-orbit hit-info
+ * leaves `firstChoice = 0`, so the head is the ONLY finish slot and this pair
+ * directly gates the assignment the escape4 routing arm once omitted. There
+ * is deliberately no `?surfacegl` twin: 4D escape chains are compute-only,
+ * and both compared captures must report engine="compute". Reduced motion
+ * makes entry snap to the deterministic bailout-ball framing, so this route
+ * can rely on its own fixed refit and needs no minted camera pose.
  *
  * SAME-STAGE CAPTURE is the discipline that makes the diff mean what it
  * claims. The full settle is EIGHT supersampling passes, and at 640x360 on
@@ -143,10 +163,15 @@
  *   node scripts/finish.verify.mjs                       # sw, both arms
  *   node scripts/finish.verify.mjs --mode=x11::0 --arm=both
  *   node scripts/finish.verify.mjs --arm=compute --stage=1 --settle=240000
+ *   node scripts/finish.verify.mjs --scene=escape4 --stage=1
+ *   node scripts/finish.verify.mjs --scene=all --arm=both --stage=1
  *
  *   --url       app origin (default https://localhost:4173)
  *   --mode      sw (default) | x11:<display>
  *   --arm       compute | webgl | both (default both)
+ *   --scene     lens3 (default) | escape4 | all. escape4 permits only the
+ *               compute arm; `--scene=escape4 --arm=both` therefore runs
+ *               its one compute route, while `--arm=webgl` is rejected.
  *   --viewport  WxH (default 640x360)
  *   --settle    per-leg budget in ms for reaching the target stage (default
  *               300000). The authored leg's budget stretches to twice the
@@ -162,7 +187,7 @@
  *               (default 0.015).
  *   --outdir    where PNGs land (default .playwright-mcp/, gitignored).
  *
- * Exit codes: 0 every requested arm passed; 1 a verdict failed (engine
+ * Exit codes: 0 every requested scene/arm route passed; 1 a verdict failed (engine
  * mismatch with an adapter present, floor not met, a page error); 2 a
  * CHECKING-side failure (no browser, no adapter, no common stage inside the
  * budget) — rerun, it is not a feature verdict. Runtime: with the defaults
@@ -188,6 +213,17 @@
  * showed "WebGPU (software)" throughout — the leg had locked its verdict
  * onto its opening poll, taken while `surfaceComputeRenderer` was still
  * null mid-gate.
+ *
+ * MEASURED (the escape4 addition, `--scene=escape4 --stage=1 --mode=sw`,
+ * 640x360): the fixture completed all eight passes before the stage-1
+ * capture could park, in 8.2s per leg / 16.6s total. Both compared captures
+ * reported engine=compute and the two settles had the identical census
+ * (11037 hits / 219363 misses / 0 exhausted), while the chrome head finish
+ * changed 10468/107320 central-region pixels structurally — 9.754% against
+ * the 1.5% floor — and 4.972% of the full canvas, max delta 188. Identical
+ * geometry work plus an object-shaped diff is the material-wire verdict;
+ * the optional 4D row is also far cheaper than the lens3 gate's default
+ * SwiftShader pair.
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -204,6 +240,13 @@ const DEFAULT_OUT_DIR = path.resolve(__dirname, "..", ".playwright-mcp");
 const LENS3_HASH =
   "#v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAuMzUsMC4zNSwwLjM1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdfSx7InBvc2l0aW9uIjpbLTAuMzUsLTAuMzUsMC4zNV0sInJvdGF0aW9uIjpbMCwwLDBdLCJzY2FsZSI6WzAuNSwwLjUsMC41XX0seyJwb3NpdGlvbiI6WzAuMzUsLTAuMzUsLTAuMzVdLCJyb3RhdGlvbiI6WzAsMCwwXSwic2NhbGUiOlswLjUsMC41LDAuNV19LHsicG9zaXRpb24iOlstMC4zNSwwLjM1LC0wLjM1XSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdfV0sIm51bVBvaW50cyI6MTAwMDAwLCJwb2ludFNpemUiOjEsImNvbG9yTW9kZSI6InRyYW5zZm9ybSIsImNvbG9yR2FtbWEiOjEsInJhbXBQYWxldHRlSWQiOiJsZWdhY3kiLCJmb3VyRENvbG9yIjoid0JsdWVPcmFuZ2UiLCJmb3VyRERlcHRoRmFkZSI6ZmFsc2UsInJlbmRlclN0eWxlIjoiZGVwdGhGYWRlIiwic2hvd0d1aWRlcyI6dHJ1ZSwiZmxhbWUiOnsiZXhwb3N1cmUiOjEsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJnYW1tYSI6Mi40LCJ2aWJyYW5jeSI6MSwic3VwZXJzYW1wbGUiOjIsImVzdGltYXRvclJhZGl1cyI6NiwiZXN0aW1hdG9yTWluaW11bVJhZGl1cyI6MCwiZXN0aW1hdG9yQ3VydmUiOjAuNCwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic29saWQiOnsicmVzb2x1dGlvbiI6MTkyLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwidGhyZXNob2xkIjowLjMsImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInN1cmZhY2UiOnsibGlnaHRBemltdXRoIjoxMzUsImxpZ2h0RWxldmF0aW9uIjo1MCwiYW1iaWVudCI6MC4yNSwiY29sb3JTb3VyY2UiOiJ0cmFuc2Zvcm0iLCJwYWxldHRlSWQiOiJzcGVjdHJ1bSIsImNvbG9yU3BlZWQiOjAuNX0sInN5bW1ldHJ5Ijp7Im9yZGVyIjoxLCJwbGFuZSI6Inh6In0sImdsb3dCcmlnaHRuZXNzIjoxLCJmaW5hbFRyYW5zZm9ybSI6eyJwb3NpdGlvbiI6WzAuMTUsLTAuMSwwLjA1XSwicm90YXRpb24iOlswLjIsMC4zLDAuMV0sInNjYWxlIjpbMC45LDAuOSwwLjldLCJ2YXJpYXRpb25zIjpbeyJ0eXBlIjoiYm94Zm9sZCIsIndlaWdodCI6MC41NX1dfSwiY2FtZXJhIjp7InRhcmdldCI6WzAuMDU2OSwtMC4wOTI1LC0wLjAzNDhdLCJyYWRpdXMiOjEuNDM5OCwidGhldGEiOjAuNzg1NCwicGhpIjoxLjA1Nn19";
 
+/** The 4D escape gate's minimal Mandelbox Brick document: mandelboxCube's
+ * one -1.5 link, rotated 1 radian in xw. Derived from the browser-proven
+ * escape4 document in surface-4d-lift.verify.mjs, with the second link
+ * removed and the first changed to the denser shipped Brick shape. */
+const ESCAPE4_HASH =
+  "#v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAsMCwwXSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMSwxLDFdLCJ2YXJpYXRpb25zIjpbeyJ0eXBlIjoibWFuZGVsYm94Iiwid2VpZ2h0IjotMS41fV0sInciOnsicm90YXRpb24iOnsieHciOjF9fX1dLCJudW1Qb2ludHMiOjEwMDAwMCwicG9pbnRTaXplIjoxLCJjb2xvck1vZGUiOiJ0cmFuc2Zvcm0iLCJjb2xvckdhbW1hIjoxLCJyYW1wUGFsZXR0ZUlkIjoibGVnYWN5IiwiZm91ckRDb2xvciI6IndCbHVlT3JhbmdlIiwiZm91ckREZXB0aEZhZGUiOmZhbHNlLCJyZW5kZXJTdHlsZSI6ImRlcHRoRmFkZSIsInNob3dHdWlkZXMiOnRydWUsImZsYW1lIjp7ImV4cG9zdXJlIjoxLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwiZ2FtbWEiOjIuNCwidmlicmFuY3kiOjEsInN1cGVyc2FtcGxlIjoyLCJlc3RpbWF0b3JSYWRpdXMiOjYsImVzdGltYXRvck1pbmltdW1SYWRpdXMiOjAsImVzdGltYXRvckN1cnZlIjowLjQsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInNvbGlkIjp7InJlc29sdXRpb24iOjE5MiwiaXRlcmF0aW9ucyI6MjAwMDAwMDAsInRocmVzaG9sZCI6MC4zLCJsaWdodEF6aW11dGgiOjEzNSwibGlnaHRFbGV2YXRpb24iOjUwLCJhbWJpZW50IjowLjI1LCJwYWxldHRlSWQiOiJzcGVjdHJ1bSJ9LCJzdXJmYWNlIjp7ImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsImNvbG9yU291cmNlIjoidHJhbnNmb3JtIiwicGFsZXR0ZUlkIjoic3BlY3RydW0iLCJjb2xvclNwZWVkIjowLjV9LCJzeW1tZXRyeSI6eyJvcmRlciI6MSwicGxhbmUiOiJ4eiJ9LCJnbG93QnJpZ2h0bmVzcyI6MSwiYmFsbG9vbkVjaG8iOmZhbHNlLCJiYWxsb29uUmFkaXVzIjoxLjYsImZvZ0RlbnNpdHkiOjEsImZvZ1RpbnQiOiIjZmZmZmZmIiwiZm9nVGludFN0cmVuZ3RoIjowLCJncm91bmRQbGFuZSI6ZmFsc2V9";
+
 /** The finishes authored onto the base document, by transform index.
  * Transform 0 becomes chrome (fully metallic, fully reflective, an
  * overdriven tight highlight), transform 2 becomes glass (mostly
@@ -214,6 +257,21 @@ const AUTHORED_FINISHES = {
   0: { metalness: 1, reflect: 1, specular: 1, shininess: 96 },
   2: { transmit: 0.65, reflect: 0.4 },
 };
+
+const SCENES = [
+  {
+    name: "lens3",
+    baseHash: LENS3_HASH,
+    finishes: AUTHORED_FINISHES,
+    armNames: ["compute", "webgl"],
+  },
+  {
+    name: "escape4",
+    baseHash: ESCAPE4_HASH,
+    finishes: { 0: AUTHORED_FINISHES[0] },
+    armNames: ["compute"],
+  },
+];
 
 /** Overlay elements that can paint on top of the canvas (surface-repro's
  * list plus the toast). Their boxes are masked out of both the full-canvas
@@ -256,6 +314,7 @@ function parseArgs(argv) {
     url: "https://localhost:4173",
     mode: "sw",
     arm: "both",
+    scene: "lens3",
     viewport: "640x360",
     settle: 300_000,
     stage: SETTLE_SAMPLES,
@@ -278,6 +337,16 @@ function parseArgs(argv) {
   }
   if (!["compute", "webgl", "both"].includes(args.arm)) {
     throw new Error(`--arm must be compute, webgl or both (got ${args.arm})`);
+  }
+  if (!["lens3", "escape4", "all"].includes(args.scene)) {
+    throw new Error(
+      `--scene must be lens3, escape4 or all (got ${args.scene})`,
+    );
+  }
+  if (args.arm === "webgl" && args.scene !== "lens3") {
+    throw new Error(
+      `--scene=${args.scene} includes compute-only escape4; use --arm=compute or --arm=both`,
+    );
   }
   const vp = /^(\d+)x(\d+)$/.exec(args.viewport);
   if (!vp) throw new Error(`--viewport must be WxH (got ${args.viewport})`);
@@ -320,24 +389,26 @@ function encodeHash(doc) {
   return `#v1=${b64}`;
 }
 
-/** The authored twin: the base document with AUTHORED_FINISHES applied.
+/** A scene's authored twin: the base document with its finish map applied.
  * Throws if the base does not round-trip byte for byte through this
  * script's own codec — the one way the two legs could silently diverge. */
-function buildDocuments() {
-  const base = decodeHash(LENS3_HASH);
-  if (encodeHash(base) !== LENS3_HASH) {
+function buildDocuments(scene) {
+  const base = decodeHash(scene.baseHash);
+  if (encodeHash(base) !== scene.baseHash) {
     throw new Error(
-      "the embedded lens3 hash does not round-trip through this script's codec; refusing to derive an authored twin from it",
+      `the embedded ${scene.name} hash does not round-trip through this script's codec; refusing to derive an authored twin from it`,
     );
   }
-  const authored = decodeHash(LENS3_HASH);
-  for (const [index, finish] of Object.entries(AUTHORED_FINISHES)) {
+  const authored = decodeHash(scene.baseHash);
+  for (const [index, finish] of Object.entries(scene.finishes)) {
     const t = authored.transforms[Number(index)];
-    if (!t) throw new Error(`base document has no transform ${index}`);
+    if (!t) {
+      throw new Error(`${scene.name} base document has no transform ${index}`);
+    }
     t.finish = { ...finish };
   }
   return [
-    { name: "unauthored", hash: LENS3_HASH },
+    { name: "unauthored", hash: scene.baseHash },
     { name: "authored", hash: encodeHash(authored) },
   ];
 }
@@ -845,23 +916,45 @@ function interestingConsole(lines) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   await mkdir(args.outdir, { recursive: true });
-  const legs = buildDocuments();
   const arms = [
     { name: "compute", query: "", expectEngine: "compute" },
     { name: "webgl", query: "surfacegl", expectEngine: "webgl" },
   ].filter((a) => args.arm === "both" || a.name === args.arm);
+  const scenes = SCENES.filter(
+    (s) => args.scene === "all" || s.name === args.scene,
+  );
+  const legsByScene = new Map(
+    scenes.map((scene) => [scene, buildDocuments(scene)]),
+  );
+  const jobs = scenes.flatMap((scene) =>
+    arms
+      .filter((arm) => scene.armNames.includes(arm.name))
+      .map((arm) => ({
+        scene,
+        arm,
+        legs: legsByScene.get(scene),
+        label: scene.name === "lens3" ? arm.name : `${scene.name}/${arm.name}`,
+        fileStem:
+          scene.name === "lens3"
+            ? `finish-${arm.name}`
+            : `finish-${scene.name}-${arm.name}`,
+      })),
+  );
   const log = (line) => console.error(`[finish] ${line}`);
   const region = centralRegion(args.width, args.height);
 
   log(
-    `lens3 ${args.width}x${args.height}, mode=${args.mode}, arms=${arms.map((a) => a.name).join("+")}, ` +
+    `scenes=${args.scene}, ${args.width}x${args.height}, mode=${args.mode}, routes=${jobs.map((j) => j.label).join("+")}, ` +
       `target stage ${stageName(args.stage)}, budget ${args.settle / 1000}s/leg, floor ${(args.floor * 100).toFixed(2)}% ` +
       `structural (>${STRUCTURAL_DELTA}/255) over the central ${CENTER_FRACTION * 100}% region ` +
       `x[${region.x}..${region.x + region.w - 1}] y[${region.y}..${region.y + region.h - 1}]`,
   );
-  log(
-    `authored twin: ${legs[1].hash.length} chars (base ${legs[0].hash.length})`,
-  );
+  for (const scene of scenes) {
+    const legs = legsByScene.get(scene);
+    log(
+      `${scene.name} authored twin: ${legs[1].hash.length} chars (base ${legs[0].hash.length})`,
+    );
+  }
 
   const { env, args: launchArgs } = launchOptions(args.mode);
   let browser;
@@ -886,9 +979,9 @@ async function main() {
     const diffPage = await diffContext.newPage();
     await diffPage.goto("about:blank");
 
-    for (const arm of arms) {
+    for (const { arm, legs, label, fileStem } of jobs) {
       log(
-        `=== arm ${arm.name} (${arm.query ? `?${arm.query}` : "default routing"}) ===`,
+        `=== ${label} (${arm.query ? `?${arm.query}` : "default routing"}) ===`,
       );
       const results = [];
       let stopAt = args.stage;
@@ -901,10 +994,10 @@ async function main() {
         try {
           r = await runLeg(browser, args, arm, leg, stopAt, budget, log);
         } catch (err) {
-          log(`  CHECKING FAILURE on ${arm.name}/${leg.name}: ${err.message}`);
+          log(`  CHECKING FAILURE on ${label}/${leg.name}: ${err.message}`);
           inconclusive++;
           verdicts.push(
-            `${arm.name}: INCONCLUSIVE — ${leg.name} leg threw before a capture (${err.message})`,
+            `${label}: INCONCLUSIVE — ${leg.name} leg threw before a capture (${err.message})`,
           );
           results.length = 0;
           break;
@@ -918,7 +1011,7 @@ async function main() {
         for (const [stage, cap] of r.captures) {
           const file = path.join(
             args.outdir,
-            `finish-${arm.name}-${leg.name}-s${stage}.png`,
+            `${fileStem}-${leg.name}-s${stage}.png`,
           );
           await writeFile(file, cap.buffer);
         }
@@ -932,7 +1025,7 @@ async function main() {
       }
       if (results.length === 0) continue;
 
-      // --- verdict for this arm ---
+      // --- verdict for this scene/arm route ---
       // A leg that captured no stage at all has no per-capture engine to
       // check; fall back to its last-observed engine (sticky-last, set in
       // runLeg) so a missing WebGPU adapter still reads as CHECKING rather
@@ -944,11 +1037,11 @@ async function main() {
         inconclusive++;
         if (arm.expectEngine === "compute" && r.labels && !r.labels.adapter) {
           verdicts.push(
-            `${arm.name}: INCONCLUSIVE — ${r.leg} leg: no WebGPU adapter in this browser (engine=${r.engine ?? "none"}) — the launch recipe did not yield one; see the module doc`,
+            `${label}: INCONCLUSIVE — ${r.leg} leg: no WebGPU adapter in this browser (engine=${r.engine ?? "none"}) — the launch recipe did not yield one; see the module doc`,
           );
         } else {
           verdicts.push(
-            `${arm.name}: INCONCLUSIVE — the unauthored leg reached no stage inside ${(args.settle / 1000).toFixed(0)}s (${r.stopReason}); raise --settle or shrink --viewport`,
+            `${label}: INCONCLUSIVE — the unauthored leg reached no stage inside ${(args.settle / 1000).toFixed(0)}s (${r.stopReason}); raise --settle or shrink --viewport`,
           );
         }
         continue;
@@ -960,7 +1053,7 @@ async function main() {
       if (common === undefined) {
         inconclusive++;
         verdicts.push(
-          `${arm.name}: INCONCLUSIVE — no common stage (unauthored [${[...un.captures.keys()].join(",")}], authored [${[...au.captures.keys()].join(",")}]); raise --settle`,
+          `${label}: INCONCLUSIVE — no common stage (unauthored [${[...un.captures.keys()].join(",")}], authored [${[...au.captures.keys()].join(",")}]); raise --settle`,
         );
         continue;
       }
@@ -996,7 +1089,7 @@ async function main() {
       }
       if (checking !== null) {
         inconclusive++;
-        verdicts.push(`${arm.name}: INCONCLUSIVE — ${checking}`);
+        verdicts.push(`${label}: INCONCLUSIVE — ${checking}`);
         continue;
       }
 
@@ -1010,12 +1103,12 @@ async function main() {
       );
       if (d.error) {
         inconclusive++;
-        verdicts.push(`${arm.name}: INCONCLUSIVE — diff failed: ${d.error}`);
+        verdicts.push(`${label}: INCONCLUSIVE — diff failed: ${d.error}`);
         continue;
       }
       const diffFile = path.join(
         args.outdir,
-        `finish-${arm.name}-diff-s${common}.png`,
+        `${fileStem}-diff-s${common}.png`,
       );
       await writeFile(diffFile, Buffer.from(d.diffPng, "base64"));
       const centerFrac =
@@ -1023,7 +1116,7 @@ async function main() {
       const fullFrac =
         d.full.compared > 0 ? d.full.structural / d.full.compared : 0;
       log(
-        `  ${arm.name} @ ${stageName(common)}: central region ${d.center.structural}/${d.center.compared} structural ` +
+        `  ${label} @ ${stageName(common)}: central region ${d.center.structural}/${d.center.compared} structural ` +
           `(${(centerFrac * 100).toFixed(3)}%, ${d.center.differing} differing, max delta ${d.center.maxDelta}); ` +
           `full canvas ${d.full.structural}/${d.full.compared} structural (${(fullFrac * 100).toFixed(3)}%, max delta ${d.full.maxDelta}); ` +
           `${masks.length} overlay box(es) masked -> ${path.basename(diffFile)}`,
@@ -1044,11 +1137,11 @@ async function main() {
       if (problems.length) {
         failures++;
         verdicts.push(
-          `${arm.name} (engine=${capA.engine}/${capB.engine}): FAIL — ${problems.join("; ")}; ${stageLine}`,
+          `${label} (engine=${capA.engine}/${capB.engine}): FAIL — ${problems.join("; ")}; ${stageLine}`,
         );
       } else {
         verdicts.push(
-          `${arm.name} (engine=${capA.engine}): PASS — authored vs unauthored ${(centerFrac * 100).toFixed(3)}% structural over the central region ` +
+          `${label} (engine=${capA.engine}): PASS — authored vs unauthored ${(centerFrac * 100).toFixed(3)}% structural over the central region ` +
             `(floor ${(args.floor * 100).toFixed(2)}%; full canvas ${(fullFrac * 100).toFixed(3)}%, max delta ${d.full.maxDelta}); ${stageLine}`,
         );
       }
@@ -1057,12 +1150,12 @@ async function main() {
     log("===== VERDICTS =====");
     for (const v of verdicts) log(v);
     log(
-      `wall time ${((Date.now() - t0) / 1000).toFixed(1)}s (mode=${args.mode}, viewport=${args.viewport}, settle=${args.settle}ms, stage=${args.stage}, floor=${args.floor})`,
+      `wall time ${((Date.now() - t0) / 1000).toFixed(1)}s (scene=${args.scene}, mode=${args.mode}, viewport=${args.viewport}, settle=${args.settle}ms, stage=${args.stage}, floor=${args.floor})`,
     );
     await browser.close().catch(() => {});
   }
   if (failures > 0) process.exit(1);
-  if (inconclusive > 0 || verdicts.length < arms.length) process.exit(2);
+  if (inconclusive > 0 || verdicts.length < jobs.length) process.exit(2);
   process.exit(0);
 }
 
