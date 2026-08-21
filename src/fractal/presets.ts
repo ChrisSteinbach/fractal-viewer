@@ -1281,6 +1281,23 @@ export function mandelbulbClassic(): Transform[] {
   return bulbMap();
 }
 
+/** The shipped look target for the metal room: neutral Chrome on a broad,
+ * smooth-enough Mandelbulb subject. The room itself is preset side-state
+ * below; keeping the transform finish here means exports/share links retain
+ * the material exactly like a hand-authored Chrome choice. */
+export function metalStudio(): Transform[] {
+  return mandelbulbClassic().map((transform) => ({
+    ...transform,
+    finish: {
+      specular: 1,
+      shininess: 96,
+      metalness: 1,
+      reflect: 0.9,
+      reflectionTint: 0,
+    },
+  }));
+}
+
 /**
  * The same power with a pre-power offset. `t` is added BEFORE
  * the triplex power rather than after it, so it does not slide the object
@@ -2037,6 +2054,7 @@ const PRESETS = {
   // The surface FINISH showcase — four maps in four materials, one of
   // them deliberately unauthored (see fourFinishes).
   fourFinishes,
+  metalStudio,
   // The escape-time set's own presets: the mode had none, so the
   // only route in was authoring a lone fold map by hand.
   mandelboxClassic,
@@ -2139,6 +2157,7 @@ export const PRESET_RENDER_HINTS: Partial<
   // Finishes are read by the surface tracers and by nothing else, so the
   // finish showcase opens where its subject exists.
   fourFinishes: "surface",
+  metalStudio: "surface",
   // The escape-time trio needs the hint more than any preset
   // here: the chaos-game cloud of a non-contracting map is escape-reset
   // debris, so as a point cloud these look BROKEN rather than merely
@@ -2281,6 +2300,28 @@ export const PRESET_PALETTES: Partial<Record<Preset, FlamePaletteId>> = {
  */
 export const PRESET_SYMMETRIES: Partial<Record<Preset, SymmetryParams>> = {
   foldChainFlower: { order: 5, plane: "xz" },
+};
+
+/** Surface-room state carried by the one preset composed around it. Absent
+ * leaves the user's room controls alone, matching lighting/palette settings;
+ * this entry authors the floor explicitly when Metal Studio is chosen. */
+export const PRESET_SURFACE_ROOMS: Partial<
+  Record<
+    Preset,
+    {
+      groundPlane: boolean;
+      floorPattern: "solid" | "checker";
+      floorTileScale: number;
+      floorEmission: number;
+    }
+  >
+> = {
+  metalStudio: {
+    groundPlane: true,
+    floorPattern: "checker",
+    floorTileScale: 0.64,
+    floorEmission: 1.4,
+  },
 };
 
 /** Build the transform set for a named preset. */

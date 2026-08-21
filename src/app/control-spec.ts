@@ -58,6 +58,9 @@ import {
   setSurfaceColorSource,
   setSurfaceColorSpeed,
   setSurfaceEnvLight,
+  setSurfaceFloorEmission,
+  setSurfaceFloorPattern,
+  setSurfaceFloorTileScale,
   setSurfaceLightAzimuth,
   setSurfaceLightElevation,
   setSurfacePaletteId,
@@ -72,6 +75,7 @@ import type {
   RenderStyle,
   SolidParams,
   SurfaceColorSource,
+  SurfaceFloorPattern,
   SurfaceParams,
 } from "./state";
 import type { BackgroundMode, BackgroundShape } from "./background";
@@ -1118,6 +1122,35 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     },
     read: (s) => String(s.surface.envLight),
     apply: (s, raw) => setSurfaceEnvLight(s, Number(raw)),
+    effect: surfaceParamsEffect,
+  },
+  {
+    kind: "select",
+    id: "surfaceFloorPatternSelect",
+    read: (s) => s.surface.floorPattern,
+    apply: (s, raw) => setSurfaceFloorPattern(s, raw as SurfaceFloorPattern),
+    effect: surfaceParamsEffect,
+  },
+  {
+    kind: "range",
+    id: "surfaceFloorTileScaleSlider",
+    label: {
+      id: "surfaceFloorTileScaleLabel",
+      text: (s) => `${s.surface.floorTileScale.toFixed(2)}×`,
+    },
+    read: (s) => String(s.surface.floorTileScale),
+    apply: (s, raw) => setSurfaceFloorTileScale(s, Number(raw)),
+    effect: surfaceParamsEffect,
+  },
+  {
+    kind: "range",
+    id: "surfaceFloorEmissionSlider",
+    label: {
+      id: "surfaceFloorEmissionLabel",
+      text: (s) => s.surface.floorEmission.toFixed(2),
+    },
+    read: (s) => String(s.surface.floorEmission),
+    apply: (s, raw) => setSurfaceFloorEmission(s, Number(raw)),
     effect: surfaceParamsEffect,
   },
   {

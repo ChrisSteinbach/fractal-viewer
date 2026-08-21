@@ -1434,6 +1434,9 @@ export interface SurfaceGpuGroundPlane {
   ballCenter: Vec3;
   ballRadius: number;
   albedo: Vec3;
+  pattern?: 0 | 1;
+  tileScale?: number;
+  emission?: number;
 }
 
 /** Write the plane block at its frozen offset (module-doc layout: y 288,
@@ -4825,7 +4828,7 @@ ${balloonHitWrapText}`
     ? `
 // Per-slot finish lighting — surface-finish.ts's surfaceFinishShadeSource,
 // ONE emission shared by every core (the shade entry is shared text).
-${surfaceFinishShadeSource(SURFACE_FINISH_WGSL)}`
+${surfaceFinishShadeSource(SURFACE_FINISH_WGSL, groundPlane)}`
     : "";
   // The hit slot's two finish lanes, hoisted ahead of the color-source
   // branch: the stride-3 slot index the base read used to spell inline,
@@ -4851,7 +4854,7 @@ ${surfaceFinishShadeSource(SURFACE_FINISH_WGSL)}`
   // The fog lines after it are shared — they read col/t/tEnter/bg only.
   const shadeLighting = finish
     ? `  // Parametric finish lighting — surface-finish.ts's finishShade.
-  var col = finishShade(base, n, rd, shadow, ao, bg, fa, fb);`
+  var col = finishShade(base, ${groundPlane ? "pos, " : ""}n, rd, shadow, ao, bg, fa, fb);`
     : `  let diffuse = max(dot(n, shade.lightDir), 0.0);
   let halfVec = normalize(shade.lightDir - rd);
   let specular = pow(max(dot(n, halfVec), 0.0), 32.0) * 0.4;
@@ -5064,7 +5067,18 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> vec3f {
   let envTint =
     mix(vec3f(1.0), envE / max(max(envE.r, max(envE.g, envE.b)), 1.0e-4), shade.envStrength);
   let lit = (shade.ambient * ao + (1.0 - shade.ambient) * diffuse * shadow) * envTint;
-  var col = pow(pow(params.groundAlbedo, vec3f(2.2)) * lit, vec3f(1.0 / 2.2));
+  var floorAlbedo = params.groundAlbedo;
+  if (shade.balloonTint.z >= 0.5) {
+    let cell = max(params.groundBallR * shade.balloonTint.x, 1.0e-4);
+    let tile = floor((hp.xz - params.groundBallC.xz) / cell);
+    let checker = ((i32(tile.x) + i32(tile.y)) % 2 + 2) % 2;
+    floorAlbedo *= mix(0.035, 1.0, f32(checker));
+  }
+  let floorLinear = pow(floorAlbedo, vec3f(2.2));
+  var col = pow(
+    floorLinear * (lit + vec3f(shade.balloonTint.y)),
+    vec3f(1.0 / 2.2)
+  );
   // Depth fog, the hit path's formula at the plane distance; the fog
   // origin is the ray's closest approach to the ball center (clamped to
   // the segment), so the floor under the fractal stays as crisp as the

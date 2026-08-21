@@ -21,7 +21,7 @@ import { clamp } from "./vec";
  * classic entry.
  */
 
-/** A finish's five fields, resolved: never absent, never non-finite, and
+/** A finish's six fields, resolved: never absent, never non-finite, and
  * always in the domain {@link resolveSurfaceFinish} enforces. */
 export interface ResolvedSurfaceFinish {
   specular: number;
@@ -29,18 +29,20 @@ export interface ResolvedSurfaceFinish {
   metalness: number;
   reflect: number;
   transmit: number;
+  reflectionTint: number;
 }
 
 /** The classic hardcoded values — today's Blinn-Phong formula, run
  * whenever a document authors no `finish` at all — shared so a caller can
  * compare a resolved finish against the default set by identity rather than
- * by re-typing five numbers. */
+ * by re-typing six numbers. */
 export const CLASSIC_SURFACE_FINISH: ResolvedSurfaceFinish = {
   specular: 0.4,
   shininess: 32,
   metalness: 0,
   reflect: 0,
   transmit: 0,
+  reflectionTint: 1,
 };
 
 /**
@@ -70,8 +72,8 @@ export const SURFACE_FINISH_SHININESS_FLOOR = 0.01;
  *   past the classic 0.4 is legal authoring.
  * - `shininess` floors at {@link SURFACE_FINISH_SHININESS_FLOOR}, strictly
  *   above zero, and is otherwise unbounded above.
- * - `metalness`/`reflect`/`transmit` clamp into `[0, 1]`, their own authored
- *   span (see each field's doc on {@link SurfaceFinish}).
+ * - `metalness`/`reflect`/`transmit`/`reflectionTint` clamp into `[0, 1]`,
+ *   their own authored span (see each field's doc on {@link SurfaceFinish}).
  */
 export function resolveSurfaceFinish(
   finish: SurfaceFinish | undefined,
@@ -91,7 +93,17 @@ export function resolveSurfaceFinish(
   const transmit = Number.isFinite(finish?.transmit)
     ? clamp(finish?.transmit as number, 0, 1)
     : CLASSIC_SURFACE_FINISH.transmit;
-  return { specular, shininess, metalness, reflect, transmit };
+  const reflectionTint = Number.isFinite(finish?.reflectionTint)
+    ? clamp(finish?.reflectionTint as number, 0, 1)
+    : CLASSIC_SURFACE_FINISH.reflectionTint;
+  return {
+    specular,
+    shininess,
+    metalness,
+    reflect,
+    transmit,
+    reflectionTint,
+  };
 }
 
 /**
@@ -115,7 +127,8 @@ export function isClassicSurfaceFinish(
     r.shininess === CLASSIC_SURFACE_FINISH.shininess &&
     r.metalness === CLASSIC_SURFACE_FINISH.metalness &&
     r.reflect === CLASSIC_SURFACE_FINISH.reflect &&
-    r.transmit === CLASSIC_SURFACE_FINISH.transmit
+    r.transmit === CLASSIC_SURFACE_FINISH.transmit &&
+    r.reflectionTint === CLASSIC_SURFACE_FINISH.reflectionTint
   );
 }
 
@@ -124,10 +137,9 @@ export function isClassicSurfaceFinish(
  * which component, shared by every packer so the WGSL `shadeMaps` stride
  * lanes and the GLSL `uMapFinishA`/`uMapFinishB` uniform arrays cannot
  * disagree about lane order. `a = (specular, shininess, metalness,
- * reflect)`, `b = (transmit, 0, 0, 0)` — `b`'s trailing three are RESERVED
- * for the Tier-2 pattern fields (patternKind, patternScale,
- * patternStrength), declared in the layout now so the pattern slice lands
- * without a second stride change, zero-filled until it exists.
+ * reflect)`, `b = (transmit, reflectionTint, 0, 0)`. The last two lanes stay
+ * reserved for a later material-pattern slice; room patterning is scene
+ * state and does not belong on a transform finish.
  */
 export function surfaceFinishLanes(finish: ResolvedSurfaceFinish): {
   a: [number, number, number, number];
@@ -135,7 +147,7 @@ export function surfaceFinishLanes(finish: ResolvedSurfaceFinish): {
 } {
   return {
     a: [finish.specular, finish.shininess, finish.metalness, finish.reflect],
-    b: [finish.transmit, 0, 0, 0],
+    b: [finish.transmit, finish.reflectionTint, 0, 0],
   };
 }
 
@@ -196,6 +208,15 @@ export interface SurfaceFinishDialect {
   /** The backdrop's two stops: `uBgTop`+`uBgBottom` / `shade.bgTop`+`shade.bgBottom`. */
   readonly bgTop: string;
   readonly bgBottom: string;
+  /** Optional production room/floor accessors. Present in both GLSL
+   * tracers; WGSL supplies them only for a ground-plane kernel. */
+  readonly groundY?: string;
+  readonly groundBallC?: string;
+  readonly groundBallR?: string;
+  readonly groundAlbedo?: string;
+  readonly groundPattern?: string;
+  readonly groundTileScale?: string;
+  readonly groundEmission?: string;
 }
 
 export const SURFACE_FINISH_GLSL: SurfaceFinishDialect = {
@@ -206,6 +227,13 @@ export const SURFACE_FINISH_GLSL: SurfaceFinishDialect = {
   envStrength: "uEnvLight",
   bgTop: "uBgTop",
   bgBottom: "uBgBottom",
+  groundY: "uGroundY",
+  groundBallC: "uGroundBallC",
+  groundBallR: "uGroundBallR",
+  groundAlbedo: "uGroundAlbedo",
+  groundPattern: "float(uGroundPattern)",
+  groundTileScale: "uGroundTileScale",
+  groundEmission: "uGroundEmission",
 };
 
 export const SURFACE_FINISH_WGSL: SurfaceFinishDialect = {
@@ -216,6 +244,13 @@ export const SURFACE_FINISH_WGSL: SurfaceFinishDialect = {
   envStrength: "shade.envStrength",
   bgTop: "shade.bgTop",
   bgBottom: "shade.bgBottom",
+  groundY: "params.groundY",
+  groundBallC: "params.groundBallC",
+  groundBallR: "params.groundBallR",
+  groundAlbedo: "params.groundAlbedo",
+  groundPattern: "shade.balloonTint.z",
+  groundTileScale: "shade.balloonTint.x",
+  groundEmission: "shade.balloonTint.y",
 };
 
 /**
@@ -251,13 +286,16 @@ export const SURFACE_FINISH_WGSL: SurfaceFinishDialect = {
  *   backdrop while fresnel keeps its grazing reflections.
  *
  * The lanes are {@link surfaceFinishLanes}': `fa = (specular, shininess,
- * metalness, reflect)`, `fb = (transmit, pattern... reserved)`. `bg` is the
+ * metalness, reflect)`, `fb = (transmit, reflectionTint, reserved...)`. `bg` is the
  * pixel's own backdrop (the value the caller's miss path would have
  * written); everything else is the call site's existing locals. Comments in
  * the emitted text are kept to one line — the 4D tracer's strip-threshold
  * headroom is measured in single kilobytes.
  */
-function surfaceFinishBody(dialect: SurfaceFinishDialect): string {
+function surfaceFinishBody(
+  dialect: SurfaceFinishDialect,
+  room: boolean,
+): string {
   const isWgsl = dialect.language === "wgsl";
   const v3 = dialect.vec3;
   const dv3 = isWgsl ? "let" : "vec3";
@@ -268,7 +306,7 @@ function surfaceFinishBody(dialect: SurfaceFinishDialect): string {
   ${df} diffuse = max(dot(n, ${dialect.lightDir}), 0.0);
   ${dv3} halfVec = normalize(${dialect.lightDir} - rd);
   ${df} spec = fa.x * pow(max(dot(n, halfVec), 0.0), fa.y);
-  ${dv3} metalTint = mix(${v3}(1.0), linBase, fa.z);
+  ${dv3} metalTint = mix(${v3}(1.0), linBase, fa.z * fb.y);
   ${dv3} envE = mix(${dialect.bgBottom}, ${dialect.bgTop}, n.y * 0.5 + 0.5);
   ${dv3} envTintV = mix(${v3}(1.0), envE / max(max(envE.r, max(envE.g, envE.b)), 1.0e-4), ${dialect.envStrength});
   ${dv3} lit = (${dialect.ambient} * ao + (1.0 - ${dialect.ambient}) * diffuse * shadow) * envTintV;
@@ -281,17 +319,41 @@ function surfaceFinishBody(dialect: SurfaceFinishDialect): string {
   ${dv3} envBase = mix(${dialect.bgBottom}, ${dialect.bgTop}, horizon * horizon * (3.0 - 2.0 * horizon));
   ${df} sunDot = max(dot(reflDir, ${dialect.lightDir}), 0.0);
   ${df} sunAmt = pow(sunDot, ${SUN_DISC_TIGHTNESS}) * ${SUN_DISC_INTENSITY} + pow(sunDot, ${SUN_GLOW_TIGHTNESS}) * ${SUN_GLOW_INTENSITY};
-  ${dv3} envR = pow(envBase, ${v3}(2.2)) + ${v3}(sunAmt);
+  ${room ? (isWgsl ? "var" : v3) : dv3} envR = pow(envBase, ${v3}(2.2)) + ${v3}(sunAmt);${
+    room
+      ? `
+${isWgsl ? "" : "#if SURFACE_GROUND_PLANE"}
+  // The authorable emitting floor is recognizable room content for a
+  // mirror. Its cell width is relative to the certified world-space ball,
+  // never to pixels, so a resize cannot retune the material.
+  if (pos.y > ${dialect.groundY} && reflDir.y < -1.0e-5) {
+    ${df} floorT = (${dialect.groundY} - pos.y) / reflDir.y;
+    ${dv3} floorP = pos + reflDir * floorT;
+    ${df} floorFade = 1.0 - smoothstep(${dialect.groundBallR} * 4.0, ${dialect.groundBallR} * 10.0, length(floorP.xz - ${dialect.groundBallC}.xz));
+    ${df} cell = max(${dialect.groundBallR} * ${dialect.groundTileScale}, 1.0e-4);
+    ${df} tileSum = floor((floorP.x - ${dialect.groundBallC}.x) / cell) + floor((floorP.z - ${dialect.groundBallC}.z) / cell);
+    ${df} checker = tileSum - 2.0 * floor(tileSum * 0.5);
+    ${df} tileTone = mix(1.0, mix(0.035, 1.0, checker), step(0.5, ${dialect.groundPattern}));
+    ${dv3} floorBase = ${dialect.groundAlbedo} * tileTone;
+    ${df} floorLit = ${dialect.ambient} + (1.0 - ${dialect.ambient}) * max(${dialect.lightDir}.y, 0.0) + ${dialect.groundEmission};
+    envR = mix(envR, pow(floorBase, ${v3}(2.2)) * floorLit, floorFade);
+  }
+${isWgsl ? "" : "#endif"}`
+      : ""
+  }
   ${dv3} refl = (fa.w * fresnel) * metalTint * envR;
   ${dv3} col = pow(linBase * lit * (1.0 - fa.z) + metalTint * (spec * shadow) + refl, ${v3}(1.0 / 2.2));
   return mix(col, bg, fb.x * (1.0 - fresnel));
 `;
 }
 
-function surfaceFinishSignature(dialect: SurfaceFinishDialect): string {
+function surfaceFinishSignature(
+  dialect: SurfaceFinishDialect,
+  room: boolean,
+): string {
   return dialect.language === "glsl"
-    ? `${dialect.vec3} finishShade(${dialect.vec3} base, ${dialect.vec3} n, ${dialect.vec3} rd, float shadow, float ao, ${dialect.vec3} bg, vec4 fa, vec4 fb)`
-    : `fn finishShade(base: ${dialect.vec3}, n: ${dialect.vec3}, rd: ${dialect.vec3}, shadow: f32, ao: f32, bg: ${dialect.vec3}, fa: vec4f, fb: vec4f) -> ${dialect.vec3}`;
+    ? `${dialect.vec3} finishShade(${dialect.vec3} base${room ? `, ${dialect.vec3} pos` : ""}, ${dialect.vec3} n, ${dialect.vec3} rd, float shadow, float ao, ${dialect.vec3} bg, vec4 fa, vec4 fb)`
+    : `fn finishShade(base: ${dialect.vec3}${room ? `, pos: ${dialect.vec3}` : ""}, n: ${dialect.vec3}, rd: ${dialect.vec3}, shadow: f32, ao: f32, bg: ${dialect.vec3}, fa: vec4f, fb: vec4f) -> ${dialect.vec3}`;
 }
 
 /**
@@ -308,8 +370,9 @@ function surfaceFinishSignature(dialect: SurfaceFinishDialect): string {
  */
 export function surfaceFinishShadeSource(
   dialect: SurfaceFinishDialect,
+  room = false,
 ): string {
-  return `${surfaceFinishSignature(dialect)} {${surfaceFinishBody(dialect)}}\n`;
+  return `${surfaceFinishSignature(dialect, room)} {${surfaceFinishBody(dialect, room)}}\n`;
 }
 
 /** The lighting-environment quantities {@link finishShadeTs} reads — the
@@ -322,6 +385,15 @@ export interface SurfaceFinishShadeEnv {
   envStrength: number;
   bgTop: Vec3;
   bgBottom: Vec3;
+  floor?: {
+    y: number;
+    ballCenter: Vec3;
+    ballRadius: number;
+    albedo: Vec3;
+    pattern: 0 | 1;
+    tileScale: number;
+    emission: number;
+  };
 }
 
 /**
@@ -345,6 +417,7 @@ export function finishShadeTs(
   bg: Vec3,
   finish: ResolvedSurfaceFinish,
   env: SurfaceFinishShadeEnv,
+  pos?: Vec3,
 ): Vec3 {
   const mix = (x: number, y: number, t: number): number => x * (1 - t) + y * t;
   const dot3 = (a: Vec3, b: Vec3): number =>
@@ -369,9 +442,9 @@ export function finishShadeTs(
   const spec =
     finish.specular * Math.pow(Math.max(dot3(n, halfVec), 0), finish.shininess);
   const metalTint: Vec3 = [
-    mix(1, linBase[0], finish.metalness),
-    mix(1, linBase[1], finish.metalness),
-    mix(1, linBase[2], finish.metalness),
+    mix(1, linBase[0], finish.metalness * finish.reflectionTint),
+    mix(1, linBase[1], finish.metalness * finish.reflectionTint),
+    mix(1, linBase[2], finish.metalness * finish.reflectionTint),
   ];
   const envY = n[1] * 0.5 + 0.5;
   const envE: Vec3 = [
@@ -409,7 +482,33 @@ export function finishShadeTs(
   const out: Vec3 = [0, 0, 0];
   for (let i = 0 as 0 | 1 | 2; i < 3; i++) {
     const envBase = mix(env.bgBottom[i], env.bgTop[i], horizonT);
-    const envR = Math.pow(envBase, 2.2) + sunAmt;
+    let envR = Math.pow(envBase, 2.2) + sunAmt;
+    const floor = env.floor;
+    if (floor && pos && pos[1] > floor.y && reflDir[1] < -1e-5) {
+      const floorT = (floor.y - pos[1]) / reflDir[1];
+      const floorP: Vec3 = [
+        pos[0] + reflDir[0] * floorT,
+        pos[1] + reflDir[1] * floorT,
+        pos[2] + reflDir[2] * floorT,
+      ];
+      const dx = floorP[0] - floor.ballCenter[0];
+      const dz = floorP[2] - floor.ballCenter[2];
+      const edge = Math.hypot(dx, dz);
+      const a = floor.ballRadius * 4;
+      const b = floor.ballRadius * 10;
+      const u = clamp((edge - a) / (b - a), 0, 1);
+      const floorFade = 1 - u * u * (3 - 2 * u);
+      const cell = Math.max(floor.ballRadius * floor.tileScale, 1e-4);
+      const tileSum = Math.floor(dx / cell) + Math.floor(dz / cell);
+      const checker = tileSum - 2 * Math.floor(tileSum * 0.5);
+      const tileTone = floor.pattern === 1 ? mix(0.035, 1, checker) : 1;
+      const floorLit =
+        env.ambient +
+        (1 - env.ambient) * Math.max(env.lightDir[1], 0) +
+        floor.emission;
+      const floorR = Math.pow(floor.albedo[i] * tileTone, 2.2) * floorLit;
+      envR = mix(envR, floorR, floorFade);
+    }
     const refl = reflW * metalTint[i] * envR;
     const col = Math.pow(
       linBase[i] * lit[i] * (1 - finish.metalness) +

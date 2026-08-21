@@ -361,11 +361,22 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     vec3 e = mix(uBgBottom, uBgTop, n.y * 0.5 + 0.5);
     return mix(vec3(1.0), e / max(max(e.r, max(e.g, e.b)), 1.0e-4), uEnvLight);
   }
+#if SURFACE_GROUND_PLANE
+  uniform float uGroundY;
+  uniform float uGroundFadeStart;
+  uniform float uGroundFadeEnd;
+  uniform float uGroundBallR;
+  uniform vec3 uGroundBallC;
+  uniform vec3 uGroundAlbedo;
+  uniform int uGroundPattern;
+  uniform float uGroundTileScale;
+  uniform float uGroundEmission;
+#endif
 #if SURFACE_FINISH
   /** surface-finish.ts's ONE lighting body, GLSL dialect — the 3D twin's
    * splice line for line; define-gated because it is value- not
    * byte-identical to the fixed formula at the classic lanes. */
-  ${surfaceFinishShadeSource(SURFACE_FINISH_GLSL)}
+  ${surfaceFinishShadeSource(SURFACE_FINISH_GLSL, true)}
 #endif
   ${backgroundShapeSource(BACKGROUND_SHAPE_GLSL)}
   /** Angular pixel footprint of the ACTIVE buffer (scene-set per frame):
@@ -1515,13 +1526,6 @@ uniform float uBalloonTintStrength;
    * Uniforms live in this arm rather than the shared block so the OFF
    * variants' resolved source stays byte-identical (the uBalloonCenter
    * precedent). */
-  uniform float uGroundY;
-  uniform float uGroundFadeStart;
-  uniform float uGroundFadeEnd;
-  uniform float uGroundBallR;
-  uniform vec3 uGroundBallC;
-  uniform vec3 uGroundAlbedo;
-
   /** The out param cov is the trace-alpha coverage flag: 1 where the floor
    * was actually lit, 0 where this function returned the caller's own
    * backdrop. The WebGPU arm counts a PLANE terminal for exactly those
@@ -1613,7 +1617,18 @@ uniform float uBalloonTintStrength;
     float diffuse = max(uLightDir.y, 0.0);
     vec3 lit = (uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow) *
       envTint(vec3(0.0, 1.0, 0.0));
-    vec3 col = pow(pow(uGroundAlbedo, vec3(2.2)) * lit, vec3(1.0 / 2.2));
+    vec3 floorAlbedo = uGroundAlbedo;
+    if (uGroundPattern == 1) {
+      float cell = max(uGroundBallR * uGroundTileScale, 1.0e-4);
+      vec2 tile = floor((hp.xz - uGroundBallC.xz) / cell);
+      float checker = mod(tile.x + tile.y, 2.0);
+      floorAlbedo *= mix(0.035, 1.0, checker);
+    }
+    vec3 floorLinear = pow(floorAlbedo, vec3(2.2));
+    vec3 col = pow(
+      floorLinear * (lit + vec3(uGroundEmission)),
+      vec3(1.0 / 2.2)
+    );
 
     // Depth fog, the hit path's formula at the plane distance: the fog
     // origin is the ray's closest approach to the ball center (clamped to
@@ -1929,7 +1944,7 @@ uniform float uBalloonTintStrength;
     // The hit's depth-0 map picks its AUTHORED finish — the 3D twin's
     // fetch line for line, over the std140 lanes.
     int fSlot = clamp(firstChoice, 0, uMapCount - 1);
-    vec3 col = finishShade(base, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot]);
+    vec3 col = finishShade(base, pos, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot]);
 #else
     float diffuse = max(dot(n, uLightDir), 0.0);
     vec3 halfVec = normalize(uLightDir - rd);
@@ -2215,6 +2230,9 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uGroundBallR: { value: 1 },
       uGroundBallC: { value: new THREE.Vector3() },
       uGroundAlbedo: { value: new THREE.Vector3(1, 1, 1) },
+      uGroundPattern: { value: 0 },
+      uGroundTileScale: { value: 0.64 },
+      uGroundEmission: { value: 0 },
       uColorSource: { value: 0 },
       uColorSpeed: { value: 0.5 },
       uColorLUT: { value: placeholderLUT },
@@ -2571,6 +2589,9 @@ export function setSurface4GroundPlane(
     u.uGroundBallR.value = spec.ballRadius;
     (u.uGroundBallC.value as THREE.Vector3).set(...spec.ballCenter);
     (u.uGroundAlbedo.value as THREE.Vector3).set(...spec.albedo);
+    u.uGroundPattern.value = spec.pattern ?? 0;
+    u.uGroundTileScale.value = spec.tileScale ?? 0.64;
+    u.uGroundEmission.value = spec.emission ?? 0;
   } else {
     // Zeros are fine while the arm is off — except the ball radius, whose
     // 1 keeps even a stray enabled read divide-by-zero-free, matching
@@ -2581,6 +2602,9 @@ export function setSurface4GroundPlane(
     u.uGroundBallR.value = 1;
     (u.uGroundBallC.value as THREE.Vector3).set(0, 0, 0);
     (u.uGroundAlbedo.value as THREE.Vector3).set(1, 1, 1);
+    u.uGroundPattern.value = 0;
+    u.uGroundTileScale.value = 0.64;
+    u.uGroundEmission.value = 0;
   }
   if (fragment !== null) {
     material.defines.SURFACE4_GROUND_PLANE = want;

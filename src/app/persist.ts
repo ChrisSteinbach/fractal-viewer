@@ -64,6 +64,7 @@ import {
   PARAM,
   RENDER_STYLES,
   SURFACE_COLOR_SOURCES,
+  SURFACE_FLOOR_PATTERNS,
   clampToSpec,
 } from "./state";
 import type {
@@ -72,6 +73,7 @@ import type {
   RenderStyle,
   SolidParams,
   SurfaceColorSource,
+  SurfaceFloorPattern,
   SurfaceParams,
 } from "./state";
 import { clampPhi, clampRadius, type CameraPose } from "./orbit";
@@ -641,7 +643,7 @@ function decodeFinishField(raw: unknown): number | undefined {
  * rather than rejecting the scene — a finish is cosmetic shading data,
  * never worth losing an otherwise-valid shared link over, the same spirit
  * {@link decodeTransform} already applies per-field to `colorIndex`/
- * `colorSpeed`. Each of the five fields decodes independently via
+ * `colorSpeed`. Each of the six fields decodes independently via
  * {@link decodeFinishField}; an entry with nothing that survives
  * (`finish: {}`, or every field malformed) decodes to `undefined`, matching
  * how an all-zero-weight `variations` array decodes to `undefined` above.
@@ -662,6 +664,8 @@ function decodeFinish(raw: unknown): SurfaceFinish | undefined {
   if (reflect !== undefined) finish.reflect = reflect;
   const transmit = decodeFinishField(f.transmit);
   if (transmit !== undefined) finish.transmit = transmit;
+  const reflectionTint = decodeFinishField(f.reflectionTint);
+  if (reflectionTint !== undefined) finish.reflectionTint = reflectionTint;
   return Object.keys(finish).length > 0 ? finish : undefined;
 }
 
@@ -1226,18 +1230,26 @@ function decodeSurfaceParams(
     // decodes to the default, which is the intended on-by-default
     // behaviour — those links render slightly differently now, on purpose.
     envLight: PARAM.surfaceEnvLight.default,
+    floorPattern: "solid",
+    floorTileScale: PARAM.surfaceFloorTileScale.default,
+    floorEmission: PARAM.surfaceFloorEmission.default,
   };
   if (raw === undefined) return defaults;
   if (typeof raw !== "object" || raw === null) return null;
   const s = raw as Record<string, unknown>;
 
   const out = { ...defaults };
-  const numeric: Exclude<keyof SurfaceParams, "colorSource" | "paletteId">[] = [
+  const numeric: Exclude<
+    keyof SurfaceParams,
+    "colorSource" | "paletteId" | "floorPattern"
+  >[] = [
     "lightAzimuth",
     "lightElevation",
     "ambient",
     "colorSpeed",
     "envLight",
+    "floorTileScale",
+    "floorEmission",
   ];
   for (const key of numeric) {
     if (s[key] === undefined) continue;
@@ -1253,6 +1265,11 @@ function decodeSurfaceParams(
     VALID_SURFACE_COLOR_SOURCES.has(s.colorSource)
       ? (s.colorSource as SurfaceColorSource)
       : "transform";
+  const floorPattern: SurfaceFloorPattern =
+    typeof s.floorPattern === "string" &&
+    (SURFACE_FLOOR_PATTERNS as readonly string[]).includes(s.floorPattern)
+      ? (s.floorPattern as SurfaceFloorPattern)
+      : "solid";
 
   // paletteId: unknown or missing quietly becomes the default —
   // same quiet-fallback contract as flame.paletteId/solid.paletteId (see
@@ -1276,6 +1293,12 @@ function decodeSurfaceParams(
     paletteId,
     colorSpeed: clampToSpec(PARAM.surfaceColorSpeed, out.colorSpeed),
     envLight: clampToSpec(PARAM.surfaceEnvLight, out.envLight),
+    floorPattern,
+    floorTileScale: clampToSpec(
+      PARAM.surfaceFloorTileScale,
+      out.floorTileScale,
+    ),
+    floorEmission: clampToSpec(PARAM.surfaceFloorEmission, out.floorEmission),
   };
 }
 
@@ -1504,11 +1527,11 @@ function encodeFoldRadius(n: number | undefined): number | undefined {
 }
 
 /**
- * Round one of a finish's five fields for the wire IFF it's present and
+ * Round one of a finish's six fields for the wire IFF it's present and
  * finite — `encodeFinish`'s counterpart to {@link decodeFinishField}, the
  * identical shape as {@link encodeFoldRadius}: `undefined` in, `undefined`
- * out, so an absent `specular`/`shininess`/`metalness`/`reflect`/`transmit`
- * writes nothing.
+ * out, so an absent `specular`/`shininess`/`metalness`/`reflect`/`transmit`/
+ * `reflectionTint` writes nothing.
  */
 function encodeFinishField(n: number | undefined): number | undefined {
   return n !== undefined && Number.isFinite(n) ? round4(n) : undefined;
@@ -1516,7 +1539,7 @@ function encodeFinishField(n: number | undefined): number | undefined {
 
 /**
  * Encode a transform's optional `finish` (see `types.ts`'s
- * {@link SurfaceFinish}): each of the five fields written only when present
+ * {@link SurfaceFinish}): each of the six fields written only when present
  * and finite, mirroring {@link encodeFoldRadius}'s per-field omission on
  * `Variation`'s own optional lengths rather than `w`'s single shared
  * predicate — there is no `isFlatTransform`-style test for a finish, so
@@ -1541,6 +1564,8 @@ function encodeFinish(
   if (reflect !== undefined) e.reflect = reflect;
   const transmit = encodeFinishField(finish.transmit);
   if (transmit !== undefined) e.transmit = transmit;
+  const reflectionTint = encodeFinishField(finish.reflectionTint);
+  if (reflectionTint !== undefined) e.reflectionTint = reflectionTint;
   return Object.keys(e).length > 0 ? e : undefined;
 }
 
@@ -1761,6 +1786,9 @@ export function encodeScene(s: SceneSnapshot): string {
       paletteId: s.surface.paletteId,
       colorSpeed: round4(s.surface.colorSpeed),
       envLight: round4(s.surface.envLight),
+      floorPattern: s.surface.floorPattern,
+      floorTileScale: round4(s.surface.floorTileScale),
+      floorEmission: round4(s.surface.floorEmission),
     },
     symmetry: {
       order: Math.round(s.symmetry.order),

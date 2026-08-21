@@ -2551,7 +2551,16 @@ export class SurfaceComputeRenderer {
         dither: spec.dither,
         fogTint: spec.fogTint,
         fogTintStrength: spec.fogTintStrength,
-        balloonTint: spec.balloonTint,
+        // Ground and balloon kernels are mutually exclusive. Reuse the
+        // balloon tint tail for the floor's shading-only appearance so the
+        // frozen ShadeParams layout does not grow: (tile, emission, pattern).
+        balloonTint: spec.groundPlane
+          ? [
+              spec.groundPlane.tileScale ?? 0.64,
+              spec.groundPlane.emission ?? 0,
+              spec.groundPlane.pattern ?? 0,
+            ]
+          : spec.balloonTint,
         balloonTintStrength: spec.balloonTintStrength,
         pixelJitter,
         envStrength: spec.envLight,

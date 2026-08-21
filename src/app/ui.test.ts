@@ -1345,7 +1345,7 @@ describe("Ui.renderTransformEditor", () => {
     // Scale W, 3 Rotation W, 3 Shear W — always built, just collapsed for a
     // w-less transform like this one); a plain transform has no variations,
     // so the Variations group adds no range sliders (just a menu).
-    expect(editorSliders()).toHaveLength(28);
+    expect(editorSliders()).toHaveLength(29);
   });
 
   it("opens only Position for a flat transform", () => {
@@ -1693,7 +1693,7 @@ describe("Ui.renderTransformEditor", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     ui.renderTransformEditor(transforms[0], 0, transforms.length);
-    expect(editorSliders()).toHaveLength(28);
+    expect(editorSliders()).toHaveLength(29);
 
     ui.renderTransformEditor(null, null, 1);
     expect(document.getElementById("transformEditor")?.children).toHaveLength(
@@ -2276,7 +2276,7 @@ describe("Ui finish editor", () => {
     select.dispatchEvent(new Event("change"));
   }
 
-  it("offers the five fields at their classic values for a map that authors none, reading Classic", () => {
+  it("offers the six fields at their classic values for a map that authors none, reading Classic", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     ui.renderTransformEditor(plain, 0, 1);
@@ -2405,7 +2405,7 @@ describe("Ui finish editor", () => {
     expect(emitted).toEqual({ metalness: 0.9, reflect: 0.2 });
   });
 
-  it("sets all five sliders from a bundle, storing only the fields that differ from classic", () => {
+  it("sets all six sliders from a bundle, storing only the fields that differ from classic", () => {
     const handlers = noopHandlers();
     const ui = new Ui(document);
     ui.bind(handlers);
@@ -2415,13 +2415,14 @@ describe("Ui finish editor", () => {
 
     // Chrome is (1, 96, 1, 0.9, 0): four fields away from classic and
     // transmit on it — which the per-field write rule stores as ABSENCE, so
-    // the document resolves to the bundle's five numbers exactly while
+    // the document resolves to the bundle's six numbers exactly while
     // carrying no classic-valued key.
     expect(lastGeometry(handlers).finish).toEqual({
       specular: 1,
       shininess: 96,
       metalness: 1,
       reflect: 0.9,
+      reflectionTint: 0,
     });
     expect(editorSlider("Finish specular").value).toBe("1");
     expect(editorSlider("Finish shininess").value).toBe("96");

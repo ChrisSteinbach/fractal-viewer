@@ -143,9 +143,9 @@ export interface Variation {
  * {@link Variation} entry.
  *
  * ABSENT MEANS THE CLASSIC VALUES — today's hardcoded lighting formula
- * (specular 0.4, shininess 32, metalness/reflect/transmit all 0) — BYTE-
- * IDENTICALLY: an unauthored document, and every document predating this
- * field, renders exactly today's frame. Each field is independently
+ * (specular 0.4, shininess 32, metalness/reflect/transmit all 0,
+ * reflection tint 1) — BYTE-IDENTICALLY: an unauthored document, and every
+ * document predating this field, renders exactly today's frame. Each field is independently
  * optional too, so a document may author `metalness` alone and leave the
  * rest classic. `surface-finish.ts`'s
  * {@link import("./surface-finish").resolveSurfaceFinish} is the one place
@@ -185,6 +185,13 @@ export interface SurfaceFinish {
    * is fully opaque.
    */
   transmit?: number;
+  /**
+   * How strongly a metal reflection inherits the transform's base color,
+   * `[0, 1]`. Absent ⇒ 1, the colored-metal behavior that shipped before
+   * this field. Chrome authors 0 so a red transform can still reflect an
+   * achromatic room; Metal keeps 1 for deliberately colored metal.
+   */
+  reflectionTint?: number;
 }
 
 /**

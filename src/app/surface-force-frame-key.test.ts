@@ -52,6 +52,9 @@ describe("surfaceComputeForceFrameKey", () => {
         ballCenter: [0, 1, 0],
         ballRadius: 5,
         albedo: [0.2, 0.2, 0.2],
+        pattern: 1,
+        tileScale: 0.64,
+        emission: 1.4,
       },
     });
     const b = baseSpec({
@@ -68,6 +71,9 @@ describe("surfaceComputeForceFrameKey", () => {
         ballCenter: [0, 1, 0],
         ballRadius: 5,
         albedo: [0.2, 0.2, 0.2],
+        pattern: 1,
+        tileScale: 0.64,
+        emission: 1.4,
       },
     });
     expect(surfaceComputeForceFrameKey(a)).toBe(surfaceComputeForceFrameKey(b));
@@ -166,6 +172,30 @@ describe("surfaceComputeForceFrameKey", () => {
     );
     expect(groundPlaneOnly).not.toBe(bothPresent);
   });
+
+  it("keys every authorable floor-appearance value", () => {
+    const groundPlane = {
+      y: -1,
+      fadeStart: 2,
+      fadeEnd: 6,
+      ballCenter: [0, 0, 0] as [number, number, number],
+      ballRadius: 3,
+      albedo: [0.5, 0.5, 0.5] as [number, number, number],
+      pattern: 1 as const,
+      tileScale: 0.64,
+      emission: 1.4,
+    };
+    const key = surfaceComputeForceFrameKey(baseSpec({ groundPlane }));
+    for (const changed of [
+      { ...groundPlane, pattern: 0 as const },
+      { ...groundPlane, tileScale: 0.8 },
+      { ...groundPlane, emission: 2 },
+    ]) {
+      expect(
+        surfaceComputeForceFrameKey(baseSpec({ groundPlane: changed })),
+      ).not.toBe(key);
+    }
+  });
 });
 
 describe("surfaceComputeForceFrameKey finishes block", () => {
@@ -175,6 +205,7 @@ describe("surfaceComputeForceFrameKey finishes block", () => {
     metalness: 1,
     reflect: 0.8,
     transmit: 0,
+    reflectionTint: 0,
   };
   const matte = {
     specular: 0,
@@ -182,6 +213,7 @@ describe("surfaceComputeForceFrameKey finishes block", () => {
     metalness: 0,
     reflect: 0,
     transmit: 0,
+    reflectionTint: 1,
   };
 
   it("keys a finish change — a timeline leg re-authoring one slot under a parked camera must re-trace", () => {
@@ -192,6 +224,16 @@ describe("surfaceComputeForceFrameKey finishes block", () => {
       baseSpec({ finishes: [chrome, { ...matte, transmit: 0.5 }] }),
     );
     expect(a).not.toBe(b);
+  });
+
+  it("keys Chrome's neutral reflection separately from colored Metal", () => {
+    const neutral = surfaceComputeForceFrameKey(
+      baseSpec({ finishes: [chrome] }),
+    );
+    const tinted = surfaceComputeForceFrameKey(
+      baseSpec({ finishes: [{ ...chrome, reflectionTint: 1 }] }),
+    );
+    expect(neutral).not.toBe(tinted);
   });
 
   it("keys presence itself: an authored session never collides with a classic one", () => {

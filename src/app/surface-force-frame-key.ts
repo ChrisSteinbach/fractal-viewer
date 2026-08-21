@@ -76,7 +76,7 @@ export function surfaceComputeForceFrameKey(
     // pixel under a parked camera — fog's own rationale, per slot. Keyed
     // on spec.finishes' OWN presence, which matches the shadeMaps
     // packer's absent default exactly (absent spec = the classic kernels
-    // = the pre-finish buffer); the RESOLVED five-number lanes per slot
+    // = the pre-finish buffer); the RESOLVED six-number lanes per slot
     // need no further defaulting because resolution is total. Tag + slot
     // COUNT then one comma-tuple per slot — self-delimiting rather than
     // fixed-length; see the module doc's collision argument.
@@ -85,9 +85,14 @@ export function surfaceComputeForceFrameKey(
           "finish",
           spec.finishes.length,
           ...spec.finishes.map((f) =>
-            [f.specular, f.shininess, f.metalness, f.reflect, f.transmit].join(
-              ",",
-            ),
+            [
+              f.specular,
+              f.shininess,
+              f.metalness,
+              f.reflect,
+              f.transmit,
+              f.reflectionTint,
+            ].join(","),
           ),
         ]
       : []),
@@ -157,6 +162,9 @@ export function surfaceComputeForceFrameKey(
           spec.groundPlane.ballCenter.join(","),
           spec.groundPlane.ballRadius,
           spec.groundPlane.albedo.join(","),
+          spec.groundPlane.pattern ?? 0,
+          spec.groundPlane.tileScale ?? 0.64,
+          spec.groundPlane.emission ?? 0,
         ]
       : []),
   ].join("|");

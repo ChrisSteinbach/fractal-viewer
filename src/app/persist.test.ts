@@ -160,6 +160,9 @@ function baseSnapshot(): SceneSnapshot {
       paletteId: DEFAULT_SOLID_PALETTE,
       colorSpeed: DEFAULT_SURFACE_COLOR_SPEED,
       envLight: DEFAULT_SURFACE_ENV_LIGHT,
+      floorPattern: "solid",
+      floorTileScale: 0.64,
+      floorEmission: 0,
     },
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, plane: DEFAULT_SYMMETRY_PLANE },
     glowBrightness: DEFAULT_GLOW_BRIGHTNESS,
@@ -214,6 +217,9 @@ describe("encodeScene / decodeScene round-trip", () => {
       paletteId: DEFAULT_SOLID_PALETTE,
       colorSpeed: DEFAULT_SURFACE_COLOR_SPEED,
       envLight: DEFAULT_SURFACE_ENV_LIGHT,
+      floorPattern: "solid",
+      floorTileScale: 0.64,
+      floorEmission: 0,
     });
   });
 
@@ -1007,6 +1013,7 @@ describe("decodeScene transform finish", () => {
             metalness: 0.5,
             reflect: 0.3,
             transmit: 0.1,
+            reflectionTint: 0.2,
           },
         },
       ],
@@ -1018,6 +1025,7 @@ describe("decodeScene transform finish", () => {
       metalness: 0.5,
       reflect: 0.3,
       transmit: 0.1,
+      reflectionTint: 0.2,
     });
   });
 
@@ -2345,6 +2353,9 @@ describe("decodeScene surface params", () => {
         paletteId: "spectrum",
         colorSpeed: 0.8,
         envLight: 0.6,
+        floorPattern: "checker",
+        floorTileScale: 0.8,
+        floorEmission: 1.5,
       },
     };
     const result = decodeScene(encodeScene(s));
@@ -2356,6 +2367,9 @@ describe("decodeScene surface params", () => {
       paletteId: "spectrum",
       colorSpeed: 0.8,
       envLight: 0.6,
+      floorPattern: "checker",
+      floorTileScale: 0.8,
+      floorEmission: 1.5,
     });
   });
 
@@ -2381,6 +2395,9 @@ describe("decodeScene surface params", () => {
       paletteId: DEFAULT_SOLID_PALETTE,
       colorSpeed: DEFAULT_SURFACE_COLOR_SPEED,
       envLight: DEFAULT_SURFACE_ENV_LIGHT,
+      floorPattern: "solid",
+      floorTileScale: 0.64,
+      floorEmission: 0,
     });
   });
 

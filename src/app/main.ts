@@ -90,6 +90,7 @@ import {
   PRESET_RENDER_HINTS,
   PRESET_SCAFFOLDS,
   PRESET_SYMMETRIES,
+  PRESET_SURFACE_ROOMS,
   presetTransforms,
 } from "../fractal/presets";
 import { CUSTOM_PALETTE_ID, resolvePalette } from "../fractal/palette";
@@ -3207,15 +3208,12 @@ function main(): void {
   // needs no caveat), "unavailable" is a missing adapter, "failed" a create
   // failure or device loss. One-way for the page's life, like the boolean it
   // replaced.
-  // The fr-2mvj reflection proof exists in the 3D WebGL tracer only. Its
-  // diagnostic query therefore implies `surfacegl`; without this, a fold
-  // preset could silently route to compute and show the ordinary material
-  // under a badge claiming the traced proof was active.
   const surfaceQuery = new URLSearchParams(window.location.search);
-  let surfaceComputeBlock: SurfaceComputeBlock | null =
-    surfaceQuery.has("surfacegl") || surfaceQuery.has("reflectionproof")
-      ? "flag"
-      : null;
+  let surfaceComputeBlock: SurfaceComputeBlock | null = surfaceQuery.has(
+    "surfacegl",
+  )
+    ? "flag"
+    : null;
   // `?surfacecompute` is `?surfacegl`'s mirror: it makes a session PREFER the
   // compute tracer on the shapes whose routing rule sends them to WebGL. That
   // is plain affine 3D alone — 4D above symmetry order 1 used to be the other
@@ -6092,6 +6090,19 @@ function main(): void {
         // palette is fine", which is every preset that predates the table.
         const palette = PRESET_PALETTES[preset];
         if (palette) state = setFlamePaletteId(state, palette);
+        const room = PRESET_SURFACE_ROOMS[preset];
+        if (room) {
+          state = {
+            ...state,
+            groundPlane: room.groundPlane,
+            surface: {
+              ...state.surface,
+              floorPattern: room.floorPattern,
+              floorTileScale: room.floorTileScale,
+              floorEmission: room.floorEmission,
+            },
+          };
+        }
       }, "always");
       // The tumbling scaffold (Show guides toggles it with the grid/axes) —
       // the polytope presets carry one (see PRESET_SCAFFOLDS); every other
@@ -7911,31 +7922,6 @@ function main(): void {
       marchSteps: pin("surfacemarchsteps"),
       shadeHits: pin("surfaceshadehits"),
     });
-  }
-
-  // Make the disposable reflection experiment impossible to confuse with a
-  // production render. The badge is query-only and intentionally inline:
-  // no app CSS, document state or UI vocabulary belongs to this spike.
-  {
-    const params = new URLSearchParams(window.location.search);
-    if (params.has("reflectionproof")) {
-      const roomOnly = params.get("reflectionproof") === "room";
-      const neutralChrome = params.has("reflectionproofneutral");
-      const badge = document.createElement("div");
-      badge.id = "reflectionProofBadge";
-      badge.textContent = `${
-        roomOnly
-          ? "VISUAL SPIKE · EMITTING ROOM · NO SECONDARY RAY"
-          : "VISUAL SPIKE · ROOM + WORLD NORMAL + 1 REFLECTION BOUNCE"
-      }${neutralChrome ? " · NEUTRAL CHROME SUBJECT" : ""}`;
-      badge.style.cssText =
-        "position:fixed;top:16px;left:50%;transform:translateX(-50%);" +
-        "z-index:10000;padding:8px 12px;border:1px solid #f59e0b;" +
-        "border-radius:8px;background:rgba(13,13,24,.92);color:#fbbf24;" +
-        "font:700 12px/1.2 system-ui;letter-spacing:.06em;pointer-events:none";
-      document.body.appendChild(badge);
-      console.info(`[reflectionproof] ${badge.textContent}; WebGL 3D forced`);
-    }
   }
 
   animate();

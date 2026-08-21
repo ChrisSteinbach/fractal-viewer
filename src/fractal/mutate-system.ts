@@ -611,6 +611,9 @@ function jitterFinish(
   if (base.transmit !== undefined) {
     finish.transmit = jitterFinishUnit(rng, base.transmit, spread);
   }
+  if (base.reflectionTint !== undefined) {
+    finish.reflectionTint = jitterFinishUnit(rng, base.reflectionTint, spread);
+  }
   return finish;
 }
 

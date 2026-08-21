@@ -36,6 +36,7 @@ describe("resolveSurfaceFinish absent input", () => {
         metalness: -Infinity,
         reflect: NaN,
         transmit: Infinity,
+        reflectionTint: NaN,
       }),
     ).toEqual(CLASSIC_SURFACE_FINISH);
   });
@@ -76,6 +77,12 @@ describe("resolveSurfaceFinish domain", () => {
     expect(resolveSurfaceFinish({ transmit: -1 }).transmit).toBe(0);
     expect(resolveSurfaceFinish({ transmit: 2 }).transmit).toBe(1);
     expect(resolveSurfaceFinish({ transmit: 0.9 }).transmit).toBe(0.9);
+  });
+
+  it("defaults reflection tint to colored metal and clamps it into [0, 1]", () => {
+    expect(resolveSurfaceFinish({}).reflectionTint).toBe(1);
+    expect(resolveSurfaceFinish({ reflectionTint: -1 }).reflectionTint).toBe(0);
+    expect(resolveSurfaceFinish({ reflectionTint: 2 }).reflectionTint).toBe(1);
   });
 
   it("resolves one authored field independently, leaving the rest classic", () => {
@@ -131,10 +138,14 @@ describe("isClassicSurfaceFinish", () => {
   it("is false when transmit resolves away from classic", () => {
     expect(isClassicSurfaceFinish({ transmit: 0.5 })).toBe(false);
   });
+
+  it("is false when reflection tint resolves away from classic", () => {
+    expect(isClassicSurfaceFinish({ reflectionTint: 0 })).toBe(false);
+  });
 });
 
 describe("surfaceFinishLanes", () => {
-  it("packs a = (specular, shininess, metalness, reflect) and b = (transmit, 0, 0, 0)", () => {
+  it("packs a = (specular, shininess, metalness, reflect) and b = (transmit, reflectionTint, 0, 0)", () => {
     expect(
       surfaceFinishLanes({
         specular: 0.7,
@@ -142,13 +153,14 @@ describe("surfaceFinishLanes", () => {
         metalness: 1,
         reflect: 0.6,
         transmit: 0.25,
+        reflectionTint: 0.5,
       }),
-    ).toEqual({ a: [0.7, 96, 1, 0.6], b: [0.25, 0, 0, 0] });
+    ).toEqual({ a: [0.7, 96, 1, 0.6], b: [0.25, 0.5, 0, 0] });
   });
 
-  it("zero-fills the reserved Tier-2 pattern lanes", () => {
+  it("packs classic reflection tint and zero-fills the two reserved lanes", () => {
     const { b } = surfaceFinishLanes(CLASSIC_SURFACE_FINISH);
-    expect(b[1]).toBe(0);
+    expect(b[1]).toBe(1);
     expect(b[2]).toBe(0);
     expect(b[3]).toBe(0);
   });
@@ -192,6 +204,23 @@ describe("surfaceFinishShadeSource dialects", () => {
       "fn finishShade(base: vec3f, n: vec3f, rd: vec3f, shadow: f32, ao: f32, bg: vec3f, fa: vec4f, fb: vec4f) -> vec3f",
     );
     expect(wgsl).not.toContain("uLightDir");
+  });
+
+  it("emits the authorable room branch in world units, never pixels", () => {
+    const glsl = surfaceFinishShadeSource(SURFACE_FINISH_GLSL, true);
+    expect(glsl).toContain(
+      "vec3 finishShade(vec3 base, vec3 pos, vec3 n, vec3 rd",
+    );
+    expect(glsl).toContain("uGroundBallR * uGroundTileScale");
+    expect(glsl).toContain("floorP.xz - uGroundBallC.xz");
+    expect(glsl).not.toContain("uPixelEps");
+
+    const wgsl = surfaceFinishShadeSource(SURFACE_FINISH_WGSL, true);
+    expect(wgsl).toContain(
+      "fn finishShade(base: vec3f, pos: vec3f, n: vec3f, rd: vec3f",
+    );
+    expect(wgsl).toContain("params.groundBallR * shade.balloonTint.x");
+    expect(wgsl).not.toContain("pixelEps");
   });
 });
 
@@ -259,6 +288,15 @@ describe("finishShadeTs classic params", () => {
         envStrength: 0,
         bgTop: [0.05, 0.05, 0.09],
         bgBottom: [0.12, 0.13, 0.22],
+        floor: {
+          y: -1,
+          ballCenter: [0, 0, 0],
+          ballRadius: 1,
+          albedo: [0.6, 0.6, 0.6],
+          pattern: 1,
+          tileScale: 0.64,
+          emission: 1.4,
+        },
       },
       {
         lightDir: norm([-0.4, 0.6, -0.7]),
@@ -303,6 +341,7 @@ describe("finishShadeTs classic params", () => {
                   bg,
                   CLASSIC_SURFACE_FINISH,
                   env,
+                  [0, 1, 0],
                 );
                 const want = classicReference(base, n, rd, shadow, ao, env);
                 expect(got[0]).toBe(want[0]);
@@ -495,6 +534,27 @@ describe("finishShadeTs parametric behavior", () => {
     // remains: red-dominant like the albedo, not white like the classic.
     expect(got[0]).toBeGreaterThan(got[1] * 1.5);
     expect(got[0]).toBeGreaterThan(got[2] * 1.5);
+  });
+
+  it("Chrome's zero tint makes a saturated transform's metal response achromatic", () => {
+    const got = finishShadeTs(
+      [1, 0.05, 0.02],
+      n,
+      [0, -1, 0],
+      1,
+      0,
+      bg,
+      {
+        ...CLASSIC_SURFACE_FINISH,
+        metalness: 1,
+        specular: 1,
+        reflect: 0,
+        reflectionTint: 0,
+      },
+      { ...env, ambient: 0 },
+    );
+    expect(got[0]).toBeCloseTo(got[1], 12);
+    expect(got[1]).toBeCloseTo(got[2], 12);
   });
 });
 

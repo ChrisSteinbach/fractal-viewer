@@ -171,237 +171,6 @@ function resolveShadeDeWidth(): number {
 }
 
 /**
- * Disposable LOOK-FIRST proof requested by fr-2mvj. This is deliberately a
- * URL-selected, WebGL-only visual spike rather than document state: `room`
- * replaces the featureless backdrop reflection with a lit studio floor/sky;
- * `trace` adds a world-space reflection normal and one secondary surface ray.
- * The production off path interpolates none of the proof text into its shader.
- */
-export type SurfaceReflectionProofMode = "off" | "room" | "trace";
-
-function resolveReflectionProofMode(): SurfaceReflectionProofMode {
-  if (typeof window === "undefined") return "off";
-  const params = new URLSearchParams(window.location.search);
-  if (!params.has("reflectionproof")) return "off";
-  return params.get("reflectionproof") === "room" ? "room" : "trace";
-}
-
-/** World-space normal footprint as a fraction of the scene bound. The query
- * override exists so the live proof can be resized and compared without
- * pretending this provisional value is fr-maer.8's production answer. */
-function resolveReflectionProofNormalWidth(): number {
-  if (typeof window === "undefined") return 0.025;
-  const raw = new URLSearchParams(window.location.search).get(
-    "reflectionproofwidth",
-  );
-  const value = raw === null ? NaN : Number(raw);
-  return Number.isFinite(value) && value >= 0.001 && value <= 0.08
-    ? value
-    : 0.025;
-}
-
-/** A neutral subject separates "the room is not readable" from "the normal
- * is correct but the transform's saturated metal tint hides the evidence".
- * Like the proof itself, this is query-only and never document state. */
-function resolveReflectionProofNeutralChrome(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).has("reflectionproofneutral")
-  );
-}
-
-function reflectionProofGlsl(
-  mode: SurfaceReflectionProofMode,
-  normalWidth: number,
-  neutralChrome: boolean,
-): string {
-  if (mode === "off") return "";
-  const traced = mode === "trace";
-  return `
-  // fr-2mvj LOOK-FIRST spike. Absent in every normal build.
-  vec3 proofRoomRadiance(vec3 origin, vec3 dir) {
-    float skyT = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
-    vec3 sky = pow(mix(uBgBottom, uBgTop, skyT), vec3(2.2));
-
-    // Two studio emitters: the scene-light softbox plus an offset fill panel.
-    // They leave the room dark everywhere else, so a reflection has broad
-    // bright shapes AND black shapes to describe its curvature.
-    float keyDot = max(dot(dir, uLightDir), 0.0);
-    float key = keyDot * 2.0 + pow(keyDot, 400.0) * 14.0;
-    vec3 fillDir = normalize(vec3(-0.72, 0.38, -0.58));
-    float fill = pow(max(dot(dir, fillDir), 0.0), 18.0) * 2.4;
-    vec3 radiance = sky + vec3(key) + vec3(0.72, 0.82, 1.0) * fill;
-
-    // An emitting checker floor is CONTENT the mirror can recognize. It is
-    // analytic and world-anchored, with no document/UI/wire in this spike.
-    float floorY = uBoundCenter.y - uVisibleRadius * 1.18;
-    if (origin.y > floorY && dir.y < -1.0e-5) {
-      float tp = (floorY - origin.y) / dir.y;
-      vec3 hp = origin + dir * tp;
-      float cell = max(uVisibleRadius * 0.64, 1.0e-4);
-      vec2 grid = (hp.xz - uBoundCenter.xz) / cell;
-      vec2 tile = floor(grid);
-      float checker = mod(tile.x + tile.y, 2.0);
-      vec2 edge = abs(fract(grid) - 0.5);
-      float grout = step(0.47, max(edge.x, edge.y));
-      vec3 darkTile = vec3(0.018, 0.024, 0.038);
-      vec3 lightTile = vec3(0.85, 0.95, 1.15);
-      vec3 floorLight = mix(darkTile, lightTile, checker);
-      floorLight = mix(floorLight, vec3(0.004), grout);
-      float horizonFade = 1.0 - smoothstep(
-        uVisibleRadius * 5.0,
-        uVisibleRadius * 11.0,
-        length(hp.xz - uBoundCenter.xz)
-      );
-      radiance = mix(radiance, floorLight, horizonFade);
-    }
-    return max(radiance, vec3(0.0));
-  }
-
-#if SURFACE_FINISH
-  vec3 proofNormal(vec3 p, vec3 fallback) {
-    float hh = uBoundingRadius * ${normalWidth.toFixed(6)};
-    vec2 ee = vec2(1.0, -1.0) * 0.5773;
-    vec3 gg = ee.xyy * surfaceDE(p + ee.xyy * hh) +
-      ee.yyx * surfaceDE(p + ee.yyx * hh) +
-      ee.yxy * surfaceDE(p + ee.yxy * hh) +
-      ee.xxx * surfaceDE(p + ee.xxx * hh);
-    vec3 wide = dot(gg, gg) > 1.0e-12 ? normalize(gg) : fallback;
-    return dot(wide, fallback) < 0.0 ? -wide : wide;
-  }
-
-  vec3 proofTerminalRadiance(
-    vec3 pos,
-    vec3 n,
-    vec3 rayDir,
-    int slot
-  ) {
-    vec3 base = ${neutralChrome ? "vec3(0.72)" : "uMapColor[slot]"};
-    vec4 fa = uMapFinishA[slot];
-    vec3 linBase = pow(base, vec3(2.2));
-    vec3 metalTint = mix(vec3(1.0), linBase, fa.z);
-    float diffuse = max(dot(n, uLightDir), 0.0);
-    vec3 halfVec = normalize(uLightDir - rayDir);
-    float spec = fa.x * pow(max(dot(n, halfVec), 0.0), fa.y);
-    vec3 lit = (uAmbient + (1.0 - uAmbient) * diffuse) * envTint(n);
-    float f0 = mix(0.04, 1.0, fa.z);
-    float fresnel = f0 + (1.0 - f0) *
-      pow(1.0 - clamp(dot(n, -rayDir), 0.0, 1.0), 5.0);
-    vec3 room = proofRoomRadiance(pos, reflect(rayDir, n));
-    return linBase * lit * (1.0 - fa.z) +
-      metalTint * (vec3(spec) + fa.w * fresnel * room);
-  }
-
-  vec3 proofReflectedRadiance(
-    vec3 primaryPos,
-    vec3 geometricN,
-    vec3 reflectedDir
-  ) {
-${
-  traced
-    ? `    float bias = uBoundingRadius * 3.0e-3;
-    vec3 rayOrigin = primaryPos + geometricN * bias;
-    float floorY = uBoundCenter.y - uVisibleRadius * 1.18;
-    float floorT =
-      (rayOrigin.y > floorY && reflectedDir.y < -1.0e-5)
-        ? (floorY - rayOrigin.y) / reflectedDir.y
-        : 1.0e30;
-    float farT = min(uVisibleRadius * 6.0, floorT);
-    float tt = 0.0;
-    bool secondaryHit = false;
-    for (int i = 0; i < 96; i++) {
-      vec3 samplePos = rayOrigin + reflectedDir * tt;
-      float dd = surfaceDE(samplePos);
-      float ee = max(uBoundingRadius * 4.0e-4, tt * uAcceptPixelEps);
-      if (dd < ee) {
-        secondaryHit = true;
-        break;
-      }
-      tt += max(dd * uStepScale, ee * 0.5);
-      if (tt > farT) break;
-    }
-    if (secondaryHit) {
-      vec3 secondaryPos = rayOrigin + reflectedDir * tt;
-      int secondaryChoice;
-      float secondaryTrap;
-      float secondaryRings;
-      float secondarySheets;
-#if SURFACE_BALLOON
-      vec3 secondaryColorPos;
-      float secondaryShell;
-      surfaceDEBalloonHitInfo(
-        secondaryPos,
-        secondaryColorPos,
-        secondaryShell,
-        secondaryChoice,
-        secondaryTrap,
-        secondaryRings,
-        secondarySheets
-      );
-#else
-      surfaceDE(
-        secondaryPos,
-        secondaryChoice,
-        secondaryTrap,
-        secondaryRings,
-        secondarySheets
-      );
-#endif
-      vec3 secondaryN = proofNormal(secondaryPos, -reflectedDir);
-      int secondarySlot = clamp(secondaryChoice, 0, uMapCount - 1);
-      return proofTerminalRadiance(
-        secondaryPos,
-        secondaryN,
-        reflectedDir,
-        secondarySlot
-      );
-    }
-    return proofRoomRadiance(rayOrigin, reflectedDir);`
-    : `    return proofRoomRadiance(primaryPos, reflectedDir);`
-}
-  }
-
-  vec3 proofFinishShade(
-    vec3 base,
-    vec3 pos,
-    vec3 n,
-    vec3 rd,
-    float shadow,
-    float ao,
-    vec3 background,
-    vec4 fa,
-    vec4 fb
-  ) {
-${neutralChrome ? "    base = vec3(0.72);" : ""}
-    vec3 linBase = pow(base, vec3(2.2));
-    float diffuse = max(dot(n, uLightDir), 0.0);
-    vec3 halfVec = normalize(uLightDir - rd);
-    float spec = fa.x * pow(max(dot(n, halfVec), 0.0), fa.y);
-    vec3 metalTint = mix(vec3(1.0), linBase, fa.z);
-    vec3 lit = (uAmbient * ao +
-      (1.0 - uAmbient) * diffuse * shadow) * envTint(n);
-    float f0 = mix(0.04, 1.0, fa.z);
-    float fresnel = f0 + (1.0 - f0) *
-      pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 5.0);
-    vec3 reflectionN = ${traced ? "proofNormal(pos, n)" : "n"};
-    vec3 reflectedDir = reflect(rd, reflectionN);
-    // A wide normal may cross the geometric hemisphere at a sharp crease;
-    // fall back there rather than launching the proof ray into the object.
-    if (dot(reflectedDir, n) <= 0.0) reflectedDir = reflect(rd, n);
-    vec3 reflected = proofReflectedRadiance(pos, n, reflectedDir);
-    vec3 refl = (fa.w * fresnel) * metalTint * reflected;
-    vec3 col = pow(
-      linBase * lit * (1.0 - fa.z) +
-        metalTint * (spec * shadow) + refl,
-      vec3(1.0 / 2.2)
-    );
-    return mix(col, background, fb.x * (1.0 - fresnel));
-  }
-#endif
-`;
-}
-
-/**
  * The fold-frontier descent body (the pure-fold branch sweep through its
  * branch-and-bound) as ONE template instantiated twice, mirroring
  * surface-de-gpu.ts's surfaceDEProbe derivation: the public `surfaceDE` at
@@ -815,12 +584,7 @@ const foldValueFormGlsl = (shadeDeWidth: number): string =>
  * pre-probe source byte for byte. Exported for tests; the module ships
  * exactly one build (SURFACE_FRAGMENT below).
  */
-export function buildSurfaceFragment(
-  shadeDeWidth: number,
-  reflectionProof: SurfaceReflectionProofMode = "off",
-  proofNormalWidth = 0.025,
-  proofNeutralChrome = false,
-): string {
+export function buildSurfaceFragment(shadeDeWidth: number): string {
   return /* glsl */ `
   precision highp float;
   precision highp sampler3D;
@@ -856,8 +620,8 @@ export function buildSurfaceFragment(
   /** Per-map surface FINISH, in fractal/surface-finish.ts's two wire
    * lanes (surfaceFinishLanes, the ONE lane definition the WGSL shade
    * stride shares): A = (specular, shininess, metalness, reflect), B =
-   * (transmit, 0, 0, 0 — the trailing three reserved for the pattern
-   * fields). Keyed to base maps like uMapColor and read at the shading
+   * (transmit, reflectionTint, 0, 0 — the trailing two reserved for later
+   * material-pattern fields). Keyed to base maps like uMapColor and read at the shading
    * site through the hit's depth-0 map. Declared INSIDE the arm (the
    * SURFACE_BULB precedent), so an unfinished document's program pays no
    * bytes for them — and in this SHARED section rather than any other
@@ -996,6 +760,17 @@ export function buildSurfaceFragment(
     vec3 e = mix(uBgBottom, uBgTop, n.y * 0.5 + 0.5);
     return mix(vec3(1.0), e / max(max(e.r, max(e.g, e.b)), 1.0e-4), uEnvLight);
   }
+#if SURFACE_GROUND_PLANE
+  uniform float uGroundY;
+  uniform float uGroundFadeStart;
+  uniform float uGroundFadeEnd;
+  uniform float uGroundBallR;
+  uniform vec3 uGroundBallC;
+  uniform vec3 uGroundAlbedo;
+  uniform int uGroundPattern;
+  uniform float uGroundTileScale;
+  uniform float uGroundEmission;
+#endif
 #if SURFACE_FINISH
   /** The parametric lighting composition — fractal/surface-finish.ts's
    * ONE body template, emitted in the GLSL dialect (the WGSL shade entry
@@ -1004,7 +779,7 @@ export function buildSurfaceFragment(
    * the uBgTop/uBgBottom pair above, and at the classic lanes reproduces
    * the fixed formula in main()'s #else branch VALUE for value — never
    * byte for byte, which is why it is define-gated rather than shipped. */
-  ${surfaceFinishShadeSource(SURFACE_FINISH_GLSL)}
+  ${surfaceFinishShadeSource(SURFACE_FINISH_GLSL, true)}
 #endif
   ${backgroundShapeSource(BACKGROUND_SHAPE_GLSL)}
   /** Angular pixel footprint of the ACTIVE buffer (scene-set per frame):
@@ -3135,7 +2910,6 @@ ${foldValueFormGlsl(shadeDeWidth)}
   }
 
 #endif
-${reflectionProofGlsl(reflectionProof, proofNormalWidth, proofNeutralChrome)}
 #if SURFACE_GROUND_PLANE
   /** Ground plane: an infinite one-sided floor at y = uGroundY, dropped
    * below the session ball (uGroundBallC/uGroundBallR — balloonBall's
@@ -3147,13 +2921,6 @@ ${reflectionProofGlsl(reflectionProof, proofNormalWidth, proofNeutralChrome)}
    * Uniforms live in this arm rather than the shared block so the OFF
    * variants' resolved source stays
    * byte-identical (the uBalloonCenter precedent). */
-  uniform float uGroundY;
-  uniform float uGroundFadeStart;
-  uniform float uGroundFadeEnd;
-  uniform float uGroundBallR;
-  uniform vec3 uGroundBallC;
-  uniform vec3 uGroundAlbedo;
-
   /** The out param cov is the trace-alpha coverage flag: 1 where the
    * floor was actually lit, 0 where this function returned the caller's
    * own backdrop. The WebGPU arm counts a PLANE terminal for exactly
@@ -3245,7 +3012,18 @@ ${reflectionProofGlsl(reflectionProof, proofNormalWidth, proofNeutralChrome)}
     float diffuse = max(uLightDir.y, 0.0);
     vec3 lit = (uAmbient * ao + (1.0 - uAmbient) * diffuse * shadow) *
       envTint(vec3(0.0, 1.0, 0.0));
-    vec3 col = pow(pow(uGroundAlbedo, vec3(2.2)) * lit, vec3(1.0 / 2.2));
+    vec3 floorAlbedo = uGroundAlbedo;
+    if (uGroundPattern == 1) {
+      float cell = max(uGroundBallR * uGroundTileScale, 1.0e-4);
+      vec2 tile = floor((hp.xz - uGroundBallC.xz) / cell);
+      float checker = mod(tile.x + tile.y, 2.0);
+      floorAlbedo *= mix(0.035, 1.0, checker);
+    }
+    vec3 floorLinear = pow(floorAlbedo, vec3(2.2));
+    vec3 col = pow(
+      floorLinear * (lit + vec3(uGroundEmission)),
+      vec3(1.0 / 2.2)
+    );
 
     // Depth fog, the hit path's formula at the plane distance: the fog
     // origin is the ray's closest approach to the ball center (clamped to
@@ -3275,7 +3053,6 @@ ${reflectionProofGlsl(reflectionProof, proofNormalWidth, proofNeutralChrome)}
     vec4 farP = uInvProjView * vec4(ndc, 1.0, 1.0);
     vec3 rd = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);
     vec3 ro = uCamPos;
-${reflectionProof === "off" ? "" : "    background = pow(proofRoomRadiance(ro, rd), vec3(1.0 / 2.2));"}
 
 #if SURFACE_BALLOON
     // Balloon mode drops the visible-sphere skip (the oracle module's
@@ -3575,7 +3352,7 @@ ${reflectionProof === "off" ? "" : "    background = pow(proofRoomRadiance(ro, r
     // the HEAD transform's finish is the scene's; the caller packs it as
     // the one live slot.
     int fSlot = clamp(firstChoice, 0, uMapCount - 1);
-    vec3 col = ${reflectionProof === "off" ? "finishShade(base, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot])" : "proofFinishShade(base, pos, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot])"};
+    vec3 col = finishShade(base, pos, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot]);
 #else
     float diffuse = max(dot(n, uLightDir), 0.0);
     vec3 halfVec = normalize(uLightDir - rd);
@@ -3627,12 +3404,7 @@ ${reflectionProof === "off" ? "" : "    background = pow(proofRoomRadiance(ro, r
 
 /** The one shipped fragment source, at the module-load-resolved probe
  * width. */
-const SURFACE_FRAGMENT = buildSurfaceFragment(
-  resolveShadeDeWidth(),
-  resolveReflectionProofMode(),
-  resolveReflectionProofNormalWidth(),
-  resolveReflectionProofNeutralChrome(),
-);
+const SURFACE_FRAGMENT = buildSurfaceFragment(resolveShadeDeWidth());
 
 /**
  * Per-tier march/shading budgets: map-heavy systems (Menger's 20 flat
@@ -3989,6 +3761,9 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uGroundBallR: { value: 1 },
       uGroundBallC: { value: new THREE.Vector3() },
       uGroundAlbedo: { value: new THREE.Vector3(1, 1, 1) },
+      uGroundPattern: { value: 0 },
+      uGroundTileScale: { value: 0.64 },
+      uGroundEmission: { value: 0 },
       uColorSource: { value: 0 },
       uColorSpeed: { value: 0.5 },
       uColorLUT: { value: placeholderLUT },
@@ -4758,6 +4533,9 @@ export interface SurfaceGroundPlaneSpec {
   ballRadius: number;
   /** sRGB floor albedo (lit in linear space like every hit). */
   albedo: Vec3;
+  pattern?: 0 | 1;
+  tileScale?: number;
+  emission?: number;
 }
 
 /**
@@ -4785,6 +4563,9 @@ export function setSurfaceGroundPlane(
     u.uGroundBallR.value = spec.ballRadius;
     (u.uGroundBallC.value as THREE.Vector3).set(...spec.ballCenter);
     (u.uGroundAlbedo.value as THREE.Vector3).set(...spec.albedo);
+    u.uGroundPattern.value = spec.pattern ?? 0;
+    u.uGroundTileScale.value = spec.tileScale ?? 0.64;
+    u.uGroundEmission.value = spec.emission ?? 0;
   } else {
     // Zeros are fine while the define is off — except the ball radius,
     // whose 1 keeps even a stray enabled read divide-by-zero-free,
@@ -4795,6 +4576,9 @@ export function setSurfaceGroundPlane(
     u.uGroundBallR.value = 1;
     (u.uGroundBallC.value as THREE.Vector3).set(0, 0, 0);
     (u.uGroundAlbedo.value as THREE.Vector3).set(1, 1, 1);
+    u.uGroundPattern.value = 0;
+    u.uGroundTileScale.value = 0.64;
+    u.uGroundEmission.value = 0;
   }
   const want = spec ? 1 : 0;
   if (material.defines.SURFACE_GROUND_PLANE !== want) {

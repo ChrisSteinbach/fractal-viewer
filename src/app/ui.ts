@@ -563,7 +563,7 @@ const BOX_LIMIT_MIN = 0;
 const BOX_LIMIT_MAX = 3;
 const FOLD_RADIUS_STEP = 0.005;
 
-/** The surface finish's five authored fields, in row order. */
+/** The surface finish's six authored fields, in row order. */
 type FinishKey = keyof ResolvedSurfaceFinish;
 
 const FINISH_FIELDS: readonly FinishKey[] = [
@@ -572,6 +572,7 @@ const FINISH_FIELDS: readonly FinishKey[] = [
   "metalness",
   "reflect",
   "transmit",
+  "reflectionTint",
 ];
 
 const FINISH_LABELS: Record<FinishKey, string> = {
@@ -580,6 +581,7 @@ const FINISH_LABELS: Record<FinishKey, string> = {
   metalness: "Metalness",
   reflect: "Reflect",
   transmit: "Transmit",
+  reflectionTint: "Metal tint",
 };
 
 const FINISH_TITLES: Record<FinishKey, string> = {
@@ -593,10 +595,12 @@ const FINISH_TITLES: Record<FinishKey, string> = {
     "How much of the surroundings the surface mirrors — the environment reflection. Classic 0.",
   transmit:
     "How much light passes through as a thin shell — the transmission. Classic 0.",
+  reflectionTint:
+    "How much a metal inherits the transform color. Chrome uses 0 for neutral reflections; colored Metal uses 1.",
 };
 
 /**
- * Finish slider bounds. Three of the five are the fields' own `[0, 1]`
+ * Finish slider bounds. Four of the six are the fields' own `[0, 1]`
  * authored span (`surface-finish.ts`'s resolver clamps there too, so the
  * slider never shows a number the tracer is not using). `specular` reaches
  * 2 — five times the classic highlight, already a glare — and `shininess`
@@ -616,6 +620,7 @@ const FINISH_RANGES: Record<
   metalness: { min: 0, max: 1, step: 0.01 },
   reflect: { min: 0, max: 1, step: 0.01 },
   transmit: { min: 0, max: 1, step: 0.01 },
+  reflectionTint: { min: 0, max: 1, step: 0.01 },
 };
 
 /** Readout text for one finish field: whole numbers for the exponent, two
@@ -640,8 +645,8 @@ function finishFieldIsClassic(key: FinishKey, value: number): boolean {
 }
 
 /**
- * A named finish bundle — UI VOCABULARY ONLY. Picking one SETS the five
- * sliders; the document stores the five numbers and never the name, so a
+ * A named finish bundle — UI VOCABULARY ONLY. Picking one SETS the six
+ * sliders; the document stores the six numbers and never the name, so a
  * bundle can be retuned later without repainting any saved scene (a scene
  * authored under the old tuning keeps the old numbers and simply reads as
  * Custom afterwards). "Classic" is the bundle whose values are the absent
@@ -666,6 +671,7 @@ const FINISH_BUNDLES: readonly FinishBundle[] = [
       metalness: 0,
       reflect: 0,
       transmit: 0,
+      reflectionTint: 1,
     },
   },
   {
@@ -677,6 +683,7 @@ const FINISH_BUNDLES: readonly FinishBundle[] = [
       metalness: 0,
       reflect: 0.08,
       transmit: 0,
+      reflectionTint: 1,
     },
   },
   {
@@ -688,6 +695,7 @@ const FINISH_BUNDLES: readonly FinishBundle[] = [
       metalness: 0,
       reflect: 0.12,
       transmit: 0,
+      reflectionTint: 1,
     },
   },
   {
@@ -699,6 +707,7 @@ const FINISH_BUNDLES: readonly FinishBundle[] = [
       metalness: 1,
       reflect: 0.45,
       transmit: 0,
+      reflectionTint: 1,
     },
   },
   {
@@ -710,6 +719,7 @@ const FINISH_BUNDLES: readonly FinishBundle[] = [
       metalness: 1,
       reflect: 0.9,
       transmit: 0,
+      reflectionTint: 0,
     },
   },
   {
@@ -721,19 +731,20 @@ const FINISH_BUNDLES: readonly FinishBundle[] = [
       metalness: 0,
       reflect: 0.5,
       transmit: 0.35,
+      reflectionTint: 1,
     },
   },
 ];
 
-/** The select's value while the five sliders match no bundle. */
+/** The select's value while the six sliders match no bundle. */
 const FINISH_CUSTOM_ID = "custom";
 
 /**
- * Which bundle, if any, these five RESOLVED values are — every field within
+ * Which bundle, if any, these six RESOLVED values are — every field within
  * half its slider step of the bundle's (the same tolerance as
  * {@link finishFieldIsClassic}, for the same round-trip reason). Resolved
  * rather than raw on purpose: a document carrying `{specular: 0}` alone
- * resolves to Matte's five numbers exactly, and must read "Matte", not
+ * resolves to Matte's six numbers exactly, and must read "Matte", not
  * "Custom", because storing classic-valued fields as ABSENCE is how the
  * write rule keeps documents minimal.
  */
@@ -755,7 +766,7 @@ function finishBundleOf(
 /**
  * The list row's finish line — present only for a finish that RESOLVES away
  * from classic (the same predicate the tracers' compile gate reads), named
- * by bundle where the five numbers are one, "custom" otherwise. A finish
+ * by bundle where the six numbers are one, "custom" otherwise. A finish
  * authored at the classic values by hand is real data but renders nothing
  * different, so the row says nothing — it is the frame, not the key, the
  * line describes.
@@ -930,7 +941,7 @@ interface ColorControls {
 }
 
 /**
- * Live handles into the "Finish" group: the bundle select, the five rows,
+ * Live handles into the "Finish" group: the bundle select, the six rows,
  * and the head-only disclosure line the forward-orbit routes reveal.
  */
 interface FinishControls {
@@ -5005,7 +5016,7 @@ export class Ui {
    * moving a neighbouring slider materializes nothing), and a slider dragged
    * back to its classic value REMOVES the field again — the whole `finish`
    * object with it once the last field goes. The bundle select is UI
-   * vocabulary over the same five sliders: picking one sets all five through
+   * vocabulary over the same six sliders: picking one sets all six through
    * the very same write rule, so "Classic" clears the finish outright and
    * every other bundle stores only the fields that differ from classic.
    *
@@ -5024,15 +5035,11 @@ export class Ui {
     // otherwise teach that the group is broken.
     const hint = this.doc.createElement("p");
     hint.className = "flame-hint";
-    // The metal caveat is DISCLOSURE, not a defect: metalness damps the
-    // diffuse body away and lights the surface from the backdrop alone, so
-    // a metal reads as its ENVIRONMENT — which, against the near-black
-    // default backdrop, means very nearly black (measured: a lobe that
-    // reads bright red unauthored goes dark maroon under Chrome). That is
-    // what a mirror does in an unlit room. Saying so here is cheaper than
-    // a user concluding the slider broke their render.
+    // A metal reads as its environment. Point users at the authorable room
+    // input that gives a mirror recognizable structure on the shipped dark
+    // backdrop, and state the intentional Metal/Chrome tint distinction.
     hint.textContent =
-      "Surface renders only: how this map's part of the surface catches light. A bundle sets all five sliders; Classic clears them. Metals reflect the backdrop, so Metal and Chrome read best against a bright one.";
+      "Surface renders only: how this map's part of the surface catches light. A bundle sets all six controls; Classic clears them. Metal keeps the transform tint; Chrome stays neutral. Turn on Floor and Floor light to give reflections room structure.";
     group.appendChild(hint);
 
     // The forward-orbit disclosure — hidden until applyFinishDisclosure
@@ -5044,16 +5051,16 @@ export class Ui {
       "Escape-time and Mandelbulb surfaces shade the whole object with the FIRST active transform's finish, so this one is not read there. It still applies to an IFS surface.";
     group.appendChild(note);
 
-    // The bundle select acts like the Presets menu over these five rows: a
+    // The bundle select acts like the Presets menu over these six rows: a
     // pick sets them all. Unlike the variation-add menu it does NOT snap
     // back to a placeholder — it REFLECTS the rows, reading "Custom"
-    // (disabled, so it can be shown but never chosen) whenever the five
+    // (disabled, so it can be shown but never chosen) whenever the six
     // values are nobody's bundle.
     const bundle = this.doc.createElement("select");
     bundle.className = "finish-bundle";
     bundle.setAttribute("aria-label", "Finish bundle");
     bundle.title =
-      "Named starting points for the five sliders below — the scene stores the numbers, never the name.";
+      "Named starting points for the six controls below — the scene stores the numbers, never the name.";
     for (const entry of FINISH_BUNDLES) {
       const option = this.doc.createElement("option");
       option.value = entry.id;
@@ -5185,7 +5192,7 @@ export class Ui {
   }
 
   /** One finish slider moved: write exactly its field, refresh its readout
-   * and the bundle select (the five may now be, or no longer be, a bundle),
+   * and the bundle select (the six may now be, or no longer be, a bundle),
    * and emit. */
   private onFinishInput(key: FinishKey, value: number): void {
     const editor = this.editor;
@@ -5202,7 +5209,7 @@ export class Ui {
     this.emitGeometry();
   }
 
-  /** A bundle was picked: set all five sliders through the per-field write
+  /** A bundle was picked: set all six sliders through the per-field write
    * rule (so Classic removes everything and no bundle stores a classic-valued
    * field), refresh the rows, and emit once. The disabled Custom option can
    * never arrive here; an unknown id is ignored rather than guessed at. */

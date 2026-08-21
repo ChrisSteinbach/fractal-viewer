@@ -364,6 +364,9 @@ const groundSpec = () => ({
   ballCenter: [0.1, 0.2, 0.3] as [number, number, number],
   ballRadius: 1.25,
   albedo: [0.4, 0.5, 0.6] as [number, number, number],
+  pattern: 1 as const,
+  tileScale: 0.64,
+  emission: 1.4,
 });
 
 describe("the 4D tracer's variant arms", () => {
@@ -708,6 +711,9 @@ describe("setSurface4GroundPlane", () => {
     expect([ball.x, ball.y, ball.z]).toEqual([0.1, 0.2, 0.3]);
     const albedo = u.uGroundAlbedo.value as THREE.Vector3;
     expect([albedo.x, albedo.y, albedo.z]).toEqual([0.4, 0.5, 0.6]);
+    expect(u.uGroundPattern.value).toBe(1);
+    expect(u.uGroundTileScale.value).toBe(0.64);
+    expect(u.uGroundEmission.value).toBe(1.4);
     expect(material.defines.SURFACE4_GROUND_PLANE).toBe(1);
     expect(material.fragmentShader).toContain("shadeGroundPlane");
   });
@@ -725,6 +731,9 @@ describe("setSurface4GroundPlane", () => {
     expect(u.uGroundBallR.value).toBe(1);
     const albedo = u.uGroundAlbedo.value as THREE.Vector3;
     expect([albedo.x, albedo.y, albedo.z]).toEqual([1, 1, 1]);
+    expect(u.uGroundPattern.value).toBe(0);
+    expect(u.uGroundTileScale.value).toBe(0.64);
+    expect(u.uGroundEmission.value).toBe(0);
     expect(material.defines.SURFACE4_GROUND_PLANE).toBe(0);
     expect(material.fragmentShader).not.toContain("uGroundY");
   });
@@ -766,7 +775,7 @@ describe("balloon seniority over the floor", () => {
 
 describe("the 4D tracer's finish arm", () => {
   const fetchLine =
-    "vec3 col = finishShade(base, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot]);";
+    "vec3 col = finishShade(base, pos, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot]);";
 
   /** Every field away from classic and every field a different number, so
    * a lane landing one float off in the std140 block is visible. */
@@ -831,7 +840,7 @@ describe("the 4D tracer's finish arm", () => {
       expect(
         countOccurrences(
           resolved,
-          "vec3 finishShade(vec3 base, vec3 n, vec3 rd, float shadow, float ao, vec3 bg, vec4 fa, vec4 fb) {",
+          "vec3 finishShade(vec3 base, vec3 pos, vec3 n, vec3 rd, float shadow, float ao, vec3 bg, vec4 fa, vec4 fb) {",
         ),
       ).toBe(1);
       expect(resolved).toContain(
@@ -908,12 +917,12 @@ describe("the 4D tracer's finish arm", () => {
       new Float32Array([0.9, 64, 0.3, 0.5]),
     );
     expect(maps.finishB.subarray(0, 4)).toEqual(
-      new Float32Array([0.2, 0, 0, 0]),
+      new Float32Array([0.2, 1, 0, 0]),
     );
     expect(maps.finishA.subarray(4, 8)).toEqual(
       new Float32Array([0.1, 8, 0, 0]),
     );
-    expect(maps.finishB.subarray(4, 8)).toEqual(new Float32Array([0, 0, 0, 0]));
+    expect(maps.finishB.subarray(4, 8)).toEqual(new Float32Array([0, 1, 0, 0]));
     expect(maps.finishA.subarray(8, 12)).toEqual(
       new Float32Array([0.4, 32, 0, 0]),
     );

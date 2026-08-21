@@ -46,6 +46,7 @@ import {
   mandelboxColumn,
   mandelboxKifs,
   mandelboxLattice,
+  metalStudio,
   mengerSponge,
   nextId,
   octahedronFlake,
@@ -57,6 +58,7 @@ import {
   PRESET_RENDER_HINTS,
   PRESET_SCAFFOLDS,
   PRESET_SYMMETRIES,
+  PRESET_SURFACE_ROOMS,
   presetTransforms,
   radiolarian,
   sierpinskiPyramid,
@@ -115,6 +117,26 @@ describe("presets", () => {
   it("assigns unique ids within each preset", () => {
     const ids = dodecahedronFlake().map((t) => t.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe("Metal Studio", () => {
+  it("ships neutral Chrome together with its authorable checker room", () => {
+    const [subject] = metalStudio();
+    expect(subject.finish).toEqual({
+      specular: 1,
+      shininess: 96,
+      metalness: 1,
+      reflect: 0.9,
+      reflectionTint: 0,
+    });
+    expect(PRESET_RENDER_HINTS.metalStudio).toBe("surface");
+    expect(PRESET_SURFACE_ROOMS.metalStudio).toEqual({
+      groundPlane: true,
+      floorPattern: "checker",
+      floorTileScale: 0.64,
+      floorEmission: 1.4,
+    });
   });
 });
 
