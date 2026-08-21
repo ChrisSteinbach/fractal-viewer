@@ -234,13 +234,14 @@ evaluation and NOT shipped. Its app-level half is
 The pre-wire refusal gate for the replacement hybrid coordinate stack. The
 old result remains useful but narrow: using `rings` directly as Wood's macro
 coordinate produced 74-79% ordinary-view edges and read as corrosion. The
-current prototype instead makes material identity object-attached: Wood is
-cylindrical about the authored axis, Marble is a two-field warped plane with
-forked veins, and Strata is deliberately laminar. Deterministic p03/p97
-`rings`/`sheets` calibration supplies secondary detail only; a degenerate
-span disables the carrier, a source-space pixel-footprint gate keeps it out
-of ordinary view, and close-ups crossfade completed ramp outputs rather than
-phases. Macro-only and world-space controls expose the expected zoom plateau.
+current prototype instead makes material identity object-attached: Wood uses
+cylindrical latewood plus longitudinal grain, Marble uses sparse non-periodic
+macro veins plus warped microveins, and Strata uses plateau beds and narrow
+seams. A source-space footprint selects and crossfades completed outputs from
+dyadic, material-specific detail octaves. Deterministic p03/p97 `sheets`
+calibration can bend those coherent fields by at most 0.08-0.10 of one cycle;
+it never becomes the texture itself, and a degenerate span disables the warp.
+Macro-only and world-space controls expose the expected zoom plateau.
 
 The run writes labeled sheets, shuffled blinded-review cards, and a JSON
 manifest under a run-specific `scripts/out/finish-pattern-<run>/` directory.
@@ -250,30 +251,50 @@ pre-lighting albedo-luminance residual; its edge and box-pyramid energy
 calculations keep disconnected source-space components separate instead of
 calling a geometry seam pattern speckle.
 
-MEASURED MACHINE VERDICT (`20260821-hybrid-v1`, 96 px): PROCEED for all three
-families to the human semantic gate. Menger (affine), mandelbox-pair (fold),
-and a frame-filling Menger affine final lens render every 1x/4x/16x/64x rung
-with zero exhausted rays. Ordinary 1x edge density spans 13.3-44.5% against
-the 8-45% contract; fine energy spans 3.1-50.8% (ceiling 60%) and 4-16 px
-energy 30.9-65.9% (floor 25%). The weakest rung-to-rung residual-variance
-retention is 0.603 and every 64x/1x ratio is at least 0.748 (required 0.60 and
-0.50). Macro/world controls mostly collapse toward zero variance at 64x while
-the hybrid rows retain detail.
+V2 MACHINE VERDICT (`20260821-hybrid-v2`, 96 px ladders): PROCEED to the human
+semantic gate. Menger (affine), mandelbox-pair (fold), and a Menger affine
+final lens render every Wood/Marble/Strata 1x/4x/16x/64x rung with zero
+exhausted rays. The unchanged all-rung contract measures 9.3-34.9% residual
+edge density (allowed 8-45%), 12.1-58.0% fine energy (ceiling 60%), and
+27.3-66.8% 4-16 px energy (floor 25%). The weakest rung-to-rung residual
+variance retention is 0.602 and the weakest 64x/1x ratio is 0.671 (required
+0.60 and 0.50). Macro/world controls still collapse toward zero variance at
+64x while the structured-detail rows retain material-scale variation.
 
-Exact accepted constants live in `finish-pattern-model.ts` and the manifest:
-scales Wood/Marble/Strata 3.5/1.75/1.2, three noise octaves, native periods
-12/10/8, detail output cap 0.94, and footprint full/off thresholds
-0.009/0.012 normalized units. The cap is intentionally below one but high: at
-close-up the native ramp may carry 94% of the output because a smaller share
-failed the explicit variance contract; ordinary view is still exactly
-macro-only. Marble's macro costs two three-octave value-noise fields, 48
-lattice hashes per hit (Wood and Strata cost 24), so shader feasibility
-remains a downstream budget question, not a claim made by this CPU gate.
+The blinded-review fixtures are rendered at 288 px with one mask-derived,
+pattern-independent camera per system. Every fixture has at least 10,000
+object pixels, at least 55% object bounding-box width, no clipping, and zero
+exhausted rays. Five decks receive independent hidden permutations; the key,
+unblinded sheet, manifest, and class counts stay unavailable to reviewers
+until their choices and confidence scores are frozen.
 
-MATERIAL NAMES ARE NOT YET APPROVED: five blinded reviewers must score the
-emitted cards (Wood/Marble/Strata/Noise-corrosion/Plain-other), with 4/5 and
-median confidence 3 per hero plus 80% aggregate. The manifest records that
-review as pending.
+Exact V2 constants live in `finish-pattern-model.ts` and the manifest: scales
+Wood/Marble/Strata 3/1.35/2.6, three noise octaves, detail scale multipliers
+1/2.5/1, maximum dyadic octave 8, footprint full/off thresholds 0.009/0.012,
+and native-warp caps 0.08/0.10/0.08 cycles. Macro samples cost 48/48/24 value-
+noise lattice hashes; a two-octave detail LOD sample costs 96/96/48. Shader
+feasibility therefore remains a downstream budget question, not a claim made
+by this CPU gate.
+
+V2 SEMANTIC VERDICT (`20260821-hybrid-v2`): REFUSE. Five fresh reviewers using
+independently permuted decks scored 31/45 cards correctly (68.9%, required
+80%). Menger and final-lens Wood/Strata each reached 5/5, while Menger and
+final-lens Marble each reached only 3/5 and was twice called
+noise/corrosion. The fold heroes scored Wood 1/5, Marble 3/5, and Strata 1/5;
+the failed answers split among plain, noise/corrosion, and the wrong material.
+Per system this is 13/15 Menger, 13/15 final lens, and 5/15 fold. Thus the V2
+machine pass is real progress but cannot approve any product family across
+the required topology matrix. Exact responses and confidences are preserved
+as `review-results.json` beside the run manifest.
+
+HISTORICAL V1 SEMANTIC VERDICT (`20260821-hybrid-v1`): REFUSE. Five
+independent blinded reviewers scored only 18/45 cards correctly (40%, required
+80%). Only cards 01 and 02 reached 4/5 recognition; the remaining per-card
+correct counts were 2/5, 0/5, 0/5, 0/5, 2/5, 1/5, and 3/5. The V1 native ramp
+also replaced 94% of the family macro at close-up, allowing retained variance
+to mask corrosion-like detail. Those results remain evidence and were not
+reinterpreted or waived; V2 keeps every numeric threshold unchanged and
+requires a fresh blinded semantic verdict.
 
 ## The Surprise Me generator's sheet
 

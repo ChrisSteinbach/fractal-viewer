@@ -59,30 +59,47 @@ export const PATTERN_NOISE_OCTAVES = 3;
 export const PATTERN_DETAIL_FOOTPRINT_FULL = 0.009;
 export const PATTERN_DETAIL_FOOTPRINT_OFF = 0.012;
 
-/** Native detail never wholly replaces the material-defining macro ramp. */
+/** Close-ups transition fully to a material-shaped detail octave. */
 export const PATTERN_DETAIL_MIX: Readonly<
   Record<Exclude<PatternKind, "none">, number>
 > = {
-  wood: 0.94,
-  marble: 0.94,
-  strata: 0.94,
+  wood: 1,
+  marble: 1,
+  strata: 1,
 };
 
 /** Exact prototype defaults to carry into the downstream authoring bead. */
 export const PATTERN_DEFAULT_SCALE: Readonly<
   Record<Exclude<PatternKind, "none">, number>
 > = {
-  wood: 3.5,
-  marble: 1.75,
-  strata: 1.2,
+  wood: 3,
+  marble: 1.35,
+  strata: 2.6,
 };
 
-export const PATTERN_NATIVE_PERIODS: Readonly<
+/**
+ * Maximum phase displacement, in one material cycle, contributed by the
+ * fractal-native carrier.  The carrier bends a coherent object-space detail
+ * field; it never becomes a stand-alone texture again.
+ */
+export const PATTERN_NATIVE_WARP_CYCLES: Readonly<
   Record<Exclude<PatternKind, "none">, number>
 > = {
-  wood: 12,
-  marble: 10,
-  strata: 8,
+  wood: 0.08,
+  marble: 0.1,
+  strata: 0.08,
+};
+
+/** Highest dyadic detail octave admitted by the CPU refusal prototype. */
+export const PATTERN_DETAIL_MAX_OCTAVE = 8;
+
+/** Family-scale cycles targeted across one close-up footprint. */
+export const PATTERN_DETAIL_SCALE_MULTIPLIER: Readonly<
+  Record<Exclude<PatternKind, "none">, number>
+> = {
+  wood: 1,
+  marble: 2.5,
+  strata: 1,
 };
 
 const clamp01 = (x: number): number => Math.max(0, Math.min(1, x));
@@ -189,22 +206,16 @@ function axes(axis: PatternAxis): readonly [number, number, number] {
 
 function woodRamp(phase: number): number {
   const t = fract(phase);
-  const latewood = smoothstep(0.12, 0.72, t) * (1 - smoothstep(0.88, 1, t));
-  const ringLine = 1 - smoothstep(0, 0.055, Math.min(t, 1 - t));
-  return clamp01(latewood * 0.86 + ringLine * 0.32);
-}
-
-function marbleRamp(phase: number): number {
-  const t = fract(phase);
-  const d = Math.abs(t - 0.5);
-  return 1 - smoothstep(0.005, 0.17, d);
+  const latewood = smoothstep(0.62, 0.78, t) * (1 - smoothstep(0.91, 1, t));
+  const ringLine = 1 - smoothstep(0, 0.04, Math.min(t, 1 - t));
+  return Math.max(0.72 * latewood, ringLine);
 }
 
 function strataRamp(phase: number): number {
   const t = fract(phase);
-  const broad = smoothstep(0.08, 0.42, t) * (1 - smoothstep(0.58, 0.93, t));
-  const seam = 1 - smoothstep(0, 0.045, Math.abs(t - 0.5));
-  return clamp01(broad * 0.8 + seam * 0.24);
+  const broad = smoothstep(0.06, 0.16, t) * (1 - smoothstep(0.52, 0.66, t));
+  const seam = 1 - smoothstep(0, 0.035, Math.abs(t - 0.61));
+  return Math.max(0.72 * broad, seam);
 }
 
 interface MacroSample {
@@ -227,45 +238,61 @@ export function patternMacroSample(
   if (kind === "wood") {
     const radial = Math.hypot(p[u], p[v]);
     const wobble = fbm([
-      p[u] * 1.45 + 7.1,
-      p[a] * 0.34 - 2.3,
-      p[v] * 1.45 + 4.7,
+      p[u] * 1.25 + 0.7,
+      p[a] * 0.22 - 2.3,
+      p[v] * 1.25 + 4.7,
     ]);
-    const phase = (radial + 0.13 * wobble) * safeScale;
+    // A second field varies much faster across the trunk than along it.  It
+    // bends the cylindrical latewood into long axial grain without turning
+    // the material into an isotropic noise texture.
+    const axialGrain = fbm([p[u] * 3 + 8, p[a] * 0.35 - 4, p[v] * 3 - 6]);
+    const phase = (radial + 0.1 * wobble + 0.025 * axialGrain) * safeScale;
     return { phase, ramp: woodRamp(phase) };
   }
   if (kind === "marble") {
-    const plane = p[a] + 0.2 * p[u] - 0.13 * p[v];
+    // Unlike the refused v1 formula, these veins are zero contours of two
+    // low-frequency scalar fields, not repeated `fract` bands.  The plane
+    // supplies geological direction; FBM makes the contours non-periodic.
+    const qScale = safeScale / PATTERN_DEFAULT_SCALE.marble;
+    const qa = p[a] * qScale;
+    const qu = p[u] * qScale;
+    const qv = p[v] * qScale;
+    const plane = qa + 0.2 * qu - 0.12 * qv;
     const warpA = fbm([
-      p[0] * 1.24 + 1.9,
-      p[1] * 1.24 - 5.2,
-      p[2] * 1.24 + 3.4,
+      p[0] * qScale * 1.1 + 1.9,
+      p[1] * qScale * 1.1 - 5.2,
+      p[2] * qScale * 1.1 + 3.4,
     ]);
     const warpB = fbm([
-      p[2] * 1.27 - 6.4,
-      p[0] * 1.27 + 2.8,
-      p[1] * 1.27 + 9.1,
+      p[2] * qScale * 2.1 - 6.4,
+      p[0] * qScale * 2.1 + 2.8,
+      p[1] * qScale * 2.1 + 9.1,
     ]);
-    const phase = (plane + 0.9 * warpA) * safeScale;
-    // A second, differently slanted warped vein is admitted only in parts
-    // of the first warp field. `max` joins completed vein ramps, producing
-    // forks instead of the regular zebra bands a single periodic plane made.
-    const branchPhase =
-      (p[a] - 0.31 * p[u] + 0.27 * p[v] + 0.54 * warpB) * safeScale * 0.82 +
-      1.37;
-    const branch =
-      marbleRamp(branchPhase) * smoothstep(-0.1, 0.16, warpA + 0.35 * warpB);
-    return { phase, ramp: Math.max(marbleRamp(phase), branch * 0.85) };
+    const field = 0.34 * plane + warpA - 0.035;
+    const branchField =
+      0.2 * (0.58 * qa - 0.41 * qu + 0.29 * qv) +
+      0.7 * warpA +
+      0.46 * warpB -
+      0.11;
+    const branchGate = 1 - smoothstep(0.075, 0.19, Math.abs(warpA - warpB));
+    const primaryDistance = Math.abs(field);
+    const branchDistance = Math.abs(branchField);
+    const core = Math.max(
+      1 - smoothstep(0.018, 0.052, primaryDistance),
+      branchGate * (1 - smoothstep(0.014, 0.044, branchDistance)),
+    );
+    const halo = Math.max(
+      1 - smoothstep(0.052, 0.13, primaryDistance),
+      0.72 * branchGate * (1 - smoothstep(0.044, 0.105, branchDistance)),
+    );
+    return { phase: field, ramp: clamp01(0.58 * halo + 0.42 * core) };
   }
-  const warp = fbm([p[u] * 0.62 - 4.3, p[a] * 0.22 + 8.1, p[v] * 0.62 + 2.7]);
-  const phase = (p[a] + 0.075 * warp) * safeScale;
+  const warp = fbm([p[u] * 0.6 - 4.3, p[a] * 0.2 + 8.1, p[v] * 0.6 + 2.7]);
+  const phase = (p[a] + 0.055 * warp) * safeScale;
   return { phase, ramp: strataRamp(phase) };
 }
 
-function nativeSample(
-  kind: Exclude<PatternKind, "none">,
-  q: PatternQuery,
-): { value: number; ramp: number; enabled: boolean } {
+function nativeSample(q: PatternQuery): { value: number; enabled: boolean } {
   // Growth rings are wholly object-space above. Sheets are the more locally
   // reliable close-up carrier on the calibration fixtures; using them here
   // cannot redefine Wood because the completed detail ramp is gated off at
@@ -273,14 +300,125 @@ function nativeSample(
   const carrier = q.sheetsCalibration;
   const raw = q.sheets;
   const value = normalizeNativeCarrier(raw, carrier);
-  const phase = value * PATTERN_NATIVE_PERIODS[kind];
-  const ramp =
-    kind === "wood"
-      ? woodRamp(phase)
-      : kind === "marble"
-        ? Math.max(marbleRamp(phase), 0.85 * marbleRamp(value * 6.4 + 1.37))
-        : strataRamp(phase);
-  return { value, ramp, enabled: carrier.enabled };
+  return { value, enabled: carrier.enabled };
+}
+
+function detailWarpPoint(
+  kind: Exclude<PatternKind, "none">,
+  axis: PatternAxis,
+  detailScale: number,
+  p: Vec3,
+  native: { value: number; enabled: boolean },
+): Vec3 {
+  const out: Vec3 = [p[0], p[1], p[2]];
+  if (!native.enabled || detailScale <= 0) return out;
+  const [a, u] = axes(axis);
+  const lane = kind === "wood" ? u : a;
+  // Dividing by scale makes this a bounded PHASE displacement.  A wildly
+  // varying trap can bend a line by at most the declared fraction of one
+  // cycle, so it cannot recreate v1's corrosion texture.
+  out[lane] +=
+    ((native.value - 0.5) * PATTERN_NATIVE_WARP_CYCLES[kind]) / detailScale;
+  return out;
+}
+
+/** Narrow, warped microveins used only after the footprint LOD opens. */
+function marbleDetailRamp(axis: PatternAxis, scale: number, p: Vec3): number {
+  const [a, u, v] = axes(axis);
+  const safeScale = Math.max(0, scale);
+  const warp = fbm([
+    p[u] * safeScale * 0.28 + 3.7,
+    p[a] * safeScale * 0.2 - 6.1,
+    p[v] * safeScale * 0.28 + 1.9,
+  ]);
+  const warpB = fbm([
+    p[v] * safeScale * 0.24 - 4.8,
+    p[u] * safeScale * 0.18 + 2.6,
+    p[a] * safeScale * 0.24 + 7.3,
+  ]);
+  const phase = (p[a] + 0.18 * p[u] - 0.11 * p[v]) * safeScale + 0.42 * warp;
+  const branchPhase =
+    (0.62 * p[a] - 0.47 * p[u] + 0.31 * p[v]) * safeScale * 0.78 +
+    0.48 * warpB +
+    1.37;
+  const vein = (veinPhase: number): number => {
+    const distance = Math.abs(fract(veinPhase) - 0.5);
+    const core = 1 - smoothstep(0.018, 0.055, distance);
+    const halo = 1 - smoothstep(0.055, 0.2, distance);
+    return clamp01(0.58 * halo + 0.42 * core);
+  };
+  // Marble is not a white field plus ink lines: a broad, low-contrast cloud
+  // keeps stone structure present between veins and prevents an arbitrary
+  // close-up from landing on a perfectly plain patch.
+  const cloud = 0.12 + 0.18 * clamp01(warp + 0.5);
+  const ramp = Math.max(cloud, vein(phase), vein(branchPhase));
+  // Keep close-up veins as legible as the sparse macro network.  This fixed
+  // material contrast is intentionally independent of any fixture statistic.
+  return clamp01(0.5 + (ramp - 0.5) * 1.12);
+}
+
+function materialDetailRamp(
+  kind: Exclude<PatternKind, "none">,
+  axis: PatternAxis,
+  scale: number,
+  p: Vec3,
+): number {
+  return kind === "marble"
+    ? marbleDetailRamp(axis, scale, p)
+    : patternMacroSample(kind, axis, scale, p).ramp;
+}
+
+function variancePreservingRampMix(a: number, b: number, t: number): number {
+  const mixed = mix(a, b, t);
+  // Crossfading unrelated dyadic octaves normally halves their variance at
+  // t=.5, creating a visible soft interval mid-zoom.  This analytic gain is
+  // global and deterministic (not measured from a fixture or image).
+  const gain = 1 / Math.sqrt((1 - t) * (1 - t) + t * t);
+  return clamp01(0.5 + (mixed - 0.5) * gain);
+}
+
+/**
+ * A material-shaped detail octave selected from the source-space footprint.
+ * Frequencies are dyadic object-space coordinates.  Crossfading completed
+ * ramp outputs makes the function continuous as a zoom crosses an octave;
+ * the texture never uses screen coordinates and therefore cannot stick to
+ * the viewport.  Native sheets only bend this coherent field slightly.
+ */
+function scaleStableDetailRamp(
+  kind: Exclude<PatternKind, "none">,
+  axis: PatternAxis,
+  scale: number,
+  q: PatternQuery,
+  native: { value: number; enabled: boolean },
+): number {
+  const footprint = Math.max(q.pixelFootprint, 1e-9);
+  const desired = Math.max(
+    1,
+    (PATTERN_DETAIL_SCALE_MULTIPLIER[kind] * PATTERN_DETAIL_FOOTPRINT_OFF) /
+      footprint,
+  );
+  const rawLevel = Math.log2(desired);
+  const level = Math.max(
+    0,
+    Math.min(PATTERN_DETAIL_MAX_OCTAVE, Math.floor(rawLevel)),
+  );
+  const blend = smoothstep(0, 1, clamp01(rawLevel - level));
+  const lowScale = scale * 2 ** level;
+  const highScale = scale * 2 ** Math.min(PATTERN_DETAIL_MAX_OCTAVE, level + 1);
+  const low = materialDetailRamp(
+    kind,
+    axis,
+    lowScale,
+    detailWarpPoint(kind, axis, lowScale, q.objectP, native),
+  );
+  if (level === PATTERN_DETAIL_MAX_OCTAVE) return low;
+  const high = materialDetailRamp(
+    kind,
+    axis,
+    highScale,
+    detailWarpPoint(kind, axis, highScale, q.objectP, native),
+  );
+  return variancePreservingRampMix(low, high, blend);
 }
 
 function patternedAlbedo(
@@ -288,16 +426,41 @@ function patternedAlbedo(
   kind: Exclude<PatternKind, "none">,
   ramp: number,
 ): Vec3 {
-  const dark =
-    kind === "wood"
-      ? ([0.43, 0.48, 0.57] as const)
-      : kind === "marble"
-        ? ([0.31, 0.34, 0.39] as const)
-        : ([0.49, 0.56, 0.66] as const);
+  let factor: Vec3;
+  if (kind === "wood") {
+    const early: Vec3 = [1.06, 1.03, 0.92];
+    const late: Vec3 = [0.3, 0.22, 0.16];
+    const amount = smoothstep(0.04, 0.92, ramp);
+    factor = [
+      mix(early[0], late[0], amount),
+      mix(early[1], late[1], amount),
+      mix(early[2], late[2], amount),
+    ];
+  } else if (kind === "marble") {
+    const halo: Vec3 = [0.68, 0.64, 0.61];
+    const core: Vec3 = [0.18, 0.22, 0.28];
+    const haloAmount = smoothstep(0.02, 0.58, ramp);
+    const coreAmount = smoothstep(0.58, 1, ramp);
+    factor = [
+      mix(mix(1, halo[0], haloAmount), core[0], coreAmount),
+      mix(mix(1, halo[1], haloAmount), core[1], coreAmount),
+      mix(mix(1, halo[2], haloAmount), core[2], coreAmount),
+    ];
+  } else {
+    const bed: Vec3 = [0.58, 0.62, 0.68];
+    const seam: Vec3 = [0.38, 0.24, 0.16];
+    const bedAmount = smoothstep(0.02, 0.72, ramp);
+    const seamAmount = smoothstep(0.74, 1, ramp);
+    factor = [
+      mix(mix(1, bed[0], bedAmount), seam[0], seamAmount),
+      mix(mix(1, bed[1], bedAmount), seam[1], seamAmount),
+      mix(mix(1, bed[2], bedAmount), seam[2], seamAmount),
+    ];
+  }
   return [
-    base[0] * mix(1, dark[0], ramp),
-    base[1] * mix(1, dark[1], ramp),
-    base[2] * mix(1, dark[2], ramp),
+    clamp01(base[0] * factor[0]),
+    clamp01(base[1] * factor[1]),
+    clamp01(base[2] * factor[2]),
   ];
 }
 
@@ -326,14 +489,21 @@ export function evaluateSurfacePattern(
     params.scale,
     q.objectP,
   );
-  const native = nativeSample(params.kind, q);
+  const native = nativeSample(q);
+  const detailRamp = scaleStableDetailRamp(
+    params.kind,
+    params.axis,
+    params.scale,
+    q,
+    native,
+  );
   const gate =
     detailMode === "hybrid" && native.enabled
       ? patternDetailGate(q.pixelFootprint)
       : 0;
   const detailMix = gate * PATTERN_DETAIL_MIX[params.kind];
   // The anti-swim contract: crossfade completed ramp outputs, never phases.
-  const outputRamp = mix(macro.ramp, native.ramp, detailMix);
+  const outputRamp = mix(macro.ramp, detailRamp, detailMix);
   const full = patternedAlbedo(base, params.kind, outputRamp);
   const strength = clamp01(
     Number.isFinite(params.strength) ? params.strength : 0,
@@ -345,7 +515,7 @@ export function evaluateSurfacePattern(
       mix(base[2], full[2], strength),
     ],
     macroRamp: macro.ramp,
-    detailRamp: native.ramp,
+    detailRamp,
     detailGate: gate,
     detailMix,
     outputRamp,
