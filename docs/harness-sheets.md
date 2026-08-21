@@ -234,17 +234,21 @@ evaluation and NOT shipped. Its app-level half is
 The pre-wire refusal gate for the replacement hybrid coordinate stack. The
 old result remains useful but narrow: using `rings` directly as Wood's macro
 coordinate produced 74-79% ordinary-view edges and read as corrosion. The
-current prototype instead makes material identity object-attached: Wood uses
-cylindrical latewood plus longitudinal grain, Marble uses sparse non-periodic
-macro veins plus warped microveins, and Strata uses plateau beds and narrow
-seams. A source-space footprint selects and crossfades completed outputs from
-dyadic, material-specific detail octaves. Deterministic p03/p97 `sheets`
+accepted V3 prototype instead makes material identity object-attached: Wood
+uses cylindrical latewood plus longitudinal grain, Marble uses sparse
+non-periodic macro veins plus one dominant flowing detail vein and softly
+gated mineral branches, and Strata uses plateau beds and narrow seams. A
+source-space footprint selects and crossfades completed outputs from dyadic,
+material-specific detail octaves. Deterministic p03/p97 `sheets`
 calibration can bend those coherent fields by at most 0.08-0.10 of one cycle;
 it never becomes the texture itself, and a degenerate span disables the warp.
 Macro-only and world-space controls expose the expected zoom plateau.
 
-The run writes labeled sheets, shuffled blinded-review cards, and a JSON
-manifest under a run-specific `scripts/out/finish-pattern-<run>/` directory.
+Every run writes labeled diagnostics and a JSON manifest under a run-specific
+`scripts/out/finish-pattern-<run>/` directory and refuses to overwrite it.
+Blinded decks are default-off and require a separate all-system 288 px hero
+run that names a prior passing machine run. That review run writes five unique
+permutations, SHA-256 hashes, a hidden key, and a strict results template.
 Geometry is cached once per system/rung, so the 28 material/control panels per
 system cost only four CPU marches. The lighting-independent metric is
 pre-lighting albedo-luminance residual; its edge and box-pyramid energy
@@ -261,6 +265,15 @@ variance retention is 0.602 and the weakest 64x/1x ratio is 0.671 (required
 0.60 and 0.50). Macro/world controls still collapse toward zero variance at
 64x while the structured-detail rows retain material-scale variation.
 
+V3 MACHINE VERDICT (`20260821-hybrid-v3-machine`, 96 px ladders): PASS. The
+complete unchanged Menger, mandelbox-pair fold, and Menger final-lens matrix
+passes every Wood/Marble/Strata rung at 1x/4x/16x/64x with zero exhausted rays.
+Residual edge density is 9.3-30.0% (allowed 8-45%), fine energy is 11.4-58.0%
+(ceiling 60%), and 4-16 px energy is 27.3-67.8% (floor 25%). The weakest
+rung-to-rung residual-variance retention is 0.616 and the weakest 64x/1x
+retention is 0.507, above the unchanged 0.60 and 0.50 floors. The passing
+machine run emitted no blinded decks.
+
 The blinded-review fixtures are rendered at 288 px with one mask-derived,
 pattern-independent camera per system. Every fixture has at least 10,000
 object pixels, at least 55% object bounding-box width, no clipping, and zero
@@ -268,7 +281,28 @@ exhausted rays. Five decks receive independent hidden permutations; the key,
 unblinded sheet, manifest, and class counts stay unavailable to reviewers
 until their choices and confidence scores are frozen.
 
-Exact V2 constants live in `finish-pattern-model.ts` and the manifest: scales
+Exact accepted V3 constants live in `src/fractal/surface-pattern.ts` (re-exported
+by `finish-pattern-model.ts` for the harness) and the manifest:
+Wood/Marble/Strata scales remain 3/1.35/2.6; all families crossfade fully to
+structured detail; detail scale multipliers are 1/1.25/1; maximum dyadic octave
+is 8; footprint full/off thresholds are 0.009/0.012; and native sheet warp caps
+remain 0.08/0.10/0.08 cycles. Marble's detail uses one primary warped vein, a
+low-frequency-gated 0.82 branch, a broad cloudy field, and fixed 2.25 ramp
+contrast under light gray halo/core factors `[0.80,0.78,0.76]` and
+`[0.40,0.43,0.49]`. The scored presentation uses the production shading
+function with one fixed neutral studio finish (specular 0.1, shininess 16,
+ambient 0.45) for every family and topology. Its fold-only eye/target/frame was
+selected from the plain geometry mask and passes 288 px coverage, width,
+clipping, and exhaustion checks without changing the machine camera.
+
+Downstream calibration must sample finite native carriers deterministically,
+retain p03/p97 low plus inverse-span, and disable spans below 0.02. It must not
+replace the object-space Wood/Marble macro coordinates with rings or sheets.
+The CPU cost contract remains three value-noise octaves: macro samples cost
+48/48/24 lattice hashes and two-sample detail LOD costs 96/96/48 for
+Wood/Marble/Strata.
+
+For comparison, the exact V2 constants were: scales
 Wood/Marble/Strata 3/1.35/2.6, three noise octaves, detail scale multipliers
 1/2.5/1, maximum dyadic octave 8, footprint full/off thresholds 0.009/0.012,
 and native-warp caps 0.08/0.10/0.08 cycles. Macro samples cost 48/48/24 value-
@@ -276,7 +310,16 @@ noise lattice hashes; a two-octave detail LOD sample costs 96/96/48. Shader
 feasibility therefore remains a downstream budget question, not a claim made
 by this CPU gate.
 
-V2 SEMANTIC VERDICT (`20260821-hybrid-v2`): REFUSE. Five fresh reviewers using
+V3 SEMANTIC VERDICT (`20260821-hybrid-v3-review`): PASS. Five fresh reviewers
+received independently permuted 288 px lit-only decks after the machine pass.
+The strict scorer accepted 43/45 decisions (95.6%, required 80%). Every fold
+hero reached 5/5; Menger and final-lens Marble each reached 4/5 with median
+confidence 4; all other Wood and Strata heroes reached 5/5 with median
+confidence 4 or 5. Thus every hero clears 4/5 and median confidence 3. The
+review key names `20260821-hybrid-v3-machine`; deck hashes and exact frozen
+responses are stored beside the review manifest.
+
+HISTORICAL V2 SEMANTIC VERDICT (`20260821-hybrid-v2`): REFUSE. Five fresh reviewers using
 independently permuted decks scored 31/45 cards correctly (68.9%, required
 80%). Menger and final-lens Wood/Strata each reached 5/5, while Menger and
 final-lens Marble each reached only 3/5 and was twice called

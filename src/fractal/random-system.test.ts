@@ -64,6 +64,17 @@ describe("randomSystem", () => {
     }
   });
 
+  it("never invents an unauthored surface pattern", () => {
+    for (const system of RANDOM_SYSTEM_CORPUS) {
+      for (const transform of system.transforms) {
+        expect("surfacePattern" in transform).toBe(false);
+      }
+      if (system.finalTransform) {
+        expect("surfacePattern" in system.finalTransform).toBe(false);
+      }
+    }
+  });
+
   it("keeps every transform's position, rotation, scale magnitude, and shear within their documented ranges", () => {
     for (let seed = 0; seed < SEED_SAMPLE_SIZE; seed++) {
       const { transforms } = RANDOM_SYSTEM_CORPUS[seed];

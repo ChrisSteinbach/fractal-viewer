@@ -64,8 +64,13 @@
 import { isFlatTransform, meanContraction } from "./affine4";
 import { DEFAULT_COLOR_SPEED, derivedColorIndex } from "./chaos-game";
 import { CLASSIC_SURFACE_FINISH } from "./surface-finish";
+import {
+  PATTERN_DEFAULT_SCALE,
+  resolveSurfacePattern,
+} from "./surface-pattern";
 import type {
   SurfaceFinish,
+  SurfacePattern,
   SymmetryParams,
   Transform,
   Variation,
@@ -380,6 +385,56 @@ function lerpFinish(
   return Object.keys(result).length === 0 ? undefined : result;
 }
 
+/**
+ * Pattern morphing keeps discrete family/orientation changes invisible by
+ * crossing strength through zero. Absence is the sole `none` state. Numeric
+ * leaves interpolate through their core defaults and stay sparse when both
+ * sides omit them; the outer endpoint fast paths still return authored
+ * systems by reference.
+ */
+function lerpSurfacePattern(
+  a: SurfacePattern | undefined,
+  b: SurfacePattern | undefined,
+  t: number,
+): SurfacePattern | undefined {
+  if (a === b) return a;
+  if (a === undefined && b === undefined) return undefined;
+  if (a === undefined) {
+    const resolved = resolveSurfacePattern(b);
+    return { ...b!, strength: resolved.strength * t };
+  }
+  if (b === undefined) {
+    const resolved = resolveSurfacePattern(a);
+    return { ...a, strength: resolved.strength * (1 - t) };
+  }
+
+  const ra = resolveSurfacePattern(a);
+  const rb = resolveSurfacePattern(b);
+  const sameIdentity = a.kind === b.kind && ra.axis === rb.axis;
+  if (sameIdentity) {
+    const result: SurfacePattern = { kind: a.kind, axis: a.axis };
+    const scale = lerpOptional(
+      a.scale,
+      b.scale,
+      PATTERN_DEFAULT_SCALE[a.kind],
+      t,
+    );
+    if (scale !== undefined) result.scale = scale;
+    const strength = lerpOptional(a.strength, b.strength, 1, t);
+    if (strength !== undefined) result.strength = strength;
+    return result;
+  }
+
+  const selected = t < 0.5 ? a : b;
+  const strength =
+    t < 0.5 ? ra.strength * (1 - 2 * t) : rb.strength * (2 * t - 1);
+  return {
+    ...selected,
+    scale: lerp(ra.scale, rb.scale, t),
+    strength,
+  };
+}
+
 /** Lerp one paired transform, field by field, assigning `id` from the pair's
  * position rather than either side's own id (mid-morph ids are
  * display-only — see the module header). `colorIndexFallback` is the
@@ -432,12 +487,20 @@ function lerpTransformPair(
   const finish = lerpFinish(a.finish, b.finish, t);
   if (finish !== undefined) result.finish = finish;
 
+  const surfacePattern = lerpSurfacePattern(
+    a.surfacePattern,
+    b.surfacePattern,
+    t,
+  );
+  if (surfacePattern !== undefined) result.surfacePattern = surfacePattern;
+
   return result;
 }
 
 /** A copy of `t` at resolved weight 0 — the padding a shorter `transforms`
  * side gets for the longer side's surplus maps (see the module header): same
- * geometry (position/rotation/scale/shear/variations/w/finish unchanged), so
+ * geometry and material metadata (position/rotation/scale/shear/variations/
+ * w/finish/surfacePattern unchanged), so
  * {@link lerpTransformPair} lerps it against the genuine `t` bit-exactly,
  * and only the weight animates 0 <-> `t`'s own resolved weight. */
 function phantomTransform(t: Transform): Transform {

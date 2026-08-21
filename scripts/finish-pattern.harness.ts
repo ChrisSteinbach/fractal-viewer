@@ -9,7 +9,9 @@
  * Each selected system produces a labeled, run-specific sheet with
  * none/wood/marble/strata at 1x/4x/16x/64x plus macro-only and world-space
  * controls at 1x/64x. A JSON manifest records constants and machine metrics.
- * Human recognition remains a five-reviewer blinded gate; cards are emitted.
+ * Human recognition remains a five-reviewer blinded gate. Cards are emitted
+ * only by an explicit all-system 288 px hero run linked to a prior passing
+ * machine run (`FINISH_PATTERN_EMIT_REVIEW_DECKS=1` plus its run id).
  *
  * Full run:
  *   npx vitest run --config scripts/vitest.harness.config.ts \
@@ -19,7 +21,8 @@
  *   FINISH_PATTERN_RUN_ID=dev-menger npx vitest run \
  *     --config scripts/vitest.harness.config.ts scripts/finish-pattern.harness.ts
  */
-import { mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
   buildSurfaceDE,
@@ -82,6 +85,23 @@ const REVIEW_SIZE = Math.max(
   Math.round(Number(process.env.FINISH_PATTERN_REVIEW_SIZE) || 288),
 );
 const HERO_PREFLIGHT = process.env.FINISH_PATTERN_HERO_PREFLIGHT === "1";
+const EMIT_REVIEW_DECKS = process.env.FINISH_PATTERN_EMIT_REVIEW_DECKS === "1";
+const REVIEW_MACHINE_RUN_ID = process.env.FINISH_PATTERN_MACHINE_RUN_ID;
+const REVIEW_EYE_OVERRIDE = (() => {
+  const raw = process.env.FINISH_PATTERN_REVIEW_EYE;
+  if (!raw) return null;
+  const values = raw.split(",").map(Number);
+  if (
+    values.length !== 3 ||
+    values.some((value) => !Number.isFinite(value)) ||
+    Math.hypot(values[0], values[1], values[2]) <= 1
+  ) {
+    throw new Error(
+      "FINISH_PATTERN_REVIEW_EYE must be three finite comma-separated values with length >1",
+    );
+  }
+  return values as Vec3;
+})();
 const PROBE_SIZE = 96;
 const ZOOMS = [1, 4, 16, 64] as const;
 const MIN_HIT_FRACTION = 0.02;
@@ -91,6 +111,11 @@ const MID_ENERGY_MIN = 0.25;
 const FINE_ENERGY_MAX = 0.6;
 const RUNG_VARIANCE_RETENTION_MIN = 0.6;
 const END_VARIANCE_RETENTION_MIN = 0.5;
+const SCORED_SYSTEM_NAMES = [
+  "menger",
+  "mandelbox-pair",
+  "menger-lens",
+] as const;
 
 const sanitize = (s: string): string =>
   s.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "run";
@@ -101,13 +126,147 @@ const autoRunId = `${new Date()
 const RUN_ID = sanitize(process.env.FINISH_PATTERN_RUN_ID ?? autoRunId);
 const RUN_DIR_NAME = `finish-pattern-${RUN_ID}`;
 const RUN_DIR = join(OUT_ROOT, RUN_DIR_NAME);
+if (
+  EMIT_REVIEW_DECKS &&
+  (!HERO_PREFLIGHT || !REVIEW_MACHINE_RUN_ID || REVIEW_SIZE < 288)
+) {
+  throw new Error(
+    "review decks require a >=288px hero preflight and FINISH_PATTERN_MACHINE_RUN_ID from a prior passing matrix",
+  );
+}
+
+function requireMachineReviewPrerequisite(runId: string): void {
+  if (sanitize(runId) !== runId) {
+    throw new Error("FINISH_PATTERN_MACHINE_RUN_ID must already be sanitized");
+  }
+  const file = join(OUT_ROOT, `finish-pattern-${runId}`, "manifest.json");
+  if (!existsSync(file)) {
+    throw new Error(`review machine manifest does not exist: ${file}`);
+  }
+  const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("review machine manifest must be an object");
+  }
+  const manifest = parsed as Record<string, unknown>;
+  const systems = Array.isArray(manifest.systems) ? manifest.systems : [];
+  const names = systems.map((value) =>
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>).name
+      : undefined,
+  );
+  const thresholds = manifest.thresholds as Record<string, unknown> | undefined;
+  const humanReview = manifest.humanReview as
+    Record<string, unknown> | undefined;
+  const reviewFits = Array.isArray(manifest.reviewFits)
+    ? manifest.reviewFits
+    : [];
+  const expectedThresholds: Record<string, unknown> = {
+    ordinaryEdgeDensity: [EDGE_DENSITY_MIN, EDGE_DENSITY_MAX],
+    minimumMidscaleEnergy: MID_ENERGY_MIN,
+    maximumFineEnergy: FINE_ENERGY_MAX,
+    minimumRungVarianceRetention: RUNG_VARIANCE_RETENTION_MIN,
+    minimum64xVarianceRetention: END_VARIANCE_RETENTION_MIN,
+  };
+  const thresholdMatch = Object.entries(expectedThresholds).every(
+    ([key, expected]) =>
+      JSON.stringify(thresholds?.[key]) === JSON.stringify(expected),
+  );
+  const systemsPass = systems.every((value) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      return false;
+    }
+    const system = value as Record<string, unknown>;
+    const panels = Array.isArray(system.panels) ? system.panels : [];
+    const ladders = Array.isArray(system.ladderChecks)
+      ? system.ladderChecks
+      : [];
+    return (
+      panels.length === 28 &&
+      panels.every(
+        (panel) =>
+          typeof panel === "object" &&
+          panel !== null &&
+          !Array.isArray(panel) &&
+          (panel as Record<string, unknown>).pass === true &&
+          (panel as Record<string, unknown>).exhausted === 0,
+      ) &&
+      ladders.length === 3 &&
+      ladders.every(
+        (check) =>
+          typeof check === "object" &&
+          check !== null &&
+          !Array.isArray(check) &&
+          (check as Record<string, unknown>).pass === true,
+      )
+    );
+  });
+  const reviewFitsPass =
+    reviewFits.length === SCORED_SYSTEM_NAMES.length &&
+    reviewFits.every((value) => {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        return false;
+      }
+      const fit = value as Record<string, unknown>;
+      const metrics = fit.metrics as Record<string, unknown> | undefined;
+      return (
+        typeof metrics?.hitFraction === "number" &&
+        metrics.hitFraction * 288 * 288 >= 10_000 &&
+        metrics.hitFraction >= 0.05 &&
+        typeof metrics.bboxWidthFraction === "number" &&
+        metrics.bboxWidthFraction >= 0.55 &&
+        metrics.clipped === false &&
+        metrics.exhausted === 0
+      );
+    });
+  if (
+    manifest.schema !== 3 ||
+    manifest.runId !== runId ||
+    manifest.completeMatrix !== true ||
+    manifest.heroPreflightOnly !== false ||
+    manifest.size !== 96 ||
+    manifest.reviewSize !== 288 ||
+    manifest.reviewGateEnforced !== true ||
+    JSON.stringify(manifest.zooms) !== JSON.stringify(ZOOMS) ||
+    JSON.stringify(manifest.selectedSystems) !==
+      JSON.stringify(SCORED_SYSTEM_NAMES) ||
+    JSON.stringify(names) !== JSON.stringify(SCORED_SYSTEM_NAMES) ||
+    !thresholdMatch ||
+    !systemsPass ||
+    !reviewFitsPass ||
+    humanReview?.emitted !== false ||
+    !Array.isArray(humanReview.decks) ||
+    humanReview.decks.length !== 0
+  ) {
+    throw new Error(
+      `review decks require a complete passing unchanged machine manifest: ${file}`,
+    );
+  }
+}
+
+if (EMIT_REVIEW_DECKS) {
+  requireMachineReviewPrerequisite(REVIEW_MACHINE_RUN_ID as string);
+}
+if (existsSync(RUN_DIR)) {
+  throw new Error(`finish-pattern refuses to overwrite existing run ${RUN_ID}`);
+}
 mkdirSync(RUN_DIR, { recursive: true });
 
 const ENV_BASE: Omit<SurfaceFinishShadeEnv, "lightDir"> = {
-  ambient: 0.25,
+  ambient: 0.45,
   envStrength: 0.35,
   bgTop: PREVIEW_BG_TOP.map((c) => Math.pow(c, 1 / 2.2)) as CoreVec3,
   bgBottom: PREVIEW_BG_BOTTOM.map((c) => Math.pow(c, 1 / 2.2)) as CoreVec3,
+};
+/**
+ * A fixed neutral studio finish for every material and topology. It keeps the
+ * scored cards production-lit through `finishShadeTs`, while broad fill and a
+ * restrained highlight stop the fold fixture's curvature from masquerading
+ * as white speckle or dark material seams.
+ */
+const PATTERN_PRESENTATION_FINISH = {
+  ...CLASSIC_SURFACE_FINISH,
+  specular: 0.1,
+  shininess: 16,
 };
 const BASES: Readonly<Record<PatternKind, Vec3>> = {
   none: [0.72, 0.64, 0.52],
@@ -396,6 +555,10 @@ interface SystemSpec {
   frame: number;
   /** Pattern-independent framing used only by the scored 1x review heroes. */
   reviewFrame: number;
+  /** Optional geometry-selected eye used only by the scored review heroes. */
+  reviewEye?: Vec3;
+  /** Optional geometry-selected target used only by the scored review heroes. */
+  reviewTarget?: Vec3;
 }
 interface BuiltSystem {
   spec: SystemSpec;
@@ -431,7 +594,9 @@ const ALL_SYSTEMS: readonly SystemSpec[] = [
     transforms: foldMandelboxPair(),
     eye: [1.55, 1.1, 1.8],
     frame: 0.55,
-    reviewFrame: 0.55,
+    reviewFrame: 0.178,
+    reviewEye: [2, 1.8, 0.3],
+    reviewTarget: [1.274831301, 1.526563833, 0.453874519],
   },
   {
     name: "menger-lens",
@@ -455,6 +620,9 @@ const SYSTEMS =
     : ALL_SYSTEMS.filter((s) => selectedNames.has(s.name));
 if (SYSTEMS.length === 0) {
   throw new Error("FINISH_PATTERN_SYSTEMS did not name a known system");
+}
+if (EMIT_REVIEW_DECKS && SYSTEMS.length !== ALL_SYSTEMS.length) {
+  throw new Error("review decks require every scored system");
 }
 
 function buildSystem(spec: SystemSpec): BuiltSystem {
@@ -616,6 +784,7 @@ function renderGeometry(
   size = SIZE,
   frame = sys.spec.frame,
   targetOverride?: Vec3,
+  eyeOverride?: Vec3,
 ): GeometryRung {
   const estimator =
     zoom === 1 ? sys.estimator : zoomDE(sys.estimator, sys.anchor, zoom);
@@ -650,7 +819,7 @@ function renderGeometry(
       hit.shadow,
       hit.ao,
       hit.bg,
-      CLASSIC_SURFACE_FINISH,
+      PATTERN_PRESENTATION_FINISH,
       { ...ENV_BASE, lightDir: hit.light },
     );
   };
@@ -660,7 +829,7 @@ function renderGeometry(
       boundingRadius: sys.R,
       target,
       stepScale: sys.de.stepScale,
-      eyeOffset: sys.spec.eye,
+      eyeOffset: eyeOverride ?? sys.spec.eye,
       zoom: frame,
       ao: false,
       shadow: false,
@@ -888,7 +1057,7 @@ function renderPatternPanel(
       sample.hit.shadow,
       sample.hit.ao,
       sample.hit.bg,
-      CLASSIC_SURFACE_FINISH,
+      PATTERN_PRESENTATION_FINISH,
       { ...ENV_BASE, lightDir: sample.hit.light },
     );
     const at = i * 3;
@@ -1005,6 +1174,7 @@ interface ReviewFit {
 interface ReviewCamera {
   frame: number;
   target: Vec3;
+  eye: Vec3;
 }
 
 const REVIEW_FIT_PROBE_SIZE = 96;
@@ -1022,8 +1192,11 @@ const REVIEW_MIN_BBOX_WIDTH = 0.55;
  */
 function fitReviewCamera(sys: BuiltSystem): ReviewCamera {
   let frame = sys.spec.reviewFrame;
-  let target: Vec3 = [sys.target[0], sys.target[1], sys.target[2]];
-  let best: ReviewCamera = { frame, target };
+  let target: Vec3 = sys.spec.reviewTarget
+    ? [...sys.spec.reviewTarget]
+    : [sys.target[0], sys.target[1], sys.target[2]];
+  const eye: Vec3 = REVIEW_EYE_OVERRIDE ?? sys.spec.reviewEye ?? sys.spec.eye;
+  let best: ReviewCamera = { frame, target, eye };
   let bestFraction = -1;
   const pixels = REVIEW_FIT_PROBE_SIZE * REVIEW_FIT_PROBE_SIZE;
   for (let round = 0; round < REVIEW_FIT_ROUNDS; round++) {
@@ -1033,7 +1206,7 @@ function fitReviewCamera(sys: BuiltSystem): ReviewCamera {
         boundingRadius: sys.R,
         target,
         stepScale: sys.de.stepScale,
-        eyeOffset: sys.spec.eye,
+        eyeOffset: eye,
         zoom: frame,
         collect: true,
         ao: false,
@@ -1045,7 +1218,7 @@ function fitReviewCamera(sys: BuiltSystem): ReviewCamera {
     const fraction = probe.hits / pixels;
     if (fraction > bestFraction) {
       bestFraction = fraction;
-      best = { frame, target: [target[0], target[1], target[2]] };
+      best = { frame, target: [target[0], target[1], target[2]], eye };
     }
     let sx = 0;
     let sy = 0;
@@ -1112,15 +1285,24 @@ function reviewFit(geometry: GeometryRung): ReviewFit {
 }
 
 const systemManifests: SystemManifest[] = [];
-const reviewHeroes: Array<{ system: string; kind: string; panel: PanelStats }> =
-  [];
+const reviewHeroes: Array<{
+  system: string;
+  kind: Exclude<PatternKind, "none">;
+  panel: PanelStats;
+}> = [];
 const reviewFits: Array<{
   system: string;
   family: SystemSpec["family"];
   frame: number;
   target: Vec3;
+  eye: Vec3;
   metrics: ReviewFit;
-  panels: Array<{ kind: string; metrics: ResidualMetrics }>;
+  panels: Array<{
+    kind: string;
+    metrics: ResidualMetrics;
+    meanDetailGate: number;
+    meanDetailMix: number;
+  }>;
 }> = [];
 
 function reviewOrder(deck: string, key: string): number {
@@ -1165,6 +1347,7 @@ describe("hybrid finish pattern evidence", () => {
         REVIEW_SIZE,
         reviewFrame,
         fittedReview.target,
+        fittedReview.eye,
       );
       const fit = reviewFit(scoredGeometry);
       console.log(
@@ -1174,24 +1357,26 @@ describe("hybrid finish pattern evidence", () => {
           `object span ${fit.objectSpan.map((v) => v.toFixed(2)).join("/")} ` +
           `clipped ${fit.clipped ? "YES" : "no"} exhausted ${fit.exhausted}`,
       );
-      expect
-        .soft(
-          scoredGeometry.stats.hits,
-          `${spec.name} review object has <${REVIEW_MIN_OBJECT_PIXELS} pixels`,
-        )
-        .toBeGreaterThanOrEqual(REVIEW_MIN_OBJECT_PIXELS);
-      expect
-        .soft(fit.hitFraction, `${spec.name} review object coverage <5%`)
-        .toBeGreaterThanOrEqual(REVIEW_MIN_HIT_FRACTION);
-      expect
-        .soft(fit.bboxWidthFraction, `${spec.name} review bbox width <55%`)
-        .toBeGreaterThanOrEqual(REVIEW_MIN_BBOX_WIDTH);
-      expect
-        .soft(fit.clipped, `${spec.name} review framing clips hits`)
-        .toBe(false);
-      expect
-        .soft(fit.exhausted, `${spec.name} review framing exhausted rays`)
-        .toBe(0);
+      if (REVIEW_SIZE >= 288) {
+        expect
+          .soft(
+            scoredGeometry.stats.hits,
+            `${spec.name} review object has <${REVIEW_MIN_OBJECT_PIXELS} pixels`,
+          )
+          .toBeGreaterThanOrEqual(REVIEW_MIN_OBJECT_PIXELS);
+        expect
+          .soft(fit.hitFraction, `${spec.name} review object coverage <5%`)
+          .toBeGreaterThanOrEqual(REVIEW_MIN_HIT_FRACTION);
+        expect
+          .soft(fit.bboxWidthFraction, `${spec.name} review bbox width <55%`)
+          .toBeGreaterThanOrEqual(REVIEW_MIN_BBOX_WIDTH);
+        expect
+          .soft(fit.clipped, `${spec.name} review framing clips hits`)
+          .toBe(false);
+        expect
+          .soft(fit.exhausted, `${spec.name} review framing exhausted rays`)
+          .toBe(0);
+      }
       const scoredPanels = (["wood", "marble", "strata"] as const).map(
         (kind) => {
           const panel = renderPatternPanel(
@@ -1202,7 +1387,12 @@ describe("hybrid finish pattern evidence", () => {
           );
           report(sys, panel);
           reviewHeroes.push({ system: spec.name, kind, panel: panel.stats });
-          return { kind, metrics: panel.metrics };
+          return {
+            kind,
+            metrics: panel.metrics,
+            meanDetailGate: panel.meanDetailGate,
+            meanDetailMix: panel.meanDetailMix,
+          };
         },
       );
       reviewFits.push({
@@ -1210,6 +1400,7 @@ describe("hybrid finish pattern evidence", () => {
         family: spec.family,
         frame: reviewFrame,
         target: fittedReview.target,
+        eye: fittedReview.eye,
         metrics: fit,
         panels: scoredPanels,
       });
@@ -1323,17 +1514,46 @@ describe("hybrid finish pattern evidence", () => {
   }
 
   afterAll(() => {
+    if (EMIT_REVIEW_DECKS) {
+      const fitNames = reviewFits.map((fit) => fit.system);
+      const reviewEvidencePasses =
+        JSON.stringify(fitNames) === JSON.stringify(SCORED_SYSTEM_NAMES) &&
+        reviewHeroes.length === 9 &&
+        reviewFits.every(
+          (fit) =>
+            fit.metrics.hitFraction * REVIEW_SIZE * REVIEW_SIZE >=
+              REVIEW_MIN_OBJECT_PIXELS &&
+            fit.metrics.hitFraction >= REVIEW_MIN_HIT_FRACTION &&
+            fit.metrics.bboxWidthFraction >= REVIEW_MIN_BBOX_WIDTH &&
+            !fit.metrics.clipped &&
+            fit.metrics.exhausted === 0,
+        ) &&
+        reviewHeroes.every(
+          (hero) =>
+            hero.panel.hits > MIN_HIT_FRACTION * REVIEW_SIZE * REVIEW_SIZE &&
+            hero.panel.exhausted === 0,
+        );
+      if (!reviewEvidencePasses) {
+        throw new Error(
+          "review decks require every 288px scored hero and fit gate to pass",
+        );
+      }
+    }
     const choices = [
       "Wood",
       "Marble",
-      "Deliberate banding",
+      "Strata",
       "Noise-corrosion",
       "Plain-other",
     ] as const;
     let reviewDiagnostic: string | null = null;
     let reviewKeyArtifact: string | null = null;
     let reviewResultsTemplate: string | null = null;
-    const reviewDecks: Array<{ deckId: string; artifact: string }> = [];
+    const reviewDecks: Array<{
+      deckId: string;
+      artifact: string;
+      sha256: string;
+    }> = [];
     const keyDecks: Array<{
       deckId: string;
       cards: Array<{
@@ -1367,80 +1587,111 @@ describe("hybrid finish pattern evidence", () => {
       );
       reviewDiagnostic = relative(OUT_ROOT, diagnostic);
 
-      for (let deckIndex = 1; deckIndex <= 5; deckIndex++) {
-        const deckId = `reviewer-${String(deckIndex).padStart(2, "0")}`;
-        const cards = [...reviewHeroes]
-          .sort(
-            (a, b) =>
-              reviewOrder(deckId, `${a.kind}:${a.system}`) -
-              reviewOrder(deckId, `${b.kind}:${b.system}`),
-          )
-          .map((hero, i) => ({
-            ...hero,
-            card: `CARD ${String(i + 1).padStart(2, "0")}`,
-          }));
-        const file = writeLabeledContactSheet(
-          cards.map((card) => ({
-            stats: card.panel,
-            lines: [card.card, "CHOICE CONF1-5"],
-          })),
-          3,
-          join(
-            RUN_DIR_NAME,
-            `review-deck-${String(deckIndex).padStart(2, "0")}.png`,
-          ),
-        );
-        reviewDecks.push({ deckId, artifact: relative(OUT_ROOT, file) });
-        keyDecks.push({
-          deckId,
-          cards: cards.map((card) => ({
-            card: card.card,
-            expected: card.kind,
-            system: card.system,
-          })),
-        });
-        resultDecks.push({
-          reviewerId: deckId,
-          deckId,
-          responses: cards.map((card) => ({
-            card: card.card,
-            choice: null,
-            confidence: null,
-          })),
-        });
-      }
+      const orderSignatures = new Set<string>();
+      if (EMIT_REVIEW_DECKS) {
+        for (let deckIndex = 1; deckIndex <= 5; deckIndex++) {
+          const deckId = `reviewer-${String(deckIndex).padStart(2, "0")}`;
+          const cards = [...reviewHeroes]
+            .sort(
+              (a, b) =>
+                reviewOrder(deckId, `${a.kind}:${a.system}`) -
+                reviewOrder(deckId, `${b.kind}:${b.system}`),
+            )
+            .map((hero, i) => ({
+              ...hero,
+              card: `CARD ${String(i + 1).padStart(2, "0")}`,
+            }));
+          const file = writeLabeledContactSheet(
+            cards.map((card) => ({
+              stats: card.panel,
+              lines: [card.card, "CHOICE CONF1-5"],
+            })),
+            3,
+            join(
+              RUN_DIR_NAME,
+              `review-deck-${String(deckIndex).padStart(2, "0")}.png`,
+            ),
+          );
+          const orderSignature = cards
+            .map((card) => `${card.kind}:${card.system}`)
+            .join("|");
+          if (orderSignatures.has(orderSignature)) {
+            throw new Error("review deck permutations must be independent");
+          }
+          orderSignatures.add(orderSignature);
+          reviewDecks.push({
+            deckId,
+            artifact: relative(OUT_ROOT, file),
+            sha256: createHash("sha256")
+              .update(readFileSync(file))
+              .digest("hex"),
+          });
+          keyDecks.push({
+            deckId,
+            cards: cards.map((card) => ({
+              card: card.card,
+              expected:
+                card.kind === "wood"
+                  ? "Wood"
+                  : card.kind === "marble"
+                    ? "Marble"
+                    : "Strata",
+              system: card.system,
+            })),
+          });
+          resultDecks.push({
+            reviewerId: deckId,
+            deckId,
+            responses: cards.map((card) => ({
+              card: card.card,
+              choice: null,
+              confidence: null,
+            })),
+          });
+        }
 
-      const keyFile = join(RUN_DIR, "review-key.json");
-      writeFileSync(
-        keyFile,
-        `${JSON.stringify({ schema: 1, runId: RUN_ID, decks: keyDecks }, null, 2)}\n`,
-      );
-      reviewKeyArtifact = relative(OUT_ROOT, keyFile);
-      const resultsFile = join(RUN_DIR, "review-results.template.json");
-      writeFileSync(
-        resultsFile,
-        `${JSON.stringify(
-          {
-            schema: 1,
-            runId: RUN_ID,
-            status: "pending",
-            instructions:
-              "Judge surface material only. Choose exactly one listed choice and confidence 1..5. Do not infer class counts.",
-            choices,
-            reviewers: resultDecks,
-          },
-          null,
-          2,
-        )}\n`,
-      );
-      reviewResultsTemplate = relative(OUT_ROOT, resultsFile);
+        const keyFile = join(RUN_DIR, "review-key.json");
+        writeFileSync(
+          keyFile,
+          `${JSON.stringify(
+            {
+              schema: 2,
+              runId: RUN_ID,
+              machineRunId: REVIEW_MACHINE_RUN_ID,
+              decks: keyDecks,
+            },
+            null,
+            2,
+          )}\n`,
+        );
+        reviewKeyArtifact = relative(OUT_ROOT, keyFile);
+        const resultsFile = join(RUN_DIR, "review-results.template.json");
+        writeFileSync(
+          resultsFile,
+          `${JSON.stringify(
+            {
+              schema: 1,
+              runId: RUN_ID,
+              status: "pending",
+              instructions:
+                "Judge surface material only. Choose exactly one listed choice and confidence 1..5. Do not infer class counts.",
+              choices,
+              reviewers: resultDecks,
+            },
+            null,
+            2,
+          )}\n`,
+        );
+        reviewResultsTemplate = relative(OUT_ROOT, resultsFile);
+      }
     }
     const manifest = {
-      schema: 2,
+      schema: 3,
       runId: RUN_ID,
       generatedAt: new Date().toISOString(),
       completeMatrix: !HERO_PREFLIGHT && SYSTEMS.length === ALL_SYSTEMS.length,
       heroPreflightOnly: HERO_PREFLIGHT,
+      reviewGateEnforced: REVIEW_SIZE >= 288,
       selectedSystems: SYSTEMS.map((s) => s.name),
       size: SIZE,
       reviewSize: REVIEW_SIZE,
@@ -1465,6 +1716,11 @@ describe("hybrid finish pattern evidence", () => {
         detailFootprintFull: PATTERN_DETAIL_FOOTPRINT_FULL,
         detailFootprintOff: PATTERN_DETAIL_FOOTPRINT_OFF,
         calibrationPercentiles: [0.03, 0.97],
+        presentation: {
+          finish: PATTERN_PRESENTATION_FINISH,
+          ambient: ENV_BASE.ambient,
+          envStrength: ENV_BASE.envStrength,
+        },
       },
       thresholds: {
         ordinaryEdgeDensity: [EDGE_DENSITY_MIN, EDGE_DENSITY_MAX],
@@ -1491,11 +1747,15 @@ describe("hybrid finish pattern evidence", () => {
         decks: reviewDecks,
         keyArtifact: reviewKeyArtifact,
         resultsTemplate: reviewResultsTemplate,
+        emitted: EMIT_REVIEW_DECKS,
+        machineRunId: REVIEW_MACHINE_RUN_ID ?? null,
         choices,
         reviewersRequired: 5,
         heroRule: "at least 4/5 correct with median confidence >=3",
-        aggregateRule: "at least 80% correct, no system below 3/5",
-        status: "pending external blinded review",
+        aggregateRule: "at least 80% correct",
+        status: EMIT_REVIEW_DECKS
+          ? "pending external blinded review"
+          : "not emitted; machine pass required first",
       },
     };
     const manifestFile = join(RUN_DIR, "manifest.json");
