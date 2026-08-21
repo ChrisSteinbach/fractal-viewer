@@ -726,6 +726,101 @@ Crossing there is as benign as every other crossing in this section
 SHIPPED 4D session its commentary, where escape+balloon's never cost a
 session anything.
 
+### The pattern arm's sizes
+
+The per-transform pattern arm (`SURFACE_PATTERN`, fr-cmtl.5) is the
+second additively-independent arm measured across every pairing in both
+states: the same fifteen variants as the finish table, pattern off and
+on, against the previous table's figures. "Off" is byte-identical to
+the pre-pattern build — pinned by commit-hash baselines in
+`src/app/surface-pattern-baseline.ts`, generated from the pre-.5 tree
+(8f5fb4d) — and "on" is what a document authors a pattern from then.
+
+| variant               | off resolved | off emitted | on resolved | on emitted | Δ resolved |
+| --------------------- | ------------ | ----------- | ----------- | ---------- | ---------- |
+| 3D base (affine/fold) | 83022        | 29194       | 95243       | 38365      | +12221     |
+| 3D lens               | 86223        | 28958       | 99062       | 38149      | +12839     |
+| 3D escape             | 55845        | 55845       | 68066       | 19637      | +12221     |
+| 3D bulb               | 39357        | 39357       | 51578       | 51578      | +12221     |
+| 3D balloon            | 91670        | 30881       | 103948      | 40095      | +12278     |
+| 3D plane              | 89724        | 31939       | 101945      | 41110      | +12221     |
+| 3D lens+balloon       | 95281        | 30697       | 108120      | 39888      | +12839     |
+| 3D lens+plane         | 92925        | 31703       | 105764      | 40894      | +12839     |
+| 3D escape+balloon     | 64681        | 64681       | 76959       | 21539      | +12278     |
+| 3D escape+plane       | 62547        | 13211       | 74768       | 22382      | +12221     |
+| 3D bulb+balloon       | 48572        | 48572       | 60850       | 60850      | +12278     |
+| 3D bulb+plane         | 46059        | 11326       | 58280       | 20497      | +12221     |
+| 4D base               | 62765        | 62765       | 74312       | 25031      | +11547     |
+| 4D balloon            | 69242        | 17330       | 80880       | 26560      | +11638     |
+| 4D plane              | 70996        | 18623       | 82543       | 27776      | +11547     |
+
+Four things the table says.
+
+**(1) The off column is the pre-pattern tree to the byte.** Every row
+matches the hash baselines in `src/app/surface-pattern-baseline.ts` —
+generated from the actual pre-.5 tree (8f5fb4d) — resolved AND emitted,
+across every 3D pairing × finish and every 4D arm × finish. (The finish
+table above this one shows slightly smaller plane rows: those figures
+predate the balloon-tint and pattern-calibration scaffolding, and the
+baseline hash is what pins the current tree, not this doc's earlier
+prose.) The pattern arm lives entirely inside resolver-owned
+`#if SURFACE_PATTERN` blocks (body, routing, fold-lens handoff), so with
+the flag off not one new token reaches the resolved source — pinned three
+ways: the finish-identity tests, token-absence sweeps, and the committed
+baselines.
+
+**(2) The arm costs every variant a ~9.6KB shared body plus a routing
+splice.** The patternShade body — noise, macro ramps, scale-stable
+detail, albedo, decode — is 9598 B of nearly comment-free GLSL emitted
+once per file (the "one template, both dimensions" rule), and the
+routing (main()'s splice plus the fold-lens handoff and the shared
+A/B-gate declarations) adds ~1.5-2.6KB depending on the scene arms (the
+balloon cpos branch and the fold-lens handoff are the larger ones).
+Because the body has almost no comments, the strip deletes little:
+stripped variants grow by ~9-12KB emitted, not the finish arm's 855B.
+The 4D rows' resolved deltas are smaller because their source is shorter
+to begin with.
+
+**(3) Most pattern-on variants cross the strip threshold; the bulb family
+stays under.** The 4D plain arm — the table the previous section called
+"where it should measure first" — crosses at 74312 B resolved (from
+62765 B), exactly the benign event that section predicted: stripped to
+25031 B emitted, and the crossing costs a SHIPPED 4D session its
+commentary in a driver log (the first time any crossing did; the pattern
+arm has no comments, so only the surrounding arms' prose is lost). 3D
+escape (68066 B), 3D balloon (103948 B), and 3D escape+balloon (76959 B)
+also cross. The three BULB rows stay under the threshold — 51578 B
+(bulb), 60850 B (bulb+balloon) and 58280 B resolved (bulb+plane; it
+strips anyway under the plane rule) — so bulb sessions remain the
+pattern-on variants that still read as source in a driver log.
+
+**(4) Nothing approaches the emitted cliff.** The largest program any
+driver is handed with the pattern on is 3D bulb+balloon at 60850 B
+(unstripped), then 3D bulb at 51578 B; every stripped variant sits
+between 17.9 and 42.9 KB — far under the 82.2 KB that crashed Mesa. The
+whole UNRESOLVED 3D template grew to ~155 KB, still under the ~190 KB a
+resolved source would need for its stripped third to reach the crash.
+
+REAL-BROWSER COMPILE + RENDER (fr-cmtl.5's `scripts/pattern.verify.mjs`,
+640x360): every leg forces the WebGL arm (`?surfacegl`) — the WGSL
+compute kernel's pattern math is fr-cmtl.6's, so a compute leg would
+render unpatterned by design — and the compared captures assert
+engine=webgl. Three routes, each three legs (none, patterned, strength-0
+control): lens3 (3D fold-FINAL lens, wood on transform 0)
+patterned-vs-none 3.80% central-region structural and strength-0-vs-none
+0.000%; ifs4plane (4D IFS + floor, marble on all four transforms — its
+transform 0's xw rotation puts map 0's copy outside the visible slice,
+so a single-slot pattern never fires there) 1.06% / 0.000%; escape3 (3D
+escape-time Mandelbox + floor, strata on the head transform) 9.19% /
+0.000%. The strength-0 rows are the strongest form of the identity
+claim: the SAME program compiled (pattern gate on), the same
+calibration, only the mix coefficient at 0 — pixel-exact against the
+pattern-absent document. On headless SwiftShader the lens3/ifs4plane
+pairs are compared at stage 1 (the pre-supersampling frame) and escape3
+reaches the SETTLED 8-pass latch; on the REAL DRIVER (--mode=x11::0,
+Intel Iris Xe / Mesa via ANGLE) all three routes settle: lens3 3.81%,
+ifs4plane 1.13%, escape3 9.19%, strength-0 0.000% everywhere.
+
 ## The probe-width verdict
 
 The three shading taps (normal/shadow/AO) ride the value form, which fold

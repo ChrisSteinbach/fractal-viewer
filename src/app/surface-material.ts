@@ -21,6 +21,7 @@ import {
   SURFACE_FINISH_GLSL,
   surfaceFinishShadeSource,
 } from "../fractal/surface-finish";
+import { surfacePatternShadeSource } from "../fractal/surface-pattern-shade";
 import {
   CLASSIC_SURFACE_MATERIAL,
   surfaceMaterialLanes,
@@ -637,6 +638,13 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * (ringsLow, ringsInvSpan, sheetsLow, sheetsInvSpan). The downstream
    * pattern-shading bead consumes it. */
   uniform vec4 uPatternCalibration;
+  /** The SURFACE_PATTERN shading arm's ONE shared body — the accepted V3
+   * pattern arithmetic (surface-pattern-shade.ts), spliced by both GLSL
+   * tracers so the 3D and 4D formula copies cannot drift. It reads no
+   * uniforms directly: the call site in main() supplies the normalized
+   * source hit, the hit's B lane, the per-DE calibration and the pixel
+   * footprint. */
+  ${surfacePatternShadeSource()}
 #endif
 #if SURFACE_FOLDS
   /** Fold-branch sweep, compiled in only for systems with pure-fold maps
@@ -2684,6 +2692,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
   float surfaceDE(vec3 p) {
     return surfaceDE(p, 0.0);
   }
+#if SURFACE_PATTERN
+  // The fold-lens hit-info overload's winning core query, published for the
+  // pattern arm in main() (see the assignment in that overload's epilogue).
+  vec3 patternFoldLensSource;
+#endif
 
   /** Hit-shading overload under the lens: re-run the branch loop tracking
    * the ARGMIN branch's core query, then fetch the shading extras from one
@@ -2794,6 +2807,15 @@ ${foldValueFormGlsl(shadeDeWidth)}
         bestQ = q;
       }
     }
+#if SURFACE_PATTERN
+    // The pattern arm's source-hit handoff: a fold final is multivalued, so
+    // the pattern evaluator cannot invent one matrix inverse — it must use
+    // the WINNING branch's already-resolved core query (the frame oracle's
+    // foldFinalSourceHit). The hit-info overload below is the only place
+    // that point exists, so it publishes it here for main()'s pattern arm
+    // to read (surface-pattern-frame.ts's contract, verbatim).
+    patternFoldLensSource = bestQ;
+#endif
     return surfaceDECore(bestQ, firstChoice, trap, rings, sheets);
   }
 #endif
@@ -3307,6 +3329,42 @@ ${foldValueFormGlsl(shadeDeWidth)}
     // strength. strength 0 (the default) makes this mix(base,
     // uBalloonTint, 0.0) == base — today's frame byte for byte.
     base = mix(base, uBalloonTint, uBalloonTintStrength * shell);
+#endif
+#if SURFACE_PATTERN
+    // Patterned albedo, BEFORE lighting and fog — the document's order:
+    // color source -> balloon tint -> pattern -> lighting -> fog. The
+    // pattern is object-attached, so the albedo reads the RAW attractor
+    // point, reconstructed by reversing the render's remaps in the
+    // surface-pattern-frame.ts order (visible hit -> balloon source query
+    // -> final inverse; a fold final is multivalued and uses the winning
+    // branch's already-resolved core query instead of an invented matrix
+    // inverse). The hit's own slot picks its material from the shared B
+    // lane; the footprint is the tier-INDEPENDENT acceptance epsilon at the
+    // hit depth, normalized by the raw bounding radius, so preview and
+    // settle tiers cannot change the material detail.
+    vec3 patternSource;
+#if SURFACE_FOLD_LENS
+    patternSource = patternFoldLensSource;
+#else
+    patternSource = pos;
+#if SURFACE_BALLOON
+    if (shell > 0.5) {
+      patternSource = cpos;
+    }
+#endif
+    patternSource = uFinalInvM * patternSource + uFinalInvT;
+#endif
+    vec3 objectP = (patternSource - uBoundCenter) / uBoundingRadius;
+    float patternFootprint = uAcceptPixelEps * t / uBoundingRadius;
+    int patternSlot = clamp(firstChoice, 0, uMapCount - 1);
+    base = patternShade(
+      base,
+      objectP,
+      uMapFinishB[patternSlot],
+      uPatternCalibration,
+      sheets,
+      patternFootprint
+    );
 #endif
 
     // Soft shadow: classic DE penumbra toward the light — the shadow ray's

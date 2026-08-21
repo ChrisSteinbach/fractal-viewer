@@ -29,6 +29,8 @@ import type { SurfaceDE4, SurfaceDE4Map } from "../fractal/surface-de-4d";
 import { radiusBandInvRange } from "../fractal/surface-de-4d";
 import { CLASSIC_SURFACE_FOLD_RADII } from "../fractal/surface-de";
 import { twentyFourCellFlake } from "../fractal/presets";
+import { createHash } from "node:crypto";
+import { PRE_PATTERN_SOURCE_HASHES } from "./surface-pattern-baseline";
 
 /**
  * The 4D tracer's per-map data rides a std140 uniform BLOCK rather than
@@ -363,6 +365,11 @@ const balloonSpec = () => ({
 /** Non-overlapping occurrence count — the 3D suite's helper, restated. */
 function countOccurrences(source: string, needle: string): number {
   return source.split(needle).length - 1;
+}
+
+/** SHA-256 of a source string (the baseline fixture's hash function). */
+function sha256(source: string): string {
+  return createHash("sha256").update(source).digest("hex");
 }
 
 /** The same, for the floor. */
@@ -1086,5 +1093,190 @@ describe("the 4D tracer's finish arm", () => {
         finishMaterials([authored]),
       ),
     ).toThrow(TypeError);
+  });
+});
+
+describe("the 4D tracer's pattern arm", () => {
+  const calibration = {
+    ringsLow: 0.1,
+    ringsInvSpan: 2,
+    sheetsLow: 0.2,
+    sheetsInvSpan: 3,
+  };
+  const patternMaterials = (finish = false): SurfaceMaterialSlots => ({
+    slots: [
+      resolveSurfaceMaterial(finish ? authored() : undefined, {
+        kind: "marble",
+        axis: "x",
+        scale: 3.1256,
+        strength: 0.625,
+      }),
+    ],
+    finish,
+    pattern: true,
+    patternCalibration: calibration,
+  });
+  const authored = (): ReturnType<typeof resolveSurfaceFinish> =>
+    resolveSurfaceFinish({
+      specular: 0.9,
+      shininess: 64,
+      metalness: 0.3,
+      reflect: 0.5,
+      transmit: 0.2,
+    });
+
+  it("matches the pre-bead byte identity for every scene arm with the pattern flag off — the pinned 8f5fb4d baseline", () => {
+    for (const finish of [0, 1]) {
+      for (const [name, balloon, plane] of [
+        ["4D base", 0, 0],
+        ["4D balloon", 1, 0],
+        ["4D plane", 0, 1],
+      ] as const) {
+        const key = `${name} finish${finish}`;
+        const expected = PRE_PATTERN_SOURCE_HASHES[key];
+        expect(expected, key).toBeDefined();
+        const resolved = surface4FragmentResolvedFor(balloon, plane, finish, 0);
+        const emitted = surface4FragmentFor(balloon, plane, finish, 0);
+        expect(sha256(resolved).slice(0, 16), `${key} resolved`).toBe(
+          expected.resolved,
+        );
+        expect(sha256(emitted).slice(0, 16), `${key} emitted`).toBe(
+          expected.emitted,
+        );
+        expect(resolved, key).not.toContain("patternShade");
+        expect(resolved, key).not.toContain("patternHash3");
+        expect(resolved, key).not.toContain("SURFACE_PATTERN");
+      }
+    }
+  });
+
+  it("compiles exactly one patternShade body into every scene arm with the flag on, and keeps the six-member std140 block fixed", () => {
+    for (const [balloon, plane] of [
+      [0, 0],
+      [1, 0],
+      [0, 1],
+    ] as const) {
+      const resolved = surface4FragmentResolvedFor(balloon, plane, 0, 1);
+      expect(
+        countOccurrences(
+          resolved,
+          "vec3 patternShade(vec3 base, vec3 objectP, vec4 fb, vec4 calibration, float sheets, float pixelFootprint) {",
+        ),
+      ).toBe(1);
+      expect(resolved).toContain("uniform vec4 uPatternCalibration;");
+      expect(resolved).toContain("base = patternShade(");
+      // The block keeps exactly its six members; the pattern calibration is
+      // a default-block vec4, never a seventh member.
+      const block = resolved.match(
+        /layout\(std140\) uniform SurfaceMaps4 \{[\s\S]*?\n\s*\};/,
+      );
+      expect(block).not.toBeNull();
+      const members = block![0]
+        .split("\n")
+        .filter((line) => /^\s*(mat4|vec4) u/.test(line))
+        .map((line) => line.trim());
+      expect(members).toEqual([
+        "mat4 uInvM[MAX_MAPS];",
+        "vec4 uInvT[MAX_MAPS];",
+        "vec4 uMapColorSigma[MAX_MAPS];",
+        "vec4 uMapTrap[MAX_MAPS];",
+        "vec4 uMapFinishA[MAX_MAPS];",
+        "vec4 uMapFinishB[MAX_MAPS];",
+      ]);
+    }
+    // The plane-over-balloon refusal holds with the pattern on.
+    expect(() => surface4FragmentFor(1, 1, 0, 1)).toThrow(RangeError);
+  });
+
+  it("emits the identical patternShade body the 3D tracer emits — one template, both dimensions", () => {
+    const body = (src: string): string => {
+      const match = src.match(/vec3 patternShade\([\s\S]*?\n\s*\}/);
+      expect(match).not.toBeNull();
+      return match![0].replace(/\s+/g, " ").trim();
+    };
+    // The 4D plain arm resolves under the strip threshold when the arm is
+    // on? No — it crosses (the size test below pins that), so compare the
+    // RESOLVED sources: both contain the full commentary-free body.
+    expect(body(surface4FragmentResolvedFor(0, 0, 0, 1))).toBe(
+      body(surfaceFragmentResolvedFor(0, 0, 0, 0, 0, 0, 1)),
+    );
+  });
+
+  it("routes the source hit through the 4D view lift and the affine final inverse, normalized by the RAW radius", () => {
+    const resolved = surface4FragmentResolvedFor(0, 0, 0, 1);
+    // The hit's own w is inserted BEFORE the inverse rotor (the frame
+    // oracle's surfacePatternHitW + inverseRotor order), using the winning
+    // descent's sStar under the slab.
+    expect(resolved).toContain(
+      "vec4 patternSource4 = vec4(pos, uW0 + sStar * uSliceHalfW);",
+    );
+    expect(resolved).toContain(
+      "vec4 patternLifted = uInvRotor * patternSource4;",
+    );
+    expect(resolved).toContain(
+      "vec4 patternRaw = uFinalInvM * patternLifted + uFinalInvT;",
+    );
+    expect(resolved).toContain(
+      "vec3 objectP = patternRaw.xyz / uBoundingRadius;",
+    );
+    expect(resolved).toContain(
+      "float patternFootprint = uAcceptPixelEps * t / uBoundingRadius;",
+    );
+    // Balloon: the shell winner's pre-inversion cpos keeps its own w.
+    const balloon = surface4FragmentResolvedFor(1, 0, 0, 1);
+    expect(balloon).toContain("if (shell > 0.5) {");
+    expect(balloon).toContain(
+      "patternSource4 = vec4(cpos, uW0 + sStar * uSliceHalfW);",
+    );
+  });
+
+  it("keeps the fixed std140 layout and classic lighting for pattern-only materials", () => {
+    const material = createSurfaceMaterial4();
+    const group = material.uniformsGroups[0];
+    setSurface4Materials(material, patternMaterials());
+    expect(group.uniforms).toHaveLength(6);
+    expect(material.defines.SURFACE4_FINISH).toBe(0);
+    expect(material.defines.SURFACE4_PATTERN).toBe(1);
+    expect(material.fragmentShader).toContain("vec3 patternShade(");
+    expect(material.fragmentShader).not.toContain("finishShade");
+    expect(material.fragmentShader).toContain("32.0) * 0.4;");
+    // A value-only lane change never rebuilds the shader.
+    const version = material.version;
+    setSurface4Materials(material, patternMaterials(true));
+    expect(material.defines.SURFACE4_FINISH).toBe(1);
+    setSurface4Materials(material, patternMaterials(true));
+    expect(material.version).toBeGreaterThan(version);
+    setSurface4Materials(material, null);
+    expect("SURFACE4_PATTERN" in material.defines).toBe(false);
+    expect(material.fragmentShader).toBe(surface4FragmentFor());
+  });
+
+  it("crosses the plain arm over the strip threshold with the pattern on — benignly: the emitted program is the stripped token stream", () => {
+    // Measured at landing: 74312 B resolved with pattern on (62765 B off),
+    // so the plain 4D arm's commentary stops reaching a driver log exactly
+    // when a 4D document authors a pattern. Crossing is the documented
+    // contract: the emitted program is the identical token stream at a
+    // fraction of the size, and the stripped programs sit far under the
+    // ~80KB Mesa crash cliff.
+    expect(surface4FragmentResolvedFor(0, 0, 0, 1).length).toBeGreaterThan(
+      SURFACE_GLSL_STRIP_BYTES,
+    );
+    const emitted = surface4FragmentFor(0, 0, 0, 1);
+    expect(emitted).not.toContain("//");
+    expect(emitted.length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES / 2);
+    // Off, the plain arm stays unstripped — the pre-pattern record.
+    expect(surface4FragmentResolvedFor(0, 0, 0, 0).length).toBeLessThan(
+      SURFACE_GLSL_STRIP_BYTES,
+    );
+    // And no pattern-enabled variant approaches the Mesa cliff.
+    for (const [balloon, plane] of [
+      [0, 0],
+      [1, 0],
+      [0, 1],
+    ] as const) {
+      expect(surface4FragmentFor(balloon, plane, 1, 1).length).toBeLessThan(
+        80 * 1024,
+      );
+    }
   });
 });
