@@ -4300,6 +4300,10 @@ export function setEscapeSystem(
   u.uSymPlane.value = SYM_PLANE_CODE[de.symmetryPlane];
   (u.uSymStep.value as THREE.Vector2).set(1, 0);
   u.uBoundingRadius.value = de.boundingRadius;
+  // Escape's pattern frame is origin-anchored. Reset the shared IFS center
+  // now so a later pattern-enabled shade variant cannot inherit the previous
+  // system's fitted ball center when render families switch in place.
+  (u.uBoundCenter.value as THREE.Vector3).set(0, 0, 0);
   u.uEscapeRadius.value = de.boundingRadius * 2;
   u.uMaxDepth.value = ESCAPE_TIME_ITERATIONS;
   u.uStepScale.value = ESCAPE_STEP_SCALE;
@@ -4382,6 +4386,8 @@ export function setBulbSystem(
   u.uSymPlane.value = 1;
   (u.uSymStep.value as THREE.Vector2).set(1, 0);
   u.uBoundingRadius.value = de.boundingRadius;
+  // Bulb query/object space is origin-anchored; see the escape twin above.
+  (u.uBoundCenter.value as THREE.Vector3).set(0, 0, 0);
   u.uEscapeRadius.value = de.boundingRadius * 2;
   u.uMaxDepth.value = BULB_ITERATIONS;
   u.uStepScale.value = BULB_STEP_SCALE;

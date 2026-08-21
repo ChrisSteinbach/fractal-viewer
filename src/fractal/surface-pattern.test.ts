@@ -2,9 +2,12 @@ import {
   PATTERN_DEFAULT_SCALE,
   PATTERN_DETAIL_SCALE_MULTIPLIER,
   PATTERN_NATIVE_WARP_CYCLES,
+  PATTERN_MIN_NATIVE_SPAN,
+  SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
   SURFACE_PATTERN_AXIS_WIRE_ID,
   SURFACE_PATTERN_KIND_WIRE_ID,
   calibrateNativeCarrier,
+  calibrateSurfaceNativeCarriers,
   evaluateSurfacePattern,
   normalizeNativeCarrier,
   patternDetailGate,
@@ -120,6 +123,80 @@ describe("accepted V3 surface pattern oracle", () => {
       marble: 0.1,
       strata: 0.08,
     });
+    expect(SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT).toBe(256);
+  });
+
+  it("derives p03/p97 deterministically without mutating or ordering the input", () => {
+    const ascending = Array.from({ length: 101 }, (_, i) => i / 100);
+    const reordered = [...ascending].reverse();
+    const snapshot = [...reordered];
+    const got = calibrateNativeCarrier(reordered);
+
+    expect(got).toEqual(live);
+    expect(reordered).toEqual(snapshot);
+    expect(got.low).toBeCloseTo(0.03, 12);
+    expect(got.high).toBeCloseTo(0.97, 12);
+    expect(got.invSpan).toBeCloseTo(1 / 0.94, 12);
+  });
+
+  it("filters non-finite observations and disables empty or degenerate spans", () => {
+    expect(
+      calibrateNativeCarrier([NaN, -Infinity, 0, 0.5, 1, Infinity]),
+    ).toEqual(calibrateNativeCarrier([0, 0.5, 1]));
+
+    for (const samples of [[], [NaN, Infinity], [0.4, 0.4, 0.4]]) {
+      const got = calibrateNativeCarrier(samples);
+      expect(got.enabled).toBe(false);
+      expect(got.invSpan).toBe(0);
+    }
+  });
+
+  it("enables the exact minimum span and disables the value immediately below it", () => {
+    const exact = calibrateNativeCarrier([0, PATTERN_MIN_NATIVE_SPAN / 0.94]);
+    const below = calibrateNativeCarrier([
+      0,
+      (PATTERN_MIN_NATIVE_SPAN - 1e-12) / 0.94,
+    ]);
+
+    expect(exact.high - exact.low).toBeCloseTo(PATTERN_MIN_NATIVE_SPAN, 14);
+    expect(exact.enabled).toBe(true);
+    expect(below.high - below.low).toBeLessThan(PATTERN_MIN_NATIVE_SPAN);
+    expect(below.enabled).toBe(false);
+  });
+
+  it("packs rings and sheets as low plus inverse span with zero as the disable bit", () => {
+    const got = calibrateSurfaceNativeCarriers([
+      { rings: 0.2, sheets: 0.7 },
+      { rings: 0.2, sheets: 0.2 },
+      { rings: 0.2, sheets: 0.45 },
+    ]);
+    expect(got.ringsLow).toBeCloseTo(0.2, 12);
+    expect(got.ringsInvSpan).toBe(0);
+    expect(got.sheetsLow).toBeGreaterThan(0.2);
+    expect(got.sheetsInvSpan).toBeGreaterThan(0);
+    expect(Object.keys(got)).toEqual([
+      "ringsLow",
+      "ringsInvSpan",
+      "sheetsLow",
+      "sheetsInvSpan",
+    ]);
+  });
+
+  it("normalizes only finite values and clamps both trimmed tails", () => {
+    expect(normalizeNativeCarrier(NaN, live)).toBe(0);
+    expect(normalizeNativeCarrier(-Infinity, live)).toBe(0);
+    expect(normalizeNativeCarrier(Infinity, live)).toBe(0);
+    expect(normalizeNativeCarrier(-100, live)).toBe(0);
+    expect(normalizeNativeCarrier(100, live)).toBe(1);
+    expect(
+      normalizeNativeCarrier(0.5, {
+        low: 0.5,
+        high: 0.5,
+        invSpan: 0,
+        enabled: false,
+        sampleCount: 8,
+      }),
+    ).toBe(0);
   });
 
   it("keeps absent and zero-strength patterns exact albedo identities", () => {

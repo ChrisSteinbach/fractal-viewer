@@ -9,6 +9,7 @@ import {
   setFoldFrontierTap4,
   singularValues4,
   slabExact4,
+  surfaceNativeCarriers4,
   transformSigmas4,
 } from "./surface-de-4d";
 import type {
@@ -45,6 +46,7 @@ import { runChaosGame4 } from "./chaos-game-4d";
 import type { ChaosGame4Result } from "./chaos-game-4d";
 import {
   doubleRotation,
+  mandelboxKifs,
   pentatope,
   sixteenCellFlake,
   tesseract,
@@ -610,6 +612,118 @@ describe("buildSurfaceDE4 on pentatope", () => {
     expect(back[1]).toBeCloseTo(p[1], 10);
     expect(back[2]).toBeCloseTo(p[2], 10);
     expect(back[3]).toBeCloseTo(p[3], 10);
+  });
+});
+
+describe("SurfaceDE4 native-pattern calibration", () => {
+  function expectFiniteUnitCarriers(
+    carriers: ReturnType<typeof surfaceNativeCarriers4>,
+  ): void {
+    expect(Number.isFinite(carriers.rings)).toBe(true);
+    expect(Number.isFinite(carriers.sheets)).toBe(true);
+    expect(carriers.rings).toBeGreaterThanOrEqual(0);
+    expect(carriers.rings).toBeLessThanOrEqual(1);
+    expect(carriers.sheets).toBeGreaterThanOrEqual(0);
+    expect(carriers.sheets).toBeLessThanOrEqual(1);
+  }
+
+  function expectFiniteCalibration(de: SurfaceDE4): void {
+    const calibration = de.patternCalibration;
+    expect(Number.isFinite(calibration.ringsLow)).toBe(true);
+    expect(Number.isFinite(calibration.ringsInvSpan)).toBe(true);
+    expect(Number.isFinite(calibration.sheetsLow)).toBe(true);
+    expect(Number.isFinite(calibration.sheetsInvSpan)).toBe(true);
+    expect(calibration.ringsLow).toBeGreaterThanOrEqual(0);
+    expect(calibration.ringsLow).toBeLessThanOrEqual(1);
+    expect(calibration.sheetsLow).toBeGreaterThanOrEqual(0);
+    expect(calibration.sheetsLow).toBeLessThanOrEqual(1);
+    expect(calibration.ringsInvSpan).toBeGreaterThanOrEqual(0);
+    expect(calibration.sheetsInvSpan).toBeGreaterThanOrEqual(0);
+  }
+
+  it("produces finite affine4 and fold4 carriers plus compact calibration", () => {
+    const affine = buildSurfaceDE4(pentatope());
+    const fold = buildSurfaceDE4(pureBoxfoldPair4());
+
+    expectFiniteUnitCarriers(
+      surfaceNativeCarriers4(affine, [0.1, -0.2, 0.3, 0.4]),
+    );
+    expectFiniteUnitCarriers(
+      surfaceNativeCarriers4(fold, [-0.25, 0.15, 0.35, -0.45]),
+    );
+    expectFiniteCalibration(affine);
+    expectFiniteCalibration(fold);
+  });
+
+  it("is exactly repeatable for the same seeded raw probe", () => {
+    const transforms = pentatope();
+    const first = buildSurfaceDE4(transforms);
+    const second = buildSurfaceDE4(transforms);
+
+    expect(second.patternCalibration).toEqual(first.patternCalibration);
+  });
+
+  it("is invariant across affine and fold final lenses", () => {
+    const transforms = pentatope();
+    const raw = buildSurfaceDE4(transforms);
+    const affineFinal = buildSurfaceDE4(
+      transforms,
+      map4({
+        id: 98,
+        position: [1.5, -0.7, 0.4],
+        rotation: [0.2, -0.3, 0.4],
+        scale: [0.8, 0.9, 0.7],
+        w: { position: 0.6, scale: 0.85, rotation: { xw: 0.35 } },
+      }),
+    );
+    const foldFinal = buildSurfaceDE4(transforms, boxfoldFinal4());
+
+    expect(affineFinal.patternCalibration).toEqual(raw.patternCalibration);
+    expect(foldFinal.patternCalibration).toEqual(raw.patternCalibration);
+  });
+
+  it("is repeatable and lens-invariant for a fold4 base", () => {
+    const transforms = pureBoxfoldPair4();
+    const raw = buildSurfaceDE4(transforms);
+    const repeated = buildSurfaceDE4(transforms);
+    const affineFinal = buildSurfaceDE4(
+      transforms,
+      map4({
+        id: 97,
+        position: [-0.8, 0.6, 0.2],
+        rotation: [-0.2, 0.3, 0.1],
+        scale: [0.75, 0.85, 0.8],
+        w: { position: -0.4, scale: 0.9, rotation: { yw: 0.25 } },
+      }),
+    );
+    const foldFinal = buildSurfaceDE4(transforms, boxfoldFinal4());
+
+    expect(repeated.patternCalibration).toEqual(raw.patternCalibration);
+    expect(affineFinal.patternCalibration).toEqual(raw.patternCalibration);
+    expect(foldFinal.patternCalibration).toEqual(raw.patternCalibration);
+  });
+
+  it("keeps a widest-supported 4D fold pilot within the session-entry budget", () => {
+    const transforms = mandelboxKifs().map((transform, index) => ({
+      ...transform,
+      w: {
+        position: ((index % 3) - 1) * 0.05,
+        scale: transform.scale[0],
+        rotation: { xw: 0.1 },
+      },
+    }));
+    const started = performance.now();
+    const de = buildSurfaceDE4(transforms);
+    const elapsed = performance.now() - started;
+
+    expect(de.maps).toHaveLength(12);
+    expect(de.maxDepth).toBeGreaterThanOrEqual(100);
+    expectFiniteCalibration(de);
+    // The 2.5 s ceiling includes the pre-existing 8,192-point extent probe,
+    // not just native calibration, and carries ample headroom over the
+    // development-host measurement. It guards the supported 243-branch,
+    // 12-map, depth-100 corner that simpler affine fixtures miss.
+    expect(elapsed).toBeLessThan(2_500);
   });
 });
 

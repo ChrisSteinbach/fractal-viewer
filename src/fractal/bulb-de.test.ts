@@ -28,6 +28,20 @@ function bulbSystem(overrides: Partial<Transform> = {}): Transform {
   };
 }
 
+function expectFinitePatternCalibration(
+  calibration: BulbDE["patternCalibration"],
+): void {
+  for (const value of Object.values(calibration)) {
+    expect(Number.isFinite(value)).toBe(true);
+  }
+  expect(calibration.ringsLow).toBeGreaterThanOrEqual(0);
+  expect(calibration.ringsLow).toBeLessThanOrEqual(1);
+  expect(calibration.sheetsLow).toBeGreaterThanOrEqual(0);
+  expect(calibration.sheetsLow).toBeLessThanOrEqual(1);
+  expect(calibration.ringsInvSpan).toBeGreaterThanOrEqual(0);
+  expect(calibration.sheetsInvSpan).toBeGreaterThanOrEqual(0);
+}
+
 /**
  * The White/Nylander power written the OTHER way — straight from the
  * spherical-coordinate definition, with the trigonometry the shipped form
@@ -177,6 +191,18 @@ describe("analyzeBulbSystem", () => {
 });
 
 describe("buildBulbDE", () => {
+  it("builds finite normalized pattern calibration", () => {
+    expectFinitePatternCalibration(
+      buildBulbDE([bulbSystem()]).patternCalibration,
+    );
+  });
+
+  it("repeats pattern calibration exactly for the same system", () => {
+    expect(buildBulbDE([bulbSystem()]).patternCalibration).toEqual(
+      buildBulbDE([bulbSystem()]).patternCalibration,
+    );
+  });
+
   it("carries the forward affine and the derivative growth", () => {
     const de = buildBulbDE([
       bulbSystem({ position: [0.2, -0.1, 0.3], scale: [1.5, 1.5, 1.5] }),

@@ -156,6 +156,15 @@
 import { composeAffine } from "./affine";
 import { isFlatTransform } from "./affine4";
 import { effectiveSymmetryOrder } from "./chaos-game";
+import { mulberry32 } from "./rng";
+import {
+  SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
+  calibrateSurfaceNativeCarriers,
+} from "./surface-pattern";
+import type {
+  SurfaceNativeCalibration,
+  SurfaceNativeCarrierSample,
+} from "./surface-pattern";
 import { transformSigmas } from "./surface-de";
 import type { SymmetryParams, Transform, Variation, Vec3 } from "./types";
 
@@ -210,6 +219,10 @@ export const BULB_BAILOUT_FLOOR = 4;
  */
 export const BULB_STEP_SCALE = 1;
 
+/** Fixed independently of camera/view state; shared numerically with the
+ * escape family's established deterministic volume-probe seed. */
+const BULB_PATTERN_CALIBRATION_SEED = 0x5eed_e5ca;
+
 export type BulbEligibilityStatus = "eligible" | "ineligible";
 
 /** What {@link analyzeBulbSystem} feeds the session gate. */
@@ -238,7 +251,12 @@ export interface BulbDE {
    * this ball about the origin, so the sphere tracer enters and exits
    * against it. */
   boundingRadius: number;
+  /** Camera-independent p03/p97 normalization of the shader's bailout-
+   * normalized radial and y-plane traps. */
+  patternCalibration: SurfaceNativeCalibration;
 }
+
+type BulbCalibrationDE = Omit<BulbDE, "patternCalibration">;
 
 /** `composeVariations`' active filter again (the twin of `escape-de.ts`'s
  * `pureFoldVariation`): the single active `bulb` entry, or null. */
@@ -333,7 +351,7 @@ export function buildBulbDE(
   const sigmas = transformSigmas(map);
   const escR = escapeRadius(sigmas.min);
   const tLen = Math.hypot(...affine.t);
-  return {
+  const de: BulbCalibrationDE = {
     m: affine.m,
     t: affine.t,
     sigmaMax: sigmas.max,
@@ -342,6 +360,10 @@ export function buildBulbDE(
     // the bailout — a bailout raised for the estimate's sake would inflate
     // the marching ball for nothing), so `sigma_min·|p| - |t| <= escR`.
     boundingRadius: (escR + tLen) / sigmas.min,
+  };
+  return {
+    ...de,
+    patternCalibration: calibrateBulbPattern(de),
   };
 }
 
@@ -418,4 +440,86 @@ export function estimateBulbDistance(
   // exit for the same reason; here it fires far more often, because `8r⁷`
   // pulls a non-escaping orbit hard toward the origin.
   return r <= 1 ? 0 : (0.5 * r * Math.log(r)) / dr;
+}
+
+/**
+ * The shader hit-info orbit's rings/sheets half, kept separate from
+ * {@link estimateBulbDistance} so the ordinary distance hot path pays no
+ * trap-tracking cost. This intentionally duplicates the power polynomial:
+ * calibration has to measure the quantities shading actually reads.
+ */
+function bulbPatternCarrierSample(
+  de: BulbCalibrationDE,
+  p: Vec3,
+): SurfaceNativeCarrierSample {
+  const m = de.m;
+  const cx = m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + de.t[0];
+  const cy = m[3] * p[0] + m[4] * p[1] + m[5] * p[2] + de.t[1];
+  const cz = m[6] * p[0] + m[7] * p[1] + m[8] * p[2] + de.t[2];
+  let yx = cx;
+  let yy = cy;
+  let yz = cz;
+  let r2 = yx * yx + yy * yy + yz * yz;
+  let r = Math.sqrt(r2);
+  let rings = 1;
+  let sheets = 1;
+  for (let i = 0; i < BULB_ITERATIONS && r <= de.bailout; i++) {
+    const a = yx * yx + yy * yy;
+    const z2 = yz * yz;
+    const r4 = r2 * r2;
+    const vz =
+      128 * z2 * z2 * z2 * z2 -
+      256 * z2 * z2 * z2 * r2 +
+      160 * z2 * z2 * r4 -
+      32 * z2 * r4 * r2 +
+      r4 * r4;
+    const s =
+      128 * z2 * z2 * z2 * yz -
+      192 * z2 * z2 * yz * r2 +
+      80 * z2 * yz * r4 -
+      8 * yz * r4 * r2;
+    const rho = Math.sqrt(a);
+    const inv = rho > 0 ? 1 / rho : 0;
+    const u1 = yx * inv;
+    const v1 = yy * inv;
+    const u2 = u1 * u1 - v1 * v1;
+    const v2 = 2 * u1 * v1;
+    const u4 = u2 * u2 - v2 * v2;
+    const v4 = 2 * u2 * v2;
+    const u8 = u4 * u4 - v4 * v4;
+    const v8 = 2 * u4 * v4;
+    const vx = rho * s * u8;
+    const vy = rho * s * v8;
+    yx = m[0] * vx + m[1] * vy + m[2] * vz + cx;
+    yy = m[3] * vx + m[4] * vy + m[5] * vz + cy;
+    yz = m[6] * vx + m[7] * vy + m[8] * vz + cz;
+    r2 = yx * yx + yy * yy + yz * yz;
+    r = Math.sqrt(r2);
+    rings = Math.min(rings, r / de.bailout);
+    sheets = Math.min(sheets, Math.abs(yy) / de.bailout);
+  }
+  return {
+    rings: Math.max(0, Math.min(1, rings)),
+    sheets: Math.max(0, Math.min(1, sheets)),
+  };
+}
+
+/** Fixed-seed, camera-independent samples over the query-space bound. */
+function calibrateBulbPattern(de: BulbCalibrationDE): SurfaceNativeCalibration {
+  const rng = mulberry32(BULB_PATTERN_CALIBRATION_SEED);
+  const samples = new Array<SurfaceNativeCarrierSample>(
+    SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
+  );
+  for (let i = 0; i < samples.length; i++) {
+    const radius = Math.cbrt(rng()) * de.boundingRadius;
+    const cosTheta = 2 * rng() - 1;
+    const sinTheta = Math.sqrt(Math.max(0, 1 - cosTheta * cosTheta));
+    const phi = 2 * Math.PI * rng();
+    samples[i] = bulbPatternCarrierSample(de, [
+      radius * sinTheta * Math.cos(phi),
+      radius * cosTheta,
+      radius * sinTheta * Math.sin(phi),
+    ]);
+  }
+  return calibrateSurfaceNativeCarriers(samples);
 }

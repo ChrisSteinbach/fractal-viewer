@@ -4,6 +4,7 @@ import {
   DEPTH_RESOLUTION,
   estimateDistance,
   estimateDistanceRefined,
+  evaluateSurfaceNativeCarriers,
   MAX_DESCENT_DEPTH,
   NEAR_ZERO_FOLD_WEIGHT,
   setFoldFrontierTap,
@@ -2819,6 +2820,56 @@ function boxfoldFinal(): Transform {
     variations: [{ type: "boxfold", weight: 0.55 }],
   });
 }
+
+describe("SurfaceDE native-carrier calibration", () => {
+  const baseSystems = (): Transform[][] => [
+    sierpinskiTetrahedron(),
+    pureBoxfoldPair(),
+  ];
+
+  it("produces finite affine and fold carrier data with exact repeated-build calibration", () => {
+    for (const transforms of baseSystems()) {
+      const first = buildSurfaceDE(transforms);
+      const second = buildSurfaceDE(transforms);
+      expect(second.patternCalibration).toEqual(first.patternCalibration);
+      expect(
+        Object.values(first.patternCalibration).every(Number.isFinite),
+      ).toBe(true);
+      expect(first.patternCalibration.ringsInvSpan).toBeGreaterThanOrEqual(0);
+      expect(first.patternCalibration.sheetsInvSpan).toBeGreaterThanOrEqual(0);
+
+      const raw = runChaosGame(transforms, 64, mulberry32(0xc411b));
+      const offset = (raw.count - 1) * 3;
+      const carriers = evaluateSurfaceNativeCarriers(first, [
+        raw.positions[offset],
+        raw.positions[offset + 1],
+        raw.positions[offset + 2],
+      ]);
+      expect(Number.isFinite(carriers.rings)).toBe(true);
+      expect(Number.isFinite(carriers.sheets)).toBe(true);
+      expect(carriers.rings).toBeGreaterThanOrEqual(0);
+      expect(carriers.rings).toBeLessThanOrEqual(1);
+      expect(carriers.sheets).toBeGreaterThanOrEqual(0);
+      expect(carriers.sheets).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("is exactly invariant under affine and pure-fold final lenses", () => {
+    const affineFinal: Transform = {
+      id: 98,
+      position: [0.3, -0.2, 0.1],
+      rotation: [0.4, 0.2, -0.3],
+      scale: [0.8, 0.8, 0.8],
+    };
+    for (const transforms of baseSystems()) {
+      const raw = buildSurfaceDE(transforms);
+      const affineLens = buildSurfaceDE(transforms, affineFinal);
+      const foldLens = buildSurfaceDE(transforms, boxfoldFinal());
+      expect(affineLens.patternCalibration).toEqual(raw.patternCalibration);
+      expect(foldLens.patternCalibration).toEqual(raw.patternCalibration);
+    }
+  });
+});
 
 describe("buildSurfaceDE with a pure-fold final lens", () => {
   it("builds foldFinal (and no affine final) with the lens's kind, weight and affine part", () => {

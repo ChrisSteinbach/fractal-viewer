@@ -45,6 +45,20 @@ function canonicalMandelbox(overrides: Partial<Transform> = {}): Transform {
   };
 }
 
+function expectFinitePatternCalibration(
+  calibration: EscapeDE4["patternCalibration"],
+): void {
+  for (const value of Object.values(calibration)) {
+    expect(Number.isFinite(value)).toBe(true);
+  }
+  expect(calibration.ringsLow).toBeGreaterThanOrEqual(0);
+  expect(calibration.ringsLow).toBeLessThanOrEqual(1);
+  expect(calibration.sheetsLow).toBeGreaterThanOrEqual(0);
+  expect(calibration.sheetsLow).toBeLessThanOrEqual(1);
+  expect(calibration.ringsInvSpan).toBeGreaterThanOrEqual(0);
+  expect(calibration.sheetsInvSpan).toBeGreaterThanOrEqual(0);
+}
+
 /** One pure-fold link, at the origin with no rotation unless asked. */
 function foldMap(
   id: number,
@@ -192,6 +206,23 @@ describe("analyzeEscapeSystem4 lifts the whole render mode", () => {
 });
 
 describe("buildEscapeDE4", () => {
+  it("builds finite normalized pattern calibration", () => {
+    expectFinitePatternCalibration(
+      buildEscapeDE4([canonicalMandelbox({ w: { rotation: { xw: 0.3 } } })])
+        .patternCalibration,
+    );
+  });
+
+  it("repeats pattern calibration exactly for the same system", () => {
+    const transforms = [
+      canonicalMandelbox(),
+      canonicalMandelbox({ id: 1, w: { rotation: { xw: 0.3 } } }),
+    ];
+    expect(buildEscapeDE4(transforms).patternCalibration).toEqual(
+      buildEscapeDE4(transforms).patternCalibration,
+    );
+  });
+
   it("throws on an ineligible system, with the reasons joined into the message", () => {
     expect(() =>
       buildEscapeDE4([
@@ -846,6 +877,12 @@ describe("probeEscapeFill4", () => {
       symmetryOrder: 1,
       symmetryPlane: "xz",
       boundingRadius: ESCAPE_TIME_RADIUS,
+      patternCalibration: {
+        ringsLow: 0,
+        ringsInvSpan: 0,
+        sheetsLow: 0,
+        sheetsInvSpan: 0,
+      },
     };
     expect(probeEscapeFill4(inert, 4096)).toBe(1);
   });

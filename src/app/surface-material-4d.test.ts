@@ -75,6 +75,12 @@ function de4(
     maxDepth: 8,
     beamWidth: 4,
     stepScale: 1,
+    patternCalibration: {
+      ringsLow: 0,
+      ringsInvSpan: 0,
+      sheetsLow: 0,
+      sheetsInvSpan: 0,
+    },
     final: null,
     foldFinal: null,
   };

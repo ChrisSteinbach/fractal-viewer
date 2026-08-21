@@ -58,6 +58,31 @@ export interface NativeCalibration {
   sampleCount: number;
 }
 
+/**
+ * One native-trap observation from a production surface evaluator. Rings and
+ * sheets deliberately stay separate from the object-attached macro frame:
+ * they only bend the accepted coherent pattern by a bounded fraction of one
+ * cycle.
+ */
+export interface SurfaceNativeCarrierSample {
+  rings: number;
+  sheets: number;
+}
+
+/**
+ * Compact host/shader contract for both native carriers. The future shader
+ * wire is exactly `(ringsLow, ringsInvSpan, sheetsLow, sheetsInvSpan)`.
+ * `invSpan === 0` is the sole disabled-carrier signal; percentile diagnostics
+ * (`high`, `enabled`, and `sampleCount`) remain host-side evidence rather than
+ * consuming renderer storage.
+ */
+export interface SurfaceNativeCalibration {
+  ringsLow: number;
+  ringsInvSpan: number;
+  sheetsLow: number;
+  sheetsInvSpan: number;
+}
+
 export interface PatternQuery {
   /** Source/object-space point, normalized by system centre and radius. */
   objectP: Vec3;
@@ -82,6 +107,13 @@ export interface PatternEvaluation {
 
 export const PATTERN_CALIBRATION_TRIM = 0.03;
 export const PATTERN_MIN_NATIVE_SPAN = 0.02;
+/**
+ * Fixed camera-independent pilot size used by every surface-family builder.
+ * At p03 this leaves roughly eight observations below the trimmed endpoint,
+ * while keeping the pilot fixed-size. A widest-supported fold4 build has a
+ * separate session-entry performance gate.
+ */
+export const SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT = 256;
 export const PATTERN_NOISE_OCTAVES = 3;
 
 /** Detail is absent at ordinary framing and fully present in close-ups. */
@@ -221,6 +253,24 @@ export function calibrateNativeCarrier(
     invSpan: enabled ? 1 / span : 0,
     enabled,
     sampleCount: sorted.length,
+  };
+}
+
+/**
+ * Derive the compact two-carrier wire from one deterministic pilot. Each lane
+ * delegates to {@link calibrateNativeCarrier}, so finite filtering, p03/p97
+ * interpolation, and the near-constant disable threshold have one owner.
+ */
+export function calibrateSurfaceNativeCarriers(
+  samples: readonly SurfaceNativeCarrierSample[],
+): SurfaceNativeCalibration {
+  const rings = calibrateNativeCarrier(samples.map((sample) => sample.rings));
+  const sheets = calibrateNativeCarrier(samples.map((sample) => sample.sheets));
+  return {
+    ringsLow: rings.low,
+    ringsInvSpan: rings.invSpan,
+    sheetsLow: sheets.low,
+    sheetsInvSpan: sheets.invSpan,
   };
 }
 

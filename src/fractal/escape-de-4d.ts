@@ -107,6 +107,14 @@ import {
 } from "./escape-de";
 import type { EscapeEligibility, EscapeLinkKind } from "./escape-de";
 import { mulberry32 } from "./rng";
+import {
+  SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
+  calibrateSurfaceNativeCarriers,
+} from "./surface-pattern";
+import type {
+  SurfaceNativeCalibration,
+  SurfaceNativeCarrierSample,
+} from "./surface-pattern";
 import { CONTRACTION_LIMIT } from "./surface-de";
 import { transformSigmas4 } from "./surface-de-4d";
 import { resolveFoldRadii, sphereFoldLipschitz } from "./variations";
@@ -168,7 +176,12 @@ export interface EscapeDE4 extends EscapeLink4 {
    * 3-sphere, so the tracer enters/exits against this radius. The wedge fold
    * is an isometry and does not move it. */
   boundingRadius: number;
+  /** Camera-independent p03/p97 normalization of the shader's bailout-
+   * normalized radial and y-plane traps. */
+  patternCalibration: SurfaceNativeCalibration;
 }
+
+type EscapeCalibrationDE4 = Omit<EscapeDE4, "patternCalibration">;
 
 /** {@link import("./escape-de").EscapeDE}'s `linkVariation` one dimension up
  * — the single active entry a link may carry. `bulb` is RECOGNISED here so
@@ -324,13 +337,17 @@ export function buildEscapeDE4(
     );
   }
   const links = activeMaps(transforms).map(buildEscapeLink4);
-  return {
+  const de: EscapeCalibrationDE4 = {
     ...links[0],
     links,
     logEstimate: links.some((l) => escapeLinkPower(l.kind) > 0),
     symmetryOrder: effectiveSymmetryOrder(symmetry.order, transforms.length),
     symmetryPlane: symmetry.plane,
     boundingRadius: ESCAPE_TIME_RADIUS,
+  };
+  return {
+    ...de,
+    patternCalibration: calibrateEscapePattern4(de),
   };
 }
 
@@ -511,6 +528,112 @@ function runEscapeOrbit4(de: EscapeDE4, p: Vec4, maxIterations: number): void {
   }
   orbitR = r;
   orbitDr = dr;
+}
+
+/**
+ * The shader hit-info orbit's rings/sheets half, separate from
+ * {@link runEscapeOrbit4} so distance and membership queries keep their
+ * allocation-free hot path unchanged.
+ */
+function escapePatternCarrierSample4(
+  de: EscapeCalibrationDE4,
+  p: Vec4,
+): SurfaceNativeCarrierSample {
+  const links = de.links;
+  const n = links.length;
+  const q =
+    de.symmetryOrder > 1
+      ? foldQueryIntoSector4(p, de.symmetryOrder, de.symmetryPlane, FOLDED4)
+      : p;
+  const qx = q[0];
+  const qy = q[1];
+  const qz = q[2];
+  const qw = q[3];
+  let vx = qx;
+  let vy = qy;
+  let vz = qz;
+  let vw = qw;
+  let r = Math.sqrt(vx * vx + vy * vy + vz * vz + vw * vw);
+  let rings = 1;
+  let sheets = 1;
+  const maxSteps = ESCAPE_TIME_ITERATIONS * n;
+  for (let step = 0; step < maxSteps && r <= de.boundingRadius; step++) {
+    const link = links[step % n];
+    const m = link.m;
+    const yx = m[0] * vx + m[1] * vy + m[2] * vz + m[3] * vw + link.t[0];
+    const yy = m[4] * vx + m[5] * vy + m[6] * vz + m[7] * vw + link.t[1];
+    const yz = m[8] * vx + m[9] * vy + m[10] * vz + m[11] * vw + link.t[2];
+    const yw = m[12] * vx + m[13] * vy + m[14] * vz + m[15] * vw + link.t[3];
+    let fx: number;
+    let fy: number;
+    let fz: number;
+    let fw: number;
+    const wall = link.boxLimit;
+    const mR2 = link.minRadius2;
+    const fR2 = link.fixedRadius2;
+    if (link.kind === ESCAPE_LINK_BOXFOLD) {
+      fx = foldAxis(yx, wall);
+      fy = foldAxis(yy, wall);
+      fz = foldAxis(yz, wall);
+      fw = foldAxis(yw, wall);
+    } else if (link.kind === ESCAPE_LINK_SPHEREFOLD) {
+      const r2 = yx * yx + yy * yy + yz * yz + yw * yw;
+      const f = fR2 / Math.max(mR2, Math.min(fR2, r2));
+      fx = yx * f;
+      fy = yy * f;
+      fz = yz * f;
+      fw = yw * f;
+    } else if (link.kind === ESCAPE_LINK_MANDELBOX) {
+      const bx = foldAxis(yx, wall);
+      const by = foldAxis(yy, wall);
+      const bz = foldAxis(yz, wall);
+      const bw = foldAxis(yw, wall);
+      const r2 = bx * bx + by * by + bz * bz + bw * bw;
+      const f = fR2 / Math.max(mR2, Math.min(fR2, r2));
+      fx = bx * f;
+      fy = by * f;
+      fz = bz * f;
+      fw = bw * f;
+    } else {
+      fx = yx * yx - yy * yy - yz * yz - yw * yw;
+      fy = 2 * yx * yy;
+      fz = 2 * yx * yz;
+      fw = 2 * yx * yw;
+    }
+    vx = link.w * fx + qx;
+    vy = link.w * fy + qy;
+    vz = link.w * fz + qz;
+    vw = link.w * fw + qw;
+    r = Math.sqrt(vx * vx + vy * vy + vz * vz + vw * vw);
+    rings = Math.min(rings, r / de.boundingRadius);
+    sheets = Math.min(sheets, Math.abs(vy) / de.boundingRadius);
+  }
+  return {
+    rings: Math.max(0, Math.min(1, rings)),
+    sheets: Math.max(0, Math.min(1, sheets)),
+  };
+}
+
+/** Fixed-seed, camera-independent samples over the query-space 4-ball. */
+function calibrateEscapePattern4(
+  de: EscapeCalibrationDE4,
+): SurfaceNativeCalibration {
+  const rng = mulberry32(ESCAPE_PROBE_SEED);
+  const samples = new Array<SurfaceNativeCarrierSample>(
+    SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
+  );
+  const direction: Vec4 = [0, 0, 0, 0];
+  for (let i = 0; i < samples.length; i++) {
+    const radius = Math.pow(rng(), 0.25) * de.boundingRadius;
+    sampleS3(rng, direction);
+    samples[i] = escapePatternCarrierSample4(de, [
+      radius * direction[0],
+      radius * direction[1],
+      radius * direction[2],
+      radius * direction[3],
+    ]);
+  }
+  return calibrateSurfaceNativeCarriers(samples);
 }
 
 /**
