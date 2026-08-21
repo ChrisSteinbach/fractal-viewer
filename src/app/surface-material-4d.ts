@@ -9,6 +9,7 @@ import {
   SURFACE_FINISH_GLSL,
   surfaceFinishShadeSource,
 } from "../fractal/surface-finish";
+import { surfacePatternShadeSource } from "../fractal/surface-pattern-shade";
 import {
   CLASSIC_SURFACE_MATERIAL,
   surfaceMaterialLanes,
@@ -385,6 +386,11 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   /** One compact native-carrier calibration per built DE/session; deliberately
    * outside the fixed per-map std140 block. */
   uniform vec4 uPatternCalibration;
+  /** The SURFACE_PATTERN shading arm's ONE shared body — the 3D tracer's
+   * splice, character for character (surface-pattern-shade.ts): the two
+   * tracers differ only in how main() reconstructs and normalizes the
+   * source hit, never in the pattern arithmetic. */
+  ${surfacePatternShadeSource()}
 #endif
   ${backgroundShapeSource(BACKGROUND_SHAPE_GLSL)}
   /** Angular pixel footprint of the ACTIVE buffer (scene-set per frame):
@@ -1903,6 +1909,41 @@ uniform float uBalloonTintStrength;
     // strength. strength 0 (the default) makes this mix(base,
     // uBalloonTint, 0.0) == base — today's frame byte for byte.
     base = mix(base, uBalloonTint, uBalloonTintStrength * shell);
+#endif
+#if SURFACE_PATTERN
+    // Patterned albedo, BEFORE lighting and fog — the document's order:
+    // color source -> balloon tint -> pattern -> lighting -> fog. The
+    // pattern is object-attached, so the albedo reads the RAW attractor
+    // point, reconstructed by reversing the render's remaps in the
+    // surface-pattern-frame.ts order (visible hit -> balloon source query
+    // -> inverse 4D view -> final inverse). The hit's OWN w is inserted
+    // BEFORE the inverse rotor — doing it afterward would screen-lock any
+    // w-mixing pose — via the winning descent's segment parameter sStar;
+    // the affine final inverse then lands in the raw attractor frame, and
+    // the raw bounding radius (never the live slice radius) normalizes.
+    // The hit's own slot picks its material from the shared B lane; the
+    // footprint is the tier-INDEPENDENT acceptance epsilon at the hit
+    // depth, normalized by the raw bounding radius, so preview and settle
+    // tiers cannot change the material detail.
+    vec4 patternSource4 = vec4(pos, uW0 + sStar * uSliceHalfW);
+#if SURFACE_BALLOON
+    if (shell > 0.5) {
+      patternSource4 = vec4(cpos, uW0 + sStar * uSliceHalfW);
+    }
+#endif
+    vec4 patternLifted = uInvRotor * patternSource4;
+    vec4 patternRaw = uFinalInvM * patternLifted + uFinalInvT;
+    vec3 objectP = patternRaw.xyz / uBoundingRadius;
+    float patternFootprint = uAcceptPixelEps * t / uBoundingRadius;
+    int patternSlot = clamp(firstChoice, 0, uMapCount - 1);
+    base = patternShade(
+      base,
+      objectP,
+      uMapFinishB[patternSlot],
+      uPatternCalibration,
+      sheets,
+      patternFootprint
+    );
 #endif
 
     // Soft shadow: classic DE penumbra toward the light — the shadow ray's

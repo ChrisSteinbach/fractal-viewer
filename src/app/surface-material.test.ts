@@ -51,6 +51,8 @@ import {
 import type { SurfaceDE, SurfaceDEMap } from "../fractal/surface-de";
 import { defaultTransforms, sierpinskiTetrahedron } from "../fractal/presets";
 import type { Transform, Vec3 } from "../fractal/types";
+import { createHash } from "node:crypto";
+import { PRE_PATTERN_SOURCE_HASHES } from "./surface-pattern-baseline";
 
 /**
  * The tracer itself is verified by running the app, but its kaleidoscope
@@ -515,6 +517,11 @@ describe("setSurfaceSystem fold final lens packing", () => {
 /** Counts non-overlapping occurrences of a literal substring. */
 function countOccurrences(source: string, needle: string): number {
   return source.split(needle).length - 1;
+}
+
+/** SHA-256 of a source string (the baseline fixture's hash function). */
+function sha256(source: string): string {
+  return createHash("sha256").update(source).digest("hex");
 }
 
 describe("buildSurfaceFragment shade probe", () => {
@@ -2107,5 +2114,317 @@ describe("SURFACE_FINISH variant", () => {
         ),
       ),
     ).not.toThrow();
+  });
+});
+
+describe("SURFACE_PATTERN variant", () => {
+  /** Every legal variant pairing — the same twelve the finish arm sweeps,
+   * with the pattern flag appended. */
+  const pairings: [string, [number, number, number, number, number]][] = [
+    ["affine", [0, 0, 0, 0, 0]],
+    ["fold lens", [0, 1, 0, 0, 0]],
+    ["balloon", [0, 0, 1, 0, 0]],
+    ["ground plane", [0, 0, 0, 1, 0]],
+    ["lens + balloon", [0, 1, 1, 0, 0]],
+    ["lens + plane", [0, 1, 0, 1, 0]],
+    ["escape", [1, 0, 0, 0, 0]],
+    ["escape + balloon", [1, 0, 1, 0, 0]],
+    ["escape + plane", [1, 0, 0, 1, 0]],
+    ["bulb", [0, 0, 0, 0, 1]],
+    ["bulb + balloon", [0, 0, 1, 0, 1]],
+    ["bulb + plane", [0, 0, 0, 1, 1]],
+  ];
+
+  const calibration = {
+    ringsLow: 0.1,
+    ringsInvSpan: 2,
+    sheetsLow: 0.2,
+    sheetsInvSpan: 3,
+  };
+  const patterned = resolveSurfaceMaterial(undefined, {
+    kind: "wood",
+    axis: "z",
+    scale: 4,
+    strength: 0.75,
+  });
+  const patternMaterials = (finish = false): SurfaceMaterialSlots => ({
+    slots: [finish ? { ...patterned, finish: authoredFinish() } : patterned],
+    finish,
+    pattern: true,
+    patternCalibration: calibration,
+  });
+
+  /** A finish with every field away from classic, shared with the finish
+   * suite's own authored value so the two arms' tests cannot disagree. */
+  const authoredFinish = (): ReturnType<typeof resolveSurfaceFinish> =>
+    resolveSurfaceFinish({
+      specular: 0.9,
+      shininess: 64,
+      metalness: 0.3,
+      reflect: 0.5,
+      transmit: 0.2,
+    });
+
+  it("matches the pre-bead byte identity for every variant with the pattern flag off — the pinned 8f5fb4d baseline", () => {
+    const variants: [string, number[]][] = [
+      ["3D affine", [0, 0, 0, 0, 0]],
+      ["3D lens", [0, 1, 0, 0, 0]],
+      ["3D balloon", [0, 0, 1, 0, 0]],
+      ["3D plane", [0, 0, 0, 1, 0]],
+      ["3D lens+balloon", [0, 1, 1, 0, 0]],
+      ["3D lens+plane", [0, 1, 0, 1, 0]],
+      ["3D escape", [1, 0, 0, 0, 0]],
+      ["3D escape+balloon", [1, 0, 1, 0, 0]],
+      ["3D escape+plane", [1, 0, 0, 1, 0]],
+      ["3D bulb", [0, 0, 0, 0, 1]],
+      ["3D bulb+balloon", [0, 0, 1, 0, 1]],
+      ["3D bulb+plane", [0, 0, 0, 1, 1]],
+    ];
+    for (const finish of [0, 1]) {
+      for (const [name, [escape, lens, balloon, plane, bulb]] of variants) {
+        const key = `${name} finish${finish}`;
+        const expected = PRE_PATTERN_SOURCE_HASHES[key];
+        expect(expected, key).toBeDefined();
+        const resolved = surfaceFragmentResolvedFor(
+          escape,
+          lens,
+          balloon,
+          plane,
+          bulb,
+          finish,
+          0,
+        );
+        const emitted = surfaceFragmentFor(
+          escape,
+          lens,
+          balloon,
+          plane,
+          bulb,
+          finish,
+          0,
+        );
+        expect(sha256(resolved).slice(0, 16), `${key} resolved`).toBe(
+          expected.resolved,
+        );
+        expect(sha256(emitted).slice(0, 16), `${key} emitted`).toBe(
+          expected.emitted,
+        );
+        // The arm adds no token even to the raw composition.
+        expect(resolved, key).not.toContain("patternShade");
+        expect(resolved, key).not.toContain("patternHash3");
+        expect(resolved, key).not.toContain("SURFACE_PATTERN");
+      }
+    }
+  });
+
+  it("compiles exactly one patternShade body and the routing splice into EVERY variant with the flag on", () => {
+    for (const [name, [escape, lens, balloon, plane, bulb]] of pairings) {
+      const resolved = surfaceFragmentResolvedFor(
+        escape,
+        lens,
+        balloon,
+        plane,
+        bulb,
+        0,
+        1,
+      );
+      expect(
+        countOccurrences(
+          resolved,
+          "vec3 patternShade(vec3 base, vec3 objectP, vec4 fb, vec4 calibration, float sheets, float pixelFootprint) {",
+        ),
+        name,
+      ).toBe(1);
+      expect(resolved, name).toContain("uniform vec4 uPatternCalibration;");
+      // The pattern slot fetch and the shading call, once each.
+      expect(
+        countOccurrences(
+          resolved,
+          "int patternSlot = clamp(firstChoice, 0, uMapCount - 1);",
+        ),
+        name,
+      ).toBe(1);
+      expect(countOccurrences(resolved, "base = patternShade("), name).toBe(1);
+      expect(resolved, name).toContain("uMapFinishB[patternSlot]");
+      // The shared A/B gate exposes both arrays under pattern-only too.
+      expect(resolved, name).toContain("uniform vec4 uMapFinishA[MAX_MAPS];");
+      expect(resolved, name).toContain("uniform vec4 uMapFinishB[MAX_MAPS];");
+    }
+    // The two existing refusals hold with the pattern on; it adds none.
+    expect(() => surfaceFragmentFor(0, 0, 1, 1, 0, 0, 1)).toThrow(RangeError);
+    expect(() => surfaceFragmentFor(1, 0, 0, 0, 1, 0, 1)).toThrow(RangeError);
+  });
+
+  it("keeps the fixed classic lighting formula under pattern-only, and no pattern tokens under finish-only", () => {
+    for (const [name, [escape, lens, balloon, plane, bulb]] of pairings) {
+      // Pattern-only: the fixed formula stays literal.
+      const patternedOnly = surfaceFragmentResolvedFor(
+        escape,
+        lens,
+        balloon,
+        plane,
+        bulb,
+        0,
+        1,
+      );
+      expect(patternedOnly, name).toContain(
+        "float specular = pow(max(dot(n, halfVec), 0.0), 32.0) * 0.4;",
+      );
+      expect(patternedOnly, name).not.toContain("finishShade");
+      // Finish-only: no pattern helper, no calibration read.
+      const finishOnly = surfaceFragmentResolvedFor(
+        escape,
+        lens,
+        balloon,
+        plane,
+        bulb,
+        1,
+        0,
+      );
+      expect(finishOnly, name).not.toContain("patternShade");
+      expect(finishOnly, name).not.toContain("uPatternCalibration");
+      expect(finishOnly, name).not.toContain("patternHash3");
+      // Both: the fixed formula is gone and both arms are present.
+      const both = surfaceFragmentResolvedFor(
+        escape,
+        lens,
+        balloon,
+        plane,
+        bulb,
+        1,
+        1,
+      );
+      expect(both, name).toContain("patternShade");
+      expect(both, name).toContain("finishShade");
+      expect(both, name).not.toContain("32.0) * 0.4;");
+    }
+  });
+
+  it("orders pattern albedo after the color source and balloon tint and before the shadow/AO lighting, leaving the floor untouched", () => {
+    const resolved = surfaceFragmentResolvedFor(0, 0, 1, 0, 0, 1, 1);
+    const balloonTint = resolved.indexOf(
+      "base = mix(base, uBalloonTint, uBalloonTintStrength * shell);",
+    );
+    const patternCall = resolved.indexOf("base = patternShade(");
+    const shadowLoop = resolved.indexOf("// Soft shadow: classic DE penumbra");
+    expect(balloonTint).toBeGreaterThan(0);
+    expect(patternCall).toBeGreaterThan(balloonTint);
+    expect(shadowLoop).toBeGreaterThan(patternCall);
+    // The ground-plane shader never calls the transform pattern helper.
+    const plane = surfaceFragmentResolvedFor(0, 0, 0, 1, 0, 0, 1);
+    const groundMatch = plane.match(/vec3 shadeGroundPlane\([\s\S]*?\n\s*\}/);
+    expect(groundMatch).not.toBeNull();
+    expect(groundMatch![0]).not.toContain("patternShade");
+    expect(groundMatch![0]).not.toContain("uPatternCalibration");
+  });
+
+  it("routes the source hit through balloon cpos and the final inverse, and through the fold-lens winner", () => {
+    // Balloon + affine final: shell winners use the pre-inversion cpos,
+    // then the existing final inverse applies.
+    const balloon = surfaceFragmentResolvedFor(0, 0, 1, 0, 0, 0, 1);
+    expect(balloon).toContain("if (shell > 0.5) {");
+    expect(balloon).toContain("patternSource = cpos;");
+    expect(balloon).toContain(
+      "patternSource = uFinalInvM * patternSource + uFinalInvT;",
+    );
+    expect(balloon).toContain(
+      "vec3 objectP = (patternSource - uBoundCenter) / uBoundingRadius;",
+    );
+    // Non-balloon: pos straight into the final inverse.
+    const plain = surfaceFragmentResolvedFor(0, 0, 0, 0, 0, 0, 1);
+    expect(plain).toContain("patternSource = pos;");
+    expect(plain).not.toContain("patternSource = cpos;");
+    // The fold lens: the winning branch's core query, never a matrix.
+    const lens = surfaceFragmentResolvedFor(0, 1, 0, 0, 0, 0, 1);
+    expect(lens).toContain("patternSource = patternFoldLensSource;");
+    expect(lens).not.toContain(
+      "patternSource = uFinalInvM * patternSource + uFinalInvT;",
+    );
+    expect(lens).toContain("patternFoldLensSource = bestQ;");
+    // The footprint is the tier-independent acceptance epsilon at the hit,
+    // normalized by the RAW bounding radius.
+    expect(plain).toContain(
+      "float patternFootprint = uAcceptPixelEps * t / uBoundingRadius;",
+    );
+  });
+
+  it("keeps the pattern arm on through every recompose site and hands the calibration to the shader", () => {
+    const material = createSurfaceMaterial();
+    setSurfaceMaterials(material, patternMaterials(true));
+    const fetchLine =
+      "vec3 col = finishShade(base, pos, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot]);";
+    const finished = (what: string) => {
+      expect(material.defines.SURFACE_PATTERN, what).toBe(1);
+      expect(material.defines.SURFACE_FINISH, what).toBe(1);
+      expect(material.fragmentShader, what).toContain("vec3 patternShade(");
+      expect(material.fragmentShader, what).toContain(fetchLine);
+      expect(material.fragmentShader, what).toContain("uPatternCalibration");
+    };
+    setSurfaceSystem(material, de3([map3()]), [black]);
+    finished("affine system");
+    const withLens = de3([map3()]);
+    withLens.foldFinal = {
+      invM: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      invT: [0, 0, 0],
+      sigmaMin: 1,
+      foldKind: 1,
+      invW: 1,
+      absW: 1,
+      foldRadii: CLASSIC_SURFACE_FOLD_RADII,
+    };
+    setSurfaceSystem(material, withLens, [black]);
+    expect(material.fragmentShader).toContain("patternFoldLensSource");
+    finished("lens system");
+    setEscapeSystem(
+      material,
+      buildEscapeDE([
+        {
+          id: 0,
+          position: [0.4, 0.3, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          variations: [{ type: "mandelbox", weight: 2 }],
+        },
+      ]),
+      black,
+    );
+    finished("escape system");
+    setBulbSystem(
+      material,
+      buildBulbDE([
+        {
+          id: 0,
+          position: [0.05, -0.1, 0.02],
+          rotation: [0, 0, 0],
+          scale: [1.3, 1.3, 1.3],
+          variations: [{ type: "bulb", weight: 1 }],
+        },
+      ]),
+      black,
+    );
+    finished("bulb system");
+    const de = de3([map3()]);
+    setSurfaceSystem(material, de, [black]);
+    const ball = balloonBall(de);
+    setSurfaceBalloon(material, {
+      center: ball.center,
+      rho: ball.radius * BALLOON_RHO_MARGIN,
+      R: 1.6 * ball.radius,
+      far: BALLOON_FAR_CAP_RHO * ball.radius,
+    });
+    finished("balloon on");
+    setSurfaceBalloon(material, null);
+    finished("balloon off");
+    setSurfaceGroundPlane(material, {
+      y: -1.2,
+      fadeStart: 4,
+      fadeEnd: 10,
+      ballCenter: [0, 0, 0],
+      ballRadius: 1,
+      albedo: [0.62, 0.62, 0.62],
+    });
+    finished("plane on");
+    setSurfaceMaterials(material, null);
+    expect(material.fragmentShader).not.toContain("patternShade");
   });
 });
