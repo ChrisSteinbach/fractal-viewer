@@ -231,43 +231,49 @@ evaluation and NOT shipped. Its app-level half is
 
 ### finish-pattern
 
-The Tier-2 patterned-albedo sheet: does WOOD (or MARBLE) read as its
-material on fractal geometry, driven by the tracers' own `rings`/`sheets`
-hit-info traps rather than world-space coordinates, against a world-space
-noise fallback expected to plateau under zoom (`qjulia-beauty`'s own
-precedent — a contact sheet is allowed to refuse a whole feature). Getting
-the sheet to a verdict cost three real bugs beyond the pattern question
-itself: `zoomDE`'s reused anchor point needs a residual far below the
-harness's tightest zoom ball or the similarity trick magnifies that error
-into NaN; a fixed wide `eye`/`frame` cannot serve a sparse system's actual
-visible mass, which needs the frustum tightened AND recentred on the hit
-centroid, not just tightened; and a fixed pattern-scale sweep reads as
-invisible on one system's geometry and speckle on another's, so the sweep
-is calibrated per system from each one's own sampled `rings`/`sheets`
-range.
+The pre-wire refusal gate for the replacement hybrid coordinate stack. The
+old result remains useful but narrow: using `rings` directly as Wood's macro
+coordinate produced 74-79% ordinary-view edges and read as corrosion. The
+current prototype instead makes material identity object-attached: Wood is
+cylindrical about the authored axis, Marble is a two-field warped plane with
+forked veins, and Strata is deliberately laminar. Deterministic p03/p97
+`rings`/`sheets` calibration supplies secondary detail only; a degenerate
+span disables the carrier, a source-space pixel-footprint gate keeps it out
+of ordinary view, and close-ups crossfade completed ramp outputs rather than
+phases. Macro-only and world-space controls expose the expected zoom plateau.
 
-MEASURED VERDICT: the zoom claim holds and the material claim does not.
-Native wood's contrast survives 1x/8x/64x magnification on menger
-(albedoVar 0.0139/0.0137/0.0151, edge density 78.5%/51.3%/10.4% — speckle
-COARSENING into bands, not vanishing) while a world-space fallback
-collapses over the same ladder (0.0138/0.0135/0.0039, edges to 1.1%) —
-confirmed on a second, structurally different estimator by
-mandelbox-pair's own 1x/8x pair (74.1% -> 68.0% edges). But at ordinary
-viewing scale every system sits at 74-79% edge density: the pattern
-changes on most adjacent hit pixels, which is speckle/corrosion texture,
-not the coherent banding wood needs, because `rings` varies at the
-fractal's own detail frequency — the same property that makes it keep
-resolving under zoom. WOOD is CLOSED won't-do on this evidence. MARBLE
-(keyed off `sheets` instead) survives as a genuinely different, band-like
-result (23-28% edge density at every system and every zoom level) and is
-filed as follow-on wiring work rather than shipped alongside the refusal.
-`foldBoxfoldPair` was dropped from the sheet's own system list after three
-independently different camera-fitting strategies — no fitting, NDC-extent
-bounding, hit-fraction-targeted tightening with centroid recentring — all
-converged on the same ~0.6-0.7% hit coverage: the signature of genuine
-geometric sparseness (a thin, dust-like fold pair) rather than a fixable
-framing bug, and too thin a panel to answer a material question either
-way.
+The run writes labeled sheets, shuffled blinded-review cards, and a JSON
+manifest under a run-specific `scripts/out/finish-pattern-<run>/` directory.
+Geometry is cached once per system/rung, so the 28 material/control panels per
+system cost only four CPU marches. The lighting-independent metric is
+pre-lighting albedo-luminance residual; its edge and box-pyramid energy
+calculations keep disconnected source-space components separate instead of
+calling a geometry seam pattern speckle.
+
+MEASURED MACHINE VERDICT (`20260821-hybrid-v1`, 96 px): PROCEED for all three
+families to the human semantic gate. Menger (affine), mandelbox-pair (fold),
+and a frame-filling Menger affine final lens render every 1x/4x/16x/64x rung
+with zero exhausted rays. Ordinary 1x edge density spans 13.3-44.5% against
+the 8-45% contract; fine energy spans 3.1-50.8% (ceiling 60%) and 4-16 px
+energy 30.9-65.9% (floor 25%). The weakest rung-to-rung residual-variance
+retention is 0.603 and every 64x/1x ratio is at least 0.748 (required 0.60 and
+0.50). Macro/world controls mostly collapse toward zero variance at 64x while
+the hybrid rows retain detail.
+
+Exact accepted constants live in `finish-pattern-model.ts` and the manifest:
+scales Wood/Marble/Strata 3.5/1.75/1.2, three noise octaves, native periods
+12/10/8, detail output cap 0.94, and footprint full/off thresholds
+0.009/0.012 normalized units. The cap is intentionally below one but high: at
+close-up the native ramp may carry 94% of the output because a smaller share
+failed the explicit variance contract; ordinary view is still exactly
+macro-only. Marble's macro costs two three-octave value-noise fields, 48
+lattice hashes per hit (Wood and Strata cost 24), so shader feasibility
+remains a downstream budget question, not a claim made by this CPU gate.
+
+MATERIAL NAMES ARE NOT YET APPROVED: five blinded reviewers must score the
+emitted cards (Wood/Marble/Strata/Noise-corrosion/Plain-other), with 4/5 and
+median confidence 3 per hero plus 80% aggregate. The manifest records that
+review as pending.
 
 ## The Surprise Me generator's sheet
 

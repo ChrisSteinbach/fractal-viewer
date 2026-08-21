@@ -524,8 +524,128 @@ export function writeContactSheet(
     }
   });
   const outDir = join(dirname(fileURLToPath(import.meta.url)), "out");
-  mkdirSync(outDir, { recursive: true });
   const file = join(outDir, fileName);
+  mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, encodePng(sheetW, size * rows, sheet));
+  return file;
+}
+
+// Five-by-seven glyphs used by evidence sheets that must remain intelligible
+// after the console legend is separated from the PNG. Keeping this tiny
+// raster font here avoids a canvas/native-font dependency in CPU harnesses.
+const LABEL_FONT: Readonly<Record<string, readonly string[]>> = {
+  " ": ["00000", "00000", "00000", "00000", "00000", "00000", "00000"],
+  "-": ["00000", "00000", "00000", "11111", "00000", "00000", "00000"],
+  ".": ["00000", "00000", "00000", "00000", "00000", "01100", "01100"],
+  "/": ["00001", "00010", "00100", "01000", "10000", "00000", "00000"],
+  ":": ["00000", "01100", "01100", "00000", "01100", "01100", "00000"],
+  "%": ["11001", "11010", "00100", "01000", "10110", "00110", "00000"],
+  "0": ["01110", "10001", "10011", "10101", "11001", "10001", "01110"],
+  "1": ["00100", "01100", "00100", "00100", "00100", "00100", "01110"],
+  "2": ["01110", "10001", "00001", "00010", "00100", "01000", "11111"],
+  "3": ["11110", "00001", "00001", "01110", "00001", "00001", "11110"],
+  "4": ["00010", "00110", "01010", "10010", "11111", "00010", "00010"],
+  "5": ["11111", "10000", "10000", "11110", "00001", "00001", "11110"],
+  "6": ["01110", "10000", "10000", "11110", "10001", "10001", "01110"],
+  "7": ["11111", "00001", "00010", "00100", "01000", "01000", "01000"],
+  "8": ["01110", "10001", "10001", "01110", "10001", "10001", "01110"],
+  "9": ["01110", "10001", "10001", "01111", "00001", "00001", "01110"],
+  A: ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
+  B: ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
+  C: ["01111", "10000", "10000", "10000", "10000", "10000", "01111"],
+  D: ["11110", "10001", "10001", "10001", "10001", "10001", "11110"],
+  E: ["11111", "10000", "10000", "11110", "10000", "10000", "11111"],
+  F: ["11111", "10000", "10000", "11110", "10000", "10000", "10000"],
+  G: ["01111", "10000", "10000", "10111", "10001", "10001", "01111"],
+  H: ["10001", "10001", "10001", "11111", "10001", "10001", "10001"],
+  I: ["01110", "00100", "00100", "00100", "00100", "00100", "01110"],
+  J: ["00111", "00010", "00010", "00010", "10010", "10010", "01100"],
+  K: ["10001", "10010", "10100", "11000", "10100", "10010", "10001"],
+  L: ["10000", "10000", "10000", "10000", "10000", "10000", "11111"],
+  M: ["10001", "11011", "10101", "10101", "10001", "10001", "10001"],
+  N: ["10001", "11001", "10101", "10011", "10001", "10001", "10001"],
+  O: ["01110", "10001", "10001", "10001", "10001", "10001", "01110"],
+  P: ["11110", "10001", "10001", "11110", "10000", "10000", "10000"],
+  Q: ["01110", "10001", "10001", "10001", "10101", "10010", "01101"],
+  R: ["11110", "10001", "10001", "11110", "10100", "10010", "10001"],
+  S: ["01111", "10000", "10000", "01110", "00001", "00001", "11110"],
+  T: ["11111", "00100", "00100", "00100", "00100", "00100", "00100"],
+  U: ["10001", "10001", "10001", "10001", "10001", "10001", "01110"],
+  V: ["10001", "10001", "10001", "10001", "10001", "01010", "00100"],
+  W: ["10001", "10001", "10001", "10101", "10101", "11011", "10001"],
+  X: ["10001", "10001", "01010", "00100", "01010", "10001", "10001"],
+  Y: ["10001", "10001", "01010", "00100", "00100", "00100", "00100"],
+  Z: ["11111", "00001", "00010", "00100", "01000", "10000", "11111"],
+};
+
+function drawLabelLine(
+  rgb: Uint8Array,
+  width: number,
+  x0: number,
+  y0: number,
+  text: string,
+): void {
+  let x = x0;
+  for (const raw of text.toUpperCase()) {
+    const glyph = LABEL_FONT[raw] ?? LABEL_FONT[" "];
+    for (let gy = 0; gy < 7; gy++) {
+      for (let gx = 0; gx < 5; gx++) {
+        if (glyph[gy][gx] !== "1") continue;
+        const at = ((y0 + gy) * width + x + gx) * 3;
+        rgb[at] = 235;
+        rgb[at + 1] = 239;
+        rgb[at + 2] = 246;
+      }
+    }
+    x += 6;
+  }
+}
+
+/** Tile equal square panels with a two-line label band beneath each one. */
+export function writeLabeledContactSheet(
+  panels: readonly { stats: PanelStats; lines: readonly [string, string] }[],
+  cols: number,
+  fileName: string,
+): string {
+  if (panels.length === 0) throw new Error("labeled contact sheet is empty");
+  const size = panels[0].stats.width;
+  const labelH = 20;
+  const cellH = size + labelH;
+  const rows = Math.ceil(panels.length / cols);
+  const sheetW = size * cols;
+  const sheetH = cellH * rows;
+  const sheet = new Uint8Array(sheetW * sheetH * 3);
+  sheet.fill(18);
+  panels.forEach(({ stats, lines }, i) => {
+    if (stats.width !== size || stats.height !== size) {
+      throw new Error("labeled contact sheet panels must be equal squares");
+    }
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    for (let y = 0; y < size; y++) {
+      const src = y * size * 3;
+      const dst = ((row * cellH + y) * sheetW + col * size) * 3;
+      sheet.set(stats.rgb.subarray(src, src + size * 3), dst);
+    }
+    const maxChars = Math.floor((size - 4) / 6);
+    drawLabelLine(
+      sheet,
+      sheetW,
+      col * size + 2,
+      row * cellH + size + 2,
+      lines[0].slice(0, maxChars),
+    );
+    drawLabelLine(
+      sheet,
+      sheetW,
+      col * size + 2,
+      row * cellH + size + 11,
+      lines[1].slice(0, maxChars),
+    );
+  });
+  const outDir = join(dirname(fileURLToPath(import.meta.url)), "out");
+  const file = join(outDir, fileName);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, encodePng(sheetW, sheetH, sheet));
   return file;
 }
