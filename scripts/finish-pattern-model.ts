@@ -56,33 +56,33 @@ export const PATTERN_MIN_NATIVE_SPAN = 0.02;
 export const PATTERN_NOISE_OCTAVES = 3;
 
 /** Detail is absent at ordinary framing and fully present in close-ups. */
-export const PATTERN_DETAIL_FOOTPRINT_FULL = 0.0015;
+export const PATTERN_DETAIL_FOOTPRINT_FULL = 0.009;
 export const PATTERN_DETAIL_FOOTPRINT_OFF = 0.012;
 
 /** Native detail never wholly replaces the material-defining macro ramp. */
 export const PATTERN_DETAIL_MIX: Readonly<
   Record<Exclude<PatternKind, "none">, number>
 > = {
-  wood: 0.78,
-  marble: 0.76,
-  strata: 0.72,
+  wood: 0.94,
+  marble: 0.94,
+  strata: 0.94,
 };
 
 /** Exact prototype defaults to carry into the downstream authoring bead. */
 export const PATTERN_DEFAULT_SCALE: Readonly<
   Record<Exclude<PatternKind, "none">, number>
 > = {
-  wood: 4.5,
-  marble: 3.25,
-  strata: 2.75,
+  wood: 3.5,
+  marble: 1.75,
+  strata: 1.2,
 };
 
 export const PATTERN_NATIVE_PERIODS: Readonly<
   Record<Exclude<PatternKind, "none">, number>
 > = {
-  wood: 6,
-  marble: 5,
-  strata: 4,
+  wood: 12,
+  marble: 10,
+  strata: 8,
 };
 
 const clamp01 = (x: number): number => Math.max(0, Math.min(1, x));
@@ -197,9 +197,7 @@ function woodRamp(phase: number): number {
 function marbleRamp(phase: number): number {
   const t = fract(phase);
   const d = Math.abs(t - 0.5);
-  const body = 1 - smoothstep(0.045, 0.17, d);
-  const hairline = 1 - smoothstep(0, 0.035, d);
-  return clamp01(body * 0.76 + hairline * 0.34);
+  return 1 - smoothstep(0.005, 0.17, d);
 }
 
 function strataRamp(phase: number): number {
@@ -238,9 +236,26 @@ export function patternMacroSample(
   }
   if (kind === "marble") {
     const plane = p[a] + 0.2 * p[u] - 0.13 * p[v];
-    const warp = fbm([p[0] * 0.92 + 1.9, p[1] * 0.92 - 5.2, p[2] * 0.92 + 3.4]);
-    const phase = (plane + 0.34 * warp) * safeScale;
-    return { phase, ramp: marbleRamp(phase) };
+    const warpA = fbm([
+      p[0] * 1.24 + 1.9,
+      p[1] * 1.24 - 5.2,
+      p[2] * 1.24 + 3.4,
+    ]);
+    const warpB = fbm([
+      p[2] * 1.27 - 6.4,
+      p[0] * 1.27 + 2.8,
+      p[1] * 1.27 + 9.1,
+    ]);
+    const phase = (plane + 0.9 * warpA) * safeScale;
+    // A second, differently slanted warped vein is admitted only in parts
+    // of the first warp field. `max` joins completed vein ramps, producing
+    // forks instead of the regular zebra bands a single periodic plane made.
+    const branchPhase =
+      (p[a] - 0.31 * p[u] + 0.27 * p[v] + 0.54 * warpB) * safeScale * 0.82 +
+      1.37;
+    const branch =
+      marbleRamp(branchPhase) * smoothstep(-0.1, 0.16, warpA + 0.35 * warpB);
+    return { phase, ramp: Math.max(marbleRamp(phase), branch * 0.85) };
   }
   const warp = fbm([p[u] * 0.62 - 4.3, p[a] * 0.22 + 8.1, p[v] * 0.62 + 2.7]);
   const phase = (p[a] + 0.075 * warp) * safeScale;
@@ -251,15 +266,19 @@ function nativeSample(
   kind: Exclude<PatternKind, "none">,
   q: PatternQuery,
 ): { value: number; ramp: number; enabled: boolean } {
-  const carrier = kind === "wood" ? q.ringsCalibration : q.sheetsCalibration;
-  const raw = kind === "wood" ? q.rings : q.sheets;
+  // Growth rings are wholly object-space above. Sheets are the more locally
+  // reliable close-up carrier on the calibration fixtures; using them here
+  // cannot redefine Wood because the completed detail ramp is gated off at
+  // ordinary view and remains a bounded output crossfade.
+  const carrier = q.sheetsCalibration;
+  const raw = q.sheets;
   const value = normalizeNativeCarrier(raw, carrier);
   const phase = value * PATTERN_NATIVE_PERIODS[kind];
   const ramp =
     kind === "wood"
       ? woodRamp(phase)
       : kind === "marble"
-        ? marbleRamp(phase)
+        ? Math.max(marbleRamp(phase), 0.85 * marbleRamp(value * 6.4 + 1.37))
         : strataRamp(phase);
   return { value, ramp, enabled: carrier.enabled };
 }

@@ -73,7 +73,7 @@ describe("finish pattern prototype coordinate stack", () => {
   it("crossfades completed ramp outputs, with native detail bounded below one", () => {
     const got = evaluateSurfacePattern(
       base,
-      { kind: "wood", axis: "y", scale: 4.5, strength: 1 },
+      { kind: "wood", axis: "y", scale: 3.5, strength: 1 },
       query(0),
     );
     expect(got.detailMix).toBe(PATTERN_DETAIL_MIX.wood);
