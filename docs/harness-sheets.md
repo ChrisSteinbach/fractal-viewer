@@ -315,10 +315,11 @@ uniform queries of their existing origin-centred ball. Final lenses therefore
 leave calibration exactly unchanged. A dedicated session-entry gate builds a
 12-map, depth-100 4D mandelbox system (eight 243-branch Mandelbox maps plus four
 81-branch boxfold maps) in about 0.6-0.7 s on the development host and enforces
-a 2.5 s ceiling, including the existing extent probe. Its exact
-finite-coordinate hot loop uses the shader's `sqrt(sum-of-squares)` length
-arithmetic. No camera, rotor, slice, visible radius, or duplicate bound enters
-calibration.
+a 2.5 s developer-host ceiling, including the existing extent probe. The
+wall-clock assertion is skipped on the shared coverage runner, where measured
+contention inflated the same build to 4.1 s. Its exact finite-coordinate hot
+loop uses the shader's `sqrt(sum-of-squares)` length arithmetic. No camera,
+rotor, slice, visible radius, or duplicate bound enters calibration.
 
 For comparison, the exact V2 constants were: scales
 Wood/Marble/Strata 3/1.35/2.6, three noise octaves, detail scale multipliers

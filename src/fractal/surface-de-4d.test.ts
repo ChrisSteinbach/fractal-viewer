@@ -703,28 +703,34 @@ describe("SurfaceDE4 native-pattern calibration", () => {
     expect(foldFinal.patternCalibration).toEqual(raw.patternCalibration);
   });
 
-  it("keeps a widest-supported 4D fold pilot within the session-entry budget", () => {
-    const transforms = mandelboxKifs().map((transform, index) => ({
-      ...transform,
-      w: {
-        position: ((index % 3) - 1) * 0.05,
-        scale: transform.scale[0],
-        rotation: { xw: 0.1 },
-      },
-    }));
-    const started = performance.now();
-    const de = buildSurfaceDE4(transforms);
-    const elapsed = performance.now() - started;
+  // Wall time is deliberately a developer-host gate. GitHub runs the suite
+  // under coverage and CPU contention (measured 4.1 s for a 0.55-0.66 s cold
+  // local build), which cannot enforce the interactive-session budget.
+  it.skipIf(process.env.CI === "true")(
+    "keeps a widest-supported 4D fold pilot within the session-entry budget",
+    () => {
+      const transforms = mandelboxKifs().map((transform, index) => ({
+        ...transform,
+        w: {
+          position: ((index % 3) - 1) * 0.05,
+          scale: transform.scale[0],
+          rotation: { xw: 0.1 },
+        },
+      }));
+      const started = performance.now();
+      const de = buildSurfaceDE4(transforms);
+      const elapsed = performance.now() - started;
 
-    expect(de.maps).toHaveLength(12);
-    expect(de.maxDepth).toBeGreaterThanOrEqual(100);
-    expectFiniteCalibration(de);
-    // The 2.5 s ceiling includes the pre-existing 8,192-point extent probe,
-    // not just native calibration, and carries ample headroom over the
-    // development-host measurement. It guards the supported 243-branch,
-    // 12-map, depth-100 corner that simpler affine fixtures miss.
-    expect(elapsed).toBeLessThan(2_500);
-  });
+      expect(de.maps).toHaveLength(12);
+      expect(de.maxDepth).toBeGreaterThanOrEqual(100);
+      expectFiniteCalibration(de);
+      // The 2.5 s ceiling includes the pre-existing 8,192-point extent probe,
+      // not just native calibration, and carries ample headroom over the
+      // development-host measurement. It guards the supported 243-branch,
+      // 12-map, depth-100 corner that simpler affine fixtures miss.
+      expect(elapsed).toBeLessThan(2_500);
+    },
+  );
 });
 
 describe("SurfaceDE4.radiusBand", () => {
@@ -4041,9 +4047,12 @@ describe("fold-radius rescale equivariance in 4D", () => {
     expect(compared).toBeGreaterThan(80);
   }
 
+  // Native calibration now runs during both builds. Coverage runners are
+  // much slower than an interactive session but the mathematical oracle is
+  // unchanged, so give this existing exhaustive check deterministic room.
   it("holds for the mandelbox pair, whose 243 branches read every length at once", () => {
     expectEquivariant4(pureMandelboxPair4().map(withRadii), null, 0x5f31, 3);
-  });
+  }, 10_000);
 
   it("holds for the spherefold pair, where only the radial lengths are in play", () => {
     expectEquivariant4(pureSpherefoldPair4().map(withRadii), null, 0x5f32, 3);
