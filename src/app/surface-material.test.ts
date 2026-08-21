@@ -10,7 +10,7 @@ import {
   setSurfaceBalloon,
   setSurfaceGrid,
   setSurfaceGridEnabled,
-  setSurfaceFinishes,
+  setSurfaceMaterials,
   setSurfaceGroundPlane,
   setSurfaceSystem,
   surfaceFragmentFor,
@@ -19,11 +19,13 @@ import {
   SURFACE_MAX_MAPS,
   SURFACE_SHADE_DE_WIDTH,
 } from "./surface-material";
+import { resolveSurfaceFinish } from "../fractal/surface-finish";
 import {
-  CLASSIC_SURFACE_FINISH,
-  resolveSurfaceFinish,
-  surfaceFinishLanes,
-} from "../fractal/surface-finish";
+  CLASSIC_SURFACE_MATERIAL,
+  resolveSurfaceMaterial,
+  surfaceMaterialLanes,
+  type SurfaceMaterialSlots,
+} from "../fractal/surface-material-wire";
 import {
   buildBulbDE,
   BULB_ITERATIONS,
@@ -518,19 +520,20 @@ function countOccurrences(source: string, needle: string): number {
 describe("buildSurfaceFragment shade probe", () => {
   it("keeps every variant free of the probe when built at the beam width (A/A)", () => {
     const source = buildSurfaceFragment(SURFACE_FOLD_BEAM_WIDTH);
-    expect(surfaceFragmentFor(0, 0, 0, 0, 0, 0, source)).not.toContain(
+    expect(surfaceFragmentFor(0, 0, 0, 0, 0, 0, 0, source)).not.toContain(
       "surfaceDEProbe",
     );
-    expect(surfaceFragmentFor(0, 1, 0, 0, 0, 0, source)).not.toContain(
+    expect(surfaceFragmentFor(0, 1, 0, 0, 0, 0, 0, source)).not.toContain(
       "surfaceDEProbe",
     );
-    expect(surfaceFragmentFor(1, 0, 0, 0, 0, 0, source)).not.toContain(
+    expect(surfaceFragmentFor(1, 0, 0, 0, 0, 0, 0, source)).not.toContain(
       "surfaceDEProbe",
     );
   });
 
   it("compiles exactly one width-1 probe, routed as the shading taps' value form", () => {
     const resolved = surfaceFragmentFor(
+      0,
       0,
       0,
       0,
@@ -553,6 +556,7 @@ describe("buildSurfaceFragment shade probe", () => {
       0,
       0,
       0,
+      0,
       buildSurfaceFragment(1),
     );
     expect(resolved).toContain("\nvec3 fcQ[1];");
@@ -567,10 +571,12 @@ describe("buildSurfaceFragment shade probe", () => {
       0,
       0,
       0,
+      0,
       buildSurfaceFragment(1),
     );
     const atBeamWidth = surfaceFragmentFor(
       1,
+      0,
       0,
       0,
       0,
@@ -585,6 +591,7 @@ describe("buildSurfaceFragment shade probe", () => {
     const resolved = surfaceFragmentFor(
       0,
       1,
+      0,
       0,
       0,
       0,
@@ -604,9 +611,11 @@ describe("buildSurfaceFragment shade probe", () => {
       0,
       0,
       0,
+      0,
       buildSurfaceFragment(1),
     );
     const atBeamWidth = surfaceFragmentFor(
+      0,
       0,
       0,
       0,
@@ -1736,6 +1745,34 @@ describe("SURFACE_FINISH variant", () => {
     reflect: 0.5,
     transmit: 0.2,
   });
+  const finishMaterials = (
+    finishes: readonly (typeof authored)[],
+  ): SurfaceMaterialSlots => ({
+    slots: finishes.map((finish) => ({
+      finish,
+      pattern: CLASSIC_SURFACE_MATERIAL.pattern,
+    })),
+    finish: true,
+    pattern: false,
+  });
+  const calibration = {
+    ringsLow: 0.1,
+    ringsInvSpan: 2,
+    sheetsLow: 0.2,
+    sheetsInvSpan: 3,
+  };
+  const patterned = resolveSurfaceMaterial(undefined, {
+    kind: "wood",
+    axis: "z",
+    scale: 4,
+    strength: 0.75,
+  });
+  const patternMaterials = (finish = false): SurfaceMaterialSlots => ({
+    slots: [finish ? { ...patterned, finish: authored } : patterned],
+    finish,
+    pattern: true,
+    patternCalibration: calibration,
+  });
 
   it("strips every finish token from every variant while the flag is off — the byte-identity mechanism", () => {
     // With finish 0 the resolved source must be byte-identical to the
@@ -1859,7 +1896,7 @@ describe("SURFACE_FINISH variant", () => {
     const laneB = material.uniforms.uMapFinishB.value as THREE.Vector4[];
     expect(laneA).toHaveLength(SURFACE_MAX_MAPS);
     expect(laneB).toHaveLength(SURFACE_MAX_MAPS);
-    const classic = surfaceFinishLanes(CLASSIC_SURFACE_FINISH);
+    const classic = surfaceMaterialLanes(CLASSIC_SURFACE_MATERIAL);
     expect(classic.a).toEqual([0.4, 32, 0, 0]);
     for (let j = 0; j < SURFACE_MAX_MAPS; j++) {
       expect(laneA[j].toArray()).toEqual(classic.a);
@@ -1867,11 +1904,11 @@ describe("SURFACE_FINISH variant", () => {
     }
   });
 
-  it("setSurfaceFinishes packs each slot's lanes in surfaceFinishLanes' order, resets the rest to classic, flips the define and recompiles", () => {
+  it("setSurfaceMaterials packs finish-only slots in the shared lane order, resets the rest, flips the finish gate and recompiles", () => {
     const material = createSurfaceMaterial();
     const versionBefore = material.version;
     const second = resolveSurfaceFinish({ specular: 0.1, shininess: 8 });
-    setSurfaceFinishes(material, [authored, second]);
+    setSurfaceMaterials(material, finishMaterials([authored, second]));
 
     const laneA = material.uniforms.uMapFinishA.value as THREE.Vector4[];
     const laneB = material.uniforms.uMapFinishB.value as THREE.Vector4[];
@@ -1894,19 +1931,22 @@ describe("SURFACE_FINISH variant", () => {
 
   it("rewrites the lanes without touching the shader on a value-only change, and null hands the fixed formula back with every slot classic", () => {
     const material = createSurfaceMaterial();
-    setSurfaceFinishes(material, [authored]);
+    setSurfaceMaterials(material, finishMaterials([authored]));
     const version = material.version;
     const shader = material.fragmentShader;
 
     // A finish slider's per-drag tick: lanes move, the program does not.
-    setSurfaceFinishes(material, [{ ...authored, reflect: 1 }]);
+    setSurfaceMaterials(
+      material,
+      finishMaterials([{ ...authored, reflect: 1 }]),
+    );
     const laneA = material.uniforms.uMapFinishA.value as THREE.Vector4[];
     expect(laneA[0].toArray()).toEqual([0.9, 64, 0.3, 1]);
     expect(material.version).toBe(version);
     expect(material.fragmentShader).toBe(shader);
 
     // null: the caller's gate says the document is classic.
-    setSurfaceFinishes(material, null);
+    setSurfaceMaterials(material, null);
     expect(material.defines.SURFACE_FINISH).toBe(0);
     expect(laneA[0].toArray()).toEqual([0.4, 32, 0, 0]);
     expect(material.fragmentShader).not.toContain("finishShade");
@@ -1915,16 +1955,44 @@ describe("SURFACE_FINISH variant", () => {
     expect(material.version).toBeGreaterThan(version);
     // A second null is a no-op on the program.
     const settled = material.version;
-    setSurfaceFinishes(material, null);
+    setSurfaceMaterials(material, null);
     expect(material.version).toBe(settled);
+  });
+
+  it("keeps pattern-only stride data independent from finish lighting and routes the per-DE calibration", () => {
+    const material = createSurfaceMaterial();
+    setSurfaceMaterials(material, patternMaterials());
+    expect(material.defines.SURFACE_FINISH).toBe(0);
+    expect(material.defines.SURFACE_PATTERN).toBe(1);
+    expect(material.fragmentShader).toContain(
+      "uniform vec4 uMapFinishA[MAX_MAPS];",
+    );
+    expect(material.fragmentShader).toContain(
+      "uniform vec4 uPatternCalibration;",
+    );
+    expect(material.fragmentShader).not.toContain("finishShade");
+    expect(material.fragmentShader).toContain("32.0) * 0.4;");
+    const laneB = material.uniforms.uMapFinishB.value as THREE.Vector4[];
+    expect(laneB[0].w).toBe(4);
+    expect(laneB[0].z).not.toBe(0);
+    expect(
+      (material.uniforms.uPatternCalibration.value as THREE.Vector4).toArray(),
+    ).toEqual([0.1, 2, 0.2, 3]);
+
+    setSurfaceMaterials(material, null);
+    expect("SURFACE_PATTERN" in material.defines).toBe(false);
+    expect(material.fragmentShader).toBe(surfaceFragmentFor(0, 0));
+    expect(laneB[0].toArray()).toEqual([0, 1, 0, 0]);
   });
 
   it("survives every recompose site: a system swap, the lens, the forward arms, the balloon and the floor all preserve the finish define and its text", () => {
     const material = createSurfaceMaterial();
-    setSurfaceFinishes(material, [authored]);
+    setSurfaceMaterials(material, patternMaterials(true));
     const finished = (what: string) => {
       expect(material.defines.SURFACE_FINISH, what).toBe(1);
+      expect(material.defines.SURFACE_PATTERN, what).toBe(1);
       expect(material.fragmentShader, what).toContain(fetchLine);
+      expect(material.fragmentShader, what).toContain("uPatternCalibration");
       expect(material.fragmentShader, what).not.toContain("32.0) * 0.4;");
     };
 
@@ -2015,24 +2083,28 @@ describe("SURFACE_FINISH variant", () => {
       ballRadius: 1,
       albedo: [0.62, 0.62, 0.62],
     });
-    setSurfaceFinishes(material, null);
+    setSurfaceMaterials(material, null);
     expect(material.defines.SURFACE_GROUND_PLANE).toBe(1);
     expect(material.fragmentShader).toContain("shadeGroundPlane");
     expect(material.fragmentShader).not.toContain("finishShade");
   });
 
-  it("refuses more finish slots than the per-map arrays carry", () => {
+  it("refuses more material slots than the per-map arrays carry", () => {
     const material = createSurfaceMaterial();
     expect(() =>
-      setSurfaceFinishes(
+      setSurfaceMaterials(
         material,
-        Array.from({ length: SURFACE_MAX_MAPS + 1 }, () => authored),
+        finishMaterials(
+          Array.from({ length: SURFACE_MAX_MAPS + 1 }, () => authored),
+        ),
       ),
     ).toThrow(RangeError);
     expect(() =>
-      setSurfaceFinishes(
+      setSurfaceMaterials(
         material,
-        Array.from({ length: SURFACE_MAX_MAPS }, () => authored),
+        finishMaterials(
+          Array.from({ length: SURFACE_MAX_MAPS }, () => authored),
+        ),
       ),
     ).not.toThrow();
   });

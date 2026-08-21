@@ -5,13 +5,15 @@ import {
 } from "../fractal/background-shape";
 import { radiusBandInvRange } from "../fractal/surface-de-4d";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
-import type { ResolvedSurfaceFinish } from "../fractal/surface-finish";
 import {
-  CLASSIC_SURFACE_FINISH,
   SURFACE_FINISH_GLSL,
-  surfaceFinishLanes,
   surfaceFinishShadeSource,
 } from "../fractal/surface-finish";
+import {
+  CLASSIC_SURFACE_MATERIAL,
+  surfaceMaterialLanes,
+  type SurfaceMaterialSlots,
+} from "../fractal/surface-material-wire";
 import type { Vec3 } from "../fractal/types";
 import {
   configureSurfaceLUTTexture,
@@ -106,13 +108,14 @@ import { lightDirection } from "./voxel-material";
  * `material.defines` carries the pair for change detection and as a
  * program-cache key, never as driver-parsed text. They are mutually
  * exclusive for the 3D reason, unchanged in 4D: there is no horizon inside
- * an enclosing shell. A THIRD arm, the per-transform surface FINISH
- * (`SURFACE_FINISH`, {@link setSurface4Finishes}), is the 3D arm itself
- * rather than a lift — one shared shading site, one shared `finishShade`
- * body from `fractal/surface-finish.ts` — and composes with both; its one
- * 4D-specific decision is that the finish lanes are UNCONDITIONAL members
- * of the `SurfaceMaps4` std140 block (see the block), so the layout never
- * moves when the define flips.
+ * an enclosing shell. Independent per-transform FINISH and PATTERN arms
+ * (`SURFACE_FINISH`/`SURFACE_PATTERN`, {@link setSurface4Materials}) share
+ * the fixed A/B wire. Finish contributes the 3D tracer's `finishShade` body;
+ * this plumbing bead gives pattern its calibration and compile gate but no
+ * formula yet. Both compose with the scene arms. Their 4D-specific decision
+ * is that the material lanes remain UNCONDITIONAL members of the
+ * `SurfaceMaps4` std140 block, so the layout never moves when either gate
+ * flips.
  *
  * THE BALLOON IS SLICE-THEN-INVERT, and that single sentence is the whole
  * 4D content of the lift. `I(p) = c + R²(p−c)/|p−c|²` is a plain 3D
@@ -377,6 +380,11 @@ const SURFACE4_FRAGMENT = /* glsl */ `
    * splice line for line; define-gated because it is value- not
    * byte-identical to the fixed formula at the classic lanes. */
   ${surfaceFinishShadeSource(SURFACE_FINISH_GLSL, true)}
+#endif
+#if SURFACE_PATTERN
+  /** One compact native-carrier calibration per built DE/session; deliberately
+   * outside the fixed per-map std140 block. */
+  uniform vec4 uPatternCalibration;
 #endif
   ${backgroundShapeSource(BACKGROUND_SHAPE_GLSL)}
   /** Angular pixel footprint of the ACTIVE buffer (scene-set per frame):
@@ -2050,8 +2058,8 @@ uniform float uBalloonTintStrength;
  * program takes 25 seconds to link. Resolved per variant instead, OFF
  * keeps its shipped bytes exactly and each arm pays only for itself.
  *
- * `finish` is the THIRD arm, the per-map surface finish
- * ({@link setSurface4Finishes}): it threads to the 3D resolver's own
+ * `finish` is the per-map lighting arm ({@link setSurface4Materials}): it
+ * threads to the 3D resolver's own
  * `finish` slot, composes with both scene arms, and at 0 resolves
  * byte-identical to the pre-finish build. Its sizes — the one arm that
  * moves the plain 4D source, since the shading site is shared — are in
@@ -2061,8 +2069,18 @@ export function surface4FragmentFor(
   balloon = 0,
   plane = 0,
   finish = 0,
+  pattern = 0,
 ): string {
-  return surfaceFragmentFor(0, 0, balloon, plane, 0, finish, SURFACE4_FRAGMENT);
+  return surfaceFragmentFor(
+    0,
+    0,
+    balloon,
+    plane,
+    0,
+    finish,
+    pattern,
+    SURFACE4_FRAGMENT,
+  );
 }
 
 /**
@@ -2074,6 +2092,7 @@ export function surface4FragmentResolvedFor(
   balloon = 0,
   plane = 0,
   finish = 0,
+  pattern = 0,
 ): string {
   return surfaceFragmentResolvedFor(
     0,
@@ -2082,6 +2101,7 @@ export function surface4FragmentResolvedFor(
     plane,
     0,
     finish,
+    pattern,
     SURFACE4_FRAGMENT,
   );
 }
@@ -2099,19 +2119,20 @@ interface Surface4MapBuffers {
   readonly colorSigma: Float32Array;
   /** MAX_MAPS * 4 floats: (trapIndex, unused, unused, unused). */
   readonly trap: Float32Array;
-  /** MAX_MAPS * 4 floats: the finish's A lane (specular, shininess,
-   * metalness, reflect) — `surfaceFinishLanes`' order, written by
-   * {@link setSurface4Finishes}; classic until it runs. */
+  /** MAX_MAPS * 4 floats: material lane A (specular, shininess,
+   * metalness, reflect) — `surfaceMaterialLanes`' order, written by
+   * {@link setSurface4Materials}; classic until it runs. */
   readonly finishA: Float32Array;
-  /** MAX_MAPS * 4 floats: the finish's B lane (transmit, 0, 0, 0). */
+  /** MAX_MAPS * 4 floats: material lane B (transmit, reflectionTint,
+   * patternConfig, scale). */
   readonly finishB: Float32Array;
 }
 
-/** The classic finish's two lanes, derived through `surfaceFinishLanes`
+/** The classic+none material's two lanes, derived through `surfaceMaterialLanes`
  * rather than retyped — the 3D material's own constant, restated here
  * because it is module-private there and the two files are twins by
  * convention, not by import of each other's privates. */
-const CLASSIC_FINISH_LANES = surfaceFinishLanes(CLASSIC_SURFACE_FINISH);
+const CLASSIC_MATERIAL_LANES = surfaceMaterialLanes(CLASSIC_SURFACE_MATERIAL);
 
 /** Which buffers back which material's map block. A WeakMap rather than
  * `material.uniforms` entries because block members must NOT appear as
@@ -2156,8 +2177,8 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
   for (let j = 0; j < SURFACE4_MAX_MAPS; j++) {
     for (let d = 0; d < 4; d++) buffers.invM[j * 16 + d * 4 + d] = 1;
     buffers.colorSigma[j * 4 + 3] = 1;
-    buffers.finishA.set(CLASSIC_FINISH_LANES.a, j * 4);
-    buffers.finishB.set(CLASSIC_FINISH_LANES.b, j * 4);
+    buffers.finishA.set(CLASSIC_MATERIAL_LANES.a, j * 4);
+    buffers.finishB.set(CLASSIC_MATERIAL_LANES.b, j * 4);
   }
   const maps = new THREE.UniformsGroup();
   // The name is how the renderer finds the block in the linked program
@@ -2268,6 +2289,7 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       uShadowSteps: { value: SURFACE_FULL_SHADOW_STEPS },
       uAoTaps: { value: SURFACE_FULL_AO_TAPS },
       uHitFloor: { value: SURFACE_FULL_HIT_FLOOR },
+      uPatternCalibration: { value: new THREE.Vector4() },
     },
     // Which scene arms are compiled in. Like the 3D tracer's variant names
     // these are resolved JS-side ({@link surface4FragmentFor}), so the
@@ -2285,7 +2307,8 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
     // over a source whose arms are already resolved. Renaming the
     // directives to match would break the resolution. SURFACE4_FINISH is
     // the third key under the same rule (its directive is the 3D
-    // `SURFACE_FINISH`; setSurface4Finishes flips it).
+    // `SURFACE_FINISH`; setSurface4Materials flips it). SURFACE4_PATTERN is
+    // added only while live so the legacy define set stays exact.
     defines: {
       SURFACE4_BALLOON: 0,
       SURFACE4_GROUND_PLANE: 0,
@@ -2540,6 +2563,7 @@ export function setSurface4Balloon(
       want,
       plane,
       material.defines.SURFACE4_FINISH === 1 ? 1 : 0,
+      material.defines.SURFACE4_PATTERN === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -2580,6 +2604,7 @@ export function setSurface4GroundPlane(
           material.defines.SURFACE4_BALLOON === 1 ? 1 : 0,
           want,
           material.defines.SURFACE4_FINISH === 1 ? 1 : 0,
+          material.defines.SURFACE4_PATTERN === 1 ? 1 : 0,
         );
   const u = material.uniforms;
   if (spec) {
@@ -2614,34 +2639,32 @@ export function setSurface4GroundPlane(
 }
 
 /**
- * Install the per-map surface finishes — `finishes[j]` the RESOLVED finish
- * for the transform in slot `j`, keyed exactly as `setSurfaceSystem4`'s
- * `colors[j]` — or clear them with `null`. The 3D `setSurfaceFinishes`'s
- * contract one dimension up: THE CALLER OWNS THE BYTE-IDENTITY GATE and
- * passes `null` whenever `isClassicSurfaceFinish` holds for every slotted
- * transform, which is what keeps an unauthored document on the fixed
- * lighting formula (the arm is value-, not byte-identical to it at the
- * classic lanes); a non-null list compiles the arm whatever its values.
+ * Install the unified per-map A/B material wire, keyed exactly as
+ * `setSurfaceSystem4`'s `colors[j]`, or clear it with `null`. The 3D
+ * `setSurfaceMaterials` contract one dimension up: THE CALLER OWNS THE
+ * BYTE-IDENTITY GATE and passes `null` for classic+none. A patterned wire
+ * carries its one per-DE calibration quartet; finish and pattern compile
+ * independently, so pattern-only retains the fixed lighting formula.
  *
  * The lanes land in the std140 block's two trailing members — written
  * through the group's backing arrays like every other per-map quantity,
  * every slot on every call (listed ones to their lanes, the rest and all
  * of them on `null` back to the CLASSIC lanes), so no previous system's
- * finish can leak into an unfilled slot. The block members exist whether
- * or not the arm is compiled (see the block and group comments), so
- * writing them never touches the layout; only the define flip reassembles
+ * material can leak into an unfilled slot. The block members exist whether
+ * or not either arm is compiled (see the block and group comments), so
+ * writing them never touches the layout; only a define flip reassembles
  * the source, through {@link surface4FragmentFor} with the material's
  * CURRENT scene arms — a session-set-scale rebuild, and a lanes-only call
- * (a finish slider's per-drag tick) never touches the shader. Throws past
+ * (a finish or pattern slider's per-drag tick) never touches the shader. Throws past
  * {@link SURFACE4_MAX_MAPS} slots.
  */
-export function setSurface4Finishes(
+export function setSurface4Materials(
   material: THREE.ShaderMaterial,
-  finishes: readonly ResolvedSurfaceFinish[] | null,
+  materials: SurfaceMaterialSlots | null,
 ): void {
-  if (finishes && finishes.length > SURFACE4_MAX_MAPS) {
+  if (materials && materials.slots.length > SURFACE4_MAX_MAPS) {
     throw new RangeError(
-      `${finishes.length} surface finishes, but the material carries at most ${SURFACE4_MAX_MAPS}`,
+      `${materials.slots.length} surface materials, but the material carries at most ${SURFACE4_MAX_MAPS}`,
     );
   }
   const maps = mapBuffers.get(material);
@@ -2652,19 +2675,35 @@ export function setSurface4Finishes(
   }
   for (let j = 0; j < SURFACE4_MAX_MAPS; j++) {
     const lanes =
-      finishes && j < finishes.length
-        ? surfaceFinishLanes(finishes[j])
-        : CLASSIC_FINISH_LANES;
+      materials && j < materials.slots.length
+        ? surfaceMaterialLanes(materials.slots[j])
+        : CLASSIC_MATERIAL_LANES;
     maps.finishA.set(lanes.a, j * 4);
     maps.finishB.set(lanes.b, j * 4);
   }
-  const want = finishes ? 1 : 0;
-  if (material.defines.SURFACE4_FINISH !== want) {
-    material.defines.SURFACE4_FINISH = want;
+  const calibration = material.uniforms.uPatternCalibration
+    .value as THREE.Vector4;
+  if (materials?.pattern) {
+    const c = materials.patternCalibration;
+    calibration.set(c.ringsLow, c.ringsInvSpan, c.sheetsLow, c.sheetsInvSpan);
+  } else {
+    calibration.set(0, 0, 0, 0);
+  }
+  const wantFinish = materials?.finish ? 1 : 0;
+  const wantPattern = materials?.pattern ? 1 : 0;
+  const currentPattern = material.defines.SURFACE4_PATTERN === 1 ? 1 : 0;
+  if (
+    material.defines.SURFACE4_FINISH !== wantFinish ||
+    currentPattern !== wantPattern
+  ) {
+    material.defines.SURFACE4_FINISH = wantFinish;
+    if (wantPattern) material.defines.SURFACE4_PATTERN = 1;
+    else delete material.defines.SURFACE4_PATTERN;
     material.fragmentShader = surface4FragmentFor(
       material.defines.SURFACE4_BALLOON === 1 ? 1 : 0,
       material.defines.SURFACE4_GROUND_PLANE === 1 ? 1 : 0,
-      want,
+      wantFinish,
+      wantPattern,
     );
     material.needsUpdate = true;
   }

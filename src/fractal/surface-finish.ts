@@ -133,25 +133,6 @@ export function isClassicSurfaceFinish(
 }
 
 /**
- * The finish's two wire lanes — the ONE definition of which field rides
- * which component, shared by every packer so the WGSL `shadeMaps` stride
- * lanes and the GLSL `uMapFinishA`/`uMapFinishB` uniform arrays cannot
- * disagree about lane order. `a = (specular, shininess, metalness,
- * reflect)`, `b = (transmit, reflectionTint, 0, 0)`. The last two lanes stay
- * reserved for a later material-pattern slice; room patterning is scene
- * state and does not belong on a transform finish.
- */
-export function surfaceFinishLanes(finish: ResolvedSurfaceFinish): {
-  a: [number, number, number, number];
-  b: [number, number, number, number];
-} {
-  return {
-    a: [finish.specular, finish.shininess, finish.metalness, finish.reflect],
-    b: [finish.transmit, finish.reflectionTint, 0, 0],
-  };
-}
-
-/**
  * THE REFLECTED SUN, and why the environment has one at all.
  *
  * An image-based reflection can only ever show what the environment
@@ -285,9 +266,11 @@ export const SURFACE_FINISH_WGSL: SurfaceFinishDialect = {
  *   transmissive surface reads as a partial miss toward its own pixel's
  *   backdrop while fresnel keeps its grazing reflections.
  *
- * The lanes are {@link surfaceFinishLanes}': `fa = (specular, shininess,
- * metalness, reflect)`, `fb = (transmit, reflectionTint, reserved...)`. `bg` is the
- * pixel's own backdrop (the value the caller's miss path would have
+ * The lanes come from `surface-material-wire.ts`'s shared material packer:
+ * `fa = (specular, shininess, metalness, reflect)`, `fb = (transmit,
+ * reflectionTint, patternConfig, scale)`. Finish lighting reads only fb.x/y;
+ * the sibling pattern gate owns fb.z/w. `bg` is the pixel's own backdrop
+ * (the value the caller's miss path would have
  * written); everything else is the call site's existing locals. Comments in
  * the emitted text are kept to one line — the 4D tracer's strip-threshold
  * headroom is measured in single kilobytes.

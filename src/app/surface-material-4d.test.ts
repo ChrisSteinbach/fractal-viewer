@@ -2,7 +2,7 @@ import type * as THREE from "three";
 import {
   createSurfaceMaterial4,
   setSurface4Balloon,
-  setSurface4Finishes,
+  setSurface4Materials,
   setSurface4GroundPlane,
   setSurfaceSystem4,
   setSurfaceView4,
@@ -11,16 +11,19 @@ import {
   SURFACE4_MAX_MAPS,
 } from "./surface-material-4d";
 import {
+  createSurfaceMaterial,
   packSurfaceBalloonTint,
   SURFACE_GLSL_STRIP_BYTES,
   surfaceFragmentFor,
   surfaceFragmentResolvedFor,
 } from "./surface-material";
+import { resolveSurfaceFinish } from "../fractal/surface-finish";
 import {
-  CLASSIC_SURFACE_FINISH,
-  resolveSurfaceFinish,
-  surfaceFinishLanes,
-} from "../fractal/surface-finish";
+  CLASSIC_SURFACE_MATERIAL,
+  resolveSurfaceMaterial,
+  surfaceMaterialLanes,
+  type SurfaceMaterialSlots,
+} from "../fractal/surface-material-wire";
 import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
 import type { SurfaceDE4, SurfaceDE4Map } from "../fractal/surface-de-4d";
 import { radiusBandInvRange } from "../fractal/surface-de-4d";
@@ -792,6 +795,35 @@ describe("the 4D tracer's finish arm", () => {
     reflect: 0.5,
     transmit: 0.2,
   });
+  const finishMaterials = (
+    finishes: readonly (typeof authored)[],
+  ): SurfaceMaterialSlots => ({
+    slots: finishes.map((finish) => ({
+      finish,
+      pattern: CLASSIC_SURFACE_MATERIAL.pattern,
+    })),
+    finish: true,
+    pattern: false,
+  });
+  const calibration = {
+    ringsLow: 0.1,
+    ringsInvSpan: 2,
+    sheetsLow: 0.2,
+    sheetsInvSpan: 3,
+  };
+  const patternMaterials = (finish = false): SurfaceMaterialSlots => ({
+    slots: [
+      resolveSurfaceMaterial(finish ? authored : undefined, {
+        kind: "marble",
+        axis: "x",
+        scale: 3.1256,
+        strength: 0.625,
+      }),
+    ],
+    finish,
+    pattern: true,
+    patternCalibration: calibration,
+  });
 
   it("declares the finish lanes as the block's two trailing members UNCONDITIONALLY, read only under the arm", () => {
     // The block's member list is the std140 layout contract with the
@@ -900,7 +932,7 @@ describe("the 4D tracer's finish arm", () => {
     const maps = mapBlock(material);
     expect(maps.finishA).toHaveLength(SURFACE4_MAX_MAPS * 4);
     expect(maps.finishB).toHaveLength(SURFACE4_MAX_MAPS * 4);
-    const classic = surfaceFinishLanes(CLASSIC_SURFACE_FINISH);
+    const classic = surfaceMaterialLanes(CLASSIC_SURFACE_MATERIAL);
     for (let j = 0; j < SURFACE4_MAX_MAPS; j++) {
       expect(maps.finishA.subarray(j * 4, j * 4 + 4)).toEqual(
         new Float32Array(classic.a),
@@ -911,13 +943,16 @@ describe("the 4D tracer's finish arm", () => {
     }
   });
 
-  it("setSurface4Finishes writes each slot's lanes into the block at j * 4, resets the rest to classic, flips the define and recompiles", () => {
+  it("setSurface4Materials writes finish-only slots into the block at j * 4, resets the rest, flips the finish gate and recompiles", () => {
     const material = createSurfaceMaterial4();
     const versionBefore = material.version;
-    setSurface4Finishes(material, [
-      authored,
-      resolveSurfaceFinish({ specular: 0.1, shininess: 8 }),
-    ]);
+    setSurface4Materials(
+      material,
+      finishMaterials([
+        authored,
+        resolveSurfaceFinish({ specular: 0.1, shininess: 8 }),
+      ]),
+    );
     const maps = mapBlock(material);
     expect(maps.finishA.subarray(0, 4)).toEqual(
       new Float32Array([0.9, 64, 0.3, 0.5]),
@@ -943,22 +978,28 @@ describe("the 4D tracer's finish arm", () => {
     expect(material.version).toBeGreaterThan(versionBefore);
     // A float32 lane rounds an authored value to the GPU's own precision —
     // which is the precision every other member of this block carries.
-    setSurface4Finishes(material, [{ ...authored, specular: 0.7 }]);
+    setSurface4Materials(
+      material,
+      finishMaterials([{ ...authored, specular: 0.7 }]),
+    );
     expect(maps.finishA[0]).toBeCloseTo(0.7, 6);
   });
 
   it("rewrites the lanes without touching the shader on a value-only change, and null hands the fixed formula back with every slot classic", () => {
     const material = createSurfaceMaterial4();
-    setSurface4Finishes(material, [authored]);
+    setSurface4Materials(material, finishMaterials([authored]));
     const version = material.version;
     const shader = material.fragmentShader;
-    setSurface4Finishes(material, [{ ...authored, reflect: 1 }]);
+    setSurface4Materials(
+      material,
+      finishMaterials([{ ...authored, reflect: 1 }]),
+    );
     const maps = mapBlock(material);
     expect(maps.finishA[3]).toBe(1);
     expect(material.version).toBe(version);
     expect(material.fragmentShader).toBe(shader);
 
-    setSurface4Finishes(material, null);
+    setSurface4Materials(material, null);
     expect(material.defines.SURFACE4_FINISH).toBe(0);
     expect(maps.finishA.subarray(0, 4)).toEqual(
       new Float32Array([0.4, 32, 0, 0]),
@@ -968,12 +1009,39 @@ describe("the 4D tracer's finish arm", () => {
     expect(material.version).toBeGreaterThan(version);
   });
 
+  it("keeps the fixed std140 layout and classic lighting for pattern-only materials", () => {
+    const material = createSurfaceMaterial4();
+    const group = material.uniformsGroups[0];
+    setSurface4Materials(material, patternMaterials());
+    expect(group.uniforms).toHaveLength(6);
+    expect(material.defines.SURFACE4_FINISH).toBe(0);
+    expect(material.defines.SURFACE4_PATTERN).toBe(1);
+    expect(material.fragmentShader).not.toContain("finishShade");
+    expect(material.fragmentShader).toContain("32.0) * 0.4;");
+    expect(material.fragmentShader).toContain(
+      "uniform vec4 uPatternCalibration;",
+    );
+    const maps = mapBlock(material);
+    expect(maps.finishB[2]).not.toBe(0);
+    expect(maps.finishB[3]).toBeCloseTo(3.1256, 6);
+    expect(
+      (material.uniforms.uPatternCalibration.value as THREE.Vector4).toArray(),
+    ).toEqual([0.1, 2, 0.2, 3]);
+
+    setSurface4Materials(material, null);
+    expect("SURFACE4_PATTERN" in material.defines).toBe(false);
+    expect(group.uniforms).toHaveLength(6);
+    expect(material.fragmentShader).toBe(surface4FragmentFor());
+  });
+
   it("survives both scene arms' rebuilds in either direction, and reads them back when it rebuilds", () => {
     const material = createSurfaceMaterial4();
-    setSurface4Finishes(material, [authored]);
+    setSurface4Materials(material, patternMaterials(true));
     const finished = (what: string) => {
       expect(material.defines.SURFACE4_FINISH, what).toBe(1);
+      expect(material.defines.SURFACE4_PATTERN, what).toBe(1);
       expect(material.fragmentShader, what).toContain(fetchLine);
+      expect(material.fragmentShader, what).toContain("uPatternCalibration");
     };
     setSurface4Balloon(material, balloonSpec());
     expect(material.fragmentShader).toContain("balloonInvert");
@@ -984,29 +1052,39 @@ describe("the 4D tracer's finish arm", () => {
     expect(material.fragmentShader).toContain("shadeGroundPlane");
     finished("plane on");
     // Clearing the finish over a live floor keeps the floor.
-    setSurface4Finishes(material, null);
+    setSurface4Materials(material, null);
     expect(material.defines.SURFACE4_GROUND_PLANE).toBe(1);
     expect(material.fragmentShader).toContain("shadeGroundPlane");
     expect(material.fragmentShader).not.toContain("finishShade");
     // And re-enabling it over the floor composes both.
-    setSurface4Finishes(material, [authored]);
+    setSurface4Materials(material, patternMaterials(true));
     expect(material.fragmentShader).toContain("shadeGroundPlane");
     finished("finish over plane");
   });
 
-  it("refuses more finish slots than the block carries, and a material without a block", () => {
+  it("refuses more material slots than the block carries, and a material without a block", () => {
     const material = createSurfaceMaterial4();
     expect(() =>
-      setSurface4Finishes(
+      setSurface4Materials(
         material,
-        Array.from({ length: SURFACE4_MAX_MAPS + 1 }, () => authored),
+        finishMaterials(
+          Array.from({ length: SURFACE4_MAX_MAPS + 1 }, () => authored),
+        ),
       ),
     ).toThrow(RangeError);
     expect(() =>
-      setSurface4Finishes(
+      setSurface4Materials(
         material,
-        Array.from({ length: SURFACE4_MAX_MAPS }, () => authored),
+        finishMaterials(
+          Array.from({ length: SURFACE4_MAX_MAPS }, () => authored),
+        ),
       ),
     ).not.toThrow();
+    expect(() =>
+      setSurface4Materials(
+        createSurfaceMaterial(),
+        finishMaterials([authored]),
+      ),
+    ).toThrow(TypeError);
   });
 });

@@ -2,10 +2,11 @@ import { derivedColorIndex } from "../fractal/chaos-game";
 import { transformColors } from "../fractal/color";
 import type { Transform } from "../fractal/types";
 import { CLASSIC_SURFACE_FINISH } from "../fractal/surface-finish";
+import { CLASSIC_SURFACE_MATERIAL } from "../fractal/surface-material-wire";
 import {
   surfaceSlotColors,
-  surfaceSlotFinishes,
-  surfaceSlotsAuthorFinish,
+  surfaceForwardSlot,
+  surfaceSlotMaterials,
   surfaceTrapIndices,
 } from "./surface-slots";
 import type { SurfaceSlot } from "./surface-slots";
@@ -19,6 +20,13 @@ function transform(overrides: Partial<Transform> = {}): Transform {
     ...overrides,
   };
 }
+
+const calibration = {
+  ringsLow: 0.1,
+  ringsInvSpan: 2,
+  sheetsLow: 0.2,
+  sheetsInvSpan: 3,
+};
 
 describe("surfaceTrapIndices", () => {
   it("takes an authored colorIndex as the slot's coordinate over the derived ramp spread", () => {
@@ -119,6 +127,24 @@ describe("surfaceTrapIndices", () => {
   });
 });
 
+describe("surfaceForwardSlot", () => {
+  it("shares the first positive-weight head selection for forward color and material wires", () => {
+    const transforms = [
+      transform({ id: 0, weight: 0 }),
+      transform({ id: 1, weight: 0 }),
+      transform({ id: 2, weight: 0.5 }),
+    ];
+    expect(surfaceForwardSlot(transforms)).toEqual({ baseIndex: 2 });
+  });
+
+  it("falls back to slot zero for all-zero or empty hostile input", () => {
+    expect(surfaceForwardSlot([transform({ weight: 0 })])).toEqual({
+      baseIndex: 0,
+    });
+    expect(surfaceForwardSlot([])).toEqual({ baseIndex: 0 });
+  });
+});
+
 describe("surfaceSlotColors", () => {
   it("colors each slot from its base map's By Transform hue, keyed on the full transform count when slots are sparse", () => {
     // 4 transforms in the document but only 2 slots (baseIndex 0 and 3), so
@@ -158,65 +184,105 @@ describe("surfaceSlotColors", () => {
   });
 });
 
-describe("surfaceSlotFinishes", () => {
-  it("resolves each slot's base-map finish, sparse baseIndex included", () => {
+describe("surfaceSlotMaterials", () => {
+  it("resolves finish and pattern together for each base-map slot, sparse baseIndex included", () => {
     const transforms = [
-      transform({ id: 0, finish: { metalness: 1, reflect: 0.5 } }),
+      transform({
+        id: 0,
+        finish: { metalness: 1, reflect: 0.5 },
+        surfacePattern: {
+          kind: "wood",
+          axis: "z",
+          scale: 4,
+          strength: 0.75,
+        },
+      }),
       transform({ id: 1, weight: 0 }),
       transform({ id: 2 }),
     ];
     const slots: SurfaceSlot[] = [{ baseIndex: 0 }, { baseIndex: 2 }];
-    expect(surfaceSlotFinishes(transforms, slots)).toEqual([
-      { ...CLASSIC_SURFACE_FINISH, metalness: 1, reflect: 0.5 },
-      CLASSIC_SURFACE_FINISH,
-    ]);
+    expect(surfaceSlotMaterials(transforms, slots, calibration)).toEqual({
+      finish: true,
+      pattern: true,
+      patternCalibration: calibration,
+      slots: [
+        {
+          finish: {
+            ...CLASSIC_SURFACE_FINISH,
+            metalness: 1,
+            reflect: 0.5,
+          },
+          pattern: {
+            kind: "wood",
+            axis: "z",
+            scale: 4,
+            strength: 0.75,
+          },
+        },
+        CLASSIC_SURFACE_MATERIAL,
+      ],
+    });
   });
 
-  it("resolves an unauthored slot to the classic lanes explicitly, never a hole", () => {
+  it("returns null for the exact classic+none route, including explicitly classic finish values", () => {
     const transforms = [transform({ id: 0 })];
-    expect(surfaceSlotFinishes(transforms, [{ baseIndex: 0 }])).toEqual([
-      CLASSIC_SURFACE_FINISH,
-    ]);
+    expect(surfaceSlotMaterials(transforms, [{ baseIndex: 0 }])).toBeNull();
+    expect(
+      surfaceSlotMaterials(
+        [
+          transform({
+            id: 0,
+            finish: { specular: 0.4, shininess: 32, metalness: 0 },
+          }),
+        ],
+        [{ baseIndex: 0 }],
+      ),
+    ).toBeNull();
   });
-});
 
-describe("surfaceSlotsAuthorFinish", () => {
-  it("is false when no transform authors a finish", () => {
-    const transforms = [transform({ id: 0 }), transform({ id: 1 })];
-    const slots: SurfaceSlot[] = [{ baseIndex: 0 }, { baseIndex: 1 }];
-    expect(surfaceSlotsAuthorFinish(transforms, slots)).toBe(false);
-  });
-
-  it("is false when the authored finish RESOLVES to classic — explicit classic values must not force the parametric program", () => {
+  it("keeps finish and pattern gates independent for pattern-only and finish-only wires", () => {
     const transforms = [
       transform({
         id: 0,
-        finish: { specular: 0.4, shininess: 32, metalness: 0 },
+        surfacePattern: { kind: "marble", axis: "y", strength: 0 },
       }),
     ];
-    expect(surfaceSlotsAuthorFinish(transforms, [{ baseIndex: 0 }])).toBe(
-      false,
-    );
+    expect(
+      surfaceSlotMaterials(transforms, [{ baseIndex: 0 }], calibration),
+    ).toMatchObject({ finish: false, pattern: true });
+    expect(
+      surfaceSlotMaterials(
+        [transform({ id: 0, finish: { transmit: 0.7 } })],
+        [{ baseIndex: 0 }],
+      ),
+    ).toMatchObject({ finish: true, pattern: false });
   });
 
-  it("is true when any slotted transform resolves away from classic", () => {
-    const transforms = [
-      transform({ id: 0 }),
-      transform({ id: 1, finish: { transmit: 0.7 } }),
-    ];
-    const slots: SurfaceSlot[] = [{ baseIndex: 0 }, { baseIndex: 1 }];
-    expect(surfaceSlotsAuthorFinish(transforms, slots)).toBe(true);
+  it("refuses a pattern gate without the built DE's one calibration quartet", () => {
+    expect(() =>
+      surfaceSlotMaterials(
+        [
+          transform({
+            surfacePattern: { kind: "wood", axis: "y" },
+          }),
+        ],
+        [{ baseIndex: 0 }],
+      ),
+    ).toThrow(TypeError);
   });
 
-  it("ignores an authored finish on a transform that contributes no slot — weight-0 maps must not force the parametric program", () => {
+  it("ignores finish and pattern on transforms that contribute no slot", () => {
     const transforms = [
       transform({ id: 0 }),
-      transform({ id: 1, weight: 0, finish: { metalness: 1 } }),
+      transform({
+        id: 1,
+        weight: 0,
+        finish: { metalness: 1 },
+        surfacePattern: { kind: "strata", axis: "x" },
+      }),
       transform({ id: 2 }),
     ];
-    // The slot list skips the weight-0 middle map, exactly as buildSurfaceDE
-    // builds it.
     const slots: SurfaceSlot[] = [{ baseIndex: 0 }, { baseIndex: 2 }];
-    expect(surfaceSlotsAuthorFinish(transforms, slots)).toBe(false);
+    expect(surfaceSlotMaterials(transforms, slots)).toBeNull();
   });
 });

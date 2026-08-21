@@ -1,9 +1,11 @@
 import { transformColors } from "../fractal/color";
 import {
-  isClassicSurfaceFinish,
-  resolveSurfaceFinish,
-  type ResolvedSurfaceFinish,
-} from "../fractal/surface-finish";
+  resolveSurfaceMaterial,
+  surfaceMaterialUsesFinish,
+  surfaceMaterialUsesPattern,
+  type SurfaceMaterialSlots,
+} from "../fractal/surface-material-wire";
+import type { SurfaceNativeCalibration } from "../fractal/surface-pattern";
 import type { Transform, Vec3 } from "../fractal/types";
 
 /**
@@ -35,6 +37,21 @@ import type { Transform, Vec3 } from "../fractal/types";
  */
 export interface SurfaceSlot {
   readonly baseIndex: number;
+}
+
+/** The synthetic one-slot wire used by every forward-orbit surface core
+ * (escape, bulb and escape4): the first positive-weight transform, falling
+ * back to head index 0 for hostile/all-zero input. Color and material callers
+ * share this selector so their slot-0 meanings cannot drift. */
+export function surfaceForwardSlot(
+  transforms: readonly Transform[],
+): SurfaceSlot {
+  return {
+    baseIndex: Math.max(
+      0,
+      transforms.findIndex((transform) => (transform.weight ?? 1) > 0),
+    ),
+  };
 }
 
 /**
@@ -98,43 +115,42 @@ export function surfaceTrapIndices(
 }
 
 /**
- * Per-slot surface FINISHES — the third per-slot shading input, beside the
- * colors and trap coordinates above: each slot takes its base map's
- * authored {@link Transform.finish} through `surface-finish.ts`'s
- * `resolveSurfaceFinish`, the one absent-means-classic definition, so an
- * unauthored transform's slot carries the classic lanes explicitly.
- * `baseIndex`-keyed exactly like {@link surfaceSlotColors} and
- * dimension-agnostic for the same reason (a 4D slot differs from a 3D one
- * in everything but the field this reads). Kaleidoscope copies inherit
- * their base map's finish for free — slots are base maps in both
- * dimensions.
- */
-export function surfaceSlotFinishes(
-  transforms: readonly Transform[],
-  maps: readonly SurfaceSlot[],
-): ResolvedSurfaceFinish[] {
-  return maps.map((m) => resolveSurfaceFinish(transforms[m.baseIndex].finish));
-}
-
-/**
- * The finish COMPILE GATE's predicate: does any SLOTTED transform author a
- * finish that resolves away from classic? The parametric shader path is
- * not a byte-identity with the fixed lighting formula (`pow(x, 32.0)`
- * literal against a per-slot value), so an unauthored document must
- * compile literally today's program text — callers pass the slot finishes
- * only when this is true, and `null` otherwise, on BOTH engines (the WGSL
- * `finish` codegen flag and the GLSL `SURFACE_FINISH` define).
+ * Resolve one material per DE slot and both independent compile gates in one
+ * pass. This is the sole transform-to-material derivation: finish and pattern
+ * can no longer be routed or packed by setters that overwrite each other's
+ * shared B lane.
  *
- * Keyed on the SLOT list deliberately: a weight-0 transform contributes no
- * slot, so an authored finish on a map the descent never inverts must not
- * force the parametric program — the slot list, not the transform list, is
- * what the tracers shade from.
+ * `baseIndex`-keyed exactly like colors/traps above, so weight-zero transforms
+ * do not force either gate and kaleidoscope copies inherit their base map's
+ * material. `null` is the exact classic+none route: GLSL keeps its old source
+ * and WGSL keeps its old stride-1 shadeMaps bytes. A non-null wire is present
+ * when EITHER gate is authored; pattern-only therefore gets stride 3 while
+ * `finish` remains false and the fixed classic lighting formula stays live.
  */
-export function surfaceSlotsAuthorFinish(
+export function surfaceSlotMaterials(
   transforms: readonly Transform[],
   maps: readonly SurfaceSlot[],
-): boolean {
-  return maps.some(
-    (m) => !isClassicSurfaceFinish(transforms[m.baseIndex].finish),
-  );
+  patternCalibration?: SurfaceNativeCalibration,
+): SurfaceMaterialSlots | null {
+  let finish = false;
+  let pattern = false;
+  const slots = maps.map((m) => {
+    const transform = transforms[m.baseIndex];
+    const material = resolveSurfaceMaterial(
+      transform.finish,
+      transform.surfacePattern,
+    );
+    finish ||= surfaceMaterialUsesFinish(material);
+    pattern ||= surfaceMaterialUsesPattern(material);
+    return material;
+  });
+  if (pattern) {
+    if (!patternCalibration) {
+      throw new TypeError(
+        "patterned surface slots require their built DE's native calibration",
+      );
+    }
+    return { slots, finish, pattern: true, patternCalibration };
+  }
+  return finish ? { slots, finish: true, pattern: false } : null;
 }

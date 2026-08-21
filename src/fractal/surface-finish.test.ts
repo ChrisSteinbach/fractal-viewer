@@ -6,7 +6,6 @@ import {
   finishShadeTs,
   isClassicSurfaceFinish,
   resolveSurfaceFinish,
-  surfaceFinishLanes,
   surfaceFinishShadeSource,
   type SurfaceFinishShadeEnv,
 } from "./surface-finish";
@@ -134,28 +133,6 @@ describe("isClassicSurfaceFinish", () => {
 
   it("is false when reflection tint resolves away from classic", () => {
     expect(isClassicSurfaceFinish({ reflectionTint: 0 })).toBe(false);
-  });
-});
-
-describe("surfaceFinishLanes", () => {
-  it("packs a = (specular, shininess, metalness, reflect) and b = (transmit, reflectionTint, 0, 0)", () => {
-    expect(
-      surfaceFinishLanes({
-        specular: 0.7,
-        shininess: 96,
-        metalness: 1,
-        reflect: 0.6,
-        transmit: 0.25,
-        reflectionTint: 0.5,
-      }),
-    ).toEqual({ a: [0.7, 96, 1, 0.6], b: [0.25, 0.5, 0, 0] });
-  });
-
-  it("packs classic reflection tint and zero-fills the two reserved lanes", () => {
-    const { b } = surfaceFinishLanes(CLASSIC_SURFACE_FINISH);
-    expect(b[1]).toBe(1);
-    expect(b[2]).toBe(0);
-    expect(b[3]).toBe(0);
   });
 });
 
