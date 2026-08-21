@@ -2,6 +2,7 @@ import {
   PATTERN_DETAIL_FOOTPRINT_FULL,
   PATTERN_DETAIL_FOOTPRINT_OFF,
   PATTERN_DETAIL_MIX,
+  PATTERN_DEFAULT_SCALE,
   PATTERN_MIN_NATIVE_SPAN,
   calibrateNativeCarrier,
   evaluateSurfacePattern,
@@ -59,25 +60,86 @@ describe("finish pattern prototype coordinate stack", () => {
     expect(Math.abs(alongY.phase - alongX.phase)).toBeGreaterThan(0.4);
   });
 
-  it("marble is a warped plane and strata remains a broad laminar plane", () => {
+  it("wood irregularity is longitudinal rather than isotropic noise", () => {
+    let axialGradient = 0;
+    let crossGradient = 0;
+    const h = 0.01;
+    for (let iy = 0; iy < 21; iy++) {
+      for (let ix = 0; ix < 21; ix++) {
+        const u = -0.8 + (1.6 * ix) / 20;
+        const a = -0.8 + (1.6 * iy) / 20;
+        const phase = (x: number, y: number): number =>
+          patternMacroSample("wood", "y", PATTERN_DEFAULT_SCALE.wood, [
+            x,
+            y,
+            0.23,
+          ]).phase;
+        axialGradient += Math.abs(phase(u, a + h) - phase(u, a - h));
+        crossGradient += Math.abs(phase(u + h, a) - phase(u - h, a));
+      }
+    }
+    expect(crossGradient / axialGradient).toBeGreaterThan(5);
+  });
+
+  it("marble is sparse and strata contains at least three coherent layers", () => {
     const p0: Vec3 = [0.2, -0.4, 0.1];
     const p1: Vec3 = [0.2, 0.4, 0.1];
     const marble0 = patternMacroSample("marble", "y", 3.25, p0);
     const marble1 = patternMacroSample("marble", "y", 3.25, p1);
     const strata0 = patternMacroSample("strata", "y", 2.75, p0);
     const strata1 = patternMacroSample("strata", "y", 2.75, p1);
-    expect(Math.abs(marble1.phase - marble0.phase)).toBeGreaterThan(1);
+    expect(Math.abs(marble1.phase - marble0.phase)).toBeGreaterThan(0.25);
     expect(Math.abs(strata1.phase - strata0.phase)).toBeGreaterThan(1);
+
+    let marbleCore = 0;
+    let marbleHalo = 0;
+    const sampleSize = 64;
+    for (let y = 0; y < sampleSize; y++) {
+      for (let x = 0; x < sampleSize; x++) {
+        const ramp = patternMacroSample(
+          "marble",
+          "y",
+          PATTERN_DEFAULT_SCALE.marble,
+          [
+            -1 + (2 * x) / (sampleSize - 1),
+            -1 + (2 * y) / (sampleSize - 1),
+            0.17,
+          ],
+        ).ramp;
+        if (ramp > 0.9) marbleCore++;
+        if (ramp > 0.58) marbleHalo++;
+      }
+    }
+    const samples = sampleSize * sampleSize;
+    expect(marbleCore / samples).toBeGreaterThanOrEqual(0.03);
+    expect(marbleCore / samples).toBeLessThanOrEqual(0.12);
+    expect(marbleHalo / samples).toBeGreaterThanOrEqual(0.1);
+    expect(marbleHalo / samples).toBeLessThanOrEqual(0.28);
+
+    let layers = 0;
+    let inLayer = false;
+    for (let i = 0; i < 1024; i++) {
+      const a = -1 + (2 * i) / 1023;
+      const now =
+        patternMacroSample("strata", "y", PATTERN_DEFAULT_SCALE.strata, [
+          0.17,
+          a,
+          0.23,
+        ]).ramp > 0.58;
+      if (now && !inLayer) layers++;
+      inLayer = now;
+    }
+    expect(layers).toBeGreaterThanOrEqual(3);
   });
 
-  it("crossfades completed ramp outputs, with native detail bounded below one", () => {
+  it("crossfades complete macro and structured-detail ramp outputs", () => {
     const got = evaluateSurfacePattern(
       base,
       { kind: "wood", axis: "y", scale: 3.5, strength: 1 },
       query(0),
     );
     expect(got.detailMix).toBe(PATTERN_DETAIL_MIX.wood);
-    expect(got.detailMix).toBeLessThan(1);
+    expect(got.detailMix).toBeLessThanOrEqual(1);
     expect(got.outputRamp).toBeCloseTo(
       got.macroRamp * (1 - got.detailMix) + got.detailRamp * got.detailMix,
       14,

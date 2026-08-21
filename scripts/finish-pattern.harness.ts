@@ -57,7 +57,9 @@ import {
   PATTERN_DETAIL_FOOTPRINT_FULL,
   PATTERN_DETAIL_FOOTPRINT_OFF,
   PATTERN_DETAIL_MIX,
-  PATTERN_NATIVE_PERIODS,
+  PATTERN_DETAIL_MAX_OCTAVE,
+  PATTERN_DETAIL_SCALE_MULTIPLIER,
+  PATTERN_NATIVE_WARP_CYCLES,
   PATTERN_NOISE_OCTAVES,
   calibrateNativeCarrier,
   evaluateSurfacePattern,
@@ -75,6 +77,11 @@ const SIZE = Math.max(
   64,
   Math.round(Number(process.env.FINISH_PATTERN_SIZE) || DEFAULT_SIZE),
 );
+const REVIEW_SIZE = Math.max(
+  96,
+  Math.round(Number(process.env.FINISH_PATTERN_REVIEW_SIZE) || 288),
+);
+const HERO_PREFLIGHT = process.env.FINISH_PATTERN_HERO_PREFLIGHT === "1";
 const PROBE_SIZE = 96;
 const ZOOMS = [1, 4, 16, 64] as const;
 const MIN_HIT_FRACTION = 0.02;
@@ -104,9 +111,9 @@ const ENV_BASE: Omit<SurfaceFinishShadeEnv, "lightDir"> = {
 };
 const BASES: Readonly<Record<PatternKind, Vec3>> = {
   none: [0.72, 0.64, 0.52],
-  wood: [0.78, 0.55, 0.3],
-  marble: [0.9, 0.88, 0.84],
-  strata: [0.72, 0.6, 0.44],
+  wood: [0.72, 0.4, 0.16],
+  marble: [0.86, 0.84, 0.78],
+  strata: [0.68, 0.6, 0.47],
 };
 
 interface HitInfo {
@@ -387,6 +394,8 @@ interface SystemSpec {
   final?: Transform;
   eye: Vec3;
   frame: number;
+  /** Pattern-independent framing used only by the scored 1x review heroes. */
+  reviewFrame: number;
 }
 interface BuiltSystem {
   spec: SystemSpec;
@@ -414,6 +423,7 @@ const ALL_SYSTEMS: readonly SystemSpec[] = [
     transforms: mengerSponge(),
     eye: [1.55, 1.1, 1.8],
     frame: 0.5,
+    reviewFrame: 0.5,
   },
   {
     name: "mandelbox-pair",
@@ -421,6 +431,7 @@ const ALL_SYSTEMS: readonly SystemSpec[] = [
     transforms: foldMandelboxPair(),
     eye: [1.55, 1.1, 1.8],
     frame: 0.55,
+    reviewFrame: 0.55,
   },
   {
     name: "menger-lens",
@@ -429,6 +440,7 @@ const ALL_SYSTEMS: readonly SystemSpec[] = [
     final: squashLens(),
     eye: [1.55, 1.1, 1.8],
     frame: 0.55,
+    reviewFrame: 0.44,
   },
 ];
 const selectedNames = new Set(
@@ -551,6 +563,8 @@ interface CachedHit {
 }
 interface GeometryRung {
   zoom: number;
+  size: number;
+  frame: number;
   stats: PanelStats;
   hits: Array<CachedHit | undefined>;
   components: Int32Array;
@@ -559,6 +573,7 @@ interface GeometryRung {
 /** Label adjacent pixels only when their source/object points are local. */
 function continuousComponents(
   hits: readonly (CachedHit | undefined)[],
+  size: number,
 ): Int32Array {
   const labels = new Int32Array(hits.length);
   const stack: number[] = [];
@@ -570,9 +585,9 @@ function continuousComponents(
     while (stack.length > 0) {
       const at = stack.pop()!;
       const here = hits[at]!;
-      const x = at % SIZE;
-      for (const step of [-1, 1, -SIZE, SIZE]) {
-        if ((step === -1 && x === 0) || (step === 1 && x === SIZE - 1))
+      const x = at % size;
+      for (const step of [-1, 1, -size, size]) {
+        if ((step === -1 && x === 0) || (step === 1 && x === size - 1))
           continue;
         const to = at + step;
         if (to < 0 || to >= hits.length || labels[to] !== 0 || !hits[to])
@@ -595,11 +610,17 @@ function continuousComponents(
   return labels;
 }
 
-function renderGeometry(sys: BuiltSystem, zoom: number): GeometryRung {
+function renderGeometry(
+  sys: BuiltSystem,
+  zoom: number,
+  size = SIZE,
+  frame = sys.spec.frame,
+  targetOverride?: Vec3,
+): GeometryRung {
   const estimator =
     zoom === 1 ? sys.estimator : zoomDE(sys.estimator, sys.anchor, zoom);
-  const target: Vec3 = zoom === 1 ? sys.target : [0, 0, 0];
-  const hits = new Array<CachedHit | undefined>(SIZE * SIZE).fill(undefined);
+  const target: Vec3 = targetOverride ?? (zoom === 1 ? sys.target : [0, 0, 0]);
+  const hits = new Array<CachedHit | undefined>(size * size).fill(undefined);
   const shade = (hit: PreviewHit): Vec3 => {
     const world: Vec3 =
       zoom === 1
@@ -611,7 +632,7 @@ function renderGeometry(sys: BuiltSystem, zoom: number): GeometryRung {
           ];
     const source = sourcePoint(sys.de, world);
     const info = hitInfo(sys.de, world);
-    hits[hit.py * SIZE + hit.px] = {
+    hits[hit.py * size + hit.px] = {
       hit,
       world,
       objectP: [
@@ -640,15 +661,22 @@ function renderGeometry(sys: BuiltSystem, zoom: number): GeometryRung {
       target,
       stepScale: sys.de.stepScale,
       eyeOffset: sys.spec.eye,
-      zoom: sys.spec.frame,
+      zoom: frame,
       ao: false,
       shadow: false,
       fog: false,
       shade,
     },
-    SIZE,
+    size,
   );
-  return { zoom, stats, hits, components: continuousComponents(hits) };
+  return {
+    zoom,
+    size,
+    frame,
+    stats,
+    hits,
+    components: continuousComponents(hits, size),
+  };
 }
 
 const luminance = (c: Vec3): number =>
@@ -807,12 +835,14 @@ function renderPatternPanel(
   sys: BuiltSystem,
   geometry: GeometryRung,
   spec: PanelSpec,
+  enforceMachineGates = true,
 ): RenderedPanel {
+  const size = geometry.size;
   const base = BASES[spec.kind];
   const rgb = geometry.stats.rgb.slice();
-  const residual = new Float32Array(SIZE * SIZE);
-  const mask = new Uint8Array(SIZE * SIZE);
-  const nativeValues = new Float32Array(SIZE * SIZE);
+  const residual = new Float32Array(size * size);
+  const mask = new Uint8Array(size * size);
+  const nativeValues = new Float32Array(size * size);
   let gateSum = 0;
   let detailMixSum = 0;
   let count = 0;
@@ -834,8 +864,8 @@ function renderPatternPanel(
           ]
         : sample.objectP;
     const footprint =
-      (2 * sys.spec.frame * Math.max(sample.hit.t / sys.R, 1)) /
-      (SIZE * spec.zoom);
+      (2 * geometry.frame * Math.max(sample.hit.t / sys.R, 1)) /
+      (size * spec.zoom);
     const detailMode: PatternDetailMode =
       spec.mode === "hybrid" ? "hybrid" : "macro-only";
     const result = evaluateSurfacePattern(
@@ -872,14 +902,14 @@ function renderPatternPanel(
     detailMixSum += result.detailMix;
     count++;
   }
-  const metrics = residualMetrics(residual, mask, geometry.components, SIZE);
+  const metrics = residualMetrics(residual, mask, geometry.components, size);
   const checks: string[] = [];
-  if (geometry.stats.hits <= MIN_HIT_FRACTION * SIZE * SIZE)
+  if (geometry.stats.hits <= MIN_HIT_FRACTION * size * size)
     checks.push("hit-coverage");
   if (spec.kind === "none" && metrics.residualVariance > 1e-12) {
     checks.push("none-not-identity");
   }
-  if (spec.kind !== "none" && spec.mode === "hybrid" && spec.zoom === 1) {
+  if (enforceMachineGates && spec.kind !== "none" && spec.mode === "hybrid") {
     if (
       metrics.edgeDensity < EDGE_DENSITY_MIN ||
       metrics.edgeDensity > EDGE_DENSITY_MAX
@@ -962,13 +992,140 @@ interface SystemManifest {
   }>;
 }
 
+interface ReviewFit {
+  hitFraction: number;
+  bboxWidthFraction: number;
+  bboxHeightFraction: number;
+  /** Robust p02..p98 source/object-coordinate extent. */
+  objectSpan: Vec3;
+  clipped: boolean;
+  exhausted: number;
+}
+
+interface ReviewCamera {
+  frame: number;
+  target: Vec3;
+}
+
+const REVIEW_FIT_PROBE_SIZE = 96;
+const REVIEW_FIT_TARGET_FRACTION = 0.28;
+const REVIEW_FIT_ROUNDS = 5;
+const REVIEW_MIN_OBJECT_PIXELS = 10_000;
+const REVIEW_MIN_HIT_FRACTION = 0.05;
+const REVIEW_MIN_BBOX_WIDTH = 0.55;
+
+/**
+ * Recenter and tighten a review camera using only the plain geometry mask.
+ * The result is shared by every family, so material math cannot choose its
+ * own flattering crop.  This is especially important for disconnected fold
+ * systems whose fitted bound centre may lie in empty space.
+ */
+function fitReviewCamera(sys: BuiltSystem): ReviewCamera {
+  let frame = sys.spec.reviewFrame;
+  let target: Vec3 = [sys.target[0], sys.target[1], sys.target[2]];
+  let best: ReviewCamera = { frame, target };
+  let bestFraction = -1;
+  const pixels = REVIEW_FIT_PROBE_SIZE * REVIEW_FIT_PROBE_SIZE;
+  for (let round = 0; round < REVIEW_FIT_ROUNDS; round++) {
+    const probe = renderPreview(
+      {
+        de: sys.estimator,
+        boundingRadius: sys.R,
+        target,
+        stepScale: sys.de.stepScale,
+        eyeOffset: sys.spec.eye,
+        zoom: frame,
+        collect: true,
+        ao: false,
+        shadow: false,
+        fog: false,
+      },
+      REVIEW_FIT_PROBE_SIZE,
+    );
+    const fraction = probe.hits / pixels;
+    if (fraction > bestFraction) {
+      bestFraction = fraction;
+      best = { frame, target: [target[0], target[1], target[2]] };
+    }
+    let sx = 0;
+    let sy = 0;
+    let sz = 0;
+    let count = 0;
+    for (let i = 0; i < pixels; i++) {
+      if (probe.status?.[i] !== PREVIEW_HIT || !probe.hitPos) continue;
+      sx += probe.hitPos[i * 3];
+      sy += probe.hitPos[i * 3 + 1];
+      sz += probe.hitPos[i * 3 + 2];
+      count++;
+    }
+    if (count === 0) break;
+    if (fraction >= REVIEW_FIT_TARGET_FRACTION) break;
+    target = [sx / count, sy / count, sz / count];
+    if (fraction > 0) {
+      frame *= Math.max(
+        0.55,
+        Math.min(0.95, Math.sqrt(fraction / REVIEW_FIT_TARGET_FRACTION)),
+      );
+    }
+  }
+  return best;
+}
+
+function reviewFit(geometry: GeometryRung): ReviewFit {
+  const { size, hits } = geometry;
+  let minX = size;
+  let minY = size;
+  let maxX = -1;
+  let maxY = -1;
+  let clipped = false;
+  let count = 0;
+  const objectAxes: [number[], number[], number[]] = [[], [], []];
+  for (let i = 0; i < hits.length; i++) {
+    const hit = hits[i];
+    if (!hit) continue;
+    count++;
+    objectAxes[0].push(hit.objectP[0]);
+    objectAxes[1].push(hit.objectP[1]);
+    objectAxes[2].push(hit.objectP[2]);
+    const x = i % size;
+    const y = Math.floor(i / size);
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+    if (x === 0 || y === 0 || x === size - 1 || y === size - 1) clipped = true;
+  }
+  return {
+    hitFraction: count / (size * size),
+    bboxWidthFraction: count > 0 ? (maxX - minX + 1) / size : 0,
+    bboxHeightFraction: count > 0 ? (maxY - minY + 1) / size : 0,
+    clipped,
+    exhausted: geometry.stats.exhausted,
+    objectSpan: objectAxes.map((values) => {
+      values.sort((a, b) => a - b);
+      if (values.length === 0) return 0;
+      const at = (p: number): number =>
+        values[Math.round(p * (values.length - 1))];
+      return at(0.98) - at(0.02);
+    }) as Vec3,
+  };
+}
+
 const systemManifests: SystemManifest[] = [];
 const reviewHeroes: Array<{ system: string; kind: string; panel: PanelStats }> =
   [];
+const reviewFits: Array<{
+  system: string;
+  family: SystemSpec["family"];
+  frame: number;
+  target: Vec3;
+  metrics: ReviewFit;
+  panels: Array<{ kind: string; metrics: ResidualMetrics }>;
+}> = [];
 
-function reviewOrder(key: string): number {
+function reviewOrder(deck: string, key: string): number {
   let hash = 2166136261;
-  for (const ch of `${RUN_ID}:${key}`) {
+  for (const ch of `${RUN_ID}:${deck}:${key}`) {
     hash ^= ch.charCodeAt(0);
     hash = Math.imul(hash, 16777619);
   }
@@ -979,7 +1136,7 @@ function report(sys: BuiltSystem, panel: RenderedPanel): void {
   const m = panel.metrics;
   console.log(
     `  ${sys.spec.name.padEnd(16)} ${panel.spec.kind.padEnd(7)} ${panel.spec.mode.padEnd(13)} ` +
-      `${`${panel.spec.zoom}x`.padStart(3)} hits ${((100 * panel.stats.hits) / (SIZE * SIZE)).toFixed(1).padStart(5)}% ` +
+      `${`${panel.spec.zoom}x`.padStart(3)} hits ${((100 * panel.stats.hits) / (panel.stats.width * panel.stats.height)).toFixed(1).padStart(5)}% ` +
       `var ${m.residualVariance.toFixed(4)} edge ${(100 * m.edgeDensity).toFixed(1).padStart(5)}% ` +
       `energy fine/mid ${m.fineEnergyShare.toFixed(2)}/${m.midEnergyShare.toFixed(2)} ` +
       `gate ${panel.meanDetailGate.toFixed(2)} nativeVar ${panel.nativeVariance.toFixed(4)} ` +
@@ -998,6 +1155,67 @@ describe("hybrid finish pattern evidence", () => {
           `sheets ${sys.sheetsCalibration.enabled ? "on" : "OFF"} ` +
           `[${sys.sheetsCalibration.low.toFixed(3)}, ${sys.sheetsCalibration.high.toFixed(3)}]`,
       );
+
+      const fittedReview = fitReviewCamera(sys);
+      const reviewFrame =
+        Number(process.env.FINISH_PATTERN_REVIEW_FRAME) || fittedReview.frame;
+      const scoredGeometry = renderGeometry(
+        sys,
+        1,
+        REVIEW_SIZE,
+        reviewFrame,
+        fittedReview.target,
+      );
+      const fit = reviewFit(scoredGeometry);
+      console.log(
+        `  ${spec.name} review fit: ${REVIEW_SIZE}px frame ${reviewFrame.toFixed(3)} ` +
+          `hits ${(100 * fit.hitFraction).toFixed(1)}% bbox ` +
+          `${(100 * fit.bboxWidthFraction).toFixed(1)}x${(100 * fit.bboxHeightFraction).toFixed(1)}% ` +
+          `object span ${fit.objectSpan.map((v) => v.toFixed(2)).join("/")} ` +
+          `clipped ${fit.clipped ? "YES" : "no"} exhausted ${fit.exhausted}`,
+      );
+      expect
+        .soft(
+          scoredGeometry.stats.hits,
+          `${spec.name} review object has <${REVIEW_MIN_OBJECT_PIXELS} pixels`,
+        )
+        .toBeGreaterThanOrEqual(REVIEW_MIN_OBJECT_PIXELS);
+      expect
+        .soft(fit.hitFraction, `${spec.name} review object coverage <5%`)
+        .toBeGreaterThanOrEqual(REVIEW_MIN_HIT_FRACTION);
+      expect
+        .soft(fit.bboxWidthFraction, `${spec.name} review bbox width <55%`)
+        .toBeGreaterThanOrEqual(REVIEW_MIN_BBOX_WIDTH);
+      expect
+        .soft(fit.clipped, `${spec.name} review framing clips hits`)
+        .toBe(false);
+      expect
+        .soft(fit.exhausted, `${spec.name} review framing exhausted rays`)
+        .toBe(0);
+      const scoredPanels = (["wood", "marble", "strata"] as const).map(
+        (kind) => {
+          const panel = renderPatternPanel(
+            sys,
+            scoredGeometry,
+            { kind, mode: "hybrid", zoom: 1 },
+            false,
+          );
+          report(sys, panel);
+          reviewHeroes.push({ system: spec.name, kind, panel: panel.stats });
+          return { kind, metrics: panel.metrics };
+        },
+      );
+      reviewFits.push({
+        system: spec.name,
+        family: spec.family,
+        frame: reviewFrame,
+        target: fittedReview.target,
+        metrics: fit,
+        panels: scoredPanels,
+      });
+
+      if (HERO_PREFLIGHT) return;
+
       const geometry = new Map<number, GeometryRung>();
       for (const zoom of ZOOMS) {
         const rung = renderGeometry(sys, zoom);
@@ -1025,17 +1243,6 @@ describe("hybrid finish pattern evidence", () => {
             `${spec.name} ${specification.kind} ${specification.mode} ${specification.zoom}x: ${panel.checks.join(", ")}`,
           )
           .toBe(true);
-        if (
-          specification.mode === "hybrid" &&
-          specification.zoom === 1 &&
-          specification.kind !== "none"
-        ) {
-          reviewHeroes.push({
-            system: spec.name,
-            kind: specification.kind,
-            panel: panel.stats,
-          });
-        }
         return panel;
       });
 
@@ -1116,46 +1323,145 @@ describe("hybrid finish pattern evidence", () => {
   }
 
   afterAll(() => {
-    const cardPanels = [...reviewHeroes]
-      .sort(
-        (a, b) =>
-          reviewOrder(`${a.kind}:${a.system}`) -
-          reviewOrder(`${b.kind}:${b.system}`),
-      )
-      .map((hero, i) => ({
-        ...hero,
-        card: `CARD ${String(i + 1).padStart(2, "0")}`,
-      }));
-    let reviewArtifact: string | null = null;
-    if (cardPanels.length > 0) {
-      const file = writeLabeledContactSheet(
-        cardPanels.map((card) => ({
-          stats: card.panel,
-          lines: [card.card, "CHOICE CONF1-5"],
-        })),
+    const choices = [
+      "Wood",
+      "Marble",
+      "Deliberate banding",
+      "Noise-corrosion",
+      "Plain-other",
+    ] as const;
+    let reviewDiagnostic: string | null = null;
+    let reviewKeyArtifact: string | null = null;
+    let reviewResultsTemplate: string | null = null;
+    const reviewDecks: Array<{ deckId: string; artifact: string }> = [];
+    const keyDecks: Array<{
+      deckId: string;
+      cards: Array<{
+        card: string;
+        expected: string;
+        system: string;
+      }>;
+    }> = [];
+    const resultDecks: Array<{
+      reviewerId: string;
+      deckId: string;
+      responses: Array<{
+        card: string;
+        choice: null;
+        confidence: null;
+      }>;
+    }> = [];
+    if (reviewHeroes.length > 0) {
+      const diagnostic = writeLabeledContactSheet(
+        [...reviewHeroes]
+          .sort(
+            (a, b) =>
+              a.system.localeCompare(b.system) || a.kind.localeCompare(b.kind),
+          )
+          .map((hero) => ({
+            stats: hero.panel,
+            lines: [hero.kind, hero.system],
+          })),
         3,
-        join(RUN_DIR_NAME, "review-cards.png"),
+        join(RUN_DIR_NAME, "review-heroes-unblinded.png"),
       );
-      reviewArtifact = relative(OUT_ROOT, file);
+      reviewDiagnostic = relative(OUT_ROOT, diagnostic);
+
+      for (let deckIndex = 1; deckIndex <= 5; deckIndex++) {
+        const deckId = `reviewer-${String(deckIndex).padStart(2, "0")}`;
+        const cards = [...reviewHeroes]
+          .sort(
+            (a, b) =>
+              reviewOrder(deckId, `${a.kind}:${a.system}`) -
+              reviewOrder(deckId, `${b.kind}:${b.system}`),
+          )
+          .map((hero, i) => ({
+            ...hero,
+            card: `CARD ${String(i + 1).padStart(2, "0")}`,
+          }));
+        const file = writeLabeledContactSheet(
+          cards.map((card) => ({
+            stats: card.panel,
+            lines: [card.card, "CHOICE CONF1-5"],
+          })),
+          3,
+          join(
+            RUN_DIR_NAME,
+            `review-deck-${String(deckIndex).padStart(2, "0")}.png`,
+          ),
+        );
+        reviewDecks.push({ deckId, artifact: relative(OUT_ROOT, file) });
+        keyDecks.push({
+          deckId,
+          cards: cards.map((card) => ({
+            card: card.card,
+            expected: card.kind,
+            system: card.system,
+          })),
+        });
+        resultDecks.push({
+          reviewerId: deckId,
+          deckId,
+          responses: cards.map((card) => ({
+            card: card.card,
+            choice: null,
+            confidence: null,
+          })),
+        });
+      }
+
+      const keyFile = join(RUN_DIR, "review-key.json");
+      writeFileSync(
+        keyFile,
+        `${JSON.stringify({ schema: 1, runId: RUN_ID, decks: keyDecks }, null, 2)}\n`,
+      );
+      reviewKeyArtifact = relative(OUT_ROOT, keyFile);
+      const resultsFile = join(RUN_DIR, "review-results.template.json");
+      writeFileSync(
+        resultsFile,
+        `${JSON.stringify(
+          {
+            schema: 1,
+            runId: RUN_ID,
+            status: "pending",
+            instructions:
+              "Judge surface material only. Choose exactly one listed choice and confidence 1..5. Do not infer class counts.",
+            choices,
+            reviewers: resultDecks,
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      reviewResultsTemplate = relative(OUT_ROOT, resultsFile);
     }
     const manifest = {
-      schema: 1,
+      schema: 2,
       runId: RUN_ID,
       generatedAt: new Date().toISOString(),
-      completeMatrix: SYSTEMS.length === ALL_SYSTEMS.length,
+      completeMatrix: !HERO_PREFLIGHT && SYSTEMS.length === ALL_SYSTEMS.length,
+      heroPreflightOnly: HERO_PREFLIGHT,
       selectedSystems: SYSTEMS.map((s) => s.name),
       size: SIZE,
+      reviewSize: REVIEW_SIZE,
       zooms: ZOOMS,
       constants: {
         noiseOctaves: PATTERN_NOISE_OCTAVES,
         latticeHashesPerMacroSample: {
-          wood: 24,
+          wood: 48,
           marble: 48,
           strata: 24,
         },
+        latticeHashesPerDetailLodSample: {
+          wood: 96,
+          marble: 96,
+          strata: 48,
+        },
         defaultScale: PATTERN_DEFAULT_SCALE,
-        nativePeriods: PATTERN_NATIVE_PERIODS,
-        nativeDetailMix: PATTERN_DETAIL_MIX,
+        detailMaxOctave: PATTERN_DETAIL_MAX_OCTAVE,
+        detailScaleMultiplier: PATTERN_DETAIL_SCALE_MULTIPLIER,
+        nativeWarpCycles: PATTERN_NATIVE_WARP_CYCLES,
+        structuredDetailMix: PATTERN_DETAIL_MIX,
         detailFootprintFull: PATTERN_DETAIL_FOOTPRINT_FULL,
         detailFootprintOff: PATTERN_DETAIL_FOOTPRINT_OFF,
         calibrationPercentiles: [0.03, 0.97],
@@ -1166,6 +1472,9 @@ describe("hybrid finish pattern evidence", () => {
         maximumFineEnergy: FINE_ENERGY_MAX,
         minimumRungVarianceRetention: RUNG_VARIANCE_RETENTION_MIN,
         minimum64xVarianceRetention: END_VARIANCE_RETENTION_MIN,
+        reviewMinimumObjectPixels: REVIEW_MIN_OBJECT_PIXELS,
+        reviewMinimumHitFraction: REVIEW_MIN_HIT_FRACTION,
+        reviewMinimumBboxWidth: REVIEW_MIN_BBOX_WIDTH,
       },
       metric: {
         residual: "pre-lighting albedo luminance minus plain-base luminance",
@@ -1174,18 +1483,18 @@ describe("hybrid finish pattern evidence", () => {
           "masked box-pyramid: residual->2px is fine; 2->4->8->16px is mid; 16px is low",
       },
       systems: systemManifests,
+      reviewFits,
       humanReview: {
         required: true,
-        artifact: reviewArtifact,
-        choices: ["Wood", "Marble", "Strata", "Noise-corrosion", "Plain-other"],
+        scoredImage: "lit beauty only",
+        diagnosticArtifact: reviewDiagnostic,
+        decks: reviewDecks,
+        keyArtifact: reviewKeyArtifact,
+        resultsTemplate: reviewResultsTemplate,
+        choices,
         reviewersRequired: 5,
         heroRule: "at least 4/5 correct with median confidence >=3",
         aggregateRule: "at least 80% correct, no system below 3/5",
-        cards: cardPanels.map((card) => ({
-          card: card.card,
-          expected: card.kind,
-          system: card.system,
-        })),
         status: "pending external blinded review",
       },
     };
