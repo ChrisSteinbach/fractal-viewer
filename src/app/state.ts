@@ -249,6 +249,12 @@ export const SURFACE_COLOR_SOURCES = [
 
 export type SurfaceColorSource = (typeof SURFACE_COLOR_SOURCES)[number];
 
+/** Authorable floor appearance. The pattern is evaluated in world space,
+ * scaled from the surface session's certified visible ball, so resizing the
+ * panel never changes the material. */
+export const SURFACE_FLOOR_PATTERNS = ["solid", "checker"] as const;
+export type SurfaceFloorPattern = (typeof SURFACE_FLOOR_PATTERNS)[number];
+
 /**
  * Settings for the surface render (the sphere-traced implicit
  * surface — `surface-material.ts`'s GLSL tracer over `surface-de.ts`'s
@@ -317,6 +323,12 @@ export interface SurfaceParams {
    * here.
    */
   envLight: number;
+  /** Solid or world-space checker floor. */
+  floorPattern: SurfaceFloorPattern;
+  /** Checker cell width as a fraction of the session ball radius. */
+  floorTileScale: number;
+  /** Emitted floor radiance in linear light. Zero is the legacy floor. */
+  floorEmission: number;
 }
 
 /** Snapshot of everything the UI and renderer need to draw a frame. */
@@ -823,6 +835,12 @@ export const MAX_SURFACE_COLOR_SPEED = 1;
 export const DEFAULT_SURFACE_ENV_LIGHT = 0.35;
 export const MIN_SURFACE_ENV_LIGHT = 0;
 export const MAX_SURFACE_ENV_LIGHT = 1;
+export const DEFAULT_SURFACE_FLOOR_TILE_SCALE = 0.64;
+export const MIN_SURFACE_FLOOR_TILE_SCALE = 0.1;
+export const MAX_SURFACE_FLOOR_TILE_SCALE = 2;
+export const DEFAULT_SURFACE_FLOOR_EMISSION = 0;
+export const MIN_SURFACE_FLOOR_EMISSION = 0;
+export const MAX_SURFACE_FLOOR_EMISSION = 4;
 /**
  * Default solid-render palette: the same spectrum gradient as
  * {@link DEFAULT_FLAME_PALETTE}, for one coherent default look across both
@@ -1201,6 +1219,16 @@ export const PARAM = defineParams({
     max: MAX_SURFACE_ENV_LIGHT,
     default: DEFAULT_SURFACE_ENV_LIGHT,
   },
+  surfaceFloorTileScale: {
+    min: MIN_SURFACE_FLOOR_TILE_SCALE,
+    max: MAX_SURFACE_FLOOR_TILE_SCALE,
+    default: DEFAULT_SURFACE_FLOOR_TILE_SCALE,
+  },
+  surfaceFloorEmission: {
+    min: MIN_SURFACE_FLOOR_EMISSION,
+    max: MAX_SURFACE_FLOOR_EMISSION,
+    default: DEFAULT_SURFACE_FLOOR_EMISSION,
+  },
   symmetryOrder: {
     min: MIN_SYMMETRY_ORDER,
     max: MAX_SYMMETRY_ORDER,
@@ -1290,6 +1318,9 @@ export function initialState(panelOpen: boolean): AppState {
       paletteId: DEFAULT_SOLID_PALETTE,
       colorSpeed: DEFAULT_SURFACE_COLOR_SPEED,
       envLight: DEFAULT_SURFACE_ENV_LIGHT,
+      floorPattern: "solid",
+      floorTileScale: DEFAULT_SURFACE_FLOOR_TILE_SCALE,
+      floorEmission: DEFAULT_SURFACE_FLOOR_EMISSION,
     },
     renderMode: "points",
     symmetry: { order: DEFAULT_SYMMETRY_ORDER, plane: DEFAULT_SYMMETRY_PLANE },
@@ -1921,6 +1952,39 @@ export function setSurfaceEnvLight(
     surface: {
       ...state.surface,
       envLight: clampToSpec(PARAM.surfaceEnvLight, envLight),
+    },
+  };
+}
+
+export function setSurfaceFloorPattern(
+  state: AppState,
+  floorPattern: SurfaceFloorPattern,
+): AppState {
+  return { ...state, surface: { ...state.surface, floorPattern } };
+}
+
+export function setSurfaceFloorTileScale(
+  state: AppState,
+  floorTileScale: number,
+): AppState {
+  return {
+    ...state,
+    surface: {
+      ...state.surface,
+      floorTileScale: clampToSpec(PARAM.surfaceFloorTileScale, floorTileScale),
+    },
+  };
+}
+
+export function setSurfaceFloorEmission(
+  state: AppState,
+  floorEmission: number,
+): AppState {
+  return {
+    ...state,
+    surface: {
+      ...state.surface,
+      floorEmission: clampToSpec(PARAM.surfaceFloorEmission, floorEmission),
     },
   };
 }

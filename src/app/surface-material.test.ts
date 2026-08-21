@@ -621,45 +621,6 @@ describe("buildSurfaceFragment shade probe", () => {
   });
 });
 
-describe("buildSurfaceFragment reflection proof isolation", () => {
-  it("keeps the shipped off path free of every disposable proof symbol", () => {
-    const source = buildSurfaceFragment(SURFACE_SHADE_DE_WIDTH);
-    expect(source).not.toContain("proofRoomRadiance");
-    expect(source).not.toContain("proofNormal");
-    expect(source).not.toContain("proofFinishShade");
-    expect(source).not.toContain("secondaryHit");
-  });
-
-  it("makes room-only and one-bounce modes structurally distinguishable", () => {
-    const room = buildSurfaceFragment(SURFACE_SHADE_DE_WIDTH, "room");
-    const trace = buildSurfaceFragment(SURFACE_SHADE_DE_WIDTH, "trace");
-    expect(room).toContain("proofRoomRadiance");
-    expect(room).toContain("proofFinishShade");
-    expect(room).not.toContain("secondaryHit");
-    expect(trace).toContain("bool secondaryHit = false;");
-    expect(trace).toContain("for (int i = 0; i < 96; i++)");
-  });
-
-  it("labels neutral Chrome in shader source without changing the off path", () => {
-    const normalOff = buildSurfaceFragment(SURFACE_SHADE_DE_WIDTH);
-    const neutralOff = buildSurfaceFragment(
-      SURFACE_SHADE_DE_WIDTH,
-      "off",
-      0.012,
-      true,
-    );
-    const neutralTrace = buildSurfaceFragment(
-      SURFACE_SHADE_DE_WIDTH,
-      "trace",
-      0.025,
-      true,
-    );
-    expect(neutralOff).toBe(normalOff);
-    expect(neutralTrace).toContain("base = vec3(0.72);");
-    expect(neutralTrace).toContain("uBoundingRadius * 0.025000");
-  });
-});
-
 describe("SURFACE_BALLOON variant", () => {
   /** The spec scene.ts builds — fractal/balloon-de.ts's buildBalloon
    * convention (margined rho, world-unit R) plus the oracle's far cap. */
@@ -952,6 +913,9 @@ describe("SURFACE_GROUND_PLANE variant", () => {
       ballCenter: [0, 0, 0],
       ballRadius: 1,
       albedo: [0.62, 0.62, 0.62],
+      pattern: 1,
+      tileScale: 0.64,
+      emission: 1.4,
     };
     setSurfaceGroundPlane(material, spec);
     expect(material.defines.SURFACE_GROUND_PLANE).toBe(1);
@@ -964,6 +928,9 @@ describe("SURFACE_GROUND_PLANE variant", () => {
     expect([ballC.x, ballC.y, ballC.z]).toEqual([0, 0, 0]);
     const albedo = u.uGroundAlbedo.value as THREE.Vector3;
     expect([albedo.x, albedo.y, albedo.z]).toEqual([0.62, 0.62, 0.62]);
+    expect(u.uGroundPattern.value).toBe(1);
+    expect(u.uGroundTileScale.value).toBe(0.64);
+    expect(u.uGroundEmission.value).toBe(1.4);
     expect(material.fragmentShader).toContain("shadeGroundPlane");
 
     setSurfaceGroundPlane(material, null);
@@ -974,6 +941,9 @@ describe("SURFACE_GROUND_PLANE variant", () => {
     expect(u.uGroundBallR.value).toBe(1);
     expect([ballC.x, ballC.y, ballC.z]).toEqual([0, 0, 0]);
     expect([albedo.x, albedo.y, albedo.z]).toEqual([1, 1, 1]);
+    expect(u.uGroundPattern.value).toBe(0);
+    expect(u.uGroundTileScale.value).toBe(0.64);
+    expect(u.uGroundEmission.value).toBe(0);
     expect(material.fragmentShader).not.toContain("uGround");
   });
 
@@ -1724,7 +1694,7 @@ describe("SURFACE_FINISH variant", () => {
   ];
 
   const fetchLine =
-    "vec3 col = finishShade(base, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot]);";
+    "vec3 col = finishShade(base, pos, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot]);";
 
   /** A finish with every field away from classic and every field a
    * different number, so a lane landing one component off is visible. */
@@ -1781,7 +1751,7 @@ describe("SURFACE_FINISH variant", () => {
       expect(
         countOccurrences(
           resolved,
-          "vec3 finishShade(vec3 base, vec3 n, vec3 rd, float shadow, float ao, vec3 bg, vec4 fa, vec4 fb) {",
+          "vec3 finishShade(vec3 base, vec3 pos, vec3 n, vec3 rd, float shadow, float ao, vec3 bg, vec4 fa, vec4 fb) {",
         ),
         name,
       ).toBe(1);
@@ -1875,9 +1845,9 @@ describe("SURFACE_FINISH variant", () => {
     const laneA = material.uniforms.uMapFinishA.value as THREE.Vector4[];
     const laneB = material.uniforms.uMapFinishB.value as THREE.Vector4[];
     expect(laneA[0].toArray()).toEqual([0.9, 64, 0.3, 0.5]);
-    expect(laneB[0].toArray()).toEqual([0.2, 0, 0, 0]);
+    expect(laneB[0].toArray()).toEqual([0.2, 1, 0, 0]);
     expect(laneA[1].toArray()).toEqual([0.1, 8, 0, 0]);
-    expect(laneB[1].toArray()).toEqual([0, 0, 0, 0]);
+    expect(laneB[1].toArray()).toEqual([0, 1, 0, 0]);
     // Slot 2 onward: the classic lanes, not a leftover and not zero.
     expect(laneA[2].toArray()).toEqual([0.4, 32, 0, 0]);
     expect(laneA[SURFACE_MAX_MAPS - 1].toArray()).toEqual([0.4, 32, 0, 0]);

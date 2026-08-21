@@ -3726,6 +3726,7 @@ export class FractalScene {
   private surfaceGroundPlaneSpec(): SurfaceGroundPlaneSpec | null {
     const ball = this.surfaceGroundBall;
     if (!ball) return null;
+    const room = this.surfaceComputeParams;
     return {
       y: ball.center[1] - ball.radius * GROUND_PLANE_DROP,
       fadeStart: ball.radius * GROUND_PLANE_FADE_START,
@@ -3733,6 +3734,9 @@ export class FractalScene {
       ballCenter: ball.center,
       ballRadius: ball.radius,
       albedo: GROUND_PLANE_ALBEDO,
+      pattern: room?.floorPattern === "checker" ? 1 : 0,
+      tileScale: room?.floorTileScale ?? 0.64,
+      emission: room?.floorEmission ?? 0,
     };
   }
 
@@ -3919,6 +3923,9 @@ export class FractalScene {
       u.uColorSource.value = SURFACE_COLOR_SOURCES.indexOf(params.colorSource);
       u.uColorSpeed.value = params.colorSpeed;
     }
+    // Pattern/scale/emission are part of the already-installed floor's
+    // uniform payload. Re-pack live; this never changes the shader variant.
+    this.applySurfaceGroundPlane();
   }
 
   /**

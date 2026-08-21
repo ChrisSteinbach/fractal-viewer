@@ -568,6 +568,7 @@
             <option value="curling">Curling Fern</option>
             <option value="mandelboxKifs">Mandelbox KIFS</option>
             <option value="fourFinishes">Four Finishes</option>
+            <option value="metalStudio">Metal Studio</option>
             <optgroup label="Escape-time">
               <option value="mandelboxClassic">Mandelbox</option>
               <option value="mandelboxRings">Mandelbox Rings</option>
@@ -1586,11 +1587,11 @@
                fractal, catching its shadow. Persisted (state.groundPlane),
                surface-mode only — no explorer-echo counterpart the way the
                balloon above has one. Visible for BOTH "ifs" and "escape"
-               surface sessions (unlike the balloon row, which hides for
-               escape — the floor survives where the balloon degenerates),
-               hidden only in a live 4D surface session. The balloon takes
-               precedence while both are on: the two never compile together
-               (main.ts's compute-target assembly resolves it). -->
+               surface sessions, including 4D (unlike the balloon row, which
+               hides for escape — the floor survives where the balloon
+               degenerates). The balloon takes precedence while both are on:
+               the two never compile together (main.ts's compute-target
+               assembly resolves it). -->
           <label
             class="checkbox-label"
             id="surfaceGroundPlaneRow"
@@ -1598,6 +1599,35 @@
           >
             <input type="checkbox" id="surfaceGroundPlaneCheckbox" />
             Floor
+          </label>
+          <label class="select-label">
+            Floor pattern
+            <select id="surfaceFloorPatternSelect">
+              <option value="solid">Solid</option>
+              <option value="checker">Checkerboard</option>
+            </select>
+          </label>
+          <label class="select-label">
+            Tile size: <span id="surfaceFloorTileScaleLabel">0.64×</span>
+            <input
+              type="range"
+              id="surfaceFloorTileScaleSlider"
+              min="0.1"
+              max="2"
+              step="0.01"
+              value="0.64"
+            />
+          </label>
+          <label class="select-label">
+            Floor light: <span id="surfaceFloorEmissionLabel">0.00</span>
+            <input
+              type="range"
+              id="surfaceFloorEmissionSlider"
+              min="0"
+              max="4"
+              step="0.05"
+              value="0"
+            />
           </label>
         </details>
       </div>

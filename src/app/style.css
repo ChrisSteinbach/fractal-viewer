@@ -941,9 +941,9 @@ summary.editor-group-title {
   min-width: 42px;
 }
 
-/* The Finish group's five rows are labelled by field name ("Shininess" is
+/* The Finish group's six rows are labelled by field name ("Shininess" is
    the widest); fixed rather than min-width, like the fold-length rows, so
-   the five sliders share one left edge. */
+   the six sliders share one left edge. */
 .finish-row .axis {
   width: 64px;
   min-width: 64px;

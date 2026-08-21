@@ -52,7 +52,7 @@
  *   byte-identical to before those fields existed.
  * - `Transform.finish` (the optional per-transform surface shading — see
  *   `types.ts`'s {@link SurfaceFinish}) lerps the identical way, one field
- *   family over: each of its five fields goes through {@link lerpOptional}
+ *   family over: each of its six fields goes through {@link lerpOptional}
  *   with ITS OWN classic value (`surface-finish.ts`'s
  *   `CLASSIC_SURFACE_FINISH`) as the absent side's fallback, so
  *   `metalness: 1` against a side that omits it (the field OR the whole
@@ -317,7 +317,7 @@ function lerpW(a: Transform, b: Transform, t: number): WExtension | undefined {
 }
 
 /**
- * `Transform.finish` for a pair: each of the five fields lerps
+ * `Transform.finish` for a pair: each of the six fields lerps
  * INDEPENDENTLY through {@link lerpOptional}, with that field's OWN
  * `CLASSIC_SURFACE_FINISH` value (`surface-finish.ts`) as the absent side's
  * fallback — `metalness: 1` against a side that omits `finish` entirely, or
@@ -370,6 +370,13 @@ function lerpFinish(
     t,
   );
   if (transmit !== undefined) result.transmit = transmit;
+  const reflectionTint = lerpOptional(
+    a?.reflectionTint,
+    b?.reflectionTint,
+    CLASSIC_SURFACE_FINISH.reflectionTint,
+    t,
+  );
+  if (reflectionTint !== undefined) result.reflectionTint = reflectionTint;
   return Object.keys(result).length === 0 ? undefined : result;
 }
 

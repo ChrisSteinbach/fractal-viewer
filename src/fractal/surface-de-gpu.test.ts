@@ -1175,6 +1175,7 @@ describe("packSurfaceGpuShadeMaps", () => {
         metalness: 0.25,
         reflect: 0.5,
         transmit: 0.125,
+        reflectionTint: 0.75,
       },
       CLASSIC_SURFACE_FINISH,
     ];
@@ -1188,9 +1189,9 @@ describe("packSurfaceGpuShadeMaps", () => {
     );
     expect(out.length).toBe(24);
     // Slot 0: today's vec4, then a = (specular, shininess, metalness,
-    // reflect), then b = (transmit, 0, 0, 0) — surfaceFinishLanes' order.
+    // reflect), then b = (transmit, reflectionTint, 0, 0).
     expect(Array.from(out.subarray(0, 12))).toEqual([
-      0.125, 0.25, 0.375, 0.25, 0.75, 96, 0.25, 0.5, 0.125, 0, 0, 0,
+      0.125, 0.25, 0.375, 0.25, 0.75, 96, 0.25, 0.5, 0.125, 0.75, 0, 0,
     ]);
     // Slot 1: the classic lanes (0.4 is f32-exact only after fround, so
     // compare the rounded value).
@@ -1204,7 +1205,7 @@ describe("packSurfaceGpuShadeMaps", () => {
       0,
       0,
       0,
-      0,
+      1,
       0,
       0,
     ]);
@@ -2187,7 +2188,7 @@ describe("balloon echo tint", () => {
     }
   });
 
-  it("adds NOTHING to a non-balloon kernel but the two unconditional ShadeParams members — the byte-identity bar", () => {
+  it("keeps balloon tint unread outside balloon and ground shade kernels", () => {
     const cases: Partial<SurfaceGpuKernelOptions>[] = [
       { mode: "shade", core: "fold", width: 12, shadeDeWidth: 1 },
       { mode: "shade", core: "affine", width: 4 },
@@ -2206,14 +2207,18 @@ describe("balloon echo tint", () => {
       // No attribution member and no reader of one.
       expect(wgsl).not.toContain("shell: f32,");
       expect(wgsl).not.toContain("hi.shell");
-      expect(wgsl).not.toContain("shade.balloonTint");
+      if (overrides.groundPlane) {
+        expect(wgsl).toContain("shade.balloonTint.z");
+      } else {
+        expect(wgsl).not.toContain("shade.balloonTint");
+      }
       // `balloonTint` occurs ONLY as the ShadeParams declaration — a
       // uniform struct is one layout across every kernel, which is the
       // single deliberate exception to "balloon:false adds no text".
       const declared = wgsl.split("balloonTint").length - 1;
-      expect(declared).toBe(
-        wgsl.includes("struct ShadeParams") ? 2 : 0, // the vec3f + the …Strength f32
-      );
+      if (!overrides.groundPlane) {
+        expect(declared).toBe(wgsl.includes("struct ShadeParams") ? 2 : 0);
+      }
     }
   });
 
