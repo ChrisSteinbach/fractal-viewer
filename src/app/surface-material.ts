@@ -17,13 +17,15 @@ import {
   BACKGROUND_SHAPE_GLSL,
   backgroundShapeSource,
 } from "../fractal/background-shape";
-import type { ResolvedSurfaceFinish } from "../fractal/surface-finish";
 import {
-  CLASSIC_SURFACE_FINISH,
   SURFACE_FINISH_GLSL,
-  surfaceFinishLanes,
   surfaceFinishShadeSource,
 } from "../fractal/surface-finish";
+import {
+  CLASSIC_SURFACE_MATERIAL,
+  surfaceMaterialLanes,
+  type SurfaceMaterialSlots,
+} from "../fractal/surface-material-wire";
 import type { Vec3 } from "../fractal/types";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 import { lightDirection } from "./voxel-material";
@@ -616,7 +618,7 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   uniform float uSigmaMin[MAX_MAPS];
   /** sRGB 0..1 base color per map slot (keyed to base maps caller-side). */
   uniform vec3 uMapColor[MAX_MAPS];
-#if SURFACE_FINISH
+#if SURFACE_FINISH || SURFACE_PATTERN
   /** Per-map surface FINISH, in fractal/surface-finish.ts's two wire
    * lanes (surfaceFinishLanes, the ONE lane definition the WGSL shade
    * stride shares): A = (specular, shininess, metalness, reflect), B =
@@ -629,6 +631,12 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * included, can read them. */
   uniform vec4 uMapFinishA[MAX_MAPS];
   uniform vec4 uMapFinishB[MAX_MAPS];
+#endif
+#if SURFACE_PATTERN
+  /** One calibration quartet per built DE/session, never repeated per map:
+   * (ringsLow, ringsInvSpan, sheetsLow, sheetsInvSpan). The downstream
+   * pattern-shading bead consumes it. */
+  uniform vec4 uPatternCalibration;
 #endif
 #if SURFACE_FOLDS
   /** Fold-branch sweep, compiled in only for systems with pure-fold maps
@@ -3595,13 +3603,13 @@ export function setSurfaceGridEnabled(
   material.uniforms.uGridEnabled.value = enabled ? 1 : 0;
 }
 
-/** The classic finish's two wire lanes — `(0.4, 32, 0, 0)` / `(0, 0, 0,
- * 0)`, derived through `surfaceFinishLanes` rather than retyped so the
- * slot default and the packer can never disagree about lane order. The
- * value every `uMapFinishA`/`uMapFinishB` slot holds until
- * {@link setSurfaceFinishes} writes it, and the value unreached slots are
+/** The classic+none material's two wire lanes — `(0.4, 32, 0, 0)` /
+ * `(0, 1, 0, 0)`, derived through `surfaceMaterialLanes` rather than retyped
+ * so the slot default and the packer can never disagree about lane order.
+ * The value every `uMapFinishA`/`uMapFinishB` slot holds until
+ * {@link setSurfaceMaterials} writes it, and the value unreached slots are
  * reset to. */
-const CLASSIC_FINISH_LANES = surfaceFinishLanes(CLASSIC_SURFACE_FINISH);
+const CLASSIC_MATERIAL_LANES = surfaceMaterialLanes(CLASSIC_SURFACE_MATERIAL);
 
 export function createSurfaceMaterial(): THREE.ShaderMaterial {
   // A 1x1 white placeholder LUT so the material is complete (and compiled)
@@ -3636,8 +3644,8 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
           () => new THREE.Vector3(),
         ),
       },
-      // Per-map surface finish, surface-finish.ts's two lanes; alive only
-      // under the SURFACE_FINISH define (setSurfaceFinishes). Unconditional
+      // Per-map unified material wire, alive under either independent
+      // SURFACE_FINISH/SURFACE_PATTERN gate (setSurfaceMaterials). Unconditional
       // entries like the balloon's — Three.js ignores entries the compiled
       // program does not use — and DEFAULTED TO THE CLASSIC LANES rather
       // than zero, so a stray enabled read renders the fixed formula's own
@@ -3645,15 +3653,16 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uMapFinishA: {
         value: Array.from(
           { length: SURFACE_MAX_MAPS },
-          () => new THREE.Vector4(...CLASSIC_FINISH_LANES.a),
+          () => new THREE.Vector4(...CLASSIC_MATERIAL_LANES.a),
         ),
       },
       uMapFinishB: {
         value: Array.from(
           { length: SURFACE_MAX_MAPS },
-          () => new THREE.Vector4(...CLASSIC_FINISH_LANES.b),
+          () => new THREE.Vector4(...CLASSIC_MATERIAL_LANES.b),
         ),
       },
+      uPatternCalibration: { value: new THREE.Vector4() },
       uTrapIndex: { value: new Array<number>(SURFACE_MAX_MAPS).fill(0) },
       // Fold-variant per-map data: (foldKind, 1/w, |w|*sigmaMin,
       // trapIndex). Only the variant selected by the SURFACE_FOLDS define
@@ -3815,7 +3824,7 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
     // inverted-union (setSurfaceBalloon) — like the lens and escape names
     // it is resolved JS-side, so the entry here is change detection (and a
     // program-cache key), never driver-parsed text. SURFACE_FINISH 1
-    // (setSurfaceFinishes) swaps the shading site's fixed lighting formula
+    // (setSurfaceMaterials) swaps the shading site's fixed lighting formula
     // for the per-map parametric one; it composes with EVERY variant and
     // is resolved the same JS-side way.
     // setSurfaceSystem/setEscapeSystem flip these when the system's shape
@@ -3916,10 +3925,11 @@ export function setSurfaceSystem(
   // carries the plane arm: its programs resolve through stripGlslSource,
   // far under the Mesa cliff).
   const plane = material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0;
-  // The finish is orthogonal session state owned by setSurfaceFinishes —
-  // a system swap preserves it too, so a rebuild here can never silently
-  // hand an authored finish back to the fixed formula.
+  // Finish and pattern are orthogonal session state owned together by
+  // setSurfaceMaterials — a system swap preserves both, so a rebuild here
+  // cannot silently drop either independent gate.
   const finish = material.defines.SURFACE_FINISH === 1 ? 1 : 0;
+  const pattern = material.defines.SURFACE_PATTERN === 1 ? 1 : 0;
   if (
     material.defines.SURFACE_FOLDS !== wantFolds ||
     material.defines.SURFACE_FOLD_LENS !== wantLens ||
@@ -3941,6 +3951,7 @@ export function setSurfaceSystem(
       plane,
       0,
       finish,
+      pattern,
     );
     material.needsUpdate = true;
   }
@@ -4158,6 +4169,7 @@ export function surfaceFragmentResolvedFor(
   plane = 0,
   bulb = 0,
   finish = 0,
+  pattern = 0,
   source: string = SURFACE_FRAGMENT,
 ): string {
   if (plane !== 0 && balloon !== 0) {
@@ -4178,7 +4190,9 @@ export function surfaceFragmentResolvedFor(
     SURFACE_FOLD_LENS: lens,
     SURFACE_BALLOON: balloon,
     SURFACE_GROUND_PLANE: plane,
+    "SURFACE_FINISH || SURFACE_PATTERN": finish || pattern,
     SURFACE_FINISH: finish,
+    SURFACE_PATTERN: pattern,
   });
 }
 
@@ -4198,7 +4212,7 @@ export function surfaceFragmentResolvedFor(
  * byte-identical to the pre-bulb build, and it refuses to compile
  * alongside `escape` (each replaces the descent bodies wholesale, so both
  * on would define surfaceDE twice). `finish` is the per-map surface
- * finish arm (setSurfaceFinishes): 0 resolves byte-identical to the
+ * finish arm (setSurfaceMaterials): 0 resolves byte-identical to the
  * pre-finish build — the fixed lighting formula, which is what the
  * caller's `isClassicSurfaceFinish` gate buys an unauthored document — and
  * 1 compiles the `uMapFinishA`/`uMapFinishB` arrays and the shared
@@ -4228,6 +4242,7 @@ export function surfaceFragmentFor(
   plane = 0,
   bulb = 0,
   finish = 0,
+  pattern = 0,
   source: string = SURFACE_FRAGMENT,
 ): string {
   const resolved = surfaceFragmentResolvedFor(
@@ -4237,6 +4252,7 @@ export function surfaceFragmentFor(
     plane,
     bulb,
     finish,
+    pattern,
     source,
   );
   return plane !== 0 || resolved.length > SURFACE_GLSL_STRIP_BYTES
@@ -4321,6 +4337,7 @@ export function setEscapeSystem(
   const balloon = material.defines.SURFACE_BALLOON === 1 ? 1 : 0;
   const plane = material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0;
   const finish = material.defines.SURFACE_FINISH === 1 ? 1 : 0;
+  const pattern = material.defines.SURFACE_PATTERN === 1 ? 1 : 0;
   if (
     material.defines.SURFACE_ESCAPE !== 1 ||
     material.defines.SURFACE_BULB !== 0 ||
@@ -4340,6 +4357,7 @@ export function setEscapeSystem(
       plane,
       0,
       finish,
+      pattern,
     );
     material.needsUpdate = true;
   }
@@ -4403,6 +4421,7 @@ export function setBulbSystem(
   const balloon = material.defines.SURFACE_BALLOON === 1 ? 1 : 0;
   const plane = material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0;
   const finish = material.defines.SURFACE_FINISH === 1 ? 1 : 0;
+  const pattern = material.defines.SURFACE_PATTERN === 1 ? 1 : 0;
   if (
     material.defines.SURFACE_BULB !== 1 ||
     material.defines.SURFACE_ESCAPE !== 0 ||
@@ -4420,6 +4439,7 @@ export function setBulbSystem(
       plane,
       1,
       finish,
+      pattern,
     );
     material.needsUpdate = true;
   }
@@ -4490,6 +4510,7 @@ export function setSurfaceBalloon(
       plane,
       material.defines.SURFACE_BULB === 1 ? 1 : 0,
       material.defines.SURFACE_FINISH === 1 ? 1 : 0,
+      material.defines.SURFACE_PATTERN === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -4598,46 +4619,26 @@ export function setSurfaceGroundPlane(
       want,
       material.defines.SURFACE_BULB === 1 ? 1 : 0,
       material.defines.SURFACE_FINISH === 1 ? 1 : 0,
+      material.defines.SURFACE_PATTERN === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
 }
 
-/**
- * Install the per-map surface finishes — `finishes[j]` is the RESOLVED
- * finish (`fractal/surface-finish.ts`'s `resolveSurfaceFinish`) for the
- * transform in slot `j`, keyed exactly as `setSurfaceSystem`'s `colors[j]`
- * is — or clear them with `null`.
- *
- * THE CALLER OWNS THE BYTE-IDENTITY GATE: it passes `null` whenever
- * `isClassicSurfaceFinish` holds for every slotted transform, and that is
- * what keeps an unauthored document compiling literally the fixed
- * lighting formula — the `SURFACE_FINISH` arm is NOT a byte-identity with
- * it (`pow(x, 32.0)` literal against a uniform), so the gate lives in the
- * caller's knowledge of the document rather than in a comparison here. A
- * non-null list compiles the arm whatever its values. Forward-orbit
- * sessions (escape, bulb) pass ONE slot, the head transform's: their
- * hit-info reports `firstChoice` 0, so slot 0 is the finish the whole
- * scene shades with.
- *
- * Every slot is written on every call — the listed ones to their own
- * lanes, the rest (and all of them on `null`) back to the CLASSIC lanes —
- * so a previous system's finish can never leak into a slot the next one
- * does not fill, and a stray enabled read always has a sane highlight to
- * render. Flipping the define reassembles the fragment source through
- * {@link surfaceFragmentFor} with the material's CURRENT variant flags
- * (a session-set-scale program rebuild, {@link setSurfaceBalloon}'s
- * contract); a call that changes only the lanes — a finish slider's
- * per-drag-tick path — never touches the shader. Throws past
- * {@link SURFACE_MAX_MAPS} slots, the per-map arrays' own cap.
- */
-export function setSurfaceFinishes(
+/** Install the unified per-map A/B material wire and its independent compile
+ * gates. `null` is exactly classic+none: every lane resets to the historical
+ * classic values and both gated sources disappear. Pattern-only sessions keep
+ * SURFACE_FINISH off (the fixed lighting literal remains) while the composite
+ * declaration gate exposes A/B and SURFACE_PATTERN exposes the one per-DE
+ * calibration quartet. Every slot is rewritten so no previous session leaks.
+ * A lane-only edit with unchanged gates never rebuilds the shader. */
+export function setSurfaceMaterials(
   material: THREE.ShaderMaterial,
-  finishes: readonly ResolvedSurfaceFinish[] | null,
+  materials: SurfaceMaterialSlots | null,
 ): void {
-  if (finishes && finishes.length > SURFACE_MAX_MAPS) {
+  if (materials && materials.slots.length > SURFACE_MAX_MAPS) {
     throw new RangeError(
-      `${finishes.length} surface finishes, but the material carries at most ${SURFACE_MAX_MAPS}`,
+      `${materials.slots.length} surface materials, but the material carries at most ${SURFACE_MAX_MAPS}`,
     );
   }
   const u = material.uniforms;
@@ -4645,22 +4646,39 @@ export function setSurfaceFinishes(
   const laneB = u.uMapFinishB.value as THREE.Vector4[];
   for (let j = 0; j < SURFACE_MAX_MAPS; j++) {
     const lanes =
-      finishes && j < finishes.length
-        ? surfaceFinishLanes(finishes[j])
-        : CLASSIC_FINISH_LANES;
+      materials && j < materials.slots.length
+        ? surfaceMaterialLanes(materials.slots[j])
+        : CLASSIC_MATERIAL_LANES;
     laneA[j].set(...lanes.a);
     laneB[j].set(...lanes.b);
   }
-  const want = finishes ? 1 : 0;
-  if (material.defines.SURFACE_FINISH !== want) {
-    material.defines.SURFACE_FINISH = want;
+  const calibration = u.uPatternCalibration.value as THREE.Vector4;
+  if (materials?.pattern) {
+    const c = materials.patternCalibration;
+    calibration.set(c.ringsLow, c.ringsInvSpan, c.sheetsLow, c.sheetsInvSpan);
+  } else {
+    calibration.set(0, 0, 0, 0);
+  }
+  const wantFinish = materials?.finish ? 1 : 0;
+  const wantPattern = materials?.pattern ? 1 : 0;
+  const currentPattern = material.defines.SURFACE_PATTERN === 1 ? 1 : 0;
+  if (
+    material.defines.SURFACE_FINISH !== wantFinish ||
+    currentPattern !== wantPattern
+  ) {
+    material.defines.SURFACE_FINISH = wantFinish;
+    // Keep the classic material's define set byte-identical: the new key only
+    // exists while the independent pattern gate is actually on.
+    if (wantPattern) material.defines.SURFACE_PATTERN = 1;
+    else delete material.defines.SURFACE_PATTERN;
     material.fragmentShader = surfaceFragmentFor(
       material.defines.SURFACE_ESCAPE === 1 ? 1 : 0,
       material.defines.SURFACE_FOLD_LENS === 1 ? 1 : 0,
       material.defines.SURFACE_BALLOON === 1 ? 1 : 0,
       material.defines.SURFACE_GROUND_PLANE === 1 ? 1 : 0,
       material.defines.SURFACE_BULB === 1 ? 1 : 0,
-      want,
+      wantFinish,
+      wantPattern,
     );
     material.needsUpdate = true;
   }

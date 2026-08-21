@@ -1,5 +1,11 @@
 import { surfaceComputeForceFrameKey } from "./surface-force-frame-key";
 import type { SurfaceComputeFrameSpec } from "./surface-compute";
+import { CLASSIC_SURFACE_FINISH } from "../fractal/surface-finish";
+import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
+import type {
+  ResolvedSurfacePattern,
+  SurfaceNativeCalibration,
+} from "../fractal/surface-pattern";
 
 /** The smallest spec the key function reads every unconditional field from;
  * mirrors surface-compute.test.ts's own `frameSpec()` fixture. Every
@@ -215,23 +221,37 @@ describe("surfaceComputeForceFrameKey finishes block", () => {
     transmit: 0,
     reflectionTint: 1,
   };
+  const finishMaterials = (
+    finishes: readonly (typeof chrome)[],
+  ): SurfaceMaterialSlots => ({
+    slots: finishes.map((finish) => ({
+      finish,
+      pattern: { kind: "none", axis: "y", scale: 1, strength: 0 },
+    })),
+    finish: true,
+    pattern: false,
+  });
 
   it("keys a finish change — a timeline leg re-authoring one slot under a parked camera must re-trace", () => {
     const a = surfaceComputeForceFrameKey(
-      baseSpec({ finishes: [chrome, matte] }),
+      baseSpec({ materials: finishMaterials([chrome, matte]) }),
     );
     const b = surfaceComputeForceFrameKey(
-      baseSpec({ finishes: [chrome, { ...matte, transmit: 0.5 }] }),
+      baseSpec({
+        materials: finishMaterials([chrome, { ...matte, transmit: 0.5 }]),
+      }),
     );
     expect(a).not.toBe(b);
   });
 
   it("keys Chrome's neutral reflection separately from colored Metal", () => {
     const neutral = surfaceComputeForceFrameKey(
-      baseSpec({ finishes: [chrome] }),
+      baseSpec({ materials: finishMaterials([chrome]) }),
     );
     const tinted = surfaceComputeForceFrameKey(
-      baseSpec({ finishes: [{ ...chrome, reflectionTint: 1 }] }),
+      baseSpec({
+        materials: finishMaterials([{ ...chrome, reflectionTint: 1 }]),
+      }),
     );
     expect(neutral).not.toBe(tinted);
   });
@@ -239,15 +259,15 @@ describe("surfaceComputeForceFrameKey finishes block", () => {
   it("keys presence itself: an authored session never collides with a classic one", () => {
     const classic = surfaceComputeForceFrameKey(baseSpec());
     const authored = surfaceComputeForceFrameKey(
-      baseSpec({ finishes: [matte] }),
+      baseSpec({ materials: finishMaterials([matte]) }),
     );
     expect(classic).not.toBe(authored);
   });
 
-  it("absent finishes keys byte-identically to a spec predating the field — the packer's own absent default", () => {
-    expect(surfaceComputeForceFrameKey(baseSpec({ finishes: undefined }))).toBe(
-      surfaceComputeForceFrameKey(baseSpec()),
-    );
+  it("absent materials keys byte-identically to a spec predating the field — the packer's own absent default", () => {
+    expect(
+      surfaceComputeForceFrameKey(baseSpec({ materials: undefined })),
+    ).toBe(surfaceComputeForceFrameKey(baseSpec()));
   });
 
   it("cannot be re-partitioned into its neighbor blocks: the slot count delimits it ahead of bgShape's tag", () => {
@@ -257,23 +277,105 @@ describe("surfaceComputeForceFrameKey finishes block", () => {
     // parses distinct.
     const a = surfaceComputeForceFrameKey(
       baseSpec({
-        finishes: [chrome],
+        materials: finishMaterials([chrome]),
         bgShape: { kind: "radial", center: [0.5, 0.5], scale: [1, 1] },
       }),
     );
     const b = surfaceComputeForceFrameKey(
-      baseSpec({ finishes: [chrome, matte] }),
+      baseSpec({ materials: finishMaterials([chrome, matte]) }),
     );
     expect(a).not.toBe(b);
   });
 
   it("keys slot ORDER — two sessions swapping the same two finishes differ", () => {
     const a = surfaceComputeForceFrameKey(
-      baseSpec({ finishes: [chrome, matte] }),
+      baseSpec({ materials: finishMaterials([chrome, matte]) }),
     );
     const b = surfaceComputeForceFrameKey(
-      baseSpec({ finishes: [matte, chrome] }),
+      baseSpec({ materials: finishMaterials([matte, chrome]) }),
     );
     expect(a).not.toBe(b);
+  });
+});
+
+describe("surfaceComputeForceFrameKey pattern blocks", () => {
+  const pattern: ResolvedSurfacePattern = {
+    kind: "wood",
+    axis: "y",
+    scale: 3,
+    strength: 0.5,
+  };
+  const calibration: SurfaceNativeCalibration = {
+    ringsLow: 0.1,
+    ringsInvSpan: 2,
+    sheetsLow: 0.2,
+    sheetsInvSpan: 3,
+  };
+  const materials = (
+    value: ResolvedSurfacePattern = pattern,
+    native: SurfaceNativeCalibration = calibration,
+  ): SurfaceMaterialSlots => ({
+    slots: [{ finish: { ...CLASSIC_SURFACE_FINISH }, pattern: { ...value } }],
+    finish: false,
+    pattern: true,
+    patternCalibration: { ...native },
+  });
+
+  it("keys value-equal pattern sessions identically across fresh objects", () => {
+    expect(
+      surfaceComputeForceFrameKey(baseSpec({ materials: materials() })),
+    ).toBe(surfaceComputeForceFrameKey(baseSpec({ materials: materials() })));
+  });
+
+  it("invalidates on every resolved pattern field and the pixel footprint", () => {
+    const key = surfaceComputeForceFrameKey(
+      baseSpec({ materials: materials(), tracePixelEps: 0.001 }),
+    );
+    for (const changed of [
+      { ...pattern, kind: "marble" as const },
+      { ...pattern, axis: "z" as const },
+      { ...pattern, strength: 0.51 },
+      { ...pattern, scale: 4 },
+    ]) {
+      expect(
+        surfaceComputeForceFrameKey(
+          baseSpec({ materials: materials(changed), tracePixelEps: 0.001 }),
+        ),
+      ).not.toBe(key);
+    }
+    expect(
+      surfaceComputeForceFrameKey(
+        baseSpec({ materials: materials(), tracePixelEps: 0.002 }),
+      ),
+    ).not.toBe(key);
+  });
+
+  it("invalidates on every per-DE native calibration lane", () => {
+    const key = surfaceComputeForceFrameKey(
+      baseSpec({ materials: materials() }),
+    );
+    for (const changed of [
+      { ...calibration, ringsLow: 0.11 },
+      { ...calibration, ringsInvSpan: 2.1 },
+      { ...calibration, sheetsLow: 0.21 },
+      { ...calibration, sheetsInvSpan: 3.1 },
+    ]) {
+      expect(
+        surfaceComputeForceFrameKey(
+          baseSpec({ materials: materials(pattern, changed) }),
+        ),
+      ).not.toBe(key);
+    }
+  });
+
+  it("keys pattern presence even at strength zero, without perturbing the absent-material legacy key", () => {
+    const absent = surfaceComputeForceFrameKey(baseSpec());
+    const zero = surfaceComputeForceFrameKey(
+      baseSpec({ materials: materials({ ...pattern, strength: 0 }) }),
+    );
+    expect(zero).not.toBe(absent);
+    expect(
+      surfaceComputeForceFrameKey(baseSpec({ materials: undefined })),
+    ).toBe(absent);
   });
 });

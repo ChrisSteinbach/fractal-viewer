@@ -68,6 +68,12 @@ import {
   CLASSIC_SURFACE_FINISH,
   type ResolvedSurfaceFinish,
 } from "./surface-finish";
+import {
+  CLASSIC_SURFACE_MATERIAL,
+  encodeSurfacePatternConfig,
+  resolveSurfaceMaterial,
+  type ResolvedSurfaceMaterial,
+} from "./surface-material-wire";
 import type { Transform } from "./types";
 
 /** Two-map pure-boxfold system (the pure-fold shape used throughout
@@ -1148,7 +1154,7 @@ describe("packSurfaceGpuShadeMaps", () => {
     expect(Array.from(out)).toEqual([0, 0, 0, 0]);
   });
 
-  it("absent finishes returns the 1-vec4-stride buffer byte for byte — every caller predating the finish is unmoved", () => {
+  it("absent materials return the 1-vec4-stride buffer byte for byte — every earlier caller is unmoved", () => {
     const colors: [number, number, number][] = [
       [0.125, 0.25, 0.375],
       [0.5, 0.625, 0.75],
@@ -1167,7 +1173,7 @@ describe("packSurfaceGpuShadeMaps", () => {
     expect(packSurfaceGpuShadeMaps(colors, traps, undefined)).toEqual(expected);
   });
 
-  it("packs stride 3 under finishes — [0] the (rgb, trap) vec4 unchanged, [1] lanes a, [2] lanes b with the Tier-2 tail zero-filled — at exact indices", () => {
+  it("packs finish-only stride 3 — [0] the (rgb, trap) vec4 unchanged, then shared lanes A/B at exact indices", () => {
     const finishes: ResolvedSurfaceFinish[] = [
       {
         specular: 0.75,
@@ -1179,13 +1185,17 @@ describe("packSurfaceGpuShadeMaps", () => {
       },
       CLASSIC_SURFACE_FINISH,
     ];
+    const materials: ResolvedSurfaceMaterial[] = finishes.map((finish) => ({
+      finish,
+      pattern: CLASSIC_SURFACE_MATERIAL.pattern,
+    }));
     const out = packSurfaceGpuShadeMaps(
       [
         [0.125, 0.25, 0.375],
         [0.5, 0.625, 0.75],
       ],
       [0.25, 0.75],
-      finishes,
+      materials,
     );
     expect(out.length).toBe(24);
     // Slot 0: today's vec4, then a = (specular, shininess, metalness,
@@ -1211,7 +1221,7 @@ describe("packSurfaceGpuShadeMaps", () => {
     ]);
   });
 
-  it("throws RangeError when finishes does not cover every color slot — a caller bug, like the module's other pack throws", () => {
+  it("throws RangeError when materials do not cover every color slot — a caller bug, like the module's other pack throws", () => {
     expect(() =>
       packSurfaceGpuShadeMaps(
         [
@@ -1219,12 +1229,33 @@ describe("packSurfaceGpuShadeMaps", () => {
           [0, 1, 0],
         ],
         [0, 0],
-        [CLASSIC_SURFACE_FINISH],
+        [CLASSIC_SURFACE_MATERIAL],
       ),
     ).toThrow(RangeError);
   });
 
-  it("pads one zero stride of 12 floats for empty colors under finishes — the slot clamp keeps reads inside real slots, so zeros are safe", () => {
+  it("packs pattern-only materials at stride 3 while retaining classic finish lanes", () => {
+    const material = resolveSurfaceMaterial(undefined, {
+      kind: "strata",
+      axis: "x",
+      scale: 3.1256,
+      strength: 0.625,
+    });
+    const out = packSurfaceGpuShadeMaps([[0.25, 0.5, 0.75]], [0.4], [material]);
+    expect(out.length).toBe(12);
+    expect(Array.from(out.subarray(4, 12))).toEqual([
+      Math.fround(0.4),
+      32,
+      0,
+      0,
+      0,
+      1,
+      encodeSurfacePatternConfig(material.pattern),
+      Math.fround(3.1256),
+    ]);
+  });
+
+  it("pads one zero stride of 12 floats for empty colors under materials — the slot clamp keeps reads inside real slots, so zeros are safe", () => {
     const out = packSurfaceGpuShadeMaps([], [], []);
     expect(out.length).toBe(12);
     expect(Array.from(out)).toEqual(Array<number>(12).fill(0));
@@ -2619,6 +2650,101 @@ describe("surfaceDeKernelWgsl per-slot finishes (finish)", () => {
       src.slice(
         src.indexOf("struct ShadeParams"),
         src.indexOf("}", src.indexOf("struct ShadeParams")) + 1,
+      );
+    expect(struct(on)).toBe(struct(off));
+  });
+});
+
+describe("surfaceDeKernelWgsl independent pattern material gate", () => {
+  const cores = [
+    "fold",
+    "affine",
+    "escape",
+    "bulb",
+    "affine4",
+    "fold4",
+    "escape4",
+  ] as const;
+
+  it("keeps omitted and explicit pattern:false byte-identical across every core and mode", () => {
+    for (const core of cores) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        const omitted = surfaceDeKernelWgsl(
+          kernelOpts({ mode, core, width: 4 }),
+        );
+        const explicit = surfaceDeKernelWgsl(
+          kernelOpts({ mode, core, width: 4, pattern: false }),
+        );
+        expect(explicit).toBe(omitted);
+      }
+    }
+  });
+
+  it("is structurally inert in march/eval while pattern-only shade uses stride 3 with fixed classic lighting", () => {
+    for (const core of cores) {
+      for (const mode of ["eval", "march"] as const) {
+        const off = surfaceDeKernelWgsl(kernelOpts({ mode, core, width: 4 }));
+        const on = surfaceDeKernelWgsl(
+          kernelOpts({ mode, core, width: 4, pattern: true }),
+        );
+        expect(on).toBe(off);
+      }
+
+      const shade = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, width: 4, pattern: true }),
+      );
+      expect(shade).toContain(
+        "let fSlot = clamp(hi.firstChoice, 0, i32(params.mapCount) - 1);",
+      );
+      expect(shade).toContain("let fa = shadeMaps[fSlot * 3 + 1];");
+      expect(shade).toContain("let fb = shadeMaps[fSlot * 3 + 2];");
+      expect(shade).toContain("base = shadeMaps[fSlot * 3].rgb;");
+      expect(shade).not.toContain("fn finishShade(");
+      expect(shade).toContain(
+        "let specular = pow(max(dot(n, halfVec), 0.0), 32.0) * 0.4;",
+      );
+      for (const read of shade.matchAll(/shadeMaps\[([^\]]*)\]/g)) {
+        expect(read[1]).toContain("* 3");
+      }
+    }
+  });
+
+  it("composes both gates without changing finish-only source when pattern is false", () => {
+    const finishOnly = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 12, finish: true }),
+    );
+    expect(
+      surfaceDeKernelWgsl(
+        kernelOpts({
+          mode: "shade",
+          width: 12,
+          finish: true,
+          pattern: false,
+        }),
+      ),
+    ).toBe(finishOnly);
+    const combined = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        width: 12,
+        finish: true,
+        pattern: true,
+      }),
+    );
+    expect(combined).toBe(finishOnly);
+    expect(combined.split("fn finishShade(")).toHaveLength(2);
+  });
+
+  it("does not grow the frozen 224-byte ShadeParams layout", () => {
+    expect(SURFACE_GPU_SHADE_BYTES).toBe(224);
+    const off = surfaceDeKernelWgsl(kernelOpts({ mode: "shade", width: 12 }));
+    const on = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 12, pattern: true }),
+    );
+    const struct = (source: string): string =>
+      source.slice(
+        source.indexOf("struct ShadeParams"),
+        source.indexOf("}", source.indexOf("struct ShadeParams")) + 1,
       );
     expect(struct(on)).toBe(struct(off));
   });

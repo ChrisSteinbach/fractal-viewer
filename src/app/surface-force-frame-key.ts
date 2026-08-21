@@ -36,10 +36,12 @@ import type { SurfaceComputeFrameSpec } from "./surface-compute";
  * combination of present/absent optional blocks can be re-partitioned into a
  * DIFFERENT combination that reads the same —
  * `surface-force-frame-key.test.ts`'s collision case pins exactly that for
- * the new `bgShape` block against its neighbors. The `finish` block relaxes
- * "fixed-length when present" to SELF-DELIMITING: it opens with its tag and
- * then its own slot COUNT, so a parse knows exactly where it ends however
- * many slots a session has — the same injectivity, one indirection later.
+ * the new `bgShape` block against its neighbors. The per-slot `finish` and
+ * `pattern` blocks relax "fixed-length when present" to SELF-DELIMITING:
+ * each opens with its tag and then its own slot COUNT, so a parse knows
+ * exactly where it ends however many slots a session has — the same
+ * injectivity, one indirection later. Pattern's calibration is a separately
+ * tagged fixed quartet inside the pattern-only region.
  */
 export function surfaceComputeForceFrameKey(
   spec: SurfaceComputeFrameSpec,
@@ -74,17 +76,17 @@ export function surfaceComputeForceFrameKey(
     // The session's authored finishes: a timeline leg whose document
     // authors a different finish on some transform repaints every hit
     // pixel under a parked camera — fog's own rationale, per slot. Keyed
-    // on spec.finishes' OWN presence, which matches the shadeMaps
+    // on spec.materials' finish gate, which matches the shadeMaps
     // packer's absent default exactly (absent spec = the classic kernels
     // = the pre-finish buffer); the RESOLVED six-number lanes per slot
     // need no further defaulting because resolution is total. Tag + slot
     // COUNT then one comma-tuple per slot — self-delimiting rather than
     // fixed-length; see the module doc's collision argument.
-    ...(spec.finishes
+    ...(spec.materials?.finish
       ? [
           "finish",
-          spec.finishes.length,
-          ...spec.finishes.map((f) =>
+          spec.materials.slots.length,
+          ...spec.materials.slots.map(({ finish: f }) =>
             [
               f.specular,
               f.shininess,
@@ -94,6 +96,34 @@ export function surfaceComputeForceFrameKey(
               f.reflectionTint,
             ].join(","),
           ),
+        ]
+      : []),
+    // Pattern authoring is independently gated from finish. The per-slot
+    // block carries canonical resolved fields rather than only packed lanes,
+    // so every authored family/orientation/strength/scale edit invalidates a
+    // parked-camera force frame. tracePixelEps belongs here because the
+    // accepted pattern detail gate reads the pixel footprint; it is irrelevant
+    // (and therefore preserves the legacy key) when pattern is off.
+    ...(spec.materials?.pattern
+      ? [
+          "pattern",
+          spec.materials.slots.length,
+          spec.tracePixelEps,
+          ...spec.materials.slots.map(({ pattern }) =>
+            [pattern.kind, pattern.axis, pattern.strength, pattern.scale].join(
+              ",",
+            ),
+          ),
+          // One quartet owned by the built DE/session, never repeated per
+          // material slot. Presence is guaranteed by SurfaceMaterialSlots'
+          // discriminated type.
+          "patternCalibration",
+          [
+            spec.materials.patternCalibration.ringsLow,
+            spec.materials.patternCalibration.ringsInvSpan,
+            spec.materials.patternCalibration.sheetsLow,
+            spec.materials.patternCalibration.sheetsInvSpan,
+          ].join(","),
         ]
       : []),
     // The background SHAPE: linear vs radial, or a radial
