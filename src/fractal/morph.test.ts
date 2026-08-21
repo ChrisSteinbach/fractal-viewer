@@ -864,3 +864,160 @@ describe("lerpSystem finish", () => {
     expect(mid.transforms[0].finish).toBeUndefined();
   });
 });
+
+describe("lerpSystem surface pattern", () => {
+  it("returns authored endpoints by reference and preserves total absence", () => {
+    const a = system({
+      transforms: [transform({ surfacePattern: { kind: "wood", axis: "y" } })],
+    });
+    const b = system({ transforms: [transform({ position: [1, 1, 1] })] });
+    expect(lerpSystem(a, b, 0)).toBe(a);
+    expect(lerpSystem(a, b, 1)).toBe(b);
+    const plain = system({ transforms: [transform()] });
+    for (const t of [0.1, 0.5, 0.9]) {
+      expect(
+        lerpSystem(plain, b, t).transforms[0].surfacePattern,
+      ).toBeUndefined();
+    }
+  });
+
+  it("fades none to and from one retained family", () => {
+    const plain = system({ transforms: [transform()] });
+    const wood = system({
+      transforms: [
+        transform({
+          surfacePattern: {
+            kind: "wood",
+            axis: "x",
+            scale: 5,
+            strength: 0.8,
+          },
+        }),
+      ],
+    });
+    expect(lerpSystem(plain, wood, 0.25).transforms[0].surfacePattern).toEqual({
+      kind: "wood",
+      axis: "x",
+      scale: 5,
+      strength: 0.2,
+    });
+    const fadingOut = lerpSystem(wood, plain, 0.25).transforms[0]
+      .surfacePattern!;
+    expect(fadingOut).toMatchObject({ kind: "wood", axis: "x", scale: 5 });
+    expect(fadingOut.strength).toBeCloseTo(0.6, 14);
+  });
+
+  it("interpolates same-family numeric leaves through defaults and preserves shared sparsity", () => {
+    const a = system({
+      transforms: [
+        transform({ surfacePattern: { kind: "marble", axis: "y", scale: 2 } }),
+      ],
+    });
+    const b = system({
+      transforms: [
+        transform({
+          surfacePattern: { kind: "marble", axis: "y", strength: 0.4 },
+        }),
+      ],
+    });
+    expect(lerpSystem(a, b, 0.5).transforms[0].surfacePattern).toEqual({
+      kind: "marble",
+      axis: "y",
+      scale: (2 + 1.35) / 2,
+      strength: 0.7,
+    });
+
+    const sparseA = system({
+      transforms: [
+        transform({ surfacePattern: { kind: "strata", axis: "z" } }),
+      ],
+    });
+    const sparseB = system({
+      transforms: [
+        transform({
+          position: [1, 1, 1],
+          surfacePattern: { kind: "strata", axis: "z" },
+        }),
+      ],
+    });
+    expect(
+      lerpSystem(sparseA, sparseB, 0.5).transforms[0].surfacePattern,
+    ).toEqual({ kind: "strata", axis: "z" });
+  });
+
+  it("crossfades family and axis changes through zero with a discrete midpoint", () => {
+    const a = system({
+      transforms: [
+        transform({
+          surfacePattern: {
+            kind: "wood",
+            axis: "x",
+            scale: 3,
+            strength: 1,
+          },
+        }),
+      ],
+    });
+    const b = system({
+      transforms: [
+        transform({
+          surfacePattern: {
+            kind: "marble",
+            axis: "z",
+            scale: 5,
+            strength: 1,
+          },
+        }),
+      ],
+    });
+    expect(lerpSystem(a, b, 0.25).transforms[0].surfacePattern).toEqual({
+      kind: "wood",
+      axis: "x",
+      scale: 3.5,
+      strength: 0.5,
+    });
+    expect(lerpSystem(a, b, 0.5).transforms[0].surfacePattern).toEqual({
+      kind: "marble",
+      axis: "z",
+      scale: 4,
+      strength: 0,
+    });
+    expect(lerpSystem(a, b, 0.75).transforms[0].surfacePattern).toEqual({
+      kind: "marble",
+      axis: "z",
+      scale: 4.5,
+      strength: 0.5,
+    });
+
+    const axisB = system({
+      transforms: [
+        transform({
+          surfacePattern: {
+            kind: "wood",
+            axis: "z",
+            scale: 3,
+            strength: 1,
+          },
+        }),
+      ],
+    });
+    expect(
+      lerpSystem(a, axisB, 0.5).transforms[0].surfacePattern,
+    ).toMatchObject({ kind: "wood", axis: "z", strength: 0 });
+  });
+
+  it("pins a phantom surplus map's nested pattern and fades a final lens from none", () => {
+    const plain = system({ transforms: [transform()] });
+    const pattern = { kind: "strata" as const, axis: "y" as const, scale: 2.6 };
+    const larger = system({
+      transforms: [transform(), transform({ surfacePattern: pattern })],
+      finalTransform: transform({ surfacePattern: pattern }),
+    });
+    const mid = lerpSystem(plain, larger, 0.5);
+    expect(mid.transforms[1].surfacePattern).toBe(pattern);
+    expect(mid.finalTransform!.surfacePattern).toEqual({
+      ...pattern,
+      strength: 0.5,
+    });
+  });
+});

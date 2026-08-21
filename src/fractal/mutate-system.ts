@@ -26,9 +26,14 @@ import type { MorphSystem } from "./morph";
 import { MIN_OCCUPIED_CELLS, scoreSystem } from "./random-system";
 import type { Rng } from "./rng";
 import { SURFACE_FINISH_SHININESS_FLOOR } from "./surface-finish";
+import {
+  SURFACE_PATTERN_SCALE_MAX,
+  SURFACE_PATTERN_SCALE_MIN,
+} from "./surface-pattern";
 import { VARIATION_TYPES } from "./types";
 import type {
   SurfaceFinish,
+  SurfacePattern,
   SymmetryParams,
   Transform,
   Variation,
@@ -250,6 +255,8 @@ const FINISH_UNIT_JITTER = 0.05;
  * {@link COLOR_INDEX_CLAMP_MIN}/`_MAX`. */
 const FINISH_UNIT_CLAMP_MIN = 0;
 const FINISH_UNIT_CLAMP_MAX = 1;
+const SURFACE_PATTERN_SCALE_JITTER_HALF_RANGE = 0.08;
+const SURFACE_PATTERN_STRENGTH_JITTER = 0.05;
 
 /**
  * How much wider every jitter half-range above gets on the grid's one
@@ -586,10 +593,9 @@ function jitterFinishUnit(rng: Rng, value: number, spread: number): number {
  * documented on this module's `FINISH_*` constants above. Mirrors
  * {@link jitterW}'s "only present subfields move" shape, one field family
  * over, on {@link jitterVariationEntry}'s COPY-rather-than-rebuild
- * discipline: `finish` is spread first so a field this function has no rule
- * for (there are none today, but `types.ts`'s own `SurfaceFinish` doc notes
- * a later slice will add Tier-2 pattern fields) rides through untouched
- * instead of silently vanishing. */
+ * discipline: `finish` is spread first so a future lighting field this
+ * function has no rule for rides through untouched instead of silently
+ * vanishing. Patterned albedo remains the separate `surfacePattern` sibling. */
 function jitterFinish(
   rng: Rng,
   base: SurfaceFinish,
@@ -617,18 +623,52 @@ function jitterFinish(
   return finish;
 }
 
+/** Copy a present pattern and perturb only authored numeric leaves. */
+function jitterSurfacePattern(
+  rng: Rng,
+  base: SurfacePattern,
+  spread: number,
+): SurfacePattern {
+  const pattern: SurfacePattern = { ...base };
+  if (base.scale !== undefined) {
+    pattern.scale = clamp(
+      base.scale *
+        uniform(
+          rng,
+          1 - SURFACE_PATTERN_SCALE_JITTER_HALF_RANGE * spread,
+          1 + SURFACE_PATTERN_SCALE_JITTER_HALF_RANGE * spread,
+        ),
+      SURFACE_PATTERN_SCALE_MIN,
+      SURFACE_PATTERN_SCALE_MAX,
+    );
+  }
+  if (base.strength !== undefined) {
+    pattern.strength = clamp(
+      base.strength +
+        uniform(
+          rng,
+          -SURFACE_PATTERN_STRENGTH_JITTER * spread,
+          SURFACE_PATTERN_STRENGTH_JITTER * spread,
+        ),
+      0,
+      1,
+    );
+  }
+  return pattern;
+}
+
 /**
  * Jitter one base map: every field nudged per this module's documented
  * ranges, scaled by `spread` (`1` for a plain cell, {@link WILDCARD_SPREAD}
  * for the wildcard cell). `id` is preserved (never reassigned — the map
  * identity a mutation grid cell shows must trace back to the base system's
  * own map), and every optional field (`shear`/`variations`/`w`/`colorIndex`/
- * `colorSpeed`/`finish`) stays exactly as present or absent as it is on
+ * `colorSpeed`/`finish`/`surfacePattern`) stays exactly as present or absent as it is on
  * `base` — no key is ever invented or dropped, fold-family lengths included:
  * see {@link jitterVariationEntry} for why a mutation may perturb a present
  * `minRadius`/`fixedRadius`/`boxLimit` but never materializes an absent one,
- * and {@link jitterFinish} for the identical rule applied field-by-field to
- * `finish`.
+ * {@link jitterFinish} for the identical rule applied field-by-field to
+ * `finish`, and {@link jitterSurfacePattern} for the separate albedo sibling.
  */
 function jitterTransform(rng: Rng, base: Transform, spread: number): Transform {
   const rotation: Vec3 = [
@@ -744,6 +784,16 @@ function jitterTransform(rng: Rng, base: Transform, spread: number): Transform {
     result.finish = jitterFinish(rng, base.finish, spread);
   }
 
+  // Pattern comes last and consumes no draws when absent, preserving every
+  // pre-pattern fixed-seed mutation exactly.
+  if (base.surfacePattern) {
+    result.surfacePattern = jitterSurfacePattern(
+      rng,
+      base.surfacePattern,
+      spread,
+    );
+  }
+
   return result;
 }
 
@@ -826,6 +876,7 @@ function jitterFinalTransform(
   spread: number,
 ): Transform {
   const result: Transform = { ...base };
+  if (base.surfacePattern) result.surfacePattern = { ...base.surfacePattern };
   if (base.variations) {
     result.variations = base.variations.map((v) =>
       jitterVariationEntry(rng, v, spread),

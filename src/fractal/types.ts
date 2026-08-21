@@ -1,3 +1,10 @@
+import type { SurfacePattern } from "./surface-pattern";
+export type {
+  SurfacePattern,
+  SurfacePatternAxis,
+  SurfacePatternKind,
+} from "./surface-pattern";
+
 /** A 3-component vector: `[x, y, z]`. */
 export type Vec3 = [number, number, number];
 
@@ -151,9 +158,8 @@ export interface Variation {
  * {@link import("./surface-finish").resolveSurfaceFinish} is the one place
  * that rule is written down; nothing else may re-derive it.
  *
- * Tier-2 procedural-pattern fields (e.g. a future `patternKind`) are
- * deliberately NOT here — this is lighting response only, and a later slice
- * owns pattern.
+ * Procedural albedo is deliberately NOT here — this remains lighting response
+ * only. {@link Transform.surfacePattern} is its document-level sibling.
  */
 export interface SurfaceFinish {
   /**
@@ -300,6 +306,13 @@ export interface Transform {
    * every other render mode ignores it.
    */
   finish?: SurfaceFinish;
+  /**
+   * Optional per-transform procedural albedo. Omitted means no pattern and is
+   * an exact albedo identity; see `surface-pattern.ts` for the sole resolver,
+   * domains, defaults, stable wire ids, and accepted CPU arithmetic. This is a
+   * sibling of {@link finish}, never a field inside the lighting response.
+   */
+  surfacePattern?: SurfacePattern;
 }
 
 /**

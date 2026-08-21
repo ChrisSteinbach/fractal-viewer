@@ -1307,6 +1307,170 @@ describe("decodeScene transform finish", () => {
   });
 });
 
+describe("decodeScene transform surface pattern", () => {
+  it("round-trips every stable family/axis and sparse numeric leaves", () => {
+    for (const kind of ["wood", "marble", "strata"] as const) {
+      for (const axis of ["x", "y", "z"] as const) {
+        const s: SceneSnapshot = {
+          ...baseSnapshot(),
+          transforms: [
+            {
+              id: 0,
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [0.5, 0.5, 0.5],
+              surfacePattern: { kind, axis, scale: 3.1256, strength: 0.625 },
+            },
+          ],
+        };
+        expect(
+          decodeScene(encodeScene(s))!.transforms[0].surfacePattern,
+        ).toEqual({ kind, axis, scale: 3.1256, strength: 0.625 });
+      }
+    }
+    const sparse: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          surfacePattern: { kind: "marble", axis: "y" },
+        },
+      ],
+    };
+    expect(
+      decodeScene(encodeScene(sparse))!.transforms[0].surfacePattern,
+    ).toEqual({ kind: "marble", axis: "y" });
+  });
+
+  it("keeps absence byte-identical and old payloads patternless", () => {
+    const omitted: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+        },
+      ],
+    };
+    const explicit = structuredClone(omitted);
+    explicit.transforms[0].surfacePattern = undefined;
+    const legacyGolden =
+      "v1=eyJ0cmFuc2Zvcm1zIjpbeyJwb3NpdGlvbiI6WzAsMCwwXSwicm90YXRpb24iOlswLDAsMF0sInNjYWxlIjpbMC41LDAuNSwwLjVdfV0sIm51bVBvaW50cyI6MTAwMDAwLCJwb2ludFNpemUiOjEsImNvbG9yTW9kZSI6InRyYW5zZm9ybSIsImNvbG9yR2FtbWEiOjEsInJhbXBQYWxldHRlSWQiOiJsZWdhY3kiLCJmb3VyRENvbG9yIjoid0JsdWVPcmFuZ2UiLCJmb3VyRERlcHRoRmFkZSI6ZmFsc2UsInJlbmRlclN0eWxlIjoiZGVwdGhGYWRlIiwic2hvd0d1aWRlcyI6dHJ1ZSwiZmxhbWUiOnsiZXhwb3N1cmUiOjEsIml0ZXJhdGlvbnMiOjIwMDAwMDAwLCJnYW1tYSI6Mi40LCJ2aWJyYW5jeSI6MSwic3VwZXJzYW1wbGUiOjIsImVzdGltYXRvclJhZGl1cyI6NiwiZXN0aW1hdG9yTWluaW11bVJhZGl1cyI6MCwiZXN0aW1hdG9yQ3VydmUiOjAuNCwicGFsZXR0ZUlkIjoic3BlY3RydW0ifSwic29saWQiOnsicmVzb2x1dGlvbiI6MTkyLCJpdGVyYXRpb25zIjoyMDAwMDAwMCwidGhyZXNob2xkIjowLjMsImxpZ2h0QXppbXV0aCI6MTM1LCJsaWdodEVsZXZhdGlvbiI6NTAsImFtYmllbnQiOjAuMjUsInBhbGV0dGVJZCI6InNwZWN0cnVtIn0sInN1cmZhY2UiOnsibGlnaHRBemltdXRoIjoxMzUsImxpZ2h0RWxldmF0aW9uIjo1MCwiYW1iaWVudCI6MC4yNSwiY29sb3JTb3VyY2UiOiJ0cmFuc2Zvcm0iLCJwYWxldHRlSWQiOiJzcGVjdHJ1bSIsImNvbG9yU3BlZWQiOjAuNSwiZW52TGlnaHQiOjAuMzUsImZsb29yUGF0dGVybiI6InNvbGlkIiwiZmxvb3JUaWxlU2NhbGUiOjAuNjQsImZsb29yRW1pc3Npb24iOjB9LCJzeW1tZXRyeSI6eyJvcmRlciI6MSwicGxhbmUiOiJ4eiJ9LCJnbG93QnJpZ2h0bmVzcyI6MSwiYmFsbG9vbkVjaG8iOmZhbHNlLCJiYWxsb29uUmFkaXVzIjoxLjYsImJhbGxvb25UaW50IjoiIzAwMDAwMCIsImJhbGxvb25UaW50U3RyZW5ndGgiOjAsImZvZ0RlbnNpdHkiOjEsImZvZ1RpbnQiOiIjZmZmZmZmIiwiZm9nVGludFN0cmVuZ3RoIjowLCJncm91bmRQbGFuZSI6ZmFsc2V9";
+    expect(encodeScene(omitted)).toBe(legacyGolden);
+    expect(encodeScene(explicit)).toBe(encodeScene(omitted));
+    expect(
+      decodeScene(encodeScene(omitted))!.transforms[0].surfacePattern,
+    ).toBeUndefined();
+    const payload = decodePayload(encodeScene(omitted));
+    expect(
+      "surfacePattern" in (payload.transforms as Record<string, unknown>[])[0],
+    ).toBe(false);
+  });
+
+  it("quietly drops malformed blocks and required discriminators", () => {
+    const build = (surfacePattern: unknown) => ({
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          surfacePattern,
+        },
+      ],
+    });
+    for (const value of [
+      null,
+      "wood",
+      ["wood", "y"],
+      {},
+      { kind: "plain", axis: "y" },
+      { kind: "wood" },
+      { kind: "wood", axis: "q" },
+    ]) {
+      const decoded = decodeScene("v1=" + b64url(JSON.stringify(build(value))));
+      expect(decoded).not.toBeNull();
+      expect(decoded!.transforms[0].surfacePattern).toBeUndefined();
+    }
+  });
+
+  it("drops malformed optional leaves independently but preserves finite authored values", () => {
+    const raw = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          surfacePattern: {
+            kind: "strata",
+            axis: "z",
+            scale: -7,
+            strength: "strong",
+          },
+        },
+      ],
+    };
+    const decoded = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(decoded).not.toBeNull();
+    expect(decoded!.transforms[0].surfacePattern).toEqual({
+      kind: "strata",
+      axis: "z",
+      scale: -7,
+    });
+  });
+
+  it("omits non-finite numeric leaves on encode while retaining the valid family", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          surfacePattern: {
+            kind: "wood",
+            axis: "x",
+            scale: NaN,
+            strength: Infinity,
+          },
+        },
+      ],
+    };
+    const payload = decodePayload(encodeScene(s));
+    expect(
+      (payload.transforms as Record<string, unknown>[])[0].surfacePattern,
+    ).toEqual({ kind: "wood", axis: "x" });
+  });
+
+  it("uses the same codec for a final transform", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      finalTransform: {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        surfacePattern: {
+          kind: "marble",
+          axis: "z",
+          scale: 1.35,
+          strength: 0.8,
+        },
+      },
+    };
+    expect(decodeScene(encodeScene(s))!.finalTransform!.surfacePattern).toEqual(
+      s.finalTransform!.surfacePattern,
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Final transform (optional field)
 // ---------------------------------------------------------------------------

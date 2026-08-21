@@ -823,3 +823,82 @@ describe("mutateSystem finish", () => {
     expect(sawMetalnessChange).toBe(true);
   });
 });
+
+describe("mutateSystem surface pattern", () => {
+  const patternedMap: Transform = {
+    id: 0,
+    position: [0, 0.8, 0],
+    rotation: [0, 0, 0],
+    scale: [0.5, 0.5, 0.5],
+    surfacePattern: {
+      kind: "wood",
+      axis: "z",
+      scale: 3,
+      strength: 0.6,
+    },
+  };
+
+  it("keeps kind/axis discrete and jitters only present numeric leaves", () => {
+    const base = system({
+      transforms: [patternedMap, ...sierpinskiTetrahedron().slice(1)],
+    });
+    let sawChange = false;
+    for (let seed = 0; seed < 10; seed++) {
+      const pattern = mutateSystem(base, mulberry32(seed)).transforms[0]
+        .surfacePattern!;
+      expect(pattern.kind).toBe("wood");
+      expect(pattern.axis).toBe("z");
+      expect(pattern.scale).toBeGreaterThanOrEqual(0.5);
+      expect(pattern.scale).toBeLessThanOrEqual(32);
+      expect(pattern.strength).toBeGreaterThanOrEqual(0);
+      expect(pattern.strength).toBeLessThanOrEqual(1);
+      if (pattern.scale !== 3 || pattern.strength !== 0.6) sawChange = true;
+    }
+    expect(sawChange).toBe(true);
+  });
+
+  it("preserves absent blocks and leaves under ordinary and wildcard mutation", () => {
+    const plain = system();
+    const sparse = system({
+      transforms: [
+        { ...patternedMap, surfacePattern: { kind: "strata", axis: "y" } },
+        ...sierpinskiTetrahedron().slice(1),
+      ],
+    });
+    for (const wildcard of [false, true]) {
+      const plainMutant = mutateSystem(plain, mulberry32(4), { wildcard });
+      for (const transform of plainMutant.transforms) {
+        expect("surfacePattern" in transform).toBe(false);
+      }
+      const pattern = mutateSystem(sparse, mulberry32(4), { wildcard })
+        .transforms[0].surfacePattern!;
+      expect(pattern).toEqual({ kind: "strata", axis: "y" });
+      expect("scale" in pattern).toBe(false);
+      expect("strength" in pattern).toBe(false);
+    }
+  });
+
+  it("clones base and final pattern objects without aliasing", () => {
+    const finalPattern = {
+      kind: "marble" as const,
+      axis: "x" as const,
+      scale: 1.35,
+    };
+    const base = system({
+      transforms: [patternedMap, ...sierpinskiTetrahedron().slice(1)],
+      finalTransform: {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        surfacePattern: finalPattern,
+      },
+    });
+    const mutant = mutateSystem(base, mulberry32(8));
+    expect(mutant.transforms[0].surfacePattern).not.toBe(
+      patternedMap.surfacePattern,
+    );
+    expect(mutant.finalTransform!.surfacePattern).toEqual(finalPattern);
+    expect(mutant.finalTransform!.surfacePattern).not.toBe(finalPattern);
+  });
+});

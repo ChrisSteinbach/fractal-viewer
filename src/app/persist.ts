@@ -9,6 +9,10 @@
  * module stays fully testable without a real DOM.
  */
 import { isFlatTransform } from "../fractal/affine4";
+import {
+  SURFACE_PATTERN_AXES,
+  SURFACE_PATTERN_KINDS,
+} from "../fractal/surface-pattern";
 import type { PositionAxisColors } from "../fractal/color";
 import {
   CUSTOM_PALETTE_ID,
@@ -33,6 +37,7 @@ import type {
   ColorMode,
   FourDColorMode,
   SurfaceFinish,
+  SurfacePattern,
   SymmetryParams,
   SymmetryPlane,
   Transform,
@@ -670,6 +675,40 @@ function decodeFinish(raw: unknown): SurfaceFinish | undefined {
 }
 
 /**
+ * Decode cosmetic patterned-albedo state without coercion or clamping.
+ * `kind` and `axis` are required stable discriminators; malformed structure
+ * quietly drops this block, while malformed optional numeric leaves alone are
+ * omitted. Runtime domains belong to `surface-pattern.ts`, not persistence.
+ */
+function decodeSurfacePattern(raw: unknown): SurfacePattern | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  const p = raw as Record<string, unknown>;
+  if (
+    typeof p.kind !== "string" ||
+    !SURFACE_PATTERN_KINDS.includes(
+      p.kind as (typeof SURFACE_PATTERN_KINDS)[number],
+    ) ||
+    typeof p.axis !== "string" ||
+    !SURFACE_PATTERN_AXES.includes(
+      p.axis as (typeof SURFACE_PATTERN_AXES)[number],
+    )
+  ) {
+    return undefined;
+  }
+  const pattern: SurfacePattern = {
+    kind: p.kind as SurfacePattern["kind"],
+    axis: p.axis as SurfacePattern["axis"],
+  };
+  const scale = decodeFinishField(p.scale);
+  if (scale !== undefined) pattern.scale = scale;
+  const strength = decodeFinishField(p.strength);
+  if (strength !== undefined) pattern.strength = strength;
+  return pattern;
+}
+
+/**
  * Decode one optional numeric leaf inside an untrusted `w` block — a
  * position, a scale, or a single rotation/shear w-plane angle. All four kinds
  * share the identical "coerce, reject non-finite, clamp into `[min, max]`"
@@ -865,6 +904,10 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
   if (tf.finish !== undefined) {
     const finish = decodeFinish(tf.finish);
     if (finish !== undefined) decoded.finish = finish;
+  }
+  if (tf.surfacePattern !== undefined) {
+    const pattern = decodeSurfacePattern(tf.surfacePattern);
+    if (pattern !== undefined) decoded.surfacePattern = pattern;
   }
   return decoded;
 }
@@ -1512,6 +1555,7 @@ interface EncodedTransform {
   variations?: EncodedVariation[];
   w?: WExtension;
   finish?: SurfaceFinish;
+  surfacePattern?: SurfacePattern;
 }
 
 /**
@@ -1567,6 +1611,28 @@ function encodeFinish(
   const reflectionTint = encodeFinishField(finish.reflectionTint);
   if (reflectionTint !== undefined) e.reflectionTint = reflectionTint;
   return Object.keys(e).length > 0 ? e : undefined;
+}
+
+/** Sparse, fidelity-only patterned-albedo encoder. */
+function encodeSurfacePattern(
+  pattern: SurfacePattern | undefined,
+): SurfacePattern | undefined {
+  if (
+    pattern === undefined ||
+    !SURFACE_PATTERN_KINDS.includes(pattern.kind) ||
+    !SURFACE_PATTERN_AXES.includes(pattern.axis)
+  ) {
+    return undefined;
+  }
+  const encoded: SurfacePattern = {
+    kind: pattern.kind,
+    axis: pattern.axis,
+  };
+  const scale = encodeFinishField(pattern.scale);
+  if (scale !== undefined) encoded.scale = scale;
+  const strength = encodeFinishField(pattern.strength);
+  if (strength !== undefined) encoded.strength = strength;
+  return encoded;
 }
 
 /**
@@ -1680,6 +1746,8 @@ function encodeTransform(t: Transform): EncodedTransform {
   }
   const finish = encodeFinish(t.finish);
   if (finish !== undefined) e.finish = finish;
+  const surfacePattern = encodeSurfacePattern(t.surfacePattern);
+  if (surfacePattern !== undefined) e.surfacePattern = surfacePattern;
   return e;
 }
 
