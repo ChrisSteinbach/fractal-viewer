@@ -623,6 +623,81 @@ Three composition rules, each inherited rather than invented:
 No new throws anywhere: `finish` composes with every core and with
 lens/balloon/groundPlane.
 
+## Surface pattern lanes (the `pattern` codegen flag)
+
+`pattern: true` compiles the pattern ALBEDO arm into the shade entry — the
+WGSL twin of the GLSL tracers' `SURFACE_PATTERN` body, emitted from the
+SAME template (`surface-pattern-shade.ts`'s dialect emission, the
+`surfaceFinishShadeSource` discipline one feature over) so the two GLSL
+tracers and the WGSL kernel cannot drift on the arithmetic; a test
+collapses both dialect texts onto one canonical character stream. One
+splice, immediately ahead of `shadeRays` (beside `finishShade`), serves
+all seven cores — the shade entry is shared text.
+
+THE SOURCE IS THE HIT-INFO, NOT THE SHADE ENTRY. The frame oracle's
+`source4` member joins `SurfaceHitInfo` under the gate, and each core's
+hit-info fills it with the raw attractor-frame point, reversing the
+render's remaps in the surface-pattern-frame.ts order:
+
+- 3D descent cores (fold, affine) fill their final-applied query `q`
+  (`finalM * p + finalT`, the packed final INVERSE; identity under a fold
+  final) — the GLSL `patternSource` after the `uFinalInvM` apply.
+- The forward cores (escape, bulb) fill the plain hit `p`: no final
+  transform can exist on a forward chain.
+- The 4D descent cores (affine4, fold4) RE-LIFT the hit at its OWN w —
+  `finalApply4(rotorInvApply4(vec4f(p, w0 + sStar * sliceHalfW)))` — the
+  hit's w inserted BEFORE the inverse rotor (doing it after would
+  screen-lock any w-mixing pose), then the affine final inverse.
+- escape4 fills the plain rotor lift `liftEscape4(p)` (its slab is pinned
+  0 and no final lens can exist; `finalApply4` is not even emitted for
+  forward cores).
+- The 4D LENS wrapper overwrites the core's fill with the WINNING BRANCH
+  TUPLE `bestQ + sStar * bestExt` (the oracle's fold-final source; `bestQ`
+  alone without a slab). The 3D lens and the balloon wrapper need NO
+  splice: the core call already runs at the winning query (bestQ; the
+  balloon argmin's `inv.xyz`/`p`), so the core's own fill IS the GLSL
+  `patternFoldLensSource` / `cpos` value.
+
+THE SHADE ENTRY NORMALIZES AND CALLS. 3D reads `(source4.xyz -
+boundCenter) / boundingRadius` (the shared bound centre); 4D reads
+`source4.xyz / boundingRadius` (the raw radius, implicit zero centre —
+never the live slice radius). The footprint is the TIER-INDEPENDENT
+acceptance epsilon at the hit depth: `params.pixelEps * t /
+boundingRadius`, where `params.pixelEps` is the host-packed
+`acceptPixelEps` (native-height derived — a preview coarsens sampling,
+never acceptance), the GLSL `uAcceptPixelEps * t / uBoundingRadius` twin;
+`tracePixelEps` stays the normal probe's own scale. The call reads the
+hit slot's shared B lane (`fb`), the calibration quartet and the sheets
+carrier, and lands in the document's order — colour source -> balloon
+tint -> pattern -> lighting -> fog — with `shadeGroundPlane` untouched
+(the floor stays unpatterned).
+
+THE CALIBRATION RIDES SHADEPARAMS, SHADE-MODE ONLY. The rings/sheets
+clamp quartet `(ringsLow, ringsInvSpan, sheetsLow, sheetsInvSpan)` —
+`shade.patternCalibration` at offset 224, closing the struct at 240
+(`SURFACE_GPU_SHADE_PATTERN_BYTES`) — is declared ONLY under shade +
+pattern: a pattern-enabled MARCH kernel's text must stay byte-identical
+(the acceptance sweep), and the march never reads the member. The host
+sizes ONE buffer at 240 for both pipelines of a patterned session (a
+struct never reads past its own size) and packs the quartet from the
+session's materials.
+
+BYTE IDENTITY IS A COMPILE GATE, as with finish: absent or `false`
+reproduces today's source byte for byte across every mode, core and
+wrapper, march/eval stay byte-identical under the flag, and the shade
+stride (1 -> 3 under finish OR pattern) is the centralized token the
+finish sweep already regexes.
+
+MEASURED (this tree, 640x360, the .6 compute gate): the pattern body adds
+a uniform ~11.7-11.8 KB to every shade kernel (fold 29799 -> 41546 B,
+affine 26374 -> 38121, escape 21017 -> 32760, bulb 13920 -> 25663,
+affine4 33679 -> 45471, fold4 38453 -> 50245, escape4 17923 -> 29644).
+Real-driver (Intel Iris Xe / Mesa, `intel gen-12lp`) settle wall times for
+a patterned session are within run-to-run noise of the strength-0 control
+on the same kernel (e.g. lens3 3212 vs 3061 ms; escape4 667 vs 662 ms),
+and the ray census is IDENTICAL across the unauthored/patterned/
+strength-0 legs — the pattern changes shading, never geometry.
+
 ## Modes
 
 `eval` (per-query distances) and `march` (bounded-dispatch ray march,

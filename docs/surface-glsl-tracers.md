@@ -821,6 +821,15 @@ reaches the SETTLED 8-pass latch; on the REAL DRIVER (--mode=x11::0,
 Intel Iris Xe / Mesa via ANGLE) all three routes settle: lens3 3.81%,
 ifs4plane 1.13%, escape3 9.19%, strength-0 0.000% everywhere.
 
+THE WGSL TWIN (fr-cmtl.6) renders the SAME documents on the compute path
+with the same effect: `scripts/pattern.compute.verify.mjs` (no
+`?surfacegl`, engine=compute asserted at capture time) measures lens3
+3.81%, ifs4plane 1.13%, escape3 9.19% — byte-for-byte the WebGL rows —
+plus the compute-only escape4 Mandelbox Brick at 5.13%, strength-0
+0.000% everywhere, on the real driver at the settled 8-pass latch. The
+WGSL-side wiring is documented in `surface-gpu-kernels.md`'s pattern
+lanes section.
+
 ## The probe-width verdict
 
 The three shading taps (normal/shadow/AO) ride the value form, which fold
