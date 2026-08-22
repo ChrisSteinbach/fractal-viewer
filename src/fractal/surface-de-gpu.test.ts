@@ -27,6 +27,7 @@ import {
   SURFACE_GPU_RAY_MISS,
   SURFACE_GPU_RAY_PLANE,
   SURFACE_GPU_SHADE_BYTES,
+  SURFACE_GPU_SHADE_PATTERN_BYTES,
   SURFACE_GPU_UNIFORM_MAP_SLOTS,
   surfaceDeKernelWgsl,
   surfaceGpuWorkgroupBytes,
@@ -1117,6 +1118,35 @@ describe("packSurfaceGpuShade", () => {
       ),
     );
     expect(Array.from(bytes.slice(196, 208))).toEqual(Array(12).fill(0));
+  });
+
+  it("packs the pattern calibration quartet at 224, growing the buffer to 240 — absent keeps the 224-byte buffer byte for byte", () => {
+    expect(SURFACE_GPU_SHADE_PATTERN_BYTES).toBe(240);
+    const calibration: [number, number, number, number] = [
+      0.03,
+      1 / 0.94,
+      0.2,
+      1 / 0.6,
+    ];
+    const buf = packSurfaceGpuShade(
+      shadeParams({ patternCalibration: calibration }),
+    );
+    expect(buf.byteLength).toBe(SURFACE_GPU_SHADE_PATTERN_BYTES);
+    const view = new DataView(buf);
+    expect(view.getFloat32(224, true)).toBe(Math.fround(calibration[0]));
+    expect(view.getFloat32(228, true)).toBe(Math.fround(calibration[1]));
+    expect(view.getFloat32(232, true)).toBe(Math.fround(calibration[2]));
+    expect(view.getFloat32(236, true)).toBe(Math.fround(calibration[3]));
+    // Every pre-calibration byte is the 224-byte buffer's own.
+    const without = new Uint8Array(packSurfaceGpuShade(shadeParams()));
+    expect(without.byteLength).toBe(SURFACE_GPU_SHADE_BYTES);
+    expect(new Uint8Array(buf, 0, SURFACE_GPU_SHADE_BYTES)).toEqual(without);
+    // An explicit zero quartet is still a 240-byte buffer (the member's
+    // presence is the wire signal, not its values).
+    expect(
+      packSurfaceGpuShade(shadeParams({ patternCalibration: [0, 0, 0, 0] }))
+        .byteLength,
+    ).toBe(SURFACE_GPU_SHADE_PATTERN_BYTES);
   });
 });
 
@@ -2723,6 +2753,8 @@ describe("surfaceDeKernelWgsl independent pattern material gate", () => {
         }),
       ),
     ).toBe(finishOnly);
+    // With both gates on, the pattern arm joins the finish arm — one
+    // finishShade call and one patternShade call, braces balanced.
     const combined = surfaceDeKernelWgsl(
       kernelOpts({
         mode: "shade",
@@ -2731,22 +2763,266 @@ describe("surfaceDeKernelWgsl independent pattern material gate", () => {
         pattern: true,
       }),
     );
-    expect(combined).toBe(finishOnly);
+    expect(combined).not.toBe(finishOnly);
     expect(combined.split("fn finishShade(")).toHaveLength(2);
+    expect(combined.split("fn patternShade(")).toHaveLength(2);
+    expect([...combined.matchAll(/\}/g)].length).toBe(
+      [...combined.matchAll(/\{/g)].length,
+    );
+    // The document's order: colour source -> balloon tint -> pattern ->
+    // lighting -> fog. The pattern call lands before the finishShade call.
+    expect(combined.indexOf("base = patternShade(")).toBeLessThan(
+      combined.indexOf("finishShade(base,"),
+    );
   });
 
-  it("does not grow the frozen 224-byte ShadeParams layout", () => {
+  it("grows ShadeParams to 240 only under shade + pattern — the frozen 224-byte layout otherwise", () => {
     expect(SURFACE_GPU_SHADE_BYTES).toBe(224);
-    const off = surfaceDeKernelWgsl(kernelOpts({ mode: "shade", width: 12 }));
-    const on = surfaceDeKernelWgsl(
-      kernelOpts({ mode: "shade", width: 12, pattern: true }),
-    );
+    expect(SURFACE_GPU_SHADE_PATTERN_BYTES).toBe(240);
     const struct = (source: string): string =>
       source.slice(
         source.indexOf("struct ShadeParams"),
         source.indexOf("}", source.indexOf("struct ShadeParams")) + 1,
       );
-    expect(struct(on)).toBe(struct(off));
+    // Absent and pattern:false keep the 224-byte struct byte for byte.
+    const off = surfaceDeKernelWgsl(kernelOpts({ mode: "shade", width: 12 }));
+    const offExplicit = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 12, pattern: false }),
+    );
+    expect(struct(offExplicit)).toBe(struct(off));
+    expect(off).not.toContain("patternCalibration");
+    // Shade + pattern declares the calibration quartet at 224.
+    const on = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 12, pattern: true }),
+    );
+    const onStruct = struct(on);
+    expect(onStruct).toContain("patternCalibration: vec4f,");
+    expect(onStruct.endsWith("patternCalibration: vec4f,\n}")).toBe(true);
+    // Finish alone does not grow it.
+    const finish = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 12, finish: true }),
+    );
+    expect(struct(finish)).toBe(struct(off));
+    // A pattern-enabled MARCH kernel keeps the 224-byte struct: its text
+    // must stay byte-identical under the flag, so the member is a
+    // shade-only declaration.
+    const march = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "march", rays: "unproject", width: 12 }),
+    );
+    const marchOn = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "march",
+        rays: "unproject",
+        width: 12,
+        pattern: true,
+      }),
+    );
+    expect(struct(marchOn)).toBe(struct(march));
+  });
+
+  it("splices ONE pattern body (the shared WGSL twin) into every shade kernel, pattern-only retaining the fixed classic lighting lines", () => {
+    for (const core of cores) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, width: 4, pattern: true }),
+      );
+      expect(wgsl.split("fn patternShade(")).toHaveLength(2);
+      // The shared body's marker functions, each exactly once.
+      expect(wgsl.split("fn patternHash3(")).toHaveLength(2);
+      expect(wgsl.split("fn patternFbm(")).toHaveLength(2);
+      expect(wgsl.split("fn patternAlbedo(")).toHaveLength(2);
+      // The pattern call reads the hit's material lane, the calibration
+      // quartet, the sheets carrier and the tier-independent footprint.
+      expect(wgsl).toContain(
+        "base = patternShade(base, objectP, fb, shade.patternCalibration, hi.sheets, patternFootprint);",
+      );
+      // The classic lighting lines survive pattern-only.
+      expect(wgsl).toContain(
+        "let specular = pow(max(dot(n, halfVec), 0.0), 32.0) * 0.4;",
+      );
+      // Pattern-only never emits the parametric finish.
+      expect(wgsl).not.toContain("fn finishShade(");
+    }
+  });
+
+  it("routes the pattern source through the hit-info's source4 member with the frame-oracle reconstruction per core", () => {
+    // The struct carries the raw attractor-frame source4 under the gate.
+    const fold = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "fold", width: 4, pattern: true }),
+    );
+    expect(fold).toContain("source4: vec4f,");
+    // 3D descent cores fill the final-applied query q — the GLSL
+    // patternSource (balloon cpos / plain pos, then the affine final
+    // inverse; identity under a fold final).
+    expect(fold).toContain("info.source4 = vec4f(q, 0.0);");
+    const affine = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "affine", width: 4, pattern: true }),
+    );
+    expect(affine).toContain("info.source4 = vec4f(q, 0.0);");
+    // The FORWARD cores fill the plain hit (no final transform exists).
+    const escape = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "escape", width: 4, pattern: true }),
+    );
+    expect(escape).toContain("info.source4 = vec4f(p, 0.0);");
+    const bulb = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "bulb", width: 4, pattern: true }),
+    );
+    expect(bulb).toContain("info.source4 = vec4f(p, 0.0);");
+    // The 4D descent cores re-lift the hit at its OWN w before the inverse
+    // rotor and the affine final inverse — the oracle's lift-with-hitW
+    // order (the sStar member places the hit along the segment).
+    const affine4 = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "affine4", width: 4, pattern: true }),
+    );
+    expect(affine4).toContain(
+      "info.source4 = finalApply4(rotorInvApply4(vec4f(p, params.w0 + info.sStar * params.sliceHalfW)));",
+    );
+    const fold4 = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "fold4", width: 4, pattern: true }),
+    );
+    expect(fold4).toContain(
+      "info.source4 = finalApply4(rotorInvApply4(vec4f(p, params.w0 + info.sStar * params.sliceHalfW)));",
+    );
+    // escape4 lifts through the rotor alone (its slab is pinned 0 and no
+    // final lens can exist on a forward chain; finalApply4 is not even
+    // emitted for forward cores).
+    const escape4 = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "escape4", width: 4, pattern: true }),
+    );
+    expect(escape4).toContain("info.source4 = liftEscape4(p);");
+  });
+
+  it("routes the 4D fold-final source as the winning branch tuple bestQ + sStar * bestExt — and the 3D balloon source through the core's own fill", () => {
+    const fold4Lens = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "fold4",
+        width: 4,
+        lens: true,
+        pattern: true,
+      }),
+    );
+    expect(fold4Lens).toContain(
+      "var hi = surfaceDEHitInfoCore(bestQ, bestExt, li);",
+    );
+    expect(fold4Lens).toContain("hi.source4 = bestQ + hi.sStar * bestExt;");
+    // Without a slab the tuple collapses to the branch centre.
+    const fold4LensNoSlab = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "fold4",
+        width: 4,
+        lens: true,
+        slabExt: false,
+        pattern: true,
+      }),
+    );
+    expect(fold4LensNoSlab).toContain("hi.source4 = bestQ;");
+    expect(fold4LensNoSlab).not.toContain("bestQ + hi.sStar");
+    // The 3D lens core fills its own query (the winning branch bestQ with
+    // the identity final), so the wrapper needs no pattern handoff — the
+    // GLSL patternFoldLensSource value, produced in the core.
+    const foldLens = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "fold",
+        width: 4,
+        lens: true,
+        pattern: true,
+      }),
+    );
+    expect(foldLens).toContain("info.source4 = vec4f(q, 0.0);");
+    // The balloon wrapper needs no source4 edit either: the core call at
+    // the winning term's own query fills it — colorPos after the final
+    // inverse, exactly the GLSL `if (shell > 0.5) patternSource = cpos`.
+    const balloon = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "fold",
+        width: 4,
+        balloon: true,
+        pattern: true,
+      }),
+    );
+    expect(balloon).toContain("info.source4 = vec4f(q, 0.0);");
+    expect(balloon).toContain("source4: vec4f,");
+  });
+
+  it("normalizes the pattern source per dimension and pins the tier-independent footprint expression", () => {
+    const fold = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "fold", width: 4, pattern: true }),
+    );
+    // 3D reuses the shared bound centre; 4D the implicit zero centre.
+    expect(fold).toContain(
+      "let objectP = (hi.source4.xyz - params.boundCenter) / params.boundingRadius;",
+    );
+    const escape4 = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "escape4", width: 4, pattern: true }),
+    );
+    expect(escape4).toContain(
+      "let objectP = hi.source4.xyz / params.boundingRadius;",
+    );
+    // The footprint is the ACCEPTANCE epsilon at the hit depth — the
+    // march's own params.pixelEps, which the host packs from the
+    // native-height acceptPixelEps — normalized by the raw bounding
+    // radius: the GLSL uAcceptPixelEps * t / uBoundingRadius twin, so
+    // preview/settle tiers cannot change the material detail.
+    for (const core of cores) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, width: 4, pattern: true }),
+      );
+      expect(wgsl).toContain(
+        "let patternFootprint = params.pixelEps * t / params.boundingRadius;",
+      );
+    }
+  });
+
+  it("keeps the ground plane and the balloon echo tint outside the pattern arm, preserving the document's ordering", () => {
+    const plane = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        width: 12,
+        groundPlane: true,
+        pattern: true,
+      }),
+    );
+    // The floor stays unpatterned: shadeGroundPlane never calls the
+    // pattern helper (the hit path's call is the only one).
+    expect(plane.split("base = patternShade(")).toHaveLength(2);
+    expect(plane.indexOf("fn shadeGroundPlane")).toBeLessThan(
+      plane.indexOf("fn patternShade("),
+    );
+    expect(
+      plane.slice(
+        plane.indexOf("fn shadeGroundPlane("),
+        plane.indexOf("fn patternShade("),
+      ),
+    ).not.toContain("patternShade(");
+    // Ordering: color source -> balloon tint -> pattern -> lighting -> fog.
+    const balloon = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 12, balloon: true, pattern: true }),
+    );
+    expect(balloon.indexOf("base = mix(base, shade.balloonTint")).toBeLessThan(
+      balloon.indexOf("base = patternShade("),
+    );
+    expect(balloon.indexOf("base = patternShade(")).toBeLessThan(
+      balloon.indexOf("let diffuse = max(dot(n, shade.lightDir), 0.0);"),
+    );
+    expect(
+      balloon.indexOf("let diffuse = max(dot(n, shade.lightDir), 0.0);"),
+    ).toBeLessThan(
+      balloon.indexOf("let fog = 1.0 - exp(-0.12 * pow((t - tEnter)"),
+    );
+  });
+
+  it("emits no source4 member, no pattern functions, and no calibration member when pattern is false", () => {
+    for (const core of cores) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, width: 4 }),
+      );
+      expect(wgsl).not.toContain("source4");
+      expect(wgsl).not.toContain("fn patternShade(");
+      expect(wgsl).not.toContain("patternCalibration");
+    }
   });
 });
 

@@ -29,6 +29,7 @@ import {
   SURFACE_FINISH_WGSL,
   surfaceFinishShadeSource,
 } from "./surface-finish";
+import { surfacePatternShadeSourceWgsl } from "./surface-pattern-shade";
 import {
   surfaceMaterialLanes,
   type ResolvedSurfaceMaterial,
@@ -757,19 +758,30 @@ import type { Vec3 } from "./types";
  * shape-dependent scale either. All three ride the shared emitted
  * `backgroundShapeT` (`BACKGROUND_SHAPE_WGSL`'s `field` accessor reads
  * them as `shade.bgCenter`/`shade.bgScale`/`shade.bgShape`).
- * balloonTint/balloonTintStrength are the ECHO's own colour: the
- * shade entry mixes `base = mix(base, balloonTint, strength * hi.shell)`
- * at the base-albedo site, BEFORE lighting — so the shell still shades as
- * geometry and the specular stays untinted (the `envTint` note's rule) —
- * and `hi.shell` restricts it to the rays the union's argmin gave to the
- * inverted term, leaving a fractal-term hit untouched at any strength.
- * Strength 0, the default and the absent-field value, is `mix(x, y, 0)` =
- * x exactly: today's frame byte for byte. The pair rides THIS struct and
- * NOT the frozen balloon DE params block (288 in 3D, 576 in 4D) because it
- * LIGHTS a hit rather than moving geometry — the block those offsets
- * belong to is read by the march, which must stay untouched, and the
- * struct is declared unconditionally so a `balloon: false` kernel's own
- * shade text is unchanged.
+ *  balloonTint/balloonTintStrength are the ECHO's own colour: the
+ *  shade entry mixes `base = mix(base, balloonTint, strength * hi.shell)`
+ *  at the base-albedo site, BEFORE lighting — so the shell still shades as
+ *  geometry and the specular stays untinted (the `envTint` note's rule) —
+ *  and `hi.shell` restricts it to the rays the union's argmin gave to the
+ *  inverted term, leaving a fractal-term hit untouched at any strength.
+ *  Strength 0, the default and the absent-field value, is `mix(x, y, 0)` =
+ *  x exactly: today's frame byte for byte. The pair rides THIS struct and
+ *  NOT the frozen balloon DE params block (288 in 3D, 576 in 4D) because it
+ *  LIGHTS a hit rather than moving geometry — the block those offsets
+ *  belong to is read by the march, which must stay untouched, and the
+ *  struct is declared unconditionally so a `balloon: false` kernel's own
+ *  shade text is unchanged.
+ *  The pattern calibration quartet (`patternCalibration`, at 224, closing
+ *  the struct at 240 — {@link SURFACE_GPU_SHADE_PATTERN_BYTES}) is the
+ *  pattern arm's native-carrier clamp `(ringsLow, ringsInvSpan,
+ *  sheetsLow, sheetsInvSpan)`, the GLSL `uPatternCalibration` order. It is
+ *  declared ONLY under shade mode + the pattern gate: a pattern-enabled
+ *  MARCH kernel's text must stay byte-identical (the acceptance sweep),
+ *  and the march never reads the member — its struct still ends at 224
+ *  while the shade kernel's is 240, which is a legal pair because the host
+ *  binds one 240-byte buffer to both pipelines of a patterned session (a
+ *  struct never reads past its own size). Absent — every caller predating
+ *  the pattern bead — keeps the 224-byte layout byte for byte.
  *
  * Shade maps storage (mode "shade") — one vec4f per map slot:
  * (uMapColor rgb, uFoldParams.w trapIndex); one zero stride when empty,
@@ -897,7 +909,9 @@ export const SURFACE_GPU_MAP4_VEC4 = 9;
  * (AlignOf 16, and 196 % 16 != 0 — the `envStrength` trick of filling a pad
  * in place does not repeat here), so the tint lands at the next 16-aligned
  * offset, 208, with its f32 strength at 220 closing the struct exactly
- * at 224 with no pad at all. */
+ * at 224 with no pad at all. Under shade + the pattern gate a fourth
+ * vec4f (`patternCalibration`) appends at 224, closing at 240 — see
+ * {@link SURFACE_GPU_SHADE_PATTERN_BYTES}. */
 export const SURFACE_GPU_SHADE_BYTES = 224;
 /** Map slots a `mapsUniform: true` 4D kernel declares (the refuted
  * maps-uniform probe): uniform-address-space arrays need a
@@ -912,6 +926,16 @@ export const SURFACE_GPU_SHADE_BYTES = 224;
  * surface entry in main.ts, compute-only fold shapes included), so no
  * eligible system can overflow the fixed array. */
 export const SURFACE_GPU_UNIFORM_MAP_SLOTS = 24;
+
+/** Shade uniform size under the pattern gate (shade mode): the 224-byte
+ * layout plus the calibration quartet at the frozen offset 224 (layout
+ * contract in the module doc). Only a shade kernel generated with
+ * `pattern: true` declares the member, so a patterned session's host binds
+ * THIS size to BOTH pipelines of the pair (a march struct ending at 224
+ * reading a 240-byte buffer is valid WebGPU). {@link packSurfaceGpuShade}
+ * returns this size exactly when its `patternCalibration` argument is
+ * present, and the 224-byte buffer byte for byte when it is absent. */
+export const SURFACE_GPU_SHADE_PATTERN_BYTES = 240;
 
 /** Ray-state status codes (the `y` component of a march state vec4).
  * PLANE exists only in `groundPlane: true` kernels: a MISS
@@ -1080,13 +1104,17 @@ export interface SurfaceGpuKernelOptions {
    * own recorded "lighting minus specular" decision). Composes with
    * every core and with lens/balloon/groundPlane — no new throws. */
   finish?: boolean;
-  /** Independent per-slot patterned-albedo gate. This plumbing bead emits no
-   * pattern formula yet; it establishes the material wire and stride the
-   * downstream WGSL-pattern bead consumes. In shade mode, `pattern: true`
-   * makes shadeMaps stride 3 and fetches the shared A/B lanes even when
-   * `finish` is false, while deliberately retaining the fixed classic
-   * lighting lines. Absent/false is byte-identical to the pre-pattern source,
-   * and march/eval stay structurally inert just like `finish`. */
+  /** Independent per-slot patterned-albedo gate. Under shade mode it makes
+   * shadeMaps stride 3, fetches the shared A/B lanes even when `finish` is
+   * false (pattern-only keeps the fixed classic lighting lines), carries
+   * the hit's raw attractor-frame source point on the hit-info (the
+   * `source4` member), and splices the ONE shared pattern body
+   * (surface-pattern-shade.ts's WGSL twin) plus the pattern arm's call
+   * into the shade entry — the document's order: color source -> balloon
+   * tint -> pattern -> lighting -> fog. The 224-byte ShadeParams layout
+   * grows to 240 under shade+pattern with the calibration quartet
+   * (`shade.patternCalibration`); march/eval kernels stay byte-identical,
+   * and so does every pattern-absent shade kernel. */
   pattern?: boolean;
   /** March-mode ray derivation. "pose" (default) keeps the bench baseline:
    * NDC pixel centers against the pose basis — byte-identical output to
@@ -2286,12 +2314,27 @@ export interface SurfaceGpuShadeParams {
    * byte. It is gated per-ray by the union argmin's `hi.shell`, so a
    * FRACTAL-term hit is untouched at any strength. */
   balloonTintStrength?: number;
+  /** The pattern calibration quartet `(ringsLow, ringsInvSpan,
+   * sheetsLow, sheetsInvSpan)`, packed at offset 224 — the pattern arm's
+   * native-carrier clamp (GLSL `uPatternCalibration` order). Present
+   * EXACTLY when the shade kernel was generated with the pattern gate:
+   * the buffer becomes {@link SURFACE_GPU_SHADE_PATTERN_BYTES} bytes and
+   * the host binds it to both pipelines of the patterned session. Absent —
+   * every caller predating the pattern bead — keeps the 224-byte buffer
+   * byte for byte. */
+  patternCalibration?: [number, number, number, number];
 }
 
 /** Pack the ShadeParams uniform (march "unproject" + mode "shade";
- * layout contract in the module doc). flags = dither ? 1 : 0. */
+ * layout contract in the module doc). flags = dither ? 1 : 0. A present
+ * `patternCalibration` grows the buffer to
+ * {@link SURFACE_GPU_SHADE_PATTERN_BYTES} with the quartet at 224;
+ * absent, the 224-byte buffer is byte for byte what it was. */
 export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
-  const buf = new ArrayBuffer(SURFACE_GPU_SHADE_BYTES);
+  const calibration = shade.patternCalibration;
+  const buf = new ArrayBuffer(
+    calibration ? SURFACE_GPU_SHADE_PATTERN_BYTES : SURFACE_GPU_SHADE_BYTES,
+  );
   const view = new DataView(buf);
   for (let k = 0; k < 16; k++) {
     view.setFloat32(k * 4, shade.invProjView[k], true);
@@ -2327,6 +2370,15 @@ export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
   // host that never heard of the tint packs the pre-tint uniform.
   writeVec3(view, 208, shade.balloonTint ?? [0, 0, 0]);
   view.setFloat32(220, shade.balloonTintStrength ?? 0, true);
+  // The pattern calibration quartet at the frozen 224 — present exactly
+  // when the kernel was generated with the pattern gate (the struct's own
+  // conditional member), growing the buffer to 240.
+  if (calibration) {
+    view.setFloat32(224, calibration[0], true);
+    view.setFloat32(228, calibration[1], true);
+    view.setFloat32(232, calibration[2], true);
+    view.setFloat32(236, calibration[3], true);
+  }
   return buf;
 }
 
@@ -2551,11 +2603,16 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // every core and wrapper, and is STRUCTURALLY inert outside shade mode
   // (every splice below lands in shade-emitted text alone).
   const finish = opts.finish ?? false;
-  // The independent pattern gate. This bead only establishes the shared
-  // material wire: the pattern formula lands downstream, while pattern-only
-  // already proves its stride-3/classic-lighting contract here.
+  // The independent pattern gate (option doc): the shared pattern body,
+  // the hit-info's source4 member, and the calibration quartet's
+  // ShadeParams member all key on this flag alone.
   const pattern = opts.pattern ?? false;
   const material = finish || pattern;
+  // The hit-info constructor's pattern member: WGSL value constructors
+  // are all-or-none, so under the pattern gate every core's full-member
+  // constructor gains the source4 placeholder (zeroed — the core fills it
+  // before returning, and the balloon rename extends the SAME text).
+  const source4CtorArg = pattern ? ", vec4f(0.0)" : "";
   // The shadeMaps stride token: under either material feature the buffer is 3
   // vec4f per slot ([0] rgb+trap unchanged, [1]/[2] the shared lanes), so EVERY
   // shadeMaps read site's index gains " * 3" through this one string —
@@ -2676,7 +2733,24 @@ fn frontierIx(slot: u32, li: u32) -> u32 {
     ? `
 @group(0) @binding(5) var<storage, read_write> statusOut: array<u32>;`
     : "";
-  const shadeParamsIo = `
+  // The ShadeParams struct, shared by march "unproject" and shade. Its
+  // calibration member exists ONLY under shade mode + the pattern gate
+  // (module doc): a pattern-enabled MARCH kernel's text must stay
+  // byte-identical, and the march never reads the member — the host binds
+  // one 240-byte buffer to both pipelines of a patterned session, and a
+  // struct never reads past its own size.
+  const shadePatternCalibrationMember =
+    mode === "shade" && pattern
+      ? `
+  // The pattern calibration quartet (ringsLow, ringsInvSpan, sheetsLow,
+  // sheetsInvSpan), at 224 — the pattern arm's native-carrier clamp
+  // (GLSL uPatternCalibration order). Declared ONLY under shade + the
+  // pattern gate: it closes the struct at 240 there
+  // (SURFACE_GPU_SHADE_PATTERN_BYTES), while every other kernel's struct
+  // still ends at 224, byte for byte.
+  patternCalibration: vec4f,`
+      : "";
+  const shadeParamsIo = (patternMember: string): string => `
 
 struct ShadeParams {
   invProjView: mat4x4f,
@@ -2704,7 +2778,7 @@ struct ShadeParams {
   // shade entry reads it. WGSL lands the vec3f at 208 (AlignOf 16 past
   // bgShape's 196), the f32 at 220, closing the struct at 224.
   balloonTint: vec3f,
-  balloonTintStrength: f32,
+  balloonTintStrength: f32,${patternMember}
 }
 
 @group(0) @binding(4) var<uniform> shade: ShadeParams;`;
@@ -2722,9 +2796,9 @@ fn hash2(p: vec2f) -> f32 {
 @group(0) @binding(3) var<storage, read_write> results: array<f32>;`
       : mode === "march"
         ? unproject
-          ? `${rayIo}${shadeParamsIo}${statusIo}${hash2Io}`
+          ? `${rayIo}${shadeParamsIo("")}${statusIo}${hash2Io}`
           : `${rayIo}${statusIo}`
-        : `${rayIo}${shadeParamsIo}
+        : `${rayIo}${shadeParamsIo(shadePatternCalibrationMember)}
 @group(0) @binding(5) var<storage, read> shadeMaps: array<vec4f>;
 @group(0) @binding(6) var<storage, read_write> colorOut: array<u32>;
 @group(0) @binding(7) var lutTex: texture_2d<f32>;
@@ -2783,7 +2857,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     dot(params.finalM1, p) + params.finalT1,
     dot(params.finalM2, p) + params.finalT2,
   );
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0);
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg});
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -2976,6 +3050,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
+${pattern ? `  info.source4 = vec4f(q, 0.0);` : ""}
   return info;
 }`;
 
@@ -2996,7 +3071,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     dot(params.finalM1, p) + params.finalT1,
     dot(params.finalM2, p) + params.finalT2,
   );
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0);
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg});
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -3169,6 +3244,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
+${pattern ? `  info.source4 = vec4f(q, 0.0);` : ""}
   return info;
 }`;
 
@@ -3272,7 +3348,7 @@ ${
     slabExt,
     lens,
   )}, li: u32) -> SurfaceHitInfo {
-${lift4Text("p", "", slabExt, lens)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0);
+${lift4Text("p", "", slabExt, lens)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg});
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -3627,6 +3703,7 @@ ${
   info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
+${pattern && !lens ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, params.w0 + info.sStar * params.sliceHalfW)));` : ""}
   return info;
 }`;
 
@@ -3660,7 +3737,7 @@ ${
     slabExt,
     lens,
   )}, li: u32) -> SurfaceHitInfo {
-${lift4Text("p", "", slabExt, lens)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0);
+${lift4Text("p", "", slabExt, lens)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg});
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -3972,6 +4049,7 @@ ${
   info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
+${pattern && !lens ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, params.w0 + info.sStar * params.sliceHalfW)));` : ""}
   return info;
 }`;
 
@@ -3985,7 +4063,7 @@ ${
   // GLSL overload also returns the DE, so its dr accumulator is the one
   // value-side term trimmed here.
   const escapeHitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0);
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg});
   let q = foldQuerySector(p);
   var v = q;
   var r = length(v);
@@ -4077,6 +4155,7 @@ ${
     clamp((f32(escapedAt) - escFrac) / f32(params.maxDepth), 0.0, 1.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
+${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
   return info;
 }`;
 
@@ -4089,7 +4168,7 @@ ${
   // the orbit runs in the ATTRACTOR frame, exactly as the 4D descents'
   // colour sources do.
   const escape4HitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0);
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg});
   let q = foldQuerySector4(liftEscape4(p));
   var v = q;
   var r = length(v);
@@ -4146,6 +4225,7 @@ ${
     clamp((f32(escapedAt) - escFrac) / f32(params.maxDepth), 0.0, 1.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
+${pattern ? `  info.source4 = liftEscape4(p);` : ""}
   return info;
 }`;
 
@@ -4159,7 +4239,7 @@ ${
   // Colors-only convention (every hit-info body's): the estimate's dr
   // accumulator is the one value-side term trimmed here.
   const bulbHitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0);
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg});
   let bail = params.bulbParams.y;
   let c = vec3f(
     dot(params.bulbM0, p) + params.bulbT0,
@@ -4195,6 +4275,7 @@ ${
   info.trap = clamp((f32(escapedAt) - escFrac) / f32(params.maxDepth), 0.0, 1.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
+${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
   return info;
 }`;
 
@@ -4571,7 +4652,23 @@ ${
     : ``
 }    }
   }
-  return surfaceDEHitInfoCore(bestQ, ${slabExt ? "bestExt, " : ""}li);
+${
+  pattern
+    ? slabExt
+      ? `  // Pattern only: the fold-final source is the WINNING BRANCH TUPLE
+  // (the frame oracle's bestQ + sStar * bestExt — the branch centre plus
+  // the hit's place along the transported segment; inverse maps preserve
+  // the segment parameterization). The core's own fill ran at its query
+  // with the slab centre w, so the wrapper overwrites it with the
+  // branch's transported tuple.
+  var hi = surfaceDEHitInfoCore(bestQ, bestExt, li);
+  hi.source4 = bestQ + hi.sStar * bestExt;
+  return hi;`
+      : `  var hi = surfaceDEHitInfoCore(bestQ, li);
+  hi.source4 = bestQ;
+  return hi;`
+    : `  return surfaceDEHitInfoCore(bestQ, ${slabExt ? "bestExt, " : ""}li);`
+}
 }`;
 
   const coreHitInfoText =
@@ -4649,8 +4746,8 @@ ${core4 ? lens4HitWrapText : lensHitWrapText}`
         // term, which is the safe direction: an untinted hit.
         balloonRename(
           lensedHitInfoText,
-          "SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0)",
-          "SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0, vec3f(0.0), 0.0)",
+          `SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg})`,
+          `SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}, vec3f(0.0), 0.0)`,
         ),
         "fn surfaceDEHitInfo(",
         "fn surfaceDEHitInfoFractal(",
@@ -4727,6 +4824,34 @@ ${balloonHitWrapText}`
   const shadeBalloonTint = balloon
     ? `
   base = mix(base, shade.balloonTint, shade.balloonTintStrength * hi.shell);`
+    : "";
+
+  // The pattern arm's call, at the base-albedo site — AFTER the colour
+  // source and the balloon tint, BEFORE lighting and fog (the document's
+  // order: color source -> balloon tint -> pattern -> lighting -> fog).
+  // The pattern is object-attached, so the albedo reads the RAW attractor
+  // point the hit-info resolved into `hi.source4` (the frame oracle's
+  // source4: visible hit -> balloon source query -> inverse 4D view ->
+  // final inverse; a fold final is the winning branch's already-resolved
+  // tuple). Normalization splits by dimension exactly like the height/
+  // radius colour sources: 3D reuses the shared bound centre, 4D the raw
+  // bounding radius with the implicit zero centre. The hit's own slot
+  // picks its material from the shared B lane (already fetched as `fb`);
+  // the footprint is the tier-INDEPENDENT acceptance epsilon at the hit
+  // depth — params.pixelEps, the march's own acceptance slope the host
+  // packs from the native-height acceptPixelEps — normalized by the raw
+  // bounding radius, the GLSL `uAcceptPixelEps * t / uBoundingRadius`
+  // twin, so preview and settle tiers cannot change the material detail.
+  const shadePattern = pattern
+    ? core4
+      ? `
+  let objectP = hi.source4.xyz / params.boundingRadius;
+  let patternFootprint = params.pixelEps * t / params.boundingRadius;
+  base = patternShade(base, objectP, fb, shade.patternCalibration, hi.sheets, patternFootprint);`
+      : `
+  let objectP = (hi.source4.xyz - params.boundCenter) / params.boundingRadius;
+  let patternFootprint = params.pixelEps * t / params.boundingRadius;
+  base = patternShade(base, objectP, fb, shade.patternCalibration, hi.sheets, patternFootprint);`
     : "";
 
   // The march entry's gate: balloon mode drops the
@@ -4843,6 +4968,18 @@ ${balloonHitWrapText}`
 // Per-slot finish lighting — surface-finish.ts's surfaceFinishShadeSource,
 // ONE emission shared by every core (the shade entry is shared text).
 ${surfaceFinishShadeSource(SURFACE_FINISH_WGSL, groundPlane)}`
+    : "";
+  // The pattern body (surface-pattern-shade.ts's WGSL twin), ONE emission
+  // shared by every core — the GLSL tracers' SURFACE_PATTERN arm in the
+  // shade kernel's dialect. Spliced into the shade entry alone, exactly
+  // like finishFnText, so march/eval kernels stay byte-identical under
+  // the flag. Every function reads only its parameters and builtins; the
+  // call site supplies the frame reconstruction and the calibration.
+  const patternFnText = pattern
+    ? `
+// Patterned albedo — surface-pattern-shade.ts's surfacePatternShadeSourceWgsl,
+// ONE emission shared by every core (the shade entry is shared text).
+${surfacePatternShadeSourceWgsl()}`
     : "";
   // The hit slot's two material lanes, hoisted ahead of the color-source
   // branch: the stride-3 slot index the base read used to spell inline,
@@ -4978,6 +5115,19 @@ struct SurfaceHitInfo {
   // the constructor's 0, which pins the radius color to the slice plane
   // exactly as before.
   sStar: f32,${
+    pattern
+      ? `
+  // Pattern only: the hit's raw attractor-frame SOURCE
+  // point — the frame oracle's \`source4\` (surface-pattern-frame.ts's
+  // frozen name), reconstructed by reversing the render's remaps in its
+  // order (visible hit -> balloon source query -> inverse 4D view ->
+  // final inverse; a fold final is the winning branch's already-resolved
+  // tuple). Each core's hit-info fills it; the shade entry's pattern arm
+  // is the one reader. Shading extras only, never part of distance
+  // evaluation.
+  source4: vec4f,`
+      : ""
+  }${
     balloon
       ? `
   // Balloon only: the winning union term's SOURCE query
@@ -5105,7 +5255,7 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> vec3f {
 }
 `
     : ""
-}${finishFnText}
+}${finishFnText}${patternFnText}
 @compute @workgroup_size(${workgroupSize})
 fn shadeRays(
   @builtin(global_invocation_id) gid: vec3u,
@@ -5191,7 +5341,7 @@ ${shadeGate}
       u = hi.sheets;
     }
     base = textureSampleLevel(lutTex, lutSamp, vec2f(u, 0.5), 0.0).rgb;
-  }${shadeBalloonTint}
+  }${shadeBalloonTint}${shadePattern}
   // Normal from the DE gradient (tetrahedron taps), probed at the hit's
   // own resolution scale; a vanishing gradient faces the camera instead
   // of dividing by ~zero.
