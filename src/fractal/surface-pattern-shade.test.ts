@@ -4,6 +4,7 @@ import {
   patternLaneFor,
   patternShadeTs,
   surfacePatternShadeSource,
+  surfacePatternShadeSourceWgsl,
   type PatternShadeQuery,
 } from "./surface-pattern-shade";
 import {
@@ -79,6 +80,112 @@ describe("shared pattern GLSL emission", () => {
     const lines = src.split("\n");
     const commentLines = lines.filter((l) => l.trim().startsWith("//"));
     // One marker line only (the pointer to the TS mirror).
+    expect(commentLines.length).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("shared pattern WGSL emission", () => {
+  it("emits the patternShade twin with the WGSL spellings of every accepted constant", () => {
+    const src = surfacePatternShadeSourceWgsl();
+    expect(src).toContain(
+      "fn patternShade(base: vec3f, objectP: vec3f, fb: vec4f, calibration: vec4f, sheets: f32, pixelFootprint: f32) -> vec3f {",
+    );
+    // The exact wire decode, WGSL-spelled: division by the radices, never
+    // a pre-rounded 0.0001 literal.
+    expect(src).toContain("let kindDiv: f32 = floor(word / 65536.0);");
+    expect(src).toContain(
+      "let axisDiv: f32 = floor((word - kindBase) / 16384.0);",
+    );
+    expect(src).toContain("let strength: f32 = strengthQ / 10000.0;");
+    expect(src).not.toContain("0.0001");
+    expect(src).toContain("let scale: f32 = fb.w;");
+    expect(src).toContain(
+      "let gate: f32 = select(0.0, patternDetailGate(pixelFootprint), nativeEnabled);",
+    );
+    // The integer-lattice hash keeps its modulo-2^32 uint arithmetic.
+    expect(src).toContain(
+      "var h: u32 = u32(i32(ix)) * 374761393u + u32(i32(iy)) * 668265263u + u32(i32(iz)) * 2147483647u;",
+    );
+    expect(src).toContain("return f32(h) / 4294967296.0;");
+    // No GLSL-only spelling survives in the WGSL twin.
+    expect(src).not.toContain("? ");
+    expect(src).not.toContain("vec3(");
+    expect(src).not.toContain("float(");
+    expect(src).not.toContain("uint(int(");
+    expect(src).not.toContain("int(levelF)");
+    expect(src).not.toContain("int(kindDiv)");
+    expect(src).not.toContain("int(axisDiv)");
+  });
+
+  it("normalizes both dialect bodies onto ONE character stream — the arithmetic cannot drift between the GLSL tracers and the WGSL shade kernel", () => {
+    // The finish-pair's canon discipline: the two emissions may differ only
+    // in the per-dialect tokens — types, casts, declarations, signatures,
+    // and the bool-picked select spelling — and must be character-identical
+    // after those normalize away.
+    const canon = (s: string): string => {
+      const typeOf = (t: string): string => {
+        const types: Record<string, string> = {
+          u32: "uint",
+          f32: "float",
+          i32: "int",
+          vec4f: "vec4",
+          vec3f: "vec3",
+          vec2f: "vec2",
+          bool: "bool",
+        };
+        return types[t] ?? t;
+      };
+      return s
+        .replace(
+          /select\(([^()]*(?:\([^()]*\))?[^()]*), ([^()]*(?:\([^()]*\))?[^()]*), ([^()]*)\)/g,
+          "$3 ? $2 : $1",
+        )
+        .replace(
+          /^(\s*)fn (\w+)\(([^)]*)\) -> (\w+) \{$/gm,
+          (
+            match: string,
+            ind: string,
+            name: string,
+            params: string,
+            ret: string,
+          ): string => {
+            const p = params
+              .split(",")
+              .map((q) => q.trim())
+              .filter((q) => q.length > 0)
+              .map((q) => {
+                const m = q.match(/^(\w+):\s*(\w+)$/);
+                if (!m) throw new Error(`unparsed dialect parameter ${q}`);
+                return `${typeOf(m[2])} ${m[1]}`;
+              })
+              .join(", ");
+            return `${ind}${typeOf(ret)} ${name}(${p}) {`;
+          },
+        )
+        .replace(
+          /\b(?:let|var)\s+(\w+):\s*(u32|f32|i32|vec4f|vec3f|vec2f|bool)\s*(=|;)/g,
+          (match: string, name: string, type: string, eq: string): string =>
+            `${typeOf(type)} ${name} ${eq}`,
+        )
+        .replace(/u32\(i32\(/g, "uint(int(")
+        .replace(/\bf32\(/g, "float(")
+        .replace(/\bi32\(/g, "int(")
+        .replace(/\bvec4f\b/g, "vec4")
+        .replace(/\bvec3f\b/g, "vec3")
+        .replace(/\bvec2f\b/g, "vec2")
+        .replace(/\bf32\b/g, "float")
+        .replace(/\bi32\b/g, "int")
+        .replace(/\bu32\b/g, "uint");
+    };
+    const glsl = canon(surfacePatternShadeSource());
+    const wgsl = canon(surfacePatternShadeSourceWgsl());
+    expect(wgsl).toBe(glsl);
+  });
+
+  it("keeps the WGSL twin comment-light like the GLSL body", () => {
+    const src = surfacePatternShadeSourceWgsl();
+    const lines = src.split("\n");
+    const commentLines = lines.filter((l) => l.trim().startsWith("//"));
     expect(commentLines.length).toBeLessThanOrEqual(1);
   });
 });
@@ -284,7 +391,12 @@ describe("patternShadeTs vs the accepted V3 oracle", () => {
       .update(surfacePatternShadeSource())
       .digest("hex");
     expect(hash).toBe(
-      "aafaa9cacb703c7b57f27824172bcc05c0537f313acc64bfd9d542e9878ca993",
+      // fr-cmtl.6: patternDetailWarpPoint now mutates an explicit `out`
+      // copy of the parameter instead of the parameter itself — value
+      // identical in f32 (a copy is exact), and the form the WGSL dialect
+      // needs (WGSL parameters are immutable) and the TS mirror already
+      // used. No other byte changed.
+      "c678e0a6c406358214a55de7986185b5339f527ffdbb81f8e81f78491790fd86",
     );
   });
 
