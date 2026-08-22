@@ -19,7 +19,8 @@ import {
 import type { Vec3 } from "./types";
 
 /**
- * The SURFACE_PATTERN shading arm's ONE shared GLSL body and its TS mirror.
+ * The SURFACE_PATTERN shading arm's ONE shared body — emitted in both
+ * shader dialects — and its TS mirror.
  *
  * The accepted V3 pattern arithmetic (surface-pattern.ts) is a pure function
  * of (base albedo, normalized source point, patternConfig, scale, sheets
@@ -27,15 +28,21 @@ import type { Vec3 } from "./types";
  *
  * - {@link surfacePatternShadeSource}, the emitted GLSL both GLSL tracers
  *   (surface-material.ts and surface-material-4d.ts) splice under their own
- *   `#if SURFACE_PATTERN` arms — one body, so the 3D and 4D formula copies
- *   cannot drift (the surface-finish.ts discipline). The two tracers differ
- *   only in how they RECONSTRUCT and NORMALIZE the source hit; everything
- *   from the config decode through the macro ramps, the scale-stable detail
- *   octave, and the albedo factor is this module's single emission.
+ *   `#if SURFACE_PATTERN` arms, and
+ *   {@link surfacePatternShadeSourceWgsl}, the WGSL twin the shared WGSL
+ *   shade kernel (surface-de-gpu.ts) splices under its `pattern` codegen
+ *   flag. ONE body template ({@link surfacePatternBody}) emits both through
+ *   the {@link SurfacePatternShadeDialect} spellings — the
+ *   `surface-finish.ts` `SurfaceFinishDialect` discipline — so the two GLSL
+ *   tracers and the WGSL kernel cannot drift on the arithmetic. The two GLSL
+ *   tracers differ only in how they RECONSTRUCT and NORMALIZE the source
+ *   hit; everything from the config decode through the macro ramps, the
+ *   scale-stable detail octave, and the albedo factor is this module's
+ *   single emission.
  * - {@link patternShadeTs}, the TS mirror of the emitted body, executing the
  *   same operation order with f32 rounding at the decode and mix boundaries
- *   the wire contract makes exact — the executable stand-in for the GLSL the
- *   parity tests compare against the double-precision oracle
+ *   the wire contract makes exact — the executable stand-in for the shaders
+ *   the parity tests compare against the double-precision oracle
  *   `evaluateSurfacePattern`. The mirror is written as a transliteration of
  *   the GLSL text (not a re-derivation of the oracle), so a porting error in
  *   the emission — wrong constant, wrong axis lane, wrong operation order —
@@ -45,41 +52,146 @@ import type { Vec3 } from "./types";
  * the integer-lattice hash (well-defined modulo-2^32 wrapping, matching the
  * TS oracle's `| 0`/`imul` bit patterns exactly), `exp2` for dyadic octave
  * scaling, and GLSL's `mix`/`smoothstep`/`fract` builtins (identical
- * definitions to the oracle's helpers on every edge the body uses). The WGSL
- * twin of this body belongs to fr-cmtl.6; this module emits GLSL only.
+ * definitions to the oracle's helpers on every edge the body uses). WGSL
+ * spells the same operations with its own names (`select` for a bool-picked
+ * value, `let`/`var` plus an explicit type for every local), and the two
+ * texts collapse onto one character stream under the test's canon function —
+ * the same proof surface-finish.ts's body-equality test gives its own pair.
  */
 
-/** The GLSL3 spelling of the pattern math, one template both tracers emit.
- * Reads NO uniforms directly: everything it needs arrives as parameters, so
- * the 3D and 4D emissions are character-identical and the call site owns the
+/** The per-dialect spellings {@link surfacePatternBody} interpolates —
+ * `surface-finish.ts`'s `SurfaceFinishDialect` pattern applied to the
+ * pattern math. GLSL spells every local with its type; WGSL declares with
+ * `let`/`var` PLUS an explicit type annotation, so the two texts become
+ * identical under the test's canonicalization and the arithmetic cannot
+ * drift between the two GLSL tracers and the WGSL shade kernel. */
+export interface SurfacePatternShadeDialect {
+  readonly language: "glsl" | "wgsl";
+  /** The constructor-and-type spelling: `vec2` / `vec2f`. */
+  readonly vec2: string;
+  readonly vec3: string;
+  /** `uint(int(x))` / `u32(i32(x))` — the integer-lattice hash's casts. */
+  readonly cu2: (e: string) => string;
+  /** `float(x)` / `f32(x)`. */
+  readonly cf: (e: string) => string;
+  /** `int(x)` / `i32(x)`. */
+  readonly ci: (e: string) => string;
+  /** A bool-picked value: `cond ? a : b` / `select(b, a, cond)` — both
+   * dialects select `b` when the condition is false and `a` when true. */
+  readonly sel: (a: string, b: string, cond: string) => string;
+  /** Immutable scalar locals: `float x = ...;` / `let x: f32 = ...;`. */
+  readonly f: (name: string, init: string) => string;
+  /** Immutable bool locals: `bool x = ...;` / `let x: bool = ...;`. */
+  readonly b: (name: string, init: string) => string;
+  /** Immutable vec3 locals: `vec3 x = ...;` / `let x: vec3f = ...;`. */
+  readonly v3: (name: string, init: string) => string;
+  /** Mutable f32 locals (the fbm accumulators): `float x = ...;` /
+   * `var x: f32 = ...;`. */
+  readonly fVar: (name: string, init: string) => string;
+  /** Mutable u32 locals (the hash's h): `uint h = ...;` / `var h: u32 = ...;`. */
+  readonly u32Var: (name: string, init: string) => string;
+  /** Mutable vec3 locals (the detail-warp copy): `vec3 x = ...;` /
+   * `var x: vec3f = ...;`. */
+  readonly v3Var: (name: string, init: string) => string;
+  /** Immutable i32 locals (the decoded kind/axis/level): `int x = ...;` /
+   * `let x: i32 = ...;`. */
+  readonly i32Let: (name: string, init: string) => string;
+  /** The fbm loop's induction declaration: `int octave = 0` /
+   * `var octave: i32 = 0`. */
+  readonly loopI: (init: string) => string;
+  /** A function signature, spelled per dialect. */
+  readonly sig: (glsl: string, wgsl: string) => string;
+}
+
+export const SURFACE_PATTERN_SHADE_GLSL: SurfacePatternShadeDialect = {
+  language: "glsl",
+  vec2: "vec2",
+  vec3: "vec3",
+  cu2: (e) => `uint(int(${e}))`,
+  cf: (e) => `float(${e})`,
+  ci: (e) => `int(${e})`,
+  sel: (a, b, cond) => `${cond} ? ${a} : ${b}`,
+  f: (name, init) => `float ${name} = ${init};`,
+  b: (name, init) => `bool ${name} = ${init};`,
+  v3: (name, init) => `vec3 ${name} = ${init};`,
+  fVar: (name, init) => `float ${name} = ${init};`,
+  u32Var: (name, init) => `uint ${name} = ${init};`,
+  v3Var: (name, init) => `vec3 ${name} = ${init};`,
+  i32Let: (name, init) => `int ${name} = ${init};`,
+  loopI: (init) => `int ${init} = 0`,
+  sig: (glsl) => glsl,
+};
+
+export const SURFACE_PATTERN_SHADE_WGSL: SurfacePatternShadeDialect = {
+  language: "wgsl",
+  vec2: "vec2f",
+  vec3: "vec3f",
+  cu2: (e) => `u32(i32(${e}))`,
+  cf: (e) => `f32(${e})`,
+  ci: (e) => `i32(${e})`,
+  sel: (a, b, cond) => `select(${b}, ${a}, ${cond})`,
+  f: (name, init) => `let ${name}: f32 = ${init};`,
+  b: (name, init) => `let ${name}: bool = ${init};`,
+  v3: (name, init) => `let ${name}: vec3f = ${init};`,
+  fVar: (name, init) => `var ${name}: f32 = ${init};`,
+  u32Var: (name, init) => `var ${name}: u32 = ${init};`,
+  v3Var: (name, init) => `var ${name}: vec3f = ${init};`,
+  i32Let: (name, init) => `let ${name}: i32 = ${init};`,
+  loopI: (init) => `var ${init}: i32 = 0`,
+  sig: (_glsl, wgsl) => wgsl,
+};
+
+/** The ONE pattern-math body template, emitted in both dialects. Reads NO
+ * uniforms directly: everything it needs arrives as parameters, so the 3D
+ * and 4D GLSL emissions are character-identical and the call site owns the
  * frame-specific reconstruction. The body is written comment-light — the 4D
  * plain arm's strip-threshold headroom is measured in single kilobytes, and
  * the pattern arm lands on every one of those rows. */
-export function surfacePatternShadeSource(): string {
+function surfacePatternBody(d: SurfacePatternShadeDialect): string {
+  const sig = d.sig;
+  const f = d.f;
+  const b = d.b;
+  const v3 = d.v3;
+  const v3v = d.v3Var;
+  const fv = d.fVar;
+  const u32v = d.u32Var;
+  const i32l = d.i32Let;
+  const V2 = d.vec2;
+  const V3 = d.vec3;
+  const sel = d.sel;
+  const cu2 = d.cu2;
+  const cf = d.cf;
+  const ci = d.ci;
   return `
   // Shared pattern body — see patternShadeTs in surface-pattern-shade.ts.
-  float patternHash3(float ix, float iy, float iz) {
-    uint h = uint(int(ix)) * 374761393u + uint(int(iy)) * 668265263u + uint(int(iz)) * 2147483647u;
+${sig(
+  "  float patternHash3(float ix, float iy, float iz) {",
+  "  fn patternHash3(ix: f32, iy: f32, iz: f32) -> f32 {",
+)}
+    ${u32v("h", `${cu2("ix")} * 374761393u + ${cu2("iy")} * 668265263u + ${cu2("iz")} * 2147483647u`)}
     h = (h ^ (h >> 13u)) * 1274126177u;
     h ^= h >> 16u;
-    return float(h) / 4294967296.0;
+    return ${cf("h")} / 4294967296.0;
   }
 
-  float patternValueNoise(vec3 p) {
-    float ix = floor(p.x);
-    float iy = floor(p.y);
-    float iz = floor(p.z);
-    float fx = smoothstep(0.0, 1.0, p.x - ix);
-    float fy = smoothstep(0.0, 1.0, p.y - iy);
-    float fz = smoothstep(0.0, 1.0, p.z - iz);
-    float c000 = patternHash3(ix, iy, iz) - 0.5;
-    float c100 = patternHash3(ix + 1.0, iy, iz) - 0.5;
-    float c010 = patternHash3(ix, iy + 1.0, iz) - 0.5;
-    float c110 = patternHash3(ix + 1.0, iy + 1.0, iz) - 0.5;
-    float c001 = patternHash3(ix, iy, iz + 1.0) - 0.5;
-    float c101 = patternHash3(ix + 1.0, iy, iz + 1.0) - 0.5;
-    float c011 = patternHash3(ix, iy + 1.0, iz + 1.0) - 0.5;
-    float c111 = patternHash3(ix + 1.0, iy + 1.0, iz + 1.0) - 0.5;
+${sig(
+  "  float patternValueNoise(vec3 p) {",
+  "  fn patternValueNoise(p: vec3f) -> f32 {",
+)}
+    ${f("ix", "floor(p.x)")}
+    ${f("iy", "floor(p.y)")}
+    ${f("iz", "floor(p.z)")}
+    ${f("fx", "smoothstep(0.0, 1.0, p.x - ix)")}
+    ${f("fy", "smoothstep(0.0, 1.0, p.y - iy)")}
+    ${f("fz", "smoothstep(0.0, 1.0, p.z - iz)")}
+    ${f("c000", "patternHash3(ix, iy, iz) - 0.5")}
+    ${f("c100", "patternHash3(ix + 1.0, iy, iz) - 0.5")}
+    ${f("c010", "patternHash3(ix, iy + 1.0, iz) - 0.5")}
+    ${f("c110", "patternHash3(ix + 1.0, iy + 1.0, iz) - 0.5")}
+    ${f("c001", "patternHash3(ix, iy, iz + 1.0) - 0.5")}
+    ${f("c101", "patternHash3(ix + 1.0, iy, iz + 1.0) - 0.5")}
+    ${f("c011", "patternHash3(ix, iy + 1.0, iz + 1.0) - 0.5")}
+    ${f("c111", "patternHash3(ix + 1.0, iy + 1.0, iz + 1.0) - 0.5")}
     return mix(
       mix(mix(c000, c100, fx), mix(c010, c110, fx), fy),
       mix(mix(c001, c101, fx), mix(c011, c111, fx), fy),
@@ -87,12 +199,12 @@ export function surfacePatternShadeSource(): string {
     );
   }
 
-  float patternFbm(vec3 p) {
-    float sum = 0.0;
-    float amplitude = 0.5;
-    float total = 0.0;
-    float frequency = 1.0;
-    for (int octave = 0; octave < ${PATTERN_NOISE_OCTAVES}; octave++) {
+${sig("  float patternFbm(vec3 p) {", "  fn patternFbm(p: vec3f) -> f32 {")}
+    ${fv("sum", "0.0")}
+    ${fv("amplitude", "0.5")}
+    ${fv("total", "0.0")}
+    ${fv("frequency", "1.0")}
+    for (${d.loopI("octave")}; octave < ${PATTERN_NOISE_OCTAVES}; octave++) {
       sum += amplitude * patternValueNoise(p * frequency);
       total += amplitude;
       amplitude *= 0.5;
@@ -101,187 +213,243 @@ export function surfacePatternShadeSource(): string {
     return sum / total;
   }
 
-  vec3 patternPermutePoint(int axisId, vec3 p) {
+${sig(
+  "  vec3 patternPermutePoint(int axisId, vec3 p) {",
+  "  fn patternPermutePoint(axisId: i32, p: vec3f) -> vec3f {",
+)}
     if (axisId == 0) {
-      return vec3(p.x, p.y, p.z);
+      return ${V3}(p.x, p.y, p.z);
     }
     if (axisId == 2) {
-      return vec3(p.z, p.x, p.y);
+      return ${V3}(p.z, p.x, p.y);
     }
-    return vec3(p.y, p.x, p.z);
+    return ${V3}(p.y, p.x, p.z);
   }
 
-  float patternWoodRamp(float phase) {
-    float t = fract(phase);
-    float latewood = smoothstep(0.62, 0.78, t) * (1.0 - smoothstep(0.91, 1.0, t));
-    float ringLine = 1.0 - smoothstep(0.0, 0.04, min(t, 1.0 - t));
+${sig(
+  "  float patternWoodRamp(float phase) {",
+  "  fn patternWoodRamp(phase: f32) -> f32 {",
+)}
+    ${f("t", "fract(phase)")}
+    ${f("latewood", "smoothstep(0.62, 0.78, t) * (1.0 - smoothstep(0.91, 1.0, t))")}
+    ${f("ringLine", "1.0 - smoothstep(0.0, 0.04, min(t, 1.0 - t))")}
     return max(0.72 * latewood, ringLine);
   }
 
-  float patternStrataRamp(float phase) {
-    float t = fract(phase);
-    float broad = smoothstep(0.06, 0.16, t) * (1.0 - smoothstep(0.52, 0.66, t));
-    float seam = 1.0 - smoothstep(0.0, 0.035, abs(t - 0.61));
+${sig(
+  "  float patternStrataRamp(float phase) {",
+  "  fn patternStrataRamp(phase: f32) -> f32 {",
+)}
+    ${f("t", "fract(phase)")}
+    ${f("broad", "smoothstep(0.06, 0.16, t) * (1.0 - smoothstep(0.52, 0.66, t))")}
+    ${f("seam", "1.0 - smoothstep(0.0, 0.035, abs(t - 0.61))")}
     return max(0.72 * broad, seam);
   }
 
-  float patternMarbleMacroRamp(float scale, vec3 p, vec3 pm) {
-    float safeScale = max(scale, 0.0);
-    float qScale = safeScale / ${PATTERN_DEFAULT_SCALE.marble};
-    float qa = pm.x * qScale;
-    float qu = pm.y * qScale;
-    float qv = pm.z * qScale;
-    float plane = qa + 0.2 * qu - 0.12 * qv;
-    float warpA = patternFbm(vec3(p.x * qScale * 1.1 + 1.9, p.y * qScale * 1.1 - 5.2, p.z * qScale * 1.1 + 3.4));
-    float warpB = patternFbm(vec3(p.z * qScale * 2.1 - 6.4, p.x * qScale * 2.1 + 2.8, p.y * qScale * 2.1 + 9.1));
-    float field = 0.34 * plane + warpA - 0.035;
-    float branchField = 0.2 * (0.58 * qa - 0.41 * qu + 0.29 * qv) + 0.7 * warpA + 0.46 * warpB - 0.11;
-    float branchGate = 1.0 - smoothstep(0.075, 0.19, abs(warpA - warpB));
-    float primaryDistance = abs(field);
-    float branchDistance = abs(branchField);
-    float core = max(1.0 - smoothstep(0.018, 0.052, primaryDistance), branchGate * (1.0 - smoothstep(0.014, 0.044, branchDistance)));
-    float halo = max(1.0 - smoothstep(0.052, 0.13, primaryDistance), 0.72 * branchGate * (1.0 - smoothstep(0.044, 0.105, branchDistance)));
+${sig(
+  "  float patternMarbleMacroRamp(float scale, vec3 p, vec3 pm) {",
+  "  fn patternMarbleMacroRamp(scale: f32, p: vec3f, pm: vec3f) -> f32 {",
+)}
+    ${f("safeScale", "max(scale, 0.0)")}
+    ${f("qScale", `safeScale / ${PATTERN_DEFAULT_SCALE.marble}`)}
+    ${f("qa", "pm.x * qScale")}
+    ${f("qu", "pm.y * qScale")}
+    ${f("qv", "pm.z * qScale")}
+    ${f("plane", "qa + 0.2 * qu - 0.12 * qv")}
+    ${f("warpA", `patternFbm(${V3}(p.x * qScale * 1.1 + 1.9, p.y * qScale * 1.1 - 5.2, p.z * qScale * 1.1 + 3.4))`)}
+    ${f("warpB", `patternFbm(${V3}(p.z * qScale * 2.1 - 6.4, p.x * qScale * 2.1 + 2.8, p.y * qScale * 2.1 + 9.1))`)}
+    ${f("field", "0.34 * plane + warpA - 0.035")}
+    ${f("branchField", "0.2 * (0.58 * qa - 0.41 * qu + 0.29 * qv) + 0.7 * warpA + 0.46 * warpB - 0.11")}
+    ${f("branchGate", "1.0 - smoothstep(0.075, 0.19, abs(warpA - warpB))")}
+    ${f("primaryDistance", "abs(field)")}
+    ${f("branchDistance", "abs(branchField)")}
+    ${f("core", "max(1.0 - smoothstep(0.018, 0.052, primaryDistance), branchGate * (1.0 - smoothstep(0.014, 0.044, branchDistance)))")}
+    ${f("halo", "max(1.0 - smoothstep(0.052, 0.13, primaryDistance), 0.72 * branchGate * (1.0 - smoothstep(0.044, 0.105, branchDistance)))")}
     return clamp(0.58 * halo + 0.42 * core, 0.0, 1.0);
   }
 
-  float patternMacroRamp(int kindId, float scale, vec3 p, vec3 pm) {
-    float safeScale = max(scale, 0.0);
+${sig(
+  "  float patternMacroRamp(int kindId, float scale, vec3 p, vec3 pm) {",
+  "  fn patternMacroRamp(kindId: i32, scale: f32, p: vec3f, pm: vec3f) -> f32 {",
+)}
+    ${f("safeScale", "max(scale, 0.0)")}
     if (kindId == 1) {
-      float radial = length(vec2(pm.y, pm.z));
-      float wobble = patternFbm(vec3(pm.y * 1.25 + 0.7, pm.x * 0.22 - 2.3, pm.z * 1.25 + 4.7));
-      float axialGrain = patternFbm(vec3(pm.y * 3.0 + 8.0, pm.x * 0.35 - 4.0, pm.z * 3.0 - 6.0));
-      float phase = (radial + 0.1 * wobble + 0.025 * axialGrain) * safeScale;
+      ${f("radial", `length(${V2}(pm.y, pm.z))`)}
+      ${f("wobble", `patternFbm(${V3}(pm.y * 1.25 + 0.7, pm.x * 0.22 - 2.3, pm.z * 1.25 + 4.7))`)}
+      ${f("axialGrain", `patternFbm(${V3}(pm.y * 3.0 + 8.0, pm.x * 0.35 - 4.0, pm.z * 3.0 - 6.0))`)}
+      ${f("phase", "(radial + 0.1 * wobble + 0.025 * axialGrain) * safeScale")}
       return patternWoodRamp(phase);
     }
     if (kindId == 2) {
       return patternMarbleMacroRamp(scale, p, pm);
     }
-    float warp = patternFbm(vec3(pm.y * 0.6 - 4.3, pm.x * 0.2 + 8.1, pm.z * 0.6 + 2.7));
-    float phase = (pm.x + 0.055 * warp) * safeScale;
+    ${f("warp", `patternFbm(${V3}(pm.y * 0.6 - 4.3, pm.x * 0.2 + 8.1, pm.z * 0.6 + 2.7))`)}
+    ${f("phase", "(pm.x + 0.055 * warp) * safeScale")}
     return patternStrataRamp(phase);
   }
 
-  vec3 patternDetailWarpPoint(int kindId, float detailScale, vec3 pm, float nativeValue, bool nativeEnabled) {
+${sig(
+  "  vec3 patternDetailWarpPoint(int kindId, float detailScale, vec3 pm, float nativeValue, bool nativeEnabled) {",
+  "  fn patternDetailWarpPoint(kindId: i32, detailScale: f32, pm: vec3f, nativeValue: f32, nativeEnabled: bool) -> vec3f {",
+)}
     if (!nativeEnabled || detailScale <= 0.0) {
       return pm;
     }
-    float warpCycles = kindId == 2 ? ${PATTERN_NATIVE_WARP_CYCLES.marble} : ${PATTERN_NATIVE_WARP_CYCLES.wood};
-    float shift = ((nativeValue - 0.5) * warpCycles) / detailScale;
+    ${f("warpCycles", sel(`${PATTERN_NATIVE_WARP_CYCLES.marble}`, `${PATTERN_NATIVE_WARP_CYCLES.wood}`, "kindId == 2"))}
+    ${f("shift", "((nativeValue - 0.5) * warpCycles) / detailScale")}
+    ${v3v("out", "pm")}
     if (kindId == 1) {
-      pm.y += shift;
+      out.y += shift;
     } else {
-      pm.x += shift;
+      out.x += shift;
     }
-    return pm;
+    return out;
   }
 
-  float patternMarbleDetailRamp(float scale, vec3 p, vec3 pm) {
-    float safeScale = max(scale, 0.0);
-    float warp = patternFbm(vec3(pm.y * safeScale * 0.28 + 3.7, pm.x * safeScale * 0.2 - 6.1, pm.z * safeScale * 0.28 + 1.9));
-    float warpB = patternFbm(vec3(pm.z * safeScale * 0.24 - 4.8, pm.y * safeScale * 0.18 + 2.6, pm.x * safeScale * 0.24 + 7.3));
-    float phase = (pm.x + 0.18 * pm.y - 0.11 * pm.z) * safeScale + 0.42 * warp;
-    float branchPhase = (0.62 * pm.x - 0.47 * pm.y + 0.31 * pm.z) * safeScale * 0.78 + 0.48 * warpB + 1.37;
-    float veinCore = 1.0 - smoothstep(0.018, 0.055, abs(fract(phase) - 0.5));
-    float veinHalo = 1.0 - smoothstep(0.055, 0.2, abs(fract(phase) - 0.5));
-    float vein = clamp(0.58 * veinHalo + 0.42 * veinCore, 0.0, 1.0);
-    float branchCore = 1.0 - smoothstep(0.018, 0.055, abs(fract(branchPhase) - 0.5));
-    float branchHalo = 1.0 - smoothstep(0.055, 0.2, abs(fract(branchPhase) - 0.5));
-    float branchVein = clamp(0.58 * branchHalo + 0.42 * branchCore, 0.0, 1.0);
-    float cloud = 0.1 + 0.42 * clamp(warp + 0.5, 0.0, 1.0);
-    float branchGate = smoothstep(-0.04, 0.22, warp - 0.45 * warpB);
-    float branch = 0.82 * branchGate * branchVein;
-    float ramp = max(cloud, max(vein, branch));
+${sig(
+  "  float patternMarbleDetailRamp(float scale, vec3 p, vec3 pm) {",
+  "  fn patternMarbleDetailRamp(scale: f32, p: vec3f, pm: vec3f) -> f32 {",
+)}
+    ${f("safeScale", "max(scale, 0.0)")}
+    ${f("warp", `patternFbm(${V3}(pm.y * safeScale * 0.28 + 3.7, pm.x * safeScale * 0.2 - 6.1, pm.z * safeScale * 0.28 + 1.9))`)}
+    ${f("warpB", `patternFbm(${V3}(pm.z * safeScale * 0.24 - 4.8, pm.y * safeScale * 0.18 + 2.6, pm.x * safeScale * 0.24 + 7.3))`)}
+    ${f("phase", "(pm.x + 0.18 * pm.y - 0.11 * pm.z) * safeScale + 0.42 * warp")}
+    ${f("branchPhase", "(0.62 * pm.x - 0.47 * pm.y + 0.31 * pm.z) * safeScale * 0.78 + 0.48 * warpB + 1.37")}
+    ${f("veinCore", "1.0 - smoothstep(0.018, 0.055, abs(fract(phase) - 0.5))")}
+    ${f("veinHalo", "1.0 - smoothstep(0.055, 0.2, abs(fract(phase) - 0.5))")}
+    ${f("vein", "clamp(0.58 * veinHalo + 0.42 * veinCore, 0.0, 1.0)")}
+    ${f("branchCore", "1.0 - smoothstep(0.018, 0.055, abs(fract(branchPhase) - 0.5))")}
+    ${f("branchHalo", "1.0 - smoothstep(0.055, 0.2, abs(fract(branchPhase) - 0.5))")}
+    ${f("branchVein", "clamp(0.58 * branchHalo + 0.42 * branchCore, 0.0, 1.0)")}
+    ${f("cloud", "0.1 + 0.42 * clamp(warp + 0.5, 0.0, 1.0)")}
+    ${f("branchGate", "smoothstep(-0.04, 0.22, warp - 0.45 * warpB)")}
+    ${f("branch", "0.82 * branchGate * branchVein")}
+    ${f("ramp", "max(cloud, max(vein, branch))")}
     return clamp(0.5 + (ramp - 0.5) * 2.25, 0.0, 1.0);
   }
 
-  float patternMaterialDetailRamp(int kindId, float scale, vec3 p, vec3 pm) {
+${sig(
+  "  float patternMaterialDetailRamp(int kindId, float scale, vec3 p, vec3 pm) {",
+  "  fn patternMaterialDetailRamp(kindId: i32, scale: f32, p: vec3f, pm: vec3f) -> f32 {",
+)}
     if (kindId == 2) {
       return patternMarbleDetailRamp(scale, p, pm);
     }
     return patternMacroRamp(kindId, scale, p, pm);
   }
 
-  float patternVarianceRampMix(float a, float b, float t) {
-    float mixed = mix(a, b, t);
-    float gain = 1.0 / sqrt((1.0 - t) * (1.0 - t) + t * t);
+${sig(
+  "  float patternVarianceRampMix(float a, float b, float t) {",
+  "  fn patternVarianceRampMix(a: f32, b: f32, t: f32) -> f32 {",
+)}
+    ${f("mixed", "mix(a, b, t)")}
+    ${f("gain", "1.0 / sqrt((1.0 - t) * (1.0 - t) + t * t)")}
     return clamp(0.5 + (mixed - 0.5) * gain, 0.0, 1.0);
   }
 
-  float patternScaleStableDetailRamp(int kindId, float scale, vec3 p, vec3 pm, float nativeValue, bool nativeEnabled, float pixelFootprint) {
-    float footprint = max(pixelFootprint, 1.0e-9);
-    float detailScaleMult = kindId == 2 ? ${PATTERN_DETAIL_SCALE_MULTIPLIER.marble} : ${PATTERN_DETAIL_SCALE_MULTIPLIER.wood}.0;
-    float desired = max(1.0, (detailScaleMult * ${PATTERN_DETAIL_FOOTPRINT_OFF}) / footprint);
-    float rawLevel = log2(desired);
-    float levelF = clamp(floor(rawLevel), 0.0, ${PATTERN_DETAIL_MAX_OCTAVE}.0);
-    int level = int(levelF);
-    float blend = smoothstep(0.0, 1.0, clamp(rawLevel - levelF, 0.0, 1.0));
-    float lowScale = scale * exp2(levelF);
-    vec3 lowP = patternDetailWarpPoint(kindId, lowScale, pm, nativeValue, nativeEnabled);
-    float low = patternMaterialDetailRamp(kindId, lowScale, p, lowP);
+${sig(
+  "  float patternScaleStableDetailRamp(int kindId, float scale, vec3 p, vec3 pm, float nativeValue, bool nativeEnabled, float pixelFootprint) {",
+  "  fn patternScaleStableDetailRamp(kindId: i32, scale: f32, p: vec3f, pm: vec3f, nativeValue: f32, nativeEnabled: bool, pixelFootprint: f32) -> f32 {",
+)}
+    ${f("footprint", "max(pixelFootprint, 1.0e-9)")}
+    ${f("detailScaleMult", sel(`${PATTERN_DETAIL_SCALE_MULTIPLIER.marble}`, `${PATTERN_DETAIL_SCALE_MULTIPLIER.wood}.0`, "kindId == 2"))}
+    ${f("desired", `max(1.0, (detailScaleMult * ${PATTERN_DETAIL_FOOTPRINT_OFF}) / footprint)`)}
+    ${f("rawLevel", "log2(desired)")}
+    ${f("levelF", `clamp(floor(rawLevel), 0.0, ${PATTERN_DETAIL_MAX_OCTAVE}.0)`)}
+    ${i32l("level", ci("levelF"))}
+    ${f("blend", "smoothstep(0.0, 1.0, clamp(rawLevel - levelF, 0.0, 1.0))")}
+    ${f("lowScale", "scale * exp2(levelF)")}
+    ${v3("lowP", "patternDetailWarpPoint(kindId, lowScale, pm, nativeValue, nativeEnabled)")}
+    ${f("low", "patternMaterialDetailRamp(kindId, lowScale, p, lowP)")}
     if (level >= ${PATTERN_DETAIL_MAX_OCTAVE}) {
       return low;
     }
-    float highScale = scale * exp2(levelF + 1.0);
-    vec3 highP = patternDetailWarpPoint(kindId, highScale, pm, nativeValue, nativeEnabled);
-    float high = patternMaterialDetailRamp(kindId, highScale, p, highP);
+    ${f("highScale", "scale * exp2(levelF + 1.0)")}
+    ${v3("highP", "patternDetailWarpPoint(kindId, highScale, pm, nativeValue, nativeEnabled)")}
+    ${f("high", "patternMaterialDetailRamp(kindId, highScale, p, highP)")}
     return patternVarianceRampMix(low, high, blend);
   }
 
-  float patternDetailGate(float pixelFootprint) {
+${sig(
+  "  float patternDetailGate(float pixelFootprint) {",
+  "  fn patternDetailGate(pixelFootprint: f32) -> f32 {",
+)}
     return 1.0 - smoothstep(${PATTERN_DETAIL_FOOTPRINT_FULL}, ${PATTERN_DETAIL_FOOTPRINT_OFF}, pixelFootprint);
   }
 
-  vec3 patternAlbedo(vec3 base, int kindId, float ramp) {
+${sig(
+  "  vec3 patternAlbedo(vec3 base, int kindId, float ramp) {",
+  "  fn patternAlbedo(base: vec3f, kindId: i32, ramp: f32) -> vec3f {",
+)}
     if (kindId == 1) {
-      vec3 early = vec3(1.06, 1.03, 0.92);
-      vec3 late = vec3(0.3, 0.22, 0.16);
-      float amount = smoothstep(0.04, 0.92, ramp);
-      vec3 factor = mix(early, late, amount);
+      ${v3("early", `${V3}(1.06, 1.03, 0.92)`)}
+      ${v3("late", `${V3}(0.3, 0.22, 0.16)`)}
+      ${f("amount", "smoothstep(0.04, 0.92, ramp)")}
+      ${v3("factor", "mix(early, late, amount)")}
       return clamp(base * factor, 0.0, 1.0);
     }
     if (kindId == 2) {
-      vec3 halo = vec3(0.8, 0.78, 0.76);
-      vec3 core = vec3(0.4, 0.43, 0.49);
-      float haloAmount = smoothstep(0.02, 0.58, ramp);
-      float coreAmount = smoothstep(0.58, 1.0, ramp);
-      vec3 factor = mix(mix(vec3(1.0), halo, haloAmount), core, coreAmount);
+      ${v3("halo", `${V3}(0.8, 0.78, 0.76)`)}
+      ${v3("core", `${V3}(0.4, 0.43, 0.49)`)}
+      ${f("haloAmount", "smoothstep(0.02, 0.58, ramp)")}
+      ${f("coreAmount", "smoothstep(0.58, 1.0, ramp)")}
+      ${v3("factor", `mix(mix(${V3}(1.0), halo, haloAmount), core, coreAmount)`)}
       return clamp(base * factor, 0.0, 1.0);
     }
-    vec3 bed = vec3(0.58, 0.62, 0.68);
-    vec3 seam = vec3(0.38, 0.24, 0.16);
-    float bedAmount = smoothstep(0.02, 0.72, ramp);
-    float seamAmount = smoothstep(0.74, 1.0, ramp);
-    vec3 factor = mix(mix(vec3(1.0), bed, bedAmount), seam, seamAmount);
+    ${v3("bed", `${V3}(0.58, 0.62, 0.68)`)}
+    ${v3("seam", `${V3}(0.38, 0.24, 0.16)`)}
+    ${f("bedAmount", "smoothstep(0.02, 0.72, ramp)")}
+    ${f("seamAmount", "smoothstep(0.74, 1.0, ramp)")}
+    ${v3("factor", `mix(mix(${V3}(1.0), bed, bedAmount), seam, seamAmount)`)}
     return clamp(base * factor, 0.0, 1.0);
   }
 
-  vec3 patternShade(vec3 base, vec3 objectP, vec4 fb, vec4 calibration, float sheets, float pixelFootprint) {
-    float word = fb.z;
+${sig(
+  "  vec3 patternShade(vec3 base, vec3 objectP, vec4 fb, vec4 calibration, float sheets, float pixelFootprint) {",
+  "  fn patternShade(base: vec3f, objectP: vec3f, fb: vec4f, calibration: vec4f, sheets: f32, pixelFootprint: f32) -> vec3f {",
+)}
+    ${f("word", "fb.z")}
     if (word == 0.0) {
       return base;
     }
-    float kindDiv = floor(word / ${SURFACE_PATTERN_WIRE_KIND_RADIX}.0);
-    int kindId = int(kindDiv);
+    ${f("kindDiv", `floor(word / ${SURFACE_PATTERN_WIRE_KIND_RADIX}.0)`)}
+    ${i32l("kindId", ci("kindDiv"))}
     if (kindId < 1 || kindId > 3) {
       return base;
     }
-    float kindBase = kindDiv * ${SURFACE_PATTERN_WIRE_KIND_RADIX}.0;
-    float axisDiv = floor((word - kindBase) / ${SURFACE_PATTERN_WIRE_AXIS_RADIX}.0);
-    int axisId = int(axisDiv);
-    float strengthQ = word - kindBase - axisDiv * ${SURFACE_PATTERN_WIRE_AXIS_RADIX}.0;
-    float strength = strengthQ / 10000.0;
-    float scale = fb.w;
-    vec3 pm = patternPermutePoint(axisId, objectP);
-    float macro = patternMacroRamp(kindId, scale, objectP, pm);
-    bool nativeEnabled = calibration.w != 0.0;
-    float nativeValue = clamp((sheets - calibration.z) * calibration.w, 0.0, 1.0);
-    float detail = patternScaleStableDetailRamp(kindId, scale, objectP, pm, nativeValue, nativeEnabled, pixelFootprint);
-    float gate = nativeEnabled ? patternDetailGate(pixelFootprint) : 0.0;
-    float outputRamp = mix(macro, detail, gate);
-    vec3 full = patternAlbedo(base, kindId, outputRamp);
+    ${f("kindBase", `kindDiv * ${SURFACE_PATTERN_WIRE_KIND_RADIX}.0`)}
+    ${f("axisDiv", `floor((word - kindBase) / ${SURFACE_PATTERN_WIRE_AXIS_RADIX}.0)`)}
+    ${i32l("axisId", ci("axisDiv"))}
+    ${f("strengthQ", `word - kindBase - axisDiv * ${SURFACE_PATTERN_WIRE_AXIS_RADIX}.0`)}
+    ${f("strength", `strengthQ / ${SURFACE_PATTERN_WIRE_STRENGTH_STEPS}.0`)}
+    ${f("scale", "fb.w")}
+    ${v3("pm", "patternPermutePoint(axisId, objectP)")}
+    ${f("macro", "patternMacroRamp(kindId, scale, objectP, pm)")}
+    ${b("nativeEnabled", "calibration.w != 0.0")}
+    ${f("nativeValue", "clamp((sheets - calibration.z) * calibration.w, 0.0, 1.0)")}
+    ${f("detail", "patternScaleStableDetailRamp(kindId, scale, objectP, pm, nativeValue, nativeEnabled, pixelFootprint)")}
+    ${f("gate", sel("patternDetailGate(pixelFootprint)", "0.0", "nativeEnabled"))}
+    ${f("outputRamp", "mix(macro, detail, gate)")}
+    ${v3("full", "patternAlbedo(base, kindId, outputRamp)")}
     return mix(base, full, clamp(strength, 0.0, 1.0));
   }
 `;
+}
+
+/** The GLSL3 emission of {@link surfacePatternBody} — the body both GLSL
+ * tracers splice under their own `#if SURFACE_PATTERN` arms. One body, so
+ * the 3D and 4D formula copies cannot drift; the two tracers differ only in
+ * the call site's frame reconstruction. */
+export function surfacePatternShadeSource(): string {
+  return surfacePatternBody(SURFACE_PATTERN_SHADE_GLSL);
+}
+
+/** The WGSL emission of {@link surfacePatternBody} — the twin
+ * `surface-de-gpu.ts`'s shade kernel splices under its `pattern` codegen
+ * flag. Same math, per-dialect spelling; the body-equality test pins the
+ * two emissions to one canonical text. */
+export function surfacePatternShadeSourceWgsl(): string {
+  return surfacePatternBody(SURFACE_PATTERN_SHADE_WGSL);
 }
 
 /**
