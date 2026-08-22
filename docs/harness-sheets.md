@@ -249,9 +249,10 @@ Macro-only and world-space controls expose the expected zoom plateau.
 
 Every run writes labeled diagnostics and a JSON manifest under a run-specific
 `scripts/out/finish-pattern-<run>/` directory and refuses to overwrite it.
-Blinded decks are default-off and require a separate all-system 288 px hero
-run that names a prior passing machine run. That review run writes five unique
-permutations, SHA-256 hashes, a hidden key, and a strict results template.
+The legacy V3 CPU harness can reproduce its historical five-reviewer evidence:
+its blinded decks are default-off and require a separate all-system 288 px hero
+run that names a prior passing machine run. The current release decision uses
+the production-browser owner gate documented below.
 Geometry is cached once per system/rung, so the 28 material/control panels per
 system cost only four CPU marches. The lighting-independent metric is
 pre-lighting albedo-luminance residual; its edge and box-pyramid energy
@@ -277,12 +278,12 @@ rung-to-rung residual-variance retention is 0.616 and the weakest 64x/1x
 retention is 0.507, above the unchanged 0.60 and 0.50 floors. The passing
 machine run emitted no blinded decks.
 
-The blinded-review fixtures are rendered at 288 px with one mask-derived,
-pattern-independent camera per system. Every fixture has at least 10,000
-object pixels, at least 55% object bounding-box width, no clipping, and zero
-exhausted rays. Five decks receive independent hidden permutations; the key,
-unblinded sheet, manifest, and class counts stay unavailable to reviewers
-until their choices and confidence scores are frozen.
+The historical V3 blinded-review fixtures were rendered at 288 px with one
+mask-derived, pattern-independent camera per system. Every fixture had at least
+10,000 object pixels, at least 55% object bounding-box width, no clipping, and
+zero exhausted rays. Five decks received independent hidden permutations; the
+key, unblinded sheet, manifest, and class counts stayed unavailable to those
+reviewers until their choices and confidence scores were frozen.
 
 Exact accepted V3 constants live in `src/fractal/surface-pattern.ts` (re-exported
 by `finish-pattern-model.ts` for the harness) and the manifest:
@@ -402,16 +403,30 @@ The full hero matrix is 128 settled captures: pattern-none plus
 Wood/Marble/Strata at 1×/4×/16×/64× for affine3, base-fold3, and two affine4
 slices, on compute and WebGL. Compatibility pairs cover lens/fold-final,
 escape, bulb, kaleido4/fold4 refusal, escape4, balloon, LUT, and by-transform
-color. The verifier compares lighting-normalized signed effect maps, not beauty
-frames: correlation must be at least 0.85, effect-mask IoU at least 0.70, and
-scalar metrics must agree within 15%. The manifest includes the git SHA,
-persisted hash and pose, stage, exact active backend, ray census, threshold
-version, raw/effect/mask hashes, sheets, parity, and variance retention.
+color. Effect-metric contract V2 keeps the 8–45% edge-density and 60% maximum
+fine-energy checks at every rung, and applies the anti-speckle midscale floor
+at the ordinary 1× view where it was specified. The production normalized
+post-light residual uses a 22.5% midscale floor; this replaces the prototype's
+25% floor measured on 96px pre-lighting CPU panels. Zoom ladders retain at
+least 55% variance rung-to-rung and 50% from 1× to 64×, allowing one bounded
+transition dip only when the end-to-end detail recovers.
 
-A real-driver machine pass emits five independently permuted nine-card blinded
-decks and a null-valued results template. It never supplies human answers.
-After five reviewers freeze their choices and confidence scores, validate them
-with:
+The verifier compares lighting-normalized signed effect maps, not beauty
+frames: correlation must be at least 0.85, effect-mask IoU at least 0.70, and
+scalar metrics must agree within 15%. Engine parity is eligible only after
+both arms pass the 5%/10,000-pixel coverage gate. The manifest includes the git
+SHA, persisted hash and pose, stage, exact active backend, ray census,
+threshold version, raw/effect/mask hashes, sheets, parity, and variance
+retention.
+
+A real-driver machine pass emits one permuted nine-card blinded owner deck and
+a null-valued results template. It never supplies answers or a verdict. Show
+the owner only `review-deck-01.png`, the five allowed choices, and the response
+template. The key, unblinded sheet, manifest, and class counts remain hidden
+until all nine choices, confidence scores, and the explicit owner verdict are
+frozen. The verdict is one of `approve`, `request-changes`, or
+`downgrade-name`; a downgrade also names the current family and a non-empty
+replacement label. Then validate the frozen response with:
 
 ```bash
 npm run verify:pattern-release-review -- \
@@ -420,10 +435,14 @@ npm run verify:pattern-release-review -- \
   --out=/path/to/review-score.json
 ```
 
-The strict shared scorer requires every hero to reach 4/5 correct with median
-confidence at least 3 and at least 80% correct overall. A machine pass remains
-explicitly pending, never a material-name release verdict, until that external
-score passes.
+The shared validator requires schema 3, the exact run and owner deck, one
+response for every card, allowed choices, integer confidence from 1 through 5,
+and a complete explicit verdict. Choice accuracy is reported as evidence, not
+turned into a synthetic multi-reviewer threshold. Only the owner's explicit
+`approve` passes the naming gate. `request-changes` and `downgrade-name` refuse
+the current names, and malformed or pending input fails closed. A machine pass
+remains pending, never a material-name release verdict, until that blinded
+owner decision passes.
 
 ## The Surprise Me generator's sheet
 

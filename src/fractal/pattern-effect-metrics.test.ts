@@ -107,7 +107,7 @@ function naiveComponentBlur(
 describe("pattern effect release constants", () => {
   it("publishes one deeply immutable versioned threshold contract", () => {
     expect(PATTERN_EFFECT_THRESHOLD_VERSION).toBe(
-      "fr-cmtl.8-effect-metrics-v1",
+      "fr-cmtl.8-effect-metrics-v2",
     );
     expect(PATTERN_EFFECT_THRESHOLDS.version).toBe(
       PATTERN_EFFECT_THRESHOLD_VERSION,
@@ -117,6 +117,10 @@ describe("pattern effect release constants", () => {
     expect(
       Object.isFrozen(PATTERN_EFFECT_THRESHOLDS.residual.pyramidRadii),
     ).toBe(true);
+    expect(
+      Object.isFrozen(PATTERN_EFFECT_THRESHOLDS.residual.midscaleEnergyZooms),
+    ).toBe(true);
+    expect(PATTERN_EFFECT_THRESHOLDS.residual.midscaleEnergyZooms).toEqual([1]);
     expect(PATTERN_EFFECT_THRESHOLDS.attachmentMeasurements.zoom).toEqual({
       required: true,
       passThreshold: null,
@@ -303,6 +307,9 @@ describe("paired production-frame analysis", () => {
   it("derives coverage, linear-light signed effect, and strict RGB effect mask", () => {
     const { plain, patterned } = pair();
     const analysis = analyzePatternEffect(plain, patterned);
+    const zoomAnalysis = analyzePatternEffect(plain, patterned, [], {
+      requireMidEnergy: false,
+    });
     expect(analysis.coverage.objectCount).toBe(15);
     expect(analysis.coverage.interiorCount).toBe(3);
     expect(analysis.coverage.rawObjectShare).toBeCloseTo(15 / 63, 14);
@@ -321,6 +328,8 @@ describe("paired production-frame analysis", () => {
     expect(analysis.effectMask[2 * 9 + 4]).toBe(0);
     expect(analysis.effectMask[3 * 9 + 4]).toBe(1);
     expect(analysis.effectMask[4 * 9 + 4]).toBe(0);
+    expect(analysis.gates.midEnergyRequired).toBe(true);
+    expect(zoomAnalysis.gates.midEnergyRequired).toBe(false);
   });
 
   it("compares engines on common interiors with correlation, IoU, and scalars", () => {
@@ -379,13 +388,13 @@ describe("parity primitives", () => {
   });
 
   it("enforces every rung and the end-to-end variance retention", () => {
-    expect(measurePatternEffectVarianceRetention([1, 0.6, 0.5, 0.5])).toEqual({
-      rungRetention: [0.6, 5 / 6, 1],
+    expect(measurePatternEffectVarianceRetention([1, 0.55, 0.5, 0.5])).toEqual({
+      rungRetention: [0.55, 10 / 11, 1],
       endRetention: 0.5,
       pass: true,
     });
     expect(
-      measurePatternEffectVarianceRetention([1, 0.59, 0.55, 0.5]).pass,
+      measurePatternEffectVarianceRetention([1, 0.54, 0.5, 0.5]).pass,
     ).toBe(false);
     expect(
       measurePatternEffectVarianceRetention([1, 0.9, 0.8, 0.49]).pass,

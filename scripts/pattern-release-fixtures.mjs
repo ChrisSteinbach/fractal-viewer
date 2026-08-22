@@ -320,6 +320,47 @@ const BULB3_SOURCE_HASH = deriveSceneHash(
   },
 );
 
+// The production benchmark's pureBoxfoldPair4 scene, with its audited slab
+// view widened to the maximum supported normalized half-thickness. The older
+// compatibility source produced only 240 mask pixels; this explicit view was
+// measured at 29.49% raw coverage and 80,836 interior pixels at 960x540.
+const FOLD4_COMPATIBILITY_SOURCE_HASH = deriveSceneHash(
+  AUDITED_SOURCE_HASHES.fold4,
+  (document) => {
+    document.transforms = [
+      {
+        position: [0.4, 0.1, 0],
+        rotation: [0.3, 0.2, 0],
+        scale: [0.45, 0.45, 0.45],
+        w: { position: 0.3, rotation: { xw: 0.3 } },
+        variations: [{ type: "boxfold", weight: 1 }],
+      },
+      {
+        position: [-0.35, -0.2, 0.3],
+        rotation: [0, 0.5, 0.1],
+        scale: [0.5, 0.5, 0.5],
+        w: { position: -0.3, rotation: { xw: 0.3 } },
+        variations: [{ type: "boxfold", weight: 0.9 }],
+      },
+    ];
+    document.camera = {
+      target: [0.1235, -0.0689, 0.2312],
+      radius: 1.7488,
+      theta: 0.7854,
+      phi: 1.056,
+    };
+    document.fourD = {
+      p: [0.9624, 0, -0.2715, 0],
+      q: [0.9624, 0, 0.2715, 0],
+      sliceOn: true,
+      sliceCenter: 0.15,
+      sliceThickness: 0.5,
+      sliceRelColor: false,
+    };
+    document.groundPlane = false;
+  },
+);
+
 function declareFixture({ id, routeId, sourceHash, provenance, derive }) {
   const canonicalSource = canonicalSceneHash(sourceHash);
   const measurementHash = deriveSceneHash(canonicalSource, (document) => {
@@ -394,9 +435,9 @@ export const FIXTURES = deepFreeze({
   fold4: declareFixture({
     id: "fold4",
     routeId: "fold4",
-    sourceHash: AUDITED_SOURCE_HASHES.fold4,
+    sourceHash: FOLD4_COMPATIBILITY_SOURCE_HASH,
     provenance:
-      "surface-4d.verify.mjs FOLD4_HASH; exact two-map 4D boxfold scene, compute-only",
+      "gpu-bench surfaceFold4Boxfold/pureBoxfoldPair4 with explicit fold4Slab camera, YW rotor, center 0.15, and half-thickness 0.5; compute-only",
   }),
   escape4: declareFixture({
     id: "escape4",
@@ -408,9 +449,9 @@ export const FIXTURES = deepFreeze({
   balloon3: declareFixture({
     id: "balloon3",
     routeId: "balloon3",
-    sourceHash: AUDITED_SOURCE_HASHES.boxfoldPair3,
+    sourceHash: AUDITED_SOURCE_HASHES.lens3,
     provenance:
-      "surface-repro.verify.mjs BOXFOLD_BASE_HASH plus balloon-real-driver.verify.mjs radius 1.6",
+      "audited lens3 nonlinear final-boxfold scene and pinned camera, composed with balloon radius 1.6",
     derive(document) {
       document.balloonEcho = true;
       document.balloonRadius = 1.6;
@@ -912,6 +953,31 @@ export function runFixtureSelfCheck() {
     decodeSceneHash(FIXTURES.balloon3.measurementHash).balloonEcho,
     true,
   );
+  assert.deepEqual(
+    decodeSceneHash(FIXTURES.balloon3.measurementHash).camera,
+    decodeSceneHash(AUDITED_SOURCE_HASHES.lens3).camera,
+  );
+  assert.equal(
+    decodeSceneHash(FIXTURES.balloon3.measurementHash).finalTransform
+      ?.variations?.[0]?.type,
+    "boxfold",
+  );
+  const fold4Compatibility = decodeSceneHash(FIXTURES.fold4.measurementHash);
+  assert.equal(fold4Compatibility.transforms.length, 2);
+  assert.deepEqual(fold4Compatibility.camera, {
+    target: [0.1235, -0.0689, 0.2312],
+    radius: 1.7488,
+    theta: 0.7854,
+    phi: 1.056,
+  });
+  assert.deepEqual(fold4Compatibility.fourD, {
+    p: [0.9624, 0, -0.2715, 0],
+    q: [0.9624, 0, 0.2715, 0],
+    sliceOn: true,
+    sliceCenter: 0.15,
+    sliceThickness: 0.5,
+    sliceRelColor: false,
+  });
   assert.equal(
     decodeSceneHash(FIXTURES.lut3.measurementHash).surface.colorSource,
     "palette",

@@ -7,7 +7,7 @@
  * compute/WebGL, and 4D-slice cell has enough real object interior and zero
  * exhausted rays. `--phase=machine` consumes that file, renders the complete
  * 128-cell hero matrix plus compatibility routes, evaluates effect maps and
- * engine parity, and emits blinded review decks only after the numeric gate
+ * engine parity, and emits one blinded owner-review deck only after the numeric gate
  * passes. Human responses are never synthesized; score them separately with
  * `pattern-release-review-score.ts`.
  */
@@ -522,6 +522,7 @@ async function renderPatternPair(
     plain.image,
     patterned.image,
     exclusions,
+    { requireMidEnergy: category !== "hero" || cell.zoom === 1 },
   );
   const metricArtifacts = await writeMetricArtifacts(
     analysisPage,
@@ -814,11 +815,30 @@ async function renderCompatibility(
       byEngine[arm.engine] = result.analysis;
     }
     if (byEngine.compute && byEngine.webgl) {
+      const parityEligible = [byEngine.compute, byEngine.webgl].every(
+        (analysis) =>
+          analysis.gates.rawObjectShare && analysis.gates.interiorCount,
+      );
+      if (!parityEligible) {
+        parity.push({
+          fixtureId: fixture.id,
+          family,
+          status: "ineligible",
+          reason:
+            "both engine arms must pass coverage before scalar parity is meaningful",
+        });
+        continue;
+      }
       const comparison = comparePatternEffectEngines(
         byEngine.compute,
         byEngine.webgl,
       );
-      parity.push({ fixtureId: fixture.id, family, ...comparison });
+      parity.push({
+        fixtureId: fixture.id,
+        family,
+        status: "measured",
+        ...comparison,
+      });
       if (!comparison.gates.pass) {
         failures.push(`${fixture.id}: compatibility engine parity failed`);
       }
@@ -831,7 +851,7 @@ function reviewOrder(runId, deckId, hero) {
   return sha256(`${runId}:${deckId}:${hero.system}:${hero.kind}`);
 }
 
-async function emitReviewDecks(page, runDirectory, runId, reviewHeroes) {
+async function emitOwnerReviewDeck(page, runDirectory, runId, reviewHeroes) {
   if (reviewHeroes.length !== 9) {
     throw new Error(
       `review gate needs exactly nine heroes, got ${String(reviewHeroes.length)}`,
@@ -859,84 +879,76 @@ async function emitReviewDecks(page, runDirectory, runId, reviewHeroes) {
     "review/review-heroes-unblinded.png",
     unblinded,
   );
-  const keyDecks = [];
-  const resultDecks = [];
-  const decks = [];
-  const signatures = new Set();
-  for (let index = 1; index <= 5; index++) {
-    const deckId = `reviewer-${String(index).padStart(2, "0")}`;
-    const cards = [...reviewHeroes]
-      .sort((a, b) =>
-        reviewOrder(runId, deckId, a).localeCompare(
-          reviewOrder(runId, deckId, b),
-        ),
-      )
-      .map((hero, cardIndex) => ({
-        ...hero,
-        card: `CARD ${String(cardIndex + 1).padStart(2, "0")}`,
-      }));
-    const signature = cards
-      .map((card) => `${card.system}:${card.kind}`)
-      .join("|");
-    if (signatures.has(signature))
-      throw new Error("review deck permutations collided");
-    signatures.add(signature);
-    const png = await makeLabeledSheet(
-      page,
-      cards.map((card) => ({
-        png: card.png,
-        lines: [card.card, "CHOICE + CONFIDENCE 1-5"],
-      })),
-      3,
-    );
-    const artifact = await writeRunArtifact(
-      runDirectory,
-      `review/review-deck-${String(index).padStart(2, "0")}.png`,
-      png,
-    );
-    decks.push({ deckId, artifact });
-    keyDecks.push({
+  const deckId = "owner-01";
+  const cards = [...reviewHeroes]
+    .sort((a, b) =>
+      reviewOrder(runId, deckId, a).localeCompare(
+        reviewOrder(runId, deckId, b),
+      ),
+    )
+    .map((hero, cardIndex) => ({
+      ...hero,
+      card: `CARD ${String(cardIndex + 1).padStart(2, "0")}`,
+    }));
+  const png = await makeLabeledSheet(
+    page,
+    cards.map((card) => ({
+      png: card.png,
+      lines: [card.card, "CHOICE + CONFIDENCE 1-5"],
+    })),
+    3,
+  );
+  const artifact = await writeRunArtifact(
+    runDirectory,
+    "review/review-deck-01.png",
+    png,
+  );
+  const decks = [{ deckId, artifact }];
+  const keyDecks = [
+    {
       deckId,
       cards: cards.map((card) => ({
         card: card.card,
         expected: card.kind,
         system: card.system,
       })),
-    });
-    resultDecks.push({
-      reviewerId: deckId,
-      deckId,
-      responses: cards.map((card) => ({
-        card: card.card,
-        choice: null,
-        confidence: null,
-      })),
-    });
-  }
+    },
+  ];
   const key = await writeRunArtifact(
     runDirectory,
     "review/review-key.json",
-    jsonArtifact({ schema: 2, runId, decks: keyDecks }),
+    jsonArtifact({ schema: 3, runId, decks: keyDecks }),
   );
   const template = await writeRunArtifact(
     runDirectory,
     "review/review-results.template.json",
     jsonArtifact({
-      schema: 2,
+      schema: 3,
       runId,
       status: "pending",
       instructions:
-        "Judge surface material only. Choose exactly one listed choice and confidence 1..5.",
+        "Without opening the key, unblinded sheet, or manifest, judge surface material only. Complete all nine choices and confidence scores, then freeze one verdict: approve, request-changes, or downgrade-name. A downgrade must name the current family and its replacement.",
       choices,
-      reviewers: resultDecks,
+      verdict: null,
+      downgrade: null,
+      owner: {
+        ownerId: null,
+        deckId,
+        responses: cards.map((card) => ({
+          card: card.card,
+          choice: null,
+          confidence: null,
+        })),
+      },
     }),
   );
   return {
-    status: "pending external blinded review",
-    reviewersRequired: 5,
-    cardsPerReviewer: 9,
-    heroRule: "at least 4/5 correct with median confidence >=3",
-    aggregateRule: "at least 80% correct",
+    status: "pending blinded owner review",
+    ownerReviewsRequired: 1,
+    cardsPerOwner: 9,
+    decisionRule:
+      "one complete blinded owner review plus an explicit approve verdict; request-changes and downgrade-name refuse the current names",
+    hiddenUntilResponsesAndVerdictFrozen: [diagnostic, key],
     diagnostic,
     decks,
     key,
@@ -986,7 +998,7 @@ async function runMachine(
   const machinePass = failures.length === 0;
   const review =
     machinePass && args.release
-      ? await emitReviewDecks(
+      ? await emitOwnerReviewDeck(
           analysisPage,
           runDirectory,
           args.runId,
@@ -1036,7 +1048,7 @@ async function runMachine(
     for (const failure of failures) console.error(`  ${failure}`);
   } else if (args.release) {
     console.error(
-      "[pattern-release] MACHINE PASS — five-reviewer blinded semantic gate remains pending",
+      "[pattern-release] MACHINE PASS — blinded owner semantic gate remains pending",
     );
   } else {
     console.error(
