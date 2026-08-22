@@ -1469,6 +1469,43 @@ describe("decodeScene transform surface pattern", () => {
       s.finalTransform!.surfacePattern,
     );
   });
+
+  it("stores only values for a material-starting-point document, never a preset name", () => {
+    // Exactly what the panel's Wood starting point writes (ui.ts's
+    // MATERIAL_PRESETS): the satin finish's three non-classic fields plus
+    // the wood pattern at its own defaults. The wire has a `finish` block
+    // and a `surfacePattern` block and NOTHING naming the preset — the
+    // name is UI vocabulary, so retuning a preset later repaints no saved
+    // scene.
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          finish: { specular: 0.25, shininess: 8, reflect: 0.08 },
+          surfacePattern: { kind: "wood", axis: "y" },
+        },
+      ],
+    };
+    const payload = decodePayload(encodeScene(s));
+    const transform = (payload.transforms as Record<string, unknown>[])[0];
+    expect(transform.finish).toEqual({
+      specular: 0.25,
+      shininess: 8,
+      reflect: 0.08,
+    });
+    expect(transform.surfacePattern).toEqual({ kind: "wood", axis: "y" });
+    expect("material" in transform).toBe(false);
+    expect("preset" in transform).toBe(false);
+    // And the round trip is identity: values in, values out.
+    expect(decodeScene(encodeScene(s))!.transforms[0]).toMatchObject({
+      finish: { specular: 0.25, shininess: 8, reflect: 0.08 },
+      surfacePattern: { kind: "wood", axis: "y" },
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
