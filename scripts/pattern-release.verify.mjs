@@ -324,8 +324,14 @@ async function captureCell(browser, page, args, runDirectory, cell, category) {
     log: (line) => console.error(`${logPrefix}: ${line}`),
   });
   if (capture.census.exhausted !== 0) {
+    const locations = capture.census.exhaustedIndices
+      .map(
+        (index) =>
+          `(${String(index % RELEASE_VIEWPORT.width)},${String(Math.floor(index / RELEASE_VIEWPORT.width))} from bottom)`,
+      )
+      .join(", ");
     throw new Error(
-      `${cell.id}: ${String(capture.census.exhausted)} exhausted rays`,
+      `${cell.id}: ${String(capture.census.exhausted)} exhausted rays at ${locations}`,
     );
   }
   if (

@@ -9,6 +9,8 @@ import {
   surfaceMaterialLanes,
   surfaceMaterialUsesFinish,
   surfaceMaterialUsesPattern,
+  surfaceMaterialsNeedAo,
+  surfaceMaterialsNeedShadow,
 } from "./surface-material-wire";
 import { SURFACE_PATTERN_AXES, SURFACE_PATTERN_KINDS } from "./surface-pattern";
 
@@ -30,6 +32,53 @@ describe("unified surface material wire", () => {
     const finished = resolveSurfaceMaterial({ metalness: 1 }, undefined);
     expect(surfaceMaterialUsesFinish(finished)).toBe(true);
     expect(surfaceMaterialUsesPattern(finished)).toBe(false);
+  });
+
+  it("omits shadow work only when every shadow coefficient is exactly zero", () => {
+    const matte = resolveSurfaceMaterial(
+      { specular: 0, shininess: 8 },
+      { kind: "wood", axis: "y", scale: 4 },
+    );
+    const glossy = resolveSurfaceMaterial(
+      { specular: 0.1 },
+      { kind: "wood", axis: "y", scale: 4 },
+    );
+    const metal = resolveSurfaceMaterial(
+      { specular: 0, metalness: 1, reflect: 1 },
+      { kind: "wood", axis: "y", scale: 4 },
+    );
+    const materials = (slots: readonly (typeof matte)[]) => ({
+      slots,
+      finish: true as const,
+      pattern: true as const,
+      patternCalibration: {
+        ringsLow: 0.1,
+        ringsInvSpan: 2,
+        sheetsLow: 0.2,
+        sheetsInvSpan: 3,
+      },
+    });
+
+    expect(surfaceMaterialsNeedShadow(1, materials([matte, matte]))).toBe(
+      false,
+    );
+    expect(surfaceMaterialsNeedShadow(0.9999, materials([matte]))).toBe(true);
+    expect(surfaceMaterialsNeedShadow(0.25, materials([metal]))).toBe(false);
+    expect(surfaceMaterialsNeedShadow(1, materials([matte, glossy]))).toBe(
+      true,
+    );
+    expect(surfaceMaterialsNeedShadow(1, null)).toBe(true);
+    expect(
+      surfaceMaterialsNeedShadow(1, {
+        ...materials([matte]),
+        finish: false,
+      }),
+    ).toBe(true);
+
+    expect(surfaceMaterialsNeedAo(0, null)).toBe(false);
+    expect(surfaceMaterialsNeedAo(0.25, materials([metal, metal]))).toBe(false);
+    expect(surfaceMaterialsNeedAo(0.25, materials([metal, matte]))).toBe(true);
+    expect(surfaceMaterialsNeedAo(0.25, null)).toBe(true);
   });
 
   it("is the sole A/B authority and composes finish with directly inspectable pattern scale", () => {

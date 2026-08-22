@@ -4,6 +4,8 @@ export interface SurfaceRayCensus {
   covered: number;
   miss: number;
   exhausted: number;
+  /** Exact bottom-row-first linear raster indices of every exhausted ray. */
+  exhaustedIndices: readonly number[];
 }
 
 /** Trace-target alpha is a status side channel, never presented opacity. */
@@ -23,13 +25,29 @@ export function exactSurfaceRayCensus(
   covered: number,
   miss: number,
   exhausted: number,
+  exhaustedIndices: readonly number[],
 ): SurfaceRayCensus | null {
   const values = [rays, covered, miss, exhausted];
   if (values.some((value) => !Number.isSafeInteger(value) || value < 0)) {
     return null;
   }
   if (covered + miss + exhausted !== rays) return null;
-  return { rays, covered, miss, exhausted };
+  if (
+    exhaustedIndices.length !== exhausted ||
+    exhaustedIndices.some(
+      (index) => !Number.isSafeInteger(index) || index < 0 || index >= rays,
+    ) ||
+    new Set(exhaustedIndices).size !== exhaustedIndices.length
+  ) {
+    return null;
+  }
+  return {
+    rays,
+    covered,
+    miss,
+    exhausted,
+    exhaustedIndices: [...exhaustedIndices],
+  };
 }
 
 /** Decode the invisible RGBA8 alpha side channel written by the GLSL
@@ -55,13 +73,15 @@ export function decodeSurfaceRayCensus(
   let covered = 0;
   let miss = 0;
   let exhausted = 0;
-  for (let alpha = 3; alpha < rgba.length; alpha += 4) {
+  const exhaustedIndices: number[] = [];
+  for (let index = 0, alpha = 3; alpha < rgba.length; index++, alpha += 4) {
     switch (rgba[alpha]) {
       case SURFACE_TRACE_ALPHA_MISS:
         miss++;
         break;
       case SURFACE_TRACE_ALPHA_EXHAUSTED:
         exhausted++;
+        exhaustedIndices.push(index);
         break;
       case SURFACE_TRACE_ALPHA_COVERED:
         covered++;
@@ -70,5 +90,11 @@ export function decodeSurfaceRayCensus(
         return null;
     }
   }
-  return exactSurfaceRayCensus(rays, covered, miss, exhausted);
+  return exactSurfaceRayCensus(
+    rays,
+    covered,
+    miss,
+    exhausted,
+    exhaustedIndices,
+  );
 }

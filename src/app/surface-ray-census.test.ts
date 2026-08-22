@@ -40,6 +40,7 @@ describe("surface trace alpha census", () => {
       covered: 1,
       miss: 1,
       exhausted: 2,
+      exhaustedIndices: [1, 3],
     });
   });
 
@@ -52,13 +53,17 @@ describe("surface trace alpha census", () => {
   });
 
   it("only constructs compute censuses that exactly partition the rays", () => {
-    expect(exactSurfaceRayCensus(10, 3, 5, 2)).toEqual({
+    expect(exactSurfaceRayCensus(10, 3, 5, 2, [1, 9])).toEqual({
       rays: 10,
       covered: 3,
       miss: 5,
       exhausted: 2,
+      exhaustedIndices: [1, 9],
     });
-    expect(exactSurfaceRayCensus(10, 3, 5, 1)).toBeNull();
-    expect(exactSurfaceRayCensus(10, 3, 5, 3)).toBeNull();
+    expect(exactSurfaceRayCensus(10, 3, 5, 1, [1])).toBeNull();
+    expect(exactSurfaceRayCensus(10, 3, 5, 3, [1, 2, 3])).toBeNull();
+    expect(exactSurfaceRayCensus(10, 3, 5, 2, [1])).toBeNull();
+    expect(exactSurfaceRayCensus(10, 3, 5, 2, [1, 1])).toBeNull();
+    expect(exactSurfaceRayCensus(10, 3, 5, 2, [1, 10])).toBeNull();
   });
 });

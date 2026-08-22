@@ -3860,6 +3860,7 @@ function main(): void {
           drawn,
           frame.counts.miss,
           frame.counts.exhausted,
+          frame.exhaustedIndices,
         );
         if (
           firstSettle &&

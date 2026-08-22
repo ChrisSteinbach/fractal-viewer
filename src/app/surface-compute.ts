@@ -630,6 +630,8 @@ export interface SurfaceComputeFrame {
     active: number;
     plane: number;
   };
+  /** Bottom-row-first raster indices for every terminal exhausted ray. */
+  exhaustedIndices: readonly number[];
 }
 
 /**
@@ -2970,6 +2972,7 @@ export class SurfaceComputeRenderer {
     // its rays — the whole-states scan that used to produce it needed a
     // readback this loop no longer pays for.
     const counts = { hit: 0, miss: 0, exhausted: 0, active: 0, plane: 0 };
+    const exhaustedIndices: number[] = [];
     tr(
       `frame start rays=${rays} marchSteps=${spec.marchSteps} budgetMs=${budgetMs} shadeCost0=${sizer.cost.interceptUs.toFixed(0)}+n*${sizer.cost.marginalUs.toFixed(1)}us rayStepEmaUs0=${rayStepEmaUs} shadeHitCap0=${sizer.cap}`,
     );
@@ -3075,8 +3078,10 @@ export class SurfaceComputeRenderer {
             shadeHitQueue.push(ray);
           } else {
             if (rayStatus === SURFACE_GPU_RAY_MISS) counts.miss++;
-            else if (rayStatus === SURFACE_GPU_RAY_EXHAUSTED)
+            else if (rayStatus === SURFACE_GPU_RAY_EXHAUSTED) {
               counts.exhausted++;
+              exhaustedIndices.push(ray);
+            }
             shadeFreeQueue.push(ray);
           }
         }
@@ -3256,6 +3261,7 @@ export class SurfaceComputeRenderer {
       passes,
       truncated,
       counts,
+      exhaustedIndices,
     };
   }
 }

@@ -107,6 +107,46 @@ export function surfaceMaterialUsesPattern(
   return material.pattern.kind !== "none";
 }
 
+/**
+ * Whether the shared surface shade pass can observe a soft-shadow sample.
+ *
+ * The parameterized finish formula has exactly two shadow-dependent terms:
+ * diffuse is multiplied by `(1 - ambient) * (1 - metalness)`, and the
+ * specular lobe is multiplied by each slot's resolved `specular`. Returning
+ * false only when both coefficients are literal zero in every reachable slot
+ * lets both renderers set their existing shadow-step budget to zero without
+ * changing a pixel. Classic or pattern-only materials deliberately keep the
+ * old budget because their fixed-lighting path still has a specular lobe.
+ */
+export function surfaceMaterialsNeedShadow(
+  ambient: number,
+  materials: SurfaceMaterialSlots | null,
+): boolean {
+  if (materials?.finish !== true) return true;
+  return materials.slots.some(
+    (material) =>
+      material.finish.specular !== 0 ||
+      (ambient !== 1 && material.finish.metalness !== 1),
+  );
+}
+
+/**
+ * Whether object shading can observe ambient-occlusion probes. AO appears
+ * only in the diffuse body's `ambient * (1 - metalness)` coefficient. The
+ * fixed path may therefore omit it only at ambient 0; the parameterized path
+ * may also omit it when every reachable slot is literally pure metal.
+ */
+export function surfaceMaterialsNeedAo(
+  ambient: number,
+  materials: SurfaceMaterialSlots | null,
+): boolean {
+  if (ambient === 0) return false;
+  return (
+    materials?.finish !== true ||
+    materials.slots.some((material) => material.finish.metalness !== 1)
+  );
+}
+
 /** Encode family + axis + the canonical four-decimal strength quantum into
  * B.z using arithmetic that stays integer-exact after a Float32Array upload.
  * The shader twins decode with floor/subtraction and divide the recovered
