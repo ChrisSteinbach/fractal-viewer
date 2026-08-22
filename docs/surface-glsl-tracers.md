@@ -308,9 +308,11 @@ lighting composition in `main()`, never the descent bodies. Three splice
 points, identical in both files:
 
 - `uniform vec4 uMapFinishA[MAX_MAPS]` / `uMapFinishB[MAX_MAPS]` — the
-  two wire lanes `surfaceFinishLanes` defines, A = (specular, shininess,
-  metalness, reflect) and B = (transmit, 0, 0, 0) with B's tail reserved
-  for the pattern fields — declared INSIDE the arm (the `SURFACE_BULB`
+  two material wire lanes `surfaceMaterialLanes` defines, A = (specular,
+  shininess, metalness, reflect) and B = (transmit, reflectionTint,
+  patternConfig, scale). The pattern encoding now occupies the tail that the
+  finish landing originally reserved. They are declared INSIDE either
+  material arm (the `SURFACE_BULB`
   precedent, so an unfinished program pays no bytes) but in the SHARED
   uniform section right after `uMapColor`, so the forward-orbit arms,
   which replace the descent bodies wholesale, read them exactly as the
@@ -697,11 +699,11 @@ therefore under a quarter of the threshold emitted) rather than as the
 figure. No other row changes column: every 3D descent variant stripped
 before and strips after; escape (7658 B of headroom left), bulb
 (24146 B) and bulb+balloon (14931 B) stay unstripped with the arm on;
-escape+plane and bulb+plane strip under the plane rule regardless. On
-the 4D side the plain arm stays unstripped in both states — 63464 B with
-the arm on, 2072 B of headroom, THIS FILE'S TIGHTEST MARGIN and the
-figure the "one-line comments" rule in `surface-finish.ts`'s emitted
-body was written against — and balloon/plane strip in both.
+escape+plane and bulb+plane strip under the plane rule regardless. The 4D
+figures in this paragraph are the historical finish landing before patterned
+materials existed: the plain arm was 63464 B with 2072 B of headroom. The
+current finish-only baseline is 63878 B with 1658 raw bytes of headroom; the
+pattern-on 4D plain arm crosses the strip threshold as recorded below.
 
 **(5) Nothing approaches the emitted cliff.** The largest program any
 driver is handed is still 3D escape+balloon with the arm OFF at 64681 B;
@@ -714,13 +716,11 @@ its stripped third to reach the 82.2 KB that crashed Mesa.
 THE PAIRING TO WATCH, updated. With the arm off it is still 3D
 escape+balloon at 64681 B, 855 B under — unchanged, because the arm is
 off. With the arm on, escape+balloon has already crossed and there is
-nothing left to watch there; the nearest unstripped margins are now
-**4D plain + finish at 2072 B** (63464 B, the tightest unstripped arm in
-either file and a SHIPPED pairing once any 4D document authors a
-finish), then 4D plain at 2771 B, then 3D escape + finish at 7658 B.
-The Tier-2 pattern slice — which will grow `finishShade`'s body and is
-the reason `uMapFinishB`'s tail exists — lands its bytes on every one of
-those rows, and the 4D plain arm is where it should measure first.
+nothing left to watch there; the current nearest unstripped margin is
+**4D plain + finish at 1658 B** (63878 B, a shipped pairing). The old 2072 B
+figure was the pre-pattern finish landing. Patterned 4D plain crosses and
+strips, as measured in the next section; this is benign and costs only source
+comments in the driver diagnostic.
 Crossing there is as benign as every other crossing in this section
 (strip, not cliff), but it is the first time a crossing would cost a
 SHIPPED 4D session its commentary, where escape+balloon's never cost a

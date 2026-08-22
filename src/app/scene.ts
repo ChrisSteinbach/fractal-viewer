@@ -119,6 +119,10 @@ import {
   subPixelSample,
   surfaceComputeTileRows,
 } from "./surface-compute";
+import {
+  decodeSurfaceRayCensus,
+  type SurfaceRayCensus,
+} from "./surface-ray-census";
 
 // Authored point/guide colors are already sRGB, so render them verbatim
 // instead of running Three.js's sRGB<->linear conversions.
@@ -1144,12 +1148,11 @@ export class FractalScene {
    * more completed passes — i.e. whether it, rather than the settle
    * target, is the image this surface last presented. */
   private surfaceSampleMeanReady = false;
-  /** Share of the last COMPLETED settle pass's pixels that drew something
-   * — a hit, or a lit ground plane — or null when no pass of the current
-   * settle has completed. Read off the coverage flag the
-   * tracers write into alpha, in the readback the accumulator already
-   * pays for; see {@link surfaceCoveredFraction}. */
-  private surfaceCovered: number | null = null;
+  /** Exact terminal-ray census of the FIRST completed pass in the current
+   * settle, or null before that pass completes (and after invalidation).
+   * Read from the invisible trace-target alpha status bytes in the readback
+   * the accumulator already pays for. */
+  private surfaceSettledRayCensus: SurfaceRayCensus | null = null;
   /** True while {@link captureSurfaceFrame}'s yielding drain owns
    * {@link surfaceSettleTarget} and the full-tier uniforms — see
    * {@link surfaceCaptureBusy} for who has to respect it. */
@@ -5371,20 +5374,17 @@ export class FractalScene {
     );
     const tRead = SURFPERF ? performance.now() : 0;
     const px = width * height;
-    // Coverage rides this loop: one byte compare per pixel in a
-    // pass that is already reading every pixel back, against a channel the
-    // tracers write and nothing displays. It is measured on the FIRST
-    // completed pass — the frame the blank-frame question is about is the
-    // one the settle arrived at, and passes 1..7 only anti-alias it.
-    let covered = 0;
+    // The terminal census is measured on the FIRST completed pass — the
+    // frame the verifier and blank-frame question care about; passes 1..7
+    // only anti-alias it. The decoder rejects any alpha outside the exact
+    // miss/exhausted/covered vocabulary rather than guessing.
+    if (this.surfaceSampleTaken === 0) {
+      this.surfaceSettledRayCensus = decodeSurfaceRayCensus(buf, width, height);
+    }
     for (let i = 0, p = 0, a = 0; i < px; i++, p += 4, a += 3) {
       accum[a] += SRGB_TO_LINEAR[buf[p]];
       accum[a + 1] += SRGB_TO_LINEAR[buf[p + 1]];
       accum[a + 2] += SRGB_TO_LINEAR[buf[p + 2]];
-      if (buf[p + 3] !== 0) covered++;
-    }
-    if (this.surfaceSampleTaken === 0 && px > 0) {
-      this.surfaceCovered = covered / px;
     }
     this.surfaceSampleTaken += 1;
     // The texture now holds THIS pass verbatim — which is already the
@@ -5403,14 +5403,14 @@ export class FractalScene {
   }
 
   /**
-   * Count the completed settle target's COVERED pixels when the sample
-   * accumulator is not there to count them for free.
+   * Decode the completed settle target's terminal-ray census when the sample
+   * accumulator is not there to do so for free.
    *
-   * "Covered" is the alpha flag the tracers write: 1 for a hit or a lit
-   * ground plane, 0 for a miss, an exhausted ray, or backdrop — the WebGPU
-   * arm's `hit + plane` over its own per-ray status tally, one engine over.
+   * Alpha is a trace-only status byte: 255 for a hit or lit ground plane, 0
+   * for a miss, and 128 for an exhausted ray — the WebGPU arm's terminal
+   * status tally, one engine over.
    */
-  private measureSurfaceCoverage(width: number, height: number): void {
+  private measureSurfaceRayCensus(width: number, height: number): void {
     const px = width * height;
     if (px <= 0) return;
     const buf = new Uint8Array(px * 4);
@@ -5422,11 +5422,13 @@ export class FractalScene {
       height,
       buf,
     );
-    let covered = 0;
-    for (let i = 0, p = 3; i < px; i++, p += 4) {
-      if (buf[p] !== 0) covered++;
-    }
-    this.surfaceCovered = covered / px;
+    this.surfaceSettledRayCensus = decodeSurfaceRayCensus(buf, width, height);
+  }
+
+  /** Exact status census for the current completed settle pass, or null
+   * while that pass is absent/in flight. */
+  get surfaceRayCensus(): SurfaceRayCensus | null {
+    return this.surfaceSettledRayCensus;
   }
 
   /**
@@ -5439,7 +5441,8 @@ export class FractalScene {
    * document rendered.
    */
   get surfaceCoveredFraction(): number | null {
-    return this.surfaceCovered;
+    const census = this.surfaceSettledRayCensus;
+    return census && census.rays > 0 ? census.covered / census.rays : null;
   }
 
   /**
@@ -5447,7 +5450,7 @@ export class FractalScene {
    * accumulated from — the gamma decode's inverse, see
    * {@link foldSurfaceSample}. In place, so a pass costs one full-frame
    * readback and one upload with no copy between them; alpha is left as the
-   * trace wrote it — the last folded pass's COVERAGE flag rather than an
+   * trace wrote it — the last folded pass's terminal status rather than an
    * opacity, which is invisible because the present blit strips alpha to 1
    * (three r163+ creates the canvas `alpha: true` regardless of the
    * renderer's `alpha` param, so a coverage-0 pixel that DID reach the canvas
@@ -5560,7 +5563,7 @@ export class FractalScene {
     // the compute engine this arm stands in for). Pass
     // 0 is armed exactly as it always was, below.
     this.beginSurfaceSamples(SURFACE_STRIP_SETTLE_SAMPLES, size.x, size.y);
-    this.surfaceCovered = null;
+    this.surfaceSettledRayCensus = null;
     this.surfaceStripJob = this.newStripJob(
       createStripPlanner(size.y, size.x, {
         priorMsPerPx: this.surfaceStripPriorMsPerPx(),
@@ -5621,11 +5624,11 @@ export class FractalScene {
   private advanceSurfaceSettleSample(): boolean {
     const target = this.surfaceSettleTarget;
     if (this.surfaceSampleTotal <= 1) {
-      // `?surfacesamples=1` — no accumulator, so the coverage count has to
+      // `?surfacesamples=1` — no accumulator, so the status census has to
       // buy its own readback. One frame, once per settle, on a
       // debug path: the alternative is a blank-frame notice that silently
       // stops working under the flag that exists to A/B this arm.
-      this.measureSurfaceCoverage(target.width, target.height);
+      this.measureSurfaceRayCensus(target.width, target.height);
       this.blitSurface(target.texture, null);
       return true;
     }
@@ -5665,6 +5668,7 @@ export class FractalScene {
     this.poolStripBacklog(this.surfaceStripJob);
     this.surfaceStripJob = null;
     this.surfaceFullPxCostMs = null;
+    this.surfaceSettledRayCensus = null;
   }
 
   /** Whether a settle job is mid-flight (main.ts steps it per frame). */

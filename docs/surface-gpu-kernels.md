@@ -569,12 +569,12 @@ section up).
 THE WIRE IS THE `shadeMaps` STRIDE AND NOTHING ELSE. Under shade + finish
 the buffer grows 1 -> 3 `vec4f` per slot: `[0]` keeps (rgb, trapIndex)
 unchanged, `[1]` = (specular, shininess, metalness, reflect), `[2]` =
-(transmit, 0, 0, 0) — the lane order is `surfaceFinishLanes`' (the ONE
-definition, shared with the GLSL tracers' `uMapFinishA`/`uMapFinishB`
-uniform pair, so the two shader dialects cannot disagree about which field
-rides which component), and `[2].yzw` is ZERO-FILLED, reserved for the
-Tier-2 pattern fields so Tier 2 lands without a second stride change — the
-3D-freezes-layout lesson applied in advance. `packSurfaceGpuShadeMaps`
+(transmit, reflectionTint, patternConfig, scale). The lane order is
+`surfaceMaterialLanes`' single definition, shared with the GLSL tracers'
+`uMapFinishA`/`uMapFinishB` uniform pair, so the two shader dialects cannot
+disagree about which field rides which component. The finish landing's
+zero-filled reserved tail is now the live patterned-material wire; the stride
+remains three. `packSurfaceGpuShadeMaps`
 grows the matching optional `finishes` argument (absent -> today's
 1-vec4-stride buffer byte for byte; a length mismatch against `colors`
 throws `RangeError`), and the binding declaration stays a runtime-sized

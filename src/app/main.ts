@@ -31,6 +31,10 @@ import {
 } from "./surface-compute";
 import { surfaceComputeForceFrameKey } from "./surface-force-frame-key";
 import {
+  exactSurfaceRayCensus,
+  type SurfaceRayCensus,
+} from "./surface-ray-census";
+import {
   isSoftwareRendererLabel,
   softwareWarningText,
   surfaceWebglDetail,
@@ -382,6 +386,10 @@ interface SurfaceStateProbe {
   mode: RenderMode;
   /** Which engine owns the session — null outside surface mode. */
   engine: "compute" | "webgl" | null;
+  /** The renderer actually executing this surface session. */
+  backend: { label: string | null; software: boolean } | null;
+  /** Exact terminal statuses for the current completed settle pass. */
+  census: SurfaceRayCensus | null;
   /** The session has traced its first frame (past the compile/pipeline
    * gate). Until then the canvas still shows the explorer. */
   firstFrame: boolean;
@@ -607,6 +615,9 @@ function main(): void {
   // it instead of re-tracing seconds of identical pixels. Any
   // invalidation clears it.
   let surfaceSettled = false;
+  // Exact status tally belonging to surfaceSettled on the compute arm. The
+  // WebGL arm retains its equivalent in FractalScene beside its readback.
+  let surfaceComputeSettledRayCensus: SurfaceRayCensus | null = null;
   // A settle verdict the tier scheduler fired while a preview strip job was
   // still mid-flight: held here until the preview completes, then
   // begun. A fresh invalidation supersedes it.
@@ -3455,6 +3466,7 @@ function main(): void {
     surfaceComputeForceKey = null;
     surfaceComputeSettleProgress = null;
     surfaceComputePreviewProgress = null;
+    surfaceComputeSettledRayCensus = null;
     scene.exitSurfaceComputeSession();
     updateSoftwareRendererNote();
   }
@@ -3761,6 +3773,7 @@ function main(): void {
     const renderer = surfaceComputeRenderer;
     if (!renderer || surfaceComputeSettleFlight || surfaceCaptureFlight) return;
     surfaceComputeSettleFlight = true;
+    surfaceComputeSettledRayCensus = null;
     try {
       renderer.cancel();
       const spec = scene.surfaceComputeFrameSpec("full");
@@ -3831,10 +3844,10 @@ function main(): void {
         // in view and zero hits means there is no object.
         //
         // BOTH ENGINES ANSWER THIS. This arm counts ray STATUSES the
-        // kernel already reports; the WebGL strip arm counts the COVERAGE
-        // flag its tracer writes into alpha, in the readback the strip
+        // kernel already reports; the WebGL strip arm decodes the terminal
+        // status its tracer writes into alpha, in the readback the strip
         // arm's supersampling accumulator already pays for (`scene.ts`'s
-        // `surfaceCoveredFraction`, fired from tickRender). Same fraction
+        // `surfaceRayCensus`, fired from tickRender). Same fraction
         // of the same settle frame, and `plane` counts as drawn on both —
         // a fallback session used to render an empty set in silence, which
         // was the notice's original complaint surviving inside its own fix.
@@ -3842,6 +3855,12 @@ function main(): void {
         surfaceSettled = true;
         const drawn = frame.counts.hit + frame.counts.plane;
         const rays = frame.width * frame.height;
+        surfaceComputeSettledRayCensus = exactSurfaceRayCensus(
+          rays,
+          drawn,
+          frame.counts.miss,
+          frame.counts.exhausted,
+        );
         if (
           firstSettle &&
           surfaceBlankNotice &&
@@ -4277,6 +4296,7 @@ function main(): void {
     if (tier === "preview") {
       scene.clearRenderNeeded();
       surfaceSettled = false;
+      surfaceComputeSettledRayCensus = null;
       surfaceSettlePending = false;
       surfaceComputeForceKey = null;
       if (surfacePreviewsEnabled) {
@@ -5017,6 +5037,7 @@ function main(): void {
       surfaceRenderTier.reset();
       surfaceWebglPreviewPending = false;
       surfaceSettled = false;
+      surfaceComputeSettledRayCensus = null;
       surfaceSettlePending = false;
       state = setRenderMode(state, "surface");
       trackAutoBackground(); // see the flame session's activate
@@ -7860,26 +7881,42 @@ function main(): void {
   // over exists; the query survives the isolation reload with the rest of
   // the URL, so a script that asked for it keeps it.
   if (new URLSearchParams(window.location.search).has("surfacestate")) {
-    window.__surfaceState = () => ({
-      mode: state.renderMode,
-      engine:
-        state.renderMode !== "surface"
+    window.__surfaceState = () => {
+      const inSurface = state.renderMode === "surface";
+      const compute = inSurface ? surfaceComputeRenderer : null;
+      const census =
+        !inSurface || !surfaceSettled
           ? null
-          : surfaceComputeRenderer !== null
-            ? "compute"
-            : "webgl",
-      firstFrame: surfaceSession.hasFirstFrame,
-      settled: surfaceSettled,
-      settlePending: surfaceSettlePending,
-      previewActive:
-        surfaceComputeRenderer !== null
-          ? surfaceComputePreviewFlight || surfaceComputePreviewPending
-          : scene.surfacePreviewActive,
-      settleActive:
-        surfaceComputeRenderer !== null
-          ? surfaceComputeSettleFlight
-          : scene.surfaceSettleActive,
-    });
+          : compute !== null
+            ? surfaceComputeSettledRayCensus
+            : scene.surfaceRayCensus;
+      return {
+        mode: state.renderMode,
+        engine: !inSurface ? null : compute !== null ? "compute" : "webgl",
+        backend: !inSurface
+          ? null
+          : compute !== null
+            ? {
+                label: compute.adapterLabel ?? null,
+                software: compute.software,
+              }
+            : { label: webglRendererLabel, software: webglSoftware },
+        // Return a fresh object so a diagnostics consumer cannot mutate the
+        // retained evidence for the live session.
+        census: census === null ? null : { ...census },
+        firstFrame: surfaceSession.hasFirstFrame,
+        settled: surfaceSettled,
+        settlePending: surfaceSettlePending,
+        previewActive:
+          compute !== null
+            ? surfaceComputePreviewFlight || surfaceComputePreviewPending
+            : scene.surfacePreviewActive,
+        settleActive:
+          compute !== null
+            ? surfaceComputeSettleFlight
+            : scene.surfaceSettleActive,
+      };
+    };
   }
 
   // `?surfacetrace` opts the compute renderer's frame loop into

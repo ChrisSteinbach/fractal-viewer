@@ -14,8 +14,11 @@ summarized. Run one with:
 npx vitest run --config scripts/vitest.harness.config.ts scripts/<name>
 ```
 
-Output lands under `scripts/out/`, which is gitignored — regenerate rather
-than commit megabytes of PNG.
+Output lands under `scripts/out/`, which is gitignored. PNGs, manifests, keys,
+and frozen review responses in that tree are run-local evidence, not repository
+artifacts; archive a release run outside the checkout if it must remain
+independently inspectable. Regeneration is appropriate for machine evidence,
+but a human review cannot be reconstructed from its prose summary.
 
 ## The two shared instruments
 
@@ -336,7 +339,8 @@ hero reached 5/5; Menger and final-lens Marble each reached 4/5 with median
 confidence 4; all other Wood and Strata heroes reached 5/5 with median
 confidence 4 or 5. Thus every hero clears 4/5 and median confidence 3. The
 review key names `20260821-hybrid-v3-machine`; deck hashes and exact frozen
-responses are stored beside the review manifest.
+responses were stored beside the review manifest in that run's gitignored
+artifact directory. They are not implied to be present in a fresh checkout.
 
 HISTORICAL V2 SEMANTIC VERDICT (`20260821-hybrid-v2`): REFUSE. Five fresh reviewers using
 independently permuted decks scored 31/45 cards correctly (68.9%, required
@@ -346,8 +350,10 @@ noise/corrosion. The fold heroes scored Wood 1/5, Marble 3/5, and Strata 1/5;
 the failed answers split among plain, noise/corrosion, and the wrong material.
 Per system this is 13/15 Menger, 13/15 final lens, and 5/15 fold. Thus the V2
 machine pass is real progress but cannot approve any product family across
-the required topology matrix. Exact responses and confidences are preserved
-as `review-results.json` beside the run manifest.
+the required topology matrix. Exact responses and confidences were preserved
+as `review-results.json` beside that historical run manifest; like all
+`scripts/out/` contents, that file is external/run-local evidence rather than
+a tracked repository artifact.
 
 HISTORICAL V1 SEMANTIC VERDICT (`20260821-hybrid-v1`): REFUSE. Five
 independent blinded reviewers scored only 18/45 cards correctly (40%, required
@@ -357,6 +363,64 @@ also replaced 94% of the family macro at close-up, allowing retained variance
 to mask corrosion-like detail. Those results remain evidence and were not
 reinterpreted or waived; V2 keeps every numeric threshold unchanged and
 requires a fresh blinded semantic verdict.
+
+### pattern-release production-browser gate
+
+`scripts/pattern-release.verify.mjs` is the production proof that follows the
+CPU refusal gate. It reuses a healthy preview on port 4173 or starts and owns
+one when needed, drives persisted `#v1` documents through the real app at
+960×540/DSF 1, waits only for the eight-pass settled latch, and reads the
+active session's exact engine, adapter, and terminal-ray census from
+`?surfacestate`. A release-eligible run uses `--mode=x11::0` and refuses
+software adapters; `--mode=sw` is diagnostic and exits inconclusive even if
+its arithmetic passes.
+
+Run candidate camera/pose calibration first:
+
+```bash
+npm run verify:pattern-release -- --phase=preflight --mode=x11::0
+```
+
+The 16-cell preflight covers 1× and 64× on both engines, including both 4D
+slices. It emits `calibrations.json` only when every cell has at least 5%
+object coverage, at least 10,000 eroded interior pixels, and zero exhausted
+rays. During calibration, `--only-hero=affine3|fold3|affine4` runs a bounded
+single-hero diagnostic but deliberately cannot emit calibrations. The full
+machine run consumes the complete preflight's exact, git-SHA-bound file:
+
+```bash
+npm run verify:pattern-release -- \
+  --phase=machine \
+  --mode=x11::0 \
+  --calibrations=scripts/out/pattern-release-<run>/calibrations.json
+```
+
+The full hero matrix is 128 settled captures: pattern-none plus
+Wood/Marble/Strata at 1×/4×/16×/64× for affine3, base-fold3, and two affine4
+slices, on compute and WebGL. Compatibility pairs cover lens/fold-final,
+escape, bulb, kaleido4/fold4 refusal, escape4, balloon, LUT, and by-transform
+color. The verifier compares lighting-normalized signed effect maps, not beauty
+frames: correlation must be at least 0.85, effect-mask IoU at least 0.70, and
+scalar metrics must agree within 15%. The manifest includes the git SHA,
+persisted hash and pose, stage, exact active backend, ray census, threshold
+version, raw/effect/mask hashes, sheets, parity, and variance retention.
+
+A real-driver machine pass emits five independently permuted nine-card blinded
+decks and a null-valued results template. It never supplies human answers.
+After five reviewers freeze their choices and confidence scores, validate them
+with:
+
+```bash
+npm run verify:pattern-release-review -- \
+  --key=scripts/out/<run>/review/review-key.json \
+  --results=/path/to/frozen-review-results.json \
+  --out=/path/to/review-score.json
+```
+
+The strict shared scorer requires every hero to reach 4/5 correct with median
+confidence at least 3 and at least 80% correct overall. A machine pass remains
+explicitly pending, never a material-name release verdict, until that external
+score passes.
 
 ## The Surprise Me generator's sheet
 

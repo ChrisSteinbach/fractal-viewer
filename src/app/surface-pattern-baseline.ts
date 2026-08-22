@@ -1,137 +1,140 @@
 /**
  * SHA-256 (16-hex-char prefix) of every pattern-off variant's RESOLVED and
- * EMITTED source, measured at the pre-fr-cmtl.5 tree (8f5fb4d, "Unify
- * surface material slot packing") — the genuine pre-pattern baseline the
- * byte-identity tests compare the pattern-off emissions against.
+ * EMITTED source. Initially measured at the pre-fr-cmtl.5 tree (8f5fb4d,
+ * "Unify surface material slot packing"), then advanced for two intentional
+ * global shader changes: fr-plxs's invisible terminal-ray alpha code, and
+ * the corrected live material B-lane/source comments in the resolved GLSL.
+ * This remains the pattern-OFF baseline the byte-identity tests compare
+ * pattern-off emissions against.
  *
- * How to regenerate (the .5 session's recipe): a git worktree at 8f5fb4d
- * with the main tree's node_modules symlinked, running the same
- * resolved/emitted sweep over every (variant, finish) pair. The hashes are
- * commit-pinned: any pattern-arm byte that leaks into a pattern-off program
- * changes a row here.
+ * How to regenerate: run the same resolved/emitted sweep over every
+ * (variant, finish) pair on the intentional pattern-off source baseline.
+ * Any pattern-arm byte that leaks into a pattern-off program changes a row
+ * here; an intentional global shader change must advance every affected row
+ * and document why above.
  */
 export const PRE_PATTERN_SOURCE_HASHES: Record<
   string,
   { resolved: string; emitted: string }
 > = {
   "3D affine finish0": {
-    resolved: "097981cef9400761",
-    emitted: "a4fdd681dc47264a",
+    resolved: "a807514dd4e13695",
+    emitted: "4c52a02070792f6c",
   },
   "3D affine finish1": {
-    resolved: "c3022b341b1e77e1",
-    emitted: "9e1f90076a700bc0",
+    resolved: "2e543f5c83372196",
+    emitted: "e34017ea588b8e11",
   },
   "3D lens finish0": {
-    resolved: "ed2fe5054418bd96",
-    emitted: "e28266a7c828fa25",
+    resolved: "a12b205ffb493b87",
+    emitted: "274151ba975b6f98",
   },
   "3D lens finish1": {
-    resolved: "e91abdbe15e5c713",
-    emitted: "18eb8b947aeeb0c3",
+    resolved: "8e221c4d07b7ea8b",
+    emitted: "49253151ec3b0bfb",
   },
   "3D balloon finish0": {
-    resolved: "82afa4616bd7abba",
-    emitted: "ba69aeb857797542",
+    resolved: "bb499afd96ec097d",
+    emitted: "56babe760f6b1981",
   },
   "3D balloon finish1": {
-    resolved: "80da1b0c29647d1e",
-    emitted: "df2a058e7005a737",
+    resolved: "28e6cecefc162ecf",
+    emitted: "7364a2249e792f0d",
   },
   "3D plane finish0": {
-    resolved: "18187137a9ab6de8",
-    emitted: "ea0ce1dd02bd2151",
+    resolved: "aad3cfd441157a78",
+    emitted: "801b1f817f00dc1c",
   },
   "3D plane finish1": {
-    resolved: "be9cbf0ebd4ce17f",
-    emitted: "b66d5d01859b1da3",
+    resolved: "edb95ddf344b1c30",
+    emitted: "bc5cf3e13618291f",
   },
   "3D lens+balloon finish0": {
-    resolved: "e947392453028704",
-    emitted: "25801d3d495ed535",
+    resolved: "b5ceed82d6b245cb",
+    emitted: "5f48fb7522d318a4",
   },
   "3D lens+balloon finish1": {
-    resolved: "17a33bf2fb6da7b9",
-    emitted: "321382de1effda63",
+    resolved: "9b62978993d9d285",
+    emitted: "1f500e04ffdbc653",
   },
   "3D lens+plane finish0": {
-    resolved: "15ee973726ced38a",
-    emitted: "a9bc24e4c8730875",
+    resolved: "f6612cf5faae1b42",
+    emitted: "180bc54bd8919fe5",
   },
   "3D lens+plane finish1": {
-    resolved: "c5862f1813834697",
-    emitted: "2692d44fde6357eb",
+    resolved: "eef69be601e069b2",
+    emitted: "cadc34f4b3739f47",
   },
   "3D escape finish0": {
-    resolved: "61a0efcec5dc09f5",
-    emitted: "61a0efcec5dc09f5",
+    resolved: "373498edf799eb14",
+    emitted: "373498edf799eb14",
   },
   "3D escape finish1": {
-    resolved: "dd85e1f2fed7250e",
-    emitted: "dd85e1f2fed7250e",
+    resolved: "f2297708a23d1980",
+    emitted: "f2297708a23d1980",
   },
   "3D escape+balloon finish0": {
-    resolved: "36d7fc03e67bb6dc",
-    emitted: "36d7fc03e67bb6dc",
+    resolved: "7defec12a5d03014",
+    emitted: "7defec12a5d03014",
   },
   "3D escape+balloon finish1": {
-    resolved: "dc0751a7efb616d8",
-    emitted: "8631084ec06fdfe5",
+    resolved: "b3fe8c4d55d60af8",
+    emitted: "f447a38776e26957",
   },
   "3D escape+plane finish0": {
-    resolved: "ac04516fc832eadd",
-    emitted: "42c19a34b3f64a5e",
+    resolved: "6bc8749b2c56f09e",
+    emitted: "6aa6ece5db6fbb73",
   },
   "3D escape+plane finish1": {
-    resolved: "1ad16da4325cc414",
-    emitted: "c2022f3604ce185c",
+    resolved: "97f312687121aac4",
+    emitted: "d471a20213962837",
   },
   "3D bulb finish0": {
-    resolved: "1d9a96f165b37674",
-    emitted: "1d9a96f165b37674",
+    resolved: "c0828ca3f9ed4eec",
+    emitted: "c0828ca3f9ed4eec",
   },
   "3D bulb finish1": {
-    resolved: "7af9d14d07ac1efc",
-    emitted: "7af9d14d07ac1efc",
+    resolved: "9ec0571cfecd9fa1",
+    emitted: "9ec0571cfecd9fa1",
   },
   "3D bulb+balloon finish0": {
-    resolved: "2da96775996296fe",
-    emitted: "2da96775996296fe",
+    resolved: "a53f6d65a4fc882a",
+    emitted: "a53f6d65a4fc882a",
   },
   "3D bulb+balloon finish1": {
-    resolved: "5c498d8b18135c70",
-    emitted: "5c498d8b18135c70",
+    resolved: "8da77cef9c39faa9",
+    emitted: "8da77cef9c39faa9",
   },
   "3D bulb+plane finish0": {
-    resolved: "d954e3cd4fe47c09",
-    emitted: "cf12529a62f99ce0",
+    resolved: "2507e8f0cd1e099b",
+    emitted: "5270dfaddf648019",
   },
   "3D bulb+plane finish1": {
-    resolved: "85c6d6188383b543",
-    emitted: "3869adc11cfe50e0",
+    resolved: "9f8d66e869f667fe",
+    emitted: "4d1a5b9c58580bd8",
   },
   "4D base finish0": {
-    resolved: "ab5ad33f4f3e985a",
-    emitted: "ab5ad33f4f3e985a",
+    resolved: "123c54729c33db40",
+    emitted: "123c54729c33db40",
   },
   "4D base finish1": {
-    resolved: "3a24132e8aae206e",
-    emitted: "3a24132e8aae206e",
+    resolved: "e027ec0023f6867b",
+    emitted: "e027ec0023f6867b",
   },
   "4D balloon finish0": {
-    resolved: "ee585e7f370af066",
-    emitted: "807221ee24c51f56",
+    resolved: "4a5d772c78e361fa",
+    emitted: "d94fb4928117819d",
   },
   "4D balloon finish1": {
-    resolved: "3137a79e48b3b546",
-    emitted: "1752502389b12f4c",
+    resolved: "4d9c47d7d95ccd9c",
+    emitted: "d97fe1d05eaef6ea",
   },
   "4D plane finish0": {
-    resolved: "51c7bf29e82226ac",
-    emitted: "8aba684e43f8c9ea",
+    resolved: "bcc6da2887c7bde5",
+    emitted: "5309a251633ec9bc",
   },
   "4D plane finish1": {
-    resolved: "a758bb7d9544dffc",
-    emitted: "daf4c1ab7ab6ad37",
+    resolved: "e7bcba05fa53c14e",
+    emitted: "fcc13abbfae64892",
   },
 };

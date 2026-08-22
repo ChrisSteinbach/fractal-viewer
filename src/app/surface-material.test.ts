@@ -1546,8 +1546,27 @@ describe("SURFACE_BULB variant", () => {
   });
 });
 
-describe("the present blit strips coverage alpha", () => {
-  // The tracers write the COVERAGE flag into alpha (miss = 0), a private
+describe("surface trace alpha statuses", () => {
+  it("keeps miss, exhausted, and covered distinct without changing RGB", () => {
+    const shader = surfaceFragmentResolvedFor(0, 0, 0, 0, 0, 0, 0);
+    const terminal = shader.slice(shader.indexOf("if (!hit)"));
+    expect(terminal).toContain("if (t > tFar) {");
+    expect(terminal).toContain("outColor = vec4(background, 0.0);");
+    expect(terminal).toContain("outColor = vec4(background, 0.5);");
+    expect(shader).toContain("outColor = vec4(col, 1.0);");
+  });
+
+  it("keeps exhausted distinct when a sphere-exit miss can become a plane", () => {
+    const shader = surfaceFragmentResolvedFor(0, 0, 0, 1, 0, 0, 0);
+    expect(shader).toContain(
+      "shadeGroundPlane(ro, rd, background, planeCovMiss)",
+    );
+    expect(shader).toContain("outColor = vec4(background, 0.5);");
+  });
+});
+
+describe("the present blit strips trace-status alpha", () => {
+  // The tracers write terminal status into alpha, a private
   // side-channel of the trace targets. three r163+ creates the canvas
   // WebGL context alpha:true regardless of the renderer's `alpha` param,
   // so a coverage-0 pixel that reaches the canvas makes the
@@ -1556,7 +1575,7 @@ describe("the present blit strips coverage alpha", () => {
   // settle, the whole of the two 4D arms' IoU 0.24/0.35 divergence. The
   // blit is every surface present's last hop (settle, preview, compute
   // DataTexture, capture's present-then-toBlob), so alpha must die here.
-  it("forces alpha to 1 so the coverage flag never reaches the always-alpha:true canvas", () => {
+  it("forces alpha to 1 so trace status never reaches the always-alpha:true canvas", () => {
     const material = createSurfaceBlitMaterial(new Texture());
     expect(material.fragmentShader).toContain(
       "outColor = vec4(texture(uSrc, vUv).rgb, 1.0);",
@@ -2165,7 +2184,7 @@ describe("SURFACE_PATTERN variant", () => {
       transmit: 0.2,
     });
 
-  it("matches the pre-bead byte identity for every variant with the pattern flag off — the pinned 8f5fb4d baseline", () => {
+  it("matches the pinned pattern-off byte identity for every variant", () => {
     const variants: [string, number[]][] = [
       ["3D affine", [0, 0, 0, 0, 0]],
       ["3D lens", [0, 1, 0, 0, 0]],

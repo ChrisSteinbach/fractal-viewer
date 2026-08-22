@@ -30,6 +30,7 @@ import type {
   SurfaceGroundPlaneSpec,
 } from "./surface-material";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
+import { SURFACE_TRACE_EXHAUSTED_ALPHA } from "./surface-ray-census";
 import { lightDirection } from "./voxel-material";
 
 /**
@@ -246,8 +247,9 @@ const SURFACE4_FRAGMENT = /* glsl */ `
     /** x = per-slot palette coordinate in [0, 1] for the orbit trap
      * (CPU-precomputed from each slot's base-map index); yzw unused. */
     vec4 uMapTrap[MAX_MAPS];
-    /** Per-map surface FINISH lanes (surface-finish.ts: A = specular,
-     * shininess, metalness, reflect; B = transmit, reserved). UNCONDITIONAL
+    /** Per-map surface material lanes (surface-material-wire.ts: A =
+     * specular, shininess, metalness, reflect; B = transmit,
+     * reflectionTint, patternConfig, scale). UNCONDITIONAL
      * members, read only by the finish arm in main(): a define-gated
      * member would move the std140 offsets on every toggle — see the
      * UniformsGroup. */
@@ -1767,28 +1769,25 @@ uniform float uBalloonTintStrength;
       t += d * uStepScale;
     }
     if (!hit) {
-#if SURFACE_GROUND_PLANE
-      // Sphere-exit misses land on the floor; budget-EXHAUSTED rays stay
-      // background (their geometry is unresolved) — the WGSL march
-      // kernel's status split, mirrored, and the one place the 4D floor
-      // lift had to ADD structure rather than copy it: 3D splits this miss
-      // because it has a floor to split it for, and the 4D loop never did,
-      // both outcomes painting the same backdrop. EXHAUSTED must never
-      // plane, or a ray that ran out of steps INSIDE the object would
-      // paint floor through it.
       if (t > tFar) {
+#if SURFACE_GROUND_PLANE
+        // Sphere-exit misses land on the floor. A floor pixel is COVERED
+        // when shadeGroundPlane sets planeCovMiss, otherwise it is a MISS.
         float planeCovMiss;
         outColor = vec4(
           shadeGroundPlane(ro, rd, background, planeCovMiss),
           planeCovMiss
         );
+#else
+        outColor = vec4(background, 0.0);
+#endif
         return;
       }
-      // Alpha 0 for a MISS and — deliberately — for an EXHAUSTED ray too,
-      // which is the compute arm's own rule: a ray that spent its budget
-      // resolved no geometry, so it drew nothing.
-#endif
-      outColor = vec4(background, 0.0);
+      // EXHAUSTED must never plane, or a ray that ran out of steps inside
+      // the object would paint floor through it. The trace target's alpha
+      // is an invisible status byte: 0.5 becomes RGBA8 128, distinct from
+      // MISS 0 and COVERED 255; the present blit still forces alpha 1.
+      outColor = vec4(background, ${SURFACE_TRACE_EXHAUSTED_ALPHA.toFixed(1)});
       return;
     }
     vec3 pos = ro + rd * t;
@@ -2027,10 +2026,10 @@ uniform float uBalloonTintStrength;
       1.0 - exp(-0.12 * pow((t - tEnter) * uFogDensity / max(sliceVisR, 1.0e-6), 2.0));
     col = mix(col, mix(background, uFogTint, uFogTintStrength), clamp(fog, 0.0, 1.0));
 
-    // Alpha is the COVERAGE flag, not an opacity: 1 where the frame drew
-    // something, 0 where it shows only its backdrop. The 3D tracer's
-    // convention, mirrored so scene.ts's settle fold can count either
-    // arm's output with one loop. Invisible because BLIT_FRAGMENT strips
+    // Alpha is a terminal-status flag, not opacity: 1 where the frame drew
+    // something, 0 for a miss, and 0.5 for an exhausted ray. The 3D
+    // tracer's convention, mirrored so scene.ts can decode either arm's
+    // output. Invisible because BLIT_FRAGMENT strips
     // it to 1 at every present (three r163+ makes the canvas alpha:true
     // regardless, and a coverage-0 pixel reaching it composited the page
     // background into the pane).
@@ -2083,10 +2082,10 @@ uniform float uBalloonTintStrength;
  *            shell-gated mix are the only bytes that survive the strip).
  * - plane:   70527 B (68.9KB) / 18215 B (17.8KB) — plane variants always
  *            strip.
- * - finish:  +699 B raw over each of the three (the finishShade body and
- *            the fetch, less the fixed formula they replace); the plain
- *            arm stays unstripped at 63464 B (2072 B of headroom, this
- *            file's tightest), balloon 18113 B and plane 18998 B emitted.
+ * - finish:  the current recorded material baseline leaves the plain 4D
+ *            finish arm at 63878 B (1658 B of raw headroom). A patterned
+ *            4D plain arm crosses and strips; that is expected and remains
+ *            safely below the emitted driver cliff.
  *
  * ONLY THE RAW SIDE MOVES ON A COMMENT-ONLY EDIT: the strip deletes
  * comments anyway, so balloon's and plane's driver figures are invariant
