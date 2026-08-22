@@ -115,6 +115,7 @@ import {
   SURFACE_GPU_RAY_MISS,
   SURFACE_GPU_RAY_PLANE,
   SURFACE_GPU_SHADE_BYTES,
+  SURFACE_GPU_SHADE_PATTERN_BYTES,
   surfaceDeKernelWgsl,
 } from "../fractal/surface-de-gpu";
 import {
@@ -1808,7 +1809,14 @@ export class SurfaceComputeRenderer {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const shadeBuf = device.createBuffer({
-      size: SURFACE_GPU_SHADE_BYTES,
+      // A patterned session's shade struct declares the calibration quartet
+      // at 224 (SURFACE_GPU_SHADE_PATTERN_BYTES); the march struct still
+      // ends at 224, and one buffer serves both pipelines of the pair — a
+      // struct never reads past its own size, so binding the larger buffer
+      // to the march pipeline is valid.
+      size: materials?.pattern
+        ? SURFACE_GPU_SHADE_PATTERN_BYTES
+        : SURFACE_GPU_SHADE_BYTES,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     // Re-wrapped copies: the kernel packers' bare Float32Array types
@@ -2568,6 +2576,18 @@ export class SurfaceComputeRenderer {
             ]
           : spec.balloonTint,
         balloonTintStrength: spec.balloonTintStrength,
+        // The pattern arm's native-carrier calibration, present exactly
+        // when the session compiled the pattern gate — the shade struct's
+        // conditional member at 224 (the buffer was sized 240 above).
+        patternCalibration:
+          spec.materials?.pattern === true
+            ? [
+                spec.materials.patternCalibration.ringsLow,
+                spec.materials.patternCalibration.ringsInvSpan,
+                spec.materials.patternCalibration.sheetsLow,
+                spec.materials.patternCalibration.sheetsInvSpan,
+              ]
+            : undefined,
         pixelJitter,
         envStrength: spec.envLight,
         bgOffset,
