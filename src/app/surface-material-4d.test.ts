@@ -527,7 +527,7 @@ describe("the 4D tracer's variant arms", () => {
         ");",
         "return;",
         "}",
-        "outColor = vec4(background, 0.0);",
+        "outColor = vec4(background, 0.5);",
       ].join("\n"),
     );
   });
@@ -789,6 +789,25 @@ describe("balloon seniority over the floor", () => {
   });
 });
 
+describe("the 4D trace alpha statuses", () => {
+  it("keeps miss, exhausted, and covered distinct without changing RGB", () => {
+    const shader = surface4FragmentResolvedFor(0, 0, 0, 0);
+    const terminal = shader.slice(shader.indexOf("if (!hit)"));
+    expect(terminal).toContain("if (t > tFar) {");
+    expect(terminal).toContain("outColor = vec4(background, 0.0);");
+    expect(terminal).toContain("outColor = vec4(background, 0.5);");
+    expect(shader).toContain("outColor = vec4(col, 1.0);");
+  });
+
+  it("keeps exhausted distinct when a sphere-exit miss can become a plane", () => {
+    const shader = surface4FragmentResolvedFor(0, 1, 0, 0);
+    expect(shader).toContain(
+      "shadeGroundPlane(ro, rd, background, planeCovMiss)",
+    );
+    expect(shader).toContain("outColor = vec4(background, 0.5);");
+  });
+});
+
 describe("the 4D tracer's finish arm", () => {
   const fetchLine =
     "vec3 col = finishShade(base, pos, n, rd, shadow, ao, background, uMapFinishA[fSlot], uMapFinishB[fSlot]);";
@@ -916,9 +935,9 @@ describe("the 4D tracer's finish arm", () => {
   });
 
   it("keeps the plain 4D arm under the strip threshold with the finish on — this file's tightest margin", () => {
-    // Measured at landing: 63464 B resolved, 2072 B under. The RESOLVED
-    // length, for the reason the off-arm test above gives. The balloon
-    // and plane arms already strip, finish or not.
+    // Current recorded material baseline: 63878 B resolved, 1658 B under.
+    // The patterned 4D plain arm intentionally crosses and strips; this
+    // finish-only arm remains the tightest unstripped material pairing.
     expect(surface4FragmentResolvedFor(0, 0, 1).length).toBeLessThan(
       SURFACE_GLSL_STRIP_BYTES,
     );
@@ -1125,7 +1144,7 @@ describe("the 4D tracer's pattern arm", () => {
       transmit: 0.2,
     });
 
-  it("matches the pre-bead byte identity for every scene arm with the pattern flag off — the pinned 8f5fb4d baseline", () => {
+  it("matches the pinned pattern-off byte identity for every scene arm", () => {
     for (const finish of [0, 1]) {
       for (const [name, balloon, plane] of [
         ["4D base", 0, 0],

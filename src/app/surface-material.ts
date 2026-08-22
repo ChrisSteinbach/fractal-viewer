@@ -29,6 +29,7 @@ import {
 } from "../fractal/surface-material-wire";
 import type { Vec3 } from "../fractal/types";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
+import { SURFACE_TRACE_EXHAUSTED_ALPHA } from "./surface-ray-census";
 import { lightDirection } from "./voxel-material";
 
 /**
@@ -620,11 +621,10 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   /** sRGB 0..1 base color per map slot (keyed to base maps caller-side). */
   uniform vec3 uMapColor[MAX_MAPS];
 #if SURFACE_FINISH || SURFACE_PATTERN
-  /** Per-map surface FINISH, in fractal/surface-finish.ts's two wire
-   * lanes (surfaceFinishLanes, the ONE lane definition the WGSL shade
-   * stride shares): A = (specular, shininess, metalness, reflect), B =
-   * (transmit, reflectionTint, 0, 0 — the trailing two reserved for later
-   * material-pattern fields). Keyed to base maps like uMapColor and read at the shading
+  /** Per-map surface material, in surface-material-wire.ts's two wire
+   * lanes (the ONE lane definition the WGSL shade stride shares): A =
+   * (specular, shininess, metalness, reflect), B = (transmit,
+   * reflectionTint, patternConfig, scale). Keyed to base maps like uMapColor and read at the shading
    * site through the hit's depth-0 map. Declared INSIDE the arm (the
    * SURFACE_BULB precedent), so an unfinished document's program pays no
    * bytes for them — and in this SHARED section rather than any other
@@ -3236,23 +3236,25 @@ ${foldValueFormGlsl(shadeDeWidth)}
       t += d * uStepScale;
     }
     if (!hit) {
-#if SURFACE_GROUND_PLANE
-      // Sphere-exit misses land on the floor; budget-exhausted rays stay
-      // background (their geometry is unresolved) — the WGSL march
-      // kernel's status split, mirrored.
       if (t > tFar) {
+#if SURFACE_GROUND_PLANE
+        // Sphere-exit misses land on the floor. A floor pixel is COVERED
+        // when shadeGroundPlane sets planeCovMiss, otherwise it is a MISS.
         float planeCovMiss;
         outColor = vec4(
           shadeGroundPlane(ro, rd, background, planeCovMiss),
           planeCovMiss
         );
+#else
+        outColor = vec4(background, 0.0);
+#endif
         return;
       }
-#endif
-      // Alpha 0 for a MISS and — deliberately — for an EXHAUSTED ray too,
-      // which is the compute arm's own rule: a ray that spent its budget
-      // resolved no geometry, so it drew nothing.
-      outColor = vec4(background, 0.0);
+      // The trace target's alpha is an invisible status byte: RGBA8 UNORM
+      // encodes 0.5 as 128 for EXHAUSTED, distinct from MISS 0 and COVERED
+      // 255. RGB remains the same backdrop, and BLIT_FRAGMENT strips the
+      // status to presented alpha 1.
+      outColor = vec4(background, ${SURFACE_TRACE_EXHAUSTED_ALPHA.toFixed(1)});
       return;
     }
     vec3 pos = ro + rd * t;
@@ -3452,9 +3454,9 @@ ${foldValueFormGlsl(shadeDeWidth)}
       1.0 - exp(-0.12 * pow((t - tEnter) * uFogDensity / max(uVisibleRadius, 1.0e-6), 2.0));
     col = mix(col, mix(background, uFogTint, uFogTintStrength), clamp(fog, 0.0, 1.0));
 
-    // Alpha 1: a HIT. The alpha channel of this tracer's output is the
-    // COVERAGE flag — 1 where the frame drew something, 0 where it shows
-    // only its own backdrop — and never an opacity. It is invisible to the
+    // Alpha 1: a HIT. The alpha channel of this tracer's output is a
+    // terminal-status flag — 1 where the frame drew something, 0 for a
+    // miss, and 0.5 for an exhausted ray — and never an opacity. It is invisible to the
     // user because BLIT_FRAGMENT strips it to 1 at every present (three
     // r163+ creates the canvas alpha:true regardless of the renderer's
     // alpha param, so a coverage-0 pixel reaching the canvas composites
@@ -3512,8 +3514,8 @@ const BLIT_FRAGMENT = /* glsl */ `
   out vec4 outColor;
   void main() {
     // ALPHA IS FORCED TO 1 HERE, and this is load-bearing: the tracers'
-    // alpha channel is the COVERAGE flag (1 = drew something, 0 =
-    // backdrop), a private side-channel of the render targets — and three
+    // alpha channel is a terminal-status flag (1 = covered, 0.5 =
+    // exhausted, 0 = miss), a private side-channel of the render targets — and three
     // r163+ creates the canvas WebGL context with alpha:true
     // unconditionally (the WebGLRenderer \`alpha\` param only picks the
     // default CLEAR alpha), so a verbatim copy handed the compositor
@@ -3536,7 +3538,7 @@ const BLIT_FRAGMENT = /* glsl */ `
  * tracer's authored-sRGB output (ColorManagement is off app-wide, and this
  * module keeps all surface GLSL in one place). RGB is copied verbatim;
  * ALPHA IS FORCED TO 1 (see BLIT_FRAGMENT's comment: the tracers' alpha is
- * the coverage flag, and letting it reach the always-alpha:true canvas
+ * the terminal-status flag, and letting it reach the always-alpha:true canvas
  * composited the page background into every miss pixel). `src` is the
  * preview target's texture — bound once here by object identity, which
  * `WebGLRenderTarget.setSize` preserves across reallocations.
