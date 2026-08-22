@@ -613,49 +613,83 @@ morphs into place instead of snapping (see **Presets** below).
     never moves the coordinate.
   - **Finish** — one group below **Color**: how this map's part of the
     surface catches light in a **◈ Surface** render, and nowhere else (the
-    cloud, the flame and the solid never read it). Five sliders:
+    cloud, the flame and the solid never read it). Six sliders:
     **Specular** (`0–2`, the highlight's brightness; classic `0.40`),
     **Shininess** (`1–256`, the highlight's tightness — higher is smaller
     and sharper; classic `32`), **Metalness** (`0–1`, the highlight takes on
     the surface's own color; classic `0`), **Reflect** (`0–1`, how much of
-    the surroundings the surface mirrors; classic `0`) and **Transmit**
-    (`0–1`, how much light passes through it as a thin shell; classic `0`).
+    the surroundings the surface mirrors; classic `0`), **Transmit**
+    (`0–1`, how much light passes through it as a thin shell; classic `0`)
+    and **Metal tint** (`0–1`, how much a metal inherits the transform
+    color; classic `1` — Chrome uses `0` for neutral reflections).
     The _classic_ values are exactly the fixed lighting formula every
     Surface render used before the group existed, so a scene that never
-    touches it renders byte-for-byte as it always did. Above the sliders a
-    **bundle** menu offers named starting points — **Classic**, **Matte**,
-    **Satin**, **Plastic**, **Metal**, **Chrome**, **Translucent**
-    — and picking one sets all five sliders at once; the scene stores the
-    five numbers, never the name, so a bundle can be retuned in a later
-    version without repainting anything you saved, and sliders that match
-    no bundle read **Custom** (shown, never pickable). **A metal reads as its
-    surroundings**: raising **Metalness** damps the surface's own diffuse
-    colour away and lights it from the backdrop alone, so **Metal** and
-    **Chrome** need a bright backdrop to look like metal — against the
-    near-black default they render very nearly black, which is what a
-    mirror does in an unlit room rather than a fault (the panel's own hint
-    says so). Pair them with the **haze** backdrop, or a bright custom one.
-    Like the Color pair
-    above and the fold lengths below, each field stays **unset** until you
-    move its own slider, and dragging one back to its classic value clears
-    it again — the whole finish with it once the last field goes, which is
-    also exactly what **Classic** does — so a scene you explored and returned
-    from is byte-identical to one that never carried a finish, and a bundle
-    stores only the fields that differ from classic (**Matte** is a lone
-    `specular: 0`). Every map's finish reaches an IFS surface, 3D or 4D, a
-    kaleidoscope copy or a balloon echo included (each shades as the map
-    that produced it). The **escape-time** and **Mandelbulb** surfaces are
-    the exception: they shade the whole object with the FIRST active
-    transform's finish, so on a system the Surface gate would route there
-    the other transforms' Finish rows are disabled, with a note saying why
-    — the rows come back the moment the system routes to an IFS surface
-    again, or that transform becomes the head. The final transform has no
-    Finish group: the tracers shade a hit by the map that produced it, and
-    the lens is not one. Like every transform edit it is made in **∴
-    Points** (a render takes over the panel) and shows the next time
-    **◈ Surface** is entered; the transform list names an authored finish
-    on its row, by bundle where it is one (`Finish: Chrome`) and as
+    touches it renders byte-for-byte as it always did. At the top of the
+    group a **Material** menu offers whole-material starting points —
+    **Wood**, **Marble**, **Strata** — each setting the finish AND a
+    pattern family together (see the **Pattern** group below); it reads
+    **None** when nothing is set (pickable, to clear both) and **Custom**
+    (shown, never pickable) when the finish and pattern match no starting
+    point. Below it a **bundle** menu offers finish-only named starting
+    points — **Classic**, **Matte**, **Satin**, **Plastic**, **Metal**,
+    **Chrome**, **Translucent** — and picking one sets all six sliders at
+    once; the scene stores the numbers, never the name, so a bundle can be
+    retuned in a later version without repainting anything you saved, and
+    sliders that match no bundle read **Custom** (shown, never pickable).
+    **A metal reads as its surroundings**: raising **Metalness** damps the
+    surface's own diffuse colour away and lights it from the backdrop alone,
+    so **Metal** and **Chrome** need a bright backdrop to look like metal —
+    against the near-black default they render very nearly black, which is
+    what a mirror does in an unlit room rather than a fault (the panel's own
+    hint says so). Pair them with the **haze** backdrop, or a bright custom
+    one. Like the Color pair above and the fold lengths below, each field
+    stays **unset** until you move its own slider, and dragging one back to
+    its classic value clears it again — the whole finish with it once the
+    last field goes, which is also exactly what **Classic** does — so a
+    scene you explored and returned from is byte-identical to one that never
+    carried a finish, and a bundle stores only the fields that differ from
+    classic (**Matte** is a lone `specular: 0`). Every map's finish reaches
+    an IFS surface, 3D or 4D, a kaleidoscope copy or a balloon echo included
+    (each shades as the map that produced it). The **escape-time** and
+    **Mandelbulb** surfaces are the exception: they shade the whole object
+    with the FIRST active transform's finish, so on a system the Surface
+    gate would route there the other transforms' Finish rows are disabled,
+    with a note saying why — the rows come back the moment the system routes
+    to an IFS surface again, or that transform becomes the head. The final
+    transform has no Finish group: the tracers shade a hit by the map that
+    produced it, and the lens is not one. Like every transform edit it is
+    made in **∴ Points** (a render takes over the panel) and shows the next
+    time **◈ Surface** is entered; the transform list names an authored
+    finish on its row, by bundle where it is one (`Finish: Chrome`) and as
     `Finish: custom` otherwise.
+  - **Pattern** — one group below **Finish**: how this map's part of the
+    surface is patterned in a **◈ Surface** render, and nowhere else — the
+    albedo texture the lighting then responds to. A **family** menu picks
+    the pattern — **None** (no pattern), **Wood** (cylindrical growth
+    rings), **Marble** (warped stone veins) or **Strata** (laminar bands) —
+    plus an **Axis** menu (X/Y/Z, default Y: the object-space axis the
+    pattern's structure runs along), a **Scale** slider and a **Strength**
+    slider. Scale is logarithmic over the resolver's whole `0.5–32` span
+    (periods across one normalized object-space unit) and defaults per
+    family — Wood `3`, Marble `1.35`, Strata `2.6`, each exactly reachable
+    on the slider's grid; Strength runs `0–1` and defaults to `1` (the full
+    pattern). Like the Finish fields, nothing is stored until you move a
+    control: picking a family writes `kind` and `axis` with the defaults
+    left unset, a slider dragged back to its default clears it again, and
+    returning the family to **None** removes the pattern entirely — so a
+    scene you explored and returned from is byte-identical to one that
+    never carried a pattern. A pattern family is a DIFFERENT concept from
+    the material presets: the **Material** menu in the Finish group sets a
+    finish and a pattern family together, but once picked the two are
+    independent — any family can pair with any finish, and a pair that
+    matches no starting point reads **Custom** in the Material menu while
+    the family menu still names it. The same forward-orbit disclosure as
+    Finish applies: escape-time and Mandelbulb surfaces pattern the whole
+    object with the first active transform's pattern, so on such a system
+    the other transforms' Pattern rows are disabled with a note saying why.
+    The final transform has no Pattern group, and the transform list names
+    an authored pattern on its row (`Pattern: Wood` at the family's
+    defaults, `Pattern: custom` once tuned away from them).
   - **Variations → a fold's own lengths** — a `boxfold`,
     `spherefold` or `mandelbox` row carries the Mandelbox apparatus's three
     lengths nested under its weight slider: **Min radius** and **Fixed
