@@ -9,9 +9,10 @@
  * Each selected system produces a labeled, run-specific sheet with
  * none/wood/marble/strata at 1x/4x/16x/64x plus macro-only and world-space
  * controls at 1x/64x. A JSON manifest records constants and machine metrics.
- * Human recognition remains a five-reviewer blinded gate. Cards are emitted
- * only by an explicit all-system 288 px hero run linked to a prior passing
- * machine run (`FINISH_PATTERN_EMIT_REVIEW_DECKS=1` plus its run id).
+ * The historical V3 evidence used a five-reviewer blinded gate. Those legacy
+ * cards are emitted only by an explicit all-system 288 px hero run linked to a
+ * prior passing machine run (`FINISH_PATTERN_EMIT_REVIEW_DECKS=1` plus its run
+ * id). The production-browser gate now uses one blinded owner review.
  *
  * Full run:
  *   npx vitest run --config scripts/vitest.harness.config.ts \
