@@ -943,25 +943,33 @@ summary.editor-group-title {
 
 /* The Finish group's six rows are labelled by field name ("Shininess" is
    the widest); fixed rather than min-width, like the fold-length rows, so
-   the six sliders share one left edge. */
-.finish-row .axis {
+   the six sliders share one left edge. The Pattern group's two rows use
+   the same layout and join the rule. */
+.finish-row .axis,
+.pattern-row .axis {
   width: 64px;
   min-width: 64px;
 }
 
-/* The bundle select sits inside the group like the variation-add menu, and
-   the group's rows follow it directly; the generic #panel select rule
-   already themes it, this only closes the gap the rows' own margins don't. */
+/* The material and bundle selects sit inside the group like the
+   variation-add menu, and the group's rows follow them directly; the
+   generic #panel select rule already themes them, this only closes the gap
+   the rows' own margins don't. */
+.finish-material,
 .finish-bundle {
   margin-bottom: 4px;
 }
 
-/* A Finish group the document's surface route would never read (a
-   forward-orbit session shades with the head transform's finish alone):
-   its controls are disabled, and the whole group dims so the disclosure
-   note reads as the reason rather than as one more hint. */
-.finish-inert .finish-row,
-.finish-inert .finish-bundle {
+/* A Finish/Pattern group the document's surface route would never read (a
+   forward-orbit session shades and patterns with the head transform's
+   material alone): its controls are disabled, and the whole group dims so
+   the disclosure note reads as the reason rather than as one more hint. */
+.material-inert .finish-row,
+.material-inert .finish-bundle,
+.material-inert .finish-material,
+.material-inert .pattern-row,
+.material-inert .pattern-family,
+.material-inert .pattern-axis {
   opacity: 0.55;
 }
 

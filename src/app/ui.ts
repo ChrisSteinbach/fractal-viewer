@@ -35,6 +35,20 @@ import {
   resolveSurfaceFinish,
 } from "../fractal/surface-finish";
 import type { ResolvedSurfaceFinish } from "../fractal/surface-finish";
+import {
+  PATTERN_DEFAULT_SCALE,
+  resolveSurfacePattern,
+  SURFACE_PATTERN_AXES,
+  SURFACE_PATTERN_DEFAULT_AXIS,
+  SURFACE_PATTERN_DEFAULT_STRENGTH,
+  SURFACE_PATTERN_KINDS,
+} from "../fractal/surface-pattern";
+import type {
+  ResolvedSurfacePattern,
+  SurfacePattern,
+  SurfacePatternAxis,
+  SurfacePatternKind,
+} from "../fractal/surface-pattern";
 import type {
   SurfaceFinish,
   Transform,
@@ -106,6 +120,7 @@ type Geometry = Pick<
   | "colorIndex"
   | "colorSpeed"
   | "finish"
+  | "surfacePattern"
 >;
 
 /** The final transform's geometry — the same, minus the fields that only mean
@@ -117,7 +132,7 @@ type Geometry = Pick<
  * one authored there. */
 type FinalGeometry = Omit<
   Geometry,
-  "weight" | "colorIndex" | "colorSpeed" | "finish"
+  "weight" | "colorIndex" | "colorSpeed" | "finish" | "surfacePattern"
 >;
 
 /** The current edit target: a transform index, the final transform, or none. */
@@ -483,6 +498,14 @@ function cloneFinish(
   return finish === undefined ? undefined : { ...finish };
 }
 
+/** Sparse clone of a transform's optional surface pattern —
+ * {@link cloneFinish}'s twin (the object is flat, so a spread is exact). */
+function cloneSurfacePattern(
+  pattern: SurfacePattern | undefined,
+): SurfacePattern | undefined {
+  return pattern === undefined ? undefined : { ...pattern };
+}
+
 /** The three w-mixing planes shared by `WExtension.rotation`/`.shear` (see
  * `types.ts`'s `Rotation4`/`Shear4`), in the 4D group's row order. One array
  * drives both the Rotation W and Shear W row-builders below since the two
@@ -777,6 +800,298 @@ function finishSummary(t: Transform): string[] {
   return [`Finish: ${bundle ? bundle.label : "custom"}`];
 }
 
+// ------------------------------------------------------------- the pattern
+
+/** The family select's value while the transform authors no pattern. */
+const PATTERN_FAMILY_NONE = "none";
+
+const PATTERN_KIND_LABELS: Record<SurfacePatternKind, string> = {
+  wood: "Wood",
+  marble: "Marble",
+  strata: "Strata",
+};
+
+const PATTERN_AXIS_LABELS: Record<SurfacePatternAxis, string> = {
+  x: "X",
+  y: "Y",
+  z: "Z",
+};
+
+/** Strength slider bounds — the resolver's own `[0, 1]` authored span
+ * (surface-pattern.ts clamps there too, so the slider never shows a number
+ * the tracer is not using). The 0.01 step sits on the wire's 0.0001
+ * strength quantum grid (surface-material-wire.ts's
+ * SURFACE_PATTERN_WIRE_STRENGTH_QUANTUM) and makes the default 1 exactly
+ * representable — the same "STEPS MATTER" rule FINISH_RANGES documents. */
+const PATTERN_STRENGTH_MIN = 0;
+const PATTERN_STRENGTH_MAX = 1;
+const PATTERN_STRENGTH_STEP = 0.01;
+/** Half a strength slider step — the finish's {@link finishFieldIsClassic}
+ * tolerance, for the same round-trip reason. */
+const PATTERN_STRENGTH_TOLERANCE = PATTERN_STRENGTH_STEP / 2;
+
+/**
+ * The scale slider's position grid, in scale units. A logarithmic slider
+ * CANNOT be uniform and still land on the accepted prototype defaults — 3,
+ * 1.35 and 2.6 (surface-pattern.ts's {@link PATTERN_DEFAULT_SCALE}, the exact
+ * values the verifiers author) are not commensurable on any uniform log
+ * grid — so the grid is the uniform log2 sequence `0.5 · 2^(k/16)` over the
+ * resolver's whole `[0.5, 32]` span (surface-pattern.ts's
+ * SURFACE_PATTERN_SCALE_MIN/MAX) with each default REPLACING the grid point
+ * nearest it (all three sit within 0.4% of one, so the replacement is
+ * imperceptible and the grid stays monotonically sorted). Every position is
+ * therefore exactly representable, and a value's returned-to default is an
+ * EXACT grid point — the fold radii' own "back to the classic value removes
+ * the field" discipline, at log resolution.
+ */
+const PATTERN_SCALE_GRID: readonly number[] = (() => {
+  const grid = Array.from({ length: 97 }, (_, k) => 0.5 * 2 ** (k / 16));
+  const oct = (scale: number): number => Math.log2(scale / 0.5);
+  for (const defaultScale of Object.values(PATTERN_DEFAULT_SCALE)) {
+    let nearest = 0;
+    for (let i = 1; i < grid.length; i++) {
+      if (
+        Math.abs(oct(grid[i]) - oct(defaultScale)) <
+        Math.abs(oct(grid[nearest]) - oct(defaultScale))
+      ) {
+        nearest = i;
+      }
+    }
+    grid[nearest] = defaultScale;
+  }
+  return grid;
+})();
+
+/** The scale slider's position for a scale value — the nearest grid
+ * position, in octaves (log2), since the grid is log-spaced. Hostile
+ * out-of-domain input clamps into the grid's own span first. */
+function patternScaleToSlider(scale: number): number {
+  if (!Number.isFinite(scale)) return 0;
+  const clamped = Math.max(
+    PATTERN_SCALE_GRID[0],
+    Math.min(PATTERN_SCALE_GRID[PATTERN_SCALE_GRID.length - 1], scale),
+  );
+  const oct = (s: number): number => Math.log2(s / 0.5);
+  const target = oct(clamped);
+  let best = 0;
+  let bestDistance = Infinity;
+  for (let i = 0; i < PATTERN_SCALE_GRID.length; i++) {
+    const distance = Math.abs(oct(PATTERN_SCALE_GRID[i]) - target);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/** The scale value at a slider position — the grid itself. */
+function patternScaleFromSlider(position: number): number {
+  const index = Math.max(
+    0,
+    Math.min(PATTERN_SCALE_GRID.length - 1, Math.round(position)),
+  );
+  return PATTERN_SCALE_GRID[index];
+}
+
+/** Half a slider step, in octaves, around a family's default scale — the
+ * scale analogue of {@link finishFieldIsClassic}'s half-step tolerance
+ * (the grid's octave spacing varies because the defaults displaced their
+ * nearest grid points, so the tolerance is read off the grid rather than
+ * assumed constant). */
+function patternScaleToleranceOctaves(kind: SurfacePatternKind): number {
+  const oct = (s: number): number => Math.log2(s / 0.5);
+  const index = PATTERN_SCALE_GRID.indexOf(PATTERN_DEFAULT_SCALE[kind]);
+  if (index < 0) return 0;
+  const left =
+    index > 0
+      ? oct(PATTERN_SCALE_GRID[index]) - oct(PATTERN_SCALE_GRID[index - 1])
+      : Infinity;
+  const right =
+    index < PATTERN_SCALE_GRID.length - 1
+      ? oct(PATTERN_SCALE_GRID[index + 1]) - oct(PATTERN_SCALE_GRID[index])
+      : Infinity;
+  return Math.min(left, right) / 2;
+}
+
+/** Is `scale` this family's default, within half a slider step? */
+function patternScaleIsDefault(
+  scale: number,
+  kind: SurfacePatternKind,
+): boolean {
+  if (!Number.isFinite(scale)) return false;
+  return (
+    Math.abs(Math.log2(scale / PATTERN_DEFAULT_SCALE[kind])) <=
+    patternScaleToleranceOctaves(kind)
+  );
+}
+
+/** The material menu's value while the current finish+pattern is the
+ * all-clear state (classic finish, no pattern) — and what picking it
+ * restores. */
+const MATERIAL_NONE_ID = "none";
+
+/** The material menu's value while the current finish+pattern matches no
+ * starting point — a disabled option, so it can be shown but never picked. */
+const MATERIAL_CUSTOM_ID = "custom";
+
+/**
+ * A material starting point — UI VOCABULARY ONLY, the pattern sibling of a
+ * finish bundle. Picking one SETS the finish fields and the pattern
+ * (family + axis + scale + strength); the document stores the numbers and
+ * never the name, so a starting point can be retuned later without
+ * repainting any saved scene (a scene authored under the old tuning keeps
+ * the old numbers and simply reads as Custom afterwards). DISTINCT FROM THE
+ * PATTERN FAMILY: "Strata the material" pairs the strata family with a
+ * matte finish, and a preset is the only place the two are tied — once
+ * picked, any family can pair with any finish, and a pair that is nobody's
+ * preset reads Custom in this menu while the family menu still names it.
+ */
+interface MaterialPreset {
+  id: string;
+  label: string;
+  /** The lighting finish this material starts from — each is one of the
+   * Finish group's own named bundles (the lookup keeps the two tables from
+   * drifting), so picking a material also reads that bundle in the bundle
+   * menu. */
+  finish: ResolvedSurfaceFinish;
+  /** The pattern this material starts from — each family at its own
+   * defaults (axis y, the family's default scale, strength 1), so the
+   * stored surfacePattern is exactly `{kind, axis}`. */
+  pattern: ResolvedSurfacePattern;
+}
+
+/** Look a finish bundle up by id, for the material presets below. */
+function finishBundleValue(id: string): ResolvedSurfaceFinish {
+  const bundle = FINISH_BUNDLES.find((entry) => entry.id === id);
+  if (!bundle) throw new Error(`Unknown finish bundle ${id}`);
+  return bundle.finish;
+}
+
+/** The three material starting points, in menu order. */
+const MATERIAL_PRESETS: readonly MaterialPreset[] = [
+  {
+    id: "wood",
+    label: "Wood",
+    finish: finishBundleValue("satin"),
+    pattern: {
+      kind: "wood",
+      axis: SURFACE_PATTERN_DEFAULT_AXIS,
+      scale: PATTERN_DEFAULT_SCALE.wood,
+      strength: SURFACE_PATTERN_DEFAULT_STRENGTH,
+    },
+  },
+  {
+    id: "marble",
+    label: "Marble",
+    finish: finishBundleValue("plastic"),
+    pattern: {
+      kind: "marble",
+      axis: SURFACE_PATTERN_DEFAULT_AXIS,
+      scale: PATTERN_DEFAULT_SCALE.marble,
+      strength: SURFACE_PATTERN_DEFAULT_STRENGTH,
+    },
+  },
+  {
+    id: "strata",
+    label: "Strata",
+    finish: finishBundleValue("matte"),
+    pattern: {
+      kind: "strata",
+      axis: SURFACE_PATTERN_DEFAULT_AXIS,
+      scale: PATTERN_DEFAULT_SCALE.strata,
+      strength: SURFACE_PATTERN_DEFAULT_STRENGTH,
+    },
+  },
+];
+
+/** The all-clear pseudo-preset: classic finish and no pattern. A material
+ * preset match returns it rather than `null`, so a caller cannot confuse
+ * "nothing is authored" (the menu reads its pickable "None") with
+ * "something is authored but it is nobody's preset" (the disabled
+ * "Custom"). */
+const MATERIAL_NONE: MaterialPreset = {
+  id: MATERIAL_NONE_ID,
+  label: "None",
+  finish: CLASSIC_SURFACE_FINISH,
+  pattern: {
+    kind: "none",
+    axis: SURFACE_PATTERN_DEFAULT_AXIS,
+    scale: 1,
+    strength: 0,
+  },
+};
+
+/**
+ * Which material starting point, if any, these RESOLVED finish+pattern
+ * values are — the finish's {@link finishBundleOf} tolerance on both sides:
+ * every finish field within half its slider step of the preset's, the
+ * family and axis exact, and the scale/strength within half their slider
+ * step of the family defaults (the presets are the families at their own
+ * defaults). The all-clear state (classic finish, no pattern) returns the
+ * "None" pseudo-preset — the menu's pickable clear option — and `null` is
+ * the disabled "Custom" everywhere else. Resolved rather than raw on
+ * purpose, exactly like {@link finishBundleOf}: a sparse
+ * `{kind: "wood", axis: "y"}` IS the wood preset's pattern, and must read
+ * "Wood", not "Custom".
+ */
+function materialPresetOf(
+  finish: SurfaceFinish | undefined,
+  pattern: SurfacePattern | undefined,
+): MaterialPreset | null {
+  const resolvedFinish = resolveSurfaceFinish(finish);
+  const resolvedPattern = resolveSurfacePattern(pattern);
+  if (
+    isClassicSurfaceFinish(resolvedFinish) &&
+    resolvedPattern.kind === "none"
+  ) {
+    return MATERIAL_NONE;
+  }
+  return (
+    MATERIAL_PRESETS.find(
+      (preset) =>
+        FINISH_FIELDS.every(
+          (key) =>
+            Math.abs(resolvedFinish[key] - preset.finish[key]) <
+            FINISH_RANGES[key].step / 2,
+        ) &&
+        preset.pattern.kind === resolvedPattern.kind &&
+        preset.pattern.axis === resolvedPattern.axis &&
+        // The equality above guarantees a real family by the time this
+        // runs (no preset is kind none), so the cast only satisfies TS.
+        patternScaleIsDefault(
+          resolvedPattern.scale,
+          preset.pattern.kind as SurfacePatternKind,
+        ) &&
+        Math.abs(resolvedPattern.strength - preset.pattern.strength) <=
+          PATTERN_STRENGTH_TOLERANCE,
+    ) ?? null
+  );
+}
+
+/**
+ * The list row's pattern line — present only for a pattern that RESOLVES to
+ * a family (the predicate the tracers' compile gate reads), named by the
+ * family where the pattern sits at the family's OWN defaults (axis y, the
+ * family's default scale, strength 1 — the exact state a material starting
+ * point or a fresh family pick produces) and "custom" once any of them is
+ * tuned away — the finish row's named-vs-custom shape one feature over. A
+ * pattern whose family is tuned is still the family on screen; the row
+ * says "custom" because it is no longer any starting point's numbers.
+ */
+function patternSummary(t: Transform): string[] {
+  const resolved = resolveSurfacePattern(t.surfacePattern);
+  if (resolved.kind === "none") return [];
+  const atDefaults =
+    resolved.axis === SURFACE_PATTERN_DEFAULT_AXIS &&
+    patternScaleIsDefault(resolved.scale, resolved.kind) &&
+    Math.abs(resolved.strength - SURFACE_PATTERN_DEFAULT_STRENGTH) <=
+      PATTERN_STRENGTH_TOLERANCE;
+  return atDefaults
+    ? [`Pattern: ${PATTERN_KIND_LABELS[resolved.kind]}`]
+    : ["Pattern: custom"];
+}
+
 /** The forward-orbit routes — the escape-time chain in either dimension and
  * the Mandelbulb — which shade the WHOLE object with ONE finish, the first
  * active transform's (main.ts's `escapeSlotFinish`, the kernels'
@@ -941,12 +1256,18 @@ interface ColorControls {
 }
 
 /**
- * Live handles into the "Finish" group: the bundle select, the six rows,
- * and the head-only disclosure line the forward-orbit routes reveal.
+ * Live handles into the "Finish" group: the material starting-point menu,
+ * the bundle select, the six rows, and the head-only disclosure line the
+ * forward-orbit routes reveal.
  */
 interface FinishControls {
   /** The `<details>` group itself — the disclosure dims it as a whole. */
   group: HTMLElement;
+  /** The material starting-point select: a material preset id,
+   * {@link MATERIAL_NONE_ID} for the all-clear state, or
+   * {@link MATERIAL_CUSTOM_ID} (a disabled option, so it can be shown but
+   * never picked). */
+  material: HTMLSelectElement;
   /** The named-bundle select: a bundle id, or {@link FINISH_CUSTOM_ID}
    * (a disabled option, so it can be shown but never picked). */
   bundle: HTMLSelectElement;
@@ -954,6 +1275,29 @@ interface FinishControls {
   /** The "only the first transform's finish is read" line — hidden unless
    * the document routes to a forward-orbit surface session AND this is
    * not its head transform. */
+  note: HTMLElement;
+}
+
+/**
+ * Live handles into the "Pattern" group: the family and axis selects, the
+ * scale/strength rows, and the head-only disclosure line — the Finish
+ * group's shape one feature over.
+ */
+interface PatternControls {
+  /** The `<details>` group itself — the disclosure dims it as a whole. */
+  group: HTMLElement;
+  /** The family select: {@link PATTERN_FAMILY_NONE}, or a family id. */
+  family: HTMLSelectElement;
+  /** The axis select: `x`, `y` or `z`. */
+  axis: HTMLSelectElement;
+  /** The logarithmic scale row (periods across one normalized
+   * object-space unit). */
+  scale: AxisControl;
+  /** The strength row (patterned-albedo blend, `0..1`). */
+  strength: AxisControl;
+  /** The "only the first transform's pattern is read" line — hidden
+   * unless the document routes to a forward-orbit surface session AND
+   * this is not its head transform. */
   note: HTMLElement;
 }
 
@@ -999,6 +1343,15 @@ interface EditorState {
      * own slider moved off classic, and leaves again when it returns
      * there (see {@link Ui.writeFinishField}). */
     finish: SurfaceFinish | undefined;
+    /** Working copy of the transform's optional surface pattern — a CLONE
+     * of the document's object, `undefined` exactly when the transform
+     * authors none AND the user hasn't picked a family yet. The sparse
+     * discipline as `finish`, applied at the object level: the object
+     * materializes when a family is picked (its `kind` and `axis` leaves
+     * are required by the document model) and vanishes again when the
+     * family returns to none, while `scale`/`strength` ride the finish
+     * fields' per-field rule (see {@link Ui.writePatternFamily}). */
+    surfacePattern: SurfacePattern | undefined;
   };
   /**
    * Has the user moved a finish slider or picked a bundle since this
@@ -1012,6 +1365,16 @@ interface EditorState {
    * after one, the working copy IS the document again.
    */
   finishTouched: boolean;
+  /**
+   * The pattern counterpart of {@link finishTouched}: until the user picks
+   * a family (or a material starting point), the emitted geometry carries
+   * NO `surfacePattern` key at all, and once touched the working copy is
+   * emitted even when EMPTY — as an explicit `surfacePattern: undefined`
+   * — because returning the family to none has to REMOVE the document's
+   * own key through the same merge. Reset on sync, exactly like
+   * `finishTouched`.
+   */
+  patternTouched: boolean;
   controls: Record<Channel, AxisControl[]>;
   /** The Scale group's per-axis mirror toggles: pressed ⇔ that axis's
    * scale is negative (a reflection). */
@@ -1024,6 +1387,9 @@ interface EditorState {
   /** The "Finish" group, or `null` for the final transform — the lens is
    * not a shading slot, so no tracer reads a finish authored on it. */
   finishControls: FinishControls | null;
+  /** The "Pattern" group, or `null` for the final transform — the lens is
+   * not a shading slot, so no tracer reads a pattern authored on it. */
+  patternControls: PatternControls | null;
   /** Working copy of the transform's variation blend, edited in place. */
   variations: Variation[];
   /** Container the variation rows are (re)built into on add/remove. */
@@ -4341,7 +4707,7 @@ export class Ui {
     // surfaceRouteKind's doc): re-applied to a live editor here because the
     // gate refresh runs AFTER the editor build on every refresh path.
     this.surfaceRouteKind = kind;
-    this.applyFinishDisclosure();
+    this.applyMaterialDisclosure();
   }
 
   /**
@@ -4497,7 +4863,7 @@ export class Ui {
     // it is where the forward-orbit head is read off (a weight edit can move
     // it); the finish disclosure re-applies in case the editor is live.
     this.forwardHead = forwardHeadIndex(transforms);
-    this.applyFinishDisclosure();
+    this.applyMaterialDisclosure();
 
     const palette = transformColors(
       transforms.length,
@@ -4519,6 +4885,7 @@ export class Ui {
               : []),
             ...colorSummary(t),
             ...finishSummary(t),
+            ...patternSummary(t),
             ...variationSummary(t),
           ],
           onClick: () => this.handlers?.onSelect(i),
@@ -4642,13 +5009,15 @@ export class Ui {
   ): void {
     this.transformEditor.replaceChildren();
 
-    // The final transform omits Weight, Color and Finish (see below), so a
-    // remembered choice of any would build an editor with nothing open at all.
+    // The final transform omits Weight, Color, Finish and Pattern (see
+    // below), so a remembered choice of any would build an editor with
+    // nothing open at all.
     const remembered =
       target === "final" &&
       (this.editorOpenGroup === "Weight" ||
         this.editorOpenGroup === "Color" ||
-        this.editorOpenGroup === "Finish")
+        this.editorOpenGroup === "Finish" ||
+        this.editorOpenGroup === "Pattern")
         ? null
         : this.editorOpenGroup;
     // Resolved per build and deliberately NOT written back to
@@ -4682,6 +5051,8 @@ export class Ui {
       // this object in place, and the document's own must stay untouched
       // until the edit is emitted through the handler.
       finish: cloneFinish(transform.finish),
+      // The pattern's own clone — see {@link cloneSurfacePattern}.
+      surfacePattern: cloneSurfacePattern(transform.surfacePattern),
     };
     const controls: Record<Channel, AxisControl[]> = {
       position: [],
@@ -4771,7 +5142,20 @@ export class Ui {
     const finishControls =
       target === "final"
         ? null
-        : this.buildFinishControls(geometry.finish, openGroup);
+        : this.buildFinishControls(
+            geometry.finish,
+            geometry.surfacePattern,
+            openGroup,
+          );
+    // Pattern sits directly below Finish: the other per-map property a
+    // RENDERER reads off this map (the surface tracers pattern a hit by the
+    // slot that produced it, right where the albedo enters the shade chain),
+    // and the group the Finish group's Material menu reaches down into.
+    // Omitted for the final transform — see FinalGeometry.
+    const patternControls =
+      target === "final"
+        ? null
+        : this.buildPatternControls(geometry.surfacePattern, openGroup);
     const { list, add } = this.buildVariationsGroup(openGroup);
     // Placed last (after Variations): a deliberate choice to leave the
     // existing layout for every ordinary (flat) transform undisturbed — this
@@ -4784,11 +5168,13 @@ export class Ui {
       target,
       geometry,
       finishTouched: false,
+      patternTouched: false,
       controls,
       mirror,
       weightControl,
       colorControls,
       finishControls,
+      patternControls,
       variations: (transform.variations ?? []).map((v) => ({ ...v })),
       variationList: list,
       variationAdd: add,
@@ -4797,8 +5183,9 @@ export class Ui {
     this.renderVariationRows();
     this.refreshAddOptions();
     // The rows were built from the working copy already; this applies the
-    // head-only disclosure, which needs `this.editor` to exist.
-    this.applyFinishDisclosure();
+    // head-only disclosure and the family-none enablement, which need
+    // `this.editor` to exist.
+    this.applyMaterialDisclosure();
   }
 
   /** Build a Scale group's "Mirror" row of aria-pressed toggle buttons —
@@ -5003,12 +5390,13 @@ export class Ui {
   }
 
   /**
-   * Build the "Finish" group: a scope hint, the named-bundle select, and one
-   * row per field of the transform's optional surface finish
-   * (`types.ts`'s `SurfaceFinish`) — the fold's authored lengths'
-   * construction ({@link appendFoldRadiusRows}) one level up, on the
-   * transform rather than a variation, because a finish is a property of
-   * the MAP's part of the surface, not of a warp it applies.
+   * Build the "Finish" group: a scope hint, the material starting-point
+   * select, the named-bundle select, and one row per field of the
+   * transform's optional surface finish (`types.ts`'s `SurfaceFinish`) —
+   * the fold's authored lengths' construction
+   * ({@link appendFoldRadiusRows}) one level up, on the transform rather
+   * than a variation, because a finish is a property of the MAP's part of
+   * the surface, not of a warp it applies.
    *
    * The same two rules keep "absent means classic BYTE-IDENTICALLY" true
    * through an editing session: a field is written into the document ONLY
@@ -5020,12 +5408,21 @@ export class Ui {
    * the very same write rule, so "Classic" clears the finish outright and
    * every other bundle stores only the fields that differ from classic.
    *
+   * The MATERIAL select sits above the bundles: a material starting point
+   * (Wood/Marble/Strata, see {@link MATERIAL_PRESETS}) sets the six finish
+   * sliders AND the pattern group below through the same per-field rule,
+   * "None" clears both, and it reads back whichever starting point the
+   * current finish+pattern IS — "Custom" (disabled, so it can be shown but
+   * never chosen) when they are nobody's, exactly like the bundle select
+   * one row down.
+   *
    * The rows display the RESOLVED value while a field is absent (the classic
    * number `surface-finish.ts`'s resolver would use), exactly as the Color
    * rows display the derived palette slot — only the working copy is empty.
    */
   private buildFinishControls(
     finish: SurfaceFinish | undefined,
+    pattern: SurfacePattern | undefined,
     openGroup: string,
   ): FinishControls {
     const group = this.createEditorGroup("Finish", openGroup);
@@ -5039,10 +5436,10 @@ export class Ui {
     // input that gives a mirror recognizable structure on the shipped dark
     // backdrop, and state the intentional Metal/Chrome tint distinction.
     hint.textContent =
-      "Surface renders only: how this map's part of the surface catches light. A bundle sets all six controls; Classic clears them. Metal keeps the transform tint; Chrome stays neutral. Turn on Floor and Floor light to give reflections room structure.";
+      "Surface renders only: how this map's part of the surface catches light. The Material menu sets a finish and a pattern family together; a bundle sets all six controls; Classic clears them. Metal keeps the transform tint; Chrome stays neutral. Turn on Floor and Floor light to give reflections room structure.";
     group.appendChild(hint);
 
-    // The forward-orbit disclosure — hidden until applyFinishDisclosure
+    // The forward-orbit disclosure — hidden until applyMaterialDisclosure
     // finds the document routing to an escape-time chain or a Mandelbulb
     // with this transform not at its head.
     const note = this.doc.createElement("p");
@@ -5050,6 +5447,39 @@ export class Ui {
     note.textContent =
       "Escape-time and Mandelbulb surfaces shade the whole object with the FIRST active transform's finish, so this one is not read there. It still applies to an IFS surface.";
     group.appendChild(note);
+
+    // The material select acts like a preset menu over the finish AND the
+    // pattern group: a pick sets both, and it REFLECTS them — reading
+    // "None" (the all-clear state, pickable to clear both) when nothing is
+    // authored, a starting point's name when the current finish+pattern is
+    // one, and the disabled "Custom" whenever the two are nobody's preset
+    // (see materialPresetOf). The pattern family and the material preset
+    // are deliberately DIFFERENT concepts: the preset ties a family to a
+    // finish, and the two come apart the moment either side is retuned.
+    const material = this.doc.createElement("select");
+    material.className = "finish-material";
+    material.setAttribute("aria-label", "Material");
+    material.title =
+      "Material starting points that set the finish and the pattern family together — the scene stores the numbers, never the name.";
+    const materialNone = this.doc.createElement("option");
+    materialNone.value = MATERIAL_NONE_ID;
+    materialNone.textContent = "None";
+    material.appendChild(materialNone);
+    for (const preset of MATERIAL_PRESETS) {
+      const option = this.doc.createElement("option");
+      option.value = preset.id;
+      option.textContent = preset.label;
+      material.appendChild(option);
+    }
+    const materialCustom = this.doc.createElement("option");
+    materialCustom.value = MATERIAL_CUSTOM_ID;
+    materialCustom.textContent = "Custom";
+    materialCustom.disabled = true;
+    material.appendChild(materialCustom);
+    material.addEventListener("change", () =>
+      this.onMaterialChange(material.value),
+    );
+    group.appendChild(material);
 
     // The bundle select acts like the Presets menu over these six rows: a
     // pick sets them all. Unlike the variation-add menu it does NOT snap
@@ -5113,9 +5543,11 @@ export class Ui {
       rows[key] = { slider, readout };
     }
     this.syncFinishBundleSelect(bundle, finish);
+    material.value =
+      materialPresetOf(finish, pattern)?.id ?? MATERIAL_CUSTOM_ID;
 
     this.transformEditor.appendChild(group);
-    return { group, bundle, rows, note };
+    return { group, material, bundle, rows, note };
   }
 
   /** Point the bundle select at whichever bundle the working copy IS, or at
@@ -5127,7 +5559,18 @@ export class Ui {
     bundle.value = finishBundleOf(finish)?.id ?? FINISH_CUSTOM_ID;
   }
 
-  /** Re-sync the Finish group's rows and select to the working copy — the
+  /** Point the material select at whichever starting point the current
+   * finish+pattern working copies ARE — "None" for the all-clear state,
+   * a preset's id, or the disabled "Custom" when the pair is nobody's. */
+  private syncMaterialSelect(): void {
+    const editor = this.editor;
+    if (!editor || !editor.finishControls) return;
+    editor.finishControls.material.value =
+      materialPresetOf(editor.geometry.finish, editor.geometry.surfacePattern)
+        ?.id ?? MATERIAL_CUSTOM_ID;
+  }
+
+  /** Re-sync the Finish group's rows and selects to the working copy — the
    * finish counterpart to the Color rows' re-sync in {@link syncEditor}. */
   private syncFinishControls(): void {
     const editor = this.editor;
@@ -5139,32 +5582,51 @@ export class Ui {
       rows[key].readout.textContent = formatFinishValue(key, resolved[key]);
     }
     this.syncFinishBundleSelect(bundle, editor.geometry.finish);
-    this.applyFinishDisclosure();
+    this.syncMaterialSelect();
+    this.applyMaterialDisclosure();
   }
 
   /**
-   * Disable the Finish group — and say why — on a transform whose finish the
-   * surface session this document would start could never read: the
-   * forward-orbit routes (the escape-time chain in either dimension, the
-   * Mandelbulb) shade the WHOLE object with the first active transform's
-   * finish and nobody else's. Disclosure rather than pretence: an enabled
-   * slider that moved nothing would teach that the feature is broken. The
-   * rows stay editable everywhere else, including on the head transform of
-   * such a document, and the document keeps whatever it carries — routing
-   * is a property of the system and a weight edit can hand the head to
-   * another map, at which point its rows re-enable through the same call.
+   * Disable the Finish and Pattern groups — and say why — on a transform
+   * whose material the surface session this document would start could
+   * never read: the forward-orbit routes (the escape-time chain in either
+   * dimension, the Mandelbulb) shade AND pattern the WHOLE object with the
+   * first active transform's and nobody else's. Disclosure rather than
+   * pretence: an enabled slider that moved nothing would teach that the
+   * feature is broken. The rows stay editable everywhere else, including on
+   * the head transform of such a document, and the document keeps whatever
+   * it carries — routing is a property of the system and a weight edit can
+   * hand the head to another map, at which point its rows re-enable through
+   * the same call. The pattern group's axis/scale/strength additionally
+   * disable while the family is none (there is no pattern to orient or
+   * scale yet) — the family select itself stays live, and the disclosure
+   * dims the whole group as well.
    */
-  private applyFinishDisclosure(): void {
+  private applyMaterialDisclosure(): void {
     const editor = this.editor;
-    if (!editor || !editor.finishControls) return;
+    if (!editor) return;
     const headOnly =
       routeShadesHeadOnly(this.surfaceRouteKind) &&
       editor.target !== this.forwardHead;
-    const { group, bundle, rows, note } = editor.finishControls;
-    bundle.disabled = headOnly;
-    for (const key of FINISH_FIELDS) rows[key].slider.disabled = headOnly;
-    note.classList.toggle("hidden", !headOnly);
-    group.classList.toggle("finish-inert", headOnly);
+    if (editor.finishControls) {
+      const { group, material, bundle, rows, note } = editor.finishControls;
+      material.disabled = headOnly;
+      bundle.disabled = headOnly;
+      for (const key of FINISH_FIELDS) rows[key].slider.disabled = headOnly;
+      note.classList.toggle("hidden", !headOnly);
+      group.classList.toggle("material-inert", headOnly);
+    }
+    if (editor.patternControls) {
+      const { group, family, axis, scale, strength, note } =
+        editor.patternControls;
+      const hasFamily = family.value !== PATTERN_FAMILY_NONE;
+      family.disabled = headOnly;
+      axis.disabled = headOnly || !hasFamily;
+      scale.slider.disabled = headOnly || !hasFamily;
+      strength.slider.disabled = headOnly || !hasFamily;
+      note.classList.toggle("hidden", !headOnly);
+      group.classList.toggle("material-inert", headOnly);
+    }
   }
 
   /**
@@ -5192,7 +5654,8 @@ export class Ui {
   }
 
   /** One finish slider moved: write exactly its field, refresh its readout
-   * and the bundle select (the six may now be, or no longer be, a bundle),
+   * and the bundle and material selects (the six — and the pattern beside
+   * them — may now be, or no longer be, a bundle or a starting point),
    * and emit. */
   private onFinishInput(key: FinishKey, value: number): void {
     const editor = this.editor;
@@ -5206,6 +5669,7 @@ export class Ui {
       editor.finishControls.bundle,
       editor.geometry.finish,
     );
+    this.syncMaterialSelect();
     this.emitGeometry();
   }
 
@@ -5223,6 +5687,343 @@ export class Ui {
     }
     this.syncFinishControls();
     this.emitGeometry();
+  }
+
+  /** A material starting point was picked: set the finish fields and the
+   * pattern through the SAME per-field/object write rules the sliders use
+   * (so a wood starting point stores only `{kind: "wood", axis: "y"}`
+   * plus the satin finish's non-classic fields — the family defaults and
+   * the classic values stay ABSENT), refresh both groups, and emit once.
+   * "None" clears both through the same rules (every finish field back at
+   * classic removes the finish, the family back at none removes the
+   * pattern). The disabled Custom option can never arrive here; an unknown
+   * id is ignored rather than guessed at. */
+  private onMaterialChange(id: string): void {
+    const editor = this.editor;
+    if (!editor || !editor.finishControls) return;
+    if (id === MATERIAL_NONE_ID) {
+      for (const key of FINISH_FIELDS) {
+        this.writeFinishField(key, CLASSIC_SURFACE_FINISH[key]);
+      }
+      this.writePatternFamily(PATTERN_FAMILY_NONE);
+    } else {
+      const preset = MATERIAL_PRESETS.find((entry) => entry.id === id);
+      if (!preset) return;
+      for (const key of FINISH_FIELDS) {
+        this.writeFinishField(key, preset.finish[key]);
+      }
+      this.writePatternFamily(preset.pattern.kind);
+      this.writePatternAxis(preset.pattern.axis);
+      this.writePatternScale(preset.pattern.scale);
+      this.writePatternStrength(preset.pattern.strength);
+    }
+    this.syncFinishControls();
+    this.syncPatternControls();
+    this.emitGeometry();
+  }
+
+  /**
+   * The ONE write into the pattern working copy's FAMILY — the finish's
+   * {@link writeFinishField} one feature over, at the object level.
+   * Picking a family materializes the object (the document model requires
+   * `kind` and `axis` whenever `surfacePattern` exists, so a fresh pick
+   * starts at the default axis with both numerics absent — their family
+   * defaults resolve). Returning the family to NONE deletes the whole
+   * object, so a pattern explored and returned from leaves the transform
+   * exactly as it found it. Marks the group touched either way — see
+   * EditorState.patternTouched for why a removal has to be emitted rather
+   * than merely omitted.
+   */
+  private writePatternFamily(
+    kind: SurfacePatternKind | typeof PATTERN_FAMILY_NONE,
+  ): void {
+    const editor = this.editor;
+    if (!editor) return;
+    editor.patternTouched = true;
+    if (kind === PATTERN_FAMILY_NONE) {
+      editor.geometry.surfacePattern = undefined;
+      return;
+    }
+    const pattern =
+      editor.geometry.surfacePattern ??
+      (editor.geometry.surfacePattern = {
+        kind,
+        axis: SURFACE_PATTERN_DEFAULT_AXIS,
+      });
+    pattern.kind = kind;
+  }
+
+  /** Write the pattern's axis — a REQUIRED leaf of the document model, so
+   * it is written whenever it changes (there is no "back to the default
+   * removes it" for the object's spine; absence belongs to the whole
+   * pattern). Only reachable while a family is active. */
+  private writePatternAxis(axis: SurfacePatternAxis): void {
+    const editor = this.editor;
+    const pattern = editor?.geometry.surfacePattern;
+    if (!pattern) return;
+    editor.patternTouched = true;
+    pattern.axis = axis;
+  }
+
+  /** Write the pattern's scale — the finish rule's per-field discipline:
+   * a value on the CURRENT family's default scale (within half a slider
+   * step) DELETES the field, so the slider rides the resolver's family
+   * defaults exactly. Only reachable while a family is active. */
+  private writePatternScale(scale: number): void {
+    const editor = this.editor;
+    const pattern = editor?.geometry.surfacePattern;
+    if (!pattern) return;
+    editor.patternTouched = true;
+    if (patternScaleIsDefault(scale, pattern.kind)) {
+      delete pattern.scale;
+    } else {
+      pattern.scale = scale;
+    }
+  }
+
+  /** Write the pattern's strength — {@link writePatternScale}'s twin: a
+   * value on the default strength 1 (within half a slider step) DELETES
+   * the field. Only reachable while a family is active. */
+  private writePatternStrength(strength: number): void {
+    const editor = this.editor;
+    const pattern = editor?.geometry.surfacePattern;
+    if (!pattern) return;
+    editor.patternTouched = true;
+    if (
+      Math.abs(strength - SURFACE_PATTERN_DEFAULT_STRENGTH) <=
+      PATTERN_STRENGTH_TOLERANCE
+    ) {
+      delete pattern.strength;
+    } else {
+      pattern.strength = strength;
+    }
+  }
+
+  /** The family select changed: write exactly the family (a pick
+   * materializes `{kind, axis}`; none removes the whole pattern), refresh
+   * the group and the material select (the pick may now be, or no longer
+   * be, a starting point's pattern side), and emit. An unknown id is
+   * ignored rather than guessed at. */
+  private onPatternFamilyInput(value: string): void {
+    const editor = this.editor;
+    if (!editor || !editor.patternControls) return;
+    if (value === PATTERN_FAMILY_NONE) {
+      this.writePatternFamily(PATTERN_FAMILY_NONE);
+    } else if (SURFACE_PATTERN_KINDS.includes(value as SurfacePatternKind)) {
+      this.writePatternFamily(value as SurfacePatternKind);
+    } else {
+      return;
+    }
+    this.syncPatternControls();
+    this.syncMaterialSelect();
+    this.emitGeometry();
+  }
+
+  /** The axis select changed: write exactly the axis, refresh the material
+   * select, and emit. */
+  private onPatternAxisInput(value: string): void {
+    const editor = this.editor;
+    if (!editor || !editor.patternControls) return;
+    if (!SURFACE_PATTERN_AXES.includes(value as SurfacePatternAxis)) return;
+    this.writePatternAxis(value as SurfacePatternAxis);
+    this.syncMaterialSelect();
+    this.emitGeometry();
+  }
+
+  /** The scale slider moved (already mapped through the grid): write
+   * exactly the scale — removing it when it lands back on the family
+   * default — refresh the readout and the material select, and emit. */
+  private onPatternScaleInput(scale: number): void {
+    const editor = this.editor;
+    if (!editor || !editor.patternControls) return;
+    this.writePatternScale(scale);
+    editor.patternControls.scale.readout.textContent = scale.toFixed(2);
+    this.syncMaterialSelect();
+    this.emitGeometry();
+  }
+
+  /** The strength slider moved — {@link onPatternScaleInput}'s twin. */
+  private onPatternStrengthInput(strength: number): void {
+    const editor = this.editor;
+    if (!editor || !editor.patternControls) return;
+    this.writePatternStrength(strength);
+    editor.patternControls.strength.readout.textContent = strength.toFixed(2);
+    this.syncMaterialSelect();
+    this.emitGeometry();
+  }
+
+  /**
+   * Build the "Pattern" group: a scope hint, the family and axis selects,
+   * and the scale/strength rows — the Finish group's structure one feature
+   * over (the sibling `surfacePattern` block of `types.ts`'s
+   * `SurfaceFinish`, see surface-pattern.ts). The family select is the
+   * block's spine: picking one materializes the pattern object, and
+   * returning it to none removes the pattern outright (see
+   * {@link writePatternFamily}); the axis select and both sliders disable
+   * until a family is active (there is no pattern to orient or scale yet),
+   * and the scale slider is the LOGARITHMIC one the resolver's domain
+   * needs — its position grid (see {@link PATTERN_SCALE_GRID}) is exactly
+   * representable for every family default.
+   *
+   * The rows display the RESOLVED value while a leaf is absent (the family
+   * default `surface-pattern.ts`'s resolver would use) — the Finish rows'
+   * classic-number idiom — and the family/axis selects display the
+   * resolved kind/axis the same way; only the working copy is empty.
+   */
+  private buildPatternControls(
+    pattern: SurfacePattern | undefined,
+    openGroup: string,
+  ): PatternControls {
+    const group = this.createEditorGroup("Pattern", openGroup);
+
+    // The scope note, in the Finish hint's idiom: every other render mode
+    // ignores a pattern, and a control that moves nothing on screen would
+    // otherwise teach that the group is broken.
+    const hint = this.doc.createElement("p");
+    hint.className = "flame-hint";
+    hint.textContent =
+      "Surface renders only: how this map's part of the surface is patterned — its albedo texture, under the lighting. A family picks the pattern; None clears it. The Finish group's Material menu sets a family and a finish together.";
+    group.appendChild(hint);
+
+    // The forward-orbit disclosure — hidden until applyMaterialDisclosure
+    // finds the document routing to an escape-time chain or a Mandelbulb
+    // with this transform not at its head.
+    const note = this.doc.createElement("p");
+    note.className = "flame-hint pattern-note hidden";
+    note.textContent =
+      "Escape-time and Mandelbulb surfaces pattern the whole object with the FIRST active transform's, so this one is not read there. It still applies to an IFS surface.";
+    group.appendChild(note);
+
+    // The family select is the block's spine: it reflects the resolved
+    // kind, and picking one is what materializes the pattern (see
+    // writePatternFamily). Unlike the Finish group's selects it has a
+    // pickable "None" — the family's absent state, the exact analogue of
+    // the bundle select's "Classic".
+    const family = this.doc.createElement("select");
+    family.className = "pattern-family";
+    family.setAttribute("aria-label", "Pattern family");
+    family.title =
+      "Which pattern covers this map's part of the surface: wood, marble or strata. None removes the pattern.";
+    const familyNone = this.doc.createElement("option");
+    familyNone.value = PATTERN_FAMILY_NONE;
+    familyNone.textContent = "None";
+    family.appendChild(familyNone);
+    for (const kind of SURFACE_PATTERN_KINDS) {
+      const option = this.doc.createElement("option");
+      option.value = kind;
+      option.textContent = PATTERN_KIND_LABELS[kind];
+      family.appendChild(option);
+    }
+    family.addEventListener("change", () =>
+      this.onPatternFamilyInput(family.value),
+    );
+    group.appendChild(family);
+
+    // The axis select — a required leaf of the document model (see
+    // writePatternAxis), disabled until a family is active.
+    const axis = this.doc.createElement("select");
+    axis.className = "pattern-axis";
+    axis.setAttribute("aria-label", "Pattern axis");
+    axis.title =
+      "Which object-space axis the pattern's structure runs along. Y is the default.";
+    for (const value of SURFACE_PATTERN_AXES) {
+      const option = this.doc.createElement("option");
+      option.value = value;
+      option.textContent = PATTERN_AXIS_LABELS[value];
+      axis.appendChild(option);
+    }
+    axis.addEventListener("change", () => this.onPatternAxisInput(axis.value));
+    group.appendChild(axis);
+
+    const resolved = resolveSurfacePattern(pattern);
+    // Seed the two selects from the resolved document (the sliders below
+    // are already seeded from the same `resolved`) — the Finish group's
+    // syncFinishBundleSelect at build, so the family-none enablement and
+    // the disclosure read the right state before the first sync.
+    family.value = resolved.kind;
+    axis.value = resolved.axis;
+
+    // The scale row: periods across one normalized object-space unit, on
+    // the logarithmic position grid (see PATTERN_SCALE_GRID). The slider
+    // carries a POSITION while the readout carries the MODEL value, the
+    // 4D rows' toSlider/fromSlider shape — so an authored value that is
+    // not a grid point (a morph's, say) still reads honestly, and snaps
+    // to the grid the moment the user drags.
+    const scaleRow = this.doc.createElement("div");
+    scaleRow.className = "editor-row pattern-row";
+    const scaleName = this.doc.createElement("span");
+    scaleName.className = "axis";
+    scaleName.textContent = "Scale";
+    const scaleSlider = this.doc.createElement("input");
+    scaleSlider.type = "range";
+    scaleSlider.min = "0";
+    scaleSlider.max = String(PATTERN_SCALE_GRID.length - 1);
+    scaleSlider.step = "1";
+    scaleSlider.value = String(patternScaleToSlider(resolved.scale));
+    scaleSlider.setAttribute("aria-label", "Pattern scale");
+    scaleSlider.title =
+      "Periods across one normalized object-space unit, on a logarithmic slider. Wood 3, Marble 1.35, Strata 2.6 by default.";
+    const scaleReadout = this.doc.createElement("span");
+    scaleReadout.className = "value";
+    scaleReadout.textContent = resolved.scale.toFixed(2);
+    scaleSlider.addEventListener("input", () =>
+      this.onPatternScaleInput(
+        patternScaleFromSlider(Number(scaleSlider.value)),
+      ),
+    );
+    scaleRow.append(scaleName, scaleSlider, scaleReadout);
+    group.appendChild(scaleRow);
+    const scale: AxisControl = { slider: scaleSlider, readout: scaleReadout };
+
+    // The strength row: the patterned-albedo blend, `0..1` at the wire's
+    // own 0.01 UI step (see PATTERN_STRENGTH_STEP), default 1.
+    const strengthRow = this.doc.createElement("div");
+    strengthRow.className = "editor-row pattern-row";
+    const strengthName = this.doc.createElement("span");
+    strengthName.className = "axis";
+    strengthName.textContent = "Strength";
+    const strengthSlider = this.doc.createElement("input");
+    strengthSlider.type = "range";
+    strengthSlider.min = String(PATTERN_STRENGTH_MIN);
+    strengthSlider.max = String(PATTERN_STRENGTH_MAX);
+    strengthSlider.step = String(PATTERN_STRENGTH_STEP);
+    strengthSlider.value = String(resolved.strength);
+    strengthSlider.setAttribute("aria-label", "Pattern strength");
+    strengthSlider.title =
+      "How much the pattern replaces the surface's own albedo: 0 leaves it unchanged, 1 is the full pattern. Default 1.";
+    const strengthReadout = this.doc.createElement("span");
+    strengthReadout.className = "value";
+    strengthReadout.textContent = resolved.strength.toFixed(2);
+    strengthSlider.addEventListener("input", () =>
+      this.onPatternStrengthInput(Number(strengthSlider.value)),
+    );
+    strengthRow.append(strengthName, strengthSlider, strengthReadout);
+    group.appendChild(strengthRow);
+    const strength: AxisControl = {
+      slider: strengthSlider,
+      readout: strengthReadout,
+    };
+
+    this.transformEditor.appendChild(group);
+    return { group, family, axis, scale, strength, note };
+  }
+
+  /** Re-sync the Pattern group's selects and rows to the working copy —
+   * the Finish group's {@link syncFinishControls} one feature over, and
+   * the row-refresh half of {@link applyMaterialDisclosure}'s enablement
+   * (which this calls). */
+  private syncPatternControls(): void {
+    const editor = this.editor;
+    if (!editor || !editor.patternControls) return;
+    const { family, axis, scale, strength } = editor.patternControls;
+    const resolved = resolveSurfacePattern(editor.geometry.surfacePattern);
+    family.value = resolved.kind;
+    axis.value = resolved.axis;
+    scale.slider.value = String(patternScaleToSlider(resolved.scale));
+    scale.readout.textContent = resolved.scale.toFixed(2);
+    strength.slider.value = String(resolved.strength);
+    strength.readout.textContent = resolved.strength.toFixed(2);
+    this.applyMaterialDisclosure();
   }
 
   /**
@@ -5732,10 +6533,13 @@ export class Ui {
       colorIndex: transform.colorIndex,
       colorSpeed: transform.colorSpeed,
       finish: cloneFinish(transform.finish),
+      surfacePattern: cloneSurfacePattern(transform.surfacePattern),
     };
-    // The working copy IS the document again, so the finish key goes back
-    // to riding only on presence (see EditorState.finishTouched).
+    // The working copy IS the document again, so the finish and pattern
+    // keys go back to riding only on presence (see EditorState.finishTouched
+    // / patternTouched).
     editor.finishTouched = false;
+    editor.patternTouched = false;
     for (const channel of CHANNEL_ORDER) {
       const spec = CHANNELS[channel];
       editor.controls[channel].forEach((control, axis) => {
@@ -5770,6 +6574,7 @@ export class Ui {
       color.speed.readout.textContent = speed.toFixed(2);
     }
     this.syncFinishControls();
+    this.syncPatternControls();
     this.syncFourDControls();
 
     // Variations rarely change under a stable selection (drags don't touch
@@ -5927,6 +6732,21 @@ export class Ui {
           ? { finish: cloneFinish(editor.geometry.finish) }
           : editor.finishTouched
             ? { finish: undefined }
+            : {}),
+        // The pattern's twin: the object materializes only once a family
+        // (or a material starting point) is picked, and once touched an
+        // EMPTY working copy is emitted as an explicit
+        // `surfacePattern: undefined` so returning the family to none
+        // REMOVES the document's own key through the same merge. See
+        // EditorState.patternTouched.
+        ...(editor.geometry.surfacePattern !== undefined
+          ? {
+              surfacePattern: cloneSurfacePattern(
+                editor.geometry.surfacePattern,
+              ),
+            }
+          : editor.patternTouched
+            ? { surfacePattern: undefined }
             : {}),
       });
     }
