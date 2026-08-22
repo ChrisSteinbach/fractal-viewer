@@ -297,13 +297,13 @@ ${sig(
     }
     ${f("warpCycles", sel(`${PATTERN_NATIVE_WARP_CYCLES.marble}`, `${PATTERN_NATIVE_WARP_CYCLES.wood}`, "kindId == 2"))}
     ${f("shift", "((nativeValue - 0.5) * warpCycles) / detailScale")}
-    ${v3v("out", "pm")}
+    ${v3v("warped", "pm")}
     if (kindId == 1) {
-      out.y += shift;
+      warped.y += shift;
     } else {
-      out.x += shift;
+      warped.x += shift;
     }
-    return out;
+    return warped;
   }
 
 ${sig(
@@ -697,10 +697,10 @@ function patternDetailWarpPointTs(
   if (!nativeEnabled || detailScale <= 0) return pm;
   const warpCycles = PATTERN_NATIVE_WARP_CYCLES[kindIdToKind(kindId)];
   const shift = ((nativeValue - 0.5) * warpCycles) / detailScale;
-  const out: Vec3 = [pm[0], pm[1], pm[2]];
-  if (kindId === 1) out[1] += shift;
-  else out[0] += shift;
-  return out;
+  const warped: Vec3 = [pm[0], pm[1], pm[2]];
+  if (kindId === 1) warped[1] += shift;
+  else warped[0] += shift;
+  return warped;
 }
 
 const kindIdToKind = (id: number): "wood" | "marble" | "strata" =>
