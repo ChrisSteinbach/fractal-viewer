@@ -1333,6 +1333,7 @@ describe("Ui.renderTransformEditor", () => {
       "Weight",
       "Color",
       "Finish",
+      "Pattern",
       "Variations",
       "4D",
       "Position W",
@@ -1341,11 +1342,12 @@ describe("Ui.renderTransformEditor", () => {
       "Shear W",
     ]);
     // 12 axis sliders (4 channels × 3) + 1 weight slider + 2 color sliders
-    // (Index, Speed) + 5 finish sliders + 8 in the 4D group (Position W,
-    // Scale W, 3 Rotation W, 3 Shear W — always built, just collapsed for a
-    // w-less transform like this one); a plain transform has no variations,
-    // so the Variations group adds no range sliders (just a menu).
-    expect(editorSliders()).toHaveLength(29);
+    // (Index, Speed) + 6 finish sliders + 2 pattern sliders (Scale,
+    // Strength) + 8 in the 4D group (Position W, Scale W, 3 Rotation W,
+    // 3 Shear W — always built, just collapsed for a w-less transform like
+    // this one); a plain transform has no variations, so the Variations
+    // group adds no range sliders (just a menu).
+    expect(editorSliders()).toHaveLength(31);
   });
 
   it("opens only Position for a flat transform", () => {
@@ -1368,7 +1370,7 @@ describe("Ui.renderTransformEditor", () => {
     ui.bind(noopHandlers());
     ui.renderTransformEditor(transforms[0], 0, transforms.length);
 
-    // The nine top-level groups; the 4D sub-groups stay plain divs, since a
+    // The ten top-level groups; the 4D sub-groups stay plain divs, since a
     // second level of exclusivity inside 4D would close Position W to read
     // Rotation W.
     const names = [
@@ -1376,7 +1378,7 @@ describe("Ui.renderTransformEditor", () => {
         "#transformEditor > details",
       ),
     ].map((d) => d.getAttribute("name"));
-    expect(names).toHaveLength(9);
+    expect(names).toHaveLength(10);
     expect(new Set(names).size).toBe(1);
   });
 
@@ -1693,7 +1695,7 @@ describe("Ui.renderTransformEditor", () => {
     const ui = new Ui(document);
     ui.bind(noopHandlers());
     ui.renderTransformEditor(transforms[0], 0, transforms.length);
-    expect(editorSliders()).toHaveLength(29);
+    expect(editorSliders()).toHaveLength(31);
 
     ui.renderTransformEditor(null, null, 1);
     expect(document.getElementById("transformEditor")?.children).toHaveLength(
@@ -2714,6 +2716,726 @@ describe("Ui finish editor", () => {
       ui.setSurfaceEligibility("ineligible", "not marchable", null);
       expect(bundleSelect().disabled).toBe(false);
     });
+  });
+});
+
+// The "Pattern" group: the single UI that can create or edit a transform's
+// optional `surfacePattern` (see fractal/types.ts's SurfacePattern), the
+// finish group's sibling one feature over. The contract under test is the
+// finish's own: nothing is written until a control moves, a family pick
+// materializes the object, returning the family to none removes it, and
+// the document a user explored and returned from is byte-identical to one
+// that never carried a pattern.
+describe("Ui pattern editor", () => {
+  const plain: Transform = {
+    id: 0,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [0.5, 0.5, 0.5],
+  };
+
+  function patternFamilySelect(): HTMLSelectElement {
+    const select = document.querySelector<HTMLSelectElement>(
+      "#transformEditor .pattern-family",
+    );
+    if (!select) throw new Error("No pattern-family select");
+    return select;
+  }
+
+  function patternAxisSelect(): HTMLSelectElement {
+    const select = document.querySelector<HTMLSelectElement>(
+      "#transformEditor .pattern-axis",
+    );
+    if (!select) throw new Error("No pattern-axis select");
+    return select;
+  }
+
+  function patternNote(): HTMLElement {
+    const note = document.querySelector<HTMLElement>(
+      "#transformEditor .pattern-note",
+    );
+    if (!note) throw new Error("No pattern-note");
+    return note;
+  }
+
+  function lastGeometry(handlers: UiHandlers) {
+    const calls = vi.mocked(handlers.onTransformGeometry).mock.calls;
+    return calls[calls.length - 1][1];
+  }
+
+  function drag(label: string, value: string): void {
+    const slider = editorSlider(label);
+    slider.value = value;
+    slider.dispatchEvent(new Event("input"));
+  }
+
+  function pickFamily(id: string): void {
+    const select = patternFamilySelect();
+    select.value = id;
+    select.dispatchEvent(new Event("change"));
+  }
+
+  function pickAxis(id: string): void {
+    const select = patternAxisSelect();
+    select.value = id;
+    select.dispatchEvent(new Event("change"));
+  }
+
+  // The log grid's position for a scale value — the same construction the
+  // slider uses, so tests can drive positions without importing the
+  // private helper.
+  function scalePosition(scale: number): number {
+    const grid = Array.from({ length: 97 }, (_, k) => 0.5 * 2 ** (k / 16));
+    const oct = (s: number) => Math.log2(s / 0.5);
+    let best = 0;
+    for (let i = 1; i < grid.length; i++) {
+      if (
+        Math.abs(oct(grid[i]) - oct(scale)) <
+        Math.abs(oct(grid[best]) - oct(scale))
+      ) {
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  it("offers a Pattern group with family None, and disables the axis/scale/strength rows until a family is picked", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(plain, 0, 1);
+
+    expect(editorGroupTitles()).toContain("Pattern");
+    expect(patternFamilySelect().value).toBe("none");
+    // With no family there is no pattern to orient or scale: the rows are
+    // disabled (the family select stays live), while still displaying the
+    // values the resolver would use.
+    expect(patternAxisSelect().disabled).toBe(true);
+    expect(editorSlider("Pattern scale").disabled).toBe(true);
+    expect(editorSlider("Pattern strength").disabled).toBe(true);
+    expect(editorReadout("Pattern scale").textContent).toBe("1.00");
+    expect(editorReadout("Pattern strength").textContent).toBe("0.00");
+  });
+
+  it("seeds the rows from the document, and from the family defaults where the document is silent", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(
+      {
+        ...plain,
+        surfacePattern: { kind: "wood", axis: "z", scale: 4, strength: 0.5 },
+      },
+      0,
+      1,
+    );
+    expect(patternFamilySelect().value).toBe("wood");
+    expect(patternAxisSelect().value).toBe("z");
+    expect(patternAxisSelect().disabled).toBe(false);
+    expect(editorSlider("Pattern scale").disabled).toBe(false);
+    expect(editorSlider("Pattern scale").value).toBe(String(scalePosition(4)));
+    expect(editorReadout("Pattern scale").textContent).toBe("4.00");
+    expect(editorSlider("Pattern strength").value).toBe("0.5");
+    expect(editorReadout("Pattern strength").textContent).toBe("0.50");
+
+    // A sparse document resolves to its family's own defaults.
+    ui.renderTransformEditor(
+      { ...plain, surfacePattern: { kind: "marble", axis: "y" } },
+      0,
+      1,
+    );
+    expect(patternFamilySelect().value).toBe("marble");
+    expect(editorReadout("Pattern scale").textContent).toBe("1.35");
+    expect(editorReadout("Pattern strength").textContent).toBe("1.00");
+  });
+
+  it("emits no surfacePattern key at all for an unrelated edit on a map that authors none", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(plain, 0, 1);
+
+    const scaleX = editorSlider("Scale X");
+    scaleX.value = "0.7";
+    scaleX.dispatchEvent(new Event("input"));
+
+    // Not `undefined`, not `{}`: NO key — building the group and displaying
+    // the resolved values materializes nothing.
+    expect(lastGeometry(handlers)).not.toHaveProperty("surfacePattern");
+  });
+
+  it("materializes exactly {kind, axis} when a family is picked, leaving the defaults absent", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(plain, 0, 1);
+
+    pickFamily("wood");
+
+    // The family defaults (axis y, scale 3, strength 1) are ABSENT: the
+    // resolver supplies them, which is what keeps the stored document
+    // minimal.
+    expect(lastGeometry(handlers).surfacePattern).toEqual({
+      kind: "wood",
+      axis: "y",
+    });
+    expect(editorSlider("Pattern scale").disabled).toBe(false);
+    expect(editorSlider("Pattern strength").disabled).toBe(false);
+    expect(patternAxisSelect().disabled).toBe(false);
+    expect(editorReadout("Pattern scale").textContent).toBe("3.00");
+    expect(editorReadout("Pattern strength").textContent).toBe("1.00");
+  });
+
+  it("carries authored scale and strength through a family switch, with the defaults staying absent", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      { ...plain, surfacePattern: { kind: "wood", axis: "x", scale: 2.2 } },
+      0,
+      1,
+    );
+
+    pickFamily("marble");
+
+    // The authored axis and scale survive the family switch untouched; only
+    // the family leaf changes. The displayed scale stays the authored 2.2,
+    // not marble's 1.35 — the rows show the RESOLVED value.
+    expect(lastGeometry(handlers).surfacePattern).toEqual({
+      kind: "marble",
+      axis: "x",
+      scale: 2.2,
+    });
+    expect(editorReadout("Pattern scale").textContent).toBe("2.20");
+
+    // A sparse pattern instead follows the NEW family's default on the rows.
+    ui.renderTransformEditor(
+      { ...plain, surfacePattern: { kind: "wood", axis: "y" } },
+      0,
+      1,
+    );
+    expect(editorReadout("Pattern scale").textContent).toBe("3.00");
+    pickFamily("strata");
+    expect(editorReadout("Pattern scale").textContent).toBe("2.60");
+    expect(lastGeometry(handlers).surfacePattern).toEqual({
+      kind: "strata",
+      axis: "y",
+    });
+  });
+
+  it("writes scale sparsely and removes it when it returns to the family default", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      { ...plain, surfacePattern: { kind: "wood", axis: "y", scale: 4 } },
+      0,
+      1,
+    );
+
+    // Position 50 is the grid value 0.5·2^(50/16) ≈ 4.36 (no default
+    // displaced it), off wood's default 3.
+    drag("Pattern scale", "50");
+    expect(lastGeometry(handlers).surfacePattern).toEqual({
+      kind: "wood",
+      axis: "y",
+      scale: 0.5 * 2 ** (50 / 16),
+    });
+
+    // Position 41 IS wood's default scale 3 (the grid's nearest point was
+    // replaced by the default): landing on it removes the leaf.
+    drag("Pattern scale", "41");
+    expect(lastGeometry(handlers).surfacePattern).toEqual({
+      kind: "wood",
+      axis: "y",
+    });
+  });
+
+  it("writes strength sparsely and removes it at the default 1", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        ...plain,
+        surfacePattern: { kind: "strata", axis: "y", strength: 0.5 },
+      },
+      0,
+      1,
+    );
+
+    drag("Pattern strength", "0.8");
+    expect(lastGeometry(handlers).surfacePattern).toEqual({
+      kind: "strata",
+      axis: "y",
+      strength: 0.8,
+    });
+    expect(editorReadout("Pattern strength").textContent).toBe("0.80");
+
+    drag("Pattern strength", "1");
+    expect(lastGeometry(handlers).surfacePattern).toEqual({
+      kind: "strata",
+      axis: "y",
+    });
+  });
+
+  it("writes the axis through its select, keeping it present even at the default y", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      { ...plain, surfacePattern: { kind: "marble", axis: "y" } },
+      0,
+      1,
+    );
+
+    pickAxis("z");
+    expect(lastGeometry(handlers).surfacePattern).toEqual({
+      kind: "marble",
+      axis: "z",
+    });
+
+    // Axis is a REQUIRED leaf of the document model — unlike scale and
+    // strength there is no absent state to return to, so y is stored.
+    pickAxis("y");
+    expect(lastGeometry(handlers).surfacePattern).toEqual({
+      kind: "marble",
+      axis: "y",
+    });
+  });
+
+  it("removes the whole surfacePattern when the family returns to none, emitting the removal explicitly", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        ...plain,
+        surfacePattern: { kind: "wood", axis: "z", scale: 4, strength: 0.5 },
+      },
+      0,
+      1,
+    );
+
+    pickFamily("none");
+
+    // The key is PRESENT and undefined, not omitted: state.ts's
+    // updateTransform merges the emitted geometry over the transform, so an
+    // omitted key would leave the document's old pattern in place. persist
+    // writes nothing for an undefined surfacePattern, so the saved scene is
+    // byte-identical to one that never authored a pattern.
+    const geometry = lastGeometry(handlers);
+    expect(geometry).toHaveProperty("surfacePattern");
+    expect(geometry.surfacePattern).toBeUndefined();
+    expect(patternFamilySelect().value).toBe("none");
+    expect(patternAxisSelect().disabled).toBe(true);
+    expect(editorSlider("Pattern scale").disabled).toBe(true);
+  });
+
+  it("never leaves the document's own surfacePattern object mutated", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const pattern = { kind: "wood" as const, axis: "y" as const, scale: 4 };
+    ui.renderTransformEditor({ ...plain, surfacePattern: pattern }, 0, 1);
+
+    drag("Pattern scale", "50");
+
+    // The editor edits a CLONE and hands back another: the document's own
+    // object is untouched by the drag, and the already-emitted object is
+    // not aliased to the working copy either — the second drag changes the
+    // working copy, not the clone the first drag handed out.
+    expect(pattern).toEqual({ kind: "wood", axis: "y", scale: 4 });
+    const emitted = lastGeometry(handlers).surfacePattern;
+    drag("Pattern scale", "55");
+    expect(emitted).toEqual({
+      kind: "wood",
+      axis: "y",
+      scale: 0.5 * 2 ** (50 / 16),
+    });
+    expect(lastGeometry(handlers).surfacePattern).toEqual({
+      kind: "wood",
+      axis: "y",
+      scale: 0.5 * 2 ** (55 / 16),
+    });
+  });
+
+  it("omits the Pattern group for the final transform", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    // The lens is not a shading slot: the tracers pattern a hit by the base
+    // map that produced it, so nothing would ever read a pattern authored
+    // on the final transform.
+    ui.renderTransformEditor(plain, "final", 1);
+
+    expect(editorGroupTitles()).not.toContain("Pattern");
+    expect(
+      document.querySelector("#transformEditor .pattern-family"),
+    ).toBeNull();
+    expect(
+      document.querySelector("#transformEditor .finish-material"),
+    ).toBeNull();
+  });
+
+  it("builds the Pattern group for a 4D transform too", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    // A 4D transform is an ordinary transform with a `w` block — the same
+    // single editor serves both dimensions, so the block must exist there.
+    ui.renderTransformEditor({ ...plain, w: { position: 0.5 } }, 0, 1);
+
+    expect(editorGroupTitles()).toContain("Pattern");
+    expect(patternFamilySelect()).not.toBeNull();
+  });
+
+  it("picks up a pattern that changed under a stable selection, instead of writing the stale one back", () => {
+    // An undo back past the first pattern edit returns a transform with the
+    // key gone; the working copy has to forget it too, or the next unrelated
+    // edit would write it back.
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      { ...plain, surfacePattern: { kind: "wood", axis: "y" } },
+      0,
+      1,
+    );
+    ui.renderTransformEditor(plain, 0, 1);
+
+    expect(patternFamilySelect().value).toBe("none");
+    const scaleX = editorSlider("Scale X");
+    scaleX.value = "0.7";
+    scaleX.dispatchEvent(new Event("input"));
+    expect(lastGeometry(handlers)).not.toHaveProperty("surfacePattern");
+  });
+
+  it("names an authored pattern on the transform list row, by family at the family defaults and custom otherwise", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformList(
+      [
+        plain,
+        // At the family's defaults — exactly what a family pick or a
+        // material starting point stores.
+        { ...plain, id: 1, surfacePattern: { kind: "wood", axis: "y" } },
+        // Axis off the default: no starting point's numbers.
+        { ...plain, id: 2, surfacePattern: { kind: "marble", axis: "z" } },
+        // Strength explicitly at the default still names the family.
+        {
+          ...plain,
+          id: 3,
+          surfacePattern: { kind: "strata", axis: "y", strength: 1 },
+        },
+        // Scale tuned away from the family default.
+        {
+          ...plain,
+          id: 4,
+          surfacePattern: { kind: "wood", axis: "y", scale: 4 },
+        },
+      ],
+      null,
+      null,
+    );
+    const rows = [
+      ...document.querySelectorAll<HTMLElement>(
+        "#transformList .transform-btn",
+      ),
+    ].map((b) => b.textContent ?? "");
+    // Row 0 is the camera card.
+    expect(rows[1]).not.toContain("Pattern");
+    expect(rows[2]).toContain("Pattern: Wood");
+    expect(rows[3]).toContain("Pattern: custom");
+    expect(rows[4]).toContain("Pattern: Strata");
+    expect(rows[5]).toContain("Pattern: custom");
+  });
+
+  describe("forward-orbit disclosure", () => {
+    // An escape-time or Mandelbulb surface shades AND patterns the WHOLE
+    // object with the first active transform's material (main.ts's
+    // escapeSlotMaterials, the kernels' firstChoice 0). The gate's route
+    // kind reaches the panel with every eligibility refresh, and the rows
+    // it would skip say so — the Finish group's own disclosure, one feature
+    // over.
+    const two: Transform[] = [
+      { ...plain, surfacePattern: { kind: "wood", axis: "y" } },
+      {
+        ...plain,
+        id: 1,
+        position: [1, 0, 0],
+        surfacePattern: { kind: "wood", axis: "y" },
+      },
+    ];
+
+    function patternInputsDisabled(): boolean[] {
+      return [
+        patternFamilySelect().disabled,
+        patternAxisSelect().disabled,
+        editorSlider("Pattern scale").disabled,
+        editorSlider("Pattern strength").disabled,
+      ];
+    }
+
+    it("disables a non-head transform's pattern rows on an escape-shaped document, with the reason shown", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.renderTransformList(two, 1, null);
+      ui.renderTransformEditor(two[1], 1, 2);
+      ui.setSurfaceEligibility("eligible", null, "escape");
+
+      expect(patternInputsDisabled()).toEqual([true, true, true, true]);
+      expect(patternNote().classList.contains("hidden")).toBe(false);
+      expect(patternNote().textContent).toMatch(/FIRST active transform/);
+    });
+
+    it("keeps the head transform's rows live on the same document", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.renderTransformList(two, 0, null);
+      ui.renderTransformEditor(two[0], 0, 2);
+      ui.setSurfaceEligibility("eligible", null, "bulb");
+
+      expect(patternInputsDisabled()).toEqual([false, false, false, false]);
+      expect(patternNote().classList.contains("hidden")).toBe(true);
+    });
+
+    it("re-enables the rows when the document routes back to an IFS surface, and applies to a later-built editor", () => {
+      const ui = new Ui(document);
+      ui.bind(noopHandlers());
+      ui.renderTransformList(two, 1, null);
+      ui.setSurfaceEligibility("eligible", null, "escape");
+      // Built AFTER the gate pushed its kind: the disclosure applies at
+      // build, not only on the next refresh.
+      ui.renderTransformEditor(two[1], 1, 2);
+      expect(patternFamilySelect().disabled).toBe(true);
+
+      ui.setSurfaceEligibility("eligible", null, "ifs");
+      expect(patternInputsDisabled()).toEqual([false, false, false, false]);
+      expect(patternNote().classList.contains("hidden")).toBe(true);
+
+      // An ineligible document routes nowhere, and a refusal is not a
+      // reason to grey the rows — the gate's own note carries that.
+      ui.setSurfaceEligibility("ineligible", "not marchable", null);
+      expect(patternFamilySelect().disabled).toBe(false);
+    });
+  });
+});
+
+// The material starting points (Wood/Marble/Strata): a second select in the
+// Finish group that sets the finish AND the pattern family together — the
+// document stores only the numbers, never the name, and the two concepts
+// (material preset, pattern family) stay deliberately distinct.
+describe("Ui material starting points", () => {
+  const plain: Transform = {
+    id: 0,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [0.5, 0.5, 0.5],
+  };
+
+  function materialSelect(): HTMLSelectElement {
+    const select = document.querySelector<HTMLSelectElement>(
+      "#transformEditor .finish-material",
+    );
+    if (!select) throw new Error("No finish-material select");
+    return select;
+  }
+
+  function patternFamilySelect(): HTMLSelectElement {
+    const select = document.querySelector<HTMLSelectElement>(
+      "#transformEditor .pattern-family",
+    );
+    if (!select) throw new Error("No pattern-family select");
+    return select;
+  }
+
+  function lastGeometry(handlers: UiHandlers) {
+    const calls = vi.mocked(handlers.onTransformGeometry).mock.calls;
+    return calls[calls.length - 1][1];
+  }
+
+  function pickMaterial(id: string): void {
+    const select = materialSelect();
+    select.value = id;
+    select.dispatchEvent(new Event("change"));
+  }
+
+  function pickFamily(id: string): void {
+    const select = patternFamilySelect();
+    select.value = id;
+    select.dispatchEvent(new Event("change"));
+  }
+
+  function drag(label: string, value: string): void {
+    const slider = editorSlider(label);
+    slider.value = value;
+    slider.dispatchEvent(new Event("input"));
+  }
+
+  it("reads None for the all-clear state and Custom whenever either side deviates", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(plain, 0, 1);
+    expect(materialSelect().value).toBe("none");
+
+    // A finish alone is nobody's material.
+    ui.renderTransformEditor({ ...plain, finish: { specular: 0.9 } }, 0, 1);
+    expect(materialSelect().value).toBe("custom");
+
+    // A pattern alone is nobody's material either (the strata preset pairs
+    // the family with a matte finish, and this finish is classic).
+    ui.renderTransformEditor(
+      { ...plain, surfacePattern: { kind: "strata", axis: "y" } },
+      0,
+      1,
+    );
+    expect(materialSelect().value).toBe("custom");
+  });
+
+  it("picking Wood sets the documented finish and pattern, storing values only", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(plain, 0, 1);
+
+    pickMaterial("wood");
+
+    // Wood = the Satin finish (the three fields that differ from classic)
+    // + the wood pattern at its own defaults (so only kind and axis are
+    // stored). One emit for the whole pick.
+    const geometry = lastGeometry(handlers);
+    expect(geometry.finish).toEqual({
+      specular: 0.25,
+      shininess: 8,
+      reflect: 0.08,
+    });
+    expect(geometry.surfacePattern).toEqual({ kind: "wood", axis: "y" });
+    expect(materialSelect().value).toBe("wood");
+    // The finish half reads as its own bundle, and the pattern half as its
+    // family.
+    expect(
+      document.querySelector<HTMLSelectElement>(
+        "#transformEditor .finish-bundle",
+      )?.value,
+    ).toBe("satin");
+    expect(patternFamilySelect().value).toBe("wood");
+    expect(editorReadout("Pattern scale").textContent).toBe("3.00");
+    expect(vi.mocked(handlers.onTransformGeometry)).toHaveBeenCalledTimes(1);
+  });
+
+  it("replaces a custom finish and pattern wholesale when a material is picked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        ...plain,
+        finish: { transmit: 0.9, metalness: 0.2 },
+        surfacePattern: { kind: "marble", axis: "z", scale: 7, strength: 0.4 },
+      },
+      0,
+      1,
+    );
+
+    pickMaterial("strata");
+
+    // Strata = the Matte finish (specular 0 is its only non-classic field)
+    // + the strata pattern at its defaults: the stray marble axis, scale
+    // and strength go, not merely the fields the preset happens to differ
+    // on.
+    const geometry = lastGeometry(handlers);
+    expect(geometry.finish).toEqual({ specular: 0 });
+    expect(geometry.surfacePattern).toEqual({ kind: "strata", axis: "y" });
+    expect(materialSelect().value).toBe("strata");
+  });
+
+  it("None clears both the finish and the surfacePattern, emitting both removals explicitly", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(
+      {
+        ...plain,
+        finish: { specular: 0.9 },
+        surfacePattern: { kind: "wood", axis: "y" },
+      },
+      0,
+      1,
+    );
+
+    pickMaterial("none");
+
+    const geometry = lastGeometry(handlers);
+    expect(geometry).toHaveProperty("finish");
+    expect(geometry.finish).toBeUndefined();
+    expect(geometry).toHaveProperty("surfacePattern");
+    expect(geometry.surfacePattern).toBeUndefined();
+    expect(materialSelect().value).toBe("none");
+    expect(
+      document.querySelector<HTMLSelectElement>(
+        "#transformEditor .finish-bundle",
+      )?.value,
+    ).toBe("classic");
+    expect(patternFamilySelect().value).toBe("none");
+  });
+
+  it("reads Custom when a material's constants change on either side, and the preset again when restored", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderTransformEditor(plain, 0, 1);
+    pickMaterial("wood");
+    expect(materialSelect().value).toBe("wood");
+
+    // Tune the pattern scale off wood's default 3: nobody's preset now.
+    drag("Pattern scale", "50");
+    expect(materialSelect().value).toBe("custom");
+    expect(patternFamilySelect().value).toBe("wood");
+
+    // Back to the default 3 (position 41 IS the wood default): wood again.
+    drag("Pattern scale", "41");
+    expect(materialSelect().value).toBe("wood");
+
+    // Tune the finish half instead: custom again.
+    drag("Finish specular", "0.7");
+    expect(materialSelect().value).toBe("custom");
+    drag("Finish specular", "0.25");
+    expect(materialSelect().value).toBe("wood");
+  });
+
+  it("keeps a pattern family distinct from the material preset", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(plain, 0, 1);
+    pickMaterial("wood");
+
+    // Swap the family under a wood material: the material menu reads
+    // Custom (marble pattern + satin finish is nobody's preset) while the
+    // family menu names Marble and the finish half keeps reading Satin —
+    // a preset may pair any family with any finish.
+    pickFamily("marble");
+    expect(materialSelect().value).toBe("custom");
+    expect(patternFamilySelect().value).toBe("marble");
+    expect(
+      document.querySelector<HTMLSelectElement>(
+        "#transformEditor .finish-bundle",
+      )?.value,
+    ).toBe("satin");
+  });
+
+  it("keeps the finish bundles working alongside the material menu", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderTransformEditor(plain, 0, 1);
+    pickMaterial("wood");
+
+    // Picking a bundle only touches the finish half: the pattern survives,
+    // and the material menu reads Custom (chrome + wood pattern is
+    // nobody's preset).
+    const bundle = document.querySelector<HTMLSelectElement>(
+      "#transformEditor .finish-bundle",
+    );
+    bundle!.value = "chrome";
+    bundle!.dispatchEvent(new Event("change"));
+    expect(materialSelect().value).toBe("custom");
+    expect(patternFamilySelect().value).toBe("wood");
   });
 });
 
