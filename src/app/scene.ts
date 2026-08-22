@@ -107,7 +107,11 @@ import { BULB_ITERATIONS } from "../fractal/bulb-de";
 import type { SurfaceDE } from "../fractal/surface-de";
 import { surfaceDescentCostWeight } from "../fractal/surface-de";
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
-import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
+import {
+  surfaceMaterialsNeedAo,
+  surfaceMaterialsNeedShadow,
+  type SurfaceMaterialSlots,
+} from "../fractal/surface-material-wire";
 import { balloonClearsGridBox } from "../fractal/surface-grid";
 import type { SurfaceGrid } from "../fractal/surface-grid";
 import { SURFACE_COLOR_SOURCES } from "./state";
@@ -4250,10 +4254,20 @@ export class FractalScene {
       marchSteps: preview
         ? SURFACE_PREVIEW_MARCH_STEPS
         : SURFACE_FULL_MARCH_STEPS,
-      shadowSteps: preview
-        ? SURFACE_PREVIEW_SHADOW_STEPS
-        : SURFACE_FULL_SHADOW_STEPS,
-      aoTaps: preview ? SURFACE_PREVIEW_AO_TAPS : SURFACE_FULL_AO_TAPS,
+      shadowSteps:
+        this.surfaceComputeGroundPlane ||
+        surfaceMaterialsNeedShadow(params.ambient, this.surfaceMaterials)
+          ? preview
+            ? SURFACE_PREVIEW_SHADOW_STEPS
+            : SURFACE_FULL_SHADOW_STEPS
+          : 0,
+      aoTaps:
+        this.surfaceComputeGroundPlane ||
+        surfaceMaterialsNeedAo(params.ambient, this.surfaceMaterials)
+          ? preview
+            ? SURFACE_PREVIEW_AO_TAPS
+            : SURFACE_FULL_AO_TAPS
+          : 0,
       hitFloor: preview ? SURFACE_PREVIEW_HIT_FLOOR : SURFACE_FULL_HIT_FLOOR,
       lightDir: [light.x, light.y, light.z],
       ambient: params.ambient,
@@ -5742,10 +5756,26 @@ export class FractalScene {
     u.uMarchSteps.value = preview
       ? SURFACE_PREVIEW_MARCH_STEPS
       : SURFACE_FULL_MARCH_STEPS;
-    u.uShadowSteps.value = preview
-      ? SURFACE_PREVIEW_SHADOW_STEPS
-      : SURFACE_FULL_SHADOW_STEPS;
-    u.uAoTaps.value = preview ? SURFACE_PREVIEW_AO_TAPS : SURFACE_FULL_AO_TAPS;
+    u.uShadowSteps.value =
+      this.surfaceGroundPlaneOn ||
+      surfaceMaterialsNeedShadow(
+        this.surfaceComputeParams?.ambient ?? 0,
+        this.surfaceMaterials,
+      )
+        ? preview
+          ? SURFACE_PREVIEW_SHADOW_STEPS
+          : SURFACE_FULL_SHADOW_STEPS
+        : 0;
+    u.uAoTaps.value =
+      this.surfaceGroundPlaneOn ||
+      surfaceMaterialsNeedAo(
+        this.surfaceComputeParams?.ambient ?? 0,
+        this.surfaceMaterials,
+      )
+        ? preview
+          ? SURFACE_PREVIEW_AO_TAPS
+          : SURFACE_FULL_AO_TAPS
+        : 0;
     u.uHitFloor.value = preview
       ? SURFACE_PREVIEW_HIT_FLOOR
       : SURFACE_FULL_HIT_FLOOR;

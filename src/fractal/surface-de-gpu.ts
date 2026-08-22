@@ -5377,7 +5377,10 @@ ${shadeGate}
     norm += wgt;
     wgt *= 0.6;
   }
-  let ao = clamp(1.0 - 0.85 * occ / norm, 0.0, 1.0);
+  var ao = 1.0;
+  if (norm > 0.0) {
+    ao = clamp(1.0 - 0.85 * occ / norm, 0.0, 1.0);
+  }
 ${shadeLighting}
   // Depth fog toward the backdrop: squared-exponential in the distance
   // traveled inside the bounding sphere. params.fogDensity scales the

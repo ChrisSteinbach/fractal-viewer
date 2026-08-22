@@ -284,6 +284,19 @@ function validateCaptureProbe(probe, expectedEngine, release) {
       `settled ray census does not partition its ${census.rays} rays`,
     );
   }
+  if (
+    !Array.isArray(census.exhaustedIndices) ||
+    census.exhaustedIndices.length !== census.exhausted ||
+    census.exhaustedIndices.some(
+      (index) =>
+        !Number.isSafeInteger(index) || index < 0 || index >= census.rays,
+    ) ||
+    new Set(census.exhaustedIndices).size !== census.exhaustedIndices.length
+  ) {
+    throw new SurfaceBrowserCheckingError(
+      "settled ray census has malformed exhausted-ray locations",
+    );
+  }
   return { backend, census };
 }
 

@@ -3410,7 +3410,9 @@ ${foldValueFormGlsl(shadeDeWidth)}
       norm += wgt;
       wgt *= 0.6;
     }
-    float ao = clamp(1.0 - 0.85 * occ / norm, 0.0, 1.0);
+    float ao = norm > 0.0
+      ? clamp(1.0 - 0.85 * occ / norm, 0.0, 1.0)
+      : 1.0;
 
 #if SURFACE_FINISH
     // The hit's depth-0 map picks its AUTHORED finish — surface-finish.ts's

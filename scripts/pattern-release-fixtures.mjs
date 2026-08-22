@@ -525,35 +525,45 @@ const AFFINE3_CANDIDATE_HASH = deriveSceneHash(
 );
 
 // Candidate B: the audited Sierpinski tetrahedron with one pure spherefold on
-// each base map. minRadius/fixedRadius 0.95/1 keeps every folded map contractive
-// (0.5 * 1/0.95^2 ~= 0.554) while exercising a genuinely nonlinear BASE-fold
-// route with 3 inverse branches per map instead of boxfold's 27. The former
-// audited KIFS subsets were measured and refused: four maps missed the 5-minute
-// settle bound, while two maps made the 64x fallback an impractical all-hit
-// frame. Positions and fold radii share the same similarity scale. The camera
-// targets a seeded view-facing attractor extremum, keeping the deep view outside
-// the surface instead of in a bounds-centre void.
-const FOLD3_SCALE = 16.7152;
+// every base map. minRadius/fixedRadius 0.985/1 and affine scale 0.45 keep each
+// folded map contractive (0.45 / 0.985^2 ~= 0.464) while exercising a
+// genuinely nonlinear BASE-fold route with 3 inverse branches per map instead
+// of boxfold's 27. The 0.5-scale source topology was measured and refused
+// because its deep fragment descent missed the settle bound. This lower-depth
+// form targets a measured populated shell extremum and clears release coverage
+// at both endpoints. Its pure-metal/specular-zero finish keeps the pattern in
+// reflected albedo while making secondary shadow/AO traces mathematically
+// irrelevant; surface-material-wire.ts owns that exact gate.
+const FOLD3_POSITION_SCALE = 18.3174;
+const FOLD3_FIXED_RADIUS = 18.3174;
+const FOLD3_MIN_RADIUS_RATIO = 0.985;
+const FOLD3_TRACE_NEUTRAL_FINISH = deepFreeze({
+  specular: 0,
+  metalness: 1,
+  reflect: 1,
+  reflectionTint: 1,
+});
 const FOLD3_PINNED_CAMERA = deepFreeze({
-  target: [9.5995, 14.704, 1.0181],
+  target: [-12.4858, -13.322, 21.6436],
   radius: 96,
-  theta: 0.7854,
-  phi: 1.056,
+  theta: 2.6,
+  phi: 2.03,
 });
 const FOLD3_CANDIDATE_HASH = deriveSceneHash(
   AUDITED_SOURCE_HASHES.affine3,
   (document) => {
-    const factor = FOLD3_SCALE;
     for (const transform of document.transforms) {
-      transform.position = scaleVec3(transform.position, factor);
+      transform.position = scaleVec3(transform.position, FOLD3_POSITION_SCALE);
+      transform.scale = [0.45, 0.45, 0.45];
       transform.variations = [
         {
           type: "spherefold",
           weight: 1,
-          minRadius: round4(0.95 * factor),
-          fixedRadius: round4(factor),
+          minRadius: round4(FOLD3_MIN_RADIUS_RATIO * FOLD3_FIXED_RADIUS),
+          fixedRadius: FOLD3_FIXED_RADIUS,
         },
       ];
+      transform.finish = { ...FOLD3_TRACE_NEUTRAL_FINISH };
     }
     document.camera = {
       ...FOLD3_PINNED_CAMERA,
@@ -586,7 +596,7 @@ const AFFINE4_CANDIDATE_HASH = deriveSceneHash(
     }
     document.transforms = expanded;
     document.camera = {
-      target: [24, -8.256, 0],
+      target: [24.0011, -8.256, -0.0011],
       radius: 96,
       theta: 0.7854,
       phi: 1.056,
@@ -943,24 +953,24 @@ export function runFixtureSelfCheck() {
   const fold3Candidate = decodeSceneHash(
     HERO_CALIBRATION_CANDIDATES.fold3.baseHash,
   );
-  const fold3Factor = FOLD3_SCALE;
   assert.equal(fold3Candidate.finalTransform, undefined);
   for (const [index, transform] of fold3Candidate.transforms.entries()) {
     const source = fold3Source.transforms[index];
     assert.deepEqual(transform.rotation, source.rotation);
-    assert.deepEqual(transform.scale, source.scale);
+    assert.deepEqual(transform.scale, [0.45, 0.45, 0.45]);
     assert.deepEqual(
       transform.position,
-      scaleVec3(source.position, fold3Factor),
+      scaleVec3(source.position, FOLD3_POSITION_SCALE),
     );
     assert.deepEqual(transform.variations, [
       {
         type: "spherefold",
         weight: 1,
-        minRadius: round4(0.95 * fold3Factor),
-        fixedRadius: round4(fold3Factor),
+        minRadius: round4(FOLD3_MIN_RADIUS_RATIO * FOLD3_FIXED_RADIUS),
+        fixedRadius: FOLD3_FIXED_RADIUS,
       },
     ]);
+    assert.deepEqual(transform.finish, FOLD3_TRACE_NEUTRAL_FINISH);
   }
   assert.deepEqual(fold3Candidate.camera.target, FOLD3_PINNED_CAMERA.target);
 
@@ -978,7 +988,7 @@ export function runFixtureSelfCheck() {
     });
   }
   assert.deepEqual(affine4Candidate.camera, {
-    target: [24, -8.256, 0],
+    target: [24.0011, -8.256, -0.0011],
     radius: 96,
     theta: 0.7854,
     phi: 1.056,
