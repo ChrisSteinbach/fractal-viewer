@@ -25,7 +25,7 @@ export const PATTERN_FAMILIES = Object.freeze([
 export const ZOOM_FACTORS = Object.freeze([1, 4, 16, 64]);
 export const HERO_SLICE_CENTERS = Object.freeze([0, 0.3]);
 export const EXPECTED_HERO_CELL_COUNT = 128;
-export const EXPECTED_CALIBRATION_PREFLIGHT_CELL_COUNT = 16;
+export const EXPECTED_CALIBRATION_PREFLIGHT_CELL_COUNT = 32;
 
 const PATTERN_SCALE = Object.freeze({ wood: 3, marble: 1.35, strata: 2.6 });
 const PATTERN_AXES = Object.freeze(["y", "z", "x"]);
@@ -508,6 +508,8 @@ function clearMeasurementDecorations(document) {
 // Candidate A: a true homothety of the audited Sierpinski pin. Map scales and
 // rotations stay bit-identical; only xyz translations, camera target, and the
 // camera radius move into a range where 64x remains above OrbitCamera's floor.
+// The elevated persisted view avoids the measured 16x grazing-ray cliff while
+// retaining ample object coverage across the complete zoom ladder.
 const AFFINE3_CANDIDATE_HASH = deriveSceneHash(
   AUDITED_SOURCE_HASHES.affine3,
   (document) => {
@@ -519,6 +521,7 @@ const AFFINE3_CANDIDATE_HASH = deriveSceneHash(
       ...document.camera,
       target: scaleVec3(document.camera.target, factor),
       radius: 96,
+      phi: 1.4,
     };
     clearMeasurementDecorations(document);
   },
@@ -628,7 +631,7 @@ export const HERO_CALIBRATION_CANDIDATES = deepFreeze({
     baseHash: AFFINE3_CANDIDATE_HASH,
     sliceCenters: [null],
     provenance:
-      "audited Sierpinski3 pin, xyz-map and camera-target homothety to persisted radius 96",
+      "audited Sierpinski3 pin, xyz-map and camera-target homothety to persisted radius 96, with an all-zoom calibrated camera elevation",
   },
   fold3: {
     id: "fold3-spherefold-tetrahedron",
@@ -723,9 +726,11 @@ function assertCalibrationPreflightCell(cell) {
 
 /**
  * Bounded browser-census schedule for candidate calibration only: pattern-none
- * at 1x and 64x, on both legal engines, and both affine4 slices. Results from
- * these cells decide whether a candidate may later be minted as ready; merely
- * building them conveys no coverage or exhaustion evidence.
+ * at every release zoom, on both legal engines, and both affine4 slices.
+ * Exhaustion is not monotonic as the camera travels through a self-similar
+ * object, so endpoint-only evidence cannot mint a ready calibration. Results
+ * from these cells decide whether a candidate may later be minted as ready;
+ * merely building them conveys no coverage or exhaustion evidence.
  */
 export function buildHeroCalibrationPreflight() {
   const cells = [];
@@ -733,7 +738,7 @@ export function buildHeroCalibrationPreflight() {
     const base = decodeSceneHash(candidate.baseHash);
     for (const sliceCenter of candidate.sliceCenters) {
       for (const engine of ENGINE_ROUTES[candidate.routeId].legalEngines) {
-        for (const zoom of [1, 64]) {
+        for (const zoom of ZOOM_FACTORS) {
           let documentHash = withGroundPlaneDisabled(candidate.baseHash);
           documentHash = withCameraPose(documentHash, {
             ...base.camera,
@@ -948,6 +953,8 @@ export function runFixtureSelfCheck() {
     affine3Candidate.camera.target,
     scaleVec3(affine3Source.camera.target, affine3Factor),
   );
+  assert.equal(affine3Candidate.camera.theta, affine3Source.camera.theta);
+  assert.equal(affine3Candidate.camera.phi, 1.4);
 
   const fold3Source = decodeSceneHash(AUDITED_SOURCE_HASHES.affine3);
   const fold3Candidate = decodeSceneHash(
@@ -1004,11 +1011,14 @@ export function runFixtureSelfCheck() {
 
   const preflight = buildHeroCalibrationPreflight();
   assert.equal(preflight.length, EXPECTED_CALIBRATION_PREFLIGHT_CELL_COUNT);
-  assert.equal(preflight.filter((cell) => cell.heroId === "affine3").length, 4);
-  assert.equal(preflight.filter((cell) => cell.heroId === "fold3").length, 4);
-  assert.equal(preflight.filter((cell) => cell.heroId === "affine4").length, 8);
+  assert.equal(preflight.filter((cell) => cell.heroId === "affine3").length, 8);
+  assert.equal(preflight.filter((cell) => cell.heroId === "fold3").length, 8);
+  assert.equal(
+    preflight.filter((cell) => cell.heroId === "affine4").length,
+    16,
+  );
   assert(preflight.every((cell) => cell.status === "candidate"));
-  assert(preflight.every((cell) => [1, 64].includes(cell.zoom)));
+  assert(preflight.every((cell) => ZOOM_FACTORS.includes(cell.zoom)));
 
   const plan = buildHeroMatrixPlan();
   assert.equal(plan.length, EXPECTED_HERO_CELL_COUNT);

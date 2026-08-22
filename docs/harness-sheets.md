@@ -381,12 +381,15 @@ Run candidate camera/pose calibration first:
 npm run verify:pattern-release -- --phase=preflight --mode=x11::0
 ```
 
-The 16-cell preflight covers 1× and 64× on both engines, including both 4D
-slices. It emits `calibrations.json` only when every cell has at least 5%
-object coverage, at least 10,000 eroded interior pixels, and zero exhausted
-rays. During calibration, `--only-hero=affine3|fold3|affine4` runs a bounded
-single-hero diagnostic but deliberately cannot emit calibrations. The full
-machine run consumes the complete preflight's exact, git-SHA-bound file:
+The 32-cell preflight covers 1×, 4×, 16×, and 64× on both engines, including
+both 4D slices. Every rung is required because exhaustion is not monotonic as
+the camera travels through a self-similar object; endpoint-only evidence once
+missed a real 16× grazing-ray cliff. It emits `calibrations.json` only when
+every cell has at least 5% object coverage, at least 10,000 eroded interior
+pixels, and zero exhausted rays. During calibration,
+`--only-hero=affine3|fold3|affine4` runs a bounded single-hero diagnostic but
+deliberately cannot emit calibrations. The full machine run consumes the
+complete preflight's exact, git-SHA-bound file:
 
 ```bash
 npm run verify:pattern-release -- \
