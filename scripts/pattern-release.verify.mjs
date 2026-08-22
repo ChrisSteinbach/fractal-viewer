@@ -3,7 +3,7 @@
  * Production-browser release evidence for patterned Surface materials.
  *
  * `--phase=preflight` measures the deliberately untrusted hero calibration
- * candidates and emits a ready-calibration file only when every 1x/64x,
+ * candidates and emits a ready-calibration file only when every release zoom,
  * compute/WebGL, and 4D-slice cell has enough real object interior and zero
  * exhausted rays. `--phase=machine` consumes that file, renders the complete
  * 128-cell hero matrix plus compatibility routes, evaluates effect maps and
