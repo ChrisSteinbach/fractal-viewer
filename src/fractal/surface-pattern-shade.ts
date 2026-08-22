@@ -386,7 +386,7 @@ ${sig(
       ${v3("late", `${V3}(0.3, 0.22, 0.16)`)}
       ${f("amount", "smoothstep(0.04, 0.92, ramp)")}
       ${v3("factor", "mix(early, late, amount)")}
-      return clamp(base * factor, 0.0, 1.0);
+      return clamp(base * factor, ${V3}(0.0), ${V3}(1.0));
     }
     if (kindId == 2) {
       ${v3("halo", `${V3}(0.8, 0.78, 0.76)`)}
@@ -394,14 +394,14 @@ ${sig(
       ${f("haloAmount", "smoothstep(0.02, 0.58, ramp)")}
       ${f("coreAmount", "smoothstep(0.58, 1.0, ramp)")}
       ${v3("factor", `mix(mix(${V3}(1.0), halo, haloAmount), core, coreAmount)`)}
-      return clamp(base * factor, 0.0, 1.0);
+      return clamp(base * factor, ${V3}(0.0), ${V3}(1.0));
     }
     ${v3("bed", `${V3}(0.58, 0.62, 0.68)`)}
     ${v3("seam", `${V3}(0.38, 0.24, 0.16)`)}
     ${f("bedAmount", "smoothstep(0.02, 0.72, ramp)")}
     ${f("seamAmount", "smoothstep(0.74, 1.0, ramp)")}
     ${v3("factor", `mix(mix(${V3}(1.0), bed, bedAmount), seam, seamAmount)`)}
-    return clamp(base * factor, 0.0, 1.0);
+    return clamp(base * factor, ${V3}(0.0), ${V3}(1.0));
   }
 
 ${sig(
@@ -424,12 +424,12 @@ ${sig(
     ${f("strength", `strengthQ / ${SURFACE_PATTERN_WIRE_STRENGTH_STEPS}.0`)}
     ${f("scale", "fb.w")}
     ${v3("pm", "patternPermutePoint(axisId, objectP)")}
-    ${f("macro", "patternMacroRamp(kindId, scale, objectP, pm)")}
+    ${f("macroRamp", "patternMacroRamp(kindId, scale, objectP, pm)")}
     ${b("nativeEnabled", "calibration.w != 0.0")}
     ${f("nativeValue", "clamp((sheets - calibration.z) * calibration.w, 0.0, 1.0)")}
     ${f("detail", "patternScaleStableDetailRamp(kindId, scale, objectP, pm, nativeValue, nativeEnabled, pixelFootprint)")}
     ${f("gate", sel("patternDetailGate(pixelFootprint)", "0.0", "nativeEnabled"))}
-    ${f("outputRamp", "mix(macro, detail, gate)")}
+    ${f("outputRamp", "mix(macroRamp, detail, gate)")}
     ${v3("full", "patternAlbedo(base, kindId, outputRamp)")}
     return mix(base, full, clamp(strength, 0.0, 1.0));
   }
@@ -497,7 +497,7 @@ export function patternShadeTs(
   const scale = f(fb[3]);
 
   const pm = patternPermuteTs(axisId, objectP);
-  const macro = f(patternMacroRampTs(kindId, scale, objectP, pm));
+  const macroRamp = f(patternMacroRampTs(kindId, scale, objectP, pm));
   const nativeEnabled = calibration[3] !== 0;
   const nativeValue = f(clamp01(f((sheets - calibration[2]) * calibration[3])));
   const detail = patternScaleStableDetailRampTs(
@@ -510,7 +510,7 @@ export function patternShadeTs(
     pixelFootprint,
   );
   const gate = nativeEnabled ? patternDetailGateTs(pixelFootprint) : 0;
-  const outputRamp = f(mixF(macro, detail, gate));
+  const outputRamp = f(mixF(macroRamp, detail, gate));
   const full = patternAlbedoTs(base, kindId, outputRamp);
   const strengthC = clamp01(strength);
   // Strength 0 is an exact albedo identity in f32 too: GLSL mix(a, b, 0.0)

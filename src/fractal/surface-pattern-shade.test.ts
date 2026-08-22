@@ -395,8 +395,11 @@ describe("patternShadeTs vs the accepted V3 oracle", () => {
       // copy of the parameter instead of the parameter itself — value
       // identical in f32 (a copy is exact), and the form the WGSL dialect
       // needs (WGSL parameters are immutable) and the TS mirror already
-      // used. No other byte changed.
-      "c678e0a6c406358214a55de7986185b5339f527ffdbb81f8e81f78491790fd86",
+      // used — patternShade's macro local is named macroRamp because
+      // WGSL reserves the identifier `macro`, and patternAlbedo's clamp
+      // bounds are spelled vec3 so the same text is valid WGSL (clamp
+      // takes matching types there). No other byte changed.
+      "27d9297042467ecd957e4211621360378ad27cbe8176a077717ed1601554dcf8",
     );
   });
 
