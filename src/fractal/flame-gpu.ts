@@ -13,8 +13,10 @@
  * (`src/app/gpu-bench/`, the accumulation spike's equal-N methodology)
  * against `accumulateFlame`, this kernel's line-for-line CPU reference.
  *
- * The kernel is that spike's kernel, productionized. Parity with
- * `accumulateFlame` (see that function and `chaos-game.ts`'s `stepOrbit`):
+ * The kernel is that spike's kernel, productionized. For the blend-less
+ * systems that can reach a render worker (see {@link packGpuSystem}'s weight
+ * note), parity with `accumulateFlame` (see that function and
+ * `chaos-game.ts`'s `stepOrbit`):
  * same uniform/weighted transform pick (lower-bound binary search over
  * cumulative weights), same affine → blended-variations → symmetry
  * post-rotation step, same escape-reseed limit (written NaN-robustly for
@@ -841,7 +843,7 @@ export interface PackedGpuSystem {
  * Throws `RangeError` if `transforms.length` exceeds `MAX_TRANSFORMS` — same
  * check and message shape as `prepareChaosGame`.
  *
- * **Expansion** mirrors `prepareChaosGame` exactly: `order =
+ * **Geometric expansion** mirrors `prepareChaosGame` exactly: `order =
  * effectiveSymmetryOrder(symmetry.order, baseTransformCount)`, then slot `k *
  * baseTransformCount + i` (copy-major: every copy's base maps together, copy
  * 0 first) holds base map `i`'s affine and its OWN variation list (each copy
@@ -854,10 +856,11 @@ export interface PackedGpuSystem {
  *
  * **Weights**: slot `s`'s weight is `transforms[s % baseTransformCount]
  * .weight ?? 1` (every copy of a base map shares its weight), `cumWeight` is
- * the running sum, and `weighted` is true under the exact same condition
- * `prepareChaosGame` uses (`some weight !== 1 && totalWeight > 0 &&
- * Number.isFinite(totalWeight)`) — so the kernel's weighted/uniform pick
- * branch agrees with the CPU's bit for bit.
+ * the running sum, and `weighted` uses the same
+ * `some(weight !== 1) && totalWeight > 0 && Number.isFinite(totalWeight)`
+ * test as `prepareChaosGame`. The one deliberate divergence is documented
+ * beside the table below: this packer does not apply `symmetry.blend` to
+ * rotated copies.
  *
  * **Color slots**: every slot also carries the flam3 pair the
  * kernel's structural walk blends with — `colorIndex` (the transform's own, or
@@ -903,8 +906,17 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
   const slotU32 = new Uint32Array(slots);
 
   // Selection weights over the EXPANDED slots (never the final slot, which
-  // pickIndex never draws) — same rule as prepareChaosGame: each slot
-  // inherits its base map's weight, defaulting to 1.
+  // pickIndex never draws): every slot inherits its base map's weight,
+  // defaulting to 1. This deliberately differs from prepareChaosGame only
+  // when symmetry.blend is present: the CPU clamps that field to [0, 1] and
+  // scales every ROTATED copy, while this table leaves all copies at full
+  // weight. `blend` exists only on intermediate morph samples, which render
+  // as points, and the flame-worker command carries no such field. A manual
+  // flame switch snaps that display tween and immediately packs the document,
+  // which was already replaced with the blend-less endpoint; a saved
+  // flame-mode hint enters only when the terminal cloud request lands. Thus
+  // every system on the shipped GPU-flame path has blend's default 1, where
+  // the two tables agree exactly.
   const weights = new Array<number>(transformCount);
   for (let s = 0; s < transformCount; s++) {
     weights[s] = transforms[s % baseTransformCount].weight ?? 1;
