@@ -19,6 +19,9 @@
  * The returned host image is always opaque; sidecar coverage must never
  * become canvas alpha.
  *
+ * The exact/approximate boundary and the rejected retained re-shading
+ * alternatives are recorded in `docs/surface-background-layer.md`.
+ *
  * Pure: no Three.js, DOM, or app-layer imports.
  */
 import {

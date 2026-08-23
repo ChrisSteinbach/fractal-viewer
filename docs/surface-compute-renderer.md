@@ -5,6 +5,10 @@ This is the full record behind CLAUDE.md's `surface-compute.ts` bullet
 routing table and the rules; this document keeps every measured number,
 every measurement narrative, and every refuted premise behind it.
 
+The separately retained background sidecar, its nonlinear supersampling
+boundary, and the decision not to retain exact re-shading state are recorded in
+[`surface-background-layer.md`](surface-background-layer.md).
+
 ## Which sessions route here
 
 `surface-compute.ts` is the WebGPU compute renderer for fold-shaped 3D
