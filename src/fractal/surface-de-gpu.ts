@@ -4776,11 +4776,10 @@ ${balloonHitWrapText}`
   // noslab kernels, every 3D core), which keeps hitW equal to w0 there
   // bit for bit.
   //
-  // Under BALLOON (3D only) both read the winning term's
-  // SOURCE point `hi.colorPos` instead of `pos` — a shell hit reads its
-  // pre-inversion geometry, so the ramps sweep the same range as the
-  // fractal's own instead of clamping at the far wall (the GLSL arm's
-  // cpos routing).
+  // Under BALLOON the 3D sources read the winning term's SOURCE point
+  // `hi.colorPos` instead of `pos`. The 4D radius source likewise pairs
+  // that point with the same source descent's sStar before the rotor lift,
+  // matching the GLSL arm's cpos routing.
   const shadeHeightU = core4
     ? `u = clamp(pos.y / params.visRadius4 * 0.5 + 0.5, 0.0, 1.0);`
     : balloon
@@ -4801,7 +4800,7 @@ ${balloonHitWrapText}`
         0.0, 1.0);`
       : core4
         ? `let hitW = params.w0 + hi.sStar * params.sliceHalfW;
-      let q4c = rotorInvApply4(vec4f(pos, hitW));
+      let q4c = rotorInvApply4(vec4f(${balloon ? "hi.colorPos" : "pos"}, hitW));
       u = clamp(
         (length(q4c - params.radiusCenter4) - params.radiusMinD) *
           params.radiusInvRange,
