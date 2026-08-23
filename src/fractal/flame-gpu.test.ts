@@ -440,8 +440,8 @@ describe("packGpuSystem fold radii", () => {
   });
 });
 
-describe("packGpuSystem parity with prepareChaosGame", () => {
-  it("matches transformCount, baseTransformCount, weighted, totalWeight, and cumWeight lanes", () => {
+describe("packGpuSystem compared with prepareChaosGame", () => {
+  it("matches counts and weight-table fields when symmetry.blend is absent", () => {
     const transforms: Transform[] = [
       {
         id: 0,
@@ -484,6 +484,40 @@ describe("packGpuSystem parity with prepareChaosGame", () => {
     for (let s = 0; s < packed.transformCount; s++) {
       expect(f32[s * F32_PER_SLOT + CUM_WEIGHT]).toBeCloseTo(expectedCum[s], 6);
     }
+  });
+
+  it("deliberately leaves morph-only symmetry.blend out of the packed weight table", () => {
+    const transforms = makeTransforms(1);
+    const symmetry: SymmetryParams = {
+      order: 3,
+      plane: "xy",
+      blend: 0.25,
+    };
+    const prepared = prepareChaosGame(transforms, null, symmetry);
+    const packed = packGpuSystem({
+      transforms,
+      finalTransform: null,
+      symmetry,
+      palette: "legacy",
+    });
+
+    // CPU point-cloud morph samples thin rotated copies; the GPU packer keeps
+    // every copy at the base map's full default weight. Production flame
+    // sessions pack the already-terminal document after a manual tween snap,
+    // or enter from a saved mode hint when the terminal cloud request lands.
+    expect(Array.from(prepared.cumulative)).toEqual([1, 1.25, 1.5]);
+    expect(prepared.totalWeight).toBe(1.5);
+    expect(prepared.weighted).toBe(true);
+
+    const f32 = new Float32Array(packed.slots);
+    expect(
+      Array.from(
+        { length: packed.transformCount },
+        (_, s) => f32[s * F32_PER_SLOT + CUM_WEIGHT],
+      ),
+    ).toEqual([1, 2, 3]);
+    expect(packed.totalWeight).toBe(3);
+    expect(packed.weighted).toBe(false);
   });
 
   it("resolves every slot's color pair to the value prepareChaosGame resolved for that BASE map", () => {

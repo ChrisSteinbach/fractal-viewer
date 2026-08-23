@@ -326,7 +326,7 @@ describe("packGpuSystem4 fold radii", () => {
   });
 });
 
-describe("packGpuSystem4 parity with prepareChaosGame4", () => {
+describe("packGpuSystem4 agreement with prepareChaosGame4 at default blend", () => {
   it("matches transformCount, weighted, totalWeight, and cumWeight lanes", () => {
     const transforms4: Transform4[] = [
       { position: [0.2, 0, 0, 0], scale: [0.5, 0.5, 0.5, 0.5], weight: 2 },
@@ -476,7 +476,7 @@ describe("packGpuSystem4 symmetry expansion", () => {
     expect(u32[packed.transformCount * F32_PER_SLOT4 + HAS_POST]).toBe(0);
   });
 
-  it("matches prepareChaosGame4's expanded counts, weights and cumWeight lanes", () => {
+  it("matches prepareChaosGame4's expanded weight table at default blend", () => {
     const transforms4: Transform4[] = [
       { position: [0.2, 0, 0, 0], scale: [0.5, 0.5, 0.5, 0.5], weight: 2 },
       { position: [-0.2, 0.1, 0, 0], scale: [0.6, 0.5, 0.4, 0.4], weight: 5 },
@@ -499,6 +499,25 @@ describe("packGpuSystem4 symmetry expansion", () => {
         6,
       );
     }
+  });
+
+  it("deliberately ignores the in-flight morph blend that prepareChaosGame4 applies to rotated copies", () => {
+    const transforms4 = makeTransforms4(1);
+    const symmetry: SymmetryParams = { order: 3, plane: "xw", blend: 0.25 };
+    const prepared = prepareChaosGame4(transforms4, null, symmetry);
+    const packed = packGpuSystem4(baseSpec4({ transforms4, symmetry }));
+    const f32 = new Float32Array(packed.slots);
+    const packedCumulative = Array.from(
+      { length: packed.transformCount },
+      (_, s) => f32[s * F32_PER_SLOT4 + CUM_WEIGHT],
+    );
+
+    expect(Array.from(prepared.cumulative)).toEqual([1, 1.25, 1.5]);
+    expect(prepared.weighted).toBe(true);
+    expect(prepared.totalWeight).toBe(1.5);
+    expect(packedCumulative).toEqual([1, 2, 3]);
+    expect(packed.weighted).toBe(false);
+    expect(packed.totalWeight).toBe(3);
   });
 
   it("replicates each BASE map's color pair across every copy of it, so the kernel needs no modulo", () => {

@@ -18,8 +18,10 @@
  * methodology that pins the 3D kernel) against `accumulateFlame4`
  * (`flame-4d.ts`), this kernel's line-for-line CPU reference.
  *
- * Parity with `accumulateFlame4` (see that function and `chaos-game-4d.ts`'s
- * `stepOrbit4`): same uniform/weighted transform pick, same 4x4+t affine →
+ * For the blend-less systems that can reach a render worker (see
+ * {@link packGpuSystem4}'s weight note), parity with `accumulateFlame4` (see
+ * that function and `chaos-game-4d.ts`'s `stepOrbit4`): same
+ * uniform/weighted transform pick, same 4x4+t affine →
  * blended-`variations4` → kaleidoscope post-rotation step (the 4D
  * symmetry expansion `prepareChaosGame4` performs, packed here exactly as
  * `flame-gpu.ts` packs the 3D one: copy-major slots `k · baseTransformCount +
@@ -758,7 +760,7 @@ const FALLBACK_COLOR: readonly [number, number, number] = [1, 1, 1];
  * Throws `RangeError` if `transforms4.length` exceeds `MAX_TRANSFORMS` —
  * same check and message shape as `prepareChaosGame4`.
  *
- * **Expansion** mirrors `prepareChaosGame4` exactly: `order =
+ * **Geometric expansion** mirrors `prepareChaosGame4` exactly: `order =
  * effectiveSymmetryOrder(symmetry.order, baseTransformCount)`, then slot `k *
  * baseTransformCount + i` (copy-major: every copy's base maps together, copy
  * 0 first) holds base map `i`'s affine rows + translation and its OWN
@@ -769,13 +771,18 @@ const FALLBACK_COLOR: readonly [number, number, number] = [1, 1, 1];
  * its own copies by, imported rather than restated. `hasPost` is set only in
  * the latter case.
  *
- * **Weights**: mirror `prepareChaosGame4`'s expanded table — slot `s`'s
- * weight is `transforms4[s % baseTransformCount].weight ?? 1` (every copy of
- * a base map shares its weight), `cumWeight` the running sum, `weighted` true
- * under the identical `some(w !== 1) && total > 0 && finite` condition, so
- * the kernel's weighted/uniform pick branch agrees with the CPU's bit for
- * bit. `symmetry.blend` is deliberately NOT applied, exactly as the 3D packer
- * ignores it: it is a morph artifact that never reaches a render worker.
+ * **Weights**: at the default symmetry blend, this matches
+ * `prepareChaosGame4`'s expanded table — slot `s`'s weight is
+ * `transforms4[s % baseTransformCount].weight ?? 1` (every copy of a base map
+ * shares its weight), `cumWeight` the running sum, and `weighted` true under
+ * the identical `some(w !== 1) && total > 0 && finite` condition.
+ * `prepareChaosGame4` additionally scales rotated copies by
+ * `symmetry.blend` clamped to [0, 1]; this packer deliberately does not. That
+ * field exists only on in-flight morph samples, whose legs render as point
+ * clouds, and the flame-worker command carries no such field. Before a flame
+ * session packs, state is already the endpoint: a manual mode switch snaps
+ * the tween first, while a saved-mode hint enters when the terminal request
+ * lands. Thus no partial blend reaches this packer through the render path.
  *
  * **Color slots**: each slot also carries the flam3 pair the
  * kernel's structural walk blends with — `colorIndex` (the transform's own, or
@@ -819,10 +826,10 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
   const slotU32 = new Uint32Array(slots);
 
   // Selection weights over the EXPANDED slots (never the final slot, which
-  // the pick never draws) — same rule as prepareChaosGame4 (which the CPU
-  // oracle accumulateFlame4 drives through pickIndex4): each slot inherits
-  // its base map's weight, defaulting to 1, and only a genuinely non-uniform
-  // system takes the weighted branch.
+  // the pick never draws): each slot inherits its base map's weight,
+  // defaulting to 1. Unlike prepareChaosGame4, this deliberately does not
+  // scale rotated copies by symmetry.blend; the function doc above records
+  // the render-path boundary that makes that safe.
   const weights = new Array<number>(transformCount);
   for (let s = 0; s < transformCount; s++) {
     weights[s] = transforms4[s % baseTransformCount].weight ?? 1;
