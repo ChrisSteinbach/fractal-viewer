@@ -34,8 +34,13 @@ import type {
   SurfaceComputeTarget,
 } from "./surface-compute";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
-import { SURFACE_GPU_HIT_FLOOR } from "../fractal/surface-de-gpu";
+import {
+  SURFACE_GPU_HIT_FLOOR,
+  surfaceDeKernelWgsl,
+} from "../fractal/surface-de-gpu";
 import { SURFACE_FULL_HIT_FLOOR } from "./surface-material";
+import { surface4FragmentFor } from "./surface-material-4d";
+import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
 
 describe("the two engines' full-tier hit floor (mirror pin)", () => {
   it("is ONE number: surface-de-gpu.ts's SURFACE_GPU_HIT_FLOOR is surface-material.ts's SURFACE_FULL_HIT_FLOOR", () => {
@@ -52,6 +57,166 @@ describe("the two engines' full-tier hit floor (mirror pin)", () => {
     expect(SURFACE_GPU_HIT_FLOOR).toBe(SURFACE_FULL_HIT_FLOOR);
     expect(SURFACE_FULL_HIT_FLOOR).toBe(1.0e-5);
   });
+});
+
+type Vec3 = [number, number, number];
+type Vec4 = [number, number, number, number];
+
+/** Read the position operand from the generated WGSL radius lift. Keeping
+ * this extraction deliberately narrow makes the numeric parity cases below
+ * exercise the generated shader's choice, rather than restating which choice
+ * the test expects. */
+function wgslBalloonRadiusSource(wgsl: string): "pos" | "colorPos" {
+  const matches = [
+    ...wgsl.matchAll(
+      /let q4c = rotorInvApply4\(vec4f\((hi\.colorPos|pos), hitW\)\);/g,
+    ),
+  ];
+  expect(matches).toHaveLength(1);
+  return matches[0][1] === "hi.colorPos" ? "colorPos" : "pos";
+}
+
+/** GLSL twin of {@link wgslBalloonRadiusSource}. The fragment shader names
+ * the balloon hit-info source `cpos`; both spellings map to the same semantic
+ * source below. */
+function glslBalloonRadiusSource(glsl: string): "pos" | "colorPos" {
+  const matches = [
+    ...glsl.matchAll(
+      /vec4 q4 = uInvRotor \* vec4\((cpos|pos), uW0 \+ sStar \* uSliceHalfW\);/g,
+    ),
+  ];
+  expect(matches).toHaveLength(1);
+  return matches[0][1] === "cpos" ? "colorPos" : "pos";
+}
+
+/** Apply the inverse of a row-major SO(4) rotor. Both shader packers upload
+ * this transpose, but spelling the multiply here lets a non-identity rotor
+ * expose a source-coordinate error that the identity case alone could hide. */
+function inverseRotorApply4(rotor: number[], q: Vec4): Vec4 {
+  return [0, 1, 2, 3].map((row) =>
+    q.reduce((sum, value, column) => sum + rotor[column * 4 + row] * value, 0),
+  ) as Vec4;
+}
+
+function shaderRadiusU(
+  source: "pos" | "colorPos",
+  rotor: number[],
+  pos: Vec3,
+  colorPos: Vec3,
+  w0: number,
+  sliceHalfW: number,
+  sStar: number,
+): number {
+  const p = source === "colorPos" ? colorPos : pos;
+  const q = inverseRotorApply4(rotor, [
+    p[0],
+    p[1],
+    p[2],
+    w0 + sStar * sliceHalfW,
+  ]);
+  const center: Vec4 = [0.13, -0.21, 0.34, -0.08];
+  const radius = Math.hypot(
+    q[0] - center[0],
+    q[1] - center[1],
+    q[2] - center[2],
+    q[3] - center[3],
+  );
+  return Math.min(Math.max((radius - 0.17) * 0.73, 0), 1);
+}
+
+describe("the two engines' 4D balloon radius source (mirror pin)", () => {
+  const identityRotor = rotorMatrix(identityRotorPair());
+  const rotatedRotor = rotorMatrix(
+    rotateInPlane(identityRotorPair(), "xw", Math.PI / 5),
+  );
+  const views = [
+    {
+      name: "identity rotor, off-center thick slice",
+      rotor: identityRotor,
+      w0: 0.31,
+      sliceHalfW: 0.19,
+      sStar: -0.65,
+    },
+    {
+      name: "xw rotor, off-center thick slice",
+      rotor: rotatedRotor,
+      w0: -0.27,
+      sliceHalfW: 0.22,
+      sStar: 0.7,
+    },
+  ];
+  const marchedPos: Vec3 = [0.24, -0.18, 0.41];
+  const invertedSource: Vec3 = [1.17, 0.36, -0.72];
+  const glsl = surface4FragmentFor(1, 0);
+
+  it.each(["affine4", "fold4"] as const)(
+    "%s lifts the balloon argmin's inverted source, matching WebGL's cpos contract",
+    (core) => {
+      const wgsl = surfaceDeKernelWgsl({
+        mode: "shade",
+        core,
+        width: 4,
+        workgroupSize: 32,
+        sharedFrontier: false,
+        bnbStage2: false,
+        balloon: true,
+      });
+      expect(wgsl).toContain(
+        "let q4c = rotorInvApply4(vec4f(hi.colorPos, hitW));",
+      );
+      expect(wgsl).not.toContain("let q4c = rotorInvApply4(vec4f(pos, hitW));");
+      expect(wgslBalloonRadiusSource(wgsl)).toBe(glslBalloonRadiusSource(glsl));
+    },
+  );
+
+  it.each(
+    (["affine4", "fold4"] as const).flatMap((core) =>
+      views.map((view) => ({ core, ...view })),
+    ),
+  )(
+    "$core agrees with WebGL for $name at nonzero w0/sliceHalfW/sStar",
+    ({ core, rotor, w0, sliceHalfW, sStar }) => {
+      const wgsl = surfaceDeKernelWgsl({
+        mode: "shade",
+        core,
+        width: 4,
+        workgroupSize: 32,
+        sharedFrontier: false,
+        bnbStage2: false,
+        balloon: true,
+      });
+      const compute = shaderRadiusU(
+        wgslBalloonRadiusSource(wgsl),
+        rotor,
+        marchedPos,
+        invertedSource,
+        w0,
+        sliceHalfW,
+        sStar,
+      );
+      const webgl = shaderRadiusU(
+        glslBalloonRadiusSource(glsl),
+        rotor,
+        marchedPos,
+        invertedSource,
+        w0,
+        sliceHalfW,
+        sStar,
+      );
+      const staleMarchedPositionResult = shaderRadiusU(
+        "pos",
+        rotor,
+        marchedPos,
+        invertedSource,
+        w0,
+        sliceHalfW,
+        sStar,
+      );
+
+      expect(compute).toBeCloseTo(webgl, 12);
+      expect(Math.abs(webgl - staleMarchedPositionResult)).toBeGreaterThan(0.1);
+    },
+  );
 });
 
 describe("buildSurfaceComputeBackground", () => {
