@@ -498,13 +498,15 @@ body {
    all of it stacked above whatever you actually opened. The collapsed ones
    pack into chip rows instead; the open one takes a row to itself.
 
-   Three strips rather than one, because the sections are not siblings: the
-   mode wrappers (#explorerControls and the flame/solid/surface trio) own the
-   display:none that gates a render mode's sections, and flattening them into
-   a single strip would mean re-homing that gating onto every section. A strip
-   per existing container leaves it untouched. The cost is that chips cannot
-   pack across a group boundary — about one row — which is well under what a
-   display:contents flattening would have risked.
+   Several strips rather than one, because the sections are not siblings: the
+   mode wrappers (#explorerControls, #explorerSecondaryControls, and the
+   flame/solid/surface trio) own the display:none that gates a render mode's
+   sections. #atmosphereControls deliberately sits between the two Points
+   strips so it can remain live in every mode. Flattening these into one strip
+   would mean re-homing that gating onto every section. A strip per container
+   leaves it explicit. The cost is that chips cannot pack across a group
+   boundary — about one row — which is well under what a display:contents
+   flattening would have risked.
 
    Chips are also a bigger touch target than what they replace: ~34px against
    a bare 12px text line, on the panel this whole change exists to make
@@ -516,8 +518,8 @@ body {
 
   /* Deliberately small, and measured: the stacked headers this replaces got
      their separation from the summaries' own `margin: 20px 0 9px`, which
-     collapsed between adjacent sections. Three strips each paying a generous
-     top margin instead handed 42px back to the overhead the strips exist to
+     collapsed between adjacent sections. Every strip paying a generous top
+     margin instead would hand space back to the overhead the strips exist to
      cut. */
   margin-top: 8px;
 }
