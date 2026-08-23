@@ -89,6 +89,28 @@ function glslBalloonRadiusSource(glsl: string): "pos" | "colorPos" {
   return matches[0][1] === "cpos" ? "colorPos" : "pos";
 }
 
+/** Read the position operand from the generated WGSL height ramp. */
+function wgslBalloonHeightSource(wgsl: string): "pos" | "colorPos" {
+  const matches = [
+    ...wgsl.matchAll(
+      /u = clamp\((hi\.colorPos|pos)\.y \/ params\.visRadius4 \* 0\.5 \+ 0\.5, 0\.0, 1\.0\);/g,
+    ),
+  ];
+  expect(matches).toHaveLength(1);
+  return matches[0][1] === "hi.colorPos" ? "colorPos" : "pos";
+}
+
+/** GLSL twin of {@link wgslBalloonHeightSource}. */
+function glslBalloonHeightSource(glsl: string): "pos" | "colorPos" {
+  const matches = [
+    ...glsl.matchAll(
+      /u = clamp\((cpos|pos)\.y \/ uVisibleRadius \* 0\.5 \+ 0\.5, 0\.0, 1\.0\);/g,
+    ),
+  ];
+  expect(matches).toHaveLength(1);
+  return matches[0][1] === "cpos" ? "colorPos" : "pos";
+}
+
 /** Apply the inverse of a row-major SO(4) rotor. Both shader packers upload
  * this transpose, but spelling the multiply here lets a non-identity rotor
  * expose a source-coordinate error that the identity case alone could hide. */
@@ -122,6 +144,16 @@ function shaderRadiusU(
     q[3] - center[3],
   );
   return Math.min(Math.max((radius - 0.17) * 0.73, 0), 1);
+}
+
+function shaderHeightU(
+  source: "pos" | "colorPos",
+  pos: Vec3,
+  colorPos: Vec3,
+  visibleRadius: number,
+): number {
+  const p = source === "colorPos" ? colorPos : pos;
+  return Math.min(Math.max((p[1] / visibleRadius) * 0.5 + 0.5, 0), 1);
 }
 
 describe("the two engines' 4D balloon radius source (mirror pin)", () => {
@@ -211,6 +243,71 @@ describe("the two engines' 4D balloon radius source (mirror pin)", () => {
         w0,
         sliceHalfW,
         sStar,
+      );
+
+      expect(compute).toBeCloseTo(webgl, 12);
+      expect(Math.abs(webgl - staleMarchedPositionResult)).toBeGreaterThan(0.1);
+    },
+  );
+});
+
+describe("the two engines' 4D balloon height source (mirror pin)", () => {
+  const marchedPos: Vec3 = [0.24, -0.18, 0.41];
+  const invertedSource: Vec3 = [1.17, 0.36, -0.72];
+  const visibleRadius = 1.6;
+  const glsl = surface4FragmentFor(1, 0);
+
+  it.each(["affine4", "fold4"] as const)(
+    "%s reads the balloon argmin's inverted source, matching WebGL's cpos contract",
+    (core) => {
+      const wgsl = surfaceDeKernelWgsl({
+        mode: "shade",
+        core,
+        width: 4,
+        workgroupSize: 32,
+        sharedFrontier: false,
+        bnbStage2: false,
+        balloon: true,
+      });
+      expect(wgsl).toContain(
+        "u = clamp(hi.colorPos.y / params.visRadius4 * 0.5 + 0.5, 0.0, 1.0);",
+      );
+      expect(wgsl).not.toContain(
+        "u = clamp(pos.y / params.visRadius4 * 0.5 + 0.5, 0.0, 1.0);",
+      );
+      expect(wgslBalloonHeightSource(wgsl)).toBe(glslBalloonHeightSource(glsl));
+    },
+  );
+
+  it.each(["affine4", "fold4"] as const)(
+    "%s agrees with WebGL for a shell winner away from the marched hit",
+    (core) => {
+      const wgsl = surfaceDeKernelWgsl({
+        mode: "shade",
+        core,
+        width: 4,
+        workgroupSize: 32,
+        sharedFrontier: false,
+        bnbStage2: false,
+        balloon: true,
+      });
+      const compute = shaderHeightU(
+        wgslBalloonHeightSource(wgsl),
+        marchedPos,
+        invertedSource,
+        visibleRadius,
+      );
+      const webgl = shaderHeightU(
+        glslBalloonHeightSource(glsl),
+        marchedPos,
+        invertedSource,
+        visibleRadius,
+      );
+      const staleMarchedPositionResult = shaderHeightU(
+        "pos",
+        marchedPos,
+        invertedSource,
+        visibleRadius,
       );
 
       expect(compute).toBeCloseTo(webgl, 12);
