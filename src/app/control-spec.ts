@@ -618,9 +618,10 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   {
     // The Fog slider: depth-fog density, spanning the points explorer's
     // fog-bearing styles, every surface tracer, and the solid render — see
-    // state.ts's AppState.fogDensity. Always visible (no `view` guard, no
-    // gating row): atmosphere applies to every render mode this control
-    // reaches, unlike glowBrightnessSlider's glow-only row.
+    // state.ts's AppState.fogDensity. The shared Atmosphere panel exposes this
+    // row in Points, Surface, and Solid; ui.ts hides the enclosing fogControls
+    // group in Flame, whose renderer does not consume fog. Unlike
+    // glowBrightnessSlider, the row has no point-style gate of its own.
     kind: "range",
     id: "fogSlider",
     label: { id: "fogLabel", text: (s) => `${s.fogDensity.toFixed(2)}×` },
@@ -630,11 +631,11 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   },
   {
     // The fog TINT strength: the blend-weight half of the atmosphere pair,
-    // spanning the same renderers as fogSlider above and likewise never
-    // gated. The color half is a bespoke picker (ui.ts's onFogTint), like
-    // the backdrop stops — this entry only carries the 0..1 strength
-    // slider, converting the paired hex color to rgb01 at the point of use
-    // rather than storing it twice.
+    // spanning the same renderers as fogSlider above and gated with it only
+    // by the enclosing fogControls group in Flame. The color half is a
+    // bespoke picker (ui.ts's onFogTint), like the backdrop stops — this
+    // entry only carries the 0..1 strength slider, converting the paired hex
+    // color to rgb01 at the point of use rather than storing it twice.
     kind: "range",
     id: "fogTintStrength",
     label: {

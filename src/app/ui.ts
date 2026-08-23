@@ -1798,6 +1798,15 @@ export class Ui {
   private readonly transformEditor: HTMLElement;
 
   private readonly explorerControls: HTMLElement;
+  /** The Points-only Symmetry strip sits below the shared Atmosphere strip in
+   * the static DOM, so it has its own mode gate while Atmosphere remains
+   * reachable. */
+  private readonly explorerSecondaryControls: HTMLElement;
+  /** The one shared Atmosphere section and its two mode-sensitive subsets:
+   * Points-only depth/balloon effects, and fog (all modes except Flame). */
+  private readonly atmosphereControls: HTMLElement;
+  private readonly pointsAtmosphereControls: HTMLElement;
+  private readonly fogControls: HTMLElement;
   /** The render-mode segmented control's three buttons, keyed by the mode
    * each one switches to — the single entry/exit surface that replaced the
    * flame/solid modal islands' four separate buttons. */
@@ -2286,6 +2295,10 @@ export class Ui {
     this.finalTransformToggle = this.byId("finalTransformToggle");
     this.transformEditor = this.byId("transformEditor");
     this.explorerControls = this.byId("explorerControls");
+    this.explorerSecondaryControls = this.byId("explorerSecondaryControls");
+    this.atmosphereControls = this.byId("atmosphereControls");
+    this.pointsAtmosphereControls = this.byId("pointsAtmosphereControls");
+    this.fogControls = this.byId("fogControls");
     this.modeButtons = {
       points: this.byId("modePointsBtn"),
       flame: this.byId("modeFlameBtn"),
@@ -3016,6 +3029,8 @@ export class Ui {
     // over the panel — editing controls that can't affect the in-progress
     // render would just be confusing — but the segmented control itself stays,
     // so flame↔solid is a direct switch, not a round-trip through Points.
+    // Atmosphere is the deliberate exception: its one shared section remains
+    // reachable and exposes only rows the current renderer actually uses.
     const rendering = state.renderMode !== "points";
     // "4D" is a DERIVED property of the system (see affine4.ts's systemIsFlat
     // via state.ts's systemIsNonFlat), NOT a fourth render mode — so this is a
@@ -3045,6 +3060,10 @@ export class Ui {
     this.fourDSurfaceLive = nonFlat && state.renderMode === "surface";
     this.panelTitle.textContent = nonFlat ? "4D IFS Fractal" : "3D IFS Fractal";
     this.explorerControls.classList.toggle("hidden", rendering);
+    this.explorerSecondaryControls.classList.toggle("hidden", rendering);
+    this.atmosphereControls.classList.toggle("hidden", false);
+    this.pointsAtmosphereControls.classList.toggle("hidden", rendering);
+    this.fogControls.classList.toggle("hidden", state.renderMode === "flame");
     this.flameControls.classList.toggle("hidden", state.renderMode !== "flame");
     this.solidControls.classList.toggle("hidden", state.renderMode !== "solid");
     this.surfaceControls.classList.toggle(

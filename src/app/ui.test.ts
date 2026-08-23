@@ -3741,6 +3741,9 @@ describe("Ui render mode switch", () => {
   function surfaceControls(): HTMLElement {
     return document.getElementById("surfaceControls") as HTMLElement;
   }
+  function atmosphereControls(): HTMLElement {
+    return document.getElementById("atmosphereControls") as HTMLElement;
+  }
 
   it("fires onRenderMode with the flame mode when the flame segment is clicked", () => {
     const handlers = noopHandlers();
@@ -3806,7 +3809,7 @@ describe("Ui render mode switch", () => {
     return document.getElementById(id) as HTMLElement;
   }
 
-  it("shows only the flame controls and marks the flame segment active", () => {
+  it("shows the flame controls and marks the flame segment active", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderMode: "flame" });
 
@@ -3821,7 +3824,7 @@ describe("Ui render mode switch", () => {
     expect(modeBtn("points").getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("shows only the solid controls and marks the solid segment active", () => {
+  it("shows the solid controls and marks the solid segment active", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderMode: "solid" });
 
@@ -3835,7 +3838,7 @@ describe("Ui render mode switch", () => {
     expect(modeBtn("solid").getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("shows only the surface controls and marks the surface segment active", () => {
+  it("shows the surface controls and marks the surface segment active", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderMode: "surface" });
 
@@ -3849,6 +3852,51 @@ describe("Ui render mode switch", () => {
     expect(byId("solidStatus").classList.contains("hidden")).toBe(true);
     expect(modeBtn("surface").classList.contains("active")).toBe(true);
     expect(modeBtn("surface").getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("keeps one shared Atmosphere section live and exposes only renderer-relevant rows", () => {
+    const ui = new Ui(document);
+    const state = initialState(true);
+    const atmosphere = byId("atmosphereSection");
+
+    expect(atmosphereControls().contains(atmosphere)).toBe(true);
+    expect(explorerControls().contains(atmosphere)).toBe(false);
+    expect(surfaceControls().contains(atmosphere)).toBe(false);
+
+    ui.updateLabels({ ...state, renderMode: "surface" });
+    expect(atmosphereControls().classList.contains("hidden")).toBe(false);
+    expect(byId("explorerSecondaryControls").classList.contains("hidden")).toBe(
+      true,
+    );
+    expect(byId("pointsAtmosphereControls").classList.contains("hidden")).toBe(
+      true,
+    );
+    expect(byId("backgroundRow").classList.contains("hidden")).toBe(false);
+    expect(byId("fogControls").classList.contains("hidden")).toBe(false);
+
+    ui.updateLabels({ ...state, renderMode: "solid" });
+    expect(atmosphereControls().classList.contains("hidden")).toBe(false);
+    expect(byId("pointsAtmosphereControls").classList.contains("hidden")).toBe(
+      true,
+    );
+    expect(byId("fogControls").classList.contains("hidden")).toBe(false);
+
+    ui.updateLabels({ ...state, renderMode: "flame" });
+    expect(atmosphereControls().classList.contains("hidden")).toBe(false);
+    expect(byId("pointsAtmosphereControls").classList.contains("hidden")).toBe(
+      true,
+    );
+    expect(byId("backgroundRow").classList.contains("hidden")).toBe(false);
+    expect(byId("fogControls").classList.contains("hidden")).toBe(true);
+
+    ui.updateLabels(state);
+    expect(byId("explorerSecondaryControls").classList.contains("hidden")).toBe(
+      false,
+    );
+    expect(byId("pointsAtmosphereControls").classList.contains("hidden")).toBe(
+      false,
+    );
+    expect(byId("fogControls").classList.contains("hidden")).toBe(false);
   });
 
   it("shows the explorer and marks the points segment active by default", () => {
@@ -3874,6 +3922,8 @@ describe("Ui render mode switch", () => {
   it("keeps every non-section block above the first accordion section", () => {
     for (const containerId of [
       "explorerControls",
+      "atmosphereControls",
+      "explorerSecondaryControls",
       "flameControls",
       "solidControls",
       "surfaceControls",
@@ -6330,6 +6380,27 @@ describe("panel accordion sections", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), renderMode: "surface" });
     expect(details("surfaceLookSection").open).toBe(true);
+  });
+
+  it("restores Atmosphere as Surface's remembered shared section", () => {
+    const ui = new Ui(document);
+    const points = initialState(true);
+    const surface = { ...points, renderMode: "surface" as const };
+    ui.updateLabels(surface);
+
+    // Simulate the native exclusive-name exchange when the user opens the
+    // shared Atmosphere section in Surface mode. jsdom does not close the
+    // previously open details element itself.
+    details("surfaceLookSection").open = false;
+    const atmosphere = details("atmosphereSection");
+    atmosphere.open = true;
+    atmosphere.dispatchEvent(new Event("toggle"));
+
+    ui.updateLabels(points);
+    atmosphere.open = false; // the browser closes it when Presets reopens
+    ui.updateLabels(surface);
+
+    expect(atmosphere.open).toBe(true);
   });
 
   it("returning to points restores the explorer's section", () => {

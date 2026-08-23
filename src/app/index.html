@@ -320,9 +320,10 @@
       </div>
 
       <!-- The always-present document sections, packed as one chip strip.
-           Three strips exist rather than one because the mode wrappers below
-           own the display:none that gates a render mode's sections; see the
-           .section-strip block in style.css. -->
+           Separate strips exist because the mode wrappers below own the
+           display:none that gates their sections; see the .section-strip
+           block in style.css. Atmosphere is likewise its own strip because
+           it remains live across modes while its Points-only rows do not. -->
       <div class="section-strip">
         <!-- Capture vs Share: this section is PIXELS ONLY — one-way
            snapshots of what's on screen. The scene-document traffic (link,
@@ -646,8 +647,9 @@
              thumb while scrolling it. Split three ways, along the gating
              seam: every gate keeps the rows it reveals, so colorMode and
              its 4D sibling stay welded to the ramp/axis/contrast rows they
-             gate, background to its custom stops, balloon echo to its
-             radius, and depth style to glow brightness. -->
+             gate. The shared Atmosphere section below keeps background with
+             its custom stops and keeps the Points-only balloon/depth pairs
+             together inside their own mode-gated block. -->
         <details class="panel-section" id="cloudSection" name="panel-section">
           <summary>Cloud</summary>
           <label class="select-label">
@@ -841,118 +843,127 @@
             </label>
           </div>
         </details>
+      </div>
 
+      <!-- Shared scene atmosphere. This stays reachable in every render
+           mode: Background affects all four, while #fogControls hides only
+           in Flame (the one renderer with no depth fog). The first block is
+           the Points renderer's own depth style and echo, so Surface/Solid/
+           Flame hide it without duplicating any of the shared controls. -->
+      <div id="atmosphereControls" class="section-strip">
         <details
           class="panel-section"
           id="atmosphereSection"
           name="panel-section"
         >
           <summary>Atmosphere</summary>
-          <div id="renderStyleRow">
-            <label class="select-label">
-              Depth Style
-              <select id="renderStyle">
-                <option value="depthFade">Depth Fade</option>
-                <option value="aerial">Aerial Haze</option>
-                <option value="glow">Glow + Bloom</option>
-                <option value="dof">Depth of Field</option>
-                <option value="edl">Eye-Dome Lighting</option>
-              </select>
-            </label>
-          </div>
+          <div id="pointsAtmosphereControls">
+            <div id="renderStyleRow">
+              <label class="select-label">
+                Depth Style
+                <select id="renderStyle">
+                  <option value="depthFade">Depth Fade</option>
+                  <option value="aerial">Aerial Haze</option>
+                  <option value="glow">Glow + Bloom</option>
+                  <option value="dof">Depth of Field</option>
+                  <option value="edl">Eye-Dome Lighting</option>
+                </select>
+              </label>
+            </div>
 
-          <!-- The 4D sibling of #renderStyleRow's depth treatment (its
+            <!-- The 4D sibling of #renderStyleRow's depth treatment (its
                default option IS "Depth Fade"): a persisted look preference
                like fourDColor's, so it lives with the other look
                controls. -->
-          <div id="fourDDepthFadeRow" class="hidden">
-            <label class="checkbox-label">
-              <input type="checkbox" id="fourDDepthFadeToggle" />
-              Depth fade (dim far points)
-            </label>
-          </div>
+            <div id="fourDDepthFadeRow" class="hidden">
+              <label class="checkbox-label">
+                <input type="checkbox" id="fourDDepthFadeToggle" />
+                Depth fade (dim far points)
+              </label>
+            </div>
 
-          <div id="glowBrightnessRow" class="hidden">
-            <label class="select-label">
-              Glow Brightness: <span id="glowBrightnessLabel">1.00×</span>
-              <input
-                type="range"
-                id="glowBrightnessSlider"
-                min="0.1"
-                max="3"
-                step="0.05"
-                value="1"
-              />
-            </label>
-          </div>
+            <div id="glowBrightnessRow" class="hidden">
+              <label class="select-label">
+                Glow Brightness: <span id="glowBrightnessLabel">1.00×</span>
+                <input
+                  type="range"
+                  id="glowBrightnessSlider"
+                  min="0.1"
+                  max="3"
+                  step="0.05"
+                  value="1"
+                />
+              </label>
+            </div>
 
-          <!-- The balloon echo: a second, sphere-inverted point cloud
+            <!-- The balloon echo: a second, sphere-inverted point cloud
                behind the explorer's own. Persisted scene content — one
                balloon shared with the surface render's Balloon checkbox
                below. A 4D cloud projects each source point through the
                shared rotor/w-ramp/slice path, then inverts that displayed
                3D point through the full 4D ball. -->
-          <label
-            class="checkbox-label"
-            id="balloonEchoRow"
-            title="Show a sphere-inverted echo of the attractor enclosing the whole scene — the Balloon size slider inflates it from a crumpled ball into a cave"
-          >
-            <input type="checkbox" id="balloonEchoCheckbox" />
-            Balloon echo
-          </label>
-
-          <div id="balloonRadiusRow" class="hidden">
-            <label class="select-label">
-              Balloon size: <span id="balloonRadiusLabel">1.60×</span>
-              <input
-                type="range"
-                id="balloonRadiusSlider"
-                min="0.05"
-                max="2.5"
-                step="0.01"
-                value="1.6"
-              />
-            </label>
-            <button
-              class="btn btn-ghost"
-              id="balloonInflateButton"
-              type="button"
-              title="Inflate: animate the echo from a crumpled ball out to its full size"
+            <label
+              class="checkbox-label"
+              id="balloonEchoRow"
+              title="Show a sphere-inverted echo of the attractor enclosing the whole scene — the Balloon size slider inflates it from a crumpled ball into a cave"
             >
-              Inflate
-            </button>
-          </div>
+              <input type="checkbox" id="balloonEchoCheckbox" />
+              Balloon echo
+            </label>
 
-          <!-- Balloon echo tint: color + strength blended onto the echo's
+            <div id="balloonRadiusRow" class="hidden">
+              <label class="select-label">
+                Balloon size: <span id="balloonRadiusLabel">1.60×</span>
+                <input
+                  type="range"
+                  id="balloonRadiusSlider"
+                  min="0.05"
+                  max="2.5"
+                  step="0.01"
+                  value="1.6"
+                />
+              </label>
+              <button
+                class="btn btn-ghost"
+                id="balloonInflateButton"
+                type="button"
+                title="Inflate: animate the echo from a crumpled ball out to its full size"
+              >
+                Inflate
+              </button>
+            </div>
+
+            <!-- Balloon echo tint: color + strength blended onto the echo's
                own base albedo before the dim/fade terms, one setting shared
                with the surface balloon's identical row in the Surface
                section below — the balloonRadiusRow/surfaceBalloonRadiusRow
                "one balloon, two renderers" relationship applied to color
                instead of size. Same position-axis-row shape as fogTintRow
                above. -->
-          <div id="balloonTintRow" class="position-axis-row hidden">
-            <span class="position-axis-title"
-              >Tint <span id="balloonTintLabel">0%</span></span
-            >
-            <div class="position-axis-inputs">
-              <label class="position-axis-label"
-                ><input
-                  type="color"
-                  id="balloonTintColor"
-                  value="#000000"
-                  aria-label="Balloon echo tint color"
-              /></label>
-              <label class="position-axis-label">
-                <input
-                  type="range"
-                  id="balloonTintStrength"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value="0"
-                  aria-label="Balloon echo tint strength"
-                />
-              </label>
+            <div id="balloonTintRow" class="position-axis-row hidden">
+              <span class="position-axis-title"
+                >Tint <span id="balloonTintLabel">0%</span></span
+              >
+              <div class="position-axis-inputs">
+                <label class="position-axis-label"
+                  ><input
+                    type="color"
+                    id="balloonTintColor"
+                    value="#000000"
+                    aria-label="Balloon echo tint color"
+                /></label>
+                <label class="position-axis-label">
+                  <input
+                    type="range"
+                    id="balloonTintStrength"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value="0"
+                    aria-label="Balloon echo tint strength"
+                  />
+                </label>
+              </div>
             </div>
           </div>
 
@@ -1002,53 +1013,58 @@
           <!-- Depth-fog density: spans the points explorer's fog-bearing
                styles, every surface tracer, and the solid render, so —
                unlike glowBrightnessSlider's glow-only row — it is never
-               gated. -->
-          <label class="select-label">
-            Fog: <span id="fogLabel">1.00×</span>
-            <input
-              type="range"
-              id="fogSlider"
-              min="0"
-              max="2.5"
-              step="0.05"
-              value="1"
-            />
-          </label>
+               gated within those modes. Flame has no depth fog, so the
+               shared #fogControls block hides there. -->
+          <div id="fogControls">
+            <label class="select-label">
+              Fog: <span id="fogLabel">1.00×</span>
+              <input
+                type="range"
+                id="fogSlider"
+                min="0"
+                max="2.5"
+                step="0.05"
+                value="1"
+              />
+            </label>
 
-          <!-- Fog tint: color + strength shifting what the depth fog
-               blends toward, applied after the backdrop-midpoint
-               derivation — ungated like the Fog row above. -->
-          <div id="fogTintRow" class="position-axis-row">
-            <span class="position-axis-title"
-              >Tint <span id="fogTintLabel">0%</span></span
-            >
-            <div class="position-axis-inputs">
-              <!-- The wrapping <label>s carry no text (the row's "Tint 0%"
-                   title is a sibling span), so each input is named for
-                   assistive tech directly — the "Color stop N" pattern
-                   (ui.ts's custom-palette swatches). -->
-              <label class="position-axis-label"
-                ><input
-                  type="color"
-                  id="fogTintColor"
-                  value="#ffffff"
-                  aria-label="Fog tint color"
-              /></label>
-              <label class="position-axis-label">
-                <input
-                  type="range"
-                  id="fogTintStrength"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value="0"
-                  aria-label="Fog tint strength"
-                />
-              </label>
+            <!-- Fog tint: color + strength shifting what the depth fog
+                 blends toward, applied after the backdrop-midpoint
+                 derivation — gated with the Fog row above. -->
+            <div id="fogTintRow" class="position-axis-row">
+              <span class="position-axis-title"
+                >Tint <span id="fogTintLabel">0%</span></span
+              >
+              <div class="position-axis-inputs">
+                <!-- The wrapping <label>s carry no text (the row's "Tint 0%"
+                     title is a sibling span), so each input is named for
+                     assistive tech directly — the "Color stop N" pattern
+                     (ui.ts's custom-palette swatches). -->
+                <label class="position-axis-label"
+                  ><input
+                    type="color"
+                    id="fogTintColor"
+                    value="#ffffff"
+                    aria-label="Fog tint color"
+                /></label>
+                <label class="position-axis-label">
+                  <input
+                    type="range"
+                    id="fogTintStrength"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value="0"
+                    aria-label="Fog tint strength"
+                  />
+                </label>
+              </div>
             </div>
           </div>
         </details>
+      </div>
 
+      <div id="explorerSecondaryControls" class="section-strip">
         <details
           class="panel-section"
           id="symmetrySection"
