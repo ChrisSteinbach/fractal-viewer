@@ -488,7 +488,7 @@ describe("the 4D tracer's variant arms", () => {
     expect(glsl).toContain("uniform float uGroundY;");
     expect(glsl).toContain("uniform vec3 uGroundAlbedo;");
     expect(glsl).toContain(
-      "vec3 shadeGroundPlane(vec3 ro, vec3 rd, vec3 background, out float cov) {",
+      "vec3 shadeGroundPlane(\nvec3 ro,\nvec3 rd,\nvec3 background,\nout float cov,\nout float layerCoverage,\nout float layerFog\n) {",
     );
     // One-sided, radially faded, and the two gates that make an infinite
     // floor affordable (shadow corridor, AO reach).
@@ -521,13 +521,27 @@ describe("the 4D tracer's variant arms", () => {
         "if (!hit) {",
         "if (t > tFar) {",
         "float planeCovMiss;",
+        "float planeLayerCoverageMiss;",
+        "float planeLayerFogMiss;",
         "outColor = vec4(",
-        "shadeGroundPlane(ro, rd, background, planeCovMiss),",
+        "shadeGroundPlane(",
+        "ro,",
+        "rd,",
+        "background,",
+        "planeCovMiss,",
+        "planeLayerCoverageMiss,",
+        "planeLayerFogMiss",
+        "),",
         "planeCovMiss",
+        ");",
+        "outTraceLayer = traceLayer(",
+        "planeLayerCoverageMiss,",
+        "planeLayerFogMiss",
         ");",
         "return;",
         "}",
         "outColor = vec4(background, 0.5);",
+        "outTraceLayer = traceLayer(0.0, 0.0);",
       ].join("\n"),
     );
   });
@@ -535,7 +549,7 @@ describe("the 4D tracer's variant arms", () => {
   it("lands the two pre-march misses on the floor too", () => {
     const glsl = surface4FragmentFor(0, 1);
     expect(glsl).toContain(
-      "if (disc < 0.0) {\nfloat planeCov;\noutColor = vec4(shadeGroundPlane(ro, rd, background, planeCov), planeCov);",
+      "if (disc < 0.0) {\nfloat planeCov;\nfloat planeLayerCoverage;\nfloat planeLayerFog;\noutColor = vec4(\nshadeGroundPlane(",
     );
     expect(glsl).toContain("if (tFar <= 0.0) {\nfloat planeCovExit;");
   });
@@ -801,10 +815,43 @@ describe("the 4D trace alpha statuses", () => {
 
   it("keeps exhausted distinct when a sphere-exit miss can become a plane", () => {
     const shader = surface4FragmentResolvedFor(0, 1, 0, 0);
-    expect(shader).toContain(
-      "shadeGroundPlane(ro, rd, background, planeCovMiss)",
+    expect(shader).toMatch(
+      /shadeGroundPlane\(\s*ro,\s*rd,\s*background,\s*planeCovMiss,\s*planeLayerCoverageMiss,\s*planeLayerFogMiss\s*\)/,
     );
     expect(shader).toContain("outColor = vec4(background, 0.5);");
+  });
+
+  it("mirrors the 3D coverage, fog, and backdrop-weight sidecar", () => {
+    const shader = surface4FragmentResolvedFor(0, 1, 0, 0);
+    expect(shader).toContain("layout(location = 0) out vec4 outColor;");
+    expect(shader).toContain("layout(location = 1) out vec4 outTraceLayer;");
+    expect(shader).toContain(
+      [
+        "float beta = 1.0 - coverage +",
+        "      coverage * fog * (1.0 - uFogTintStrength);",
+        "    return vec4(coverage, fog, beta, 1.0);",
+      ].join("\n"),
+    );
+    expect(shader).toContain("layerCoverage = 0.0;");
+    expect(shader).toContain("layerFog = 0.0;");
+    expect(shader).toContain("cov = 1.0;\n    layerCoverage = fade;");
+    expect(shader).toContain("layerFog = clamp(fog, 0.0, 1.0);");
+    expect(shader).toMatch(
+      /outTraceLayer = traceLayer\(\s*planeLayerCoverageMiss,\s*planeLayerFogMiss\s*\);/,
+    );
+    expect(shader).toContain("outTraceLayer = traceLayer(0.0, 0.0);");
+    expect(shader).toContain(
+      "outTraceLayer = traceLayer(1.0, clamp(fog, 0.0, 1.0));",
+    );
+    for (const [name, source] of [
+      ["plain", surface4FragmentResolvedFor(0, 0, 0, 0)],
+      ["balloon", surface4FragmentResolvedFor(1, 0, 0, 0)],
+      ["ground", shader],
+    ] as const) {
+      expect(countOccurrences(source, "outTraceLayer ="), name).toBe(
+        countOccurrences(source, "outColor ="),
+      );
+    }
   });
 });
 

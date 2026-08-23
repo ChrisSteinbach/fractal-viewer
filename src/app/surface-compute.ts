@@ -319,6 +319,25 @@ function encodeLinearMean(
   return out;
 }
 
+/** Average packed layer-sidecar bytes in their own scalar space. Unlike the
+ * traced RGB, coverage/fog/beta are coefficients, not gamma-encoded light,
+ * so their supersample mean is the ordinary arithmetic mean. */
+function encodeLayerMean(
+  accum: Float32Array,
+  taken: number,
+  alpha: Uint8Array,
+): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(alpha.length);
+  const inv = 1 / taken;
+  for (let p = 0, a = 0; p < out.length; p += 4, a += 3) {
+    out[p] = Math.round(accum[a] * inv);
+    out[p + 1] = Math.round(accum[a + 1] * inv);
+    out[p + 2] = Math.round(accum[a + 2] * inv);
+    out[p + 3] = alpha[p + 3];
+  }
+  return out;
+}
+
 /** A context with no usable WebGPU at all (`navigator.gpu` missing, or no
  * compatible adapter) — the session's signal to route to the WebGL tracer
  * without noting an error. */
@@ -566,7 +585,8 @@ export interface SurfaceComputeFrameOptions {
    * needs no seed at all, having no wall budget to leave rays
    * unresolved by. */
   capture?: boolean;
-  /** Progressive present: called with a full-frame RGBA snapshot at most
+  /** Progressive present: called with the immutable legacy RGBA reference
+   * plus its packed RGBA layer sidecar at most
    * every `progressIntervalMs` while rays are still marching. `done` /
    * `total` are ray-work tallies from `surfaceComputeProgressDone`: a
    * ray's march half accrues CONTINUOUSLY with its consumed steps and
@@ -575,7 +595,12 @@ export interface SurfaceComputeFrameOptions {
    * surface progress row from them, so a compute settle reports honest
    * coverage the way the WebGL strip path's `surfaceRenderProgress()`
    * does. `done` may be fractional. */
-  onProgress?: (pixels: Uint8Array, done: number, total: number) => void;
+  onProgress?: (
+    pixels: Uint8Array,
+    layers: Uint8Array,
+    done: number,
+    total: number,
+  ) => void;
   progressIntervalMs?: number;
   /**
    * Samples per pixel. `1` — the default and every preview's value — is
@@ -587,7 +612,7 @@ export interface SurfaceComputeFrameOptions {
    * unit sphere's 1.31%, and its exponent against output resolution is
    * -0.21..-0.36 where the sphere measures the perimeter law at -0.98, so
    * no viewport resolves it. The fix is samples, not pixels. Widening a
-   * frame to N rays per pixel would multiply the five per-ray buffers and
+   * frame to N rays per pixel would multiply the eight per-ray buffers and
    * meet the device ray ceiling N times sooner; tracing N FRAMES at N
    * sub-pixel offsets and averaging costs the same GPU work, keeps every
    * buffer and every watchdog bound exactly as measured, and makes the
@@ -602,6 +627,10 @@ export interface SurfaceComputeFrame {
   /** RGBA8, row 0 = bottom (the kernel's py=0 row is ndcY=-1), matching
    * an unflipped DataTexture under the shared blit quad. */
   pixels: Uint8Array;
+  /** RGBA8 background-composite sidecar, row order matching {@link pixels}:
+   * R coverage, G fog, B beta, A 255. `pixels` stays the byte-identical
+   * traced reference; presentation may combine the pair without retracing. */
+  layers: Uint8Array;
   width: number;
   height: number;
   wallMs: number;
@@ -695,6 +724,21 @@ export function buildSurfaceComputeBackground(
       const [u, v] = backgroundImageUv(px, py, offset, extent);
       writePixel((py * width + px) * 4, u, v);
     }
+  }
+  return out;
+}
+
+/** Packed sidecar seed for rays that have not reached a terminal shade yet:
+ * no traced coverage, no fog, full background coefficient, opaque storage.
+ * Deliberately independent of any previous frame: active pixels describe
+ * their CURRENT trace state. */
+export function buildSurfaceComputeLayerPrefill(
+  rays: number,
+): Uint8Array<ArrayBuffer> {
+  const out = new Uint8Array(Math.max(0, rays) * 4);
+  for (let p = 0; p < out.length; p += 4) {
+    out[p + 2] = 255;
+    out[p + 3] = 255;
   }
   return out;
 }
@@ -1209,12 +1253,13 @@ export function resampleSurfacePixels(
  * since the march status side-channel landed: nothing reads it back. */
 export const SURFACE_COMPUTE_RAY_STATE_BYTES = 16;
 
-/** Bytes of GPU buffer ONE ray costs a frame, across all six per-ray
- * buffers: states 16 + active 4 + color 4 + stagingColor 4 + status 4 +
- * stagingStatus 4. Was 44 before the status side-channel traded the 16
- * B/ray states
- * staging twin for a 4 B/ray status side-channel and its own twin. */
-export const SURFACE_COMPUTE_RAY_BYTES = 36;
+/** Bytes of GPU buffer ONE ray costs a frame, across all eight per-ray
+ * buffers: states 16 + active 4 + color 4 + stagingColor 4 + layer 4 +
+ * stagingLayer 4 + status 4 + stagingStatus 4. Was 36 immediately before
+ * the background-composite sidecar; the earlier status-side-channel change
+ * had cut 44 to 36 by trading the 16 B/ray states staging twin for a 4 B/ray
+ * status side-channel and its own twin. */
+export const SURFACE_COMPUTE_RAY_BYTES = 44;
 
 /** Byte count as MiB, for the size errors' messages. */
 function mib(bytes: number): string {
@@ -1284,12 +1329,12 @@ export function surfaceComputeMaxFrameRays(limits: {
 
 /**
  * Rays one CAPTURE tile may cost, however much the device would allow. A
- * frame's buffers are 36 B/ray and its host mirrors another ~24 B/ray, so
- * an untiled 4x export of a 1920x1057 pane (32.5M rays) commits ~1.2 GB
- * of GPU memory and reads back up to 130 MB of ray status per march sweep
+ * frame's buffers are 44 B/ray and its host mirrors another ~28 B/ray, so
+ * an untiled 4x export of a 1920x1057 pane (32.5M rays) commits ~1.43 GB
+ * of GPU memory plus its host mirrors and reads back up to 130 MB of ray status per march sweep
  * (a flat 520 MB of ray STATE before the status side-channel) — a device
  * that reports gigabytes of `maxBufferSize` will still refuse or thrash.
- * At this cap a tile is ~144 MB of buffers, comfortably above the live
+ * At this cap a tile is ~176 MB of GPU buffers, comfortably above the live
  * rasters the same code paths run all session (a 1920x1057 pane is 2.0M
  * rays), so tiling costs an export nothing it was not already paying per
  * frame.
@@ -1443,14 +1488,19 @@ export interface SurfaceComputeRendererInit {
 
 interface FrameBuffers {
   rays: number;
+  /** Host-side immutable seed matching the allocated buffer capacity. */
+  layerPrefill: Uint8Array<ArrayBuffer>;
   states: GPUBuffer;
   active: GPUBuffer;
   color: GPUBuffer;
+  /** Packed RGBA8 background-composite sidecar: coverage/fog/beta/1. */
+  layer: GPUBuffer;
   /** The march status side-channel: one `u32` per ACTIVE-LIST SLOT,
    * written by every march dispatch and read back once per sweep. */
   status: GPUBuffer;
   stagingStatus: GPUBuffer;
   stagingColor: GPUBuffer;
+  stagingLayer: GPUBuffer;
   marchBindGroup: GPUBindGroup;
   shadeBindGroup: GPUBindGroup;
 }
@@ -1723,6 +1773,7 @@ export class SurfaceComputeRenderer {
           visibility: GPUShaderStage.COMPUTE,
           sampler: { type: "filtering" },
         },
+        bufferEntry(9, "storage"),
       ],
     });
     // An ifs4 target compiles a SECOND, slab-free kernel pair beside the
@@ -2001,13 +2052,6 @@ export class SurfaceComputeRenderer {
   private chain: Promise<unknown> = Promise.resolve();
   private frame: FrameBuffers | null = null;
   private uploadedLutVersion: number | null = null;
-  /** Last completed frame — the seed for the next frame's prefill (see
-   * runFrame's seeding comment). */
-  private lastFrame: {
-    pixels: Uint8Array<ArrayBuffer>;
-    width: number;
-    height: number;
-  } | null = null;
   private background: {
     width: number;
     height: number;
@@ -2152,6 +2196,7 @@ export class SurfaceComputeRenderer {
     if (samples === 1) return this.runFrame(token, spec, opts);
     const rays = spec.width * spec.height;
     const accum = new Float32Array(rays * 3);
+    const layerAccum = new Float32Array(rays * 3);
     let taken = 0;
     let out: SurfaceComputeFrame | null = null;
     let wallMs = 0;
@@ -2183,8 +2228,8 @@ export class SurfaceComputeRenderer {
           // getting worse.
           onProgress:
             s === 0 && opts.onProgress
-              ? (pixels, done, total) => {
-                  opts.onProgress?.(pixels, done, total * samples);
+              ? (pixels, layers, done, total) => {
+                  opts.onProgress?.(pixels, layers, done, total * samples);
                 }
               : undefined,
         },
@@ -2196,33 +2241,29 @@ export class SurfaceComputeRenderer {
       gpuMs += frame.gpuMs;
       if (s > 0 && frame.truncated) break;
       const px = frame.pixels;
+      const layers = frame.layers;
       for (let i = 0, p = 0, a = 0; i < rays; i++, p += 4, a += 3) {
         accum[a] += SRGB_TO_LINEAR[px[p]];
         accum[a + 1] += SRGB_TO_LINEAR[px[p + 1]];
         accum[a + 2] += SRGB_TO_LINEAR[px[p + 2]];
+        layerAccum[a] += layers[p];
+        layerAccum[a + 1] += layers[p + 1];
+        layerAccum[a + 2] += layers[p + 2];
       }
       taken++;
       if (s === 0) {
         // Pass 0 IS the pre-supersampling frame — hand it back untouched
-        // (its own runFrame already seeded lastFrame and presented its
-        // partials), so a job superseded here delivers exactly what this
+        // (its own runFrame already presented its partials), so a job
+        // superseded here delivers exactly what this
         // renderer delivered before supersampling existed.
         out = { ...frame, wallMs, gpuMs };
       } else {
         const mean = encodeLinearMean(accum, taken, px);
-        out = { ...frame, pixels: mean, wallMs, gpuMs };
-        // The running mean becomes the seed for the next pass's prefill
-        // and for the next frame after this job (the strip settle's
-        // preview-seeded-target discipline) — never a single pass's own
-        // image, which is the noisier picture of the two.
-        if (opts.capture !== true) {
-          this.lastFrame = {
-            pixels: mean,
-            width: spec.width,
-            height: spec.height,
-          };
-        }
-        opts.onProgress?.(mean, taken * rays, samples * rays);
+        const layerMean = encodeLayerMean(layerAccum, taken, layers);
+        out = { ...frame, pixels: mean, layers: layerMean, wallMs, gpuMs };
+        // The completed mean is what later samples present; their in-flight
+        // prefill remains deliberately uncovered background.
+        opts.onProgress?.(mean, layerMean, taken * rays, samples * rays);
       }
       if (frame.truncated) break;
     }
@@ -2281,7 +2322,7 @@ export class SurfaceComputeRenderer {
 
   /**
    * {@link ensureFrameBuffers} with the device's own verdict attached. A
-   * frame's five per-ray buffers are the only allocation that scales with
+   * frame's eight per-ray buffers are the only allocation that scales with
    * the caller's raster, and WebGPU reports both ways it can fail WITHOUT
    * throwing: an over-limit size is a validation error returning an
    * invalid buffer, an exhausted allocator an out-of-memory one. Either
@@ -2333,9 +2374,11 @@ export class SurfaceComputeRenderer {
       this.frame.states,
       this.frame.active,
       this.frame.color,
+      this.frame.layer,
       this.frame.status,
       this.frame.stagingStatus,
       this.frame.stagingColor,
+      this.frame.stagingLayer,
     ]) {
       b.destroy();
     }
@@ -2364,6 +2407,13 @@ export class SurfaceComputeRenderer {
         GPUBufferUsage.COPY_DST |
         GPUBufferUsage.COPY_SRC,
     });
+    const layer = device.createBuffer({
+      size: rays * 4,
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.COPY_SRC,
+    });
     const status = device.createBuffer({
       size: rays * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
@@ -2373,6 +2423,10 @@ export class SurfaceComputeRenderer {
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     });
     const stagingColor = device.createBuffer({
+      size: rays * 4,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    });
+    const stagingLayer = device.createBuffer({
       size: rays * 4,
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
     });
@@ -2399,16 +2453,20 @@ export class SurfaceComputeRenderer {
         { binding: 6, resource: { buffer: color } },
         { binding: 7, resource: this.lutTex.createView() },
         { binding: 8, resource: this.lutSamp },
+        { binding: 9, resource: { buffer: layer } },
       ],
     });
     this.frame = {
       rays,
+      layerPrefill: buildSurfaceComputeLayerPrefill(rays),
       states,
       active,
       color,
+      layer,
       status,
       stagingStatus,
       stagingColor,
+      stagingLayer,
       marchBindGroup,
       shadeBindGroup,
     };
@@ -2466,15 +2524,24 @@ export class SurfaceComputeRenderer {
     return rows;
   }
 
-  private async readback(
-    src: GPUBuffer,
-    staging: GPUBuffer,
+  /** Copy the immutable reference and its layer sidecar in one submission,
+   * then map both staging buffers together. Their row/ray order is identical
+   * by construction, so callers always receive an aligned pair. */
+  private async readbackFrame(
+    color: GPUBuffer,
+    stagingColor: GPUBuffer,
+    layer: GPUBuffer,
+    stagingLayer: GPUBuffer,
     bytes: number,
-  ): Promise<ArrayBuffer> {
+  ): Promise<[ArrayBuffer, ArrayBuffer]> {
     const encoder = this.device.createCommandEncoder();
-    encoder.copyBufferToBuffer(src, 0, staging, 0, bytes);
+    encoder.copyBufferToBuffer(color, 0, stagingColor, 0, bytes);
+    encoder.copyBufferToBuffer(layer, 0, stagingLayer, 0, bytes);
     this.device.queue.submit([encoder.finish()]);
-    return this.drainStaging(staging, bytes);
+    return Promise.all([
+      this.drainStaging(stagingColor, bytes),
+      this.drainStaging(stagingLayer, bytes),
+    ]);
   }
 
   /** Map, copy out and unmap a staging buffer whose bytes are ALREADY on
@@ -2482,7 +2549,7 @@ export class SurfaceComputeRenderer {
    * riding the slice's own submission, so the sweep pays one `mapAsync`
    * round trip rather than one per slice. `mapAsync` queues behind
    * everything already submitted, which is the same ordering
-   * guarantee {@link readback} leans on. */
+   * guarantee {@link readbackFrame} leans on. */
   private async drainStaging(
     staging: GPUBuffer,
     bytes: number,
@@ -2599,37 +2666,34 @@ export class SurfaceComputeRenderer {
         bgShape: backgroundShapeCode(bgShape.kind),
       }),
     );
-    // Host prefill contract (module doc of surface-de-gpu.ts): rays still
-    // ACTIVE at a budget cut (or mid-frame progress presents) keep this
-    // seed; the kernel writes every terminal pixel itself. Seeding from
-    // the LAST frame — resampled across raster changes — is the strip
-    // settle's preview-seeded-target discipline: a frame's presents never
-    // look worse than the image they follow. First frame of a session
-    // seeds the backdrop gradient, and so does every capture frame (an
-    // export tile has no live image to carry).
-    const last = opts.capture === true ? null : this.lastFrame;
+    // Composite-layer prefill contract: rays still ACTIVE at a budget cut
+    // are uncovered background in BOTH buffers. A prior frame's RGB cannot
+    // be paired with coverage zero under this frame's background reference:
+    // the first edit would apply the wrong delta to stale geometry.
     device.queue.writeBuffer(
       buffers.color,
       0,
-      last === null
-        ? this.backgroundRows(
-            width,
-            height,
-            spec.bgTop,
-            spec.bgBottom,
-            bgOffset,
-            bgExtent,
-            bgShape,
-          )
-        : last.width === width && last.height === height
-          ? last.pixels
-          : resampleSurfacePixels(
-              last.pixels,
-              last.width,
-              last.height,
-              width,
-              height,
-            ),
+      this.backgroundRows(
+        width,
+        height,
+        spec.bgTop,
+        spec.bgBottom,
+        bgOffset,
+        bgExtent,
+        bgShape,
+      ),
+    );
+    // The layer describes this frame's CURRENT trace, never the legacy RGB
+    // seed above. Until a ray reaches a terminal shade it is uncovered,
+    // unfogged, and wholly background-responsive (beta 1). This deliberate
+    // asymmetry means a truncated frame's active metadata cannot masquerade
+    // as the previous frame's settled geometry.
+    device.queue.writeBuffer(
+      buffers.layer,
+      0,
+      buffers.layerPrefill,
+      0,
+      rays * 4,
     );
     const states = new Float32Array(rays * 4);
     for (let i = 0; i < rays; i++) states[i * 4] = -1;
@@ -2937,9 +3001,15 @@ export class SurfaceComputeRenderer {
       if (!opts.onProgress) return true;
       if (performance.now() - lastProgress < progressMs) return true;
       tr("present readback BEGIN");
-      const partial = new Uint8Array(
-        await this.readback(buffers.color, buffers.stagingColor, rays * 4),
+      const [partialBytes, partialLayerBytes] = await this.readbackFrame(
+        buffers.color,
+        buffers.stagingColor,
+        buffers.layer,
+        buffers.stagingLayer,
+        rays * 4,
       );
+      const partial = new Uint8Array(partialBytes);
+      const partialLayers = new Uint8Array(partialLayerBytes);
       tr("present readback END");
       if (token !== this.frameToken || this.isLost || this.destroyed) {
         return false;
@@ -2950,6 +3020,7 @@ export class SurfaceComputeRenderer {
       // monotonicity argument.
       opts.onProgress(
         partial,
+        partialLayers,
         surfaceComputeProgressDone({
           rays,
           active: active.length,
@@ -3234,9 +3305,15 @@ export class SurfaceComputeRenderer {
     }
 
     tr("final readback BEGIN");
-    const pixels = new Uint8Array(
-      await this.readback(buffers.color, buffers.stagingColor, rays * 4),
+    const [pixelBytes, layerBytes] = await this.readbackFrame(
+      buffers.color,
+      buffers.stagingColor,
+      buffers.layer,
+      buffers.stagingLayer,
+      rays * 4,
     );
+    const pixels = new Uint8Array(pixelBytes);
+    const layers = new Uint8Array(layerBytes);
     if (token !== this.frameToken || this.isLost || this.destroyed) return null;
     // The tally is kept as rays LEAVE the active list, so it needs no
     // final pass over the ray states (there is none to read). ACTIVE is
@@ -3249,9 +3326,9 @@ export class SurfaceComputeRenderer {
     tr(
       `frame done passes=${passes} truncated=${truncated} hit=${counts.hit} miss=${counts.miss} exhausted=${counts.exhausted} active=${counts.active} plane=${counts.plane}`,
     );
-    if (opts.capture !== true) this.lastFrame = { pixels, width, height };
     return {
       pixels,
+      layers,
       width,
       height,
       wallMs: performance.now() - wallStart,

@@ -127,6 +127,11 @@ import {
   decodeSurfaceRayCensus,
   type SurfaceRayCensus,
 } from "./surface-ray-census";
+import {
+  snapshotTraceBackground,
+  traceBackgroundsEqual,
+  type TraceBackgroundReference,
+} from "../fractal/surface-background-layer";
 
 // Authored point/guide colors are already sRGB, so render them verbatim
 // instead of running Three.js's sRGB<->linear conversions.
@@ -1123,6 +1128,11 @@ export class FractalScene {
    * to completion synchronously (offline export, thumbnails), and
    * {@link captureSurfaceFrame} drains them while yielding. */
   private readonly surfaceSettleTarget: THREE.WebGLRenderTarget;
+  /** Background snapshot baked into each MRT target's legacy RGB. The
+   * sidecar attachment makes that RGB cheaply re-compositable against a
+   * later live backdrop without touching the tracer. */
+  private surfacePreviewBackground: TraceBackgroundReference | null = null;
+  private surfaceSettleBackground: TraceBackgroundReference | null = null;
   /** In-flight strip job over {@link surfaceSettleTarget}, or null. */
   private surfaceStripJob: SurfaceStripJob | null = null;
   /** Passes the ACTIVE {@link surfaceSettleTarget} supersampling sequence
@@ -1141,10 +1151,15 @@ export class FractalScene {
    * precision at all. See {@link foldSurfaceSample} for where the gamma
    * decode happens and why. */
   private surfaceSampleAccum: Float32Array | null = null;
+  /** Byte-domain sums of the coverage/fog/background-weight sidecar. The
+   * RGB mean keeps the existing linear-light path; metadata is averaged in
+   * its own affine domain for changed-background presentation. */
+  private surfaceSampleLayerAccum: Float32Array | null = null;
   /** RGBA8 scratch the passes read back into and the mean is encoded back
    * into — the {@link surfaceSampleTexture}'s own storage, so a pass costs
    * one readback and one upload, no intermediate copy. */
   private surfaceSampleTexture: THREE.DataTexture | null = null;
+  private surfaceSampleLayerTexture: THREE.DataTexture | null = null;
   /** Frame the sequence's buffers are sized for. */
   private surfaceSampleWidth = 0;
   private surfaceSampleHeight = 0;
@@ -1291,6 +1306,20 @@ export class FractalScene {
    * py=0 is ndcY=-1), which is exactly an unflipped DataTexture under the
    * blit quad's v=0-at-bottom UVs. */
   private surfaceComputeTexture: THREE.DataTexture | null = null;
+  private surfaceComputeLayerTexture: THREE.DataTexture | null = null;
+  private surfaceComputeBackground: TraceBackgroundReference | null = null;
+  /** Background edits are presentation work while Surface owns the canvas.
+   * They never set renderNeeded (the trace dirty bit); tickRender consumes
+   * this latch through presentSurfaceComposite. */
+  private surfaceDisplayActive = false;
+  private surfaceCompositePending = false;
+  /** The last source actually shown on the canvas, retained so a backdrop
+   * tween can repaint it without re-tracing. */
+  private surfacePresentation: {
+    color: THREE.Texture;
+    layer: THREE.Texture | null;
+    background: TraceBackgroundReference | null;
+  } | null = null;
   /** Live SurfaceParams snapshot for compute frame specs — kept beside the
    * GLSL uniform writes in {@link setSurfaceParams} so both paths read the
    * one document. */
@@ -1710,12 +1739,14 @@ export class FractalScene {
     // drawing buffer. No depth/stencil — the tracer is a full-screen quad —
     // and linear filtering so the upscale blit smooths rather than blocks.
     this.surfacePreviewTarget = new THREE.WebGLRenderTarget(2, 2, {
+      count: 2,
       depthBuffer: false,
       stencilBuffer: false,
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
     });
     this.surfaceSettleTarget = new THREE.WebGLRenderTarget(2, 2, {
+      count: 2,
       depthBuffer: false,
       stencilBuffer: false,
       minFilter: THREE.LinearFilter,
@@ -1723,6 +1754,7 @@ export class FractalScene {
     });
     this.surfaceBlitMaterial = createSurfaceBlitMaterial(
       this.surfacePreviewTarget.texture,
+      this.surfacePreviewTarget.textures[1],
     );
     this.surfaceBlitQuad = new FullScreenQuad(this.surfaceBlitMaterial);
   }
@@ -2259,7 +2291,16 @@ export class FractalScene {
     }
     this.backdrop = stops;
     this.backdropShape = shape;
-    this.renderNeeded = true;
+    if (
+      this.surfaceDisplayActive &&
+      this.surfacePresentation !== null &&
+      this.surfacePresentation.layer !== null &&
+      this.surfacePresentation.background !== null
+    ) {
+      this.surfaceCompositePending = true;
+    } else {
+      this.renderNeeded = true;
+    }
     if (this.backdropCtx) {
       paintBackdropGradient(
         this.backdropCtx,
@@ -2278,11 +2319,11 @@ export class FractalScene {
       this.viewportWidth,
       this.viewportHeight,
     );
-    for (const material of [
-      this.surfaceMaterial,
-      this.surfaceMaterial4,
-      this.voxelMaterial,
-    ]) {
+    // Surface tracers snapshot their backdrop when a frame is ARMED. A live
+    // edit must only move the compositor while that expensive frame remains
+    // valid; mutating their uniforms here would tear a scissored frame across
+    // old/new backgrounds. Solid still shades directly to the canvas.
+    for (const material of [this.voxelMaterial]) {
       const u = material.uniforms;
       (u.uBgTop.value as THREE.Vector3).set(...stops.top);
       (u.uBgBottom.value as THREE.Vector3).set(...stops.bottom);
@@ -2320,17 +2361,41 @@ export class FractalScene {
       );
       this.backdropTexture.needsUpdate = true;
     }
-    for (const material of [
-      this.surfaceMaterial,
-      this.surfaceMaterial4,
-      this.voxelMaterial,
-    ]) {
+    for (const material of [this.voxelMaterial]) {
       const u = material.uniforms;
       (u.uBgCenter.value as THREE.Vector2).set(
         ...(spec.center ?? DEFAULT_BACKGROUND_SHAPE_CENTER),
       );
       (u.uBgScale.value as THREE.Vector2).set(...(spec.scale ?? [1, 1]));
     }
+  }
+
+  /** Tell the scene whether the Surface session owns the shared canvas.
+   * Background edits use this to dirty presentation rather than tracing;
+   * points/flame/solid retain the ordinary renderNeeded behavior. */
+  setSurfaceDisplayActive(active: boolean): void {
+    if (active && !this.surfaceDisplayActive) {
+      // Session-scoped: an image from the previous Surface visit may have a
+      // different DE even when its dimensions happen to match.
+      this.surfacePresentation = null;
+      this.surfaceComputeBackground = null;
+    }
+    this.surfaceDisplayActive = active;
+    this.surfaceCompositePending = false;
+  }
+
+  get surfaceCompositeNeeded(): boolean {
+    return this.surfaceCompositePending;
+  }
+
+  /** Repaint the last surface source against the live backdrop. False before
+   * any trace has presented in this session. */
+  presentSurfaceComposite(): boolean {
+    const source = this.surfacePresentation;
+    if (!source?.layer || !source.background) return false;
+    this.blitSurface(source.color, null, source.layer, source.background);
+    this.surfaceCompositePending = false;
+    return true;
   }
 
   /**
@@ -4154,6 +4219,9 @@ export class FractalScene {
     this.surfaceComputeFitNoted = false;
     this.surfaceComputeTexture?.dispose();
     this.surfaceComputeTexture = null;
+    this.surfaceComputeLayerTexture?.dispose();
+    this.surfaceComputeLayerTexture = null;
+    this.surfaceComputeBackground = null;
   }
 
   get surfaceComputeSessionActive(): boolean {
@@ -4384,6 +4452,8 @@ export class FractalScene {
     pixels: Uint8Array,
     width: number,
     height: number,
+    layers?: Uint8Array,
+    traceSpec?: SurfaceComputeFrameSpec,
   ): void {
     let tex = this.surfaceComputeTexture;
     if (!tex || tex.image.width !== width || tex.image.height !== height) {
@@ -4403,14 +4473,48 @@ export class FractalScene {
     }
     (tex.image.data as Uint8Array).set(pixels);
     tex.needsUpdate = true;
-    this.blitSurface(tex, null);
+    let layerTex: THREE.DataTexture | null = null;
+    let reference: TraceBackgroundReference | null = null;
+    if (layers && traceSpec) {
+      layerTex = this.surfaceComputeLayerTexture;
+      if (
+        !layerTex ||
+        layerTex.image.width !== width ||
+        layerTex.image.height !== height
+      ) {
+        layerTex?.dispose();
+        layerTex = new THREE.DataTexture(
+          new Uint8Array(width * height * 4),
+          width,
+          height,
+        );
+        layerTex.minFilter = THREE.LinearFilter;
+        layerTex.magFilter = THREE.LinearFilter;
+        layerTex.wrapS = THREE.ClampToEdgeWrapping;
+        layerTex.wrapT = THREE.ClampToEdgeWrapping;
+        this.surfaceComputeLayerTexture = layerTex;
+      }
+      (layerTex.image.data as Uint8Array).set(layers);
+      layerTex.needsUpdate = true;
+      reference = snapshotTraceBackground({
+        stops: { top: traceSpec.bgTop, bottom: traceSpec.bgBottom },
+        shape: traceSpec.bgShape ?? { kind: "linear" },
+      });
+    }
+    this.surfaceComputeBackground = reference;
+    this.blitSurface(tex, null, layerTex, reference);
   }
 
   /** Repaint the last presented compute frame (recorder ticks, forced
    * offline frames, exit repaints). False when none exists yet. */
   representSurfaceComputeFrame(): boolean {
     if (!this.surfaceComputeTexture) return false;
-    this.blitSurface(this.surfaceComputeTexture, null);
+    this.blitSurface(
+      this.surfaceComputeTexture,
+      null,
+      this.surfaceComputeLayerTexture,
+      this.surfaceComputeBackground,
+    );
     return true;
   }
 
@@ -4443,10 +4547,10 @@ export class FractalScene {
    * resolution traces finer, exactly like the GLSL capture).
    *
    * TILED, because a frame's cost in GPU memory scales with its rays
-   * (36 B/ray across six buffers once the march status moved to its own
-   * side channel; 44 across five before that) and an export's rays scale
+   * (44 B/ray across eight buffers with the status and background-layer
+   * side channels; 36 before the layer) and an export's rays scale
    * with exportScale SQUARED: a 4x export of a 1920x1057 pane is 32.5M
-   * rays — a 520 MB ray-state buffer inside a ~1.2 GB frame — which
+   * rays — a 520 MB ray-state buffer inside a ~1.43 GB GPU frame — which
    * devices refuse. WebGPU does not throw for it either; `createBuffer`
    * returns an invalid buffer and the first REJECTION is a staging
    * `mapAsync` ("Invalid buffer"), which is how the bug reached a user as
@@ -4655,7 +4759,12 @@ export class FractalScene {
       SURFACE_CAPTURE_SPEND_CEILING_MS,
     );
     this.finishSurfaceFullFrame(arm, totalPx, completed ? "done" : "ceiling");
-    this.blitSurface(this.surfaceSettleTarget.texture, null);
+    this.blitSurface(
+      this.surfaceSettleTarget.texture,
+      null,
+      this.surfaceSettleTarget.textures[1],
+      this.surfaceSettleBackground,
+    );
   }
 
   /**
@@ -4707,7 +4816,11 @@ export class FractalScene {
     this.abandonSurfaceSettle();
     this.abandonSurfacePreview();
     sizeTarget(this.surfaceSettleTarget, width, height);
-    this.setSurfaceFrameUniforms("full", height, height);
+    this.surfaceSettleBackground = this.setSurfaceFrameUniforms(
+      "full",
+      height,
+      height,
+    );
     // Single-pass by default, which is what the synchronous
     // callers of this — offline export force frames and thumbnails — stay
     // at: an export's cost would multiply by the frame count, and a
@@ -4971,19 +5084,20 @@ export class FractalScene {
     const scale = this.surfacePreviewGovernor.scale;
     const w = Math.max(1, Math.round(size.x * scale));
     const h = Math.max(1, Math.round(size.y * scale));
-    const resized =
-      this.surfacePreviewTarget.width !== w ||
-      this.surfacePreviewTarget.height !== h;
     sizeTarget(this.surfacePreviewTarget, w, h);
-    if (resized) {
-      // A partial present must show backdrop under untraced rows, never
-      // uninitialized target memory. Same-size re-arms keep the previous
-      // preview's pixels instead — the cheapest seed there is.
-      this.renderer.setRenderTarget(this.surfacePreviewTarget);
-      this.renderer.clear();
-      this.renderer.setRenderTarget(null);
-    }
-    this.setSurfaceFrameUniforms("preview", h, size.y);
+    this.surfacePreviewBackground = this.setSurfaceFrameUniforms(
+      "preview",
+      h,
+      size.y,
+    );
+    // Deliberate composite-layer prefill: unresolved rows are uncovered
+    // backdrop (coverage=0, fog=0, beta=1), even on a same-size re-arm.
+    // Carrying the prior frame would mix two trace-background references in
+    // one MRT and make a later background edit impossible to recompose.
+    this.seedSurfaceTarget(
+      this.surfacePreviewTarget,
+      this.surfacePreviewBackground,
+    );
     // Probe SIZED from the prior: a measured px cost when one
     // exists, else the pessimistic fold-class prior. Either way the probe
     // plans at most ~one strip target of predicted GPU — during a drag on
@@ -5076,7 +5190,12 @@ export class FractalScene {
     // rides the same GL queue as the strips, so presenting mid-queue
     // would stall the page's own frames behind the queued trace work.
     if (done || present) {
-      this.blitSurface(this.surfacePreviewTarget.texture, null);
+      this.blitSurface(
+        this.surfacePreviewTarget.texture,
+        null,
+        this.surfacePreviewTarget.textures[1],
+        this.surfacePreviewBackground,
+      );
     }
     return done;
   }
@@ -5288,11 +5407,19 @@ export class FractalScene {
     this.surfaceSampleWidth = width;
     this.surfaceSampleHeight = height;
     if (total <= 1) {
-      // ~33MB at 1080p between the accumulator and the mean texture: a
-      // single-pass caller has no use for either.
+      // A single-pass caller has no use for either accumulation pair.
       this.surfaceSampleAccum = null;
+      this.surfaceSampleLayerAccum = null;
+      if (
+        this.surfacePresentation?.color === this.surfaceSampleTexture ||
+        this.surfacePresentation?.layer === this.surfaceSampleLayerTexture
+      ) {
+        this.surfacePresentation = null;
+      }
       this.surfaceSampleTexture?.dispose();
       this.surfaceSampleTexture = null;
+      this.surfaceSampleLayerTexture?.dispose();
+      this.surfaceSampleLayerTexture = null;
       return;
     }
     const px = width * height;
@@ -5300,6 +5427,11 @@ export class FractalScene {
       this.surfaceSampleAccum.fill(0);
     } else {
       this.surfaceSampleAccum = new Float32Array(px * 3);
+    }
+    if (this.surfaceSampleLayerAccum?.length === px * 3) {
+      this.surfaceSampleLayerAccum.fill(0);
+    } else {
+      this.surfaceSampleLayerAccum = new Float32Array(px * 3);
     }
     const tex = this.surfaceSampleTexture;
     if (!tex || tex.image.width !== width || tex.image.height !== height) {
@@ -5312,6 +5444,20 @@ export class FractalScene {
       next.wrapS = THREE.ClampToEdgeWrapping;
       next.wrapT = THREE.ClampToEdgeWrapping;
       this.surfaceSampleTexture = next;
+    }
+    const layerTex = this.surfaceSampleLayerTexture;
+    if (
+      !layerTex ||
+      layerTex.image.width !== width ||
+      layerTex.image.height !== height
+    ) {
+      layerTex?.dispose();
+      const next = new THREE.DataTexture(new Uint8Array(px * 4), width, height);
+      next.minFilter = THREE.LinearFilter;
+      next.magFilter = THREE.LinearFilter;
+      next.wrapS = THREE.ClampToEdgeWrapping;
+      next.wrapT = THREE.ClampToEdgeWrapping;
+      this.surfaceSampleLayerTexture = next;
     }
   }
 
@@ -5372,11 +5518,14 @@ export class FractalScene {
    */
   private foldSurfaceSample(): void {
     const accum = this.surfaceSampleAccum;
+    const layerAccum = this.surfaceSampleLayerAccum;
     const tex = this.surfaceSampleTexture;
-    if (!accum || !tex) return;
+    const layerTex = this.surfaceSampleLayerTexture;
+    if (!accum || !layerAccum || !tex || !layerTex) return;
     const width = this.surfaceSampleWidth;
     const height = this.surfaceSampleHeight;
     const buf = tex.image.data as Uint8Array;
+    const layerBuf = layerTex.image.data as Uint8Array;
     const t0 = SURFPERF ? performance.now() : 0;
     this.renderer.readRenderTargetPixels(
       this.surfaceSettleTarget,
@@ -5385,6 +5534,16 @@ export class FractalScene {
       width,
       height,
       buf,
+    );
+    this.renderer.readRenderTargetPixels(
+      this.surfaceSettleTarget,
+      0,
+      0,
+      width,
+      height,
+      layerBuf,
+      0,
+      1,
     );
     const tRead = SURFPERF ? performance.now() : 0;
     const px = width * height;
@@ -5399,12 +5558,16 @@ export class FractalScene {
       accum[a] += SRGB_TO_LINEAR[buf[p]];
       accum[a + 1] += SRGB_TO_LINEAR[buf[p + 1]];
       accum[a + 2] += SRGB_TO_LINEAR[buf[p + 2]];
+      layerAccum[a] += layerBuf[p];
+      layerAccum[a + 1] += layerBuf[p + 1];
+      layerAccum[a + 2] += layerBuf[p + 2];
     }
     this.surfaceSampleTaken += 1;
     // The texture now holds THIS pass verbatim — which is already the
     // right image to re-present while pass 1 traces over the target
     // (encodeSurfaceSampleMean takes over from two passes on).
     tex.needsUpdate = true;
+    layerTex.needsUpdate = true;
     if (SURFPERF) {
       // The accumulator's whole overhead, the number the host-side-vs-float-
       // target choice was made on: readback + decode, once per PASS.
@@ -5475,17 +5638,33 @@ export class FractalScene {
    */
   private encodeSurfaceSampleMean(): void {
     const accum = this.surfaceSampleAccum;
+    const layerAccum = this.surfaceSampleLayerAccum;
     const tex = this.surfaceSampleTexture;
-    if (!accum || !tex || this.surfaceSampleTaken < 2) return;
+    const layerTex = this.surfaceSampleLayerTexture;
+    if (
+      !accum ||
+      !layerAccum ||
+      !tex ||
+      !layerTex ||
+      this.surfaceSampleTaken < 2
+    ) {
+      return;
+    }
     const buf = tex.image.data as Uint8Array;
+    const layerBuf = layerTex.image.data as Uint8Array;
     const inv = 1 / this.surfaceSampleTaken;
     const invGamma = 1 / SURFACE_OUTPUT_GAMMA;
     for (let p = 0, a = 0; p < buf.length; p += 4, a += 3) {
       buf[p] = Math.round(255 * Math.pow(accum[a] * inv, invGamma));
       buf[p + 1] = Math.round(255 * Math.pow(accum[a + 1] * inv, invGamma));
       buf[p + 2] = Math.round(255 * Math.pow(accum[a + 2] * inv, invGamma));
+      layerBuf[p] = Math.round(layerAccum[a] * inv);
+      layerBuf[p + 1] = Math.round(layerAccum[a + 1] * inv);
+      layerBuf[p + 2] = Math.round(layerAccum[a + 2] * inv);
+      layerBuf[p + 3] = 255;
     }
     tex.needsUpdate = true;
+    layerTex.needsUpdate = true;
   }
 
   /**
@@ -5500,7 +5679,12 @@ export class FractalScene {
   ): boolean {
     const tex = this.surfaceSampleTexture;
     if (!tex || this.surfaceSampleTaken < 1) return false;
-    this.blitSurface(tex, target);
+    this.blitSurface(
+      tex,
+      target,
+      this.surfaceSampleLayerTexture,
+      this.surfaceSettleBackground,
+    );
     this.surfaceSampleMeanReady = true;
     return true;
   }
@@ -5525,7 +5709,11 @@ export class FractalScene {
     this.abandonSurfacePreview();
     const size = this.renderer.getDrawingBufferSize(DRAW_SIZE);
     sizeTarget(this.surfaceSettleTarget, size.x, size.y);
-    this.setSurfaceFrameUniforms("full", size.y, size.y);
+    this.surfaceSettleBackground = this.setSurfaceFrameUniforms(
+      "full",
+      size.y,
+      size.y,
+    );
     // Seed for the rows the strips haven't traced yet. "preview" — the
     // normal choreography — upscales the completed preview of THIS pose.
     // "hold" (the previews-off pref) keeps the target's own stale pixels:
@@ -5538,6 +5726,15 @@ export class FractalScene {
       this.blitSurface(
         this.surfacePreviewTarget.texture,
         this.surfaceSettleTarget,
+        this.surfacePreviewTarget.textures[1],
+        this.surfacePreviewBackground,
+      );
+    } else {
+      // With previews disabled there is no coherent same-pose layer to seed
+      // from. Start uncovered so a mid-frame background edit remains exact.
+      this.seedSurfaceTarget(
+        this.surfaceSettleTarget,
+        this.surfaceSettleBackground,
       );
     }
     // Force the seed — and every frame still queued before it — to
@@ -5616,7 +5813,12 @@ export class FractalScene {
           this.surfaceSampleIndex === 0 ||
           !this.presentSurfaceSampleImage()
         ) {
-          this.blitSurface(this.surfaceSettleTarget.texture, null);
+          this.blitSurface(
+            this.surfaceSettleTarget.texture,
+            null,
+            this.surfaceSettleTarget.textures[1],
+            this.surfaceSettleBackground,
+          );
         }
       }
       return false;
@@ -5643,7 +5845,12 @@ export class FractalScene {
       // debug path: the alternative is a blank-frame notice that silently
       // stops working under the flag that exists to A/B this arm.
       this.measureSurfaceRayCensus(target.width, target.height);
-      this.blitSurface(target.texture, null);
+      this.blitSurface(
+        target.texture,
+        null,
+        target.textures[1],
+        this.surfaceSettleBackground,
+      );
       return true;
     }
     const first = this.surfaceSampleIndex === 0;
@@ -5652,7 +5859,12 @@ export class FractalScene {
     if (first || !this.presentSurfaceSampleImage()) {
       // Pass 0 presents its own TARGET — the pre-supersampling settle, at
       // the moment it always arrived — and never the readback of it.
-      this.blitSurface(target.texture, null);
+      this.blitSurface(
+        target.texture,
+        null,
+        target.textures[1],
+        this.surfaceSettleBackground,
+      );
     }
     this.surfaceSampleIndex += 1;
     if (this.surfaceSampleIndex >= this.surfaceSampleTotal) return true;
@@ -5702,7 +5914,12 @@ export class FractalScene {
     // pane is already showing, or a recorder frame of a parked view would
     // be visibly noisier than the view it recorded.
     if (this.surfaceSampleMeanReady && this.presentSurfaceSampleImage()) return;
-    this.blitSurface(this.surfaceSettleTarget.texture, null);
+    this.blitSurface(
+      this.surfaceSettleTarget.texture,
+      null,
+      this.surfaceSettleTarget.textures[1],
+      this.surfaceSettleBackground,
+    );
   }
 
   /**
@@ -5720,9 +5937,25 @@ export class FractalScene {
     tier: RenderTier,
     height: number,
     acceptHeight: number,
-  ): void {
+  ): TraceBackgroundReference {
     this.camera.updateMatrixWorld();
     const u = this.activeSurfaceMaterial.uniforms;
+    const background = snapshotTraceBackground({
+      stops: this.backdrop,
+      shape: this.backgroundShapeSpecForImage(
+        this.viewportWidth,
+        this.viewportHeight,
+      ),
+    });
+    (u.uBgTop.value as THREE.Vector3).set(...background.stops.top);
+    (u.uBgBottom.value as THREE.Vector3).set(...background.stops.bottom);
+    u.uBgShape.value = backgroundShapeCode(background.shape.kind);
+    (u.uBgCenter.value as THREE.Vector2).set(
+      ...(background.shape.center ?? DEFAULT_BACKGROUND_SHAPE_CENTER),
+    );
+    (u.uBgScale.value as THREE.Vector2).set(
+      ...(background.shape.scale ?? [1, 1]),
+    );
     (u.uCamPos.value as THREE.Vector3).copy(this.camera.position);
     (u.uInvProjView.value as THREE.Matrix4)
       .multiplyMatrices(
@@ -5779,6 +6012,7 @@ export class FractalScene {
     u.uHitFloor.value = preview
       ? SURFACE_PREVIEW_HIT_FLOOR
       : SURFACE_FULL_HIT_FLOOR;
+    return background;
   }
 
   /**
@@ -6431,16 +6665,82 @@ export class FractalScene {
     for (const f of pool.entries) gl.deleteSync(f.sync);
   }
 
-  /** Stretch `src` over `target` (null = the canvas) via the shared blit
-   * quad. */
-  private blitSurface(
-    src: THREE.Texture,
-    target: THREE.WebGLRenderTarget | null,
+  private currentSurfaceBackground(): TraceBackgroundReference {
+    return snapshotTraceBackground({
+      stops: this.backdrop,
+      shape: this.backgroundShapeSpecForImage(
+        this.viewportWidth,
+        this.viewportHeight,
+      ),
+    });
+  }
+
+  private setSurfaceBlitBackground(
+    prefix: "Trace" | "Live",
+    background: TraceBackgroundReference,
   ): void {
-    this.surfaceBlitMaterial.uniforms.uSrc.value = src;
+    const u = this.surfaceBlitMaterial.uniforms;
+    (u[`u${prefix}BgTop`].value as THREE.Vector3).set(...background.stops.top);
+    (u[`u${prefix}BgBottom`].value as THREE.Vector3).set(
+      ...background.stops.bottom,
+    );
+    u[`u${prefix}BgShape`].value = backgroundShapeCode(background.shape.kind);
+    (u[`u${prefix}BgCenter`].value as THREE.Vector2).set(
+      ...(background.shape.center ?? DEFAULT_BACKGROUND_SHAPE_CENTER),
+    );
+    (u[`u${prefix}BgScale`].value as THREE.Vector2).set(
+      ...(background.shape.scale ?? [1, 1]),
+    );
+  }
+
+  /** Fill both attachments with uncovered backdrop. This is the deliberate
+   * mid-frame policy: pixels a bounded trace has not reached yet follow a
+   * live background edit immediately instead of impersonating misses from a
+   * stale reference. */
+  private seedSurfaceTarget(
+    target: THREE.WebGLRenderTarget,
+    background: TraceBackgroundReference,
+  ): void {
+    const u = this.surfaceBlitMaterial.uniforms;
+    u.uHasSource.value = 0;
+    u.uHasLayer.value = 0;
+    u.uComposite.value = 0;
+    this.setSurfaceBlitBackground("Live", background);
     this.renderer.setRenderTarget(target);
     this.surfaceBlitQuad.render(this.renderer);
     this.renderer.setRenderTarget(null);
+  }
+
+  /** Stretch `src` over `target` (null = the canvas) via the shared opaque
+   * compositor. Equal backgrounds take a literal legacy RGB copy; only an
+   * actual edit evaluates the sidecar delta. */
+  private blitSurface(
+    src: THREE.Texture,
+    target: THREE.WebGLRenderTarget | null,
+    layer: THREE.Texture | null = null,
+    background: TraceBackgroundReference | null = null,
+  ): void {
+    const u = this.surfaceBlitMaterial.uniforms;
+    const live = this.currentSurfaceBackground();
+    u.uSrc.value = src;
+    u.uLayer.value = layer ?? src;
+    u.uHasSource.value = 1;
+    u.uHasLayer.value = layer === null ? 0 : 1;
+    u.uComposite.value =
+      layer !== null &&
+      background !== null &&
+      !traceBackgroundsEqual(background, live)
+        ? 1
+        : 0;
+    this.setSurfaceBlitBackground("Live", live);
+    if (background !== null) this.setSurfaceBlitBackground("Trace", background);
+    this.renderer.setRenderTarget(target);
+    this.surfaceBlitQuad.render(this.renderer);
+    this.renderer.setRenderTarget(null);
+    if (target === null) {
+      this.surfacePresentation = { color: src, layer, background };
+      this.surfaceCompositePending = false;
+    }
   }
 
   /**
@@ -6468,9 +6768,18 @@ export class FractalScene {
    * not shrunk.
    */
   private releaseSurfaceSampleSequence(): void {
+    if (
+      this.surfacePresentation?.color === this.surfaceSampleTexture ||
+      this.surfacePresentation?.layer === this.surfaceSampleLayerTexture
+    ) {
+      this.surfacePresentation = null;
+    }
     this.surfaceSampleAccum = null;
+    this.surfaceSampleLayerAccum = null;
     this.surfaceSampleTexture?.dispose();
     this.surfaceSampleTexture = null;
+    this.surfaceSampleLayerTexture?.dispose();
+    this.surfaceSampleLayerTexture = null;
     this.surfaceSampleMeanReady = false;
   }
 
@@ -6606,7 +6915,12 @@ export class FractalScene {
         // CANVAS, already blitted synchronously, so nothing needs this
         // capture's sample sequence once this returns.
         if (this.surfaceSampleTaken < 2 || !this.presentSurfaceSampleImage()) {
-          this.blitSurface(this.surfaceSettleTarget.texture, null);
+          this.blitSurface(
+            this.surfaceSettleTarget.texture,
+            null,
+            this.surfaceSettleTarget.textures[1],
+            this.surfaceSettleBackground,
+          );
         }
         return exportImageFrom(this.renderer.domElement);
       });

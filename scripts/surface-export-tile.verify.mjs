@@ -3,12 +3,12 @@
  * Export-tiling gate: does a TILED compute capture reproduce the
  * untiled one, pixel for pixel?
  *
- * THE BUG THIS EXISTS TO CATCH. `SurfaceComputeRenderer` allocates six
- * per-ray buffers for a whole frame (36 B/ray since the march status
- * side-channel replaced the whole-states readback, 44 across five before
- * it; the ray state alone is 16 B), and a capture's rays scale with
+ * THE BUG THIS EXISTS TO CATCH. `SurfaceComputeRenderer` allocates eight
+ * per-ray buffers for a whole frame (44 B/ray with the march-status and
+ * background-layer sidecars, 36 before the background layer; the ray state
+ * alone is 16 B), and a capture's rays scale with
  * exportScale SQUARED — a 4x export of a 1920x1057 pane is 32.5M rays, a
- * 520 MB ray-state buffer inside a ~1.2 GB frame. Devices refuse that, and
+ * 520 MB ray-state buffer inside a ~1.43 GB GPU frame. Devices refuse that, and
  * WebGPU does not throw for it:
  * `createBuffer` returns an INVALID buffer plus a validation error, and
  * the first REJECTION comes from a staging `mapAsync` several awaits later

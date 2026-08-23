@@ -4,8 +4,9 @@
  * "Unify surface material slot packing"), then advanced for two intentional
  * global shader changes: fr-plxs's invisible terminal-ray alpha code, and
  * the corrected live material B-lane/source comments in the resolved GLSL,
- * and fr-cmtl.8's zero-tap-safe AO identity for provably AO-independent
- * authored finishes.
+ * fr-cmtl.8's zero-tap-safe AO identity for provably AO-independent
+ * authored finishes, and fr-q6ca's second fragment output carrying the
+ * background-recomposition coverage/fog/beta sidecar.
  * This remains the pattern-OFF baseline the byte-identity tests compare
  * pattern-off emissions against.
  *
@@ -20,123 +21,123 @@ export const PRE_PATTERN_SOURCE_HASHES: Record<
   { resolved: string; emitted: string }
 > = {
   "3D affine finish0": {
-    resolved: "7d10ebcfb9a04148",
-    emitted: "38cf84a4d9f804b7",
+    resolved: "b796706cea426a5a",
+    emitted: "814be982a8a9b994",
   },
   "3D affine finish1": {
-    resolved: "e7c71261aa0b9bc0",
-    emitted: "039e2c00989e3ce6",
+    resolved: "1ed87b486fff452b",
+    emitted: "03e229766c5d3ec3",
   },
   "3D lens finish0": {
-    resolved: "a8014508c2af2ed8",
-    emitted: "650dae6dea960418",
+    resolved: "1038ea2124f48d1a",
+    emitted: "2d454b4f05b1c3ab",
   },
   "3D lens finish1": {
-    resolved: "f0e21f80561061b1",
-    emitted: "64f88e0fceee902d",
+    resolved: "5ddb439dd93d17d4",
+    emitted: "46d10b3c273d71bb",
   },
   "3D balloon finish0": {
-    resolved: "29bab4eddf4f328a",
-    emitted: "78bd7e9b7c301fda",
+    resolved: "20ca22410439e45f",
+    emitted: "114f40fdefc09b20",
   },
   "3D balloon finish1": {
-    resolved: "291926567fcdc775",
-    emitted: "de769e0686a14d6b",
+    resolved: "30a65862840819f3",
+    emitted: "e391179f5c96ff2f",
   },
   "3D plane finish0": {
-    resolved: "bb61d07f3a08dc0c",
-    emitted: "068160df0b8e2526",
+    resolved: "3dfe2e75c86f652a",
+    emitted: "f093e722feacbeae",
   },
   "3D plane finish1": {
-    resolved: "c3d6abd98e876284",
-    emitted: "a4ecab82c44f629a",
+    resolved: "2d347d766809f70b",
+    emitted: "97694609cfb4eb08",
   },
   "3D lens+balloon finish0": {
-    resolved: "62fa675fa34430da",
-    emitted: "8dccbd2cc4b64eed",
+    resolved: "979363a822657f02",
+    emitted: "4d42222c937f7ff3",
   },
   "3D lens+balloon finish1": {
-    resolved: "7cea242e53ae9b77",
-    emitted: "fc83d65dad84c911",
+    resolved: "9c6ddf5f925ad4e0",
+    emitted: "804c054e240e49f2",
   },
   "3D lens+plane finish0": {
-    resolved: "503d47a8ed890d96",
-    emitted: "2e758c87fb917efc",
+    resolved: "685ec5ea653dc4fd",
+    emitted: "c4c74a6f6a7e0533",
   },
   "3D lens+plane finish1": {
-    resolved: "923598b21186a76f",
-    emitted: "65125e8aad7ec2d5",
+    resolved: "d8fd90713df8cad8",
+    emitted: "cdc35fa1a88fef5a",
   },
   "3D escape finish0": {
-    resolved: "440d3c0418fb0c96",
-    emitted: "440d3c0418fb0c96",
+    resolved: "6fefaf2c63a4325a",
+    emitted: "6fefaf2c63a4325a",
   },
   "3D escape finish1": {
-    resolved: "ae1ea2aa5197f2bb",
-    emitted: "ae1ea2aa5197f2bb",
+    resolved: "8bd27bc2dfd8394c",
+    emitted: "8bd27bc2dfd8394c",
   },
   "3D escape+balloon finish0": {
-    resolved: "bc96b9088d675c0d",
-    emitted: "bc96b9088d675c0d",
+    resolved: "8b16d1ab1c0100cd",
+    emitted: "8b16d1ab1c0100cd",
   },
   "3D escape+balloon finish1": {
-    resolved: "9479b5f3d5335773",
-    emitted: "40a750ce14adc0de",
+    resolved: "07cd7f5b45a85a72",
+    emitted: "09637dd9fa99a038",
   },
   "3D escape+plane finish0": {
-    resolved: "c88320a8cf64300f",
-    emitted: "f681a3f73850b7b4",
+    resolved: "bad044def349e9d1",
+    emitted: "dd14af627048b9fb",
   },
   "3D escape+plane finish1": {
-    resolved: "be6078148439f8a4",
-    emitted: "e4e8bad202f4e5ba",
+    resolved: "fa004e04e7c106ac",
+    emitted: "6b161cd865a9a695",
   },
   "3D bulb finish0": {
-    resolved: "4a86de1d16e4ad24",
-    emitted: "4a86de1d16e4ad24",
+    resolved: "680c4e47649557fe",
+    emitted: "680c4e47649557fe",
   },
   "3D bulb finish1": {
-    resolved: "f7387ed557687d78",
-    emitted: "f7387ed557687d78",
+    resolved: "d757192881c06d26",
+    emitted: "d757192881c06d26",
   },
   "3D bulb+balloon finish0": {
-    resolved: "0998a602c0a8ec60",
-    emitted: "0998a602c0a8ec60",
+    resolved: "c7997b9295b928e2",
+    emitted: "c7997b9295b928e2",
   },
   "3D bulb+balloon finish1": {
-    resolved: "90f73a5bd5777f4d",
-    emitted: "90f73a5bd5777f4d",
+    resolved: "bf39d3e892dc4cb2",
+    emitted: "bf39d3e892dc4cb2",
   },
   "3D bulb+plane finish0": {
-    resolved: "6dfde1573ebd8232",
-    emitted: "98117c35dc09e4b3",
+    resolved: "1065aa15a1e0cc5f",
+    emitted: "a2ff36afd5018b1d",
   },
   "3D bulb+plane finish1": {
-    resolved: "ddfbfeb4ba38f78f",
-    emitted: "4f6d5e9966c7154b",
+    resolved: "db984554a831195f",
+    emitted: "a7f9e8aedd683604",
   },
   "4D base finish0": {
-    resolved: "368f8ced965df527",
-    emitted: "368f8ced965df527",
+    resolved: "0fea9dfa6c5eef47",
+    emitted: "0fea9dfa6c5eef47",
   },
   "4D base finish1": {
-    resolved: "f37801efa989be0b",
-    emitted: "f37801efa989be0b",
+    resolved: "b5a9284ecd835290",
+    emitted: "b5a9284ecd835290",
   },
   "4D balloon finish0": {
-    resolved: "a24b3cffa045ee6a",
-    emitted: "497280377c0de3ac",
+    resolved: "f425b9362d55ad74",
+    emitted: "922fe06b78df05d6",
   },
   "4D balloon finish1": {
-    resolved: "234ea1cf8769f2eb",
-    emitted: "0ca046130095c60d",
+    resolved: "137f573132da758e",
+    emitted: "759313ada6a54e47",
   },
   "4D plane finish0": {
-    resolved: "dee1c078f772dd05",
-    emitted: "9d21ce389159cd94",
+    resolved: "ea50070941addaee",
+    emitted: "60aecb6d107d00e7",
   },
   "4D plane finish1": {
-    resolved: "0a23feda406e2a2c",
-    emitted: "9f3bb098486923b5",
+    resolved: "e9c8cdd5b13c566e",
+    emitted: "ff68ea363c17db05",
   },
 };
