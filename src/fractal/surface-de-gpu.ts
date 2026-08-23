@@ -798,7 +798,7 @@ import type { Vec3 } from "./types";
  * Bindings per mode — eval and march "pose" bind 0-3 (params, maps, the
  * mode's own pair at 2/3); march "unproject" binds 0-4, the march set
  * plus shade: ShadeParams (rays + dither inputs only — it declares none
- * of shadeMaps/colorOut/lutTex/lutSamp); mode "shade" binds 0-8. The
+ * of shadeMaps/colorOut/lutTex/lutSamp/layerOut); mode "shade" binds 0-9. The
  * BULB core never declares binding 1 (maps) in any mode — its one forward
  * map rides the params variant block — so its hosts skip that buffer;
  * the ESCAPE core DOES declare it (its chain is a list of forward maps,
@@ -822,6 +822,12 @@ import type { Vec3 } from "./types";
  *               so textureSampleLevel(lutTex, lutSamp, vec2f(u, 0.5), 0.0)
  *               is exact parity with GLSL texture(uColorLUT, vec2(u, 0.5))
  *               on the same Uint8-quantized texture.
+ *   @binding(9) var<storage, read_write> layerOut: array<u32> — the
+ *               background-composite sidecar packed as RGBA8: R coverage,
+ *               G fog, B beta = 1 - coverage + coverage * fog *
+ *               (1 - fogTintStrength), A 1. `colorOut` remains the immutable
+ *               legacy reference; the sidecar lets presentation apply a
+ *               backdrop delta without changing those bytes.
  */
 
 /** Mirror of `surface-material.ts`'s `SURFACE_FULL_HIT_FLOOR` (1e-5) —
@@ -2722,7 +2728,7 @@ fn frontierIx(slot: u32, li: u32) -> u32 {
   // march and shade share the ray-state I/O. march "unproject" adds the
   // ShadeParams block (binding 4) it reads rays and dither from — nothing
   // else — plus the hash2 helper; mode "shade" adds the full shading
-  // interface on top (bindings 4-8, module doc), no hash2 (no dither).
+  // interface on top (bindings 4-9, module doc), no hash2 (no dither).
   const rayIo = `
 @group(0) @binding(2) var<storage, read> activeList: array<u32>;
 @group(0) @binding(3) var<storage, read_write> states: array<vec4f>;`;
@@ -2802,7 +2808,8 @@ fn hash2(p: vec2f) -> f32 {
 @group(0) @binding(5) var<storage, read> shadeMaps: array<vec4f>;
 @group(0) @binding(6) var<storage, read_write> colorOut: array<u32>;
 @group(0) @binding(7) var lutTex: texture_2d<f32>;
-@group(0) @binding(8) var lutSamp: sampler;`;
+@group(0) @binding(8) var lutSamp: sampler;
+@group(0) @binding(9) var<storage, read_write> layerOut: array<u32>;`;
 
   // March-arm interpolation points, so the "pose" bench baseline stays
   // byte-identical while "unproject" swaps in the GLSL tracer's ray.
@@ -4944,6 +4951,7 @@ ${balloonHitWrapText}`
   if (disc < 0.0) {
     // Defensive — a HIT ray always intersected the gate sphere.
     colorOut[ray] = pack4x8unorm(vec4f(bg, 1.0));
+    layerOut[ray] = packSurfaceLayer(0.0, 0.0);
     return;
   }
   let sq = sqrt(disc);
@@ -5147,16 +5155,27 @@ struct SurfaceHitInfo {
 
 ${hitInfoText}
 ${backgroundShapeSource(BACKGROUND_SHAPE_WGSL)}
+fn packSurfaceLayer(coverage: f32, fog: f32) -> u32 {
+  let beta = 1.0 - coverage +
+    coverage * fog * (1.0 - shade.fogTintStrength);
+  return pack4x8unorm(vec4f(coverage, fog, beta, 1.0));
+}
 ${
   groundPlane
     ? `
-fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> vec3f {
+struct GroundPlaneShade {
+  color: vec3f,
+  coverage: f32,
+  fog: f32,
+}
+
+fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> GroundPlaneShade {
   // Ground plane — the SURFACE_GROUND_PLANE GLSL arm's
   // shadeGroundPlane, term for term. The march only queues PLANE rays,
   // but the geometry re-derives from scratch so the guards keep this
   // total on any input.
   if (ro.y <= params.groundY || rd.y >= -1.0e-6) {
-    return bg;
+    return GroundPlaneShade(bg, 0.0, 0.0);
   }
   let tp = (params.groundY - ro.y) / rd.y;
   let hp = ro + rd * tp;
@@ -5165,7 +5184,7 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> vec3f {
   let fade =
     1.0 - smoothstep(params.groundFadeStart, params.groundFadeEnd, length(rel));
   if (fade <= 0.0) {
-    return bg;
+    return GroundPlaneShade(bg, 0.0, 0.0);
   }
   let gR = params.groundBallR;
   let visR = params.visibleRadius;
@@ -5250,7 +5269,7 @@ fn shadeGroundPlane(ro: vec3f, rd: vec3f, bg: vec3f, li: u32) -> vec3f {
   let dist = tp - clamp(dot(params.groundBallC - ro, rd), 0.0, tp);
   let fog = 1.0 - exp(-0.12 * pow(dist * params.fogDensity / max(visR, 1.0e-6), 2.0));
   col = mix(col, mix(bg, shade.fogTint, shade.fogTintStrength), clamp(fog, 0.0, 1.0));
-  return mix(bg, col, fade);
+  return GroundPlaneShade(mix(bg, col, fade), fade, clamp(fog, 0.0, 1.0));
 }
 `
     : ""
@@ -5299,14 +5318,16 @@ ${
     let nearP = shade.invProjView * vec4f(ndcX, ndcY, -1.0, 1.0);
     let farP = shade.invProjView * vec4f(ndcX, ndcY, 1.0, 1.0);
     let rd = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);
-    colorOut[ray] =
-      pack4x8unorm(vec4f(shadeGroundPlane(params.ro, rd, bg, li), 1.0));
+    let ground = shadeGroundPlane(params.ro, rd, bg, li);
+    colorOut[ray] = pack4x8unorm(vec4f(ground.color, 1.0));
+    layerOut[ray] = packSurfaceLayer(ground.coverage, ground.fog);
     return;
   }
 `
     : ""
 }  if (st.y != ${SURFACE_GPU_RAY_HIT}.0) {
     colorOut[ray] = pack4x8unorm(vec4f(bg, 1.0));
+    layerOut[ray] = packSurfaceLayer(0.0, 0.0);
     return;
   }
   let ndcX = ((f32(px) + sub.x) / f32(params.rasterWidth)) * 2.0 - 1.0;
@@ -5389,6 +5410,7 @@ ${shadeLighting}
   let fog = 1.0 - exp(-0.12 * pow((t - tEnter) * params.fogDensity / max(visR, 1.0e-6), 2.0));
   col = mix(col, mix(bg, shade.fogTint, shade.fogTintStrength), clamp(fog, 0.0, 1.0));
   colorOut[ray] = pack4x8unorm(vec4f(col, 1.0));
+  layerOut[ray] = packSurfaceLayer(1.0, clamp(fog, 0.0, 1.0));
 }`;
 
   // Stage-2 branch-and-bound (surface-de.ts descendFold, the

@@ -187,8 +187,9 @@ Three details make it a plain win rather than a trade:
   measured march time, which is where it belongs.
 - The `states` buffer loses its MAP_READ staging twin and its COPY_SRC
   usage: nothing reads it back at all now. A frame's per-ray commitment
-  falls 44 B → 36 B (see "Raster limits" below for why the device ceiling
-  does not move with it).
+  fell 44 B → 36 B; the later background-layer output and staging twin
+  bring the total back to 44 B (see "Raster limits" below for why the
+  device ceiling still does not move).
 - The terminal tally (`SurfaceComputeFrame.counts`) is kept as rays LEAVE
   the active list, with `active` the remainder, replacing a final
   whole-buffer scan of a buffer the loop no longer reads. Same numbers,
@@ -920,7 +921,7 @@ exactly, the rest the R2 low-discrepancy sequence). Passes are averaged in
 LINEAR light, because both tracers end with a `pow(lit, 1/2.2)` encode and
 averaging the gamma-encoded bytes is the edge-darkening bug.
 
-It is N FRAMES, not N rays per frame, so the five per-ray buffers and every
+It is N FRAMES, not N rays per frame, so the eight per-ray buffers and every
 watchdog bound stay exactly as measured, and the device ray ceiling is not
 met N times sooner. The result is PROGRESSIVE: pass 0 is the
 pre-supersampling frame, arriving when it always did and presenting its own
@@ -983,9 +984,10 @@ restores the exact single-pass behaviour).
 
 ## Raster limits and tiled export
 
-A frame's RASTER is bounded by the device, not the caller. The six per-ray
-buffers cost 36 B/ray (44 across five before the status side channel dropped
-the ray state's MAP_READ twin), and it is the 16 B ray state as a BOUND
+A frame's RASTER is bounded by the device, not the caller. The eight per-ray
+buffers cost 44 B/ray (36 before the background-layer output/staging twin;
+44 across five before the status side channel dropped the ray state's
+MAP_READ twin), and it is the 16 B ray state as a BOUND
 STORAGE buffer that a limit actually bites on. So `maxFrameRays =
 min(maxBufferSize, maxStorageBufferBindingSize) / 16` — unchanged by that
 change, which is worth stating because it was expected to move: a cheaper

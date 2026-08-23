@@ -1558,10 +1558,43 @@ describe("surface trace alpha statuses", () => {
 
   it("keeps exhausted distinct when a sphere-exit miss can become a plane", () => {
     const shader = surfaceFragmentResolvedFor(0, 0, 0, 1, 0, 0, 0);
-    expect(shader).toContain(
-      "shadeGroundPlane(ro, rd, background, planeCovMiss)",
+    expect(shader).toMatch(
+      /shadeGroundPlane\(\s*ro,\s*rd,\s*background,\s*planeCovMiss,\s*planeLayerCoverageMiss,\s*planeLayerFogMiss\s*\)/,
     );
     expect(shader).toContain("outColor = vec4(background, 0.5);");
+  });
+
+  it("emits coverage, fog, and backdrop weight without repurposing status alpha", () => {
+    const shader = surfaceFragmentResolvedFor(0, 0, 0, 1, 0, 0, 0);
+    expect(shader).toContain("layout(location = 0) out vec4 outColor;");
+    expect(shader).toContain("layout(location = 1) out vec4 outTraceLayer;");
+    expect(shader).toContain(
+      [
+        "float beta = 1.0 - coverage +",
+        "      coverage * fog * (1.0 - uFogTintStrength);",
+        "    return vec4(coverage, fog, beta, 1.0);",
+      ].join("\n"),
+    );
+    expect(shader).toContain("layerCoverage = 0.0;");
+    expect(shader).toContain("layerFog = 0.0;");
+    expect(shader).toContain("cov = 1.0;\n    layerCoverage = fade;");
+    expect(shader).toContain("layerFog = clamp(fog, 0.0, 1.0);");
+    expect(shader).toMatch(
+      /outTraceLayer = traceLayer\(\s*planeLayerCoverageMiss,\s*planeLayerFogMiss\s*\);/,
+    );
+    expect(shader).toContain("outTraceLayer = traceLayer(0.0, 0.0);");
+    expect(shader).toContain(
+      "outTraceLayer = traceLayer(1.0, clamp(fog, 0.0, 1.0));",
+    );
+    for (const [name, source] of [
+      ["plain", surfaceFragmentResolvedFor(0, 0, 0, 0, 0, 0, 0)],
+      ["balloon", surfaceFragmentResolvedFor(0, 0, 1, 0, 0, 0, 0)],
+      ["ground", shader],
+    ] as const) {
+      expect(countOccurrences(source, "outTraceLayer ="), name).toBe(
+        countOccurrences(source, "outColor ="),
+      );
+    }
   });
 });
 
@@ -1577,9 +1610,8 @@ describe("the present blit strips trace-status alpha", () => {
   // DataTexture, capture's present-then-toBlob), so alpha must die here.
   it("forces alpha to 1 so trace status never reaches the always-alpha:true canvas", () => {
     const material = createSurfaceBlitMaterial(new Texture());
-    expect(material.fragmentShader).toContain(
-      "outColor = vec4(texture(uSrc, vUv).rgb, 1.0);",
-    );
+    expect(material.fragmentShader).toContain("outColor = vec4(rgb, 1.0);");
+    expect(material.fragmentShader).toContain("outColor = vec4(liveBg, 1.0);");
     expect(material.fragmentShader).not.toContain(
       "outColor = texture(uSrc, vUv);",
     );

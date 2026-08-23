@@ -419,7 +419,15 @@ const SURFACE4_FRAGMENT = /* glsl */ `
   uniform vec4 uPixelJitter;
 
   in vec2 vUv;
-  out vec4 outColor;
+  layout(location = 0) out vec4 outColor;
+  layout(location = 1) out vec4 outTraceLayer;
+
+  /** Background recomposition sidecar, identical to the 3D tracer. */
+  vec4 traceLayer(float coverage, float fog) {
+    float beta = 1.0 - coverage +
+      coverage * fog * (1.0 - uFogTintStrength);
+    return vec4(coverage, fog, beta, 1.0);
+  }
 
   /** Per-pixel dither for the march start so grazing rays don't band. */
   float hash(vec2 p) {
@@ -1548,8 +1556,17 @@ uniform float uBalloonTintStrength;
    * pixels, so the two engines' blank-frame arithmetic agrees on a
    * document with a
    * floor. */
-  vec3 shadeGroundPlane(vec3 ro, vec3 rd, vec3 background, out float cov) {
+  vec3 shadeGroundPlane(
+    vec3 ro,
+    vec3 rd,
+    vec3 background,
+    out float cov,
+    out float layerCoverage,
+    out float layerFog
+  ) {
     cov = 0.0;
+    layerCoverage = 0.0;
+    layerFog = 0.0;
     // One-sided: visible from above only; parallel or climbing rays miss.
     if (ro.y <= uGroundY || rd.y >= -1.0e-6) {
       return background;
@@ -1566,6 +1583,7 @@ uniform float uBalloonTintStrength;
       return background;
     }
     cov = 1.0;
+    layerCoverage = fade;
 
     // Penumbra shadow toward the light: the hit path's DE loop, adapted
     // for a start OUTSIDE the certified ball. Two analytic gates make the
@@ -1654,6 +1672,7 @@ uniform float uBalloonTintStrength;
     float fog =
       1.0 - exp(-0.12 * pow(dist * uFogDensity / max(uVisibleRadius, 1.0e-6), 2.0));
     col = mix(col, mix(background, uFogTint, uFogTintStrength), clamp(fog, 0.0, 1.0));
+    layerFog = clamp(fog, 0.0, 1.0);
 
     return mix(background, col, fade);
   }
@@ -1715,9 +1734,23 @@ uniform float uBalloonTintStrength;
     if (disc < 0.0) {
 #if SURFACE_GROUND_PLANE
       float planeCov;
-      outColor = vec4(shadeGroundPlane(ro, rd, background, planeCov), planeCov);
+      float planeLayerCoverage;
+      float planeLayerFog;
+      outColor = vec4(
+        shadeGroundPlane(
+          ro,
+          rd,
+          background,
+          planeCov,
+          planeLayerCoverage,
+          planeLayerFog
+        ),
+        planeCov
+      );
+      outTraceLayer = traceLayer(planeLayerCoverage, planeLayerFog);
 #else
       outColor = vec4(background, 0.0);
+      outTraceLayer = traceLayer(0.0, 0.0);
 #endif
       return;
     }
@@ -1726,10 +1759,26 @@ uniform float uBalloonTintStrength;
     if (tFar <= 0.0) {
 #if SURFACE_GROUND_PLANE
       float planeCovExit;
-      outColor =
-        vec4(shadeGroundPlane(ro, rd, background, planeCovExit), planeCovExit);
+      float planeLayerCoverageExit;
+      float planeLayerFogExit;
+      outColor = vec4(
+        shadeGroundPlane(
+          ro,
+          rd,
+          background,
+          planeCovExit,
+          planeLayerCoverageExit,
+          planeLayerFogExit
+        ),
+        planeCovExit
+      );
+      outTraceLayer = traceLayer(
+        planeLayerCoverageExit,
+        planeLayerFogExit
+      );
 #else
       outColor = vec4(background, 0.0);
+      outTraceLayer = traceLayer(0.0, 0.0);
 #endif
       return;
     }
@@ -1774,12 +1823,26 @@ uniform float uBalloonTintStrength;
         // Sphere-exit misses land on the floor. A floor pixel is COVERED
         // when shadeGroundPlane sets planeCovMiss, otherwise it is a MISS.
         float planeCovMiss;
+        float planeLayerCoverageMiss;
+        float planeLayerFogMiss;
         outColor = vec4(
-          shadeGroundPlane(ro, rd, background, planeCovMiss),
+          shadeGroundPlane(
+            ro,
+            rd,
+            background,
+            planeCovMiss,
+            planeLayerCoverageMiss,
+            planeLayerFogMiss
+          ),
           planeCovMiss
+        );
+        outTraceLayer = traceLayer(
+          planeLayerCoverageMiss,
+          planeLayerFogMiss
         );
 #else
         outColor = vec4(background, 0.0);
+        outTraceLayer = traceLayer(0.0, 0.0);
 #endif
         return;
       }
@@ -1788,6 +1851,7 @@ uniform float uBalloonTintStrength;
       // is an invisible status byte: 0.5 becomes RGBA8 128, distinct from
       // MISS 0 and COVERED 255; the present blit still forces alpha 1.
       outColor = vec4(background, ${SURFACE_TRACE_EXHAUSTED_ALPHA.toFixed(1)});
+      outTraceLayer = traceLayer(0.0, 0.0);
       return;
     }
     vec3 pos = ro + rd * t;
@@ -2036,6 +2100,7 @@ uniform float uBalloonTintStrength;
     // regardless, and a coverage-0 pixel reaching it composited the page
     // background into the pane).
     outColor = vec4(col, 1.0);
+    outTraceLayer = traceLayer(1.0, clamp(fog, 0.0, 1.0));
   }
 `;
 

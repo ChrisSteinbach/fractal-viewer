@@ -1393,7 +1393,7 @@ describe("surfaceDeKernelWgsl mode selection", () => {
     expect(wgsl).not.toContain("fn evalQueries");
   });
 
-  it("mode 'shade' declares the shading interface at bindings 4-8 (shade/shadeMaps/colorOut/lutTex/lutSamp)", () => {
+  it("mode 'shade' declares the shading interface at bindings 4-9 (shade/shadeMaps/colorOut/lutTex/lutSamp/layerOut)", () => {
     const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "shade" }));
     expect(wgsl).toContain(
       "@group(0) @binding(4) var<uniform> shade: ShadeParams;",
@@ -1408,6 +1408,27 @@ describe("surfaceDeKernelWgsl mode selection", () => {
       "@group(0) @binding(7) var lutTex: texture_2d<f32>;",
     );
     expect(wgsl).toContain("@group(0) @binding(8) var lutSamp: sampler;");
+    expect(wgsl).toContain(
+      "@group(0) @binding(9) var<storage, read_write> layerOut: array<u32>;",
+    );
+  });
+
+  it("packs the composite sidecar as coverage/fog/beta/one and writes every ordinary terminal path without changing colorOut", () => {
+    const wgsl = surfaceDeKernelWgsl(kernelOpts({ mode: "shade" }));
+    expect(wgsl).toContain(
+      "fn packSurfaceLayer(coverage: f32, fog: f32) -> u32",
+    );
+    expect(wgsl).toContain("coverage * fog * (1.0 - shade.fogTintStrength)");
+    expect(wgsl).toContain(
+      "return pack4x8unorm(vec4f(coverage, fog, beta, 1.0));",
+    );
+    // Defensive gate miss, terminal miss/exhausted, terminal hit.
+    expect(wgsl.split("layerOut[ray] = packSurfaceLayer(").length - 1).toBe(3);
+    expect(wgsl).toContain("layerOut[ray] = packSurfaceLayer(0.0, 0.0);");
+    expect(wgsl).toContain(
+      "layerOut[ray] = packSurfaceLayer(1.0, clamp(fog, 0.0, 1.0));",
+    );
+    expect(wgsl).toContain("colorOut[ray] = pack4x8unorm(vec4f(col, 1.0));");
   });
 
   it("mode 'shade' emits the greedy hit-info descent and packs pixels with pack4x8unorm", () => {
@@ -1451,6 +1472,7 @@ describe("surfaceDeKernelWgsl march ray derivation (rays option)", () => {
     );
     expect(wgsl).not.toContain("shadeMaps");
     expect(wgsl).not.toContain("colorOut");
+    expect(wgsl).not.toContain("layerOut");
     expect(wgsl).not.toContain("lutTex");
     expect(wgsl).not.toContain("lutSamp");
     expect(wgsl).not.toContain("binding(5)");
@@ -2360,6 +2382,12 @@ describe("groundPlane wrapper", () => {
     expect(wgsl).toContain("fn shadeGroundPlane");
     expect(wgsl).toContain("if (st.y == 4.0) {");
     expect(wgsl).toContain("surfaceDEProbe(");
+    expect(wgsl).toContain(
+      "return GroundPlaneShade(mix(bg, col, fade), fade, clamp(fog, 0.0, 1.0));",
+    );
+    expect(wgsl).toContain(
+      "layerOut[ray] = packSurfaceLayer(ground.coverage, ground.fog);",
+    );
   });
 
   it("escape shade composes with the ground plane — the classic Mandelbox floor — appending the plane block after the escape variant block, taps riding the plain surfaceDE (escape has no probe)", () => {

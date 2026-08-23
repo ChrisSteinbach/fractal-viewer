@@ -1,5 +1,6 @@
 import {
   buildSurfaceComputeBackground,
+  buildSurfaceComputeLayerPrefill,
   fitSurfaceComputeRaster,
   initialShadeHitCost,
   marchChunkFor,
@@ -16,6 +17,7 @@ import {
   SURFACE_COMPUTE_MAX_TILE_RAYS,
   SURFACE_COMPUTE_PASS_TARGET_MS,
   SURFACE_COMPUTE_RAY_STATE_BYTES,
+  SURFACE_COMPUTE_RAY_BYTES,
   SURFACE_COMPUTE_SHADE_COST_PIVOT,
   SURFACE_COMPUTE_SHADE_DISPATCH_CEILING_MS,
   SURFACE_COMPUTE_SHADE_MARGINAL_DECAY,
@@ -481,6 +483,21 @@ describe("surfaceComputeMaxFrameRays", () => {
       (128 * 1024 * 1024) / SURFACE_COMPUTE_RAY_STATE_BYTES,
     );
     expect(frameRays).toBeGreaterThan(dispatchRays);
+  });
+});
+
+describe("surface compute composite layer storage", () => {
+  it("prices the second output and staging buffers at 44 GPU bytes per ray", () => {
+    // states 16 + active 4 + color/staging 8 + layer/staging 8 +
+    // status/staging 8.
+    expect(SURFACE_COMPUTE_RAY_BYTES).toBe(44);
+  });
+
+  it("prefills every active ray as uncovered, unfogged, full-background beta", () => {
+    expect(Array.from(buildSurfaceComputeLayerPrefill(3))).toEqual([
+      0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255,
+    ]);
+    expect(buildSurfaceComputeLayerPrefill(0)).toHaveLength(0);
   });
 });
 
@@ -1356,7 +1373,7 @@ interface TeardownHarness {
    * deferred-teardown state machine exists to TIME correctly. */
   deviceDestroy: ReturnType<typeof vi.fn>;
   /** One destroy spy per per-frame GPU buffer the renderer has allocated so
-   * far (states/active/color/status + the two staging buffers). Grows as
+   * far (states/active/color/layer/status + the three staging buffers). Grows as
    * frames allocate; a parked frame's staging buffers are exactly the ones
    * that must not be freed under it. */
   bufferDestroys: ReturnType<typeof vi.fn>[];

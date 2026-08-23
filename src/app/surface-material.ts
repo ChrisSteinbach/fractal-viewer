@@ -860,7 +860,17 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   uniform float uGridEnabled;
 
   in vec2 vUv;
-  out vec4 outColor;
+  layout(location = 0) out vec4 outColor;
+  layout(location = 1) out vec4 outTraceLayer;
+
+  /** Background recomposition sidecar: fractional surface coverage,
+   * clamped fog, and the surviving backdrop weight beta. The fourth lane
+   * is reserved and deliberately initialized on every terminal path. */
+  vec4 traceLayer(float coverage, float fog) {
+    float beta = 1.0 - coverage +
+      coverage * fog * (1.0 - uFogTintStrength);
+    return vec4(coverage, fog, beta, 1.0);
+  }
 
   /** Per-pixel dither for the march start so grazing rays don't band. */
   float hash(vec2 p) {
@@ -2956,8 +2966,17 @@ ${foldValueFormGlsl(shadeDeWidth)}
    * own backdrop. The WebGPU arm counts a PLANE terminal for exactly
    * those pixels, so the two engines' blank-frame arithmetic agrees on a
    * document with a floor. */
-  vec3 shadeGroundPlane(vec3 ro, vec3 rd, vec3 background, out float cov) {
+  vec3 shadeGroundPlane(
+    vec3 ro,
+    vec3 rd,
+    vec3 background,
+    out float cov,
+    out float layerCoverage,
+    out float layerFog
+  ) {
     cov = 0.0;
+    layerCoverage = 0.0;
+    layerFog = 0.0;
     // One-sided: visible from above only; parallel or climbing rays miss.
     if (ro.y <= uGroundY || rd.y >= -1.0e-6) {
       return background;
@@ -2974,6 +2993,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
       return background;
     }
     cov = 1.0;
+    layerCoverage = fade;
 
     // Penumbra shadow toward the light: the hit path's DE loop, adapted
     // for a start OUTSIDE the certified ball. Two analytic gates make the
@@ -3063,6 +3083,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
     float fog =
       1.0 - exp(-0.12 * pow(dist * uFogDensity / max(uVisibleRadius, 1.0e-6), 2.0));
     col = mix(col, mix(background, uFogTint, uFogTintStrength), clamp(fog, 0.0, 1.0));
+    layerFog = clamp(fog, 0.0, 1.0);
 
     return mix(background, col, fade);
   }
@@ -3119,9 +3140,23 @@ ${foldValueFormGlsl(shadeDeWidth)}
     if (disc < 0.0) {
 #if SURFACE_GROUND_PLANE
       float planeCov;
-      outColor = vec4(shadeGroundPlane(ro, rd, background, planeCov), planeCov);
+      float planeLayerCoverage;
+      float planeLayerFog;
+      outColor = vec4(
+        shadeGroundPlane(
+          ro,
+          rd,
+          background,
+          planeCov,
+          planeLayerCoverage,
+          planeLayerFog
+        ),
+        planeCov
+      );
+      outTraceLayer = traceLayer(planeLayerCoverage, planeLayerFog);
 #else
       outColor = vec4(background, 0.0);
+      outTraceLayer = traceLayer(0.0, 0.0);
 #endif
       return;
     }
@@ -3130,10 +3165,26 @@ ${foldValueFormGlsl(shadeDeWidth)}
     if (tFar <= 0.0) {
 #if SURFACE_GROUND_PLANE
       float planeCovExit;
-      outColor =
-        vec4(shadeGroundPlane(ro, rd, background, planeCovExit), planeCovExit);
+      float planeLayerCoverageExit;
+      float planeLayerFogExit;
+      outColor = vec4(
+        shadeGroundPlane(
+          ro,
+          rd,
+          background,
+          planeCovExit,
+          planeLayerCoverageExit,
+          planeLayerFogExit
+        ),
+        planeCovExit
+      );
+      outTraceLayer = traceLayer(
+        planeLayerCoverageExit,
+        planeLayerFogExit
+      );
 #else
       outColor = vec4(background, 0.0);
+      outTraceLayer = traceLayer(0.0, 0.0);
 #endif
       return;
     }
@@ -3241,12 +3292,26 @@ ${foldValueFormGlsl(shadeDeWidth)}
         // Sphere-exit misses land on the floor. A floor pixel is COVERED
         // when shadeGroundPlane sets planeCovMiss, otherwise it is a MISS.
         float planeCovMiss;
+        float planeLayerCoverageMiss;
+        float planeLayerFogMiss;
         outColor = vec4(
-          shadeGroundPlane(ro, rd, background, planeCovMiss),
+          shadeGroundPlane(
+            ro,
+            rd,
+            background,
+            planeCovMiss,
+            planeLayerCoverageMiss,
+            planeLayerFogMiss
+          ),
           planeCovMiss
+        );
+        outTraceLayer = traceLayer(
+          planeLayerCoverageMiss,
+          planeLayerFogMiss
         );
 #else
         outColor = vec4(background, 0.0);
+        outTraceLayer = traceLayer(0.0, 0.0);
 #endif
         return;
       }
@@ -3255,6 +3320,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
       // 255. RGB remains the same backdrop, and BLIT_FRAGMENT strips the
       // status to presented alpha 1.
       outColor = vec4(background, ${SURFACE_TRACE_EXHAUSTED_ALPHA.toFixed(1)});
+      outTraceLayer = traceLayer(0.0, 0.0);
       return;
     }
     vec3 pos = ro + rd * t;
@@ -3468,6 +3534,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
     // answer the blank-frame question the WebGPU arm answers from its own
     // per-ray status tally.
     outColor = vec4(col, 1.0);
+    outTraceLayer = traceLayer(1.0, clamp(fog, 0.0, 1.0));
   }
 `;
 }
@@ -3512,8 +3579,47 @@ export const SURFACE_PREVIEW_HIT_FLOOR = 2.0e-4;
 const BLIT_FRAGMENT = /* glsl */ `
   precision highp float;
   uniform sampler2D uSrc;
+  uniform sampler2D uLayer;
+  uniform int uHasSource;
+  uniform int uHasLayer;
+  uniform int uComposite;
+  uniform vec3 uTraceBgTop;
+  uniform vec3 uTraceBgBottom;
+  uniform int uTraceBgShape;
+  uniform vec2 uTraceBgCenter;
+  uniform vec2 uTraceBgScale;
+  uniform vec3 uLiveBgTop;
+  uniform vec3 uLiveBgBottom;
+  uniform int uLiveBgShape;
+  uniform vec2 uLiveBgCenter;
+  uniform vec2 uLiveBgScale;
   in vec2 vUv;
-  out vec4 outColor;
+  layout(location = 0) out vec4 outColor;
+  layout(location = 1) out vec4 outLayer;
+
+  float blitBackgroundShapeT(
+    vec2 p,
+    int shape,
+    vec2 center,
+    vec2 scale
+  ) {
+    if (shape == 1) {
+      float r = clamp(length((p - center) * scale), 0.0, 1.0);
+      return r * r * (3.0 - 2.0 * r);
+    }
+    return clamp(p.y, 0.0, 1.0);
+  }
+
+  vec3 blitBackground(
+    vec3 bottom,
+    vec3 top,
+    int shape,
+    vec2 center,
+    vec2 scale
+  ) {
+    return mix(bottom, top, blitBackgroundShapeT(vUv, shape, center, scale));
+  }
+
   void main() {
     // ALPHA IS FORCED TO 1 HERE, and this is load-bearing: the tracers'
     // alpha channel is a terminal-status flag (1 = covered, 0.5 =
@@ -3529,7 +3635,36 @@ const BLIT_FRAGMENT = /* glsl */ `
     // path's present-then-toBlob) is where the coverage channel must stop;
     // the settle-target readbacks that COUNT it read the trace target,
     // never a blit destination.
-    outColor = vec4(texture(uSrc, vUv).rgb, 1.0);
+    vec3 liveBg = blitBackground(
+      uLiveBgBottom,
+      uLiveBgTop,
+      uLiveBgShape,
+      uLiveBgCenter,
+      uLiveBgScale
+    );
+    if (uHasSource == 0) {
+      // Composite-layer prefill: unresolved pixels are uncovered live
+      // backdrop, not stale target memory.
+      outColor = vec4(liveBg, 1.0);
+      outLayer = vec4(0.0, 0.0, 1.0, 1.0);
+      return;
+    }
+    vec3 rgb = texture(uSrc, vUv).rgb;
+    vec4 layer = uHasLayer == 1
+      ? texture(uLayer, vUv)
+      : vec4(0.0, 0.0, 1.0, 1.0);
+    if (uComposite == 1) {
+      vec3 traceBg = blitBackground(
+        uTraceBgBottom,
+        uTraceBgTop,
+        uTraceBgShape,
+        uTraceBgCenter,
+        uTraceBgScale
+      );
+      rgb += layer.b * (liveBg - traceBg);
+    }
+    outColor = vec4(rgb, 1.0);
+    outLayer = layer;
   }
 `;
 
@@ -3547,10 +3682,27 @@ const BLIT_FRAGMENT = /* glsl */ `
  */
 export function createSurfaceBlitMaterial(
   src: THREE.Texture,
+  layer: THREE.Texture = src,
 ): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
-    uniforms: { uSrc: { value: src } },
+    uniforms: {
+      uSrc: { value: src },
+      uLayer: { value: layer },
+      uHasSource: { value: 1 },
+      uHasLayer: { value: 0 },
+      uComposite: { value: 0 },
+      uTraceBgTop: { value: new THREE.Vector3() },
+      uTraceBgBottom: { value: new THREE.Vector3() },
+      uTraceBgShape: { value: 0 },
+      uTraceBgCenter: { value: new THREE.Vector2(0.5, 0.5) },
+      uTraceBgScale: { value: new THREE.Vector2(1, 1) },
+      uLiveBgTop: { value: new THREE.Vector3() },
+      uLiveBgBottom: { value: new THREE.Vector3() },
+      uLiveBgShape: { value: 0 },
+      uLiveBgCenter: { value: new THREE.Vector2(0.5, 0.5) },
+      uLiveBgScale: { value: new THREE.Vector2(1, 1) },
+    },
     vertexShader: SURFACE_VERTEX,
     fragmentShader: BLIT_FRAGMENT,
     depthTest: false,

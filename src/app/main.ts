@@ -3689,7 +3689,7 @@ function main(): void {
                 // pass re-runs (the renderer prefills from it), and the
                 // ray tallies feed "Preview · WebGPU N%" + the Skip
                 // button through syncSurfaceProgress.
-                onProgress: (pixels, done, total) => {
+                onProgress: (pixels, layers, done, total) => {
                   if (
                     surfaceComputeRenderer !== renderer ||
                     state.renderMode !== "surface"
@@ -3700,6 +3700,8 @@ function main(): void {
                     pixels,
                     spec.width,
                     spec.height,
+                    layers,
+                    spec,
                   );
                   surfaceComputePreviewProgress =
                     total > 0 ? done / total : null;
@@ -3720,6 +3722,8 @@ function main(): void {
             frame.pixels,
             frame.width,
             frame.height,
+            frame.layers,
+            spec,
           );
           // The completion pass feeds the governor NOTHING: it is by
           // construction the frame that did not fit, measured under a
@@ -3788,12 +3792,18 @@ function main(): void {
         // (resolved rays shade in, unresolved ones keep backdrop) instead
         // of parking on the last preview. An invalidation cancels via the
         // preview loop's cancel() and this resolves null.
-        onProgress: (pixels, done, total) => {
+        onProgress: (pixels, layers, done, total) => {
           if (
             surfaceComputeRenderer === renderer &&
             state.renderMode === "surface"
           ) {
-            scene.presentSurfaceComputeFrame(pixels, spec.width, spec.height);
+            scene.presentSurfaceComputeFrame(
+              pixels,
+              spec.width,
+              spec.height,
+              layers,
+              spec,
+            );
             surfaceComputeSettleProgress = total > 0 ? done / total : null;
             // Which supersampling pass this coverage belongs to. `done`
             // spans the whole job, so the pass is just which N-th of it we
@@ -3822,6 +3832,8 @@ function main(): void {
           frame.pixels,
           frame.width,
           frame.height,
+          frame.layers,
+          spec,
         );
         // The empty-set notice, second cut. The FIRST completed settle of a
         // session is the honest place to say "there is nothing here", and
@@ -3903,7 +3915,13 @@ function main(): void {
     // grows a quality tier to hang it on.
     const frame = await renderer.renderFrame(spec);
     if (!frame || surfaceComputeRenderer !== renderer) return;
-    scene.presentSurfaceComputeFrame(frame.pixels, frame.width, frame.height);
+    scene.presentSurfaceComputeFrame(
+      frame.pixels,
+      frame.width,
+      frame.height,
+      frame.layers,
+      spec,
+    );
     surfaceComputeForceKey = key;
   }
 
@@ -3929,7 +3947,7 @@ function main(): void {
         // exactly once, at export pixel ratio, inside
         // captureSurfaceComputeFrame's own present-and-read span, and a
         // progressive present would fight that.
-        onProgress: (_pixels, done, total) => {
+        onProgress: (_pixels, _layers, done, total) => {
           run.report(
             total > 0 ? (tile.index + done / total) / tile.count : null,
           );
@@ -5041,6 +5059,7 @@ function main(): void {
       surfaceComputeSettledRayCensus = null;
       surfaceSettlePending = false;
       state = setRenderMode(state, "surface");
+      scene.setSurfaceDisplayActive(true);
       trackAutoBackground(); // see the flame session's activate
       refreshUi();
       // The render-complete signal — the budget-met event a holding
@@ -5051,6 +5070,7 @@ function main(): void {
       if (surfaceSession.hasFirstFrame) noteRenderProgress("surface", 1, 1);
     },
     deactivate: () => {
+      scene.setSurfaceDisplayActive(false);
       // The 4D flag dies with the session (tickRender's surface branch is
       // unreachable once the mode resets, but stale-true costs nothing to
       // preclude). So do in-flight settle/preview strip jobs — nothing steps
@@ -7571,6 +7591,13 @@ function main(): void {
         const grid = pendingSurfaceGrid;
         pendingSurfaceGrid = null;
         applySurfaceGrid(grid);
+      }
+      // A backdrop edit is a compositing-only invalidation once any Surface
+      // image exists. Repaint that cached trace before the tier scheduler:
+      // renderNeeded remains reserved for camera/DE/material changes, so this
+      // cannot arm a preview or throw away a settled frame.
+      if (!surfaceCaptureFlight && scene.surfaceCompositeNeeded) {
+        scene.presentSurfaceComposite();
       }
       if (surfaceSession.hasFirstFrame) {
         // The interaction tier split (strips and all): an invalidated frame
