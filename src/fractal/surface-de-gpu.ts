@@ -4776,12 +4776,12 @@ ${balloonHitWrapText}`
   // noslab kernels, every 3D core), which keeps hitW equal to w0 there
   // bit for bit.
   //
-  // Under BALLOON the 3D sources read the winning term's SOURCE point
-  // `hi.colorPos` instead of `pos`. The 4D radius source likewise pairs
-  // that point with the same source descent's sStar before the rotor lift,
-  // matching the GLSL arm's cpos routing.
+  // Under BALLOON both dimensions' sources read the winning term's SOURCE
+  // point `hi.colorPos` instead of `pos`. The 4D radius source additionally
+  // pairs that point with the same source descent's sStar before the rotor
+  // lift, matching the GLSL arm's cpos routing.
   const shadeHeightU = core4
-    ? `u = clamp(pos.y / params.visRadius4 * 0.5 + 0.5, 0.0, 1.0);`
+    ? `u = clamp(${balloon ? "hi.colorPos" : "pos"}.y / params.visRadius4 * 0.5 + 0.5, 0.0, 1.0);`
     : balloon
       ? `u = clamp(hi.colorPos.y / visR * 0.5 + 0.5, 0.0, 1.0);`
       : `u = clamp(pos.y / visR * 0.5 + 0.5, 0.0, 1.0);`;
