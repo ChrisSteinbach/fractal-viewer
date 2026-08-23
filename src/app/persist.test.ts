@@ -13,6 +13,7 @@ import {
   MAX_CUSTOM_PALETTE_STOPS,
   MIN_CUSTOM_PALETTE_STOPS,
 } from "../fractal/palette";
+import { woodGrain } from "../fractal/presets";
 import { VARIATION_TYPES } from "../fractal/types";
 import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
 import { MAX_PHI, MAX_RADIUS, MIN_PHI, MIN_RADIUS } from "./orbit";
@@ -1505,6 +1506,32 @@ describe("decodeScene transform surface pattern", () => {
       finish: { specular: 0.25, shininess: 8, reflect: 0.08 },
       surfacePattern: { kind: "wood", axis: "y" },
     });
+  });
+
+  it("persists the Wood Grain showcase as accepted values, never its menu name", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: woodGrain(),
+    };
+    const encoded = encodeScene(s);
+    const payload = decodePayload(encoded);
+    const transforms = payload.transforms as Record<string, unknown>[];
+
+    expect(transforms).toHaveLength(6);
+    expect(transforms.map((transform) => transform.surfacePattern)).toEqual(
+      (["y", "z", "x", "y", "z", "x"] as const).map((axis) => ({
+        kind: "wood",
+        axis,
+        scale: 3,
+        strength: 1,
+      })),
+    );
+    for (const transform of transforms) {
+      expect("finish" in transform).toBe(false);
+      expect("material" in transform).toBe(false);
+      expect("preset" in transform).toBe(false);
+    }
+    expect(decodeScene(encoded)!.transforms).toEqual(woodGrain());
   });
 });
 

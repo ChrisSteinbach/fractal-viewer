@@ -1829,6 +1829,58 @@ export function doubleRotation(): Transform[] {
   ];
 }
 
+/**
+ * "Wood Grain" — the patterned-Surface feature's post-acceptance showcase.
+ * Three spatial affine maps are each duplicated at `w = ±0.15`, so the
+ * attractor is a triangular gasket carried through a short fourth-dimensional
+ * interval. The six depth-0 partitions alternate the Wood axis y/z/x, making
+ * the object-attached grain change direction with the structure instead of
+ * reading as one screen-space overlay.
+ *
+ * WHY THIS EXACT SYSTEM. The fr-cmtl.8 real-Intel release gate's ordinary 1x,
+ * slice-0 affine4 Wood card passed every effect gate, retained its variance
+ * through 64x, and was the only Wood card the blinded owner named Wood. The
+ * evidence remains deliberately modest (confidence 2/5 and only 2/9 exact
+ * names overall), so this is a study of the accepted material, not a claim
+ * that every view is unmistakable. The exact accepted settled capture is
+ * `affine4/compute/wood/1x/slice-0` in the
+ * `pattern-release-machine-e3397fd-20260823a` manifest.
+ *
+ * The large xyz translations are not decorative: they are the accepted
+ * fixture's 67.2x homothety, which kept the complete 1x/4x/16x/64x camera
+ * ladder above the production camera's radius floor. Do not normalize them
+ * while retaining the fixture claim. Likewise, no finish is authored: the
+ * accepted frame paired Wood with the classic lighting response. Only stable
+ * material values ride the transforms; the menu label never enters a scene.
+ * Surface-hinted because no other renderer reads `surfacePattern`.
+ */
+export function woodGrain(): Transform[] {
+  const spatialPositions: Vec3[] = [
+    [33.6, 0, 0],
+    [-16.8, 28.896, 0],
+    [-16.8, -28.896, 0],
+  ];
+  const axes = ["y", "z", "x", "y", "z", "x"] as const;
+  return spatialPositions.flatMap((position, spatialIndex) =>
+    [-0.15, 0.15].map((wPosition, wIndex): Transform => {
+      const id = spatialIndex * 2 + wIndex;
+      return {
+        id,
+        position: [...position] as Vec3,
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        w: { position: wPosition, scale: 0.5 },
+        surfacePattern: {
+          kind: "wood",
+          axis: axes[id],
+          scale: 3,
+          strength: 1,
+        },
+      };
+    }),
+  );
+}
+
 /** Half-side of the tesseract: vertices `(±h)⁴`, circumradius `2h = 1.3`. */
 const TESSERACT_HALF_SIDE = 0.65;
 
@@ -2081,6 +2133,9 @@ const PRESETS = {
   // The first non-flat presets: systems whose w extension is in play.
   pentatope,
   doubleRotation,
+  // The accepted patterned-material showcase. Its deliberately simple
+  // affine4 partitions and exact Wood values are documented at woodGrain.
+  woodGrain,
   // The second wave of 4D systems: the remaining regular polytopes
   // small enough to converge as flakes (the 120-/600-cell's hundreds of maps
   // are not), a duoprism, and the fern bent through w.
@@ -2158,6 +2213,9 @@ export const PRESET_RENDER_HINTS: Partial<
   // finish showcase opens where its subject exists.
   fourFinishes: "surface",
   metalStudio: "surface",
+  // Patterned albedo is likewise a Surface-only concern. This one is 4D,
+  // which routes it to the affine4 tracer before the hint is consumed.
+  woodGrain: "surface",
   // The escape-time trio needs the hint more than any preset
   // here: the chaos-game cloud of a non-contracting map is escape-reset
   // debris, so as a point cloud these look BROKEN rather than merely

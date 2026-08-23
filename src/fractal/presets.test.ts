@@ -72,6 +72,7 @@ import {
   tesseractWireframe,
   twentyFourCellFlake,
   twentyFourCellWireframe,
+  woodGrain,
 } from "./presets";
 import { mulberry32 } from "./rng";
 import { analyzeSurfaceSystem } from "./surface-de";
@@ -940,6 +941,47 @@ describe("doubleRotation (unified 4D preset)", () => {
     let farW = 0;
     for (const w of result.w) farW = Math.max(farW, Math.abs(w));
     expect(farW).toBeGreaterThan(0.15);
+  });
+});
+
+describe("Wood Grain (accepted patterned-material showcase)", () => {
+  it("reproduces the accepted affine4 Wood fixture values exactly", () => {
+    const transforms = woodGrain();
+    expect(transforms).toHaveLength(6);
+    expect(transforms.map((transform) => transform.position)).toEqual([
+      [33.6, 0, 0],
+      [33.6, 0, 0],
+      [-16.8, 28.896, 0],
+      [-16.8, 28.896, 0],
+      [-16.8, -28.896, 0],
+      [-16.8, -28.896, 0],
+    ]);
+    expect(transforms.map((transform) => transform.w)).toEqual([
+      { position: -0.15, scale: 0.5 },
+      { position: 0.15, scale: 0.5 },
+      { position: -0.15, scale: 0.5 },
+      { position: 0.15, scale: 0.5 },
+      { position: -0.15, scale: 0.5 },
+      { position: 0.15, scale: 0.5 },
+    ]);
+    expect(transforms.map((transform) => transform.surfacePattern)).toEqual(
+      (["y", "z", "x", "y", "z", "x"] as const).map((axis) => ({
+        kind: "wood",
+        axis,
+        scale: 3,
+        strength: 1,
+      })),
+    );
+    for (const transform of transforms) {
+      expect(transform.rotation).toEqual([0, 0, 0]);
+      expect(transform.scale).toEqual([0.5, 0.5, 0.5]);
+      expect(transform.finish).toBeUndefined();
+    }
+  });
+
+  it("is registered and opens in the only renderer that reads the pattern", () => {
+    expect(PRESET_NAMES).toContain("woodGrain");
+    expect(PRESET_RENDER_HINTS.woodGrain).toBe("surface");
   });
 });
 
