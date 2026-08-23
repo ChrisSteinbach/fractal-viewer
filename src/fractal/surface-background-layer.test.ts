@@ -190,6 +190,72 @@ describe("compositeSurfaceBackgroundLayer", () => {
     ]);
   });
 
+  it("documents the changed-background byte rounding boundary", () => {
+    const reference = uniformBackground([0.1, 0.1, 0.1]);
+    const live = uniformBackground([0.2, 0.2, 0.2]);
+    const changed = compositeSurfaceBackgroundLayer({
+      width: 1,
+      height: 1,
+      legacyRgba: new Uint8Array([26, 26, 26, 255]),
+      layerRgba: repeatLayer(encodeSurfaceBackgroundLayer(0, 0, 0), 1),
+      referenceBackground: reference,
+      liveBackground: live,
+    });
+
+    // beta's direct-background algebra is exact before storage, but legacy
+    // RGB and beta have already crossed independent RGBA8 roundings. A fresh
+    // trace quantizes the live stop once and therefore lands one byte lower.
+    expect(Array.from(changed)).toEqual([52, 52, 52, 255]);
+    expect(quantize(0.2)).toBe(51);
+  });
+
+  it("documents that averaged beta cannot reproduce the linear-light supersample fold", () => {
+    const reference = uniformBackground([0.2, 0.2, 0.2]);
+    const live = uniformBackground([0.4, 0.4, 0.4]);
+    const compositeSample = (
+      legacyByte: number,
+      layer: SurfaceBackgroundLayerBytes,
+    ): number =>
+      compositeSurfaceBackgroundLayer({
+        width: 1,
+        height: 1,
+        legacyRgba: new Uint8Array([legacyByte, legacyByte, legacyByte, 255]),
+        layerRgba: new Uint8Array(layer),
+        referenceBackground: reference,
+        liveBackground: live,
+      })[0];
+    const linearMeanByte = (bytes: readonly number[]): number =>
+      quantize(
+        Math.pow(
+          bytes.reduce((sum, byte) => sum + Math.pow(byte / 255, 2.2), 0) /
+            bytes.length,
+          1 / 2.2,
+        ),
+      );
+
+    // Two sub-pixel samples: uncovered dark backdrop and an opaque bright hit.
+    // Exact changed-background semantics composite each sample before the
+    // existing gamma-decode/linear-mean/gamma-encode fold.
+    const exactMean = linearMeanByte([
+      compositeSample(51, encodeSurfaceBackgroundLayer(0, 0, 0)),
+      compositeSample(204, encodeSurfaceBackgroundLayer(1, 0, 0)),
+    ]);
+
+    // The shipped retained frame instead has the already-folded RGB and only
+    // the arithmetic mean of beta. Run that representation through the real
+    // compositor: this is the documented approximation, not a replacement
+    // algorithm hidden in the test.
+    const foldedLegacy = linearMeanByte([51, 204]);
+    const averagedBeta = compositeSample(
+      foldedLegacy,
+      encodeSurfaceBackgroundLayer(0.5, 0, 0),
+    );
+
+    expect(exactMean).toBe(163);
+    expect(averagedBeta).toBe(178);
+    expect(averagedBeta).not.toBe(exactMean);
+  });
+
   it("evaluates changed radial shapes at full-image pixel centers", () => {
     const width = 3;
     const height = 3;

@@ -5,6 +5,10 @@ CLAUDE.md's `surface-material.ts` and `surface-material-4d.ts` bullets are
 condensed pointers into this document — read here for the byte figures, the
 measurements and the verdicts.
 
+The tracers' separately retained background sidecar, its exact boundary, and
+the decision not to split out retained re-shading state are recorded in
+[`surface-background-layer.md`](surface-background-layer.md).
+
 ## The 3D tracer
 
 `surface-material.ts` is a GLSL3 full-screen-quad sphere tracer mirroring
