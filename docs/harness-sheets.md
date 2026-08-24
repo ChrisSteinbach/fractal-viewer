@@ -571,6 +571,30 @@ Companion to `qjulia-beauty` below.
 The quaternion Julia oracle's proof, and the twenty panels that demoted its
 own WGSL/GLSL cores and its 4D lift to won't-do.
 
+### flame-balloon
+
+The flame balloon echo's histogram-weight decision, measured instead of
+copying the Points arm's additive-blend dim constant. Three shipped systems
+(tetrahedral, fern, and nonlinear radiolarian) render at weight 0.25 / 0.5 /
+1.0 beside an echo-off control, with the same seed, enclosing ball, camera,
+palette, and tone map in every column.
+
+MEASURED VERDICT: weight 1.0. Echo-only/source mean-luminance ratios climbed
+from 0.85 / 0.51 / 0.69 at weight 0.25, through 0.95 / 0.59 / 0.75 at 0.5,
+to 1.04 / 0.67 / 0.78 at 1.0. No candidate produced a near-white pixel and
+source-support luminance was effectively unchanged, so halving the deposited
+weight bought no highlight safety; one source splat plus one full echo splat
+was the clearest and most balanced histogram semantics.
+
+The same sheet measured the Points arm's radial fade against no fade at the
+frozen Flame frustum. At the 0.9x comparison radius it touched 0 of 31,570 /
+47,031 / 80,000 visible echo samples. At the persisted 1.6x rest radius,
+fade-on/off visible mass was 0.987449 / 0.115876 / 1.000000 (tetra / fern /
+radiolarian): the fade erased 88.4% of the fern cave wall that still projected
+on-screen. A Flame never re-fits its frozen camera, so those deposits cannot
+drag bounds; the shipped histogram path deliberately keeps them and drops the
+fade.
+
 ### julia-flame
 
 The compositions three flame presets were picked from.

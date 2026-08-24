@@ -122,8 +122,7 @@ const NUM_CHAINS = 65536;
 const MAX_ITERS_PER_INVOCATION = 512;
 
 /** Convert a `snapshot()` staging readback into a {@link FlameHistogram} —
- * `convertGpuHistogram` for the 3D program, `convertGpuHistogram4` (whose
- * buckets carry the extra weight fixed-point factor) for the 4D one. */
+ * dimension-named converters over the shared weighted bucket layout. */
 type SnapshotConverter = (
   words: Uint32Array,
   width: number,
@@ -1100,6 +1099,7 @@ export async function createGpuFlameBackend(
       hasFinal: packed.hasFinal,
       totalWeight: packed.totalWeight,
       numChains: NUM_CHAINS,
+      echo: request.echo,
     }),
     paramsItersOffsetBytes: PARAMS_ITERS_OFFSET_BYTES,
     slots: packed.slots,
@@ -1120,9 +1120,7 @@ export async function createGpuFlameBackend(
  * `flame-gpu-4d.ts`'s program — the 4D kernel pinned against
  * `accumulateFlame4` — and hands off to the same shared driver. Matches
  * `FlameWorkerDeps.createGpuBackend4`'s signature exactly. Note the 4D
- * readback converters: the 4D kernel's buckets carry the fixed-point slice-
- * weight factor (see flame-gpu-4d.ts's module doc), so reading them back
- * with the 3D converters would inflate every value 256-fold.
+ * dimension-named readback converters over the shared x256 weighted layout.
  */
 export async function createGpuFlameBackend4(
   request: GpuBackendRequest4,
@@ -1155,6 +1153,9 @@ export async function createGpuFlameBackend4(
       numChains: NUM_CHAINS,
       view: request.view,
       color: request.color,
+      echo: request.echo,
+      rotorProjection: request.rotorProjection,
+      cameraProjection: request.cameraProjection,
     }),
     paramsItersOffsetBytes: PARAMS4_ITERS_OFFSET_BYTES,
     slots: packed.slots,

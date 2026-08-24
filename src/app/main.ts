@@ -56,10 +56,12 @@ import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
 import type { SurfaceNativeCalibration } from "../fractal/surface-pattern";
 import { deriveSurfaceEligibility } from "./surface-eligibility";
 import {
+  DEFAULT_FLAME_BALLOON_ECHO_WEIGHT,
   DEFAULT_GAMMA_THRESHOLD,
   tonemapFlame,
   viewFlameHistogram,
 } from "../fractal/flame";
+import type { FlameBalloonEcho } from "../fractal/flame";
 import { flameAccumBudgetBuckets } from "./flame-worker-core";
 import type { FlameWorkerCommand, FlameWorkerEvent } from "./flame-worker-core";
 import type { SharedFrameBuffers } from "./flame-worker-core";
@@ -2875,6 +2877,25 @@ function main(): void {
     };
   }
 
+  /**
+   * Snapshot the one shared balloon's Flame payload. The enclosing ball comes
+   * directly from the displayed Points geometry (including its exact 4D
+   * rotation-invariant ball), while the shared document supplies radius and
+   * tint. Returning `undefined` for off/missing geometry preserves the
+   * accumulator's original one-splat path.
+   */
+  function flameBalloonEchoSnapshot(): FlameBalloonEcho | undefined {
+    if (!state.balloonEcho) return undefined;
+    const balloon = scene.flameBalloon(state.balloonRadius);
+    if (!balloon) return undefined;
+    return {
+      balloon,
+      tint: hexToRgb01(state.balloonTint),
+      tintStrength: state.balloonTintStrength,
+      weight: DEFAULT_FLAME_BALLOON_ECHO_WEIGHT,
+    };
+  }
+
   /** The decorative backdrop's own persistent worker. It uses the existing
    * flame protocol in transfer mode, but failures stay local: a backdrop is
    * optional and never falls back to synchronous work on the UI thread. */
@@ -3060,6 +3081,7 @@ function main(): void {
         estimatorMinimumRadius: state.flame.estimatorMinimumRadius,
         estimatorCurve: state.flame.estimatorCurve,
         palette: resolvePalette(state.flame.paletteId, state.customPalette),
+        balloonEcho: flameBalloonEchoSnapshot(),
         order: state.symmetry.order,
         plane: state.symmetry.plane,
         twist: state.symmetry.twist ?? 0,
@@ -6478,11 +6500,9 @@ function main(): void {
     // Balloon tint color: the color half of the balloon tint pair, mirroring
     // onFogTint just above exactly — one undo checkpoint per drag burst, then
     // an instant push to every renderer the balloon reaches. ONE handler
-    // serves BOTH pickers (ui.ts wires it from the Points section's
-    // balloonTintColorInput AND the Surface section's
-    // surfaceBalloonTintColorInput). The strength half rides the table-driven
-    // onScalarControl pipeline instead (control-spec.ts's
-    // balloonTintStrength/surfaceBalloonTintStrength entries).
+    // serves all THREE pickers (ui.ts wires the Points, Flame, and Surface
+    // inputs to it). The strength half rides the table-driven onScalarControl
+    // pipeline instead (control-spec.ts's three balloon-tint entries).
     onBalloonTint: (hex) => {
       stopShows({ notify: true });
       editSession.beginEdit();
@@ -6492,6 +6512,10 @@ function main(): void {
         hexToRgb01(state.balloonTint),
         state.balloonTintStrength,
       );
+      // Flame bakes the echo color into sumRGB, so the shared color picker
+      // must restart an active accumulation just like the Flame section's
+      // tint-strength slider. Points/Surface remain cheap live pushes above.
+      if (state.renderMode === "flame") controlEffects.restartFlameRender();
     },
     onRegenerate: () => regenerate(),
     // "▶ Watch it build": replay the DISPLAYED cloud's own generation order —
@@ -6574,8 +6598,9 @@ function main(): void {
     },
     // "Inflate": animate the balloon's radius from a crumpled near-center
     // ball out to its rest size — tickLogic's absolute-time poll pushes the
-    // sweep every frame while balloonSweepStartMs is set, in BOTH points and
-    // surface modes. Turns the balloon on first if it wasn't already,
+    // sweep every frame while balloonSweepStartMs is set, in Points and
+    // Surface. Flame lands at rest and starts one new exposure instead.
+    // Turns the balloon on first if it wasn't already,
     // mirroring the checkbox effects' own enabled(+radius) push
     // (control-spec.ts), so a click from off plays the whole sweep instead of
     // silently jumping straight to rest — the explorer and surface checkboxes
@@ -6585,6 +6610,23 @@ function main(): void {
     // the sweep is left resting on, via the next ordinary edit's debounced
     // save — this handler itself just never cuts one).
     onBalloonInflate: () => {
+      // A histogram cannot animate the radius in place: every radius is a
+      // different set of deposited buckets, and restarting once per display
+      // frame would prevent convergence entirely. In Flame, the shared
+      // Inflate affordance therefore lands directly at the rest pose and
+      // starts one fresh accumulation. Points and Surface retain the live
+      // sweep below.
+      if (state.renderMode === "flame") {
+        balloonSweepStartMs = null;
+        state = setBalloonEcho(state, true);
+        state = setBalloonRadius(state, DEFAULT_BALLOON_RADIUS);
+        scene.setBalloonEchoEnabled(true);
+        scene.setBalloonEchoRadius(state.balloonRadius);
+        scene.setSurfaceBalloonRadius(state.balloonRadius);
+        ui.updateLabels(state);
+        controlEffects.restartFlameRender();
+        return;
+      }
       if (!state.balloonEcho) {
         state = setBalloonEcho(state, true);
         if (state.renderMode === "surface") {
@@ -7510,9 +7552,9 @@ function main(): void {
     // off ABSOLUTE time (now - balloonSweepStartMs) exactly like the tween
     // samples above, not a per-mode render dt — and tickLogic runs
     // unconditionally every frame where tickRender's per-mode branches
-    // early-return, so one poll here covers both points and surface (and
-    // costs nothing in flame/solid, where the balloon has no renderer to
-    // reach anyway). Direct reducer + scene calls, not the onScalarControl
+    // early-return, so one poll here covers Points and Surface. Flame never
+    // arms the sweep (its handler lands once at rest); Solid has no balloon
+    // renderer. Direct reducer + scene calls, not the onScalarControl
     // pipeline (this is session-only replay motion, not a user edit — no undo
     // checkpoint, no save, and critically it can never reach the
     // control-spec.ts effects that call cancelBalloonSweep, or the sweep

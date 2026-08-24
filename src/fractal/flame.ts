@@ -15,6 +15,29 @@
  * real `stepOrbit`/`plotPoint` by an oracle test in `flame.test.ts` — see
  * "matches stepOrbit/plotPoint exactly" — so the two paths can never
  * silently drift apart.
+ *
+ * **Balloon echo.** An optional {@link FlameBalloonEcho} deposits each
+ * plotted point's sphere inversion into this SAME histogram, immediately
+ * after the source point. The echo is not a second image composited later:
+ * its weighted hits and tint-mixed color sums participate in the one shared
+ * density field and the one shared tone map. Unlike the live Points arm, a
+ * histogram deliberately carries NO conformal-magnification term. Density is
+ * already the measure: inversion spreads or concentrates samples by where
+ * they land, so scaling a point sprite and compensating its brightness would
+ * count that Jacobian twice.
+ *
+ * There is deliberately NO radial fade either. The flame camera/framing is
+ * frozen before accumulation begins, and inverted points outside that
+ * frustum are simply not deposited, so arbitrarily distant near-centre
+ * images cannot drag any bounds. The executable sheet measured the Points
+ * arm's fade on/off over three systems: at the 0.9x comparison radius it
+ * touched no visible deposits; at the persisted 1.6x rest pose its visible
+ * mass ratio was 0.987449 / 0.115876 / 1.000000, erasing 88.4% of the fern's
+ * still-on-screen cave wall. With no later bounds fit to protect, that is lost
+ * feature rather than safety. CPU inversion goes through
+ * `balloon-de.ts`'s {@link invertBalloon}, retaining its float64
+ * `BALLOON_CENTER_FLOOR` rather than restating the algebra or borrowing the
+ * GPU's coarser float32 floor.
  */
 import {
   ESCAPE_LIMIT,
@@ -23,6 +46,8 @@ import {
   stepOrbit,
 } from "./chaos-game";
 import type { PreparedChaosGame } from "./chaos-game";
+import { invertBalloon } from "./balloon-de";
+import type { Balloon } from "./balloon-de";
 import type { Rng } from "./rng";
 import type { Vec3 } from "./types";
 
@@ -40,6 +65,38 @@ import type { Vec3 } from "./types";
  * (`Matrix4.clone().transpose().elements` does exactly that).
  */
 export type Mat4 = number[];
+
+/**
+ * The production histogram weight of one balloon-echo splat relative to its
+ * source splat. Kept independent from the live Points arm's additive-blend
+ * dim constant: under the flame's logarithmic density tone map, a half-weight
+ * echo remains substantially brighter than half intensity in established
+ * buckets, so copying `0.5` does not buy the additive arm's highlight safety.
+ * `scripts/flame-balloon.harness.ts` measured 0.25 / 0.5 / 1.0 across three
+ * structurally different flames: full weight gave the closest echo/source
+ * luminance balance with zero near-white pixels and essentially unchanged
+ * source luminance. One plotted point therefore deposits one real echo splat.
+ * The field on {@link FlameBalloonEcho} stays overridable so the executable
+ * measurement and CPU/GPU agreement tests can exercise alternatives.
+ */
+export const DEFAULT_FLAME_BALLOON_ECHO_WEIGHT = 1;
+
+/**
+ * Optional sphere-inverted echo deposited by {@link accumulateFlame} and
+ * `flame-4d.ts`'s `accumulateFlame4` into the SAME histogram as the primary
+ * flame. `balloon.R` follows `buildBalloon`'s convention (`rMult` times the
+ * source ball's raw radius); the caller derives that ball once from the exact
+ * explorer cloud it is rendering. `tintStrength` is the authored `[0, 1]`
+ * mix amount, applied to the echo color only and before `weight` is deposited.
+ * Omit this whole object when the echo is off: that preserves the pre-balloon
+ * accumulation path byte for byte.
+ */
+export interface FlameBalloonEcho {
+  balloon: Balloon;
+  tint: Vec3;
+  tintStrength: number;
+  weight: number;
+}
 
 /**
  * A 2D density accumulation: one bucket per pixel of the target image, each
@@ -239,6 +296,7 @@ export function accumulateFlame(
   palette: Vec3[],
   histogram?: FlameHistogram,
   colorLUT?: Float32Array,
+  echo?: FlameBalloonEcho,
 ): FlameHistogram {
   if (projection.length !== 16) {
     throw new RangeError(
@@ -272,6 +330,11 @@ export function accumulateFlame(
   const colorSlots = prepared.colorIndex;
   const colorSpeeds = prepared.colorSpeed;
   let c = hist.orbitColor;
+  // Reused only on the echo path. `invertBalloon` accepts the caller-owned
+  // output specifically so enabling balloon does not reintroduce two Vec3
+  // allocations per iteration into this otherwise allocation-free hot loop.
+  const echoSource: Vec3 = [0, 0, 0];
+  const echoInverted: Vec3 = [0, 0, 0];
 
   let x: number;
   let y: number;
@@ -409,33 +472,99 @@ export function accumulateFlame(
       }
     }
 
-    // --- project through the frozen camera and bucket -----------------------
-    const cw = rw0 * px + rw1 * py + rw2 * pz + rw3;
-    if (cw <= 0) continue; // behind (or exactly at) the camera.
-    const cx = rx0 * px + rx1 * py + rx2 * pz + rx3;
-    const cy = ry0 * px + ry1 * py + ry2 * pz + ry3;
-    const ndcX = cx / cw;
-    const ndcY = cy / cw;
-    const col = Math.floor((ndcX + 1) * 0.5 * width);
-    // NDC Y points up; pixel row 0 is the top of the image, so flip.
-    const row = Math.floor((1 - ndcY) * 0.5 * height);
-    if (col < 0 || col >= width || row < 0 || row >= height) continue;
+    // Keep the original no-echo projection/deposit path textually intact.
+    // Besides making the absent/off byte-identity contract auditable, this
+    // lets its early `continue`s stay the cheapest path when balloon is off.
+    if (echo === undefined) {
+      // --- project through the frozen camera and bucket ---------------------
+      const cw = rw0 * px + rw1 * py + rw2 * pz + rw3;
+      if (cw <= 0) continue; // behind (or exactly at) the camera.
+      const cx = rx0 * px + rx1 * py + rx2 * pz + rx3;
+      const cy = ry0 * px + ry1 * py + ry2 * pz + ry3;
+      const ndcX = cx / cw;
+      const ndcY = cy / cw;
+      const col = Math.floor((ndcX + 1) * 0.5 * width);
+      // NDC Y points up; pixel row 0 is the top of the image, so flip.
+      const row = Math.floor((1 - ndcY) * 0.5 * height);
+      if (col < 0 || col >= width || row < 0 || row >= height) continue;
 
-    const bucket = row * width + col;
-    const hit = ++hits[bucket];
-    if (hit > maxHits) maxHits = hit;
-    const o = bucket * 3;
+      const bucket = row * width + col;
+      const hit = ++hits[bucket];
+      if (hit > maxHits) maxHits = hit;
+      const o = bucket * 3;
+      if (colorLUT !== undefined) {
+        // c is in [0, 1]; the min guards the c === 1 edge (256 -> 255).
+        const li = Math.min(255, (c * 256) | 0) * 3;
+        sumRGB[o] += colorLUT[li];
+        sumRGB[o + 1] += colorLUT[li + 1];
+        sumRGB[o + 2] += colorLUT[li + 2];
+      } else {
+        const rgb = palette[baseIdx] ?? FALLBACK_COLOR;
+        sumRGB[o] += rgb[0];
+        sumRGB[o + 1] += rgb[1];
+        sumRGB[o + 2] += rgb[2];
+      }
+      continue;
+    }
+
+    // Resolve the plotted point's base color once for both deposits. Tint is
+    // applied ONLY to the echo below; the primary splat remains untouched.
+    let r: number;
+    let g: number;
+    let b: number;
     if (colorLUT !== undefined) {
-      // c is in [0, 1]; the min guards the c === 1 edge (256 -> 255).
       const li = Math.min(255, (c * 256) | 0) * 3;
-      sumRGB[o] += colorLUT[li];
-      sumRGB[o + 1] += colorLUT[li + 1];
-      sumRGB[o + 2] += colorLUT[li + 2];
+      r = colorLUT[li];
+      g = colorLUT[li + 1];
+      b = colorLUT[li + 2];
     } else {
       const rgb = palette[baseIdx] ?? FALLBACK_COLOR;
-      sumRGB[o] += rgb[0];
-      sumRGB[o + 1] += rgb[1];
-      sumRGB[o + 2] += rgb[2];
+      r = rgb[0];
+      g = rgb[1];
+      b = rgb[2];
+    }
+
+    // Primary splat. It cannot early-continue in balloon mode: a source
+    // outside (or behind) the camera can invert back into the visible frame.
+    const cw = rw0 * px + rw1 * py + rw2 * pz + rw3;
+    if (cw > 0) {
+      const cx = rx0 * px + rx1 * py + rx2 * pz + rx3;
+      const cy = ry0 * px + ry1 * py + ry2 * pz + ry3;
+      const col = Math.floor((cx / cw + 1) * 0.5 * width);
+      const row = Math.floor((1 - cy / cw) * 0.5 * height);
+      if (col >= 0 && col < width && row >= 0 && row < height) {
+        const bucket = row * width + col;
+        const hit = ++hits[bucket];
+        if (hit > maxHits) maxHits = hit;
+        const o = bucket * 3;
+        sumRGB[o] += r;
+        sumRGB[o + 1] += g;
+        sumRGB[o + 2] += b;
+      }
+    }
+
+    // Echo splat: the shared CPU helper owns the inversion floor/algebra.
+    // No fade and no conformal magnification term — see the module doc.
+    echoSource[0] = px;
+    echoSource[1] = py;
+    echoSource[2] = pz;
+    const inv = invertBalloon(echo.balloon, echoSource, echoInverted);
+    const ecw = rw0 * inv[0] + rw1 * inv[1] + rw2 * inv[2] + rw3;
+    if (ecw > 0) {
+      const ecx = rx0 * inv[0] + rx1 * inv[1] + rx2 * inv[2] + rx3;
+      const ecy = ry0 * inv[0] + ry1 * inv[1] + ry2 * inv[2] + ry3;
+      const col = Math.floor((ecx / ecw + 1) * 0.5 * width);
+      const row = Math.floor((1 - ecy / ecw) * 0.5 * height);
+      if (col >= 0 && col < width && row >= 0 && row < height) {
+        const bucket = row * width + col;
+        const hit = (hits[bucket] += echo.weight);
+        if (hit > maxHits) maxHits = hit;
+        const o = bucket * 3;
+        const t = echo.tintStrength;
+        sumRGB[o] += (r + (echo.tint[0] - r) * t) * echo.weight;
+        sumRGB[o + 1] += (g + (echo.tint[1] - g) * t) * echo.weight;
+        sumRGB[o + 2] += (b + (echo.tint[2] - b) * t) * echo.weight;
+      }
     }
   }
 

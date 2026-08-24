@@ -580,6 +580,57 @@ describe("Ui balloon echo radius row", () => {
   });
 });
 
+describe("Ui Flame balloon rows", () => {
+  function flameBalloonRow(): HTMLElement {
+    return document.getElementById("flameBalloonRow") as HTMLElement;
+  }
+  function flameBalloonRadiusRow(): HTMLElement {
+    return document.getElementById("flameBalloonRadiusRow") as HTMLElement;
+  }
+  function flameBalloonTintRow(): HTMLElement {
+    return document.getElementById("flameBalloonTintRow") as HTMLElement;
+  }
+
+  it("keeps the checkbox available and hides its dependent rows while the echo is off", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "flame" as const,
+      balloonEcho: false,
+    });
+
+    expect(flameBalloonRow().classList.contains("hidden")).toBe(false);
+    expect(flameBalloonRadiusRow().classList.contains("hidden")).toBe(true);
+    expect(flameBalloonTintRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows the radius and tint rows while the echo is on, including for a non-flat system", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "flame" as const,
+      transforms: nonFlatTransforms(),
+      balloonEcho: true,
+    });
+
+    expect(flameBalloonRow().classList.contains("hidden")).toBe(false);
+    expect(flameBalloonRadiusRow().classList.contains("hidden")).toBe(false);
+    expect(flameBalloonTintRow().classList.contains("hidden")).toBe(false);
+  });
+
+  it("fires onBalloonInflate when the Flame Inflate button is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    (
+      document.getElementById("flameBalloonInflateButton") as HTMLButtonElement
+    ).click();
+
+    expect(handlers.onBalloonInflate).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("Ui surface balloon rows", () => {
   function surfaceBalloonRow(): HTMLElement {
     return document.getElementById("surfaceBalloonRow") as HTMLElement;
@@ -790,16 +841,33 @@ describe("Ui balloon tint", () => {
     expect(handlers.onBalloonTint).toHaveBeenCalledWith("#996633");
   });
 
-  it("reflects a non-default balloonTint into BOTH pickers (gallery loads/undo move the swatch)", () => {
+  it("reports a Flame picker edit as the raw hex value through the SAME handler", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.updateLabels(initialState(true));
+
+    const input = el("flameBalloonTintColor");
+    input.value = "#663399";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(handlers.onBalloonTint).toHaveBeenCalledWith("#663399");
+  });
+
+  it("reflects a non-default balloonTint into all three pickers (gallery loads/undo move the swatch)", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), balloonTint: "#336699" });
     expect(el("balloonTintColor").value).toBe("#336699");
+    expect(el("flameBalloonTintColor").value).toBe("#336699");
     expect(el("surfaceBalloonTintColor").value).toBe("#336699");
   });
 
-  it("names both color inputs for assistive tech (their labels carry no text)", () => {
+  it("names all color inputs for assistive tech (their labels carry no text)", () => {
     new Ui(document);
     expect(el("balloonTintColor").getAttribute("aria-label")).toBe(
+      "Balloon echo tint color",
+    );
+    expect(el("flameBalloonTintColor").getAttribute("aria-label")).toBe(
       "Balloon echo tint color",
     );
     expect(el("surfaceBalloonTintColor").getAttribute("aria-label")).toBe(
@@ -6293,6 +6361,7 @@ describe("index.html slider ranges match PARAM", () => {
     ["pointSizeSlider", PARAM.pointSize],
     ["glowBrightnessSlider", PARAM.glowBrightness],
     ["balloonRadiusSlider", PARAM.balloonRadius],
+    ["flameBalloonRadiusSlider", PARAM.balloonRadius],
     ["surfaceBalloonRadiusSlider", PARAM.balloonRadius],
     ["fogSlider", PARAM.fogDensity],
     ["fogTintStrength", PARAM.fogTintStrength],

@@ -6,7 +6,7 @@ import {
   viewFlameHistogram,
   DEFAULT_GAMMA_THRESHOLD,
 } from "../fractal/flame";
-import type { FlameHistogram, Mat4 } from "../fractal/flame";
+import type { FlameBalloonEcho, FlameHistogram, Mat4 } from "../fractal/flame";
 import { W_SIDE_PALETTES, buildColorModeLUT } from "../fractal/color";
 import { sierpinskiTetrahedron } from "../fractal/presets";
 import type { Transform4 } from "../fractal/types";
@@ -40,6 +40,13 @@ const ORTHOGRAPHIC: Mat4 = [
   0, 0, 1, 0,
   0, 0, 0, 1,
 ];
+
+const BALLOON_ECHO: FlameBalloonEcho = {
+  balloon: { center: [0, 0, 0], rho: 2, R: 1.5 },
+  tint: [0.2, 0.4, 0.8],
+  tintStrength: 0.35,
+  weight: 1,
+};
 
 function startCommand(
   overrides: Partial<Extract<FlameWorkerCommand, { type: "start" }>> = {},
@@ -309,6 +316,24 @@ describe("FlameWorkerSession start", () => {
     const lastA = progressEvents(a.events).at(-1)!;
     const lastB = progressEvents(b.events).at(-1)!;
     expect(Array.from(lastA.image)).toEqual(Array.from(lastB.image));
+  });
+
+  it("forwards the optional balloon echo unchanged into every CPU accumulation chunk", () => {
+    const seen: Array<FlameBalloonEcho | undefined> = [];
+    const { session, scheduler } = harness({
+      initialChunkSize: 10,
+      accumulate: (...args) => {
+        seen.push(args[9]);
+        return accumulateFlame(...args);
+      },
+    });
+    session.handle(
+      startCommand({ balloonEcho: BALLOON_ECHO, iterationsBudget: 35 }),
+    );
+    scheduler.drain();
+
+    expect(seen.length).toBeGreaterThan(1);
+    expect(seen.every((echo) => echo === BALLOON_ECHO)).toBe(true);
   });
 });
 
@@ -1555,6 +1580,34 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     expect(snapshotCalls).toBe(2);
   });
 
+  it("forwards the balloon echo unchanged to the 3D GPU factory", async () => {
+    let captured: GpuBackendRequest | undefined;
+    const createGpuBackend = async (
+      request: GpuBackendRequest,
+    ): Promise<FlameAccumBackend> => {
+      captured = request;
+      return {
+        kind: "gpu",
+        accumulate: async (n) => n,
+        snapshot: async () =>
+          createFlameHistogram(request.width, request.height),
+        destroy: () => {},
+      };
+    };
+    const { session, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({
+        balloonEcho: BALLOON_ECHO,
+        gpuPreference: "auto",
+        iterationsBudget: 500,
+      }),
+    );
+    await drainAsync(scheduler);
+
+    expect(captured?.echo).toBe(BALLOON_ECHO);
+    expect(captured?.projection).toBe(ORTHOGRAPHIC);
+  });
+
   it("falls back to CPU when the GPU factory rejects, and never retries it again this session", async () => {
     let factoryCalls = 0;
     const createGpuBackend = async (): Promise<FlameAccumBackend> => {
@@ -2472,7 +2525,7 @@ describe("FlameWorkerSession 4D flame render", () => {
     ]);
   });
 
-  it("calls the 4D GPU factory for a 4D session with gpuPreference auto and passes the session's own geometry/view/color through the request", async () => {
+  it("calls the 4D GPU factory and passes geometry/view/color plus the separate project-then-invert maps", async () => {
     const fourD = defaultFourD();
     let factory4Calls = 0;
     let capturedRequest: GpuBackendRequest4 | undefined;
@@ -2502,6 +2555,7 @@ describe("FlameWorkerSession 4D flame render", () => {
     session.handle(
       startCommand({
         fourD,
+        balloonEcho: BALLOON_ECHO,
         gpuPreference: "auto",
         palette: "legacy",
         width: 8,
@@ -2519,6 +2573,10 @@ describe("FlameWorkerSession 4D flame render", () => {
     expect(request.finalTransform4).toBeNull();
     expect(request.projection).toBeInstanceOf(Float64Array);
     expect(request.projection).toHaveLength(20);
+    expect(request.echo).toBe(BALLOON_ECHO);
+    expect(request.rotorProjection).toBeInstanceOf(Float64Array);
+    expect(request.rotorProjection).toHaveLength(20);
+    expect(request.cameraProjection).toBe(ORTHOGRAPHIC);
     expect(request.view).toEqual({
       invWAmp: 1,
       sliceOn: false,

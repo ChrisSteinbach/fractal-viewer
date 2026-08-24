@@ -198,10 +198,9 @@ export interface ControlSceneEffects {
    * uniforms from state in one sweep. */
   setSurfaceBalloonRadius(rMult: number): void;
   /** Set the balloon tint — `tint` an rgb01 tuple, `strength` its 0..1
-   * blend weight; see `scene.ts`'s `setBalloonTint`. ONE method for BOTH
-   * balloon renderers, so the two strength sliders' entries
-   * (`balloonTintStrength`, `surfaceBalloonTintStrength`) and the two
-   * bespoke color pickers all reach the same push. Uniform/spec writes
+   * blend weight; see `scene.ts`'s `setBalloonTint`. ONE method for the
+   * Points and Surface scene renderers; all three panels' strength sliders
+   * and bespoke color pickers reach the same shared state/push. Uniform/spec writes
    * only — unlike the balloon's on/off TOGGLE above this needs no session
    * re-enter, because the tint lives inside the already-compiled
    * SURFACE_BALLOON arm. */
@@ -741,10 +740,9 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   {
     // Independent balloon color: the blend-weight half of the echo's own
     // tint pair, next to balloonRadiusSlider above — the SAME state field
-    // as surfaceBalloonTintStrength below, seen through the Points explorer
-    // instead of the Surface render, exactly like
-    // balloonRadiusSlider/surfaceBalloonRadiusSlider share the balloon's
-    // size. The color half is a bespoke picker (ui.ts's onBalloonTint),
+    // as the Flame and Surface strength sliders below, seen through the
+    // Points explorer. The color half is a bespoke picker (ui.ts's
+    // onBalloonTint),
     // like fogTintStrength's onFogTint above — this entry only carries the
     // 0..1 strength slider, converting the paired hex color to rgb01 at the
     // point of use rather than storing it twice.
@@ -943,6 +941,57 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
         palette: resolvePalette(s.flame.paletteId, s.customPalette),
       });
       fx.trackAutoBackground();
+    },
+  },
+  {
+    // The Flame panel's view of the shared balloon toggle. Unlike Points'
+    // uniform-only echo and Surface's shader variant, Flame bakes the extra
+    // deposits into its histogram, so every edit starts a fresh exposure.
+    kind: "checkbox",
+    id: "flameBalloonCheckbox",
+    read: (s) => s.balloonEcho,
+    apply: (s, checked) => setBalloonEcho(s, checked),
+    effect: (s, fx) => {
+      fx.cancelBalloonSweep();
+      fx.scene.setBalloonEchoEnabled(s.balloonEcho);
+      fx.scene.setBalloonEchoRadius(s.balloonRadius);
+      if (s.renderMode === "flame") fx.restartFlameRender();
+    },
+  },
+  {
+    // Same shared radius as the Points/Surface sliders. The scene pushes keep
+    // those two arms ready for a later mode switch; Flame itself must discard
+    // the old-radius histogram and accumulate again.
+    kind: "range",
+    id: "flameBalloonRadiusSlider",
+    label: {
+      id: "flameBalloonRadiusLabel",
+      text: (s) => `${s.balloonRadius.toFixed(2)}×`,
+    },
+    read: (s) => String(s.balloonRadius),
+    apply: (s, raw) => setBalloonRadius(s, Number(raw)),
+    effect: (s, fx) => {
+      fx.cancelBalloonSweep();
+      fx.scene.setBalloonEchoRadius(s.balloonRadius);
+      fx.scene.setSurfaceBalloonRadius(s.balloonRadius);
+      if (s.renderMode === "flame") fx.restartFlameRender();
+    },
+  },
+  {
+    // The strength half of Flame's shared tint pair. Tint affects deposited
+    // color, not the final tone-map, so it follows radius and restarts the
+    // exposure instead of trying to recolor an existing histogram.
+    kind: "range",
+    id: "flameBalloonTintStrength",
+    label: {
+      id: "flameBalloonTintLabel",
+      text: (s) => `${Math.round(s.balloonTintStrength * 100)}%`,
+    },
+    read: (s) => String(s.balloonTintStrength),
+    apply: (s, raw) => setBalloonTintStrength(s, Number(raw)),
+    effect: (s, fx) => {
+      fx.scene.setBalloonTint(hexToRgb01(s.balloonTint), s.balloonTintStrength);
+      if (s.renderMode === "flame") fx.restartFlameRender();
     },
   },
   // Adaptive density-estimation blur sliders — live-reactive like
@@ -1228,9 +1277,9 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   },
   {
     // Independent balloon color: the blend-weight half of the surface
-    // balloon's own tint pair — the SAME state field as balloonTintStrength
-    // above (one balloon, two renderers, exactly like
-    // surfaceBalloonRadiusSlider/balloonRadiusSlider share the size). The
+    // balloon's own tint pair — the SAME state field as the Points and Flame
+    // strengths above (one balloon, three renderers, exactly like their
+    // radius sliders share the size). The
     // color half is a bespoke picker (ui.ts's onBalloonTint), like
     // fogTintStrength's onFogTint. Unlike surfaceBalloonCheckbox above,
     // this is deliberately NOT a variant-level change — no

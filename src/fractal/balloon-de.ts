@@ -130,6 +130,24 @@ export interface Balloon {
   R: number;
 }
 
+/**
+ * Build a balloon from an already-chosen RAW enclosing ball. This is the
+ * shared `rMult`/rho-margin convention for renderers whose enclosing ball
+ * does not come from a surface DE (the point-cloud/flame pair), while
+ * {@link buildBalloon} and {@link buildBalloon4} remain the DE-specific
+ * front doors.
+ */
+export function buildBalloonFromBall(
+  ball: { center: Vec3; radius: number },
+  rMult: number,
+): Balloon {
+  return {
+    center: [ball.center[0], ball.center[1], ball.center[2]],
+    rho: ball.radius * BALLOON_RHO_MARGIN,
+    R: rMult * ball.radius,
+  };
+}
+
 /** A wrapped estimate with its term attribution: `shell` when the echo
  * term won the min STRICTLY — ties go to the fractal term, the
  * convention the shader arms' hit-info argmin must mirror. */
@@ -165,24 +183,28 @@ export function balloonBall(de: SurfaceDE): { center: Vec3; radius: number } {
  * extent and the spike's regimes — 0.35 early, 0.9 mid, 1.6 rest — mean
  * the same thing here). */
 export function buildBalloon(de: SurfaceDE, rMult: number): Balloon {
-  const ball = balloonBall(de);
-  return {
-    center: ball.center,
-    rho: ball.radius * BALLOON_RHO_MARGIN,
-    R: rMult * ball.radius,
-  };
+  return buildBalloonFromBall(balloonBall(de), rMult);
 }
 
 /** `I(p) = c + R²(p−c)/|p−c|²`, `|p−c|²` floored so a query at `c` maps
- * far away instead of to NaN. Self-inverse away from the floor. */
-export function invertBalloon(b: Balloon, p: Vec3): Vec3 {
+ * far away instead of to NaN. Self-inverse away from the floor. `out` is an
+ * optional caller-owned tuple for allocation-free hot loops; omitted, the
+ * long-standing return-a-fresh-tuple behavior is unchanged. */
+export function invertBalloon(
+  b: Balloon,
+  p: Vec3,
+  out: Vec3 = [0, 0, 0],
+): Vec3 {
   const dx = p[0] - b.center[0];
   const dy = p[1] - b.center[1];
   const dz = p[2] - b.center[2];
   const floor = BALLOON_CENTER_FLOOR * b.rho;
   const r2 = Math.max(dx * dx + dy * dy + dz * dz, floor * floor);
   const s = (b.R * b.R) / r2;
-  return [b.center[0] + s * dx, b.center[1] + s * dy, b.center[2] + s * dz];
+  out[0] = b.center[0] + s * dx;
+  out[1] = b.center[1] + s * dy;
+  out[2] = b.center[2] + s * dz;
+  return out;
 }
 
 /**
@@ -282,12 +304,7 @@ export function balloonBall4(de: SurfaceDE4): {
 /** {@link buildBalloon}'s 4D twin — same margin, same `rMult`
  * normalization, over {@link balloonBall4}. */
 export function buildBalloon4(de: SurfaceDE4, rMult: number): Balloon {
-  const ball = balloonBall4(de);
-  return {
-    center: ball.center,
-    rho: ball.radius * BALLOON_RHO_MARGIN,
-    R: rMult * ball.radius,
-  };
+  return buildBalloonFromBall(balloonBall4(de), rMult);
 }
 
 /**

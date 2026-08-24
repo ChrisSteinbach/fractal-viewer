@@ -78,6 +78,14 @@ describe("applyScalarControl: parsing/mapping", () => {
     expect(state.balloonRadius).toBe(0.9);
   });
 
+  it("flameBalloonRadiusSlider apply writes the SAME numeric balloonRadius", () => {
+    const spec = specById("flameBalloonRadiusSlider");
+
+    const state = applyScalarControl(initialState(true), spec, "0.9");
+
+    expect(state.balloonRadius).toBe(0.9);
+  });
+
   it("fogSlider apply parses the raw string into a numeric fogDensity", () => {
     const spec = specById("fogSlider");
 
@@ -102,8 +110,16 @@ describe("applyScalarControl: parsing/mapping", () => {
     expect(state.balloonTintStrength).toBe(0.5);
   });
 
-  it("surfaceBalloonTintStrength apply parses the raw string into the SAME numeric balloonTintStrength (one balloon, two renderers)", () => {
+  it("surfaceBalloonTintStrength apply parses the raw string into the SAME numeric balloonTintStrength", () => {
     const spec = specById("surfaceBalloonTintStrength");
+
+    const state = applyScalarControl(initialState(true), spec, "0.5");
+
+    expect(state.balloonTintStrength).toBe(0.5);
+  });
+
+  it("flameBalloonTintStrength apply parses into the shared balloonTintStrength", () => {
+    const spec = specById("flameBalloonTintStrength");
 
     const state = applyScalarControl(initialState(true), spec, "0.5");
 
@@ -370,6 +386,57 @@ describe("effects", () => {
       // — no direct scene call here.
       expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(1);
       expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
+    });
+
+    it("flameBalloonCheckbox effect keeps the Points echo synced and restarts Flame accumulation", () => {
+      const spec = specById("flameBalloonCheckbox");
+      const previous = {
+        ...initialState(true),
+        renderMode: "flame" as const,
+      };
+      const state = applyScalarControl(previous, spec, true);
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setBalloonEchoEnabled).toHaveBeenCalledWith(true);
+      expect(fx.scene.setBalloonEchoRadius).toHaveBeenCalledWith(
+        state.balloonRadius,
+      );
+      expect(fx.restartFlameRender).toHaveBeenCalledTimes(1);
+      expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
+    });
+
+    it("flameBalloonRadiusSlider effect syncs both scene arms and restarts Flame accumulation", () => {
+      const spec = specById("flameBalloonRadiusSlider");
+      const previous = {
+        ...initialState(true),
+        renderMode: "flame" as const,
+      };
+      const state = applyScalarControl(previous, spec, "0.9");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setBalloonEchoRadius).toHaveBeenCalledWith(0.9);
+      expect(fx.scene.setSurfaceBalloonRadius).toHaveBeenCalledWith(0.9);
+      expect(fx.restartFlameRender).toHaveBeenCalledTimes(1);
+      expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
+    });
+
+    it("flameBalloonTintStrength effect syncs the scene tint and restarts Flame accumulation", () => {
+      const spec = specById("flameBalloonTintStrength");
+      const previous = {
+        ...initialState(true),
+        renderMode: "flame" as const,
+      };
+      const state = applyScalarControl(previous, spec, "0.5");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setBalloonTint).toHaveBeenCalledWith([0, 0, 0], 0.5);
+      expect(fx.restartFlameRender).toHaveBeenCalledTimes(1);
     });
 
     it("surfaceBalloonRadiusSlider effect forwards the radius through the scene's cheap path and cancels an in-flight sweep", () => {

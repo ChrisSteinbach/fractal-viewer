@@ -15,6 +15,7 @@ import {
 } from "./color";
 import type { FourDRenderColor } from "./color";
 import { buildPaletteLUT } from "./palette";
+import { buildBalloonFromBall } from "./balloon-de";
 import {
   composeFlameProjection4,
   composeRotorProjection4,
@@ -954,6 +955,119 @@ describe("accumulateFlame4 with symmetry", () => {
   });
 });
 
+describe("accumulateFlame4 balloon echo", () => {
+  it("projects to the visible 3D point before inversion, inherits slice weight, and tints only the echo", () => {
+    const point: Vec4 = [0.25, 0, 0, 2];
+    const prepared = prepareChaosGame4(fixedPointSystem4(point));
+    const palette: Vec3[] = [[0.8, 0.2, 0.1]];
+    const rotorProjection = composeRotorProjection4(
+      IDENTITY_ROTOR,
+      [0, 0, 0, 0],
+    );
+    const projection = composeFlameProjection4(ORTHOGRAPHIC, rotorProjection);
+    const view: FourDView = {
+      ...FLAT_VIEW,
+      sliceOn: true,
+      sliceCenter: 0,
+      sliceWidth: 0.5,
+    };
+    const iterations = 8;
+    const hist = accumulateFlame4(
+      prepared,
+      projection,
+      view,
+      20,
+      20,
+      iterations,
+      mulberry32(3),
+      { kind: "transform", palette },
+      undefined,
+      {
+        // After the identity rotor drops w, x = 0.25. R² = 0.125 maps that
+        // visible 3D source to x = 0.5. Inverting the ORIGINAL 4D point would
+        // include w = 2 in the denominator and land near x = 0.008 instead.
+        balloon: buildBalloonFromBall(
+          { center: [0, 0, 0], radius: 0.5 },
+          Math.SQRT1_2,
+        ),
+        tint: [0, 1, 0],
+        tintStrength: 1,
+        weight: 0.25,
+      },
+      rotorProjection,
+      ORTHOGRAPHIC,
+    );
+
+    const sourceWeight = sliceWeight(1, 0, 0.5, 0.06);
+    const sourceBucket = 10 * 20 + 12; // projected x = 0.25.
+    const echoBucket = 10 * 20 + 15; // 3D inversion x = 0.5.
+    const wrong4DInversionBucket = 10 * 20 + 10;
+    expect(hist.hits[sourceBucket]).toBeCloseTo(iterations * sourceWeight, 12);
+    expect(hist.sumRGB[sourceBucket * 3]).toBeCloseTo(
+      0.8 * iterations * sourceWeight,
+      12,
+    );
+    expect(hist.sumRGB[sourceBucket * 3 + 1]).toBeCloseTo(
+      0.2 * iterations * sourceWeight,
+      12,
+    );
+    expect(hist.sumRGB[sourceBucket * 3 + 2]).toBeCloseTo(
+      0.1 * iterations * sourceWeight,
+      12,
+    );
+    expect(hist.hits[echoBucket]).toBeCloseTo(
+      iterations * sourceWeight * 0.25,
+      12,
+    );
+    expect(hist.sumRGB[echoBucket * 3]).toBe(0);
+    expect(hist.sumRGB[echoBucket * 3 + 1]).toBeCloseTo(
+      iterations * sourceWeight * 0.25,
+      12,
+    );
+    expect(hist.sumRGB[echoBucket * 3 + 2]).toBe(0);
+    expect(hist.hits[wrong4DInversionBucket]).toBe(0);
+  });
+
+  it("keeps an explicitly absent echo byte-identical to the original call shape", () => {
+    const prepared = prepareChaosGame4(weightedPentatope());
+    const color: FourDRenderColor = {
+      kind: "transform",
+      palette: transformColors(5),
+    };
+    const plain = accumulateFlame4(
+      prepared,
+      FLAT_PROJECTION,
+      FLAT_VIEW,
+      32,
+      32,
+      5000,
+      mulberry32(29),
+      color,
+    );
+    const absent = accumulateFlame4(
+      prepared,
+      FLAT_PROJECTION,
+      FLAT_VIEW,
+      32,
+      32,
+      5000,
+      mulberry32(29),
+      color,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    );
+
+    expect(Array.from(absent.hits)).toEqual(Array.from(plain.hits));
+    expect(Array.from(absent.sumRGB)).toEqual(Array.from(plain.sumRGB));
+    expect(absent.maxHits).toBe(plain.maxHits);
+    expect(absent.orbit).toEqual(plain.orbit);
+    expect(absent.orbitW).toBe(plain.orbitW);
+    expect(absent.orbitColor).toBe(plain.orbitColor);
+  });
+});
+
 describe("accumulateFlame4 validation", () => {
   it("throws for a projection that isn't 20 entries", () => {
     const prepared = prepareChaosGame4(fixedPointSystem4([0, 0, 0, 0]));
@@ -987,5 +1101,47 @@ describe("accumulateFlame4 validation", () => {
         mismatched,
       ),
     ).toThrow(RangeError);
+  });
+
+  it("requires the separate rotor and camera projections when balloon echo is on", () => {
+    const prepared = prepareChaosGame4(fixedPointSystem4([0.25, 0, 0, 0]));
+    const echo = {
+      balloon: buildBalloonFromBall(
+        { center: [0, 0, 0] as Vec3, radius: 1 },
+        1,
+      ),
+      tint: [0, 0, 0] as Vec3,
+      tintStrength: 0,
+      weight: 0.5,
+    };
+    expect(() =>
+      accumulateFlame4(
+        prepared,
+        FLAT_PROJECTION,
+        FLAT_VIEW,
+        10,
+        10,
+        1,
+        mulberry32(1),
+        { kind: "transform", palette: transformColors(1) },
+        undefined,
+        echo,
+      ),
+    ).toThrow(/rotorProjection/);
+    expect(() =>
+      accumulateFlame4(
+        prepared,
+        FLAT_PROJECTION,
+        FLAT_VIEW,
+        10,
+        10,
+        1,
+        mulberry32(1),
+        { kind: "transform", palette: transformColors(1) },
+        undefined,
+        echo,
+        composeRotorProjection4(IDENTITY_ROTOR, [0, 0, 0, 0]),
+      ),
+    ).toThrow(/cameraProjection/);
   });
 });
