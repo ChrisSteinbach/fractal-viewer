@@ -4,6 +4,7 @@ import {
   DEFAULT_COLOR_SPEED,
   derivedColorIndex,
   runChaosGame,
+  systemHasChaos,
 } from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
 import {
@@ -32,6 +33,8 @@ import {
   hybridChainCube,
   hybridChainQuaternion,
   hybridChainShells,
+  fernSpongeIsolated,
+  fernSpongeLeak,
   hyperfern,
   icosahedronFlake,
   jerusalemCube,
@@ -1552,5 +1555,60 @@ describe("the 4D escape-time presets", () => {
 
     expect(fill).toBeGreaterThan(0);
     expect(fill).toBeLessThan(0.02);
+  });
+});
+
+describe("fern | sponge xaos pair", () => {
+  it("composes 24 maps — the fern's four then the sponge's twenty — conjugated rigidly apart", () => {
+    const isolated = fernSpongeIsolated();
+    expect(isolated).toHaveLength(24);
+    expect(isolated.map((t) => t.id)).toEqual(
+      Array.from({ length: 24 }, (_, i) => i),
+    );
+    // Conjugation by translation leaves every linear part untouched: the
+    // fern maps' composed M must equal barnsleyFern's own, entry for entry,
+    // and the sponge maps' mengerSponge's.
+    const fern = barnsleyFern();
+    const sponge = mengerSponge();
+    for (let i = 0; i < 4; i++) {
+      expect(composeAffine(isolated[i]).m).toEqual(composeAffine(fern[i]).m);
+    }
+    for (let j = 0; j < 20; j++) {
+      expect(composeAffine(isolated[4 + j]).m).toEqual(
+        composeAffine(sponge[j]).m,
+      );
+    }
+    // And the two systems sit apart: fern fixed points left of the origin,
+    // sponge cells right of it. The sponge's map positions moved by
+    // (I - (1/3)I)·offset = 0.8 from mengerSponge's own ±0.5 grid.
+    for (let j = 0; j < 20; j++) {
+      expect(isolated[4 + j].position[0]).toBeCloseTo(
+        sponge[j].position[0] + 0.8,
+        12,
+      );
+    }
+  });
+
+  it("carries block-structured chaos rows — 0 off-block isolated, 0.01 off-block leaked", () => {
+    const isolated = fernSpongeIsolated();
+    const leak = fernSpongeLeak();
+    expect(systemHasChaos(isolated)).toBe(true);
+    expect(systemHasChaos(leak)).toBe(true);
+    for (let i = 0; i < 24; i++) {
+      const inFern = i < 4;
+      for (let j = 0; j < 24; j++) {
+        const sameBlock = inFern === j < 4;
+        expect(isolated[i].chaos![j]).toBe(sameBlock ? 1 : 0);
+        expect(leak[i].chaos![j]).toBe(sameBlock ? 1 : 0.01);
+      }
+    }
+  });
+
+  it("balances the entry pick: both blocks' weights sum to 100", () => {
+    const isolated = fernSpongeIsolated();
+    const sum = (ts: Transform[]) =>
+      ts.reduce((acc, t) => acc + (t.weight ?? 1), 0);
+    expect(sum(isolated.slice(0, 4))).toBe(100);
+    expect(sum(isolated.slice(4))).toBe(100);
   });
 });

@@ -5425,3 +5425,100 @@ describe("toSnapshot / fromSnapshot ground plane", () => {
     expect(result.groundPlane).toBe(true);
   });
 });
+
+describe("decodeScene transform chaos rows", () => {
+  function chiTransforms(): SceneSnapshot["transforms"] {
+    return [0, 1, 2].map((id) => ({
+      id,
+      position: [0.2 * id, 0, 0] as [number, number, number],
+      rotation: [0, 0, 0] as [number, number, number],
+      scale: [0.5, 0.5, 0.5] as [number, number, number],
+    }));
+  }
+
+  /** Encode a valid 3-map scene, splice `chaos` RAW into transform 0's wire
+   * form, and decode — the untrusted-input door the quiet-drop rules guard. */
+  function decodeWithRawChaos(chaos: unknown): SceneSnapshot | null {
+    const s: SceneSnapshot = { ...baseSnapshot(), transforms: chiTransforms() };
+    const encoded = encodeScene(s);
+    const b64 = encoded
+      .slice("v1=".length)
+      .replace(/-/g, "+")
+      .replace(/_/g, "/");
+    const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+    const json = JSON.parse(atob(padded)) as {
+      transforms: Record<string, unknown>[];
+    };
+    json.transforms[0].chaos = chaos;
+    return decodeScene("v1=" + b64url(JSON.stringify(json)));
+  }
+
+  it("round-trips a non-trivial row verbatim — zeros, >1 scales, and out-of-domain negatives included", () => {
+    const transforms = chiTransforms();
+    transforms[0] = { ...transforms[0], chaos: [1, 0, 2.5] };
+    const s: SceneSnapshot = { ...baseSnapshot(), transforms };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].chaos).toEqual([1, 0, 2.5]);
+    expect(result!.transforms[1].chaos).toBeUndefined();
+  });
+
+  it("drops trivial rows at encode — explicit all-1s, and all-1s-by-padding/truncation", () => {
+    const transforms = chiTransforms();
+    transforms[0] = { ...transforms[0], chaos: [1, 1, 1] };
+    transforms[1] = { ...transforms[1], chaos: [1, 1] };
+    // Trivial at the base count 3 — the deviation sits past it (truncated).
+    transforms[2] = { ...transforms[2], chaos: [1, 1, 1, 9] };
+    const s: SceneSnapshot = { ...baseSnapshot(), transforms };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].chaos).toBeUndefined();
+    expect(result!.transforms[1].chaos).toBeUndefined();
+    expect(result!.transforms[2].chaos).toBeUndefined();
+    // And byte-identity: the encoded string equals a never-authored scene's.
+    expect(encodeScene(s)).toBe(
+      encodeScene({ ...baseSnapshot(), transforms: chiTransforms() }),
+    );
+  });
+
+  it("never encodes a chaos row on the final transform (a lens sits outside selection)", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      transforms: chiTransforms(),
+      finalTransform: {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        chaos: [0, 2, 0],
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.finalTransform!.chaos).toBeUndefined();
+  });
+
+  it("decodes only whole well-formed rows — a malformed entry or shape quietly drops the row, never the scene", () => {
+    // A numeric string must NOT coerce (the fold-length rule), and one bad
+    // entry drops the WHOLE row — a row is one distribution.
+    expect(
+      decodeWithRawChaos([1, "0.5", 1])!.transforms[0].chaos,
+    ).toBeUndefined();
+    expect(
+      decodeWithRawChaos([1, null, 1])!.transforms[0].chaos,
+    ).toBeUndefined();
+    expect(
+      decodeWithRawChaos([1, true, 1])!.transforms[0].chaos,
+    ).toBeUndefined();
+    expect(decodeWithRawChaos({ 0: 1 })!.transforms[0].chaos).toBeUndefined();
+    expect(decodeWithRawChaos("1 1 1")!.transforms[0].chaos).toBeUndefined();
+    // An untrusted array longer than MAX_TRANSFORMS can never mean anything
+    // — dropped whole rather than carried verbatim.
+    expect(
+      decodeWithRawChaos(new Array(MAX_TRANSFORMS + 1).fill(1.5))!.transforms[0]
+        .chaos,
+    ).toBeUndefined();
+    // A well-formed but out-of-domain row survives untouched — no clamp,
+    // fidelity at the leaf (the domain lives in resolveChaosEntry).
+    expect(decodeWithRawChaos([-1, 1, 1])!.transforms[0].chaos).toEqual([
+      -1, 1, 1,
+    ]);
+  });
+});

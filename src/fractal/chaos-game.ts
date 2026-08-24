@@ -34,6 +34,36 @@ export const ESCAPE_LIMIT = 50;
 /** Uint8 transform indices cap the system at 256 maps. */
 export const MAX_TRANSFORMS = 256;
 
+/**
+ * Plotted points per chaos SUB-ORBIT under graph-directed selection (chi
+ * rows — see {@link systemHasChaos}). With a block-diagonal chi a single
+ * orbit NEVER leaves the block its entry pick landed in, and every consumer
+ * runs one orbit for its whole output — so without re-fusing, an "isolated"
+ * two-system document would render exactly one of its systems. Every
+ * chi-consuming loop therefore re-fuses each `CHAOS_SUB_ORBIT_POINTS`
+ * plotted points: a fresh seed point drawn from the ITERATION-LOCAL (aux)
+ * stream — three draws there, so the primary stream keeps its exactly-one-
+ * draw-per-pick rigidity — `prevBase` reset to `-1` (a fresh ENTRY pick),
+ * then {@link WARMUP_ITERATIONS} unrecorded warm-up steps, exactly like the
+ * run's own opening fuse (flam3's fuse, re-run per batch). 4096 keeps the
+ * re-fuse overhead ~2.5% of iterations while sampling every block thousands
+ * of times per render.
+ *
+ * THE ENTRY PICK (prevBase −1) USES THE EXISTING GLOBAL TABLE — a deliberate
+ * deviation from "re-pick the entry base uniformly": for unit weights the
+ * global table IS the uniform draw (byte-identically), for weighted systems
+ * it honors the authored weights (a fern block whose maps sum to weight 100
+ * gets its authored share of sub-orbits), and it reaches every
+ * positive-weight block with positive probability, which is all the
+ * isolation invariant needs. An escape-reseed re-fuses the entry pick the
+ * same way (prevBase resets to −1; flam3 re-fuses) without the warm-up —
+ * the reseed is a safety net, not a scheduled boundary.
+ *
+ * The chi-absent path never re-fuses and is byte-identical to before chi
+ * existed: same stream, same output, zero extra draws.
+ */
+export const CHAOS_SUB_ORBIT_POINTS = 4096;
+
 /** `prepareChaosGame`'s default `symmetry`: order 1 is the identity (today's
  * unreplicated system) for any plane, so every existing caller that omits the
  * parameter gets byte-identical behavior. */
@@ -67,6 +97,144 @@ export const DEFAULT_COLOR_SPEED = 0.5;
  */
 export function derivedColorIndex(index: number, count: number): number {
   return count > 1 ? index / (count - 1) : 0.5;
+}
+
+/**
+ * Resolve one authored chaos-row entry to its consumption value — the ONE
+ * definition of the chi domain (see {@link import("./types").Transform.chaos}):
+ * absent (an absent row, or a row shorter than the base count) and non-finite
+ * both read as `1` (the non-finite arm is defense only — `persist.ts` drops
+ * malformed rows before they reach a document), and a finite value clamps to
+ * `>= 0` (a negative scale has no probability meaning). The domain lives HERE,
+ * at consumption; persist stays faithful, exactly like the fold lengths.
+ */
+export function resolveChaosEntry(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return 1;
+  return value < 0 ? 0 : value;
+}
+
+/**
+ * Whether a chaos row means anything: padded/truncated to
+ * `baseTransformCount` with 1s (flam3's rule), does any resolved entry
+ * differ from 1? An absent row, a row of exact 1s, and a row whose only
+ * deviations sit PAST the base count are all trivial — they select exactly
+ * as no row at all, so consumers (and `persist.ts`'s encoder) treat them
+ * identically to absent. The ONE definition; nothing else may re-derive it.
+ */
+export function chaosRowIsNonTrivial(
+  row: readonly number[] | undefined,
+  baseTransformCount: number,
+): boolean {
+  if (row === undefined) return false;
+  for (let j = 0; j < baseTransformCount; j++) {
+    if (resolveChaosEntry(row[j]) !== 1) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a system carries graph-directed selection at all: any transform's
+ * chaos row is non-trivial ({@link chaosRowIsNonTrivial}). The structural
+ * parameter type (not `Transform[]`) lets `Transform4` lists — whose rows
+ * ride the 3D → 4D lift verbatim — share the one definition. This is the
+ * predicate every seam keys on: `prepareChaosGame` builds chi rows exactly
+ * when it holds (flam3's `flam3_check_unity_chaos` disabling), the flame
+ * worker forces the CPU backend on it, the GPU flame packers throw on it,
+ * and the surface/escape/bulb gates refuse on it.
+ */
+export function systemHasChaos(
+  transforms: readonly { chaos?: number[] }[],
+): boolean {
+  const n = transforms.length;
+  for (const t of transforms) {
+    if (chaosRowIsNonTrivial(t.chaos, n)) return true;
+  }
+  return false;
+}
+
+/** The chi-selection tables a prepared chaos game carries — see
+ * {@link PreparedChaosGame.chaosRows} for field-by-field meaning. */
+export interface ChaosSelection {
+  chaosRows: Float64Array[];
+  chaosRowTotals: Float64Array;
+  chaosFallbackRows: number[];
+}
+
+/**
+ * Build the graph-directed selection tables: one cumulative row PER BASE
+ * TRANSFORM over the EXPANDED SLOT list, slot `s` in row `i` weighing
+ * `slotWeights[s] * chi_i[s % baseTransformCount]` — so a kaleidoscope copy
+ * inherits its base map's chi COLUMN exactly as it inherits its weight (and
+ * `symmetry.blend`'s copy scaling, already baked into `slotWeights`, rides
+ * through untouched). Returns `null` when {@link systemHasChaos} is false:
+ * an all-trivial system builds NOTHING and every existing code path runs
+ * untouched — flam3's `flam3_check_unity_chaos` disabling.
+ *
+ * A row whose weighted total is 0 or non-finite (every reachable entry
+ * zeroed, or an over/underflow) is recorded in `chaosFallbackRows` and
+ * FALLS BACK to the global table for that draw ({@link pickIndex}) —
+ * flam3's tolerance, avoiding stuck orbits. Deliberately NO console warning
+ * here: this runs inside workers per generation, and UI disclosure of a
+ * degenerate row belongs to the chi matrix editor (a fresh session may name
+ * the open item it waits on: fr-wo2j.6).
+ *
+ * Selection has no dimension — this is shared by `prepareChaosGame` and
+ * `chaos-game-4d.ts`'s `prepareChaosGame4` rather than duplicated, exactly
+ * like {@link effectiveSymmetryOrder}.
+ */
+export function buildChaosSelection(
+  transforms: readonly { chaos?: number[] }[],
+  slotWeights: readonly number[],
+  baseTransformCount: number,
+): ChaosSelection | null {
+  if (!systemHasChaos(transforms)) return null;
+  const transformCount = slotWeights.length;
+  const chaosRows: Float64Array[] = [];
+  const chaosRowTotals = new Float64Array(baseTransformCount);
+  const chaosFallbackRows: number[] = [];
+  for (let i = 0; i < baseTransformCount; i++) {
+    const chi = transforms[i].chaos;
+    const row = new Float64Array(transformCount);
+    let total = 0;
+    for (let s = 0; s < transformCount; s++) {
+      total +=
+        slotWeights[s] * resolveChaosEntry(chi?.[s % baseTransformCount]);
+      row[s] = total;
+    }
+    chaosRows.push(row);
+    chaosRowTotals[i] = total;
+    if (!(total > 0) || !Number.isFinite(total)) chaosFallbackRows.push(i);
+  }
+  return { chaosRows, chaosRowTotals, chaosFallbackRows };
+}
+
+/**
+ * Iteration number of plotted point `i` under chi's sub-orbit re-fusing, for
+ * an `iterationRng`-driven run ({@link runChaosGame}) — a PURE FUNCTION of
+ * the plotted-point index, so two chi-carrying runs under one pinned seed
+ * stay point-for-point correspondent for morphs exactly as chi-free runs do.
+ * Numbering is consecutive in execution order: the run's own warm-up takes
+ * `0..WARMUP_ITERATIONS-1` and sub-orbit 0's points follow (identical to the
+ * chi-free numbering), then each later sub-orbit's re-fuse block — one seed
+ * iteration ({@link chaosRefuseIteration}) plus `WARMUP_ITERATIONS` warm-up
+ * iterations — is numbered consecutively before its points.
+ */
+export function chaosPointIteration(i: number): number {
+  const sub = Math.floor(i / CHAOS_SUB_ORBIT_POINTS);
+  return WARMUP_ITERATIONS + i + sub * (WARMUP_ITERATIONS + 1);
+}
+
+/**
+ * Iteration number of sub-orbit `sub`'s re-fuse SEED draw (`sub >= 1`; the
+ * run's own seed is not numbered — it precedes iteration 0, exactly as
+ * today). The block's warm-up steps take the `WARMUP_ITERATIONS` numbers
+ * immediately after it, then the sub-orbit's first point continues at
+ * {@link chaosPointIteration}`(sub * CHAOS_SUB_ORBIT_POINTS)`.
+ */
+export function chaosRefuseIteration(sub: number): number {
+  return (
+    chaosPointIteration(sub * CHAOS_SUB_ORBIT_POINTS) - (WARMUP_ITERATIONS + 1)
+  );
 }
 
 /**
@@ -212,6 +380,29 @@ export interface PreparedChaosGame {
   /** Sum of all transform weights. */
   totalWeight: number;
   /**
+   * Graph-directed selection rows ({@link buildChaosSelection}), or `null`
+   * for a system with no non-trivial chi — the common case, in which
+   * {@link pickIndex} and every consumer run their pre-chi paths untouched.
+   * One cumulative `Float64Array` per BASE transform over the EXPANDED slot
+   * list: `chaosRows[prevBase]` is the distribution the next pick draws from
+   * when the previously applied base map was `prevBase`.
+   */
+  chaosRows: Float64Array[] | null;
+  /**
+   * Per-row weighted totals, indexed by base map — `chaosRows[i]`'s last
+   * entry, hoisted so {@link pickIndex} reads one scalar. Non-null exactly
+   * when {@link chaosRows} is.
+   */
+  chaosRowTotals: Float64Array | null;
+  /**
+   * Base-map indices whose chi row weighted to a 0/non-finite total — those
+   * draws fall back to the global table (see {@link buildChaosSelection}).
+   * Non-null exactly when {@link chaosRows} is; empty for a healthy matrix.
+   * Carried for the UI's future disclosure; no consumer branches on it
+   * (pickIndex re-checks the total itself).
+   */
+  chaosFallbackRows: number[] | null;
+  /**
    * Row-major 3x3 rotation applied AFTER a slot's affine + variation output
    * (the kaleidoscope copies), indexed like `affines`/`variations`, or
    * `null` for an unrotated slot — every slot at symmetry order 1, and every
@@ -343,6 +534,14 @@ export function prepareChaosGame(
     totalWeight > 0 &&
     Number.isFinite(totalWeight);
 
+  // Graph-directed selection (chi): built ONLY when some row is non-trivial
+  // (buildChaosSelection returns null otherwise — flam3_check_unity_chaos),
+  // so an all-trivial system allocates nothing and pickIndex's chi branch
+  // never engages. Rows weigh the same expanded `weights` the global table
+  // just summed, so blend-scaled kaleidoscope copies inherit their base's
+  // chi column at their scaled weight.
+  const chaos = buildChaosSelection(transforms, weights, baseTransformCount);
+
   // Flame structural-coloring slots, resolved per BASE map — the
   // kaleidoscope copies deliberately get no entries of their own, since
   // `flame.ts` looks them up by `idx % baseTransformCount`. An all-absent
@@ -366,6 +565,9 @@ export function prepareChaosGame(
     weighted,
     cumulative,
     totalWeight,
+    chaosRows: chaos ? chaos.chaosRows : null,
+    chaosRowTotals: chaos ? chaos.chaosRowTotals : null,
+    chaosFallbackRows: chaos ? chaos.chaosFallbackRows : null,
     postRotations,
     colorIndex,
     colorSpeed,
@@ -379,11 +581,44 @@ export function prepareChaosGame(
  * (see {@link prepareChaosGame}). For all-unit weights the lower-bound search
  * coincides with the uniform draw, so the two paths agree where they overlap.
  *
+ * `prevBase` is the BASE index of the last applied map, for graph-directed
+ * selection: when `prepared` carries chi rows AND `prevBase >= 0`, the draw
+ * comes from `chaosRows[prevBase]` — the same one-`rng()`-draw lower-bound
+ * search, over that row and its own total — so selection reads the row of
+ * the FROM map, flam3's convention. `-1` (the default, and every caller
+ * predating chi) means "no previous map": the ENTRY pick, which uses the
+ * global table below exactly as before. A degenerate row (0/non-finite
+ * total — see {@link buildChaosSelection}) also falls THROUGH to the global
+ * table for that draw, flam3's stuck-orbit tolerance. EXACTLY ONE `rng()`
+ * DRAW ON EVERY PATH — the stream discipline that keeps a chi edit
+ * decorrelating a morph no worse than a weight edit does.
+ *
  * Exported so a hand-inlined hot loop (see `flame.ts`'s `accumulateFlame`)
  * can pick a transform the exact same way {@link stepOrbit} does, without
  * paying for `stepOrbit`'s per-call `OrbitStep` allocation.
  */
-export function pickIndex(prepared: PreparedChaosGame, rng: Rng): number {
+export function pickIndex(
+  prepared: PreparedChaosGame,
+  rng: Rng,
+  prevBase = -1,
+): number {
+  const { chaosRows, chaosRowTotals } = prepared;
+  if (chaosRows !== null && chaosRowTotals !== null && prevBase >= 0) {
+    const rowTotal = chaosRowTotals[prevBase];
+    if (rowTotal > 0 && Number.isFinite(rowTotal)) {
+      const row = chaosRows[prevBase];
+      const r = rng() * rowTotal;
+      let lo = 0;
+      let hi = row.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (r < row[mid]) hi = mid;
+        else lo = mid + 1;
+      }
+      return lo;
+    }
+    // Degenerate row: fall through to the global table — one draw either way.
+  }
   if (!prepared.weighted) {
     return Math.floor(rng() * prepared.transformCount);
   }
@@ -406,6 +641,14 @@ export interface OrbitStep {
   z: number;
   /** Index of the transform that produced this step (see caveat below). */
   index: number;
+  /**
+   * Whether this step's landing point tripped the escape guard and was
+   * reseeded. A chi-threading caller's selection state must then re-fuse:
+   * its next `prevBase` is `escaped ? -1 : index` — an escape-reseed re-runs
+   * the ENTRY pick (flam3 re-fuses) rather than chaining from the map that
+   * triggered the blow-up. Chi-free callers can ignore it.
+   */
+  escaped: boolean;
 }
 
 /**
@@ -452,6 +695,14 @@ export interface OrbitStep {
  * re-rolls the entire remaining cloud — the morph visibly "boils". See
  * {@link runChaosGame}'s `iterationRng` for the per-iteration discipline the
  * cloud generation layers on top.
+ *
+ * `prevBase` is the graph-directed selection state (see {@link pickIndex}):
+ * the BASE index of the last applied map, handed straight to the pick. The
+ * CALLER threads it — `next = step.escaped ? -1 : step.index` — because an
+ * orbit's selection state lives with the orbit point, not the prepared
+ * tables. `-1` (the default, and every caller predating chi) is the entry
+ * pick; with no chi rows the parameter is inert and every existing caller
+ * is byte-identical.
  */
 export function stepOrbit(
   prepared: PreparedChaosGame,
@@ -460,8 +711,9 @@ export function stepOrbit(
   z: number,
   rng: Rng,
   auxRng: Rng = rng,
+  prevBase = -1,
 ): OrbitStep {
-  const idx = pickIndex(prepared, rng);
+  const idx = pickIndex(prepared, rng, prevBase);
   const p = applyAffine(prepared.affines[idx], x, y, z);
   const warp = prepared.variations[idx];
   let nx: number;
@@ -489,6 +741,7 @@ export function stepOrbit(
     ny = ry;
     nz = rz;
   }
+  let escaped = false;
   if (
     !Number.isFinite(nx) ||
     !Number.isFinite(ny) ||
@@ -500,8 +753,15 @@ export function stepOrbit(
     nx = auxRng() - 0.5;
     ny = auxRng() - 0.5;
     nz = auxRng() - 0.5;
+    escaped = true;
   }
-  return { x: nx, y: ny, z: nz, index: idx % prepared.baseTransformCount };
+  return {
+    x: nx,
+    y: ny,
+    z: nz,
+    index: idx % prepared.baseTransformCount,
+    escaped,
+  };
 }
 
 /**
@@ -611,12 +871,19 @@ export function runChaosGame(
   // and recording alike, numbered consecutively — rewinds it first.
   const aux = iterationRng ? iterationRng.draw : rng;
 
+  // Graph-directed selection state (see pickIndex/CHAOS_SUB_ORBIT_POINTS).
+  // Threaded unconditionally — with chaosRows null, pickIndex ignores it and
+  // the update below is inert, so the chi-free path stays byte-identical.
+  const chaosOn = prepared.chaosRows !== null;
+  let prevBase = -1;
+
   for (let i = 0; i < WARMUP_ITERATIONS; i++) {
     if (iterationRng) iterationRng.begin(i);
-    const s = stepOrbit(prepared, x, y, z, rng, aux);
+    const s = stepOrbit(prepared, x, y, z, rng, aux, prevBase);
     x = s.x;
     y = s.y;
     z = s.z;
+    prevBase = s.escaped ? -1 : s.index;
   }
 
   let minX = Infinity;
@@ -640,9 +907,38 @@ export function runChaosGame(
   const { baseTransformCount } = prepared;
 
   for (let i = 0; i < numPoints; i++) {
+    // Sub-orbit re-fuse (see CHAOS_SUB_ORBIT_POINTS): every K plotted points
+    // under chi, reseed from the aux stream, reset to the entry pick, and
+    // warm the fresh orbit up unrecorded — otherwise a block-diagonal chi
+    // renders only the block the run's first entry pick landed in. Iteration
+    // numbers stay a pure function of the plotted-point index
+    // (chaosRefuseIteration / chaosPointIteration), so two chi runs under
+    // one pinned seed remain point-for-point correspondent for morphs.
+    if (chaosOn && i > 0 && i % CHAOS_SUB_ORBIT_POINTS === 0) {
+      const sub = i / CHAOS_SUB_ORBIT_POINTS;
+      if (iterationRng) iterationRng.begin(chaosRefuseIteration(sub));
+      x = aux() - 0.5;
+      y = aux() - 0.5;
+      z = aux() - 0.5;
+      prevBase = -1;
+      for (let k = 0; k < WARMUP_ITERATIONS; k++) {
+        if (iterationRng) {
+          iterationRng.begin(chaosRefuseIteration(sub) + 1 + k);
+        }
+        const s = stepOrbit(prepared, x, y, z, rng, aux, prevBase);
+        x = s.x;
+        y = s.y;
+        z = s.z;
+        prevBase = s.escaped ? -1 : s.index;
+      }
+    }
     // --- inlined stepOrbit(prepared, x, y, z, rng, aux) ---------------------
-    if (iterationRng) iterationRng.begin(WARMUP_ITERATIONS + i);
-    const idx = pickIndex(prepared, rng);
+    if (iterationRng) {
+      iterationRng.begin(
+        chaosOn ? chaosPointIteration(i) : WARMUP_ITERATIONS + i,
+      );
+    }
+    const idx = pickIndex(prepared, rng, prevBase);
     const aff = affines[idx];
     const m = aff.m;
     const t = aff.t;
@@ -683,6 +979,7 @@ export function runChaosGame(
       nz = rz;
     }
 
+    let escaped = false;
     if (
       !Number.isFinite(nx) ||
       !Number.isFinite(ny) ||
@@ -694,10 +991,15 @@ export function runChaosGame(
       nx = aux() - 0.5;
       ny = aux() - 0.5;
       nz = aux() - 0.5;
+      escaped = true;
     }
     x = nx;
     y = ny;
     z = nz;
+    // Selection state for the next pick — mirrors stepOrbit's escaped/index
+    // contract exactly (an escape-reseed re-fuses the entry pick). Inert
+    // without chi rows.
+    prevBase = escaped ? -1 : idx % baseTransformCount;
 
     // --- inlined plotPoint(prepared, x, y, z, rng, aux) ----------------------
     // The plotted point is the orbit point, optionally bent by the final

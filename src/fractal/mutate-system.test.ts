@@ -902,3 +902,44 @@ describe("mutateSystem surface pattern", () => {
     expect(mutant.finalTransform!.surfacePattern).not.toBe(finalPattern);
   });
 });
+
+describe("chaos row mutation", () => {
+  const chiBase = system({
+    transforms: sierpinskiTetrahedron().map((t, i) => ({
+      ...t,
+      // Map 0 carries a block-ish row with real zeros; the rest are rowless.
+      ...(i === 0 ? { chaos: [1, 0, 2, 0.5] } : {}),
+    })),
+  });
+
+  it("perturbs a present row entrywise, keeping exact zeros exactly zero", () => {
+    for (let seed = 0; seed < 20; seed++) {
+      const mutated = mutateSystem(chiBase, mulberry32(seed));
+      const row = mutated.transforms[0].chaos;
+      expect(row).toBeDefined();
+      expect(row).toHaveLength(4);
+      for (const entry of row!) {
+        expect(entry).toBeGreaterThanOrEqual(0);
+        expect(Number.isFinite(entry)).toBe(true);
+      }
+      // The multiplicative jitter's whole point: a block boundary (exact 0)
+      // survives every mutation, so isolation never leaks by accident.
+      expect(row![1]).toBe(0);
+      // Non-zero entries genuinely move (multiplicative, never to zero).
+      expect(row![2]).toBeGreaterThan(0);
+      expect(row![3]).toBeGreaterThan(0);
+    }
+  });
+
+  it("never materializes an absent row — wildcard included", () => {
+    for (let seed = 0; seed < 20; seed++) {
+      const plain = mutateSystem(chiBase, mulberry32(seed));
+      const wild = mutateSystem(chiBase, mulberry32(seed), { wildcard: true });
+      for (const result of [plain, wild]) {
+        expect(result.transforms[1].chaos).toBeUndefined();
+        expect(result.transforms[2].chaos).toBeUndefined();
+        expect(result.transforms[3].chaos).toBeUndefined();
+      }
+    }
+  });
+});

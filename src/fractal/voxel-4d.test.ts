@@ -2,6 +2,7 @@ import { accumulateVoxels4, computeVoxelBounds4 } from "./voxel-4d";
 import { BOUNDS_MARGIN, BOUNDS_QUANTILE, createVoxelGrid } from "./voxel";
 import type { VoxelBounds } from "./voxel";
 import {
+  CHAOS_SUB_ORBIT_POINTS,
   DEFAULT_COLOR_SPEED,
   ESCAPE_LIMIT,
   WARMUP_ITERATIONS,
@@ -1215,5 +1216,188 @@ describe("accumulateVoxels4 with symmetry", () => {
     expect(Array.from(wPlane.density).some((d) => !Number.isInteger(d))).toBe(
       true,
     );
+  });
+});
+
+describe("accumulateVoxels4 graph-directed selection (chaos rows)", () => {
+  // flame-4d.test.ts's chi fixture verbatim (weighted pentatope + an
+  // origin-anchored spherical map that occasionally escapes), so both 4D
+  // mirrors pin against the same hardest case.
+  function chiSystem4(): Transform4[] {
+    const base = weightedPentatope().map((t, i) => ({
+      ...t,
+      chaos: [1, 0.25, 1.5, 1, 0.5, 2].map((v, j) => (j === i ? 1 : v)),
+    }));
+    base.push({
+      position: [0, 0, 0, 0],
+      scale: [0.6, 0.6, 0.6, 0.6],
+      variations: [{ type: "spherical", weight: 1 }],
+      chaos: [2, 1, 1, 1, 1, 0],
+    });
+    return base;
+  }
+
+  it("matches a stepOrbit4/plotPoint4 reference under chi — weighted, kaleidoscope order 2, escapes, a sub-orbit boundary", () => {
+    const transforms4 = chiSystem4();
+    const symmetry = { order: 2, plane: "xy" as const };
+    const palette = transformColors(transforms4.length);
+    const color: FourDRenderColor = { kind: "transform", palette };
+    const bounds = unitishBounds(3);
+    const size = 8;
+    const iterations = 6000;
+
+    const actual = createVoxelGrid(size, bounds);
+    accumulateVoxels4(
+      prepareChaosGame4(transforms4, null, symmetry),
+      actual,
+      iterations,
+      mulberry32(42),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      color,
+    );
+
+    const prepared = prepareChaosGame4(transforms4, null, symmetry);
+    const rng = mulberry32(42);
+    const expected = createVoxelGrid(size, bounds);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    let w = rng() - 0.5;
+    let prevBase = -1;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const step = stepOrbit4(prepared, x, y, z, w, rng, rng, prevBase);
+      x = step.x;
+      y = step.y;
+      z = step.z;
+      w = step.w;
+      prevBase = step.escaped ? -1 : step.index;
+    }
+    let chaosLeft = CHAOS_SUB_ORBIT_POINTS;
+    const invCell = size / (bounds.max[0] - bounds.min[0]);
+    for (let n = 0; n < iterations; n++) {
+      if (chaosLeft <= 0) {
+        x = rng() - 0.5;
+        y = rng() - 0.5;
+        z = rng() - 0.5;
+        w = rng() - 0.5;
+        prevBase = -1;
+        for (let k = 0; k < WARMUP_ITERATIONS; k++) {
+          const step = stepOrbit4(prepared, x, y, z, w, rng, rng, prevBase);
+          x = step.x;
+          y = step.y;
+          z = step.z;
+          w = step.w;
+          prevBase = step.escaped ? -1 : step.index;
+        }
+        chaosLeft = CHAOS_SUB_ORBIT_POINTS;
+      }
+      chaosLeft--;
+      const step = stepOrbit4(prepared, x, y, z, w, rng, rng, prevBase);
+      x = step.x;
+      y = step.y;
+      z = step.z;
+      w = step.w;
+      prevBase = step.escaped ? -1 : step.index;
+      const [px, py, pz, pw] = plotPoint4(prepared, x, y, z, w, rng);
+      // FLAT_ROTOR_PROJ: projX/Y/Z = the plotted xyz; sliceOn false ⇒
+      // weight 1, exactly the 3D reference's bucketing.
+      void pw;
+      const vx = Math.floor((px - bounds.min[0]) * invCell);
+      const vy = Math.floor((py - bounds.min[1]) * invCell);
+      const vz = Math.floor((pz - bounds.min[2]) * invCell);
+      if (vx < 0 || vx >= size || vy < 0 || vy >= size) continue;
+      if (vz < 0 || vz >= size) continue;
+      const bucket = vz * size * size + vy * size + vx;
+      const d = expected.density[bucket] + 1;
+      expected.density[bucket] = d;
+      if (d > expected.maxDensity) expected.maxDensity = d;
+      const rgb = palette[step.index] ?? [1, 1, 1];
+      const o = bucket * 3;
+      const inv = 1 / d;
+      expected.avgRGB[o] += (rgb[0] - expected.avgRGB[o]) * inv;
+      expected.avgRGB[o + 1] += (rgb[1] - expected.avgRGB[o + 1]) * inv;
+      expected.avgRGB[o + 2] += (rgb[2] - expected.avgRGB[o + 2]) * inv;
+    }
+
+    expect(actual.density).toEqual(expected.density);
+    expect(actual.avgRGB).toEqual(expected.avgRGB);
+    expect(actual.maxDensity).toBe(expected.maxDensity);
+    expect(actual.orbit).toEqual([x, y, z]);
+    expect(actual.orbitW).toBe(w);
+    expect(actual.orbitPrevBase).toBe(prevBase);
+    expect(actual.orbitChaosLeft).toBe(chaosLeft);
+  });
+
+  it("accumulates independently of chunk boundaries under chi — the re-fuse counter rides the grid", () => {
+    const transforms4 = chiSystem4();
+    const palette = transformColors(transforms4.length);
+    const color: FourDRenderColor = { kind: "transform", palette };
+    const bounds = unitishBounds(3);
+    const size = 8;
+
+    const chunkedRng = mulberry32(7);
+    const chunked = createVoxelGrid(size, bounds);
+    accumulateVoxels4(
+      prepareChaosGame4(transforms4),
+      chunked,
+      4000,
+      chunkedRng,
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      color,
+    );
+    accumulateVoxels4(
+      prepareChaosGame4(transforms4),
+      chunked,
+      5000,
+      chunkedRng,
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      color,
+    );
+
+    const single = createVoxelGrid(size, bounds);
+    accumulateVoxels4(
+      prepareChaosGame4(transforms4),
+      single,
+      9000,
+      mulberry32(7),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      color,
+    );
+
+    expect(chunked.density).toEqual(single.density);
+    expect(chunked.avgRGB).toEqual(single.avgRGB);
+    expect(chunked.orbit).toEqual(single.orbit);
+    expect(chunked.orbitW).toBe(single.orbitW);
+    expect(chunked.orbitPrevBase).toBe(single.orbitPrevBase);
+    expect(chunked.orbitChaosLeft).toBe(single.orbitChaosLeft);
+  });
+
+  it("computeVoxelBounds4's pilot re-fuses, so a block-diagonal 4D system's grid covers BOTH blocks", () => {
+    // Two 2-map blocks conjugated apart along ±x with block-diagonal rows:
+    // without the pilot's sub-orbit re-fuse the trimmed extents hug one
+    // block and the other never makes it into the solidified grid.
+    const block = (cx: number, inFirst: boolean, sign: number): Transform4 => ({
+      position: [cx, 0.4 * sign, 0.2 * sign, 0.15 * sign],
+      scale: [0.5, 0.5, 0.5, 0.5],
+      chaos: inFirst ? [1, 1, 0, 0] : [0, 0, 1, 1],
+    });
+    const transforms4 = [
+      block(-1.3, true, 1),
+      block(-0.7, true, -1),
+      block(1.3, false, 1),
+      block(0.7, false, -1),
+    ];
+    const bounds = computeVoxelBounds4(
+      prepareChaosGame4(transforms4),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      mulberry32(5),
+    );
+    expect(bounds.color.minX).toBeLessThan(-0.6);
+    expect(bounds.color.maxX).toBeGreaterThan(0.6);
   });
 });

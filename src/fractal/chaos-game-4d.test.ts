@@ -6,6 +6,7 @@ import {
   toTransform4,
 } from "./affine4";
 import {
+  CHAOS_SUB_ORBIT_POINTS,
   DEFAULT_COLOR_SPEED,
   ESCAPE_LIMIT,
   MAX_TRANSFORMS,
@@ -1294,5 +1295,155 @@ describe("iteration-local randomness isolation (4D twin)", () => {
     // the orbit escaped: those land on the iteration stream instead.
     expect(primaryDraws).toBe(4 + WARMUP_ITERATIONS + numPoints);
     expect(auxDraws).toBeGreaterThan(0);
+  });
+});
+
+describe("graph-directed selection (chaos rows), one dimension up", () => {
+  // Two non-flat two-map blocks conjugated apart along x — a minimal 4D
+  // block-diagonal system. Each block is a pair of contractions toward
+  // opposite corners with a slight w extension, so the system is genuinely
+  // non-flat and never escapes.
+  function blockSystem4(offBlock: number): Transform4[] {
+    const block = (
+      cx: number,
+      chaosRow: number[],
+      sign: number,
+    ): Transform4 => ({
+      position: [cx, 0.4 * sign, 0.2 * sign, 0.15 * sign],
+      scale: [0.5, 0.5, 0.5, 0.5],
+      weight: 1,
+      chaos: chaosRow,
+    });
+    const row = (inFirst: boolean): number[] =>
+      inFirst ? [1, 1, offBlock, offBlock] : [offBlock, offBlock, 1, 1];
+    return [
+      block(-1 + 0.3, row(true), 1),
+      block(-1 - 0.3, row(true), -1),
+      block(1 + 0.3, row(false), 1),
+      block(1 - 0.3, row(false), -1),
+    ];
+  }
+
+  it("is byte-identical to a chaos-free run at explicit all-1s chi", () => {
+    const numPoints = 6000;
+    const base = pentatope().map(toTransform4);
+    const trivial = base.map((t) => ({
+      ...t,
+      chaos: [1, 1, 1, 1, 1],
+    }));
+
+    const countingRun = (transforms4: Transform4[]) => {
+      let draws = 0;
+      const inner = mulberry32(21);
+      const spy: Rng = () => {
+        draws++;
+        return inner();
+      };
+      const result = runChaosGame4(transforms4, numPoints, spy);
+      return { draws, result };
+    };
+
+    const plain = countingRun(base);
+    const withChi = countingRun(trivial);
+
+    expect(withChi.draws).toBe(plain.draws);
+    expect(Array.from(withChi.result.positions)).toEqual(
+      Array.from(plain.result.positions),
+    );
+    expect(Array.from(withChi.result.w)).toEqual(Array.from(plain.result.w));
+    expect(Array.from(withChi.result.transformIndices)).toEqual(
+      Array.from(plain.result.transformIndices),
+    );
+  });
+
+  it("matches a reference loop driving stepOrbit4/plotPoint4 by hand under chi with a kaleidoscope and a sub-orbit boundary", () => {
+    // The 3D chi oracle one dimension up: runChaosGame4's inlined loop must
+    // stay byte-for-byte what the real stepping blocks produce when the
+    // caller threads prevBase and re-fuses per the documented contract.
+    const transforms4 = blockSystem4(0.05);
+    const symmetry = { order: 2, plane: "xy" as const };
+    const numPoints = 5000;
+    const seed = 31;
+
+    const actual = runChaosGame4(
+      transforms4,
+      numPoints,
+      mulberry32(seed),
+      null,
+      symmetry,
+    );
+
+    const prepared = prepareChaosGame4(transforms4, null, symmetry);
+    const rng = mulberry32(seed);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    let w = rng() - 0.5;
+    let prevBase = -1;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const s = stepOrbit4(prepared, x, y, z, w, rng, rng, prevBase);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      w = s.w;
+      prevBase = s.escaped ? -1 : s.index;
+    }
+    const positions = new Float32Array(numPoints * 3);
+    const wBuffer = new Float32Array(numPoints);
+    const transformIndices = new Uint8Array(numPoints);
+    for (let i = 0; i < numPoints; i++) {
+      if (i > 0 && i % CHAOS_SUB_ORBIT_POINTS === 0) {
+        x = rng() - 0.5;
+        y = rng() - 0.5;
+        z = rng() - 0.5;
+        w = rng() - 0.5;
+        prevBase = -1;
+        for (let k = 0; k < WARMUP_ITERATIONS; k++) {
+          const s = stepOrbit4(prepared, x, y, z, w, rng, rng, prevBase);
+          x = s.x;
+          y = s.y;
+          z = s.z;
+          w = s.w;
+          prevBase = s.escaped ? -1 : s.index;
+        }
+      }
+      const s = stepOrbit4(prepared, x, y, z, w, rng, rng, prevBase);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      w = s.w;
+      prevBase = s.escaped ? -1 : s.index;
+      const [px, py, pz, pw] = plotPoint4(prepared, x, y, z, w, rng);
+      positions[i * 3] = px;
+      positions[i * 3 + 1] = py;
+      positions[i * 3 + 2] = pz;
+      wBuffer[i] = pw;
+      transformIndices[i] = s.index;
+    }
+
+    expect(Array.from(actual.positions)).toEqual(Array.from(positions));
+    expect(Array.from(actual.w)).toEqual(Array.from(wBuffer));
+    expect(Array.from(actual.transformIndices)).toEqual(
+      Array.from(transformIndices),
+    );
+  });
+
+  it("keeps block-diagonal 4D blocks isolated while both still receive points", () => {
+    const numPoints = 20_000;
+    const result = runChaosGame4(blockSystem4(0), numPoints, mulberry32(13));
+
+    let first = 0;
+    let second = 0;
+    let crossings = 0;
+    for (let i = 0; i < numPoints; i++) {
+      const inFirst = result.transformIndices[i] < 2;
+      if (inFirst) first++;
+      else second++;
+      if (i === 0 || i % CHAOS_SUB_ORBIT_POINTS === 0) continue;
+      if (inFirst !== result.transformIndices[i - 1] < 2) crossings++;
+    }
+    expect(crossings).toBe(0);
+    expect(first).toBeGreaterThan(0);
+    expect(second).toBeGreaterThan(0);
   });
 });

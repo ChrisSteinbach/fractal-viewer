@@ -93,7 +93,7 @@
  * one function.
  */
 import { composeAffine4, toTransform4 } from "./affine4";
-import { effectiveSymmetryOrder } from "./chaos-game";
+import { effectiveSymmetryOrder, systemHasChaos } from "./chaos-game";
 import {
   ESCAPE_LINK_BOXFOLD,
   ESCAPE_LINK_MANDELBOX,
@@ -279,6 +279,12 @@ export function analyzeEscapeSystem4(
   });
   if (active.length > 0 && reasons.length === 0 && !anyExpands) {
     reasons.push("every map contracts (the attractor surface render owns it)");
+  }
+  // Chaos rows: the 3D gate's refusal verbatim (escape-de.ts) — a forward
+  // orbit cycles its links, there is no pick for a row to direct, and the
+  // dimension changes nothing about that.
+  if (systemHasChaos(transforms)) {
+    reasons.push("chaos rows (unsupported in escape-time mode)");
   }
   if (finalTransform) {
     reasons.push("final transform (unsupported in escape-time mode)");

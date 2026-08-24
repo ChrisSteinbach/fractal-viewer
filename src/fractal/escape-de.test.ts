@@ -1778,3 +1778,19 @@ describe("a fold-only chain is unmoved by the power links", () => {
     }
   });
 });
+
+describe("analyzeEscapeSystem chaos rows", () => {
+  it("refuses a chi-carrying document — the forward orbit cycles links and would ignore the rows", () => {
+    const analysis = analyzeEscapeSystem([
+      canonicalMandelbox({ chaos: [0.5] }),
+    ]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toContain(
+      "chaos rows (unsupported in escape-time mode)",
+    );
+    // A trivial row is no row: the same document stays eligible with it.
+    expect(
+      analyzeEscapeSystem([canonicalMandelbox({ chaos: [1] })]).status,
+    ).toBe("eligible");
+  });
+});

@@ -57,7 +57,7 @@ import type {
   TonemapParams,
 } from "../fractal/flame";
 import { symmetryIsNonFlat } from "../fractal/affine4";
-import { prepareChaosGame } from "../fractal/chaos-game";
+import { prepareChaosGame, systemHasChaos } from "../fractal/chaos-game";
 import type { PreparedChaosGame } from "../fractal/chaos-game";
 import { prepareChaosGame4 } from "../fractal/chaos-game-4d";
 import type { PreparedChaosGame4 } from "../fractal/chaos-game-4d";
@@ -357,6 +357,15 @@ export type FlameWorkerEvent =
        * software rasterization must not pass as a normal GPU render.
        * Absent for CPU backends. */
       software?: boolean;
+      /** True when this CPU backend was FORCED by the document's chaos rows
+       * — GPU would otherwise have been attempted (`gpuPreference` auto, a
+       * factory wired up, no prior failure ratchet), but the flame WGSL
+       * kernels do not know chi yet (open work: fr-wo2j.4) and one document
+       * must never render two different objects. The main thread's backend
+       * note names chaos rows as the reason. Absent for GPU backends, and
+       * for CPU backends that are CPU for any other reason (so the note
+       * never blames chi for a machine that simply has no WebGPU). */
+      chaosForced?: boolean;
     }
   | { type: "error"; message: string }
   | {
@@ -1082,6 +1091,15 @@ export class FlameWorkerSession {
    * with no `createGpuBackend` factory wired up
    * behaves identically regardless of what this says. */
   private gpuPreference: "auto" | "off" = "off";
+
+  /** Whether the CURRENT session's document carries non-trivial chaos rows
+   * (`systemHasChaos` over the start command's transforms — chi is fixed
+   * per session; live commands never swap the transform list). While true,
+   * {@link gpuEligible} refuses GPU outright: the WGSL kernels do not know
+   * chi (fr-wo2j.4 is the lift), and attempting them would render a
+   * different object than the CPU oracle — the two-backends-one-document
+   * divergence class. */
+  private sessionHasChaos = false;
   /** Throughput instrumentation, all inert unless the `start` command
    * set `instrument` (see its doc). `perf` accumulates per-chunk phase timings
    * and periodically yields a summary to `log`; `lastChunkEndAt` is the clock
@@ -1330,6 +1348,10 @@ export class FlameWorkerSession {
 
   private start(cmd: Extract<FlameWorkerCommand, { type: "start" }>): void {
     this.baseTransforms = cmd.transforms;
+    // Chi status is per-session (transforms only arrive here). The 4D
+    // transforms4 carry identical rows (the lift copies them verbatim), so
+    // the 3D list answers for both dimensions.
+    this.sessionHasChaos = systemHasChaos(cmd.transforms);
     this.baseFinalTransform = cmd.finalTransform;
     this.symmetryOrder = cmd.order;
     this.symmetryPlane = cmd.plane;
@@ -1510,6 +1532,15 @@ export class FlameWorkerSession {
    * CPU-only accumulation by a GPU ceiling would shrink it for no reason).
    */
   private gpuEligible(): boolean {
+    return !this.sessionHasChaos && this.gpuCandidate();
+  }
+
+  /** The pre-chi {@link gpuEligible} conditions: the `start` opted in, this
+   * session hasn't permanently given up on GPU, and the current dimension
+   * has a factory wired up. Split out so {@link gpuBlockedByChaos} can ask
+   * "WOULD GPU have been attempted, but for the chaos rows?" without
+   * restating them. */
+  private gpuCandidate(): boolean {
     return (
       this.gpuPreference === "auto" &&
       !this.gpuFailed &&
@@ -1517,6 +1548,14 @@ export class FlameWorkerSession {
         ? this.createGpuBackend4 !== undefined
         : this.createGpuBackend !== undefined)
     );
+  }
+
+  /** True exactly when the document's chaos rows are the ONE reason this
+   * session is on CPU — every other GPU condition holds. Drives the backend
+   * event's `chaosForced` disclosure, and nothing else: a machine with no
+   * WebGPU (or a failed ladder) keeps its own truthful reason. */
+  private gpuBlockedByChaos(): boolean {
+    return this.sessionHasChaos && this.gpuCandidate();
   }
 
   private computeEffectiveSupersample(requested: number): number {
@@ -2253,6 +2292,12 @@ export class FlameWorkerSession {
         backend: created.kind,
         adapter: created.adapterLabel,
         software: created.software,
+        // Disclose a chi-forced CPU backend (see the event field's doc);
+        // absent otherwise, so consumers can't misread an ordinary CPU
+        // session as chi-forced.
+        ...(created.kind === "cpu" && this.gpuBlockedByChaos()
+          ? { chaosForced: true }
+          : {}),
       });
     }
     const backend = this.backend;

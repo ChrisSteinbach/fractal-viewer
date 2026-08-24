@@ -378,6 +378,10 @@ export function embedTransform3(t: Transform): Transform4 {
   // stays absent, so a 4D render derives the same slot the 3D one does.
   if (t.colorIndex !== undefined) embedded.colorIndex = t.colorIndex;
   if (t.colorSpeed !== undefined) embedded.colorSpeed = t.colorSpeed;
+  // The chaos row rides the lift verbatim (selection is dimension-agnostic —
+  // see Transform4.chaos): a fresh array, like `variations`, so later edits
+  // to either transform can't alias through.
+  if (t.chaos !== undefined) embedded.chaos = [...t.chaos];
   return embedded;
 }
 

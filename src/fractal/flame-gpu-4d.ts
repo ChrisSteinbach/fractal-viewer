@@ -88,6 +88,7 @@ import {
   MAX_TRANSFORMS,
   derivedColorIndex,
   effectiveSymmetryOrder,
+  systemHasChaos,
 } from "./chaos-game";
 import {
   COLOR_FIXED_POINT_SCALE,
@@ -889,6 +890,15 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
   if (transforms4.length > MAX_TRANSFORMS) {
     throw new RangeError(
       `IFS supports at most ${MAX_TRANSFORMS} transforms, got ${transforms4.length}`,
+    );
+  }
+  // Defense in depth — packGpuSystem's chi guard verbatim (a Transform4's
+  // rows ride the lift, so the predicate is the same one): the 4D kernel
+  // has no chaos-row selection either, and the worker's CPU forcing covers
+  // both dimensions. Comes out with the WGSL lift (fr-wo2j.4).
+  if (systemHasChaos(transforms4)) {
+    throw new RangeError(
+      "packGpuSystem4: chaos rows are not in the WGSL kernels yet — chi documents take the CPU backend",
     );
   }
 

@@ -1,6 +1,10 @@
 import { composeAffine } from "./affine";
 import { isFlatTransform, symmetryIsNonFlat } from "./affine4";
-import { effectiveSymmetryOrder, runChaosGame } from "./chaos-game";
+import {
+  effectiveSymmetryOrder,
+  runChaosGame,
+  systemHasChaos,
+} from "./chaos-game";
 import { mulberry32 } from "./rng";
 import {
   calibrateSurfaceNativeCarriers,
@@ -1483,6 +1487,18 @@ export function analyzeSurfaceSystem(
     reasons.push("no transforms");
   } else if (active.length === 0) {
     reasons.push("every transform has weight 0");
+  }
+
+  // Graph-directed selection (chaos rows) constrains the attractor to the
+  // SUBSET reachable through the chi digraph's paths, and this estimator's
+  // inverse-map descent enumerates EVERY composition — it would march the
+  // unconstrained, larger object, worse than a wrong picture because it is
+  // a confidently wrong one. Refused until a chi-aware descent prunes
+  // inadmissible chains (open work: fr-wo2j.13).
+  if (systemHasChaos(transforms)) {
+    reasons.push(
+      "chaos rows constrain the attractor (Surface would march the unconstrained object)",
+    );
   }
 
   transforms.forEach((t, i) => {

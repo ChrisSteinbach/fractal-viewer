@@ -60,6 +60,12 @@
  *   field absent on both sides stays absent. Both `finish` objects absent
  *   stays absent, keeping an unparameterized morph byte-identical to before
  *   the field existed.
+ * - `Transform.chaos` (graph-directed selection rows) lerps entrywise with
+ *   the absent side reading all-1s at the other side's length, and an
+ *   all-1s result is dropped — see {@link lerpChaos}. A transform-count
+ *   mismatch needs no extra rule: the phantom padding copies the surplus
+ *   map's row verbatim (like every other metadata field), and rows shorter
+ *   than the paired side's pad with 1s inside the entry lerp.
  */
 import { isFlatTransform, meanContraction } from "./affine4";
 import { DEFAULT_COLOR_SPEED, derivedColorIndex } from "./chaos-game";
@@ -288,6 +294,36 @@ function lerpVariations(
 }
 
 /**
+ * `Transform.chaos` for a pair: entrywise lerp, the absent side reading
+ * ALL-1s at the other side's length (1 is the field's absent-means default —
+ * see `types.ts`'s {@link Transform.chaos} — so a row fades toward "no
+ * constraint", never toward a synthesized 0 that would starve maps out of
+ * selection mid-morph; the fold lengths' classic-fallback rule applied to
+ * selection). Two present rows of different lengths pad the shorter with 1s
+ * the same way. An all-1s RESULT is ABSENT — `lerp(1, 1, t)` is exactly 1
+ * (the `a + (b - a) * t` form), so a trivial-vs-absent pair emits nothing at
+ * every `t` and an unauthored morph stays byte-identical to before the field
+ * existed; the endpoints themselves are exact by {@link lerpSystem}'s
+ * by-reference returns.
+ */
+function lerpChaos(
+  a: number[] | undefined,
+  b: number[] | undefined,
+  t: number,
+): number[] | undefined {
+  if (a === undefined && b === undefined) return undefined;
+  const length = Math.max(a?.length ?? 0, b?.length ?? 0);
+  const result = new Array<number>(length);
+  let trivial = true;
+  for (let j = 0; j < length; j++) {
+    const value = lerp(a?.[j] ?? 1, b?.[j] ?? 1, t);
+    result[j] = value;
+    if (value !== 1) trivial = false;
+  }
+  return trivial ? undefined : result;
+}
+
+/**
  * `Transform.w` for a pair: `undefined` unless {@link isFlatTransform} calls
  * at least one side genuinely non-flat (a flat-flat pair would otherwise
  * flip `systemIsFlat` mid-morph for no visual gain — see the module
@@ -480,6 +516,9 @@ function lerpTransformPair(
 
   const variations = lerpVariations(a.variations, b.variations, t);
   if (variations !== undefined) result.variations = variations;
+
+  const chaos = lerpChaos(a.chaos, b.chaos, t);
+  if (chaos !== undefined) result.chaos = chaos;
 
   const w = lerpW(a, b, t);
   if (w !== undefined) result.w = w;

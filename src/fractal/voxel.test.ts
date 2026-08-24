@@ -8,8 +8,10 @@ import {
 } from "./voxel";
 import type { VoxelBounds } from "./voxel";
 import {
+  CHAOS_SUB_ORBIT_POINTS,
   DEFAULT_COLOR_SPEED,
   ESCAPE_LIMIT,
+  WARMUP_ITERATIONS,
   derivedColorIndex,
   plotPoint,
   prepareChaosGame,
@@ -24,7 +26,7 @@ import type { PositionAxisColors } from "./color";
 import { buildPaletteLUT } from "./palette";
 import type { CustomPalette } from "./palette";
 import { mulberry32 } from "./rng";
-import { sierpinskiTetrahedron } from "./presets";
+import { fernSpongeIsolated, sierpinskiTetrahedron } from "./presets";
 import type { Transform, Vec3 } from "./types";
 
 /**
@@ -1074,5 +1076,178 @@ describe("clampVoxelResolution", () => {
 
   it("never goes below one resolution step, even when nothing fits", () => {
     expect(clampVoxelResolution(256, 10)).toBe(VOXEL_RESOLUTION_STEP);
+  });
+});
+
+describe("accumulateVoxels graph-directed selection (chaos rows)", () => {
+  // Weighted, occasionally-escaping chi fixture — flame.test.ts's chi
+  // fixture verbatim, so the two mirrors are pinned against the same
+  // hardest case (escape re-fuse + scheduled re-fuse + row-directed picks).
+  function chiVoxelSystem(): Transform[] {
+    return [
+      {
+        id: 0,
+        position: [0.5, 0.5, 0.5],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        weight: 2,
+        chaos: [1, 0.25, 1.5],
+      },
+      {
+        id: 1,
+        position: [-0.5, -0.5, -0.5],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        chaos: [2, 1, 1],
+        variations: [
+          { type: "linear", weight: 1 },
+          { type: "julia", weight: 0.3 },
+        ],
+      },
+      {
+        id: 2,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.6, 0.6, 0.6],
+        variations: [{ type: "spherical", weight: 1 }],
+      },
+    ];
+  }
+
+  it("matches a stepOrbit/plotPoint reference under chi — weighted, kaleidoscope order 2, escapes, a sub-orbit boundary", () => {
+    const transforms = chiVoxelSystem();
+    const symmetry = { order: 2, plane: "xz" as const };
+    const palette = transformColors(transforms.length);
+    const bounds = unitishBounds(3);
+    const size = 8;
+    const iterations = 6000;
+
+    const actual = createVoxelGrid(size, bounds);
+    accumulateVoxels(
+      prepareChaosGame(transforms, null, symmetry),
+      actual,
+      iterations,
+      mulberry32(42),
+      palette,
+    );
+
+    const prepared = prepareChaosGame(transforms, null, symmetry);
+    const rng = mulberry32(42);
+    const expected = createVoxelGrid(size, bounds);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    let prevBase = -1;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng, rng, prevBase);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      prevBase = s.escaped ? -1 : s.index;
+    }
+    let chaosLeft = CHAOS_SUB_ORBIT_POINTS;
+    const invCell = size / (bounds.max[0] - bounds.min[0]);
+    for (let n = 0; n < iterations; n++) {
+      if (chaosLeft <= 0) {
+        x = rng() - 0.5;
+        y = rng() - 0.5;
+        z = rng() - 0.5;
+        prevBase = -1;
+        for (let k = 0; k < WARMUP_ITERATIONS; k++) {
+          const s = stepOrbit(prepared, x, y, z, rng, rng, prevBase);
+          x = s.x;
+          y = s.y;
+          z = s.z;
+          prevBase = s.escaped ? -1 : s.index;
+        }
+        chaosLeft = CHAOS_SUB_ORBIT_POINTS;
+      }
+      chaosLeft--;
+      const s = stepOrbit(prepared, x, y, z, rng, rng, prevBase);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      prevBase = s.escaped ? -1 : s.index;
+      const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
+      const vx = Math.floor((px - bounds.min[0]) * invCell);
+      const vy = Math.floor((py - bounds.min[1]) * invCell);
+      const vz = Math.floor((pz - bounds.min[2]) * invCell);
+      if (vx < 0 || vx >= size || vy < 0 || vy >= size) continue;
+      if (vz < 0 || vz >= size) continue;
+      const bucket = vz * size * size + vy * size + vx;
+      const d = expected.density[bucket] + 1;
+      expected.density[bucket] = d;
+      if (d > expected.maxDensity) expected.maxDensity = d;
+      const rgb = palette[s.index];
+      const o = bucket * 3;
+      const inv = 1 / d;
+      expected.avgRGB[o] += (rgb[0] - expected.avgRGB[o]) * inv;
+      expected.avgRGB[o + 1] += (rgb[1] - expected.avgRGB[o + 1]) * inv;
+      expected.avgRGB[o + 2] += (rgb[2] - expected.avgRGB[o + 2]) * inv;
+    }
+
+    expect(actual.density).toEqual(expected.density);
+    expect(actual.avgRGB).toEqual(expected.avgRGB);
+    expect(actual.maxDensity).toBe(expected.maxDensity);
+    expect(actual.orbit).toEqual([x, y, z]);
+    expect(actual.orbitPrevBase).toBe(prevBase);
+    expect(actual.orbitChaosLeft).toBe(chaosLeft);
+  });
+
+  it("accumulates independently of chunk boundaries — the re-fuse counter rides the grid", () => {
+    // flame.test.ts's chunk-independence pin, on the voxel mirror: a
+    // 4000 + 5000 split puts the first re-fuse (4096) inside the second
+    // chunk, so worker-local chi state would diverge from one 9000 call.
+    const transforms = chiVoxelSystem();
+    const palette = transformColors(transforms.length);
+    const bounds = unitishBounds(3);
+    const size = 8;
+
+    const chunkedRng = mulberry32(7);
+    const chunked = createVoxelGrid(size, bounds);
+    accumulateVoxels(
+      prepareChaosGame(transforms),
+      chunked,
+      4000,
+      chunkedRng,
+      palette,
+    );
+    accumulateVoxels(
+      prepareChaosGame(transforms),
+      chunked,
+      5000,
+      chunkedRng,
+      palette,
+    );
+
+    const single = createVoxelGrid(size, bounds);
+    accumulateVoxels(
+      prepareChaosGame(transforms),
+      single,
+      9000,
+      mulberry32(7),
+      palette,
+    );
+
+    expect(chunked.density).toEqual(single.density);
+    expect(chunked.avgRGB).toEqual(single.avgRGB);
+    expect(chunked.orbit).toEqual(single.orbit);
+    expect(chunked.orbitPrevBase).toBe(single.orbitPrevBase);
+    expect(chunked.orbitChaosLeft).toBe(single.orbitChaosLeft);
+  });
+
+  it("computeVoxelBounds' pilot re-fuses too, so a block-diagonal system's grid covers BOTH blocks", () => {
+    // Without the pilot's sub-orbit re-fuse, one orbit stays in whichever
+    // block its entry pick landed in and the grid hugs that block alone —
+    // cropping the other system out of the solid render entirely. The
+    // shipped isolated preset seats the fern around x = -1.2 and the sponge
+    // around x = +1.2, so covering both means the color extents span well
+    // past the origin on each side.
+    const bounds = computeVoxelBounds(
+      prepareChaosGame(fernSpongeIsolated()),
+      mulberry32(5),
+    );
+    expect(bounds.color.minX).toBeLessThan(-0.8);
+    expect(bounds.color.maxX).toBeGreaterThan(0.8);
   });
 });

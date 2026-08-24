@@ -24,6 +24,7 @@
  * `voxel.test.ts` so the two paths can never silently drift apart.
  */
 import {
+  CHAOS_SUB_ORBIT_POINTS,
   ESCAPE_LIMIT,
   WARMUP_ITERATIONS,
   pickIndex,
@@ -100,20 +101,43 @@ export function computeVoxelBounds(
   const zs = new Float64Array(samples);
   const rs = new Float64Array(samples);
 
+  // Graph-directed selection state — with block-diagonal chi one pilot
+  // orbit never leaves its block, and a grid sized to ONE block would crop
+  // every other system out of the solid render, so the pilot re-fuses on
+  // the same sub-orbit cadence the accumulation uses (a 30k-sample pilot
+  // visits every block several times over). Inert without chi rows.
+  const chaosOn = prepared.chaosRows !== null;
+  let prevBase = -1;
+
   let x = rng() - 0.5;
   let y = rng() - 0.5;
   let z = rng() - 0.5;
   for (let i = 0; i < WARMUP_ITERATIONS; i++) {
-    const s = stepOrbit(prepared, x, y, z, rng);
+    const s = stepOrbit(prepared, x, y, z, rng, rng, prevBase);
     x = s.x;
     y = s.y;
     z = s.z;
+    prevBase = s.escaped ? -1 : s.index;
   }
   for (let i = 0; i < samples; i++) {
-    const s = stepOrbit(prepared, x, y, z, rng);
+    if (chaosOn && i > 0 && i % CHAOS_SUB_ORBIT_POINTS === 0) {
+      x = rng() - 0.5;
+      y = rng() - 0.5;
+      z = rng() - 0.5;
+      prevBase = -1;
+      for (let k = 0; k < WARMUP_ITERATIONS; k++) {
+        const s = stepOrbit(prepared, x, y, z, rng, rng, prevBase);
+        x = s.x;
+        y = s.y;
+        z = s.z;
+        prevBase = s.escaped ? -1 : s.index;
+      }
+    }
+    const s = stepOrbit(prepared, x, y, z, rng, rng, prevBase);
     x = s.x;
     y = s.y;
     z = s.z;
+    prevBase = s.escaped ? -1 : s.index;
     const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
     xs[i] = px;
     ys[i] = py;
@@ -218,6 +242,20 @@ export interface VoxelGrid {
    * `0` default on the 3D path (`accumulateVoxels` never touches it).
    */
   orbitW: number;
+  /**
+   * Graph-directed selection continuation — `flame.ts`'s
+   * `FlameHistogram.orbitPrevBase`, same meaning (`-1` = entry pick), same
+   * chi-only relevance, kept on the grid so a chunked render resumes the
+   * exact same selection walk.
+   */
+  orbitPrevBase: number;
+  /**
+   * Plotted points remaining in the current chaos sub-orbit —
+   * `FlameHistogram.orbitChaosLeft`'s twin, persisted here so the re-fuse
+   * cadence is independent of worker chunk boundaries. Chi-only, like
+   * {@link orbitPrevBase}.
+   */
+  orbitChaosLeft: number;
 }
 
 /** A fresh, empty grid over `bounds`: every voxel at zero, orbit not started,
@@ -232,6 +270,8 @@ export function createVoxelGrid(size: number, bounds: VoxelBounds): VoxelGrid {
     orbit: null,
     orbitColor: 0.5,
     orbitW: 0,
+    orbitPrevBase: -1,
+    orbitChaosLeft: CHAOS_SUB_ORBIT_POINTS,
   };
 }
 
@@ -442,6 +482,13 @@ export function accumulateVoxels(
   const colorSpeeds = prepared.colorSpeed;
   let c = grid.orbitColor;
 
+  // Graph-directed selection state, resumed from the grid so a chunked
+  // render's re-fuse cadence is independent of chunk boundaries (see
+  // VoxelGrid.orbitPrevBase/orbitChaosLeft; inert without chi rows).
+  const chaosOn = prepared.chaosRows !== null;
+  let prevBase = grid.orbitPrevBase;
+  let chaosLeft = grid.orbitChaosLeft;
+
   const minX = grid.bounds.min[0];
   const minY = grid.bounds.min[1];
   const minZ = grid.bounds.min[2];
@@ -460,18 +507,41 @@ export function accumulateVoxels(
     y = rng() - 0.5;
     z = rng() - 0.5;
     for (let i = 0; i < WARMUP_ITERATIONS; i++) {
-      const s = stepOrbit(prepared, x, y, z, rng);
+      const s = stepOrbit(prepared, x, y, z, rng, rng, prevBase);
       x = s.x;
       y = s.y;
       z = s.z;
+      prevBase = s.escaped ? -1 : s.index;
     }
   } else {
     [x, y, z] = grid.orbit;
   }
 
   for (let n = 0; n < iterations; n++) {
+    // Sub-orbit re-fuse — accumulateFlame's chi block (see chaos-game.ts's
+    // CHAOS_SUB_ORBIT_POINTS): reseed from `rng` (the one stream here),
+    // reset to the entry pick, warm up unrecorded through the real
+    // stepOrbit, reset the structural color walk like an escape-reseed's.
+    if (chaosOn) {
+      if (chaosLeft <= 0) {
+        x = rng() - 0.5;
+        y = rng() - 0.5;
+        z = rng() - 0.5;
+        prevBase = -1;
+        for (let k = 0; k < WARMUP_ITERATIONS; k++) {
+          const s = stepOrbit(prepared, x, y, z, rng, rng, prevBase);
+          x = s.x;
+          y = s.y;
+          z = s.z;
+          prevBase = s.escaped ? -1 : s.index;
+        }
+        if (colorLUT !== undefined) c = 0.5;
+        chaosLeft = CHAOS_SUB_ORBIT_POINTS;
+      }
+      chaosLeft--;
+    }
     // --- inlined stepOrbit(prepared, x, y, z, rng) ------------------------
-    const idx = pickIndex(prepared, rng);
+    const idx = pickIndex(prepared, rng, prevBase);
     // The BASE map this slot is a (possibly rotated) copy of — see
     // PreparedChaosGame.baseTransformCount. Equal to `idx` at symmetry order
     // 1. The "By Transform" coloring below keys on this, never the raw
@@ -524,6 +594,7 @@ export function accumulateVoxels(
       nz = rz;
     }
 
+    let escaped = false;
     if (
       !Number.isFinite(nx) ||
       !Number.isFinite(ny) ||
@@ -537,10 +608,14 @@ export function accumulateVoxels(
       nz = rng() - 0.5;
       // The orbit restarts, so its color coordinate does too.
       if (colorLUT !== undefined) c = 0.5;
+      escaped = true;
     }
     x = nx;
     y = ny;
     z = nz;
+    // Selection state for the next pick — stepOrbit's escaped/index contract
+    // exactly. Inert without chi rows.
+    prevBase = escaped ? -1 : baseIdx;
 
     // --- inlined plotPoint(prepared, x, y, z, rng) -------------------------
     let px = x;
@@ -650,6 +725,8 @@ export function accumulateVoxels(
 
   grid.orbit = [x, y, z];
   grid.orbitColor = c;
+  grid.orbitPrevBase = prevBase;
+  grid.orbitChaosLeft = chaosLeft;
   grid.maxDensity = maxDensity;
   return grid;
 }

@@ -1,14 +1,18 @@
 import {
+  CHAOS_SUB_ORBIT_POINTS,
   DEFAULT_COLOR_SPEED,
   MAX_TRANSFORMS,
   WARMUP_ITERATIONS,
+  chaosRowIsNonTrivial,
   derivedColorIndex,
   effectiveSymmetryOrder,
+  pickIndex,
   plotPoint,
   prepareChaosGame,
   runChaosGame,
   stepOrbit,
   symmetryRotation,
+  systemHasChaos,
 } from "./chaos-game";
 import type { PreparedChaosGame } from "./chaos-game";
 import { applyAffine, composeAffine, rotationMatrixXYZ } from "./affine";
@@ -16,8 +20,8 @@ import { rotationMatrix4 } from "./affine4";
 import { composeVariations } from "./variations";
 import { iterationRng, mulberry32 } from "./rng";
 import type { IterationRng, Rng } from "./rng";
-import { sierpinskiTetrahedron } from "./presets";
-import type { Bounds, Transform } from "./types";
+import { fernSpongeIsolated, sierpinskiTetrahedron } from "./presets";
+import type { Bounds, SymmetryParams, Transform } from "./types";
 
 function makeTransforms(count: number): Transform[] {
   return Array.from({ length: count }, (_, id) => ({
@@ -1282,5 +1286,376 @@ describe("symmetry blend", () => {
     });
     const off = runChaosGame(offAxisSystem(), 2000, mulberry32(7));
     expect(under.positions).toEqual(off.positions);
+  });
+});
+
+describe("graph-directed selection (chaos rows)", () => {
+  // A weighted 3-map contractive affine system (no variations, so the orbit
+  // never escapes and every rng draw is a pick) whose chi rows are easy to
+  // reason about. Row semantics: chi[i][j] scales P(pick base j | prev base
+  // i) alongside the weights.
+  function chiSystem(): Transform[] {
+    return [
+      {
+        id: 0,
+        position: [0.6, 0.4, 0.1],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        weight: 1,
+        chaos: [1, 0.5, 2],
+      },
+      {
+        id: 1,
+        position: [-0.5, 0.3, -0.4],
+        rotation: [0, 0.2, 0],
+        scale: [0.45, 0.45, 0.45],
+        weight: 2,
+        chaos: [2, 1, 0],
+      },
+      {
+        id: 2,
+        position: [0.1, -0.6, 0.4],
+        rotation: [0.1, 0, 0.3],
+        scale: [0.5, 0.5, 0.5],
+        weight: 1,
+        // No row: reads all-1s — an absent row must select exactly like the
+        // global table from this map.
+      },
+    ];
+  }
+
+  it("chaosRowIsNonTrivial pads/truncates to the base count with 1s and resolves the domain", () => {
+    // Absent, all-1s, and short-but-all-1s rows are all trivial.
+    expect(chaosRowIsNonTrivial(undefined, 3)).toBe(false);
+    expect(chaosRowIsNonTrivial([1, 1, 1], 3)).toBe(false);
+    expect(chaosRowIsNonTrivial([1, 1], 4)).toBe(false);
+    // A deviation past the base count is truncated away — trivial.
+    expect(chaosRowIsNonTrivial([1, 1, 1, 7], 3)).toBe(false);
+    // A non-finite entry reads as 1 (defense; persist drops such rows).
+    expect(chaosRowIsNonTrivial([Number.NaN, 1], 2)).toBe(false);
+    // A real deviation anywhere inside the base count is non-trivial...
+    expect(chaosRowIsNonTrivial([0.5], 2)).toBe(true);
+    expect(chaosRowIsNonTrivial([1, 1, 0], 3)).toBe(true);
+    // ...including a negative one, which clamps to 0 (0 !== 1).
+    expect(chaosRowIsNonTrivial([1, -0.5], 2)).toBe(true);
+  });
+
+  it("systemHasChaos is true exactly when some transform carries a non-trivial row", () => {
+    const plain = makeTransforms(3);
+    expect(systemHasChaos(plain)).toBe(false);
+    expect(systemHasChaos(plain.map((t) => ({ ...t, chaos: [1, 1, 1] })))).toBe(
+      false,
+    );
+    expect(systemHasChaos(chiSystem())).toBe(true);
+  });
+
+  it("is byte-identical to a chaos-free run — same draw count, same output — at absent AND at explicit all-1s chi", () => {
+    const numPoints = 6000;
+    const base = gauntletChiFixture();
+    const withTrivialChi = base.map((t) => ({
+      ...t,
+      chaos: [1, 1, 1],
+    }));
+
+    const countingRun = (transforms: Transform[]) => {
+      let draws = 0;
+      const inner = mulberry32(11);
+      const spy: Rng = () => {
+        draws++;
+        return inner();
+      };
+      const result = runChaosGame(transforms, numPoints, spy);
+      return { draws, result };
+    };
+
+    const plain = countingRun(base);
+    const trivial = countingRun(withTrivialChi);
+
+    expect(trivial.draws).toBe(plain.draws);
+    expect(Array.from(trivial.result.positions)).toEqual(
+      Array.from(plain.result.positions),
+    );
+    expect(Array.from(trivial.result.transformIndices)).toEqual(
+      Array.from(plain.result.transformIndices),
+    );
+    expect(trivial.result.bounds).toEqual(plain.result.bounds);
+  });
+
+  // The byte-identity fixture: weighted + a stochastic variation + an
+  // occasional escape, so "same draw count" covers every draw source, not
+  // just picks. Named apart from the iteration-rng block's gauntletSystem
+  // (scoped to that describe) but shaped like it.
+  function gauntletChiFixture(): Transform[] {
+    return [
+      {
+        id: 0,
+        position: [0.5, 0.5, 0.5],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        weight: 2,
+      },
+      {
+        id: 1,
+        position: [-0.5, -0.5, -0.5],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        variations: [
+          { type: "linear", weight: 1 },
+          { type: "julia", weight: 0.3 },
+        ],
+      },
+      {
+        id: 2,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.6, 0.6, 0.6],
+        variations: [{ type: "spherical", weight: 1 }],
+      },
+    ];
+  }
+
+  it("spends exactly one primary draw per pick and 3 aux draws per re-fuse (iterationRng draw accounting)", () => {
+    // Plain affine chi system: no variation/escape draws, so the counts
+    // are exact. 10000 points crosses two sub-orbit boundaries (4096, 8192);
+    // each re-fuse is 3 aux seed draws + WARMUP_ITERATIONS picks.
+    const numPoints = 10_000;
+    const refuses = 2;
+    let primaryDraws = 0;
+    const inner = mulberry32(5);
+    const primary: Rng = () => {
+      primaryDraws++;
+      return inner();
+    };
+    let auxDraws = 0;
+    const iter = iterationRng(1234);
+    const countingIter: IterationRng = {
+      begin: (i) => iter.begin(i),
+      draw: () => {
+        auxDraws++;
+        return iter.draw();
+      },
+    };
+
+    runChaosGame(
+      chiSystem(),
+      numPoints,
+      primary,
+      null,
+      undefined,
+      countingIter,
+    );
+
+    expect(primaryDraws).toBe(
+      3 + WARMUP_ITERATIONS + numPoints + refuses * WARMUP_ITERATIONS,
+    );
+    expect(auxDraws).toBe(refuses * 3);
+  });
+
+  it("matches a reference loop driving stepOrbit/plotPoint by hand under chi — weighted, kaleidoscope order 2, escapes, and a sub-orbit boundary inside the run", () => {
+    // The chi twin of the allocation-free oracle: runChaosGame's inlined
+    // loop (prevBase threading, escape re-fuse, the sub-orbit re-fuse
+    // block) must stay byte-for-byte what the real stepOrbit/plotPoint
+    // building blocks produce when a caller threads selection state per
+    // their documented contract. gauntletChiFixture escapes occasionally
+    // (spherical near the origin) so the escaped -> entry-pick path is
+    // genuinely walked; 6000 points crosses the 4096 boundary once.
+    const transforms = gauntletChiFixture().map((t, i) => ({
+      ...t,
+      chaos: [
+        [1, 0.25, 1.5],
+        [2, 1, 1],
+        [1, 1, 1],
+      ][i],
+    }));
+    const symmetry: SymmetryParams = { order: 2, plane: "xz" };
+    const numPoints = 6000;
+    const seed = 77;
+
+    const actual = runChaosGame(
+      transforms,
+      numPoints,
+      mulberry32(seed),
+      null,
+      symmetry,
+    );
+
+    const prepared = prepareChaosGame(transforms, null, symmetry);
+    const rng = mulberry32(seed);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    let prevBase = -1;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng, rng, prevBase);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      prevBase = s.escaped ? -1 : s.index;
+    }
+    const positions = new Float32Array(numPoints * 3);
+    const transformIndices = new Uint8Array(numPoints);
+    for (let i = 0; i < numPoints; i++) {
+      if (i > 0 && i % CHAOS_SUB_ORBIT_POINTS === 0) {
+        x = rng() - 0.5;
+        y = rng() - 0.5;
+        z = rng() - 0.5;
+        prevBase = -1;
+        for (let k = 0; k < WARMUP_ITERATIONS; k++) {
+          const s = stepOrbit(prepared, x, y, z, rng, rng, prevBase);
+          x = s.x;
+          y = s.y;
+          z = s.z;
+          prevBase = s.escaped ? -1 : s.index;
+        }
+      }
+      const s = stepOrbit(prepared, x, y, z, rng, rng, prevBase);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      prevBase = s.escaped ? -1 : s.index;
+      const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
+      positions[i * 3] = px;
+      positions[i * 3 + 1] = py;
+      positions[i * 3 + 2] = pz;
+      transformIndices[i] = s.index;
+    }
+
+    expect(Array.from(actual.positions)).toEqual(Array.from(positions));
+    expect(Array.from(actual.transformIndices)).toEqual(
+      Array.from(transformIndices),
+    );
+  });
+
+  it("draws transitions with empirical P(j | i) proportional to w_j * chi_ij, kaleidoscope copies included", () => {
+    // The transition histogram over recorded consecutive picks. Order-2
+    // kaleidoscope: both copies of base j inherit its chi column, so
+    // P(base j | i) stays proportional to w_j * chi_ij at any order.
+    // Sub-orbit boundaries are excluded — the pick at a boundary is an
+    // ENTRY pick, not a transition. chiSystem never escapes (pure affine
+    // contractions), so no other exclusions apply.
+    const transforms = chiSystem();
+    const numPoints = 200_000;
+    const result = runChaosGame(transforms, numPoints, mulberry32(99), null, {
+      order: 2,
+      plane: "xz",
+    });
+
+    const weights = transforms.map((t) => t.weight ?? 1);
+    const counts = [0, 1, 2].map(() => [0, 0, 0]);
+    for (let i = 1; i < numPoints; i++) {
+      if (i % CHAOS_SUB_ORBIT_POINTS === 0) continue;
+      counts[result.transformIndices[i - 1]][result.transformIndices[i]]++;
+    }
+    for (let from = 0; from < 3; from++) {
+      const chi = transforms[from].chaos ?? [1, 1, 1];
+      const expected = weights.map((w, j) => w * (chi[j] ?? 1));
+      const expectedTotal = expected.reduce((a, b) => a + b, 0);
+      const observedTotal = counts[from].reduce((a, b) => a + b, 0);
+      expect(observedTotal).toBeGreaterThan(10_000);
+      for (let to = 0; to < 3; to++) {
+        const expectedP = expected[to] / expectedTotal;
+        const observedP = counts[from][to] / observedTotal;
+        expect(Math.abs(observedP - expectedP)).toBeLessThan(0.02);
+      }
+    }
+    // The zeroed edge (map 1 -> map 2) is EXACTLY never drawn, not merely
+    // rare — the cumulative row gives it zero width.
+    expect(counts[1][2]).toBe(0);
+  });
+
+  it("keeps block-diagonal blocks isolated while the sub-orbit re-fuse still samples both (the fern|sponge invariant)", () => {
+    // The shipped isolated preset: fern maps 0..3, sponge maps 4..23. Zero
+    // cross-block CONSECUTIVE transitions (entry picks at sub-orbit
+    // boundaries excluded; the fern/sponge maps are contractive, so no
+    // escape-reseed exclusion is ever needed) — AND both blocks receive
+    // plotted points, which is the sub-orbit design's whole reason to
+    // exist: one orbit never leaves its block, so without re-fusing the
+    // cloud would be one object, not two.
+    const transforms = fernSpongeIsolated();
+    const numPoints = 30_000;
+    const result = runChaosGame(transforms, numPoints, mulberry32(3));
+
+    const fernCount = 4;
+    let fernPoints = 0;
+    let spongePoints = 0;
+    let crossings = 0;
+    for (let i = 0; i < numPoints; i++) {
+      const inFern = result.transformIndices[i] < fernCount;
+      if (inFern) fernPoints++;
+      else spongePoints++;
+      if (i === 0 || i % CHAOS_SUB_ORBIT_POINTS === 0) continue;
+      const prevInFern = result.transformIndices[i - 1] < fernCount;
+      if (inFern !== prevInFern) crossings++;
+    }
+    expect(crossings).toBe(0);
+    expect(fernPoints).toBeGreaterThan(0);
+    expect(spongePoints).toBeGreaterThan(0);
+  });
+
+  it("falls back to the global table for a degenerate (all-zero-total) row, one draw either way", () => {
+    // Map 0's row weights to zero total; a draw from prevBase 0 must land
+    // exactly where the global table would land the same rng value, and
+    // the prepared object records the row for the UI's future disclosure.
+    const transforms = chiSystem().map((t, i) =>
+      i === 0 ? { ...t, chaos: [0, 0, 0] } : t,
+    );
+    const prepared = prepareChaosGame(transforms);
+    expect(prepared.chaosFallbackRows).toEqual([0]);
+
+    for (const draw of [0.01, 0.3, 0.6, 0.99]) {
+      const fixed: Rng = () => draw;
+      expect(pickIndex(prepared, fixed, 0)).toBe(pickIndex(prepared, fixed));
+    }
+  });
+
+  it("keeps ε-different chi runs point-for-point correspondent under a pinned iterationRng seed", () => {
+    // The morph-flow guarantee under chi: iteration numbering is a pure
+    // function of the plotted-point index (chaosPointIteration), so an
+    // ε-different weight — or a chi entry edit — decorrelates no worse
+    // than it does chaos-free. Compare against the shared-stream runs,
+    // which re-roll the whole remaining cloud after the first divergence.
+    const numPoints = 20_000;
+    const system = (w0: number, chi01: number): Transform[] =>
+      gauntletChiFixture().map((t, i) =>
+        i === 0
+          ? { ...t, weight: w0, chaos: [1, chi01, 1.5] }
+          : { ...t, chaos: [2, 1, 1][i] === 2 ? [2, 1, 1] : [1, 1, 1] },
+      );
+    const jumpedFraction = (a: Float32Array, b: Float32Array): number => {
+      let jumped = 0;
+      for (let i = 0; i < numPoints; i++) {
+        const dx = a[i * 3] - b[i * 3];
+        const dy = a[i * 3 + 1] - b[i * 3 + 1];
+        const dz = a[i * 3 + 2] - b[i * 3 + 2];
+        if (Math.hypot(dx, dy, dz) > 0.3) jumped++;
+      }
+      return jumped / numPoints;
+    };
+
+    const isolated = jumpedFraction(
+      runChaosGame(
+        system(2, 0.5),
+        numPoints,
+        mulberry32(5),
+        null,
+        undefined,
+        iterationRng(1234),
+      ).positions,
+      runChaosGame(
+        system(2.01, 0.502),
+        numPoints,
+        mulberry32(5),
+        null,
+        undefined,
+        iterationRng(1234),
+      ).positions,
+    );
+    const shared = jumpedFraction(
+      runChaosGame(system(2, 0.5), numPoints, mulberry32(5)).positions,
+      runChaosGame(system(2.01, 0.502), numPoints, mulberry32(5)).positions,
+    );
+
+    expect(isolated).toBeLessThan(0.15);
+    expect(shared).toBeGreaterThan(0.5);
   });
 });

@@ -887,3 +887,24 @@ describe("probeEscapeFill4", () => {
     expect(probeEscapeFill4(inert, 4096)).toBe(1);
   });
 });
+
+describe("analyzeEscapeSystem4 chaos rows", () => {
+  it("refuses a chi-carrying non-flat chain — the 3D gate's refusal, one dimension up", () => {
+    const chain = [
+      canonicalMandelbox({ chaos: [1, 0] }),
+      canonicalMandelbox({ id: 1, w: { rotation: { xw: 0.3 } } }),
+    ];
+    const analysis = analyzeEscapeSystem4(chain);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toContain(
+      "chaos rows (unsupported in escape-time mode)",
+    );
+    // A trivial row is no row: the same chain stays eligible with it.
+    expect(
+      analyzeEscapeSystem4([
+        canonicalMandelbox({ chaos: [1, 1] }),
+        canonicalMandelbox({ id: 1, w: { rotation: { xw: 0.3 } } }),
+      ]).status,
+    ).toBe("eligible");
+  });
+});

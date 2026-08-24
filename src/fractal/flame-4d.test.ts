@@ -1,5 +1,6 @@
 import { accumulateFlame4 } from "./flame-4d";
 import {
+  CHAOS_SUB_ORBIT_POINTS,
   DEFAULT_COLOR_SPEED,
   ESCAPE_LIMIT,
   WARMUP_ITERATIONS,
@@ -1204,5 +1205,172 @@ describe("accumulateFlame4 validation", () => {
         composeRotorProjection4(IDENTITY_ROTOR, [0, 0, 0, 0]),
       ),
     ).toThrow(/cameraProjection/);
+  });
+});
+
+describe("accumulateFlame4 graph-directed selection (chaos rows)", () => {
+  // The weighted pentatope plus one origin-anchored spherical map (which
+  // occasionally blows the orbit past ESCAPE_LIMIT), all carrying chi rows —
+  // the 4D twin of flame.test.ts's chi fixture: weighted picks, escapes,
+  // and row-directed selection in one system.
+  function chiSystem4(): Transform4[] {
+    const base = weightedPentatope().map((t, i) => ({
+      ...t,
+      chaos: [1, 0.25, 1.5, 1, 0.5, 2].map((v, j) => (j === i ? 1 : v)),
+    }));
+    base.push({
+      position: [0, 0, 0, 0],
+      scale: [0.6, 0.6, 0.6, 0.6],
+      variations: [{ type: "spherical", weight: 1 }],
+      chaos: [2, 1, 1, 1, 1, 0],
+    });
+    return base;
+  }
+
+  it("matches a stepOrbit4/plotPoint4 reference under chi — weighted, kaleidoscope order 2, escapes, a sub-orbit boundary, structural color", () => {
+    const transforms4 = chiSystem4();
+    const symmetry = { order: 2, plane: "xy" as const };
+    const prepared = prepareChaosGame4(transforms4, null, symmetry);
+    const lut = buildPaletteLUT("spectrum");
+    if (!lut) throw new Error("spectrum should have a LUT");
+    const width = 64;
+    const height = 64;
+    const iterations = 6000;
+    const seed = 42;
+    const n = transforms4.length;
+
+    const actual = accumulateFlame4(
+      prepared,
+      FLAT_PROJECTION,
+      FLAT_VIEW,
+      width,
+      height,
+      iterations,
+      mulberry32(seed),
+      { kind: "structural", lut },
+    );
+
+    const rng = mulberry32(seed);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    let w = rng() - 0.5;
+    let prevBase = -1;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const step = stepOrbit4(prepared, x, y, z, w, rng, rng, prevBase);
+      x = step.x;
+      y = step.y;
+      z = step.z;
+      w = step.w;
+      prevBase = step.escaped ? -1 : step.index;
+    }
+    const expected = createFlameHistogram(width, height);
+    let c = 0.5;
+    let chaosLeft = CHAOS_SUB_ORBIT_POINTS;
+    for (let i = 0; i < iterations; i++) {
+      if (chaosLeft <= 0) {
+        x = rng() - 0.5;
+        y = rng() - 0.5;
+        z = rng() - 0.5;
+        w = rng() - 0.5;
+        prevBase = -1;
+        for (let k = 0; k < WARMUP_ITERATIONS; k++) {
+          const step = stepOrbit4(prepared, x, y, z, w, rng, rng, prevBase);
+          x = step.x;
+          y = step.y;
+          z = step.z;
+          w = step.w;
+          prevBase = step.escaped ? -1 : step.index;
+        }
+        c = 0.5;
+        chaosLeft = CHAOS_SUB_ORBIT_POINTS;
+      }
+      chaosLeft--;
+      const step = stepOrbit4(prepared, x, y, z, w, rng, rng, prevBase);
+      x = step.x;
+      y = step.y;
+      z = step.z;
+      w = step.w;
+      // Blend-at-pick, overwritten by the escape reset — same net value as
+      // the inlined ordering (see flame.test.ts's chi oracle).
+      const slot = n > 1 ? step.index / (n - 1) : 0.5;
+      c = (c + slot) / 2;
+      if (step.escaped) c = 0.5;
+      prevBase = step.escaped ? -1 : step.index;
+      const [px, py, pz, pw] = plotPoint4(prepared, x, y, z, w, rng);
+
+      // FLAT_PROJECTION: clipX = x, clipY = y, clipW = 1 — project by hand.
+      const col = Math.floor((px + 1) * 0.5 * width);
+      const row = Math.floor((1 - py) * 0.5 * height);
+      void pz;
+      void pw;
+      if (col < 0 || col >= width || row < 0 || row >= height) continue;
+      const bucket = row * width + col;
+      expected.hits[bucket] += 1;
+      expected.maxHits = Math.max(expected.maxHits, expected.hits[bucket]);
+      const li = Math.min(255, (c * 256) | 0) * 3;
+      const o = bucket * 3;
+      expected.sumRGB[o] += lut[li];
+      expected.sumRGB[o + 1] += lut[li + 1];
+      expected.sumRGB[o + 2] += lut[li + 2];
+    }
+
+    expect(Array.from(actual.hits)).toEqual(Array.from(expected.hits));
+    expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
+    expect(actual.orbit).toEqual([x, y, z]);
+    expect(actual.orbitW).toBe(w);
+    expect(actual.orbitColor).toBe(c);
+    expect(actual.orbitPrevBase).toBe(prevBase);
+    expect(actual.orbitChaosLeft).toBe(chaosLeft);
+  });
+
+  it("accumulates independently of chunk boundaries under chi — the re-fuse counter rides the histogram", () => {
+    const transforms4 = chiSystem4();
+    const prepared = prepareChaosGame4(transforms4);
+    const palette = transformColors(transforms4.length);
+    const color: FourDRenderColor = { kind: "transform", palette };
+    const width = 32;
+    const height = 32;
+
+    const chunkedRng = mulberry32(11);
+    let chunked = accumulateFlame4(
+      prepared,
+      FLAT_PROJECTION,
+      FLAT_VIEW,
+      width,
+      height,
+      4000,
+      chunkedRng,
+      color,
+    );
+    chunked = accumulateFlame4(
+      prepared,
+      FLAT_PROJECTION,
+      FLAT_VIEW,
+      width,
+      height,
+      5000,
+      chunkedRng,
+      color,
+      chunked,
+    );
+
+    const single = accumulateFlame4(
+      prepared,
+      FLAT_PROJECTION,
+      FLAT_VIEW,
+      width,
+      height,
+      9000,
+      mulberry32(11),
+      color,
+    );
+
+    expect(Array.from(chunked.hits)).toEqual(Array.from(single.hits));
+    expect(Array.from(chunked.sumRGB)).toEqual(Array.from(single.sumRGB));
+    expect(chunked.orbit).toEqual(single.orbit);
+    expect(chunked.orbitW).toBe(single.orbitW);
+    expect(chunked.orbitPrevBase).toBe(single.orbitPrevBase);
+    expect(chunked.orbitChaosLeft).toBe(single.orbitChaosLeft);
   });
 });
