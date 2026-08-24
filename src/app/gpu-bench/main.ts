@@ -97,6 +97,8 @@ import {
   barnsleyFern,
   mengerSponge,
   doubleRotation,
+  fernSpongeIsolated,
+  fernSpongeLeak,
   hyperfern,
   mandelboxKifs,
   pentatope,
@@ -879,6 +881,80 @@ const SCENARIOS: ScenarioDef[] = [
     // search over B's own cumulative lane, and the post-word running
     // BEFORE the lens adopt (no other scenario carries a schedule).
   },
+  {
+    kind: "3d",
+    name: "chi-isolated",
+    transforms: fernSpongeIsolated(),
+    finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
+    paletteId: "ember",
+    // The xaos reachability preset itself (presets.ts): Barnsley's fern
+    // and the Menger sponge conjugated apart into ONE 24-map system whose
+    // BLOCK-DIAGONAL chi rows keep them two separate objects — a kernel
+    // that ignored the rows would apply every map to everything (sponges
+    // budding on fronds) and fail this gate wholesale. The weighted maps
+    // (fern 1/85/7/7, sponge 5s) put the chi row draw over a genuinely
+    // weighted expanded table, and every chi entry is 0 or 1, both
+    // f32-exact — this leg is immune even to table narrowing at the
+    // probability level (chi-leak carries the inexact entries).
+    //
+    // The camera is slightly OFF-AXIS on purpose: the sponge's
+    // axis-aligned faces concentrate mass on exact planes, and a
+    // straight-on camera maps those onto bucket boundaries, where f64 and
+    // f32 convergence tails land in DIFFERENT pixels (the knife-edge
+    // false-divergence this item's fixture probe measured: L1 0.35
+    // boundary-straddling vs 0.009 mid-bucket); the tilt keeps plane mass
+    // off pixel edges. Probed at 400k points: NDC x in [-0.43, 0.53],
+    // y in [-0.46, 0.67], 100.0% in frame.
+    cameraPos: [0.5, 0.4, 4.8],
+    lookAt: [0, 0, 0],
+    // Measured equal-N noise floor: 0.057 (the CPU oracle against ITSELF
+    // at two seeds, 0xc0ffee vs 0xbadcafe, 50.3M iterations each through
+    // this exact camera/downsample/tonemap pipeline — fold-zoo-param's
+    // control procedure). 2x that is far below the default 1.0, so the
+    // threshold stays at the default-equivalent 1.0 (schedule-sponge's
+    // convention).
+    maeThreshold: 1.0,
+    // Uniquely pins (with chi-leak): the 3D kernel's graph-directed
+    // selection — the chaosRows storage table (packChaosRowsTable's
+    // transferred totals + cumulative rows), pickSlot's prevBase row draw,
+    // and the per-chain selection state riding aux.z. One honest scope
+    // note: the equal-N budget gives each of the backend's 65,536 chains
+    // only 768 plotted points, so the kernel's 4096-point sub-orbit
+    // RE-FUSE never fires inside this agreement leg (the CPU's fires
+    // ~12k times; the entry-pick and per-block distributions coincide, so
+    // the images still agree) — the re-fuse path runs live in the TIMED
+    // leg, whose per-chain counts pass 4096, but its cadence is pinned by
+    // unit tests and the CPU oracle, not by this MAE gate.
+  },
+  {
+    kind: "3d",
+    name: "chi-leak",
+    transforms: fernSpongeLeak(),
+    finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
+    paletteId: "legacy",
+    // chi-isolated's sibling with 0.01 in every off-block entry: ~1% of
+    // picks cross systems, so the frame carries the leak's transition
+    // dust — the image region most sensitive to the row VALUES (a wrong
+    // lookup changes P(switch) and restructures the dust wholesale).
+    // Legacy palette on purpose: the isolated leg colors through the
+    // structural LUT walk, this one through the per-BASE-map palette
+    // fold, so between them chi composes with both color paths. The 0.01
+    // entries are NOT f32-exact; the packed table's narrowing perturbs
+    // each pick probability by ~1e-9 relative — orders of magnitude below
+    // this scenario's own shot-noise floor, which is why the equal-N gate
+    // needs no f32-exact authoring here (the bit-agreement question lives
+    // in the packing unit tests, which pin the narrowed values exactly).
+    cameraPos: [0.5, 0.4, 4.8],
+    lookAt: [0, 0, 0],
+    // Measured equal-N noise floor: 0.562 (the same two-seed CPU control
+    // procedure as chi-isolated) — the leak dust is exactly the sparse
+    // few-hits-per-bucket haze AGREEMENT_MAE_THRESHOLD's doc names as
+    // what raises a scenario's floor. 1.2 = ~2x the floor, fold-zoo-
+    // param's doubling convention.
+    maeThreshold: 1.2,
+  },
   // The 4D legs: between them, all four FourDRenderColor kinds and
   // both slice states; hyperfern/doubleRotation both carry non-1 weights,
   // exercising the 4D kernel's weighted binary-search pick (mirroring the 3D
@@ -1103,6 +1179,47 @@ const SCENARIOS: ScenarioDef[] = [
     // Uniquely pins: the 4D kernel's plot-time schedule stage — the
     // lifted B slots after the lens slot, the per-level draw, and the
     // post-word bending the 4D plotted point before rotor projection.
+  },
+  {
+    kind: "4d",
+    name: "chi-kaleido-4d",
+    system: () =>
+      hyperfern().map((t, i): Transform => ({
+        // Block-structured chi over the hyperfern's four maps — {stem,
+        // frond} | {left leaflet, right leaflet} — with a 1% leak: the
+        // fernSpongeLeak construction reduced onto a genuinely 4D
+        // system (the frond map's yw curl carries the orbit out of
+        // w = 0, so the chi selection state provably rides a real 4D
+        // orbit; probed cloud w extent [-0.27, 0.63]).
+        ...t,
+        chaos: [0, 1, 2, 3].map((j) => (j < 2 === i < 2 ? 1 : 0.01)),
+      })),
+    finalTransform: null,
+    // Order 3: the ONE chi leg whose expanded slot list is wider than its
+    // base list (12 slots over 4 base rows), so the kernel's row indexing
+    // (rowBase = baseTransformCount + row * transformCount) and the
+    // copy-inherits-its-base's-chi-column rule are both live — the two 3D
+    // chi legs are order 1, where transformCount == baseTransformCount
+    // and conflating the two counts would cancel out invisibly.
+    symmetry: { order: 3, plane: "xy" },
+    rotation: BENCH_TUMBLE,
+    paletteId: "aurora", // non-legacy => structural LUT coloring.
+    colorMode: "wBlueOrange", // ignored under a non-legacy palette.
+    sliceOn: false,
+    sliceCenter: 0,
+    sliceWidth: 0.35,
+    sliceRelativeColor: false,
+    // Measured equal-N noise floor: 0.183 (the two-seed CPU-vs-itself
+    // control, 50.3M iterations each through prepare4D's own derived
+    // camera/view — chi-isolated's procedure one dimension up). 2x that
+    // is well below the default 1.0, so the threshold stays at the
+    // default-equivalent 1.0.
+    maeThreshold: 1.0,
+    // Uniquely pins: the 4D kernel's chi lane — pickSlot's row draw over
+    // packGpuSystem4's transferred table (flame-gpu.ts's shared
+    // packChaosRowsTable), the selection state in the 4D chain's aux.w
+    // (its one free lane), and chi COMPOSED with the kaleidoscope
+    // expansion, which no other chi leg exercises.
   },
 ];
 

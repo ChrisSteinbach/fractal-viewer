@@ -11,6 +11,7 @@ import {
   WEIGHT_FIXED_POINT_SCALE,
   convertGpuDisplayHistogram,
   convertGpuHistogram,
+  packChaosRowsTable,
   packGpuChains,
   packGpuColorLUT,
   packGpuDownsample,
@@ -22,7 +23,13 @@ import type { GpuFlameSystemSpec, GpuParamsFields } from "./flame-gpu";
 import { FLAME_GPU_KERNEL_4D_WGSL } from "./flame-gpu-4d";
 import { surfaceDeKernelWgsl } from "./surface-de-gpu";
 import { composeAffine, rotationMatrixXYZ } from "./affine";
-import { MAX_TRANSFORMS, prepareChaosGame } from "./chaos-game";
+import {
+  CHAOS_SUB_ORBIT_POINTS,
+  MAX_TRANSFORMS,
+  WARMUP_ITERATIONS,
+  buildChaosSelection,
+  prepareChaosGame,
+} from "./chaos-game";
 import { transformColors } from "./color";
 import { createFlameHistogram } from "./flame";
 import type { Mat4 } from "./flame";
@@ -733,6 +740,145 @@ describe("packGpuSystem color slots", () => {
   });
 });
 
+describe("packGpuSystem chaos rows (the chi lane)", () => {
+  // A weighted, kaleidoscoped chi fixture: order 2 expands 2 base maps to 4
+  // slots, so the packed rows must weigh the EXPANDED slot list and each
+  // rotated copy must inherit its base map's chi column. Values are
+  // asserted against prepareChaosGame's OWN prepared tables — the transfer
+  // contract: the packer ships the oracle's numbers, never a recomputation.
+  const CHI_TRANSFORMS: Transform[] = [
+    {
+      id: 0,
+      position: [0.5, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+      weight: 3,
+      chaos: [1, 0.5],
+    },
+    {
+      id: 1,
+      position: [0, 0.5, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+      weight: 1,
+      chaos: [2, 1],
+    },
+  ];
+  const CHI_SYMMETRY: SymmetryParams = { order: 2, plane: "xz" };
+
+  it("transfers buildChaosSelection's own tables — per-row totals first, then one cumulative row per base over the expanded slots", () => {
+    const packed = packGpuSystem(
+      baseSpec({ transforms: CHI_TRANSFORMS, symmetry: CHI_SYMMETRY }),
+    );
+    const prepared = prepareChaosGame(CHI_TRANSFORMS, null, CHI_SYMMETRY);
+    expect(packed.chaosRows).not.toBeNull();
+    const f32 = new Float32Array(packed.chaosRows!);
+    // Layout: baseTransformCount totals, then baseTransformCount rows of
+    // transformCount cumulative entries each — (2 + 2 * 4) f32 elements.
+    expect(f32.length).toBe(2 + 2 * 4);
+    for (let i = 0; i < 2; i++) {
+      expect(f32[i]).toBe(Math.fround(prepared.chaosRowTotals![i]));
+      for (let s = 0; s < 4; s++) {
+        expect(f32[2 + i * 4 + s]).toBe(Math.fround(prepared.chaosRows![i][s]));
+      }
+    }
+  });
+
+  it("weighs rotated copies by their base map's chi column — the worked numbers for weights (3, 1) under order 2", () => {
+    const packed = packGpuSystem(
+      baseSpec({ transforms: CHI_TRANSFORMS, symmetry: CHI_SYMMETRY }),
+    );
+    const f32 = new Float32Array(packed.chaosRows!);
+    // Expanded slot weights are (3, 1, 3, 1); row 0's chi (1, 0.5) repeats
+    // per copy: 3·1, 1·0.5, 3·1, 1·0.5 → cumulative (3, 3.5, 6.5, 7),
+    // total 7; row 1's chi (2, 1): 3·2, 1·1, 3·2, 1·1 → cumulative
+    // (6, 7, 13, 14), total 14. Totals lead, then the two rows.
+    expect(Array.from(f32)).toEqual([7, 14, 3, 3.5, 6.5, 7, 6, 7, 13, 14]);
+  });
+
+  it("writes total 0 for a row the oracle recorded degenerate, so the kernel's rowTotal > 0 test IS pickIndex's fallback decision", () => {
+    const transforms = CHI_TRANSFORMS.map((t, i) =>
+      i === 0 ? { ...t, chaos: [0, 0] } : t,
+    );
+    const packed = packGpuSystem(baseSpec({ transforms }));
+    const f32 = new Float32Array(packed.chaosRows!);
+    expect(f32[0]).toBe(0); // row 0: every reachable entry zeroed.
+    expect(f32[1]).toBeGreaterThan(0); // row 1 stays a live table.
+  });
+
+  it("stores 0 for a total whose f32 narrowing overflows — the one guard on top of the transferred decision", () => {
+    // An authored weight past f32 range: the f64 total is finite (so the
+    // oracle keeps the row) but its f32 form is Infinity, which the kernel
+    // could not multiply a draw by — the packer falls that row back to the
+    // global table, the conservative direction pickIndex already takes.
+    const selection = buildChaosSelection(
+      [{ chaos: [1, 2] }, { chaos: [0, 1] }],
+      [1e39, 1],
+      2,
+    )!;
+    expect(selection.chaosFallbackRows).toEqual([]);
+    const f32 = new Float32Array(packChaosRowsTable(selection, 2, 2));
+    expect(f32[0]).toBe(0); // f64 total 1e39 + 2 narrows to Infinity.
+    expect(f32[1]).toBe(1); // row 1 zeroes the huge slot: total stays 1.
+  });
+
+  it("packs chaosRows null for a chi-free system, and for an all-trivial row that selects exactly as no row at all", () => {
+    expect(packGpuSystem(baseSpec()).chaosRows).toBeNull();
+    const trivial = makeTransforms(2).map((t, i) =>
+      i === 0 ? { ...t, chaos: [1, 1] } : t,
+    );
+    expect(
+      packGpuSystem(baseSpec({ transforms: trivial })).chaosRows,
+    ).toBeNull();
+  });
+
+  it("no longer refuses a chi document — the CPU-force era's throw is gone with the kernels' lift", () => {
+    expect(() =>
+      packGpuSystem(baseSpec({ transforms: CHI_TRANSFORMS })),
+    ).not.toThrow();
+  });
+});
+
+describe("FLAME_GPU_KERNEL_WGSL chi selection", () => {
+  it("declares the chaosRows binding and gates it on the params flag", () => {
+    expect(FLAME_GPU_KERNEL_WGSL).toContain(
+      "@group(0) @binding(6) var<storage, read> chaosRows: array<f32>;",
+    );
+    expect(FLAME_GPU_KERNEL_WGSL).toContain("chaosEnabled: u32,");
+  });
+
+  it("routes every transform pick through the one pickSlot definition — the main loop and the re-fuse warm-up cannot drift", () => {
+    expect(FLAME_GPU_KERNEL_WGSL).toContain("fn pickSlot(");
+    const calls = FLAME_GPU_KERNEL_WGSL.split("pickSlot(&rng, chiPrev)");
+    expect(calls.length - 1).toBe(2); // warm-up + main pick, nothing else.
+  });
+
+  it("interpolates the CPU's own re-fuse cadence constants", () => {
+    expect(FLAME_GPU_KERNEL_WGSL).toContain(
+      `chiSub >= ${CHAOS_SUB_ORBIT_POINTS}u`,
+    );
+    expect(FLAME_GPU_KERNEL_WGSL).toContain(
+      `for (var k = 0u; k < ${WARMUP_ITERATIONS}u; k++)`,
+    );
+  });
+
+  it("carries the chi state in the 3D chain's aux.z and the 4D chain's aux.w — each struct's free lane", () => {
+    expect(FLAME_GPU_KERNEL_WGSL).toContain("chains[chainIdx].aux.z & 0xFFFFu");
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "chains[chainIdx].aux.w & 0xFFFFu",
+    );
+    // The 4D kernel takes the whole lane verbatim: binding, pickSlot and
+    // cadence included.
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "@group(0) @binding(6) var<storage, read> chaosRows: array<f32>;",
+    );
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("fn pickSlot(");
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      `chiSub >= ${CHAOS_SUB_ORBIT_POINTS}u`,
+    );
+  });
+});
+
 describe("packGpuChains", () => {
   it("is deterministic for a given seed", () => {
     const a = new Uint8Array(packGpuChains(4, 7));
@@ -811,6 +957,7 @@ describe("packGpuParams", () => {
       scheduleDepth: 0,
       scheduleWeighted: false,
       scheduleTotalWeight: 0,
+      chaosEnabled: false,
       ...overrides,
       echoPalette: overrides.echoPalette ?? false,
     };
@@ -914,6 +1061,21 @@ describe("packGpuParams", () => {
     expect(onlyWeighted[19]).toBe(0);
     expect(onlyHasFinal[18]).toBe(0);
     expect(onlyHasFinal[19]).toBe(1);
+  });
+
+  it("writes chaosEnabled at element 37 (byte 148, the old trailing pad) and leaves the pre-chi words untouched", () => {
+    const off = packGpuParams(fields({ chaosEnabled: false }));
+    const on = packGpuParams(fields({ chaosEnabled: true }));
+    expect(new Uint32Array(off)[37]).toBe(0);
+    expect(new Uint32Array(on)[37]).toBe(1);
+    // chaosEnabled false is the byte-identical pre-chi params block: the
+    // flag's word sits in what was pad, so flipping it moves exactly one
+    // word and PARAMS_BYTES never grew.
+    expect(off.byteLength).toBe(PARAMS_BYTES);
+    const offWords = Array.from(new Uint32Array(off));
+    const onWords = Array.from(new Uint32Array(on));
+    expect(onWords.slice(0, 37)).toEqual(offWords.slice(0, 37));
+    expect(onWords.slice(38)).toEqual(offWords.slice(38));
   });
 });
 
@@ -1448,21 +1610,6 @@ describe("the flame kernels' triplexPow8 (case 16u)", () => {
   });
 });
 
-describe("packGpuSystem chaos rows (defense in depth)", () => {
-  it("throws on a chi-carrying system — the kernel has no row-directed selection, and the worker must have routed it to CPU", () => {
-    const transforms = makeTransforms(2).map((t, i) =>
-      i === 0 ? { ...t, chaos: [1, 0] } : t,
-    );
-    expect(() => packGpuSystem(baseSpec({ transforms }))).toThrow(RangeError);
-    expect(() => packGpuSystem(baseSpec({ transforms }))).toThrow(/chaos rows/);
-    // A trivial row is no row — packs exactly like an unauthored system.
-    const trivial = makeTransforms(2).map((t) => ({ ...t, chaos: [1, 1] }));
-    expect(() =>
-      packGpuSystem(baseSpec({ transforms: trivial })),
-    ).not.toThrow();
-  });
-});
-
 describe("packGpuSystem scheduled-hybrid B slots", () => {
   function makeTransforms(count: number): Transform[] {
     return Array.from({ length: count }, (_, id) => ({
@@ -1590,6 +1737,7 @@ describe("packGpuParams schedule scalars", () => {
       scheduleDepth: 3,
       scheduleWeighted: true,
       scheduleTotalWeight: 7.5,
+      chaosEnabled: true,
     });
     const f32 = new Float32Array(buf);
     const u32 = new Uint32Array(buf);
@@ -1598,5 +1746,6 @@ describe("packGpuParams schedule scalars", () => {
     expect(u32[34]).toBe(3); // scheduleDepth
     expect(u32[35]).toBe(1); // scheduleWeighted
     expect(f32[36]).toBe(7.5); // scheduleTotalWeight
+    expect(u32[37]).toBe(1); // chaosEnabled (byte 148, the old pad)
   });
 });

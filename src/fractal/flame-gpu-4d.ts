@@ -21,7 +21,11 @@
  * For the blend-less systems that can reach a render worker (see
  * {@link packGpuSystem4}'s weight note), parity with `accumulateFlame4` (see
  * that function and `chaos-game-4d.ts`'s `stepOrbit4`): same
- * uniform/weighted transform pick, same 4x4+t affine →
+ * uniform/weighted transform pick — and the same graph-directed selection
+ * one layer over it (`pickIndex4`'s chi path over `buildChaosSelection`'s
+ * transferred tables, the escape/entry re-fuse and the sub-orbit re-fuse,
+ * per chain — see the 3D kernel's chi note, whose conventions this module
+ * takes verbatim) — same 4x4+t affine →
  * blended-`variations4` → kaleidoscope post-rotation step (the 4D
  * symmetry expansion `prepareChaosGame4` performs, packed here exactly as
  * `flame-gpu.ts` packs the 3D one: copy-major slots `k · baseTransformCount +
@@ -84,13 +88,15 @@ import type { FourDView, RotorProjection4 } from "./project4";
 // flame-gpu.ts's own split between type-only and value imports.
 import { composeAffine4, symmetryRotation4, toTransform4 } from "./affine4";
 import {
+  CHAOS_SUB_ORBIT_POINTS,
   DEFAULT_COLOR_SPEED,
   MAX_TRANSFORMS,
+  WARMUP_ITERATIONS,
+  buildChaosSelection,
   buildScheduleTable,
   derivedColorIndex,
   effectiveSymmetryOrder,
   resolveScheduleDepth,
-  systemHasChaos,
 } from "./chaos-game";
 import {
   COLOR_FIXED_POINT_SCALE,
@@ -98,6 +104,7 @@ import {
   KERNEL_VARIATION_INDEX,
   WEIGHT_FIXED_POINT_SCALE,
   WORKGROUP_SIZE,
+  packChaosRowsTable,
   packVariations,
   writeColorEntry,
 } from "./flame-gpu";
@@ -153,7 +160,9 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   336 echoTintStrength vec4f (tint rgb, strength) |
  *   352 echoPaletteEnabled u32 | 356 scheduleCount u32 (zero = no
  *   post-word) | 360 scheduleDepth u32 | 364 scheduleWeighted u32 |
- *   368 scheduleTotalWeight f32 | 372..383 pad
+ *   368 scheduleTotalWeight f32 | 372 chaosEnabled u32 (zero = no chi
+ *   rows — binding 6 is then an unread alias, the echoColors idiom) |
+ *   376..383 pad
  *
  * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 336 stride);
  * slot count = transformCount + 1 + scheduleCount — the expanded transform
@@ -207,13 +216,25 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   coordinate BITCAST to u32 — an f32 stored bit-exactly in a u32 lane; the
  *   kernel round-trips it with WGSL `bitcast`, and `packGpuChains4` writes it
  *   through the buffer's own Float32Array view at the same element, z the
- *   chain's odd PCG stream increment)
+ *   chain's odd PCG stream increment, w the graph-directed selection state
+ *   word — the 3D Chain's aux.z encoding VERBATIM (low 16 bits
+ *   `prevBase + 1`, 0 = the entry pick; high 16 bits the current chaos
+ *   sub-orbit's plotted-point count), landed in the one lane this struct
+ *   has free. Zero — every packed chain — is exactly a fresh histogram's
+ *   chi state, so `packGpuChains4` writes nothing for it and a chi-free
+ *   document's chains buffer is byte-identical to before chi existed)
  *
  * colors: array<vec4u, 256> — gradient LUT (structural/radius) or
  * per-transform palette (transform mode), channels pre-scaled by
  * `COLOR_FIXED_POINT_SCALE` via `writeColorEntry`; zeros for wRamp (whose
  * color is computed in-shader from the projected s instead). The independent
  * balloon LUT is the separate echoColors table at binding 5.
+ *
+ * chaosRows: array<f32> at binding 6 — the graph-directed selection rows
+ * (flame-gpu.ts's `packChaosRowsTable` layout, the SAME helper: per-BASE-row
+ * totals, then one cumulative row per base over the EXPANDED slots), read
+ * only when `chaosEnabled` is 1; a chi-free document aliases the binding to
+ * `colors` exactly as an echo-less one aliases binding 5.
  *
  * hist: array<atomic<u32>>, `width * height * HIST_U32_PER_BUCKET`, the SAME
  * scaled 8-word emulated-u64 bucket layout as the 3D kernel. The backend
@@ -279,6 +300,7 @@ struct Params {
   scheduleDepth: u32,
   scheduleWeighted: u32,
   scheduleTotalWeight: f32,
+  chaosEnabled: u32,
 }
 
 struct Slot {
@@ -318,6 +340,10 @@ struct Chain {
 @group(0) @binding(3) var<storage, read_write> chains: array<Chain>;
 @group(0) @binding(4) var<storage, read_write> hist: array<atomic<u32>>;
 @group(0) @binding(5) var<storage, read> echoColors: array<vec4u, 256>;
+// Graph-directed selection rows (flame-gpu.ts's packChaosRowsTable layout),
+// read only when params.chaosEnabled is 1; a chi-free document aliases this
+// binding to colors exactly as an echo-less one aliases binding 5.
+@group(0) @binding(6) var<storage, read> chaosRows: array<f32>;
 
 // Warmup dispatches run a PLOT=false specialization of this same pipeline —
 // iterate the orbit without recording, like the CPU's unrecorded warmup.
@@ -534,6 +560,60 @@ fn applySlot(slotIdx: u32, p: vec4f, rng: ptr<function, vec2u>) -> vec4f {
   return q;
 }
 
+// --- pickIndex4 (chaos-game-4d.ts) — the 3D kernel's pickSlot VERBATIM
+// (the pick has no dimension): the chi row draw when rows are present and
+// the chain has a previous base, else uniform draw or weighted lower bound.
+// EXACTLY ONE rand01 draw on every path, the same lower-bound search
+// convention over each cumulative table, and pickIndex4's degenerate-row
+// tolerance (a stored total of 0 — the oracle's own chaosFallbackRows
+// decision, transferred — falls through to the global table, one draw
+// either way). prevBasePlus1 is the +1 encoding: 0 = no previous map, the
+// entry pick. Row i's total sits at chaosRows[i]; its cumulative row over
+// the EXPANDED slots starts at baseTransformCount + i * transformCount.
+fn pickSlot(rng: ptr<function, vec2u>, prevBasePlus1: u32) -> u32 {
+  if (params.chaosEnabled == 1u && prevBasePlus1 != 0u) {
+    let rowIdx = prevBasePlus1 - 1u;
+    let rowTotal = chaosRows[rowIdx];
+    if (rowTotal > 0.0) {
+      let needle = rand01(rng) * rowTotal;
+      let rowBase = params.baseTransformCount + rowIdx * params.transformCount;
+      var lo = 0u;
+      var hi = params.transformCount - 1u;
+      loop {
+        if (lo >= hi) {
+          break;
+        }
+        let mid = (lo + hi) >> 1u;
+        if (needle < chaosRows[rowBase + mid]) {
+          hi = mid;
+        } else {
+          lo = mid + 1u;
+        }
+      }
+      return lo;
+    }
+  }
+  let r = rand01(rng);
+  if (params.weighted == 1u) {
+    let needle = r * params.totalWeight;
+    var lo = 0u;
+    var hi = params.transformCount - 1u;
+    loop {
+      if (lo >= hi) {
+        break;
+      }
+      let mid = (lo + hi) >> 1u;
+      if (needle < slots[mid].cumWeight) {
+        hi = mid;
+      } else {
+        lo = mid + 1u;
+      }
+    }
+    return lo;
+  }
+  return min(u32(r * f32(params.transformCount)), params.transformCount - 1u);
+}
+
 // The diverging rotated-w ramp — color.ts's wRampColor, with the shape
 // constants (exponent, gray notch, brightness floor) interpolated from its
 // W_RAMP_* exports so this kernel's copy can't drift from the CPU
@@ -554,32 +634,65 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
   var pos = chains[chainIdx].pos;
   var rng = chains[chainIdx].aux.xz;
   var colorCoord = bitcast<f32>(chains[chainIdx].aux.y);
+  // Graph-directed selection state (aux.w — see the Chain4 layout doc, the
+  // 3D kernel's aux.z encoding verbatim): low half prevBase + 1 (0 = the
+  // entry pick), high half the current chaos sub-orbit's plotted-point
+  // count. A packed chain's zeroed word is exactly a fresh histogram's
+  // state. Dead registers without chi rows.
+  var chiPrev = chains[chainIdx].aux.w & 0xFFFFu;
+  var chiSub = chains[chainIdx].aux.w >> 16u;
 
   for (var n = 0u; n < params.itersPerInvocation; n++) {
-    // --- pickIndex4 (chaos-game-4d.ts): uniform draw, or weighted lower
-    // bound over cumulative weights — identical to the 3D kernel's pick
-    // (the pick has no dimension), over the symmetry-EXPANDED slots.
-    var idx: u32;
-    let r = rand01(&rng);
-    if (params.weighted == 1u) {
-      let needle = r * params.totalWeight;
-      var lo = 0u;
-      var hi = params.transformCount - 1u;
-      loop {
-        if (lo >= hi) {
-          break;
+    // Sub-orbit re-fuse (chaos-game.ts's CHAOS_SUB_ORBIT_POINTS) —
+    // accumulateFlame4's chi block, per chain, four coordinates: every K
+    // PLOTTED points, reseed the orbit from the one stream, reset to the
+    // entry pick, and warm the fresh orbit up unrecorded, or a
+    // block-diagonal chi would render only each chain's first block. The
+    // count-up twin of the CPU's countdown, gated on PLOT exactly as the
+    // CPU counts recorded iterations only — the backend's warmup dispatches
+    // never advance it. The warm-up steps are EXTRA work beyond
+    // itersPerInvocation, mirroring the CPU's own unrecorded loop; the
+    // color walk stays untouched during them (stepOrbit4 never blends c)
+    // and resets to 0.5 after, exactly the CPU order.
+    if (PLOT && params.chaosEnabled == 1u) {
+      if (chiSub >= ${CHAOS_SUB_ORBIT_POINTS}u) {
+        pos = vec4f(
+          rand01(&rng) - 0.5,
+          rand01(&rng) - 0.5,
+          rand01(&rng) - 0.5,
+          rand01(&rng) - 0.5,
+        );
+        chiPrev = 0u;
+        for (var k = 0u; k < ${WARMUP_ITERATIONS}u; k++) {
+          let wIdx = pickSlot(&rng, chiPrev);
+          var wp = applySlot(wIdx, pos, &rng);
+          if (!(all(abs(wp) <= vec4f(ESCAPE_LIMIT)))) {
+            wp = vec4f(
+              rand01(&rng) - 0.5,
+              rand01(&rng) - 0.5,
+              rand01(&rng) - 0.5,
+              rand01(&rng) - 0.5,
+            );
+            chiPrev = 0u;
+          } else {
+            chiPrev = wIdx % params.baseTransformCount + 1u;
+          }
+          pos = wp;
         }
-        let mid = (lo + hi) >> 1u;
-        if (needle < slots[mid].cumWeight) {
-          hi = mid;
-        } else {
-          lo = mid + 1u;
+        if (params.colorKind == 0u) {
+          colorCoord = 0.5;
         }
+        chiSub = 0u;
       }
-      idx = lo;
-    } else {
-      idx = min(u32(r * f32(params.transformCount)), params.transformCount - 1u);
+      chiSub = chiSub + 1u;
     }
+
+    // --- pickIndex4 (chaos-game-4d.ts): uniform draw, or weighted lower
+    // bound over cumulative weights — and, since the chi lift, the prevBase
+    // row draw ahead of both; see pickSlot above (identical to the 3D
+    // kernel's — the pick has no dimension), over the symmetry-EXPANDED
+    // slots.
+    let idx = pickSlot(&rng, chiPrev);
 
     // Structural coloring: blend the color coordinate toward this transform's
     // palette slot, at this transform's own speed, BEFORE stepping — exactly
@@ -597,7 +710,11 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
 
     // Escape-reseed over all four coordinates, NaN-robust: any NaN lane
     // makes its <= comparison false, so all() fails and the ! reseeds —
-    // the vec4 restatement of the 3D kernel's chained-&& form.
+    // the vec4 restatement of the 3D kernel's chained-&& form. An escape
+    // re-fuses the chi selection state to the entry pick; otherwise the
+    // BASE map that produced this step becomes the next pick's prevBase —
+    // stepOrbit4's escaped/index contract exactly. chiPrev is dead state
+    // without chi rows (pickSlot never reads it).
     if (!(all(abs(np) <= vec4f(ESCAPE_LIMIT)))) {
       np = vec4f(
         rand01(&rng) - 0.5,
@@ -608,6 +725,9 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
       if (params.colorKind == 0u) {
         colorCoord = 0.5;
       }
+      chiPrev = 0u;
+    } else {
+      chiPrev = idx % params.baseTransformCount + 1u;
     }
     pos = np;
 
@@ -732,6 +852,13 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
   chains[chainIdx].pos = pos;
   chains[chainIdx].aux.x = rng.x;
   chains[chainIdx].aux.y = bitcast<u32>(colorCoord);
+  // Chi selection state rides the chain across dispatches exactly as the
+  // CPU's rides the histogram (orbitPrevBase/orbitChaosLeft), so the
+  // re-fuse cadence is independent of dispatch boundaries. Guarded so a
+  // chi-free document's chains buffer stays byte-identical in VRAM too.
+  if (params.chaosEnabled == 1u) {
+    chains[chainIdx].aux.w = (chiSub << 16u) | chiPrev;
+  }
 }
 `;
 
@@ -781,7 +908,11 @@ const CHAIN4_AUX_RNG = 4; // aux.x: rng state.
 /** aux.y: the color coordinate — an f32 written through the buffer's
  * Float32Array view into a u32 lane; the kernel bitcasts it back. */
 const CHAIN4_AUX_COLOR = 5;
-const CHAIN4_AUX_INC = 6; // aux.z: odd PCG stream increment (aux.w unused, left zeroed).
+// aux.z: odd PCG stream increment. aux.w is the chi selection state word
+// (see the Chain4 layout doc — the 3D Chain's aux.z encoding in this
+// struct's one free lane), whose zero default IS the fresh entry-pick
+// state — so the packer writes nothing for it.
+const CHAIN4_AUX_INC = 6;
 
 const PARAMS4_PROJ_X = 0;
 const PARAMS4_PROJ_Y = 4;
@@ -828,6 +959,7 @@ const PARAMS4_SCHEDULE_COUNT = 89;
 const PARAMS4_SCHEDULE_DEPTH = 90;
 const PARAMS4_SCHEDULE_WEIGHTED = 91;
 const PARAMS4_SCHEDULE_TOTAL_WEIGHT = 92;
+const PARAMS4_CHAOS_ENABLED = 93;
 
 /**
  * A 4D chaos-game system in exactly the shape {@link packGpuSystem4} needs —
@@ -886,6 +1018,11 @@ export interface PackedGpuSystem4 {
   scheduleDepth: number;
   scheduleWeighted: boolean;
   scheduleTotalWeight: number;
+  /** The graph-directed selection rows — flame-gpu.ts's
+   * `packChaosRowsTable` layout through the SAME helper, or `null` for a
+   * system with no non-trivial chi row (the kernel's chi branch never
+   * engages and the backend aliases binding 6, the echoColors idiom). */
+  chaosRows: ArrayBuffer | null;
 }
 
 /** Entries in the `colors` table — same 256 x vec4u shape as the 3D
@@ -963,16 +1100,6 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
       `IFS supports at most ${MAX_TRANSFORMS} transforms, got ${transforms4.length}`,
     );
   }
-  // Defense in depth — packGpuSystem's chi guard verbatim (a Transform4's
-  // rows ride the lift, so the predicate is the same one): the 4D kernel
-  // has no chaos-row selection either, and the worker's CPU forcing covers
-  // both dimensions. Comes out with the WGSL lift (fr-wo2j.4).
-  if (systemHasChaos(transforms4)) {
-    throw new RangeError(
-      "packGpuSystem4: chaos rows are not in the WGSL kernels yet — chi documents take the CPU backend",
-    );
-  }
-
   const baseTransformCount = transforms4.length;
   const order = effectiveSymmetryOrder(symmetry.order, baseTransformCount);
   const transformCount = order * baseTransformCount;
@@ -1012,6 +1139,14 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
     weights.some((w) => w !== 1) &&
     totalWeight > 0 &&
     Number.isFinite(totalWeight);
+
+  // Graph-directed selection (chi): the CPU oracle's OWN prepared tables —
+  // the ONE shared buildChaosSelection over the same expanded `weights`
+  // this packer just summed, exactly as prepareChaosGame4 builds them (a
+  // Transform4's chi rows ride the 3D → 4D lift verbatim, so the builder
+  // is the same one; null for an all-trivial system) — transferred through
+  // flame-gpu.ts's packChaosRowsTable rather than recomputed.
+  const chaos = buildChaosSelection(transforms4, weights, baseTransformCount);
 
   // Flame structural-coloring pair per BASE map, resolved through
   // the SAME two definitions prepareChaosGame4 resolves the CPU oracle's
@@ -1111,6 +1246,9 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
     scheduleDepth,
     scheduleWeighted: scheduleTable.weighted,
     scheduleTotalWeight: scheduleTable.totalWeight,
+    chaosRows: chaos
+      ? packChaosRowsTable(chaos, transformCount, baseTransformCount)
+      : null,
   };
 }
 
@@ -1265,6 +1403,11 @@ export interface GpuParams4Fields {
   scheduleDepth: number;
   scheduleWeighted: boolean;
   scheduleTotalWeight: number;
+  /** Whether the packed system carries chi rows
+   * (`PackedGpuSystem4.chaosRows !== null`) — gates the kernel's whole chi
+   * path. False is the byte-identical pre-chi params block (the flag's
+   * word sits in what was trailing pad). */
+  chaosEnabled: boolean;
 }
 
 /**
@@ -1364,6 +1507,7 @@ export function packGpuParams4(fields: GpuParams4Fields): ArrayBuffer {
   u32[PARAMS4_SCHEDULE_DEPTH] = fields.scheduleDepth;
   u32[PARAMS4_SCHEDULE_WEIGHTED] = fields.scheduleWeighted ? 1 : 0;
   f32[PARAMS4_SCHEDULE_TOTAL_WEIGHT] = fields.scheduleTotalWeight;
+  u32[PARAMS4_CHAOS_ENABLED] = fields.chaosEnabled ? 1 : 0;
 
   const echo = fields.echo;
   if (echo) {

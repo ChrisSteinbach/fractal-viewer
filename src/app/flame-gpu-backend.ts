@@ -163,6 +163,11 @@ interface GpuProgramSpec {
   colors: ArrayBuffer;
   /** Independent balloon colors; absent aliases binding 5 to `colors`. */
   echoColors?: ArrayBuffer;
+  /** Graph-directed selection rows (`packChaosRowsTable`'s layout); absent
+   * aliases binding 6 to `colors` — the echoColors idiom exactly: the
+   * kernel's `chaosEnabled` flag keeps the alias unread, avoiding a second
+   * allocation/upload for the chi-free common case. */
+  chaosRows?: ArrayBuffer;
   chains: ArrayBuffer;
   convertSnapshot: SnapshotConverter;
   convertDisplay: DisplayConverter;
@@ -730,6 +735,20 @@ async function buildBackendOnDevice(
     device.queue.writeBuffer(echoColorsBuffer, 0, program.echoColors);
   }
 
+  // Chi-free mode binding 6 aliases the primary table the same way (two
+  // read-only bindings of one buffer are legal), and the kernel's
+  // chaosEnabled flag keeps the alias unread. A chi document gets its own
+  // immutable row table.
+  let chaosRowsBuffer = colorsBuffer;
+  if (program.chaosRows) {
+    chaosRowsBuffer = device.createBuffer({
+      label: "flame-gpu chaos rows",
+      size: program.chaosRows.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    device.queue.writeBuffer(chaosRowsBuffer, 0, program.chaosRows);
+  }
+
   const chainsBuffer = device.createBuffer({
     label: "flame-gpu chains",
     size: program.chains.byteLength,
@@ -785,6 +804,11 @@ async function buildBackendOnDevice(
       },
       {
         binding: 5,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "read-only-storage" },
+      },
+      {
+        binding: 6,
         visibility: GPUShaderStage.COMPUTE,
         buffer: { type: "read-only-storage" },
       },
@@ -845,6 +869,7 @@ async function buildBackendOnDevice(
       { binding: 3, resource: { buffer: chainsBuffer } },
       { binding: 4, resource: { buffer: histBuffer } },
       { binding: 5, resource: { buffer: echoColorsBuffer } },
+      { binding: 6, resource: { buffer: chaosRowsBuffer } },
     ],
   });
 
@@ -1128,6 +1153,7 @@ export async function createGpuFlameBackend(
       scheduleDepth: packed.scheduleDepth,
       scheduleWeighted: packed.scheduleWeighted,
       scheduleTotalWeight: packed.scheduleTotalWeight,
+      chaosEnabled: packed.chaosRows !== null,
     }),
     paramsItersOffsetBytes: PARAMS_ITERS_OFFSET_BYTES,
     slots: packed.slots,
@@ -1135,6 +1161,7 @@ export async function createGpuFlameBackend(
     echoColors: request.echoColorLUT
       ? packGpuColorLUT(request.echoColorLUT)
       : undefined,
+    chaosRows: packed.chaosRows ?? undefined,
     chains: packGpuChains(NUM_CHAINS, request.seed),
     convertSnapshot: convertGpuHistogram,
     convertDisplay: convertGpuDisplayHistogram,
@@ -1193,6 +1220,7 @@ export async function createGpuFlameBackend4(
       scheduleDepth: packed.scheduleDepth,
       scheduleWeighted: packed.scheduleWeighted,
       scheduleTotalWeight: packed.scheduleTotalWeight,
+      chaosEnabled: packed.chaosRows !== null,
     }),
     paramsItersOffsetBytes: PARAMS4_ITERS_OFFSET_BYTES,
     slots: packed.slots,
@@ -1200,6 +1228,7 @@ export async function createGpuFlameBackend4(
     echoColors: request.echoColorLUT
       ? packGpuColorLUT(request.echoColorLUT)
       : undefined,
+    chaosRows: packed.chaosRows ?? undefined,
     chains: packGpuChains4(NUM_CHAINS, request.seed),
     convertSnapshot: convertGpuHistogram4,
     convertDisplay: convertGpuDisplayHistogram4,

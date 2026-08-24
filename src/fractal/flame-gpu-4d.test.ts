@@ -885,6 +885,7 @@ describe("packGpuParams4", () => {
       scheduleDepth: 0,
       scheduleWeighted: false,
       scheduleTotalWeight: 0,
+      chaosEnabled: false,
       ...overrides,
       echoPalette: overrides.echoPalette ?? false,
     };
@@ -1342,21 +1343,58 @@ describe("FLAME_GPU_KERNEL_4D_WGSL variation switch", () => {
   });
 });
 
-describe("packGpuSystem4 chaos rows (defense in depth)", () => {
-  it("throws on a chi-carrying 4D system — packGpuSystem's guard, one dimension up", () => {
+describe("packGpuSystem4 chaos rows (the chi lane)", () => {
+  // The 3D packer's chi fixture one dimension up: order 2 expands 2 base
+  // maps to 4 slots, so the packed rows must weigh the EXPANDED slot list
+  // (a kaleidoscope copy inherits its base map's chi column). Values are
+  // asserted against prepareChaosGame4's OWN prepared tables — the
+  // transfer contract, through flame-gpu.ts's shared packChaosRowsTable.
+  const CHI_TRANSFORMS4: Transform4[] = [
+    {
+      position: [0.5, 0, 0, 0],
+      scale: [0.5, 0.5, 0.5, 0.5],
+      weight: 3,
+      chaos: [1, 0.5],
+    },
+    {
+      position: [0, 0.5, 0, 0],
+      scale: [0.5, 0.5, 0.5, 0.5],
+      weight: 1,
+      chaos: [2, 1],
+    },
+  ];
+  const CHI_SYMMETRY: SymmetryParams = { order: 2, plane: "xz" };
+
+  it("transfers buildChaosSelection's tables through the shared packChaosRowsTable — totals first, then rows over the expanded slots", () => {
+    const packed = packGpuSystem4(
+      baseSpec4({ transforms4: CHI_TRANSFORMS4, symmetry: CHI_SYMMETRY }),
+    );
+    const prepared = prepareChaosGame4(CHI_TRANSFORMS4, null, CHI_SYMMETRY);
+    expect(packed.chaosRows).not.toBeNull();
+    const f32 = new Float32Array(packed.chaosRows!);
+    expect(f32.length).toBe(2 + 2 * 4);
+    for (let i = 0; i < 2; i++) {
+      expect(f32[i]).toBe(Math.fround(prepared.chaosRowTotals![i]));
+      for (let s = 0; s < 4; s++) {
+        expect(f32[2 + i * 4 + s]).toBe(Math.fround(prepared.chaosRows![i][s]));
+      }
+    }
+  });
+
+  it("no longer throws on a chi-carrying 4D system — the defense-in-depth guard went out with the kernels' lift", () => {
     const transforms4 = makeTransforms4(2).map((t, i) =>
       i === 0 ? { ...t, chaos: [1, 0] } : t,
     );
-    expect(() => packGpuSystem4(baseSpec4({ transforms4 }))).toThrow(
-      RangeError,
-    );
-    expect(() => packGpuSystem4(baseSpec4({ transforms4 }))).toThrow(
-      /chaos rows/,
-    );
+    expect(() => packGpuSystem4(baseSpec4({ transforms4 }))).not.toThrow();
+    expect(packGpuSystem4(baseSpec4({ transforms4 })).chaosRows).not.toBeNull();
+  });
+
+  it("packs chaosRows null for a chi-free system, and for an all-trivial row that selects exactly as no row at all", () => {
+    expect(packGpuSystem4(baseSpec4()).chaosRows).toBeNull();
     const trivial = makeTransforms4(2).map((t) => ({ ...t, chaos: [1, 1] }));
-    expect(() =>
-      packGpuSystem4(baseSpec4({ transforms4: trivial })),
-    ).not.toThrow();
+    expect(
+      packGpuSystem4(baseSpec4({ transforms4: trivial })).chaosRows,
+    ).toBeNull();
   });
 });
 
@@ -1448,6 +1486,7 @@ describe("packGpuParams4 schedule scalars", () => {
       scheduleDepth: 3,
       scheduleWeighted: true,
       scheduleTotalWeight: 7.5,
+      chaosEnabled: true,
     });
     const f32 = new Float32Array(buf);
     const u32 = new Uint32Array(buf);
@@ -1456,5 +1495,6 @@ describe("packGpuParams4 schedule scalars", () => {
     expect(u32[90]).toBe(3); // scheduleDepth (byte 360)
     expect(u32[91]).toBe(1); // scheduleWeighted (byte 364)
     expect(f32[92]).toBe(7.5); // scheduleTotalWeight (byte 368)
+    expect(u32[93]).toBe(1); // chaosEnabled (byte 372, the old pad)
   });
 });

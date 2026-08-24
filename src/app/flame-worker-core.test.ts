@@ -3023,8 +3023,8 @@ describe("FlameWorkerSession instrumentation", () => {
   });
 });
 
-describe("FlameWorkerSession chaos rows force the CPU backend", () => {
-  it("never attempts the GPU factory for a chi document and discloses chaosForced on the backend event", async () => {
+describe("FlameWorkerSession chaos rows take the GPU backend", () => {
+  it("attempts the GPU factory for a chi document — the WGSL kernels carry chi now, so nothing forces CPU and nothing is disclosed", async () => {
     let factoryCalls = 0;
     const createGpuBackend = async (): Promise<FlameAccumBackend> => {
       factoryCalls++;
@@ -3046,18 +3046,20 @@ describe("FlameWorkerSession chaos rows force the CPU backend", () => {
     );
     await drainAsync(scheduler);
 
-    // GPU would have been attempted (auto + factory + no failure) — the
-    // rows are the one reason it wasn't, so the event says so.
-    expect(factoryCalls).toBe(0);
+    // The CPU-force era's routing (chi documents never reached the GPU
+    // factory) is over: the packers transfer the rows and the kernels run
+    // pickIndex's chi path, so a chi document takes whatever backend the
+    // machine offers — and the backend event carries no chaosForced.
+    expect(factoryCalls).toBe(1);
     expect(backendEvents(events)).toEqual([
-      { type: "backend", backend: "cpu", chaosForced: true },
+      { type: "backend", backend: "gpu" },
     ]);
   });
 
-  it("does not blame chaos rows when GPU was never on the table", async () => {
+  it("takes the ordinary CPU path, with no chi disclosure, when GPU was never on the table", async () => {
     // No factory wired up: the CPU backend is the natural choice, and the
-    // event must NOT carry chaosForced — the note would otherwise claim chi
-    // forced a fallback on a machine that never had the option.
+    // event must NOT carry chaosForced — chi is not a reason for anything
+    // any more, on any machine.
     const { session, events, scheduler } = harness({});
     session.handle(
       startCommand({
@@ -3148,7 +3150,7 @@ describe("FlameWorkerSession shape emitters force the CPU backend", () => {
     ]);
   });
 
-  it("sets BOTH flags for a document carrying chi and emitters — each is truthfully a blocker", async () => {
+  it("forces CPU for a chi+emitter document via the emitter flag ALONE — chi is no longer a blocker, so it must not be blamed", async () => {
     const createGpuBackend = async (): Promise<FlameAccumBackend> => ({
       kind: "gpu",
       accumulate: async (n) => n,
@@ -3166,13 +3168,12 @@ describe("FlameWorkerSession shape emitters force the CPU backend", () => {
     );
     await drainAsync(scheduler);
 
+    // The kernels know chi but not emitters (fr-wo2j.8 is that lift), so
+    // the emitter force still routes this document to CPU — and the event
+    // names emitters alone: a chaosForced here would claim a force that no
+    // longer exists.
     expect(backendEvents(events)).toEqual([
-      {
-        type: "backend",
-        backend: "cpu",
-        chaosForced: true,
-        emitterForced: true,
-      },
+      { type: "backend", backend: "cpu", emitterForced: true },
     ]);
   });
 

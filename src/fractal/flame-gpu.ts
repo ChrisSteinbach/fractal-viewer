@@ -18,7 +18,13 @@
  * note), parity with `accumulateFlame` (see that function and
  * `chaos-game.ts`'s `stepOrbit`):
  * same uniform/weighted transform pick (lower-bound binary search over
- * cumulative weights), same affine → blended-variations → symmetry
+ * cumulative weights) — and, one layer over it, the same graph-directed
+ * selection (`pickIndex`'s chi path: the prevBase row draw over
+ * `buildChaosSelection`'s own transferred tables, the escape/entry re-fuse,
+ * and the `CHAOS_SUB_ORBIT_POINTS` sub-orbit re-fuse, each chain carrying
+ * its own selection state exactly as the CPU's histogram carries
+ * `orbitPrevBase`/`orbitChaosLeft`) — same affine → blended-variations →
+ * symmetry
  * post-rotation step, same escape-reseed limit (written NaN-robustly for
  * f32: WGSL comparisons with NaN are false, so `!(all inside)` catches NaN
  * and ±inf alike), same final-transform adopt-only-if-finite lens, same
@@ -85,14 +91,17 @@ import type { PaletteSpec } from "./palette";
 // authored imports above stay untouched.
 import { composeAffine, rotationMatrixXYZ } from "./affine";
 import {
+  CHAOS_SUB_ORBIT_POINTS,
   DEFAULT_COLOR_SPEED,
   MAX_TRANSFORMS,
+  WARMUP_ITERATIONS,
+  buildChaosSelection,
   buildScheduleTable,
   derivedColorIndex,
   effectiveSymmetryOrder,
   resolveScheduleDepth,
-  systemHasChaos,
 } from "./chaos-game";
+import type { ChaosSelection } from "./chaos-game";
 import { transformColors } from "./color";
 import { isFoldVariationType, resolveFoldRadii } from "./variations";
 import { buildPaletteLUT } from "./palette";
@@ -170,7 +179,9 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  *   112 echoTintStrength vec4f (tint rgb, strength) |
  *   128 echoPaletteEnabled u32 | 132 scheduleCount u32 (zero = no post-word) |
  *   136 scheduleDepth u32 | 140 scheduleWeighted u32 |
- *   144 scheduleTotalWeight f32 | 148..159 pad
+ *   144 scheduleTotalWeight f32 | 148 chaosEnabled u32 (zero = no chi
+ *   rows — binding 6 is then an unread alias, the echoColors idiom) |
+ *   152..159 pad
  *
  * Slot (storage array element, {@link SLOT_STRIDE_BYTES} = 336 stride);
  * slot count = transformCount + 1 + scheduleCount — the expanded transform
@@ -206,13 +217,27 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  *
  * Chain (storage array element, {@link CHAIN_STRIDE_BYTES} = 32 stride):
  *   0 pos vec4f (xyz orbit point, w color coordinate) | 16 aux vec4u (x rng
- *   state, y the chain's odd PCG stream increment)
+ *   state, y the chain's odd PCG stream increment, z the graph-directed
+ *   selection state word — low 16 bits `prevBase + 1` (0 = no previous map,
+ *   the entry pick), high 16 bits the plotted-point count of the current
+ *   chaos sub-orbit (both bounded far inside a half: MAX_TRANSFORMS is 256
+ *   and CHAOS_SUB_ORBIT_POINTS 4096) — w unused. The +1/count-up encoding
+ *   makes the ArrayBuffer's ZERO default exactly a fresh histogram's chi
+ *   state (`orbitPrevBase` -1, a full sub-orbit ahead), so `packGpuChains`
+ *   writes nothing for it and a chi-free document's chains buffer is
+ *   byte-identical to before chi existed)
  *
  * colors: array<vec4u, 256> — legacy palette (entry per base transform) or
  * 256-entry gradient LUT, channels pre-scaled by
  * {@link COLOR_FIXED_POINT_SCALE}; the w lane is unused padding. A separate
  * echoColors table at binding 5 carries the independent balloon LUT; inherit
  * aliases this binding to colors but never reads it.
+ *
+ * chaosRows: array<f32> at binding 6 — the graph-directed selection rows
+ * ({@link packChaosRowsTable}'s layout: per-BASE-row totals, then one
+ * cumulative row per base over the EXPANDED slots), read only when
+ * `chaosEnabled` is 1. A chi-free document aliases this binding to `colors`
+ * exactly as an echo-less one aliases binding 5 — bound but never read.
  *
  * hist: array<atomic<u32>>, `width * height * HIST_U32_PER_BUCKET`,
  * bucket layout as {@link HIST_U32_PER_BUCKET} describes.
@@ -227,9 +252,11 @@ export const PARAMS_ITERS_OFFSET_BYTES = 64;
 
 /** The GPU counterpart of `chaos-game.ts`'s WARMUP_ITERATIONS semantics:
  * every chain runs this many unrecorded steps (the PLOT=false pipeline)
- * once per accumulation, so recording starts on the attractor. Same
- * constant, per chain instead of per orbit. */
-export { WARMUP_ITERATIONS } from "./chaos-game";
+ * once per accumulation, so recording starts on the attractor — and, since
+ * the chi lift, the same constant is the per-chain re-fuse warm-up length
+ * interpolated into the kernel below. Same constant, per chain instead of
+ * per orbit. */
+export { WARMUP_ITERATIONS };
 
 export const FLAME_GPU_KERNEL_WGSL = /* wgsl */ `
 const ESCAPE_LIMIT: f32 = 50.0;
@@ -259,6 +286,7 @@ struct Params {
   scheduleDepth: u32,
   scheduleWeighted: u32,
   scheduleTotalWeight: f32,
+  chaosEnabled: u32,
 }
 
 struct Slot {
@@ -297,6 +325,11 @@ struct Chain {
 @group(0) @binding(3) var<storage, read_write> chains: array<Chain>;
 @group(0) @binding(4) var<storage, read_write> hist: array<atomic<u32>>;
 @group(0) @binding(5) var<storage, read> echoColors: array<vec4u, 256>;
+// Graph-directed selection rows (packChaosRowsTable's layout: per-BASE-row
+// totals, then one cumulative row per base over the EXPANDED slots), read
+// only when params.chaosEnabled is 1; a chi-free document aliases this
+// binding to colors exactly as an echo-less one aliases binding 5.
+@group(0) @binding(6) var<storage, read> chaosRows: array<f32>;
 
 // Warmup dispatches run a PLOT=false specialization of this same pipeline —
 // iterate the orbit without recording, like the CPU's unrecorded warmup.
@@ -504,6 +537,64 @@ fn applySlot(slotIdx: u32, p: vec3f, rng: ptr<function, vec2u>) -> vec3f {
   return q;
 }
 
+// --- pickIndex (chaos-game.ts): the chi row draw when rows are present and
+// the chain has a previous base, else uniform draw or weighted lower bound —
+// the whole selection in ONE function so the main loop and the re-fuse
+// warm-up cannot drift. EXACTLY ONE rand01 draw on every path (pickIndex's
+// stream discipline), the same lower-bound search convention over each
+// cumulative table, and pickIndex's degenerate-row tolerance: a row whose
+// stored total is 0 — the packer transfers the oracle's own
+// chaosFallbackRows decision as exactly that — falls through to the global
+// table, one draw either way. prevBasePlus1 is the chi selection state's +1
+// encoding (0 = no previous map, the entry pick, which uses the global
+// table exactly as before chi existed). Row i's total sits at chaosRows[i];
+// its cumulative row over the EXPANDED slots starts at
+// baseTransformCount + i * transformCount (see the chaosRows layout doc).
+fn pickSlot(rng: ptr<function, vec2u>, prevBasePlus1: u32) -> u32 {
+  if (params.chaosEnabled == 1u && prevBasePlus1 != 0u) {
+    let rowIdx = prevBasePlus1 - 1u;
+    let rowTotal = chaosRows[rowIdx];
+    if (rowTotal > 0.0) {
+      let needle = rand01(rng) * rowTotal;
+      let rowBase = params.baseTransformCount + rowIdx * params.transformCount;
+      var lo = 0u;
+      var hi = params.transformCount - 1u;
+      loop {
+        if (lo >= hi) {
+          break;
+        }
+        let mid = (lo + hi) >> 1u;
+        if (needle < chaosRows[rowBase + mid]) {
+          hi = mid;
+        } else {
+          lo = mid + 1u;
+        }
+      }
+      return lo;
+    }
+  }
+  let r = rand01(rng);
+  if (params.weighted == 1u) {
+    // "needle", not "target": target is a WGSL reserved identifier.
+    let needle = r * params.totalWeight;
+    var lo = 0u;
+    var hi = params.transformCount - 1u;
+    loop {
+      if (lo >= hi) {
+        break;
+      }
+      let mid = (lo + hi) >> 1u;
+      if (needle < slots[mid].cumWeight) {
+        hi = mid;
+      } else {
+        lo = mid + 1u;
+      }
+    }
+    return lo;
+  }
+  return min(u32(r * f32(params.transformCount)), params.transformCount - 1u);
+}
+
 @compute @workgroup_size(${WORKGROUP_SIZE})
 fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
   let chainIdx = gid.x;
@@ -513,31 +604,52 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
   var pos = chains[chainIdx].pos.xyz;
   var colorCoord = chains[chainIdx].pos.w;
   var rng = chains[chainIdx].aux.xy;
+  // Graph-directed selection state (aux.z — see the Chain layout doc): low
+  // half prevBase + 1 (0 = the entry pick), high half the current chaos
+  // sub-orbit's plotted-point count. A packed chain's zeroed word is
+  // exactly a fresh histogram's state. Dead registers without chi rows.
+  var chiPrev = chains[chainIdx].aux.z & 0xFFFFu;
+  var chiSub = chains[chainIdx].aux.z >> 16u;
 
   for (var n = 0u; n < params.itersPerInvocation; n++) {
-    // --- pickIndex (chaos-game.ts): uniform draw, or weighted lower bound.
-    var idx: u32;
-    let r = rand01(&rng);
-    if (params.weighted == 1u) {
-      // "needle", not "target": target is a WGSL reserved identifier.
-      let needle = r * params.totalWeight;
-      var lo = 0u;
-      var hi = params.transformCount - 1u;
-      loop {
-        if (lo >= hi) {
-          break;
+    // Sub-orbit re-fuse (chaos-game.ts's CHAOS_SUB_ORBIT_POINTS) —
+    // accumulateFlame's chi block, per chain: every K PLOTTED points,
+    // reseed the orbit from the one stream, reset to the entry pick, and
+    // warm the fresh orbit up unrecorded, or a block-diagonal chi would
+    // render only each chain's first block. The count-up twin of the CPU's
+    // countdown, gated on PLOT exactly as the CPU counts recorded
+    // iterations only — the backend's warmup dispatches never advance it.
+    // The warm-up steps are EXTRA work beyond itersPerInvocation, mirroring
+    // the CPU's own unrecorded loop; the color walk stays untouched during
+    // them (stepOrbit never blends c) and resets to 0.5 after, exactly the
+    // CPU order.
+    if (PLOT && params.chaosEnabled == 1u) {
+      if (chiSub >= ${CHAOS_SUB_ORBIT_POINTS}u) {
+        pos = vec3f(rand01(&rng) - 0.5, rand01(&rng) - 0.5, rand01(&rng) - 0.5);
+        chiPrev = 0u;
+        for (var k = 0u; k < ${WARMUP_ITERATIONS}u; k++) {
+          let wIdx = pickSlot(&rng, chiPrev);
+          var wp = applySlot(wIdx, pos, &rng);
+          if (!(abs(wp.x) <= ESCAPE_LIMIT && abs(wp.y) <= ESCAPE_LIMIT && abs(wp.z) <= ESCAPE_LIMIT)) {
+            wp = vec3f(rand01(&rng) - 0.5, rand01(&rng) - 0.5, rand01(&rng) - 0.5);
+            chiPrev = 0u;
+          } else {
+            chiPrev = wIdx % params.baseTransformCount + 1u;
+          }
+          pos = wp;
         }
-        let mid = (lo + hi) >> 1u;
-        if (needle < slots[mid].cumWeight) {
-          hi = mid;
-        } else {
-          lo = mid + 1u;
+        if (params.colorMode == 1u) {
+          colorCoord = 0.5;
         }
+        chiSub = 0u;
       }
-      idx = lo;
-    } else {
-      idx = min(u32(r * f32(params.transformCount)), params.transformCount - 1u);
+      chiSub = chiSub + 1u;
     }
+
+    // --- pickIndex (chaos-game.ts): uniform draw, or weighted lower bound —
+    // and, since the chi lift, the prevBase row draw ahead of both; see
+    // pickSlot above.
+    let idx = pickSlot(&rng, chiPrev);
     // The BASE map this slot is a (possibly rotated) copy of — accumulateFlame's
     // own idx % baseTransformCount, kept here as the legacy per-transform
     // palette's lookup key at the bottom of the loop. The structural walk just
@@ -559,12 +671,20 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
 
     var np = applySlot(idx, pos, &rng);
 
-    // Escape-reseed, NaN-robust (see the module doc).
+    // Escape-reseed, NaN-robust (see the module doc). An escape re-fuses
+    // the chi selection state to the entry pick; otherwise the map that
+    // produced this step becomes the next pick's prevBase — stepOrbit's
+    // escaped/index contract exactly. chiPrev is dead state without chi
+    // rows (pickSlot never reads it), so the unguarded update costs a
+    // register write and changes nothing.
     if (!(abs(np.x) <= ESCAPE_LIMIT && abs(np.y) <= ESCAPE_LIMIT && abs(np.z) <= ESCAPE_LIMIT)) {
       np = vec3f(rand01(&rng) - 0.5, rand01(&rng) - 0.5, rand01(&rng) - 0.5);
       if (params.colorMode == 1u) {
         colorCoord = 0.5;
       }
+      chiPrev = 0u;
+    } else {
+      chiPrev = baseIdx + 1u;
     }
     pos = np;
 
@@ -653,6 +773,13 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
 
   chains[chainIdx].pos = vec4f(pos, colorCoord);
   chains[chainIdx].aux.x = rng.x;
+  // Chi selection state rides the chain across dispatches exactly as the
+  // CPU's rides the histogram (orbitPrevBase/orbitChaosLeft), so the
+  // re-fuse cadence is independent of dispatch boundaries. Guarded so a
+  // chi-free document's chains buffer stays byte-identical in VRAM too.
+  if (params.chaosEnabled == 1u) {
+    chains[chainIdx].aux.z = (chiSub << 16u) | chiPrev;
+  }
 }
 `;
 
@@ -705,7 +832,10 @@ const SLOT_FOLD_RADII = 72;
 const F32_PER_CHAIN = CHAIN_STRIDE_BYTES / 4; // 8.
 const CHAIN_POS = 0; // pos.xyzw: x, y, z, colorCoord.
 const CHAIN_AUX_X = 4; // aux.x: rng state.
-const CHAIN_AUX_INC = 5; // aux.y: odd PCG stream increment (aux.zw unused, left zeroed).
+// aux.y: odd PCG stream increment. aux.z is the chi selection state word
+// (see the Chain layout doc), whose zero default IS the fresh entry-pick
+// state — so the packer writes nothing for it; aux.w unused, left zeroed.
+const CHAIN_AUX_INC = 5;
 
 /** Entries in the `colors` LUT/palette table — always the full 256, however
  * many are actually meaningful (see {@link packGpuSystem}'s `colorMode`). */
@@ -738,6 +868,7 @@ const PARAMS_SCHEDULE_COUNT = 33;
 const PARAMS_SCHEDULE_DEPTH = 34;
 const PARAMS_SCHEDULE_WEIGHTED = 35;
 const PARAMS_SCHEDULE_TOTAL_WEIGHT = 36;
+const PARAMS_CHAOS_ENABLED = 37;
 
 /**
  * `chaos-game.ts`'s `symmetryRotation`, restated here (a deliberate
@@ -990,6 +1121,12 @@ export interface PackedGpuSystem {
    * table the CPU's `prepareSchedule` builds. */
   scheduleWeighted: boolean;
   scheduleTotalWeight: number;
+  /** The graph-directed selection rows ({@link packChaosRowsTable}'s
+   * layout — `buildChaosSelection`'s own numbers, transferred), or `null`
+   * for a system with no non-trivial chi row — in which case the kernel's
+   * chi branch never engages (`chaosEnabled` 0) and the backend aliases
+   * binding 6 exactly as an echo-less one aliases binding 5. */
+  chaosRows: ArrayBuffer | null;
 }
 
 /**
@@ -1062,17 +1199,6 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
   const scheduleTransforms =
     scheduleDepth > 0 && schedule ? schedule.transforms : [];
   const scheduleCount = scheduleTransforms.length;
-  // Defense in depth, not routing: the flame worker already forces the CPU
-  // backend for chi documents (flame-worker-core's gpuEligible), because
-  // this kernel has no chaos-row selection — packing one would render a
-  // DIFFERENT object than the CPU oracle for the same document. Throw
-  // rather than silently draw the unconstrained system; the WGSL lift is
-  // open work (fr-wo2j.4), and this guard comes out with it.
-  if (systemHasChaos(transforms)) {
-    throw new RangeError(
-      "packGpuSystem: chaos rows are not in the WGSL kernels yet — chi documents take the CPU backend",
-    );
-  }
 
   const baseTransformCount = transforms.length;
   const baseAffines = transforms.map(composeAffine);
@@ -1112,6 +1238,15 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
     weights.some((w) => w !== 1) &&
     totalWeight > 0 &&
     Number.isFinite(totalWeight);
+
+  // Graph-directed selection (chi): the CPU oracle's OWN prepared tables —
+  // buildChaosSelection over the same expanded `weights` this packer just
+  // summed, exactly as prepareChaosGame builds them (null for an
+  // all-trivial system, flam3's flam3_check_unity_chaos disabling) —
+  // transferred into the kernel's flat storage array rather than
+  // recomputed, the escape lane's precedent: the packer ships its oracle's
+  // numbers so the two sides cannot disagree.
+  const chaos = buildChaosSelection(transforms, weights, baseTransformCount);
 
   // Flame structural-coloring pair per BASE map, resolved through
   // the SAME two definitions prepareChaosGame resolves the CPU oracle's with,
@@ -1215,7 +1350,58 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
     scheduleDepth,
     scheduleWeighted: scheduleTable.weighted,
     scheduleTotalWeight: scheduleTable.totalWeight,
+    chaosRows: chaos
+      ? packChaosRowsTable(chaos, transformCount, baseTransformCount)
+      : null,
   };
+}
+
+/**
+ * Pack `buildChaosSelection`'s prepared tables into the kernel's flat
+ * `chaosRows` storage array — TRANSFERRED, never recomputed (the escape
+ * lane's precedent: the packer ships its oracle's own numbers so the two
+ * sides cannot disagree). Layout, in f32 elements:
+ *
+ *   [0 .. baseTransformCount)                    per-row totals, by BASE map
+ *   [baseTransformCount + i * transformCount + s]  row i's cumulative entry s
+ *
+ * Rows are `buildChaosSelection`'s own cumulative `Float64Array`s over the
+ * EXPANDED slot list, narrowed to f32 by the store (narrowing is monotone,
+ * so the kernel's lower-bound search convention stays valid on the narrowed
+ * row). A row the oracle recorded in `chaosFallbackRows` stores total 0 —
+ * the kernel's `rowTotal > 0.0` test is then exactly `pickIndex`'s
+ * degenerate-row decision, transferred rather than re-derived in f32 — with
+ * ONE narrowing guard on top: a total whose f32 form is non-finite (an
+ * authored-weight overflow past f32 range that the oracle's f64 test cannot
+ * see) also stores 0, falling back to the global table — the conservative
+ * direction `pickIndex` already takes for a row it cannot trust.
+ *
+ * Exported for `flame-gpu-4d.ts`: selection has no dimension
+ * (`buildChaosSelection`'s own reasoning), so the 4D packer writes its
+ * table through this same helper — and for the packing tests, which pin
+ * the transfer against the oracle's arrays on a fixture.
+ */
+export function packChaosRowsTable(
+  selection: ChaosSelection,
+  transformCount: number,
+  baseTransformCount: number,
+): ArrayBuffer {
+  const buf = new ArrayBuffer(
+    (baseTransformCount + baseTransformCount * transformCount) * 4,
+  );
+  const f32 = new Float32Array(buf);
+  const fallback = new Set(selection.chaosFallbackRows);
+  for (let i = 0; i < baseTransformCount; i++) {
+    const total = selection.chaosRowTotals[i];
+    f32[i] =
+      !fallback.has(i) && Number.isFinite(Math.fround(total)) ? total : 0;
+    const row = selection.chaosRows[i];
+    const rowBase = baseTransformCount + i * transformCount;
+    for (let s = 0; s < transformCount; s++) {
+      f32[rowBase + s] = row[s];
+    }
+  }
+  return buf;
 }
 
 /**
@@ -1307,6 +1493,11 @@ export interface GpuParamsFields {
   scheduleDepth: number;
   scheduleWeighted: boolean;
   scheduleTotalWeight: number;
+  /** Whether the packed system carries chi rows
+   * (`PackedGpuSystem.chaosRows !== null`) — gates the kernel's whole chi
+   * path. False is the byte-identical pre-chi params block (the flag's
+   * word sits in what was trailing pad). */
+  chaosEnabled: boolean;
 }
 
 /**
@@ -1349,6 +1540,7 @@ export function packGpuParams(fields: GpuParamsFields): ArrayBuffer {
   u32[PARAMS_SCHEDULE_DEPTH] = fields.scheduleDepth;
   u32[PARAMS_SCHEDULE_WEIGHTED] = fields.scheduleWeighted ? 1 : 0;
   f32[PARAMS_SCHEDULE_TOTAL_WEIGHT] = fields.scheduleTotalWeight;
+  u32[PARAMS_CHAOS_ENABLED] = fields.chaosEnabled ? 1 : 0;
   const echo = fields.echo;
   if (echo) {
     f32[PARAMS_ECHO_WEIGHT] = echo.weight;
