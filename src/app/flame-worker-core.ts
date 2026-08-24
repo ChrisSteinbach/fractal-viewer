@@ -57,11 +57,7 @@ import type {
   TonemapParams,
 } from "../fractal/flame";
 import { symmetryIsNonFlat } from "../fractal/affine4";
-import {
-  prepareChaosGame,
-  systemHasChaos,
-  systemHasEmitters,
-} from "../fractal/chaos-game";
+import { prepareChaosGame, systemHasEmitters } from "../fractal/chaos-game";
 import type { PreparedChaosGame } from "../fractal/chaos-game";
 import { prepareChaosGame4 } from "../fractal/chaos-game-4d";
 import type { PreparedChaosGame4 } from "../fractal/chaos-game-4d";
@@ -371,23 +367,16 @@ export type FlameWorkerEvent =
        * software rasterization must not pass as a normal GPU render.
        * Absent for CPU backends. */
       software?: boolean;
-      /** True when this CPU backend was FORCED by the document's chaos rows
-       * — GPU would otherwise have been attempted (`gpuPreference` auto, a
-       * factory wired up, no prior failure ratchet), but the flame WGSL
-       * kernels do not know chi yet (open work: fr-wo2j.4) and one document
-       * must never render two different objects. The main thread's backend
-       * note names chaos rows as the reason. Absent for GPU backends, and
-       * for CPU backends that are CPU for any other reason (so the note
-       * never blames chi for a machine that simply has no WebGPU). */
-      chaosForced?: boolean;
       /** True when this CPU backend was FORCED by the document's shape
-       * emitters — {@link chaosForced}'s exact contract one selection layer
-       * over: GPU would otherwise have been attempted, but the flame WGSL
+       * emitters — GPU would otherwise have been attempted
+       * (`gpuPreference` auto, a factory wired up, no prior failure
+       * ratchet), but the flame WGSL
        * kernels do not know emitters yet (open work: fr-wo2j.8) and one
-       * document must never render two different objects. A document
-       * carrying BOTH chi and emitters sets both flags; the main thread
-       * discloses chi first. Absent for GPU backends and for CPU backends
-       * that are CPU for any other reason. */
+       * document must never render two different objects. The main
+       * thread's backend note names emitters as the reason. Absent for GPU
+       * backends and for CPU backends
+       * that are CPU for any other reason (so the note never blames
+       * emitters for a machine that simply has no WebGPU). */
       emitterForced?: boolean;
     }
   | { type: "error"; message: string }
@@ -1127,21 +1116,16 @@ export class FlameWorkerSession {
    * behaves identically regardless of what this says. */
   private gpuPreference: "auto" | "off" = "off";
 
-  /** Whether the CURRENT session's document carries non-trivial chaos rows
-   * (`systemHasChaos` over the start command's transforms — chi is fixed
-   * per session; live commands never swap the transform list). While true,
-   * {@link gpuEligible} refuses GPU outright: the WGSL kernels do not know
-   * chi (fr-wo2j.4 is the lift), and attempting them would render a
-   * different object than the CPU oracle — the two-backends-one-document
-   * divergence class. */
-  private sessionHasChaos = false;
   /** Whether the CURRENT session's document carries shape emitters
-   * (`systemHasEmitters` over the start command's transforms) —
-   * {@link sessionHasChaos}'s exact contract one selection layer over.
-   * While true, {@link gpuEligible} refuses GPU outright: the WGSL kernels
+   * (`systemHasEmitters` over the start command's transforms — fixed per
+   * session; live commands never swap the transform list). While true,
+   * {@link gpuEligible} refuses GPU outright: the WGSL kernels
    * do not know emitters (fr-wo2j.8 is the lift), and attempting them
    * would render the plain attractor instead of the condensation set —
-   * the two-backends-one-document divergence class. */
+   * the two-backends-one-document divergence class. Chaos rows used to
+   * carry the same force one selection layer over; the WGSL kernels know
+   * chi now (`packGpuSystem`/`packGpuSystem4` transfer the rows), so chi
+   * documents take whatever backend the machine offers. */
   private sessionHasEmitters = false;
   /** Throughput instrumentation, all inert unless the `start` command
    * set `instrument` (see its doc). `perf` accumulates per-chunk phase timings
@@ -1391,12 +1375,9 @@ export class FlameWorkerSession {
 
   private start(cmd: Extract<FlameWorkerCommand, { type: "start" }>): void {
     this.baseTransforms = cmd.transforms;
-    // Chi status is per-session (transforms only arrive here). The 4D
-    // transforms4 carry identical rows (the lift copies them verbatim), so
-    // the 3D list answers for both dimensions.
-    this.sessionHasChaos = systemHasChaos(cmd.transforms);
-    // Emitter status likewise — one selection layer over, same 3D-list-
-    // answers-for-both-dimensions reasoning.
+    // Emitter status is per-session (transforms only arrive here). The 4D
+    // transforms4 carry identical emitters (the lift copies them
+    // verbatim), so the 3D list answers for both dimensions.
     this.sessionHasEmitters = systemHasEmitters(cmd.transforms);
     this.baseFinalTransform = cmd.finalTransform;
     this.hybridSchedule = cmd.schedule ?? null;
@@ -1581,16 +1562,14 @@ export class FlameWorkerSession {
    * CPU-only accumulation by a GPU ceiling would shrink it for no reason).
    */
   private gpuEligible(): boolean {
-    return (
-      !this.sessionHasChaos && !this.sessionHasEmitters && this.gpuCandidate()
-    );
+    return !this.sessionHasEmitters && this.gpuCandidate();
   }
 
-  /** The pre-chi {@link gpuEligible} conditions: the `start` opted in, this
-   * session hasn't permanently given up on GPU, and the current dimension
-   * has a factory wired up. Split out so {@link gpuBlockedByChaos} can ask
-   * "WOULD GPU have been attempted, but for the chaos rows?" without
-   * restating them. */
+  /** The document-independent {@link gpuEligible} conditions: the `start`
+   * opted in, this session hasn't permanently given up on GPU, and the
+   * current dimension has a factory wired up. Split out so
+   * {@link gpuBlockedByEmitters} can ask "WOULD GPU have been attempted,
+   * but for the emitters?" without restating them. */
   private gpuCandidate(): boolean {
     return (
       this.gpuPreference === "auto" &&
@@ -1601,19 +1580,13 @@ export class FlameWorkerSession {
     );
   }
 
-  /** True exactly when the document's chaos rows are the ONE reason this
-   * session is on CPU — every other GPU condition holds. Drives the backend
-   * event's `chaosForced` disclosure, and nothing else: a machine with no
-   * WebGPU (or a failed ladder) keeps its own truthful reason. */
-  private gpuBlockedByChaos(): boolean {
-    return this.sessionHasChaos && this.gpuCandidate();
-  }
-
-  /** {@link gpuBlockedByChaos} one selection layer over: the document's
-   * shape emitters block GPU while every machine-side condition holds.
-   * Drives the backend event's `emitterForced` disclosure. Deliberately
-   * independent of {@link sessionHasChaos} — a both-layers document sets
-   * both flags truthfully and the main thread picks the wording. */
+  /** True exactly when the document's shape emitters are the ONE reason
+   * this session is on CPU — every other GPU condition holds. Drives the
+   * backend event's `emitterForced` disclosure, and nothing else: a
+   * machine with no WebGPU (or a failed ladder) keeps its own truthful
+   * reason. (Chaos rows carried the same force until the WGSL kernels
+   * learned chi; emitters are the one selection layer still awaiting its
+   * GPU lift.) */
   private gpuBlockedByEmitters(): boolean {
     return this.sessionHasEmitters && this.gpuCandidate();
   }
@@ -2356,14 +2329,10 @@ export class FlameWorkerSession {
         backend: created.kind,
         adapter: created.adapterLabel,
         software: created.software,
-        // Disclose a chi-forced CPU backend (see the event field's doc);
-        // absent otherwise, so consumers can't misread an ordinary CPU
-        // session as chi-forced.
-        ...(created.kind === "cpu" && this.gpuBlockedByChaos()
-          ? { chaosForced: true }
-          : {}),
-        // And an emitter-forced one, the parallel flag (both may be set —
-        // the main thread's note discloses chi first).
+        // Disclose an emitter-forced CPU backend (see the event field's
+        // doc); absent otherwise, so consumers can't misread an ordinary
+        // CPU session as emitter-forced. (Chaos rows carried a twin flag
+        // here until the WGSL kernels learned chi.)
         ...(created.kind === "cpu" && this.gpuBlockedByEmitters()
           ? { emitterForced: true }
           : {}),
