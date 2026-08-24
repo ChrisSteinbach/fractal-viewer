@@ -1,4 +1,5 @@
 import { DEFAULT_BACKGROUND_SHAPE_CENTER } from "../fractal/background-shape";
+import { resolveShapeTrap } from "../fractal/shape-trap";
 import type { SurfaceComputeFrameSpec } from "./surface-compute";
 
 /**
@@ -29,7 +30,9 @@ import type { SurfaceComputeFrameSpec } from "./surface-compute";
  * ordered element list (splitting the result on `"|"` always recovers exactly
  * the list that was joined; there is no second way to have produced the same
  * string). Second, every OPTIONAL block (`view4`, `balloon`, `groundPlane`,
- * and now `bgShape`) is fixed-length when present and zero-length when
+ * `bgShape`, and now `shapeTrap` — whose one JSON element is pipe-free
+ * because the spec vocabulary's strings are fixed kind/combine literals) is
+ * fixed-length when present and zero-length when
  * absent, and every one of them but `view4` (whose contents are always
  * numeric, so it can never start with a word) opens with a tag literal that
  * no numeric field, and no other block's tag, can ever equal. So no
@@ -200,6 +203,30 @@ export function surfaceComputeForceFrameKey(
           spec.groundPlane.tileScale ?? 0.64,
           spec.groundPlane.emission ?? 0,
         ]
+      : []),
+    // The shape-trap block: a timeline leg that authors a different trap
+    // pose/mode — or a different SHAPE — under a parked camera repaints
+    // every hit pixel, the balloon/plane blocks' reason again. Keyed
+    // through resolveShapeTrap, the packers' OWN resolver, so every
+    // absent-field default here IS what the params block packs — the
+    // module doc's defaults-must-match rule by construction rather than
+    // by a parallel list. The shape's identity is its JSON (pipe-free:
+    // the spec's strings are fixed kind/combine literals), fixed-length
+    // when present behind the "shapeTrap" tag.
+    ...(spec.shapeTrap
+      ? (() => {
+          const rt = resolveShapeTrap(spec.shapeTrap);
+          return [
+            "shapeTrap",
+            JSON.stringify(rt.spec),
+            rt.invRot.join(","),
+            rt.position.join(","),
+            rt.invScale,
+            rt.mode,
+            rt.threshold,
+            rt.fade,
+          ];
+        })()
       : []),
   ].join("|");
 }

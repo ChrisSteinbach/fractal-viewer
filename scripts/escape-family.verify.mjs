@@ -84,6 +84,11 @@ const PRESETS = [
   { key: "mandelboxClassic", group: "mandelbox" },
   { key: "mandelboxRings", group: "mandelbox" },
   { key: "mandelboxCube", group: "mandelbox" },
+  // The shape-trap preset: the SAME map as mandelboxClassic, so its
+  // membership in the mandelbox group is itself a check — if it renders
+  // the same picture as the classic, the trap channel (a color source, a
+  // side table, two engines' shading) is not reaching the render.
+  { key: "mandelboxPeace", group: "mandelbox" },
   { key: "foldChain", group: "chain" },
   { key: "foldChainBoulder", group: "chain" },
   { key: "foldChainFlower", group: "chain" },
@@ -615,6 +620,73 @@ async function main() {
             );
           } else {
             console.error(`[escape-family] empty set reported OK: "${toast}"`);
+          }
+        }
+      } finally {
+        await context.close();
+      }
+    }
+
+    // --- the shape trap reaches the render: trap-on vs trap-off differ
+    // The knob-reaches-the-render check the trap channel owes: load the
+    // trap preset FROM THE MENU (its PRESET_TRAPS entry installs the
+    // block and lands the color source on the channel), settle, then turn
+    // the trap OFF through its own panel select and settle again. The two
+    // settled frames must differ — same map, same pose, so the only thing
+    // between them is the channel. (Off resolves the "shapeTrap" source
+    // to by-transform — the pinned fallback — so a dead channel renders
+    // the SAME picture twice and fails here.)
+    if (wanted.some((p) => p.key === "mandelboxPeace")) {
+      const { context, page } = await openApp(browser, args);
+      try {
+        await loadPreset(page, "mandelboxPeace");
+        const entry = await enterSurface(page);
+        if (!entry.entered) {
+          failures.push(`shape-trap check: Surface disabled — ${entry.reason}`);
+        } else {
+          const settledOn = await waitSettled(page, args);
+          if (!settledOn.ok) {
+            failures.push("shape-trap check: trap-on session never settled");
+          } else {
+            const onShot = path.join(args.outdir, "trap-on.png");
+            await page.locator("canvas").first().screenshot({ path: onShot });
+            // Turn the trap off through the panel's own select — the row
+            // lives in the Surface Look accordion section, so open it the
+            // way loadPreset opens the preset menu's.
+            await page.evaluate(() => {
+              const sel = document.getElementById("surfaceTrapShape");
+              const details = sel?.closest("details");
+              if (details && !details.open) details.open = true;
+            });
+            await page.selectOption("#surfaceTrapShape", "");
+            const settledOff = await waitSettled(page, args);
+            if (!settledOff.ok) {
+              failures.push("shape-trap check: trap-off session never settled");
+            } else {
+              const offShot = path.join(args.outdir, "trap-off.png");
+              await page
+                .locator("canvas")
+                .first()
+                .screenshot({ path: offShot });
+              const diffContext2 = await browser.newContext({
+                ignoreHTTPSErrors: true,
+              });
+              const diffPage2 = await diffContext2.newPage();
+              await diffPage2.goto("about:blank");
+              const frac = await differingFraction(diffPage2, onShot, offShot);
+              await diffContext2.close();
+              const ok = frac >= DIFFER_FRACTION;
+              console.error(
+                `[escape-family] shape trap: on vs off — ` +
+                  `${(100 * frac).toFixed(2)}% of pixels differ ${ok ? "OK" : "TOO SIMILAR"}`,
+              );
+              if (!ok) {
+                failures.push(
+                  `shape trap: trap-on and trap-off render the same picture ` +
+                    `(${(100 * frac).toFixed(2)}% differing, need ${100 * DIFFER_FRACTION}%) — the channel is not reaching the render`,
+                );
+              }
+            }
           }
         }
       } finally {

@@ -30,6 +30,8 @@ import type {
   ColorMode,
   FourDColorMode,
   HybridSchedule,
+  ShapeTrap,
+  ShapeTrapMode,
   SymmetryPlane,
   SymmetryParams,
   Transform,
@@ -281,6 +283,15 @@ export const SURFACE_COLOR_SOURCES = [
   "radius",
   "rings",
   "sheets",
+  // The escape family's SHAPE-TRAP channel (Pickover shape-trapping —
+  // `types.ts`'s ShapeTrap block): the orbit's accumulated distance to the
+  // document's posed trap shape, through the same palette as
+  // "palette"/"rings"/"sheets". Appended per this array's own append-only
+  // rule; index 6 in both engines' dispatch. Selected without a live trap
+  // (no document block, or a session outside the escape family) it
+  // RESOLVES to "transform" at the one packing site per engine
+  // (scene.ts's surfaceColorSourceIndex) — the pinned honest fallback.
+  "shapeTrap",
 ] as const;
 
 export type SurfaceColorSource = (typeof SURFACE_COLOR_SOURCES)[number];
@@ -392,6 +403,22 @@ export interface AppState {
    * where the background SHAPE pops.
    */
   schedule?: HybridSchedule;
+  /**
+   * Optional shape-trap COLOR block (`types.ts`'s {@link ShapeTrap}):
+   * Pickover shape-trapping as the escape family's second palette channel —
+   * the forward orbit's accumulated distance to this posed shape, painted
+   * by the `"shapeTrap"` surface color source. Omitted ⇒ off
+   * byte-identically (no trap arithmetic anywhere, every emitted shader
+   * byte-identical to the trap-free build). Scene content beside
+   * {@link schedule}: persists, rides shared links, and a preset load
+   * clears it unless the preset's own `PRESET_TRAPS` entry says otherwise
+   * (`PRESET_FINALS`' absent-means-clear rule). The one writer
+   * ({@link setShapeTrap}) normalizes classic-valued optional fields away,
+   * the fold lengths' removal rule at block scope. COLOR ONLY: no gate
+   * reads it, no estimator's marching changes at any setting — which is
+   * why, unlike {@link schedule}, it refuses nothing.
+   */
+  shapeTrap?: ShapeTrap;
   numPoints: number;
   /** Multiplier on each render style's base point size; 1 = as authored. */
   pointSize: number;
@@ -1547,6 +1574,70 @@ export function setSchedule(
 export function setScheduleDepth(state: AppState, depth: number): AppState {
   if (!state.schedule) return state;
   return setSchedule(state, { ...state.schedule, depth });
+}
+
+/**
+ * Install/replace the shape-trap color block, or clear it with `null` —
+ * {@link setSchedule}'s shape for the trap. THE NORMALIZATION RULE LIVES
+ * HERE (the fold lengths' "dragging back to classic REMOVES the field"
+ * rule at block scope): every optional field is stored only away from its
+ * classic value — position/rotation away from zero, scale away from 1,
+ * mode away from `"min"`, fade away from 0 — and `threshold` is stored
+ * only under `"threshold"` mode (it is that mode's own knob). A trap whose
+ * shape has no parts stores ABSENT. Values are stored WITHOUT domain
+ * clamps beyond that: the resolution domain is `escape-de.ts`'s
+ * `resolveShapeTrap`, and this writer's job is the absent-means-classic
+ * byte-identity of an unauthored field.
+ */
+export function setShapeTrap(
+  state: AppState,
+  trap: ShapeTrap | null,
+): AppState {
+  if (!trap || trap.shape.parts.length === 0) {
+    return { ...state, shapeTrap: undefined };
+  }
+  const normalized: ShapeTrap = { shape: trap.shape };
+  const p = trap.position;
+  if (p && (p[0] !== 0 || p[1] !== 0 || p[2] !== 0)) {
+    normalized.position = [...p];
+  }
+  const r = trap.rotation;
+  if (r && (r[0] !== 0 || r[1] !== 0 || r[2] !== 0)) {
+    normalized.rotation = [...r];
+  }
+  if (
+    trap.scale !== undefined &&
+    Number.isFinite(trap.scale) &&
+    trap.scale !== 1
+  ) {
+    normalized.scale = trap.scale;
+  }
+  if (trap.mode === "threshold") {
+    normalized.mode = "threshold";
+    if (trap.threshold !== undefined && Number.isFinite(trap.threshold)) {
+      normalized.threshold = trap.threshold;
+    }
+  }
+  if (
+    trap.fade !== undefined &&
+    Number.isFinite(trap.fade) &&
+    trap.fade !== 0
+  ) {
+    normalized.fade = trap.fade;
+  }
+  return { ...state, shapeTrap: normalized };
+}
+
+/** Move one trap pose/mode field: re-installs the current block through
+ * {@link setShapeTrap}'s one normalization domain. No-ops without a block
+ * — each field is a property OF the trap, meaningless before a shape is
+ * chosen ({@link setScheduleDepth}'s reasoning). */
+export function updateShapeTrap(
+  state: AppState,
+  patch: Partial<Omit<ShapeTrap, "shape">> & { mode?: ShapeTrapMode },
+): AppState {
+  if (!state.shapeTrap) return state;
+  return setShapeTrap(state, { ...state.shapeTrap, ...patch });
 }
 
 export function setNumPoints(state: AppState, numPoints: number): AppState {

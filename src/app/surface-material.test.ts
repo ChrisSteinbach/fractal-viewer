@@ -33,6 +33,8 @@ import {
   BULB_STEP_SCALE,
 } from "../fractal/bulb-de";
 import { buildEscapeDE } from "../fractal/escape-de";
+import { shapeTrapInvNorm } from "../fractal/shape-trap";
+import { PEACE_SIGN_SHAPE } from "../fractal/shapes";
 import type {
   SurfaceBalloonSpec,
   SurfaceGroundPlaneSpec,
@@ -51,7 +53,7 @@ import {
 } from "../fractal/surface-de";
 import type { SurfaceDE, SurfaceDEMap } from "../fractal/surface-de";
 import { defaultTransforms, sierpinskiTetrahedron } from "../fractal/presets";
-import type { Transform, Vec3 } from "../fractal/types";
+import type { ShapeTrap, Transform, Vec3 } from "../fractal/types";
 import { createHash } from "node:crypto";
 import { PRE_PATTERN_SOURCE_HASHES } from "./surface-pattern-baseline";
 
@@ -2603,5 +2605,276 @@ describe("SURFACE_PATTERN variant", () => {
     finished("plane on");
     setSurfaceMaterials(material, null);
     expect(material.fragmentShader).not.toContain("patternShade");
+  });
+});
+
+describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", () => {
+  it("omitted and explicit trap:null produce identical source for every legal pairing — the byte-identical off state", () => {
+    const cases: [number, number, number, number, number, number, number][] = [
+      [0, 0, 0, 0, 0, 0, 0],
+      [0, 1, 0, 0, 0, 0, 0],
+      [0, 0, 1, 0, 0, 0, 0],
+      [1, 0, 0, 0, 0, 0, 0],
+      [1, 0, 0, 1, 0, 0, 0],
+      [1, 0, 0, 0, 0, 1, 0],
+      [0, 0, 0, 0, 1, 0, 0],
+      [0, 0, 0, 1, 1, 0, 0],
+    ];
+    for (const [e, l, b, p, bu, f, pa] of cases) {
+      const omitted = surfaceFragmentResolvedFor(e, l, b, p, bu, f, pa);
+      const explicit = surfaceFragmentResolvedFor(
+        e,
+        l,
+        b,
+        p,
+        bu,
+        f,
+        pa,
+        undefined,
+        null,
+      );
+      expect(explicit).toBe(omitted);
+      expect(omitted).not.toContain("surfaceTrapSdf");
+      expect(omitted).not.toContain("uTrapInvRot");
+      expect(omitted).not.toContain("__SURFACE_TRAP");
+    }
+  });
+
+  it("refuses the trap outside the escape/bulb arms, and refuses it under the balloon", () => {
+    expect(() =>
+      surfaceFragmentResolvedFor(
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        PEACE_SIGN_SHAPE,
+      ),
+    ).toThrow(/escape\/bulb/);
+    expect(() =>
+      surfaceFragmentResolvedFor(
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        PEACE_SIGN_SHAPE,
+      ),
+    ).toThrow(/escape\/bulb/);
+    expect(() =>
+      surfaceFragmentResolvedFor(
+        1,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        PEACE_SIGN_SHAPE,
+      ),
+    ).toThrow(/balloon/);
+  });
+
+  it("compiles the baked SDF, the live uniforms, the accumulator, the six-out overload and the source-6 dispatch into each forward arm — with no placeholder left behind", () => {
+    for (const arm of ["escape", "bulb"] as const) {
+      const resolved = surfaceFragmentResolvedFor(
+        arm === "escape" ? 1 : 0,
+        0,
+        0,
+        0,
+        arm === "bulb" ? 1 : 0,
+        0,
+        0,
+        undefined,
+        PEACE_SIGN_SHAPE,
+      );
+      expect(resolved).toContain("float surfaceTrapSdf(vec3 p)");
+      expect(resolved).toContain("uniform mat3 uTrapInvRot;");
+      expect(resolved).toContain("uniform vec4 uTrapPose;");
+      expect(resolved).toContain("uniform vec4 uTrapParams;");
+      expect(resolved).toContain("trapBest = min(trapBest, tCand);");
+      expect(resolved).toContain("shapeTrap = trapValue(trapBest, trapCross);");
+      expect(resolved).toContain("out float shapeTrap");
+      expect(resolved).toContain(
+        "surfaceDE(pos, firstChoice, trap, rings, sheets, shapeTrap);",
+      );
+      expect(resolved).toContain("u = shapeTrap;");
+      expect(resolved).not.toContain("__SURFACE_TRAP");
+      // The normalizer bakes from the ONE shared definition.
+      expect(resolved).toContain(
+        `surfaceTrapSdf(tl) * ${String(shapeTrapInvNorm(PEACE_SIGN_SHAPE))}`,
+      );
+    }
+  });
+
+  it("emits the two arms' trap helper text character for character — the bulbPow8 duplication discipline", () => {
+    const grab = (src: string): string => {
+      // The resolved source carries no #if scaffolding, so the slice runs
+      // from the candidate helper's opening to trapValue's closing line —
+      // the whole shared helper text.
+      const start = src.indexOf("float trapCandidate(");
+      const endMarker = "return clamp(cross / uTrapParams.y, 0.0, 1.0);\n  }";
+      const end = src.indexOf(endMarker, start);
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      return src.slice(start, end + endMarker.length);
+    };
+    const escape = surfaceFragmentResolvedFor(
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      undefined,
+      PEACE_SIGN_SHAPE,
+    );
+    const bulb = surfaceFragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      undefined,
+      PEACE_SIGN_SHAPE,
+    );
+    expect(grab(escape)).toBe(grab(bulb));
+  });
+
+  it("keeps the two shipped forward arms under the strip threshold with the trap on — the reference peace-sign spec included", () => {
+    // Measured at the change: escape+trap 60412 B (5124 B under), bulb+trap
+    // 43752 B (21784 B under); with the finish arm too, escape+finish+trap
+    // 62811 B (2725 B under) — THE pairing to watch next, and the reason
+    // this assertion exists. Crossing is BENIGN (stripping brings the
+    // emitted source to a third, far under Mesa's cliff); what this
+    // protects is the arms' commentary surviving into a driver log.
+    for (const finish of [0, 1]) {
+      expect(
+        surfaceFragmentResolvedFor(
+          1,
+          0,
+          0,
+          0,
+          0,
+          finish,
+          0,
+          undefined,
+          PEACE_SIGN_SHAPE,
+        ).length,
+      ).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+      expect(
+        surfaceFragmentResolvedFor(
+          0,
+          0,
+          0,
+          0,
+          1,
+          finish,
+          0,
+          undefined,
+          PEACE_SIGN_SHAPE,
+        ).length,
+      ).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+    }
+  });
+
+  it("setEscapeSystem with a trap flips SURFACE_SHAPE_TRAP, bakes the shape, pushes the live uniforms, and a shape swap alone rebuilds", () => {
+    const material = createSurfaceMaterial();
+    const de = buildEscapeDE([
+      {
+        id: 0,
+        position: [0.4, 0.3, 0.2],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "mandelbox", weight: 2 }],
+      },
+    ]);
+    const trap: ShapeTrap = {
+      shape: PEACE_SIGN_SHAPE,
+      position: [0.3, -0.2, 0.5],
+      scale: 0.5,
+      mode: "threshold",
+      threshold: 0.3,
+      fade: 0.1,
+    };
+    setEscapeSystem(material, de, [1, 0, 0], trap);
+    expect(material.defines.SURFACE_SHAPE_TRAP).toBe(1);
+    expect(material.fragmentShader).toContain("surfaceTrapSdf");
+    const pose = material.uniforms.uTrapPose.value as {
+      x: number;
+      y: number;
+      z: number;
+      w: number;
+    };
+    expect(pose.x).toBeCloseTo(0.3, 6);
+    expect(pose.w).toBeCloseTo(2, 6); // invScale of 0.5
+    const params = material.uniforms.uTrapParams.value as {
+      x: number;
+      y: number;
+      z: number;
+    };
+    expect(params.x).toBe(1);
+    expect(params.y).toBeCloseTo(0.3, 6);
+    expect(params.z).toBeCloseTo(0.1, 6);
+    // A shape swap at unchanged defines still re-bakes the program.
+    const before = material.fragmentShader;
+    setEscapeSystem(material, de, [1, 0, 0], {
+      ...trap,
+      shape: {
+        parts: [{ primitive: { kind: "sphere", radius: 1 }, combine: "union" }],
+      },
+    });
+    expect(material.fragmentShader).not.toBe(before);
+    // And a later DESCENT install clears the channel entirely.
+    const ifs = buildSurfaceDE([
+      {
+        id: 0,
+        position: [0.4, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+      {
+        id: 1,
+        position: [-0.4, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+    ]);
+    setSurfaceSystem(material, ifs, [
+      [1, 0, 0],
+      [0, 1, 0],
+    ]);
+    expect(material.defines.SURFACE_SHAPE_TRAP).toBe(0);
+    expect(material.fragmentShader).not.toContain("surfaceTrapSdf");
+  });
+
+  it("setBulbSystem takes the same trap wire", () => {
+    const material = createSurfaceMaterial();
+    const de = buildBulbDE([
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "bulb", weight: 1 }],
+      },
+    ]);
+    setBulbSystem(material, de, [1, 0, 0], { shape: PEACE_SIGN_SHAPE });
+    expect(material.defines.SURFACE_SHAPE_TRAP).toBe(1);
+    expect(material.defines.SURFACE_BULB).toBe(1);
+    expect(material.fragmentShader).toContain("surfaceTrapSdf");
+    setBulbSystem(material, de, [1, 0, 0], null);
+    expect(material.defines.SURFACE_SHAPE_TRAP).toBe(0);
+    expect(material.fragmentShader).not.toContain("surfaceTrapSdf");
   });
 });

@@ -37,6 +37,7 @@ import type {
   ColorMode,
   FourDColorMode,
   HybridSchedule,
+  ShapeTrap,
   SurfaceFinish,
   SurfacePattern,
   SymmetryParams,
@@ -131,6 +132,15 @@ export interface SceneSnapshot {
    * without), entries accepted through a dedicated affine-only leg.
    */
   schedule?: HybridSchedule;
+  /**
+   * Optional shape-trap color block (see {@link AppState.shapeTrap}).
+   * Optional like {@link schedule}, and on the identical wire discipline:
+   * written only when present (a scene that never authored one encodes
+   * byte-identically to one predating the field), decoded by
+   * {@link decodeShapeTrap} — never-throwing, WHOLE-BLOCK-OR-NOTHING, the
+   * shape leg through {@link decodeEmitter}'s spec codec.
+   */
+  shapeTrap?: ShapeTrap;
   numPoints: number;
   pointSize: number;
   colorMode: ColorMode;
@@ -386,6 +396,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     transforms: state.transforms,
     finalTransform: state.finalTransform,
     schedule: state.schedule,
+    shapeTrap: state.shapeTrap,
     numPoints: state.numPoints,
     pointSize: state.pointSize,
     colorMode: state.colorMode,
@@ -477,6 +488,8 @@ export function fromSnapshot(
     // schedule-less snapshot must clear a base session's block even when
     // the incoming object never declares the key at all.
     schedule: snapshot.schedule,
+    // The trap block, for the schedule's reason exactly.
+    shapeTrap: snapshot.shapeTrap,
     balloonEcho: snapshot.balloonEcho ?? false,
     balloonRadius: snapshot.balloonRadius ?? DEFAULT_BALLOON_RADIUS,
     balloonPaletteId: snapshot.balloonPaletteId ?? DEFAULT_BALLOON_PALETTE,
@@ -873,6 +886,58 @@ function decodeSchedule(raw: unknown): HybridSchedule | undefined {
     transforms.push(decoded);
   }
   return { transforms, depth: Math.min(depth, MAX_SCHEDULE_DEPTH) };
+}
+
+/**
+ * Decode the scene's optional shape-trap color block (`types.ts`'s
+ * {@link ShapeTrap}). QUIET WHOLE-BLOCK fallback, {@link decodeSchedule}'s
+ * discipline: a malformed block — a bad shape, a non-Vec3 pose vector, a
+ * non-finite scalar, an unknown mode string — drops the ENTIRE block to
+ * `undefined` rather than rejecting the scene or salvaging fields (a trap
+ * is one channel, not a bag of leaves), and never throws. The block is
+ * REBUILT from exactly the admitted fields, its shape through
+ * {@link decodeEmitter}'s spec codec (one spec vocabulary, one codec). The
+ * fold lengths' two deliberate deviations apply to every numeric leaf: NO
+ * `Number(x)` coercion and NO domain clamps — scale/threshold/fade domains
+ * belong to `escape-de.ts`'s `resolveShapeTrap`; persist's job at this
+ * leaf is fidelity.
+ */
+function decodeShapeTrap(raw: unknown): ShapeTrap | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  const o = raw as Record<string, unknown>;
+  const shape = decodeEmitter(o.shape);
+  if (shape === undefined) return undefined;
+  const trap: ShapeTrap = { shape };
+  if (o.position !== undefined) {
+    if (!isVec3(o.position)) return undefined;
+    trap.position = o.position;
+  }
+  if (o.rotation !== undefined) {
+    if (!isVec3(o.rotation)) return undefined;
+    trap.rotation = o.rotation;
+  }
+  if (o.scale !== undefined) {
+    const scale = decodeEmitterNumber(o.scale);
+    if (scale === undefined) return undefined;
+    trap.scale = scale;
+  }
+  if (o.mode !== undefined) {
+    if (o.mode !== "min" && o.mode !== "threshold") return undefined;
+    if (o.mode === "threshold") trap.mode = o.mode;
+  }
+  if (o.threshold !== undefined) {
+    const threshold = decodeEmitterNumber(o.threshold);
+    if (threshold === undefined) return undefined;
+    trap.threshold = threshold;
+  }
+  if (o.fade !== undefined) {
+    const fade = decodeEmitterNumber(o.fade);
+    if (fade === undefined) return undefined;
+    trap.fade = fade;
+  }
+  return trap;
 }
 
 /**
@@ -2187,6 +2252,7 @@ export function encodeScene(s: SceneSnapshot): string {
       }[];
       depth: number;
     };
+    shapeTrap?: ShapeTrap;
     numPoints: number;
     pointSize: number;
     colorMode: ColorMode;
@@ -2418,6 +2484,40 @@ export function encodeScene(s: SceneSnapshot): string {
       depth: Math.floor(s.schedule.depth),
     };
   }
+  // The shape-trap color block, written only when its shape survives the
+  // spec encoder — the schedule's own discipline one block down: rebuilt
+  // from exactly the admitted fields, the shape through the emitter spec's
+  // encoder (one spec vocabulary, one codec), every float round4'd, each
+  // optional field written only when present.
+  if (s.shapeTrap) {
+    const shape = encodeEmitter(s.shapeTrap.shape);
+    if (shape !== undefined) {
+      const trap: ShapeTrap = { shape };
+      if (s.shapeTrap.position !== undefined) {
+        trap.position = round4Vec3(s.shapeTrap.position);
+      }
+      if (s.shapeTrap.rotation !== undefined) {
+        trap.rotation = round4Vec3(s.shapeTrap.rotation);
+      }
+      if (
+        s.shapeTrap.scale !== undefined &&
+        Number.isFinite(s.shapeTrap.scale)
+      ) {
+        trap.scale = round4(s.shapeTrap.scale);
+      }
+      if (s.shapeTrap.mode === "threshold") trap.mode = "threshold";
+      if (
+        s.shapeTrap.threshold !== undefined &&
+        Number.isFinite(s.shapeTrap.threshold)
+      ) {
+        trap.threshold = round4(s.shapeTrap.threshold);
+      }
+      if (s.shapeTrap.fade !== undefined && Number.isFinite(s.shapeTrap.fade)) {
+        trap.fade = round4(s.shapeTrap.fade);
+      }
+      payload.shapeTrap = trap;
+    }
+  }
   // Written only when present, like finalTransform above — never-authored
   // scenes keep their short URLs. Encoded as hex strings for URL
   // compactness — see rgbToHex.
@@ -2639,6 +2739,10 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     // scene; see decodeSchedule.
     const schedule = decodeSchedule(o.schedule);
 
+    // shapeTrap: optional shape-trap color block — quiet whole-block
+    // fallback, never rejecting the scene; see decodeShapeTrap.
+    const shapeTrap = decodeShapeTrap(o.shapeTrap);
+
     // colorMode / renderStyle: exact known-string matches only. ---------------
     const { colorMode, renderStyle } = o;
     if (typeof colorMode !== "string" || !VALID_COLOR_MODES.has(colorMode))
@@ -2847,6 +2951,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       transforms,
       finalTransform,
       schedule,
+      shapeTrap,
       numPoints,
       pointSize,
       colorMode: colorMode as ColorMode,

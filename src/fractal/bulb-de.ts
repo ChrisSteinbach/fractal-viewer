@@ -162,6 +162,12 @@ import {
 } from "./chaos-game";
 import { mulberry32 } from "./rng";
 import {
+  SHAPE_TRAP_NO_CROSSING,
+  shapeTrapCandidate,
+  shapeTrapValue,
+} from "./shape-trap";
+import type { ResolvedShapeTrap } from "./shape-trap";
+import {
   SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
   calibrateSurfaceNativeCarriers,
 } from "./surface-pattern";
@@ -396,6 +402,48 @@ export function estimateBulbDistance(
   p: Vec3,
   maxIterations = BULB_ITERATIONS,
 ): number {
+  runBulbOrbit(de, p, maxIterations);
+  // `ln|y|` goes NEGATIVE below |y| = 1, which a converging orbit reaches —
+  // and a negative estimate would march the tracer backwards. Clamping the
+  // logarithm's argument at 1 returns exactly 0 there, which is the inside
+  // signal and is safe in the direction a sphere tracer needs (0 is always
+  // an under-estimate of the true distance). `qjulia-de.ts` takes the same
+  // exit for the same reason; here it fires far more often, because `8r⁷`
+  // pulls a non-escaping orbit hard toward the origin.
+  return orbitR <= 1 ? 0 : (0.5 * orbitR * Math.log(orbitR)) / orbitDr;
+}
+
+/** The orbit's terminal radius and derivative bound, left in module scratch
+ * by {@link runBulbOrbit} — `escape-de.ts`'s one-shared-loop convention:
+ * {@link estimateBulbDistance} and {@link bulbShapeTrap} are thin readers
+ * of the one loop, so the trap can never evaluate a different orbit than
+ * the estimate does. Safe as module state because the estimator is
+ * synchronous and single-threaded. */
+let orbitR = 0;
+let orbitDr = 1;
+let orbitTrapBest = 0;
+let orbitTrapCross = 0;
+
+/**
+ * Run the Mandelbulb's forward orbit from `p`, leaving the terminal radius
+ * and derivative bound in the module scratch above — the loop the
+ * `SURFACE_BULB` GLSL variant and the `core:"bulb"` kernel mirror,
+ * factored out of {@link estimateBulbDistance} statement for statement so
+ * the estimate stays BIT-identical to its pinned history. The optional
+ * `trap` runs `shape-trap.ts`'s two accumulators at each post-step `y` —
+ * the same point rings/sheets read — behind a null guard (the emitter
+ * branch's shape), so distance callers pay one falsy test per step.
+ */
+function runBulbOrbit(
+  de: BulbDE,
+  p: Vec3,
+  maxIterations: number,
+  trap: ResolvedShapeTrap | null = null,
+): void {
+  if (trap) {
+    orbitTrapBest = 1e30;
+    orbitTrapCross = SHAPE_TRAP_NO_CROSSING;
+  }
   const m = de.m;
   // y_0 = M p + t — the point the power is applied to, and (module doc) the
   // Mandelbrot form's per-iteration offset in y space.
@@ -449,15 +497,36 @@ export function estimateBulbDistance(
     yz = m[6] * vx + m[7] * vy + m[8] * vz + cz;
     r2 = yx * yx + yy * yy + yz * yz;
     r = Math.sqrt(r2);
+    // The shape trap's two accumulators, at exactly this post-step `y`.
+    if (trap) {
+      const cand = shapeTrapCandidate(trap, yx, yy, yz, i);
+      if (cand < orbitTrapBest) orbitTrapBest = cand;
+      if (orbitTrapCross <= SHAPE_TRAP_NO_CROSSING && cand < trap.threshold) {
+        orbitTrapCross = cand;
+      }
+    }
   }
-  // `ln|y|` goes NEGATIVE below |y| = 1, which a converging orbit reaches —
-  // and a negative estimate would march the tracer backwards. Clamping the
-  // logarithm's argument at 1 returns exactly 0 there, which is the inside
-  // signal and is safe in the direction a sphere tracer needs (0 is always
-  // an under-estimate of the true distance). `qjulia-de.ts` takes the same
-  // exit for the same reason; here it fires far more often, because `8r⁷`
-  // pulls a non-escaping orbit hard toward the origin.
-  return r <= 1 ? 0 : (0.5 * r * Math.log(r)) / dr;
+  orbitR = r;
+  orbitDr = dr;
+}
+
+/**
+ * The Mandelbulb's shape-trap palette coordinate at `p` — the hit-info
+ * side's trap channel, a thin reader of {@link runBulbOrbit} exactly as
+ * {@link estimateBulbDistance} is: `shape-trap.ts`'s ONE formula over this
+ * module's own orbit (`y` space, candidates at the post-step `y`
+ * rings/sheets read, the orbit's own bailout ball). The f64 oracle the
+ * `SURFACE_BULB` GLSL arm's and the `core:"bulb"` kernel's trap lines
+ * mirror.
+ */
+export function bulbShapeTrap(
+  de: BulbDE,
+  rt: ResolvedShapeTrap,
+  p: Vec3,
+  maxIterations = BULB_ITERATIONS,
+): number {
+  runBulbOrbit(de, p, maxIterations, rt);
+  return shapeTrapValue(rt, orbitTrapBest, orbitTrapCross);
 }
 
 /**

@@ -13,7 +13,13 @@ import {
   ESCAPE_TIME_ITERATIONS,
   type EscapeDE,
 } from "./escape-de";
+import {
+  SHAPE_TRAP_NO_CROSSING,
+  shapeTrapInvNorm,
+  type ResolvedShapeTrap,
+} from "./shape-trap";
 import { SYM_PLANE_CODE4, type EscapeDE4 } from "./escape-de-4d";
+import { shapeSdfSource, type ShapeSpec } from "./shapes";
 import {
   FOOTPRINT_DEPTH_FLOOR,
   SPHEREFOLD_MID_MIN_R,
@@ -651,6 +657,31 @@ import type { Vec3 } from "./types";
  *              verbatim once a ball is chosen; the app chooses the
  *              origin and the FULL 4D visible radius, so the floor does
  *              not slide as the slice scrubs.
+ *          · `shapeTrap` (the escape family's shape-trap color channel,
+ *              FORWARD cores only — descent cores throw) — the trap's
+ *              LIVE pose/mode block, appended past the PLANE block at ONE
+ *              offset per dimension: 336 for the 3D forward cores
+ *              (escape, bulb), 624 for escape4. The plane block region is
+ *              declared UNCONDITIONALLY under the trap (zero-filled by
+ *              the packer when there is no floor) so the trap keeps that
+ *              one offset — the lens4-under-balloon rule again — and the
+ *              4D chain additionally forces the whole 464..575 variant
+ *              region declared (`tail4Block`) for the same reason.
+ *              Layout, both dimensions (offsets 336.. / 624..):
+ *              +0  vec4f trapR0 — Rᵀ row0, .w = trap position.x
+ *              +16 vec4f trapR1 — Rᵀ row1, .w = trap position.y
+ *              +32 vec4f trapR2 — Rᵀ row2, .w = trap position.z
+ *              +48 vec4f trapP — (invScale, mode, threshold, fade),
+ *                  `resolveShapeTrap`'s own fields. The shape GEOMETRY is
+ *                  never on this wire: it is BAKED per spec at codegen
+ *                  (`shapeSdfSource`), with the normalizer `invNorm` a
+ *                  baked literal beside it (`shapeTrapInvNorm` — the ONE
+ *                  definition the resolver shares). Totals: {@link
+ *                  SURFACE_GPU_PARAMS_TRAP_BYTES} = 400, {@link
+ *                  SURFACE_GPU_PARAMS4_TRAP_BYTES} = 688. COLOR ONLY: the
+ *                  march/eval bodies never read the block (their structs
+ *                  merely declare it, so one options object builds a
+ *                  session's pair); only the shade hit-info orbits do.
  *
  * Maps storage — {@link SURFACE_GPU_MAP_VEC4} vec4f per map ({@link
  * SURFACE_GPU_MAP_STRIDE_BYTES} bytes), matching WGSL `struct GpuMap`:
@@ -905,6 +936,25 @@ export const SURFACE_GPU_PARAMS4_BALLOON_BYTES =
  * ballCenter vec3f 592, albedo vec3f 608. */
 export const SURFACE_GPU_PARAMS4_PLANE_BYTES =
   SURFACE_GPU_PARAMS4_LENS_BYTES + 48;
+/** Params size for a 3D FORWARD core (escape, bulb) under `shapeTrap`: the
+ * 336-byte plane-bearing block — the plane region declared unconditionally
+ * under the trap and zero-filled when there is no floor, which is what
+ * keeps the trap block at ONE offset (336) whether or not the session has
+ * one — plus the appended 64-byte trap pose/mode block (layout contract in
+ * the module doc). {@link packEscapeGpuParams}/{@link packBulbGpuParams}
+ * return THIS size exactly when their `shapeTrap` argument is non-null. */
+export const SURFACE_GPU_PARAMS_TRAP_BYTES =
+  SURFACE_GPU_PARAMS_PLANE_BYTES + 64;
+/** Params size for `core: "escape4"` under `shapeTrap`: the 624-byte
+ * plane-bearing 4D block — variant region and plane block both declared
+ * unconditionally under the trap, zero-filled when absent — plus the same
+ * 64-byte trap block at the frozen 624. {@link packEscape4GpuParams}
+ * returns THIS size exactly when its `shapeTrap` argument is non-null.
+ * (A block appended at 576 would land INSIDE the plane region exactly the
+ * way the recorded lens4Fold corruption landed inside that quartet —
+ * the offset is 624 and the pads under it are the guarantee.) */
+export const SURFACE_GPU_PARAMS4_TRAP_BYTES =
+  SURFACE_GPU_PARAMS4_PLANE_BYTES + 64;
 export const SURFACE_GPU_MAP_VEC4 = 7;
 export const SURFACE_GPU_MAP_STRIDE_BYTES = SURFACE_GPU_MAP_VEC4 * 16;
 /** vec4f slots per 4D map (`struct GpuMap4`): four invM rows, invT, and
@@ -1133,6 +1183,25 @@ export interface SurfaceGpuKernelOptions {
    * (`shade.patternCalibration`); march/eval kernels stay byte-identical,
    * and so does every pattern-absent shade kernel. */
   pattern?: boolean;
+  /** The escape family's SHAPE-TRAP color channel (`types.ts`'s ShapeTrap;
+   * the formula is `escape-de.ts`'s, defined once): bake this spec's SDF
+   * into the kernel (`shapeSdfSource`, the create-time-geometry decision —
+   * the finish flag's compile-gate precedent), run the trap's two
+   * accumulators inside the shade hit-info orbit, carry the value as the
+   * hit-info's `shapeTrap` member, and let the shade entry's color-source
+   * dispatch read it at source 6. The LIVE pose/mode/threshold/fade
+   * quantities ride the appended trap params block (module doc's layout;
+   * {@link SURFACE_GPU_PARAMS_TRAP_BYTES} /
+   * {@link SURFACE_GPU_PARAMS4_TRAP_BYTES}) — pack with the packers'
+   * `shapeTrap` argument. FORWARD cores only (escape, bulb, escape4):
+   * every descent core THROWS — the channel is the escape family's, and
+   * the descent hit-info is a branch sweep with no forward orbit for the
+   * accumulator to ride. Absent or null reproduces the trap-free source
+   * BYTE FOR BYTE across every mode/core/variant. COLOR ONLY: march/eval
+   * bodies never read the block (their structs declare it so one options
+   * object builds a session's kernel pair), and no marching quantity
+   * changes at any setting. */
+  shapeTrap?: ShapeSpec | null;
   /** March-mode ray derivation. "pose" (default) keeps the bench baseline:
    * NDC pixel centers against the pose basis — byte-identical output to
    * the pre-shade-split generator. "unproject" derives rays the GLSL
@@ -1546,9 +1615,14 @@ export function packEscapeGpuParams(
   de: EscapeDE,
   run: SurfaceGpuRunParams,
   groundPlane: SurfaceGpuGroundPlane | null = null,
+  shapeTrap: ResolvedShapeTrap | null = null,
 ): ArrayBuffer {
   const buf = new ArrayBuffer(
-    groundPlane ? SURFACE_GPU_PARAMS_PLANE_BYTES : SURFACE_GPU_PARAMS_BYTES,
+    shapeTrap
+      ? SURFACE_GPU_PARAMS_TRAP_BYTES
+      : groundPlane
+        ? SURFACE_GPU_PARAMS_PLANE_BYTES
+        : SURFACE_GPU_PARAMS_BYTES,
   );
   const view = new DataView(buf);
   view.setFloat32(12, de.boundingRadius, true);
@@ -1612,7 +1686,34 @@ export function packEscapeGpuParams(
   if (groundPlane) {
     writeGroundPlane(view, groundPlane);
   }
+  // The shape trap's live block past the plane region (zero-filled when no
+  // floor — the unconditional-pad contract that keeps ONE offset).
+  if (shapeTrap) {
+    writeShapeTrap(view, 336, shapeTrap);
+  }
   return buf;
+}
+
+/** The trap's live pose/mode block — ONE writer for both dimensions
+ * (module doc's layout row): Rᵀ rows with the trap position in the `.w`
+ * lanes, then (invScale, mode, threshold, fade) — `resolveShapeTrap`'s own
+ * fields, transferred rather than recomputed. */
+function writeShapeTrap(
+  view: DataView,
+  base: number,
+  trap: ResolvedShapeTrap,
+): void {
+  const m = trap.invRot;
+  writeVec3(view, base, [m[0], m[1], m[2]]);
+  view.setFloat32(base + 12, trap.position[0], true);
+  writeVec3(view, base + 16, [m[3], m[4], m[5]]);
+  view.setFloat32(base + 28, trap.position[1], true);
+  writeVec3(view, base + 32, [m[6], m[7], m[8]]);
+  view.setFloat32(base + 44, trap.position[2], true);
+  view.setFloat32(base + 48, trap.invScale, true);
+  view.setFloat32(base + 52, trap.mode, true);
+  view.setFloat32(base + 56, trap.threshold, true);
+  view.setFloat32(base + 60, trap.fade, true);
 }
 
 /**
@@ -1694,9 +1795,14 @@ export function packBulbGpuParams(
   de: BulbDE,
   run: SurfaceGpuRunParams,
   groundPlane: SurfaceGpuGroundPlane | null = null,
+  shapeTrap: ResolvedShapeTrap | null = null,
 ): ArrayBuffer {
   const buf = new ArrayBuffer(
-    groundPlane ? SURFACE_GPU_PARAMS_PLANE_BYTES : SURFACE_GPU_PARAMS_BYTES,
+    shapeTrap
+      ? SURFACE_GPU_PARAMS_TRAP_BYTES
+      : groundPlane
+        ? SURFACE_GPU_PARAMS_PLANE_BYTES
+        : SURFACE_GPU_PARAMS_BYTES,
   );
   const view = new DataView(buf);
   view.setFloat32(12, de.boundingRadius, true);
@@ -1749,6 +1855,11 @@ export function packBulbGpuParams(
   // floor is the same classic look the fold arm carries it for.
   if (groundPlane) {
     writeGroundPlane(view, groundPlane);
+  }
+  // The shape trap's live block at the same frozen 336 as the escape
+  // packer's — one offset across the 3D forward cores.
+  if (shapeTrap) {
+    writeShapeTrap(view, 336, shapeTrap);
   }
   return buf;
 }
@@ -2029,6 +2140,7 @@ export function packEscape4GpuParams(
   view4: SurfaceGpu4View,
   run: SurfaceGpuRunParams,
   groundPlane: SurfaceGpuGroundPlane | null = null,
+  shapeTrap: ResolvedShapeTrap | null = null,
 ): ArrayBuffer {
   if (view4.sliceHalfW > 0) {
     throw new Error(
@@ -2038,9 +2150,11 @@ export function packEscape4GpuParams(
     );
   }
   const buf = new ArrayBuffer(
-    groundPlane
-      ? SURFACE_GPU_PARAMS4_PLANE_BYTES
-      : SURFACE_GPU_PARAMS4_ESCAPE_BYTES,
+    shapeTrap
+      ? SURFACE_GPU_PARAMS4_TRAP_BYTES
+      : groundPlane
+        ? SURFACE_GPU_PARAMS4_PLANE_BYTES
+        : SURFACE_GPU_PARAMS4_ESCAPE_BYTES,
   );
   const view = new DataView(buf);
   const R = de.boundingRadius;
@@ -2101,6 +2215,12 @@ export function packEscape4GpuParams(
   view.setFloat32(464, de.logEstimate ? 1 : 0, true);
   if (groundPlane) {
     writeGroundPlane4(view, groundPlane);
+  }
+  // The trap's live block at the frozen 624 — past the plane region, which
+  // stays zero-filled when there is no floor (a block at 576 would land
+  // INSIDE it: the lens4Fold corruption's shape, one append later).
+  if (shapeTrap) {
+    writeShapeTrap(view, 624, shapeTrap);
   }
   return buf;
 }
@@ -2511,6 +2631,17 @@ fn bulbPow8(y: vec3f, r2: f32) -> vec3f {
  * estimator, the GLSL tracer and this kernel stay in lockstep term for
  * term, and any disagreement the bench finds is a bug, not a design gap.
  */
+/** A finite number as a WGSL float literal — `shapes.ts`'s `lit` rule
+ * (String round-trips f64 exactly; a bare integer gains `.0` so the token
+ * reads as a float). Used for the trap's baked normalizer. */
+function wgslFloatLit(x: number): string {
+  if (!Number.isFinite(x)) {
+    throw new Error(`surface-de-gpu: non-finite baked constant (${x})`);
+  }
+  const s = String(x);
+  return /[.e]/.test(s) ? s : `${s}.0`;
+}
+
 export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   const { mode, width, workgroupSize, sharedFrontier, bnbStage2 } = opts;
   // Which descent body. Absent means "fold", so every config
@@ -2623,6 +2754,17 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
         "arm refuses the same pair)",
     );
   }
+  // The escape family's shape-trap color channel (option doc). Absent
+  // means no trap, so every trap-free config generates byte-identical
+  // source — the compile-gate mechanism, exactly the finish flag's.
+  const shapeTrap = opts.shapeTrap ?? null;
+  if (shapeTrap && !forward) {
+    throw new Error(
+      "surface-de-gpu: shapeTrap is the escape family's color channel " +
+        "(cores escape/bulb/escape4) — a descent hit-info is a branch " +
+        "sweep with no forward orbit for the accumulator to ride",
+    );
+  }
   // Per-slot finish lighting (option doc). Absent means the fixed
   // Blinn-Phong lines, so every config predating the option generates
   // byte-identical source; no throw anywhere — the flag composes with
@@ -2639,6 +2781,77 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // constructor gains the source4 placeholder (zeroed — the core fills it
   // before returning, and the balloon rename extends the SAME text).
   const source4CtorArg = pattern ? ", vec4f(0.0)" : "";
+  // The shape trap's hit-info constructor member, appended LAST (after the
+  // pattern member; the balloon members never co-exist with it — every
+  // forward core throws under balloon — so the balloon rename strings stay
+  // untouched text). 1.0 is the far value; the bodies overwrite it.
+  const trapCtorArg = shapeTrap ? ", 1.0" : "";
+  // The trap's per-body splices — the ONE formula (`escape-de.ts`'s
+  // shapeTrapCandidate/shapeTrapValue) in its f32 formulation, emitted only
+  // into the three forward hit-info orbits. `-1e+30` is
+  // SHAPE_TRAP_NO_CROSSING, interpolated so the two sides cannot drift.
+  const trapDecl = shapeTrap
+    ? /* wgsl */ `
+  var trapBest = 1.0e30;
+  var trapCross = ${SHAPE_TRAP_NO_CROSSING};`
+    : "";
+  // (pointExpr, indexExpr) -> the per-step accumulator lines, placed right
+  // after the rings/sheets min-tracks so the trap reads exactly the orbit
+  // points they read.
+  const trapStep = (point: string, idx: string): string =>
+    shapeTrap
+      ? /* wgsl */ `
+    let tCand = trapCandidate(${point}, ${idx});
+    trapBest = min(trapBest, tCand);
+    if (trapCross <= ${SHAPE_TRAP_NO_CROSSING} && tCand < params.trapP.z) {
+      trapCross = tCand;
+    }`
+      : "";
+  const trapFinal = shapeTrap
+    ? /* wgsl */ `
+  info.shapeTrap = trapValue(trapBest, trapCross);`
+    : "";
+  // The trap's shade-mode helpers: the BAKED shape SDF (per-spec codegen,
+  // `shapes.ts`'s shapeSdfSource — the create-time-geometry decision) plus
+  // the candidate/finalize pair mirroring `escape-de.ts`'s
+  // shapeTrapCandidate/shapeTrapValue term for term. The normalizer is a
+  // baked literal from the ONE shared definition (`shapeTrapInvNorm`), so
+  // the kernel and the resolver cannot disagree; everything LIVE rides the
+  // appended trap params block.
+  const trapHelperText = shapeTrap
+    ? `${shapeSdfSource(shapeTrap, "wgsl", "trapShapeSdf")}
+// Step stepIdx's trap candidate at orbit point pOrbit — escape-de.ts's
+// shapeTrapCandidate in f32: pose inverse WITHOUT the value factor
+// (distances in the shape's own local units), normalized by the baked
+// bounding radius so the channel is scale-relative, then the
+// fade-by-index weight.
+fn trapCandidate(pOrbit: vec3f, stepIdx: u32) -> f32 {
+  let td = pOrbit - vec3f(params.trapR0.w, params.trapR1.w, params.trapR2.w);
+  let tl = vec3f(
+    dot(params.trapR0.xyz, td),
+    dot(params.trapR1.xyz, td),
+    dot(params.trapR2.xyz, td),
+  ) * params.trapP.x;
+  return trapShapeSdf(tl) * ${wgslFloatLit(shapeTrapInvNorm(shapeTrap))} *
+    (1.0 + params.trapP.w * f32(stepIdx));
+}
+
+// escape-de.ts's shapeTrapValue: min mode clamps the closest weighted
+// approach; threshold mode sweeps the first crossing over [0, threshold]
+// and reads 1.0 when no candidate ever dipped under the bar (the
+// resolver floors the threshold, so the division is total).
+fn trapValue(best: f32, cross: f32) -> f32 {
+  if (params.trapP.y < 0.5) {
+    return clamp(best, 0.0, 1.0);
+  }
+  if (cross <= ${SHAPE_TRAP_NO_CROSSING}) {
+    return 1.0;
+  }
+  return clamp(cross / params.trapP.z, 0.0, 1.0);
+}
+
+`
+    : "";
   // The shadeMaps stride token: under either material feature the buffer is 3
   // vec4f per slot ([0] rgb+trap unchanged, [1]/[2] the shared lanes), so EVERY
   // shadeMaps read site's index gains " * 3" through this one string —
@@ -2652,7 +2865,10 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // plane/balloon block lands at ONE offset (576) across every 4D core —
   // the 3D `lens || balloon || groundPlane` rule one dimension up. The
   // packer zero-fills it when there is no lens, exactly as 3D's does.
-  const tail4Block = core4 && (lens || balloon || groundPlane);
+  // The shape trap appends past THAT (escape4's own 624), so it forces the
+  // chain too.
+  const tail4Block =
+    core4 && (lens || balloon || groundPlane || shapeTrap !== null);
   // The slab's register-pressure probe (option doc).
   // Meaningful only under the 4D DESCENT cores — every other core reads
   // `true` unconditionally, so `opts.slabExt` is never even consulted for
@@ -2889,7 +3105,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     dot(params.finalM1, p) + params.finalT1,
     dot(params.finalM2, p) + params.finalT2,
   );
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg});
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg});
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -3103,7 +3319,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     dot(params.finalM1, p) + params.finalT1,
     dot(params.finalM2, p) + params.finalT2,
   );
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg});
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg});
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -3380,7 +3596,7 @@ ${
     slabExt,
     lens,
   )}, li: u32) -> SurfaceHitInfo {
-${lift4Text("p", "", slabExt, lens)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg});
+${lift4Text("p", "", slabExt, lens)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg});
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -3769,7 +3985,7 @@ ${pattern && !lens ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, param
     slabExt,
     lens,
   )}, li: u32) -> SurfaceHitInfo {
-${lift4Text("p", "", slabExt, lens)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg});
+${lift4Text("p", "", slabExt, lens)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg});
   var trapAcc = 0.0;
   var trapNorm = 0.0;
   var trapW = 1.0;
@@ -4095,7 +4311,7 @@ ${pattern && !lens ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, param
   // GLSL overload also returns the DE, so its dr accumulator is the one
   // value-side term trimmed here.
   const escapeHitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg});
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg});
   let q = foldQuerySector(p);
   var v = q;
   var r = length(v);
@@ -4110,7 +4326,7 @@ ${pattern && !lens ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, param
   // And its DEGREE, 0 until a step has run — which is also what a
   // FOLD leaves here, so a fold-only chain reads the constant-factor arm
   // below at every step exactly as it did before.
-  var lastPower = 0.0;
+  var lastPower = 0.0;${trapDecl}
   for (var i = 0u; i < steps; i++) {
     if (r > params.boundingRadius) {
       escapedAt = i;
@@ -4158,7 +4374,10 @@ ${pattern && !lens ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, param
     // multiply.
     lastPower = select(select(0.0, 2.0, kind == 5u), ${BULB_POWER}.0, kind == 4u);
     info.rings = min(info.rings, r / params.boundingRadius);
-    info.sheets = min(info.sheets, abs(v.y) / params.boundingRadius);
+    info.sheets = min(info.sheets, abs(v.y) / params.boundingRadius);${trapStep(
+      "v",
+      "i",
+    )}
     link++;
     if (link == n) {
       link = 0u;
@@ -4186,7 +4405,7 @@ ${pattern && !lens ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, param
   info.trap =
     clamp((f32(escapedAt) - escFrac) / f32(params.maxDepth), 0.0, 1.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
-  info.sheets = clamp(info.sheets, 0.0, 1.0);
+  info.sheets = clamp(info.sheets, 0.0, 1.0);${trapFinal}
 ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
   return info;
 }`;
@@ -4200,7 +4419,7 @@ ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
   // the orbit runs in the ATTRACTOR frame, exactly as the 4D descents'
   // colour sources do.
   const escape4HitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg});
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg});
   let q = foldQuerySector4(liftEscape4(p));
   var v = q;
   var r = length(v);
@@ -4209,7 +4428,7 @@ ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
   var link = 0u;
   var escapedAt = steps;
   var growth = maps[0].p0.z;
-  var lastPower = 0.0;
+  var lastPower = 0.0;${trapDecl}
   for (var i = 0u; i < steps; i++) {
     if (r > params.boundingRadius) {
       escapedAt = i;
@@ -4239,7 +4458,10 @@ ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
     growth = L.p0.z;
     lastPower = select(0.0, 2.0, kind == 5u);
     info.rings = min(info.rings, r / params.boundingRadius);
-    info.sheets = min(info.sheets, abs(v.y) / params.boundingRadius);
+    info.sheets = min(info.sheets, abs(v.y) / params.boundingRadius);${trapStep(
+      "v.xyz",
+      "i",
+    )}
     link++;
     if (link == n) {
       link = 0u;
@@ -4256,7 +4478,7 @@ ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
   info.trap =
     clamp((f32(escapedAt) - escFrac) / f32(params.maxDepth), 0.0, 1.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
-  info.sheets = clamp(info.sheets, 0.0, 1.0);
+  info.sheets = clamp(info.sheets, 0.0, 1.0);${trapFinal}
 ${pattern ? `  info.source4 = liftEscape4(p);` : ""}
   return info;
 }`;
@@ -4271,7 +4493,7 @@ ${pattern ? `  info.source4 = liftEscape4(p);` : ""}
   // Colors-only convention (every hit-info body's): the estimate's dr
   // accumulator is the one value-side term trimmed here.
   const bulbHitInfoText = /* wgsl */ `fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
-  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg});
+  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg});
   let bail = params.bulbParams.y;
   let c = vec3f(
     dot(params.bulbM0, p) + params.bulbT0,
@@ -4281,7 +4503,7 @@ ${pattern ? `  info.source4 = liftEscape4(p);` : ""}
   var y = c;
   var r2 = dot(y, y);
   var r = sqrt(r2);
-  var escapedAt = params.maxDepth;
+  var escapedAt = params.maxDepth;${trapDecl}
   for (var i = 0u; i < params.maxDepth; i++) {
     if (r > bail) {
       escapedAt = i;
@@ -4292,7 +4514,7 @@ ${pattern ? `  info.source4 = liftEscape4(p);` : ""}
     r2 = dot(y, y);
     r = sqrt(r2);
     info.rings = min(info.rings, r / bail);
-    info.sheets = min(info.sheets, abs(y.y) / bail);
+    info.sheets = min(info.sheets, abs(y.y) / bail);${trapStep("y", "i")}
   }
   // The continuous escape count for a POWER map, the GLSL
   // arm's escFrac term for term: r grows as r^n, not by a constant
@@ -4306,7 +4528,7 @@ ${pattern ? `  info.source4 = liftEscape4(p);` : ""}
   }
   info.trap = clamp((f32(escapedAt) - escFrac) / f32(params.maxDepth), 0.0, 1.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
-  info.sheets = clamp(info.sheets, 0.0, 1.0);
+  info.sheets = clamp(info.sheets, 0.0, 1.0);${trapFinal}
 ${pattern ? `  info.source4 = vec4f(p, 0.0);` : ""}
   return info;
 }`;
@@ -4778,8 +5000,8 @@ ${core4 ? lens4HitWrapText : lensHitWrapText}`
         // term, which is the safe direction: an untinted hit.
         balloonRename(
           lensedHitInfoText,
-          `SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg})`,
-          `SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}, vec3f(0.0), 0.0)`,
+          `SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg})`,
+          `SurfaceHitInfo(0, 0.0, 1.0, 1.0, 0.0${source4CtorArg}${trapCtorArg}, vec3f(0.0), 0.0)`,
         ),
         "fn surfaceDEHitInfo(",
         "fn surfaceDEHitInfoFractal(",
@@ -5184,6 +5406,15 @@ struct SurfaceHitInfo {
   source4: vec4f,`
       : ""
   }${
+    shapeTrap
+      ? `
+  // Shape trap only: the [0, 1] palette coordinate the trap
+  // accumulators produced (escape-de.ts's ONE formula) — the forward
+  // hit-info orbits fill it, and the shade entry's color source 6 is the
+  // one reader. Shading extras only, never part of distance evaluation.
+  shapeTrap: f32,`
+      : ""
+  }${
     balloon
       ? `
   // Balloon only: the winning union term's SOURCE query
@@ -5202,7 +5433,7 @@ struct SurfaceHitInfo {
   }
 }
 
-${hitInfoText}
+${trapHelperText}${hitInfoText}
 ${backgroundShapeSource(BACKGROUND_SHAPE_WGSL)}
 fn packSurfaceLayer(coverage: f32, fog: f32) -> u32 {
   let beta = 1.0 - coverage +
@@ -5406,8 +5637,16 @@ ${shadeGate}
       ${shadeRadiusU}
     } else if (shade.colorSource == 4u) {
       u = hi.rings;
-    } else {
+    } else ${
+      shapeTrap
+        ? /* wgsl */ `if (shade.colorSource == 5u) {
       u = hi.sheets;
+    } else {
+      u = hi.shapeTrap;
+    }`
+        : /* wgsl */ `{
+      u = hi.sheets;
+    }`
     }
     base = textureSampleLevel(lutTex, lutSamp, vec2f(u, 0.5), 0.0).rgb;
   }${shadeBalloonPalette}${shadeBalloonTint}${shadePattern}
@@ -5569,6 +5808,16 @@ ${shadeLighting}
   balloonFar: f32,
   padB0: f32,
   padB1: f32,`;
+  // The shape trap's LIVE pose/mode block, appended past the plane block —
+  // which is declared UNCONDITIONALLY under the trap (zero-filled when no
+  // floor) so this lands at ONE offset per dimension: 336 for the 3D
+  // forward cores, 624 for escape4 (module doc's layout row). ONE text for
+  // both dimensions, exactly like the plane's.
+  const trapStructFields = /* wgsl */ `
+  trapR0: vec4f,
+  trapR1: vec4f,
+  trapR2: vec4f,
+  trapP: vec4f,`;
   const headerText = /* wgsl */ `
 struct Params {
   boundCenter: vec3f,
@@ -5687,7 +5936,9 @@ struct Params {
   // oracles), so this is the same quartet at the 4D block's own offset.
   lens4Fold: vec4f,`
         : ""
-  }${balloon ? balloonStructFields : ""}${groundPlane ? planeStructFields : ""}`
+  }${balloon ? balloonStructFields : ""}${
+    groundPlane || shapeTrap ? planeStructFields : ""
+  }${shapeTrap ? trapStructFields : ""}`
       : core === "escape"
         ? /* wgsl */ `
   escM0: vec3f,
@@ -5706,7 +5957,9 @@ struct Params {
   // the maps binding — the slot exists so the shared plane/balloon block
   // lands at ONE offset (288) across every 3D core, the same layout-parity
   // argument the 4D map struct's unread lanes already ride.
-  padF: vec4f,${groundPlane ? planeStructFields : ""}`
+  padF: vec4f,${groundPlane || shapeTrap ? planeStructFields : ""}${
+    shapeTrap ? trapStructFields : ""
+  }`
         : core === "bulb"
           ? /* wgsl */ `
   bulbM0: vec3f,
@@ -5717,7 +5970,9 @@ struct Params {
   bulbT2: f32,
   bulbParams: vec4f,
   // The 272..287 fold-lens slot again, PAD: the bulb has no fold at all.
-  padF: vec4f,${groundPlane ? planeStructFields : ""}`
+  padF: vec4f,${groundPlane || shapeTrap ? planeStructFields : ""}${
+    shapeTrap ? trapStructFields : ""
+  }`
           : lens || balloon || groundPlane
             ? /* wgsl */ `
   lensM0: vec3f,

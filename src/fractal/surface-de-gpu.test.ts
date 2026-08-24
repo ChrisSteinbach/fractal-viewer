@@ -18,9 +18,11 @@ import {
   SURFACE_GPU_PARAMS4_ESCAPE_BYTES,
   SURFACE_GPU_PARAMS4_LENS_BYTES,
   SURFACE_GPU_PARAMS4_PLANE_BYTES,
+  SURFACE_GPU_PARAMS4_TRAP_BYTES,
   SURFACE_GPU_PARAMS_BALLOON_BYTES,
   SURFACE_GPU_PARAMS_BYTES,
   SURFACE_GPU_PARAMS_PLANE_BYTES,
+  SURFACE_GPU_PARAMS_TRAP_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
   SURFACE_GPU_RAY_HIT,
@@ -56,6 +58,8 @@ import {
   ESCAPE_STEP_SCALE,
   ESCAPE_TIME_ITERATIONS,
 } from "./escape-de";
+import { resolveShapeTrap } from "./shape-trap";
+import { PEACE_SIGN_SHAPE } from "./shapes";
 import { buildEscapeDE4, SYM_PLANE_CODE4 } from "./escape-de-4d";
 import {
   buildSurfaceDE,
@@ -6415,5 +6419,232 @@ describe("box-branch decode duplication", () => {
         expected,
       );
     }
+  });
+});
+
+describe("surfaceDeKernelWgsl shape trap (shapeTrap)", () => {
+  it("omitted and explicit shapeTrap:null produce identical source across every mode/core/variant — the byte-identical off state", () => {
+    const cases: Partial<SurfaceGpuKernelOptions>[] = [
+      { mode: "eval", width: 12 },
+      { mode: "eval", core: "escape", width: 4 },
+      { mode: "march", rays: "unproject", width: 12, statusOut: true },
+      { mode: "shade", width: 12, shadeDeWidth: 1 },
+      { mode: "shade", core: "escape" },
+      { mode: "shade", core: "escape", groundPlane: true },
+      { mode: "shade", core: "bulb" },
+      { mode: "shade", core: "bulb", finish: true },
+      { mode: "shade", core: "escape4" },
+      { mode: "shade", core: "escape4", groundPlane: true },
+      { mode: "shade", core: "affine4" },
+      { mode: "shade", core: "fold4", lens: true },
+    ];
+    for (const overrides of cases) {
+      const omitted = surfaceDeKernelWgsl(kernelOpts(overrides));
+      const explicit = surfaceDeKernelWgsl(
+        kernelOpts({ ...overrides, shapeTrap: null }),
+      );
+      expect(explicit).toBe(omitted);
+      expect(omitted).not.toContain("trapShapeSdf");
+      expect(omitted).not.toContain("trapCandidate");
+      expect(omitted).not.toContain("trapR0");
+    }
+  });
+
+  it("throws on every descent core — the trap is the escape family's channel", () => {
+    for (const core of ["fold", "affine", "affine4", "fold4"] as const) {
+      expect(() =>
+        surfaceDeKernelWgsl(
+          kernelOpts({ mode: "shade", core, shapeTrap: PEACE_SIGN_SHAPE }),
+        ),
+      ).toThrow(/escape family/);
+    }
+  });
+
+  it("emits the baked SDF, the candidate/finalize helpers, the accumulator in the hit-info orbit, the struct member and the source-6 dispatch for each trap-carrying core", () => {
+    for (const core of ["escape", "bulb", "escape4"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, shapeTrap: PEACE_SIGN_SHAPE }),
+      );
+      expect(wgsl).toContain("fn trapShapeSdf(p: vec3f) -> f32");
+      expect(wgsl).toContain("fn trapCandidate(pOrbit: vec3f, stepIdx: u32)");
+      expect(wgsl).toContain("fn trapValue(best: f32, cross: f32)");
+      expect(wgsl).toContain("trapBest = min(trapBest, tCand);");
+      expect(wgsl).toContain(
+        "info.shapeTrap = trapValue(trapBest, trapCross);",
+      );
+      expect(wgsl).toContain("shapeTrap: f32,");
+      expect(wgsl).toContain("u = hi.shapeTrap;");
+      // The params block's four lanes, declared past the (unconditional)
+      // plane region.
+      for (const field of ["trapR0", "trapR1", "trapR2", "trapP"]) {
+        expect(wgsl).toContain(`${field}: vec4f,`);
+      }
+      expect(wgsl).toContain("groundY: f32,");
+    }
+  });
+
+  it("keeps the trap's params block out of the march/eval BODIES: only struct declarations, no reads outside shade", () => {
+    for (const mode of ["eval", "march"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({
+          mode,
+          core: "escape",
+          ...(mode === "march" ? { rays: "unproject" as const } : {}),
+          shapeTrap: PEACE_SIGN_SHAPE,
+        }),
+      );
+      expect(wgsl).toContain("trapP: vec4f,");
+      expect(wgsl).not.toContain("params.trapP");
+      expect(wgsl).not.toContain("trapShapeSdf");
+    }
+  });
+
+  it("bakes the normalizer as the shared shapeTrapInvNorm literal", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "escape",
+        shapeTrap: PEACE_SIGN_SHAPE,
+      }),
+    );
+    const invNorm = 1 / 1.12; // torus major 1 + minor 0.12 — the peace
+    // sign's bounding radius, shapeBoundingRadius's tight gear-free bound.
+    expect(wgsl).toContain(`trapShapeSdf(tl) * ${String(invNorm)}`);
+  });
+});
+
+describe("packers' shape-trap block (the appended 336/624 layout)", () => {
+  const trap = () =>
+    resolveShapeTrap({
+      shape: PEACE_SIGN_SHAPE,
+      position: [0.3, -0.2, 0.5],
+      rotation: [0.2, 0, 0.4],
+      scale: 0.7,
+      mode: "threshold",
+      threshold: 0.3,
+      fade: 0.05,
+    });
+  const escapeDe = () =>
+    buildEscapeDE([
+      {
+        id: 0,
+        position: [0.4, 0.3, 0.2],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "mandelbox", weight: 2 }],
+      },
+    ]);
+
+  it("grows packEscapeGpuParams to SURFACE_GPU_PARAMS_TRAP_BYTES with the lanes at 336 and the plane region zero-filled", () => {
+    expect(SURFACE_GPU_PARAMS_TRAP_BYTES).toBe(400);
+    const rt = trap();
+    const buf = packEscapeGpuParams(escapeDe(), { itemCount: 2 }, null, rt);
+    expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS_TRAP_BYTES);
+    const f32 = new Float32Array(buf);
+    // The plane region (288..335) stays zero — the unconditional pad that
+    // keeps the trap at ONE offset.
+    for (let i = 288 / 4; i < 336 / 4; i++) expect(f32[i]).toBe(0);
+    // Rᵀ rows with the position in the .w lanes, then the params quartet.
+    expect(f32[336 / 4 + 3]).toBeCloseTo(0.3, 6);
+    expect(f32[352 / 4 + 3]).toBeCloseTo(-0.2, 6);
+    expect(f32[368 / 4 + 3]).toBeCloseTo(0.5, 6);
+    expect(f32[384 / 4 + 0]).toBeCloseTo(rt.invScale, 6);
+    expect(f32[384 / 4 + 1]).toBe(1); // threshold mode
+    expect(f32[384 / 4 + 2]).toBeCloseTo(0.3, 6);
+    expect(f32[384 / 4 + 3]).toBeCloseTo(0.05, 6);
+    // Rᵀ row 0 is resolveShapeTrap's own matrix, transferred not
+    // recomputed.
+    expect(f32[336 / 4 + 0]).toBeCloseTo(rt.invRot[0], 6);
+    expect(f32[336 / 4 + 1]).toBeCloseTo(rt.invRot[1], 6);
+    expect(f32[336 / 4 + 2]).toBeCloseTo(rt.invRot[2], 6);
+  });
+
+  it("leaves the frozen 0..287 escape block byte-identical to the trap-free packing of the same system", () => {
+    const de = escapeDe();
+    const plain = new Uint8Array(packEscapeGpuParams(de, { itemCount: 2 }));
+    const trapped = new Uint8Array(
+      packEscapeGpuParams(de, { itemCount: 2 }, null, trap()),
+    );
+    expect(trapped.slice(0, SURFACE_GPU_PARAMS_BYTES)).toEqual(plain);
+  });
+
+  it("composes trap + groundPlane: the plane block keeps its 288 offset under the trap", () => {
+    const gp: SurfaceGpuGroundPlane = {
+      y: -1.5,
+      fadeStart: 2,
+      fadeEnd: 4,
+      ballCenter: [0, 0, 0],
+      ballRadius: 4,
+      albedo: [0.5, 0.5, 0.5],
+    };
+    const de = escapeDe();
+    const planeOnly = new Uint8Array(
+      packEscapeGpuParams(de, { itemCount: 2 }, gp),
+    );
+    const both = new Uint8Array(
+      packEscapeGpuParams(de, { itemCount: 2 }, gp, trap()),
+    );
+    expect(both.byteLength).toBe(SURFACE_GPU_PARAMS_TRAP_BYTES);
+    expect(both.slice(0, SURFACE_GPU_PARAMS_PLANE_BYTES)).toEqual(planeOnly);
+  });
+
+  it("packBulbGpuParams takes the identical block at the identical offset", () => {
+    const de = buildBulbDE([
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "bulb", weight: 1 }],
+      },
+    ]);
+    const rt = trap();
+    const buf = packBulbGpuParams(de, { itemCount: 2 }, null, rt);
+    expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS_TRAP_BYTES);
+    const f32 = new Float32Array(buf);
+    expect(f32[384 / 4 + 0]).toBeCloseTo(rt.invScale, 6);
+    const plain = new Uint8Array(packBulbGpuParams(de, { itemCount: 2 }));
+    expect(new Uint8Array(buf).slice(0, SURFACE_GPU_PARAMS_BYTES)).toEqual(
+      plain,
+    );
+  });
+
+  it("packEscape4GpuParams appends at the frozen 624 — past the zero-filled plane region — and leaves the 0..575 block byte-identical", () => {
+    expect(SURFACE_GPU_PARAMS4_TRAP_BYTES).toBe(688);
+    const de4 = buildEscapeDE4([
+      {
+        id: 0,
+        position: [0.3, 0.1, 0.2],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "mandelbox", weight: 2 }],
+        w: { position: 0.2, rotation: { xw: 0.6 } },
+      },
+    ]);
+    const view: SurfaceGpu4View = {
+      rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      w0: 0.1,
+      sliceHalfW: 0,
+    };
+    const rt = trap();
+    const buf = packEscape4GpuParams(de4, view, { itemCount: 2 }, null, rt);
+    expect(buf.byteLength).toBe(SURFACE_GPU_PARAMS4_TRAP_BYTES);
+    const f32 = new Float32Array(buf);
+    for (let i = 576 / 4; i < 624 / 4; i++) expect(f32[i]).toBe(0);
+    expect(f32[624 / 4 + 3]).toBeCloseTo(0.3, 6);
+    expect(f32[672 / 4 + 1]).toBe(1);
+    const plain = new Uint8Array(
+      packEscape4GpuParams(de4, view, { itemCount: 2 }),
+    );
+    expect(
+      new Uint8Array(buf).slice(0, SURFACE_GPU_PARAMS4_ESCAPE_BYTES),
+    ).toEqual(plain);
+  });
+
+  it("omits the trap back to today's buffers, byte for byte, on all three packers", () => {
+    const de = escapeDe();
+    expect(
+      new Uint8Array(packEscapeGpuParams(de, { itemCount: 2 }, null, null)),
+    ).toEqual(new Uint8Array(packEscapeGpuParams(de, { itemCount: 2 })));
   });
 });

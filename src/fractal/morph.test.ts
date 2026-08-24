@@ -1,9 +1,12 @@
 import { systemPartsAreNonFlat } from "./affine4";
 import { derivedColorIndex } from "./chaos-game";
-import { lerpSystem } from "./morph";
+import { lerpShapeTrap, lerpSystem } from "./morph";
 import type { MorphSystem } from "./morph";
 import { CLASSIC_SURFACE_FINISH } from "./surface-finish";
 import type { ShapeSpec } from "./shapes";
+import { PEACE_SIGN_SHAPE, GEAR_SHAPE } from "./shapes";
+import { DEFAULT_SHAPE_TRAP_THRESHOLD } from "./shape-trap";
+import type { ShapeTrap } from "./types";
 import { VARIATION_TYPES } from "./types";
 import type { Transform, VariationType } from "./types";
 import {
@@ -1237,5 +1240,88 @@ describe("emitter morphing", () => {
     // only its weight animates: 0 -> 2.
     expect(mid.transforms[1].emitter).toEqual(spec);
     expect(mid.transforms[1].weight).toBeCloseTo(1, 12);
+  });
+});
+
+describe("lerpShapeTrap (the shape-trap block's morph rule)", () => {
+  const trapA: ShapeTrap = {
+    shape: PEACE_SIGN_SHAPE,
+    position: [1, 0, 0],
+    rotation: [0, 0.4, 0],
+    scale: 0.5,
+    fade: 0.2,
+  };
+  const trapB: ShapeTrap = {
+    shape: PEACE_SIGN_SHAPE,
+    position: [0, 1, 0],
+    scale: 1.5,
+  };
+
+  it("is endpoint-exact by reference at t = 0 and t = 1", () => {
+    expect(lerpShapeTrap(trapA, trapB, 0)).toBe(trapA);
+    expect(lerpShapeTrap(trapA, trapB, 1)).toBe(trapB);
+    expect(lerpShapeTrap(null, trapB, 0)).toBeNull();
+  });
+
+  it("glides pose/scale/fade between two traps of the SAME shape through the absent-means-classic fallbacks", () => {
+    const mid = lerpShapeTrap(trapA, trapB, 0.5)!;
+    expect(mid.shape).toBe(trapB.shape);
+    expect(mid.position).toEqual([0.5, 0.5, 0]);
+    // rotation absent on B reads zero.
+    expect(mid.rotation?.[1]).toBeCloseTo(0.2, 12);
+    expect(mid.scale).toBeCloseTo(1, 12);
+    // fade absent on B reads 0.
+    expect(mid.fade).toBeCloseTo(0.1, 12);
+    // absent-on-both stays absent.
+    expect(mid.mode).toBeUndefined();
+    expect(mid.threshold).toBeUndefined();
+  });
+
+  it("lerps the threshold under matching threshold modes, the absent side reading the classic bar", () => {
+    const a: ShapeTrap = { shape: PEACE_SIGN_SHAPE, mode: "threshold" };
+    const b: ShapeTrap = {
+      shape: PEACE_SIGN_SHAPE,
+      mode: "threshold",
+      threshold: 0.45,
+    };
+    const mid = lerpShapeTrap(a, b, 0.5)!;
+    expect(mid.mode).toBe("threshold");
+    expect(mid.threshold).toBeCloseTo(
+      (DEFAULT_SHAPE_TRAP_THRESHOLD + 0.45) / 2,
+      12,
+    );
+  });
+
+  it("POPS to the target for every other pair: one-sided, a different shape, a different mode", () => {
+    // One-sided (either way).
+    expect(lerpShapeTrap(null, trapB, 0.25)).toBe(trapB);
+    expect(lerpShapeTrap(trapA, null, 0.25)).toBeNull();
+    // A different shape.
+    const gear: ShapeTrap = { shape: GEAR_SHAPE };
+    expect(lerpShapeTrap(trapA, gear, 0.25)).toBe(gear);
+    // A different mode class.
+    const th: ShapeTrap = { shape: PEACE_SIGN_SHAPE, mode: "threshold" };
+    expect(lerpShapeTrap(trapA, th, 0.25)).toBe(th);
+  });
+
+  it("rides lerpSystem: a shapeTrap-less pair stays absent and a trapped pair glides", () => {
+    const system = (trap: ShapeTrap | null): MorphSystem => ({
+      transforms: [
+        {
+          id: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+        },
+      ],
+      finalTransform: null,
+      symmetry: { order: 1, plane: "xz" },
+      shapeTrap: trap,
+    });
+    expect(
+      lerpSystem(system(null), system(null), 0.5).shapeTrap,
+    ).toBeUndefined();
+    const mid = lerpSystem(system(trapA), system(trapB), 0.5).shapeTrap;
+    expect(mid?.position).toEqual([0.5, 0.5, 0]);
   });
 });

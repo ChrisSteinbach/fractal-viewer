@@ -12,6 +12,7 @@ import type { Transform, Vec3, WDepthColorMode } from "../fractal/types";
 import { to255 } from "../fractal/vec";
 import type { AppState } from "./state";
 import { surfaceColorLUT } from "./control-spec";
+import { deriveSurfaceEligibility } from "./surface-eligibility";
 
 /**
  * The color legend as DATA: what the panel's unobtrusive key for "what do the
@@ -309,6 +310,29 @@ export function deriveLegend({
   if (state.renderMode === "surface") {
     const source = state.surface.colorSource;
     if (source === "transform") return transformSwatches(state.transforms);
+    // The shape-trap source renders as "transform" wherever the trap is
+    // not LIVE — no document block, or a session outside the escape
+    // family, whose shaders carry no trap channel (scene.ts's
+    // surfaceColorSourceIndex is the one resolution site) — and the
+    // legend must narrate the SCREEN, so it takes the same fork. The
+    // family question re-derives from the document through the shared
+    // eligibility derivation (its kind is the session router's own
+    // answer; computeAvailable true because an entered surface session
+    // proved whatever availability it needed).
+    if (source === "shapeTrap") {
+      const kind = state.shapeTrap
+        ? deriveSurfaceEligibility(
+            state.transforms,
+            state.finalTransform ?? null,
+            state.symmetry,
+            { computeAvailable: true },
+            state.schedule ?? null,
+          ).kind
+        : null;
+      if (kind !== "escape" && kind !== "bulb" && kind !== "escape4") {
+        return transformSwatches(state.transforms);
+      }
+    }
     // The key samples the EXACT ramp the tracer samples: surfaceColorLUT
     // is the one definition of what setSurfaceColorLUT uploads
     // (control-spec.ts), so the legend can never drift from the rendered
@@ -317,9 +341,15 @@ export function deriveLegend({
     const lut = surfaceColorLUT(state);
     // Unreachable: every non-transform source builds a LUT.
     if (lut === null) return { kind: "hidden" };
-    if (source === "palette" || source === "rings" || source === "sheets") {
-      // rings/sheets ride the same descent hit-info as palette, just reading a
-      // different coordinate off it — same named-gradient legend.
+    if (
+      source === "palette" ||
+      source === "rings" ||
+      source === "sheets" ||
+      source === "shapeTrap"
+    ) {
+      // rings/sheets/shapeTrap ride the same forward/descent hit-info as
+      // palette, just reading a different coordinate off it — same
+      // named-gradient legend.
       return paletteBar(
         lutGradient(lut),
         paletteName("surfacePalette", state.surface.paletteId),

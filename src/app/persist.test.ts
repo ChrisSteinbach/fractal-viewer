@@ -18,6 +18,7 @@ import {
   MIN_CUSTOM_PALETTE_STOPS,
 } from "../fractal/palette";
 import { woodGrain } from "../fractal/presets";
+import { PEACE_SIGN_SHAPE } from "../fractal/shapes";
 import type { ShapeSpec } from "../fractal/shapes";
 import { VARIATION_TYPES } from "../fractal/types";
 import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
@@ -5870,5 +5871,110 @@ describe("decodeScene transform shape emitters", () => {
     const part = result!.transforms[0].emitter!.parts[0];
     expect((part.primitive as { radius: number }).radius).toBe(-2);
     expect(part.pose!.scale).toBe(-1);
+  });
+});
+
+describe("shapeTrap codec (the shape-trap color block)", () => {
+  it("round-trips a full block, round4'd, and drops nothing authored", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      shapeTrap: {
+        shape: PEACE_SIGN_SHAPE,
+        position: [0.31234567, -0.2, 0.5],
+        rotation: [0.2, 0, 0.4],
+        scale: 0.5,
+        mode: "threshold",
+        threshold: 0.3,
+        fade: 0.05,
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    expect(result).not.toBeNull();
+    expect(result!.shapeTrap).toBeDefined();
+    expect(result!.shapeTrap!.position).toEqual([0.3123, -0.2, 0.5]);
+    expect(result!.shapeTrap!.rotation).toEqual([0.2, 0, 0.4]);
+    expect(result!.shapeTrap!.scale).toBe(0.5);
+    expect(result!.shapeTrap!.mode).toBe("threshold");
+    expect(result!.shapeTrap!.threshold).toBe(0.3);
+    expect(result!.shapeTrap!.fade).toBe(0.05);
+    // The shape survives through the emitter spec codec — one vocabulary,
+    // one codec.
+    expect(result!.shapeTrap!.shape.parts).toHaveLength(4);
+    expect(result!.shapeTrap!.shape.parts[0].primitive.kind).toBe("torus");
+  });
+
+  it("writes nothing without a block — an unauthored scene stays byte-identical to one predating the field", () => {
+    const plain = encodeScene(baseSnapshot());
+    const payload = JSON.parse(
+      Buffer.from(
+        plain.slice("v1=".length).replace(/-/g, "+").replace(/_/g, "/"),
+        "base64",
+      ).toString("utf8"),
+    ) as Record<string, unknown>;
+    expect("shapeTrap" in payload).toBe(false);
+    const decoded = decodeScene(plain);
+    expect(decoded!.shapeTrap).toBeUndefined();
+  });
+
+  it("writes each optional field only when present — a shape-only block carries the shape alone", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      shapeTrap: { shape: PEACE_SIGN_SHAPE },
+    };
+    const decoded = decodeScene(encodeScene(s));
+    expect(decoded!.shapeTrap).toBeDefined();
+    expect(decoded!.shapeTrap!.position).toBeUndefined();
+    expect(decoded!.shapeTrap!.rotation).toBeUndefined();
+    expect(decoded!.shapeTrap!.scale).toBeUndefined();
+    expect(decoded!.shapeTrap!.mode).toBeUndefined();
+    expect(decoded!.shapeTrap!.threshold).toBeUndefined();
+    expect(decoded!.shapeTrap!.fade).toBeUndefined();
+  });
+
+  it("drops a malformed block WHOLE — never rejecting the scene, never salvaging leaves", () => {
+    const mangle = (patch: object): SceneSnapshot | null => {
+      const raw = JSON.parse(
+        Buffer.from(
+          encodeScene({
+            ...baseSnapshot(),
+            shapeTrap: { shape: PEACE_SIGN_SHAPE, scale: 0.5 },
+          })
+            .slice("v1=".length)
+            .replace(/-/g, "+")
+            .replace(/_/g, "/"),
+          "base64",
+        ).toString("utf8"),
+      ) as Record<string, unknown>;
+      raw.shapeTrap = { ...(raw.shapeTrap as object), ...patch };
+      const b64 = Buffer.from(JSON.stringify(raw), "utf8")
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+      return decodeScene(`v1=${b64}`);
+    };
+    // A numeric-string scale (no coercion), an unknown mode, a non-Vec3
+    // position, a corrupt shape: each drops the ENTIRE block and keeps the
+    // scene.
+    for (const patch of [
+      { scale: "2" },
+      { mode: "nearest" },
+      { position: [1, 2] },
+      { shape: { parts: "x" } },
+    ]) {
+      const decoded = mangle(patch);
+      expect(decoded).not.toBeNull();
+      expect(decoded!.shapeTrap).toBeUndefined();
+    }
+  });
+
+  it("fromSnapshot clears a base session's block when the snapshot has none (the schedule's explicit-read rule)", () => {
+    const withTrap = fromSnapshot(
+      { ...baseSnapshot(), shapeTrap: { shape: PEACE_SIGN_SHAPE } },
+      initialState(false),
+    );
+    expect(withTrap.shapeTrap).toBeDefined();
+    const cleared = fromSnapshot(baseSnapshot(), withTrap);
+    expect(cleared.shapeTrap).toBeUndefined();
   });
 });

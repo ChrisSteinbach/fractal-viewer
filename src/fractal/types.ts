@@ -466,6 +466,71 @@ export interface HybridSchedule {
   depth: number;
 }
 
+/**
+ * How a {@link ShapeTrap} turns its per-step candidates into ONE palette
+ * coordinate: `"min"` keeps the orbit's closest weighted approach to the
+ * shape (Pickover's classic), `"threshold"` keeps the FIRST weighted
+ * candidate that dips under {@link ShapeTrap.threshold} — the stamps alone,
+ * each shaded by how deep the crossing landed, everything else at the ramp's
+ * top. Single source of truth for the type and the persistence validator,
+ * the {@link COLOR_MODES} discipline.
+ */
+export const SHAPE_TRAP_MODES = ["min", "threshold"] as const;
+export type ShapeTrapMode = (typeof SHAPE_TRAP_MODES)[number];
+
+/**
+ * The escape-time family's shape-trap COLOR block — Pickover shape-trapping
+ * as a scene-level channel: at every step of the forward orbit the trap
+ * measures the orbit point's distance to this posed shape, and the shade
+ * paths paint the accumulated value through the surface palette when the
+ * `"shapeTrap"` color source is selected. COLOR ONLY: no marching quantity,
+ * no DE validity change, which is why it composes with every member of the
+ * family including the non-conformal ones (Liouville distortion bites
+ * trapped GEOMETRY, never a color channel).
+ *
+ * SCENE-LEVEL, beside {@link HybridSchedule}: one trap per document, riding
+ * `AppState`/the scene document rather than a transform. ABSENT MEANS OFF
+ * byte-identically — no block, no trap arithmetic anywhere, every emitted
+ * shader byte-identical to the pre-trap build (the `weight?`/`chaos?`
+ * convention at scene scope). Every OTHER field is optional with the
+ * absent-means-classic rule: pose fields default to the identity
+ * ({@link ShapePose}'s treatment), `mode` to `"min"`, `threshold` to
+ * `escape-de.ts`'s `DEFAULT_SHAPE_TRAP_THRESHOLD`, `fade` to 0. The
+ * resolution domain — every default and floor — lives in ONE place,
+ * `escape-de.ts`'s `resolveShapeTrap`, exactly as the fold lengths' lives
+ * in `resolveFoldRadii`; persistence carries the fields with fidelity and
+ * no clamps.
+ *
+ * THE POSE IS IN ORBIT SPACE — the space the forward orbit's points live in
+ * (`v` space for a chain, `y` space for the Mandelbulb), whose scale is the
+ * family's bailout ball. The trap VALUE is scale-relative by construction
+ * (distances are measured in the shape's own local units and normalized by
+ * its bounding radius), so scrubbing `scale` moves the stamps' SIZE without
+ * blowing the channel's [0, 1] range.
+ */
+export interface ShapeTrap {
+  /** The trapped shape ({@link ShapeSpec} — `shapes.ts`'s vocabulary). */
+  shape: ShapeSpec;
+  /** Trap center in orbit space. Absent ⇒ the origin. */
+  position?: Vec3;
+  /** Intrinsic Euler XYZ, radians — the {@link ShapePose.rotate}
+   * convention. Absent ⇒ no rotation. */
+  rotation?: Vec3;
+  /** Uniform scale, `> 0`; absent/non-finite/`<= 0` resolves to 1
+   * (`resolveShapeTrap`). */
+  scale?: number;
+  /** Accumulation rule — see {@link SHAPE_TRAP_MODES}. Absent ⇒ `"min"`. */
+  mode?: ShapeTrapMode;
+  /** The `"threshold"` mode's crossing bar, in NORMALIZED shape units
+   * (fractions of the shape's own bounding radius, so it composes with
+   * `scale`). Read only under that mode. Absent ⇒ the classic default. */
+  threshold?: number;
+  /** Fade-by-iteration-index: step `i`'s candidate is weighted by
+   * `1 + fade·i` before the min/threshold rule, so a positive fade biases
+   * the channel toward the orbit's EARLY (large) stamps. Absent ⇒ 0. */
+  fade?: number;
+}
+
 /** Axis-aligned extent of a point cloud, plus radial extent from the origin. */
 export interface Bounds {
   minX: number;

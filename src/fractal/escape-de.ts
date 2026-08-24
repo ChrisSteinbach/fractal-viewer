@@ -656,6 +656,12 @@ import { composeAffine } from "./affine";
 import { isFlatTransform, symmetryIsNonFlat } from "./affine4";
 import { BULB_POWER } from "./bulb-de";
 import {
+  SHAPE_TRAP_NO_CROSSING,
+  shapeTrapCandidate,
+  shapeTrapValue,
+} from "./shape-trap";
+import type { ResolvedShapeTrap } from "./shape-trap";
+import {
   effectiveSymmetryOrder,
   systemHasChaos,
   systemHasEmitters,
@@ -1216,9 +1222,14 @@ const FOLDED: Vec3 = [0, 0, 0];
  * readers of the one loop, so they cannot disagree about what the orbit is —
  * which is the whole point of the split, and the reason
  * {@link probeEscapeFill} can ask about the RENDERED set rather than about a
- * threshold on a distance. */
+ * threshold on a distance. {@link escapeShapeTrap} is the third thin reader:
+ * its two accumulators ride the SAME loop behind a null-guarded trap
+ * argument, so the trap can never evaluate a different orbit than the
+ * estimate does. */
 let orbitR = 0;
 let orbitDr = 1;
+let orbitTrapBest = 0;
+let orbitTrapCross = 0;
 
 /**
  * Run the chain's forward orbit from `p`, leaving the terminal radius and
@@ -1227,9 +1238,18 @@ let orbitDr = 1;
  * they inline it into their own estimator, since neither needs the
  * membership reader.
  */
-function runEscapeOrbit(de: EscapeDE, p: Vec3, maxIterations: number): void {
+function runEscapeOrbit(
+  de: EscapeDE,
+  p: Vec3,
+  maxIterations: number,
+  trap: ResolvedShapeTrap | null = null,
+): void {
   const links = de.links;
   const n = links.length;
+  if (trap) {
+    orbitTrapBest = 1e30;
+    orbitTrapCross = SHAPE_TRAP_NO_CROSSING;
+  }
   // The kaleidoscope, once, before anything else: the orbit is seeded AND
   // offset by the folded point, which is what makes the rendered set
   // exactly wedge-symmetric (module doc).
@@ -1339,6 +1359,16 @@ function runEscapeOrbit(de: EscapeDE, p: Vec3, maxIterations: number): void {
     vz = link.w * fz + qz;
     dr = link.derivGrowth * localL * dr + 1;
     r = Math.sqrt(vx * vx + vy * vy + vz * vz);
+    // The shape trap's two accumulators, at exactly this post-step point —
+    // the emitter branch's null-check shape: distance/membership callers
+    // pass no trap and pay one falsy test per step.
+    if (trap) {
+      const cand = shapeTrapCandidate(trap, vx, vy, vz, step);
+      if (cand < orbitTrapBest) orbitTrapBest = cand;
+      if (orbitTrapCross <= SHAPE_TRAP_NO_CROSSING && cand < trap.threshold) {
+        orbitTrapCross = cand;
+      }
+    }
   }
   orbitR = r;
   orbitDr = dr;
@@ -1549,6 +1579,32 @@ export const ESCAPE_PROBE_SEED = 0x5eed_e5ca;
  * which is what `escape-chain.harness.ts` and `hybrid-chain.harness.ts` use
  * it for when pricing whether composition inflates a set toward a solid ball.
  */
+/**
+ * The chain's shape-trap palette coordinate at `p` — the hit-info side's
+ * trap channel, evaluated exactly where the shaders evaluate theirs: a
+ * fresh forward orbit at the ACCEPTED point (the escape fraction's own
+ * post-hit re-run — hit info here has always been a dedicated re-run, so
+ * the trap is an accumulator inside the EXISTING loop rather than new
+ * machinery). A THIRD thin reader of {@link runEscapeOrbit}, beside the
+ * estimate and the membership reader: the accumulators ride the one shared
+ * loop behind its null-guarded trap argument, so a chain edit cannot move
+ * the estimate's orbit without moving this one — candidates land at the
+ * same post-step points rings/sheets read, kaleidoscope fold included.
+ * The formula itself is `shape-trap.ts`'s (`shapeTrapCandidate` /
+ * `shapeTrapValue` — ONE definition across the three CPU oracles); this
+ * f64 evaluation is the oracle the `SURFACE_ESCAPE` GLSL arm's and the
+ * `core:"escape"` kernel's trap lines mirror.
+ */
+export function escapeShapeTrap(
+  de: EscapeDE,
+  rt: ResolvedShapeTrap,
+  p: Vec3,
+  maxIterations = ESCAPE_TIME_ITERATIONS,
+): number {
+  runEscapeOrbit(de, p, maxIterations, rt);
+  return shapeTrapValue(rt, orbitTrapBest, orbitTrapCross);
+}
+
 export function probeEscapeFill(
   de: EscapeDE,
   points = ESCAPE_PROBE_POINTS,

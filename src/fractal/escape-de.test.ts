@@ -1,6 +1,7 @@
 import {
   analyzeEscapeSystem,
   buildEscapeDE,
+  escapeShapeTrap,
   ESCAPE_LINK_BOXFOLD,
   ESCAPE_LINK_BULB,
   ESCAPE_LINK_MANDELBOX,
@@ -19,6 +20,8 @@ import {
 import type { EscapeDE } from "./escape-de";
 import { composeAffine } from "./affine";
 import { analyzeBulbSystem } from "./bulb-de";
+import { resolveShapeTrap } from "./shape-trap";
+import { PEACE_SIGN_SHAPE } from "./shapes";
 import {
   foldChain,
   foldChainFlower,
@@ -38,7 +41,13 @@ import {
 } from "./surface-de";
 import { mulberry32 } from "./rng";
 import { composeVariations, resolveFoldRadii, triplexPow8 } from "./variations";
-import type { SymmetryParams, Transform, VariationType, Vec3 } from "./types";
+import type {
+  ShapeTrap,
+  SymmetryParams,
+  Transform,
+  VariationType,
+  Vec3,
+} from "./types";
 
 /** The canonical single-map Mandelbox shape: identity-scale affine with an
  * offset, mandelbox variation at the classic weight 2 — exactly the
@@ -1819,5 +1828,92 @@ describe("analyzeEscapeSystem shape emitters", () => {
       analyzeEscapeSystem([canonicalMandelbox({ emitter: { parts: [] } })])
         .status,
     ).toBe("eligible");
+  });
+});
+
+describe("escapeShapeTrap (the hit-info side's trap channel)", () => {
+  const peaceTrap: ShapeTrap = { shape: PEACE_SIGN_SHAPE };
+
+  it("reads 0 when the trap swallows the whole bailout ball and 1 when it sits far outside it", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const enveloping = resolveShapeTrap({
+      shape: {
+        parts: [
+          { primitive: { kind: "sphere", radius: 50 }, combine: "union" },
+        ],
+      },
+    });
+    const distant = resolveShapeTrap({
+      shape: {
+        parts: [
+          { primitive: { kind: "sphere", radius: 0.5 }, combine: "union" },
+        ],
+      },
+      position: [500, 0, 0],
+    });
+    const p: Vec3 = [0.31, -0.12, 0.4];
+    // Inside the enveloping sphere every candidate is negative -> clamp 0;
+    // 500 units out every candidate is far past one bounding radius -> 1.
+    expect(escapeShapeTrap(de, enveloping, p)).toBe(0);
+    expect(escapeShapeTrap(de, distant, p)).toBe(1);
+  });
+
+  it("varies across the mandelbox surface for the reference peace-sign trap (a channel, not a constant)", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const rt = resolveShapeTrap(peaceTrap);
+    const values = new Set<number>();
+    const rng = mulberry32(77);
+    for (let i = 0; i < 64; i++) {
+      const p: Vec3 = [rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1];
+      values.add(Math.round(escapeShapeTrap(de, rt, p) * 1e6));
+    }
+    expect(values.size).toBeGreaterThan(20);
+  });
+
+  it("is monotone under fade: a larger fade never lowers a min-mode value", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const plain = resolveShapeTrap(peaceTrap);
+    const faded = resolveShapeTrap({ ...peaceTrap, fade: 0.4 });
+    const rng = mulberry32(31);
+    for (let i = 0; i < 32; i++) {
+      const p: Vec3 = [rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1];
+      expect(escapeShapeTrap(de, faded, p)).toBeGreaterThanOrEqual(
+        escapeShapeTrap(de, plain, p),
+      );
+    }
+  });
+
+  it("threshold mode reads 1 exactly where no candidate ever dips under the bar, and inside [0, 1) where one does", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const th = resolveShapeTrap({
+      ...peaceTrap,
+      mode: "threshold",
+      threshold: 0.15,
+    });
+    const min = resolveShapeTrap(peaceTrap);
+    const rng = mulberry32(99);
+    let crossed = 0;
+    for (let i = 0; i < 64; i++) {
+      const p: Vec3 = [rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1];
+      const v = escapeShapeTrap(de, th, p);
+      const best = escapeShapeTrap(de, min, p);
+      if (v < 1) {
+        crossed++;
+        // A crossing implies the min-mode value also dipped under the bar
+        // (the min is <= the first crossing).
+        expect(best).toBeLessThan(0.15);
+      }
+    }
+    expect(crossed).toBeGreaterThan(0);
+    expect(crossed).toBeLessThan(64);
+  });
+
+  it("leaves the distance estimate untouched at every trap setting (color only — decision 13's CPU pin)", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const p: Vec3 = [0.31, -0.12, 0.4];
+    const before = estimateEscapeDistance(de, p);
+    resolveShapeTrap(peaceTrap);
+    escapeShapeTrap(de, resolveShapeTrap(peaceTrap), p);
+    expect(estimateEscapeDistance(de, p)).toBe(before);
   });
 });

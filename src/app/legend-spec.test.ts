@@ -5,7 +5,8 @@ import type { AppState } from "./state";
 import { surfaceColorLUT } from "./control-spec";
 import { buildColorModeLUT } from "../fractal/color";
 import { buildPaletteLUT } from "../fractal/palette";
-import { defaultTransforms } from "../fractal/presets";
+import { defaultTransforms, mandelboxClassic } from "../fractal/presets";
+import { PEACE_SIGN_SHAPE } from "../fractal/shapes";
 import { to255 } from "../fractal/vec";
 
 /**
@@ -752,5 +753,41 @@ describe("deriveLegend build-replay showcase", () => {
     );
 
     expect(spec.kind).toBe("swatches");
+  });
+});
+
+describe("the surface shapeTrap color source", () => {
+  it("shows the palette bar when the trap is LIVE — an escape-family document with a trap block", () => {
+    const base = initialState(false);
+    const state: AppState = {
+      ...base,
+      transforms: mandelboxClassic(),
+      renderMode: "surface",
+      shapeTrap: { shape: PEACE_SIGN_SHAPE },
+      surface: { ...base.surface, colorSource: "shapeTrap" },
+    };
+    const spec = bar(legendOf(state));
+    expect(spec.mid).toBe(`${state.surface.paletteId} palette`);
+  });
+
+  it("narrates the pinned fallback — by-transform swatches — when the source is selected without a live trap", () => {
+    const base = initialState(false);
+    // No trap block on an escape-family document…
+    const noBlock: AppState = {
+      ...base,
+      transforms: mandelboxClassic(),
+      renderMode: "surface",
+      surface: { ...base.surface, colorSource: "shapeTrap" },
+    };
+    expect(legendOf(noBlock).kind).toBe("swatches");
+    // …and a trap block on a DESCENT document (an ordinary contracting
+    // IFS), whose session carries no trap channel at all.
+    const wrongFamily: AppState = {
+      ...base,
+      renderMode: "surface",
+      shapeTrap: { shape: PEACE_SIGN_SHAPE },
+      surface: { ...base.surface, colorSource: "shapeTrap" },
+    };
+    expect(legendOf(wrongFamily).kind).toBe("swatches");
   });
 });

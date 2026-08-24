@@ -104,7 +104,9 @@ import {
   PRESET_NAMES,
   PRESET_SCHEDULES,
   PRESET_SYMMETRIES,
+  PRESET_SURFACE_PALETTES,
   PRESET_SURFACE_ROOMS,
+  PRESET_TRAPS,
   presetTransforms,
 } from "../fractal/presets";
 import type { Preset } from "../fractal/presets";
@@ -185,6 +187,7 @@ import {
   setRenderMode,
   setSchedule,
   setScheduleDepth,
+  setShapeTrap,
   setSymmetryPlane,
   setSymmetryOrder,
   setSymmetryTwist,
@@ -4743,10 +4746,17 @@ function main(): void {
                 kind: "escape4",
                 de,
                 groundPlane: state.groundPlane,
+                // The 3D escape arm's trap wiring, one dimension up — the
+                // channel's 4D half is this ONE core (no fragment mirror
+                // exists by design).
+                ...(state.shapeTrap
+                  ? { shapeTrap: state.shapeTrap.shape }
+                  : {}),
               };
               scene.enterSurfaceComputeEscape4Session(
                 state.groundPlane,
                 de.boundingRadius,
+                state.shapeTrap ?? null,
               );
               scene.setSurface4View(
                 fourDView.matrix(),
@@ -5000,14 +5010,26 @@ function main(): void {
                 kind: "escape",
                 de,
                 groundPlane: state.groundPlane,
+                // The shape-trap channel — create-time geometry on the
+                // target (the kernels bake the SDF), the live pose block
+                // riding every frame spec off the scene's stored
+                // document block.
+                ...(state.shapeTrap
+                  ? { shapeTrap: state.shapeTrap.shape }
+                  : {}),
               };
               scene.enterSurfaceComputeEscapeSession(
                 state.groundPlane,
                 de.boundingRadius,
+                state.shapeTrap ?? null,
               );
             } else {
               forwardWebglDetail();
-              scene.setEscapeSystem(de, escapeSlotColor());
+              scene.setEscapeSystem(
+                de,
+                escapeSlotColor(),
+                state.shapeTrap ?? null,
+              );
             }
           } else {
             // The Mandelbulb — the escape arm one formula over.
@@ -5034,14 +5056,23 @@ function main(): void {
                 kind: "bulb",
                 de,
                 groundPlane: state.groundPlane,
+                // The escape arm's trap wiring, one formula over.
+                ...(state.shapeTrap
+                  ? { shapeTrap: state.shapeTrap.shape }
+                  : {}),
               };
               scene.enterSurfaceComputeBulbSession(
                 state.groundPlane,
                 de.boundingRadius,
+                state.shapeTrap ?? null,
               );
             } else {
               forwardWebglDetail();
-              scene.setBulbSystem(de, escapeSlotColor());
+              scene.setBulbSystem(
+                de,
+                escapeSlotColor(),
+                state.shapeTrap ?? null,
+              );
             }
           }
           surfaceGrid.cancel();
@@ -6481,6 +6512,31 @@ function main(): void {
         // and would take the Surface modes away outright (the gate refuses
         // schedule documents until the descent lift ships).
         state = setSchedule(state, PRESET_SCHEDULES[preset]?.() ?? null);
+        // The shape trap a preset IS a composition with (PRESET_TRAPS) —
+        // the lens table's exact both-directions rule again: a trap
+        // preset installs its block, and every other preset CLEARS one
+        // (a leftover trap would stamp the arriving system with shapes it
+        // was never composed with). A preset that carries one also lands
+        // the color source ON it — the trap is a color channel, and a
+        // preset whose subject is the channel must show it (the
+        // PRESET_SURFACE_ROOMS precedent for a preset reaching into
+        // SurfaceParams).
+        const presetTrap = PRESET_TRAPS[preset]?.() ?? null;
+        state = setShapeTrap(state, presetTrap);
+        if (presetTrap) {
+          // The channel and the gradient were tuned together
+          // (PRESET_SURFACE_PALETTES — set, never cleared, the flame
+          // palette table's rule one render over).
+          const surfacePalette = PRESET_SURFACE_PALETTES[preset];
+          state = {
+            ...state,
+            surface: {
+              ...state.surface,
+              colorSource: "shapeTrap",
+              ...(surfacePalette ? { paletteId: surfacePalette } : {}),
+            },
+          };
+        }
         // The flame palette a preset was composed against
         // (PRESET_PALETTES) — set, never cleared: absent means "the user's
         // palette is fine", which is every preset that predates the table.
