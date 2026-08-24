@@ -454,7 +454,26 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
   - `chaos-game.ts` — IFS iterator: warm-up, escape-reset, bounds tracking.
     Injected RNG for reproducibility; optional `IterationRng` keeps morphs
     point-for-point correspondent. `SymmetryParams.blend` fades kaleidoscope
-    weights continuously.
+    weights continuously. TWO MULTI-SYSTEM LAYERS ride it, both
+    absent-means-classic byte-identically and both refused by every
+    surface/escape/bulb gate until their descent lifts ship.
+    `Transform.chaos` (flam3's xaos, graph-directed selection): row = FROM
+    map, entry j scales the pick of base j next, `systemHasChaos`/
+    `chaosRowIsNonTrivial`/`resolveChaosEntry` the ONE definitions; picks
+    stay one draw on every path; chi runs re-fuse each
+    `CHAOS_SUB_ORBIT_POINTS` (a block-diagonal orbit never leaves its
+    block); chi documents force the flame CPU backend (disclosed — the
+    WGSL kernels learn chi in the epic's GPU child) and the fern|sponge
+    preset pair is the reachability proof. `HybridSchedule` (the
+    scheduled-hybrid post-word): scene-level `{transforms, depth}`, B
+    AFFINE-ONLY and stripped at every producer, applied at PLOT time —
+    post-word THEN lens, `depth` primary-stream draws exactly when live,
+    never fed back — in all four inlined mirrors AND both flame WGSL
+    kernels (bench-pinned agreement scenarios); morphs never interpolate
+    it (target's block pops at the leg's first push); `spongeOfFerns` +
+    `PRESET_SCHEDULES` side table are its reachability. The four
+    hand-inlined stepper mirrors (flame, flame-4d, voxel, voxel-4d) and
+    both voxel bounds pilots carry BOTH layers, forced by oracle tests.
   - `chaos-game-4d.ts` — 4D twin (`runChaosGame4`), same loop unrolled to four
     coords. Kaleidoscope copies rotate in a PLANE, optionally with a `twist`
     (a double rotation — `affine4.ts`'s `symmetryRotation4`, which reproduces
@@ -536,6 +555,24 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     optional kaleidoscope, 25% 4D), quality-gated by chaos-game probes,
     rerolls up to 40×. Injected `Rng`.
   - `rng.ts` — seedable mulberry32 PRNG.
+  - `shapes.ts` — the multi-system epic's shape library: ONE document-facing
+    `ShapeSpec` vocabulary (flat posed-part list, max 8 parts — no
+    recursion, GPU packers need fixed blocks; Tier-1 primitives + the
+    parametric gear) with TWO evaluators so every consumer renders the same
+    object: `shapeSdf` (exact f64 SDF oracle, conservative under the
+    min/max fold) and `prepareShapeSampler` (uniform-by-volume, min-index
+    overlap acceptance; intersect parts are SDF-only, it throws).
+    `shapeSdfSource` emits per-spec baked-constant code from ONE scalar
+    template in glsl/wgsl/js dialects — the js dialect EXECUTES the shared
+    template in tests against the oracle; the GPU-side executable pin lands
+    with the first shader consumer. `SHAPE_MARCH_SAFETY` (0.9) is the one
+    marching factor every consumer shares; the gear sector fold's domain
+    (tooth must fit its sector, or the field overestimates) is disclosed in
+    the module doc. Measured worst Lipschitz 1.000000 on both reference
+    shapes; `scripts/shapes.harness.ts` is the visual + extent proof. The
+    vocabulary is deliberately 3D — each consumer decides its embedding
+    (stated in the module doc under the parity rule). No persistence/UI
+    yet: consumers own their document fields.
   - `surface-de.ts` — surface render's CPU oracle: `analyzeSurfaceSystem`
     (eligibility gate: eligible/degraded/ineligible + reasons),
     `buildSurfaceDE` (BASE inverse maps + the kaleidoscope the descent
