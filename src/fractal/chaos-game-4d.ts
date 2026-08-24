@@ -15,19 +15,24 @@ import {
   buildScheduleTable,
   chaosPointIteration,
   chaosRefuseIteration,
+  createEmitterStream,
   derivedColorIndex,
   effectiveSymmetryOrder,
+  emitterSeed,
   pickScheduleIndex,
+  prepareEmitters,
   resolveScheduleDepth,
 } from "./chaos-game";
 import { composeVariations4 } from "./variations4";
 import type { VariationBlend4 } from "./variations4";
+import { mulberry32 } from "./rng";
 import type { IterationRng, Rng } from "./rng";
 import type {
   Bounds4,
   HybridSchedule,
   SymmetryParams,
   Transform4,
+  Vec3,
   Vec4,
 } from "./types";
 
@@ -274,6 +279,16 @@ export interface PreparedChaosGame4 {
    */
   schedule: PreparedSchedule4 | null;
   /**
+   * Per-BASE-map shape-emitter samplers — `chaos-game.ts`'s
+   * `PreparedChaosGame.emitters` VERBATIM, built by the one shared
+   * `prepareEmitters` (a `Transform4`'s emitter rides the 3D → 4D lift like
+   * its chi row, and the shape vocabulary is deliberately 3D — `shapes.ts`'s
+   * own parity statement — so the samplers ARE the 3D samplers). The 4D
+   * step embeds each sample at `w = 0` and lets the transform's 4D affine
+   * pose it; see {@link stepOrbit4}.
+   */
+  emitters: (((rng: Rng) => Vec3) | null)[] | null;
+  /**
    * Resolved flame palette slot per BASE map — length
    * {@link baseTransformCount}, indexed by `idx % baseTransformCount`, never
    * by the expanded slot: every kaleidoscope copy of a map colors as that
@@ -440,6 +455,7 @@ export function prepareChaosGame4(
     chaosFallbackRows: chaos ? chaos.chaosFallbackRows : null,
     postRotations,
     schedule: prepareSchedule4(schedule),
+    emitters: prepareEmitters(transforms),
     colorIndex,
     colorSpeed,
   };
@@ -548,6 +564,17 @@ export interface OrbitStep4 {
  * graph-directed selection state the CALLER threads (`next = step.escaped ?
  * -1 : step.index`); `-1` (the default) is the entry pick, and with no chi
  * rows the parameter is inert.
+ *
+ * EMITTER STEPS mirror `stepOrbit`'s condensation branch — same one-seed-
+ * draw discipline ({@link emitterSeed}), same skipped variations, same
+ * post-rotation/escape/plot treatment of the emitted point — with the ONE
+ * dimensional decision stated here because this is where it acts: the
+ * shape vocabulary is 3D (`shapes.ts`'s parity statement), so the sample
+ * is embedded AT `w = 0` — `(sx, sy, sz, 0)` — and the transform's own 4D
+ * affine poses it, exactly as `toTransform4` embeds a flat map. The `w`
+ * column of `M` therefore drops out of the emitted point's algebra, and an
+ * emitter reaches out of the `w = 0` slice exactly as far as its
+ * transform's `w` block sends it.
  */
 export function stepOrbit4(
   prepared: PreparedChaosGame4,
@@ -560,26 +587,48 @@ export function stepOrbit4(
   prevBase = -1,
 ): OrbitStep4 {
   const idx = pickIndex4(prepared, rng, prevBase);
-  const p = applyAffine4(prepared.affines[idx], x, y, z, w);
-  const warp = prepared.variations[idx];
+  const baseIdx = idx % prepared.baseTransformCount;
+  const emitter =
+    prepared.emitters !== null ? prepared.emitters[baseIdx] : null;
   let nx: number;
   let ny: number;
   let nz: number;
   let nw: number;
-  if (warp === null) {
+  if (emitter !== null) {
+    // Condensation step (doc above): the 3D sample lifts to (sx, sy, sz, 0)
+    // and the slot's 4D affine poses it; incoming point and variations are
+    // deliberately not consulted.
+    const sample = emitter(mulberry32(emitterSeed(rng)));
+    const p = applyAffine4(
+      prepared.affines[idx],
+      sample[0],
+      sample[1],
+      sample[2],
+      0,
+    );
     nx = p[0];
     ny = p[1];
     nz = p[2];
     nw = p[3];
   } else {
-    // Nonlinear maps can send a point to infinity — or, at a singularity, to
-    // NaN. The reseed guard below catches both (NaN fails Number.isFinite),
-    // stopping a bad landing from poisoning the rest of the orbit.
-    const q = warp(p[0], p[1], p[2], p[3], auxRng);
-    nx = q[0];
-    ny = q[1];
-    nz = q[2];
-    nw = q[3];
+    const p = applyAffine4(prepared.affines[idx], x, y, z, w);
+    const warp = prepared.variations[idx];
+    if (warp === null) {
+      nx = p[0];
+      ny = p[1];
+      nz = p[2];
+      nw = p[3];
+    } else {
+      // Nonlinear maps can send a point to infinity — or, at a singularity,
+      // to NaN. The reseed guard below catches both (NaN fails
+      // Number.isFinite), stopping a bad landing from poisoning the rest of
+      // the orbit.
+      const q = warp(p[0], p[1], p[2], p[3], auxRng);
+      nx = q[0];
+      ny = q[1];
+      nz = q[2];
+      nw = q[3];
+    }
   }
   const post = prepared.postRotations[idx];
   if (post !== null) {
@@ -614,7 +663,7 @@ export function stepOrbit4(
     y: ny,
     z: nz,
     w: nw,
-    index: idx % prepared.baseTransformCount,
+    index: baseIdx,
     escaped,
   };
 }
@@ -817,7 +866,11 @@ export function runChaosGame4(
   // never silently drift apart.
   const { affines, variations, postRotations, finalAffine, finalWarp } =
     prepared;
-  const { baseTransformCount, schedule: preparedSchedule } = prepared;
+  const { baseTransformCount, schedule: preparedSchedule, emitters } = prepared;
+  // Emitter-sample stream — runChaosGame's per-run reseedable object, one
+  // primary seed draw per emitter step (see chaos-game.ts's emitterSeed).
+  const emitterStream = createEmitterStream();
+  const emitterDraw = emitterStream.draw;
 
   for (let i = 0; i < numPoints; i++) {
     // Sub-orbit re-fuse — runChaosGame's chi block, four coordinates (see
@@ -851,33 +904,51 @@ export function runChaosGame4(
       );
     }
     const idx = pickIndex4(prepared, rng, prevBase);
-    const aff = affines[idx];
-    const m = aff.m;
-    const t = aff.t;
-    const ax = m[0] * x + m[1] * y + m[2] * z + m[3] * w + t[0];
-    const ay = m[4] * x + m[5] * y + m[6] * z + m[7] * w + t[1];
-    const az = m[8] * x + m[9] * y + m[10] * z + m[11] * w + t[2];
-    const aw = m[12] * x + m[13] * y + m[14] * z + m[15] * w + t[3];
-
-    const warp = variations[idx];
+    const baseIdx = idx % baseTransformCount;
+    const emitter = emitters !== null ? emitters[baseIdx] : null;
     let nx: number;
     let ny: number;
     let nz: number;
     let nw: number;
-    if (warp === null) {
-      nx = ax;
-      ny = ay;
-      nz = az;
-      nw = aw;
+    if (emitter !== null) {
+      // Condensation step — stepOrbit4's emitter branch exactly: one
+      // primary seed draw, the 3D sample embedded at w = 0 (the m[3]/m[7]/
+      // m[11]/m[15] column drops out), the slot's 4D affine as the pose.
+      emitterStream.reseed(emitterSeed(rng));
+      const sample = emitter(emitterDraw);
+      const aff = affines[idx];
+      const m = aff.m;
+      const t = aff.t;
+      nx = m[0] * sample[0] + m[1] * sample[1] + m[2] * sample[2] + t[0];
+      ny = m[4] * sample[0] + m[5] * sample[1] + m[6] * sample[2] + t[1];
+      nz = m[8] * sample[0] + m[9] * sample[1] + m[10] * sample[2] + t[2];
+      nw = m[12] * sample[0] + m[13] * sample[1] + m[14] * sample[2] + t[3];
     } else {
-      // Nonlinear maps can send a point to infinity — or, at a singularity,
-      // to NaN. The reseed guard below catches both (NaN fails
-      // Number.isFinite), stopping a bad landing from poisoning the orbit.
-      const q = warp(ax, ay, az, aw, aux);
-      nx = q[0];
-      ny = q[1];
-      nz = q[2];
-      nw = q[3];
+      const aff = affines[idx];
+      const m = aff.m;
+      const t = aff.t;
+      const ax = m[0] * x + m[1] * y + m[2] * z + m[3] * w + t[0];
+      const ay = m[4] * x + m[5] * y + m[6] * z + m[7] * w + t[1];
+      const az = m[8] * x + m[9] * y + m[10] * z + m[11] * w + t[2];
+      const aw = m[12] * x + m[13] * y + m[14] * z + m[15] * w + t[3];
+
+      const warp = variations[idx];
+      if (warp === null) {
+        nx = ax;
+        ny = ay;
+        nz = az;
+        nw = aw;
+      } else {
+        // Nonlinear maps can send a point to infinity — or, at a
+        // singularity, to NaN. The reseed guard below catches both (NaN
+        // fails Number.isFinite), stopping a bad landing from poisoning the
+        // orbit.
+        const q = warp(ax, ay, az, aw, aux);
+        nx = q[0];
+        ny = q[1];
+        nz = q[2];
+        nw = q[3];
+      }
     }
 
     // Symmetry: rotate this slot's FULL affine + variation output —
@@ -920,7 +991,7 @@ export function runChaosGame4(
     w = nw;
     // Selection state for the next pick — stepOrbit4's escaped/index
     // contract exactly. Inert without chi rows.
-    prevBase = escaped ? -1 : idx % baseTransformCount;
+    prevBase = escaped ? -1 : baseIdx;
 
     // --- inlined plotPoint4(prepared, x, y, z, w, rng, aux) -----------------
     // The plotted point is the orbit point, optionally bent by the schedule's
@@ -1000,7 +1071,7 @@ export function runChaosGame4(
     // PreparedChaosGame4.baseTransformCount — matching stepOrbit4's own
     // OrbitStep4.index exactly, including the escape-reseed case (idx is the
     // TRIGGERING transform, fixed before the reseed branch above runs).
-    transformIndices[i] = idx % baseTransformCount;
+    transformIndices[i] = baseIdx;
 
     if (px < minX) minX = px;
     if (px > maxX) maxX = px;

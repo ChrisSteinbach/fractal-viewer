@@ -1,3 +1,4 @@
+import type { ShapeSpec } from "./shapes";
 import type { SurfacePattern } from "./surface-pattern";
 export type {
   SurfacePattern,
@@ -342,6 +343,38 @@ export interface Transform {
    * sibling of {@link finish}, never a field inside the lighting response.
    */
   surfacePattern?: SurfacePattern;
+  /**
+   * Optional shape EMITTER — Barnsley's IFS-with-condensation as a
+   * transform kind: `H(S) = C₀ ∪ ⋃ f_j(S)`, with this shape as the fixed
+   * compact set `C₀`. When the chaos game's selection picks a slot whose
+   * base transform carries one, the step IGNORES the incoming orbit point
+   * and emits a fresh uniform sample of the shape instead, posed by this
+   * transform's OWN affine TRS (position/rotation/scale/shear — the
+   * existing sliders are the shape's pose; the spec's internal part poses
+   * stay reserved for shape authoring). The plotted cloud is then the union
+   * of `f_w(C₀)` over all composition words `w` — "a 3D fractal of cog
+   * wheels". {@link weight} doubles as the emission probability and
+   * {@link colorIndex} as the emitter's own palette slot, both through the
+   * unchanged selection/coloring machinery.
+   *
+   * The transform's {@link variations} are SKIPPED on emitter steps — a
+   * condensation set is a fixed compact shape, and warping each sample
+   * would render some other set (`chaos-game.ts`'s `stepOrbit` states the
+   * rule where it acts). ABSENT MEANS TODAY'S BEHAVIOR byte-identically —
+   * same stream, same output, zero extra draws (the `weight?`/`chaos?`
+   * convention); `chaos-game.ts`'s `transformHasEmitter`/
+   * `systemHasEmitters` are the ONE presence predicates every seam keys
+   * on. The final transform never carries one — it sits outside selection
+   * (plot-time), so nothing ever builds a sampler for it.
+   *
+   * Read by every chaos-game consumer (points, flame CPU, solid). The
+   * flame WGSL kernels do NOT know it yet, so an emitter document forces
+   * the flame CPU backend (disclosed in the backend note), and all five
+   * surface/escape/bulb estimator gates refuse emitter documents outright:
+   * condensation makes the attractor a SUPERSET of the plain one, and an
+   * estimator without the shape term would march the wrong object.
+   */
+  emitter?: ShapeSpec;
 }
 
 /**
@@ -654,6 +687,16 @@ export interface Transform4 {
    * keeps its graph in every 4D render.
    */
   chaos?: number[];
+  /**
+   * Shape emitter, mirroring {@link Transform.emitter} exactly — the shape
+   * vocabulary is deliberately 3D (`shapes.ts`'s own parity statement), so
+   * the 4D step samples the shape AT `w = 0` and lets this transform's 4D
+   * affine pose the lifted `(x, y, z, 0)` sample; see `chaos-game-4d.ts`'s
+   * `stepOrbit4` for the one place that choice acts. Meant to be carried
+   * across the 3D → 4D lift by `affine4.ts`'s `embedTransform3` exactly as
+   * {@link chaos} is.
+   */
+  emitter?: ShapeSpec;
 }
 
 /** Axis-aligned extent of a 4D point cloud (the 4D analogue of {@link Bounds}). */

@@ -3902,3 +3902,39 @@ describe("analyzeSurfaceSystem chaos rows", () => {
     expect(analyzeSurfaceSystem(trivial).status).toBe("eligible");
   });
 });
+
+describe("analyzeSurfaceSystem shape emitters", () => {
+  it("refuses an emitter-carrying document — the descent has no shape term and would march the plain (smaller) object", () => {
+    const transforms = sierpinskiTetrahedron().map((t, i) =>
+      i === 2
+        ? {
+            ...t,
+            emitter: {
+              parts: [
+                {
+                  primitive: { kind: "sphere" as const, radius: 0.5 },
+                  combine: "union" as const,
+                },
+              ],
+            },
+          }
+        : t,
+    );
+    // The emitter-free base is eligible — the refusal below is the
+    // emitter's alone.
+    expect(analyzeSurfaceSystem(sierpinskiTetrahedron()).status).toBe(
+      "eligible",
+    );
+    const analysis = analyzeSurfaceSystem(transforms);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toContain(
+      "map 3 is a shape emitter (condensation)",
+    );
+    // An empty-parts spec is PRESENCE-false (transformHasEmitter) and
+    // refuses nothing.
+    const empty = sierpinskiTetrahedron().map((t, i) =>
+      i === 2 ? { ...t, emitter: { parts: [] } } : t,
+    );
+    expect(analyzeSurfaceSystem(empty).status).toBe("eligible");
+  });
+});

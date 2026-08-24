@@ -431,6 +431,22 @@ describe("embedTransform3", () => {
     ).toBeUndefined();
   });
 
+  it("carries the shape emitter through by reference, absent staying absent", () => {
+    const emitter = {
+      parts: [
+        {
+          combine: "union" as const,
+          primitive: { kind: "sphere" as const, radius: 0.5 },
+        },
+      ],
+    };
+    // By REFERENCE, deliberately: a ShapeSpec is treated as immutable
+    // everywhere (mutate-system preserves it the same way), so the lift
+    // must not deep-copy it either.
+    expect(embedTransform3(transform({ emitter })).emitter).toBe(emitter);
+    expect(embedTransform3(transform({})).emitter).toBeUndefined();
+  });
+
   it("copies the variation list verbatim (into a fresh array)", () => {
     const variations = [
       { type: "spherical" as const, weight: 0.6 },

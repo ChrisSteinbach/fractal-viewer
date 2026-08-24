@@ -93,7 +93,11 @@
  * one function.
  */
 import { composeAffine4, toTransform4 } from "./affine4";
-import { effectiveSymmetryOrder, systemHasChaos } from "./chaos-game";
+import {
+  effectiveSymmetryOrder,
+  systemHasChaos,
+  systemHasEmitters,
+} from "./chaos-game";
 import {
   ESCAPE_LINK_BOXFOLD,
   ESCAPE_LINK_MANDELBOX,
@@ -285,6 +289,13 @@ export function analyzeEscapeSystem4(
   // dimension changes nothing about that.
   if (systemHasChaos(transforms)) {
     reasons.push("chaos rows (unsupported in escape-time mode)");
+  }
+  // Shape emitters: the 3D gate's refusal verbatim (escape-de.ts) — a
+  // forward orbit has no per-step pick to emit on, would silently march the
+  // plain chain, and a link may carry `emitter` beside an admissible fold,
+  // so the refusal must be explicit rather than structural.
+  if (systemHasEmitters(transforms)) {
+    reasons.push("shape emitters (unsupported in escape-time mode)");
   }
   if (finalTransform) {
     reasons.push("final transform (unsupported in escape-time mode)");

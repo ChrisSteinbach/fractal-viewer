@@ -29,6 +29,7 @@ import { buildPaletteLUT } from "./palette";
 import { balloonPaletteCoordinate, buildBalloonFromBall } from "./balloon-de";
 import { mulberry32 } from "./rng";
 import { sierpinskiTetrahedron } from "./presets";
+import { GEAR_SHAPE } from "./shapes";
 import type { Transform, Vec3 } from "./types";
 
 function makeTransforms(count: number): Transform[] {
@@ -2689,5 +2690,101 @@ describe("accumulateFlame scheduled-hybrid post-word (correctness oracle)", () =
     expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
     expect(actual.maxHits).toBe(expected.maxHits);
     expect(actual.orbit).toEqual(expected.orbit);
+  });
+});
+
+describe("accumulateFlame shape emitters (correctness oracle)", () => {
+  it("matches the stepOrbit/plotPoint oracle with a gear emitter forced through the inlined loop", () => {
+    // The top oracle with a condensation system: stepOrbit owns the emitter
+    // branch (chaos-game.test.ts pins its semantics), so driving it by hand
+    // here is what forces accumulateFlame's hand-inlined copy — the seed
+    // draw, the derived sampler stream, the skipped variations — to stay
+    // byte-for-byte equivalent. The emitter map carries a variation on
+    // purpose: the inlined loop must NOT run it on emitter steps.
+    const transforms: Transform[] = [
+      ...sierpinskiTetrahedron(),
+      {
+        id: 4,
+        position: [0, 0.1, 0],
+        rotation: [0.8, 0, 0.3],
+        scale: [0.45, 0.45, 0.45],
+        weight: 1.5,
+        variations: [{ type: "swirl", weight: 0.8 }],
+        emitter: GEAR_SHAPE,
+      },
+    ];
+    const prepared = prepareChaosGame(transforms);
+    const palette = transformColors(transforms.length);
+    const width = 48;
+    const height = 48;
+    const iterations = 4000;
+    const projection = ORTHOGRAPHIC;
+
+    const actual = accumulateFlame(
+      prepared,
+      projection,
+      width,
+      height,
+      iterations,
+      mulberry32(1234),
+      palette,
+    );
+
+    const rng = mulberry32(1234);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+    const expected = createFlameHistogram(width, height);
+    let emitterDeposits = 0;
+    for (let i = 0; i < iterations; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
+      const cw =
+        projection[12] * px +
+        projection[13] * py +
+        projection[14] * pz +
+        projection[15];
+      if (cw <= 0) continue;
+      const cx =
+        projection[0] * px +
+        projection[1] * py +
+        projection[2] * pz +
+        projection[3];
+      const cy =
+        projection[4] * px +
+        projection[5] * py +
+        projection[6] * pz +
+        projection[7];
+      const col = Math.floor((cx / cw + 1) * 0.5 * width);
+      const row = Math.floor((1 - cy / cw) * 0.5 * height);
+      if (col < 0 || col >= width || row < 0 || row >= height) continue;
+      const bucket = row * width + col;
+      expected.hits[bucket] += 1;
+      expected.maxHits = Math.max(expected.maxHits, expected.hits[bucket]);
+      const rgb = palette[s.index] ?? [1, 1, 1];
+      const o = bucket * 3;
+      expected.sumRGB[o] += rgb[0];
+      expected.sumRGB[o + 1] += rgb[1];
+      expected.sumRGB[o + 2] += rgb[2];
+      if (s.index === 4) emitterDeposits++;
+    }
+    expected.orbit = [x, y, z];
+
+    expect(Array.from(actual.hits)).toEqual(Array.from(expected.hits));
+    expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
+    expect(actual.maxHits).toBe(expected.maxHits);
+    expect(actual.orbit).toEqual(expected.orbit);
+    // The system genuinely emitted — an oracle over a path that never fired
+    // would pass vacuously.
+    expect(emitterDeposits).toBeGreaterThan(iterations / 8);
   });
 });

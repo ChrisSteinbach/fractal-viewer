@@ -4089,3 +4089,24 @@ describe("analyzeSurfaceSystem4 chaos rows", () => {
     ).toBe("eligible");
   });
 });
+
+describe("analyzeSurfaceSystem4 shape emitters", () => {
+  it("refuses an emitter-carrying 4D document — 3D's refusal verbatim, the dimension changes nothing", () => {
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.5 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const base = pentatope();
+    expect(analyzeSurfaceSystem4(base).status).toBe("eligible");
+    const withEmitter = base.map((t, i) => (i === 1 ? { ...t, emitter } : t));
+    const analysis = analyzeSurfaceSystem4(withEmitter);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toContain(
+      "map 2 is a shape emitter (condensation)",
+    );
+  });
+});

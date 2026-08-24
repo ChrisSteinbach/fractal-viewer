@@ -26,6 +26,8 @@ import {
 } from "./chaos-game-4d";
 import type { PreparedChaosGame4 } from "./chaos-game-4d";
 import { pentatope, sierpinskiTetrahedron } from "./presets";
+import { prepareShapeSampler } from "./shapes";
+import type { ShapeSpec } from "./shapes";
 import { iterationRng, mulberry32 } from "./rng";
 import type { IterationRng, Rng } from "./rng";
 import { composeVariations4 } from "./variations4";
@@ -1593,5 +1595,126 @@ describe("scheduled hybrids: the 4D post-word stage", () => {
     expect(out[1]).toBe(1);
     expect(out[2]).toBe(1.5);
     expect(out[3]).toBe(0.6);
+  });
+});
+
+describe("shape emitters in 4D (condensation at w = 0)", () => {
+  const SPHERE_SPEC: ShapeSpec = {
+    parts: [{ primitive: { kind: "sphere", radius: 0.5 }, combine: "union" }],
+  };
+
+  /** One 4D contraction plus one emitter map whose affine genuinely mixes
+   * w, so the w-column-drops-out claim is load-bearing. */
+  function emitterSystem4(): Transform4[] {
+    return [
+      {
+        position: [0.3, 0.3, 0.3, 0.2],
+        scale: [0.5, 0.5, 0.5, 0.5],
+      },
+      {
+        position: [0.1, -0.1, 0, 0.35],
+        scale: [0.6, 0.6, 0.6, 0.6],
+        rotation: { xw: 0.5, xy: 0.3 },
+        emitter: SPHERE_SPEC,
+      },
+    ];
+  }
+
+  it("emits the 3D sample embedded at w = 0 through the transform's 4D affine", () => {
+    const transforms = emitterSystem4();
+    const prepared = prepareChaosGame4(transforms);
+    expect(prepared.emitters).not.toBeNull();
+    expect(prepared.emitters![0]).toBeNull();
+    expect(prepared.emitters![1]).not.toBeNull();
+
+    // Drive the pick onto the emitter (index 1 of 2).
+    const primary = [0.9, 0.31337];
+    let at = 0;
+    const rng: Rng = () => primary[at++];
+    const step = stepOrbit4(prepared, 9, 9, 9, 9, rng);
+
+    const seed = (0.31337 * 0x100000000) >>> 0;
+    const sample = prepareShapeSampler(SPHERE_SPEC)(mulberry32(seed));
+    const expected = applyAffine4(
+      prepared.affines[1],
+      sample[0],
+      sample[1],
+      sample[2],
+      0, // the parity decision: the shape lives at w = 0
+    );
+    expect([step.x, step.y, step.z, step.w]).toEqual(expected);
+    expect(step.index).toBe(1);
+    // The xw rotation carries the sample's x into w, so the emitted point
+    // genuinely leaves the w = 0 slice — the pose owns the lift.
+    expect(Math.abs(step.w - 0.35)).toBeGreaterThan(0); // t_w plus rotated x
+  });
+
+  it("reproduces runChaosGame4's output exactly when driven by hand (inlined-mirror oracle with an emitter)", () => {
+    const transforms = emitterSystem4();
+    transforms[0].weight = 2;
+    const numPoints = 2500;
+    const seed = 47;
+
+    const expected = runChaosGame4(transforms, numPoints, mulberry32(seed));
+
+    const prepared = prepareChaosGame4(transforms);
+    const rng = mulberry32(seed);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    let w = rng() - 0.5;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const s = stepOrbit4(prepared, x, y, z, w, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      w = s.w;
+    }
+    for (let i = 0; i < numPoints; i++) {
+      const s = stepOrbit4(prepared, x, y, z, w, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      w = s.w;
+      const [px, py, pz, pw] = plotPoint4(prepared, x, y, z, w, rng);
+      expect(expected.positions[i * 3]).toBe(Math.fround(px));
+      expect(expected.positions[i * 3 + 1]).toBe(Math.fround(py));
+      expect(expected.positions[i * 3 + 2]).toBe(Math.fround(pz));
+      expect(expected.w[i]).toBe(Math.fround(pw));
+      expect(expected.transformIndices[i]).toBe(s.index);
+    }
+  });
+
+  it("emitter-free 4D documents keep the exact pre-emitter draw count", () => {
+    const numPoints = 600;
+    let draws = 0;
+    const inner = mulberry32(5);
+    const spy: Rng = () => {
+      draws++;
+      return inner();
+    };
+    runChaosGame4(makeMaps(3), numPoints, spy);
+    // 4 seed draws + one pick per warmup and recorded step.
+    expect(draws).toBe(4 + WARMUP_ITERATIONS + numPoints);
+    expect(prepareChaosGame4(makeMaps(3)).emitters).toBeNull();
+  });
+
+  it("costs the primary stream exactly pick + seed per emitter step (single always-emit map)", () => {
+    const transforms: Transform4[] = [
+      {
+        position: [0, 0, 0, 0.2],
+        scale: [0.4, 0.4, 0.4, 0.4],
+        emitter: SPHERE_SPEC,
+      },
+    ];
+    const numPoints = 400;
+    let draws = 0;
+    const inner = mulberry32(9);
+    const spy: Rng = () => {
+      draws++;
+      return inner();
+    };
+    runChaosGame4(transforms, numPoints, spy);
+    expect(draws).toBe(4 + 2 * (WARMUP_ITERATIONS + numPoints));
   });
 });

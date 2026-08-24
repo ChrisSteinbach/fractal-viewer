@@ -22,6 +22,7 @@ import { composeRotorProjection4 } from "./project4";
 import type { FourDView, RotorProjection4 } from "./project4";
 import { pentatope } from "./presets";
 import { mulberry32 } from "./rng";
+import type { ShapeSpec } from "./shapes";
 import type { Transform4, Vec3, Vec4 } from "./types";
 
 /** A single map that ignores its input and always lands exactly on `point`:
@@ -1525,5 +1526,132 @@ describe("accumulateVoxels4 scheduled-hybrid post-word (correctness oracle)", ()
     expect(actual.orbit).toEqual(expected.orbit);
     expect(actual.orbitW).toBe(expected.orbitW);
     expect(actual.maxDensity).toBeGreaterThan(0);
+  });
+});
+
+describe("accumulateVoxels4 shape emitters (correctness oracle)", () => {
+  it("matches the stepOrbit4/plotPoint4 oracle with an emitter forced through the inlined loop", () => {
+    // The condensation twin of the top oracle (chaos-game-4d.test.ts pins
+    // the branch's own semantics: sample embedded at w = 0, one primary
+    // seed draw, variations skipped). Identity rotor keeps the projection
+    // trivial; the emitter map mixes w through an xw rotation and carries a
+    // variation on purpose, and the deposit count asserts the branch fired.
+    const spec: ShapeSpec = {
+      parts: [{ primitive: { kind: "sphere", radius: 0.5 }, combine: "union" }],
+    };
+    const transforms4: Transform4[] = [
+      ...weightedPentatope(),
+      {
+        position: [0.1, -0.05, 0, 0.3],
+        scale: [0.5, 0.5, 0.5, 0.5],
+        rotation: { xw: 0.4 },
+        weight: 4,
+        variations: [{ type: "swirl", weight: 0.6 }],
+        emitter: spec,
+      },
+    ];
+    const prepared = prepareChaosGame4(transforms4);
+    const palette = transformColors(transforms4.length);
+    const bounds = unitishBounds(2);
+    const size = 8;
+    const iterations = 3000;
+    const seed = 93;
+
+    const actual = accumulateVoxels4(
+      prepared,
+      createVoxelGrid(size, bounds),
+      iterations,
+      mulberry32(seed),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      { kind: "transform", palette },
+    );
+
+    const rng = mulberry32(seed);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    let w = rng() - 0.5;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const step = stepOrbit4(prepared, x, y, z, w, rng);
+      x = step.x;
+      y = step.y;
+      z = step.z;
+      w = step.w;
+    }
+    const expected = createVoxelGrid(size, bounds);
+    const invCell = size / (bounds.max[0] - bounds.min[0]);
+    let emitterSteps = 0;
+    const emitterIndex = transforms4.length - 1;
+    for (let i = 0; i < iterations; i++) {
+      const step = stepOrbit4(prepared, x, y, z, w, rng);
+      if (step.index === emitterIndex) emitterSteps++;
+      x = step.x;
+      y = step.y;
+      z = step.z;
+      w = step.w;
+      const [px, py, pz] = plotPoint4(prepared, x, y, z, w, rng);
+      // Identity rotor about the origin: projX/Y/Z are the xyz verbatim.
+      const bx = Math.floor((px - bounds.min[0]) * invCell);
+      if (bx < 0 || bx >= size) continue;
+      const by = Math.floor((py - bounds.min[1]) * invCell);
+      if (by < 0 || by >= size) continue;
+      const bz = Math.floor((pz - bounds.min[2]) * invCell);
+      if (bz < 0 || bz >= size) continue;
+      const bucket = bz * size * size + by * size + bx;
+      const d = expected.density[bucket] + 1;
+      expected.density[bucket] = d;
+      if (d > expected.maxDensity) expected.maxDensity = d;
+      const rgb = palette[step.index] ?? [1, 1, 1];
+      const o = bucket * 3;
+      const invWeight = 1 / d;
+      expected.avgRGB[o] += (rgb[0] - expected.avgRGB[o]) * invWeight;
+      expected.avgRGB[o + 1] += (rgb[1] - expected.avgRGB[o + 1]) * invWeight;
+      expected.avgRGB[o + 2] += (rgb[2] - expected.avgRGB[o + 2]) * invWeight;
+    }
+
+    expect(actual.density).toEqual(expected.density);
+    expect(actual.avgRGB).toEqual(expected.avgRGB);
+    expect(actual.maxDensity).toBe(expected.maxDensity);
+    expect(actual.orbit).toEqual([x, y, z]);
+    expect(actual.orbitW).toBe(w);
+    expect(emitterSteps).toBeGreaterThan(iterations / 10);
+  });
+});
+
+describe("computeVoxelBounds4 with a shape emitter", () => {
+  it("sizes the grid to cover the emitted geometry through the rotor projection", () => {
+    // The 4D twin of voxel.test.ts's emitter bounds pin: the pilot goes
+    // through the real stepOrbit4, so a far-off emitter must widen the
+    // projected cube.
+    const spec: ShapeSpec = {
+      parts: [{ primitive: { kind: "sphere", radius: 0.4 }, combine: "union" }],
+    };
+    const transforms4: Transform4[] = [
+      {
+        position: [0.1, 0.1, 0.1, 0],
+        scale: [0.4, 0.4, 0.4, 0.4],
+      },
+      {
+        position: [3, 0, 0, 0],
+        scale: [1, 1, 1, 1],
+        emitter: spec,
+      },
+    ];
+    const withEmitter = computeVoxelBounds4(
+      prepareChaosGame4(transforms4),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      mulberry32(5),
+    );
+    expect(withEmitter.max[0]).toBeGreaterThan(3);
+
+    const plain = computeVoxelBounds4(
+      prepareChaosGame4(transforms4.slice(0, 1)),
+      FLAT_ROTOR_PROJ,
+      FLAT_VIEW,
+      mulberry32(5),
+    );
+    expect(plain.max[0]).toBeLessThan(1);
   });
 });

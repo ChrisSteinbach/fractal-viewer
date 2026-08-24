@@ -3,6 +3,7 @@ import { derivedColorIndex } from "./chaos-game";
 import { lerpSystem } from "./morph";
 import type { MorphSystem } from "./morph";
 import { CLASSIC_SURFACE_FINISH } from "./surface-finish";
+import type { ShapeSpec } from "./shapes";
 import { VARIATION_TYPES } from "./types";
 import type { Transform, VariationType } from "./types";
 import {
@@ -1083,5 +1084,158 @@ describe("chaos row morphing", () => {
     const mid = lerpSystem(a, b, 0.5);
     expect(mid.transforms).toHaveLength(2);
     expect(mid.transforms[1].chaos).toEqual([0, 1]);
+  });
+});
+
+describe("emitter morphing", () => {
+  const gearSpec = (radius: number): ShapeSpec => ({
+    parts: [
+      {
+        primitive: {
+          kind: "gear",
+          teeth: 8,
+          radius,
+          tooth: [0.2, 0.15],
+          hole: 0.3,
+          halfHeight: 0.25,
+        },
+        combine: "union",
+        pose: { offset: [0.1, 0, 0], scale: 0.5 },
+      },
+    ],
+  });
+  const sphereSpec = (radius: number): ShapeSpec => ({
+    parts: [{ primitive: { kind: "sphere", radius }, combine: "union" }],
+  });
+
+  it("lerps numeric shape params and pose for structurally equal specs", () => {
+    const a = system({ transforms: [transform({ emitter: gearSpec(0.8) })] });
+    const b = system({
+      transforms: [
+        transform({
+          emitter: {
+            parts: [
+              {
+                primitive: {
+                  kind: "gear",
+                  teeth: 8,
+                  radius: 1.2,
+                  tooth: [0.3, 0.25],
+                  hole: 0.5,
+                  halfHeight: 0.35,
+                },
+                combine: "union",
+                pose: { offset: [0.3, 0, 0], scale: 0.7 },
+              },
+            ],
+          },
+        }),
+      ],
+    });
+    const mid = lerpSystem(a, b, 0.5).transforms[0].emitter!;
+    const prim = mid.parts[0].primitive as Extract<
+      ShapeSpec["parts"][number]["primitive"],
+      { kind: "gear" }
+    >;
+    expect(prim.kind).toBe("gear");
+    expect(prim.teeth).toBe(8);
+    expect(prim.radius).toBeCloseTo(1.0, 12);
+    expect(prim.tooth[0]).toBeCloseTo(0.25, 12);
+    expect(prim.tooth[1]).toBeCloseTo(0.2, 12);
+    expect(prim.hole).toBeCloseTo(0.4, 12);
+    expect(prim.halfHeight).toBeCloseTo(0.3, 12);
+    expect(mid.parts[0].pose!.offset![0]).toBeCloseTo(0.2, 12);
+    expect(mid.parts[0].pose!.scale).toBeCloseTo(0.6, 12);
+  });
+
+  it("pose fields lerp through their identity fallbacks when one side omits them", () => {
+    const a = system({ transforms: [transform({ emitter: sphereSpec(0.4) })] });
+    const bSpec: ShapeSpec = {
+      parts: [
+        {
+          primitive: { kind: "sphere", radius: 0.4 },
+          combine: "union",
+          pose: { scale: 2 },
+        },
+      ],
+    };
+    const b = system({ transforms: [transform({ emitter: bSpec })] });
+    const mid = lerpSystem(a, b, 0.5).transforms[0].emitter!;
+    // Absent scale reads 1, so halfway to 2 is 1.5; absent-on-both offset
+    // stays absent.
+    expect(mid.parts[0].pose!.scale).toBeCloseTo(1.5, 12);
+    expect(mid.parts[0].pose!.offset).toBeUndefined();
+  });
+
+  it("pops to the target's spec for a structural mismatch (different kind)", () => {
+    const aSpec = sphereSpec(0.4);
+    const bSpec = gearSpec(1);
+    const a = system({ transforms: [transform({ emitter: aSpec })] });
+    const b = system({ transforms: [transform({ emitter: bSpec })] });
+    expect(lerpSystem(a, b, 0.25).transforms[0].emitter).toBe(bSpec);
+    expect(lerpSystem(a, b, 0.75).transforms[0].emitter).toBe(bSpec);
+  });
+
+  it("pops for a gear TOOTH-COUNT mismatch — a discrete sector count never interpolates", () => {
+    const aSpec = gearSpec(1);
+    const bSpec: ShapeSpec = {
+      parts: [
+        {
+          primitive: {
+            kind: "gear",
+            teeth: 12,
+            radius: 1,
+            tooth: [0.2, 0.15],
+            hole: 0.3,
+            halfHeight: 0.25,
+          },
+          combine: "union",
+        },
+      ],
+    };
+    const a = system({ transforms: [transform({ emitter: aSpec })] });
+    const b = system({ transforms: [transform({ emitter: bSpec })] });
+    expect(lerpSystem(a, b, 0.5).transforms[0].emitter).toBe(bSpec);
+  });
+
+  it("one-sided emitters pop too: source-only vanishes at the first intermediate, target-only appears", () => {
+    const spec = sphereSpec(0.5);
+    const withEmitter = system({
+      transforms: [transform({ emitter: spec })],
+    });
+    const plain = system({ transforms: [transform({ position: [1, 0, 0] })] });
+    // a has one, b doesn't → intermediates carry b's absence.
+    expect(
+      lerpSystem(withEmitter, plain, 0.1).transforms[0].emitter,
+    ).toBeUndefined();
+    // b has one, a doesn't → intermediates carry b's spec by reference.
+    expect(lerpSystem(plain, withEmitter, 0.1).transforms[0].emitter).toBe(
+      spec,
+    );
+  });
+
+  it("stays endpoint-exact: t = 0 and t = 1 return the systems by reference, emitter included", () => {
+    const a = system({ transforms: [transform({ emitter: sphereSpec(0.4) })] });
+    const b = system({ transforms: [transform({ emitter: gearSpec(1) })] });
+    expect(lerpSystem(a, b, 0)).toBe(a);
+    expect(lerpSystem(a, b, 1)).toBe(b);
+  });
+
+  it("fades a surplus emitter map by weight through the phantom padding (count mismatch)", () => {
+    const spec = sphereSpec(0.5);
+    const a = system({ transforms: [transform({})] });
+    const b = system({
+      transforms: [
+        transform({}),
+        transform({ id: 1, emitter: spec, weight: 2 }),
+      ],
+    });
+    const mid = lerpSystem(a, b, 0.5);
+    expect(mid.transforms).toHaveLength(2);
+    // The phantom copies b's surplus map (emitter included, structurally
+    // equal on both sides of the pair, so the spec lerps to itself) and
+    // only its weight animates: 0 -> 2.
+    expect(mid.transforms[1].emitter).toEqual(spec);
+    expect(mid.transforms[1].weight).toBeCloseTo(1, 12);
   });
 });

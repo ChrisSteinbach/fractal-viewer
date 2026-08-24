@@ -2788,11 +2788,19 @@ function main(): void {
           // the negation).
           event.backend === "cpu" && event.chaosForced === true
             ? "chaos rows run here for now"
-            : event.backend === "cpu" && flameGpuUnavailableReason !== null
-              ? flameGpuUnavailableReason === "no-webgpu"
-                ? "no GPU API in this browser"
-                : "GPU failed"
-              : undefined,
+            : event.backend === "cpu" && event.emitterForced === true
+              ? // The emitter twin of the chi disclosure one branch up —
+                // same one-true-reason contract (the worker only sets
+                // emitterForced when every other GPU condition held; the
+                // GPU flame kernels don't know shape emitters yet, see
+                // flame-worker-core's event doc). Chi wins the wording
+                // when a document carries both layers.
+                "shape emitters run here for now"
+              : event.backend === "cpu" && flameGpuUnavailableReason !== null
+                ? flameGpuUnavailableReason === "no-webgpu"
+                  ? "no GPU API in this browser"
+                  : "GPU failed"
+                : undefined,
           // Software adapters escalate the note to the warning tier
           // — SwiftShader accumulation must not pass as the GPU.
           event.software === true,

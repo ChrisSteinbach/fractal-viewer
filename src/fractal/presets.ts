@@ -1,6 +1,7 @@
 import { composeAffine } from "./affine";
 import type { FlamePaletteId } from "./palette";
 import type { Rng } from "./rng";
+import { GEAR_SHAPE } from "./shapes";
 import type {
   HybridSchedule,
   Rotation4,
@@ -2164,6 +2165,56 @@ export function fernSpongeLeak(): Transform[] {
   return fernSpongeSystem(0.01);
 }
 
+/** {@link gearworks}' two authored palette slots: one STRUCTURE hue shared
+ * by all four corner contractions (cool steel) and one COG hue for the
+ * emitter (warm brass) — named beside each other so the preset's whole
+ * point, cog color vs structure color, cannot drift apart by a typo
+ * ({@link DYED_ARM_SLOT}'s reasoning). Both the identity-hue "By Transform"
+ * wheel and the structural gradient walk read them. */
+const GEARWORKS_STRUCTURE_SLOT = 0.62;
+const GEARWORKS_COG_SLOT = 0.08;
+
+/**
+ * "Gearworks" — the shape-EMITTER (condensation) proof: Barnsley's
+ * IFS-with-condensation `H(S) = C₀ ∪ ⋃ f_j(S)` with the parametric gear
+ * ({@link GEAR_SHAPE}) as the fixed shape `C₀`, under the four
+ * {@link sierpinskiTetrahedron} corner contractions — so the cloud is the
+ * union of every composition's image of one cog: a Sierpinski tetrahedron
+ * whose EVERY cell is a gear wheel, "a 3D fractal of cog wheels", which no
+ * plain transform list can express (an affine map has no gear to stamp).
+ *
+ * The fifth transform IS the emitter: its TRS poses the master cog (a
+ * half-scale gear tipped off-axis so the teeth read in 3D rather than as a
+ * face-on disc), its `weight` is the emission probability — 1.4 against
+ * four unit corners puts ~26% of points on the master cog and hands the
+ * rest down the geometric word-length ladder, so first-generation corner
+ * cogs still resolve their teeth at the default point budget — and its
+ * authored `colorIndex` is the COG hue against the corners' shared
+ * STRUCTURE hue (see the slots above). Solid-hinted
+ * ({@link PRESET_RENDER_HINTS}): a voxelized gear reads as a machined
+ * part where an additive point sprite reads as a nebula, and the solid
+ * render is the mode the emitter work was shaped for (the surface/escape
+ * gates refuse emitter documents until the descent grows a shape term).
+ */
+export function gearworks(): Transform[] {
+  const corners = sierpinskiTetrahedron().map((t): Transform => ({
+    ...t,
+    colorIndex: GEARWORKS_STRUCTURE_SLOT,
+  }));
+  return [
+    ...corners,
+    {
+      id: 4,
+      position: [0, 0.05, 0],
+      rotation: [0.55, 0.2, 0.25],
+      scale: [0.55, 0.55, 0.55],
+      weight: 1.4,
+      colorIndex: GEARWORKS_COG_SLOT,
+      emitter: GEAR_SHAPE,
+    },
+  ];
+}
+
 /**
  * The named systems offered in the preset menu, mapped to their transform
  * factories. `default` is the system the viewer boots with (see
@@ -2198,6 +2249,9 @@ const PRESETS = {
   // (B = the sponge, depth 2) rides PRESET_SCHEDULES, exactly as a lens
   // rides PRESET_FINALS.
   spongeOfFerns: barnsleyFern,
+  // The shape-emitter (condensation) reachability proof, fourth member of
+  // the multi-system family: a Sierpinski tetrahedron of gear wheels.
+  gearworks,
   radiolarian,
   swirl: swirlFlame,
   dyedSpiral,
@@ -2303,6 +2357,13 @@ export const PRESET_RENDER_HINTS: Partial<
   radiolarian: "flame",
   swirl: "flame",
   dyedSpiral: "flame",
+  // The condensation showcase solidifies: a voxelized gear reads as a
+  // machined part with lit faces and drilled bores, where the additive
+  // point sprite reads as a nebula — and solid/points are exactly the two
+  // renders an emitter document can reach (the flame runs too, on its CPU
+  // backend; the surface/escape gates refuse until the descent's shape
+  // term lands).
+  gearworks: "solid",
   // Flat 2D sheets in the XY plane: the flame's log-density
   // exposure is what turns an IIM Julia set's tip-heavy point density into
   // a legible curve instead of a faint, mostly-empty sparkle.

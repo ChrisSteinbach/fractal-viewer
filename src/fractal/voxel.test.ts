@@ -27,6 +27,8 @@ import { buildPaletteLUT } from "./palette";
 import type { CustomPalette } from "./palette";
 import { mulberry32 } from "./rng";
 import { fernSpongeIsolated, sierpinskiTetrahedron } from "./presets";
+import { GEAR_SHAPE } from "./shapes";
+import type { ShapeSpec } from "./shapes";
 import type { Transform, Vec3 } from "./types";
 
 /**
@@ -1348,5 +1350,123 @@ describe("accumulateVoxels scheduled-hybrid post-word (correctness oracle)", () 
     expect(actual.avgRGB).toEqual(expected.avgRGB);
     expect(actual.maxDensity).toBe(expected.maxDensity);
     expect(actual.orbit).toEqual([x, y, z]);
+  });
+});
+
+describe("accumulateVoxels shape emitters (correctness oracle)", () => {
+  it("matches the stepOrbit/plotPoint oracle with a gear emitter forced through the inlined loop", () => {
+    // The top oracle with a condensation system (see chaos-game.test.ts for
+    // the emitter branch's own semantics pins): a variation rides the
+    // emitter map on purpose — the inlined loop must NOT run it on emitter
+    // steps — and the deposit count asserts the path genuinely fired.
+    const transforms: Transform[] = [
+      ...sierpinskiTetrahedron(),
+      {
+        id: 4,
+        position: [0, 0.1, 0],
+        rotation: [0.8, 0, 0.3],
+        scale: [0.45, 0.45, 0.45],
+        weight: 1.5,
+        variations: [{ type: "swirl", weight: 0.8 }],
+        emitter: GEAR_SHAPE,
+      },
+    ];
+    const palette = transformColors(transforms.length);
+    const bounds = unitishBounds(2);
+    const size = 8;
+    const iterations = 3000;
+
+    const actual = createVoxelGrid(size, bounds);
+    accumulateVoxels(
+      prepareChaosGame(transforms),
+      actual,
+      iterations,
+      mulberry32(77),
+      palette,
+    );
+
+    const prepared = prepareChaosGame(transforms);
+    const rng = mulberry32(77);
+    const expected = createVoxelGrid(size, bounds);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+    const invCell = size / (bounds.max[0] - bounds.min[0]);
+    let emitterSteps = 0;
+    for (let n = 0; n < iterations; n++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      if (s.index === 4) emitterSteps++;
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
+      const vx = Math.floor((px - bounds.min[0]) * invCell);
+      const vy = Math.floor((py - bounds.min[1]) * invCell);
+      const vz = Math.floor((pz - bounds.min[2]) * invCell);
+      if (vx < 0 || vx >= size || vy < 0 || vy >= size) continue;
+      if (vz < 0 || vz >= size) continue;
+      const bucket = vz * size * size + vy * size + vx;
+      const d = expected.density[bucket] + 1;
+      expected.density[bucket] = d;
+      if (d > expected.maxDensity) expected.maxDensity = d;
+      const rgb = palette[s.index];
+      const o = bucket * 3;
+      const inv = 1 / d;
+      expected.avgRGB[o] += (rgb[0] - expected.avgRGB[o]) * inv;
+      expected.avgRGB[o + 1] += (rgb[1] - expected.avgRGB[o + 1]) * inv;
+      expected.avgRGB[o + 2] += (rgb[2] - expected.avgRGB[o + 2]) * inv;
+    }
+
+    expect(actual.density).toEqual(expected.density);
+    expect(actual.avgRGB).toEqual(expected.avgRGB);
+    expect(actual.maxDensity).toBe(expected.maxDensity);
+    expect(actual.orbit).toEqual([x, y, z]);
+    expect(emitterSteps).toBeGreaterThan(iterations / 8);
+  });
+});
+
+describe("computeVoxelBounds with a shape emitter", () => {
+  it("sizes the grid to cover the emitted geometry, not just the plain attractor", () => {
+    // The emitter parks a far-off sphere: without emitter awareness the
+    // pilot would size the cube to the near-origin contraction alone and
+    // the solid render would crop every stamp out. The pilot goes through
+    // the real stepOrbit, so this pins that route end to end.
+    const spec: ShapeSpec = {
+      parts: [{ primitive: { kind: "sphere", radius: 0.4 }, combine: "union" }],
+    };
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.1, 0.1, 0.1],
+        rotation: [0, 0, 0],
+        scale: [0.4, 0.4, 0.4],
+      },
+      {
+        id: 1,
+        position: [3, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        emitter: spec,
+      },
+    ];
+    const withEmitter = computeVoxelBounds(
+      prepareChaosGame(transforms),
+      mulberry32(5),
+    );
+    // The emitted stamps live around x = 3 (±0.4 plus contraction images);
+    // the grid must reach them.
+    expect(withEmitter.max[0]).toBeGreaterThan(3);
+
+    const plain = computeVoxelBounds(
+      prepareChaosGame(transforms.slice(0, 1)),
+      mulberry32(5),
+    );
+    expect(plain.max[0]).toBeLessThan(1);
   });
 });

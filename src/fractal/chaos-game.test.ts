@@ -5,20 +5,27 @@ import {
   MAX_TRANSFORMS,
   WARMUP_ITERATIONS,
   chaosRowIsNonTrivial,
+  createEmitterStream,
   derivedColorIndex,
   effectiveSymmetryOrder,
+  emitterSeed,
   pickIndex,
   pickScheduleIndex,
   plotPoint,
   prepareChaosGame,
+  prepareEmitters,
   runChaosGame,
   stepOrbit,
   symmetryRotation,
   systemHasChaos,
+  systemHasEmitters,
+  transformHasEmitter,
 } from "./chaos-game";
 import type { PreparedChaosGame } from "./chaos-game";
 import { applyAffine, composeAffine, rotationMatrixXYZ } from "./affine";
 import { rotationMatrix4 } from "./affine4";
+import { GEAR_SHAPE, prepareShapeSampler, shapeSdf } from "./shapes";
+import type { ShapeSpec } from "./shapes";
 import { composeVariations } from "./variations";
 import { iterationRng, mulberry32 } from "./rng";
 import type { IterationRng, Rng } from "./rng";
@@ -1909,5 +1916,391 @@ describe("scheduled hybrids: the post-word stage", () => {
     // r * 4 = 1.2 -> index 1. One draw each (the fns below ARE the draw).
     expect(pickScheduleIndex(weighted, () => 0.2)).toBe(0);
     expect(pickScheduleIndex(weighted, () => 0.3)).toBe(1);
+  });
+});
+
+describe("shape emitters (condensation)", () => {
+  const SPHERE_SPEC: ShapeSpec = {
+    parts: [{ primitive: { kind: "sphere", radius: 0.5 }, combine: "union" }],
+  };
+  const INTERSECT_SPEC: ShapeSpec = {
+    parts: [
+      { primitive: { kind: "sphere", radius: 0.5 }, combine: "union" },
+      {
+        primitive: { kind: "box", half: [0.4, 0.4, 0.4] },
+        combine: "intersect",
+      },
+    ],
+  };
+
+  /** One ordinary contraction plus one emitter map — the smallest
+   * condensation system. */
+  function emitterSystem(
+    weight = 1,
+    spec: ShapeSpec = SPHERE_SPEC,
+  ): Transform[] {
+    return [
+      {
+        id: 0,
+        position: [0.4, 0.4, 0.4],
+        rotation: [0, 0.3, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+      {
+        id: 1,
+        position: [0.2, -0.1, 0],
+        rotation: [0, 0, 0.4],
+        scale: [0.6, 0.6, 0.6],
+        weight,
+        emitter: spec,
+      },
+    ];
+  }
+
+  it("keys transformHasEmitter/systemHasEmitters on PRESENCE — empty parts read absent", () => {
+    expect(transformHasEmitter(emitterSystem()[1])).toBe(true);
+    expect(transformHasEmitter(emitterSystem()[0])).toBe(false);
+    expect(transformHasEmitter({ emitter: { parts: [] } })).toBe(false);
+    expect(systemHasEmitters(emitterSystem())).toBe(true);
+    expect(systemHasEmitters(makeTransforms(3))).toBe(false);
+    // A weight-0 emitter still counts (the conservative line the predicate
+    // documents).
+    const zeroWeight = emitterSystem(0);
+    expect(systemHasEmitters(zeroWeight)).toBe(true);
+  });
+
+  it("prepares one sampler per emitter-carrying BASE map, and null without any", () => {
+    const prepared = prepareChaosGame(emitterSystem());
+    expect(prepared.emitters).not.toBeNull();
+    expect(prepared.emitters![0]).toBeNull();
+    expect(prepared.emitters![1]).not.toBeNull();
+    expect(prepareChaosGame(makeTransforms(3)).emitters).toBeNull();
+  });
+
+  it("createEmitterStream reproduces mulberry32(seed)'s sequence after every reseed", () => {
+    const stream = createEmitterStream();
+    for (const seed of [0, 1, 0x9ea2c0f5, 4294967295]) {
+      stream.reseed(seed);
+      const reference = mulberry32(seed);
+      for (let i = 0; i < 8; i++) {
+        expect(stream.draw()).toBe(reference());
+      }
+    }
+  });
+
+  it("emits the transform's posed shape sample — incoming point and variations both ignored, exactly one primary draw beyond the pick", () => {
+    // The emitter also carries a julia variation, which would flip aux
+    // coins if it ran; the emitted point must be the affine of the sample
+    // alone, and the aux stream must stay untouched.
+    const transforms = emitterSystem();
+    transforms[1].variations = [{ type: "julia", weight: 1 }];
+    const prepared = prepareChaosGame(transforms);
+
+    // Drive the pick onto the emitter slot (index 1 of 2 base maps).
+    const primary: number[] = [0.9, 0.123456];
+    let primaryAt = 0;
+    const rng: Rng = () => primary[primaryAt++];
+    let auxDraws = 0;
+    const aux: Rng = () => {
+      auxDraws++;
+      return 0.5;
+    };
+    const step = stepOrbit(prepared, 9, -9, 9, rng, aux);
+
+    const seed = (0.123456 * 0x100000000) >>> 0;
+    const sample = prepareShapeSampler(SPHERE_SPEC)(mulberry32(seed));
+    const expected = applyAffine(
+      prepared.affines[1],
+      sample[0],
+      sample[1],
+      sample[2],
+    );
+    expect([step.x, step.y, step.z]).toEqual(expected);
+    expect(step.index).toBe(1);
+    expect(step.escaped).toBe(false);
+    expect(primaryAt).toBe(2); // pick + seed, nothing else
+    expect(auxDraws).toBe(0); // no julia coin, no reseed
+  });
+
+  it("emitted fraction tracks the emitter's weight share", () => {
+    // Emitter weight 1 against a weight-3 contraction: ~25% of plotted
+    // points come from the emitter.
+    const transforms = emitterSystem(1);
+    transforms[0].weight = 3;
+    const numPoints = 20000;
+    const { transformIndices } = runChaosGame(
+      transforms,
+      numPoints,
+      mulberry32(11),
+    );
+    let emitted = 0;
+    for (let i = 0; i < numPoints; i++) {
+      if (transformIndices[i] === 1) emitted++;
+    }
+    expect(emitted / numPoints).toBeGreaterThan(0.22);
+    expect(emitted / numPoints).toBeLessThan(0.28);
+  });
+
+  it("every emitter-indexed point lies in the transform's image of the shape (sampler-through-stepper distribution)", () => {
+    // Invert the emitter's own affine on each emitter-indexed plotted point
+    // and ask the shape's SDF for membership — the stepper must deliver
+    // exactly the sampler's support, posed by the TRS.
+    const transforms = emitterSystem();
+    const aff = composeAffine(transforms[1]);
+    const numPoints = 4000;
+    const { positions, transformIndices } = runChaosGame(
+      transforms,
+      numPoints,
+      mulberry32(21),
+    );
+    // Invert p = M s + t for the pure rotation+uniform-scale M authored
+    // above: s = Mᵀ (p - t) / scale².
+    const s2 = 0.6 * 0.6;
+    let checked = 0;
+    for (let i = 0; i < numPoints; i++) {
+      if (transformIndices[i] !== 1) continue;
+      const dx = positions[i * 3] - aff.t[0];
+      const dy = positions[i * 3 + 1] - aff.t[1];
+      const dz = positions[i * 3 + 2] - aff.t[2];
+      const sx = (aff.m[0] * dx + aff.m[3] * dy + aff.m[6] * dz) / s2;
+      const sy = (aff.m[1] * dx + aff.m[4] * dy + aff.m[7] * dz) / s2;
+      const sz = (aff.m[2] * dx + aff.m[5] * dy + aff.m[8] * dz) / s2;
+      expect(shapeSdf(SPHERE_SPEC, sx, sy, sz)).toBeLessThanOrEqual(1e-9);
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(numPoints / 4);
+  });
+
+  it("costs the primary stream a CONSTANT one extra draw per emitter step even for a rejection-loop sampler (gear)", () => {
+    // GEAR_SHAPE's sampler redraws unboundedly inside the annulus; every
+    // one of those draws must come from the derived stream, so the primary
+    // count is exactly 3 seed + 2 per step (pick + emitter seed).
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.4, 0.4, 0.4],
+        emitter: GEAR_SHAPE,
+      },
+    ];
+    const numPoints = 500;
+    let draws = 0;
+    const inner = mulberry32(7);
+    const spy: Rng = () => {
+      draws++;
+      return inner();
+    };
+    runChaosGame(transforms, numPoints, spy);
+    expect(draws).toBe(3 + 2 * (WARMUP_ITERATIONS + numPoints));
+  });
+
+  it("emitter-free documents keep the exact pre-emitter draw count, and empty parts behave as absent byte-identically", () => {
+    const plain = makeTransforms(3);
+    const emptySpec: ShapeSpec = { parts: [] };
+    const withEmpty = makeTransforms(3).map((t, i) =>
+      i === 1 ? { ...t, emitter: emptySpec } : t,
+    );
+    const numPoints = 800;
+    const run = (transforms: Transform[]) => {
+      let draws = 0;
+      const inner = mulberry32(13);
+      const spy: Rng = () => {
+        draws++;
+        return inner();
+      };
+      const result = runChaosGame(transforms, numPoints, spy);
+      return { draws, result };
+    };
+    const a = run(plain);
+    const b = run(withEmpty);
+    // Plain affine system: 3 seed draws + one pick per warmup/recorded step.
+    expect(a.draws).toBe(3 + WARMUP_ITERATIONS + numPoints);
+    expect(b.draws).toBe(a.draws);
+    expect(b.result.positions).toEqual(a.result.positions);
+    expect(b.result.transformIndices).toEqual(a.result.transformIndices);
+  });
+
+  it("falls back to the plain transform for an unsamplable (intersect) spec, byte-identically", () => {
+    // prepareShapeSampler throws on the intersect part; the transform must
+    // then behave exactly as if the field were absent — same draws, same
+    // output — and prepare no emitters at all.
+    const withEmitter = emitterSystem(1, INTERSECT_SPEC);
+    withEmitter[1].variations = [{ type: "swirl", weight: 0.5 }];
+    const plain = emitterSystem(1, INTERSECT_SPEC).map((t, i) => {
+      if (i !== 1) return t;
+      const { emitter: _emitter, ...rest } = t;
+      return { ...rest, variations: [{ type: "swirl" as const, weight: 0.5 }] };
+    });
+    expect(prepareChaosGame(withEmitter).emitters).toBeNull();
+    const numPoints = 600;
+    const a = runChaosGame(withEmitter, numPoints, mulberry32(31));
+    const b = runChaosGame(plain, numPoints, mulberry32(31));
+    expect(a.positions).toEqual(b.positions);
+    expect(a.transformIndices).toEqual(b.transformIndices);
+  });
+
+  it("prepareEmitters is shared vocabulary: the sampler fallback never hides a samplable sibling", () => {
+    const emitters = prepareEmitters([
+      { emitter: INTERSECT_SPEC },
+      {},
+      { emitter: SPHERE_SPEC },
+    ]);
+    expect(emitters).not.toBeNull();
+    expect(emitters![0]).toBeNull();
+    expect(emitters![1]).toBeNull();
+    expect(emitters![2]).not.toBeNull();
+  });
+
+  it("rotates a kaleidoscope copy's emitted stamp by the copy's own rotation", () => {
+    const transforms: Transform[] = [emitterSystem()[1]];
+    transforms[0].id = 0;
+    const symmetry: SymmetryParams = { order: 2, plane: "xy" };
+    const prepared = prepareChaosGame(transforms, null, symmetry);
+    // Two slots (copy 0, copy 1); drive the pick onto copy 1.
+    const primary = [0.75, 0.5];
+    let at = 0;
+    const rng: Rng = () => primary[at++];
+    const step = stepOrbit(prepared, 0, 0, 0, rng);
+
+    const seed = (0.5 * 0x100000000) >>> 0;
+    const sample = prepareShapeSampler(SPHERE_SPEC)(mulberry32(seed));
+    const base = applyAffine(
+      prepared.affines[1],
+      sample[0],
+      sample[1],
+      sample[2],
+    );
+    const post = symmetryRotation("xy", Math.PI);
+    expect(step.x).toBeCloseTo(
+      post[0] * base[0] + post[1] * base[1] + post[2] * base[2],
+      12,
+    );
+    expect(step.y).toBeCloseTo(
+      post[3] * base[0] + post[4] * base[1] + post[5] * base[2],
+      12,
+    );
+    expect(step.index).toBe(0); // still the BASE map
+  });
+
+  it("keeps the escape guard: an emitter whose pose flings samples out reseeds from aux", () => {
+    const transforms = emitterSystem();
+    transforms[1].position = [1000, 0, 0]; // far past ESCAPE_LIMIT
+    const prepared = prepareChaosGame(transforms);
+    const primary = [0.9, 0.5];
+    let at = 0;
+    const rng: Rng = () => primary[at++];
+    const auxSeq = [0.7, 0.6, 0.5];
+    let auxAt = 0;
+    const aux: Rng = () => auxSeq[auxAt++];
+    const step = stepOrbit(prepared, 0, 0, 0, rng, aux);
+    expect(step.escaped).toBe(true);
+    expect(step.x).toBeCloseTo(0.2, 12);
+    expect(step.y).toBeCloseTo(0.1, 12);
+    expect(step.z).toBeCloseTo(0.0, 12);
+  });
+
+  it("reproduces runChaosGame's output exactly when driven by hand (inlined-mirror oracle with an emitter, weights + kaleidoscope + lens)", () => {
+    const transforms = emitterSystem(1.5, GEAR_SHAPE);
+    transforms[0].weight = 2;
+    const finalTransform: Transform = {
+      id: 0,
+      position: [0.05, 0, 0],
+      rotation: [0, 0.2, 0],
+      scale: [0.95, 0.95, 0.95],
+    };
+    const symmetry: SymmetryParams = { order: 3, plane: "xz" };
+    const numPoints = 3000;
+    const seed = 41;
+
+    const expected = runChaosGame(
+      transforms,
+      numPoints,
+      mulberry32(seed),
+      finalTransform,
+      symmetry,
+    );
+
+    const prepared = prepareChaosGame(transforms, finalTransform, symmetry);
+    const rng = mulberry32(seed);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+    for (let i = 0; i < numPoints; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
+      expect(expected.positions[i * 3]).toBe(Math.fround(px));
+      expect(expected.positions[i * 3 + 1]).toBe(Math.fround(py));
+      expect(expected.positions[i * 3 + 2]).toBe(Math.fround(pz));
+      expect(expected.transformIndices[i]).toBe(s.index);
+    }
+  });
+
+  it("keeps the primary stream rigid under an iterationRng: pick + seed per emitter step", () => {
+    const transforms = emitterSystem();
+    const numPoints = 400;
+    let primaryDraws = 0;
+    const inner = mulberry32(3);
+    const spy: Rng = () => {
+      primaryDraws++;
+      return inner();
+    };
+    const iter = iterationRng(77);
+    const result = runChaosGame(
+      transforms,
+      numPoints,
+      spy,
+      null,
+      { order: 1, plane: "xz" },
+      iter,
+    );
+    expect(result.count).toBe(numPoints);
+    // 3 seed draws + one pick per step + one emitter seed exactly on
+    // emitter picks: total = 3 + steps + emitterSteps. Recover the emitter
+    // step count from the recorded indices (warmup steps counted via a
+    // second, plain run below).
+    let expectedDraws = 3; // the seed point's three draws
+    const prepared = prepareChaosGame(transforms);
+    const iter2 = iterationRng(77);
+    // Reproduce the run to count emitter picks including warmup: drive the
+    // same loop and count.
+    const rng2 = mulberry32(3);
+    let x = rng2() - 0.5;
+    let y = rng2() - 0.5;
+    let z = rng2() - 0.5;
+    let emitterSteps = 0;
+    for (let i = 0; i < WARMUP_ITERATIONS + numPoints; i++) {
+      iter2.begin(i);
+      const s = stepOrbit(prepared, x, y, z, rng2, iter2.draw);
+      if (s.index === 1) emitterSteps++;
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+    expectedDraws += WARMUP_ITERATIONS + numPoints + emitterSteps;
+    expect(primaryDraws).toBe(expectedDraws);
+  });
+
+  it("emitterSeed spends exactly one draw and spreads over the u32 space", () => {
+    let draws = 0;
+    const rng: Rng = () => {
+      draws++;
+      return 0.999999999;
+    };
+    const seed = emitterSeed(rng);
+    expect(draws).toBe(1);
+    expect(seed).toBeGreaterThanOrEqual(0);
+    expect(seed).toBeLessThanOrEqual(0xffffffff);
+    expect(Number.isInteger(seed)).toBe(true);
+    expect(emitterSeed(() => 0)).toBe(0);
   });
 });

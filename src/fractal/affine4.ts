@@ -382,6 +382,12 @@ export function embedTransform3(t: Transform): Transform4 {
   // see Transform4.chaos): a fresh array, like `variations`, so later edits
   // to either transform can't alias through.
   if (t.chaos !== undefined) embedded.chaos = [...t.chaos];
+  // The shape emitter rides verbatim too (the vocabulary is 3D; the 4D step
+  // samples at w = 0 — see Transform4.emitter). By REFERENCE, deliberately:
+  // a ShapeSpec is treated as immutable everywhere (mutate-system preserves
+  // it by reference for the same reason), and a deep copy here would buy
+  // nothing but allocation in the chaos game's prepare path.
+  if (t.emitter !== undefined) embedded.emitter = t.emitter;
   return embedded;
 }
 

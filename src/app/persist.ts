@@ -106,6 +106,8 @@ import {
   MAX_TRANSFORMS,
   chaosRowIsNonTrivial,
 } from "../fractal/chaos-game";
+import { MAX_SHAPE_PARTS } from "../fractal/shapes";
+import type { ShapePart, ShapePose, ShapeSpec } from "../fractal/shapes";
 import { clamp } from "../fractal/vec";
 
 // ---------------------------------------------------------------------------
@@ -593,6 +595,13 @@ function round4(n: number): number {
   return Math.round(n * 10000) / 10000;
 }
 
+/** {@link round4} over a Vec3, keeping the tuple type (the emitter codec's
+ * typed fields want a `Vec3` back where `.map(round4)` widens to
+ * `number[]`). */
+function round4Vec3(v: Vec3): Vec3 {
+  return [round4(v[0]), round4(v[1]), round4(v[2])];
+}
+
 function toBase64url(s: string): string {
   return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
 }
@@ -660,6 +669,145 @@ function decodeChaosRow(raw: unknown): number[] | undefined {
     row.push(entry);
   }
   return row;
+}
+
+/** One genuine, finite number or `undefined` — the fold lengths'
+ * no-coercion/no-clamp leaf rule ({@link decodeFoldRadius}'s own body),
+ * shared by every numeric leaf inside an emitter spec. */
+function decodeEmitterNumber(raw: unknown): number | undefined {
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
+}
+
+/**
+ * Decode one transform's optional shape-emitter spec (`types.ts`'s
+ * {@link Transform.emitter}). QUIET WHOLE-FIELD fallback,
+ * {@link decodeChaosRow}'s discipline at spec scale: a spec is one shape,
+ * not a bag of leaves — ANY malformation (a non-object, a bad part list, an
+ * unknown primitive kind or combine op, any non-finite numeric leaf) drops
+ * the ENTIRE field rather than salvaging parts, and never rejects the
+ * scene. Parts are REBUILT from exactly the admitted fields
+ * ({@link decodeSchedule}'s discipline), so foreign fields on a
+ * hand-crafted payload never reach the document. The fold lengths' two
+ * deliberate deviations apply to every numeric leaf: NO `Number(x)`
+ * coercion and NO domain clamp — a pose scale's `<= 0`-resolves-to-1 rule
+ * and a gear's teeth rounding belong to `shapes.ts` (`resolvePoseScale`/
+ * `resolveGearTeeth`); persist's job at this leaf is fidelity. Structural
+ * SANITY (the part-count band, known kinds) is checked because the wire
+ * must not carry unbounded untrusted arrays — but part 0's combine op is
+ * deliberately NOT enforced here: that domain lives in `shapes.ts`'s
+ * `validateShapeSpec`, and the engine's prepare-time fallback
+ * (`chaos-game.ts`'s `prepareEmitters`) already degrades an unsamplable
+ * spec to the plain transform.
+ */
+function decodeEmitter(raw: unknown): ShapeSpec | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  const spec = raw as Record<string, unknown>;
+  if (!Array.isArray(spec.parts)) return undefined;
+  if (spec.parts.length < 1 || spec.parts.length > MAX_SHAPE_PARTS) {
+    return undefined;
+  }
+  const parts: ShapePart[] = [];
+  for (const entry of spec.parts as unknown[]) {
+    if (typeof entry !== "object" || entry === null) return undefined;
+    const part = entry as Record<string, unknown>;
+    if (part.combine !== "union" && part.combine !== "intersect") {
+      return undefined;
+    }
+    if (typeof part.primitive !== "object" || part.primitive === null) {
+      return undefined;
+    }
+    const prim = part.primitive as Record<string, unknown>;
+    let primitive: ShapePart["primitive"];
+    switch (prim.kind) {
+      case "sphere": {
+        const radius = decodeEmitterNumber(prim.radius);
+        if (radius === undefined) return undefined;
+        primitive = { kind: "sphere", radius };
+        break;
+      }
+      case "box": {
+        if (!isVec3(prim.half)) return undefined;
+        primitive = { kind: "box", half: prim.half };
+        break;
+      }
+      case "torus": {
+        const major = decodeEmitterNumber(prim.major);
+        const minor = decodeEmitterNumber(prim.minor);
+        if (major === undefined || minor === undefined) return undefined;
+        primitive = { kind: "torus", major, minor };
+        break;
+      }
+      case "capsule": {
+        const radius = decodeEmitterNumber(prim.radius);
+        if (!isVec3(prim.a) || !isVec3(prim.b) || radius === undefined) {
+          return undefined;
+        }
+        primitive = { kind: "capsule", a: prim.a, b: prim.b, radius };
+        break;
+      }
+      case "gear": {
+        const teeth = decodeEmitterNumber(prim.teeth);
+        const radius = decodeEmitterNumber(prim.radius);
+        const hole = decodeEmitterNumber(prim.hole);
+        const halfHeight = decodeEmitterNumber(prim.halfHeight);
+        const rawTooth: unknown = prim.tooth;
+        if (
+          teeth === undefined ||
+          radius === undefined ||
+          hole === undefined ||
+          halfHeight === undefined ||
+          !Array.isArray(rawTooth) ||
+          rawTooth.length !== 2
+        ) {
+          return undefined;
+        }
+        const t0 = decodeEmitterNumber(rawTooth[0]);
+        const t1 = decodeEmitterNumber(rawTooth[1]);
+        if (t0 === undefined || t1 === undefined) return undefined;
+        primitive = {
+          kind: "gear",
+          teeth,
+          radius,
+          tooth: [t0, t1],
+          hole,
+          halfHeight,
+        };
+        break;
+      }
+      default:
+        return undefined;
+    }
+    const decoded: ShapePart = { primitive, combine: part.combine };
+    if (part.pose !== undefined) {
+      if (
+        typeof part.pose !== "object" ||
+        part.pose === null ||
+        Array.isArray(part.pose)
+      ) {
+        return undefined;
+      }
+      const rawPose = part.pose as Record<string, unknown>;
+      const pose: ShapePose = {};
+      if (rawPose.offset !== undefined) {
+        if (!isVec3(rawPose.offset)) return undefined;
+        pose.offset = rawPose.offset;
+      }
+      if (rawPose.rotate !== undefined) {
+        if (!isVec3(rawPose.rotate)) return undefined;
+        pose.rotate = rawPose.rotate;
+      }
+      if (rawPose.scale !== undefined) {
+        const scale = decodeEmitterNumber(rawPose.scale);
+        if (scale === undefined) return undefined;
+        pose.scale = scale;
+      }
+      if (Object.keys(pose).length > 0) decoded.pose = pose;
+    }
+    parts.push(decoded);
+  }
+  return { parts };
 }
 
 /**
@@ -985,6 +1133,14 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
   if (tf.chaos !== undefined) {
     const chaos = decodeChaosRow(tf.chaos);
     if (chaos !== undefined) decoded.chaos = chaos;
+  }
+  // emitter: optional condensation shape — quiet whole-field fallback, no
+  // coercion, no clamp; see decodeEmitter. Kept wherever it arrives (this
+  // decoder is shared with the final transform, where the field is inert —
+  // nothing ever builds a sampler for the lens); fidelity over policing.
+  if (tf.emitter !== undefined) {
+    const emitter = decodeEmitter(tf.emitter);
+    if (emitter !== undefined) decoded.emitter = emitter;
   }
   // w: optional 4D extension (see WExtension). Absent ⇒ the decoded transform
   // has no `w` key at all — flat, exactly like a pre-4D link (isFlatTransform
@@ -1718,6 +1874,7 @@ interface EncodedTransform {
   w?: WExtension;
   finish?: SurfaceFinish;
   surfacePattern?: SurfacePattern;
+  emitter?: ShapeSpec;
 }
 
 /**
@@ -1773,6 +1930,77 @@ function encodeFinish(
   const reflectionTint = encodeFinishField(finish.reflectionTint);
   if (reflectionTint !== undefined) e.reflectionTint = reflectionTint;
   return Object.keys(e).length > 0 ? e : undefined;
+}
+
+/** {@link encodeEmitter}'s pose leg: each field written only when present
+ * (offsets/rotations round4'd like every wire float; an all-absent pose
+ * writes nothing), rebuilt rather than spread so nothing foreign rides. */
+function encodeEmitterPose(pose: ShapePose | undefined): ShapePose | undefined {
+  if (pose === undefined) return undefined;
+  const encoded: ShapePose = {};
+  if (pose.offset !== undefined) encoded.offset = round4Vec3(pose.offset);
+  if (pose.rotate !== undefined) encoded.rotate = round4Vec3(pose.rotate);
+  if (pose.scale !== undefined && Number.isFinite(pose.scale)) {
+    encoded.scale = round4(pose.scale);
+  }
+  return Object.keys(encoded).length > 0 ? encoded : undefined;
+}
+
+/**
+ * Encode a transform's optional shape emitter (`types.ts`'s
+ * {@link Transform.emitter}): written ONLY when present — an absent field
+ * writes nothing, so a document that never authored one encodes
+ * byte-identically to one predating the field ({@link encodeFoldRadius}'s
+ * rule at spec scale). Parts are REBUILT from exactly the admitted fields
+ * (the decoder's own discipline mirrored, so a stray field on a live
+ * document object never reaches the wire) with every numeric leaf round4'd
+ * like every other wire float; a spec whose parts are gone (the empty list
+ * `transformHasEmitter` already calls absent) writes nothing.
+ */
+function encodeEmitter(spec: ShapeSpec | undefined): ShapeSpec | undefined {
+  if (spec === undefined || spec.parts.length === 0) return undefined;
+  const parts = spec.parts.map((part): ShapePart => {
+    const prim = part.primitive;
+    let primitive: ShapePart["primitive"];
+    switch (prim.kind) {
+      case "sphere":
+        primitive = { kind: "sphere", radius: round4(prim.radius) };
+        break;
+      case "box":
+        primitive = { kind: "box", half: round4Vec3(prim.half) };
+        break;
+      case "torus":
+        primitive = {
+          kind: "torus",
+          major: round4(prim.major),
+          minor: round4(prim.minor),
+        };
+        break;
+      case "capsule":
+        primitive = {
+          kind: "capsule",
+          a: round4Vec3(prim.a),
+          b: round4Vec3(prim.b),
+          radius: round4(prim.radius),
+        };
+        break;
+      case "gear":
+        primitive = {
+          kind: "gear",
+          teeth: round4(prim.teeth),
+          radius: round4(prim.radius),
+          tooth: [round4(prim.tooth[0]), round4(prim.tooth[1])],
+          hole: round4(prim.hole),
+          halfHeight: round4(prim.halfHeight),
+        };
+        break;
+    }
+    const encoded: ShapePart = { primitive, combine: part.combine };
+    const pose = encodeEmitterPose(part.pose);
+    if (pose !== undefined) encoded.pose = pose;
+    return encoded;
+  });
+  return { parts };
 }
 
 /** Sparse, fidelity-only patterned-albedo encoder. */
@@ -1935,6 +2163,8 @@ function encodeTransform(
   if (finish !== undefined) e.finish = finish;
   const surfacePattern = encodeSurfacePattern(t.surfacePattern);
   if (surfacePattern !== undefined) e.surfacePattern = surfacePattern;
+  const emitter = encodeEmitter(t.emitter);
+  if (emitter !== undefined) e.emitter = emitter;
   return e;
 }
 

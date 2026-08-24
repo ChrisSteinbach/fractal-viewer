@@ -66,9 +66,26 @@
  *   mismatch needs no extra rule: the phantom padding copies the surplus
  *   map's row verbatim (like every other metadata field), and rows shorter
  *   than the paired side's pad with 1s inside the entry lerp.
+ * - `Transform.emitter` (the condensation shape) lerps NUMERICALLY only
+ *   when both sides carry STRUCTURALLY EQUAL specs — same part count,
+ *   same per-part primitive kind and combine op, same gear tooth count (a
+ *   discrete sector count, `symmetry.order`'s treatment) — in which case
+ *   each part's numeric shape params and pose lerp (the transform's own
+ *   TRS, the shape's pose, already lerps as affine fields). ANY OTHER
+ *   pair — one-sided, or structurally mismatched — POPS to the TARGET
+ *   side's spec (or absence) from the morph's first intermediate, the
+ *   scheduled-hybrid block's placement: there is no meaningful midpoint
+ *   between two different shapes, and the slot-per-slot pairing
+ *   {@link lerpTransformPair} is built on has no room to split one slot
+ *   into two fading transforms. A transform-COUNT mismatch still fades an
+ *   emitter map by weight for free — the phantom padding copies the
+ *   surplus map, emitter included, and only its weight animates. See
+ *   {@link lerpEmitter}; endpoints stay exact by {@link lerpSystem}'s
+ *   by-reference returns.
  */
 import { isFlatTransform, meanContraction } from "./affine4";
 import { DEFAULT_COLOR_SPEED, derivedColorIndex } from "./chaos-game";
+import type { ShapePart, ShapePose, ShapeSpec } from "./shapes";
 import { CLASSIC_SURFACE_FINISH } from "./surface-finish";
 import {
   PATTERN_DEFAULT_SCALE,
@@ -324,6 +341,152 @@ function lerpChaos(
 }
 
 /**
+ * Whether two emitter specs are the SAME SHAPE, structurally — the identity
+ * {@link lerpEmitter} keys its numeric-lerp arm on: equal part counts, and
+ * per part an equal primitive `kind`, an equal `combine` op, and (for
+ * gears) an equal `teeth` count — a discrete sector count that cannot
+ * interpolate, exactly like `symmetry.order` (a fractional tooth count
+ * would round through `resolveGearTeeth` into mid-morph pops). Pose
+ * PRESENCE deliberately does not join the identity: an absent pose field
+ * is the identity value, so it lerps numerically through its fallback like
+ * any optional field.
+ */
+function emitterStructurallyEqual(a: ShapeSpec, b: ShapeSpec): boolean {
+  if (a.parts.length !== b.parts.length) return false;
+  for (let i = 0; i < a.parts.length; i++) {
+    const pa = a.parts[i];
+    const pb = b.parts[i];
+    if (pa.combine !== pb.combine) return false;
+    if (pa.primitive.kind !== pb.primitive.kind) return false;
+    if (
+      pa.primitive.kind === "gear" &&
+      pb.primitive.kind === "gear" &&
+      pa.primitive.teeth !== pb.primitive.teeth
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** A shape part's pose for a structurally-equal pair: `offset` through the
+ * zero fallback ({@link lerpOptionalVec3}), `rotate` through the
+ * nearest-turn Euler lerp with the zero fallback (emitted when either side
+ * has one), `scale` through the identity fallback 1 ({@link lerpOptional});
+ * absent-on-both fields stay absent, and an all-absent pose stays absent. */
+function lerpShapePose(
+  a: ShapePose | undefined,
+  b: ShapePose | undefined,
+  t: number,
+): ShapePose | undefined {
+  if (a === undefined && b === undefined) return undefined;
+  const result: ShapePose = {};
+  const offset = lerpOptionalVec3(a?.offset, b?.offset, t);
+  if (offset !== undefined) result.offset = offset;
+  if (a?.rotate !== undefined || b?.rotate !== undefined) {
+    result.rotate = lerpRotation(
+      a?.rotate ?? ZERO_VEC3,
+      b?.rotate ?? ZERO_VEC3,
+      t,
+    );
+  }
+  const scale = lerpOptional(a?.scale, b?.scale, 1, t);
+  if (scale !== undefined) result.scale = scale;
+  return Object.keys(result).length === 0 ? undefined : result;
+}
+
+/** One structurally-equal part pair: every numeric shape param lerps
+ * ({@link lerp} — same-kind established by
+ * {@link emitterStructurallyEqual}, which is what makes the casts below
+ * sound), the pose through {@link lerpShapePose}. */
+function lerpEmitterPart(a: ShapePart, b: ShapePart, t: number): ShapePart {
+  const pa = a.primitive;
+  const pb = b.primitive;
+  let primitive: ShapePart["primitive"];
+  switch (pa.kind) {
+    case "sphere": {
+      const q = pb as Extract<ShapePart["primitive"], { kind: "sphere" }>;
+      primitive = { kind: "sphere", radius: lerp(pa.radius, q.radius, t) };
+      break;
+    }
+    case "box": {
+      const q = pb as Extract<ShapePart["primitive"], { kind: "box" }>;
+      primitive = { kind: "box", half: lerpVec3(pa.half, q.half, t) };
+      break;
+    }
+    case "torus": {
+      const q = pb as Extract<ShapePart["primitive"], { kind: "torus" }>;
+      primitive = {
+        kind: "torus",
+        major: lerp(pa.major, q.major, t),
+        minor: lerp(pa.minor, q.minor, t),
+      };
+      break;
+    }
+    case "capsule": {
+      const q = pb as Extract<ShapePart["primitive"], { kind: "capsule" }>;
+      primitive = {
+        kind: "capsule",
+        a: lerpVec3(pa.a, q.a, t),
+        b: lerpVec3(pa.b, q.b, t),
+        radius: lerp(pa.radius, q.radius, t),
+      };
+      break;
+    }
+    case "gear": {
+      const q = pb as Extract<ShapePart["primitive"], { kind: "gear" }>;
+      primitive = {
+        kind: "gear",
+        // Equal by the structural identity — carried, never lerped.
+        teeth: pa.teeth,
+        radius: lerp(pa.radius, q.radius, t),
+        tooth: [
+          lerp(pa.tooth[0], q.tooth[0], t),
+          lerp(pa.tooth[1], q.tooth[1], t),
+        ],
+        // `hole` 0 means NO bore (shapes.ts) — still a plain numeric lerp:
+        // the term fades in continuously as the value leaves 0.
+        hole: lerp(pa.hole, q.hole, t),
+        halfHeight: lerp(pa.halfHeight, q.halfHeight, t),
+      };
+      break;
+    }
+  }
+  const part: ShapePart = { primitive, combine: a.combine };
+  const pose = lerpShapePose(a.pose, b.pose, t);
+  if (pose !== undefined) part.pose = pose;
+  return part;
+}
+
+/**
+ * `Transform.emitter` for a pair (see the module header's bullet): both
+ * absent stays absent; both present AND structurally equal
+ * ({@link emitterStructurallyEqual}) lerps every numeric shape param and
+ * pose field ({@link lerpEmitterPart} — the transform's own TRS, the
+ * shape's pose, already lerps as ordinary affine fields); ANY other pair —
+ * one-sided or structurally mismatched — POPS to the TARGET side `b`'s
+ * spec (or absence) from the first intermediate, the scheduled-hybrid
+ * block's placement (there is no meaningful midpoint between two different
+ * shapes, and the slot pairing has no room to split one slot in two). The
+ * popped spec rides BY REFERENCE — intermediates are consumed, never
+ * mutated, and the endpoints are exact via {@link lerpSystem}'s
+ * by-reference returns regardless.
+ */
+function lerpEmitter(
+  a: ShapeSpec | undefined,
+  b: ShapeSpec | undefined,
+  t: number,
+): ShapeSpec | undefined {
+  if (a === undefined && b === undefined) return undefined;
+  if (a === undefined || b === undefined || !emitterStructurallyEqual(a, b)) {
+    return b;
+  }
+  return {
+    parts: a.parts.map((part, i) => lerpEmitterPart(part, b.parts[i], t)),
+  };
+}
+
+/**
  * `Transform.w` for a pair: `undefined` unless {@link isFlatTransform} calls
  * at least one side genuinely non-flat (a flat-flat pair would otherwise
  * flip `systemIsFlat` mid-morph for no visual gain — see the module
@@ -519,6 +682,9 @@ function lerpTransformPair(
 
   const chaos = lerpChaos(a.chaos, b.chaos, t);
   if (chaos !== undefined) result.chaos = chaos;
+
+  const emitter = lerpEmitter(a.emitter, b.emitter, t);
+  if (emitter !== undefined) result.emitter = emitter;
 
   const w = lerpW(a, b, t);
   if (w !== undefined) result.w = w;

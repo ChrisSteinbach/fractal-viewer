@@ -908,3 +908,30 @@ describe("analyzeEscapeSystem4 chaos rows", () => {
     ).toBe("eligible");
   });
 });
+
+describe("analyzeEscapeSystem4 shape emitters", () => {
+  it("refuses an emitter riding an admissible non-flat chain — the 3D gate's explicit refusal, one dimension up", () => {
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.5 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const base = [
+      canonicalMandelbox(),
+      canonicalMandelbox({ id: 1, w: { rotation: { xw: 0.3 } } }),
+    ];
+    expect(analyzeEscapeSystem4(base).status).toBe("eligible");
+    const withEmitter = [
+      canonicalMandelbox({ emitter }),
+      canonicalMandelbox({ id: 1, w: { rotation: { xw: 0.3 } } }),
+    ];
+    const analysis = analyzeEscapeSystem4(withEmitter);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toContain(
+      "shape emitters (unsupported in escape-time mode)",
+    );
+  });
+});

@@ -18,6 +18,7 @@ import {
   MIN_CUSTOM_PALETTE_STOPS,
 } from "../fractal/palette";
 import { woodGrain } from "../fractal/presets";
+import type { ShapeSpec } from "../fractal/shapes";
 import { VARIATION_TYPES } from "../fractal/types";
 import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
 import { MAX_PHI, MAX_RADIUS, MIN_PHI, MIN_RADIUS } from "./orbit";
@@ -5699,5 +5700,175 @@ describe("decodeScene / encodeScene schedule (scheduled-hybrid block)", () => {
       scale: [0.5, 0.5, 0.5],
       weight: 10000,
     });
+  });
+});
+
+describe("decodeScene transform shape emitters", () => {
+  const GEAR: ShapeSpec = {
+    parts: [
+      {
+        primitive: {
+          kind: "gear",
+          teeth: 8,
+          radius: 1,
+          tooth: [0.22, 0.16],
+          hole: 0.35,
+          halfHeight: 0.25,
+        },
+        combine: "union",
+        pose: { offset: [0.1, -0.2, 0], rotate: [0.5, 0, 0.25], scale: 0.5 },
+      },
+      { primitive: { kind: "sphere", radius: 0.4 }, combine: "union" },
+    ],
+  };
+
+  it("round-trips an authored emitter spec exactly (4-decimal values)", () => {
+    const s = baseSnapshot();
+    s.transforms[0] = { ...s.transforms[0], emitter: GEAR };
+    const result = decodeScene(encodeScene(s));
+    expect(result!.transforms[0].emitter).toEqual(GEAR);
+  });
+
+  it("writes NO emitter key for an unauthored document (absent byte-identity)", () => {
+    const encoded = encodeScene(baseSnapshot());
+    const payload = decodePayload(encoded);
+    expect(JSON.stringify(payload).includes("emitter")).toBe(false);
+    const transforms = payload.transforms as Record<string, unknown>[];
+    expect("emitter" in transforms[0]).toBe(false);
+  });
+
+  it("rounds numeric leaves to 4 decimals on the wire, fold-length style", () => {
+    const s = baseSnapshot();
+    s.transforms[0] = {
+      ...s.transforms[0],
+      emitter: {
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: 0.123456789 },
+            combine: "union",
+          },
+        ],
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    const prim = result!.transforms[0].emitter!.parts[0].primitive;
+    expect(prim.kind).toBe("sphere");
+    expect((prim as { radius: number }).radius).toBe(0.1235);
+  });
+
+  it("rebuilds parts from admitted fields only — foreign keys never reach the document", () => {
+    const raw = JSON.parse(JSON.stringify(baseSnapshot())) as Record<
+      string,
+      unknown
+    >;
+    (raw.transforms as Record<string, unknown>[])[0].emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere", radius: 0.5, smuggled: 1 },
+          combine: "union",
+          pose: { scale: 2, contraband: true },
+          extra: "nope",
+        },
+      ],
+      alien: 42,
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    const emitter = result!.transforms[0].emitter!;
+    expect(emitter).toEqual({
+      parts: [
+        {
+          primitive: { kind: "sphere", radius: 0.5 },
+          combine: "union",
+          pose: { scale: 2 },
+        },
+      ],
+    });
+  });
+
+  it("drops the WHOLE field quietly on any malformation, keeping the scene", () => {
+    const malformed: unknown[] = [
+      "not an object",
+      { parts: "nope" },
+      { parts: [] },
+      {
+        parts: Array.from({ length: 9 }, () => ({
+          primitive: { kind: "sphere", radius: 1 },
+          combine: "union",
+        })),
+      },
+      { parts: [{ primitive: { kind: "cone", radius: 1 }, combine: "union" }] },
+      {
+        parts: [
+          { primitive: { kind: "sphere", radius: "1" }, combine: "union" },
+        ],
+      },
+      {
+        parts: [
+          { primitive: { kind: "sphere", radius: Infinity }, combine: "union" },
+        ],
+      },
+      {
+        parts: [
+          { primitive: { kind: "sphere", radius: 1 }, combine: "subtract" },
+        ],
+      },
+      {
+        parts: [
+          {
+            primitive: {
+              kind: "gear",
+              teeth: 8,
+              radius: 1,
+              tooth: [0.2],
+              hole: 0,
+              halfHeight: 0.2,
+            },
+            combine: "union",
+          },
+        ],
+      },
+      {
+        parts: [{ primitive: { kind: "box", half: [1, 1] }, combine: "union" }],
+      },
+      {
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: 1 },
+            combine: "union",
+            pose: { scale: null },
+          },
+        ],
+      },
+    ];
+    for (const emitter of malformed) {
+      const raw = JSON.parse(JSON.stringify(baseSnapshot())) as Record<
+        string,
+        unknown
+      >;
+      (raw.transforms as Record<string, unknown>[])[0].emitter = emitter;
+      const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+      expect(result).not.toBeNull();
+      expect(result!.transforms[0].emitter).toBeUndefined();
+    }
+  });
+
+  it("keeps fidelity at out-of-domain but finite numbers (no clamp — the domain lives in shapes.ts)", () => {
+    const s = baseSnapshot();
+    s.transforms[0] = {
+      ...s.transforms[0],
+      emitter: {
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: -2 },
+            combine: "union",
+            pose: { scale: -1 },
+          },
+        ],
+      },
+    };
+    const result = decodeScene(encodeScene(s));
+    const part = result!.transforms[0].emitter!.parts[0];
+    expect((part.primitive as { radius: number }).radius).toBe(-2);
+    expect(part.pose!.scale).toBe(-1);
   });
 });

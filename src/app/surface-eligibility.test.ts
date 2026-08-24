@@ -265,3 +265,62 @@ describe("deriveSurfaceEligibility and the scheduled-hybrid block", () => {
     }
   });
 });
+
+describe("deriveSurfaceEligibility shape emitters", () => {
+  it("refuses the gearworks preset with the surface gate's emitter reason in the note, routing nowhere", () => {
+    const result = derivePreset("gearworks");
+    expect(result.status).toBe("ineligible");
+    expect(result.kind).toBeNull();
+    expect(result.note).toContain("map 5 is a shape emitter (condensation)");
+  });
+
+  it("refuses an emitter-carrying escape-shaped document too — no arm slips through to march the plain object", () => {
+    // A non-contracting mandelbox carrying an emitter beside its fold: the
+    // IFS gate refuses, and the escape complement must NOT then admit it
+    // (its own explicit emitter refusal is what closes that door).
+    const mandelbox: Transform = {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [{ type: "mandelbox", weight: 2 }],
+      emitter: {
+        parts: [
+          { primitive: { kind: "sphere", radius: 0.5 }, combine: "union" },
+        ],
+      },
+    };
+    const result = deriveSurfaceEligibility([mandelbox], null, NO_SYMMETRY, {
+      computeAvailable: true,
+    });
+    expect(result.status).toBe("ineligible");
+    expect(result.kind).toBeNull();
+    expect(result.note).toContain("shape emitter");
+  });
+
+  it("refuses an emitter-carrying 4D document through the 4D analyzers", () => {
+    const transforms: Transform[] = sierpinskiTetrahedron().map((t, i) =>
+      i === 0
+        ? { ...t, w: { rotation: { xw: 0.3 } } }
+        : i === 1
+          ? {
+              ...t,
+              emitter: {
+                parts: [
+                  {
+                    primitive: { kind: "sphere", radius: 0.5 },
+                    combine: "union",
+                  },
+                ],
+              },
+            }
+          : t,
+    );
+    const result = deriveSurfaceEligibility(transforms, null, NO_SYMMETRY, {
+      computeAvailable: true,
+    });
+    expect(result.status).toBe("ineligible");
+    expect(result.kind).toBeNull();
+    expect(result.note).toContain("map 2 is a shape emitter (condensation)");
+  });
+});

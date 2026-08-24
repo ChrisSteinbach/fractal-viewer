@@ -1,7 +1,10 @@
 import { applyAffine, composeAffine, rotationMatrixXYZ } from "./affine";
 import type { Affine } from "./affine";
+import { prepareShapeSampler } from "./shapes";
+import type { ShapeSpec } from "./shapes";
 import { composeVariations } from "./variations";
 import type { VariationBlend } from "./variations";
+import { mulberry32 } from "./rng";
 import type { IterationRng, Rng } from "./rng";
 import type {
   Bounds,
@@ -156,6 +159,137 @@ export function systemHasChaos(
     if (chaosRowIsNonTrivial(t.chaos, n)) return true;
   }
   return false;
+}
+
+/**
+ * Whether a transform is a shape EMITTER (see
+ * {@link import("./types").Transform.emitter}): a present spec with at
+ * least one part. PRESENCE, deliberately not samplability or activity —
+ * the ONE predicate every seam keys on (the five surface/escape/bulb
+ * gates, the flame worker's CPU force, and `persist.ts`'s encoder read
+ * this, `systemHasChaos`'s role one layer over):
+ *
+ * - SAMPLABILITY is resolved per slot at prepare time instead
+ *   ({@link prepareEmitters}' fallback) — deciding it here would run the
+ *   sampler's own validation (a gear's seeded Monte-Carlo area measure)
+ *   inside gates that fire on every document edit, and an authored spec
+ *   the sampler must refuse is an authoring error the gates should
+ *   surface rather than silently render past.
+ * - ACTIVITY (weight > 0) is deliberately not consulted either — chi's
+ *   own convention, and the weight-0 corner is refused conservatively
+ *   rather than reasoned about: an all-zero-weight system's selection
+ *   degrades to the uniform draw over every map (`prepareChaosGame`'s
+ *   `weighted` flag needs a positive total), so even a "never selected"
+ *   emitter can fire there.
+ */
+export function transformHasEmitter(t: { emitter?: ShapeSpec }): boolean {
+  return t.emitter !== undefined && t.emitter.parts.length > 0;
+}
+
+/**
+ * Whether a system carries shape emitters at all: any transform's emitter
+ * is present ({@link transformHasEmitter}). The structural parameter type
+ * lets `Transform4` lists — whose emitters ride the 3D → 4D lift verbatim
+ * — share the one definition, exactly like {@link systemHasChaos}. The
+ * final transform never carries one (it sits outside selection), so
+ * callers pass the base list alone.
+ */
+export function systemHasEmitters(
+  transforms: readonly { emitter?: ShapeSpec }[],
+): boolean {
+  for (const t of transforms) {
+    if (transformHasEmitter(t)) return true;
+  }
+  return false;
+}
+
+/**
+ * Build the per-BASE-map emitter samplers a prepared chaos game carries,
+ * or `null` when no transform's emitter yields one — the common case, in
+ * which {@link stepOrbit} and every hand-inlined mirror run their
+ * pre-emitter paths untouched (zero extra draws, byte-identical output).
+ * Indexed by BASE map (`idx % baseTransformCount`), never the expanded
+ * slot: a kaleidoscope copy inherits its base map's emitter exactly as it
+ * inherits its chi column and color slot.
+ *
+ * THE FALLBACK RULE: a present emitter whose sampler cannot be prepared —
+ * `prepareShapeSampler` throws on an `"intersect"` part (SDF-only spec: no
+ * exact per-part sampling scheme exists), on structural violations and on
+ * a measureless spec — resolves to `null` and the transform behaves as
+ * the PLAIN transform (affine + variations), because sampling is simply
+ * impossible for such a spec and a thrown generation would take the whole
+ * cloud down for one bad field. Presets never author one; the gates still
+ * refuse the document on PRESENCE ({@link transformHasEmitter}'s
+ * conservative line). Prepared ONCE per run here — never per step — since
+ * a gear spec's volume measure runs a seeded Monte-Carlo integration.
+ *
+ * Selection-side twin of {@link buildChaosSelection}: shared by
+ * `prepareChaosGame` and `chaos-game-4d.ts`'s `prepareChaosGame4` (the
+ * shape vocabulary is 3D — the 4D step embeds the sample at `w = 0`), so
+ * the two dimensions cannot drift on what an emitter samples.
+ */
+export function prepareEmitters(
+  transforms: readonly { emitter?: ShapeSpec }[],
+): (((rng: Rng) => Vec3) | null)[] | null {
+  let any = false;
+  const emitters = transforms.map((t) => {
+    if (!transformHasEmitter(t)) return null;
+    try {
+      const sampler = prepareShapeSampler(t.emitter as ShapeSpec);
+      any = true;
+      return sampler;
+    } catch {
+      // SDF-only / degenerate spec — the documented plain-transform
+      // fallback above.
+      return null;
+    }
+  });
+  return any ? emitters : null;
+}
+
+/**
+ * Derive an emitter step's sampler seed from the orbit stream: EXACTLY ONE
+ * `rng()` draw, spread over the full u32 space. The ONE definition of the
+ * derivation — {@link stepOrbit}, both dimensions' inlined mirrors and
+ * every test replicate through it — so the byte-identity rule holds
+ * everywhere: an emitter step costs the PRIMARY stream one draw beyond the
+ * selection draw regardless of how many draws the sampler's internal
+ * rejection loop spends on the DERIVED `mulberry32(seed)` stream
+ * (`prepareShapeSampler` documents unbounded redraws as policy), which is
+ * what keeps a morph's pinned-seed pick correspondence intact.
+ */
+export function emitterSeed(rng: Rng): number {
+  return (rng() * 0x100000000) >>> 0;
+}
+
+/** A reseedable emitter-sample stream for the hand-inlined hot loops:
+ * `reseed(seed)` rewinds it, after which `draw` yields exactly
+ * `mulberry32(seed)`'s sequence (`rng.ts`'s algorithm restated so one
+ * object serves a whole run — `IterationRng`'s allocation-free shape;
+ * pinned equal to `mulberry32` in chaos-game.test.ts). {@link stepOrbit}
+ * itself just allocates `mulberry32(emitterSeed(rng))` per emitter step —
+ * it already allocates its `OrbitStep` — and the two are draw-for-draw
+ * identical. */
+export interface EmitterStream {
+  reseed(seed: number): void;
+  draw: Rng;
+}
+
+/** Create an {@link EmitterStream} — one per accumulation run, reseeded per
+ * emitter step. */
+export function createEmitterStream(): EmitterStream {
+  let state = 0;
+  return {
+    reseed(seed: number): void {
+      state = seed >>> 0;
+    },
+    draw(): number {
+      state = (state + 0x6d2b79f5) | 0;
+      let t = Math.imul(state ^ (state >>> 15), 1 | state);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    },
+  };
 }
 
 /** The chi-selection tables a prepared chaos game carries — see
@@ -588,6 +722,17 @@ export interface PreparedChaosGame {
    */
   schedule: PreparedSchedule | null;
   /**
+   * Per-BASE-map shape-emitter samplers ({@link prepareEmitters}), or
+   * `null` for a system with no (samplable) emitter — the common case, in
+   * which {@link stepOrbit} and every hand-inlined mirror run their
+   * pre-emitter paths untouched. Indexed by `idx % baseTransformCount`
+   * (kaleidoscope copies inherit their base's emitter); a `null` ENTRY is
+   * the documented plain-transform fallback for a spec the sampler must
+   * refuse. Consumed at STEP time: the picked slot's sampler replaces the
+   * whole affine + variation application (see {@link stepOrbit}).
+   */
+  emitters: (((rng: Rng) => Vec3) | null)[] | null;
+  /**
    * Resolved flame palette slot per BASE map — length
    * {@link baseTransformCount}, indexed by `idx % baseTransformCount`, never by
    * the expanded slot: every kaleidoscope copy of a map colors as that map.
@@ -753,6 +898,7 @@ export function prepareChaosGame(
     chaosFallbackRows: chaos ? chaos.chaosFallbackRows : null,
     postRotations,
     schedule: prepareSchedule(schedule),
+    emitters: prepareEmitters(transforms),
     colorIndex,
     colorSpeed,
   };
@@ -887,6 +1033,23 @@ export interface OrbitStep {
  * tables. `-1` (the default, and every caller predating chi) is the entry
  * pick; with no chi rows the parameter is inert and every existing caller
  * is byte-identical.
+ *
+ * EMITTER STEPS (condensation — see {@link PreparedChaosGame.emitters}):
+ * when the picked slot's BASE transform carries a prepared emitter, the
+ * step IGNORES the incoming point entirely — the new orbit point is the
+ * transform's own affine TRS applied to a fresh uniform sample of the
+ * shape. The transform's VARIATIONS are deliberately SKIPPED: a
+ * condensation set is a fixed compact shape `C₀`, and warping each sample
+ * would make the plotted union some other set than `⋃ f_w(C₀)`. Everything
+ * after the landing point is the ordinary step: a kaleidoscope copy's
+ * post-rotation bends the emitted point (the emitter stamps replicate
+ * around the axis), the escape guard still applies, and the emitted point
+ * both feeds the orbit and plots through the unchanged plot stage
+ * (post-word, lens, colors). RNG: exactly ONE draw from the primary `rng`
+ * beyond the pick ({@link emitterSeed}); the sampler's own (unbounded)
+ * draws all come from the derived `mulberry32(seed)` stream, so the
+ * primary stream's cost per emitter step is constant. Selection is
+ * untouched — chi rows and the schedule treat emitter slots like any slot.
  */
 export function stepOrbit(
   prepared: PreparedChaosGame,
@@ -898,23 +1061,43 @@ export function stepOrbit(
   prevBase = -1,
 ): OrbitStep {
   const idx = pickIndex(prepared, rng, prevBase);
-  const p = applyAffine(prepared.affines[idx], x, y, z);
-  const warp = prepared.variations[idx];
+  const baseIdx = idx % prepared.baseTransformCount;
+  const emitter =
+    prepared.emitters !== null ? prepared.emitters[baseIdx] : null;
   let nx: number;
   let ny: number;
   let nz: number;
-  if (warp === null) {
+  if (emitter !== null) {
+    // Condensation step (see the doc above): pose a fresh shape sample by
+    // this slot's affine; the incoming point and the variations are
+    // deliberately not consulted.
+    const sample = emitter(mulberry32(emitterSeed(rng)));
+    const p = applyAffine(
+      prepared.affines[idx],
+      sample[0],
+      sample[1],
+      sample[2],
+    );
     nx = p[0];
     ny = p[1];
     nz = p[2];
   } else {
-    // Nonlinear maps can send a point to infinity — or, at a singularity, to
-    // NaN. The reseed guard below catches both (NaN fails Number.isFinite),
-    // stopping a bad landing from poisoning the rest of the orbit.
-    const q = warp(p[0], p[1], p[2], auxRng);
-    nx = q[0];
-    ny = q[1];
-    nz = q[2];
+    const p = applyAffine(prepared.affines[idx], x, y, z);
+    const warp = prepared.variations[idx];
+    if (warp === null) {
+      nx = p[0];
+      ny = p[1];
+      nz = p[2];
+    } else {
+      // Nonlinear maps can send a point to infinity — or, at a singularity,
+      // to NaN. The reseed guard below catches both (NaN fails
+      // Number.isFinite), stopping a bad landing from poisoning the rest of
+      // the orbit.
+      const q = warp(p[0], p[1], p[2], auxRng);
+      nx = q[0];
+      ny = q[1];
+      nz = q[2];
+    }
   }
   const post = prepared.postRotations[idx];
   if (post !== null) {
@@ -943,7 +1126,7 @@ export function stepOrbit(
     x: nx,
     y: ny,
     z: nz,
-    index: idx % prepared.baseTransformCount,
+    index: baseIdx,
     escaped,
   };
 }
@@ -1137,7 +1320,13 @@ export function runChaosGame(
   // apart.
   const { affines, variations, postRotations, finalAffine, finalWarp } =
     prepared;
-  const { baseTransformCount, schedule: preparedSchedule } = prepared;
+  const { baseTransformCount, schedule: preparedSchedule, emitters } = prepared;
+  // Emitter-sample stream: one reseedable object per run (allocation-free
+  // per step), reseeded from the primary stream by exactly one draw per
+  // emitter step — see emitterSeed/createEmitterStream. Inert (never
+  // reseeded, never drawn) without emitters.
+  const emitterStream = createEmitterStream();
+  const emitterDraw = emitterStream.draw;
 
   for (let i = 0; i < numPoints; i++) {
     // Sub-orbit re-fuse (see CHAOS_SUB_ORBIT_POINTS): every K plotted points
@@ -1172,29 +1361,46 @@ export function runChaosGame(
       );
     }
     const idx = pickIndex(prepared, rng, prevBase);
-    const aff = affines[idx];
-    const m = aff.m;
-    const t = aff.t;
-    const ax = m[0] * x + m[1] * y + m[2] * z + t[0];
-    const ay = m[3] * x + m[4] * y + m[5] * z + t[1];
-    const az = m[6] * x + m[7] * y + m[8] * z + t[2];
-
-    const warp = variations[idx];
+    const baseIdx = idx % baseTransformCount;
+    const emitter = emitters !== null ? emitters[baseIdx] : null;
     let nx: number;
     let ny: number;
     let nz: number;
-    if (warp === null) {
-      nx = ax;
-      ny = ay;
-      nz = az;
+    if (emitter !== null) {
+      // Condensation step — stepOrbit's emitter branch exactly: one primary
+      // seed draw, the sampler on the derived stream, the slot's affine as
+      // the shape's pose, incoming point and variations ignored.
+      emitterStream.reseed(emitterSeed(rng));
+      const sample = emitter(emitterDraw);
+      const aff = affines[idx];
+      const m = aff.m;
+      const t = aff.t;
+      nx = m[0] * sample[0] + m[1] * sample[1] + m[2] * sample[2] + t[0];
+      ny = m[3] * sample[0] + m[4] * sample[1] + m[5] * sample[2] + t[1];
+      nz = m[6] * sample[0] + m[7] * sample[1] + m[8] * sample[2] + t[2];
     } else {
-      // Nonlinear maps can send a point to infinity — or, at a singularity,
-      // to NaN. The reseed guard below catches both (NaN fails
-      // Number.isFinite), stopping a bad landing from poisoning the orbit.
-      const q = warp(ax, ay, az, aux);
-      nx = q[0];
-      ny = q[1];
-      nz = q[2];
+      const aff = affines[idx];
+      const m = aff.m;
+      const t = aff.t;
+      const ax = m[0] * x + m[1] * y + m[2] * z + t[0];
+      const ay = m[3] * x + m[4] * y + m[5] * z + t[1];
+      const az = m[6] * x + m[7] * y + m[8] * z + t[2];
+
+      const warp = variations[idx];
+      if (warp === null) {
+        nx = ax;
+        ny = ay;
+        nz = az;
+      } else {
+        // Nonlinear maps can send a point to infinity — or, at a
+        // singularity, to NaN. The reseed guard below catches both (NaN
+        // fails Number.isFinite), stopping a bad landing from poisoning the
+        // orbit.
+        const q = warp(ax, ay, az, aux);
+        nx = q[0];
+        ny = q[1];
+        nz = q[2];
+      }
     }
 
     // Symmetry: rotate this slot's FULL affine + variation output —
@@ -1232,7 +1438,7 @@ export function runChaosGame(
     // Selection state for the next pick — mirrors stepOrbit's escaped/index
     // contract exactly (an escape-reseed re-fuses the entry pick). Inert
     // without chi rows.
-    prevBase = escaped ? -1 : idx % baseTransformCount;
+    prevBase = escaped ? -1 : baseIdx;
 
     // --- inlined plotPoint(prepared, x, y, z, rng, aux) ----------------------
     // The plotted point is the orbit point, optionally bent by the schedule's
@@ -1291,7 +1497,7 @@ export function runChaosGame(
     // PreparedChaosGame.baseTransformCount — matching stepOrbit's own
     // OrbitStep.index exactly, including the escape-reseed case (idx is the
     // TRIGGERING transform, fixed before the reseed branch above runs).
-    transformIndices[i] = idx % baseTransformCount;
+    transformIndices[i] = baseIdx;
 
     minX = Math.min(minX, px);
     maxX = Math.max(maxX, px);
