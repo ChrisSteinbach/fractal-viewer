@@ -117,26 +117,26 @@ more valuable property to protect.
 
 ## Import (`.flame` → scene)
 
-| flame                                                | explorer                                                                                            |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `coefs`                                              | QR → position/rotation/scale/shear (exact)                                                          |
-| pure `linear="w"` blend                              | folded into the affine (`w·A`, `w·t`), list omitted (exact)                                         |
-| known variation attrs                                | `variations: [{type, weight}]` by name (exact)                                                      |
-| `post` on a purely affine map                        | composed into the affine (exact)                                                                    |
-| `post` on a nonlinear map                            | **dropped + warning** (nothing to hang it on)                                                       |
-| unknown variations/parameters                        | **ignored + one aggregated warning** naming the attributes                                          |
-| `weight`                                             | `Transform.weight`; all-equal weights omitted (uniform)                                             |
-| `weight ≤ 0` xform                                   | **skipped + warning**                                                                               |
-| `chaos` (xaos)                                       | **ignored + warning** (no xaos in the chaos game)                                                   |
-| `opacity="0"`                                        | imported visible + warning (no per-map opacity)                                                     |
-| `color`                                              | `Transform.colorIndex`, clamped to `[0, 1]`; absent ⇒ key omitted                                   |
-| `color_speed`                                        | `Transform.colorSpeed`, clamped to `[0, 1]`; wins over `symmetry` when both appear                  |
-| `symmetry` (deprecated)                              | `Transform.colorSpeed = (1 - symmetry) / 2`, clamped                                                |
-| `<finalxform>`                                       | `finalTransform` (same rules; its weight ignored)                                                   |
-| palette (`<palette>` hex block or `<color>` entries) | downsampled onto an 8-stop `CustomPalette`; `flame.paletteId` and `rampPaletteId` become `"custom"` |
-| `brightness` / `gamma` / `vibrancy`                  | `flame.exposure` (`brightness / 4`) / `gamma` / `vibrancy`, clamped to our ranges                   |
-| `supersample`/`oversample`, `estimator_*`            | the matching `FlameParams` fields, clamped                                                          |
-| `size`/`center`/`scale`/`rotate`                     | ignored — the explorer auto-fits its own camera                                                     |
+| flame                                                | explorer                                                                                                                       |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `coefs`                                              | QR → position/rotation/scale/shear (exact)                                                                                     |
+| pure `linear="w"` blend                              | folded into the affine (`w·A`, `w·t`), list omitted (exact)                                                                    |
+| known variation attrs                                | `variations: [{type, weight}]` by name (exact)                                                                                 |
+| `post` on a purely affine map                        | composed into the affine (exact)                                                                                               |
+| `post` on a nonlinear map                            | **dropped + warning** (nothing to hang it on)                                                                                  |
+| unknown variations/parameters                        | **ignored + one aggregated warning** naming the attributes                                                                     |
+| `weight`                                             | `Transform.weight`; all-equal weights omitted (uniform)                                                                        |
+| `weight ≤ 0` xform                                   | **skipped + warning**                                                                                                          |
+| `chaos` (xaos)                                       | `Transform.chaos` row: sanitized, pad/truncated to the base xform count, reindexed around any dropped xform — see "Xaos" below |
+| `opacity="0"`                                        | imported visible + warning (no per-map opacity)                                                                                |
+| `color`                                              | `Transform.colorIndex`, clamped to `[0, 1]`; absent ⇒ key omitted                                                              |
+| `color_speed`                                        | `Transform.colorSpeed`, clamped to `[0, 1]`; wins over `symmetry` when both appear                                             |
+| `symmetry` (deprecated)                              | `Transform.colorSpeed = (1 - symmetry) / 2`, clamped                                                                           |
+| `<finalxform>`                                       | `finalTransform` (same rules; its weight ignored)                                                                              |
+| palette (`<palette>` hex block or `<color>` entries) | downsampled onto an 8-stop `CustomPalette`; `flame.paletteId` and `rampPaletteId` become `"custom"`                            |
+| `brightness` / `gamma` / `vibrancy`                  | `flame.exposure` (`brightness / 4`) / `gamma` / `vibrancy`, clamped to our ranges                                              |
+| `supersample`/`oversample`, `estimator_*`            | the matching `FlameParams` fields, clamped                                                                                     |
+| `size`/`center`/`scale`/`rotate`                     | ignored — the explorer auto-fits its own camera                                                                                |
 
 "Known variation attrs" matches any of our seventeen `VARIATION_TYPES` by name
 — the fold family and the two power maps included, per the deviation above.
@@ -174,6 +174,9 @@ The export writes the system's **XY shadow**:
   the variation _output_, which is exactly flam3's `post` slot). A z-axis
   kaleidoscope of a z-flat system therefore exports exactly; x/y-axis
   kaleidoscopes flatten with a warning.
+- `chaos` rows export when the system carries any non-trivial one
+  (`systemHasChaos`) — see "Xaos" below for the write gate, the
+  kaleidoscope-copy expansion, and the final-transform exclusion.
 - `finalTransform` → `<finalxform>`; variations pass through by name (merged
   by type — XML attributes must be unique); weights pass through as-is.
 - Per-xform colors are written **resolved**: a map's authored
@@ -208,10 +211,85 @@ The export writes the system's **XY shadow**:
   `brightness = 4·exposure`, `gamma`, `vibrancy`, `supersample`,
   `estimator_*`.
 
+## Xaos (per-transform chaos rows)
+
+flam3's xaos — Mauldin–Williams graph-directed selection — round-trips
+through `Transform.chaos` (`chaos-game.ts`'s vocabulary; see its own doc
+comment for the row/column convention and `resolveChaosEntry`/
+`chaosRowIsNonTrivial`, the ONE definitions this module reuses rather than
+restates).
+
+- **Attribute form.** `chaos="s0 s1 s2 …"` on a standard `<xform>`: entry `j`
+  scales the probability of picking base xform `j` (document order) as the
+  NEXT map, when THIS xform was the one just applied — flam3's row-is-FROM,
+  entry-is-TOWARD convention, unchanged.
+- **Pad/truncate.** flam3's own parser rule: entries missing past the end of
+  the list default to `1`; entries past the file's base-xform count are
+  ignored. Both fall out of `resolveChaosEntry`'s "absent reads as 1" rule
+  for free — import never pads or truncates the array by hand, it just reads
+  whichever index the base count asks for.
+- **Sanitize, at this trust boundary.** A `chaos` attribute comes from
+  untrusted file text, so each parsed entry is resolved through
+  `resolveChaosEntry` immediately: a non-finite token (unparseable text, or a
+  literal `nan`/`inf`) reads as `1` (the domain's own "absent means 1" rule,
+  rather than a second one invented for this file), and a negative entry
+  clamps to `0` (`resolveChaosEntry`'s own domain — a negative scale has no
+  probability meaning). A stored `Transform.chaos` entry is therefore always
+  a finite number `>= 0` on import, which also sidesteps a real hazard:
+  `persist.ts`'s wire is JSON, where `NaN`/`Infinity` serialize as `null` and
+  would silently drop the WHOLE row on the next decode (`decodeChaosRow`'s
+  whole-row-or-nothing rule) — sanitizing at the parse boundary means that
+  failure mode never reaches the encoded scene at all.
+- **The ordering hazard.** flame-file's import folds pure-linear blends,
+  drops malformed/non-positive-weight xforms, and truncates past
+  `MAX_TRANSFORMS` — any of which changes what column `j` in a surviving row
+  means. The rule: an xform the import drops loses BOTH its own row and its
+  column in every surviving row; the survivors keep document order and their
+  columns close back up around the gap. Implemented as a two-pass reindex:
+  parse every surviving xform's row in RAW file-column order first, then once
+  every xform has been visited and the survivors are known, remap each row
+  through the list of raw indices that survived (a raw column past the row's
+  own length still resolves through `resolveChaosEntry`'s pad rule, so pad,
+  truncate and the column-drop are one mechanism, not three).
+- **Final xforms sit outside selection**, exactly as in flam3: no row is read
+  off a `<finalxform>`'s `chaos` attribute (if a hand-edited file even
+  carries one), and no base row's column ever addresses the final transform
+  — the base-xform column space only ever spans the standard `<xform>` list,
+  in both directions.
+- **Trivial rows.** A row that resolves to all-`1`s — absent, explicit
+  `"1 1 1"`, or truncated down to nothing but `1`s — is OMITTED from the
+  imported `Transform`, exactly `chaosRowIsNonTrivial`'s definition of
+  trivial: it selects exactly as no row at all, so storing it would be
+  noise.
+- **Export gate.** A `chaos` attribute is written on an xform only when the
+  SYSTEM carries at least one non-trivial row (`systemHasChaos`) — flam3's
+  own `flam3_check_unity_chaos` disabling, and our absent-means-classic
+  convention agreeing for once by construction. When the gate is on, EVERY
+  exported xform gets a `chaos="…"` attribute, including one whose own row
+  is trivial (written as explicit `1`s) — matching flam3's writer, which
+  emits the full per-xform array once any xform in the genome uses one,
+  rather than mixing explicit and implicit rows in one file. When the gate
+  is off, no xform anywhere gets the attribute — an unauthored document
+  exports byte-identically to one predating chi.
+- **Kaleidoscope-baked export.** Our kaleidoscope copies bake into explicit
+  xforms (see "Export" above); chi selection lives at the BASE-map level
+  (the sector sweep that picks a copy is orthogonal to it), so every copy of
+  a base map inherits that base's row verbatim, and the row itself EXPANDS:
+  the column toward every copy of base `j` carries base `j`'s entry,
+  regardless of which copy. A 2-map, order-2 system's base-0 row `[a, b]`
+  therefore exports as the 4-entry row `[a, b, a, b]` on BOTH copies of base
+  0 (and base 1's row the same way on both of its copies) — reproducing the
+  base-level selection graph exactly, since a copy's own identity never
+  affects which BASE map gets picked next.
+- **Round-trip.** Import → export → import preserves `Transform.chaos` rows
+  exactly (up to the wire's usual 4-decimal rounding): nothing about a row
+  is approximated in either direction, unlike the fold radii or the schedule
+  block.
+
 ## Known losses (by design)
 
 - z / w structure (projection — warned).
-- Xaos, animation/motion attributes, per-xform opacity.
+- Animation/motion attributes, per-xform opacity.
 - A final xform's color blending (export — our lens doesn't recolor, so the
   export pins its `color_speed` to 0 rather than reproducing an imported
   one; see the export notes above).

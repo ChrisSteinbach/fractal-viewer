@@ -63,10 +63,13 @@ import { isFlatTransform, planeHasW } from "../fractal/affine4";
 import {
   DEFAULT_COLOR_SPEED,
   MAX_TRANSFORMS,
+  chaosRowIsNonTrivial,
   derivedColorIndex,
   effectiveSymmetryOrder,
+  resolveChaosEntry,
   resolveScheduleDepth,
   runChaosGame,
+  systemHasChaos,
 } from "../fractal/chaos-game";
 import { transformColors } from "../fractal/color";
 import {
@@ -377,6 +380,17 @@ function symmetryRotation(plane: SymmetryPlane, angle: number): number[] {
 interface ImportedXform {
   transform: Transform;
   weight: number;
+  /**
+   * The xform's raw `chaos` row, if it carried one: whitespace-separated
+   * entries parsed and sanitized through {@link resolveChaosEntry} (a
+   * non-finite entry reads as 1, a negative one clamps to 0) but NOT YET
+   * reindexed onto the surviving transforms' columns — still keyed by this
+   * xform's position among the file's raw `<xform>` elements. `flameToScene`
+   * does that reindex once every xform in the file has been processed and it
+   * knows which raw positions survived (see its ordering-hazard comment).
+   * Always `undefined` for a final xform: it sits outside selection.
+   */
+  chaosRow?: number[];
 }
 
 /**
@@ -414,6 +428,7 @@ function xformToTransform(
   // are collected for one aggregated warning — they are either variations we
   // don't implement or their parameters.
   let variations: Variation[] = [];
+  let chaosRow: number[] | undefined;
   for (const name of el.getAttributeNames()) {
     if (VARIATION_NAMES.has(name)) {
       const w = attrNumber(el, name);
@@ -428,10 +443,27 @@ function xformToTransform(
       continue;
     }
     if (KNOWN_XFORM_ATTRS.has(name)) {
-      if (name === "chaos") {
-        warnings.add(
-          "Xaos (per-transform chaos weights) is not supported and was ignored",
-        );
+      if (name === "chaos" && !isFinal) {
+        // Whitespace-separated scalars TOWARD each standard xform, in
+        // document order (flam3's row-is-FROM, entry-is-TOWARD convention —
+        // see `types.ts`'s `Transform.chaos`). Sanitized per entry through
+        // the ONE consumption-domain definition — non-finite reads as 1,
+        // negative clamps to 0 — right here at the trust boundary, both
+        // because that IS `resolveChaosEntry`'s domain and because a raw
+        // NaN/Infinity would silently drop the whole row on the next
+        // persist.ts decode (JSON has no non-finite numbers). Still in RAW
+        // file-column order; the caller reindexes once it knows which
+        // xforms in the file survive (see flameToScene's ordering-hazard
+        // handling) — a short row's missing tail and a long row's surplus
+        // both fall out of that same resolve, so pad/truncate needs no
+        // separate code here.
+        const raw = el.getAttribute("chaos");
+        if (raw !== null) {
+          chaosRow = raw
+            .trim()
+            .split(/\s+/)
+            .map((tok) => resolveChaosEntry(Number.parseFloat(tok)));
+        }
       }
       if (name === "opacity" && attrNumber(el, "opacity") === 0) {
         warnings.add("A hidden (opacity 0) transform was imported visible");
@@ -500,7 +532,7 @@ function xformToTransform(
   const colorSpeed = xformColorSpeed(el);
   if (colorSpeed !== undefined) transform.colorSpeed = colorSpeed;
 
-  return { transform, weight };
+  return { transform, weight, chaosRow };
 }
 
 /**
@@ -584,8 +616,16 @@ function flameToScene(
     xformEls = xformEls.slice(0, MAX_TRANSFORMS);
   }
 
+  // `keptRawIndices[newIndex]` is the RAW position (among `xformEls`) of the
+  // xform that landed at `newIndex` in `imported`. An xform this loop drops
+  // (`xf === null` — malformed coefs, non-positive weight) never enters
+  // either array, which is what loses its own chaos row AND its column in
+  // every surviving row in one stroke; everything that survives keeps
+  // document order, so the surviving columns close back up around the gap
+  // below.
   const imported: ImportedXform[] = [];
-  for (const el of xformEls) {
+  const keptRawIndices: number[] = [];
+  xformEls.forEach((el, rawIndex) => {
     const xf = xformToTransform(
       el,
       imported.length,
@@ -593,8 +633,11 @@ function flameToScene(
       warnings,
       ignoredAttrs,
     );
-    if (xf !== null) imported.push(xf);
-  }
+    if (xf !== null) {
+      imported.push(xf);
+      keptRawIndices.push(rawIndex);
+    }
+  });
   if (imported.length === 0) {
     warnings.add(`Flame "${name}" has no usable transforms — skipped`);
     return null;
@@ -612,6 +655,23 @@ function flameToScene(
         Math.max(MIN_XFORM_WEIGHT, imported[i].weight),
       );
     }
+  }
+
+  // Chi rows: reindex each surviving xform's row from RAW file-column space
+  // (`ImportedXform.chaosRow`) onto the surviving transforms' own columns,
+  // now that `keptRawIndices` names exactly which raw positions made it
+  // through. A raw column past what the row's author wrote — or past
+  // `keptRawIndices` altogether, i.e. one that pointed at a dropped xform —
+  // resolves through `resolveChaosEntry`'s own absent-means-1 rule, so pad,
+  // truncate and the column-drop all fall out of the one definition. A row
+  // that resolves to all-1s is trivial (`chaosRowIsNonTrivial`, the ONE
+  // definition) and is left off the transform entirely, same as no row at
+  // all — absent-means-classic, one level up.
+  for (let i = 0; i < imported.length; i++) {
+    const rawRow = imported[i].chaosRow;
+    if (rawRow === undefined) continue;
+    const row = keptRawIndices.map((rawJ) => resolveChaosEntry(rawRow[rawJ]));
+    if (chaosRowIsNonTrivial(row, imported.length)) transforms[i].chaos = row;
   }
 
   let finalTransform: Transform | undefined;
@@ -956,6 +1016,11 @@ export function encodeFlameFile(
   const warnings = new Set<string>();
   const transforms = s.transforms;
   const n = transforms.length;
+  // The system-level xaos gate (flam3's own `flam3_check_unity_chaos`
+  // disabling): a chaos attribute is written at all only once some row is
+  // non-trivial — see the precomputed `chaosAttrs` below and the module doc's
+  // Xaos section.
+  const hasChaos = systemHasChaos(transforms);
 
   // A 4D kaleidoscope (a w-plane) has no 3x3 to compose into
   // `coefs`, so it DROPS here rather than throwing — this exporter's whole
@@ -1027,6 +1092,27 @@ export function encodeFlameFile(
     );
   }
 
+  // Each base map's exported chaos ROW, computed ONCE and shared by every
+  // kaleidoscope copy of that map: chi selection is over BASE maps (the
+  // sector sweep that picks a copy is orthogonal to it), so a copy inherits
+  // its base's row exactly as it inherits its weight. The row spans every
+  // EMITTED xform in the same k-major/i-minor order they're pushed below, so
+  // entry `k2*n + i2` is base map i2's resolved entry regardless of which
+  // copy k2 it lands on — the column toward EVERY copy of base j carries base
+  // j's entry verbatim, reproducing the base-level selection graph exactly
+  // (sector choice already rides the split weights, same as the render).
+  const chaosAttrs: string[] = hasChaos
+    ? transforms.map((t) => {
+        const row: number[] = [];
+        for (let k2 = 0; k2 < order; k2++) {
+          for (let i2 = 0; i2 < n; i2++) {
+            row.push(resolveChaosEntry(t.chaos?.[i2]));
+          }
+        }
+        return ` chaos="${row.map(fmt).join(" ")}"`;
+      })
+    : [];
+
   const xforms: string[] = [];
   for (let k = 0; k < order; k++) {
     const rot =
@@ -1071,6 +1157,7 @@ export function encodeFlameFile(
       xforms.push(
         `    <xform weight="${fmt(weight)}" color="${fmt(color)}"` +
           `${colorSpeedAttrs(colorSpeed)}` +
+          `${hasChaos ? chaosAttrs[i] : ""}` +
           `${variationAttrs(merged)} coefs="${coefsAttr(coefs)}"${post}/>`,
       );
     }

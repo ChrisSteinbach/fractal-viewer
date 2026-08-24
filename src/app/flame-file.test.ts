@@ -173,14 +173,19 @@ describe("decodeFlameFile", () => {
     for (let i = 0; i < 6; i++) expect(got[i]).toBeCloseTo(want[i], 3);
   });
 
-  it("imports an xaos xform with a warning, ignoring the chaos weights", () => {
+  it("imports a chaos row without any warning, truncating a column past the base transform count", () => {
+    // A single-xform system: base transform count is 1, so entry 1 (toward
+    // a second base map that doesn't exist) is truncated away per flam3's
+    // parser rule, leaving only entry 0 — which is 1, i.e. trivial — so the
+    // row is left off the transform entirely.
     const xml = `<flame><xform weight="1" chaos="1 0" coefs="0.5 0 0 0.5 0 0"/></flame>`;
     const file = decodeFlameFile(xml);
     expect(file).not.toBeNull();
-    expect(file!.warnings.some((w) => /xaos/i.test(w))).toBe(true);
+    expect(file!.warnings.some((w) => /xaos/i.test(w))).toBe(false);
     const snap = decodeScene(file!.scenes[0].encoded);
     expect(snap).not.toBeNull();
     expect(snap!.transforms).toHaveLength(1);
+    expect(snap!.transforms[0].chaos).toBeUndefined();
   });
 
   it("warns on a hidden (opacity 0) transform but not on an opaque one", () => {
@@ -441,6 +446,126 @@ describe("decodeFlameFile", () => {
     const snap = loadFirstScene(xml);
     expect(snap.finalTransform?.colorIndex).toBe(0.4);
     expect(snap.finalTransform?.colorSpeed).toBe(0);
+  });
+});
+
+describe("decodeFlameFile chaos rows", () => {
+  it("imports a chaos row onto Transform.chaos", () => {
+    const xml = `<flame>
+      <xform weight="1" chaos="2 1 0.5" coefs="0.5 0 0 0.5 0.2 0"/>
+      <xform weight="1" coefs="0.5 0 0 0.5 -0.2 0"/>
+      <xform weight="1" chaos="0 1 1" coefs="0.4 0 0 0.4 0 0.2"/>
+    </flame>`;
+    const snap = loadFirstScene(xml);
+    expect(snap.transforms[0].chaos).toEqual([2, 1, 0.5]);
+    expect(snap.transforms[1].chaos).toBeUndefined();
+    expect(snap.transforms[2].chaos).toEqual([0, 1, 1]);
+  });
+
+  it("sanitizes a chaos row's entries: non-finite reads as 1, negative clamps to 0", () => {
+    const xml = `<flame>
+      <xform weight="1" chaos="abc -3 2" coefs="0.5 0 0 0.5 0.2 0"/>
+      <xform weight="1" coefs="0.5 0 0 0.5 -0.2 0"/>
+      <xform weight="1" coefs="0.4 0 0 0.4 0 0.2"/>
+    </flame>`;
+    const snap = loadFirstScene(xml);
+    expect(snap.transforms[0].chaos).toEqual([1, 0, 2]);
+  });
+
+  it("pads a short chaos row with 1s and truncates a long one to the base transform count", () => {
+    const xml = `<flame>
+      <xform weight="1" chaos="0.5" coefs="0.5 0 0 0.5 0.2 0"/>
+      <xform weight="1" chaos="0.25 2 3 4 5" coefs="0.5 0 0 0.5 -0.2 0"/>
+      <xform weight="1" coefs="0.4 0 0 0.4 0 0.2"/>
+    </flame>`;
+    const snap = loadFirstScene(xml);
+    // One entry pads with 1s out to the 3-map base count.
+    expect(snap.transforms[0].chaos).toEqual([0.5, 1, 1]);
+    // Five entries truncate down to the 3-map base count.
+    expect(snap.transforms[1].chaos).toEqual([0.25, 2, 3]);
+  });
+
+  it("omits an explicit all-1s chaos row — trivial reads as absent", () => {
+    const xml = `<flame>
+      <xform weight="1" chaos="1 1 1" coefs="0.5 0 0 0.5 0.2 0"/>
+      <xform weight="1" coefs="0.5 0 0 0.5 -0.2 0"/>
+      <xform weight="1" coefs="0.4 0 0 0.4 0 0.2"/>
+    </flame>`;
+    const snap = loadFirstScene(xml);
+    expect(snap.transforms[0].chaos).toBeUndefined();
+  });
+
+  it("reindexes chaos rows and columns around an xform the import drops between two chi-carrying ones", () => {
+    // Raw xform 1 (weight 0) is dropped; raw xforms 0 and 2 survive and
+    // become the imported system's indices 0 and 1. Each raw row is keyed
+    // to RAW columns [0, 1, 2] — dropping column 1 (the dead xform) must
+    // close the gap so the survivors' columns realign to their NEW indices
+    // [0, 1].
+    const xml = `<flame>
+      <xform weight="1" chaos="1 0.5 2" coefs="0.5 0 0 0.5 0.2 0"/>
+      <xform weight="0" coefs="0.5 0 0 0.5 0 0"/>
+      <xform weight="1" chaos="2 1 0.5" coefs="0.4 0 0 0.4 0 0.2"/>
+    </flame>`;
+    const file = decodeFlameFile(xml);
+    expect(file).not.toBeNull();
+    const snap = decodeScene(file!.scenes[0].encoded);
+    expect(snap).not.toBeNull();
+    expect(snap!.transforms).toHaveLength(2);
+    // Raw row [1, 0.5, 2] loses column 1 (the dropped xform) -> [1, 2].
+    expect(snap!.transforms[0].chaos).toEqual([1, 2]);
+    // Raw row [2, 1, 0.5] loses column 1 -> [2, 0.5].
+    expect(snap!.transforms[1].chaos).toEqual([2, 0.5]);
+  });
+
+  it("excludes the final transform from chi entirely: no row in, no column toward it", () => {
+    const xml = `<flame>
+      <xform weight="1" chaos="1 0.5" coefs="0.5 0 0 0.5 0.2 0"/>
+      <xform weight="1" coefs="0.5 0 0 0.5 -0.2 0"/>
+      <finalxform chaos="1 1" coefs="0.5 0 0 0.5 0 0"/>
+    </flame>`;
+    const snap = loadFirstScene(xml);
+    // The base row only ever spans the 2 standard xforms — a finalxform
+    // attribute (even on a hand-edited file) contributes no column, and the
+    // final transform itself carries no row.
+    expect(snap.transforms[0].chaos).toEqual([1, 0.5]);
+    expect(snap.finalTransform?.chaos).toBeUndefined();
+  });
+
+  it("imports a hand-authored flam3-style xaos flame's rows (golden fixture)", () => {
+    // A hand-authored fixture in flam3's own documented xaos form: three
+    // standard xforms, two chi-carrying and one plain. This is the standing
+    // assertion in place of the one-time manual pixel-diff against a
+    // reference renderer (flam3/Fractorium) — that check isn't reachable in
+    // this environment (no such binary/browser plugin here), so it is
+    // deliberately skipped, and these imported ROWS stand in for it.
+    const xml = `<flame name="golden-xaos" version="flam3 3.1.1">
+      <xform weight="1" chaos="1 0.5 0" color="0" linear="1" coefs="0.5 0 0 0.5 0.2 0"/>
+      <xform weight="1" chaos="0 1 2" color="0.5" linear="1" coefs="0.5 0 0 0.5 -0.2 0"/>
+      <xform weight="1" color="1" linear="1" coefs="0.4 0 0 0.4 0 0.2"/>
+    </flame>`;
+    const snap = loadFirstScene(xml);
+    expect(snap.transforms).toHaveLength(3);
+    expect(snap.transforms[0].chaos).toEqual([1, 0.5, 0]);
+    expect(snap.transforms[1].chaos).toEqual([0, 1, 2]);
+    expect(snap.transforms[2].chaos).toBeUndefined();
+  });
+
+  it("round-trips chaos rows through import → export → import byte-for-byte", () => {
+    const xml = `<flame>
+      <xform weight="1" chaos="1 0.5 2" coefs="0.5 0 0 0.5 0.2 0"/>
+      <xform weight="1" coefs="0.5 0 0 0.5 -0.2 0"/>
+      <xform weight="1" chaos="0 1 1" coefs="0.4 0 0 0.4 0 0.2"/>
+    </flame>`;
+    const first = loadFirstScene(xml);
+    expect(first.transforms[0].chaos).toEqual([1, 0.5, 2]);
+    expect(first.transforms[1].chaos).toBeUndefined();
+    expect(first.transforms[2].chaos).toEqual([0, 1, 1]);
+
+    const { xml: exported } = encodeFlameFile(first, "chi-round-trip");
+    const second = loadFirstScene(exported);
+    expect(second.transforms[0].chaos).toEqual(first.transforms[0].chaos);
+    expect(second.transforms[1].chaos).toEqual(first.transforms[1].chaos);
+    expect(second.transforms[2].chaos).toEqual(first.transforms[2].chaos);
   });
 });
 
@@ -825,6 +950,38 @@ describe("encodeFlameFile → decodeFlameFile round trip", () => {
       '<finalxform color="0.4" color_speed="0" symmetry="1"',
     );
   });
+
+  it("round-trips chi rows through export → import", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.3, 0.1, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0],
+        chaos: [2, 1, 0.5],
+      },
+      {
+        id: 1,
+        position: [-0.2, -0.1, 0],
+        rotation: [0, 0, 0],
+        scale: [0.4, 0.4, 0],
+      },
+      {
+        id: 2,
+        position: [0, -0.3, 0],
+        rotation: [0, 0, 0],
+        scale: [0.35, 0.35, 0],
+        chaos: [0, 1, 1],
+      },
+    ];
+    const source = snapshotWith({ transforms });
+
+    const { xml } = encodeFlameFile(source, "chi-round-trip");
+    const back = loadFirstScene(xml);
+    expect(back.transforms[0].chaos).toEqual([2, 1, 0.5]);
+    expect(back.transforms[1].chaos).toBeUndefined();
+    expect(back.transforms[2].chaos).toEqual([0, 1, 1]);
+  });
 });
 
 describe("encodeFlameFile warnings", () => {
@@ -1074,5 +1231,96 @@ describe("encodeFlameFile and the scheduled-hybrid block", () => {
     };
     const out = encodeFlameFile(s, "dead");
     expect(out.warnings.some((w) => w.includes("hybrid schedule"))).toBe(false);
+  });
+});
+
+describe("encodeFlameFile chaos rows", () => {
+  it("writes chaos attributes on every xform once the system carries any non-trivial row", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.1, 0.1, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0],
+        chaos: [2, 1, 0.5],
+      },
+      {
+        id: 1,
+        position: [-0.2, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.4, 0.4, 0],
+        // No row of its own — the system-level gate still writes an
+        // explicit "1 1 1" here (flam3_check_unity_chaos parity: once ANY
+        // row is non-trivial the file states every row explicitly).
+      },
+      {
+        id: 2,
+        position: [0.1, -0.2, 0],
+        rotation: [0, 0, 0],
+        scale: [0.3, 0.3, 0],
+        chaos: [0, 1, 1],
+      },
+    ];
+    const source = snapshotWith({ transforms });
+
+    const { xml } = encodeFlameFile(source, "chaos-export");
+    const rows = [...xml.matchAll(/<xform [^>]*\bchaos="([^"]*)"/g)].map(
+      (m) => m[1],
+    );
+    expect(rows).toEqual(["2 1 0.5", "1 1 1", "0 1 1"]);
+  });
+
+  it("writes no chaos attributes when every row is absent or explicitly all-1s", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.1, 0.1, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0],
+        chaos: [1, 1],
+      },
+      {
+        id: 1,
+        position: [-0.2, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.4, 0.4, 0],
+      },
+    ];
+    const source = snapshotWith({ transforms });
+
+    const { xml } = encodeFlameFile(source, "no-chaos-export");
+    expect(xml).not.toContain("chaos=");
+  });
+
+  it("expands each kaleidoscope copy's chaos row from its base map", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.3, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0],
+        chaos: [2, 1],
+      },
+      {
+        id: 1,
+        position: [-0.3, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.4, 0.4, 0],
+      },
+    ];
+    const source = snapshotWith({
+      transforms,
+      symmetry: { order: 2, plane: "xy" },
+    });
+
+    const { xml } = encodeFlameFile(source, "kaleido-chaos");
+    const rows = [...xml.matchAll(/<xform [^>]*\bchaos="([^"]*)"/g)].map(
+      (m) => m[1],
+    );
+    // k-major, i-minor, matching the color test's own enumeration: copy0 of
+    // base0, copy0 of base1, copy1 of base0, copy1 of base1. Both copies of
+    // base0 carry the identical 4-entry row (base0's row [2, 1] broadcast to
+    // every copy of each base), and likewise for base1's absent (all-1s) row.
+    expect(rows).toEqual(["2 1 2 1", "1 1 1 1", "2 1 2 1", "1 1 1 1"]);
   });
 });
