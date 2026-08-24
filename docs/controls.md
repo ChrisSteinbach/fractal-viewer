@@ -198,6 +198,14 @@ morphs into place instead of snapping (see **Presets** below).
     plus **By Color Mode (legacy)**, which hands coloring back to
     **Color**'s **Color Mode**; the restart is needed because each
     voxel's running mean color already has the old palette in it.
+    **Balloon echo**, **Balloon size**, **Inflate**, and **Tint** are the
+    Solid view of the same balloon settings shown in the other renders. Solid
+    remaps each ray query through the existing density volume, so these apply
+    live and never build or enlarge a second voxel grid. If the current
+    density already fills its enclosing-ball centre, the checkbox stays
+    checked but disables with an explanatory note: inverting that interior
+    would put the camera inside an unbounded solid. A later eligible system
+    restores the authored setting automatically.
   - **Lighting** — **Light Angle** (−180°–180°, default 135°) swings a single
     directional light around the shape; **Light Height** (5°–85°, default
     50°) raises it from the horizon — the 5° floor is deliberate, since a
@@ -1010,20 +1018,23 @@ morphs into place instead of snapping (see **Presets** below).
   reduced motion it lands on the rest pose immediately), and grabbing the
   slider mid-sweep stops the animation where it is. The sweep itself
   is session-only view motion — never an undo step — but the toggle and the
-  size are scene content: they persist in the link and scene file, and the
-  ◈ Surface render traces the very same balloon as real geometry with the
-  fractal's shadows on the cave wall (see **◈ Surface** above — one
-  balloon, two renderers). Echo points fade out as the inversion throws
-  them far away — the same horizon the surface march caps at, so the two
-  renderers agree on where the balloon ends — and the whole thing is a
+  size are scene content: they persist in the link and scene file. The
+  ◆ Solid render samples its one density texture at both the ordinary and
+  inverted query, while the ◈ Surface render traces the same balloon as real
+  geometry with the fractal's shadows on the cave wall (see their sections
+  above — one balloon across every renderer). Echo points fade out as the
+  inversion throws them far away — the same horizon the Solid and Surface
+  marches cap at, so the renderers agree on where the balloon ends — and the whole thing is a
   re-projection of the cloud already on screen, applied live with no
   regenerate. In a 4D view, each source point takes the same rotor,
   w-ramp and soft-slice path as the main cloud, then its displayed 3D
   projection is inverted. This project-then-invert order makes the cave an
   echo of exactly what is on screen; the full rotation-invariant 4D enclosing
   ball keeps its normalized size stable while the view tumbles. The 4D
-  ◈ Surface render follows the matching rule one mode over: slice
-  first, then invert the marched 3D point.
+  ◆ Solid and ◈ Surface renders follow the matching rule one mode over:
+  slice first, then invert the marched 3D query. Solid freezes that slice in
+  its voxel grid, but keeps the inversion ball at the 4D origin with the full
+  pre-slice cloud radius, so scrubbing the slice never resizes the shell.
 - **Background** — the two-stop gradient every render shows behind
   the attractor: **Dark** (the original ground, and the default), **Haze**
   (the cooler, lighter atmosphere Aerial Haze used to force before this

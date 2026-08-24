@@ -87,6 +87,14 @@ describe("applyScalarControl: parsing/mapping", () => {
     expect(state.balloonRadius).toBe(0.9);
   });
 
+  it("solidBalloonRadiusSlider apply writes the SAME numeric balloonRadius", () => {
+    const spec = specById("solidBalloonRadiusSlider");
+
+    const state = applyScalarControl(initialState(true), spec, "0.9");
+
+    expect(state.balloonRadius).toBe(0.9);
+  });
+
   it.each(["balloonPalette", "flameBalloonPalette", "surfaceBalloonPalette"])(
     "%s apply writes the shared balloon selection",
     (id) => {
@@ -133,6 +141,14 @@ describe("applyScalarControl: parsing/mapping", () => {
 
   it("flameBalloonTintStrength apply parses into the shared balloonTintStrength", () => {
     const spec = specById("flameBalloonTintStrength");
+
+    const state = applyScalarControl(initialState(true), spec, "0.5");
+
+    expect(state.balloonTintStrength).toBe(0.5);
+  });
+
+  it("solidBalloonTintStrength apply parses into the shared balloonTintStrength", () => {
+    const spec = specById("solidBalloonTintStrength");
 
     const state = applyScalarControl(initialState(true), spec, "0.5");
 
@@ -570,6 +586,27 @@ describe("effects", () => {
       expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
     });
 
+    it("solidBalloonCheckbox effect updates the live query-space echo without restarting accumulation", () => {
+      const spec = specById("solidBalloonCheckbox");
+      const previous = {
+        ...initialState(true),
+        renderMode: "solid" as const,
+      };
+      const state = applyScalarControl(previous, spec, true);
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(state.balloonEcho).toBe(true);
+      expect(fx.scene.setBalloonEchoEnabled).toHaveBeenCalledWith(true);
+      expect(fx.scene.setBalloonEchoRadius).toHaveBeenCalledWith(
+        state.balloonRadius,
+      );
+      expect(fx.restartSolidRender).not.toHaveBeenCalled();
+      expect(fx.postVoxel).not.toHaveBeenCalled();
+      expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
+    });
+
     it("flameBalloonRadiusSlider effect syncs both scene arms and restarts Flame accumulation", () => {
       const spec = specById("flameBalloonRadiusSlider");
       const previous = {
@@ -587,6 +624,23 @@ describe("effects", () => {
       expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
     });
 
+    it("solidBalloonRadiusSlider effect updates the live query-space radius without restarting accumulation", () => {
+      const spec = specById("solidBalloonRadiusSlider");
+      const previous = {
+        ...initialState(true),
+        renderMode: "solid" as const,
+      };
+      const state = applyScalarControl(previous, spec, "0.9");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setBalloonEchoRadius).toHaveBeenCalledWith(0.9);
+      expect(fx.restartSolidRender).not.toHaveBeenCalled();
+      expect(fx.postVoxel).not.toHaveBeenCalled();
+      expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
+    });
+
     it("flameBalloonTintStrength effect syncs the scene tint and restarts Flame accumulation", () => {
       const spec = specById("flameBalloonTintStrength");
       const previous = {
@@ -600,6 +654,22 @@ describe("effects", () => {
 
       expect(fx.scene.setBalloonTint).toHaveBeenCalledWith([0, 0, 0], 0.5);
       expect(fx.restartFlameRender).toHaveBeenCalledTimes(1);
+    });
+
+    it("solidBalloonTintStrength effect updates the shared live tint without restarting accumulation", () => {
+      const spec = specById("solidBalloonTintStrength");
+      const previous = {
+        ...initialState(true),
+        renderMode: "solid" as const,
+      };
+      const state = applyScalarControl(previous, spec, "0.5");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setBalloonTint).toHaveBeenCalledWith([0, 0, 0], 0.5);
+      expect(fx.restartSolidRender).not.toHaveBeenCalled();
+      expect(fx.postVoxel).not.toHaveBeenCalled();
     });
 
     it("surfaceBalloonRadiusSlider effect forwards the radius through the scene's cheap path and cancels an in-flight sweep", () => {

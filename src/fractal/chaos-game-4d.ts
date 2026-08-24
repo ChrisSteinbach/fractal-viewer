@@ -92,6 +92,12 @@ export interface ChaosGame4Result {
    * `main.ts`'s `fourDFramingBounds`).
    */
   radius: number;
+  /** Exact maximum distance from the 4D ORIGIN over every emitted point.
+   * Unlike {@link radius}, this is the origin-centred full-cloud ball the
+   * Solid balloon needs to mirror `balloonBall4`: slice-independent, so its
+   * shell cannot pulse or resize with the frozen slice snapshot. Computed in
+   * the same second pass as `radius`, with no extra worker traversal. */
+  originRadius: number;
 }
 
 /** {@link prepareChaosGame4}'s default `symmetry`, mirroring `chaos-game.ts`'s
@@ -122,6 +128,7 @@ function emptyResult(): ChaosGame4Result {
     bounds: emptyBounds4(),
     center: [0, 0, 0, 0],
     radius: 0,
+    originRadius: 0,
   };
 }
 
@@ -756,15 +763,23 @@ export function runChaosGame4(
   // doc). Reads the Float32-rounded values we actually emitted, so the radius
   // genuinely bounds the stored cloud rather than the pre-rounding orbit.
   let radiusSq = 0;
+  let originRadiusSq = 0;
   for (let i = 0; i < numPoints; i++) {
-    const dx = positions[i * 3] - center[0];
-    const dy = positions[i * 3 + 1] - center[1];
-    const dz = positions[i * 3 + 2] - center[2];
-    const dw = wBuffer[i] - center[3];
+    const px = positions[i * 3];
+    const py = positions[i * 3 + 1];
+    const pz = positions[i * 3 + 2];
+    const pw = wBuffer[i];
+    const dx = px - center[0];
+    const dy = py - center[1];
+    const dz = pz - center[2];
+    const dw = pw - center[3];
     const d2 = dx * dx + dy * dy + dz * dz + dw * dw;
     if (d2 > radiusSq) radiusSq = d2;
+    const originD2 = px * px + py * py + pz * pz + pw * pw;
+    if (originD2 > originRadiusSq) originRadiusSq = originD2;
   }
   const radius = Math.sqrt(radiusSq);
+  const originRadius = Math.sqrt(originRadiusSq);
 
   return {
     positions,
@@ -774,5 +789,6 @@ export function runChaosGame4(
     bounds: { minX, maxX, minY, maxY, minZ, maxZ, minW, maxW },
     center,
     radius,
+    originRadius,
   };
 }

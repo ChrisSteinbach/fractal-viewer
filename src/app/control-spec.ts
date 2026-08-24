@@ -1176,6 +1176,53 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     },
   },
   {
+    // Solid's view of the shared balloon toggle. The echo is a query-space
+    // remap in the voxel material, so enabling it is the same cheap scene
+    // update as Points: the worker's one attractor grid remains untouched.
+    kind: "checkbox",
+    id: "solidBalloonCheckbox",
+    read: (s) => s.balloonEcho,
+    apply: (s, checked) => setBalloonEcho(s, checked),
+    effect: (s, fx) => {
+      if (s.balloonEcho) applyBalloonPaletteToScene(s, fx);
+      fx.scene.setBalloonEchoEnabled(s.balloonEcho);
+      fx.scene.setBalloonEchoRadius(s.balloonRadius);
+      fx.cancelBalloonSweep();
+    },
+  },
+  {
+    // The shader samples the same fixed voxel grid at the new inverted query
+    // point, so radius changes are live uniforms and never restart or rebuild
+    // the Solid accumulation.
+    kind: "range",
+    id: "solidBalloonRadiusSlider",
+    label: {
+      id: "solidBalloonRadiusLabel",
+      text: (s) => `${s.balloonRadius.toFixed(2)}×`,
+    },
+    read: (s) => String(s.balloonRadius),
+    apply: (s, raw) => setBalloonRadius(s, Number(raw)),
+    effect: (s, fx) => {
+      fx.scene.setBalloonEchoRadius(s.balloonRadius);
+      fx.cancelBalloonSweep();
+    },
+  },
+  {
+    // The strength half of Solid's shared tint pair. As in Points and
+    // Surface, the material consumes it live; only the echo contribution is
+    // tinted by the renderer.
+    kind: "range",
+    id: "solidBalloonTintStrength",
+    label: {
+      id: "solidBalloonTintLabel",
+      text: (s) => `${Math.round(s.balloonTintStrength * 100)}%`,
+    },
+    read: (s) => String(s.balloonTintStrength),
+    apply: (s, raw) => setBalloonTintStrength(s, Number(raw)),
+    effect: (s, fx) =>
+      fx.scene.setBalloonTint(hexToRgb01(s.balloonTint), s.balloonTintStrength),
+  },
+  {
     kind: "range",
     id: "solidIterationsSlider",
     label: {

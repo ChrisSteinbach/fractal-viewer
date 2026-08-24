@@ -344,7 +344,7 @@ export interface UiHandlers {
   /** A balloon tint color picker changed — `hex` is the input's raw
    * `#rrggbb` value, ready for `setBalloonTint` (the reducer, not this
    * callback, is the validation boundary). ONE handler serves the Points,
-   * Flame, and Surface pickers — one state field seen from three render modes,
+   * Flame, Solid, and Surface pickers — one state field seen from four render modes,
    * exactly like `onFogTint` above. The strength half of the pair is
    * table-driven by each panel's scalar entry in control-spec.ts. */
   onBalloonTint: (hex: string) => void;
@@ -1891,6 +1891,20 @@ export class Ui {
   private readonly solidControls: HTMLElement;
   private readonly solidResolutionNote: HTMLElement;
   private readonly solidProgress: HTMLElement;
+  // Solid's view of the shared balloon fields. Its query-space remap is live,
+  // so the radius row and tint picker use the same bespoke handlers as Points
+  // and Surface without rebuilding the one accumulated voxel grid.
+  private readonly solidBalloonRow: HTMLElement;
+  private readonly solidBalloonCheckbox: HTMLInputElement;
+  private readonly solidBalloonNote: HTMLElement;
+  private readonly solidBalloonRadiusRow: HTMLElement;
+  private readonly solidBalloonInflateButton: HTMLButtonElement;
+  private readonly solidBalloonTintRow: HTMLElement;
+  private readonly solidBalloonTintColorInput: HTMLInputElement;
+  /** Whether the active Solid session's centre-density probe permits the
+   * query-space echo. Session routing owns this transient result; it is not
+   * authored AppState and never changes the shared checkbox value. */
+  private solidBalloonAvailable = true;
 
   // The surface render's status block: a hint paragraph, a note line
   // (degraded-march notice while active), and the trace-progress row (see
@@ -2363,6 +2377,13 @@ export class Ui {
     this.solidControls = this.byId("solidControls");
     this.solidResolutionNote = this.byId("solidResolutionNote");
     this.solidProgress = this.byId("solidProgress");
+    this.solidBalloonRow = this.byId("solidBalloonRow");
+    this.solidBalloonCheckbox = this.byId("solidBalloonCheckbox");
+    this.solidBalloonNote = this.byId("solidBalloonNote");
+    this.solidBalloonRadiusRow = this.byId("solidBalloonRadiusRow");
+    this.solidBalloonInflateButton = this.byId("solidBalloonInflateButton");
+    this.solidBalloonTintRow = this.byId("solidBalloonTintRow");
+    this.solidBalloonTintColorInput = this.byId("solidBalloonTintColor");
     this.surfaceControls = this.byId("surfaceControls");
     this.surfacePaletteRow = this.byId("surfacePaletteRow");
     this.surfaceColorSpeedRow = this.byId("surfaceColorSpeedRow");
@@ -2702,12 +2723,15 @@ export class Ui {
     );
     // The balloon echo's "Inflate" replay — a bespoke button like
     // watchBuildBtn above, not a table-driven scalar control. The surface
-    // Flame and Surface each expose their own Inflate button through the
-    // exact SAME handler — one radius field and three mode-aware entry points.
+    // Flame, Solid, and Surface each expose their own Inflate button through
+    // the exact SAME handler — one radius field and four mode-aware entry points.
     this.balloonInflateButton.addEventListener("click", () =>
       handlers.onBalloonInflate(),
     );
     this.flameBalloonInflateButton.addEventListener("click", () =>
+      handlers.onBalloonInflate(),
+    );
+    this.solidBalloonInflateButton.addEventListener("click", () =>
       handlers.onBalloonInflate(),
     );
     this.surfaceBalloonInflateButton.addEventListener("click", () =>
@@ -2888,8 +2912,8 @@ export class Ui {
     this.fogTintColorInput.addEventListener("input", () => {
       handlers.onFogTint(this.fogTintColorInput.value);
     });
-    // Balloon tint color: ONE handler serves all three pickers — the Points,
-    // Flame, and Surface sections expose the same state field in their own
+    // Balloon tint color: ONE handler serves all four pickers — the Points,
+    // Flame, Solid, and Surface sections expose the same state field in their own
     // render modes (fogTintColorInput's precedent just above, tripled).
     // Each row also hosts its own table-driven strength slider, whose
     // "input" events must not re-trigger this handler — so, like
@@ -2899,6 +2923,9 @@ export class Ui {
     });
     this.flameBalloonTintColorInput.addEventListener("input", () => {
       handlers.onBalloonTint(this.flameBalloonTintColorInput.value);
+    });
+    this.solidBalloonTintColorInput.addEventListener("input", () => {
+      handlers.onBalloonTint(this.solidBalloonTintColorInput.value);
     });
     this.surfaceBalloonTintColorInput.addEventListener("input", () => {
       handlers.onBalloonTint(this.surfaceBalloonTintColorInput.value);
@@ -3026,6 +3053,29 @@ export class Ui {
    * is what actually applies it. */
   setSurfaceSessionKind(kind: SurfaceSessionKind | null): void {
     this.surfaceSessionKind = kind;
+  }
+
+  /** Apply the active Solid session's centre-density refusal result. The
+   * authored balloon flag remains checked while refused so switching to an
+   * eligible system restores the user's intent rather than erasing it. */
+  setSolidBalloonAvailable(available: boolean): void {
+    this.solidBalloonAvailable = available;
+    this.syncSolidBalloonRows();
+  }
+
+  /** Reconcile the transient Solid eligibility result with the shared
+   * checkbox value most recently reflected by updateLabels. */
+  private syncSolidBalloonRows(): void {
+    const refused = !this.solidBalloonAvailable;
+    const showDependent = !refused && this.solidBalloonCheckbox.checked;
+    this.solidBalloonRow.classList.toggle("hidden", false);
+    this.solidBalloonCheckbox.disabled = refused;
+    this.solidBalloonRadiusRow.classList.toggle("hidden", !showDependent);
+    this.solidBalloonTintRow.classList.toggle("hidden", !showDependent);
+    this.solidBalloonNote.textContent = refused
+      ? "Balloon unavailable — this solid fills its enclosing-ball centre."
+      : "";
+    this.solidBalloonNote.classList.toggle("hidden", !refused);
   }
 
   /** Reset the 4D slice controls to off/centered — called on every 4D entry so
@@ -3176,6 +3226,10 @@ export class Ui {
     this.flameBalloonRadiusRow.classList.toggle("hidden", !state.balloonEcho);
     this.flameBalloonTintRow.classList.toggle("hidden", !state.balloonEcho);
     this.solidControls.classList.toggle("hidden", state.renderMode !== "solid");
+    // Solid's query-space echo is dimension-independent, but a session whose
+    // centre-density probe refuses it temporarily disables the checkbox and
+    // hides the dependent rows without mutating the shared authored flag.
+    this.syncSolidBalloonRows();
     this.surfaceControls.classList.toggle(
       "hidden",
       state.renderMode !== "surface",
@@ -3364,14 +3418,17 @@ export class Ui {
       this.fogTintColorInput.value = state.fogTint;
     }
     // The balloon tint pickers: synced the same only-write-on-change way as
-    // fogTintColorInput just above, to ALL inputs — the Points, Flame, and
-    // Surface sections show the SAME state.balloonTint through three DOM
+    // fogTintColorInput just above, to ALL inputs — the Points, Flame, Solid,
+    // and Surface sections show the SAME state.balloonTint through four DOM
     // elements, so a gallery load or undo must move whichever are stale.
     if (this.balloonTintColorInput.value !== state.balloonTint) {
       this.balloonTintColorInput.value = state.balloonTint;
     }
     if (this.flameBalloonTintColorInput.value !== state.balloonTint) {
       this.flameBalloonTintColorInput.value = state.balloonTint;
+    }
+    if (this.solidBalloonTintColorInput.value !== state.balloonTint) {
+      this.solidBalloonTintColorInput.value = state.balloonTint;
     }
     if (this.surfaceBalloonTintColorInput.value !== state.balloonTint) {
       this.surfaceBalloonTintColorInput.value = state.balloonTint;
