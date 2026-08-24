@@ -1,5 +1,5 @@
 import { composeAffine4, symmetryRotation4, toTransform4 } from "./affine4";
-import { effectiveSymmetryOrder } from "./chaos-game";
+import { effectiveSymmetryOrder, systemHasChaos } from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
 import { mulberry32 } from "./rng";
 import {
@@ -683,6 +683,16 @@ export function analyzeSurfaceSystem4(
     reasons.push("no transforms");
   } else if (active.length === 0) {
     reasons.push("every transform has weight 0");
+  }
+
+  // Graph-directed selection: 3D's refusal verbatim (see
+  // analyzeSurfaceSystem) — chi constrains the attractor to a subset, the
+  // descent enumerates every composition, and the dimension changes nothing
+  // about that mismatch.
+  if (systemHasChaos(transforms)) {
+    reasons.push(
+      "chaos rows constrain the attractor (Surface would march the unconstrained object)",
+    );
   }
 
   transforms.forEach((t, i) => {

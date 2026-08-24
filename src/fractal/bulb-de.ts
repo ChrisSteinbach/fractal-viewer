@@ -155,7 +155,7 @@
  */
 import { composeAffine } from "./affine";
 import { isFlatTransform } from "./affine4";
-import { effectiveSymmetryOrder } from "./chaos-game";
+import { effectiveSymmetryOrder, systemHasChaos } from "./chaos-game";
 import { mulberry32 } from "./rng";
 import {
   SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
@@ -309,6 +309,12 @@ export function analyzeBulbSystem(
       // radius below has no solution and the bounding ball is unbounded.
       reasons.push("the map is singular (zero scale on some axis)");
     }
+  }
+  // Chaos rows are a selection layer and this render never selects (one map,
+  // iterated) — refused rather than silently ignored, so the mode gates stay
+  // one answer with the escape/surface family's.
+  if (systemHasChaos(transforms)) {
+    reasons.push("chaos rows (unsupported in Mandelbulb mode)");
   }
   if (finalTransform) {
     reasons.push("final transform (unsupported in Mandelbulb mode)");

@@ -59,7 +59,11 @@
  * of — an out-of-slice point still contributes a faint trace, it isn't
  * simply absent.
  */
-import { ESCAPE_LIMIT, WARMUP_ITERATIONS } from "./chaos-game";
+import {
+  CHAOS_SUB_ORBIT_POINTS,
+  ESCAPE_LIMIT,
+  WARMUP_ITERATIONS,
+} from "./chaos-game";
 import { pickIndex4, stepOrbit4 } from "./chaos-game-4d";
 import type { PreparedChaosGame4 } from "./chaos-game-4d";
 import { balloonPaletteCoordinate, invertBalloon } from "./balloon-de";
@@ -172,6 +176,13 @@ export function accumulateFlame4(
   const echoSource: Vec3 = [0, 0, 0];
   const echoInverted: Vec3 = [0, 0, 0];
 
+  // Graph-directed selection state, resumed from the histogram — see
+  // accumulateFlame's identical threading (chunk-boundary independence via
+  // FlameHistogram.orbitPrevBase/orbitChaosLeft; inert without chi rows).
+  const chaosOn = prepared.chaosRows !== null;
+  let prevBase = hist.orbitPrevBase;
+  let chaosLeft = hist.orbitChaosLeft;
+
   let x: number;
   let y: number;
   let z: number;
@@ -182,11 +193,12 @@ export function accumulateFlame4(
     z = rng() - 0.5;
     w = rng() - 0.5;
     for (let i = 0; i < WARMUP_ITERATIONS; i++) {
-      const step = stepOrbit4(prepared, x, y, z, w, rng);
+      const step = stepOrbit4(prepared, x, y, z, w, rng, rng, prevBase);
       x = step.x;
       y = step.y;
       z = step.z;
       w = step.w;
+      prevBase = step.escaped ? -1 : step.index;
     }
   } else {
     [x, y, z] = hist.orbit;
@@ -226,8 +238,33 @@ export function accumulateFlame4(
   const { shift: colorShift, invScale: colorInvScale } = sliceColorRemap(view);
 
   for (let n = 0; n < iterations; n++) {
+    // Sub-orbit re-fuse — accumulateFlame's chi block, four coordinates (see
+    // chaos-game.ts's CHAOS_SUB_ORBIT_POINTS): reseed from `rng` (the one
+    // stream here), reset to the entry pick, warm up unrecorded through the
+    // real stepOrbit4, reset the structural color walk like an
+    // escape-reseed's.
+    if (chaosOn) {
+      if (chaosLeft <= 0) {
+        x = rng() - 0.5;
+        y = rng() - 0.5;
+        z = rng() - 0.5;
+        w = rng() - 0.5;
+        prevBase = -1;
+        for (let k = 0; k < WARMUP_ITERATIONS; k++) {
+          const step = stepOrbit4(prepared, x, y, z, w, rng, rng, prevBase);
+          x = step.x;
+          y = step.y;
+          z = step.z;
+          w = step.w;
+          prevBase = step.escaped ? -1 : step.index;
+        }
+        if (structural) c = 0.5;
+        chaosLeft = CHAOS_SUB_ORBIT_POINTS;
+      }
+      chaosLeft--;
+    }
     // --- inlined stepOrbit4(prepared, x, y, z, w, rng) ---------------------
-    const idx = pickIndex4(prepared, rng);
+    const idx = pickIndex4(prepared, rng, prevBase);
     // The BASE map this slot is a (possibly rotated) copy of — see
     // PreparedChaosGame4.baseTransformCount. Equal to `idx` at symmetry order
     // 1. Anything keyed to "which logical map" (the color slot below, and the
@@ -287,6 +324,7 @@ export function accumulateFlame4(
       nw = rw;
     }
 
+    let escaped = false;
     if (
       !Number.isFinite(nx) ||
       !Number.isFinite(ny) ||
@@ -303,11 +341,15 @@ export function accumulateFlame4(
       nw = rng() - 0.5;
       // The orbit restarts, so its color coordinate does too.
       if (structural) c = 0.5;
+      escaped = true;
     }
     x = nx;
     y = ny;
     z = nz;
     w = nw;
+    // Selection state for the next pick — stepOrbit4's escaped/index
+    // contract exactly. Inert without chi rows.
+    prevBase = escaped ? -1 : baseIdx;
 
     // --- inlined plotPoint4(prepared, x, y, z, w, rng) ---------------------
     let px = x;
@@ -550,6 +592,8 @@ export function accumulateFlame4(
   hist.orbit = [x, y, z];
   hist.orbitW = w;
   hist.orbitColor = c;
+  hist.orbitPrevBase = prevBase;
+  hist.orbitChaosLeft = chaosLeft;
   hist.maxHits = maxHits;
   return hist;
 }

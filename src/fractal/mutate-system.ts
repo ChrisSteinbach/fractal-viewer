@@ -181,6 +181,21 @@ const COLOR_SPEED_CLAMP_MIN = 0;
 const COLOR_SPEED_CLAMP_MAX = 1;
 
 /**
+ * Multiplicative jitter half-range for a chaos-row entry: `U(0.75, 1.25)`,
+ * matching {@link WEIGHT_JITTER_HALF_RANGE} — a chi entry is a selection
+ * strength, exactly what `weight` is, one graph edge at a time.
+ * Multiplicative ON PURPOSE, with no `MIN_WEIGHT`-style floor: an exact 0
+ * stays exactly 0 under any multiplier, so a block-diagonal matrix's
+ * isolation survives every mutation — a grid must stay a grid of the system
+ * you brought it, and an additive nudge (or a floor) would leak two
+ * deliberately separated systems into each other behind the user's back.
+ * The only clamp is the consumption domain's own `>= 0`
+ * ({@link Math.max} at the jitter site); like `weight`, a chi entry has no
+ * authored upper bound.
+ */
+const CHAOS_JITTER_HALF_RANGE = 0.25;
+
+/**
  * Multiplicative jitter half-range for a fold length (`minRadius`/
  * `fixedRadius`): `U(0.92, 1.08)`, the same order as
  * {@link SCALE_JITTER_HALF_RANGE} — both are positive lengths on the map's
@@ -663,7 +678,7 @@ function jitterSurfacePattern(
  * for the wildcard cell). `id` is preserved (never reassigned — the map
  * identity a mutation grid cell shows must trace back to the base system's
  * own map), and every optional field (`shear`/`variations`/`w`/`colorIndex`/
- * `colorSpeed`/`finish`/`surfacePattern`) stays exactly as present or absent as it is on
+ * `colorSpeed`/`finish`/`surfacePattern`/`chaos`) stays exactly as present or absent as it is on
  * `base` — no key is ever invented or dropped, fold-family lengths included:
  * see {@link jitterVariationEntry} for why a mutation may perturb a present
  * `minRadius`/`fixedRadius`/`boxLimit` but never materializes an absent one,
@@ -791,6 +806,27 @@ function jitterTransform(rng: Rng, base: Transform, spread: number): Transform {
       rng,
       base.surfacePattern,
       spread,
+    );
+  }
+
+  // Chaos rows: a PRESENT row is perturbed entrywise (multiplicative, so an
+  // exact 0 — a block boundary — stays exactly 0; see
+  // CHAOS_JITTER_HALF_RANGE), an absent one is NEVER materialized —
+  // the fold lengths' rule applied to selection, and the wildcard's
+  // structural kick never invents chi either (it only swaps variation
+  // types). Placed after every field above for the same
+  // draws-when-present-only sequencing reason as finish/pattern.
+  if (base.chaos) {
+    result.chaos = base.chaos.map((entry) =>
+      Math.max(
+        0,
+        entry *
+          uniform(
+            rng,
+            1 - CHAOS_JITTER_HALF_RANGE * spread,
+            1 + CHAOS_JITTER_HALF_RANGE * spread,
+          ),
+      ),
     );
   }
 

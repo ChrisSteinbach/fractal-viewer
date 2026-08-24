@@ -1,10 +1,14 @@
 import { applyAffine4, composeAffine4, symmetryRotation4 } from "./affine4";
 import type { Affine4 } from "./affine4";
 import {
+  CHAOS_SUB_ORBIT_POINTS,
   DEFAULT_COLOR_SPEED,
   ESCAPE_LIMIT,
   MAX_TRANSFORMS,
   WARMUP_ITERATIONS,
+  buildChaosSelection,
+  chaosPointIteration,
+  chaosRefuseIteration,
   derivedColorIndex,
   effectiveSymmetryOrder,
 } from "./chaos-game";
@@ -175,6 +179,17 @@ export interface PreparedChaosGame4 {
   /** Sum of all transform weights. */
   totalWeight: number;
   /**
+   * Graph-directed selection rows, or `null` for a system with no
+   * non-trivial chi — `chaos-game.ts`'s `PreparedChaosGame.chaosRows`
+   * verbatim (selection is dimension-agnostic; both prepares build these
+   * through the ONE shared `buildChaosSelection`).
+   */
+  chaosRows: Float64Array[] | null;
+  /** Per-row weighted totals — see `PreparedChaosGame.chaosRowTotals`. */
+  chaosRowTotals: Float64Array | null;
+  /** Degenerate-row record — see `PreparedChaosGame.chaosFallbackRows`. */
+  chaosFallbackRows: number[] | null;
+  /**
    * Row-major 4x4 rotation applied AFTER a slot's affine + variation output
    * (the 4D kaleidoscope copies — `chaos-game.ts`'s 3x3
    * `PreparedChaosGame.postRotations` one dimension up), indexed like
@@ -312,6 +327,12 @@ export function prepareChaosGame4(
     totalWeight > 0 &&
     Number.isFinite(totalWeight);
 
+  // Graph-directed selection (chi), through the ONE shared
+  // buildChaosSelection — a Transform4's row rides the 3D → 4D lift
+  // verbatim, and selection has no dimension, so sharing the builder is
+  // what keeps a system and its lift drawing from the same graph.
+  const chaos = buildChaosSelection(transforms, weights, baseTransformCount);
+
   // Flame structural-coloring slots, resolved per BASE map — the
   // kaleidoscope copies deliberately get no entries of their own, since
   // `flame-4d.ts` looks them up by `idx % baseTransformCount`.
@@ -333,6 +354,9 @@ export function prepareChaosGame4(
     weighted,
     cumulative,
     totalWeight,
+    chaosRows: chaos ? chaos.chaosRows : null,
+    chaosRowTotals: chaos ? chaos.chaosRowTotals : null,
+    chaosFallbackRows: chaos ? chaos.chaosFallbackRows : null,
     postRotations,
     colorIndex,
     colorSpeed,
@@ -345,13 +369,37 @@ export function prepareChaosGame4(
  * non-1 weight — the fast, RNG-identical path for the common unweighted case
  * (see {@link prepareChaosGame4}). Mirrors `chaos-game.ts`'s `pickIndex`
  * exactly, one dimension up (the pick itself has no dimension — it only ever
- * touches `prepared.transformCount`/`cumulative`/`totalWeight`).
+ * touches `prepared.transformCount`/`cumulative`/`totalWeight`), including
+ * `prevBase`: the graph-directed row draw, the degenerate-row fallback, and
+ * the exactly-one-`rng()`-draw discipline are that function's, word for word
+ * — see its doc.
  *
  * Exported so a future hand-inlined 4D hot loop (a `flame-gpu.ts`-style
  * accumulator) can pick a transform the exact same way {@link stepOrbit4}
  * does, without paying for `stepOrbit4`'s per-call `OrbitStep4` allocation.
  */
-export function pickIndex4(prepared: PreparedChaosGame4, rng: Rng): number {
+export function pickIndex4(
+  prepared: PreparedChaosGame4,
+  rng: Rng,
+  prevBase = -1,
+): number {
+  const { chaosRows, chaosRowTotals } = prepared;
+  if (chaosRows !== null && chaosRowTotals !== null && prevBase >= 0) {
+    const rowTotal = chaosRowTotals[prevBase];
+    if (rowTotal > 0 && Number.isFinite(rowTotal)) {
+      const row = chaosRows[prevBase];
+      const r = rng() * rowTotal;
+      let lo = 0;
+      let hi = row.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (r < row[mid]) hi = mid;
+        else lo = mid + 1;
+      }
+      return lo;
+    }
+    // Degenerate row: fall through to the global table — one draw either way.
+  }
   if (!prepared.weighted) {
     return Math.floor(rng() * prepared.transformCount);
   }
@@ -376,6 +424,10 @@ export interface OrbitStep4 {
   /** Index of the transform that produced this step (see `stepOrbit`'s caveat
    * about the escape-reseed case — the same caveat applies here). */
   index: number;
+  /** Whether this step escape-reseeded — `chaos-game.ts`'s
+   * `OrbitStep.escaped`, same chi-threading contract (`next prevBase =
+   * escaped ? -1 : index`). Chi-free callers can ignore it. */
+  escaped: boolean;
 }
 
 /**
@@ -409,6 +461,11 @@ export interface OrbitStep4 {
  * original single-stream behavior, byte-identical for every existing
  * caller). See that doc for why a separate stream keeps morph samples
  * point-for-point correspondent.
+ *
+ * `prevBase` mirrors `stepOrbit`'s parameter of the same name — the
+ * graph-directed selection state the CALLER threads (`next = step.escaped ?
+ * -1 : step.index`); `-1` (the default) is the entry pick, and with no chi
+ * rows the parameter is inert.
  */
 export function stepOrbit4(
   prepared: PreparedChaosGame4,
@@ -418,8 +475,9 @@ export function stepOrbit4(
   w: number,
   rng: Rng,
   auxRng: Rng = rng,
+  prevBase = -1,
 ): OrbitStep4 {
-  const idx = pickIndex4(prepared, rng);
+  const idx = pickIndex4(prepared, rng, prevBase);
   const p = applyAffine4(prepared.affines[idx], x, y, z, w);
   const warp = prepared.variations[idx];
   let nx: number;
@@ -452,6 +510,7 @@ export function stepOrbit4(
     nz = rz;
     nw = rw;
   }
+  let escaped = false;
   if (
     !Number.isFinite(nx) ||
     !Number.isFinite(ny) ||
@@ -466,6 +525,7 @@ export function stepOrbit4(
     ny = auxRng() - 0.5;
     nz = auxRng() - 0.5;
     nw = auxRng() - 0.5;
+    escaped = true;
   }
   return {
     x: nx,
@@ -473,6 +533,7 @@ export function stepOrbit4(
     z: nz,
     w: nw,
     index: idx % prepared.baseTransformCount,
+    escaped,
   };
 }
 
@@ -597,14 +658,20 @@ export function runChaosGame4(
   // and recording alike, numbered consecutively — rewinds it first.
   const aux = iterationRng ? iterationRng.draw : rng;
 
+  // Graph-directed selection state — see runChaosGame's identical threading
+  // (inert without chi rows, byte-identical stream either way).
+  const chaosOn = prepared.chaosRows !== null;
+  let prevBase = -1;
+
   // Warm up so the orbit settles onto the attractor before we start recording.
   for (let i = 0; i < WARMUP_ITERATIONS; i++) {
     if (iterationRng) iterationRng.begin(i);
-    const s = stepOrbit4(prepared, x, y, z, w, rng, aux);
+    const s = stepOrbit4(prepared, x, y, z, w, rng, aux, prevBase);
     x = s.x;
     y = s.y;
     z = s.z;
     w = s.w;
+    prevBase = s.escaped ? -1 : s.index;
   }
 
   let minX = Infinity;
@@ -628,9 +695,37 @@ export function runChaosGame4(
   const { baseTransformCount } = prepared;
 
   for (let i = 0; i < numPoints; i++) {
+    // Sub-orbit re-fuse — runChaosGame's chi block, four coordinates (see
+    // chaos-game.ts's CHAOS_SUB_ORBIT_POINTS): reseed from the aux stream,
+    // reset to the entry pick, warm up unrecorded, iteration numbers a pure
+    // function of the plotted-point index.
+    if (chaosOn && i > 0 && i % CHAOS_SUB_ORBIT_POINTS === 0) {
+      const sub = i / CHAOS_SUB_ORBIT_POINTS;
+      if (iterationRng) iterationRng.begin(chaosRefuseIteration(sub));
+      x = aux() - 0.5;
+      y = aux() - 0.5;
+      z = aux() - 0.5;
+      w = aux() - 0.5;
+      prevBase = -1;
+      for (let k = 0; k < WARMUP_ITERATIONS; k++) {
+        if (iterationRng) {
+          iterationRng.begin(chaosRefuseIteration(sub) + 1 + k);
+        }
+        const s = stepOrbit4(prepared, x, y, z, w, rng, aux, prevBase);
+        x = s.x;
+        y = s.y;
+        z = s.z;
+        w = s.w;
+        prevBase = s.escaped ? -1 : s.index;
+      }
+    }
     // --- inlined stepOrbit4(prepared, x, y, z, w, rng, aux) -----------------
-    if (iterationRng) iterationRng.begin(WARMUP_ITERATIONS + i);
-    const idx = pickIndex4(prepared, rng);
+    if (iterationRng) {
+      iterationRng.begin(
+        chaosOn ? chaosPointIteration(i) : WARMUP_ITERATIONS + i,
+      );
+    }
+    const idx = pickIndex4(prepared, rng, prevBase);
     const aff = affines[idx];
     const m = aff.m;
     const t = aff.t;
@@ -677,6 +772,7 @@ export function runChaosGame4(
       nw = rw;
     }
 
+    let escaped = false;
     if (
       !Number.isFinite(nx) ||
       !Number.isFinite(ny) ||
@@ -691,11 +787,15 @@ export function runChaosGame4(
       ny = aux() - 0.5;
       nz = aux() - 0.5;
       nw = aux() - 0.5;
+      escaped = true;
     }
     x = nx;
     y = ny;
     z = nz;
     w = nw;
+    // Selection state for the next pick — stepOrbit4's escaped/index
+    // contract exactly. Inert without chi rows.
+    prevBase = escaped ? -1 : idx % baseTransformCount;
 
     // --- inlined plotPoint4(prepared, x, y, z, w, rng, aux) -----------------
     // The plotted point is the orbit point, optionally bent through the lens

@@ -15,8 +15,10 @@ import type {
   TonemapParams,
 } from "./flame";
 import {
+  CHAOS_SUB_ORBIT_POINTS,
   DEFAULT_COLOR_SPEED,
   ESCAPE_LIMIT,
+  WARMUP_ITERATIONS,
   derivedColorIndex,
   plotPoint,
   prepareChaosGame,
@@ -2374,5 +2376,207 @@ describe("viewFlameHistogram", () => {
     expect(Array.from(tonemapFlame(view, params))).toEqual(
       Array.from(tonemapFlame(hist, params)),
     );
+  });
+});
+
+describe("accumulateFlame graph-directed selection (chaos rows)", () => {
+  // Weighted + occasionally-escaping chi fixture (julia's coin flips and
+  // spherical's origin singularity), the inlined mirror's hardest case: the
+  // chi oracle below must cover the escape -> entry-pick path, not just the
+  // scheduled sub-orbit boundary.
+  function chiFlameSystem(): Transform[] {
+    return [
+      {
+        id: 0,
+        position: [0.5, 0.5, 0.5],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        weight: 2,
+        chaos: [1, 0.25, 1.5],
+      },
+      {
+        id: 1,
+        position: [-0.5, -0.5, -0.5],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        chaos: [2, 1, 1],
+        variations: [
+          { type: "linear", weight: 1 },
+          { type: "julia", weight: 0.3 },
+        ],
+      },
+      {
+        id: 2,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.6, 0.6, 0.6],
+        variations: [{ type: "spherical", weight: 1 }],
+      },
+    ];
+  }
+
+  it("matches a stepOrbit/plotPoint reference under chi — weighted, kaleidoscope order 2, escapes, a sub-orbit boundary, structural color", () => {
+    // The chi extension of this file's correctness oracle: the inlined loop's
+    // prevBase threading, escape re-fuse, scheduled sub-orbit re-fuse (seed +
+    // warm-up + color reset) and row-directed picks must all be byte-for-byte
+    // what the real stepping blocks produce. 6000 iterations cross the 4096
+    // boundary once.
+    const transforms = chiFlameSystem();
+    const symmetry = { order: 2, plane: "xz" as const };
+    const prepared = prepareChaosGame(transforms, null, symmetry);
+    const palette = transformColors(transforms.length);
+    const colorLUT = buildPaletteLUT("spectrum");
+    if (!colorLUT) throw new Error("spectrum should have a LUT");
+    const width = 64;
+    const height = 64;
+    const iterations = 6000;
+    const projection = ORTHOGRAPHIC;
+    const n = transforms.length;
+
+    const actual = accumulateFlame(
+      prepared,
+      projection,
+      width,
+      height,
+      iterations,
+      mulberry32(42),
+      palette,
+      undefined,
+      colorLUT,
+    );
+
+    const rng = mulberry32(42);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    let prevBase = -1;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng, rng, prevBase);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      prevBase = s.escaped ? -1 : s.index;
+    }
+    const expected = createFlameHistogram(width, height);
+    let c = 0.5;
+    let chaosLeft = CHAOS_SUB_ORBIT_POINTS;
+    for (let i = 0; i < iterations; i++) {
+      if (chaosLeft <= 0) {
+        x = rng() - 0.5;
+        y = rng() - 0.5;
+        z = rng() - 0.5;
+        prevBase = -1;
+        for (let k = 0; k < WARMUP_ITERATIONS; k++) {
+          const s = stepOrbit(prepared, x, y, z, rng, rng, prevBase);
+          x = s.x;
+          y = s.y;
+          z = s.z;
+          prevBase = s.escaped ? -1 : s.index;
+        }
+        c = 0.5;
+        chaosLeft = CHAOS_SUB_ORBIT_POINTS;
+      }
+      chaosLeft--;
+      const s = stepOrbit(prepared, x, y, z, rng, rng, prevBase);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      // The inlined loop blends c toward the picked base's slot at pick
+      // time and resets it on an escape; blending then overwriting on
+      // escape lands the same value.
+      const slot = n > 1 ? s.index / (n - 1) : 0.5;
+      c = (c + slot) / 2;
+      if (s.escaped) c = 0.5;
+      prevBase = s.escaped ? -1 : s.index;
+      const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
+      const cw =
+        projection[12] * px +
+        projection[13] * py +
+        projection[14] * pz +
+        projection[15];
+      if (cw <= 0) continue;
+      const cx =
+        projection[0] * px +
+        projection[1] * py +
+        projection[2] * pz +
+        projection[3];
+      const cy =
+        projection[4] * px +
+        projection[5] * py +
+        projection[6] * pz +
+        projection[7];
+      const col = Math.floor((cx / cw + 1) * 0.5 * width);
+      const row = Math.floor((1 - cy / cw) * 0.5 * height);
+      if (col < 0 || col >= width || row < 0 || row >= height) continue;
+      const bucket = row * width + col;
+      expected.hits[bucket] += 1;
+      expected.maxHits = Math.max(expected.maxHits, expected.hits[bucket]);
+      const li = Math.min(255, (c * 256) | 0) * 3;
+      const o = bucket * 3;
+      expected.sumRGB[o] += colorLUT[li];
+      expected.sumRGB[o + 1] += colorLUT[li + 1];
+      expected.sumRGB[o + 2] += colorLUT[li + 2];
+    }
+    expected.orbit = [x, y, z];
+    expected.orbitColor = c;
+    expected.orbitPrevBase = prevBase;
+    expected.orbitChaosLeft = chaosLeft;
+
+    expect(Array.from(actual.hits)).toEqual(Array.from(expected.hits));
+    expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
+    expect(actual.orbit).toEqual(expected.orbit);
+    expect(actual.orbitColor).toBe(expected.orbitColor);
+    expect(actual.orbitPrevBase).toBe(expected.orbitPrevBase);
+    expect(actual.orbitChaosLeft).toBe(expected.orbitChaosLeft);
+  });
+
+  it("renders independently of chunk boundaries — the re-fuse counter rides the histogram", () => {
+    // Chunk sizes vary per frame budget; the rendered object must not. A
+    // 4000 + 5000 split puts the first re-fuse boundary (4096) inside the
+    // SECOND chunk — if the countdown or prevBase were worker-local instead
+    // of persisted on the histogram, the split would re-fuse at the wrong
+    // iteration and diverge from the single 9000-iteration call.
+    const transforms = chiFlameSystem();
+    const prepared = prepareChaosGame(transforms);
+    const palette = transformColors(transforms.length);
+    const width = 32;
+    const height = 32;
+
+    const chunkedRng = mulberry32(11);
+    let chunked = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      width,
+      height,
+      4000,
+      chunkedRng,
+      palette,
+    );
+    chunked = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      width,
+      height,
+      5000,
+      chunkedRng,
+      palette,
+      chunked,
+    );
+
+    const single = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      width,
+      height,
+      9000,
+      mulberry32(11),
+      palette,
+    );
+
+    expect(Array.from(chunked.hits)).toEqual(Array.from(single.hits));
+    expect(Array.from(chunked.sumRGB)).toEqual(Array.from(single.sumRGB));
+    expect(chunked.orbit).toEqual(single.orbit);
+    expect(chunked.orbitPrevBase).toBe(single.orbitPrevBase);
+    expect(chunked.orbitChaosLeft).toBe(single.orbitChaosLeft);
   });
 });

@@ -2754,18 +2754,24 @@ function main(): void {
         ui.setFlameBackendNote(
           event.backend,
           event.adapter,
-          // A CPU backend AFTER a gpuUnavailable is a fallback — say why,
-          // briefly. A CPU backend with no preceding gpuUnavailable is just
-          // a CPU render (GPU never attempted): no reason to show. Wording
-          // per the render-backend disclosure's legibility lesson: no API
-          // names inside negations — "WebGPU unavailable" was field-misread
-          // as a positive WebGPU indicator (the eye catches the API name,
-          // not the negation).
-          event.backend === "cpu" && flameGpuUnavailableReason !== null
-            ? flameGpuUnavailableReason === "no-webgpu"
-              ? "no GPU API in this browser"
-              : "GPU failed"
-            : undefined,
+          // A chi-forced CPU backend discloses first — the worker only sets
+          // chaosForced when every other GPU condition held, so this is the
+          // one true reason (the GPU flame kernels don't know chaos rows
+          // yet; see flame-worker-core's event doc). Then: a CPU backend
+          // AFTER a gpuUnavailable is a fallback — say why, briefly. A CPU
+          // backend with no preceding gpuUnavailable is just a CPU render
+          // (GPU never attempted): no reason to show. Wording per the
+          // render-backend disclosure's legibility lesson: no API names
+          // inside negations — "WebGPU unavailable" was field-misread as a
+          // positive WebGPU indicator (the eye catches the API name, not
+          // the negation).
+          event.backend === "cpu" && event.chaosForced === true
+            ? "chaos rows run here for now"
+            : event.backend === "cpu" && flameGpuUnavailableReason !== null
+              ? flameGpuUnavailableReason === "no-webgpu"
+                ? "no GPU API in this browser"
+                : "GPU failed"
+              : undefined,
           // Software adapters escalate the note to the warning tier
           // — SwiftShader accumulation must not pass as the GPU.
           event.software === true,

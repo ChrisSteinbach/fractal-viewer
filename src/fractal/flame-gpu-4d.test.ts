@@ -1337,3 +1337,21 @@ describe("FLAME_GPU_KERNEL_4D_WGSL variation switch", () => {
     expect(arithmetic).not.toContain("p.w");
   });
 });
+
+describe("packGpuSystem4 chaos rows (defense in depth)", () => {
+  it("throws on a chi-carrying 4D system — packGpuSystem's guard, one dimension up", () => {
+    const transforms4 = makeTransforms4(2).map((t, i) =>
+      i === 0 ? { ...t, chaos: [1, 0] } : t,
+    );
+    expect(() => packGpuSystem4(baseSpec4({ transforms4 }))).toThrow(
+      RangeError,
+    );
+    expect(() => packGpuSystem4(baseSpec4({ transforms4 }))).toThrow(
+      /chaos rows/,
+    );
+    const trivial = makeTransforms4(2).map((t) => ({ ...t, chaos: [1, 1] }));
+    expect(() =>
+      packGpuSystem4(baseSpec4({ transforms4: trivial })),
+    ).not.toThrow();
+  });
+});

@@ -556,3 +556,17 @@ describe("the Mandelbulb presets", () => {
     expect(disagreements / probed).toBeGreaterThan(0.5);
   });
 });
+
+describe("analyzeBulbSystem chaos rows", () => {
+  it("refuses a chi-carrying document — this render never selects, so the rows would be silently ignored", () => {
+    const analysis = analyzeBulbSystem([bulbSystem({ chaos: [0.5] })]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toContain(
+      "chaos rows (unsupported in Mandelbulb mode)",
+    );
+    // A trivial row is no row: the same document stays eligible with it.
+    expect(analyzeBulbSystem([bulbSystem({ chaos: [1] })]).status).toBe(
+      "eligible",
+    );
+  });
+});

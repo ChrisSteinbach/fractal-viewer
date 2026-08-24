@@ -1,3 +1,4 @@
+import { composeAffine } from "./affine";
 import type { FlamePaletteId } from "./palette";
 import type { Rng } from "./rng";
 import type {
@@ -2066,6 +2067,103 @@ export function hyperfern(): Transform[] {
 }
 
 /**
+ * Conjugate every map of a system by the translation `A(p) = p + offset`,
+ * moving its attractor RIGIDLY by `offset`: conjugation leaves each map's
+ * linear part `M` untouched and rewrites only its translation to
+ * `position + (I − M)·offset` (the same identity {@link buildFern}'s
+ * re-centring uses, computed here numerically from the COMPOSED affine so it
+ * holds for any rotation/scale/shear a map carries). This is how the xaos
+ * presets seat two whole systems side by side in one space — each keeps its
+ * own internal geometry exactly.
+ */
+function conjugateApart(transforms: Transform[], offset: Vec3): Transform[] {
+  const [ox, oy, oz] = offset;
+  return transforms.map((t) => {
+    const m = composeAffine(t).m;
+    const position: Vec3 = [
+      t.position[0] + ox - (m[0] * ox + m[1] * oy + m[2] * oz),
+      t.position[1] + oy - (m[3] * ox + m[4] * oy + m[5] * oz),
+      t.position[2] + oz - (m[6] * ox + m[7] * oy + m[8] * oz),
+    ];
+    return { ...t, position };
+  });
+}
+
+/** How far each of the fern|sponge pair's two systems sits from the origin
+ * along ±x — chosen so the fern's ~0.75 x half-extent and the sponge's 0.75
+ * cube clear each other with a visible gap. */
+const FERN_SPONGE_OFFSET = 1.2;
+
+/**
+ * Every sponge map's selection weight in the fern|sponge pair: the fern's
+ * four maps sum to weight 100 (1 + 85 + 7 + 7, Barnsley's proportions), so
+ * 20 sponge maps at 5 sum to 100 too — the ENTRY pick (which draws from the
+ * global weighted table; see `chaos-game.ts`'s `CHAOS_SUB_ORBIT_POINTS`)
+ * then lands each sub-orbit in either block with equal probability, and the
+ * two objects render at comparable density instead of the sponge getting a
+ * sixth of the points. Within the sponge block the uniform 5s stay uniform,
+ * so the sponge itself is unchanged.
+ */
+const FERN_SPONGE_SPONGE_WEIGHT = 5;
+
+/**
+ * The xaos reachability pair's shared construction: Barnsley's fern
+ * ({@link barnsleyFern}, 4 maps) and the Menger sponge
+ * ({@link mengerSponge}, 20 maps) conjugated apart along x
+ * ({@link conjugateApart}) into ONE 24-map system, with BLOCK-STRUCTURED
+ * chaos rows: every fern map's row carries 1 toward fern columns and
+ * `offBlock` toward sponge columns, and vice versa. At `offBlock` 0 the two
+ * systems are fully isolated — merging their transform lists WITHOUT rows
+ * would bud shrunken sponges along fern fronds and ferns inside every
+ * sub-cube (every map applies to everything); the rows are what keep them
+ * two neat objects in one space. Small non-zero `offBlock` leaks them into
+ * each other in a controlled way.
+ */
+function fernSpongeSystem(offBlock: number): Transform[] {
+  const fern = conjugateApart(barnsleyFern(), [-FERN_SPONGE_OFFSET, 0, 0]);
+  const sponge = conjugateApart(mengerSponge(), [FERN_SPONGE_OFFSET, 0, 0]);
+  const fernCount = fern.length;
+  const all = [...fern, ...sponge];
+  const total = all.length;
+  return all.map((t, i): Transform => {
+    const inFern = i < fernCount;
+    const chaos = new Array<number>(total);
+    for (let j = 0; j < total; j++) {
+      chaos[j] = inFern === j < fernCount ? 1 : offBlock;
+    }
+    return {
+      ...t,
+      id: i,
+      weight: inFern ? t.weight : FERN_SPONGE_SPONGE_WEIGHT,
+      chaos,
+    };
+  });
+}
+
+/**
+ * "Fern | Sponge (isolated)" — the xaos (graph-directed selection) proof:
+ * two whole systems sharing one space as SEPARATE objects, which no plain
+ * transform-list merge can express (see {@link fernSpongeSystem}). The
+ * block-diagonal rows mean an orbit entering either block never leaves it;
+ * the engine's sub-orbit re-fusing is what samples both
+ * (`chaos-game.ts`'s `CHAOS_SUB_ORBIT_POINTS`).
+ */
+export function fernSpongeIsolated(): Transform[] {
+  return fernSpongeSystem(0);
+}
+
+/**
+ * "Fern | Sponge (1% leak)" — {@link fernSpongeIsolated} with 0.01 in every
+ * off-block entry: about one transition in ~100 weighted picks crosses
+ * systems, so sponges bud tiny ferns and fern fronds sprout sponge dust —
+ * the controlled cross-infection that makes xaos a CONTINUOUS dial from
+ * "side by side" to the everything-hybrid a plain merge gives.
+ */
+export function fernSpongeLeak(): Transform[] {
+  return fernSpongeSystem(0.01);
+}
+
+/**
  * The named systems offered in the preset menu, mapped to their transform
  * factories. `default` is the system the viewer boots with (see
  * {@link defaultTransforms}); listing it here keeps the startup fractal
@@ -2089,6 +2187,11 @@ const PRESETS = {
   chiral: chiralLace,
   barnsley: barnsleyFern,
   curling: curlingFern,
+  // The xaos (graph-directed selection) pair — chaos rows' reachability
+  // proof: two systems in one space, isolated and 1%-leaked. Points/flame/
+  // solid render them; the surface and escape gates refuse chi documents.
+  fernSponge: fernSpongeIsolated,
+  fernSpongeLeak,
   radiolarian,
   swirl: swirlFlame,
   dyedSpiral,

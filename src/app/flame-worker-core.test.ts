@@ -3022,3 +3022,71 @@ describe("FlameWorkerSession instrumentation", () => {
     expect(logs.some((m) => m.includes("flame perf"))).toBe(false);
   });
 });
+
+describe("FlameWorkerSession chaos rows force the CPU backend", () => {
+  it("never attempts the GPU factory for a chi document and discloses chaosForced on the backend event", async () => {
+    let factoryCalls = 0;
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => {
+      factoryCalls++;
+      return {
+        kind: "gpu",
+        accumulate: async (n) => n,
+        snapshot: async () => createFlameHistogram(8, 8),
+        destroy: () => {},
+      };
+    };
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({
+        transforms: sierpinskiTetrahedron().map((t, i) =>
+          i === 0 ? { ...t, chaos: [1, 0, 1, 1] } : t,
+        ),
+        gpuPreference: "auto",
+      }),
+    );
+    await drainAsync(scheduler);
+
+    // GPU would have been attempted (auto + factory + no failure) — the
+    // rows are the one reason it wasn't, so the event says so.
+    expect(factoryCalls).toBe(0);
+    expect(backendEvents(events)).toEqual([
+      { type: "backend", backend: "cpu", chaosForced: true },
+    ]);
+  });
+
+  it("does not blame chaos rows when GPU was never on the table", async () => {
+    // No factory wired up: the CPU backend is the natural choice, and the
+    // event must NOT carry chaosForced — the note would otherwise claim chi
+    // forced a fallback on a machine that never had the option.
+    const { session, events, scheduler } = harness({});
+    session.handle(
+      startCommand({
+        transforms: sierpinskiTetrahedron().map((t, i) =>
+          i === 0 ? { ...t, chaos: [1, 0, 1, 1] } : t,
+        ),
+        gpuPreference: "auto",
+      }),
+    );
+    await drainAsync(scheduler);
+
+    expect(backendEvents(events)).toEqual([
+      { type: "backend", backend: "cpu" },
+    ]);
+  });
+
+  it("still renders the chi document on the CPU path — accumulation completes", async () => {
+    const { session, events, scheduler } = harness({});
+    session.handle(
+      startCommand({
+        transforms: sierpinskiTetrahedron().map((t, i) =>
+          i === 0 ? { ...t, chaos: [1, 0, 1, 1] } : t,
+        ),
+        iterationsBudget: 500,
+      }),
+    );
+    await drainAsync(scheduler);
+
+    const progress = progressEvents(events);
+    expect(progress.at(-1)!.iterationsDone).toBe(500);
+  });
+});

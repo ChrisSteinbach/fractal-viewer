@@ -83,6 +83,7 @@ import {
   MAX_TRANSFORMS,
   derivedColorIndex,
   effectiveSymmetryOrder,
+  systemHasChaos,
 } from "./chaos-game";
 import { transformColors } from "./color";
 import { isFoldVariationType, resolveFoldRadii } from "./variations";
@@ -968,6 +969,17 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
   if (transforms.length > MAX_TRANSFORMS) {
     throw new RangeError(
       `IFS supports at most ${MAX_TRANSFORMS} transforms, got ${transforms.length}`,
+    );
+  }
+  // Defense in depth, not routing: the flame worker already forces the CPU
+  // backend for chi documents (flame-worker-core's gpuEligible), because
+  // this kernel has no chaos-row selection — packing one would render a
+  // DIFFERENT object than the CPU oracle for the same document. Throw
+  // rather than silently draw the unconstrained system; the WGSL lift is
+  // open work (fr-wo2j.4), and this guard comes out with it.
+  if (systemHasChaos(transforms)) {
+    throw new RangeError(
+      "packGpuSystem: chaos rows are not in the WGSL kernels yet — chi documents take the CPU backend",
     );
   }
 

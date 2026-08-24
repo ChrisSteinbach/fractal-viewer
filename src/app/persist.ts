@@ -99,7 +99,11 @@ import {
 } from "../fractal/background-shape";
 import type { FourDPose } from "./four-d-view";
 import { normalizeRotorPair } from "./rotor4";
-import { DEFAULT_COLOR_SPEED, MAX_TRANSFORMS } from "../fractal/chaos-game";
+import {
+  DEFAULT_COLOR_SPEED,
+  MAX_TRANSFORMS,
+  chaosRowIsNonTrivial,
+} from "../fractal/chaos-game";
 import { clamp } from "../fractal/vec";
 
 // ---------------------------------------------------------------------------
@@ -612,6 +616,34 @@ function decodeFoldRadius(raw: unknown): number | undefined {
 }
 
 /**
+ * Decode one transform's optional chaos row (`types.ts`'s
+ * {@link Transform.chaos}). QUIET fallback like {@link decodeFoldRadius}: a
+ * malformed row never rejects the whole scene, it just leaves the field
+ * absent — and the row is kept ONLY WHOLE: it must be an array, no longer
+ * than {@link MAX_TRANSFORMS} (a row can never mean more — the Uint8 cap
+ * bounds the base count — and an unbounded untrusted array must not be
+ * carried verbatim), with EVERY entry a genuine, finite `number`; anything
+ * else drops the entire row rather than salvaging entries, because a row is
+ * one distribution, not a bag of independent leaves (a partially-dropped row
+ * would silently re-weight the survivors through the pad-with-1s rule).
+ * The fold lengths' two deliberate deviations apply here too, documented
+ * there: NO `Number(x)` coercion (a numeric string or boolean drops the row
+ * rather than becoming a probability scale) and NO clamp — the domain
+ * (entries `>= 0`, absent-tail-means-1) belongs to `chaos-game.ts`'s
+ * `resolveChaosEntry`; persist's job at this leaf is fidelity.
+ */
+function decodeChaosRow(raw: unknown): number[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  if (raw.length > MAX_TRANSFORMS) return undefined;
+  const row: number[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "number" || !Number.isFinite(entry)) return undefined;
+    row.push(entry);
+  }
+  return row;
+}
+
+/**
  * Validate one transform's untrusted `variations` field: an array (capped at
  * {@link MAX_VARIATIONS}) of `{ type, weight }` with a known {@link VariationType}
  * and a finite weight (clamped to ±{@link MAX_VARIATION_WEIGHT}), plus the
@@ -863,6 +895,12 @@ function decodeTransform(raw: unknown, id: number): Transform | null {
     const variations = decodeVariations(tf.variations);
     if (variations === null) return null;
     if (variations.length > 0) decoded.variations = variations;
+  }
+  // chaos: optional graph-directed selection row — quiet whole-row fallback,
+  // no coercion, no clamp; see decodeChaosRow.
+  if (tf.chaos !== undefined) {
+    const chaos = decodeChaosRow(tf.chaos);
+    if (chaos !== undefined) decoded.chaos = chaos;
   }
   // w: optional 4D extension (see WExtension). Absent ⇒ the decoded transform
   // has no `w` key at all — flat, exactly like a pre-4D link (isFlatTransform
@@ -1592,6 +1630,7 @@ interface EncodedTransform {
   colorSpeed?: number;
   shear?: number[];
   variations?: EncodedVariation[];
+  chaos?: number[];
   w?: WExtension;
   finish?: SurfaceFinish;
   surfacePattern?: SurfacePattern;
@@ -1715,8 +1754,23 @@ function encodeSurfacePattern(
  * omission instead — see {@link encodeFinish} — because unlike `w` it has no
  * single shared "is this the identity" predicate to key on: each of its five
  * fields is independently classic-or-not, so each is dropped independently.
+ *
+ * `chaos` is written only when present AND non-trivial at
+ * `chaosBaseCount` — `chaos-game.ts`'s `chaosRowIsNonTrivial`, the runtime's
+ * own "does this row select any differently than no row" predicate, the
+ * exact `isFlatTransform` move applied to selection — so an all-1s (or
+ * effectively-all-1s) row encodes as nothing and an unauthored document
+ * stays byte-identical to one predating the field. `chaosBaseCount` is the
+ * SYSTEM's transform count, which this per-transform function cannot know
+ * (the `colorIndex` paragraph's situation, resolved the other way: the
+ * caller passes it). The final transform's call site omits it, so a final
+ * transform NEVER encodes a row — it sits outside selection entirely
+ * (flam3's rule; see `Transform.chaos`).
  */
-function encodeTransform(t: Transform): EncodedTransform {
+function encodeTransform(
+  t: Transform,
+  chaosBaseCount?: number,
+): EncodedTransform {
   const e: EncodedTransform = {
     position: t.position.map(round4),
     rotation: t.rotation.map(round4),
@@ -1755,6 +1809,16 @@ function encodeTransform(t: Transform): EncodedTransform {
         return ev;
       });
     if (active.length > 0) e.variations = active;
+  }
+  // The chaos row: whole-row presence keyed on non-triviality (see this
+  // function's doc); entries round4'd like every other float on the wire.
+  if (
+    chaosBaseCount !== undefined &&
+    chaosRowIsNonTrivial(t.chaos, chaosBaseCount)
+  ) {
+    // Non-trivial implies present — chaosRowIsNonTrivial is false for an
+    // absent row — so t.chaos is an array here.
+    e.chaos = (t.chaos as number[]).map(round4);
   }
   if (!isFlatTransform(t)) {
     // Safe: isFlatTransform only returns false when `t.w` is present (an
@@ -1847,7 +1911,12 @@ export function encodeScene(s: SceneSnapshot): string {
       sliceRelColor: boolean;
     };
   } = {
-    transforms: s.transforms.map(encodeTransform),
+    // The base count rides along for the chaos row's non-triviality test —
+    // see encodeTransform's chaos paragraph. The finalTransform call below
+    // deliberately omits it (a lens never carries a row).
+    transforms: s.transforms.map((t) =>
+      encodeTransform(t, s.transforms.length),
+    ),
     numPoints: s.numPoints,
     pointSize: round4(s.pointSize),
     colorMode: s.colorMode,

@@ -1443,3 +1443,18 @@ describe("the flame kernels' triplexPow8 (case 16u)", () => {
     expect(chebyshev(FLAME_GPU_KERNEL_4D_WGSL)).toEqual(frozen);
   });
 });
+
+describe("packGpuSystem chaos rows (defense in depth)", () => {
+  it("throws on a chi-carrying system — the kernel has no row-directed selection, and the worker must have routed it to CPU", () => {
+    const transforms = makeTransforms(2).map((t, i) =>
+      i === 0 ? { ...t, chaos: [1, 0] } : t,
+    );
+    expect(() => packGpuSystem(baseSpec({ transforms }))).toThrow(RangeError);
+    expect(() => packGpuSystem(baseSpec({ transforms }))).toThrow(/chaos rows/);
+    // A trivial row is no row — packs exactly like an unauthored system.
+    const trivial = makeTransforms(2).map((t) => ({ ...t, chaos: [1, 1] }));
+    expect(() =>
+      packGpuSystem(baseSpec({ transforms: trivial })),
+    ).not.toThrow();
+  });
+});

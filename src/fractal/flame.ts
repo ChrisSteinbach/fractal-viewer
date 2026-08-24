@@ -40,6 +40,7 @@
  * GPU's coarser float32 floor.
  */
 import {
+  CHAOS_SUB_ORBIT_POINTS,
   ESCAPE_LIMIT,
   WARMUP_ITERATIONS,
   pickIndex,
@@ -157,6 +158,25 @@ export interface FlameHistogram {
    * it), so nothing here changes for any existing caller.
    */
   orbitW: number;
+  /**
+   * Graph-directed selection continuation: the BASE index of the last
+   * applied map (`-1` = entry pick — the fresh-histogram default, and what
+   * an escape-reseed resets to). Only meaningful when the prepared system
+   * carries chi rows; a chi-free accumulation never reads it. Kept on the
+   * histogram — like {@link orbit}/{@link orbitColor} — so a chunked render
+   * resumes the exact same selection walk.
+   */
+  orbitPrevBase: number;
+  /**
+   * Plotted points remaining in the current chaos SUB-ORBIT before the next
+   * re-fuse (`chaos-game.ts`'s {@link CHAOS_SUB_ORBIT_POINTS}, the
+   * fresh-histogram default — the opening warm-up IS sub-orbit 0's fuse).
+   * Persisted here — NOT worker-local — so the re-fuse cadence is a pure
+   * function of accumulated iterations, independent of worker CHUNK
+   * boundaries (chunk sizes vary per frame budget; the rendered object must
+   * not). Only meaningful on the chi path, like {@link orbitPrevBase}.
+   */
+  orbitChaosLeft: number;
 }
 
 /** A fresh, empty histogram: every bucket at zero hits, ready to accumulate into. */
@@ -173,6 +193,8 @@ export function createFlameHistogram(
     orbit: [0, 0, 0],
     orbitColor: 0.5,
     orbitW: 0,
+    orbitPrevBase: -1,
+    orbitChaosLeft: CHAOS_SUB_ORBIT_POINTS,
   };
 }
 
@@ -202,6 +224,8 @@ export function viewFlameHistogram(
     orbit: [0, 0, 0],
     orbitColor: 0.5,
     orbitW: 0,
+    orbitPrevBase: -1,
+    orbitChaosLeft: CHAOS_SUB_ORBIT_POINTS,
   };
 }
 
@@ -344,6 +368,15 @@ export function accumulateFlame(
   const echoSource: Vec3 = [0, 0, 0];
   const echoInverted: Vec3 = [0, 0, 0];
 
+  // Graph-directed selection state, resumed from the histogram so a chunked
+  // render's re-fuse cadence is independent of chunk boundaries (see
+  // FlameHistogram.orbitPrevBase/orbitChaosLeft). Threaded unconditionally —
+  // with chaosRows null, pickIndex ignores prevBase, the countdown is never
+  // consulted, and the loop below is byte-identical to before chi existed.
+  const chaosOn = prepared.chaosRows !== null;
+  let prevBase = hist.orbitPrevBase;
+  let chaosLeft = hist.orbitChaosLeft;
+
   let x: number;
   let y: number;
   let z: number;
@@ -352,10 +385,11 @@ export function accumulateFlame(
     y = rng() - 0.5;
     z = rng() - 0.5;
     for (let i = 0; i < WARMUP_ITERATIONS; i++) {
-      const s = stepOrbit(prepared, x, y, z, rng);
+      const s = stepOrbit(prepared, x, y, z, rng, rng, prevBase);
       x = s.x;
       y = s.y;
       z = s.z;
+      prevBase = s.escaped ? -1 : s.index;
     }
   } else {
     [x, y, z] = hist.orbit;
@@ -379,8 +413,33 @@ export function accumulateFlame(
   const rw3 = projection[15];
 
   for (let n = 0; n < iterations; n++) {
+    // Sub-orbit re-fuse (chaos-game.ts's CHAOS_SUB_ORBIT_POINTS): every K
+    // plotted points under chi, reseed, reset to the entry pick, and warm
+    // the fresh orbit up unrecorded through the real (non-inlined — this
+    // block isn't hot) stepOrbit. Single-stream consumer, so the seed's
+    // three draws come from `rng` itself (it IS the aux stream here). The
+    // color coordinate resets like an escape-reseed's: the orbit restarts,
+    // so its color walk does too.
+    if (chaosOn) {
+      if (chaosLeft <= 0) {
+        x = rng() - 0.5;
+        y = rng() - 0.5;
+        z = rng() - 0.5;
+        prevBase = -1;
+        for (let k = 0; k < WARMUP_ITERATIONS; k++) {
+          const s = stepOrbit(prepared, x, y, z, rng, rng, prevBase);
+          x = s.x;
+          y = s.y;
+          z = s.z;
+          prevBase = s.escaped ? -1 : s.index;
+        }
+        if (colorLUT !== undefined) c = 0.5;
+        chaosLeft = CHAOS_SUB_ORBIT_POINTS;
+      }
+      chaosLeft--;
+    }
     // --- inlined stepOrbit(prepared, x, y, z, rng) ------------------------
-    const idx = pickIndex(prepared, rng);
+    const idx = pickIndex(prepared, rng, prevBase);
     // The BASE map this slot is a (possibly rotated) copy of — see
     // PreparedChaosGame.baseTransformCount. Equal to `idx` at symmetry order
     // 1. Anything keyed to "which logical map" (the color slot below, and the
@@ -439,6 +498,7 @@ export function accumulateFlame(
       nz = rz;
     }
 
+    let escaped = false;
     if (
       !Number.isFinite(nx) ||
       !Number.isFinite(ny) ||
@@ -452,10 +512,14 @@ export function accumulateFlame(
       nz = rng() - 0.5;
       // The orbit restarts, so its color coordinate does too.
       if (colorLUT !== undefined) c = 0.5;
+      escaped = true;
     }
     x = nx;
     y = ny;
     z = nz;
+    // Selection state for the next pick — stepOrbit's escaped/index contract
+    // exactly. Inert without chi rows.
+    prevBase = escaped ? -1 : baseIdx;
 
     // --- inlined plotPoint(prepared, x, y, z, rng) -------------------------
     let px = x;
@@ -588,6 +652,8 @@ export function accumulateFlame(
 
   hist.orbit = [x, y, z];
   hist.orbitColor = c;
+  hist.orbitPrevBase = prevBase;
+  hist.orbitChaosLeft = chaosLeft;
   hist.maxHits = maxHits;
   return hist;
 }

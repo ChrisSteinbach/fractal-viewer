@@ -655,7 +655,7 @@
 import { composeAffine } from "./affine";
 import { isFlatTransform, symmetryIsNonFlat } from "./affine4";
 import { BULB_POWER } from "./bulb-de";
-import { effectiveSymmetryOrder } from "./chaos-game";
+import { effectiveSymmetryOrder, systemHasChaos } from "./chaos-game";
 import { mulberry32 } from "./rng";
 import {
   SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
@@ -1013,6 +1013,13 @@ export function analyzeEscapeSystem(
   });
   if (active.length > 0 && reasons.length === 0 && !anyExpands) {
     reasons.push("every map contracts (the attractor surface render owns it)");
+  }
+  // Chaos rows are a chaos-game SELECTION layer; this render's forward
+  // orbit applies the chain's links cyclically — there is no per-step pick
+  // for a chi row to direct — so it would silently ignore the rows and draw
+  // a different object than the points modes show for the same document.
+  if (systemHasChaos(transforms)) {
+    reasons.push("chaos rows (unsupported in escape-time mode)");
   }
   if (finalTransform) {
     reasons.push("final transform (unsupported in escape-time mode)");

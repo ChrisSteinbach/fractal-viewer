@@ -465,6 +465,10 @@ function randomVariationType(rng: Rng, exclude?: VariationType): VariationType {
  * rolling them here would trade a measured-good generator for an unmeasured
  * one. `mutate-system.ts` is where a document that already carries
  * non-classic lengths gets to explore near them instead.
+ *
+ * The generator does not roll `Transform.chaos` rows either, the identical
+ * stance: no evidence they improve the generator, and a rolled chi matrix
+ * moves systems across the surface-eligibility seam behind the user's back.
  */
 function randomVariations(rng: Rng): Variation[] | undefined {
   const variations: Variation[] = [];

@@ -1021,3 +1021,67 @@ describe("lerpSystem surface pattern", () => {
     });
   });
 });
+
+describe("chaos row morphing", () => {
+  it("lerps rows entrywise, padding the shorter (or absent) side with 1s", () => {
+    const a = system({
+      transforms: [transform({ chaos: [0, 2, 1] })],
+    });
+    const b = system({
+      transforms: [transform({ chaos: [1, 1, 0.5] })],
+    });
+    const mid = lerpSystem(a, b, 0.5);
+    expect(mid.transforms[0].chaos).toEqual([0.5, 1.5, 0.75]);
+
+    // Absent side reads all-1s at the other side's length: [0, 2, 1] fades
+    // toward "no constraint", never toward a synthesized zero row.
+    const toAbsent = lerpSystem(a, system({ transforms: [transform()] }), 0.5);
+    expect(toAbsent.transforms[0].chaos).toEqual([0.5, 1.5, 1]);
+
+    // Two present rows of different lengths: the short one's missing tail
+    // reads 1.
+    const short = system({ transforms: [transform({ chaos: [0.5] })] });
+    const long = system({ transforms: [transform({ chaos: [1, 3] })] });
+    expect(lerpSystem(short, long, 0.5).transforms[0].chaos).toEqual([0.75, 2]);
+  });
+
+  it("drops an all-1s result — a trivial-vs-absent pair emits no row at any t", () => {
+    const trivial = system({
+      transforms: [transform({ chaos: [1, 1, 1] })],
+    });
+    const absent = system({ transforms: [transform()] });
+    // lerp(1, 1, t) is exactly 1 (the a + (b - a) * t form), so every
+    // intermediate is rowless — byte-identical to a pre-chi morph.
+    expect(
+      lerpSystem(trivial, absent, 0.25).transforms[0].chaos,
+    ).toBeUndefined();
+    expect(
+      lerpSystem(absent, trivial, 0.75).transforms[0].chaos,
+    ).toBeUndefined();
+    // Both sides absent stays absent.
+    expect(lerpSystem(absent, absent, 0.5).transforms[0].chaos).toBeUndefined();
+  });
+
+  it("is endpoint-exact: t = 0 and t = 1 return the authored rows by reference", () => {
+    const a = system({ transforms: [transform({ chaos: [0, 2] })] });
+    const b = system({ transforms: [transform({ chaos: [2, 0] })] });
+    expect(lerpSystem(a, b, 0)).toBe(a);
+    expect(lerpSystem(a, b, 1)).toBe(b);
+  });
+
+  it("carries the surplus map's row through phantom padding bit-exactly, only the weight animating", () => {
+    // A transform-count mismatch pads the shorter side with a weight-0 copy
+    // of the surplus map — its chaos row included — so the row rides the
+    // whole morph unchanged.
+    const a = system({ transforms: [transform()] });
+    const b = system({
+      transforms: [
+        transform(),
+        transform({ id: 1, position: [1, 0, 0], chaos: [0, 1] }),
+      ],
+    });
+    const mid = lerpSystem(a, b, 0.5);
+    expect(mid.transforms).toHaveLength(2);
+    expect(mid.transforms[1].chaos).toEqual([0, 1]);
+  });
+});

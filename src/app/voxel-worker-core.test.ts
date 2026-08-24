@@ -1,4 +1,5 @@
 import { sierpinskiTetrahedron } from "../fractal/presets";
+import { CHAOS_SUB_ORBIT_POINTS } from "../fractal/chaos-game";
 import { clampVoxelResolution } from "../fractal/voxel";
 import type { Transform4 } from "../fractal/types";
 import {
@@ -581,6 +582,8 @@ describe("VoxelWorkerSession memory guards", () => {
           orbit: null,
           orbitColor: 0.5,
           orbitW: 0,
+          orbitPrevBase: -1,
+          orbitChaosLeft: CHAOS_SUB_ORBIT_POINTS,
         };
       },
     });

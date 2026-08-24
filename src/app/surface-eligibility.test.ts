@@ -163,3 +163,43 @@ describe("deriveSurfaceEligibility caps and refusal notes", () => {
     expect(nonFlat.note?.endsWith(hint)).toBe(true);
   });
 });
+
+describe("deriveSurfaceEligibility chaos rows", () => {
+  it("refuses the chi presets with the surface gate's reason in the note, routing nowhere", () => {
+    // Both fern|sponge presets: contractive IFS shapes that would be
+    // Surface-eligible but for their rows — the gate refusal (not the
+    // escape/bulb complements, which refuse chi too) is what the user reads.
+    for (const preset of ["fernSponge", "fernSpongeLeak"] as const) {
+      const result = deriveSurfaceEligibility(
+        presetTransforms(preset),
+        null,
+        NO_SYMMETRY,
+        { computeAvailable: true },
+      );
+      expect(result.status).toBe("ineligible");
+      expect(result.kind).toBeNull();
+      expect(result.note).toContain(
+        "chaos rows constrain the attractor (Surface would march the unconstrained object)",
+      );
+    }
+  });
+
+  it("refuses a chi-carrying escape-shaped document too — no arm slips through to march the wrong object", () => {
+    // A non-contracting mandelbox with a row: the IFS gate refuses (chi +
+    // does not contract), and the escape complement must NOT then admit it.
+    const mandelbox: Transform = {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [{ type: "mandelbox", weight: 2 }],
+      chaos: [0.5],
+    };
+    const result = deriveSurfaceEligibility([mandelbox], null, NO_SYMMETRY, {
+      computeAvailable: true,
+    });
+    expect(result.status).toBe("ineligible");
+    expect(result.kind).toBeNull();
+    expect(result.note).toContain("chaos rows");
+  });
+});

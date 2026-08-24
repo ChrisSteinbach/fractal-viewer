@@ -296,6 +296,35 @@ export interface Transform {
    */
   w?: WExtension;
   /**
+   * Optional chaos row (flam3's "xaos", Mauldin–Williams graph-directed
+   * selection): `chaos[j]` scales the probability of picking BASE transform
+   * `j` (document order) when the PREVIOUSLY APPLIED base map was THIS one —
+   * flam3's row convention: the row is the FROM side, each entry the TOWARD
+   * side. The chaos game's next pick is then drawn with probability
+   * ∝ `weight_j · chaos[j]` instead of `weight_j` alone, so a block-diagonal
+   * matrix keeps two sub-systems as separate objects in one space and small
+   * off-block entries leak them into each other in a controlled way.
+   *
+   * ABSENT ROW, ABSENT TAIL ENTRIES, AND ALL-1s ROWS ALL MEAN 1,
+   * byte-identically (rows are padded/truncated to the base-transform count
+   * at consumption — flam3's rule): a document carrying no non-trivial row
+   * renders exactly as before this field existed, the `weight?`/`colorIndex?`
+   * convention. `chaos-game.ts`'s {@link import("./chaos-game").systemHasChaos}
+   * /`chaosRowIsNonTrivial` are the ONE definition of "non-trivial" and of
+   * the consumption domain (entries clamp to `>= 0`; a non-finite entry
+   * reads as 1 — defense only, `persist.ts` drops malformed rows); nothing
+   * else may re-derive either. The final transform never carries one: it
+   * sits outside selection entirely (it is plot-time), exactly as in flam3.
+   *
+   * Read by every chaos-game consumer (points, flame CPU, solid). The flame
+   * WGSL kernels do NOT know it yet, so a chi-carrying document forces the
+   * flame CPU backend (disclosed in the backend note), and the
+   * surface/escape-time estimator gates refuse chi documents outright: chaos
+   * rows constrain the attractor to a SUBSET, and an estimator that ignores
+   * them would march the unconstrained — wrong — object.
+   */
+  chaos?: number[];
+  /**
    * Optional per-transform surface finish (see {@link SurfaceFinish}): how
    * this map's part of the attractor responds to light in Surface mode.
    * Omitted (or present with every field absent) ⇒ the classic hardcoded
@@ -578,6 +607,15 @@ export interface Transform4 {
    * `DEFAULT_COLOR_SPEED`.
    */
   colorSpeed?: number;
+  /**
+   * Chaos row for graph-directed selection, mirroring
+   * {@link Transform.chaos} exactly — selection is dimension-agnostic, so
+   * the meaning, the absent-means-1 rule and the consumption domain are all
+   * `chaos-game.ts`'s one definition. Carried across the 3D → 4D lift by
+   * `affine4.ts`'s `embedTransform3`, so a `Transform` that authors rows
+   * keeps its graph in every 4D render.
+   */
+  chaos?: number[];
 }
 
 /** Axis-aligned extent of a 4D point cloud (the 4D analogue of {@link Bounds}). */
