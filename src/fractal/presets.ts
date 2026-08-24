@@ -1,3 +1,4 @@
+import { applyAffine, composeAffine } from "./affine";
 import type { FlamePaletteId } from "./palette";
 import type { Rng } from "./rng";
 import type {
@@ -8,6 +9,7 @@ import type {
   Variation,
   Vec3,
   Vec4,
+  WExtension,
 } from "./types";
 
 const HALF = 0.5;
@@ -488,6 +490,243 @@ export function barnsleyFern(): Transform[] {
  */
 export function curlingFern(): Transform[] {
   return buildFern(FERN_CURL);
+}
+
+/**
+ * The landscape presets' shared ground anchor: `(0, -1.5, 0)`, on the
+ * ground line `y = -1.5` the ferns' own base sits on ({@link FERN_CENTER}'s
+ * `y`). Every scatter placement seats this point, and the kelp conjugation
+ * re-centres on it.
+ */
+const GROUND_ANCHOR: Vec3 = [0, -1.5, 0];
+
+/**
+ * A scatter placement map for the landscape presets: rotation + uniform
+ * scale, positioned so the SCENE's ground anchor {@link GROUND_ANCHOR}
+ * ((0, -1.5, 0) — the ferns' own base) lands exactly at `base`. Computed
+ * through the engine's own composition (`composeAffine` + `applyAffine`)
+ * so the seating can never drift from how the map is applied: the position
+ * is `base − M·anchor`, with `M·anchor` read off the composed map rather
+ * than restated here.
+ */
+function scatterOntoGround(
+  id: number,
+  spec: {
+    /** Uniform scale of the placed copy of the scene. */
+    s: number;
+    /** Euler-XYZ rotation of the placed copy. */
+    rotation: Vec3;
+    /** Where the placed copy's ground anchor lands. */
+    base: Vec3;
+    weight: number;
+    colorIndex?: number;
+    colorSpeed?: number;
+    w?: WExtension;
+  },
+): Transform {
+  const { s, rotation, base, weight, colorIndex, colorSpeed, w } = spec;
+  const linear = composeAffine({
+    id,
+    position: [0, 0, 0],
+    rotation,
+    scale: [s, s, s],
+  });
+  const seated = applyAffine(linear, ...GROUND_ANCHOR);
+  return {
+    id,
+    position: [base[0] - seated[0], base[1] - seated[1], base[2] - seated[2]],
+    rotation: [...rotation],
+    scale: [s, s, s],
+    weight,
+    ...(colorIndex !== undefined ? { colorIndex } : {}),
+    ...(colorSpeed !== undefined ? { colorSpeed } : {}),
+    ...(w !== undefined ? { w } : {}),
+  };
+}
+
+/**
+ * The kelp plant's four maps, authored in "kelp coordinates" (rooted at the
+ * origin, growing up +y to ~10 tall like Barnsley's fern) and conjugated at
+ * build time by the shrink-and-seat similarity
+ * `A(p) = FERN_SCALE·p + GROUND_ANCHOR` — {@link buildFern}'s exact
+ * treatment: conjugating by a similarity leaves each linear part untouched
+ * and only rewrites the translation to `FERN_SCALE·t + c − M·c`, with `M·c`
+ * computed through the engine's own `composeAffine` + `applyAffine` so the
+ * seating can never drift from how the map is applied.
+ *
+ * The shape is a rank-thin STIPE (near-zero x/z scale, the fern stem's
+ * treatment), a dominant CLIMB map whose gentle per-step yaw 0.12 + lean
+ * 0.10 arcs the plant over as it recurses — the forest-composition sheet's
+ * first draft used yaw 0.5, which coiled the stipe into a rosette: a
+ * per-step yaw that large wraps the plant — and two drooping BLADES pitched
+ * off the stipe like the fern's leaflets, one per side.
+ */
+function buildKelp(): Transform[] {
+  // (position, rotation, scale, weight) in kelp coordinates:
+  // stipe, climb, and the two blades.
+  const maps: {
+    id: number;
+    position: Vec3;
+    rotation: Vec3;
+    scale: Vec3;
+    weight: number;
+  }[] = [
+    {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.04, 0.16, 0.04],
+      weight: 2,
+    },
+    {
+      id: 1,
+      position: [0, 0.85, 0],
+      rotation: [0.05, 0.12, 0.1],
+      scale: [0.8, 0.92, 0.8],
+      weight: 78,
+    },
+    {
+      id: 2,
+      position: [0, 1.5, 0],
+      rotation: [0.25, 0, 1.25],
+      scale: [0.26, 0.3, 0.08],
+      weight: 9,
+    },
+    {
+      id: 3,
+      position: [0, 0.8, 0],
+      rotation: [-0.22, 0, -1.2],
+      scale: [0.24, 0.28, 0.08],
+      weight: 9,
+    },
+  ];
+  const [cx, cy, cz] = GROUND_ANCHOR;
+  return maps.map(({ id, position, rotation, scale, weight }): Transform => {
+    // M·c off the composed map (position zeroed, so applyAffine returns
+    // exactly the linear image of c), then t' = FERN_SCALE·t + c − M·c.
+    const mc = applyAffine(
+      composeAffine({ id, position: [0, 0, 0], rotation, scale }),
+      cx,
+      cy,
+      cz,
+    );
+    return {
+      id,
+      position: [
+        FERN_SCALE * position[0] + cx - mc[0],
+        FERN_SCALE * position[1] + cy - mc[1],
+        FERN_SCALE * position[2] + cz - mc[2],
+      ],
+      rotation,
+      scale,
+      weight,
+    };
+  });
+}
+
+/**
+ * "Fern Forest" — the first scatter-composed landscape:
+ * {@link curlingFern}'s four maps verbatim plus ONE placement map, a 0.8×
+ * ROW that seats the whole scene back on the ground line a step to the
+ * side. The attractor satisfies `A = fern(A) ∪ row(A)`, so the treeline is
+ * genuinely endless — an infinite receding colonnade, each copy 0.8× the
+ * last, vanishing toward `base/(1 − s)` — and the forest-composition sheet
+ * measured that row as the strongest construction of the wave (xSpan 8.8
+ * at s 0.8, against 6.0 at 0.7 and a smeared hedge wedge at 0.9), at the
+ * winning scatter share 43/143 ≈ 0.30 (0.45 over-weights the deep copies
+ * and the recession brightens into a spear).
+ *
+ * Authored for the FLAME renderer under the moss palette
+ * ({@link PRESET_RENDER_HINTS} / {@link PRESET_PALETTES}), where the
+ * scatter map's `colorIndex` recolors every copy for free — each copy's
+ * points took the row map as their LAST pick, so one blend step tints the
+ * whole copy — and `colorSpeed` 0.5 stretches the recolor into a depth
+ * gradient along the recession (0.9 saturates in about one copy). Surface
+ * is REFUSED for this system, and the reason is measured rather than
+ * assumed: Barnsley's stem map has x-scale exactly 0 — singular — and the
+ * surface gate names it ("map 1 is nearly flat"), so this preset is a
+ * points/flame composition.
+ */
+export function fernForest(): Transform[] {
+  return [
+    ...curlingFern(),
+    scatterOntoGround(4, {
+      s: 0.8,
+      rotation: [0, 0, 0],
+      base: [1.62, -1.5, -0.62],
+      weight: 43,
+      colorIndex: 0.8,
+      colorSpeed: 0.5,
+    }),
+  ];
+}
+
+/**
+ * "Fern Thicket" — {@link curlingFern} under THREE grove placements
+ * instead of {@link fernForest}'s one row: the canopy/thicket mound, and
+ * this doc is honest about what the forest-composition sheet measured. A
+ * grove of placements can NEVER read as distinct individuals in a plain
+ * IFS, because every scattered copy contains the whole scene again — so
+ * the placements render as a layered canopy (the wide spacing articulates
+ * three crown peaks but stays a thicket), and the mound IS that
+ * cross-coupling, shipped as such: a points showcase, no render hint.
+ * Distinct whole plants at the placements are the post-word stage's
+ * construction, measured on the same sheet — engine work this preset
+ * deliberately does not wait for.
+ *
+ * NO color fields, also deliberately: the points-mode look was judged with
+ * derived colors, and authoring `colorIndex` would also re-hue the points
+ * "By Transform" palette (`transformColors` reads `colorIndex` as the
+ * hue).
+ */
+export function fernThicket(): Transform[] {
+  return [
+    ...curlingFern(),
+    scatterOntoGround(4, {
+      s: 0.58,
+      rotation: [0, 0.6, 0.07],
+      base: [-1.85, -1.5, -0.55],
+      weight: 14.3,
+    }),
+    scatterOntoGround(5, {
+      s: 0.74,
+      rotation: [0, -1.1, -0.05],
+      base: [1.8, -1.5, -1.15],
+      weight: 14.3,
+    }),
+    scatterOntoGround(6, {
+      s: 0.64,
+      rotation: [0, 2.3, 0.1],
+      base: [0.35, -1.5, -2.1],
+      weight: 14.3,
+    }),
+  ];
+}
+
+/**
+ * "Kelp Forest" — the seabed: {@link buildKelp}'s plant under the same
+ * 0.8× row placement as {@link fernForest}, at weight 42 (the kelp plant's
+ * weights total 98, so 42 makes the scatter share exactly 0.30, the row's
+ * winning share). A receding kelp bed; under the flame renderer with the
+ * lagoon palette it renders a golden crest rolling into teal depths — the
+ * forest-composition sheet's strongest kelp picture, and the picture this
+ * preset is flame-hinted BY, not a refusal: the kelp systems are
+ * degraded-ELIGIBLE for Surface and march clean and cheap (measured 523ms
+ * at 128px, 0 exhausted), but the DE shell renders a blobby union of
+ * climb-map images, nothing kelp-like.
+ */
+export function kelpForest(): Transform[] {
+  return [
+    ...buildKelp(),
+    scatterOntoGround(4, {
+      s: 0.8,
+      rotation: [0, 0, 0],
+      base: [1.62, -1.5, -0.62],
+      weight: 42,
+      colorIndex: 0.8,
+      colorSpeed: 0.5,
+    }),
+  ];
 }
 
 /** Attach the same variation blend to every map in a system. */
@@ -2066,6 +2305,41 @@ export function hyperfern(): Transform[] {
 }
 
 /**
+ * "Hyperfern Forest" — {@link fernForest}'s receding colonnade built on the
+ * {@link hyperfern}, the landscape wave's 4D half. The one row map carries
+ * the w-mixing rotation (`w.rotation.xw` 0.35), so the rotation COMPOUNDS
+ * with recession — copy k is turned k·0.35 rad into `+w` — and the
+ * colonnade visibly rolls up into the fourth dimension AT THE IDENTITY
+ * ROTOR, the fresh-load pose (the forest-composition sheet measured the
+ * w-row's slice weight at meanAbsS 0.612 against the plain w-grove's
+ * 0.388, the best 4D picture of the sheet): near copies stay in the
+ * visible slice, deep copies foreshorten into a knot, and a yw/zw tumble
+ * unrolls the treeline back into view.
+ *
+ * `w.scale` is deliberately ABSENT on the row map: the derived value is
+ * the map's mean spatial contraction `(0.8 + 0.8 + 0.8)/3 = 0.8`, exactly
+ * its uniform scale, so the derived default is already the true rotation —
+ * contrast the hyperfern's frond, which must pin `w.scale` because its
+ * planar maps are z-flattened ({@link buildFern}). No scaffold, like
+ * {@link hyperfern} itself: a scattered landscape has no natural
+ * wireframe.
+ */
+export function hyperfernForest(): Transform[] {
+  return [
+    ...hyperfern(),
+    scatterOntoGround(4, {
+      s: 0.8,
+      rotation: [0, 0, 0],
+      base: [1.62, -1.5, -0.62],
+      weight: 43,
+      colorIndex: 0.8,
+      colorSpeed: 0.5,
+      w: { rotation: { xw: 0.35 } },
+    }),
+  ];
+}
+
+/**
  * The named systems offered in the preset menu, mapped to their transform
  * factories. `default` is the system the viewer boots with (see
  * {@link defaultTransforms}); listing it here keeps the startup fractal
@@ -2152,6 +2426,14 @@ const PRESETS = {
   mandelboxBrick,
   mandelboxColumn,
   hybridChainShells,
+  // The scatter-composed landscapes: a plant sub-IFS plus placement maps
+  // that seat the whole scene back on the ground line, measured organic
+  // rather than mush by the forest-composition sheet
+  // (`scripts/forest-composition.harness.ts`).
+  fernForest,
+  fernThicket,
+  kelpForest,
+  hyperfernForest,
 } as const satisfies Record<string, () => Transform[]>;
 
 export type Preset = keyof typeof PRESETS;
@@ -2254,6 +2536,14 @@ export const PRESET_RENDER_HINTS: Partial<
   mandelboxBrick: "surface",
   mandelboxColumn: "surface",
   hybridChainShells: "surface",
+  // The receding-row landscapes are flame compositions: the log-density
+  // exposure plus the row map's authored colorIndex/colorSpeed turn the
+  // colonnade's recession into a depth gradient (and fernForest's system
+  // the surface gate refuses outright — Barnsley's stem map is singular).
+  // The grove-shaped fernThicket and the 4D hyperfernForest stay
+  // point-cloud showcases and carry no entry.
+  fernForest: "flame",
+  kelpForest: "flame",
 };
 
 /**
@@ -2306,6 +2596,12 @@ export const PRESET_PALETTES: Partial<Record<Preset, FlamePaletteId>> = {
   juliaIsland: "dusk",
   juliaSnowflake: "sunset",
   juliaPinwheel: "sunset",
+  // The landscape rows were composed against these palettes on the
+  // forest-composition sheet: the fern colonnade renders red-to-green
+  // under moss, and the kelp row under lagoon is a golden crest rolling
+  // into teal depths.
+  fernForest: "moss",
+  kelpForest: "lagoon",
 };
 
 /**

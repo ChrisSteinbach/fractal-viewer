@@ -1,5 +1,5 @@
-import { composeAffine } from "./affine";
-import { systemPartsAreNonFlat, toTransform4 } from "./affine4";
+import { applyAffine, composeAffine } from "./affine";
+import { systemIsFlat, systemPartsAreNonFlat, toTransform4 } from "./affine4";
 import {
   DEFAULT_COLOR_SPEED,
   derivedColorIndex,
@@ -28,11 +28,14 @@ import {
   doubleRotation,
   duoprism,
   duoprismWireframe,
+  fernForest,
+  fernThicket,
   hybridChainCraters,
   hybridChainCube,
   hybridChainQuaternion,
   hybridChainShells,
   hyperfern,
+  hyperfernForest,
   icosahedronFlake,
   jerusalemCube,
   juliaDust,
@@ -42,6 +45,7 @@ import {
   juliaSet,
   juliaSnowflake,
   juliaSnowflakeLens,
+  kelpForest,
   mandelboxBrick,
   mandelboxColumn,
   mandelboxKifs,
@@ -1226,6 +1230,136 @@ describe("hyperfern (4D preset)", () => {
     // Planar in z: nothing ever mixes z, so the seed's z decays to nothing.
     expect(maxZ - minZ).toBeLessThan(1e-9);
     expect(maxW - minW).toBeGreaterThan(0.2 * height); // genuinely curled
+  });
+});
+
+describe("the landscape presets", () => {
+  // The whole wave shares one construction: a shipped plant sub-IFS
+  // verbatim plus scatter placement maps. The plant halves must be the
+  // shipped presets' maps exactly — a landscape is a composition, not a
+  // re-tuning.
+  it("builds on the shipped plants verbatim", () => {
+    expect(fernForest().slice(0, 4)).toEqual(curlingFern());
+    expect(fernThicket().slice(0, 4)).toEqual(curlingFern());
+    expect(hyperfernForest().slice(0, 4)).toEqual(hyperfern());
+  });
+
+  // The seating rule: a scatter map's position is chosen so the scene's
+  // ground anchor (0, -1.5, 0) — the ferns' own base — lands exactly at the
+  // authored base point. Pinned both ways: the computed position, and the
+  // seating itself through the engine's own composition.
+  it("seats fernForest's row map on the ground line", () => {
+    const row = fernForest()[4];
+    expect(row.position[0]).toBeCloseTo(1.62, 10);
+    expect(row.position[1]).toBeCloseTo(-0.3, 10);
+    expect(row.position[2]).toBeCloseTo(-0.62, 10);
+    const seated = applyAffine(composeAffine(row), 0, -1.5, 0);
+    expect(seated[0]).toBeCloseTo(1.62, 12);
+    expect(seated[1]).toBeCloseTo(-1.5, 12);
+    expect(seated[2]).toBeCloseTo(-0.62, 12);
+  });
+
+  it("seats fernThicket's three grove placements at their authored poses", () => {
+    const grove = fernThicket().slice(4);
+    const expected = [
+      [-1.9002, -0.6321, -0.5156],
+      [1.8252, -0.3914, -1.1006],
+      [0.4139, -0.5448, -2.0285],
+    ];
+    expect(grove).toHaveLength(3);
+    grove.forEach((map, i) => {
+      map.position.forEach((c, axis) => {
+        expect(c).toBeCloseTo(expected[i][axis], 4);
+      });
+    });
+  });
+
+  // The thicket's points-mode look was judged with DERIVED colors, and an
+  // authored colorIndex would also re-hue the points "By Transform"
+  // palette (transformColors reads colorIndex as the hue) — so no map may
+  // carry either color field.
+  it("keeps fernThicket free of authored color fields", () => {
+    for (const map of fernThicket()) {
+      expect(map.colorIndex).toBeUndefined();
+      expect(map.colorSpeed).toBeUndefined();
+    }
+  });
+
+  it("gives kelpForest the row's winning share over a contracting plant", () => {
+    const transforms = kelpForest();
+    expect(transforms.map((t) => t.weight)).toEqual([2, 78, 9, 9, 42]);
+    // The kelp plant's weights total 98, so 42 is EXACTLY the sheet's
+    // winning scatter share of 0.30 — not approximately.
+    expect(42 / 140).toBe(0.3);
+    // Every map contracts (all scale magnitudes < 1), so the chaos game
+    // converges rather than escaping.
+    for (const t of transforms) {
+      for (const c of t.scale) {
+        expect(Math.abs(c)).toBeLessThan(1);
+      }
+    }
+  });
+
+  it("keeps the kelp bed inside its box", () => {
+    const { bounds } = runChaosGame(kelpForest(), 30000, mulberry32(1));
+    for (const v of Object.values(bounds)) {
+      expect(Number.isFinite(v)).toBe(true);
+    }
+    // The sheet measured ≈3.2 of height for the kelp plant alone; the
+    // row's receding copies are each smaller than their parent, so the bed
+    // adds height slowly and the plant stays in its box.
+    const ySpan = bounds.maxY - bounds.minY;
+    expect(ySpan).toBeGreaterThan(2.5);
+    expect(ySpan).toBeLessThan(4.5);
+  });
+
+  // The wave's 4D half: the ONE row map carries the w-mixing rotation, so
+  // the rotation compounds with recession — copy k is turned k·0.35 rad
+  // into +w.
+  it("turns hyperfernForest's row map into +w with no pinned w scale", () => {
+    const row = hyperfernForest()[4];
+    expect(row.w?.rotation?.xw).toBe(0.35);
+    expect(row.w?.rotation?.yw).toBeUndefined();
+    expect(row.w?.rotation?.zw).toBeUndefined();
+    expect(row.w?.position).toBeUndefined();
+    // w.scale stays ABSENT because the derived default — the mean spatial
+    // contraction — is already the map's uniform 0.8, so deriving IS the
+    // true rotation (unlike hyperfern's z-flattened frond, which pins it).
+    expect(row.w?.scale).toBeUndefined();
+    expect(toTransform4(row).scale[3]).toBeCloseTo(0.8, 12);
+    expect(systemIsFlat(hyperfernForest())).toBe(false);
+  });
+
+  it("rolls the treeline genuinely out of the w = 0 hyperplane", () => {
+    const { bounds } = runChaosGame4(
+      hyperfernForest().map(toTransform4),
+      30000,
+      mulberry32(4),
+    );
+    for (const v of Object.values(bounds)) {
+      expect(Number.isFinite(v)).toBe(true);
+    }
+    expect(bounds.maxW - bounds.minW).toBeGreaterThan(0.5);
+  });
+
+  // Registration: all four are real presets; the two row landscapes open
+  // in the flame renderer under their composed palettes, while the thicket
+  // and the 4D colonnade stay point-cloud showcases (no hint entry).
+  it("registers the wave with its render hints and palettes", () => {
+    for (const key of [
+      "fernForest",
+      "fernThicket",
+      "kelpForest",
+      "hyperfernForest",
+    ]) {
+      expect(PRESET_NAMES).toContain(key);
+    }
+    expect(PRESET_RENDER_HINTS.fernForest).toBe("flame");
+    expect(PRESET_RENDER_HINTS.kelpForest).toBe("flame");
+    expect(PRESET_RENDER_HINTS.fernThicket).toBeUndefined();
+    expect(PRESET_RENDER_HINTS.hyperfernForest).toBeUndefined();
+    expect(PRESET_PALETTES.fernForest).toBe("moss");
+    expect(PRESET_PALETTES.kelpForest).toBe("lagoon");
   });
 });
 
