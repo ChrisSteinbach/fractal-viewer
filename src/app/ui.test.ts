@@ -8,6 +8,7 @@ import {
   MAX_COLOR_GAMMA,
   MORPH_DETAILS,
   PARAM,
+  setBackgroundFlamePaletteId,
   setBackgroundMode,
   setBackgroundShape,
   setFlamePaletteId,
@@ -8346,12 +8347,44 @@ describe("background shape select menu", () => {
   });
 });
 
+describe("background Flame palette select menu", () => {
+  it("offers exactly the registered Flame palettes plus Custom, in order", () => {
+    const values = Array.from(
+      document.querySelectorAll<HTMLOptionElement>(
+        "#backgroundFlamePalette option",
+      ),
+    ).map((o) => o.value);
+
+    expect(values).toEqual([...FLAME_PALETTE_IDS, CUSTOM_PALETTE_ID]);
+  });
+
+  it("applies the selected palette to the backdrop-owned state field", () => {
+    const { handlers, current } = scalarHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const select = document.getElementById(
+      "backgroundFlamePalette",
+    ) as HTMLSelectElement;
+
+    select.value = "lagoon";
+    select.dispatchEvent(new Event("change"));
+
+    expect(current().background.flamePaletteId).toBe("lagoon");
+  });
+});
+
 describe("Ui background backdrop row", () => {
   function backgroundShapeRow(): HTMLElement {
     return document.getElementById("backgroundShapeRow") as HTMLElement;
   }
   function backgroundCustomRow(): HTMLElement {
     return document.getElementById("backgroundCustomRow") as HTMLElement;
+  }
+  function backgroundFlamePaletteRow(): HTMLElement {
+    return document.getElementById("backgroundFlamePaletteRow") as HTMLElement;
+  }
+  function backgroundCustomPaletteRow(): HTMLElement {
+    return document.getElementById("backgroundCustomPaletteRow") as HTMLElement;
   }
   function el(id: string): HTMLInputElement {
     return document.getElementById(id) as HTMLInputElement;
@@ -8361,6 +8394,7 @@ describe("Ui background backdrop row", () => {
     const ui = new Ui(document);
     ui.updateLabels(initialState(true));
     expect(backgroundCustomRow().classList.contains("hidden")).toBe(true);
+    expect(backgroundFlamePaletteRow().classList.contains("hidden")).toBe(true);
   });
 
   it('stays hidden once the background mode is "auto"', () => {
@@ -8369,12 +8403,81 @@ describe("Ui background backdrop row", () => {
     expect(backgroundCustomRow().classList.contains("hidden")).toBe(true);
   });
 
-  it('hides both gradient-only rows once the background mode is "flame"', () => {
+  it('replaces the gradient-only rows with the palette control in "flame" mode', () => {
     const ui = new Ui(document);
     ui.updateLabels(setBackgroundMode(initialState(true), "flame"));
 
     expect(backgroundShapeRow().classList.contains("hidden")).toBe(true);
     expect(backgroundCustomRow().classList.contains("hidden")).toBe(true);
+    expect(backgroundFlamePaletteRow().classList.contains("hidden")).toBe(
+      false,
+    );
+    expect(
+      (document.getElementById("backgroundFlamePalette") as HTMLSelectElement)
+        .value,
+    ).toBe("spectrum");
+  });
+
+  it("shows the shared gradient editor for a Custom Flame backdrop palette", () => {
+    const ui = new Ui(document);
+    const state = setBackgroundMode(
+      setBackgroundFlamePaletteId(initialState(true), "custom"),
+      "flame",
+    );
+
+    ui.updateLabels(state);
+
+    expect(backgroundCustomPaletteRow().classList.contains("hidden")).toBe(
+      false,
+    );
+    expect(
+      document.querySelectorAll(
+        '#backgroundCustomPaletteStops input[type="color"]',
+      ),
+    ).toHaveLength(state.customPalette!.stops.length);
+  });
+
+  it("reports edits from the Flame backdrop's Custom gradient editor", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    const state = setBackgroundMode(
+      setBackgroundFlamePaletteId(initialState(true), "custom"),
+      "flame",
+    );
+    ui.bind(handlers);
+    ui.updateLabels(state);
+    const inputs = Array.from(
+      document.querySelectorAll<HTMLInputElement>(
+        '#backgroundCustomPaletteStops input[type="color"]',
+      ),
+    );
+
+    inputs[0].value = "#010203";
+    inputs[0].dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(handlers.onCustomPaletteStops).toHaveBeenCalledWith([
+      [1 / 255, 2 / 255, 3 / 255],
+      ...state.customPalette!.stops.slice(1),
+    ]);
+  });
+
+  it("keeps the Flame palette dormant and hides its editor outside Flame mode", () => {
+    const ui = new Ui(document);
+    const custom = setBackgroundMode(
+      setBackgroundFlamePaletteId(initialState(true), "custom"),
+      "haze",
+    );
+
+    ui.updateLabels(custom);
+
+    expect(backgroundFlamePaletteRow().classList.contains("hidden")).toBe(true);
+    expect(backgroundCustomPaletteRow().classList.contains("hidden")).toBe(
+      true,
+    );
+    expect(
+      (document.getElementById("backgroundFlamePalette") as HTMLSelectElement)
+        .value,
+    ).toBe("custom");
   });
 
   it("restores the dormant authored shape when leaving flame mode", () => {

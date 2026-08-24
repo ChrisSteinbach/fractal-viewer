@@ -193,6 +193,14 @@ describe("applyScalarControl: parsing/mapping", () => {
     expect(state.background.shape).toBe("radial");
   });
 
+  it("backgroundFlamePalette select apply authors the backdrop palette", () => {
+    const spec = specById("backgroundFlamePalette");
+
+    const state = applyScalarControl(initialState(true), spec, "ember");
+
+    expect(state.background.flamePaletteId).toBe("ember");
+  });
+
   it("showGuides checkbox apply sets showGuides from the checked flag", () => {
     const spec = specById("showGuides");
 
@@ -476,6 +484,21 @@ describe("effects", () => {
       spec.effect?.(state, fx, previous);
 
       expect(fx.applyBackground).toHaveBeenCalledTimes(1);
+      for (const sceneMethod of Object.values(fx.scene)) {
+        expect(sceneMethod).not.toHaveBeenCalled();
+      }
+    });
+
+    it("backgroundFlamePalette effect requests one guarded backdrop refresh", () => {
+      const spec = specById("backgroundFlamePalette");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "aurora");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.trackAutoBackground).toHaveBeenCalledTimes(1);
+      expect(fx.applyBackground).not.toHaveBeenCalled();
       for (const sceneMethod of Object.values(fx.scene)) {
         expect(sceneMethod).not.toHaveBeenCalled();
       }

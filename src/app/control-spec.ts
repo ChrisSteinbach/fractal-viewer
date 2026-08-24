@@ -10,6 +10,7 @@ import type { FlameWorkerCommand } from "./flame-worker-core";
 import type { VoxelWorkerCommand } from "./voxel-worker-core";
 import { hexToRgb01 } from "./constants";
 import {
+  DEFAULT_FLAME_PALETTE,
   DEFAULT_SOLID_PALETTE,
   FLAME_ITERATION_DETENTS,
   MAX_COLOR_GAMMA,
@@ -18,6 +19,7 @@ import {
   nearestFlameIterationDetentIndex,
   setAdaptiveResolution,
   setAutoUpdate,
+  setBackgroundFlamePaletteId,
   setBackgroundMode,
   setBackgroundShape,
   setBalloonEcho,
@@ -615,6 +617,18 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     read: (s) => s.background.shape ?? "linear",
     apply: (s, raw) => setBackgroundShape(s, raw as BackgroundShape),
     effect: (s, fx) => fx.applyBackground(),
+  },
+  {
+    // The generated backdrop owns its palette instead of borrowing whichever
+    // renderer happens to be active. The row is visible only in Flame
+    // background mode (ui.ts), but the authored value persists dormantly.
+    // trackAutoBackground is also the app's guarded decorative-Flame refresh
+    // coordinator, despite its historical name.
+    kind: "select",
+    id: "backgroundFlamePalette",
+    read: (s) => s.background.flamePaletteId ?? DEFAULT_FLAME_PALETTE,
+    apply: (s, raw) => setBackgroundFlamePaletteId(s, raw as PaletteSelection),
+    effect: (s, fx) => fx.trackAutoBackground(),
   },
   {
     // The Fog slider: depth-fog density, spanning the points explorer's

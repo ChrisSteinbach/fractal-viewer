@@ -90,10 +90,12 @@ import {
   nearestFlameIterationDetentIndex,
   PARAM,
   removeTransform,
+  resolveFlameBackdropPalette,
   resolveSceneBackground,
   selectTransform,
   setAdaptiveResolution,
   setBackgroundCustom,
+  setBackgroundFlamePaletteId,
   setBackgroundMode,
   setBackgroundShape,
   setBalloonEcho,
@@ -1821,6 +1823,62 @@ describe("setBackgroundShape", () => {
     const next = setBackgroundShape(state, "radial");
     expect(next.background).toEqual({ mode: "haze", shape: "radial" });
     expect(state.background).not.toHaveProperty("shape");
+  });
+});
+
+describe("setBackgroundFlamePaletteId", () => {
+  it("authors a backdrop-owned palette without changing its mode", () => {
+    const state = setBackgroundMode(initialState(true), "flame");
+    const next = setBackgroundFlamePaletteId(state, "aurora");
+
+    expect(next.background).toEqual({
+      mode: "flame",
+      flamePaletteId: "aurora",
+    });
+    expect(state.background).toEqual({ mode: "flame" });
+  });
+
+  it("keeps the palette dormant when another backdrop mode is selected", () => {
+    const authored = setBackgroundFlamePaletteId(initialState(true), "ember");
+    const next = setBackgroundMode(authored, "haze");
+
+    expect(next.background).toEqual({
+      mode: "haze",
+      flamePaletteId: "ember",
+    });
+  });
+
+  it("seeds a first Custom selection from the backdrop palette being replaced", () => {
+    const authored = setBackgroundFlamePaletteId(initialState(true), "sunset");
+    const next = setBackgroundFlamePaletteId(authored, "custom");
+
+    expect(next.background.flamePaletteId).toBe("custom");
+    expect(next.customPalette?.stops).toEqual(seedCustomStops("sunset"));
+  });
+});
+
+describe("resolveFlameBackdropPalette", () => {
+  it("defaults to Spectrum instead of the points renderer's Transform palette", () => {
+    const state = setBackgroundMode(initialState(true), "flame");
+
+    expect(state.rampPaletteId).toBe("legacy");
+    expect(resolveFlameBackdropPalette(state)).toBe(DEFAULT_FLAME_PALETTE);
+  });
+
+  it("uses the backdrop-owned palette independently of the active renderer", () => {
+    const state = setRenderMode(
+      setBackgroundFlamePaletteId(initialState(true), "lagoon"),
+      "surface",
+    );
+
+    expect(activeScenePalette(state)).toBe(state.surface.paletteId);
+    expect(resolveFlameBackdropPalette(state)).toBe("lagoon");
+  });
+
+  it("resolves the backdrop's Custom selection to the shared authored stops", () => {
+    const state = setBackgroundFlamePaletteId(initialState(true), "custom");
+
+    expect(resolveFlameBackdropPalette(state)).toBe(state.customPalette);
   });
 });
 

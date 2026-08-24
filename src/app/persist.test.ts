@@ -4367,6 +4367,80 @@ describe("decodeScene background", () => {
     expect(decodeScene(encodeScene(s))!.background).toEqual({ mode: "flame" });
   });
 
+  it("round-trips a backdrop-owned Flame palette", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: { mode: "flame", flamePaletteId: "aurora" },
+    };
+
+    const encoded = encodeScene(s);
+
+    expect(decodePayload(encoded).background).toEqual({
+      mode: "flame",
+      flamePaletteId: "aurora",
+    });
+    expect(decodeScene(encoded)!.background).toEqual(s.background);
+  });
+
+  it("keeps a non-default Flame palette dormant outside Flame backdrop mode", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: { mode: "haze", flamePaletteId: "ember" },
+    };
+
+    expect(decodeScene(encodeScene(s))!.background).toEqual(s.background);
+  });
+
+  it("omits the default Spectrum Flame palette from the background wire form", () => {
+    const withExplicitDefault: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: { mode: "flame", flamePaletteId: "spectrum" },
+    };
+    const withAbsentDefault: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: { mode: "flame" },
+    };
+
+    expect(encodeScene(withExplicitDefault)).toBe(
+      encodeScene(withAbsentDefault),
+    );
+    expect(decodePayload(encodeScene(withExplicitDefault)).background).toEqual({
+      mode: "flame",
+    });
+  });
+
+  it("round-trips a Custom Flame backdrop palette with its shared stops", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: { mode: "flame", flamePaletteId: "custom" },
+      customPalette: {
+        stops: [
+          [0.2, 0.4, 0.6],
+          [0.8, 1, 0],
+        ],
+      },
+    };
+
+    const result = decodeScene(encodeScene(s));
+
+    expect(result!.background).toEqual(s.background);
+    expect(result!.customPalette).toEqual(s.customPalette);
+  });
+
+  it("falls back to Spectrum shorthand for an unknown or payload-less Custom Flame backdrop palette", () => {
+    for (const flamePaletteId of ["future-palette", "custom"]) {
+      const raw = {
+        ...baseSnapshot(),
+        background: { mode: "flame", flamePaletteId },
+      };
+
+      const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+
+      expect(result).not.toBeNull();
+      expect(result!.background).toEqual({ mode: "flame" });
+    }
+  });
+
   it("keeps authored gradient slots dormant while flame is selected", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),
