@@ -911,6 +911,54 @@
               Balloon echo
             </label>
 
+            <div id="balloonPaletteRow">
+              <label class="select-label">
+                Balloon Palette
+                <select id="balloonPalette">
+                  <option value="inherit">Inherit</option>
+                  <option value="spectrum">Spectrum</option>
+                  <option value="sunset">Sunset</option>
+                  <option value="dusk">Dusk</option>
+                  <option value="lagoon">Lagoon</option>
+                  <option value="ember">Ember</option>
+                  <option value="aurora">Aurora</option>
+                  <option value="moss">Moss</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </label>
+              <div
+                id="balloonCustomPaletteRow"
+                class="custom-palette-row hidden"
+              >
+                <div
+                  id="balloonCustomPaletteStrip"
+                  class="custom-palette-strip"
+                ></div>
+                <div
+                  id="balloonCustomPaletteStops"
+                  class="custom-palette-stops"
+                ></div>
+                <div class="custom-palette-actions">
+                  <button
+                    class="btn btn-ghost"
+                    id="balloonCustomPaletteRemove"
+                    type="button"
+                    title="Remove the last balloon color stop"
+                  >
+                    − Stop
+                  </button>
+                  <button
+                    class="btn btn-ghost"
+                    id="balloonCustomPaletteAdd"
+                    type="button"
+                    title="Add a balloon color stop"
+                  >
+                    + Stop
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div id="balloonRadiusRow" class="hidden">
               <label class="select-label">
                 Balloon size: <span id="balloonRadiusLabel">1.60×</span>
@@ -1257,6 +1305,53 @@
             <input type="checkbox" id="flameBalloonCheckbox" />
             Balloon echo
           </label>
+          <div id="flameBalloonPaletteRow">
+            <label class="select-label">
+              Balloon Palette
+              <select id="flameBalloonPalette">
+                <option value="inherit">Inherit</option>
+                <option value="spectrum">Spectrum</option>
+                <option value="sunset">Sunset</option>
+                <option value="dusk">Dusk</option>
+                <option value="lagoon">Lagoon</option>
+                <option value="ember">Ember</option>
+                <option value="aurora">Aurora</option>
+                <option value="moss">Moss</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+            <div
+              id="flameBalloonCustomPaletteRow"
+              class="custom-palette-row hidden"
+            >
+              <div
+                id="flameBalloonCustomPaletteStrip"
+                class="custom-palette-strip"
+              ></div>
+              <div
+                id="flameBalloonCustomPaletteStops"
+                class="custom-palette-stops"
+              ></div>
+              <div class="custom-palette-actions">
+                <button
+                  class="btn btn-ghost"
+                  id="flameBalloonCustomPaletteRemove"
+                  type="button"
+                  title="Remove the last balloon color stop"
+                >
+                  − Stop
+                </button>
+                <button
+                  class="btn btn-ghost"
+                  id="flameBalloonCustomPaletteAdd"
+                  type="button"
+                  title="Add a balloon color stop"
+                >
+                  + Stop
+                </button>
+              </div>
+            </div>
+          </div>
           <div id="flameBalloonRadiusRow" class="hidden">
             <label class="select-label">
               Balloon size: <span id="flameBalloonRadiusLabel">1.60×</span>
@@ -1659,6 +1754,53 @@
             <input type="checkbox" id="surfaceBalloonCheckbox" />
             Balloon
           </label>
+          <div id="surfaceBalloonPaletteRow">
+            <label class="select-label">
+              Balloon Palette
+              <select id="surfaceBalloonPalette">
+                <option value="inherit">Inherit</option>
+                <option value="spectrum">Spectrum</option>
+                <option value="sunset">Sunset</option>
+                <option value="dusk">Dusk</option>
+                <option value="lagoon">Lagoon</option>
+                <option value="ember">Ember</option>
+                <option value="aurora">Aurora</option>
+                <option value="moss">Moss</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+            <div
+              id="surfaceBalloonCustomPaletteRow"
+              class="custom-palette-row hidden"
+            >
+              <div
+                id="surfaceBalloonCustomPaletteStrip"
+                class="custom-palette-strip"
+              ></div>
+              <div
+                id="surfaceBalloonCustomPaletteStops"
+                class="custom-palette-stops"
+              ></div>
+              <div class="custom-palette-actions">
+                <button
+                  class="btn btn-ghost"
+                  id="surfaceBalloonCustomPaletteRemove"
+                  type="button"
+                  title="Remove the last balloon color stop"
+                >
+                  − Stop
+                </button>
+                <button
+                  class="btn btn-ghost"
+                  id="surfaceBalloonCustomPaletteAdd"
+                  type="button"
+                  title="Add a balloon color stop"
+                >
+                  + Stop
+                </button>
+              </div>
+            </div>
+          </div>
           <div id="surfaceBalloonRadiusRow" class="hidden">
             <label class="select-label">
               Balloon size: <span id="surfaceBalloonRadiusLabel">1.60×</span>

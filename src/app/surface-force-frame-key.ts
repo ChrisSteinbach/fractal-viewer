@@ -175,6 +175,10 @@ export function surfaceComputeForceFrameKey(
           // default does (fractal/surface-de-gpu.ts).
           (spec.balloonTint ?? [0, 0, 0]).join(","),
           spec.balloonTintStrength ?? 0,
+          // Independent balloon palette: inherit is a stable sentinel;
+          // otherwise the scene's monotonic revision invalidates a parked
+          // force-frame without conflating it with the primary LUT version.
+          spec.balloonLut ? (spec.balloonLutVersion ?? 0) : "inherit",
         ]
       : []),
     // The ground plane block: the balloon block's own precedent one

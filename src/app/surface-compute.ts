@@ -503,6 +503,11 @@ export interface SurfaceComputeFrameSpec {
   /** Monotonic version so the renderer re-uploads the LUT texture only
    * when the ramp actually changed. */
   lutVersion: number;
+  /** Independent balloon 256x4 RGBA palette bytes. `null`/absent is explicit
+   * inherit; non-balloon targets ignore it and allocate no second texture. */
+  balloonLut?: Uint8Array | null;
+  /** Monotonic balloon-LUT revision, independent of the primary surface LUT. */
+  balloonLutVersion?: number;
   dither: boolean;
   /** The 4D session's LIVE view: the same (rotor, w0, sliceHalfW) triple
    * `setSurfaceView4` receives, re-read from scene state at every spec
@@ -1475,6 +1480,8 @@ export interface SurfaceComputeRendererInit {
   mapsBuf: GPUBuffer;
   shadeMapsBuf: GPUBuffer;
   lutTex: GPUTexture;
+  /** Balloon-only LUT, allocated only for a target compiled with balloon. */
+  balloonLutTex?: GPUTexture | null;
   lutSamp: GPUSampler;
   /** Adapter label from create()'s requestAdapter — surfaced in the UI's
    * backend disclosure; undefined when the adapter offered no
@@ -1754,6 +1761,9 @@ export class SurfaceComputeRenderer {
         bufferEntry(5, "storage"),
       ],
     });
+    const targetHasBalloon =
+      (target.kind === "ifs" || target.kind === "ifs4") &&
+      target.balloon === true;
     const shadeLayout = device.createBindGroupLayout({
       entries: [
         bufferEntry(0, "uniform"),
@@ -1774,6 +1784,15 @@ export class SurfaceComputeRenderer {
           sampler: { type: "filtering" },
         },
         bufferEntry(9, "storage"),
+        ...(targetHasBalloon
+          ? [
+              {
+                binding: 10,
+                visibility: GPUShaderStage.COMPUTE,
+                texture: { sampleType: "float" as const },
+              },
+            ]
+          : []),
       ],
     });
     // An ifs4 target compiles a SECOND, slab-free kernel pair beside the
@@ -1924,6 +1943,21 @@ export class SurfaceComputeRenderer {
       { bytesPerRow: 256 * 4 },
       { width: 256, height: 1 },
     );
+    const balloonLutTex = targetHasBalloon
+      ? device.createTexture({
+          size: { width: 256, height: 1 },
+          format: "rgba8unorm",
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+        })
+      : null;
+    if (balloonLutTex) {
+      device.queue.writeTexture(
+        { texture: balloonLutTex },
+        WHITE_LUT,
+        { bytesPerRow: 256 * 4 },
+        { width: 256, height: 1 },
+      );
+    }
     const lutSamp = device.createSampler({
       magFilter: "linear",
       minFilter: "linear",
@@ -1954,6 +1988,7 @@ export class SurfaceComputeRenderer {
       mapsBuf,
       shadeMapsBuf,
       lutTex,
+      balloonLutTex,
       lutSamp,
       adapterLabel: adapterStatus.label,
       software: adapterStatus.software,
@@ -2052,6 +2087,7 @@ export class SurfaceComputeRenderer {
   private chain: Promise<unknown> = Promise.resolve();
   private frame: FrameBuffers | null = null;
   private uploadedLutVersion: number | null = null;
+  private uploadedBalloonLutVersion: number | null = null;
   private background: {
     width: number;
     height: number;
@@ -2091,6 +2127,7 @@ export class SurfaceComputeRenderer {
   private readonly mapsBuf: GPUBuffer;
   private readonly shadeMapsBuf: GPUBuffer;
   private readonly lutTex: GPUTexture;
+  private readonly balloonLutTex: GPUTexture | null;
   private readonly lutSamp: GPUSampler;
   /** See {@link SurfaceComputeRendererInit.adapterLabel}. */
   readonly adapterLabel: string | undefined;
@@ -2116,6 +2153,7 @@ export class SurfaceComputeRenderer {
     this.mapsBuf = init.mapsBuf;
     this.shadeMapsBuf = init.shadeMapsBuf;
     this.lutTex = init.lutTex;
+    this.balloonLutTex = init.balloonLutTex ?? null;
     this.lutSamp = init.lutSamp;
     this.adapterLabel = init.adapterLabel;
     this.software = init.software;
@@ -2454,6 +2492,14 @@ export class SurfaceComputeRenderer {
         { binding: 7, resource: this.lutTex.createView() },
         { binding: 8, resource: this.lutSamp },
         { binding: 9, resource: { buffer: layer } },
+        ...(this.balloonLutTex
+          ? [
+              {
+                binding: 10,
+                resource: this.balloonLutTex.createView(),
+              },
+            ]
+          : []),
       ],
     });
     this.frame = {
@@ -2617,6 +2663,19 @@ export class SurfaceComputeRenderer {
       );
       this.uploadedLutVersion = spec.lutVersion;
     }
+    if (
+      this.balloonLutTex &&
+      spec.balloonLut &&
+      (spec.balloonLutVersion ?? 0) !== this.uploadedBalloonLutVersion
+    ) {
+      device.queue.writeTexture(
+        { texture: this.balloonLutTex },
+        new Uint8Array(spec.balloonLut),
+        { bytesPerRow: 256 * 4 },
+        { width: 256, height: 1 },
+      );
+      this.uploadedBalloonLutVersion = spec.balloonLutVersion ?? 0;
+    }
     device.queue.writeBuffer(
       this.shadeBuf,
       0,
@@ -2632,6 +2691,7 @@ export class SurfaceComputeRenderer {
         shadowSteps: spec.shadowSteps,
         aoTaps: spec.aoTaps,
         dither: spec.dither,
+        balloonPalette: this.balloonLutTex !== null && !!spec.balloonLut,
         fogTint: spec.fogTint,
         fogTintStrength: spec.fogTintStrength,
         // Ground and balloon kernels are mutually exclusive. Reuse the

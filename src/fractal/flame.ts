@@ -46,7 +46,7 @@ import {
   stepOrbit,
 } from "./chaos-game";
 import type { PreparedChaosGame } from "./chaos-game";
-import { invertBalloon } from "./balloon-de";
+import { balloonPaletteCoordinate, invertBalloon } from "./balloon-de";
 import type { Balloon } from "./balloon-de";
 import type { Rng } from "./rng";
 import type { Vec3 } from "./types";
@@ -264,6 +264,13 @@ const FALLBACK_COLOR: Vec3 = [1, 1, 1];
  * `c` to `0.5` alongside the point. `palette` is still required (and used when
  * `colorLUT` is omitted).
  *
+ * **Balloon coloring** is independent. With `echo` present, omit
+ * `echoColorLUT` to inherit the primary splat's color exactly. Supplying a
+ * 256-entry RGB LUT samples it at the pre-inversion source coordinate
+ * `clamp(length(source - echo.balloon.center) / echo.balloon.rho, 0, 1)`;
+ * that sampled color is tinted and then multiplied by `echo.weight` during
+ * accumulation. The primary splat never reads this LUT.
+ *
  * **Progressive**: pass the histogram returned by a previous call back in as
  * `histogram` to keep converging the same image — the orbit (and its color
  * coordinate) resumes from exactly where it left off (see
@@ -297,6 +304,7 @@ export function accumulateFlame(
   histogram?: FlameHistogram,
   colorLUT?: Float32Array,
   echo?: FlameBalloonEcho,
+  echoColorLUT?: Float32Array,
 ): FlameHistogram {
   if (projection.length !== 16) {
     throw new RangeError(
@@ -548,6 +556,16 @@ export function accumulateFlame(
     echoSource[0] = px;
     echoSource[1] = py;
     echoSource[2] = pz;
+    let er = r;
+    let eg = g;
+    let eb = b;
+    if (echoColorLUT !== undefined) {
+      const u = balloonPaletteCoordinate(echo.balloon, echoSource);
+      const li = Math.min(255, (u * 256) | 0) * 3;
+      er = echoColorLUT[li];
+      eg = echoColorLUT[li + 1];
+      eb = echoColorLUT[li + 2];
+    }
     const inv = invertBalloon(echo.balloon, echoSource, echoInverted);
     const ecw = rw0 * inv[0] + rw1 * inv[1] + rw2 * inv[2] + rw3;
     if (ecw > 0) {
@@ -561,9 +579,9 @@ export function accumulateFlame(
         if (hit > maxHits) maxHits = hit;
         const o = bucket * 3;
         const t = echo.tintStrength;
-        sumRGB[o] += (r + (echo.tint[0] - r) * t) * echo.weight;
-        sumRGB[o + 1] += (g + (echo.tint[1] - g) * t) * echo.weight;
-        sumRGB[o + 2] += (b + (echo.tint[2] - b) * t) * echo.weight;
+        sumRGB[o] += (er + (echo.tint[0] - er) * t) * echo.weight;
+        sumRGB[o + 1] += (eg + (echo.tint[1] - eg) * t) * echo.weight;
+        sumRGB[o + 2] += (eb + (echo.tint[2] - eb) * t) * echo.weight;
       }
     }
   }

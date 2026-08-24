@@ -101,7 +101,11 @@ import {
   PRESET_SURFACE_ROOMS,
   presetTransforms,
 } from "../fractal/presets";
-import { CUSTOM_PALETTE_ID, resolvePalette } from "../fractal/palette";
+import {
+  buildPaletteLUT,
+  CUSTOM_PALETTE_ID,
+  resolvePalette,
+} from "../fractal/palette";
 import { mutateSystem } from "../fractal/mutate-system";
 import { renderSystemThumb } from "./mutation-thumbs";
 import { randomSystem } from "../fractal/random-system";
@@ -152,12 +156,14 @@ import {
   initialState,
   MIN_BALLOON_RADIUS,
   removeTransform,
+  resolveBalloonPalette,
   resolveFlameBackdropPalette,
   resolveSceneBackground,
   selectTransform,
   setBalloonEcho,
   setBalloonRadius,
   setBalloonTint,
+  setBalloonCustomPaletteStops,
   setCustomPaletteStops,
   setFinalTransform,
   setFlamePaletteId,
@@ -2896,6 +2902,20 @@ function main(): void {
     };
   }
 
+  function flameBalloonPaletteSnapshot() {
+    return state.balloonEcho
+      ? (resolveBalloonPalette(state) ?? undefined)
+      : undefined;
+  }
+
+  /** Resolve and push the balloon's independent gradient to the two live
+   * scene renderers. Null is explicit inherit. Kept beside the Flame echo
+   * snapshot because all three render arms must read one state decision. */
+  function syncBalloonPaletteToScene(): void {
+    const palette = resolveBalloonPalette(state);
+    scene.setBalloonPalette(palette ? buildPaletteLUT(palette) : null);
+  }
+
   /** The decorative backdrop's own persistent worker. It uses the existing
    * flame protocol in transfer mode, but failures stay local: a backdrop is
    * optional and never falls back to synchronous work on the UI thread. */
@@ -3056,6 +3076,7 @@ function main(): void {
           : "Flame render: postMessage-transfer transport.",
       );
       const host = createFlameWorkerHost();
+      const balloonPalette = flameBalloonPaletteSnapshot();
 
       // Post the `start` via the freshly-created host, NOT flameSession.post:
       // RenderSession.enter only stores this returned handle afterwards, so
@@ -3082,6 +3103,10 @@ function main(): void {
         estimatorCurve: state.flame.estimatorCurve,
         palette: resolvePalette(state.flame.paletteId, state.customPalette),
         balloonEcho: flameBalloonEchoSnapshot(),
+        // Optional by construction: omitted is the worker's exact inherit
+        // path. Only send a resolved independent gradient while the balloon
+        // is enabled, avoiding even a LUT build in an echo-off session.
+        ...(balloonPalette ? { balloonPalette } : {}),
         order: state.symmetry.order,
         plane: state.symmetry.plane,
         twist: state.symmetry.twist ?? 0,
@@ -5091,6 +5116,7 @@ function main(): void {
         // the compute route the fragment materials stay untouched by the
         // session, so the uniform write is inert until a fallback re-enter
         // compiles one.
+        if (state.balloonEcho) syncBalloonPaletteToScene();
         scene.setSurfaceBalloon(state.balloonEcho, state.balloonRadius);
         // The session's authored materials — the arms' gated derivation
         // applied once for both engines: the fragment materials' lanes +
@@ -5620,6 +5646,7 @@ function main(): void {
     scene.setBalloonEchoEnabled(state.balloonEcho);
     scene.setBalloonEchoRadius(state.balloonRadius);
     scene.setSurfaceBalloonRadius(state.balloonRadius);
+    if (state.balloonEcho) syncBalloonPaletteToScene();
     // The balloon tint pair: pushed unconditionally, right beside the radius
     // it rides with — a restored document with a non-default tint would
     // otherwise render untinted until an edit first moved it.
@@ -6460,6 +6487,30 @@ function main(): void {
       // trackAutoBackground's own guards make this free otherwise.
       trackAutoBackground();
     },
+    // Balloon Custom is an entirely separate authored slot. Its rendering
+    // effects mirror the shared selection: Points/Surface receive the
+    // balloon-only scene LUT, Flame restarts because echo RGB is baked into
+    // accumulation. Editing dormant stops or editing while the balloon is
+    // off changes only the document, doing no renderer work.
+    onBalloonCustomPaletteStops: (stops) => {
+      stopShows({ notify: true });
+      editSession.beginEdit();
+      state = setBalloonCustomPaletteStops(state, stops);
+      ui.updateLabels(state);
+      if (!state.balloonEcho || state.balloonPaletteId !== CUSTOM_PALETTE_ID) {
+        return;
+      }
+      syncBalloonPaletteToScene();
+      const palette = resolveBalloonPalette(state);
+      if (state.renderMode === "flame") {
+        flameSession.post({
+          type: "setBalloonPalette",
+          ...(palette ? { palette } : {}),
+        });
+      } else if (state.renderMode === "surface") {
+        controlEffects.restartSurfaceRender();
+      }
+    },
     // The axis-color pickers are a bespoke widget like the gradient
     // editor: undo checkpoint + debounced save, reducer, label sync, then a
     // recolor over the cached run — never a regenerate. No worker forward:
@@ -6620,6 +6671,7 @@ function main(): void {
         balloonSweepStartMs = null;
         state = setBalloonEcho(state, true);
         state = setBalloonRadius(state, DEFAULT_BALLOON_RADIUS);
+        syncBalloonPaletteToScene();
         scene.setBalloonEchoEnabled(true);
         scene.setBalloonEchoRadius(state.balloonRadius);
         scene.setSurfaceBalloonRadius(state.balloonRadius);
@@ -6636,6 +6688,7 @@ function main(): void {
           // uniform the active variant doesn't carry.
           controlEffects.restartSurfaceRender();
         } else {
+          syncBalloonPaletteToScene();
           scene.setBalloonEchoEnabled(true);
           scene.setBalloonEchoRadius(state.balloonRadius);
         }
@@ -7255,6 +7308,7 @@ function main(): void {
   scene.setBalloonEchoEnabled(state.balloonEcho);
   scene.setBalloonEchoRadius(state.balloonRadius);
   scene.setSurfaceBalloonRadius(state.balloonRadius);
+  if (state.balloonEcho) syncBalloonPaletteToScene();
   // Same push for the restored balloon tint pair, right beside the radius it
   // rides with: a document restored with a non-default tint would otherwise
   // render untinted until an edit first moved it.

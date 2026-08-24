@@ -34,6 +34,12 @@
  * itself accounts for inversion's spreading, while the frozen camera simply
  * discards unbounded images outside its frustum.
  *
+ * An optional echo-only LUT replaces that inherited base color. Its
+ * coordinate is the radius of the visible rotor-projected 3D source about
+ * the balloon center, normalized by `rho` and clamped before inversion; LUT
+ * lookup therefore happens after the 4D-to-visible-3D projection, then tint,
+ * then soft-slice/echo weight accumulation. The primary splat is unchanged.
+ *
  * **Coloring** has four flavors (see {@link import("./color").FourDRenderColor}): `"structural"` is
  * the cosine-palette path, an exact mirror of `accumulateFlame`'s `colorLUT`
  * mode — an orbit-riding coordinate blended toward the picked transform's
@@ -56,7 +62,7 @@
 import { ESCAPE_LIMIT, WARMUP_ITERATIONS } from "./chaos-game";
 import { pickIndex4, stepOrbit4 } from "./chaos-game-4d";
 import type { PreparedChaosGame4 } from "./chaos-game-4d";
-import { invertBalloon } from "./balloon-de";
+import { balloonPaletteCoordinate, invertBalloon } from "./balloon-de";
 import { createFlameHistogram } from "./flame";
 import type { FlameBalloonEcho, FlameHistogram, Mat4 } from "./flame";
 import { wRampColor } from "./color";
@@ -98,7 +104,8 @@ const FALLBACK_COLOR: Vec3 = [1, 1, 1];
  * required and validated at 20 and 16 coefficients respectively. They are
  * tail parameters so every existing no-echo caller keeps its original call
  * shape; see the module doc for why the nonlinear echo needs the two maps
- * separately.
+ * separately. `echoColorLUT` is also a tail parameter; omit it for exact
+ * inherited primary color.
  *
  * Pass a seeded {@link Rng} for reproducible output (tests); the app passes
  * `Math.random`.
@@ -116,6 +123,7 @@ export function accumulateFlame4(
   echo?: FlameBalloonEcho,
   rotorProjection?: RotorProjection4,
   cameraProjection?: Mat4,
+  echoColorLUT?: Float32Array,
 ): FlameHistogram {
   if (projection.length !== 20) {
     throw new RangeError(
@@ -495,6 +503,16 @@ export function accumulateFlame4(
     echoSource[1] = rp[5] * px + rp[6] * py + rp[7] * pz + rp[8] * pw + rp[9];
     echoSource[2] =
       rp[10] * px + rp[11] * py + rp[12] * pz + rp[13] * pw + rp[14];
+    let er = r;
+    let eg = g;
+    let eb = b;
+    if (echoColorLUT !== undefined) {
+      const u = balloonPaletteCoordinate(echo.balloon, echoSource);
+      const li = Math.min(255, (u * 256) | 0) * 3;
+      er = echoColorLUT[li];
+      eg = echoColorLUT[li + 1];
+      eb = echoColorLUT[li + 2];
+    }
     const inv = invertBalloon(echo.balloon, echoSource, echoInverted);
     const camera = cameraProjection!;
     const ecw =
@@ -522,9 +540,9 @@ export function accumulateFlame4(
         if (hit > maxHits) maxHits = hit;
         const o = bucket * 3;
         const t = echo.tintStrength;
-        sumRGB[o] += (r + (echo.tint[0] - r) * t) * echoWeight;
-        sumRGB[o + 1] += (g + (echo.tint[1] - g) * t) * echoWeight;
-        sumRGB[o + 2] += (b + (echo.tint[2] - b) * t) * echoWeight;
+        sumRGB[o] += (er + (echo.tint[0] - er) * t) * echoWeight;
+        sumRGB[o + 1] += (eg + (echo.tint[1] - eg) * t) * echoWeight;
+        sumRGB[o + 2] += (eb + (echo.tint[2] - eb) * t) * echoWeight;
       }
     }
   }

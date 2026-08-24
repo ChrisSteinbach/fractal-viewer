@@ -4,6 +4,7 @@ import { isLegacyPositionAxisColors } from "../fractal/color";
 import type { PositionAxisColors } from "../fractal/color";
 import {
   CUSTOM_PALETTE_ID,
+  FLAME_PALETTE_IDS,
   MAX_CUSTOM_PALETTE_STOPS,
   MIN_CUSTOM_PALETTE_STOPS,
   resolvePalette,
@@ -33,6 +34,39 @@ import type {
 } from "../fractal/types";
 import { clamp } from "../fractal/vec";
 import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
+
+/**
+ * Balloon-only palette sentinel: keep each renderer's existing balloon color
+ * path exactly as-is. This is deliberately distinct from the primary
+ * palettes' `"legacy"` sentinel — that value names renderer-specific coloring,
+ * while the balloon needs one shared, renderer-neutral instruction to inherit
+ * whichever base color its current arm already produced.
+ */
+export const BALLOON_PALETTE_INHERIT = "inherit";
+
+/**
+ * What the shared balloon palette controls store. The actual gradient choices
+ * are the registered built-ins except `"legacy"` (which has no LUT), plus the
+ * independently-authored Custom slot and the balloon-only Inherit sentinel.
+ */
+export type BalloonPaletteSelection =
+  typeof BALLOON_PALETTE_INHERIT | Exclude<PaletteSelection, "legacy">;
+
+/**
+ * Every balloon palette choice in UI order. Single source of truth for the
+ * mirrored Points/Flame/Surface selects and persistence validation.
+ */
+export const BALLOON_PALETTE_IDS: readonly BalloonPaletteSelection[] = [
+  BALLOON_PALETTE_INHERIT,
+  ...FLAME_PALETTE_IDS.filter(
+    (id): id is Exclude<FlamePaletteId, "legacy"> => id !== "legacy",
+  ),
+  CUSTOM_PALETTE_ID,
+];
+
+/** The legacy-preserving default for every new or decoded document. */
+export const DEFAULT_BALLOON_PALETTE: BalloonPaletteSelection =
+  BALLOON_PALETTE_INHERIT;
 
 /**
  * How the point cloud conveys depth. `depthFade` is the original look (fog to
@@ -444,6 +478,22 @@ export interface AppState {
    * the "rest" pose where the echo has fully turned into an enclosing cave.
    */
   balloonRadius: number;
+  /**
+   * The one palette selection shared by the balloon in Points, Flame, and
+   * Surface. {@link BALLOON_PALETTE_INHERIT} preserves each arm's existing
+   * base-color path exactly; a gradient choice recolors only balloon-attributed
+   * samples/shell terms before {@link balloonTint} is applied. Persisted scene
+   * content, with missing/legacy/malformed values decoding back to Inherit.
+   */
+  balloonPaletteId: BalloonPaletteSelection;
+  /**
+   * The balloon's independently-authored Custom gradient. It is deliberately
+   * separate from {@link customPalette}: editing or selecting one slot must
+   * never mutate the other. Optional until the balloon palette first selects
+   * Custom, and retained while unselected so an authored gradient survives a
+   * round trip through Inherit or a built-in palette.
+   */
+  balloonCustomPalette?: CustomPalette;
   /**
    * The balloon echo/surface-balloon shell's tint color, a
    * `#rrggbb` hex string paired with {@link balloonTintStrength} — ONE
@@ -1287,6 +1337,7 @@ export function initialState(panelOpen: boolean): AppState {
     adaptiveResolution: true,
     balloonEcho: false,
     balloonRadius: DEFAULT_BALLOON_RADIUS,
+    balloonPaletteId: DEFAULT_BALLOON_PALETTE,
     balloonTint: DEFAULT_BALLOON_TINT,
     balloonTintStrength: DEFAULT_BALLOON_TINT_STRENGTH,
     exportScale: 1,
@@ -1555,6 +1606,47 @@ export function setBalloonRadius(
     ...state,
     balloonRadius: clampToSpec(PARAM.balloonRadius, balloonRadius),
   };
+}
+
+/**
+ * Select the shared balloon palette without touching any primary-fractal
+ * palette selection or its {@link AppState.customPalette} payload. A first
+ * switch to Custom seeds the balloon's own slot from the built-in gradient
+ * being replaced. Inherit has no single gradient to sample — its color source
+ * differs by renderer — so that transition deliberately seeds Spectrum, the
+ * app's established total-function fallback for a palette with no LUT.
+ */
+export function setBalloonPaletteId(
+  state: AppState,
+  balloonPaletteId: BalloonPaletteSelection,
+): AppState {
+  const seedFrom: PaletteSelection =
+    state.balloonPaletteId === BALLOON_PALETTE_INHERIT
+      ? DEFAULT_FLAME_PALETTE
+      : state.balloonPaletteId;
+  return {
+    ...state,
+    balloonPaletteId,
+    ...(balloonPaletteId === CUSTOM_PALETTE_ID &&
+    state.balloonCustomPalette === undefined
+      ? { balloonCustomPalette: { stops: seedCustomStops(seedFrom) } }
+      : {}),
+  };
+}
+
+/**
+ * Replace only the balloon's Custom gradient, applying the same bounds,
+ * finite-value validation, copying, and channel clamping as the primary
+ * custom-palette reducer. Invalid input is a no-op.
+ */
+export function setBalloonCustomPaletteStops(
+  state: AppState,
+  stops: readonly RgbStop[],
+): AppState {
+  const cleaned = sanitizeCustomPaletteStops(stops);
+  return cleaned === null
+    ? state
+    : { ...state, balloonCustomPalette: { stops: cleaned } };
 }
 
 /**
@@ -2057,16 +2149,26 @@ export function setCustomPaletteStops(
   state: AppState,
   stops: readonly RgbStop[],
 ): AppState {
-  if (stops.length < MIN_CUSTOM_PALETTE_STOPS) return state;
+  const cleaned = sanitizeCustomPaletteStops(stops);
+  return cleaned === null
+    ? state
+    : { ...state, customPalette: { stops: cleaned } };
+}
+
+/** Shared live-editor validation for the primary and balloon custom slots. */
+function sanitizeCustomPaletteStops(
+  stops: readonly RgbStop[],
+): RgbStop[] | null {
+  if (stops.length < MIN_CUSTOM_PALETTE_STOPS) return null;
   const trimmed = stops.slice(0, MAX_CUSTOM_PALETTE_STOPS);
   if (trimmed.some((stop) => stop.some((channel) => !Number.isFinite(channel))))
-    return state;
+    return null;
   const cleaned: RgbStop[] = trimmed.map(([r, g, b]): RgbStop => [
     clamp(r, 0, 1),
     clamp(g, 0, 1),
     clamp(b, 0, 1),
   ]);
-  return { ...state, customPalette: { stops: cleaned } };
+  return cleaned;
 }
 
 /**
@@ -2197,6 +2299,18 @@ export function activeScenePalette(state: AppState): PaletteSpec {
           ? state.surface.paletteId
           : state.rampPaletteId;
   return resolvePalette(id, state.customPalette);
+}
+
+/**
+ * Resolve the balloon-only gradient for renderer consumers. `null` is the
+ * explicit Inherit signal; every concrete selection resolves through the
+ * balloon's independent Custom slot and can be passed directly to the shared
+ * palette LUT builders.
+ */
+export function resolveBalloonPalette(state: AppState): PaletteSpec | null {
+  return state.balloonPaletteId === BALLOON_PALETTE_INHERIT
+    ? null
+    : resolvePalette(state.balloonPaletteId, state.balloonCustomPalette);
 }
 
 /**

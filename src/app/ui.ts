@@ -75,6 +75,7 @@ import {
   MIN_W_POSITION,
   MIN_W_SCALE,
   MIN_W_SHEAR,
+  resolveBalloonPalette,
   systemIsNonFlat,
 } from "./state";
 import { formatIterationCount, SCALAR_CONTROLS } from "./control-spec";
@@ -320,6 +321,10 @@ export interface UiHandlers {
    * recolor, an added stop, or a removed stop; `stops` is the editor's
    * whole new list, parsed and ready for `setCustomPaletteStops`. */
   onCustomPaletteStops: (stops: RgbStop[]) => void;
+  /** A mirrored balloon gradient editor changed its whole independent stop
+   * list. This must never route through {@link onCustomPaletteStops}: the
+   * primary and balloon Custom slots are separate document content. */
+  onBalloonCustomPaletteStops: (stops: RgbStop[]) => void;
   /** The position mode's axis-color pickers changed — `colors` is the full
    * x/y/z triple as parsed from the three inputs; the Reset button sends the
    * exact legacy identity (the reducer normalizes it to absent). */
@@ -1920,6 +1925,9 @@ export class Ui {
   // explorer pair. Its own Inflate button binds the SAME handler as the
   // Points and Flame buttons — one shared command with mode-specific motion.
   private readonly surfaceBalloonRow: HTMLElement;
+  /** Palette/editor container: eligible whenever the surface balloon itself
+   * is eligible, even while the balloon is currently off. */
+  private readonly surfaceBalloonPaletteRow: HTMLElement;
   private readonly surfaceBalloonRadiusRow: HTMLElement;
   private readonly surfaceBalloonInflateButton: HTMLButtonElement;
   /** The surface balloon's tint picker — same state field as the Points and
@@ -2075,6 +2083,18 @@ export class Ui {
    * (background/flame/solid/surface) or \`rampPaletteId\` (ramp). */
   private readonly customPaletteEditors: Record<
     "background" | "flame" | "solid" | "surface" | "ramp",
+    {
+      row: HTMLElement;
+      strip: HTMLElement;
+      stops: HTMLElement;
+      add: HTMLButtonElement;
+      remove: HTMLButtonElement;
+    }
+  >;
+
+  /** Three mirrored views of the balloon's independent Custom slot. */
+  private readonly balloonCustomPaletteEditors: Record<
+    "points" | "flame" | "surface",
     {
       row: HTMLElement;
       strip: HTMLElement;
@@ -2347,6 +2367,7 @@ export class Ui {
     this.surfacePaletteRow = this.byId("surfacePaletteRow");
     this.surfaceColorSpeedRow = this.byId("surfaceColorSpeedRow");
     this.surfaceBalloonRow = this.byId("surfaceBalloonRow");
+    this.surfaceBalloonPaletteRow = this.byId("surfaceBalloonPaletteRow");
     this.surfaceBalloonRadiusRow = this.byId("surfaceBalloonRadiusRow");
     this.surfaceBalloonInflateButton = this.byId("surfaceBalloonInflateButton");
     this.surfaceBalloonTintRow = this.byId("surfaceBalloonTintRow");
@@ -2419,6 +2440,29 @@ export class Ui {
         stops: this.byId("rampCustomPaletteStops"),
         add: this.byId("rampCustomPaletteAdd"),
         remove: this.byId("rampCustomPaletteRemove"),
+      },
+    };
+    this.balloonCustomPaletteEditors = {
+      points: {
+        row: this.byId("balloonCustomPaletteRow"),
+        strip: this.byId("balloonCustomPaletteStrip"),
+        stops: this.byId("balloonCustomPaletteStops"),
+        add: this.byId("balloonCustomPaletteAdd"),
+        remove: this.byId("balloonCustomPaletteRemove"),
+      },
+      flame: {
+        row: this.byId("flameBalloonCustomPaletteRow"),
+        strip: this.byId("flameBalloonCustomPaletteStrip"),
+        stops: this.byId("flameBalloonCustomPaletteStops"),
+        add: this.byId("flameBalloonCustomPaletteAdd"),
+        remove: this.byId("flameBalloonCustomPaletteRemove"),
+      },
+      surface: {
+        row: this.byId("surfaceBalloonCustomPaletteRow"),
+        strip: this.byId("surfaceBalloonCustomPaletteStrip"),
+        stops: this.byId("surfaceBalloonCustomPaletteStops"),
+        add: this.byId("surfaceBalloonCustomPaletteAdd"),
+        remove: this.byId("surfaceBalloonCustomPaletteRemove"),
       },
     };
 
@@ -2797,6 +2841,29 @@ export class Ui {
         handlers.onCustomPaletteStops(stops.slice(0, -1));
       });
     }
+    // Balloon Custom has the same editor mechanics but an intentionally
+    // separate callback and document slot. Each mirrored editor reports the
+    // whole balloon stop list; none can mutate the primary Custom gradient.
+    for (const kind of ["points", "flame", "surface"] as const) {
+      const editor = this.balloonCustomPaletteEditors[kind];
+      editor.stops.addEventListener("input", () => {
+        const stops = this.readCustomPaletteStops(editor.stops);
+        if (stops) handlers.onBalloonCustomPaletteStops(stops);
+      });
+      editor.add.addEventListener("click", () => {
+        const stops = this.readCustomPaletteStops(editor.stops);
+        if (!stops || stops.length >= MAX_CUSTOM_PALETTE_STOPS) return;
+        handlers.onBalloonCustomPaletteStops([
+          ...stops,
+          stops[stops.length - 1],
+        ]);
+      });
+      editor.remove.addEventListener("click", () => {
+        const stops = this.readCustomPaletteStops(editor.stops);
+        if (!stops || stops.length <= MIN_CUSTOM_PALETTE_STOPS) return;
+        handlers.onBalloonCustomPaletteStops(stops.slice(0, -1));
+      });
+    }
     // Position axis colors: three pickers report as one triple — the app
     // state is the triple, so a drag in any one picker re-reads all three,
     // exactly like the gradient editor reads its whole stop list.
@@ -3041,6 +3108,7 @@ export class Ui {
       if (spec.label && label) label.textContent = spec.label.text(state);
     }
     this.syncCustomPaletteEditors(state);
+    this.syncBalloonCustomPaletteEditors(state);
 
     const effectiveOrder = effectiveSymmetryOrder(
       state.symmetry.order,
@@ -3141,6 +3209,10 @@ export class Ui {
       this.surfaceSessionKind === "escape" ||
       this.surfaceSessionKind === "bulb";
     this.surfaceBalloonRow.classList.toggle("hidden", surfaceBalloonHidden);
+    this.surfaceBalloonPaletteRow.classList.toggle(
+      "hidden",
+      surfaceBalloonHidden,
+    );
     this.surfaceBalloonRadiusRow.classList.toggle(
       "hidden",
       surfaceBalloonHidden || !state.balloonEcho,
@@ -3508,6 +3580,47 @@ export class Ui {
 
       // Safe: buildPaletteLUT only returns null for the "legacy" sentinel,
       // never for a CustomPalette payload.
+      editor.strip.style.background = lutGradient(buildPaletteLUT(resolved)!);
+      editor.add.disabled = stops.length >= MAX_CUSTOM_PALETTE_STOPS;
+      editor.remove.disabled = stops.length <= MIN_CUSTOM_PALETTE_STOPS;
+    }
+  }
+
+  /**
+   * Sync the three balloon-only gradient editors. Their visibility follows
+   * only the shared balloon palette selection — never `balloonEcho` — so a
+   * Custom look can be authored while the balloon is off. Surface eligibility
+   * is an outer-container gate applied in {@link updateLabels}.
+   */
+  private syncBalloonCustomPaletteEditors(state: AppState): void {
+    const isCustom = state.balloonPaletteId === CUSTOM_PALETTE_ID;
+    for (const kind of ["points", "flame", "surface"] as const) {
+      const editor = this.balloonCustomPaletteEditors[kind];
+      editor.row.classList.toggle("hidden", !isCustom);
+      if (!isCustom) continue;
+
+      // The selection check above excludes resolveBalloonPalette's null arm.
+      const resolved = resolveBalloonPalette(state) as CustomPalette;
+      const { stops } = resolved;
+      const inputs = Array.from(
+        editor.stops.querySelectorAll<HTMLInputElement>('input[type="color"]'),
+      );
+      if (inputs.length !== stops.length) {
+        editor.stops.replaceChildren();
+        stops.forEach((stop, i) => {
+          const input = this.doc.createElement("input");
+          input.type = "color";
+          input.value = rgbToHex(stop);
+          input.setAttribute("aria-label", `Balloon color stop ${i + 1}`);
+          editor.stops.appendChild(input);
+        });
+      } else {
+        inputs.forEach((input, i) => {
+          const hex = rgbToHex(stops[i]);
+          if (input.value !== hex) input.value = hex;
+        });
+      }
+
       editor.strip.style.background = lutGradient(buildPaletteLUT(resolved)!);
       editor.add.disabled = stops.length >= MAX_CUSTOM_PALETTE_STOPS;
       editor.remove.disabled = stops.length <= MIN_CUSTOM_PALETTE_STOPS;

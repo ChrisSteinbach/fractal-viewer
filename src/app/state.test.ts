@@ -1,7 +1,10 @@
 import {
   activeScenePalette,
   addTransform,
+  BALLOON_PALETTE_IDS,
+  BALLOON_PALETTE_INHERIT,
   clampToSpec,
+  DEFAULT_BALLOON_PALETTE,
   DEFAULT_BALLOON_RADIUS,
   DEFAULT_BALLOON_TINT,
   DEFAULT_BALLOON_TINT_STRENGTH,
@@ -90,6 +93,7 @@ import {
   nearestFlameIterationDetentIndex,
   PARAM,
   removeTransform,
+  resolveBalloonPalette,
   resolveFlameBackdropPalette,
   resolveSceneBackground,
   selectTransform,
@@ -98,7 +102,9 @@ import {
   setBackgroundFlamePaletteId,
   setBackgroundMode,
   setBackgroundShape,
+  setBalloonCustomPaletteStops,
   setBalloonEcho,
+  setBalloonPaletteId,
   setBalloonRadius,
   setBalloonTint,
   setBalloonTintStrength,
@@ -191,6 +197,13 @@ describe("initialState", () => {
     const state = initialState(true);
     expect(state.balloonEcho).toBe(false);
     expect(state.balloonRadius).toBe(DEFAULT_BALLOON_RADIUS);
+  });
+
+  it("boots with the balloon palette explicitly inheriting and no custom payload", () => {
+    const state = initialState(true);
+    expect(state.balloonPaletteId).toBe(BALLOON_PALETTE_INHERIT);
+    expect(state.balloonPaletteId).toBe(DEFAULT_BALLOON_PALETTE);
+    expect(state.balloonCustomPalette).toBeUndefined();
   });
 
   // The balloon tint starts fully off too: black at strength 0,
@@ -429,6 +442,168 @@ describe("setBalloonRadius", () => {
   });
 });
 
+describe("balloon palette document state", () => {
+  it("registers inherit, every gradient built-in, and custom — never legacy", () => {
+    expect(BALLOON_PALETTE_IDS).toEqual([
+      "inherit",
+      "spectrum",
+      "sunset",
+      "dusk",
+      "lagoon",
+      "ember",
+      "aurora",
+      "moss",
+      "custom",
+    ]);
+    expect(BALLOON_PALETTE_IDS).not.toContain("legacy");
+  });
+
+  it("selects a built-in without changing any primary palette state", () => {
+    const primaryStops = {
+      stops: [
+        [0.1, 0.2, 0.3],
+        [0.9, 0.8, 0.7],
+      ],
+    } as const;
+    const state = { ...initialState(true), customPalette: primaryStops };
+
+    const next = setBalloonPaletteId(state, "aurora");
+
+    expect(next.balloonPaletteId).toBe("aurora");
+    expect(next.customPalette).toBe(primaryStops);
+    expect(next.flame).toBe(state.flame);
+    expect(next.solid).toBe(state.solid);
+    expect(next.surface).toBe(state.surface);
+  });
+
+  it("resolves Inherit to null even with dormant balloon stops", () => {
+    const state = {
+      ...initialState(true),
+      balloonCustomPalette: {
+        stops: [
+          [1, 0, 0],
+          [0, 0, 1],
+        ],
+      },
+    } as const;
+    expect(resolveBalloonPalette(state)).toBeNull();
+  });
+
+  it("resolves built-in and Custom selections through the balloon slot", () => {
+    expect(
+      resolveBalloonPalette(setBalloonPaletteId(initialState(true), "aurora")),
+    ).toBe("aurora");
+
+    const balloonCustomPalette = {
+      stops: [
+        [1, 0, 0],
+        [0, 0, 1],
+      ],
+    } as const;
+    const primaryCustomPalette = {
+      stops: [
+        [0, 1, 0],
+        [1, 1, 0],
+      ],
+    } as const;
+    const state = {
+      ...initialState(true),
+      balloonPaletteId: "custom",
+      balloonCustomPalette,
+      customPalette: primaryCustomPalette,
+    } as const;
+    expect(resolveBalloonPalette(state)).toBe(balloonCustomPalette);
+  });
+
+  it("seeds a first Custom selection from Spectrum when replacing Inherit", () => {
+    const next = setBalloonPaletteId(initialState(true), "custom");
+
+    expect(next.balloonPaletteId).toBe("custom");
+    expect(next.balloonCustomPalette).toEqual({
+      stops: seedCustomStops("spectrum"),
+    });
+    expect(next.customPalette).toBeUndefined();
+  });
+
+  it("seeds a first Custom selection from the balloon built-in being replaced", () => {
+    const state = setBalloonPaletteId(initialState(true), "ember");
+    const next = setBalloonPaletteId(state, "custom");
+
+    expect(next.balloonCustomPalette).toEqual({
+      stops: seedCustomStops("ember"),
+    });
+  });
+
+  it("preserves authored balloon stops while switching away and back", () => {
+    const authored = setBalloonCustomPaletteStops(
+      setBalloonPaletteId(initialState(true), "custom"),
+      [
+        [0.1, 0.2, 0.3],
+        [0.9, 0.8, 0.7],
+      ],
+    );
+    const away = setBalloonPaletteId(authored, "lagoon");
+    const back = setBalloonPaletteId(away, "custom");
+
+    expect(back.balloonCustomPalette).toBe(authored.balloonCustomPalette);
+  });
+
+  it("edits only balloon stops, with the primary custom slot untouched", () => {
+    const primaryStops = {
+      stops: [
+        [1, 0, 0],
+        [0, 1, 0],
+      ],
+    } as const;
+    const state = { ...initialState(true), customPalette: primaryStops };
+    const next = setBalloonCustomPaletteStops(state, [
+      [-1, 0.5, 2],
+      [0.2, -5, 1.5],
+    ]);
+
+    expect(next.balloonCustomPalette).toEqual({
+      stops: [
+        [0, 0.5, 1],
+        [0.2, 0, 1],
+      ],
+    });
+    expect(next.customPalette).toBe(primaryStops);
+  });
+
+  it("keeps balloon stops untouched when the primary custom slot is edited", () => {
+    const balloonStops = {
+      stops: [
+        [0.1, 0.2, 0.3],
+        [0.9, 0.8, 0.7],
+      ],
+    } as const;
+    const state = { ...initialState(true), balloonCustomPalette: balloonStops };
+    const next = setCustomPaletteStops(state, [
+      [1, 0, 0],
+      [0, 1, 0],
+    ]);
+
+    expect(next.balloonCustomPalette).toBe(balloonStops);
+    expect(next.customPalette).toEqual({
+      stops: [
+        [1, 0, 0],
+        [0, 1, 0],
+      ],
+    });
+  });
+
+  it("rejects invalid balloon stops with the same contract as the primary slot", () => {
+    const state = initialState(true);
+    expect(setBalloonCustomPaletteStops(state, [[0, 0, 0]])).toBe(state);
+    expect(
+      setBalloonCustomPaletteStops(state, [
+        [0, 0, 0],
+        [NaN, 1, 1],
+      ]),
+    ).toBe(state);
+  });
+});
+
 describe("setBalloonTint", () => {
   it("sets the balloon tint color immutably", () => {
     const state = initialState(true);
@@ -542,6 +717,20 @@ describe("setTransforms", () => {
     const next = setTransforms(state, mengerSponge());
     expect(next.transforms).toHaveLength(20);
     expect(next.selectedTransform).toBeNull();
+  });
+
+  it("preserves the document-level balloon palette and its dormant custom stops", () => {
+    const state = setBalloonCustomPaletteStops(
+      setBalloonPaletteId(initialState(true), "custom"),
+      [
+        [0.1, 0.2, 0.3],
+        [0.9, 0.8, 0.7],
+      ],
+    );
+    const next = setTransforms(state, mengerSponge());
+
+    expect(next.balloonPaletteId).toBe("custom");
+    expect(next.balloonCustomPalette).toBe(state.balloonCustomPalette);
   });
 });
 

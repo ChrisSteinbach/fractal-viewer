@@ -8,6 +8,7 @@ import {
 } from "../fractal/flame";
 import type { FlameBalloonEcho, FlameHistogram, Mat4 } from "../fractal/flame";
 import { W_SIDE_PALETTES, buildColorModeLUT } from "../fractal/color";
+import { buildPaletteLUT } from "../fractal/palette";
 import { sierpinskiTetrahedron } from "../fractal/presets";
 import type { Transform4 } from "../fractal/types";
 import {
@@ -318,22 +319,55 @@ describe("FlameWorkerSession start", () => {
     expect(Array.from(lastA.image)).toEqual(Array.from(lastB.image));
   });
 
-  it("forwards the optional balloon echo unchanged into every CPU accumulation chunk", () => {
+  it("forwards the balloon echo and its independently resolved LUT into every CPU chunk", () => {
     const seen: Array<FlameBalloonEcho | undefined> = [];
+    const seenLuts: Array<Float32Array | undefined> = [];
     const { session, scheduler } = harness({
       initialChunkSize: 10,
       accumulate: (...args) => {
         seen.push(args[9]);
+        seenLuts.push(args[10]);
         return accumulateFlame(...args);
       },
     });
     session.handle(
-      startCommand({ balloonEcho: BALLOON_ECHO, iterationsBudget: 35 }),
+      startCommand({
+        balloonEcho: BALLOON_ECHO,
+        balloonPalette: "aurora",
+        iterationsBudget: 35,
+      }),
     );
     scheduler.drain();
 
     expect(seen.length).toBeGreaterThan(1);
     expect(seen.every((echo) => echo === BALLOON_ECHO)).toBe(true);
+    expect(seenLuts.every((lut) => lut === seenLuts[0])).toBe(true);
+    expect(Array.from(seenLuts[0]!)).toEqual(
+      Array.from(buildPaletteLUT("aurora")!),
+    );
+  });
+
+  it("treats an accidental null balloon LUT as exact inherit", () => {
+    const seenLuts: Array<Float32Array | undefined> = [];
+    const { session, scheduler } = harness({
+      accumulate: (...args) => {
+        seenLuts.push(args[10]);
+        return accumulateFlame(...args);
+      },
+    });
+    session.handle(
+      startCommand({
+        balloonEcho: BALLOON_ECHO,
+        // Only gradient specs are sent by the UI. This intentionally pins
+        // the defensive buildPaletteLUT(null) path for malformed/stale data.
+        balloonPalette: "legacy",
+        iterationsBudget: 35,
+      }),
+    );
+    scheduler.drain();
+
+    expect(seenLuts.length).toBeGreaterThan(0);
+    expect(seenLuts.every((lut) => lut === undefined)).toBe(true);
   });
 });
 
@@ -808,6 +842,65 @@ describe("FlameWorkerSession setPalette", () => {
     expect(Array.from(finalImage("spectrum"))).not.toEqual(
       Array.from(finalImage("legacy")),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Balloon palette: live setBalloonPalette command
+// ---------------------------------------------------------------------------
+
+describe("FlameWorkerSession setBalloonPalette", () => {
+  it("restarts an active echo for a new independent LUT and for inherit", () => {
+    const seenLuts: Array<Float32Array | undefined> = [];
+    const { session, events, scheduler } = harness({
+      initialChunkSize: 10,
+      accumulate: (...args) => {
+        seenLuts.push(args[10]);
+        return accumulateFlame(...args);
+      },
+    });
+    session.handle(
+      startCommand({
+        balloonEcho: BALLOON_ECHO,
+        iterationsBudget: 20,
+      }),
+    );
+    scheduler.drain();
+    expect(seenLuts.at(-1)).toBeUndefined();
+
+    const framesBeforeGradient = progressEvents(events).length;
+    const restartsBeforeGradient = restartedEvents(events).length;
+    session.handle({ type: "setBalloonPalette", palette: "spectrum" });
+    expect(restartedEvents(events)).toHaveLength(restartsBeforeGradient + 1);
+    expect(progressEvents(events)).toHaveLength(framesBeforeGradient);
+    scheduler.drain();
+    expect(Array.from(seenLuts.at(-1)!)).toEqual(
+      Array.from(buildPaletteLUT("spectrum")!),
+    );
+
+    const framesBeforeInherit = progressEvents(events).length;
+    const restartsBeforeInherit = restartedEvents(events).length;
+    session.handle({ type: "setBalloonPalette" });
+    expect(restartedEvents(events)).toHaveLength(restartsBeforeInherit + 1);
+    expect(progressEvents(events)).toHaveLength(framesBeforeInherit);
+    scheduler.drain();
+    expect(seenLuts.at(-1)).toBeUndefined();
+  });
+
+  it("does no work when no balloon echo is active", () => {
+    const { session, events, scheduler } = harness({ initialChunkSize: 10 });
+    session.handle(startCommand({ iterationsBudget: 20 }));
+    scheduler.drain();
+    const framesBefore = progressEvents(events).length;
+    const restartsBefore = restartedEvents(events).length;
+    const backendsBefore = backendEvents(events).length;
+
+    session.handle({ type: "setBalloonPalette", palette: "aurora" });
+
+    expect(scheduler.step()).toBe(false);
+    expect(progressEvents(events)).toHaveLength(framesBefore);
+    expect(restartedEvents(events)).toHaveLength(restartsBefore);
+    expect(backendEvents(events)).toHaveLength(backendsBefore);
   });
 });
 
@@ -1580,7 +1673,7 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     expect(snapshotCalls).toBe(2);
   });
 
-  it("forwards the balloon echo unchanged to the 3D GPU factory", async () => {
+  it("forwards the balloon echo and independent LUT to the 3D GPU factory", async () => {
     let captured: GpuBackendRequest | undefined;
     const createGpuBackend = async (
       request: GpuBackendRequest,
@@ -1598,6 +1691,7 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     session.handle(
       startCommand({
         balloonEcho: BALLOON_ECHO,
+        balloonPalette: "aurora",
         gpuPreference: "auto",
         iterationsBudget: 500,
       }),
@@ -1605,7 +1699,52 @@ describe("FlameWorkerSession GPU accumulation backend", () => {
     await drainAsync(scheduler);
 
     expect(captured?.echo).toBe(BALLOON_ECHO);
+    expect(Array.from(captured?.echoColorLUT ?? [])).toEqual(
+      Array.from(buildPaletteLUT("aurora")!),
+    );
     expect(captured?.projection).toBe(ORTHOGRAPHIC);
+  });
+
+  it("destroys and rebuilds the GPU backend when the balloon palette changes", async () => {
+    const requests: GpuBackendRequest[] = [];
+    let destroys = 0;
+    const createGpuBackend = async (
+      request: GpuBackendRequest,
+    ): Promise<FlameAccumBackend> => {
+      requests.push(request);
+      return {
+        kind: "gpu",
+        accumulate: async (n) => n,
+        snapshot: async () =>
+          createFlameHistogram(request.width, request.height),
+        destroy: () => {
+          destroys++;
+        },
+      };
+    };
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({
+        balloonEcho: BALLOON_ECHO,
+        balloonPalette: "aurora",
+        gpuPreference: "auto",
+        iterationsBudget: 500,
+      }),
+    );
+    await drainAsync(scheduler);
+    expect(requests).toHaveLength(1);
+
+    const framesBefore = progressEvents(events).length;
+    session.handle({ type: "setBalloonPalette", palette: "spectrum" });
+    expect(destroys).toBe(1);
+    expect(progressEvents(events)).toHaveLength(framesBefore);
+    await drainAsync(scheduler);
+
+    expect(requests).toHaveLength(2);
+    expect(Array.from(requests[1].echoColorLUT!)).toEqual(
+      Array.from(buildPaletteLUT("spectrum")!),
+    );
+    expect(progressEvents(events).length).toBeGreaterThan(framesBefore);
   });
 
   it("falls back to CPU when the GPU factory rejects, and never retries it again this session", async () => {
@@ -2556,6 +2695,7 @@ describe("FlameWorkerSession 4D flame render", () => {
       startCommand({
         fourD,
         balloonEcho: BALLOON_ECHO,
+        balloonPalette: "aurora",
         gpuPreference: "auto",
         palette: "legacy",
         width: 8,
@@ -2574,6 +2714,9 @@ describe("FlameWorkerSession 4D flame render", () => {
     expect(request.projection).toBeInstanceOf(Float64Array);
     expect(request.projection).toHaveLength(20);
     expect(request.echo).toBe(BALLOON_ECHO);
+    expect(Array.from(request.echoColorLUT!)).toEqual(
+      Array.from(buildPaletteLUT("aurora")!),
+    );
     expect(request.rotorProjection).toBeInstanceOf(Float64Array);
     expect(request.rotorProjection).toHaveLength(20);
     expect(request.cameraProjection).toBe(ORTHOGRAPHIC);

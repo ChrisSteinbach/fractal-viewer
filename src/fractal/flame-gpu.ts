@@ -152,13 +152,14 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  * Byte-layout contracts (WGSL struct rules; the pack* functions below
  * write ArrayBuffers to match, and `flame-gpu.test.ts` pins them):
  *
- * Params (uniform, {@link PARAMS_BYTES} = 128):
+ * Params (uniform, {@link PARAMS_BYTES} = 144):
  *   0 projX vec4f | 16 projY vec4f | 32 projW vec4f
  *   48 width u32 | 52 height u32 | 56 transformCount u32 | 60 baseTransformCount u32
  *   64 itersPerInvocation u32 | 68 colorMode u32 (0 legacy, 1 LUT) | 72 weighted u32 | 76 hasFinal u32
  *   80 totalWeight f32 | 84 numChains u32 | 88 echoWeight f32 (zero = off) |
  *   92 echoRho f32 | 96 echoCenterR2 vec4f (center xyz, R squared) |
- *   112 echoTintStrength vec4f (tint rgb, strength)
+ *   112 echoTintStrength vec4f (tint rgb, strength) |
+ *   128 echoPaletteEnabled u32 | 132..143 pad
  *
  * Slot (storage array element, {@link SLOT_STRIDE_BYTES} = 336 stride);
  * slot count = transformCount + 1, the last being the final-transform lens
@@ -191,12 +192,14 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  *
  * colors: array<vec4u, 256> — legacy palette (entry per base transform) or
  * 256-entry gradient LUT, channels pre-scaled by
- * {@link COLOR_FIXED_POINT_SCALE}; the w lane is unused padding.
+ * {@link COLOR_FIXED_POINT_SCALE}; the w lane is unused padding. A separate
+ * echoColors table at binding 5 carries the independent balloon LUT; inherit
+ * aliases this binding to colors but never reads it.
  *
  * hist: array<atomic<u32>>, `width * height * HIST_U32_PER_BUCKET`,
  * bucket layout as {@link HIST_U32_PER_BUCKET} describes.
  */
-export const PARAMS_BYTES = 128;
+export const PARAMS_BYTES = 144;
 export const SLOT_STRIDE_BYTES = 336;
 export const CHAIN_STRIDE_BYTES = 32;
 export const COLORS_BYTES = 256 * 16;
@@ -233,6 +236,7 @@ struct Params {
   echoRho: f32,
   echoCenterR2: vec4f,
   echoTintStrength: vec4f,
+  echoPaletteEnabled: u32,
 }
 
 struct Slot {
@@ -270,6 +274,7 @@ struct Chain {
 @group(0) @binding(2) var<storage, read> colors: array<vec4u, 256>;
 @group(0) @binding(3) var<storage, read_write> chains: array<Chain>;
 @group(0) @binding(4) var<storage, read_write> hist: array<atomic<u32>>;
+@group(0) @binding(5) var<storage, read> echoColors: array<vec4u, 256>;
 
 // Warmup dispatches run a PLOT=false specialization of this same pipeline —
 // iterate the orbit without recording, like the CPU's unrecorded warmup.
@@ -565,8 +570,14 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
         let centerFloor = 1e-6 * params.echoRho;
         let r2 = max(dot(d, d), centerFloor * centerFloor);
         let inv = params.echoCenterR2.xyz + (params.echoCenterR2.w / r2) * d;
+        var echoBase = rgb;
+        if (params.echoPaletteEnabled == 1u) {
+          let u = clamp(length(d) / params.echoRho, 0.0, 1.0);
+          let li = min(u32(u * 256.0), 255u);
+          echoBase = echoColors[li].xyz;
+        }
         let echoRgb = vec3u(round(mix(
-          vec3f(rgb),
+          vec3f(echoBase),
           params.echoTintStrength.xyz * ${COLOR_FIXED_POINT_SCALE}.0,
           params.echoTintStrength.w,
         )));
@@ -658,6 +669,7 @@ const PARAMS_ECHO_WEIGHT = 22;
 const PARAMS_ECHO_RHO = 23;
 const PARAMS_ECHO_CENTER_R2 = 24;
 const PARAMS_ECHO_TINT_STRENGTH = 28;
+const PARAMS_ECHO_PALETTE_ENABLED = 32;
 
 /**
  * `chaos-game.ts`'s `symmetryRotation`, restated here (a deliberate
@@ -839,6 +851,22 @@ export function writeColorEntry(
   colorsU32[o] = Math.round(r * COLOR_FIXED_POINT_SCALE);
   colorsU32[o + 1] = Math.round(g * COLOR_FIXED_POINT_SCALE);
   colorsU32[o + 2] = Math.round(b * COLOR_FIXED_POINT_SCALE);
+}
+
+/** Pack one already-resolved 256-entry RGB LUT into the GPU colors-table
+ * layout without involving the primary flame palette. */
+export function packGpuColorLUT(lut: Float32Array): ArrayBuffer {
+  if (lut.length !== COLOR_LUT_ENTRIES * 3) {
+    throw new RangeError(
+      `packGpuColorLUT: expected ${COLOR_LUT_ENTRIES * 3} values, got ${lut.length}`,
+    );
+  }
+  const colors = new ArrayBuffer(COLORS_BYTES);
+  const colorsU32 = new Uint32Array(colors);
+  for (let i = 0; i < COLOR_LUT_ENTRIES; i++) {
+    writeColorEntry(colorsU32, i, lut[i * 3], lut[i * 3 + 1], lut[i * 3 + 2]);
+  }
+  return colors;
 }
 
 /**
@@ -1146,6 +1174,8 @@ export interface GpuParamsFields {
   /** Omitted is the byte-identical one-splat path. Tint affects only the
    * optional second splat; the primary color table is never rewritten. */
   echo?: GpuFlameBalloonEchoFields;
+  /** Whether binding 5 carries an independent echo-only LUT. */
+  echoPalette: boolean;
 }
 
 /**
@@ -1183,6 +1213,7 @@ export function packGpuParams(fields: GpuParamsFields): ArrayBuffer {
   u32[PARAMS_HAS_FINAL] = fields.hasFinal ? 1 : 0;
   f32[PARAMS_TOTAL_WEIGHT] = fields.totalWeight;
   u32[PARAMS_NUM_CHAINS] = fields.numChains;
+  u32[PARAMS_ECHO_PALETTE_ENABLED] = fields.echoPalette ? 1 : 0;
   const echo = fields.echo;
   if (echo) {
     f32[PARAMS_ECHO_WEIGHT] = echo.weight;

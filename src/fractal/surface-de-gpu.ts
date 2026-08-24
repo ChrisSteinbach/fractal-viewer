@@ -721,7 +721,8 @@ import type { Vec3 } from "./types";
  *          80  vec3f bgTop             92  f32 colorSpeed
  *          96  vec3f bgBottom         108  f32 tracePixelEps
  *         112  u32  colorSource       116  u32 shadowSteps
- *         120  u32  aoTaps            124  u32 flags (bit0 = dither)
+ *         120  u32  aoTaps            124  u32 flags (bit0 = dither,
+ *                                             bit1 = balloon palette)
  *         128  vec3f fogTint          140  f32 fogTintStrength
  *         144  vec2f pixelJitter      152  f32 envStrength
  *         160  vec2f bgOffset         168  vec2f bgExtent
@@ -783,6 +784,11 @@ import type { Vec3 } from "./types";
  *  struct never reads past its own size). Absent — every caller predating
  *  the pattern bead — keeps the 224-byte layout byte for byte.
  *
+ * A balloon shade kernel also declares binding 10, a second 256x1 RGBA8
+ * LUT for the balloon alone. Non-balloon targets do not create, bind, or
+ * declare it; explicit inherit clears flags bit1, so even a balloon kernel
+ * retains the existing base-colour path without sampling it.
+ *
  * Shade maps storage (mode "shade") — one vec4f per map slot:
  * (uMapColor rgb, uFoldParams.w trapIndex); one zero stride when empty,
  * like {@link packSurfaceGpuMaps}. Under `finish: true` OR `pattern: true` the stride is
@@ -798,7 +804,8 @@ import type { Vec3 } from "./types";
  * Bindings per mode — eval and march "pose" bind 0-3 (params, maps, the
  * mode's own pair at 2/3); march "unproject" binds 0-4, the march set
  * plus shade: ShadeParams (rays + dither inputs only — it declares none
- * of shadeMaps/colorOut/lutTex/lutSamp/layerOut); mode "shade" binds 0-9. The
+ * of shadeMaps/colorOut/lutTex/lutSamp/layerOut); mode "shade" binds 0-9,
+ * plus binding 10 only for a balloon target's independent LUT. The
  * BULB core never declares binding 1 (maps) in any mode — its one forward
  * map rides the params variant block — so its hosts skip that buffer;
  * the ESCAPE core DOES declare it (its chain is a list of forward maps,
@@ -828,6 +835,10 @@ import type { Vec3 } from "./types";
  *               (1 - fogTintStrength), A 1. `colorOut` remains the immutable
  *               legacy reference; the sidecar lets presentation apply a
  *               backdrop delta without changing those bytes.
+ *   @binding(10) var balloonLutTex: texture_2d<f32> — BALLOON SHADE ONLY;
+ *                the independent 256x1 RGBA8 gradient, sampled at the
+ *                pre-inversion source-radius coordinate when flags bit1 is
+ *                set. Non-balloon targets neither declare nor bind it.
  */
 
 /** Mirror of `surface-material.ts`'s `SURFACE_FULL_HIT_FLOOR` (1e-5) —
@@ -1117,7 +1128,7 @@ export interface SurfaceGpuKernelOptions {
    * `source4` member), and splices the ONE shared pattern body
    * (surface-pattern-shade.ts's WGSL twin) plus the pattern arm's call
    * into the shade entry — the document's order: color source -> balloon
-   * tint -> pattern -> lighting -> fog. The 224-byte ShadeParams layout
+   * palette -> tint -> pattern -> lighting -> fog. The 224-byte ShadeParams layout
    * grows to 240 under shade+pattern with the calibration quartet
    * (`shade.patternCalibration`); march/eval kernels stay byte-identical,
    * and so does every pattern-absent shade kernel. */
@@ -2229,6 +2240,10 @@ export interface SurfaceGpuShadeParams {
   shadowSteps: number; // uShadowSteps (per tier)
   aoTaps: number; // uAoTaps (per tier)
   dither: boolean; // march-start hash dither (off for bench agreement)
+  /** Whether a balloon shade kernel samples its independent LUT. Packed in
+   * flags bit1; false/absent is explicit inherit and preserves the existing
+   * base-colour path. Ignored by non-balloon kernels. */
+  balloonPalette?: boolean;
   /** Fog tint color, packed at offset 128 (module doc): what
    * the shade entry's fog blends toward is mix(bg, fogTint,
    * fogTintStrength). Default [1, 1, 1] when omitted, matching the GLSL
@@ -2332,7 +2347,8 @@ export interface SurfaceGpuShadeParams {
 }
 
 /** Pack the ShadeParams uniform (march "unproject" + mode "shade";
- * layout contract in the module doc). flags = dither ? 1 : 0. A present
+ * layout contract in the module doc). flags bit0 is dither and bit1 enables
+ * the independent balloon LUT. A present
  * `patternCalibration` grows the buffer to
  * {@link SURFACE_GPU_SHADE_PATTERN_BYTES} with the quartet at 224;
  * absent, the 224-byte buffer is byte for byte what it was. */
@@ -2354,7 +2370,11 @@ export function packSurfaceGpuShade(shade: SurfaceGpuShadeParams): ArrayBuffer {
   view.setUint32(112, shade.colorSource, true);
   view.setUint32(116, shade.shadowSteps, true);
   view.setUint32(120, shade.aoTaps, true);
-  view.setUint32(124, shade.dither ? 1 : 0, true);
+  view.setUint32(
+    124,
+    (shade.dither ? 1 : 0) | (shade.balloonPalette ? 2 : 0),
+    true,
+  );
   writeVec3(view, 128, shade.fogTint ?? [1, 1, 1]);
   view.setFloat32(140, shade.fogTintStrength ?? 0, true);
   const jitter = shade.pixelJitter ?? [0.5, 0.5];
@@ -2788,6 +2808,11 @@ struct ShadeParams {
 }
 
 @group(0) @binding(4) var<uniform> shade: ShadeParams;`;
+  const balloonLutIo =
+    mode === "shade" && balloon
+      ? `
+@group(0) @binding(10) var balloonLutTex: texture_2d<f32>;`
+      : "";
   const hash2Io = `
 
 // Per-pixel march-start dither — surface-material.ts's hash(), fed
@@ -2804,7 +2829,7 @@ fn hash2(p: vec2f) -> f32 {
         ? unproject
           ? `${rayIo}${shadeParamsIo("")}${statusIo}${hash2Io}`
           : `${rayIo}${statusIo}`
-        : `${rayIo}${shadeParamsIo(shadePatternCalibrationMember)}
+        : `${rayIo}${shadeParamsIo(shadePatternCalibrationMember)}${balloonLutIo}
 @group(0) @binding(5) var<storage, read> shadeMaps: array<vec4f>;
 @group(0) @binding(6) var<storage, read_write> colorOut: array<u32>;
 @group(0) @binding(7) var lutTex: texture_2d<f32>;
@@ -4816,6 +4841,29 @@ ${balloonHitWrapText}`
           ? `u = clamp(length(hi.colorPos) / visR, 0.0, 1.0);`
           : `u = clamp(length(pos) / visR, 0.0, 1.0);`;
 
+  // Independent balloon palette first, then the orthogonal tint. The
+  // coordinate is balloon-de.ts's renderer-neutral normalized radius of
+  // the exact pre-inversion source query whose shell image won. flags bit1
+  // is explicit non-inherit; fractal-term hits and inherit retain the
+  // existing base path without a second sample.
+  const shadeBalloonPalette = balloon
+    ? `
+  if ((shade.flags & 2u) != 0u && hi.shell > 0.5) {
+    let balloonU = clamp(
+      length(hi.colorPos - params.balloonCenter) / params.balloonRho,
+      0.0,
+      1.0,
+    );
+    let balloonIndex = min(floor(balloonU * 256.0), 255.0);
+    base = textureSampleLevel(
+      balloonLutTex,
+      lutSamp,
+      vec2f((balloonIndex + 0.5) / 256.0, 0.5),
+      0.0,
+    ).rgb;
+  }`
+    : "";
+
   // The echo's own tint (balloon only), at the BASE-ALBEDO site
   // — after the colour source resolves `base`, before the sRGB decode and
   // the lighting product — so the inverted copy reads as an echo rather
@@ -4833,8 +4881,9 @@ ${balloonHitWrapText}`
     : "";
 
   // The pattern arm's call, at the base-albedo site — AFTER the colour
-  // source and the balloon tint, BEFORE lighting and fog (the document's
-  // order: color source -> balloon tint -> pattern -> lighting -> fog).
+  // source and the balloon palette/tint, BEFORE lighting and fog (the
+  // document's order: color source -> balloon palette -> tint -> pattern ->
+  // lighting -> fog).
   // The pattern is object-attached, so the albedo reads the RAW attractor
   // point the hit-info resolved into `hi.source4` (the frame oracle's
   // source4: visible hit -> balloon source query -> inverse 4D view ->
@@ -5361,7 +5410,7 @@ ${shadeGate}
       u = hi.sheets;
     }
     base = textureSampleLevel(lutTex, lutSamp, vec2f(u, 0.5), 0.0).rgb;
-  }${shadeBalloonTint}${shadePattern}
+  }${shadeBalloonPalette}${shadeBalloonTint}${shadePattern}
   // Normal from the DE gradient (tetrahedron taps), probed at the hit's
   // own resolution scale; a vanishing gradient faces the camera instead
   // of dividing by ~zero.

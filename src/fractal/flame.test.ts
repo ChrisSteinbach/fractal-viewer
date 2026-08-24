@@ -24,7 +24,7 @@ import {
 } from "./chaos-game";
 import { transformColors } from "./color";
 import { buildPaletteLUT } from "./palette";
-import { buildBalloonFromBall } from "./balloon-de";
+import { balloonPaletteCoordinate, buildBalloonFromBall } from "./balloon-de";
 import { mulberry32 } from "./rng";
 import { sierpinskiTetrahedron } from "./presets";
 import type { Transform, Vec3 } from "./types";
@@ -266,6 +266,120 @@ describe("accumulateFlame balloon echo", () => {
     expect(hist.sumRGB[echoBucket * 3]).toBe(0);
     expect(hist.sumRGB[echoBucket * 3 + 1]).toBe(iterations * 0.5);
     expect(hist.sumRGB[echoBucket * 3 + 2]).toBe(0);
+  });
+
+  it("samples the independent palette by pre-inversion source radius, then applies tint and weight", () => {
+    const palette: Vec3[] = [[0.8, 0.2, 0.1]];
+    const balloon = buildBalloonFromBall(
+      { center: [0, 0, 0], radius: 0.5 },
+      Math.SQRT1_2,
+    );
+    const echoColorLUT = new Float32Array(256 * 3);
+    const source: Vec3 = [0.25, 0, 0];
+    const li =
+      Math.min(255, (balloonPaletteCoordinate(balloon, source) * 256) | 0) * 3;
+    echoColorLUT.set([0.1, 0.5, 0.9], li);
+    const iterations = 6;
+    const hist = accumulateFlame(
+      prepareChaosGame(fixedPointSystem(source)),
+      ORTHOGRAPHIC,
+      20,
+      20,
+      iterations,
+      mulberry32(2),
+      palette,
+      undefined,
+      undefined,
+      {
+        balloon,
+        tint: [0.9, 0.1, 0.3],
+        tintStrength: 0.25,
+        weight: 0.5,
+      },
+      echoColorLUT,
+    );
+
+    const sourceBucket = 10 * 20 + 12;
+    const echoBucket = 10 * 20 + 15;
+    for (const [channel, value] of palette[0].entries()) {
+      expect(hist.sumRGB[sourceBucket * 3 + channel]).toBeCloseTo(
+        value * iterations,
+        12,
+      );
+    }
+    const echoWeight = iterations * 0.5;
+    const sampled = [
+      echoColorLUT[li],
+      echoColorLUT[li + 1],
+      echoColorLUT[li + 2],
+    ];
+    const tint: Vec3 = [0.9, 0.1, 0.3];
+    for (let channel = 0; channel < 3; channel++) {
+      const expected =
+        (sampled[channel] + (tint[channel] - sampled[channel]) * 0.25) *
+        echoWeight;
+      expect(hist.sumRGB[echoBucket * 3 + channel]).toBeCloseTo(expected, 12);
+    }
+  });
+
+  it("keeps independent-palette progressive chunks identical to one shot", () => {
+    const prepared = prepareChaosGame(sierpinskiTetrahedron());
+    const palette = transformColors(4);
+    const echo = {
+      balloon: buildBalloonFromBall(
+        { center: [0, 0, 0] as Vec3, radius: 2 },
+        0.9,
+      ),
+      tint: [0.2, 0.7, 0.4] as Vec3,
+      tintStrength: 0.3,
+      weight: 1,
+    };
+    const echoColorLUT = buildPaletteLUT("aurora")!;
+    const rngChunked = mulberry32(91);
+    let chunked = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      32,
+      32,
+      2000,
+      rngChunked,
+      palette,
+      undefined,
+      undefined,
+      echo,
+      echoColorLUT,
+    );
+    chunked = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      32,
+      32,
+      3000,
+      rngChunked,
+      palette,
+      chunked,
+      undefined,
+      echo,
+      echoColorLUT,
+    );
+    const oneShot = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      32,
+      32,
+      5000,
+      mulberry32(91),
+      palette,
+      undefined,
+      undefined,
+      echo,
+      echoColorLUT,
+    );
+
+    expect(Array.from(chunked.hits)).toEqual(Array.from(oneShot.hits));
+    expect(Array.from(chunked.sumRGB)).toEqual(Array.from(oneShot.sumRGB));
+    expect(chunked.orbit).toEqual(oneShot.orbit);
+    expect(chunked.orbitColor).toBe(oneShot.orbitColor);
   });
 
   it("keeps an explicitly absent echo byte-identical to the original call shape", () => {

@@ -18,6 +18,8 @@ import { VARIATION_TYPES } from "../fractal/types";
 import { VOXEL_RESOLUTION_STEP } from "../fractal/voxel";
 import { MAX_PHI, MAX_RADIUS, MIN_PHI, MIN_RADIUS } from "./orbit";
 import {
+  BALLOON_PALETTE_INHERIT,
+  DEFAULT_BALLOON_PALETTE,
   DEFAULT_BALLOON_RADIUS,
   DEFAULT_BALLOON_TINT,
   DEFAULT_BALLOON_TINT_STRENGTH,
@@ -4671,6 +4673,198 @@ describe("decodeScene background shape", () => {
     const raw = { ...baseSnapshot(), background: { mode: "haze" } };
     const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
     expect(result!.background).toEqual({ mode: "haze" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Balloon palette — an independent document slot whose compact default is
+// Inherit. Its Custom payload remains persisted even when dormant.
+// ---------------------------------------------------------------------------
+
+describe("decodeScene balloon palette", () => {
+  it("omits the default selection from the wire and decodes absence to Inherit", () => {
+    const payload = decodePayload(
+      encodeScene({
+        ...baseSnapshot(),
+        balloonPaletteId: DEFAULT_BALLOON_PALETTE,
+      }),
+    );
+    expect(payload).not.toHaveProperty("balloonPaletteId");
+
+    const result = decodeScene("v1=" + b64url(JSON.stringify(baseSnapshot())));
+    expect(result).not.toBeNull();
+    expect(result!.balloonPaletteId).toBe(BALLOON_PALETTE_INHERIT);
+  });
+
+  it("round-trips a built-in balloon palette", () => {
+    const result = decodeScene(
+      encodeScene({ ...baseSnapshot(), balloonPaletteId: "aurora" }),
+    );
+    expect(result!.balloonPaletteId).toBe("aurora");
+  });
+
+  it("round-trips Custom only with its independent payload", () => {
+    const snapshot: SceneSnapshot = {
+      ...baseSnapshot(),
+      balloonPaletteId: "custom",
+      balloonCustomPalette: {
+        stops: [
+          [1, 0, 0],
+          [0, 0, 1],
+        ],
+      },
+    };
+    const payload = decodePayload(encodeScene(snapshot));
+    expect(payload.balloonPaletteId).toBe("custom");
+    expect(payload.balloonCustomPalette).toEqual({
+      stops: ["#ff0000", "#0000ff"],
+    });
+
+    const result = decodeScene(encodeScene(snapshot));
+    expect(result!.balloonPaletteId).toBe("custom");
+    expect(result!.balloonCustomPalette).toEqual(snapshot.balloonCustomPalette);
+  });
+
+  it("round-trips primary and balloon Custom payloads independently", () => {
+    const snapshot: SceneSnapshot = {
+      ...baseSnapshot(),
+      customPalette: {
+        stops: [
+          [1, 1, 0],
+          [0, 1, 0],
+        ],
+      },
+      balloonPaletteId: "custom",
+      balloonCustomPalette: {
+        stops: [
+          [1, 0, 1],
+          [0, 1, 1],
+        ],
+      },
+    };
+    const result = decodeScene(encodeScene(snapshot));
+    expect(result!.customPalette).toEqual(snapshot.customPalette);
+    expect(result!.balloonCustomPalette).toEqual(snapshot.balloonCustomPalette);
+  });
+
+  it("preserves valid dormant balloon stops while omitting Inherit", () => {
+    const snapshot: SceneSnapshot = {
+      ...baseSnapshot(),
+      balloonPaletteId: BALLOON_PALETTE_INHERIT,
+      balloonCustomPalette: {
+        stops: [
+          [1, 0, 0],
+          [0, 1, 0],
+        ],
+      },
+    };
+    const encoded = encodeScene(snapshot);
+    const payload = decodePayload(encoded);
+    expect(payload).not.toHaveProperty("balloonPaletteId");
+    expect(payload.balloonCustomPalette).toEqual({
+      stops: ["#ff0000", "#00ff00"],
+    });
+
+    const result = decodeScene(encoded);
+    expect(result!.balloonPaletteId).toBe(BALLOON_PALETTE_INHERIT);
+    expect(result!.balloonCustomPalette).toEqual(snapshot.balloonCustomPalette);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["null", null],
+    ["non-string", 42],
+    ["unknown", "chartreuse"],
+    ["primary legacy sentinel", "legacy"],
+  ])("falls back to Inherit for a %s selection", (_label, selection) => {
+    const raw = { ...baseSnapshot(), balloonPaletteId: selection };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.balloonPaletteId).toBe(BALLOON_PALETTE_INHERIT);
+  });
+
+  it("falls back to Inherit for Custom without a payload", () => {
+    const raw = { ...baseSnapshot(), balloonPaletteId: "custom" };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result!.balloonPaletteId).toBe(BALLOON_PALETTE_INHERIT);
+    expect(result!.balloonCustomPalette).toBeUndefined();
+  });
+
+  it("falls back to Inherit for Custom with a malformed payload", () => {
+    const raw = {
+      ...baseSnapshot(),
+      balloonPaletteId: "custom",
+      balloonCustomPalette: { stops: ["#ff0000", "not-a-color"] },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.balloonPaletteId).toBe(BALLOON_PALETTE_INHERIT);
+    expect(result!.balloonCustomPalette).toBeUndefined();
+  });
+
+  it("keeps a valid built-in while quietly dropping a malformed dormant payload", () => {
+    const raw = {
+      ...baseSnapshot(),
+      balloonPaletteId: "moss",
+      balloonCustomPalette: { stops: ["#ff0000"] },
+    };
+    const result = decodeScene("v1=" + b64url(JSON.stringify(raw)));
+    expect(result).not.toBeNull();
+    expect(result!.balloonPaletteId).toBe("moss");
+    expect(result!.balloonCustomPalette).toBeUndefined();
+  });
+});
+
+describe("toSnapshot / fromSnapshot balloon palette", () => {
+  it("toSnapshot carries both the selection and independent payload", () => {
+    const balloonCustomPalette = {
+      stops: [
+        [1, 0, 0],
+        [0, 0, 1],
+      ],
+    } as const;
+    const snapshot = toSnapshot({
+      ...initialState(true),
+      balloonPaletteId: "custom",
+      balloonCustomPalette,
+    });
+    expect(snapshot.balloonPaletteId).toBe("custom");
+    expect(snapshot.balloonCustomPalette).toBe(balloonCustomPalette);
+  });
+
+  it("legacy restore defaults to Inherit and clears a stale base payload", () => {
+    const base: AppState = {
+      ...initialState(true),
+      balloonPaletteId: "custom",
+      balloonCustomPalette: {
+        stops: [
+          [1, 0, 0],
+          [0, 0, 1],
+        ],
+      },
+    };
+    const result = fromSnapshot(baseSnapshot(), base);
+    expect(result.balloonPaletteId).toBe(BALLOON_PALETTE_INHERIT);
+    expect(result.balloonCustomPalette).toBeUndefined();
+  });
+
+  it("lands both fields when the restored snapshot carries them", () => {
+    const balloonCustomPalette = {
+      stops: [
+        [1, 0, 0],
+        [0, 1, 0],
+      ],
+    } as const;
+    const result = fromSnapshot(
+      {
+        ...baseSnapshot(),
+        balloonPaletteId: "custom",
+        balloonCustomPalette,
+      },
+      initialState(true),
+    );
+    expect(result.balloonPaletteId).toBe("custom");
+    expect(result.balloonCustomPalette).toBe(balloonCustomPalette);
   });
 });
 
