@@ -272,8 +272,9 @@ export interface ControlEffects {
    * mode. The surface sibling of {@link restartFlameRender}. */
   restartSurfaceRender(): void;
   /**
-   * Push the CURRENT `state.background`'s resolved gradient to every
-   * renderer. An app-level callback rather than a
+   * Apply the CURRENT `state.background` source to every renderer: a resolved
+   * gradient for the gradient modes, or coordination of the transient image
+   * source for Flame. An app-level callback rather than a
    * {@link ControlSceneEffects} method on purpose: main.ts owns the live
    * backdrop value (the crossfade tween interpolates from it), so every push
    * must route through its one owner — a direct scene call here would desync
@@ -590,10 +591,10 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     },
   },
   {
-    // The Background select: which backdrop gradient every renderer shows —
-    // see background.ts. No `view` guard: the backdrop applies to the 4D
-    // projection exactly like the 3D explorer. Landing on Custom seeds the
-    // authored slot from the backdrop being replaced (see
+    // The Background select: which gradient or transient image source every
+    // renderer shows — see background.ts. No `view` guard: the backdrop
+    // applies to the 4D projection exactly like the 3D explorer. Landing on
+    // Custom seeds the authored slot from the backdrop being replaced (see
     // setBackgroundMode); the custom color pickers themselves are a bespoke
     // ui.ts row (onBackgroundCustom), like the position axis colors.
     kind: "select",
@@ -603,12 +604,12 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     effect: (s, fx) => fx.applyBackground(),
   },
   {
-    // The Shape select: the backdrop's gradient SHAPE — linear ramp or
-    // radial vignette — orthogonal to the Background select above (see
-    // background.ts's BackgroundParams doc). Same no-`view`-guard, same
-    // fx.applyBackground() push: one shared effect moves both mode and
-    // shape edits through pushBackground, which reads the shape off state
-    // itself.
+    // The Shape select: the backdrop's gradient SHAPE — linear ramp or radial
+    // vignette — orthogonal to the Background select's gradient choices (see
+    // background.ts's BackgroundParams doc), and hidden while Flame selects a
+    // per-pixel image. Same no-`view`-guard, same fx.applyBackground() push:
+    // one shared effect moves both mode and shape edits through the app's
+    // backdrop coordinator, which reads the shape off state itself.
     kind: "select",
     id: "backgroundShape",
     read: (s) => s.background.shape ?? "linear",

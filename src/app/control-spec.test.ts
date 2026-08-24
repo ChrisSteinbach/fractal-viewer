@@ -169,9 +169,9 @@ describe("applyScalarControl: parsing/mapping", () => {
   it("background select apply sets background.mode from the option value", () => {
     const spec = specById("background");
 
-    const state = applyScalarControl(initialState(true), spec, "haze");
+    const state = applyScalarControl(initialState(true), spec, "flame");
 
-    expect(state.background.mode).toBe("haze");
+    expect(state.background.mode).toBe("flame");
   });
 
   it('background select apply landing on "custom" seeds background.custom from the replaced backdrop', () => {

@@ -1783,6 +1783,10 @@ export class Ui {
     z: HTMLInputElement;
   };
   private readonly positionColorsResetBtn: HTMLElement;
+  /** The gradient-shape row is inert for the per-pixel flame backdrop and
+   * hides while that image source is selected. Its authored state remains in
+   * AppState and returns when a gradient mode is selected again. */
+  private readonly backgroundShapeRow: HTMLElement;
   private readonly backgroundCustomRow: HTMLElement;
   private readonly backgroundInputs: {
     top: HTMLInputElement;
@@ -2285,6 +2289,7 @@ export class Ui {
       z: this.byId("positionAxisZ"),
     };
     this.positionColorsResetBtn = this.byId("positionColorsReset");
+    this.backgroundShapeRow = this.byId("backgroundShapeRow");
     this.backgroundCustomRow = this.byId("backgroundCustomRow");
     this.backgroundInputs = {
       top: this.byId("backgroundTop"),
@@ -3218,9 +3223,16 @@ export class Ui {
       const input = this.positionAxisInputs[axis];
       if (input.value !== hex) input.value = hex;
     }
-    // The custom backdrop pickers: shown only while the Background
-    // select sits on Custom; synced to the resolved stops with the same
-    // only-write-on-change guard as the axis pickers above.
+    // The gradient shape has no meaning for the Flame backdrop's per-pixel
+    // image. Hide the row while that mode is selected without clearing its
+    // authored value — switching back restores the same shape.
+    this.backgroundShapeRow.classList.toggle(
+      "hidden",
+      state.background.mode === "flame",
+    );
+    // The custom backdrop pickers: shown only while the Background select
+    // sits on Custom (therefore hidden for Flame too); synced to the resolved
+    // stops with the same only-write-on-change guard as the axis pickers above.
     this.backgroundCustomRow.classList.toggle(
       "hidden",
       state.background.mode !== "custom",

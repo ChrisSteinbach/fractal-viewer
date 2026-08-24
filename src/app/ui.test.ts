@@ -9,6 +9,7 @@ import {
   MORPH_DETAILS,
   PARAM,
   setBackgroundMode,
+  setBackgroundShape,
   setFlamePaletteId,
   setSolidPaletteId,
   setSurfaceColorSource,
@@ -8346,6 +8347,9 @@ describe("background shape select menu", () => {
 });
 
 describe("Ui background backdrop row", () => {
+  function backgroundShapeRow(): HTMLElement {
+    return document.getElementById("backgroundShapeRow") as HTMLElement;
+  }
   function backgroundCustomRow(): HTMLElement {
     return document.getElementById("backgroundCustomRow") as HTMLElement;
   }
@@ -8363,6 +8367,35 @@ describe("Ui background backdrop row", () => {
     const ui = new Ui(document);
     ui.updateLabels(setBackgroundMode(initialState(true), "auto"));
     expect(backgroundCustomRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it('hides both gradient-only rows once the background mode is "flame"', () => {
+    const ui = new Ui(document);
+    ui.updateLabels(setBackgroundMode(initialState(true), "flame"));
+
+    expect(backgroundShapeRow().classList.contains("hidden")).toBe(true);
+    expect(backgroundCustomRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("restores the dormant authored shape when leaving flame mode", () => {
+    const ui = new Ui(document);
+    const flame = setBackgroundShape(
+      setBackgroundMode(initialState(true), "flame"),
+      "radial",
+    );
+    ui.updateLabels(flame);
+
+    expect(backgroundShapeRow().classList.contains("hidden")).toBe(true);
+    expect(
+      (document.getElementById("backgroundShape") as HTMLSelectElement).value,
+    ).toBe("radial");
+
+    ui.updateLabels(setBackgroundMode(flame, "haze"));
+
+    expect(backgroundShapeRow().classList.contains("hidden")).toBe(false);
+    expect(
+      (document.getElementById("backgroundShape") as HTMLSelectElement).value,
+    ).toBe("radial");
   });
 
   it('is shown once the background mode is "custom"', () => {

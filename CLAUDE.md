@@ -373,8 +373,10 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     `ShadeParams` tail (`surface-de-gpu.ts`, `bgCenter`/`bgScale`/`bgShape`
     appended at 176/184/192, struct 208 B then, 224 since
     the balloon tint pair) now carry — a SHAPE
-    orthogonal to `background.ts`'s MODE, so every mode can be linear or
-    radial and `BackgroundGradient` stays the two-stop pair it always was.
+    orthogonal to `background.ts`'s GRADIENT modes, so every gradient mode can
+    be linear or radial and `BackgroundGradient` stays the two-stop pair it
+    always was. The per-pixel `"flame"` mode keeps the authored shape dormant
+    until a gradient mode is selected again.
     Full measurement record (byte sizes, the two-token dialect divergence,
     the viewport-vs-canvas scale distinction) in
     `docs/surface-glsl-tracers.md`.
@@ -1173,7 +1175,7 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     temporary showcase (By Transform color, guides visible, auto-orbit).
     Pure, tested, injected clock.
   - `background.ts` — the scene backdrop: `BACKGROUND_MODES` vocabulary
-    (dark/haze/auto/custom, extensible for curated presets);
+    (dark/haze/auto/flame/custom, extensible for curated presets);
     `resolveBackground` is the ONE mode→(top, bottom) definition every
     renderer/capture/compute-spec path shares. `"auto"` is
     the palette-linked backdrop: `autoBackground` darkens two
@@ -1183,15 +1185,17 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     pick the tracked palette per render mode (coarse on purpose), and
     main.ts's `trackAutoBackground` re-derives on palette edits and
     render-mode landings — persisted as the MODE alone, never baked colors.
-    `lerpBackground` + `BackgroundTween` are the replace-load
-    crossfade, a fourth motion beside the system morph/camera/4D rotor
+    `"flame"` selects a transient, low-budget 2D echo generated from the
+    current system; only that mode id persists, never its bitmap, seed, blur,
+    or budget. `lerpBackground` + `BackgroundTween` are the gradient-only
+    replace-load crossfade, a fourth motion beside the system morph/camera/4D rotor
     glides — the SHAPE below is deliberately not part of it (no meaningful
     midpoint between linear and radial; it pops to the target's at the
     leg's first push). Persists via `persist.ts`, whose decoder doubles as
     the legacy migration (absent field + aerial style → haze). Pure,
-    tested. `BackgroundParams.shape` is ORTHOGONAL to `mode` —
-    the gradient SHAPE (`fractal/background-shape.ts`'s vocabulary) every
-    mode's two stops paint through, absent means `"linear"` byte-identical
+    tested. `BackgroundParams.shape` is ORTHOGONAL to the gradient modes —
+    the gradient SHAPE (`fractal/background-shape.ts`'s vocabulary) their
+    two stops paint through, absent means `"linear"` byte-identical
     to every document predating it. `scene.ts`'s Shape select
     (`setBackgroundShape`) and `pushBackground` read it the same way the
     Background select reads `mode`.
@@ -1535,6 +1539,15 @@ Frame` callback, which runs before paint so the disabled look never
   - `cloud-generator.ts` — main-thread cloud worker client: at most one request
     in flight, latest wins, OR-merges coalesced flags. Synchronous fallback if
     worker crashes. `settle()` for offline export. Pure, tested.
+  - `flame-backdrop-generator.ts` — optional backdrop worker controller over
+    the existing flame protocol: one persistent CPU/transfer worker, fixed
+    256px-class/1M-iteration blurred policy, 300ms trailing debounce, at most
+    one request in flight plus one latest pending snapshot, and no synchronous
+    fallback. Morphs `suspend()` it and keep the currently displayed source;
+    the terminal cloud `resume()`s one fresh request. It screen-composites the
+    worker image over dark off-thread output, publishes immutable opaque RGBA
+    plus its mean fog color, and exposes `settle()` to frame-exact export.
+    Pure controller, tested.
   - `flame-gpu-backend.ts` — drives flame WGSL kernels inside the flame worker
     behind `FlameAccumBackend` seam. Error-scoped resource creation
     (`FlameGpuSizeError`). `destroy()` defers the real `device.destroy()`

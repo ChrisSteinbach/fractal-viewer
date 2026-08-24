@@ -32,7 +32,11 @@ import { DARK_BACKDROP, hexToRgb01 } from "./constants";
  * The miss-pixel gradient shares its shape with every other tracer:
  * `backgroundShapeT`, spliced in from `../fractal/background-shape.ts`, is
  * the one place that shape is defined — this module only supplies the two
- * stops and the pixel's full-image UV.
+ * stops and the pixel's full-image UV. The flame backdrop is the one
+ * non-gradient source: `uBgImageOn` switches the same full-image UV to the
+ * scene's immutable, blurred flame texture. Keeping that branch here is
+ * necessary because Solid shades directly to the canvas rather than going
+ * through Surface's retained-background compositor.
  */
 
 /** Screen-space gradient the raymarcher paints on a miss — the same authored
@@ -74,6 +78,10 @@ const VOXEL_FRAGMENT = /* glsl */ `
   uniform int uBgShape;
   uniform vec2 uBgCenter;
   uniform vec2 uBgScale;
+  /** Per-pixel flame backdrop. uBgImageOn == 0 is the shipped gradient
+   * path byte-for-expression; the sampler is then bound but never read. */
+  uniform sampler2D uBgImage;
+  uniform int uBgImageOn;
   /** Primary march step count, scaled with the bound grid so the stride
    * stays ~1.16 voxels (see marchStepsForGrid). */
   uniform int uMarchSteps;
@@ -135,7 +143,9 @@ const VOXEL_FRAGMENT = /* glsl */ `
   ${backgroundShapeSource(BACKGROUND_SHAPE_GLSL)}
   void main() {
     // Shared shape at full-image coordinates; see surface-material.ts.
-    vec3 background = mix(uBgBottom, uBgTop, backgroundShapeT(vUv));
+    vec3 background = uBgImageOn == 1
+      ? texture(uBgImage, vUv).rgb
+      : mix(uBgBottom, uBgTop, backgroundShapeT(vUv));
 
     // Reconstruct the camera ray by unprojecting this pixel on the near and
     // far clip planes.
@@ -309,6 +319,7 @@ export function marchStepsForGrid(gridSize: number): number {
 
 export function createVoxelMaterial(
   volume: THREE.Data3DTexture,
+  backgroundImage?: THREE.Texture,
 ): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
@@ -328,6 +339,10 @@ export function createVoxelMaterial(
       uBgShape: { value: 0 },
       uBgCenter: { value: new THREE.Vector2(0.5, 0.5) },
       uBgScale: { value: new THREE.Vector2(1, 1) },
+      // Bound from construction so switching sources is one integer write;
+      // scene.ts owns and repaints the CanvasTexture without replacing it.
+      uBgImage: { value: backgroundImage ?? new THREE.Texture() },
+      uBgImageOn: { value: 0 },
       // Matches the placeholder 1³ texture era; a real value arrives with
       // the first uploaded volume (setVoxelGrid → marchStepsForGrid).
       uMarchSteps: { value: 220 },

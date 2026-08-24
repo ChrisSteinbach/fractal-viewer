@@ -43,6 +43,9 @@ Three.js, and Vite, and packaged as an installable, offline-capable PWA.
   cyan — plus gradient palettes and a custom-gradient editor.
 - **Orbit camera** with rotate / pan / zoom, and an adjustable atmosphere:
   depth fog with its own density and tint, tracking the cloud and backdrop.
+- **Scene backdrops** — dark, haze, palette-linked, custom gradients, or a
+  softly blurred 2D Flame echo of the current system, generated off-thread and
+  shared by every renderer and capture path.
 - **Collection & Timeline** — a persistent gallery of saved scenes, and an
   authored keyframe timeline played back as a chain of morphs — exportable
   as a frame-exact 30 fps MP4 clip (WebCodecs) or a live recording.

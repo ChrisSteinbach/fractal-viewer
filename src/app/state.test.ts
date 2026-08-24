@@ -1717,6 +1717,12 @@ describe("setBackgroundMode", () => {
     expect(state.background.mode).toBe("dark");
   });
 
+  it("selects the generated flame mode without adding image state", () => {
+    const next = setBackgroundMode(initialState(true), "flame");
+
+    expect(next.background).toEqual({ mode: "flame" });
+  });
+
   it("seeds the custom slot from the dark backdrop's resolved stops on first switch to custom", () => {
     const state = initialState(true);
     const next = setBackgroundMode(state, "custom");
@@ -1764,6 +1770,35 @@ describe("setBackgroundMode", () => {
     const next = setBackgroundMode(withCustom, "haze");
     expect(next.background.mode).toBe("haze");
     expect(next.background.custom).toEqual(authored);
+  });
+
+  it("keeps authored custom colors and shape dormant while flame is selected", () => {
+    const state = setBackgroundShape(
+      setBackgroundCustom(setBackgroundMode(initialState(true), "custom"), {
+        top: [0.1, 0.2, 0.3],
+        bottom: [0.9, 0.8, 0.7],
+      }),
+      "radial",
+    );
+
+    const next = setBackgroundMode(state, "flame");
+
+    expect(next.background).toEqual({
+      mode: "flame",
+      custom: {
+        top: [0.1, 0.2, 0.3],
+        bottom: [0.9, 0.8, 0.7],
+      },
+      shape: "radial",
+    });
+  });
+
+  it("seeds a never-authored custom slot from flame mode's dark placeholder", () => {
+    const flame = setBackgroundMode(initialState(true), "flame");
+
+    const next = setBackgroundMode(flame, "custom");
+
+    expect(next.background.custom).toEqual(resolveBackground({ mode: "dark" }));
   });
 });
 

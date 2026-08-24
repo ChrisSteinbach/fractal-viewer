@@ -1616,6 +1616,29 @@ describe("the present blit strips trace-status alpha", () => {
       "outColor = texture(uSrc, vUv);",
     );
   });
+
+  it("supports image color sources without moving the default gradient/copy path", () => {
+    const fallback = new Texture();
+    const material = createSurfaceBlitMaterial(fallback);
+    const u = material.uniforms;
+    expect(u.uTraceBgImage.value).toBe(fallback);
+    expect(u.uLiveBgImage.value).toBe(fallback);
+    expect(u.uTraceBgKind.value).toBe(0);
+    expect(u.uLiveBgKind.value).toBe(0);
+    expect(u.uComposite.value).toBe(0);
+    expect(material.fragmentShader).toContain(
+      "uniform sampler2D uTraceBgImage;",
+    );
+    expect(material.fragmentShader).toContain(
+      "uniform sampler2D uLiveBgImage;",
+    );
+    expect(material.fragmentShader).toContain(
+      "if (kind == 1) {\n      return texture(image, vUv).rgb;",
+    );
+    expect(material.fragmentShader).toContain(
+      "rgb += layer.b * (liveBg - traceBg);",
+    );
+  });
 });
 
 /** Every BOX-BRANCH DECODE the assembled fragment source carries, in
