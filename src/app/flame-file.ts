@@ -65,6 +65,7 @@ import {
   MAX_TRANSFORMS,
   derivedColorIndex,
   effectiveSymmetryOrder,
+  resolveScheduleDepth,
   runChaosGame,
 } from "../fractal/chaos-game";
 import { transformColors } from "../fractal/color";
@@ -961,6 +962,17 @@ export function encodeFlameFile(
   // contract is a lossy XY projection that warns about what it loses (see
   // the 3D/4D flattening warnings just below), and refusing the export would
   // be the one place in the module that treats loss as fatal.
+  // The scheduled-hybrid post-word has no flam3 equivalent (a schedule is
+  // not expressible as xforms — the closest chi encoding needs depth-many
+  // layered B copies): the export writes system A alone and says so, this
+  // exporter's standing lossy-with-warnings contract. Keyed on the ONE
+  // consumption domain so a dead block warns exactly as it renders: not at
+  // all.
+  if (resolveScheduleDepth(s.schedule ?? null) > 0) {
+    warnings.add(
+      "The hybrid schedule (system B) has no .flame equivalent and was dropped — the file holds system A alone",
+    );
+  }
   const requestedOrder = effectiveSymmetryOrder(s.symmetry.order, n);
   const drops4D = requestedOrder > 1 && planeHasW(s.symmetry.plane);
   const order = drops4D ? 1 : requestedOrder;

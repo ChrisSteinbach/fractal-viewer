@@ -68,7 +68,13 @@
  *   three of the 20 lanes now ride spare).
  */
 import type { Rng } from "./rng";
-import type { SymmetryParams, Transform, VariationType, Vec3 } from "./types";
+import type {
+  HybridSchedule,
+  SymmetryParams,
+  Transform,
+  VariationType,
+  Vec3,
+} from "./types";
 import type { Balloon } from "./balloon-de";
 import { createFlameHistogram } from "./flame";
 import type { FlameHistogram, Mat4 } from "./flame";
@@ -81,8 +87,10 @@ import { composeAffine, rotationMatrixXYZ } from "./affine";
 import {
   DEFAULT_COLOR_SPEED,
   MAX_TRANSFORMS,
+  buildScheduleTable,
   derivedColorIndex,
   effectiveSymmetryOrder,
+  resolveScheduleDepth,
   systemHasChaos,
 } from "./chaos-game";
 import { transformColors } from "./color";
@@ -153,18 +161,27 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  * Byte-layout contracts (WGSL struct rules; the pack* functions below
  * write ArrayBuffers to match, and `flame-gpu.test.ts` pins them):
  *
- * Params (uniform, {@link PARAMS_BYTES} = 144):
+ * Params (uniform, {@link PARAMS_BYTES} = 160):
  *   0 projX vec4f | 16 projY vec4f | 32 projW vec4f
  *   48 width u32 | 52 height u32 | 56 transformCount u32 | 60 baseTransformCount u32
  *   64 itersPerInvocation u32 | 68 colorMode u32 (0 legacy, 1 LUT) | 72 weighted u32 | 76 hasFinal u32
  *   80 totalWeight f32 | 84 numChains u32 | 88 echoWeight f32 (zero = off) |
  *   92 echoRho f32 | 96 echoCenterR2 vec4f (center xyz, R squared) |
  *   112 echoTintStrength vec4f (tint rgb, strength) |
- *   128 echoPaletteEnabled u32 | 132..143 pad
+ *   128 echoPaletteEnabled u32 | 132 scheduleCount u32 (zero = no post-word) |
+ *   136 scheduleDepth u32 | 140 scheduleWeighted u32 |
+ *   144 scheduleTotalWeight f32 | 148..159 pad
  *
  * Slot (storage array element, {@link SLOT_STRIDE_BYTES} = 336 stride);
- * slot count = transformCount + 1, the last being the final-transform lens
- * (read only when hasFinal = 1, never drawn by the transform pick):
+ * slot count = transformCount + 1 + scheduleCount — the expanded transform
+ * slots, then the final-transform lens slot (read only when hasFinal = 1,
+ * never drawn by the transform pick), then the scheduled-hybrid post-word's
+ * B slots (`chaos-game.ts`'s `PreparedSchedule`, affine-only: only
+ * rowX/rowY/rowZ and cumWeight are meaningful, everything else stays at the
+ * ArrayBuffer's zero default — `applySlot` on one is exactly the plain
+ * affine, no variations, no post-rotation, no RNG). B slots start at index
+ * `transformCount + 1` and are drawn only by the plot loop's own schedule
+ * pick, never by the transform pick:
  *   0 rowX vec4f (m0 m1 m2 t0) | 16 rowY | 32 rowZ
  *   48 postX vec4f (symmetry post-rotation row, w unused) | 64 postY | 80 postZ
  *   96 varWeights array<vec4f, 5> | 176 varTypes array<vec4u, 5> (20 lanes of
@@ -200,7 +217,7 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  * hist: array<atomic<u32>>, `width * height * HIST_U32_PER_BUCKET`,
  * bucket layout as {@link HIST_U32_PER_BUCKET} describes.
  */
-export const PARAMS_BYTES = 144;
+export const PARAMS_BYTES = 160;
 export const SLOT_STRIDE_BYTES = 336;
 export const CHAIN_STRIDE_BYTES = 32;
 export const COLORS_BYTES = 256 * 16;
@@ -238,6 +255,10 @@ struct Params {
   echoCenterR2: vec4f,
   echoTintStrength: vec4f,
   echoPaletteEnabled: u32,
+  scheduleCount: u32,
+  scheduleDepth: u32,
+  scheduleWeighted: u32,
+  scheduleTotalWeight: f32,
 }
 
 struct Slot {
@@ -549,8 +570,50 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
 
     if (PLOT) {
       var pp = pos;
+      // Scheduled-hybrid post-word (chaos-game.ts's plotPoint, post-word
+      // THEN lens): scheduleDepth B-picks — each ONE rand01 draw, exactly
+      // the CPU's primary-stream rigidity — bending the plotted point
+      // through the B slots appended after the lens slot. applySlot on a B
+      // slot is the plain affine (varCount 0, hasPost 0 — see the Slot
+      // layout doc), so no extra RNG is consumed beyond the picks. Adopted
+      // only while finite (the lens's own < 1e30 f32 stand-in); on
+      // overflow the word falls back to the pre-word point, exactly the
+      // CPU rule. Zero draws and byte-identical behavior at depth 0.
+      if (params.scheduleDepth > 0u) {
+        let schedBase = params.transformCount + 1u;
+        var sp = pp;
+        for (var d = 0u; d < params.scheduleDepth; d++) {
+          let sr = rand01(&rng);
+          var si: u32;
+          if (params.scheduleWeighted == 1u) {
+            let sNeedle = sr * params.scheduleTotalWeight;
+            var sLo = 0u;
+            var sHi = params.scheduleCount - 1u;
+            loop {
+              if (sLo >= sHi) {
+                break;
+              }
+              let sMid = (sLo + sHi) >> 1u;
+              if (sNeedle < slots[schedBase + sMid].cumWeight) {
+                sHi = sMid;
+              } else {
+                sLo = sMid + 1u;
+              }
+            }
+            si = sLo;
+          } else {
+            si = min(u32(sr * f32(params.scheduleCount)), params.scheduleCount - 1u);
+          }
+          sp = applySlot(schedBase + si, sp, &rng);
+        }
+        if (abs(sp.x) < 1e30 && abs(sp.y) < 1e30 && abs(sp.z) < 1e30) {
+          pp = sp;
+        }
+      }
       if (params.hasFinal == 1u) {
-        let f = applySlot(params.transformCount, pos, &rng);
+        // The lens bends the (possibly post-word-bent) plotted point — pp,
+        // which IS pos when no schedule is present.
+        let f = applySlot(params.transformCount, pp, &rng);
         // CPU adopts the lensed point only when all coordinates are finite;
         // < 1e30 is the f32 stand-in (inf and NaN both fail it).
         if (abs(f.x) < 1e30 && abs(f.y) < 1e30 && abs(f.z) < 1e30) {
@@ -671,6 +734,10 @@ const PARAMS_ECHO_RHO = 23;
 const PARAMS_ECHO_CENTER_R2 = 24;
 const PARAMS_ECHO_TINT_STRENGTH = 28;
 const PARAMS_ECHO_PALETTE_ENABLED = 32;
+const PARAMS_SCHEDULE_COUNT = 33;
+const PARAMS_SCHEDULE_DEPTH = 34;
+const PARAMS_SCHEDULE_WEIGHTED = 35;
+const PARAMS_SCHEDULE_TOTAL_WEIGHT = 36;
 
 /**
  * `chaos-game.ts`'s `symmetryRotation`, restated here (a deliberate
@@ -884,6 +951,12 @@ export interface GpuFlameSystemSpec {
    * (`colorMode` 0); anything else selects the 256-entry gradient LUT mode
    * (`colorMode` 1) — see `palette.ts`'s `buildPaletteLUT`. */
   palette: PaletteSpec;
+  /** The scheduled-hybrid post-word block ({@link HybridSchedule}) — B's
+   * affine-only maps appended as extra slots after the lens slot, drawn by
+   * the kernel's plot-time schedule pick. Absent/`null`/empty is the
+   * byte-identical no-post-word path (zero extra slots, `scheduleDepth`
+   * 0). */
+  schedule?: HybridSchedule | null;
 }
 
 /**
@@ -893,8 +966,9 @@ export interface GpuFlameSystemSpec {
  * raw bytes.
  */
 export interface PackedGpuSystem {
-  /** `(transformCount + 1) * SLOT_STRIDE_BYTES` — one slot per expanded
-   * (copy, base transform) pair, plus the final-transform lens slot. */
+  /** `(transformCount + 1 + scheduleCount) * SLOT_STRIDE_BYTES` — one slot
+   * per expanded (copy, base transform) pair, plus the final-transform lens
+   * slot, plus the schedule's B slots (see the byte-layout doc). */
   slots: ArrayBuffer;
   /** {@link COLORS_BYTES} — always the full 256-entry table, however many
    * entries are actually meaningful (see `colorMode`). */
@@ -907,6 +981,15 @@ export interface PackedGpuSystem {
   totalWeight: number;
   colorMode: 0 | 1;
   hasFinal: boolean;
+  /** B slot count — 0 exactly when the spec carries no live schedule. */
+  scheduleCount: number;
+  /** The post-word's depth k (0 = no post-word), through the ONE shared
+   * `resolveScheduleDepth` domain. */
+  scheduleDepth: number;
+  /** B's own weighted-draw flag/total — `buildScheduleTable`'s, the same
+   * table the CPU's `prepareSchedule` builds. */
+  scheduleWeighted: boolean;
+  scheduleTotalWeight: number;
 }
 
 /**
@@ -971,6 +1054,14 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
       `IFS supports at most ${MAX_TRANSFORMS} transforms, got ${transforms.length}`,
     );
   }
+  // The scheduled-hybrid post-word, through the ONE shared consumption
+  // domain (`resolveScheduleDepth`) so the CPU oracle and this packer can
+  // never disagree on when a block is live.
+  const schedule = spec.schedule ?? null;
+  const scheduleDepth = resolveScheduleDepth(schedule);
+  const scheduleTransforms =
+    scheduleDepth > 0 && schedule ? schedule.transforms : [];
+  const scheduleCount = scheduleTransforms.length;
   // Defense in depth, not routing: the flame worker already forces the CPU
   // backend for chi documents (flame-worker-core's gpuEligible), because
   // this kernel has no chaos-row selection — packing one would render a
@@ -989,7 +1080,9 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
   const transformCount = order * baseTransformCount;
   const hasFinal = finalTransform !== null;
 
-  const slots = new ArrayBuffer((transformCount + 1) * SLOT_STRIDE_BYTES);
+  const slots = new ArrayBuffer(
+    (transformCount + 1 + scheduleCount) * SLOT_STRIDE_BYTES,
+  );
   const slotF32 = new Float32Array(slots);
   const slotU32 = new Uint32Array(slots);
 
@@ -1062,6 +1155,21 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
     writeSlotVariations(slotF32, slotU32, finalBase, finalTransform.variations);
   }
 
+  // The schedule's B slots, appended after the lens slot: affine rows +
+  // cumWeight only (B is affine-only by the document rule — see
+  // `HybridSchedule` — so no variation lanes, no post-rotation, no color
+  // pair; the zero defaults make `applySlot` on one exactly the plain
+  // affine). The weight table is the ONE shared `buildScheduleTable`, so
+  // the kernel's weighted schedule draw and the CPU's `pickScheduleIndex`
+  // read the same numbers.
+  const scheduleTable = buildScheduleTable(scheduleTransforms);
+  for (let i = 0; i < scheduleCount; i++) {
+    const base = (transformCount + 1 + i) * F32_PER_SLOT;
+    const affine = composeAffine(scheduleTransforms[i]);
+    writeSlotRows(slotF32, base, affine.m, affine.t);
+    slotF32[base + SLOT_CUM_WEIGHT] = scheduleTable.cumulative[i];
+  }
+
   const colors = new ArrayBuffer(COLORS_BYTES);
   const colorsU32 = new Uint32Array(colors);
   const colorMode: 0 | 1 = palette === "legacy" ? 0 : 1;
@@ -1103,6 +1211,10 @@ export function packGpuSystem(spec: GpuFlameSystemSpec): PackedGpuSystem {
     totalWeight,
     colorMode,
     hasFinal,
+    scheduleCount,
+    scheduleDepth,
+    scheduleWeighted: scheduleTable.weighted,
+    scheduleTotalWeight: scheduleTable.totalWeight,
   };
 }
 
@@ -1188,6 +1300,13 @@ export interface GpuParamsFields {
   echo?: GpuFlameBalloonEchoFields;
   /** Whether binding 5 carries an independent echo-only LUT. */
   echoPalette: boolean;
+  /** The scheduled-hybrid post-word's scalar four, straight off
+   * {@link PackedGpuSystem} — count/depth 0 (the packed default for a
+   * schedule-less spec) is the byte-identical no-post-word path. */
+  scheduleCount: number;
+  scheduleDepth: number;
+  scheduleWeighted: boolean;
+  scheduleTotalWeight: number;
 }
 
 /**
@@ -1226,6 +1345,10 @@ export function packGpuParams(fields: GpuParamsFields): ArrayBuffer {
   f32[PARAMS_TOTAL_WEIGHT] = fields.totalWeight;
   u32[PARAMS_NUM_CHAINS] = fields.numChains;
   u32[PARAMS_ECHO_PALETTE_ENABLED] = fields.echoPalette ? 1 : 0;
+  u32[PARAMS_SCHEDULE_COUNT] = fields.scheduleCount;
+  u32[PARAMS_SCHEDULE_DEPTH] = fields.scheduleDepth;
+  u32[PARAMS_SCHEDULE_WEIGHTED] = fields.scheduleWeighted ? 1 : 0;
+  f32[PARAMS_SCHEDULE_TOTAL_WEIGHT] = fields.scheduleTotalWeight;
   const echo = fields.echo;
   if (echo) {
     f32[PARAMS_ECHO_WEIGHT] = echo.weight;

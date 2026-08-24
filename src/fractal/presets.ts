@@ -2,6 +2,7 @@ import { composeAffine } from "./affine";
 import type { FlamePaletteId } from "./palette";
 import type { Rng } from "./rng";
 import type {
+  HybridSchedule,
   Rotation4,
   SurfaceFinish,
   SymmetryParams,
@@ -2192,6 +2193,11 @@ const PRESETS = {
   // solid render them; the surface and escape gates refuse chi documents.
   fernSponge: fernSpongeIsolated,
   fernSpongeLeak,
+  // The scheduled-hybrid post-word's reachability proof, third member of
+  // the fern-and-sponge family: system A alone here — the schedule block
+  // (B = the sponge, depth 2) rides PRESET_SCHEDULES, exactly as a lens
+  // rides PRESET_FINALS.
+  spongeOfFerns: barnsleyFern,
   radiolarian,
   swirl: swirlFlame,
   dyedSpiral,
@@ -2461,6 +2467,71 @@ export const PRESET_PALETTES: Partial<Record<Preset, FlamePaletteId>> = {
  */
 export const PRESET_SYMMETRIES: Partial<Record<Preset, SymmetryParams>> = {
   foldChainFlower: { order: 5, plane: "xz" },
+};
+
+/**
+ * How far apart {@link spongeOfFernsSchedule} spreads the sponge's cells,
+ * as a uniform conjugation of {@link mengerSponge}'s maps (`s'(x) =
+ * c·s(x/c)`: positions scale by `c`, the 1/3 contractions are untouched, so
+ * the arrangement is the SAME sponge at twice the size). The classic sponge
+ * fills [-0.75, 0.75]³ — cell edge `1.5/3^k` at depth k — while the
+ * re-centred fern stands ~3.0 tall, i.e. `3.0/3^k` after a depth-k word:
+ * TWICE a cell, so neighbouring ferns overlapped into fuzz at every depth.
+ * At 2 the cell pitch equals the contracted fern's height at every depth
+ * alike, and the arrangement reads as distinct whole plants — judged in
+ * the browser at depths 1..3 (the K1/K2 grove picture).
+ */
+const SPONGE_OF_FERNS_SPREAD = 2;
+
+/**
+ * "Sponge of Ferns"' schedule block: the Menger sponge as system B — the
+ * union of `s_w(Fern)` over all depth-length sponge words, "a Menger sponge
+ * MADE OF ferns". A plain-transform-list merge cannot produce this (every
+ * map would apply to everything — sponges budding along fronds), and a chi
+ * matrix CAN only at the cost of depth-many layered sponge copies; the
+ * post-word stage is THE construction for a grove of distinct whole
+ * individuals (the forest-composition measurement: K1 renders crisp whole
+ * ferns at the arrangement's placements, K2 the second generation). The
+ * sponge's maps are pure affine, which is exactly the schedule's
+ * affine-only document rule.
+ *
+ * DEPTH 2, NOT 3, judged by eye in the browser at the default 100k-point
+ * budget: depth 2's 400 word-cells leave ~250 points per fern — every copy
+ * still reads as a plant AND the sponge's level-2 holes read as a sponge —
+ * while depth 3's 8,000 cells leave ~12 points each, dissolving the ferns
+ * into strand texture (the brief's own "as k grows the ferns shrink into
+ * invisibility"). The slider reaches 3 in one tick for anyone who raises
+ * the point budget to match.
+ */
+function spongeOfFernsSchedule(): HybridSchedule {
+  const c = SPONGE_OF_FERNS_SPREAD;
+  return {
+    transforms: mengerSponge().map((t) => ({
+      ...t,
+      position: [
+        t.position[0] * c,
+        t.position[1] * c,
+        t.position[2] * c,
+      ] as Vec3,
+    })),
+    depth: 2,
+  };
+}
+
+/**
+ * The scheduled-hybrid post-word a preset is a composition OF — the sixth
+ * side table, on {@link PRESET_FINALS}' exact both-directions rule: a
+ * preset composed around a schedule installs it, and every other preset
+ * CLEARS one (ABSENT MEANS CLEAR — a leftover post-word would rearrange
+ * the arriving attractor into copies it was never composed with, and would
+ * take the Surface modes away outright, since the gate refuses schedule
+ * documents until the descent lift ships). A factory like
+ * `PRESET_FINALS`' entries — main.ts's handler feeds it through
+ * `setSchedule`, which strips and clamps, so the table cannot smuggle
+ * non-affine fields into the document even if an entry grew some.
+ */
+export const PRESET_SCHEDULES: Partial<Record<Preset, () => HybridSchedule>> = {
+  spongeOfFerns: spongeOfFernsSchedule,
 };
 
 /** Surface-room state carried by the one preset composed around it. Absent

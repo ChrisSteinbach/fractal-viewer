@@ -63,6 +63,7 @@ import {
   CHAOS_SUB_ORBIT_POINTS,
   ESCAPE_LIMIT,
   WARMUP_ITERATIONS,
+  pickScheduleIndex,
 } from "./chaos-game";
 import { pickIndex4, stepOrbit4 } from "./chaos-game-4d";
 import type { PreparedChaosGame4 } from "./chaos-game-4d";
@@ -153,7 +154,7 @@ export function accumulateFlame4(
 
   const { affines, variations, postRotations, finalAffine, finalWarp } =
     prepared;
-  const { baseTransformCount } = prepared;
+  const { baseTransformCount, schedule } = prepared;
   const { hits, sumRGB } = hist;
   let maxHits = hist.maxHits;
 
@@ -352,17 +353,50 @@ export function accumulateFlame4(
     prevBase = escaped ? -1 : baseIdx;
 
     // --- inlined plotPoint4(prepared, x, y, z, w, rng) ---------------------
+    // Post-word first, then the lens — chaos-game-4d.ts's plotPoint4 stage
+    // for stage (single-stream consumer, so the B-picks draw from `rng`).
     let px = x;
     let py = y;
     let pz = z;
     let pw = w;
+    if (schedule !== null) {
+      let sx = px;
+      let sy = py;
+      let sz = pz;
+      let sw = pw;
+      for (let d = 0; d < schedule.depth; d++) {
+        const bAff = schedule.affines[pickScheduleIndex(schedule, rng)];
+        const bm = bAff.m;
+        const bt = bAff.t;
+        const nx = bm[0] * sx + bm[1] * sy + bm[2] * sz + bm[3] * sw + bt[0];
+        const ny = bm[4] * sx + bm[5] * sy + bm[6] * sz + bm[7] * sw + bt[1];
+        const nz = bm[8] * sx + bm[9] * sy + bm[10] * sz + bm[11] * sw + bt[2];
+        const nw =
+          bm[12] * sx + bm[13] * sy + bm[14] * sz + bm[15] * sw + bt[3];
+        sx = nx;
+        sy = ny;
+        sz = nz;
+        sw = nw;
+      }
+      if (
+        Number.isFinite(sx) &&
+        Number.isFinite(sy) &&
+        Number.isFinite(sz) &&
+        Number.isFinite(sw)
+      ) {
+        px = sx;
+        py = sy;
+        pz = sz;
+        pw = sw;
+      }
+    }
     if (finalAffine !== null) {
       const fm = finalAffine.m;
       const ft = finalAffine.t;
-      let fx = fm[0] * x + fm[1] * y + fm[2] * z + fm[3] * w + ft[0];
-      let fy = fm[4] * x + fm[5] * y + fm[6] * z + fm[7] * w + ft[1];
-      let fz = fm[8] * x + fm[9] * y + fm[10] * z + fm[11] * w + ft[2];
-      let fw = fm[12] * x + fm[13] * y + fm[14] * z + fm[15] * w + ft[3];
+      let fx = fm[0] * px + fm[1] * py + fm[2] * pz + fm[3] * pw + ft[0];
+      let fy = fm[4] * px + fm[5] * py + fm[6] * pz + fm[7] * pw + ft[1];
+      let fz = fm[8] * px + fm[9] * py + fm[10] * pz + fm[11] * pw + ft[2];
+      let fw = fm[12] * px + fm[13] * py + fm[14] * pz + fm[15] * pw + ft[3];
       if (finalWarp !== null) {
         const q = finalWarp(fx, fy, fz, fw, rng);
         fx = q[0];

@@ -73,7 +73,7 @@
  * as the public 4D seam even though its scale is now shared.
  */
 import type { Rng } from "./rng";
-import type { SymmetryParams, Transform4 } from "./types";
+import type { HybridSchedule, SymmetryParams, Transform4 } from "./types";
 import { createFlameHistogram } from "./flame";
 import type { FlameHistogram, Mat4 } from "./flame";
 import type { FourDRenderColor } from "./color";
@@ -82,12 +82,14 @@ import { sliceColorRemap, SLICE_GHOST_FLOOR } from "./project4";
 import type { FourDView, RotorProjection4 } from "./project4";
 // Value imports for the packing functions below the kernel — mirrors
 // flame-gpu.ts's own split between type-only and value imports.
-import { composeAffine4, symmetryRotation4 } from "./affine4";
+import { composeAffine4, symmetryRotation4, toTransform4 } from "./affine4";
 import {
   DEFAULT_COLOR_SPEED,
   MAX_TRANSFORMS,
+  buildScheduleTable,
   derivedColorIndex,
   effectiveSymmetryOrder,
+  resolveScheduleDepth,
   systemHasChaos,
 } from "./chaos-game";
 import {
@@ -130,7 +132,7 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * Byte-layout contracts (WGSL struct rules; the pack* functions below write
  * ArrayBuffers to match, and `flame-gpu-4d.test.ts` pins them):
  *
- * Params4 (uniform, {@link PARAMS4_BYTES} = 368):
+ * Params4 (uniform, {@link PARAMS4_BYTES} = 384):
  *   0 projX vec4f | 16 projY vec4f | 32 projW vec4f | 48 projS vec4f
  *   64 projC vec4f (the four row constants: x=clipX, y=clipY, z=clipW, w=sRaw)
  *   80 center4 vec4f (radius mode's 4D center; zero otherwise)
@@ -149,11 +151,20 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   272 echoCameraX vec4f | 288 echoCameraY | 304 echoCameraW |
  *   320 echoCenterR2 vec4f (visible-3D center xyz, R squared) |
  *   336 echoTintStrength vec4f (tint rgb, strength) |
- *   352 echoPaletteEnabled u32 | 356..367 pad
+ *   352 echoPaletteEnabled u32 | 356 scheduleCount u32 (zero = no
+ *   post-word) | 360 scheduleDepth u32 | 364 scheduleWeighted u32 |
+ *   368 scheduleTotalWeight f32 | 372..383 pad
  *
  * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 336 stride);
- * slot count = transformCount + 1, the last being the final-transform lens
- * (read only when hasFinal = 1, never drawn by the transform pick). The
+ * slot count = transformCount + 1 + scheduleCount — the expanded transform
+ * slots, then the final-transform lens slot (read only when hasFinal = 1,
+ * never drawn by the transform pick), then the scheduled-hybrid post-word's
+ * B slots: the 3D kernel's appended-B-slots convention verbatim, affine-only
+ * (rows + trans + cumWeight meaningful, everything else zero — `applySlot`
+ * on one is the plain 4D affine), the document's flat B maps lifted through
+ * `toTransform4` at pack exactly as `prepareSchedule4` lifts the CPU
+ * oracle's. B slots start at index `transformCount + 1` and are drawn only
+ * by the plot loop's schedule pick. The
  * post-rotation rows sit where the 3D Slot's do — right after the affine
  * block, before the variation lanes — but are FOUR full rows, every lane
  * used (a 4D symmetry copy is a 4x4, where 3D's is a 3x3 in three vec4s
@@ -209,7 +220,7 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * still reads it through the dimension-named {@link convertGpuHistogram4}
  * seam.
  */
-export const PARAMS4_BYTES = 368;
+export const PARAMS4_BYTES = 384;
 export const SLOT4_STRIDE_BYTES = 384;
 export const CHAIN4_STRIDE_BYTES = 32;
 /** Byte offset of Params4.itersPerInvocation — the one field the driver
@@ -264,6 +275,10 @@ struct Params {
   echoCenterR2: vec4f,
   echoTintStrength: vec4f,
   echoPaletteEnabled: u32,
+  scheduleCount: u32,
+  scheduleDepth: u32,
+  scheduleWeighted: u32,
+  scheduleTotalWeight: f32,
 }
 
 struct Slot {
@@ -598,8 +613,46 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
 
     if (PLOT) {
       var pp = pos;
+      // Scheduled-hybrid post-word — the 3D kernel's plot-time schedule
+      // stage verbatim, one dimension up (chaos-game-4d.ts's plotPoint4:
+      // post-word THEN lens, one rand01 draw per level, applySlot on a B
+      // slot is the plain 4D affine, adopt-only-if-finite with fallback to
+      // the pre-word point). Zero draws and byte-identical at depth 0.
+      if (params.scheduleDepth > 0u) {
+        let schedBase = params.transformCount + 1u;
+        var sp = pp;
+        for (var d = 0u; d < params.scheduleDepth; d++) {
+          let sr = rand01(&rng);
+          var si: u32;
+          if (params.scheduleWeighted == 1u) {
+            let sNeedle = sr * params.scheduleTotalWeight;
+            var sLo = 0u;
+            var sHi = params.scheduleCount - 1u;
+            loop {
+              if (sLo >= sHi) {
+                break;
+              }
+              let sMid = (sLo + sHi) >> 1u;
+              if (sNeedle < slots[schedBase + sMid].cumWeight) {
+                sHi = sMid;
+              } else {
+                sLo = sMid + 1u;
+              }
+            }
+            si = sLo;
+          } else {
+            si = min(u32(sr * f32(params.scheduleCount)), params.scheduleCount - 1u);
+          }
+          sp = applySlot(schedBase + si, sp, &rng);
+        }
+        if (all(abs(sp) < vec4f(1e30))) {
+          pp = sp;
+        }
+      }
       if (params.hasFinal == 1u) {
-        let f = applySlot(params.transformCount, pos, &rng);
+        // The lens bends the (possibly post-word-bent) plotted point — pp,
+        // which IS pos when no schedule is present.
+        let f = applySlot(params.transformCount, pp, &rng);
         // CPU adopts the lensed point only when all four coordinates are
         // finite; < 1e30 is the f32 stand-in (inf and NaN both fail it).
         if (all(abs(f) < vec4f(1e30))) {
@@ -771,6 +824,10 @@ const PARAMS4_ECHO_CAMERA_W = 76;
 const PARAMS4_ECHO_CENTER_R2 = 80;
 const PARAMS4_ECHO_TINT_STRENGTH = 84;
 const PARAMS4_ECHO_PALETTE_ENABLED = 88;
+const PARAMS4_SCHEDULE_COUNT = 89;
+const PARAMS4_SCHEDULE_DEPTH = 90;
+const PARAMS4_SCHEDULE_WEIGHTED = 91;
+const PARAMS4_SCHEDULE_TOTAL_WEIGHT = 92;
 
 /**
  * A 4D chaos-game system in exactly the shape {@link packGpuSystem4} needs —
@@ -789,6 +846,12 @@ export interface GpuFlameSystemSpec4 {
    * the pre-symmetry buffers byte for byte. */
   symmetry: SymmetryParams;
   color: FourDRenderColor;
+  /** The scheduled-hybrid post-word block, in the DOCUMENT's flat 3D form —
+   * the packer lifts B through `toTransform4` exactly as
+   * `prepareSchedule4` lifts the CPU oracle's (one wire shape for both
+   * dimensions). Absent/`null`/empty is the byte-identical no-post-word
+   * path. */
+  schedule?: HybridSchedule | null;
 }
 
 /**
@@ -799,8 +862,9 @@ export interface GpuFlameSystemSpec4 {
  * {@link FourDRenderColor} both packers consume).
  */
 export interface PackedGpuSystem4 {
-  /** `(transformCount + 1) * SLOT4_STRIDE_BYTES` — one slot per expanded
-   * (copy, base transform) pair, plus the final-transform lens slot. */
+  /** `(transformCount + 1 + scheduleCount) * SLOT4_STRIDE_BYTES` — one slot
+   * per expanded (copy, base transform) pair, plus the final-transform lens
+   * slot, plus the schedule's B slots (see the byte-layout doc). */
   slots: ArrayBuffer;
   /** flame-gpu.ts's `COLORS_BYTES` — always the full 256-entry table,
    * however many entries are actually meaningful (zeros for wRamp). */
@@ -815,6 +879,13 @@ export interface PackedGpuSystem4 {
   weighted: boolean;
   totalWeight: number;
   hasFinal: boolean;
+  /** The post-word's scalar four — flame-gpu.ts's `PackedGpuSystem` fields
+   * of the same names, through the same shared
+   * `resolveScheduleDepth`/`buildScheduleTable` definitions. */
+  scheduleCount: number;
+  scheduleDepth: number;
+  scheduleWeighted: boolean;
+  scheduleTotalWeight: number;
 }
 
 /** Entries in the `colors` table — same 256 x vec4u shape as the 3D
@@ -907,7 +978,18 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
   const transformCount = order * baseTransformCount;
   const hasFinal = finalTransform4 !== null;
 
-  const slots = new ArrayBuffer((transformCount + 1) * SLOT4_STRIDE_BYTES);
+  // The scheduled-hybrid post-word, through the ONE shared consumption
+  // domain — the 3D packer's own resolution, so neither dimension can
+  // disagree with the CPU oracles on when a block is live.
+  const schedule = spec.schedule ?? null;
+  const scheduleDepth = resolveScheduleDepth(schedule);
+  const scheduleTransforms =
+    scheduleDepth > 0 && schedule ? schedule.transforms : [];
+  const scheduleCount = scheduleTransforms.length;
+
+  const slots = new ArrayBuffer(
+    (transformCount + 1 + scheduleCount) * SLOT4_STRIDE_BYTES,
+  );
   const slotF32 = new Float32Array(slots);
   const slotU32 = new Uint32Array(slots);
 
@@ -975,6 +1057,18 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
     );
   }
 
+  // The schedule's B slots, appended after the lens slot — the 3D packer's
+  // convention verbatim: affine rows + trans + cumWeight only (B is
+  // affine-only by the document rule), the flat B maps lifted through
+  // toTransform4 exactly as prepareSchedule4 lifts the CPU oracle's, and
+  // the weight table through the ONE shared buildScheduleTable.
+  const scheduleTable = buildScheduleTable(scheduleTransforms);
+  for (let i = 0; i < scheduleCount; i++) {
+    const base = (transformCount + 1 + i) * F32_PER_SLOT4;
+    writeSlot4Affine(slotF32, base, toTransform4(scheduleTransforms[i]));
+    slotF32[base + SLOT4_CUM_WEIGHT] = scheduleTable.cumulative[i];
+  }
+
   const colors = new ArrayBuffer(COLORS4_BYTES);
   const colorsU32 = new Uint32Array(colors);
   switch (color.kind) {
@@ -1013,6 +1107,10 @@ export function packGpuSystem4(spec: GpuFlameSystemSpec4): PackedGpuSystem4 {
     weighted,
     totalWeight,
     hasFinal,
+    scheduleCount,
+    scheduleDepth,
+    scheduleWeighted: scheduleTable.weighted,
+    scheduleTotalWeight: scheduleTable.totalWeight,
   };
 }
 
@@ -1160,6 +1258,13 @@ export interface GpuParams4Fields {
   cameraProjection?: Mat4;
   /** Whether binding 5 carries an independent echo-only LUT. */
   echoPalette: boolean;
+  /** The scheduled-hybrid post-word's scalar four, straight off
+   * {@link PackedGpuSystem4} — count/depth 0 (the packed default for a
+   * schedule-less spec) is the byte-identical no-post-word path. */
+  scheduleCount: number;
+  scheduleDepth: number;
+  scheduleWeighted: boolean;
+  scheduleTotalWeight: number;
 }
 
 /**
@@ -1255,6 +1360,10 @@ export function packGpuParams4(fields: GpuParams4Fields): ArrayBuffer {
   f32[PARAMS4_SLICE_COLOR_SHIFT] = remap.shift;
   f32[PARAMS4_SLICE_COLOR_INV_SCALE] = remap.invScale;
   u32[PARAMS4_ECHO_PALETTE_ENABLED] = fields.echoPalette ? 1 : 0;
+  u32[PARAMS4_SCHEDULE_COUNT] = fields.scheduleCount;
+  u32[PARAMS4_SCHEDULE_DEPTH] = fields.scheduleDepth;
+  u32[PARAMS4_SCHEDULE_WEIGHTED] = fields.scheduleWeighted ? 1 : 0;
+  f32[PARAMS4_SCHEDULE_TOTAL_WEIGHT] = fields.scheduleTotalWeight;
 
   const echo = fields.echo;
   if (echo) {

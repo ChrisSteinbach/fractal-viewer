@@ -1,4 +1,9 @@
-import { applyAffine4, composeAffine4, symmetryRotation4 } from "./affine4";
+import {
+  applyAffine4,
+  composeAffine4,
+  symmetryRotation4,
+  toTransform4,
+} from "./affine4";
 import type { Affine4 } from "./affine4";
 import {
   CHAOS_SUB_ORBIT_POINTS,
@@ -7,15 +12,24 @@ import {
   MAX_TRANSFORMS,
   WARMUP_ITERATIONS,
   buildChaosSelection,
+  buildScheduleTable,
   chaosPointIteration,
   chaosRefuseIteration,
   derivedColorIndex,
   effectiveSymmetryOrder,
+  pickScheduleIndex,
+  resolveScheduleDepth,
 } from "./chaos-game";
 import { composeVariations4 } from "./variations4";
 import type { VariationBlend4 } from "./variations4";
 import type { IterationRng, Rng } from "./rng";
-import type { Bounds4, SymmetryParams, Transform4, Vec4 } from "./types";
+import type {
+  Bounds4,
+  HybridSchedule,
+  SymmetryParams,
+  Transform4,
+  Vec4,
+} from "./types";
 
 /**
  * # 4D chaos game (born as a points-mode spike; variations, shear and the
@@ -110,6 +124,59 @@ export interface ChaosGame4Result {
  * byte-identical behavior. */
 const NO_SYMMETRY4: SymmetryParams = { order: 1, plane: "xz" };
 
+/**
+ * The prepared post-word stage one dimension up — `chaos-game.ts`'s
+ * `PreparedSchedule` with 4D affines. The weight table fields are
+ * STRUCTURALLY the 3D shape on purpose: `pickScheduleIndex` (the one shared
+ * pick — selection has no dimension) reads them directly, so a system and
+ * its 4D lift draw B identically.
+ */
+export interface PreparedSchedule4 {
+  /** System B's composed 4D affine per entry — the document's flat 3D maps
+   * lifted through `toTransform4` once at prepare (see
+   * {@link prepareSchedule4}). */
+  affines: Affine4[];
+  /** Running sum of B weights — `pickScheduleIndex`'s `cumulative` shape. */
+  cumulative: Float64Array;
+  /** Sum of all B weights. */
+  totalWeight: number;
+  /** Whether any B entry has a non-1 weight. */
+  weighted: boolean;
+  /** `schedule.transforms.length` — the uniform draw range. */
+  count: number;
+  /** The word length k. */
+  depth: number;
+}
+
+/**
+ * Compose the DOCUMENT's schedule block into a 4D prepared stage, or `null`
+ * for an absent/empty block — `chaos-game.ts`'s `prepareSchedule` one
+ * dimension up. The wire stays one shape for both paths (the cloud
+ * request's own rule): B is authored as flat 3D `Transform`s, and this lift
+ * runs `toTransform4` ONCE at prepare — a flat B embeds with `w` riding
+ * through untouched (scaled by the embed's derived `scale_w`, exactly as
+ * any flat map lifts), so the post-word bends the 4D plotted point without
+ * collapsing its `w`. The weight table is built by the ONE shared
+ * `buildScheduleTable`, and the depth domain by the ONE shared
+ * `resolveScheduleDepth`, so the two dimensions cannot disagree on what a
+ * block means.
+ */
+export function prepareSchedule4(
+  schedule: HybridSchedule | null | undefined,
+): PreparedSchedule4 | null {
+  const depth = resolveScheduleDepth(schedule);
+  if (depth === 0 || !schedule) return null;
+  const table = buildScheduleTable(schedule.transforms);
+  return {
+    affines: schedule.transforms.map((t) => composeAffine4(toTransform4(t))),
+    cumulative: table.cumulative,
+    totalWeight: table.totalWeight,
+    weighted: table.weighted,
+    count: table.count,
+    depth,
+  };
+}
+
 function emptyBounds4(): Bounds4 {
   return {
     minX: 0,
@@ -200,6 +267,13 @@ export interface PreparedChaosGame4 {
    */
   postRotations: (number[] | null)[];
   /**
+   * The scheduled-hybrid post-word stage ({@link prepareSchedule4}), or
+   * `null` for a document with no schedule block — `chaos-game.ts`'s
+   * `PreparedChaosGame.schedule` one dimension up, consumed at PLOT time
+   * only by {@link plotPoint4} and the hand-inlined 4D mirrors.
+   */
+  schedule: PreparedSchedule4 | null;
+  /**
    * Resolved flame palette slot per BASE map — length
    * {@link baseTransformCount}, indexed by `idx % baseTransformCount`, never
    * by the expanded slot: every kaleidoscope copy of a map colors as that
@@ -237,6 +311,12 @@ export interface PreparedChaosGame4 {
  * weights, continuously fading the kaleidoscope between full strength (1) and
  * bit-identical-to-order-1 (0) — see the weight-table comment below.
  *
+ * `schedule` (default `null`) is the scheduled-hybrid post-word block —
+ * the DOCUMENT's flat 3D form, lifted here through {@link prepareSchedule4}
+ * (the cloud request's own one-wire-shape rule); an absent/empty block
+ * prepares to `null` and the whole run is byte-identical to before the
+ * parameter existed.
+ *
  * Throws `RangeError` if `transforms.length` exceeds {@link MAX_TRANSFORMS}
  * (the Uint8 transform-index cap), matching `prepareChaosGame`'s message text
  * exactly — and, like it, independent of `symmetry`, which instead silently
@@ -247,6 +327,7 @@ export function prepareChaosGame4(
   transforms: Transform4[],
   finalTransform: Transform4 | null = null,
   symmetry: SymmetryParams = NO_SYMMETRY4,
+  schedule: HybridSchedule | null = null,
 ): PreparedChaosGame4 {
   if (transforms.length > MAX_TRANSFORMS) {
     throw new RangeError(
@@ -358,6 +439,7 @@ export function prepareChaosGame4(
     chaosRowTotals: chaos ? chaos.chaosRowTotals : null,
     chaosFallbackRows: chaos ? chaos.chaosFallbackRows : null,
     postRotations,
+    schedule: prepareSchedule4(schedule),
     colorIndex,
     colorSpeed,
   };
@@ -538,18 +620,21 @@ export function stepOrbit4(
 }
 
 /**
- * Compute the plotted point for a 4D orbit point: the point itself, or — when
- * `prepared` has a final transform — that point bent through the
- * final-transform "lens" (fractal-flame terminology: applied only at plot
- * time, never fed back into the orbit; see {@link runChaosGame4}). Mirrors
- * `chaos-game.ts`'s `plotPoint` one dimension up: a nonlinear lens can diverge
- * at a singularity, so the bent point is only adopted while every one of the
- * four coordinates stays finite, otherwise this returns the orbit point
- * unchanged so a bad landing never produces NaN/Inf.
+ * Compute the plotted point for a 4D orbit point: the point itself,
+ * optionally bent by the scheduled-hybrid POST-WORD and then — when
+ * `prepared` has a final transform — by the final-transform "lens"
+ * (fractal-flame terminology: applied only at plot time, never fed back into
+ * the orbit; see {@link runChaosGame4}). Mirrors `chaos-game.ts`'s
+ * `plotPoint` one dimension up, stage for stage: the post-word runs FIRST
+ * (`depth` B-picks, each EXACTLY ONE draw from the PRIMARY `rng` through the
+ * one shared `pickScheduleIndex`, the word computed unconditionally and
+ * adopted only while all four coordinates stay finite — on non-finite it
+ * falls back to the point BEFORE the word), THEN the lens bends the result,
+ * with its own adopt-only-if-finite rule.
  *
  * `auxRng` mirrors `plotPoint`'s parameter of the same name: the
  * stream a stochastic lens's own draws come from, defaulting to `rng` — the
- * original single-stream behavior.
+ * original single-stream behavior. Affine B-maps draw nothing themselves.
  */
 export function plotPoint4(
   prepared: PreparedChaosGame4,
@@ -560,9 +645,43 @@ export function plotPoint4(
   rng: Rng,
   auxRng: Rng = rng,
 ): Vec4 {
-  const { finalAffine, finalWarp } = prepared;
-  if (finalAffine === null) return [x, y, z, w];
-  const p = applyAffine4(finalAffine, x, y, z, w);
+  const { finalAffine, finalWarp, schedule } = prepared;
+  let px = x;
+  let py = y;
+  let pz = z;
+  let pw = w;
+  if (schedule !== null) {
+    let sx = px;
+    let sy = py;
+    let sz = pz;
+    let sw = pw;
+    for (let d = 0; d < schedule.depth; d++) {
+      const b = schedule.affines[pickScheduleIndex(schedule, rng)];
+      const m = b.m;
+      const t = b.t;
+      const nx = m[0] * sx + m[1] * sy + m[2] * sz + m[3] * sw + t[0];
+      const ny = m[4] * sx + m[5] * sy + m[6] * sz + m[7] * sw + t[1];
+      const nz = m[8] * sx + m[9] * sy + m[10] * sz + m[11] * sw + t[2];
+      const nw = m[12] * sx + m[13] * sy + m[14] * sz + m[15] * sw + t[3];
+      sx = nx;
+      sy = ny;
+      sz = nz;
+      sw = nw;
+    }
+    if (
+      Number.isFinite(sx) &&
+      Number.isFinite(sy) &&
+      Number.isFinite(sz) &&
+      Number.isFinite(sw)
+    ) {
+      px = sx;
+      py = sy;
+      pz = sz;
+      pw = sw;
+    }
+  }
+  if (finalAffine === null) return [px, py, pz, pw];
+  const p = applyAffine4(finalAffine, px, py, pz, pw);
   let fx = p[0];
   let fy = p[1];
   let fz = p[2];
@@ -582,7 +701,7 @@ export function plotPoint4(
   ) {
     return [fx, fy, fz, fw];
   }
-  return [x, y, z, w];
+  return [px, py, pz, pw];
 }
 
 /**
@@ -636,12 +755,18 @@ export function runChaosGame4(
   finalTransform: Transform4 | null = null,
   symmetry: SymmetryParams = NO_SYMMETRY4,
   iterationRng?: IterationRng,
+  schedule: HybridSchedule | null = null,
 ): ChaosGame4Result {
   if (transforms.length === 0 || numPoints <= 0) {
     return emptyResult();
   }
 
-  const prepared = prepareChaosGame4(transforms, finalTransform, symmetry);
+  const prepared = prepareChaosGame4(
+    transforms,
+    finalTransform,
+    symmetry,
+    schedule,
+  );
 
   const positions = new Float32Array(numPoints * 3);
   const wBuffer = new Float32Array(numPoints);
@@ -692,7 +817,7 @@ export function runChaosGame4(
   // never silently drift apart.
   const { affines, variations, postRotations, finalAffine, finalWarp } =
     prepared;
-  const { baseTransformCount } = prepared;
+  const { baseTransformCount, schedule: preparedSchedule } = prepared;
 
   for (let i = 0; i < numPoints; i++) {
     // Sub-orbit re-fuse — runChaosGame's chi block, four coordinates (see
@@ -798,20 +923,55 @@ export function runChaosGame4(
     prevBase = escaped ? -1 : idx % baseTransformCount;
 
     // --- inlined plotPoint4(prepared, x, y, z, w, rng, aux) -----------------
-    // The plotted point is the orbit point, optionally bent through the lens
-    // (final transform's affine + warp). The orbit state x/y/z/w is left
-    // untouched, so the lens never feeds back into the iteration.
+    // The plotted point is the orbit point, optionally bent by the schedule's
+    // post-word and then through the lens (final transform's affine + warp).
+    // The orbit state x/y/z/w is left untouched, so neither stage ever feeds
+    // back into the iteration.
     let px = x;
     let py = y;
     let pz = z;
     let pw = w;
+    if (preparedSchedule !== null) {
+      // The post-word: depth B-picks off the PRIMARY stream (one draw per
+      // level, plotPoint4's rigidity rule), adopted only while finite.
+      let sx = px;
+      let sy = py;
+      let sz = pz;
+      let sw = pw;
+      for (let d = 0; d < preparedSchedule.depth; d++) {
+        const b =
+          preparedSchedule.affines[pickScheduleIndex(preparedSchedule, rng)];
+        const bm = b.m;
+        const bt = b.t;
+        const nx = bm[0] * sx + bm[1] * sy + bm[2] * sz + bm[3] * sw + bt[0];
+        const ny = bm[4] * sx + bm[5] * sy + bm[6] * sz + bm[7] * sw + bt[1];
+        const nz = bm[8] * sx + bm[9] * sy + bm[10] * sz + bm[11] * sw + bt[2];
+        const nw =
+          bm[12] * sx + bm[13] * sy + bm[14] * sz + bm[15] * sw + bt[3];
+        sx = nx;
+        sy = ny;
+        sz = nz;
+        sw = nw;
+      }
+      if (
+        Number.isFinite(sx) &&
+        Number.isFinite(sy) &&
+        Number.isFinite(sz) &&
+        Number.isFinite(sw)
+      ) {
+        px = sx;
+        py = sy;
+        pz = sz;
+        pw = sw;
+      }
+    }
     if (finalAffine !== null) {
       const fm = finalAffine.m;
       const ft = finalAffine.t;
-      let fx = fm[0] * x + fm[1] * y + fm[2] * z + fm[3] * w + ft[0];
-      let fy = fm[4] * x + fm[5] * y + fm[6] * z + fm[7] * w + ft[1];
-      let fz = fm[8] * x + fm[9] * y + fm[10] * z + fm[11] * w + ft[2];
-      let fw = fm[12] * x + fm[13] * y + fm[14] * z + fm[15] * w + ft[3];
+      let fx = fm[0] * px + fm[1] * py + fm[2] * pz + fm[3] * pw + ft[0];
+      let fy = fm[4] * px + fm[5] * py + fm[6] * pz + fm[7] * pw + ft[1];
+      let fz = fm[8] * px + fm[9] * py + fm[10] * pz + fm[11] * pw + ft[2];
+      let fw = fm[12] * px + fm[13] * py + fm[14] * pz + fm[15] * pw + ft[3];
       if (finalWarp !== null) {
         const q = finalWarp(fx, fy, fz, fw, aux);
         fx = q[0];

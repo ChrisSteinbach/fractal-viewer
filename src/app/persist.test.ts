@@ -8,7 +8,11 @@ import {
   toSnapshot,
 } from "./persist";
 import type { SceneSnapshot } from "./persist";
-import { DEFAULT_COLOR_SPEED, MAX_TRANSFORMS } from "../fractal/chaos-game";
+import {
+  DEFAULT_COLOR_SPEED,
+  MAX_SCHEDULE_DEPTH,
+  MAX_TRANSFORMS,
+} from "../fractal/chaos-game";
 import {
   MAX_CUSTOM_PALETTE_STOPS,
   MIN_CUSTOM_PALETTE_STOPS,
@@ -5520,5 +5524,180 @@ describe("decodeScene transform chaos rows", () => {
     expect(decodeWithRawChaos([-1, 1, 1])!.transforms[0].chaos).toEqual([
       -1, 1, 1,
     ]);
+  });
+});
+
+describe("decodeScene / encodeScene schedule (scheduled-hybrid block)", () => {
+  function scheduled(): SceneSnapshot {
+    return {
+      ...baseSnapshot(),
+      schedule: {
+        transforms: [
+          {
+            id: 0,
+            position: [-0.5, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [0.5, 0.5, 0.5],
+          },
+          {
+            id: 1,
+            position: [0.5, 0.25, 0],
+            rotation: [0, 0, 0.4],
+            scale: [0.5, 0.5, 0.5],
+            shear: [0.1, 0, 0],
+            weight: 3,
+          },
+        ],
+        depth: 3,
+      },
+    };
+  }
+
+  it("round-trips a live block both ways (affine fields, weight, shear, depth)", () => {
+    const result = decodeScene(encodeScene(scheduled()));
+    expect(result).not.toBeNull();
+    const schedule = result!.schedule!;
+    expect(schedule.depth).toBe(3);
+    expect(schedule.transforms).toHaveLength(2);
+    expect(schedule.transforms[0]).toEqual({
+      id: 0,
+      position: [-0.5, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+    });
+    expect(schedule.transforms[1]).toEqual({
+      id: 1,
+      position: [0.5, 0.25, 0],
+      rotation: [0, 0, 0.4],
+      scale: [0.5, 0.5, 0.5],
+      shear: [0.1, 0, 0],
+      weight: 3,
+    });
+    // A second trip is a fixed point (round4 already applied).
+    expect(encodeScene(result!)).toBe(encodeScene(scheduled()));
+  });
+
+  it("an unauthored scene's encoding is byte-identical to one predating the field", () => {
+    const withoutKey = encodeScene(baseSnapshot());
+    expect(encodeScene({ ...baseSnapshot(), schedule: undefined })).toBe(
+      withoutKey,
+    );
+    // A dead block (depth 0) never reaches the wire either.
+    expect(
+      encodeScene({
+        ...baseSnapshot(),
+        schedule: { transforms: scheduled().schedule!.transforms, depth: 0 },
+      }),
+    ).toBe(withoutKey);
+    // And a decoded unauthored scene carries no block.
+    expect(decodeScene(withoutKey)!.schedule).toBeUndefined();
+  });
+
+  it("drops the WHOLE block (never the scene) on malformed input — no coercion anywhere", () => {
+    const base = JSON.parse(
+      Buffer.from(
+        encodeScene(scheduled()).slice(3).replace(/-/g, "+").replace(/_/g, "/"),
+        "base64",
+      ).toString(),
+    ) as Record<string, unknown>;
+    const rehash = (payload: unknown): string =>
+      "v1=" +
+      Buffer.from(JSON.stringify(payload))
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=/g, "");
+    const withSchedule = (schedule: unknown): string =>
+      rehash({ ...base, schedule });
+
+    const good = base.schedule as {
+      transforms: Record<string, unknown>[];
+      depth: number;
+    };
+
+    // Malformed shapes: block dropped, scene survives.
+    for (const bad of [
+      "3-deep",
+      [good],
+      { ...good, depth: "3" },
+      { ...good, depth: Number.NaN },
+      { ...good, depth: 0 },
+      { ...good, transforms: [] },
+      { ...good, transforms: "sponge" },
+      {
+        ...good,
+        transforms: [{ ...good.transforms[0], position: [1, 2] }],
+      },
+      {
+        ...good,
+        transforms: [{ ...good.transforms[0], weight: "3" }],
+      },
+      {
+        ...good,
+        transforms: [{ ...good.transforms[0], shear: [1, "0", 0] }],
+      },
+    ]) {
+      const result = decodeScene(withSchedule(bad));
+      expect(result).not.toBeNull();
+      expect(result!.schedule).toBeUndefined();
+    }
+  });
+
+  it("clamps depth into 1..MAX_SCHEDULE_DEPTH and weight into the main list's band; ignores non-affine fields", () => {
+    const base = JSON.parse(
+      Buffer.from(
+        encodeScene(scheduled()).slice(3).replace(/-/g, "+").replace(/_/g, "/"),
+        "base64",
+      ).toString(),
+    ) as Record<string, unknown>;
+    const rehash = (payload: unknown): string =>
+      "v1=" +
+      Buffer.from(JSON.stringify(payload))
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=/g, "");
+    const good = base.schedule as {
+      transforms: Record<string, unknown>[];
+      depth: number;
+    };
+
+    const clamped = decodeScene(
+      rehash({ ...base, schedule: { ...good, depth: 99 } }),
+    )!.schedule!;
+    expect(clamped.depth).toBe(MAX_SCHEDULE_DEPTH);
+    expect(
+      decodeScene(rehash({ ...base, schedule: { ...good, depth: 2.9 } }))!
+        .schedule!.depth,
+    ).toBe(2);
+
+    const smuggled = decodeScene(
+      rehash({
+        ...base,
+        schedule: {
+          depth: 2,
+          transforms: [
+            {
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [0.5, 0.5, 0.5],
+              weight: 1e9,
+              variations: [{ type: "julia", weight: 1 }],
+              w: { position: 0.5 },
+              chaos: [0, 1],
+            },
+          ],
+        },
+      }),
+    )!.schedule!;
+    // The affine-only leg REBUILDS entries: nothing but the admitted
+    // fields survives, and the weight clamps like the main list's.
+    expect(smuggled.transforms[0]).toEqual({
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+      weight: 10000,
+    });
   });
 });

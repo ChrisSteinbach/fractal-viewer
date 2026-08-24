@@ -33,6 +33,7 @@ function cloudRequest(overrides: Partial<CloudRequest> = {}): CloudRequest {
     colorMode: "transform",
     colorGamma: 1,
     rampPalette: "legacy",
+    schedule: null,
     replaced: false,
     fit: false,
     ...overrides,

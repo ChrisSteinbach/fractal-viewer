@@ -148,6 +148,20 @@ export interface UiHandlers {
   /** Step the scene document forward one edit burst. */
   onRedo: () => void;
   onPreset: (preset: Preset) => void;
+  /**
+   * The Hybrid schedule section's System B picker changed: `source` is
+   * `""` (None — remove the block), `"preset:<key>"` (a preset menu entry)
+   * or `"saved:<id>"` (a saved-scene collection entry). main.ts resolves
+   * the source's transforms and installs their stripped affine part via
+   * `state.ts`'s `setSchedule` — an ordinary undoable document edit.
+   */
+  onScheduleSource: (source: string) => void;
+  /** The Hybrid schedule's "Use current system as B" button was clicked:
+   * snapshot the live transform list (stripped to its affine part) as B. */
+  onScheduleSnapshot: () => void;
+  /** The Hybrid schedule's depth slider moved: an integer 0..5, where 0
+   * removes the block (the classic-removal rule). */
+  onScheduleDepth: (depth: number) => void;
   /** "Surprise Me" was clicked: roll a fresh random IFS and load it like a preset. */
   onSurprise: () => void;
   /** "🧬 Mutate" was clicked: open the mutation-grid modal. The app builds
@@ -1805,6 +1819,15 @@ export class Ui {
    * `backgroundInputs`' pair. */
   private readonly fogTintColorInput: HTMLInputElement;
   private readonly symmetryNote: HTMLElement;
+  /** The Hybrid schedule section's controls — see the UiHandlers schedule
+   * trio for the contract each drives. */
+  private readonly scheduleSource: HTMLSelectElement;
+  private readonly scheduleInstalledOption: HTMLOptionElement;
+  private readonly scheduleSourceSaved: HTMLOptGroupElement;
+  private readonly scheduleSnapshotBtn: HTMLButtonElement;
+  private readonly scheduleDepthSlider: HTMLInputElement;
+  private readonly scheduleDepthLabel: HTMLElement;
+  private readonly scheduleNote: HTMLElement;
   private readonly finalTransformToggle: HTMLInputElement;
   private readonly transformEditor: HTMLElement;
 
@@ -2342,6 +2365,39 @@ export class Ui {
     };
     this.fogTintColorInput = this.byId("fogTintColor");
     this.symmetryNote = this.byId("symmetryNote");
+    this.scheduleSource = this.byId("scheduleSource");
+    this.scheduleSourceSaved = this.byId("scheduleSourceSaved");
+    this.scheduleSnapshotBtn = this.byId("scheduleSnapshotBtn");
+    this.scheduleDepthSlider = this.byId("scheduleDepthSlider");
+    this.scheduleDepthLabel = this.byId("scheduleDepthLabel");
+    this.scheduleNote = this.byId("scheduleNote");
+    // The sentinel the picker shows while a block is installed (the
+    // document stores B's MAPS, not their source, so no source name can be
+    // honestly re-selected after a reload/undo).
+    const installedOption =
+      this.scheduleSource.querySelector<HTMLOptionElement>(
+        'option[value="__installed"]',
+      );
+    if (!installedOption) {
+      throw new Error("Missing #scheduleSource option __installed");
+    }
+    this.scheduleInstalledOption = installedOption;
+    // The Presets group clones the preset menu's own entries — index.html's
+    // option list stays the single source of preset display names (the
+    // same list ui.test.ts pins against PRESET_NAMES) — value-prefixed so
+    // main.ts can tell a preset source from a saved-scene one.
+    const schedulePresetsGroup = this.byId<HTMLOptGroupElement>(
+      "scheduleSourcePresets",
+    );
+    for (const option of Array.from(
+      this.presetSelect.querySelectorAll("option"),
+    )) {
+      if (!option.value) continue;
+      const clone = this.doc.createElement("option");
+      clone.value = `preset:${option.value}`;
+      clone.textContent = option.textContent;
+      schedulePresetsGroup.appendChild(clone);
+    }
     this.finalTransformToggle = this.byId("finalTransformToggle");
     this.transformEditor = this.byId("transformEditor");
     this.explorerControls = this.byId("explorerControls");
@@ -2625,6 +2681,19 @@ export class Ui {
       const preset = this.presetSelect.value;
       this.presetSelect.value = "";
       if (preset) handlers.onPreset(preset as Preset);
+    });
+    // The Hybrid schedule trio: the picker's value goes to the handler
+    // verbatim (updateLabels re-syncs it to the document's own state — the
+    // "__installed" sentinel or None — after the edit lands), the snapshot
+    // button and depth slider are direct forwards.
+    this.scheduleSource.addEventListener("change", () => {
+      handlers.onScheduleSource(this.scheduleSource.value);
+    });
+    this.scheduleSnapshotBtn.addEventListener("click", () =>
+      handlers.onScheduleSnapshot(),
+    );
+    this.scheduleDepthSlider.addEventListener("input", () => {
+      handlers.onScheduleDepth(Number(this.scheduleDepthSlider.value));
     });
     this.surpriseBtn.addEventListener("click", () => handlers.onSurprise());
     this.driftBtn.addEventListener("click", () => handlers.onDriftToggle());
@@ -3170,6 +3239,32 @@ export class Ui {
     } else {
       this.symmetryNote.textContent = "";
       this.symmetryNote.classList.add("hidden");
+    }
+
+    // The Hybrid schedule rows reflect the DOCUMENT's block: the picker
+    // shows the installed sentinel (the document stores B's maps, not
+    // their source, so no source name can honestly survive a
+    // reload/undo), the depth slider the block's depth (0 = absent), and
+    // the note names the composition and the Surface refusal.
+    const schedule = state.schedule;
+    this.scheduleInstalledOption.hidden = schedule === undefined;
+    if (schedule) {
+      this.scheduleInstalledOption.textContent = `System B (${schedule.transforms.length} maps)`;
+      this.scheduleSource.value = "__installed";
+      this.scheduleDepthSlider.value = String(schedule.depth);
+      this.scheduleDepthLabel.textContent = String(schedule.depth);
+      this.scheduleNote.textContent =
+        `Each plotted point is bent through ${schedule.depth} random ` +
+        `B-map${schedule.depth === 1 ? "" : "s"} — the depth-${schedule.depth} ` +
+        `B-arrangement of the attractor. Points, flame and solid render ` +
+        `the composition; Surface refuses it while the schedule is on.`;
+      this.scheduleNote.classList.remove("hidden");
+    } else {
+      this.scheduleSource.value = "";
+      this.scheduleDepthSlider.value = "0";
+      this.scheduleDepthLabel.textContent = "off";
+      this.scheduleNote.textContent = "";
+      this.scheduleNote.classList.add("hidden");
     }
 
     this.finalTransformToggle.checked = state.finalTransform !== undefined;
@@ -3733,6 +3828,26 @@ export class Ui {
    */
   private setReasonNote(note: HTMLElement, text: string): void {
     if (note.textContent !== text) note.textContent = text;
+  }
+
+  /**
+   * Repopulate the Hybrid schedule picker's Saved scenes group — one
+   * option per collection entry, value `saved:<id>` (the same id
+   * `onLoadFromCollection` addresses). main.ts calls this at boot and
+   * after every collection mutation, so the picker tracks the gallery
+   * without rebuilding on every updateLabels tick (an open dropdown must
+   * not have its options replaced under the pointer).
+   */
+  setScheduleSavedScenes(entries: { id: string; createdAt: number }[]): void {
+    this.scheduleSourceSaved.textContent = "";
+    for (const entry of entries) {
+      const option = this.doc.createElement("option");
+      option.value = `saved:${entry.id}`;
+      // The gallery card's own caption format — a saved scene has no name,
+      // so its timestamp is its identity there and here alike.
+      option.textContent = galleryTimestamp(entry.createdAt);
+      this.scheduleSourceSaved.appendChild(option);
+    }
   }
 
   /** Reflect whether the ambient drift show is running on the Drift

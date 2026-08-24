@@ -26,7 +26,12 @@ import {
   analyzeSurfaceSystem4,
   systemFoldShaped4,
 } from "../fractal/surface-de-4d";
-import type { SymmetryParams, Transform } from "../fractal/types";
+import { resolveScheduleDepth } from "../fractal/chaos-game";
+import type {
+  HybridSchedule,
+  SymmetryParams,
+  Transform,
+} from "../fractal/types";
 import { SURFACE_MAX_MAPS } from "./surface-material";
 import { SURFACE4_MAX_MAPS } from "./surface-material-4d";
 
@@ -77,7 +82,27 @@ export function deriveSurfaceEligibility(
   finalTransform: Transform | null,
   symmetry: SymmetryParams,
   opts: { computeAvailable: boolean },
+  schedule: HybridSchedule | null = null,
 ): SurfaceEligibilityResult {
+  // The scheduled-hybrid post-word refuses Surface OUTRIGHT, ahead of every
+  // analyzer: the analyzers gate SYSTEM shape and cannot see scene-level
+  // state, but the post-word changes the attractor itself — the rendered
+  // set is the depth-k B-arrangement of A's attractor, a DIFFERENT object —
+  // so an estimator that ignored the block would march the wrong one (worse
+  // than a knob that never reaches the DE, which at least renders the same
+  // picture). Keyed on the ONE consumption domain (`resolveScheduleDepth`)
+  // so a dead block (depth 0 / empty B — shapes the reducer never stores
+  // but a hand-built document could) refuses nothing, exactly as it renders
+  // nothing. The descent-side lift (a level-dependent alphabet: levels < k
+  // descend only B's inverse maps, deeper levels only A's) is the open item
+  // this refusal waits on: fr-wo2j.12.
+  if (resolveScheduleDepth(schedule) > 0) {
+    return {
+      status: "ineligible",
+      note: "the hybrid schedule rewrites every plotted point; Surface would march system A alone",
+      kind: null,
+    };
+  }
   // A 4D document routes to the 4D analysis — what used to be this gate's
   // blanket "extends into 4D" disqualifier is now the 4D tracer's
   // admission ticket.

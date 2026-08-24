@@ -1,4 +1,8 @@
-import { systemPartsAreNonFlat, toTransform4 } from "../fractal/affine4";
+import {
+  isFlatTransform,
+  systemPartsAreNonFlat,
+  toTransform4,
+} from "../fractal/affine4";
 import { wSupport } from "./rotor4";
 import { FourDTween, FourDView, viewTransition } from "./four-d-view";
 import type { FourDPose } from "./four-d-view";
@@ -97,10 +101,17 @@ import {
   PRESET_PALETTES,
   PRESET_RENDER_HINTS,
   PRESET_SCAFFOLDS,
+  PRESET_NAMES,
+  PRESET_SCHEDULES,
   PRESET_SYMMETRIES,
   PRESET_SURFACE_ROOMS,
   presetTransforms,
 } from "../fractal/presets";
+import type { Preset } from "../fractal/presets";
+import {
+  chaosRowIsNonTrivial,
+  resolveScheduleDepth,
+} from "../fractal/chaos-game";
 import {
   buildPaletteLUT,
   CUSTOM_PALETTE_ID,
@@ -172,6 +183,8 @@ import {
   setFogTint,
   setPositionAxisColors,
   setRenderMode,
+  setSchedule,
+  setScheduleDepth,
   setSymmetryPlane,
   setSymmetryOrder,
   setSymmetryTwist,
@@ -202,7 +215,7 @@ import {
 import { decodeFlameFile, encodeFlameFile } from "./flame-file";
 import { BALLOON_SWEEP_MS, hexToRgb01, MOBILE_BREAKPOINT } from "./constants";
 import { MorphBudget } from "./morph-budget";
-import type { Bounds, Vec3, Vec4 } from "../fractal/types";
+import type { Bounds, Transform, Vec3, Vec4 } from "../fractal/types";
 import { CameraTween, fourDFramingBounds } from "./camera-tween";
 import { BuildReplay, SPOTLIGHT_DIM } from "./build-replay";
 import { MorphTween, MORPH_TWEEN_MS, type MorphSample } from "./morph-tween";
@@ -2057,6 +2070,14 @@ function main(): void {
     return {
       transforms,
       finalTransform,
+      // The scheduled-hybrid post-word reads the LIVE DOCUMENT even
+      // mid-morph — deliberately not part of the morph sample, because the
+      // schedule does not interpolate (lerpSystem never sees it): on a
+      // replace-load the document already IS the target, so the TARGET's
+      // block applies from the leg's first intermediate request — exactly
+      // where the background SHAPE pops (pushBackground reads the current
+      // document's shape the same way).
+      schedule: state.schedule ?? null,
       // Intermediates run at the adaptive budget — sized from measured
       // generation latency so each frame's request fits in roughly one
       // animation frame on this device (morph-budget.ts), scaled by the
@@ -3117,6 +3138,10 @@ function main(): void {
         order: state.symmetry.order,
         plane: state.symmetry.plane,
         twist: state.symmetry.twist ?? 0,
+        // The scheduled-hybrid post-word, snapshotted at entry like the
+        // transform set (document form for both dimensions — the worker's
+        // 4D prepare lifts it).
+        schedule: state.schedule ?? null,
         // SAB-backed views structured-clone by SHARING their buffers — the
         // worker sees the same memory these frames wrap, nothing is copied.
         sharedFrames: flameShared?.frames,
@@ -3325,6 +3350,9 @@ function main(): void {
         order: state.symmetry.order,
         plane: state.symmetry.plane,
         twist: state.symmetry.twist ?? 0,
+        // The scheduled-hybrid post-word, snapshotted at entry like the
+        // transform set — the flame start's field, verbatim.
+        schedule: state.schedule ?? null,
         // The frozen 4D view, or undefined for the unchanged 3D path.
         fourD: fourDRenderSnapshot(),
       });
@@ -4593,6 +4621,22 @@ function main(): void {
 
   const surfaceSession = new RenderSession<never>({
     start: () => {
+      // The scheduled-hybrid refusal, AIRTIGHT at the session door: the
+      // eligibility gate already disables the button
+      // (deriveSurfaceEligibility's own schedule arm), but entry paths that
+      // bypass the button — a timeline keyframe saved in surface mode, the
+      // isolation-reload handoff, a mid-session document change — land here
+      // regardless, and the routing below re-derives from analyzers that
+      // cannot see scene-level state. Same deferred-exit shape as the
+      // routing's own compute-unavailable arms. The descent lift is
+      // fr-wo2j.12.
+      if (resolveScheduleDepth(state.schedule ?? null) > 0) {
+        ui.flashToast(
+          "Surface is unavailable with a hybrid schedule: the post-word rewrites every plotted point, so Surface would march system A alone. Remove the schedule to enter Surface.",
+        );
+        queueMicrotask(() => surfaceSession.exit());
+        return { post: () => {}, terminate: () => teardownSurfaceCompute() };
+      }
       // Set when this session routes to the WebGPU compute path — fold 3D,
       // escape, ifs4 and bulb kinds alike — the gate below then awaits
       // device + pipeline instead of the GLSL link.
@@ -5499,6 +5543,7 @@ function main(): void {
       state.finalTransform ?? null,
       state.symmetry,
       { computeAvailable: surfaceComputeAvailable() },
+      state.schedule ?? null,
     );
     // The route kind rides along for the transform editor's Finish group:
     // a forward-orbit route shades the whole object with the head
@@ -5921,6 +5966,7 @@ function main(): void {
       return;
     }
     ui.setCollectionCount(collection.size);
+    refreshScheduleSavedScenes();
     ui.openGallery(collection.all());
     ui.flashToast(
       added === 1 ? "Imported 1 scene" : `Imported ${added} scenes`,
@@ -5979,6 +6025,7 @@ function main(): void {
       return true;
     }
     ui.setCollectionCount(collection.size);
+    refreshScheduleSavedScenes();
     ui.openGallery(collection.all());
     ui.flashToast(
       (added === 1 ? "Imported 1 flame" : `Imported ${added} flames`) + suffix,
@@ -6174,6 +6221,13 @@ function main(): void {
           state,
           sys.symmetry?.twist ?? DEFAULT_SYMMETRY_TWIST,
         );
+        // The schedule clears with the lens and the kaleidoscope above, for
+        // their shared reason: the roll's quality gate probed the bare
+        // system, and a leftover post-word would rearrange the fresh
+        // surprise into an arrangement that gate never saw. (random-system
+        // never ROLLS one — B is authored composition, not surprise
+        // material.)
+        state = setSchedule(state, null);
       },
       "always",
       morphMs,
@@ -6208,8 +6262,12 @@ function main(): void {
     const base = currentMorphSystem();
     mutationCandidates = [];
     ui.resetMutationCells();
+    // The live schedule rides every thumbnail (mutateSystem leaves it
+    // alone — it operates on transforms — so each candidate renders under
+    // the block the pick would actually load into).
+    const schedule = state.schedule ?? null;
     ui.setMutationCurrent(
-      renderSystemThumb(base, MUTATION_THUMB_SIZE, Math.random),
+      renderSystemThumb(base, MUTATION_THUMB_SIZE, Math.random, schedule),
       MUTATION_THUMB_SIZE,
     );
     let index = 0;
@@ -6220,7 +6278,12 @@ function main(): void {
       mutationCandidates[index] = candidate;
       ui.setMutationCell(
         index,
-        renderSystemThumb(candidate, MUTATION_THUMB_SIZE, Math.random),
+        renderSystemThumb(
+          candidate,
+          MUTATION_THUMB_SIZE,
+          Math.random,
+          schedule,
+        ),
         MUTATION_THUMB_SIZE,
         wild,
       );
@@ -6283,6 +6346,67 @@ function main(): void {
     },
   };
 
+  /**
+   * Resolve the Hybrid schedule picker's source value to the transform list
+   * system B will be stripped from: `"preset:<key>"` through the preset
+   * factories (validated against PRESET_NAMES — the picker's options are
+   * cloned from the preset menu, but the value is still a DOM string), or
+   * `"saved:<id>"` through the collection entry's encoded document. `null`
+   * for anything unresolvable (a deleted entry, a corrupt encoded string)
+   * — the caller discloses and snaps the picker back.
+   */
+  function resolveScheduleSourceTransforms(source: string): Transform[] | null {
+    if (source.startsWith("preset:")) {
+      const key = source.slice("preset:".length);
+      if (!(PRESET_NAMES as string[]).includes(key)) return null;
+      return presetTransforms(key as Preset);
+    }
+    if (source.startsWith("saved:")) {
+      const id = source.slice("saved:".length);
+      const entry = collection.all().find((e) => e.id === id);
+      if (!entry) return null;
+      return decodeScene(entry.encoded)?.transforms ?? null;
+    }
+    return null;
+  }
+
+  /**
+   * Install `transforms` as system B — the one edit both the picker and the
+   * snapshot button funnel through: keep the current block's depth (a
+   * source swap should not also move the depth slider) or start at 1 for a
+   * fresh block, strip through setSchedule, and DISCLOSE the strip when it
+   * actually dropped shape (the schedule's document rule is affine-only;
+   * variations, live 4D blocks and chaos rows do not ride it — cosmetic
+   * fields are dropped silently, they never shaped geometry).
+   */
+  function installSchedule(transforms: Transform[]): void {
+    const losesShape = transforms.some(
+      (t) =>
+        (t.variations?.some((v) => v.weight !== 0) ?? false) ||
+        !isFlatTransform(t) ||
+        chaosRowIsNonTrivial(t.chaos, transforms.length),
+    );
+    const depth = state.schedule?.depth ?? 1;
+    applyEdit(() => {
+      state = setSchedule(state, { transforms, depth });
+    });
+    if (losesShape) {
+      ui.flashToast(
+        "System B keeps only the source's affine part — its variations, 4D parts or chaos rows don't ride the schedule.",
+      );
+    }
+  }
+
+  /** Keep the Hybrid schedule picker's Saved scenes group tracking the
+   * collection — called at boot and after every collection mutation
+   * (save, delete, import), never per updateLabels tick (see
+   * ui.setScheduleSavedScenes). */
+  function refreshScheduleSavedScenes(): void {
+    ui.setScheduleSavedScenes(
+      collection.all().map((e) => ({ id: e.id, createdAt: e.createdAt })),
+    );
+  }
+
   // Every simple scalar control (slider/select/checkbox bound to one state
   // field) shares the one pipeline in onScalarControl below, driven by
   // control-spec.ts's SCALAR_CONTROLS table. Its `view` guard replaces the
@@ -6341,6 +6465,14 @@ function main(): void {
           symmetry?.plane ?? DEFAULT_SYMMETRY_PLANE,
         );
         state = setSymmetryTwist(state, 0);
+        // The scheduled-hybrid post-word a preset IS a composition of
+        // (PRESET_SCHEDULES) — the lens table's exact both-directions rule:
+        // a preset composed around a schedule installs it, and every other
+        // preset CLEARS one, because a leftover post-word would rearrange
+        // the arriving attractor into copies it was never composed with —
+        // and would take the Surface modes away outright (the gate refuses
+        // schedule documents until the descent lift ships).
+        state = setSchedule(state, PRESET_SCHEDULES[preset]?.() ?? null);
         // The flame palette a preset was composed against
         // (PRESET_PALETTES) — set, never cleared: absent means "the user's
         // palette is fine", which is every preset that predates the table.
@@ -6370,6 +6502,42 @@ function main(): void {
       // arriving cloud consumes it — see applyCloudResult — so the showcase
       // preset actually shows up in the renderer its menu group promises.
       loadHints.armMode(PRESET_RENDER_HINTS[preset] ?? null);
+    },
+    // The Hybrid schedule trio. Installs go through setSchedule (which
+    // strips to the affine part and clamps depth), as ordinary undoable
+    // document edits; the picker's own display re-syncs from the document
+    // in refreshUi/updateLabels, so a failed resolve just snaps back.
+    onScheduleSource: (source) => {
+      if (source === "__installed") return; // re-picking the sentinel: no-op.
+      if (source === "") {
+        applyEdit(() => {
+          state = setSchedule(state, null);
+        });
+        return;
+      }
+      const transforms = resolveScheduleSourceTransforms(source);
+      if (!transforms || transforms.length === 0) {
+        ui.flashToast(
+          "That source could not be read as a system B — nothing installed.",
+        );
+        refreshUi();
+        return;
+      }
+      installSchedule(transforms);
+    },
+    onScheduleSnapshot: () => {
+      installSchedule(state.transforms);
+    },
+    onScheduleDepth: (depth) => {
+      if (!state.schedule) {
+        // Depth is a property OF the post-word; without a B there is
+        // nothing for it to mean — snap the slider back to 0.
+        refreshUi();
+        return;
+      }
+      applyEdit(() => {
+        state = setScheduleDepth(state, depth);
+      });
     },
     // A manual press is a manual replace-load, so applyEdit (inside) also
     // ends a running drift show — the show's own legs take the same path
@@ -6748,6 +6916,7 @@ function main(): void {
         notePendingThumbnailPatch("collection", entry.id, gapMode, encoded);
       }
       ui.setCollectionCount(collection.size);
+      refreshScheduleSavedScenes();
       ui.flashToast("Saved to collection");
     },
     onOpenGallery: () => {
@@ -6935,12 +7104,14 @@ function main(): void {
       if (!entry) return;
       collection.remove(id);
       ui.setCollectionCount(collection.size);
+      refreshScheduleSavedScenes();
       ui.renderGallery(collection.all()); // refresh the still-open modal in place.
       ui.flashToast("Deleted from collection", {
         label: "Undo",
         onAction: () => {
           collection.restore(entry);
           ui.setCollectionCount(collection.size);
+          refreshScheduleSavedScenes();
           // Same refresh as the delete above — consistent whether the
           // gallery modal is currently open or closed.
           ui.renderGallery(collection.all());
@@ -7391,6 +7562,7 @@ function main(): void {
   refreshUi();
   editSession.syncUi();
   ui.setCollectionCount(collection.size);
+  refreshScheduleSavedScenes();
   // The async upgrade to the document's real density: same request
   // (same seed) at the full count, through the worker, now that the capped
   // boot cloud has painted and the camera is framed. The boot cloud is this

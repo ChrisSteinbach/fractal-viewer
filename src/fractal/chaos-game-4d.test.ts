@@ -13,6 +13,8 @@ import {
   WARMUP_ITERATIONS,
   derivedColorIndex,
   effectiveSymmetryOrder,
+  plotPoint,
+  prepareChaosGame,
   runChaosGame,
 } from "./chaos-game";
 import {
@@ -1445,5 +1447,151 @@ describe("graph-directed selection (chaos rows), one dimension up", () => {
     expect(crossings).toBe(0);
     expect(first).toBeGreaterThan(0);
     expect(second).toBeGreaterThan(0);
+  });
+});
+
+describe("scheduled hybrids: the 4D post-word stage", () => {
+  function pairB(): Transform[] {
+    return [
+      {
+        id: 0,
+        position: [-0.5, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+      {
+        id: 1,
+        position: [0.5, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+    ];
+  }
+
+  function countingRng(seed: number): { rng: Rng; count: () => number } {
+    const inner = mulberry32(seed);
+    let n = 0;
+    return {
+      rng: () => {
+        n++;
+        return inner();
+      },
+      count: () => n,
+    };
+  }
+
+  it("absent/depth-0 schedule is byte-identical: same stream, same output, zero extra draws", () => {
+    const transforms4 = pentatopeGasket();
+    const base = countingRng(13);
+    const baseline = runChaosGame4(transforms4, 400, base.rng);
+
+    const withNull = countingRng(13);
+    const nullResult = runChaosGame4(
+      transforms4,
+      400,
+      withNull.rng,
+      null,
+      undefined,
+      undefined,
+      null,
+    );
+    expect(nullResult.positions).toEqual(baseline.positions);
+    expect(nullResult.w).toEqual(baseline.w);
+    expect(withNull.count()).toBe(base.count());
+
+    const dead = countingRng(13);
+    const deadResult = runChaosGame4(
+      transforms4,
+      400,
+      dead.rng,
+      null,
+      undefined,
+      undefined,
+      { transforms: pairB(), depth: 0 },
+    );
+    expect(deadResult.positions).toEqual(baseline.positions);
+    expect(dead.count()).toBe(base.count());
+  });
+
+  it("draws exactly depth extra primary draws per plotted point", () => {
+    const transforms4 = pentatopeGasket();
+    const n = 300;
+    const base = countingRng(17);
+    runChaosGame4(transforms4, n, base.rng);
+    const baselineDraws = base.count();
+    expect(baselineDraws).toBe(4 + WARMUP_ITERATIONS + n);
+
+    const counted = countingRng(17);
+    runChaosGame4(transforms4, n, counted.rng, null, undefined, undefined, {
+      transforms: pairB(),
+      depth: 3,
+    });
+    expect(counted.count()).toBe(baselineDraws + n * 3);
+  });
+
+  it("lifts a flat B through toTransform4: xyz agrees with the 3D post-word bit for bit, w rides the embed's derived scale", () => {
+    // A single-entry B (uniform pick over one map is deterministic), flat,
+    // rotation-free — so its 4D lift's upper-left block and translation are
+    // the 3D affine's own values bit for bit, and the embed derives
+    // scale_w = (|sx| + |sy| + |sz|) / 3 = 0.5 for the fourth row.
+    const b: Transform = {
+      id: 0,
+      position: [0.25, -0.125, 0.5],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+    };
+    const prepared3 = prepareChaosGame(
+      [b],
+      null,
+      { order: 1, plane: "xz" },
+      { transforms: [b], depth: 1 },
+    );
+    const prepared4 = prepareChaosGame4(
+      [toTransform4(b)],
+      null,
+      { order: 1, plane: "xz" },
+      { transforms: [b], depth: 1 },
+    );
+    const p3 = plotPoint(prepared3, 0.3, -0.7, 0.9, mulberry32(2));
+    const p4 = plotPoint4(prepared4, 0.3, -0.7, 0.9, 0.8, mulberry32(2));
+    expect(p4[0]).toBe(p3[0]);
+    expect(p4[1]).toBe(p3[1]);
+    expect(p4[2]).toBe(p3[2]);
+    // Flat B: w rides through the embed's derived w-scale (0.5 here) with
+    // no w-translation — the post-word cannot collapse the fourth
+    // coordinate.
+    expect(p4[3]).toBe(0.4);
+  });
+
+  it("plotPoint4 applies the post-word BEFORE the lens", () => {
+    const lens4 = toTransform4({
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [2, 2, 2],
+    });
+    const prepared = prepareChaosGame4(
+      pentatopeGasket(),
+      lens4,
+      { order: 1, plane: "xz" },
+      {
+        transforms: [
+          {
+            id: 0,
+            position: [1, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+          },
+        ],
+        depth: 1,
+      },
+    );
+    // lens(B(p)): translate x by 1, then scale xyz by 2 — and w by the
+    // LENS's own derived w-scale (2), after B's identity w-scale (1).
+    const out = plotPoint4(prepared, 0.25, 0.5, 0.75, 0.3, mulberry32(1));
+    expect(out[0]).toBe(2.5);
+    expect(out[1]).toBe(1);
+    expect(out[2]).toBe(1.5);
+    expect(out[3]).toBe(0.6);
   });
 });

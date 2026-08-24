@@ -36,6 +36,7 @@ import {
 import type {
   ColorMode,
   FourDColorMode,
+  HybridSchedule,
   SurfaceFinish,
   SurfacePattern,
   SymmetryParams,
@@ -101,6 +102,7 @@ import type { FourDPose } from "./four-d-view";
 import { normalizeRotorPair } from "./rotor4";
 import {
   DEFAULT_COLOR_SPEED,
+  MAX_SCHEDULE_DEPTH,
   MAX_TRANSFORMS,
   chaosRowIsNonTrivial,
 } from "../fractal/chaos-game";
@@ -115,6 +117,18 @@ export interface SceneSnapshot {
   transforms: Transform[];
   /** Optional final-transform lens (see {@link AppState.finalTransform}). */
   finalTransform?: Transform;
+  /**
+   * Optional scheduled-hybrid post-word block (see
+   * {@link AppState.schedule}): system B's affine-only maps + the word
+   * depth. Optional like `finalTransform` — absent for every unauthored
+   * document, and the wire writes it only when live (depth >= 1, non-empty
+   * B), so a scene that never authored one encodes byte-identically to one
+   * predating the field. Decoded by {@link decodeSchedule}: never-throwing,
+   * WHOLE-BLOCK-OR-NOTHING (a malformed block drops to absent rather than
+   * rejecting the scene — it is composition data a link is still valid
+   * without), entries accepted through a dedicated affine-only leg.
+   */
+  schedule?: HybridSchedule;
   numPoints: number;
   pointSize: number;
   colorMode: ColorMode;
@@ -369,6 +383,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
   return {
     transforms: state.transforms,
     finalTransform: state.finalTransform,
+    schedule: state.schedule,
     numPoints: state.numPoints,
     pointSize: state.pointSize,
     colorMode: state.colorMode,
@@ -456,6 +471,10 @@ export function fromSnapshot(
     ...base,
     ...rest,
     positionAxisColors: snapshot.positionAxisColors,
+    // Read explicitly for positionAxisColors' reason: restoring a
+    // schedule-less snapshot must clear a base session's block even when
+    // the incoming object never declares the key at all.
+    schedule: snapshot.schedule,
     balloonEcho: snapshot.balloonEcho ?? false,
     balloonRadius: snapshot.balloonRadius ?? DEFAULT_BALLOON_RADIUS,
     balloonPaletteId: snapshot.balloonPaletteId ?? DEFAULT_BALLOON_PALETTE,
@@ -641,6 +660,71 @@ function decodeChaosRow(raw: unknown): number[] | undefined {
     row.push(entry);
   }
   return row;
+}
+
+/**
+ * Decode the scene's optional scheduled-hybrid block (`types.ts`'s
+ * {@link HybridSchedule}). QUIET WHOLE-BLOCK fallback, {@link decodeChaosRow}'s
+ * discipline scaled up: a malformed block — or any malformed entry in it —
+ * drops the ENTIRE block to `undefined` rather than rejecting the scene or
+ * salvaging entries (B is one system, not a bag of leaves; a
+ * partially-dropped list would silently re-weight the survivors), and never
+ * throws. NO `Number(x)` coercion anywhere in it: `depth`, `weight` and
+ * every vector component must be genuine finite numbers.
+ *
+ * THE LEG IS AFFINE-ONLY BY CONSTRUCTION, not by stripping after the fact:
+ * each entry is REBUILT from exactly the affine fields the document rule
+ * admits (position/rotation/scale as strict Vec3s, optional shear as a
+ * strict Vec3, optional weight clamped through the main transform list's
+ * own [0.0001, 10000] band), so variations/`w`/chaos/finish fields on a
+ * hand-crafted payload simply never reach the decoded document. `depth`
+ * floors to an integer and clamps into 1..{@link MAX_SCHEDULE_DEPTH} — the
+ * `symmetry.order` treatment, since the reducer (`state.ts`'s
+ * `setSchedule`) holds "a present block has depth in 1..max" as an
+ * invariant the decode must not be the one door around; a depth below 1
+ * (the classic-removal value) drops the block whole, absent-means-absent.
+ */
+function decodeSchedule(raw: unknown): HybridSchedule | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  const o = raw as Record<string, unknown>;
+  if (typeof o.depth !== "number" || !Number.isFinite(o.depth)) {
+    return undefined;
+  }
+  const depth = Math.floor(o.depth);
+  if (depth < 1) return undefined;
+  if (!Array.isArray(o.transforms)) return undefined;
+  if (o.transforms.length < 1 || o.transforms.length > MAX_TRANSFORMS) {
+    return undefined;
+  }
+  const transforms: Transform[] = [];
+  for (let i = 0; i < o.transforms.length; i++) {
+    const entry: unknown = o.transforms[i];
+    if (typeof entry !== "object" || entry === null) return undefined;
+    const t = entry as Record<string, unknown>;
+    if (!isVec3(t.position) || !isVec3(t.rotation) || !isVec3(t.scale)) {
+      return undefined;
+    }
+    const decoded: Transform = {
+      id: i,
+      position: t.position,
+      rotation: t.rotation,
+      scale: t.scale,
+    };
+    if (t.shear !== undefined) {
+      if (!isVec3(t.shear)) return undefined;
+      decoded.shear = t.shear;
+    }
+    if (t.weight !== undefined) {
+      if (typeof t.weight !== "number" || !Number.isFinite(t.weight)) {
+        return undefined;
+      }
+      decoded.weight = clamp(t.weight, 0.0001, 10000);
+    }
+    transforms.push(decoded);
+  }
+  return { transforms, depth: Math.min(depth, MAX_SCHEDULE_DEPTH) };
 }
 
 /**
@@ -1863,6 +1947,16 @@ export function encodeScene(s: SceneSnapshot): string {
   const payload: {
     transforms: EncodedTransform[];
     finalTransform?: EncodedTransform;
+    schedule?: {
+      transforms: {
+        position: number[];
+        rotation: number[];
+        scale: number[];
+        shear?: number[];
+        weight?: number;
+      }[];
+      depth: number;
+    };
     numPoints: number;
     pointSize: number;
     colorMode: ColorMode;
@@ -2059,6 +2153,41 @@ export function encodeScene(s: SceneSnapshot): string {
   // Written only when present, so lens-free systems keep their short URLs.
   if (s.finalTransform)
     payload.finalTransform = encodeTransform(s.finalTransform);
+  // The scheduled-hybrid block: written only when LIVE (depth >= 1, B
+  // non-empty — state.ts's setSchedule invariant, re-checked here so a
+  // hand-built snapshot cannot smuggle a dead block onto the wire), through
+  // a dedicated AFFINE-ONLY leg rather than encodeTransform: the document
+  // rule says B carries nothing else, and a leg that cannot express a
+  // variation cannot leak one. Floats round4 like the main list; shear
+  // omitted when all-zero and weight when 1, encodeTransform's own
+  // omit-the-identity conventions.
+  if (
+    s.schedule &&
+    s.schedule.transforms.length > 0 &&
+    Math.floor(s.schedule.depth) >= 1
+  ) {
+    payload.schedule = {
+      transforms: s.schedule.transforms.map((t) => {
+        const e: {
+          position: number[];
+          rotation: number[];
+          scale: number[];
+          shear?: number[];
+          weight?: number;
+        } = {
+          position: t.position.map(round4),
+          rotation: t.rotation.map(round4),
+          scale: t.scale.map(round4),
+        };
+        if (t.shear && t.shear.some((v) => v !== 0))
+          e.shear = t.shear.map(round4);
+        if (t.weight !== undefined && t.weight !== 1)
+          e.weight = round4(t.weight);
+        return e;
+      }),
+      depth: Math.floor(s.schedule.depth),
+    };
+  }
   // Written only when present, like finalTransform above — never-authored
   // scenes keep their short URLs. Encoded as hex strings for URL
   // compactness — see rgbToHex.
@@ -2275,6 +2404,11 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       finalTransform = decoded;
     }
 
+    // schedule: optional scheduled-hybrid block — quiet whole-block
+    // fallback through its dedicated affine-only leg, never rejecting the
+    // scene; see decodeSchedule.
+    const schedule = decodeSchedule(o.schedule);
+
     // colorMode / renderStyle: exact known-string matches only. ---------------
     const { colorMode, renderStyle } = o;
     if (typeof colorMode !== "string" || !VALID_COLOR_MODES.has(colorMode))
@@ -2482,6 +2616,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     return {
       transforms,
       finalTransform,
+      schedule,
       numPoints,
       pointSize,
       colorMode: colorMode as ColorMode,

@@ -18,6 +18,7 @@ import type {
   RgbStop,
 } from "../fractal/palette";
 import type { Rng } from "../fractal/rng";
+import { MAX_SCHEDULE_DEPTH } from "../fractal/chaos-game";
 import { resolveBackground } from "./background";
 import type {
   BackgroundGradient,
@@ -28,6 +29,7 @@ import type {
 import type {
   ColorMode,
   FourDColorMode,
+  HybridSchedule,
   SymmetryPlane,
   SymmetryParams,
   Transform,
@@ -375,6 +377,21 @@ export interface AppState {
    * preset loads, like `colorMode` / `renderStyle`.
    */
   finalTransform?: Transform;
+  /**
+   * Optional scheduled-hybrid post-word block (`types.ts`'s
+   * {@link HybridSchedule}): after each plotted point and BEFORE the lens,
+   * `depth` random maps from system B bend the point — "a Menger sponge
+   * made of ferns". Omitted ⇒ today's behavior byte-identically, and the
+   * one writer ({@link setSchedule}) stores absent for depth 0 / empty B —
+   * the classic-removal rule — with entries stripped to affine-only. Scene
+   * content: persists, rides shared links, and a preset load clears it
+   * unless the preset's own `PRESET_SCHEDULES` entry says otherwise
+   * (`PRESET_FINALS`' absent-means-clear rule). It deliberately does NOT
+   * interpolate in a morph (`lerpSystem` never sees it): a replace-load
+   * applies the TARGET's block from the leg's first generation, exactly
+   * where the background SHAPE pops.
+   */
+  schedule?: HybridSchedule;
   numPoints: number;
   /** Multiplier on each render style's base point size; 1 = as authored. */
   pointSize: number;
@@ -1465,6 +1482,71 @@ export function setFinalTransform(
   finalTransform: Transform | null,
 ): AppState {
   return { ...state, finalTransform: finalTransform ?? undefined };
+}
+
+/**
+ * Strip one system-B entry to the affine-only shape the schedule stores
+ * (`types.ts`'s {@link HybridSchedule}: position/rotation/scale, shear when
+ * non-zero, weight when non-1 — no variations, no `w`, no chaos, no
+ * color/finish fields). The one strip definition every B producer funnels
+ * through ({@link setSchedule} applies it to whatever source the picker
+ * chose), so a preset, a saved scene and a current-system snapshot all
+ * store the identical vocabulary and `persist.ts`'s affine-only codec leg
+ * never meets a field it would drop.
+ */
+export function stripScheduleTransform(t: Transform, id: number): Transform {
+  const stripped: Transform = {
+    id,
+    position: [...t.position],
+    rotation: [...t.rotation],
+    scale: [...t.scale],
+  };
+  if (t.shear && t.shear.some((v) => v !== 0)) stripped.shear = [...t.shear];
+  if (t.weight !== undefined && t.weight !== 1) stripped.weight = t.weight;
+  return stripped;
+}
+
+/**
+ * Install/replace the scheduled-hybrid post-word block, or clear it with
+ * `null`. THE DOCUMENT RULE LIVES HERE: entries are stripped to affine-only
+ * ({@link stripScheduleTransform}), depth floors to an integer and clamps
+ * into 1..{@link MAX_SCHEDULE_DEPTH}, and a depth of 0 or below — or an
+ * empty B list — stores ABSENT (`undefined`, the classic-removal rule), so
+ * the persisted snapshot of an unauthored scene stays byte-identical and
+ * `chaos-game.ts`'s `resolveScheduleDepth` can never see a half-formed
+ * block from this app's own state.
+ */
+export function setSchedule(
+  state: AppState,
+  schedule: { transforms: Transform[]; depth: number } | null,
+): AppState {
+  if (!schedule || schedule.transforms.length === 0) {
+    return { ...state, schedule: undefined };
+  }
+  const depth = Math.min(
+    Math.floor(Number.isFinite(schedule.depth) ? schedule.depth : 0),
+    MAX_SCHEDULE_DEPTH,
+  );
+  if (depth <= 0) return { ...state, schedule: undefined };
+  return {
+    ...state,
+    schedule: {
+      transforms: schedule.transforms.map(stripScheduleTransform),
+      depth,
+    },
+  };
+}
+
+/**
+ * Move the schedule's depth slider: re-installs the current block at the
+ * new depth through {@link setSchedule}'s one domain (so 0 removes the
+ * block — the classic-removal rule — and out-of-range clamps). A no-op
+ * without a block: depth is a property OF the post-word, and there is
+ * nothing for a bare depth to mean before a B system is chosen.
+ */
+export function setScheduleDepth(state: AppState, depth: number): AppState {
+  if (!state.schedule) return state;
+  return setSchedule(state, { ...state.schedule, depth });
 }
 
 export function setNumPoints(state: AppState, numPoints: number): AppState {

@@ -13,7 +13,7 @@ import {
   packGpuSystem4,
 } from "./flame-gpu-4d";
 import type { GpuFlameSystemSpec4, GpuParams4Fields } from "./flame-gpu-4d";
-import { composeAffine4, symmetryRotation4 } from "./affine4";
+import { composeAffine4, symmetryRotation4, toTransform4 } from "./affine4";
 import { prepareChaosGame4 } from "./chaos-game-4d";
 import { MAX_TRANSFORMS } from "./chaos-game";
 import {
@@ -76,7 +76,7 @@ const COLOR_SPEED = 80; // byte 320
 
 describe("layout constants", () => {
   it("pins the byte-layout sizes documented on the module", () => {
-    expect(PARAMS4_BYTES).toBe(368);
+    expect(PARAMS4_BYTES).toBe(384);
     expect(SLOT4_STRIDE_BYTES).toBe(384);
     expect(CHAIN4_STRIDE_BYTES).toBe(32);
     expect(PARAMS4_ITERS_OFFSET_BYTES).toBe(144);
@@ -881,6 +881,10 @@ describe("packGpuParams4", () => {
         kind: "wRamp",
         side: { neg: [0.1, 0.2, 0.3], pos: [0.4, 0.5, 0.6] },
       },
+      scheduleCount: 0,
+      scheduleDepth: 0,
+      scheduleWeighted: false,
+      scheduleTotalWeight: 0,
       ...overrides,
       echoPalette: overrides.echoPalette ?? false,
     };
@@ -1353,5 +1357,104 @@ describe("packGpuSystem4 chaos rows (defense in depth)", () => {
     expect(() =>
       packGpuSystem4(baseSpec4({ transforms4: trivial })),
     ).not.toThrow();
+  });
+});
+
+describe("packGpuSystem4 scheduled-hybrid B slots", () => {
+  const schedule = {
+    transforms: [
+      {
+        id: 0,
+        position: [-0.5, 0, 0] as Vec3,
+        rotation: [0, 0, 0] as Vec3,
+        scale: [0.5, 0.5, 0.5] as Vec3,
+      },
+      {
+        id: 1,
+        position: [0.5, 0.25, 0] as Vec3,
+        rotation: [0, 0, 0] as Vec3,
+        scale: [0.5, 0.5, 0.5] as Vec3,
+        weight: 3,
+      },
+    ],
+    depth: 2,
+  };
+
+  it("a schedule-less spec packs byte-identically (null and absent alike)", () => {
+    const base = packGpuSystem4(baseSpec4());
+    const withNull = packGpuSystem4(baseSpec4({ schedule: null }));
+    expect(new Uint8Array(withNull.slots)).toEqual(new Uint8Array(base.slots));
+    expect(base.slots.byteLength).toBe((2 + 1) * SLOT4_STRIDE_BYTES);
+    expect(base.scheduleCount).toBe(0);
+    expect(base.scheduleDepth).toBe(0);
+    const dead = packGpuSystem4(
+      baseSpec4({ schedule: { ...schedule, depth: 0 } }),
+    );
+    expect(new Uint8Array(dead.slots)).toEqual(new Uint8Array(base.slots));
+  });
+
+  it("appends B slots lifted through toTransform4 after the lens slot", () => {
+    const packed = packGpuSystem4(baseSpec4({ schedule }));
+    expect(packed.scheduleCount).toBe(2);
+    expect(packed.scheduleDepth).toBe(2);
+    expect(packed.scheduleWeighted).toBe(true);
+    expect(packed.scheduleTotalWeight).toBe(4);
+    expect(packed.slots.byteLength).toBe((2 + 1 + 2) * SLOT4_STRIDE_BYTES);
+
+    const f32 = new Float32Array(packed.slots);
+    const u32 = new Uint32Array(packed.slots);
+    // B slot 0 at index transformCount + 1 = 3: the lift's own composed 4D
+    // affine — the exact bytes prepareSchedule4 hands the CPU oracle.
+    const b0 = 3 * F32_PER_SLOT4;
+    const lifted = composeAffine4(toTransform4(schedule.transforms[0]));
+    for (let c = 0; c < 4; c++) {
+      expect(f32[b0 + ROW_X + c]).toBe(Math.fround(lifted.m[c]));
+      expect(f32[b0 + ROW_W + c]).toBe(Math.fround(lifted.m[12 + c]));
+      expect(f32[b0 + TRANS + c]).toBe(Math.fround(lifted.t[c]));
+    }
+    expect(u32[b0 + VAR_COUNT]).toBe(0); // affine-only: no lanes.
+    expect(u32[b0 + HAS_POST]).toBe(0);
+    expect(f32[b0 + CUM_WEIGHT]).toBe(1);
+    const b1 = 4 * F32_PER_SLOT4;
+    expect(f32[b1 + CUM_WEIGHT]).toBe(4); // weight 3 after weight 1.
+  });
+});
+
+describe("packGpuParams4 schedule scalars", () => {
+  it("writes the schedule four at their documented element offsets", () => {
+    const projection = new Float64Array(20);
+    for (let i = 0; i < 20; i++) projection[i] = 1;
+    const buf = packGpuParams4({
+      projection,
+      width: 64,
+      height: 64,
+      transformCount: 2,
+      baseTransformCount: 2,
+      itersPerInvocation: 16,
+      weighted: false,
+      hasFinal: false,
+      totalWeight: 2,
+      numChains: 128,
+      view: {
+        invWAmp: 1,
+        sliceOn: false,
+        sliceCenter: 0,
+        sliceWidth: 0.5,
+        sliceRelativeColor: false,
+      },
+      color: { kind: "wRamp", side: { neg: [0, 0, 0], pos: [0, 0, 0] } },
+      echoPalette: false,
+      scheduleCount: 20,
+      scheduleDepth: 3,
+      scheduleWeighted: true,
+      scheduleTotalWeight: 7.5,
+    });
+    const f32 = new Float32Array(buf);
+    const u32 = new Uint32Array(buf);
+    expect(buf.byteLength).toBe(PARAMS4_BYTES);
+    expect(u32[89]).toBe(20); // scheduleCount (byte 356)
+    expect(u32[90]).toBe(3); // scheduleDepth (byte 360)
+    expect(u32[91]).toBe(1); // scheduleWeighted (byte 364)
+    expect(f32[92]).toBe(7.5); // scheduleTotalWeight (byte 368)
   });
 });

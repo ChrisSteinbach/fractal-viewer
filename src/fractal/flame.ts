@@ -44,6 +44,7 @@ import {
   ESCAPE_LIMIT,
   WARMUP_ITERATIONS,
   pickIndex,
+  pickScheduleIndex,
   stepOrbit,
 } from "./chaos-game";
 import type { PreparedChaosGame } from "./chaos-game";
@@ -344,7 +345,7 @@ export function accumulateFlame(
 
   const { affines, variations, postRotations, finalAffine, finalWarp } =
     prepared;
-  const { baseTransformCount } = prepared;
+  const { baseTransformCount, schedule } = prepared;
   const { hits, sumRGB } = hist;
   let maxHits = hist.maxHits;
 
@@ -522,15 +523,39 @@ export function accumulateFlame(
     prevBase = escaped ? -1 : baseIdx;
 
     // --- inlined plotPoint(prepared, x, y, z, rng) -------------------------
+    // Post-word first, then the lens — chaos-game.ts's plotPoint stage for
+    // stage (single-stream consumer, so the B-picks draw from `rng`, which
+    // IS the primary stream here).
     let px = x;
     let py = y;
     let pz = z;
+    if (schedule !== null) {
+      let sx = px;
+      let sy = py;
+      let sz = pz;
+      for (let d = 0; d < schedule.depth; d++) {
+        const bAff = schedule.affines[pickScheduleIndex(schedule, rng)];
+        const bm = bAff.m;
+        const bt = bAff.t;
+        const nx = bm[0] * sx + bm[1] * sy + bm[2] * sz + bt[0];
+        const ny = bm[3] * sx + bm[4] * sy + bm[5] * sz + bt[1];
+        const nz = bm[6] * sx + bm[7] * sy + bm[8] * sz + bt[2];
+        sx = nx;
+        sy = ny;
+        sz = nz;
+      }
+      if (Number.isFinite(sx) && Number.isFinite(sy) && Number.isFinite(sz)) {
+        px = sx;
+        py = sy;
+        pz = sz;
+      }
+    }
     if (finalAffine !== null) {
       const fm = finalAffine.m;
       const ft = finalAffine.t;
-      let fx = fm[0] * x + fm[1] * y + fm[2] * z + ft[0];
-      let fy = fm[3] * x + fm[4] * y + fm[5] * z + ft[1];
-      let fz = fm[6] * x + fm[7] * y + fm[8] * z + ft[2];
+      let fx = fm[0] * px + fm[1] * py + fm[2] * pz + ft[0];
+      let fy = fm[3] * px + fm[4] * py + fm[5] * pz + ft[1];
+      let fz = fm[6] * px + fm[7] * py + fm[8] * pz + ft[2];
       if (finalWarp !== null) {
         const q = finalWarp(fx, fy, fz, rng);
         fx = q[0];
