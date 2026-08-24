@@ -47,6 +47,9 @@ import type {
   WExtension,
 } from "../fractal/types";
 import {
+  BALLOON_PALETTE_IDS,
+  BALLOON_PALETTE_INHERIT,
+  DEFAULT_BALLOON_PALETTE,
   DEFAULT_BALLOON_RADIUS,
   DEFAULT_BALLOON_TINT,
   DEFAULT_BALLOON_TINT_STRENGTH,
@@ -74,6 +77,7 @@ import {
 } from "./state";
 import type {
   AppState,
+  BalloonPaletteSelection,
   FlameParams,
   RenderStyle,
   SolidParams,
@@ -252,6 +256,18 @@ export interface SceneSnapshot {
    */
   balloonRadius?: number;
   /**
+   * Palette used only for balloon-attributed color. Optional at the snapshot
+   * boundary so legacy and hand-built documents remain valid; decoded absence,
+   * malformed ids, the primary palette's `"legacy"` sentinel, and Custom
+   * without a valid independent payload all resolve to Inherit.
+   */
+  balloonPaletteId?: BalloonPaletteSelection;
+  /**
+   * Independently-authored balloon Custom gradient. Retained even while a
+   * built-in or Inherit is selected so dormant authoring survives save/load.
+   */
+  balloonCustomPalette?: CustomPalette;
+  /**
    * The balloon shell's tint color (see `state.ts`'s
    * {@link AppState.balloonTint}) — persisted alongside `balloonRadius` the
    * identical way: optional here even though `toSnapshot`/`encodeScene`
@@ -376,6 +392,8 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     // applies instead of `background`'s omit-while-pristine dance.
     balloonEcho: state.balloonEcho,
     balloonRadius: state.balloonRadius,
+    balloonPaletteId: state.balloonPaletteId,
+    balloonCustomPalette: state.balloonCustomPalette,
     // Always written, the identical balloonRadius shape just
     // above: AppState.balloonTint/balloonTintStrength are always defined,
     // and there is no legacy document whose meaning depends on either
@@ -436,6 +454,10 @@ export function fromSnapshot(
     positionAxisColors: snapshot.positionAxisColors,
     balloonEcho: snapshot.balloonEcho ?? false,
     balloonRadius: snapshot.balloonRadius ?? DEFAULT_BALLOON_RADIUS,
+    balloonPaletteId: snapshot.balloonPaletteId ?? DEFAULT_BALLOON_PALETTE,
+    // Explicit assignment is intentional: restoring a legacy snapshot must
+    // clear a dormant balloon Custom slot left in the base session.
+    balloonCustomPalette: snapshot.balloonCustomPalette,
     balloonTint: snapshot.balloonTint ?? DEFAULT_BALLOON_TINT,
     balloonTintStrength:
       snapshot.balloonTintStrength ?? DEFAULT_BALLOON_TINT_STRENGTH,
@@ -479,6 +501,9 @@ const VALID_VARIATION_TYPES = new Set<string>(VARIATION_TYPES);
  * separately via their `hasCustomPalette` parameter.
  */
 const VALID_PALETTE_IDS = new Set<string>(FLAME_PALETTE_IDS);
+
+/** Exact balloon vocabulary, including Inherit/Custom but excluding legacy. */
+const VALID_BALLOON_PALETTE_IDS = new Set<string>(BALLOON_PALETTE_IDS);
 
 /** Exact set of valid SymmetryPlane values. */
 const VALID_SYMMETRY_PLANES = new Set<string>(SYMMETRY_PLANES);
@@ -1790,6 +1815,8 @@ export function encodeScene(s: SceneSnapshot): string {
     glowBrightness: number;
     balloonEcho: boolean;
     balloonRadius: number;
+    balloonPaletteId?: BalloonPaletteSelection;
+    balloonCustomPalette?: { stops: string[] };
     balloonTint: string;
     balloonTintStrength: number;
     fogDensity: number;
@@ -1968,6 +1995,18 @@ export function encodeScene(s: SceneSnapshot): string {
   // compactness — see rgbToHex.
   if (s.customPalette)
     payload.customPalette = { stops: s.customPalette.stops.map(rgbToHex) };
+  // Inherit is the compact, legacy-preserving default. The independently
+  // authored payload is still written whenever valid, even while dormant.
+  if (
+    (s.balloonPaletteId ?? DEFAULT_BALLOON_PALETTE) !== DEFAULT_BALLOON_PALETTE
+  ) {
+    payload.balloonPaletteId = s.balloonPaletteId;
+  }
+  if (s.balloonCustomPalette) {
+    payload.balloonCustomPalette = {
+      stops: s.balloonCustomPalette.stops.map(rgbToHex),
+    };
+  }
   // Written only when present, like customPalette above — the legacy
   // identity is expressed by absence (see AppState.positionAxisColors),
   // so never-customized scenes stay byte-identical.
@@ -2197,6 +2236,17 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     // back it. Never rejects the scene — see decodeCustomPalette.
     const customPalette = decodeCustomPalette(o.customPalette);
 
+    // Balloon Custom is an independent authored slot. Decode it regardless of
+    // the active selection so valid dormant stops survive a compact round trip.
+    const balloonCustomPalette = decodeCustomPalette(o.balloonCustomPalette);
+    const balloonPaletteId: BalloonPaletteSelection =
+      typeof o.balloonPaletteId === "string" &&
+      VALID_BALLOON_PALETTE_IDS.has(o.balloonPaletteId) &&
+      (o.balloonPaletteId !== CUSTOM_PALETTE_ID ||
+        balloonCustomPalette !== undefined)
+        ? (o.balloonPaletteId as BalloonPaletteSelection)
+        : BALLOON_PALETTE_INHERIT;
+
     // positionAxisColors: the position color mode's custom axis
     // colors. Never rejects the scene — see decodePositionAxisColors.
     const positionAxisColors = decodePositionAxisColors(o.positionAxisColors);
@@ -2384,6 +2434,8 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       fourD,
       balloonEcho,
       balloonRadius,
+      balloonPaletteId,
+      balloonCustomPalette,
       balloonTint,
       balloonTintStrength,
       fogDensity,

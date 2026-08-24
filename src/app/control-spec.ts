@@ -17,12 +17,14 @@ import {
   MAX_NUM_POINTS,
   MIN_NUM_POINTS,
   nearestFlameIterationDetentIndex,
+  resolveBalloonPalette,
   setAdaptiveResolution,
   setAutoUpdate,
   setBackgroundFlamePaletteId,
   setBackgroundMode,
   setBackgroundShape,
   setBalloonEcho,
+  setBalloonPaletteId,
   setBalloonRadius,
   setBalloonTintStrength,
   setColorGamma,
@@ -72,6 +74,7 @@ import {
 } from "./state";
 import type {
   AppState,
+  BalloonPaletteSelection,
   ExportScale,
   MorphDetail,
   RenderStyle,
@@ -205,6 +208,9 @@ export interface ControlSceneEffects {
    * re-enter, because the tint lives inside the already-compiled
    * SURFACE_BALLOON arm. */
   setBalloonTint(tint: [number, number, number], strength: number): void;
+  /** Replace the balloon-only LUT in the Points and Surface scene arms.
+   * `null` is the explicit Inherit signal. */
+  setBalloonPalette(lut: Float32Array | null): void;
   /** Set the depth-fog density multiplier — see `scene.ts`'s
    * `setFogDensity`. Pushes the GLSL/WGSL uniform on both surface tracers
    * and re-derives the points explorer's fog band and the balloon echo's
@@ -484,6 +490,53 @@ export function surfaceColorLUT(state: AppState): Float32Array | null {
   return new Float32Array(256 * 3).fill(1);
 }
 
+/**
+ * Push the settled balloon palette to every renderer that can consume it.
+ * The document remains editable while the balloon is off, but that state is
+ * inert until a later enable rebuilds each arm from the current state. Flame
+ * owns its accumulation restart inside the worker's `setBalloonPalette`
+ * command; Surface needs an active-session re-entry to invalidate its
+ * progressive frame cleanly.
+ *
+ * Exported for the bespoke balloon Custom editor in main.ts, whose stop-list
+ * callback uses the same effect as the three scalar palette selects.
+ */
+export function applyBalloonPaletteEffects(
+  state: AppState,
+  fx: ControlEffects,
+): void {
+  if (!state.balloonEcho) return;
+
+  const palette = applyBalloonPaletteToScene(state, fx);
+  fx.postFlame(
+    palette === null
+      ? { type: "setBalloonPalette" }
+      : { type: "setBalloonPalette", palette },
+  );
+  if (state.renderMode === "surface") fx.restartSurfaceRender();
+}
+
+/** Install the current document choice in the persistent Points/Surface
+ * scene without touching Flame accumulation. This is also needed when a
+ * checkbox enables a palette authored while the balloon was off, because
+ * dormant palette authoring is deliberately renderer-inert. */
+function applyBalloonPaletteToScene(
+  state: AppState,
+  fx: ControlEffects,
+): ReturnType<typeof resolveBalloonPalette> {
+  const palette = resolveBalloonPalette(state);
+  fx.scene.setBalloonPalette(
+    palette === null ? null : buildPaletteLUT(palette),
+  );
+  return palette;
+}
+
+/** A select `change` that did not change the settled id is renderer-inert. */
+const balloonPaletteEffect: ControlEffect = (state, fx, previous) => {
+  if (state.balloonPaletteId === previous.balloonPaletteId) return;
+  applyBalloonPaletteEffects(state, fx);
+};
+
 export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
   // ——— Explorer: appearance ———
   {
@@ -707,10 +760,22 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     read: (s) => s.balloonEcho,
     apply: (s, checked) => setBalloonEcho(s, checked),
     effect: (s, fx) => {
+      if (s.balloonEcho) applyBalloonPaletteToScene(s, fx);
       fx.scene.setBalloonEchoEnabled(s.balloonEcho);
       fx.scene.setBalloonEchoRadius(s.balloonRadius);
       fx.cancelBalloonSweep();
     },
+  },
+  {
+    // All three panels edit this one selection. Unlike radius/tint, the row
+    // stays reachable while the balloon is off so a look can be prepared
+    // before enabling it; the shared effect's off guard keeps that authoring
+    // renderer-inert until then.
+    kind: "select",
+    id: "balloonPalette",
+    read: (s) => s.balloonPaletteId,
+    apply: (s, raw) => setBalloonPaletteId(s, raw as BalloonPaletteSelection),
+    effect: balloonPaletteEffect,
   },
   {
     // The balloon echo's radius slider — a plain 1:1 numeric mapping like
@@ -953,10 +1018,18 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     apply: (s, checked) => setBalloonEcho(s, checked),
     effect: (s, fx) => {
       fx.cancelBalloonSweep();
+      if (s.balloonEcho) applyBalloonPaletteToScene(s, fx);
       fx.scene.setBalloonEchoEnabled(s.balloonEcho);
       fx.scene.setBalloonEchoRadius(s.balloonRadius);
       if (s.renderMode === "flame") fx.restartFlameRender();
     },
+  },
+  {
+    kind: "select",
+    id: "flameBalloonPalette",
+    read: (s) => s.balloonPaletteId,
+    apply: (s, raw) => setBalloonPaletteId(s, raw as BalloonPaletteSelection),
+    effect: balloonPaletteEffect,
   },
   {
     // Same shared radius as the Points/Surface sliders. The scene pushes keep
@@ -1250,8 +1323,16 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     apply: (s, checked) => setBalloonEcho(s, checked),
     effect: (s, fx) => {
       fx.cancelBalloonSweep();
-      fx.restartSurfaceRender();
+      if (s.balloonEcho) applyBalloonPaletteEffects(s, fx);
+      else fx.restartSurfaceRender();
     },
+  },
+  {
+    kind: "select",
+    id: "surfaceBalloonPalette",
+    read: (s) => s.balloonPaletteId,
+    apply: (s, raw) => setBalloonPaletteId(s, raw as BalloonPaletteSelection),
+    effect: balloonPaletteEffect,
   },
   {
     // The surface balloon's radius — same state field as

@@ -33,6 +33,26 @@
  * change, and any core (affine ladder, fold frontier, escape, 4D later)
  * composes.
  *
+ * BALLOON PALETTE COORDINATE. Every renderer samples an independently
+ * selected balloon gradient at one renderer-neutral coordinate:
+ *
+ *     t = clamp(|source - c| / rho, 0, 1)
+ *
+ * `source` is the exact pre-inversion point whose image is being drawn:
+ * the projected source point in Points and Flame, and the shell argmin's
+ * inverted query (`BalloonDistance.shell`'s source) in Surface. Thus one
+ * source sample keeps one colour through the inversion, the coordinate is
+ * independent of the balloon radius `R`, and Points/Flame/Surface do not
+ * silently borrow three unrelated main-render colour modes. The margined
+ * `rho`, rather than raw ball radius, is deliberate: it is the one bound all
+ * balloon paths already carry and keeps certified source samples inside the
+ * gradient up to measured ball-fit slack. {@link balloonPaletteCoordinate}
+ * is the CPU definition; GLSL/WGSL spell the same formula where moving the
+ * coordinate itself would cost more than recomputing it. Palette lookup
+ * replaces only the balloon term's base colour, then the existing balloon
+ * tint mix runs, followed by each renderer's existing intensity,
+ * accumulation, pattern, lighting, and fog operations.
+ *
  * THE BALL is the DE's own ({@link balloonBall}): the probe-fit
  * `(boundCenter, boundingRadius)` for plain systems, the analytic
  * `([0,0,0], visibleBoundingRadius)` for lens systems (either final
@@ -128,6 +148,19 @@ export interface Balloon {
   center: Vec3;
   rho: number;
   R: number;
+}
+
+/**
+ * Renderer-neutral balloon gradient coordinate (module doc): normalized
+ * pre-inversion source radius about the balloon's certified, margined ball.
+ * Clamping is part of the render contract: a probe-fit source may sit in the
+ * small raw-ball slack that `rho` covers.
+ */
+export function balloonPaletteCoordinate(b: Balloon, source: Vec3): number {
+  const dx = source[0] - b.center[0];
+  const dy = source[1] - b.center[1];
+  const dz = source[2] - b.center[2];
+  return Math.min(1, Math.hypot(dx, dy, dz) / b.rho);
 }
 
 /**

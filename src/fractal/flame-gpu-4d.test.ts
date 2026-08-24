@@ -76,7 +76,7 @@ const COLOR_SPEED = 80; // byte 320
 
 describe("layout constants", () => {
   it("pins the byte-layout sizes documented on the module", () => {
-    expect(PARAMS4_BYTES).toBe(352);
+    expect(PARAMS4_BYTES).toBe(368);
     expect(SLOT4_STRIDE_BYTES).toBe(384);
     expect(CHAIN4_STRIDE_BYTES).toBe(32);
     expect(PARAMS4_ITERS_OFFSET_BYTES).toBe(144);
@@ -846,6 +846,7 @@ describe("packGpuParams4", () => {
   const ECHO_CAMERA_W = 76;
   const ECHO_CENTER_R2 = 80;
   const ECHO_TINT_STRENGTH = 84;
+  const ECHO_PALETTE_ENABLED = 88;
 
   const VIEW: FourDView = {
     invWAmp: 2.5,
@@ -881,6 +882,7 @@ describe("packGpuParams4", () => {
         side: { neg: [0.1, 0.2, 0.3], pos: [0.4, 0.5, 0.6] },
       },
       ...overrides,
+      echoPalette: overrides.echoPalette ?? false,
     };
   }
 
@@ -923,7 +925,7 @@ describe("packGpuParams4", () => {
     expect(f32[SLICE_COLOR_SHIFT]).toBe(0);
     expect(f32[SLICE_COLOR_INV_SCALE]).toBe(1);
     // Optional echo absent: every field in its tail block stays zero.
-    expect(Array.from(u32.slice(50, 88))).toEqual(new Array(38).fill(0));
+    expect(Array.from(u32.slice(50, 92))).toEqual(new Array(42).fill(0));
   });
 
   it("packs project-then-invert echo rows and its echo-only tint", () => {
@@ -947,6 +949,7 @@ describe("packGpuParams4", () => {
           },
           rotorProjection,
           cameraProjection,
+          echoPalette: true,
         }),
       ),
     );
@@ -977,6 +980,7 @@ describe("packGpuParams4", () => {
       Math.fround(0.8),
       Math.fround(0.6),
     ]);
+    expect(new Uint32Array(f32.buffer)[ECHO_PALETTE_ENABLED]).toBe(1);
   });
 
   it("rejects an echo without both uncomposed projection stages", () => {
@@ -1244,6 +1248,12 @@ describe("FLAME_GPU_KERNEL_4D_WGSL", () => {
     );
     expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
       "depositEcho(inv, echoRgb, echoWeightFix);",
+    );
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "let u = clamp(length(d) / params.echoRho, 0.0, 1.0);",
+    );
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "echoBase = echoColors[li].xyz;",
     );
   });
 

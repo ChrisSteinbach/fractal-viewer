@@ -202,6 +202,41 @@ describe("surfaceComputeForceFrameKey", () => {
       ).not.toBe(key);
     }
   });
+
+  it("keys a balloon palette by its independent revision while null and absent both mean inherit", () => {
+    const balloon = {
+      center: [1, 2, 3] as [number, number, number],
+      rho: 4,
+      R: 5,
+      far: 6,
+    };
+    const absent = surfaceComputeForceFrameKey(baseSpec({ balloon }));
+    const explicitInherit = surfaceComputeForceFrameKey(
+      baseSpec({ balloon, balloonLut: null, balloonLutVersion: 91 }),
+    );
+    expect(explicitInherit).toBe(absent);
+
+    const lut = new Uint8Array(256 * 4).fill(127);
+    const version7 = surfaceComputeForceFrameKey(
+      baseSpec({ balloon, balloonLut: lut, balloonLutVersion: 7 }),
+    );
+    const version8 = surfaceComputeForceFrameKey(
+      baseSpec({ balloon, balloonLut: lut, balloonLutVersion: 8 }),
+    );
+    expect(version7).not.toBe(absent);
+    expect(version8).not.toBe(version7);
+    // The revision is the upload/cache contract; the memo key deliberately
+    // does not serialize a kilobyte of LUT bytes.
+    expect(
+      surfaceComputeForceFrameKey(
+        baseSpec({
+          balloon,
+          balloonLut: new Uint8Array(256 * 4).fill(255),
+          balloonLutVersion: 7,
+        }),
+      ),
+    ).toBe(version7);
+  });
 });
 
 describe("surfaceComputeForceFrameKey finishes block", () => {

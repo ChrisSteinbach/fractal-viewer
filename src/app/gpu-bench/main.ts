@@ -354,6 +354,9 @@ interface ScenarioDef3D {
    * equal-N CPU/GPU image agreement gate covers the weighted second splat,
    * tint, and f32 inversion floor instead of only compiling that branch. */
   balloonEcho?: FlameBalloonEcho;
+  /** Independent echo gradient. Present on the balloon scenario so the
+   * agreement gate also pins source-radius lookup before tint/weight. */
+  balloonPaletteId?: Exclude<FlamePaletteId, "legacy">;
   /**
    * Per-scenario override of `AGREEMENT_MAE_THRESHOLD`. The equal-N MAE
    * between two INDEPENDENT samplings of the same attractor never reaches 0
@@ -407,6 +410,8 @@ interface ScenarioDef4D {
   balloonEcho?: Omit<FlameBalloonEcho, "balloon"> & {
     radiusMultiple: number;
   };
+  /** Independent echo gradient; same contract as the 3D field. */
+  balloonPaletteId?: Exclude<FlamePaletteId, "legacy">;
   /** See {@link ScenarioDef3D.maeThreshold} — same scenario-owned noise
    * floor override, one dimension up. */
   maeThreshold?: number;
@@ -699,6 +704,7 @@ const SCENARIOS: ScenarioDef[] = [
       tintStrength: 0.4,
       weight: 1,
     },
+    balloonPaletteId: "aurora",
   },
   {
     kind: "3d",
@@ -851,6 +857,7 @@ const SCENARIOS: ScenarioDef[] = [
       tintStrength: 0.4,
       weight: 1,
     },
+    balloonPaletteId: "spectrum",
   },
   {
     kind: "4d",
@@ -1126,6 +1133,10 @@ function toGpuBackendRequest(
   def: ScenarioDef3D,
   projection: Mat4,
 ): GpuBackendRequest {
+  const echoColorLUT =
+    def.balloonEcho && def.balloonPaletteId
+      ? (buildPaletteLUT(def.balloonPaletteId) ?? undefined)
+      : undefined;
   return {
     transforms: def.transforms,
     finalTransform: def.finalTransform,
@@ -1140,6 +1151,7 @@ function toGpuBackendRequest(
     displayHeight: DISPLAY_HEIGHT,
     progressiveFilterRadius: FLAME_FILTER_RADIUS,
     echo: def.balloonEcho,
+    echoColorLUT,
   };
 }
 
@@ -1213,6 +1225,10 @@ function prepare3D(def: ScenarioDef3D): ScenarioEngines {
     def.transforms.map((t) => t.colorIndex),
   );
   const lut = buildPaletteLUT(def.paletteId) ?? undefined;
+  const echoColorLUT =
+    def.balloonEcho && def.balloonPaletteId
+      ? (buildPaletteLUT(def.balloonPaletteId) ?? undefined)
+      : undefined;
   const projection = buildProjection(
     ACCUM_WIDTH,
     ACCUM_HEIGHT,
@@ -1232,6 +1248,7 @@ function prepare3D(def: ScenarioDef3D): ScenarioEngines {
         histogram,
         lut,
         def.balloonEcho,
+        echoColorLUT,
       ),
     createBackend: () =>
       createGpuFlameBackend(toGpuBackendRequest(def, projection)),
@@ -1349,6 +1366,10 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
         weight: def.balloonEcho.weight,
       }
     : undefined;
+  const echoColorLUT =
+    balloonEcho && def.balloonPaletteId
+      ? (buildPaletteLUT(def.balloonPaletteId) ?? undefined)
+      : undefined;
 
   return {
     cpuChunk: (n, histogram, rng) =>
@@ -1365,6 +1386,7 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
         balloonEcho,
         balloonEcho ? rotorProjection : undefined,
         balloonEcho ? camera : undefined,
+        echoColorLUT,
       ),
     createBackend: () =>
       createGpuFlameBackend4({
@@ -1383,6 +1405,7 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
         displayHeight: DISPLAY_HEIGHT,
         progressiveFilterRadius: FLAME_FILTER_RADIUS,
         echo: balloonEcho,
+        echoColorLUT,
         rotorProjection: balloonEcho ? rotorProjection : undefined,
         cameraProjection: balloonEcho ? camera : undefined,
       } satisfies GpuBackendRequest4),

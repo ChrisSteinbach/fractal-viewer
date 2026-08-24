@@ -1,6 +1,7 @@
 import {
   BALLOON_CENTER_FLOOR,
   BALLOON_RHO_MARGIN,
+  balloonPaletteCoordinate,
   balloonBall,
   balloonBall4,
   buildBalloon,
@@ -28,6 +29,24 @@ import {
 } from "./surface-de";
 import { buildSurfaceDE4, estimateDistance4Refined } from "./surface-de-4d";
 import type { Transform, Vec3, Vec4 } from "./types";
+
+describe("balloon palette coordinate", () => {
+  const balloon: Balloon = { center: [1, -2, 3], rho: 4, R: 9 };
+
+  it("normalizes the pre-inversion source radius by rho", () => {
+    expect(balloonPaletteCoordinate(balloon, [1, -2, 3])).toBe(0);
+    expect(balloonPaletteCoordinate(balloon, [3, -2, 3])).toBe(0.5);
+    expect(balloonPaletteCoordinate(balloon, [1, 2, 3])).toBe(1);
+  });
+
+  it("clamps source-ball slack and is independent of the inversion radius", () => {
+    const source: Vec3 = [7, -2, 3];
+    expect(balloonPaletteCoordinate(balloon, source)).toBe(1);
+    expect(
+      balloonPaletteCoordinate({ ...balloon, R: balloon.R * 100 }, source),
+    ).toBe(1);
+  });
+});
 
 /**
  * Tests for the balloon inverted-union DE. The reference machinery below

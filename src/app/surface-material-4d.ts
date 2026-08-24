@@ -558,6 +558,10 @@ uniform float uBalloonFar;
 // == x exactly, so an unset tint is today's frame byte for byte.
 uniform vec3 uBalloonTint;
 uniform float uBalloonTintStrength;
+// Independent balloon gradient, with the same explicit-inherit gate and
+// source-radius coordinate as the 3D tracer.
+uniform sampler2D uBalloonColorLUT;
+uniform float uBalloonPaletteEnabled;
 #define surfaceDE surfaceDEFractal
 #endif
   /**
@@ -1966,6 +1970,20 @@ uniform float uBalloonTintStrength;
       base = texture(uColorLUT, vec2(u, 0.5)).rgb;
     }
 #if SURFACE_BALLOON
+    // balloon-de.ts's renderer-neutral coordinate: cpos is the exact
+    // pre-inversion visible-3D source query whose shell image won.
+    if (uBalloonPaletteEnabled > 0.5 && shell > 0.5) {
+      float balloonU = clamp(
+        length(cpos - uBalloonCenter) / uBalloonRho,
+        0.0,
+        1.0
+      );
+      float balloonIndex = min(floor(balloonU * 256.0), 255.0);
+      base = texture(
+        uBalloonColorLUT,
+        vec2((balloonIndex + 0.5) / 256.0, 0.5)
+      ).rgb;
+    }
     // The echo's own tint, on the BASE ALBEDO before lighting — shell
     // restricts it to the inverted term (the oracle's own attribution;
     // ties go to the fractal), so a fractal-term hit is untouched at any
@@ -1975,8 +1993,8 @@ uniform float uBalloonTintStrength;
 #endif
 #if SURFACE_PATTERN
     // Patterned albedo, BEFORE lighting and fog — the document's order:
-    // color source -> balloon tint -> pattern -> lighting -> fog. The
-    // pattern is object-attached, so the albedo reads the RAW attractor
+    // color source -> balloon palette -> tint -> pattern -> lighting -> fog.
+    // The pattern is object-attached, so the albedo reads the RAW attractor
     // point, reconstructed by reversing the render's remaps in the
     // surface-pattern-frame.ts order (visible hit -> balloon source query
     // -> inverse 4D view -> final inverse). The hit's OWN w is inserted
@@ -2348,6 +2366,8 @@ export function createSurfaceMaterial4(): THREE.ShaderMaterial {
       // needed.
       uBalloonTint: { value: new THREE.Vector3() },
       uBalloonTintStrength: { value: 0 },
+      uBalloonColorLUT: { value: placeholderLUT },
+      uBalloonPaletteEnabled: { value: 0 },
       // Ground plane: inert defaults; alive only under the
       // SURFACE_GROUND_PLANE arm (ball radius 1 so a stray enabled read
       // could never divide by zero, albedo white so a stray enabled floor

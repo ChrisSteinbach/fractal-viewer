@@ -1090,6 +1090,10 @@ uniform float uBalloonFar;
 // exactly, so an unset tint is today's frame byte for byte.
 uniform vec3 uBalloonTint;
 uniform float uBalloonTintStrength;
+// Independent balloon gradient. Disabled is explicit inherit: the shell
+// keeps the already-resolved base colour and performs no texture lookup.
+uniform sampler2D uBalloonColorLUT;
+uniform float uBalloonPaletteEnabled;
 #define surfaceDE surfaceDEFractal
 #endif
 #if SURFACE_ESCAPE
@@ -3391,6 +3395,22 @@ ${foldValueFormGlsl(shadeDeWidth)}
       base = texture(uColorLUT, vec2(u, 0.5)).rgb;
     }
 #if SURFACE_BALLOON
+    // Renderer-neutral balloon coordinate (balloon-de.ts): the normalized
+    // radius of the exact pre-inversion source query whose shell image won.
+    // Palette first, then the orthogonal tint mix below. Fractal-term hits
+    // and explicit inherit retain the existing base path exactly.
+    if (uBalloonPaletteEnabled > 0.5 && shell > 0.5) {
+      float balloonU = clamp(
+        length(cpos - uBalloonCenter) / uBalloonRho,
+        0.0,
+        1.0
+      );
+      float balloonIndex = min(floor(balloonU * 256.0), 255.0);
+      base = texture(
+        uBalloonColorLUT,
+        vec2((balloonIndex + 0.5) / 256.0, 0.5)
+      ).rgb;
+    }
     // The echo's own tint, on the BASE ALBEDO before lighting — shell
     // restricts it to the inverted term (the oracle's own attribution;
     // ties go to the fractal), so a fractal-term hit is untouched at any
@@ -3400,8 +3420,8 @@ ${foldValueFormGlsl(shadeDeWidth)}
 #endif
 #if SURFACE_PATTERN
     // Patterned albedo, BEFORE lighting and fog — the document's order:
-    // color source -> balloon tint -> pattern -> lighting -> fog. The
-    // pattern is object-attached, so the albedo reads the RAW attractor
+    // color source -> balloon palette -> tint -> pattern -> lighting -> fog.
+    // The pattern is object-attached, so the albedo reads the RAW attractor
     // point, reconstructed by reversing the render's remaps in the
     // surface-pattern-frame.ts order (visible hit -> balloon source query
     // -> final inverse; a fold final is multivalued and uses the winning
@@ -3993,6 +4013,11 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       // rest of this block.
       uBalloonTint: { value: new THREE.Vector3() },
       uBalloonTintStrength: { value: 0 },
+      // Inherit aliases the already-valid primary placeholder and disables
+      // the branch; scene.ts installs a separate 256x1 texture only for a
+      // non-inherit balloon palette.
+      uBalloonColorLUT: { value: placeholderLUT },
+      uBalloonPaletteEnabled: { value: 0 },
       // Ground plane: inert defaults; alive only under the
       // SURFACE_GROUND_PLANE define (ball radius 1 so a stray enabled
       // read could never divide by zero). Three.js ignores entries the
@@ -4772,6 +4797,21 @@ export function packSurfaceBalloonTint(
   const u = material.uniforms;
   (u.uBalloonTint.value as THREE.Vector3).set(...tint);
   u.uBalloonTintStrength.value = strength;
+}
+
+/**
+ * Select an independent balloon gradient for either GLSL surface material.
+ * `null` is explicit inherit: the shader retains its already-resolved base
+ * colour and skips the lookup. This is a uniform-only live path; callers own
+ * the texture's allocation/upload and render invalidation.
+ */
+export function packSurfaceBalloonPalette(
+  material: THREE.ShaderMaterial,
+  texture: THREE.DataTexture | null,
+): void {
+  const u = material.uniforms;
+  if (texture) u.uBalloonColorLUT.value = texture;
+  u.uBalloonPaletteEnabled.value = texture ? 1 : 0;
 }
 
 /** The ground plane's uniform payload, built by scene.ts from the session

@@ -1,4 +1,5 @@
 import type * as THREE from "three";
+import { DataTexture } from "three";
 import {
   createSurfaceMaterial4,
   setSurface4Balloon,
@@ -12,6 +13,7 @@ import {
 } from "./surface-material-4d";
 import {
   createSurfaceMaterial,
+  packSurfaceBalloonPalette,
   packSurfaceBalloonTint,
   SURFACE_GLSL_STRIP_BYTES,
   surfaceFragmentFor,
@@ -31,6 +33,22 @@ import { CLASSIC_SURFACE_FOLD_RADII } from "../fractal/surface-de";
 import { twentyFourCellFlake } from "../fractal/presets";
 import { createHash } from "node:crypto";
 import { PRE_PATTERN_SOURCE_HASHES } from "./surface-pattern-baseline";
+
+/** Balloon-palette source advance; unaffected rows stay pinned to the shared
+ * pre-pattern fixture. */
+const BALLOON_PALETTE_SOURCE_HASHES: Record<
+  string,
+  { resolved: string; emitted: string }
+> = {
+  "4D balloon finish0": {
+    resolved: "0769da4164ccda95",
+    emitted: "50f29771c6ddd73c",
+  },
+  "4D balloon finish1": {
+    resolved: "62e202ba5c488c7c",
+    emitted: "a66d90c86b8d1447",
+  },
+};
 
 /**
  * The 4D tracer's per-map data rides a std140 uniform BLOCK rather than
@@ -601,6 +619,9 @@ describe("the 4D tracer's variant arms", () => {
     for (const glsl of [surface4FragmentFor(), surface4FragmentFor(0, 1)]) {
       expect(glsl).not.toContain("uBalloonTint");
       expect(glsl).not.toContain("uBalloonTintStrength");
+      expect(glsl).not.toContain("uBalloonColorLUT");
+      expect(glsl).not.toContain("uBalloonPaletteEnabled");
+      expect(glsl).not.toContain("balloonIndex");
       expect(glsl).not.toContain("* shell");
     }
   });
@@ -628,6 +649,28 @@ describe("the 4D tracer's variant arms", () => {
       "base = mix(base, uBalloonTint, uBalloonTintStrength * shell);";
     expect(surfaceFragmentFor(0, 0, 1)).toContain(line);
     expect(surface4FragmentFor(1, 0)).toContain(line);
+  });
+
+  it("mirrors the 3D shell-only palette lookup exactly, including the pre-inversion cpos/rho coordinate and palette-before-tint order", () => {
+    const paletteBlock = (src: string): string => {
+      const match = src.match(
+        /if \(uBalloonPaletteEnabled > 0\.5 && shell > 0\.5\) \{[\s\S]*?\n\s*\}/,
+      );
+      expect(match).not.toBeNull();
+      return match![0].replace(/\s+/g, " ").trim();
+    };
+    const three = surfaceFragmentResolvedFor(0, 0, 1);
+    const four = surface4FragmentResolvedFor(1, 0);
+    expect(paletteBlock(four)).toBe(paletteBlock(three));
+    expect(paletteBlock(four)).toContain(
+      "length(cpos - uBalloonCenter) / uBalloonRho, 0.0, 1.0",
+    );
+    expect(paletteBlock(four)).toContain("min(floor(balloonU * 256.0), 255.0)");
+    expect(four.indexOf("uBalloonColorLUT,")).toBeLessThan(
+      four.indexOf(
+        "base = mix(base, uBalloonTint, uBalloonTintStrength * shell);",
+      ),
+    );
   });
 });
 
@@ -724,6 +767,25 @@ describe("setSurface4Balloon", () => {
 
     packSurfaceBalloonTint(material, [1, 0, 0], 0.5);
 
+    expect(material.version).toBe(version);
+  });
+
+  it("shares packSurfaceBalloonPalette's explicit-inherit uniform contract without touching the 4D shader", () => {
+    const material = createSurfaceMaterial4();
+    const primary = material.uniforms.uColorLUT.value;
+    const texture = new DataTexture(new Uint8Array(4), 1, 1);
+    const shader = material.fragmentShader;
+    const version = material.version;
+
+    packSurfaceBalloonPalette(material, texture);
+    expect(material.uniforms.uBalloonColorLUT.value).toBe(texture);
+    expect(material.uniforms.uBalloonPaletteEnabled.value).toBe(1);
+    expect(material.uniforms.uColorLUT.value).toBe(primary);
+
+    packSurfaceBalloonPalette(material, null);
+    expect(material.uniforms.uBalloonPaletteEnabled.value).toBe(0);
+    expect(material.uniforms.uBalloonColorLUT.value).toBe(texture);
+    expect(material.fragmentShader).toBe(shader);
     expect(material.version).toBe(version);
   });
 });
@@ -1199,7 +1261,8 @@ describe("the 4D tracer's pattern arm", () => {
         ["4D plane", 0, 1],
       ] as const) {
         const key = `${name} finish${finish}`;
-        const expected = PRE_PATTERN_SOURCE_HASHES[key];
+        const expected =
+          BALLOON_PALETTE_SOURCE_HASHES[key] ?? PRE_PATTERN_SOURCE_HASHES[key];
         expect(expected, key).toBeDefined();
         const resolved = surface4FragmentResolvedFor(balloon, plane, finish, 0);
         const emitted = surface4FragmentFor(balloon, plane, finish, 0);

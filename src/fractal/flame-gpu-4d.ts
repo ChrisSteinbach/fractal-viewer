@@ -129,7 +129,7 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * Byte-layout contracts (WGSL struct rules; the pack* functions below write
  * ArrayBuffers to match, and `flame-gpu-4d.test.ts` pins them):
  *
- * Params4 (uniform, {@link PARAMS4_BYTES} = 352):
+ * Params4 (uniform, {@link PARAMS4_BYTES} = 368):
  *   0 projX vec4f | 16 projY vec4f | 32 projW vec4f | 48 projS vec4f
  *   64 projC vec4f (the four row constants: x=clipX, y=clipY, z=clipW, w=sRaw)
  *   80 center4 vec4f (radius mode's 4D center; zero otherwise)
@@ -147,7 +147,8 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   256 echoProjC vec4f (xyz constants, w unused) |
  *   272 echoCameraX vec4f | 288 echoCameraY | 304 echoCameraW |
  *   320 echoCenterR2 vec4f (visible-3D center xyz, R squared) |
- *   336 echoTintStrength vec4f (tint rgb, strength)
+ *   336 echoTintStrength vec4f (tint rgb, strength) |
+ *   352 echoPaletteEnabled u32 | 356..367 pad
  *
  * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 336 stride);
  * slot count = transformCount + 1, the last being the final-transform lens
@@ -199,14 +200,15 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * colors: array<vec4u, 256> — gradient LUT (structural/radius) or
  * per-transform palette (transform mode), channels pre-scaled by
  * `COLOR_FIXED_POINT_SCALE` via `writeColorEntry`; zeros for wRamp (whose
- * color is computed in-shader from the projected s instead).
+ * color is computed in-shader from the projected s instead). The independent
+ * balloon LUT is the separate echoColors table at binding 5.
  *
  * hist: array<atomic<u32>>, `width * height * HIST_U32_PER_BUCKET`, the SAME
  * scaled 8-word emulated-u64 bucket layout as the 3D kernel. The backend
  * still reads it through the dimension-named {@link convertGpuHistogram4}
  * seam.
  */
-export const PARAMS4_BYTES = 352;
+export const PARAMS4_BYTES = 368;
 export const SLOT4_STRIDE_BYTES = 384;
 export const CHAIN4_STRIDE_BYTES = 32;
 /** Byte offset of Params4.itersPerInvocation — the one field the driver
@@ -260,6 +262,7 @@ struct Params {
   echoCameraW: vec4f,
   echoCenterR2: vec4f,
   echoTintStrength: vec4f,
+  echoPaletteEnabled: u32,
 }
 
 struct Slot {
@@ -298,6 +301,7 @@ struct Chain {
 @group(0) @binding(2) var<storage, read> colors: array<vec4u, 256>;
 @group(0) @binding(3) var<storage, read_write> chains: array<Chain>;
 @group(0) @binding(4) var<storage, read_write> hist: array<atomic<u32>>;
+@group(0) @binding(5) var<storage, read> echoColors: array<vec4u, 256>;
 
 // Warmup dispatches run a PLOT=false specialization of this same pipeline —
 // iterate the orbit without recording, like the CPU's unrecorded warmup.
@@ -652,8 +656,14 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
         let centerFloor = 1e-6 * params.echoRho;
         let r2 = max(dot(d, d), centerFloor * centerFloor);
         let inv = params.echoCenterR2.xyz + (params.echoCenterR2.w / r2) * d;
+        var echoBase = rgb;
+        if (params.echoPaletteEnabled == 1u) {
+          let u = clamp(length(d) / params.echoRho, 0.0, 1.0);
+          let li = min(u32(u * 256.0), 255u);
+          echoBase = echoColors[li].xyz;
+        }
         let echoRgb = vec3u(round(mix(
-          vec3f(rgb),
+          vec3f(echoBase),
           params.echoTintStrength.xyz * ${COLOR_FIXED_POINT_SCALE}.0,
           params.echoTintStrength.w,
         )));
@@ -759,6 +769,7 @@ const PARAMS4_ECHO_CAMERA_Y = 72;
 const PARAMS4_ECHO_CAMERA_W = 76;
 const PARAMS4_ECHO_CENTER_R2 = 80;
 const PARAMS4_ECHO_TINT_STRENGTH = 84;
+const PARAMS4_ECHO_PALETTE_ENABLED = 88;
 
 /**
  * A 4D chaos-game system in exactly the shape {@link packGpuSystem4} needs —
@@ -1137,6 +1148,8 @@ export interface GpuParams4Fields {
   echo?: GpuFlameBalloonEchoFields;
   rotorProjection?: RotorProjection4;
   cameraProjection?: Mat4;
+  /** Whether binding 5 carries an independent echo-only LUT. */
+  echoPalette: boolean;
 }
 
 /**
@@ -1231,6 +1244,7 @@ export function packGpuParams4(fields: GpuParams4Fields): ArrayBuffer {
   const remap = sliceColorRemap(view);
   f32[PARAMS4_SLICE_COLOR_SHIFT] = remap.shift;
   f32[PARAMS4_SLICE_COLOR_INV_SCALE] = remap.invScale;
+  u32[PARAMS4_ECHO_PALETTE_ENABLED] = fields.echoPalette ? 1 : 0;
 
   const echo = fields.echo;
   if (echo) {

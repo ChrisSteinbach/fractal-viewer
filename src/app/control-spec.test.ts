@@ -42,6 +42,7 @@ function mockEffects(shared = false): ControlEffects {
       setBalloonEchoRadius: vi.fn(),
       setSurfaceBalloonRadius: vi.fn(),
       setBalloonTint: vi.fn(),
+      setBalloonPalette: vi.fn(),
       setFogDensity: vi.fn(),
       setFogTint: vi.fn(),
     },
@@ -85,6 +86,18 @@ describe("applyScalarControl: parsing/mapping", () => {
 
     expect(state.balloonRadius).toBe(0.9);
   });
+
+  it.each(["balloonPalette", "flameBalloonPalette", "surfaceBalloonPalette"])(
+    "%s apply writes the shared balloon selection",
+    (id) => {
+      const state = applyScalarControl(
+        initialState(true),
+        specById(id),
+        "moss",
+      );
+      expect(state.balloonPaletteId).toBe("moss");
+    },
+  );
 
   it("fogSlider apply parses the raw string into a numeric fogDensity", () => {
     const spec = specById("fogSlider");
@@ -325,17 +338,43 @@ describe("effects", () => {
 
     it("balloonEchoCheckbox effect forwards the enabled flag and current radius, and cancels an in-flight sweep", () => {
       const spec = specById("balloonEchoCheckbox");
-      const previous = initialState(true);
+      const previous = {
+        ...initialState(true),
+        balloonPaletteId: "aurora" as const,
+      };
       const state = applyScalarControl(previous, spec, true);
       const fx = mockEffects();
 
       spec.effect?.(state, fx, previous);
 
+      expect(fx.scene.setBalloonPalette).toHaveBeenCalledWith(
+        buildPaletteLUT("aurora"),
+      );
       expect(fx.scene.setBalloonEchoEnabled).toHaveBeenCalledWith(true);
       expect(fx.scene.setBalloonEchoRadius).toHaveBeenCalledWith(
         state.balloonRadius,
       );
       expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
+    });
+
+    it("balloon enable applies a palette authored while the echo was off", () => {
+      const spec = specById("balloonEchoCheckbox");
+      const previous = {
+        ...initialState(true),
+        balloonPaletteId: "sunset" as const,
+      };
+      const state = applyScalarControl(previous, spec, true);
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setBalloonPalette).toHaveBeenCalledWith(
+        buildPaletteLUT("sunset"),
+      );
+      // Checkbox enable uses the scene-only setup path. An active Flame
+      // session is restarted below from the full current state instead of
+      // receiving a redundant live-palette command first.
+      expect(fx.postFlame).not.toHaveBeenCalled();
     });
 
     it("balloonRadiusSlider effect forwards the radius and cancels an in-flight sweep", () => {
@@ -348,6 +387,127 @@ describe("effects", () => {
 
       expect(fx.scene.setBalloonEchoRadius).toHaveBeenCalledWith(0.9);
       expect(fx.cancelBalloonSweep).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["balloonPalette", "flameBalloonPalette", "surfaceBalloonPalette"])(
+      "%s resolves one shared LUT, forwards Flame through worker semantics, and does not restart Flame directly",
+      (id) => {
+        const spec = specById(id);
+        const previous = { ...initialState(true), balloonEcho: true };
+        const state = applyScalarControl(previous, spec, "aurora");
+        const fx = mockEffects();
+
+        spec.effect?.(state, fx, previous);
+
+        expect(fx.scene.setBalloonPalette).toHaveBeenCalledWith(
+          buildPaletteLUT("aurora"),
+        );
+        expect(fx.postFlame).toHaveBeenCalledWith({
+          type: "setBalloonPalette",
+          palette: "aurora",
+        });
+        expect(fx.restartFlameRender).not.toHaveBeenCalled();
+        expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
+      },
+    );
+
+    it("sends null/omitted palette for Inherit", () => {
+      const spec = specById("balloonPalette");
+      const previous = {
+        ...initialState(true),
+        balloonEcho: true,
+        balloonPaletteId: "aurora" as const,
+      };
+      const state = applyScalarControl(previous, spec, "inherit");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setBalloonPalette).toHaveBeenCalledWith(null);
+      expect(fx.postFlame).toHaveBeenCalledWith({
+        type: "setBalloonPalette",
+      });
+    });
+
+    it("resolves Custom from the independent balloon payload, never the primary slot", () => {
+      const spec = specById("flameBalloonPalette");
+      const balloonCustomPalette = {
+        stops: [
+          [1, 0, 0],
+          [0, 0, 1],
+        ],
+      } as const;
+      const previous = {
+        ...initialState(true),
+        balloonEcho: true,
+        balloonCustomPalette,
+        customPalette: {
+          stops: [
+            [0, 1, 0],
+            [1, 1, 0],
+          ],
+        },
+      } as const;
+      const state = applyScalarControl(previous, spec, "custom");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setBalloonPalette).toHaveBeenCalledWith(
+        buildPaletteLUT(balloonCustomPalette),
+      );
+      expect(fx.postFlame).toHaveBeenCalledWith({
+        type: "setBalloonPalette",
+        palette: balloonCustomPalette,
+      });
+    });
+
+    it("keeps palette authoring renderer-inert while the balloon is off", () => {
+      const spec = specById("surfaceBalloonPalette");
+      const previous = initialState(true);
+      const state = applyScalarControl(previous, spec, "sunset");
+      const fx = mockEffects();
+
+      expect(state.balloonPaletteId).toBe("sunset");
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setBalloonPalette).not.toHaveBeenCalled();
+      expect(fx.postFlame).not.toHaveBeenCalled();
+      expect(fx.restartFlameRender).not.toHaveBeenCalled();
+      expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
+    });
+
+    it("restarts an active Surface session after pushing a changed palette", () => {
+      const spec = specById("surfaceBalloonPalette");
+      const previous = {
+        ...initialState(true),
+        renderMode: "surface" as const,
+        balloonEcho: true,
+      };
+      const state = applyScalarControl(previous, spec, "dusk");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setBalloonPalette).toHaveBeenCalledTimes(1);
+      expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(1);
+    });
+
+    it("does no renderer work for a redundant selection event", () => {
+      const spec = specById("balloonPalette");
+      const previous = {
+        ...initialState(true),
+        balloonEcho: true,
+        balloonPaletteId: "moss" as const,
+      };
+      const state = applyScalarControl(previous, spec, "moss");
+      const fx = mockEffects();
+
+      spec.effect?.(state, fx, previous);
+
+      expect(fx.scene.setBalloonPalette).not.toHaveBeenCalled();
+      expect(fx.postFlame).not.toHaveBeenCalled();
+      expect(fx.restartSurfaceRender).not.toHaveBeenCalled();
     });
 
     it("fogSlider effect forwards the density to the scene", () => {
@@ -375,7 +535,10 @@ describe("effects", () => {
 
     it("surfaceBalloonCheckbox effect re-enters the surface session and cancels an in-flight sweep", () => {
       const spec = specById("surfaceBalloonCheckbox");
-      const previous = initialState(true);
+      const previous = {
+        ...initialState(true),
+        renderMode: "surface" as const,
+      };
       const state = applyScalarControl(previous, spec, true);
       const fx = mockEffects();
 

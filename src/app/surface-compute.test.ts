@@ -43,6 +43,8 @@ import {
 import { SURFACE_FULL_HIT_FLOOR } from "./surface-material";
 import { surface4FragmentFor } from "./surface-material-4d";
 import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
+import { buildSurfaceDE } from "../fractal/surface-de";
+import { defaultTransforms } from "../fractal/presets";
 
 describe("the two engines' full-tier hit floor (mirror pin)", () => {
   it("is ONE number: surface-de-gpu.ts's SURFACE_GPU_HIT_FLOOR is surface-material.ts's SURFACE_FULL_HIT_FLOOR", () => {
@@ -1318,6 +1320,232 @@ globalThis.GPUBufferUsage = {
   INDIRECT: 0x0100,
   QUERY_RESOLVE: 0x0200,
 };
+globalThis.GPUShaderStage = {
+  VERTEX: 0x1,
+  FRAGMENT: 0x2,
+  COMPUTE: 0x4,
+};
+globalThis.GPUTextureUsage = {
+  COPY_SRC: 0x01,
+  COPY_DST: 0x02,
+  TEXTURE_BINDING: 0x04,
+  STORAGE_BINDING: 0x08,
+  RENDER_ATTACHMENT: 0x10,
+  TRANSIENT_ATTACHMENT: 0x20,
+};
+
+interface PaletteResourceHarness {
+  renderer: SurfaceComputeRenderer;
+  layoutDescriptors: GPUBindGroupLayoutDescriptor[];
+  textureDescriptors: GPUTextureDescriptor[];
+  textureWrites: ReturnType<typeof vi.fn>;
+  bufferWrites: ReturnType<typeof vi.fn>;
+  bindGroups: GPUBindGroupDescriptor[];
+  primaryTexture: GPUTexture;
+  balloonTexture: GPUTexture | null;
+}
+
+/** Drive the real buildOnDevice resource/layout branch over an inert device.
+ * Shader generation and all packers remain production code; only WebGPU
+ * allocation/compilation outcomes are supplied by the fake. */
+async function createPaletteResourceHarness(
+  balloon: boolean,
+): Promise<PaletteResourceHarness> {
+  const layoutDescriptors: GPUBindGroupLayoutDescriptor[] = [];
+  const textureDescriptors: GPUTextureDescriptor[] = [];
+  const bindGroups: GPUBindGroupDescriptor[] = [];
+  const textureWrites = vi.fn();
+  const bufferWrites = vi.fn();
+  const textures: GPUTexture[] = [];
+  const neverLost = new Promise<GPUDeviceLostInfo>(() => {});
+  const device = {
+    lost: neverLost,
+    limits: {
+      maxBufferSize: 1 << 28,
+      maxStorageBufferBindingSize: 1 << 28,
+      maxComputeWorkgroupsPerDimension: 65535,
+    },
+    queue: {
+      writeBuffer: bufferWrites,
+      writeTexture: textureWrites,
+    },
+    pushErrorScope: () => {},
+    popErrorScope: async () => null,
+    createShaderModule: () => ({
+      getCompilationInfo: async () => ({ messages: [] }),
+    }),
+    createBindGroupLayout: (descriptor: GPUBindGroupLayoutDescriptor) => {
+      layoutDescriptors.push(descriptor);
+      return {};
+    },
+    createPipelineLayout: () => ({}),
+    createComputePipelineAsync: async () => ({}),
+    createBuffer: () => ({ destroy: vi.fn() }),
+    createTexture: (descriptor: GPUTextureDescriptor) => {
+      textureDescriptors.push(descriptor);
+      const texture = {
+        createView: () => ({}),
+        destroy: vi.fn(),
+      } as unknown as GPUTexture;
+      textures.push(texture);
+      return texture;
+    },
+    createSampler: () => ({}),
+    createBindGroup: (descriptor: GPUBindGroupDescriptor) => {
+      bindGroups.push(descriptor);
+      return {};
+    },
+    destroy: vi.fn(),
+  } as unknown as GPUDevice;
+  const de = buildSurfaceDE(defaultTransforms(), null, {
+    order: 1,
+    plane: "xz",
+  });
+  const target: SurfaceComputeTarget = { kind: "ifs", de, balloon };
+  const build = Reflect.get(SurfaceComputeRenderer, "buildOnDevice") as (
+    device: GPUDevice,
+    target: SurfaceComputeTarget,
+    colors: [number, number, number][],
+    trapIndices: number[],
+    shadeDeWidth: number,
+    adapterStatus: { label: string | undefined; software: boolean },
+    materials: null,
+  ) => Promise<SurfaceComputeRenderer>;
+  const renderer = await build.call(
+    SurfaceComputeRenderer,
+    device,
+    target,
+    [[1, 1, 1]],
+    [0],
+    1,
+    { label: undefined, software: false },
+    null,
+  );
+  return {
+    renderer,
+    layoutDescriptors,
+    textureDescriptors,
+    textureWrites,
+    bufferWrites,
+    bindGroups,
+    primaryTexture: textures[0],
+    balloonTexture: textures[1] ?? null,
+  };
+}
+
+async function runPaletteFramePrelude(
+  harness: PaletteResourceHarness,
+  spec: SurfaceComputeFrameSpec,
+): Promise<{ flags: number; textureCalls: unknown[][] }> {
+  // Stop immediately after the shade uniform write. This observes LUT
+  // upload + flag packing without mocking the march loop or readbacks.
+  Reflect.set(harness.renderer, "allocateFrameBuffers", async () => ({}));
+  Reflect.set(harness.renderer, "uploadedLutVersion", spec.lutVersion);
+  harness.textureWrites.mockClear();
+  harness.bufferWrites.mockClear();
+  const stop = new Error("shade prelude observed");
+  let shadeBytes: ArrayBuffer | null = null;
+  harness.bufferWrites.mockImplementationOnce(
+    (_buffer: GPUBuffer, _offset: number, data: ArrayBuffer) => {
+      shadeBytes = data;
+      throw stop;
+    },
+  );
+  const run = Reflect.get(harness.renderer, "runFrame") as (
+    token: number,
+    spec: SurfaceComputeFrameSpec,
+    opts: Record<string, never>,
+  ) => Promise<unknown>;
+  await expect(run.call(harness.renderer, 0, spec, {})).rejects.toBe(stop);
+  expect(shadeBytes).not.toBeNull();
+  return {
+    flags: new DataView(shadeBytes!).getUint32(124, true),
+    textureCalls: harness.textureWrites.mock.calls,
+  };
+}
+
+describe("SurfaceComputeRenderer balloon palette resources", () => {
+  it.each([
+    [false, 1, false],
+    [true, 2, true],
+  ] as const)(
+    "allocates and binds the second LUT only when target.balloon is %s",
+    async (balloon, expectedTextures, expectsBinding10) => {
+      const harness = await createPaletteResourceHarness(balloon);
+      expect(harness.textureDescriptors).toHaveLength(expectedTextures);
+      // Every allocated LUT is initialized to a valid 256x1 white texture.
+      expect(harness.textureWrites).toHaveBeenCalledTimes(expectedTextures);
+      for (const descriptor of harness.textureDescriptors) {
+        expect(descriptor.size).toEqual({ width: 256, height: 1 });
+        expect(descriptor.format).toBe("rgba8unorm");
+      }
+      const shadeLayout = harness.layoutDescriptors[1];
+      expect(
+        Array.from(shadeLayout.entries).some((entry) => entry.binding === 10),
+      ).toBe(expectsBinding10);
+
+      const ensure = Reflect.get(harness.renderer, "ensureFrameBuffers") as (
+        rays: number,
+      ) => unknown;
+      ensure.call(harness.renderer, 1);
+      const shadeBindGroup = harness.bindGroups[1];
+      expect(
+        Array.from(shadeBindGroup.entries).some(
+          (entry) => entry.binding === 10,
+        ),
+      ).toBe(expectsBinding10);
+      if (expectsBinding10) {
+        expect(harness.balloonTexture).not.toBeNull();
+      } else {
+        expect(harness.balloonTexture).toBeNull();
+      }
+    },
+  );
+
+  it("uploads only the target-specific balloon LUT revision and enables flags bit1", async () => {
+    const harness = await createPaletteResourceHarness(true);
+    const lut = new Uint8Array(256 * 4).fill(73);
+    const spec = frameSpec();
+    spec.balloon = { center: [0, 0, 0], rho: 2, R: 3, far: 8 };
+    spec.balloonLut = lut;
+    spec.balloonLutVersion = 7;
+
+    const first = await runPaletteFramePrelude(harness, spec);
+    expect(first.flags).toBe(2);
+    expect(first.textureCalls).toHaveLength(1);
+    expect(first.textureCalls[0][0]).toEqual({
+      texture: harness.balloonTexture,
+    });
+    expect(first.textureCalls[0][1]).toEqual(lut);
+
+    const cached = await runPaletteFramePrelude(harness, spec);
+    expect(cached.flags).toBe(2);
+    expect(cached.textureCalls).toHaveLength(0);
+
+    spec.balloonLutVersion = 8;
+    const revised = await runPaletteFramePrelude(harness, spec);
+    expect(revised.textureCalls).toHaveLength(1);
+  });
+
+  it("does not upload or set bit1 for inherit, or for a non-balloon target handed stray palette bytes", async () => {
+    const balloon = await createPaletteResourceHarness(true);
+    const inherit = frameSpec();
+    inherit.balloon = { center: [0, 0, 0], rho: 2, R: 3, far: 8 };
+    inherit.balloonLut = null;
+    inherit.balloonLutVersion = 4;
+    const inherited = await runPaletteFramePrelude(balloon, inherit);
+    expect(inherited.flags).toBe(0);
+    expect(inherited.textureCalls).toHaveLength(0);
+
+    const plain = await createPaletteResourceHarness(false);
+    const stray = frameSpec();
+    stray.balloonLut = new Uint8Array(256 * 4).fill(255);
+    stray.balloonLutVersion = 4;
+    const ignored = await runPaletteFramePrelude(plain, stray);
+    expect(ignored.flags).toBe(0);
+    expect(ignored.textureCalls).toHaveLength(0);
+  });
+});
 
 /** A promise a test settles on its own schedule, independent of when the
  * class under test actually awaits it — mirrors flame-gpu-backend.test.ts's

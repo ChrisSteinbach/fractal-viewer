@@ -56,6 +56,7 @@ import {
   convertGpuDisplayHistogram,
   convertGpuHistogram,
   packGpuChains,
+  packGpuColorLUT,
   packGpuDownsample,
   packGpuParams,
   packGpuSystem,
@@ -160,6 +161,8 @@ interface GpuProgramSpec {
   paramsItersOffsetBytes: number;
   slots: ArrayBuffer;
   colors: ArrayBuffer;
+  /** Independent balloon colors; absent aliases binding 5 to `colors`. */
+  echoColors?: ArrayBuffer;
   chains: ArrayBuffer;
   convertSnapshot: SnapshotConverter;
   convertDisplay: DisplayConverter;
@@ -714,6 +717,19 @@ async function buildBackendOnDevice(
   });
   device.queue.writeBuffer(colorsBuffer, 0, program.colors);
 
+  // In inherit/off mode binding 5 aliases the primary table and the kernel's
+  // flag keeps it unread, avoiding a second allocation/upload. A selected
+  // balloon palette gets its own immutable 4 KiB table.
+  let echoColorsBuffer = colorsBuffer;
+  if (program.echoColors) {
+    echoColorsBuffer = device.createBuffer({
+      label: "flame-gpu echo colors",
+      size: program.echoColors.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    device.queue.writeBuffer(echoColorsBuffer, 0, program.echoColors);
+  }
+
   const chainsBuffer = device.createBuffer({
     label: "flame-gpu chains",
     size: program.chains.byteLength,
@@ -766,6 +782,11 @@ async function buildBackendOnDevice(
         binding: 4,
         visibility: GPUShaderStage.COMPUTE,
         buffer: { type: "storage" },
+      },
+      {
+        binding: 5,
+        visibility: GPUShaderStage.COMPUTE,
+        buffer: { type: "read-only-storage" },
       },
     ],
   });
@@ -823,6 +844,7 @@ async function buildBackendOnDevice(
       { binding: 2, resource: { buffer: colorsBuffer } },
       { binding: 3, resource: { buffer: chainsBuffer } },
       { binding: 4, resource: { buffer: histBuffer } },
+      { binding: 5, resource: { buffer: echoColorsBuffer } },
     ],
   });
 
@@ -1100,10 +1122,14 @@ export async function createGpuFlameBackend(
       totalWeight: packed.totalWeight,
       numChains: NUM_CHAINS,
       echo: request.echo,
+      echoPalette: request.echoColorLUT !== undefined,
     }),
     paramsItersOffsetBytes: PARAMS_ITERS_OFFSET_BYTES,
     slots: packed.slots,
     colors: packed.colors,
+    echoColors: request.echoColorLUT
+      ? packGpuColorLUT(request.echoColorLUT)
+      : undefined,
     chains: packGpuChains(NUM_CHAINS, request.seed),
     convertSnapshot: convertGpuHistogram,
     convertDisplay: convertGpuDisplayHistogram,
@@ -1154,12 +1180,16 @@ export async function createGpuFlameBackend4(
       view: request.view,
       color: request.color,
       echo: request.echo,
+      echoPalette: request.echoColorLUT !== undefined,
       rotorProjection: request.rotorProjection,
       cameraProjection: request.cameraProjection,
     }),
     paramsItersOffsetBytes: PARAMS4_ITERS_OFFSET_BYTES,
     slots: packed.slots,
     colors: packed.colors,
+    echoColors: request.echoColorLUT
+      ? packGpuColorLUT(request.echoColorLUT)
+      : undefined,
     chains: packGpuChains4(NUM_CHAINS, request.seed),
     convertSnapshot: convertGpuHistogram4,
     convertDisplay: convertGpuDisplayHistogram4,

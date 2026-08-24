@@ -2,6 +2,7 @@
 import { Ui } from "./ui";
 import type { UiHandlers } from "./ui";
 import {
+  BALLOON_PALETTE_IDS,
   EXPORT_SCALES,
   FLAME_ITERATION_DETENTS,
   initialState,
@@ -11,6 +12,8 @@ import {
   setBackgroundFlamePaletteId,
   setBackgroundMode,
   setBackgroundShape,
+  setBalloonCustomPaletteStops,
+  setBalloonPaletteId,
   setFlamePaletteId,
   setSolidPaletteId,
   setSurfaceColorSource,
@@ -98,6 +101,7 @@ function noopHandlers(): UiHandlers {
     onWatchBuild: vi.fn(),
     onBalloonInflate: vi.fn(),
     onCustomPaletteStops: vi.fn(),
+    onBalloonCustomPaletteStops: vi.fn(),
     onPositionAxisColors: vi.fn(),
     onBackgroundCustom: vi.fn(),
     onFogTint: vi.fn(),
@@ -744,6 +748,201 @@ describe("Ui surface balloon rows", () => {
     ).click();
 
     expect(handlers.onBalloonInflate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Ui balloon palette", () => {
+  const selectIds = [
+    "balloonPalette",
+    "flameBalloonPalette",
+    "surfaceBalloonPalette",
+  ] as const;
+
+  it.each(selectIds)(
+    "%s offers exactly the shared balloon vocabulary in order",
+    (id) => {
+      const values = Array.from(
+        document.querySelectorAll<HTMLOptionElement>(`#${id} option`),
+      ).map((option) => option.value);
+      expect(values).toEqual(BALLOON_PALETTE_IDS);
+      expect(values).not.toContain("legacy");
+    },
+  );
+
+  it("reflects one state selection into all three selects", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(setBalloonPaletteId(initialState(true), "aurora"));
+
+    for (const id of selectIds) {
+      expect((document.getElementById(id) as HTMLSelectElement).value).toBe(
+        "aurora",
+      );
+    }
+  });
+
+  it.each(selectIds)("%s edits the same shared state field", (id) => {
+    const { handlers, current } = scalarHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    const select = document.getElementById(id) as HTMLSelectElement;
+
+    select.value = "lagoon";
+    select.dispatchEvent(new Event("change"));
+
+    expect(current().balloonPaletteId).toBe("lagoon");
+  });
+
+  it("keeps every eligible palette row visible while the balloon is off", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceSessionKind("ifs");
+    ui.updateLabels({ ...initialState(true), balloonEcho: false });
+
+    expect(
+      document
+        .getElementById("balloonPaletteRow")
+        ?.classList.contains("hidden"),
+    ).toBe(false);
+    expect(
+      document
+        .getElementById("flameBalloonPaletteRow")
+        ?.classList.contains("hidden"),
+    ).toBe(false);
+    expect(
+      document
+        .getElementById("surfaceBalloonPaletteRow")
+        ?.classList.contains("hidden"),
+    ).toBe(false);
+  });
+
+  it.each(["escape", "bulb"] as const)(
+    "hides the Surface palette/editor container for an ineligible %s session",
+    (kind) => {
+      const ui = new Ui(document);
+      ui.setSurfaceSessionKind(kind);
+      ui.updateLabels({
+        ...setBalloonPaletteId(initialState(true), "custom"),
+        renderMode: "surface" as const,
+        balloonEcho: false,
+      });
+
+      expect(
+        document
+          .getElementById("surfaceBalloonPaletteRow")
+          ?.classList.contains("hidden"),
+      ).toBe(true);
+    },
+  );
+});
+
+describe("balloon custom palette editors", () => {
+  const editors = [
+    ["points", "balloonCustomPalette"],
+    ["flame", "flameBalloonCustomPalette"],
+    ["surface", "surfaceBalloonCustomPalette"],
+  ] as const;
+
+  function authoredBalloonState(): AppState {
+    return setBalloonCustomPaletteStops(
+      setBalloonPaletteId(initialState(true), "custom"),
+      [
+        [1, 0, 0],
+        [0, 0, 1],
+      ],
+    );
+  }
+
+  it("shows and mirrors all three editors while Custom is selected, even with balloon off", () => {
+    const ui = new Ui(document);
+    const state = authoredBalloonState();
+    expect(state.balloonEcho).toBe(false);
+    ui.updateLabels(state);
+
+    for (const [, prefix] of editors) {
+      expect(
+        document.getElementById(`${prefix}Row`)?.classList.contains("hidden"),
+      ).toBe(false);
+      const values = Array.from(
+        document.querySelectorAll<HTMLInputElement>(
+          `#${prefix}Stops input[type='color']`,
+        ),
+      ).map((input) => input.value);
+      expect(values).toEqual(["#ff0000", "#0000ff"]);
+    }
+  });
+
+  it("keeps balloon stops visually independent from the primary Custom slot", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...authoredBalloonState(),
+      flame: { ...initialState(true).flame, paletteId: "custom" },
+      customPalette: {
+        stops: [
+          [0, 1, 0],
+          [1, 1, 0],
+        ],
+      },
+    });
+
+    const primary = Array.from(
+      document.querySelectorAll<HTMLInputElement>(
+        "#flameCustomPaletteStops input[type='color']",
+      ),
+    ).map((input) => input.value);
+    const balloon = Array.from(
+      document.querySelectorAll<HTMLInputElement>(
+        "#flameBalloonCustomPaletteStops input[type='color']",
+      ),
+    ).map((input) => input.value);
+    expect(primary).toEqual(["#00ff00", "#ffff00"]);
+    expect(balloon).toEqual(["#ff0000", "#0000ff"]);
+  });
+
+  it.each(editors)(
+    "%s editor dispatches only onBalloonCustomPaletteStops",
+    (_kind, prefix) => {
+      const handlers = noopHandlers();
+      const ui = new Ui(document);
+      ui.bind(handlers);
+      ui.updateLabels(authoredBalloonState());
+      const first = document.querySelector<HTMLInputElement>(
+        `#${prefix}Stops input[type='color']`,
+      )!;
+
+      first.value = "#00ff00";
+      first.dispatchEvent(new Event("input", { bubbles: true }));
+
+      expect(handlers.onBalloonCustomPaletteStops).toHaveBeenCalledWith([
+        [0, 1, 0],
+        [0, 0, 1],
+      ]);
+      expect(handlers.onCustomPaletteStops).not.toHaveBeenCalled();
+    },
+  );
+
+  it("routes add/remove through the balloon callback without touching the primary callback", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.updateLabels(authoredBalloonState());
+
+    document.getElementById("balloonCustomPaletteAdd")?.click();
+    expect(handlers.onBalloonCustomPaletteStops).toHaveBeenCalledWith([
+      [1, 0, 0],
+      [0, 0, 1],
+      [0, 0, 1],
+    ]);
+    expect(handlers.onCustomPaletteStops).not.toHaveBeenCalled();
+  });
+
+  it("hides all three editors when a built-in is selected", () => {
+    const ui = new Ui(document);
+    ui.updateLabels(setBalloonPaletteId(authoredBalloonState(), "ember"));
+
+    for (const [, prefix] of editors) {
+      expect(
+        document.getElementById(`${prefix}Row`)?.classList.contains("hidden"),
+      ).toBe(true);
+    }
   });
 });
 

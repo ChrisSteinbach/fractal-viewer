@@ -161,6 +161,12 @@ export type FlameWorkerCommand =
        * byte-identical single-splat path.
        */
       balloonEcho?: FlameBalloonEcho;
+      /**
+       * Independent balloon gradient. Omitted means inherit the primary
+       * sample color exactly; callers resolve custom selections to their
+       * self-contained payload before crossing the worker boundary.
+       */
+      balloonPalette?: PaletteSpec;
       /** Kaleidoscope symmetry, 4D as well as 3D — which is also why
        * `twist` rides along (the second angle of a 4D double rotation, which
        * only the 4D path can express). Absent `twist` means 0. */
@@ -267,6 +273,7 @@ export type FlameWorkerCommand =
   | { type: "setEstimatorMinimumRadius"; estimatorMinimumRadius: number }
   | { type: "setEstimatorCurve"; estimatorCurve: number }
   | { type: "setPalette"; palette: PaletteSpec }
+  | { type: "setBalloonPalette"; palette?: PaletteSpec }
   | {
       type: "setSymmetry";
       order: number;
@@ -697,6 +704,8 @@ export interface GpuBackendRequest {
   projection: Mat4;
   /** Same optional echo object the CPU accumulator receives. */
   echo?: FlameBalloonEcho;
+  /** Independent balloon LUT, or absent for exact primary-color inherit. */
+  echoColorLUT?: Float32Array;
   /** ACCUMULATION resolution (display size x effective supersample) — NOT
    * the display resolution `start.width`/`height` carry. */
   width: number;
@@ -751,6 +760,8 @@ export interface GpuBackendRequest4 {
   cameraProjection?: Mat4;
   /** Same optional echo object the CPU 4D accumulator receives. */
   echo?: FlameBalloonEcho;
+  /** Independent balloon LUT, or absent for exact primary-color inherit. */
+  echoColorLUT?: Float32Array;
   /** The frozen 4D view (signed-w normalization + soft slice) — see
    * `project4.ts`'s `FourDView`. */
   view: FourDView;
@@ -817,6 +828,7 @@ class CpuFlameBackend implements FlameAccumBackend {
     private readonly rng: Rng,
     private readonly colorLUT: Float32Array | null,
     private readonly echo: FlameBalloonEcho | undefined,
+    private readonly echoColorLUT: Float32Array | null,
   ) {}
 
   accumulate(iterations: number): number {
@@ -831,6 +843,7 @@ class CpuFlameBackend implements FlameAccumBackend {
       this.histogram ?? undefined,
       this.colorLUT ?? undefined,
       this.echo,
+      this.echoColorLUT ?? undefined,
     );
     return iterations; // CPU always retires exactly what it was asked for.
   }
@@ -879,6 +892,7 @@ class Cpu4DFlameBackend implements FlameAccumBackend {
     private readonly echo: FlameBalloonEcho | undefined,
     private readonly rotorProjection: RotorProjection4 | undefined,
     private readonly cameraProjection: Mat4 | undefined,
+    private readonly echoColorLUT: Float32Array | null,
   ) {}
 
   accumulate(iterations: number): number {
@@ -895,6 +909,7 @@ class Cpu4DFlameBackend implements FlameAccumBackend {
       this.echo,
       this.rotorProjection,
       this.cameraProjection,
+      this.echoColorLUT ?? undefined,
     );
     return iterations; // CPU always retires exactly what it was asked for.
   }
@@ -961,6 +976,8 @@ export class FlameWorkerSession {
   private projection: Mat4 | null = null;
   /** Balloon echo snapshotted at session start; absent is the off path. */
   private balloonEcho: FlameBalloonEcho | undefined;
+  /** Independent echo-only gradient; null is the exact inherit path. */
+  private balloonColorLUT: Float32Array | null = null;
   /** True when the current session's `start` carried a `fourD` block — see
    * that field's doc. Set once per `start`; a restart (setSupersample/
    * setPalette) never toggles it, since a session's dimensionality doesn't
@@ -1272,6 +1289,9 @@ export class FlameWorkerSession {
       case "setPalette":
         this.setPalette(command.palette);
         break;
+      case "setBalloonPalette":
+        this.setBalloonPalette(command.palette);
+        break;
       case "setSymmetry":
         this.setSymmetry(command.order, command.plane, command.twist ?? 0);
         break;
@@ -1323,6 +1343,13 @@ export class FlameWorkerSession {
     );
     this.projection = cmd.projection;
     this.balloonEcho = cmd.balloonEcho;
+    // A palette without an echo is inert: avoid even building its LUT. A
+    // resolved spec that unexpectedly has no gradient (currently "legacy")
+    // degrades to inherit rather than inventing a renderer-local meaning.
+    this.balloonColorLUT =
+      cmd.balloonEcho && cmd.balloonPalette !== undefined
+        ? buildPaletteLUT(cmd.balloonPalette)
+        : null;
     this.palette = transformColors(
       cmd.transforms.length,
       cmd.transforms.map((t) => t.colorIndex),
@@ -1671,6 +1698,25 @@ export class FlameWorkerSession {
     );
   }
 
+  /**
+   * Replace only the balloon's baked colors. Like the primary palette, an
+   * active echo requires a fresh histogram because sumRGB already contains
+   * the old colors. With no echo, retain the exact no-work path: the setting
+   * cannot affect this session and a later enable arrives via a new `start`.
+   */
+  private setBalloonPalette(palette: PaletteSpec | undefined): void {
+    if (!this.hasGeometry()) return;
+    if (!this.balloonEcho) {
+      this.balloonColorLUT = null;
+      return;
+    }
+    this.balloonColorLUT =
+      palette === undefined ? null : buildPaletteLUT(palette);
+    this.startAccumulation(
+      this.lastRequestedSupersample ?? this.effectiveSupersample,
+    );
+  }
+
   /** Live kaleidoscope change. Both dimensions rebuild their own prepared
    * game (the 4D path has `postRotations`/base-map bookkeeping of its
    * own, so this is no longer 3D-only) and restart the accumulation. */
@@ -1983,6 +2029,7 @@ export class FlameWorkerSession {
       this.rng,
       this.colorLUT,
       this.balloonEcho,
+      this.balloonColorLUT,
     );
   }
 
@@ -2002,6 +2049,7 @@ export class FlameWorkerSession {
       this.balloonEcho,
       this.balloonEcho ? this.rotorProjection4! : undefined,
       this.balloonEcho ? this.projection! : undefined,
+      this.balloonColorLUT,
     );
   }
 
@@ -2020,6 +2068,7 @@ export class FlameWorkerSession {
       palette: this.paletteSpec,
       projection: this.projection!,
       echo: this.balloonEcho,
+      echoColorLUT: this.balloonColorLUT ?? undefined,
       width: this.accumWidth,
       height: this.accumHeight,
       seed: Math.floor(this.rng() * 0x100000000) >>> 0,
@@ -2044,6 +2093,7 @@ export class FlameWorkerSession {
       rotorProjection: this.balloonEcho ? this.rotorProjection4! : undefined,
       cameraProjection: this.balloonEcho ? this.projection! : undefined,
       echo: this.balloonEcho,
+      echoColorLUT: this.balloonColorLUT ?? undefined,
       view: this.fourDView!,
       color: this.fourDColor!,
       width: this.accumWidth,

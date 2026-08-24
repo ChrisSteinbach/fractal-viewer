@@ -12,6 +12,7 @@ import {
   convertGpuDisplayHistogram,
   convertGpuHistogram,
   packGpuChains,
+  packGpuColorLUT,
   packGpuDownsample,
   packGpuParams,
   packGpuSystem,
@@ -807,6 +808,7 @@ describe("packGpuParams", () => {
       totalWeight: 9.5,
       numChains: 65536,
       ...overrides,
+      echoPalette: overrides.echoPalette ?? false,
     };
   }
 
@@ -831,7 +833,7 @@ describe("packGpuParams", () => {
     expect(u32[21]).toBe(65536); // numChains
     // Optional echo absent: its full scalar/vec4 block is zero, so the WGSL
     // takes the original one-splat specialization.
-    expect(Array.from(u32.slice(22, 32))).toEqual(new Array(10).fill(0));
+    expect(Array.from(u32.slice(22, 36))).toEqual(new Array(14).fill(0));
   });
 
   it("packs the balloon echo's f32 inversion/color block without touching the camera rows", () => {
@@ -843,6 +845,7 @@ describe("packGpuParams", () => {
           tintStrength: 0.6,
           weight: 0.5,
         },
+        echoPalette: true,
       }),
     );
     const f32 = new Float32Array(buf);
@@ -855,9 +858,30 @@ describe("packGpuParams", () => {
       Math.fround(0.8),
       Math.fround(0.6),
     ]);
+    expect(new Uint32Array(buf)[32]).toBe(1); // echoPaletteEnabled
     expect(Array.from(f32.slice(0, 12))).toEqual([
       1, 2, 3, 4, 5, 6, 7, 8, 13, 14, 15, 16,
     ]);
+  });
+
+  it("packs an independent LUT without mutating the primary colors table", () => {
+    const primary = packGpuSystem(baseSpec({ palette: "ember" })).colors;
+    const before = Array.from(new Uint32Array(primary));
+    const lut = buildPaletteLUT("aurora")!;
+    const echo = packGpuColorLUT(lut);
+
+    expect(echo).not.toBe(primary);
+    expect(Array.from(new Uint32Array(primary))).toEqual(before);
+    const echoWords = new Uint32Array(echo);
+    expect(Array.from(echoWords.slice(0, 3))).toEqual([
+      Math.round(lut[0] * COLOR_FIXED_POINT_SCALE),
+      Math.round(lut[1] * COLOR_FIXED_POINT_SCALE),
+      Math.round(lut[2] * COLOR_FIXED_POINT_SCALE),
+    ]);
+  });
+
+  it("rejects a malformed independent LUT length", () => {
+    expect(() => packGpuColorLUT(new Float32Array(3))).toThrow(RangeError);
   });
 
   it("ignores the projection matrix's row 2 (clip Z)", () => {
@@ -1244,6 +1268,10 @@ describe("FLAME_GPU_KERNEL_WGSL balloon echo", () => {
     expect(FLAME_GPU_KERNEL_WGSL).toContain(
       "depositPoint(inv, echoRgb, echoWeightFix);",
     );
+    expect(FLAME_GPU_KERNEL_WGSL).toContain(
+      "let u = clamp(length(d) / params.echoRho, 0.0, 1.0);",
+    );
+    expect(FLAME_GPU_KERNEL_WGSL).toContain("echoBase = echoColors[li].xyz;");
   });
 
   it("keeps tint echo-only and carries neither radial fade nor conformal magnification", () => {

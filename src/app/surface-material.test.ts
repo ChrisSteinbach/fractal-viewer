@@ -1,9 +1,10 @@
 import type * as THREE from "three";
-import { Data3DTexture, Texture } from "three";
+import { Data3DTexture, DataTexture, Texture } from "three";
 import {
   buildSurfaceFragment,
   createSurfaceBlitMaterial,
   createSurfaceMaterial,
+  packSurfaceBalloonPalette,
   packSurfaceBalloonTint,
   setBulbSystem,
   setEscapeSystem,
@@ -53,6 +54,47 @@ import { defaultTransforms, sierpinskiTetrahedron } from "../fractal/presets";
 import type { Transform, Vec3 } from "../fractal/types";
 import { createHash } from "node:crypto";
 import { PRE_PATTERN_SOURCE_HASHES } from "./surface-pattern-baseline";
+
+/** Intentional pattern-off source advance for the balloon palette arm. Kept
+ * local to this feature test so the pre-pattern fixture remains the baseline
+ * for every unaffected variant. */
+const BALLOON_PALETTE_SOURCE_HASHES: Record<
+  string,
+  { resolved: string; emitted: string }
+> = {
+  "3D balloon finish0": {
+    resolved: "0b31fb692019f37e",
+    emitted: "d08ca00b0c99a92c",
+  },
+  "3D balloon finish1": {
+    resolved: "573db1fc59cc0d1e",
+    emitted: "99208e73b12d72e4",
+  },
+  "3D lens+balloon finish0": {
+    resolved: "6dd170601d64fe73",
+    emitted: "d8677e27d22928a1",
+  },
+  "3D lens+balloon finish1": {
+    resolved: "9faaf9f832a8cea1",
+    emitted: "a1b3ae4e0de26b23",
+  },
+  "3D escape+balloon finish0": {
+    resolved: "4aff6eaba479d054",
+    emitted: "49b0d5603e41990c",
+  },
+  "3D escape+balloon finish1": {
+    resolved: "705124986854f173",
+    emitted: "c237c2d4daff4da0",
+  },
+  "3D bulb+balloon finish0": {
+    resolved: "0e853527eaf55af4",
+    emitted: "0e853527eaf55af4",
+  },
+  "3D bulb+balloon finish1": {
+    resolved: "e01c3d36251472eb",
+    emitted: "e01c3d36251472eb",
+  },
+};
 
 /**
  * The tracer itself is verified by running the app, but its kaleidoscope
@@ -829,6 +871,42 @@ describe("SURFACE_BALLOON variant", () => {
     }
   });
 
+  it("gates an independent shell-only palette lookup on explicit non-inherit, using the exact renderer-neutral source coordinate before tint", () => {
+    for (const [escape, lens] of [
+      [0, 0],
+      [0, 1],
+      [1, 0],
+    ] as const) {
+      const resolved = surfaceFragmentResolvedFor(escape, lens, 1);
+      const guard = "if (uBalloonPaletteEnabled > 0.5 && shell > 0.5) {";
+      const radial = `float balloonU = clamp(
+        length(cpos - uBalloonCenter) / uBalloonRho,
+        0.0,
+        1.0
+      );`;
+      const bucket =
+        "float balloonIndex = min(floor(balloonU * 256.0), 255.0);";
+      const lookup = `base = texture(
+        uBalloonColorLUT,
+        vec2((balloonIndex + 0.5) / 256.0, 0.5)
+      ).rgb;`;
+      const tint =
+        "base = mix(base, uBalloonTint, uBalloonTintStrength * shell);";
+
+      expect(resolved).toContain("uniform sampler2D uBalloonColorLUT;");
+      expect(resolved).toContain("uniform float uBalloonPaletteEnabled;");
+      expect(resolved).toContain(guard);
+      expect(resolved).toContain(radial);
+      expect(resolved).toContain(bucket);
+      expect(resolved).toContain(lookup);
+      expect(resolved.indexOf(lookup)).toBeLessThan(resolved.indexOf(tint));
+      // Exactly one palette read, and it lives inside the shell + enabled
+      // guard. The ordinary source path above remains the inherit branch.
+      expect(countOccurrences(resolved, "uBalloonColorLUT,")).toBe(1);
+      expect(resolved.indexOf(guard)).toBeLessThan(resolved.indexOf(lookup));
+    }
+  });
+
   it("pays nothing for the echo tint while the balloon is off", () => {
     // uBalloonTint/uBalloonTintStrength both carry the uBalloon prefix the
     // byte-identity test above already nets, but pinning the tint's own
@@ -842,15 +920,18 @@ describe("SURFACE_BALLOON variant", () => {
       const resolved = surfaceFragmentFor(escape, lens, 0);
       expect(resolved).not.toContain("uBalloonTint");
       expect(resolved).not.toContain("uBalloonTintStrength");
+      expect(resolved).not.toContain("uBalloonColorLUT");
+      expect(resolved).not.toContain("uBalloonPaletteEnabled");
+      expect(resolved).not.toContain("balloonIndex");
       expect(resolved).not.toContain("* shell");
     }
   });
 
   it("surfaceDEBalloonHitInfo reports shell 1.0 on the inverted term and 0.0 on the fractal term/tie, right after colorPos", () => {
-    // escape+balloon stays under the strip threshold (module doc: "the
-    // pairing to watch"), so this resolved source keeps its indentation —
-    // the one combo in this describe block worth an exact multi-line pin.
-    const resolved = surfaceFragmentFor(1, 0, 1);
+    // Palette support moved escape+balloon over the emission strip
+    // threshold. Read the resolver-owned source directly so this exact
+    // semantic pin keeps its indentation independent of emission policy.
+    const resolved = surfaceFragmentResolvedFor(1, 0, 1);
     expect(resolved).toContain(
       "    vec3 p,\n    out vec3 colorPos,\n    out float shell,\n    out int firstChoice,",
     );
@@ -875,6 +956,28 @@ describe("SURFACE_BALLOON variant", () => {
 
     packSurfaceBalloonTint(material, [1, 0, 0], 0.5);
 
+    expect(material.fragmentShader).toBe(shader);
+    expect(material.version).toBe(version);
+  });
+
+  it("packSurfaceBalloonPalette treats null as explicit inherit and swaps only palette uniforms", () => {
+    const material = createSurfaceMaterial();
+    const primary = material.uniforms.uColorLUT.value;
+    const inherited = material.uniforms.uBalloonColorLUT.value;
+    const texture = new DataTexture(new Uint8Array(4), 1, 1);
+    const shader = material.fragmentShader;
+    const version = material.version;
+
+    packSurfaceBalloonPalette(material, texture);
+    expect(material.uniforms.uBalloonColorLUT.value).toBe(texture);
+    expect(material.uniforms.uBalloonPaletteEnabled.value).toBe(1);
+    expect(material.uniforms.uColorLUT.value).toBe(primary);
+
+    packSurfaceBalloonPalette(material, null);
+    expect(material.uniforms.uBalloonPaletteEnabled.value).toBe(0);
+    // Inherit disables the lookup rather than replacing the valid sampler.
+    expect(material.uniforms.uBalloonColorLUT.value).toBe(texture);
+    expect(material.uniforms.uBalloonColorLUT.value).not.toBe(inherited);
     expect(material.fragmentShader).toBe(shader);
     expect(material.version).toBe(version);
   });
@@ -1939,24 +2042,19 @@ describe("SURFACE_FINISH variant", () => {
     }
   });
 
-  it("tips the escape+balloon pairing over the strip threshold — benignly: the emitted program is the stripped token stream, a fifth of the size", () => {
-    // Measured at the finish arm's landing: 64681 B -> 66714 B resolved,
-    // the one pairing whose strip status the arm flips. It is a
-    // measurement-only pairing (balloon is IFS-only, escape is forward),
-    // and crossing costs it nothing but its commentary in a driver log.
-    // Pinned as the CONTRACT — over the threshold, therefore stripped —
-    // rather than as the figures.
-    const resolved = surfaceFragmentResolvedFor(1, 0, 1, 0, 0, 1);
-    expect(resolved.length).toBeGreaterThan(SURFACE_GLSL_STRIP_BYTES);
-    const emitted = surfaceFragmentFor(1, 0, 1, 0, 0, 1);
-    expect(emitted).not.toContain("//");
-    expect(emitted).not.toContain("/*");
-    expect(emitted.length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES / 4);
-    // Off, the same pairing is still emitted whole (the pre-finish
-    // record's "pairing to watch", unmoved by an arm that is off).
-    expect(surfaceFragmentResolvedFor(1, 0, 1, 0, 0, 0).length).toBeLessThan(
-      SURFACE_GLSL_STRIP_BYTES,
-    );
+  it("keeps escape+balloon safely over the strip threshold in both finish states", () => {
+    // The palette source intentionally pushed the already-tight finish-off
+    // pairing over the threshold too. Both states therefore emit the same
+    // compact token stream policy; semantic assertions use the resolved
+    // source elsewhere in this suite when whitespace matters.
+    for (const finish of [0, 1]) {
+      const resolved = surfaceFragmentResolvedFor(1, 0, 1, 0, 0, finish);
+      expect(resolved.length).toBeGreaterThan(SURFACE_GLSL_STRIP_BYTES);
+      const emitted = surfaceFragmentFor(1, 0, 1, 0, 0, finish);
+      expect(emitted).not.toContain("//");
+      expect(emitted).not.toContain("/*");
+      expect(emitted.length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES / 4);
+    }
   });
 
   it("keeps the two shipped forward arms under the strip threshold with the finish on, so a finished escape or bulb session still reads as source in a driver log", () => {
@@ -2257,7 +2355,8 @@ describe("SURFACE_PATTERN variant", () => {
     for (const finish of [0, 1]) {
       for (const [name, [escape, lens, balloon, plane, bulb]] of variants) {
         const key = `${name} finish${finish}`;
-        const expected = PRE_PATTERN_SOURCE_HASHES[key];
+        const expected =
+          BALLOON_PALETTE_SOURCE_HASHES[key] ?? PRE_PATTERN_SOURCE_HASHES[key];
         expect(expected, key).toBeDefined();
         const resolved = surfaceFragmentResolvedFor(
           escape,
@@ -2374,14 +2473,18 @@ describe("SURFACE_PATTERN variant", () => {
     }
   });
 
-  it("orders pattern albedo after the color source and balloon tint and before the shadow/AO lighting, leaving the floor untouched", () => {
+  it("orders pattern albedo after the balloon palette and tint and before the shadow/AO lighting, leaving the floor untouched", () => {
     const resolved = surfaceFragmentResolvedFor(0, 0, 1, 0, 0, 1, 1);
+    const balloonPalette = resolved.indexOf(
+      "base = texture(\n        uBalloonColorLUT,",
+    );
     const balloonTint = resolved.indexOf(
       "base = mix(base, uBalloonTint, uBalloonTintStrength * shell);",
     );
     const patternCall = resolved.indexOf("base = patternShade(");
     const shadowLoop = resolved.indexOf("// Soft shadow: classic DE penumbra");
-    expect(balloonTint).toBeGreaterThan(0);
+    expect(balloonPalette).toBeGreaterThan(0);
+    expect(balloonTint).toBeGreaterThan(balloonPalette);
     expect(patternCall).toBeGreaterThan(balloonTint);
     expect(shadowLoop).toBeGreaterThan(patternCall);
     // The ground-plane shader never calls the transform pattern helper.

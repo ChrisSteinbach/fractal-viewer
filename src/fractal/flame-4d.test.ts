@@ -15,7 +15,7 @@ import {
 } from "./color";
 import type { FourDRenderColor } from "./color";
 import { buildPaletteLUT } from "./palette";
-import { buildBalloonFromBall } from "./balloon-de";
+import { balloonPaletteCoordinate, buildBalloonFromBall } from "./balloon-de";
 import {
   composeFlameProjection4,
   composeRotorProjection4,
@@ -1026,6 +1026,67 @@ describe("accumulateFlame4 balloon echo", () => {
     );
     expect(hist.sumRGB[echoBucket * 3 + 2]).toBe(0);
     expect(hist.hits[wrong4DInversionBucket]).toBe(0);
+  });
+
+  it("samples the independent palette from the projected pre-inversion 3D source before tint and weight", () => {
+    const source4: Vec4 = [0.25, 0, 0, 2];
+    const palette: Vec3[] = [[0.8, 0.2, 0.1]];
+    const rotorProjection = composeRotorProjection4(
+      IDENTITY_ROTOR,
+      [0, 0, 0, 0],
+    );
+    const balloon = buildBalloonFromBall(
+      { center: [0, 0, 0], radius: 0.5 },
+      Math.SQRT1_2,
+    );
+    const echoColorLUT = new Float32Array(256 * 3);
+    const source3: Vec3 = [0.25, 0, 0];
+    const li =
+      Math.min(255, (balloonPaletteCoordinate(balloon, source3) * 256) | 0) * 3;
+    echoColorLUT.set([0.1, 0.5, 0.9], li);
+    const iterations = 8;
+    const hist = accumulateFlame4(
+      prepareChaosGame4(fixedPointSystem4(source4)),
+      composeFlameProjection4(ORTHOGRAPHIC, rotorProjection),
+      FLAT_VIEW,
+      20,
+      20,
+      iterations,
+      mulberry32(3),
+      { kind: "transform", palette },
+      undefined,
+      {
+        balloon,
+        tint: [0.9, 0.1, 0.3],
+        tintStrength: 0.25,
+        weight: 0.5,
+      },
+      rotorProjection,
+      ORTHOGRAPHIC,
+      echoColorLUT,
+    );
+
+    const sourceBucket = 10 * 20 + 12;
+    const echoBucket = 10 * 20 + 15;
+    for (const [channel, value] of palette[0].entries()) {
+      expect(hist.sumRGB[sourceBucket * 3 + channel]).toBeCloseTo(
+        value * iterations,
+        12,
+      );
+    }
+    const echoWeight = iterations * 0.5;
+    const sampled = [
+      echoColorLUT[li],
+      echoColorLUT[li + 1],
+      echoColorLUT[li + 2],
+    ];
+    const tint: Vec3 = [0.9, 0.1, 0.3];
+    for (let channel = 0; channel < 3; channel++) {
+      const expected =
+        (sampled[channel] + (tint[channel] - sampled[channel]) * 0.25) *
+        echoWeight;
+      expect(hist.sumRGB[echoBucket * 3 + channel]).toBeCloseTo(expected, 12);
+    }
   });
 
   it("keeps an explicitly absent echo byte-identical to the original call shape", () => {

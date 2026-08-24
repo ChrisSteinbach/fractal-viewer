@@ -5,6 +5,7 @@
  *
  *   npm run build && npm run preview &
  *   node scripts/surface-balloon-tint.verify.mjs [--url=…] [--display=:0]
+ *   node scripts/surface-balloon-tint.verify.mjs --palette-only
  *
  * Its sibling `scripts/explorer-balloon-4d.verify.mjs` gates the POINTS arm
  * of the same pair. This one gates the two SURFACE arms, and it exists for
@@ -188,6 +189,18 @@
  * unauthorized client, so `--display=:0` could not be exercised. The
  * kernels and the programs are genuinely run; what a real driver would add
  * is a real raster (see the cost note above) and nothing about the claims.
+ *
+ * `--palette-only` is the independent balloon-palette acceptance slice. It
+ * drives the built-in Aurora palette through production WebGPU and forced
+ * WebGL in both dimensions, always against an absent-field/Inherit document
+ * with the same pinned camera. Each dimension first proves the shell is on
+ * screen, then requires the palette to move it on both engines. The cheap
+ * balloon-OFF control edits the dormant select IN PLACE on both engines and
+ * must remain byte identical. Keeping that check inside one settled session
+ * isolates the promised no-render-work behavior from unrelated cross-load
+ * layout/render variance in the 3D fragment capture.
+ * `--only=3d|4d` may narrow that slice while debugging; without it the
+ * acceptance command covers both dimensions.
  */
 import { chromium } from "playwright-core";
 
@@ -215,6 +228,9 @@ const BALLOON_RADIUS = 0.5;
  * hex as the sibling Points gate, so one colour means one thing across both
  * halves of the tint work. */
 const TINT_HEX = "#00ff88";
+/** One shipped, persisted palette — intentionally not Custom, so the browser
+ * leg exercises the ordinary id -> resolver -> LUT production path. */
+const BALLOON_PALETTE_ID = "aurora";
 /** Strength 1.0 for the difference legs: `mix(base, tint, 1)` is the tint
  * exactly, the largest signal the pair can produce. Strength 0.0 is L3's
  * claim and also the absent-field value. */
@@ -302,7 +318,15 @@ const enc = (scene) =>
  * baseline is (see the header). `pose` carries the camera (and, for the 4D
  * system, the rotor/slice) read off the app's own share link.
  */
-function sceneDoc({ system, balloon, tint, strength, pose, radius }) {
+function sceneDoc({
+  system,
+  balloon,
+  tint,
+  strength,
+  palette = null,
+  pose,
+  radius,
+}) {
   const doc = {
     transforms: system,
     numPoints: 100000,
@@ -317,6 +341,9 @@ function sceneDoc({ system, balloon, tint, strength, pose, radius }) {
     doc.balloonTint = tint;
     doc.balloonTintStrength = strength;
   }
+  // null writes no field at all: persist/state decode it as explicit
+  // Inherit, which is the compatibility branch the palette legs compare.
+  if (palette !== null) doc.balloonPaletteId = palette;
   if (pose?.camera) doc.camera = pose.camera;
   if (pose?.fourD) doc.fourD = pose.fourD;
   return doc;
@@ -328,6 +355,7 @@ function parseArgs(argv) {
     display: undefined,
     settleMs: DEFAULT_SETTLE_MS,
     only: null,
+    paletteOnly: false,
     // `--radius=` is rule 2's re-measurement knob, not a tuning dial: it is
     // how a later session reproduces "the echo is off screen at 1.60x and
     // in frame at 0.50x" instead of taking this file's word for it. The
@@ -347,6 +375,8 @@ function parseArgs(argv) {
     else if (key === "display") out.display = value ?? ":0";
     else if (key === "settle" && value) out.settleMs = Number(value);
     else if (key === "only" && value) out.only = value;
+    else if (key === "palette-only" && value === undefined)
+      out.paletteOnly = true;
     else if (key === "radius" && value) out.radius = Number(value);
     else if (key === "scale" && value) out.scale = Number(value);
     else throw new Error(`Unknown argument: ${raw}`);
@@ -830,6 +860,7 @@ async function main() {
       balloon,
       tint,
       strength,
+      palette = null,
       pose,
       gl,
     }) => {
@@ -839,6 +870,7 @@ async function main() {
           balloon,
           tint,
           strength,
+          palette,
           pose,
           radius: args.radius,
         }),
@@ -857,6 +889,148 @@ async function main() {
           `settle=${(state.ms / 1000).toFixed(0)}s`,
       );
       return { png, engine: state.engine };
+    };
+
+    /** The palette acceptance pair for one pinned system. WebGPU and forced
+     * WebGL are separate claims: accepting whichever engine happened to run
+     * would let one backend cover the other twice. */
+    const verifyPaletteDimension = async ({ dimension, system, pose }) => {
+      const short = dimension.toLowerCase();
+      const base = {
+        system,
+        pose,
+        tint: null,
+        strength: TINT_OFF,
+      };
+      const capturePalette = (tag, balloon, palette, gl) =>
+        capture({ ...base, tag, balloon, palette, gl });
+      const selectDormantPalette = async (tag) => {
+        await page.selectOption("#surfaceBalloonPalette", BALLOON_PALETTE_ID);
+        // The balloon-off control effect is renderer-inert. Give the browser
+        // a turn, then use the same stable-shot rule as every loaded frame.
+        await page.waitForTimeout(250);
+        const png = await settledShot(page, tag);
+        const state = await page.evaluate(() => window.__surfaceState?.());
+        log(
+          `capture ${tag.padEnd(18)} engine=${String(state?.engine).padEnd(8)} ` +
+            `dormant palette edit`,
+        );
+        return { png, engine: state?.engine ?? null };
+      };
+
+      const computeInherit = await capturePalette(
+        `pal-c${short}-inherit`,
+        true,
+        null,
+        false,
+      );
+      const computePalette = await capturePalette(
+        `pal-c${short}-aurora`,
+        true,
+        BALLOON_PALETTE_ID,
+        false,
+      );
+      const computeOffInherit = await capturePalette(
+        `pal-c${short}-off-i`,
+        false,
+        null,
+        false,
+      );
+      const computeOffPalette = await selectDormantPalette(
+        `pal-c${short}-off-a`,
+      );
+      const glInherit = await capturePalette(
+        `pal-g${short}-inherit`,
+        true,
+        null,
+        true,
+      );
+      const glPalette = await capturePalette(
+        `pal-g${short}-aurora`,
+        true,
+        BALLOON_PALETTE_ID,
+        true,
+      );
+      const glOffInherit = await capturePalette(
+        `pal-g${short}-off-i`,
+        false,
+        null,
+        true,
+      );
+      const glOffPalette = await selectDormantPalette(`pal-g${short}-off-a`);
+
+      for (const [tag, cap] of [
+        [`pal-c${short}-inherit`, computeInherit],
+        [`pal-c${short}-aurora`, computePalette],
+        [`pal-c${short}-off-i`, computeOffInherit],
+        [`pal-c${short}-off-a`, computeOffPalette],
+      ]) {
+        if (cap.engine !== "compute") {
+          fail(`${tag} took engine=${cap.engine}, not requested compute`);
+        }
+      }
+      for (const [tag, cap] of [
+        [`pal-g${short}-inherit`, glInherit],
+        [`pal-g${short}-aurora`, glPalette],
+        [`pal-g${short}-off-i`, glOffInherit],
+        [`pal-g${short}-off-a`, glOffPalette],
+      ]) {
+        if (cap.engine !== "webgl") {
+          fail(`${tag} took engine=${cap.engine} under ?surfacegl, not webgl`);
+        }
+      }
+
+      // Prove the prerequisite independently on each requested engine: the
+      // shell is materially present before that engine's palette effect is
+      // judged. Both comparisons use Inherit, so palette cannot manufacture
+      // its own precondition.
+      for (const [engine, on, off] of [
+        ["compute", computeInherit, computeOffInherit],
+        ["webgl", glInherit, glOffInherit],
+      ]) {
+        const shell = await sceneDiff(page, on.png, off.png);
+        reportDiff(`PP ${dimension} ${engine}`, shell);
+        if (shell.changedFraction < MIN_CHANGED_FRACTION) {
+          fail(
+            `palette ${dimension}/${engine}: the balloon contributes only ` +
+              `${(100 * shell.changedFraction).toFixed(3)}% of scene pixels; ` +
+              `the palette leg has no visible shell to recolour`,
+          );
+        }
+      }
+
+      for (const [engine, selected, inherited] of [
+        ["compute", computePalette, computeInherit],
+        ["webgl", glPalette, glInherit],
+      ]) {
+        const diff = await sceneDiff(page, selected.png, inherited.png);
+        reportDiff(`PAL ${dimension} ${engine}`, diff);
+        if (diff.changedFraction < MIN_CHANGED_FRACTION) {
+          fail(
+            `palette ${dimension}/${engine}: ${BALLOON_PALETTE_ID} moved ` +
+              `${(100 * diff.changedFraction).toFixed(3)}% of scene pixels ` +
+              `against Inherit — the production LUT path is not drawing`,
+          );
+        }
+      }
+
+      // Cheap negative control: with no balloon target, selecting Aurora in
+      // the live mirrored control is renderer-inert on both engines. This
+      // catches both a LUT replacing the primary surface palette and an
+      // unnecessary progressive restart while the balloon is disabled.
+      for (const [engine, selected, inherited] of [
+        ["compute", computeOffPalette, computeOffInherit],
+        ["webgl", glOffPalette, glOffInherit],
+      ]) {
+        const diff = await sceneDiff(page, selected.png, inherited.png);
+        reportDiff(`OFF ${dimension} ${engine}`, diff);
+        if (diff.maxDelta !== 0) {
+          fail(
+            `palette ${dimension}/${engine}: balloon OFF still moved the ` +
+              `frame (max delta ${diff.maxDelta})`,
+          );
+        }
+      }
     };
 
     // ---- the adapter question, asked on the app origin -------------------
@@ -900,8 +1074,57 @@ async function main() {
     const run3d = args.only !== "4d";
     const run4d = args.only !== "3d";
 
+    // ---- independent balloon palette -----------------------------------
+    // Kept behind its own mode because each shell-on settle is expensive on
+    // software WebGPU. This mode is still complete by itself: both engines,
+    // both dimensions, positive effect, visible-shell prerequisite and the
+    // balloon-off negative control.
+    if (args.paletteOnly) {
+      if (!adapter.adapter) {
+        throw new HarnessError(
+          "--palette-only requires a WebGPU adapter; the compute palette " +
+            "legs cannot be replaced by WebGL fallback",
+        );
+      }
+      if (run3d) {
+        await verifyPaletteDimension({
+          dimension: "3D",
+          system: SYSTEM_3D,
+          pose: pose3d,
+        });
+      }
+      if (run4d) {
+        const poseProbe4 = enc(
+          sceneDoc({
+            system: SYSTEM_4D,
+            balloon: true,
+            tint: null,
+            strength: 0,
+            pose: null,
+            radius: args.radius,
+          }),
+        );
+        await openScene(page, {
+          url: args.url,
+          tag: "palette-pose4d",
+          hash: poseProbe4,
+          gl: false,
+        });
+        const pose4d = await readPose(page);
+        log(
+          `palette pose4d ${JSON.stringify(pose4d.camera)} ` +
+            `fourD=${JSON.stringify(pose4d.fourD ?? null)}`,
+        );
+        await verifyPaletteDimension({
+          dimension: "4D",
+          system: SYSTEM_4D,
+          pose: pose4d,
+        });
+      }
+    }
+
     // ---- 3D -------------------------------------------------------------
-    if (run3d) {
+    if (run3d && !args.paletteOnly) {
       const base = {
         system: SYSTEM_3D,
         pose: pose3d,
@@ -1083,7 +1306,7 @@ async function main() {
 
     // ---- 4D (dimensional parity — the shade entry is shared, and this is
     // where that gets SHOWN rather than argued) --------------------------
-    if (run4d) {
+    if (run4d && !args.paletteOnly) {
       const poseProbe4 = enc(
         sceneDoc({
           system: SYSTEM_4D,

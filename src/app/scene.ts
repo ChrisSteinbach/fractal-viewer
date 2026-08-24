@@ -61,6 +61,7 @@ import {
   setBulbSystem as packBulbSystem,
   setEscapeSystem as packEscapeSystem,
   setSurfaceBalloon as packSurfaceBalloon,
+  packSurfaceBalloonPalette,
   packSurfaceBalloonTint,
   setSurfaceMaterials as packSurfaceMaterials,
   setSurfaceGroundPlane as packSurfaceGroundPlane,
@@ -595,15 +596,22 @@ const FOUR_D_FRAGMENT = /* glsl */ `
 // recipe fourDMaterial uses below, so overlapping echo points glow together
 // instead of z-fighting — appropriate for a cloud that is, by construction,
 // always "behind" (renderOrder -1) the main one.
-const BALLOON_ECHO_VERTEX = /* glsl */ `
+export const BALLOON_ECHO_VERTEX = /* glsl */ `
   ${FOUR_D_PROJECT_POINT_GLSL}
   uniform float uFourDActive;
   uniform vec3 uEchoCenter;
   uniform float uEchoR;
+  uniform float uEchoRho;
   uniform float uEchoFloor2;
   uniform float uEchoFadeStart;
   uniform float uEchoFadeEnd;
   uniform float uEchoDim;
+  // The independent balloon palette is echo-only. Inherit keeps this flag at
+  // zero and therefore leaves sourceColor on the exact path it followed before
+  // the palette existed. A non-inherit selection samples the shared 256-entry
+  // LUT at balloon-de.ts's renderer-neutral pre-inversion radius coordinate.
+  uniform float uEchoUsePalette;
+  uniform sampler2D uEchoPalette;
   // Independent balloon color: the echo's own base-albedo tint —
   // see the mix at vColor's assignment below. Default black at strength 0
   // is the untinted identity.
@@ -630,6 +638,14 @@ const BALLOON_ECHO_VERTEX = /* glsl */ `
     }
 
     vec3 d = source - uEchoCenter;
+    if (uEchoUsePalette > 0.5) {
+      float paletteT = clamp(length(d) / uEchoRho, 0.0, 1.0);
+      // Match palette.ts/flame.ts's 256-bucket lookup exactly rather than
+      // letting texture filtering invent a renderer-specific interpolation.
+      float paletteIndex = min(floor(paletteT * 256.0), 255.0);
+      float paletteU = (paletteIndex + 0.5) / 256.0;
+      sourceColor = texture2D(uEchoPalette, vec2(paletteU, 0.5)).rgb;
+    }
     float r2 = max(dot(d, d), uEchoFloor2);
     vec3 inv = uEchoCenter + (uEchoR * uEchoR / r2) * d;
 
@@ -803,6 +819,14 @@ export class FractalScene {
   // enclosing ball — changes.
   private readonly balloonEchoPoints: THREE.Points;
   private balloonEchoEnabled = false;
+  /** Lazily allocated echo-only palette ramp. The primary cloud never binds
+   * this texture and continues to read pointGeometry's `color` attribute.
+   * Null is the explicit inherit state and allocates/uploads nothing. */
+  private balloonEchoPaletteTexture: THREE.DataTexture | null = null;
+  /** Shared selection gate for Points and both Surface engines. */
+  private balloonPaletteEnabled = false;
+  /** Independent compute upload revision; never aliases surfaceLUTVersion. */
+  private balloonPaletteLUTVersion = 0;
   // The exact enclosing ball the echo inverts about. Kept apart from
   // pointGeometry.boundingSphere because the 4D geometry's sphere includes
   // 0.1% culling slack (setPoints4), while Balloon size 1.00× promises the
@@ -1595,10 +1619,15 @@ export class FractalScene {
         uFourDActive: { value: 0 },
         uEchoCenter: { value: new THREE.Vector3() },
         uEchoR: { value: 0 },
+        uEchoRho: { value: 1 },
         uEchoFloor2: { value: 1e-8 },
         uEchoFadeStart: { value: 0 },
         uEchoFadeEnd: { value: 0 },
         uEchoDim: { value: BALLOON_ECHO_DIM },
+        // Explicit inherit: no texture is allocated until a real independent
+        // palette arrives, and the shader retains sourceColor unchanged.
+        uEchoUsePalette: { value: 0 },
+        uEchoPalette: { value: null },
         // Balloon tint: NOT aliased to fourDMaterial's uniforms
         // above — every entry above IS an alias (the main cloud and its
         // echo must track the same rotor/slice/color state), but tint is
@@ -2554,6 +2583,94 @@ export class FractalScene {
   }
 
   /**
+   * Set the Points echo's independent 256x3 palette LUT. `null` is explicit
+   * inherit: the echo keeps the main point's sourceColor exactly, including
+   * the shared 4D projection/color path. A real LUT is uploaded into one
+   * echo-only RGBA8 texture and sampled in the vertex shader before the
+   * existing tint/dim/fade/magnification operations. Nothing here mutates the
+   * shared geometry or its primary `color` attribute.
+   *
+   * The echo Points object is absent from rendering while disabled, and a
+   * palette edit in that state deliberately does not dirty the live frame.
+   * Enabling it later already marks the frame dirty through
+   * {@link setBalloonEchoEnabled}.
+   */
+  setBalloonPalette(lut: Float32Array | null): void {
+    const u = this.balloonEchoMaterial.uniforms;
+    if (lut === null) {
+      if (!this.balloonPaletteEnabled) return;
+      this.balloonPaletteEnabled = false;
+      u.uEchoUsePalette.value = 0;
+      packSurfaceBalloonPalette(this.surfaceMaterial, null);
+      packSurfaceBalloonPalette(this.surfaceMaterial4, null);
+      if (this.balloonEchoEnabled || this.surfaceBalloonOn) {
+        this.renderNeeded = true;
+      }
+      return;
+    }
+    if (lut.length !== 256 * 3) {
+      throw new RangeError(
+        `Balloon palette LUT must contain 768 channels; received ${lut.length}`,
+      );
+    }
+
+    if (!this.balloonEchoPaletteTexture) {
+      this.balloonEchoPaletteTexture = new THREE.DataTexture(
+        new Uint8Array(256 * 4),
+        256,
+        1,
+      );
+      // Lookups explicitly address texel centres after applying the shared
+      // floor(t*256) bucketing rule, so nearest filtering is the honest state.
+      this.balloonEchoPaletteTexture.minFilter = THREE.NearestFilter;
+      this.balloonEchoPaletteTexture.magFilter = THREE.NearestFilter;
+      this.balloonEchoPaletteTexture.wrapS = THREE.ClampToEdgeWrapping;
+      this.balloonEchoPaletteTexture.wrapT = THREE.ClampToEdgeWrapping;
+      u.uEchoPalette.value = this.balloonEchoPaletteTexture;
+    }
+
+    const data = this.balloonEchoPaletteTexture.image.data as Uint8Array;
+    let changed = false;
+    for (let i = 0; i < 256; i++) {
+      const o = i * 4;
+      const r = Math.round(clamp(lut[i * 3], 0, 1) * 255);
+      const g = Math.round(clamp(lut[i * 3 + 1], 0, 1) * 255);
+      const b = Math.round(clamp(lut[i * 3 + 2], 0, 1) * 255);
+      if (
+        data[o] !== r ||
+        data[o + 1] !== g ||
+        data[o + 2] !== b ||
+        data[o + 3] !== 255
+      ) {
+        data[o] = r;
+        data[o + 1] = g;
+        data[o + 2] = b;
+        data[o + 3] = 255;
+        changed = true;
+      }
+    }
+    if (changed) this.balloonEchoPaletteTexture.needsUpdate = true;
+    const enabling = !this.balloonPaletteEnabled;
+    this.balloonPaletteEnabled = true;
+    u.uEchoUsePalette.value = 1;
+    packSurfaceBalloonPalette(
+      this.surfaceMaterial,
+      this.balloonEchoPaletteTexture,
+    );
+    packSurfaceBalloonPalette(
+      this.surfaceMaterial4,
+      this.balloonEchoPaletteTexture,
+    );
+    if (changed) this.balloonPaletteLUTVersion++;
+    if (
+      (changed || enabling) &&
+      (this.balloonEchoEnabled || this.surfaceBalloonOn)
+    ) {
+      this.renderNeeded = true;
+    }
+  }
+
+  /**
    * Re-derive every uEcho* uniform from {@link balloonEchoRadius} and the
    * cloud's exact current enclosing ball ({@link balloonEchoSourceSphere}). A
    * no-op before the first cloud ever lands. In 3D that ball copies
@@ -2568,6 +2685,11 @@ export class FractalScene {
     const u = this.balloonEchoMaterial.uniforms;
     (u.uEchoCenter.value as THREE.Vector3).copy(sphere.center);
     u.uEchoR.value = this.balloonEchoRadius * sphere.radius;
+    // balloon-de.ts's renderer-neutral palette coordinate divides the exact
+    // visible-3D pre-inversion source radius by the certified, margined rho.
+    // In 4D `source` is projectPoint4's result, so both dimensional branches
+    // meet at the same formula in BALLOON_ECHO_VERTEX.
+    u.uEchoRho.value = sphere.radius * BALLOON_RHO_MARGIN;
     // The vertex shader runs in float32, unlike the CPU DE oracle's float64
     // (fractal/balloon-de.ts's BALLOON_CENTER_FLOOR, 1e-12): a point landing
     // near the true center accumulates float32 rounding noise in `dot(d, d)`
@@ -4536,6 +4658,13 @@ export class FractalScene {
       lut:
         (this.surfaceLUTTexture?.image.data as Uint8Array | undefined) ?? null,
       lutVersion: this.surfaceLUTVersion,
+      // Independent balloon bytes/revision: never overwrite or version-bump
+      // the primary surface LUT. Explicit inherit carries null.
+      balloonLut:
+        this.balloonPaletteEnabled && this.balloonEchoPaletteTexture
+          ? (this.balloonEchoPaletteTexture.image.data as Uint8Array)
+          : null,
+      balloonLutVersion: this.balloonPaletteLUTVersion,
       dither: true,
       // The 4D session's live pose: the same (rotor, w0, halfW) state
       // setSurface4View maintains — already CONVERTED to literal world w

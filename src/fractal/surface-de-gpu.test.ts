@@ -1013,6 +1013,25 @@ describe("packSurfaceGpuShade", () => {
     expect(off.getUint32(124, true)).toBe(0);
   });
 
+  it("packs the independent balloon-palette gate in flags bit1 without disturbing dither bit0", () => {
+    const inherit = new DataView(
+      packSurfaceGpuShade(
+        shadeParams({ dither: false, balloonPalette: false }),
+      ),
+    );
+    const palette = new DataView(
+      packSurfaceGpuShade(shadeParams({ dither: false, balloonPalette: true })),
+    );
+    const both = new DataView(
+      packSurfaceGpuShade(shadeParams({ dither: true, balloonPalette: true })),
+    );
+    expect(inherit.getUint32(124, true)).toBe(0);
+    expect(palette.getUint32(124, true)).toBe(2);
+    expect(both.getUint32(124, true)).toBe(3);
+    expect(both.getUint32(124, true) & 1).toBe(1);
+    expect(both.getUint32(124, true) & 2).toBe(2);
+  });
+
   it("defaults fogTint to [1, 1, 1] at offset 128 and fogTintStrength to 0 at offset 140 when omitted (the fog-tint identity)", () => {
     const view = new DataView(packSurfaceGpuShade(shadeParams()));
     expect(view.getFloat32(128, true)).toBe(1);
@@ -2236,6 +2255,55 @@ describe("balloon echo tint", () => {
     );
   });
 
+  it("binds and samples the balloon LUT only for shell hits with flags bit1, using the exact source/rho coordinate before tint", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", width: 12, shadeDeWidth: 1, balloon: true }),
+    );
+    const binding =
+      "@group(0) @binding(10) var balloonLutTex: texture_2d<f32>;";
+    const guard = "if ((shade.flags & 2u) != 0u && hi.shell > 0.5) {";
+    const radial = `let balloonU = clamp(
+      length(hi.colorPos - params.balloonCenter) / params.balloonRho,
+      0.0,
+      1.0,
+    );`;
+    const bucket = "let balloonIndex = min(floor(balloonU * 256.0), 255.0);";
+    const lookup = `base = textureSampleLevel(
+      balloonLutTex,
+      lutSamp,
+      vec2f((balloonIndex + 0.5) / 256.0, 0.5),
+      0.0,
+    ).rgb;`;
+    const tint =
+      "base = mix(base, shade.balloonTint, shade.balloonTintStrength * hi.shell);";
+    expect(wgsl).toContain(binding);
+    expect(wgsl).toContain(guard);
+    expect(wgsl).toContain(radial);
+    expect(wgsl).toContain(bucket);
+    expect(wgsl).toContain(lookup);
+    expect(wgsl.indexOf(lookup)).toBeLessThan(wgsl.indexOf(tint));
+    expect(wgsl.split("balloonLutTex")).toHaveLength(3);
+  });
+
+  it("emits the same palette lookup for 3D and 4D balloon shade cores", () => {
+    const paletteBlock = (src: string): string => {
+      const match = src.match(
+        /if \(\(shade\.flags & 2u\) != 0u && hi\.shell > 0\.5\) \{[\s\S]*?\n\s*\}/,
+      );
+      expect(match).not.toBeNull();
+      return match![0];
+    };
+    const three = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "fold", width: 12, balloon: true }),
+    );
+    for (const core of ["affine4", "fold4"] as const) {
+      const four = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, width: 12, balloon: true }),
+      );
+      expect(paletteBlock(four)).toBe(paletteBlock(three));
+    }
+  });
+
   it("emits the mix once per shade kernel and nowhere in the eval/march kernels, which have no base albedo", () => {
     const shade = surfaceDeKernelWgsl(
       kernelOpts({ mode: "shade", width: 12, balloon: true }),
@@ -2254,6 +2322,10 @@ describe("balloon echo tint", () => {
       // exists to be read by shading, so it costs the marcher nothing.
       expect(wgsl).not.toContain("shell: f32,");
       expect(wgsl).not.toContain("hi.shell");
+      expect(wgsl).not.toContain("@binding(10)");
+      expect(wgsl).not.toContain("balloonLutTex");
+      expect(wgsl).not.toContain("shade.flags & 2u");
+      expect(wgsl).not.toContain("balloonIndex");
     }
   });
 
@@ -2290,6 +2362,10 @@ describe("balloon echo tint", () => {
       // No attribution member and no reader of one.
       expect(wgsl).not.toContain("shell: f32,");
       expect(wgsl).not.toContain("hi.shell");
+      expect(wgsl).not.toContain("@binding(10)");
+      expect(wgsl).not.toContain("balloonLutTex");
+      expect(wgsl).not.toContain("shade.flags & 2u");
+      expect(wgsl).not.toContain("balloonIndex");
       if (overrides.groundPlane) {
         expect(wgsl).toContain("shade.balloonTint.z");
       } else {
@@ -3025,9 +3101,13 @@ describe("surfaceDeKernelWgsl independent pattern material gate", () => {
         plane.indexOf("fn patternShade("),
       ),
     ).not.toContain("patternShade(");
-    // Ordering: color source -> balloon tint -> pattern -> lighting -> fog.
+    // Ordering: color source -> balloon palette -> tint -> pattern ->
+    // lighting -> fog.
     const balloon = surfaceDeKernelWgsl(
       kernelOpts({ mode: "shade", width: 12, balloon: true, pattern: true }),
+    );
+    expect(balloon.indexOf("balloonLutTex,")).toBeLessThan(
+      balloon.indexOf("base = mix(base, shade.balloonTint"),
     );
     expect(balloon.indexOf("base = mix(base, shade.balloonTint")).toBeLessThan(
       balloon.indexOf("base = patternShade("),
