@@ -34,6 +34,18 @@
  * phase-shifted copies of one shared cycle. The output is a statistically
  * indistinguishable render of the same attractor, not a byte-identical one.
  *
+ * **Balloon echo.** When the optional echo block is present, every plotted
+ * point is sphere-inverted and deposited once more into this SAME histogram;
+ * the normal and echo splats therefore share one density field and one tone
+ * map. There is deliberately NO conformal-magnification correction here: a
+ * histogram measures density directly, so the changing spacing between
+ * inverted samples already is the magnification effect. Nor is there a
+ * radial fade: the frozen camera rejects an inversion outside its frustum,
+ * and rejected points cannot change that already-frozen frame. Tint is
+ * applied only to the echo's color before its second deposit. With no echo
+ * block, the uniform weight is zero and the old one-splat path is the exact
+ * specialization (the x256 base scale divides out losslessly).
+ *
  * Two production changes over the spike kernel:
  *
  * - **64-bit histogram counters.** The spike's single-u32 buckets overflow
@@ -56,7 +68,8 @@
  *   three of the 20 lanes now ride spare).
  */
 import type { Rng } from "./rng";
-import type { SymmetryParams, Transform, VariationType } from "./types";
+import type { SymmetryParams, Transform, VariationType, Vec3 } from "./types";
+import type { Balloon } from "./balloon-de";
 import { createFlameHistogram } from "./flame";
 import type { FlameHistogram, Mat4 } from "./flame";
 import type { PaletteSpec } from "./palette";
@@ -83,10 +96,17 @@ export const WORKGROUP_SIZE = 128;
 
 /** Fixed-point scale for color channels: palette/LUT entries are
  * pre-scaled to `round(channel * 256)` at pack time, so the kernel adds
- * integers and {@link convertGpuHistogram} divides once on readback.
+ * integers and {@link convertGpuHistogram} removes this color scale plus
+ * {@link WEIGHT_FIXED_POINT_SCALE} on readback.
  * Quantization is ≤ 1/512 per channel per hit — invisible under the
  * log-density tonemap (measured: bias ≤ 0.065/255 in that spike). */
 export const COLOR_FIXED_POINT_SCALE = 256;
+
+/** Fixed-point scale for histogram hit weights. The 3D path did not need a
+ * fractional hit before the balloon echo; sharing the 4D path's x256 scale
+ * keeps the common histogram/downsample/readback contract single-sourced.
+ * A normal hit is exactly 256, and the scale divides out on readback. */
+export const WEIGHT_FIXED_POINT_SCALE = 256;
 
 /** Variation (type, weight) lanes per slot — equal to `VARIATION_TYPES.length`
  * (`types.ts`), so a single transform can carry every {@link VariationType}
@@ -132,13 +152,13 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  * Byte-layout contracts (WGSL struct rules; the pack* functions below
  * write ArrayBuffers to match, and `flame-gpu.test.ts` pins them):
  *
- * Params (uniform, {@link PARAMS_BYTES} = 96):
+ * Params (uniform, {@link PARAMS_BYTES} = 128):
  *   0 projX vec4f | 16 projY vec4f | 32 projW vec4f
  *   48 width u32 | 52 height u32 | 56 transformCount u32 | 60 baseTransformCount u32
  *   64 itersPerInvocation u32 | 68 colorMode u32 (0 legacy, 1 LUT) | 72 weighted u32 | 76 hasFinal u32
- *   80 totalWeight f32 | 84 numChains u32 | 88..95 trailing pad (WGSL rounds
- *   the struct to its own 16-byte alignment, so the two spare words are
- *   unavoidable — declared explicitly rather than left implicit)
+ *   80 totalWeight f32 | 84 numChains u32 | 88 echoWeight f32 (zero = off) |
+ *   92 echoRho f32 | 96 echoCenterR2 vec4f (center xyz, R squared) |
+ *   112 echoTintStrength vec4f (tint rgb, strength)
  *
  * Slot (storage array element, {@link SLOT_STRIDE_BYTES} = 336 stride);
  * slot count = transformCount + 1, the last being the final-transform lens
@@ -176,7 +196,7 @@ export const KERNEL_VARIATION_INDEX: Record<VariationType, number> = {
  * hist: array<atomic<u32>>, `width * height * HIST_U32_PER_BUCKET`,
  * bucket layout as {@link HIST_U32_PER_BUCKET} describes.
  */
-export const PARAMS_BYTES = 96;
+export const PARAMS_BYTES = 128;
 export const SLOT_STRIDE_BYTES = 336;
 export const CHAIN_STRIDE_BYTES = 32;
 export const COLORS_BYTES = 256 * 16;
@@ -209,8 +229,10 @@ struct Params {
   hasFinal: u32,
   totalWeight: f32,
   numChains: u32,
-  _pad0: u32,
-  _pad1: u32,
+  echoWeight: f32,
+  echoRho: f32,
+  echoCenterR2: vec4f,
+  echoTintStrength: vec4f,
 }
 
 struct Slot {
@@ -263,6 +285,28 @@ fn addU64(base: u32, v: u32) {
   if (old > 0xFFFFFFFFu - v) {
     atomicAdd(&hist[base + 1u], 1u);
   }
+}
+
+// One weighted splat into the shared histogram. Both the ordinary point and
+// its optional balloon echo pass through this function, which mechanically
+// prevents a second accumulation/tone-map path from creeping in.
+fn depositPoint(p: vec3f, rgb: vec3u, weightFix: u32) {
+  let cw = dot(params.projW.xyz, p) + params.projW.w;
+  if (cw <= 0.0) {
+    return;
+  }
+  let ndcX = (dot(params.projX.xyz, p) + params.projX.w) / cw;
+  let ndcY = (dot(params.projY.xyz, p) + params.projY.w) / cw;
+  let col = i32(floor((ndcX + 1.0) * 0.5 * f32(params.width)));
+  let row = i32(floor((1.0 - ndcY) * 0.5 * f32(params.height)));
+  if (col < 0 || col >= i32(params.width) || row < 0 || row >= i32(params.height)) {
+    return;
+  }
+  let bucket = (u32(row) * params.width + u32(col)) * 8u;
+  addU64(bucket, weightFix);
+  addU64(bucket + 2u, rgb.x * weightFix);
+  addU64(bucket + 4u, rgb.y * weightFix);
+  addU64(bucket + 6u, rgb.z * weightFix);
 }
 
 // PCG-RXS-M-XS 32 with per-chain streams: rng.x the mutable state, rng.y the
@@ -507,26 +551,27 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
           pp = f;
         }
       }
-      // Project through the frozen camera and bucket — same rows, same
-      // floor/flip conventions as accumulateFlame.
-      let cw = dot(params.projW.xyz, pp) + params.projW.w;
-      if (cw > 0.0) {
-        let ndcX = (dot(params.projX.xyz, pp) + params.projX.w) / cw;
-        let ndcY = (dot(params.projY.xyz, pp) + params.projY.w) / cw;
-        let col = i32(floor((ndcX + 1.0) * 0.5 * f32(params.width)));
-        let row = i32(floor((1.0 - ndcY) * 0.5 * f32(params.height)));
-        if (col >= 0 && col < i32(params.width) && row >= 0 && row < i32(params.height)) {
-          let bucket = (u32(row) * params.width + u32(col)) * 8u;
-          addU64(bucket, 1u);
-          var ci = baseIdx;
-          if (params.colorMode == 1u) {
-            ci = min(u32(colorCoord * 256.0), 255u);
-          }
-          let rgb = colors[ci];
-          addU64(bucket + 2u, rgb.x);
-          addU64(bucket + 4u, rgb.y);
-          addU64(bucket + 6u, rgb.z);
-        }
+      var ci = baseIdx;
+      if (params.colorMode == 1u) {
+        ci = min(u32(colorCoord * 256.0), 255u);
+      }
+      let rgb = colors[ci].xyz;
+      depositPoint(pp, rgb, ${WEIGHT_FIXED_POINT_SCALE}u);
+
+      if (params.echoWeight > 0.0) {
+        let d = pp - params.echoCenterR2.xyz;
+        // The explorer shader's f32 centre floor, deliberately NOT the CPU
+        // oracle's 1e-12*rho: f32 rounding around c is much larger.
+        let centerFloor = 1e-6 * params.echoRho;
+        let r2 = max(dot(d, d), centerFloor * centerFloor);
+        let inv = params.echoCenterR2.xyz + (params.echoCenterR2.w / r2) * d;
+        let echoRgb = vec3u(round(mix(
+          vec3f(rgb),
+          params.echoTintStrength.xyz * ${COLOR_FIXED_POINT_SCALE}.0,
+          params.echoTintStrength.w,
+        )));
+        let echoWeightFix = u32(round(params.echoWeight * ${WEIGHT_FIXED_POINT_SCALE}.0));
+        depositPoint(inv, echoRgb, echoWeightFix);
       }
     }
   }
@@ -609,7 +654,10 @@ const PARAMS_WEIGHTED = 18;
 const PARAMS_HAS_FINAL = 19;
 const PARAMS_TOTAL_WEIGHT = 20;
 const PARAMS_NUM_CHAINS = 21;
-// Elements 22-23 are Params' trailing pad.
+const PARAMS_ECHO_WEIGHT = 22;
+const PARAMS_ECHO_RHO = 23;
+const PARAMS_ECHO_CENTER_R2 = 24;
+const PARAMS_ECHO_TINT_STRENGTH = 28;
 
 /**
  * `chaos-game.ts`'s `symmetryRotation`, restated here (a deliberate
@@ -1066,6 +1114,16 @@ export function packGpuChains(numChains: number, seed: number): ArrayBuffer {
   return buf;
 }
 
+/** The GPU packer's structural view of `flame.ts`'s balloon-echo option.
+ * Kept as a plain data interface so the browser driver can pass the CPU
+ * option through without adapting it or duplicating any semantics. */
+export interface GpuFlameBalloonEchoFields {
+  balloon: Balloon;
+  tint: Vec3;
+  tintStrength: number;
+  weight: number;
+}
+
 /**
  * {@link packGpuParams}'s input: plain scalar fields for every Params
  * uniform the kernel reads once per dispatch (see the byte-layout doc
@@ -1085,6 +1143,9 @@ export interface GpuParamsFields {
   hasFinal: boolean;
   totalWeight: number;
   numChains: number;
+  /** Omitted is the byte-identical one-splat path. Tint affects only the
+   * optional second splat; the primary color table is never rewritten. */
+  echo?: GpuFlameBalloonEchoFields;
 }
 
 /**
@@ -1122,6 +1183,19 @@ export function packGpuParams(fields: GpuParamsFields): ArrayBuffer {
   u32[PARAMS_HAS_FINAL] = fields.hasFinal ? 1 : 0;
   f32[PARAMS_TOTAL_WEIGHT] = fields.totalWeight;
   u32[PARAMS_NUM_CHAINS] = fields.numChains;
+  const echo = fields.echo;
+  if (echo) {
+    f32[PARAMS_ECHO_WEIGHT] = echo.weight;
+    f32[PARAMS_ECHO_RHO] = echo.balloon.rho;
+    f32[PARAMS_ECHO_CENTER_R2] = echo.balloon.center[0];
+    f32[PARAMS_ECHO_CENTER_R2 + 1] = echo.balloon.center[1];
+    f32[PARAMS_ECHO_CENTER_R2 + 2] = echo.balloon.center[2];
+    f32[PARAMS_ECHO_CENTER_R2 + 3] = echo.balloon.R * echo.balloon.R;
+    f32[PARAMS_ECHO_TINT_STRENGTH] = echo.tint[0];
+    f32[PARAMS_ECHO_TINT_STRENGTH + 1] = echo.tint[1];
+    f32[PARAMS_ECHO_TINT_STRENGTH + 2] = echo.tint[2];
+    f32[PARAMS_ECHO_TINT_STRENGTH + 3] = echo.tintStrength;
+  }
   return buf;
 }
 
@@ -1208,11 +1282,13 @@ function combineU64(lo: number, hi: number): number {
  * HIST_U32_PER_BUCKET` long; throws `RangeError` (naming both the actual and
  * expected length) otherwise.
  *
- * Per bucket: `hits = hitsLo + hitsHi * 2^32`, and each `sumRGB` channel is
- * the same lo/hi combination divided by {@link COLOR_FIXED_POINT_SCALE} —
- * the exact inverse of {@link writeColorEntry}'s `Math.round(channel *
- * COLOR_FIXED_POINT_SCALE)`. `maxHits` is recomputed as the max over every
- * converted bucket, exactly like a fresh CPU histogram's own bookkeeping.
+ * Per bucket: `hits` divides by {@link WEIGHT_FIXED_POINT_SCALE}, and each
+ * `sumRGB` channel divides by that scale times
+ * {@link COLOR_FIXED_POINT_SCALE}. This is the exact inverse of the kernel's
+ * weighted deposit; a normal one-splat hit carries exactly 256 and therefore
+ * converts to the same integer hit/color values as before the echo existed.
+ * `maxHits` is recomputed as the max over every converted bucket, exactly
+ * like a fresh CPU histogram's own bookkeeping.
  *
  * Pass `out` to convert into an existing histogram instead of allocating —
  * the same contract as `downsampleFlame`'s `out`: dimensions must match (or
@@ -1246,19 +1322,18 @@ export function convertGpuHistogram(
   }
   const hist = out ?? createFlameHistogram(width, height);
   const { hits, sumRGB } = hist;
+  const colorScale = COLOR_FIXED_POINT_SCALE * WEIGHT_FIXED_POINT_SCALE;
   let maxHits = 0;
   for (let i = 0; i < bucketCount; i++) {
     const w = i * HIST_U32_PER_BUCKET;
-    const hitCount = combineU64(words[w], words[w + 1]);
+    const hitCount =
+      combineU64(words[w], words[w + 1]) / WEIGHT_FIXED_POINT_SCALE;
     hits[i] = hitCount;
     if (hitCount > maxHits) maxHits = hitCount;
     const o = i * 3;
-    sumRGB[o] =
-      combineU64(words[w + 2], words[w + 3]) / COLOR_FIXED_POINT_SCALE;
-    sumRGB[o + 1] =
-      combineU64(words[w + 4], words[w + 5]) / COLOR_FIXED_POINT_SCALE;
-    sumRGB[o + 2] =
-      combineU64(words[w + 6], words[w + 7]) / COLOR_FIXED_POINT_SCALE;
+    sumRGB[o] = combineU64(words[w + 2], words[w + 3]) / colorScale;
+    sumRGB[o + 1] = combineU64(words[w + 4], words[w + 5]) / colorScale;
+    sumRGB[o + 2] = combineU64(words[w + 6], words[w + 7]) / colorScale;
   }
   hist.maxHits = maxHits;
   return hist;
@@ -1611,13 +1686,13 @@ export function convertGpuDisplayHistogram(
   let maxHits = 0;
   for (let i = 0; i < bucketCount; i++) {
     const w = i * 4;
-    const hitVal = data[w];
+    const hitVal = data[w] / WEIGHT_FIXED_POINT_SCALE;
     hits[i] = hitVal;
     if (hitVal > maxHits) maxHits = hitVal;
     const o = i * 3;
-    sumRGB[o] = data[w + 1];
-    sumRGB[o + 1] = data[w + 2];
-    sumRGB[o + 2] = data[w + 3];
+    sumRGB[o] = data[w + 1] / WEIGHT_FIXED_POINT_SCALE;
+    sumRGB[o + 1] = data[w + 2] / WEIGHT_FIXED_POINT_SCALE;
+    sumRGB[o + 2] = data[w + 3] / WEIGHT_FIXED_POINT_SCALE;
   }
   out.maxHits = maxHits;
   return out;

@@ -8,6 +8,7 @@ import {
   MAX_SLOT_VARIATIONS,
   PARAMS_BYTES,
   SLOT_STRIDE_BYTES,
+  WEIGHT_FIXED_POINT_SCALE,
   convertGpuDisplayHistogram,
   convertGpuHistogram,
   packGpuChains,
@@ -828,10 +829,35 @@ describe("packGpuParams", () => {
     expect(u32[19]).toBe(1); // hasFinal
     expect(f32[20]).toBeCloseTo(9.5, 6); // totalWeight
     expect(u32[21]).toBe(65536); // numChains
-    // Elements 22-23 are the struct's trailing pad — the two words WGSL's
-    // 16-byte struct alignment adds back after colorDenom was removed.
-    expect(u32[22]).toBe(0);
-    expect(u32[23]).toBe(0);
+    // Optional echo absent: its full scalar/vec4 block is zero, so the WGSL
+    // takes the original one-splat specialization.
+    expect(Array.from(u32.slice(22, 32))).toEqual(new Array(10).fill(0));
+  });
+
+  it("packs the balloon echo's f32 inversion/color block without touching the camera rows", () => {
+    const buf = packGpuParams(
+      fields({
+        echo: {
+          balloon: { center: [1.25, -2.5, 3.75], rho: 4.5, R: 2 },
+          tint: [0.2, 0.4, 0.8],
+          tintStrength: 0.6,
+          weight: 0.5,
+        },
+      }),
+    );
+    const f32 = new Float32Array(buf);
+    expect(f32[22]).toBe(0.5); // echoWeight
+    expect(f32[23]).toBe(4.5); // echoRho
+    expect(Array.from(f32.slice(24, 28))).toEqual([1.25, -2.5, 3.75, 4]);
+    expect(Array.from(f32.slice(28, 32))).toEqual([
+      Math.fround(0.2),
+      Math.fround(0.4),
+      Math.fround(0.8),
+      Math.fround(0.6),
+    ]);
+    expect(Array.from(f32.slice(0, 12))).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8, 13, 14, 15, 16,
+    ]);
   });
 
   it("ignores the projection matrix's row 2 (clip Z)", () => {
@@ -954,18 +980,19 @@ describe("convertGpuHistogram", () => {
     return words;
   }
 
-  it("carries the lo/hi hit-count pair into one number (hi=1, lo=5 -> 4294967301)", () => {
+  it("carries the lo/hi hit-count pair through the shared hit-weight scale", () => {
     const words = makeWords(2, 1, { 0: [5, 1, 0, 0, 0, 0, 0, 0] });
     const hist = convertGpuHistogram(words, 2, 1);
-    expect(hist.hits[0]).toBe(4294967301);
+    expect(hist.hits[0]).toBe(4294967301 / WEIGHT_FIXED_POINT_SCALE);
   });
 
-  it("scales summed color channels by 1 / COLOR_FIXED_POINT_SCALE", () => {
+  it("scales colors by color fixed point times hit-weight fixed point", () => {
     const words = makeWords(1, 1, { 0: [10, 0, 512, 0, 256, 0, 128, 0] });
     const hist = convertGpuHistogram(words, 1, 1);
-    expect(hist.sumRGB[0]).toBeCloseTo(512 / COLOR_FIXED_POINT_SCALE, 6);
-    expect(hist.sumRGB[1]).toBeCloseTo(256 / COLOR_FIXED_POINT_SCALE, 6);
-    expect(hist.sumRGB[2]).toBeCloseTo(128 / COLOR_FIXED_POINT_SCALE, 6);
+    const scale = COLOR_FIXED_POINT_SCALE * WEIGHT_FIXED_POINT_SCALE;
+    expect(hist.sumRGB[0]).toBeCloseTo(512 / scale, 6);
+    expect(hist.sumRGB[1]).toBeCloseTo(256 / scale, 6);
+    expect(hist.sumRGB[2]).toBeCloseTo(128 / scale, 6);
   });
 
   it("recomputes maxHits as the max over every converted bucket", () => {
@@ -974,7 +1001,7 @@ describe("convertGpuHistogram", () => {
       1: [999, 0, 0, 0, 0, 0, 0, 0],
     });
     const hist = convertGpuHistogram(words, 2, 1);
-    expect(hist.maxHits).toBe(999);
+    expect(hist.maxHits).toBe(999 / WEIGHT_FIXED_POINT_SCALE);
   });
 
   it("throws RangeError naming both the actual and expected word count on a length mismatch", () => {
@@ -998,10 +1025,10 @@ describe("convertGpuHistogram", () => {
     const hist = convertGpuHistogram(words, 2, 1, out);
 
     expect(hist).toBe(out); // reused, not reallocated.
-    expect(hist.hits[0]).toBe(7);
+    expect(hist.hits[0]).toBe(7 / WEIGHT_FIXED_POINT_SCALE);
     expect(hist.hits[1]).toBe(0); // stale 6789 must not survive.
     expect(Array.from(hist.sumRGB)).toEqual([0, 0, 0, 0, 0, 0]);
-    expect(hist.maxHits).toBe(7);
+    expect(hist.maxHits).toBe(7 / WEIGHT_FIXED_POINT_SCALE);
   });
 
   it("throws RangeError when out has different dimensions than requested", () => {
@@ -1149,20 +1176,25 @@ describe("packGpuDownsample", () => {
 });
 
 describe("convertGpuDisplayHistogram", () => {
-  it("copies interleaved [hits,r,g,b] into out.hits/out.sumRGB", () => {
+  it("copies and removes the shared hit-weight scale from display data", () => {
     const out = createFlameHistogram(2, 1);
     const data = new Float32Array([5, 1, 2, 3, 9, 4, 5, 6]);
     const hist = convertGpuDisplayHistogram(data, 2, 1, out);
     expect(hist).toBe(out); // reused, not reallocated.
-    expect(Array.from(hist.hits)).toEqual([5, 9]);
-    expect(Array.from(hist.sumRGB)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(Array.from(hist.hits)).toEqual([
+      5 / WEIGHT_FIXED_POINT_SCALE,
+      9 / WEIGHT_FIXED_POINT_SCALE,
+    ]);
+    expect(Array.from(hist.sumRGB)).toEqual(
+      [1, 2, 3, 4, 5, 6].map((x) => x / WEIGHT_FIXED_POINT_SCALE),
+    );
   });
 
   it("recomputes maxHits as the max over every converted bucket", () => {
     const out = createFlameHistogram(2, 1);
     const data = new Float32Array([5, 0, 0, 0, 999, 0, 0, 0]);
     const hist = convertGpuDisplayHistogram(data, 2, 1, out);
-    expect(hist.maxHits).toBe(999);
+    expect(hist.maxHits).toBe(999 / WEIGHT_FIXED_POINT_SCALE);
   });
 
   it("fully overwrites a reused out histogram's stale nonzero buckets", () => {
@@ -1175,10 +1207,10 @@ describe("convertGpuDisplayHistogram", () => {
     const data = new Float32Array([7, 0, 0, 0, 0, 0, 0, 0]); // bucket 1 all-zero.
     const hist = convertGpuDisplayHistogram(data, 2, 1, out);
 
-    expect(hist.hits[0]).toBe(7);
+    expect(hist.hits[0]).toBe(7 / WEIGHT_FIXED_POINT_SCALE);
     expect(hist.hits[1]).toBe(0); // stale 6789 must not survive.
     expect(Array.from(hist.sumRGB)).toEqual([0, 0, 0, 0, 0, 0]);
-    expect(hist.maxHits).toBe(7);
+    expect(hist.maxHits).toBe(7 / WEIGHT_FIXED_POINT_SCALE);
   });
 
   it("throws RangeError naming both the actual and expected length on a data length mismatch", () => {
@@ -1197,6 +1229,27 @@ describe("convertGpuDisplayHistogram", () => {
     expect(() => convertGpuDisplayHistogram(data, 2, 2, out)).toThrow(
       RangeError,
     );
+  });
+});
+
+describe("FLAME_GPU_KERNEL_WGSL balloon echo", () => {
+  it("deposits primary and echo through one histogram helper with the f32 centre floor", () => {
+    expect(FLAME_GPU_KERNEL_WGSL).toContain("fn depositPoint(");
+    expect(FLAME_GPU_KERNEL_WGSL).toContain(
+      `depositPoint(pp, rgb, ${WEIGHT_FIXED_POINT_SCALE}u);`,
+    );
+    expect(FLAME_GPU_KERNEL_WGSL).toContain(
+      "let centerFloor = 1e-6 * params.echoRho;",
+    );
+    expect(FLAME_GPU_KERNEL_WGSL).toContain(
+      "depositPoint(inv, echoRgb, echoWeightFix);",
+    );
+  });
+
+  it("keeps tint echo-only and carries neither radial fade nor conformal magnification", () => {
+    expect(FLAME_GPU_KERNEL_WGSL).toContain("params.echoTintStrength");
+    expect(FLAME_GPU_KERNEL_WGSL).not.toContain("echoFade");
+    expect(FLAME_GPU_KERNEL_WGSL).not.toContain("echoMag");
   });
 });
 

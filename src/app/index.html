@@ -898,10 +898,10 @@
 
             <!-- The balloon echo: a second, sphere-inverted point cloud
                behind the explorer's own. Persisted scene content — one
-               balloon shared with the surface render's Balloon checkbox
-               below. A 4D cloud projects each source point through the
-               shared rotor/w-ramp/slice path, then inverts that displayed
-               3D point through the full 4D ball. -->
+               balloon shared by Points, Flame, and Surface. A 4D cloud
+               projects each source point through the shared rotor/w-ramp/
+               slice path, then inverts that displayed 3D point through the
+               cloud's enclosing ball. -->
             <label
               class="checkbox-label"
               id="balloonEchoRow"
@@ -927,7 +927,7 @@
                 class="btn btn-ghost"
                 id="balloonInflateButton"
                 type="button"
-                title="Inflate: animate the echo from a crumpled ball out to its full size"
+                title="Inflate: animate Points and Surface, or restart Flame at the full-size rest pose"
               >
                 Inflate
               </button>
@@ -935,9 +935,8 @@
 
             <!-- Balloon echo tint: color + strength blended onto the echo's
                own base albedo before the dim/fade terms, one setting shared
-               with the surface balloon's identical row in the Surface
-               section below — the balloonRadiusRow/surfaceBalloonRadiusRow
-               "one balloon, two renderers" relationship applied to color
+               with the Flame and Surface rows below — the three radius rows'
+               "one balloon, three renderers" relationship applied to color
                instead of size. Same position-axis-row shape as fogTintRow
                above. -->
             <div id="balloonTintRow" class="position-axis-row hidden">
@@ -1242,6 +1241,67 @@
               >
                 + Stop
               </button>
+            </div>
+          </div>
+
+          <!-- The flame balloon: a second deposit for every chaos-game point,
+               sphere-inverted into this same exposure. These controls bind
+               the SAME persisted balloon fields as the Points and Surface
+               rows; changing them restarts accumulation because the echo and
+               its tint are baked into the histogram. -->
+          <label
+            class="checkbox-label"
+            id="flameBalloonRow"
+            title="Deposit a sphere-inverted echo of every Flame point into the same exposure"
+          >
+            <input type="checkbox" id="flameBalloonCheckbox" />
+            Balloon echo
+          </label>
+          <div id="flameBalloonRadiusRow" class="hidden">
+            <label class="select-label">
+              Balloon size: <span id="flameBalloonRadiusLabel">1.60×</span>
+              <input
+                type="range"
+                id="flameBalloonRadiusSlider"
+                min="0.05"
+                max="2.5"
+                step="0.01"
+                value="1.6"
+              />
+            </label>
+            <button
+              class="btn btn-ghost"
+              id="flameBalloonInflateButton"
+              type="button"
+              title="Inflate: restart the Flame exposure at the full-size rest pose"
+            >
+              Inflate
+            </button>
+          </div>
+
+          <div id="flameBalloonTintRow" class="position-axis-row hidden">
+            <span class="position-axis-title"
+              >Tint <span id="flameBalloonTintLabel">0%</span></span
+            >
+            <div class="position-axis-inputs">
+              <label class="position-axis-label"
+                ><input
+                  type="color"
+                  id="flameBalloonTintColor"
+                  value="#000000"
+                  aria-label="Balloon echo tint color"
+              /></label>
+              <label class="position-axis-label">
+                <input
+                  type="range"
+                  id="flameBalloonTintStrength"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value="0"
+                  aria-label="Balloon echo tint strength"
+                />
+              </label>
             </div>
           </div>
         </details>
@@ -1625,9 +1685,8 @@
                shell's base albedo before lighting, gated on the union
                argmin's shell attribution so a fractal-term hit is
                untouched. Binds the SAME persisted state pair as the Points
-               section's balloonTintRow above — one setting, two render
-               modes, exactly like surfaceBalloonRadiusRow/balloonRadiusRow
-               share the balloon size. -->
+               and Flame rows above — one setting, three render modes, exactly
+               like their radius rows share the balloon size. -->
           <div id="surfaceBalloonTintRow" class="position-axis-row hidden">
             <span class="position-axis-title"
               >Tint <span id="surfaceBalloonTintLabel">0%</span></span

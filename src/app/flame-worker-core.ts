@@ -51,6 +51,7 @@ import {
 } from "../fractal/flame";
 import type {
   DensityEstimatorParams,
+  FlameBalloonEcho,
   FlameHistogram,
   Mat4,
   TonemapParams,
@@ -71,7 +72,7 @@ import {
   composeFlameProjection4,
   composeRotorProjection4,
 } from "../fractal/project4";
-import type { FourDView } from "../fractal/project4";
+import type { FourDView, RotorProjection4 } from "../fractal/project4";
 import { buildPaletteLUT } from "../fractal/palette";
 import type { PaletteSpec } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
@@ -153,6 +154,13 @@ export type FlameWorkerCommand =
        * it may also be a self-contained `CustomPalette` payload.
        */
       palette: PaletteSpec;
+      /**
+       * Optional balloon echo, snapshotted from the exact enclosing ball of
+       * the explorer cloud when Flame is entered. Omitted — including for
+       * every pre-feature/off document — the accumulator takes its original
+       * byte-identical single-splat path.
+       */
+      balloonEcho?: FlameBalloonEcho;
       /** Kaleidoscope symmetry, 4D as well as 3D — which is also why
        * `twist` rides along (the second angle of a 4D double rotation, which
        * only the 4D path can express). Absent `twist` means 0. */
@@ -687,6 +695,8 @@ export interface GpuBackendRequest {
    * may also be a self-contained `CustomPalette` payload. */
   palette: PaletteSpec;
   projection: Mat4;
+  /** Same optional echo object the CPU accumulator receives. */
+  echo?: FlameBalloonEcho;
   /** ACCUMULATION resolution (display size x effective supersample) — NOT
    * the display resolution `start.width`/`height` carry. */
   width: number;
@@ -736,6 +746,11 @@ export interface GpuBackendRequest4 {
    * `composeFlameProjection4`), row-major 4x5 — the same array
    * `accumulateFlame4` takes. */
   projection: Float64Array;
+  /** Separate reduction and camera maps needed for project-then-invert. */
+  rotorProjection?: RotorProjection4;
+  cameraProjection?: Mat4;
+  /** Same optional echo object the CPU 4D accumulator receives. */
+  echo?: FlameBalloonEcho;
   /** The frozen 4D view (signed-w normalization + soft slice) — see
    * `project4.ts`'s `FourDView`. */
   view: FourDView;
@@ -801,6 +816,7 @@ class CpuFlameBackend implements FlameAccumBackend {
     private readonly palette: Vec3[],
     private readonly rng: Rng,
     private readonly colorLUT: Float32Array | null,
+    private readonly echo: FlameBalloonEcho | undefined,
   ) {}
 
   accumulate(iterations: number): number {
@@ -814,6 +830,7 @@ class CpuFlameBackend implements FlameAccumBackend {
       this.palette,
       this.histogram ?? undefined,
       this.colorLUT ?? undefined,
+      this.echo,
     );
     return iterations; // CPU always retires exactly what it was asked for.
   }
@@ -859,6 +876,9 @@ class Cpu4DFlameBackend implements FlameAccumBackend {
     private readonly height: number,
     private readonly rng: Rng,
     private readonly color: FourDRenderColor,
+    private readonly echo: FlameBalloonEcho | undefined,
+    private readonly rotorProjection: RotorProjection4 | undefined,
+    private readonly cameraProjection: Mat4 | undefined,
   ) {}
 
   accumulate(iterations: number): number {
@@ -872,6 +892,9 @@ class Cpu4DFlameBackend implements FlameAccumBackend {
       this.rng,
       this.color,
       this.histogram ?? undefined,
+      this.echo,
+      this.rotorProjection,
+      this.cameraProjection,
     );
     return iterations; // CPU always retires exactly what it was asked for.
   }
@@ -936,6 +959,8 @@ export class FlameWorkerSession {
 
   private prepared: PreparedChaosGame | null = null;
   private projection: Mat4 | null = null;
+  /** Balloon echo snapshotted at session start; absent is the off path. */
+  private balloonEcho: FlameBalloonEcho | undefined;
   /** True when the current session's `start` carried a `fourD` block — see
    * that field's doc. Set once per `start`; a restart (setSupersample/
    * setPalette) never toggles it, since a session's dimensionality doesn't
@@ -948,6 +973,8 @@ export class FlameWorkerSession {
    * across every `startAccumulation` restart (a supersample/palette change
    * never rebuilds it, mirroring `projection`'s own lifetime). */
   private projection4: Float64Array | null = null;
+  /** The unfused 4D reduction map used only by project-then-invert. */
+  private rotorProjection4: RotorProjection4 | null = null;
   private fourDView: FourDView | null = null;
   private fourDColorMode: FourDColorMode = "wBlueOrange";
   private fourDCenter: Vec4 = [0, 0, 0, 0];
@@ -1295,6 +1322,7 @@ export class FlameWorkerSession {
       this.symmetry3D(),
     );
     this.projection = cmd.projection;
+    this.balloonEcho = cmd.balloonEcho;
     this.palette = transformColors(
       cmd.transforms.length,
       cmd.transforms.map((t) => t.colorIndex),
@@ -1315,9 +1343,13 @@ export class FlameWorkerSession {
       // Resolution-independent (NDC-based), like the 3D path's own
       // `projection` — built once here and reused across every
       // startAccumulation restart (see `projection4`'s doc).
+      this.rotorProjection4 = composeRotorProjection4(
+        fourD.rotor,
+        fourD.center,
+      );
       this.projection4 = composeFlameProjection4(
         cmd.projection,
-        composeRotorProjection4(fourD.rotor, fourD.center),
+        this.rotorProjection4,
       );
       this.fourDView = {
         invWAmp: fourD.invWAmp,
@@ -1336,6 +1368,7 @@ export class FlameWorkerSession {
       this.baseFinalTransform4 = null;
       this.prepared4 = null;
       this.projection4 = null;
+      this.rotorProjection4 = null;
       this.fourDView = null;
     }
     this.rng = mulberry32(cmd.seed);
@@ -1949,6 +1982,7 @@ export class FlameWorkerSession {
       this.palette,
       this.rng,
       this.colorLUT,
+      this.balloonEcho,
     );
   }
 
@@ -1965,6 +1999,9 @@ export class FlameWorkerSession {
       this.accumHeight,
       this.rng,
       this.fourDColor!,
+      this.balloonEcho,
+      this.balloonEcho ? this.rotorProjection4! : undefined,
+      this.balloonEcho ? this.projection! : undefined,
     );
   }
 
@@ -1982,6 +2019,7 @@ export class FlameWorkerSession {
       plane: this.symmetryPlane,
       palette: this.paletteSpec,
       projection: this.projection!,
+      echo: this.balloonEcho,
       width: this.accumWidth,
       height: this.accumHeight,
       seed: Math.floor(this.rng() * 0x100000000) >>> 0,
@@ -2003,6 +2041,9 @@ export class FlameWorkerSession {
       plane: this.symmetryPlane,
       twist: this.symmetryTwist,
       projection: this.projection4!,
+      rotorProjection: this.balloonEcho ? this.rotorProjection4! : undefined,
+      cameraProjection: this.balloonEcho ? this.projection! : undefined,
+      echo: this.balloonEcho,
       view: this.fourDView!,
       color: this.fourDColor!,
       width: this.accumWidth,

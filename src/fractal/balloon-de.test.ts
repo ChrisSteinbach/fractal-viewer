@@ -5,6 +5,7 @@ import {
   balloonBall4,
   buildBalloon,
   buildBalloon4,
+  buildBalloonFromBall,
   estimateBalloonDistance,
   estimateBalloonDistance4,
   invertBalloon,
@@ -236,6 +237,17 @@ function foldBoxfoldPair(): Transform[] {
 
 describe("balloon-de", () => {
   describe("inversion identity + involution", () => {
+    it("writes into an optional caller-owned tuple without changing the inversion", () => {
+      const b: Balloon = { center: [0.3, -0.2, 0.1], rho: 1.7, R: 2.3 };
+      const p: Vec3 = [0.8, -0.4, 1.2];
+      const expected = invertBalloon(b, p);
+      const out: Vec3 = [99, 98, 97];
+
+      expect(invertBalloon(b, p, out)).toBe(out);
+      expect(out).toEqual(expected);
+      expect(p).toEqual([0.8, -0.4, 1.2]);
+    });
+
     it("holds the |p-I(s)| = |p-c|*|I(p)-s|/|s-c| identity and is self-inverse, to f64 roundoff", () => {
       // Ported from balloon-inversion.harness.ts's section (0), at reduced
       // scale (2000 pairs instead of 20000). The reference scan below
@@ -759,6 +771,20 @@ describe("balloonBall4", () => {
     // asserted separately because it is the one the shell term uses).
     expect(worst3).toBeLessThanOrEqual(radius);
     expect(worst3).toBeLessThanOrEqual(worst4);
+  });
+});
+
+describe("buildBalloonFromBall", () => {
+  it("shares the DE arms' raw-radius and margined-rho convention without aliasing the source center", () => {
+    const center: Vec3 = [1, -2, 3];
+    const balloon = buildBalloonFromBall({ center, radius: 4 }, 1.6);
+    expect(balloon).toEqual({
+      center: [1, -2, 3],
+      rho: 4 * BALLOON_RHO_MARGIN,
+      R: 6.4,
+    });
+    center[0] = 99;
+    expect(balloon.center).toEqual([1, -2, 3]);
   });
 });
 

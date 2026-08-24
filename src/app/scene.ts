@@ -18,7 +18,9 @@ import {
   BALLOON_RHO_MARGIN,
   balloonBall,
   balloonBall4,
+  buildBalloonFromBall,
 } from "../fractal/balloon-de";
+import type { Balloon } from "../fractal/balloon-de";
 import {
   transformColors,
   W_RAMP_BRIGHTNESS_FLOOR,
@@ -3386,6 +3388,25 @@ export class FractalScene {
     // Matrix4.elements is column-major (WebGL convention); .transpose() before
     // reading it sequentially gives the row-major flattening flame.ts expects.
     return Array.from(combined.transpose().elements);
+  }
+
+  /**
+   * Snapshot the exact enclosing ball used by the Points balloon echo for a
+   * flame accumulation. Returning the already-built {@link Balloon} keeps
+   * the histogram backend on the same raw-radius / margined-rho convention
+   * as every other balloon arm without exposing Three.js objects across the
+   * worker boundary. `null` only before the first cloud has landed.
+   */
+  flameBalloon(radiusMultiple: number): Balloon | null {
+    if (!this.balloonEchoSourceSphereReady) return null;
+    const sphere = this.balloonEchoSourceSphere;
+    return buildBalloonFromBall(
+      {
+        center: [sphere.center.x, sphere.center.y, sphere.center.z],
+        radius: sphere.radius,
+      },
+      radiusMultiple,
+    );
   }
 
   /**

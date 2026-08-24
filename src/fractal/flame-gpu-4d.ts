@@ -44,11 +44,21 @@
  * per-chain stream — see the 3D kernel's pcgNext doc) —
  * statistically the same render, not a byte-identical one.
  *
- * **The one genuinely new mechanism over the 3D kernel: fixed-point slice
- * weighting.** `accumulateFlame4` adds a FRACTIONAL weight per hit
+ * The optional balloon follows the 4D Points arm's settled PROJECT THEN
+ * INVERT semantic: evaluate the plotted 4D point through the frozen rotor to
+ * the visible 3D point, sphere-invert that point, then pass the result through
+ * the frozen camera. Projecting a 4D inversion would be a different object.
+ * Like the 3D histogram twin, the echo is one extra weighted splat into the
+ * SAME buckets, with echo-only tint, no radial fade, and deliberately no
+ * conformal-magnification term — histogram density already measures how the
+ * inversion spreads samples.
+ *
+ * **Weighted histogram mechanism.** `accumulateFlame4` adds a FRACTIONAL
+ * slice weight per hit
  * (`sliceWeight` ∈ [0.06, 1] when the soft w-slice is on), but the GPU
- * histogram is integer (emulated-u64 atomics — WGSL has no f32 atomics). So
- * every add carries an extra {@link WEIGHT_FIXED_POINT_SCALE} = 256 factor:
+ * histogram is integer (emulated-u64 atomics — WGSL has no f32 atomics).
+ * Both dimensions now carry {@link WEIGHT_FIXED_POINT_SCALE} = 256 because
+ * the 3D balloon echo is fractional too; here
  * `hits` buckets accumulate `round(weight * 256)` and color buckets
  * accumulate `rgbFixed * round(weight * 256)` (≤ 256 · 256 = 2^16 per add —
  * far inside u32), and {@link convertGpuHistogram4} divides both back out on
@@ -58,19 +68,18 @@
  * under the log-density tonemap, and pinned by the agreement harness.
  *
  * The progressive display downsample needs NO 4D variant:
- * `FLAME_GPU_DOWNSAMPLE_WGSL` (flame-gpu.ts) reads the accumulated 2D
- * histogram buckets, which have the identical 8-word layout — only their
- * SCALE differs, and the downsample is linear, so the extra 256 divides out
- * on readback instead ({@link convertGpuDisplayHistogram4}).
+ * `FLAME_GPU_DOWNSAMPLE_WGSL` (flame-gpu.ts) reads the same scaled 8-word
+ * histogram layout in both dimensions. The dimension-named converter stays
+ * as the public 4D seam even though its scale is now shared.
  */
 import type { Rng } from "./rng";
 import type { SymmetryParams, Transform4 } from "./types";
 import { createFlameHistogram } from "./flame";
-import type { FlameHistogram } from "./flame";
+import type { FlameHistogram, Mat4 } from "./flame";
 import type { FourDRenderColor } from "./color";
 import { W_RAMP_BRIGHTNESS_FLOOR, W_RAMP_EXPONENT, W_RAMP_GRAY } from "./color";
 import { sliceColorRemap, SLICE_GHOST_FLOOR } from "./project4";
-import type { FourDView } from "./project4";
+import type { FourDView, RotorProjection4 } from "./project4";
 // Value imports for the packing functions below the kernel — mirrors
 // flame-gpu.ts's own split between type-only and value imports.
 import { composeAffine4, symmetryRotation4 } from "./affine4";
@@ -84,10 +93,12 @@ import {
   COLOR_FIXED_POINT_SCALE,
   HIST_U32_PER_BUCKET,
   KERNEL_VARIATION_INDEX,
+  WEIGHT_FIXED_POINT_SCALE,
   WORKGROUP_SIZE,
   packVariations,
   writeColorEntry,
 } from "./flame-gpu";
+import type { GpuFlameBalloonEchoFields } from "./flame-gpu";
 import { mulberry32 } from "./rng";
 import { isFoldVariationType, resolveFoldRadii } from "./variations";
 
@@ -98,7 +109,7 @@ import { isFoldVariationType, resolveFoldRadii } from "./variations";
  * back out. 256 quantizes the weight to ≤ 1/512 absolute error per hit —
  * the same bound the 3D kernel's color fixed point already carries.
  */
-export const WEIGHT_FIXED_POINT_SCALE = 256;
+export { WEIGHT_FIXED_POINT_SCALE } from "./flame-gpu";
 
 /**
  * The `colorKind` values the kernel switches on — packing maps a
@@ -118,7 +129,7 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * Byte-layout contracts (WGSL struct rules; the pack* functions below write
  * ArrayBuffers to match, and `flame-gpu-4d.test.ts` pins them):
  *
- * Params4 (uniform, {@link PARAMS4_BYTES} = 208):
+ * Params4 (uniform, {@link PARAMS4_BYTES} = 352):
  *   0 projX vec4f | 16 projY vec4f | 32 projW vec4f | 48 projS vec4f
  *   64 projC vec4f (the four row constants: x=clipX, y=clipY, z=clipW, w=sRaw)
  *   80 center4 vec4f (radius mode's 4D center; zero otherwise)
@@ -130,11 +141,13 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   192 sliceColorShift f32 | 196 sliceColorInvScale f32 (the slice-relative
  *   remap — `sliceColorRemap`'s (shift, invScale); identity (0, 1) when
  *   off) |
- *   200..207 trailing pad (WGSL rounds the struct to its 16-byte alignment,
- *   which is why dropping the dead `colorDenom` from the middle of this
- *   block compacted the layout without shrinking {@link PARAMS4_BYTES} — and
- *   why the kaleidoscope's `baseTransformCount` grew it back into the same
- *   208 bytes rather than past them)
+ *   200 echoWeight f32 (zero = off) | 204 echoRho f32 |
+ *   208 echoProjX vec4f | 224 echoProjY | 240 echoProjZ (rotor-projected
+ *   visible-3D coefficients over the raw plotted vec4) |
+ *   256 echoProjC vec4f (xyz constants, w unused) |
+ *   272 echoCameraX vec4f | 288 echoCameraY | 304 echoCameraW |
+ *   320 echoCenterR2 vec4f (visible-3D center xyz, R squared) |
+ *   336 echoTintStrength vec4f (tint rgb, strength)
  *
  * Slot4 (storage array element, {@link SLOT4_STRIDE_BYTES} = 336 stride);
  * slot count = transformCount + 1, the last being the final-transform lens
@@ -189,12 +202,11 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * color is computed in-shader from the projected s instead).
  *
  * hist: array<atomic<u32>>, `width * height * HIST_U32_PER_BUCKET`, the SAME
- * 8-word emulated-u64 bucket layout as the 3D kernel — but every value
- * carries the extra {@link WEIGHT_FIXED_POINT_SCALE} factor (see the module
- * doc), so read it back with {@link convertGpuHistogram4}, never
- * `convertGpuHistogram`.
+ * scaled 8-word emulated-u64 bucket layout as the 3D kernel. The backend
+ * still reads it through the dimension-named {@link convertGpuHistogram4}
+ * seam.
  */
-export const PARAMS4_BYTES = 208;
+export const PARAMS4_BYTES = 352;
 export const SLOT4_STRIDE_BYTES = 384;
 export const CHAIN4_STRIDE_BYTES = 32;
 /** Byte offset of Params4.itersPerInvocation — the one field the driver
@@ -237,6 +249,17 @@ struct Params {
   invRadiusRange: f32,
   sliceColorShift: f32,
   sliceColorInvScale: f32,
+  echoWeight: f32,
+  echoRho: f32,
+  echoProjX: vec4f,
+  echoProjY: vec4f,
+  echoProjZ: vec4f,
+  echoProjC: vec4f,
+  echoCameraX: vec4f,
+  echoCameraY: vec4f,
+  echoCameraW: vec4f,
+  echoCenterR2: vec4f,
+  echoTintStrength: vec4f,
 }
 
 struct Slot {
@@ -287,6 +310,44 @@ fn addU64(base: u32, v: u32) {
   if (old > 0xFFFFFFFFu - v) {
     atomicAdd(&hist[base + 1u], 1u);
   }
+}
+
+fn depositClip(clipX: f32, clipY: f32, clipW: f32, rgb: vec3u, weightFix: u32) {
+  if (clipW <= 0.0 || weightFix == 0u) {
+    return;
+  }
+  let ndcX = clipX / clipW;
+  let ndcY = clipY / clipW;
+  let col = i32(floor((ndcX + 1.0) * 0.5 * f32(params.width)));
+  let row = i32(floor((1.0 - ndcY) * 0.5 * f32(params.height)));
+  if (col < 0 || col >= i32(params.width) || row < 0 || row >= i32(params.height)) {
+    return;
+  }
+  let bucket = (u32(row) * params.width + u32(col)) * 8u;
+  addU64(bucket, weightFix);
+  addU64(bucket + 2u, rgb.x * weightFix);
+  addU64(bucket + 4u, rgb.y * weightFix);
+  addU64(bucket + 6u, rgb.z * weightFix);
+}
+
+fn depositPrimary(p: vec4f, rgb: vec3u, weightFix: u32) {
+  depositClip(
+    dot(params.projX, p) + params.projC.x,
+    dot(params.projY, p) + params.projC.y,
+    dot(params.projW, p) + params.projC.z,
+    rgb,
+    weightFix,
+  );
+}
+
+fn depositEcho(p: vec3f, rgb: vec3u, weightFix: u32) {
+  depositClip(
+    dot(params.echoCameraX.xyz, p) + params.echoCameraX.w,
+    dot(params.echoCameraY.xyz, p) + params.echoCameraY.w,
+    dot(params.echoCameraW.xyz, p) + params.echoCameraW.w,
+    rgb,
+    weightFix,
+  );
 }
 
 // PCG-RXS-M-XS 32 with per-chain streams — identical to the 3D kernel's
@@ -540,71 +601,66 @@ fn accumulate(@builtin(global_invocation_id) gid: vec3u) {
           pp = f;
         }
       }
-      // Project through the frozen rotor+camera composition — the four
-      // 5-coefficient rows accumulateFlame4 evaluates (clipX, clipY, clipW,
-      // sRaw over (x, y, z, w, 1)), same floor/flip bucketing conventions.
-      let cw = dot(params.projW, pp) + params.projC.z;
-      if (cw > 0.0) {
-        let ndcX = (dot(params.projX, pp) + params.projC.x) / cw;
-        let ndcY = (dot(params.projY, pp) + params.projC.y) / cw;
-        let col = i32(floor((ndcX + 1.0) * 0.5 * f32(params.width)));
-        let row = i32(floor((1.0 - ndcY) * 0.5 * f32(params.height)));
-        if (col >= 0 && col < i32(params.width) && row >= 0 && row < i32(params.height)) {
-          // The rotor's raw signed-w signal — never perspective-divided —
-          // normalized and clamped exactly like the CPU (and the point-cloud
-          // shader's s = clamp(q.w * uInvWAmp4, -1, 1)).
-          let sRaw = dot(params.projS, pp) + params.projC.w;
-          let s = clamp(sRaw * params.invWAmp, -1.0, 1.0);
-          // The soft w-slice window at the flame's ghost-context floor —
-          // project4.ts's sliceWeight(s, center, width, 0.06).
-          var weight = 1.0;
-          if (params.sliceOn == 1u) {
-            let d = (s - params.sliceCenter) / params.sliceWidth;
-            weight = SLICE_FLOOR + (1.0 - SLICE_FLOOR) * exp(-0.5 * d * d);
-          }
-          // Fixed-point weight (see the module doc): hits carry
-          // round(weight * 256), colors carry rgbFixed * that same factor.
-          let wFix = u32(round(weight * ${WEIGHT_FIXED_POINT_SCALE}.0));
+      // Color and slice weight belong to the PLOTTED source point, not to
+      // whichever of its two projected splats happens to be in-frame. Compute
+      // them once, then feed primary and echo into the same histogram.
+      let sRaw = dot(params.projS, pp) + params.projC.w;
+      let s = clamp(sRaw * params.invWAmp, -1.0, 1.0);
+      var weight = 1.0;
+      if (params.sliceOn == 1u) {
+        let d = (s - params.sliceCenter) / params.sliceWidth;
+        weight = SLICE_FLOOR + (1.0 - SLICE_FLOOR) * exp(-0.5 * d * d);
+      }
 
-          let bucket = (u32(row) * params.width + u32(col)) * 8u;
-          addU64(bucket, wFix);
-
-          // rgb is the fixed-point (x256) channel triple, whatever the mode
-          // — table modes read it pre-scaled from colors[], wRamp computes
-          // the f32 color in-shader and quantizes to the same scale.
-          var rgb: vec3u;
-          switch params.colorKind {
-            case 0u: { // structural: the flam3 color-coordinate LUT walk.
-              let ci = min(u32(colorCoord * 256.0), 255u);
-              rgb = colors[ci].xyz;
-            }
-            case 1u: { // wRamp: in-shader diverging ramp on s, through the
-              // optional slice-relative remap — project4.ts's
-              // sliceColorRemap, identity (shift 0, invScale 1) when off.
-              let sc = clamp(
-                (s - params.sliceColorShift) * params.sliceColorInvScale,
-                -1.0,
-                1.0,
-              );
-              rgb = vec3u(round(wRampColor(sc) * ${COLOR_FIXED_POINT_SCALE}.0));
-            }
-            case 2u: { // transform: the picked slot's BASE map palette entry
-              // accumulateFlame4's own color.palette[baseIdx], so
-              // every kaleidoscope copy colors as the map it copies. Equal to
-              // idx at symmetry order 1.
-              rgb = colors[idx % params.baseTransformCount].xyz;
-            }
-            default: { // 3u, radius: 4D distance from center4, LUT-ramped.
-              let d4 = distance(pp, params.center4);
-              let t = clamp((d4 - params.minD) * params.invRadiusRange, 0.0, 1.0);
-              let li = u32(t * 255.0 + 0.5);
-              rgb = colors[li].xyz;
-            }
-          }
-          addU64(bucket + 2u, rgb.x * wFix);
-          addU64(bucket + 4u, rgb.y * wFix);
-          addU64(bucket + 6u, rgb.z * wFix);
+      var rgb: vec3u;
+      switch params.colorKind {
+        case 0u: { // structural: the flam3 color-coordinate LUT walk.
+          let ci = min(u32(colorCoord * 256.0), 255u);
+          rgb = colors[ci].xyz;
         }
+        case 1u: { // wRamp: in-shader diverging ramp on s.
+          let sc = clamp(
+            (s - params.sliceColorShift) * params.sliceColorInvScale,
+            -1.0,
+            1.0,
+          );
+          rgb = vec3u(round(wRampColor(sc) * ${COLOR_FIXED_POINT_SCALE}.0));
+        }
+        case 2u: { // transform: picked slot's BASE-map palette entry.
+          rgb = colors[idx % params.baseTransformCount].xyz;
+        }
+        default: { // 3u, radius: source point's 4D distance.
+          let d4 = distance(pp, params.center4);
+          let t = clamp((d4 - params.minD) * params.invRadiusRange, 0.0, 1.0);
+          let li = u32(t * 255.0 + 0.5);
+          rgb = colors[li].xyz;
+        }
+      }
+
+      let wFix = u32(round(weight * ${WEIGHT_FIXED_POINT_SCALE}.0));
+      depositPrimary(pp, rgb, wFix);
+
+      if (params.echoWeight > 0.0) {
+        // PROJECT THEN INVERT: these three rows produce the exact visible-3D
+        // point the main 4D view draws before its camera is applied.
+        let source = vec3f(
+          dot(params.echoProjX, pp) + params.echoProjC.x,
+          dot(params.echoProjY, pp) + params.echoProjC.y,
+          dot(params.echoProjZ, pp) + params.echoProjC.z,
+        );
+        let d = source - params.echoCenterR2.xyz;
+        let centerFloor = 1e-6 * params.echoRho;
+        let r2 = max(dot(d, d), centerFloor * centerFloor);
+        let inv = params.echoCenterR2.xyz + (params.echoCenterR2.w / r2) * d;
+        let echoRgb = vec3u(round(mix(
+          vec3f(rgb),
+          params.echoTintStrength.xyz * ${COLOR_FIXED_POINT_SCALE}.0,
+          params.echoTintStrength.w,
+        )));
+        let echoWeightFix = u32(round(
+          weight * params.echoWeight * ${WEIGHT_FIXED_POINT_SCALE}.0,
+        ));
+        depositEcho(inv, echoRgb, echoWeightFix);
       }
     }
   }
@@ -692,8 +748,17 @@ const PARAMS4_MIN_D = 46;
 const PARAMS4_INV_RADIUS_RANGE = 47;
 const PARAMS4_SLICE_COLOR_SHIFT = 48;
 const PARAMS4_SLICE_COLOR_INV_SCALE = 49;
-// Elements 50-51 are the struct's trailing pad, left at the ArrayBuffer's
-// zero default.
+const PARAMS4_ECHO_WEIGHT = 50;
+const PARAMS4_ECHO_RHO = 51;
+const PARAMS4_ECHO_PROJ_X = 52;
+const PARAMS4_ECHO_PROJ_Y = 56;
+const PARAMS4_ECHO_PROJ_Z = 60;
+const PARAMS4_ECHO_PROJ_C = 64;
+const PARAMS4_ECHO_CAMERA_X = 68;
+const PARAMS4_ECHO_CAMERA_Y = 72;
+const PARAMS4_ECHO_CAMERA_W = 76;
+const PARAMS4_ECHO_CENTER_R2 = 80;
+const PARAMS4_ECHO_TINT_STRENGTH = 84;
 
 /**
  * A 4D chaos-game system in exactly the shape {@link packGpuSystem4} needs —
@@ -1066,6 +1131,12 @@ export interface GpuParams4Fields {
   numChains: number;
   view: FourDView;
   color: FourDRenderColor;
+  /** Optional second splat into the same histogram. When present, the two
+   * uncomposed projection stages below are required because inversion sits
+   * between them (project 4D to visible 3D, invert, then camera-project). */
+  echo?: GpuFlameBalloonEchoFields;
+  rotorProjection?: RotorProjection4;
+  cameraProjection?: Mat4;
 }
 
 /**
@@ -1103,6 +1174,16 @@ export function packGpuParams4(fields: GpuParams4Fields): ArrayBuffer {
   if (projection.length !== 20) {
     throw new RangeError(
       `packGpuParams4: projection must have 20 entries (row-major 4x5 rotor+camera), got ${projection.length}`,
+    );
+  }
+  if (fields.echo && fields.rotorProjection?.length !== 20) {
+    throw new RangeError(
+      `packGpuParams4: balloon echo requires rotorProjection with 20 entries, got ${fields.rotorProjection?.length ?? 0}`,
+    );
+  }
+  if (fields.echo && fields.cameraProjection?.length !== 16) {
+    throw new RangeError(
+      `packGpuParams4: balloon echo requires cameraProjection with 16 entries, got ${fields.cameraProjection?.length ?? 0}`,
     );
   }
   const buf = new ArrayBuffer(PARAMS4_BYTES);
@@ -1150,6 +1231,33 @@ export function packGpuParams4(fields: GpuParams4Fields): ArrayBuffer {
   const remap = sliceColorRemap(view);
   f32[PARAMS4_SLICE_COLOR_SHIFT] = remap.shift;
   f32[PARAMS4_SLICE_COLOR_INV_SCALE] = remap.invScale;
+
+  const echo = fields.echo;
+  if (echo) {
+    const rotorProjection = fields.rotorProjection!;
+    const cameraProjection = fields.cameraProjection!;
+    f32[PARAMS4_ECHO_WEIGHT] = echo.weight;
+    f32[PARAMS4_ECHO_RHO] = echo.balloon.rho;
+    for (let i = 0; i < 4; i++) {
+      f32[PARAMS4_ECHO_PROJ_X + i] = rotorProjection[i];
+      f32[PARAMS4_ECHO_PROJ_Y + i] = rotorProjection[5 + i];
+      f32[PARAMS4_ECHO_PROJ_Z + i] = rotorProjection[10 + i];
+      f32[PARAMS4_ECHO_CAMERA_X + i] = cameraProjection[i];
+      f32[PARAMS4_ECHO_CAMERA_Y + i] = cameraProjection[4 + i];
+      f32[PARAMS4_ECHO_CAMERA_W + i] = cameraProjection[12 + i];
+    }
+    f32[PARAMS4_ECHO_PROJ_C] = rotorProjection[4];
+    f32[PARAMS4_ECHO_PROJ_C + 1] = rotorProjection[9];
+    f32[PARAMS4_ECHO_PROJ_C + 2] = rotorProjection[14];
+    f32[PARAMS4_ECHO_CENTER_R2] = echo.balloon.center[0];
+    f32[PARAMS4_ECHO_CENTER_R2 + 1] = echo.balloon.center[1];
+    f32[PARAMS4_ECHO_CENTER_R2 + 2] = echo.balloon.center[2];
+    f32[PARAMS4_ECHO_CENTER_R2 + 3] = echo.balloon.R * echo.balloon.R;
+    f32[PARAMS4_ECHO_TINT_STRENGTH] = echo.tint[0];
+    f32[PARAMS4_ECHO_TINT_STRENGTH + 1] = echo.tint[1];
+    f32[PARAMS4_ECHO_TINT_STRENGTH + 2] = echo.tint[2];
+    f32[PARAMS4_ECHO_TINT_STRENGTH + 3] = echo.tintStrength;
+  }
   return buf;
 }
 

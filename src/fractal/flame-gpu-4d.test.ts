@@ -23,6 +23,7 @@ import {
   WORKGROUP_SIZE,
 } from "./flame-gpu";
 import { createFlameHistogram } from "./flame";
+import type { Mat4 } from "./flame";
 import { mulberry32 } from "./rng";
 import { VARIATION_TYPES } from "./types";
 import type { SymmetryParams, Transform4, Vec3, Vec4 } from "./types";
@@ -75,7 +76,7 @@ const COLOR_SPEED = 80; // byte 320
 
 describe("layout constants", () => {
   it("pins the byte-layout sizes documented on the module", () => {
-    expect(PARAMS4_BYTES).toBe(208);
+    expect(PARAMS4_BYTES).toBe(352);
     expect(SLOT4_STRIDE_BYTES).toBe(384);
     expect(CHAIN4_STRIDE_BYTES).toBe(32);
     expect(PARAMS4_ITERS_OFFSET_BYTES).toBe(144);
@@ -834,6 +835,17 @@ describe("packGpuParams4", () => {
   const INV_RADIUS_RANGE = 47;
   const SLICE_COLOR_SHIFT = 48;
   const SLICE_COLOR_INV_SCALE = 49;
+  const ECHO_WEIGHT = 50;
+  const ECHO_RHO = 51;
+  const ECHO_PROJ_X = 52;
+  const ECHO_PROJ_Y = 56;
+  const ECHO_PROJ_Z = 60;
+  const ECHO_PROJ_C = 64;
+  const ECHO_CAMERA_X = 68;
+  const ECHO_CAMERA_Y = 72;
+  const ECHO_CAMERA_W = 76;
+  const ECHO_CENTER_R2 = 80;
+  const ECHO_TINT_STRENGTH = 84;
 
   const VIEW: FourDView = {
     invWAmp: 2.5,
@@ -910,10 +922,79 @@ describe("packGpuParams4", () => {
     // (see sliceColorRemap).
     expect(f32[SLICE_COLOR_SHIFT]).toBe(0);
     expect(f32[SLICE_COLOR_INV_SCALE]).toBe(1);
-    // Elements 50-51 are the struct's trailing pad — the two words WGSL's
-    // 16-byte struct alignment still leaves after the kaleidoscope's
-    // baseTransformCount took the third.
-    for (const pad of [50, 51]) expect(u32[pad]).toBe(0);
+    // Optional echo absent: every field in its tail block stays zero.
+    expect(Array.from(u32.slice(50, 88))).toEqual(new Array(38).fill(0));
+  });
+
+  it("packs project-then-invert echo rows and its echo-only tint", () => {
+    const rotorProjection = new Float64Array(20);
+    for (let i = 0; i < 20; i++) rotorProjection[i] = 10 + i / 10;
+    // prettier-ignore
+    const cameraProjection: Mat4 = [
+      1, 2, 3, 4,
+      5, 6, 7, 8,
+      9, 10, 11, 12,
+      13, 14, 15, 16,
+    ];
+    const f32 = new Float32Array(
+      packGpuParams4(
+        fields4({
+          echo: {
+            balloon: { center: [1.5, -2.25, 3], rho: 4.5, R: 2 },
+            tint: [0.2, 0.4, 0.8],
+            tintStrength: 0.6,
+            weight: 0.5,
+          },
+          rotorProjection,
+          cameraProjection,
+        }),
+      ),
+    );
+    expect(f32[ECHO_WEIGHT]).toBe(0.5);
+    expect(f32[ECHO_RHO]).toBe(4.5);
+    for (let i = 0; i < 4; i++) {
+      expect(f32[ECHO_PROJ_X + i]).toBe(Math.fround(rotorProjection[i]));
+      expect(f32[ECHO_PROJ_Y + i]).toBe(Math.fround(rotorProjection[5 + i]));
+      expect(f32[ECHO_PROJ_Z + i]).toBe(Math.fround(rotorProjection[10 + i]));
+      expect(f32[ECHO_CAMERA_X + i]).toBe(cameraProjection[i]);
+      expect(f32[ECHO_CAMERA_Y + i]).toBe(cameraProjection[4 + i]);
+      expect(f32[ECHO_CAMERA_W + i]).toBe(cameraProjection[12 + i]);
+    }
+    expect(Array.from(f32.slice(ECHO_PROJ_C, ECHO_PROJ_C + 4))).toEqual([
+      Math.fround(rotorProjection[4]),
+      Math.fround(rotorProjection[9]),
+      Math.fround(rotorProjection[14]),
+      0,
+    ]);
+    expect(Array.from(f32.slice(ECHO_CENTER_R2, ECHO_CENTER_R2 + 4))).toEqual([
+      1.5, -2.25, 3, 4,
+    ]);
+    expect(
+      Array.from(f32.slice(ECHO_TINT_STRENGTH, ECHO_TINT_STRENGTH + 4)),
+    ).toEqual([
+      Math.fround(0.2),
+      Math.fround(0.4),
+      Math.fround(0.8),
+      Math.fround(0.6),
+    ]);
+  });
+
+  it("rejects an echo without both uncomposed projection stages", () => {
+    const echo = {
+      balloon: { center: [0, 0, 0] as Vec3, rho: 1, R: 1 },
+      tint: [0, 0, 0] as Vec3,
+      tintStrength: 0,
+      weight: 0.5,
+    };
+    expect(() => packGpuParams4(fields4({ echo }))).toThrow(
+      /rotorProjection with 20 entries/,
+    );
+    expect(() =>
+      packGpuParams4({
+        ...fields4({ echo }),
+        rotorProjection: new Float64Array(20),
+      }),
+    ).toThrow(/cameraProjection with 16 entries/);
   });
 
   it("packs the slice-relative color remap into sliceColorShift/sliceColorInvScale when both the slice and the option are on", () => {
@@ -1150,6 +1231,26 @@ describe("FLAME_GPU_KERNEL_4D_WGSL", () => {
   it("declares the PLOT override and the accumulate entry point", () => {
     expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("override PLOT: bool = true;");
     expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("fn accumulate(");
+  });
+
+  it("project-then-inverts in visible 3D and deposits the echo independently", () => {
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("fn depositPrimary(");
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("fn depositEcho(");
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "dot(params.echoProjX, pp) + params.echoProjC.x",
+    );
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "let centerFloor = 1e-6 * params.echoRho;",
+    );
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "depositEcho(inv, echoRgb, echoWeightFix);",
+    );
+  });
+
+  it("keeps tint echo-only and omits radial fade/conformal magnification", () => {
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("params.echoTintStrength");
+    expect(FLAME_GPU_KERNEL_4D_WGSL).not.toContain("echoFade");
+    expect(FLAME_GPU_KERNEL_4D_WGSL).not.toContain("echoMag");
   });
 });
 

@@ -338,12 +338,10 @@ export interface UiHandlers {
   onFogTint: (hex: string) => void;
   /** A balloon tint color picker changed — `hex` is the input's raw
    * `#rrggbb` value, ready for `setBalloonTint` (the reducer, not this
-   * callback, is the validation boundary). ONE handler serves BOTH pickers
-   * (the Points section's `balloonTintColor` and the Surface section's
-   * `surfaceBalloonTintColor` — one state field seen from two render
-   * modes, exactly like `onFogTint` above). The strength half of the pair
-   * is table-driven (see control-spec.ts's `balloonTintStrength`/
-   * `surfaceBalloonTintStrength` entries). */
+   * callback, is the validation boundary). ONE handler serves the Points,
+   * Flame, and Surface pickers — one state field seen from three render modes,
+   * exactly like `onFogTint` above. The strength half of the pair is
+   * table-driven by each panel's scalar entry in control-spec.ts. */
   onBalloonTint: (hex: string) => void;
 }
 
@@ -1875,6 +1873,15 @@ export class Ui {
   private readonly flameSupersampleNote: HTMLElement;
   private readonly flameBackendNote: HTMLElement;
   private readonly flameProgress: HTMLElement;
+  // Flame's third view of the shared balloon fields. The scalar inputs are
+  // table-driven; the Inflate button and tint-color picker share the two
+  // bespoke handlers used by their Points/Surface siblings (the handler
+  // itself gives Flame its one-restart rest-pose behavior).
+  private readonly flameBalloonRow: HTMLElement;
+  private readonly flameBalloonRadiusRow: HTMLElement;
+  private readonly flameBalloonInflateButton: HTMLButtonElement;
+  private readonly flameBalloonTintRow: HTMLElement;
+  private readonly flameBalloonTintColorInput: HTMLInputElement;
 
   private readonly solidControls: HTMLElement;
   private readonly solidResolutionNote: HTMLElement;
@@ -1911,13 +1918,12 @@ export class Ui {
   // exactly like a 3D one, so the old fourDSurfaceLive gate is gone. The
   // radius row additionally waits for the balloon itself, mirroring the
   // explorer pair. Its own Inflate button binds the SAME handler as the
-  // explorer's balloonInflateButton — one sweep, one handler, two entry
-  // points.
+  // Points and Flame buttons — one shared command with mode-specific motion.
   private readonly surfaceBalloonRow: HTMLElement;
   private readonly surfaceBalloonRadiusRow: HTMLElement;
   private readonly surfaceBalloonInflateButton: HTMLButtonElement;
-  /** The surface balloon's tint picker — same state field as
-   * balloonTintColorInput above (one balloon, two renderers). Hidden
+  /** The surface balloon's tint picker — same state field as the Points and
+   * Flame inputs above (one balloon, three renderers). Hidden
    * exactly like surfaceBalloonRadiusRow: under a forward-orbit session in
    * either dimension, or while the balloon itself is off. */
   private readonly surfaceBalloonTintRow: HTMLElement;
@@ -2329,6 +2335,11 @@ export class Ui {
     this.flameSupersampleNote = this.byId("flameSupersampleNote");
     this.flameBackendNote = this.byId("flameBackendNote");
     this.flameProgress = this.byId("flameProgress");
+    this.flameBalloonRow = this.byId("flameBalloonRow");
+    this.flameBalloonRadiusRow = this.byId("flameBalloonRadiusRow");
+    this.flameBalloonInflateButton = this.byId("flameBalloonInflateButton");
+    this.flameBalloonTintRow = this.byId("flameBalloonTintRow");
+    this.flameBalloonTintColorInput = this.byId("flameBalloonTintColor");
     this.solidControls = this.byId("solidControls");
     this.solidResolutionNote = this.byId("solidResolutionNote");
     this.solidProgress = this.byId("solidProgress");
@@ -2647,9 +2658,12 @@ export class Ui {
     );
     // The balloon echo's "Inflate" replay — a bespoke button like
     // watchBuildBtn above, not a table-driven scalar control. The surface
-    // balloon's own Inflate button fires the exact SAME handler — one
-    // sweep, one radius field, two renderers' buttons.
+    // Flame and Surface each expose their own Inflate button through the
+    // exact SAME handler — one radius field and three mode-aware entry points.
     this.balloonInflateButton.addEventListener("click", () =>
+      handlers.onBalloonInflate(),
+    );
+    this.flameBalloonInflateButton.addEventListener("click", () =>
       handlers.onBalloonInflate(),
     );
     this.surfaceBalloonInflateButton.addEventListener("click", () =>
@@ -2807,15 +2821,17 @@ export class Ui {
     this.fogTintColorInput.addEventListener("input", () => {
       handlers.onFogTint(this.fogTintColorInput.value);
     });
-    // Balloon tint color: ONE handler serves both pickers — the Points
-    // section's balloonTintColorInput and the Surface section's
-    // surfaceBalloonTintColorInput are the same state field seen from two
-    // render modes (fogTintColorInput's precedent just above, doubled).
+    // Balloon tint color: ONE handler serves all three pickers — the Points,
+    // Flame, and Surface sections expose the same state field in their own
+    // render modes (fogTintColorInput's precedent just above, tripled).
     // Each row also hosts its own table-driven strength slider, whose
     // "input" events must not re-trigger this handler — so, like
     // fogTintColorInput, these bind to the picker itself, not the row.
     this.balloonTintColorInput.addEventListener("input", () => {
       handlers.onBalloonTint(this.balloonTintColorInput.value);
+    });
+    this.flameBalloonTintColorInput.addEventListener("input", () => {
+      handlers.onBalloonTint(this.flameBalloonTintColorInput.value);
     });
     this.surfaceBalloonTintColorInput.addEventListener("input", () => {
       handlers.onBalloonTint(this.surfaceBalloonTintColorInput.value);
@@ -3088,6 +3104,9 @@ export class Ui {
     this.pointsAtmosphereControls.classList.toggle("hidden", rendering);
     this.fogControls.classList.toggle("hidden", state.renderMode === "flame");
     this.flameControls.classList.toggle("hidden", state.renderMode !== "flame");
+    this.flameBalloonRow.classList.toggle("hidden", false);
+    this.flameBalloonRadiusRow.classList.toggle("hidden", !state.balloonEcho);
+    this.flameBalloonTintRow.classList.toggle("hidden", !state.balloonEcho);
     this.solidControls.classList.toggle("hidden", state.renderMode !== "solid");
     this.surfaceControls.classList.toggle(
       "hidden",
@@ -3273,12 +3292,14 @@ export class Ui {
       this.fogTintColorInput.value = state.fogTint;
     }
     // The balloon tint pickers: synced the same only-write-on-change way as
-    // fogTintColorInput just above, to BOTH inputs — the Points and Surface
-    // sections show the SAME state.balloonTint through two different DOM
-    // elements, so a gallery load or undo must move whichever one is
-    // currently stale (possibly both).
+    // fogTintColorInput just above, to ALL inputs — the Points, Flame, and
+    // Surface sections show the SAME state.balloonTint through three DOM
+    // elements, so a gallery load or undo must move whichever are stale.
     if (this.balloonTintColorInput.value !== state.balloonTint) {
       this.balloonTintColorInput.value = state.balloonTint;
+    }
+    if (this.flameBalloonTintColorInput.value !== state.balloonTint) {
+      this.flameBalloonTintColorInput.value = state.balloonTint;
     }
     if (this.surfaceBalloonTintColorInput.value !== state.balloonTint) {
       this.surfaceBalloonTintColorInput.value = state.balloonTint;

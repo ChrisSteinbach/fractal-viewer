@@ -19,6 +19,21 @@
  * caller, via `composeFlameProjection4`) into the `projection` this function
  * takes.
  *
+ * **Balloon echo means PROJECT THEN INVERT.** When a
+ * {@link FlameBalloonEcho} is present, the plotted 4D point first goes through
+ * the same frozen {@link RotorProjection4} the explorer uses to produce its
+ * visible 3D point; only that 3D point is sphere-inverted, then the frozen
+ * camera projects the result into the histogram. Inverting in 4D before the
+ * rotor/drop would produce a different object. The primary splat keeps the
+ * already-composed fast projection above; the separate tail matrices exist
+ * only because nonlinear inversion prevents folding the echo into it.
+ *
+ * The echo inherits the source point's 4D color and soft-slice weight, mixes
+ * tint only into its own color, and follows `flame.ts`'s deliberate histogram
+ * semantics: no conformal-magnification term and no radial fade. Density
+ * itself accounts for inversion's spreading, while the frozen camera simply
+ * discards unbounded images outside its frustum.
+ *
  * **Coloring** has four flavors (see {@link import("./color").FourDRenderColor}): `"structural"` is
  * the cosine-palette path, an exact mirror of `accumulateFlame`'s `colorLUT`
  * mode — an orbit-riding coordinate blended toward the picked transform's
@@ -41,12 +56,13 @@
 import { ESCAPE_LIMIT, WARMUP_ITERATIONS } from "./chaos-game";
 import { pickIndex4, stepOrbit4 } from "./chaos-game-4d";
 import type { PreparedChaosGame4 } from "./chaos-game-4d";
+import { invertBalloon } from "./balloon-de";
 import { createFlameHistogram } from "./flame";
-import type { FlameHistogram } from "./flame";
+import type { FlameBalloonEcho, FlameHistogram, Mat4 } from "./flame";
 import { wRampColor } from "./color";
 import type { FourDRenderColor } from "./color";
 import { sliceColorRemap, sliceWeight, SLICE_GHOST_FLOOR } from "./project4";
-import type { FourDView } from "./project4";
+import type { FourDView, RotorProjection4 } from "./project4";
 import type { Rng } from "./rng";
 import type { Vec3 } from "./types";
 
@@ -78,6 +94,12 @@ const FALLBACK_COLOR: Vec3 = [1, 1, 1];
  * the same histogram and RNG *instance* back in) produces the identical
  * result as one unchunked call, exactly like `accumulateFlame`.
  *
+ * When `echo` is present, `rotorProjection` and `cameraProjection` are both
+ * required and validated at 20 and 16 coefficients respectively. They are
+ * tail parameters so every existing no-echo caller keeps its original call
+ * shape; see the module doc for why the nonlinear echo needs the two maps
+ * separately.
+ *
  * Pass a seeded {@link Rng} for reproducible output (tests); the app passes
  * `Math.random`.
  */
@@ -91,10 +113,23 @@ export function accumulateFlame4(
   rng: Rng,
   color: FourDRenderColor,
   histogram?: FlameHistogram,
+  echo?: FlameBalloonEcho,
+  rotorProjection?: RotorProjection4,
+  cameraProjection?: Mat4,
 ): FlameHistogram {
   if (projection.length !== 20) {
     throw new RangeError(
       `accumulateFlame4: projection must have 20 entries (row-major 4x5 rotor+camera), got ${projection.length}`,
+    );
+  }
+  if (echo !== undefined && rotorProjection?.length !== 20) {
+    throw new RangeError(
+      `accumulateFlame4: balloon echo requires a 20-entry rotorProjection, got ${rotorProjection?.length ?? 0}`,
+    );
+  }
+  if (echo !== undefined && cameraProjection?.length !== 16) {
+    throw new RangeError(
+      `accumulateFlame4: balloon echo requires a 16-entry cameraProjection, got ${cameraProjection?.length ?? 0}`,
     );
   }
   const hist = histogram ?? createFlameHistogram(width, height);
@@ -123,6 +158,11 @@ export function accumulateFlame4(
   const colorSlots = prepared.colorIndex;
   const colorSpeeds = prepared.colorSpeed;
   let c = hist.orbitColor;
+  // Reused on the echo path: project into one 3D tuple, invert into the
+  // other. The optional output on invertBalloon preserves this hot loop's
+  // allocation-free contract even when every iteration gains an echo splat.
+  const echoSource: Vec3 = [0, 0, 0];
+  const echoInverted: Vec3 = [0, 0, 0];
 
   let x: number;
   let y: number;
@@ -293,42 +333,106 @@ export function accumulateFlame4(
       }
     }
 
-    // --- project through the frozen rotor+camera and bucket ----------------
-    const cw = rw0 * px + rw1 * py + rw2 * pz + rw3 * pw + rw4;
-    if (cw <= 0) continue; // behind (or exactly at) the camera.
-    const cx = rx0 * px + rx1 * py + rx2 * pz + rx3 * pw + rx4;
-    const cy = ry0 * px + ry1 * py + ry2 * pz + ry3 * pw + ry4;
-    const ndcX = cx / cw;
-    const ndcY = cy / cw;
-    const col = Math.floor((ndcX + 1) * 0.5 * width);
-    // NDC Y points up; pixel row 0 is the top of the image, so flip.
-    const row = Math.floor((1 - ndcY) * 0.5 * height);
-    if (col < 0 || col >= width || row < 0 || row >= height) continue;
+    // Keep the original no-echo projection/deposit path textually intact.
+    // Its early continues remain both the cheapest and the most auditable
+    // byte-identical route for an absent/off balloon.
+    if (echo === undefined) {
+      // --- project through the frozen rotor+camera and bucket --------------
+      const cw = rw0 * px + rw1 * py + rw2 * pz + rw3 * pw + rw4;
+      if (cw <= 0) continue; // behind (or exactly at) the camera.
+      const cx = rx0 * px + rx1 * py + rx2 * pz + rx3 * pw + rx4;
+      const cy = ry0 * px + ry1 * py + ry2 * pz + ry3 * pw + ry4;
+      const ndcX = cx / cw;
+      const ndcY = cy / cw;
+      const col = Math.floor((ndcX + 1) * 0.5 * width);
+      // NDC Y points up; pixel row 0 is the top of the image, so flip.
+      const row = Math.floor((1 - ndcY) * 0.5 * height);
+      if (col < 0 || col >= width || row < 0 || row >= height) continue;
 
-    // The rotor's raw signed-w signal — a pure function of (x, y, z, w) and
-    // the frozen rotor/center, untouched by the camera (see
-    // composeFlameProjection4's doc) — never perspective-divided.
+      // The rotor's raw signed-w signal — a pure function of (x, y, z, w) and
+      // the frozen rotor/center, untouched by the camera (see
+      // composeFlameProjection4's doc) — never perspective-divided.
+      const sRaw = rs0 * px + rs1 * py + rs2 * pz + rs3 * pw + rs4;
+      const sScaled = sRaw * invWAmp;
+      const s = sScaled < -1 ? -1 : sScaled > 1 ? 1 : sScaled;
+      // The flame renders the CURRENT VIEW, ghost context included — see this
+      // module's doc for why the floor matches the point cloud's (0.06), not
+      // the solid render's (0).
+      const weight = sliceOn
+        ? sliceWeight(s, sliceCenter, sliceWidth, SLICE_GHOST_FLOOR)
+        : 1;
+
+      const bucket = row * width + col;
+      const hit = (hits[bucket] += weight);
+      if (hit > maxHits) maxHits = hit;
+      const o = bucket * 3;
+
+      let r: number;
+      let g: number;
+      let b: number;
+      switch (color.kind) {
+        case "structural": {
+          // c is in [0, 1]; the min guards the c === 1 edge (256 -> 255).
+          const li = Math.min(255, (c * 256) | 0) * 3;
+          r = color.lut[li];
+          g = color.lut[li + 1];
+          b = color.lut[li + 2];
+          break;
+        }
+        case "wRamp": {
+          // The optional slice-relative remap of s — wRampColor's own
+          // clamp bounds the rescaled signal, exactly like the raw s's.
+          const rgb = wRampColor((s - colorShift) * colorInvScale, color.side);
+          r = rgb[0];
+          g = rgb[1];
+          b = rgb[2];
+          break;
+        }
+        case "transform": {
+          const rgb = color.palette[baseIdx] ?? FALLBACK_COLOR;
+          r = rgb[0];
+          g = rgb[1];
+          b = rgb[2];
+          break;
+        }
+        case "radius": {
+          const dx = px - color.center[0];
+          const dy = py - color.center[1];
+          const dz = pz - color.center[2];
+          const dw = pw - color.center[3];
+          const d4 = Math.sqrt(dx * dx + dy * dy + dz * dz + dw * dw);
+          const range = color.maxD - color.minD || 1;
+          const t = (d4 - color.minD) / range;
+          // Same 256-step rounding convention as voxel.ts's accumulateVoxels
+          // ramp lookup (clamp then round-to-nearest, not floor).
+          const li = (t <= 0 ? 0 : t >= 1 ? 255 : (t * 255 + 0.5) | 0) * 3;
+          r = color.lut[li];
+          g = color.lut[li + 1];
+          b = color.lut[li + 2];
+          break;
+        }
+      }
+      sumRGB[o] += r * weight;
+      sumRGB[o + 1] += g * weight;
+      sumRGB[o + 2] += b * weight;
+      continue;
+    }
+
+    // Source color and soft-slice density are shared by primary and echo.
+    // They are evaluated even when the primary is off-screen because its
+    // sphere inversion may still land inside the frozen camera's frame.
     const sRaw = rs0 * px + rs1 * py + rs2 * pz + rs3 * pw + rs4;
     const sScaled = sRaw * invWAmp;
     const s = sScaled < -1 ? -1 : sScaled > 1 ? 1 : sScaled;
-    // The flame renders the CURRENT VIEW, ghost context included — see this
-    // module's doc for why the floor matches the point cloud's (0.06), not
-    // the solid render's (0).
-    const weight = sliceOn
+    const sourceWeight = sliceOn
       ? sliceWeight(s, sliceCenter, sliceWidth, SLICE_GHOST_FLOOR)
       : 1;
-
-    const bucket = row * width + col;
-    const hit = (hits[bucket] += weight);
-    if (hit > maxHits) maxHits = hit;
-    const o = bucket * 3;
 
     let r: number;
     let g: number;
     let b: number;
     switch (color.kind) {
       case "structural": {
-        // c is in [0, 1]; the min guards the c === 1 edge (256 -> 255).
         const li = Math.min(255, (c * 256) | 0) * 3;
         r = color.lut[li];
         g = color.lut[li + 1];
@@ -336,8 +440,6 @@ export function accumulateFlame4(
         break;
       }
       case "wRamp": {
-        // The optional slice-relative remap of s — wRampColor's own
-        // clamp bounds the rescaled signal, exactly like the raw s's.
         const rgb = wRampColor((s - colorShift) * colorInvScale, color.side);
         r = rgb[0];
         g = rgb[1];
@@ -359,8 +461,6 @@ export function accumulateFlame4(
         const d4 = Math.sqrt(dx * dx + dy * dy + dz * dz + dw * dw);
         const range = color.maxD - color.minD || 1;
         const t = (d4 - color.minD) / range;
-        // Same 256-step rounding convention as voxel.ts's accumulateVoxels
-        // ramp lookup (clamp then round-to-nearest, not floor).
         const li = (t <= 0 ? 0 : t >= 1 ? 255 : (t * 255 + 0.5) | 0) * 3;
         r = color.lut[li];
         g = color.lut[li + 1];
@@ -368,9 +468,65 @@ export function accumulateFlame4(
         break;
       }
     }
-    sumRGB[o] += r * weight;
-    sumRGB[o + 1] += g * weight;
-    sumRGB[o + 2] += b * weight;
+
+    // Primary splat via the precomposed fast projection.
+    const cw = rw0 * px + rw1 * py + rw2 * pz + rw3 * pw + rw4;
+    if (cw > 0) {
+      const cx = rx0 * px + rx1 * py + rx2 * pz + rx3 * pw + rx4;
+      const cy = ry0 * px + ry1 * py + ry2 * pz + ry3 * pw + ry4;
+      const col = Math.floor((cx / cw + 1) * 0.5 * width);
+      const row = Math.floor((1 - cy / cw) * 0.5 * height);
+      if (col >= 0 && col < width && row >= 0 && row < height) {
+        const bucket = row * width + col;
+        const hit = (hits[bucket] += sourceWeight);
+        if (hit > maxHits) maxHits = hit;
+        const o = bucket * 3;
+        sumRGB[o] += r * sourceWeight;
+        sumRGB[o + 1] += g * sourceWeight;
+        sumRGB[o + 2] += b * sourceWeight;
+      }
+    }
+
+    // Echo splat: raw plotted 4D point -> visible rotor-projected 3D point ->
+    // shared f64 balloon inversion -> camera. This is project-then-invert,
+    // matching the Points arm; no 4D inversion appears anywhere in the path.
+    const rp = rotorProjection!;
+    echoSource[0] = rp[0] * px + rp[1] * py + rp[2] * pz + rp[3] * pw + rp[4];
+    echoSource[1] = rp[5] * px + rp[6] * py + rp[7] * pz + rp[8] * pw + rp[9];
+    echoSource[2] =
+      rp[10] * px + rp[11] * py + rp[12] * pz + rp[13] * pw + rp[14];
+    const inv = invertBalloon(echo.balloon, echoSource, echoInverted);
+    const camera = cameraProjection!;
+    const ecw =
+      camera[12] * inv[0] +
+      camera[13] * inv[1] +
+      camera[14] * inv[2] +
+      camera[15];
+    if (ecw > 0) {
+      const ecx =
+        camera[0] * inv[0] +
+        camera[1] * inv[1] +
+        camera[2] * inv[2] +
+        camera[3];
+      const ecy =
+        camera[4] * inv[0] +
+        camera[5] * inv[1] +
+        camera[6] * inv[2] +
+        camera[7];
+      const col = Math.floor((ecx / ecw + 1) * 0.5 * width);
+      const row = Math.floor((1 - ecy / ecw) * 0.5 * height);
+      if (col >= 0 && col < width && row >= 0 && row < height) {
+        const bucket = row * width + col;
+        const echoWeight = sourceWeight * echo.weight;
+        const hit = (hits[bucket] += echoWeight);
+        if (hit > maxHits) maxHits = hit;
+        const o = bucket * 3;
+        const t = echo.tintStrength;
+        sumRGB[o] += (r + (echo.tint[0] - r) * t) * echoWeight;
+        sumRGB[o + 1] += (g + (echo.tint[1] - g) * t) * echoWeight;
+        sumRGB[o + 2] += (b + (echo.tint[2] - b) * t) * echoWeight;
+      }
+    }
   }
 
   hist.orbit = [x, y, z];

@@ -466,8 +466,14 @@ clamp(vUv.y, 0, 1))` lines, the WGSL row form, its obliged-byte-exact
     and `accumulateVoxels` share.
   - `flame.ts` — CPU fractal-flame: `accumulateFlame` (2D histogram) +
     `tonemapFlame` (exposure/gamma/vibrancy). CPU oracle for `flame-gpu.ts`.
+    Its optional balloon echo deposits one full-weight, tint-only second
+    splat into that SAME histogram; there is deliberately no separate
+    compositing, conformal magnification, or radial fade. The executable
+    weight decision is `scripts/flame-balloon.harness.ts`.
   - `flame-4d.ts` — 4D twin (`accumulateFlame4`), CPU oracle for
-    `flame-gpu-4d.ts`; slices with `0.06` ghost floor (not solid's `0`).
+    `flame-gpu-4d.ts`; slices with `0.06` ghost floor (not solid's `0`). Its
+    balloon path reduces through the frozen rotor first, inverts the visible
+    3D point, then applies the camera — never a 4D inversion.
   - `flame-gpu.ts` — WebGPU flame kernel (WGSL) + packing/dispatch/histogram
     layer. Pinned against CPU oracle by `src/app/gpu-bench/` (`npm run bench:gpu`).
     The fold family's AUTHORED lengths ride a per-TYPE Slot lane —

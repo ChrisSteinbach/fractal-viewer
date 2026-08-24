@@ -82,7 +82,12 @@ import {
   tonemapFlame,
   DEFAULT_GAMMA_THRESHOLD,
 } from "../../fractal/flame";
-import type { FlameHistogram, Mat4, TonemapParams } from "../../fractal/flame";
+import type {
+  FlameBalloonEcho,
+  FlameHistogram,
+  Mat4,
+  TonemapParams,
+} from "../../fractal/flame";
 import { accumulateFlame4 } from "../../fractal/flame-4d";
 import { buildPaletteLUT } from "../../fractal/palette";
 import type { FlamePaletteId } from "../../fractal/palette";
@@ -345,6 +350,10 @@ interface ScenarioDef3D {
   paletteId: FlamePaletteId;
   cameraPos: [number, number, number];
   lookAt: [number, number, number];
+  /** Optional production balloon payload. One scenario carries it so the
+   * equal-N CPU/GPU image agreement gate covers the weighted second splat,
+   * tint, and f32 inversion floor instead of only compiling that branch. */
+  balloonEcho?: FlameBalloonEcho;
   /**
    * Per-scenario override of `AGREEMENT_MAE_THRESHOLD`. The equal-N MAE
    * between two INDEPENDENT samplings of the same attractor never reaches 0
@@ -392,6 +401,12 @@ interface ScenarioDef4D {
   sliceCenter: number;
   sliceWidth: number;
   sliceRelativeColor: boolean;
+  /** Add the production echo around the explorer cloud's exact 4D enclosing
+   * ball after rotor projection. The ball itself is derived in prepare4D,
+   * where the cloud and its centre/radius are available. */
+  balloonEcho?: Omit<FlameBalloonEcho, "balloon"> & {
+    radiusMultiple: number;
+  };
   /** See {@link ScenarioDef3D.maeThreshold} — same scenario-owned noise
    * floor override, one dimension up. */
   maeThreshold?: number;
@@ -676,6 +691,14 @@ const SCENARIOS: ScenarioDef[] = [
     symmetry: { order: 1, plane: "xz" },
     paletteId: "ember",
     ...FERN_CAMERA,
+    // The controlled balloon leg for the 3D kernel. R = 0.9 rho keeps both
+    // source and echo substantially on-screen under the source-fit camera.
+    balloonEcho: {
+      balloon: { center: [0, 0, 0], rho: 1.8, R: 1.62 },
+      tint: [0.15, 0.7, 1],
+      tintStrength: 0.4,
+      weight: 1,
+    },
   },
   {
     kind: "3d",
@@ -819,6 +842,15 @@ const SCENARIOS: ScenarioDef[] = [
     sliceCenter: 0,
     sliceWidth: 0.35,
     sliceRelativeColor: false,
+    // The 4D agreement leg: prepare4D derives the ball from this exact cloud
+    // and supplies separate rotor/camera projections, pinning project-then-
+    // invert rather than an accidental 4D inversion or composed projection.
+    balloonEcho: {
+      radiusMultiple: 0.9,
+      tint: [1, 0.2, 0.55],
+      tintStrength: 0.4,
+      weight: 1,
+    },
   },
   {
     kind: "4d",
@@ -1107,6 +1139,7 @@ function toGpuBackendRequest(
     displayWidth: DISPLAY_WIDTH,
     displayHeight: DISPLAY_HEIGHT,
     progressiveFilterRadius: FLAME_FILTER_RADIUS,
+    echo: def.balloonEcho,
   };
 }
 
@@ -1198,6 +1231,7 @@ function prepare3D(def: ScenarioDef3D): ScenarioEngines {
         palette,
         histogram,
         lut,
+        def.balloonEcho,
       ),
     createBackend: () =>
       createGpuFlameBackend(toGpuBackendRequest(def, projection)),
@@ -1301,10 +1335,20 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
     center[1],
     center[2],
   ]);
-  const projection = composeFlameProjection4(
-    camera,
-    composeRotorProjection4(rotor, center),
-  );
+  const rotorProjection = composeRotorProjection4(rotor, center);
+  const projection = composeFlameProjection4(camera, rotorProjection);
+  const balloonEcho: FlameBalloonEcho | undefined = def.balloonEcho
+    ? {
+        balloon: {
+          center: [center[0], center[1], center[2]],
+          rho: cloud.radius * 1.02,
+          R: cloud.radius * def.balloonEcho.radiusMultiple,
+        },
+        tint: def.balloonEcho.tint,
+        tintStrength: def.balloonEcho.tintStrength,
+        weight: def.balloonEcho.weight,
+      }
+    : undefined;
 
   return {
     cpuChunk: (n, histogram, rng) =>
@@ -1318,6 +1362,9 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
         rng,
         color,
         histogram,
+        balloonEcho,
+        balloonEcho ? rotorProjection : undefined,
+        balloonEcho ? camera : undefined,
       ),
     createBackend: () =>
       createGpuFlameBackend4({
@@ -1335,6 +1382,9 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
         displayWidth: DISPLAY_WIDTH,
         displayHeight: DISPLAY_HEIGHT,
         progressiveFilterRadius: FLAME_FILTER_RADIUS,
+        echo: balloonEcho,
+        rotorProjection: balloonEcho ? rotorProjection : undefined,
+        cameraProjection: balloonEcho ? camera : undefined,
       } satisfies GpuBackendRequest4),
   };
 }

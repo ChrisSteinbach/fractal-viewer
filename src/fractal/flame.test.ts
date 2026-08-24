@@ -24,6 +24,7 @@ import {
 } from "./chaos-game";
 import { transformColors } from "./color";
 import { buildPaletteLUT } from "./palette";
+import { buildBalloonFromBall } from "./balloon-de";
 import { mulberry32 } from "./rng";
 import { sierpinskiTetrahedron } from "./presets";
 import type { Transform, Vec3 } from "./types";
@@ -195,6 +196,108 @@ describe("accumulateFlame projection and bucketing", () => {
       transformColors(1),
     );
     expect(front.hits.reduce((a, b) => a + b, 0)).toBe(50);
+  });
+});
+
+describe("accumulateFlame balloon echo", () => {
+  it("deposits an off-frame source's visible inversion into the same histogram at the configured weight", () => {
+    const palette: Vec3[] = [[0.8, 0.2, 0.1]];
+    const hist = accumulateFlame(
+      prepareChaosGame(fixedPointSystem([2, 0, 0])),
+      ORTHOGRAPHIC,
+      20,
+      20,
+      8,
+      mulberry32(1),
+      palette,
+      undefined,
+      undefined,
+      {
+        // R = 1: x = 2 inverts to x = 0.5, visibly inside the frame.
+        balloon: buildBalloonFromBall({ center: [0, 0, 0], radius: 1 }, 1),
+        tint: [0, 1, 0],
+        tintStrength: 0.75,
+        weight: 0.25,
+      },
+    );
+
+    const echoBucket = 10 * 20 + 15; // NDC (0.5, 0).
+    expect(hist.hits.reduce((sum, hit) => sum + hit, 0)).toBe(2);
+    expect(hist.hits[echoBucket]).toBe(2); // 8 * 0.25.
+    expect(hist.maxHits).toBe(2);
+    const mixed: Vec3 = [0.2, 0.8, 0.025];
+    expect(hist.sumRGB[echoBucket * 3]).toBeCloseTo(mixed[0] * 2, 12);
+    expect(hist.sumRGB[echoBucket * 3 + 1]).toBeCloseTo(mixed[1] * 2, 12);
+    expect(hist.sumRGB[echoBucket * 3 + 2]).toBeCloseTo(mixed[2] * 2, 12);
+  });
+
+  it("tints only the echo while leaving the primary splat's color untouched", () => {
+    const palette: Vec3[] = [[0.8, 0.2, 0.1]];
+    const iterations = 6;
+    const hist = accumulateFlame(
+      prepareChaosGame(fixedPointSystem([0.25, 0, 0])),
+      ORTHOGRAPHIC,
+      20,
+      20,
+      iterations,
+      mulberry32(2),
+      palette,
+      undefined,
+      undefined,
+      {
+        // R² = 0.125: x = 0.25 inverts to x = 0.5.
+        balloon: buildBalloonFromBall(
+          { center: [0, 0, 0], radius: 0.5 },
+          Math.SQRT1_2,
+        ),
+        tint: [0, 1, 0],
+        tintStrength: 1,
+        weight: 0.5,
+      },
+    );
+
+    const sourceBucket = 10 * 20 + 12;
+    const echoBucket = 10 * 20 + 15;
+    expect(hist.hits[sourceBucket]).toBe(iterations);
+    expect(hist.sumRGB[sourceBucket * 3]).toBeCloseTo(0.8 * iterations, 12);
+    expect(hist.sumRGB[sourceBucket * 3 + 1]).toBeCloseTo(0.2 * iterations, 12);
+    expect(hist.sumRGB[sourceBucket * 3 + 2]).toBeCloseTo(0.1 * iterations, 12);
+    expect(hist.hits[echoBucket]).toBe(iterations * 0.5);
+    expect(hist.sumRGB[echoBucket * 3]).toBe(0);
+    expect(hist.sumRGB[echoBucket * 3 + 1]).toBe(iterations * 0.5);
+    expect(hist.sumRGB[echoBucket * 3 + 2]).toBe(0);
+  });
+
+  it("keeps an explicitly absent echo byte-identical to the original call shape", () => {
+    const prepared = prepareChaosGame(sierpinskiTetrahedron());
+    const palette = transformColors(4);
+    const plain = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      32,
+      32,
+      5000,
+      mulberry32(17),
+      palette,
+    );
+    const absent = accumulateFlame(
+      prepared,
+      ORTHOGRAPHIC,
+      32,
+      32,
+      5000,
+      mulberry32(17),
+      palette,
+      undefined,
+      undefined,
+      undefined,
+    );
+
+    expect(Array.from(absent.hits)).toEqual(Array.from(plain.hits));
+    expect(Array.from(absent.sumRGB)).toEqual(Array.from(plain.sumRGB));
+    expect(absent.maxHits).toBe(plain.maxHits);
+    expect(absent.orbit).toEqual(plain.orbit);
+    expect(absent.orbitColor).toBe(plain.orbitColor);
   });
 });
 
