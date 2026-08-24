@@ -669,3 +669,28 @@ gates) is reached by exactly ONE shipped system — `mandelboxKifs`, 9% away,
 `mR` 0.478 instead of 0.500 — while the three escape presets would need
 `mR > fR` and all three chains are unreachable at any ratio behind a
 box-fold link that expands regardless.
+
+### shapes
+
+The shape library's visual + extent proof: the peace sign and gear
+reference specs plus a union+intersect die-and-ring composition marched
+through the shared tracer at `SHAPE_MARCH_SAFETY`, with the point sampler
+splatted beside each SDF so the two evaluators are judged as one object.
+Also the home of the library's fill/reach measurement (`set-extent.ts`'s
+instrument, membership = the exact SDF's sign): the root tsconfig's
+`rootDir: "src"` refuses a `src/` test importing from `scripts/`, so the
+instrument leg lives here, asserted.
+
+MEASURED VERDICT: the peace sign reads as the icon and both evaluators
+draw the same object. Renders hit 39.1 / 29.9 / 28.5% of pixels with zero
+exhausted rays; the sampled splats overlay the rendered silhouettes, the
+outline splat drawing the full gear profile — tooth flanks included.
+Peace sign fill 7.36%, reach 1.1195 against bound 1.1200 (the ring's
+outer edge — attained); gear fill 19.99%, reach 1.2495 against 1.2556
+(the tooth corner, within two shell-widths). Both fields measure worst
+finite-difference Lipschitz 1.000000 — the gear's predicted slight seam
+overshoot does not materialize, because the folded field's VALUE is
+continuous across seams (the tooth box is symmetric about the sector
+mid-plane); only the gradient direction flips there, which neither a
+central difference nor a secant reads as > 1. Sampler cost: 5.93 / 4.58 /
+16.32 rng draws per accepted sample (peace / gear solid / gear outline).
