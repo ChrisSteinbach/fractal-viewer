@@ -730,8 +730,10 @@ morphs into place instead of snapping (see **Presets** below).
   from the Sierpinski tetrahedron and Menger sponge to the 12-map icosahedron
   and 20-map dodecahedron flakes, plus scatter-composed landscape showcases —
   a receding **Fern Forest** and **Kelp Forest** authored for the flame
-  renderer, and the **Fern Thicket** point-cloud mound — and dedicated
-  **Flame** and **4D** groups.
+  renderer, the **Fern Thicket** point-cloud mound, and a **Fern Hills**
+  terrain authored for the solid renderer (squashed, leaned copies carpet
+  the fern into opaque rolling ground under the lagoon palette) — and
+  dedicated **Flame** and **4D** groups.
   Loading one — like Surprise Me and a gallery load — morphs the attractor
   smoothly from the current shape into the new one instead of snapping; the
   OS's reduced-motion preference opts out to the instant snap.
@@ -1209,10 +1211,12 @@ morphs into place instead of snapping (see **Presets** below).
   Presets dropdown's **4D** group to see one immediately — **Pentatope
   Gasket**, **16-Cell Flake**, **Duoprism (3×3)**, **Tesseract Dust**,
   **24-Cell Flake**, **Double-Rotation Spiral**, **Hyperfern** (Barnsley's
-  fern curling through w instead of z), or **Hyperfern Forest** (a hyperfern
+  fern curling through w instead of z), **Hyperfern Forest** (a hyperfern
   treeline whose one placement map turns each receding copy 0.35 rad further
   into w, so the colonnade rolls up into the fourth dimension and a tumble
-  unrolls it); with **Show guides** on, the polytope
+  unrolls it), or **Hyperfern Hills** (a solid-rendered 4D fern terrain —
+  the hyperfern treeline's compounding w-rotation carpeted into rolling
+  ground); with **Show guides** on, the polytope
   presets tumble their own wireframe (5-cell, 16-cell, duoprism, tesseract,
   24-cell edges) through the same rotation. The group is keyed to where its
   systems _live_ — outside the `w = 0` hyperplane — rather than to how they

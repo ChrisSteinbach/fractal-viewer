@@ -514,6 +514,12 @@ function scatterOntoGround(
   spec: {
     /** Uniform scale of the placed copy of the scene. */
     s: number;
+    /** Optional vertical scale override: a terrain map squashes its copy
+     * (`sy < s`) so the scene carpets into rolling ground rather than
+     * standing beside it. Absent = the uniform `s`. The seating math below
+     * is already generic — `composeAffine` composes the non-uniform scale
+     * and `M·anchor` is read off the composed map either way. */
+    sy?: number;
     /** Euler-XYZ rotation of the placed copy. */
     rotation: Vec3;
     /** Where the placed copy's ground anchor lands. */
@@ -524,19 +530,19 @@ function scatterOntoGround(
     w?: WExtension;
   },
 ): Transform {
-  const { s, rotation, base, weight, colorIndex, colorSpeed, w } = spec;
+  const { s, sy, rotation, base, weight, colorIndex, colorSpeed, w } = spec;
   const linear = composeAffine({
     id,
     position: [0, 0, 0],
     rotation,
-    scale: [s, s, s],
+    scale: [s, sy ?? s, s],
   });
   const seated = applyAffine(linear, ...GROUND_ANCHOR);
   return {
     id,
     position: [base[0] - seated[0], base[1] - seated[1], base[2] - seated[2]],
     rotation: [...rotation],
-    scale: [s, s, s],
+    scale: [s, sy ?? s, s],
     weight,
     ...(colorIndex !== undefined ? { colorIndex } : {}),
     ...(colorSpeed !== undefined ? { colorSpeed } : {}),
@@ -724,6 +730,70 @@ export function kelpForest(): Transform[] {
       base: [1.62, -1.5, -0.62],
       weight: 42,
       colorIndex: 0.8,
+      colorSpeed: 0.5,
+    }),
+  ];
+}
+
+/**
+ * "Fern Hills" — the fern as LANDSCAPE: an undulating opaque terrain whose
+ * every swell is fern-stuff, authored for the SOLID renderer (the first
+ * "solid"-hinted preset — the asked-for look is lit, AO-shaded in the
+ * valleys, which is the solid render's territory, not an additive glow's).
+ * Three squashed, leaned TERRAIN copies (`sy < s`,
+ * {@link scatterOntoGround}'s vertical override) carpet the scene into
+ * rolling ground, and the receding 0.8× row chain is what buys
+ * wave-after-wave recession — the forest-composition sheet's solid
+ * addendum measured placements alone rendering ONE mound. Scatter share
+ * 122/222 ≈ 0.55.
+ *
+ * The color scheme rides the LAGOON structural palette
+ * ({@link PRESET_PALETTES}): the PLANT maps author into lagoon's punchy
+ * teal-green band (the stem at 0.6, the near-black shadow slot; the frond
+ * and leaflets at 0.88–0.95) and the scatter maps into straw/rust/dark-teal
+ * (0.15/0.45/0.75) — green frond crowns rolling over golden-rust swells
+ * with dark valleys. Moss was measured and REFUSED for this scheme: its
+ * green band is intrinsically pastel (peak (0.6, 0.9, 0.6)) and the
+ * running-mean voxel color washes it to sage, while the derived plant
+ * slots land in its salmon zone — pink hills.
+ */
+export function fernHills(): Transform[] {
+  const plantColors = [0.6, 0.92, 0.95, 0.88];
+  return [
+    ...curlingFern().map((t, i) => ({ ...t, colorIndex: plantColors[i] })),
+    scatterOntoGround(4, {
+      s: 0.72,
+      sy: 0.45,
+      rotation: [0.15, 0.4, 0],
+      base: [-1.6, -1.5, -1.2],
+      weight: 27,
+      colorIndex: 0.15,
+      colorSpeed: 0.5,
+    }),
+    scatterOntoGround(5, {
+      s: 0.68,
+      sy: 0.5,
+      rotation: [0, -2.0, -0.12],
+      base: [1.7, -1.5, -1.9],
+      weight: 27,
+      colorIndex: 0.45,
+      colorSpeed: 0.5,
+    }),
+    scatterOntoGround(6, {
+      s: 0.55,
+      sy: 0.4,
+      rotation: [0.18, 1.2, 0],
+      base: [0.2, -1.5, -3.2],
+      weight: 27,
+      colorIndex: 0.75,
+      colorSpeed: 0.5,
+    }),
+    scatterOntoGround(7, {
+      s: 0.8,
+      rotation: [0, 0, 0],
+      base: [1.62, -1.5, -0.62],
+      weight: 41,
+      colorIndex: 0.15,
       colorSpeed: 0.5,
     }),
   ];
@@ -2340,6 +2410,65 @@ export function hyperfernForest(): Transform[] {
 }
 
 /**
+ * "Hyperfern Hills" — the solid landscape's 4D half: {@link fernHills}'
+ * exact terrain-row construction over the {@link hyperfern} (same plant
+ * color overlay — the spread preserves the frond's existing `w` block —
+ * and the same four scatter maps), voxelized by the production 4D solid
+ * path. The forest-composition sheet's solid addendum measured the
+ * identity-rotor voxelization as a RIBBED terrain — the w-curled frond
+ * content striates the swells — and the row map carries
+ * {@link hyperfernForest}'s own compounding lift (`w.rotation.xw` 0.35:
+ * one map, copy k turned k·0.35 rad into `+w`).
+ *
+ * `w.scale` stays ABSENT on the row for the reason
+ * {@link hyperfernForest}'s doc gives: the derived mean contraction IS the
+ * uniform 0.8, so deriving is already the true rotation. No scaffold, like
+ * the rest of the wave: a scattered landscape has no natural wireframe.
+ */
+export function hyperfernHills(): Transform[] {
+  const plantColors = [0.6, 0.92, 0.95, 0.88];
+  return [
+    ...hyperfern().map((t, i) => ({ ...t, colorIndex: plantColors[i] })),
+    scatterOntoGround(4, {
+      s: 0.72,
+      sy: 0.45,
+      rotation: [0.15, 0.4, 0],
+      base: [-1.6, -1.5, -1.2],
+      weight: 27,
+      colorIndex: 0.15,
+      colorSpeed: 0.5,
+    }),
+    scatterOntoGround(5, {
+      s: 0.68,
+      sy: 0.5,
+      rotation: [0, -2.0, -0.12],
+      base: [1.7, -1.5, -1.9],
+      weight: 27,
+      colorIndex: 0.45,
+      colorSpeed: 0.5,
+    }),
+    scatterOntoGround(6, {
+      s: 0.55,
+      sy: 0.4,
+      rotation: [0.18, 1.2, 0],
+      base: [0.2, -1.5, -3.2],
+      weight: 27,
+      colorIndex: 0.75,
+      colorSpeed: 0.5,
+    }),
+    scatterOntoGround(7, {
+      s: 0.8,
+      rotation: [0, 0, 0],
+      base: [1.62, -1.5, -0.62],
+      weight: 41,
+      colorIndex: 0.15,
+      colorSpeed: 0.5,
+      w: { rotation: { xw: 0.35 } },
+    }),
+  ];
+}
+
+/**
  * The named systems offered in the preset menu, mapped to their transform
  * factories. `default` is the system the viewer boots with (see
  * {@link defaultTransforms}); listing it here keeps the startup fractal
@@ -2429,11 +2558,15 @@ const PRESETS = {
   // The scatter-composed landscapes: a plant sub-IFS plus placement maps
   // that seat the whole scene back on the ground line, measured organic
   // rather than mush by the forest-composition sheet
-  // (`scripts/forest-composition.harness.ts`).
+  // (`scripts/forest-composition.harness.ts`); the solid pair (the Hills)
+  // squashes leaned terrain copies into opaque rolling ground for the
+  // SOLID renderer, off the same sheet's addendum.
   fernForest,
   fernThicket,
   kelpForest,
   hyperfernForest,
+  fernHills,
+  hyperfernHills,
 } as const satisfies Record<string, () => Transform[]>;
 
 export type Preset = keyof typeof PRESETS;
@@ -2544,6 +2677,13 @@ export const PRESET_RENDER_HINTS: Partial<
   // point-cloud showcases and carry no entry.
   fernForest: "flame",
   kelpForest: "flame",
+  // The Hills pair carries the table's FIRST "solid" hints: the look they
+  // were composed for — an undulating OPAQUE terrain, lit and AO-shaded in
+  // the valleys — is the solid renderer's territory, not an additive
+  // glow's, measured on the forest-composition sheet's solid-landscape
+  // addendum.
+  fernHills: "solid",
+  hyperfernHills: "solid",
 };
 
 /**
@@ -2586,9 +2726,14 @@ export const PRESET_FINALS: Partial<Record<Preset, () => Transform>> = {
  *
  * Scoped deliberately narrow: built-in {@link FlamePaletteId}s only (no
  * custom gradients — every value here is one the palette `<select>`
- * offers), applied to the FLAME palette alone, and only for presets that
- * also carry a `"flame"` {@link PRESET_RENDER_HINTS} entry, so it can
- * never repaint a mode the preset was not authored for. Absent = the
+ * offers), and only for presets that also carry a `"flame"` or `"solid"`
+ * {@link PRESET_RENDER_HINTS} entry, so it can never repaint a mode the
+ * preset was not authored for. The flame palette is always set (switching
+ * renderers keeps the scheme); solid qualifies because the solid session
+ * renders the same structural palette through its OWN field
+ * (`state.solid.paletteId`, default "spectrum") — which no hint reached
+ * before the landscape wave's fernHills — so main.ts's preset handler
+ * additionally applies a solid-hinted preset's palette there. Absent = the
  * user's current palette, untouched — the ordinary case, and every
  * pre-existing preset.
  */
@@ -2602,6 +2747,14 @@ export const PRESET_PALETTES: Partial<Record<Preset, FlamePaletteId>> = {
   // into teal depths.
   fernForest: "moss",
   kelpForest: "lagoon",
+  // The solid landscapes were composed against LAGOON on the same sheet's
+  // addendum — the plant maps author into its punchy teal-green band and
+  // the scatter maps into straw/rust/dark-teal. Moss was measured and
+  // refused: its greens are intrinsically pastel and the running-mean
+  // voxel color washes them to sage, while the derived plant slots land
+  // in its salmon zone (pink hills).
+  fernHills: "lagoon",
+  hyperfernHills: "lagoon",
 };
 
 /**

@@ -167,6 +167,7 @@ import {
   setCustomPaletteStops,
   setFinalTransform,
   setFlamePaletteId,
+  setSolidPaletteId,
   setPanelOpen,
   setBackgroundCustom,
   setFogTint,
@@ -6338,8 +6339,19 @@ function main(): void {
         // The flame palette a preset was composed against
         // (PRESET_PALETTES) — set, never cleared: absent means "the user's
         // palette is fine", which is every preset that predates the table.
+        // The flame set stays unconditional (switching renderers keeps the
+        // scheme).
         const palette = PRESET_PALETTES[preset];
-        if (palette) state = setFlamePaletteId(state, palette);
+        if (palette) {
+          state = setFlamePaletteId(state, palette);
+          // A solid-hinted preset's palette colors the renderer its menu
+          // entry promises: the solid session's structural palette is its
+          // own field (state.solid.paletteId, default "spectrum"), which
+          // no hint reached before the landscape wave's fernHills.
+          if (PRESET_RENDER_HINTS[preset] === "solid") {
+            state = setSolidPaletteId(state, palette);
+          }
+        }
         const room = PRESET_SURFACE_ROOMS[preset];
         if (room) {
           state = {

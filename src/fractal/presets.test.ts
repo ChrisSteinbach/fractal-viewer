@@ -29,6 +29,7 @@ import {
   duoprism,
   duoprismWireframe,
   fernForest,
+  fernHills,
   fernThicket,
   hybridChainCraters,
   hybridChainCube,
@@ -36,6 +37,7 @@ import {
   hybridChainShells,
   hyperfern,
   hyperfernForest,
+  hyperfernHills,
   icosahedronFlake,
   jerusalemCube,
   juliaDust,
@@ -773,12 +775,16 @@ describe("PRESET_PALETTES", () => {
     }
   });
 
-  // The table's own scoping claim: it repaints the FLAME palette, so it may
-  // only key presets the app actually takes into the flame renderer.
-  it("only paints presets that are flame showcases", () => {
+  // The table's own scoping claim: it repaints the FLAME palette — and,
+  // for solid-hinted presets, the solid session's own structural palette
+  // (state.solid.paletteId, where main.ts's preset handler routes the
+  // hint, since the solid render draws the same structural LUT through
+  // its own field) — so it may only key presets the app actually takes
+  // into one of those renderers.
+  it("only paints presets that are flame or solid showcases", () => {
     for (const key of Object.keys(PRESET_PALETTES)) {
-      expect(PRESET_RENDER_HINTS[key as keyof typeof PRESET_RENDER_HINTS]).toBe(
-        "flame",
+      expect(["flame", "solid"]).toContain(
+        PRESET_RENDER_HINTS[key as keyof typeof PRESET_RENDER_HINTS],
       );
     }
   });
@@ -1340,6 +1346,99 @@ describe("the landscape presets", () => {
       expect(Number.isFinite(v)).toBe(true);
     }
     expect(bounds.maxW - bounds.minW).toBeGreaterThan(0.5);
+  });
+
+  // The solid pair builds on the shipped plants the same way, plus an
+  // authored plant color OVERLAY (the lagoon scheme's teal-green band:
+  // stem 0.6 in the near-black shadow slot, frond and leaflets 0.88-0.95).
+  // Stripping colorIndex must give back the shipped maps exactly — a
+  // landscape is a composition, not a re-tuning.
+  it("overlays fernHills' plant colors on curlingFern verbatim", () => {
+    const plants = fernHills().slice(0, 4);
+    expect(plants.map(({ colorIndex: _ci, ...rest }) => rest)).toEqual(
+      curlingFern(),
+    );
+    expect(plants.map((t) => t.colorIndex)).toEqual([0.6, 0.92, 0.95, 0.88]);
+  });
+
+  it("overlays hyperfernHills' plant colors without losing the frond's w block", () => {
+    const plants = hyperfernHills().slice(0, 4);
+    expect(plants.map(({ colorIndex: _ci, ...rest }) => rest)).toEqual(
+      hyperfern(),
+    );
+    expect(plants.map((t) => t.colorIndex)).toEqual([0.6, 0.92, 0.95, 0.88]);
+    // The overlay is a spread, and the spread must preserve the frond's
+    // existing w block — the yw curl IS the hyperfern.
+    expect(plants[1].w?.rotation?.yw).toBe(0.15);
+  });
+
+  // The terrain maps: squashed (sy < s) so each copy carpets into rolling
+  // ground rather than standing beside it, and still seated on the ground
+  // line through the engine's own composition — a non-uniform scale
+  // changes M·anchor, so the seating rule itself is what is under test.
+  it("squashes and seats fernHills' terrain copies on the ground line", () => {
+    const terrain = fernHills()[4];
+    expect(terrain.scale).toEqual([0.72, 0.45, 0.72]);
+    const seated = applyAffine(composeAffine(terrain), 0, -1.5, 0);
+    expect(seated[0]).toBeCloseTo(-1.6, 12);
+    expect(seated[1]).toBeCloseTo(-1.5, 12);
+    expect(seated[2]).toBeCloseTo(-1.2, 12);
+    const far = applyAffine(composeAffine(fernHills()[6]), 0, -1.5, 0);
+    expect(far[0]).toBeCloseTo(0.2, 12);
+    expect(far[1]).toBeCloseTo(-1.5, 12);
+    expect(far[2]).toBeCloseTo(-3.2, 12);
+  });
+
+  it("gives fernHills the terrain-row share the solid sheet measured", () => {
+    // (?? 0 so an unauthored weight fails the pin loudly rather than
+    // typing as undefined.)
+    const weights = fernHills().map((t) => t.weight ?? 0);
+    expect(weights).toEqual([1, 85, 7, 7, 27, 27, 27, 41]);
+    // Scatter 27 + 27 + 27 + 41 = 122 of 222 total — the addendum's ≈0.55
+    // terrain-row share, pinned as its own arithmetic.
+    const scatter = weights.slice(4).reduce((a, b) => a + b, 0);
+    const total = weights.reduce((a, b) => a + b, 0);
+    expect(scatter).toBe(122);
+    expect(total).toBe(222);
+    expect(scatter / total).toBeCloseTo(0.55, 2);
+  });
+
+  // The solid landscape's 4D half: only the ROW carries the w-mixing
+  // rotation (hyperfernForest's own compounding lift), and it genuinely
+  // rolls the terrain out of the w = 0 hyperplane.
+  it("turns hyperfernHills' row into +w and rolls the terrain out of the hyperplane", () => {
+    const row = hyperfernHills()[7];
+    expect(row.w?.rotation?.xw).toBe(0.35);
+    expect(row.w?.rotation?.yw).toBeUndefined();
+    expect(row.w?.rotation?.zw).toBeUndefined();
+    expect(row.w?.position).toBeUndefined();
+    // Absent for hyperfernForest's reason: the derived mean contraction IS
+    // the row's uniform 0.8.
+    expect(row.w?.scale).toBeUndefined();
+    expect(systemIsFlat(hyperfernHills())).toBe(false);
+    const { bounds } = runChaosGame4(
+      hyperfernHills().map(toTransform4),
+      30000,
+      mulberry32(4),
+    );
+    for (const v of Object.values(bounds)) {
+      expect(Number.isFinite(v)).toBe(true);
+    }
+    expect(bounds.maxW - bounds.minW).toBeGreaterThan(0.5);
+  });
+
+  // Registration: the pair carries the table's FIRST "solid" render hints
+  // (the opaque lit terrain look lives in the solid renderer — measured on
+  // the solid-landscape sheet) and the lagoon palette they were composed
+  // against.
+  it("registers the solid pair with solid hints and the lagoon palette", () => {
+    for (const key of ["fernHills", "hyperfernHills"]) {
+      expect(PRESET_NAMES).toContain(key);
+    }
+    expect(PRESET_RENDER_HINTS.fernHills).toBe("solid");
+    expect(PRESET_RENDER_HINTS.hyperfernHills).toBe("solid");
+    expect(PRESET_PALETTES.fernHills).toBe("lagoon");
+    expect(PRESET_PALETTES.hyperfernHills).toBe("lagoon");
   });
 
   // Registration: all four are real presets; the two row landscapes open

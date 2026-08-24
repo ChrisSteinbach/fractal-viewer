@@ -355,7 +355,7 @@ baseline only on a flat-to-non-flat transition or a whole-system replacement,
 never on an ordinary parameter edit. The 4D presets (`pentatope`,
 `doubleRotation`, and the later waves — `tesseract`, `sixteenCell`,
 `twentyFourCell`, `duoprism`, `hyperfern`, and the scatter-composed
-`hyperfernForest` — all in `presets.ts`; the earlier
+`hyperfernForest` and `hyperfernHills` — all in `presets.ts`; the earlier
 standalone `presets4.ts` is gone, merged into the same factory record every
 other preset lives in) span static polytope flakes and dynamic w-rotation
 systems, and each polytope preset also carries a legibility scaffold
