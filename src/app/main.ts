@@ -63,6 +63,10 @@ import {
 import { flameAccumBudgetBuckets } from "./flame-worker-core";
 import type { FlameWorkerCommand, FlameWorkerEvent } from "./flame-worker-core";
 import type { SharedFrameBuffers } from "./flame-worker-core";
+import {
+  FlameBackdropGenerator,
+  type FlameBackdropImage,
+} from "./flame-backdrop-generator";
 import type { RenderSessionHandle } from "./render-session";
 import { voxelAccumBudgetVoxels } from "./voxel-worker-core";
 import type { VoxelWorkerCommand, VoxelWorkerEvent } from "./voxel-worker-core";
@@ -138,6 +142,7 @@ import { createResolutionGovernor } from "./resolution-governor";
 import { createRenderTierScheduler } from "./render-tier";
 import {
   addTransform,
+  activeScenePalette,
   DEFAULT_BALLOON_RADIUS,
   DEFAULT_SYMMETRY_PLANE,
   DEFAULT_SYMMETRY_ORDER,
@@ -981,8 +986,15 @@ function main(): void {
   // leg's fade would start from a stale pair. Starts at the scene's own
   // construction default (dark); boot syncs it to the restored document.
   let liveBackground: BackgroundGradient = resolveBackground({ mode: "dark" });
+  let liveBackgroundSource: "gradient" | "flame" = "gradient";
+  // A replace-load involving the generated source holds whatever is already
+  // visible until the terminal cloud lands. The decorative worker is
+  // suspended for that whole interval, so morph intermediates never spend a
+  // million-iteration render or flash a source belonging to neither endpoint.
+  let backgroundMorphHeld = false;
   function pushBackground(stops: BackgroundGradient): void {
     liveBackground = stops;
+    liveBackgroundSource = "gradient";
     // The shape always reads the CURRENT document's — a crossfade
     // interpolates only the colors (background.ts's BackgroundTween doc), so
     // the shape pops to the target's at the leg's first pushBackground call,
@@ -995,6 +1007,19 @@ function main(): void {
    * active render's palette. */
   function applyBackgroundNow(): void {
     backgroundTween.cancel();
+    backgroundMorphHeld = false;
+    if (state.background.mode === "flame") {
+      flameBackdropGenerator.resume();
+      // Keep a previously delivered flame image in place while its refresh is
+      // off-thread. The first entry has no image, so it shows the explicit dark
+      // placeholder until the worker lands.
+      if (liveBackgroundSource !== "flame") {
+        pushBackground(resolveSceneBackground(state));
+      }
+      requestFlameBackdrop();
+      return;
+    }
+    flameBackdropGenerator.suspend();
     pushBackground(resolveSceneBackground(state));
   }
   /**
@@ -1008,6 +1033,12 @@ function main(): void {
    * still settles on the right derivation.
    */
   function trackAutoBackground(): void {
+    if (state.background.mode === "flame") {
+      if (!backgroundTween.active() && !backgroundMorphHeld) {
+        requestFlameBackdrop();
+      }
+      return;
+    }
     if (state.background.mode !== "auto") return;
     if (backgroundTween.active()) return;
     const target = resolveSceneBackground(state);
@@ -1508,6 +1539,9 @@ function main(): void {
           virtualNowMs = frameNowMs;
           tickLogic(frameNowMs);
           await cloudGenerator.settle();
+          if (state.background.mode === "flame") {
+            await flameBackdropGenerator.settle();
+          }
           // Frame-exactness for surface keyframes: the empty-space grid
           // arrives on a REAL-time worker against this VIRTUAL clock, so
           // whether a frame traces with or without it would otherwise depend
@@ -2200,6 +2234,13 @@ function main(): void {
     if (target !== null) {
       enterLoadedRenderMode(target);
     }
+    if (backgroundMorphHeld && request.replaced) {
+      finishBackgroundMorphHold();
+    } else if (!backgroundMorphHeld && state.background.mode === "flame") {
+      // Ordinary geometry regeneration: the image follows the cloud only
+      // after that cloud actually lands, never at slider-request time.
+      requestFlameBackdrop();
+    }
   }
 
   // The off-main-thread generation pipeline: a dedicated Worker runs
@@ -2831,6 +2872,96 @@ function main(): void {
       // the explorer's colors — snapshotted here like colorMode itself.
       rampPalette: resolvePalette(state.rampPaletteId, state.customPalette),
     };
+  }
+
+  /** The decorative backdrop's own persistent worker. It uses the existing
+   * flame protocol in transfer mode, but failures stay local: a backdrop is
+   * optional and never falls back to synchronous work on the UI thread. */
+  function createFlameBackdropWorker(
+    onEvent: (event: FlameWorkerEvent) => void,
+    onError: (error: unknown) => void,
+  ) {
+    if (typeof Worker === "undefined") return null;
+    const worker = new Worker(new URL("./flame-worker.ts", import.meta.url), {
+      type: "module",
+    });
+    worker.onmessage = (event: MessageEvent<FlameWorkerEvent>) =>
+      onEvent(event.data);
+    worker.onerror = (event) => onError(event);
+    worker.onmessageerror = () =>
+      onError(new Error("Flame backdrop worker reply failed to deserialize"));
+    return {
+      post: (command: FlameWorkerCommand) => worker.postMessage(command),
+      terminate: () => {
+        worker.onmessage = null;
+        worker.onerror = null;
+        worker.onmessageerror = null;
+        worker.terminate();
+      },
+    };
+  }
+
+  function applyFlameBackdropImage(image: FlameBackdropImage): void {
+    if (state.background.mode !== "flame" || backgroundMorphHeld) return;
+    scene.setFlameBackdropImage(image);
+    liveBackgroundSource = "flame";
+  }
+
+  const flameBackdropGenerator = new FlameBackdropGenerator({
+    createWorker: createFlameBackdropWorker,
+    onImage: applyFlameBackdropImage,
+    onError: (error) => {
+      // Hold the last successful image (or the dark placeholder) and retry
+      // lazily on the next authored change. Decorative failure is not a mode
+      // failure and must not eject a full flame/solid/surface session.
+      console.warn(
+        "Flame backdrop generation failed; keeping prior source.",
+        error,
+      );
+    },
+  });
+
+  /** Snapshot only authored/current scene inputs. All quality and transport
+   * knobs are fixed inside FlameBackdropGenerator's cheap CPU-only policy. */
+  function requestFlameBackdrop(): void {
+    if (
+      state.background.mode !== "flame" ||
+      backgroundMorphHeld ||
+      morphTween.active
+    ) {
+      return;
+    }
+    const { width, height } = scene.flameBackdropRenderSize();
+    flameBackdropGenerator.request({
+      transforms: state.transforms,
+      finalTransform: state.finalTransform ?? null,
+      projection: scene.flameProjectionMatrix(),
+      width,
+      height,
+      // Fixed across refreshes: authored system/palette changes, not random
+      // noise, decide how the echo changes.
+      seed: 0x5f3759df,
+      palette: activeScenePalette(state),
+      order: state.symmetry.order,
+      plane: state.symmetry.plane,
+      twist: state.symmetry.twist ?? 0,
+      fourD: fourDRenderSnapshot(),
+    });
+  }
+
+  /** Release a replace-load hold only when its terminal cloud is actually on
+   * screen. A gradient target snaps then; a flame target starts one debounced
+   * render from the terminal system and keeps the held source until it lands. */
+  function finishBackgroundMorphHold(): void {
+    backgroundMorphHeld = false;
+    backgroundTween.cancel();
+    if (state.background.mode === "flame") {
+      flameBackdropGenerator.resume();
+      requestFlameBackdrop();
+    } else {
+      flameBackdropGenerator.suspend();
+      pushBackground(resolveSceneBackground(state));
+    }
   }
 
   // The flame render session: freeze the current camera and converge a flame
@@ -3975,7 +4106,12 @@ function main(): void {
             `${String(frame.passes)} passes, hit ${String(frame.counts.hit)}`,
         );
       }
-      return frame ? frame.pixels : null;
+      return frame
+        ? {
+            pixels: frame.pixels,
+            ...(frame.layers ? { layers: frame.layers } : {}),
+          }
+        : null;
     });
   }
 
@@ -5397,6 +5533,14 @@ function main(): void {
       // session's activate).
       const target = resolveSceneBackground(state);
       if (
+        backgroundMorphHeld ||
+        liveBackgroundSource === "flame" ||
+        state.background.mode === "flame"
+      ) {
+        backgroundTween.cancel();
+        backgroundMorphHeld = true;
+        flameBackdropGenerator.suspend();
+      } else if (
         prefersReducedMotion() ||
         backgroundGradientsEqual(liveBackground, target)
       ) {
@@ -6994,6 +7138,7 @@ function main(): void {
 
   window.addEventListener("resize", () => {
     scene.resize(window.innerWidth, window.innerHeight);
+    trackAutoBackground();
     // Backdrop visibility depends on the viewport width (mobile scrim), so
     // crossing MOBILE_BREAKPOINT — e.g. rotating a phone to landscape with
     // the panel open — must re-sync it or the scrim sticks around.
@@ -7107,6 +7252,10 @@ function main(): void {
   if (saved?.fourD && viewIs4D) {
     applyFourDPose(saved.fourD);
   }
+  // The capped boot cloud landed before the restored/auto-fit camera pose was
+  // applied above. Replace its parked backdrop request with one from the
+  // actual first-frame projection.
+  if (state.background.mode === "flame") requestFlameBackdrop();
   // A flat boot never routes through regenerate()'s flip/replacement branches,
   // so seed the auto-orbit baseline (incl. the reduced-motion pause and the
   // checkbox sync) explicitly. A non-flat boot leaves it to the first

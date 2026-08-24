@@ -540,15 +540,16 @@ export interface AppState {
    */
   positionAxisColors?: PositionAxisColors;
   /**
-   * The scene backdrop (see `background.ts`): which two-stop
-   * gradient every renderer draws behind the attractor — the built-in dark
-   * or haze pair, or the user-authored custom gradient. Persists like
-   * `colorMode` / `renderStyle`; `persist.ts` omits the pristine default so
-   * never-touched scenes keep their short URLs, and decodes an absent field
-   * per the LEGACY coupling (haze for an aerial-style document, dark
-   * otherwise) so links predating the field render exactly as they always
-   * did. The `custom` slot survives while unselected, exactly like
-   * {@link customPalette}.
+   * The scene backdrop (see `background.ts`): the gradient or generated flame
+   * image every renderer draws behind the attractor. Persists like `colorMode`
+   * / `renderStyle`; only the mode and the gradient modes' authored slots are
+   * document state — a generated flame bitmap is transient and regenerated
+   * from the system. `persist.ts` omits the pristine default so never-touched
+   * scenes keep their short URLs, and decodes an absent field per the LEGACY
+   * coupling (haze for an aerial-style document, dark otherwise) so links
+   * predating the field render exactly as they always did. The `custom` and
+   * `shape` slots survive while the flame mode is selected, exactly like
+   * {@link customPalette} surviving while unselected.
    */
   background: BackgroundParams;
   /**
@@ -2199,12 +2200,15 @@ export function activeScenePalette(state: AppState): PaletteSpec {
 }
 
 /**
- * The one state-aware backdrop resolution: `resolveBackground`
+ * The one state-aware gradient/placeholder backdrop resolution:
+ * `resolveBackground`
  * with the {@link activeScenePalette} supplied, so `"auto"` derives from
  * what the scene is actually showing. Every consumer that holds an
  * {@link AppState} resolves through THIS (main.ts's pushes, the
  * custom-slot seeding below); the palette-less `resolveBackground` overload
- * stays only for callers with no state in hand.
+ * stays only for callers with no state in hand. In `"flame"` mode this is the
+ * dark placeholder, not the generated bitmap (which is transient render
+ * state).
  */
 export function resolveSceneBackground(state: AppState): BackgroundGradient {
   return resolveBackground(state.background, activeScenePalette(state));
@@ -2222,9 +2226,11 @@ export function resolveSceneBackground(state: AppState): BackgroundGradient {
  * mode, an `"auto"` predecessor's derived stops included), so
  * Custom starts as a tweakable copy of the current look: the exact
  * {@link setFlamePaletteId}/`seedCustomStops` discipline, applied to the
- * backdrop. Picking a built-in mode, or re-picking Custom when a payload
- * already exists, leaves the authored slot untouched — selecting a backdrop
- * must never clear authored colors.
+ * backdrop. Picking a built-in or generated mode, or re-picking Custom when a
+ * payload already exists, leaves the authored slot untouched — selecting a
+ * backdrop must never clear authored colors. Since a generated image is not a
+ * two-stop gradient, switching from Flame to a never-authored Custom slot
+ * seeds the dark placeholder returned by {@link resolveSceneBackground}.
  */
 export function setBackgroundMode(
   state: AppState,

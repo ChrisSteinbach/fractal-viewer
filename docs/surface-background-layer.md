@@ -147,6 +147,36 @@ background is frozen when capture starts, and completed bands are final output.
 That avoids the full 4x retained figures but does not solve the live pane's
 capability, bandwidth, or shade-replay costs.
 
+## Image-backed backgrounds
+
+The generated Flame backdrop extends the same final compositor; it does not add
+an image sampler or bind-group entry to either expensive Surface tracer. An
+image frame traces against one flat analytic reference (the image's mean color)
+and retains the ordinary beta sidecar. Presentation then applies the same delta
+equation per pixel, sampling the live image at the full-image coordinate:
+
+```text
+changed = legacy + beta * (liveImage(uv) - traceMean)
+```
+
+The image uses top-origin ImageData bytes. The host sampler converts Surface's
+bottom-origin `v`, clamps to the edge, and bilinearly filters like the WebGL
+texture. A compute export passes each band's `bgOffset`/`bgExtent`, so one image
+continues across all bands instead of repeating inside each band. The export
+freezes one immutable image revision before its first asynchronous trace; the
+WebGL capture similarly binds a short-lived texture from the frozen bytes if a
+new worker result repaints the live CanvasTexture during the drain.
+
+Image equality is content-identity equality: width, height, revision, and the
+exact immutable RGBA object must match. That preserves the literal copy path
+for a frame presented against the same image while making every new generated
+revision take the delta path. The existing approximation boundary remains: the
+sidecar replaces direct background/fog contribution but does not re-evaluate
+environment, reflection, or transmission lighting. Solid is the exception to
+the compositor architecture because it shades straight to the canvas; its miss
+branch samples the shared backdrop texture directly. Points and the full Flame
+renderer already consume that same CanvasTexture.
+
 ## Verdict
 
 Exact retained background re-shading is not adopted under the current

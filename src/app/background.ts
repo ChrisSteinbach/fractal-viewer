@@ -1,18 +1,23 @@
 /**
- * The scene backdrop: a two-stop vertical gradient every renderer
- * shows behind the attractor — the explorer's CanvasTexture, the flame
- * composite, the voxel/surface tracers' miss gradient (their `uBgTop`/
- * `uBgBottom` uniforms), and the WebGPU compute kernels' shade params.
+ * The scene backdrop choice every renderer shows behind the attractor. Most
+ * modes resolve to a two-stop gradient — the explorer's CanvasTexture, the
+ * flame composite, the voxel/surface tracers' miss gradient (their `uBgTop`/
+ * `uBgBottom` uniforms), and the WebGPU compute kernels' shade params. The
+ * `"flame"` mode instead selects a generated per-pixel image; its bitmap is
+ * transient render state, never part of {@link BackgroundParams}.
  *
  * This module is the ONE definition of what a background choice means in
- * colors: `resolveBackground` turns the persisted {@link BackgroundParams}
- * into the concrete `(top, bottom)` stop pair, and every consumer — scene
- * push, captures, the compute frame spec, and the morph-leg crossfade —
- * resolves through it, so no two renderers can disagree about the backdrop.
+ * gradient colors: `resolveBackground` turns the persisted
+ * {@link BackgroundParams} into the concrete `(top, bottom)` stop pair, and
+ * every gradient consumer — scene push, captures, the compute frame spec, and
+ * the morph-leg crossfade — resolves through it, so no two renderers can
+ * disagree about the backdrop. For `"flame"` it supplies only the dark
+ * placeholder shown until the generated image is ready.
  *
  * The vocabulary is deliberately an extensible id list: the palette-linked
- * `"auto"` mode ({@link autoBackground}) was added to it, and any curated
- * preset would ride this same `(top, bottom)` plumbing.
+ * `"auto"` mode ({@link autoBackground}) and image-backed `"flame"` mode were
+ * added to it, and any curated gradient preset would ride the same
+ * `(top, bottom)` plumbing.
  * `persist.ts` decodes an unknown id to the legacy default rather than
  * rejecting, so links written by future builds degrade gracefully in this
  * one.
@@ -31,13 +36,20 @@ export type { BackgroundShape } from "../fractal/background-shape";
  * The Background select's positions: the two built-in backdrops the app has
  * always had — `"dark"` (every render style's original ground) and `"haze"`
  * (the cooler, lighter atmosphere the aerial style used to force) — plus
- * `"auto"`, the palette-derived backdrop (see {@link autoBackground}), and
- * `"custom"`, the user-authored two-stop gradient (a single flat color =
- * top equals bottom). Single source of truth for the {@link BackgroundMode}
- * type, the UI select's options (pinned by ui.test.ts) and the persistence
- * validator (`persist.ts`) — the `RENDER_STYLES` discipline.
+ * `"auto"`, the palette-derived backdrop (see {@link autoBackground}),
+ * `"flame"`, the generated 2D echo of the current system, and `"custom"`, the
+ * user-authored two-stop gradient (a single flat color = top equals bottom).
+ * Single source of truth for the {@link BackgroundMode} type, the UI select's
+ * options (pinned by ui.test.ts) and the persistence validator (`persist.ts`)
+ * — the `RENDER_STYLES` discipline.
  */
-export const BACKGROUND_MODES = ["dark", "haze", "auto", "custom"] as const;
+export const BACKGROUND_MODES = [
+  "dark",
+  "haze",
+  "auto",
+  "flame",
+  "custom",
+] as const;
 
 export type BackgroundMode = (typeof BACKGROUND_MODES)[number];
 
@@ -56,13 +68,14 @@ export interface BackgroundGradient {
  * the MODE alone: the derived colors are never baked into the
  * document, so palette edits keep tracking after a link round-trip.
  *
- * `shape` is ORTHOGONAL to `mode`: it picks the GRADIENT SHAPE
+ * `shape` is ORTHOGONAL to the GRADIENT modes: it picks the GRADIENT SHAPE
  * (`fractal/background-shape.ts`'s vocabulary — linear ramp or radial
  * vignette) that the two `mode`-derived stops are painted through, so every
- * mode can be linear or radial and a palette-linked `"auto"` backdrop gets
- * a vignette for free. Absent means `"linear"`, matching
- * `DEFAULT_BACKGROUND_SHAPE` — every document predating this field is
- * unmoved.
+ * gradient mode can be linear or radial and a palette-linked `"auto"`
+ * backdrop gets a vignette for free. It is dormant while `mode === "flame"`
+ * but remains authored, so switching back never loses the user's shape. Absent
+ * means `"linear"`, matching `DEFAULT_BACKGROUND_SHAPE` — every document
+ * predating this field is unmoved.
  */
 export interface BackgroundParams {
   mode: BackgroundMode;
@@ -194,7 +207,9 @@ export function autoBackground(palette: PaletteSpec): BackgroundGradient {
  * derives from the caller's active palette ({@link autoBackground}); callers
  * with no palette in hand (boot placeholders, the hidden custom-picker sync)
  * get the same dark fallback — `state.ts`'s `resolveSceneBackground` is the
- * form that always supplies one.
+ * form that always supplies one. `"flame"` also returns the dark stops here,
+ * but only as the placeholder beneath its asynchronously generated image; the
+ * image itself is owned by the render-side backdrop controller.
  */
 export function resolveBackground(
   params: BackgroundParams,
@@ -204,6 +219,7 @@ export function resolveBackground(
   if (params.mode === "auto") {
     return palette === undefined ? DARK_GRADIENT : autoBackground(palette);
   }
+  if (params.mode === "flame") return DARK_GRADIENT;
   return params.mode === "haze" ? HAZE_GRADIENT : DARK_GRADIENT;
 }
 

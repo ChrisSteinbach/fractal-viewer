@@ -3583,11 +3583,15 @@ const BLIT_FRAGMENT = /* glsl */ `
   uniform int uHasSource;
   uniform int uHasLayer;
   uniform int uComposite;
+  uniform sampler2D uTraceBgImage;
+  uniform int uTraceBgKind;
   uniform vec3 uTraceBgTop;
   uniform vec3 uTraceBgBottom;
   uniform int uTraceBgShape;
   uniform vec2 uTraceBgCenter;
   uniform vec2 uTraceBgScale;
+  uniform sampler2D uLiveBgImage;
+  uniform int uLiveBgKind;
   uniform vec3 uLiveBgTop;
   uniform vec3 uLiveBgBottom;
   uniform int uLiveBgShape;
@@ -3611,12 +3615,17 @@ const BLIT_FRAGMENT = /* glsl */ `
   }
 
   vec3 blitBackground(
+    sampler2D image,
+    int kind,
     vec3 bottom,
     vec3 top,
     int shape,
     vec2 center,
     vec2 scale
   ) {
+    if (kind == 1) {
+      return texture(image, vUv).rgb;
+    }
     return mix(bottom, top, blitBackgroundShapeT(vUv, shape, center, scale));
   }
 
@@ -3636,6 +3645,8 @@ const BLIT_FRAGMENT = /* glsl */ `
     // the settle-target readbacks that COUNT it read the trace target,
     // never a blit destination.
     vec3 liveBg = blitBackground(
+      uLiveBgImage,
+      uLiveBgKind,
       uLiveBgBottom,
       uLiveBgTop,
       uLiveBgShape,
@@ -3655,6 +3666,8 @@ const BLIT_FRAGMENT = /* glsl */ `
       : vec4(0.0, 0.0, 1.0, 1.0);
     if (uComposite == 1) {
       vec3 traceBg = blitBackground(
+        uTraceBgImage,
+        uTraceBgKind,
         uTraceBgBottom,
         uTraceBgTop,
         uTraceBgShape,
@@ -3692,11 +3705,17 @@ export function createSurfaceBlitMaterial(
       uHasSource: { value: 1 },
       uHasLayer: { value: 0 },
       uComposite: { value: 0 },
+      // Both image samplers always have a complete fallback texture bound;
+      // kind 0 keeps the shipping analytic-gradient path active.
+      uTraceBgImage: { value: src },
+      uTraceBgKind: { value: 0 },
       uTraceBgTop: { value: new THREE.Vector3() },
       uTraceBgBottom: { value: new THREE.Vector3() },
       uTraceBgShape: { value: 0 },
       uTraceBgCenter: { value: new THREE.Vector2(0.5, 0.5) },
       uTraceBgScale: { value: new THREE.Vector2(1, 1) },
+      uLiveBgImage: { value: src },
+      uLiveBgKind: { value: 0 },
       uLiveBgTop: { value: new THREE.Vector3() },
       uLiveBgBottom: { value: new THREE.Vector3() },
       uLiveBgShape: { value: 0 },

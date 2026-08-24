@@ -128,10 +128,13 @@ import {
   type SurfaceRayCensus,
 } from "./surface-ray-census";
 import {
+  compositeSurfaceBackgroundLayer,
   snapshotTraceBackground,
   traceBackgroundsEqual,
+  type TraceBackgroundImage,
   type TraceBackgroundReference,
 } from "../fractal/surface-background-layer";
+import type { FlameBackdropImage } from "./flame-backdrop-generator";
 
 // Authored point/guide colors are already sRGB, so render them verbatim
 // instead of running Three.js's sRGB<->linear conversions.
@@ -757,6 +760,14 @@ export interface ExportImage {
   height: number;
 }
 
+/** One compute-export band. `layers` is Surface's retained background
+ * sidecar; when present the scene composes it against the capture-frozen live
+ * source before bands are assembled. */
+export interface SurfaceComputeCaptureBand {
+  pixels: Uint8Array;
+  layers?: Uint8Array;
+}
+
 /**
  * Thin wrapper around the Three.js scene graph: a point cloud, a reference grid
  * and axes, and one wireframe "guide" box per transform. This is the main home
@@ -889,6 +900,12 @@ export class FractalScene {
   // applyFogColor, resize and every GLSL push need to know the CURRENT
   // shape, not just the current stops.
   private backdropShape: BackgroundShape = "linear";
+  /** The generated backdrop is transient render state. Its bytes are an
+   * immutable 256x256 snapshot so Surface's host compositor and a capture
+   * spanning multiple event turns can keep a stable source by reference. */
+  private backdropImage: TraceBackgroundImage | null = null;
+  private backdropImageMean: readonly [number, number, number] = [0, 0, 0];
+  private backdropImageActive = false;
   private readonly backdropCanvas: HTMLCanvasElement;
   private readonly backdropCtx: CanvasRenderingContext2D | null;
   private readonly backdropTexture: THREE.CanvasTexture;
@@ -1727,7 +1744,10 @@ export class FractalScene {
 
     // 1x1x1 transparent placeholder until the first setVoxelGrid call.
     this.voxelTexture = emptyVoxelTexture();
-    this.voxelMaterial = createVoxelMaterial(this.voxelTexture);
+    this.voxelMaterial = createVoxelMaterial(
+      this.voxelTexture,
+      this.backdropTexture,
+    );
     this.voxelQuad = new FullScreenQuad(this.voxelMaterial);
 
     // Zero-map placeholder until the first setSurfaceSystem call.
@@ -2285,12 +2305,14 @@ export class FractalScene {
   ): void {
     if (
       backgroundGradientsEqual(this.backdrop, stops) &&
-      this.backdropShape === shape
+      this.backdropShape === shape &&
+      !this.backdropImageActive
     ) {
       return;
     }
     this.backdrop = stops;
     this.backdropShape = shape;
+    this.backdropImageActive = false;
     if (
       this.surfaceDisplayActive &&
       this.surfacePresentation !== null &&
@@ -2332,7 +2354,86 @@ export class FractalScene {
         ...(spec.center ?? DEFAULT_BACKGROUND_SHAPE_CENTER),
       );
       (u.uBgScale.value as THREE.Vector2).set(...(spec.scale ?? [1, 1]));
+      u.uBgImageOn.value = 0;
     }
+  }
+
+  /**
+   * Publish the latest low-budget flame render as the active scene backdrop.
+   * The display canvas keeps its construction-time 256x256 dimensions: Three
+   * allocates immutable texture storage for a CanvasTexture, so resizing that
+   * canvas after first upload can silently leave the old GPU allocation bound.
+   * A viewport-shaped worker image is therefore resampled into the fixed
+   * canvas, and the exact resampled bytes become Surface's immutable source.
+   */
+  setFlameBackdropImage(image: FlameBackdropImage): void {
+    const source = document.createElement("canvas");
+    source.width = image.width;
+    source.height = image.height;
+    const sourceCtx = source.getContext("2d");
+    if (!sourceCtx || !this.backdropCtx) return;
+    sourceCtx.putImageData(
+      new ImageData(image.rgba, image.width, image.height),
+      0,
+      0,
+    );
+    this.backdropCtx.clearRect(0, 0, BACKDROP_CANVAS_PX, BACKDROP_CANVAS_PX);
+    this.backdropCtx.imageSmoothingEnabled = true;
+    this.backdropCtx.drawImage(
+      source,
+      0,
+      0,
+      BACKDROP_CANVAS_PX,
+      BACKDROP_CANVAS_PX,
+    );
+    const rgba = new Uint8ClampedArray(
+      this.backdropCtx.getImageData(
+        0,
+        0,
+        BACKDROP_CANVAS_PX,
+        BACKDROP_CANVAS_PX,
+      ).data,
+    );
+    this.backdropImage = {
+      width: BACKDROP_CANVAS_PX,
+      height: BACKDROP_CANVAS_PX,
+      rgba,
+      revision: image.revision,
+    };
+    this.backdropImageMean = image.meanRgb;
+    this.backdropImageActive = true;
+    this.backdropTexture.needsUpdate = true;
+    if (
+      this.surfaceDisplayActive &&
+      this.surfacePresentation !== null &&
+      this.surfacePresentation.layer !== null &&
+      this.surfacePresentation.background !== null
+    ) {
+      this.surfaceCompositePending = true;
+    } else {
+      this.renderNeeded = true;
+    }
+    this.applyFogColor();
+    this.voxelMaterial.uniforms.uBgImageOn.value = 1;
+  }
+
+  /** Paint the active source at an arbitrary capture size. */
+  private paintCurrentBackdrop(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+  ): void {
+    if (this.backdropImageActive && this.backdropImage !== null) {
+      ctx.drawImage(this.backdropCanvas, 0, 0, width, height);
+      return;
+    }
+    paintBackdropGradient(
+      ctx,
+      width,
+      height,
+      this.backdrop,
+      this.backgroundShapeSpecForImage(width, height),
+    );
   }
 
   /**
@@ -2346,7 +2447,7 @@ export class FractalScene {
    * ellipse between background pushes.
    */
   private refreshBackgroundShapeForViewport(): void {
-    if (this.backdropShape !== "radial") return;
+    if (this.backdropImageActive || this.backdropShape !== "radial") return;
     const spec = this.backgroundShapeSpecForImage(
       this.viewportWidth,
       this.viewportHeight,
@@ -2764,15 +2865,19 @@ export class FractalScene {
    * setting meaningful. Strength 0 leaves the midpoint untouched.
    */
   private applyFogColor(): void {
-    this.fog.color.copy(
-      backdropMidpoint(
-        this.backdrop,
-        this.backgroundShapeSpecForImage(
-          this.viewportWidth,
-          this.viewportHeight,
+    if (this.backdropImageActive && this.backdropImage !== null) {
+      this.fog.color.setRGB(...this.backdropImageMean);
+    } else {
+      this.fog.color.copy(
+        backdropMidpoint(
+          this.backdrop,
+          this.backgroundShapeSpecForImage(
+            this.viewportWidth,
+            this.viewportHeight,
+          ),
         ),
-      ),
-    );
+      );
+    }
     if (this.fogTintStrength > 0) {
       this.fog.color.lerp(
         FOG_TINT_COLOR.setRGB(...this.fogTint),
@@ -3158,6 +3263,7 @@ export class FractalScene {
             this.backdrop,
             this.backdropShape,
             "screen",
+            this.backdropImageActive ? this.backdropCanvas : null,
           )
         : "";
     }
@@ -3239,6 +3345,23 @@ export class FractalScene {
     return {
       width: Math.floor(this.viewportWidth * ratio),
       height: Math.floor(this.viewportHeight * ratio),
+    };
+  }
+
+  /** Viewport-shaped worker raster for the decorative backdrop. The long
+   * side is capped independently of DPR: the fixed 256px display texture is
+   * intentionally low-detail and the worker must stay cheap on 4K screens. */
+  flameBackdropRenderSize(maxSide = BACKDROP_CANVAS_PX): {
+    width: number;
+    height: number;
+  } {
+    const scale = Math.min(
+      1,
+      maxSide / Math.max(this.viewportWidth, this.viewportHeight, 1),
+    );
+    return {
+      width: Math.max(1, Math.round(this.viewportWidth * scale)),
+      height: Math.max(1, Math.round(this.viewportHeight * scale)),
     };
   }
 
@@ -3324,13 +3447,7 @@ export class FractalScene {
     out.height = height;
     const ctx = out.getContext("2d");
     if (!ctx) return Promise.resolve(null);
-    paintBackdropGradient(
-      ctx,
-      width,
-      height,
-      this.backdrop,
-      this.backgroundShapeSpecForImage(width, height),
-    );
+    this.paintCurrentBackdrop(ctx, width, height);
     ctx.globalCompositeOperation = "screen";
     ctx.drawImage(this.flameCanvas, 0, 0);
     return exportImageFrom(out);
@@ -4302,6 +4419,10 @@ export class FractalScene {
     // several (bands are always full-width — surfaceComputeTileRows).
     const bgOffset: [number, number] = [0, band ? band.bottom : 0];
     const bgExtent: [number, number] = [width, band ? band.fullHeight : height];
+    const traceBackground = this.surfaceTraceBackground(
+      bgExtent[0],
+      bgExtent[1],
+    );
     return {
       width,
       height,
@@ -4375,12 +4496,8 @@ export class FractalScene {
       // lighting change. ALWAYS the full-image stops — a
       // capture tile's own place in the image rides bgOffset/bgExtent
       // below instead of a remapped pair.
-      bgTop: [this.backdrop.top[0], this.backdrop.top[1], this.backdrop.top[2]],
-      bgBottom: [
-        this.backdrop.bottom[0],
-        this.backdrop.bottom[1],
-        this.backdrop.bottom[2],
-      ],
+      bgTop: [...traceBackground.stops.top],
+      bgBottom: [...traceBackground.stops.bottom],
       bgOffset,
       bgExtent,
       // The live backdrop SHAPE, mirroring the GLSL tracers'
@@ -4392,14 +4509,7 @@ export class FractalScene {
       // different ellipse per band instead of one consistent vignette
       // across the whole tiled export (the same reason
       // `surfaceComputeBandStops` had to go — see this method's own doc).
-      bgShape:
-        this.backdropShape === "linear"
-          ? { kind: "linear" }
-          : {
-              kind: "radial",
-              center: DEFAULT_BACKGROUND_SHAPE_CENTER,
-              scale: backgroundRadialScale(bgExtent[0], bgExtent[1]),
-            },
+      bgShape: traceBackground.shape,
       colorSource: SURFACE_COLOR_SOURCES.indexOf(params.colorSource),
       colorSpeed: params.colorSpeed,
       lut:
@@ -4449,7 +4559,7 @@ export class FractalScene {
    * preview tier they themselves satisfy.
    */
   presentSurfaceComputeFrame(
-    pixels: Uint8Array,
+    pixels: Uint8Array | Uint8ClampedArray,
     width: number,
     height: number,
     layers?: Uint8Array,
@@ -4566,7 +4676,7 @@ export class FractalScene {
     trace: (
       spec: SurfaceComputeFrameSpec,
       tile: { index: number; count: number },
-    ) => Promise<Uint8Array | null>,
+    ) => Promise<SurfaceComputeCaptureBand | null>,
   ): Promise<ExportImage | null> {
     const ratio = this.exportPixelRatio(exportScale);
     // The renderer floors when deriving a buffer from a ratio — match it
@@ -4606,6 +4716,30 @@ export class FractalScene {
       return specs;
     }, false);
     const count = bands.length;
+    const captureBackground = this.currentSurfaceBackground(width, height);
+    const deliverFrozen = async (
+      pixels: Uint8Array | Uint8ClampedArray,
+    ): Promise<ExportImage | null> => {
+      const result = await this.deliverSurfaceCapture(
+        pixels,
+        width,
+        height,
+        ratio,
+      );
+      if (
+        !traceBackgroundsEqual(
+          captureBackground,
+          this.currentSurfaceBackground(width, height),
+        )
+      ) {
+        // deliverSurfaceCapture intentionally presents flattened pixels (the
+        // capture has already consumed its sidecar), so there is no retained
+        // layer to re-composite. Re-arm one live compute frame instead.
+        this.surfaceCompositePending = false;
+        this.renderNeeded = true;
+      }
+      return result;
+    };
     // One band is the whole image: trace it and present its own pixels,
     // no assembly buffer (a 4x export's would be another 130 MB).
     const image = count === 1 ? null : new Uint8Array(width * height * 4);
@@ -4613,26 +4747,40 @@ export class FractalScene {
       const band = bands[index];
       const traced = await trace(band, { index, count });
       if (!traced) return null;
+      const referenceBackground = snapshotTraceBackground({
+        stops: { top: band.bgTop, bottom: band.bgBottom },
+        shape: band.bgShape ?? { kind: "linear" },
+      });
+      const pixels = traced.layers
+        ? compositeSurfaceBackgroundLayer({
+            width,
+            height: band.height,
+            legacyRgba: traced.pixels,
+            layerRgba: traced.layers,
+            referenceBackground,
+            liveBackground: captureBackground,
+            traceOffset: band.bgOffset,
+            traceExtent: band.bgExtent,
+          })
+        : traced.pixels;
       if (image === null) {
-        return this.deliverSurfaceCapture(traced, width, height, ratio);
+        return deliverFrozen(pixels);
       }
       // Row 0 is the bottom row on both sides (the kernel's py=0 row is
       // ndcY=-1), so a band's rows land contiguously at its own offset.
       image.set(
-        traced.subarray(0, width * band.height * 4),
+        pixels.subarray(0, width * band.height * 4),
         index * rows * width * 4,
       );
     }
-    return image
-      ? this.deliverSurfaceCapture(image, width, height, ratio)
-      : null;
+    return image ? deliverFrozen(image) : null;
   }
 
   /** Present a finished capture at the export pixel ratio and read it
    * back — the paint and the `toBlob` snapshot in ONE synchronous span
    * (the renderer runs without `preserveDrawingBuffer`). */
   private deliverSurfaceCapture(
-    pixels: Uint8Array,
+    pixels: Uint8Array | Uint8ClampedArray,
     width: number,
     height: number,
     ratio: number,
@@ -5676,6 +5824,7 @@ export class FractalScene {
    */
   private presentSurfaceSampleImage(
     target: THREE.WebGLRenderTarget | null = null,
+    liveOverride: TraceBackgroundReference | null = null,
   ): boolean {
     const tex = this.surfaceSampleTexture;
     if (!tex || this.surfaceSampleTaken < 1) return false;
@@ -5684,6 +5833,7 @@ export class FractalScene {
       target,
       this.surfaceSampleLayerTexture,
       this.surfaceSettleBackground,
+      liveOverride,
     );
     this.surfaceSampleMeanReady = true;
     return true;
@@ -5940,13 +6090,10 @@ export class FractalScene {
   ): TraceBackgroundReference {
     this.camera.updateMatrixWorld();
     const u = this.activeSurfaceMaterial.uniforms;
-    const background = snapshotTraceBackground({
-      stops: this.backdrop,
-      shape: this.backgroundShapeSpecForImage(
-        this.viewportWidth,
-        this.viewportHeight,
-      ),
-    });
+    const background = this.surfaceTraceBackground(
+      this.viewportWidth,
+      this.viewportHeight,
+    );
     (u.uBgTop.value as THREE.Vector3).set(...background.stops.top);
     (u.uBgBottom.value as THREE.Vector3).set(...background.stops.bottom);
     u.uBgShape.value = backgroundShapeCode(background.shape.kind);
@@ -6665,21 +6812,76 @@ export class FractalScene {
     for (const f of pool.entries) gl.deleteSync(f.sync);
   }
 
-  private currentSurfaceBackground(): TraceBackgroundReference {
+  /** The analytic source expensive Surface tracers freeze. An active image
+   * uses its mean as a flat fallback; the final compositor replaces only the
+   * retained background contribution with the full per-pixel source. */
+  private surfaceTraceBackground(
+    width: number,
+    height: number,
+  ): TraceBackgroundReference {
+    if (this.backdropImageActive && this.backdropImage !== null) {
+      const mean: [number, number, number] = [...this.backdropImageMean];
+      return snapshotTraceBackground({
+        stops: { top: mean, bottom: [...mean] },
+        shape: { kind: "linear" },
+      });
+    }
     return snapshotTraceBackground({
       stops: this.backdrop,
-      shape: this.backgroundShapeSpecForImage(
-        this.viewportWidth,
-        this.viewportHeight,
-      ),
+      shape: this.backgroundShapeSpecForImage(width, height),
     });
+  }
+
+  /** The source the final compositor should show right now. */
+  private currentSurfaceBackground(
+    width = this.viewportWidth,
+    height = this.viewportHeight,
+  ): TraceBackgroundReference {
+    const fallback = this.surfaceTraceBackground(width, height);
+    return this.backdropImageActive && this.backdropImage !== null
+      ? snapshotTraceBackground({ ...fallback, image: this.backdropImage })
+      : fallback;
+  }
+
+  /** Bind an image reference. The live image reuses the CanvasTexture; a
+   * capture-frozen older revision gets a short-lived DataTexture so a later
+   * worker delivery cannot alter the export midway through its async drain. */
+  private surfaceBackgroundTexture(background: TraceBackgroundReference): {
+    texture: THREE.Texture;
+    disposable: THREE.Texture | null;
+  } {
+    const image = background.image;
+    if (
+      image === undefined ||
+      (this.backdropImageActive && image === this.backdropImage)
+    ) {
+      return { texture: this.backdropTexture, disposable: null };
+    }
+    const texture = new THREE.DataTexture(
+      image.rgba,
+      image.width,
+      image.height,
+      THREE.RGBAFormat,
+      THREE.UnsignedByteType,
+    );
+    texture.flipY = true;
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.generateMipmaps = false;
+    texture.needsUpdate = true;
+    return { texture, disposable: texture };
   }
 
   private setSurfaceBlitBackground(
     prefix: "Trace" | "Live",
     background: TraceBackgroundReference,
-  ): void {
+  ): THREE.Texture | null {
     const u = this.surfaceBlitMaterial.uniforms;
+    const image = this.surfaceBackgroundTexture(background);
+    u[`u${prefix}BgImage`].value = image.texture;
+    u[`u${prefix}BgKind`].value = background.image === undefined ? 0 : 1;
     (u[`u${prefix}BgTop`].value as THREE.Vector3).set(...background.stops.top);
     (u[`u${prefix}BgBottom`].value as THREE.Vector3).set(
       ...background.stops.bottom,
@@ -6691,6 +6893,7 @@ export class FractalScene {
     (u[`u${prefix}BgScale`].value as THREE.Vector2).set(
       ...(background.shape.scale ?? [1, 1]),
     );
+    return image.disposable;
   }
 
   /** Fill both attachments with uncovered backdrop. This is the deliberate
@@ -6705,10 +6908,11 @@ export class FractalScene {
     u.uHasSource.value = 0;
     u.uHasLayer.value = 0;
     u.uComposite.value = 0;
-    this.setSurfaceBlitBackground("Live", background);
+    const disposable = this.setSurfaceBlitBackground("Live", background);
     this.renderer.setRenderTarget(target);
     this.surfaceBlitQuad.render(this.renderer);
     this.renderer.setRenderTarget(null);
+    disposable?.dispose();
   }
 
   /** Stretch `src` over `target` (null = the canvas) via the shared opaque
@@ -6719,9 +6923,10 @@ export class FractalScene {
     target: THREE.WebGLRenderTarget | null,
     layer: THREE.Texture | null = null,
     background: TraceBackgroundReference | null = null,
+    liveOverride: TraceBackgroundReference | null = null,
   ): void {
     const u = this.surfaceBlitMaterial.uniforms;
-    const live = this.currentSurfaceBackground();
+    const live = liveOverride ?? this.currentSurfaceBackground();
     u.uSrc.value = src;
     u.uLayer.value = layer ?? src;
     u.uHasSource.value = 1;
@@ -6732,11 +6937,16 @@ export class FractalScene {
       !traceBackgroundsEqual(background, live)
         ? 1
         : 0;
-    this.setSurfaceBlitBackground("Live", live);
-    if (background !== null) this.setSurfaceBlitBackground("Trace", background);
+    const liveDisposable = this.setSurfaceBlitBackground("Live", live);
+    const traceDisposable =
+      background === null
+        ? null
+        : this.setSurfaceBlitBackground("Trace", background);
     this.renderer.setRenderTarget(target);
     this.surfaceBlitQuad.render(this.renderer);
     this.renderer.setRenderTarget(null);
+    liveDisposable?.dispose();
+    traceDisposable?.dispose();
     if (target === null) {
       this.surfacePresentation = { color: src, layer, background };
       this.surfaceCompositePending = false;
@@ -6835,6 +7045,7 @@ export class FractalScene {
     const ratio = this.exportPixelRatio(exportScale);
     const width = Math.floor(this.viewportWidth * ratio);
     const height = Math.floor(this.viewportHeight * ratio);
+    const captureBackground = this.currentSurfaceBackground(width, height);
     // invalidate: false — this arms the offscreen capture job under the
     // centered camera; a capture job never presents (strip-planner's own
     // rule), so nothing centered ever reaches the live canvas and the
@@ -6908,22 +7119,35 @@ export class FractalScene {
       ) {
         return null;
       }
-      return await this.withPixelRatio(ratio, () => {
+      const exported = await this.withPixelRatio(ratio, () => {
         // The mean of the completed passes, or — for a single-pass
         // export, and for every caller that predates supersampling — the
         // traced target itself, byte for byte as before. The image reads the
         // CANVAS, already blitted synchronously, so nothing needs this
         // capture's sample sequence once this returns.
-        if (this.surfaceSampleTaken < 2 || !this.presentSurfaceSampleImage()) {
+        if (
+          this.surfaceSampleTaken < 2 ||
+          !this.presentSurfaceSampleImage(null, captureBackground)
+        ) {
           this.blitSurface(
             this.surfaceSettleTarget.texture,
             null,
             this.surfaceSettleTarget.textures[1],
             this.surfaceSettleBackground,
+            captureBackground,
           );
         }
         return exportImageFrom(this.renderer.domElement);
       });
+      if (
+        !traceBackgroundsEqual(
+          captureBackground,
+          this.currentSurfaceBackground(width, height),
+        )
+      ) {
+        this.surfaceCompositePending = true;
+      }
+      return exported;
     } finally {
       this.releaseSurfaceSampleSequence();
     }
@@ -7447,6 +7671,7 @@ function thumbnailFrom(
   backdrop: BackgroundGradient,
   shape: BackgroundShape,
   composite: GlobalCompositeOperation = "source-over",
+  backdropImage: HTMLCanvasElement | null = null,
 ): string {
   const longSide = Math.max(src.width, src.height);
   const scale = longSide > maxDim ? maxDim / longSide : 1;
@@ -7457,19 +7682,23 @@ function thumbnailFrom(
   out.height = h;
   const ctx = out.getContext("2d");
   if (!ctx) return "";
-  paintBackdropGradient(
-    ctx,
-    w,
-    h,
-    backdrop,
-    shape === "radial"
-      ? {
-          kind: "radial",
-          center: DEFAULT_BACKGROUND_SHAPE_CENTER,
-          scale: backgroundRadialScale(w, h),
-        }
-      : { kind: "linear" },
-  );
+  if (backdropImage) {
+    ctx.drawImage(backdropImage, 0, 0, w, h);
+  } else {
+    paintBackdropGradient(
+      ctx,
+      w,
+      h,
+      backdrop,
+      shape === "radial"
+        ? {
+            kind: "radial",
+            center: DEFAULT_BACKGROUND_SHAPE_CENTER,
+            scale: backgroundRadialScale(w, h),
+          }
+        : { kind: "linear" },
+    );
+  }
   ctx.globalCompositeOperation = composite;
   ctx.drawImage(src, 0, 0, w, h);
   return out.toDataURL("image/jpeg", 0.72);

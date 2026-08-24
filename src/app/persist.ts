@@ -164,7 +164,8 @@ export interface SceneSnapshot {
    */
   glowBrightness: number;
   /**
-   * The scene backdrop (see {@link AppState.background}). Always
+   * The scene backdrop mode and any dormant authored gradient slots (see
+   * {@link AppState.background}). Always
    * present in the snapshot like `symmetry`, but the WIRE form omits the
    * pristine default (`{ mode: "dark" }`, nothing authored) so never-touched
    * scenes keep their short URLs — except under the aerial render style,
@@ -997,9 +998,10 @@ function decodePositionAxisColors(
  * unrecognized mode, so a link from a future build's curated presets
  * degrades to the legacy resolution rather than costing the scene — exactly
  * how builds predating the auto backdrop degrade the now-valid `"auto"`.
- * `"auto"` itself round-trips as the bare mode: the derived colors are
- * never written, so the backdrop keeps tracking palette edits after a link
- * round-trip.
+ * `"auto"` itself round-trips as the bare mode: the derived colors are never
+ * written, so the backdrop keeps tracking palette edits after a link
+ * round-trip. `"flame"` follows the same document shape: the generated image,
+ * seed, blur and render budget are transient and never enter the scene wire.
  *
  * The custom gradient (`top`/`bottom` hex strings, {@link hexToRgb}-strict
  * like {@link decodePositionAxisColors}) decodes independently of the mode
@@ -1009,14 +1011,14 @@ function decodePositionAxisColors(
  * can't be honored and takes the legacy fallback, mirroring the `"custom"`
  * paletteId rule in {@link decodeFlameParams}.
  *
- * `shape` decodes independently of `mode`/`custom` too — it is
- * ORTHOGONAL, not a fourth thing that can fail alongside them — and falls
- * back QUIETLY to `DEFAULT_BACKGROUND_SHAPE` ("linear") on anything not in
- * {@link VALID_BACKGROUND_SHAPES}: absent (every document predating the
- * shape field), malformed, or a shape id from a future build. Never written
- * when it resolves to the default (see the encoder), so this fallback is
- * also what keeps a linear-only document decoding to exactly the shape it
- * always had.
+ * `shape` decodes independently of `mode`/`custom` too — it is ORTHOGONAL to
+ * the gradient modes and remains a dormant authored slot while Flame is
+ * selected, not a fourth thing that can fail alongside them — and falls back
+ * QUIETLY to `DEFAULT_BACKGROUND_SHAPE` ("linear") on anything not in
+ * {@link VALID_BACKGROUND_SHAPES}: absent (every document predating the shape
+ * field), malformed, or a shape id from a future build. Never written when it
+ * resolves to the default (see the encoder), so this fallback is also what
+ * keeps a linear-only document decoding to exactly the shape it always had.
  */
 function decodeBackground(
   raw: unknown,

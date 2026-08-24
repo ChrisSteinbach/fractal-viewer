@@ -13,8 +13,14 @@ import { DARK_BACKDROP, HAZE_BACKDROP, hexToRgb01 } from "./constants";
 import { FLAME_PALETTE_IDS } from "../fractal/palette";
 
 describe("BACKGROUND_MODES", () => {
-  it("lists the four modes in UI order", () => {
-    expect(BACKGROUND_MODES).toEqual(["dark", "haze", "auto", "custom"]);
+  it("lists the five modes in UI order", () => {
+    expect(BACKGROUND_MODES).toEqual([
+      "dark",
+      "haze",
+      "auto",
+      "flame",
+      "custom",
+    ]);
   });
 });
 
@@ -134,6 +140,13 @@ describe("resolveBackground", () => {
 
   it("falls back to the dark stops for auto mode with no palette argument", () => {
     expect(resolveBackground({ mode: "auto" })).toEqual({
+      top: hexToRgb01(DARK_BACKDROP.top),
+      bottom: hexToRgb01(DARK_BACKDROP.bottom),
+    });
+  });
+
+  it("returns the dark placeholder for flame mode while its image is transient", () => {
+    expect(resolveBackground({ mode: "flame" }, "sunset")).toEqual({
       top: hexToRgb01(DARK_BACKDROP.top),
       bottom: hexToRgb01(DARK_BACKDROP.bottom),
     });

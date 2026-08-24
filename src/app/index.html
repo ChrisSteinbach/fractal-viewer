@@ -969,7 +969,8 @@
 
           <!-- The scene backdrop: shown by every renderer, not just the
                explorer, so unlike Depth Style it stays live in the 4D
-               view too. Custom reveals the two-stop pickers below. -->
+               view too. Flame selects the generated image source; Custom
+               reveals the two-stop pickers below. -->
           <div id="backgroundRow">
             <label class="select-label">
               Background
@@ -977,13 +978,15 @@
                 <option value="dark">Dark</option>
                 <option value="haze">Haze</option>
                 <option value="auto">Auto</option>
+                <option value="flame">Flame</option>
                 <option value="custom">Custom</option>
               </select>
             </label>
           </div>
 
-          <!-- The backdrop's gradient SHAPE: orthogonal to the Background
-               select above — every mode can be linear or radial. See
+          <!-- The backdrop's gradient SHAPE: orthogonal to the gradient
+               Background choices above — every gradient mode can be linear
+               or radial. Hidden while Flame selects a per-pixel image. See
                fractal/background-shape.ts's BACKGROUND_SHAPES. -->
           <div id="backgroundShapeRow">
             <label class="select-label">

@@ -8,12 +8,15 @@ import {
   compositeSurfaceBackgroundLayer,
   decodeSurfaceBackgroundLayer,
   encodeSurfaceBackgroundLayer,
+  sampleTraceBackground,
+  sampleTraceBackgroundImage,
   snapshotTraceBackground,
   surfaceBackgroundWeight,
   traceBackgroundsEqual,
 } from "./surface-background-layer";
 import type {
   SurfaceBackgroundLayerBytes,
+  TraceBackgroundImage,
   TraceBackgroundSpec,
 } from "./surface-background-layer";
 
@@ -35,6 +38,17 @@ const repeatLayer = (
 
 const quantize = (channel: number): number =>
   Math.floor(Math.max(0, Math.min(1, channel)) * 255 + 0.5);
+
+/** Top row red/green, bottom row blue/white — deliberately asymmetric so a
+ * Surface-v/ImageData-y flip cannot hide. */
+const cornerImage = (revision = 1): TraceBackgroundImage => ({
+  width: 2,
+  height: 2,
+  rgba: new Uint8ClampedArray([
+    255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+  ]),
+  revision,
+});
 
 describe("surface background layer encoding", () => {
   it("encodes a miss as full background weight", () => {
@@ -127,6 +141,70 @@ describe("trace background references", () => {
       ),
     ).toBe(true);
   });
+
+  it("uses immutable image content identity and revision instead of ignored fallback stops", () => {
+    const image = cornerImage();
+    const a: TraceBackgroundSpec = {
+      ...uniformBackground([0, 0, 0]),
+      image,
+    };
+    const sameContent: TraceBackgroundSpec = {
+      ...uniformBackground([1, 1, 1]),
+      image: { ...image },
+    };
+    expect(traceBackgroundsEqual(a, sameContent)).toBe(true);
+    expect(
+      traceBackgroundsEqual(a, {
+        ...sameContent,
+        image: { ...image, revision: image.revision + 1 },
+      }),
+    ).toBe(false);
+    expect(
+      traceBackgroundsEqual(a, {
+        ...sameContent,
+        image: { ...image, rgba: image.rgba.slice() },
+      }),
+    ).toBe(false);
+    expect(traceBackgroundsEqual(a, uniformBackground([0, 0, 0]))).toBe(false);
+    expect(snapshotTraceBackground(a).image).toBe(image);
+  });
+});
+
+describe("Surface image background sampling", () => {
+  it("maps bottom-origin Surface UV to top-origin ImageData rows", () => {
+    const image = cornerImage();
+    expect(sampleTraceBackgroundImage(image, 0.25, 0.75)).toEqual([1, 0, 0]);
+    expect(sampleTraceBackgroundImage(image, 0.75, 0.75)).toEqual([0, 1, 0]);
+    expect(sampleTraceBackgroundImage(image, 0.25, 0.25)).toEqual([0, 0, 1]);
+    expect(sampleTraceBackgroundImage(image, 0.75, 0.25)).toEqual([1, 1, 1]);
+  });
+
+  it("matches clamp-to-edge bilinear texture filtering", () => {
+    const image = cornerImage();
+    expect(sampleTraceBackgroundImage(image, 0.5, 0.5)).toEqual([
+      0.5, 0.5, 0.5,
+    ]);
+    expect(sampleTraceBackgroundImage(image, -4, 0.75)).toEqual([1, 0, 0]);
+    expect(sampleTraceBackgroundImage(image, 4, 0.25)).toEqual([1, 1, 1]);
+  });
+
+  it("dispatches the unified sampler between image and gradient sources", () => {
+    const gradient = uniformBackground([0.2, 0.3, 0.4]);
+    expect(sampleTraceBackground(gradient, 0.1, 0.9)).toEqual([0.2, 0.3, 0.4]);
+    expect(
+      sampleTraceBackground({ ...gradient, image: cornerImage() }, 0.25, 0.75),
+    ).toEqual([1, 0, 0]);
+  });
+
+  it("rejects malformed immutable image records", () => {
+    expect(() =>
+      sampleTraceBackgroundImage(
+        { width: 2, height: 2, rgba: new Uint8Array(4), revision: 1 },
+        0.5,
+        0.5,
+      ),
+    ).toThrow(/RGBA length/);
+  });
 });
 
 describe("compositeSurfaceBackgroundLayer", () => {
@@ -144,6 +222,27 @@ describe("compositeSurfaceBackgroundLayer", () => {
     expect(Array.from(out)).toEqual([13, 72, 201, 255, 255, 4, 99, 255]);
   });
 
+  it("direct-copies when immutable image identity and revision are unchanged", () => {
+    const image = cornerImage(7);
+    const reference: TraceBackgroundSpec = {
+      ...uniformBackground([0, 0, 0]),
+      image,
+    };
+    const legacy = new Uint8Array([13, 72, 201, 0]);
+    const out = compositeSurfaceBackgroundLayer({
+      width: 1,
+      height: 1,
+      legacyRgba: legacy,
+      layerRgba: repeatLayer(encodeSurfaceBackgroundLayer(0, 0, 0), 1),
+      referenceBackground: reference,
+      liveBackground: {
+        ...uniformBackground([1, 1, 1]),
+        image: { ...image },
+      },
+    });
+    expect(Array.from(out)).toEqual([13, 72, 201, 255]);
+  });
+
   it("replaces a miss's reference background with the live background", () => {
     const reference = uniformBackground([51 / 255, 76 / 255, 102 / 255]);
     const live = uniformBackground([102 / 255, 153 / 255, 204 / 255]);
@@ -156,6 +255,41 @@ describe("compositeSurfaceBackgroundLayer", () => {
       liveBackground: live,
     });
     expect(Array.from(out)).toEqual([102, 153, 204, 255]);
+  });
+
+  it("replaces gradient misses with a bottom-origin view of a top-origin image", () => {
+    const reference = uniformBackground([0, 0, 0]);
+    const out = compositeSurfaceBackgroundLayer({
+      width: 2,
+      height: 2,
+      legacyRgba: new Uint8Array(16),
+      layerRgba: repeatLayer(encodeSurfaceBackgroundLayer(0, 0, 0), 4),
+      referenceBackground: reference,
+      liveBackground: { ...reference, image: cornerImage() },
+    });
+    // Surface row zero is bottom: blue/white, followed by top-row red/green.
+    expect(Array.from(out)).toEqual([
+      0, 0, 255, 255, 255, 255, 255, 255, 255, 0, 0, 255, 0, 255, 0, 255,
+    ]);
+  });
+
+  it("samples an image reference as well as an image live source", () => {
+    const reference: TraceBackgroundSpec = {
+      ...uniformBackground([0, 0, 0]),
+      image: cornerImage(),
+    };
+    const out = compositeSurfaceBackgroundLayer({
+      width: 2,
+      height: 2,
+      // The reference image in Surface's bottom-origin row order.
+      legacyRgba: new Uint8Array([
+        0, 0, 255, 255, 255, 255, 255, 255, 255, 0, 0, 255, 0, 255, 0, 255,
+      ]),
+      layerRgba: repeatLayer(encodeSurfaceBackgroundLayer(0, 0, 0), 4),
+      referenceBackground: reference,
+      liveBackground: uniformBackground([1, 1, 1]),
+    });
+    expect(Array.from(out)).toEqual(new Array(16).fill(255));
   });
 
   it("leaves a fully covered, unfogged hit unchanged", () => {
@@ -336,6 +470,41 @@ describe("compositeSurfaceBackgroundLayer", () => {
         layers.set(encodeSurfaceBackgroundLayer((x + y) / 10, y / 8, 0.3), p);
       }
     }
+    const full = compositeSurfaceBackgroundLayer({
+      width,
+      height,
+      legacyRgba: legacy,
+      layerRgba: layers,
+      referenceBackground: reference,
+      liveBackground: live,
+    });
+    const start = bandBottom * width * 4;
+    const end = start + bandHeight * width * 4;
+    const band = compositeSurfaceBackgroundLayer({
+      width,
+      height: bandHeight,
+      legacyRgba: legacy.slice(start, end),
+      layerRgba: layers.slice(start, end),
+      referenceBackground: reference,
+      liveBackground: live,
+      traceOffset: [0, bandBottom],
+      traceExtent: [width, height],
+    });
+    expect(band).toEqual(full.slice(start, end));
+  });
+
+  it("samples one image across capture bands instead of repeating it per band", () => {
+    const width = 4;
+    const height = 7;
+    const bandBottom = 3;
+    const bandHeight = 2;
+    const reference = uniformBackground([0, 0, 0]);
+    const live: TraceBackgroundSpec = { ...reference, image: cornerImage() };
+    const legacy = new Uint8Array(width * height * 4);
+    const layers = repeatLayer(
+      encodeSurfaceBackgroundLayer(0, 0, 0),
+      width * height,
+    );
     const full = compositeSurfaceBackgroundLayer({
       width,
       height,

@@ -4355,6 +4355,39 @@ describe("decodeScene background", () => {
     expect(decodeScene(encodeScene(s))!.background).toEqual({ mode: "auto" });
   });
 
+  it("round-trips flame as the bare mode with no generated image state", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: { mode: "flame" },
+    };
+
+    const payload = decodePayload(encodeScene(s));
+
+    expect(payload.background).toEqual({ mode: "flame" });
+    expect(decodeScene(encodeScene(s))!.background).toEqual({ mode: "flame" });
+  });
+
+  it("keeps authored gradient slots dormant while flame is selected", () => {
+    const s: SceneSnapshot = {
+      ...baseSnapshot(),
+      background: {
+        mode: "flame",
+        custom: { top: [0.2, 0.4, 0.6], bottom: [0.8, 1, 0] },
+        shape: "radial",
+      },
+    };
+
+    const once = encodeScene(s);
+
+    expect(decodePayload(once).background).toEqual({
+      mode: "flame",
+      top: "#336699",
+      bottom: "#ccff00",
+      shape: "radial",
+    });
+    expect(decodeScene(once)!.background).toEqual(s.background);
+  });
+
   it("keeps the authored custom payload even while auto is selected", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),

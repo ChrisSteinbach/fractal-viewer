@@ -32,10 +32,28 @@ import {
 import type { BackgroundShapeSpec, BackgroundStops } from "./background-shape";
 import { clamp } from "./vec";
 
-/** A background as captured when a trace starts, or as resolved live later. */
+/**
+ * One immutable image background. `rgba` uses the ImageData convention: row
+ * zero is the TOP row. `revision` is part of the rendered-content identity, so
+ * replacing pixels in a long-lived owner means publishing a new object and a
+ * new revision rather than mutating this one in place.
+ */
+export interface TraceBackgroundImage {
+  readonly width: number;
+  readonly height: number;
+  readonly rgba: Uint8Array | Uint8ClampedArray;
+  readonly revision: number;
+}
+
+/**
+ * A background as captured when a trace starts, or as resolved live later.
+ * Stops/shape remain the trace fallback and the gradient source when `image`
+ * is absent. When `image` is present it is the per-pixel color source instead.
+ */
 export interface TraceBackgroundSpec {
   readonly stops: BackgroundStops;
   readonly shape: BackgroundShapeSpec;
+  readonly image?: TraceBackgroundImage;
 }
 
 /** An owned snapshot: later mutations of an app-layer value cannot alter it. */
@@ -83,6 +101,84 @@ export interface SurfaceBackgroundCompositeSpec {
   readonly traceExtent?: readonly [width: number, height: number];
 }
 
+function validateImage(image: TraceBackgroundImage): void {
+  if (!Number.isInteger(image.width) || image.width <= 0) {
+    throw new Error(
+      `Surface background image width must be a positive integer`,
+    );
+  }
+  if (!Number.isInteger(image.height) || image.height <= 0) {
+    throw new Error(
+      `Surface background image height must be a positive integer`,
+    );
+  }
+  const byteLength = image.width * image.height * 4;
+  if (image.rgba.length !== byteLength) {
+    throw new Error(
+      `Surface background image RGBA length ${String(image.rgba.length)} does not match ${String(byteLength)}`,
+    );
+  }
+}
+
+function sampleImageUnchecked(
+  image: TraceBackgroundImage,
+  u: number,
+  v: number,
+): [number, number, number] {
+  // Match a clamp-to-edge, linearly filtered normalized texture lookup. The
+  // half texel converts normalized coordinates to texel-index space. ImageData
+  // rows run top-down while Surface's v=0 is the bottom, hence `1 - v` here.
+  const x = u * image.width - 0.5;
+  const topY = (1 - v) * image.height - 0.5;
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(topY);
+  const tx = x - x0;
+  const ty = topY - y0;
+  const left = Math.max(0, Math.min(image.width - 1, x0));
+  const right = Math.max(0, Math.min(image.width - 1, x0 + 1));
+  const top = Math.max(0, Math.min(image.height - 1, y0));
+  const bottom = Math.max(0, Math.min(image.height - 1, y0 + 1));
+  const rgba = image.rgba;
+  const topLeft = (top * image.width + left) * 4;
+  const topRight = (top * image.width + right) * 4;
+  const bottomLeft = (bottom * image.width + left) * 4;
+  const bottomRight = (bottom * image.width + right) * 4;
+  const out: [number, number, number] = [0, 0, 0];
+  for (let lane = 0; lane < 3; lane++) {
+    const topMix =
+      (rgba[topLeft + lane] * (1 - tx) + rgba[topRight + lane] * tx) / 255;
+    const bottomMix =
+      (rgba[bottomLeft + lane] * (1 - tx) + rgba[bottomRight + lane] * tx) /
+      255;
+    out[lane] = topMix * (1 - ty) + bottomMix * ty;
+  }
+  return out;
+}
+
+/**
+ * Sample top-origin RGBA bytes through Surface's bottom-origin normalized UV.
+ * Filtering matches a WebGL clamp-to-edge `LinearFilter` texture lookup.
+ */
+export function sampleTraceBackgroundImage(
+  image: TraceBackgroundImage,
+  u: number,
+  v: number,
+): [number, number, number] {
+  validateImage(image);
+  return sampleImageUnchecked(image, u, v);
+}
+
+/** Sample either an image source or the existing analytic gradient source. */
+export function sampleTraceBackground(
+  background: TraceBackgroundSpec,
+  u: number,
+  v: number,
+): [number, number, number] {
+  return background.image === undefined
+    ? backgroundColorAt(u, v, background.stops, background.shape)
+    : sampleTraceBackgroundImage(background.image, u, v);
+}
+
 function copyPair(value: readonly [number, number]): [number, number] {
   return [value[0], value[1]];
 }
@@ -108,6 +204,9 @@ export function snapshotTraceBackground(
       ...(shape.center === undefined ? {} : { center: copyPair(shape.center) }),
       ...(shape.scale === undefined ? {} : { scale: copyPair(shape.scale) }),
     },
+    // Image sources are immutable by contract. Preserve their content identity
+    // instead of copying a potentially multi-megabyte buffer on every present.
+    ...(background.image === undefined ? {} : { image: background.image }),
   };
 }
 
@@ -135,6 +234,15 @@ export function traceBackgroundsEqual(
   a: TraceBackgroundSpec,
   b: TraceBackgroundSpec,
 ): boolean {
+  if (a.image !== undefined || b.image !== undefined) {
+    if (a.image === undefined || b.image === undefined) return false;
+    return (
+      a.image.width === b.image.width &&
+      a.image.height === b.image.height &&
+      a.image.revision === b.image.revision &&
+      a.image.rgba === b.image.rgba
+    );
+  }
   if (
     !triplesEqual(a.stops.top, b.stops.top) ||
     !triplesEqual(a.stops.bottom, b.stops.bottom) ||
@@ -238,6 +346,12 @@ export function compositeSurfaceBackgroundLayer(
       `Surface layer RGBA length ${layerRgba.length} does not match ${byteLength}`,
     );
   }
+  if (spec.referenceBackground.image !== undefined) {
+    validateImage(spec.referenceBackground.image);
+  }
+  if (spec.liveBackground.image !== undefined) {
+    validateImage(spec.liveBackground.image);
+  }
 
   const out = new Uint8ClampedArray(byteLength);
   const equal = traceBackgroundsEqual(
@@ -256,18 +370,24 @@ export function compositeSurfaceBackgroundLayer(
         out[p + 2] = legacyRgba[p + 2];
       } else {
         const [u, v] = backgroundImageUv(x, y, offset, extent);
-        const reference = backgroundColorAt(
-          u,
-          v,
-          spec.referenceBackground.stops,
-          spec.referenceBackground.shape,
-        );
-        const live = backgroundColorAt(
-          u,
-          v,
-          spec.liveBackground.stops,
-          spec.liveBackground.shape,
-        );
+        const reference =
+          spec.referenceBackground.image === undefined
+            ? backgroundColorAt(
+                u,
+                v,
+                spec.referenceBackground.stops,
+                spec.referenceBackground.shape,
+              )
+            : sampleImageUnchecked(spec.referenceBackground.image, u, v);
+        const live =
+          spec.liveBackground.image === undefined
+            ? backgroundColorAt(
+                u,
+                v,
+                spec.liveBackground.stops,
+                spec.liveBackground.shape,
+              )
+            : sampleImageUnchecked(spec.liveBackground.image, u, v);
         const beta = layerRgba[p + SURFACE_LAYER_BACKGROUND_WEIGHT_BYTE];
         out[p] = adjustedByte(legacyRgba[p], beta, reference[0], live[0]);
         out[p + 1] = adjustedByte(
