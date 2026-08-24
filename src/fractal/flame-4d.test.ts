@@ -27,6 +27,7 @@ import { createFlameHistogram } from "./flame";
 import type { Mat4 } from "./flame";
 import { pentatope } from "./presets";
 import { mulberry32 } from "./rng";
+import type { ShapeSpec } from "./shapes";
 import type { Transform4, Vec3, Vec4 } from "./types";
 
 /** A single map that ignores its input and always lands exactly on `point`:
@@ -1515,5 +1516,92 @@ describe("accumulateFlame4 scheduled-hybrid post-word (correctness oracle)", () 
     expect(actual.maxHits).toBe(expected.maxHits);
     expect(actual.orbit).toEqual(expected.orbit);
     expect(actual.orbitW).toBe(expected.orbitW);
+  });
+});
+
+describe("accumulateFlame4 shape emitters (correctness oracle)", () => {
+  it("matches the stepOrbit4/plotPoint4 oracle with an emitter forced through the inlined loop", () => {
+    // The condensation twin of the top oracle (see chaos-game-4d.test.ts for
+    // the emitter branch's own semantics pins — sample embedded at w = 0,
+    // one primary seed draw, variations skipped): the emitter map mixes w
+    // through an xw rotation and carries a variation on purpose, and the
+    // deposit count asserts the branch genuinely fired.
+    const spec: ShapeSpec = {
+      parts: [{ primitive: { kind: "sphere", radius: 0.5 }, combine: "union" }],
+    };
+    const transforms4: Transform4[] = [
+      ...weightedPentatope(),
+      {
+        position: [0.1, -0.05, 0, 0.3],
+        scale: [0.5, 0.5, 0.5, 0.5],
+        rotation: { xw: 0.4 },
+        weight: 3,
+        variations: [{ type: "swirl", weight: 0.6 }],
+        emitter: spec,
+      },
+    ];
+    const prepared = prepareChaosGame4(transforms4);
+    const palette = transformColors(transforms4.length);
+    const width = 48;
+    const height = 48;
+    const iterations = 4000;
+    const seed = 91;
+
+    const actual = accumulateFlame4(
+      prepared,
+      FLAT_PROJECTION,
+      FLAT_VIEW,
+      width,
+      height,
+      iterations,
+      mulberry32(seed),
+      { kind: "transform", palette },
+    );
+
+    const rng = mulberry32(seed);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    let w = rng() - 0.5;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const step = stepOrbit4(prepared, x, y, z, w, rng);
+      x = step.x;
+      y = step.y;
+      z = step.z;
+      w = step.w;
+    }
+    const expected = createFlameHistogram(width, height);
+    let emitterDeposits = 0;
+    const emitterIndex = transforms4.length - 1;
+    for (let i = 0; i < iterations; i++) {
+      const step = stepOrbit4(prepared, x, y, z, w, rng);
+      x = step.x;
+      y = step.y;
+      z = step.z;
+      w = step.w;
+      const [px, py] = plotPoint4(prepared, x, y, z, w, rng);
+      // FLAT_PROJECTION: clipX = x, clipY = y, clipW = 1 — no divide.
+      const col = Math.floor((px + 1) * 0.5 * width);
+      const row = Math.floor((1 - py) * 0.5 * height);
+      if (col < 0 || col >= width || row < 0 || row >= height) continue;
+      const bucket = row * width + col;
+      expected.hits[bucket] += 1;
+      expected.maxHits = Math.max(expected.maxHits, expected.hits[bucket]);
+      const rgb = palette[step.index] ?? [1, 1, 1];
+      const o = bucket * 3;
+      expected.sumRGB[o] += rgb[0];
+      expected.sumRGB[o + 1] += rgb[1];
+      expected.sumRGB[o + 2] += rgb[2];
+      if (step.index === emitterIndex) emitterDeposits++;
+    }
+    expected.orbit = [x, y, z];
+    expected.orbitW = w;
+
+    expect(Array.from(actual.hits)).toEqual(Array.from(expected.hits));
+    expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
+    expect(actual.maxHits).toBe(expected.maxHits);
+    expect(actual.orbit).toEqual(expected.orbit);
+    expect(actual.orbitW).toBe(expected.orbitW);
+    expect(emitterDeposits).toBeGreaterThan(iterations / 10);
   });
 });

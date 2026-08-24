@@ -830,6 +830,18 @@ function jitterTransform(rng: Rng, base: Transform, spread: number): Transform {
     );
   }
 
+  // The emitter spec rides through UNTOUCHED, by reference: a mutation
+  // perturbs the transform's OWN TRS — which IS the shape's pose — and
+  // never the shape's internal parameters (the shape is the artwork's
+  // fixed vocabulary, not a knob field; first-cut stance from the bead
+  // that shipped it). Consumes no draws whether present or absent, so
+  // every pre-emitter fixed-seed mutation stays byte-identical, and an
+  // absent emitter is never materialized (the wildcard's structural kick
+  // doesn't invent one either — it only swaps variation types).
+  if (base.emitter) {
+    result.emitter = base.emitter;
+  }
+
   return result;
 }
 

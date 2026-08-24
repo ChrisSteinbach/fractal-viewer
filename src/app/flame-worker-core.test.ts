@@ -3090,3 +3090,105 @@ describe("FlameWorkerSession chaos rows force the CPU backend", () => {
     expect(progress.at(-1)!.iterationsDone).toBe(500);
   });
 });
+
+describe("FlameWorkerSession shape emitters force the CPU backend", () => {
+  const EMITTER = {
+    parts: [
+      {
+        primitive: { kind: "sphere" as const, radius: 0.5 },
+        combine: "union" as const,
+      },
+    ],
+  };
+
+  it("never attempts the GPU factory for an emitter document and discloses emitterForced on the backend event", async () => {
+    let factoryCalls = 0;
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => {
+      factoryCalls++;
+      return {
+        kind: "gpu",
+        accumulate: async (n) => n,
+        snapshot: async () => createFlameHistogram(8, 8),
+        destroy: () => {},
+      };
+    };
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({
+        transforms: sierpinskiTetrahedron().map((t, i) =>
+          i === 0 ? { ...t, emitter: EMITTER } : t,
+        ),
+        gpuPreference: "auto",
+      }),
+    );
+    await drainAsync(scheduler);
+
+    // GPU would have been attempted (auto + factory + no failure) — the
+    // emitters are the one reason it wasn't, so the event says so.
+    expect(factoryCalls).toBe(0);
+    expect(backendEvents(events)).toEqual([
+      { type: "backend", backend: "cpu", emitterForced: true },
+    ]);
+  });
+
+  it("does not blame emitters when GPU was never on the table", async () => {
+    const { session, events, scheduler } = harness({});
+    session.handle(
+      startCommand({
+        transforms: sierpinskiTetrahedron().map((t, i) =>
+          i === 0 ? { ...t, emitter: EMITTER } : t,
+        ),
+        gpuPreference: "auto",
+      }),
+    );
+    await drainAsync(scheduler);
+
+    expect(backendEvents(events)).toEqual([
+      { type: "backend", backend: "cpu" },
+    ]);
+  });
+
+  it("sets BOTH flags for a document carrying chi and emitters — each is truthfully a blocker", async () => {
+    const createGpuBackend = async (): Promise<FlameAccumBackend> => ({
+      kind: "gpu",
+      accumulate: async (n) => n,
+      snapshot: async () => createFlameHistogram(8, 8),
+      destroy: () => {},
+    });
+    const { session, events, scheduler } = harness({ createGpuBackend });
+    session.handle(
+      startCommand({
+        transforms: sierpinskiTetrahedron().map((t, i) =>
+          i === 0 ? { ...t, chaos: [1, 0, 1, 1], emitter: EMITTER } : t,
+        ),
+        gpuPreference: "auto",
+      }),
+    );
+    await drainAsync(scheduler);
+
+    expect(backendEvents(events)).toEqual([
+      {
+        type: "backend",
+        backend: "cpu",
+        chaosForced: true,
+        emitterForced: true,
+      },
+    ]);
+  });
+
+  it("still renders the emitter document on the CPU path — accumulation completes", async () => {
+    const { session, events, scheduler } = harness({});
+    session.handle(
+      startCommand({
+        transforms: sierpinskiTetrahedron().map((t, i) =>
+          i === 0 ? { ...t, emitter: EMITTER } : t,
+        ),
+        iterationsBudget: 500,
+      }),
+    );
+    await drainAsync(scheduler);
+
+    const progress = progressEvents(events);
+    expect(progress.at(-1)!.iterationsDone).toBe(500);
+  });
+});

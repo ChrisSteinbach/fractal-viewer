@@ -655,7 +655,11 @@
 import { composeAffine } from "./affine";
 import { isFlatTransform, symmetryIsNonFlat } from "./affine4";
 import { BULB_POWER } from "./bulb-de";
-import { effectiveSymmetryOrder, systemHasChaos } from "./chaos-game";
+import {
+  effectiveSymmetryOrder,
+  systemHasChaos,
+  systemHasEmitters,
+} from "./chaos-game";
 import { mulberry32 } from "./rng";
 import {
   SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
@@ -1020,6 +1024,17 @@ export function analyzeEscapeSystem(
   // a different object than the points modes show for the same document.
   if (systemHasChaos(transforms)) {
     reasons.push("chaos rows (unsupported in escape-time mode)");
+  }
+  // Shape emitters are a chaos-game SELECTION kind — with probability
+  // proportional to its weight a step emits a fresh shape sample instead of
+  // applying its map — and this render's forward orbit applies the chain's
+  // links cyclically with no per-step pick at all, so it would silently
+  // ignore the field and march the plain chain: a different object than the
+  // points modes show for the same document. NOT structurally refused — a
+  // chain link may carry `emitter` beside its fold and pass every shape
+  // test above — so the refusal is explicit, chi's line exactly.
+  if (systemHasEmitters(transforms)) {
+    reasons.push("shape emitters (unsupported in escape-time mode)");
   }
   if (finalTransform) {
     reasons.push("final transform (unsupported in escape-time mode)");

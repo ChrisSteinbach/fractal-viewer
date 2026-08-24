@@ -1794,3 +1794,30 @@ describe("analyzeEscapeSystem chaos rows", () => {
     ).toBe("eligible");
   });
 });
+
+describe("analyzeEscapeSystem shape emitters", () => {
+  it("refuses an emitter riding an admissible fold link — NOT structurally refused, so the pin is the explicit reason", () => {
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.5 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    // The emitter-free base is ELIGIBLE (this is the claim-verification
+    // half: the shape tests do NOT refuse an emitter document on their
+    // own, because `emitter` is orthogonal to the link's fold).
+    expect(analyzeEscapeSystem([canonicalMandelbox()]).status).toBe("eligible");
+    const analysis = analyzeEscapeSystem([canonicalMandelbox({ emitter })]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toContain(
+      "shape emitters (unsupported in escape-time mode)",
+    );
+    // Empty parts read absent (transformHasEmitter's presence rule).
+    expect(
+      analyzeEscapeSystem([canonicalMandelbox({ emitter: { parts: [] } })])
+        .status,
+    ).toBe("eligible");
+  });
+});

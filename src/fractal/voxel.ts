@@ -27,6 +27,8 @@ import {
   CHAOS_SUB_ORBIT_POINTS,
   ESCAPE_LIMIT,
   WARMUP_ITERATIONS,
+  createEmitterStream,
+  emitterSeed,
   pickIndex,
   pickScheduleIndex,
   stepOrbit,
@@ -430,9 +432,14 @@ export function accumulateVoxels(
 ): VoxelGrid {
   const { affines, variations, postRotations, finalAffine, finalWarp } =
     prepared;
-  const { baseTransformCount, schedule } = prepared;
+  const { baseTransformCount, schedule, emitters } = prepared;
   const { size, density, avgRGB } = grid;
   let maxDensity = grid.maxDensity;
+  // Emitter-sample stream — accumulateFlame's per-run reseedable object, one
+  // primary seed draw per emitter step (chaos-game.ts's emitterSeed). Inert
+  // without emitters.
+  const emitterStream = createEmitterStream();
+  const emitterDraw = emitterStream.draw;
 
   // Color-mode dispatch, hoisted like buildColors': an integer code, a
   // prebuilt ramp LUT for height/radius (256 entries once per call, not
@@ -558,26 +565,41 @@ export function accumulateVoxels(
       const speed = colorSpeeds[baseIdx];
       c = c * (1 - speed) + colorSlots[baseIdx] * speed;
     }
-    const aff = affines[idx];
-    const m = aff.m;
-    const t = aff.t;
-    const ax = m[0] * x + m[1] * y + m[2] * z + t[0];
-    const ay = m[3] * x + m[4] * y + m[5] * z + t[1];
-    const az = m[6] * x + m[7] * y + m[8] * z + t[2];
-
-    const warp = variations[idx];
+    const emitter = emitters !== null ? emitters[baseIdx] : null;
     let nx: number;
     let ny: number;
     let nz: number;
-    if (warp === null) {
-      nx = ax;
-      ny = ay;
-      nz = az;
+    if (emitter !== null) {
+      // Condensation step — stepOrbit's emitter branch exactly: one primary
+      // seed draw, the sampler on the derived stream, the slot's affine as
+      // the shape's pose, incoming point and variations ignored.
+      emitterStream.reseed(emitterSeed(rng));
+      const sample = emitter(emitterDraw);
+      const aff = affines[idx];
+      const m = aff.m;
+      const t = aff.t;
+      nx = m[0] * sample[0] + m[1] * sample[1] + m[2] * sample[2] + t[0];
+      ny = m[3] * sample[0] + m[4] * sample[1] + m[5] * sample[2] + t[1];
+      nz = m[6] * sample[0] + m[7] * sample[1] + m[8] * sample[2] + t[2];
     } else {
-      const q = warp(ax, ay, az, rng);
-      nx = q[0];
-      ny = q[1];
-      nz = q[2];
+      const aff = affines[idx];
+      const m = aff.m;
+      const t = aff.t;
+      const ax = m[0] * x + m[1] * y + m[2] * z + t[0];
+      const ay = m[3] * x + m[4] * y + m[5] * z + t[1];
+      const az = m[6] * x + m[7] * y + m[8] * z + t[2];
+
+      const warp = variations[idx];
+      if (warp === null) {
+        nx = ax;
+        ny = ay;
+        nz = az;
+      } else {
+        const q = warp(ax, ay, az, rng);
+        nx = q[0];
+        ny = q[1];
+        nz = q[2];
+      }
     }
 
     // Symmetry: rotate this slot's FULL affine + variation output —

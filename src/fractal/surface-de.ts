@@ -4,6 +4,7 @@ import {
   effectiveSymmetryOrder,
   runChaosGame,
   systemHasChaos,
+  transformHasEmitter,
 } from "./chaos-game";
 import { mulberry32 } from "./rng";
 import {
@@ -1500,6 +1501,19 @@ export function analyzeSurfaceSystem(
       "chaos rows constrain the attractor (Surface would march the unconstrained object)",
     );
   }
+
+  // Shape emitters (condensation) make the attractor the UNION of every
+  // composition's image of the shape — a SUPERSET of the plain attractor —
+  // and this estimator's inverse-map descent carries no shape term, so it
+  // would march the plain, smaller object: confidently wrong, the chi
+  // refusal's mirror image. Refused on PRESENCE (transformHasEmitter's
+  // conservative line) until the descent grows a sigma-scaled shape
+  // distance at every node (open work: fr-wo2j.10).
+  transforms.forEach((t, i) => {
+    if (transformHasEmitter(t)) {
+      reasons.push(`map ${i + 1} is a shape emitter (condensation)`);
+    }
+  });
 
   transforms.forEach((t, i) => {
     if (!isActive(t)) return;

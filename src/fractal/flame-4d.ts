@@ -63,6 +63,8 @@ import {
   CHAOS_SUB_ORBIT_POINTS,
   ESCAPE_LIMIT,
   WARMUP_ITERATIONS,
+  createEmitterStream,
+  emitterSeed,
   pickScheduleIndex,
 } from "./chaos-game";
 import { pickIndex4, stepOrbit4 } from "./chaos-game-4d";
@@ -154,9 +156,14 @@ export function accumulateFlame4(
 
   const { affines, variations, postRotations, finalAffine, finalWarp } =
     prepared;
-  const { baseTransformCount, schedule } = prepared;
+  const { baseTransformCount, schedule, emitters } = prepared;
   const { hits, sumRGB } = hist;
   let maxHits = hist.maxHits;
+  // Emitter-sample stream — accumulateFlame's per-run reseedable object, one
+  // primary seed draw per emitter step (chaos-game.ts's emitterSeed). Inert
+  // without emitters.
+  const emitterStream = createEmitterStream();
+  const emitterDraw = emitterStream.draw;
 
   // Structural coloring (mirrors accumulateFlame's colorLUT path exactly —
   // see FourDRenderColor's doc): `structural` gates both the per-step update below
@@ -282,30 +289,46 @@ export function accumulateFlame4(
       const speed = colorSpeeds[baseIdx];
       c = c * (1 - speed) + colorSlots[baseIdx] * speed;
     }
-    const aff = affines[idx];
-    const m = aff.m;
-    const t = aff.t;
-    const ax = m[0] * x + m[1] * y + m[2] * z + m[3] * w + t[0];
-    const ay = m[4] * x + m[5] * y + m[6] * z + m[7] * w + t[1];
-    const az = m[8] * x + m[9] * y + m[10] * z + m[11] * w + t[2];
-    const aw = m[12] * x + m[13] * y + m[14] * z + m[15] * w + t[3];
-
-    const warp = variations[idx];
+    const emitter = emitters !== null ? emitters[baseIdx] : null;
     let nx: number;
     let ny: number;
     let nz: number;
     let nw: number;
-    if (warp === null) {
-      nx = ax;
-      ny = ay;
-      nz = az;
-      nw = aw;
+    if (emitter !== null) {
+      // Condensation step — stepOrbit4's emitter branch exactly: one
+      // primary seed draw, the 3D sample embedded at w = 0 (the m[3]/m[7]/
+      // m[11]/m[15] column drops out), the slot's 4D affine as the pose.
+      emitterStream.reseed(emitterSeed(rng));
+      const sample = emitter(emitterDraw);
+      const aff = affines[idx];
+      const m = aff.m;
+      const t = aff.t;
+      nx = m[0] * sample[0] + m[1] * sample[1] + m[2] * sample[2] + t[0];
+      ny = m[4] * sample[0] + m[5] * sample[1] + m[6] * sample[2] + t[1];
+      nz = m[8] * sample[0] + m[9] * sample[1] + m[10] * sample[2] + t[2];
+      nw = m[12] * sample[0] + m[13] * sample[1] + m[14] * sample[2] + t[3];
     } else {
-      const q = warp(ax, ay, az, aw, rng);
-      nx = q[0];
-      ny = q[1];
-      nz = q[2];
-      nw = q[3];
+      const aff = affines[idx];
+      const m = aff.m;
+      const t = aff.t;
+      const ax = m[0] * x + m[1] * y + m[2] * z + m[3] * w + t[0];
+      const ay = m[4] * x + m[5] * y + m[6] * z + m[7] * w + t[1];
+      const az = m[8] * x + m[9] * y + m[10] * z + m[11] * w + t[2];
+      const aw = m[12] * x + m[13] * y + m[14] * z + m[15] * w + t[3];
+
+      const warp = variations[idx];
+      if (warp === null) {
+        nx = ax;
+        ny = ay;
+        nz = az;
+        nw = aw;
+      } else {
+        const q = warp(ax, ay, az, aw, rng);
+        nx = q[0];
+        ny = q[1];
+        nz = q[2];
+        nw = q[3];
+      }
     }
 
     // Symmetry: rotate this slot's FULL affine + variation output —

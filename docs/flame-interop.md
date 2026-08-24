@@ -307,6 +307,11 @@ restates).
   shape always reads back at the classic Mandelbox lengths. Absent or
   explicitly-classic lengths lose nothing and warn nothing. See "A deliberate
   deviation" above.
+- A shape emitter (condensation) (export — **warned**): no faithful flam3
+  equivalent exists (the lossy disc-emitter ≈ `gaussian_blur` idea is
+  recorded in the epic's brief and deliberately deferred), so an emitter
+  transform exports as its plain affine map — weight, color and chaos row
+  intact, the stamped shape lost.
 - Our kaleidoscope exports as baked xforms, so re-importing an export returns
   plain maps (the symmetry metadata itself doesn't round-trip).
 - Camera pose (flame files have no 3D camera).

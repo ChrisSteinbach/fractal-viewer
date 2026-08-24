@@ -570,3 +570,24 @@ describe("analyzeBulbSystem chaos rows", () => {
     );
   });
 });
+
+describe("analyzeBulbSystem shape emitters", () => {
+  it("refuses an emitter riding the admissible lone bulb map — NOT structurally refused, so the pin is the explicit reason", () => {
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.5 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    // Claim verification: the emitter-free base is eligible, so the shape
+    // tests alone would ADMIT the emitter document.
+    expect(analyzeBulbSystem([bulbSystem()]).status).toBe("eligible");
+    const analysis = analyzeBulbSystem([bulbSystem({ emitter })]);
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toContain(
+      "shape emitters (unsupported in Mandelbulb mode)",
+    );
+  });
+});

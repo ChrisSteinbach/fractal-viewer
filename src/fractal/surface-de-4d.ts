@@ -1,5 +1,9 @@
 import { composeAffine4, symmetryRotation4, toTransform4 } from "./affine4";
-import { effectiveSymmetryOrder, systemHasChaos } from "./chaos-game";
+import {
+  effectiveSymmetryOrder,
+  systemHasChaos,
+  transformHasEmitter,
+} from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
 import { mulberry32 } from "./rng";
 import {
@@ -694,6 +698,16 @@ export function analyzeSurfaceSystem4(
       "chaos rows constrain the attractor (Surface would march the unconstrained object)",
     );
   }
+
+  // Shape emitters: 3D's refusal verbatim (see analyzeSurfaceSystem) —
+  // condensation makes the attractor a superset the descent has no shape
+  // term for, and the dimension changes nothing about that mismatch
+  // (fr-wo2j.10's lift covers both dimensions when it lands).
+  transforms.forEach((t, i) => {
+    if (transformHasEmitter(t)) {
+      reasons.push(`map ${i + 1} is a shape emitter (condensation)`);
+    }
+  });
 
   transforms.forEach((t, i) => {
     if (!isActive(t)) return;

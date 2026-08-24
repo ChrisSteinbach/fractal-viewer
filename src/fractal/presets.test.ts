@@ -5,7 +5,9 @@ import {
   derivedColorIndex,
   runChaosGame,
   systemHasChaos,
+  systemHasEmitters,
 } from "./chaos-game";
+import { GEAR_SHAPE, shapeSdf } from "./shapes";
 import { runChaosGame4 } from "./chaos-game-4d";
 import {
   analyzeEscapeSystem,
@@ -35,6 +37,7 @@ import {
   hybridChainShells,
   fernSpongeIsolated,
   fernSpongeLeak,
+  gearworks,
   hyperfern,
   icosahedronFlake,
   jerusalemCube,
@@ -1610,5 +1613,68 @@ describe("fern | sponge xaos pair", () => {
       ts.reduce((acc, t) => acc + (t.weight ?? 1), 0);
     expect(sum(isolated.slice(0, 4))).toBe(100);
     expect(sum(isolated.slice(4))).toBe(100);
+  });
+});
+
+describe("gearworks (shape-emitter condensation preset)", () => {
+  it("is four Sierpinski corners plus ONE gear emitter with a distinct authored cog color", () => {
+    const transforms = gearworks();
+    expect(transforms).toHaveLength(5);
+    const corners = transforms.slice(0, 4);
+    const emitter = transforms[4];
+    // The structure maps share one hue; the emitter authors its own,
+    // distinct one — cog color vs structure color.
+    for (const corner of corners) {
+      expect(corner.emitter).toBeUndefined();
+      expect(corner.colorIndex).toBe(corners[0].colorIndex);
+    }
+    expect(emitter.emitter).toEqual(GEAR_SHAPE);
+    expect(emitter.colorIndex).toBeDefined();
+    expect(emitter.colorIndex).not.toBe(corners[0].colorIndex);
+    expect(systemHasEmitters(transforms)).toBe(true);
+    // The corner maps are the plain Sierpinski contraction geometry.
+    expect(corners.map((t) => t.scale)).toEqual(
+      sierpinskiTetrahedron().map((t) => t.scale),
+    );
+  });
+
+  it("is solid-hinted and refused by the Surface gate with the emitter reason", () => {
+    expect(PRESET_RENDER_HINTS.gearworks).toBe("solid");
+    const analysis = analyzeSurfaceSystem(gearworks());
+    expect(analysis.status).toBe("ineligible");
+    expect(analysis.reasons).toContain(
+      "map 5 is a shape emitter (condensation)",
+    );
+  });
+
+  it("renders with a healthy emitted share and stamps that lie in the posed gear", () => {
+    const transforms = gearworks();
+    const numPoints = 20000;
+    const { transformIndices, positions } = runChaosGame(
+      transforms,
+      numPoints,
+      mulberry32(17),
+    );
+    let emitted = 0;
+    for (let i = 0; i < numPoints; i++) {
+      if (transformIndices[i] === 4) emitted++;
+    }
+    // weight 1.4 of 5.4 total ≈ 26% of plotted points are fresh stamps.
+    expect(emitted / numPoints).toBeGreaterThan(0.2);
+    expect(emitted / numPoints).toBeLessThan(0.33);
+    // Every fresh stamp sits inside the emitter's posed gear: invert the
+    // TRS (uniform scale + rotation) and ask the shape's own SDF.
+    const aff = composeAffine(transforms[4]);
+    const s2 = transforms[4].scale[0] * transforms[4].scale[0];
+    for (let i = 0; i < numPoints; i++) {
+      if (transformIndices[i] !== 4) continue;
+      const dx = positions[i * 3] - aff.t[0];
+      const dy = positions[i * 3 + 1] - aff.t[1];
+      const dz = positions[i * 3 + 2] - aff.t[2];
+      const sx = (aff.m[0] * dx + aff.m[3] * dy + aff.m[6] * dz) / s2;
+      const sy = (aff.m[1] * dx + aff.m[4] * dy + aff.m[7] * dz) / s2;
+      const sz = (aff.m[2] * dx + aff.m[5] * dy + aff.m[8] * dz) / s2;
+      expect(shapeSdf(GEAR_SHAPE, sx, sy, sz)).toBeLessThanOrEqual(1e-9);
+    }
   });
 });

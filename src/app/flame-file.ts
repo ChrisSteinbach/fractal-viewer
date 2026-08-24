@@ -70,6 +70,7 @@ import {
   resolveScheduleDepth,
   runChaosGame,
   systemHasChaos,
+  systemHasEmitters,
 } from "../fractal/chaos-game";
 import { transformColors } from "../fractal/color";
 import {
@@ -1036,6 +1037,17 @@ export function encodeFlameFile(
   if (resolveScheduleDepth(s.schedule ?? null) > 0) {
     warnings.add(
       "The hybrid schedule (system B) has no .flame equivalent and was dropped — the file holds system A alone",
+    );
+  }
+  // A shape emitter (condensation) has no faithful flam3 equivalent either —
+  // the lossy disc-emitter ≈ gaussian_blur idea is recorded in the epic's
+  // brief and deliberately deferred — so an emitter transform exports as its
+  // plain affine map (weight/color/chaos row intact, the stamp lost) under
+  // the same lossy-with-warnings contract. Keyed on the ONE presence
+  // predicate the engine and gates key on.
+  if (systemHasEmitters(transforms)) {
+    warnings.add(
+      "A shape emitter (condensation) has no .flame equivalent — its transform was exported as a plain map",
     );
   }
   const requestedOrder = effectiveSymmetryOrder(s.symmetry.order, n);

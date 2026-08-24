@@ -943,3 +943,57 @@ describe("chaos row mutation", () => {
     }
   });
 });
+
+describe("mutateSystem shape emitters", () => {
+  const EMITTER = {
+    parts: [
+      {
+        primitive: {
+          kind: "gear" as const,
+          teeth: 8,
+          radius: 1,
+          tooth: [0.2, 0.15] as [number, number],
+          hole: 0.3,
+          halfHeight: 0.25,
+        },
+        combine: "union" as const,
+      },
+    ],
+  };
+
+  it("preserves a present emitter EXACTLY (same reference) and never invents an absent one", () => {
+    const transforms: Transform[] = sierpinskiTetrahedron().map((t, i) =>
+      i === 1 ? { ...t, emitter: EMITTER } : t,
+    );
+    const base = system({ transforms });
+    for (let seed = 0; seed < 10; seed++) {
+      const mutant = mutateSystem(base, mulberry32(seed), { wildcard: true });
+      // The spec rides through untouched, by reference — the mutation moves
+      // the transform's own TRS (the pose), never the shape's internals.
+      expect(mutant.transforms[1].emitter).toBe(EMITTER);
+      for (const [i, t] of mutant.transforms.entries()) {
+        if (i === 1) continue;
+        expect("emitter" in t, `seed ${seed} map ${i}`).toBe(false);
+      }
+    }
+  });
+
+  it("consumes no extra draws for the field: an emitter-free base mutates byte-identically with or without the code path", () => {
+    // Fixed seed, same base, two calls — determinism already pinned above;
+    // this adds that adding an emitter to ONE map leaves every OTHER map's
+    // jitter untouched (the field draws nothing).
+    const plain = system({ transforms: sierpinskiTetrahedron() });
+    const withEmitter = system({
+      transforms: sierpinskiTetrahedron().map((t, i) =>
+        i === 3 ? { ...t, emitter: EMITTER } : t,
+      ),
+    });
+    const a = mutateSystem(plain, mulberry32(9));
+    const b = mutateSystem(withEmitter, mulberry32(9));
+    for (let i = 0; i < 3; i++) {
+      expect(b.transforms[i]).toEqual(a.transforms[i]);
+    }
+    expect(b.transforms[3].position).toEqual(a.transforms[3].position);
+    expect(b.transforms[3].emitter).toBe(EMITTER);
+  });
+});

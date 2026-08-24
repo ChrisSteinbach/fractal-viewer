@@ -609,6 +609,42 @@ describe("encodeFlameFile → decodeFlameFile round trip", () => {
     expect(back.transforms[1].weight ?? 1).toBe(1);
   });
 
+  it("warns that a shape emitter exports as a plain map, and stays quiet without one", () => {
+    const emitter = {
+      parts: [
+        {
+          combine: "union" as const,
+          primitive: { kind: "sphere" as const, radius: 0.5 },
+        },
+      ],
+    };
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.2, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0],
+      },
+      {
+        id: 1,
+        position: [-0.2, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0],
+        emitter,
+      },
+    ];
+    const withEmitter = encodeFlameFile(snapshotWith({ transforms }), "e");
+    expect(
+      withEmitter.warnings.some((w) => /shape emitter.*plain map/i.test(w)),
+    ).toBe(true);
+    // The xform itself still exports (plain affine — nothing else changes).
+    expect(withEmitter.xml.match(/<xform /g)).toHaveLength(2);
+
+    const plain = transforms.map(({ emitter: _e, ...rest }) => rest);
+    const without = encodeFlameFile(snapshotWith({ transforms: plain }), "e");
+    expect(without.warnings.some((w) => /emitter/i.test(w))).toBe(false);
+  });
+
   it("composes a z-axis kaleidoscope copy's rotation into an affine map's coefs", () => {
     const transforms: Transform[] = [
       {

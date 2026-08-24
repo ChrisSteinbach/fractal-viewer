@@ -155,7 +155,11 @@
  */
 import { composeAffine } from "./affine";
 import { isFlatTransform } from "./affine4";
-import { effectiveSymmetryOrder, systemHasChaos } from "./chaos-game";
+import {
+  effectiveSymmetryOrder,
+  systemHasChaos,
+  systemHasEmitters,
+} from "./chaos-game";
 import { mulberry32 } from "./rng";
 import {
   SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
@@ -315,6 +319,14 @@ export function analyzeBulbSystem(
   // one answer with the escape/surface family's.
   if (systemHasChaos(transforms)) {
     reasons.push("chaos rows (unsupported in Mandelbulb mode)");
+  }
+  // Shape emitters likewise: the lone bulb map may carry `emitter` beside
+  // its admissible triplex power (the field is orthogonal to every shape
+  // test above), and this forward orbit has no per-step pick to emit on —
+  // it would silently march the plain Mandelbulb while the points modes
+  // render the condensation set. Explicit, chi's line exactly.
+  if (systemHasEmitters(transforms)) {
+    reasons.push("shape emitters (unsupported in Mandelbulb mode)");
   }
   if (finalTransform) {
     reasons.push("final transform (unsupported in Mandelbulb mode)");
