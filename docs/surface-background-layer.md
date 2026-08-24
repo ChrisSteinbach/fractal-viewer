@@ -159,6 +159,14 @@ equation per pixel, sampling the live image at the full-image coordinate:
 changed = legacy + beta * (liveImage(uv) - traceMean)
 ```
 
+Automatic 3D orbit and 4D tumble refresh that image through a bounded pump,
+not from every animation frame. It snapshots only while the existing
+debounce/worker pipeline is idle, waits for the one-million-sample render to
+settle, then observes a short cooldown before taking the latest pose. That
+preserves latest-wins authored edits and the morph/capture holds while avoiding
+the failure mode where continuous requests keep resetting the trailing-edge
+debounce and no image ever finishes.
+
 The image uses top-origin ImageData bytes. The host sampler converts Surface's
 bottom-origin `v`, clamps to the edge, and bilinearly filters like the WebGL
 texture. A compute export passes each band's `bgOffset`/`bgExtent`, so one image

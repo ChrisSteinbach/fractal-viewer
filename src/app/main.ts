@@ -65,6 +65,7 @@ import type { FlameWorkerCommand, FlameWorkerEvent } from "./flame-worker-core";
 import type { SharedFrameBuffers } from "./flame-worker-core";
 import {
   FlameBackdropGenerator,
+  FlameBackdropMotionRefresh,
   type FlameBackdropImage,
 } from "./flame-backdrop-generator";
 import type { RenderSessionHandle } from "./render-session";
@@ -2948,6 +2949,19 @@ function main(): void {
       fourD: fourDRenderSnapshot(),
     });
   }
+
+  /** Continuous orbit/tumble cannot call requestFlameBackdrop every frame:
+   * its trailing-edge debounce would never elapse. This pump waits for an
+   * idle generator, snapshots the latest view, then waits for that render to
+   * settle and cool down before another motion-driven refresh. */
+  const flameBackdropMotionRefresh = new FlameBackdropMotionRefresh({
+    busy: () => flameBackdropGenerator.busy,
+    request: () => {
+      requestFlameBackdrop();
+      return flameBackdropGenerator.settle();
+    },
+    now: nowMs,
+  });
 
   /** Release a replace-load hold only when its terminal cloud is actually on
    * screen. A gradient target snaps then; a flame target starts one debounced
@@ -7938,6 +7952,7 @@ function main(): void {
     // orientation on refocus/exit.
     const dt = Math.min((now - lastMotionTickMs) / 1000, 0.1);
     lastMotionTickMs = now;
+    let automaticViewMoved = false;
     if (
       !viewIs4D &&
       autoOrbitOn &&
@@ -7952,6 +7967,7 @@ function main(): void {
       // timeline leg's pose glide, the one camera motion that owns theta
       // itself, so it pauses for that too.
       orbit.spherical.theta -= dt * AUTO_ORBIT_RATE * autoOrbitSpeed;
+      automaticViewMoved = dt > 0;
     }
     scene.applyCamera(orbit);
     scene.updateFog();
@@ -7962,8 +7978,10 @@ function main(): void {
       // doesn't replay the gap as a jump. The point color re-derives
       // in-shader from the new rotation, so nothing else needs updating per
       // frame.
+      const automaticFourDMotion = fourDTween.active || fourDView.tumbleOn;
       advanceFourDPose(dt);
       scene.setRot4(fourDView.matrix());
+      automaticViewMoved = automaticFourDMotion && dt > 0;
     } else if (state.renderStyle === "glow" && lastResult) {
       // Density-adaptive glow brightness: dim dense clouds, brighten sparse
       // ones. state.glowBrightness then layers the user's manual override on
@@ -7990,6 +8008,17 @@ function main(): void {
         ) * state.glowBrightness,
       );
     }
+    // The decorative image snapshots the orbit camera and (in 4D) rotor, so
+    // automatic motion needs occasional new worker renders. Realtime only:
+    // an offline export awaits the backdrop BEFORE tickRender and must not
+    // launch a new asynchronous job after that frame's settle point.
+    flameBackdropMotionRefresh.tick(
+      !force &&
+        automaticViewMoved &&
+        state.background.mode === "flame" &&
+        !backgroundMorphHeld &&
+        !morphTween.active,
+    );
     // The "Watch it build" replay: while one is active, draw only the
     // buffer's first `revealed` points (generation order — see
     // scene.setDrawCount), ride the cursor on the newest landing (re-posed

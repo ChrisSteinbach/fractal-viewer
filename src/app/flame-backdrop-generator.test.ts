@@ -1,8 +1,10 @@
 import {
   compositeFlameBackdrop,
   FlameBackdropGenerator,
+  FlameBackdropMotionRefresh,
   FLAME_BACKDROP_DEBOUNCE_MS,
   FLAME_BACKDROP_ITERATIONS,
+  FLAME_BACKDROP_MOTION_COOLDOWN_MS,
 } from "./flame-backdrop-generator";
 import type {
   FlameBackdropGeneratorDeps,
@@ -116,6 +118,18 @@ function harness(): {
 }
 
 describe("FlameBackdropGenerator request policy", () => {
+  it("reports busy across debounce and worker work, then idle after delivery", () => {
+    const h = harness();
+
+    expect(h.generator.busy).toBe(false);
+    h.generator.request(params());
+    expect(h.generator.busy).toBe(true);
+    h.fireDebounce();
+    expect(h.generator.busy).toBe(true);
+    h.workers[0].emit(terminal());
+    expect(h.generator.busy).toBe(false);
+  });
+
   it("debounces the complete 4D snapshot into one fixed low-budget CPU start", () => {
     const h = harness();
     const fourD: NonNullable<FlameBackdropParams["fourD"]> = {
@@ -198,6 +212,65 @@ describe("FlameBackdropGenerator request policy", () => {
     h.fireDebounce();
     expect(h.workers[0].posted).toHaveLength(2);
     expect(h.workers[0].posted[1]).toMatchObject({ seed: 2 });
+  });
+});
+
+describe("FlameBackdropMotionRefresh", () => {
+  it("waits for motion, an idle generator, settle, and the cooldown", async () => {
+    let now = 1_000;
+    let busy = false;
+    const resolvers: (() => void)[] = [];
+    const request = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+    const refresh = new FlameBackdropMotionRefresh({
+      busy: () => busy,
+      request,
+      now: () => now,
+    });
+
+    expect(refresh.tick(false)).toBe(false);
+    busy = true;
+    expect(refresh.tick(true)).toBe(false);
+    busy = false;
+
+    expect(refresh.tick(true)).toBe(true);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(refresh.tick(true)).toBe(false); // its request is still settling
+
+    now = 1_250;
+    resolvers[0]();
+    await Promise.resolve();
+    expect(refresh.tick(true)).toBe(false);
+
+    now = 1_250 + FLAME_BACKDROP_MOTION_COOLDOWN_MS - 1;
+    expect(refresh.tick(true)).toBe(false);
+    now += 1;
+    expect(refresh.tick(true)).toBe(true);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it("contains a synchronous decorative request failure and backs off", () => {
+    let now = 10;
+    const request = vi.fn((): Promise<void> => {
+      throw new Error("snapshot failed");
+    });
+    const refresh = new FlameBackdropMotionRefresh({
+      busy: () => false,
+      request,
+      now: () => now,
+    });
+
+    expect(refresh.tick(true)).toBe(false);
+    expect(request).toHaveBeenCalledTimes(1);
+    now += FLAME_BACKDROP_MOTION_COOLDOWN_MS - 1;
+    expect(refresh.tick(true)).toBe(false);
+    now += 1;
+    expect(refresh.tick(true)).toBe(false);
+    expect(request).toHaveBeenCalledTimes(2);
   });
 });
 
