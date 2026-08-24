@@ -67,6 +67,8 @@ import {
   ESCAPE_TIME_ITERATIONS,
   estimateEscapeDistance,
 } from "../../fractal/escape-de";
+import { resolveShapeTrap } from "../../fractal/shape-trap";
+import { PEACE_SIGN_SHAPE } from "../../fractal/shapes";
 import type { EscapeDE } from "../../fractal/escape-de";
 import {
   analyzeEscapeSystem4,
@@ -12290,6 +12292,260 @@ async function runSurfaceDeSection(
     }
 
     await canaryCheck("the M7 escape4 agreement leg");
+
+    // ----- The SHAPE-TRAP agreement legs (escape/bulb/escape4 + trap) -----
+    // The trap is COLOR ONLY, so the CPU oracle values are the plain legs'
+    // own — what these rows pin is everything the channel appends to the
+    // wire and the module: the baked-SDF compile, the trap params block at
+    // its ONE offset per dimension (a misplaced append corrupts the frozen
+    // fields, which the distance agreement catches immediately — the
+    // lens4Fold corruption's class), and the pads that hold the plane
+    // region under it. One representative fixture per family, under the
+    // same forward-orbit classifier layers and caps as the plain legs; the
+    // rows are distinguished by the "+trap" system name.
+    {
+      const trap = resolveShapeTrap({
+        shape: PEACE_SIGN_SHAPE,
+        position: [0.3, -0.2, 0.5],
+        rotation: [0.2, 0, 0.4],
+        scale: 0.5,
+        mode: "threshold",
+        threshold: 0.3,
+        fade: 0.05,
+      });
+      const trapLegs: {
+        family: "escape" | "bulb" | "escape4";
+        sys:
+          | SurfaceEscapeSystemState
+          | SurfaceBulbSystemState
+          | SurfaceEscape4SystemState
+          | undefined;
+      }[] = [
+        {
+          family: "escape",
+          sys:
+            escapeSystems.find((s) => s.name === "escChainPair") ??
+            escapeSystems[0],
+        },
+        { family: "bulb", sys: bulbSystems[0] },
+        { family: "escape4", sys: escape4Systems[0] },
+      ];
+      for (const leg of trapLegs) {
+        const base = leg.sys;
+        if (!base) continue;
+        const cfg: SurfaceKernelConfig = {
+          core: leg.family,
+          variant: "private",
+          width: SURFACE_FOLD_BEAM_WIDTH,
+          stage2: false,
+          wg: surfaceWgFor(config, "private"),
+        };
+        const label = `${configLabel(cfg)}+trap`;
+        status(`agreement: compiling ${label}…`);
+        activity.setState("gpu", `Surface DE agreement — ${label}`);
+        const layout = surfaceForwardBindGroupLayout(device);
+        const pipelineLayout = device.createPipelineLayout({
+          label: `surface-de ${leg.family}+trap pipeline layout`,
+          bindGroupLayouts: [layout],
+        });
+        let pipeline: GPUComputePipeline | null = null;
+        let compileMs = 0;
+        try {
+          const code = surfaceDeKernelWgsl({
+            mode: "eval",
+            core: leg.family,
+            width: cfg.width,
+            workgroupSize: cfg.wg,
+            sharedFrontier: false,
+            bnbStage2: false,
+            shapeTrap: PEACE_SIGN_SHAPE,
+          });
+          ({ pipeline, compileMs } = await buildSurfacePipeline(
+            device,
+            pipelineLayout,
+            code,
+            "evalQueries",
+            `surface-de eval ${label}`,
+          ));
+        } catch (e) {
+          compileFailed = true;
+          results.notes.push(`agreement ${label}: ${describeError(e)}`);
+        }
+        if (pipeline === null) continue;
+        // A fresh state that SHARES the base fixture's queries and oracle
+        // values (the trap moves no distance) but owns its buffers, so the
+        // plain leg's cached set is untouched and the row's system name is
+        // its own.
+        if (leg.family === "escape") {
+          const src = base as SurfaceEscapeSystemState;
+          const sys: SurfaceEscapeSystemState = {
+            ...src,
+            name: `${src.name}+trap`,
+            buffers: undefined,
+          };
+          status(`agreement: ${label} × ${sys.name}…`);
+          await ensureSurfaceForwardEvalBuffers(
+            device,
+            layout,
+            sys,
+            packEscapeGpuParams(
+              sys.de,
+              { itemCount: sys.queries.length, cutoff: 0 },
+              null,
+              trap,
+            ),
+            packEscapeGpuMaps(sys.de),
+          );
+          const t0 = performance.now();
+          const gpu = await runSurfaceEvalDispatch(
+            device,
+            pipeline,
+            sys,
+            cfg.wg,
+          );
+          const gpuMs = performance.now() - t0;
+          const row = compareSurfaceForwardAgreement(
+            sys,
+            sys.de.boundingRadius,
+            (q) => estimateEscapeDistanceF32(sys.de, q),
+            cfg,
+            gpu,
+            compileMs,
+            gpuMs,
+          );
+          results.agreement.push(row);
+          if ((row.excluded ?? 0) > SURFACE_ESCAPE_EXCLUDED_CAP) {
+            escapeGateFail = true;
+            results.notes.push(
+              `escape+trap agreement ${sys.name}: excluded ` +
+                `${row.excluded ?? 0}/${row.n} queries (> ${SURFACE_ESCAPE_EXCLUDED_CAP})`,
+            );
+          }
+          if ((row.chaoticFlips ?? 0) > SURFACE_ESCAPE_FLIP_CAP) {
+            escapeGateFail = true;
+            results.notes.push(
+              `escape+trap agreement ${sys.name}: ${row.chaoticFlips ?? 0} ` +
+                `verified chaotic flips (> ${SURFACE_ESCAPE_FLIP_CAP})`,
+            );
+          }
+          destroySurfaceForwardEvalBuffers(sys);
+        } else if (leg.family === "bulb") {
+          const src = base as SurfaceBulbSystemState;
+          const sys: SurfaceBulbSystemState = {
+            ...src,
+            name: `${src.name}+trap`,
+            buffers: undefined,
+          };
+          status(`agreement: ${label} × ${sys.name}…`);
+          await ensureSurfaceForwardEvalBuffers(
+            device,
+            layout,
+            sys,
+            packBulbGpuParams(
+              sys.de,
+              { itemCount: sys.queries.length, cutoff: 0 },
+              null,
+              trap,
+            ),
+            // The bulb core declares no maps binding; one zero stride
+            // fills the layout's slot exactly as the plain leg does.
+            new Float32Array(SURFACE_GPU_MAP_VEC4 * 4),
+          );
+          const t0 = performance.now();
+          const gpu = await runSurfaceEvalDispatch(
+            device,
+            pipeline,
+            sys,
+            cfg.wg,
+          );
+          const gpuMs = performance.now() - t0;
+          const row = compareSurfaceForwardAgreement(
+            sys,
+            sys.de.boundingRadius,
+            (q) => estimateBulbDistanceF32(sys.de, q),
+            cfg,
+            gpu,
+            compileMs,
+            gpuMs,
+          );
+          results.agreement.push(row);
+          if ((row.excluded ?? 0) > SURFACE_BULB_EXCLUDED_CAP) {
+            bulbGateFail = true;
+            results.notes.push(
+              `bulb+trap agreement ${sys.name}: excluded ` +
+                `${row.excluded ?? 0}/${row.n} queries (> ${SURFACE_BULB_EXCLUDED_CAP})`,
+            );
+          }
+          if ((row.chaoticFlips ?? 0) > SURFACE_BULB_FLIP_CAP) {
+            bulbGateFail = true;
+            results.notes.push(
+              `bulb+trap agreement ${sys.name}: ${row.chaoticFlips ?? 0} ` +
+                `verified chaotic flips (> ${SURFACE_BULB_FLIP_CAP})`,
+            );
+          }
+          destroySurfaceForwardEvalBuffers(sys);
+        } else {
+          const src = base as SurfaceEscape4SystemState;
+          const sys: SurfaceEscape4SystemState = {
+            ...src,
+            name: `${src.name}+trap`,
+            buffers: undefined,
+          };
+          status(`agreement: ${label} × ${sys.name}…`);
+          await ensureSurfaceForwardEvalBuffers(
+            device,
+            layout,
+            sys,
+            packEscape4GpuParams(
+              sys.de,
+              sys.view4,
+              { itemCount: sys.queries.length, cutoff: 0 },
+              null,
+              trap,
+            ),
+            packEscape4GpuMaps(sys.de),
+          );
+          const t0 = performance.now();
+          const gpu = await runSurfaceEvalDispatch(
+            device,
+            pipeline,
+            sys,
+            cfg.wg,
+          );
+          const gpuMs = performance.now() - t0;
+          const row = compareSurfaceForwardAgreement(
+            sys,
+            sys.de.boundingRadius,
+            (q) =>
+              estimateEscapeDistance4F32(sys.de, liftEscape4F32(sys.view4, q)),
+            cfg,
+            gpu,
+            compileMs,
+            gpuMs,
+          );
+          results.agreement.push(row);
+          if ((row.excluded ?? 0) > SURFACE_ESCAPE_EXCLUDED_CAP) {
+            escape4GateFail = true;
+            results.notes.push(
+              `escape4+trap agreement ${sys.name}: excluded ` +
+                `${row.excluded ?? 0}/${row.n} queries (> ${SURFACE_ESCAPE_EXCLUDED_CAP})`,
+            );
+          }
+          if ((row.chaoticFlips ?? 0) > SURFACE_ESCAPE_FLIP_CAP) {
+            escape4GateFail = true;
+            results.notes.push(
+              `escape4+trap agreement ${sys.name}: ${row.chaoticFlips ?? 0} ` +
+                `verified chaotic flips (> ${SURFACE_ESCAPE_FLIP_CAP})`,
+            );
+          }
+          destroySurfaceForwardEvalBuffers(sys);
+        }
+        render();
+        await new Promise<void>((resolve) => setTimeout(resolve));
+      }
+    }
+
+    await canaryCheck("the shape-trap agreement legs");
 
     // ----- Cross-checks (fold core only — see the M0 leg above) -----
     if (

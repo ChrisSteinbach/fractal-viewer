@@ -82,7 +82,9 @@ import {
 } from "../fractal/background-shape";
 import type { BulbDE } from "../fractal/bulb-de";
 import type { EscapeDE } from "../fractal/escape-de";
+import { resolveShapeTrap } from "../fractal/shape-trap";
 import type { EscapeDE4 } from "../fractal/escape-de-4d";
+import type { ShapeSpec } from "../fractal/shapes";
 import type {
   SurfaceGpu4View,
   SurfaceGpuGroundPlane,
@@ -106,9 +108,11 @@ import {
   SURFACE_GPU_PARAMS4_ESCAPE_BYTES,
   SURFACE_GPU_PARAMS4_LENS_BYTES,
   SURFACE_GPU_PARAMS4_PLANE_BYTES,
+  SURFACE_GPU_PARAMS4_TRAP_BYTES,
   SURFACE_GPU_PARAMS_BALLOON_BYTES,
   SURFACE_GPU_PARAMS_BYTES,
   SURFACE_GPU_PARAMS_PLANE_BYTES,
+  SURFACE_GPU_PARAMS_TRAP_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
   SURFACE_GPU_RAY_HIT,
@@ -126,7 +130,7 @@ import {
 import type { SurfaceDE4 } from "../fractal/surface-de-4d";
 import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
 import { deHasFolds4, slabExact4 } from "../fractal/surface-de-4d";
-import type { Vec3 } from "../fractal/types";
+import type { ShapeTrap, Vec3 } from "../fractal/types";
 import { clamp } from "../fractal/vec";
 import { webgpuAdapterStatus } from "./render-backend";
 
@@ -386,9 +390,25 @@ export class SurfaceComputeFrameSizeError extends Error {}
  */
 export type SurfaceComputeTarget =
   | { kind: "ifs"; de: SurfaceDE; balloon?: boolean; groundPlane?: boolean }
-  | { kind: "escape"; de: EscapeDE; groundPlane?: boolean }
-  | { kind: "bulb"; de: BulbDE; groundPlane?: boolean }
-  | { kind: "escape4"; de: EscapeDE4; groundPlane?: boolean }
+  | {
+      kind: "escape";
+      de: EscapeDE;
+      groundPlane?: boolean;
+      /** The shape-trap channel's CREATE-TIME geometry (`AppState.shapeTrap`'s
+       * shape): compiles the trap accumulator + baked SDF into the kernels
+       * and grows their params struct; the LIVE pose/mode block then rides
+       * every frame's spec (`SurfaceComputeFrameSpec.shapeTrap`). The three
+       * FORWARD kinds only — the trap is the escape family's color channel
+       * (the codegen throws for every descent core). */
+      shapeTrap?: ShapeSpec;
+    }
+  | { kind: "bulb"; de: BulbDE; groundPlane?: boolean; shapeTrap?: ShapeSpec }
+  | {
+      kind: "escape4";
+      de: EscapeDE4;
+      groundPlane?: boolean;
+      shapeTrap?: ShapeSpec;
+    }
   | {
       kind: "ifs4";
       de: SurfaceDE4;
@@ -406,12 +426,20 @@ export type SurfaceComputeTarget =
  * the maps binding, so every maps-shaped branch names them before it
  * reaches this predicate — bulb is the one bindingless
  * kind. */
-export function isForwardTarget(
-  target: SurfaceComputeTarget,
-): target is
-  | { kind: "escape"; de: EscapeDE; groundPlane?: boolean }
-  | { kind: "bulb"; de: BulbDE; groundPlane?: boolean }
-  | { kind: "escape4"; de: EscapeDE4; groundPlane?: boolean } {
+export function isForwardTarget(target: SurfaceComputeTarget): target is
+  | {
+      kind: "escape";
+      de: EscapeDE;
+      groundPlane?: boolean;
+      shapeTrap?: ShapeSpec;
+    }
+  | { kind: "bulb"; de: BulbDE; groundPlane?: boolean; shapeTrap?: ShapeSpec }
+  | {
+      kind: "escape4";
+      de: EscapeDE4;
+      groundPlane?: boolean;
+      shapeTrap?: ShapeSpec;
+    } {
   return (
     target.kind === "escape" ||
     target.kind === "bulb" ||
@@ -430,7 +458,12 @@ export function isFourDTarget(target: SurfaceComputeTarget): target is
       balloon?: boolean;
       groundPlane?: boolean;
     }
-  | { kind: "escape4"; de: EscapeDE4; groundPlane?: boolean } {
+  | {
+      kind: "escape4";
+      de: EscapeDE4;
+      groundPlane?: boolean;
+      shapeTrap?: ShapeSpec;
+    } {
   return target.kind === "ifs4" || target.kind === "escape4";
 }
 
@@ -577,6 +610,17 @@ export interface SurfaceComputeFrameSpec {
    * ignored otherwise. Re-derived from scene state at every
    * spec assembly like the balloon block. */
   groundPlane?: SurfaceGpuGroundPlane;
+  /** The shape-trap DOCUMENT block — REQUIRED whenever the session's
+   * target carried `shapeTrap` (the trap-grown params struct has no
+   * meaningful default; the balloon's required-throw discipline), ignored
+   * otherwise. The whole block rather than pre-resolved numbers: the LIVE
+   * half (pose/mode/threshold/fade) is resolved at pack through
+   * `resolveShapeTrap` — the one domain — and the SHAPE half, though
+   * create-time on the renderer, rides along so the offline force-frame
+   * memo key sees a shape swap under a parked camera
+   * (surface-force-frame-key.ts's hazard doc). Re-read from scene state at
+   * every spec assembly, so a trap pose slider is live per frame. */
+  shapeTrap?: ShapeTrap;
 }
 
 export interface SurfaceComputeFrameOptions {
@@ -1707,6 +1751,13 @@ export class SurfaceComputeRenderer {
           // and a balloon+plane target is a caller bug the codegen
           // rejects loudly.
           groundPlane: target.groundPlane === true,
+          // The shape-trap channel — FORWARD kinds only (the target union
+          // carries the field nowhere else). Baked geometry: the create-time
+          // decision, so a shape edit re-enters the session with fresh
+          // kernels while pose/mode edits ride the live params block.
+          shapeTrap: isForwardTarget(target)
+            ? (target.shapeTrap ?? null)
+            : null,
           width: SURFACE_FOLD_BEAM_WIDTH,
           shadeDeWidth: mode === "shade" ? shadeDeWidth : undefined,
           workgroupSize: SURFACE_COMPUTE_WORKGROUP_SIZE,
@@ -1856,28 +1907,38 @@ export class SurfaceComputeRenderer {
       size: isFourDTarget(target)
         ? target.kind === "ifs4" && target.balloon === true
           ? SURFACE_GPU_PARAMS4_BALLOON_BYTES
-          : target.groundPlane === true
-            ? SURFACE_GPU_PARAMS4_PLANE_BYTES
-            : target.kind === "escape4"
-              ? // The escape4 variant block is the lens4
-                // block's own region, so its size is the lens size.
-                SURFACE_GPU_PARAMS4_ESCAPE_BYTES
-              : target.de.foldFinal !== null
-                ? // A fold FINAL grows the params with
-                  // the lens block past the 4D tail.
-                  SURFACE_GPU_PARAMS4_LENS_BYTES
-                : SURFACE_GPU_PARAMS4_BYTES
+          : target.kind === "escape4" && target.shapeTrap !== undefined
+            ? // The trap block at the frozen 624, past the
+              // unconditionally declared plane region — the 3D trap
+              // sizing one dimension up.
+              SURFACE_GPU_PARAMS4_TRAP_BYTES
+            : target.groundPlane === true
+              ? SURFACE_GPU_PARAMS4_PLANE_BYTES
+              : target.kind === "escape4"
+                ? // The escape4 variant block is the lens4
+                  // block's own region, so its size is the lens size.
+                  SURFACE_GPU_PARAMS4_ESCAPE_BYTES
+                : target.de.foldFinal !== null
+                  ? // A fold FINAL grows the params with
+                    // the lens block past the 4D tail.
+                    SURFACE_GPU_PARAMS4_LENS_BYTES
+                  : SURFACE_GPU_PARAMS4_BYTES
         : target.kind === "ifs" && target.balloon === true
           ? // The balloon kernel's params struct appends the balloon
             // block at the frozen offset 288 (272 before the lens-fold
             // quartet took that slot).
             SURFACE_GPU_PARAMS_BALLOON_BYTES
-          : target.groundPlane === true
-            ? // The plane kernel's params struct appends the
-              // plane block at the same frozen offset (the two are
-              // mutually exclusive by the codegen throw).
-              SURFACE_GPU_PARAMS_PLANE_BYTES
-            : SURFACE_GPU_PARAMS_BYTES,
+          : isForwardTarget(target) && target.shapeTrap !== undefined
+            ? // A trap kernel's struct appends the trap block past the
+              // (unconditionally declared) plane region — one size
+              // whether or not the session has a floor.
+              SURFACE_GPU_PARAMS_TRAP_BYTES
+            : target.groundPlane === true
+              ? // The plane kernel's params struct appends the
+                // plane block at the same frozen offset (the two are
+                // mutually exclusive by the codegen throw).
+                SURFACE_GPU_PARAMS_PLANE_BYTES
+              : SURFACE_GPU_PARAMS_BYTES,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const shadeBuf = device.createBuffer({
@@ -2912,17 +2973,41 @@ export class SurfaceComputeRenderer {
           return v;
         })()
       : null;
+    // The trap session's live block, resolved once per frame — a
+    // trap-kernel frame spec must carry the document block (the trap-grown
+    // params struct has no meaningful default; the balloon's required-throw
+    // discipline). A trap-free session ignores any stray spec.shapeTrap —
+    // its buffer never grew.
+    const shapeTrap =
+      isForwardTarget(target) && target.shapeTrap !== undefined
+        ? (() => {
+            const st = spec.shapeTrap;
+            if (!st) {
+              throw new Error(
+                "Surface compute: a shape-trap frame spec must carry shapeTrap",
+              );
+            }
+            return resolveShapeTrap(st);
+          })()
+        : null;
     const packParams: (run: SurfaceGpuRunParams) => ArrayBuffer =
       target.kind === "escape"
-        ? (run) => packEscapeGpuParams(target.de, run, groundPlane)
+        ? (run) => packEscapeGpuParams(target.de, run, groundPlane, shapeTrap)
         : target.kind === "escape4"
-          ? (run) => packEscape4GpuParams(target.de, view4!, run, groundPlane)
+          ? (run) =>
+              packEscape4GpuParams(
+                target.de,
+                view4!,
+                run,
+                groundPlane,
+                shapeTrap,
+              )
           : target.kind === "bulb"
             ? // The escape packer's twin — one asymmetry, and it
               // is inside packBulbGpuParams: the ORBIT bailout and the
               // QUERY-space marching ball are different numbers for this
               // object, so the frozen radii take the latter.
-              (run) => packBulbGpuParams(target.de, run, groundPlane)
+              (run) => packBulbGpuParams(target.de, run, groundPlane, shapeTrap)
             : target.kind === "ifs4"
               ? (() => {
                   // A balloon 4D session's spec must carry the live balloon

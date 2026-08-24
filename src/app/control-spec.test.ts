@@ -37,6 +37,7 @@ function mockEffects(shared = false): ControlEffects {
       setFourDDepthFade: vi.fn(),
       setSolidParams: vi.fn(),
       setSurfaceParams: vi.fn(),
+      setSurfaceShapeTrap: vi.fn(),
       setSurfaceColorLUT: vi.fn(),
       setBalloonEchoEnabled: vi.fn(),
       setBalloonEchoRadius: vi.fn(),

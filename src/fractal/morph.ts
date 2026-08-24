@@ -85,6 +85,7 @@
  */
 import { isFlatTransform, meanContraction } from "./affine4";
 import { DEFAULT_COLOR_SPEED, derivedColorIndex } from "./chaos-game";
+import { DEFAULT_SHAPE_TRAP_THRESHOLD } from "./shape-trap";
 import type { ShapePart, ShapePose, ShapeSpec } from "./shapes";
 import { CLASSIC_SURFACE_FINISH } from "./surface-finish";
 import {
@@ -92,6 +93,7 @@ import {
   resolveSurfacePattern,
 } from "./surface-pattern";
 import type {
+  ShapeTrap,
   SurfaceFinish,
   SurfacePattern,
   SymmetryParams,
@@ -119,6 +121,22 @@ export interface MorphSystem {
   transforms: Transform[];
   finalTransform: Transform | null;
   symmetry: SymmetryParams;
+  /**
+   * The scene's optional shape-trap color block ({@link ShapeTrap}) —
+   * carried so a trap POSE can glide between two trapped keyframes of the
+   * SAME shape. Interpolation rule ({@link lerpShapeTrap}): both sides
+   * trapped with DEEPLY-EQUAL specs and the same mode lerp their
+   * position/rotation/scale/threshold/fade through the absent-means-classic
+   * fallbacks; any other pair — one-sided, a different shape, a different
+   * mode — POPS to the TARGET's block from the first intermediate, the
+   * scheduled-hybrid block's placement (there is no meaningful midpoint
+   * between two shapes). Absent on both sides stays absent, and the
+   * endpoints are exact by {@link lerpSystem}'s by-reference returns.
+   * Optional (`undefined` and `null` both mean "no trap") so every
+   * existing caller's plain `{transforms, finalTransform, symmetry}`
+   * object stays valid.
+   */
+  shapeTrap?: ShapeTrap | null;
 }
 
 /** The three w-mixing planes shared by {@link WExtension}'s `rotation` and
@@ -866,9 +884,65 @@ export function lerpSystem(
   // symmetry via `symmetryIsNonFlat`) — symmetry is simply computed, and any
   // caller that wants the SAMPLE's flatness derives it
   // from the finished parts + symmetry, exactly as for an authored system.
-  return {
+  const system: MorphSystem = {
     transforms: lerpTransforms(a.transforms, b.transforms, t),
     finalTransform: lerpFinalTransform(a.finalTransform, b.finalTransform, t),
     symmetry: lerpSymmetry(a.symmetry, b.symmetry, t),
   };
+  const shapeTrap = lerpShapeTrap(a.shapeTrap ?? null, b.shapeTrap ?? null, t);
+  if (shapeTrap) system.shapeTrap = shapeTrap;
+  return system;
+}
+
+/**
+ * The shape-trap block's interpolation ({@link MorphSystem.shapeTrap}'s
+ * rule): a pose glide when both sides trap the SAME object — deeply-equal
+ * specs, same mode — through the block's own absent-means-classic
+ * fallbacks ({@link lerpOptional} idioms: position/rotation toward zero,
+ * scale toward 1, threshold toward the classic default, fade toward 0,
+ * absent-on-both-sides stays absent); a POP to the target's block for
+ * every other pair, the scheduled-hybrid placement. Exported for the
+ * pinning tests; app callers go through {@link lerpSystem}.
+ */
+export function lerpShapeTrap(
+  a: ShapeTrap | null,
+  b: ShapeTrap | null,
+  t: number,
+): ShapeTrap | null {
+  if (t <= 0) return a;
+  if (t >= 1) return b;
+  if (!a || !b) return b;
+  if (JSON.stringify(a.shape) !== JSON.stringify(b.shape)) return b;
+  const aMode = a.mode === "threshold" ? "threshold" : "min";
+  const bMode = b.mode === "threshold" ? "threshold" : "min";
+  if (aMode !== bMode) return b;
+  const out: ShapeTrap = { shape: b.shape };
+  const position = lerpOptionalVec3(a.position, b.position, t);
+  if (position !== undefined) out.position = position;
+  // Euler angles take the nearest-turn treatment the transforms' own
+  // rotation gets, through the optional-Vec3 shape (absent reads zero).
+  if (a.rotation !== undefined || b.rotation !== undefined) {
+    out.rotation = lerpRotation(
+      a.rotation ?? ZERO_VEC3,
+      b.rotation ?? ZERO_VEC3,
+      t,
+    );
+  }
+  const scale = lerpOptional(a.scale, b.scale, 1, t);
+  if (scale !== undefined) out.scale = scale;
+  if (bMode === "threshold") {
+    out.mode = "threshold";
+    // The absent side reads the resolver's own classic bar — imported, so
+    // the fallback cannot drift from what an absent field renders as.
+    const threshold = lerpOptional(
+      a.threshold,
+      b.threshold,
+      DEFAULT_SHAPE_TRAP_THRESHOLD,
+      t,
+    );
+    if (threshold !== undefined) out.threshold = threshold;
+  }
+  const fade = lerpOptional(a.fade, b.fade, 0, t);
+  if (fade !== undefined) out.fade = fade;
+  return out;
 }

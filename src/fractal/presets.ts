@@ -1,10 +1,11 @@
 import { composeAffine } from "./affine";
-import type { FlamePaletteId } from "./palette";
+import type { FlamePaletteId, PaletteSelection } from "./palette";
 import type { Rng } from "./rng";
-import { GEAR_SHAPE } from "./shapes";
+import { GEAR_SHAPE, PEACE_SIGN_SHAPE } from "./shapes";
 import type {
   HybridSchedule,
   Rotation4,
+  ShapeTrap,
   SurfaceFinish,
   SymmetryParams,
   Transform,
@@ -2275,6 +2276,13 @@ const PRESETS = {
   mandelboxClassic,
   mandelboxRings,
   mandelboxCube,
+  // The shape-trap channel's reachability proof: the SAME canonical
+  // Mandelbox, composed with the peace-sign trap that rides
+  // PRESET_TRAPS exactly as a lens rides PRESET_FINALS — the system is
+  // the classic's because the preset's subject is the COLOR channel, and
+  // the reference image it reproduces is that object with the icon
+  // stamped at every scale.
+  mandelboxPeace: mandelboxClassic,
   // The escape-time CHAINS: the transform list became a
   // hybrid formula chain and both shader mirrors learned to cycle it, but
   // every preset above is still ONE map — so the composition had no way in.
@@ -2395,6 +2403,9 @@ export const PRESET_RENDER_HINTS: Partial<
   mandelboxClassic: "surface",
   mandelboxRings: "surface",
   mandelboxCube: "surface",
+  // The trap preset needs the hint for the trio's own reason — and more:
+  // its whole subject is a surface color channel no other mode reads.
+  mandelboxPeace: "surface",
   // The chains need the hint for the identical reason —
   // every link is non-contracting, so the chaos-game cloud is escape-reset
   // debris — and the mode reached this way is the same escape-time marcher,
@@ -2593,6 +2604,52 @@ function spongeOfFernsSchedule(): HybridSchedule {
  */
 export const PRESET_SCHEDULES: Partial<Record<Preset, () => HybridSchedule>> = {
   spongeOfFerns: spongeOfFernsSchedule,
+};
+
+/**
+ * The SHAPE TRAP a preset is a composition WITH ({@link ShapeTrap} — the
+ * escape family's Pickover color channel): the sixth side table, on
+ * {@link PRESET_FINALS}' ABSENT-MEANS-CLEAR rule — a trap preset installs
+ * its block, every other preset clears one (a leftover trap would stamp
+ * the arriving system with shapes it was never composed with) — and
+ * main.ts's handler also lands the surface color source on the channel,
+ * because a preset whose subject is the trap must SHOW it (the
+ * reachability rule; a trap nothing selects is dead state).
+ *
+ * `mandelboxPeace` is the reference-image composition: the canonical
+ * weight-2 Mandelbox shaded by distance-to-peace-sign, the icon's rings and
+ * spokes swept across every scale of the solid — Pickover shape-trapping in
+ * 3D. TUNED BY LOOKING AT IT in the browser, three knobs against the
+ * settled render: scale 1.5 puts the icon's basin where the fold's
+ * first-step images land (a face point's `v₁` sits near ±1.5 on its axis,
+ * so the sign's preimages sweep the visible faces rather than saturating
+ * the channel — 0.5 rendered a flat far-clamp, 2 washed low); min mode
+ * keeps the sweep continuous so the outlines read as bands rather than
+ * dust; fade 0.3 biases the channel toward the orbit's EARLY, large stamps
+ * (unfaded, deep-iteration chaos speckles the whole body). The Ember
+ * surface palette ({@link PRESET_SURFACE_PALETTES}) is part of the tuning:
+ * far-from-icon reads gold, the sweeps pale rose, where a full-hue
+ * spectrum turned the same channel into confetti.
+ */
+export const PRESET_TRAPS: Partial<Record<Preset, () => ShapeTrap>> = {
+  mandelboxPeace: () => ({
+    shape: PEACE_SIGN_SHAPE,
+    scale: 1.5,
+    fade: 0.3,
+  }),
+};
+
+/**
+ * The SURFACE palette a trap preset was tuned against —
+ * {@link PRESET_PALETTES}' reasoning one render over (the channel and its
+ * gradient were chosen together; under another ramp the composition is a
+ * different picture), and the same SET-NEVER-CLEAR rule: absent means "the
+ * user's palette is fine". Built-in ids only, trap presets only.
+ */
+export const PRESET_SURFACE_PALETTES: Partial<
+  Record<Preset, PaletteSelection>
+> = {
+  mandelboxPeace: "ember",
 };
 
 /** Surface-room state carried by the one preset composed around it. Absent

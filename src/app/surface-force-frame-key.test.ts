@@ -1,6 +1,8 @@
 import { surfaceComputeForceFrameKey } from "./surface-force-frame-key";
 import type { SurfaceComputeFrameSpec } from "./surface-compute";
 import { CLASSIC_SURFACE_FINISH } from "../fractal/surface-finish";
+import { resolveShapeTrap } from "../fractal/shape-trap";
+import { PEACE_SIGN_SHAPE } from "../fractal/shapes";
 import type { SurfaceMaterialSlots } from "../fractal/surface-material-wire";
 import type {
   ResolvedSurfacePattern,
@@ -412,5 +414,86 @@ describe("surfaceComputeForceFrameKey pattern blocks", () => {
     expect(
       surfaceComputeForceFrameKey(baseSpec({ materials: undefined })),
     ).toBe(absent);
+  });
+});
+
+describe("the shapeTrap block", () => {
+  it("keys every trap quantity — shape identity, pose, mode, threshold, fade — so a parked-camera trap edit re-traces", () => {
+    const spec = baseSpec();
+    const trapped = {
+      ...spec,
+      shapeTrap: { shape: PEACE_SIGN_SHAPE, scale: 0.5 },
+    };
+    expect(surfaceComputeForceFrameKey(trapped)).not.toBe(
+      surfaceComputeForceFrameKey(spec),
+    );
+    // Each field moves the key on its own.
+    for (const patch of [
+      { scale: 0.6 },
+      { position: [0.1, 0, 0] as [number, number, number] },
+      { rotation: [0, 0.2, 0] as [number, number, number] },
+      { mode: "threshold" as const },
+      { mode: "threshold" as const, threshold: 0.4 },
+      { fade: 0.1 },
+    ]) {
+      expect(
+        surfaceComputeForceFrameKey({
+          ...spec,
+          shapeTrap: { shape: PEACE_SIGN_SHAPE, scale: 0.5, ...patch },
+        }),
+      ).not.toBe(surfaceComputeForceFrameKey(trapped));
+    }
+    // A SHAPE swap at an identical pose keys differently too.
+    expect(
+      surfaceComputeForceFrameKey({
+        ...spec,
+        shapeTrap: {
+          shape: {
+            parts: [
+              { primitive: { kind: "sphere", radius: 1 }, combine: "union" },
+            ],
+          },
+          scale: 0.5,
+        },
+      }),
+    ).not.toBe(surfaceComputeForceFrameKey(trapped));
+  });
+
+  it("defaults match the packers' own resolver: an absent optional field keys identically to its explicit classic value", () => {
+    const spec = baseSpec();
+    const bare = surfaceComputeForceFrameKey({
+      ...spec,
+      shapeTrap: { shape: PEACE_SIGN_SHAPE },
+    });
+    // resolveShapeTrap is the key's own resolver, so these MUST collide —
+    // the packers pack the same bytes for both.
+    const explicit = surfaceComputeForceFrameKey({
+      ...spec,
+      shapeTrap: {
+        shape: PEACE_SIGN_SHAPE,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: 1,
+        fade: 0,
+      },
+    });
+    expect(explicit).toBe(bare);
+    // Sanity: the resolver itself agrees about what "classic" means.
+    expect(resolveShapeTrap({ shape: PEACE_SIGN_SHAPE }).invScale).toBe(1);
+  });
+
+  it("cannot be re-partitioned into its neighbor blocks — the JSON element is pipe-free and the tag leads", () => {
+    const spec = baseSpec();
+    const key = surfaceComputeForceFrameKey({
+      ...spec,
+      shapeTrap: { shape: PEACE_SIGN_SHAPE },
+    });
+    const parts = key.split("|");
+    const at = parts.indexOf("shapeTrap");
+    expect(at).toBeGreaterThan(-1);
+    // Fixed length behind the tag: JSON, invRot, position, invScale, mode,
+    // threshold, fade — then the key ends (no trailing blocks here).
+    expect(parts.length - at).toBe(8);
+    expect(parts[at + 1].includes("|")).toBe(false);
   });
 });

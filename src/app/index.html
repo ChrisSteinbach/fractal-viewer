@@ -578,6 +578,7 @@
               <option value="mandelboxClassic">Mandelbox</option>
               <option value="mandelboxRings">Mandelbox Rings</option>
               <option value="mandelboxCube">Mandelbox Cube</option>
+              <option value="mandelboxPeace">Mandelbox Peace</option>
               <option value="foldChain">Fold Chain</option>
               <option value="foldChainBoulder">Fold Chain Boulder</option>
               <option value="foldChainFlower">Fold Chain Flower</option>
@@ -1758,6 +1759,7 @@
               <option value="radius">Radius ramp</option>
               <option value="rings">Orbit rings</option>
               <option value="sheets">Orbit sheets</option>
+              <option value="shapeTrap">Shape trap</option>
             </select>
           </label>
           <div id="surfacePaletteRow" class="hidden">
@@ -1815,6 +1817,108 @@
                 value="0.5"
               />
             </label>
+          </div>
+          <!-- The shape trap (Pickover shape-trapping): the escape family's
+               second palette channel — the orbit's distance to a posed
+               shape, stamped at every scale of the fractal. Visible only
+               for escape-family sessions (ui.setSurfaceSessionKind);
+               painted by the "Shape trap" color source above. -->
+          <div id="surfaceTrapRow" class="hidden">
+            <label
+              class="select-label"
+              title="Stamp a shape across the fractal: every orbit step measures its distance to this shape, and the closest approach drives the palette"
+            >
+              Shape trap
+              <select id="surfaceTrapShape">
+                <option value="">None</option>
+                <option value="peace">Peace sign</option>
+                <option value="gear">Gear</option>
+                <option value="custom" hidden>(authored)</option>
+              </select>
+            </label>
+            <div id="surfaceTrapControls" class="hidden">
+              <label class="select-label">
+                Trap size: <span id="surfaceTrapScaleLabel">1.00×</span>
+                <input
+                  type="range"
+                  id="surfaceTrapScaleSlider"
+                  min="0.1"
+                  max="3"
+                  step="0.05"
+                  value="1"
+                />
+              </label>
+              <label class="select-label">
+                Trap X: <span id="surfaceTrapXLabel">0.00</span>
+                <input
+                  type="range"
+                  id="surfaceTrapXSlider"
+                  min="-3"
+                  max="3"
+                  step="0.05"
+                  value="0"
+                />
+              </label>
+              <label class="select-label">
+                Trap Y: <span id="surfaceTrapYLabel">0.00</span>
+                <input
+                  type="range"
+                  id="surfaceTrapYSlider"
+                  min="-3"
+                  max="3"
+                  step="0.05"
+                  value="0"
+                />
+              </label>
+              <label class="select-label">
+                Trap Z: <span id="surfaceTrapZLabel">0.00</span>
+                <input
+                  type="range"
+                  id="surfaceTrapZSlider"
+                  min="-3"
+                  max="3"
+                  step="0.05"
+                  value="0"
+                />
+              </label>
+              <label
+                class="select-label"
+                title="Closest approach shades by how near the orbit ever came; First crossing paints only the stamps, each swept by its first dip under the bar"
+              >
+                Trap mode
+                <select id="surfaceTrapMode">
+                  <option value="min">Closest approach</option>
+                  <option value="threshold">First crossing</option>
+                </select>
+              </label>
+              <div id="surfaceTrapThresholdRow" class="hidden">
+                <label class="select-label">
+                  Crossing bar: <span id="surfaceTrapThresholdLabel">25%</span>
+                  <input
+                    type="range"
+                    id="surfaceTrapThresholdSlider"
+                    min="0.02"
+                    max="1"
+                    step="0.01"
+                    value="0.25"
+                  />
+                </label>
+              </div>
+              <label
+                class="select-label"
+                title="Bias the channel toward the orbit's early, large stamps"
+              >
+                Trap fade: <span id="surfaceTrapFadeLabel">0%</span>
+                <input
+                  type="range"
+                  id="surfaceTrapFadeSlider"
+                  min="0"
+                  max="0.3"
+                  step="0.01"
+                  value="0"
+                />
+              </label>
+            </div>
           </div>
           <label class="select-label">
             Light Angle: <span id="surfaceLightAzimuthLabel">135°</span>

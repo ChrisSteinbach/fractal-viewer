@@ -1,12 +1,16 @@
 import {
   analyzeBulbSystem,
   buildBulbDE,
+  bulbShapeTrap,
   estimateBulbDistance,
   BULB_ITERATIONS,
   BULB_STEP_SCALE,
 } from "./bulb-de";
 import type { BulbDE } from "./bulb-de";
 import { analyzeEscapeSystem } from "./escape-de";
+import { mulberry32 } from "./rng";
+import { resolveShapeTrap } from "./shape-trap";
+import { PEACE_SIGN_SHAPE } from "./shapes";
 import {
   mandelbulbClassic,
   mandelbulbOffset,
@@ -589,5 +593,45 @@ describe("analyzeBulbSystem shape emitters", () => {
     expect(analysis.reasons).toContain(
       "shape emitters (unsupported in Mandelbulb mode)",
     );
+  });
+});
+describe("bulbShapeTrap (the hit-info side's trap channel)", () => {
+  it("bulbShapeTrap runs the bulb's own y-space orbit: a bulb-enveloping trap reads 0 and a distant one 1", () => {
+    const bulb = buildBulbDE([
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "bulb", weight: 1 }],
+      },
+    ]);
+    const enveloping = resolveShapeTrap({
+      shape: {
+        parts: [
+          { primitive: { kind: "sphere", radius: 50 }, combine: "union" },
+        ],
+      },
+    });
+    const distant = resolveShapeTrap({
+      shape: {
+        parts: [
+          { primitive: { kind: "sphere", radius: 0.5 }, combine: "union" },
+        ],
+      },
+      position: [500, 0, 0],
+    });
+    const p: Vec3 = [0.4, 0.2, -0.3];
+    expect(bulbShapeTrap(bulb, enveloping, p)).toBe(0);
+    expect(bulbShapeTrap(bulb, distant, p)).toBe(1);
+    // And it varies across the bulb (a channel, not a constant).
+    const rt = resolveShapeTrap({ shape: PEACE_SIGN_SHAPE, scale: 0.4 });
+    const values = new Set<number>();
+    const rng = mulberry32(13);
+    for (let i = 0; i < 64; i++) {
+      const q: Vec3 = [rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1];
+      values.add(Math.round(bulbShapeTrap(bulb, rt, q) * 1e6));
+    }
+    expect(values.size).toBeGreaterThan(10);
   });
 });

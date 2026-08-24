@@ -30,7 +30,7 @@ import {
 } from "../fractal/color";
 import { sliceColorRemap, SLICE_GHOST_FLOOR } from "../fractal/project4";
 import { clamp, clone3 } from "../fractal/vec";
-import type { Transform, Vec3, Vec4 } from "../fractal/types";
+import type { ShapeTrap, Transform, Vec3, Vec4 } from "../fractal/types";
 import type { Mat4 } from "../fractal/flame";
 import type { OrbitCamera } from "./orbit";
 import { wSupport } from "./rotor4";
@@ -65,6 +65,7 @@ import {
   setSurfaceGridEnabled as packSurfaceGridEnabled,
   setBulbSystem as packBulbSystem,
   setEscapeSystem as packEscapeSystem,
+  setSurfaceShapeTrapUniforms as packSurfaceShapeTrapUniforms,
   setSurfaceBalloon as packSurfaceBalloon,
   packSurfaceBalloonPalette,
   packSurfaceBalloonTint,
@@ -110,6 +111,7 @@ import {
 } from "./surface-material-4d";
 import type { EscapeDE } from "../fractal/escape-de";
 import { ESCAPE_TIME_ITERATIONS } from "../fractal/escape-de";
+import { resolveShapeTrap } from "../fractal/shape-trap";
 import type { BulbDE } from "../fractal/bulb-de";
 import { BULB_ITERATIONS } from "../fractal/bulb-de";
 import type { SurfaceDE } from "../fractal/surface-de";
@@ -1351,6 +1353,24 @@ export class FractalScene {
    * While true every frame spec carries the live floor block re-derived
    * from the stored ball. */
   private surfaceComputeGroundPlane = false;
+  /** Whether the ACTIVE compute session's kernels carry the shape-trap
+   * channel — the {@link surfaceComputeBalloon} discipline: created-with
+   * is what the trap-grown params struct needs on EVERY frame of the
+   * session (a shape edit re-enters with fresh kernels). While true every
+   * frame spec carries the stored document block re-read at assembly, so
+   * pose/threshold/fade edits are live per frame. */
+  private surfaceComputeShapeTrap = false;
+  /** Whether the ACTIVE surface session — either engine — carries the
+   * shape-trap channel at all: set by the forward installers/enters, false
+   * for every descent session. The `"shapeTrap"` color source resolves to
+   * `"transform"` while this is false ({@link surfaceColorSourceIndex}'s
+   * pinned fallback). */
+  private surfaceShapeTrapLive = false;
+  /** The document's shape-trap block, stored by
+   * {@link setSurfaceShapeTrap} — the ONE source the GLSL uniforms and
+   * every compute frame spec re-derive from, `surfaceBalloonRMult`'s
+   * live-value discipline. */
+  private surfaceShapeTrap: ShapeTrap | null = null;
   /** Rays the ACTIVE compute session's device can trace as ONE frame
    * — `SurfaceComputeRenderer.maxFrameRays`, handed over at
    * create by {@link setSurfaceComputeRayCap}. Infinity until then (and
@@ -3885,6 +3905,10 @@ export class FractalScene {
     // packSurfaceSystem resets the material's grid uniforms; the texture
     // itself is ours to free.
     this.dropSurfaceGridTexture();
+    // A descent session never carries the shape-trap channel — the color
+    // source's fallback resolution keys on this (the stored document block
+    // survives for the next forward session).
+    this.surfaceShapeTrapLive = false;
     packSurfaceSystem(this.surfaceMaterial, de, colors, trapIndices);
     // The balloon certifies against the DE's OWN ball, so a
     // new system re-derives it and re-applies the stored on/rMult — a
@@ -3951,10 +3975,19 @@ export class FractalScene {
    * trades boundary detail for speed exactly as the IFS descent trades
    * levels, at any chain length. No grid exists for this mode.
    */
-  setEscapeSystem(de: EscapeDE, color: Vec3): void {
+  setEscapeSystem(
+    de: EscapeDE,
+    color: Vec3,
+    trap: ShapeTrap | null = null,
+  ): void {
     this.renderNeeded = true;
     this.dropSurfaceGridTexture();
-    packEscapeSystem(this.surfaceMaterial, de, color);
+    // The trap is session state on BOTH engines: store the block (the live
+    // wire's source) and mark the channel live so the "shapeTrap" color
+    // source stops resolving to its fallback.
+    this.surfaceShapeTrap = trap;
+    this.surfaceShapeTrapLive = trap !== null;
+    packEscapeSystem(this.surfaceMaterial, de, color, trap);
     // NO balloon ball for escape sessions (measured): the
     // escape set is a FILLED solid whose interior reaches the ball
     // center (never-escaping orbits return DE ~ 0 throughout), and the
@@ -4000,10 +4033,13 @@ export class FractalScene {
    * ball are different numbers here, so the balls below take
    * `de.boundingRadius` — the marching one.
    */
-  setBulbSystem(de: BulbDE, color: Vec3): void {
+  setBulbSystem(de: BulbDE, color: Vec3, trap: ShapeTrap | null = null): void {
     this.renderNeeded = true;
     this.dropSurfaceGridTexture();
-    packBulbSystem(this.surfaceMaterial, de, color);
+    // The escape twin's trap store, verbatim.
+    this.surfaceShapeTrap = trap;
+    this.surfaceShapeTrapLive = trap !== null;
+    packBulbSystem(this.surfaceMaterial, de, color, trap);
     // NO balloon ball, for the escape solid's reason re-measured on this
     // object: the Mandelbulb is a FILLED solid whose interior
     // reaches the ball centre — DE(0) = 0 and 100% of a 0.1R neighbourhood
@@ -4077,6 +4113,36 @@ export class FractalScene {
     if (!this.surfaceBalloonOn) return;
     this.renderNeeded = true;
     this.applySurfaceBalloon();
+  }
+
+  /**
+   * Store the document's shape-trap block — the LIVE half of the trap's
+   * wire ({@link setSurfaceBalloonRadius}'s cheap-path discipline): pose/
+   * mode/threshold/fade edits rewrite uniforms (GLSL) or ride the next
+   * frame spec (compute) with no shader touch, while SHAPE and mode-CLASS
+   * changes re-enter the session (main.ts's effect owns that split). Every
+   * call may be a drag tick, so equality-guard by content. Stored even
+   * while no trap session is live, so the next session enter reads the
+   * settled document.
+   */
+  setSurfaceShapeTrap(trap: ShapeTrap | null): void {
+    const next = trap ? JSON.stringify(trap) : null;
+    const prev = this.surfaceShapeTrap
+      ? JSON.stringify(this.surfaceShapeTrap)
+      : null;
+    if (next === prev) return;
+    this.surfaceShapeTrap = trap;
+    if (!this.surfaceShapeTrapLive) return;
+    this.renderNeeded = true;
+    // The GLSL fallback sessions read uniforms; the compute sessions
+    // re-derive from the stored block at every frame-spec assembly, so the
+    // field update above IS their push.
+    if (!this.surfaceComputeActive && trap) {
+      packSurfaceShapeTrapUniforms(
+        this.surfaceMaterial,
+        resolveShapeTrap(trap),
+      );
+    }
   }
 
   /** The live balloon parameter block derived from the stored ball +
@@ -4269,6 +4335,9 @@ export class FractalScene {
     // session is 4D (no grid there — the live rotor/slice would invalidate
     // one every frame).
     this.dropSurfaceGridTexture();
+    // The 4D fragment tracer carries no trap arm (escape4 is
+    // compute-only), so the channel is never live here.
+    this.surfaceShapeTrapLive = false;
     packSurfaceSystem4(this.surfaceMaterial4, de, colors, trapIndices);
     this.activeSurfaceMaterial = this.surfaceMaterial4;
     this.surfaceQuad.material = this.surfaceMaterial4;
@@ -4367,12 +4436,29 @@ export class FractalScene {
       (u.uLightDir.value as THREE.Vector3).copy(
         lightDirection(params.lightAzimuth, params.lightElevation),
       );
-      u.uColorSource.value = SURFACE_COLOR_SOURCES.indexOf(params.colorSource);
+      u.uColorSource.value = this.surfaceColorSourceIndex(params);
       u.uColorSpeed.value = params.colorSpeed;
     }
     // Pattern/scale/emission are part of the already-installed floor's
     // uniform payload. Re-pack live; this never changes the shader variant.
     this.applySurfaceGroundPlane();
+  }
+
+  /**
+   * The color-source integer BOTH engines dispatch on — the ONE resolution
+   * site of the `"shapeTrap"` source's pinned fallback: selected without a
+   * live trap session (the document has no block, or the session is not an
+   * escape-family one — the only kind whose shaders carry the channel), it
+   * READS AS `"transform"`, the default source, rather than aliasing onto
+   * whatever the dispatch's final else happens to hold. `SURFACE_COLOR_SOURCES`
+   * stays the single source of truth for the index mapping.
+   */
+  private surfaceColorSourceIndex(params: SurfaceParams): number {
+    const source =
+      params.colorSource === "shapeTrap" && !this.surfaceShapeTrapLive
+        ? "transform"
+        : params.colorSource;
+    return SURFACE_COLOR_SOURCES.indexOf(source);
   }
 
   /**
@@ -4434,6 +4520,9 @@ export class FractalScene {
     this.renderNeeded = true;
     this.surfaceComputeActive = true;
     this.surfaceCompute4 = false;
+    // An IFS compute session's kernels never carry the trap channel.
+    this.surfaceComputeShapeTrap = false;
+    this.surfaceShapeTrapLive = false;
     this.surfaceBalloonBall = balloonBall(de);
     this.surfaceComputeBalloon = balloon;
     // The floor flag records the create-target's choice exactly
@@ -4469,10 +4558,18 @@ export class FractalScene {
     maxDepth: number,
     groundPlane: boolean,
     ballRadius: number,
+    shapeTrap: ShapeTrap | null,
   ): void {
     this.renderNeeded = true;
     this.surfaceComputeActive = true;
     this.surfaceCompute4 = false;
+    // The trap is create-time kernel state exactly like the floor below:
+    // record the SESSION's choice (the trap-grown params struct needs the
+    // live block on every frame) and store the document block the frame
+    // specs re-derive from.
+    this.surfaceComputeShapeTrap = shapeTrap !== null;
+    this.surfaceShapeTrapLive = shapeTrap !== null;
+    this.surfaceShapeTrap = shapeTrap;
     // Forward-orbit sessions never balloon (the escape solid's measured
     // degeneracy, re-measured on the Mandelbulb — see setEscapeSystem's
     // and setBulbSystem's comments) — null the ball
@@ -4493,21 +4590,31 @@ export class FractalScene {
 
   /** The escape-time forward orbit's compute entry — see
    * {@link enterSurfaceComputeForwardSession}. */
-  enterSurfaceComputeEscapeSession(groundPlane = false, ballRadius = 1): void {
+  enterSurfaceComputeEscapeSession(
+    groundPlane = false,
+    ballRadius = 1,
+    shapeTrap: ShapeTrap | null = null,
+  ): void {
     this.enterSurfaceComputeForwardSession(
       ESCAPE_TIME_ITERATIONS,
       groundPlane,
       ballRadius,
+      shapeTrap,
     );
   }
 
   /** The Mandelbulb forward orbit's compute entry — see
    * {@link enterSurfaceComputeForwardSession}. */
-  enterSurfaceComputeBulbSession(groundPlane = false, ballRadius = 1): void {
+  enterSurfaceComputeBulbSession(
+    groundPlane = false,
+    ballRadius = 1,
+    shapeTrap: ShapeTrap | null = null,
+  ): void {
     this.enterSurfaceComputeForwardSession(
       BULB_ITERATIONS,
       groundPlane,
       ballRadius,
+      shapeTrap,
     );
   }
 
@@ -4529,6 +4636,10 @@ export class FractalScene {
     this.renderNeeded = true;
     this.surfaceComputeActive = true;
     this.surfaceCompute4 = true;
+    // A 4D IFS session never carries the trap channel (the 3D entry's
+    // clear, one dimension up).
+    this.surfaceComputeShapeTrap = false;
+    this.surfaceShapeTrapLive = false;
     // Both wrappers are lifted to 4D, and both balls are the 4D
     // ball projected into the sliced world space (`balloonBall4`) — the
     // 3D entry's move with its own ball choice. The flags record the
@@ -4553,10 +4664,18 @@ export class FractalScene {
    * solid's echo swallows the camera), and the floor dropping under the
    * bailout ball.
    */
-  enterSurfaceComputeEscape4Session(groundPlane = false, ballRadius = 1): void {
+  enterSurfaceComputeEscape4Session(
+    groundPlane = false,
+    ballRadius = 1,
+    shapeTrap: ShapeTrap | null = null,
+  ): void {
     this.renderNeeded = true;
     this.surfaceComputeActive = true;
     this.surfaceCompute4 = true;
+    // The 3D forward entries' trap record, one dimension up.
+    this.surfaceComputeShapeTrap = shapeTrap !== null;
+    this.surfaceShapeTrapLive = shapeTrap !== null;
+    this.surfaceShapeTrap = shapeTrap;
     this.surfaceBalloonBall = null;
     this.surfaceComputeBalloon = false;
     this.surfaceGroundBall = groundPlane
@@ -4586,6 +4705,7 @@ export class FractalScene {
    * frame holds megabytes of GPU memory nothing will re-present. */
   exitSurfaceComputeSession(): void {
     this.surfaceComputeActive = false;
+    this.surfaceComputeShapeTrap = false;
     this.surfaceComputeGroundPlane = false;
     this.surfaceCompute4 = false;
     this.surfaceComputeBalloon = false;
@@ -4767,7 +4887,7 @@ export class FractalScene {
       // across the whole tiled export (the same reason
       // `surfaceComputeBandStops` had to go — see this method's own doc).
       bgShape: traceBackground.shape,
-      colorSource: SURFACE_COLOR_SOURCES.indexOf(params.colorSource),
+      colorSource: this.surfaceColorSourceIndex(params),
       colorSpeed: params.colorSpeed,
       lut:
         (this.surfaceLUTTexture?.image.data as Uint8Array | undefined) ?? null,
@@ -4813,6 +4933,15 @@ export class FractalScene {
         const groundPlane = this.surfaceGroundPlaneSpec();
         return groundPlane ? { groundPlane } : {};
       })(),
+      // The shape-trap session's live block: keyed on the SESSION flag —
+      // the kernels were compiled with the trap and their trap-grown
+      // params struct — carrying the stored DOCUMENT block re-read at
+      // every assembly, so pose/threshold/fade edits are live per frame
+      // (the balloon's discipline; the shape inside it is create-time and
+      // rides along for the force-frame memo key).
+      ...(this.surfaceComputeShapeTrap && this.surfaceShapeTrap
+        ? { shapeTrap: this.surfaceShapeTrap }
+        : {}),
     };
   }
 

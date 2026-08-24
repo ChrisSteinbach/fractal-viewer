@@ -1962,6 +1962,12 @@ export class Ui {
   // explorer pair. Its own Inflate button binds the SAME handler as the
   // Points and Flame buttons — one shared command with mode-specific motion.
   private readonly surfaceBalloonRow: HTMLElement;
+  // The shape trap's rows — the balloon's COMPLEMENT: visible exactly for
+  // the forward-orbit (escape-family) session kinds, where the balloon
+  // rows hide (see updateLabels' toggle and its comment).
+  private readonly surfaceTrapRow: HTMLElement;
+  private readonly surfaceTrapControls: HTMLElement;
+  private readonly surfaceTrapThresholdRow: HTMLElement;
   /** Palette/editor container: eligible whenever the surface balloon itself
    * is eligible, even while the balloon is currently off. */
   private readonly surfaceBalloonPaletteRow: HTMLElement;
@@ -2444,6 +2450,9 @@ export class Ui {
     this.surfacePaletteRow = this.byId("surfacePaletteRow");
     this.surfaceColorSpeedRow = this.byId("surfaceColorSpeedRow");
     this.surfaceBalloonRow = this.byId("surfaceBalloonRow");
+    this.surfaceTrapRow = this.byId("surfaceTrapRow");
+    this.surfaceTrapControls = this.byId("surfaceTrapControls");
+    this.surfaceTrapThresholdRow = this.byId("surfaceTrapThresholdRow");
     this.surfaceBalloonPaletteRow = this.byId("surfaceBalloonPaletteRow");
     this.surfaceBalloonRadiusRow = this.byId("surfaceBalloonRadiusRow");
     this.surfaceBalloonInflateButton = this.byId("surfaceBalloonInflateButton");
@@ -3329,14 +3338,15 @@ export class Ui {
       "hidden",
       state.renderMode !== "surface",
     );
-    // The surface palette select means anything for "palette", "rings", and
-    // "sheets" — all three sample the user-selected palette — like
-    // glowBrightnessRow, hidden whenever none of those three is active.
+    // The surface palette select means anything for "palette", "rings",
+    // "sheets" and "shapeTrap" — all four sample the user-selected palette
+    // — like glowBrightnessRow, hidden whenever none of those is active.
     this.surfacePaletteRow.classList.toggle(
       "hidden",
       state.surface.colorSource !== "palette" &&
         state.surface.colorSource !== "rings" &&
-        state.surface.colorSource !== "sheets",
+        state.surface.colorSource !== "sheets" &&
+        state.surface.colorSource !== "shapeTrap",
     );
     // The color-speed slider only shapes the "palette" source's orbit-trap
     // blend weight — inert for rings/sheets (a different coordinate off
@@ -3381,6 +3391,17 @@ export class Ui {
     // the w-slice it drops under is an ordinary 3D object. So the row
     // carries no gate of its own at all.
     this.surfaceGroundPlaneRow.classList.toggle("hidden", false);
+    // The shape trap is the balloon's COMPLEMENT: it exists ONLY for the
+    // forward-orbit (escape-family) sessions — the descent shaders carry
+    // no trap channel — so the row shows exactly where the balloon rows
+    // hide. Sub-rows wait for a block to exist; the crossing bar for its
+    // own mode.
+    this.surfaceTrapRow.classList.toggle("hidden", !surfaceBalloonHidden);
+    this.surfaceTrapControls.classList.toggle("hidden", !state.shapeTrap);
+    this.surfaceTrapThresholdRow.classList.toggle(
+      "hidden",
+      state.shapeTrap?.mode !== "threshold",
+    );
     // …including each mode's non-section block above the accordion: the
     // Undo/Redo row belongs to the explorer (a mid-render undo couldn't
     // affect the frozen render, same reason the editing controls hide), and

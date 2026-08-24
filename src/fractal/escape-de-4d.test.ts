@@ -2,6 +2,7 @@ import {
   analyzeEscapeSystem4,
   buildEscapeDE4,
   escapeSetContains4,
+  escapeShapeTrap4,
   estimateEscapeDistance4,
   foldQueryIntoSector4,
   probeEscapeFill4,
@@ -13,12 +14,15 @@ import {
   ESCAPE_LINK_BOXFOLD,
   ESCAPE_TIME_RADIUS,
   escapeSetContains,
+  escapeShapeTrap,
   estimateEscapeDistance,
   foldQueryIntoSector,
 } from "./escape-de";
+import { resolveShapeTrap } from "./shape-trap";
 import { toTransform4 } from "./affine4";
 import { effectiveSymmetryOrder } from "./chaos-game";
 import { mulberry32 } from "./rng";
+import { PEACE_SIGN_SHAPE } from "./shapes";
 import { transformSigmas4 } from "./surface-de-4d";
 import { SYMMETRY_PLANES } from "./types";
 import type {
@@ -933,5 +937,74 @@ describe("analyzeEscapeSystem4 shape emitters", () => {
     expect(analysis.reasons).toContain(
       "shape emitters (unsupported in escape-time mode)",
     );
+  });
+});
+
+describe("the 4D shape trap (escapeShapeTrap4)", () => {
+  it("anchors bit-exactly to the 3D trap at w = 0 for a flat system — the trap inherits the module's anchor property", () => {
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.4, 0.3, 0.2],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "mandelbox", weight: 2 }],
+      },
+    ];
+    const de3 = buildEscapeDE(transforms);
+    const de4 = buildEscapeDE4(transforms);
+    const rt = resolveShapeTrap({
+      shape: PEACE_SIGN_SHAPE,
+      position: [0.3, -0.2, 0.5],
+      rotation: [0.2, 0, 0.4],
+      scale: 0.7,
+      fade: 0.1,
+    });
+    const rng = mulberry32(55);
+    for (let i = 0; i < 24; i++) {
+      const p: Vec3 = [rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1];
+      expect(escapeShapeTrap4(de4, rt, [p[0], p[1], p[2], 0])).toBe(
+        escapeShapeTrap(de3, rt, p),
+      );
+    }
+  });
+
+  it("reads the orbit's xyz DROPPING w: the trap's own w never enters the candidate (the shape vocabulary is 3D)", () => {
+    // A non-flat system whose one map turns in xw, so the orbit genuinely
+    // leaves w = 0 — the trap must still measure only xyz, so an
+    // xyz-enveloping cylinder of a shape (a huge sphere) still reads 0.
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0.3, 0.1, 0.2],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "mandelbox", weight: 2 }],
+        w: { position: 0.2, rotation: { xw: 0.6 } },
+      },
+    ];
+    const de4 = buildEscapeDE4(transforms);
+    const enveloping = resolveShapeTrap({
+      shape: {
+        parts: [
+          { primitive: { kind: "sphere", radius: 50 }, combine: "union" },
+        ],
+      },
+    });
+    expect(escapeShapeTrap4(de4, enveloping, [0.2, 0.1, -0.3, 0.4])).toBe(0);
+    // And it varies across the object like the 3D channel does.
+    const rt = resolveShapeTrap({ shape: PEACE_SIGN_SHAPE });
+    const values = new Set<number>();
+    const rng = mulberry32(21);
+    for (let i = 0; i < 48; i++) {
+      const q: Vec4 = [
+        rng() * 2 - 1,
+        rng() * 2 - 1,
+        rng() * 2 - 1,
+        rng() - 0.5,
+      ];
+      values.add(Math.round(escapeShapeTrap4(de4, rt, q) * 1e6));
+    }
+    expect(values.size).toBeGreaterThan(10);
   });
 });

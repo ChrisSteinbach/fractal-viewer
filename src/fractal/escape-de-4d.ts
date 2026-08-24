@@ -110,6 +110,12 @@ import {
   escapeLinkPower,
 } from "./escape-de";
 import type { EscapeEligibility, EscapeLinkKind } from "./escape-de";
+import {
+  SHAPE_TRAP_NO_CROSSING,
+  shapeTrapCandidate,
+  shapeTrapValue,
+} from "./shape-trap";
+import type { ResolvedShapeTrap } from "./shape-trap";
 import { mulberry32 } from "./rng";
 import {
   SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
@@ -456,18 +462,31 @@ const FOLDED4: Vec4 = [0, 0, 0, 0];
 
 /** The orbit's terminal radius and derivative bound, left in module scratch
  * by {@link runEscapeOrbit4} so the estimate and the membership reader cannot
- * disagree about what the orbit is — 3D's split, for its reason. */
+ * disagree about what the orbit is — 3D's split, for its reason.
+ * {@link escapeShapeTrap4} is the third thin reader, its accumulators
+ * riding the same loop behind the null-guarded trap argument. */
 let orbitR = 0;
 let orbitDr = 1;
+let orbitTrapBest = 0;
+let orbitTrapCross = 0;
 
 /**
  * Run the chain's forward orbit from `p`, leaving the terminal radius and
  * derivative bound in the module scratch above. The loop
  * `surface-de-gpu.ts`'s `core: "escape4"` kernel mirrors.
  */
-function runEscapeOrbit4(de: EscapeDE4, p: Vec4, maxIterations: number): void {
+function runEscapeOrbit4(
+  de: EscapeDE4,
+  p: Vec4,
+  maxIterations: number,
+  trap: ResolvedShapeTrap | null = null,
+): void {
   const links = de.links;
   const n = links.length;
+  if (trap) {
+    orbitTrapBest = 1e30;
+    orbitTrapCross = SHAPE_TRAP_NO_CROSSING;
+  }
   const q =
     de.symmetryOrder > 1
       ? foldQueryIntoSector4(p, de.symmetryOrder, de.symmetryPlane, FOLDED4)
@@ -542,6 +561,16 @@ function runEscapeOrbit4(de: EscapeDE4, p: Vec4, maxIterations: number): void {
     vw = link.w * fw + qw;
     dr = link.derivGrowth * localL * dr + 1;
     r = Math.sqrt(vx * vx + vy * vy + vz * vz + vw * vw);
+    // The shape trap's accumulators at this post-step point's xyz — the
+    // trap SDF DROPS w by decision ({@link escapeShapeTrap4}'s doc), so
+    // vw never enters the candidate. 3D's null-guard shape.
+    if (trap) {
+      const cand = shapeTrapCandidate(trap, vx, vy, vz, step);
+      if (cand < orbitTrapBest) orbitTrapBest = cand;
+      if (orbitTrapCross <= SHAPE_TRAP_NO_CROSSING && cand < trap.threshold) {
+        orbitTrapCross = cand;
+      }
+    }
   }
   orbitR = r;
   orbitDr = dr;
@@ -696,6 +725,37 @@ export function escapeSetContains4(
 ): boolean {
   runEscapeOrbit4(de, p, maxIterations);
   return orbitR <= ESCAPE_TIME_RADIUS;
+}
+
+/**
+ * The 4D chain's shape-trap palette coordinate at `p` — `shape-trap.ts`'s
+ * ONE formula as the third thin reader of {@link runEscapeOrbit4}, beside
+ * the estimate and the membership reader: the accumulators ride the one
+ * shared loop behind its null-guarded trap argument, so the trap can never
+ * evaluate a different orbit than the estimate does — candidates at the
+ * same post-step points rings/sheets read.
+ *
+ * THE TRAP SDF READS THE ORBIT POINT'S xyz, DROPPING w — a decision, not an
+ * omission, and `shapes.ts`'s own parity stance is the reason: the shape
+ * vocabulary is deliberately 3D (a shape is a 3D object each consumer
+ * embeds), so this consumer fixes its embedding as "the 3D shape applied to
+ * the orbit's first three coordinates". The stamps therefore read as the
+ * shape swept along w rather than as a 4D solid's slices — honest, cheap,
+ * and bit-exact against the 3D trap at `w = 0` for a flat system (the
+ * module's anchor property, which the trap inherits because `+ 0` never
+ * moves the first three coordinates). A genuine 4D shape vocabulary would
+ * be a different feature, not this one's missing half. The f64 oracle the
+ * `core:"escape4"` kernel's trap lines mirror; there is no fragment mirror,
+ * exactly as for the rest of this module.
+ */
+export function escapeShapeTrap4(
+  de: EscapeDE4,
+  rt: ResolvedShapeTrap,
+  p: Vec4,
+  maxIterations = ESCAPE_TIME_ITERATIONS,
+): number {
+  runEscapeOrbit4(de, p, maxIterations, rt);
+  return shapeTrapValue(rt, orbitTrapBest, orbitTrapCross);
 }
 
 /**

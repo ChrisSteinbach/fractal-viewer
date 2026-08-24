@@ -113,6 +113,8 @@ import {
   setExportScale,
   setFinalTransform,
   setSchedule,
+  setShapeTrap,
+  updateShapeTrap,
   setScheduleDepth,
   stripScheduleTransform,
   setFlameEstimatorCurve,
@@ -167,7 +169,8 @@ import {
 } from "../fractal/presets";
 import { seedCustomStops } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
-import type { Transform } from "../fractal/types";
+import type { ShapeTrap, Transform } from "../fractal/types";
+import { PEACE_SIGN_SHAPE } from "../fractal/shapes";
 
 describe("initialState", () => {
   it("starts in camera mode with the default system", () => {
@@ -2224,5 +2227,74 @@ describe("setSchedule / setScheduleDepth (scheduled-hybrid block)", () => {
     expect(stripped.position).toEqual(bSource[0].position);
     expect(stripped.position).not.toBe(bSource[0].position);
     expect(stripped.shear).not.toBe(bSource[0].shear);
+  });
+});
+
+describe("setShapeTrap / updateShapeTrap (shape-trap color block)", () => {
+  const base = initialState(false);
+
+  it("stores a normalized block and clears with null (absent-means-off)", () => {
+    const on = setShapeTrap(base, { shape: PEACE_SIGN_SHAPE });
+    expect(on.shapeTrap).toEqual({ shape: PEACE_SIGN_SHAPE });
+    const off = setShapeTrap(on, null);
+    expect(off.shapeTrap).toBeUndefined();
+    // A shape with no parts stores absent too — nothing to trap.
+    expect(
+      setShapeTrap(base, { shape: { parts: [] } }).shapeTrap,
+    ).toBeUndefined();
+  });
+
+  it("strips classic-valued optional fields — the fold lengths' removal rule at block scope", () => {
+    const authored: ShapeTrap = {
+      shape: PEACE_SIGN_SHAPE,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: 1,
+      mode: "min",
+      threshold: 0.4,
+      fade: 0,
+    };
+    const stored = setShapeTrap(base, authored).shapeTrap;
+    // Everything was classic (and threshold rides only the threshold
+    // mode), so only the shape survives.
+    expect(stored).toEqual({ shape: PEACE_SIGN_SHAPE });
+  });
+
+  it("keeps authored values away from the classics, threshold only under its own mode", () => {
+    const stored = setShapeTrap(base, {
+      shape: PEACE_SIGN_SHAPE,
+      position: [0.3, 0, -0.2],
+      rotation: [0, 0.5, 0],
+      scale: 0.5,
+      mode: "threshold",
+      threshold: 0.3,
+      fade: 0.1,
+    }).shapeTrap;
+    expect(stored).toEqual({
+      shape: PEACE_SIGN_SHAPE,
+      position: [0.3, 0, -0.2],
+      rotation: [0, 0.5, 0],
+      scale: 0.5,
+      mode: "threshold",
+      threshold: 0.3,
+      fade: 0.1,
+    });
+  });
+
+  it("updateShapeTrap patches through the same normalization and no-ops without a block", () => {
+    expect(updateShapeTrap(base, { scale: 2 })).toBe(base);
+    const on = setShapeTrap(base, { shape: PEACE_SIGN_SHAPE });
+    const scaled = updateShapeTrap(on, { scale: 2 });
+    expect(scaled.shapeTrap?.scale).toBe(2);
+    // Dragging back to the classic value removes the field.
+    expect(
+      updateShapeTrap(scaled, { scale: 1 }).shapeTrap?.scale,
+    ).toBeUndefined();
+    // Flipping to min mode drops the mode AND its threshold.
+    const th = updateShapeTrap(on, { mode: "threshold", threshold: 0.2 });
+    expect(th.shapeTrap?.mode).toBe("threshold");
+    const backToMin = updateShapeTrap(th, { mode: "min" });
+    expect(backToMin.shapeTrap?.mode).toBeUndefined();
+    expect(backToMin.shapeTrap?.threshold).toBeUndefined();
   });
 });

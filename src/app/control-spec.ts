@@ -1,8 +1,12 @@
 import type {
   ColorMode,
   FourDColorMode,
+  ShapeTrap,
+  ShapeTrapMode,
   SymmetryPlane,
 } from "../fractal/types";
+import { GEAR_SHAPE, PEACE_SIGN_SHAPE } from "../fractal/shapes";
+import { DEFAULT_SHAPE_TRAP_THRESHOLD } from "../fractal/shape-trap";
 import { buildColorModeLUT } from "../fractal/color";
 import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
 import type { PaletteSelection } from "../fractal/palette";
@@ -68,6 +72,8 @@ import {
   setSurfaceLightAzimuth,
   setSurfaceLightElevation,
   setSurfacePaletteId,
+  setShapeTrap,
+  updateShapeTrap,
   setSymmetryPlane,
   setSymmetryOrder,
   setSymmetryTwist,
@@ -200,6 +206,10 @@ export interface ControlSceneEffects {
    * (`restartSurfaceRender`), which re-derives routing + grid + variant +
    * uniforms from state in one sweep. */
   setSurfaceBalloonRadius(rMult: number): void;
+  /** Store the document's shape-trap block — the trap sliders' live
+   * cheap path (uniforms / next frame spec, no recompile); see
+   * `scene.ts`'s `setSurfaceShapeTrap`. */
+  setSurfaceShapeTrap(trap: ShapeTrap | null): void;
   /** Set the balloon tint — `tint` an rgb01 tuple, `strength` its 0..1
    * blend weight; see `scene.ts`'s `setBalloonTint`. ONE method for the
    * Points and Surface scene renderers; all three panels' strength sliders
@@ -440,6 +450,30 @@ const surfaceParamsEffect: ControlEffect = (state, fx) => {
   fx.scene.setSurfaceParams(state.surface);
 };
 
+/** The trap's live-half push (scale/position/threshold/fade): rewrite the
+ * scene's stored block — uniforms on the GLSL arm, the next frame spec on
+ * compute — with no recompile (surfaceBalloonRadiusSlider's cheap path). */
+const shapeTrapLiveEffect: ControlEffect = (state, fx) => {
+  fx.scene.setSurfaceShapeTrap(state.shapeTrap ?? null);
+};
+
+/** Patch one component of the trap's position through the block's one
+ * normalization domain (state.ts's updateShapeTrap). */
+function updateShapeTrapPosition(
+  state: AppState,
+  axis: 0 | 1 | 2,
+  value: number,
+): AppState {
+  if (!state.shapeTrap) return state;
+  const position: [number, number, number] = [
+    state.shapeTrap.position?.[0] ?? 0,
+    state.shapeTrap.position?.[1] ?? 0,
+    state.shapeTrap.position?.[2] ?? 0,
+  ];
+  position[axis] = value;
+  return updateShapeTrap(state, { position });
+}
+
 /**
  * The surface tracer's color LUT for whichever `colorSource` needs
  * one — pure so `main.ts` (at session start) and this module's own
@@ -476,8 +510,8 @@ export function surfaceColorLUT(state: AppState): Float32Array | null {
       resolvePalette(state.rampPaletteId, state.customPalette),
     );
   }
-  // "palette" / "rings" / "sheets": an orbit-trap-derived coordinate
-  // through the surface's own user-selected palette.
+  // "palette" / "rings" / "sheets" / "shapeTrap": an orbit-trap-derived
+  // coordinate through the surface's own user-selected palette.
   const lut =
     buildPaletteLUT(
       resolvePalette(state.surface.paletteId, state.customPalette),
@@ -1476,4 +1510,133 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
       fx.trackAutoBackground();
     },
   },
+  {
+    // The shape trap's SHAPE — the built-ins by name, "" = no trap (the
+    // classic-removal value: the block leaves the document outright). A
+    // block whose spec matches no built-in — a preset's authored pose, a
+    // shared link — reads as the hidden "(authored)" sentinel, and
+    // re-picking it is a no-op so a sync can never destroy an authored
+    // spec. VARIANT-LEVEL: the shape bakes into both engines' programs
+    // (surfaceFragmentFor's splice, the kernels' codegen), so the effect
+    // re-enters the session, surfaceBalloonCheckbox's discipline.
+    kind: "select",
+    id: "surfaceTrapShape",
+    read: (s) => shapeTrapSelectValue(s),
+    apply: (s, raw) =>
+      raw === "custom"
+        ? s
+        : setShapeTrap(
+            s,
+            raw === "peace"
+              ? { shape: PEACE_SIGN_SHAPE }
+              : raw === "gear"
+                ? { shape: GEAR_SHAPE }
+                : null,
+          ),
+    effect: (s, fx) => {
+      fx.scene.setSurfaceShapeTrap(s.shapeTrap ?? null);
+      fx.restartSurfaceRender();
+    },
+  },
+  {
+    // The trap's live pose half: scale/position/threshold/fade rewrite
+    // uniforms (GLSL) or ride the next frame spec (compute) with no
+    // recompile — surfaceBalloonRadiusSlider's cheap path.
+    kind: "range",
+    id: "surfaceTrapScaleSlider",
+    label: {
+      id: "surfaceTrapScaleLabel",
+      text: (s) => `${(s.shapeTrap?.scale ?? 1).toFixed(2)}×`,
+    },
+    read: (s) => String(s.shapeTrap?.scale ?? 1),
+    apply: (s, raw) => updateShapeTrap(s, { scale: Number(raw) }),
+    effect: shapeTrapLiveEffect,
+  },
+  {
+    kind: "range",
+    id: "surfaceTrapXSlider",
+    label: {
+      id: "surfaceTrapXLabel",
+      text: (s) => (s.shapeTrap?.position?.[0] ?? 0).toFixed(2),
+    },
+    read: (s) => String(s.shapeTrap?.position?.[0] ?? 0),
+    apply: (s, raw) => updateShapeTrapPosition(s, 0, Number(raw)),
+    effect: shapeTrapLiveEffect,
+  },
+  {
+    kind: "range",
+    id: "surfaceTrapYSlider",
+    label: {
+      id: "surfaceTrapYLabel",
+      text: (s) => (s.shapeTrap?.position?.[1] ?? 0).toFixed(2),
+    },
+    read: (s) => String(s.shapeTrap?.position?.[1] ?? 0),
+    apply: (s, raw) => updateShapeTrapPosition(s, 1, Number(raw)),
+    effect: shapeTrapLiveEffect,
+  },
+  {
+    kind: "range",
+    id: "surfaceTrapZSlider",
+    label: {
+      id: "surfaceTrapZLabel",
+      text: (s) => (s.shapeTrap?.position?.[2] ?? 0).toFixed(2),
+    },
+    read: (s) => String(s.shapeTrap?.position?.[2] ?? 0),
+    apply: (s, raw) => updateShapeTrapPosition(s, 2, Number(raw)),
+    effect: shapeTrapLiveEffect,
+  },
+  {
+    // Min vs first-crossing. On the wire it is a live flag, but the mode
+    // re-enters the session by decision (the create-time treatment the
+    // shape gets), so the two-mode split never depends on which engine's
+    // uniform push happened to land first.
+    kind: "select",
+    id: "surfaceTrapMode",
+    read: (s) => (s.shapeTrap?.mode === "threshold" ? "threshold" : "min"),
+    apply: (s, raw) => updateShapeTrap(s, { mode: raw as ShapeTrapMode }),
+    effect: (s, fx) => {
+      fx.scene.setSurfaceShapeTrap(s.shapeTrap ?? null);
+      fx.restartSurfaceRender();
+    },
+  },
+  {
+    kind: "range",
+    id: "surfaceTrapThresholdSlider",
+    label: {
+      id: "surfaceTrapThresholdLabel",
+      text: (s) =>
+        `${Math.round((s.shapeTrap?.threshold ?? DEFAULT_SHAPE_TRAP_THRESHOLD) * 100)}%`,
+    },
+    read: (s) => String(s.shapeTrap?.threshold ?? DEFAULT_SHAPE_TRAP_THRESHOLD),
+    apply: (s, raw) => updateShapeTrap(s, { threshold: Number(raw) }),
+    effect: shapeTrapLiveEffect,
+  },
+  {
+    kind: "range",
+    id: "surfaceTrapFadeSlider",
+    label: {
+      id: "surfaceTrapFadeLabel",
+      text: (s) => `${Math.round((s.shapeTrap?.fade ?? 0) * 100)}%`,
+    },
+    read: (s) => String(s.shapeTrap?.fade ?? 0),
+    apply: (s, raw) => updateShapeTrap(s, { fade: Number(raw) }),
+    effect: shapeTrapLiveEffect,
+  },
 ];
+
+/**
+ * The trap shape select's display value — which built-in the document's
+ * block IS, by deep spec equality ("" without a block, the hidden
+ * "(authored)" sentinel for anything else). Exported for `ui.ts`'s row
+ * gating and the spec tests.
+ */
+export function shapeTrapSelectValue(
+  state: AppState,
+): "" | "peace" | "gear" | "custom" {
+  const trap = state.shapeTrap;
+  if (!trap) return "";
+  const key = JSON.stringify(trap.shape);
+  if (key === JSON.stringify(PEACE_SIGN_SHAPE)) return "peace";
+  if (key === JSON.stringify(GEAR_SHAPE)) return "gear";
+  return "custom";
+}
