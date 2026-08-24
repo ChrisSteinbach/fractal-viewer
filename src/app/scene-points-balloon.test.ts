@@ -36,6 +36,12 @@ function sceneWithoutRenderer(
       uBalloonPaletteEnabled: { value: 0 },
     },
   });
+  Reflect.set(scene, "voxelMaterial", {
+    uniforms: {
+      uBalloonColorLUT: { value: null },
+      uBalloonPaletteEnabled: { value: 0 },
+    },
+  });
   return { scene, uniforms, setAttribute };
 }
 

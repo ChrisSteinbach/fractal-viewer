@@ -50,6 +50,11 @@ import {
   emptyVoxelTexture,
   lightDirection,
   marchStepsForGrid,
+  packVoxelBalloonPalette,
+  packVoxelBalloonTint,
+  sampleVoxelAlpha,
+  setVoxelBalloon,
+  solidBalloonCenterIsEmpty,
 } from "./voxel-material";
 import {
   configureSurfaceGridTexture,
@@ -837,6 +842,18 @@ export class FractalScene {
     0,
   );
   private balloonEchoSourceSphereReady = false;
+  /** Solid's own inversion ball. In 3D it matches the cloud sphere above; in
+   * 4D it is deliberately origin-centred with a full, slice-independent 4D
+   * radius, matching balloonBall4 rather than Points' projection-centred ball. */
+  private readonly solidBalloonSourceSphere = new THREE.Sphere(
+    new THREE.Vector3(),
+    0,
+  );
+  private solidBalloonSourceSphereReady = false;
+  /** Latest trilinear packed-alpha sample at the Solid ball centre. A filled
+   * centre makes the inverted isosurface unbounded and refuses the echo. */
+  private solidBalloonCenterAlpha = 0;
+  private solidThreshold = 0.3;
   // Normalized multiple of the cloud's enclosing-ball radius (see
   // fractal/balloon-de.ts's buildBalloon). Mirrors state.ts's
   // DEFAULT_BALLOON_RADIUS as a plain literal rather than an import — the
@@ -992,6 +1009,10 @@ export class FractalScene {
    *    direction ride the same setter while changing no loop count;
    *    splitting them out would only buy a stale reading the right to
    *    survive an edit nobody makes on its own.
+   *  - {@link setBalloonEchoEnabled}/{@link setBalloonEchoRadius}: the Solid
+   *    balloon replaces the box interval with the ten-radius horizon and
+   *    preserves the voxel stride by increasing the loop count. A toggle or
+   *    radius therefore invalidates the old price without rebuilding a grid.
    * SURVIVES A POSE CHANGE, and that is the load-bearing decision here
    * rather than an omission. The pose genuinely re-prices a solid ray —
    * the span runs from "off screen, every ray a miss" to "filling the
@@ -1862,22 +1883,33 @@ export class FractalScene {
     if (sphere) {
       this.balloonEchoSourceSphere.copy(sphere);
       this.balloonEchoSourceSphereReady = true;
+      this.solidBalloonSourceSphere.copy(sphere);
+      this.solidBalloonSourceSphereReady = true;
     } else {
       this.balloonEchoSourceSphereReady = false;
+      this.solidBalloonSourceSphereReady = false;
     }
+    // This ball belongs to a new cloud while the voxel texture still belongs
+    // to the previous Solid session. Treat eligibility as unknown/safe until
+    // setVoxelGrid samples the first matching progressive grid; carrying the
+    // previous cloud's refusal into this session would disable unrelated art.
+    this.solidBalloonCenterAlpha = 0;
     // The balloon echo's uEcho* uniforms are all derived from the cloud's
     // own enclosing ball, which just moved — re-derive them regardless of
     // whether the echo is currently enabled, so it never shows stale
     // geometry for one frame after a delayed enable.
     this.syncBalloonEchoUniforms();
+    this.syncSolidBalloonUniforms();
   }
 
   /**
    * Upload a freshly generated 4D cloud: the projected-to-3D
    * `xyz` positions plus the separate `w` coordinate the shader colors by, and
    * the 4D `center`/`halfExtents` that drive the shader's rotation pivot and
-   * w-color normalization. `radius` is the exact rotation-invariant ball used
-   * by the balloon echo, plus 0.1% slack in the frustum-culling copy. Any
+   * w-color normalization. `radius` is the exact rotation-invariant,
+   * center-relative ball used by the Points/Flame balloon echo, while
+   * `originRadius` is Solid's exact full-cloud origin-relative ball; the
+   * frustum-culling copy receives 0.1% slack. Any
    * `color` attribute is dropped: it belonged to the previous cloud (possibly
    * a different length),
    * and main.ts re-points the color source — re-baking the attribute when the
@@ -1889,6 +1921,7 @@ export class FractalScene {
     w: Float32Array,
     center: Vec4,
     radius: number,
+    originRadius: number,
     halfExtents: Vec4,
   ): void {
     this.renderNeeded = true;
@@ -1931,7 +1964,18 @@ export class FractalScene {
     this.balloonEchoSourceSphere.center.set(center[0], center[1], center[2]);
     this.balloonEchoSourceSphere.radius = radius;
     this.balloonEchoSourceSphereReady = true;
+    // Solid slices to a 3D grid BEFORE the material ever sees it. Its
+    // inversion nevertheless uses balloonBall4's semantic ball: origin plus
+    // the FULL 4D visible radius, never the slice-aware voxel AABB or Points'
+    // projection-centred sphere. `originRadius` is the exact full-cloud
+    // maximum |p4| from chaos-game-4d.ts's existing radius pass and is
+    // invariant under the frozen rotor/slice snapshot.
+    this.solidBalloonSourceSphere.center.set(0, 0, 0);
+    this.solidBalloonSourceSphere.radius = originRadius;
+    this.solidBalloonSourceSphereReady = true;
+    this.solidBalloonCenterAlpha = 0;
     this.syncBalloonEchoUniforms();
+    this.syncSolidBalloonUniforms();
 
     // The scaffold pivots on the same center, which a fresh generation may
     // have moved — re-pose it.
@@ -2563,7 +2607,9 @@ export class FractalScene {
     this.balloonEchoEnabled = on;
     this.renderNeeded = true;
     this.syncBalloonEchoUniforms();
+    this.syncSolidBalloonUniforms();
     this.syncBalloonEchoVisibility();
+    this.solidCapturePxCostMs = null;
   }
 
   /**
@@ -2579,7 +2625,9 @@ export class FractalScene {
     this.balloonEchoRadius = rMult;
     this.renderNeeded = true;
     this.syncBalloonEchoUniforms();
+    this.syncSolidBalloonUniforms();
     this.syncBalloonEchoVisibility();
+    this.solidCapturePxCostMs = null;
   }
 
   /**
@@ -2603,6 +2651,7 @@ export class FractalScene {
       u.uEchoUsePalette.value = 0;
       packSurfaceBalloonPalette(this.surfaceMaterial, null);
       packSurfaceBalloonPalette(this.surfaceMaterial4, null);
+      packVoxelBalloonPalette(this.voxelMaterial, null);
       if (this.balloonEchoEnabled || this.surfaceBalloonOn) {
         this.renderNeeded = true;
       }
@@ -2661,6 +2710,7 @@ export class FractalScene {
       this.surfaceMaterial4,
       this.balloonEchoPaletteTexture,
     );
+    packVoxelBalloonPalette(this.voxelMaterial, this.balloonEchoPaletteTexture);
     if (changed) this.balloonPaletteLUTVersion++;
     if (
       (changed || enabling) &&
@@ -2717,6 +2767,48 @@ export class FractalScene {
       (BALLOON_FAR_CAP_RHO * sphere.radius) / Math.max(this.fogDensity, 0.15);
     u.uEchoFadeEnd.value = fadeEnd;
     u.uEchoFadeStart.value = 0.45 * fadeEnd;
+  }
+
+  /**
+   * Re-resolve Solid's shader variant from the shared balloon state, its own
+   * dimension-correct ball, and the latest installed grid's centre-density
+   * refusal. The density texture itself is never duplicated or enlarged:
+   * {@link setVoxelBalloon} only changes the query program/uniforms.
+   */
+  private syncSolidBalloonUniforms(): void {
+    const available = this.solidBalloonAvailable();
+    if (
+      !this.balloonEchoEnabled ||
+      !this.solidBalloonSourceSphereReady ||
+      !(this.solidBalloonSourceSphere.radius > 0) ||
+      !available
+    ) {
+      setVoxelBalloon(this.voxelMaterial, null);
+      return;
+    }
+    const sphere = this.solidBalloonSourceSphere;
+    const balloon = buildBalloonFromBall(
+      {
+        center: [sphere.center.x, sphere.center.y, sphere.center.z],
+        radius: sphere.radius,
+      },
+      this.balloonEchoRadius,
+    );
+    setVoxelBalloon(this.voxelMaterial, {
+      center: balloon.center,
+      radius: sphere.radius,
+      rho: balloon.rho,
+      R: balloon.R,
+    });
+  }
+
+  /** Whether the installed Solid grid may be inverted without turning an
+   * occupied centre neighbourhood into above-threshold density at infinity. */
+  solidBalloonAvailable(): boolean {
+    return solidBalloonCenterIsEmpty(
+      this.solidBalloonCenterAlpha,
+      this.solidThreshold,
+    );
   }
 
   /**
@@ -3013,11 +3105,12 @@ export class FractalScene {
   /**
    * Set the balloon tint — `tint` an rgb01 tuple, `strength` its
    * 0..1 blend weight; see state.ts's `AppState` fields for what they mean.
-   * ONE setter feeds BOTH renderers: the explorer echo
+   * ONE setter feeds every balloon renderer: the explorer echo
    * (balloonEchoMaterial's uEchoTint/uEchoTintStrength) and the surface
    * balloon (packSurfaceBalloonTint on BOTH surfaceMaterial and
-   * surfaceMaterial4, unconditionally — the uniform objects exist on both
-   * regardless of which arm is compiled, exactly like uBalloonCenter) —
+   * surfaceMaterial4) plus Solid's query-space volume arm
+   * (packVoxelBalloonTint), unconditionally — the uniform objects exist on
+   * every material regardless of which arm is compiled —
    * the {@link setBalloonEchoRadius}/{@link setSurfaceBalloonRadius}
    * "one balloon, two renderers" precedent applied to color instead of
    * size. The compute path needs nothing beyond the field update +
@@ -3044,6 +3137,7 @@ export class FractalScene {
     u.uEchoTintStrength.value = strength;
     packSurfaceBalloonTint(this.surfaceMaterial, this.balloonTint, strength);
     packSurfaceBalloonTint(this.surfaceMaterial4, this.balloonTint, strength);
+    packVoxelBalloonTint(this.voxelMaterial, this.balloonTint, strength);
   }
 
   /**
@@ -3651,6 +3745,21 @@ export class FractalScene {
     );
     u.uTexel.value = 1 / size;
     u.uMarchSteps.value = marchStepsForGrid(size);
+    if (this.solidBalloonSourceSphereReady) {
+      const center = this.solidBalloonSourceSphere.center;
+      this.solidBalloonCenterAlpha = sampleVoxelAlpha(
+        data,
+        size,
+        boundsMin,
+        boundsMax,
+        [center.x, center.y, center.z],
+      );
+    } else {
+      this.solidBalloonCenterAlpha = 0;
+    }
+    // A progressive upload can cross (or clear) the centre-density refusal
+    // as log normalization converges, so re-answer it on every grid event.
+    this.syncSolidBalloonUniforms();
     // Both factors of a solid capture's per-pixel cost just moved: the
     // step count above, and the density that decides where a ray leaves
     // the loop. See {@link solidCapturePxCostMs}.
@@ -3667,10 +3776,15 @@ export class FractalScene {
     this.renderNeeded = true;
     const u = this.voxelMaterial.uniforms;
     u.uThreshold.value = params.threshold;
+    this.solidThreshold = params.threshold;
     u.uAmbient.value = params.ambient;
     (u.uLightDir.value as THREE.Vector3).copy(
       lightDirection(params.lightAzimuth, params.lightElevation),
     );
+    // Threshold is also the centre-density refusal boundary. Raising it can
+    // make a previously filled-centre grid safe to invert, and lowering it
+    // can refuse one, without any worker round-trip.
+    this.syncSolidBalloonUniforms();
     // uThreshold is where both marches stop, so an edit here re-prices
     // every ray. See {@link solidCapturePxCostMs} for why the
     // whole setter clears rather than the threshold alone.

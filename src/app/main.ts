@@ -2174,6 +2174,7 @@ function main(): void {
         result.w,
         result.center,
         result.radius,
+        result.originRadius,
         [
           (b4.maxX - b4.minX) / 2,
           (b4.maxY - b4.minY) / 2,
@@ -3203,6 +3204,7 @@ function main(): void {
           event.boundsMin,
           event.boundsMax,
         );
+        ui.setSolidBalloonAvailable(scene.solidBalloonAvailable());
         ui.setSolidProgress(event.iterationsDone, event.iterationsBudget);
         noteRenderProgress(
           "solid",
@@ -3324,6 +3326,10 @@ function main(): void {
     },
     clearNotes: () => {
       ui.setSolidResolutionNote(null); // clear any note from a previous render before the fresh worker reports its own.
+      // The arriving grid will replace this optimistic placeholder with its
+      // measured centre-density verdict. Do not carry a previous system's
+      // refusal through the first-frame gap.
+      ui.setSolidBalloonAvailable(true);
     },
     resetProgress: () => {
       ui.setSolidProgress(0, state.solid.iterations); // reset from a previous render's "100%" rather than leaving it stale until the first grid event.
@@ -5445,6 +5451,7 @@ function main(): void {
 
   function refreshUi(): void {
     ui.updateLabels(state);
+    ui.setSolidBalloonAvailable(scene.solidBalloonAvailable());
     ui.renderTransformList(
       state.transforms,
       state.selectedTransform,
@@ -6429,6 +6436,9 @@ function main(): void {
       state = applyScalarControl(state, spec, raw);
       ui.updateLabels(state);
       spec.effect?.(state, controlEffects, previous);
+      // Threshold and the shared balloon toggle/radius can change the live
+      // centre-density refusal without a new worker event.
+      ui.setSolidBalloonAvailable(scene.solidBalloonAvailable());
     },
     // The gradient editor is a bespoke widget like the transform
     // sliders, not a table-driven scalar: its value is a stop LIST. Same

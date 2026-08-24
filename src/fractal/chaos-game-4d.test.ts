@@ -54,6 +54,7 @@ describe("runChaosGame4 result shape", () => {
     expect(result.w).toHaveLength(0);
     expect(result.transformIndices).toHaveLength(0);
     expect(result.radius).toBe(0);
+    expect(result.originRadius).toBe(0);
     expect(result.center).toEqual([0, 0, 0, 0]);
     expect(result.bounds).toEqual({
       minX: 0,
@@ -390,6 +391,19 @@ describe("runChaosGame4 bounds, center and radius", () => {
     expect(result.radius).toBeCloseTo(Math.sqrt(maxDistSq), 6);
     // Every point is within the radius (it is the max, by construction).
     expect(result.radius).toBeGreaterThanOrEqual(Math.sqrt(maxDistSq) - 1e-9);
+  });
+
+  it("reports the exact full-cloud radius from the 4D origin", () => {
+    const result = runChaosGame4(pentatopeGasket(), 2000, mulberry32(19));
+    let maxDistSq = 0;
+    for (let i = 0; i < result.count; i++) {
+      const x = result.positions[i * 3];
+      const y = result.positions[i * 3 + 1];
+      const z = result.positions[i * 3 + 2];
+      const w = result.w[i];
+      maxDistSq = Math.max(maxDistSq, x * x + y * y + z * z + w * w);
+    }
+    expect(result.originRadius).toBe(Math.sqrt(maxDistSq));
   });
 });
 
@@ -949,6 +963,7 @@ describe("runChaosGame4 vs. stepOrbit4/plotPoint4 (allocation-free oracle)", () 
     bounds: Bounds4;
     center: Vec4;
     radius: number;
+    originRadius: number;
   } {
     let x = rng() - 0.5;
     let y = rng() - 0.5;
@@ -1003,15 +1018,23 @@ describe("runChaosGame4 vs. stepOrbit4/plotPoint4 (allocation-free oracle)", () 
     ];
 
     let radiusSq = 0;
+    let originRadiusSq = 0;
     for (let i = 0; i < numPoints; i++) {
-      const dx = positions[i * 3] - center[0];
-      const dy = positions[i * 3 + 1] - center[1];
-      const dz = positions[i * 3 + 2] - center[2];
-      const dw = wBuffer[i] - center[3];
+      const px = positions[i * 3];
+      const py = positions[i * 3 + 1];
+      const pz = positions[i * 3 + 2];
+      const pw = wBuffer[i];
+      const dx = px - center[0];
+      const dy = py - center[1];
+      const dz = pz - center[2];
+      const dw = pw - center[3];
       const d2 = dx * dx + dy * dy + dz * dz + dw * dw;
       if (d2 > radiusSq) radiusSq = d2;
+      const originD2 = px * px + py * py + pz * pz + pw * pw;
+      if (originD2 > originRadiusSq) originRadiusSq = originD2;
     }
     const radius = Math.sqrt(radiusSq);
+    const originRadius = Math.sqrt(originRadiusSq);
 
     return {
       positions,
@@ -1020,6 +1043,7 @@ describe("runChaosGame4 vs. stepOrbit4/plotPoint4 (allocation-free oracle)", () 
       bounds: { minX, maxX, minY, maxY, minZ, maxZ, minW, maxW },
       center,
       radius,
+      originRadius,
     };
   }
 
@@ -1046,6 +1070,7 @@ describe("runChaosGame4 vs. stepOrbit4/plotPoint4 (allocation-free oracle)", () 
     expect(actual.bounds).toEqual(reference.bounds);
     expect(actual.center).toEqual(reference.center);
     expect(actual.radius).toBe(reference.radius);
+    expect(actual.originRadius).toBe(reference.originRadius);
   });
 
   it("matches for a system with a variation on one transform (warp !== null branch)", () => {
@@ -1077,6 +1102,7 @@ describe("runChaosGame4 vs. stepOrbit4/plotPoint4 (allocation-free oracle)", () 
     expect(actual.bounds).toEqual(reference.bounds);
     expect(actual.center).toEqual(reference.center);
     expect(actual.radius).toBe(reference.radius);
+    expect(actual.originRadius).toBe(reference.originRadius);
   });
 
   it("matches for a system with a final-transform lens that itself has a variation (inlined plotPoint4's affine+warp)", () => {
@@ -1106,6 +1132,7 @@ describe("runChaosGame4 vs. stepOrbit4/plotPoint4 (allocation-free oracle)", () 
     expect(actual.bounds).toEqual(reference.bounds);
     expect(actual.center).toEqual(reference.center);
     expect(actual.radius).toBe(reference.radius);
+    expect(actual.originRadius).toBe(reference.originRadius);
   });
 
   it("matches for a weighted system (pickIndex4's weighted path)", () => {
@@ -1133,6 +1160,7 @@ describe("runChaosGame4 vs. stepOrbit4/plotPoint4 (allocation-free oracle)", () 
     expect(actual.bounds).toEqual(reference.bounds);
     expect(actual.center).toEqual(reference.center);
     expect(actual.radius).toBe(reference.radius);
+    expect(actual.originRadius).toBe(reference.originRadius);
   });
 
   it("matches for a system with symmetry order > 1 (postRotations branch)", () => {
@@ -1176,6 +1204,7 @@ describe("runChaosGame4 vs. stepOrbit4/plotPoint4 (allocation-free oracle)", () 
     expect(actual.bounds).toEqual(reference.bounds);
     expect(actual.center).toEqual(reference.center);
     expect(actual.radius).toBe(reference.radius);
+    expect(actual.originRadius).toBe(reference.originRadius);
   });
 });
 

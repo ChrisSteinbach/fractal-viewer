@@ -811,6 +811,7 @@ describe("buildColors4", () => {
       bounds: zeroBounds4(),
       center: [0, 0, 0, 0],
       radius: 1,
+      originRadius: 1,
     };
     const colors = buildColors4(result, 3, "transform");
     const palette = transformColors(3);
@@ -832,6 +833,7 @@ describe("buildColors4", () => {
       bounds: zeroBounds4(),
       center: [0, 0, 0, 0],
       radius: 1,
+      originRadius: 1,
     };
     const colors = buildColors4(result, 2, "transform");
     expect(colors[0]).toBeCloseTo(1, 5);
@@ -848,6 +850,7 @@ describe("buildColors4", () => {
       bounds: zeroBounds4(),
       center: [0, 0, 0, 0],
       radius: 1,
+      originRadius: 1,
     };
     // Map 1 authors 0.9 (its neighbours don't) — threaded through as the
     // parallel colorIndexes array, exactly like buildColors' own transform
@@ -881,6 +884,7 @@ describe("buildColors4", () => {
       bounds: zeroBounds4(),
       center: [0, 0, 0, 0],
       radius: 2,
+      originRadius: 2,
     };
     const colors = buildColors4(result, 1, "radius");
     const near = hslToRgb(0, 0.85, 0.55);
@@ -902,6 +906,7 @@ describe("buildColors4", () => {
       bounds: zeroBounds4(),
       center: [0, 0, 0, 0],
       radius: 1,
+      originRadius: 1,
     };
     const colors = buildColors4(result, 1, "radius");
     expect(colors).toHaveLength(6);
@@ -930,6 +935,7 @@ describe("buildColors4 rampPalette", () => {
       bounds: zeroBounds4(),
       center: [0, 0, 0, 0],
       radius: 2,
+      originRadius: 2,
     };
     const colors = buildColors4(result, 1, "radius", "ember");
     const lut = buildPaletteLUT("ember");
@@ -957,6 +963,7 @@ describe("buildColors4 rampPalette", () => {
       bounds: zeroBounds4(),
       center: [0, 0, 0, 0],
       radius: 2,
+      originRadius: 2,
     };
     expect(buildColors4(result, 1, "radius", "legacy")).toEqual(
       buildColors4(result, 1, "radius"),
@@ -972,6 +979,7 @@ describe("buildColors4 rampPalette", () => {
       bounds: zeroBounds4(),
       center: [0, 0, 0, 0],
       radius: 2,
+      originRadius: 2,
     };
     const redToBlue: CustomPalette = {
       stops: [
@@ -1002,6 +1010,7 @@ describe("buildColors4 rampPalette", () => {
       bounds: zeroBounds4(),
       center: [0, 0, 0, 0],
       radius: 1,
+      originRadius: 1,
     };
     expect(buildColors4(result, 3, "transform", "ember")).toEqual(
       buildColors4(result, 3, "transform"),

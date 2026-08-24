@@ -635,6 +635,107 @@ describe("Ui Flame balloon rows", () => {
   });
 });
 
+describe("Ui Solid balloon rows", () => {
+  function solidBalloonRow(): HTMLElement {
+    return document.getElementById("solidBalloonRow") as HTMLElement;
+  }
+  function solidBalloonRadiusRow(): HTMLElement {
+    return document.getElementById("solidBalloonRadiusRow") as HTMLElement;
+  }
+  function solidBalloonCheckbox(): HTMLInputElement {
+    return document.getElementById("solidBalloonCheckbox") as HTMLInputElement;
+  }
+  function solidBalloonNote(): HTMLElement {
+    return document.getElementById("solidBalloonNote") as HTMLElement;
+  }
+  function solidBalloonTintRow(): HTMLElement {
+    return document.getElementById("solidBalloonTintRow") as HTMLElement;
+  }
+
+  it("keeps the checkbox available and hides its dependent rows while the echo is off", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "solid" as const,
+      balloonEcho: false,
+    });
+
+    expect(solidBalloonRow().classList.contains("hidden")).toBe(false);
+    expect(solidBalloonRadiusRow().classList.contains("hidden")).toBe(true);
+    expect(solidBalloonTintRow().classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows the radius and tint rows while the echo is on in both dimensions", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "solid" as const,
+      transforms: nonFlatTransforms(),
+      balloonEcho: true,
+    });
+
+    expect(solidBalloonRow().classList.contains("hidden")).toBe(false);
+    expect(solidBalloonRadiusRow().classList.contains("hidden")).toBe(false);
+    expect(solidBalloonTintRow().classList.contains("hidden")).toBe(false);
+  });
+
+  it("fires onBalloonInflate when the Solid Inflate button is clicked", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    (
+      document.getElementById("solidBalloonInflateButton") as HTMLButtonElement
+    ).click();
+
+    expect(handlers.onBalloonInflate).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses the balloon transiently while preserving the checked authored state", () => {
+    const ui = new Ui(document);
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "solid" as const,
+      balloonEcho: true,
+    });
+
+    ui.setSolidBalloonAvailable(false);
+
+    expect(solidBalloonRow().classList.contains("hidden")).toBe(false);
+    expect(solidBalloonCheckbox().checked).toBe(true);
+    expect(solidBalloonCheckbox().disabled).toBe(true);
+    expect(solidBalloonRadiusRow().classList.contains("hidden")).toBe(true);
+    expect(solidBalloonTintRow().classList.contains("hidden")).toBe(true);
+    expect(solidBalloonNote().classList.contains("hidden")).toBe(false);
+    expect(solidBalloonNote().textContent).toBe(
+      "Balloon unavailable — this solid fills its enclosing-ball centre.",
+    );
+  });
+
+  it("keeps a refusal across state refreshes, then restores the checked rows when available", () => {
+    const ui = new Ui(document);
+    ui.setSolidBalloonAvailable(false);
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "solid" as const,
+      balloonEcho: true,
+    });
+
+    expect(solidBalloonCheckbox().disabled).toBe(true);
+    expect(solidBalloonRadiusRow().classList.contains("hidden")).toBe(true);
+    expect(solidBalloonTintRow().classList.contains("hidden")).toBe(true);
+
+    ui.setSolidBalloonAvailable(true);
+
+    expect(solidBalloonCheckbox().checked).toBe(true);
+    expect(solidBalloonCheckbox().disabled).toBe(false);
+    expect(solidBalloonRadiusRow().classList.contains("hidden")).toBe(false);
+    expect(solidBalloonTintRow().classList.contains("hidden")).toBe(false);
+    expect(solidBalloonNote().classList.contains("hidden")).toBe(true);
+    expect(solidBalloonNote().textContent).toBe("");
+  });
+});
+
 describe("Ui surface balloon rows", () => {
   function surfaceBalloonRow(): HTMLElement {
     return document.getElementById("surfaceBalloonRow") as HTMLElement;
@@ -1053,11 +1154,25 @@ describe("Ui balloon tint", () => {
     expect(handlers.onBalloonTint).toHaveBeenCalledWith("#663399");
   });
 
-  it("reflects a non-default balloonTint into all three pickers (gallery loads/undo move the swatch)", () => {
+  it("reports a Solid picker edit as the raw hex value through the SAME handler", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.updateLabels(initialState(true));
+
+    const input = el("solidBalloonTintColor");
+    input.value = "#339966";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(handlers.onBalloonTint).toHaveBeenCalledWith("#339966");
+  });
+
+  it("reflects a non-default balloonTint into all four pickers (gallery loads/undo move the swatch)", () => {
     const ui = new Ui(document);
     ui.updateLabels({ ...initialState(true), balloonTint: "#336699" });
     expect(el("balloonTintColor").value).toBe("#336699");
     expect(el("flameBalloonTintColor").value).toBe("#336699");
+    expect(el("solidBalloonTintColor").value).toBe("#336699");
     expect(el("surfaceBalloonTintColor").value).toBe("#336699");
   });
 
@@ -1067,6 +1182,9 @@ describe("Ui balloon tint", () => {
       "Balloon echo tint color",
     );
     expect(el("flameBalloonTintColor").getAttribute("aria-label")).toBe(
+      "Balloon echo tint color",
+    );
+    expect(el("solidBalloonTintColor").getAttribute("aria-label")).toBe(
       "Balloon echo tint color",
     );
     expect(el("surfaceBalloonTintColor").getAttribute("aria-label")).toBe(

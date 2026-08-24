@@ -495,6 +495,85 @@ controls re-render with no worker round-trip — which is also why the solid wor
 needs no SharedArrayBuffer fast path (nothing on the main thread is tone-mapping),
 unlike the flame.
 
+The solid balloon is a **query-space union over that one volume**, not a second
+voxel accumulation: while enabled, every combined-density query is
+`max(density(p), density(I(p)))`, where `I` is the shared sphere inversion.
+Growing a grid to contain the distant shell would spend almost all of its finite
+resolution on empty space and crush the source attractor; sampling the existing
+RGBA8 texture twice keeps its bounds and resolution intact. The volume sampler
+is still `ClampToEdge` for ordinary in-box filtering, so the balloon program
+checks coordinates itself and returns zero before every out-of-volume read — an
+inverted query outside the finite field is empty, never a boundary texel smeared
+across the shell. Echo color is attributed on a strict density win (ties stay
+source), optionally takes the shared independent balloon palette, and mixes
+toward `balloonTint` before lighting on that echo contribution only. The off arm
+is a separate resolved shader program whose fragment source is the literal
+pre-balloon source; turning the echo off therefore removes the longer march and
+all balloon sampling rather than trusting a nominally inert uniform branch.
+
+The density multiplier is **1.0**, a geometry/isovalue decision rather than the
+Points renderer's brightness dim. A lower weight changes the echo contour to an
+effective `threshold / weight`; at weight `<= 0.30` it cannot cross the default
+strict hit test at all. The production 192³/20M matched-ray sweep at an in-frame
+0.5× functional radius measured strict echo-attributed coverage for weights
+0.35 / 0.5 / 0.75 / 1.0 at 4.8 / 17.4 / 20.2 / 21.4% on the default 3D system
+and 0 / 6.9 / 50.5 / 55.9% on 4D hyperfern. Full weight is both the most
+legible candidate and the only one that preserves the source field's exact
+isovalue.
+
+The centre refusal is evaluated against the **current packed, log-normalized
+grid**, with WebGL-coordinate trilinear filtering, and compared with the live
+Solid threshold; it is not a raw hit-count or a permanent property of a preset.
+A progressive upload or threshold edit can therefore change the answer. At the
+default threshold 0.30, the complete shipped-preset sweep (192³, 20M voxel
+iterations, 500k-point ball probe, deterministic seeds) recorded these refused
+cases; every other shipped preset was admitted:
+
+| preset          | dimension/centre     | packed centre alpha |
+| --------------- | -------------------- | ------------------: |
+| pyramid         | 3D cloud-ball centre |             0.50764 |
+| dyedSpiral      | 3D cloud-ball centre |             0.48610 |
+| juliaPinwheel   | 3D cloud-ball centre |             0.33586 |
+| mandelboxRings  | 3D cloud-ball centre |             0.99334 |
+| foldChain       | 3D cloud-ball centre |             0.43077 |
+| foldChainFlower | 3D cloud-ball centre |             0.43077 |
+| pentatope       | 4D origin            |             0.69202 |
+| doubleRotation  | 4D origin            |             0.53023 |
+| woodGrain       | 4D origin            |             0.99276 |
+| sixteenCell     | 4D origin            |             0.87384 |
+
+`foldChainBoulder` was the closest admitted control at 0.26711; 4D hyperfern
+read 0.11039. The runnable record is `scripts/solid-balloon.harness.ts`.
+
+The feature's main price is the march interval, not merely the second texture
+sample. Echo-off rays intersect and stop at the source box. Echo-on rays run to
+the shared `|camera - centre| + 10 rho` horizon, increasing their loop ceiling
+to `ceil(tFar * uMarchSteps / maxBoxSpan)` (capped at 8192) so 220 samples are
+not stretched across the whole cave. It runs beside, rather than replaces, the
+primary AABB march: source sampling keeps the legacy interval, step count,
+jitter phase, and identical in-box sample result; the echo alone pays the
+distant interval, and the earlier refined hit is the union. On 64×48 matched
+rays at the production 192³/20M grid and the
+shipped 1.6× radius, the portable work accounting was:
+
+| fixture      | off/on loop ceiling | ceiling ratio | mean-step ratio | bounded texture-fetch ratio |
+| ------------ | ------------------: | ------------: | --------------: | --------------------------: |
+| default 3D   |          220 / 2374 |        10.79× |          29.09× |                      16.13× |
+| hyperfern 4D |          220 / 1829 |         8.31× |           9.56× |                       6.75× |
+
+The mean can exceed the ceiling ratio because an off-box ray costs zero primary
+steps while the balloon horizon covers every pixel; outside-zero checks make
+the fetch ratio lower than the loop ratio. The matched primary arm lost zero
+hits after the split (hyperfern stayed 7.7% off and on), the acceptance property
+the earlier one-long-interval prototype failed. A current-program browser stress
+measurement at the same 192³/20M default fixture, 640×480 with adaptive
+resolution off, measured median forced-redraw-plus-canvas-readback times of
+267.5 ms off and 5448.9 ms on (20.37×; three post-warmup samples per arm).
+That run used Chromium WebGL2's SwiftShader software rasterizer and is a shader
+compile/render check plus a deliberately conservative wall-time bound, not a
+representative hardware-GPU claim. Browser wall time stays separate from the
+portable accounting because it also includes draw synchronization and readback.
+
 Both renders extend to 4D. There is no separate 4D worker: the
 flame and solid `start` commands each carry an optional `fourD` block whose mere
 presence flips the session onto the 4D chaos game and `accumulateFlame4` /
@@ -516,6 +595,14 @@ view_, ghosts included. The solid render slices with a floor of **`0`** instead:
 an out-of-slice voxel contributes nothing, because a solid isosurface has no
 translucency to fade a 6% pedestal into and would just fog the whole projection
 with dross nobody asked to see solidified.
+
+For the Solid balloon, voxelization performs that slice first and the material
+then inverts its marched 3D query — the same **SLICE THEN INVERT** verdict as
+the Surface arm below. Its ball nevertheless comes from the full unsliced 4D
+cloud: origin-centred with the exact maximum `|p4|`, never the current voxel
+AABB, the cloud's bbox centre, or the current slice. The shell consequently
+does not pulse when the slice slider changes; only the sliced density sampled
+through it changes.
 
 ## The surface distance estimator
 

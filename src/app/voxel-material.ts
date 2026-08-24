@@ -3,6 +3,8 @@ import {
   BACKGROUND_SHAPE_GLSL,
   backgroundShapeSource,
 } from "../fractal/background-shape";
+import { BALLOON_FAR_CAP_RHO } from "../fractal/balloon-de";
+import type { Vec3 } from "../fractal/types";
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 
 /**
@@ -264,6 +266,347 @@ const VOXEL_FRAGMENT = /* glsl */ `
   }
 `;
 
+/**
+ * The solid echo's measured density multiplier. Unlike the additive Points
+ * echo, a lit isosurface does not need a brightness reduction: lowering this
+ * value changes which density contour is geometry rather than merely dimming
+ * it. The production preset sweep recorded in docs/architecture.md therefore
+ * keeps the source field's exact threshold at weight 1.
+ */
+export const SOLID_BALLOON_ECHO_WEIGHT = 1;
+
+/** Hard safety ceiling for a very distant camera. The ordinary balloon pose
+ * stays far below it; without a ceiling an extreme zoom-out could turn one
+ * synchronous full-screen draw into an effectively unbounded shader loop. */
+const SOLID_BALLOON_MAX_MARCH_STEPS = 8192;
+
+/** Replace one exact fragment-source seam, failing at module evaluation if a
+ * future shader edit silently removes or duplicates the seam. The off program
+ * remains the literal {@link VOXEL_FRAGMENT}; only the on variant is spliced. */
+function spliceVoxelBalloon(
+  source: string,
+  seam: string,
+  replacement: string,
+): string {
+  const at = source.indexOf(seam);
+  if (at < 0 || source.indexOf(seam, at + seam.length) >= 0) {
+    throw new Error("Voxel balloon shader seam is missing or ambiguous");
+  }
+  return source.slice(0, at) + replacement + source.slice(at + seam.length);
+}
+
+/**
+ * Build the query-space balloon arm over the unchanged density texture.
+ *
+ * Deliberately a program variant, not an always-live uniform branch: when the
+ * echo is absent/off, `voxelFragmentFor(false)` returns the exact shader source
+ * that shipped before this feature. The on arm samples the SAME finite volume
+ * at p and I(p); growing or duplicating the grid would spend its resolution on
+ * the inversion's mostly-empty far field and is specifically not this design.
+ */
+function buildVoxelBalloonFragment(): string {
+  let source = VOXEL_FRAGMENT;
+  source = spliceVoxelBalloon(
+    source,
+    "  uniform float uFogTintStrength;\n",
+    `  uniform float uFogTintStrength;
+  // Query-space balloon: one fixed volume, sampled at p and I(p). These
+  // uniforms exist only in this resolved program; the off source is exact.
+  uniform vec3 uBalloonCenter;
+  uniform float uBalloonRawRadius;
+  uniform float uBalloonR;
+  uniform float uBalloonRho;
+  uniform float uBalloonFar;
+  uniform vec3 uBalloonTint;
+  uniform float uBalloonTintStrength;
+  uniform sampler2D uBalloonColorLUT;
+  uniform float uBalloonPaletteEnabled;
+`,
+  );
+  source = spliceVoxelBalloon(
+    source,
+    `  float densityAt(vec3 p) {
+    return texture(uVolume, (p - uBoundsMin) / uBoundsSize).a;
+  }
+
+  vec3 colorAt(vec3 p) {
+    return texture(uVolume, (p - uBoundsMin) / uBoundsSize).rgb;
+  }
+`,
+    `  // ClampToEdge is correct sampler state for the ordinary box march, but
+  // WRONG for an inverted query: outside the finite source volume means zero,
+  // not a boundary voxel smeared across the shell. Check before every read.
+  vec4 boundedVolumeSample(vec3 p) {
+    vec3 uvw = (p - uBoundsMin) / uBoundsSize;
+    if (any(lessThan(uvw, vec3(0.0))) || any(greaterThan(uvw, vec3(1.0)))) {
+      return vec4(0.0);
+    }
+    return texture(uVolume, uvw);
+  }
+
+  vec3 balloonInvert(vec3 p) {
+    vec3 d = p - uBalloonCenter;
+    float floorRadius = 1.0e-6 * uBalloonRho;
+    float r2 = max(dot(d, d), floorRadius * floorRadius);
+    return uBalloonCenter + (uBalloonR * uBalloonR / r2) * d;
+  }
+
+  float densityAtFractal(vec3 p) {
+    return boundedVolumeSample(p).a;
+  }
+
+  float densityAtEcho(vec3 p) {
+    return ${SOLID_BALLOON_ECHO_WEIGHT.toFixed(1)} *
+      boundedVolumeSample(balloonInvert(p)).a;
+  }
+
+  float densityAt(vec3 p) {
+    float primary = densityAtFractal(p);
+    float echo = densityAtEcho(p);
+    return max(primary, echo);
+  }
+
+  vec3 colorAt(vec3 p) {
+    vec4 primary = boundedVolumeSample(p);
+    vec3 source = balloonInvert(p);
+    vec4 echo = boundedVolumeSample(source);
+    // Same attribution as balloon-de.ts: a strict win selects the shell;
+    // ties stay on the primary fractal term.
+    if (${SOLID_BALLOON_ECHO_WEIGHT.toFixed(1)} * echo.a > primary.a) {
+      vec3 base = echo.rgb;
+      if (uBalloonPaletteEnabled > 0.5) {
+        float paletteT = clamp(
+          length(source - uBalloonCenter) / uBalloonRho,
+          0.0,
+          1.0
+        );
+        float paletteIndex = min(floor(paletteT * 256.0), 255.0);
+        float paletteU = (paletteIndex + 0.5) / 256.0;
+        base = texture(uBalloonColorLUT, vec2(paletteU, 0.5)).rgb;
+      }
+      return mix(base, uBalloonTint, uBalloonTintStrength);
+    }
+    return primary.rgb;
+  }
+`,
+  );
+  source = spliceVoxelBalloon(
+    source,
+    `    vec2 tRange = boxIntersect(ro, rd);
+    float tFar = tRange.y;
+    float t = max(tRange.x, 0.0);
+    if (tRange.x > tRange.y || tFar <= 0.0) {
+      outColor = vec4(background, 1.0);
+      return;
+    }
+
+    float dt = (tFar - t) / float(uMarchSteps);
+    t += dt * hash(gl_FragCoord.xy);
+
+    // --- primary march: first sample past the isosurface -------------------
+    float tPrev = t;
+    bool hit = false;
+    for (int i = 0; i < uMarchSteps; i++) {
+      if (densityAt(ro + rd * t) > uThreshold) {
+        hit = true;
+        break;
+      }
+      tPrev = t;
+      t += dt;
+    }
+    if (!hit) {
+      outColor = vec4(background, 1.0);
+      return;
+    }
+
+    // --- refine: bisect between the last outside and first inside samples --
+    float lo = tPrev;
+    float hi = t;
+    for (int i = 0; i < REFINE_STEPS; i++) {
+      float mid = (lo + hi) * 0.5;
+      if (densityAt(ro + rd * mid) > uThreshold) {
+        hi = mid;
+      } else {
+        lo = mid;
+      }
+    }
+    vec3 pos = ro + rd * hi;
+`,
+    `    float jitter = hash(gl_FragCoord.xy);
+
+    // Keep the original primary AABB interval, step count, jitter phase, and
+    // source sample: enabling a union must never erase a thin source hit by
+    // stretching its phase over the much longer echo interval. The echo gets
+    // its own march; the earlier refined hit is exactly the first hit of
+    // max(primary, echo).
+    vec2 tRange = boxIntersect(ro, rd);
+    float primaryFar = tRange.y;
+    float primaryT = max(tRange.x, 0.0);
+    float primaryPrev = primaryT;
+    float primaryHi = 1.0e30;
+    bool primaryHit = false;
+    if (tRange.x <= tRange.y && primaryFar > 0.0) {
+      float primaryDt = (primaryFar - primaryT) / float(uMarchSteps);
+      primaryT += primaryDt * jitter;
+      primaryPrev = primaryT;
+      for (int i = 0; i < uMarchSteps; i++) {
+        if (densityAtFractal(ro + rd * primaryT) > uThreshold) {
+          primaryHit = true;
+          break;
+        }
+        primaryPrev = primaryT;
+        primaryT += primaryDt;
+      }
+      if (primaryHit) {
+        float primaryLo = primaryPrev;
+        primaryHi = primaryT;
+        for (int i = 0; i < REFINE_STEPS; i++) {
+          float mid = (primaryLo + primaryHi) * 0.5;
+          if (densityAtFractal(ro + rd * mid) > uThreshold) {
+            primaryHi = mid;
+          } else {
+            primaryLo = mid;
+          }
+        }
+      }
+    }
+
+    // The echo can sit outside the source AABB, so march from the camera to
+    // the same BALLOON_FAR_CAP_RHO horizon as the Surface arm. Increasing the
+    // echo-only step count preserves the grid's face-on world stride without
+    // paying an inversion or second texture query in the legacy primary loop.
+    float tFar = length(ro - uBalloonCenter) + uBalloonFar;
+    float baseSpan = max(max(uBoundsSize.x, uBoundsSize.y), uBoundsSize.z);
+    int marchSteps = min(
+      ${String(SOLID_BALLOON_MAX_MARCH_STEPS)},
+      max(uMarchSteps, int(ceil(tFar * float(uMarchSteps) / max(baseSpan, 1.0e-6))))
+    );
+    float dt = tFar / float(marchSteps);
+    float t = dt * jitter;
+    float tPrev = t;
+    float echoHi = 1.0e30;
+    bool echoHit = false;
+    for (int i = 0; i < marchSteps; i++) {
+      if (densityAtEcho(ro + rd * t) > uThreshold) {
+        echoHit = true;
+        break;
+      }
+      tPrev = t;
+      t += dt;
+    }
+    if (echoHit) {
+      float echoLo = tPrev;
+      echoHi = t;
+      for (int i = 0; i < REFINE_STEPS; i++) {
+        float mid = (echoLo + echoHi) * 0.5;
+        if (densityAtEcho(ro + rd * mid) > uThreshold) {
+          echoHi = mid;
+        } else {
+          echoLo = mid;
+        }
+      }
+    }
+    if (!primaryHit && !echoHit) {
+      outColor = vec4(background, 1.0);
+      return;
+    }
+    float hi = min(primaryHi, echoHi);
+    vec3 pos = ro + rd * hi;
+
+    // Fog still begins at the source ball (or at closest approach on a ray
+    // that misses it), continuous across its silhouette like Surface.
+    vec3 ballRo = ro - uBalloonCenter;
+    float ballB = dot(ballRo, rd);
+    float ballC = dot(ballRo, ballRo) - uBalloonRawRadius * uBalloonRawRadius;
+    float ballDisc = ballB * ballB - ballC;
+    float tEnter = max(
+      -ballB - (ballDisc >= 0.0 ? sqrt(ballDisc) : 0.0),
+      0.0
+    );
+`,
+  );
+  source = spliceVoxelBalloon(
+    source,
+    `    // Hard shadow ray: march from just off the surface toward the light; any
+    // above-threshold sample occludes.
+    float shadow = 1.0;
+    vec3 sp = pos + n * inset * 1.5;
+    float shadowStep = inset * 1.5;
+    for (int i = 0; i < SHADOW_STEPS; i++) {
+      sp += uLightDir * shadowStep;
+      vec3 uvw = (sp - uBoundsMin) / uBoundsSize;
+      if (any(lessThan(uvw, vec3(0.0))) || any(greaterThan(uvw, vec3(1.0)))) {
+        break; // left the volume: reached the light.
+      }
+      if (texture(uVolume, uvw).a > uThreshold) {
+        shadow = 0.0;
+        break;
+      }
+    }
+`,
+    `    // The shell receives shadows but never casts them: intersect its
+    // light ray with the ORIGINAL volume and sample only the fractal density.
+    // Starting an exterior shell hit with the old "leave box => lit" loop
+    // would never reach the attractor and could not paint its shadow.
+    float shadow = 1.0;
+    vec3 sp = pos + n * inset * 1.5;
+    vec2 shadowRange = boxIntersect(sp, uLightDir);
+    float shadowNear = max(shadowRange.x, 0.0);
+    if (shadowNear <= shadowRange.y && shadowRange.y > 0.0) {
+      float shadowStep = (shadowRange.y - shadowNear) / float(SHADOW_STEPS);
+      float shadowT = shadowNear + shadowStep * 0.5;
+      for (int i = 0; i < SHADOW_STEPS; i++) {
+        if (densityAtFractal(sp + uLightDir * shadowT) > uThreshold) {
+          shadow = 0.0;
+          break;
+        }
+        shadowT += shadowStep;
+      }
+    }
+`,
+  );
+  source = spliceVoxelBalloon(
+    source,
+    `    // Depth fog toward the backdrop: squared-exponential in the
+    // distance traveled inside the volume box, mirroring the surface
+    // tracers' fog term (surface-material.ts) — same -0.12 constant, with
+    // the box's half-diagonal standing in for the bounding sphere's
+    // visible radius and the box entry for the sphere-entry fog origin —
+    // so one Fog slider value reads the same across solid and surface.
+    float fogR = 0.5 * length(uBoundsSize);
+    float fog = 1.0 -
+      exp(-0.12 * pow((hi - max(tRange.x, 0.0)) * uFogDensity / max(fogR, 1.0e-6), 2.0));
+`,
+    `    // Balloon hits can precede the source-ball fog origin; clamp them to
+    // a zero fog distance, and use the existing box half-diagonal as Solid's
+    // distance unit so the Fog control retains its established scale.
+    tEnter = min(tEnter, hi);
+    float fogR = 0.5 * length(uBoundsSize);
+    float fog = 1.0 -
+      exp(-0.12 * pow((hi - tEnter) * uFogDensity / max(fogR, 1.0e-6), 2.0));
+`,
+  );
+  return source;
+}
+
+const VOXEL_BALLOON_FRAGMENT = buildVoxelBalloonFragment();
+
+/** Resolved shader source. `false` is the pre-feature source byte for byte. */
+export function voxelFragmentFor(balloon: boolean): string {
+  return balloon ? VOXEL_BALLOON_FRAGMENT : VOXEL_FRAGMENT;
+}
+
+/** The live uniform block for the Solid query-space balloon. */
+export interface VoxelBalloonSpec {
+  center: Vec3;
+  /** Raw, unmargined enclosing-ball radius. */
+  radius: number;
+  /** Margined source radius used by the palette coordinate/f32 floor. */
+  rho: number;
+  /** Authored inversion radius in world units. */
+  R: number;
+}
+
 /** A 1x1x1 fully-transparent placeholder volume, so the material is complete
  * (and compiled) before the worker's first real grid arrives. */
 export function emptyVoxelTexture(): THREE.Data3DTexture {
@@ -274,8 +617,9 @@ export function emptyVoxelTexture(): THREE.Data3DTexture {
 
 /** The sampler state every uploaded volume needs: trilinear filtering (the
  * raymarcher's refinement and gradients rely on smooth interpolation) and
- * edge clamping (samples just outside the grid must read as empty edge
- * voxels, not wrap to the far side of the attractor). */
+ * edge clamping (ordinary in-box taps must not wrap to the far side). The
+ * balloon arm explicitly returns zero BEFORE sampling an out-of-box query;
+ * ClampToEdge by itself would smear boundary voxels across the echo. */
 export function configureVoxelTexture(texture: THREE.Data3DTexture): void {
   texture.format = THREE.RGBAFormat;
   texture.type = THREE.UnsignedByteType;
@@ -317,6 +661,114 @@ export function marchStepsForGrid(gridSize: number): number {
   return Math.max(220, Math.ceil((gridSize * 220) / 256));
 }
 
+/**
+ * CPU twin of the volume texture's normalized-alpha trilinear sample. Used
+ * only for the balloon refusal: if the authored enclosing-ball centre already
+ * crosses the isosurface, inversion maps that filled neighbourhood toward
+ * infinity and the camera sits inside the echo. Coordinates follow WebGL's
+ * normalized texture convention (`x = u*size - 0.5`) and ClampToEdge exactly.
+ */
+export function sampleVoxelAlpha(
+  data: Uint8Array,
+  size: number,
+  boundsMin: Vec3,
+  boundsMax: Vec3,
+  p: Vec3,
+): number {
+  if (size <= 0 || data.length < size * size * size * 4) return 0;
+  const extent: Vec3 = [
+    boundsMax[0] - boundsMin[0],
+    boundsMax[1] - boundsMin[1],
+    boundsMax[2] - boundsMin[2],
+  ];
+  if (extent.some((v) => !(v > 0))) return 0;
+  const uvw: Vec3 = [
+    (p[0] - boundsMin[0]) / extent[0],
+    (p[1] - boundsMin[1]) / extent[1],
+    (p[2] - boundsMin[2]) / extent[2],
+  ];
+  if (uvw.some((v) => v < 0 || v > 1)) return 0;
+
+  const axis = (u: number): [number, number, number] => {
+    const x = u * size - 0.5;
+    const lo = Math.floor(x);
+    const hi = lo + 1;
+    return [
+      Math.max(0, Math.min(size - 1, lo)),
+      Math.max(0, Math.min(size - 1, hi)),
+      x - lo,
+    ];
+  };
+  const [x0, x1, tx] = axis(uvw[0]);
+  const [y0, y1, ty] = axis(uvw[1]);
+  const [z0, z1, tz] = axis(uvw[2]);
+  const alpha = (x: number, y: number, z: number): number =>
+    data[(x + y * size + z * size * size) * 4 + 3] / 255;
+  const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+  const z0y0 = lerp(alpha(x0, y0, z0), alpha(x1, y0, z0), tx);
+  const z0y1 = lerp(alpha(x0, y1, z0), alpha(x1, y1, z0), tx);
+  const z1y0 = lerp(alpha(x0, y0, z1), alpha(x1, y0, z1), tx);
+  const z1y1 = lerp(alpha(x0, y1, z1), alpha(x1, y1, z1), tx);
+  return lerp(lerp(z0y0, z0y1, ty), lerp(z1y0, z1y1, ty), tz);
+}
+
+/** True exactly while the inverted density at infinity stays below the live
+ * isosurface. Equality is safe because the shader's hit test is strict `>`. */
+export function solidBalloonCenterIsEmpty(
+  centerAlpha: number,
+  threshold: number,
+): boolean {
+  return SOLID_BALLOON_ECHO_WEIGHT * centerAlpha <= threshold;
+}
+
+/** Install/clear the query-space variant. Only an on/off transition rebuilds
+ * the program; radius animation is uniform-only. */
+export function setVoxelBalloon(
+  material: THREE.ShaderMaterial,
+  spec: VoxelBalloonSpec | null,
+): void {
+  const u = material.uniforms;
+  const center = u.uBalloonCenter.value as THREE.Vector3;
+  if (spec) {
+    center.set(...spec.center);
+    u.uBalloonRawRadius.value = spec.radius;
+    u.uBalloonR.value = spec.R;
+    u.uBalloonRho.value = spec.rho;
+    u.uBalloonFar.value = BALLOON_FAR_CAP_RHO * spec.rho;
+  } else {
+    center.set(0, 0, 0);
+    u.uBalloonRawRadius.value = 1;
+    u.uBalloonR.value = 0;
+    u.uBalloonRho.value = 1;
+    u.uBalloonFar.value = 0;
+  }
+  const next = voxelFragmentFor(spec !== null);
+  if (material.fragmentShader !== next) {
+    material.fragmentShader = next;
+    material.needsUpdate = true;
+  }
+}
+
+/** Uniform-only shell tint; strength 0 is the authored-color identity. */
+export function packVoxelBalloonTint(
+  material: THREE.ShaderMaterial,
+  tint: Vec3,
+  strength: number,
+): void {
+  (material.uniforms.uBalloonTint.value as THREE.Vector3).set(...tint);
+  material.uniforms.uBalloonTintStrength.value = strength;
+}
+
+/** Uniform-only independent balloon gradient. Null means inherit the sampled
+ * source voxel's RGB exactly. */
+export function packVoxelBalloonPalette(
+  material: THREE.ShaderMaterial,
+  texture: THREE.DataTexture | null,
+): void {
+  if (texture) material.uniforms.uBalloonColorLUT.value = texture;
+  material.uniforms.uBalloonPaletteEnabled.value = texture ? 1 : 0;
+}
+
 export function createVoxelMaterial(
   volume: THREE.Data3DTexture,
   backgroundImage?: THREE.Texture,
@@ -349,9 +801,19 @@ export function createVoxelMaterial(
       uFogDensity: { value: 1 }, // scene.setFogDensity keeps it current.
       uFogTint: { value: new THREE.Vector3(1, 1, 1) },
       uFogTintStrength: { value: 0 }, // scene.setFogTint keeps both current.
+      // Balloon uniforms are inert while the exact off source is installed.
+      uBalloonCenter: { value: new THREE.Vector3() },
+      uBalloonRawRadius: { value: 1 },
+      uBalloonR: { value: 0 },
+      uBalloonRho: { value: 1 },
+      uBalloonFar: { value: 0 },
+      uBalloonTint: { value: new THREE.Vector3() },
+      uBalloonTintStrength: { value: 0 },
+      uBalloonColorLUT: { value: new THREE.Texture() },
+      uBalloonPaletteEnabled: { value: 0 },
     },
     vertexShader: VOXEL_VERTEX,
-    fragmentShader: VOXEL_FRAGMENT,
+    fragmentShader: voxelFragmentFor(false),
     depthTest: false,
     depthWrite: false,
   });

@@ -1541,6 +1541,73 @@
               </button>
             </div>
           </div>
+
+          <!-- The solid balloon samples the attractor's existing density
+               volume again at the sphere-inverted query point; it does not
+               accumulate a second, impractically large voxel grid. These
+               controls bind the SAME persisted balloon fields as Points,
+               Flame, and Surface. -->
+          <label
+            class="checkbox-label"
+            id="solidBalloonRow"
+            title="Show a sphere-inverted echo of the Solid volume around the attractor"
+          >
+            <input type="checkbox" id="solidBalloonCheckbox" />
+            Balloon echo
+          </label>
+          <p
+            id="solidBalloonNote"
+            class="flame-note hidden"
+            role="status"
+            aria-live="polite"
+          ></p>
+          <div id="solidBalloonRadiusRow" class="hidden">
+            <label class="select-label">
+              Balloon size: <span id="solidBalloonRadiusLabel">1.60×</span>
+              <input
+                type="range"
+                id="solidBalloonRadiusSlider"
+                min="0.05"
+                max="2.5"
+                step="0.01"
+                value="1.6"
+              />
+            </label>
+            <button
+              class="btn btn-ghost"
+              id="solidBalloonInflateButton"
+              type="button"
+              title="Inflate: animate the balloon from a crumpled ball out to its full size"
+            >
+              Inflate
+            </button>
+          </div>
+
+          <div id="solidBalloonTintRow" class="position-axis-row hidden">
+            <span class="position-axis-title"
+              >Tint <span id="solidBalloonTintLabel">0%</span></span
+            >
+            <div class="position-axis-inputs">
+              <label class="position-axis-label"
+                ><input
+                  type="color"
+                  id="solidBalloonTintColor"
+                  value="#000000"
+                  aria-label="Balloon echo tint color"
+              /></label>
+              <label class="position-axis-label">
+                <input
+                  type="range"
+                  id="solidBalloonTintStrength"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value="0"
+                  aria-label="Balloon echo tint strength"
+                />
+              </label>
+            </div>
+          </div>
         </details>
 
         <details

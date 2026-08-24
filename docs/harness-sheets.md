@@ -199,6 +199,50 @@ correct per-cell sufficient condition
 115k-140k positive-floor cells at res 64 (13k-18k at res 32), 42-62%
 margin at the tightest cell.
 
+### solid-balloon
+
+The Solid arm's acceptance sheet: it voxelizes the attractor once, samples the
+same packed RGBA8 field at the source and inverted queries, and prices the
+far-horizon march without ever constructing an echo grid. The centre sweep uses
+the app's 3D/4D routing, seeded bounds/accumulation, production RGBA8 pack and
+WebGL-coordinate trilinear alpha; 3D probes the cloud enclosing-ball centre,
+while 4D probes the origin and retains the full unsliced origin-relative radius.
+
+MEASURED VERDICT at 192³ / 20M iterations / 500k cloud points: the current
+packed grid refuses ten shipped cases at the default 0.30 threshold — pyramid
+0.50764, dyedSpiral 0.48610, juliaPinwheel 0.33586, mandelboxRings 0.99334,
+foldChain and foldChainFlower both 0.43077; plus the 4D-origin cases pentatope
+0.69202, doubleRotation 0.53023, woodGrain 0.99276, and sixteenCell 0.87384.
+Every other shipped preset was admitted; foldChainBoulder was the closest safe
+control at 0.26711 and 4D hyperfern read 0.11039. This is a live-grid refusal,
+not permanent preset metadata: log normalization and threshold edits can move
+the boundary.
+
+The same sheet settles the density weight instead of copying a point-cloud dim
+constant. At the 0.5× in-frame gate, strict shell-attributed coverage for weights
+0.35 / 0.5 / 0.75 / 1.0 was 4.8 / 17.4 / 20.2 / 21.4% on default 3D and 0 /
+6.9 / 50.5 / 55.9% on hyperfern 4D. Weight 1.0 is the most legible candidate and
+the only one that preserves the source isovalue; lower weights change the echo
+geometry to an effective threshold of `threshold / weight` rather than merely
+dimming it.
+
+At the shipped 1.6× radius, 64×48 matched rays over production 192³/20M grids
+priced the legacy-primary-plus-echo march at a 10.79× analytic loop ceiling,
+29.09× mean steps and 16.13× bounded texture fetches on default 3D; hyperfern
+4D measured 8.31× / 9.56× / 6.75×. The larger mean ratio is real: an off-box
+ray costs zero steps while the echo horizon covers every pixel. The sheet also
+guards the implementation split that made the union honest: the primary AABB
+arm retains the legacy interval, step count, jitter phase, and identical in-box
+sample result, and lost zero matched source hits; only the echo arm pays the
+ten-rho horizon.
+
+A separate current-shader browser check at 192³/20M and 640×480 (adaptive
+resolution off) measured median forced-redraw-plus-canvas-readback times of
+267.5 ms off and 5448.9 ms on, or 20.37×, over three post-warmup samples per
+arm. It compiled and rendered without page, console, or shader errors in
+Chromium WebGL2, but used SwiftShader: treat it as a software-rasterizer stress
+result and conservative wall-time bound, not representative GPU performance.
+
 ### aff4-order-cpu
 
 The 4D kernel-cost attribution sheet, and it closed the question. The 4D
