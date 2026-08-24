@@ -1002,6 +1002,9 @@ function decodePositionAxisColors(
  * written, so the backdrop keeps tracking palette edits after a link
  * round-trip. `"flame"` follows the same document shape: the generated image,
  * seed, blur and render budget are transient and never enter the scene wire.
+ * Its authored flamePaletteId does: absent/unknown quietly means Spectrum,
+ * and Custom is honored only when the sibling customPalette decoded, using
+ * the same validation rule as the full Flame/Solid palette selects.
  *
  * The custom gradient (`top`/`bottom` hex strings, {@link hexToRgb}-strict
  * like {@link decodePositionAxisColors}) decodes independently of the mode
@@ -1023,6 +1026,7 @@ function decodePositionAxisColors(
 function decodeBackground(
   raw: unknown,
   legacyAerial: boolean,
+  hasCustomPalette: boolean,
 ): BackgroundParams {
   const fallback: BackgroundMode = legacyAerial ? "haze" : "dark";
   if (typeof raw !== "object" || raw === null) return { mode: fallback };
@@ -1046,10 +1050,18 @@ function decodeBackground(
       ? (b.shape as BackgroundShape)
       : DEFAULT_BACKGROUND_SHAPE;
 
+  const flamePaletteId: PaletteSelection =
+    typeof b.flamePaletteId === "string" &&
+    (VALID_PALETTE_IDS.has(b.flamePaletteId) ||
+      (b.flamePaletteId === CUSTOM_PALETTE_ID && hasCustomPalette))
+      ? (b.flamePaletteId as PaletteSelection)
+      : DEFAULT_FLAME_PALETTE;
+
   return {
     mode,
     ...(custom === undefined ? {} : { custom }),
     ...(shape === DEFAULT_BACKGROUND_SHAPE ? {} : { shape }),
+    ...(flamePaletteId === DEFAULT_FLAME_PALETTE ? {} : { flamePaletteId }),
   };
 }
 
@@ -1789,6 +1801,7 @@ export function encodeScene(s: SceneSnapshot): string {
       top?: string;
       bottom?: string;
       shape?: BackgroundShape;
+      flamePaletteId?: PaletteSelection;
     };
     customPalette?: { stops: string[] };
     positionAxisColors?: { x: string; y: string; z: string };
@@ -1906,7 +1919,8 @@ export function encodeScene(s: SceneSnapshot): string {
     groundPlane: s.groundPlane ?? false,
   };
   // background: omitted while pristine (`dark`, nothing authored,
-  // shape linear) so never-touched scenes keep their short URLs AND
+  // shape linear, Flame palette Spectrum) so never-touched scenes keep their
+  // short URLs AND
   // documents predating the field keep identical encoded bytes — EXCEPT
   // under the aerial render style, where even the pristine default is
   // written out: an absent field is what a legacy document looks like, and
@@ -1917,13 +1931,17 @@ export function encodeScene(s: SceneSnapshot): string {
   // rgbToHex). `shape` is written only when it is NOT the default "linear" —
   // a linear-only document, radial-authored or not, encodes byte-identical
   // to one predating the shape field, the same absent-means-identity
-  // discipline as finalTransform/weight/shear.
+  // discipline as finalTransform/weight/shear. The generated Flame palette
+  // follows that same rule: Spectrum is absent, while every non-default
+  // authored choice survives even when another background mode is selected.
   if (
     s.background.mode !== "dark" ||
     s.background.custom !== undefined ||
     s.renderStyle === "aerial" ||
     (s.background.shape ?? DEFAULT_BACKGROUND_SHAPE) !==
-      DEFAULT_BACKGROUND_SHAPE
+      DEFAULT_BACKGROUND_SHAPE ||
+    (s.background.flamePaletteId ?? DEFAULT_FLAME_PALETTE) !==
+      DEFAULT_FLAME_PALETTE
   ) {
     payload.background = {
       mode: s.background.mode,
@@ -1935,6 +1953,10 @@ export function encodeScene(s: SceneSnapshot): string {
         : {}),
       ...(s.background.shape && s.background.shape !== DEFAULT_BACKGROUND_SHAPE
         ? { shape: s.background.shape }
+        : {}),
+      ...(s.background.flamePaletteId &&
+      s.background.flamePaletteId !== DEFAULT_FLAME_PALETTE
+        ? { flamePaletteId: s.background.flamePaletteId }
         : {}),
     };
   }
@@ -2243,7 +2265,11 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     // otherwise), which is also the legacy migration. Safe to key on
     // renderStyle here: it was strictly validated above. See
     // decodeBackground.
-    const background = decodeBackground(o.background, renderStyle === "aerial");
+    const background = decodeBackground(
+      o.background,
+      renderStyle === "aerial",
+      customPalette !== undefined,
+    );
 
     // camera: the optional orbit-camera pose. Never rejects the
     // scene — a malformed or absent value quietly decodes to undefined,

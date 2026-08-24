@@ -142,7 +142,6 @@ import { createResolutionGovernor } from "./resolution-governor";
 import { createRenderTierScheduler } from "./render-tier";
 import {
   addTransform,
-  activeScenePalette,
   DEFAULT_BALLOON_RADIUS,
   DEFAULT_SYMMETRY_PLANE,
   DEFAULT_SYMMETRY_ORDER,
@@ -150,6 +149,7 @@ import {
   initialState,
   MIN_BALLOON_RADIUS,
   removeTransform,
+  resolveFlameBackdropPalette,
   resolveSceneBackground,
   selectTransform,
   setBalloonEcho,
@@ -2941,7 +2941,7 @@ function main(): void {
       // Fixed across refreshes: authored system/palette changes, not random
       // noise, decide how the echo changes.
       seed: 0x5f3759df,
-      palette: activeScenePalette(state),
+      palette: resolveFlameBackdropPalette(state),
       order: state.symmetry.order,
       plane: state.symmetry.plane,
       twist: state.symmetry.twist ?? 0,

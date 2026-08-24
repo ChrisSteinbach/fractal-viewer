@@ -26,7 +26,11 @@
  * `palette.ts`'s convention, matching `positionAxisColors`).
  */
 import type { BackgroundShape } from "../fractal/background-shape";
-import type { PaletteSpec, RgbStop } from "../fractal/palette";
+import type {
+  PaletteSelection,
+  PaletteSpec,
+  RgbStop,
+} from "../fractal/palette";
 import { buildPaletteLUT } from "../fractal/palette";
 import { DARK_BACKDROP, HAZE_BACKDROP, hexToRgb01 } from "./constants";
 
@@ -76,11 +80,21 @@ export interface BackgroundGradient {
  * but remains authored, so switching back never loses the user's shape. Absent
  * means `"linear"`, matching `DEFAULT_BACKGROUND_SHAPE` — every document
  * predating this field is unmoved.
+ *
+ * `flamePaletteId` is the generated Flame backdrop's own structural-coloring
+ * palette. It is deliberately independent of the active renderer's palette:
+ * changing from Points to Surface must not silently recolor the decorative
+ * flame. The absent value means `DEFAULT_FLAME_PALETTE` (Spectrum; see
+ * `state.ts`), preserving short scene documents while giving older Flame
+ * backdrop documents the same colorful default as the full Flame renderer.
+ * Like `shape`, the authored value remains dormant outside its applicable
+ * backdrop mode.
  */
 export interface BackgroundParams {
   mode: BackgroundMode;
   custom?: BackgroundGradient;
   shape?: BackgroundShape;
+  flamePaletteId?: PaletteSelection;
 }
 
 /** The dark backdrop with no authored custom slot — `scene.ts`'s construction

@@ -998,6 +998,57 @@
             </label>
           </div>
 
+          <!-- The generated backdrop's palette is authored independently of
+               the renderer in front of it, so Points' default Transform
+               coloring cannot silently pin this Flame image. -->
+          <div id="backgroundFlamePaletteRow" class="hidden">
+            <label class="select-label">
+              Flame Color
+              <select id="backgroundFlamePalette">
+                <option value="legacy">By Transform (legacy)</option>
+                <option value="spectrum">Spectrum</option>
+                <option value="sunset">Sunset</option>
+                <option value="dusk">Dusk</option>
+                <option value="lagoon">Lagoon</option>
+                <option value="ember">Ember</option>
+                <option value="aurora">Aurora</option>
+                <option value="moss">Moss</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+          </div>
+          <div
+            id="backgroundCustomPaletteRow"
+            class="custom-palette-row hidden"
+          >
+            <div
+              id="backgroundCustomPaletteStrip"
+              class="custom-palette-strip"
+            ></div>
+            <div
+              id="backgroundCustomPaletteStops"
+              class="custom-palette-stops"
+            ></div>
+            <div class="custom-palette-actions">
+              <button
+                class="btn btn-ghost"
+                id="backgroundCustomPaletteRemove"
+                type="button"
+                title="Remove the last color stop"
+              >
+                − Stop
+              </button>
+              <button
+                class="btn btn-ghost"
+                id="backgroundCustomPaletteAdd"
+                type="button"
+                title="Add a color stop"
+              >
+                + Stop
+              </button>
+            </div>
+          </div>
+
           <!-- Custom backdrop stops; reuses the position-axis picker-row
                styling — same titled-row-of-swatches shape. -->
           <div id="backgroundCustomRow" class="position-axis-row hidden">

@@ -2200,6 +2200,20 @@ export function activeScenePalette(state: AppState): PaletteSpec {
 }
 
 /**
+ * Resolve the generated Flame backdrop's own authored palette. Unlike
+ * {@link activeScenePalette}, this never follows the renderer currently in
+ * front of the backdrop: a points renderer whose ramp is `"legacy"` must not
+ * force the decorative flame back to per-transform coloring. An absent field
+ * is the persisted-default shorthand for {@link DEFAULT_FLAME_PALETTE}.
+ */
+export function resolveFlameBackdropPalette(state: AppState): PaletteSpec {
+  return resolvePalette(
+    state.background.flamePaletteId ?? DEFAULT_FLAME_PALETTE,
+    state.customPalette,
+  );
+}
+
+/**
  * The one state-aware gradient/placeholder backdrop resolution:
  * `resolveBackground`
  * with the {@link activeScenePalette} supplied, so `"auto"` derives from
@@ -2271,6 +2285,27 @@ export function setBackgroundShape(
   shape: BackgroundShape,
 ): AppState {
   return { ...state, background: { ...state.background, shape } };
+}
+
+/**
+ * Set the generated Flame backdrop's structural-coloring palette. The value
+ * remains authored when another background mode is selected. A first switch
+ * to Custom seeds the app's shared custom-gradient slot from the backdrop
+ * palette being replaced, matching the full Flame/Solid palette controls.
+ */
+export function setBackgroundFlamePaletteId(
+  state: AppState,
+  flamePaletteId: PaletteSelection,
+): AppState {
+  const previous = state.background.flamePaletteId ?? DEFAULT_FLAME_PALETTE;
+  return {
+    ...state,
+    background: { ...state.background, flamePaletteId },
+    ...(flamePaletteId === CUSTOM_PALETTE_ID &&
+    state.customPalette === undefined
+      ? { customPalette: { stops: seedCustomStops(previous) } }
+      : {}),
+  };
 }
 
 /**

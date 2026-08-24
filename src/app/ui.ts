@@ -65,6 +65,7 @@ import type { AppState, RenderMode } from "./state";
 import { resolveBackground } from "./background";
 import type { BackgroundGradient } from "./background";
 import {
+  DEFAULT_FLAME_PALETTE,
   RENDER_MODES,
   MAX_W_ANGLE,
   MAX_W_POSITION,
@@ -1787,6 +1788,9 @@ export class Ui {
    * hides while that image source is selected. Its authored state remains in
    * AppState and returns when a gradient mode is selected again. */
   private readonly backgroundShapeRow: HTMLElement;
+  /** The generated Flame backdrop's own palette row. Unlike the gradient
+   * shape, it shows only while the image-backed mode is selected. */
+  private readonly backgroundFlamePaletteRow: HTMLElement;
   private readonly backgroundCustomRow: HTMLElement;
   private readonly backgroundInputs: {
     top: HTMLInputElement;
@@ -2056,15 +2060,15 @@ export class Ui {
     }
   >();
 
-  /** The gradient-stop editor rows shown under the flame/solid/surface/ramp
+  /** The gradient-stop editor rows shown under the background/flame/solid/surface/ramp
    * palette `<select>`s once set to Custom: a live gradient strip preview,
    * one `<input type="color">` per stop, and the add/remove-stop buttons.
-   * All four editors read/write the SAME shared `AppState.customPalette`
+   * All five editors read/write the SAME shared `AppState.customPalette`
    * slot (see {@link syncCustomPaletteEditors}) — only which row is visible
    * differs, keyed on that palette select's own paletteId
-   * (flame/solid/surface) or `rampPaletteId` (ramp). */
+   * (background/flame/solid/surface) or \`rampPaletteId\` (ramp). */
   private readonly customPaletteEditors: Record<
-    "flame" | "solid" | "surface" | "ramp",
+    "background" | "flame" | "solid" | "surface" | "ramp",
     {
       row: HTMLElement;
       strip: HTMLElement;
@@ -2290,6 +2294,7 @@ export class Ui {
     };
     this.positionColorsResetBtn = this.byId("positionColorsReset");
     this.backgroundShapeRow = this.byId("backgroundShapeRow");
+    this.backgroundFlamePaletteRow = this.byId("backgroundFlamePaletteRow");
     this.backgroundCustomRow = this.byId("backgroundCustomRow");
     this.backgroundInputs = {
       top: this.byId("backgroundTop"),
@@ -2369,6 +2374,13 @@ export class Ui {
       });
     }
     this.customPaletteEditors = {
+      background: {
+        row: this.byId("backgroundCustomPaletteRow"),
+        strip: this.byId("backgroundCustomPaletteStrip"),
+        stops: this.byId("backgroundCustomPaletteStops"),
+        add: this.byId("backgroundCustomPaletteAdd"),
+        remove: this.byId("backgroundCustomPaletteRemove"),
+      },
       flame: {
         row: this.byId("flameCustomPaletteRow"),
         strip: this.byId("flameCustomPaletteStrip"),
@@ -2743,12 +2755,18 @@ export class Ui {
         this.fourDSliceRelColorToggle.checked,
       ),
     );
-    // Custom palette gradient editor: the flame/solid/surface/ramp rows share
+    // Custom palette gradient editor: the background/flame/solid/surface/ramp rows share
     // this same wiring, each against its own DOM elements. The recolor
     // listener is delegated on the `stops` container (rather than bound per
     // input) so it survives syncCustomPaletteEditors rebuilding the inputs on
     // an add/remove.
-    for (const kind of ["flame", "solid", "surface", "ramp"] as const) {
+    for (const kind of [
+      "background",
+      "flame",
+      "solid",
+      "surface",
+      "ramp",
+    ] as const) {
       const editor = this.customPaletteEditors[kind];
       editor.stops.addEventListener("input", () => {
         const stops = this.readCustomPaletteStops(editor.stops);
@@ -3230,6 +3248,10 @@ export class Ui {
       "hidden",
       state.background.mode === "flame",
     );
+    this.backgroundFlamePaletteRow.classList.toggle(
+      "hidden",
+      state.background.mode !== "flame",
+    );
     // The custom backdrop pickers: shown only while the Background select
     // sits on Custom (therefore hidden for Flame too); synced to the resolved
     // stops with the same only-write-on-change guard as the axis pickers above.
@@ -3390,9 +3412,10 @@ export class Ui {
   }
 
   /**
-   * Sync the flame/solid/surface/ramp gradient-stop editors to
+   * Sync the background/flame/solid/surface/ramp gradient-stop editors to
    * `state.customPalette`, called from {@link updateLabels} right after the
-   * table-driven scalar sync loop. Four rows now: the flame/solid rows show
+   * table-driven scalar sync loop. Five rows now: the background editor shows
+   * only while the Flame backdrop owns a Custom palette; flame/solid rows show
    * only while their OWN render's palette select is on
    * {@link CUSTOM_PALETTE_ID}; the surface and ramp rows additionally sit
    * INSIDE a gated container (`#surfacePaletteRow`, hidden unless the
@@ -3410,17 +3433,26 @@ export class Ui {
    */
   private syncCustomPaletteEditors(state: AppState): void {
     const paletteIdByKind: Record<
-      "flame" | "solid" | "surface" | "ramp",
+      "background" | "flame" | "solid" | "surface" | "ramp",
       PaletteSelection
     > = {
+      background: state.background.flamePaletteId ?? DEFAULT_FLAME_PALETTE,
       flame: state.flame.paletteId,
       solid: state.solid.paletteId,
       surface: state.surface.paletteId,
       ramp: state.rampPaletteId,
     };
-    for (const kind of ["flame", "solid", "surface", "ramp"] as const) {
+    for (const kind of [
+      "background",
+      "flame",
+      "solid",
+      "surface",
+      "ramp",
+    ] as const) {
       const editor = this.customPaletteEditors[kind];
-      const isCustom = paletteIdByKind[kind] === CUSTOM_PALETTE_ID;
+      const isCustom =
+        paletteIdByKind[kind] === CUSTOM_PALETTE_ID &&
+        (kind !== "background" || state.background.mode === "flame");
       editor.row.classList.toggle("hidden", !isCustom);
       if (!isCustom) continue;
 
