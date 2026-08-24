@@ -720,3 +720,29 @@ the fern presets are points/flame only, honestly refused rather than
 slow; the kelp systems are degraded-eligible and march clean (523ms at
 128px, 0 exhausted) but the DE shell is a blobby union of climb-map
 images, so kelpForest ships flame-hinted, not surface-hinted.
+
+A reference image re-scoped the target after the first verdict: the
+asked-for look is an undulating OPAQUE fern terrain — lit, AO-shaded,
+hazy at the horizon — the SOLID renderer's territory, not an additive
+glow's. The added solid-landscape sheet marches voxel.ts's own density
+grids (and voxel-4d's, for the 4D twin) through the shared marcher with
+field-gradient lighting, and its verdict shipped the wave's fifth and
+sixth presets: the TERRAIN-ROW arrangement (squashed leaned terrain
+copies PLUS a receding row chain — placements alone render one mound;
+the chain buys wave-after-wave recession) at share 0.55 under the
+LAGOON structural LUT, plant maps authored into lagoon's punchy
+teal-green band (stem 0.6 in the near-black shadow slot, fronds
+0.88-0.95) and scatter maps in straw/rust/dark-teal (0.15/0.45/0.75) —
+green frond crowns rolling over golden-rust swells with dark valleys
+(fernHills, the first "solid"-hinted preset). Two color refutations en
+route: scatter-only colorIndex over moss leaves the derived plant slots
+in the salmon zone (pink hills), and moss's green band is intrinsically
+pastel (peak (0.6, 0.9, 0.6)), so even authored-green moss reads sage
+under the running-mean voxel wash. The same scheme over the hyperfern
+with the row carrying the compounding xw 0.35 voxelizes through the
+production accumulateVoxels4 at the identity rotor into a ribbed 4D
+terrain (hyperfernHills). Plumbing fact the preset work depends on: a
+solid session's structural palette is state.solid.paletteId (default
+"spectrum"), a separate field no preset hint reached before this wave —
+the preset handler now applies a solid-hinted preset's palette hint to
+the solid palette.

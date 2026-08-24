@@ -34,11 +34,16 @@
  *    stem's x-scale is exactly 0 — singular — so the fern systems are
  *    expected ineligible with a reason naming it) plus a cost panel for
  *    every marchable system.
+ *  - solid landscape: the reference-image target — an undulating OPAQUE
+ *    lit fern terrain — measured on the SOLID renderer's own pure core:
+ *    voxel.ts density grids (and voxel-4d's for the 4D twin) marched
+ *    through the shared marcher with field-gradient lighting and
+ *    color-scheme arms.
  *
  * The point panels use a SPLATTER local to this sheet — an orthographic
  * log-density projection of a chaos-game cloud — deliberately NOT a
  * marcher: de-preview's marcher stays the only marcher, and the surface
- * probe renders through it unchanged.
+ * probe and solid panels render through it unchanged.
  *
  * VERDICT (2026-08-24): ORGANIC, NOT MUSH — at S 0.15-0.30 every
  * arrangement reads as a landscape; S 0.45 over-weights the deep copies
@@ -87,6 +92,34 @@
  * blobby union of climb-map images, nothing kelp-like — kelpForest ships
  * flame-hinted, not surface-hinted, by that picture.
  *
+ * VERDICT ADDENDUM (2026-08-24, after a reference image re-scoped the
+ * target): the asked-for look is an undulating OPAQUE fern terrain — lit,
+ * AO-shaded in the valleys, hazy at the horizon — which is the SOLID
+ * renderer's territory, not an additive glow's. The solid sheet measured
+ * it: the TERRAIN-ROW arrangement (squashed, leaned terrain copies plus a
+ * receding row chain — placements alone give one mound; the row chain is
+ * what buys wave-after-wave recession) at share 0.55, under the LAGOON
+ * structural LUT with the PLANT maps authored into lagoon's punchy
+ * teal-green band (stem 0.6 in the near-black shadow slot, fronds
+ * 0.88-0.95) and the scatter maps in straw/rust/dark-teal
+ * (0.15/0.45/0.75), renders exactly that family — green frond crowns
+ * rolling over golden-rust swells with dark valleys (-> the fernHills
+ * preset, the first "solid"-hinted one). Two color refutations along the
+ * way: scatter-only colorIndex over moss leaves the DERIVED plant slots
+ * in moss's salmon zone (pink hills), and authoring the plants into
+ * moss's green band still reads sage, because moss's greens are
+ * intrinsically pastel (peak (0.6, 0.9, 0.6)) and the running-mean voxel
+ * color washes them further. The SAME scheme over the hyperfern with the
+ * row map carrying the compounding xw 0.35 (hyperfernForest's own lift)
+ * voxelizes through the production accumulateVoxels4 at the identity
+ * rotor into a ribbed 4D terrain — the w-curled frond content striates
+ * the swells — so the 4D twin ships as hyperfernHills. Plumbing fact the
+ * preset work depends on: the structural palette a solid session renders
+ * is state.solid.paletteId (default "spectrum"), a SEPARATE field from
+ * the flame palette, which no preset hint reached before this wave — the
+ * preset handler applies a solid-hinted preset's palette hint to the
+ * solid palette as of fernHills.
+ *
  * Run: npx vitest run --config scripts/vitest.harness.config.ts \
  *        scripts/forest-composition.harness.ts
  * Writes: scripts/out/forest-arrangement.png
@@ -96,6 +129,7 @@
  *         scripts/out/forest-infection.png
  *         scripts/out/forest-4d.png
  *         scripts/out/forest-surface.png (only if a system is marchable)
+ *         scripts/out/forest-solid.png
  */
 import { describe, expect, it } from "vitest";
 import { applyAffine, composeAffine } from "../src/fractal/affine";
@@ -107,7 +141,7 @@ import {
   prepareChaosGame,
   runChaosGame,
 } from "../src/fractal/chaos-game";
-import { runChaosGame4 } from "../src/fractal/chaos-game-4d";
+import { prepareChaosGame4, runChaosGame4 } from "../src/fractal/chaos-game-4d";
 import type { ChaosGame4Result } from "../src/fractal/chaos-game-4d";
 import {
   W_SIDE_PALETTES,
@@ -128,8 +162,19 @@ import {
   composeRotorProjection4,
   sliceWeight,
 } from "../src/fractal/project4";
+import type { FourDView } from "../src/fractal/project4";
+import {
+  accumulateVoxels4,
+  computeVoxelBounds4,
+} from "../src/fractal/voxel-4d";
 import { mulberry32 } from "../src/fractal/rng";
 import type { Rng } from "../src/fractal/rng";
+import {
+  accumulateVoxels,
+  computeVoxelBounds,
+  createVoxelGrid,
+} from "../src/fractal/voxel";
+import type { VoxelGrid } from "../src/fractal/voxel";
 import {
   analyzeSurfaceSystem,
   buildSurfaceDE,
@@ -159,7 +204,7 @@ import {
   writeContactSheet,
   writeLabeledContactSheet,
 } from "./de-preview";
-import type { PanelStats } from "./de-preview";
+import type { PanelStats, PreviewHit } from "./de-preview";
 
 const SEED = 0xf03e57;
 /** The plant's base — the ferns' own y = -1.5 ground line. */
@@ -178,6 +223,9 @@ const SHARES = [0.15, 0.3, 0.45] as const;
 
 interface ScatterSpec {
   s: number;
+  /** Vertical scale override — a terrain map squashes the copy (sy < s)
+   * so the scene carpets into rolling ground rather than standing. */
+  sy?: number;
   yaw?: number;
   leanX?: number;
   leanZ?: number;
@@ -199,7 +247,7 @@ interface ScatterSpec {
  */
 function scatterTransform(id: number, spec: ScatterSpec): Transform {
   const rotation: Vec3 = [spec.leanX ?? 0, spec.yaw ?? 0, spec.leanZ ?? 0];
-  const scale: Vec3 = [spec.s, spec.s, spec.s];
+  const scale: Vec3 = [spec.s, spec.sy ?? spec.s, spec.s];
   const image = applyAffine(
     composeAffine({ id, position: [0, 0, 0], rotation, scale }),
     0,
@@ -291,6 +339,41 @@ const GROVE_WIDE_SPECS: ScatterSpec[] = [
   { s: 0.5, yaw: 0.6, leanZ: 0.07, baseX: -2.7, baseZ: -0.8, weight: 1 },
   { s: 0.62, yaw: -1.1, leanZ: -0.05, baseX: 2.6, baseZ: -1.5, weight: 1 },
   { s: 0.55, yaw: 2.3, leanZ: 0.1, baseX: 0.7, baseZ: -3.0, weight: 1 },
+];
+
+/** TERRAIN: squashed (sy < s), leaned, yawed copies that carpet the scene
+ * into rolling ground instead of standing beside it — aimed at the
+ * fern-as-landscape look (an undulating opaque terrain whose every swell is
+ * fern-stuff), where the standing arrangements read as plants ON a ground
+ * that is not there. */
+const TERRAIN_SPECS: ScatterSpec[] = [
+  {
+    s: 0.72,
+    sy: 0.45,
+    yaw: 0.4,
+    leanX: 0.15,
+    baseX: -1.6,
+    baseZ: -1.2,
+    weight: 1,
+  },
+  {
+    s: 0.68,
+    sy: 0.5,
+    yaw: -2.0,
+    leanZ: -0.12,
+    baseX: 1.7,
+    baseZ: -1.9,
+    weight: 1,
+  },
+  {
+    s: 0.55,
+    sy: 0.4,
+    yaw: 1.2,
+    leanX: 0.18,
+    baseX: 0.2,
+    baseZ: -3.2,
+    weight: 1,
+  },
 ];
 
 // ------------------------------------------------------------- the kelp
@@ -826,6 +909,285 @@ function projectCloud4(
     sumAbs += Math.abs(sc);
   }
   return { positions, s, meanAbsS: sumAbs / cloud.count };
+}
+
+// ------------------------------------------------- solid-landscape render
+
+/**
+ * The SOLID arm: accumulate the system into `voxel.ts`'s density grid (the
+ * production solid renderer's own pure core), then march the grid's
+ * trilinear log-density field through de-preview's SHARED marcher as a
+ * pseudo distance estimator — 0 at/inside the iso surface, a sub-voxel
+ * creep near it, a bounded empty-space stride away from it. This is a LOOK
+ * instrument, not a certified bound (the stride can graze a shell thinner
+ * than one voxel), and it deliberately rides `renderPreview` for lighting,
+ * AO, cone shadow and fog rather than growing a ninth marcher — the shade
+ * hook only supplies the voxel grid's own running-mean color as albedo.
+ */
+interface SolidScene {
+  grid: VoxelGrid;
+  /** Normalized log-density in [0, 1], trilinear at voxel centers. */
+  field: (x: number, y: number, z: number) => number;
+  center: Vec3;
+  /** Half-extent of the grid cube (one number — the cube is isotropic). */
+  half: number;
+  cell: number;
+  /** Fraction of voxels at/above the iso threshold. */
+  occupied: number;
+}
+
+const SOLID_GRID = 192;
+const SOLID_ISO = 0.07;
+const SOLID_ITERATIONS = 30_000_000;
+
+/** How a solid scene is colored — mirroring the app's own three routes: the
+ * structural orbit LUT (the flame palette applied to solid, flam3 orbit
+ * semantics, overrides colorMode), the By-Transform default a hint-less
+ * load lands on, or a colorMode height ramp. */
+type SolidColor =
+  | { kind: "lut"; palette: FlamePaletteId }
+  | { kind: "transform" }
+  | { kind: "ramp"; palette: FlamePaletteId };
+
+function buildSolidScene(
+  system: Transform[],
+  seed: number,
+  color: SolidColor,
+): SolidScene {
+  const prepared = prepareChaosGame(system);
+  const rng = mulberry32(seed);
+  const bounds = computeVoxelBounds(prepared, rng);
+  const grid = createVoxelGrid(SOLID_GRID, bounds);
+  const palette =
+    color.kind === "transform"
+      ? transformColors(
+          system.length,
+          system.map((t) => t.colorIndex),
+        )
+      : [];
+  const lut =
+    color.kind === "lut"
+      ? (buildPaletteLUT(color.palette) ?? undefined)
+      : undefined;
+  accumulateVoxels(
+    prepared,
+    grid,
+    SOLID_ITERATIONS,
+    rng,
+    palette,
+    color.kind === "ramp" ? "height" : "transform",
+    lut,
+    1,
+    color.kind === "ramp" ? color.palette : "legacy",
+  );
+  return sceneFromGrid(grid);
+}
+
+/** Finish a solid scene from an accumulated grid — shared by the 3D path
+ * (accumulateVoxels) and the 4D one (accumulateVoxels4 over the projected
+ * cloud), so both march and light identically. */
+function sceneFromGrid(grid: VoxelGrid): SolidScene {
+  const n = grid.size;
+  const logNorm = new Float32Array(n * n * n);
+  const invLogMax = 1 / Math.log1p(Math.max(grid.maxDensity, 1));
+  let occupied = 0;
+  for (let i = 0; i < logNorm.length; i++) {
+    const v = Math.log1p(grid.density[i]) * invLogMax;
+    logNorm[i] = v;
+    if (v >= SOLID_ISO) occupied++;
+  }
+  const min = grid.bounds.min;
+  const max = grid.bounds.max;
+  const extent = max[0] - min[0];
+  const cell = extent / n;
+  const invCell = 1 / cell;
+  const field = (x: number, y: number, z: number): number => {
+    // Sample at voxel centers; outside the cube is empty by construction.
+    const gx = (x - min[0]) * invCell - 0.5;
+    const gy = (y - min[1]) * invCell - 0.5;
+    const gz = (z - min[2]) * invCell - 0.5;
+    const x0 = Math.floor(gx);
+    const y0 = Math.floor(gy);
+    const z0 = Math.floor(gz);
+    if (x0 < -1 || y0 < -1 || z0 < -1 || x0 >= n || y0 >= n || z0 >= n) {
+      return 0;
+    }
+    const fx = gx - x0;
+    const fy = gy - y0;
+    const fz = gz - z0;
+    let sum = 0;
+    for (let dz = 0; dz <= 1; dz++) {
+      const zc = z0 + dz;
+      if (zc < 0 || zc >= n) continue;
+      const wz = dz === 1 ? fz : 1 - fz;
+      for (let dy = 0; dy <= 1; dy++) {
+        const yc = y0 + dy;
+        if (yc < 0 || yc >= n) continue;
+        const wy = dy === 1 ? fy : 1 - fy;
+        for (let dx = 0; dx <= 1; dx++) {
+          const xc = x0 + dx;
+          if (xc < 0 || xc >= n) continue;
+          const wx = dx === 1 ? fx : 1 - fx;
+          sum += logNorm[xc + yc * n + zc * n * n] * wx * wy * wz;
+        }
+      }
+    }
+    return sum;
+  };
+  return {
+    grid,
+    field,
+    center: [
+      (min[0] + max[0]) / 2,
+      (min[1] + max[1]) / 2,
+      (min[2] + max[2]) / 2,
+    ],
+    half: extent / 2,
+    cell,
+    occupied: occupied / logNorm.length,
+  };
+}
+
+function solidPanel(
+  scene: SolidScene,
+  eyeOffset: Vec3,
+  zoom: number,
+  size: number,
+  targetOffset: Vec3 = [0, 0, 0],
+): PanelStats {
+  const { field, center, half, cell } = scene;
+  const target: Vec3 = [
+    center[0] + targetOffset[0] * half,
+    center[1] + targetOffset[1] * half,
+    center[2] + targetOffset[2] * half,
+  ];
+  const de = (p: Vec3): number => {
+    // Outside the grid cube: a conservative step toward it.
+    const dx = Math.max(Math.abs(p[0] - center[0]) - half, 0);
+    const dy = Math.max(Math.abs(p[1] - center[1]) - half, 0);
+    const dz = Math.max(Math.abs(p[2] - center[2]) - half, 0);
+    const outside = Math.hypot(dx, dy, dz);
+    if (outside > cell) return outside;
+    const f = field(p[0], p[1], p[2]);
+    if (f >= SOLID_ISO) return 0;
+    if (f < SOLID_ISO * 0.35) return 1.2 * cell;
+    return ((SOLID_ISO - f) / SOLID_ISO) * 0.8 * cell + 0.12 * cell;
+  };
+  const { grid } = scene;
+  const n = grid.size;
+  const min = grid.bounds.min;
+  const invCell = n / (grid.bounds.max[0] - min[0]);
+  const albedo = (p: Vec3): Vec3 => {
+    const xc = Math.min(
+      n - 1,
+      Math.max(0, Math.round((p[0] - min[0]) * invCell - 0.5)),
+    );
+    const yc = Math.min(
+      n - 1,
+      Math.max(0, Math.round((p[1] - min[1]) * invCell - 0.5)),
+    );
+    const zc = Math.min(
+      n - 1,
+      Math.max(0, Math.round((p[2] - min[2]) * invCell - 0.5)),
+    );
+    const o = (xc + yc * n + zc * n * n) * 3;
+    return [grid.avgRGB[o], grid.avgRGB[o + 1], grid.avgRGB[o + 2]];
+  };
+  const gam = (v: number): number =>
+    Math.pow(Math.min(1, Math.max(0, v)), 1 / 2.2);
+  // Lighting reads the SMOOTH trilinear field, not the marcher's proxies:
+  // the tetrahedron normal and step-count AO both manufacture pixel noise
+  // on a kinked pseudo-DE (de-preview's own AO doc warns of exactly this),
+  // where the field's gradient and a few field taps are smooth — the app's
+  // GLSL voxel raymarcher lights the same way (gradient normals).
+  const fieldNormal = (p: Vec3): Vec3 => {
+    const h = cell;
+    const gx = field(p[0] + h, p[1], p[2]) - field(p[0] - h, p[1], p[2]);
+    const gy = field(p[0], p[1] + h, p[2]) - field(p[0], p[1] - h, p[2]);
+    const gz = field(p[0], p[1], p[2] + h) - field(p[0], p[1], p[2] - h);
+    const d = Math.hypot(gx, gy, gz) || 1;
+    return [-gx / d, -gy / d, -gz / d];
+  };
+  const occlusionAlong = (p: Vec3, dir: Vec3, taps: number[]): number => {
+    let occ = 0;
+    for (const t of taps) {
+      occ += field(p[0] + dir[0] * t, p[1] + dir[1] * t, p[2] + dir[2] * t);
+    }
+    return occ / taps.length;
+  };
+  const aoTaps = [2, 4, 7, 11].map((k) => k * cell);
+  const sunTaps = [3, 6, 10, 16].map((k) => k * cell);
+  return downsample2(
+    renderPreview(
+      {
+        de,
+        boundingRadius: half * 1.9,
+        target,
+        stepScale: 1,
+        eyeOffset,
+        zoom,
+        maxSteps: 700,
+        ao: false,
+        shadow: false,
+        shade: (hit: PreviewHit): Vec3 => {
+          const a = albedo(hit.p);
+          const nrm = fieldNormal(hit.p);
+          const diffuse = Math.max(
+            nrm[0] * hit.light[0] +
+              nrm[1] * hit.light[1] +
+              nrm[2] * hit.light[2],
+            0,
+          );
+          const ao = Math.max(0, 1 - 2.2 * occlusionAlong(hit.p, nrm, aoTaps));
+          const sun = Math.max(
+            0,
+            1 - 2.8 * occlusionAlong(hit.p, hit.light, sunTaps),
+          );
+          // Low ambient + strong AO: the reference look's valleys go DARK.
+          // The running-mean voxel color washes toward bright pastel, so
+          // DEEPEN the albedo (power > 1) and re-saturate before lighting
+          // — the harness's stand-in for the app's own tone controls.
+          const deep = (v: number): number => Math.pow(Math.max(v, 0), 1.5);
+          const d0 = deep(a[0]);
+          const d1 = deep(a[1]);
+          const d2 = deep(a[2]);
+          const grey = (d0 + d1 + d2) / 3;
+          const l = (0.18 + 0.82 * diffuse * sun) * (0.3 + 0.7 * ao) * 1.15;
+          const sat = (v: number): number => grey + 1.25 * (v - grey);
+          return [gam(sat(d0) * l), gam(sat(d1) * l), gam(sat(d2) * l)];
+        },
+      },
+      size * 2,
+    ),
+  );
+}
+
+/** 2x box downsample of a PanelStats — the solid panels render supersampled
+ * because a panel pixel is about one voxel cell wide, right at the noise
+ * frequency the app's much finer canvas never sees. */
+function downsample2(stats: PanelStats): PanelStats {
+  const w = stats.width / 2;
+  const rgb = new Uint8Array(w * w * 3);
+  for (let y = 0; y < w; y++) {
+    for (let x = 0; x < w; x++) {
+      for (let ch = 0; ch < 3; ch++) {
+        const s0 = ((2 * y * stats.width + 2 * x) * 3 + ch) | 0;
+        const s1 = s0 + 3;
+        const s2 = s0 + stats.width * 3;
+        const s3 = s2 + 3;
+        rgb[(y * w + x) * 3 + ch] = Math.round(
+          (stats.rgb[s0] + stats.rgb[s1] + stats.rgb[s2] + stats.rgb[s3]) / 4,
+        );
+      }
+    }
+  }
+  return {
+    ...stats,
+    rgb,
+    width: w,
+    height: w,
+    hits: Math.round(stats.hits / 4),
+  };
 }
 
 // ---------------------------------------------------------------- sheets
@@ -1506,5 +1868,197 @@ describe("forest-composition sheet", () => {
       console.info(`wrote ${path}`);
     }
     expect(table).toHaveLength(5);
+  });
+
+  it("solid landscape", () => {
+    // The fern-as-landscape target: an undulating OPAQUE terrain whose
+    // every swell is fern-stuff, lit, with AO in the valleys and haze at
+    // the horizon. That is the SOLID renderer's territory, so these panels
+    // march voxel.ts's own density grid through the shared marcher, and the
+    // color arms are the routes a PRESET can actually reach: the structural
+    // orbit LUT (the flame palette applied to solid — authored scatter
+    // colorIndex drifts the color across copies, the flame sheet's recolor
+    // mechanism in opaque form) and the By-Transform default.
+    const ci = (specs: ScatterSpec[], idx: number[]): ScatterSpec[] =>
+      specs.map((spec, i) => ({
+        ...spec,
+        colorIndex: idx[i],
+        colorSpeed: 0.5,
+      }));
+    const terrainCi = ci(TERRAIN_SPECS, [0.2, 0.55, 0.85]);
+    const rowCi = ci(ROW_SPECS["0.80"], [0.8]);
+    // The GREEN scheme rides LAGOON, not moss: moss's green band is
+    // intrinsically pastel (peak (0.6, 0.9, 0.6)) and averaged to sage in
+    // the first green arms, where lagoon carries PUNCHY teal-greens at
+    // c 0.88-0.95, golden straw at 0.15, rust at 0.45 and near-black at
+    // 0.6 — the reference family exactly. Plant maps author into the
+    // green band (stem into the near-black shadow slot), scatter/terrain
+    // into straw/rust/dark-teal, so the foreground fronds read green over
+    // golden-rust receding swells with dark valleys.
+    const greenPlant = (plant: Transform[]): Transform[] => {
+      const idx = [0.6, 0.92, 0.95, 0.88];
+      return plant.map((t, i) => ({ ...t, colorIndex: idx[i] }));
+    };
+    const terrainGreen = ci(TERRAIN_SPECS, [0.15, 0.45, 0.75]);
+    const groveGreen = ci(GROVE3_SPECS, [0.15, 0.45, 0.75]);
+    const rowGreen = ci(ROW_SPECS["0.80"], [0.15]);
+    const arms: {
+      name: string;
+      line2: string;
+      system: Transform[];
+      color: SolidColor;
+    }[] = [
+      {
+        name: "GROVE3 S045",
+        line2: "TRANSFORM",
+        system: landscape(curlingFern(), GROVE3_SPECS, 0.45),
+        color: { kind: "transform" },
+      },
+      {
+        name: "GROVE3 GREEN",
+        line2: "LAGOON LUT",
+        system: landscape(greenPlant(curlingFern()), groveGreen, 0.45),
+        color: { kind: "lut", palette: "lagoon" },
+      },
+      {
+        // Terrain + a receding row: the reference's wave-after-wave swells
+        // need a translation CHAIN, not just placements around the origin.
+        name: "TERRAIN-ROW S055",
+        line2: "MOSS LUT",
+        system: landscape(
+          curlingFern(),
+          [...terrainCi, { ...rowCi[0], weight: 1.5 }],
+          0.55,
+        ),
+        color: { kind: "lut", palette: "moss" },
+      },
+      {
+        name: "TERRAIN-ROW GREEN",
+        line2: "LAGOON LUT",
+        system: landscape(
+          greenPlant(curlingFern()),
+          [...terrainGreen, { ...rowGreen[0], weight: 1.5 }],
+          0.55,
+        ),
+        color: { kind: "lut", palette: "lagoon" },
+      },
+      {
+        name: "ROW080 S030 CI",
+        line2: "MOSS LUT",
+        system: landscape(curlingFern(), rowCi, 0.3),
+        color: { kind: "lut", palette: "moss" },
+      },
+      {
+        name: "KELP ROW CI",
+        line2: "LAGOON LUT",
+        system: landscape(kelpPlant(), rowCi, 0.3),
+        color: { kind: "lut", palette: "lagoon" },
+      },
+    ];
+    const panels: LabeledPanel[] = [];
+    const table: Record<string, string | number>[] = [];
+    const view: { eye: Vec3; zoom: number } = {
+      eye: [1.05, 0.33, 1.45],
+      zoom: 0.42,
+    };
+    const push = (
+      name: string,
+      line2: string,
+      scene: SolidScene,
+      stats: PanelStats,
+    ): void => {
+      table.push({
+        name,
+        occupiedPct: (100 * scene.occupied).toFixed(2),
+        hitsPct: ((100 * stats.hits) / (PANEL_SIZE * PANEL_SIZE)).toFixed(1),
+        exhaustedPct: (
+          (100 * stats.exhausted) /
+          (PANEL_SIZE * PANEL_SIZE)
+        ).toFixed(1),
+        ms: stats.ms,
+      });
+      panels.push({ stats, lines: [name, line2] });
+    };
+    const scenes = arms.map((arm, i) => {
+      const scene = buildSolidScene(arm.system, SEED ^ (0x700 + i), arm.color);
+      push(
+        arm.name,
+        arm.line2,
+        scene,
+        solidPanel(scene, view.eye, view.zoom, PANEL_SIZE),
+      );
+      return scene;
+    });
+    // Hero close-up of the green terrain-row — the reference framing is a
+    // low aerial down the row with a sharp foreground frond.
+    const hero = solidPanel(
+      scenes[3],
+      [0.9, 0.28, 1.35],
+      0.3,
+      PANEL_SIZE,
+      [0.25, -0.1, -0.1],
+    );
+    push("TERRAIN-ROW GREEN HERO", "LAGOON LUT", scenes[3], hero);
+    // The 4D half's own measurement: the same green terrain-row over the
+    // hyperfern, its row map carrying the compounding xw rotation
+    // (hyperfernForest's lift), voxelized through the PRODUCTION
+    // accumulateVoxels4 at the identity rotor and marched identically.
+    const lifted = landscape(
+      greenPlant(hyperfern()),
+      [
+        ...terrainGreen,
+        { ...rowGreen[0], weight: 1.5, w: { rotation: { xw: 0.35 } } },
+      ],
+      0.55,
+    ).map(toTransform4);
+    const prepared4 = prepareChaosGame4(lifted);
+    const probe4 = runChaosGame4(lifted, 200_000, mulberry32(SEED ^ 0x710));
+    const m4 = rotorMatrix(identityRotorPair());
+    const rotorProj = composeRotorProjection4(m4, probe4.center);
+    const halfExtents4: Vec4 = [
+      (probe4.bounds.maxX - probe4.bounds.minX) / 2,
+      (probe4.bounds.maxY - probe4.bounds.minY) / 2,
+      (probe4.bounds.maxZ - probe4.bounds.minZ) / 2,
+      (probe4.bounds.maxW - probe4.bounds.minW) / 2,
+    ];
+    const view4: FourDView = {
+      invWAmp: 1 / Math.max(wSupport(m4, halfExtents4), 1e-9),
+      sliceOn: false,
+      sliceCenter: 0,
+      sliceWidth: 1,
+      sliceRelativeColor: false,
+    };
+    const lagoonLut = buildPaletteLUT("lagoon");
+    if (!lagoonLut) throw new Error("lagoon LUT unexpectedly null");
+    const rng4 = mulberry32(SEED ^ 0x711);
+    const bounds4 = computeVoxelBounds4(prepared4, rotorProj, view4, rng4);
+    const grid4 = createVoxelGrid(SOLID_GRID, bounds4);
+    accumulateVoxels4(
+      prepared4,
+      grid4,
+      SOLID_ITERATIONS,
+      rng4,
+      rotorProj,
+      view4,
+      { kind: "structural", lut: lagoonLut },
+    );
+    const scene4 = sceneFromGrid(grid4);
+    push(
+      "4D TERRAIN-ROW GREEN",
+      "LAGOON LUT IDENTITY",
+      scene4,
+      solidPanel(scene4, view.eye, view.zoom, PANEL_SIZE),
+    );
+    console.table(table);
+    const path = writeLabeledContactSheet(panels, 4, "forest-solid.png");
+    console.info(`wrote ${path}`);
+    expect(panels).toHaveLength(8);
+    expect(scene4.grid.maxDensity).toBeGreaterThan(0);
+    for (const scene of scenes) {
+      expect(scene.grid.maxDensity).toBeGreaterThan(0);
+    }
+    for (const { stats } of panels) {
+      expect(stats.hits).toBeGreaterThan(0.05 * PANEL_SIZE * PANEL_SIZE);
+    }
   });
 });
