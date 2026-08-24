@@ -80,6 +80,7 @@ import type { Rng } from "../fractal/rng";
 import { FlamePerfMeter } from "./flame-perf";
 import type {
   FourDColorMode,
+  HybridSchedule,
   SymmetryParams,
   SymmetryPlane,
   Transform,
@@ -167,6 +168,15 @@ export type FlameWorkerCommand =
        * self-contained payload before crossing the worker boundary.
        */
       balloonPalette?: PaletteSpec;
+      /**
+       * Optional scheduled-hybrid post-word block (`types.ts`'s
+       * {@link HybridSchedule}), in the document's flat 3D form for BOTH
+       * dimensions (the 4D prepare lifts it, exactly like the cloud
+       * request). Omitted/absent — every pre-feature document — both
+       * prepares and both GPU packers take their byte-identical
+       * no-post-word paths.
+       */
+      schedule?: HybridSchedule | null;
       /** Kaleidoscope symmetry, 4D as well as 3D — which is also why
        * `twist` rides along (the second angle of a 4D double rotation, which
        * only the 4D path can express). Absent `twist` means 0. */
@@ -715,6 +725,10 @@ export interface GpuBackendRequest {
   echo?: FlameBalloonEcho;
   /** Independent balloon LUT, or absent for exact primary-color inherit. */
   echoColorLUT?: Float32Array;
+  /** The scheduled-hybrid post-word block the session retained from its
+   * start command — `packGpuSystem` appends B's affine slots and the kernel
+   * runs the plot-time post-word; absent/`null` is byte-identical. */
+  schedule?: HybridSchedule | null;
   /** ACCUMULATION resolution (display size x effective supersample) — NOT
    * the display resolution `start.width`/`height` carry. */
   width: number;
@@ -771,6 +785,10 @@ export interface GpuBackendRequest4 {
   echo?: FlameBalloonEcho;
   /** Independent balloon LUT, or absent for exact primary-color inherit. */
   echoColorLUT?: Float32Array;
+  /** The scheduled-hybrid post-word block, in the DOCUMENT's flat 3D form —
+   * `packGpuSystem4` lifts it exactly as `prepareSchedule4` lifts the CPU
+   * oracle's; absent/`null` is byte-identical. */
+  schedule?: HybridSchedule | null;
   /** The frozen 4D view (signed-w normalization + soft slice) — see
    * `project4.ts`'s `FourDView`. */
   view: FourDView;
@@ -1026,6 +1044,10 @@ export class FlameWorkerSession {
    * main thread resending the whole transform list. */
   private baseTransforms: Transform[] = [];
   private baseFinalTransform: Transform | null = null;
+  /** The session's scheduled-hybrid post-word block (document form, both
+   * dimensions — see the start command's field), retained like
+   * `baseTransforms` so symmetry/supersample restarts re-prepare with it. */
+  private hybridSchedule: HybridSchedule | null = null;
   /** The raw 4D transform set from the last "start"'s `fourD` block —
    * retained (alongside the composed `prepared4`) because a
    * {@link GpuBackendRequest4} carries the raw transforms; the GPU packer
@@ -1353,6 +1375,7 @@ export class FlameWorkerSession {
     // the 3D list answers for both dimensions.
     this.sessionHasChaos = systemHasChaos(cmd.transforms);
     this.baseFinalTransform = cmd.finalTransform;
+    this.hybridSchedule = cmd.schedule ?? null;
     this.symmetryOrder = cmd.order;
     this.symmetryPlane = cmd.plane;
     this.symmetryTwist = cmd.twist ?? 0;
@@ -1362,6 +1385,7 @@ export class FlameWorkerSession {
       cmd.transforms,
       cmd.finalTransform,
       this.symmetry3D(),
+      this.hybridSchedule,
     );
     this.projection = cmd.projection;
     this.balloonEcho = cmd.balloonEcho;
@@ -1388,6 +1412,7 @@ export class FlameWorkerSession {
         fourD.transforms4,
         fourD.finalTransform4,
         this.symmetry(),
+        this.hybridSchedule,
       );
       // Resolution-independent (NDC-based), like the 3D path's own
       // `projection` — built once here and reused across every
@@ -1780,12 +1805,14 @@ export class FlameWorkerSession {
         this.baseTransforms4,
         this.baseFinalTransform4,
         this.symmetry(),
+        this.hybridSchedule,
       );
     } else {
       this.prepared = prepareChaosGame(
         this.baseTransforms,
         this.baseFinalTransform,
         this.symmetry3D(),
+        this.hybridSchedule,
       );
     }
     // The accumulated color sums (and the slot layout itself) assume the OLD
@@ -2108,6 +2135,7 @@ export class FlameWorkerSession {
       projection: this.projection!,
       echo: this.balloonEcho,
       echoColorLUT: this.balloonColorLUT ?? undefined,
+      schedule: this.hybridSchedule,
       width: this.accumWidth,
       height: this.accumHeight,
       seed: Math.floor(this.rng() * 0x100000000) >>> 0,
@@ -2133,6 +2161,7 @@ export class FlameWorkerSession {
       cameraProjection: this.balloonEcho ? this.projection! : undefined,
       echo: this.balloonEcho,
       echoColorLUT: this.balloonColorLUT ?? undefined,
+      schedule: this.hybridSchedule,
       view: this.fourDView!,
       color: this.fourDColor!,
       width: this.accumWidth,

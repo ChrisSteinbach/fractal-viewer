@@ -93,6 +93,7 @@ import { buildPaletteLUT } from "../../fractal/palette";
 import type { FlamePaletteId } from "../../fractal/palette";
 import {
   barnsleyFern,
+  mengerSponge,
   doubleRotation,
   hyperfern,
   mandelboxKifs,
@@ -154,6 +155,7 @@ import type {
   SurfaceGpuPose,
 } from "../../fractal/surface-de-gpu";
 import type {
+  HybridSchedule,
   FourDColorMode,
   Rotation4,
   SymmetryParams,
@@ -358,6 +360,14 @@ interface ScenarioDef3D {
    * agreement gate also pins source-radius lookup before tint/weight. */
   balloonPaletteId?: Exclude<FlamePaletteId, "legacy">;
   /**
+   * Optional scheduled-hybrid post-word block (`types.ts`'s
+   * `HybridSchedule`): B's affine maps + depth, fed identically to the CPU
+   * oracle's `prepareChaosGame` and the GPU packer, so the agreement gate
+   * pins the kernel's plot-time schedule stage — its per-level draw, the
+   * post-word -> lens order, and the appended B slots.
+   */
+  schedule?: HybridSchedule;
+  /**
    * Per-scenario override of `AGREEMENT_MAE_THRESHOLD`. The equal-N MAE
    * between two INDEPENDENT samplings of the same attractor never reaches 0
    * — it has a Monte-Carlo noise floor that is a property of the SCENARIO
@@ -412,6 +422,10 @@ interface ScenarioDef4D {
   };
   /** Independent echo gradient; same contract as the 3D field. */
   balloonPaletteId?: Exclude<FlamePaletteId, "legacy">;
+  /** See {@link ScenarioDef3D.schedule} — same block, one dimension up:
+   * the flat 3D form both the 4D prepare and the 4D packer lift through
+   * `toTransform4`. */
+  schedule?: HybridSchedule;
   /** See {@link ScenarioDef3D.maeThreshold} — same scenario-owned noise
    * floor override, one dimension up. */
   maeThreshold?: number;
@@ -828,6 +842,41 @@ const SCENARIOS: ScenarioDef[] = [
     // leaves all three absent, so between them they only ever exercise
     // the classic 0.5/1/1 the kernel could equally have kept hard-coded.
   },
+  {
+    kind: "3d",
+    name: "schedule-sponge",
+    transforms: barnsleyFern(),
+    finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
+    paletteId: "moss",
+    // The scheduled-hybrid post-word: the sponge-of-ferns composition —
+    // every plotted fern point bent through 2 random sponge maps, one
+    // cell weighted so the kernel's WEIGHTED schedule search (not just the
+    // uniform fast path) is what agreement pins. Depth 2 keeps 400 ferns
+    // at 1/9 scale — small enough to exercise the k-loop, large enough
+    // that a wrong pick/order restructures the whole frame.
+    schedule: {
+      transforms: mengerSponge().map((t, i) =>
+        i === 0 ? { ...t, weight: 3 } : t,
+      ),
+      depth: 2,
+    },
+    // The composed arrangement spans the sponge's own [-0.75, 0.75] box
+    // (each fern copy ~0.17 tall at depth 2) — a straight-on camera at
+    // z 3 frames it fully.
+    cameraPos: [0, 0, 3],
+    lookAt: [0, 0, 0],
+    // Measured equal-N reading: CPU-vs-GPU maeRGB on SwiftShader is 0.334
+    // (integer atomics, stable per seed). 2x that (0.67) is below the
+    // default 1.0 floor, so the threshold stays at the default-equivalent
+    // 1.0 rather than tightening below it — fold-zoo-4d's own convention,
+    // spelled out for the same reason.
+    maeThreshold: 1.0,
+    // Uniquely pins: the 3D kernel's plot-time schedule stage — the
+    // appended B slots, the per-level rand01 draw, the weighted lower-bound
+    // search over B's own cumulative lane, and the post-word running
+    // BEFORE the lens adopt (no other scenario carries a schedule).
+  },
   // The 4D legs: between them, all four FourDRenderColor kinds and
   // both slice states; hyperfern/doubleRotation both carry non-1 weights,
   // exercising the 4D kernel's weighted binary-search pick (mirroring the 3D
@@ -1007,6 +1056,52 @@ const SCENARIOS: ScenarioDef[] = [
     // fold. Every other 4D scenario here is order 1, where all of that is
     // zero-filled and inert.
   },
+  {
+    kind: "4d",
+    name: "schedule-4d",
+    system: hyperfern,
+    finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
+    rotation: BENCH_TUMBLE,
+    paletteId: "ember",
+    colorMode: "wBlueOrange",
+    sliceOn: false,
+    sliceCenter: 0,
+    sliceWidth: 0.35,
+    sliceRelativeColor: false,
+    // The schedule-sponge leg one dimension up: a genuinely 4D orbit
+    // (hyperfern's w-mixing frond) bent through a flat two-map B — packed
+    // through toTransform4 exactly as prepareSchedule4 lifts the CPU
+    // oracle's. Uniform B weights on purpose: the 3D leg pins the WEIGHTED
+    // schedule search, this one the uniform fast path, so between them
+    // both branches of each kernel's textually-shared pick are exercised.
+    schedule: {
+      transforms: [
+        {
+          id: 0,
+          position: [-0.6, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+        },
+        {
+          id: 1,
+          position: [0.6, 0.3, 0],
+          rotation: [0, 0, 0.5],
+          scale: [0.5, 0.5, 0.5],
+        },
+      ],
+      depth: 2,
+    },
+    // Measured equal-N reading: CPU-vs-GPU maeRGB on SwiftShader is 0.0034
+    // — the composition concentrates mass into few bright cells, so the
+    // per-pixel mean is tiny. 2x that is far below the default 1.0 floor,
+    // so the threshold stays at the default-equivalent 1.0 (fold-zoo-4d's
+    // convention).
+    maeThreshold: 1.0,
+    // Uniquely pins: the 4D kernel's plot-time schedule stage — the
+    // lifted B slots after the lens slot, the per-level draw, and the
+    // post-word bending the 4D plotted point before rotor projection.
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -1143,6 +1238,7 @@ function toGpuBackendRequest(
     order: def.symmetry.order,
     plane: def.symmetry.plane,
     palette: def.paletteId,
+    schedule: def.schedule ?? null,
     projection,
     width: ACCUM_WIDTH,
     height: ACCUM_HEIGHT,
@@ -1219,6 +1315,7 @@ function prepare3D(def: ScenarioDef3D): ScenarioEngines {
     def.transforms,
     def.finalTransform,
     def.symmetry,
+    def.schedule ?? null,
   );
   const palette: Vec3[] = transformColors(
     def.transforms.length,
@@ -1286,6 +1383,7 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
     transforms4,
     final4,
     def.symmetry,
+    def.schedule ?? null,
   );
   // Lensed cloud: the view (bounds/center/radius statistics below) derives
   // from the explorer cloud exactly the way the app's own explorer cloud
@@ -1297,6 +1395,10 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
     mulberry32(SEED),
     final4,
     def.symmetry,
+    undefined,
+    // The view derives from the composed cloud, exactly as the app's own
+    // explorer cloud carries the schedule.
+    def.schedule ?? null,
   );
   const rotor = rotationMatrix4(def.rotation);
   const b = cloud.bounds;
@@ -1408,6 +1510,7 @@ function prepare4D(def: ScenarioDef4D): ScenarioEngines {
         echoColorLUT,
         rotorProjection: balloonEcho ? rotorProjection : undefined,
         cameraProjection: balloonEcho ? camera : undefined,
+        schedule: def.schedule ?? null,
       } satisfies GpuBackendRequest4),
   };
 }

@@ -1374,3 +1374,146 @@ describe("accumulateFlame4 graph-directed selection (chaos rows)", () => {
     expect(chunked.orbitChaosLeft).toBe(single.orbitChaosLeft);
   });
 });
+
+describe("accumulateFlame4 scheduled-hybrid post-word (correctness oracle)", () => {
+  it("matches the stepOrbit4/plotPoint4 reference when the prepared system carries a schedule", () => {
+    // The top oracle with a live post-word: plotPoint4's schedule stage
+    // (flat B lifted through toTransform4, one primary draw per level,
+    // post-word -> lens) is pinned in chaos-game-4d.test.ts, so equality
+    // FORCES accumulateFlame4's hand-inlined copy.
+    const transforms4 = weightedPentatope();
+    const finalTransform4: Transform4 = {
+      position: [0.15, -0.1, 0.05, 0.2],
+      scale: [1.1, 1.1, 1.1, 1.1],
+      rotation: { xw: 0.25, yz: 0.4 },
+    };
+    const schedule = {
+      transforms: [
+        {
+          id: 0,
+          position: [-0.5, 0, 0] as Vec3,
+          rotation: [0, 0, 0] as Vec3,
+          scale: [0.5, 0.5, 0.5] as Vec3,
+        },
+        {
+          id: 1,
+          position: [0.5, 0.2, 0] as Vec3,
+          rotation: [0, 0, 0.4] as Vec3,
+          scale: [0.5, 0.5, 0.5] as Vec3,
+          weight: 3,
+        },
+      ],
+      depth: 2,
+    };
+    const prepared = prepareChaosGame4(
+      transforms4,
+      finalTransform4,
+      { order: 1, plane: "xz" },
+      schedule,
+    );
+    const palette = transformColors(transforms4.length);
+    const width = 64;
+    const height = 64;
+    const iterations = 5000;
+    const seed = 42;
+
+    const rotor = rotationMatrix4({ xw: 0.35, yw: -0.2, xy: 0.15 });
+    const center: Vec4 = [0.05, -0.03, 0.02, 0.1];
+    // prettier-ignore
+    const camera: Mat4 = [
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 1, 3,
+    ];
+    const projection = composeFlameProjection4(
+      camera,
+      composeRotorProjection4(rotor, center),
+    );
+    const view: FourDView = {
+      invWAmp: 0.8,
+      sliceOn: false,
+      sliceCenter: 0.1,
+      sliceWidth: 0.6,
+      sliceRelativeColor: false,
+    };
+
+    const actual = accumulateFlame4(
+      prepared,
+      projection,
+      view,
+      width,
+      height,
+      iterations,
+      mulberry32(seed),
+      { kind: "transform", palette },
+    );
+
+    const rng = mulberry32(seed);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    let w = rng() - 0.5;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const step = stepOrbit4(prepared, x, y, z, w, rng);
+      x = step.x;
+      y = step.y;
+      z = step.z;
+      w = step.w;
+    }
+    const expected = createFlameHistogram(width, height);
+    for (let i = 0; i < iterations; i++) {
+      const step = stepOrbit4(prepared, x, y, z, w, rng);
+      x = step.x;
+      y = step.y;
+      z = step.z;
+      w = step.w;
+      const [px, py, pz, pw] = plotPoint4(prepared, x, y, z, w, rng);
+
+      const vx = px - center[0];
+      const vy = py - center[1];
+      const vz = pz - center[2];
+      const vw = pw - center[3];
+      const qx = rotor[0] * vx + rotor[1] * vy + rotor[2] * vz + rotor[3] * vw;
+      const qy = rotor[4] * vx + rotor[5] * vy + rotor[6] * vz + rotor[7] * vw;
+      const qz =
+        rotor[8] * vx + rotor[9] * vy + rotor[10] * vz + rotor[11] * vw;
+      const projx = qx + center[0];
+      const projy = qy + center[1];
+      const projz = qz + center[2];
+
+      const cw =
+        camera[12] * projx +
+        camera[13] * projy +
+        camera[14] * projz +
+        camera[15];
+      if (cw <= 0) continue;
+      const cx =
+        camera[0] * projx + camera[1] * projy + camera[2] * projz + camera[3];
+      const cy =
+        camera[4] * projx + camera[5] * projy + camera[6] * projz + camera[7];
+      const ndcX = cx / cw;
+      const ndcY = cy / cw;
+      const col = Math.floor((ndcX + 1) * 0.5 * width);
+      const row = Math.floor((1 - ndcY) * 0.5 * height);
+      if (col < 0 || col >= width || row < 0 || row >= height) continue;
+
+      const bucket = row * width + col;
+      expected.hits[bucket] += 1;
+      expected.maxHits = Math.max(expected.maxHits, expected.hits[bucket]);
+      const rgb = palette[step.index] ?? [1, 1, 1];
+      const o = bucket * 3;
+      expected.sumRGB[o] += rgb[0];
+      expected.sumRGB[o + 1] += rgb[1];
+      expected.sumRGB[o + 2] += rgb[2];
+    }
+    expected.orbit = [x, y, z];
+    expected.orbitW = w;
+
+    expect(Array.from(actual.hits)).toEqual(Array.from(expected.hits));
+    expect(Array.from(actual.sumRGB)).toEqual(Array.from(expected.sumRGB));
+    expect(actual.maxHits).toBe(expected.maxHits);
+    expect(actual.orbit).toEqual(expected.orbit);
+    expect(actual.orbitW).toBe(expected.orbitW);
+  });
+});

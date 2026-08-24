@@ -1033,3 +1033,46 @@ describe("encodeFlameFile fold radii", () => {
     expect(warnings).toEqual([]);
   });
 });
+
+describe("encodeFlameFile and the scheduled-hybrid block", () => {
+  it("drops the schedule with a warning — system A alone reaches the file", () => {
+    const s: SceneSnapshot = {
+      ...snapshotWith({}),
+      schedule: {
+        transforms: [
+          {
+            id: 0,
+            position: [0.5, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [0.5, 0.5, 0.5],
+          },
+        ],
+        depth: 2,
+      },
+    };
+    const out = encodeFlameFile(s, "scheduled");
+    expect(out.warnings.some((w) => w.includes("hybrid schedule"))).toBe(true);
+    // The file itself carries only system A's xforms (no extra maps).
+    const xformCount = (out.xml.match(/<xform /g) ?? []).length;
+    expect(xformCount).toBe(s.transforms.length);
+  });
+
+  it("a dead block (depth 0) warns exactly as it renders: not at all", () => {
+    const s: SceneSnapshot = {
+      ...snapshotWith({}),
+      schedule: {
+        transforms: [
+          {
+            id: 0,
+            position: [0.5, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [0.5, 0.5, 0.5],
+          },
+        ],
+        depth: 0,
+      },
+    };
+    const out = encodeFlameFile(s, "dead");
+    expect(out.warnings.some((w) => w.includes("hybrid schedule"))).toBe(false);
+  });
+});

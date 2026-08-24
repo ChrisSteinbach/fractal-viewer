@@ -30,6 +30,7 @@ import { iterationRng, mulberry32 } from "../fractal/rng";
 import type {
   Bounds,
   ColorMode,
+  HybridSchedule,
   SymmetryParams,
   Transform,
 } from "../fractal/types";
@@ -60,6 +61,12 @@ export interface CloudRequest {
    * 4D chaos game. Decided by the MAIN thread (`systemIsNonFlat(state)`) so
    * the view-flip bookkeeping there and the generation here can't disagree. */
   fourD: boolean;
+  /** The scheduled-hybrid post-word block (`types.ts`'s
+   * {@link HybridSchedule}), in main-thread 3D terms for BOTH paths — the
+   * 4D prepare lifts B worker-side exactly like the transforms themselves.
+   * `null`/absent — every pre-feature document — runs both chaos games
+   * byte-identically to before the field existed. */
+  schedule: HybridSchedule | null;
   /** 3D color bake inputs (`buildColors`); unused on the 4D path, where color
    * is shader-owned or rebaked main-side per mode (see main.ts's
    * `applyFourDColor`). */
@@ -172,6 +179,7 @@ export function generateCloud(request: CloudRequest): CloudResult {
       final4,
       request.symmetry,
       iterRng,
+      request.schedule,
     );
     const frameRadius = framingRadius4(
       result.positions,
@@ -188,6 +196,7 @@ export function generateCloud(request: CloudRequest): CloudResult {
     request.finalTransform,
     request.symmetry,
     iterRng,
+    request.schedule,
   );
   const colors = buildColors(
     result,

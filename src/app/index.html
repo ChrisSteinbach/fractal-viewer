@@ -569,6 +569,7 @@
             <option value="curling">Curling Fern</option>
             <option value="fernSponge">Fern | Sponge (isolated)</option>
             <option value="fernSpongeLeak">Fern | Sponge (1% leak)</option>
+            <option value="spongeOfFerns">Sponge of Ferns</option>
             <option value="mandelboxKifs">Mandelbox KIFS</option>
             <option value="fourFinishes">Four Finishes</option>
             <option value="metalStudio">Metal Studio</option>
@@ -1208,6 +1209,55 @@
             />
           </label>
           <p id="symmetryNote" class="flame-note hidden"></p>
+        </details>
+
+        <!-- The scheduled-hybrid post-word: system B bends every plotted
+             point depth times before the lens — "a Menger sponge made of
+             ferns". Picking a source installs B's AFFINE PART (stripped);
+             depth 0 removes the block. Surface refuses schedule documents
+             (the gate's own note says why), so this stays a points/flame/
+             solid composition control. -->
+        <details
+          class="panel-section"
+          id="scheduleSection"
+          name="panel-section"
+        >
+          <summary>Hybrid schedule</summary>
+          <label class="select-label">
+            System B
+            <select
+              id="scheduleSource"
+              aria-label="Choose the hybrid schedule's system B"
+            >
+              <option value="" selected>None</option>
+              <option value="__installed" hidden>System B installed</option>
+              <optgroup label="Presets" id="scheduleSourcePresets"></optgroup>
+              <optgroup
+                label="Saved scenes"
+                id="scheduleSourceSaved"
+              ></optgroup>
+            </select>
+          </label>
+          <button
+            class="btn btn-ghost"
+            id="scheduleSnapshotBtn"
+            type="button"
+            title="Snapshot the current transform list as system B (affine part only)"
+          >
+            Use current system as B
+          </button>
+          <label class="select-label">
+            Depth: <span id="scheduleDepthLabel">off</span>
+            <input
+              type="range"
+              id="scheduleDepthSlider"
+              min="0"
+              max="5"
+              step="1"
+              value="0"
+            />
+          </label>
+          <p id="scheduleNote" class="flame-note hidden"></p>
         </details>
       </div>
 

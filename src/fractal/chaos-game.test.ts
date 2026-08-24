@@ -1,12 +1,14 @@
 import {
   CHAOS_SUB_ORBIT_POINTS,
   DEFAULT_COLOR_SPEED,
+  MAX_SCHEDULE_DEPTH,
   MAX_TRANSFORMS,
   WARMUP_ITERATIONS,
   chaosRowIsNonTrivial,
   derivedColorIndex,
   effectiveSymmetryOrder,
   pickIndex,
+  pickScheduleIndex,
   plotPoint,
   prepareChaosGame,
   runChaosGame,
@@ -1657,5 +1659,255 @@ describe("graph-directed selection (chaos rows)", () => {
 
     expect(isolated).toBeLessThan(0.15);
     expect(shared).toBeGreaterThan(0.5);
+  });
+});
+
+describe("scheduled hybrids: the post-word stage", () => {
+  // A one-map system whose attractor IS its fixed point: scale 0 sends every
+  // orbit point straight to `position`, so the plotted support isolates the
+  // post-word's arrangement exactly (and doubles as the proof the post-word
+  // never feeds back into the orbit — a fed-back word would wander the
+  // orbit over B's whole attractor instead of leaving one fixed point).
+  function pointSystem(p: [number, number, number]): Transform[] {
+    return [{ id: 0, position: p, rotation: [0, 0, 0], scale: [0, 0, 0] }];
+  }
+
+  // System B: two half-scale contractions offset along x — the level-k
+  // arrangement is 2^k exactly-enumerable images.
+  function pairB(): Transform[] {
+    return [
+      {
+        id: 0,
+        position: [-0.5, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+      {
+        id: 1,
+        position: [0.5, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+    ];
+  }
+
+  function countingRng(seed: number): { rng: Rng; count: () => number } {
+    const inner = mulberry32(seed);
+    let n = 0;
+    return {
+      rng: () => {
+        n++;
+        return inner();
+      },
+      count: () => n,
+    };
+  }
+
+  it("absent/depth-0 schedule is byte-identical: same stream, same output, zero extra draws", () => {
+    const transforms = sierpinskiTetrahedron();
+    const base = countingRng(7);
+    const baseline = runChaosGame(transforms, 500, base.rng);
+
+    const explicitNull = countingRng(7);
+    const withNull = runChaosGame(
+      transforms,
+      500,
+      explicitNull.rng,
+      null,
+      undefined,
+      undefined,
+      null,
+    );
+    expect(withNull.positions).toEqual(baseline.positions);
+    expect(explicitNull.count()).toBe(base.count());
+
+    // A depth-0 block is ABSENT by the one consumption domain
+    // (resolveScheduleDepth) — same stream, same bytes, zero draws.
+    const deadBlock = countingRng(7);
+    const withDead = runChaosGame(
+      transforms,
+      500,
+      deadBlock.rng,
+      null,
+      undefined,
+      undefined,
+      { transforms: pairB(), depth: 0 },
+    );
+    expect(withDead.positions).toEqual(baseline.positions);
+    expect(deadBlock.count()).toBe(base.count());
+  });
+
+  it("a present block draws exactly depth extra primary draws per plotted point", () => {
+    // Contractive, variation-free, unweighted system: no escapes and no
+    // iteration-local draws, so the whole primary stream is 3 (seed) +
+    // WARMUP + N picks — and with the block, + N * depth schedule picks.
+    const transforms = sierpinskiTetrahedron();
+    const n = 400;
+    const base = countingRng(11);
+    runChaosGame(transforms, n, base.rng);
+    const baselineDraws = base.count();
+    expect(baselineDraws).toBe(3 + WARMUP_ITERATIONS + n);
+
+    for (const depth of [1, 3]) {
+      const counted = countingRng(11);
+      runChaosGame(transforms, n, counted.rng, null, undefined, undefined, {
+        transforms: pairB(),
+        depth,
+      });
+      expect(counted.count()).toBe(baselineDraws + n * depth);
+    }
+  });
+
+  it("plots the depth-k B-arrangement of A's attractor (support matches the 2^k word images, both directions)", () => {
+    const q: [number, number, number] = [0.2, 0.1, 0.3];
+    const depth = 3;
+    const bAffines = pairB().map(composeAffine);
+    // Every word image s_w(q), |w| = k — the expected support.
+    let images: [number, number, number][] = [q];
+    for (let level = 0; level < depth; level++) {
+      images = images.flatMap((p) =>
+        bAffines.map((a) => {
+          const r = applyAffine(a, p[0], p[1], p[2]);
+          return [r[0], r[1], r[2]] as [number, number, number];
+        }),
+      );
+    }
+    expect(images).toHaveLength(2 ** depth);
+
+    const result = runChaosGame(
+      pointSystem(q),
+      2000,
+      mulberry32(21),
+      null,
+      undefined,
+      undefined,
+      { transforms: pairB(), depth },
+    );
+    const hit = new Array<boolean>(images.length).fill(false);
+    for (let i = 0; i < result.count; i++) {
+      const px = result.positions[i * 3];
+      const py = result.positions[i * 3 + 1];
+      const pz = result.positions[i * 3 + 2];
+      let best = -1;
+      for (let j = 0; j < images.length; j++) {
+        const [ix, iy, iz] = images[j];
+        if (
+          Math.abs(px - ix) < 1e-5 &&
+          Math.abs(py - iy) < 1e-5 &&
+          Math.abs(pz - iz) < 1e-5
+        ) {
+          best = j;
+          break;
+        }
+      }
+      // Every plotted point IS one of the word images (within Float32
+      // storage rounding)...
+      expect(best).toBeGreaterThanOrEqual(0);
+      hit[best] = true;
+    }
+    // ...and every word image is realized (2000 points over 8 uniform
+    // cells cannot plausibly miss one).
+    expect(hit.every(Boolean)).toBe(true);
+  });
+
+  it("plotPoint applies the post-word BEFORE the lens", () => {
+    const lens: Transform = {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [2, 2, 2],
+    };
+    // One B map (uniform pick over one entry is deterministic): translate
+    // by [1, 0, 0].
+    const prepared = prepareChaosGame(
+      pointSystem([0, 0, 0]),
+      lens,
+      { order: 1, plane: "xz" },
+      {
+        transforms: [
+          {
+            id: 0,
+            position: [1, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+          },
+        ],
+        depth: 1,
+      },
+    );
+    // lens(B([0.25, 0.5, 0.75])) = 2 * ([0.25, 0.5, 0.75] + [1, 0, 0]).
+    expect(plotPoint(prepared, 0.25, 0.5, 0.75, mulberry32(1))).toEqual([
+      2.5, 1, 1.5,
+    ]);
+  });
+
+  it("a non-finite word falls back to the pre-word point while still consuming its draws", () => {
+    const overflow: Transform = {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1e308, 1e308, 1e308],
+    };
+    const prepared = prepareChaosGame(
+      pointSystem([0, 0, 0]),
+      null,
+      { order: 1, plane: "xz" },
+      { transforms: [overflow], depth: 2 },
+    );
+    const counted = countingRng(3);
+    // 1e308 * 1e308 overflows to Infinity at level 2 — the word is
+    // discarded, the pre-word point survives, and both picks still drew
+    // (the draw count must be a pure function of the document).
+    expect(plotPoint(prepared, 0.5, 0.25, 0.125, counted.rng)).toEqual([
+      0.5, 0.25, 0.125,
+    ]);
+    expect(counted.count()).toBe(2);
+  });
+
+  it("prepareChaosGame resolves the schedule through the one consumption domain", () => {
+    const none = prepareChaosGame(pointSystem([0, 0, 0]));
+    expect(none.schedule).toBeNull();
+
+    const empty = prepareChaosGame(pointSystem([0, 0, 0]), null, undefined, {
+      transforms: [],
+      depth: 3,
+    });
+    expect(empty.schedule).toBeNull();
+
+    // Depth clamps into 1..MAX_SCHEDULE_DEPTH (floor first: 2.9 -> 2).
+    const clamped = prepareChaosGame(pointSystem([0, 0, 0]), null, undefined, {
+      transforms: pairB(),
+      depth: 99,
+    });
+    expect(clamped.schedule?.depth).toBe(MAX_SCHEDULE_DEPTH);
+    const floored = prepareChaosGame(pointSystem([0, 0, 0]), null, undefined, {
+      transforms: pairB(),
+      depth: 2.9,
+    });
+    expect(floored.schedule?.depth).toBe(2);
+  });
+
+  it("pickScheduleIndex follows pickIndex's uniform/weighted conventions at one draw each", () => {
+    const uniform = prepareChaosGame(pointSystem([0, 0, 0]), null, undefined, {
+      transforms: [...pairB(), ...pairB()].map((t, id) => ({ ...t, id })),
+      depth: 1,
+    }).schedule!;
+    expect(uniform.weighted).toBe(false);
+    // Uniform fast path: floor(r * count), one draw.
+    expect(pickScheduleIndex(uniform, () => 0.7)).toBe(2);
+
+    const weighted = prepareChaosGame(pointSystem([0, 0, 0]), null, undefined, {
+      transforms: [
+        { ...pairB()[0], weight: 1 },
+        { ...pairB()[1], weight: 3 },
+      ],
+      depth: 1,
+    }).schedule!;
+    expect(weighted.weighted).toBe(true);
+    expect(weighted.totalWeight).toBe(4);
+    // Lower-bound search over cumulative [1, 4]: r * 4 = 0.8 -> index 0;
+    // r * 4 = 1.2 -> index 1. One draw each (the fns below ARE the draw).
+    expect(pickScheduleIndex(weighted, () => 0.2)).toBe(0);
+    expect(pickScheduleIndex(weighted, () => 0.3)).toBe(1);
   });
 });

@@ -48,6 +48,7 @@ import type { Rng } from "../fractal/rng";
 import type {
   ColorMode,
   FourDColorMode,
+  HybridSchedule,
   SymmetryParams,
   SymmetryPlane,
   Transform,
@@ -121,6 +122,13 @@ export type VoxelWorkerCommand =
       order: number;
       plane: SymmetryPlane;
       twist?: number;
+      /**
+       * Optional scheduled-hybrid post-word block (`types.ts`'s
+       * {@link HybridSchedule}), in the document's flat 3D form for BOTH
+       * dimensions — the flame start command's field, verbatim. Omitted/
+       * absent, both prepares take their byte-identical no-post-word paths.
+       */
+      schedule?: HybridSchedule | null;
       /**
        * Optional 4D solid render (mirroring the flame's):
        * present when the explorer was in 4D mode when the render was
@@ -453,6 +461,10 @@ export class VoxelWorkerSession {
    * retained so setSymmetry can re-prepare with a NEW symmetry without the
    * main thread resending the whole transform list. */
   private baseTransforms: Transform[] = [];
+  /** The session's scheduled-hybrid post-word block (document form, both
+   * dimensions), retained like `baseTransforms` so a symmetry restart
+   * re-prepares with it — the flame session's field, verbatim. */
+  private hybridSchedule: HybridSchedule | null = null;
   private baseFinalTransform: Transform | null = null;
   /** The raw 4D transform set from the last "start"'s `fourD` block —
    * retained for the same reason as the 3D pair above: setSymmetry re-runs
@@ -570,6 +582,7 @@ export class VoxelWorkerSession {
   private start(cmd: Extract<VoxelWorkerCommand, { type: "start" }>): void {
     this.baseTransforms = cmd.transforms;
     this.baseFinalTransform = cmd.finalTransform;
+    this.hybridSchedule = cmd.schedule ?? null;
     this.symmetryOrder = cmd.order;
     this.symmetryPlane = cmd.plane;
     this.symmetryTwist = cmd.twist ?? 0;
@@ -581,6 +594,7 @@ export class VoxelWorkerSession {
       cmd.transforms,
       cmd.finalTransform,
       this.symmetry3D(),
+      this.hybridSchedule,
     );
     this.palette = transformColors(
       cmd.transforms.length,
@@ -608,6 +622,7 @@ export class VoxelWorkerSession {
         fourD.transforms4,
         fourD.finalTransform4,
         this.symmetry(),
+        this.hybridSchedule,
       );
       // The rotor is frozen for the whole session — built once here, unlike
       // the flame session's projection4 there is no camera to fold on top:
@@ -748,12 +763,14 @@ export class VoxelWorkerSession {
         this.baseTransforms4,
         this.baseFinalTransform4,
         this.symmetry(),
+        this.hybridSchedule,
       );
     } else {
       this.prepared = prepareChaosGame(
         this.baseTransforms,
         this.baseFinalTransform,
         this.symmetry3D(),
+        this.hybridSchedule,
       );
     }
     // Symmetry changes the attractor's spatial extent — a kaleidoscope can be

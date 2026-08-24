@@ -395,6 +395,44 @@ export type FourDAttributeColorMode = Extract<
   "transform" | "radius"
 >;
 
+/**
+ * The scheduled-hybrid post-word block — "a Menger sponge MADE OF ferns":
+ * after each plotted attractor point of system A (and BEFORE the
+ * final-transform lens), the chaos game applies {@link depth} independently
+ * random maps drawn from this second transform list B, so the plotted
+ * distribution is the depth-k B-arrangement of A's attractor — the union of
+ * `s_w(A)` over all words `w` of length k. Finite k IS the artwork: as k
+ * grows the A-copies shrink into invisibility and the plain B-attractor
+ * returns.
+ *
+ * SCENE-LEVEL, not per-transform: the block rides the scene document (and
+ * `AppState`) beside `finalTransform`, never inside a {@link Transform}.
+ * ABSENT MEANS TODAY'S BEHAVIOR byte-identically — no block, no extra RNG
+ * draws, same stream, same output (the `weight?`/`colorIndex?` convention at
+ * scene scope). The UI removes the block at depth 0 (the classic-removal
+ * rule), so a present block always has `depth` in 1..`MAX_SCHEDULE_DEPTH`
+ * and a non-empty list; `chaos-game.ts`'s `prepareSchedule` is the one
+ * consumption-domain owner and degrades anything else to absent.
+ *
+ * B IS AFFINE-ONLY, STORED STRIPPED: entries carry only
+ * position/rotation/scale/shear and weight — no variations, no `w` block, no
+ * chaos rows, no finish/color fields. The natural Bs (sponge/sierpinski
+ * arrangements) are pure affine, and running B's variation blends would
+ * multiply the mirror surface (CPU + GPU, 3D + 4D — every hand-inlined plot
+ * seam and both WGSL kernels) for no demonstrated composition. The picker
+ * strips at snapshot time and `persist.ts`'s decoder accepts only the affine
+ * fields, so the engine (`chaos-game.ts`'s `prepareSchedule`) composes
+ * affines alone and never consults the rest.
+ */
+export interface HybridSchedule {
+  /** System B's maps — affine-only (see above), weighted like any transform
+   * list ({@link Transform.weight}, absent ⇒ 1). */
+  transforms: Transform[];
+  /** How many random B-maps bend each plotted point — the word length k,
+   * an integer in 1..`MAX_SCHEDULE_DEPTH` for a present block. */
+  depth: number;
+}
+
 /** Axis-aligned extent of a point cloud, plus radial extent from the origin. */
 export interface Bounds {
   minX: number;

@@ -112,6 +112,9 @@ import {
   setCustomPaletteStops,
   setExportScale,
   setFinalTransform,
+  setSchedule,
+  setScheduleDepth,
+  stripScheduleTransform,
   setFlameEstimatorCurve,
   setFlameEstimatorMinimumRadius,
   setFlameEstimatorRadius,
@@ -2130,5 +2133,96 @@ describe("resolveSceneBackground", () => {
     expect(resolveSceneBackground(state)).toEqual(
       resolveBackground({ mode: "dark" }),
     );
+  });
+});
+
+describe("setSchedule / setScheduleDepth (scheduled-hybrid block)", () => {
+  const bSource: Transform[] = [
+    {
+      id: 7,
+      position: [-0.5, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+      weight: 3,
+      shear: [0.1, 0, 0],
+      variations: [{ type: "julia", weight: 1 }],
+      colorIndex: 0.25,
+      chaos: [0, 1],
+      w: { position: 0.5 },
+    },
+    {
+      id: 9,
+      position: [0.5, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+    },
+  ];
+
+  it("installs a stripped, affine-only block immutably", () => {
+    const state = initialState(true);
+    const next = setSchedule(state, { transforms: bSource, depth: 3 });
+    expect(state.schedule).toBeUndefined();
+    const schedule = next.schedule!;
+    expect(schedule.depth).toBe(3);
+    // Every non-affine field is gone; ids reassigned by index; weight and
+    // non-zero shear survive.
+    expect(schedule.transforms).toEqual([
+      {
+        id: 0,
+        position: [-0.5, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        weight: 3,
+        shear: [0.1, 0, 0],
+      },
+      {
+        id: 1,
+        position: [0.5, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+    ]);
+  });
+
+  it("stores ABSENT for null, empty B, and depth <= 0 — the classic-removal rule", () => {
+    const installed = setSchedule(initialState(true), {
+      transforms: bSource,
+      depth: 2,
+    });
+    expect(setSchedule(installed, null).schedule).toBeUndefined();
+    expect(
+      setSchedule(installed, { transforms: [], depth: 2 }).schedule,
+    ).toBeUndefined();
+    expect(
+      setSchedule(installed, { transforms: bSource, depth: 0 }).schedule,
+    ).toBeUndefined();
+  });
+
+  it("clamps and floors depth through the one domain", () => {
+    const state = initialState(true);
+    expect(
+      setSchedule(state, { transforms: bSource, depth: 99 }).schedule!.depth,
+    ).toBe(5);
+    expect(
+      setSchedule(state, { transforms: bSource, depth: 2.9 }).schedule!.depth,
+    ).toBe(2);
+  });
+
+  it("setScheduleDepth moves the installed block's depth, removes at 0, and no-ops without a block", () => {
+    const installed = setSchedule(initialState(true), {
+      transforms: bSource,
+      depth: 2,
+    });
+    expect(setScheduleDepth(installed, 4).schedule!.depth).toBe(4);
+    expect(setScheduleDepth(installed, 0).schedule).toBeUndefined();
+    const bare = initialState(true);
+    expect(setScheduleDepth(bare, 3)).toBe(bare);
+  });
+
+  it("stripScheduleTransform copies vectors rather than aliasing the source", () => {
+    const stripped = stripScheduleTransform(bSource[0], 0);
+    expect(stripped.position).toEqual(bSource[0].position);
+    expect(stripped.position).not.toBe(bSource[0].position);
+    expect(stripped.shear).not.toBe(bSource[0].shear);
   });
 });

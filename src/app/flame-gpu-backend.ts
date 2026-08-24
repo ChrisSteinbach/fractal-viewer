@@ -1099,6 +1099,7 @@ export async function createGpuFlameBackend(
     finalTransform: request.finalTransform,
     symmetry: { order: request.order, plane: request.plane },
     palette: request.palette,
+    schedule: request.schedule ?? null,
   });
   // itersPerInvocation starts at WARMUP_ITERATIONS: the FIRST dispatch this
   // backend ever runs is the warmup one (see createBackendForProgram), which
@@ -1123,6 +1124,10 @@ export async function createGpuFlameBackend(
       numChains: NUM_CHAINS,
       echo: request.echo,
       echoPalette: request.echoColorLUT !== undefined,
+      scheduleCount: packed.scheduleCount,
+      scheduleDepth: packed.scheduleDepth,
+      scheduleWeighted: packed.scheduleWeighted,
+      scheduleTotalWeight: packed.scheduleTotalWeight,
     }),
     paramsItersOffsetBytes: PARAMS_ITERS_OFFSET_BYTES,
     slots: packed.slots,
@@ -1160,6 +1165,7 @@ export async function createGpuFlameBackend4(
       twist: request.twist,
     },
     color: request.color,
+    schedule: request.schedule ?? null,
   });
   // itersPerInvocation starts at WARMUP_ITERATIONS — same warmup contract as
   // the 3D factory above.
@@ -1183,6 +1189,10 @@ export async function createGpuFlameBackend4(
       echoPalette: request.echoColorLUT !== undefined,
       rotorProjection: request.rotorProjection,
       cameraProjection: request.cameraProjection,
+      scheduleCount: packed.scheduleCount,
+      scheduleDepth: packed.scheduleDepth,
+      scheduleWeighted: packed.scheduleWeighted,
+      scheduleTotalWeight: packed.scheduleTotalWeight,
     }),
     paramsItersOffsetBytes: PARAMS4_ITERS_OFFSET_BYTES,
     slots: packed.slots,

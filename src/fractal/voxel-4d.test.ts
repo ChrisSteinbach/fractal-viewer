@@ -1401,3 +1401,129 @@ describe("accumulateVoxels4 graph-directed selection (chaos rows)", () => {
     expect(bounds.color.maxX).toBeGreaterThan(0.6);
   });
 });
+
+describe("accumulateVoxels4 scheduled-hybrid post-word (correctness oracle)", () => {
+  it("matches the stepOrbit4/plotPoint4 reference when the prepared system carries a schedule", () => {
+    // The top oracle with a live post-word: plotPoint4's schedule stage is
+    // pinned in chaos-game-4d.test.ts, so equality FORCES
+    // accumulateVoxels4's hand-inlined copy.
+    const transforms4 = weightedPentatope();
+    const finalTransform4: Transform4 = {
+      position: [0.15, -0.1, 0.05, 0.2],
+      scale: [1.1, 1.1, 1.1, 1.1],
+      rotation: { xw: 0.25, yz: 0.4 },
+    };
+    const schedule = {
+      transforms: [
+        {
+          id: 0,
+          position: [-0.5, 0, 0] as Vec3,
+          rotation: [0, 0, 0] as Vec3,
+          scale: [0.5, 0.5, 0.5] as Vec3,
+        },
+        {
+          id: 1,
+          position: [0.5, 0.2, 0] as Vec3,
+          rotation: [0, 0, 0.4] as Vec3,
+          scale: [0.5, 0.5, 0.5] as Vec3,
+          weight: 3,
+        },
+      ],
+      depth: 2,
+    };
+    const prepared = prepareChaosGame4(
+      transforms4,
+      finalTransform4,
+      { order: 1, plane: "xz" },
+      schedule,
+    );
+    const palette = transformColors(transforms4.length);
+    const bounds = unitishBounds(3);
+    const size = 8;
+    const iterations = 2000;
+    const seed = 42;
+
+    const rotor = rotationMatrix4({ xw: 0.35, yw: -0.2, xy: 0.15 });
+    const center: Vec4 = [0.05, -0.03, 0.02, 0.1];
+    const rotorProj = composeRotorProjection4(rotor, center);
+    const view: FourDView = {
+      invWAmp: 0.8,
+      sliceOn: false,
+      sliceCenter: 0.1,
+      sliceWidth: 0.6,
+      sliceRelativeColor: false,
+    };
+
+    const actual = accumulateVoxels4(
+      prepared,
+      createVoxelGrid(size, bounds),
+      iterations,
+      mulberry32(seed),
+      rotorProj,
+      view,
+      { kind: "transform", palette },
+    );
+
+    const rng = mulberry32(seed);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    let w = rng() - 0.5;
+    for (let i = 0; i < WARMUP_ITERATIONS; i++) {
+      const step = stepOrbit4(prepared, x, y, z, w, rng);
+      x = step.x;
+      y = step.y;
+      z = step.z;
+      w = step.w;
+    }
+    const expected = createVoxelGrid(size, bounds);
+    const invCell = size / (bounds.max[0] - bounds.min[0]);
+    for (let i = 0; i < iterations; i++) {
+      const step = stepOrbit4(prepared, x, y, z, w, rng);
+      x = step.x;
+      y = step.y;
+      z = step.z;
+      w = step.w;
+      const [px, py, pz, pw] = plotPoint4(prepared, x, y, z, w, rng);
+
+      const vx = px - center[0];
+      const vy = py - center[1];
+      const vz = pz - center[2];
+      const vw = pw - center[3];
+      const qx = rotor[0] * vx + rotor[1] * vy + rotor[2] * vz + rotor[3] * vw;
+      const qy = rotor[4] * vx + rotor[5] * vy + rotor[6] * vz + rotor[7] * vw;
+      const qz =
+        rotor[8] * vx + rotor[9] * vy + rotor[10] * vz + rotor[11] * vw;
+      const projX = qx + center[0];
+      const projY = qy + center[1];
+      const projZ = qz + center[2];
+
+      const bx = Math.floor((projX - bounds.min[0]) * invCell);
+      if (bx < 0 || bx >= size) continue;
+      const by = Math.floor((projY - bounds.min[1]) * invCell);
+      if (by < 0 || by >= size) continue;
+      const bz = Math.floor((projZ - bounds.min[2]) * invCell);
+      if (bz < 0 || bz >= size) continue;
+
+      const bucket = bz * size * size + by * size + bx;
+      const d = expected.density[bucket] + 1;
+      expected.density[bucket] = d;
+      if (d > expected.maxDensity) expected.maxDensity = d;
+      const rgb = palette[step.index] ?? [1, 1, 1];
+      const o = bucket * 3;
+      const invWeight = 1 / d;
+      expected.avgRGB[o] += (rgb[0] - expected.avgRGB[o]) * invWeight;
+      expected.avgRGB[o + 1] += (rgb[1] - expected.avgRGB[o + 1]) * invWeight;
+      expected.avgRGB[o + 2] += (rgb[2] - expected.avgRGB[o + 2]) * invWeight;
+    }
+    expected.orbit = [x, y, z];
+    expected.orbitW = w;
+
+    expect(actual.density).toEqual(expected.density);
+    expect(actual.avgRGB).toEqual(expected.avgRGB);
+    expect(actual.maxDensity).toBe(expected.maxDensity);
+    expect(actual.orbit).toEqual(expected.orbit);
+    expect(actual.orbitW).toBe(expected.orbitW);
+    expect(actual.maxDensity).toBeGreaterThan(0);
+  });
+});

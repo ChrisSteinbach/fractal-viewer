@@ -37,6 +37,7 @@ import { runChaosGame4 } from "../fractal/chaos-game-4d";
 import { transformColors } from "../fractal/color";
 import type { MorphSystem } from "../fractal/morph";
 import type { Rng } from "../fractal/rng";
+import type { HybridSchedule } from "../fractal/types";
 
 /** Points per thumbnail chaos game — enough to read structure at ~100px. */
 const THUMB_POINTS = 18000;
@@ -102,6 +103,7 @@ export function renderSystemThumb(
   system: MorphSystem,
   size: number,
   rng: Rng,
+  schedule: HybridSchedule | null = null,
 ): Uint8ClampedArray<ArrayBuffer> {
   const { transforms, finalTransform, symmetry } = system;
 
@@ -122,6 +124,8 @@ export function renderSystemThumb(
       rng,
       finalTransform,
       symmetry,
+      undefined,
+      schedule,
     );
     positions = result.positions;
     transformIndices = result.transformIndices;
@@ -137,6 +141,8 @@ export function renderSystemThumb(
       rng,
       finalTransform4,
       symmetry,
+      undefined,
+      schedule,
     );
     positions = result.positions;
     transformIndices = result.transformIndices;

@@ -21,7 +21,7 @@ import {
 import type { GpuFlameSystemSpec, GpuParamsFields } from "./flame-gpu";
 import { FLAME_GPU_KERNEL_4D_WGSL } from "./flame-gpu-4d";
 import { surfaceDeKernelWgsl } from "./surface-de-gpu";
-import { rotationMatrixXYZ } from "./affine";
+import { composeAffine, rotationMatrixXYZ } from "./affine";
 import { MAX_TRANSFORMS, prepareChaosGame } from "./chaos-game";
 import { transformColors } from "./color";
 import { createFlameHistogram } from "./flame";
@@ -807,6 +807,10 @@ describe("packGpuParams", () => {
       hasFinal: true,
       totalWeight: 9.5,
       numChains: 65536,
+      scheduleCount: 0,
+      scheduleDepth: 0,
+      scheduleWeighted: false,
+      scheduleTotalWeight: 0,
       ...overrides,
       echoPalette: overrides.echoPalette ?? false,
     };
@@ -1456,5 +1460,143 @@ describe("packGpuSystem chaos rows (defense in depth)", () => {
     expect(() =>
       packGpuSystem(baseSpec({ transforms: trivial })),
     ).not.toThrow();
+  });
+});
+
+describe("packGpuSystem scheduled-hybrid B slots", () => {
+  function makeTransforms(count: number): Transform[] {
+    return Array.from({ length: count }, (_, id) => ({
+      id,
+      position: [0.5, 0, 0] as const,
+      rotation: [0, 0, 0] as const,
+      scale: [0.5, 0.5, 0.5] as const,
+    }));
+  }
+  const schedule = {
+    transforms: [
+      {
+        id: 0,
+        position: [-0.5, 0, 0] as [number, number, number],
+        rotation: [0, 0, 0] as [number, number, number],
+        scale: [0.5, 0.5, 0.5] as [number, number, number],
+      },
+      {
+        id: 1,
+        position: [0.5, 0.25, 0] as [number, number, number],
+        rotation: [0, 0, 0] as [number, number, number],
+        scale: [0.5, 0.5, 0.5] as [number, number, number],
+        weight: 3,
+      },
+    ],
+    depth: 2,
+  };
+
+  it("a schedule-less spec packs byte-identically to before the field existed (null and absent alike)", () => {
+    const base = packGpuSystem({
+      transforms: makeTransforms(3),
+      finalTransform: null,
+      symmetry: { order: 1, plane: "xz" },
+      palette: "legacy",
+    });
+    const withNull = packGpuSystem({
+      transforms: makeTransforms(3),
+      finalTransform: null,
+      symmetry: { order: 1, plane: "xz" },
+      palette: "legacy",
+      schedule: null,
+    });
+    expect(new Uint8Array(withNull.slots)).toEqual(new Uint8Array(base.slots));
+    expect(base.slots.byteLength).toBe((3 + 1) * SLOT_STRIDE_BYTES);
+    expect(base.scheduleCount).toBe(0);
+    expect(base.scheduleDepth).toBe(0);
+    expect(base.scheduleWeighted).toBe(false);
+    // A dead block (depth 0) packs identically too — the one consumption
+    // domain (resolveScheduleDepth) decides here exactly as on the CPU.
+    const dead = packGpuSystem({
+      transforms: makeTransforms(3),
+      finalTransform: null,
+      symmetry: { order: 1, plane: "xz" },
+      palette: "legacy",
+      schedule: { ...schedule, depth: 0 },
+    });
+    expect(new Uint8Array(dead.slots)).toEqual(new Uint8Array(base.slots));
+  });
+
+  it("appends affine-only B slots after the lens slot, with buildScheduleTable's cumulative weights", () => {
+    const packed = packGpuSystem({
+      transforms: makeTransforms(3),
+      finalTransform: null,
+      symmetry: { order: 1, plane: "xz" },
+      palette: "legacy",
+      schedule,
+    });
+    expect(packed.scheduleCount).toBe(2);
+    expect(packed.scheduleDepth).toBe(2);
+    expect(packed.scheduleWeighted).toBe(true);
+    expect(packed.scheduleTotalWeight).toBe(4);
+    expect(packed.slots.byteLength).toBe((3 + 1 + 2) * SLOT_STRIDE_BYTES);
+
+    const f32 = new Float32Array(packed.slots);
+    const u32 = new Uint32Array(packed.slots);
+    const perSlot = SLOT_STRIDE_BYTES / 4;
+    // B slot 0 sits at index transformCount + 1 = 4: its affine rows carry
+    // the composed scale/translation (rowX = [0.5, 0, 0, -0.5]), cumWeight
+    // is the running sum, and varCount/hasPost stay zero (affine-only —
+    // applySlot on it is the plain affine, no draws).
+    const b0 = 4 * perSlot;
+    const aff0 = composeAffine(schedule.transforms[0]);
+    expect(Array.from(f32.slice(b0, b0 + 4))).toEqual(
+      [aff0.m[0], aff0.m[1], aff0.m[2], aff0.t[0]].map(Math.fround),
+    );
+    expect(f32[b0 + 66]).toBe(1); // cumWeight after entry 0.
+    expect(u32[b0 + 64]).toBe(0); // varCount.
+    expect(u32[b0 + 65]).toBe(0); // hasPost.
+    const b1 = 5 * perSlot;
+    const aff1 = composeAffine(schedule.transforms[1]);
+    expect(Array.from(f32.slice(b1, b1 + 4))).toEqual(
+      [aff1.m[0], aff1.m[1], aff1.m[2], aff1.t[0]].map(Math.fround),
+    );
+    expect(f32[b1 + 66]).toBe(4); // cumWeight after entry 1 (weight 3).
+  });
+
+  it("depth clamps through the shared domain at pack time", () => {
+    const packed = packGpuSystem({
+      transforms: makeTransforms(2),
+      finalTransform: null,
+      symmetry: { order: 1, plane: "xz" },
+      palette: "legacy",
+      schedule: { ...schedule, depth: 99 },
+    });
+    expect(packed.scheduleDepth).toBe(5);
+  });
+});
+
+describe("packGpuParams schedule scalars", () => {
+  it("writes the schedule four at their documented element offsets", () => {
+    const buf = packGpuParams({
+      projection: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      width: 64,
+      height: 64,
+      transformCount: 3,
+      baseTransformCount: 3,
+      itersPerInvocation: 16,
+      colorMode: 0,
+      weighted: false,
+      hasFinal: false,
+      totalWeight: 3,
+      numChains: 128,
+      echoPalette: false,
+      scheduleCount: 20,
+      scheduleDepth: 3,
+      scheduleWeighted: true,
+      scheduleTotalWeight: 7.5,
+    });
+    const f32 = new Float32Array(buf);
+    const u32 = new Uint32Array(buf);
+    expect(buf.byteLength).toBe(PARAMS_BYTES);
+    expect(u32[33]).toBe(20); // scheduleCount
+    expect(u32[34]).toBe(3); // scheduleDepth
+    expect(u32[35]).toBe(1); // scheduleWeighted
+    expect(f32[36]).toBe(7.5); // scheduleTotalWeight
   });
 });

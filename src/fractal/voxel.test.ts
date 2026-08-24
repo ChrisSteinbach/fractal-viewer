@@ -1251,3 +1251,102 @@ describe("accumulateVoxels graph-directed selection (chaos rows)", () => {
     expect(bounds.color.maxX).toBeGreaterThan(0.8);
   });
 });
+
+describe("accumulateVoxels scheduled-hybrid post-word (correctness oracle)", () => {
+  it("matches the stepOrbit/plotPoint reference when the prepared system carries a schedule", () => {
+    // The top oracle with a live post-word: plotPoint's schedule stage is
+    // pinned in chaos-game.test.ts, so equality FORCES accumulateVoxels'
+    // hand-inlined copy — draws, post-word -> lens order, and the
+    // adopt-only-if-finite rule. A lens rides along so the inlined section
+    // exercises both stages in one run.
+    const transforms = sierpinskiTetrahedron();
+    const finalTransform: Transform = {
+      id: 0,
+      position: [0.1, 0, 0],
+      rotation: [0, 0.3, 0],
+      scale: [1, 1, 1],
+    };
+    const schedule = {
+      transforms: [
+        {
+          id: 0,
+          position: [-0.5, 0, 0] as Vec3,
+          rotation: [0, 0, 0] as Vec3,
+          scale: [0.5, 0.5, 0.5] as Vec3,
+        },
+        {
+          id: 1,
+          position: [0.5, 0.2, 0] as Vec3,
+          rotation: [0, 0, 0.4] as Vec3,
+          scale: [0.5, 0.5, 0.5] as Vec3,
+          weight: 3,
+        },
+      ],
+      depth: 2,
+    };
+    const palette = transformColors(transforms.length);
+    const bounds = unitishBounds(2);
+    const size = 8;
+    const iterations = 2000;
+
+    const actual = createVoxelGrid(size, bounds);
+    accumulateVoxels(
+      prepareChaosGame(
+        transforms,
+        finalTransform,
+        { order: 1, plane: "xz" },
+        schedule,
+      ),
+      actual,
+      iterations,
+      mulberry32(99),
+      palette,
+    );
+
+    const prepared = prepareChaosGame(
+      transforms,
+      finalTransform,
+      { order: 1, plane: "xz" },
+      schedule,
+    );
+    const rng = mulberry32(99);
+    const expected = createVoxelGrid(size, bounds);
+    let x = rng() - 0.5;
+    let y = rng() - 0.5;
+    let z = rng() - 0.5;
+    for (let i = 0; i < 100; i++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+    }
+    const invCell = size / (bounds.max[0] - bounds.min[0]);
+    for (let n = 0; n < iterations; n++) {
+      const s = stepOrbit(prepared, x, y, z, rng);
+      x = s.x;
+      y = s.y;
+      z = s.z;
+      const [px, py, pz] = plotPoint(prepared, x, y, z, rng);
+      const vx = Math.floor((px - bounds.min[0]) * invCell);
+      const vy = Math.floor((py - bounds.min[1]) * invCell);
+      const vz = Math.floor((pz - bounds.min[2]) * invCell);
+      if (vx < 0 || vx >= size || vy < 0 || vy >= size) continue;
+      if (vz < 0 || vz >= size) continue;
+      const bucket = vz * size * size + vy * size + vx;
+      const d = expected.density[bucket] + 1;
+      expected.density[bucket] = d;
+      if (d > expected.maxDensity) expected.maxDensity = d;
+      const rgb = palette[s.index];
+      const o = bucket * 3;
+      const inv = 1 / d;
+      expected.avgRGB[o] += (rgb[0] - expected.avgRGB[o]) * inv;
+      expected.avgRGB[o + 1] += (rgb[1] - expected.avgRGB[o + 1]) * inv;
+      expected.avgRGB[o + 2] += (rgb[2] - expected.avgRGB[o + 2]) * inv;
+    }
+
+    expect(actual.density).toEqual(expected.density);
+    expect(actual.avgRGB).toEqual(expected.avgRGB);
+    expect(actual.maxDensity).toBe(expected.maxDensity);
+    expect(actual.orbit).toEqual([x, y, z]);
+  });
+});

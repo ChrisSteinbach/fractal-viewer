@@ -2,6 +2,7 @@ import {
   PRESET_FINALS,
   PRESET_NAMES,
   PRESET_RENDER_HINTS,
+  PRESET_SCHEDULES,
   PRESET_SYMMETRIES,
   presetTransforms,
   sierpinskiTetrahedron,
@@ -24,6 +25,7 @@ function derivePreset(
     PRESET_FINALS[preset]?.() ?? null,
     PRESET_SYMMETRIES[preset] ?? NO_SYMMETRY,
     opts,
+    PRESET_SCHEDULES[preset]?.() ?? null,
   );
 }
 
@@ -201,5 +203,65 @@ describe("deriveSurfaceEligibility chaos rows", () => {
     expect(result.status).toBe("ineligible");
     expect(result.kind).toBeNull();
     expect(result.note).toContain("chaos rows");
+  });
+});
+
+describe("deriveSurfaceEligibility and the scheduled-hybrid block", () => {
+  const pairB: Transform[] = [
+    {
+      id: 0,
+      position: [-0.5, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+    },
+    {
+      id: 1,
+      position: [0.5, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+    },
+  ];
+
+  it("refuses any document carrying a live schedule, whatever the system's own shape", () => {
+    const result = deriveSurfaceEligibility(
+      sierpinskiTetrahedron(),
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      { transforms: pairB, depth: 3 },
+    );
+    expect(result.status).toBe("ineligible");
+    expect(result.kind).toBeNull();
+    expect(result.note).toContain("hybrid schedule");
+    expect(result.note).toContain("system A alone");
+  });
+
+  it("refuses the shipped Sponge of Ferns preset by its side-table schedule", () => {
+    const result = derivePreset("spongeOfFerns");
+    expect(result.status).toBe("ineligible");
+    expect(result.note).toContain("hybrid schedule");
+  });
+
+  it("a dead block (depth 0 / empty B) refuses nothing — the one consumption domain decides", () => {
+    const clean = deriveSurfaceEligibility(
+      sierpinskiTetrahedron(),
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+    );
+    for (const dead of [
+      null,
+      { transforms: pairB, depth: 0 },
+      { transforms: [], depth: 3 },
+    ]) {
+      const result = deriveSurfaceEligibility(
+        sierpinskiTetrahedron(),
+        null,
+        NO_SYMMETRY,
+        { computeAvailable: true },
+        dead,
+      );
+      expect(result).toEqual(clean);
+    }
   });
 });

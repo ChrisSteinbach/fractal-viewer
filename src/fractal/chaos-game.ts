@@ -3,7 +3,13 @@ import type { Affine } from "./affine";
 import { composeVariations } from "./variations";
 import type { VariationBlend } from "./variations";
 import type { IterationRng, Rng } from "./rng";
-import type { Bounds, SymmetryParams, Transform, Vec3 } from "./types";
+import type {
+  Bounds,
+  HybridSchedule,
+  SymmetryParams,
+  Transform,
+  Vec3,
+} from "./types";
 
 /** Result of running the chaos game: a flat point cloud plus metadata. */
 export interface ChaosGameResult {
@@ -238,6 +244,167 @@ export function chaosRefuseIteration(sub: number): number {
 }
 
 /**
+ * The scheduled-hybrid post-word's depth ceiling (see
+ * {@link import("./types").HybridSchedule}): the brief's own control range.
+ * Deeper words shrink the A-copies below visibility anyway — finite k IS
+ * the artwork — so the slider stops here rather than at some engine limit.
+ */
+export const MAX_SCHEDULE_DEPTH = 5;
+
+/**
+ * The prepared post-word stage a {@link PreparedChaosGame} carries when the
+ * document authors a {@link import("./types").HybridSchedule}: system B's
+ * composed affines plus its own small weight table, in exactly
+ * {@link pickIndex}'s uniform-fast-path/weighted conventions so a
+ * {@link pickScheduleIndex} draw costs what a transform pick costs. `null`
+ * — the common case — is today's plot path byte-identically.
+ *
+ * B IS AFFINE-ONLY BY CONSTRUCTION (the document rule — see
+ * `HybridSchedule`'s doc): {@link prepareSchedule} composes each entry's
+ * affine part alone and never builds variation blends, post-rotations or
+ * chi rows for B, which is what keeps the post-word one multiply-add per
+ * level in every mirror (CPU + WGSL, 3D + 4D) instead of a second full
+ * stepper. CHI AND THE SCHEDULE DO NOT INTERACT, by construction rather
+ * than by guard: chi shapes which map the ORBIT picks (`pickIndex`'s
+ * `prevBase` rows), while the schedule bends the PLOTTED point after the
+ * orbit has moved on — a B-pick is never a `prevBase`, and no chi row has a
+ * column for a B map. The post-word never feeds back into the orbit and
+ * never runs during warm-up (warm-up doesn't plot).
+ *
+ * RELATION TO CHI (the xaos layer): once graph-directed selection exists, a
+ * periodic schedule IS expressible as layered transform copies under a
+ * directed chi — but a depth-3 sponge-of-ferns would need 3 x 20 sponge
+ * COPIES (60 extra transforms and rows over them) where this stage needs
+ * none, which is why the post-word ships as its own mechanism rather than
+ * as sugar over chi.
+ */
+export interface PreparedSchedule {
+  /** System B's composed affine per entry, indexed like
+   * `schedule.transforms`. */
+  affines: Affine[];
+  /** Running sum of B weights, {@link pickIndex}'s `cumulative` shape. */
+  cumulative: Float64Array;
+  /** Sum of all B weights. */
+  totalWeight: number;
+  /** Whether any B entry has a non-1 weight — selects the weighted draw in
+   * {@link pickScheduleIndex}, exactly like `PreparedChaosGame.weighted`. */
+  weighted: boolean;
+  /** `schedule.transforms.length` — the uniform draw range. */
+  count: number;
+  /** The word length k: how many B-picks bend each plotted point. */
+  depth: number;
+}
+
+/**
+ * The dimension-free half of preparing a schedule: B's weight table, built
+ * exactly the way {@link prepareChaosGame} builds the main table (absent
+ * weight means 1; `weighted` only when some weight differs from 1 AND the
+ * total is a positive finite number). Shared by {@link prepareSchedule} and
+ * `chaos-game-4d.ts`'s `prepareSchedule4` — selection has no dimension,
+ * `buildChaosSelection`'s own reasoning — so the two dimensions cannot
+ * drift on what a B weight means.
+ */
+export function buildScheduleTable(
+  transforms: readonly { weight?: number }[],
+): {
+  cumulative: Float64Array;
+  totalWeight: number;
+  weighted: boolean;
+  count: number;
+} {
+  const count = transforms.length;
+  const cumulative = new Float64Array(count);
+  let totalWeight = 0;
+  let anyNonUnit = false;
+  for (let i = 0; i < count; i++) {
+    const w = transforms[i].weight ?? 1;
+    if (w !== 1) anyNonUnit = true;
+    totalWeight += w;
+    cumulative[i] = totalWeight;
+  }
+  const weighted =
+    anyNonUnit && totalWeight > 0 && Number.isFinite(totalWeight);
+  return { cumulative, totalWeight, weighted, count };
+}
+
+/**
+ * Whether a document's schedule block means anything — the consumption-side
+ * domain, mirroring `resolveChaosEntry`'s split of duties with `persist.ts`
+ * (persist stays faithful; the domain lives at the reader): a block is live
+ * only with a non-empty B list and an integer depth in
+ * 1..{@link MAX_SCHEDULE_DEPTH}. Depth floors/ceilings rather than
+ * rejecting (a hand-crafted 7 renders at 5 instead of silently at 0), but 0
+ * or below — and a non-finite depth — means ABSENT, the UI's own
+ * classic-removal rule.
+ */
+export function resolveScheduleDepth(
+  schedule: HybridSchedule | null | undefined,
+): number {
+  if (!schedule || schedule.transforms.length === 0) return 0;
+  const depth = Math.floor(schedule.depth);
+  if (!Number.isFinite(depth) || depth <= 0) return 0;
+  return Math.min(depth, MAX_SCHEDULE_DEPTH);
+}
+
+/**
+ * Compose a document schedule block into the {@link PreparedSchedule} the
+ * plot seam consumes, or `null` for an absent/empty block (see
+ * {@link resolveScheduleDepth}) — in which case {@link plotPoint} and every
+ * hand-inlined mirror run their pre-schedule paths untouched, zero extra
+ * draws. Affine-only on purpose: `composeAffine` reads
+ * position/rotation/scale/shear, and everything else a stray entry might
+ * carry is deliberately not consulted (the document rule strips it anyway).
+ */
+export function prepareSchedule(
+  schedule: HybridSchedule | null | undefined,
+): PreparedSchedule | null {
+  const depth = resolveScheduleDepth(schedule);
+  if (depth === 0 || !schedule) return null;
+  const table = buildScheduleTable(schedule.transforms);
+  return {
+    affines: schedule.transforms.map(composeAffine),
+    cumulative: table.cumulative,
+    totalWeight: table.totalWeight,
+    weighted: table.weighted,
+    count: table.count,
+    depth,
+  };
+}
+
+/**
+ * Draw one B index from a prepared schedule — {@link pickIndex}'s exact
+ * conventions over B's own table: the plain uniform draw when no B weight
+ * differs from 1 (RNG-identical to `Math.floor(rng() * count)`), else the
+ * lower-bound binary search, EXACTLY ONE `rng()` DRAW either way. The
+ * parameter type is structural (the table fields alone) so
+ * `chaos-game-4d.ts`'s `PreparedSchedule4` shares this one definition —
+ * the pick has no dimension.
+ */
+export function pickScheduleIndex(
+  schedule: {
+    cumulative: Float64Array;
+    totalWeight: number;
+    weighted: boolean;
+    count: number;
+  },
+  rng: Rng,
+): number {
+  if (!schedule.weighted) {
+    return Math.floor(rng() * schedule.count);
+  }
+  const { cumulative, totalWeight } = schedule;
+  const r = rng() * totalWeight;
+  let lo = 0;
+  let hi = cumulative.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (r < cumulative[mid]) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
+
+/**
  * Largest symmetry order `<= requestedOrder` (and always `>= 1`) whose
  * expanded transform count (`order * baseTransformCount`) fits within
  * {@link MAX_TRANSFORMS} — the same "ask for N, get the largest N that fits"
@@ -412,6 +579,15 @@ export interface PreparedChaosGame {
    */
   postRotations: (number[] | null)[];
   /**
+   * The scheduled-hybrid post-word stage ({@link prepareSchedule}), or
+   * `null` for a document with no schedule block — the common case, in
+   * which {@link plotPoint} and every hand-inlined plot mirror run their
+   * pre-schedule paths untouched (zero extra draws, byte-identical output).
+   * Consumed at PLOT time only: `depth` picks from B per plotted point,
+   * post-word THEN lens, never fed back into the orbit.
+   */
+  schedule: PreparedSchedule | null;
+  /**
    * Resolved flame palette slot per BASE map — length
    * {@link baseTransformCount}, indexed by `idx % baseTransformCount`, never by
    * the expanded slot: every kaleidoscope copy of a map colors as that map.
@@ -448,6 +624,12 @@ export interface PreparedChaosGame {
  * weights, continuously fading the kaleidoscope between full strength (1)
  * and bit-identical-to-order-1 (0) — see the weight-table comment below.
  *
+ * `schedule` (default `null` — every existing caller) is the scheduled-
+ * hybrid post-word block ({@link import("./types").HybridSchedule}),
+ * precomposed once here into {@link PreparedChaosGame.schedule} via
+ * {@link prepareSchedule}; an absent/empty block prepares to `null` and the
+ * whole run is byte-identical to before the parameter existed.
+ *
  * Throws `RangeError` if `transforms.length` exceeds {@link MAX_TRANSFORMS}
  * (the Uint8 transform-index cap) — independent of `symmetry`, which instead
  * silently reduces its own effective order to fit that same cap on the
@@ -457,6 +639,7 @@ export function prepareChaosGame(
   transforms: Transform[],
   finalTransform: Transform | null = null,
   symmetry: SymmetryParams = NO_SYMMETRY,
+  schedule: HybridSchedule | null = null,
 ): PreparedChaosGame {
   if (transforms.length > MAX_TRANSFORMS) {
     throw new RangeError(
@@ -569,6 +752,7 @@ export function prepareChaosGame(
     chaosRowTotals: chaos ? chaos.chaosRowTotals : null,
     chaosFallbackRows: chaos ? chaos.chaosFallbackRows : null,
     postRotations,
+    schedule: prepareSchedule(schedule),
     colorIndex,
     colorSpeed,
   };
@@ -765,17 +949,27 @@ export function stepOrbit(
 }
 
 /**
- * Compute the plotted point for an orbit point: the point itself, or — when
- * `prepared` has a final transform — that point bent through the
- * final-transform "lens" (fractal-flame terminology: applied only at plot
- * time, never fed back into the orbit; see {@link runChaosGame}). A nonlinear
- * lens can diverge at a singularity; the bent point is only adopted while
- * every coordinate stays finite, otherwise this returns the orbit point
- * unchanged so a bad landing never produces NaN/Inf.
+ * Compute the plotted point for an orbit point: the point itself, optionally
+ * bent by the scheduled-hybrid POST-WORD and then — when `prepared` has a
+ * final transform — by the final-transform "lens" (fractal-flame
+ * terminology: applied only at plot time, never fed back into the orbit; see
+ * {@link runChaosGame}). A nonlinear lens can diverge at a singularity; the
+ * bent point is only adopted while every coordinate stays finite, otherwise
+ * this returns its input unchanged so a bad landing never produces NaN/Inf.
  *
- * `auxRng` mirrors {@link stepOrbit}'s parameter of the same name:
- * the stream a stochastic lens's own draws come from, defaulting to `rng` —
- * the original single-stream behavior.
+ * THE POST-WORD RUNS FIRST, THEN THE LENS: with a prepared schedule
+ * ({@link PreparedSchedule}), `depth` B-maps — each drawn independently by
+ * {@link pickScheduleIndex}, EXACTLY ONE draw from the PRIMARY `rng` per
+ * level (the pick stream's rigidity rule: `depth` draws exactly when the
+ * block is present, zero when absent) — are applied to the plotted point in
+ * sequence, and the lens then bends the RESULT. The whole word is computed
+ * unconditionally (all `depth` draws happen even if the arithmetic
+ * overflows — the draw count must be a pure function of the document, or a
+ * morph's pinned-seed correspondence breaks), and the bent point is adopted
+ * only while finite, exactly the lens's own rule: on non-finite, the
+ * post-word falls back to the point BEFORE the word and the lens applies to
+ * that. Affine B-maps draw nothing themselves, so `auxRng` stays the
+ * stochastic LENS's stream alone.
  */
 export function plotPoint(
   prepared: PreparedChaosGame,
@@ -785,9 +979,33 @@ export function plotPoint(
   rng: Rng,
   auxRng: Rng = rng,
 ): Vec3 {
-  const { finalAffine, finalWarp } = prepared;
-  if (finalAffine === null) return [x, y, z];
-  const p = applyAffine(finalAffine, x, y, z);
+  const { finalAffine, finalWarp, schedule } = prepared;
+  let px = x;
+  let py = y;
+  let pz = z;
+  if (schedule !== null) {
+    let sx = px;
+    let sy = py;
+    let sz = pz;
+    for (let d = 0; d < schedule.depth; d++) {
+      const b = schedule.affines[pickScheduleIndex(schedule, rng)];
+      const m = b.m;
+      const t = b.t;
+      const nx = m[0] * sx + m[1] * sy + m[2] * sz + t[0];
+      const ny = m[3] * sx + m[4] * sy + m[5] * sz + t[1];
+      const nz = m[6] * sx + m[7] * sy + m[8] * sz + t[2];
+      sx = nx;
+      sy = ny;
+      sz = nz;
+    }
+    if (Number.isFinite(sx) && Number.isFinite(sy) && Number.isFinite(sz)) {
+      px = sx;
+      py = sy;
+      pz = sz;
+    }
+  }
+  if (finalAffine === null) return [px, py, pz];
+  const p = applyAffine(finalAffine, px, py, pz);
   let fx = p[0];
   let fy = p[1];
   let fz = p[2];
@@ -800,7 +1018,7 @@ export function plotPoint(
   if (Number.isFinite(fx) && Number.isFinite(fy) && Number.isFinite(fz)) {
     return [fx, fy, fz];
   }
-  return [x, y, z];
+  return [px, py, pz];
 }
 
 /**
@@ -834,6 +1052,15 @@ export function plotPoint(
  * cannot offset any other iteration's dice). Omitted, every draw shares
  * `rng` — the original behavior, byte-identical for every existing caller.
  *
+ * An optional `schedule` is the scheduled-hybrid post-word block
+ * ({@link import("./types").HybridSchedule}): `depth` random B-maps bend
+ * every point as it is plotted, AFTER the orbit and BEFORE the lens — see
+ * {@link plotPoint}. Each level draws exactly once from the PRIMARY pick
+ * stream, so with an `iterationRng` the pick stream's consumption stays
+ * rigid (1 + depth draws per recorded iteration) and morph correspondence
+ * survives. Omitted/absent, the loop is byte-identical to before the
+ * parameter existed — same stream, same output, zero extra draws.
+ *
  * The per-run setup ({@link prepareChaosGame}) and per-iteration stepping
  * ({@link stepOrbit}, {@link plotPoint}) this function drives are exported so
  * another consumer — e.g. a histogram accumulator that needs the same
@@ -846,6 +1073,7 @@ export function runChaosGame(
   finalTransform: Transform | null = null,
   symmetry: SymmetryParams = NO_SYMMETRY,
   iterationRng?: IterationRng,
+  schedule: HybridSchedule | null = null,
 ): ChaosGameResult {
   if (transforms.length === 0 || numPoints <= 0) {
     return {
@@ -856,7 +1084,12 @@ export function runChaosGame(
     };
   }
 
-  const prepared = prepareChaosGame(transforms, finalTransform, symmetry);
+  const prepared = prepareChaosGame(
+    transforms,
+    finalTransform,
+    symmetry,
+    schedule,
+  );
 
   const positions = new Float32Array(numPoints * 3);
   const transformIndices = new Uint8Array(numPoints);
@@ -904,7 +1137,7 @@ export function runChaosGame(
   // apart.
   const { affines, variations, postRotations, finalAffine, finalWarp } =
     prepared;
-  const { baseTransformCount } = prepared;
+  const { baseTransformCount, schedule: preparedSchedule } = prepared;
 
   for (let i = 0; i < numPoints; i++) {
     // Sub-orbit re-fuse (see CHAOS_SUB_ORBIT_POINTS): every K plotted points
@@ -1002,18 +1235,42 @@ export function runChaosGame(
     prevBase = escaped ? -1 : idx % baseTransformCount;
 
     // --- inlined plotPoint(prepared, x, y, z, rng, aux) ----------------------
-    // The plotted point is the orbit point, optionally bent by the final
-    // transform. The orbit state x/y/z is left untouched, so the lens never
-    // feeds back into the iteration.
+    // The plotted point is the orbit point, optionally bent by the schedule's
+    // post-word and then by the final transform. The orbit state x/y/z is
+    // left untouched, so neither stage ever feeds back into the iteration.
     let px = x;
     let py = y;
     let pz = z;
+    if (preparedSchedule !== null) {
+      // The post-word: depth B-picks off the PRIMARY stream (one draw per
+      // level, plotPoint's rigidity rule), adopted only while finite.
+      let sx = px;
+      let sy = py;
+      let sz = pz;
+      for (let d = 0; d < preparedSchedule.depth; d++) {
+        const b =
+          preparedSchedule.affines[pickScheduleIndex(preparedSchedule, rng)];
+        const bm = b.m;
+        const bt = b.t;
+        const nx = bm[0] * sx + bm[1] * sy + bm[2] * sz + bt[0];
+        const ny = bm[3] * sx + bm[4] * sy + bm[5] * sz + bt[1];
+        const nz = bm[6] * sx + bm[7] * sy + bm[8] * sz + bt[2];
+        sx = nx;
+        sy = ny;
+        sz = nz;
+      }
+      if (Number.isFinite(sx) && Number.isFinite(sy) && Number.isFinite(sz)) {
+        px = sx;
+        py = sy;
+        pz = sz;
+      }
+    }
     if (finalAffine !== null) {
       const fm = finalAffine.m;
       const ft = finalAffine.t;
-      let fx = fm[0] * x + fm[1] * y + fm[2] * z + ft[0];
-      let fy = fm[3] * x + fm[4] * y + fm[5] * z + ft[1];
-      let fz = fm[6] * x + fm[7] * y + fm[8] * z + ft[2];
+      let fx = fm[0] * px + fm[1] * py + fm[2] * pz + ft[0];
+      let fy = fm[3] * px + fm[4] * py + fm[5] * pz + ft[1];
+      let fz = fm[6] * px + fm[7] * py + fm[8] * pz + ft[2];
       if (finalWarp !== null) {
         const q = finalWarp(fx, fy, fz, aux);
         fx = q[0];
