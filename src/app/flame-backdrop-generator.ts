@@ -74,10 +74,29 @@ export interface FlameBackdropGeneratorDeps {
   schedule?: (fn: () => void, delayMs: number) => () => void;
 }
 
+/** Dependencies for the automatic-view motion pump. Kept as a tiny injected
+ * boundary so its cadence and busy/latest-wins decisions are deterministic in
+ * tests and independent of requestAnimationFrame. */
+export interface FlameBackdropMotionRefreshDeps {
+  /** Whether the ordinary debounce/worker pipeline already owns work. */
+  busy: () => boolean;
+  /** Snapshot the latest view and resolve once that pipeline drains. */
+  request: () => Promise<void>;
+  /** Same clock as the animation loop (main.ts uses nowMs). */
+  now: () => number;
+  /** Test/tuning override; production uses the exported default below. */
+  cooldownMs?: number;
+}
+
 /** Fixed cheap-render policy. The equal estimator radii make the final
  * density-estimation pass a broad, deliberately out-of-focus blur. */
 export const FLAME_BACKDROP_DEBOUNCE_MS = 300;
 export const FLAME_BACKDROP_ITERATIONS = 1_000_000;
+/** Quiet time after a motion-driven image finishes before the next snapshot.
+ * Added to the normal debounce and render time, this yields roughly one
+ * update per second on ordinary hardware: frequent enough to follow the slow
+ * ambient orbit/tumble, bounded enough not to keep a CPU worker spinning. */
+export const FLAME_BACKDROP_MOTION_COOLDOWN_MS = 500;
 const FLAME_BACKDROP_SUPERSAMPLE = 1;
 const FLAME_BACKDROP_EXPOSURE = 0.2;
 const FLAME_BACKDROP_GAMMA = 2.4;
@@ -92,6 +111,52 @@ interface BackdropJob {
   acceptable: boolean;
   /** The debounce has elapsed; dispatch as soon as the worker is idle. */
   ready: boolean;
+}
+
+/**
+ * Bounded pump for a Flame backdrop behind continuous automatic view motion.
+ * A request is made only when the ordinary generator is idle. The pump then
+ * waits for that request (and any authored request that supersedes it) to
+ * settle before starting its cooldown, so motion can never keep resetting the
+ * generator's trailing-edge debounce or suppress every terminal image.
+ */
+export class FlameBackdropMotionRefresh {
+  private awaitingSettle = false;
+  private nextEligibleMs = Number.NEGATIVE_INFINITY;
+  private readonly cooldownMs: number;
+
+  constructor(private readonly deps: FlameBackdropMotionRefreshDeps) {
+    this.cooldownMs = deps.cooldownMs ?? FLAME_BACKDROP_MOTION_COOLDOWN_MS;
+  }
+
+  /** Poll once per explorer frame. Returns true exactly when it starts work. */
+  tick(moving: boolean): boolean {
+    if (
+      !moving ||
+      this.awaitingSettle ||
+      this.deps.busy() ||
+      this.deps.now() < this.nextEligibleMs
+    ) {
+      return false;
+    }
+
+    let settled: Promise<void>;
+    try {
+      settled = this.deps.request();
+    } catch {
+      // Decorative refresh failures must never escape into the render loop.
+      this.nextEligibleMs = this.deps.now() + this.cooldownMs;
+      return false;
+    }
+
+    this.awaitingSettle = true;
+    const complete = (): void => {
+      this.awaitingSettle = false;
+      this.nextEligibleMs = this.deps.now() + this.cooldownMs;
+    };
+    void settled.then(complete, complete);
+    return true;
+  }
 }
 
 function defaultSchedule(fn: () => void, delayMs: number): () => void {
@@ -200,6 +265,12 @@ export class FlameBackdropGenerator {
 
   constructor(private readonly deps: FlameBackdropGeneratorDeps) {
     this.schedule = deps.schedule ?? defaultSchedule;
+  }
+
+  /** True while a debounce, parked successor, or worker render is active.
+   * Motion refreshes use this to leave ordinary authored/boot work alone. */
+  get busy(): boolean {
+    return !this.isSettled();
   }
 
   /** Replace the parked snapshot and restart its trailing-edge debounce. */

@@ -1034,24 +1034,32 @@ morphs into place instead of snapping (see **Presets** below).
   palette edits, gradient-editor drags, and render-mode switches live
   (palettes with no gradient, like Classic, keep the Dark ground; the
   derived stops are clamped dark enough that the attractor keeps contrast),
+  **Flame**, a dark, defocused one-million-sample flame of the same system
+  projected through the current view, with its own **Flame Color** palette
+  (Spectrum by default, or any preset/Custom gradient),
   or **Custom**, which reveals **Top**/**Bottom** color pickers for an
   authored gradient (landing on Custom from Auto seeds the pickers with the
-  derived stops you were just looking at). One backdrop for the whole app —
+  derived stops you were just looking at). While auto-orbit or 4D tumble is
+  running, the Flame image follows at a bounded cadence: each off-thread
+  render must finish, then rests briefly before snapshotting the latest pose,
+  so continuous motion cannot starve the worker's debounce or turn it into a
+  per-frame job. One backdrop for the whole app —
   Points, Flame, Solid, and Surface all show it, and Save PNG / video
   captures render exactly what's on screen. Depth Fade and Aerial Haze's fog
   also tints toward it, so switching the backdrop re-tints the fog to match
   (the **Fog** and **Tint** controls below set how thick that atmosphere is
   and shift what it fades toward).
   Persists in the link and scene file — Auto persists as the choice, not as
-  baked colors, so a shared link keeps tracking its scene's palette; a link
-  saved before this control existed still renders exactly as it always did —
-  Haze if its Depth Style was Aerial, Dark otherwise.
+  baked colors, and Flame persists its own palette but not generated image
+  bytes, so a shared link keeps tracking its scene and view; a link saved
+  before this control existed still renders exactly as it always did — Haze
+  if its Depth Style was Aerial, Dark otherwise.
 - **Shape** — the backdrop's gradient shape, orthogonal to
   **Background** above: **Vertical** (the default — the original top-to-
   bottom ramp) or **Radial**, a soft vignette centered behind the
   attractor, darkened corners fading toward a lighter glow at the middle.
-  Every **Background** choice — Dark, Haze, Auto, or Custom — can be either
-  shape, since on all four the derived/authored top stop is the darker one
+  Every gradient **Background** choice — Dark, Haze, Auto, or Custom — can be
+  either shape, since on all four the derived/authored top stop is the darker one
   and the bottom stop the lighter one, which is exactly what a vignette
   needs; nothing about **Background** itself changes when you switch
   shapes. Reaches the same renders **Background** does (Points, Flame,
