@@ -669,3 +669,54 @@ gates) is reached by exactly ONE shipped system — `mandelboxKifs`, 9% away,
 `mR` 0.478 instead of 0.500 — while the three escape presets would need
 `mR > fR` and all three chains are unreachable at any ratio behind a
 box-fold link that expands regardless.
+
+## The landscape composition sheet
+
+### forest-composition
+
+The forest/meadow/seabed question: does a landscape composed as ONE plain
+IFS — a plant sub-IFS (Barnsley's fern verbatim, or a kelp defined on the
+sheet) plus 1-3 "scatter" contractions that seat the WHOLE SCENE back on
+the ground line — read as organic or as mush at real render quality, and
+which arrangement wins. Every scattered copy contains the whole scene
+again (`A = plant(A) ∪ scatter(A)`), so cross-coupling is the aesthetic
+unknown; weight share S is the density knob. Seven sheets: an arrangement
+x share grid, lean spread, plant comparison, the production flame
+renderer, an infection-dial A/B (plain IFS vs a local Markov/chi stepper
+vs a local post-word stage — simulations that ship nothing), one 4D sheet,
+and a surface probe.
+
+MEASURED VERDICT: organic at S 0.15-0.30 (0.45 over-weights the deep
+copies). ROW 0.80 at S 0.30 is the winning construction — an infinite
+receding colonnade, best under the flame renderer, where an authored
+scatter colorIndex recolors copies for FREE (every point of a copy took
+the scatter map as its LAST pick) and colorSpeed sets the length of the
+recession's color gradient. A grove of placements does NOT read as
+distinct individuals at any spacing measured — each copy is a copy of the
+whole scene, so it renders as a canopy/thicket mound. The winners shipped
+as the fernForest / fernThicket / kelpForest / hyperfernForest presets.
+
+Two refutations worth the sheet on their own. CHI BLOCK ("once scattered,
+stay scattering") does NOT yield exact whole plants: the scatter class is
+absorbing, plotted words end in ever-deeper scatter tails, and the panel
+renders the scatter-only attractor — a pancake dust at a third of the
+engine panel's pixels — because no chi matrix yields bounded-suffix words;
+returning to the plant block is exactly what re-couples it. The post-word
+stage delivers precisely what chi cannot (K1: three crisp whole ferns at
+the placements; K2: the nine second-generation copies), so the
+zero-coupling end of the infection dial belongs to the scheduled-hybrids
+construction, and the xaos dial's real forest value is undergrowth
+density, not instancing. And the sheet's own first kelp draft refuted a
+climb-map intuition: yaw 0.5 per step coils the stipe into a rosette —
+the shipped kelp climbs at yaw 0.12.
+
+4D: w-mixing rotations on scatter maps are visible at the identity rotor
+(the fresh-load pose; w-grove vs control meanAbsS 0.388 vs 0.320), and the
+W-ROW — one row map carrying `xw` 0.35, the rotation COMPOUNDING with
+recession — is the sheet's best 4D picture (meanAbsS 0.612): the
+colonnade visibly rolls up into +w. Surface: every fern landscape is
+ineligible (Barnsley's stem has x-scale exactly 0; the gate names it), so
+the fern presets are points/flame only, honestly refused rather than
+slow; the kelp systems are degraded-eligible and march clean (523ms at
+128px, 0 exhausted) but the DE shell is a blobby union of climb-map
+images, so kelpForest ships flame-hinted, not surface-hinted.
