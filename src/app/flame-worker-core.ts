@@ -57,7 +57,7 @@ import type {
   TonemapParams,
 } from "../fractal/flame";
 import { symmetryIsNonFlat } from "../fractal/affine4";
-import { prepareChaosGame, systemHasEmitters } from "../fractal/chaos-game";
+import { prepareChaosGame } from "../fractal/chaos-game";
 import type { PreparedChaosGame } from "../fractal/chaos-game";
 import { prepareChaosGame4 } from "../fractal/chaos-game-4d";
 import type { PreparedChaosGame4 } from "../fractal/chaos-game-4d";
@@ -367,16 +367,14 @@ export type FlameWorkerEvent =
        * software rasterization must not pass as a normal GPU render.
        * Absent for CPU backends. */
       software?: boolean;
-      /** True when this CPU backend was FORCED by the document's shape
-       * emitters — GPU would otherwise have been attempted
-       * (`gpuPreference` auto, a factory wired up, no prior failure
-       * ratchet), but the flame WGSL
-       * kernels do not know emitters yet (open work: fr-wo2j.8) and one
-       * document must never render two different objects. The main
-       * thread's backend note names emitters as the reason. Absent for GPU
-       * backends and for CPU backends
-       * that are CPU for any other reason (so the note never blames
-       * emitters for a machine that simply has no WebGPU). */
+      /** DEAD: never set by this session any more. Used to disclose a CPU
+       * backend FORCED by the document's shape emitters, back when the
+       * flame WGSL kernels did not know emitters yet — `packGpuSystem`/
+       * `packGpuSystem4` now transfer an emitter's condensation-shape block
+       * exactly as they transfer chi rows, so no document forces CPU for
+       * this reason any more (`gpuEligible`'s own doc). The field stays
+       * declared because `main.ts` still reads it; owed removal once that
+       * consumer goes too. */
       emitterForced?: boolean;
     }
   | { type: "error"; message: string }
@@ -1116,17 +1114,6 @@ export class FlameWorkerSession {
    * behaves identically regardless of what this says. */
   private gpuPreference: "auto" | "off" = "off";
 
-  /** Whether the CURRENT session's document carries shape emitters
-   * (`systemHasEmitters` over the start command's transforms — fixed per
-   * session; live commands never swap the transform list). While true,
-   * {@link gpuEligible} refuses GPU outright: the WGSL kernels
-   * do not know emitters (fr-wo2j.8 is the lift), and attempting them
-   * would render the plain attractor instead of the condensation set —
-   * the two-backends-one-document divergence class. Chaos rows used to
-   * carry the same force one selection layer over; the WGSL kernels know
-   * chi now (`packGpuSystem`/`packGpuSystem4` transfer the rows), so chi
-   * documents take whatever backend the machine offers. */
-  private sessionHasEmitters = false;
   /** Throughput instrumentation, all inert unless the `start` command
    * set `instrument` (see its doc). `perf` accumulates per-chunk phase timings
    * and periodically yields a summary to `log`; `lastChunkEndAt` is the clock
@@ -1375,10 +1362,6 @@ export class FlameWorkerSession {
 
   private start(cmd: Extract<FlameWorkerCommand, { type: "start" }>): void {
     this.baseTransforms = cmd.transforms;
-    // Emitter status is per-session (transforms only arrive here). The 4D
-    // transforms4 carry identical emitters (the lift copies them
-    // verbatim), so the 3D list answers for both dimensions.
-    this.sessionHasEmitters = systemHasEmitters(cmd.transforms);
     this.baseFinalTransform = cmd.finalTransform;
     this.hybridSchedule = cmd.schedule ?? null;
     this.symmetryOrder = cmd.order;
@@ -1560,17 +1543,13 @@ export class FlameWorkerSession {
    * (which acts on it) and `computeEffectiveSupersample` (whose GPU-size
    * clamp must apply exactly when the GPU will be attempted — clamping a
    * CPU-only accumulation by a GPU ceiling would shrink it for no reason).
+   * Document-independent now: chaos rows and shape emitters both used to
+   * force CPU here in turn, one selection layer at a time, until their WGSL
+   * kernels learned to read them (`packGpuSystem`/`packGpuSystem4` transfer
+   * chi rows and emitter blocks alike), so every document now takes
+   * whatever backend the machine offers.
    */
   private gpuEligible(): boolean {
-    return !this.sessionHasEmitters && this.gpuCandidate();
-  }
-
-  /** The document-independent {@link gpuEligible} conditions: the `start`
-   * opted in, this session hasn't permanently given up on GPU, and the
-   * current dimension has a factory wired up. Split out so
-   * {@link gpuBlockedByEmitters} can ask "WOULD GPU have been attempted,
-   * but for the emitters?" without restating them. */
-  private gpuCandidate(): boolean {
     return (
       this.gpuPreference === "auto" &&
       !this.gpuFailed &&
@@ -1578,17 +1557,6 @@ export class FlameWorkerSession {
         ? this.createGpuBackend4 !== undefined
         : this.createGpuBackend !== undefined)
     );
-  }
-
-  /** True exactly when the document's shape emitters are the ONE reason
-   * this session is on CPU — every other GPU condition holds. Drives the
-   * backend event's `emitterForced` disclosure, and nothing else: a
-   * machine with no WebGPU (or a failed ladder) keeps its own truthful
-   * reason. (Chaos rows carried the same force until the WGSL kernels
-   * learned chi; emitters are the one selection layer still awaiting its
-   * GPU lift.) */
-  private gpuBlockedByEmitters(): boolean {
-    return this.sessionHasEmitters && this.gpuCandidate();
   }
 
   private computeEffectiveSupersample(requested: number): number {
@@ -2329,13 +2297,6 @@ export class FlameWorkerSession {
         backend: created.kind,
         adapter: created.adapterLabel,
         software: created.software,
-        // Disclose an emitter-forced CPU backend (see the event field's
-        // doc); absent otherwise, so consumers can't misread an ordinary
-        // CPU session as emitter-forced. (Chaos rows carried a twin flag
-        // here until the WGSL kernels learned chi.)
-        ...(created.kind === "cpu" && this.gpuBlockedByEmitters()
-          ? { emitterForced: true }
-          : {}),
       });
     }
     const backend = this.backend;

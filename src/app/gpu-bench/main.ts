@@ -99,6 +99,7 @@ import {
   doubleRotation,
   fernSpongeIsolated,
   fernSpongeLeak,
+  gearworks,
   hyperfern,
   mandelboxKifs,
   pentatope,
@@ -696,6 +697,76 @@ function xformColorFern(): Transform[] {
   return barnsleyFern().map((t, i) => ({ ...t, ...XFORM_COLOR_PAIRS[i] }));
 }
 
+/**
+ * The shape-emitter menagerie: two simple contractions (id 0/1, plain
+ * affine, no variations) plus one multi-part emitter transform (id 2) whose
+ * `ShapeSpec` carries the FOUR primitives {@link gearworks}'s GEAR_SHAPE
+ * -only fixture never reaches — sphere, box, torus, capsule — each
+ * `"union"`, each posed to its own DISTINCT region: bounding-sphere
+ * separated (sphere at +x, box at -x, torus at +y, capsule at -y, each
+ * part's own reach well under the gap to its neighbours), so shapes.ts's
+ * min-index overlap correction is never exercised here — the multi-part
+ * pick's own disclosed overlap divergence (flame-gpu.ts's Slot layout doc)
+ * stays out of scope for this leg, which targets the part-pick's WEIGHTS and
+ * the four primitive samplers instead. The emitter transform's own weight
+ * (3, against the two unit-weight contractions) keeps most plotted points a
+ * recent emitter stamp, so a wrong sampler or a wrong part-pick weight
+ * restructures the frame rather than hiding in a rarely-visited corner of it
+ * — `emitter-gearworks`'s own reasoning, one primitive count wider.
+ */
+function emitterMenagerie(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0.55, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+    },
+    {
+      id: 1,
+      position: [-0.55, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.5, 0.5, 0.5],
+    },
+    {
+      id: 2,
+      position: [0, 0, 0],
+      rotation: [0.3, 0.4, 0.15],
+      scale: [0.6, 0.6, 0.6],
+      weight: 3,
+      emitter: {
+        parts: [
+          {
+            primitive: { kind: "sphere", radius: 0.25 },
+            combine: "union",
+            pose: { offset: [0.55, 0, 0] },
+          },
+          {
+            primitive: { kind: "box", half: [0.2, 0.15, 0.1] },
+            combine: "union",
+            pose: { offset: [-0.55, 0, 0] },
+          },
+          {
+            primitive: { kind: "torus", major: 0.35, minor: 0.1 },
+            combine: "union",
+            pose: { offset: [0, 0.55, 0], rotate: [Math.PI / 2, 0, 0] },
+          },
+          {
+            primitive: {
+              kind: "capsule",
+              a: [0, -0.15, 0],
+              b: [0, 0.15, 0],
+              radius: 0.12,
+            },
+            combine: "union",
+            pose: { offset: [0, -0.55, 0], rotate: [0, 0, Math.PI / 6] },
+          },
+        ],
+      },
+    },
+  ];
+}
+
 const SCENARIOS: ScenarioDef[] = [
   {
     kind: "3d",
@@ -954,6 +1025,81 @@ const SCENARIOS: ScenarioDef[] = [
     // what raises a scenario's floor. 1.2 = ~2x the floor, fold-zoo-
     // param's doubling convention.
     maeThreshold: 1.2,
+  },
+  {
+    kind: "3d",
+    name: "emitter-gearworks",
+    transforms: gearworks(),
+    finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
+    paletteId: "legacy",
+    // The shape-emitter (condensation) reachability preset itself
+    // (presets.ts): four Sierpinski-tetrahedron corners plus a fifth
+    // transform whose slot is a GEAR_SHAPE emitter (weight 1.4 against the
+    // four unit corners), so this leg's picked slots hit applySlot's
+    // emitter branch on every engine — the derived-stream draw, the
+    // slot's OWN affine posing the sample, the gear kind's device
+    // triangle-fan-CDF sampler (emitterDrawGear) against the CPU's
+    // annulus-rejection one. Legacy palette: gearworks authors per-transform
+    // colorIndex pairs (cog vs. structure hue), which only the legacy
+    // per-BASE-map palette path reads.
+    ...SIERPINSKI_CAMERA,
+    // Emitters are not chaotic forward orbits (no per-step feedback through
+    // a nonlinear map) — plain equal-N agreement holds without the escape
+    // legs' classifier machinery, chi-isolated's own reasoning one selection
+    // layer over. Measured control floor: the CPU oracle against ITSELF at
+    // two seeds (0xc0ffee vs 0xbadcafe) through this exact camera/downsample/
+    // tonemap pipeline, at a REDUCED 5M iterations each (a throwaway
+    // standalone script, not this file, since the equal-N harness below
+    // needs a live backend) — mae 0.461. A smaller N is A NOISIER, so
+    // CONSERVATIVELY OVER-ESTIMATED floor relative to this scenario's real
+    // 50.3M-iteration equal-N run (shot noise falls with more samples), so
+    // 2x it (0.92) is still a safe upper bound at the real scale, and it
+    // sits below the default 1.0 — the threshold stays at the
+    // default-equivalent 1.0 rather than tightening below it
+    // (schedule-sponge's own convention for the identical case).
+    maeThreshold: 1.0,
+    // Uniquely pins: applySlot's whole emitter branch in BOTH kernels —
+    // the derived mulberry32-restated stream (emitterNext), every
+    // constant-draw primitive sampler that branch can reach through a
+    // shipped preset (here: the gear's host-triangulated triangle-fan
+    // CDF), the multi-part pick's degenerate partCount<=1 fast path, and
+    // the shared emitterGearTable binding's real-buffer (not aliased) path.
+  },
+  {
+    kind: "3d",
+    name: "emitter-menagerie",
+    transforms: emitterMenagerie(),
+    finalTransform: null,
+    symmetry: { order: 1, plane: "xz" },
+    paletteId: "legacy",
+    // emitter-gearworks's sibling: its single GEAR_SHAPE part never reaches
+    // the sphere/box/torus/capsule device samplers, nor the multi-part
+    // pick's weighted search (a partCount<=1 slot skips it outright). This
+    // leg's emitter is one ShapeSpec holding all four, each posed to its own
+    // non-overlapping region — see emitterMenagerie's doc.
+    // Probed via a 200k-point bounds pass (chaos-game's own `bounds`; this
+    // system has no escape tail — every emitter sample is exactly bounded —
+    // so a plain min/max is as tight a frame as a percentile one would be):
+    // x ∈ [-1.09, 1.10], y ∈ [-0.44, 0.44], z ∈ [-0.26, 0.37].
+    cameraPos: [2.15, 1.55, 2.2],
+    lookAt: [0, 0, 0.05],
+    // Measured control floor: the CPU oracle against ITSELF at two seeds
+    // (0xc0ffee vs 0xbadcafe) through this exact camera/downsample/tonemap
+    // pipeline, at a REDUCED 5M iterations each (a throwaway standalone
+    // script, not this file, since the equal-N harness above needs a live
+    // backend — emitter-gearworks' own procedure) — mae 0.0305. A smaller N
+    // is a NOISIER, so CONSERVATIVELY OVER-ESTIMATED floor relative to this
+    // scenario's real 50.3M-iteration equal-N run, so 2x it (0.061) is still
+    // a safe upper bound at the real scale, and it sits well below the
+    // default 1.0 — the threshold stays at the default-equivalent 1.0
+    // rather than tightening below it (schedule-sponge's convention).
+    maeThreshold: 1.0,
+    // Uniquely pins: applySlot's emitter branch over the sphere, box, torus
+    // and capsule device samplers (emitterDrawSphere/Box/Torus/Capsule) —
+    // none of which emitter-gearworks' single gear part reaches — and the
+    // multi-part pick's weighted binary search over a partCount > 1 slot
+    // (emitterSampleSlot), which no other scenario here exercises at all.
   },
   // The 4D legs: between them, all four FourDRenderColor kinds and
   // both slice states; hyperfern/doubleRotation both carry non-1 weights,
