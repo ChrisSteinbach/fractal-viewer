@@ -322,6 +322,15 @@ function printSurfaceSummary(surfaceDe) {
       console.log(formatSurfaceUnprojectRow("unproj-balloon", mub));
     }
   }
+  // Leg A through the code-generated condensation shape term.
+  const muc = surfaceDe.marchUnprojectCondensation;
+  if (muc) {
+    if (muc.skipped) {
+      console.log(`  unproj-condensation: skipped — ${muc.skipped}`);
+    } else {
+      console.log(formatSurfaceUnprojectRow("unproj-condensation", muc));
+    }
+  }
   // Leg B: the end-to-end SurfaceComputeRenderer frame.
   const cf = surfaceDe.computeFrame;
   if (cf) {

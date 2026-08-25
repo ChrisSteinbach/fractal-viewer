@@ -16,6 +16,7 @@ import {
   setSurfaceSystem,
   surfaceFragmentFor,
   surfaceFragmentResolvedFor,
+  SURFACE_CONDENSATION_GLSL_DEPTH_MAX,
   SURFACE_GLSL_STRIP_BYTES,
   SURFACE_MAX_MAPS,
   SURFACE_SHADE_DE_WIDTH,
@@ -34,7 +35,7 @@ import {
 } from "../fractal/bulb-de";
 import { buildEscapeDE } from "../fractal/escape-de";
 import { shapeTrapInvNorm } from "../fractal/shape-trap";
-import { PEACE_SIGN_SHAPE } from "../fractal/shapes";
+import { PEACE_SIGN_SHAPE, type ShapeSpec } from "../fractal/shapes";
 import type {
   SurfaceBalloonSpec,
   SurfaceGroundPlaneSpec,
@@ -161,6 +162,186 @@ function de3(
 }
 
 const black: Vec3 = [0, 0, 0];
+
+const COND_SPHERE: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "sphere", radius: 0.4 },
+      combine: "union",
+    },
+  ],
+};
+
+const COND_BOX: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "box", half: [0.2, 0.3, 0.4] },
+      combine: "union",
+    },
+  ],
+};
+
+function condEmitter3(shape: ShapeSpec, shadeIndex: number, invT: Vec3) {
+  return {
+    shape,
+    baseIndex: shadeIndex,
+    shadeIndex,
+    sigmaMin: 0.25,
+    invM: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+    invT,
+    center: [0, 0, 0] as Vec3,
+    radius: 1,
+  };
+}
+
+describe("GLSL condensation packing and source", () => {
+  it("appends symmetry-expanded inverse records while map and shade counts stay separate", () => {
+    const material = createSurfaceMaterial();
+    const de: SurfaceDE = {
+      ...de3([map3()]),
+      condensation: {
+        emitters: [
+          condEmitter3(COND_SPHERE, 1, [1, 2, 3]),
+          condEmitter3(COND_BOX, 2, [4, 5, 6]),
+          // Symmetry copy: another inverse record, same material slot.
+          condEmitter3(COND_SPHERE, 1, [7, 8, 9]),
+        ],
+        depthBand: { minDepth: 2, maxDepth: 5 },
+      },
+    };
+    setSurfaceSystem(material, de, [black, [1, 0, 0], [0, 1, 0]]);
+    const u = material.uniforms;
+    expect(u.uMapCount.value).toBe(1);
+    expect(u.uCondMapCount.value).toBe(1);
+    expect(u.uCondCount.value).toBe(3);
+    expect(u.uShadeCount.value).toBe(3);
+    expect(u.uCondMinDepth.value).toBe(2);
+    expect(u.uCondMaxDepth.value).toBe(5);
+    expect(u.uCondShape.value.slice(0, 3)).toEqual([0, 1, 0]);
+    expect(u.uCondShade.value.slice(0, 3)).toEqual([1, 2, 1]);
+    expect((u.uInvT.value[1] as THREE.Vector3).toArray()).toEqual([1, 2, 3]);
+    expect((u.uInvT.value[3] as THREE.Vector3).toArray()).toEqual([7, 8, 9]);
+    expect((u.uMapColor.value[1] as THREE.Vector3).toArray()).toEqual([
+      1, 0, 0,
+    ]);
+    expect((u.uMapColor.value[2] as THREE.Vector3).toArray()).toEqual([
+      0, 1, 0,
+    ]);
+
+    de.condensation!.depthBand.maxDepth = Number.MAX_SAFE_INTEGER;
+    setSurfaceSystem(material, de, [black, [1, 0, 0], [0, 1, 0]]);
+    expect(u.uCondMaxDepth.value).toBe(SURFACE_CONDENSATION_GLSL_DEPTH_MAX);
+  });
+
+  it("bakes multiple shape SDFs, the inclusive depth band, damping and future-subtree guard only into descent arms", () => {
+    const glsl = surfaceFragmentFor(0, 0, 0, 0, 0, 0, 0, undefined, null, [
+      COND_SPHERE,
+      COND_BOX,
+      COND_SPHERE,
+    ]);
+    expect(glsl).toContain("float condensationSdf0");
+    expect(glsl).toContain("float condensationSdf1");
+    expect(glsl).not.toContain("condensationSdf2");
+    expect(glsl).toContain("depth < uCondMinDepth || depth > uCondMaxDepth");
+    expect(glsl).toContain("scale * 0.9 * uSigmaMin[slot]");
+    expect(glsl).toContain("condensationFutureAfterChild");
+    expect(glsl.match(/float\s+tKey\s*=\s*c4Key\s*;/g)).toHaveLength(4);
+    expect(glsl.match(/eKey\s*=\s*tKey\s*;/g)).toHaveLength(4);
+    expect(glsl).toContain("uMapColor[clamp(firstChoice, 0, uShadeCount - 1)]");
+    expect(glsl).not.toContain("__SURFACE_CONDENSATION_SDFS__");
+    expect(glsl.length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+    expect(() =>
+      surfaceFragmentFor(1, 0, 0, 0, 0, 0, 0, undefined, null, [COND_SPHERE]),
+    ).toThrow(/inverse-map descent/);
+    expect(() =>
+      surfaceFragmentFor(0, 0, 0, 0, 1, 0, 0, undefined, null, [COND_SPHERE]),
+    ).toThrow(/inverse-map descent/);
+  });
+
+  it("composes with the admitted lens, balloon, grid and plane architecture", () => {
+    const shapes = [COND_SPHERE] as const;
+    const lens = surfaceFragmentFor(
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      undefined,
+      null,
+      shapes,
+    );
+    const balloon = surfaceFragmentFor(
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      undefined,
+      null,
+      shapes,
+    );
+    const plane = surfaceFragmentFor(
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      undefined,
+      null,
+      shapes,
+    );
+    expect(lens).toContain("surfaceDECore");
+    expect(lens).toContain("condensationTerm");
+    expect(lens).toContain("uGridEnabled");
+    expect(balloon).toContain("balloonInvert");
+    expect(balloon).toContain("condensationTerm");
+    expect(plane).toContain("shadeGroundPlane");
+    expect(plane).toContain("condensationTerm");
+  });
+
+  it("restores the exact feature-off shader and rejects total-record overflow", () => {
+    const material = createSurfaceMaterial();
+    const baseline = material.fragmentShader;
+    const withCondensation: SurfaceDE = {
+      ...de3([map3()]),
+      condensation: {
+        emitters: [condEmitter3(COND_SPHERE, 1, [0, 0, 0])],
+        depthBand: { minDepth: 0, maxDepth: 8 },
+      },
+    };
+    setSurfaceSystem(material, withCondensation, [black, [1, 0, 0]]);
+    expect(material.fragmentShader).not.toBe(baseline);
+    setSurfaceSystem(material, de3([map3()]), [black]);
+    expect(material.fragmentShader).toBe(baseline);
+    expect(material.uniforms.uCondCount.value).toBe(0);
+
+    const maps = Array.from({ length: 20 }, (_, baseIndex) =>
+      map3({ baseIndex }),
+    );
+    const overflow: SurfaceDE = {
+      ...de3(maps),
+      condensation: {
+        emitters: Array.from({ length: 5 }, (_, i) =>
+          condEmitter3(COND_SPHERE, 20 + i, [i, 0, 0]),
+        ),
+        depthBand: { minDepth: 0, maxDepth: 8 },
+      },
+    };
+    expect(() =>
+      setSurfaceSystem(
+        material,
+        overflow,
+        Array.from({ length: 25 }, () => black),
+      ),
+    ).toThrow(/condensation records/);
+  });
+});
 
 describe("setSurfaceSystem kaleidoscope packing", () => {
   it("passes a symmetry-free system a single sector with no rotation", () => {

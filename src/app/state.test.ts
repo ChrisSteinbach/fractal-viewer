@@ -115,6 +115,7 @@ import {
   setChaosCell,
   setChaosLeak,
   setColorGamma,
+  setCondensationDepthBand,
   setCustomPaletteStops,
   setExportScale,
   setFinalTransform,
@@ -2237,6 +2238,30 @@ describe("setSchedule / setScheduleDepth (scheduled-hybrid block)", () => {
     expect(stripped.position).toEqual(bSource[0].position);
     expect(stripped.position).not.toBe(bSource[0].position);
     expect(stripped.shear).not.toBe(bSource[0].shear);
+  });
+});
+
+describe("setCondensationDepthBand", () => {
+  const base = initialState(true);
+
+  it("stores a sorted inclusive finite band", () => {
+    expect(
+      setCondensationDepthBand(base, { minDepth: 5.9, maxDepth: 2.2 })
+        .condensationDepthBand,
+    ).toEqual({ minDepth: 2, maxDepth: 5 });
+    expect(
+      setCondensationDepthBand(base, { maxDepth: -3 }).condensationDepthBand,
+    ).toEqual({ maxDepth: 0 });
+  });
+
+  it("stores the classic all-depth range as absence and clears with null", () => {
+    const authored = setCondensationDepthBand(base, { maxDepth: 4 });
+    expect(setCondensationDepthBand(authored, null).condensationDepthBand).toBe(
+      undefined,
+    );
+    expect(
+      setCondensationDepthBand(base, { minDepth: 0 }).condensationDepthBand,
+    ).toBeUndefined();
   });
 });
 

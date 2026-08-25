@@ -1,5 +1,6 @@
 import {
   applyScalarControl,
+  condensationBandMode,
   SCALAR_CONTROLS,
   surfaceColorLUT,
 } from "./control-spec";
@@ -64,6 +65,42 @@ function mockEffects(shared = false): ControlEffects {
 }
 
 describe("applyScalarControl: parsing/mapping", () => {
+  it("authors classic, root-only, and sorted custom condensation bands", () => {
+    const mode = specById("surfaceCondensationBandMode");
+    const min = specById("surfaceCondensationMinSlider");
+    const max = specById("surfaceCondensationMaxSlider");
+    const initial = initialState(true);
+
+    const root = applyScalarControl(initial, mode, "root");
+    expect(root.condensationDepthBand).toEqual({ maxDepth: 0 });
+    expect(condensationBandMode(root)).toBe("root");
+
+    const custom = applyScalarControl(root, mode, "custom");
+    const withMin = applyScalarControl(custom, min, "7");
+    expect(withMin.condensationDepthBand).toEqual({
+      minDepth: 1,
+      maxDepth: 7,
+    });
+    const sorted = applyScalarControl(withMin, max, "3");
+    expect(sorted.condensationDepthBand).toEqual({
+      minDepth: 1,
+      maxDepth: 3,
+    });
+    expect(condensationBandMode(sorted)).toBe("custom");
+
+    const classic = applyScalarControl(sorted, mode, "all");
+    expect(classic.condensationDepthBand).toBeUndefined();
+    expect(condensationBandMode(classic)).toBe("all");
+  });
+
+  it("restarts the frozen Surface session after a condensation-band edit", () => {
+    const spec = specById("surfaceCondensationMaxSlider");
+    const state = applyScalarControl(initialState(true), spec, "4");
+    const fx = mockEffects();
+    spec.effect?.(state, fx, initialState(true));
+    expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(1);
+  });
+
   it("pointSizeSlider apply parses the raw string into a numeric pointSize", () => {
     const spec = specById("pointSizeSlider");
 

@@ -32,6 +32,8 @@ import {
   runChaosGame,
 } from "../fractal/chaos-game";
 import { resolveBackground } from "./background";
+import { resolveCondensationDepthBand } from "../fractal/condensation-de";
+import type { CondensationDepthBand } from "../fractal/condensation-de";
 import type {
   BackgroundGradient,
   BackgroundMode,
@@ -415,6 +417,13 @@ export interface AppState {
    * where the background SHAPE pops.
    */
   schedule?: HybridSchedule;
+  /**
+   * Optional inclusive word-depth band for condensation geometry in Surface.
+   * Root is depth 0. Absence is the classic/full construction: C0 is folded
+   * at every visited depth. This is scene content (not a renderer preference)
+   * because a finite band changes which copies belong to the displayed set.
+   */
+  condensationDepthBand?: CondensationDepthBand;
   /**
    * Optional shape-trap COLOR block (`types.ts`'s {@link ShapeTrap}):
    * Pickover shape-trapping as the escape family's second palette channel —
@@ -1586,6 +1595,32 @@ export function setSchedule(
 export function setScheduleDepth(state: AppState, depth: number): AppState {
   if (!state.schedule) return state;
   return setSchedule(state, { ...state.schedule, depth });
+}
+
+/**
+ * Set Surface condensation's inclusive word-depth band. Finite endpoints are
+ * floored, clamped nonnegative, and sorted by the shared resolver. The full
+ * range (0..unbounded) is stored as absence so documents predating the field
+ * and documents whose user never narrowed the levels encode identically.
+ */
+export function setCondensationDepthBand(
+  state: AppState,
+  band: CondensationDepthBand | null,
+): AppState {
+  if (!band) return { ...state, condensationDepthBand: undefined };
+  const resolved = resolveCondensationDepthBand(band);
+  const normalized: CondensationDepthBand = {};
+  if (resolved.minDepth > 0) normalized.minDepth = resolved.minDepth;
+  if (resolved.maxDepth < Number.MAX_SAFE_INTEGER) {
+    normalized.maxDepth = resolved.maxDepth;
+  }
+  return {
+    ...state,
+    condensationDepthBand:
+      normalized.minDepth === undefined && normalized.maxDepth === undefined
+        ? undefined
+        : normalized,
+  };
 }
 
 /**

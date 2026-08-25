@@ -15,6 +15,7 @@ import {
   createSurfaceMaterial,
   packSurfaceBalloonPalette,
   packSurfaceBalloonTint,
+  SURFACE_CONDENSATION_GLSL_DEPTH_MAX,
   SURFACE_GLSL_STRIP_BYTES,
   surfaceFragmentFor,
   surfaceFragmentResolvedFor,
@@ -30,6 +31,7 @@ import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
 import type { SurfaceDE4, SurfaceDE4Map } from "../fractal/surface-de-4d";
 import { radiusBandInvRange } from "../fractal/surface-de-4d";
 import { CLASSIC_SURFACE_FOLD_RADII } from "../fractal/surface-de";
+import type { ShapeSpec } from "../fractal/shapes";
 import { twentyFourCellFlake } from "../fractal/presets";
 import { createHash } from "node:crypto";
 import { PRE_PATTERN_SOURCE_HASHES } from "./surface-pattern-baseline";
@@ -158,6 +160,156 @@ function rowMajorOf(m: THREE.Matrix4): number[] {
     e[15],
   ];
 }
+
+const COND4_SPHERE: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "sphere", radius: 0.35 },
+      combine: "union",
+    },
+  ],
+};
+
+const COND4_BOX: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "box", half: [0.2, 0.25, 0.3] },
+      combine: "union",
+    },
+  ],
+};
+
+function condEmitter4(
+  shape: ShapeSpec,
+  shadeIndex: number,
+  invT: [number, number, number, number],
+) {
+  return {
+    shape,
+    baseIndex: shadeIndex,
+    shadeIndex,
+    sigmaMin: 0.2,
+    invM: IDENTITY4,
+    invT,
+    center: [0, 0, 0, 0] as [number, number, number, number],
+    radius: 1,
+  };
+}
+
+describe("4D GLSL condensation packing and source", () => {
+  it("appends inverse records in the std140 map arrays while recursive and shade counts remain separate", () => {
+    const material = createSurfaceMaterial4();
+    const de: SurfaceDE4 = {
+      ...de4([map4()]),
+      condensation: {
+        emitters: [
+          condEmitter4(COND4_SPHERE, 1, [1, 2, 3, 4]),
+          condEmitter4(COND4_BOX, 2, [5, 6, 7, 8]),
+          condEmitter4(COND4_SPHERE, 1, [9, 10, 11, 12]),
+        ],
+        depthBand: { minDepth: 1, maxDepth: 4 },
+      },
+    };
+    setSurfaceSystem4(material, de, [
+      [0, 0, 0],
+      [1, 0, 0],
+      [0, 1, 0],
+    ]);
+    const u = material.uniforms;
+    expect(u.uMapCount.value).toBe(1);
+    expect(u.uCondCount.value).toBe(3);
+    expect(u.uShadeCount.value).toBe(3);
+    expect(u.uCondMinDepth.value).toBe(1);
+    expect(u.uCondMaxDepth.value).toBe(4);
+    expect(u.uCondShape.value.slice(0, 3)).toEqual([0, 1, 0]);
+    expect(u.uCondShade.value.slice(0, 3)).toEqual([1, 2, 1]);
+    const block = mapBlock(material);
+    expect(Array.from(block.invT.subarray(4, 8))).toEqual([1, 2, 3, 4]);
+    expect(Array.from(block.invT.subarray(12, 16))).toEqual([9, 10, 11, 12]);
+    expect(Array.from(block.colorSigma.subarray(4, 7))).toEqual([1, 0, 0]);
+    expect(Array.from(block.colorSigma.subarray(8, 11))).toEqual([0, 1, 0]);
+    expect(block.colorSigma[7]).toBeCloseTo(0.2, 6);
+
+    de.condensation!.depthBand.maxDepth = Number.MAX_SAFE_INTEGER;
+    setSurfaceSystem4(material, de, [
+      [0, 0, 0],
+      [1, 0, 0],
+      [0, 1, 0],
+    ]);
+    expect(u.uCondMaxDepth.value).toBe(SURFACE_CONDENSATION_GLSL_DEPTH_MAX);
+  });
+
+  it("bakes the embedded-solid formula, multiple selectors and all recursive visit hooks", () => {
+    const glsl = surface4FragmentFor(0, 0, 0, 0, [
+      COND4_SPHERE,
+      COND4_BOX,
+      COND4_SPHERE,
+    ]);
+    expect(glsl).toContain("float condensation4Sdf0");
+    expect(glsl).toContain("float condensation4Sdf1");
+    expect(glsl).not.toContain("condensation4Sdf2");
+    expect(glsl).toContain("length(vec2(max(sd, 0.0), local.w))");
+    expect(glsl).toContain("scale * 0.9 * uMapColorSigma[slot].w");
+    expect(glsl).toContain("condensationFutureAfterChild4");
+    expect(glsl.match(/float\s+tKey\s*=\s*c4Key\s*;/g)).toHaveLength(4);
+    expect(glsl.match(/eKey\s*=\s*tKey\s*;/g)).toHaveLength(4);
+    expect(glsl).toContain("condensationTerm4(img, 1.0, depth).x");
+    expect(glsl).toContain(
+      "uMapColorSigma[clamp(firstChoice, 0, uShadeCount - 1)].xyz",
+    );
+    expect(glsl).not.toContain("__SURFACE_CONDENSATION_SDFS__");
+    expect(glsl.length).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+  });
+
+  it("composes with both admitted 4D scene arms", () => {
+    const balloon = surface4FragmentFor(1, 0, 0, 0, [COND4_SPHERE]);
+    const plane = surface4FragmentFor(0, 1, 0, 0, [COND4_SPHERE]);
+    expect(balloon).toContain("balloonInvert");
+    expect(balloon).toContain("condensationTerm4");
+    expect(plane).toContain("shadeGroundPlane");
+    expect(plane).toContain("condensationTerm4");
+  });
+
+  it("restores the byte-identical off source and enforces the shared 24-record cap", () => {
+    const material = createSurfaceMaterial4();
+    const baseline = material.fragmentShader;
+    const withCondensation: SurfaceDE4 = {
+      ...de4([map4()]),
+      condensation: {
+        emitters: [condEmitter4(COND4_SPHERE, 1, [0, 0, 0, 0])],
+        depthBand: { minDepth: 0, maxDepth: 8 },
+      },
+    };
+    setSurfaceSystem4(material, withCondensation, [
+      [0, 0, 0],
+      [1, 0, 0],
+    ]);
+    expect(material.fragmentShader).not.toBe(baseline);
+    setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]]);
+    expect(material.fragmentShader).toBe(baseline);
+    expect(material.uniforms.uCondCount.value).toBe(0);
+
+    const maps = Array.from({ length: 21 }, (_, baseIndex) =>
+      map4({ baseIndex }),
+    );
+    const overflow: SurfaceDE4 = {
+      ...de4(maps),
+      condensation: {
+        emitters: Array.from({ length: 4 }, (_, i) =>
+          condEmitter4(COND4_SPHERE, 21 + i, [i, 0, 0, 0]),
+        ),
+        depthBand: { minDepth: 0, maxDepth: 8 },
+      },
+    };
+    expect(() =>
+      setSurfaceSystem4(
+        material,
+        overflow,
+        Array.from({ length: 25 }, () => [0, 0, 0]),
+      ),
+    ).toThrow(/condensation records/);
+  });
+});
 
 describe("setSurfaceSystem4 slot cap", () => {
   it("has room for the 24 maps twentyFourCellFlake brings", () => {

@@ -44,7 +44,8 @@ import { SURFACE_FULL_HIT_FLOOR } from "./surface-material";
 import { surface4FragmentFor } from "./surface-material-4d";
 import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
 import { buildSurfaceDE } from "../fractal/surface-de";
-import { defaultTransforms } from "../fractal/presets";
+import { buildSurfaceDE4 } from "../fractal/surface-de-4d";
+import { defaultTransforms, gearworks } from "../fractal/presets";
 
 describe("the two engines' full-tier hit floor (mirror pin)", () => {
   it("is ONE number: surface-de-gpu.ts's SURFACE_GPU_HIT_FLOOR is surface-material.ts's SURFACE_FULL_HIT_FLOOR", () => {
@@ -1337,6 +1338,8 @@ globalThis.GPUTextureUsage = {
 interface PaletteResourceHarness {
   renderer: SurfaceComputeRenderer;
   layoutDescriptors: GPUBindGroupLayoutDescriptor[];
+  bufferDescriptors: GPUBufferDescriptor[];
+  shaderSources: string[];
   textureDescriptors: GPUTextureDescriptor[];
   textureWrites: ReturnType<typeof vi.fn>;
   bufferWrites: ReturnType<typeof vi.fn>;
@@ -1350,8 +1353,11 @@ interface PaletteResourceHarness {
  * allocation/compilation outcomes are supplied by the fake. */
 async function createPaletteResourceHarness(
   balloon: boolean,
+  targetOverride?: SurfaceComputeTarget,
 ): Promise<PaletteResourceHarness> {
   const layoutDescriptors: GPUBindGroupLayoutDescriptor[] = [];
+  const bufferDescriptors: GPUBufferDescriptor[] = [];
+  const shaderSources: string[] = [];
   const textureDescriptors: GPUTextureDescriptor[] = [];
   const bindGroups: GPUBindGroupDescriptor[] = [];
   const textureWrites = vi.fn();
@@ -1371,16 +1377,22 @@ async function createPaletteResourceHarness(
     },
     pushErrorScope: () => {},
     popErrorScope: async () => null,
-    createShaderModule: () => ({
-      getCompilationInfo: async () => ({ messages: [] }),
-    }),
+    createShaderModule: (descriptor: GPUShaderModuleDescriptor) => {
+      shaderSources.push(descriptor.code);
+      return {
+        getCompilationInfo: async () => ({ messages: [] }),
+      };
+    },
     createBindGroupLayout: (descriptor: GPUBindGroupLayoutDescriptor) => {
       layoutDescriptors.push(descriptor);
       return {};
     },
     createPipelineLayout: () => ({}),
     createComputePipelineAsync: async () => ({}),
-    createBuffer: () => ({ destroy: vi.fn() }),
+    createBuffer: (descriptor: GPUBufferDescriptor) => {
+      bufferDescriptors.push(descriptor);
+      return { destroy: vi.fn() };
+    },
     createTexture: (descriptor: GPUTextureDescriptor) => {
       textureDescriptors.push(descriptor);
       const texture = {
@@ -1401,7 +1413,11 @@ async function createPaletteResourceHarness(
     order: 1,
     plane: "xz",
   });
-  const target: SurfaceComputeTarget = { kind: "ifs", de, balloon };
+  const target: SurfaceComputeTarget = targetOverride ?? {
+    kind: "ifs",
+    de,
+    balloon,
+  };
   const build = Reflect.get(SurfaceComputeRenderer, "buildOnDevice") as (
     device: GPUDevice,
     target: SurfaceComputeTarget,
@@ -1424,6 +1440,8 @@ async function createPaletteResourceHarness(
   return {
     renderer,
     layoutDescriptors,
+    bufferDescriptors,
+    shaderSources,
     textureDescriptors,
     textureWrites,
     bufferWrites,
@@ -1432,6 +1450,58 @@ async function createPaletteResourceHarness(
     balloonTexture: textures[1] ?? null,
   };
 }
+
+describe("SurfaceComputeRenderer condensation session resources", () => {
+  it("passes emitter geometry into both kernels and allocates the appended params block", async () => {
+    const de = buildSurfaceDE(
+      gearworks(),
+      null,
+      { order: 1, plane: "xz" },
+      {
+        condensationDepthBand: { minDepth: 2, maxDepth: 4 },
+      },
+    );
+    expect(de.condensation?.emitters.length).toBeGreaterThan(0);
+    const harness = await createPaletteResourceHarness(false, {
+      kind: "ifs",
+      de,
+    });
+
+    expect(harness.shaderSources).toHaveLength(2);
+    for (const source of harness.shaderSources) {
+      expect(source).toContain("struct CondensationHit");
+      expect(source).toContain("condensationShapeSdf");
+    }
+    expect(harness.bufferDescriptors[0].size).toBe(304);
+    harness.renderer.destroy();
+  });
+
+  it("does the same for the slab-refusing 4D kernel pair", async () => {
+    const de = buildSurfaceDE4(
+      gearworks(),
+      null,
+      { order: 1, plane: "xz" },
+      {
+        condensationDepthBand: { maxDepth: 0 },
+      },
+    );
+    const harness = await createPaletteResourceHarness(false, {
+      kind: "ifs4",
+      de,
+    });
+
+    // An embedded condensation solid does not admit the 4D segment query,
+    // so this session intentionally compiles only its slab-free pair.
+    expect(harness.shaderSources).toHaveLength(2);
+    for (const source of harness.shaderSources) {
+      expect(source).toContain("struct CondensationHit");
+      expect(source).toContain("condensationShapeSdf");
+      expect(source).toContain("max(shapeDistance, 0.0), local.w");
+    }
+    expect(harness.bufferDescriptors[0].size).toBe(592);
+    harness.renderer.destroy();
+  });
+});
 
 async function runPaletteFramePrelude(
   harness: PaletteResourceHarness,

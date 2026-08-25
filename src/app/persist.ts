@@ -109,6 +109,8 @@ import {
 } from "../fractal/chaos-game";
 import { MAX_SHAPE_PARTS } from "../fractal/shapes";
 import type { ShapePart, ShapePose, ShapeSpec } from "../fractal/shapes";
+import { resolveCondensationDepthBand } from "../fractal/condensation-de";
+import type { CondensationDepthBand } from "../fractal/condensation-de";
 import { clamp } from "../fractal/vec";
 
 // ---------------------------------------------------------------------------
@@ -132,6 +134,8 @@ export interface SceneSnapshot {
    * without), entries accepted through a dedicated affine-only leg.
    */
   schedule?: HybridSchedule;
+  /** Optional inclusive condensation word-depth band; absence means all. */
+  condensationDepthBand?: CondensationDepthBand;
   /**
    * Optional shape-trap color block (see {@link AppState.shapeTrap}).
    * Optional like {@link schedule}, and on the identical wire discipline:
@@ -396,6 +400,7 @@ export function toSnapshot(state: AppState): SceneSnapshot {
     transforms: state.transforms,
     finalTransform: state.finalTransform,
     schedule: state.schedule,
+    condensationDepthBand: state.condensationDepthBand,
     shapeTrap: state.shapeTrap,
     numPoints: state.numPoints,
     pointSize: state.pointSize,
@@ -488,6 +493,7 @@ export function fromSnapshot(
     // schedule-less snapshot must clear a base session's block even when
     // the incoming object never declares the key at all.
     schedule: snapshot.schedule,
+    condensationDepthBand: snapshot.condensationDepthBand,
     // The trap block, for the schedule's reason exactly.
     shapeTrap: snapshot.shapeTrap,
     balloonEcho: snapshot.balloonEcho ?? false,
@@ -886,6 +892,40 @@ function decodeSchedule(raw: unknown): HybridSchedule | undefined {
     transforms.push(decoded);
   }
   return { transforms, depth: Math.min(depth, MAX_SCHEDULE_DEPTH) };
+}
+
+/** Decode the optional inclusive condensation level band. Like the schedule,
+ * this is a quiet whole-block fallback with genuine finite-number leaves.
+ * Endpoints are normalized by the estimator's one resolver; the classic full
+ * range returns absence so a hand-authored redundant block cannot become
+ * sticky state. */
+function decodeCondensationDepthBand(
+  raw: unknown,
+): CondensationDepthBand | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  const o = raw as Record<string, unknown>;
+  for (const key of ["minDepth", "maxDepth"] as const) {
+    if (
+      o[key] !== undefined &&
+      (typeof o[key] !== "number" || !Number.isFinite(o[key]))
+    ) {
+      return undefined;
+    }
+  }
+  const resolved = resolveCondensationDepthBand({
+    ...(o.minDepth !== undefined ? { minDepth: o.minDepth as number } : {}),
+    ...(o.maxDepth !== undefined ? { maxDepth: o.maxDepth as number } : {}),
+  });
+  const band: CondensationDepthBand = {};
+  if (resolved.minDepth > 0) band.minDepth = resolved.minDepth;
+  if (resolved.maxDepth < Number.MAX_SAFE_INTEGER) {
+    band.maxDepth = resolved.maxDepth;
+  }
+  return band.minDepth === undefined && band.maxDepth === undefined
+    ? undefined
+    : band;
 }
 
 /**
@@ -2252,6 +2292,7 @@ export function encodeScene(s: SceneSnapshot): string {
       }[];
       depth: number;
     };
+    condensationDepthBand?: CondensationDepthBand;
     shapeTrap?: ShapeTrap;
     numPoints: number;
     pointSize: number;
@@ -2445,6 +2486,21 @@ export function encodeScene(s: SceneSnapshot): string {
         ? { flamePaletteId: s.background.flamePaletteId }
         : {}),
     };
+  }
+  if (s.condensationDepthBand) {
+    const band = resolveCondensationDepthBand(s.condensationDepthBand);
+    const encodedBand: CondensationDepthBand = {
+      ...(band.minDepth > 0 ? { minDepth: band.minDepth } : {}),
+      ...(band.maxDepth < Number.MAX_SAFE_INTEGER
+        ? { maxDepth: band.maxDepth }
+        : {}),
+    };
+    if (
+      encodedBand.minDepth !== undefined ||
+      encodedBand.maxDepth !== undefined
+    ) {
+      payload.condensationDepthBand = encodedBand;
+    }
   }
   // Written only when present, so lens-free systems keep their short URLs.
   if (s.finalTransform)
@@ -2739,6 +2795,10 @@ export function decodeScene(raw: string): SceneSnapshot | null {
     // scene; see decodeSchedule.
     const schedule = decodeSchedule(o.schedule);
 
+    const condensationDepthBand = decodeCondensationDepthBand(
+      o.condensationDepthBand,
+    );
+
     // shapeTrap: optional shape-trap color block — quiet whole-block
     // fallback, never rejecting the scene; see decodeShapeTrap.
     const shapeTrap = decodeShapeTrap(o.shapeTrap);
@@ -2951,6 +3011,7 @@ export function decodeScene(raw: string): SceneSnapshot | null {
       transforms,
       finalTransform,
       schedule,
+      condensationDepthBand,
       shapeTrap,
       numPoints,
       pointSize,

@@ -266,6 +266,18 @@ morphs into place instead of snapping (see **Presets** below).
   proportional cost in trace time rather than in slots. High orders do
   soften the estimate (more branches per level than the tracer's beam can
   follow), which can show as faint membranes across the shape's voids.
+  A transform with a samplable **shape emitter** is the other supported map
+  kind: Surface marches the condensation set `C0 union f_j(A)`, so the
+  shipped **Gearworks** preset renders the master gear and every recursive
+  copy instead of refusing the document. **Cog levels** chooses all depths,
+  root only, or a custom inclusive min/max word-depth band (root is 0).
+  Emitters do not recurse and their variations are skipped; ordinary maps
+  remain the recursive alphabet. The 24-slot gate counts ordinary maps plus
+  symmetry-expanded emitter records, while symmetry copies share the
+  emitter's one color/material slot. Unsamplable or nearly-flat emitters,
+  emitter-only documents and an emitter on the final transform remain
+  refused. In a 4D Surface session the 3D emitter solid is embedded at local
+  w=0, so **Slice thickness** is clamped to 0 for condensation geometry.
   **Pure-fold maps** are no longer an automatic disqualifier either: a
   map whose variation list is exactly one fold-family entry
   (`boxfold`/`spherefold`/`mandelbox`) is a composition the tracer can

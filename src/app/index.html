@@ -1860,6 +1860,43 @@
               />
             </label>
           </div>
+          <div id="surfaceCondensationRow" class="hidden">
+            <label
+              class="select-label"
+              title="Choose which recursive word depths contain copies of an emitter shape; root is depth 0"
+            >
+              Cog levels
+              <select id="surfaceCondensationBandMode">
+                <option value="all">All levels</option>
+                <option value="root">Root only</option>
+                <option value="custom">Custom band</option>
+              </select>
+            </label>
+            <div id="surfaceCondensationCustom" class="hidden">
+              <label class="select-label">
+                First level: <span id="surfaceCondensationMinLabel">1</span>
+                <input
+                  type="range"
+                  id="surfaceCondensationMinSlider"
+                  min="0"
+                  max="24"
+                  step="1"
+                  value="1"
+                />
+              </label>
+              <label class="select-label">
+                Last level: <span id="surfaceCondensationMaxLabel">1</span>
+                <input
+                  type="range"
+                  id="surfaceCondensationMaxSlider"
+                  min="0"
+                  max="24"
+                  step="1"
+                  value="1"
+                />
+              </label>
+            </div>
+          </div>
           <!-- The shape trap (Pickover shape-trapping): the escape family's
                second palette channel — the orbit's distance to a posed
                shape, stamped at every scale of the fractal. Visible only

@@ -19,7 +19,7 @@ import {
   type ResolvedShapeTrap,
 } from "./shape-trap";
 import { SYM_PLANE_CODE4, type EscapeDE4 } from "./escape-de-4d";
-import { shapeSdfSource, type ShapeSpec } from "./shapes";
+import { SHAPE_MARCH_SAFETY, shapeSdfSource, type ShapeSpec } from "./shapes";
 import {
   FOOTPRINT_DEPTH_FLOOR,
   SPHEREFOLD_MID_MIN_R,
@@ -900,6 +900,12 @@ export const SURFACE_GPU_PARAMS_BALLOON_BYTES = 320;
  * size exactly when their `groundPlane` argument is non-null, and their
  * usual buffer byte for byte when it is null. */
 export const SURFACE_GPU_PARAMS_PLANE_BYTES = 336;
+/** Params sizes when condensation appends its four-u32 control block after
+ * the last enabled 3D feature block. The pre-existing prefixes and their
+ * frozen offsets are unchanged. */
+export const SURFACE_GPU_PARAMS_CONDENSATION_BYTES = 304;
+export const SURFACE_GPU_PARAMS_BALLOON_CONDENSATION_BYTES = 336;
+export const SURFACE_GPU_PARAMS_PLANE_CONDENSATION_BYTES = 352;
 /** Params size for `core: "affine4"` — the frozen 0..207 block plus the
  * 4D variant tail (layout contract in the module doc). The other cores'
  * structs still end at 208/288; binding the larger buffer to them would
@@ -936,6 +942,11 @@ export const SURFACE_GPU_PARAMS4_BALLOON_BYTES =
  * ballCenter vec3f 592, albedo vec3f 608. */
 export const SURFACE_GPU_PARAMS4_PLANE_BYTES =
   SURFACE_GPU_PARAMS4_LENS_BYTES + 48;
+/** 4D condensation sizes: its four-u32 control block follows the forced
+ * 576-byte variant prefix, or the existing balloon/plane feature tail. */
+export const SURFACE_GPU_PARAMS4_CONDENSATION_BYTES = 592;
+export const SURFACE_GPU_PARAMS4_BALLOON_CONDENSATION_BYTES = 624;
+export const SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_BYTES = 640;
 /** Params size for a 3D FORWARD core (escape, bulb) under `shapeTrap`: the
  * 336-byte plane-bearing block — the plane region declared unconditionally
  * under the trap and zero-filled when there is no floor, which is what
@@ -993,6 +1004,92 @@ export const SURFACE_GPU_SHADE_BYTES = 224;
  * surface entry in main.ts, compute-only fold shapes included), so no
  * eligible system can overflow the fixed array. */
 export const SURFACE_GPU_UNIFORM_MAP_SLOTS = 24;
+
+interface CondensationWireEmitter {
+  shadeIndex: number;
+}
+
+interface CondensationWireDE {
+  maps: readonly unknown[];
+  condensation?: {
+    emitters: readonly CondensationWireEmitter[];
+    depthBand: { minDepth: number; maxDepth: number };
+  };
+}
+
+interface CondensationWireInfo {
+  emitterCount: number;
+  shadeCount: number;
+  depthMin: number;
+  depthMax: number;
+}
+
+/** Validate the compact low-level wire shared by params and map packing.
+ * Emitters themselves are symmetry-expanded records, while shade slots are
+ * unique by base emitter and must be the contiguous suffix after maps. */
+function condensationWireInfo(
+  de: CondensationWireDE,
+): CondensationWireInfo | null {
+  const condensation = de.condensation;
+  if (!condensation || condensation.emitters.length === 0) return null;
+  const recordCount = de.maps.length + condensation.emitters.length;
+  if (recordCount > SURFACE_GPU_UNIFORM_MAP_SLOTS) {
+    throw new RangeError(
+      `surface-de-gpu: condensation needs ${recordCount} map/emitter records; ` +
+        `the low-level cap is ${SURFACE_GPU_UNIFORM_MAP_SLOTS}`,
+    );
+  }
+  const shadeIndices = new Set<number>();
+  for (const emitter of condensation.emitters) {
+    if (!Number.isInteger(emitter.shadeIndex)) {
+      throw new RangeError(
+        `surface-de-gpu: condensation shade index ${emitter.shadeIndex} is not an integer`,
+      );
+    }
+    shadeIndices.add(emitter.shadeIndex);
+  }
+  const sortedShades = [...shadeIndices].sort((a, b) => a - b);
+  for (let i = 0; i < sortedShades.length; i++) {
+    const expected = de.maps.length + i;
+    if (sortedShades[i] !== expected) {
+      throw new RangeError(
+        `surface-de-gpu: condensation shade slots must be the contiguous ` +
+          `suffix [${de.maps.length}, ${de.maps.length + sortedShades.length}); ` +
+          `found ${sortedShades.join(", ")}`,
+      );
+    }
+  }
+  const shadeCount = de.maps.length + sortedShades.length;
+  if (shadeCount > SURFACE_GPU_UNIFORM_MAP_SLOTS) {
+    throw new RangeError(
+      `surface-de-gpu: condensation needs ${shadeCount} unique shade slots; ` +
+        `the low-level cap is ${SURFACE_GPU_UNIFORM_MAP_SLOTS}`,
+    );
+  }
+  return {
+    emitterCount: condensation.emitters.length,
+    shadeCount,
+    depthMin: Math.min(
+      0xffffffff,
+      Math.max(0, condensation.depthBand.minDepth),
+    ),
+    depthMax: Math.min(
+      0xffffffff,
+      Math.max(0, condensation.depthBand.maxDepth),
+    ),
+  };
+}
+
+function writeCondensationBlock(
+  view: DataView,
+  offset: number,
+  info: CondensationWireInfo,
+): void {
+  view.setUint32(offset, info.emitterCount, true);
+  view.setUint32(offset + 4, info.depthMin, true);
+  view.setUint32(offset + 8, info.depthMax, true);
+  view.setUint32(offset + 12, info.shadeCount, true);
+}
 
 /** Shade uniform size under the pattern gate (shade mode): the 224-byte
  * layout plus the calibration quartet at the frozen offset 224 (layout
@@ -1202,6 +1299,15 @@ export interface SurfaceGpuKernelOptions {
    * object builds a session's kernel pair), and no marching quantity
    * changes at any setting. */
   shapeTrap?: ShapeSpec | null;
+  /** Condensation codegen input. Pass the DE's recursive map count plus its
+   * symmetry-expanded emitters directly; codegen validates the same 24-record
+   * and unique-shade suffix contract as the packers, then bakes one ShapeSpec
+   * per unique base-emitter shade. Absent, null, or an empty emitter list
+   * emits the pre-condensation source byte for byte. Descent cores only. */
+  condensation?: {
+    mapCount: number;
+    emitters: readonly { shape: ShapeSpec; shadeIndex: number }[];
+  } | null;
   /** March-mode ray derivation. "pose" (default) keeps the bench baseline:
    * NDC pixel centers against the pose basis — byte-identical output to
    * the pre-shade-split generator. "unproject" derives rays the GLSL
@@ -1421,6 +1527,7 @@ export function packSurfaceGpuParams(
   balloon: { center: Vec3; rho: number; R: number; far: number } | null = null,
   groundPlane: SurfaceGpuGroundPlane | null = null,
 ): ArrayBuffer {
+  const condensation = condensationWireInfo(de);
   if (balloon && groundPlane) {
     throw new Error(
       "surface-de-gpu: groundPlane+balloon: excluded — the two " +
@@ -1450,11 +1557,17 @@ export function packSurfaceGpuParams(
     );
   }
   const buf = new ArrayBuffer(
-    balloon
-      ? SURFACE_GPU_PARAMS_BALLOON_BYTES
-      : groundPlane
-        ? SURFACE_GPU_PARAMS_PLANE_BYTES
-        : SURFACE_GPU_PARAMS_BYTES,
+    condensation
+      ? balloon
+        ? SURFACE_GPU_PARAMS_BALLOON_CONDENSATION_BYTES
+        : groundPlane
+          ? SURFACE_GPU_PARAMS_PLANE_CONDENSATION_BYTES
+          : SURFACE_GPU_PARAMS_CONDENSATION_BYTES
+      : balloon
+        ? SURFACE_GPU_PARAMS_BALLOON_BYTES
+        : groundPlane
+          ? SURFACE_GPU_PARAMS_PLANE_BYTES
+          : SURFACE_GPU_PARAMS_BYTES,
   );
   const view = new DataView(buf);
   writeVec3(view, 0, de.boundCenter);
@@ -1543,6 +1656,13 @@ export function packSurfaceGpuParams(
   // convention.
   if (groundPlane) {
     writeGroundPlane(view, groundPlane);
+  }
+  if (condensation) {
+    writeCondensationBlock(
+      view,
+      balloon ? 320 : groundPlane ? 336 : 288,
+      condensation,
+    );
   }
   return buf;
 }
@@ -1938,6 +2058,7 @@ export function packSurface4GpuParams(
   balloon: { center: Vec3; rho: number; R: number; far: number } | null = null,
   groundPlane: SurfaceGpuGroundPlane | null = null,
 ): ArrayBuffer {
+  const condensation = condensationWireInfo(de);
   if (balloon && groundPlane) {
     throw new Error(
       "surface-de-gpu: groundPlane+balloon: excluded — the two " +
@@ -1963,13 +2084,19 @@ export function packSurface4GpuParams(
   // without a lens), which is what keeps their own offset at 576 for
   // every 4D core — the 3D packer's frozen-288 rule one dimension up.
   const buf = new ArrayBuffer(
-    balloon
-      ? SURFACE_GPU_PARAMS4_BALLOON_BYTES
-      : groundPlane
-        ? SURFACE_GPU_PARAMS4_PLANE_BYTES
-        : lens4
-          ? SURFACE_GPU_PARAMS4_LENS_BYTES
-          : SURFACE_GPU_PARAMS4_BYTES,
+    condensation
+      ? balloon
+        ? SURFACE_GPU_PARAMS4_BALLOON_CONDENSATION_BYTES
+        : groundPlane
+          ? SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_BYTES
+          : SURFACE_GPU_PARAMS4_CONDENSATION_BYTES
+      : balloon
+        ? SURFACE_GPU_PARAMS4_BALLOON_BYTES
+        : groundPlane
+          ? SURFACE_GPU_PARAMS4_PLANE_BYTES
+          : lens4
+            ? SURFACE_GPU_PARAMS4_LENS_BYTES
+            : SURFACE_GPU_PARAMS4_BYTES,
   );
   const view = new DataView(buf);
   view.setFloat32(12, de.boundingRadius, true);
@@ -2092,6 +2219,13 @@ export function packSurface4GpuParams(
   }
   if (groundPlane) {
     writeGroundPlane4(view, groundPlane);
+  }
+  if (condensation) {
+    writeCondensationBlock(
+      view,
+      balloon ? 608 : groundPlane ? 624 : 576,
+      condensation,
+    );
   }
   return buf;
 }
@@ -2260,8 +2394,11 @@ export function packEscape4GpuMaps(de: EscapeDE4): Float32Array {
 
 /** Pack the per-map storage array (layout contract above). */
 export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
+  const condensation = condensationWireInfo(de);
+  const emitterCount = condensation?.emitterCount ?? 0;
   const out = new Float32Array(
-    de.maps.length * SURFACE_GPU_MAP_VEC4 * 4 || SURFACE_GPU_MAP_VEC4 * 4,
+    (de.maps.length + emitterCount) * SURFACE_GPU_MAP_VEC4 * 4 ||
+      SURFACE_GPU_MAP_VEC4 * 4,
   );
   de.maps.forEach((m, j) => {
     const base = j * SURFACE_GPU_MAP_VEC4 * 4;
@@ -2293,6 +2430,25 @@ export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
     out[base + 25] = m.foldRadii.fixedR;
     out[base + 26] = m.foldRadii.wall;
   });
+  de.condensation?.emitters.forEach((emitter, j) => {
+    if (!condensation) return;
+    const base = (de.maps.length + j) * SURFACE_GPU_MAP_VEC4 * 4;
+    out[base + 0] = emitter.invM[0];
+    out[base + 1] = emitter.invM[1];
+    out[base + 2] = emitter.invM[2];
+    out[base + 3] = emitter.invT[0];
+    out[base + 4] = emitter.invM[3];
+    out[base + 5] = emitter.invM[4];
+    out[base + 6] = emitter.invM[5];
+    out[base + 7] = emitter.invT[1];
+    out[base + 8] = emitter.invM[6];
+    out[base + 9] = emitter.invM[7];
+    out[base + 10] = emitter.invM[8];
+    out[base + 11] = emitter.invT[2];
+    out[base + 12] = emitter.sigmaMin;
+    out[base + 13] = emitter.shadeIndex;
+    out[base + 14] = emitter.shadeIndex - de.maps.length;
+  });
   return out;
 }
 
@@ -2303,8 +2459,11 @@ export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
  * the 3D "affine" core. Pads to one zero stride when empty, like
  * {@link packSurfaceGpuMaps}. */
 export function packSurfaceGpuMaps4(de: SurfaceDE4): Float32Array {
+  const condensation = condensationWireInfo(de);
+  const emitterCount = condensation?.emitterCount ?? 0;
   const out = new Float32Array(
-    de.maps.length * SURFACE_GPU_MAP4_VEC4 * 4 || SURFACE_GPU_MAP4_VEC4 * 4,
+    (de.maps.length + emitterCount) * SURFACE_GPU_MAP4_VEC4 * 4 ||
+      SURFACE_GPU_MAP4_VEC4 * 4,
   );
   de.maps.forEach((m, j) => {
     const base = j * SURFACE_GPU_MAP4_VEC4 * 4;
@@ -2336,6 +2495,20 @@ export function packSurfaceGpuMaps4(de: SurfaceDE4): Float32Array {
     out[base + 32] = m.foldRadii.minR;
     out[base + 33] = m.foldRadii.fixedR;
     out[base + 34] = m.foldRadii.wall;
+  });
+  de.condensation?.emitters.forEach((emitter, j) => {
+    if (!condensation) return;
+    const base = (de.maps.length + j) * SURFACE_GPU_MAP4_VEC4 * 4;
+    for (let i = 0; i < 16; i++) {
+      out[base + i] = emitter.invM[i];
+    }
+    out[base + 16] = emitter.invT[0];
+    out[base + 17] = emitter.invT[1];
+    out[base + 18] = emitter.invT[2];
+    out[base + 19] = emitter.invT[3];
+    out[base + 20] = emitter.sigmaMin;
+    out[base + 21] = emitter.shadeIndex;
+    out[base + 22] = emitter.shadeIndex - de.maps.length;
   });
   return out;
 }
@@ -2686,6 +2859,48 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // that is BOTH — it takes the 4D tail and the `GpuMap4` layout from the
   // descent cores and the orbit from the 3D escape one.
   const forward = core === "escape" || core === "bulb" || core === "escape4";
+  let condensationShapes: readonly ShapeSpec[] | null = null;
+  if (opts.condensation && opts.condensation.emitters.length > 0) {
+    const codegenCondensation = opts.condensation;
+    if (
+      !Number.isInteger(codegenCondensation.mapCount) ||
+      codegenCondensation.mapCount < 0
+    ) {
+      throw new RangeError(
+        `surface-de-gpu: bad condensation map count ${codegenCondensation.mapCount}`,
+      );
+    }
+    const info = condensationWireInfo({
+      maps: new Array(codegenCondensation.mapCount),
+      condensation: {
+        emitters: codegenCondensation.emitters,
+        depthBand: { minDepth: 0, maxDepth: 0 },
+      },
+    })!;
+    // Size by the validated shade suffix, not the symmetry-expanded record
+    // count, then make every copy agree on its base shape.
+    const shapes = new Array<ShapeSpec>(
+      info.shadeCount - codegenCondensation.mapCount,
+    );
+    for (const emitter of codegenCondensation.emitters) {
+      const selector = emitter.shadeIndex - codegenCondensation.mapCount;
+      const prior = shapes[selector];
+      if (prior && prior !== emitter.shape) {
+        throw new RangeError(
+          `surface-de-gpu: condensation shade ${emitter.shadeIndex} points ` +
+            "at multiple ShapeSpecs",
+        );
+      }
+      shapes[selector] = emitter.shape;
+    }
+    condensationShapes = shapes;
+  }
+  if (condensationShapes && forward) {
+    throw new Error(
+      "surface-de-gpu: condensation is supported only by the " +
+        "affine/fold/affine4/fold4 descent cores; forward cores refuse it",
+    );
+  }
   // ...but the escape cores' formula CHAIN rides the maps
   // storage binding — one `GpuMap`/`GpuMap4` per LINK, the descent cores'
   // own layout carrying FORWARD affines (packed by {@link
@@ -2758,6 +2973,12 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // means no trap, so every trap-free config generates byte-identical
   // source — the compile-gate mechanism, exactly the finish flag's.
   const shapeTrap = opts.shapeTrap ?? null;
+  if (shapeTrap && condensationShapes) {
+    throw new Error(
+      "surface-de-gpu: condensation+shapeTrap is excluded — condensation " +
+        "belongs to descent cores and shapeTrap belongs to forward cores",
+    );
+  }
   if (shapeTrap && !forward) {
     throw new Error(
       "surface-de-gpu: shapeTrap is the escape family's color channel " +
@@ -2852,6 +3073,116 @@ fn trapValue(best: f32, cross: f32) -> f32 {
 
 `
     : "";
+  const condensationHelperText = condensationShapes
+    ? `${condensationShapes
+        .map((shape, i) =>
+          shapeSdfSource(shape, "wgsl", `condensationShape${i}`),
+        )
+        .join("\n")}
+struct CondensationHit {
+  distance: f32,
+  shade: i32,
+}
+
+fn condensationShapeSdf(selector: u32, p: vec3f) -> f32 {
+  switch selector {
+${condensationShapes
+  .map(
+    (_, i) => `    case ${i}u: {
+      return condensationShape${i}(p);
+    }`,
+  )
+  .join("\n")}
+    default: {
+      return 1e30;
+    }
+  }
+}
+
+fn condensationDistance(q: ${core4 ? "vec4f" : "vec3f"}) -> CondensationHit {
+  var best = 1e30;
+  var shade = 0;
+  for (var e = 0u; e < params.condEmitterCount; e++) {
+    let m = maps[params.mapCount + e];
+    let local = ${core4 ? "mapApply4(m, q)" : "mapApply(m, q)"};
+    let shapeDistance = condensationShapeSdf(u32(m.p0.z), local.xyz);
+    let embeddedDistance = ${
+      core4
+        ? "length(vec2f(max(shapeDistance, 0.0), local.w))"
+        : "shapeDistance"
+    };
+    let d = m.p0.x * embeddedDistance;
+    if (d < best) {
+      best = d;
+      shade = i32(m.p0.y);
+    }
+  }
+  return CondensationHit(best, shade);
+}
+
+fn condensationTerm(q: ${core4 ? "vec4f" : "vec3f"}, scale: f32, depth: u32) -> f32 {
+  if (depth < params.condDepthMin || depth > params.condDepthMax) {
+    return 1e30;
+  }
+  return scale * ${wgslFloatLit(SHAPE_MARCH_SAFETY)} * condensationDistance(q).distance;
+}
+${
+  mode === "shade"
+    ? `
+fn condensationTermHit(q: ${core4 ? "vec4f" : "vec3f"}, scale: f32, depth: u32) -> CondensationHit {
+  if (depth < params.condDepthMin || depth > params.condDepthMax) {
+    return CondensationHit(1e30, -1);
+  }
+  let hit = condensationDistance(q);
+  return CondensationHit(
+    scale * ${wgslFloatLit(SHAPE_MARCH_SAFETY)} * hit.distance,
+    hit.shade,
+  );
+}
+`
+    : ""
+}
+
+// Whether a strict descendant of this already-generated child can still
+// carry an enabled C0. The call sites pass depth + 1, matching the CPU's
+// condensationHasFutureDepth(band, depth + 1) exactly.
+fn condensationHasFuture(childDepth: u32) -> bool {
+  return max(childDepth + 1u, params.condDepthMin) <= params.condDepthMax;
+}
+`
+    : "";
+  // Shade-only descents must carry the winning C0 emitter's shade slot,
+  // not merely reproduce its distance. A lexical block makes the helper
+  // safe to interpolate more than once in one WGSL scope while preserving
+  // the strict `<` tie convention of condensationFoldHit in the GLSL path.
+  const condensationHitFold = (
+    q: string,
+    scale: string,
+    depth: string,
+    best: string,
+  ): string =>
+    condensationShapes
+      ? `    {
+      let condensationHit = condensationTermHit(${q}, ${scale}, ${depth});
+      if (condensationHit.distance < ${best}) {
+        ${best} = condensationHit.distance;
+        info.firstChoice = condensationHit.shade;
+      }
+    }
+`
+      : "";
+  const condensationLiveHitFold = (
+    live: string,
+    q: string,
+    scale: string,
+    depth: string,
+    best: string,
+  ): string =>
+    condensationShapes
+      ? `    if (${live}) {
+${condensationHitFold(q, scale, depth, best)}    }
+`
+      : "";
   // The shadeMaps stride token: under either material feature the buffer is 3
   // vec4f per slot ([0] rgb+trap unchanged, [1]/[2] the shared lanes), so EVERY
   // shadeMaps read site's index gains " * 3" through this one string —
@@ -2868,7 +3199,12 @@ fn trapValue(best: f32, cross: f32) -> f32 {
   // The shape trap appends past THAT (escape4's own 624), so it forces the
   // chain too.
   const tail4Block =
-    core4 && (lens || balloon || groundPlane || shapeTrap !== null);
+    core4 &&
+    (lens ||
+      balloon ||
+      groundPlane ||
+      shapeTrap !== null ||
+      condensationShapes !== null);
   // The slab's register-pressure probe (option doc).
   // Meaningful only under the 4D DESCENT cores — every other core reads
   // `true` unconditionally, so `opts.slabExt` is never even consulted for
@@ -3114,11 +3450,11 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   var chFloor = 0.0;
   var live = true;
   let R = params.boundingRadius;
-  for (var depth = 0u; depth < params.maxDepth; depth++) {
+${condensationShapes ? "  var condensationBest = 1e30;\n" : ""}  for (var depth = 0u; depth < params.maxDepth; depth++) {
     if (!live) {
       break;
     }
-    var lbKey = 1e30;
+${condensationHitFold("chQ", "chScale", "depth", "condensationBest")}    var lbKey = 1e30;
     var lbMap = 0u;
     var lbR = 0.0;
     var lbAbsY = 0.0;
@@ -3256,7 +3592,12 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
             branchSigma = m.p0.z * sfSigma;
           }
           let r = length(img - params.boundCenter);
-          var candFloor = pFloor;
+${condensationHitFold(
+  "img",
+  "pScale * branchSigma",
+  "depth + 1u",
+  "condensationBest",
+)}          var candFloor = pFloor;
           if (branchRd > 0.0) {
             candFloor = max(candFloor, pScale * absW * branchRd);
           }
@@ -3279,7 +3620,9 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     if (lbKey >= 1e29) {
       break;
     }
-    if (depth == 0u) {
+    if (depth == 0u${
+      condensationShapes ? " && lbScale * (lbR - R) < condensationBest" : ""
+    }) {
       info.firstChoice = i32(lbMap);
     }
     trapAcc += trapW * shadeMaps[lbMap${shadeStride}].w;
@@ -3295,7 +3638,13 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
       chFloor = lbFloor;
     }
   }
-  info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
+${
+  condensationShapes
+    ? `  if (live) {
+${condensationHitFold("chQ", "chScale", "params.maxDepth", "condensationBest")}  }
+`
+    : ""
+}  info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
 ${pattern ? `  info.source4 = vec4f(q, 0.0);` : ""}
@@ -3324,12 +3673,18 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
   var trapNorm = 0.0;
   var trapW = 1.0;
   let R = params.boundingRadius;
-  var aQ = q;
+${
+  condensationShapes
+    ? `  var best = 1e30;
+  var aR = length(q - params.boundCenter);
+`
+    : ""
+}  var aQ = q;
   var aScale = 1.0;
   var aLive = true;
   var bQ = vec3f(0.0);
   var bScale = 1.0;
-  var bLive = false;
+${condensationShapes ? "  var bR = 0.0;\n" : ""}  var bLive = false;
   var v1Q = vec3f(0.0);
   var v1Scale = 1.0;
   var v1Live = false;
@@ -3340,24 +3695,29 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     if (!aLive && !bLive && !v1Live && !v2Live) {
       break;
     }
-    var c1Key = 1e30;
+${
+  condensationShapes
+    ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "depth", "best")}${condensationLiveHitFold("bLive", "bQ", "bScale", "depth", "best")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "depth", "best")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "depth", "best")}    let futureCondensation = condensationHasFuture(depth + 1u);
+`
+    : ""
+}    var c1Key = 1e30;
     var c1Q = vec3f(0.0);
     var c1Scale = 1.0;
     var c1R = 0.0;
-    var c1Map = 0u;
+${condensationShapes ? "    var c1Cert = 0.0;\n" : ""}    var c1Map = 0u;
     var c2Key = 1e30;
     var c2Q = vec3f(0.0);
     var c2Scale = 1.0;
     var c2R = 0.0;
-    var c3Key = 1e30;
+${condensationShapes ? "    var c2Cert = 0.0;\n" : ""}    var c3Key = 1e30;
     var c3Q = vec3f(0.0);
     var c3Scale = 1.0;
     var c3R = 0.0;
-    var c4Key = 1e30;
+${condensationShapes ? "    var c3Cert = 0.0;\n" : ""}    var c4Key = 1e30;
     var c4Q = vec3f(0.0);
     var c4Scale = 1.0;
     var c4R = 0.0;
-    for (var c = 0u; c < 4u; c++) {
+${condensationShapes ? "    var c4Cert = 0.0;\n" : ""}    for (var c = 0u; c < 4u; c++) {
       var pQ = vec3f(0.0);
       var pScale = 1.0;
       if (c == 0u) {
@@ -3398,7 +3758,7 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
           let r = length(img - params.boundCenter);
           let key = pScale * (r - R);
           let childScale = pScale * m.p0.x;
-          // Top-2 insert-shift; the displaced tuple (or the candidate
+${condensationHitFold("img", "childScale", "depth + 1u", "best")}${condensationShapes ? "          let cert = childScale * (r - R);\n" : ""}          // Top-2 insert-shift; the displaced tuple (or the candidate
           // itself) spills into the rank-3/4 ladder. Certificates are
           // value-side and trimmed; radii flow through — the spill
           // ladder routes on them.
@@ -3406,49 +3766,96 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
           var eQ = img;
           var eScale = childScale;
           var eR = r;
-          if (key < c1Key) {
+${condensationShapes ? "          var eCert = cert;\n" : ""}          if (key < c1Key) {
             eKey = c2Key;
             eQ = c2Q;
             eScale = c2Scale;
             eR = c2R;
-            c2Key = c1Key;
+${condensationShapes ? "            eCert = c2Cert;\n" : ""}            c2Key = c1Key;
             c2Q = c1Q;
             c2Scale = c1Scale;
             c2R = c1R;
-            c1Key = key;
+${condensationShapes ? "            c2Cert = c1Cert;\n" : ""}            c1Key = key;
             c1Q = img;
             c1Scale = childScale;
             c1R = r;
-            c1Map = j;
+${condensationShapes ? "            c1Cert = cert;\n" : ""}            c1Map = j;
           } else if (key < c2Key) {
             eKey = c2Key;
             eQ = c2Q;
             eScale = c2Scale;
             eR = c2R;
-            c2Key = key;
+${condensationShapes ? "            eCert = c2Cert;\n" : ""}            c2Key = key;
             c2Q = img;
             c2Scale = childScale;
             c2R = r;
-          }
+${condensationShapes ? "            c2Cert = cert;\n" : ""}          }
           if (eKey < c3Key) {
-            c4Key = c3Key;
+${
+  condensationShapes
+    ? `            let tKey = c4Key;
+            let tQ = c4Q;
+            let tScale = c4Scale;
+            let tR = c4R;
+            let tCert = c4Cert;
+`
+    : ""
+}            c4Key = c3Key;
             c4Q = c3Q;
             c4Scale = c3Scale;
             c4R = c3R;
-            c3Key = eKey;
+${condensationShapes ? "            c4Cert = c3Cert;\n" : ""}            c3Key = eKey;
             c3Q = eQ;
             c3Scale = eScale;
             c3R = eR;
-          } else if (eKey < c4Key) {
-            c4Key = eKey;
+${
+  condensationShapes
+    ? `            c3Cert = eCert;
+            eKey = tKey;
+            eQ = tQ;
+            eScale = tScale;
+            eR = tR;
+            eCert = tCert;
+`
+    : ""
+}          } else if (eKey < c4Key) {
+${
+  condensationShapes
+    ? `            let tKey = c4Key;
+            let tQ = c4Q;
+            let tScale = c4Scale;
+            let tR = c4R;
+            let tCert = c4Cert;
+`
+    : ""
+}            c4Key = eKey;
             c4Q = eQ;
             c4Scale = eScale;
             c4R = eR;
+${
+  condensationShapes
+    ? `            c4Cert = eCert;
+            eKey = tKey;
+            eQ = tQ;
+            eScale = tScale;
+            eR = tR;
+            eCert = tCert;
+`
+    : ""
+}          }
+${
+  condensationShapes
+    ? `          if (eR > R && eCert < best) {
+            best = min(best, refinedCert(eQ, eR, eScale, depth + 1u));
+          } else if (eKey < 1e30 && futureCondensation && eR <= R) {
+            best = min(best, eScale * (eR - R));
           }
-        }
+`
+    : ""
+}        }
       }
     }
-    if (depth == 0u) {
+    if (depth == 0u${condensationShapes ? " && c1Cert < best" : ""}) {
       info.firstChoice = i32(c1Map);
     }
     trapAcc += trapW * shadeMaps[c1Map${shadeStride}].w;
@@ -3461,35 +3868,77 @@ fn surfaceDEHitInfo(p: vec3f, li: u32) -> SurfaceHitInfo {
     v1Live = false;
     v2Live = false;
     if (c1Key < 1e29) {
-      if (c1R <= params.escapeRadius) {
-        aQ = c1Q;
+${
+  condensationShapes
+    ? `      if (c1R > params.escapeRadius) {
+        best = min(best, c1Cert);
+      } else {
+`
+    : `      if (c1R <= params.escapeRadius) {
+`
+}        aQ = c1Q;
         aScale = c1Scale;
-        aLive = true;
+${condensationShapes ? "        aR = c1R;\n" : ""}        aLive = true;
       }
     }
     if (c2Key < 1e29) {
-      if (c2R <= params.escapeRadius) {
-        bQ = c2Q;
+${
+  condensationShapes
+    ? `      if (c2R > params.escapeRadius) {
+        best = min(best, c2Cert);
+      } else {
+`
+    : `      if (c2R <= params.escapeRadius) {
+`
+}        bQ = c2Q;
         bScale = c2Scale;
-        bLive = true;
+${condensationShapes ? "        bR = c2R;\n" : ""}        bLive = true;
       }
     }
     if (c3Key < 1e29) {
-      if (c3R <= R) {
-        v1Q = c3Q;
+${
+  condensationShapes
+    ? `      if (c3R > R) {
+        if (c3Cert < best) {
+          best = min(best, refinedCert(c3Q, c3R, c3Scale, depth + 1u));
+        }
+      } else {
+`
+    : `      if (c3R <= R) {
+`
+}        v1Q = c3Q;
         v1Scale = c3Scale;
         v1Live = true;
       }
     }
     if (c4Key < 1e29) {
-      if (c4R <= R) {
-        v2Q = c4Q;
+${
+  condensationShapes
+    ? `      if (c4R > R) {
+        if (c4Cert < best) {
+          best = min(best, refinedCert(c4Q, c4R, c4Scale, depth + 1u));
+        }
+      } else {
+`
+    : `      if (c4R <= R) {
+`
+}        v2Q = c4Q;
         v2Scale = c4Scale;
         v2Live = true;
       }
     }
   }
-  info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
+${
+  condensationShapes
+    ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "params.maxDepth", "best")}${condensationLiveHitFold("bLive", "bQ", "bScale", "params.maxDepth", "best")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "params.maxDepth", "best")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "params.maxDepth", "best")}  if (aLive) {
+    best = min(best, aScale * (aR - R));
+  }
+  if (bLive) {
+    best = min(best, bScale * (bR - R));
+  }
+`
+    : ""
+}  info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
 ${pattern ? `  info.source4 = vec4f(q, 0.0);` : ""}
@@ -3601,7 +4050,13 @@ ${lift4Text("p", "", slabExt, lens)}  var info = SurfaceHitInfo(0, 0.0, 1.0, 1.0
   var trapNorm = 0.0;
   var trapW = 1.0;
   let R = params.boundingRadius;
-  var aQ = q;
+${
+  condensationShapes
+    ? `  var best = 1e30;
+  var aR = ${slabExt ? "segmentRadius4(q, ext)" : "length(q)"};
+`
+    : ""
+}  var aQ = q;
 ${
   slabExt
     ? `  var aExt = ext;
@@ -3616,7 +4071,7 @@ ${
 `
     : ``
 }  var bScale = 1.0;
-  var bLive = false;
+${condensationShapes ? "  var bR = 0.0;\n" : ""}  var bLive = false;
   var v1Q = vec4f(0.0);
 ${
   slabExt
@@ -3637,7 +4092,12 @@ ${
     if (!aLive && !bLive && !v1Live && !v2Live) {
       break;
     }
-    var c1Key = 1e30;
+${
+  condensationShapes
+    ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "depth", "best")}${condensationLiveHitFold("bLive", "bQ", "bScale", "depth", "best")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "depth", "best")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "depth", "best")}    let futureCondensation = condensationHasFuture(depth + 1u);
+`
+    : ""
+}    var c1Key = 1e30;
     var c1Q = vec4f(0.0);
 ${
   slabExt
@@ -3646,7 +4106,7 @@ ${
     : ``
 }    var c1Scale = 1.0;
     var c1R = 0.0;
-    var c1Map = 0u;
+${condensationShapes ? "    var c1Cert = 0.0;\n" : ""}    var c1Map = 0u;
     var c2Key = 1e30;
     var c2Q = vec4f(0.0);
 ${
@@ -3656,7 +4116,7 @@ ${
     : ``
 }    var c2Scale = 1.0;
     var c2R = 0.0;
-    var c3Key = 1e30;
+${condensationShapes ? "    var c2Cert = 0.0;\n" : ""}    var c3Key = 1e30;
     var c3Q = vec4f(0.0);
 ${
   slabExt
@@ -3665,7 +4125,7 @@ ${
     : ``
 }    var c3Scale = 1.0;
     var c3R = 0.0;
-    var c4Key = 1e30;
+${condensationShapes ? "    var c3Cert = 0.0;\n" : ""}    var c4Key = 1e30;
     var c4Q = vec4f(0.0);
 ${
   slabExt
@@ -3674,7 +4134,7 @@ ${
     : ``
 }    var c4Scale = 1.0;
     var c4R = 0.0;
-    for (var c = 0u; c < 4u; c++) {
+${condensationShapes ? "    var c4Cert = 0.0;\n" : ""}    for (var c = 0u; c < 4u; c++) {
       var pQ = vec4f(0.0);
 ${
   slabExt
@@ -3770,19 +4230,24 @@ ${
 }          let key = pScale * (r - R);
           let childScale = pScale * m.p0.x;
 ${
-  slabExt
-    ? `          // Top-2 insert-shift; the displaced tuple (or the candidate
+  condensationShapes
+    ? `${condensationHitFold("img", "childScale", "depth + 1u", "best")}          let cert = childScale * (r - R);
+`
+    : ""
+}${
+    slabExt
+      ? `          // Top-2 insert-shift; the displaced tuple (or the candidate
           // itself) spills into the rank-3/4 ladder. Certificates are
           // value-side and trimmed; radii and extents flow through —
           // the spill ladder routes on radii, the chains descend the
           // extents.
 `
-    : `          // Top-2 insert-shift; the displaced tuple (or the candidate
+      : `          // Top-2 insert-shift; the displaced tuple (or the candidate
           // itself) spills into the rank-3/4 ladder. Certificates are
           // value-side and trimmed; radii flow through — the spill
           // ladder routes on radii.
 `
-}          var eKey = key;
+  }          var eKey = key;
           var eQ = img;
 ${
   slabExt
@@ -3791,7 +4256,7 @@ ${
     : ``
 }          var eScale = childScale;
           var eR = r;
-          if (key < c1Key) {
+${condensationShapes ? "          var eCert = cert;\n" : ""}          if (key < c1Key) {
             eKey = c2Key;
             eQ = c2Q;
 ${
@@ -3801,7 +4266,7 @@ ${
     : ``
 }            eScale = c2Scale;
             eR = c2R;
-            c2Key = c1Key;
+${condensationShapes ? "            eCert = c2Cert;\n" : ""}            c2Key = c1Key;
             c2Q = c1Q;
 ${
   slabExt
@@ -3810,7 +4275,7 @@ ${
     : ``
 }            c2Scale = c1Scale;
             c2R = c1R;
-            c1Key = key;
+${condensationShapes ? "            c2Cert = c1Cert;\n" : ""}            c1Key = key;
             c1Q = img;
 ${
   slabExt
@@ -3819,7 +4284,7 @@ ${
     : ``
 }            c1Scale = childScale;
             c1R = r;
-            c1Map = j;
+${condensationShapes ? "            c1Cert = cert;\n" : ""}            c1Map = j;
           } else if (key < c2Key) {
             eKey = c2Key;
             eQ = c2Q;
@@ -3830,7 +4295,7 @@ ${
     : ``
 }            eScale = c2Scale;
             eR = c2R;
-            c2Key = key;
+${condensationShapes ? "            eCert = c2Cert;\n" : ""}            c2Key = key;
             c2Q = img;
 ${
   slabExt
@@ -3839,9 +4304,18 @@ ${
     : ``
 }            c2Scale = childScale;
             c2R = r;
-          }
+${condensationShapes ? "            c2Cert = cert;\n" : ""}          }
           if (eKey < c3Key) {
-            c4Key = c3Key;
+${
+  condensationShapes
+    ? `            let tKey = c4Key;
+            let tQ = c4Q;
+${slabExt ? "            let tExt = c4Ext;\n" : ""}            let tScale = c4Scale;
+            let tR = c4R;
+            let tCert = c4Cert;
+`
+    : ""
+}            c4Key = c3Key;
             c4Q = c3Q;
 ${
   slabExt
@@ -3850,7 +4324,7 @@ ${
     : ``
 }            c4Scale = c3Scale;
             c4R = c3R;
-            c3Key = eKey;
+${condensationShapes ? "            c4Cert = c3Cert;\n" : ""}            c3Key = eKey;
             c3Q = eQ;
 ${
   slabExt
@@ -3859,8 +4333,27 @@ ${
     : ``
 }            c3Scale = eScale;
             c3R = eR;
-          } else if (eKey < c4Key) {
-            c4Key = eKey;
+${
+  condensationShapes
+    ? `            c3Cert = eCert;
+            eKey = tKey;
+            eQ = tQ;
+${slabExt ? "            eExt = tExt;\n" : ""}            eScale = tScale;
+            eR = tR;
+            eCert = tCert;
+`
+    : ""
+}          } else if (eKey < c4Key) {
+${
+  condensationShapes
+    ? `            let tKey = c4Key;
+            let tQ = c4Q;
+${slabExt ? "            let tExt = c4Ext;\n" : ""}            let tScale = c4Scale;
+            let tR = c4R;
+            let tCert = c4Cert;
+`
+    : ""
+}            c4Key = eKey;
             c4Q = eQ;
 ${
   slabExt
@@ -3869,11 +4362,30 @@ ${
     : ``
 }            c4Scale = eScale;
             c4R = eR;
+${
+  condensationShapes
+    ? `            c4Cert = eCert;
+            eKey = tKey;
+            eQ = tQ;
+${slabExt ? "            eExt = tExt;\n" : ""}            eScale = tScale;
+            eR = tR;
+            eCert = tCert;
+`
+    : ""
+}          }
+${
+  condensationShapes
+    ? `          if (eR > R && eCert < best) {
+            best = min(best, refinedCert(eQ, ${slabExt ? "eExt, " : ""}eR, eScale, depth + 1u));
+          } else if (eKey < 1e30 && futureCondensation && eR <= R) {
+            best = min(best, eScale * (eR - R));
           }
-        }
+`
+    : ""
+}        }
       }
     }
-    if (depth == 0u) {
+    if (depth == 0u${condensationShapes ? " && c1Cert < best" : ""}) {
       info.firstChoice = i32(c1Map);
     }
     trapAcc += trapW * shadeMaps[c1Map${shadeStride}].w;
@@ -3900,32 +4412,55 @@ ${
     v1Live = false;
     v2Live = false;
     if (c1Key < 1e29) {
-      if (c1R <= params.escapeRadius) {
-        aQ = c1Q;
+${
+  condensationShapes
+    ? `      if (c1R > params.escapeRadius) {
+        best = min(best, c1Cert);
+      } else {
+`
+    : `      if (c1R <= params.escapeRadius) {
+`
+}        aQ = c1Q;
 ${
   slabExt
     ? `        aExt = c1Ext;
 `
     : ``
 }        aScale = c1Scale;
-        aLive = true;
+${condensationShapes ? "        aR = c1R;\n" : ""}        aLive = true;
       }
     }
     if (c2Key < 1e29) {
-      if (c2R <= params.escapeRadius) {
-        bQ = c2Q;
+${
+  condensationShapes
+    ? `      if (c2R > params.escapeRadius) {
+        best = min(best, c2Cert);
+      } else {
+`
+    : `      if (c2R <= params.escapeRadius) {
+`
+}        bQ = c2Q;
 ${
   slabExt
     ? `        bExt = c2Ext;
 `
     : ``
 }        bScale = c2Scale;
-        bLive = true;
+${condensationShapes ? "        bR = c2R;\n" : ""}        bLive = true;
       }
     }
     if (c3Key < 1e29) {
-      if (c3R <= R) {
-        v1Q = c3Q;
+${
+  condensationShapes
+    ? `      if (c3R > R) {
+        if (c3Cert < best) {
+          best = min(best, refinedCert(c3Q, ${slabExt ? "c3Ext, " : ""}c3R, c3Scale, depth + 1u));
+        }
+      } else {
+`
+    : `      if (c3R <= R) {
+`
+}        v1Q = c3Q;
 ${
   slabExt
     ? `        v1Ext = c3Ext;
@@ -3936,8 +4471,17 @@ ${
       }
     }
     if (c4Key < 1e29) {
-      if (c4R <= R) {
-        v2Q = c4Q;
+${
+  condensationShapes
+    ? `      if (c4R > R) {
+        if (c4Cert < best) {
+          best = min(best, refinedCert(c4Q, ${slabExt ? "c4Ext, " : ""}c4R, c4Scale, depth + 1u));
+        }
+      } else {
+`
+    : `      if (c4R <= R) {
+`
+}        v2Q = c4Q;
 ${
   slabExt
     ? `        v2Ext = c4Ext;
@@ -3948,7 +4492,17 @@ ${
       }
     }
   }
-  info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
+${
+  condensationShapes
+    ? `${condensationLiveHitFold("aLive", "aQ", "aScale", "params.maxDepth", "best")}${condensationLiveHitFold("bLive", "bQ", "bScale", "params.maxDepth", "best")}${condensationLiveHitFold("v1Live", "v1Q", "v1Scale", "params.maxDepth", "best")}${condensationLiveHitFold("v2Live", "v2Q", "v2Scale", "params.maxDepth", "best")}  if (aLive) {
+    best = min(best, aScale * (aR - R));
+  }
+  if (bLive) {
+    best = min(best, bScale * (bR - R));
+  }
+`
+    : ""
+}  info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
 ${pattern && !lens ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, params.w0 + info.sStar * params.sliceHalfW)));` : ""}
@@ -3999,11 +4553,11 @@ ${
   var chFloor = 0.0;
   var live = true;
   let R = params.boundingRadius;
-  for (var depth = 0u; depth < params.maxDepth; depth++) {
+${condensationShapes ? "  var condensationBest = 1e30;\n" : ""}  for (var depth = 0u; depth < params.maxDepth; depth++) {
     if (!live) {
       break;
     }
-    var lbKey = 1e30;
+${condensationHitFold("chQ", "chScale", "depth", "condensationBest")}    var lbKey = 1e30;
     var lbMap = 0u;
     var lbR = 0.0;
     var lbAbsY = 0.0;
@@ -4231,7 +4785,12 @@ ${
 `
     : `          let r = length(img);
 `
-}          var candFloor = pFloor;
+}${condensationHitFold(
+    "img",
+    "pScale * branchSigma",
+    "depth + 1u",
+    "condensationBest",
+  )}          var candFloor = pFloor;
           if (branchRd > 0.0) {
             candFloor = max(candFloor, pScale * absW * branchRd);
           }
@@ -4259,7 +4818,9 @@ ${
     if (lbKey >= 1e29) {
       break;
     }
-    if (depth == 0u) {
+    if (depth == 0u${
+      condensationShapes ? " && lbScale * (lbR - R) < condensationBest" : ""
+    }) {
       info.firstChoice = i32(lbMap);
     }
     trapAcc += trapW * shadeMaps[lbMap${shadeStride}].w;
@@ -4294,7 +4855,13 @@ ${
       chFloor = lbFloor;
     }
   }
-  info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
+${
+  condensationShapes
+    ? `  if (live) {
+${condensationHitFold("chQ", "chScale", "params.maxDepth", "condensationBest")}  }
+`
+    : ""
+}  info.trap = select(0.0, trapAcc / trapNorm, trapNorm > 0.0);
   info.rings = clamp(info.rings, 0.0, 1.0);
   info.sheets = clamp(info.sheets, 0.0, 1.0);
 ${pattern && !lens ? `  info.source4 = finalApply4(rotorInvApply4(vec4f(p, params.w0 + info.sStar * params.sliceHalfW)));` : ""}
@@ -5267,16 +5834,19 @@ ${surfacePatternShadeSourceWgsl()}`
   // firstChoice comes from
   // the descent at the INVERTED point, so a shell hit inherits its
   // source map's finish for free.
+  const shadeSlotCount = condensationShapes
+    ? "params.condShadeCount"
+    : "params.mapCount";
   const finishLanesFetch = material
     ? `
   // The hit slot's shared material lanes (surfaceMaterialLanes' a/b order).
-  let fSlot = clamp(hi.firstChoice, 0, i32(params.mapCount) - 1);
+  let fSlot = clamp(hi.firstChoice, 0, i32(${shadeSlotCount}) - 1);
   let fa = shadeMaps[fSlot * 3 + 1];
   let fb = shadeMaps[fSlot * 3 + 2];`
     : "";
   const shadeBaseRead = material
     ? `base = shadeMaps[fSlot * 3].rgb;`
-    : `base = shadeMaps[clamp(hi.firstChoice, 0, i32(params.mapCount) - 1)].rgb;`;
+    : `base = shadeMaps[clamp(hi.firstChoice, 0, i32(${shadeSlotCount}) - 1)].rgb;`;
   // The lighting composition: under finish, the emitted finishShade over
   // the hit slot's lanes (fa/fb fetched above; base already carries
   // shadeBalloonTint's albedo-side mix, so the echo tint's ordering is
@@ -5818,6 +6388,11 @@ ${shadeLighting}
   trapR1: vec4f,
   trapR2: vec4f,
   trapP: vec4f,`;
+  const condensationStructFields = /* wgsl */ `
+  condEmitterCount: u32,
+  condDepthMin: u32,
+  condDepthMax: u32,
+  condShadeCount: u32,`;
   const headerText = /* wgsl */ `
 struct Params {
   boundCenter: vec3f,
@@ -5938,7 +6513,9 @@ struct Params {
         : ""
   }${balloon ? balloonStructFields : ""}${
     groundPlane || shapeTrap ? planeStructFields : ""
-  }${shapeTrap ? trapStructFields : ""}`
+  }${shapeTrap ? trapStructFields : ""}${
+    condensationShapes ? condensationStructFields : ""
+  }`
       : core === "escape"
         ? /* wgsl */ `
   escM0: vec3f,
@@ -5973,7 +6550,7 @@ struct Params {
   padF: vec4f,${groundPlane || shapeTrap ? planeStructFields : ""}${
     shapeTrap ? trapStructFields : ""
   }`
-          : lens || balloon || groundPlane
+          : lens || balloon || groundPlane || condensationShapes
             ? /* wgsl */ `
   lensM0: vec3f,
   lensT0: f32,
@@ -5989,7 +6566,7 @@ struct Params {
   // which the wrapper never reads.
   lensFold: vec4f,${balloon ? balloonStructFields : ""}${
     groundPlane ? planeStructFields : ""
-  }`
+  }${condensationShapes ? condensationStructFields : ""}`
             : ""
   }
 }${
@@ -6270,6 +6847,25 @@ ${descentPrologue}
   for (var depth = 0u; depth < maxDepth; depth++) {
     if (chainCount == 0u) {
       break;
+    }${
+      condensationShapes
+        ? `
+    for (var rootC = 0u; rootC < chainCount; rootC++) {
+      let rootQ = vec3f(
+        fcX[frontierIx(rootC, li)],
+        fcY[frontierIx(rootC, li)],
+        fcZ[frontierIx(rootC, li)],
+      );
+      best = min(
+        best,
+        condensationTerm(rootQ, fcScale[frontierIx(rootC, li)], depth),
+      );
+    }
+    if (best <= sphereBound || best * params.finalSigmaMin < bailBelow) {
+      return max(best, sphereBound) * params.finalSigmaMin;
+    }
+    let futureCondensation = condensationHasFuture(depth + 1u);`
+        : ""
     }
     var keptCount = 0u;
     var fnWorstKey = -1e30;
@@ -6443,7 +7039,12 @@ ${descentPrologue}
             }
             let r = length(img - params.boundCenter);
             let childScale = pScale * branchSigma;
-            var key = pScale * (r - R);
+${
+  condensationShapes
+    ? `            best = min(best, condensationTerm(img, childScale, depth + 1u));
+`
+    : ""
+}            var key = pScale * (r - R);
             if (candFloor > 0.0 && candFloor > key) {
               key = candFloor;
             }
@@ -6470,12 +7071,12 @@ ${descentPrologue}
             // the kept set folds plain: escaped tuples their
             // (floor-raised) certificate, in-sphere tuples their floor.
             var evR = 0.0;
-            var evCert = 0.0;
+${condensationShapes ? "            var evScale = 0.0;\n" : ""}            var evCert = 0.0;
             var evFloor = 0.0;
             var evHas = false;
             if (keptCount == ${Wstr} && key >= fnWorstKey) {
               evR = r;
-              evCert = cert;
+${condensationShapes ? "              evScale = childScale;\n" : ""}              evCert = cert;
               evFloor = candFloor;
               evHas = true;
             } else {
@@ -6483,7 +7084,11 @@ ${descentPrologue}
               if (keptCount == ${Wstr}) {
                 slot = fnWorstIdx;
                 evR = fnR[frontierIx(slot, li)];
-                evCert = fnCert[frontierIx(slot, li)];
+${
+  condensationShapes
+    ? "                evScale = fnScale[frontierIx(slot, li)];\n"
+    : ""
+}                evCert = fnCert[frontierIx(slot, li)];
                 evFloor = fnFloor[frontierIx(slot, li)];
                 evHas = true;
               } else {
@@ -6521,6 +7126,18 @@ ${descentPrologue}
                     return max(best, sphereBound) * params.finalSigmaMin;
                   }
                 }
+              }${
+                condensationShapes
+                  ? ` else if (futureCondensation) {
+                best = min(best, evScale * (evR - R));
+                if (
+                  best <= sphereBound ||
+                  best * params.finalSigmaMin < bailBelow
+                ) {
+                  return max(best, sphereBound) * params.finalSigmaMin;
+                }
+              }`
+                  : ""
               } else if (evFloor > 0.0 && evFloor < best) {
                 best = evFloor;
                 if (
@@ -6549,7 +7166,24 @@ ${descentPrologue}
   }
   // Floor-raised KIFS terminals for every chain alive at the depth cap.
   for (var cc = 0u; cc < chainCount; cc++) {
-    var terminal = fcScale[frontierIx(cc, li)] * (fcR[frontierIx(cc, li)] - R);
+${
+  condensationShapes
+    ? `    let terminalQ = vec3f(
+      fcX[frontierIx(cc, li)],
+      fcY[frontierIx(cc, li)],
+      fcZ[frontierIx(cc, li)],
+    );
+    best = min(
+      best,
+      condensationTerm(
+        terminalQ,
+        fcScale[frontierIx(cc, li)],
+        maxDepth,
+      ),
+    );
+`
+    : ""
+}    var terminal = fcScale[frontierIx(cc, li)] * (fcR[frontierIx(cc, li)] - R);
     let tFloor = fcFloor[frontierIx(cc, li)];
     if (tFloor > 0.0 && tFloor > terminal) {
       terminal = tFloor;
@@ -6611,8 +7245,12 @@ ${renameToProbe(
 // (|invMap_j(img)| - R)) — never below the plain childScale * (r - R).
 // "Every map" means every (sector, base map) pair, which the sector
 // sweep spells out where the expanded slot list used to.
-fn refinedCert(img: vec3f, r: f32, childScale: f32) -> f32 {
-  var inner = 1e30;
+fn refinedCert(img: vec3f, r: f32, childScale: f32${
+    condensationShapes ? ", depth: u32" : ""
+  }) -> f32 {
+  var inner = ${
+    condensationShapes ? "condensationTerm(img, 1.0, depth)" : "1e30"
+  };
   var sImg = img;
   for (var k = 0u; k < params.symOrder; k++) {
     if (k > 0u) {
@@ -6655,6 +7293,26 @@ ${descentPrologue}
   for (var depth = 0u; depth < maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) {
       break;
+    }${
+      condensationShapes
+        ? `
+    if (aLive) {
+      best = min(best, condensationTerm(aQ, aScale, depth));
+    }
+    if (bLive) {
+      best = min(best, condensationTerm(bQ, bScale, depth));
+    }
+    if (v1Live) {
+      best = min(best, condensationTerm(v1Q, v1Scale, depth));
+    }
+    if (v2Live) {
+      best = min(best, condensationTerm(v2Q, v2Scale, depth));
+    }
+    if (best <= sphereBound || best * params.finalSigmaMin < bailBelow) {
+      return max(best, sphereBound) * params.finalSigmaMin;
+    }
+    let futureCondensation = condensationHasFuture(depth + 1u);`
+        : ""
     }
     // The four smallest-key candidates this level, key-ascending. The
     // sentinel r = 0 keeps empty slots out of every escaped-candidate
@@ -6727,7 +7385,12 @@ ${descentPrologue}
           let r = length(img - params.boundCenter);
           let key = pScale * (r - R);
           let childScale = pScale * m.p0.x;
-          let cert = childScale * (r - R);
+${
+  condensationShapes
+    ? `          best = min(best, condensationTerm(img, childScale, depth + 1u));
+`
+    : ""
+}          let cert = childScale * (r - R);
           // Exactly one tuple leaves the top-2 ladder per candidate —
           // the displaced runner-up, or the candidate itself. It spills
           // into the rank-3/4 ladder or folds below; empty-slot
@@ -6773,7 +7436,7 @@ ${descentPrologue}
           // (point, scale, radius, certificate) survive, and width 4 is
           // fixed here, so there is no tKey.
           if (eKey < c3Key) {
-            let tQ = c4Q;
+${condensationShapes ? "            let tKey = c4Key;\n" : ""}            let tQ = c4Q;
             let tScale = c4Scale;
             let tR = c4R;
             let tCert = c4Cert;
@@ -6787,12 +7450,12 @@ ${descentPrologue}
             c3Scale = eScale;
             c3R = eR;
             c3Cert = eCert;
-            eQ = tQ;
+${condensationShapes ? "            eKey = tKey;\n" : ""}            eQ = tQ;
             eScale = tScale;
             eR = tR;
             eCert = tCert;
           } else if (eKey < c4Key) {
-            let tQ = c4Q;
+${condensationShapes ? "            let tKey = c4Key;\n" : ""}            let tQ = c4Q;
             let tScale = c4Scale;
             let tR = c4R;
             let tCert = c4Cert;
@@ -6801,7 +7464,7 @@ ${descentPrologue}
             c4Scale = eScale;
             c4R = eR;
             c4Cert = eCert;
-            eQ = tQ;
+${condensationShapes ? "            eKey = tKey;\n" : ""}            eQ = tQ;
             eScale = tScale;
             eR = tR;
             eCert = tCert;
@@ -6814,7 +7477,9 @@ ${descentPrologue}
           // carries no positive certificate — it can only get here past
           // FOUR smaller keys, the shrunken validity-slot residual drop.
           if (eR > R && eCert < best) {
-            best = min(best, refinedCert(eQ, eR, eScale));
+            best = min(best, refinedCert(eQ, eR, eScale${
+              condensationShapes ? ", depth + 1u" : ""
+            }));
             // Cutoff exit plus the value-exact sphere-floor pin:
             // the folded certificate is FINALIZED (already refined) and
             // best only falls from here, so once best is at or below
@@ -6827,6 +7492,12 @@ ${descentPrologue}
             ) {
               return max(best, sphereBound) * params.finalSigmaMin;
             }
+          }${
+            condensationShapes
+              ? ` else if (eKey < 1e30 && futureCondensation && eR <= R) {
+            best = min(best, eScale * (eR - R));
+          }`
+              : ""
           }
         }
       }
@@ -6864,7 +7535,9 @@ ${descentPrologue}
     if (c3Key < 1e29) {
       if (c3R > R) {
         if (c3Cert < best) {
-          best = min(best, refinedCert(c3Q, c3R, c3Scale));
+          best = min(best, refinedCert(c3Q, c3R, c3Scale${
+            condensationShapes ? ", depth + 1u" : ""
+          }));
         }
       } else {
         v1Q = c3Q;
@@ -6875,7 +7548,9 @@ ${descentPrologue}
     if (c4Key < 1e29) {
       if (c4R > R) {
         if (c4Cert < best) {
-          best = min(best, refinedCert(c4Q, c4R, c4Scale));
+          best = min(best, refinedCert(c4Q, c4R, c4Scale${
+            condensationShapes ? ", depth + 1u" : ""
+          }));
         }
       } else {
         v2Q = c4Q;
@@ -6901,7 +7576,23 @@ ${descentPrologue}
   // bounding SPHERE, not near the attractor, so their cap terminal is a
   // vacuous negative bound (folding them was measured to change
   // nothing, so the omission is on principle, not cost).
-  if (aLive) {
+${
+  condensationShapes
+    ? `  if (aLive) {
+    best = min(best, condensationTerm(aQ, aScale, maxDepth));
+  }
+  if (bLive) {
+    best = min(best, condensationTerm(bQ, bScale, maxDepth));
+  }
+  if (v1Live) {
+    best = min(best, condensationTerm(v1Q, v1Scale, maxDepth));
+  }
+  if (v2Live) {
+    best = min(best, condensationTerm(v2Q, v2Scale, maxDepth));
+  }
+`
+    : ""
+}  if (aLive) {
     best = min(best, aScale * (aR - R));
   }
   if (bLive) {
@@ -6954,16 +7645,22 @@ ${descentPrologue}
 `
   }${
     slabExt
-      ? `fn refinedCert(img: vec4f, imgExt: vec4f, r: f32, childScale: f32) -> f32 {
+      ? `fn refinedCert(img: vec4f, imgExt: vec4f, r: f32, childScale: f32${
+          condensationShapes ? ", depth: u32" : ""
+        }) -> f32 {
 `
-      : `fn refinedCert(img: vec4f, r: f32, childScale: f32) -> f32 {
+      : `fn refinedCert(img: vec4f, r: f32, childScale: f32${
+          condensationShapes ? ", depth: u32" : ""
+        }) -> f32 {
 `
   }${
     slabExt
       ? `  let segment = params.sliceHalfW > 0.0;
 `
       : ``
-  }  var inner = 1e30;
+  }  var inner = ${
+    condensationShapes ? "condensationTerm(img, 1.0, depth)" : "1e30"
+  };
   var sImg = img;
 ${
   slabExt
@@ -7096,6 +7793,26 @@ ${
   for (var depth = 0u; depth < params.maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) {
       break;
+    }${
+      condensationShapes
+        ? `
+    if (aLive) {
+      best = min(best, condensationTerm(aQ, aScale, depth));
+    }
+    if (bLive) {
+      best = min(best, condensationTerm(bQ, bScale, depth));
+    }
+    if (v1Live) {
+      best = min(best, condensationTerm(v1Q, v1Scale, depth));
+    }
+    if (v2Live) {
+      best = min(best, condensationTerm(v2Q, v2Scale, depth));
+    }
+    if (best <= sphereBound || best * params.final4SigmaMin < bailBelow) {
+      return max(best, sphereBound) * params.final4SigmaMin;
+    }
+    let futureCondensation = condensationHasFuture(depth + 1u);`
+        : ""
     }
     // The four smallest-key candidates this level, key-ascending. The
     // sentinel r = 0 keeps empty slots out of every escaped-candidate
@@ -7247,7 +7964,12 @@ ${
 `
 }          let key = pScale * (r - R);
           let childScale = pScale * m.p0.x;
-          let cert = childScale * (r - R);
+${
+  condensationShapes
+    ? `          best = min(best, condensationTerm(img, childScale, depth + 1u));
+`
+    : ""
+}          let cert = childScale * (r - R);
           // Exactly one tuple leaves the top-2 ladder per candidate —
           // the displaced runner-up, or the candidate itself. It spills
           // into the rank-3/4 ladder or folds below; empty-slot
@@ -7333,7 +8055,7 @@ ${
           // fixed here, so there is no tKey.
 `
 }          if (eKey < c3Key) {
-            let tQ = c4Q;
+${condensationShapes ? "            let tKey = c4Key;\n" : ""}            let tQ = c4Q;
 ${
   slabExt
     ? `            let tExt = c4Ext;
@@ -7362,7 +8084,7 @@ ${
 }            c3Scale = eScale;
             c3R = eR;
             c3Cert = eCert;
-            eQ = tQ;
+${condensationShapes ? "            eKey = tKey;\n" : ""}            eQ = tQ;
 ${
   slabExt
     ? `            eExt = tExt;
@@ -7372,7 +8094,7 @@ ${
             eR = tR;
             eCert = tCert;
           } else if (eKey < c4Key) {
-            let tQ = c4Q;
+${condensationShapes ? "            let tKey = c4Key;\n" : ""}            let tQ = c4Q;
 ${
   slabExt
     ? `            let tExt = c4Ext;
@@ -7391,7 +8113,7 @@ ${
 }            c4Scale = eScale;
             c4R = eR;
             c4Cert = eCert;
-            eQ = tQ;
+${condensationShapes ? "            eKey = tKey;\n" : ""}            eQ = tQ;
 ${
   slabExt
     ? `            eExt = tExt;
@@ -7412,9 +8134,13 @@ ${
           if (eR > R && eCert < best) {
 ${
   slabExt
-    ? `            best = min(best, refinedCert(eQ, eExt, eR, eScale));
+    ? `            best = min(best, refinedCert(eQ, eExt, eR, eScale${
+        condensationShapes ? ", depth + 1u" : ""
+      }));
 `
-    : `            best = min(best, refinedCert(eQ, eR, eScale));
+    : `            best = min(best, refinedCert(eQ, eR, eScale${
+        condensationShapes ? ", depth + 1u" : ""
+      }));
 `
 }            // Cutoff exit plus the value-exact sphere-floor pin:
             // the folded certificate is FINALIZED (already refined) and
@@ -7428,6 +8154,12 @@ ${
             ) {
               return max(best, sphereBound) * params.final4SigmaMin;
             }
+          }${
+            condensationShapes
+              ? ` else if (eKey < 1e30 && futureCondensation && eR <= R) {
+            best = min(best, eScale * (eR - R));
+          }`
+              : ""
           }
         }
       }
@@ -7477,9 +8209,13 @@ ${
         if (c3Cert < best) {
 ${
   slabExt
-    ? `          best = min(best, refinedCert(c3Q, c3Ext, c3R, c3Scale));
+    ? `          best = min(best, refinedCert(c3Q, c3Ext, c3R, c3Scale${
+        condensationShapes ? ", depth + 1u" : ""
+      }));
 `
-    : `          best = min(best, refinedCert(c3Q, c3R, c3Scale));
+    : `          best = min(best, refinedCert(c3Q, c3R, c3Scale${
+        condensationShapes ? ", depth + 1u" : ""
+      }));
 `
 }        }
       } else {
@@ -7498,9 +8234,13 @@ ${
         if (c4Cert < best) {
 ${
   slabExt
-    ? `          best = min(best, refinedCert(c4Q, c4Ext, c4R, c4Scale));
+    ? `          best = min(best, refinedCert(c4Q, c4Ext, c4R, c4Scale${
+        condensationShapes ? ", depth + 1u" : ""
+      }));
 `
-    : `          best = min(best, refinedCert(c4Q, c4R, c4Scale));
+    : `          best = min(best, refinedCert(c4Q, c4R, c4Scale${
+        condensationShapes ? ", depth + 1u" : ""
+      }));
 `
 }        }
       } else {
@@ -7532,7 +8272,23 @@ ${
   // bounding SPHERE, not near the attractor, so their cap terminal is a
   // vacuous negative bound (folding them was measured to change
   // nothing, so the omission is on principle, not cost).
-  if (aLive) {
+${
+  condensationShapes
+    ? `  if (aLive) {
+    best = min(best, condensationTerm(aQ, aScale, params.maxDepth));
+  }
+  if (bLive) {
+    best = min(best, condensationTerm(bQ, bScale, params.maxDepth));
+  }
+  if (v1Live) {
+    best = min(best, condensationTerm(v1Q, v1Scale, params.maxDepth));
+  }
+  if (v2Live) {
+    best = min(best, condensationTerm(v2Q, v2Scale, params.maxDepth));
+  }
+`
+    : ""
+}  if (aLive) {
     best = min(best, aScale * (aR - R));
   }
   if (bLive) {
@@ -7639,6 +8395,17 @@ ${
   for (var depth = 0u; depth < params.maxDepth; depth++) {
     if (chainCount == 0u) {
       break;
+    }${
+      condensationShapes
+        ? `
+    for (var rootC = 0u; rootC < chainCount; rootC++) {
+      best = min(best, condensationTerm(fcQ[rootC], fcScale[rootC], depth));
+    }
+    if (best <= sphereBound || best * params.final4SigmaMin < bailBelow) {
+      return max(best, sphereBound) * params.final4SigmaMin;
+    }
+    let futureCondensation = condensationHasFuture(depth + 1u);`
+        : ""
     }
     var keptCount = 0u;
     var fnWorstKey = -1e30;
@@ -7925,7 +8692,12 @@ ${
     : `            let r = length(img);
 `
 }            let childScale = pScale * branchSigma;
-            var key = pScale * (r - R);
+${
+  condensationShapes
+    ? `            best = min(best, condensationTerm(img, childScale, depth + 1u));
+`
+    : ""
+}            var key = pScale * (r - R);
             if (candFloor > 0.0 && candFloor > key) {
               key = candFloor;
             }
@@ -7953,12 +8725,12 @@ ${
             // escaped tuples their (floor-raised) certificate, in-sphere
             // tuples their floor — the drop-fold rule.
             var evR = 0.0;
-            var evCert = 0.0;
+${condensationShapes ? "            var evScale = 0.0;\n" : ""}            var evCert = 0.0;
             var evFloor = 0.0;
             var evHas = false;
             if (keptCount == ${w}u && key >= fnWorstKey) {
               evR = r;
-              evCert = cert;
+${condensationShapes ? "              evScale = childScale;\n" : ""}              evCert = cert;
               evFloor = candFloor;
               evHas = true;
             } else {
@@ -7966,7 +8738,9 @@ ${
               if (keptCount == ${w}u) {
                 slot = fnWorstIdx;
                 evR = fnR[slot];
-                evCert = fnCert[slot];
+${
+  condensationShapes ? "                evScale = fnScale[slot];\n" : ""
+}                evCert = fnCert[slot];
                 evFloor = fnFloor[slot];
                 evHas = true;
               } else {
@@ -8007,6 +8781,18 @@ ${
                     return max(best, sphereBound) * params.final4SigmaMin;
                   }
                 }
+              }${
+                condensationShapes
+                  ? ` else if (futureCondensation) {
+                best = min(best, evScale * (evR - R));
+                if (
+                  best <= sphereBound ||
+                  best * params.final4SigmaMin < bailBelow
+                ) {
+                  return max(best, sphereBound) * params.final4SigmaMin;
+                }
+              }`
+                  : ""
               } else if (evFloor > 0.0 && evFloor < best) {
                 best = evFloor;
                 if (
@@ -8045,7 +8831,15 @@ ${
   }
   // Floor-raised KIFS terminals for every chain alive at the depth cap.
   for (var cc = 0u; cc < chainCount; cc++) {
-    var terminal = fcScale[cc] * (fcR[cc] - R);
+${
+  condensationShapes
+    ? `    best = min(
+      best,
+      condensationTerm(fcQ[cc], fcScale[cc], params.maxDepth),
+    );
+`
+    : ""
+}    var terminal = fcScale[cc] * (fcR[cc] - R);
     let tFloor = fcFloor[cc];
     if (tFloor > 0.0 && tFloor > terminal) {
       terminal = tFloor;
@@ -9035,7 +9829,7 @@ ${balloonProbeWrapText}`
 
   return /* wgsl */ `${headerText}
 
-${bodyBlock}
+${condensationHelperText}${bodyBlock}
 ${entry}
 `;
 }

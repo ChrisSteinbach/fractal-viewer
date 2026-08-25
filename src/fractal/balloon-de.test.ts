@@ -20,7 +20,7 @@ import { toTransform4 } from "./affine4";
 import { runChaosGame } from "./chaos-game";
 import { runChaosGame4 } from "./chaos-game-4d";
 import type { ChaosGameResult } from "./chaos-game";
-import { defaultTransforms, pentatope } from "./presets";
+import { defaultTransforms, gearworks, pentatope } from "./presets";
 import { mulberry32 } from "./rng";
 import {
   buildSurfaceDE,
@@ -45,6 +45,36 @@ describe("balloon palette coordinate", () => {
     expect(
       balloonPaletteCoordinate({ ...balloon, R: balloon.R * 100 }, source),
     ).toBe(1);
+  });
+});
+
+describe("condensation composition", () => {
+  it("admits a 3D condensation DE through the unchanged public-estimator wrapper", () => {
+    const de = buildSurfaceDE(gearworks());
+    const b = buildBalloon(de, 1.6);
+    const p: Vec3 = [0.7, -0.2, 0.4];
+    const wrapped = estimateBalloonDistance(estimateDistanceRefined, de, b, p);
+    expect(de.condensation?.emitters.length).toBeGreaterThan(0);
+    expect(Number.isFinite(wrapped.d)).toBe(true);
+    expect(wrapped.d).toBeLessThanOrEqual(estimateDistanceRefined(de, p));
+  });
+
+  it("admits the embedded 4D condensation solid at a zero-thickness slice", () => {
+    const de = buildSurfaceDE4(gearworks());
+    const b = buildBalloon4(de, 1.6);
+    const p: Vec3 = [-0.5, 0.3, 0.6];
+    const wrapped = estimateBalloonDistance4(
+      estimateDistance4Refined,
+      de,
+      b,
+      p,
+      0,
+    );
+    expect(de.condensation?.emitters.length).toBeGreaterThan(0);
+    expect(Number.isFinite(wrapped.d)).toBe(true);
+    expect(wrapped.d).toBeLessThanOrEqual(
+      estimateDistance4Refined(de, [p[0], p[1], p[2], 0]),
+    );
   });
 });
 

@@ -9,6 +9,14 @@ Commands section points here rather than carrying these numbers inline.
 It pins `surface-de-gpu.ts` — both the eval/march baselines and the app
 path's march-unproject/shade — to the CPU estimator.
 
+The condensation addition appends two Gearworks gates without changing any
+existing fixture or timing baseline. `gearworksCondensation` runs the normal
+700-query affine agreement comparator against a dedicated WGSL program with
+the gear SDF generated into it. `marchUnprojectCondensation` then uses the
+same bounded 96x54 app-ray march and per-ray CPU emulator as the established
+fold/lens/balloon legs. Either compilation failure, truncation or unexcluded
+agreement failure fails the section.
+
 ## Running it
 
 Add `--display=:0` for real-driver timing. Run it on a QUIET machine, never
@@ -21,6 +29,23 @@ Judge the escape rows on `--display=:0` — this is already this file's
 standing advice, and the reason is the known SwiftShader false failure
 documented below. Do not raise the escape agreement cap to make a
 SwiftShader run green.
+
+For the condensation landing, run the static gates before adapter evidence:
+
+```bash
+npx vitest run src/app/gpu-bench/condensation.test.ts \
+  src/fractal/condensation-de.test.ts src/fractal/surface-de-gpu.test.ts \
+  src/app/surface-compute.test.ts src/app/surface-eligibility.test.ts \
+  src/app/surface-material.test.ts src/app/surface-material-4d.test.ts \
+  src/fractal/surface-grid.test.ts src/fractal/balloon-de.test.ts
+npx tsc --noEmit
+npm run bench:surface -- --display=:0
+```
+
+The benchmark run is accepted only when the Gearworks eval row reports
+`fail=0`, the condensation unproject row completes with `fail=0`, and the
+section verdict is `pass`. The JSON artifact remains the evidence record;
+do not infer real-driver timing from SwiftShader.
 
 ## The known SwiftShader false failure
 

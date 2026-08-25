@@ -104,14 +104,20 @@ import {
   packSurfaceGpuShadeMaps,
   SURFACE_GPU_MAP_VEC4,
   SURFACE_GPU_PARAMS4_BALLOON_BYTES,
+  SURFACE_GPU_PARAMS4_BALLOON_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS4_BYTES,
+  SURFACE_GPU_PARAMS4_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS4_ESCAPE_BYTES,
   SURFACE_GPU_PARAMS4_LENS_BYTES,
   SURFACE_GPU_PARAMS4_PLANE_BYTES,
+  SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS4_TRAP_BYTES,
   SURFACE_GPU_PARAMS_BALLOON_BYTES,
+  SURFACE_GPU_PARAMS_BALLOON_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS_BYTES,
+  SURFACE_GPU_PARAMS_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS_PLANE_BYTES,
+  SURFACE_GPU_PARAMS_PLANE_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS_TRAP_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
@@ -1758,6 +1764,18 @@ export class SurfaceComputeRenderer {
           shapeTrap: isForwardTarget(target)
             ? (target.shapeTrap ?? null)
             : null,
+          // Condensation geometry belongs to the inverse-descent family.
+          // Pass the analyzer's already-expanded emitter records straight
+          // through so codegen, params packing, and map packing validate one
+          // wire contract and bake one SDF per unique shade suffix.
+          condensation: !isForwardTarget(target)
+            ? target.de.condensation
+              ? {
+                  mapCount: target.de.maps.length,
+                  emitters: target.de.condensation.emitters,
+                }
+              : null
+            : null,
           width: SURFACE_FOLD_BEAM_WIDTH,
           shadeDeWidth: mode === "shade" ? shadeDeWidth : undefined,
           workgroupSize: SURFACE_COMPUTE_WORKGROUP_SIZE,
@@ -1815,6 +1833,9 @@ export class SurfaceComputeRenderer {
     const targetHasBalloon =
       (target.kind === "ifs" || target.kind === "ifs4") &&
       target.balloon === true;
+    const targetHasCondensation =
+      (target.kind === "ifs" || target.kind === "ifs4") &&
+      (target.de.condensation?.emitters.length ?? 0) > 0;
     const shadeLayout = device.createBindGroupLayout({
       entries: [
         bufferEntry(0, "uniform"),
@@ -1905,40 +1926,52 @@ export class SurfaceComputeRenderer {
       // why the appended-block arms come first for them, exactly as they
       // do for the 3D cores.
       size: isFourDTarget(target)
-        ? target.kind === "ifs4" && target.balloon === true
-          ? SURFACE_GPU_PARAMS4_BALLOON_BYTES
-          : target.kind === "escape4" && target.shapeTrap !== undefined
-            ? // The trap block at the frozen 624, past the
-              // unconditionally declared plane region — the 3D trap
-              // sizing one dimension up.
-              SURFACE_GPU_PARAMS4_TRAP_BYTES
+        ? targetHasCondensation
+          ? targetHasBalloon
+            ? SURFACE_GPU_PARAMS4_BALLOON_CONDENSATION_BYTES
             : target.groundPlane === true
-              ? SURFACE_GPU_PARAMS4_PLANE_BYTES
-              : target.kind === "escape4"
-                ? // The escape4 variant block is the lens4
-                  // block's own region, so its size is the lens size.
-                  SURFACE_GPU_PARAMS4_ESCAPE_BYTES
-                : target.de.foldFinal !== null
-                  ? // A fold FINAL grows the params with
-                    // the lens block past the 4D tail.
-                    SURFACE_GPU_PARAMS4_LENS_BYTES
-                  : SURFACE_GPU_PARAMS4_BYTES
-        : target.kind === "ifs" && target.balloon === true
-          ? // The balloon kernel's params struct appends the balloon
-            // block at the frozen offset 288 (272 before the lens-fold
-            // quartet took that slot).
-            SURFACE_GPU_PARAMS_BALLOON_BYTES
-          : isForwardTarget(target) && target.shapeTrap !== undefined
-            ? // A trap kernel's struct appends the trap block past the
-              // (unconditionally declared) plane region — one size
-              // whether or not the session has a floor.
-              SURFACE_GPU_PARAMS_TRAP_BYTES
+              ? SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_BYTES
+              : SURFACE_GPU_PARAMS4_CONDENSATION_BYTES
+          : target.kind === "ifs4" && target.balloon === true
+            ? SURFACE_GPU_PARAMS4_BALLOON_BYTES
+            : target.kind === "escape4" && target.shapeTrap !== undefined
+              ? // The trap block at the frozen 624, past the
+                // unconditionally declared plane region — the 3D trap
+                // sizing one dimension up.
+                SURFACE_GPU_PARAMS4_TRAP_BYTES
+              : target.groundPlane === true
+                ? SURFACE_GPU_PARAMS4_PLANE_BYTES
+                : target.kind === "escape4"
+                  ? // The escape4 variant block is the lens4
+                    // block's own region, so its size is the lens size.
+                    SURFACE_GPU_PARAMS4_ESCAPE_BYTES
+                  : target.de.foldFinal !== null
+                    ? // A fold FINAL grows the params with
+                      // the lens block past the 4D tail.
+                      SURFACE_GPU_PARAMS4_LENS_BYTES
+                    : SURFACE_GPU_PARAMS4_BYTES
+        : targetHasCondensation
+          ? targetHasBalloon
+            ? SURFACE_GPU_PARAMS_BALLOON_CONDENSATION_BYTES
             : target.groundPlane === true
-              ? // The plane kernel's params struct appends the
-                // plane block at the same frozen offset (the two are
-                // mutually exclusive by the codegen throw).
-                SURFACE_GPU_PARAMS_PLANE_BYTES
-              : SURFACE_GPU_PARAMS_BYTES,
+              ? SURFACE_GPU_PARAMS_PLANE_CONDENSATION_BYTES
+              : SURFACE_GPU_PARAMS_CONDENSATION_BYTES
+          : target.kind === "ifs" && target.balloon === true
+            ? // The balloon kernel's params struct appends the balloon
+              // block at the frozen offset 288 (272 before the lens-fold
+              // quartet took that slot).
+              SURFACE_GPU_PARAMS_BALLOON_BYTES
+            : isForwardTarget(target) && target.shapeTrap !== undefined
+              ? // A trap kernel's struct appends the trap block past the
+                // (unconditionally declared) plane region — one size
+                // whether or not the session has a floor.
+                SURFACE_GPU_PARAMS_TRAP_BYTES
+              : target.groundPlane === true
+                ? // The plane kernel's params struct appends the
+                  // plane block at the same frozen offset (the two are
+                  // mutually exclusive by the codegen throw).
+                  SURFACE_GPU_PARAMS_PLANE_BYTES
+                : SURFACE_GPU_PARAMS_BYTES,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const shadeBuf = device.createBuffer({

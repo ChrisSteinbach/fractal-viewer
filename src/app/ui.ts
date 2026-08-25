@@ -2017,6 +2017,10 @@ export class Ui {
   // explorer pair. Its own Inflate button binds the SAME handler as the
   // Points and Flame buttons — one shared command with mode-specific motion.
   private readonly surfaceBalloonRow: HTMLElement;
+  /** Condensation level-band controls, visible only for an emitter-backed
+   * IFS Surface session. */
+  private readonly surfaceCondensationRow: HTMLElement;
+  private readonly surfaceCondensationCustom: HTMLElement;
   // The shape trap's rows — the balloon's COMPLEMENT: visible exactly for
   // the forward-orbit (escape-family) session kinds, where the balloon
   // rows hide (see updateLabels' toggle and its comment).
@@ -2528,6 +2532,8 @@ export class Ui {
     this.surfacePaletteRow = this.byId("surfacePaletteRow");
     this.surfaceColorSpeedRow = this.byId("surfaceColorSpeedRow");
     this.surfaceBalloonRow = this.byId("surfaceBalloonRow");
+    this.surfaceCondensationRow = this.byId("surfaceCondensationRow");
+    this.surfaceCondensationCustom = this.byId("surfaceCondensationCustom");
     this.surfaceTrapRow = this.byId("surfaceTrapRow");
     this.surfaceTrapControls = this.byId("surfaceTrapControls");
     this.surfaceTrapThresholdRow = this.byId("surfaceTrapThresholdRow");
@@ -3489,6 +3495,19 @@ export class Ui {
     this.surfaceTrapThresholdRow.classList.toggle(
       "hidden",
       state.shapeTrap?.mode !== "threshold",
+    );
+    const condensationLive =
+      this.surfaceSessionKind === "ifs" &&
+      state.transforms.some(
+        (transform) =>
+          (transform.weight ?? 1) > 0 && transform.emitter !== undefined,
+      );
+    this.surfaceCondensationRow.classList.toggle("hidden", !condensationLive);
+    this.surfaceCondensationCustom.classList.toggle(
+      "hidden",
+      !condensationLive ||
+        state.condensationDepthBand?.maxDepth === 0 ||
+        state.condensationDepthBand === undefined,
     );
     // …including each mode's non-section block above the accordion: the
     // Undo/Redo row belongs to the explorer (a mid-render undo couldn't

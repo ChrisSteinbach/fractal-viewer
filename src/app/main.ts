@@ -49,6 +49,7 @@ import {
   buildSurfaceDE4,
   deHasFolds4,
   slabExact4,
+  type SurfaceDE4,
 } from "../fractal/surface-de-4d";
 import {
   surfaceSlotColors,
@@ -181,6 +182,7 @@ import {
   setBalloonCustomPaletteStops,
   setChaosCell,
   setChaosLeak,
+  setCondensationDepthBand,
   setCustomPaletteStops,
   setFinalTransform,
   setFlamePaletteId,
@@ -2018,6 +2020,7 @@ function main(): void {
       transforms: state.transforms,
       finalTransform: state.finalTransform ?? null,
       symmetry: state.symmetry,
+      condensationDepthBand: state.condensationDepthBand ?? null,
     };
   }
 
@@ -3693,6 +3696,27 @@ function main(): void {
     return surfaceSlotMaterials(state.transforms, maps, patternCalibration);
   }
 
+  /** IFS shade slots in the estimator's wire order: recursive maps first,
+   * then one slot per BASE emitter. Condensation stores symmetry-expanded C0
+   * records, so deduplicate through the explicit shadeIndex rather than
+   * treating emitters.length as a palette count. */
+  function ifsShadeSlots(
+    de: SurfaceDE | SurfaceDE4,
+  ): readonly { baseIndex: number }[] {
+    const condensation = de.condensation;
+    if (!condensation) return de.maps;
+    const slots: Array<{ baseIndex: number } | undefined> = de.maps.map(
+      (map) => map,
+    );
+    for (const emitter of condensation.emitters) {
+      slots[emitter.shadeIndex] ??= { baseIndex: emitter.baseIndex };
+    }
+    if (slots.some((slot) => slot === undefined)) {
+      throw new Error("Surface condensation shade slots are not contiguous");
+    }
+    return slots as { baseIndex: number }[];
+  }
+
   function teardownSurfaceCompute(): void {
     surfaceComputeRenderer?.destroy();
     surfaceComputeRenderer = null;
@@ -3753,10 +3777,10 @@ function main(): void {
       // trap index 0, the GLSL setEscapeSystem/setBulbSystem shape.
       isForwardTarget(target)
         ? [escapeSlotColor()]
-        : surfaceSlotColors(state.transforms, target.de.maps),
+        : surfaceSlotColors(state.transforms, ifsShadeSlots(target.de)),
       isForwardTarget(target)
         ? [0]
-        : surfaceTrapIndices(state.transforms, target.de.maps),
+        : surfaceTrapIndices(state.transforms, ifsShadeSlots(target.de)),
       // The session's unified materials — null for classic+none — keeping
       // both codegen flags and stride-3 shadeMaps packing in lockstep.
       { materials },
@@ -4788,9 +4812,10 @@ function main(): void {
               state.transforms,
               state.finalTransform ?? null,
               state.symmetry,
+              { condensationDepthBand: state.condensationDepthBand },
             );
             sessionMaterials = gatedSlotMaterials(
-              de.maps,
+              ifsShadeSlots(de),
               de.patternCalibration,
             );
             // An IFS-shaped 4D session — the balloon's live shape one
@@ -4903,8 +4928,8 @@ function main(): void {
               });
               scene.setSurfaceSystem4(
                 de,
-                surfaceSlotColors(state.transforms, de.maps),
-                surfaceTrapIndices(state.transforms, de.maps),
+                surfaceSlotColors(state.transforms, ifsShadeSlots(de)),
+                surfaceTrapIndices(state.transforms, ifsShadeSlots(de)),
               );
             }
             scene.setSurface4View(
@@ -5100,8 +5125,12 @@ function main(): void {
             state.transforms,
             state.finalTransform ?? null,
             state.symmetry,
+            { condensationDepthBand: state.condensationDepthBand },
           );
-          sessionMaterials = gatedSlotMaterials(de.maps, de.patternCalibration);
+          sessionMaterials = gatedSlotMaterials(
+            ifsShadeSlots(de),
+            de.patternCalibration,
+          );
           if (surfaceComputeEligible(de)) {
             // The WebGPU compute path: no GLSL system upload — the fold
             // variant must never compile here (its ~25s Mesa link and the
@@ -5151,8 +5180,8 @@ function main(): void {
             });
             scene.setSurfaceSystem(
               de,
-              surfaceSlotColors(state.transforms, de.maps),
-              surfaceTrapIndices(state.transforms, de.maps),
+              surfaceSlotColors(state.transforms, ifsShadeSlots(de)),
+              surfaceTrapIndices(state.transforms, ifsShadeSlots(de)),
             );
             // Kick the empty-space grid build. Async and optional: the
             // session renders gridless until it lands, and a superseding
@@ -6285,6 +6314,7 @@ function main(): void {
         // never ROLLS one — B is authored composition, not surprise
         // material.)
         state = setSchedule(state, null);
+        state = setCondensationDepthBand(state, null);
       },
       "always",
       morphMs,
@@ -6547,6 +6577,10 @@ function main(): void {
         // and would take the Surface modes away outright (the gate refuses
         // schedule documents until the descent lift ships).
         state = setSchedule(state, PRESET_SCHEDULES[preset]?.() ?? null);
+        // A finite condensation band is authored composition, not a viewer
+        // preference. No shipped preset currently narrows it, so every
+        // preset load restores the construction's all-level default.
+        state = setCondensationDepthBand(state, null);
         // The shape trap a preset IS a composition with (PRESET_TRAPS) —
         // the lens table's exact both-directions rule again: a trap
         // preset installs its block, and every other preset CLEARS one

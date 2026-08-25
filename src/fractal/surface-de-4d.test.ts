@@ -4091,7 +4091,7 @@ describe("analyzeSurfaceSystem4 chaos rows", () => {
 });
 
 describe("analyzeSurfaceSystem4 shape emitters", () => {
-  it("refuses an emitter-carrying 4D document — 3D's refusal verbatim, the dimension changes nothing", () => {
+  it("admits a samplable emitter, splits it from recursive maps, and refuses slabs", () => {
     const emitter = {
       parts: [
         {
@@ -4104,9 +4104,347 @@ describe("analyzeSurfaceSystem4 shape emitters", () => {
     expect(analyzeSurfaceSystem4(base).status).toBe("eligible");
     const withEmitter = base.map((t, i) => (i === 1 ? { ...t, emitter } : t));
     const analysis = analyzeSurfaceSystem4(withEmitter);
+    expect(analysis.status).toBe("eligible");
+    const de = buildSurfaceDE4(withEmitter);
+    expect(de.maps.map((m) => m.baseIndex)).toEqual([0, 2, 3, 4]);
+    expect(de.condensation?.emitters[0]).toMatchObject({
+      baseIndex: 1,
+      shadeIndex: 4,
+    });
+    expect(slabExact4(de)).toBe(false);
+    expect(() => estimateDistance4(de, [0, 0, 0, 0], [0, 0, 0, 0.1])).toThrow(
+      /condensation shape/,
+    );
+    expect(() =>
+      estimateDistance4Refined(de, [0, 0, 0, 0], 0, [0, 0, 0, 0.1]),
+    ).toThrow(/condensation shape/);
+  });
+
+  it("refuses a pure-emitter 4D system", () => {
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.5 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const analysis = analyzeSurfaceSystem4([map4({ emitter })]);
     expect(analysis.status).toBe("ineligible");
     expect(analysis.reasons).toContain(
-      "map 2 is a shape emitter (condensation)",
+      "shape emitters leave no recursive maps",
     );
+
+    const inactiveUnsamplable = [
+      map4(),
+      map4({
+        id: 2,
+        weight: 0,
+        emitter: {
+          parts: [
+            emitter.parts[0],
+            {
+              primitive: { kind: "sphere", radius: 0.25 },
+              combine: "intersect",
+            },
+          ],
+        },
+      }),
+    ];
+    expect(analyzeSurfaceSystem4(inactiveUnsamplable).status).toBe("eligible");
+    expect(buildSurfaceDE4(inactiveUnsamplable).condensation).toBeUndefined();
+
+    const finalEmitter = analyzeSurfaceSystem4(
+      [map4()],
+      map4({ id: 3, emitter }),
+    );
+    expect(finalEmitter.status).toBe("ineligible");
+    expect(finalEmitter.reasons).toContain(
+      "final transform has a shape emitter",
+    );
+  });
+
+  it("proves a 4D invariant closure sphere for a rare translated recursive map", () => {
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 1 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const transforms = [
+      map4({
+        position: [100, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        w: { position: 20, scale: 0.5 },
+        weight: 1e-12,
+      }),
+      map4({
+        id: 1,
+        position: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        w: { position: 0, scale: 0.5 },
+        weight: 1,
+        emitter,
+      }),
+    ];
+    const de = buildSurfaceDE4(transforms);
+    let x = 0;
+    let w = 0;
+    for (let i = 0; i < 48; i++) {
+      x = 0.5 * x + 100;
+      w = 0.5 * w + 20;
+    }
+    expect(Math.hypot(x, w)).toBeLessThanOrEqual(de.boundingRadius);
+    expect(de.boundingRadius).toBeGreaterThan(203);
+    const first: Vec4 = [100, 0, 0, 20];
+    expect(estimateDistance4(de, first)).toBeLessThanOrEqual(0);
+    expect(estimateDistance4Refined(de, first)).toBeLessThanOrEqual(0);
+
+    const affineFinal = map4({
+      id: 2,
+      position: [3, 0, 0],
+      scale: [1.5, 1.5, 1.5],
+      w: { position: 2, scale: 1.25 },
+    });
+    const affineDE = buildSurfaceDE4(transforms, affineFinal);
+    const affinePoint = applyAffine4(
+      composeAffine4(toTransform4(affineFinal)),
+      x,
+      0,
+      0,
+      w,
+    );
+    expect(Math.hypot(...affinePoint)).toBeLessThanOrEqual(
+      affineDE.visibleBoundingRadius,
+    );
+    expect(estimateDistance4(affineDE, affinePoint)).toBeLessThanOrEqual(0);
+
+    const foldFinal = map4({
+      id: 3,
+      position: [0, 0, 0],
+      scale: [1, 1, 1],
+      w: { position: 0, scale: 1 },
+      variations: [{ type: "boxfold", weight: 1 }],
+    });
+    const foldDE = buildSurfaceDE4(transforms, foldFinal);
+    const axis = (value: number) => 2 * clamp(value, -1, 1) - value;
+    const foldedPoint: Vec4 = [axis(x), 0, 0, axis(w)];
+    expect(Math.hypot(...foldedPoint)).toBeLessThanOrEqual(
+      foldDE.visibleBoundingRadius,
+    );
+    expect(estimateDistance4(foldDE, foldedPoint)).toBeLessThanOrEqual(0);
+  });
+
+  it("evaluates pruned 4D child shapes and bounds evicted future-band subtrees", () => {
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.1 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const duplicateMaps = Array.from({ length: 4 }, (_, id) =>
+      map4({
+        id,
+        position: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        w: { scale: 0.5 },
+      }),
+    );
+    const buildAdversary = (translation: number, depth: number) =>
+      buildSurfaceDE4(
+        [
+          ...duplicateMaps,
+          map4({
+            id: 4,
+            position: [translation, 0, 0],
+            scale: [0.5, 0.5, 0.5],
+            w: { scale: 0.5 },
+          }),
+          map4({
+            id: 5,
+            position: [10, 0, 0],
+            scale: [1, 1, 1],
+            w: { scale: 1 },
+            emitter,
+          }),
+        ],
+        null,
+        { order: 1, plane: "xz" },
+        { condensationDepthBand: { minDepth: depth, maxDepth: depth } },
+      );
+    const immediate = buildAdversary(-5, 1);
+    const future = buildAdversary(-2.49, 2);
+    expect(immediate.beamWidth).toBe(4);
+    expect(future.beamWidth).toBe(4);
+    for (const candidate of [immediate, future]) {
+      const query: Vec4 = [0.01, 0, 0, 0];
+      expect(estimateDistance4(candidate, query)).toBeLessThanOrEqual(0);
+      expect(estimateDistance4Refined(candidate, query)).toBeLessThanOrEqual(0);
+    }
+  });
+
+  it("keeps plain and refined 4D estimates below an independent condensation cloud", () => {
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.3 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const transforms = pentatope().map((t, i) =>
+      i === 1 ? { ...t, emitter } : t,
+    );
+    const de = buildSurfaceDE4(transforms);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      12000,
+      mulberry32(0x4c01),
+    );
+    const rng = mulberry32(0x4d01);
+    for (let i = 0; i < 10; i++) {
+      const p: Vec4 = [
+        (rng() - 0.5) * 3,
+        (rng() - 0.5) * 3,
+        (rng() - 0.5) * 3,
+        (rng() - 0.5) * 2,
+      ];
+      const nearest = nearestDistance4(cloud, p) + 1e-6;
+      expect(estimateDistance4(de, p)).toBeLessThanOrEqual(nearest);
+      expect(estimateDistance4Refined(de, p)).toBeLessThanOrEqual(nearest);
+    }
+
+    const affineFinal = map4({
+      position: [0.2, -0.1, 0.1],
+      scale: [1.1, 0.9, 1],
+      w: { position: 0.25, scale: 1.05 },
+    });
+    const foldFinal = map4({
+      scale: [0.7, 0.7, 0.7],
+      w: { scale: 0.7 },
+      variations: [{ type: "boxfold", weight: 1 }],
+    });
+    expect(buildSurfaceDE4(transforms, affineFinal).final).not.toBeNull();
+    expect(buildSurfaceDE4(transforms, foldFinal).foldFinal).not.toBeNull();
+  });
+
+  it("folds condensation through the 4D fold frontier and keeps emitter-free builds exact", () => {
+    const transforms = [
+      ...pureBoxfoldPair4(),
+      map4({
+        id: 8,
+        position: [0.6, 0, 0],
+        scale: [0.3, 0.3, 0.3],
+        w: { position: 0.2, scale: 0.4 },
+        emitter: {
+          parts: [
+            {
+              primitive: { kind: "sphere", radius: 0.35 },
+              combine: "union",
+            },
+          ],
+        },
+      }),
+    ];
+    const de = buildSurfaceDE4(transforms);
+    expect(de.maps).toHaveLength(2);
+    const cloud = runChaosGame4(
+      transforms.map(toTransform4),
+      8000,
+      mulberry32(0x4f01),
+    );
+    const p: Vec4 = [1.1, -0.3, 0.4, 0.2];
+    const nearest = nearestDistance4(cloud, p) + 1e-6;
+    expect(estimateDistance4(de, p)).toBeLessThanOrEqual(nearest);
+    expect(estimateDistance4Refined(de, p)).toBeLessThanOrEqual(nearest);
+
+    const base = pentatope();
+    const classic = buildSurfaceDE4(base);
+    const option = buildSurfaceDE4(
+      base,
+      null,
+      { order: 1, plane: "xz" },
+      {
+        condensationDepthBand: { minDepth: 1, maxDepth: 1 },
+      },
+    );
+    expect(option).toEqual(classic);
+    const q: Vec4 = [0.2, -0.4, 0.7, 0.1];
+    expect(estimateDistance4(option, q)).toBe(estimateDistance4(classic, q));
+    expect(estimateDistance4Refined(option, q)).toBe(
+      estimateDistance4Refined(classic, q),
+    );
+
+    const pruned = buildSurfaceDE4(
+      [
+        map4({
+          position: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          w: { scale: 0.5 },
+          variations: [{ type: "boxfold", weight: 0.5 }],
+        }),
+        map4({
+          id: 1,
+          position: [10, 0, 0],
+          scale: [1, 1, 1],
+          w: { scale: 1 },
+          emitter: {
+            parts: [
+              {
+                primitive: { kind: "sphere", radius: 0.1 },
+                combine: "union",
+              },
+            ],
+          },
+        }),
+      ],
+      null,
+      { order: 1, plane: "xz" },
+      { condensationDepthBand: { minDepth: 1, maxDepth: 1 } },
+    );
+    const foldQuery: Vec4 = [-1.5, 0, 0, 0];
+    expect(estimateDistance4(pruned, foldQuery)).toBeLessThanOrEqual(0);
+    expect(estimateDistance4Refined(pruned, foldQuery)).toBeLessThanOrEqual(0);
+  });
+
+  it("applies root/depth-1/all bands in the 4D affine descent", () => {
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.3 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const transforms = [
+      map4({
+        position: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        w: { scale: 0.5 },
+      }),
+      map4({
+        id: 1,
+        position: [1, 0, 0],
+        scale: [0.4, 0.4, 0.4],
+        w: { scale: 0.4 },
+        emitter,
+      }),
+    ];
+    const symmetry = { order: 1, plane: "xz" as const };
+    const root = buildSurfaceDE4(transforms, null, symmetry, {
+      condensationDepthBand: { maxDepth: 0 },
+    });
+    const depth1 = buildSurfaceDE4(transforms, null, symmetry, {
+      condensationDepthBand: { minDepth: 1, maxDepth: 1 },
+    });
+    const all = buildSurfaceDE4(transforms);
+    const p: Vec4 = [0.5, 0, 0, 0];
+    expect(estimateDistance4(root, p)).toBeCloseTo(0.342, 12);
+    expect(estimateDistance4(depth1, p)).toBe(0);
+    expect(estimateDistance4(all, p)).toBe(estimateDistance4(depth1, p));
   });
 });

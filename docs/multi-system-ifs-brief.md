@@ -15,10 +15,11 @@ shapes faithful, and the shared 3D shape supply chain.
 **Implementation status (2026-08-25).** The shared shape library, xaos selection and `.flame`
 interop, the xaos construction/editor UI, scheduled post-words in every point consumer, emitter
 transforms, both xaos and emitter Flame GPU paths, and the escape-family shape-trap COLOR channel have
-landed. Still remaining are condensation in the inverse beam descent, trap-as-GEOMETRY in conformal
-forward fold chains, scheduled and graph-directed descent, and Tier-3 mesh shapes. The sections below
-keep the original design argument, with landed paragraphs updated to describe the implementation rather
-than a proposal.
+landed. Condensation now also reaches the 3D and 4D inverse-beam Surface paths, including the WebGL and
+WebGPU tracers, an inclusive level band, grid acceleration and balloon composition. Still remaining are
+trap-as-GEOMETRY in conformal forward fold chains, scheduled and graph-directed descent, and Tier-3 mesh
+shapes. The sections below keep the original design argument, with landed paragraphs updated to describe
+the implementation rather than a proposal.
 
 Companion docs already in `docs/`: `quaternion-julia-brief.md`, `fold-de-performance-brief.md`,
 `flame-interop.md`.
@@ -151,16 +152,37 @@ and friends are input-ignoring "condensation sets in disguise.")
 - `.flame` has no faithful emitter equivalent, so export warns and writes the ordinary map. The optional
   lossy disc-to-`gaussian_blur` conversion remains deferred.
 
-### Surface mode: shape trap inside the certified beam DE
+### Surface mode: shape trap inside the certified beam DE (landed)
 
 The condensation attractor satisfies A = C₀ ∪ ⋃fⱼ(A), so the descent in `surface-de.ts` gains one term:
 at **every visited node** (including the root), fold `σ_acc · sdShape(q_node)` into the running min, where
 `σ_acc` is the accumulated σ_min product along that chain and `q_node` the inverse-mapped query point.
 Pruned-sibling sphere certificates keep working provided the bounding radius R bounds the _condensation_
-attractor — either the fixed point of R = max(R_shape, maxⱼ(σmaxⱼ·R + |tⱼ|)) or the existing empirical
-bound computed from an emitter-enabled chaos-game run. This is the classic "orbit traps define the
-geometry" construction (Syntopia part VIII) transplanted into the beam-descent estimator; a level-band
-variant (only fold the shape in at levels a..b) gives "cogs at one scale only."
+attractor. The implementation uses the certified fixed-point inequality
+`R(c) = max(r₀(c), maxⱼ ||fⱼ(c)-c||/(1-Lⱼ))`, including fold/symmetry copies, rather than an empirical
+chaos-game fit. This is the classic "orbit traps define the geometry" construction (Syntopia part VIII)
+transplanted into the beam-descent estimator. The **Cog levels** control supplies an inclusive word-depth
+band `[a,b]` (root = 0, ordinary-map children = 1); the classic setting is all depths, and finite bands
+give "cogs at one scale only."
+
+The shape term is evaluated at the root, every generated child, every retained or terminal frontier
+node, and every fold/lens branch the estimator visits. Its `0.9` safety factor is applied after the
+emitter pose's `sigma_min` and the accumulated chain scale. In 3D this is the ordinary posed solid SDF.
+In 4D the same 3D solid is embedded at local `w = 0`, with distance
+`hypot(max(sdShape(xyz), 0), w)` — an embedded solid, not an extrusion through w — and nonzero slice
+thickness is refused because a segment query has no certified condensation counterpart.
+
+Emitter transforms are reset events, not recursive maps: their variations are skipped, symmetry copies
+share one shade/material slot, and ordinary maps remain the only descent alphabet. Surface refuses an
+unsamplable or nearly-flat emitter, an emitter-only document, and an emitter on the final transform. The
+shader wire admits at most 24 ordinary-map plus symmetry-expanded emitter records and at most 24 unique
+shade slots. Escape/bulb forward cores remain a different construction and refuse this condensation
+term; their shape-trap color channel and the separate trap-as-geometry work below are not aliases for it.
+
+The public estimator already contains the full condensation term and its invariant ball, so the existing
+3D refined surface grid composes without a special estimator fork, while the balloon inverted-union
+wrapper composes in both dimensions. Grid build/sampling stays on the 3D affine system's refined price
+path; balloon applies the same public-estimator union proof one wrapper farther out.
 
 GLSL gear SDF for the mirror in `src/app/surface-material.ts` (2D profile, then extrude):
 
@@ -190,7 +212,7 @@ Non-goal worth writing down: _meshing_ gears (interlocking teeth across scales) 
 top of the IFS — constant tooth module forces rational similarity ratios so tooth counts stay integers.
 Fun, out of scope.
 
-**Status: point consumers and Flame GPU landed; the Surface condensation term remains.**
+**Status: landed in point, Flame, Solid and Surface consumers, CPU and both shader dialects.**
 
 ---
 
@@ -258,12 +280,10 @@ the conformal fold family.
 
 ## Delivery sequence
 
-The shape library, C′-color, xaos, C-point and B-point are landed, including their Flame GPU mirrors.
-The remaining implementation order is: condensation in the beam descent and conformal forward
-trap-geometry first (their CPU-oracle stages can proceed together; their shared shader and app wiring
-serializes), then the scheduled descent, followed by graph-directed descent and Tier-3 mesh shapes. Each
-remains independently shippable; all must reuse the existing shape, selection and schedule vocabularies
-rather than restating them.
+The shape library, C′-color, xaos, C-point, C-surface and B-point are landed, including their GPU mirrors.
+The remaining implementation order is conformal forward trap-geometry, then scheduled descent, followed
+by graph-directed descent and Tier-3 mesh shapes. Each remains independently shippable; all must reuse
+the existing shape, selection and schedule vocabularies rather than restating them.
 
 ## Validation strategy
 

@@ -29,6 +29,7 @@ import type { ScalarControlSpec } from "./control-spec";
 import {
   defaultTransforms,
   fernSpongeIsolated,
+  gearworks,
   PRESET_NAMES,
 } from "../fractal/presets";
 import {
@@ -1095,6 +1096,59 @@ describe("Ui surface balloon rows", () => {
     ).click();
 
     expect(handlers.onBalloonInflate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Ui condensation level band", () => {
+  const row = (): HTMLElement =>
+    document.getElementById("surfaceCondensationRow") as HTMLElement;
+  const custom = (): HTMLElement =>
+    document.getElementById("surfaceCondensationCustom") as HTMLElement;
+
+  it("shows only for an emitter-backed inverse-descent session", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceSessionKind("ifs");
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface",
+      transforms: gearworks(),
+    });
+    expect(row().classList.contains("hidden")).toBe(false);
+    expect(custom().classList.contains("hidden")).toBe(true);
+
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface",
+      transforms: defaultTransforms(),
+    });
+    expect(row().classList.contains("hidden")).toBe(true);
+
+    ui.setSurfaceSessionKind("escape");
+    ui.updateLabels({
+      ...initialState(true),
+      renderMode: "surface",
+      transforms: gearworks(),
+    });
+    expect(row().classList.contains("hidden")).toBe(true);
+  });
+
+  it("opens endpoint sliders only for a custom finite band", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceSessionKind("ifs");
+    const state = {
+      ...initialState(true),
+      renderMode: "surface" as const,
+      transforms: gearworks(),
+    };
+
+    ui.updateLabels({
+      ...state,
+      condensationDepthBand: { minDepth: 2, maxDepth: 5 },
+    });
+    expect(custom().classList.contains("hidden")).toBe(false);
+
+    ui.updateLabels({ ...state, condensationDepthBand: { maxDepth: 0 } });
+    expect(custom().classList.contains("hidden")).toBe(true);
   });
 });
 

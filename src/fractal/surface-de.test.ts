@@ -28,6 +28,7 @@ import { runChaosGame, symmetryRotation } from "./chaos-game";
 import type { ChaosGameResult } from "./chaos-game";
 import {
   defaultTransforms,
+  gearworks,
   mandelboxKifs,
   mengerSponge,
   sierpinskiTetrahedron,
@@ -3904,7 +3905,7 @@ describe("analyzeSurfaceSystem chaos rows", () => {
 });
 
 describe("analyzeSurfaceSystem shape emitters", () => {
-  it("refuses an emitter-carrying document — the descent has no shape term and would march the plain (smaller) object", () => {
+  it("admits samplable emitters, removes reset events from recursive maps, and keeps their shape descriptors", () => {
     const transforms = sierpinskiTetrahedron().map((t, i) =>
       i === 2
         ? {
@@ -3920,21 +3921,391 @@ describe("analyzeSurfaceSystem shape emitters", () => {
           }
         : t,
     );
-    // The emitter-free base is eligible — the refusal below is the
-    // emitter's alone.
     expect(analyzeSurfaceSystem(sierpinskiTetrahedron()).status).toBe(
       "eligible",
     );
     const analysis = analyzeSurfaceSystem(transforms);
-    expect(analysis.status).toBe("ineligible");
-    expect(analysis.reasons).toContain(
-      "map 3 is a shape emitter (condensation)",
+    expect(analysis.status).toBe("eligible");
+    const de = buildSurfaceDE(transforms);
+    expect(de.maps.map((m) => m.baseIndex)).toEqual([0, 1, 3]);
+    expect(de.condensation?.emitters).toHaveLength(1);
+    expect(de.condensation?.emitters[0]).toMatchObject({
+      baseIndex: 2,
+      shadeIndex: 3,
+    });
+    expect(de.boundingRadius).toBeGreaterThanOrEqual(
+      Math.hypot(...transforms[2].position) + 0.25,
     );
+    expect(estimateDistance(de, transforms[2].position)).toBeLessThanOrEqual(0);
+    const symmetric = buildSurfaceDE(transforms, null, {
+      order: 3,
+      plane: "xy",
+    });
+    expect(symmetric.condensation?.emitters).toHaveLength(3);
+    expect(
+      symmetric.condensation?.emitters.map((e) => [e.baseIndex, e.shadeIndex]),
+    ).toEqual([
+      [2, 3],
+      [2, 3],
+      [2, 3],
+    ]);
     // An empty-parts spec is PRESENCE-false (transformHasEmitter) and
     // refuses nothing.
     const empty = sierpinskiTetrahedron().map((t, i) =>
       i === 2 ? { ...t, emitter: { parts: [] } } : t,
     );
     expect(analyzeSurfaceSystem(empty).status).toBe("eligible");
+  });
+
+  it("refuses pure-emitter and unsamplable-emitter systems explicitly", () => {
+    const sphere = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.5 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const pure = analyzeSurfaceSystem([map({ emitter: sphere })]);
+    expect(pure.status).toBe("ineligible");
+    expect(pure.reasons).toContain("shape emitters leave no recursive maps");
+
+    const unsamplable = analyzeSurfaceSystem([
+      map(),
+      map({
+        id: 1,
+        emitter: {
+          parts: [
+            sphere.parts[0],
+            {
+              primitive: { kind: "sphere", radius: 0.25 },
+              combine: "intersect",
+            },
+          ],
+        },
+      }),
+    ]);
+    expect(unsamplable.status).toBe("ineligible");
+    expect(unsamplable.reasons.join(" ")).toMatch(/unsamplable shape emitter/);
+
+    const inactiveFallback = [
+      map(),
+      map({
+        id: 2,
+        weight: 0,
+        emitter: {
+          parts: [
+            sphere.parts[0],
+            {
+              primitive: { kind: "sphere", radius: 0.25 },
+              combine: "intersect",
+            },
+          ],
+        },
+      }),
+    ];
+    expect(analyzeSurfaceSystem(inactiveFallback).status).toBe("eligible");
+    expect(buildSurfaceDE(inactiveFallback).condensation).toBeUndefined();
+
+    const finalEmitter = analyzeSurfaceSystem(
+      [map()],
+      map({ id: 3, emitter: sphere }),
+    );
+    expect(finalEmitter.status).toBe("ineligible");
+    expect(finalEmitter.reasons).toContain(
+      "final transform has a shape emitter",
+    );
+  });
+
+  it("uses an invariant closure sphere even when a remote recursive map is vanishingly rare", () => {
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 1 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const transforms = [
+      map({
+        position: [100, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        weight: 1e-12,
+      }),
+      map({
+        id: 1,
+        position: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        weight: 1,
+        emitter,
+      }),
+    ];
+    const de = buildSurfaceDE(transforms);
+    let x = 0;
+    for (let i = 0; i < 48; i++) x = 0.5 * x + 100;
+    expect(
+      Math.hypot(x - de.boundCenter[0], de.boundCenter[1], de.boundCenter[2]),
+    ).toBeLessThanOrEqual(de.boundingRadius);
+    expect(de.boundingRadius).toBeGreaterThan(199);
+    for (const estimate of [estimateDistance, estimateDistanceRefined]) {
+      expect(estimate(de, [100, 0, 0])).toBeLessThanOrEqual(0);
+    }
+
+    const affineFinal = map({
+      id: 2,
+      position: [3, 0, 0],
+      scale: [1.5, 1.5, 1.5],
+    });
+    const affineDE = buildSurfaceDE(transforms, affineFinal);
+    const affinePoint: Vec3 = [1.5 * x + 3, 0, 0];
+    expect(Math.hypot(...affinePoint)).toBeLessThanOrEqual(
+      affineDE.visibleBoundingRadius,
+    );
+    expect(estimateDistance(affineDE, affinePoint)).toBeLessThanOrEqual(0);
+
+    const foldFinal = map({
+      id: 3,
+      position: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [{ type: "boxfold", weight: 1 }],
+    });
+    const foldDE = buildSurfaceDE(transforms, foldFinal);
+    const foldedPoint: Vec3 = [2 * Math.min(1, x) - x, 0, 0];
+    expect(Math.hypot(...foldedPoint)).toBeLessThanOrEqual(
+      foldDE.visibleBoundingRadius,
+    );
+    expect(estimateDistance(foldDE, foldedPoint)).toBeLessThanOrEqual(0);
+  });
+
+  it("evaluates every child C0 before beam pruning and covers evicted future bands", () => {
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.1 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const duplicateMaps = Array.from({ length: 4 }, (_, id) =>
+      map({
+        id,
+        position: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      }),
+    );
+    const buildAdversary = (translation: number, depth: number) =>
+      buildSurfaceDE(
+        [
+          ...duplicateMaps,
+          map({
+            id: 4,
+            position: [translation, 0, 0],
+            scale: [0.5, 0.5, 0.5],
+          }),
+          map({
+            id: 5,
+            position: [10, 0, 0],
+            scale: [1, 1, 1],
+            emitter,
+          }),
+        ],
+        null,
+        { order: 1, plane: "xz" },
+        { condensationDepthBand: { minDepth: depth, maxDepth: depth } },
+      );
+    const immediate = buildAdversary(-5, 1);
+    const future = buildAdversary(-2.49, 2);
+    expect(immediate.beamWidth).toBe(4);
+    expect(future.beamWidth).toBe(4);
+    for (const de of [immediate, future]) {
+      expect(estimateDistance(de, [0.01, 0, 0])).toBeLessThanOrEqual(0);
+      expect(estimateDistanceRefined(de, [0.01, 0, 0])).toBeLessThanOrEqual(0);
+    }
+  });
+
+  it("does not turn Gearworks' empty rank-3/4 sentinels into a future-band sphere", () => {
+    const symmetry = { order: 1, plane: "xz" as const };
+    const root = buildSurfaceDE(gearworks(), null, symmetry, {
+      condensationDepthBand: { maxDepth: 0 },
+    });
+    const all = buildSurfaceDE(gearworks(), null, symmetry);
+    const finite = buildSurfaceDE(gearworks(), null, symmetry, {
+      condensationDepthBand: { minDepth: 1, maxDepth: 2 },
+    });
+    const p: Vec3 = [0, 0, 0];
+
+    for (const estimate of [estimateDistance, estimateDistanceRefined]) {
+      const rootValue = estimate(root, p);
+      const allValue = estimate(all, p);
+      const finiteValue = estimate(finite, p);
+      expect(rootValue).toBeGreaterThan(0);
+      expect(allValue).toBeGreaterThan(0);
+      expect(finiteValue).toBeGreaterThan(0);
+    }
+  });
+
+  it("keeps both estimators certified against an independent condensation cloud, including affine and fold final lenses", () => {
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.35 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const transforms = sierpinskiTetrahedron().map((t, i) =>
+      i === 2 ? { ...t, emitter } : t,
+    );
+    const finals: (Transform | null)[] = [
+      null,
+      map({
+        position: [0.2, -0.1, 0.15],
+        scale: [1.1, 0.9, 1],
+      }),
+      map({
+        position: [0.1, 0, -0.1],
+        scale: [0.7, 0.7, 0.7],
+        variations: [{ type: "boxfold", weight: 1 }],
+      }),
+    ];
+    for (let lensIndex = 0; lensIndex < finals.length; lensIndex++) {
+      const final = finals[lensIndex];
+      expect(analyzeSurfaceSystem(transforms, final).status).not.toBe(
+        "ineligible",
+      );
+      const de = buildSurfaceDE(transforms, final);
+      const cloud = runChaosGame(
+        transforms,
+        12000,
+        mulberry32(0xc010 + lensIndex),
+        final,
+      );
+      const rng = mulberry32(0xd010 + lensIndex);
+      for (let i = 0; i < 12; i++) {
+        const p: Vec3 = [
+          (rng() - 0.5) * 3,
+          (rng() - 0.5) * 3,
+          (rng() - 0.5) * 3,
+        ];
+        const nearest = nearestDistance(cloud, p) + 1e-6;
+        expect(estimateDistance(de, p)).toBeLessThanOrEqual(nearest);
+        expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(nearest);
+      }
+    }
+  });
+
+  it("leaves emitter-free builds and values exact when a condensation band option is supplied", () => {
+    const transforms = sierpinskiTetrahedron();
+    const classic = buildSurfaceDE(transforms);
+    const option = buildSurfaceDE(
+      transforms,
+      null,
+      { order: 1, plane: "xz" },
+      {
+        condensationDepthBand: { minDepth: 1, maxDepth: 1 },
+      },
+    );
+    expect(option).toEqual(classic);
+    const p: Vec3 = [0.37, -0.21, 0.83];
+    expect(estimateDistance(option, p)).toBe(estimateDistance(classic, p));
+    expect(estimateDistanceRefined(option, p)).toBe(
+      estimateDistanceRefined(classic, p),
+    );
+  });
+
+  it("folds condensation terms through the fold frontier", () => {
+    const transforms = [
+      ...pureBoxfoldPair(),
+      map({
+        id: 7,
+        position: [0.7, 0, 0],
+        scale: [0.35, 0.35, 0.35],
+        emitter: {
+          parts: [
+            {
+              primitive: { kind: "sphere", radius: 0.4 },
+              combine: "union",
+            },
+          ],
+        },
+      }),
+    ];
+    const de = buildSurfaceDE(transforms);
+    expect(de.maps).toHaveLength(2);
+    expect(de.condensation?.emitters).toHaveLength(1);
+    const cloud = runChaosGame(transforms, 10000, mulberry32(0xf01d));
+    for (const p of [
+      [0.9, 0.2, -0.1],
+      [-0.8, 0.4, 0.5],
+      [1.4, -0.5, 0.3],
+    ] as Vec3[]) {
+      const nearest = nearestDistance(cloud, p) + 1e-6;
+      expect(estimateDistance(de, p)).toBeLessThanOrEqual(nearest);
+      expect(estimateDistanceRefined(de, p)).toBeLessThanOrEqual(nearest);
+    }
+
+    // The valid x-up boxfold inverse lands at C0 center x=10, behind more
+    // than the fixed frontier's worth of smaller invalid branch radii.
+    const pruned = buildSurfaceDE(
+      [
+        map({
+          position: [0, 0, 0],
+          scale: [0.5, 0.5, 0.5],
+          variations: [{ type: "boxfold", weight: 0.5 }],
+        }),
+        map({
+          id: 1,
+          position: [10, 0, 0],
+          scale: [1, 1, 1],
+          emitter: {
+            parts: [
+              {
+                primitive: { kind: "sphere", radius: 0.1 },
+                combine: "union",
+              },
+            ],
+          },
+        }),
+      ],
+      null,
+      { order: 1, plane: "xz" },
+      { condensationDepthBand: { minDepth: 1, maxDepth: 1 } },
+    );
+    expect(estimateDistance(pruned, [-1.5, 0, 0])).toBeLessThanOrEqual(0);
+    expect(estimateDistanceRefined(pruned, [-1.5, 0, 0])).toBeLessThanOrEqual(
+      0,
+    );
+  });
+
+  it("applies the inclusive band at root, depth 1, or every live depth", () => {
+    const emitter = {
+      parts: [
+        {
+          primitive: { kind: "sphere" as const, radius: 0.3 },
+          combine: "union" as const,
+        },
+      ],
+    };
+    const transforms = [
+      map({ position: [0, 0, 0], scale: [0.5, 0.5, 0.5] }),
+      map({
+        id: 1,
+        position: [1, 0, 0],
+        scale: [0.4, 0.4, 0.4],
+        emitter,
+      }),
+    ];
+    const symmetry = { order: 1, plane: "xz" as const };
+    const root = buildSurfaceDE(transforms, null, symmetry, {
+      condensationDepthBand: { maxDepth: 0 },
+    });
+    const depth1 = buildSurfaceDE(transforms, null, symmetry, {
+      condensationDepthBand: { minDepth: 1, maxDepth: 1 },
+    });
+    const all = buildSurfaceDE(transforms);
+    const p: Vec3 = [0.5, 0, 0];
+    expect(estimateDistance(root, p)).toBeGreaterThan(0.2);
+    expect(estimateDistance(depth1, p)).toBeCloseTo(-0.054, 12);
+    expect(estimateDistance(all, p)).toBe(estimateDistance(depth1, p));
   });
 });

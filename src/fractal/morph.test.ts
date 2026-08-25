@@ -54,6 +54,20 @@ describe("lerpSystem endpoints", () => {
   });
 });
 
+describe("lerpSystem condensation depth band", () => {
+  it("keeps exact endpoints and target-pops the discrete band", () => {
+    const a = system({ condensationDepthBand: { maxDepth: 0 } });
+    const b = system({ condensationDepthBand: { minDepth: 2, maxDepth: 4 } });
+    expect(lerpSystem(a, b, 0)).toBe(a);
+    expect(lerpSystem(a, b, 1)).toBe(b);
+    expect(lerpSystem(a, b, 0.01).condensationDepthBand).toEqual({
+      minDepth: 2,
+      maxDepth: 4,
+    });
+    expect(lerpSystem(b, system(), 0.5).condensationDepthBand).toBeUndefined();
+  });
+});
+
 describe("lerpSystem rotation", () => {
   it("lerps through the nearest turn rather than raw numeric distance", () => {
     const a = system({
