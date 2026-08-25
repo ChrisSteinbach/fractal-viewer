@@ -367,15 +367,6 @@ export type FlameWorkerEvent =
        * software rasterization must not pass as a normal GPU render.
        * Absent for CPU backends. */
       software?: boolean;
-      /** DEAD: never set by this session any more. Used to disclose a CPU
-       * backend FORCED by the document's shape emitters, back when the
-       * flame WGSL kernels did not know emitters yet — `packGpuSystem`/
-       * `packGpuSystem4` now transfer an emitter's condensation-shape block
-       * exactly as they transfer chi rows, so no document forces CPU for
-       * this reason any more (`gpuEligible`'s own doc). The field stays
-       * declared because `main.ts` still reads it; owed removal once that
-       * consumer goes too. */
-      emitterForced?: boolean;
     }
   | { type: "error"; message: string }
   | {
