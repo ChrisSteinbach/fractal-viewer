@@ -162,6 +162,8 @@ import { createResolutionGovernor } from "./resolution-governor";
 import { createRenderTierScheduler } from "./render-tier";
 import {
   addTransform,
+  appendXaosBlock,
+  computeXaosBlockOffset,
   DEFAULT_BALLOON_RADIUS,
   DEFAULT_SYMMETRY_PLANE,
   DEFAULT_SYMMETRY_ORDER,
@@ -177,6 +179,8 @@ import {
   setBalloonRadius,
   setBalloonTint,
   setBalloonCustomPaletteStops,
+  setChaosCell,
+  setChaosLeak,
   setCustomPaletteStops,
   setFinalTransform,
   setFlamePaletteId,
@@ -5550,6 +5554,10 @@ function main(): void {
     // a property of the map's position among ALL the base maps, not of the
     // map itself.
     ui.renderTransformEditor(editing, sel, state.transforms.length);
+    // The Xaos leak rows + matrix are DOCUMENT-driven (chi rows), like the
+    // transform list above — rebuilt here, on the discrete-edit chokepoint,
+    // never from updateLabels() alone (see renderXaosSection's own doc).
+    ui.renderXaosSection(state.transforms);
     refreshSurfaceEligibility();
   }
 
@@ -6212,6 +6220,27 @@ function main(): void {
   }
 
   /**
+   * The Xaos matrix's cell commits and leak-dial drags: applyDragEdit's
+   * bookkeeping shape (burst-coalesced undo, frame-coalesced regen)
+   * PLUS this section's own resync — kept OUT of applyDragEdit itself so
+   * an unrelated position/rotation/fold-radius drag never rebuilds this
+   * grid on every one of its ticks. `resync` skips the rebuild mid-drag
+   * (every leak-dial "input" tick) the same way applyDragEdit skips
+   * refreshUi for the slider it is currently dragging — ui.ts's own leak
+   * row updates its label directly instead — and runs it once the drag
+   * settles ("change") or for a matrix cell's single "change" commit,
+   * where a rebuild is safe: no cell is still focused mid-edit by then.
+   */
+  function applyXaosEdit(mutate: () => void, resync: boolean): void {
+    stopShows({ notify: true });
+    editSession.beginEdit();
+    mutate();
+    if (resync) ui.renderXaosSection(state.transforms);
+    refreshSurfaceEligibility();
+    if (state.autoUpdate) regenScheduler.schedule();
+  }
+
+  /**
    * Roll a fresh random system into the document — the shared body of the
    * Surprise Me button and a drift leg: the same quality-gated roll
    * (random-system.ts), the same "replace" undo checkpoint and camera
@@ -6403,6 +6432,19 @@ function main(): void {
   }
 
   /**
+   * The Xaos "Add system as isolated block" picker's own resolver:
+   * `"__duplicate"` (the CURRENT system — `appendXaosBlock` conjugates its
+   * own copy apart, so handing back the live array is safe) on top of
+   * {@link resolveScheduleSourceTransforms}'s `preset:`/`saved:` cases,
+   * which this picker's Presets/Saved-scenes groups share verbatim
+   * (ui.ts's own clone of the same option list).
+   */
+  function resolveXaosSourceTransforms(source: string): Transform[] | null {
+    if (source === "__duplicate") return state.transforms;
+    return resolveScheduleSourceTransforms(source);
+  }
+
+  /**
    * Install `transforms` as system B — the one edit both the picker and the
    * snapshot button funnel through: keep the current block's depth (a
    * source swap should not also move the depth slider) or start at 1 for a
@@ -6429,14 +6471,18 @@ function main(): void {
     }
   }
 
-  /** Keep the Hybrid schedule picker's Saved scenes group tracking the
-   * collection — called at boot and after every collection mutation
-   * (save, delete, import), never per updateLabels tick (see
-   * ui.setScheduleSavedScenes). */
+  /** Keep the Hybrid schedule picker's AND the Xaos "Add system as
+   * isolated block" picker's Saved scenes groups tracking the collection
+   * — called at boot and after every collection mutation (save, delete,
+   * import), never per updateLabels tick (see ui.setScheduleSavedScenes /
+   * ui.setXaosAddSourceSavedScenes). One entries list, two independent
+   * pickers. */
   function refreshScheduleSavedScenes(): void {
-    ui.setScheduleSavedScenes(
-      collection.all().map((e) => ({ id: e.id, createdAt: e.createdAt })),
-    );
+    const entries = collection
+      .all()
+      .map((e) => ({ id: e.id, createdAt: e.createdAt }));
+    ui.setScheduleSavedScenes(entries);
+    ui.setXaosAddSourceSavedScenes(entries);
   }
 
   // Every simple scalar control (slider/select/checkbox bound to one state
@@ -6595,6 +6641,52 @@ function main(): void {
       applyEdit(() => {
         state = setScheduleDepth(state, depth);
       });
+    },
+    // The Xaos construction gesture: resolve the picked source, measure
+    // both systems' extent to seat the new block apart
+    // (computeXaosBlockOffset), then append with block-structured chaos
+    // rows (appendXaosBlock) — "always" like a preset load, since a
+    // successful add changes the visible extent enough that the camera
+    // should re-frame, and undo should restore the pre-gesture pose.
+    onXaosAddBlock: (source, balanceWeights) => {
+      if (source === "") {
+        ui.flashToast("Choose a system to add first.");
+        return;
+      }
+      const incoming = resolveXaosSourceTransforms(source);
+      if (!incoming || incoming.length === 0) {
+        ui.flashToast(
+          "That source could not be read as a system to add — nothing appended.",
+        );
+        ui.resetXaosAddSource();
+        return;
+      }
+      const offsetX = computeXaosBlockOffset(state.transforms, incoming);
+      const result = appendXaosBlock(
+        state.transforms,
+        incoming,
+        offsetX,
+        balanceWeights,
+      );
+      if ("refused" in result) {
+        ui.flashToast(result.refused);
+        ui.resetXaosAddSource();
+        return;
+      }
+      applyEdit(() => {
+        state = setTransforms(state, result.transforms);
+      }, "always");
+      ui.resetXaosAddSource();
+    },
+    onXaosCell: (fromIndex, toIndex, value) => {
+      applyXaosEdit(() => {
+        state = setChaosCell(state, fromIndex, toIndex, value);
+      }, true);
+    },
+    onXaosLeak: (blockA, blockB, leak, phase) => {
+      applyXaosEdit(() => {
+        state = setChaosLeak(state, blockA, blockB, leak);
+      }, phase === "commit");
     },
     // A manual press is a manual replace-load, so applyEdit (inside) also
     // ends a running drift show — the show's own legs take the same path

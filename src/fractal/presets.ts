@@ -2078,8 +2078,16 @@ export function hyperfern(): Transform[] {
  * holds for any rotation/scale/shear a map carries). This is how the xaos
  * presets seat two whole systems side by side in one space — each keeps its
  * own internal geometry exactly.
+ *
+ * Exported for `state.ts`'s `appendXaosBlock` — the Xaos matrix editor's
+ * "Add system as isolated block" gesture (fr-wo2j.6) reuses this exact
+ * algebra to seat an arbitrary picked system beside whatever is already
+ * authored, rather than restating it for a general pair.
  */
-function conjugateApart(transforms: Transform[], offset: Vec3): Transform[] {
+export function conjugateApart(
+  transforms: Transform[],
+  offset: Vec3,
+): Transform[] {
   const [ox, oy, oz] = offset;
   return transforms.map((t) => {
     const m = composeAffine(t).m;

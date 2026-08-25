@@ -1,5 +1,10 @@
 import { systemPartsAreNonFlat } from "../fractal/affine4";
-import { appendTransform, defaultTransforms } from "../fractal/presets";
+import {
+  appendTransform,
+  conjugateApart,
+  defaultTransforms,
+  nextId,
+} from "../fractal/presets";
 import { isLegacyPositionAxisColors } from "../fractal/color";
 import type { PositionAxisColors } from "../fractal/color";
 import {
@@ -18,7 +23,14 @@ import type {
   RgbStop,
 } from "../fractal/palette";
 import type { Rng } from "../fractal/rng";
-import { MAX_SCHEDULE_DEPTH } from "../fractal/chaos-game";
+import { mulberry32 } from "../fractal/rng";
+import {
+  chaosRowIsNonTrivial,
+  MAX_SCHEDULE_DEPTH,
+  MAX_TRANSFORMS,
+  resolveChaosEntry,
+  runChaosGame,
+} from "../fractal/chaos-game";
 import { resolveBackground } from "./background";
 import type {
   BackgroundGradient,
@@ -1574,6 +1586,354 @@ export function setSchedule(
 export function setScheduleDepth(state: AppState, depth: number): AppState {
   if (!state.schedule) return state;
   return setSchedule(state, { ...state.schedule, depth });
+}
+
+/**
+ * Partition a transform list into its finest Xaos BLOCKS: the connected
+ * components of "i and j pick each other at full weight" — chi(i→j) AND
+ * chi(j→i) both resolve to 1 (`chaos-game.ts`'s `resolveChaosEntry`). A
+ * system with no chaos rows at all is one block (every entry reads 1, the
+ * classic byte-identical case); the "Add system as isolated block"
+ * gesture's own output — the old block(s) reading 0 toward the new one,
+ * the new block reading 1 within itself and 0 toward the old — is
+ * recovered exactly, because "leak dial at 0" IS "entries read 0, not 1",
+ * and a leak dragged all the way to 1 (full merge) collapses two blocks
+ * into one HONESTLY: nothing distinguishes them any more, in the document
+ * or in the render.
+ *
+ * A hand-edited matrix that is no longer cleanly block-structured (an
+ * asymmetric edit, or a leak applied to only some of a pair's cells)
+ * degrades safely here: the relation only ever MERGES indices into a
+ * block, never invents a split that is not there, so the worst a stray
+ * edit does is coarsen the partition (two blocks read as one) rather than
+ * report structure that does not exist. {@link detectXaosLeaks} is what
+ * actually notices a pair whose cross entries are not uniform.
+ *
+ * Pure and O(n²) (n <= {@link MAX_TRANSFORMS}, so at most 65536 pair
+ * checks) — cheap enough to re-derive on every render of the Xaos panel
+ * rather than tracked as its own state.
+ */
+export function detectXaosBlocks(
+  transforms: readonly { chaos?: number[] }[],
+): number[][] {
+  const n = transforms.length;
+  const parent = Array.from({ length: n }, (_, i) => i);
+  function find(start: number): number {
+    let root = start;
+    while (parent[root] !== root) root = parent[root];
+    let cursor = start;
+    while (parent[cursor] !== root) {
+      const next = parent[cursor];
+      parent[cursor] = root;
+      cursor = next;
+    }
+    return root;
+  }
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const forward = resolveChaosEntry(transforms[i].chaos?.[j]);
+      const backward = resolveChaosEntry(transforms[j].chaos?.[i]);
+      if (forward === 1 && backward === 1) {
+        const ri = find(i);
+        const rj = find(j);
+        if (ri !== rj) parent[ri] = rj;
+      }
+    }
+  }
+  const groups = new Map<number, number[]>();
+  for (let i = 0; i < n; i++) {
+    const root = find(i);
+    let group = groups.get(root);
+    if (!group) {
+      group = [];
+      groups.set(root, group);
+    }
+    group.push(i);
+  }
+  // Order blocks by their lowest index, so the same document always lists
+  // them the same way — the order the leak rows render in.
+  return Array.from(groups.values()).sort((a, b) => a[0] - b[0]);
+}
+
+/**
+ * One Xaos block-pair's cross-weight reading, from {@link detectXaosLeaks}:
+ * `value` is the shared scalar every cross entry between the two blocks
+ * resolves to (both directions), or `null` when the matrix carries
+ * something other than a single uniform leak between them — a hand edit
+ * that touched only some of the pair's cells, or gave the two directions
+ * different weights. The leak dial degrades to a "Customized" note exactly
+ * on `null`, rather than guessing or silently overwriting a customization
+ * it cannot honestly summarize as one number.
+ */
+export interface XaosLeak {
+  blockA: number[];
+  blockB: number[];
+  value: number | null;
+}
+
+/**
+ * Every pairwise leak reading between `blocks` ({@link detectXaosBlocks}'s
+ * output) — one entry per unordered pair, in block order. Pure, O(pairs *
+ * block size²); for the shipped fern|sponge shape (2 blocks, 4 and 20
+ * maps) that is 80 cell reads for the one pair that exists.
+ */
+function xaosPairLeak(
+  transforms: readonly { chaos?: number[] }[],
+  blockA: readonly number[],
+  blockB: readonly number[],
+): number | null {
+  let value: number | null = null;
+  for (const i of blockA) {
+    for (const j of blockB) {
+      const fwd = resolveChaosEntry(transforms[i].chaos?.[j]);
+      const bwd = resolveChaosEntry(transforms[j].chaos?.[i]);
+      if (value === null) value = fwd;
+      if (fwd !== value || bwd !== value) return null;
+    }
+  }
+  return value;
+}
+
+export function detectXaosLeaks(
+  transforms: readonly { chaos?: number[] }[],
+  blocks: readonly number[][],
+): XaosLeak[] {
+  const leaks: XaosLeak[] = [];
+  for (let a = 0; a < blocks.length; a++) {
+    for (let b = a + 1; b < blocks.length; b++) {
+      const blockA = blocks[a];
+      const blockB = blocks[b];
+      leaks.push({
+        blockA,
+        blockB,
+        value: xaosPairLeak(transforms, blockA, blockB),
+      });
+    }
+  }
+  return leaks;
+}
+
+/**
+ * Edit one chaos-matrix cell: row `fromIndex`, column `toIndex`, to
+ * `value` — the fold-lengths' editing discipline (types.ts's
+ * absent-means-classic convention) applied to a chi row: the row
+ * materializes into the document only on THIS first touch (an absent row
+ * already reads as all-1s at consumption — `chaos-game.ts`'s
+ * `resolveChaosEntry` — so materializing it with literal 1s everywhere
+ * else is value-identical to leaving it absent), and a row edited back to
+ * functionally-all-1s is REMOVED again (`chaosRowIsNonTrivial` is the ONE
+ * predicate — never re-derived here). `value` is stored RAW, exactly like
+ * `persist.ts`'s `decodeChaosRow` and `variations.ts`'s fold lengths: the
+ * domain (entries `>= 0`) belongs to `resolveChaosEntry` at consumption,
+ * not to this writer — a negative or out-of-range `value` is faithfully
+ * stored and resolved at read time exactly as an authored one would be.
+ * Out-of-range indices no-op (defense only — the UI never offers one).
+ */
+export function setChaosCell(
+  state: AppState,
+  fromIndex: number,
+  toIndex: number,
+  value: number,
+): AppState {
+  const n = state.transforms.length;
+  if (fromIndex < 0 || fromIndex >= n || toIndex < 0 || toIndex >= n) {
+    return state;
+  }
+  const transforms = state.transforms.map((t, i) => {
+    if (i !== fromIndex) return t;
+    const row: number[] = [];
+    for (let j = 0; j < n; j++) {
+      row.push(j === toIndex ? value : resolveChaosEntry(t.chaos?.[j]));
+    }
+    return { ...t, chaos: chaosRowIsNonTrivial(row, n) ? row : undefined };
+  });
+  return { ...state, transforms };
+}
+
+/**
+ * Set the leak between two Xaos blocks: every cross entry in BOTH
+ * directions (every `blockA[i] → blockB[j]` and every `blockB[j] →
+ * blockA[i]`) to `leak` — the one write both the "Add system as isolated
+ * block" gesture's initial 0 and the follow-up leak dial funnel through.
+ * Within-block entries are untouched, so any FINER structure a block
+ * already carries (it may itself be two sub-blocks from an earlier
+ * gesture or a leak dragged back to 0) survives a leak edit on the OUTER
+ * pair. One pass over the transform list rather than one `setChaosCell`
+ * call per cross pair — the leak dial can drag across a large block pair
+ * (two 20+-map blocks) many times a second, and re-mapping the whole
+ * transform array per cell would make that visibly lag.
+ */
+export function setChaosLeak(
+  state: AppState,
+  blockA: readonly number[],
+  blockB: readonly number[],
+  leak: number,
+): AppState {
+  const n = state.transforms.length;
+  const setA = new Set(blockA);
+  const setB = new Set(blockB);
+  const transforms = state.transforms.map((t, i) => {
+    const inA = setA.has(i);
+    const inB = setB.has(i);
+    if (!inA && !inB) return t;
+    const targets = inA ? setB : setA;
+    const row: number[] = [];
+    for (let j = 0; j < n; j++) {
+      row.push(targets.has(j) ? leak : resolveChaosEntry(t.chaos?.[j]));
+    }
+    return { ...t, chaos: chaosRowIsNonTrivial(row, n) ? row : undefined };
+  });
+  return { ...state, transforms };
+}
+
+/** Sample size for {@link computeXaosBlockOffset}'s extent probe: enough
+ * points to trace a system's rough x-silhouette without paying for a real
+ * cloud generation (which runs in a worker; this runs synchronously on
+ * the gesture's button click, so it must stay cheap). Warm-up is
+ * `runChaosGame`'s own 100 iterations on top. */
+const XAOS_BLOCK_EXTENT_SAMPLE_POINTS = 4000;
+
+/** How far past touching the incoming block's own extent
+ * {@link computeXaosBlockOffset} seats it — a fixed visual margin rather
+ * than a fraction of either system's size, so a tiny system beside a huge
+ * one still gets a perceptible gap. */
+const XAOS_BLOCK_GAP = 0.4;
+
+/**
+ * The x-offset {@link appendXaosBlock} conjugates the incoming block by:
+ * enough that its own silhouette clears the EXISTING system's silhouette
+ * along +x, plus {@link XAOS_BLOCK_GAP} of daylight — the fern|sponge
+ * presets' "the two clear each other with a visible gap" rule
+ * (`presets.ts`'s `FERN_SPONGE_OFFSET`), generalized from a constant
+ * hand-picked for those two specific systems to any pair, by actually
+ * MEASURING both systems' extent instead of assuming one.
+ *
+ * Measurement runs a short, seeded, synchronous {@link runChaosGame} over
+ * each system alone (a fixed seed — this offset is a UI-thread placement
+ * affordance, not a document value, so it need not vary run to run) and
+ * reads the x-bounds of the resulting cloud. `existing`'s own maxX anchors
+ * the incoming block's minX, so a SECOND gesture keeps growing the
+ * arrangement along +x from wherever the first one left off, rather than
+ * re-measuring from the origin and risking overlap with a block already
+ * seated there.
+ */
+export function computeXaosBlockOffset(
+  existing: Transform[],
+  incoming: Transform[],
+): number {
+  const existingBounds = runChaosGame(
+    existing,
+    XAOS_BLOCK_EXTENT_SAMPLE_POINTS,
+    mulberry32(1),
+  ).bounds;
+  const incomingBounds = runChaosGame(
+    incoming,
+    XAOS_BLOCK_EXTENT_SAMPLE_POINTS,
+    mulberry32(1),
+  ).bounds;
+  return existingBounds.maxX - incomingBounds.minX + XAOS_BLOCK_GAP;
+}
+
+/** {@link appendXaosBlock}'s weight-balance target: the average of the
+ * CURRENT blocks' own weight sums ({@link detectXaosBlocks}) — before any
+ * append, the whole system is one block, so this is simply its total
+ * weight (the fern|sponge presets' own move: the sponge's 20 maps at
+ * weight 5 sum to the fern's 100). After a later append, the next block
+ * balances toward the AVERAGE of whatever blocks already exist, rather
+ * than re-deriving a target from just one of them. */
+function xaosBalanceTarget(existing: Transform[]): number {
+  const blocks = detectXaosBlocks(existing);
+  const sums = blocks.map((block) =>
+    block.reduce((sum, i) => sum + (existing[i].weight ?? 1), 0),
+  );
+  return sums.reduce((a, b) => a + b, 0) / sums.length;
+}
+
+/** {@link appendXaosBlock}'s outcome: either the combined transform list,
+ * or a refusal reason to show the user. */
+export type XaosBlockAppend = { transforms: Transform[] } | { refused: string };
+
+/**
+ * "Add system as isolated block" (fr-wo2j.6's construction gesture):
+ * append `incoming`'s maps to `existing`, conjugated apart along x by
+ * `offsetX` ({@link computeXaosBlockOffset}, via `presets.ts`'s
+ * `conjugateApart`), with block-structured chaos rows written
+ * automatically — every EXISTING map's row extends with 0s toward the new
+ * block (materializing an absent row first: an absent row means "1
+ * toward everyone", and left that way it would leak into the very block
+ * this gesture exists to isolate), and every NEW map's row carries 0s
+ * toward the old blocks and its OWN row verbatim (remapped) within its
+ * own — so a source that already carries internal Xaos structure (e.g.
+ * appending "Fern | Sponge (isolated)" itself) keeps that structure
+ * nested inside the new block rather than being flattened to all-1s.
+ *
+ * `balanceWeights` scales the incoming block's weights (uniformly, so its
+ * OWN internal balance is untouched) to sum to {@link xaosBalanceTarget}
+ * — the fern|sponge presets' own move, offered as a choice rather than
+ * applied unconditionally because it is a stylistic default, not a
+ * correctness rule.
+ *
+ * Refuses — returns `{refused}`, `existing` and `incoming` untouched —
+ * for an empty `incoming`, or past {@link MAX_TRANSFORMS} (the Uint8
+ * transform-index cap every chaos-game consumer shares): this never
+ * silently truncates the way a blind array concat would.
+ */
+export function appendXaosBlock(
+  existing: Transform[],
+  incoming: Transform[],
+  offsetX: number,
+  balanceWeights: boolean,
+): XaosBlockAppend {
+  if (incoming.length === 0) {
+    return { refused: "That source has no transforms to add." };
+  }
+  const existingCount = existing.length;
+  const newCount = incoming.length;
+  const total = existingCount + newCount;
+  if (total > MAX_TRANSFORMS) {
+    return {
+      refused:
+        `Adding ${newCount} map${newCount === 1 ? "" : "s"} would need ` +
+        `${total} transforms total, over the ${MAX_TRANSFORMS}-transform ` +
+        `limit (${existingCount} already authored) — nothing was added.`,
+    };
+  }
+
+  let factor = 1;
+  if (balanceWeights) {
+    const incomingSum = incoming.reduce((sum, t) => sum + (t.weight ?? 1), 0);
+    const target = xaosBalanceTarget(existing);
+    if (incomingSum > 0 && Number.isFinite(incomingSum) && target > 0) {
+      factor = target / incomingSum;
+    }
+  }
+
+  const shifted = conjugateApart(incoming, [offsetX, 0, 0]);
+  let id = nextId(existing);
+  const newBlock = shifted.map((t): Transform => {
+    const row = new Array<number>(total);
+    for (let j = 0; j < existingCount; j++) row[j] = 0;
+    for (let j = 0; j < newCount; j++) {
+      row[existingCount + j] = resolveChaosEntry(t.chaos?.[j]);
+    }
+    return {
+      ...t,
+      id: id++,
+      weight: factor === 1 ? t.weight : (t.weight ?? 1) * factor,
+      chaos: row,
+    };
+  });
+
+  const updatedExisting = existing.map((t): Transform => {
+    const row = new Array<number>(total);
+    for (let j = 0; j < existingCount; j++) {
+      row[j] = resolveChaosEntry(t.chaos?.[j]);
+    }
+    for (let j = existingCount; j < total; j++) row[j] = 0;
+    return { ...t, chaos: row };
+  });
+
+  return { transforms: [...updatedExisting, ...newBlock] };
 }
 
 /**

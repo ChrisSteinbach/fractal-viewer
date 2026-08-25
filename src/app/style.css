@@ -1301,6 +1301,88 @@ summary.editor-group-title {
   min-width: 0;
 }
 
+/* ── Xaos section ─────────────────────────────────────────────────────────
+   The leak-dial rows and the n×n chi matrix behind the Xaos panel section's
+   own "Advanced" disclosure (ui.ts's renderXaosLeakRows/renderXaosMatrix).
+   `.xaos-chip` is `.legend-swatch` reused to key a matrix row/column or a
+   leak-row block against the transform list's own accent colors — its
+   per-transform `background` is computed at render time and stays inline;
+   everything else here is fixed. */
+.xaos-chip {
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
+.xaos-leak-row {
+  margin-bottom: 8px;
+}
+
+.xaos-leak-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+/* A block pair whose cross entries aren't a single uniform value reads as
+   "Customized" rather than a slider guessing a position that isn't really
+   there. */
+.xaos-leak-note {
+  flex: 1;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+/* Horizontal-scroll wrapper: usable at 24+ maps (the shipped fern|sponge
+   presets' size) without pretending an n×n grid scales to the transform
+   cap. */
+.xaos-matrix-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.xaos-matrix-table {
+  border-collapse: collapse;
+}
+
+.xaos-matrix-col-head,
+.xaos-matrix-row-head {
+  padding: 2px 3px;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.xaos-matrix-row-head {
+  text-align: right;
+}
+
+.xaos-matrix-cell {
+  padding: 1px;
+}
+
+/* The diagonal (a map re-selecting itself) is a normal, editable cell —
+   flam3 allows and uses self-transitions — with only a faint background as
+   a reading aid for a big grid. */
+.xaos-matrix-cell.diagonal {
+  background: var(--surface-2);
+}
+
+.xaos-matrix-input {
+  width: 3.2em;
+  padding: 2px;
+  font-size: 11px;
+}
+
+.xaos-matrix-warn {
+  padding-left: 6px;
+  color: var(--bad);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 #backdrop {
   position: absolute;
   inset: 0;
