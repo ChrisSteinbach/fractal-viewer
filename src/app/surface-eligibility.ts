@@ -15,16 +15,17 @@
  * re-classifying.
  */
 
-import { systemPartsAreNonFlat } from "../fractal/affine4";
+import { systemPartsAreNonFlat, toTransform4 } from "../fractal/affine4";
 import { analyzeBulbSystem } from "../fractal/bulb-de";
 import { analyzeEscapeSystem, systemHasPowerLink } from "../fractal/escape-de";
 import { analyzeEscapeSystem4 } from "../fractal/escape-de-4d";
 import { systemHasActiveQSquare } from "../fractal/qjulia-de";
-import { analyzeSurfaceSystem } from "../fractal/surface-de";
+import { analyzeSurfaceSystem, transformSigmas } from "../fractal/surface-de";
 import type { SurfaceEligibilityStatus } from "../fractal/surface-de";
 import {
   analyzeSurfaceSystem4,
   systemFoldShaped4,
+  transformSigmas4,
 } from "../fractal/surface-de-4d";
 import {
   effectiveSymmetryOrder,
@@ -33,6 +34,7 @@ import {
 } from "../fractal/chaos-game";
 import type {
   HybridSchedule,
+  ShapeTrap,
   SymmetryParams,
   Transform,
 } from "../fractal/types";
@@ -101,6 +103,62 @@ function hasActiveEmitter(transforms: Transform[]): boolean {
   );
 }
 
+/** Trap geometry's deliberately narrower admission inside an otherwise
+ * marchable escape-time route. Color trapping is defined for every forward
+ * orbit, but pulling a shape SDF back into distance geometry relies on the
+ * fold-only chain's conformal derivative scale. Return the exact UI refusal,
+ * or null when geometry is off / the active word satisfies that contract. */
+export function surfaceTrapGeometryRestriction(
+  transforms: Transform[],
+  fourD: boolean,
+): string | null {
+  if (systemHasPowerLink(transforms)) {
+    return (
+      "Shape-trap geometry requires a fold-only conformal escape chain; " +
+      "power maps are unsupported. Turn Geometry off to keep this trap as a color source."
+    );
+  }
+  for (let i = 0; i < transforms.length; i++) {
+    const transform = transforms[i];
+    if ((transform.weight ?? 1) <= 0) continue;
+    const sigmas = fourD
+      ? transformSigmas4(toTransform4(transform))
+      : transformSigmas(transform);
+    const ratio = sigmas.min > 0 ? sigmas.max / sigmas.min : Infinity;
+    // Geometry needs a scalar derivative scale, not the inverse-descent
+    // gate's looser "conformal-enough" performance class. Rotation and
+    // uniform scale resolve to exact equal singular values in both helpers;
+    // a tiny numerical allowance covers the eigen solve used only by an
+    // authored shear (which remains refused at any meaningful magnitude).
+    if (ratio > 1 + 1e-9) {
+      return (
+        `Shape-trap geometry requires conformal fold links; map ${i + 1} ` +
+        `is anisotropic (ratio ${ratio.toFixed(2)}). Turn Geometry off to ` +
+        "keep this trap as a color source."
+      );
+    }
+  }
+  return null;
+}
+
+function trapGeometryRefusal(
+  transforms: Transform[],
+  shapeTrap: ShapeTrap | null,
+  fourD: boolean,
+): string | null {
+  return shapeTrap?.geometry === true
+    ? surfaceTrapGeometryRestriction(transforms, fourD)
+    : null;
+}
+
+function inverseDescentTrapGeometryRefusal(
+  shapeTrap: ShapeTrap | null,
+): string | null {
+  return shapeTrap?.geometry === true
+    ? "Shape-trap geometry is available only on conformal fold-only escape chains; this document routes to the inverse-descent attractor tracer. Turn Geometry off to keep the trap as authored color state."
+    : null;
+}
+
 /**
  * Classify the document for the Surface gate: the pure marchability analyses
  * (cheap — no bounding probe) plus the tracers' uniform-array caps, routed on
@@ -116,6 +174,7 @@ export function deriveSurfaceEligibility(
   symmetry: SymmetryParams,
   opts: { computeAvailable: boolean },
   schedule: HybridSchedule | null = null,
+  shapeTrap: ShapeTrap | null = null,
 ): SurfaceEligibilityResult {
   // The scheduled-hybrid post-word refuses Surface OUTRIGHT, ahead of every
   // analyzer: the analyzers gate SYSTEM shape and cannot see scene-level
@@ -161,6 +220,18 @@ export function deriveSurfaceEligibility(
           return {
             status: "ineligible",
             note: `${links} chain links (the escape-time tracer carries at most ${SURFACE4_MAX_MAPS})`,
+            kind: null,
+          };
+        }
+        const geometryRefusal = trapGeometryRefusal(
+          transforms,
+          shapeTrap,
+          true,
+        );
+        if (geometryRefusal) {
+          return {
+            status: "ineligible",
+            note: geometryRefusal,
             kind: null,
           };
         }
@@ -210,6 +281,14 @@ export function deriveSurfaceEligibility(
         kind: null,
       };
     }
+    const geometryRouteRefusal = inverseDescentTrapGeometryRefusal(shapeTrap);
+    if (geometryRouteRefusal) {
+      return {
+        status: "ineligible",
+        note: geometryRouteRefusal,
+        kind: null,
+      };
+    }
     // The 4D tracer's uniform cap. No symmetry multiplier — the 4D descent
     // sweeps kaleidoscope sectors around the base maps, so slots are active
     // maps 1:1 at any order.
@@ -255,6 +334,10 @@ export function deriveSurfaceEligibility(
           kind: null,
         };
       }
+      const geometryRefusal = trapGeometryRefusal(transforms, shapeTrap, false);
+      if (geometryRefusal) {
+        return { status: "ineligible", note: geometryRefusal, kind: null };
+      }
       return {
         status: "degraded",
         note:
@@ -280,6 +363,15 @@ export function deriveSurfaceEligibility(
       analyzeBulbSystem(transforms, finalTransform, symmetry).status ===
       "eligible"
     ) {
+      if (shapeTrap?.geometry === true) {
+        return {
+          status: "ineligible",
+          note:
+            "Shape-trap geometry requires a fold-only conformal escape chain; " +
+            "the Mandelbulb is a power map. Turn Geometry off to keep this trap as a color source.",
+          kind: null,
+        };
+      }
       return {
         status: "degraded",
         note: "Mandelbulb render: Surface marches the escape-time set of this triplex power — the classic Mandelbulb — rather than an IFS attractor.",
@@ -298,6 +390,14 @@ export function deriveSurfaceEligibility(
       reasons.push(QSQUARE_CHAIN_HINT);
     }
     return { status: "ineligible", note: reasons.join("; "), kind: null };
+  }
+  const geometryRouteRefusal = inverseDescentTrapGeometryRefusal(shapeTrap);
+  if (geometryRouteRefusal) {
+    return {
+      status: "ineligible",
+      note: geometryRouteRefusal,
+      kind: null,
+    };
   }
   // The tracer's uniform cap, on the BARE active-map count: the descent
   // sweeps kaleidoscope sectors around the base maps, so order costs no

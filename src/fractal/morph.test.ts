@@ -1306,6 +1306,57 @@ describe("lerpShapeTrap (the shape-trap block's morph rule)", () => {
     );
   });
 
+  it("target-pops geometry and its inclusive band while same-shape pose/color fields keep gliding", () => {
+    const a: ShapeTrap = {
+      ...trapA,
+      geometry: true,
+      geometryLevelMin: 1,
+      geometryLevelMax: 3,
+    };
+    const b: ShapeTrap = {
+      ...trapB,
+      geometry: true,
+      geometryLevelMin: 4,
+      geometryLevelMax: 8,
+    };
+    const mid = lerpShapeTrap(a, b, 0.25)!;
+    expect(mid.position).toEqual([0.75, 0.25, 0]);
+    expect(mid.fade).toBeCloseTo(0.15, 12);
+    expect(mid.geometry).toBe(true);
+    expect(mid.geometryLevelMin).toBe(4);
+    expect(mid.geometryLevelMax).toBe(8);
+
+    const systemMid = lerpSystem(
+      system({ shapeTrap: a }),
+      system({ shapeTrap: b }),
+      0.25,
+    ).shapeTrap;
+    expect(systemMid?.geometry).toBe(true);
+    expect(systemMid?.geometryLevelMin).toBe(4);
+    expect(systemMid?.geometryLevelMax).toBe(8);
+
+    const off = lerpShapeTrap(a, trapB, 0.25)!;
+    expect(off.position).toEqual([0.75, 0.25, 0]);
+    expect(off.geometry).toBeUndefined();
+    expect(off.geometryLevelMin).toBeUndefined();
+    expect(off.geometryLevelMax).toBeUndefined();
+  });
+
+  it("keeps geometry-bearing endpoints exact by reference", () => {
+    const a: ShapeTrap = {
+      ...trapA,
+      geometry: true,
+      geometryLevelMin: 2,
+    };
+    const b: ShapeTrap = {
+      ...trapB,
+      geometry: true,
+      geometryLevelMax: 6,
+    };
+    expect(lerpShapeTrap(a, b, 0)).toBe(a);
+    expect(lerpShapeTrap(a, b, 1)).toBe(b);
+  });
+
   it("POPS to the target for every other pair: one-sided, a different shape, a different mode", () => {
     // One-sided (either way).
     expect(lerpShapeTrap(null, trapB, 0.25)).toBe(trapB);

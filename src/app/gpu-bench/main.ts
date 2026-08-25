@@ -67,8 +67,9 @@ import {
   ESCAPE_TIME_ITERATIONS,
   estimateEscapeDistance,
 } from "../../fractal/escape-de";
-import { resolveShapeTrap } from "../../fractal/shape-trap";
-import { PEACE_SIGN_SHAPE } from "../../fractal/shapes";
+import { resolveShapeTrap, shapeTrapLocalSdf } from "../../fractal/shape-trap";
+import type { ResolvedShapeTrap } from "../../fractal/shape-trap";
+import { PEACE_SIGN_SHAPE, SHAPE_MARCH_SAFETY } from "../../fractal/shapes";
 import type { EscapeDE } from "../../fractal/escape-de";
 import {
   analyzeEscapeSystem4,
@@ -4433,6 +4434,7 @@ function estimateEscape4Composed(
   de: EscapeDE4,
   view4: SurfaceGpu4View,
   q: Vec3,
+  trap: ResolvedShapeTrap | null = null,
 ): number {
   const rot = view4.rotor;
   const p: Vec4 = [0, 0, 0, 0];
@@ -4443,7 +4445,7 @@ function estimateEscape4Composed(
       rot[8 + i] * q[2] +
       rot[12 + i] * view4.w0;
   }
-  return estimateEscapeDistance4(de, p);
+  return estimateEscapeDistance4(de, p, ESCAPE_TIME_ITERATIONS, trap);
 }
 
 /**
@@ -4756,8 +4758,26 @@ function affine4Queries(
  * kernel arithmetic bugs. See `compareSurfaceForwardAgreement`'s doc for how
  * the gap between the two oracles is used.
  */
-function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
+function trapGeometryDistanceF32(
+  trap: ResolvedShapeTrap,
+  x: number,
+  y: number,
+  z: number,
+  dr: number,
+): number {
   const f = Math.fround;
+  const localSdf = f(shapeTrapLocalSdf(trap, x, y, z));
+  return f(f(f(SHAPE_MARCH_SAFETY) * localSdf) / f(f(trap.invScale) * dr));
+}
+
+function estimateEscapeDistanceF32(
+  de: EscapeDE,
+  p: Vec3,
+  trap: ResolvedShapeTrap | null = null,
+): number {
+  const f = Math.fround;
+  const geometryTrap = trap?.geometry ? trap : null;
+  let trapDistance = Infinity;
   // The whole CHAIN, in the kernel's own f32 lanes — one
   // pre-rounded link per slot, cycled `i mod n`.
   const links = de.links.map((link) => ({
@@ -4898,13 +4918,27 @@ function estimateEscapeDistanceF32(de: EscapeDE, p: Vec3): number {
     vz = f(f(link.w * yz) + q[2]);
     dr = f(f(f(link.g * localL) * dr) + 1);
     r = f(Math.sqrt(f(f(f(vx * vx) + f(vy * vy)) + f(vz * vz))));
+    if (
+      geometryTrap &&
+      i >= geometryTrap.geometryLevelMin &&
+      i <= geometryTrap.geometryLevelMax
+    ) {
+      trapDistance = Math.min(
+        trapDistance,
+        trapGeometryDistanceF32(geometryTrap, vx, vy, vz, dr),
+      );
+    }
   }
   // The chain's escape law picks the form (escape-de.ts's ESTIMATE
   // FORM paragraph) — `EscapeDE.logEstimate` rides `escParams.w` on the
   // wire, so the twin must read the same flag the kernel does. A fold-only
   // chain keeps the linear quotient bit for bit.
-  if (!de.logEstimate) return r / dr;
-  return r <= 1 ? 0 : f(f(f(0.5 * r) * f(Math.log(r))) / dr);
+  const escapeDistance = !de.logEstimate
+    ? r / dr
+    : r <= 1
+      ? 0
+      : f(f(f(0.5 * r) * f(Math.log(r))) / dr);
+  return geometryTrap ? Math.min(escapeDistance, trapDistance) : escapeDistance;
 }
 
 /**
@@ -5014,8 +5048,14 @@ function liftEscape4F32(view4: SurfaceGpu4View, q: Vec3): Vec4 {
  * fourth component — `escape-de-4d.ts`'s WHAT LIFTS section), so the
  * `kind < 4` guard's else-arm is the quaternion square alone.
  */
-function estimateEscapeDistance4F32(de: EscapeDE4, p: Vec4): number {
+function estimateEscapeDistance4F32(
+  de: EscapeDE4,
+  p: Vec4,
+  trap: ResolvedShapeTrap | null = null,
+): number {
   const f = Math.fround;
+  const geometryTrap = trap?.geometry ? trap : null;
+  let trapDistance = Infinity;
   // One pre-rounded link per slot, cycled `i mod n` — the 3D twin's own
   // shape, and the same per-LINK fold lengths (the SQUARES, which are the
   // form `EscapeLink4` keeps and the `fold` lane carries).
@@ -5139,14 +5179,31 @@ function estimateEscapeDistance4F32(de: EscapeDE4, p: Vec4): number {
     r = f(
       Math.sqrt(f(f(f(f(vx * vx) + f(vy * vy)) + f(vz * vz)) + f(vw * vw))),
     );
+    if (
+      geometryTrap &&
+      i >= geometryTrap.geometryLevelMin &&
+      i <= geometryTrap.geometryLevelMax
+    ) {
+      // The 4D CPU oracle and kernel both apply the shared 3D trap
+      // vocabulary to xyz. This is the signed distance to its w-extrusion,
+      // hence remains 1-Lipschitz in the full orbit space.
+      trapDistance = Math.min(
+        trapDistance,
+        trapGeometryDistanceF32(geometryTrap, vx, vy, vz, dr),
+      );
+    }
   }
   // The chain's escape law picks the form — `EscapeDE4.logEstimate` rides
   // `esc4Params.x` on this core's wire (the 3D core spells the same
   // number `escParams.w`), so the twin must read the flag the kernel
   // reads. In 4D `logEstimate` is true exactly when some link is a
   // quaternion square, the family's only surviving power map.
-  if (!de.logEstimate) return r / dr;
-  return r <= 1 ? 0 : f(f(f(0.5 * r) * f(Math.log(r))) / dr);
+  const escapeDistance = !de.logEstimate
+    ? r / dr
+    : r <= 1
+      ? 0
+      : f(f(f(0.5 * r) * f(Math.log(r))) / dr);
+  return geometryTrap ? Math.min(escapeDistance, trapDistance) : escapeDistance;
 }
 
 /**
@@ -12885,6 +12942,284 @@ async function runSurfaceDeSection(
             );
           }
           destroySurfaceForwardEvalBuffers(sys);
+        }
+        render();
+        await new Promise<void>((resolve) => setTimeout(resolve));
+      }
+    }
+
+    // ----- Shape-trap GEOMETRY agreement (escape + escape4) -----
+    // Unlike the color-only rows above, these two rows change the distance
+    // value: the posed peace-sign SDF is divided by dr AFTER each sampled
+    // link, admitted only at levels 0..2, then min-unioned with the ordinary
+    // escape term. The dedicated f32 twins include that same term, so the
+    // forward-orbit stability classifier still separates chaotic orbit
+    // divergence from a shader/packer defect. Bulb is deliberately absent:
+    // power maps are outside the conformal fold-only geometry gate.
+    {
+      const trap = resolveShapeTrap({
+        shape: PEACE_SIGN_SHAPE,
+        position: [0.3, -0.2, 0.5],
+        rotation: [0.2, 0, 0.4],
+        scale: 0.5,
+        geometry: true,
+        geometryLevelMin: 0,
+        geometryLevelMax: 2,
+      });
+      const cfgFor = (core: "escape" | "escape4"): SurfaceKernelConfig => ({
+        core,
+        variant: "private",
+        width: SURFACE_FOLD_BEAM_WIDTH,
+        stage2: false,
+        wg: surfaceWgFor(config, "private"),
+      });
+
+      const escapeBase =
+        escapeSystems.find((s) => s.name === "escChainPair") ??
+        escapeSystems[0];
+      if (escapeBase) {
+        const cfg = cfgFor("escape");
+        const label = `${configLabel(cfg)}+trap-geometry`;
+        status(`agreement: compiling ${label}…`);
+        activity.setState("gpu", `Surface DE agreement — ${label}`);
+        const layout = surfaceForwardBindGroupLayout(device);
+        const pipelineLayout = device.createPipelineLayout({
+          label: "surface-de escape+trap-geometry pipeline layout",
+          bindGroupLayouts: [layout],
+        });
+        try {
+          const code = surfaceDeKernelWgsl({
+            mode: "eval",
+            core: "escape",
+            width: cfg.width,
+            workgroupSize: cfg.wg,
+            sharedFrontier: false,
+            bnbStage2: false,
+            shapeTrap: PEACE_SIGN_SHAPE,
+            shapeTrapGeometry: trap,
+          });
+          const { pipeline, compileMs } = await buildSurfacePipeline(
+            device,
+            pipelineLayout,
+            code,
+            "evalQueries",
+            `surface-de eval ${label}`,
+          );
+          const evalF32 = (q: Vec3): number =>
+            estimateEscapeDistanceF32(escapeBase.de, q, trap);
+          const cpu64 = escapeBase.queries.map((q) =>
+            estimateEscapeDistance(
+              escapeBase.de,
+              q,
+              ESCAPE_TIME_ITERATIONS,
+              trap,
+            ),
+          );
+          const geometryWins = cpu64.reduce(
+            (count, distance, i) =>
+              count + (distance < escapeBase.cpu64[i] ? 1 : 0),
+            0,
+          );
+          results.notes.push(
+            `escape+trap-geometry active samples ${geometryWins}/${cpu64.length}`,
+          );
+          // A numerically green row whose trap never wins only re-tests the
+          // classic escape term. Keep a material activation population so
+          // the real-driver gate genuinely reaches the new min-union.
+          if (geometryWins < 32) {
+            escapeGateFail = true;
+            results.notes.push(
+              `escape+trap-geometry activation too sparse: ${geometryWins}/${cpu64.length} (< 32)`,
+            );
+          }
+          const R = escapeBase.de.boundingRadius;
+          const sys: SurfaceEscapeSystemState = {
+            ...escapeBase,
+            name: `${escapeBase.name}+trap-geometry`,
+            cpu64,
+            cpu32: escapeBase.queries.map(evalF32),
+            stable: cpu64.map((c64, i) =>
+              forwardQueryStable(
+                evalF32,
+                escapeBase.queries[i],
+                c64,
+                surfaceEvalTol(c64, R),
+              ),
+            ),
+            buffers: undefined,
+          };
+          await ensureSurfaceForwardEvalBuffers(
+            device,
+            layout,
+            sys,
+            packEscapeGpuParams(
+              sys.de,
+              { itemCount: sys.queries.length, cutoff: 0 },
+              null,
+              trap,
+            ),
+            packEscapeGpuMaps(sys.de),
+          );
+          const t0 = performance.now();
+          const gpu = await runSurfaceEvalDispatch(
+            device,
+            pipeline,
+            sys,
+            cfg.wg,
+          );
+          const gpuMs = performance.now() - t0;
+          const row = compareSurfaceForwardAgreement(
+            sys,
+            R,
+            evalF32,
+            cfg,
+            gpu,
+            compileMs,
+            gpuMs,
+          );
+          results.agreement.push(row);
+          if ((row.excluded ?? 0) > SURFACE_ESCAPE_EXCLUDED_CAP) {
+            escapeGateFail = true;
+            results.notes.push(
+              `escape+trap-geometry agreement ${sys.name}: excluded ` +
+                `${row.excluded ?? 0}/${row.n} queries (> ${SURFACE_ESCAPE_EXCLUDED_CAP})`,
+            );
+          }
+          if ((row.chaoticFlips ?? 0) > SURFACE_ESCAPE_FLIP_CAP) {
+            escapeGateFail = true;
+            results.notes.push(
+              `escape+trap-geometry agreement ${sys.name}: ` +
+                `${row.chaoticFlips ?? 0} verified chaotic flips ` +
+                `(> ${SURFACE_ESCAPE_FLIP_CAP})`,
+            );
+          }
+          destroySurfaceForwardEvalBuffers(sys);
+        } catch (e) {
+          compileFailed = true;
+          results.notes.push(`agreement ${label}: ${describeError(e)}`);
+        }
+        render();
+        await new Promise<void>((resolve) => setTimeout(resolve));
+      }
+
+      const escape4Base = escape4Systems[0];
+      if (escape4Base) {
+        const cfg = cfgFor("escape4");
+        const label = `${configLabel(cfg)}+trap-geometry`;
+        status(`agreement: compiling ${label}…`);
+        activity.setState("gpu", `Surface DE agreement — ${label}`);
+        const layout = surfaceForwardBindGroupLayout(device);
+        const pipelineLayout = device.createPipelineLayout({
+          label: "surface-de escape4+trap-geometry pipeline layout",
+          bindGroupLayouts: [layout],
+        });
+        try {
+          const code = surfaceDeKernelWgsl({
+            mode: "eval",
+            core: "escape4",
+            width: cfg.width,
+            workgroupSize: cfg.wg,
+            sharedFrontier: false,
+            bnbStage2: false,
+            shapeTrap: PEACE_SIGN_SHAPE,
+            shapeTrapGeometry: trap,
+          });
+          const { pipeline, compileMs } = await buildSurfacePipeline(
+            device,
+            pipelineLayout,
+            code,
+            "evalQueries",
+            `surface-de eval ${label}`,
+          );
+          const evalF32 = (q: Vec3): number =>
+            estimateEscapeDistance4F32(
+              escape4Base.de,
+              liftEscape4F32(escape4Base.view4, q),
+              trap,
+            );
+          const cpu64 = escape4Base.queries.map((q) =>
+            estimateEscape4Composed(escape4Base.de, escape4Base.view4, q, trap),
+          );
+          const geometryWins = cpu64.reduce(
+            (count, distance, i) =>
+              count + (distance < escape4Base.cpu64[i] ? 1 : 0),
+            0,
+          );
+          results.notes.push(
+            `escape4+trap-geometry active samples ${geometryWins}/${cpu64.length}`,
+          );
+          if (geometryWins < 32) {
+            escape4GateFail = true;
+            results.notes.push(
+              `escape4+trap-geometry activation too sparse: ${geometryWins}/${cpu64.length} (< 32)`,
+            );
+          }
+          const R = escape4Base.de.boundingRadius;
+          const sys: SurfaceEscape4SystemState = {
+            ...escape4Base,
+            name: `${escape4Base.name}+trap-geometry`,
+            cpu64,
+            cpu32: escape4Base.queries.map(evalF32),
+            stable: cpu64.map((c64, i) =>
+              forwardQueryStable(
+                evalF32,
+                escape4Base.queries[i],
+                c64,
+                surfaceEvalTol(c64, R),
+              ),
+            ),
+            buffers: undefined,
+          };
+          await ensureSurfaceForwardEvalBuffers(
+            device,
+            layout,
+            sys,
+            packEscape4GpuParams(
+              sys.de,
+              sys.view4,
+              { itemCount: sys.queries.length, cutoff: 0 },
+              null,
+              trap,
+            ),
+            packEscape4GpuMaps(sys.de),
+          );
+          const t0 = performance.now();
+          const gpu = await runSurfaceEvalDispatch(
+            device,
+            pipeline,
+            sys,
+            cfg.wg,
+          );
+          const gpuMs = performance.now() - t0;
+          const row = compareSurfaceForwardAgreement(
+            sys,
+            R,
+            evalF32,
+            cfg,
+            gpu,
+            compileMs,
+            gpuMs,
+          );
+          results.agreement.push(row);
+          if ((row.excluded ?? 0) > SURFACE_ESCAPE_EXCLUDED_CAP) {
+            escape4GateFail = true;
+            results.notes.push(
+              `escape4+trap-geometry agreement ${sys.name}: excluded ` +
+                `${row.excluded ?? 0}/${row.n} queries (> ${SURFACE_ESCAPE_EXCLUDED_CAP})`,
+            );
+          }
+          if ((row.chaoticFlips ?? 0) > SURFACE_ESCAPE_FLIP_CAP) {
+            escape4GateFail = true;
+            results.notes.push(
+              `escape4+trap-geometry agreement ${sys.name}: ` +
+                `${row.chaoticFlips ?? 0} verified chaotic flips ` +
+                `(> ${SURFACE_ESCAPE_FLIP_CAP})`,
+            );
+          }
+          destroySurfaceForwardEvalBuffers(sys);
+        } catch (e) {
+          compileFailed = true;
+          results.notes.push(`agreement ${label}: ${describeError(e)}`);
         }
         render();
         await new Promise<void>((resolve) => setTimeout(resolve));

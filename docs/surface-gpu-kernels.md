@@ -207,9 +207,27 @@ the flat top-of-ramp PATCHES are sub-pixel rather than regions of the object
 averages the TRAP over 16 where both engines' supersampling averages the
 shaded COLOUR over 8.
 
-The trap drives COLOR ONLY (the convention `core:"bulb"` always used),
-with rings/sheets over the orbit's closest radial / y-plane approaches —
-the descent cores' colors-only convention.
+Without the optional geometry flag, the trap drives COLOR ONLY, with
+rings/sheets over the orbit's closest radial / y-plane approaches — the
+descent cores' colors-only convention.
+
+The fold-only `escape` and `escape4` cores can also compile that same posed
+shape into the distance field. After each active link, at inclusive orbit
+level `i`, they evaluate the local SDF at the post-link point and form
+`0.9 * localSdf / (invScale * drAfter)`. The result is min-unioned with the
+ordinary escape-set estimate; `logEstimate` still transforms only that
+ordinary term. In 4D, the shared 3D shape is extruded through w and therefore
+samples `xyz`. Narrow finite bands skip the SDF entirely outside their levels,
+and the hit-info body shares the one SDF evaluation needed by geometry and
+trap color.
+
+The shape and its inclusive level band are create-time codegen inputs, while
+the existing trap block continues to carry the live pose. No uniform layout
+grew: the 3D and 4D buffers remain 400 and 688 bytes, with trap starts at 336
+and 624. Geometry absent or false emits the pre-feature color-only source byte
+for byte. The bulb codegen and packer reject geometry explicitly: power maps
+do not preserve the scalar conformal derivative contract used to pull the SDF
+back, though their color trap remains valid.
 
 ### `core:"bulb"`
 

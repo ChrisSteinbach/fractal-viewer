@@ -5918,7 +5918,7 @@ describe("decodeScene transform shape emitters", () => {
   });
 });
 
-describe("shapeTrap codec (the shape-trap color block)", () => {
+describe("shapeTrap codec (the shape-trap color/geometry block)", () => {
   it("round-trips a full block, round4'd, and drops nothing authored", () => {
     const s: SceneSnapshot = {
       ...baseSnapshot(),
@@ -5930,6 +5930,9 @@ describe("shapeTrap codec (the shape-trap color block)", () => {
         mode: "threshold",
         threshold: 0.3,
         fade: 0.05,
+        geometry: true,
+        geometryLevelMin: 7.9,
+        geometryLevelMax: 2.1,
       },
     };
     const result = decodeScene(encodeScene(s));
@@ -5941,6 +5944,9 @@ describe("shapeTrap codec (the shape-trap color block)", () => {
     expect(result!.shapeTrap!.mode).toBe("threshold");
     expect(result!.shapeTrap!.threshold).toBe(0.3);
     expect(result!.shapeTrap!.fade).toBe(0.05);
+    expect(result!.shapeTrap!.geometry).toBe(true);
+    expect(result!.shapeTrap!.geometryLevelMin).toBe(2);
+    expect(result!.shapeTrap!.geometryLevelMax).toBe(7);
     // The shape survives through the emitter spec codec — one vocabulary,
     // one codec.
     expect(result!.shapeTrap!.shape.parts).toHaveLength(4);
@@ -5973,6 +5979,62 @@ describe("shapeTrap codec (the shape-trap color block)", () => {
     expect(decoded!.shapeTrap!.mode).toBeUndefined();
     expect(decoded!.shapeTrap!.threshold).toBeUndefined();
     expect(decoded!.shapeTrap!.fade).toBeUndefined();
+    expect(decoded!.shapeTrap!.geometry).toBeUndefined();
+    expect(decoded!.shapeTrap!.geometryLevelMin).toBeUndefined();
+    expect(decoded!.shapeTrap!.geometryLevelMax).toBeUndefined();
+    expect(Object.keys(decoded!.shapeTrap!)).toEqual(["shape"]);
+  });
+
+  it("keeps geometry-off wire output byte-identical and omits dormant level fields", () => {
+    const plain = encodeScene({
+      ...baseSnapshot(),
+      shapeTrap: { shape: PEACE_SIGN_SHAPE, fade: 0.2 },
+    });
+    const explicitlyOff = encodeScene({
+      ...baseSnapshot(),
+      shapeTrap: {
+        shape: PEACE_SIGN_SHAPE,
+        fade: 0.2,
+        geometry: false,
+        geometryLevelMin: 9,
+        geometryLevelMax: 3,
+      },
+    });
+    expect(explicitlyOff).toBe(plain);
+  });
+
+  it("round-trips geometry with a canonical inclusive band and keeps all-level defaults absent", () => {
+    const bounded = decodeScene(
+      encodeScene({
+        ...baseSnapshot(),
+        shapeTrap: {
+          shape: PEACE_SIGN_SHAPE,
+          geometry: true,
+          geometryLevelMin: 6.8,
+          geometryLevelMax: 1.2,
+        },
+      }),
+    )!.shapeTrap;
+    expect(bounded).toMatchObject({
+      geometry: true,
+      geometryLevelMin: 1,
+      geometryLevelMax: 6,
+    });
+
+    const allLevels = decodeScene(
+      encodeScene({
+        ...baseSnapshot(),
+        shapeTrap: {
+          shape: PEACE_SIGN_SHAPE,
+          geometry: true,
+          geometryLevelMin: -2,
+          geometryLevelMax: Number.POSITIVE_INFINITY,
+        },
+      }),
+    )!.shapeTrap;
+    expect(allLevels?.geometry).toBe(true);
+    expect(allLevels?.geometryLevelMin).toBeUndefined();
+    expect(allLevels?.geometryLevelMax).toBeUndefined();
   });
 
   it("drops a malformed block WHOLE — never rejecting the scene, never salvaging leaves", () => {
@@ -6005,6 +6067,9 @@ describe("shapeTrap codec (the shape-trap color block)", () => {
       { mode: "nearest" },
       { position: [1, 2] },
       { shape: { parts: "x" } },
+      { geometry: 1 },
+      { geometryLevelMin: "2" },
+      { geometryLevelMax: Number.POSITIVE_INFINITY },
     ]) {
       const decoded = mangle(patch);
       expect(decoded).not.toBeNull();

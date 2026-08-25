@@ -4,6 +4,7 @@ import {
   PRESET_RENDER_HINTS,
   PRESET_SCHEDULES,
   PRESET_SYMMETRIES,
+  PRESET_TRAPS,
   presetTransforms,
   sierpinskiTetrahedron,
 } from "../fractal/presets";
@@ -26,6 +27,7 @@ function derivePreset(
     PRESET_SYMMETRIES[preset] ?? NO_SYMMETRY,
     opts,
     PRESET_SCHEDULES[preset]?.() ?? null,
+    PRESET_TRAPS[preset]?.() ?? null,
   );
 }
 
@@ -163,6 +165,160 @@ describe("deriveSurfaceEligibility caps and refusal notes", () => {
     expect(nonFlat.status).toBe("ineligible");
     expect(flat.note?.endsWith(hint)).toBe(true);
     expect(nonFlat.note?.endsWith(hint)).toBe(true);
+  });
+});
+
+describe("deriveSurfaceEligibility for shape-trap geometry", () => {
+  const geometryTrap = PRESET_TRAPS.foldChainGear!();
+  const colorTrap = { ...geometryTrap, geometry: false };
+
+  it("admits the shipped conformal fold-chain geometry preset and a 4D conformal fold", () => {
+    expect(derivePreset("foldChainGear")).toMatchObject({
+      status: "degraded",
+      kind: "escape",
+    });
+    expect(
+      deriveSurfaceEligibility(
+        presetTransforms("mandelboxBrick"),
+        null,
+        NO_SYMMETRY,
+        { computeAvailable: true },
+        null,
+        geometryTrap,
+      ),
+    ).toMatchObject({ status: "degraded", kind: "escape4" });
+  });
+
+  it("refuses geometry on 3D and 4D power chains with the color-only way out", () => {
+    for (const preset of ["hybridChainCube", "hybridChainShells"] as const) {
+      const result = deriveSurfaceEligibility(
+        presetTransforms(preset),
+        null,
+        NO_SYMMETRY,
+        { computeAvailable: true },
+        null,
+        geometryTrap,
+      );
+      expect(result.status, preset).toBe("ineligible");
+      expect(result.kind, preset).toBeNull();
+      expect(result.note, preset).toContain("fold-only conformal escape chain");
+      expect(result.note, preset).toContain("power maps are unsupported");
+      expect(result.note, preset).toContain("keep this trap as a color source");
+    }
+  });
+
+  it("refuses geometry on the Mandelbulb while its color-only trap remains routable", () => {
+    const transforms = presetTransforms("mandelbulbClassic");
+    const refused = deriveSurfaceEligibility(
+      transforms,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      geometryTrap,
+    );
+    expect(refused.status).toBe("ineligible");
+    expect(refused.note).toContain("the Mandelbulb is a power map");
+
+    const colored = deriveSurfaceEligibility(
+      transforms,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      colorTrap,
+    );
+    expect(colored).toMatchObject({ status: "degraded", kind: "bulb" });
+  });
+
+  it("refuses anisotropic fold geometry in both dimensions without refusing color", () => {
+    for (const preset of ["foldChain", "mandelboxBrick"] as const) {
+      const transforms = presetTransforms(preset).map((transform, i) =>
+        i === 0
+          ? { ...transform, scale: [2, 1, 1] as [number, number, number] }
+          : transform,
+      );
+      const refused = deriveSurfaceEligibility(
+        transforms,
+        null,
+        NO_SYMMETRY,
+        { computeAvailable: true },
+        null,
+        geometryTrap,
+      );
+      expect(refused.status, preset).toBe("ineligible");
+      expect(refused.note, preset).toContain(
+        "map 1 is anisotropic (ratio 2.00)",
+      );
+      expect(refused.note, preset).toContain(
+        "keep this trap as a color source",
+      );
+
+      expect(
+        deriveSurfaceEligibility(
+          transforms,
+          null,
+          NO_SYMMETRY,
+          { computeAvailable: true },
+          null,
+          colorTrap,
+        ).kind,
+        preset,
+      ).toBe(preset === "foldChain" ? "escape" : "escape4");
+    }
+  });
+
+  it("uses true conformality rather than the inverse-descent gate's 5% tolerance", () => {
+    const transforms = presetTransforms("foldChain").map((transform, i) =>
+      i === 0
+        ? {
+            ...transform,
+            scale: [1.02, 1, 1] as [number, number, number],
+          }
+        : transform,
+    );
+    const result = deriveSurfaceEligibility(
+      transforms,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      null,
+      geometryTrap,
+    );
+    expect(result.status).toBe("ineligible");
+    expect(result.note).toContain("anisotropic (ratio 1.02)");
+  });
+
+  it("refuses geometry rather than silently dropping it on 3D and 4D inverse descents", () => {
+    for (const preset of ["default", "pentatope"] as const) {
+      const transforms = presetTransforms(preset);
+      const refused = deriveSurfaceEligibility(
+        transforms,
+        null,
+        NO_SYMMETRY,
+        { computeAvailable: true },
+        null,
+        geometryTrap,
+      );
+      expect(refused.status, preset).toBe("ineligible");
+      expect(refused.kind, preset).toBeNull();
+      expect(refused.note, preset).toContain(
+        "only on conformal fold-only escape chains",
+      );
+      expect(refused.note, preset).toContain(
+        "inverse-descent attractor tracer",
+      );
+
+      const colored = deriveSurfaceEligibility(
+        transforms,
+        null,
+        NO_SYMMETRY,
+        { computeAvailable: true },
+        null,
+        colorTrap,
+      );
+      expect(colored.kind, preset).toBe(preset === "default" ? "ifs" : "ifs4");
+    }
   });
 });
 

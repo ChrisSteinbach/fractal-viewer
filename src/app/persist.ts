@@ -33,6 +33,10 @@ import {
   SYMMETRY_PLANES,
   VARIATION_TYPES,
 } from "../fractal/types";
+import {
+  SHAPE_TRAP_GEOMETRY_LEVEL_MAX,
+  resolveShapeTrap,
+} from "../fractal/shape-trap";
 import type {
   ColorMode,
   FourDColorMode,
@@ -137,7 +141,7 @@ export interface SceneSnapshot {
   /** Optional inclusive condensation word-depth band; absence means all. */
   condensationDepthBand?: CondensationDepthBand;
   /**
-   * Optional shape-trap color block (see {@link AppState.shapeTrap}).
+   * Optional shape-trap color/geometry block (see {@link AppState.shapeTrap}).
    * Optional like {@link schedule}, and on the identical wire discipline:
    * written only when present (a scene that never authored one encodes
    * byte-identically to one predating the field), decoded by
@@ -929,18 +933,20 @@ function decodeCondensationDepthBand(
 }
 
 /**
- * Decode the scene's optional shape-trap color block (`types.ts`'s
+ * Decode the scene's optional shape-trap color/geometry block (`types.ts`'s
  * {@link ShapeTrap}). QUIET WHOLE-BLOCK fallback, {@link decodeSchedule}'s
  * discipline: a malformed block — a bad shape, a non-Vec3 pose vector, a
- * non-finite scalar, an unknown mode string — drops the ENTIRE block to
+ * non-finite scalar/band endpoint, an unknown mode string, a non-boolean
+ * geometry flag — drops the ENTIRE block to
  * `undefined` rather than rejecting the scene or salvaging fields (a trap
  * is one channel, not a bag of leaves), and never throws. The block is
  * REBUILT from exactly the admitted fields, its shape through
  * {@link decodeEmitter}'s spec codec (one spec vocabulary, one codec). The
- * fold lengths' two deliberate deviations apply to every numeric leaf: NO
- * `Number(x)` coercion and NO domain clamps — scale/threshold/fade domains
- * belong to `escape-de.ts`'s `resolveShapeTrap`; persist's job at this
- * leaf is fidelity.
+ * fold lengths' first deliberate deviation applies to every numeric leaf:
+ * NO `Number(x)` coercion. Scale/threshold/fade retain wire fidelity and
+ * resolve only when used; geometry's integer band is the exception, rebuilt
+ * through `shape-trap.ts`'s {@link resolveShapeTrap} so state, wire and the
+ * estimator share one sorted nonnegative interval.
  */
 function decodeShapeTrap(raw: unknown): ShapeTrap | undefined {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
@@ -976,6 +982,40 @@ function decodeShapeTrap(raw: unknown): ShapeTrap | undefined {
     const fade = decodeEmitterNumber(o.fade);
     if (fade === undefined) return undefined;
     trap.fade = fade;
+  }
+  if (o.geometry !== undefined) {
+    if (typeof o.geometry !== "boolean") return undefined;
+    if (o.geometry) trap.geometry = true;
+  }
+  if (o.geometryLevelMin !== undefined) {
+    const level = decodeEmitterNumber(o.geometryLevelMin);
+    if (level === undefined) return undefined;
+    trap.geometryLevelMin = level;
+  }
+  if (o.geometryLevelMax !== undefined) {
+    const level = decodeEmitterNumber(o.geometryLevelMax);
+    if (level === undefined) return undefined;
+    trap.geometryLevelMax = level;
+  }
+  // Off is the classic wire shape: explicitly-false geometry and dormant
+  // endpoints normalize away. When live, use the CPU oracle's one domain so
+  // crafted/reversed links enter AppState with the same sorted, nonnegative
+  // inclusive band as the writer and estimator.
+  if (trap.geometry === true) {
+    const resolved = resolveShapeTrap(trap);
+    if (resolved.geometryLevelMin === 0) {
+      delete trap.geometryLevelMin;
+    } else {
+      trap.geometryLevelMin = resolved.geometryLevelMin;
+    }
+    if (resolved.geometryLevelMax === SHAPE_TRAP_GEOMETRY_LEVEL_MAX) {
+      delete trap.geometryLevelMax;
+    } else {
+      trap.geometryLevelMax = resolved.geometryLevelMax;
+    }
+  } else {
+    delete trap.geometryLevelMin;
+    delete trap.geometryLevelMax;
   }
   return trap;
 }
@@ -2570,6 +2610,16 @@ export function encodeScene(s: SceneSnapshot): string {
       }
       if (s.shapeTrap.fade !== undefined && Number.isFinite(s.shapeTrap.fade)) {
         trap.fade = round4(s.shapeTrap.fade);
+      }
+      if (s.shapeTrap.geometry === true) {
+        const resolved = resolveShapeTrap(s.shapeTrap);
+        trap.geometry = true;
+        if (resolved.geometryLevelMin !== 0) {
+          trap.geometryLevelMin = resolved.geometryLevelMin;
+        }
+        if (resolved.geometryLevelMax !== SHAPE_TRAP_GEOMETRY_LEVEL_MAX) {
+          trap.geometryLevelMax = resolved.geometryLevelMax;
+        }
       }
       payload.shapeTrap = trap;
     }

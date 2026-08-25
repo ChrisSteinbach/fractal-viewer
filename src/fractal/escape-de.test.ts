@@ -21,7 +21,7 @@ import type { EscapeDE } from "./escape-de";
 import { composeAffine } from "./affine";
 import { analyzeBulbSystem } from "./bulb-de";
 import { resolveShapeTrap } from "./shape-trap";
-import { PEACE_SIGN_SHAPE } from "./shapes";
+import { PEACE_SIGN_SHAPE, SHAPE_MARCH_SAFETY } from "./shapes";
 import {
   foldChain,
   foldChainFlower,
@@ -1915,5 +1915,265 @@ describe("escapeShapeTrap (the hit-info side's trap channel)", () => {
     resolveShapeTrap(peaceTrap);
     escapeShapeTrap(de, resolveShapeTrap(peaceTrap), p);
     expect(estimateEscapeDistance(de, p)).toBe(before);
+  });
+
+  it("leaves the color channel untouched by geometry and its level band", () => {
+    const de = buildEscapeDE([canonicalMandelbox()]);
+    const colorOnly = resolveShapeTrap(peaceTrap);
+    const geometry = resolveShapeTrap({
+      ...peaceTrap,
+      geometry: true,
+      geometryLevelMin: 1000,
+      geometryLevelMax: 2000,
+    });
+    const rng = mulberry32(0xc0107);
+    for (let i = 0; i < 32; i++) {
+      const p: Vec3 = [rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1];
+      expect(escapeShapeTrap(de, geometry, p)).toBe(
+        escapeShapeTrap(de, colorOnly, p),
+      );
+    }
+  });
+});
+
+describe("shape-trap geometry in estimateEscapeDistance", () => {
+  const sphereGeometry = (
+    position: Vec3,
+    radius: number,
+    overrides: Partial<Omit<ShapeTrap, "shape" | "position">> = {},
+  ) =>
+    resolveShapeTrap({
+      shape: {
+        parts: [{ primitive: { kind: "sphere", radius }, combine: "union" }],
+      },
+      position,
+      geometry: true,
+      ...overrides,
+    });
+
+  it("is bit-exactly classic when geometry is absent or false", () => {
+    const de = buildEscapeDE([
+      foldMap(0, "mandelbox", 2),
+      foldMap(1, "boxfold", 1.6),
+    ]);
+    const colorOnly = resolveShapeTrap({
+      shape: PEACE_SIGN_SHAPE,
+      geometry: false,
+      geometryLevelMin: 4,
+      geometryLevelMax: 9,
+      mode: "threshold",
+      threshold: 0.01,
+      fade: 5,
+    });
+    const rng = mulberry32(0x7a90);
+    for (let i = 0; i < 64; i++) {
+      const p: Vec3 = [rng() * 4 - 2, rng() * 4 - 2, rng() * 4 - 2];
+      expect(estimateEscapeDistance(de, p, 7, colorOnly)).toBe(
+        estimateEscapeDistance(de, p, 7),
+      );
+    }
+  });
+
+  it("samples the post-link point with drAfter, including that link's derivative", () => {
+    const de = buildEscapeDE([foldMap(0, "boxfold", 2)]);
+    const trap = sphereGeometry([0, 0, 0], 2.5, {
+      geometryLevelMin: 0,
+      geometryLevelMax: 0,
+    });
+    // p.x=1.2 -> fold=0.8 -> z0=2*0.8+1.2=2.8. The posed
+    // sphere SDF is 0.3 and drAfter=2*1*1+1=3 (drBefore was 1).
+    expect(estimateEscapeDistance(de, [1.2, 0, 0], 1, trap)).toBeCloseTo(
+      (SHAPE_MARCH_SAFETY * 0.3) / 3,
+      12,
+    );
+  });
+
+  it("applies a nonunit rotated pose in the estimator, not only the standalone SDF helper", () => {
+    const de = buildEscapeDE([foldMap(0, "boxfold", 2)]);
+    const trap = resolveShapeTrap({
+      shape: {
+        parts: [
+          {
+            primitive: { kind: "box", half: [1, 0.25, 0.25] },
+            combine: "union",
+          },
+        ],
+      },
+      // The sampled z0=(2.8,0,0) is local (0.5,0,0): scale 2 and +90°
+      // send that local point to pose+[0,1,0]. The posed box SDF is -0.5.
+      position: [2.8, -1, 0],
+      rotation: [0, 0, Math.PI / 2],
+      scale: 2,
+      geometry: true,
+      geometryLevelMin: 0,
+      geometryLevelMax: 0,
+    });
+    expect(estimateEscapeDistance(de, [1.2, 0, 0], 1, trap)).toBeCloseTo(
+      (SHAPE_MARCH_SAFETY * -0.5) / 3,
+      12,
+    );
+  });
+
+  it("includes both zero-based band endpoints and excludes adjacent levels", () => {
+    const de = buildEscapeDE([
+      foldMap(0, "boxfold", 2),
+      foldMap(1, "boxfold", 2),
+    ]);
+    const p: Vec3 = [1.2, 0, 0];
+    // The two post-link x positions are 2.8 and -0.4.
+    const atLevel0 = sphereGeometry([2.8, 0, 0], 0.1, {
+      geometryLevelMin: 0,
+      geometryLevelMax: 0,
+    });
+    const atLevel1 = sphereGeometry([-0.4, 0, 0], 0.1, {
+      geometryLevelMin: 1,
+      geometryLevelMax: 1,
+    });
+    const bothAtLevel0 = sphereGeometry([2.8, 0, 0], 0.1, {
+      geometryLevelMin: 0,
+      geometryLevelMax: 1,
+    });
+    const bothAtLevel1 = sphereGeometry([-0.4, 0, 0], 0.1, {
+      geometryLevelMin: 1,
+      geometryLevelMax: 0,
+    });
+
+    expect(estimateEscapeDistance(de, p, 1, atLevel0)).toBeLessThan(0);
+    expect(estimateEscapeDistance(de, p, 1, atLevel1)).toBeLessThan(0);
+    expect(estimateEscapeDistance(de, p, 1, bothAtLevel0)).toBe(
+      estimateEscapeDistance(de, p, 1, atLevel0),
+    );
+    expect(estimateEscapeDistance(de, p, 1, bothAtLevel1)).toBe(
+      estimateEscapeDistance(de, p, 1, atLevel1),
+    );
+
+    const wrongLevelForFirst = sphereGeometry([2.8, 0, 0], 0.1, {
+      geometryLevelMin: 1,
+      geometryLevelMax: 1,
+    });
+    const wrongLevelForSecond = sphereGeometry([-0.4, 0, 0], 0.1, {
+      geometryLevelMin: 0,
+      geometryLevelMax: 0,
+    });
+    expect(
+      estimateEscapeDistance(de, p, 1, wrongLevelForFirst),
+    ).toBeGreaterThan(0);
+    expect(
+      estimateEscapeDistance(de, p, 1, wrongLevelForSecond),
+    ).toBeGreaterThan(0);
+
+    const outsideBudget = sphereGeometry([2.8, 0, 0], 0.1, {
+      geometryLevelMin: 2,
+      geometryLevelMax: 2,
+    });
+    expect(estimateEscapeDistance(de, p, 1, outsideBudget)).toBe(
+      estimateEscapeDistance(de, p, 1),
+    );
+  });
+
+  it("uses one global level index across links and passes", () => {
+    const de = buildEscapeDE([
+      foldMap(0, "boxfold", 2),
+      foldMap(1, "boxfold", 2),
+    ]);
+    const p: Vec3 = [1.2, 0, 0];
+    // Across two passes the post-link x values are:
+    //   level 0: 2.8, level 1: -0.4, level 2: 0.4, level 3: 2.0.
+    // Level 2 must not alias link-local level 0 when the second pass starts.
+    const level2 = sphereGeometry([0.4, 0, 0], 0.1, {
+      geometryLevelMin: 2,
+      geometryLevelMax: 2,
+    });
+    const level2AtLevel0 = sphereGeometry([0.4, 0, 0], 0.1, {
+      geometryLevelMin: 0,
+      geometryLevelMax: 0,
+    });
+    const level0AtLevel2 = sphereGeometry([2.8, 0, 0], 0.1, {
+      geometryLevelMin: 2,
+      geometryLevelMax: 2,
+    });
+    expect(estimateEscapeDistance(de, p, 2, level2)).toBeLessThan(0);
+    expect(estimateEscapeDistance(de, p, 2, level2AtLevel0)).toBeGreaterThan(0);
+    expect(estimateEscapeDistance(de, p, 2, level0AtLevel2)).toBeGreaterThan(0);
+  });
+
+  it("resets geometry scratch before an out-of-budget band", () => {
+    const de = buildEscapeDE([foldMap(0, "boxfold", 2)]);
+    const p: Vec3 = [1.2, 0, 0];
+    const finite = sphereGeometry([2.8, 0, 0], 0.1, {
+      geometryLevelMin: 0,
+      geometryLevelMax: 0,
+    });
+    const empty = sphereGeometry([2.8, 0, 0], 0.1, {
+      geometryLevelMin: 1,
+      geometryLevelMax: 1,
+    });
+    expect(estimateEscapeDistance(de, p, 1, finite)).toBeLessThan(0);
+    expect(estimateEscapeDistance(de, p, 1, empty)).toBe(
+      estimateEscapeDistance(de, p, 1),
+    );
+  });
+
+  it("samples the terminal post-link point even when that link crosses bailout", () => {
+    const de = buildEscapeDE([foldMap(0, "boxfold", 4)]);
+    const p: Vec3 = [1.2, 0, 0];
+    // fold(1.2)=0.8, so z0=4*0.8+1.2=4.4 crosses radius 4 and
+    // drAfter=4+1=5. The loop still samples level 0 before terminating.
+    expect(escapeSetContains(de, p, 1)).toBe(false);
+    const trap = sphereGeometry([4.4, 0, 0], 0.1, {
+      geometryLevelMin: 0,
+      geometryLevelMax: 0,
+    });
+    expect(estimateEscapeDistance(de, p, 1, trap)).toBeCloseTo(
+      (SHAPE_MARCH_SAFETY * -0.1) / 5,
+      12,
+    );
+  });
+
+  it("ignores color-only mode, threshold, fade, and invNorm", () => {
+    const de = buildEscapeDE([foldMap(0, "boxfold", 2)]);
+    const trap = sphereGeometry([0, 0, 0], 2.5);
+    const colorEdited = {
+      ...trap,
+      mode: 1,
+      threshold: 1e-4,
+      fade: 1e6,
+      invNorm: 12345,
+    };
+    const p: Vec3 = [1.2, 0, 0];
+    expect(estimateEscapeDistance(de, p, 1, colorEdited)).toBe(
+      estimateEscapeDistance(de, p, 1, trap),
+    );
+  });
+
+  it("applies logEstimate only to the escape term of a real power-bearing chain", () => {
+    const logarithmic = buildEscapeDE([
+      foldMap(0, "boxfold", 1),
+      powerMap(1, "qsquare"),
+    ]);
+    expect(logarithmic.logEstimate).toBe(true);
+    const linear = { ...logarithmic, logEstimate: false };
+    const p: Vec3 = [1.5, 0, 0];
+    // level 0: fold(1.5)=0.5, z0=2, dr0=2.
+    // level 1: qsquare(2)=4, z1=5.5, dr1=2*|2|*2+1=9.
+    // A radius-.75 sphere at level 0 has trapDE=.9*(2-.75)/2=.5625,
+    // between the log escape term (~.521) and linear one (~.611).
+    const trap = sphereGeometry([0, 0, 0], 0.75, {
+      geometryLevelMin: 0,
+      geometryLevelMax: 0,
+    });
+    const logEscape = (0.5 * 5.5 * Math.log(5.5)) / 9;
+    const linearEscape = 5.5 / 9;
+    const trapDistance = (SHAPE_MARCH_SAFETY * 1.25) / 2;
+    expect(logEscape).toBeLessThan(trapDistance);
+    expect(trapDistance).toBeLessThan(linearEscape);
+    expect(estimateEscapeDistance(logarithmic, p, 1, trap)).toBeCloseTo(
+      logEscape,
+      12,
+    );
+    expect(estimateEscapeDistance(linear, p, 1, trap)).toBeCloseTo(
+      trapDistance,
+      12,
+    );
   });
 });

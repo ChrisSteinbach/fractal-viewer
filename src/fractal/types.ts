@@ -479,14 +479,14 @@ export const SHAPE_TRAP_MODES = ["min", "threshold"] as const;
 export type ShapeTrapMode = (typeof SHAPE_TRAP_MODES)[number];
 
 /**
- * The escape-time family's shape-trap COLOR block — Pickover shape-trapping
- * as a scene-level channel: at every step of the forward orbit the trap
- * measures the orbit point's distance to this posed shape, and the shade
- * paths paint the accumulated value through the surface palette when the
- * `"shapeTrap"` color source is selected. COLOR ONLY: no marching quantity,
- * no DE validity change, which is why it composes with every member of the
- * family including the non-conformal ones (Liouville distortion bites
- * trapped GEOMETRY, never a color channel).
+ * The escape-time family's shape-trap block — Pickover shape-trapping as a
+ * scene-level color channel, with an optional fold-chain geometry use. At
+ * every step of the forward orbit the trap measures the orbit point's
+ * distance to this posed shape. The shade paths can paint the accumulated
+ * value through the surface palette; when {@link ShapeTrap.geometry} is true,
+ * fold-only escape estimators can also union the pulled-back shape with the
+ * escape set. The geometry eligibility gate lives at the app/shader seam;
+ * the low-level document vocabulary only records the intent and level band.
  *
  * SCENE-LEVEL, beside {@link HybridSchedule}: one trap per document, riding
  * `AppState`/the scene document rather than a transform. ABSENT MEANS OFF
@@ -495,11 +495,12 @@ export type ShapeTrapMode = (typeof SHAPE_TRAP_MODES)[number];
  * convention at scene scope). Every OTHER field is optional with the
  * absent-means-classic rule: pose fields default to the identity
  * ({@link ShapePose}'s treatment), `mode` to `"min"`, `threshold` to
- * `escape-de.ts`'s `DEFAULT_SHAPE_TRAP_THRESHOLD`, `fade` to 0. The
+ * `shape-trap.ts`'s `DEFAULT_SHAPE_TRAP_THRESHOLD`, `fade` to 0. The
  * resolution domain — every default and floor — lives in ONE place,
- * `escape-de.ts`'s `resolveShapeTrap`, exactly as the fold lengths' lives
- * in `resolveFoldRadii`; persistence carries the fields with fidelity and
- * no clamps.
+ * `shape-trap.ts`'s `resolveShapeTrap`, exactly as the fold lengths' lives
+ * in `resolveFoldRadii`; persistence carries pose/color numbers with
+ * fidelity, while state and persistence canonicalize geometry's integer
+ * band through that resolver.
  *
  * THE POSE IS IN ORBIT SPACE — the space the forward orbit's points live in
  * (`v` space for a chain, `y` space for the Mandelbulb), whose scale is the
@@ -529,6 +530,18 @@ export interface ShapeTrap {
    * `1 + fade·i` before the min/threshold rule, so a positive fade biases
    * the channel toward the orbit's EARLY (large) stamps. Absent ⇒ 0. */
   fade?: number;
+  /** Use the posed shape as fold-chain geometry as well as a color trap.
+   * Absent/false ⇒ classic color-only behavior, byte-identically. Geometry
+   * reads only `shape` and the pose fields: `mode`, `threshold`, and `fade`
+   * remain color-channel controls. */
+  geometry?: boolean;
+  /** First eligible post-link orbit level, inclusive and zero-based.
+   * Absent ⇒ 0. Finite values resolve to nonnegative integers. */
+  geometryLevelMin?: number;
+  /** Last eligible post-link orbit level, inclusive and zero-based.
+   * Absent ⇒ unbounded. Finite values resolve to nonnegative integers;
+   * reversed endpoints are sorted by `resolveShapeTrap`. */
+  geometryLevelMax?: number;
 }
 
 /** Axis-aligned extent of a point cloud, plus radial extent from the origin. */

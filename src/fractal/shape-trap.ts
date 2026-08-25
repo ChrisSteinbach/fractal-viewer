@@ -30,17 +30,29 @@
  *
  * so `min` shades by closest weighted approach (0 = on the stamp) and
  * `threshold` paints ONLY the stamps, each swept by how deep its first
- * crossing landed, everything else at the ramp's top. COLOR ONLY: no
- * marching quantity reads any of this, which is what lets it compose with
- * the whole family (a Liouville distortion bites trapped GEOMETRY, never a
- * color channel) and what keeps every absent-trap frame byte-identical.
+ * crossing landed, everything else at the ramp's top. Those three fields
+ * (`mode`, `threshold`, `fade`) and `invNorm` are COLOR ONLY, which is what
+ * lets that channel compose with the whole family.
+ *
+ * OPTIONAL GEOMETRY restores the similarity's distance factor and divides
+ * by the derivative bound AFTER the link that produced the sampled point:
+ *
+ *   posed_i = sdShape((Rᵀ(z_i − pos)) / s) · s
+ *   trapDE_i = SHAPE_MARCH_SAFETY · posed_i / drAfter_i
+ *
+ * Only inclusive zero-based levels `geometryLevelMin..geometryLevelMax`
+ * contribute, and the production escape oracles return the union
+ * `min(escapeDE, min_i trapDE_i)`. Geometry absent/false never enters that
+ * arithmetic, keeping every classic estimate bit-identical. Eligibility is
+ * deliberately not resolved here: the app/shader gate restricts this field
+ * to fold-only chains, while color remains valid on non-conformal maps.
  *
  * WHERE THE ACCUMULATORS RUN is each oracle's business, not this
  * module's: every module's SHARED orbit runner (`runEscapeOrbit`,
  * `runEscapeOrbit4`, `runBulbOrbit`) takes an optional resolved trap and
- * feeds {@link shapeTrapCandidate} per step, so the trap can never
- * evaluate a different orbit than the estimate does — the one-loop
- * discipline those runners exist for.
+ * feeds the factored {@link shapeTrapLocalSdf} per step, so color and
+ * geometry cannot disagree about pose or evaluate a different orbit than
+ * the estimate — the one-loop discipline those runners exist for.
  *
  * Pure: no Three.js, no DOM, no imports outside `src/fractal/`.
  */
@@ -63,6 +75,10 @@ export const DEFAULT_SHAPE_TRAP_THRESHOLD = 0.25;
  * `best` accumulator initializes at the positive twin for the same
  * reason. */
 export const SHAPE_TRAP_NO_CROSSING = -1e30;
+
+/** Wire-safe stand-in for an unbounded geometry level range. Orbit levels
+ * are zero-based integers, so no practical render budget reaches this. */
+export const SHAPE_TRAP_GEOMETRY_LEVEL_MAX = 0x7fffffff;
 
 /**
  * `1 / max(shapeBoundingRadius, floor)` — the trap's ONE normalizer, shared
@@ -104,6 +120,12 @@ export interface ResolvedShapeTrap {
   fade: number;
   /** {@link shapeTrapInvNorm} of `spec`. */
   invNorm: number;
+  /** Whether the posed SDF also contributes a marching term. */
+  geometry: boolean;
+  /** First included zero-based post-link orbit level. */
+  geometryLevelMin: number;
+  /** Last included zero-based post-link orbit level. */
+  geometryLevelMax: number;
 }
 
 /** Resolve a document trap block into the numbers the formula and every
@@ -128,6 +150,11 @@ export function resolveShapeTrap(trap: ShapeTrap): ResolvedShapeTrap {
     typeof trap.fade === "number" && Number.isFinite(trap.fade)
       ? Math.min(Math.max(trap.fade, 0), 1e6)
       : 0;
+  const authoredLevelMin = resolveGeometryLevel(trap.geometryLevelMin, 0);
+  const authoredLevelMax = resolveGeometryLevel(
+    trap.geometryLevelMax,
+    SHAPE_TRAP_GEOMETRY_LEVEL_MAX,
+  );
   return {
     spec: trap.shape,
     invRot:
@@ -145,7 +172,20 @@ export function resolveShapeTrap(trap: ShapeTrap): ResolvedShapeTrap {
     threshold,
     fade,
     invNorm: shapeTrapInvNorm(trap.shape),
+    geometry: trap.geometry === true,
+    geometryLevelMin: Math.min(authoredLevelMin, authoredLevelMax),
+    geometryLevelMax: Math.max(authoredLevelMin, authoredLevelMax),
   };
+}
+
+/** Resolve one authored inclusive geometry-band endpoint. */
+function resolveGeometryLevel(
+  value: number | undefined,
+  fallback: number,
+): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(SHAPE_TRAP_GEOMETRY_LEVEL_MAX, Math.max(0, Math.floor(value)))
+    : fallback;
 }
 
 /** Row-major 3x3 transpose, for {@link resolveShapeTrap}'s pose inverse. */
@@ -165,6 +205,17 @@ export function shapeTrapCandidate(
   z: number,
   step: number,
 ): number {
+  return shapeTrapLocalSdf(rt, x, y, z) * rt.invNorm * (1 + rt.fade * step);
+}
+
+/** The shape SDF in its own local frame. Color and geometry both enter
+ * through this helper so their pose inverse cannot drift apart. */
+export function shapeTrapLocalSdf(
+  rt: ResolvedShapeTrap,
+  x: number,
+  y: number,
+  z: number,
+): number {
   const dx = x - rt.position[0];
   const dy = y - rt.position[1];
   const dz = z - rt.position[2];
@@ -172,7 +223,19 @@ export function shapeTrapCandidate(
   const lx = (m[0] * dx + m[1] * dy + m[2] * dz) * rt.invScale;
   const ly = (m[3] * dx + m[4] * dy + m[5] * dz) * rt.invScale;
   const lz = (m[6] * dx + m[7] * dy + m[8] * dz) * rt.invScale;
-  return shapeSdf(rt.spec, lx, ly, lz) * rt.invNorm * (1 + rt.fade * step);
+  return shapeSdf(rt.spec, lx, ly, lz);
+}
+
+/** World/orbit-space distance of the posed shape. Uniform similarity
+ * conjugation is `scale * localSdf`, spelled as `/ invScale` because the
+ * resolved trap stores the inverse scale used by the pose transform. */
+export function shapeTrapPosedSdf(
+  rt: ResolvedShapeTrap,
+  x: number,
+  y: number,
+  z: number,
+): number {
+  return shapeTrapLocalSdf(rt, x, y, z) / rt.invScale;
 }
 
 /**

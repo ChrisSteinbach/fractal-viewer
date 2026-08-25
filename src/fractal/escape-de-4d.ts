@@ -112,10 +112,11 @@ import {
 import type { EscapeEligibility, EscapeLinkKind } from "./escape-de";
 import {
   SHAPE_TRAP_NO_CROSSING,
-  shapeTrapCandidate,
+  shapeTrapLocalSdf,
   shapeTrapValue,
 } from "./shape-trap";
 import type { ResolvedShapeTrap } from "./shape-trap";
+import { SHAPE_MARCH_SAFETY } from "./shapes";
 import { mulberry32 } from "./rng";
 import {
   SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
@@ -174,7 +175,8 @@ export interface EscapeDE4 extends EscapeLink4 {
   /** The formula chain in document order; step `i` applies `links[i mod n]`. */
   links: EscapeLink4[];
   /** Read the terminal radius through the Böttcher form — true exactly when
-   * some link is a POWER map, which in 4D means `qsquare` alone. */
+   * some link is a POWER map, which in 4D means `qsquare` alone. This applies
+   * only to the escape-set term, never the shape-trap geometry term. */
   logEstimate: boolean;
   /** Kaleidoscope sectors the query is folded into before the orbit starts
    * ({@link foldQueryIntoSector4}); `1` is off. */
@@ -469,6 +471,10 @@ let orbitR = 0;
 let orbitDr = 1;
 let orbitTrapBest = 0;
 let orbitTrapCross = 0;
+let orbitTrapDistance = Infinity;
+
+const TRAP_COLLECT_COLOR = 1;
+const TRAP_COLLECT_GEOMETRY = 2;
 
 /**
  * Run the chain's forward orbit from `p`, leaving the terminal radius and
@@ -480,12 +486,16 @@ function runEscapeOrbit4(
   p: Vec4,
   maxIterations: number,
   trap: ResolvedShapeTrap | null = null,
+  trapCollection = 0,
 ): void {
   const links = de.links;
   const n = links.length;
-  if (trap) {
+  if (trap && (trapCollection & TRAP_COLLECT_COLOR) !== 0) {
     orbitTrapBest = 1e30;
     orbitTrapCross = SHAPE_TRAP_NO_CROSSING;
+  }
+  if (trap && (trapCollection & TRAP_COLLECT_GEOMETRY) !== 0) {
+    orbitTrapDistance = Infinity;
   }
   const q =
     de.symmetryOrder > 1
@@ -561,14 +571,29 @@ function runEscapeOrbit4(
     vw = link.w * fw + qw;
     dr = link.derivGrowth * localL * dr + 1;
     r = Math.sqrt(vx * vx + vy * vy + vz * vz + vw * vw);
-    // The shape trap's accumulators at this post-step point's xyz — the
-    // trap SDF DROPS w by decision ({@link escapeShapeTrap4}'s doc), so
-    // vw never enters the candidate. 3D's null-guard shape.
+    // Both trap uses sample xyz and deliberately DROP w. `dr` is the
+    // post-link value, so it includes the sampled point's link derivative.
     if (trap) {
-      const cand = shapeTrapCandidate(trap, vx, vy, vz, step);
-      if (cand < orbitTrapBest) orbitTrapBest = cand;
-      if (orbitTrapCross <= SHAPE_TRAP_NO_CROSSING && cand < trap.threshold) {
-        orbitTrapCross = cand;
+      const collectColor = (trapCollection & TRAP_COLLECT_COLOR) !== 0;
+      const collectGeometry =
+        (trapCollection & TRAP_COLLECT_GEOMETRY) !== 0 &&
+        trap.geometry &&
+        step >= trap.geometryLevelMin &&
+        step <= trap.geometryLevelMax;
+      if (!collectColor && !collectGeometry) continue;
+      const localSdf = shapeTrapLocalSdf(trap, vx, vy, vz);
+      if (collectColor) {
+        const cand = localSdf * trap.invNorm * (1 + trap.fade * step);
+        if (cand < orbitTrapBest) orbitTrapBest = cand;
+        if (orbitTrapCross <= SHAPE_TRAP_NO_CROSSING && cand < trap.threshold) {
+          orbitTrapCross = cand;
+        }
+      }
+      if (collectGeometry) {
+        orbitTrapDistance = Math.min(
+          orbitTrapDistance,
+          (SHAPE_MARCH_SAFETY * localSdf) / (trap.invScale * dr),
+        );
       }
     }
   }
@@ -699,14 +724,28 @@ export function estimateEscapeDistance4(
   de: EscapeDE4,
   p: Vec4,
   maxIterations = ESCAPE_TIME_ITERATIONS,
+  trap: ResolvedShapeTrap | null = null,
 ): number {
-  runEscapeOrbit4(de, p, maxIterations);
-  if (!de.logEstimate) return orbitR / orbitDr;
+  const geometryTrap = trap?.geometry ? trap : null;
+  runEscapeOrbit4(
+    de,
+    p,
+    maxIterations,
+    geometryTrap,
+    geometryTrap ? TRAP_COLLECT_GEOMETRY : 0,
+  );
+  let escapeDistance = orbitR / orbitDr;
   // `ln r` goes negative below r = 1, which a converging orbit reaches, and a
   // negative estimate would march the tracer BACKWARDS — 0 is the inside
   // signal and is safe in the direction a sphere tracer needs. Every module
   // in this family takes the identical exit.
-  return orbitR <= 1 ? 0 : (0.5 * orbitR * Math.log(orbitR)) / orbitDr;
+  if (de.logEstimate) {
+    escapeDistance =
+      orbitR <= 1 ? 0 : (0.5 * orbitR * Math.log(orbitR)) / orbitDr;
+  }
+  return geometryTrap
+    ? Math.min(escapeDistance, orbitTrapDistance)
+    : escapeDistance;
 }
 
 /**
@@ -754,7 +793,7 @@ export function escapeShapeTrap4(
   p: Vec4,
   maxIterations = ESCAPE_TIME_ITERATIONS,
 ): number {
-  runEscapeOrbit4(de, p, maxIterations, rt);
+  runEscapeOrbit4(de, p, maxIterations, rt, TRAP_COLLECT_COLOR);
   return shapeTrapValue(rt, orbitTrapBest, orbitTrapCross);
 }
 

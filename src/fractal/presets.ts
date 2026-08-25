@@ -2297,6 +2297,11 @@ const PRESETS = {
   foldChain,
   foldChainBoulder,
   foldChainFlower,
+  // Trap-as-geometry's reachability proof: the familiar two-link fold chain
+  // unioned with gear copies pulled back from every post-link orbit level.
+  // The transform word stays fold-only; the geometry block rides
+  // PRESET_TRAPS, beside Mandelbox Peace's color-only block.
+  foldChainGear: foldChain,
   // The escape-time family's THIRD object: the Mandelbulb had
   // an estimator, two shader mirrors and no way in at all.
   mandelbulbClassic,
@@ -2421,6 +2426,7 @@ export const PRESET_RENDER_HINTS: Partial<
   foldChain: "surface",
   foldChainBoulder: "surface",
   foldChainFlower: "surface",
+  foldChainGear: "surface",
   // The Mandelbulb trio needs the hint for exactly the same
   // reason — a single non-contracting map's chaos-game cloud is
   // escape-reset debris — and the mode reached this way is the
@@ -2638,12 +2644,26 @@ export const PRESET_SCHEDULES: Partial<Record<Preset, () => HybridSchedule>> = {
  * surface palette ({@link PRESET_SURFACE_PALETTES}) is part of the tuning:
  * far-from-icon reads gold, the sweeps pale rose, where a full-hue
  * spectrum turned the same channel into confetti.
+ *
+ * `foldChainGear` is the geometry counterpart, kept distinct so loading it
+ * cannot mutate the established Mandelbox Peace composition. Its transform
+ * word is {@link foldChain}, hence contains only conformal fold links; its
+ * posed gear is the GEAR/FOLD CHAIN/FULL fixture rendered by the trap-geometry
+ * contact sheet, now carried as live document geometry instead of a
+ * harness-only input.
  */
 export const PRESET_TRAPS: Partial<Record<Preset, () => ShapeTrap>> = {
   mandelboxPeace: () => ({
     shape: PEACE_SIGN_SHAPE,
     scale: 1.5,
     fade: 0.3,
+  }),
+  foldChainGear: () => ({
+    shape: GEAR_SHAPE,
+    position: [0.15, -0.1, 0.2],
+    rotation: [0.55, 0.2, -0.15],
+    scale: 0.72,
+    geometry: true,
   }),
 };
 

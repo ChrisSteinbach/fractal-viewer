@@ -2538,7 +2538,7 @@ describe("appendXaosBlock", () => {
   });
 });
 
-describe("setShapeTrap / updateShapeTrap (shape-trap color block)", () => {
+describe("setShapeTrap / updateShapeTrap (shape-trap color/geometry block)", () => {
   const base = initialState(false);
 
   it("stores a normalized block and clears with null (absent-means-off)", () => {
@@ -2589,6 +2589,48 @@ describe("setShapeTrap / updateShapeTrap (shape-trap color block)", () => {
     });
   });
 
+  it("stores geometry only while on and canonicalizes its inclusive level band without dropping color fields", () => {
+    const off = setShapeTrap(base, {
+      shape: PEACE_SIGN_SHAPE,
+      position: [0.3, 0, 0],
+      mode: "threshold",
+      threshold: 0.2,
+      geometry: false,
+      geometryLevelMin: 8,
+      geometryLevelMax: 2,
+    }).shapeTrap;
+    expect(off).toEqual({
+      shape: PEACE_SIGN_SHAPE,
+      position: [0.3, 0, 0],
+      mode: "threshold",
+      threshold: 0.2,
+    });
+
+    const on = setShapeTrap(base, {
+      shape: PEACE_SIGN_SHAPE,
+      fade: 0.1,
+      geometry: true,
+      geometryLevelMin: 8.9,
+      geometryLevelMax: 2.2,
+    }).shapeTrap;
+    expect(on).toEqual({
+      shape: PEACE_SIGN_SHAPE,
+      fade: 0.1,
+      geometry: true,
+      geometryLevelMin: 2,
+      geometryLevelMax: 8,
+    });
+
+    expect(
+      setShapeTrap(base, {
+        shape: PEACE_SIGN_SHAPE,
+        geometry: true,
+        geometryLevelMin: -4,
+        geometryLevelMax: Number.POSITIVE_INFINITY,
+      }).shapeTrap,
+    ).toEqual({ shape: PEACE_SIGN_SHAPE, geometry: true });
+  });
+
   it("updateShapeTrap patches through the same normalization and no-ops without a block", () => {
     expect(updateShapeTrap(base, { scale: 2 })).toBe(base);
     const on = setShapeTrap(base, { shape: PEACE_SIGN_SHAPE });
@@ -2604,5 +2646,21 @@ describe("setShapeTrap / updateShapeTrap (shape-trap color block)", () => {
     const backToMin = updateShapeTrap(th, { mode: "min" });
     expect(backToMin.shapeTrap?.mode).toBeUndefined();
     expect(backToMin.shapeTrap?.threshold).toBeUndefined();
+
+    const geometry = updateShapeTrap(backToMin, {
+      geometry: true,
+      geometryLevelMin: 7,
+      geometryLevelMax: 3,
+    });
+    expect(geometry.shapeTrap).toMatchObject({
+      geometry: true,
+      geometryLevelMin: 3,
+      geometryLevelMax: 7,
+    });
+    const geometryOff = updateShapeTrap(geometry, { geometry: false });
+    expect(geometryOff.shapeTrap?.geometry).toBeUndefined();
+    expect(geometryOff.shapeTrap?.geometryLevelMin).toBeUndefined();
+    expect(geometryOff.shapeTrap?.geometryLevelMax).toBeUndefined();
+    expect(geometryOff.shapeTrap?.shape).toBe(PEACE_SIGN_SHAPE);
   });
 });
