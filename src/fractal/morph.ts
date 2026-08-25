@@ -84,6 +84,7 @@
  *   by-reference returns.
  */
 import { isFlatTransform, meanContraction } from "./affine4";
+import type { CondensationDepthBand } from "./condensation-de";
 import { DEFAULT_COLOR_SPEED, derivedColorIndex } from "./chaos-game";
 import { DEFAULT_SHAPE_TRAP_THRESHOLD } from "./shape-trap";
 import type { ShapePart, ShapePose, ShapeSpec } from "./shapes";
@@ -137,6 +138,12 @@ export interface MorphSystem {
    * object stays valid.
    */
   shapeTrap?: ShapeTrap | null;
+  /**
+   * Surface condensation's inclusive word-depth band. It is discrete scene
+   * structure, so intermediate samples adopt the target block immediately;
+   * the exact endpoints still return by reference.
+   */
+  condensationDepthBand?: CondensationDepthBand | null;
 }
 
 /** The three w-mixing planes shared by {@link WExtension}'s `rotation` and
@@ -891,6 +898,9 @@ export function lerpSystem(
   };
   const shapeTrap = lerpShapeTrap(a.shapeTrap ?? null, b.shapeTrap ?? null, t);
   if (shapeTrap) system.shapeTrap = shapeTrap;
+  if (b.condensationDepthBand) {
+    system.condensationDepthBand = { ...b.condensationDepthBand };
+  }
   return system;
 }
 

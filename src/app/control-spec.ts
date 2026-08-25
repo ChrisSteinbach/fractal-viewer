@@ -32,6 +32,7 @@ import {
   setBalloonRadius,
   setBalloonTintStrength,
   setColorGamma,
+  setCondensationDepthBand,
   setColorMode,
   setExportScale,
   setFlameEstimatorCurve,
@@ -1511,6 +1512,60 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     },
   },
   {
+    // Condensation geometry is a Surface-only interpretation of emitter
+    // documents. The preset's default is every word depth (absent on the
+    // wire); root-only is the useful one-scale shortcut, and Custom exposes
+    // the inclusive endpoints. Every change rebuilds the frozen DE/session.
+    kind: "select",
+    id: "surfaceCondensationBandMode",
+    read: (s) => condensationBandMode(s),
+    apply: (s, raw) =>
+      raw === "all"
+        ? setCondensationDepthBand(s, null)
+        : raw === "root"
+          ? setCondensationDepthBand(s, { maxDepth: 0 })
+          : setCondensationDepthBand(
+              s,
+              s.condensationDepthBand?.maxDepth === 0
+                ? { minDepth: 1, maxDepth: 1 }
+                : (s.condensationDepthBand ?? {
+                    minDepth: 1,
+                    maxDepth: 1,
+                  }),
+            ),
+    effect: (_s, fx) => fx.restartSurfaceRender(),
+  },
+  {
+    kind: "range",
+    id: "surfaceCondensationMinSlider",
+    label: {
+      id: "surfaceCondensationMinLabel",
+      text: (s) => String(s.condensationDepthBand?.minDepth ?? 1),
+    },
+    read: (s) => String(s.condensationDepthBand?.minDepth ?? 1),
+    apply: (s, raw) =>
+      setCondensationDepthBand(s, {
+        ...(s.condensationDepthBand ?? { maxDepth: 1 }),
+        minDepth: Number(raw),
+      }),
+    effect: (_s, fx) => fx.restartSurfaceRender(),
+  },
+  {
+    kind: "range",
+    id: "surfaceCondensationMaxSlider",
+    label: {
+      id: "surfaceCondensationMaxLabel",
+      text: (s) => String(s.condensationDepthBand?.maxDepth ?? 1),
+    },
+    read: (s) => String(s.condensationDepthBand?.maxDepth ?? 1),
+    apply: (s, raw) =>
+      setCondensationDepthBand(s, {
+        ...(s.condensationDepthBand ?? { minDepth: 1 }),
+        maxDepth: Number(raw),
+      }),
+    effect: (_s, fx) => fx.restartSurfaceRender(),
+  },
+  {
     // The shape trap's SHAPE — the built-ins by name, "" = no trap (the
     // classic-removal value: the block leaves the document outright). A
     // block whose spec matches no built-in — a preset's authored pose, a
@@ -1639,4 +1694,12 @@ export function shapeTrapSelectValue(
   if (key === JSON.stringify(PEACE_SIGN_SHAPE)) return "peace";
   if (key === JSON.stringify(GEAR_SHAPE)) return "gear";
   return "custom";
+}
+
+export function condensationBandMode(
+  state: AppState,
+): "all" | "root" | "custom" {
+  const band = state.condensationDepthBand;
+  if (!band) return "all";
+  return band.minDepth === undefined && band.maxDepth === 0 ? "root" : "custom";
 }

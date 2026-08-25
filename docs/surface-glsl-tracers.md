@@ -929,6 +929,38 @@ alone — every other variant's march is confined to the `1.02 *
 uVisibleRadius` sphere inscribed in the `1.03` cube and can never meet it,
 so their sources stay byte-identical.
 
+## Condensation shape arm
+
+Emitter-enabled IFS documents compile a resolved `SURFACE_CONDENSATION` arm
+instead of sending a universal shape library to the driver. One SDF body per
+unique authored emitter shape is baked into the program; `uCondShape` selects
+it for each symmetry-expanded emitter record. The fixed inverse arrays hold
+ordinary maps first and emitter records second, while `uMapCount` stays the
+recursive count. `uCondCount`, inclusive `uCondMinDepth`/`uCondMaxDepth`,
+`uCondShade` and `uShadeCount` describe the suffix and its material slots.
+Feature-off resolution remains byte-identical to the pre-condensation source.
+
+Both fragment tracers fold the shape term at the root and every visited
+descendant, including retained, terminal and fold/lens paths. The 3D arm uses
+the posed solid SDF; the 4D arm uses
+`length(vec2(max(sdShape(local.xyz), 0.0), local.w))`, embedding that solid at
+local w=0 rather than extruding it. A nonzero 4D slice thickness is refused.
+Hit-info carries the winning emitter's shade index, so base color, pattern and
+finish all read the emitter slot that actually supplied the minimum.
+
+The uniform wire is capped at 24 total ordinary-map plus symmetry-expanded
+emitter records and 24 unique shade slots. Unsamplable/nearly-flat emitters,
+emitter-only documents and final-transform emitters are rejected before this
+arm; escape and bulb use the separate forward-orbit construction and cannot
+compile it. Balloon and the surface grid remain admissible because both wrap
+or sample the same condensation-aware public estimator.
+
+Source-size verification on the landed generator (resolved / emitted bytes):
+3D condensation 90,873 / 35,304; 3D condensation + finish 93,274 / 36,415;
+4D condensation 68,213 / 20,573; 4D condensation + finish 69,328 / 21,612.
+Every emitted program stays below 65,536 bytes. As a feature-off control,
+escape + finish remains 59,134 / 59,134 bytes.
+
 ## The 4D tracer
 
 `surface-material-4d.ts` is the 4D twin: it sphere-traces the `w = w0` slice

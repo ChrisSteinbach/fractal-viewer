@@ -5704,6 +5704,50 @@ describe("decodeScene / encodeScene schedule (scheduled-hybrid block)", () => {
   });
 });
 
+describe("condensationDepthBand codec", () => {
+  it("round-trips a normalized inclusive band and keeps the classic range byte-identically absent", () => {
+    const base = encodeScene(baseSnapshot());
+    const encoded = encodeScene({
+      ...baseSnapshot(),
+      condensationDepthBand: { minDepth: 5.9, maxDepth: 2.2 },
+    });
+    expect(decodeScene(encoded)!.condensationDepthBand).toEqual({
+      minDepth: 2,
+      maxDepth: 5,
+    });
+    expect(
+      encodeScene({
+        ...baseSnapshot(),
+        condensationDepthBand: { minDepth: 0 },
+      }),
+    ).toBe(base);
+    expect(decodeScene(base)!.condensationDepthBand).toBeUndefined();
+  });
+
+  it("quietly drops malformed endpoint leaves without rejecting the scene", () => {
+    const raw = JSON.parse(
+      Buffer.from(
+        encodeScene(baseSnapshot())
+          .slice(3)
+          .replace(/-/g, "+")
+          .replace(/_/g, "/"),
+        "base64",
+      ).toString(),
+    ) as Record<string, unknown>;
+    raw.condensationDepthBand = { minDepth: "2", maxDepth: 5 };
+    const encoded =
+      "v1=" +
+      Buffer.from(JSON.stringify(raw))
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=/g, "");
+    const decoded = decodeScene(encoded);
+    expect(decoded).not.toBeNull();
+    expect(decoded!.condensationDepthBand).toBeUndefined();
+  });
+});
+
 describe("decodeScene transform shape emitters", () => {
   const GEAR: ShapeSpec = {
     parts: [

@@ -13,7 +13,7 @@ import type { SurfaceGrid, SurfaceGridSpec } from "./surface-grid";
 import { buildSurfaceDE } from "./surface-de";
 import { runChaosGame } from "./chaos-game";
 import type { ChaosGameResult } from "./chaos-game";
-import { sierpinskiTetrahedron } from "./presets";
+import { gearworks, sierpinskiTetrahedron } from "./presets";
 import { mulberry32 } from "./rng";
 import type { Transform, Vec3 } from "./types";
 
@@ -360,6 +360,12 @@ describe("surfaceGridEstimator", () => {
     const de = buildSurfaceDE(foldBoxfoldPair());
     expect(surfaceGridEstimator(de)).toBe("plain");
   });
+
+  it('keeps an affine condensation system on the shipped "refined" price path', () => {
+    const de = buildSurfaceDE(gearworks());
+    expect(de.condensation?.emitters.length).toBeGreaterThan(0);
+    expect(surfaceGridEstimator(de)).toBe("refined");
+  });
 });
 
 describe("the estimator parameter", () => {
@@ -368,6 +374,13 @@ describe("the estimator parameter", () => {
   // live" below for that half).
   it('defaults to "refined" on an affine system: bit-identical values to an explicit refined build', () => {
     const de = buildSurfaceDE(sierpinskiTetrahedron());
+    const implicit = buildSurfaceGrid(de, 8);
+    const explicit = buildSurfaceGrid(de, 8, "refined");
+    expect(Array.from(implicit.values)).toEqual(Array.from(explicit.values));
+  });
+
+  it("carries condensation through the same implicit refined grid build", () => {
+    const de = buildSurfaceDE(gearworks());
     const implicit = buildSurfaceGrid(de, 8);
     const explicit = buildSurfaceGrid(de, 8, "refined");
     expect(Array.from(implicit.values)).toEqual(Array.from(explicit.values));

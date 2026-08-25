@@ -26,13 +26,17 @@ import {
   analyzeSurfaceSystem4,
   systemFoldShaped4,
 } from "../fractal/surface-de-4d";
-import { resolveScheduleDepth } from "../fractal/chaos-game";
+import {
+  effectiveSymmetryOrder,
+  resolveScheduleDepth,
+  transformHasEmitter,
+} from "../fractal/chaos-game";
 import type {
   HybridSchedule,
   SymmetryParams,
   Transform,
 } from "../fractal/types";
-import { SURFACE_MAX_MAPS } from "./surface-material";
+import { SURFACE_MAX_MAPS, SURFACE_MAX_RECORDS } from "./surface-material";
 import { SURFACE4_MAX_MAPS } from "./surface-material-4d";
 
 /**
@@ -66,6 +70,35 @@ const QSQUARE_CHAIN_HINT =
  * slots, so order costs nothing). */
 function activeMapCount(transforms: Transform[]): number {
   return transforms.filter((t) => (t.weight ?? 1) > 0).length;
+}
+
+/** Storage records used by a condensation descent: recursive maps occupy one
+ * each, while every active samplable emitter occupies one inverse record per
+ * effective symmetry copy. The shade/material side stays one slot per base
+ * transform, but the shared GLSL/WGSL record ceiling must price the expanded
+ * C0 union explicitly. */
+function condensationRecordCount(
+  transforms: Transform[],
+  symmetry: SymmetryParams,
+): number {
+  let recursive = 0;
+  let emitters = 0;
+  transforms.forEach((transform) => {
+    if ((transform.weight ?? 1) <= 0) return;
+    if (transformHasEmitter(transform)) emitters++;
+    else recursive++;
+  });
+  return (
+    recursive +
+    emitters * effectiveSymmetryOrder(symmetry.order, transforms.length)
+  );
+}
+
+function hasActiveEmitter(transforms: Transform[]): boolean {
+  return transforms.some(
+    (transform) =>
+      (transform.weight ?? 1) > 0 && transformHasEmitter(transform),
+  );
 }
 
 /**
@@ -180,11 +213,14 @@ export function deriveSurfaceEligibility(
     // The 4D tracer's uniform cap. No symmetry multiplier — the 4D descent
     // sweeps kaleidoscope sectors around the base maps, so slots are active
     // maps 1:1 at any order.
-    const activeMaps4 = activeMapCount(transforms);
-    if (activeMaps4 > SURFACE4_MAX_MAPS) {
+    const records4 = condensationRecordCount(transforms, symmetry);
+    if (records4 > SURFACE4_MAX_MAPS) {
+      const countLabel = hasActiveEmitter(transforms)
+        ? "map/emitter records"
+        : "maps";
       return {
         status: "ineligible",
-        note: `${activeMaps4} maps (the 4D surface tracer carries at most ${SURFACE4_MAX_MAPS})`,
+        note: `${records4} ${countLabel} (the 4D surface tracer carries at most ${SURFACE4_MAX_MAPS})`,
         kind: null,
       };
     }
@@ -266,11 +302,14 @@ export function deriveSurfaceEligibility(
   // The tracer's uniform cap, on the BARE active-map count: the descent
   // sweeps kaleidoscope sectors around the base maps, so order costs no
   // slots and every order is admissible.
-  const activeMaps = activeMapCount(transforms);
-  if (activeMaps > SURFACE_MAX_MAPS) {
+  const records = condensationRecordCount(transforms, symmetry);
+  if (records > SURFACE_MAX_RECORDS) {
+    const countLabel = hasActiveEmitter(transforms)
+      ? "map/emitter records"
+      : "maps";
     return {
       status: "ineligible",
-      note: `${activeMaps} maps (the surface tracer carries at most ${SURFACE_MAX_MAPS})`,
+      note: `${records} ${countLabel} (the surface tracer carries at most ${SURFACE_MAX_RECORDS})`,
       kind: null,
     };
   }

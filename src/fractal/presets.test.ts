@@ -1638,13 +1638,10 @@ describe("gearworks (shape-emitter condensation preset)", () => {
     );
   });
 
-  it("is solid-hinted and refused by the Surface gate with the emitter reason", () => {
+  it("is solid-hinted and admitted by the condensation-aware Surface gate", () => {
     expect(PRESET_RENDER_HINTS.gearworks).toBe("solid");
     const analysis = analyzeSurfaceSystem(gearworks());
-    expect(analysis.status).toBe("ineligible");
-    expect(analysis.reasons).toContain(
-      "map 5 is a shape emitter (condensation)",
-    );
+    expect(analysis.status).toBe("eligible");
   });
 
   it("renders with a healthy emitted share and stamps that lie in the posed gear", () => {

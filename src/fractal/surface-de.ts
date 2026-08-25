@@ -2,11 +2,25 @@ import { composeAffine } from "./affine";
 import { isFlatTransform, symmetryIsNonFlat } from "./affine4";
 import {
   effectiveSymmetryOrder,
+  prepareEmitters,
   runChaosGame,
+  symmetryRotation,
   systemHasChaos,
   transformHasEmitter,
 } from "./chaos-game";
+import {
+  condensationBoundingRadius3,
+  condensationHasFutureDepth,
+  condensationTerm3,
+  resolveCondensationDepthBand,
+} from "./condensation-de";
+import type {
+  CondensationDE3,
+  CondensationDepthBand,
+  CondensationEmitter3,
+} from "./condensation-de";
 import { mulberry32 } from "./rng";
+import { shapeBoundingRadius } from "./shapes";
 import {
   calibrateSurfaceNativeCarriers,
   SURFACE_NATIVE_CALIBRATION_SAMPLE_COUNT,
@@ -24,6 +38,7 @@ import type {
 } from "./types";
 import {
   CLASSIC_FOLD_RADII,
+  foldVariationFn,
   resolveFoldRadii,
   sphereFoldLipschitz,
 } from "./variations";
@@ -784,6 +799,9 @@ export interface SurfaceDE {
    * contribute none either: {@link symmetry} replaces the old expansion, so
    * this array is base-sized at any order. */
   maps: SurfaceDEMap[];
+  /** Condensation set C0. Absent on emitter-free systems so their built DE
+   * and every estimator arithmetic path stay unchanged. */
+  condensation?: CondensationDE3;
   /** Kaleidoscope sectors swept around every {@link maps} entry. */
   symmetry: SurfaceSymmetry;
   /** Bounding-sphere radius of the RAW attractor (pre-final-transform),
@@ -855,6 +873,12 @@ export interface SurfaceDE {
      * the base maps carry. */
     foldRadii: SurfaceFoldRadii;
   } | null;
+}
+
+/** CPU/build-only controls for condensation geometry. Persistence and UI
+ * wiring deliberately land with the integration stage. */
+export interface SurfaceDEBuildOptions {
+  condensationDepthBand?: CondensationDepthBand;
 }
 
 type SurfaceNativeCarrierContext = Pick<
@@ -1482,6 +1506,13 @@ export function analyzeSurfaceSystem(
   const reasons: string[] = [];
   const sigmas = transforms.map(transformSigmas);
   const active = transforms.filter(isActive);
+  const hasEmitter = transforms.some(transformHasEmitter);
+  // This is the point sampler's own resolution, not a second interpretation:
+  // a sampler-null emitter falls back to an ordinary map in point mode, so
+  // Surface refuses it explicitly instead of drawing divergent geometry.
+  const preparedEmitters = hasEmitter ? prepareEmitters(transforms) : null;
+  const isPreparedEmitter = (i: number): boolean =>
+    preparedEmitters?.[i] !== null && preparedEmitters?.[i] !== undefined;
   let anisotropy = 1;
 
   if (transforms.length === 0) {
@@ -1502,22 +1533,35 @@ export function analyzeSurfaceSystem(
     );
   }
 
-  // Shape emitters (condensation) make the attractor the UNION of every
-  // composition's image of the shape — a SUPERSET of the plain attractor —
-  // and this estimator's inverse-map descent carries no shape term, so it
-  // would march the plain, smaller object: confidently wrong, the chi
-  // refusal's mirror image. Refused on PRESENCE (transformHasEmitter's
-  // conservative line) until the descent grows a sigma-scaled shape
-  // distance at every node (open work: fr-wo2j.10).
   transforms.forEach((t, i) => {
-    if (transformHasEmitter(t)) {
-      reasons.push(`map ${i + 1} is a shape emitter (condensation)`);
+    if (isActive(t) && transformHasEmitter(t) && !isPreparedEmitter(i)) {
+      reasons.push(
+        `map ${i + 1} has an unsamplable shape emitter (point mode falls back to an ordinary map)`,
+      );
     }
   });
+
+  if (
+    active.length > 0 &&
+    transforms.every((t, i) => !isActive(t) || isPreparedEmitter(i))
+  ) {
+    reasons.push("shape emitters leave no recursive maps");
+  }
 
   transforms.forEach((t, i) => {
     if (!isActive(t)) return;
     const label = `map ${i + 1}`;
+    if (isPreparedEmitter(i)) {
+      // Emitter steps use only the full affine pose; variations are skipped
+      // and the transform is not recursive, so it has no contraction gate.
+      if (!isFlatTransform(t)) {
+        reasons.push(`${label} extends into 4D`);
+      }
+      if (sigmas[i].min < NEAR_SINGULAR_SIGMA) {
+        reasons.push(`${label} emitter is nearly flat (scale ≈ 0)`);
+      }
+      return;
+    }
     // Pure-fold maps (exactly one active fold-family variation) descend via
     // the fold-branch sweep (module doc); every other active
     // variation list has no tractable inverse and gates the mode out.
@@ -1550,6 +1594,9 @@ export function analyzeSurfaceSystem(
   });
 
   if (finalTransform) {
+    if (transformHasEmitter(finalTransform)) {
+      reasons.push("final transform has a shape emitter");
+    }
     // A pure-fold FINAL is eligible: the lens is applied ONCE to
     // the query point, so its fold expands into one round of branch root
     // descents — {@link descendLens} — with no contraction requirement (an
@@ -1670,6 +1717,7 @@ export function buildSurfaceDE(
   transforms: Transform[],
   finalTransform: Transform | null = null,
   symmetry: SymmetryParams = NO_SYMMETRY,
+  options: SurfaceDEBuildOptions = {},
 ): SurfaceDE {
   const analysis = analyzeSurfaceSystem(transforms, finalTransform);
   if (analysis.status === "ineligible") {
@@ -1695,9 +1743,13 @@ export function buildSurfaceDE(
   // q -> inv(M_i) · (Rot_k^T · q) - inv(M_i) · t_i — a base inverse applied
   // to the point ALREADY turned into sector k, which is exactly what the
   // descent's sector sweep feeds it. Nothing per-copy is left to store.
+  const preparedEmitters = transforms.some(transformHasEmitter)
+    ? prepareEmitters(transforms)
+    : null;
   const maps: SurfaceDEMap[] = [];
   transforms.forEach((t, i) => {
     if (!isActive(t)) return;
+    if (preparedEmitters?.[i]) return;
     const affine = composeAffine(t);
     const invM = inverse3(affine.m);
     const [tx, ty, tz] = affine.t;
@@ -1746,6 +1798,140 @@ export function buildSurfaceDE(
   const order = effectiveSymmetryOrder(symmetry.order, transforms.length);
   const step = (2 * Math.PI) / order;
 
+  let condensation: CondensationDE3 | undefined;
+  if (preparedEmitters !== null) {
+    const emitters: CondensationEmitter3[] = [];
+    const shadeIndices = new Map<number, number>();
+    let nextShadeIndex = maps.length;
+    for (let i = 0; i < transforms.length; i++) {
+      if (isActive(transforms[i]) && preparedEmitters[i]) {
+        shadeIndices.set(i, nextShadeIndex++);
+      }
+    }
+    for (let k = 0; k < order; k++) {
+      const post = k === 0 ? null : symmetryRotation(symmetry.plane, step * k);
+      for (let i = 0; i < transforms.length; i++) {
+        if (!isActive(transforms[i]) || !preparedEmitters[i]) continue;
+        const t = transforms[i];
+        const affine = composeAffine(t);
+        const baseInv = inverse3(affine.m);
+        const [tx, ty, tz] = affine.t;
+        const invT: Vec3 = [
+          -(baseInv[0] * tx + baseInv[1] * ty + baseInv[2] * tz),
+          -(baseInv[3] * tx + baseInv[4] * ty + baseInv[5] * tz),
+          -(baseInv[6] * tx + baseInv[7] * ty + baseInv[8] * tz),
+        ];
+        let invM = baseInv;
+        let center: Vec3 = [tx, ty, tz];
+        if (post !== null) {
+          // inv(P·M) = inv(M)·P^T; the copy rotates the translated affine
+          // output too, exactly as the point stepper's postRotations slot.
+          invM = new Array<number>(9);
+          for (let r = 0; r < 3; r++) {
+            for (let c = 0; c < 3; c++) {
+              invM[r * 3 + c] =
+                baseInv[r * 3] * post[c * 3] +
+                baseInv[r * 3 + 1] * post[c * 3 + 1] +
+                baseInv[r * 3 + 2] * post[c * 3 + 2];
+            }
+          }
+          center = [
+            post[0] * tx + post[1] * ty + post[2] * tz,
+            post[3] * tx + post[4] * ty + post[5] * tz,
+            post[6] * tx + post[7] * ty + post[8] * tz,
+          ];
+        }
+        emitters.push({
+          shape: t.emitter!,
+          invM,
+          invT,
+          sigmaMin: analysis.sigmas[i].min,
+          center,
+          radius: analysis.sigmas[i].max * shapeBoundingRadius(t.emitter!),
+          baseIndex: i,
+          // Recursive-map slots occupy [0, maps.length); unique emitters are
+          // appended once and every symmetry copy points at that shade slot.
+          shadeIndex: shadeIndices.get(i)!,
+        });
+      }
+    }
+    if (emitters.length > 0) {
+      condensation = {
+        emitters,
+        depthBand: resolveCondensationDepthBand(options.condensationDepthBand),
+      };
+    }
+  }
+
+  // A sampled cloud cannot certify a bounding ball: an arbitrarily small
+  // positive map weight can hide a geometrically remote branch.  When C0 is
+  // present, close that hole analytically.  If B(c, R) contains C0 and an
+  // admitted recursive map F is globally L-Lipschitz, then
+  //
+  //   F(B(c, R)) is inside B(F(c), L R),
+  //
+  // hence B(c, R) is invariant whenever
+  // R >= |F(c) - c| / (1 - L).  Taking the maximum over C0 and every
+  // (sector, map) copy proves B contains the least fixed set
+  // A = C0 union_j F_j(A).  Fold maps use the same certified global
+  // Lipschitz constants as eligibility; sector rotations are isometries.
+  const condensationInvariantRadius = condensation
+    ? (center: Vec3): number => {
+        let radius = condensationBoundingRadius3(condensation, center);
+        for (let k = 0; k < order; k++) {
+          const post =
+            k === 0 ? null : symmetryRotation(symmetry.plane, step * k);
+          for (let i = 0; i < transforms.length; i++) {
+            if (!isActive(transforms[i]) || preparedEmitters?.[i]) continue;
+            const transform = transforms[i];
+            const affine = composeAffine(transform);
+            let fx =
+              affine.m[0] * center[0] +
+              affine.m[1] * center[1] +
+              affine.m[2] * center[2] +
+              affine.t[0];
+            let fy =
+              affine.m[3] * center[0] +
+              affine.m[4] * center[1] +
+              affine.m[5] * center[2] +
+              affine.t[1];
+            let fz =
+              affine.m[6] * center[0] +
+              affine.m[7] * center[1] +
+              affine.m[8] * center[2] +
+              affine.t[2];
+            const fold = pureFoldVariation(transform);
+            let lipschitz = analysis.sigmas[i].max;
+            if (fold) {
+              const q = foldVariationFn(
+                fold.type as "boxfold" | "spherefold" | "mandelbox",
+                resolveFoldRadii(fold),
+              )(fx, fy, fz, mulberry32(0));
+              fx = fold.weight * q[0];
+              fy = fold.weight * q[1];
+              fz = fold.weight * q[2];
+              lipschitz *= foldLipschitz(fold);
+            }
+            if (post !== null) {
+              const rx = post[0] * fx + post[1] * fy + post[2] * fz;
+              const ry = post[3] * fx + post[4] * fy + post[5] * fz;
+              const rz = post[6] * fx + post[7] * fy + post[8] * fz;
+              fx = rx;
+              fy = ry;
+              fz = rz;
+            }
+            radius = Math.max(
+              radius,
+              Math.hypot(fx - center[0], fy - center[1], fz - center[2]) /
+                (1 - lipschitz),
+            );
+          }
+        }
+        // Preserve a small numerical margin around the analytic fixed point.
+        return radius * RADIUS_PAD + 1e-3;
+      }
+    : null;
+
   // Bounding radius of the RAW attractor: seeded probe of the exact plotted
   // set (full transform list + symmetry, but NO final transform — the DE
   // descends the raw attractor and applies the lens to the query instead).
@@ -1756,7 +1942,10 @@ export function buildSurfaceDE(
     null,
     symmetry,
   );
-  const originRadius = probe.bounds.maxR * RADIUS_PAD + 1e-3;
+  const originRadius = Math.max(
+    probe.bounds.maxR * RADIUS_PAD + 1e-3,
+    condensationInvariantRadius ? condensationInvariantRadius([0, 0, 0]) : 0,
+  );
   // Fit a near-smallest enclosing ball to the same probe cloud
   // (Ritter's deterministic two-pass construction + growth repasses) and
   // adopt it only when its PADDED radius strictly beats the origin
@@ -1793,7 +1982,10 @@ export function buildSurfaceDE(
     }
     fit.radius = Math.sqrt(maxSq);
   }
-  const fitRadius = fit.radius * RADIUS_PAD + 1e-3;
+  const fitRadius = Math.max(
+    fit.radius * RADIUS_PAD + 1e-3,
+    condensationInvariantRadius ? condensationInvariantRadius(fit.center) : 0,
+  );
   const centered = fitRadius < originRadius;
   const boundingRadius = centered ? fitRadius : originRadius;
   const boundCenter: Vec3 = centered ? fit.center : [0, 0, 0];
@@ -1942,6 +2134,7 @@ export function buildSurfaceDE(
 
   return {
     maps,
+    ...(condensation ? { condensation } : {}),
     symmetry: {
       order,
       plane: symmetry.plane,
@@ -2215,11 +2408,14 @@ function refinedCertValue(
   iz: number,
   r: number,
   childScale: number,
+  depth: number,
 ): number {
   const { order, plane, stepCos, stepSin } = de.symmetry;
   const R = de.boundingRadius;
   const [bcX, bcY, bcZ] = de.boundCenter;
-  let inner = Infinity;
+  let inner = de.condensation
+    ? condensationTerm3(de.condensation, depth, 1, ix, iy, iz)
+    : Infinity;
   let sx = ix;
   let sy = iy;
   let sz = iz;
@@ -2492,6 +2688,7 @@ function descend(
 
   const R = de.boundingRadius;
   const [bcX, bcY, bcZ] = de.boundCenter;
+  const condensation = de.condensation;
   const startR = Math.hypot(x - bcX, y - bcY, z - bcZ);
   const sphereBound = startR - R;
   const wide = de.beamWidth > 1;
@@ -2547,6 +2744,38 @@ function descend(
 
   for (let depth = 0; depth < maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) break;
+    if (condensation) {
+      if (aLive) {
+        best = Math.min(
+          best,
+          condensationTerm3(condensation, depth, aScale, aX, aY, aZ),
+        );
+      }
+      if (bLive) {
+        best = Math.min(
+          best,
+          condensationTerm3(condensation, depth, bScale, bX, bY, bZ),
+        );
+      }
+      if (v1Live) {
+        best = Math.min(
+          best,
+          condensationTerm3(condensation, depth, v1Scale, v1X, v1Y, v1Z),
+        );
+      }
+      if (v2Live) {
+        best = Math.min(
+          best,
+          condensationTerm3(condensation, depth, v2Scale, v2X, v2Y, v2Z),
+        );
+      }
+      if (best <= sphereBound || best * finalScale < bailBelow) {
+        return descentValue(best, sphereBound, finalScale);
+      }
+    }
+    const futureCondensation = condensation
+      ? condensationHasFutureDepth(condensation.depthBand, depth + 1)
+      : false;
     // The two smallest-key candidates this level, key-ascending. The
     // sentinel r = 0 keeps empty slots out of every escaped-candidate fold
     // below (their certificates are meaningless until occupied).
@@ -2642,6 +2871,17 @@ function descend(
           const key = pScale * (r - R);
           const childScale = pScale * map.sigmaMin;
           const cert = childScale * (r - R);
+          if (condensation) {
+            const shapeTerm = condensationTerm3(
+              condensation,
+              depth + 1,
+              childScale,
+              ix,
+              iy,
+              iz,
+            );
+            if (shapeTerm < best) best = shapeTerm;
+          }
           // Exactly one tuple leaves the top-2 ladder per candidate — the
           // displaced runner-up, or the candidate itself. It spills to the
           // rank-3/4 ladder (widths 3/4) or folds below; empty-slot
@@ -2697,8 +2937,11 @@ function descend(
             // spilled tuple itself, when it beats neither slot) falls
             // through to the fold below.
             if (eKey < c3Key) {
-              // The evicted key is dead past this point — only the folded
-              // fields (point, scale, radius, certificate) survive.
+              // Keep the key paired with the evicted tuple. Condensation's
+              // future-subtree fold distinguishes an actual in-ball eviction
+              // from the empty Infinity/r=0 sentinel; dropping only this lane
+              // turns that sentinel into a false whole-ball hit.
+              const tKey = extra > 1 ? c4Key : c3Key;
               const tX = extra > 1 ? c4X : c3X;
               const tY = extra > 1 ? c4Y : c3Y;
               const tZ = extra > 1 ? c4Z : c3Z;
@@ -2721,6 +2964,7 @@ function descend(
               c3Scale = eScale;
               c3R = eR;
               c3Cert = eCert;
+              eKey = tKey;
               eX = tX;
               eY = tY;
               eZ = tZ;
@@ -2728,6 +2972,7 @@ function descend(
               eR = tR;
               eCert = tCert;
             } else if (extra > 1 && eKey < c4Key) {
+              const tKey = c4Key;
               const tX = c4X;
               const tY = c4Y;
               const tZ = c4Z;
@@ -2741,6 +2986,7 @@ function descend(
               c4Scale = eScale;
               c4R = eR;
               c4Cert = eCert;
+              eKey = tKey;
               eX = tX;
               eY = tY;
               eZ = tZ;
@@ -2757,7 +3003,7 @@ function descend(
           // (shrunken) residual drop the slots exist for.
           if (eR > R && eCert < best) {
             const folded = refine
-              ? refinedCertValue(de, eX, eY, eZ, eR, eScale)
+              ? refinedCertValue(de, eX, eY, eZ, eR, eScale, depth + 1)
               : eCert;
             if (folded < best) {
               best = folded;
@@ -2775,6 +3021,12 @@ function descend(
                 return descentValue(best, sphereBound, finalScale);
               }
             }
+          } else if (eKey < Infinity && futureCondensation && eR <= R) {
+            // Immediate C0 was evaluated above.  If this evicted in-ball
+            // subtree can still reach a later enabled C0, its invariant-ball
+            // terminal is the conservative certificate for all descendants.
+            const subtree = eScale * (eR - R);
+            if (subtree < best) best = subtree;
           }
         }
       }
@@ -2814,9 +3066,12 @@ function descend(
         // refining it buys nothing a marcher could see).
         if (c2R > R && c2Cert < best) {
           const folded = refine
-            ? refinedCertValue(de, c2X, c2Y, c2Z, c2R, c2Scale)
+            ? refinedCertValue(de, c2X, c2Y, c2Z, c2R, c2Scale, depth + 1)
             : c2Cert;
           if (folded < best) best = folded;
+        } else if (futureCondensation && c2R <= R) {
+          const subtree = c2Scale * (c2R - R);
+          if (subtree < best) best = subtree;
         }
       } else if (c2R > de.escapeRadius) {
         if (c2Cert < best) best = c2Cert;
@@ -2833,7 +3088,7 @@ function descend(
       if (c3R > R) {
         if (c3Cert < best) {
           const folded = refine
-            ? refinedCertValue(de, c3X, c3Y, c3Z, c3R, c3Scale)
+            ? refinedCertValue(de, c3X, c3Y, c3Z, c3R, c3Scale, depth + 1)
             : c3Cert;
           if (folded < best) best = folded;
         }
@@ -2849,7 +3104,7 @@ function descend(
       if (c4R > R) {
         if (c4Cert < best) {
           const folded = refine
-            ? refinedCertValue(de, c4X, c4Y, c4Z, c4R, c4Scale)
+            ? refinedCertValue(de, c4X, c4Y, c4Z, c4R, c4Scale, depth + 1)
             : c4Cert;
           if (folded < best) best = folded;
         }
@@ -2882,6 +3137,32 @@ function descend(
   // Terminal bound of chains alive at the depth cap (the KIFS last-value
   // formula): non-positive when the chain tracked the attractor all the
   // way down.
+  if (condensation) {
+    if (aLive) {
+      best = Math.min(
+        best,
+        condensationTerm3(condensation, maxDepth, aScale, aX, aY, aZ),
+      );
+    }
+    if (bLive) {
+      best = Math.min(
+        best,
+        condensationTerm3(condensation, maxDepth, bScale, bX, bY, bZ),
+      );
+    }
+    if (v1Live) {
+      best = Math.min(
+        best,
+        condensationTerm3(condensation, maxDepth, v1Scale, v1X, v1Y, v1Z),
+      );
+    }
+    if (v2Live) {
+      best = Math.min(
+        best,
+        condensationTerm3(condensation, maxDepth, v2Scale, v2X, v2Y, v2Z),
+      );
+    }
+  }
   if (aLive) {
     const terminal = aScale * (aR - R);
     if (terminal < best) best = terminal;
@@ -3081,6 +3362,7 @@ function descendFold(
   const { order, plane, stepCos, stepSin } = de.symmetry;
   const R = de.boundingRadius;
   const [bcX, bcY, bcZ] = de.boundCenter;
+  const condensation = de.condensation;
   const startR = Math.hypot(x - bcX, y - bcY, z - bcZ);
   const sphereBound = startR - R;
   let best = Infinity;
@@ -3096,6 +3378,25 @@ function descendFold(
   fcR[0] = startR;
 
   for (let depth = 0; depth < maxDepth && chainCount > 0; depth++) {
+    if (condensation) {
+      for (let c = 0; c < chainCount; c++) {
+        const term = condensationTerm3(
+          condensation,
+          depth,
+          fcScale[c],
+          fcX[c],
+          fcY[c],
+          fcZ[c],
+        );
+        if (term < best) best = term;
+      }
+      if (best <= sphereBound || best * finalScale < bailBelow) {
+        return descentValue(best, sphereBound, finalScale);
+      }
+    }
+    const futureCondensation = condensation
+      ? condensationHasFutureDepth(condensation.depthBand, depth + 1)
+      : false;
     let keptCount = 0;
     // Worst kept slot, maintained by a fixed-bound rescan whenever the
     // frontier is full (see the insertion comment below for why the
@@ -3112,6 +3413,14 @@ function descendFold(
       // (sectors rotate about an axis through the origin), so the affine
       // arm's |pre|² is one number per chain; 1/pScale prices the skip's
       // frontier-key condition.
+      // With condensation, R is the proven invariant ball of the FULL
+      // recursive closure A (ordinary pieces and every nested C0), not a
+      // probe radius. Therefore childScale*(r-R) lower-bounds the whole
+      // candidate subtree. A stage-2 skip proved from that certificate is
+      // sound even though it does not literally evaluate the separately
+      // damped 0.9*C0 heuristic; fold region floors constrain the same
+      // branch image. Surviving candidates still evaluate immediate C0
+      // before frontier insertion below.
       const chainNormSq = sX * sX + sY * sY + sZ * sZ;
       const invPScale = 1 / pScale;
       for (let k = 0; k < order; k++) {
@@ -3465,6 +3774,17 @@ function descendFold(
             const icz = iz - bcZ;
             const r = Math.sqrt(icx * icx + icy * icy + icz * icz);
             const childScale = pScale * branchSigma;
+            if (condensation) {
+              const shapeTerm = condensationTerm3(
+                condensation,
+                depth + 1,
+                childScale,
+                ix,
+                iy,
+                iz,
+              );
+              if (shapeTerm < best) best = shapeTerm;
+            }
             let key = pScale * (r - R);
             if (candFloor > 0 && candFloor > key) key = candFloor;
             let cert = childScale * (r - R);
@@ -3576,6 +3896,7 @@ function descendFold(
                       evZ,
                       evR,
                       evScale,
+                      depth + 1,
                     );
                     if (rc > folded) folded = rc;
                   }
@@ -3585,6 +3906,12 @@ function descendFold(
                       return descentValue(best, sphereBound, finalScale);
                     }
                   }
+                }
+              } else if (futureCondensation) {
+                const subtree = evScale * (evR - R);
+                if (subtree < best) best = subtree;
+                if (best <= sphereBound || best * finalScale < bailBelow) {
+                  return descentValue(best, sphereBound, finalScale);
                 }
               } else if (evFloor > 0 && evFloor < best) {
                 best = evFloor;
@@ -3629,6 +3956,17 @@ function descendFold(
   // floor-0 chain is a true preimage orbit (its negative terminal is the
   // hit signal), a strayed chain folds its certified positive floor.
   for (let c = 0; c < chainCount; c++) {
+    if (condensation) {
+      const shapeTerm = condensationTerm3(
+        condensation,
+        maxDepth,
+        fcScale[c],
+        fcX[c],
+        fcY[c],
+        fcZ[c],
+      );
+      if (shapeTerm < best) best = shapeTerm;
+    }
     let terminal = fcScale[c] * (fcR[c] - R);
     if (fcFloor[c] > 0 && fcFloor[c] > terminal) terminal = fcFloor[c];
     if (terminal < best) best = terminal;

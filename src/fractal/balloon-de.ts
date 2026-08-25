@@ -31,7 +31,10 @@
  * cave wall. The wrapper composes over the PUBLIC estimators — the
  * `descendLens` idiom one layer further out; no estimator internals
  * change, and any core (affine ladder, fold frontier, escape, 4D later)
- * composes.
+ * composes. Condensation needs no special case: its public estimator already
+ * bounds the full `C0 union f_j(A)` set and carries the analytic invariant
+ * ball, so this same proof admits balloon-over-condensation in both
+ * dimensions.
  *
  * BALLOON PALETTE COORDINATE. Every renderer samples an independently
  * selected balloon gradient at one renderer-neutral coordinate:

@@ -14,14 +14,20 @@ import {
   SURFACE_GPU_MAP4_VEC4,
   SURFACE_GPU_MAP_VEC4,
   SURFACE_GPU_PARAMS4_BALLOON_BYTES,
+  SURFACE_GPU_PARAMS4_BALLOON_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS4_BYTES,
+  SURFACE_GPU_PARAMS4_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS4_ESCAPE_BYTES,
   SURFACE_GPU_PARAMS4_LENS_BYTES,
   SURFACE_GPU_PARAMS4_PLANE_BYTES,
+  SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS4_TRAP_BYTES,
   SURFACE_GPU_PARAMS_BALLOON_BYTES,
+  SURFACE_GPU_PARAMS_BALLOON_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS_BYTES,
+  SURFACE_GPU_PARAMS_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS_PLANE_BYTES,
+  SURFACE_GPU_PARAMS_PLANE_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS_TRAP_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
@@ -59,7 +65,7 @@ import {
   ESCAPE_TIME_ITERATIONS,
 } from "./escape-de";
 import { resolveShapeTrap } from "./shape-trap";
-import { PEACE_SIGN_SHAPE } from "./shapes";
+import { GEAR_SHAPE, PEACE_SIGN_SHAPE, type ShapeSpec } from "./shapes";
 import { buildEscapeDE4, SYM_PLANE_CODE4 } from "./escape-de-4d";
 import {
   buildSurfaceDE,
@@ -213,6 +219,54 @@ function kernelOpts(
     bnbStage2: false,
     ...overrides,
   };
+}
+
+const CONDENSATION_SPHERE: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "sphere", radius: 0.5 },
+      combine: "union",
+    },
+  ],
+};
+
+const CONDENSATION_BOX: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "box", half: [0.2, 0.3, 0.4] },
+      combine: "union",
+    },
+  ],
+};
+
+/** One recursive map plus two base emitters. Order 3 expands only the
+ * emitter records (six total) while preserving two unique shade slots. */
+function condensationTransforms(): Transform[] {
+  return [
+    {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.45, 0.45, 0.45],
+      variations: [],
+    },
+    {
+      id: 1,
+      position: [0.5, 0, 0],
+      rotation: [0, 0, 0.2],
+      scale: [0.25, 0.25, 0.25],
+      variations: [],
+      emitter: CONDENSATION_SPHERE,
+    },
+    {
+      id: 2,
+      position: [-0.35, 0.2, 0],
+      rotation: [0.1, 0.2, 0],
+      scale: [0.2, 0.2, 0.2],
+      variations: [],
+      emitter: CONDENSATION_BOX,
+    },
+  ];
 }
 
 describe("packSurfaceGpuParams byte length", () => {
@@ -6646,5 +6700,432 @@ describe("packers' shape-trap block (the appended 336/624 layout)", () => {
     expect(
       new Uint8Array(packEscapeGpuParams(de, { itemCount: 2 }, null, null)),
     ).toEqual(new Uint8Array(packEscapeGpuParams(de, { itemCount: 2 })));
+  });
+});
+
+describe("condensation GPU packing", () => {
+  const symmetry = { order: 3, plane: "xy" as const };
+  const depthOptions = {
+    condensationDepthBand: { minDepth: 1, maxDepth: 3 },
+  };
+  const balloon = {
+    center: [0.1, -0.2, 0.3] as [number, number, number],
+    rho: 1.5,
+    R: 2.5,
+    far: 3.5,
+  };
+  const groundPlane: SurfaceGpuGroundPlane = {
+    y: -1,
+    fadeStart: 2,
+    fadeEnd: 3,
+    ballCenter: [0, 0, 0],
+    ballRadius: 2,
+    albedo: [0.2, 0.3, 0.4],
+  };
+
+  it("appends expanded 3D emitters while mapCount and shades stay base-sized", () => {
+    const de = buildSurfaceDE(
+      condensationTransforms(),
+      null,
+      symmetry,
+      depthOptions,
+    );
+    expect(de.maps).toHaveLength(1);
+    expect(de.condensation?.emitters).toHaveLength(6);
+    const out = packSurfaceGpuMaps(de);
+    expect(out).toHaveLength(7 * SURFACE_GPU_MAP_VEC4 * 4);
+    const emitters = de.condensation!.emitters;
+    emitters.forEach((emitter, j) => {
+      const at = (de.maps.length + j) * SURFACE_GPU_MAP_VEC4 * 4;
+      expect(Array.from(out.slice(at, at + 3))).toEqual(
+        Array.from(new Float32Array(emitter.invM.slice(0, 3))),
+      );
+      expect(out[at + 3]).toBeCloseTo(emitter.invT[0], 6);
+      expect(out[at + 12]).toBeCloseTo(emitter.sigmaMin, 6);
+      expect(out[at + 13]).toBe(emitter.shadeIndex);
+      expect(out[at + 14]).toBe(emitter.shadeIndex - de.maps.length);
+    });
+    expect(emitters.map((e) => e.shadeIndex)).toEqual([1, 2, 1, 2, 1, 2]);
+
+    const view = new DataView(packSurfaceGpuParams(de, { itemCount: 1 }));
+    expect(view.byteLength).toBe(SURFACE_GPU_PARAMS_CONDENSATION_BYTES);
+    expect(view.getUint32(48, true)).toBe(1);
+    expect(view.getUint32(288, true)).toBe(6);
+    expect(view.getUint32(292, true)).toBe(1);
+    expect(view.getUint32(296, true)).toBe(3);
+    expect(view.getUint32(300, true)).toBe(3);
+  });
+
+  it("uses the 4D layout and preserves embedded-solid emitter metadata", () => {
+    const de = buildSurfaceDE4(
+      condensationTransforms(),
+      null,
+      symmetry,
+      depthOptions,
+    );
+    const out = packSurfaceGpuMaps4(de);
+    expect(out).toHaveLength(7 * SURFACE_GPU_MAP4_VEC4 * 4);
+    de.condensation!.emitters.forEach((emitter, j) => {
+      const at = (de.maps.length + j) * SURFACE_GPU_MAP4_VEC4 * 4;
+      expect(Array.from(out.slice(at, at + 16))).toEqual(
+        Array.from(new Float32Array(emitter.invM)),
+      );
+      expect(Array.from(out.slice(at + 16, at + 20))).toEqual(
+        Array.from(new Float32Array(emitter.invT)),
+      );
+      expect(out[at + 20]).toBeCloseTo(emitter.sigmaMin, 6);
+      expect(out[at + 21]).toBe(emitter.shadeIndex);
+      expect(out[at + 22]).toBe(emitter.shadeIndex - de.maps.length);
+    });
+    const view = new DataView(
+      packSurface4GpuParams(de, view4(), { itemCount: 1 }),
+    );
+    expect(view.byteLength).toBe(SURFACE_GPU_PARAMS4_CONDENSATION_BYTES);
+    expect(view.getUint32(48, true)).toBe(1);
+    expect(view.getUint32(576, true)).toBe(6);
+    expect(view.getUint32(580, true)).toBe(1);
+    expect(view.getUint32(584, true)).toBe(3);
+    expect(view.getUint32(588, true)).toBe(3);
+  });
+
+  it("places controls after every frozen balloon/plane tail", () => {
+    const de3 = buildSurfaceDE(
+      condensationTransforms(),
+      null,
+      symmetry,
+      depthOptions,
+    );
+    const base3 = new Uint8Array(packSurfaceGpuParams(de3, { itemCount: 2 }));
+    const balloon3 = new Uint8Array(
+      packSurfaceGpuParams(de3, { itemCount: 2 }, balloon),
+    );
+    const plane3 = new Uint8Array(
+      packSurfaceGpuParams(de3, { itemCount: 2 }, null, groundPlane),
+    );
+    expect(balloon3.byteLength).toBe(
+      SURFACE_GPU_PARAMS_BALLOON_CONDENSATION_BYTES,
+    );
+    expect(plane3.byteLength).toBe(SURFACE_GPU_PARAMS_PLANE_CONDENSATION_BYTES);
+    expect(balloon3.slice(0, 288)).toEqual(base3.slice(0, 288));
+    expect(plane3.slice(0, 288)).toEqual(base3.slice(0, 288));
+    expect(new DataView(balloon3.buffer).getUint32(320, true)).toBe(6);
+    expect(new DataView(plane3.buffer).getUint32(336, true)).toBe(6);
+
+    const de4 = buildSurfaceDE4(
+      condensationTransforms(),
+      null,
+      symmetry,
+      depthOptions,
+    );
+    const base4 = new Uint8Array(
+      packSurface4GpuParams(de4, view4(), { itemCount: 2 }),
+    );
+    const balloon4 = new Uint8Array(
+      packSurface4GpuParams(de4, view4(), { itemCount: 2 }, balloon),
+    );
+    const plane4 = new Uint8Array(
+      packSurface4GpuParams(de4, view4(), { itemCount: 2 }, null, groundPlane),
+    );
+    expect(balloon4.byteLength).toBe(
+      SURFACE_GPU_PARAMS4_BALLOON_CONDENSATION_BYTES,
+    );
+    expect(plane4.byteLength).toBe(
+      SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_BYTES,
+    );
+    expect(balloon4.slice(0, 576)).toEqual(base4.slice(0, 576));
+    expect(plane4.slice(0, 576)).toEqual(base4.slice(0, 576));
+    expect(new DataView(balloon4.buffer).getUint32(608, true)).toBe(6);
+    expect(new DataView(plane4.buffer).getUint32(624, true)).toBe(6);
+  });
+
+  it("places controls after populated 3D and 4D fold-lens prefixes", () => {
+    const de3 = buildSurfaceDE(
+      condensationTransforms(),
+      spherefoldFinalTransform(),
+      symmetry,
+      depthOptions,
+    );
+    const view3 = new DataView(packSurfaceGpuParams(de3, { itemCount: 1 }));
+    expect(de3.foldFinal).not.toBeNull();
+    expect(view3.byteLength).toBe(SURFACE_GPU_PARAMS_CONDENSATION_BYTES);
+    expect(view3.getFloat32(256, true)).toBe(de3.foldFinal!.foldKind);
+    expect(view3.getUint32(288, true)).toBe(6);
+
+    const de4 = buildSurfaceDE4(
+      condensationTransforms(),
+      fourDBoxfoldFinalTransform(),
+      symmetry,
+      depthOptions,
+    );
+    const view4Params = new DataView(
+      packSurface4GpuParams(de4, view4(), { itemCount: 1 }),
+    );
+    expect(de4.foldFinal).not.toBeNull();
+    expect(view4Params.byteLength).toBe(SURFACE_GPU_PARAMS4_CONDENSATION_BYTES);
+    expect(view4Params.getFloat32(544, true)).toBe(de4.foldFinal!.foldKind);
+    expect(view4Params.getUint32(576, true)).toBe(6);
+  });
+
+  it("keeps empty condensation on legacy bytes exactly", () => {
+    const plain3 = buildSurfaceDE([condensationTransforms()[0]]);
+    const empty3: SurfaceDE = {
+      ...plain3,
+      condensation: {
+        emitters: [],
+        depthBand: { minDepth: 0, maxDepth: 3 },
+      },
+    };
+    expect(
+      new Uint8Array(packSurfaceGpuParams(empty3, { itemCount: 2 })),
+    ).toEqual(new Uint8Array(packSurfaceGpuParams(plain3, { itemCount: 2 })));
+    expect(packSurfaceGpuMaps(empty3)).toEqual(packSurfaceGpuMaps(plain3));
+
+    const plain4 = buildSurfaceDE4([condensationTransforms()[0]]);
+    const empty4: SurfaceDE4 = {
+      ...plain4,
+      condensation: {
+        emitters: [],
+        depthBand: { minDepth: 0, maxDepth: 3 },
+      },
+    };
+    expect(
+      new Uint8Array(packSurface4GpuParams(empty4, view4(), { itemCount: 2 })),
+    ).toEqual(
+      new Uint8Array(packSurface4GpuParams(plain4, view4(), { itemCount: 2 })),
+    );
+    expect(packSurfaceGpuMaps4(empty4)).toEqual(packSurfaceGpuMaps4(plain4));
+  });
+
+  it("enforces the 24-record cap and contiguous shade suffix", () => {
+    const de = buildSurfaceDE(
+      condensationTransforms(),
+      null,
+      symmetry,
+      depthOptions,
+    );
+    const first = de.condensation!.emitters[0];
+    const tooMany: SurfaceDE = {
+      ...de,
+      condensation: {
+        ...de.condensation!,
+        emitters: Array.from({ length: 24 }, () => first),
+      },
+    };
+    expect(() => packSurfaceGpuMaps(tooMany)).toThrow(/25.*cap is 24/);
+    expect(() => packSurfaceGpuParams(tooMany, { itemCount: 1 })).toThrow(
+      /25.*cap is 24/,
+    );
+    const badShade: SurfaceDE = {
+      ...de,
+      condensation: {
+        ...de.condensation!,
+        emitters: [{ ...first, shadeIndex: 7 }],
+      },
+    };
+    expect(() => packSurfaceGpuMaps(badShade)).toThrow(/contiguous suffix/);
+  });
+});
+
+describe("surfaceDeKernelWgsl condensation", () => {
+  const shapes = [CONDENSATION_SPHERE, CONDENSATION_BOX] as const;
+  const condensation = {
+    mapCount: 1,
+    emitters: [
+      { shape: shapes[0], shadeIndex: 1 },
+      { shape: shapes[1], shadeIndex: 2 },
+      { shape: shapes[0], shadeIndex: 1 },
+      { shape: shapes[1], shadeIndex: 2 },
+    ],
+  } as const;
+
+  it("keeps absent, null, and empty options source-byte identical", () => {
+    const cases: Partial<SurfaceGpuKernelOptions>[] = [
+      { core: "fold", mode: "shade", shadeDeWidth: 1, lens: true },
+      { core: "affine", mode: "march", balloon: true },
+      { core: "fold4", mode: "shade", groundPlane: true },
+      { core: "affine4", mode: "eval", lens: true },
+    ];
+    for (const overrides of cases) {
+      const omitted = surfaceDeKernelWgsl(kernelOpts(overrides));
+      expect(
+        surfaceDeKernelWgsl(kernelOpts({ ...overrides, condensation: null })),
+      ).toBe(omitted);
+      expect(
+        surfaceDeKernelWgsl(
+          kernelOpts({
+            ...overrides,
+            condensation: { mapCount: 1, emitters: [] },
+          }),
+        ),
+      ).toBe(omitted);
+    }
+  });
+
+  it("bakes unique shapes and dispatches appended records by selector", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ core: "affine", condensation }),
+    );
+    expect(wgsl).toContain("fn condensationShape0(p: vec3f) -> f32");
+    expect(wgsl).toContain("fn condensationShape1(p: vec3f) -> f32");
+    expect(wgsl).toContain("case 0u:");
+    expect(wgsl).toContain("case 1u:");
+    expect(wgsl).toContain("let m = maps[params.mapCount + e];");
+    expect(wgsl).toContain("shade = i32(m.p0.y)");
+    expect(wgsl).toContain("u32(m.p0.z)");
+    expect(wgsl).toContain(
+      "depth < params.condDepthMin || depth > params.condDepthMax",
+    );
+    expect(wgsl).toContain(
+      "return scale * 0.9 * condensationDistance(q).distance",
+    );
+  });
+
+  it("uses the 4D embedded-solid formula rather than extrusion", () => {
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ core: "affine4", condensation }),
+    );
+    expect(wgsl).toContain("length(vec2f(max(shapeDistance, 0.0), local.w))");
+    expect(wgsl).toContain("fn condensationDistance(q: vec4f)");
+  });
+
+  it("attributes shade hit-info to a winning emitter at every descent observation point", () => {
+    for (const core of ["affine", "affine4"] as const) {
+      const dim = core === "affine4" ? "vec4f" : "vec3f";
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, condensation }),
+      );
+      expect(wgsl).toContain(`fn condensationTermHit(q: ${dim}`);
+      expect(wgsl).toContain("info.firstChoice = condensationHit.shade");
+      expect(wgsl).toContain("condensationTermHit(aQ, aScale, depth)");
+      expect(wgsl).toContain(
+        "condensationTermHit(img, childScale, depth + 1u)",
+      );
+      expect(wgsl).toContain(
+        "condensationTermHit(aQ, aScale, params.maxDepth)",
+      );
+      expect(wgsl).toContain("depth == 0u && c1Cert < best");
+      expect(wgsl).toContain("futureCondensation && eR <= R");
+      expect(wgsl).toMatch(
+        /best = min\(best, refinedCert\(eQ, (?:eExt, )?eR, eScale, depth \+ 1u\)\)/,
+      );
+    }
+
+    for (const core of ["fold", "fold4"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, condensation }),
+      );
+      expect(wgsl).toContain("info.firstChoice = condensationHit.shade");
+      expect(wgsl).toContain("condensationTermHit(chQ, chScale, depth)");
+      expect(wgsl).toContain(
+        "condensationTermHit(img, pScale * branchSigma, depth + 1u)",
+      );
+      expect(wgsl).toContain(
+        "condensationTermHit(chQ, chScale, params.maxDepth)",
+      );
+      expect(wgsl).toContain("lbScale * (lbR - R) < condensationBest");
+    }
+  });
+
+  it("carries emitter attribution through every 3D/4D lens wrapper without changing eval or march helpers", () => {
+    for (const core of ["affine", "fold", "affine4", "fold4"] as const) {
+      const lensed = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, lens: true, condensation }),
+      );
+      expect(lensed).toContain("fn surfaceDEHitInfoCore(");
+      expect(lensed).toContain("info.firstChoice = condensationHit.shade");
+      expect(lensed).toMatch(/return surfaceDEHitInfoCore\(bestQ,/);
+
+      for (const mode of ["eval", "march"] as const) {
+        const valueOnly = surfaceDeKernelWgsl(
+          kernelOpts({ mode, core, lens: true, condensation }),
+        );
+        expect(valueOnly).not.toContain("fn condensationTermHit(");
+        expect(valueOnly).toContain(
+          "return scale * 0.9 * condensationDistance(q).distance",
+        );
+      }
+    }
+  });
+
+  it("moves the evicted c4 key with its tuple before a future-condensation fold", () => {
+    for (const core of ["affine", "affine4"] as const) {
+      const valueOnly = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "eval", core, condensation }),
+      );
+      expect(valueOnly.match(/let tKey = c4Key;/g)).toHaveLength(2);
+      expect(valueOnly.match(/eKey = tKey;/g)).toHaveLength(2);
+
+      const withHitInfo = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, condensation }),
+      );
+      expect(withHitInfo.match(/let tKey = c4Key;/g)).toHaveLength(4);
+      expect(withHitInfo.match(/eKey = tKey;/g)).toHaveLength(4);
+      expect(withHitInfo).toContain("eKey = tKey;\n            eQ = tQ;");
+    }
+  });
+
+  it("mirrors roots, children, refinement, terminals, and future drops", () => {
+    const affine = surfaceDeKernelWgsl(
+      kernelOpts({ core: "affine", condensation }),
+    );
+    expect(affine).toContain(
+      "fn refinedCert(img: vec3f, r: f32, childScale: f32, depth: u32)",
+    );
+    expect(affine).toContain("condensationTerm(img, 1.0, depth)");
+    for (const chain of ["aQ", "bQ", "v1Q", "v2Q"]) {
+      expect(affine).toContain(`condensationTerm(${chain}`);
+    }
+    expect(affine).toContain("condensationTerm(img, childScale, depth + 1u)");
+    expect(affine).toContain("condensationHasFuture(depth + 1u)");
+    expect(affine).toContain("eScale * (eR - R)");
+    expect(affine).toContain("condensationTerm(aQ, aScale, maxDepth)");
+
+    const foldShade = surfaceDeKernelWgsl(
+      kernelOpts({
+        mode: "shade",
+        core: "fold",
+        shadeDeWidth: 1,
+        condensation,
+      }),
+    );
+    expect(foldShade).toContain(
+      "condensationTerm(rootQ, fcScale[frontierIx(rootC, li)], depth)",
+    );
+    expect(foldShade).toContain("evScale * (evR - R)");
+    expect(foldShade.match(/fn surfaceDE(?:Probe)?\(/g)).toHaveLength(2);
+    expect(
+      foldShade.match(/condensationHasFuture\(depth \+ 1u\)/g),
+    ).toHaveLength(2);
+  });
+
+  it("refuses forward cores, shapeTrap combinations, and excess slots", () => {
+    for (const core of ["escape", "bulb", "escape4"] as const) {
+      expect(() =>
+        surfaceDeKernelWgsl(kernelOpts({ core, condensation })),
+      ).toThrow(/forward cores refuse/);
+    }
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({
+          core: "affine",
+          condensation,
+          shapeTrap: CONDENSATION_SPHERE,
+        }),
+      ),
+    ).toThrow(/condensation\+shapeTrap/);
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({
+          core: "affine",
+          condensation: {
+            mapCount: 0,
+            emitters: Array.from({ length: 25 }, (_, shadeIndex) => ({
+              shape: GEAR_SHAPE,
+              shadeIndex,
+            })),
+          },
+        }),
+      ),
+    ).toThrow(/25.*cap is 24/);
   });
 });

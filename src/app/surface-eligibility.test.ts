@@ -267,11 +267,11 @@ describe("deriveSurfaceEligibility and the scheduled-hybrid block", () => {
 });
 
 describe("deriveSurfaceEligibility shape emitters", () => {
-  it("refuses the gearworks preset with the surface gate's emitter reason in the note, routing nowhere", () => {
+  it("admits the Gearworks condensation preset into the IFS descent", () => {
     const result = derivePreset("gearworks");
-    expect(result.status).toBe("ineligible");
-    expect(result.kind).toBeNull();
-    expect(result.note).toContain("map 5 is a shape emitter (condensation)");
+    expect(result.status).toBe("eligible");
+    expect(result.kind).toBe("ifs");
+    expect(result.note).toBeNull();
   });
 
   it("refuses an emitter-carrying escape-shaped document too — no arm slips through to march the plain object", () => {
@@ -298,7 +298,7 @@ describe("deriveSurfaceEligibility shape emitters", () => {
     expect(result.note).toContain("shape emitter");
   });
 
-  it("refuses an emitter-carrying 4D document through the 4D analyzers", () => {
+  it("admits an emitter-carrying contracting 4D document", () => {
     const transforms: Transform[] = sierpinskiTetrahedron().map((t, i) =>
       i === 0
         ? { ...t, w: { rotation: { xw: 0.3 } } }
@@ -319,8 +319,33 @@ describe("deriveSurfaceEligibility shape emitters", () => {
     const result = deriveSurfaceEligibility(transforms, null, NO_SYMMETRY, {
       computeAvailable: true,
     });
+    expect(result.status).not.toBe("ineligible");
+    expect(result.kind).toBe("ifs4");
+  });
+
+  it("prices symmetry-expanded emitter records against the common cap", () => {
+    const transforms: Transform[] = Array.from({ length: 25 }, (_, id) => ({
+      id,
+      position: [id * 0.01, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [0.25, 0.25, 0.25],
+      ...(id === 0
+        ? {}
+        : {
+            emitter: {
+              parts: [
+                {
+                  primitive: { kind: "sphere" as const, radius: 0.5 },
+                  combine: "union" as const,
+                },
+              ],
+            },
+          }),
+    }));
+    const result = deriveSurfaceEligibility(transforms, null, NO_SYMMETRY, {
+      computeAvailable: true,
+    });
     expect(result.status).toBe("ineligible");
-    expect(result.kind).toBeNull();
-    expect(result.note).toContain("map 2 is a shape emitter (condensation)");
+    expect(result.note).toContain("25 map/emitter records");
   });
 });

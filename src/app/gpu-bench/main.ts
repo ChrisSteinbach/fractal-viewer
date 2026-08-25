@@ -133,7 +133,6 @@ import {
   SURFACE_GPU_HIT_FLOOR,
   SURFACE_GPU_MAP4_VEC4,
   SURFACE_GPU_MAP_VEC4,
-  SURFACE_GPU_PARAMS_BALLOON_BYTES,
   SURFACE_GPU_PARAMS_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
@@ -180,6 +179,7 @@ import {
   createGpuFlameBackend4,
 } from "../flame-gpu-backend";
 import { FLAME_FILTER_RADIUS } from "../flame-worker-core";
+import { surfaceCondensationKernelSpec } from "./condensation";
 import type {
   FlameAccumBackend,
   GpuBackendRequest,
@@ -3108,6 +3108,12 @@ interface SurfaceDeResults {
    * core-routed estimator). Gates like {@link marchUnproject}, the
    * silhouette-flip exclusion machinery included. */
   marchUnprojectBalloon?: SurfaceUnprojectRow | SkippedResult;
+  /** Leg A over the condensation field class: Gearworks through the affine
+   * descent with its code-generated gear SDF, packed emitter record and
+   * all-depth band. Same per-ray CPU/GPU gate as {@link marchUnproject};
+   * appended as a new leg so the older fold/lens/balloon baselines do not
+   * change fixtures or ordering. */
+  marchUnprojectCondensation?: SurfaceUnprojectRow | SkippedResult;
   /** Leg B (informational + canvas artifact) — absent until run;
    * SkippedResult when mandelboxKifs was excluded or the renderer broke. */
   computeFrame?: SurfaceComputeFrameRow | SkippedResult;
@@ -7365,6 +7371,9 @@ async function runSurfaceUnprojectLeg(
     workgroupSize: SURFACE_COMPUTE_WORKGROUP_SIZE,
     sharedFrontier: false,
     bnbStage2: false,
+    ...(sys.de.condensation
+      ? { condensation: surfaceCondensationKernelSpec(sys.de) }
+      : {}),
   });
   const { pipeline, compileMs } = await buildSurfacePipeline(
     device,
@@ -7376,9 +7385,18 @@ async function runSurfaceUnprojectLeg(
   const params = await createSurfaceBuffer(
     device,
     "surface-de unproj params",
-    balloonPack !== null
-      ? SURFACE_GPU_PARAMS_BALLOON_BYTES
-      : SURFACE_GPU_PARAMS_BYTES,
+    packSurfaceGpuParams(
+      sys.de,
+      {
+        itemCount: 0,
+        stepsThisPass: 1,
+        marchSteps: SURFACE_MARCH_STEPS,
+        pose,
+        cutoff: 0,
+        footprint: 0,
+      },
+      balloonPack,
+    ).byteLength,
     GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   );
   // Re-wrapped copy — see ensureSurfaceEvalBuffers' mapsData note.
@@ -9832,6 +9850,14 @@ async function runSurfaceDeSection(
       transforms: surfaceAffineTetra(),
       finalTransform: surfaceLensParameterizedFinal(),
     },
+    // Condensation is appended as its own field class. It must not enter the
+    // shared affine pipeline below because its gear ShapeSpec is generated
+    // into shader source; the dedicated M8 leg compiles that source and
+    // reuses the same 700-query oracle/comparator.
+    {
+      name: "gearworksCondensation",
+      transforms: gearworks(),
+    },
   );
   const systems: SurfaceSystemState[] = [];
   for (const def of systemDefs) {
@@ -11216,12 +11242,23 @@ async function runSurfaceDeSection(
   // one pipeline per CONFIG — a lens system run through those pipelines
   // would march the bare base attractor and disagree with its own oracle.
   const foldSystems = systems.filter(
-    (s) => s.core === "fold" && s.de.foldFinal === null,
+    (s) =>
+      s.core === "fold" &&
+      s.de.foldFinal === null &&
+      s.de.condensation === undefined,
   );
   const affineSystems = systems.filter(
-    (s) => s.core === "affine" && s.de.foldFinal === null,
+    (s) =>
+      s.core === "affine" &&
+      s.de.foldFinal === null &&
+      s.de.condensation === undefined,
   );
-  const lensSystems = systems.filter((s) => s.de.foldFinal !== null);
+  const lensSystems = systems.filter(
+    (s) => s.de.foldFinal !== null && s.de.condensation === undefined,
+  );
+  const condensationSystems = systems.filter(
+    (s) => s.de.condensation !== undefined,
+  );
   if (systems.length === 0) {
     results.reason = "no eligible systems (see notes)";
     status(`skipped — ${results.reason}`);
@@ -11533,6 +11570,52 @@ async function runSurfaceDeSection(
     }
 
     await canaryCheck("the M0 affine agreement leg");
+
+    // ----- M8: the condensation affine-core agreement leg — GATING -----
+    // Gearworks is deliberately compiled on its own: emitter ShapeSpecs are
+    // code-generated, while poses, shade selectors and the inclusive depth
+    // band ride the ordinary params/maps buffers. Its CPU values and query
+    // mix were built by the same path as M0, so the existing comparator is
+    // still the oracle gate; only the compiled source differs.
+    for (const sys of condensationSystems) {
+      const cfg: SurfaceKernelConfig = {
+        ...affineEvalConfig,
+        core: sys.core,
+      };
+      const label = `condensation ${configLabel(cfg)}`;
+      status(`agreement: compiling ${label} (${sys.name})…`);
+      activity.setState("gpu", `Surface DE agreement — ${label}`);
+      try {
+        const code = surfaceDeKernelWgsl({
+          mode: "eval",
+          core: sys.core,
+          width: cfg.width,
+          workgroupSize: cfg.wg,
+          sharedFrontier: false,
+          bnbStage2: false,
+          condensation: surfaceCondensationKernelSpec(sys.de),
+        });
+        const { pipeline } = await buildSurfacePipeline(
+          device,
+          pipelineLayout,
+          code,
+          "evalQueries",
+          `surface-de eval ${label} ${sys.name}`,
+        );
+        await ensureSurfaceEvalBuffers(device, bindGroupLayout, sys);
+        const gpu = await runSurfaceEvalDispatch(device, pipeline, sys, cfg.wg);
+        results.agreement.push(compareSurfaceAgreement(sys, cfg, gpu));
+      } catch (e) {
+        compileFailed = true;
+        results.notes.push(
+          `agreement ${label} ${sys.name}: ${describeError(e)}`,
+        );
+      }
+      render();
+      await new Promise<void>((resolve) => setTimeout(resolve));
+    }
+
+    await canaryCheck("the M8 condensation agreement leg");
 
     // ----- M1 (stage B): the fold-lens agreement leg — GATING -----
     // One pipeline PER SYSTEM: `lens` wraps that system's own core
@@ -12993,6 +13076,52 @@ async function runSurfaceDeSection(
           unprojFailed = true;
           results.marchUnprojectBalloon = { skipped: describeError(e) };
           results.notes.push(`march-unproject balloon: ${describeError(e)}`);
+        }
+        render();
+      }
+
+      // M8: the same bounded unproject gate over Gearworks' condensation
+      // field. Appended after the established three legs so their fixtures,
+      // output ordering and measurements stay stable.
+      const condensationSys = condensationSystems.find(
+        (s) => s.name === "gearworksCondensation",
+      );
+      if (!condensationSys) {
+        unprojFailed = true;
+        results.marchUnprojectCondensation = {
+          skipped: "gearworksCondensation did not build (see notes)",
+        };
+        results.notes.push(
+          "march-unproject condensation: Gearworks fixture did not build — failing the leg",
+        );
+        render();
+      } else {
+        try {
+          const row = await runSurfaceUnprojectLeg(
+            device,
+            condensationSys,
+            acquired.software,
+            status,
+            activity,
+          );
+          results.marchUnprojectCondensation = row;
+          if (row.truncated) {
+            unprojFailed = true;
+            results.notes.push(
+              `march-unproject condensation: truncated at ${SURFACE_UNPROJ_CAP_MS}ms — ` +
+                "agreement not verifiable, failing the leg",
+            );
+          } else if (row.failures > 0) {
+            unprojFailed = true;
+          }
+        } catch (e) {
+          unprojFailed = true;
+          results.marchUnprojectCondensation = {
+            skipped: describeError(e),
+          };
+          results.notes.push(
+            `march-unproject condensation: ${describeError(e)}`,
+          );
         }
         render();
       }
