@@ -61,23 +61,25 @@ jobs:
       # `strategy.job-total`, so adding an entry here re-partitions the
       # sweep on its own and the two cannot drift apart.
       #
-      # RAISED 4 -> 8, and the reason is a MEASURED failure rather than a
-      # precaution. The multi-system wave added five scenarios (three chi,
-      # two emitter) whose CPU oracles are the expensive half — a 24-map
-      # block-diagonal system, and a condensation sampler drawing a gear
-      # profile by accept-reject for a quarter of its iterations. At four
-      # shards that took shards 1 and 2 past the script's own 20-minute cap
-      # on this runner (both died at ~21m30s with a TimeoutError and NO
-      # verdict, while shards 3 and 4 passed in 13-14m) — the failure mode
-      # the cap exists to report, arriving as a wall-clock overrun rather
-      # than a disagreement. Eight shards halve the per-shard sweep, which
-      # restores margin under the SAME script cap and the SAME job timeout
-      # below, so neither constant has to move and the "script trips first"
-      # ordering is untouched. Prefer re-partitioning here over raising
-      # either constant: a bigger cap only makes a genuinely hung scenario
-      # take longer to name.
+      # RAISED 4 -> 8 -> 12, each time for a MEASURED wall-clock failure,
+      # not an agreement failure or a precaution. The multi-system wave's
+      # five new scenarios include expensive CPU oracles — a 24-map
+      # block-diagonal system and a condensation sampler drawing a gear
+      # profile by accept-reject for a quarter of its iterations. Four
+      # shards put two jobs past the script's own 20-minute cap. Eight was
+      # still too coarse: shard 6 timed out without a verdict, and shards 4
+      # and 7 finished only 48s and 31s inside the same cap. Backend-start
+      # timestamps show why: individual scenario legs now span roughly
+      # 2m14s-6m56s, and round-robin happened to put three ~6-minute legs on
+      # each of those slow shards. Twelve is the first split for this roster
+      # that limits every shard to at most two scenarios; the measured
+      # slowest resulting pair is about 12m43s before the small fixed checks,
+      # restoring useful margin without changing either timeout. Thus the
+      # "script trips first" ordering below is untouched. Prefer
+      # re-partitioning here over raising either constant: a bigger cap only
+      # makes a genuinely hung scenario take longer to name.
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
       # A gate wants every failing shard named, not just the first one: with
       # fail-fast the surviving shards are cancelled and their verdicts are
       # lost, which turns "these three scenarios disagree" into "something
@@ -93,10 +95,12 @@ jobs:
     # widens that margin — measured at the split, the slowest of four shards
     # is 6m27s against the same 20-minute script cap — so the number is left
     # where that raise put it. That margin is NOT permanent: the
-    # multi-system wave's five new scenarios ate all of it at four shards
-    # (see the re-partition note above), so a wave that adds expensive
-    # scenarios should re-check the slowest shard rather than assume the
-    # headroom is still there.
+    # multi-system wave's five new scenarios ate all of it at both four and
+    # eight shards (see the re-partition note above). At twelve, the measured
+    # scenario-leg times predict about 13m20s including fixed per-shard bench
+    # work for the slowest pair, restoring roughly the original margin. A
+    # wave that adds expensive scenarios must re-check the slowest shard
+    # rather than assume that headroom is still there.
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
