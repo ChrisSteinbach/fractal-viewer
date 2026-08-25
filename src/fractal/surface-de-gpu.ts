@@ -22,6 +22,7 @@ import {
 import { SYM_PLANE_CODE4, type EscapeDE4 } from "./escape-de-4d";
 import { SHAPE_MARCH_SAFETY, shapeSdfSource, type ShapeSpec } from "./shapes";
 import {
+  ESCAPE_FACTOR,
   FOOTPRINT_DEPTH_FLOOR,
   SPHEREFOLD_MID_MIN_R,
   SYM_PLANE_CODE,
@@ -911,6 +912,16 @@ export const SURFACE_GPU_PARAMS_PLANE_BYTES = 336;
 export const SURFACE_GPU_PARAMS_CONDENSATION_BYTES = 304;
 export const SURFACE_GPU_PARAMS_BALLOON_CONDENSATION_BYTES = 336;
 export const SURFACE_GPU_PARAMS_PLANE_CONDENSATION_BYTES = 352;
+/** A hybrid-prefix schedule appends one vec4u control lane and five
+ * vec4f inner bounds after every pre-existing feature tail. The root
+ * bound remains in the frozen 0..31 prefix. */
+export const SURFACE_GPU_SCHEDULE_MAX_DEPTH = 5;
+export const SURFACE_GPU_PARAMS_SCHEDULE_BYTES = 384;
+export const SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_BYTES = 416;
+export const SURFACE_GPU_PARAMS_PLANE_SCHEDULE_BYTES = 432;
+export const SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES = 400;
+export const SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_CONDENSATION_BYTES = 432;
+export const SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CONDENSATION_BYTES = 448;
 /** Params size for `core: "affine4"` — the frozen 0..207 block plus the
  * 4D variant tail (layout contract in the module doc). The other cores'
  * structs still end at 208/288; binding the larger buffer to them would
@@ -952,6 +963,12 @@ export const SURFACE_GPU_PARAMS4_PLANE_BYTES =
 export const SURFACE_GPU_PARAMS4_CONDENSATION_BYTES = 592;
 export const SURFACE_GPU_PARAMS4_BALLOON_CONDENSATION_BYTES = 624;
 export const SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_BYTES = 640;
+export const SURFACE_GPU_PARAMS4_SCHEDULE_BYTES = 672;
+export const SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_BYTES = 704;
+export const SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_BYTES = 720;
+export const SURFACE_GPU_PARAMS4_SCHEDULE_CONDENSATION_BYTES = 688;
+export const SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_CONDENSATION_BYTES = 720;
+export const SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CONDENSATION_BYTES = 736;
 /** Params size for a 3D FORWARD core (escape, bulb) under `shapeTrap`: the
  * 336-byte plane-bearing block — the plane region declared unconditionally
  * under the trap and zero-filled when there is no floor, which is what
@@ -1016,10 +1033,92 @@ interface CondensationWireEmitter {
 
 interface CondensationWireDE {
   maps: readonly unknown[];
+  schedule?: SurfaceScheduleWire | null;
   condensation?: {
     emitters: readonly CondensationWireEmitter[];
     depthBand: { minDepth: number; maxDepth: number };
   };
+}
+
+interface SurfaceScheduleWireMap3 {
+  invM: ArrayLike<number>;
+  invT: ArrayLike<number>;
+  sigmaMin: number;
+  foldRadii?: { minR: number; fixedR: number; wall: number };
+}
+
+interface SurfaceScheduleWireBound3 {
+  center: Vec3;
+  radius: number;
+  escapeRadius: number;
+}
+
+interface SurfaceScheduleWireBound4 {
+  radius: number;
+  escapeRadius: number;
+}
+
+interface SurfaceScheduleWire {
+  maps: readonly SurfaceScheduleWireMap3[];
+  depth: number;
+  bounds: readonly (SurfaceScheduleWireBound3 | SurfaceScheduleWireBound4)[];
+}
+
+interface SurfaceScheduleWireInfo {
+  mapCount: number;
+  depth: number;
+  bounds: SurfaceScheduleWire["bounds"];
+}
+
+function surfaceScheduleWireInfo(de: {
+  maps: readonly unknown[];
+  schedule?: SurfaceScheduleWire | null;
+}): SurfaceScheduleWireInfo | null {
+  const schedule = de.schedule;
+  // Prepared zero-depth/empty schedules are the identity representation.
+  // Treating them as absent is what preserves the old buffers byte for byte.
+  if (!schedule || schedule.depth === 0 || schedule.maps.length === 0) {
+    return null;
+  }
+  if (de.maps.length < 1) {
+    throw new RangeError(
+      "surface-de-gpu: a hybrid schedule requires at least one recursive A map",
+    );
+  }
+  if (
+    !Number.isInteger(schedule.depth) ||
+    schedule.depth < 1 ||
+    schedule.depth > SURFACE_GPU_SCHEDULE_MAX_DEPTH
+  ) {
+    throw new RangeError(
+      `surface-de-gpu: schedule depth ${schedule.depth} is outside 1..${SURFACE_GPU_SCHEDULE_MAX_DEPTH}`,
+    );
+  }
+  if (schedule.bounds.length < schedule.depth + 1) {
+    throw new RangeError(
+      `surface-de-gpu: schedule depth ${schedule.depth} needs bounds[0..${schedule.depth}]; ` +
+        `found ${schedule.bounds.length}`,
+    );
+  }
+  return {
+    mapCount: schedule.maps.length,
+    depth: schedule.depth,
+    bounds: schedule.bounds,
+  };
+}
+
+function validateSurfacePhysicalMapCount(
+  de: { maps: readonly unknown[]; schedule?: SurfaceScheduleWire | null },
+  emitterCount = 0,
+): void {
+  const scheduleCount = surfaceScheduleWireInfo(de)?.mapCount ?? 0;
+  const recordCount = de.maps.length + scheduleCount + emitterCount;
+  if (recordCount > SURFACE_GPU_UNIFORM_MAP_SLOTS) {
+    throw new RangeError(
+      `surface-de-gpu: surface needs ${recordCount} physical map/emitter records; ` +
+        `the low-level cap is ${SURFACE_GPU_UNIFORM_MAP_SLOTS}`,
+    );
+  }
 }
 
 interface CondensationWireInfo {
@@ -1037,13 +1136,7 @@ function condensationWireInfo(
 ): CondensationWireInfo | null {
   const condensation = de.condensation;
   if (!condensation || condensation.emitters.length === 0) return null;
-  const recordCount = de.maps.length + condensation.emitters.length;
-  if (recordCount > SURFACE_GPU_UNIFORM_MAP_SLOTS) {
-    throw new RangeError(
-      `surface-de-gpu: condensation needs ${recordCount} map/emitter records; ` +
-        `the low-level cap is ${SURFACE_GPU_UNIFORM_MAP_SLOTS}`,
-    );
-  }
+  validateSurfacePhysicalMapCount(de, condensation.emitters.length);
   const shadeIndices = new Set<number>();
   for (const emitter of condensation.emitters) {
     if (!Number.isInteger(emitter.shadeIndex)) {
@@ -1083,6 +1176,30 @@ function condensationWireInfo(
       Math.max(0, condensation.depthBand.maxDepth),
     ),
   };
+}
+
+function writeSurfaceScheduleBlock(
+  view: DataView,
+  offset: number,
+  schedule: SurfaceScheduleWireInfo,
+  dimension: 3 | 4,
+): void {
+  view.setUint32(offset, schedule.mapCount, true);
+  view.setUint32(offset + 4, schedule.depth, true);
+  for (let level = 1; level <= SURFACE_GPU_SCHEDULE_MAX_DEPTH; level++) {
+    const bound = schedule.bounds[Math.min(level, schedule.depth)];
+    const at = offset + 16 + (level - 1) * 16;
+    if (dimension === 3) {
+      const bound3 = bound as SurfaceScheduleWireBound3;
+      writeVec3(view, at, bound3.center);
+      view.setFloat32(at + 12, bound3.radius, true);
+    } else {
+      // 4D scheduled bounds remain origin-centred, like the classic 4D
+      // certificate. Use the same xyz+radius representation as 3D so the
+      // WGSL helper is dimension-agnostic.
+      view.setFloat32(at + 12, bound.radius, true);
+    }
+  }
 }
 
 function writeCondensationBlock(
@@ -1325,6 +1442,13 @@ export interface SurfaceGpuKernelOptions {
     mapCount: number;
     emitters: readonly { shape: ShapeSpec; shadeIndex: number }[];
   } | null;
+  /** Hybrid alphabet codegen gate. `mapCount` is the recursive A count;
+   * `scheduleMapCount` is the affine B suffix packed immediately after A.
+   * A missing/null/zero-B value emits the legacy source byte for byte. */
+  schedule?: {
+    mapCount: number;
+    scheduleMapCount: number;
+  } | null;
   /** March-mode ray derivation. "pose" (default) keeps the bench baseline:
    * NDC pixel centers against the pose basis — byte-identical output to
    * the pre-shade-split generator. "unproject" derives rays the GLSL
@@ -1544,7 +1668,9 @@ export function packSurfaceGpuParams(
   balloon: { center: Vec3; rho: number; R: number; far: number } | null = null,
   groundPlane: SurfaceGpuGroundPlane | null = null,
 ): ArrayBuffer {
+  const schedule = surfaceScheduleWireInfo(de);
   const condensation = condensationWireInfo(de);
+  validateSurfacePhysicalMapCount(de, condensation?.emitterCount ?? 0);
   if (balloon && groundPlane) {
     throw new Error(
       "surface-de-gpu: groundPlane+balloon: excluded — the two " +
@@ -1573,23 +1699,42 @@ export function packSurfaceGpuParams(
         "footprint read per term; the app path always passes 0)",
     );
   }
+  if (schedule && (run.footprint ?? 0) > 0) {
+    throw new Error(
+      "surface-de-gpu: footprint under a hybrid schedule is excluded " +
+        "until the cap accounts for the non-stationary B prefix",
+    );
+  }
   const buf = new ArrayBuffer(
-    condensation
-      ? balloon
-        ? SURFACE_GPU_PARAMS_BALLOON_CONDENSATION_BYTES
-        : groundPlane
-          ? SURFACE_GPU_PARAMS_PLANE_CONDENSATION_BYTES
-          : SURFACE_GPU_PARAMS_CONDENSATION_BYTES
-      : balloon
-        ? SURFACE_GPU_PARAMS_BALLOON_BYTES
-        : groundPlane
-          ? SURFACE_GPU_PARAMS_PLANE_BYTES
-          : SURFACE_GPU_PARAMS_BYTES,
+    schedule
+      ? condensation
+        ? balloon
+          ? SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_CONDENSATION_BYTES
+          : groundPlane
+            ? SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CONDENSATION_BYTES
+            : SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES
+        : balloon
+          ? SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_BYTES
+          : groundPlane
+            ? SURFACE_GPU_PARAMS_PLANE_SCHEDULE_BYTES
+            : SURFACE_GPU_PARAMS_SCHEDULE_BYTES
+      : condensation
+        ? balloon
+          ? SURFACE_GPU_PARAMS_BALLOON_CONDENSATION_BYTES
+          : groundPlane
+            ? SURFACE_GPU_PARAMS_PLANE_CONDENSATION_BYTES
+            : SURFACE_GPU_PARAMS_CONDENSATION_BYTES
+        : balloon
+          ? SURFACE_GPU_PARAMS_BALLOON_BYTES
+          : groundPlane
+            ? SURFACE_GPU_PARAMS_PLANE_BYTES
+            : SURFACE_GPU_PARAMS_BYTES,
   );
   const view = new DataView(buf);
-  writeVec3(view, 0, de.boundCenter);
-  view.setFloat32(12, de.boundingRadius, true);
-  view.setFloat32(16, de.escapeRadius, true);
+  const rootBound = schedule ? de.schedule?.bounds[0] : undefined;
+  writeVec3(view, 0, rootBound?.center ?? de.boundCenter);
+  view.setFloat32(12, rootBound?.radius ?? de.boundingRadius, true);
+  view.setFloat32(16, rootBound?.escapeRadius ?? de.escapeRadius, true);
   view.setFloat32(20, de.stepScale, true);
   view.setFloat32(24, de.visibleBoundingRadius, true);
   view.setFloat32(28, de.slowestSigma, true);
@@ -1608,7 +1753,8 @@ export function packSurfaceGpuParams(
   view.setFloat32(76, pose?.pixelEps ?? 0, true);
   view.setFloat32(
     80,
-    de.boundingRadius * (run.hitFloor ?? SURFACE_GPU_HIT_FLOOR),
+    (rootBound?.radius ?? de.boundingRadius) *
+      (run.hitFloor ?? SURFACE_GPU_HIT_FLOOR),
     true,
   );
   view.setUint32(84, pose?.rasterWidth ?? 0, true);
@@ -1680,6 +1826,20 @@ export function packSurfaceGpuParams(
       balloon ? 320 : groundPlane ? 336 : 288,
       condensation,
     );
+  }
+  if (schedule) {
+    const scheduleOffset = condensation
+      ? balloon
+        ? 336
+        : groundPlane
+          ? 352
+          : 304
+      : balloon
+        ? 320
+        : groundPlane
+          ? 336
+          : 288;
+    writeSurfaceScheduleBlock(view, scheduleOffset, schedule, 3);
   }
   return buf;
 }
@@ -2080,7 +2240,9 @@ export function packSurface4GpuParams(
   balloon: { center: Vec3; rho: number; R: number; far: number } | null = null,
   groundPlane: SurfaceGpuGroundPlane | null = null,
 ): ArrayBuffer {
+  const schedule = surfaceScheduleWireInfo(de);
   const condensation = condensationWireInfo(de);
+  validateSurfacePhysicalMapCount(de, condensation?.emitterCount ?? 0);
   if (balloon && groundPlane) {
     throw new Error(
       "surface-de-gpu: groundPlane+balloon: excluded — the two " +
@@ -2106,23 +2268,36 @@ export function packSurface4GpuParams(
   // without a lens), which is what keeps their own offset at 576 for
   // every 4D core — the 3D packer's frozen-288 rule one dimension up.
   const buf = new ArrayBuffer(
-    condensation
-      ? balloon
-        ? SURFACE_GPU_PARAMS4_BALLOON_CONDENSATION_BYTES
-        : groundPlane
-          ? SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_BYTES
-          : SURFACE_GPU_PARAMS4_CONDENSATION_BYTES
-      : balloon
-        ? SURFACE_GPU_PARAMS4_BALLOON_BYTES
-        : groundPlane
-          ? SURFACE_GPU_PARAMS4_PLANE_BYTES
-          : lens4
-            ? SURFACE_GPU_PARAMS4_LENS_BYTES
-            : SURFACE_GPU_PARAMS4_BYTES,
+    schedule
+      ? condensation
+        ? balloon
+          ? SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_CONDENSATION_BYTES
+          : groundPlane
+            ? SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CONDENSATION_BYTES
+            : SURFACE_GPU_PARAMS4_SCHEDULE_CONDENSATION_BYTES
+        : balloon
+          ? SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_BYTES
+          : groundPlane
+            ? SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_BYTES
+            : SURFACE_GPU_PARAMS4_SCHEDULE_BYTES
+      : condensation
+        ? balloon
+          ? SURFACE_GPU_PARAMS4_BALLOON_CONDENSATION_BYTES
+          : groundPlane
+            ? SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_BYTES
+            : SURFACE_GPU_PARAMS4_CONDENSATION_BYTES
+        : balloon
+          ? SURFACE_GPU_PARAMS4_BALLOON_BYTES
+          : groundPlane
+            ? SURFACE_GPU_PARAMS4_PLANE_BYTES
+            : lens4
+              ? SURFACE_GPU_PARAMS4_LENS_BYTES
+              : SURFACE_GPU_PARAMS4_BYTES,
   );
   const view = new DataView(buf);
-  view.setFloat32(12, de.boundingRadius, true);
-  view.setFloat32(16, de.escapeRadius, true);
+  const rootBound = schedule ? de.schedule?.bounds[0] : undefined;
+  view.setFloat32(12, rootBound?.radius ?? de.boundingRadius, true);
+  view.setFloat32(16, rootBound?.escapeRadius ?? de.escapeRadius, true);
   view.setFloat32(20, de.stepScale, true);
   const minW = Math.max(Math.abs(view4.w0) - view4.sliceHalfW, 0);
   const visR = de.visibleBoundingRadius;
@@ -2141,7 +2316,8 @@ export function packSurface4GpuParams(
   view.setFloat32(76, pose?.pixelEps ?? 0, true);
   view.setFloat32(
     80,
-    de.boundingRadius * (run.hitFloor ?? SURFACE_GPU_HIT_FLOOR),
+    (rootBound?.radius ?? de.boundingRadius) *
+      (run.hitFloor ?? SURFACE_GPU_HIT_FLOOR),
     true,
   );
   view.setUint32(84, pose?.rasterWidth ?? 0, true);
@@ -2248,6 +2424,20 @@ export function packSurface4GpuParams(
       balloon ? 608 : groundPlane ? 624 : 576,
       condensation,
     );
+  }
+  if (schedule) {
+    const scheduleOffset = condensation
+      ? balloon
+        ? 624
+        : groundPlane
+          ? 640
+          : 592
+      : balloon
+        ? 608
+        : groundPlane
+          ? 624
+          : 576;
+    writeSurfaceScheduleBlock(view, scheduleOffset, schedule, 4);
   }
   return buf;
 }
@@ -2416,11 +2606,15 @@ export function packEscape4GpuMaps(de: EscapeDE4): Float32Array {
 
 /** Pack the per-map storage array (layout contract above). */
 export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
+  const schedule = surfaceScheduleWireInfo(de);
   const condensation = condensationWireInfo(de);
   const emitterCount = condensation?.emitterCount ?? 0;
+  validateSurfacePhysicalMapCount(de, emitterCount);
+  const scheduleMapCount = schedule?.mapCount ?? 0;
   const out = new Float32Array(
-    (de.maps.length + emitterCount) * SURFACE_GPU_MAP_VEC4 * 4 ||
-      SURFACE_GPU_MAP_VEC4 * 4,
+    (de.maps.length + scheduleMapCount + emitterCount) *
+      SURFACE_GPU_MAP_VEC4 *
+      4 || SURFACE_GPU_MAP_VEC4 * 4,
   );
   de.maps.forEach((m, j) => {
     const base = j * SURFACE_GPU_MAP_VEC4 * 4;
@@ -2452,9 +2646,36 @@ export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
     out[base + 25] = m.foldRadii.fixedR;
     out[base + 26] = m.foldRadii.wall;
   });
+  if (schedule) {
+    const scheduleMaps = de.schedule?.maps ?? [];
+    scheduleMaps.forEach((raw, j) => {
+      const m = raw;
+      const base = (de.maps.length + j) * SURFACE_GPU_MAP_VEC4 * 4;
+      out[base + 0] = m.invM[0];
+      out[base + 1] = m.invM[1];
+      out[base + 2] = m.invM[2];
+      out[base + 3] = m.invT[0];
+      out[base + 4] = m.invM[3];
+      out[base + 5] = m.invM[4];
+      out[base + 6] = m.invM[5];
+      out[base + 7] = m.invT[1];
+      out[base + 8] = m.invM[6];
+      out[base + 9] = m.invM[7];
+      out[base + 10] = m.invM[8];
+      out[base + 11] = m.invT[2];
+      out[base + 12] = m.sigmaMin;
+      // B is an affine-only alphabet. The fold lanes stay zero even if a
+      // hand-built object carries stray fields, so the shader cannot fan it.
+      out[base + 15] = 0;
+      out[base + 24] = m.foldRadii?.minR ?? 0.5;
+      out[base + 25] = m.foldRadii?.fixedR ?? 1;
+      out[base + 26] = m.foldRadii?.wall ?? 1;
+    });
+  }
   de.condensation?.emitters.forEach((emitter, j) => {
     if (!condensation) return;
-    const base = (de.maps.length + j) * SURFACE_GPU_MAP_VEC4 * 4;
+    const base =
+      (de.maps.length + scheduleMapCount + j) * SURFACE_GPU_MAP_VEC4 * 4;
     out[base + 0] = emitter.invM[0];
     out[base + 1] = emitter.invM[1];
     out[base + 2] = emitter.invM[2];
@@ -2481,11 +2702,15 @@ export function packSurfaceGpuMaps(de: SurfaceDE): Float32Array {
  * the 3D "affine" core. Pads to one zero stride when empty, like
  * {@link packSurfaceGpuMaps}. */
 export function packSurfaceGpuMaps4(de: SurfaceDE4): Float32Array {
+  const schedule = surfaceScheduleWireInfo(de);
   const condensation = condensationWireInfo(de);
   const emitterCount = condensation?.emitterCount ?? 0;
+  validateSurfacePhysicalMapCount(de, emitterCount);
+  const scheduleMapCount = schedule?.mapCount ?? 0;
   const out = new Float32Array(
-    (de.maps.length + emitterCount) * SURFACE_GPU_MAP4_VEC4 * 4 ||
-      SURFACE_GPU_MAP4_VEC4 * 4,
+    (de.maps.length + scheduleMapCount + emitterCount) *
+      SURFACE_GPU_MAP4_VEC4 *
+      4 || SURFACE_GPU_MAP4_VEC4 * 4,
   );
   de.maps.forEach((m, j) => {
     const base = j * SURFACE_GPU_MAP4_VEC4 * 4;
@@ -2518,9 +2743,29 @@ export function packSurfaceGpuMaps4(de: SurfaceDE4): Float32Array {
     out[base + 33] = m.foldRadii.fixedR;
     out[base + 34] = m.foldRadii.wall;
   });
+  if (schedule) {
+    const scheduleMaps = de.schedule?.maps ?? [];
+    scheduleMaps.forEach((raw, j) => {
+      const m = raw;
+      const base = (de.maps.length + j) * SURFACE_GPU_MAP4_VEC4 * 4;
+      for (let i = 0; i < 16; i++) {
+        out[base + i] = m.invM[i];
+      }
+      out[base + 16] = m.invT[0];
+      out[base + 17] = m.invT[1];
+      out[base + 18] = m.invT[2];
+      out[base + 19] = m.invT[3];
+      out[base + 20] = m.sigmaMin;
+      out[base + 23] = 0;
+      out[base + 32] = m.foldRadii?.minR ?? 0.5;
+      out[base + 33] = m.foldRadii?.fixedR ?? 1;
+      out[base + 34] = m.foldRadii?.wall ?? 1;
+    });
+  }
   de.condensation?.emitters.forEach((emitter, j) => {
     if (!condensation) return;
-    const base = (de.maps.length + j) * SURFACE_GPU_MAP4_VEC4 * 4;
+    const base =
+      (de.maps.length + scheduleMapCount + j) * SURFACE_GPU_MAP4_VEC4 * 4;
     for (let i = 0; i < 16; i++) {
       out[base + i] = emitter.invM[i];
     }
@@ -2838,7 +3083,13 @@ function wgslFloatLit(x: number): string {
 }
 
 export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
-  const { mode, width, workgroupSize, sharedFrontier, bnbStage2 } = opts;
+  const {
+    mode,
+    width,
+    workgroupSize,
+    sharedFrontier,
+    bnbStage2: requestedBnbStage2,
+  } = opts;
   // Which descent body. Absent means "fold", so every config
   // that predates the option generates byte-identical source.
   const core = opts.core ?? "fold";
@@ -2881,6 +3132,40 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // that is BOTH — it takes the 4D tail and the `GpuMap4` layout from the
   // descent cores and the orbit from the 3D escape one.
   const forward = core === "escape" || core === "bulb" || core === "escape4";
+  let schedule: NonNullable<SurfaceGpuKernelOptions["schedule"]> | null = null;
+  if (opts.schedule && opts.schedule.scheduleMapCount !== 0) {
+    if (
+      !Number.isInteger(opts.schedule.mapCount) ||
+      opts.schedule.mapCount < 1 ||
+      !Number.isInteger(opts.schedule.scheduleMapCount) ||
+      opts.schedule.scheduleMapCount < 1
+    ) {
+      throw new RangeError(
+        `surface-de-gpu: bad hybrid schedule counts A=${opts.schedule.mapCount}, ` +
+          `B=${opts.schedule.scheduleMapCount}`,
+      );
+    }
+    if (
+      opts.schedule.mapCount + opts.schedule.scheduleMapCount >
+      SURFACE_GPU_UNIFORM_MAP_SLOTS
+    ) {
+      throw new RangeError(
+        `surface-de-gpu: hybrid schedule needs ${
+          opts.schedule.mapCount + opts.schedule.scheduleMapCount
+        } physical map records; the low-level cap is ${SURFACE_GPU_UNIFORM_MAP_SLOTS}`,
+      );
+    }
+    schedule = opts.schedule;
+  }
+  if (schedule && forward) {
+    throw new Error(
+      "surface-de-gpu: hybrid schedules are supported only by the " +
+        "affine/fold/affine4/fold4 descent cores",
+    );
+  }
+  // Stage-2's packed center-specific metadata and stationary-root radii do
+  // not certify B levels. Keep the known-safe stage-1 path for schedules.
+  const bnbStage2 = requestedBnbStage2 && schedule === null;
   let condensationShapes: readonly ShapeSpec[] | null = null;
   if (opts.condensation && opts.condensation.emitters.length > 0) {
     const codegenCondensation = opts.condensation;
@@ -2890,6 +3175,22 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
     ) {
       throw new RangeError(
         `surface-de-gpu: bad condensation map count ${codegenCondensation.mapCount}`,
+      );
+    }
+    if (schedule && codegenCondensation.mapCount !== schedule.mapCount) {
+      throw new RangeError(
+        `surface-de-gpu: condensation A count ${codegenCondensation.mapCount} ` +
+          `does not match schedule A count ${schedule.mapCount}`,
+      );
+    }
+    const physicalCount =
+      codegenCondensation.mapCount +
+      (schedule?.scheduleMapCount ?? 0) +
+      codegenCondensation.emitters.length;
+    if (physicalCount > SURFACE_GPU_UNIFORM_MAP_SLOTS) {
+      throw new RangeError(
+        `surface-de-gpu: schedule+condensation needs ${physicalCount} physical ` +
+          `map/emitter records; the low-level cap is ${SURFACE_GPU_UNIFORM_MAP_SLOTS}`,
       );
     }
     const info = condensationWireInfo({
@@ -3198,7 +3499,7 @@ fn condensationDistance(q: ${core4 ? "vec4f" : "vec3f"}) -> CondensationHit {
   var best = 1e30;
   var shade = 0;
   for (var e = 0u; e < params.condEmitterCount; e++) {
-    let m = maps[params.mapCount + e];
+    let m = maps[params.mapCount${schedule ? " + params.scheduleMapCount" : ""} + e];
     let local = ${core4 ? "mapApply4(m, q)" : "mapApply(m, q)"};
     let shapeDistance = condensationShapeSdf(u32(m.p0.z), local.xyz);
     let embeddedDistance = ${
@@ -3216,7 +3517,15 @@ fn condensationDistance(q: ${core4 ? "vec4f" : "vec3f"}) -> CondensationHit {
 }
 
 fn condensationTerm(q: ${core4 ? "vec4f" : "vec3f"}, scale: f32, depth: u32) -> f32 {
-  if (depth < params.condDepthMin || depth > params.condDepthMax) {
+${
+  schedule
+    ? `  if (depth < params.scheduleDepth) {
+    return 1e30;
+  }
+  let aDepth = depth - params.scheduleDepth;
+`
+    : ""
+}  if (${schedule ? "aDepth" : "depth"} < params.condDepthMin || ${schedule ? "aDepth" : "depth"} > params.condDepthMax) {
     return 1e30;
   }
   return scale * ${wgslFloatLit(SHAPE_MARCH_SAFETY)} * condensationDistance(q).distance;
@@ -3225,7 +3534,15 @@ ${
   mode === "shade"
     ? `
 fn condensationTermHit(q: ${core4 ? "vec4f" : "vec3f"}, scale: f32, depth: u32) -> CondensationHit {
-  if (depth < params.condDepthMin || depth > params.condDepthMax) {
+${
+  schedule
+    ? `  if (depth < params.scheduleDepth) {
+    return CondensationHit(1e30, -1);
+  }
+  let aDepth = depth - params.scheduleDepth;
+`
+    : ""
+}  if (${schedule ? "aDepth" : "depth"} < params.condDepthMin || ${schedule ? "aDepth" : "depth"} > params.condDepthMax) {
     return CondensationHit(1e30, -1);
   }
   let hit = condensationDistance(q);
@@ -3242,7 +3559,15 @@ fn condensationTermHit(q: ${core4 ? "vec4f" : "vec3f"}, scale: f32, depth: u32) 
 // carry an enabled C0. The call sites pass depth + 1, matching the CPU's
 // condensationHasFutureDepth(band, depth + 1) exactly.
 fn condensationHasFuture(childDepth: u32) -> bool {
-  return max(childDepth + 1u, params.condDepthMin) <= params.condDepthMax;
+${
+  schedule
+    ? `  if (childDepth < params.scheduleDepth) {
+    return true;
+  }
+  let aChildDepth = childDepth - params.scheduleDepth;
+  return max(aChildDepth + 1u, params.condDepthMin) <= params.condDepthMax;`
+    : "  return max(childDepth + 1u, params.condDepthMin) <= params.condDepthMax;"
+}
 }
 `
     : "";
@@ -3299,7 +3624,8 @@ ${condensationHitFold(q, scale, depth, best)}    }
       balloon ||
       groundPlane ||
       shapeTrap !== null ||
-      condensationShapes !== null);
+      condensationShapes !== null ||
+      schedule !== null);
   // The slab's register-pressure probe (option doc).
   // Meaningful only under the 4D DESCENT cores — every other core reads
   // `true` unconditionally, so `opts.slabExt` is never even consulted for
@@ -3386,8 +3712,7 @@ ${frontierDecls}
 
 fn frontierIx(slot: u32, li: u32) -> u32 {
   ${ixBody}
-}
-`;
+}`;
 
   // "pose" (the default) keeps the march arm's bench-baseline bytes;
   // "unproject" swaps only the ray derivation + dither (module doc).
@@ -5587,7 +5912,114 @@ ${
 }
 }`;
 
-  const coreHitInfoText =
+  const scheduleCoreSource = (source: string, hitInfo: boolean): string => {
+    if (!schedule) return source;
+    const terminalDepth = hitInfo
+      ? "params.maxDepth"
+      : core4
+        ? "params.maxDepth"
+        : "maxDepth";
+    let out = source
+      .replaceAll(
+        "for (var k = 0u; k < params.symOrder; k++)",
+        "for (var k = 0u; k < scheduleSymOrder(depth); k++)",
+      )
+      .replaceAll(
+        "for (var j = 0u; j < params.mapCount; j++)",
+        "for (var j = scheduleMapStart(depth); j < scheduleMapEnd(depth); j++)",
+      )
+      .replaceAll(
+        "length(img - params.boundCenter)",
+        "length(img - scheduleBound(depth + 1u).xyz)",
+      )
+      .replaceAll(
+        "length(jImg - params.boundCenter) - params.boundingRadius",
+        "length(jImg - scheduleBound(depth + 1u).xyz) - scheduleBound(depth + 1u).w",
+      )
+      .replaceAll(
+        "segmentRadius4(jImg, jExt) - params.boundingRadius",
+        "segmentRadius4(jImg, jExt) - scheduleBound(depth + 1u).w",
+      )
+      .replaceAll(
+        "length(jImg) - params.boundingRadius",
+        "length(jImg) - scheduleBound(depth + 1u).w",
+      )
+      .replaceAll(
+        "return childScale * max(r - params.boundingRadius, inner);",
+        "return childScale * max(r - scheduleBound(depth).w, inner);",
+      )
+      .replaceAll("r - R", "r - scheduleBound(depth + 1u).w")
+      .replaceAll("eR > R", "eR > scheduleBound(depth + 1u).w")
+      .replaceAll("eR <= R", "eR <= scheduleBound(depth + 1u).w")
+      .replaceAll("eR - R", "eR - scheduleBound(depth + 1u).w")
+      .replaceAll("evR > R", "evR > scheduleBound(depth + 1u).w")
+      .replaceAll("evR - R", "evR - scheduleBound(depth + 1u).w")
+      .replaceAll("c3R > R", "c3R > scheduleBound(depth + 1u).w")
+      .replaceAll("c3R <= R", "c3R <= scheduleBound(depth + 1u).w")
+      .replaceAll("c4R > R", "c4R > scheduleBound(depth + 1u).w")
+      .replaceAll("c4R <= R", "c4R <= scheduleBound(depth + 1u).w")
+      .replaceAll(
+        "r > params.escapeRadius",
+        "r > scheduleEscapeRadius(depth + 1u)",
+      )
+      .replaceAll(
+        "lbR > params.escapeRadius",
+        "lbR > scheduleEscapeRadius(depth + 1u)",
+      )
+      .replaceAll(
+        "c1R > params.escapeRadius",
+        "c1R > scheduleEscapeRadius(depth + 1u)",
+      )
+      .replaceAll(
+        "c1R <= params.escapeRadius",
+        "c1R <= scheduleEscapeRadius(depth + 1u)",
+      )
+      .replaceAll(
+        "c2R > params.escapeRadius",
+        "c2R > scheduleEscapeRadius(depth + 1u)",
+      )
+      .replaceAll(
+        "c2R <= params.escapeRadius",
+        "c2R <= scheduleEscapeRadius(depth + 1u)",
+      )
+      .replaceAll("lbR - R", "lbR - scheduleBound(depth + 1u).w")
+      .replaceAll("lbR / R", "lbR / scheduleBound(depth + 1u).w")
+      .replaceAll("lbAbsY / R", "lbAbsY / scheduleBound(depth + 1u).w")
+      .replaceAll("c1R / R", "c1R / scheduleBound(depth + 1u).w")
+      .replaceAll("abs(c1Q.y) / R", "abs(c1Q.y) / scheduleBound(depth + 1u).w")
+      .replaceAll("if (depth == 0u", "if (depth == params.scheduleDepth")
+      .replaceAll(
+        `    trapAcc += trapW * shadeMaps[lbMap${shadeStride}].w;
+    trapNorm += trapW;
+    trapW *= shade.colorSpeed;`,
+        `    if (depth >= params.scheduleDepth) {
+      trapAcc += trapW * shadeMaps[lbMap${shadeStride}].w;
+      trapNorm += trapW;
+      trapW *= shade.colorSpeed;
+    }`,
+      )
+      .replaceAll(
+        `    trapAcc += trapW * shadeMaps[c1Map${shadeStride}].w;
+    trapNorm += trapW;
+    trapW *= shade.colorSpeed;`,
+        `    if (depth >= params.scheduleDepth) {
+      trapAcc += trapW * shadeMaps[c1Map${shadeStride}].w;
+      trapNorm += trapW;
+      trapW *= shade.colorSpeed;
+    }`,
+      );
+    out = out
+      .replaceAll(
+        "fcR[frontierIx(cc, li)] - R",
+        `fcR[frontierIx(cc, li)] - scheduleBound(${terminalDepth}).w`,
+      )
+      .replaceAll("fcR[cc] - R", `fcR[cc] - scheduleBound(${terminalDepth}).w`)
+      .replaceAll("aR - R", `aR - scheduleBound(${terminalDepth}).w`)
+      .replaceAll("bR - R", `bR - scheduleBound(${terminalDepth}).w`);
+    return out;
+  };
+
+  const rawCoreHitInfoText =
     core === "affine"
       ? affineHitInfoText
       : core === "escape"
@@ -5601,6 +6033,7 @@ ${
               : core === "fold4"
                 ? fold4HitInfoText(slabExt, lens)
                 : foldHitInfoText;
+  const coreHitInfoText = scheduleCoreSource(rawCoreHitInfoText, true);
   const lensedHitInfoText = lens
     ? `${coreHitInfoText.replace(
         "fn surfaceDEHitInfo(",
@@ -6488,6 +6921,16 @@ ${shadeLighting}
   condDepthMin: u32,
   condDepthMax: u32,
   condShadeCount: u32,`;
+  const scheduleStructFields = /* wgsl */ `
+  scheduleMapCount: u32,
+  scheduleDepth: u32,
+  schedulePad0: u32,
+  schedulePad1: u32,
+  scheduleBound1: vec4f,
+  scheduleBound2: vec4f,
+  scheduleBound3: vec4f,
+  scheduleBound4: vec4f,
+  scheduleBound5: vec4f,`;
   const headerText = /* wgsl */ `
 struct Params {
   boundCenter: vec3f,
@@ -6610,7 +7053,7 @@ struct Params {
     groundPlane || shapeTrap ? planeStructFields : ""
   }${shapeTrap ? trapStructFields : ""}${
     condensationShapes ? condensationStructFields : ""
-  }`
+  }${schedule ? scheduleStructFields : ""}`
       : core === "escape"
         ? /* wgsl */ `
   escM0: vec3f,
@@ -6645,7 +7088,7 @@ struct Params {
   padF: vec4f,${groundPlane || shapeTrap ? planeStructFields : ""}${
     shapeTrap ? trapStructFields : ""
   }`
-          : lens || balloon || groundPlane || condensationShapes
+          : lens || balloon || groundPlane || condensationShapes || schedule
             ? /* wgsl */ `
   lensM0: vec3f,
   lensT0: f32,
@@ -6661,7 +7104,9 @@ struct Params {
   // which the wrapper never reads.
   lensFold: vec4f,${balloon ? balloonStructFields : ""}${
     groundPlane ? planeStructFields : ""
-  }${condensationShapes ? condensationStructFields : ""}`
+  }${condensationShapes ? condensationStructFields : ""}${
+    schedule ? scheduleStructFields : ""
+  }`
             : ""
   }
 }${
@@ -6887,6 +7332,42 @@ fn foldRadiiOf(f: vec4f) -> FoldRadii {
       : ""
   }`;
 
+  const scheduleHelperText = schedule
+    ? /* wgsl */ `
+// Hybrid schedule helpers. The lens wrappers remain outside these cores,
+// so their inverse is applied before global depth zero reaches this switch.
+fn scheduleBound(depth: u32) -> vec4f {
+  if (depth == 0u) {
+    return vec4f(params.boundCenter, params.boundingRadius);
+  }
+  switch min(depth, params.scheduleDepth) {
+    case 1u: { return params.scheduleBound1; }
+    case 2u: { return params.scheduleBound2; }
+    case 3u: { return params.scheduleBound3; }
+    case 4u: { return params.scheduleBound4; }
+    default: { return params.scheduleBound5; }
+  }
+}
+
+fn scheduleEscapeRadius(depth: u32) -> f32 {
+  return ${ESCAPE_FACTOR}.0 * scheduleBound(depth).w;
+}
+
+fn scheduleMapStart(depth: u32) -> u32 {
+  return select(0u, params.mapCount, depth < params.scheduleDepth);
+}
+
+fn scheduleMapEnd(depth: u32) -> u32 {
+  return select(params.mapCount, params.mapCount + params.scheduleMapCount,
+    depth < params.scheduleDepth);
+}
+
+fn scheduleSymOrder(depth: u32) -> u32 {
+  return select(params.symOrder, 1u, depth < params.scheduleDepth);
+}
+`
+    : "";
+
   // The descent PROLOGUE both cores open with: the affine
   // final lens, the depth-0 sphere bound, the march-epsilon bail
   // threshold and the cone-footprint depth cap are the same arithmetic on either
@@ -6912,13 +7393,18 @@ fn foldRadiiOf(f: vec4f) -> FoldRadii {
   // Cone-footprint depth cap; footprint <= 0 disables (the
   // GLSL-parity default).
   var maxDepth = params.maxDepth;
-  if (params.footprint > 0.0) {
+${
+  schedule
+    ? ""
+    : `  if (params.footprint > 0.0) {
     let capF = ceil(
       log(params.footprint / (2.0 * R)) / log(params.slowestSigma),
     );
     let floored = max(capF, ${FOOTPRINT_DEPTH_FLOOR}.0);
     maxDepth = min(params.maxDepth, u32(floored));
-  }`;
+  }`
+}
+`;
 
   // ONE descent body template: the main surfaceDE below is
   // this text verbatim; the probe descent is derived from the SAME text
@@ -7341,7 +7827,7 @@ ${renameToProbe(
 // "Every map" means every (sector, base map) pair, which the sector
 // sweep spells out where the expanded slot list used to.
 fn refinedCert(img: vec3f, r: f32, childScale: f32${
-    condensationShapes ? ", depth: u32" : ""
+    condensationShapes || schedule ? ", depth: u32" : ""
   }) -> f32 {
   var inner = ${
     condensationShapes ? "condensationTerm(img, 1.0, depth)" : "1e30"
@@ -7573,7 +8059,7 @@ ${condensationShapes ? "            eKey = tKey;\n" : ""}            eQ = tQ;
           // FOUR smaller keys, the shrunken validity-slot residual drop.
           if (eR > R && eCert < best) {
             best = min(best, refinedCert(eQ, eR, eScale${
-              condensationShapes ? ", depth + 1u" : ""
+              condensationShapes || schedule ? ", depth + 1u" : ""
             }));
             // Cutoff exit plus the value-exact sphere-floor pin:
             // the folded certificate is FINALIZED (already refined) and
@@ -7631,7 +8117,7 @@ ${condensationShapes ? "            eKey = tKey;\n" : ""}            eQ = tQ;
       if (c3R > R) {
         if (c3Cert < best) {
           best = min(best, refinedCert(c3Q, c3R, c3Scale${
-            condensationShapes ? ", depth + 1u" : ""
+            condensationShapes || schedule ? ", depth + 1u" : ""
           }));
         }
       } else {
@@ -7644,7 +8130,7 @@ ${condensationShapes ? "            eKey = tKey;\n" : ""}            eQ = tQ;
       if (c4R > R) {
         if (c4Cert < best) {
           best = min(best, refinedCert(c4Q, c4R, c4Scale${
-            condensationShapes ? ", depth + 1u" : ""
+            condensationShapes || schedule ? ", depth + 1u" : ""
           }));
         }
       } else {
@@ -7741,11 +8227,11 @@ ${
   }${
     slabExt
       ? `fn refinedCert(img: vec4f, imgExt: vec4f, r: f32, childScale: f32${
-          condensationShapes ? ", depth: u32" : ""
+          condensationShapes || schedule ? ", depth: u32" : ""
         }) -> f32 {
 `
       : `fn refinedCert(img: vec4f, r: f32, childScale: f32${
-          condensationShapes ? ", depth: u32" : ""
+          condensationShapes || schedule ? ", depth: u32" : ""
         }) -> f32 {
 `
   }${
@@ -8230,11 +8716,11 @@ ${
 ${
   slabExt
     ? `            best = min(best, refinedCert(eQ, eExt, eR, eScale${
-        condensationShapes ? ", depth + 1u" : ""
+        condensationShapes || schedule ? ", depth + 1u" : ""
       }));
 `
     : `            best = min(best, refinedCert(eQ, eR, eScale${
-        condensationShapes ? ", depth + 1u" : ""
+        condensationShapes || schedule ? ", depth + 1u" : ""
       }));
 `
 }            // Cutoff exit plus the value-exact sphere-floor pin:
@@ -8305,11 +8791,11 @@ ${
 ${
   slabExt
     ? `          best = min(best, refinedCert(c3Q, c3Ext, c3R, c3Scale${
-        condensationShapes ? ", depth + 1u" : ""
+        condensationShapes || schedule ? ", depth + 1u" : ""
       }));
 `
     : `          best = min(best, refinedCert(c3Q, c3R, c3Scale${
-        condensationShapes ? ", depth + 1u" : ""
+        condensationShapes || schedule ? ", depth + 1u" : ""
       }));
 `
 }        }
@@ -8330,11 +8816,11 @@ ${
 ${
   slabExt
     ? `          best = min(best, refinedCert(c4Q, c4Ext, c4R, c4Scale${
-        condensationShapes ? ", depth + 1u" : ""
+        condensationShapes || schedule ? ", depth + 1u" : ""
       }));
 `
     : `          best = min(best, refinedCert(c4Q, c4R, c4Scale${
-        condensationShapes ? ", depth + 1u" : ""
+        condensationShapes || schedule ? ", depth + 1u" : ""
       }));
 `
 }        }
@@ -9354,7 +9840,7 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   return 0.5 * r * log(r) / dr;
 }`;
 
-  const descentBlock =
+  const rawDescentBlock =
     core === "affine"
       ? `// descend's refine=true path (surface-de.ts) — the estimator the
 // AFFINE GLSL marches, in that mirror's f32 formulation. Fixed width 4.
@@ -9385,6 +9871,7 @@ ${fold4DescentFnText(width, slabExt, lens)}${probe4DeFns}`
                 : `// descendFold's refine=false path (surface-de.ts), the estimator the
 // fold GLSL marches, in that mirror's f32 formulation.
 ${descentFnText(W, privateDecls)}${probeDeFns}`;
+  const descentBlock = scheduleCoreSource(rawDescentBlock, false);
 
   // The FOLD FINAL lens: `descendLens` (surface-de.ts)
   // one level up — exactly the GLSL SURFACE_FOLD_LENS move
@@ -9946,7 +10433,7 @@ ${balloonProbeWrapText}`
       }`
     : lensedBodyBlock;
 
-  return /* wgsl */ `${headerText}
+  return /* wgsl */ `${headerText}${scheduleHelperText}
 
 ${trapGeometryHelperText}${condensationHelperText}${bodyBlock}
 ${entry}

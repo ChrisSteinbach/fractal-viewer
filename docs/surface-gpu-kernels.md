@@ -17,13 +17,64 @@ workgroup-SHARED (banked, transposed) vs private frontier storage, and
 stage-2 branch-and-bound on/off (WGSL has no Mesa link cliff, so there's no
 reason to strip source the way the GLSL side must).
 
+## Scheduled hybrid prefix
+
+The affine/fold and affine4/fold4 descent cores accept the same finite B
+post-word the point engines plot. A scheduled kernel is still one descent with
+a level-dependent alphabet: after the final-lens inverse, global depths
+`d < k` enumerate only B's affine inverse records with symmetry order 1;
+depths `d >= k` enumerate A with its authored symmetry. The lens wrapper stays
+outside the core and is not a depth. Condensation returns no term in the B
+prefix and subtracts `k` before applying its A-local depth band or
+future-depth test. Hit-info keeps B's ring/sheet trajectory, but the first A
+choice owns material attribution.
+
+Map storage is one physical `[A][B][symmetry-expanded emitters]` sequence.
+`params.mapCount` remains A's recursive count, `scheduleMapCount` selects B's
+contiguous suffix, and condensation indexes emitters after both. The low-level
+guard and app eligibility apply the 24-record cap to the complete sequence;
+B adds no unique shade slot. Weighted schedules contain only maps in the point
+picker's support, including every map under its all-zero uniform fallback.
+The codegen refuses the schedule on forward escape/bulb cores because those
+orbits have no inverse alphabet and rendering A alone would be a different
+object.
+
+The params ABI is append-only. After the last enabled feature tail comes one
+`vec4u` lane `(scheduleMapCount, scheduleDepth, pad, pad)` and five
+`vec4f` inner bounds for global depths 1..5. The root remains in the frozen
+head fields. A 3D bound is `(center.xyz, radius)`; 4D writes an
+origin-centred `(0,0,0,radius)`. The compute helper derives each escape radius
+as `2R`, and clamps depths past `k` to the A bound. Root and terminal tests use
+the current bound; candidate selection, pruning and refined certificates use
+the next bound.
+
+The resulting 3D schedule sizes are 384 bytes base/lens, 416 balloon and 432
+plane; schedule + condensation ends at 400/432/448. In 4D the schedule forces
+the shared 576-byte variant prefix and ends at 672 bytes base/lens, 704 balloon
+and 720 plane; schedule + condensation ends at 688/720/736. A null, empty or
+zero-depth schedule retains every legacy size and byte, and codegen omits the
+schedule fields/helpers exactly. The schedule arm disables stage-2
+branch-and-bound because A's center-specific metadata does not certify B
+levels, so a scheduled program uses stage 1 throughout; schedule-free A
+programs retain stage 2 unchanged. Nonzero estimator footprint is likewise
+refused until its depth cap accounts for the non-stationary B prefix (the app
+path uses zero).
+
+`main.ts` passes the schedule into analysis and both DE builders, then hands
+the built DE unchanged to either `surface-material*.ts` or
+`SurfaceComputeRenderer`. Engine preference does not change merely because B
+exists: affine 3D remains naturally GLSL unless another compute preference is
+present, and 4D still prefers compute. A scheduled analysis refusal is
+terminal instead of falling through to a schedule-blind forward core.
+
 ## Condensation shape term
 
 The affine/fold and affine4/fold4 descent cores can compile Barnsley
 condensation geometry. `buildSurfaceDE` / `buildSurfaceDE4` separate active,
 samplable emitters from recursive maps, symmetry-expand their inverse poses,
-and append those emitter records after the ordinary-map prefix. `mapCount`
-therefore remains the recursive alphabet size; the appended control block is
+and append those emitter records after the A prefix and any B schedule suffix.
+`mapCount` therefore remains the recursive A alphabet size; the appended
+control block is
 four `u32`s `(emitterCount, minDepth, maxDepth, shadeCount)`. The depth band is
 inclusive, root depth is 0, and an unbounded maximum is packed as `0xffffffff`.
 
@@ -32,9 +83,10 @@ balloon 320 -> 336 and plane 336 -> 352. In 4D condensation forces the shared
 576-byte variant prefix even without a lens, then ends at 592 bytes; balloon
 ends at 624 and plane at 640. Feature-off buffers retain every pre-existing
 size and byte. Emitter inverse records reuse the 7-vec4 `GpuMap` or 9-vec4
-`GpuMap4` stride, and the low-level guard caps both total records and unique
-shade slots at 24. Symmetry copies keep their base emitter's shade index, so
-geometry can expand without inventing material slots.
+`GpuMap4` stride, and the low-level guard caps total A + B + emitter records
+and unique shade slots independently at 24. Symmetry copies keep their base
+emitter's shade index, so geometry can expand without inventing material
+slots.
 
 The generated shader bakes one SDF function per unique authored emitter
 shape, then evaluates `0.9 * sigmaAcc * sigmaEmitter * sdShape(local)` at the

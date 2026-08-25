@@ -24,6 +24,48 @@ flam3's convention. The per-level decay is now the Color speed slider
 (default 0.5, which reproduces that original fixed behavior), and the
 rings/sheets orbit-trap color sources ride the same hit-info descent.
 
+## Scheduled finite B prefix
+
+`SURFACE_SCHEDULE` is a resolved program arm in both fragment tracers, not a
+second estimator. The public DE keeps A in `maps` and carries supported,
+affine-only B records in `schedule.maps`; `setSurfaceSystem` /
+`setSurfaceSystem4` pack the fixed arrays in physical
+`[A][B][symmetry-expanded condensation emitters]` order. `uMapCount` remains
+the A recursive count, `uScheduleCount` names B's contiguous suffix and
+`uCondMapCount` points past both to the emitter suffix. B slots are initialized
+with no fold, trap, color or finish state. The 24-record gate covers the whole
+physical sequence, while the independent shade count remains A plus unique
+emitters.
+
+`uScheduleDepth` is the finite word length `k`. At global loop depth `d < k`,
+the helpers select only slots `[uMapCount, uMapCount + uScheduleCount)`, return
+symmetry order 1, and classify children against the bound for `d + 1`. From
+`d = k` onward they select `[0, uMapCount)` and restore A's authored
+kaleidoscope sweep. Query space has already passed through the ordinary or
+fold final-lens inverse before that loop; the lens is not a level. This is the
+inverse of the plotted `A -> k B maps -> lens` order, including noncommuting B
+words, rather than an A descent with B appended at the bottom.
+
+The 3D wire keeps depth-0's scheduled root in the classic
+`uBoundCenter/uBoundingRadius/uEscapeRadius` fields, then carries five inner
+`vec4(center, radius)` values plus five escape radii for global depths 1..5.
+The 4D twin keeps its root in the classic origin-centred pair and carries five
+`vec2(radius, escapeRadius)` inner bounds. Depths beyond `k` clamp to the A
+entry. Root and terminal terms read the current-level bound; every generated
+candidate reads the child-level bound. That distinction is load-bearing at
+the `k - 1 -> k` boundary and is pinned in source/packing tests rather than
+left to a single root-radius approximation.
+
+Condensation is absent while `d < k`; afterward the shader subtracts `k`
+before comparing the inclusive C0 depth band or asking whether a future child
+can still reach it. Hit-info similarly starts material attribution at the
+first A level. Rings and sheets still follow the complete B trajectory as
+geometry/pattern coordinates, but B never becomes a material slot. An absent,
+empty or zero-depth schedule removes `SURFACE_SCHEDULE` and reproduces the
+legacy program and uniforms exactly. Generated-source gates cover schedule,
+schedule + condensation, fold lens and 3D/4D variants under the 65,536-byte
+emitted-source ceiling.
+
 ## Shared background shape
 
 Both tracers' `void main()` used to open with its own literal
@@ -944,9 +986,10 @@ so their sources stay byte-identical.
 Emitter-enabled IFS documents compile a resolved `SURFACE_CONDENSATION` arm
 instead of sending a universal shape library to the driver. One SDF body per
 unique authored emitter shape is baked into the program; `uCondShape` selects
-it for each symmetry-expanded emitter record. The fixed inverse arrays hold
-ordinary maps first and emitter records second, while `uMapCount` stays the
-recursive count. `uCondCount`, inclusive `uCondMinDepth`/`uCondMaxDepth`,
+it for each symmetry-expanded emitter record. The fixed inverse arrays hold A
+maps first, an optional B schedule suffix second, and emitter records last,
+while `uMapCount` stays the recursive A count. `uCondMapCount` is therefore A
+plus B; `uCondCount`, inclusive `uCondMinDepth`/`uCondMaxDepth`,
 `uCondShade` and `uShadeCount` describe the suffix and its material slots.
 Feature-off resolution remains byte-identical to the pre-condensation source.
 
@@ -958,8 +1001,9 @@ local w=0 rather than extruding it. A nonzero 4D slice thickness is refused.
 Hit-info carries the winning emitter's shade index, so base color, pattern and
 finish all read the emitter slot that actually supplied the minimum.
 
-The uniform wire is capped at 24 total ordinary-map plus symmetry-expanded
-emitter records and 24 unique shade slots. Unsamplable/nearly-flat emitters,
+The uniform wire is capped at 24 total A-map plus supported B-map plus
+symmetry-expanded emitter records and 24 unique shade slots. B does not add a
+shade slot. Unsamplable/nearly-flat emitters,
 emitter-only documents and final-transform emitters are rejected before this
 arm; escape and bulb use the separate forward-orbit construction and cannot
 compile it. Balloon and the surface grid remain admissible because both wrap

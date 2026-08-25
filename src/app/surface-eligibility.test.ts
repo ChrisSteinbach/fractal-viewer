@@ -378,7 +378,7 @@ describe("deriveSurfaceEligibility and the scheduled-hybrid block", () => {
     },
   ];
 
-  it("refuses any document carrying a live schedule, whatever the system's own shape", () => {
+  it("admits a live affine schedule through the inverse-descent route", () => {
     const result = deriveSurfaceEligibility(
       sierpinskiTetrahedron(),
       null,
@@ -386,16 +386,96 @@ describe("deriveSurfaceEligibility and the scheduled-hybrid block", () => {
       { computeAvailable: true },
       { transforms: pairB, depth: 3 },
     );
-    expect(result.status).toBe("ineligible");
-    expect(result.kind).toBeNull();
-    expect(result.note).toContain("hybrid schedule");
-    expect(result.note).toContain("system A alone");
+    expect(result.status).toBe("eligible");
+    expect(result.kind).toBe("ifs");
+    expect(result.note).toBeNull();
   });
 
-  it("refuses the shipped Sponge of Ferns preset by its side-table schedule", () => {
+  it("admits the shipped Sponge of Ferns preset as a conservative affine descent", () => {
     const result = derivePreset("spongeOfFerns");
+    expect(result.status).toBe("degraded");
+    expect(result.kind).toBe("ifs");
+    expect(result.note).toContain("Anisotropic maps");
+  });
+
+  it("never falls through to an A-only escape renderer when scheduled inverse analysis refuses", () => {
+    const mandelbox: Transform = {
+      id: 0,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      variations: [{ type: "mandelbox", weight: 2 }],
+    };
+    const result = deriveSurfaceEligibility(
+      [mandelbox],
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      { transforms: pairB, depth: 1 },
+    );
     expect(result.status).toBe("ineligible");
-    expect(result.note).toContain("hybrid schedule");
+    expect(result.kind).toBeNull();
+    expect(result.note).toContain("does not contract");
+    expect(result.note).not.toContain("Escape-time render");
+  });
+
+  it("prices B records in the shared 24-record cap", () => {
+    const base = sierpinskiTetrahedron();
+    const scheduleTransforms = Array.from({ length: 21 }, (_, id) => ({
+      ...pairB[id % pairB.length],
+      id,
+    }));
+    const over = deriveSurfaceEligibility(
+      base,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      { transforms: scheduleTransforms, depth: 1 },
+    );
+    expect(over.status).toBe("ineligible");
+    expect(over.note).toContain("25 map/schedule records");
+
+    const atCap = deriveSurfaceEligibility(
+      base,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      { transforms: scheduleTransforms.slice(0, 20), depth: 1 },
+    );
+    expect(atCap.status).toBe("eligible");
+    expect(atCap.kind).toBe("ifs");
+  });
+
+  it("matches B's weighted support and all-zero uniform fallback when counting records", () => {
+    const base = sierpinskiTetrahedron();
+    const many = Array.from({ length: 21 }, (_, id): Transform => ({
+      ...pairB[id % pairB.length],
+      id,
+      weight: 0,
+    }));
+    const allZero = deriveSurfaceEligibility(
+      base,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      { transforms: many, depth: 1 },
+    );
+    expect(allZero.status).toBe("ineligible");
+    expect(allZero.note).toContain("25 map/schedule records");
+
+    const weighted = many.map((transform, index) => ({
+      ...transform,
+      weight: index === 7 ? 1 : 0,
+    }));
+    const oneSupported = deriveSurfaceEligibility(
+      base,
+      null,
+      NO_SYMMETRY,
+      { computeAvailable: true },
+      { transforms: weighted, depth: 1 },
+    );
+    expect(oneSupported.status).toBe("eligible");
+    expect(oneSupported.kind).toBe("ifs");
   });
 
   it("a dead block (depth 0 / empty B) refuses nothing — the one consumption domain decides", () => {
