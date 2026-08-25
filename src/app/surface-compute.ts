@@ -106,19 +106,31 @@ import {
   SURFACE_GPU_MAP_VEC4,
   SURFACE_GPU_PARAMS4_BALLOON_BYTES,
   SURFACE_GPU_PARAMS4_BALLOON_CONDENSATION_BYTES,
+  SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_BYTES,
+  SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS4_BYTES,
   SURFACE_GPU_PARAMS4_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS4_ESCAPE_BYTES,
   SURFACE_GPU_PARAMS4_LENS_BYTES,
   SURFACE_GPU_PARAMS4_PLANE_BYTES,
   SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_BYTES,
+  SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_BYTES,
+  SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CONDENSATION_BYTES,
+  SURFACE_GPU_PARAMS4_SCHEDULE_BYTES,
+  SURFACE_GPU_PARAMS4_SCHEDULE_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS4_TRAP_BYTES,
   SURFACE_GPU_PARAMS_BALLOON_BYTES,
   SURFACE_GPU_PARAMS_BALLOON_CONDENSATION_BYTES,
+  SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_BYTES,
+  SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS_BYTES,
   SURFACE_GPU_PARAMS_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS_PLANE_BYTES,
   SURFACE_GPU_PARAMS_PLANE_CONDENSATION_BYTES,
+  SURFACE_GPU_PARAMS_PLANE_SCHEDULE_BYTES,
+  SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CONDENSATION_BYTES,
+  SURFACE_GPU_PARAMS_SCHEDULE_BYTES,
+  SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS_TRAP_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
@@ -1816,6 +1828,20 @@ export class SurfaceComputeRenderer {
                 }
               : null
             : null,
+          // A hybrid surface packs the scheduled affine B suffix directly
+          // after the recursive A maps. The live depth and per-level bounds
+          // stay in params, while these creation-time counts select the
+          // scheduled descent source and its physical map ranges.
+          schedule: !isForwardTarget(target)
+            ? target.de.schedule &&
+              target.de.schedule.depth > 0 &&
+              target.de.schedule.maps.length > 0
+              ? {
+                  mapCount: target.de.maps.length,
+                  scheduleMapCount: target.de.schedule.maps.length,
+                }
+              : null
+            : null,
           width: SURFACE_FOLD_BEAM_WIDTH,
           shadeDeWidth: mode === "shade" ? shadeDeWidth : undefined,
           workgroupSize: SURFACE_COMPUTE_WORKGROUP_SIZE,
@@ -1876,6 +1902,10 @@ export class SurfaceComputeRenderer {
     const targetHasCondensation =
       (target.kind === "ifs" || target.kind === "ifs4") &&
       (target.de.condensation?.emitters.length ?? 0) > 0;
+    const targetHasSchedule =
+      (target.kind === "ifs" || target.kind === "ifs4") &&
+      (target.de.schedule?.depth ?? 0) > 0 &&
+      (target.de.schedule?.maps.length ?? 0) > 0;
     const shadeLayout = device.createBindGroupLayout({
       entries: [
         bufferEntry(0, "uniform"),
@@ -1959,14 +1989,20 @@ export class SurfaceComputeRenderer {
         : null,
     ]);
 
-    const paramsBuf = device.createBuffer({
-      // The 4D cores' params carry the 4D variant tail (rotor, sector
-      // step, 4D lens, w0/sliceHalfW) past the frozen block, and the
-      // shared balloon/plane block past THAT at the frozen 576 — which is
-      // why the appended-block arms come first for them, exactly as they
-      // do for the 3D cores.
-      size: isFourDTarget(target)
+    const paramsBufferSize = isFourDTarget(target)
+      ? targetHasSchedule
         ? targetHasCondensation
+          ? targetHasBalloon
+            ? SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_CONDENSATION_BYTES
+            : target.groundPlane === true
+              ? SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CONDENSATION_BYTES
+              : SURFACE_GPU_PARAMS4_SCHEDULE_CONDENSATION_BYTES
+          : targetHasBalloon
+            ? SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_BYTES
+            : target.groundPlane === true
+              ? SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_BYTES
+              : SURFACE_GPU_PARAMS4_SCHEDULE_BYTES
+        : targetHasCondensation
           ? targetHasBalloon
             ? SURFACE_GPU_PARAMS4_BALLOON_CONDENSATION_BYTES
             : target.groundPlane === true
@@ -1990,6 +2026,18 @@ export class SurfaceComputeRenderer {
                       // the lens block past the 4D tail.
                       SURFACE_GPU_PARAMS4_LENS_BYTES
                     : SURFACE_GPU_PARAMS4_BYTES
+      : targetHasSchedule
+        ? targetHasCondensation
+          ? targetHasBalloon
+            ? SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_CONDENSATION_BYTES
+            : target.groundPlane === true
+              ? SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CONDENSATION_BYTES
+              : SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES
+          : targetHasBalloon
+            ? SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_BYTES
+            : target.groundPlane === true
+              ? SURFACE_GPU_PARAMS_PLANE_SCHEDULE_BYTES
+              : SURFACE_GPU_PARAMS_SCHEDULE_BYTES
         : targetHasCondensation
           ? targetHasBalloon
             ? SURFACE_GPU_PARAMS_BALLOON_CONDENSATION_BYTES
@@ -2007,11 +2055,17 @@ export class SurfaceComputeRenderer {
                 // whether or not the session has a floor.
                 SURFACE_GPU_PARAMS_TRAP_BYTES
               : target.groundPlane === true
-                ? // The plane kernel's params struct appends the
+                ? // The plane kernel's struct appends the
                   // plane block at the same frozen offset (the two are
                   // mutually exclusive by the codegen throw).
                   SURFACE_GPU_PARAMS_PLANE_BYTES
-                : SURFACE_GPU_PARAMS_BYTES,
+                : SURFACE_GPU_PARAMS_BYTES;
+    const paramsBuf = device.createBuffer({
+      // Hybrid schedules append their live depth/map-range/bound block after
+      // the legacy variant regions. Use the matching host allocation for
+      // every balloon/plane/condensation combination; schedule-off sizes stay
+      // exactly on the frozen ABI above.
+      size: paramsBufferSize,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const shadeBuf = device.createBuffer({

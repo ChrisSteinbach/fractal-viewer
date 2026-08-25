@@ -30,6 +30,13 @@
  */
 import * as THREE from "three";
 import { SOFTWARE_RENDERER_RE } from "../render-backend";
+import {
+  SURFACE_SCHEDULE_ROW_3D,
+  SURFACE_SCHEDULE_ROW_4D,
+  surfaceScheduleFrameAcceptance,
+  surfaceScheduleKernelSpec,
+  surfaceScheduleMarchAcceptance,
+} from "./schedule";
 import { applyScenarioShard } from "./shard";
 import {
   rotationMatrix4,
@@ -104,6 +111,8 @@ import {
   hyperfern,
   mandelboxKifs,
   pentatope,
+  PRESET_SCHEDULES,
+  presetTransforms,
   sierpinskiTetrahedron,
   swirlFlame,
 } from "../../fractal/presets";
@@ -3115,9 +3124,18 @@ interface SurfaceDeResults {
    * appended as a new leg so the older fold/lens/balloon baselines do not
    * change fixtures or ordering. */
   marchUnprojectCondensation?: SurfaceUnprojectRow | SkippedResult;
+  /** The shipped Sponge of Ferns scheduled hybrid through the app's
+   * unproject march path. In addition to ordinary per-ray agreement this
+   * row must complete real work and produce a mixed hit/background raster;
+   * compilation-only and empty/full frames fail as vacuous. */
+  marchUnprojectSchedule?: SurfaceUnprojectRow | SkippedResult;
   /** Leg B (informational + canvas artifact) — absent until run;
    * SkippedResult when mandelboxKifs was excluded or the renderer broke. */
   computeFrame?: SurfaceComputeFrameRow | SkippedResult;
+  /** Production SurfaceComputeRenderer over the shipped scheduled hybrid.
+   * Gates activation/useful geometry on every adapter; a real-GPU frame
+   * must also complete with HIT and MISS and no EXHAUSTED/ACTIVE rays. */
+  computeFrameSchedule?: SurfaceComputeFrameRow | SkippedResult;
   /** Stage C: leg B over the lens field class — the PRODUCTION
    * SurfaceComputeRenderer on lensMandelboxOverAffine (affine core +
    * 81-branch mandelbox lens, branch-scaled priors). Gates like
@@ -4223,6 +4241,7 @@ function surfaceQueries(
   radius: number,
   finalTransform: Transform | null = null,
   symmetry: SymmetryParams = SURFACE_NO_SYMMETRY,
+  schedule?: HybridSchedule,
 ): Vec3[] {
   const cloud = runChaosGame(
     transforms,
@@ -4230,6 +4249,8 @@ function surfaceQueries(
     mulberry32(101),
     finalTransform,
     symmetry,
+    undefined,
+    schedule,
   );
   const out: Vec3[] = [];
   const jitterRng = mulberry32(2);
@@ -7431,6 +7452,7 @@ async function runSurfaceUnprojectLeg(
     ...(sys.de.condensation
       ? { condensation: surfaceCondensationKernelSpec(sys.de) }
       : {}),
+    ...(sys.de.schedule ? { schedule: surfaceScheduleKernelSpec(sys.de) } : {}),
   });
   const { pipeline, compileMs } = await buildSurfacePipeline(
     device,
@@ -9963,6 +9985,53 @@ async function runSurfaceDeSection(
     render();
   }
 
+  // ----- Scheduled hybrid: shipped Sponge of Ferns, CPU oracle ----------
+  // This is deliberately a fixed, must-build fixture rather than another
+  // best-effort systemDefs entry. Four affine fern maps plus the twenty
+  // affine Menger B maps occupy all 24 physical records, and depth 2 makes
+  // both B levels and the B->A boundary live. The schedule-aware chaos-game
+  // query cloud samples the composed object rather than A in isolation.
+  status(`cpu oracle: ${SURFACE_SCHEDULE_ROW_3D}…`);
+  activity.setState("cpu", "Surface scheduled CPU oracle — 3D");
+  await new Promise<void>((resolve) => setTimeout(resolve));
+  const scheduledTransforms = presetTransforms("spongeOfFerns");
+  const scheduledHybrid = PRESET_SCHEDULES.spongeOfFerns?.();
+  if (!scheduledHybrid) {
+    throw new Error("scheduled Surface bench fixture is missing its schedule");
+  }
+  const scheduledDe = buildSurfaceDE(
+    scheduledTransforms,
+    null,
+    SURFACE_NO_SYMMETRY,
+    { schedule: scheduledHybrid },
+  );
+  const scheduledSpec = surfaceScheduleKernelSpec(scheduledDe);
+  if (scheduledSpec.mapCount + scheduledSpec.scheduleMapCount !== 24) {
+    throw new Error(
+      `scheduled Surface bench fixture must occupy 24 map records, got ${String(
+        scheduledSpec.mapCount + scheduledSpec.scheduleMapCount,
+      )}`,
+    );
+  }
+  const scheduledQueries = surfaceQueries(
+    scheduledTransforms,
+    scheduledDe.boundingRadius,
+    null,
+    SURFACE_NO_SYMMETRY,
+    scheduledHybrid,
+  );
+  const scheduledSystem: SurfaceSystemState = {
+    name: SURFACE_SCHEDULE_ROW_3D,
+    core: "affine",
+    de: scheduledDe,
+    transforms: scheduledTransforms,
+    queries: scheduledQueries,
+    cpu: scheduledQueries.map((q) =>
+      estimateDistanceRefined(scheduledDe, q, 0),
+    ),
+  };
+  render();
+
   // ----- Escape-time systems: a SEPARATE gate + CPU oracle -----
   // `buildSurfaceDE` refuses these shapes by design (single non-contracting
   // pure-fold map — `analyzeEscapeSystem` is its deliberate complement), so
@@ -10969,6 +11038,62 @@ async function runSurfaceDeSection(
     render();
   }
 
+  // The same shipped fixture flat-lifted to 4D. Identity rotor, w0=0 and
+  // zero slab thickness make this a direct 3D-to-4D lift while still
+  // executing affine4's schedule-aware descent and packing contracts.
+  status(`cpu oracle: ${SURFACE_SCHEDULE_ROW_4D}…`);
+  activity.setState("cpu", "Surface scheduled CPU oracle — flat 4D");
+  await new Promise<void>((resolve) => setTimeout(resolve));
+  const scheduledDe4 = buildSurfaceDE4(
+    scheduledTransforms,
+    null,
+    SURFACE_NO_SYMMETRY,
+    { schedule: scheduledHybrid },
+  );
+  const scheduledSpec4 = surfaceScheduleKernelSpec(scheduledDe4);
+  if (scheduledSpec4.mapCount + scheduledSpec4.scheduleMapCount !== 24) {
+    throw new Error(
+      `scheduled flat-4D Surface bench fixture must occupy 24 map records, got ${String(
+        scheduledSpec4.mapCount + scheduledSpec4.scheduleMapCount,
+      )}`,
+    );
+  }
+  const scheduledView4: SurfaceGpu4View = {
+    rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    w0: 0,
+    sliceHalfW: 0,
+  };
+  // Reuse the 3D row's schedule-aware cloud queries verbatim. This makes
+  // the row a controlled dimensional-parity check at the exact same f32
+  // points, while avoiding affine4Queries' deliberately ULP-tight boundary
+  // bisections: with 20 outer B maps those engineered points densely park
+  // on beam-selection discontinuities, where pointwise f32/f64 comparison
+  // is not a meaningful kernel-accuracy question. The 3D scheduled march
+  // leg separately gates the actual near-surface ray trajectory.
+  const scheduledQueries4 = scheduledQueries;
+  const scheduledCpu4 = scheduledQueries4.map((q) =>
+    estimateSurface4Composed(scheduledDe4, scheduledView4, q),
+  );
+  const scheduledR4 = surface4ToleranceR(scheduledDe4);
+  const scheduledSystem4: Surface4SystemState = {
+    name: SURFACE_SCHEDULE_ROW_4D,
+    de: scheduledDe4,
+    view4: scheduledView4,
+    transforms: scheduledTransforms,
+    queries: scheduledQueries4,
+    cpu: scheduledCpu4,
+    stable: scheduledCpu4.map((c, i) =>
+      surface4QueryStable(
+        scheduledDe4,
+        scheduledView4,
+        scheduledQueries4[i],
+        c,
+        surfaceEvalTol(c, scheduledR4),
+      ),
+    ),
+  };
+  render();
+
   // M4: the FOLD4 core's own fixed fixture family — the same
   // "def-time eligibility gate throws" idiom as affine4SystemDefs above,
   // for the same reason (fixed fixtures; an ineligible one is a bench bug).
@@ -11628,6 +11753,59 @@ async function runSurfaceDeSection(
 
     await canaryCheck("the M0 affine agreement leg");
 
+    // ----- Scheduled 3D affine agreement — GATING -----------------------
+    // Its own pipeline is load-bearing: schedule map counts are compile-time
+    // source inputs, so sharing M0's classic pipeline would only prove that
+    // the buffers can be bound. The ordinary comparator pins every one of
+    // the schedule-aware CPU oracle's 700 values at the fixed affine width.
+    {
+      const cfg = affineEvalConfig;
+      const label = `${SURFACE_SCHEDULE_ROW_3D} ${configLabel(cfg)}`;
+      status(`agreement: compiling ${label}…`);
+      activity.setState("gpu", `Surface scheduled agreement — ${label}`);
+      let scheduledPipeline: GPUComputePipeline | null = null;
+      try {
+        const code = surfaceDeKernelWgsl({
+          mode: "eval",
+          core: "affine",
+          width: cfg.width,
+          workgroupSize: cfg.wg,
+          sharedFrontier: false,
+          bnbStage2: false,
+          schedule: surfaceScheduleKernelSpec(scheduledSystem.de),
+        });
+        ({ pipeline: scheduledPipeline } = await buildSurfacePipeline(
+          device,
+          pipelineLayout,
+          code,
+          "evalQueries",
+          `surface-de eval ${label}`,
+        ));
+      } catch (e) {
+        compileFailed = true;
+        results.notes.push(`agreement ${label}: ${describeError(e)}`);
+      }
+      if (scheduledPipeline !== null) {
+        await ensureSurfaceEvalBuffers(
+          device,
+          bindGroupLayout,
+          scheduledSystem,
+        );
+        const gpu = await runSurfaceEvalDispatch(
+          device,
+          scheduledPipeline,
+          scheduledSystem,
+          cfg.wg,
+        );
+        results.agreement.push(
+          compareSurfaceAgreement(scheduledSystem, cfg, gpu),
+        );
+      }
+      render();
+    }
+
+    await canaryCheck("the scheduled 3D agreement leg");
+
     // ----- M8: the condensation affine-core agreement leg — GATING -----
     // Gearworks is deliberately compiled on its own: emitter ShapeSpecs are
     // code-generated, while poses, shade selectors and the inclusive depth
@@ -12156,6 +12334,73 @@ async function runSurfaceDeSection(
     }
 
     await canaryCheck("the M3 affine4 agreement leg");
+
+    // ----- Scheduled flat-lift affine4 agreement — GATING ---------------
+    // A second compile-gated pipeline proves the schedule reaches affine4
+    // source generation as well as its params/maps packers. The view is an
+    // exact flat lift, but the CPU oracle and WGSL both execute the 4D core.
+    {
+      const cfg: SurfaceKernelConfig = {
+        core: "affine4",
+        variant: "private",
+        width: SURFACE_AFFINE_LADDER_WIDTH,
+        stage2: false,
+        wg: surfaceWgFor(config, "private"),
+      };
+      const label = `${SURFACE_SCHEDULE_ROW_4D} ${configLabel(cfg)}`;
+      status(`agreement: compiling ${label}…`);
+      activity.setState("gpu", `Surface scheduled agreement — ${label}`);
+      let scheduledPipeline4: GPUComputePipeline | null = null;
+      try {
+        const code = surfaceDeKernelWgsl({
+          mode: "eval",
+          core: "affine4",
+          width: cfg.width,
+          workgroupSize: cfg.wg,
+          sharedFrontier: false,
+          bnbStage2: false,
+          schedule: surfaceScheduleKernelSpec(scheduledSystem4.de),
+        });
+        ({ pipeline: scheduledPipeline4 } = await buildSurfacePipeline(
+          device,
+          pipelineLayout,
+          code,
+          "evalQueries",
+          `surface-de eval ${label}`,
+        ));
+      } catch (e) {
+        compileFailed = true;
+        results.notes.push(`agreement ${label}: ${describeError(e)}`);
+      }
+      if (scheduledPipeline4 !== null) {
+        await ensureSurface4EvalBuffers(
+          device,
+          bindGroupLayout,
+          scheduledSystem4,
+        );
+        const gpu = await runSurfaceEvalDispatch(
+          device,
+          scheduledPipeline4,
+          scheduledSystem4,
+          cfg.wg,
+        );
+        const row = compareSurface4Agreement(scheduledSystem4, cfg, gpu);
+        results.agreement.push(row);
+        const excluded = row.excluded ?? 0;
+        if (excluded > SURFACE_AFFINE4_EXCLUDED_CAP) {
+          affine4GateFail = true;
+          results.notes.push(
+            `affine4 agreement ${scheduledSystem4.name}: excluded ${String(excluded)}/${String(
+              row.n,
+            )} queries (> ${String(SURFACE_AFFINE4_EXCLUDED_CAP)}) from the ` +
+              "oracle-continuity gate",
+          );
+        }
+      }
+      render();
+    }
+
+    await canaryCheck("the scheduled flat-4D agreement leg");
 
     // ----- M4: the FOLD4 core's agreement leg -----
     // The fold frontier one dimension up, behind the SAME view lift as M3
@@ -13460,6 +13705,40 @@ async function runSurfaceDeSection(
         }
         render();
       }
+
+      // The shipped scheduled hybrid through the same app-derived rays.
+      // This leg has an extra anti-vacuity gate: it must dispatch, finish,
+      // agree, and resolve a mixed hit/background raster on BOTH sides.
+      try {
+        const row = await runSurfaceUnprojectLeg(
+          device,
+          scheduledSystem,
+          acquired.software,
+          status,
+          activity,
+        );
+        results.marchUnprojectSchedule = row;
+        const acceptance = surfaceScheduleMarchAcceptance(row);
+        results.notes.push(
+          `march-unproject schedule ${row.system}: passes=${String(row.passes)} ` +
+            `completed=${String(acceptance.completed)} agreed=${String(acceptance.agreed)} ` +
+            `gpuHits=${String(row.gpuHits)}/${String(row.rays)} ` +
+            `cpuHits=${String(row.cpuHits)}/${String(row.rays)} ` +
+            `useful=${String(acceptance.gpuUseful && acceptance.cpuUseful)}`,
+        );
+        if (!acceptance.ok) {
+          unprojFailed = true;
+          results.notes.push(
+            "march-unproject schedule: anti-vacuity gate failed — requires passes>0, " +
+              "completion, failures=0, and a nonempty/non-full hit mix on GPU and CPU",
+          );
+        }
+      } catch (e) {
+        unprojFailed = true;
+        results.marchUnprojectSchedule = { skipped: describeError(e) };
+        results.notes.push(`march-unproject schedule: ${describeError(e)}`);
+      }
+      render();
     }
 
     await canaryCheck("the march-unproject legs");
@@ -13729,6 +14008,55 @@ async function runSurfaceDeSection(
           results.computeFrame = { skipped: describeError(e) };
           results.notes.push(`compute frame: ${describeError(e)}`);
         }
+      }
+      render();
+
+      // The production host-loop proof for the scheduled field class.
+      // Unlike the ordinary presentation row, this one cannot pass merely
+      // by creating its four pipelines: it must dispatch and resolve real
+      // scheduled geometry. A real-GPU frame must additionally complete
+      // with a clean HIT/MISS terminal mix and no exhausted or active rays.
+      try {
+        const row = await runSurfaceComputeFrameLeg(
+          scheduledSystem,
+          acquired.software,
+          dom,
+          status,
+          activity,
+        );
+        results.computeFrameSchedule = row;
+        const acceptance = surfaceScheduleFrameAcceptance(
+          row,
+          acquired.software,
+        );
+        results.notes.push(
+          `compute frame schedule ${SURFACE_SCHEDULE_ROW_3D} ${String(row.width)}x${String(
+            row.height,
+          )}: passes=${String(row.passes)} hit=${String(row.counts.hit)} ` +
+            `miss=${String(row.counts.miss)} exhausted=${String(row.counts.exhausted)} ` +
+            `active=${String(row.counts.active)} truncated=${String(row.truncated)} ` +
+            `activated=${String(acceptance.activated)} geometry=${String(acceptance.geometry)} ` +
+            `settled=${String(acceptance.settled)}`,
+        );
+        if (!acceptance.ok) {
+          frameFailed = true;
+          results.notes.push(
+            "compute frame schedule: acceptance failed — requires passes>0 and hit>0; " +
+              "a completed real-adapter frame also requires miss>0, exhausted=0, active=0",
+          );
+        }
+        if (row.truncated) {
+          results.notes.push(
+            `compute frame schedule: truncated at its ${acquired.software ? SURFACE_FRAME_BUDGET_SW_MS : SURFACE_FRAME_BUDGET_MS}ms budget — ` +
+              (acquired.software
+                ? "accepted only when dispatch activation and scheduled geometry are visible"
+                : "failing the leg: a real-adapter schedule frame must complete"),
+          );
+        }
+      } catch (e) {
+        frameFailed = true;
+        results.computeFrameSchedule = { skipped: describeError(e) };
+        results.notes.push(`compute frame schedule: ${describeError(e)}`);
       }
       render();
 
@@ -14406,10 +14734,12 @@ async function runSurfaceDeSection(
   } finally {
     canary?.destroy();
     for (const sys of systems) destroySurfaceEvalBuffers(sys);
+    destroySurfaceEvalBuffers(scheduledSystem);
     for (const sys of escapeSystems) destroySurfaceForwardEvalBuffers(sys);
     for (const sys of bulbSystems) destroySurfaceForwardEvalBuffers(sys);
     for (const sys of escape4Systems) destroySurfaceForwardEvalBuffers(sys);
     for (const sys of affine4Systems) destroySurface4EvalBuffers(sys);
+    destroySurface4EvalBuffers(scheduledSystem4);
     for (const sys of fold4Systems) destroySurface4EvalBuffers(sys);
     for (const sys of lens4AffineSystems) destroySurface4EvalBuffers(sys);
     for (const sys of lens4FoldSystems) destroySurface4EvalBuffers(sys);

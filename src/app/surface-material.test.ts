@@ -198,6 +198,245 @@ function condEmitter3(shape: ShapeSpec, shadeIndex: number, invT: Vec3) {
   };
 }
 
+function scheduled3(
+  maps: SurfaceDEMap[],
+  depth = 2,
+): NonNullable<SurfaceDE["schedule"]> {
+  return {
+    maps,
+    depth,
+    bounds: Array.from({ length: depth + 1 }, (_, d) => ({
+      center: [d, d + 0.25, -d] as Vec3,
+      radius: 10 - d,
+      escapeRadius: 20 - 2 * d,
+    })),
+  };
+}
+
+describe("GLSL finite schedule packing and source", () => {
+  it("keeps absent and zero-depth schedules on the exact legacy program", () => {
+    const legacy = surfaceFragmentFor(0, 0);
+    expect(
+      surfaceFragmentFor(
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        0,
+      ),
+    ).toBe(legacy);
+    expect(legacy).not.toContain("uSchedule");
+    expect(legacy).not.toContain("surfaceLevelBound");
+
+    const material = createSurfaceMaterial();
+    const original = material.fragmentShader;
+    setSurfaceSystem(
+      material,
+      { ...de3([map3()]), schedule: scheduled3([map3()], 0) },
+      [black],
+    );
+    expect(material.defines.SURFACE_SCHEDULE).toBeUndefined();
+    expect(material.uniforms.uScheduleDepth.value).toBe(0);
+    expect(material.fragmentShader).toBe(original);
+  });
+
+  it("packs [A][B][emitters], separate counts, inner bounds, and no B fold/material attribution", () => {
+    const material = createSurfaceMaterial();
+    const a = [map3({ invT: [1, 0, 0] }), map3({ invT: [2, 0, 0] })];
+    const b = [
+      map3({ invT: [3, 0, 0], foldKind: 3, foldInvW: 9 }),
+      map3({ invT: [4, 0, 0] }),
+    ];
+    const de: SurfaceDE = {
+      ...de3(a),
+      schedule: scheduled3(b),
+      condensation: {
+        emitters: [condEmitter3(COND_SPHERE, 2, [5, 0, 0])],
+        depthBand: { minDepth: 0, maxDepth: 2 },
+      },
+    };
+    setSurfaceSystem(material, de, [black, black, [1, 0, 0]]);
+    const u = material.uniforms;
+    expect(u.uMapCount.value).toBe(2);
+    expect(u.uScheduleCount.value).toBe(2);
+    expect(u.uScheduleDepth.value).toBe(2);
+    expect(u.uCondMapCount.value).toBe(4);
+    expect(u.uCondCount.value).toBe(1);
+    expect(u.uShadeCount.value).toBe(3);
+    expect(
+      (u.uInvT.value as THREE.Vector3[]).slice(0, 5).map((v) => v.x),
+    ).toEqual([1, 2, 3, 4, 5]);
+    expect((u.uFoldParams.value as THREE.Vector4[])[2].x).toBe(0);
+    expect((u.uFoldParams.value as THREE.Vector4[])[2].w).toBe(0);
+    const bounds = u.uScheduleBounds.value as THREE.Vector4[];
+    expect([bounds[0].x, bounds[0].w, bounds[1].x, bounds[1].w]).toEqual([
+      1, 9, 2, 8,
+    ]);
+    expect(u.uScheduleEscapeRadius.value.slice(0, 2)).toEqual([18, 16]);
+  });
+
+  it("switches the refiner at d=k-1, suppresses B symmetry, and starts A attribution at d=k", () => {
+    const src = surfaceFragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      undefined,
+      null,
+      null,
+      false,
+      0,
+      1,
+    );
+    expect(src).toContain("return depth < uScheduleDepth ? uMapCount : 0;");
+    expect(src).toContain("return depth < uScheduleDepth ? 1 : uSymOrder;");
+    expect(src).toContain("vec4 childBound = surfaceLevelBound(depth + 1);");
+    expect(src).toContain(
+      "best = min(best, refinedCert(eQ, eR, eScale, depth + 1));",
+    );
+    expect(src).toContain("if (depth == uScheduleDepth)");
+    expect(src).toContain("if (depth >= uScheduleDepth)");
+  });
+
+  it("composes schedule, condensation and a fold lens while preserving the post-B pattern source", () => {
+    const shapes = [COND_SPHERE] as const;
+    const src = surfaceFragmentFor(
+      0,
+      1,
+      0,
+      0,
+      0,
+      1,
+      1,
+      undefined,
+      null,
+      shapes,
+      false,
+      0,
+      1,
+    );
+    expect(src).toContain("depth -= uScheduleDepth;");
+    expect(src).toContain("int slot = uCondMapCount + e;");
+    expect(src).toContain("patternScheduleSource = c1Q;");
+    expect(src).toContain("patternSource = patternScheduleSource;");
+    expect(src).toContain("surfaceDECore(bestQ, firstChoice");
+    expect(src).not.toContain("patternSource = patternFoldLensSource;");
+  });
+
+  it("accepts 24 physical records, rejects 25, and keeps every scheduled variant below 64KB emitted", () => {
+    const accepted = createSurfaceMaterial();
+    setSurfaceSystem(
+      accepted,
+      {
+        ...de3([map3(), map3()]),
+        schedule: scheduled3(Array.from({ length: 22 }, () => map3())),
+      },
+      [black, black],
+    );
+    expect(accepted.uniforms.uScheduleCount.value).toBe(22);
+    expect(() =>
+      setSurfaceSystem(
+        createSurfaceMaterial(),
+        {
+          ...de3([map3(), map3()]),
+          schedule: scheduled3(Array.from({ length: 23 }, () => map3())),
+        },
+        [black, black],
+      ),
+    ).toThrow(/schedule maps/);
+
+    const variants = [
+      surfaceFragmentFor(
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        1,
+      ),
+      surfaceFragmentFor(
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        1,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        1,
+      ),
+      surfaceFragmentFor(
+        0,
+        0,
+        1,
+        0,
+        0,
+        1,
+        1,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        1,
+      ),
+      surfaceFragmentFor(
+        0,
+        1,
+        0,
+        1,
+        0,
+        1,
+        1,
+        undefined,
+        null,
+        null,
+        false,
+        0,
+        1,
+      ),
+      surfaceFragmentFor(
+        0,
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        undefined,
+        null,
+        [COND_SPHERE],
+        false,
+        0,
+        1,
+      ),
+    ];
+    for (const src of variants) expect(src.length).toBeLessThan(64 * 1024);
+  });
+});
+
 describe("GLSL condensation packing and source", () => {
   it("appends symmetry-expanded inverse records while map and shade counts stay separate", () => {
     const material = createSurfaceMaterial();

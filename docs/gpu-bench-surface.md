@@ -25,6 +25,49 @@ band and the min-union without weakening or replacing the existing escape
 classifiers. There is deliberately no bulb row: geometry is refused for power
 maps while the trap's color channel stays available.
 
+The scheduled-hybrid addition appends two eval-agreement rows and one app-ray
+row without weakening an existing cap. `scheduledSpongeOfFerns3` runs the
+affine core; `scheduledSpongeOfFerns4Flat` lifts the same document through the
+affine4 core at the identity/flat view. Both use the shipped composition —
+four weighted Barnsley A maps, twenty Menger B maps, depth 2 — so the physical
+wire is exactly full at 24 records. Each eval row compares the scheduled WGSL
+against the CPU oracle and gates at `fail=0`; the 4D row additionally keeps the
+existing oracle-continuity exclusion ceiling.
+
+`marchUnprojectSchedule` runs `scheduledSpongeOfFerns3` through the bounded
+app-ray march. It gates at `fail=0`, no truncation and at least one pass, and
+requires both CPU and GPU hit counts strictly between zero and the ray count.
+Those activation checks keep an all-background, all-surface or
+compilation-only result from passing numerically. Do not substitute the
+GPU-bench app's older point-mode `schedule-sponge` / `schedule-4d` scenarios:
+those pin the Flame plot-time post-word, not Surface's level-dependent inverse
+descent.
+
+`computeFrameSchedule` takes that same 3D fixture through the production
+`SurfaceComputeRenderer`, beyond a bare eval/march pipeline. Every adapter must
+dispatch at least one pass and produce at least one hit. A completed
+real-adapter frame must additionally contain a background miss and finish with
+zero exhausted and zero active rays. A budget-truncated frame follows the
+bench's established convention but passes only when dispatch and scheduled-hit
+activation both occurred; a null frame or throw fails. Its evidence note begins
+`compute frame schedule scheduledSpongeOfFerns3` and records passes, the four
+terminal counts, truncation and the derived activation/geometry/settled gates.
+
+`surface-schedule.test.ts` remains the independent finite-word oracle: it pins
+`k=1`/`k=2`, last-B-first inverse order, lens-outside ordering, weighted
+support and the all-zero uniform fallback, every child-level bound, no B
+symmetry, the condensation depth shift, sampled-cloud lower bounds and flat
+3D/4D parity. The material and GPU tests then pin GLSL/WGSL source selection,
+`[A][B][emitters]` packing, combined params sizes, the 24-record cap and exact
+feature-off bytes; `surface-compute.test.ts` pins renderer resource selection
+and allocation, while `surface-eligibility.test.ts` pins app routing/refusal.
+
+The separate browser verifier, `scripts/surface-schedule.verify.mjs`, covers
+the presentation seam rather than duplicating those numeric comparators. It
+runs compute/off, compute/on, WebGL/off and WebGL/on legs, proves the requested
+engine actually activated and settled, records the ray census, then requires a
+structural on/off pixel delta within each engine (`schedule-effect`).
+
 ## Running it
 
 Add `--display=:0` for real-driver timing. Run it on a QUIET machine, never
@@ -38,12 +81,14 @@ standing advice, and the reason is the known SwiftShader false failure
 documented below. Do not raise the escape agreement cap to make a
 SwiftShader run green.
 
-For the condensation and escape-geometry landings, run the static gates before
-adapter evidence:
+For the condensation, escape-geometry and scheduled-hybrid landings, run the
+static gates before adapter evidence:
 
 ```bash
 npx vitest run src/app/gpu-bench/condensation.test.ts \
+  src/app/gpu-bench/schedule.test.ts \
   src/fractal/condensation-de.test.ts src/fractal/surface-de-gpu.test.ts \
+  src/fractal/surface-schedule.test.ts \
   src/fractal/shape-trap.test.ts src/fractal/escape-de.test.ts \
   src/fractal/escape-de-4d.test.ts \
   src/app/surface-compute.test.ts src/app/surface-eligibility.test.ts \
@@ -53,10 +98,27 @@ npx tsc --noEmit
 npm run bench:surface -- --display=:0
 ```
 
+Run the schedule presentation verifier against a separately served production
+build:
+
+```bash
+npm run build
+npm run preview
+# In another shell:
+node scripts/surface-schedule.verify.mjs --mode=x11::0
+```
+
+The real-display form exits 0 only after all four engine/variant legs and both
+`schedule-effect` comparisons pass. `--mode=sw` is a software diagnostic: a
+successful diagnostic deliberately exits 2 and is not release evidence.
+
 The benchmark run is accepted only when the Gearworks eval row, the
-condensation unproject row and both trap-geometry agreement rows report
-`fail=0`, and the section verdict is `pass`. The JSON artifact remains the
-evidence record; do not infer real-driver timing from SwiftShader.
+condensation unproject row, both trap-geometry agreement rows and both
+`scheduledSpongeOfFerns*` eval rows report `fail=0`;
+`marchUnprojectSchedule` must also satisfy its completion/pass/hit-mix gate,
+`computeFrameSchedule` must satisfy the production-frame gate above, and the
+section verdict must be `pass`. The JSON artifact remains the evidence record;
+do not infer real-driver timing from SwiftShader.
 
 Measured on real Iris (gen-12lp), both geometry rows passed with `fail=0`.
 `escChainPair+trap-geometry` reported `maxAbs=7.34e-7`, 71 excluded and
@@ -64,8 +126,10 @@ Measured on real Iris (gen-12lp), both geometry rows passed with `fail=0`.
 `esc4ChainWRot+trap-geometry` reported `maxAbs=5.81e-7`, 77 excluded and
 125/700 geometry-winning samples. The activation count gates at 32 samples,
 so a fixture that accidentally exercises only the classic escape term fails
-even if its numerical comparator is green. The complete Surface section and
-the existing 5,184-ray condensation unproject leg also passed with `fail=0`.
+even if its numerical comparator is green. That pre-schedule real-Iris run's
+complete Surface section and the existing 5,184-ray condensation unproject leg
+also passed with `fail=0`; the scheduled rows require a fresh artifact under
+the criteria above, and no real-driver figures for them are recorded here yet.
 
 ## The known SwiftShader false failure
 

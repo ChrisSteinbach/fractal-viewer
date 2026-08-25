@@ -124,6 +124,44 @@ genuinely connected curve (Douady's rabbit) and one an unambiguous Cantor
 dust; see `docs/julia-sets.md` for the recipe, why two presets, and the
 harmonic-measure coverage bias IIM inherits.
 
+## Scheduled hybrid post-word
+
+A scene may carry a `HybridSchedule` beside its transform list: a second,
+affine-only system B and a finite word length `k` in 1..5. The ordinary chaos
+game still evolves system A and leaves that orbit state untouched; only when a
+point is about to be plotted does it draw `k` B maps, apply them in draw order,
+and then apply the final-transform lens. The visible set before that lens is
+therefore the finite union `B^k(A)` — a sponge made of whole ferns, rather than
+one combined transform list in which sponge maps also recurse down every fern
+branch. Symmetry belongs to A and has already made its copy before B arranges
+it; B never inherits A's symmetry.
+
+`chaos-game.ts` owns B's selection semantics through `prepareSchedule`. Unit
+weights take the one-draw uniform fast path. A genuinely weighted table gives
+support only to positive-width cumulative intervals, so zero-probability maps
+do not add geometry; if the total is zero or otherwise disables the weighted
+table, the established all-zero fallback is uniform and every B map is again
+in support. `prepareSchedule4` lifts the same stripped 3D affines through
+`toTransform4`; B deliberately has no variations, `w` block, chaos row, finish
+or color attribution. An absent block, an empty B, or depth 0 is the exact
+classic path: no extra RNG draws, slots, source variants or buffers.
+
+The block is scene-level state (`AppState.schedule`) because it changes every
+render consumer together. `state.ts` strips a selected preset, saved scene or
+current-system snapshot to the affine fields; `persist.ts` writes the block to
+scene files and shared links and decodes it with quiet whole-block fallback;
+the cloud worker, both Flame backends, both voxel accumulators and the Surface
+builders all receive that same document value. A preset installs its schedule
+through `PRESET_SCHEDULES`, and every preset without one clears the old block
+instead of accidentally composing the incoming artwork with stale B state.
+
+The shipped **Sponge of Ferns** composes a spread Menger B at depth 2 over
+Barnsley's A. Barnsley's exact stem has a singular zero x column, which a
+Surface inverse cannot represent, so only this showcase's private A factory
+widens that scale to `1e-3`; the standalone Barnsley preset stays canonical.
+The result is still roughly 160:1 anisotropic and honestly enters Surface as a
+degraded system at the conservative step-scale floor.
+
 ## Final transform
 
 A **final transform** (the fractal-flame _final xform_) is one more affine +
@@ -615,10 +653,10 @@ inverse image lands nearest the origin and tracking the accumulated
 contraction so the final distance can be un-scaled once the descent bottoms
 out: the classic KIFS `dr *= scale` bookkeeping, generalized from a set of
 maps that fold onto themselves to an arbitrary IFS. `src/fractal/
-surface-de.ts`'s `buildSurfaceDE` precomputes the inverse of every active map
-— symmetry-expanded exactly like the chaos game's own kaleidoscope copies —
-plus a seeded probe of the attractor's bounding radius and a pre-inverted
-final-transform lens; `estimateDistance` is the descent itself, following
+surface-de.ts`'s `buildSurfaceDE` precomputes the inverse of every active base
+map plus the one-step symmetry pose swept around those maps, a seeded probe of
+the attractor's bounding radius and a pre-inverted final-transform lens;
+`estimateDistance` is the descent itself, following
 the two nearest inverse images at each level (the width-2 beam)
 plus up to two more that hold the rank-3/4 candidates while they stay
 in-sphere (the validity slots — in-sphere branches carry no positive
@@ -639,6 +677,38 @@ skip any fold whose plain certificate already fails to beat the running
 min, bit-exact since refinement only raises certificates — keeps the cost
 at ~2-4x inverse applications). See that module's doc comment for the
 bound's derivation and the measured tables.
+
+A live scheduled hybrid turns that stationary inverse tree into one finite
+level-dependent prefix. Query space first passes through the inverse final
+lens — the lens is outside the word and is not a descent level. Global depths
+`d < k` then enumerate only supported affine B inverses, with symmetry order
+1, unwinding the last-applied B map first; depths `d >= k` enumerate A inverses
+with A's authored symmetry. `maxDepth` includes those `k` finite levels before
+the ordinary A-depth budget. B needs a finite inverse but no contraction gate:
+it is not iterated to infinity. The 3D route additionally requires B to stay
+flat; both dimensions include B's anisotropy in the conservative step scale.
+
+The builder represents that prefix as `SurfaceScheduleDE` /
+`SurfaceScheduleDE4` on the public DE. In 3D each `SurfaceLevelBound` carries
+`center/radius/escapeRadius`; in 4D each origin-centred `SurfaceLevelBound4`
+carries `radius/escapeRadius`. `bounds[0]` encloses `B^k(A)`, `bounds[k]`
+encloses A, and intermediate global-depth entries enclose the corresponding
+remaining B suffix. A candidate generated at depth `d` is classified against
+`bounds[d + 1]`; root and terminal terms use the current `bounds[d]`. The
+legacy 3D `boundCenter`, and both dimensions' `boundingRadius` /
+`escapeRadius`, remain aliases of the root entry. The seeded calibration probe
+follows the same visible order — schedule, then lens — while every B image
+also receives an analytic affine ball certificate, so a sparse point sample
+can never define the bound.
+
+Condensation and material attribution remain A-local. No C0 term exists in
+the B-only prefix; at global depth `d >= k`, condensation reads authored
+A-depth `d - k`, including its future-enabled pruning test. Likewise B slots
+can contribute geometric ring/sheet trajectories but own no color, finish,
+pattern or trap slot: the first A choice at the B/A boundary supplies the
+material. This shift is why a scheduled shader's physical record order is
+`[A][B][symmetry-expanded emitters]` while its logical shade space is still A
+plus unique emitters.
 
 Whether a valid DE exists at all — and how fast it can be marched — turns on
 **conformality**. For an invertible affine map with linear part `M`,
@@ -725,6 +795,17 @@ against the live camera IS the first frame, and every orbit/zoom afterward
 just repeats that same call, exactly like the solid render's raymarcher
 re-running each frame against its density grid, only here against an
 analytic field that has no convergence to wait on.
+
+The app passes the schedule to eligibility analysis and to the selected 3D or
+4D builder before choosing a presentation engine. A scheduled inverse refusal
+is terminal — falling through to an escape/bulb forward core would render A
+alone and is therefore forbidden. Otherwise the existing route remains in
+force: plain 3D affine systems naturally use GLSL, fold/fold-lens 3D prefers
+compute, every 4D IFS prefers compute, and their established fragment fallbacks
+remain available where that system class has one. Both shader wires enforce
+one physical 24-record cap across A, supported B and symmetry-expanded
+emitters; B does not consume a shade slot. Null and zero-depth schedules keep
+the pre-schedule source and packed bytes exact.
 
 Two speedups shave that per-ray cost without touching the oracle
 discipline. The march hands its own acceptance epsilon to the DE as an

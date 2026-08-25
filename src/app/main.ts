@@ -112,10 +112,7 @@ import {
   presetTransforms,
 } from "../fractal/presets";
 import type { Preset } from "../fractal/presets";
-import {
-  chaosRowIsNonTrivial,
-  resolveScheduleDepth,
-} from "../fractal/chaos-game";
+import { chaosRowIsNonTrivial } from "../fractal/chaos-game";
 import {
   buildPaletteLUT,
   CUSTOM_PALETTE_ID,
@@ -4668,18 +4665,22 @@ function main(): void {
 
   const surfaceSession = new RenderSession<never>({
     start: () => {
-      // The scheduled-hybrid refusal, AIRTIGHT at the session door: the
-      // eligibility gate already disables the button
-      // (deriveSurfaceEligibility's own schedule arm), but entry paths that
-      // bypass the button — a timeline keyframe saved in surface mode, the
-      // isolation-reload handoff, a mid-session document change — land here
-      // regardless, and the routing below re-derives from analyzers that
-      // cannot see scene-level state. Same deferred-exit shape as the
-      // routing's own compute-unavailable arms. The descent lift is
-      // fr-wo2j.12.
-      if (resolveScheduleDepth(state.schedule ?? null) > 0) {
+      // Re-run the shared document gate at the session door. The button has
+      // already used this answer, but timeline/isolation restores and
+      // mid-session document changes can bypass the button. In particular a
+      // scheduled document whose inverse analysis fails must never fall
+      // through to an escape renderer that ignores B.
+      const sessionEligibility = deriveSurfaceEligibility(
+        state.transforms,
+        state.finalTransform ?? null,
+        state.symmetry,
+        { computeAvailable: surfaceComputeAvailable() },
+        state.schedule ?? null,
+        state.shapeTrap ?? null,
+      );
+      if (sessionEligibility.status === "ineligible") {
         ui.flashToast(
-          "Surface is unavailable with a hybrid schedule: the post-word rewrites every plotted point, so Surface would march system A alone. Remove the schedule to enter Surface.",
+          `Surface is unavailable: ${sessionEligibility.note ?? "this document has no supported surface estimator"}.`,
         );
         queueMicrotask(() => surfaceSession.exit());
         return { post: () => {}, terminate: () => teardownSurfaceCompute() };
@@ -4735,6 +4736,7 @@ function main(): void {
             analyzeSurfaceSystem4(
               state.transforms,
               state.finalTransform ?? null,
+              state.schedule ?? null,
             ).status === "ineligible"
           ) {
             // The 4D IFS gate refused, so the FORWARD-ORBIT complement one
@@ -4829,7 +4831,10 @@ function main(): void {
               state.transforms,
               state.finalTransform ?? null,
               state.symmetry,
-              { condensationDepthBand: state.condensationDepthBand },
+              {
+                condensationDepthBand: state.condensationDepthBand,
+                schedule: state.schedule ?? null,
+              },
             );
             sessionMaterials = gatedSlotMaterials(
               ifsShadeSlots(de),
@@ -4960,8 +4965,11 @@ function main(): void {
             surfaceGrid.cancel();
           }
         } else if (
-          analyzeSurfaceSystem(state.transforms, state.finalTransform ?? null)
-            .status === "ineligible"
+          analyzeSurfaceSystem(
+            state.transforms,
+            state.finalTransform ?? null,
+            state.schedule ?? null,
+          ).status === "ineligible"
         ) {
           // The IFS gate refused — so one of the two FORWARD-ORBIT
           // complements (the escape-time folds, or the Mandelbulb). Neither
@@ -5138,7 +5146,10 @@ function main(): void {
             state.transforms,
             state.finalTransform ?? null,
             state.symmetry,
-            { condensationDepthBand: state.condensationDepthBand },
+            {
+              condensationDepthBand: state.condensationDepthBand,
+              schedule: state.schedule ?? null,
+            },
           );
           sessionMaterials = gatedSlotMaterials(
             ifsShadeSlots(de),
@@ -6598,9 +6609,9 @@ function main(): void {
         // (PRESET_SCHEDULES) — the lens table's exact both-directions rule:
         // a preset composed around a schedule installs it, and every other
         // preset CLEARS one, because a leftover post-word would rearrange
-        // the arriving attractor into copies it was never composed with —
-        // and would take the Surface modes away outright (the gate refuses
-        // schedule documents until the descent lift ships).
+        // the arriving attractor into copies it was never composed with.
+        // Surface now consumes that same finite B prefix, but clearing remains
+        // compositionally necessary: B belongs to this preset, not the next.
         state = setSchedule(state, PRESET_SCHEDULES[preset]?.() ?? null);
         // A finite condensation band is authored composition, not a viewer
         // preference. No shipped preset currently narrows it, so every

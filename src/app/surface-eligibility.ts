@@ -28,6 +28,7 @@ import {
   transformSigmas4,
 } from "../fractal/surface-de-4d";
 import {
+  buildScheduleTable,
   effectiveSymmetryOrder,
   resolveScheduleDepth,
   transformHasEmitter,
@@ -103,6 +104,27 @@ function hasActiveEmitter(transforms: Transform[]): boolean {
   );
 }
 
+/**
+ * Number of B inverse records the scheduled descent must carry. This reads
+ * the point engine's prepared-table convention rather than treating
+ * `weight > 0` as a second selection definition: when B's weighted table is
+ * disabled (unit weights, or the all-zero fallback) every entry is selected
+ * uniformly; otherwise only a positive-width cumulative interval contributes
+ * support geometry.
+ */
+function scheduleRecordCount(schedule: HybridSchedule | null): number {
+  if (resolveScheduleDepth(schedule) === 0 || schedule === null) return 0;
+  const table = buildScheduleTable(schedule.transforms);
+  if (!table.weighted) return table.count;
+  let count = 0;
+  let previous = 0;
+  for (const cumulative of table.cumulative) {
+    if (cumulative > previous) count++;
+    previous = cumulative;
+  }
+  return count;
+}
+
 /** Trap geometry's deliberately narrower admission inside an otherwise
  * marchable escape-time route. Color trapping is defined for every forward
  * orbit, but pulling a shape SDF back into distance geometry relies on the
@@ -176,31 +198,29 @@ export function deriveSurfaceEligibility(
   schedule: HybridSchedule | null = null,
   shapeTrap: ShapeTrap | null = null,
 ): SurfaceEligibilityResult {
-  // The scheduled-hybrid post-word refuses Surface OUTRIGHT, ahead of every
-  // analyzer: the analyzers gate SYSTEM shape and cannot see scene-level
-  // state, but the post-word changes the attractor itself — the rendered
-  // set is the depth-k B-arrangement of A's attractor, a DIFFERENT object —
-  // so an estimator that ignored the block would march the wrong one (worse
-  // than a knob that never reaches the DE, which at least renders the same
-  // picture). Keyed on the ONE consumption domain (`resolveScheduleDepth`)
-  // so a dead block (depth 0 / empty B — shapes the reducer never stores
-  // but a hand-built document could) refuses nothing, exactly as it renders
-  // nothing. The descent-side lift (a level-dependent alphabet: levels < k
-  // descend only B's inverse maps, deeper levels only A's) is the open item
-  // this refusal waits on: fr-wo2j.12.
-  if (resolveScheduleDepth(schedule) > 0) {
-    return {
-      status: "ineligible",
-      note: "the hybrid schedule rewrites every plotted point; Surface would march system A alone",
-      kind: null,
-    };
-  }
+  const scheduleRecords = scheduleRecordCount(schedule);
+  const hasSchedule = scheduleRecords > 0;
   // A 4D document routes to the 4D analysis — what used to be this gate's
   // blanket "extends into 4D" disqualifier is now the 4D tracer's
   // admission ticket.
   if (systemPartsAreNonFlat(transforms, finalTransform, symmetry)) {
-    const analysis = analyzeSurfaceSystem4(transforms, finalTransform);
+    const analysis = analyzeSurfaceSystem4(
+      transforms,
+      finalTransform,
+      schedule,
+    );
     if (analysis.status === "ineligible") {
+      // A schedule is defined only for inverse descent. Falling through to a
+      // forward escape renderer here would silently drop B and render a
+      // different object, so an A/B analysis refusal is terminal whenever
+      // the post-word is live.
+      if (hasSchedule) {
+        return {
+          status: "ineligible",
+          note: analysis.reasons.join("; "),
+          kind: null,
+        };
+      }
       // The 4D IFS gate's FORWARD-ORBIT complement, the 3D arm's escape
       // clause one dimension up. Reported through the "degraded" channel
       // for the same reason: the note has to name the different object
@@ -292,11 +312,16 @@ export function deriveSurfaceEligibility(
     // The 4D tracer's uniform cap. No symmetry multiplier — the 4D descent
     // sweeps kaleidoscope sectors around the base maps, so slots are active
     // maps 1:1 at any order.
-    const records4 = condensationRecordCount(transforms, symmetry);
+    const records4 =
+      condensationRecordCount(transforms, symmetry) + scheduleRecords;
     if (records4 > SURFACE4_MAX_MAPS) {
-      const countLabel = hasActiveEmitter(transforms)
-        ? "map/emitter records"
-        : "maps";
+      const countLabel = hasSchedule
+        ? hasActiveEmitter(transforms)
+          ? "map/emitter/schedule records"
+          : "map/schedule records"
+        : hasActiveEmitter(transforms)
+          ? "map/emitter records"
+          : "maps";
       return {
         status: "ineligible",
         note: `${records4} ${countLabel} (the 4D surface tracer carries at most ${SURFACE4_MAX_MAPS})`,
@@ -313,8 +338,18 @@ export function deriveSurfaceEligibility(
     return { status: "eligible", note: null, kind: "ifs4" };
   }
 
-  const analysis = analyzeSurfaceSystem(transforms, finalTransform);
+  const analysis = analyzeSurfaceSystem(transforms, finalTransform, schedule);
   if (analysis.status === "ineligible") {
+    // As in 4D above, no forward renderer consumes the scheduled B word.
+    // Keep an inverse-analysis refusal terminal instead of admitting an
+    // attractive but confidently wrong A-only escape object.
+    if (hasSchedule) {
+      return {
+        status: "ineligible",
+        note: analysis.reasons.join("; "),
+        kind: null,
+      };
+    }
     // The escape-time complement: a single non-contracting pure-fold map —
     // the canonical Mandelbox parameterization — has no IFS attractor, but
     // Surface can march its escape-time set instead. Reported through the
@@ -402,11 +437,16 @@ export function deriveSurfaceEligibility(
   // The tracer's uniform cap, on the BARE active-map count: the descent
   // sweeps kaleidoscope sectors around the base maps, so order costs no
   // slots and every order is admissible.
-  const records = condensationRecordCount(transforms, symmetry);
+  const records =
+    condensationRecordCount(transforms, symmetry) + scheduleRecords;
   if (records > SURFACE_MAX_RECORDS) {
-    const countLabel = hasActiveEmitter(transforms)
-      ? "map/emitter records"
-      : "maps";
+    const countLabel = hasSchedule
+      ? hasActiveEmitter(transforms)
+        ? "map/emitter/schedule records"
+        : "map/schedule records"
+      : hasActiveEmitter(transforms)
+        ? "map/emitter records"
+        : "maps";
     return {
       status: "ineligible",
       note: `${records} ${countLabel} (the surface tracer carries at most ${SURFACE_MAX_RECORDS})`,

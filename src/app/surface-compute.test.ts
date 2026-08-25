@@ -38,6 +38,9 @@ import type {
 import { DARK_BACKDROP, hexToRgb01 } from "./constants";
 import {
   SURFACE_GPU_HIT_FLOOR,
+  SURFACE_GPU_PARAMS4_SCHEDULE_BYTES,
+  SURFACE_GPU_PARAMS_SCHEDULE_BYTES,
+  SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES,
   surfaceDeKernelWgsl,
 } from "../fractal/surface-de-gpu";
 import { SURFACE_FULL_HIT_FLOOR } from "./surface-material";
@@ -55,6 +58,7 @@ import {
   mandelboxBrick,
   PRESET_TRAPS,
 } from "../fractal/presets";
+import type { Transform } from "../fractal/types";
 
 describe("the two engines' full-tier hit floor (mirror pin)", () => {
   it("is ONE number: surface-de-gpu.ts's SURFACE_GPU_HIT_FLOOR is surface-material.ts's SURFACE_FULL_HIT_FLOOR", () => {
@@ -1508,6 +1512,97 @@ describe("SurfaceComputeRenderer condensation session resources", () => {
       expect(source).toContain("max(shapeDistance, 0.0), local.w");
     }
     expect(harness.bufferDescriptors[0].size).toBe(592);
+    harness.renderer.destroy();
+  });
+});
+
+describe("SurfaceComputeRenderer scheduled-hybrid session resources", () => {
+  const schedule = {
+    transforms: [
+      {
+        id: 0,
+        position: [-0.4, 0, 0] as [number, number, number],
+        rotation: [0, 0, 0] as [number, number, number],
+        scale: [0.45, 0.45, 0.45] as [number, number, number],
+      },
+      {
+        id: 1,
+        position: [0.4, 0, 0] as [number, number, number],
+        rotation: [0, 0, 0] as [number, number, number],
+        scale: [0.45, 0.45, 0.45] as [number, number, number],
+      },
+    ] satisfies Transform[],
+    depth: 2,
+  };
+
+  it("selects scheduled 3D kernels and allocates their appended params block", async () => {
+    const de = buildSurfaceDE(
+      defaultTransforms(),
+      null,
+      { order: 1, plane: "xz" },
+      { schedule },
+    );
+    const harness = await createPaletteResourceHarness(false, {
+      kind: "ifs",
+      de,
+    });
+
+    expect(harness.shaderSources).toHaveLength(2);
+    for (const source of harness.shaderSources) {
+      expect(source).toContain("scheduleMapStart");
+      expect(source).toContain("scheduleBound1");
+    }
+    expect(harness.bufferDescriptors[0].size).toBe(
+      SURFACE_GPU_PARAMS_SCHEDULE_BYTES,
+    );
+    harness.renderer.destroy();
+  });
+
+  it("does the same for both slab variants of the 4D lift", async () => {
+    const de = buildSurfaceDE4(
+      defaultTransforms(),
+      null,
+      { order: 1, plane: "xz" },
+      { schedule },
+    );
+    const harness = await createPaletteResourceHarness(false, {
+      kind: "ifs4",
+      de,
+    });
+
+    expect(harness.shaderSources).toHaveLength(4);
+    for (const source of harness.shaderSources) {
+      expect(source).toContain("scheduleMapStart");
+      expect(source).toContain("scheduleBound1");
+    }
+    expect(harness.bufferDescriptors[0].size).toBe(
+      SURFACE_GPU_PARAMS4_SCHEDULE_BYTES,
+    );
+    harness.renderer.destroy();
+  });
+
+  it("allocates the combined schedule-plus-condensation ABI", async () => {
+    const de = buildSurfaceDE(
+      gearworks(),
+      null,
+      { order: 1, plane: "xz" },
+      {
+        schedule,
+        condensationDepthBand: { minDepth: 1, maxDepth: 3 },
+      },
+    );
+    const harness = await createPaletteResourceHarness(false, {
+      kind: "ifs",
+      de,
+    });
+
+    for (const source of harness.shaderSources) {
+      expect(source).toContain("scheduleMapStart");
+      expect(source).toContain("struct CondensationHit");
+    }
+    expect(harness.bufferDescriptors[0].size).toBe(
+      SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES,
+    );
     harness.renderer.destroy();
   });
 });

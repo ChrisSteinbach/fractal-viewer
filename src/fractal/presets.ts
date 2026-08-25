@@ -485,6 +485,24 @@ export function barnsleyFern(): Transform[] {
 }
 
 /**
+ * Surface-compatible A system for the scheduled Sponge of Ferns showcase.
+ * Barnsley's canonical stem has an exactly zero x column, so no inverse-map
+ * descent can represent it. Keep the standalone Barnsley preset exact and
+ * widen only this composition's stem by one visually sub-pixel scale unit:
+ * safely above the inverse singularity floor, still 160:1 anisotropic (and
+ * therefore truthfully reported as a slow/degraded Surface system).
+ */
+function spongeOfFernsAttractor(): Transform[] {
+  const transforms = barnsleyFern();
+  const stem = transforms[0];
+  transforms[0] = {
+    ...stem,
+    scale: [1e-3, stem.scale[1], stem.scale[2]],
+  };
+  return transforms;
+}
+
+/**
  * Curling Fern — Barnsley's fern lifted into 3-D. The maps are identical except
  * the frond is tilted {@link FERN_CURL} radians out of plane each time it
  * recurses, so the frond rolls toward its tip like an unfurling fiddlehead and
@@ -2257,7 +2275,7 @@ const PRESETS = {
   // the fern-and-sponge family: system A alone here — the schedule block
   // (B = the sponge, depth 2) rides PRESET_SCHEDULES, exactly as a lens
   // rides PRESET_FINALS.
-  spongeOfFerns: barnsleyFern,
+  spongeOfFerns: spongeOfFernsAttractor,
   // The shape-emitter (condensation) reachability proof, fourth member of
   // the multi-system family: a Sierpinski tetrahedron of gear wheels.
   gearworks,
@@ -2609,12 +2627,11 @@ function spongeOfFernsSchedule(): HybridSchedule {
  * side table, on {@link PRESET_FINALS}' exact both-directions rule: a
  * preset composed around a schedule installs it, and every other preset
  * CLEARS one (ABSENT MEANS CLEAR — a leftover post-word would rearrange
- * the arriving attractor into copies it was never composed with, and would
- * take the Surface modes away outright, since the gate refuses schedule
- * documents until the descent lift ships). A factory like
+ * the arriving attractor into copies it was never composed with). A factory like
  * `PRESET_FINALS`' entries — main.ts's handler feeds it through
  * `setSchedule`, which strips and clamps, so the table cannot smuggle
- * non-affine fields into the document even if an entry grew some.
+ * non-affine fields into the document even if an entry grew some. Surface
+ * consumes the same finite B prefix through its level-dependent descent.
  */
 export const PRESET_SCHEDULES: Partial<Record<Preset, () => HybridSchedule>> = {
   spongeOfFerns: spongeOfFernsSchedule,

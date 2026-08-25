@@ -196,6 +196,148 @@ function condEmitter4(
   };
 }
 
+function scheduled4(
+  maps: SurfaceDE4Map[],
+  depth = 2,
+): NonNullable<SurfaceDE4["schedule"]> {
+  return {
+    maps,
+    depth,
+    bounds: Array.from({ length: depth + 1 }, (_, d) => ({
+      radius: 10 - d,
+      escapeRadius: 20 - 2 * d,
+    })),
+  };
+}
+
+describe("4D GLSL finite schedule packing and source", () => {
+  it("keeps absent and zero-depth schedules on the exact legacy program", () => {
+    const legacy = surface4FragmentFor();
+    expect(surface4FragmentFor(0, 0, 0, 0, null, 0)).toBe(legacy);
+    expect(legacy).not.toContain("uSchedule");
+    expect(legacy).not.toContain("surface4LevelBound");
+    const condensationLegacy = surface4FragmentFor(0, 0, 0, 0, [COND4_SPHERE]);
+    expect(surface4FragmentFor(0, 0, 0, 0, [COND4_SPHERE], 0)).toBe(
+      condensationLegacy,
+    );
+    expect(condensationLegacy).not.toContain("uCondMapCount");
+
+    const material = createSurfaceMaterial4();
+    const original = material.fragmentShader;
+    setSurfaceSystem4(
+      material,
+      { ...de4([map4()]), schedule: scheduled4([map4()], 0) },
+      [[0, 0, 0]],
+    );
+    expect(material.defines.SURFACE4_SCHEDULE).toBeUndefined();
+    expect(material.uniforms.uScheduleDepth.value).toBe(0);
+    expect(material.fragmentShader).toBe(original);
+  });
+
+  it("packs [A][B][emitters] while record, schedule and shade counts remain separate", () => {
+    const material = createSurfaceMaterial4();
+    const de: SurfaceDE4 = {
+      ...de4([map4({ invT: [1, 0, 0, 0] }), map4({ invT: [2, 0, 0, 0] })]),
+      schedule: scheduled4([
+        map4({ invT: [3, 0, 0, 0], sigmaMin: 0.3 }),
+        map4({ invT: [4, 0, 0, 0], sigmaMin: 0.4 }),
+      ]),
+      condensation: {
+        emitters: [condEmitter4(COND4_SPHERE, 2, [5, 0, 0, 0])],
+        depthBand: { minDepth: 0, maxDepth: 2 },
+      },
+    };
+    setSurfaceSystem4(material, de, [
+      [0, 0, 0],
+      [0, 0, 0],
+      [1, 0, 0],
+    ]);
+    const u = material.uniforms;
+    expect(u.uMapCount.value).toBe(2);
+    expect(u.uScheduleCount.value).toBe(2);
+    expect(u.uScheduleDepth.value).toBe(2);
+    expect(u.uCondMapCount.value).toBe(4);
+    expect(u.uCondCount.value).toBe(1);
+    expect(u.uShadeCount.value).toBe(3);
+    const block = mapBlock(material);
+    expect([0, 1, 2, 3, 4].map((slot) => block.invT[slot * 4])).toEqual([
+      1, 2, 3, 4, 5,
+    ]);
+    // Logical emitter shade slot 2 shares B0's physical record lanes: its
+    // color occupies xyz without corrupting B0's contraction in w.
+    expect(Array.from(block.colorSigma.subarray(8, 11))).toEqual([1, 0, 0]);
+    expect(block.colorSigma[11]).toBeCloseTo(0.3);
+    const bounds = u.uScheduleBounds.value as THREE.Vector2[];
+    expect([bounds[0].x, bounds[0].y, bounds[1].x, bounds[1].y]).toEqual([
+      9, 18, 8, 16,
+    ]);
+  });
+
+  it("switches the d=k-1 refiner to A, suppresses B symmetry, and begins A attribution at d=k", () => {
+    const src = surface4FragmentResolvedFor(0, 0, 0, 0, null, 1);
+    expect(src).toContain("return depth < uScheduleDepth ? uMapCount : 0;");
+    expect(src).toContain("return depth < uScheduleDepth ? 1 : uSymOrder;");
+    expect(src).toContain("vec2 childBound = surface4LevelBound(depth + 1);");
+    expect(src).toContain(
+      "best = min(best, refinedCert4(eQ, eExt, eR, eScale, depth + 1));",
+    );
+    expect(src).toContain("if (depth == uScheduleDepth)");
+    expect(src).toContain("if (depth >= uScheduleDepth)");
+  });
+
+  it("composes schedule and condensation and preserves the post-B slab pattern trajectory", () => {
+    const src = surface4FragmentFor(1, 0, 1, 1, [COND4_SPHERE], 1);
+    expect(src).toContain("depth -= uScheduleDepth;");
+    expect(src).toContain("int slot = uCondMapCount + e;");
+    expect(src).toContain("patternScheduleCenter4 = c1Q;");
+    expect(src).toContain(
+      "patternRaw = patternScheduleCenter4 + sStar * patternScheduleExtent4",
+    );
+    expect(src).not.toContain("vec4 patternSource4 = vec4(pos");
+  });
+
+  it("accepts 24 physical records, rejects 25, strips the tight plain arm, and keeps every emitted variant below 64KB", () => {
+    const accepted = createSurfaceMaterial4();
+    setSurfaceSystem4(
+      accepted,
+      {
+        ...de4([map4(), map4()]),
+        schedule: scheduled4(Array.from({ length: 22 }, () => map4())),
+      },
+      [
+        [0, 0, 0],
+        [0, 0, 0],
+      ],
+    );
+    expect(accepted.uniforms.uScheduleCount.value).toBe(22);
+    expect(() =>
+      setSurfaceSystem4(
+        createSurfaceMaterial4(),
+        {
+          ...de4([map4(), map4()]),
+          schedule: scheduled4(Array.from({ length: 23 }, () => map4())),
+        },
+        [
+          [0, 0, 0],
+          [0, 0, 0],
+        ],
+      ),
+    ).toThrow(/schedule maps/);
+
+    const plainResolved = surface4FragmentResolvedFor(0, 0, 0, 0, null, 1);
+    const plain = surface4FragmentFor(0, 0, 0, 0, null, 1);
+    expect(plainResolved.length).toBeGreaterThan(SURFACE_GLSL_STRIP_BYTES);
+    expect(plain).not.toContain("//");
+    const variants = [
+      plain,
+      surface4FragmentFor(1, 0, 1, 1, null, 1),
+      surface4FragmentFor(0, 1, 1, 1, null, 1),
+      surface4FragmentFor(0, 0, 1, 1, [COND4_SPHERE], 1),
+    ];
+    for (const src of variants) expect(src.length).toBeLessThan(64 * 1024);
+  });
+});
+
 describe("4D GLSL condensation packing and source", () => {
   it("appends inverse records in the std140 map arrays while recursive and shade counts remain separate", () => {
     const material = createSurfaceMaterial4();

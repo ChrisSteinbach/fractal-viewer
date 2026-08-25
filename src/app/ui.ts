@@ -3364,7 +3364,7 @@ export class Ui {
     // shows the installed sentinel (the document stores B's maps, not
     // their source, so no source name can honestly survive a
     // reload/undo), the depth slider the block's depth (0 = absent), and
-    // the note names the composition and the Surface refusal.
+    // the note names the composition and its Surface cost profile.
     const schedule = state.schedule;
     this.scheduleInstalledOption.hidden = schedule === undefined;
     if (schedule) {
@@ -3376,7 +3376,8 @@ export class Ui {
         `Each plotted point is bent through ${schedule.depth} random ` +
         `B-map${schedule.depth === 1 ? "" : "s"} — the depth-${schedule.depth} ` +
         `B-arrangement of the attractor. Points, flame and solid render ` +
-        `the composition; Surface refuses it while the schedule is on.`;
+        `the composition; Surface follows the same finite B prefix when ` +
+        `all participating maps support inverse descent.`;
       this.scheduleNote.classList.remove("hidden");
     } else {
       this.scheduleSource.value = "";

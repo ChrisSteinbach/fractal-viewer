@@ -251,11 +251,13 @@ morphs into place instead of snapping (see **Presets** below).
   view-dependent rather than sample-dependent: zoom in and the surface keeps
   resolving finer instead of showing the grain a still would at the same
   zoom. Not every system has a valid distance estimator, so the button
-  disables itself — with the reason in its tooltip — whenever any active
+  disables itself — with the reason in its tooltip — whenever any active A
   map (or the final-transform lens) uses variations, is nearly flat
   (scale ≈ 0), or does not contract (scale ≥ 1), and also when the map
-  count exceeds the tracer's fixed uniform budget: the bare active-map
-  count against a 24-map limit, for flat and 4D systems alike (the 4D
+  count exceeds the tracer's fixed uniform budget. An ordinary document
+  counts its bare active maps; a **Hybrid schedule** counts the physical
+  `A | B | emitter` records together against the same 24-slot limit, for
+  flat and 4D systems alike (the 4D
   limit was raised from 16 by moving that tracer's per-map arrays into a
   std140 uniform block — the 24-map **24-cell** presets
   surface now). **Symmetry** no longer counts against that budget: the flat
@@ -272,9 +274,11 @@ morphs into place instead of snapping (see **Presets** below).
   copy instead of refusing the document. **Cog levels** chooses all depths,
   root only, or a custom inclusive min/max word-depth band (root is 0).
   Emitters do not recurse and their variations are skipped; ordinary maps
-  remain the recursive alphabet. The 24-slot gate counts ordinary maps plus
-  symmetry-expanded emitter records, while symmetry copies share the
-  emitter's one color/material slot. Unsamplable or nearly-flat emitters,
+  remain the recursive alphabet. In a schedule-free document the 24-slot
+  gate therefore counts ordinary maps plus symmetry-expanded emitter
+  records; with a schedule, B's supported affine maps sit between those two
+  groups. Symmetry copies share the emitter's one color/material slot.
+  Unsamplable or nearly-flat emitters,
   emitter-only documents and an emitter on the final transform remain
   refused. In a 4D Surface session the 3D emitter solid is embedded at local
   w=0, so **Slice thickness** is clamped to 0 for condensation geometry.
@@ -1228,6 +1232,41 @@ Peace` is the color example; `Fold Chain Gear` is the geometry example.
   under the sliders names the reduced order that actually renders. The
   whole setting persists in the link, and every render mode — Points,
   Flame, Solid, Surface — renders the same kaleidoscope.
+- **Hybrid schedule** — builds a finite arrangement of one attractor from a
+  second transform list: choose a preset or saved scene under **System B**,
+  or press **Use current system as B**, then set **Depth** from 1 to 5. Each
+  plotted point from the current system A is passed through that many
+  independently selected B maps and only then through the final-transform
+  lens. B is stored affine-only — position, rotation, scale, shear and
+  selection weight; its variations, 4D block, chaos rows and material/color
+  fields are deliberately stripped. Depth 0 or **None** removes the entire
+  block and restores the classic path without extra random draws. The block
+  persists in scene files and shared links; because it stores a snapshot of
+  B rather than a live source reference, a reloaded picker says **System B
+  (N maps)** instead of claiming it still follows the preset or saved scene
+  it came from.
+
+  Points, Flame and Solid apply the finite post-word directly. Surface
+  renders the same object by reversing it: the first `k` global descent
+  levels use only B's affine inverse maps with symmetry disabled, then the
+  ordinary A inverse maps and A's authored symmetry take over. The final
+  lens remains outside those levels. Surface accepts an expanding B map — B
+  is finite, so it has no contraction requirement — but still requires every
+  B map that selection can reach to be invertible (and flat for the 3D
+  tracer). A weighted B ignores zero-probability maps; the all-zero-weight
+  fallback is the point engine's uniform path and therefore includes every
+  B map. An inverse-analysis refusal is terminal for a scheduled Surface
+  document: it never falls through to an A-only escape renderer and silently
+  drops the composition.
+
+  **Sponge of Ferns** is the shipped showcase: A is Barnsley's fern and B is
+  a spread Menger sponge at depth 2. Barnsley's canonical stem has exactly
+  zero x scale and cannot be inverted, so this composition alone widens that
+  stem to `0.001`; the standalone Barnsley preset remains exact. The widened
+  stem is still about 160:1 anisotropic, so Surface reports the showcase as
+  degraded and marches at its conservative step-scale floor; point modes do
+  not need that approximation for the standalone fern.
+
 - **3D View** — appears while the current system is _flat_, in the same panel
   spot **4D View** (below) takes over for a non-flat one. **Auto-orbit
   (turntable)** slowly circles the camera around the cloud — one revolution

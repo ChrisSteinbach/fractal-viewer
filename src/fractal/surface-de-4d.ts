@@ -1,6 +1,7 @@
 import { composeAffine4, symmetryRotation4, toTransform4 } from "./affine4";
 import {
   effectiveSymmetryOrder,
+  prepareSchedule,
   prepareEmitters,
   systemHasChaos,
   transformHasEmitter,
@@ -50,6 +51,7 @@ import type {
 } from "./surface-de";
 import { resolveFoldRadii, sphereFoldLipschitz } from "./variations";
 import type {
+  HybridSchedule,
   SymmetryParams,
   Transform,
   Transform4,
@@ -702,6 +704,12 @@ export interface SurfaceEligibility4 {
   sigmas: MapSigmas[];
 }
 
+/** One origin-centred global-depth bound in a scheduled 4D descent. */
+export interface SurfaceLevelBound4 {
+  radius: number;
+  escapeRadius: number;
+}
+
 /**
  * Classify a system for a 4D surface render mode. Mirrors 3D's
  * `analyzeSurfaceSystem` — the pure-fold base-map carve-out and the pure-fold
@@ -735,6 +743,7 @@ export interface SurfaceEligibility4 {
 export function analyzeSurfaceSystem4(
   transforms: Transform[],
   finalTransform: Transform | null = null,
+  schedule: HybridSchedule | null = null,
 ): SurfaceEligibility4 {
   const reasons: string[] = [];
   const sigmas = transforms.map((t) => transformSigmas4(toTransform4(t)));
@@ -848,6 +857,21 @@ export function analyzeSurfaceSystem4(
     } else {
       anisotropy = Math.max(anisotropy, s.max / s.min);
     }
+  }
+
+  const preparedSchedule = prepareSchedule(schedule);
+  if (preparedSchedule) {
+    const supported = schedule!.transforms.filter(
+      (t) => !preparedSchedule.weighted || (t.weight ?? 1) > 0,
+    );
+    supported.forEach((t, i) => {
+      const s = transformSigmas4(toTransform4(t));
+      if (s.min < NEAR_SINGULAR_SIGMA) {
+        reasons.push(`schedule map ${i + 1} is nearly flat (scale ≈ 0)`);
+      } else {
+        anisotropy = Math.max(anisotropy, s.max / s.min);
+      }
+    });
   }
 
   const status: SurfaceEligibilityStatus =
@@ -1036,6 +1060,8 @@ export interface SurfaceDE4 {
    * swept around every entry, so this array is base-sized at any
    * order. */
   maps: SurfaceDE4Map[];
+  /** Finite B-prefix inverse maps and global-depth bounds. */
+  schedule?: SurfaceScheduleDE4;
   /** Condensation set C0, omitted completely on emitter-free systems. */
   condensation?: CondensationDE4;
   /** Kaleidoscope sectors swept around every {@link maps} entry. */
@@ -1113,6 +1139,13 @@ export interface SurfaceDE4 {
 
 export interface SurfaceDE4BuildOptions {
   condensationDepthBand?: CondensationDepthBand;
+  schedule?: HybridSchedule | null;
+}
+
+export interface SurfaceScheduleDE4 {
+  maps: SurfaceDE4Map[];
+  depth: number;
+  bounds: SurfaceLevelBound4[];
 }
 
 /** The two fractal-native carrier values produced by the 4D surface shade
@@ -1125,7 +1158,12 @@ export interface SurfaceNativeCarriers4 {
 
 type SurfaceNativeCarrierFrame4 = Pick<
   SurfaceDE4,
-  "maps" | "symmetry" | "boundingRadius" | "escapeRadius" | "maxDepth"
+  | "maps"
+  | "schedule"
+  | "symmetry"
+  | "boundingRadius"
+  | "escapeRadius"
+  | "maxDepth"
 >;
 
 /**
@@ -1148,7 +1186,11 @@ export function buildSurfaceDE4(
   symmetry: SymmetryParams = NO_SYMMETRY4,
   options: SurfaceDE4BuildOptions = {},
 ): SurfaceDE4 {
-  const analysis = analyzeSurfaceSystem4(transforms, finalTransform);
+  const analysis = analyzeSurfaceSystem4(
+    transforms,
+    finalTransform,
+    options.schedule,
+  );
   if (analysis.status === "ineligible") {
     throw new Error(
       `system has no surface distance estimator: ${analysis.reasons.join("; ")}`,
@@ -1232,6 +1274,42 @@ export function buildSurfaceDE4(
           : [0, 0, 0, 0],
     });
   });
+
+  const preparedSchedule = prepareSchedule(options.schedule);
+  let scheduleMaps: SurfaceDE4Map[] | null = null;
+  let scheduleTransforms: Transform[] | null = null;
+  if (preparedSchedule && options.schedule) {
+    scheduleTransforms = options.schedule.transforms.filter(
+      (t) => !preparedSchedule.weighted || (t.weight ?? 1) > 0,
+    );
+    scheduleMaps = scheduleTransforms.map((t, i) => {
+      const liftedB = toTransform4(t);
+      const affine = composeAffine4(liftedB);
+      const invM = inverse4(affine.m);
+      const [tx, ty, tz, tw] = affine.t;
+      const invT: Vec4 = [
+        -(invM[0] * tx + invM[1] * ty + invM[2] * tz + invM[3] * tw),
+        -(invM[4] * tx + invM[5] * ty + invM[6] * tz + invM[7] * tw),
+        -(invM[8] * tx + invM[9] * ty + invM[10] * tz + invM[11] * tw),
+        -(invM[12] * tx + invM[13] * ty + invM[14] * tz + invM[15] * tw),
+      ];
+      const sigmas = transformSigmas4(liftedB);
+      return {
+        invM,
+        invT,
+        sigmaMin: sigmas.min,
+        baseIndex: i,
+        foldKind: SURFACE_FOLD_NONE,
+        foldInvW: 1,
+        foldSigma: sigmas.min,
+        foldRadii: surfaceFoldRadii(null),
+        invMSigmaMin: 1 / sigmas.max,
+        // Disabled in B levels: the child bound changes with global depth.
+        invTNorm: 0,
+        bnbDir: [0, 0, 0, 0],
+      } satisfies SurfaceDE4Map;
+    });
+  }
 
   // Sector count mirroring prepareChaosGame4: the effective order is clamped
   // against the FULL list length (weight-0 slots included), so the swept set
@@ -1403,7 +1481,7 @@ export function buildSurfaceDE4(
   // naturally rather than through a special case; copying 3D's in-plane
   // zeroing instead would leave a twisted kaleidoscope a NON-invariant
   // centre — an unsound certificate, not merely a loose one.
-  const probe = runChaosGame4(
+  const aProbe = runChaosGame4(
     lifted,
     PROBE_POINTS,
     mulberry32(PROBE_SEED),
@@ -1411,18 +1489,68 @@ export function buildSurfaceDE4(
     symmetry,
   );
   let maxR = 0;
-  for (let i = 0; i < probe.count; i++) {
-    const x = probe.positions[i * 3];
-    const y = probe.positions[i * 3 + 1];
-    const z = probe.positions[i * 3 + 2];
-    const w = probe.w[i];
+  for (let i = 0; i < aProbe.count; i++) {
+    const x = aProbe.positions[i * 3];
+    const y = aProbe.positions[i * 3 + 1];
+    const z = aProbe.positions[i * 3 + 2];
+    const w = aProbe.w[i];
     const r = Math.sqrt(x * x + y * y + z * z + w * w);
     if (r > maxR) maxR = r;
   }
-  const boundingRadius = Math.max(
+  const aBoundingRadius = Math.max(
     maxR * RADIUS_PAD + 1e-3,
     condensationInvariantRadius,
   );
+  let probe = aProbe;
+  let boundingRadius = aBoundingRadius;
+  let scheduleDE: SurfaceScheduleDE4 | undefined;
+  if (
+    preparedSchedule &&
+    options.schedule &&
+    scheduleMaps &&
+    scheduleTransforms
+  ) {
+    const depth = preparedSchedule.depth;
+    const bounds = new Array<SurfaceLevelBound4>(depth + 1);
+    bounds[depth] = {
+      radius: aBoundingRadius,
+      escapeRadius: ESCAPE_FACTOR * aBoundingRadius,
+    };
+    for (let d = depth - 1; d >= 0; d--) {
+      const levelProbe = runChaosGame4(
+        lifted,
+        PROBE_POINTS,
+        mulberry32(PROBE_SEED),
+        null,
+        symmetry,
+        undefined,
+        { transforms: options.schedule.transforms, depth: depth - d },
+      );
+      let levelMaxR = 0;
+      for (let i = 0; i < levelProbe.count; i++) {
+        const x = levelProbe.positions[i * 3];
+        const y = levelProbe.positions[i * 3 + 1];
+        const z = levelProbe.positions[i * 3 + 2];
+        const w = levelProbe.w[i];
+        levelMaxR = Math.max(levelMaxR, Math.hypot(x, y, z, w));
+      }
+      let certifiedRadius = 0;
+      for (const t of scheduleTransforms) {
+        const liftedB = toTransform4(t);
+        const affine = composeAffine4(liftedB);
+        certifiedRadius = Math.max(
+          certifiedRadius,
+          Math.hypot(...affine.t) +
+            transformSigmas4(liftedB).max * bounds[d + 1].radius,
+        );
+      }
+      const radius = Math.max(levelMaxR * RADIUS_PAD + 1e-3, certifiedRadius);
+      bounds[d] = { radius, escapeRadius: ESCAPE_FACTOR * radius };
+      if (d === 0) probe = levelProbe;
+    }
+    scheduleDE = { maps: scheduleMaps, depth, bounds };
+    boundingRadius = bounds[0].radius;
+  }
 
   // Depth cap from the SLOWEST contraction, identical formula to 3D
   // (ceiling: see MAX_DESCENT_DEPTH's sizing note — doubleRotation
@@ -1439,9 +1567,13 @@ export function buildSurfaceDE4(
           : map.foldSigma * map.foldRadii.innerSigma;
     return Math.max(acc, factor);
   }, 0);
+  const aMaxDepth = Math.max(
+    8,
+    Math.ceil(Math.log(DEPTH_RESOLUTION) / Math.log(slowest)),
+  );
   const maxDepth = Math.min(
     MAX_DESCENT_DEPTH,
-    Math.max(8, Math.ceil(Math.log(DEPTH_RESOLUTION) / Math.log(slowest))),
+    aMaxDepth + (scheduleDE?.depth ?? 0),
   );
 
   // Native pattern calibration samples the RAW attractor in its production
@@ -1458,6 +1590,7 @@ export function buildSurfaceDE4(
   }
   const carrierFrame: SurfaceNativeCarrierFrame4 = {
     maps,
+    ...(scheduleDE ? { schedule: scheduleDE } : {}),
     symmetry: { order, stepBack },
     boundingRadius,
     escapeRadius: ESCAPE_FACTOR * boundingRadius,
@@ -1555,6 +1688,8 @@ export function buildSurfaceDE4(
         mulberry32(PROBE_SEED),
         toTransform4(finalTransform),
         symmetry,
+        undefined,
+        options.schedule ?? null,
       )
     : probe;
   const bandCenter = probeVis.center;
@@ -1573,6 +1708,7 @@ export function buildSurfaceDE4(
 
   return {
     maps,
+    ...(scheduleDE ? { schedule: scheduleDE } : {}),
     ...(condensation ? { condensation } : {}),
     symmetry: { order, stepBack },
     boundingRadius,
@@ -1609,7 +1745,6 @@ function surfaceAffineNativeCarriers4(
   de: SurfaceNativeCarrierFrame4,
   point: Vec4,
 ): SurfaceNativeCarriers4 {
-  const R = de.boundingRadius;
   const { order, stepBack } = de.symmetry;
   const chainX = [point[0], 0, 0, 0];
   const chainY = [point[1], 0, 0, 0];
@@ -1630,6 +1765,14 @@ function surfaceAffineNativeCarriers4(
   const sector = [0, 0, 0, 0];
 
   for (let depth = 0; depth < de.maxDepth && chainCount > 0; depth++) {
+    const inB = de.schedule !== undefined && depth < de.schedule.depth;
+    const levelMaps = inB ? de.schedule!.maps : de.maps;
+    const sectorOrder = inB ? 1 : order;
+    const childBound = de.schedule
+      ? de.schedule.bounds[Math.min(depth + 1, de.schedule.depth)]
+      : null;
+    const R = childBound ? childBound.radius : de.boundingRadius;
+    const escapeRadius = childBound ? childBound.escapeRadius : de.escapeRadius;
     key.fill(1e30);
     radius.fill(0);
     for (let c = 0; c < chainCount; c++) {
@@ -1638,7 +1781,7 @@ function surfaceAffineNativeCarriers4(
       let sz = chainZ[c];
       let sw = chainW[c];
       const pScale = chainScale[c];
-      for (let k = 0; k < order; k++) {
+      for (let k = 0; k < sectorOrder; k++) {
         if (k > 0) {
           stepSector4(stepBack, sx, sy, sz, sw, sector);
           sx = sector[0];
@@ -1646,7 +1789,7 @@ function surfaceAffineNativeCarriers4(
           sz = sector[2];
           sw = sector[3];
         }
-        for (const map of de.maps) {
+        for (const map of levelMaps) {
           const im = map.invM;
           const it = map.invT;
           const ix = im[0] * sx + im[1] * sy + im[2] * sz + im[3] * sw + it[0];
@@ -1695,8 +1838,8 @@ function surfaceAffineNativeCarriers4(
       chainScale[chainCount] = scale[slot];
       chainCount++;
     };
-    keep(0, de.escapeRadius);
-    keep(1, de.escapeRadius);
+    keep(0, escapeRadius);
+    keep(1, escapeRadius);
     keep(2, R);
     keep(3, R);
   }
@@ -1713,7 +1856,6 @@ function surfaceFoldNativeCarriers4(
   de: SurfaceNativeCarrierFrame4,
   point: Vec4,
 ): SurfaceNativeCarriers4 {
-  const R = de.boundingRadius;
   const { order, stepBack } = de.symmetry;
   let chX = point[0];
   let chY = point[1];
@@ -1726,6 +1868,14 @@ function surfaceFoldNativeCarriers4(
   const sector = [0, 0, 0, 0];
 
   for (let depth = 0; depth < de.maxDepth; depth++) {
+    const inB = de.schedule !== undefined && depth < de.schedule.depth;
+    const levelMaps = inB ? de.schedule!.maps : de.maps;
+    const sectorOrder = inB ? 1 : order;
+    const childBound = de.schedule
+      ? de.schedule.bounds[Math.min(depth + 1, de.schedule.depth)]
+      : null;
+    const R = childBound ? childBound.radius : de.boundingRadius;
+    const escapeRadius = childBound ? childBound.escapeRadius : de.escapeRadius;
     let lbKey = 1e30;
     let lbX = 0;
     let lbY = 0;
@@ -1739,7 +1889,7 @@ function surfaceFoldNativeCarriers4(
     let sz = chZ;
     let sw = chW;
 
-    for (let k = 0; k < order; k++) {
+    for (let k = 0; k < sectorOrder; k++) {
       if (k > 0) {
         stepSector4(stepBack, sx, sy, sz, sw, sector);
         sx = sector[0];
@@ -1747,7 +1897,7 @@ function surfaceFoldNativeCarriers4(
         sz = sector[2];
         sw = sector[3];
       }
-      for (const map of de.maps) {
+      for (const map of levelMaps) {
         const kind = map.foldKind;
         const branchCount = foldBranchCount4(kind);
         const absW = map.foldSigma / map.sigmaMin;
@@ -1960,7 +2110,7 @@ function surfaceFoldNativeCarriers4(
     if (lbKey >= 1e29) break;
     rings = Math.min(rings, lbR / R);
     sheets = Math.min(sheets, Math.abs(lbY) / R);
-    if (lbR > de.escapeRadius) break;
+    if (lbR > escapeRadius) break;
     chX = lbX;
     chY = lbY;
     chZ = lbZ;
@@ -2133,6 +2283,33 @@ export function estimateDistance4(
   return descend4(de, p, halfExtent);
 }
 
+function scheduledCondensationTerm4(
+  de: SurfaceDE4,
+  depth: number,
+  scale: number,
+  x: number,
+  y: number,
+  z: number,
+  w: number,
+): number {
+  if (!de.condensation) return Infinity;
+  const aDepth = depth - (de.schedule?.depth ?? 0);
+  return aDepth < 0
+    ? Infinity
+    : condensationTerm4(de.condensation, aDepth, scale, x, y, z, w);
+}
+
+function scheduledCondensationHasFutureDepth4(
+  de: SurfaceDE4,
+  nextDepth: number,
+): boolean {
+  if (!de.condensation) return false;
+  const aDepth = nextDepth - (de.schedule?.depth ?? 0);
+  return (
+    aDepth < 0 || condensationHasFutureDepth(de.condensation.depthBand, aDepth)
+  );
+}
+
 function descend4(
   de: SurfaceDE4,
   p: Vec4,
@@ -2244,35 +2421,44 @@ function descend4(
 
   for (let depth = 0; depth < de.maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) break;
+    const inB = de.schedule !== undefined && depth < de.schedule.depth;
+    const levelMaps = inB ? de.schedule!.maps : de.maps;
+    const sectorOrder = inB ? 1 : order;
+    const childBound = de.schedule
+      ? de.schedule.bounds[Math.min(depth + 1, de.schedule.depth)]
+      : null;
+    const R = childBound ? childBound.radius : de.boundingRadius;
+    const escapeRadius = childBound ? childBound.escapeRadius : de.escapeRadius;
     if (condensation) {
       if (aLive) {
         best = Math.min(
           best,
-          condensationTerm4(condensation, depth, aScale, aX, aY, aZ, aW),
+          scheduledCondensationTerm4(de, depth, aScale, aX, aY, aZ, aW),
         );
       }
       if (bLive) {
         best = Math.min(
           best,
-          condensationTerm4(condensation, depth, bScale, bX, bY, bZ, bW),
+          scheduledCondensationTerm4(de, depth, bScale, bX, bY, bZ, bW),
         );
       }
       if (v1Live) {
         best = Math.min(
           best,
-          condensationTerm4(condensation, depth, v1Scale, v1X, v1Y, v1Z, v1W),
+          scheduledCondensationTerm4(de, depth, v1Scale, v1X, v1Y, v1Z, v1W),
         );
       }
       if (v2Live) {
         best = Math.min(
           best,
-          condensationTerm4(condensation, depth, v2Scale, v2X, v2Y, v2Z, v2W),
+          scheduledCondensationTerm4(de, depth, v2Scale, v2X, v2Y, v2Z, v2W),
         );
       }
     }
-    const futureCondensation = condensation
-      ? condensationHasFutureDepth(condensation.depthBand, depth + 1)
-      : false;
+    const futureCondensation = scheduledCondensationHasFutureDepth4(
+      de,
+      depth + 1,
+    );
     // The two smallest-key candidates this level, key-ascending. The
     // sentinel r = 0 keeps empty slots out of every escaped-candidate fold
     // below (their certificates are meaningless until occupied).
@@ -2369,7 +2555,7 @@ function descend4(
       let sZ = pZ;
       let sW = pW;
       if (segment) sweepExt.set(pExt);
-      for (let k = 0; k < order; k++) {
+      for (let k = 0; k < sectorOrder; k++) {
         if (k > 0) {
           stepSector4(stepBack, sX, sY, sZ, sW, sweep);
           sX = sweep[0];
@@ -2378,8 +2564,8 @@ function descend4(
           sW = sweep[3];
           if (segment) applyLinear4(stepBack, sweepExt, sweepExt);
         }
-        for (let j = 0; j < de.maps.length; j++) {
-          const map = de.maps[j];
+        for (let j = 0; j < levelMaps.length; j++) {
+          const map = levelMaps[j];
           const im = map.invM;
           const it = map.invT;
           const ix = im[0] * sX + im[1] * sY + im[2] * sZ + im[3] * sW + it[0];
@@ -2394,8 +2580,8 @@ function descend4(
           const childScale = pScale * map.sigmaMin;
           const cert = childScale * (r - R);
           if (condensation) {
-            const shapeTerm = condensationTerm4(
-              condensation,
+            const shapeTerm = scheduledCondensationTerm4(
+              de,
               depth + 1,
               childScale,
               ix,
@@ -2544,7 +2730,7 @@ function descend4(
     v1Live = false;
     v2Live = false;
     if (c1Key < Infinity) {
-      if (c1R > de.escapeRadius) {
+      if (c1R > escapeRadius) {
         if (c1Cert < best) best = c1Cert;
       } else {
         aX = c1X;
@@ -2558,7 +2744,7 @@ function descend4(
       }
     }
     if (c2Key < Infinity) {
-      if (!wide || c2R > de.escapeRadius) {
+      if (!wide || c2R > escapeRadius) {
         if (c2R > R && c2Cert < best) best = c2Cert;
         else if (!wide && futureCondensation && c2R <= R) {
           const subtree = c2Scale * (c2R - R);
@@ -2610,20 +2796,20 @@ function descend4(
     if (aLive) {
       best = Math.min(
         best,
-        condensationTerm4(condensation, de.maxDepth, aScale, aX, aY, aZ, aW),
+        scheduledCondensationTerm4(de, de.maxDepth, aScale, aX, aY, aZ, aW),
       );
     }
     if (bLive) {
       best = Math.min(
         best,
-        condensationTerm4(condensation, de.maxDepth, bScale, bX, bY, bZ, bW),
+        scheduledCondensationTerm4(de, de.maxDepth, bScale, bX, bY, bZ, bW),
       );
     }
     if (v1Live) {
       best = Math.min(
         best,
-        condensationTerm4(
-          condensation,
+        scheduledCondensationTerm4(
+          de,
           de.maxDepth,
           v1Scale,
           v1X,
@@ -2636,8 +2822,8 @@ function descend4(
     if (v2Live) {
       best = Math.min(
         best,
-        condensationTerm4(
-          condensation,
+        scheduledCondensationTerm4(
+          de,
           de.maxDepth,
           v2Scale,
           v2X,
@@ -2648,12 +2834,15 @@ function descend4(
       );
     }
   }
+  const terminalR = de.schedule
+    ? de.schedule.bounds[Math.min(de.maxDepth, de.schedule.depth)].radius
+    : R;
   if (aLive) {
-    const terminal = aScale * (aR - R);
+    const terminal = aScale * (aR - terminalR);
     if (terminal < best) best = terminal;
   }
   if (bLive) {
-    const terminal = bScale * (bR - R);
+    const terminal = bScale * (bR - terminalR);
     if (terminal < best) best = terminal;
   }
   // Validity chains fold NO cap terminal — deliberately asymmetric with
@@ -2906,15 +3095,22 @@ function descend4Refined(
     childScale: number,
     depth: number,
   ): number => {
-    let inner = condensation
-      ? condensationTerm4(condensation, depth, 1, ix, iy, iz, iw)
-      : Infinity;
+    const inB = de.schedule !== undefined && depth < de.schedule.depth;
+    const levelMaps = inB ? de.schedule!.maps : de.maps;
+    const sectorOrder = inB ? 1 : order;
+    const currentR = de.schedule
+      ? de.schedule.bounds[Math.min(depth, de.schedule.depth)].radius
+      : de.boundingRadius;
+    const childR = de.schedule
+      ? de.schedule.bounds[Math.min(depth + 1, de.schedule.depth)].radius
+      : de.boundingRadius;
+    let inner = scheduledCondensationTerm4(de, depth, 1, ix, iy, iz, iw);
     let sx = ix;
     let sy = iy;
     let sz = iz;
     let sw = iw;
     if (segment) certSweepExt.set(iExt);
-    for (let k = 0; k < order; k++) {
+    for (let k = 0; k < sectorOrder; k++) {
       if (k > 0) {
         stepSector4(stepBack, sx, sy, sz, sw, certSweep);
         sx = certSweep[0];
@@ -2923,8 +3119,8 @@ function descend4Refined(
         sw = certSweep[3];
         if (segment) applyLinear4(stepBack, certSweepExt, certSweepExt);
       }
-      for (let j = 0; j < de.maps.length; j++) {
-        const mapJ = de.maps[j];
+      for (let j = 0; j < levelMaps.length; j++) {
+        const mapJ = levelMaps[j];
         const imJ = mapJ.invM;
         const itJ = mapJ.invT;
         const jx =
@@ -2937,11 +3133,11 @@ function descend4Refined(
           imJ[12] * sx + imJ[13] * sy + imJ[14] * sz + imJ[15] * sw + itJ[3];
         if (segment) applyLinear4(imJ, certSweepExt, innerExt);
         const rj = segmentRadius(jx, jy, jz, jw, innerExt);
-        const innerTerm = mapJ.sigmaMin * (rj - R);
+        const innerTerm = mapJ.sigmaMin * (rj - childR);
         if (innerTerm < inner) inner = innerTerm;
       }
     }
-    return childScale * Math.max(r - R, inner);
+    return childScale * Math.max(r - currentR, inner);
   };
 
   // Chain slot A starts at the (lensed) query; slot B idles until beam
@@ -3003,38 +3199,47 @@ function descend4Refined(
 
   for (let depth = 0; depth < de.maxDepth; depth++) {
     if (!aLive && !bLive && !v1Live && !v2Live) break;
+    const inB = de.schedule !== undefined && depth < de.schedule.depth;
+    const levelMaps = inB ? de.schedule!.maps : de.maps;
+    const sectorOrder = inB ? 1 : order;
+    const childBound = de.schedule
+      ? de.schedule.bounds[Math.min(depth + 1, de.schedule.depth)]
+      : null;
+    const R = childBound ? childBound.radius : de.boundingRadius;
+    const escapeRadius = childBound ? childBound.escapeRadius : de.escapeRadius;
     if (condensation) {
       if (aLive) {
         best = Math.min(
           best,
-          condensationTerm4(condensation, depth, aScale, aX, aY, aZ, aW),
+          scheduledCondensationTerm4(de, depth, aScale, aX, aY, aZ, aW),
         );
       }
       if (bLive) {
         best = Math.min(
           best,
-          condensationTerm4(condensation, depth, bScale, bX, bY, bZ, bW),
+          scheduledCondensationTerm4(de, depth, bScale, bX, bY, bZ, bW),
         );
       }
       if (v1Live) {
         best = Math.min(
           best,
-          condensationTerm4(condensation, depth, v1Scale, v1X, v1Y, v1Z, v1W),
+          scheduledCondensationTerm4(de, depth, v1Scale, v1X, v1Y, v1Z, v1W),
         );
       }
       if (v2Live) {
         best = Math.min(
           best,
-          condensationTerm4(condensation, depth, v2Scale, v2X, v2Y, v2Z, v2W),
+          scheduledCondensationTerm4(de, depth, v2Scale, v2X, v2Y, v2Z, v2W),
         );
       }
       if (best <= sphereBound || best * finalScale < bailBelow) {
         return descentValue(best, sphereBound, finalScale);
       }
     }
-    const futureCondensation = condensation
-      ? condensationHasFutureDepth(condensation.depthBand, depth + 1)
-      : false;
+    const futureCondensation = scheduledCondensationHasFutureDepth4(
+      de,
+      depth + 1,
+    );
     // The two smallest-key candidates this level, key-ascending. The
     // sentinel r = 0 keeps empty slots out of every escaped-candidate fold
     // below (their certificates are meaningless until occupied).
@@ -3131,7 +3336,7 @@ function descend4Refined(
       let sZ = pZ;
       let sW = pW;
       if (segment) sweepExt.set(pExt);
-      for (let k = 0; k < order; k++) {
+      for (let k = 0; k < sectorOrder; k++) {
         if (k > 0) {
           stepSector4(stepBack, sX, sY, sZ, sW, sweep);
           sX = sweep[0];
@@ -3140,8 +3345,8 @@ function descend4Refined(
           sW = sweep[3];
           if (segment) applyLinear4(stepBack, sweepExt, sweepExt);
         }
-        for (let j = 0; j < de.maps.length; j++) {
-          const map = de.maps[j];
+        for (let j = 0; j < levelMaps.length; j++) {
+          const map = levelMaps[j];
           const im = map.invM;
           const it = map.invT;
           const ix = im[0] * sX + im[1] * sY + im[2] * sZ + im[3] * sW + it[0];
@@ -3156,8 +3361,8 @@ function descend4Refined(
           const childScale = pScale * map.sigmaMin;
           const cert = childScale * (r - R);
           if (condensation) {
-            const shapeTerm = condensationTerm4(
-              condensation,
+            const shapeTerm = scheduledCondensationTerm4(
+              de,
               depth + 1,
               childScale,
               ix,
@@ -3342,7 +3547,7 @@ function descend4Refined(
     v1Live = false;
     v2Live = false;
     if (c1Key < Infinity) {
-      if (c1R > de.escapeRadius) {
+      if (c1R > escapeRadius) {
         if (c1Cert < best) best = c1Cert;
       } else {
         aX = c1X;
@@ -3373,7 +3578,7 @@ function descend4Refined(
           const subtree = c2Scale * (c2R - R);
           if (subtree < best) best = subtree;
         }
-      } else if (c2R > de.escapeRadius) {
+      } else if (c2R > escapeRadius) {
         if (c2Cert < best) best = c2Cert;
       } else {
         bX = c2X;
@@ -3457,20 +3662,20 @@ function descend4Refined(
     if (aLive) {
       best = Math.min(
         best,
-        condensationTerm4(condensation, de.maxDepth, aScale, aX, aY, aZ, aW),
+        scheduledCondensationTerm4(de, de.maxDepth, aScale, aX, aY, aZ, aW),
       );
     }
     if (bLive) {
       best = Math.min(
         best,
-        condensationTerm4(condensation, de.maxDepth, bScale, bX, bY, bZ, bW),
+        scheduledCondensationTerm4(de, de.maxDepth, bScale, bX, bY, bZ, bW),
       );
     }
     if (v1Live) {
       best = Math.min(
         best,
-        condensationTerm4(
-          condensation,
+        scheduledCondensationTerm4(
+          de,
           de.maxDepth,
           v1Scale,
           v1X,
@@ -3483,8 +3688,8 @@ function descend4Refined(
     if (v2Live) {
       best = Math.min(
         best,
-        condensationTerm4(
-          condensation,
+        scheduledCondensationTerm4(
+          de,
           de.maxDepth,
           v2Scale,
           v2X,
@@ -3495,12 +3700,15 @@ function descend4Refined(
       );
     }
   }
+  const terminalR = de.schedule
+    ? de.schedule.bounds[Math.min(de.maxDepth, de.schedule.depth)].radius
+    : R;
   if (aLive) {
-    const terminal = aScale * (aR - R);
+    const terminal = aScale * (aR - terminalR);
     if (terminal < best) best = terminal;
   }
   if (bLive) {
-    const terminal = bScale * (bR - R);
+    const terminal = bScale * (bR - terminalR);
     if (terminal < best) best = terminal;
   }
   // Validity chains fold NO cap terminal — deliberately asymmetric with
@@ -3679,16 +3887,22 @@ function refinedCertValue4(
   depth: number,
 ): number {
   const { order, stepBack } = de.symmetry;
-  const R = de.boundingRadius;
-  let inner = de.condensation
-    ? condensationTerm4(de.condensation, depth, 1, ix, iy, iz, iw)
-    : Infinity;
+  const inB = de.schedule !== undefined && depth < de.schedule.depth;
+  const levelMaps = inB ? de.schedule!.maps : de.maps;
+  const sectorOrder = inB ? 1 : order;
+  const currentR = de.schedule
+    ? de.schedule.bounds[Math.min(depth, de.schedule.depth)].radius
+    : de.boundingRadius;
+  const childR = de.schedule
+    ? de.schedule.bounds[Math.min(depth + 1, de.schedule.depth)].radius
+    : de.boundingRadius;
+  let inner = scheduledCondensationTerm4(de, depth, 1, ix, iy, iz, iw);
   let sx = ix;
   let sy = iy;
   let sz = iz;
   let sw = iw;
   if (segment) CERT_SWEEP_EXT4.set(iExt);
-  for (let k = 0; k < order; k++) {
+  for (let k = 0; k < sectorOrder; k++) {
     if (k > 0) {
       stepSector4(stepBack, sx, sy, sz, sw, CERT_SWEEP4);
       sx = CERT_SWEEP4[0];
@@ -3697,8 +3911,8 @@ function refinedCertValue4(
       sw = CERT_SWEEP4[3];
       if (segment) applyLinear4(stepBack, CERT_SWEEP_EXT4, CERT_SWEEP_EXT4);
     }
-    for (let j = 0; j < de.maps.length; j++) {
-      const mapJ = de.maps[j];
+    for (let j = 0; j < levelMaps.length; j++) {
+      const mapJ = levelMaps[j];
       const imJ = mapJ.invM;
       const itJ = mapJ.invT;
       const kindJ = mapJ.foldKind;
@@ -3983,7 +4197,7 @@ function refinedCertValue4(
           branchSigma = mapJ.foldSigma * sfSigma;
         }
         const rj = segmentRadius(jx, jy, jz, jw, CERT_IMG_EXT4);
-        let innerTerm = branchSigma * (rj - R);
+        let innerTerm = branchSigma * (rj - childR);
         if (branchRd > 0) {
           const regionTerm = absWJ * branchRd;
           if (regionTerm > innerTerm) innerTerm = regionTerm;
@@ -3992,7 +4206,7 @@ function refinedCertValue4(
       }
     }
   }
-  return childScale * Math.max(r - R, inner);
+  return childScale * Math.max(r - currentR, inner);
 }
 
 /**
@@ -4103,10 +4317,18 @@ function descendFold4(
   fcR[0] = startR;
 
   for (let depth = 0; depth < maxDepth && chainCount > 0; depth++) {
+    const inB = de.schedule !== undefined && depth < de.schedule.depth;
+    const levelMaps = inB ? de.schedule!.maps : de.maps;
+    const sectorOrder = inB ? 1 : order;
+    const childBound = de.schedule
+      ? de.schedule.bounds[Math.min(depth + 1, de.schedule.depth)]
+      : null;
+    const R = childBound ? childBound.radius : de.boundingRadius;
+    const escapeRadius = childBound ? childBound.escapeRadius : de.escapeRadius;
     if (condensation) {
       for (let c = 0; c < chainCount; c++) {
-        const term = condensationTerm4(
-          condensation,
+        const term = scheduledCondensationTerm4(
+          de,
           depth,
           fcScale[c],
           fcX[c],
@@ -4120,9 +4342,10 @@ function descendFold4(
         return descentValue(best, sphereBound, finalScale);
       }
     }
-    const futureCondensation = condensation
-      ? condensationHasFutureDepth(condensation.depthBand, depth + 1)
-      : false;
+    const futureCondensation = scheduledCondensationHasFutureDepth4(
+      de,
+      depth + 1,
+    );
     let keptCount = 0;
     // Worst kept slot, maintained by a fixed-bound rescan whenever the
     // frontier is full (see the insertion comment below for why the
@@ -4154,7 +4377,7 @@ function descendFold4(
       // surviving candidate evaluates immediate C0 before frontier insertion.
       const chainNormSq = sX * sX + sY * sY + sZ * sZ + sW * sW;
       const invPScale = 1 / pScale;
-      for (let k = 0; k < order; k++) {
+      for (let k = 0; k < sectorOrder; k++) {
         if (k > 0) {
           stepSector4(stepBack, sX, sY, sZ, sW, FOLD_SWEEP4);
           sX = FOLD_SWEEP4[0];
@@ -4163,8 +4386,8 @@ function descendFold4(
           sW = FOLD_SWEEP4[3];
           if (segment) applyLinear4(stepBack, FOLD_SWEEP_EXT4, FOLD_SWEEP_EXT4);
         }
-        for (let j = 0; j < de.maps.length; j++) {
-          const map = de.maps[j];
+        for (let j = 0; j < levelMaps.length; j++) {
+          const map = levelMaps[j];
           const im = map.invM;
           const it = map.invT;
           // Fold-branch sweep: one candidate per inverse BRANCH — 81
@@ -4218,7 +4441,7 @@ function descendFold4(
           const bnbSigma = map.invMSigmaMin;
           const bnbSigmaSq = bnbSigma * bnbSigma;
           const bnbT = map.invTNorm;
-          const needE = de.escapeRadius + bnbT;
+          const needE = escapeRadius + bnbT;
           const needESq = needE * needE;
           const bnbDir = map.bnbDir;
           const gX = bnbDir[0];
@@ -4358,10 +4581,10 @@ function descendFold4(
               if (candFloor > 0 && candFloor >= best) continue;
               // Stage-2 B&B skips (see the hoist comment above), point
               // queries only.
-              if (!segment) {
+              if (!segment && !inB) {
                 const rDir = gX * sX + gY * sY + gZ * sZ + gW * sW + bnbT;
                 const rEsc = R + best * invChildScale;
-                if (rDir > de.escapeRadius && rDir >= rEsc) continue;
+                if (rDir > escapeRadius && rDir >= rEsc) continue;
                 const sTerm = chainNormSq * bnbSigmaSq;
                 if (sTerm > needESq) {
                   const needC = rEsc + bnbT;
@@ -4577,10 +4800,10 @@ function descendFold4(
               // Stage-2 B&B skips (see the hoist comment above); the
               // bounds read the branch preimage exactly, after the shell
               // guard. Point queries only — see the SEGMENT BYPASS note.
-              if (!segment) {
+              if (!segment && !inB) {
                 const rDir = gX * cx + gY * cy + gZ * cz + gW * cw + bnbT;
                 const rEsc = R + best * invChildScale;
-                if (rDir > de.escapeRadius && rDir >= rEsc) continue;
+                if (rDir > escapeRadius && rDir >= rEsc) continue;
                 const sTerm =
                   (cx * cx + cy * cy + cz * cz + cw * cw) * bnbSigmaSq;
                 if (sTerm > needESq) {
@@ -4619,8 +4842,8 @@ function descendFold4(
             const r = segmentRadius(ix, iy, iz, iw, FOLD_IMG_EXT4);
             const childScale = pScale * branchSigma;
             if (condensation) {
-              const shapeTerm = condensationTerm4(
-                condensation,
+              const shapeTerm = scheduledCondensationTerm4(
+                de,
                 depth + 1,
                 childScale,
                 ix,
@@ -4637,7 +4860,7 @@ function descendFold4(
             // Past the escape radius deeper refinement cannot improve the
             // min: fold the (floor-raised) certificate plain, exactly as
             // the affine body's escape-radius folds stay plain.
-            if (r > de.escapeRadius) {
+            if (r > escapeRadius) {
               if (cert < best) {
                 best = cert;
                 if (best <= sphereBound || best * finalScale < bailBelow) {
@@ -4822,10 +5045,13 @@ function descendFold4(
   // Floor-raised KIFS terminals for every chain alive at the depth cap: a
   // floor-0 chain is a true preimage orbit (its negative terminal is the
   // hit signal), a strayed chain folds its certified positive floor.
+  const terminalR = de.schedule
+    ? de.schedule.bounds[Math.min(maxDepth, de.schedule.depth)].radius
+    : R;
   for (let c = 0; c < chainCount; c++) {
     if (condensation) {
-      const shapeTerm = condensationTerm4(
-        condensation,
+      const shapeTerm = scheduledCondensationTerm4(
+        de,
         maxDepth,
         fcScale[c],
         fcX[c],
@@ -4835,7 +5061,7 @@ function descendFold4(
       );
       if (shapeTerm < best) best = shapeTerm;
     }
-    let terminal = fcScale[c] * (fcR[c] - R);
+    let terminal = fcScale[c] * (fcR[c] - terminalR);
     if (fcFloor[c] > 0 && fcFloor[c] > terminal) terminal = fcFloor[c];
     if (terminal < best) best = terminal;
   }

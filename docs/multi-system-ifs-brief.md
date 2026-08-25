@@ -117,13 +117,16 @@ maps → "sponge (3 levels deep) of ferns."
 - Once Option A exists, general periodic schedules can be expressed as layered transform copies with a
   directed χ — but the post-word stage is trivially small and ships first.
 
-### Surface mode (later)
+### Surface mode (landed)
 
 `src/fractal/surface-de.ts` descends inverse maps with per-map σ_min certificates. A schedule is a
 _level-dependent alphabet_: levels < k descend only B's inverse maps, deeper levels only A's. Certificates
-are per-map, so validity is untouched. Caveat: the fern's maps are strongly anisotropic, so σ_min bounds
-are loose and Surface-mode ferns will march slowly regardless — treat B-surface as a stretch goal and let
-point/flame carry this feature.
+are per-map, so validity is untouched; the implementation carries a certified bounding ball for every
+remaining B suffix, disables A's symmetry and condensation terms during the B prefix, and starts A's
+material attribution at the transition. Caveat: the fern's maps are strongly anisotropic, so σ_min bounds
+are loose and Surface-mode ferns march slowly regardless. Barnsley's canonical stem is also exactly
+singular, so the scheduled showcase alone widens that stem to an explicit, visually negligible 0.001
+scale; the standalone Barnsley preset remains exact.
 
 **Effort: S (point modes), M (surface). Test: k=0 bit-identical to current renderer.**
 
@@ -301,18 +304,20 @@ the conformal fold family.
 
 ## Delivery sequence
 
-The shape library, C′-color, conformal forward trap-geometry, xaos, C-point, C-surface and B-point are
-landed, including their GPU mirrors. The remaining implementation order is scheduled descent, followed by
-graph-directed descent and Tier-3 mesh shapes. Each remains independently shippable; all must reuse the
-existing shape, selection and schedule vocabularies rather than restating them.
+The shape library, C′-color, conformal forward trap-geometry, xaos, C-point, C-surface, B-point and
+scheduled descent are landed, including their CPU, GLSL and WGSL mirrors. Surface interprets the
+post-word as a finite level-dependent inverse alphabet: B alone for the first _k_ global levels, then A
+with its authored symmetry, using a bound for every remaining suffix. The remaining implementation order
+is graph-directed descent followed by Tier-3 mesh shapes. Each remains independently shippable; all must
+reuse the existing shape, selection and schedule vocabularies rather than restating them.
 
 ## Validation strategy
 
 Keep the existing oracle discipline: every GPU/GLSL change mirrors a dependency-free CPU implementation
 under `src/fractal/` with property tests (`surface-de.ts` ↔ `surface-material.ts`, `flame.ts` ↔
-`flame-gpu.ts`). New properties: transition-matrix histograms (A), k=0 identity (B), certified-lower-bound
-checks with the shape term folded in — sampled `dist(p, pointCloud)` must never be _below_ the estimator's
-claim (C).
+`flame-gpu.ts`). New properties: transition-matrix histograms (A), k=0 identity and finite-word inverse
+order (B), certified-lower-bound checks against scheduled point clouds (B), and the same bound with the
+shape term folded in (C) — sampled `dist(p, pointCloud)` must never be _below_ the estimator's claim.
 
 ## References
 

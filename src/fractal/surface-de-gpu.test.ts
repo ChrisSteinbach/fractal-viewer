@@ -21,6 +21,12 @@ import {
   SURFACE_GPU_PARAMS4_LENS_BYTES,
   SURFACE_GPU_PARAMS4_PLANE_BYTES,
   SURFACE_GPU_PARAMS4_PLANE_CONDENSATION_BYTES,
+  SURFACE_GPU_PARAMS4_SCHEDULE_BYTES,
+  SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_BYTES,
+  SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_BYTES,
+  SURFACE_GPU_PARAMS4_SCHEDULE_CONDENSATION_BYTES,
+  SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_CONDENSATION_BYTES,
+  SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS4_TRAP_BYTES,
   SURFACE_GPU_PARAMS_BALLOON_BYTES,
   SURFACE_GPU_PARAMS_BALLOON_CONDENSATION_BYTES,
@@ -28,6 +34,12 @@ import {
   SURFACE_GPU_PARAMS_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS_PLANE_BYTES,
   SURFACE_GPU_PARAMS_PLANE_CONDENSATION_BYTES,
+  SURFACE_GPU_PARAMS_SCHEDULE_BYTES,
+  SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_BYTES,
+  SURFACE_GPU_PARAMS_PLANE_SCHEDULE_BYTES,
+  SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES,
+  SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_CONDENSATION_BYTES,
+  SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CONDENSATION_BYTES,
   SURFACE_GPU_PARAMS_TRAP_BYTES,
   SURFACE_GPU_RAY_ACTIVE,
   SURFACE_GPU_RAY_EXHAUSTED,
@@ -218,6 +230,56 @@ function kernelOpts(
     sharedFrontier: false,
     bnbStage2: false,
     ...overrides,
+  };
+}
+
+function withSchedule3(
+  de: SurfaceDE,
+  scheduleMapCount = 2,
+  depth = 2,
+): SurfaceDE {
+  return {
+    ...de,
+    schedule: {
+      maps: Array.from({ length: scheduleMapCount }, () => ({ ...de.maps[0] })),
+      depth,
+      bounds: [
+        {
+          center: [4, 5, 6] as [number, number, number],
+          radius: 11,
+          escapeRadius: 22,
+        },
+        {
+          center: [1, 2, 3] as [number, number, number],
+          radius: 7,
+          escapeRadius: 14,
+        },
+        {
+          center: de.boundCenter,
+          radius: de.boundingRadius,
+          escapeRadius: de.escapeRadius,
+        },
+      ].slice(0, depth + 1),
+    },
+  };
+}
+
+function withSchedule4(
+  de: SurfaceDE4,
+  scheduleMapCount = 2,
+  depth = 2,
+): SurfaceDE4 {
+  return {
+    ...de,
+    schedule: {
+      maps: Array.from({ length: scheduleMapCount }, () => ({ ...de.maps[0] })),
+      depth,
+      bounds: [
+        { radius: 11, escapeRadius: 22 },
+        { radius: 7, escapeRadius: 14 },
+        { radius: de.boundingRadius, escapeRadius: de.escapeRadius },
+      ].slice(0, depth + 1),
+    },
   };
 }
 
@@ -7355,5 +7417,325 @@ describe("surfaceDeKernelWgsl condensation", () => {
         }),
       ),
     ).toThrow(/25.*cap is 24/);
+  });
+});
+
+describe("hybrid schedule GPU ABI", () => {
+  const balloon = {
+    center: [0.1, -0.2, 0.3] as [number, number, number],
+    rho: 1.5,
+    R: 2.5,
+    far: 3.5,
+  };
+  const groundPlane: SurfaceGpuGroundPlane = {
+    y: -1,
+    fadeStart: 2,
+    fadeEnd: 3,
+    ballCenter: [0, 0, 0],
+    ballRadius: 2,
+    albedo: [0.2, 0.3, 0.4],
+  };
+
+  it("keeps zero/empty schedules on the exact legacy bytes and source", () => {
+    const plain3 = buildSurfaceDE([condensationTransforms()[0]]);
+    const empty3: SurfaceDE = {
+      ...plain3,
+      schedule: {
+        maps: [],
+        depth: 0,
+        bounds: [
+          {
+            center: plain3.boundCenter,
+            radius: plain3.boundingRadius,
+            escapeRadius: plain3.escapeRadius,
+          },
+        ],
+      },
+    };
+    expect(packSurfaceGpuParams(empty3, { itemCount: 2 })).toEqual(
+      packSurfaceGpuParams(plain3, { itemCount: 2 }),
+    );
+    expect(packSurfaceGpuMaps(empty3)).toEqual(packSurfaceGpuMaps(plain3));
+
+    const plain4 = buildSurfaceDE4([condensationTransforms()[0]]);
+    const empty4: SurfaceDE4 = {
+      ...plain4,
+      schedule: {
+        maps: [],
+        depth: 0,
+        bounds: [
+          { radius: plain4.boundingRadius, escapeRadius: plain4.escapeRadius },
+        ],
+      },
+    };
+    expect(packSurface4GpuParams(empty4, view4(), { itemCount: 2 })).toEqual(
+      packSurface4GpuParams(plain4, view4(), { itemCount: 2 }),
+    );
+    expect(packSurfaceGpuMaps4(empty4)).toEqual(packSurfaceGpuMaps4(plain4));
+
+    for (const core of ["fold", "affine", "fold4", "affine4"] as const) {
+      const legacy = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, width: 4 }),
+      );
+      expect(
+        surfaceDeKernelWgsl(
+          kernelOpts({
+            mode: "shade",
+            core,
+            width: 4,
+            schedule: { mapCount: 1, scheduleMapCount: 0 },
+          }),
+        ),
+      ).toBe(legacy);
+    }
+  });
+
+  it("appends controls and five clamped bounds after every 3D/4D feature tail", () => {
+    const base3 = buildSurfaceDE([condensationTransforms()[0]]);
+    const scheduled3 = withSchedule3(base3);
+    const p3 = new DataView(packSurfaceGpuParams(scheduled3, { itemCount: 1 }));
+    expect(p3.byteLength).toBe(SURFACE_GPU_PARAMS_SCHEDULE_BYTES);
+    expect(p3.getFloat32(0, true)).toBe(4);
+    expect(p3.getFloat32(4, true)).toBe(5);
+    expect(p3.getFloat32(8, true)).toBe(6);
+    expect(p3.getFloat32(12, true)).toBe(11);
+    expect(p3.getFloat32(16, true)).toBe(22);
+    expect(p3.getUint32(48, true)).toBe(base3.maps.length);
+    expect(p3.getUint32(288, true)).toBe(2);
+    expect(p3.getUint32(292, true)).toBe(2);
+    expect(Array.from(new Float32Array(p3.buffer, 304, 4))).toEqual([
+      1, 2, 3, 7,
+    ]);
+    expect(p3.getFloat32(380, true)).toBeCloseTo(base3.boundingRadius, 6);
+    expect(
+      packSurfaceGpuParams(scheduled3, { itemCount: 1 }, balloon).byteLength,
+    ).toBe(SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_BYTES);
+    expect(
+      packSurfaceGpuParams(scheduled3, { itemCount: 1 }, null, groundPlane)
+        .byteLength,
+    ).toBe(SURFACE_GPU_PARAMS_PLANE_SCHEDULE_BYTES);
+
+    const base4 = buildSurfaceDE4([condensationTransforms()[0]]);
+    const scheduled4 = withSchedule4(base4);
+    const p4 = new DataView(
+      packSurface4GpuParams(scheduled4, view4(), { itemCount: 1 }),
+    );
+    expect(p4.byteLength).toBe(SURFACE_GPU_PARAMS4_SCHEDULE_BYTES);
+    expect(p4.getFloat32(12, true)).toBe(11);
+    expect(p4.getFloat32(16, true)).toBe(22);
+    expect(p4.getUint32(576, true)).toBe(2);
+    expect(p4.getUint32(580, true)).toBe(2);
+    expect(Array.from(new Float32Array(p4.buffer, 592, 4))).toEqual([
+      0, 0, 0, 7,
+    ]);
+    expect(p4.getFloat32(668, true)).toBeCloseTo(base4.boundingRadius, 6);
+    expect(
+      packSurface4GpuParams(scheduled4, view4(), { itemCount: 1 }, balloon)
+        .byteLength,
+    ).toBe(SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_BYTES);
+    expect(
+      packSurface4GpuParams(
+        scheduled4,
+        view4(),
+        { itemCount: 1 },
+        null,
+        groundPlane,
+      ).byteLength,
+    ).toBe(SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_BYTES);
+  });
+
+  it("places B between A and condensation emitters and keeps shade selectors A-relative", () => {
+    const options = {
+      condensationDepthBand: { minDepth: 1, maxDepth: 3 },
+    };
+    const base3 = buildSurfaceDE(
+      condensationTransforms(),
+      null,
+      undefined,
+      options,
+    );
+    const scheduled3 = withSchedule3(base3);
+    const maps3 = packSurfaceGpuMaps(scheduled3);
+    const b3 = base3.maps.length * SURFACE_GPU_MAP_VEC4 * 4;
+    expect(maps3[b3 + 15]).toBe(0);
+    expect(Array.from(maps3.slice(b3 + 24, b3 + 27))).toEqual([0.5, 1, 1]);
+    const emitter3 =
+      (base3.maps.length + scheduled3.schedule!.maps.length) *
+      SURFACE_GPU_MAP_VEC4 *
+      4;
+    expect(maps3[emitter3 + 13]).toBe(
+      base3.condensation!.emitters[0].shadeIndex,
+    );
+    expect(maps3[emitter3 + 14]).toBe(
+      base3.condensation!.emitters[0].shadeIndex - base3.maps.length,
+    );
+    const params3 = new DataView(
+      packSurfaceGpuParams(scheduled3, { itemCount: 1 }),
+    );
+    expect(params3.byteLength).toBe(
+      SURFACE_GPU_PARAMS_SCHEDULE_CONDENSATION_BYTES,
+    );
+    expect(params3.getUint32(288, true)).toBe(
+      base3.condensation!.emitters.length,
+    );
+    expect(params3.getUint32(304, true)).toBe(scheduled3.schedule!.maps.length);
+
+    const base4 = buildSurfaceDE4(
+      condensationTransforms(),
+      null,
+      undefined,
+      options,
+    );
+    const scheduled4 = withSchedule4(base4);
+    const maps4 = packSurfaceGpuMaps4(scheduled4);
+    const b4 = base4.maps.length * SURFACE_GPU_MAP4_VEC4 * 4;
+    expect(maps4[b4 + 23]).toBe(0);
+    const emitter4 =
+      (base4.maps.length + scheduled4.schedule!.maps.length) *
+      SURFACE_GPU_MAP4_VEC4 *
+      4;
+    expect(maps4[emitter4 + 21]).toBe(
+      base4.condensation!.emitters[0].shadeIndex,
+    );
+    expect(maps4[emitter4 + 22]).toBe(
+      base4.condensation!.emitters[0].shadeIndex - base4.maps.length,
+    );
+    const params4 = new DataView(
+      packSurface4GpuParams(scheduled4, view4(), { itemCount: 1 }),
+    );
+    expect(params4.byteLength).toBe(
+      SURFACE_GPU_PARAMS4_SCHEDULE_CONDENSATION_BYTES,
+    );
+    expect(params4.getUint32(576, true)).toBe(
+      base4.condensation!.emitters.length,
+    );
+    expect(params4.getUint32(592, true)).toBe(scheduled4.schedule!.maps.length);
+
+    expect(
+      packSurfaceGpuParams(scheduled3, { itemCount: 1 }, balloon).byteLength,
+    ).toBe(SURFACE_GPU_PARAMS_BALLOON_SCHEDULE_CONDENSATION_BYTES);
+    expect(
+      packSurfaceGpuParams(scheduled3, { itemCount: 1 }, null, groundPlane)
+        .byteLength,
+    ).toBe(SURFACE_GPU_PARAMS_PLANE_SCHEDULE_CONDENSATION_BYTES);
+    expect(
+      packSurface4GpuParams(scheduled4, view4(), { itemCount: 1 }, balloon)
+        .byteLength,
+    ).toBe(SURFACE_GPU_PARAMS4_BALLOON_SCHEDULE_CONDENSATION_BYTES);
+    expect(
+      packSurface4GpuParams(
+        scheduled4,
+        view4(),
+        { itemCount: 1 },
+        null,
+        groundPlane,
+      ).byteLength,
+    ).toBe(SURFACE_GPU_PARAMS4_PLANE_SCHEDULE_CONDENSATION_BYTES);
+  });
+
+  it("accepts 24 physical records and rejects 25 in both dimensions and codegen", () => {
+    const base3 = buildSurfaceDE([condensationTransforms()[0]]);
+    expect(packSurfaceGpuMaps(withSchedule3(base3, 23))).toHaveLength(
+      24 * SURFACE_GPU_MAP_VEC4 * 4,
+    );
+    expect(() => packSurfaceGpuMaps(withSchedule3(base3, 24))).toThrow(
+      /25.*cap is 24/,
+    );
+    const base4 = buildSurfaceDE4([condensationTransforms()[0]]);
+    expect(packSurfaceGpuMaps4(withSchedule4(base4, 23))).toHaveLength(
+      24 * SURFACE_GPU_MAP4_VEC4 * 4,
+    );
+    expect(() => packSurfaceGpuMaps4(withSchedule4(base4, 24))).toThrow(
+      /25.*cap is 24/,
+    );
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({ schedule: { mapCount: 1, scheduleMapCount: 23 } }),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({ schedule: { mapCount: 1, scheduleMapCount: 24 } }),
+      ),
+    ).toThrow(/25.*cap is 24/);
+  });
+});
+
+describe("surfaceDeKernelWgsl hybrid schedule", () => {
+  const schedule = { mapCount: 2, scheduleMapCount: 3 };
+
+  it("switches all hit/value/refined loops and bounds across the four descent cores", () => {
+    for (const core of ["fold", "affine", "fold4", "affine4"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({
+          mode: "shade",
+          core,
+          width: 4,
+          bnbStage2: true,
+          schedule,
+        }),
+      );
+      expect(wgsl).toContain("scheduleMapStart(depth)");
+      expect(wgsl).toContain("scheduleMapEnd(depth)");
+      expect(wgsl).toContain("scheduleSymOrder(depth)");
+      expect(wgsl).not.toContain("k < params.symOrder");
+      expect(wgsl).not.toContain("j < params.mapCount");
+      expect(wgsl).toContain("r - scheduleBound(depth + 1u).w");
+      expect(wgsl).toContain("scheduleEscapeRadius(depth + 1u)");
+      expect(wgsl).toContain("if (depth == params.scheduleDepth");
+      expect(wgsl).toContain("if (depth >= params.scheduleDepth)");
+      expect(wgsl).not.toContain("let bnbSigma =");
+      if (core === "fold" || core === "affine") {
+        expect(wgsl).toContain("scheduleBound(depth + 1u).xyz");
+        expect(wgsl).toContain("scheduleBound(maxDepth).w");
+      } else {
+        expect(wgsl).toContain("scheduleBound(params.maxDepth).w");
+      }
+      if (core === "affine" || core === "affine4") {
+        expect(wgsl).toMatch(/fn refinedCert\([^)]*depth: u32/);
+        expect(wgsl).toContain("max(r - scheduleBound(depth).w, inner)");
+      }
+    }
+  });
+
+  it("keeps lens inversion outside scheduled cores", () => {
+    for (const core of ["fold", "affine", "fold4", "affine4"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({ mode: "shade", core, lens: true, schedule }),
+      );
+      expect(wgsl).toContain("fn surfaceDECore(");
+      expect(wgsl).toContain("fn surfaceDEHitInfoCore(");
+      expect(wgsl).toContain("scheduleMapStart(depth)");
+      expect(wgsl).toContain("fn surfaceDE(");
+    }
+  });
+
+  it("shifts condensation to A depth and reads emitters after B", () => {
+    const condensation = {
+      mapCount: 2,
+      emitters: [
+        { shape: CONDENSATION_SPHERE, shadeIndex: 2 },
+        { shape: CONDENSATION_BOX, shadeIndex: 3 },
+      ],
+    };
+    const wgsl = surfaceDeKernelWgsl(
+      kernelOpts({ mode: "shade", core: "affine", schedule, condensation }),
+    );
+    expect(wgsl).toContain(
+      "maps[params.mapCount + params.scheduleMapCount + e]",
+    );
+    expect(wgsl).toContain("if (depth < params.scheduleDepth)");
+    expect(wgsl).toContain("let aDepth = depth - params.scheduleDepth;");
+    expect(wgsl).toContain(
+      "let aChildDepth = childDepth - params.scheduleDepth;",
+    );
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({
+          schedule: { mapCount: 2, scheduleMapCount: 21 },
+          condensation,
+        }),
+      ),
+    ).toThrow(/25 physical.*24/);
   });
 });

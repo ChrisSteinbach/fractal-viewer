@@ -155,6 +155,11 @@ export const SURFACE_MAX_MAPS = 24;
  * appended; uMapCount remains the recursive count. */
 export const SURFACE_MAX_RECORDS = SURFACE_MAX_MAPS;
 
+/** The CPU schedule contract clamps a finite B prefix to five levels. The
+ * root ball continues to use the classic uniforms; this is the number of
+ * inner (depth 1..k) balls carried only by the resolved schedule arm. */
+const SURFACE_MAX_SCHEDULE_DEPTH = 5;
+
 /** Largest positive GLSL `int`, used as the wire sentinel for an unbounded
  * condensation depth band. JavaScript's MAX_SAFE_INTEGER would wrap through
  * WebGL's uniform1i conversion and disable the all-level default. */
@@ -271,6 +276,13 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
       if (chainCount == 0) {
         break;
       }
+#if SURFACE_SCHEDULE
+      vec4 childBound = surfaceLevelBound(depth + 1);
+      float childEscape = surfaceLevelEscape(depth + 1);
+      int mapBegin = surfaceLevelMapBegin(depth);
+      int mapEnd = surfaceLevelMapEnd(depth);
+      int symOrder = surfaceLevelSymOrder(depth);
+#endif
 #if SURFACE_CONDENSATION
       for (int c = 0; c < chainCount; c++) {
         condensationFold(fcQ[c], fcScale[c], depth, best);
@@ -287,11 +299,19 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
         float pScale = fcScale[c];
         float pFloor = fcFloor[c];
         vec3 sQ = fcQ[c];
+#if SURFACE_SCHEDULE
+        for (int k = 0; k < symOrder; k++) {
+#else
         for (int k = 0; k < uSymOrder; k++) {
+#endif
           if (k > 0) {
             sQ = stepSector(sQ);
           }
+#if SURFACE_SCHEDULE
+          for (int j = mapBegin; j < mapEnd; j++) {
+#else
           for (int j = 0; j < uMapCount; j++) {
+#endif
             vec4 fp = uFoldParams[j];
             int kind = int(fp.x);
             int branchCount =
@@ -433,22 +453,38 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
                 img = uInvM[j] * pre + uInvT[j];
                 branchSigma = fp.z * sfSigma;
               }
+#if SURFACE_SCHEDULE
+              float r = length(img - childBound.xyz);
+#else
               float r = length(img - uBoundCenter);
+#endif
               float childScale = pScale * branchSigma;
 #if SURFACE_CONDENSATION
               condensationFold(img, childScale, depth + 1, best);
 #endif
+#if SURFACE_SCHEDULE
+              float key = pScale * (r - childBound.w);
+#else
               float key = pScale * (r - uBoundingRadius);
+#endif
               if (candFloor > 0.0 && candFloor > key) {
                 key = candFloor;
               }
+#if SURFACE_SCHEDULE
+              float cert = childScale * (r - childBound.w);
+#else
               float cert = childScale * (r - uBoundingRadius);
+#endif
               if (candFloor > 0.0 && candFloor > cert) {
                 cert = candFloor;
               }
               // Past the escape radius deeper refinement cannot improve
               // the min: fold the (floor-raised) certificate plain.
+#if SURFACE_SCHEDULE
+              if (r > childEscape) {
+#else
               if (r > uEscapeRadius) {
+#endif
                 if (cert < best) {
                   best = cert;
                   if (
@@ -468,11 +504,17 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
               float evR = 0.0;
               float evCert = 0.0;
               float evFloor = 0.0;
+#if SURFACE_SCHEDULE
+              float evScale = 1.0;
+#endif
               bool evHas = false;
               if (keptCount == ${width} && key >= fnWorstKey) {
                 evR = r;
                 evCert = cert;
                 evFloor = candFloor;
+#if SURFACE_SCHEDULE
+                evScale = childScale;
+#endif
                 evHas = true;
               } else {
                 int slot;
@@ -481,6 +523,9 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
                   evR = fnR[slot];
                   evCert = fnCert[slot];
                   evFloor = fnFloor[slot];
+#if SURFACE_SCHEDULE
+                  evScale = fnScale[slot];
+#endif
                   evHas = true;
                 } else {
                   slot = keptCount;
@@ -506,7 +551,11 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
                 }
               }
               if (evHas) {
+#if SURFACE_SCHEDULE
+                if (evR > childBound.w) {
+#else
                 if (evR > uBoundingRadius) {
+#endif
                   if (evCert < best) {
                     best = evCert;
                     if (
@@ -520,7 +569,11 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
                 } else if (futureCondensation) {
                   best = min(
                     best,
+#if SURFACE_SCHEDULE
+                    evScale * (evR - childBound.w)
+#else
                     evScale * (evR - uBoundingRadius)
+#endif
                   );
                   if (
                     best <= sphereBound ||
@@ -559,7 +612,12 @@ const foldDescentGlsl = (fnName: string, width: string): string =>
 #if SURFACE_CONDENSATION
       condensationFold(fcQ[c], fcScale[c], uMaxDepth, best);
 #endif
+#if SURFACE_SCHEDULE
+      vec4 terminalBound = surfaceLevelBound(uMaxDepth);
+      float terminal = fcScale[c] * (fcR[c] - terminalBound.w);
+#else
       float terminal = fcScale[c] * (fcR[c] - uBoundingRadius);
+#endif
       if (fcFloor[c] > 0.0 && fcFloor[c] > terminal) {
         terminal = fcFloor[c];
       }
@@ -701,6 +759,16 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   uniform float uSigmaMin[MAX_MAPS];
   /** sRGB 0..1 base color per map slot (keyed to base maps caller-side). */
   uniform vec3 uMapColor[MAX_MAPS];
+#if SURFACE_SCHEDULE
+  /** Finite B-prefix records occupy [uMapCount, uMapCount+uScheduleCount).
+   * Inner level bounds occupy slots depth-1; depth >= uScheduleDepth clamps
+   * to A's ordinary bound in the last live slot. The root remains the
+   * classic uBoundCenter/uBoundingRadius/uEscapeRadius trio. */
+  uniform int uScheduleCount;
+  uniform int uScheduleDepth;
+  uniform vec4 uScheduleBounds[${SURFACE_MAX_SCHEDULE_DEPTH}];
+  uniform float uScheduleEscapeRadius[${SURFACE_MAX_SCHEDULE_DEPTH}];
+#endif
 #if SURFACE_CONDENSATION
   /** Condensation C0 records append after the ordinary map prefix in the
    * same fixed arrays. uMapCount remains recursive; uCondCount counts the
@@ -716,6 +784,10 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   // time; uCondShape selects it for each symmetry copy.
   //__SURFACE_CONDENSATION_SDFS__
   vec2 condensationTerm(vec3 q, float scale, int depth) {
+#if SURFACE_SCHEDULE
+    if (depth < uScheduleDepth) return vec2(1.0e30, -1.0);
+    depth -= uScheduleDepth;
+#endif
     if (depth < uCondMinDepth || depth > uCondMaxDepth) {
       return vec2(1.0e30, -1.0);
     }
@@ -735,6 +807,9 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
     return vec2(best, float(shade));
   }
   bool condensationFutureAfterChild(int loopDepth) {
+#if SURFACE_SCHEDULE
+    loopDepth -= uScheduleDepth;
+#endif
     return max(loopDepth + 2, uCondMinDepth) <= uCondMaxDepth;
   }
   void condensationFold(vec3 q, float scale, int depth, inout float best) {
@@ -772,6 +847,11 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
    * (ringsLow, ringsInvSpan, sheetsLow, sheetsInvSpan). The downstream
    * pattern-shading bead consumes it. */
   uniform vec4 uPatternCalibration;
+#if SURFACE_SCHEDULE
+  // The hit-info descent publishes the point after the finite B prefix;
+  // pattern space begins there, while final lenses remain outside it.
+  vec3 patternScheduleSource;
+#endif
   /** The SURFACE_PATTERN shading arm's ONE shared body — the accepted V3
    * pattern arithmetic (surface-pattern-shade.ts), spliced by both GLSL
    * tracers so the 3D and 4D formula copies cannot drift. It reads no
@@ -839,6 +919,25 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   uniform mat3 uFinalInvM;
   uniform vec3 uFinalInvT;
   uniform float uFinalSigmaMin;
+#if SURFACE_SCHEDULE
+  vec4 surfaceLevelBound(int depth) {
+    if (depth <= 0) return vec4(uBoundCenter, uBoundingRadius);
+    return uScheduleBounds[min(depth, uScheduleDepth) - 1];
+  }
+  float surfaceLevelEscape(int depth) {
+    if (depth <= 0) return uEscapeRadius;
+    return uScheduleEscapeRadius[min(depth, uScheduleDepth) - 1];
+  }
+  int surfaceLevelMapBegin(int depth) {
+    return depth < uScheduleDepth ? uMapCount : 0;
+  }
+  int surfaceLevelMapEnd(int depth) {
+    return depth < uScheduleDepth ? uMapCount + uScheduleCount : uMapCount;
+  }
+  int surfaceLevelSymOrder(int depth) {
+    return depth < uScheduleDepth ? 1 : uSymOrder;
+  }
+#endif
   /** Pure-fold final lens: (foldKind, 1/w, |w|, sigmaMin of the lens's
    * affine part). Alive only under the SURFACE_FOLD_LENS define — the
    * wrapper past the descent bodies enumerates the fold's inverse
@@ -1102,7 +1201,7 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
   // linkProgram stall, empty info log, context lost). The affine variant
   // below keeps the refined discipline unchanged.
 #else
-#if SURFACE_CONDENSATION
+#if SURFACE_CONDENSATION || SURFACE_SCHEDULE
   float refinedCert(vec3 img, float r, float childScale, int depth) {
 #else
   float refinedCert(vec3 img, float r, float childScale) {
@@ -1112,20 +1211,46 @@ export function buildSurfaceFragment(shadeDeWidth: number): string {
 #else
     float inner = 1e30;
 #endif
+#if SURFACE_SCHEDULE
+    vec4 currentBound = surfaceLevelBound(depth);
+    vec4 childBound = surfaceLevelBound(depth + 1);
+    int mapBegin = surfaceLevelMapBegin(depth);
+    int mapEnd = surfaceLevelMapEnd(depth);
+    int symOrder = surfaceLevelSymOrder(depth);
+#endif
     vec3 sImg = img;
+#if SURFACE_SCHEDULE
+    for (int k = 0; k < symOrder; k++) {
+#else
     for (int k = 0; k < uSymOrder; k++) {
+#endif
       if (k > 0) {
         sImg = stepSector(sImg);
       }
+#if SURFACE_SCHEDULE
+      for (int j = mapBegin; j < mapEnd; j++) {
+#else
       for (int j = 0; j < uMapCount; j++) {
+#endif
         vec3 jImg = uInvM[j] * sImg + uInvT[j];
+#if SURFACE_SCHEDULE
+        inner = min(
+          inner,
+          uSigmaMin[j] * (length(jImg - childBound.xyz) - childBound.w)
+        );
+#else
         inner = min(
           inner,
           uSigmaMin[j] * (length(jImg - uBoundCenter) - uBoundingRadius)
         );
+#endif
       }
     }
+#if SURFACE_SCHEDULE
+    return childScale * max(r - currentBound.w, inner);
+#else
     return childScale * max(r - uBoundingRadius, inner);
+#endif
   }
 #endif
 
@@ -2079,6 +2204,13 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
       if (!aLive && !bLive && !v1Live && !v2Live) {
         break;
       }
+#if SURFACE_SCHEDULE
+      vec4 childBound = surfaceLevelBound(depth + 1);
+      float childEscape = surfaceLevelEscape(depth + 1);
+      int mapBegin = surfaceLevelMapBegin(depth);
+      int mapEnd = surfaceLevelMapEnd(depth);
+      int symOrder = surfaceLevelSymOrder(depth);
+#endif
 #if SURFACE_CONDENSATION
       if (aLive) condensationFold(aQ, aScale, depth, best);
       if (bLive) condensationFold(bQ, bScale, depth, best);
@@ -2153,19 +2285,36 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
         // symmetry section for why a single wedge FOLD would not be sound
         // here.
         vec3 sQ = pQ;
+#if SURFACE_SCHEDULE
+        for (int k = 0; k < symOrder; k++) {
+#else
         for (int k = 0; k < uSymOrder; k++) {
+#endif
           if (k > 0) {
             sQ = stepSector(sQ);
           }
+#if SURFACE_SCHEDULE
+          for (int j = mapBegin; j < mapEnd; j++) {
+#else
           for (int j = 0; j < uMapCount; j++) {
+#endif
             vec3 img = uInvM[j] * sQ + uInvT[j];
+#if SURFACE_SCHEDULE
+            float r = length(img - childBound.xyz);
+            float key = pScale * (r - childBound.w);
+#else
             float r = length(img - uBoundCenter);
             float key = pScale * (r - uBoundingRadius);
+#endif
             float childScale = pScale * uSigmaMin[j];
 #if SURFACE_CONDENSATION
             condensationFold(img, childScale, depth + 1, best);
 #endif
+#if SURFACE_SCHEDULE
+            float cert = childScale * (r - childBound.w);
+#else
             float cert = childScale * (r - uBoundingRadius);
+#endif
             // Exactly one tuple leaves the top-2 ladder per candidate — the
             // displaced runner-up, or the candidate itself. It spills into
             // the rank-3/4 ladder or folds below; empty-slot sentinels flow
@@ -2268,8 +2417,12 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
             // carries no positive certificate — it can only get here past
             // FOUR smaller keys, the (shrunken) residual drop the validity
             // slots left.
+#if SURFACE_SCHEDULE
+            if (eR > childBound.w && eCert < best) {
+#else
             if (eR > uBoundingRadius && eCert < best) {
-#if SURFACE_CONDENSATION
+#endif
+#if SURFACE_CONDENSATION || SURFACE_SCHEDULE
               best = min(best, refinedCert(eQ, eR, eScale, depth + 1));
 #else
               best = min(best, refinedCert(eQ, eR, eScale));
@@ -2286,8 +2439,16 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
                 return max(best, sphereBound) * uFinalSigmaMin;
               }
 #if SURFACE_CONDENSATION
+#if SURFACE_SCHEDULE
+            } else if (eKey < 1e29 && futureCondensation && eR <= childBound.w) {
+#else
             } else if (eKey < 1e29 && futureCondensation && eR <= uBoundingRadius) {
+#endif
+#if SURFACE_SCHEDULE
+              best = min(best, eScale * (eR - childBound.w));
+#else
               best = min(best, eScale * (eR - uBoundingRadius));
+#endif
 #endif
             }
           }
@@ -2304,7 +2465,11 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
       v1Live = false;
       v2Live = false;
       if (c1Key < 1e29) {
+#if SURFACE_SCHEDULE
+        if (c1R > childEscape) {
+#else
         if (c1R > uEscapeRadius) {
+#endif
           best = min(best, c1Cert);
         } else {
           aQ = c1Q;
@@ -2314,7 +2479,11 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
         }
       }
       if (c2Key < 1e29) {
+#if SURFACE_SCHEDULE
+        if (c2R > childEscape) {
+#else
         if (c2R > uEscapeRadius) {
+#endif
           best = min(best, c2Cert);
         } else {
           bQ = c2Q;
@@ -2324,9 +2493,13 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
         }
       }
       if (c3Key < 1e29) {
+#if SURFACE_SCHEDULE
+        if (c3R > childBound.w) {
+#else
         if (c3R > uBoundingRadius) {
+#endif
           if (c3Cert < best) {
-#if SURFACE_CONDENSATION
+#if SURFACE_CONDENSATION || SURFACE_SCHEDULE
             best = min(best, refinedCert(c3Q, c3R, c3Scale, depth + 1));
 #else
             best = min(best, refinedCert(c3Q, c3R, c3Scale));
@@ -2339,9 +2512,13 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
         }
       }
       if (c4Key < 1e29) {
+#if SURFACE_SCHEDULE
+        if (c4R > childBound.w) {
+#else
         if (c4R > uBoundingRadius) {
+#endif
           if (c4Cert < best) {
-#if SURFACE_CONDENSATION
+#if SURFACE_CONDENSATION || SURFACE_SCHEDULE
             best = min(best, refinedCert(c4Q, c4R, c4Scale, depth + 1));
 #else
             best = min(best, refinedCert(c4Q, c4R, c4Scale));
@@ -2378,10 +2555,20 @@ ${foldDescentGlsl("surfaceDE", "FOLD_W")}${foldProbeGlsl(shadeDeWidth)}
     if (v2Live) condensationFold(v2Q, v2Scale, uMaxDepth, best);
 #endif
     if (aLive) {
+#if SURFACE_SCHEDULE
+      vec4 terminalBound = surfaceLevelBound(uMaxDepth);
+      best = min(best, aScale * (aR - terminalBound.w));
+#else
       best = min(best, aScale * (aR - uBoundingRadius));
+#endif
     }
     if (bLive) {
+#if SURFACE_SCHEDULE
+      vec4 terminalBound = surfaceLevelBound(uMaxDepth);
+      best = min(best, bScale * (bR - terminalBound.w));
+#else
       best = min(best, bScale * (bR - uBoundingRadius));
+#endif
     }
     // Validity chains fold NO cap terminal — deliberately asymmetric with
     // A/B. In-sphere means inside the bounding SPHERE, not near the
@@ -2467,6 +2654,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
     out float sheets
   ) {
     vec3 q = uFinalInvM * p + uFinalInvT;
+#if SURFACE_PATTERN
+#if SURFACE_SCHEDULE
+    patternScheduleSource = q;
+#endif
+#endif
     firstChoice = 0;
 #if SURFACE_CONDENSATION
     float condensationBest = 1e30;
@@ -2485,6 +2677,13 @@ ${foldValueFormGlsl(shadeDeWidth)}
       if (!live) {
         break;
       }
+#if SURFACE_SCHEDULE
+      vec4 childBound = surfaceLevelBound(depth + 1);
+      float childEscape = surfaceLevelEscape(depth + 1);
+      int mapBegin = surfaceLevelMapBegin(depth);
+      int mapEnd = surfaceLevelMapEnd(depth);
+      int symOrder = surfaceLevelSymOrder(depth);
+#endif
 #if SURFACE_CONDENSATION
       condensationFoldHit(
         chQ,
@@ -2504,11 +2703,19 @@ ${foldValueFormGlsl(shadeDeWidth)}
       float pScale = chScale;
       float pFloor = chFloor;
       vec3 sQ = chQ;
+#if SURFACE_SCHEDULE
+      for (int k = 0; k < symOrder; k++) {
+#else
       for (int k = 0; k < uSymOrder; k++) {
+#endif
         if (k > 0) {
           sQ = stepSector(sQ);
         }
+#if SURFACE_SCHEDULE
+        for (int j = mapBegin; j < mapEnd; j++) {
+#else
         for (int j = 0; j < uMapCount; j++) {
+#endif
           vec4 fp = uFoldParams[j];
           int kind = int(fp.x);
           int branchCount =
@@ -2600,12 +2807,20 @@ ${foldValueFormGlsl(shadeDeWidth)}
               img = uInvM[j] * pre + uInvT[j];
               branchSigma = fp.z * sfSigma;
             }
+#if SURFACE_SCHEDULE
+            float r = length(img - childBound.xyz);
+#else
             float r = length(img - uBoundCenter);
+#endif
             float candFloor = pFloor;
             if (branchRd > 0.0) {
               candFloor = max(candFloor, pScale * absW * branchRd);
             }
+#if SURFACE_SCHEDULE
+            float key = pScale * (r - childBound.w);
+#else
             float key = pScale * (r - uBoundingRadius);
+#endif
 #if SURFACE_CONDENSATION
             condensationFoldHit(
               img,
@@ -2634,18 +2849,43 @@ ${foldValueFormGlsl(shadeDeWidth)}
         break;
       }
 #if SURFACE_CONDENSATION
+#if SURFACE_SCHEDULE
+      if (
+        depth == uScheduleDepth &&
+        lbScale * (lbR - childBound.w) < condensationBest
+      ) {
+#else
       if (depth == 0 && lbScale * (lbR - uBoundingRadius) < condensationBest) {
+#endif
+#else
+#if SURFACE_SCHEDULE
+      if (depth == uScheduleDepth) {
 #else
       if (depth == 0) {
 #endif
+#endif
         firstChoice = lbMap;
       }
+#if SURFACE_SCHEDULE
+#if SURFACE_PATTERN
+      if (depth + 1 == uScheduleDepth) patternScheduleSource = lbQ;
+#endif
+      if (depth >= uScheduleDepth) {
+        trapAcc += trapW * uFoldParams[lbMap].w;
+        trapNorm += trapW;
+        trapW *= uColorSpeed;
+      }
+      rings = min(rings, lbR / childBound.w);
+      sheets = min(sheets, lbAbsY / childBound.w);
+      if (lbR > childEscape) {
+#else
       trapAcc += trapW * uFoldParams[lbMap].w;
       trapNorm += trapW;
       trapW *= uColorSpeed;
       rings = min(rings, lbR / uBoundingRadius);
       sheets = min(sheets, lbAbsY / uBoundingRadius);
       if (lbR > uEscapeRadius) {
+#endif
         live = false;
       } else {
         chQ = lbQ;
@@ -2679,6 +2919,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
   ) {
     vec3 q = uFinalInvM * p + uFinalInvT;
     float startR = length(q - uBoundCenter);
+#if SURFACE_PATTERN
+#if SURFACE_SCHEDULE
+    patternScheduleSource = q;
+#endif
+#endif
     float sphereBound = startR - uBoundingRadius;
     float best = 1e30;
     vec3 aQ = q;
@@ -2711,6 +2956,13 @@ ${foldValueFormGlsl(shadeDeWidth)}
       if (!aLive && !bLive && !v1Live && !v2Live) {
         break;
       }
+#if SURFACE_SCHEDULE
+      vec4 childBound = surfaceLevelBound(depth + 1);
+      float childEscape = surfaceLevelEscape(depth + 1);
+      int mapBegin = surfaceLevelMapBegin(depth);
+      int mapEnd = surfaceLevelMapEnd(depth);
+      int symOrder = surfaceLevelSymOrder(depth);
+#endif
 #if SURFACE_CONDENSATION
       if (aLive) condensationFoldHit(aQ, aScale, depth, best, firstChoice);
       if (bLive) condensationFoldHit(bQ, bScale, depth, best, firstChoice);
@@ -2780,14 +3032,27 @@ ${foldValueFormGlsl(shadeDeWidth)}
         // symmetry section for why a single wedge FOLD would not be sound
         // here.
         vec3 sQ = pQ;
+#if SURFACE_SCHEDULE
+        for (int k = 0; k < symOrder; k++) {
+#else
         for (int k = 0; k < uSymOrder; k++) {
+#endif
           if (k > 0) {
             sQ = stepSector(sQ);
           }
+#if SURFACE_SCHEDULE
+          for (int j = mapBegin; j < mapEnd; j++) {
+#else
           for (int j = 0; j < uMapCount; j++) {
+#endif
             vec3 img = uInvM[j] * sQ + uInvT[j];
+#if SURFACE_SCHEDULE
+            float r = length(img - childBound.xyz);
+            float key = pScale * (r - childBound.w);
+#else
             float r = length(img - uBoundCenter);
             float key = pScale * (r - uBoundingRadius);
+#endif
             float childScale = pScale * uSigmaMin[j];
 #if SURFACE_CONDENSATION
             condensationFoldHit(
@@ -2798,7 +3063,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
               firstChoice
             );
 #endif
+#if SURFACE_SCHEDULE
+            float cert = childScale * (r - childBound.w);
+#else
             float cert = childScale * (r - uBoundingRadius);
+#endif
             // Exactly one tuple leaves the top-2 ladder per candidate — the
             // displaced runner-up, or the candidate itself. It spills into
             // the rank-3/4 ladder or folds below; empty-slot sentinels flow
@@ -2901,38 +3170,72 @@ ${foldValueFormGlsl(shadeDeWidth)}
             // carries no positive certificate — it can only get here past
             // FOUR smaller keys, the (shrunken) residual drop the validity
             // slots left.
+#if SURFACE_SCHEDULE
+            if (eR > childBound.w && eCert < best) {
+#else
             if (eR > uBoundingRadius && eCert < best) {
-#if SURFACE_CONDENSATION
+#endif
+#if SURFACE_CONDENSATION || SURFACE_SCHEDULE
               best = min(best, refinedCert(eQ, eR, eScale, depth + 1));
 #else
               best = min(best, refinedCert(eQ, eR, eScale));
 #endif
 #if SURFACE_CONDENSATION
+#if SURFACE_SCHEDULE
+            } else if (eKey < 1e29 && futureCondensation && eR <= childBound.w) {
+              best = min(best, eScale * (eR - childBound.w));
+#else
             } else if (eKey < 1e29 && futureCondensation && eR <= uBoundingRadius) {
               best = min(best, eScale * (eR - uBoundingRadius));
+#endif
 #endif
             }
           }
         }
       }
 #if SURFACE_CONDENSATION
+#if SURFACE_SCHEDULE
+      if (depth == uScheduleDepth && c1Cert < best) {
+#else
       if (depth == 0 && c1Cert < best) {
+#endif
+#else
+#if SURFACE_SCHEDULE
+      if (depth == uScheduleDepth) {
 #else
       if (depth == 0) {
 #endif
+#endif
         firstChoice = c1Map;
       }
+#if SURFACE_SCHEDULE
+#if SURFACE_PATTERN
+      if (depth + 1 == uScheduleDepth) patternScheduleSource = c1Q;
+#endif
+      if (depth >= uScheduleDepth) {
+        trapAcc += trapW * uTrapIndex[c1Map];
+        trapNorm += trapW;
+        trapW *= uColorSpeed;
+      }
+      rings = min(rings, c1R / childBound.w);
+      sheets = min(sheets, abs(c1Q.y) / childBound.w);
+#else
       trapAcc += trapW * uTrapIndex[c1Map];
       trapNorm += trapW;
       trapW *= uColorSpeed;
       rings = min(rings, c1R / uBoundingRadius);
       sheets = min(sheets, abs(c1Q.y) / uBoundingRadius);
+#endif
       aLive = false;
       bLive = false;
       v1Live = false;
       v2Live = false;
       if (c1Key < 1e29) {
+#if SURFACE_SCHEDULE
+        if (c1R > childEscape) {
+#else
         if (c1R > uEscapeRadius) {
+#endif
           best = min(best, c1Cert);
         } else {
           aQ = c1Q;
@@ -2942,7 +3245,11 @@ ${foldValueFormGlsl(shadeDeWidth)}
         }
       }
       if (c2Key < 1e29) {
+#if SURFACE_SCHEDULE
+        if (c2R > childEscape) {
+#else
         if (c2R > uEscapeRadius) {
+#endif
           best = min(best, c2Cert);
         } else {
           bQ = c2Q;
@@ -2952,9 +3259,13 @@ ${foldValueFormGlsl(shadeDeWidth)}
         }
       }
       if (c3Key < 1e29) {
+#if SURFACE_SCHEDULE
+        if (c3R > childBound.w) {
+#else
         if (c3R > uBoundingRadius) {
+#endif
           if (c3Cert < best) {
-#if SURFACE_CONDENSATION
+#if SURFACE_CONDENSATION || SURFACE_SCHEDULE
             best = min(best, refinedCert(c3Q, c3R, c3Scale, depth + 1));
 #else
             best = min(best, refinedCert(c3Q, c3R, c3Scale));
@@ -2967,9 +3278,13 @@ ${foldValueFormGlsl(shadeDeWidth)}
         }
       }
       if (c4Key < 1e29) {
+#if SURFACE_SCHEDULE
+        if (c4R > childBound.w) {
+#else
         if (c4R > uBoundingRadius) {
+#endif
           if (c4Cert < best) {
-#if SURFACE_CONDENSATION
+#if SURFACE_CONDENSATION || SURFACE_SCHEDULE
             best = min(best, refinedCert(c4Q, c4R, c4Scale, depth + 1));
 #else
             best = min(best, refinedCert(c4Q, c4R, c4Scale));
@@ -2989,10 +3304,20 @@ ${foldValueFormGlsl(shadeDeWidth)}
     if (v2Live) condensationFoldHit(v2Q, v2Scale, uMaxDepth, best, firstChoice);
 #endif
     if (aLive) {
+#if SURFACE_SCHEDULE
+      vec4 terminalBound = surfaceLevelBound(uMaxDepth);
+      best = min(best, aScale * (aR - terminalBound.w));
+#else
       best = min(best, aScale * (aR - uBoundingRadius));
+#endif
     }
     if (bLive) {
+#if SURFACE_SCHEDULE
+      vec4 terminalBound = surfaceLevelBound(uMaxDepth);
+      best = min(best, bScale * (bR - terminalBound.w));
+#else
       best = min(best, bScale * (bR - uBoundingRadius));
+#endif
     }
     // Validity chains fold NO cap terminal — deliberately asymmetric with
     // A/B. In-sphere means inside the bounding SPHERE, not near the
@@ -3915,6 +4240,12 @@ ${foldValueFormGlsl(shadeDeWidth)}
     // hit depth, normalized by the raw bounding radius, so preview and
     // settle tiers cannot change the material detail.
     vec3 patternSource;
+#if SURFACE_SCHEDULE
+    patternSource = patternScheduleSource;
+    vec4 patternBound = surfaceLevelBound(uScheduleDepth);
+    vec3 objectP = (patternSource - patternBound.xyz) / patternBound.w;
+    float patternFootprint = uAcceptPixelEps * t / patternBound.w;
+#else
 #if SURFACE_FOLD_LENS
     patternSource = patternFoldLensSource;
 #else
@@ -3928,6 +4259,7 @@ ${foldValueFormGlsl(shadeDeWidth)}
 #endif
     vec3 objectP = (patternSource - uBoundCenter) / uBoundingRadius;
     float patternFootprint = uAcceptPixelEps * t / uBoundingRadius;
+#endif
 #if SURFACE_CONDENSATION
     int patternSlot = clamp(firstChoice, 0, uShadeCount - 1);
 #else
@@ -4440,6 +4772,17 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
         ),
       },
       uMapCount: { value: 0 },
+      uScheduleCount: { value: 0 },
+      uScheduleDepth: { value: 0 },
+      uScheduleBounds: {
+        value: Array.from(
+          { length: SURFACE_MAX_SCHEDULE_DEPTH },
+          () => new THREE.Vector4(0, 0, 0, 1),
+        ),
+      },
+      uScheduleEscapeRadius: {
+        value: new Array<number>(SURFACE_MAX_SCHEDULE_DEPTH).fill(2),
+      },
       uSymOrder: { value: 1 },
       uSymPlane: { value: 1 },
       uSymStep: { value: new THREE.Vector2(1, 0) },
@@ -4643,15 +4986,17 @@ export function setSurfaceSystem(
   colors: Vec3[],
   trapIndices?: number[],
 ): void {
+  const schedule = de.schedule && de.schedule.depth > 0 ? de.schedule : null;
+  const scheduleMaps = schedule?.maps ?? [];
   const emitters = de.condensation?.emitters ?? [];
-  const recordCount = de.maps.length + emitters.length;
+  const recordCount = de.maps.length + scheduleMaps.length + emitters.length;
   const shadeCount = emitters.reduce(
     (count, emitter) => Math.max(count, emitter.shadeIndex + 1),
     de.maps.length,
   );
   if (recordCount > SURFACE_MAX_RECORDS) {
     throw new RangeError(
-      `surface DE has ${de.maps.length} maps + ${emitters.length} condensation records, but the material carries at most ${SURFACE_MAX_RECORDS}`,
+      `surface DE has ${de.maps.length} maps + ${scheduleMaps.length} schedule maps + ${emitters.length} condensation records, but the material carries at most ${SURFACE_MAX_RECORDS}`,
     );
   }
   if (shadeCount > SURFACE_MAX_MAPS) {
@@ -4705,9 +5050,21 @@ export function setSurfaceSystem(
     );
     if (map.foldKind !== SURFACE_FOLD_NONE) hasFolds = true;
   });
+  scheduleMaps.forEach((map, b) => {
+    const slot = de.maps.length + b;
+    const m = map.invM;
+    invM[slot].set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
+    invT[slot].set(...map.invT);
+    sigmaMin[slot] = map.sigmaMin;
+    trapIndex[slot] = 0;
+    // B is a finite affine plot-stage word: it never inherits A's fold,
+    // material, color or trap attribution even in a fold-capable program.
+    foldParams[slot].set(SURFACE_FOLD_NONE, 1, map.sigmaMin, 0);
+    foldRadii[slot].set(0.5, 1, 1, 0);
+  });
   const shapeSlots = new Map<string, number>();
   emitters.forEach((emitter, e) => {
-    const slot = de.maps.length + e;
+    const slot = de.maps.length + scheduleMaps.length + e;
     const m = emitter.invM;
     invM[slot].set(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]);
     invT[slot].set(...emitter.invT);
@@ -4728,6 +5085,7 @@ export function setSurfaceSystem(
   // actually flips).
   const wantFolds = hasFolds ? 1 : 0;
   const wantLens = de.foldFinal ? 1 : 0;
+  const wantSchedule = schedule ? 1 : 0;
   const wantCondensation = emitters.length > 0 ? 1 : 0;
   const condensationShapes = wantCondensation
     ? emitters.map((emitter) => emitter.shape)
@@ -4757,6 +5115,7 @@ export function setSurfaceSystem(
     material.defines.SURFACE_ESCAPE !== 0 ||
     material.defines.SURFACE_BULB !== 0 ||
     material.defines.SURFACE_GROUND_PLANE !== plane ||
+    (material.defines.SURFACE_SCHEDULE === 1 ? 1 : 0) !== wantSchedule ||
     material.defines.SURFACE_CONDENSATION !== wantCondensation ||
     oldCondensationKey !== condensationKey
   ) {
@@ -4770,6 +5129,8 @@ export function setSurfaceSystem(
     material.defines.SURFACE_SHAPE_TRAP = 0;
     delete material.defines.SURFACE_TRAP_GEOMETRY;
     material.defines.SURFACE_CONDENSATION = wantCondensation;
+    if (wantSchedule) material.defines.SURFACE_SCHEDULE = 1;
+    else delete material.defines.SURFACE_SCHEDULE;
     (
       material.userData as { surfaceTrapShapeKey?: string | null }
     ).surfaceTrapShapeKey = null;
@@ -4794,12 +5155,26 @@ export function setSurfaceSystem(
       SURFACE_FRAGMENT,
       null,
       condensationShapes,
+      false,
+      0,
+      wantSchedule,
     );
     material.needsUpdate = true;
   }
   u.uMapCount.value = de.maps.length;
+  u.uScheduleCount.value = scheduleMaps.length;
+  u.uScheduleDepth.value = schedule?.depth ?? 0;
+  if (schedule) {
+    const scheduleBounds = u.uScheduleBounds.value as THREE.Vector4[];
+    const scheduleEscape = u.uScheduleEscapeRadius.value as number[];
+    for (let depth = 1; depth <= schedule.depth; depth++) {
+      const bound = schedule.bounds[depth];
+      scheduleBounds[depth - 1].set(...bound.center, bound.radius);
+      scheduleEscape[depth - 1] = bound.escapeRadius;
+    }
+  }
   u.uCondCount.value = emitters.length;
-  u.uCondMapCount.value = de.maps.length;
+  u.uCondMapCount.value = de.maps.length + scheduleMaps.length;
   u.uShadeCount.value = shadeCount;
   u.uCondMinDepth.value = Math.min(
     SURFACE_CONDENSATION_GLSL_DEPTH_MAX,
@@ -5032,6 +5407,7 @@ export function surfaceFragmentResolvedFor(
   condensation: readonly ShapeSpec[] | null = null,
   condensation4 = false,
   trapGeometry = 0,
+  schedule = 0,
 ): string {
   if (plane !== 0 && balloon !== 0) {
     throw new RangeError(
@@ -5067,6 +5443,11 @@ export function surfaceFragmentResolvedFor(
       "SURFACE_CONDENSATION compiles only into inverse-map descent arms",
     );
   }
+  if (schedule !== 0 && (escape !== 0 || bulb !== 0)) {
+    throw new RangeError(
+      "SURFACE_SCHEDULE compiles only into inverse-map descent arms",
+    );
+  }
   // Geometry belongs only to the fold-chain escape estimator. A direct
   // bulb call may still carry a document trap (the app normally refuses
   // that combination); keeping this arm off guarantees it remains color
@@ -5085,6 +5466,9 @@ export function surfaceFragmentResolvedFor(
     SURFACE_SHAPE_TRAP: trap !== null ? 1 : 0,
     SURFACE_TRAP_GEOMETRY: resolvedTrapGeometry,
     SURFACE_CONDENSATION: condensation !== null ? 1 : 0,
+    SURFACE_SCHEDULE: schedule,
+    "SURFACE_CONDENSATION || SURFACE_SCHEDULE":
+      condensation !== null || schedule !== 0 ? 1 : 0,
   });
   let baked = resolved;
   // The trap arm's two BAKED splices: the per-spec shape SDF
@@ -5177,6 +5561,7 @@ export function surfaceFragmentFor(
   condensation: readonly ShapeSpec[] | null = null,
   condensation4 = false,
   trapGeometry = 0,
+  schedule = 0,
 ): string {
   const resolved = surfaceFragmentResolvedFor(
     escape,
@@ -5191,6 +5576,7 @@ export function surfaceFragmentFor(
     condensation,
     condensation4,
     trapGeometry,
+    schedule,
   );
   return plane !== 0 || resolved.length > SURFACE_GLSL_STRIP_BYTES
     ? stripGlslSource(resolved)
@@ -5376,6 +5762,7 @@ export function setEscapeSystem(
     material.defines.SURFACE_BULB !== 0 ||
     material.defines.SURFACE_FOLDS !== 0 ||
     material.defines.SURFACE_FOLD_LENS !== 0 ||
+    material.defines.SURFACE_SCHEDULE === 1 ||
     material.defines.SURFACE_CONDENSATION !== 0 ||
     material.defines.SURFACE_SHAPE_TRAP !== trapInstall.wantTrap ||
     currentTrapGeometry !== trapInstall.wantGeometry ||
@@ -5389,6 +5776,9 @@ export function setEscapeSystem(
     material.defines.SURFACE_BULB = 0;
     material.defines.SURFACE_FOLDS = 0;
     material.defines.SURFACE_FOLD_LENS = 0;
+    delete material.defines.SURFACE_SCHEDULE;
+    u.uScheduleCount.value = 0;
+    u.uScheduleDepth.value = 0;
     material.defines.SURFACE_SHAPE_TRAP = trapInstall.wantTrap;
     if (trapInstall.wantGeometry) material.defines.SURFACE_TRAP_GEOMETRY = 1;
     else delete material.defines.SURFACE_TRAP_GEOMETRY;
@@ -5488,6 +5878,7 @@ export function setBulbSystem(
     material.defines.SURFACE_ESCAPE !== 0 ||
     material.defines.SURFACE_FOLDS !== 0 ||
     material.defines.SURFACE_FOLD_LENS !== 0 ||
+    material.defines.SURFACE_SCHEDULE === 1 ||
     material.defines.SURFACE_CONDENSATION !== 0 ||
     material.defines.SURFACE_SHAPE_TRAP !== trapInstall.wantTrap ||
     currentTrapGeometry !== 0 ||
@@ -5497,6 +5888,9 @@ export function setBulbSystem(
     material.defines.SURFACE_ESCAPE = 0;
     material.defines.SURFACE_FOLDS = 0;
     material.defines.SURFACE_FOLD_LENS = 0;
+    delete material.defines.SURFACE_SCHEDULE;
+    u.uScheduleCount.value = 0;
+    u.uScheduleDepth.value = 0;
     material.defines.SURFACE_SHAPE_TRAP = trapInstall.wantTrap;
     // Shape geometry is escape-only. A direct bulb install can still carry
     // the color trap, but never compiles or preserves the geometry arm.
@@ -5598,6 +5992,7 @@ export function setSurfaceBalloon(
       materialCondensationSpecs(material),
       false,
       materialTrapGeometry(material),
+      material.defines.SURFACE_SCHEDULE === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -5727,6 +6122,7 @@ export function setSurfaceGroundPlane(
       materialCondensationSpecs(material),
       false,
       materialTrapGeometry(material),
+      material.defines.SURFACE_SCHEDULE === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
@@ -5791,6 +6187,7 @@ export function setSurfaceMaterials(
       materialCondensationSpecs(material),
       false,
       materialTrapGeometry(material),
+      material.defines.SURFACE_SCHEDULE === 1 ? 1 : 0,
     );
     material.needsUpdate = true;
   }
