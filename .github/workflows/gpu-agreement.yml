@@ -52,16 +52,32 @@ jobs:
     name: gpu-agreement (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
     strategy:
-      # Four shards over the scenario list, round-robin by index inside the
+      # Shards over the scenario list, round-robin by index inside the
       # page (see applyScenarioShard in gpu-bench/shard.ts). The count of
       # scenarios is deliberately NOT written down here — that is the drift
       # this design exists to prevent — but for scale, the sweep was
       # sixteen when this landed and split 4/4/4/4.
       # The count is NOT repeated in the --shard argument below — that reads
-      # `strategy.job-total`, so adding a fifth entry here re-partitions the
+      # `strategy.job-total`, so adding an entry here re-partitions the
       # sweep on its own and the two cannot drift apart.
+      #
+      # RAISED 4 -> 8, and the reason is a MEASURED failure rather than a
+      # precaution. The multi-system wave added five scenarios (three chi,
+      # two emitter) whose CPU oracles are the expensive half — a 24-map
+      # block-diagonal system, and a condensation sampler drawing a gear
+      # profile by accept-reject for a quarter of its iterations. At four
+      # shards that took shards 1 and 2 past the script's own 20-minute cap
+      # on this runner (both died at ~21m30s with a TimeoutError and NO
+      # verdict, while shards 3 and 4 passed in 13-14m) — the failure mode
+      # the cap exists to report, arriving as a wall-clock overrun rather
+      # than a disagreement. Eight shards halve the per-shard sweep, which
+      # restores margin under the SAME script cap and the SAME job timeout
+      # below, so neither constant has to move and the "script trips first"
+      # ordering is untouched. Prefer re-partitioning here over raising
+      # either constant: a bigger cap only makes a genuinely hung scenario
+      # take longer to name.
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
       # A gate wants every failing shard named, not just the first one: with
       # fail-fast the surviving shards are cancelled and their verdicts are
       # lost, which turns "these three scenarios disagree" into "something
@@ -76,7 +92,11 @@ jobs:
     # job's too close together to keep that ordering reliable. Sharding only
     # widens that margin — measured at the split, the slowest of four shards
     # is 6m27s against the same 20-minute script cap — so the number is left
-    # where that raise put it.
+    # where that raise put it. That margin is NOT permanent: the
+    # multi-system wave's five new scenarios ate all of it at four shards
+    # (see the re-partition note above), so a wave that adds expensive
+    # scenarios should re-check the slowest shard rather than assume the
+    # headroom is still there.
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
