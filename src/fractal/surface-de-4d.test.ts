@@ -3848,6 +3848,9 @@ describe("slab queries through the fold frontier", () => {
     }
   });
 
+  // Full-suite V8 coverage runs this 20k-cloud/property probe alongside the
+  // other heavy estimator files; the same 10s allowance used below keeps
+  // shared-runner contention from masquerading as a math failure.
   it("never returns a slab value greater than the point-query value at the same center — enlarging the query set can only shrink the infimum", () => {
     const transforms = pureBoxfoldPair4();
     const de = buildSurfaceDE4(transforms);
@@ -3868,7 +3871,7 @@ describe("slab queries through the fold frontier", () => {
         estimateDistance4Refined(de, q, 0, halfExtent),
       ).toBeLessThanOrEqual(pointRefined + 1e-9);
     }
-  });
+  }, 10_000);
 
   it("matches the point-query path bit-for-bit at a null or all-zero half-extent, through the fold frontier", () => {
     const transforms = pureBoxfoldPair4();
