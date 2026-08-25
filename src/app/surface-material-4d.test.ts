@@ -1,5 +1,5 @@
 import type * as THREE from "three";
-import { DataTexture } from "three";
+import { Data3DTexture, DataTexture, NearestFilter } from "three";
 import {
   createSurfaceMaterial4,
   setSurface4Balloon,
@@ -174,6 +174,15 @@ const COND4_BOX: ShapeSpec = {
   parts: [
     {
       primitive: { kind: "box", half: [0.2, 0.25, 0.3] },
+      combine: "union",
+    },
+  ],
+};
+
+const MESH4_SHAPE: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "mesh", meshId: "star-prism-v1" },
       combine: "union",
     },
   ],
@@ -449,6 +458,62 @@ describe("4D GLSL reverse-chi packing and source", () => {
 });
 
 describe("4D GLSL condensation packing and source", () => {
+  it("adds the shared manual atlas sampler only to mesh-bearing condensation source", () => {
+    const analytic = surface4FragmentResolvedFor(0, 0, 0, 0, [COND4_SPHERE]);
+    expect(analytic).not.toContain("uShapeMeshSdf");
+    expect(analytic).not.toContain("shapeMeshSdf(");
+
+    const mesh = surface4FragmentResolvedFor(0, 0, 0, 0, [
+      MESH4_SHAPE,
+      MESH4_SHAPE,
+    ]);
+    expect(
+      countOccurrences(mesh, "uniform highp sampler3D uShapeMeshSdf;"),
+    ).toBe(1);
+    expect(countOccurrences(mesh, "texelFetch(uShapeMeshSdf")).toBe(8);
+    expect(mesh).toContain("shapeMeshSdf(0, vec3(");
+    expect(mesh).toMatch(
+      /if \(mesh == 0\) return shapeMeshSdfSample\(p, vec3\([^)]*\), vec3\([^)]*\), [^,]+, 0, 64\);/,
+    );
+  });
+
+  it("binds a 1^3 R32F placeholder, installs the catalog atlas, and resets it", () => {
+    const material = createSurfaceMaterial4();
+    const placeholder = material.uniforms.uShapeMeshSdf.value as Data3DTexture;
+    expect(placeholder).toBeInstanceOf(Data3DTexture);
+    expect(placeholder.image).toMatchObject({ width: 1, height: 1, depth: 1 });
+    expect(placeholder.internalFormat).toBe("R32F");
+    expect(placeholder.minFilter).toBe(NearestFilter);
+    expect(placeholder.magFilter).toBe(NearestFilter);
+
+    const de: SurfaceDE4 = {
+      ...de4([map4()]),
+      condensation: {
+        emitters: [condEmitter4(MESH4_SHAPE, 1, [0, 0, 0, 0])],
+        depthBand: { minDepth: 0, maxDepth: 8 },
+      },
+    };
+    setSurfaceSystem4(material, de, [
+      [0, 0, 0],
+      [1, 0, 0],
+    ]);
+    const atlas = material.uniforms.uShapeMeshSdf.value as Data3DTexture;
+    expect(atlas).not.toBe(placeholder);
+    expect(atlas.image).toMatchObject({ width: 64, height: 64, depth: 64 });
+    expect(atlas.image.data).toBeInstanceOf(Float32Array);
+    expect(atlas.internalFormat).toBe("R32F");
+    expect(atlas.minFilter).toBe(NearestFilter);
+    expect(atlas.magFilter).toBe(NearestFilter);
+
+    setSurfaceSystem4(material, de4([map4()]), [[0, 0, 0]]);
+    expect(material.uniforms.uShapeMeshSdf.value).toBe(placeholder);
+    expect(material.uniforms.uShapeMeshSdf.value.image).toMatchObject({
+      width: 1,
+      height: 1,
+      depth: 1,
+    });
+  });
+
   it("appends inverse records in the std140 map arrays while recursive and shade counts remain separate", () => {
     const material = createSurfaceMaterial4();
     const de: SurfaceDE4 = {

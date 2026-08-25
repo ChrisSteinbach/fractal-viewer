@@ -717,15 +717,16 @@ function xformColorFern(): Transform[] {
 /**
  * The shape-emitter menagerie: two simple contractions (id 0/1, plain
  * affine, no variations) plus one multi-part emitter transform (id 2) whose
- * `ShapeSpec` carries the FOUR primitives {@link gearworks}'s GEAR_SHAPE
- * -only fixture never reaches — sphere, box, torus, capsule — each
+ * `ShapeSpec` carries the FIVE primitives {@link gearworks}'s GEAR_SHAPE
+ * -only fixture never reaches — sphere, box, torus, capsule, and the
+ * catalog star-prism mesh — each
  * `"union"`, each posed to its own DISTINCT region: bounding-sphere
  * separated (sphere at +x, box at -x, torus at +y, capsule at -y, each
  * part's own reach well under the gap to its neighbours), so shapes.ts's
  * min-index overlap correction is never exercised here — the multi-part
  * pick's own disclosed overlap divergence (flame-gpu.ts's Slot layout doc)
  * stays out of scope for this leg, which targets the part-pick's WEIGHTS and
- * the four primitive samplers instead. The emitter transform's own weight
+ * the five primitive samplers instead. The emitter transform's own weight
  * (3, against the two unit-weight contractions) keeps most plotted points a
  * recent emitter stamp, so a wrong sampler or a wrong part-pick weight
  * restructures the frame rather than hiding in a rarely-visited corner of it
@@ -778,10 +779,45 @@ function emitterMenagerie(): Transform[] {
             combine: "union",
             pose: { offset: [0, -0.55, 0], rotate: [0, 0, Math.PI / 6] },
           },
+          {
+            primitive: { kind: "mesh", meshId: "star-prism-v1" },
+            combine: "union",
+            // The catalog asset's radius is ~1.04; this scale keeps its
+            // +z island disjoint from all four solid parts while leaving
+            // enough area-weighted picks to make kind 5 statistically live.
+            pose: {
+              offset: [0, 0, 0.55],
+              rotate: [0.2, 0.35, 0.1],
+              scale: 0.18,
+            },
+          },
         ],
       },
     },
   ];
+}
+
+/** The existing transform-color Hyperfern fixture with one 7%-weight map
+ * upgraded to the catalog mesh emitter. The original Hyperfern still runs
+ * untouched in the structural-color scenario; this controlled variant keeps
+ * every map/weight/w-lift while making the 4D Flame kernel's kind-5 sampler
+ * and binding-7 table statistically live against accumulateFlame4. */
+function hyperfernMeshEmitter(): Transform[] {
+  return hyperfern().map((transform, index) =>
+    index === 2
+      ? {
+          ...transform,
+          emitter: {
+            parts: [
+              {
+                primitive: { kind: "mesh", meshId: "star-prism-v1" },
+                combine: "union",
+              },
+            ],
+          },
+        }
+      : transform,
+  );
 }
 
 const SCENARIOS: ScenarioDef[] = [
@@ -1091,9 +1127,9 @@ const SCENARIOS: ScenarioDef[] = [
     symmetry: { order: 1, plane: "xz" },
     paletteId: "legacy",
     // emitter-gearworks's sibling: its single GEAR_SHAPE part never reaches
-    // the sphere/box/torus/capsule device samplers, nor the multi-part
+    // the sphere/box/torus/capsule/mesh device samplers, nor the multi-part
     // pick's weighted search (a partCount<=1 slot skips it outright). This
-    // leg's emitter is one ShapeSpec holding all four, each posed to its own
+    // leg's emitter is one ShapeSpec holding all five, each posed to its own
     // non-overlapping region — see emitterMenagerie's doc.
     // Probed via a 200k-point bounds pass (chaos-game's own `bounds`; this
     // system has no escape tail — every emitter sample is exactly bounded —
@@ -1112,8 +1148,9 @@ const SCENARIOS: ScenarioDef[] = [
     // default 1.0 — the threshold stays at the default-equivalent 1.0
     // rather than tightening below it (schedule-sponge's convention).
     maeThreshold: 1.0,
-    // Uniquely pins: applySlot's emitter branch over the sphere, box, torus
-    // and capsule device samplers (emitterDrawSphere/Box/Torus/Capsule) —
+    // Uniquely pins: applySlot's emitter branch over the sphere, box, torus,
+    // capsule and mesh device samplers (including emitterDrawMesh's catalog
+    // area CDF + 3D triangle record) —
     // none of which emitter-gearworks' single gear part reaches — and the
     // multi-part pick's weighted binary search over a partCount > 1 slot
     // (emitterSampleSlot), which no other scenario here exercises at all.
@@ -1171,7 +1208,7 @@ const SCENARIOS: ScenarioDef[] = [
   {
     kind: "4d",
     name: "hyperfern-transform",
-    system: hyperfern,
+    system: hyperfernMeshEmitter,
     finalTransform: null,
     symmetry: { order: 1, plane: "xz" },
     rotation: BENCH_TUMBLE,
@@ -1181,6 +1218,10 @@ const SCENARIOS: ScenarioDef[] = [
     sliceCenter: 0,
     sliceWidth: 0.35,
     sliceRelativeColor: false,
+    // The structural Hyperfern leg above preserves the original geometry;
+    // this transform-color sibling also pins the mesh emitter after the
+    // document is lifted through toTransform4 (local mesh samples enter at
+    // w=0, then the ordinary 4D orbit carries them through the tumble).
   },
   {
     kind: "4d",
@@ -2877,6 +2918,10 @@ interface SurfaceUnprojectRow {
 interface SurfaceComputeFrameRow {
   width: number;
   height: number;
+  /** The production renderer's OWN adapter disclosure. Its create() call
+   * acquires independently from the Surface section's standalone device. */
+  adapterLabel?: string;
+  software?: boolean;
   wallMs: number;
   gpuMs: number;
   passes: number;
@@ -2887,6 +2932,10 @@ interface SurfaceComputeFrameRow {
    * place of a per-pixel comparison (see the leg's design comment). */
   sanityGpuHitRate?: number;
   sanityCpuHitRate?: number;
+  /** Same-pixel stride comparison used by the mesh-atlas leg. */
+  sanitySamples?: number;
+  sanityHitMismatches?: number;
+  sanityMismatchRate?: number;
   /** ifs4 frame leg only (the fold4 invocation gets one too, same leg
    * function): a SECOND frame rendered by the SAME renderer at a different
    * `view4` (rotated rotor, different w0) — the per-frame view-repack proof
@@ -3157,6 +3206,12 @@ interface SurfaceDeResults {
    * 81-branch mandelbox lens, branch-scaled priors). Gates like
    * {@link computeFrame} (zero hits on real hardware fails). */
   computeFrameLens?: SurfaceComputeFrameRow | SkippedResult;
+  /** Tier-3 mesh condensation through the PRODUCTION renderer: Star Foundry
+   * makes binding 11's R32F atlas live in both march and shade kernels, then
+   * a strided CPU Surface march gates the completed frame's same-pixel hit
+   * mask. Kept separate from the direct M8 eval leg because that older 0..3
+   * bind-group fixture intentionally has no texture binding. */
+  computeFrameMesh?: SurfaceComputeFrameRow | SkippedResult;
   /** Leg B over the escape class — the PRODUCTION renderer on
    * escMandelbox through `{ kind: "escape" }` (forward-orbit core, no
    * maps buffer, unscaled priors). Gates like {@link computeFrame}, plus
@@ -6021,6 +6076,14 @@ interface SurfaceSystemState {
   };
 }
 
+/** The subset needed by the production IFS frame leg. Keeping this narrower
+ * lets the mesh-atlas fixture avoid building an otherwise unused 700-query
+ * eval table just to exercise SurfaceComputeRenderer. */
+type SurfaceFrameSystem = Pick<
+  SurfaceSystemState,
+  "name" | "de" | "transforms"
+>;
+
 /** One FORWARD-orbit system's frozen state (escape first; made generic
  * for the bulb, which differs only in the DE type; escape4 extends it
  * below): the forward-map DE, its own dedicated query set
@@ -7858,7 +7921,7 @@ function drawSurfaceComputeFrame(
 }
 
 /**
- * Leg B driver: one end-to-end mandelboxKifs frame through the
+ * Leg B driver: one end-to-end IFS frame through the
  * PRODUCTION `SurfaceComputeRenderer` — its own device, its own march/shade
  * pipelines, the app's host loop — at full-tier knobs, presented onto the
  * section's canvas (progressively, like the app's settle presents). Colors
@@ -7866,17 +7929,35 @@ function drawSurfaceComputeFrame(
  * `surfaceTrapIndices` — the same helpers `main.ts` calls — so slot keying
  * (a map's "By Transform" color; its authored `colorIndex`, else the even
  * spread) matches the app exactly. Throws on renderer-creation failure or a
- * null frame — the caller fails the section.
+ * null frame — the caller fails the section. `cpuSanity` strengthens the
+ * forward/4D frame legs' strided hit-rate precedent to a same-pixel hit-mask
+ * oracle; the mesh leg enables it so binding 11 is checked against the CPU
+ * Surface marcher rather than merely compiled and pictured.
  */
 async function runSurfaceComputeFrameLeg(
-  sys: SurfaceSystemState,
+  sys: SurfaceFrameSystem,
   software: boolean,
   dom: SurfaceSectionDom,
   status: (text: string) => void,
   activity: ActivityBadge,
+  options: {
+    canvasLabel?: string;
+    cpuSanity?: boolean;
+    label?: string;
+    smallRaster?: boolean;
+    cheapShade?: boolean;
+  } = {},
 ): Promise<SurfaceComputeFrameRow> {
-  const width = software ? SURFACE_FRAME_WIDTH_SW : SURFACE_FRAME_WIDTH;
-  const height = software ? SURFACE_FRAME_HEIGHT_SW : SURFACE_FRAME_HEIGHT;
+  const width = options.smallRaster
+    ? SURFACE_UNPROJ_WIDTH
+    : software
+      ? SURFACE_FRAME_WIDTH_SW
+      : SURFACE_FRAME_WIDTH;
+  const height = options.smallRaster
+    ? SURFACE_UNPROJ_HEIGHT
+    : software
+      ? SURFACE_FRAME_HEIGHT_SW
+      : SURFACE_FRAME_HEIGHT;
   const budgetMs = software
     ? SURFACE_FRAME_BUDGET_SW_MS
     : SURFACE_FRAME_BUDGET_MS;
@@ -7885,15 +7966,24 @@ async function runSurfaceComputeFrameLeg(
   const colors = surfaceSlotColors(sys.transforms, sys.de.maps);
   const trapIndices = surfaceTrapIndices(sys.transforms, sys.de.maps);
 
-  activity.setState("gpu", "Surface compute frame (app path)");
-  status("compute frame: creating SurfaceComputeRenderer…");
+  const label = options.label ?? "compute frame";
+  activity.setState("gpu", `Surface ${label} (app path)`);
+  status(`${label}: creating SurfaceComputeRenderer…`);
   const renderer = await SurfaceComputeRenderer.create(
     { kind: "ifs", de: sys.de },
     colors,
     trapIndices,
   );
   try {
-    const canvas = surfaceFrameCanvas(dom, width, height);
+    const canvas = options.canvasLabel
+      ? surfaceLabeledCanvas(
+          dom,
+          options.canvasLabel,
+          `SurfaceComputeRenderer ${label} — ${sys.name}`,
+          width,
+          height,
+        )
+      : surfaceFrameCanvas(dom, width, height);
     const spec: SurfaceComputeFrameSpec = {
       width,
       height,
@@ -7907,8 +7997,8 @@ async function runSurfaceComputeFrameLeg(
         (2 * Math.tan((SURFACE_POSE_FOV_DEG * Math.PI) / 360)) / height,
       maxDepth: sys.de.maxDepth,
       marchSteps: SURFACE_MARCH_STEPS,
-      shadowSteps: SURFACE_FRAME_SHADOW_STEPS,
-      aoTaps: SURFACE_FRAME_AO_TAPS,
+      shadowSteps: options.cheapShade ? 0 : SURFACE_FRAME_SHADOW_STEPS,
+      aoTaps: options.cheapShade ? 0 : SURFACE_FRAME_AO_TAPS,
       hitFloor: SURFACE_GPU_HIT_FLOOR,
       lightDir: surfaceNormalize([0.5, 0.8, 0.3]),
       ambient: 0.25,
@@ -7921,11 +8011,11 @@ async function runSurfaceComputeFrameLeg(
       colorSpeed: 0.5,
       lut: null,
       lutVersion: 0,
-      dither: true,
+      dither: options.cheapShade ? false : true,
     };
-    status(`compute frame: rendering ${width}x${height}…`);
+    status(`${label}: rendering ${width}x${height}…`);
     console.info(
-      `[surface-bench] compute frame: rendering ${String(width)}x${String(height)} (budget ${String(budgetMs)}ms)…`,
+      `[surface-bench] ${label}: rendering ${String(width)}x${String(height)} (budget ${String(budgetMs)}ms)…`,
     );
     const frame = await renderer.renderFrame(spec, {
       budgetMs,
@@ -7938,20 +8028,74 @@ async function runSurfaceComputeFrameLeg(
         "renderFrame resolved null — the app path produced no frame",
       );
     }
+    drawSurfaceComputeFrame(canvas, frame.pixels, width, height);
+    let sanityGpuHitRate: number | undefined;
+    let sanityCpuHitRate: number | undefined;
+    let sanitySamples: number | undefined;
+    let sanityHitMismatches: number | undefined;
+    let sanityMismatchRate: number | undefined;
+    if (options.cpuSanity) {
+      let cpuHits = 0;
+      let gpuHits = 0;
+      let mismatches = 0;
+      const sampled = surfaceSanityPixels(width, height);
+      const ro: Vec3 = [
+        Math.fround(pose.ro[0]),
+        Math.fround(pose.ro[1]),
+        Math.fround(pose.ro[2]),
+      ];
+      for (let i = 0; i < sampled.length; i++) {
+        const ray = sampled[i];
+        const px = ray % width;
+        const py = Math.floor(ray / width);
+        const rd = surfaceUnprojectRay(invProjView, px, py, width, height);
+        const result = surfaceCpuMarchState(
+          sys.de,
+          ro,
+          rd,
+          SURFACE_PIXEL_EPS,
+          SURFACE_MARCH_STEPS,
+        );
+        const cpuHit = result.status === SURFACE_GPU_RAY_HIT;
+        const gpuHit = frame.layers[ray * 4] !== 0;
+        if (cpuHit) cpuHits++;
+        if (gpuHit) gpuHits++;
+        if (gpuHit !== cpuHit) mismatches++;
+        if ((i & 31) === 31) {
+          status(`${label}: CPU sanity ${i + 1}/${sampled.length}…`);
+          await new Promise<void>((resolve) => setTimeout(resolve));
+        }
+      }
+      sanitySamples = sampled.length;
+      sanityHitMismatches = mismatches;
+      sanityGpuHitRate = gpuHits / Math.max(1, sampled.length);
+      sanityCpuHitRate = cpuHits / Math.max(1, sampled.length);
+      sanityMismatchRate = mismatches / Math.max(1, sampled.length);
+    }
     console.info(
-      `[surface-bench] compute frame: done — ${String(frame.passes)} passes, ` +
+      `[surface-bench] ${label}: done — ${String(frame.passes)} passes, ` +
         `${frame.wallMs.toFixed(0)}ms wall, hit=${String(frame.counts.hit)}` +
+        (sanityGpuHitRate !== undefined && sanityCpuHitRate !== undefined
+          ? ` (gpu rate ${sanityGpuHitRate.toFixed(3)} vs cpu sanity ${sanityCpuHitRate.toFixed(3)}, ` +
+            `sample mismatches=${String(sanityHitMismatches)}/${String(sanitySamples)})`
+          : "") +
         `${frame.truncated ? ", TRUNCATED" : ""}`,
     );
-    drawSurfaceComputeFrame(canvas, frame.pixels, width, height);
     return {
       width: frame.width,
       height: frame.height,
+      adapterLabel: renderer.adapterLabel,
+      software: renderer.software,
       wallMs: frame.wallMs,
       gpuMs: frame.gpuMs,
       passes: frame.passes,
       truncated: frame.truncated,
       counts: frame.counts,
+      ...(sanityGpuHitRate !== undefined ? { sanityGpuHitRate } : {}),
+      ...(sanityCpuHitRate !== undefined ? { sanityCpuHitRate } : {}),
+      ...(sanitySamples !== undefined ? { sanitySamples } : {}),
+      ...(sanityHitMismatches !== undefined ? { sanityHitMismatches } : {}),
+      ...(sanityMismatchRate !== undefined ? { sanityMismatchRate } : {}),
     };
   } finally {
     renderer.destroy();
@@ -10001,6 +10145,29 @@ async function runSurfaceDeSection(
     }
     render();
   }
+
+  // Tier 3's mesh field deliberately stays out of `systems`: the direct
+  // eval/unproject layouts above freeze the older buffer-only 0..4 binding
+  // set, whereas the production renderer owns binding 11's 3D atlas texture.
+  // Leg B below is therefore the cleaner end-to-end proof: the shipped Star
+  // Foundry target compiles, uploads, marches and shades through that texture,
+  // then a strided `surfaceCpuMarchState` run supplies the Surface oracle.
+  let meshCondensationSystem: SurfaceFrameSystem | null = null;
+  try {
+    const transforms = presetTransforms("starFoundry");
+    const de = buildSurfaceDE(transforms, null, SURFACE_NO_SYMMETRY);
+    if (!de.condensation) {
+      throw new Error("Star Foundry did not produce a condensation field");
+    }
+    meshCondensationSystem = {
+      name: "starFoundryMeshCondensation",
+      de,
+      transforms,
+    };
+  } catch (e) {
+    results.notes.push(`starFoundry mesh frame fixture: ${describeError(e)}`);
+  }
+  render();
 
   // ----- Scheduled hybrid: shipped Sponge of Ferns, CPU oracle ----------
   // This is deliberately a fixed, must-build fixture rather than another
@@ -14238,6 +14405,102 @@ async function runSurfaceDeSection(
           frameFailed = true;
           results.computeFrame = { skipped: describeError(e) };
           results.notes.push(`compute frame: ${describeError(e)}`);
+        }
+      }
+      render();
+
+      // Tier 3: Star Foundry through the production renderer rather than
+      // the buffer-only direct-eval fixture. This is the path that owns the
+      // frozen binding-11 texture and uploads meshSdfAtlas(); the strided CPU
+      // march makes it an agreement gate, not a compile-only reachability leg.
+      if (!meshCondensationSystem) {
+        frameFailed = true;
+        results.computeFrameMesh = {
+          skipped: "Star Foundry mesh fixture did not build (see notes)",
+        };
+        results.notes.push(
+          "compute frame mesh: Star Foundry fixture unavailable — failing the leg",
+        );
+      } else {
+        try {
+          const row = await runSurfaceComputeFrameLeg(
+            meshCondensationSystem,
+            acquired.software,
+            dom,
+            status,
+            activity,
+            {
+              canvasLabel: "frame-mesh",
+              cheapShade: true,
+              cpuSanity: true,
+              label: "compute frame mesh",
+              smallRaster: true,
+            },
+          );
+          results.computeFrameMesh = row;
+          const gpuRate = row.sanityGpuHitRate;
+          const cpuRate = row.sanityCpuHitRate;
+          const rateGap =
+            gpuRate === undefined || cpuRate === undefined
+              ? Infinity
+              : Math.abs(gpuRate - cpuRate);
+          const mismatchRate = row.sanityMismatchRate ?? Infinity;
+          const rendererSoftware = row.software ?? acquired.software;
+          const activated = row.passes > 0;
+          const geometry = row.counts.hit > 0;
+          const sampledMixed =
+            gpuRate !== undefined &&
+            cpuRate !== undefined &&
+            gpuRate > 0 &&
+            gpuRate < 1 &&
+            cpuRate > 0 &&
+            cpuRate < 1;
+          const settled =
+            rendererSoftware ||
+            (!row.truncated &&
+              row.counts.miss > 0 &&
+              row.counts.exhausted === 0 &&
+              row.counts.active === 0);
+          const rateAgreed =
+            row.truncated || mismatchRate <= SURFACE_SANITY_HIT_RATE_TOL;
+          results.notes.push(
+            `compute frame mesh ${meshCondensationSystem.name} ${String(row.width)}x${String(
+              row.height,
+            )}: passes=${String(row.passes)} hit=${String(row.counts.hit)} ` +
+              `miss=${String(row.counts.miss)} exhausted=${String(row.counts.exhausted)} ` +
+              `active=${String(row.counts.active)} truncated=${String(row.truncated)} ` +
+              `hitRate gpu=${gpuRate?.toFixed(3) ?? "n/a"} cpu=${cpuRate?.toFixed(3) ?? "n/a"} ` +
+              `gap=${Number.isFinite(rateGap) ? rateGap.toFixed(3) : "n/a"} ` +
+              `samePixelMismatch=${Number.isFinite(mismatchRate) ? mismatchRate.toFixed(3) : "n/a"} ` +
+              `adapter=${row.adapterLabel ?? "unknown"} software=${String(rendererSoftware)}`,
+          );
+          if (
+            !activated ||
+            !geometry ||
+            !sampledMixed ||
+            !settled ||
+            !rateAgreed
+          ) {
+            frameFailed = true;
+            results.notes.push(
+              "compute frame mesh: acceptance failed — requires dispatches and hits; " +
+                "the same-pixel CPU/GPU sample must contain both hit and background; " +
+                "a real adapter must settle to a HIT/MISS mix, and every completed frame's " +
+                `sampled hit-mask mismatch rate must be <= ${String(SURFACE_SANITY_HIT_RATE_TOL)}`,
+            );
+          }
+          if (row.truncated) {
+            results.notes.push(
+              `compute frame mesh: truncated at its ${acquired.software ? SURFACE_FRAME_BUDGET_SW_MS : SURFACE_FRAME_BUDGET_MS}ms budget — ` +
+                (rendererSoftware
+                  ? "software-adapter activation/geometry only; the incomplete hit rate is disclosed but not gated"
+                  : "failing the leg: a real-adapter mesh frame must complete"),
+            );
+          }
+        } catch (e) {
+          frameFailed = true;
+          results.computeFrameMesh = { skipped: describeError(e) };
+          results.notes.push(`compute frame mesh: ${describeError(e)}`);
         }
       }
       render();

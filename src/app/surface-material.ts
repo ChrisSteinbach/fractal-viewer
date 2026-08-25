@@ -15,9 +15,12 @@ import {
 import type { ResolvedShapeTrap } from "../fractal/shape-trap";
 import {
   SHAPE_MARCH_SAFETY,
+  shapeMeshIds,
   shapeSdfSource,
+  shapeSpecsMeshIds,
   type ShapeSpec,
 } from "../fractal/shapes";
+import { meshSdfAtlas, type MeshSdfAtlas } from "../fractal/mesh-shapes";
 import type { SurfaceDE } from "../fractal/surface-de";
 import {
   SPHEREFOLD_MID_MIN_R,
@@ -193,7 +196,69 @@ function condensationShapeDispatch(
         `${i === 0 ? "if" : "else if"} (shape == ${i}) return ${fnPrefix}${i}(q);`,
     )
     .join("\n  ");
-  return `${bodies}\nfloat ${dispatchName}(int shape, vec3 q) {\n  ${choices}\n  return 1.0e30;\n}`;
+  const meshHelper =
+    shapeSpecsMeshIds(unique).length > 0 ? `${shapeMeshSdfGlsl()}\n` : "";
+  return `${meshHelper}${bodies}\nfloat ${dispatchName}(int shape, vec3 q) {\n  ${choices}\n  return 1.0e30;\n}`;
+}
+
+/** The one default-catalog atlas shared by source metadata and texture
+ * upload. Laziness preserves the analytic program's byte and startup-cost
+ * identity; the first mesh-bearing program bakes it, every later program /
+ * material reuses the same immutable values. */
+let cachedShapeMeshAtlas: MeshSdfAtlas | null = null;
+
+function shapeMeshAtlas(): MeshSdfAtlas {
+  cachedShapeMeshAtlas ??= meshSdfAtlas();
+  return cachedShapeMeshAtlas;
+}
+
+/** GLSL implementation of shapes.ts's external
+ * `shapeMeshSdf(catalogIndex, p)` call. There is ONE sampler and ONE manual
+ * eight-texel trilinear body no matter how many authored parts reuse a mesh;
+ * catalog-specific bounds, spacing and z slab are baked into the dispatch. */
+function shapeMeshSdfGlsl(): string {
+  const atlas = shapeMeshAtlas();
+  const entries = atlas.entries
+    .map((entry) => {
+      const lo = entry.min.map(glslFloatLit).join(", ");
+      const hi = entry.max.map(glslFloatLit).join(", ");
+      return `  if (mesh == ${entry.catalogIndex}) return shapeMeshSdfSample(p, vec3(${lo}), vec3(${hi}), ${glslFloatLit(entry.cellSize)}, ${entry.zOffset}, ${entry.resolution});`;
+    })
+    .join("\n");
+  return `uniform highp sampler3D uShapeMeshSdf;
+float shapeMeshSdfSample(
+  vec3 p,
+  vec3 lo,
+  vec3 hi,
+  float cellSize,
+  int zOffset,
+  int resolution
+) {
+  vec3 g = (clamp(p, lo, hi) - lo) / cellSize;
+  ivec3 i0 = ivec3(floor(g));
+  ivec3 i1 = min(i0 + ivec3(1), ivec3(resolution - 1));
+  vec3 f = g - vec3(i0);
+  float v000 = texelFetch(uShapeMeshSdf, ivec3(i0.x, i0.y, zOffset + i0.z), 0).r;
+  float v100 = texelFetch(uShapeMeshSdf, ivec3(i1.x, i0.y, zOffset + i0.z), 0).r;
+  float v010 = texelFetch(uShapeMeshSdf, ivec3(i0.x, i1.y, zOffset + i0.z), 0).r;
+  float v110 = texelFetch(uShapeMeshSdf, ivec3(i1.x, i1.y, zOffset + i0.z), 0).r;
+  float v001 = texelFetch(uShapeMeshSdf, ivec3(i0.x, i0.y, zOffset + i1.z), 0).r;
+  float v101 = texelFetch(uShapeMeshSdf, ivec3(i1.x, i0.y, zOffset + i1.z), 0).r;
+  float v011 = texelFetch(uShapeMeshSdf, ivec3(i0.x, i1.y, zOffset + i1.z), 0).r;
+  float v111 = texelFetch(uShapeMeshSdf, ivec3(i1.x, i1.y, zOffset + i1.z), 0).r;
+  float interpolated = mix(
+    mix(mix(v000, v100, f.x), mix(v010, v110, f.x), f.y),
+    mix(mix(v001, v101, f.x), mix(v011, v111, f.x), f.y),
+    f.z
+  );
+  vec3 outside = max(max(lo - p, p - hi), vec3(0.0));
+  float boxDistance = length(outside);
+  return boxDistance > 0.0 ? max(interpolated, boxDistance) : interpolated;
+}
+float shapeMeshSdf(int mesh, vec3 p) {
+${entries}
+  return 1.0e30;
+}`;
 }
 
 const SURFACE_VERTEX = /* glsl */ `
@@ -5064,6 +5129,78 @@ export function emptySurfaceGridTexture(): THREE.Data3DTexture {
   return texture;
 }
 
+/** The mesh-shape SDF atlas is a node lattice, not an image: each shader
+ * lookup performs the same explicit eight-node interpolation as the CPU
+ * oracle, so hardware filtering must stay disabled. */
+function configureShapeMeshSdfTexture(texture: THREE.Data3DTexture): void {
+  texture.format = THREE.RedFormat;
+  texture.type = THREE.FloatType;
+  texture.internalFormat = "R32F";
+  texture.minFilter = THREE.NearestFilter;
+  texture.magFilter = THREE.NearestFilter;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.wrapR = THREE.ClampToEdgeWrapping;
+  texture.unpackAlignment = 1;
+  texture.generateMipmaps = false;
+  texture.needsUpdate = true;
+}
+
+/** A complete, inert sampler binding for analytic-only programs. A fresh
+ * placeholder per material avoids sharing disposal ownership; the expensive
+ * catalog texture below is the one deliberately cached. */
+function emptyShapeMeshSdfTexture(): THREE.Data3DTexture {
+  const texture = new THREE.Data3DTexture(new Float32Array(1), 1, 1, 1);
+  configureShapeMeshSdfTexture(texture);
+  return texture;
+}
+
+let cachedShapeMeshTexture: THREE.Data3DTexture | null = null;
+
+function shapeMeshSdfTexture(): THREE.Data3DTexture {
+  if (cachedShapeMeshTexture) return cachedShapeMeshTexture;
+  const atlas = shapeMeshAtlas();
+  const texture = new THREE.Data3DTexture(
+    atlas.values,
+    atlas.width,
+    atlas.height,
+    atlas.depth,
+  );
+  configureShapeMeshSdfTexture(texture);
+  cachedShapeMeshTexture = texture;
+  return texture;
+}
+
+/** Unconditional sampler uniform shared by the 3D/4D material constructors.
+ * Three ignores it in analytic programs, while keeping every material
+ * complete before any mesh-bearing system is installed. */
+export function surfaceShapeMeshSdfUniform(): THREE.IUniform {
+  const placeholder = emptyShapeMeshSdfTexture();
+  const uniform: THREE.IUniform & { placeholder: THREE.Data3DTexture } = {
+    value: placeholder,
+    placeholder,
+  };
+  return uniform;
+}
+
+/** Select the cached catalog atlas exactly while an installed shape spec
+ * needs it, otherwise restore this material's cheap 1^3 placeholder. */
+export function setSurfaceShapeMeshSdf(
+  material: THREE.ShaderMaterial,
+  specs: readonly ShapeSpec[],
+): void {
+  const uniform = material.uniforms.uShapeMeshSdf as THREE.IUniform & {
+    placeholder?: THREE.Data3DTexture;
+  };
+  // Constructors seed this private companion value. Keep the fallback for
+  // foreign/test materials that install only `{ value }` before calling us.
+  uniform.placeholder ??= emptyShapeMeshSdfTexture();
+  uniform.value =
+    shapeSpecsMeshIds(specs).length > 0
+      ? shapeMeshSdfTexture()
+      : uniform.placeholder;
+}
+
 /** The grid uniform trio {@link createSurfaceMaterial} seeds and
  * {@link setSurfaceGrid} / {@link setSurfaceSystem} maintain. */
 function surfaceGridUniforms(): Record<string, THREE.IUniform> {
@@ -5146,6 +5283,7 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
     glslVersion: THREE.GLSL3,
     uniforms: {
       ...surfaceGridUniforms(),
+      uShapeMeshSdf: surfaceShapeMeshSdfUniform(),
       uInvM: {
         value: Array.from(
           { length: SURFACE_MAX_MAPS },
@@ -5563,6 +5701,7 @@ export function setSurfaceSystem(
   const condensationShapes = wantCondensation
     ? emitters.map((emitter) => emitter.shape)
     : null;
+  setSurfaceShapeMeshSdf(material, condensationShapes ?? []);
   const condensationKey = condensationShapes
     ? condensationShapeKey(condensationShapes)
     : null;
@@ -5964,10 +6103,12 @@ export function surfaceFragmentResolvedFor(
   // SURFACE_SHAPE_TRAP arms, so a trap-free resolve carries neither and
   // this replacement never runs — byte-identity by construction.
   if (trap !== null) {
+    const meshHelper =
+      shapeMeshIds(trap).length > 0 ? `${shapeMeshSdfGlsl()}\n` : "";
     baked = baked
       .replace(
         "//__SURFACE_TRAP_SDF__",
-        shapeSdfSource(trap, "glsl", "surfaceTrapSdf"),
+        meshHelper + shapeSdfSource(trap, "glsl", "surfaceTrapSdf"),
       )
       .replace(
         "__SURFACE_TRAP_INV_NORM__",
@@ -6244,6 +6385,7 @@ export function setEscapeSystem(
   const finish = material.defines.SURFACE_FINISH === 1 ? 1 : 0;
   const pattern = material.defines.SURFACE_PATTERN === 1 ? 1 : 0;
   const trapInstall = applyShapeTrapInstall(material, trap);
+  setSurfaceShapeMeshSdf(material, trapInstall.spec ? [trapInstall.spec] : []);
   const currentTrapGeometry = materialTrapGeometry(material);
   if (
     material.defines.SURFACE_ESCAPE !== 1 ||
@@ -6362,6 +6504,7 @@ export function setBulbSystem(
   const finish = material.defines.SURFACE_FINISH === 1 ? 1 : 0;
   const pattern = material.defines.SURFACE_PATTERN === 1 ? 1 : 0;
   const trapInstall = applyShapeTrapInstall(material, trap);
+  setSurfaceShapeMeshSdf(material, trapInstall.spec ? [trapInstall.spec] : []);
   const currentTrapGeometry = materialTrapGeometry(material);
   if (
     material.defines.SURFACE_BULB !== 1 ||

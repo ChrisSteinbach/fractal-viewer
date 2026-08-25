@@ -2,6 +2,7 @@ import { composeAffine } from "./affine";
 import type { FlamePaletteId, PaletteSelection } from "./palette";
 import type { Rng } from "./rng";
 import { GEAR_SHAPE, PEACE_SIGN_SHAPE } from "./shapes";
+import type { ShapeSpec } from "./shapes";
 import type {
   HybridSchedule,
   Rotation4,
@@ -2249,6 +2250,58 @@ export function gearworks(): Transform[] {
   ];
 }
 
+/** The mesh-condensation preset's two authored palette slots: the recursive
+ * tetrahedral structure stays cool while every freshly emitted star reads as
+ * warm forged metal. Kept distinct for the same reason as Gearworks' pair —
+ * both identity color and structural palette walking consume these values. */
+const STAR_FOUNDRY_STRUCTURE_SLOT = 0.66;
+const STAR_FOUNDRY_MESH_SLOT = 0.1;
+
+/** The one stable built-in mesh reference the Star Foundry preset carries.
+ * Only this catalog id enters document state; triangles, the area table and
+ * the baked SDF volume remain in `mesh-shapes.ts`, never in a share hash. */
+const STAR_PRISM_SHAPE: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "mesh", meshId: "star-prism-v1" },
+      combine: "union",
+    },
+  ],
+};
+
+/**
+ * "Star Foundry" — Tier-3 mesh reachability through the same condensation
+ * construction as {@link gearworks}: four Sierpinski contractions stamp
+ * recursively smaller copies of one posed star-prism mesh. The shape's ONE
+ * catalog entry feeds both consumers — area-weighted triangles for point /
+ * Flame / Solid emission and its baked conservative SDF for Surface — so the
+ * preset is also the integration proof that the two paths cannot select
+ * different assets.
+ *
+ * The emitter uses Gearworks' balanced 1.4-of-5.4 share and a comparable
+ * tipped half-scale pose. Its authored render hint is Surface because the
+ * baked 3D texture is Tier 3's new rendering path; returning to Points from
+ * the same document exercises the triangle sampler without changing shape.
+ */
+export function starFoundry(): Transform[] {
+  const corners = sierpinskiTetrahedron().map((t): Transform => ({
+    ...t,
+    colorIndex: STAR_FOUNDRY_STRUCTURE_SLOT,
+  }));
+  return [
+    ...corners,
+    {
+      id: 4,
+      position: [0, 0.04, 0],
+      rotation: [0.52, 0.24, 0.2],
+      scale: [0.54, 0.54, 0.54],
+      weight: 1.4,
+      colorIndex: STAR_FOUNDRY_MESH_SLOT,
+      emitter: STAR_PRISM_SHAPE,
+    },
+  ];
+}
+
 /**
  * The named systems offered in the preset menu, mapped to their transform
  * factories. `default` is the system the viewer boots with (see
@@ -2287,6 +2340,9 @@ const PRESETS = {
   // The shape-emitter (condensation) reachability proof, fourth member of
   // the multi-system family: a Sierpinski tetrahedron of gear wheels.
   gearworks,
+  // Tier-3's built-in mesh reachability proof: one catalog id supplies both
+  // the area-weighted emitter and baked-SDF Surface term.
+  starFoundry,
   radiolarian,
   swirl: swirlFlame,
   dyedSpiral,
@@ -2411,6 +2467,9 @@ export const PRESET_RENDER_HINTS: Partial<
   // backend; the surface/escape gates refuse until the descent's shape
   // term lands).
   gearworks: "solid",
+  // Tier-3's distinctive new consumer is the baked mesh SDF; Points remains
+  // one mode switch away on the identical emitter document.
+  starFoundry: "surface",
   // Flat 2D sheets in the XY plane: the flame's log-density
   // exposure is what turns an IIM Julia set's tip-heavy point density into
   // a legible curve instead of a faint, mostly-empty sparkle.

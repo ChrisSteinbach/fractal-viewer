@@ -113,6 +113,7 @@ import {
 } from "../fractal/chaos-game";
 import { MAX_SHAPE_PARTS } from "../fractal/shapes";
 import type { ShapePart, ShapePose, ShapeSpec } from "../fractal/shapes";
+import { isMeshAssetId } from "../fractal/mesh-shapes";
 import { resolveCondensationDepthBand } from "../fractal/condensation-de";
 import type { CondensationDepthBand } from "../fractal/condensation-de";
 import { clamp } from "../fractal/vec";
@@ -797,6 +798,13 @@ function decodeEmitter(raw: unknown): ShapeSpec | undefined {
           hole,
           halfHeight,
         };
+        break;
+      }
+      case "mesh": {
+        if (typeof prim.meshId !== "string" || !isMeshAssetId(prim.meshId)) {
+          return undefined;
+        }
+        primitive = { kind: "mesh", meshId: prim.meshId };
         break;
       }
       default:
@@ -2104,6 +2112,19 @@ function encodeEmitterPose(pose: ShapePose | undefined): ShapePose | undefined {
  */
 function encodeEmitter(spec: ShapeSpec | undefined): ShapeSpec | undefined {
   if (spec === undefined || spec.parts.length === 0) return undefined;
+  // Mesh bytes never ride the v1 wire: the primitive carries only a stable,
+  // built-in catalog id. Keep the encoder a trust boundary too (a live
+  // object can still arrive through an `as ShapeSpec` cast or foreign app
+  // integration) and omit the WHOLE optional shape rather than write a link
+  // this build cannot resolve.
+  if (
+    spec.parts.some(
+      (part) =>
+        part.primitive.kind === "mesh" && !isMeshAssetId(part.primitive.meshId),
+    )
+  ) {
+    return undefined;
+  }
   const parts = spec.parts.map((part): ShapePart => {
     const prim = part.primitive;
     let primitive: ShapePart["primitive"];
@@ -2138,6 +2159,9 @@ function encodeEmitter(spec: ShapeSpec | undefined): ShapeSpec | undefined {
           hole: round4(prim.hole),
           halfHeight: round4(prim.halfHeight),
         };
+        break;
+      case "mesh":
+        primitive = { kind: "mesh", meshId: prim.meshId };
         break;
     }
     const encoded: ShapePart = { primitive, combine: part.combine };

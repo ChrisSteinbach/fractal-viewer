@@ -25,6 +25,7 @@ import {
   SURFACE_COMPUTE_SHADE_WORK_PER_FIXED_COST,
   SURFACE_COMPUTE_WORKGROUP_SIZE,
   SurfaceComputeRenderer,
+  surfaceComputeTargetMeshIds,
   surfaceComputeMaxDispatchRays,
   surfaceComputeMaxFrameRays,
   surfaceComputeProgressDone,
@@ -60,6 +61,7 @@ import {
   gearworks,
   mandelboxBrick,
   PRESET_TRAPS,
+  starFoundry,
 } from "../fractal/presets";
 import type { Transform } from "../fractal/types";
 
@@ -1468,6 +1470,40 @@ async function createPaletteResourceHarness(
 }
 
 describe("SurfaceComputeRenderer condensation session resources", () => {
+  it("uploads one R32F 3D atlas and adds binding 11 to both layouts for the mesh preset", async () => {
+    const de = buildSurfaceDE(starFoundry());
+    const target: SurfaceComputeTarget = { kind: "ifs", de };
+    expect(surfaceComputeTargetMeshIds(target)).toEqual(["star-prism-v1"]);
+    const harness = await createPaletteResourceHarness(false, target);
+
+    expect(harness.shaderSources).toHaveLength(2);
+    for (const source of harness.shaderSources) {
+      expect(source).toContain(
+        "@group(0) @binding(11) var shapeMeshSdfTex: texture_3d<f32>;",
+      );
+    }
+    for (const layout of harness.layoutDescriptors) {
+      expect(layout.entries).toContainEqual(
+        expect.objectContaining({
+          binding: 11,
+          texture: {
+            sampleType: "unfilterable-float",
+            viewDimension: "3d",
+          },
+        }),
+      );
+    }
+    expect(harness.textureDescriptors).toContainEqual(
+      expect.objectContaining({
+        dimension: "3d",
+        format: "r32float",
+        size: { width: 64, height: 64, depthOrArrayLayers: 64 },
+      }),
+    );
+    expect(harness.textureWrites).toHaveBeenCalledTimes(2);
+    harness.renderer.destroy();
+  });
+
   it("passes emitter geometry into both kernels and allocates the appended params block", async () => {
     const de = buildSurfaceDE(
       gearworks(),

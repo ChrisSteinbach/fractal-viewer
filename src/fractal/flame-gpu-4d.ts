@@ -107,6 +107,7 @@ import {
   WEIGHT_FIXED_POINT_SCALE,
   WORKGROUP_SIZE,
   buildGearTriangleTable,
+  buildMeshTriangleTable,
   createGearTableBuilder,
   emitterPartWeight,
   finishGearTableBuilder,
@@ -214,10 +215,10 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  *   emitterTotalWeight f32 | 380 pad | 384 emitterParts
  *   array<EmitterPart, {@link MAX_SHAPE_PARTS}> (768 B) — flame-gpu.ts's
  *   Slot entry VERBATIM, `writeSlot4Emitter` calling that module's
- *   dimension-free `writeEmitterPart`/`buildGearTriangleTable`/
+ *   dimension-free `writeEmitterPart`/triangle-table builders/
  *   `emitterPartWeight` rather than restating them (the shape vocabulary
  *   is 3D always, and a shared `EmitterPart` layout is what lets this
- *   kernel and the 3D one read `emitterGearTable` (binding 7 below) the
+ *   kernel and the 3D one read `emitterTriangleTable` (binding 7 below) the
  *   same way): the sample is embedded at `w = 0` before this slot's OWN
  *   4x4+t affine poses it, `stepOrbit4`'s emitter branch (module doc's own
  *   dimensional-parity paragraph). The same min-index-overlap divergence
@@ -261,11 +262,10 @@ export const KERNEL_COLOR_KIND: Record<FourDRenderColor["kind"], number> = {
  * only when `chaosEnabled` is 1; a chi-free document aliases the binding to
  * `colors` exactly as an echo-less one aliases binding 5.
  *
- * emitterGearTable: array<f32> at binding 7 — flame-gpu.ts's
- * `buildGearTriangleTable` layout, the SAME triangle-fan-CDF regions (this
- * kernel's `writeSlot4Emitter` calls that module's builder directly); a
- * document with no gear-shaped emitter part anywhere aliases the binding to
- * `colors`, the same idiom.
+ * emitterTriangleTable: array<f32> at binding 7 — flame-gpu.ts's SAME
+ * gear/mesh area-CDF regions (this kernel's `writeSlot4Emitter` calls those
+ * builders directly); a document with no triangulated emitter part aliases
+ * the binding to `colors`, the same idiom.
  *
  * hist: array<atomic<u32>>, `width * height * HIST_U32_PER_BUCKET`, the SAME
  * scaled 8-word emulated-u64 bucket layout as the 3D kernel. The backend
@@ -394,10 +394,8 @@ struct Chain {
 // read only when params.chaosEnabled is 1; a chi-free document aliases this
 // binding to colors exactly as an echo-less one aliases binding 5.
 @group(0) @binding(6) var<storage, read> chaosRows: array<f32>;
-// Shape-emitter gear tables (flame-gpu.ts's buildGearTriangleTable layout;
-// byte-layout doc's binding-7 entry) — a document with no gear-shaped
-// emitter part aliases this binding to colors, the same idiom.
-@group(0) @binding(7) var<storage, read> emitterGearTable: array<f32>;
+// Shape-emitter triangle tables: the 3D kernel's frozen binding 7 verbatim.
+@group(0) @binding(7) var<storage, read> emitterTriangleTable: array<f32>;
 
 // Warmup dispatches run a PLOT=false specialization of this same pipeline —
 // iterate the orbit without recording, like the CPU's unrecorded warmup.
@@ -563,7 +561,7 @@ fn emitterDrawCapsule(state: ptr<function, u32>, a: vec3f, b: vec3f, r: f32) -> 
 // The gear profile's host-triangulated triangle-fan CDF
 // (flame-gpu.ts's buildGearTriangleTable, this module's binding-7 entry).
 fn emitterDrawGear(state: ptr<function, u32>, tableOffset: u32, triCount: u32, halfHeight: f32) -> vec3f {
-  let total = emitterGearTable[tableOffset + triCount - 1u];
+  let total = emitterTriangleTable[tableOffset + triCount - 1u];
   let needle = emitterNext(state) * total;
   var lo = 0u;
   var hi = triCount - 1u;
@@ -572,16 +570,16 @@ fn emitterDrawGear(state: ptr<function, u32>, tableOffset: u32, triCount: u32, h
       break;
     }
     let mid = (lo + hi) >> 1u;
-    if (needle < emitterGearTable[tableOffset + mid]) {
+    if (needle < emitterTriangleTable[tableOffset + mid]) {
       hi = mid;
     } else {
       lo = mid + 1u;
     }
   }
   let vBase = tableOffset + triCount + lo * 6u;
-  let v0 = vec2f(emitterGearTable[vBase], emitterGearTable[vBase + 1u]);
-  let v1 = vec2f(emitterGearTable[vBase + 2u], emitterGearTable[vBase + 3u]);
-  let v2 = vec2f(emitterGearTable[vBase + 4u], emitterGearTable[vBase + 5u]);
+  let v0 = vec2f(emitterTriangleTable[vBase], emitterTriangleTable[vBase + 1u]);
+  let v1 = vec2f(emitterTriangleTable[vBase + 2u], emitterTriangleTable[vBase + 3u]);
+  let v2 = vec2f(emitterTriangleTable[vBase + 4u], emitterTriangleTable[vBase + 5u]);
   let su = sqrt(emitterNext(state));
   let u2 = emitterNext(state);
   let aw = 1.0 - su;
@@ -590,6 +588,43 @@ fn emitterDrawGear(state: ptr<function, u32>, tableOffset: u32, triCount: u32, h
   let xy = v0 * aw + v1 * bw + v2 * cw;
   let z = (2.0 * emitterNext(state) - 1.0) * halfHeight;
   return vec3f(xy.x, xy.y, z);
+}
+
+fn emitterDrawMesh(state: ptr<function, u32>, tableOffset: u32, triCount: u32) -> vec3f {
+  let total = emitterTriangleTable[tableOffset + triCount - 1u];
+  let needle = emitterNext(state) * total;
+  var lo = 0u;
+  var hi = triCount - 1u;
+  loop {
+    if (lo >= hi) {
+      break;
+    }
+    let mid = (lo + hi) >> 1u;
+    if (needle < emitterTriangleTable[tableOffset + mid]) {
+      hi = mid;
+    } else {
+      lo = mid + 1u;
+    }
+  }
+  let vBase = tableOffset + triCount + lo * 9u;
+  let v0 = vec3f(
+    emitterTriangleTable[vBase],
+    emitterTriangleTable[vBase + 1u],
+    emitterTriangleTable[vBase + 2u],
+  );
+  let v1 = vec3f(
+    emitterTriangleTable[vBase + 3u],
+    emitterTriangleTable[vBase + 4u],
+    emitterTriangleTable[vBase + 5u],
+  );
+  let v2 = vec3f(
+    emitterTriangleTable[vBase + 6u],
+    emitterTriangleTable[vBase + 7u],
+    emitterTriangleTable[vBase + 8u],
+  );
+  let su = sqrt(emitterNext(state));
+  let u2 = emitterNext(state);
+  return v0 * (1.0 - su) + v1 * ((1.0 - u2) * su) + v2 * (u2 * su);
 }
 
 // Dispatch one EmitterPart's own primitive sampler, then pose it exactly
@@ -610,8 +645,14 @@ fn emitterSamplePart(state: ptr<function, u32>, part: EmitterPart) -> vec3f {
     case 3u: { // capsule: kindParams0.yzw = a, params1.xyz = b, .w = radius.
       local = emitterDrawCapsule(state, part.kindParams0.yzw, part.params1.xyz, part.params1.w);
     }
-    default: { // 4u gear: kindParams0.y = tableOffset, .z = triCount, .w = halfHeight.
+    case 4u: { // gear: kindParams0.y = tableOffset, .z = triCount, .w = halfHeight.
       local = emitterDrawGear(state, u32(part.kindParams0.y), u32(part.kindParams0.z), part.kindParams0.w);
+    }
+    case 5u: { // mesh: kindParams0.y = tableOffset, .z = triCount.
+      local = emitterDrawMesh(state, u32(part.kindParams0.y), u32(part.kindParams0.z));
+    }
+    default: {
+      local = vec3f(0.0);
     }
   }
   let scaled = local * part.poseOffsetScale.w;
@@ -1292,9 +1333,9 @@ export interface PackedGpuSystem4 {
    * system with no non-trivial chi row (the kernel's chi branch never
    * engages and the backend aliases binding 6, the echoColors idiom). */
   chaosRows: ArrayBuffer | null;
-  /** Every gear-shaped emitter part's triangulated table — flame-gpu.ts's
-   * `gearTable` field, the SAME `finishGearTableBuilder`, or `null` when
-   * the system has no gear-shaped emitter part anywhere. */
+  /** Every gear/mesh emitter part's triangulated table — flame-gpu.ts's
+   * historically named `gearTable` field and SAME finalizer, or `null`
+   * when the system has no triangulated emitter part. */
   gearTable: ArrayBuffer | null;
 }
 
@@ -1625,7 +1666,7 @@ function writeSlot4Variations(
 /**
  * Write one slot's emitter block one dimension up — flame-gpu.ts's
  * `writeSlotEmitter` verbatim in shape, at this module's `SLOT4_EMITTER_*`
- * offsets, calling that module's dimension-free `buildGearTriangleTable`/
+ * offsets, calling that module's dimension-free triangle-table builders/
  * `emitterPartWeight`/`writeEmitterPart` directly rather than restating
  * them (see this file's module doc's "restated, not imported" note for
  * what IS duplicated one dimension up, and why this is deliberately not
@@ -1646,7 +1687,7 @@ function writeSlot4Emitter(
   if (n <= 0) return;
   u32[base + SLOT4_EMITTER_FLAG] = 1;
   u32[base + SLOT4_EMITTER_PART_COUNT] = n;
-  const gearRegions: (GearTableRegion | null)[] =
+  const triangleRegions: (GearTableRegion | null)[] =
     new Array<GearTableRegion | null>(n);
   const weights = new Array<number>(n);
   let totalWeight = 0;
@@ -1654,10 +1695,14 @@ function writeSlot4Emitter(
     const part = spec.parts[i];
     if (part.primitive.kind === "gear") {
       const region = buildGearTriangleTable(part.primitive, gearBuilder);
-      gearRegions[i] = region;
+      triangleRegions[i] = region;
+      weights[i] = emitterPartWeight(part, region.totalArea);
+    } else if (part.primitive.kind === "mesh") {
+      const region = buildMeshTriangleTable(part.primitive, gearBuilder);
+      triangleRegions[i] = region;
       weights[i] = emitterPartWeight(part, region.totalArea);
     } else {
-      gearRegions[i] = null;
+      triangleRegions[i] = null;
       weights[i] = emitterPartWeight(part, 0);
     }
     totalWeight += weights[i];
@@ -1671,7 +1716,7 @@ function writeSlot4Emitter(
       base + SLOT4_EMITTER_PARTS + i * F32_PER_EMITTER_PART,
       spec.parts[i],
       cum,
-      gearRegions[i],
+      triangleRegions[i],
     );
   }
 }

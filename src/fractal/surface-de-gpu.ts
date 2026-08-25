@@ -20,7 +20,14 @@ import {
   type ResolvedShapeTrap,
 } from "./shape-trap";
 import { SYM_PLANE_CODE4, type EscapeDE4 } from "./escape-de-4d";
-import { SHAPE_MARCH_SAFETY, shapeSdfSource, type ShapeSpec } from "./shapes";
+import {
+  SHAPE_MARCH_SAFETY,
+  shapeMeshIds,
+  shapeSdfSource,
+  shapeSpecsMeshIds,
+  type ShapeSpec,
+} from "./shapes";
+import { meshSdfAtlas } from "./mesh-shapes";
 import {
   ESCAPE_FACTOR,
   FOOTPRINT_DEPTH_FLOOR,
@@ -842,7 +849,11 @@ import type { Vec3 } from "./types";
  * mode's own pair at 2/3); march "unproject" binds 0-4, the march set
  * plus shade: ShadeParams (rays + dither inputs only — it declares none
  * of shadeMaps/colorOut/lutTex/lutSamp/layerOut); mode "shade" binds 0-9,
- * plus binding 10 only for a balloon target's independent LUT. The
+ * plus binding 10 only for a balloon target's independent LUT. A kernel
+ * whose trap/condensation shape contains a catalog mesh also declares
+ * binding 11 in every mode that evaluates that shape: an unfilterable
+ * R32F `texture_3d` sampled through eight explicit loads. It appends no
+ * params bytes. The
  * BULB core never declares binding 1 (maps) in any mode — its one forward
  * map rides the params variant block — so its hosts skip that buffer;
  * the ESCAPE core DOES declare it (its chain is a list of forward maps,
@@ -876,6 +887,9 @@ import type { Vec3 } from "./types";
  *                the independent 256x1 RGBA8 gradient, sampled at the
  *                pre-inversion source-radius coordinate when flags bit1 is
  *                set. Non-balloon targets neither declare nor bind it.
+ *   @binding(11) var shapeMeshSdfTex: texture_3d<f32> — MESH SHAPES ONLY;
+ *                the conservative R32F catalog atlas, manually interpolated
+ *                so filtering support cannot change its lower-bound contract.
  */
 
 /** Mirror of `surface-material.ts`'s `SURFACE_FULL_HIT_FLOOR` (1e-5) —
@@ -3228,6 +3242,83 @@ function wgslFloatLit(x: number): string {
   return /[.e]/.test(s) ? s : `${s}.0`;
 }
 
+/**
+ * One binding and one manual-trilinear sampler for the built-in mesh SDF
+ * atlas. Shape bodies emitted by `shapeSdfSource` call `shapeMeshSdf` with
+ * the stable catalog index; keeping the resource declaration here means a
+ * shader containing several trap/condensation shapes still declares the
+ * texture exactly once. `textureLoad` is deliberate: R32F is not guaranteed
+ * filterable, and the CPU oracle's conservative proof is over these exact
+ * eight node loads.
+ */
+export function surfaceMeshSdfWgslSource(): string {
+  const atlas = meshSdfAtlas();
+  const bodies = atlas.entries
+    .map((entry) => {
+      const n = entry.resolution;
+      const hi = n - 1;
+      const fn = `shapeMeshSdf${entry.catalogIndex}`;
+      return /* wgsl */ `fn ${fn}(p: vec3f) -> f32 {
+  let lo = vec3f(${wgslFloatLit(entry.min[0])}, ${wgslFloatLit(entry.min[1])}, ${wgslFloatLit(entry.min[2])});
+  let hi = vec3f(${wgslFloatLit(entry.max[0])}, ${wgslFloatLit(entry.max[1])}, ${wgslFloatLit(entry.max[2])});
+  let g = clamp((p - lo) / ${wgslFloatLit(entry.cellSize)}, vec3f(0.0), vec3f(${hi}.0));
+  let i0 = vec3i(floor(g));
+  let i1 = min(i0 + vec3i(1), vec3i(${hi}));
+  let f = fract(g);
+  let z0 = ${entry.zOffset} + i0.z;
+  let z1 = ${entry.zOffset} + i1.z;
+  let x00 = mix(
+    textureLoad(shapeMeshSdfTex, vec3i(i0.x, i0.y, z0), 0).x,
+    textureLoad(shapeMeshSdfTex, vec3i(i1.x, i0.y, z0), 0).x,
+    f.x,
+  );
+  let x10 = mix(
+    textureLoad(shapeMeshSdfTex, vec3i(i0.x, i1.y, z0), 0).x,
+    textureLoad(shapeMeshSdfTex, vec3i(i1.x, i1.y, z0), 0).x,
+    f.x,
+  );
+  let x01 = mix(
+    textureLoad(shapeMeshSdfTex, vec3i(i0.x, i0.y, z1), 0).x,
+    textureLoad(shapeMeshSdfTex, vec3i(i1.x, i0.y, z1), 0).x,
+    f.x,
+  );
+  let x11 = mix(
+    textureLoad(shapeMeshSdfTex, vec3i(i0.x, i1.y, z1), 0).x,
+    textureLoad(shapeMeshSdfTex, vec3i(i1.x, i1.y, z1), 0).x,
+    f.x,
+  );
+  let interpolated = mix(mix(x00, x10, f.y), mix(x01, x11, f.y), f.z);
+  let outside = max(max(lo - p, p - hi), vec3f(0.0));
+  let boxDistance = length(outside);
+  if (boxDistance > 0.0) {
+    return max(interpolated, boxDistance);
+  }
+  return interpolated;
+}`;
+    })
+    .join("\n\n");
+  const choices = atlas.entries
+    .map(
+      (entry) => `    case ${entry.catalogIndex}u: {
+      return shapeMeshSdf${entry.catalogIndex}(p);
+    }`,
+    )
+    .join("\n");
+  return /* wgsl */ `@group(0) @binding(11) var shapeMeshSdfTex: texture_3d<f32>;
+
+${bodies}
+
+fn shapeMeshSdf(meshIndex: u32, p: vec3f) -> f32 {
+  switch meshIndex {
+${choices}
+    default: {
+      return 1e30;
+    }
+  }
+}
+`;
+}
+
 export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   const {
     mode,
@@ -3508,6 +3599,17 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
         "sweep with no forward orbit for the accumulator to ride",
     );
   }
+  // Mesh resources are selected entirely by the baked shape vocabulary,
+  // never by a params-wire flag. Trap and condensation are currently
+  // exclusive, but derive across both so this seam stays explicit.
+  const meshIds = [
+    ...(shapeTrap && (mode === "shade" || shapeTrapGeometry)
+      ? shapeMeshIds(shapeTrap)
+      : []),
+    ...(condensationShapes ? shapeSpecsMeshIds(condensationShapes) : []),
+  ];
+  const meshSdfHelperText =
+    meshIds.length > 0 ? `${surfaceMeshSdfWgslSource()}\n` : "";
   // Per-slot finish lighting (option doc). Absent means the fixed
   // Blinn-Phong lines, so every config predating the option generates
   // byte-identical source; no throw anywhere — the flag composes with
@@ -10917,7 +11019,7 @@ ${balloonProbeWrapText}`
 
   return /* wgsl */ `${headerText}${scheduleHelperText}${chaosHelperText}
 
-${trapGeometryHelperText}${condensationHelperText}${bodyBlock}
+${meshSdfHelperText}${trapGeometryHelperText}${condensationHelperText}${bodyBlock}
 ${entry}
 `;
 }

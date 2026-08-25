@@ -370,10 +370,11 @@ function lerpChaos(
 /**
  * Whether two emitter specs are the SAME SHAPE, structurally — the identity
  * {@link lerpEmitter} keys its numeric-lerp arm on: equal part counts, and
- * per part an equal primitive `kind`, an equal `combine` op, and (for
- * gears) an equal `teeth` count — a discrete sector count that cannot
- * interpolate, exactly like `symmetry.order` (a fractional tooth count
- * would round through `resolveGearTeeth` into mid-morph pops). Pose
+ * per part an equal primitive `kind`, an equal `combine` op, and equal
+ * discrete primitive identity: a gear's `teeth` count and a mesh's catalog
+ * id. Neither can interpolate, exactly like `symmetry.order` (a fractional
+ * tooth count would round through `resolveGearTeeth` into mid-morph pops,
+ * and there is no midpoint asset between two mesh ids). Pose
  * PRESENCE deliberately does not join the identity: an absent pose field
  * is the identity value, so it lerps numerically through its fallback like
  * any optional field.
@@ -389,6 +390,13 @@ function emitterStructurallyEqual(a: ShapeSpec, b: ShapeSpec): boolean {
       pa.primitive.kind === "gear" &&
       pb.primitive.kind === "gear" &&
       pa.primitive.teeth !== pb.primitive.teeth
+    ) {
+      return false;
+    }
+    if (
+      pa.primitive.kind === "mesh" &&
+      pb.primitive.kind === "mesh" &&
+      pa.primitive.meshId !== pb.primitive.meshId
     ) {
       return false;
     }
@@ -476,6 +484,12 @@ function lerpEmitterPart(a: ShapePart, b: ShapePart, t: number): ShapePart {
         hole: lerp(pa.hole, q.hole, t),
         halfHeight: lerp(pa.halfHeight, q.halfHeight, t),
       };
+      break;
+    }
+    case "mesh": {
+      // Equal by structural identity — a catalog asset is discrete, while
+      // the part pose around it remains free to glide below.
+      primitive = { kind: "mesh", meshId: pa.meshId };
       break;
     }
   }

@@ -345,6 +345,28 @@ function printSurfaceSummary(surfaceDe) {
       );
     }
   }
+  // Tier-3 mesh atlas: production march+shade plus CPU Surface hit-rate
+  // sanity. The verdict already gates this row through frameFailed; print it
+  // explicitly so CI stdout does not require opening results.json.
+  const cfm = surfaceDe.computeFrameMesh;
+  if (cfm) {
+    if (cfm.skipped) {
+      console.log(`  frame-mesh: skipped — ${cfm.skipped}`);
+    } else {
+      const sanity =
+        cfm.sanityGpuHitRate !== undefined
+          ? ` rate gpu=${cfm.sanityGpuHitRate.toFixed(3)} cpu=${(cfm.sanityCpuHitRate ?? 0).toFixed(3)}` +
+            ` sampleMismatch=${(cfm.sanityMismatchRate ?? 0).toFixed(3)}`
+          : "";
+      console.log(
+        `  frame-mesh ${cfm.width}x${cfm.height}: wall=${cfm.wallMs.toFixed(0)}ms ` +
+          `gpu=${cfm.gpuMs.toFixed(0)}ms passes=${cfm.passes} ` +
+          `hit=${cfm.counts.hit} miss=${cfm.counts.miss} exh=${cfm.counts.exhausted} ` +
+          `active=${cfm.counts.active}${sanity} adapter=${cfm.adapterLabel ?? "unknown"} ` +
+          `software=${String(cfm.software ?? false)}${cfm.truncated ? " TRUNCATED" : ""}`,
+      );
+    }
+  }
   // The lens port's stage C: leg B over the lens field class (production
   // SurfaceComputeRenderer on lensMandelboxOverAffine).
   const cfl = surfaceDe.computeFrameLens;

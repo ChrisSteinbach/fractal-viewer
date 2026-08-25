@@ -1037,6 +1037,13 @@ local w=0 rather than extruding it. A nonzero 4D slice thickness is refused.
 Hit-info carries the winning emitter's shade index, so base color, pattern and
 finish all read the emitter slot that actually supplied the minimum.
 
+Mesh-bearing trap or condensation bodies call the same catalog-indexed
+`shapeMeshSdf` seam. The material lazily creates one cached 64³ R32F
+`Data3DTexture`; one `sampler3D` and one eight-`texelFetch` manual trilinear
+helper serve every mesh part in the resolved program. This matches the CPU
+bake's conservative node interpolation and costs exactly one texture unit.
+Analytic-only source remains sampler-free and does not trigger the bake.
+
 The uniform wire is capped at 24 total A-map plus supported B-map plus
 symmetry-expanded emitter records and 24 unique shade slots. B does not add a
 shade slot. Unsamplable/nearly-flat emitters,

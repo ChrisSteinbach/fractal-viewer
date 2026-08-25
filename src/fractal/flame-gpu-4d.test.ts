@@ -25,11 +25,21 @@ import {
 import { createFlameHistogram } from "./flame";
 import type { Mat4 } from "./flame";
 import { mulberry32 } from "./rng";
+import { meshAsset } from "./mesh-shapes";
 import { VARIATION_TYPES } from "./types";
 import type { SymmetryParams, Transform4, Vec3, Vec4 } from "./types";
 import type { FourDView } from "./project4";
 import { GEAR_SHAPE } from "./shapes";
 import type { ShapeSpec } from "./shapes";
+
+const STAR_PRISM_MESH: ShapeSpec = {
+  parts: [
+    {
+      primitive: { kind: "mesh", meshId: "star-prism-v1" },
+      combine: "union",
+    },
+  ],
+};
 
 function makeTransforms4(count: number): Transform4[] {
   return Array.from({ length: count }, () => ({
@@ -390,6 +400,32 @@ describe("packGpuSystem4 shape emitters", () => {
     );
   });
 
+  it("packs the same kind-5 mesh CDF/3D-triangle region without growing Slot4", () => {
+    const asset = meshAsset("star-prism-v1");
+    const packed = packGpuSystem4(
+      baseSpec4({
+        transforms4: [transform4WithEmitter(STAR_PRISM_MESH)],
+      }),
+    );
+    expect(SLOT4_STRIDE_BYTES).toBe(1168);
+    const f32 = new Float32Array(packed.slots);
+    const p = EMITTER_PARTS;
+    expect(f32[p + EP_KIND_PARAMS0]).toBe(5);
+    expect(f32[p + EP_KIND_PARAMS0 + 1]).toBe(0);
+    expect(f32[p + EP_KIND_PARAMS0 + 2]).toBe(asset.triangles.length);
+    const table = new Float32Array(packed.gearTable!);
+    const n = asset.triangles.length;
+    expect(table.length).toBe(n + n * 9);
+    expect(Array.from(table.slice(0, n))).toEqual(
+      Array.from(asset.triangleCumulativeAreas, Math.fround),
+    );
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("fn emitterDrawMesh(");
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
+      "let vBase = tableOffset + triCount + lo * 9u;",
+    );
+    expect(FLAME_GPU_KERNEL_4D_WGSL).toContain("case 5u: { // mesh:");
+  });
+
   it("replicates a base map's emitter block into every kaleidoscope copy", () => {
     const packed = packGpuSystem4(
       baseSpec4({
@@ -409,8 +445,9 @@ describe("packGpuSystem4 shape emitters", () => {
       "let sample = vec4f(emitterSampleSlot(&derived, slotIdx), 0.0);",
     );
     expect(FLAME_GPU_KERNEL_4D_WGSL).toContain(
-      "@group(0) @binding(7) var<storage, read> emitterGearTable: array<f32>;",
+      "@group(0) @binding(7) var<storage, read> emitterTriangleTable: array<f32>;",
     );
+    expect(FLAME_GPU_KERNEL_4D_WGSL).not.toContain("@binding(8)");
   });
 });
 

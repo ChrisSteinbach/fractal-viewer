@@ -1,5 +1,6 @@
 import { systemPartsAreNonFlat } from "./affine4";
 import { derivedColorIndex } from "./chaos-game";
+import type { MeshAssetId } from "./mesh-shapes";
 import { lerpShapeTrap, lerpSystem } from "./morph";
 import type { MorphSystem } from "./morph";
 import { CLASSIC_SURFACE_FINISH } from "./surface-finish";
@@ -1124,6 +1125,28 @@ describe("emitter morphing", () => {
   const sphereSpec = (radius: number): ShapeSpec => ({
     parts: [{ primitive: { kind: "sphere", radius }, combine: "union" }],
   });
+  const meshSpec = (
+    meshId: MeshAssetId = "star-prism-v1",
+    scale?: number,
+  ): ShapeSpec => ({
+    parts: [
+      {
+        primitive: { kind: "mesh", meshId },
+        combine: "union",
+        ...(scale === undefined ? {} : { pose: { scale } }),
+      },
+    ],
+  });
+  const foreignMeshSpec = (meshId: string, scale?: number): ShapeSpec =>
+    ({
+      parts: [
+        {
+          primitive: { kind: "mesh", meshId },
+          combine: "union",
+          ...(scale === undefined ? {} : { pose: { scale } }),
+        },
+      ],
+    }) as unknown as ShapeSpec;
 
   it("lerps numeric shape params and pose for structurally equal specs", () => {
     const a = system({ transforms: [transform({ emitter: gearSpec(0.8) })] });
@@ -1182,6 +1205,32 @@ describe("emitter morphing", () => {
     // stays absent.
     expect(mid.parts[0].pose!.scale).toBeCloseTo(1.5, 12);
     expect(mid.parts[0].pose!.offset).toBeUndefined();
+  });
+
+  it("glides the pose of the same mesh asset while carrying its discrete id unchanged", () => {
+    const a = system({
+      transforms: [transform({ emitter: meshSpec(undefined, 0.5) })],
+    });
+    const b = system({
+      transforms: [transform({ emitter: meshSpec(undefined, 1.5) })],
+    });
+    const mid = lerpSystem(a, b, 0.5).transforms[0].emitter!;
+    expect(mid.parts[0].primitive).toEqual({
+      kind: "mesh",
+      meshId: "star-prism-v1",
+    });
+    expect(mid.parts[0].pose?.scale).toBeCloseTo(1, 12);
+  });
+
+  it("target-pops different mesh ids instead of inventing an intermediate asset", () => {
+    const aSpec = meshSpec("star-prism-v1", 0.5);
+    // A future catalog id is enough to pin the runtime morph rule; document
+    // decoding separately refuses ids that this build does not know.
+    const bSpec = foreignMeshSpec("future-mesh-v2", 1.5);
+    const a = system({ transforms: [transform({ emitter: aSpec })] });
+    const b = system({ transforms: [transform({ emitter: bSpec })] });
+    expect(lerpSystem(a, b, 0.25).transforms[0].emitter).toBe(bSpec);
+    expect(lerpSystem(a, b, 0.75).transforms[0].emitter).toBe(bSpec);
   });
 
   it("pops to the target's spec for a structural mismatch (different kind)", () => {

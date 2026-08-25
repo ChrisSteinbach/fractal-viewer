@@ -18,8 +18,11 @@ transforms, both xaos and emitter Flame GPU paths, and the escape-family shape-t
 landed. Condensation now also reaches the 3D and 4D inverse-beam Surface paths, including the WebGL and
 WebGPU tracers, an inclusive level band, 3D grid acceleration and balloon composition. Shape-trap
 GEOMETRY now reaches conformal forward fold chains in both dimensions. Scheduled and graph-directed
-inverse descent now reach both Surface shader families. Tier-3 mesh shapes remain. The sections below keep the original design argument, with
-landed paragraphs updated to describe the implementation rather than a proposal.
+inverse descent now reach both Surface shader families. Tier-3 mesh shapes have landed as a stable
+built-in catalog id: one prepared watertight mesh supplies both its area-weighted triangle sampler and
+a conservative 64³ R32F SDF atlas for the GLSL and WGSL Surface consumers. The sections below keep the
+original design argument, with landed paragraphs updated to describe the implementation rather than a
+proposal.
 
 Companion docs already in `docs/`: `quaternion-julia-brief.md`, `fold-de-performance-brief.md`,
 `flame-interop.md`.
@@ -300,9 +303,12 @@ the conformal fold family.
   sign and most iconography.
 - **Tier 2 — extruded/revolved 2D profiles:** the gear class (`sdGear2D` above + opExtrusion /
   opRevolution).
-- **Tier 3 — arbitrary meshes:** bake to a small single-channel SDF `TEXTURE_3D` (64³–128³, WebGL2) for
-  the DE modes; area-weighted triangle sampling of the same mesh feeds the point-mode emitter. One asset
-  pipeline, two consumers.
+- **Tier 3 — catalog meshes (landed first cut):** a stable built-in id resolves to one validated,
+  watertight prepared mesh. Its exact triangle-area CDF feeds the CPU and both Flame GPU emitters; its
+  triangles bake a conservative 64³ single-channel SDF atlas consumed through one `sampler3D` in GLSL
+  and binding 11 in WGSL. Both shader families manually interpolate eight R32F nodes, preserving the
+  CPU bake's lower-bound contract. Share links persist only the id; upload storage and its link/backup
+  story remain a separate design.
 - Keep shape fields ≈Lipschitz-1 and march their term with the 0.9 safety factor noted in Option C.
 
 ---
@@ -310,11 +316,12 @@ the conformal fold family.
 ## Delivery sequence
 
 The shape library, C′-color, conformal forward trap-geometry, xaos, C-point, C-surface, B-point,
-scheduled descent and graph-directed descent are landed, including their CPU, GLSL and WGSL mirrors. Surface interprets the
-post-word as a finite level-dependent inverse alphabet: B alone for the first _k_ global levels, then A
-with its authored symmetry, using a bound for every remaining suffix, and then transposes xaos support
-into per-chain predecessor masks. The remaining implementation item is Tier-3 mesh shapes. It must
-reuse the existing shape, selection and schedule vocabularies rather than restating them.
+scheduled descent, graph-directed descent and the built-in Tier-3 mesh path are landed, including their
+CPU, GLSL and WGSL mirrors. Surface interprets the post-word as a finite level-dependent inverse
+alphabet: B alone for the first _k_ global levels, then A with its authored symmetry, using a bound for
+every remaining suffix, and then transposes xaos support into per-chain predecessor masks. Mesh shapes
+reuse those same shape, selection and schedule vocabularies; only user-uploaded mesh asset storage is
+left for a separate design.
 
 ## Validation strategy
 
