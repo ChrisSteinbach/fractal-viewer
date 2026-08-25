@@ -45,7 +45,16 @@ import { surface4FragmentFor } from "./surface-material-4d";
 import { identityRotorPair, rotateInPlane, rotorMatrix } from "./rotor4";
 import { buildSurfaceDE } from "../fractal/surface-de";
 import { buildSurfaceDE4 } from "../fractal/surface-de-4d";
-import { defaultTransforms, gearworks } from "../fractal/presets";
+import { buildEscapeDE } from "../fractal/escape-de";
+import { buildEscapeDE4 } from "../fractal/escape-de-4d";
+import { resolveShapeTrap } from "../fractal/shape-trap";
+import {
+  defaultTransforms,
+  foldChain,
+  gearworks,
+  mandelboxBrick,
+  PRESET_TRAPS,
+} from "../fractal/presets";
 
 describe("the two engines' full-tier hit floor (mirror pin)", () => {
   it("is ONE number: surface-de-gpu.ts's SURFACE_GPU_HIT_FLOOR is surface-material.ts's SURFACE_FULL_HIT_FLOOR", () => {
@@ -1499,6 +1508,70 @@ describe("SurfaceComputeRenderer condensation session resources", () => {
       expect(source).toContain("max(shapeDistance, 0.0), local.w");
     }
     expect(harness.bufferDescriptors[0].size).toBe(592);
+    harness.renderer.destroy();
+  });
+});
+
+describe("SurfaceComputeRenderer shape-trap geometry session resources", () => {
+  const authoredTrap = () => ({
+    ...PRESET_TRAPS.foldChainGear!(),
+    geometryLevelMin: 2,
+    geometryLevelMax: 5,
+  });
+
+  it("selects the geometry-enabled 3D kernel pair while color-only stays classic", async () => {
+    const trap = authoredTrap();
+    const resolved = resolveShapeTrap(trap);
+    const de = buildEscapeDE(foldChain());
+    const geometry = await createPaletteResourceHarness(false, {
+      kind: "escape",
+      de,
+      shapeTrap: trap.shape,
+      shapeTrapGeometry: resolved,
+    });
+
+    expect(geometry.bufferDescriptors[0].size).toBe(400);
+    expect(geometry.shaderSources).toHaveLength(2);
+    for (const source of geometry.shaderSources) {
+      expect(source).toContain("var trapDistance = 1.0e30");
+      expect(source).toContain("i >= 2u && i <= 5u");
+      expect(source).toContain("return min(escapeDistance, trapDistance);");
+    }
+
+    const colorOnly = await createPaletteResourceHarness(false, {
+      kind: "escape",
+      de,
+      shapeTrap: trap.shape,
+    });
+    expect(colorOnly.bufferDescriptors[0].size).toBe(400);
+    for (const source of colorOnly.shaderSources) {
+      expect(source).not.toContain("var trapDistance = 1.0e30");
+    }
+    expect(
+      colorOnly.shaderSources.some((source) =>
+        source.includes("fn trapCandidate"),
+      ),
+    ).toBe(true);
+    geometry.renderer.destroy();
+    colorOnly.renderer.destroy();
+  });
+
+  it("selects the same inclusive geometry band for the 4D escape kernel pair", async () => {
+    const trap = authoredTrap();
+    const harness = await createPaletteResourceHarness(false, {
+      kind: "escape4",
+      de: buildEscapeDE4(mandelboxBrick()),
+      shapeTrap: trap.shape,
+      shapeTrapGeometry: resolveShapeTrap(trap),
+    });
+
+    expect(harness.bufferDescriptors[0].size).toBe(688);
+    expect(harness.shaderSources).toHaveLength(2);
+    for (const source of harness.shaderSources) {
+      expect(source).toContain("i >= 2u && i <= 5u");
+      expect(source).toContain("trapLocalSdf(v.xyz)");
+      expect(source).toContain("return min(escapeDistance, trapDistance);");
+    }
     harness.renderer.destroy();
   });
 });

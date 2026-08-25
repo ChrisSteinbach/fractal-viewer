@@ -18,6 +18,7 @@ import {
   setSolidPaletteId,
   setSurfaceColorSource,
   setSurfacePaletteId,
+  setShapeTrap,
   setSymmetryOrder,
   SURFACE_COLOR_SOURCES,
 } from "./state";
@@ -29,7 +30,10 @@ import type { ScalarControlSpec } from "./control-spec";
 import {
   defaultTransforms,
   fernSpongeIsolated,
+  foldChain,
   gearworks,
+  hybridChainCube,
+  mandelbulbClassic,
   PRESET_NAMES,
 } from "../fractal/presets";
 import {
@@ -46,6 +50,7 @@ import {
 import { to255 } from "../fractal/vec";
 import { FOUR_D_COLOR_MODES, SYMMETRY_PLANES } from "../fractal/types";
 import type { Transform } from "../fractal/types";
+import { GEAR_SHAPE } from "../fractal/shapes";
 // Load the production markup itself so the Ui↔DOM contract has one source of
 // truth: the constructor throws on any missing element, so renaming or removing
 // one in index.html fails these tests instead of silently breaking the app.
@@ -1149,6 +1154,125 @@ describe("Ui condensation level band", () => {
 
     ui.updateLabels({ ...state, condensationDepthBand: { maxDepth: 0 } });
     expect(custom().classList.contains("hidden")).toBe(true);
+  });
+});
+
+describe("Ui shape-trap geometry", () => {
+  const row = (): HTMLElement =>
+    document.getElementById("surfaceTrapGeometryRow") as HTMLElement;
+  const levels = (): HTMLElement =>
+    document.getElementById("surfaceTrapGeometryLevels") as HTMLElement;
+  const custom = (): HTMLElement =>
+    document.getElementById("surfaceTrapGeometryCustom") as HTMLElement;
+  const foldState = (): AppState =>
+    setShapeTrap(
+      {
+        ...initialState(true),
+        renderMode: "surface",
+        transforms: foldChain(),
+      },
+      { shape: GEAR_SHAPE },
+    );
+
+  it("offers Geometry only on a conformal fold-only escape session", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceSessionKind("escape");
+    ui.updateLabels(foldState());
+    expect(row().classList.contains("hidden")).toBe(false);
+    expect(levels().classList.contains("hidden")).toBe(true);
+
+    ui.updateLabels({ ...foldState(), transforms: hybridChainCube() });
+    expect(row().classList.contains("hidden")).toBe(true);
+
+    ui.setSurfaceSessionKind("bulb");
+    ui.updateLabels(foldState());
+    expect(row().classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows level mode only while Geometry is on and endpoints only for Custom", () => {
+    const ui = new Ui(document);
+    ui.setSurfaceSessionKind("escape");
+    const enabled = setShapeTrap(foldState(), {
+      ...foldState().shapeTrap!,
+      geometry: true,
+    });
+
+    ui.updateLabels(enabled);
+    expect(levels().classList.contains("hidden")).toBe(false);
+    expect(custom().classList.contains("hidden")).toBe(true);
+
+    ui.updateLabels(
+      setShapeTrap(enabled, {
+        ...enabled.shapeTrap!,
+        geometryLevelMin: 2,
+        geometryLevelMax: 5,
+      }),
+    );
+    expect(custom().classList.contains("hidden")).toBe(false);
+  });
+
+  it("discloses the fold-only restriction next to the checkbox", () => {
+    expect(row().textContent).toContain("conformal fold-only escape chains");
+    expect(row().textContent).toContain("Color trapping still works");
+  });
+
+  it.each([
+    ["power chain", hybridChainCube()],
+    ["Mandelbulb", mandelbulbClassic()],
+    [
+      "anisotropic fold chain",
+      foldChain().map((transform, i) =>
+        i === 0
+          ? {
+              ...transform,
+              scale: [1.2, 1, 1] as [number, number, number],
+            }
+          : transform,
+      ),
+    ],
+  ] as const)(
+    "keeps the Geometry checkbox reachable in Points for loaded %s geometry",
+    (_label, transforms) => {
+      const state = setShapeTrap(
+        { ...initialState(true), transforms: [...transforms] },
+        { shape: GEAR_SHAPE, geometry: true },
+      );
+      const ui = new Ui(document);
+      ui.updateLabels(state);
+
+      expect(
+        document
+          .getElementById("surfaceControls")
+          ?.classList.contains("hidden"),
+      ).toBe(false);
+      expect(row().classList.contains("hidden")).toBe(false);
+      expect(
+        (
+          document.getElementById(
+            "surfaceTrapGeometryCheckbox",
+          ) as HTMLInputElement
+        ).checked,
+      ).toBe(true);
+    },
+  );
+
+  it("lets the recovery checkbox clear an otherwise ineligible geometry flag", () => {
+    const state = setShapeTrap(
+      { ...initialState(true), transforms: hybridChainCube() },
+      { shape: GEAR_SHAPE, geometry: true },
+    );
+    const { handlers, current } = scalarHandlers(state);
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.updateLabels(state);
+    const checkbox = document.getElementById(
+      "surfaceTrapGeometryCheckbox",
+    ) as HTMLInputElement;
+
+    checkbox.checked = false;
+    checkbox.dispatchEvent(new Event("change"));
+
+    expect(current().shapeTrap).toEqual({ shape: GEAR_SHAPE });
   });
 });
 

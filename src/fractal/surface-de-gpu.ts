@@ -14,6 +14,7 @@ import {
   type EscapeDE,
 } from "./escape-de";
 import {
+  SHAPE_TRAP_GEOMETRY_LEVEL_MAX,
   SHAPE_TRAP_NO_CROSSING,
   shapeTrapInvNorm,
   type ResolvedShapeTrap,
@@ -672,14 +673,18 @@ import type { Vec3 } from "./types";
  *              +16 vec4f trapR1 — Rᵀ row1, .w = trap position.y
  *              +32 vec4f trapR2 — Rᵀ row2, .w = trap position.z
  *              +48 vec4f trapP — (invScale, mode, threshold, fade),
- *                  `resolveShapeTrap`'s own fields. The shape GEOMETRY is
- *                  never on this wire: it is BAKED per spec at codegen
+ *                  `resolveShapeTrap`'s own fields. The shape SPEC is
+ *                  never on this wire: it is BAKED at codegen
  *                  (`shapeSdfSource`), with the normalizer `invNorm` a
  *                  baked literal beside it (`shapeTrapInvNorm` — the ONE
- *                  definition the resolver shares). Totals: {@link
+ *                  definition the resolver shares). Optional trap geometry
+ *                  reuses this pose block; its inclusive level band is baked
+ *                  by `shapeTrapGeometry`, so the frozen wire does not grow.
+ *                  Totals: {@link
  *                  SURFACE_GPU_PARAMS_TRAP_BYTES} = 400, {@link
  *                  SURFACE_GPU_PARAMS4_TRAP_BYTES} = 688. COLOR ONLY: the
- *                  march/eval bodies never read the block (their structs
+ *                  march/eval bodies never read the block when geometry is
+ *                  off (their structs
  *                  merely declare it, so one options object builds a
  *                  session's pair); only the shade hit-info orbits do.
  *
@@ -1297,8 +1302,20 @@ export interface SurfaceGpuKernelOptions {
    * BYTE FOR BYTE across every mode/core/variant. COLOR ONLY: march/eval
    * bodies never read the block (their structs declare it so one options
    * object builds a session's kernel pair), and no marching quantity
-   * changes at any setting. */
+   * changes at any color setting. Geometry is the independent gate below. */
   shapeTrap?: ShapeSpec | null;
+  /** Optional marching use of {@link shapeTrap}. Pass the SAME resolved trap
+   * used by the params packer (it is accepted structurally, but only the flag
+   * and these two endpoints are read). `geometry: true` compiles the
+   * fold-chain term into `core: "escape"` / `"escape4"`; the posed SDF keeps
+   * reading the existing live inverse pose/scale block, while the inclusive
+   * zero-based band is a create-time constant. Omitted/null/false keeps the
+   * color-only source byte-identical. `core: "bulb"` throws when enabled: its
+   * power orbit is not eligible geometry and must never change silently. */
+  shapeTrapGeometry?: Pick<
+    ResolvedShapeTrap,
+    "geometry" | "geometryLevelMin" | "geometryLevelMax"
+  > | null;
   /** Condensation codegen input. Pass the DE's recursive map count plus its
    * symmetry-expanded emitters directly; codegen validates the same 24-record
    * and unique-shade suffix contract as the packers, then bakes one ShapeSpec
@@ -1917,6 +1934,11 @@ export function packBulbGpuParams(
   groundPlane: SurfaceGpuGroundPlane | null = null,
   shapeTrap: ResolvedShapeTrap | null = null,
 ): ArrayBuffer {
+  if (shapeTrap?.geometry) {
+    throw new Error(
+      "surface-de-gpu: shape-trap geometry is excluded from the bulb/power core",
+    );
+  }
   const buf = new ArrayBuffer(
     shapeTrap
       ? SURFACE_GPU_PARAMS_TRAP_BYTES
@@ -2973,6 +2995,36 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // means no trap, so every trap-free config generates byte-identical
   // source — the compile-gate mechanism, exactly the finish flag's.
   const shapeTrap = opts.shapeTrap ?? null;
+  // Geometry is a SECOND compile gate on the same trap. Its band is baked
+  // because geometry edits restart the Surface session; the pose and inverse
+  // scale remain live in the existing trap block. Keeping this separate from
+  // `shapeTrap` is load-bearing for color-only source identity.
+  const shapeTrapGeometry =
+    opts.shapeTrapGeometry?.geometry === true ? opts.shapeTrapGeometry : null;
+  if (shapeTrapGeometry && !shapeTrap) {
+    throw new Error(
+      "surface-de-gpu: shapeTrapGeometry requires shapeTrap geometry",
+    );
+  }
+  if (shapeTrapGeometry && core === "bulb") {
+    throw new Error(
+      "surface-de-gpu: shape-trap geometry is excluded from the bulb/power core",
+    );
+  }
+  if (shapeTrapGeometry) {
+    const { geometryLevelMin, geometryLevelMax } = shapeTrapGeometry;
+    if (
+      !Number.isInteger(geometryLevelMin) ||
+      !Number.isInteger(geometryLevelMax) ||
+      geometryLevelMin < 0 ||
+      geometryLevelMax < geometryLevelMin ||
+      geometryLevelMax > SHAPE_TRAP_GEOMETRY_LEVEL_MAX
+    ) {
+      throw new Error(
+        `surface-de-gpu: bad shape-trap geometry band ${geometryLevelMin}..${geometryLevelMax}`,
+      );
+    }
+  }
   if (shapeTrap && condensationShapes) {
     throw new Error(
       "surface-de-gpu: condensation+shapeTrap is excluded — condensation " +
@@ -3032,6 +3084,44 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
     ? /* wgsl */ `
   info.shapeTrap = trapValue(trapBest, trapCross);`
     : "";
+  // Geometry's one posed local-SDF helper. It is emitted beside the value
+  // body in every mode so eval/march can use it; shade's color accumulator
+  // calls the SAME helper, keeping the pose transform and SDF evaluation in
+  // one definition. Color-only keeps its historical helper text below
+  // untouched and never emits this block.
+  const trapGeometryHelperText =
+    shapeTrap && shapeTrapGeometry
+      ? `${shapeSdfSource(shapeTrap, "wgsl", "trapShapeSdf")}
+// Shared posed local SDF for shape-trap color and geometry. The similarity's
+// value factor is deliberately NOT restored here: color normalizes this local
+// value, while geometry divides it by invScale at the post-link dr.
+fn trapLocalSdf(pOrbit: vec3f) -> f32 {
+  let td = pOrbit - vec3f(params.trapR0.w, params.trapR1.w, params.trapR2.w);
+  let tl = vec3f(
+    dot(params.trapR0.xyz, td),
+    dot(params.trapR1.xyz, td),
+    dot(params.trapR2.xyz, td),
+  ) * params.trapP.x;
+  return trapShapeSdf(tl);
+}
+
+`
+      : "";
+  const trapGeometryDecl = shapeTrapGeometry
+    ? /* wgsl */ `
+  var trapDistance = 1.0e30;`
+    : "";
+  const trapGeometryStep = (point: string, idx: string): string =>
+    shapeTrapGeometry
+      ? /* wgsl */ `
+    if (${idx} >= ${shapeTrapGeometry.geometryLevelMin}u && ${idx} <= ${shapeTrapGeometry.geometryLevelMax}u) {
+      let trapLocalDistance = trapLocalSdf(${point});
+      trapDistance = min(
+        trapDistance,
+        (${wgslFloatLit(SHAPE_MARCH_SAFETY)} * trapLocalDistance) / (params.trapP.x * dr),
+      );
+    }`
+      : "";
   // The trap's shade-mode helpers: the BAKED shape SDF (per-spec codegen,
   // `shapes.ts`'s shapeSdfSource — the create-time-geometry decision) plus
   // the candidate/finalize pair mirroring `escape-de.ts`'s
@@ -3040,21 +3130,26 @@ export function surfaceDeKernelWgsl(opts: SurfaceGpuKernelOptions): string {
   // the kernel and the resolver cannot disagree; everything LIVE rides the
   // appended trap params block.
   const trapHelperText = shapeTrap
-    ? `${shapeSdfSource(shapeTrap, "wgsl", "trapShapeSdf")}
+    ? `${shapeTrapGeometry ? "" : shapeSdfSource(shapeTrap, "wgsl", "trapShapeSdf")}
 // Step stepIdx's trap candidate at orbit point pOrbit — escape-de.ts's
 // shapeTrapCandidate in f32: pose inverse WITHOUT the value factor
 // (distances in the shape's own local units), normalized by the baked
 // bounding radius so the channel is scale-relative, then the
 // fade-by-index weight.
 fn trapCandidate(pOrbit: vec3f, stepIdx: u32) -> f32 {
-  let td = pOrbit - vec3f(params.trapR0.w, params.trapR1.w, params.trapR2.w);
+${
+  shapeTrapGeometry
+    ? `  return trapLocalSdf(pOrbit) * ${wgslFloatLit(shapeTrapInvNorm(shapeTrap))} *
+    (1.0 + params.trapP.w * f32(stepIdx));`
+    : `  let td = pOrbit - vec3f(params.trapR0.w, params.trapR1.w, params.trapR2.w);
   let tl = vec3f(
     dot(params.trapR0.xyz, td),
     dot(params.trapR1.xyz, td),
     dot(params.trapR2.xyz, td),
   ) * params.trapP.x;
   return trapShapeSdf(tl) * ${wgslFloatLit(shapeTrapInvNorm(shapeTrap))} *
-    (1.0 + params.trapP.w * f32(stepIdx));
+    (1.0 + params.trapP.w * f32(stepIdx));`
+}
 }
 
 // escape-de.ts's shapeTrapValue: min mode clamps the closest weighted
@@ -8933,7 +9028,7 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   var r = length(v);
   let n = params.mapCount;
   let steps = params.maxDepth * n;
-  var link = 0u;
+  var link = 0u;${trapGeometryDecl}
   for (var i = 0u; i < steps; i++) {
     if (r > params.boundingRadius) {
       break;
@@ -8994,7 +9089,7 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
     // inside y above).
     v = L.p0.y * y + q;
     dr = L.p0.z * localL * dr + 1.0;
-    r = length(v);
+    r = length(v);${trapGeometryStep("v", "i")}
     link++;
     if (link == n) {
       link = 0u;
@@ -9007,13 +9102,25 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   // negative estimate would march the tracer BACKWARDS — returning 0
   // there is the inside signal and is safe in the direction a sphere
   // tracer needs. The bulb core takes the identical exit.
-  if (params.escParams.w == 0.0) {
+${
+  shapeTrapGeometry
+    ? `  var escapeDistance = r / dr;
+  if (params.escParams.w != 0.0) {
+    if (r <= 1.0) {
+      escapeDistance = 0.0;
+    } else {
+      escapeDistance = 0.5 * r * log(r) / dr;
+    }
+  }
+  return min(escapeDistance, trapDistance);`
+    : `  if (params.escParams.w == 0.0) {
     return r / dr;
   }
   if (r <= 1.0) {
     return 0.0;
   }
-  return 0.5 * r * log(r) / dr;
+  return 0.5 * r * log(r) / dr;`
+}
 }`;
 
   // The ESCAPE4 core: escape-de-4d.ts's
@@ -9118,7 +9225,7 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   var r = length(v);
   let n = params.mapCount;
   let steps = params.maxDepth * n;
-  var link = 0u;
+  var link = 0u;${trapGeometryDecl}
   for (var i = 0u; i < steps; i++) {
     if (r > params.boundingRadius) {
       break;
@@ -9166,7 +9273,7 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
     // The Mandelbrot form's offset — the QUERY POINT, folded and lifted.
     v = L.p0.y * y + q;
     dr = L.p0.z * localL * dr + 1.0;
-    r = length(v);
+    r = length(v);${trapGeometryStep("v.xyz", "i")}
     link++;
     if (link == n) {
       link = 0u;
@@ -9177,13 +9284,25 @@ fn surfaceDE(pIn: vec3f, cutoff: f32, li: u32) -> f32 {
   // below r = 1, which a converging orbit reaches, and a negative
   // estimate would march the tracer BACKWARDS — 0 there is the inside
   // signal and is safe in the direction a sphere tracer needs.
-  if (params.esc4Params.x == 0.0) {
+${
+  shapeTrapGeometry
+    ? `  var escapeDistance = r / dr;
+  if (params.esc4Params.x != 0.0) {
+    if (r <= 1.0) {
+      escapeDistance = 0.0;
+    } else {
+      escapeDistance = 0.5 * r * log(r) / dr;
+    }
+  }
+  return min(escapeDistance, trapDistance);`
+    : `  if (params.esc4Params.x == 0.0) {
     return r / dr;
   }
   if (r <= 1.0) {
     return 0.0;
   }
-  return 0.5 * r * log(r) / dr;
+  return 0.5 * r * log(r) / dr;`
+}
 }`;
 
   // The BULB core: bulb-de.ts's estimateBulbDistance — the
@@ -9829,7 +9948,7 @@ ${balloonProbeWrapText}`
 
   return /* wgsl */ `${headerText}
 
-${condensationHelperText}${bodyBlock}
+${trapGeometryHelperText}${condensationHelperText}${bodyBlock}
 ${entry}
 `;
 }

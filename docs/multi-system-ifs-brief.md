@@ -16,10 +16,10 @@ shapes faithful, and the shared 3D shape supply chain.
 interop, the xaos construction/editor UI, scheduled post-words in every point consumer, emitter
 transforms, both xaos and emitter Flame GPU paths, and the escape-family shape-trap COLOR channel have
 landed. Condensation now also reaches the 3D and 4D inverse-beam Surface paths, including the WebGL and
-WebGPU tracers, an inclusive level band, grid acceleration and balloon composition. Still remaining are
-trap-as-GEOMETRY in conformal forward fold chains, scheduled and graph-directed descent, and Tier-3 mesh
-shapes. The sections below keep the original design argument, with landed paragraphs updated to describe
-the implementation rather than a proposal.
+WebGPU tracers, an inclusive level band, 3D grid acceleration and balloon composition. Shape-trap
+GEOMETRY now reaches conformal forward fold chains in both dimensions. Still remaining are scheduled and
+graph-directed descent and Tier-3 mesh shapes. The sections below keep the original design argument, with
+landed paragraphs updated to describe the implementation rather than a proposal.
 
 Companion docs already in `docs/`: `quaternion-julia-brief.md`, `fold-de-performance-brief.md`,
 `flame-interop.md`.
@@ -236,17 +236,38 @@ style, fully volumetric. `sdPeace3D(p) = min(sdTorus(p), three capsules)` — Ti
 
 The implementation shares `shape-trap.ts` across thin CPU wrappers over the escape, escape4 and bulb
 orbit runners, then mirrors it in all three WGSL cores and both 3D GLSL forward arms. Real-Iris
-agreement passed with fail=0 on all three fixtures; the menu-driven 13-preset gate measured 7.78% of
+agreement passed with fail=0 on all three fixtures; the menu-driven 14-preset gate measured 7.79% of
 pixels changing with the channel on versus off. `Mandelbox Peace` is the reachability preset. Geometry
 remains unchanged at every setting.
 
-### C′-geometry: trap as geometry in the escape/fold family
+### C′-geometry: trap as geometry in the escape/fold family (landed)
 
 The dual of Option C's beam-DE trap, for the _other_ estimator family in the codebase:
 `d = min_i sdShape(z_i)/dr_i` inside the forward fold/escape iteration (Syntopia Part VIII's "orbit traps
 define geometry"). Same level-band option as Option C. Between them the two constructions cover both
 estimator families: beam descent over affine inverse maps (`surface-de.ts`) and forward fold/escape
 iteration (`escape-de.ts` and friends).
+
+The production construction is `min(escapeDE, trapDE)`, preserving the familiar escape object and
+unioning the trapped copies into it. Each admitted zero-based post-link level contributes
+`0.9 * posedSdf(z_i) / drAfter_i`; the derivative includes the link that produced the sampled point, and
+the logarithmic escape form applies only to the ordinary escape term. The same all/root/custom inclusive
+band vocabulary as condensation controls which orbit levels stamp geometry. Outside a finite band the
+orbit pays only the band check, not a shape-SDF evaluation.
+
+The decision contact sheet crosses Mandelbox / two-link fold chain, peace sign / gear, full / root-only,
+and base / min-union / rejected trap-only. Min-union keeps the recognizable anchor while trap-only turns
+finite bands into sparse fragments. The isolated damping sweep found no reason to invent a second safety
+constant, so the shape library's shared `0.9` factor remains the local term and composes with the existing
+escape marcher step scale.
+
+The app admits geometry only for fold-only escape chains; triplex and quaternion power links, the
+Mandelbulb and inverse-descent routes refuse it explicitly rather than ignoring it, while the same trap
+remains usable as color on every forward family. In 4D the existing 3D shape vocabulary measures xyz,
+i.e. its signed-distance extrusion through w, and the full 4D derivative still scales the term. Real-Iris
+agreement passed with fail=0 while the geometry term won 113/700 3D and 125/700 4D samples; the
+menu-driven on/off render differed on 23.26% of pixels. `Fold Chain Gear` is the menu-reachable geometry
+preset; `Mandelbox Peace` remains color-only.
 
 ### Which systems keep 3D shapes faithful (the Liouville constraint)
 
@@ -280,10 +301,10 @@ the conformal fold family.
 
 ## Delivery sequence
 
-The shape library, C′-color, xaos, C-point, C-surface and B-point are landed, including their GPU mirrors.
-The remaining implementation order is conformal forward trap-geometry, then scheduled descent, followed
-by graph-directed descent and Tier-3 mesh shapes. Each remains independently shippable; all must reuse
-the existing shape, selection and schedule vocabularies rather than restating them.
+The shape library, C′-color, conformal forward trap-geometry, xaos, C-point, C-surface and B-point are
+landed, including their GPU mirrors. The remaining implementation order is scheduled descent, followed by
+graph-directed descent and Tier-3 mesh shapes. Each remains independently shippable; all must reuse the
+existing shape, selection and schedule vocabularies rather than restating them.
 
 ## Validation strategy
 

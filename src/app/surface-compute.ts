@@ -83,6 +83,7 @@ import {
 import type { BulbDE } from "../fractal/bulb-de";
 import type { EscapeDE } from "../fractal/escape-de";
 import { resolveShapeTrap } from "../fractal/shape-trap";
+import type { ResolvedShapeTrap } from "../fractal/shape-trap";
 import type { EscapeDE4 } from "../fractal/escape-de-4d";
 import type { ShapeSpec } from "../fractal/shapes";
 import type {
@@ -407,13 +408,32 @@ export type SurfaceComputeTarget =
        * FORWARD kinds only — the trap is the escape family's color channel
        * (the codegen throws for every descent core). */
       shapeTrap?: ShapeSpec;
+      /** Optional marching use of that same baked shape. The live pose rides
+       * the frame trap block; only the normalized enable/band compile here. */
+      shapeTrapGeometry?: Pick<
+        ResolvedShapeTrap,
+        "geometry" | "geometryLevelMin" | "geometryLevelMax"
+      >;
     }
-  | { kind: "bulb"; de: BulbDE; groundPlane?: boolean; shapeTrap?: ShapeSpec }
+  | {
+      kind: "bulb";
+      de: BulbDE;
+      groundPlane?: boolean;
+      shapeTrap?: ShapeSpec;
+      shapeTrapGeometry?: Pick<
+        ResolvedShapeTrap,
+        "geometry" | "geometryLevelMin" | "geometryLevelMax"
+      >;
+    }
   | {
       kind: "escape4";
       de: EscapeDE4;
       groundPlane?: boolean;
       shapeTrap?: ShapeSpec;
+      shapeTrapGeometry?: Pick<
+        ResolvedShapeTrap,
+        "geometry" | "geometryLevelMin" | "geometryLevelMax"
+      >;
     }
   | {
       kind: "ifs4";
@@ -438,13 +458,30 @@ export function isForwardTarget(target: SurfaceComputeTarget): target is
       de: EscapeDE;
       groundPlane?: boolean;
       shapeTrap?: ShapeSpec;
+      shapeTrapGeometry?: Pick<
+        ResolvedShapeTrap,
+        "geometry" | "geometryLevelMin" | "geometryLevelMax"
+      >;
     }
-  | { kind: "bulb"; de: BulbDE; groundPlane?: boolean; shapeTrap?: ShapeSpec }
+  | {
+      kind: "bulb";
+      de: BulbDE;
+      groundPlane?: boolean;
+      shapeTrap?: ShapeSpec;
+      shapeTrapGeometry?: Pick<
+        ResolvedShapeTrap,
+        "geometry" | "geometryLevelMin" | "geometryLevelMax"
+      >;
+    }
   | {
       kind: "escape4";
       de: EscapeDE4;
       groundPlane?: boolean;
       shapeTrap?: ShapeSpec;
+      shapeTrapGeometry?: Pick<
+        ResolvedShapeTrap,
+        "geometry" | "geometryLevelMin" | "geometryLevelMax"
+      >;
     } {
   return (
     target.kind === "escape" ||
@@ -1763,6 +1800,9 @@ export class SurfaceComputeRenderer {
           // kernels while pose/mode edits ride the live params block.
           shapeTrap: isForwardTarget(target)
             ? (target.shapeTrap ?? null)
+            : null,
+          shapeTrapGeometry: isForwardTarget(target)
+            ? (target.shapeTrapGeometry ?? null)
             : null,
           // Condensation geometry belongs to the inverse-descent family.
           // Pass the analyzer's already-expanded emitter records straight

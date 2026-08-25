@@ -2,6 +2,7 @@ import {
   applyScalarControl,
   condensationBandMode,
   SCALAR_CONTROLS,
+  shapeTrapGeometryBandMode,
   surfaceColorLUT,
 } from "./control-spec";
 import type { ControlEffects, ScalarControlSpec } from "./control-spec";
@@ -13,11 +14,13 @@ import {
   MAX_NUM_POINTS,
   MIN_NUM_POINTS,
   nearestFlameIterationDetentIndex,
+  setShapeTrap,
   setSymmetryOrder,
 } from "./state";
 import { buildColorModeLUT } from "../fractal/color";
 import { buildPaletteLUT, resolvePalette } from "../fractal/palette";
 import { resolveBackground } from "./background";
+import { GEAR_SHAPE } from "../fractal/shapes";
 
 /** Look up a table entry by its index.html element id. */
 function specById(id: string): ScalarControlSpec {
@@ -98,6 +101,63 @@ describe("applyScalarControl: parsing/mapping", () => {
     const state = applyScalarControl(initialState(true), spec, "4");
     const fx = mockEffects();
     spec.effect?.(state, fx, initialState(true));
+    expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(1);
+  });
+
+  it("normalizes trap geometry and its all/root/custom inclusive band", () => {
+    const geometry = specById("surfaceTrapGeometryCheckbox");
+    const mode = specById("surfaceTrapGeometryBandMode");
+    const min = specById("surfaceTrapGeometryMinSlider");
+    const max = specById("surfaceTrapGeometryMaxSlider");
+    const trapped = setShapeTrap(initialState(true), { shape: GEAR_SHAPE });
+
+    const enabled = applyScalarControl(trapped, geometry, true);
+    expect(enabled.shapeTrap).toEqual({ shape: GEAR_SHAPE, geometry: true });
+    expect(shapeTrapGeometryBandMode(enabled)).toBe("all");
+
+    const root = applyScalarControl(enabled, mode, "root");
+    expect(root.shapeTrap).toEqual({
+      shape: GEAR_SHAPE,
+      geometry: true,
+      geometryLevelMax: 0,
+    });
+    expect(shapeTrapGeometryBandMode(root)).toBe("root");
+
+    const custom = applyScalarControl(root, mode, "custom");
+    expect(custom.shapeTrap).toMatchObject({
+      geometry: true,
+      geometryLevelMin: 1,
+      geometryLevelMax: 1,
+    });
+    const withMin = applyScalarControl(custom, min, "7");
+    expect(withMin.shapeTrap).toMatchObject({
+      geometryLevelMin: 1,
+      geometryLevelMax: 7,
+    });
+    const sorted = applyScalarControl(withMin, max, "3");
+    expect(sorted.shapeTrap).toMatchObject({
+      geometryLevelMin: 1,
+      geometryLevelMax: 3,
+    });
+    const disabledCustom = applyScalarControl(sorted, geometry, false);
+    expect(disabledCustom.shapeTrap).toEqual({ shape: GEAR_SHAPE });
+
+    const all = applyScalarControl(sorted, mode, "all");
+    expect(all.shapeTrap).toEqual({ shape: GEAR_SHAPE, geometry: true });
+    const disabled = applyScalarControl(all, geometry, false);
+    expect(disabled.shapeTrap).toEqual({ shape: GEAR_SHAPE });
+  });
+
+  it("re-derives eligibility and restarts Surface when trap geometry toggles", () => {
+    const spec = specById("surfaceTrapGeometryCheckbox");
+    const trapped = setShapeTrap(initialState(true), { shape: GEAR_SHAPE });
+    const state = applyScalarControl(trapped, spec, true);
+    const fx = mockEffects();
+
+    spec.effect?.(state, fx, trapped);
+
+    expect(fx.scene.setSurfaceShapeTrap).toHaveBeenCalledWith(state.shapeTrap);
+    expect(fx.refreshSurfaceEligibility).toHaveBeenCalledTimes(1);
     expect(fx.restartSurfaceRender).toHaveBeenCalledTimes(1);
   });
 

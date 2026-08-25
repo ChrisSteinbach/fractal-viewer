@@ -44,7 +44,7 @@
  * MEASURED on SwiftShader at
  * the fix: `--mode=sw --query=surfacegl` fails exactly this check on the
  * pre-fix build ("no toast explaining the blank frame (got null)") and passes
- * on the fixed one, with the twelve shipped presets still raising no toast at
+ * on the fixed one, with the fourteen shipped presets still raising no toast at
  * all — which is the check that matters more, since a signal that fires on
  * good input is worse than the silence it replaced.
  *
@@ -92,6 +92,10 @@ const PRESETS = [
   { key: "foldChain", group: "chain" },
   { key: "foldChainBoulder", group: "chain" },
   { key: "foldChainFlower", group: "chain" },
+  // Same foldChain word as the base row, with PRESET_TRAPS installing a
+  // gear as marched geometry. Group membership makes a dead geometry wire
+  // fail the ordinary pairwise object comparison too.
+  { key: "foldChainGear", group: "chain" },
   { key: "mandelbulbClassic", group: "bulb" },
   { key: "mandelbulbOffset", group: "bulb" },
   { key: "mandelbulbRotated", group: "bulb" },
@@ -684,6 +688,83 @@ async function main() {
                 failures.push(
                   `shape trap: trap-on and trap-off render the same picture ` +
                     `(${(100 * frac).toFixed(2)}% differing, need ${100 * DIFFER_FRACTION}%) — the channel is not reaching the render`,
+                );
+              }
+            }
+          }
+        }
+      } finally {
+        await context.close();
+      }
+    }
+
+    // --- trap GEOMETRY reaches marching: geometry-on vs geometry-off differ
+    // Fold Chain Gear authors the same transform word as Fold Chain, with the
+    // gear block's geometry bit as the only topology change. Load it through
+    // the menu, settle the production object, then clear that bit through its
+    // own control without removing the color-capable trap. If the CPU/WGSL/
+    // GLSL distance wire is stale, both settled frames are identical.
+    if (wanted.some((p) => p.key === "foldChainGear")) {
+      const { context, page } = await openApp(browser, args);
+      try {
+        await loadPreset(page, "foldChainGear");
+        const entry = await enterSurface(page);
+        if (!entry.entered) {
+          failures.push(
+            `shape-trap geometry check: Surface disabled — ${entry.reason}`,
+          );
+        } else {
+          const settledOn = await waitSettled(page, args);
+          if (!settledOn.ok) {
+            failures.push(
+              "shape-trap geometry check: geometry-on session never settled",
+            );
+          } else {
+            const authored = await page.isChecked(
+              "#surfaceTrapGeometryCheckbox",
+            );
+            if (!authored) {
+              failures.push(
+                "shape-trap geometry check: Fold Chain Gear did not install geometry",
+              );
+            }
+            const onShot = path.join(args.outdir, "trap-geometry-on.png");
+            await page.locator("canvas").first().screenshot({ path: onShot });
+            await page.evaluate(() => {
+              const checkbox = document.getElementById(
+                "surfaceTrapGeometryCheckbox",
+              );
+              const details = checkbox?.closest("details");
+              if (details && !details.open) details.open = true;
+            });
+            await page.uncheck("#surfaceTrapGeometryCheckbox");
+            const settledOff = await waitSettled(page, args);
+            if (!settledOff.ok) {
+              failures.push(
+                "shape-trap geometry check: geometry-off session never settled",
+              );
+            } else {
+              const offShot = path.join(args.outdir, "trap-geometry-off.png");
+              await page
+                .locator("canvas")
+                .first()
+                .screenshot({ path: offShot });
+              const diffContext2 = await browser.newContext({
+                ignoreHTTPSErrors: true,
+              });
+              const diffPage2 = await diffContext2.newPage();
+              await diffPage2.goto("about:blank");
+              const frac = await differingFraction(diffPage2, onShot, offShot);
+              await diffContext2.close();
+              const ok = frac >= DIFFER_FRACTION;
+              console.error(
+                `[escape-family] shape-trap geometry: on vs off — ` +
+                  `${(100 * frac).toFixed(2)}% of pixels differ ${ok ? "OK" : "TOO SIMILAR"}`,
+              );
+              if (!ok) {
+                failures.push(
+                  `shape-trap geometry: on and off render the same object ` +
+                    `(${(100 * frac).toFixed(2)}% differing, need ${100 * DIFFER_FRACTION}%) — geometry is not reaching the distance estimator`,
                 );
               }
             }

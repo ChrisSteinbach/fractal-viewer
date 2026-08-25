@@ -629,20 +629,30 @@ its margin).
 ### The shape-trap arm's sizes
 
 The escape-family shape trap bakes its shape SDF into the program and keeps
-the pose, mode, threshold and fade live. Measured resolved sizes after that
-arm landed, against the 65,536 B strip line:
+the pose, mode, threshold and fade live. Its optional escape-only geometry
+arm also keeps an inclusive post-link level band live, shares the hit-info
+path's local SDF with color, and min-unions `0.9 * localSdf / (invScale * dr)`
+with the ordinary escape estimate. Bulb traps stay color-only. Geometry-off
+sources retain the pre-geometry hashes exactly. Measured resolved sizes
+against the 65,536 B strip line:
 
 | variant            | resolved B | headroom | result                       |
 | ------------------ | ---------- | -------- | ---------------------------- |
 | 3D escape          | 60412      | 5124     | unstripped                   |
 | 3D escape + finish | 62811      | 2725     | unstripped; pairing to watch |
+| 3D escape geometry | 60459      | 5077     | unstripped                   |
+| geometry + finish  | 62858      | 2678     | unstripped; pairing to watch |
 | 3D bulb            | 43752      | 21784    | unstripped                   |
 | 3D escape + plane  | 67900      | —        | strips under the plane rule  |
 
 The 67,900 B plane row crossing is benign: plane-bearing variants always
 strip independently of size, so no shipped driver program approaches the
-Mesa cliff. The live margin to watch is escape + finish's 2,725 B; measure
+Mesa cliff. The live margin to watch is geometry + finish's 2,678 B; measure
 again before extending either forward arm.
+
+The forced `?surfacegl` real-Iris menu check compiled and settled `Fold Chain
+Gear` through this arm with zero exhausted rays; Geometry on versus off
+changed 23.28% of its 1024×640 pixels (the compute arm measured 23.26%).
 
 ### The finish arm's sizes
 

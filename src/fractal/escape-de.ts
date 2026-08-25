@@ -657,7 +657,7 @@ import { isFlatTransform, symmetryIsNonFlat } from "./affine4";
 import { BULB_POWER } from "./bulb-de";
 import {
   SHAPE_TRAP_NO_CROSSING,
-  shapeTrapCandidate,
+  shapeTrapLocalSdf,
   shapeTrapValue,
 } from "./shape-trap";
 import type { ResolvedShapeTrap } from "./shape-trap";
@@ -675,6 +675,7 @@ import type {
   SurfaceNativeCalibration,
   SurfaceNativeCarrierSample,
 } from "./surface-pattern";
+import { SHAPE_MARCH_SAFETY } from "./shapes";
 import {
   CONTRACTION_LIMIT,
   SURFACE_FOLD_BOXFOLD,
@@ -869,6 +870,9 @@ export interface EscapeDE extends EscapeLink {
    * (module doc's ESTIMATE FORM paragraph) — true exactly when some link
    * is a POWER map, whose super-exponential escape the linear form
    * under-reads by a factor `0.5·ln r`.
+   *
+   * This changes only the escape-set term. Shape-trap geometry always uses
+   * its linear posed-SDF / derivative-bound term before the two are unioned.
    *
    * One number per chain, resolved here rather than in each of the six
    * mirrors, and false for every document that predates the power links
@@ -1230,6 +1234,13 @@ let orbitR = 0;
 let orbitDr = 1;
 let orbitTrapBest = 0;
 let orbitTrapCross = 0;
+let orbitTrapDistance = Infinity;
+
+/** Which optional trap accumulator a reader needs. The flags let a future
+ * hit-info reader collect both from one local-SDF evaluation without adding
+ * another forward orbit. */
+const TRAP_COLLECT_COLOR = 1;
+const TRAP_COLLECT_GEOMETRY = 2;
 
 /**
  * Run the chain's forward orbit from `p`, leaving the terminal radius and
@@ -1243,12 +1254,16 @@ function runEscapeOrbit(
   p: Vec3,
   maxIterations: number,
   trap: ResolvedShapeTrap | null = null,
+  trapCollection = 0,
 ): void {
   const links = de.links;
   const n = links.length;
-  if (trap) {
+  if (trap && (trapCollection & TRAP_COLLECT_COLOR) !== 0) {
     orbitTrapBest = 1e30;
     orbitTrapCross = SHAPE_TRAP_NO_CROSSING;
+  }
+  if (trap && (trapCollection & TRAP_COLLECT_GEOMETRY) !== 0) {
+    orbitTrapDistance = Infinity;
   }
   // The kaleidoscope, once, before anything else: the orbit is seeded AND
   // offset by the folded point, which is what makes the rendered set
@@ -1359,14 +1374,30 @@ function runEscapeOrbit(
     vz = link.w * fz + qz;
     dr = link.derivGrowth * localL * dr + 1;
     r = Math.sqrt(vx * vx + vy * vy + vz * vz);
-    // The shape trap's two accumulators, at exactly this post-step point —
-    // the emitter branch's null-check shape: distance/membership callers
-    // pass no trap and pay one falsy test per step.
+    // Trap color and geometry share this ONE local-SDF evaluation and the
+    // exact post-link point. `dr` has already absorbed this link: dividing
+    // by drBefore would omit the derivative of the point being sampled.
     if (trap) {
-      const cand = shapeTrapCandidate(trap, vx, vy, vz, step);
-      if (cand < orbitTrapBest) orbitTrapBest = cand;
-      if (orbitTrapCross <= SHAPE_TRAP_NO_CROSSING && cand < trap.threshold) {
-        orbitTrapCross = cand;
+      const collectColor = (trapCollection & TRAP_COLLECT_COLOR) !== 0;
+      const collectGeometry =
+        (trapCollection & TRAP_COLLECT_GEOMETRY) !== 0 &&
+        trap.geometry &&
+        step >= trap.geometryLevelMin &&
+        step <= trap.geometryLevelMax;
+      if (!collectColor && !collectGeometry) continue;
+      const localSdf = shapeTrapLocalSdf(trap, vx, vy, vz);
+      if (collectColor) {
+        const cand = localSdf * trap.invNorm * (1 + trap.fade * step);
+        if (cand < orbitTrapBest) orbitTrapBest = cand;
+        if (orbitTrapCross <= SHAPE_TRAP_NO_CROSSING && cand < trap.threshold) {
+          orbitTrapCross = cand;
+        }
+      }
+      if (collectGeometry) {
+        orbitTrapDistance = Math.min(
+          orbitTrapDistance,
+          (SHAPE_MARCH_SAFETY * localSdf) / (trap.invScale * dr),
+        );
       }
     }
   }
@@ -1513,16 +1544,33 @@ export function estimateEscapeDistance(
   de: EscapeDE,
   p: Vec3,
   maxIterations = ESCAPE_TIME_ITERATIONS,
+  trap: ResolvedShapeTrap | null = null,
 ): number {
-  runEscapeOrbit(de, p, maxIterations);
-  if (!de.logEstimate) return orbitR / orbitDr;
+  // Keep the classic call path literal when geometry is absent/false. A
+  // resolved color trap may be supplied by shared scene code without moving
+  // one result bit until its geometry flag is authored true.
+  const geometryTrap = trap?.geometry ? trap : null;
+  runEscapeOrbit(
+    de,
+    p,
+    maxIterations,
+    geometryTrap,
+    geometryTrap ? TRAP_COLLECT_GEOMETRY : 0,
+  );
+  let escapeDistance = orbitR / orbitDr;
   // The Böttcher/Green's form for a chain that escapes super-exponentially
   // (module doc's ESTIMATE FORM paragraph). `ln r` goes NEGATIVE below
   // r = 1, which a converging orbit reaches, and a negative estimate would
   // march the tracer BACKWARDS — returning 0 there is the inside signal and
   // is safe in the direction a sphere tracer needs. `bulb-de.ts` and
   // `qjulia-de.ts` take the identical exit, for the identical reason.
-  return orbitR <= 1 ? 0 : (0.5 * orbitR * Math.log(orbitR)) / orbitDr;
+  if (de.logEstimate) {
+    escapeDistance =
+      orbitR <= 1 ? 0 : (0.5 * orbitR * Math.log(orbitR)) / orbitDr;
+  }
+  return geometryTrap
+    ? Math.min(escapeDistance, orbitTrapDistance)
+    : escapeDistance;
 }
 
 /**
@@ -1601,7 +1649,7 @@ export function escapeShapeTrap(
   p: Vec3,
   maxIterations = ESCAPE_TIME_ITERATIONS,
 ): number {
-  runEscapeOrbit(de, p, maxIterations, rt);
+  runEscapeOrbit(de, p, maxIterations, rt, TRAP_COLLECT_COLOR);
   return shapeTrapValue(rt, orbitTrapBest, orbitTrapCross);
 }
 

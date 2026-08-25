@@ -25,6 +25,10 @@ import type {
 import type { Rng } from "../fractal/rng";
 import { mulberry32 } from "../fractal/rng";
 import {
+  SHAPE_TRAP_GEOMETRY_LEVEL_MAX,
+  resolveShapeTrap,
+} from "../fractal/shape-trap";
+import {
   chaosRowIsNonTrivial,
   MAX_SCHEDULE_DEPTH,
   MAX_TRANSFORMS,
@@ -425,7 +429,7 @@ export interface AppState {
    */
   condensationDepthBand?: CondensationDepthBand;
   /**
-   * Optional shape-trap COLOR block (`types.ts`'s {@link ShapeTrap}):
+   * Optional shape-trap block (`types.ts`'s {@link ShapeTrap}):
    * Pickover shape-trapping as the escape family's second palette channel —
    * the forward orbit's accumulated distance to this posed shape, painted
    * by the `"shapeTrap"` surface color source. Omitted ⇒ off
@@ -435,9 +439,9 @@ export interface AppState {
    * clears it unless the preset's own `PRESET_TRAPS` entry says otherwise
    * (`PRESET_FINALS`' absent-means-clear rule). The one writer
    * ({@link setShapeTrap}) normalizes classic-valued optional fields away,
-   * the fold lengths' removal rule at block scope. COLOR ONLY: no gate
-   * reads it, no estimator's marching changes at any setting — which is
-   * why, unlike {@link schedule}, it refuses nothing.
+   * the fold lengths' removal rule at block scope. Color trapping is valid
+   * across the escape family; the optional `geometry` use is separately
+   * gated to conformal fold-only chains at the renderer seam.
    */
   shapeTrap?: ShapeTrap;
   numPoints: number;
@@ -1972,17 +1976,20 @@ export function appendXaosBlock(
 }
 
 /**
- * Install/replace the shape-trap color block, or clear it with `null` —
+ * Install/replace the shape-trap color/geometry block, or clear it with `null` —
  * {@link setSchedule}'s shape for the trap. THE NORMALIZATION RULE LIVES
  * HERE (the fold lengths' "dragging back to classic REMOVES the field"
  * rule at block scope): every optional field is stored only away from its
  * classic value — position/rotation away from zero, scale away from 1,
- * mode away from `"min"`, fade away from 0 — and `threshold` is stored
- * only under `"threshold"` mode (it is that mode's own knob). A trap whose
- * shape has no parts stores ABSENT. Values are stored WITHOUT domain
- * clamps beyond that: the resolution domain is `escape-de.ts`'s
- * `resolveShapeTrap`, and this writer's job is the absent-means-classic
- * byte-identity of an unauthored field.
+ * mode away from `"min"`, fade away from 0, geometry away from false — and
+ * `threshold` is stored only under `"threshold"` mode (it is that mode's
+ * own knob). Geometry's inclusive level endpoints are stored only while the
+ * mode is on, sorted and resolved through {@link resolveShapeTrap}; the
+ * classic all-level band (0..unbounded) stays absent. A trap whose shape has
+ * no parts stores ABSENT. Other numeric values are stored without domain
+ * clamps: their resolution domain is `shape-trap.ts`'s
+ * {@link resolveShapeTrap}, and this writer's job is the
+ * absent-means-classic byte-identity of an unauthored field.
  */
 export function setShapeTrap(
   state: AppState,
@@ -2019,6 +2026,16 @@ export function setShapeTrap(
     trap.fade !== 0
   ) {
     normalized.fade = trap.fade;
+  }
+  if (trap.geometry === true) {
+    const resolved = resolveShapeTrap(trap);
+    normalized.geometry = true;
+    if (resolved.geometryLevelMin !== 0) {
+      normalized.geometryLevelMin = resolved.geometryLevelMin;
+    }
+    if (resolved.geometryLevelMax !== SHAPE_TRAP_GEOMETRY_LEVEL_MAX) {
+      normalized.geometryLevelMax = resolved.geometryLevelMax;
+    }
   }
   return { ...state, shapeTrap: normalized };
 }

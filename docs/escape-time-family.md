@@ -251,14 +251,14 @@ f32 is safe on the GPU mirrors too (worst `dr/r` 2.6e13 over 200k queries,
 twenty-five orders under 3.4e38, zero non-finite): the bailout test bounds
 `|v|` entering every link and the per-link `+ 1` floors `dr`.
 
-## Shape-trap color channel
+## Shape-trap color and fold-chain geometry
 
-The escape family has a Pickover-style shape trap as COLOR ONLY: every
-orbit tracks the closest normalized signed distance to a posed 3D shape,
-or the first threshold crossing, with an optional iteration fade. Nothing
-in the distance estimate, march step or zero set changes. In 4D the same
-deliberately 3D shape reads the orbit's xyz coordinates; at w = 0 that path
-is bit-exact with the 3D oracle.
+The escape family's Pickover-style shape trap always provides a color
+channel: every orbit tracks the closest normalized signed distance to a posed
+3D shape, or the first threshold crossing, with an optional iteration fade.
+With geometry absent, nothing in the distance estimate, march step or zero set
+changes. In 4D the same deliberately 3D shape reads the orbit's xyz
+coordinates; at w = 0 that path is bit-exact with the 3D oracle.
 
 `shape-trap.ts` owns the one vocabulary and finalization rule. The CPU
 entry points are thin wrappers over `runEscapeOrbit`, `runEscapeOrbit4`
@@ -270,10 +270,40 @@ independent of intermediate marching noise and no duplicate orbit exists.
 
 Measured on the real Iris, all three new `bench:surface` agreement legs
 (`escChainPair+trap`, `bulbClassic+trap`, `esc4ChainWRot+trap`) passed with
-`fail=0`. The menu-driven escape-family gate passed all 13 presets on the
-compute engine, and toggling the trap changed 7.78% of pixels. `Mandelbox
+`fail=0`. The menu-driven escape-family gate passed all 14 presets on the
+compute engine, and toggling the trap changed 7.79% of pixels. `Mandelbox
 Peace` is the reachability case; preset trap state is absent-means-clear,
 while its paired surface palette follows the existing set-never-clear rule.
+
+The same trap block optionally contributes marched geometry on fold-only
+chains. At every enabled zero-based post-link level, the distance candidate is
+`SHAPE_MARCH_SAFETY * posedSdf(z_i) / drAfter_i`; production returns its min
+with the ordinary escape-set estimate. Using `drAfter` includes the derivative
+of the link that produced `z_i`. A chain's logarithmic escape form applies only
+to the escape term. Geometry's inclusive level range defaults to all levels;
+all/root/custom controls normalize it to one sorted nonnegative interval.
+
+This is deliberately narrower than color trapping. The Surface gate refuses
+geometry on triplex/quaternion power chains and Mandelbulbs because those maps
+do not preserve rigid/scaled 3D copies; inverse-descent routes refuse it too
+rather than silently ignoring an escape-only field. Color still works on every
+forward power route. A refused document exposes the checked Geometry control
+from Points so the user can recover without editing its JSON. The 4D escape
+core evaluates the shared 3D SDF on xyz, a 1-Lipschitz extrusion through w,
+while dividing by the full 4D orbit derivative. `Fold Chain Gear` is the
+geometry reachability preset. The decision harness records why the shipped
+object is `min(escape, trap)` rather than trap-only and why the shared `0.9`
+local damping remains in force.
+
+The real-Iris geometry rows passed with `fail=0`: 3D `escChainPair` reached the
+new term on 113/700 samples (`maxAbs=7.34e-7`, 71 excluded), and 4D
+`esc4ChainWRot` on 125/700 (`maxAbs=5.81e-7`, 77 excluded). The activation
+census is itself verdict-affecting, preventing a green row whose classic
+escape term wins every query. The 14-preset menu verifier rendered every case
+on compute with zero exhausted rays; Geometry on versus off changed 23.26% of
+the `Fold Chain Gear` pixels.
+The forced real-Iris WebGL fallback also compiled and settled the same preset,
+changing 23.28% of pixels under the identical toggle.
 
 ## Kaleidoscope
 

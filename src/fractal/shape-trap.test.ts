@@ -1,9 +1,11 @@
 import {
   DEFAULT_SHAPE_TRAP_THRESHOLD,
+  SHAPE_TRAP_GEOMETRY_LEVEL_MAX,
   SHAPE_TRAP_NO_CROSSING,
   resolveShapeTrap,
   shapeTrapCandidate,
   shapeTrapInvNorm,
+  shapeTrapPosedSdf,
   shapeTrapValue,
 } from "./shape-trap";
 import type { ShapeTrap } from "./types";
@@ -19,7 +21,7 @@ describe("the shape trap (resolveShapeTrap + the ONE value formula)", () => {
     ...overrides,
   });
 
-  it("resolves absent fields to the classics: identity pose, min mode, the default threshold, zero fade", () => {
+  it("resolves absent fields to the classics: identity pose, min mode, the default threshold, zero fade, geometry off", () => {
     const rt = resolveShapeTrap(sphereTrap());
     expect(rt.invRot).toEqual([1, 0, 0, 0, 1, 0, 0, 0, 1]);
     expect(rt.position).toEqual([0, 0, 0]);
@@ -27,10 +29,36 @@ describe("the shape trap (resolveShapeTrap + the ONE value formula)", () => {
     expect(rt.mode).toBe(0);
     expect(rt.threshold).toBe(DEFAULT_SHAPE_TRAP_THRESHOLD);
     expect(rt.fade).toBe(0);
+    expect(rt.geometry).toBe(false);
+    expect(rt.geometryLevelMin).toBe(0);
+    expect(rt.geometryLevelMax).toBe(SHAPE_TRAP_GEOMETRY_LEVEL_MAX);
     // The normalizer is the shape's own bounding radius, shared with the
     // codegen through shapeTrapInvNorm.
     expect(rt.invNorm).toBeCloseTo(1, 12);
     expect(rt.invNorm).toBe(shapeTrapInvNorm(sphereTrap().shape));
+  });
+
+  it("resolves geometry's inclusive level band to sorted nonnegative integers", () => {
+    const reversed = resolveShapeTrap(
+      sphereTrap({
+        geometry: true,
+        geometryLevelMin: 8.9,
+        geometryLevelMax: 2.2,
+      }),
+    );
+    expect(reversed.geometry).toBe(true);
+    expect(reversed.geometryLevelMin).toBe(2);
+    expect(reversed.geometryLevelMax).toBe(8);
+
+    const floored = resolveShapeTrap(
+      sphereTrap({
+        geometryLevelMin: -4,
+        geometryLevelMax: Number.POSITIVE_INFINITY,
+      }),
+    );
+    expect(floored.geometry).toBe(false);
+    expect(floored.geometryLevelMin).toBe(0);
+    expect(floored.geometryLevelMax).toBe(SHAPE_TRAP_GEOMETRY_LEVEL_MAX);
   });
 
   it("resolves out-of-domain numbers instead of throwing: non-positive scale to 1, threshold floored, fade floored at 0", () => {
@@ -65,6 +93,27 @@ describe("the shape trap (resolveShapeTrap + the ONE value formula)", () => {
       shapeTrapCandidate(at2, 4, 0, 0, 0),
       12,
     );
+  });
+
+  it("conjugates an asymmetric posed geometry SDF by rotation and uniform scale", () => {
+    const rt = resolveShapeTrap({
+      shape: {
+        parts: [
+          {
+            primitive: { kind: "box", half: [1, 0.25, 0.25] },
+            combine: "union",
+          },
+        ],
+      },
+      position: [2, 0, 0],
+      rotation: [0, 0, Math.PI / 2],
+      scale: 2,
+    });
+    // local (0.5, 0, 0) maps through scale then +90° rotation to world
+    // (2, 1, 0). Its local box distance is -0.25, hence posed -0.5.
+    // Omitting/inverting the rotation reads +0.5 instead, so this pins the
+    // direction as well as the scale factor.
+    expect(shapeTrapPosedSdf(rt, 2, 1, 0)).toBeCloseTo(-0.5, 12);
   });
 
   it("weights candidates by 1 + fade*step before the rule", () => {

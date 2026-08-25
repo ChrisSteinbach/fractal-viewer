@@ -128,10 +128,12 @@ export interface MorphSystem {
    * SAME shape. Interpolation rule ({@link lerpShapeTrap}): both sides
    * trapped with DEEPLY-EQUAL specs and the same mode lerp their
    * position/rotation/scale/threshold/fade through the absent-means-classic
-   * fallbacks; any other pair — one-sided, a different shape, a different
-   * mode — POPS to the TARGET's block from the first intermediate, the
-   * scheduled-hybrid block's placement (there is no meaningful midpoint
-   * between two shapes). Absent on both sides stays absent, and the
+   * fallbacks. Geometry and its inclusive level band are discrete render
+   * topology, so they POP to the TARGET's settings from the first
+   * intermediate even while those same-shape color/pose fields glide. Any
+   * other pair — one-sided, a different shape, a different mode — pops the
+   * whole target block (there is no meaningful midpoint between two shapes).
+   * Absent on both sides stays absent, and the
    * endpoints are exact by {@link lerpSystem}'s by-reference returns.
    * Optional (`undefined` and `null` both mean "no trap") so every
    * existing caller's plain `{transforms, finalTransform, symmetry}`
@@ -910,7 +912,9 @@ export function lerpSystem(
  * specs, same mode — through the block's own absent-means-classic
  * fallbacks ({@link lerpOptional} idioms: position/rotation toward zero,
  * scale toward 1, threshold toward the classic default, fade toward 0,
- * absent-on-both-sides stays absent); a POP to the target's block for
+ * absent-on-both-sides stays absent), while geometry and its inclusive band
+ * POP discretely to the target from the first intermediate; a POP to the
+ * target's whole block for
  * every other pair, the scheduled-hybrid placement. Exported for the
  * pinning tests; app callers go through {@link lerpSystem}.
  */
@@ -954,5 +958,18 @@ export function lerpShapeTrap(
   }
   const fade = lerpOptional(a.fade, b.fade, 0, t);
   if (fade !== undefined) out.fade = fade;
+  // Changing the union itself or its stamped depths changes topology; there
+  // is no meaningful fractional boolean/level interval. Target-pop keeps the
+  // endpoint's intent intact while the independent color/pose values above
+  // continue their same-shape glide.
+  if (b.geometry === true) {
+    out.geometry = true;
+    if (b.geometryLevelMin !== undefined) {
+      out.geometryLevelMin = b.geometryLevelMin;
+    }
+    if (b.geometryLevelMax !== undefined) {
+      out.geometryLevelMax = b.geometryLevelMax;
+    }
+  }
   return out;
 }

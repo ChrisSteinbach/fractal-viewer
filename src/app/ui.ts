@@ -83,9 +83,16 @@ import {
   systemIsNonFlat,
 } from "./state";
 import type { XaosLeak } from "./state";
-import { formatIterationCount, SCALAR_CONTROLS } from "./control-spec";
+import {
+  formatIterationCount,
+  SCALAR_CONTROLS,
+  shapeTrapGeometryBandMode,
+} from "./control-spec";
 import type { ScalarControlSpec } from "./control-spec";
-import type { SurfaceRouteKind } from "./surface-eligibility";
+import {
+  surfaceTrapGeometryRestriction,
+  type SurfaceRouteKind,
+} from "./surface-eligibility";
 import { deriveLegend, lutGradient } from "./legend-spec";
 import type { LegendPaletteControl, LegendSpec } from "./legend-spec";
 import {
@@ -2027,6 +2034,12 @@ export class Ui {
   private readonly surfaceTrapRow: HTMLElement;
   private readonly surfaceTrapControls: HTMLElement;
   private readonly surfaceTrapThresholdRow: HTMLElement;
+  /** Geometry is the trap block's optional distance-union use. Its row is
+   * limited to conformal fold-only escape sessions; its level controls wait
+   * for the checkbox, and the endpoint pair for Custom. */
+  private readonly surfaceTrapGeometryRow: HTMLElement;
+  private readonly surfaceTrapGeometryLevels: HTMLElement;
+  private readonly surfaceTrapGeometryCustom: HTMLElement;
   /** Palette/editor container: eligible whenever the surface balloon itself
    * is eligible, even while the balloon is currently off. */
   private readonly surfaceBalloonPaletteRow: HTMLElement;
@@ -2537,6 +2550,9 @@ export class Ui {
     this.surfaceTrapRow = this.byId("surfaceTrapRow");
     this.surfaceTrapControls = this.byId("surfaceTrapControls");
     this.surfaceTrapThresholdRow = this.byId("surfaceTrapThresholdRow");
+    this.surfaceTrapGeometryRow = this.byId("surfaceTrapGeometryRow");
+    this.surfaceTrapGeometryLevels = this.byId("surfaceTrapGeometryLevels");
+    this.surfaceTrapGeometryCustom = this.byId("surfaceTrapGeometryCustom");
     this.surfaceBalloonPaletteRow = this.byId("surfaceBalloonPaletteRow");
     this.surfaceBalloonRadiusRow = this.byId("surfaceBalloonRadiusRow");
     this.surfaceBalloonInflateButton = this.byId("surfaceBalloonInflateButton");
@@ -3409,6 +3425,13 @@ export class Ui {
     const nonFlat = systemIsNonFlat(state);
     const frozenRender =
       state.renderMode === "flame" || state.renderMode === "solid";
+    // Recovery door for a decoded/edited document whose authored geometry
+    // makes Surface ineligible. The refusal explicitly says to turn Geometry
+    // off, so its checkbox cannot live exclusively behind the disabled mode
+    // button. Surface Look stays available in Points only for this narrow
+    // correction case and disappears again as soon as the flag is cleared.
+    const trapGeometryRecovery =
+      state.renderMode === "points" && state.shapeTrap?.geometry === true;
     // A non-flat system in Surface mode is always the 4D tracer: the session
     // routes on this same predicate (main.ts's systemPartsAreNonFlat branch),
     // ahead of the flat-only escape-time and fold/affine paths.
@@ -3430,7 +3453,7 @@ export class Ui {
     this.syncSolidBalloonRows();
     this.surfaceControls.classList.toggle(
       "hidden",
-      state.renderMode !== "surface",
+      state.renderMode !== "surface" && !trapGeometryRecovery,
     );
     // The surface palette select means anything for "palette", "rings",
     // "sheets" and "shapeTrap" — all four sample the user-selected palette
@@ -3490,11 +3513,41 @@ export class Ui {
     // no trap channel — so the row shows exactly where the balloon rows
     // hide. Sub-rows wait for a block to exist; the crossing bar for its
     // own mode.
-    this.surfaceTrapRow.classList.toggle("hidden", !surfaceBalloonHidden);
+    this.surfaceTrapRow.classList.toggle(
+      "hidden",
+      !surfaceBalloonHidden && !trapGeometryRecovery,
+    );
     this.surfaceTrapControls.classList.toggle("hidden", !state.shapeTrap);
     this.surfaceTrapThresholdRow.classList.toggle(
       "hidden",
       state.shapeTrap?.mode !== "threshold",
+    );
+    // Color trapping is valid on every forward-orbit object. Geometry is
+    // narrower: only a conformal fold-only escape chain has the derivative
+    // contract needed to pull a posed SDF back into the distance union. Keep
+    // the color controls reachable on bulbs/power/anisotropic chains while
+    // hiding the inapplicable geometry switch itself.
+    const trapGeometryRestriction = state.shapeTrap
+      ? surfaceTrapGeometryRestriction(state.transforms, nonFlat)
+      : null;
+    const trapGeometryRelevant =
+      state.shapeTrap !== undefined &&
+      (trapGeometryRecovery ||
+        (this.surfaceSessionKind === "escape" &&
+          trapGeometryRestriction === null));
+    this.surfaceTrapGeometryRow.classList.toggle(
+      "hidden",
+      !trapGeometryRelevant,
+    );
+    this.surfaceTrapGeometryLevels.classList.toggle(
+      "hidden",
+      !trapGeometryRelevant || state.shapeTrap?.geometry !== true,
+    );
+    this.surfaceTrapGeometryCustom.classList.toggle(
+      "hidden",
+      !trapGeometryRelevant ||
+        state.shapeTrap?.geometry !== true ||
+        shapeTrapGeometryBandMode(state) !== "custom",
     );
     const condensationLive =
       this.surfaceSessionKind === "ifs" &&

@@ -327,6 +327,7 @@ export function deriveLegend({
             state.symmetry,
             { computeAvailable: true },
             state.schedule ?? null,
+            state.shapeTrap ?? null,
           ).kind
         : null;
       if (kind !== "escape" && kind !== "bulb" && kind !== "escape4") {

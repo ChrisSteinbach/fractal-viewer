@@ -17,6 +17,14 @@ same bounded 96x54 app-ray march and per-ray CPU emulator as the established
 fold/lens/balloon legs. Either compilation failure, truncation or unexcluded
 agreement failure fails the section.
 
+Trap-as-geometry adds one 3D and one 4D agreement row. Each uses a finite
+level band, recomputes the f64 oracle and its f32 stability twin with the same
+posed shape, and compares a dedicated geometry-enabled WGSL program. This
+pins post-link sampling, `drAfter`, the 0.9 shape safety factor, the inclusive
+band and the min-union without weakening or replacing the existing escape
+classifiers. There is deliberately no bulb row: geometry is refused for power
+maps while the trap's color channel stays available.
+
 ## Running it
 
 Add `--display=:0` for real-driver timing. Run it on a QUIET machine, never
@@ -30,11 +38,14 @@ standing advice, and the reason is the known SwiftShader false failure
 documented below. Do not raise the escape agreement cap to make a
 SwiftShader run green.
 
-For the condensation landing, run the static gates before adapter evidence:
+For the condensation and escape-geometry landings, run the static gates before
+adapter evidence:
 
 ```bash
 npx vitest run src/app/gpu-bench/condensation.test.ts \
   src/fractal/condensation-de.test.ts src/fractal/surface-de-gpu.test.ts \
+  src/fractal/shape-trap.test.ts src/fractal/escape-de.test.ts \
+  src/fractal/escape-de-4d.test.ts \
   src/app/surface-compute.test.ts src/app/surface-eligibility.test.ts \
   src/app/surface-material.test.ts src/app/surface-material-4d.test.ts \
   src/fractal/surface-grid.test.ts src/fractal/balloon-de.test.ts
@@ -42,10 +53,19 @@ npx tsc --noEmit
 npm run bench:surface -- --display=:0
 ```
 
-The benchmark run is accepted only when the Gearworks eval row reports
-`fail=0`, the condensation unproject row completes with `fail=0`, and the
-section verdict is `pass`. The JSON artifact remains the evidence record;
-do not infer real-driver timing from SwiftShader.
+The benchmark run is accepted only when the Gearworks eval row, the
+condensation unproject row and both trap-geometry agreement rows report
+`fail=0`, and the section verdict is `pass`. The JSON artifact remains the
+evidence record; do not infer real-driver timing from SwiftShader.
+
+Measured on real Iris (gen-12lp), both geometry rows passed with `fail=0`.
+`escChainPair+trap-geometry` reported `maxAbs=7.34e-7`, 71 excluded and
+113/700 samples where geometry won the min-union;
+`esc4ChainWRot+trap-geometry` reported `maxAbs=5.81e-7`, 77 excluded and
+125/700 geometry-winning samples. The activation count gates at 32 samples,
+so a fixture that accidentally exercises only the classic escape term fails
+even if its numerical comparator is green. The complete Surface section and
+the existing 5,184-ray condensation unproject leg also passed with `fail=0`.
 
 ## The known SwiftShader false failure
 

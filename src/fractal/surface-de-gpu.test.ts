@@ -6565,6 +6565,172 @@ describe("surfaceDeKernelWgsl shape trap (shapeTrap)", () => {
     // sign's bounding radius, shapeBoundingRadius's tight gear-free bound.
     expect(wgsl).toContain(`trapShapeSdf(tl) * ${String(invNorm)}`);
   });
+
+  it("keeps every color-only kernel byte-identical when the geometry gate is omitted or null", () => {
+    for (const core of ["escape", "escape4"] as const) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        const colorOnly = surfaceDeKernelWgsl(
+          kernelOpts({ mode, core, shapeTrap: PEACE_SIGN_SHAPE }),
+        );
+        const explicitOff = surfaceDeKernelWgsl(
+          kernelOpts({
+            mode,
+            core,
+            shapeTrap: PEACE_SIGN_SHAPE,
+            shapeTrapGeometry: null,
+          }),
+        );
+        const explicitFalse = surfaceDeKernelWgsl(
+          kernelOpts({
+            mode,
+            core,
+            shapeTrap: PEACE_SIGN_SHAPE,
+            shapeTrapGeometry: {
+              geometry: false,
+              geometryLevelMin: 2,
+              geometryLevelMax: 5,
+            },
+          }),
+        );
+        expect(explicitOff).toBe(colorOnly);
+        expect(explicitFalse).toBe(colorOnly);
+        expect(colorOnly).not.toContain("trapLocalSdf");
+        expect(colorOnly).not.toContain("trapDistance");
+      }
+    }
+  });
+
+  it("emits the inclusive post-link geometry term in eval, march, and shade for both escape dimensions", () => {
+    const shapeTrapGeometry = {
+      geometry: true,
+      geometryLevelMin: 2,
+      geometryLevelMax: 5,
+    };
+    for (const core of ["escape", "escape4"] as const) {
+      for (const mode of ["eval", "march", "shade"] as const) {
+        const wgsl = surfaceDeKernelWgsl(
+          kernelOpts({
+            mode,
+            core,
+            shapeTrap: PEACE_SIGN_SHAPE,
+            shapeTrapGeometry,
+          }),
+        );
+        expect(wgsl.match(/fn trapShapeSdf\(p: vec3f\)/g)).toHaveLength(1);
+        expect(wgsl).toContain("fn trapLocalSdf(pOrbit: vec3f) -> f32");
+        expect(wgsl).toContain("var trapDistance = 1.0e30;");
+        expect(wgsl).toContain("if (i >= 2u && i <= 5u) {");
+        expect(wgsl).toContain(
+          core === "escape"
+            ? "let trapLocalDistance = trapLocalSdf(v);"
+            : "let trapLocalDistance = trapLocalSdf(v.xyz);",
+        );
+        expect(wgsl).toContain(
+          "(0.9 * trapLocalDistance) / (params.trapP.x * dr)",
+        );
+        expect(wgsl).toContain("return min(escapeDistance, trapDistance);");
+
+        // The sampled point and derivative are both POST-link, matching
+        // runEscapeOrbit/runEscapeOrbit4. The local SDF stays below the
+        // inclusive band predicate, so a narrow band does no SDF work outside
+        // its range.
+        const drAt = wgsl.indexOf("dr = L.p0.z * localL * dr + 1.0;");
+        const radiusAt = wgsl.indexOf("r = length(v);", drAt);
+        const bandAt = wgsl.indexOf("if (i >= 2u && i <= 5u) {", radiusAt);
+        const sdfAt = wgsl.indexOf("let trapLocalDistance", bandAt);
+        expect(drAt).toBeGreaterThan(-1);
+        expect(radiusAt).toBeGreaterThan(drAt);
+        expect(bandAt).toBeGreaterThan(radiusAt);
+        expect(sdfAt).toBeGreaterThan(bandAt);
+
+        // Geometry is folded into the existing value orbit rather than a
+        // second geometry-only traversal. Shade has exactly one additional
+        // orbit for its pre-existing color hit-info.
+        expect(
+          wgsl.match(/for \(var i = 0u; i < steps; i\+\+\)/g),
+        ).toHaveLength(mode === "shade" ? 2 : 1);
+      }
+    }
+  });
+
+  it("shares one posed SDF between shade geometry and color while applying logEstimate only to the escape term", () => {
+    for (const core of ["escape", "escape4"] as const) {
+      const wgsl = surfaceDeKernelWgsl(
+        kernelOpts({
+          mode: "shade",
+          core,
+          shapeTrap: PEACE_SIGN_SHAPE,
+          shapeTrapGeometry: {
+            geometry: true,
+            geometryLevelMin: 0,
+            geometryLevelMax: 0x7fffffff,
+          },
+        }),
+      );
+      expect(wgsl).toContain("return trapLocalSdf(pOrbit) *");
+      expect(wgsl.match(/fn trapLocalSdf\(/g)).toHaveLength(1);
+      expect(wgsl).toContain("var escapeDistance = r / dr;");
+      expect(wgsl).toContain(
+        core === "escape"
+          ? "if (params.escParams.w != 0.0) {"
+          : "if (params.esc4Params.x != 0.0) {",
+      );
+      const logAt = wgsl.indexOf("escapeDistance = 0.5 * r * log(r) / dr;");
+      const unionAt = wgsl.indexOf(
+        "return min(escapeDistance, trapDistance);",
+        logAt,
+      );
+      expect(logAt).toBeGreaterThan(-1);
+      expect(unionAt).toBeGreaterThan(logAt);
+      expect(wgsl).not.toContain("log(trapDistance)");
+    }
+  });
+
+  it("rejects missing traps, malformed bands, and bulb geometry instead of silently changing power geometry", () => {
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({
+          core: "escape",
+          shapeTrapGeometry: {
+            geometry: true,
+            geometryLevelMin: 0,
+            geometryLevelMax: 1,
+          },
+        }),
+      ),
+    ).toThrow(/requires shapeTrap/);
+
+    for (const shapeTrapGeometry of [
+      { geometry: true, geometryLevelMin: -1, geometryLevelMax: 1 },
+      { geometry: true, geometryLevelMin: 2, geometryLevelMax: 1 },
+      { geometry: true, geometryLevelMin: 0.5, geometryLevelMax: 1 },
+      { geometry: true, geometryLevelMin: 0, geometryLevelMax: 0x80000000 },
+    ]) {
+      expect(() =>
+        surfaceDeKernelWgsl(
+          kernelOpts({
+            core: "escape",
+            shapeTrap: PEACE_SIGN_SHAPE,
+            shapeTrapGeometry,
+          }),
+        ),
+      ).toThrow(/bad shape-trap geometry band/);
+    }
+
+    expect(() =>
+      surfaceDeKernelWgsl(
+        kernelOpts({
+          core: "bulb",
+          shapeTrap: PEACE_SIGN_SHAPE,
+          shapeTrapGeometry: {
+            geometry: true,
+            geometryLevelMin: 0,
+            geometryLevelMax: 1,
+          },
+        }),
+      ),
+    ).toThrow(/bulb\/power/);
+  });
 });
 
 describe("packers' shape-trap block (the appended 336/624 layout)", () => {
@@ -6700,6 +6866,68 @@ describe("packers' shape-trap block (the appended 336/624 layout)", () => {
     expect(
       new Uint8Array(packEscapeGpuParams(de, { itemCount: 2 }, null, null)),
     ).toEqual(new Uint8Array(packEscapeGpuParams(de, { itemCount: 2 })));
+  });
+
+  it("keeps geometry on the existing frozen pose wire and refuses it for the bulb packer", () => {
+    const color = trap();
+    const geometry = resolveShapeTrap({
+      shape: PEACE_SIGN_SHAPE,
+      position: [0.3, -0.2, 0.5],
+      rotation: [0.2, 0, 0.4],
+      scale: 0.7,
+      mode: "threshold",
+      threshold: 0.3,
+      fade: 0.05,
+      geometry: true,
+      geometryLevelMin: 2,
+      geometryLevelMax: 5,
+    });
+    const de = escapeDe();
+    const color3 = new Uint8Array(
+      packEscapeGpuParams(de, { itemCount: 2 }, null, color),
+    );
+    const geometry3 = new Uint8Array(
+      packEscapeGpuParams(de, { itemCount: 2 }, null, geometry),
+    );
+    expect(geometry3.byteLength).toBe(400);
+    expect(geometry3).toEqual(color3);
+
+    const de4 = buildEscapeDE4([
+      {
+        id: 0,
+        position: [0.3, 0.1, 0.2],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "mandelbox", weight: 2 }],
+        w: { position: 0.2, rotation: { xw: 0.6 } },
+      },
+    ]);
+    const view: SurfaceGpu4View = {
+      rotor: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      w0: 0.1,
+      sliceHalfW: 0,
+    };
+    const color4 = new Uint8Array(
+      packEscape4GpuParams(de4, view, { itemCount: 2 }, null, color),
+    );
+    const geometry4 = new Uint8Array(
+      packEscape4GpuParams(de4, view, { itemCount: 2 }, null, geometry),
+    );
+    expect(geometry4.byteLength).toBe(688);
+    expect(geometry4).toEqual(color4);
+
+    const bulb = buildBulbDE([
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "bulb", weight: 1 }],
+      },
+    ]);
+    expect(() =>
+      packBulbGpuParams(bulb, { itemCount: 2 }, null, geometry),
+    ).toThrow(/bulb\/power/);
   });
 });
 

@@ -22,7 +22,7 @@ import { resolveShapeTrap } from "./shape-trap";
 import { toTransform4 } from "./affine4";
 import { effectiveSymmetryOrder } from "./chaos-game";
 import { mulberry32 } from "./rng";
-import { PEACE_SIGN_SHAPE } from "./shapes";
+import { PEACE_SIGN_SHAPE, SHAPE_MARCH_SAFETY } from "./shapes";
 import { transformSigmas4 } from "./surface-de-4d";
 import { SYMMETRY_PLANES } from "./types";
 import type {
@@ -1006,5 +1006,117 @@ describe("the 4D shape trap (escapeShapeTrap4)", () => {
       values.add(Math.round(escapeShapeTrap4(de4, rt, q) * 1e6));
     }
     expect(values.size).toBeGreaterThan(10);
+  });
+});
+
+describe("shape-trap geometry in estimateEscapeDistance4", () => {
+  it("is bit-exactly classic when a resolved trap keeps geometry false", () => {
+    const de = buildEscapeDE4([
+      foldMap(0, "mandelbox", 2),
+      foldMap(1, "boxfold", 1.6),
+    ]);
+    const colorOnly = resolveShapeTrap({
+      shape: PEACE_SIGN_SHAPE,
+      geometry: false,
+      geometryLevelMin: 2,
+      geometryLevelMax: 7,
+      mode: "threshold",
+      fade: 4,
+    });
+    const rng = mulberry32(0x4d90);
+    for (let i = 0; i < 48; i++) {
+      const p: Vec4 = [
+        rng() * 4 - 2,
+        rng() * 4 - 2,
+        rng() * 4 - 2,
+        rng() - 0.5,
+      ];
+      expect(estimateEscapeDistance4(de, p, 6, colorOnly)).toBe(
+        estimateEscapeDistance4(de, p, 6),
+      );
+    }
+  });
+
+  it("keeps geometry bit-identical to 3D at w = 0 for a flat chain", () => {
+    const transforms = [canonicalMandelbox()];
+    const de3 = buildEscapeDE(transforms);
+    const de4 = buildEscapeDE4(transforms);
+    const trap = resolveShapeTrap({
+      shape: PEACE_SIGN_SHAPE,
+      position: [0.2, -0.1, 0.4],
+      rotation: [0.3, 0.1, -0.2],
+      scale: 0.8,
+      geometry: true,
+      geometryLevelMin: 0,
+      geometryLevelMax: 11,
+    });
+    const rng = mulberry32(0x4d00);
+    let trapLimited = 0;
+    for (let i = 0; i < 32; i++) {
+      const p: Vec3 = [rng() * 2 - 1, rng() * 2 - 1, rng() * 2 - 1];
+      expect(estimateEscapeDistance4(de4, [...p, 0], 7, trap)).toBe(
+        estimateEscapeDistance(de3, p, 7, trap),
+      );
+      if (
+        estimateEscapeDistance(de3, p, 7, trap) <
+        estimateEscapeDistance(de3, p, 7)
+      ) {
+        trapLimited++;
+      }
+    }
+    expect(trapLimited).toBeGreaterThan(0);
+  });
+
+  it("applies a nonunit rotated xyz pose while dropping nonzero orbit w", () => {
+    const de = buildEscapeDE4([foldMap(0, "boxfold", 2)]);
+    const trap = resolveShapeTrap({
+      shape: {
+        parts: [
+          {
+            primitive: { kind: "box", half: [1, 0.25, 0.25] },
+            combine: "union",
+          },
+        ],
+      },
+      position: [2.8, -1, 0],
+      rotation: [0, 0, Math.PI / 2],
+      scale: 2,
+      geometry: true,
+      geometryLevelMin: 0,
+      geometryLevelMax: 0,
+    });
+    // xyz follows the 3D fixture: post-link (2.8, 0, 0), while w=0.2
+    // becomes 0.6. The posed xyz box SDF is -0.5 and drAfter=3 whether
+    // w is zero or not; including w in the shape distance would move it.
+    const expected = (SHAPE_MARCH_SAFETY * -0.5) / 3;
+    expect(estimateEscapeDistance4(de, [1.2, 0, 0, 0], 1, trap)).toBeCloseTo(
+      expected,
+      12,
+    );
+    expect(estimateEscapeDistance4(de, [1.2, 0, 0, 0.2], 1, trap)).toBeCloseTo(
+      expected,
+      12,
+    );
+  });
+
+  it("resets 4D geometry scratch before an out-of-budget band", () => {
+    const de = buildEscapeDE4([foldMap(0, "boxfold", 2)]);
+    const p: Vec4 = [1.2, 0, 0, 0.2];
+    const finite = resolveShapeTrap({
+      shape: {
+        parts: [
+          { primitive: { kind: "sphere", radius: 0.1 }, combine: "union" },
+        ],
+      },
+      position: [2.8, 0, 0],
+      geometry: true,
+      geometryLevelMin: 0,
+      geometryLevelMax: 0,
+    });
+    const empty = { ...finite, geometryLevelMin: 1, geometryLevelMax: 1 };
+    expect(estimateEscapeDistance4(de, p, 1, finite)).toBeLessThan(0);
+    expect(estimateEscapeDistance4(de, p, 1, empty)).toBe(
+      estimateEscapeDistance4(de, p, 1),
+    );
   });
 });

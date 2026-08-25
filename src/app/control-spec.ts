@@ -1594,6 +1594,102 @@ export const SCALAR_CONTROLS: readonly ScalarControlSpec[] = [
     },
   },
   {
+    // Geometry is a second use of the SAME posed shape. Shape and enable flag
+    // select the compiled march term; WGSL also bakes the inclusive band,
+    // while GLSL uploads it. Pose stays live on both paths, and every topology
+    // edit restarts the session. Routing eligibility changes with the flag:
+    // only conformal fold chains can use the distance union.
+    kind: "checkbox",
+    id: "surfaceTrapGeometryCheckbox",
+    read: (s) => s.shapeTrap?.geometry === true,
+    apply: (s, checked) =>
+      s.shapeTrap ? setShapeTrap(s, { ...s.shapeTrap, geometry: checked }) : s,
+    effect: (s, fx) => {
+      fx.scene.setSurfaceShapeTrap(s.shapeTrap ?? null);
+      fx.refreshSurfaceEligibility();
+      fx.restartSurfaceRender();
+    },
+  },
+  {
+    kind: "select",
+    id: "surfaceTrapGeometryBandMode",
+    read: (s) => shapeTrapGeometryBandMode(s),
+    apply: (s, raw) => {
+      if (!s.shapeTrap) return s;
+      return raw === "all"
+        ? setShapeTrap(s, {
+            ...s.shapeTrap,
+            geometry: true,
+            geometryLevelMin: undefined,
+            geometryLevelMax: undefined,
+          })
+        : raw === "root"
+          ? setShapeTrap(s, {
+              ...s.shapeTrap,
+              geometry: true,
+              geometryLevelMin: 0,
+              geometryLevelMax: 0,
+            })
+          : setShapeTrap(s, {
+              ...s.shapeTrap,
+              geometry: true,
+              ...(shapeTrapGeometryBandMode(s) === "root" ||
+              (s.shapeTrap.geometryLevelMin === undefined &&
+                s.shapeTrap.geometryLevelMax === undefined)
+                ? { geometryLevelMin: 1, geometryLevelMax: 1 }
+                : {}),
+            });
+    },
+    effect: (s, fx) => {
+      fx.scene.setSurfaceShapeTrap(s.shapeTrap ?? null);
+      fx.restartSurfaceRender();
+    },
+  },
+  {
+    kind: "range",
+    id: "surfaceTrapGeometryMinSlider",
+    label: {
+      id: "surfaceTrapGeometryMinLabel",
+      text: (s) => String(s.shapeTrap?.geometryLevelMin ?? 1),
+    },
+    read: (s) => String(s.shapeTrap?.geometryLevelMin ?? 1),
+    apply: (s, raw) =>
+      s.shapeTrap
+        ? setShapeTrap(s, {
+            ...s.shapeTrap,
+            geometry: true,
+            geometryLevelMin: Number(raw),
+            geometryLevelMax: s.shapeTrap.geometryLevelMax ?? 1,
+          })
+        : s,
+    effect: (s, fx) => {
+      fx.scene.setSurfaceShapeTrap(s.shapeTrap ?? null);
+      fx.restartSurfaceRender();
+    },
+  },
+  {
+    kind: "range",
+    id: "surfaceTrapGeometryMaxSlider",
+    label: {
+      id: "surfaceTrapGeometryMaxLabel",
+      text: (s) => String(s.shapeTrap?.geometryLevelMax ?? 1),
+    },
+    read: (s) => String(s.shapeTrap?.geometryLevelMax ?? 1),
+    apply: (s, raw) =>
+      s.shapeTrap
+        ? setShapeTrap(s, {
+            ...s.shapeTrap,
+            geometry: true,
+            geometryLevelMin: s.shapeTrap.geometryLevelMin ?? 1,
+            geometryLevelMax: Number(raw),
+          })
+        : s,
+    effect: (s, fx) => {
+      fx.scene.setSurfaceShapeTrap(s.shapeTrap ?? null);
+      fx.restartSurfaceRender();
+    },
+  },
+  {
     // The trap's live pose half: scale/position/threshold/fade rewrite
     // uniforms (GLSL) or ride the next frame spec (compute) with no
     // recompile — surfaceBalloonRadiusSlider's cheap path.
@@ -1702,4 +1798,23 @@ export function condensationBandMode(
   const band = state.condensationDepthBand;
   if (!band) return "all";
   return band.minDepth === undefined && band.maxDepth === 0 ? "root" : "custom";
+}
+
+/** Display mode for trap geometry's inclusive post-link level band. The
+ * all-level default is absent on the normalized wire; 0..0 is the root-only
+ * shortcut; every other finite pair uses the endpoint controls. */
+export function shapeTrapGeometryBandMode(
+  state: AppState,
+): "all" | "root" | "custom" {
+  const trap = state.shapeTrap;
+  if (!trap?.geometry) return "all";
+  if (
+    trap.geometryLevelMin === undefined &&
+    trap.geometryLevelMax === undefined
+  ) {
+    return "all";
+  }
+  return (trap.geometryLevelMin ?? 0) === 0 && trap.geometryLevelMax === 0
+    ? "root"
+    : "custom";
 }

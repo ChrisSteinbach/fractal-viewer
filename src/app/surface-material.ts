@@ -7,12 +7,17 @@ import {
   ESCAPE_TIME_ITERATIONS,
 } from "../fractal/escape-de";
 import {
+  SHAPE_TRAP_GEOMETRY_LEVEL_MAX,
   SHAPE_TRAP_NO_CROSSING,
   resolveShapeTrap,
   shapeTrapInvNorm,
 } from "../fractal/shape-trap";
 import type { ResolvedShapeTrap } from "../fractal/shape-trap";
-import { shapeSdfSource, type ShapeSpec } from "../fractal/shapes";
+import {
+  SHAPE_MARCH_SAFETY,
+  shapeSdfSource,
+  type ShapeSpec,
+} from "../fractal/shapes";
 import type { SurfaceDE } from "../fractal/surface-de";
 import {
   SPHEREFOLD_MID_MIN_R,
@@ -1282,7 +1287,26 @@ uniform float uBalloonPaletteEnabled;
   uniform mat3 uTrapInvRot;
   uniform vec4 uTrapPose;
   uniform vec4 uTrapParams;
+#if SURFACE_TRAP_GEOMETRY
+  /** Inclusive zero-based post-link levels whose posed SDF joins the
+   * escape set. Geometry is a resolved arm so color-only traps keep their
+   * shipped source and arithmetic byte for byte. */
+  uniform ivec2 uTrapGeometryLevels;
+#endif
 //__SURFACE_TRAP_SDF__
+#if SURFACE_TRAP_GEOMETRY
+  /** The one pose/SDF evaluation shared by geometry and color in the
+   * hit-info orbit. The similarity's value factor is restored only at the
+   * geometry use site by dividing through invScale. */
+  float trapLocalSdf(vec3 pOrbit) {
+    vec3 tl = (uTrapInvRot * (pOrbit - uTrapPose.xyz)) * uTrapPose.w;
+    return surfaceTrapSdf(tl);
+  }
+  float trapCandidateFromLocal(float localSdf, int stepIdx) {
+    return localSdf * __SURFACE_TRAP_INV_NORM__ *
+      (1.0 + uTrapParams.z * float(stepIdx));
+  }
+#else
   /** escape-de.ts's shapeTrapCandidate in f32 — pose inverse WITHOUT the
    * value factor (distances in the shape's own local units), normalized
    * by the baked bounding radius so the channel is scale-relative, then
@@ -1292,6 +1316,7 @@ uniform float uBalloonPaletteEnabled;
     return surfaceTrapSdf(tl) * __SURFACE_TRAP_INV_NORM__ *
       (1.0 + uTrapParams.z * float(stepIdx));
   }
+#endif
   /** escape-de.ts's shapeTrapValue: min mode clamps the closest weighted
    * approach; threshold mode sweeps the first crossing over
    * [0, threshold] and reads 1.0 when nothing crossed (the resolver
@@ -1410,6 +1435,9 @@ uniform float uBalloonPaletteEnabled;
     int n = uMapCount;
     int steps = uMaxDepth * n;
     int li = 0;
+#if SURFACE_TRAP_GEOMETRY
+    float trapDistance = 1.0e30;
+#endif
     for (int i = 0; i < steps; i++) {
       if (r > uBoundingRadius) {
         break;
@@ -1464,11 +1492,26 @@ uniform float uBalloonPaletteEnabled;
       // per link rather than once per pass.
       dr = prm.z * localL * dr + 1.0;
       r = length(v);
+#if SURFACE_TRAP_GEOMETRY
+      if (i >= uTrapGeometryLevels.x && i <= uTrapGeometryLevels.y) {
+        float tLocal = trapLocalSdf(v);
+        trapDistance = min(
+          trapDistance,
+          ${SHAPE_MARCH_SAFETY} * tLocal / (uTrapPose.w * dr)
+        );
+      }
+#endif
       li++;
       if (li == n) {
         li = 0;
       }
     }
+#if SURFACE_TRAP_GEOMETRY
+    float escapeDistance = uEscLogForm == 0
+      ? r / dr
+      : (r <= 1.0 ? 0.0 : 0.5 * r * log(r) / dr);
+    return min(escapeDistance, trapDistance);
+#else
     return uEscLogForm == 0
       ? r / dr
       // The Boettcher/Green's form for a chain that escapes
@@ -1479,6 +1522,7 @@ uniform float uBalloonPaletteEnabled;
       // the direction a sphere tracer needs. bulb-de.ts takes the
       // identical exit.
       : (r <= 1.0 ? 0.0 : 0.5 * r * log(r) / dr);
+#endif
   }
 
   float surfaceDE(vec3 p) {
@@ -1526,6 +1570,9 @@ uniform float uBalloonPaletteEnabled;
 #if SURFACE_SHAPE_TRAP
     float trapBest = 1.0e30;
     float trapCross = ${SHAPE_TRAP_NO_CROSSING};
+#if SURFACE_TRAP_GEOMETRY
+    float trapDistance = 1.0e30;
+#endif
 #endif
     for (int i = 0; i < steps; i++) {
       if (r > uBoundingRadius) {
@@ -1585,11 +1632,26 @@ uniform float uBalloonPaletteEnabled;
 #if SURFACE_SHAPE_TRAP
       // The trap's two accumulators, at exactly the orbit points
       // rings/sheets read (escape-de.ts's ONE formula).
+#if SURFACE_TRAP_GEOMETRY
+      float tLocal = trapLocalSdf(v);
+      float tCand = trapCandidateFromLocal(tLocal, i);
+      trapBest = min(trapBest, tCand);
+      if (trapCross <= ${SHAPE_TRAP_NO_CROSSING} && tCand < uTrapParams.y) {
+        trapCross = tCand;
+      }
+      if (i >= uTrapGeometryLevels.x && i <= uTrapGeometryLevels.y) {
+        trapDistance = min(
+          trapDistance,
+          ${SHAPE_MARCH_SAFETY} * tLocal / (uTrapPose.w * dr)
+        );
+      }
+#else
       float tCand = trapCandidate(v, i);
       trapBest = min(trapBest, tCand);
       if (trapCross <= ${SHAPE_TRAP_NO_CROSSING} && tCand < uTrapParams.y) {
         trapCross = tCand;
       }
+#endif
 #endif
       li++;
       if (li == n) {
@@ -1733,6 +1795,12 @@ uniform float uBalloonPaletteEnabled;
 #if SURFACE_SHAPE_TRAP
     shapeTrap = trapValue(trapBest, trapCross);
 #endif
+#if SURFACE_TRAP_GEOMETRY
+    float escapeDistance = uEscLogForm == 0
+      ? r / dr
+      : (r <= 1.0 ? 0.0 : 0.5 * r * log(r) / dr);
+    return min(escapeDistance, trapDistance);
+#else
     return uEscLogForm == 0
       ? r / dr
       // The Boettcher/Green's form for a chain that escapes
@@ -1743,6 +1811,7 @@ uniform float uBalloonPaletteEnabled;
       // the direction a sphere tracer needs. bulb-de.ts takes the
       // identical exit.
       : (r <= 1.0 ? 0.0 : 0.5 * r * log(r) / dr);
+#endif
   }
 #else
 #if SURFACE_BULB
@@ -4439,6 +4508,9 @@ export function createSurfaceMaterial(): THREE.ShaderMaterial {
       uTrapInvRot: { value: new THREE.Matrix3() },
       uTrapPose: { value: new THREE.Vector4(0, 0, 0, 1) },
       uTrapParams: { value: new THREE.Vector4(0, 0.25, 0, 0) },
+      // Inclusive post-link geometry band. This is an integer uniform in
+      // its resolved arm; Vector2 is supported by Three's ivec2 uploader.
+      uTrapGeometryLevels: { value: new THREE.Vector2(0, 0) },
       // Balloon inverted-union: inert defaults; alive only under the
       // SURFACE_BALLOON define (rho 1 so a stray enabled read could never
       // divide by zero). Three.js ignores entries the compiled program
@@ -4696,6 +4768,7 @@ export function setSurfaceSystem(
     material.defines.SURFACE_ESCAPE = 0;
     material.defines.SURFACE_BULB = 0;
     material.defines.SURFACE_SHAPE_TRAP = 0;
+    delete material.defines.SURFACE_TRAP_GEOMETRY;
     material.defines.SURFACE_CONDENSATION = wantCondensation;
     (
       material.userData as { surfaceTrapShapeKey?: string | null }
@@ -4958,6 +5031,7 @@ export function surfaceFragmentResolvedFor(
   trap: ShapeSpec | null = null,
   condensation: readonly ShapeSpec[] | null = null,
   condensation4 = false,
+  trapGeometry = 0,
 ): string {
   if (plane !== 0 && balloon !== 0) {
     throw new RangeError(
@@ -4993,6 +5067,12 @@ export function surfaceFragmentResolvedFor(
       "SURFACE_CONDENSATION compiles only into inverse-map descent arms",
     );
   }
+  // Geometry belongs only to the fold-chain escape estimator. A direct
+  // bulb call may still carry a document trap (the app normally refuses
+  // that combination); keeping this arm off guarantees it remains color
+  // only rather than silently changing the bulb distance.
+  const resolvedTrapGeometry =
+    trap !== null && escape !== 0 && trapGeometry !== 0 ? 1 : 0;
   const resolved = resolveVariantArms(source, {
     SURFACE_ESCAPE: escape,
     SURFACE_BULB: bulb,
@@ -5003,6 +5083,7 @@ export function surfaceFragmentResolvedFor(
     SURFACE_FINISH: finish,
     SURFACE_PATTERN: pattern,
     SURFACE_SHAPE_TRAP: trap !== null ? 1 : 0,
+    SURFACE_TRAP_GEOMETRY: resolvedTrapGeometry,
     SURFACE_CONDENSATION: condensation !== null ? 1 : 0,
   });
   let baked = resolved;
@@ -5095,6 +5176,7 @@ export function surfaceFragmentFor(
   trap: ShapeSpec | null = null,
   condensation: readonly ShapeSpec[] | null = null,
   condensation4 = false,
+  trapGeometry = 0,
 ): string {
   const resolved = surfaceFragmentResolvedFor(
     escape,
@@ -5108,6 +5190,7 @@ export function surfaceFragmentFor(
     trap,
     condensation,
     condensation4,
+    trapGeometry,
   );
   return plane !== 0 || resolved.length > SURFACE_GLSL_STRIP_BYTES
     ? stripGlslSource(resolved)
@@ -5164,6 +5247,10 @@ export function setSurfaceShapeTrapUniforms(
     rt.invScale,
   );
   (u.uTrapParams.value as THREE.Vector4).set(rt.mode, rt.threshold, rt.fade, 0);
+  (u.uTrapGeometryLevels.value as THREE.Vector2).set(
+    Math.min(SHAPE_TRAP_GEOMETRY_LEVEL_MAX, rt.geometryLevelMin),
+    Math.min(SHAPE_TRAP_GEOMETRY_LEVEL_MAX, rt.geometryLevelMax),
+  );
 }
 
 /** The trap SPEC a material's compiled program bakes, recovered from the
@@ -5176,6 +5263,12 @@ function materialTrapSpec(material: THREE.ShaderMaterial): ShapeSpec | null {
   const key = (material.userData as { surfaceTrapShapeKey?: string | null })
     .surfaceTrapShapeKey;
   return key ? (JSON.parse(key) as ShapeSpec) : null;
+}
+
+/** The escape-only resolved geometry arm, threaded through orthogonal
+ * recompiles just like the baked trap spec. */
+function materialTrapGeometry(material: THREE.ShaderMaterial): number {
+  return material.defines.SURFACE_TRAP_GEOMETRY === 1 ? 1 : 0;
 }
 
 function materialCondensationSpecs(
@@ -5195,14 +5288,25 @@ function materialCondensationSpecs(
 function applyShapeTrapInstall(
   material: THREE.ShaderMaterial,
   trap: ShapeTrap | null,
-): { wantTrap: number; spec: ShapeSpec | null; changed: boolean } {
+): {
+  wantTrap: number;
+  wantGeometry: number;
+  spec: ShapeSpec | null;
+  changed: boolean;
+} {
   const spec = trap ? trap.shape : null;
   const key = spec ? JSON.stringify(spec) : null;
   const data = material.userData as { surfaceTrapShapeKey?: string | null };
   const changed = (data.surfaceTrapShapeKey ?? null) !== key;
   data.surfaceTrapShapeKey = key;
-  if (trap) setSurfaceShapeTrapUniforms(material, resolveShapeTrap(trap));
-  return { wantTrap: trap ? 1 : 0, spec, changed };
+  const rt = trap ? resolveShapeTrap(trap) : null;
+  if (rt) setSurfaceShapeTrapUniforms(material, rt);
+  return {
+    wantTrap: rt ? 1 : 0,
+    wantGeometry: rt?.geometry ? 1 : 0,
+    spec,
+    changed,
+  };
 }
 
 export function setEscapeSystem(
@@ -5266,6 +5370,7 @@ export function setEscapeSystem(
   const finish = material.defines.SURFACE_FINISH === 1 ? 1 : 0;
   const pattern = material.defines.SURFACE_PATTERN === 1 ? 1 : 0;
   const trapInstall = applyShapeTrapInstall(material, trap);
+  const currentTrapGeometry = materialTrapGeometry(material);
   if (
     material.defines.SURFACE_ESCAPE !== 1 ||
     material.defines.SURFACE_BULB !== 0 ||
@@ -5273,6 +5378,7 @@ export function setEscapeSystem(
     material.defines.SURFACE_FOLD_LENS !== 0 ||
     material.defines.SURFACE_CONDENSATION !== 0 ||
     material.defines.SURFACE_SHAPE_TRAP !== trapInstall.wantTrap ||
+    currentTrapGeometry !== trapInstall.wantGeometry ||
     // A trap SPEC swap at the same define state still bakes a different
     // shape body — the key catches what the defines cannot.
     trapInstall.changed
@@ -5284,6 +5390,8 @@ export function setEscapeSystem(
     material.defines.SURFACE_FOLDS = 0;
     material.defines.SURFACE_FOLD_LENS = 0;
     material.defines.SURFACE_SHAPE_TRAP = trapInstall.wantTrap;
+    if (trapInstall.wantGeometry) material.defines.SURFACE_TRAP_GEOMETRY = 1;
+    else delete material.defines.SURFACE_TRAP_GEOMETRY;
     material.defines.SURFACE_CONDENSATION = 0;
     u.uCondCount.value = 0;
     (
@@ -5305,6 +5413,9 @@ export function setEscapeSystem(
       pattern,
       undefined,
       trapInstall.spec,
+      null,
+      false,
+      trapInstall.wantGeometry,
     );
     material.needsUpdate = true;
   }
@@ -5371,6 +5482,7 @@ export function setBulbSystem(
   const finish = material.defines.SURFACE_FINISH === 1 ? 1 : 0;
   const pattern = material.defines.SURFACE_PATTERN === 1 ? 1 : 0;
   const trapInstall = applyShapeTrapInstall(material, trap);
+  const currentTrapGeometry = materialTrapGeometry(material);
   if (
     material.defines.SURFACE_BULB !== 1 ||
     material.defines.SURFACE_ESCAPE !== 0 ||
@@ -5378,6 +5490,7 @@ export function setBulbSystem(
     material.defines.SURFACE_FOLD_LENS !== 0 ||
     material.defines.SURFACE_CONDENSATION !== 0 ||
     material.defines.SURFACE_SHAPE_TRAP !== trapInstall.wantTrap ||
+    currentTrapGeometry !== 0 ||
     trapInstall.changed
   ) {
     material.defines.SURFACE_BULB = 1;
@@ -5385,6 +5498,9 @@ export function setBulbSystem(
     material.defines.SURFACE_FOLDS = 0;
     material.defines.SURFACE_FOLD_LENS = 0;
     material.defines.SURFACE_SHAPE_TRAP = trapInstall.wantTrap;
+    // Shape geometry is escape-only. A direct bulb install can still carry
+    // the color trap, but never compiles or preserves the geometry arm.
+    delete material.defines.SURFACE_TRAP_GEOMETRY;
     material.defines.SURFACE_CONDENSATION = 0;
     u.uCondCount.value = 0;
     (
@@ -5480,6 +5596,8 @@ export function setSurfaceBalloon(
       undefined,
       materialTrapSpec(material),
       materialCondensationSpecs(material),
+      false,
+      materialTrapGeometry(material),
     );
     material.needsUpdate = true;
   }
@@ -5607,6 +5725,8 @@ export function setSurfaceGroundPlane(
       undefined,
       materialTrapSpec(material),
       materialCondensationSpecs(material),
+      false,
+      materialTrapGeometry(material),
     );
     material.needsUpdate = true;
   }
@@ -5669,6 +5789,8 @@ export function setSurfaceMaterials(
       undefined,
       materialTrapSpec(material),
       materialCondensationSpecs(material),
+      false,
+      materialTrapGeometry(material),
     );
     material.needsUpdate = true;
   }

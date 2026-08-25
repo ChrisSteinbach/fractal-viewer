@@ -624,6 +624,7 @@
               <option value="foldChain">Fold Chain</option>
               <option value="foldChainBoulder">Fold Chain Boulder</option>
               <option value="foldChainFlower">Fold Chain Flower</option>
+              <option value="foldChainGear">Fold Chain Gear</option>
               <option value="mandelbulbClassic">Mandelbulb</option>
               <option value="mandelbulbOffset">Mandelbulb Offset</option>
               <option value="mandelbulbRotated">Mandelbulb Rotated</option>
@@ -1916,6 +1917,58 @@
               </select>
             </label>
             <div id="surfaceTrapControls" class="hidden">
+              <div id="surfaceTrapGeometryRow" class="hidden">
+                <label
+                  class="checkbox-label"
+                  title="Use the posed trap shape as distance geometry; available only for conformal fold-only escape chains"
+                >
+                  <input type="checkbox" id="surfaceTrapGeometryCheckbox" />
+                  Use as geometry
+                </label>
+                <p class="flame-note-info">
+                  Geometry is limited to conformal fold-only escape chains.
+                  Color trapping still works on power and anisotropic systems.
+                </p>
+                <div id="surfaceTrapGeometryLevels" class="hidden">
+                  <label
+                    class="select-label"
+                    title="Choose which post-link orbit levels contain pulled-back copies of the trap shape; root is level 0"
+                  >
+                    Geometry levels
+                    <select id="surfaceTrapGeometryBandMode">
+                      <option value="all">All levels</option>
+                      <option value="root">Root only</option>
+                      <option value="custom">Custom band</option>
+                    </select>
+                  </label>
+                  <div id="surfaceTrapGeometryCustom" class="hidden">
+                    <label class="select-label">
+                      First level:
+                      <span id="surfaceTrapGeometryMinLabel">1</span>
+                      <input
+                        type="range"
+                        id="surfaceTrapGeometryMinSlider"
+                        min="0"
+                        max="24"
+                        step="1"
+                        value="1"
+                      />
+                    </label>
+                    <label class="select-label">
+                      Last level:
+                      <span id="surfaceTrapGeometryMaxLabel">1</span>
+                      <input
+                        type="range"
+                        id="surfaceTrapGeometryMaxSlider"
+                        min="0"
+                        max="24"
+                        step="1"
+                        value="1"
+                      />
+                    </label>
+                  </div>
+                </div>
+              </div>
               <label class="select-label">
                 Trap size: <span id="surfaceTrapScaleLabel">1.00×</span>
                 <input

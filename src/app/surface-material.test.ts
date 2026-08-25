@@ -35,7 +35,11 @@ import {
 } from "../fractal/bulb-de";
 import { buildEscapeDE } from "../fractal/escape-de";
 import { shapeTrapInvNorm } from "../fractal/shape-trap";
-import { PEACE_SIGN_SHAPE, type ShapeSpec } from "../fractal/shapes";
+import {
+  PEACE_SIGN_SHAPE,
+  SHAPE_MARCH_SAFETY,
+  type ShapeSpec,
+} from "../fractal/shapes";
 import type {
   SurfaceBalloonSpec,
   SurfaceGroundPlaneSpec,
@@ -2790,6 +2794,64 @@ describe("SURFACE_PATTERN variant", () => {
 });
 
 describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", () => {
+  it("pins the shipped trap-absent and color-only bytes while geometry is omitted or false", () => {
+    const cases = [
+      {
+        source: surfaceFragmentResolvedFor(1, 0),
+        hash: "6fefaf2c63a4325a13bb444c6d57ab355264d0556f3032a2be98145ac2c89995",
+      },
+      {
+        source: surfaceFragmentResolvedFor(
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          undefined,
+          PEACE_SIGN_SHAPE,
+        ),
+        hash: "da44aaf7b0d78fc6748335b7b0bbeabe78239566cd9b65e534507ad07eaad9a8",
+      },
+      {
+        source: surfaceFragmentResolvedFor(
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          undefined,
+          PEACE_SIGN_SHAPE,
+        ),
+        hash: "11fa11fbf1fcf682e2c49ba308980f1a214bbcaa16fd4532f4227445523e91ea",
+      },
+    ];
+    for (const { source, hash } of cases) {
+      expect(sha256(source)).toBe(hash);
+      expect(source).not.toContain("uTrapGeometryLevels");
+      expect(source).not.toContain("trapDistance");
+    }
+    expect(
+      surfaceFragmentResolvedFor(
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        undefined,
+        PEACE_SIGN_SHAPE,
+        null,
+        false,
+        0,
+      ),
+    ).toBe(cases[1].source);
+  });
+
   it("omitted and explicit trap:null produce identical source for every legal pairing — the byte-identical off state", () => {
     const cases: [number, number, number, number, number, number, number][] = [
       [0, 0, 0, 0, 0, 0, 0],
@@ -2895,6 +2957,77 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
     }
   });
 
+  it("compiles escape geometry as an inclusive post-link min-union and shares the hit-info local SDF with color", () => {
+    const resolved = surfaceFragmentResolvedFor(
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      undefined,
+      PEACE_SIGN_SHAPE,
+      null,
+      false,
+      1,
+    );
+    expect(resolved).toContain("uniform ivec2 uTrapGeometryLevels;");
+    expect(resolved).toContain(
+      "if (i >= uTrapGeometryLevels.x && i <= uTrapGeometryLevels.y)",
+    );
+    expect(countOccurrences(resolved, "float tLocal = trapLocalSdf(v);")).toBe(
+      2,
+    );
+    expect(resolved).toContain("trapCandidateFromLocal(tLocal, i)");
+    expect(countOccurrences(resolved, "surfaceTrapSdf(tl)")).toBe(1);
+    expect(countOccurrences(resolved, `${SHAPE_MARCH_SAFETY} * tLocal`)).toBe(
+      2,
+    );
+    expect(countOccurrences(resolved, "uTrapPose.w * dr")).toBe(2);
+    expect(
+      countOccurrences(resolved, "return min(escapeDistance, trapDistance);"),
+    ).toBe(2);
+    // The logarithmic form is selected only for the classic escape term;
+    // the trap distance joins after that selection.
+    expect(
+      countOccurrences(resolved, "float escapeDistance = uEscLogForm"),
+    ).toBe(2);
+    expect(resolved).not.toContain("float trapCandidate(vec3 pOrbit");
+    expect(resolved).not.toContain("SURFACE_TRAP_GEOMETRY");
+  });
+
+  it("keeps bulb traps color-only even if a direct caller requests geometry", () => {
+    const colorOnly = surfaceFragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      undefined,
+      PEACE_SIGN_SHAPE,
+    );
+    const requested = surfaceFragmentResolvedFor(
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      undefined,
+      PEACE_SIGN_SHAPE,
+      null,
+      false,
+      1,
+    );
+    expect(requested).toBe(colorOnly);
+    expect(requested).not.toContain("uTrapGeometryLevels");
+    expect(requested).not.toContain("trapDistance");
+  });
+
   it("emits the two arms' trap helper text character for character — the bulbPow8 duplication discipline", () => {
     const grab = (src: string): string => {
       // The resolved source carries no #if scaffolding, so the slice runs
@@ -2964,6 +3097,27 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
           0,
           undefined,
           PEACE_SIGN_SHAPE,
+        ).length,
+      ).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
+    }
+  });
+
+  it("keeps escape trap geometry under the resolved-source strip threshold, including finish", () => {
+    for (const finish of [0, 1]) {
+      expect(
+        surfaceFragmentResolvedFor(
+          1,
+          0,
+          0,
+          0,
+          0,
+          finish,
+          0,
+          undefined,
+          PEACE_SIGN_SHAPE,
+          null,
+          false,
+          1,
         ).length,
       ).toBeLessThan(SURFACE_GLSL_STRIP_BYTES);
     }
@@ -3039,6 +3193,42 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
     expect(material.fragmentShader).not.toContain("surfaceTrapSdf");
   });
 
+  it("packs the normalized geometry band, clamps its unbounded maximum, and rebuilds only the escape geometry arm", () => {
+    const material = createSurfaceMaterial();
+    const de = buildEscapeDE([
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        variations: [{ type: "mandelbox", weight: 2 }],
+      },
+    ]);
+    const colorOnly: ShapeTrap = { shape: PEACE_SIGN_SHAPE };
+    setEscapeSystem(material, de, [1, 0, 0], colorOnly);
+    const shippedColorSource = material.fragmentShader;
+    expect(material.defines.SURFACE_TRAP_GEOMETRY).toBeUndefined();
+
+    setEscapeSystem(material, de, [1, 0, 0], {
+      ...colorOnly,
+      geometry: true,
+      geometryLevelMin: Number.MAX_SAFE_INTEGER,
+      geometryLevelMax: 7,
+    });
+    expect(material.defines.SURFACE_TRAP_GEOMETRY).toBe(1);
+    expect(material.fragmentShader).toContain("uTrapGeometryLevels");
+    const levels = material.uniforms.uTrapGeometryLevels.value as {
+      x: number;
+      y: number;
+    };
+    expect(levels.x).toBe(7);
+    expect(levels.y).toBe(0x7fffffff);
+
+    setEscapeSystem(material, de, [1, 0, 0], colorOnly);
+    expect(material.defines.SURFACE_TRAP_GEOMETRY).toBeUndefined();
+    expect(material.fragmentShader).toBe(shippedColorSource);
+  });
+
   it("setBulbSystem takes the same trap wire", () => {
     const material = createSurfaceMaterial();
     const de = buildBulbDE([
@@ -3054,6 +3244,16 @@ describe("SURFACE_SHAPE_TRAP variant (the escape family's shape-trap channel)", 
     expect(material.defines.SURFACE_SHAPE_TRAP).toBe(1);
     expect(material.defines.SURFACE_BULB).toBe(1);
     expect(material.fragmentShader).toContain("surfaceTrapSdf");
+    const colorOnlySource = material.fragmentShader;
+    setBulbSystem(material, de, [1, 0, 0], {
+      shape: PEACE_SIGN_SHAPE,
+      geometry: true,
+      geometryLevelMin: 2,
+      geometryLevelMax: 5,
+    });
+    expect(material.defines.SURFACE_TRAP_GEOMETRY).toBeUndefined();
+    expect(material.fragmentShader).toBe(colorOnlySource);
+    expect(material.fragmentShader).not.toContain("uTrapGeometryLevels");
     setBulbSystem(material, de, [1, 0, 0], null);
     expect(material.defines.SURFACE_SHAPE_TRAP).toBe(0);
     expect(material.fragmentShader).not.toContain("surfaceTrapSdf");

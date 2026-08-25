@@ -575,9 +575,17 @@ morphs into place instead of snapping (see **Presets** below).
   toward earlier, larger stamps. The shape choice re-enters the surface
   session because it changes generated shader structure; mode also re-enters
   by policy so both engines switch coherently. Pose, size, crossing bar and
-  fade remain live. The row appears only for the
-  escape-time and Mandelbulb families, and changes color only—never their
-  marched geometry. `Mandelbox Peace` is the ready-made example.
+  fade remain live. The row appears only for the escape-time and Mandelbulb
+  families. **Use as geometry** additionally unions the posed shape into the
+  marched object on conformal fold-only escape chains; power-link and
+  Mandelbulb sessions keep the color controls but do not offer this geometry
+  switch, and inverse-descent Surface routes refuse an authored geometry flag
+  rather than ignore it. When a loaded document is refused, Points exposes
+  the checked switch as a recovery control. **Geometry levels** selects **All**, **Root only**, or **Custom**
+  inclusive post-link levels; custom exposes the minimum and maximum sliders
+  and stores them as one sorted interval. Toggling geometry or changing its
+  band restarts Surface because it changes the distance field. `Mandelbox
+Peace` is the color example; `Fold Chain Gear` is the geometry example.
   Two persisted scene toggles round out the section. **Balloon**
   — with its **Balloon size** slider and **Inflate** button — is the same
   balloon as **Atmosphere**'s **Balloon echo** below (one setting, shared

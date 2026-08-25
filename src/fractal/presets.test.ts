@@ -13,6 +13,7 @@ import {
   analyzeEscapeSystem,
   buildEscapeDE,
   ESCAPE_LINK_BULB,
+  ESCAPE_LINK_BOXFOLD,
   ESCAPE_LINK_MANDELBOX,
   ESCAPE_LINK_QSQUARE,
 } from "./escape-de";
@@ -64,6 +65,7 @@ import {
   PRESET_RENDER_HINTS,
   PRESET_SCAFFOLDS,
   PRESET_SYMMETRIES,
+  PRESET_TRAPS,
   PRESET_SURFACE_ROOMS,
   presetTransforms,
   radiolarian,
@@ -1292,6 +1294,39 @@ describe("PRESET_RENDER_HINTS", () => {
     for (const key of Object.keys(PRESET_RENDER_HINTS)) {
       expect(PRESET_NAMES).toContain(key);
     }
+  });
+});
+
+describe("PRESET_TRAPS", () => {
+  it("keys only real preset names", () => {
+    for (const key of Object.keys(PRESET_TRAPS)) {
+      expect(PRESET_NAMES).toContain(key);
+    }
+  });
+
+  it("keeps Mandelbox Peace color-only and reaches gear geometry through a fold-only surface preset", () => {
+    expect(PRESET_TRAPS.mandelboxPeace?.().geometry).toBeUndefined();
+
+    const transforms = presetTransforms("foldChainGear");
+    const analysis = analyzeEscapeSystem(transforms);
+    expect(analysis.status).toBe("eligible");
+    if (analysis.status !== "eligible") return;
+    const de = buildEscapeDE(transforms);
+    expect(
+      de.links.every(
+        (link) =>
+          link.kind === ESCAPE_LINK_MANDELBOX ||
+          link.kind === ESCAPE_LINK_BOXFOLD,
+      ),
+    ).toBe(true);
+    expect(PRESET_RENDER_HINTS.foldChainGear).toBe("surface");
+    expect(PRESET_TRAPS.foldChainGear?.()).toEqual({
+      shape: GEAR_SHAPE,
+      position: [0.15, -0.1, 0.2],
+      rotation: [0.55, 0.2, -0.15],
+      scale: 0.72,
+      geometry: true,
+    });
   });
 });
 

@@ -19,6 +19,7 @@ import { analyzeEscapeSystem, buildEscapeDE } from "../fractal/escape-de";
 import { buildEscapeDE4 } from "../fractal/escape-de-4d";
 import { buildBulbDE } from "../fractal/bulb-de";
 import { buildBalloon } from "../fractal/balloon-de";
+import { resolveShapeTrap } from "../fractal/shape-trap";
 import {
   analyzeSurfaceSystem,
   buildSurfaceDE,
@@ -2020,6 +2021,7 @@ function main(): void {
       transforms: state.transforms,
       finalTransform: state.finalTransform ?? null,
       symmetry: state.symmetry,
+      shapeTrap: state.shapeTrap ?? null,
       condensationDepthBand: state.condensationDepthBand ?? null,
     };
   }
@@ -3717,6 +3719,23 @@ function main(): void {
     return slots as { baseIndex: number }[];
   }
 
+  /** Compute codegen's two halves of one authored trap: the ShapeSpec bakes
+   * the shared color/geometry SDF, while the normalized geometry flag and
+   * inclusive level band select the optional march term. The live pose and
+   * color fields continue to ride scene.surfaceComputeFrameSpec. */
+  function computeShapeTrapTarget(): Pick<
+    Extract<SurfaceComputeTarget, { kind: "escape" }>,
+    "shapeTrap" | "shapeTrapGeometry"
+  > {
+    const trap = state.shapeTrap;
+    if (!trap) return {};
+    const resolved = resolveShapeTrap(trap);
+    return {
+      shapeTrap: trap.shape,
+      ...(resolved.geometry ? { shapeTrapGeometry: resolved } : {}),
+    };
+  }
+
   function teardownSurfaceCompute(): void {
     surfaceComputeRenderer?.destroy();
     surfaceComputeRenderer = null;
@@ -4766,9 +4785,7 @@ function main(): void {
                 // The 3D escape arm's trap wiring, one dimension up — the
                 // channel's 4D half is this ONE core (no fragment mirror
                 // exists by design).
-                ...(state.shapeTrap
-                  ? { shapeTrap: state.shapeTrap.shape }
-                  : {}),
+                ...computeShapeTrapTarget(),
               };
               scene.enterSurfaceComputeEscape4Session(
                 state.groundPlane,
@@ -5032,9 +5049,7 @@ function main(): void {
                 // target (the kernels bake the SDF), the live pose block
                 // riding every frame spec off the scene's stored
                 // document block.
-                ...(state.shapeTrap
-                  ? { shapeTrap: state.shapeTrap.shape }
-                  : {}),
+                ...computeShapeTrapTarget(),
               };
               scene.enterSurfaceComputeEscapeSession(
                 state.groundPlane,
@@ -5075,9 +5090,7 @@ function main(): void {
                 de,
                 groundPlane: state.groundPlane,
                 // The escape arm's trap wiring, one formula over.
-                ...(state.shapeTrap
-                  ? { shapeTrap: state.shapeTrap.shape }
-                  : {}),
+                ...computeShapeTrapTarget(),
               };
               scene.enterSurfaceComputeBulbSession(
                 state.groundPlane,
@@ -5609,6 +5622,7 @@ function main(): void {
       state.symmetry,
       { computeAvailable: surfaceComputeAvailable() },
       state.schedule ?? null,
+      state.shapeTrap ?? null,
     );
     // The route kind rides along for the transform editor's Finish group:
     // a forward-orbit route shades the whole object with the head
@@ -6315,6 +6329,13 @@ function main(): void {
         // material.)
         state = setSchedule(state, null);
         state = setCondensationDepthBand(state, null);
+        // A shape trap is authored against the previous forward-orbit
+        // system. In particular, its optional geometry mode is admissible
+        // only for conformal fold chains, which a fresh random roll did not
+        // promise. Clear the whole color/geometry composition with the other
+        // system-scoped blocks rather than leaving a stale trap to disable
+        // the arriving system's Surface route.
+        state = setShapeTrap(state, null);
       },
       "always",
       morphMs,
@@ -6395,6 +6416,10 @@ function main(): void {
       state = setSymmetryOrder(state, candidate.symmetry.order);
       state = setSymmetryPlane(state, candidate.symmetry.plane);
       state = setSymmetryTwist(state, candidate.symmetry.twist ?? 0);
+      // Mutation may turn a conformal fold chain anisotropic. The candidate
+      // grid does not carry a re-authored trap, so do not let geometry (or
+      // its paired color composition) leak onto the selected system.
+      state = setShapeTrap(state, null);
     }, "always");
     // A mutated system is no longer the polytope a preset's scaffold
     // illustrated — clear it, like rollSurpriseSystem.
