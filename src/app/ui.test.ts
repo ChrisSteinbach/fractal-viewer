@@ -26,7 +26,11 @@ import { BACKGROUND_MODES } from "./background";
 import { BACKGROUND_SHAPES } from "../fractal/background-shape";
 import { applyScalarControl } from "./control-spec";
 import type { ScalarControlSpec } from "./control-spec";
-import { defaultTransforms, PRESET_NAMES } from "../fractal/presets";
+import {
+  defaultTransforms,
+  fernSpongeIsolated,
+  PRESET_NAMES,
+} from "../fractal/presets";
 import {
   CUSTOM_PALETTE_ID,
   FLAME_PALETTE_IDS,
@@ -56,6 +60,9 @@ function noopHandlers(): UiHandlers {
     onScheduleSource: vi.fn(),
     onScheduleSnapshot: vi.fn(),
     onScheduleDepth: vi.fn(),
+    onXaosAddBlock: vi.fn(),
+    onXaosCell: vi.fn(),
+    onXaosLeak: vi.fn(),
     onSurprise: vi.fn(),
     onOpenMutations: vi.fn(),
     onMutationPick: vi.fn(),
@@ -365,6 +372,242 @@ describe("Ui.renderTransformList", () => {
       list?.getAttribute("aria-labelledby") ?? "",
     );
     expect(title?.textContent?.trim()).toBe("Select to edit");
+  });
+});
+
+/** One matrix cell's `<input>`, by its `Chi from transform N to transform M`
+ * aria-label — 1-indexed like the on-screen headers. */
+function xaosCell(from: number, to: number): HTMLInputElement {
+  const input = document.querySelector<HTMLInputElement>(
+    `#xaosMatrixContainer input[aria-label="Chi from transform ${from} to transform ${to}"]`,
+  );
+  if (!input) throw new Error(`No Xaos cell for ${from} -> ${to}`);
+  return input;
+}
+
+function xaosLeakSliders(): HTMLInputElement[] {
+  return Array.from(
+    document.querySelectorAll<HTMLInputElement>(
+      '#xaosLeakRows input[type="range"]',
+    ),
+  );
+}
+
+describe("Ui.renderXaosSection — the matrix", () => {
+  it("reads block-diagonal for the xaos reachability preset: within-block 1s, cross-block 0s", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderXaosSection(fernSpongeIsolated());
+
+    expect(xaosCell(1, 2).value).toBe("1"); // fern -> fern
+    expect(xaosCell(1, 5).value).toBe("0"); // fern -> sponge
+    expect(xaosCell(5, 6).value).toBe("1"); // sponge -> sponge
+    expect(xaosCell(5, 1).value).toBe("0"); // sponge -> fern
+  });
+
+  it("reads a hand-authored leak value on the cell it lives on", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        chaos: [1, 0.4],
+      },
+      {
+        id: 1,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+    ];
+    ui.renderXaosSection(transforms);
+    expect(xaosCell(1, 2).value).toBe("0.4");
+    expect(xaosCell(2, 1).value).toBe("1"); // absent row reads classic 1
+  });
+
+  it("shows the degenerate all-zero row's warning inline on that row, not elsewhere", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    const transforms: Transform[] = [
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+        chaos: [0, 0],
+      },
+      {
+        id: 1,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+    ];
+    ui.renderXaosSection(transforms);
+    const rows = document.querySelectorAll("#xaosMatrixContainer tbody tr");
+    expect(rows[0].textContent).toContain("falls back to the global table");
+    expect(rows[1].textContent).not.toContain("falls back");
+  });
+
+  it("commits a cell edit through onXaosCell, and restores on a bad value without calling it", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderXaosSection([
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+      {
+        id: 1,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+    ]);
+
+    const cell = xaosCell(1, 2);
+    expect(cell.value).toBe("1"); // classic default at render time
+    cell.value = "0.3";
+    cell.dispatchEvent(new Event("change"));
+    expect(handlers.onXaosCell).toHaveBeenCalledWith(0, 1, 0.3);
+
+    // A bad commit restores the value that was on screen when THIS cell was
+    // built (main.ts's onXaosCell resyncs the whole section on every good
+    // commit — see renderXaosSection's own doc — so in the running app the
+    // next cell's "previous" is always fresh; this handler is a noop mock,
+    // so no resync happens here and the snapshot stays the render-time one).
+    cell.value = "";
+    cell.dispatchEvent(new Event("change"));
+    expect(handlers.onXaosCell).toHaveBeenCalledTimes(1);
+    expect(cell.value).toBe("1");
+  });
+
+  it("shows a helper note instead of a matrix for a single transform", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderXaosSection([
+      {
+        id: 0,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [0.5, 0.5, 0.5],
+      },
+    ]);
+    expect(document.getElementById("xaosMatrixContainer")?.textContent).toBe(
+      "",
+    );
+    expect(
+      document.getElementById("xaosMatrixNote")?.classList.contains("hidden"),
+    ).toBe(false);
+  });
+});
+
+describe("Ui.renderXaosSection — the leak dial", () => {
+  it("shows exactly one dial for the xaos reachability preset's one block pair, reading 0", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderXaosSection(fernSpongeIsolated());
+    const sliders = xaosLeakSliders();
+    expect(sliders).toHaveLength(1);
+    expect(sliders[0].value).toBe("0");
+  });
+
+  it("hides the leak rows entirely for a single-block (untouched) system", () => {
+    const ui = new Ui(document);
+    ui.bind(noopHandlers());
+    ui.renderXaosSection(defaultTransforms());
+    expect(
+      document.getElementById("xaosLeakRows")?.classList.contains("hidden"),
+    ).toBe(true);
+    expect(xaosLeakSliders()).toHaveLength(0);
+  });
+
+  it("drives onXaosLeak with the block indices and phase, input live and change once", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+    ui.renderXaosSection(fernSpongeIsolated());
+
+    const slider = xaosLeakSliders()[0];
+    slider.value = "0.02";
+    slider.dispatchEvent(new Event("input"));
+    expect(handlers.onXaosLeak).toHaveBeenCalledWith(
+      [0, 1, 2, 3],
+      Array.from({ length: 20 }, (_, i) => i + 4),
+      0.02,
+      "input",
+    );
+    slider.dispatchEvent(new Event("change"));
+    expect(handlers.onXaosLeak).toHaveBeenLastCalledWith(
+      [0, 1, 2, 3],
+      Array.from({ length: 20 }, (_, i) => i + 4),
+      0.02,
+      "commit",
+    );
+  });
+});
+
+describe("Ui Xaos add-as-block gesture", () => {
+  it("passes the picker's source and the checkbox's checked state to onXaosAddBlock", () => {
+    const handlers = noopHandlers();
+    const ui = new Ui(document);
+    ui.bind(handlers);
+
+    const source = document.getElementById(
+      "xaosAddSource",
+    ) as HTMLSelectElement;
+    source.value = "__duplicate";
+    (
+      document.getElementById("xaosBalanceWeights") as HTMLInputElement
+    ).checked = false;
+    document
+      .getElementById("xaosAddBtn")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(handlers.onXaosAddBlock).toHaveBeenCalledWith("__duplicate", false);
+  });
+
+  it("clones the preset menu's options with a preset: prefix, exactly like the schedule picker", () => {
+    new Ui(document);
+    const values = Array.from(
+      document.querySelectorAll<HTMLOptionElement>(
+        "#xaosAddSourcePresets option",
+      ),
+    ).map((o) => o.value);
+    // DOM order (index.html's menu groups presets under optgroups like
+    // "Escape-time"/"Flame"/"4D"), not PRESETS' object-key order — same
+    // set-equality check the "preset menu" describe block above uses.
+    expect(values.sort()).toEqual(
+      PRESET_NAMES.map((p) => `preset:${p}`).sort(),
+    );
+  });
+
+  it("setXaosAddSourceSavedScenes populates the saved-scenes optgroup", () => {
+    const ui = new Ui(document);
+    ui.setXaosAddSourceSavedScenes([{ id: "abc", createdAt: 0 }]);
+    const options = Array.from(
+      document.querySelectorAll<HTMLOptionElement>(
+        "#xaosAddSourceSaved option",
+      ),
+    );
+    expect(options).toHaveLength(1);
+    expect(options[0].value).toBe("saved:abc");
+  });
+
+  it("resetXaosAddSource snaps the picker back to its placeholder", () => {
+    const ui = new Ui(document);
+    const source = document.getElementById(
+      "xaosAddSource",
+    ) as HTMLSelectElement;
+    source.value = "__duplicate";
+    ui.resetXaosAddSource();
+    expect(source.value).toBe("");
   });
 });
 

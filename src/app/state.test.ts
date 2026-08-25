@@ -1,9 +1,11 @@
 import {
   activeScenePalette,
   addTransform,
+  appendXaosBlock,
   BALLOON_PALETTE_IDS,
   BALLOON_PALETTE_INHERIT,
   clampToSpec,
+  computeXaosBlockOffset,
   DEFAULT_BALLOON_PALETTE,
   DEFAULT_BALLOON_RADIUS,
   DEFAULT_BALLOON_TINT,
@@ -38,6 +40,8 @@ import {
   DEFAULT_SURFACE_FLOOR_TILE_SCALE,
   DEFAULT_SYMMETRY_PLANE,
   DEFAULT_SYMMETRY_ORDER,
+  detectXaosBlocks,
+  detectXaosLeaks,
   FLAME_ITERATION_DETENTS,
   initialState,
   MAX_BALLOON_RADIUS,
@@ -108,6 +112,8 @@ import {
   setBalloonRadius,
   setBalloonTint,
   setBalloonTintStrength,
+  setChaosCell,
+  setChaosLeak,
   setColorGamma,
   setCustomPaletteStops,
   setExportScale,
@@ -163,12 +169,16 @@ import {
 } from "./state";
 import { autoBackground, resolveBackground } from "./background";
 import {
+  barnsleyFern,
   defaultFinalTransform,
+  fernSpongeIsolated,
+  fernSpongeLeak,
   mengerSponge,
   presetTransforms,
 } from "../fractal/presets";
 import { seedCustomStops } from "../fractal/palette";
 import { mulberry32 } from "../fractal/rng";
+import { chaosRowIsNonTrivial, MAX_TRANSFORMS } from "../fractal/chaos-game";
 import type { ShapeTrap, Transform } from "../fractal/types";
 import { PEACE_SIGN_SHAPE } from "../fractal/shapes";
 
@@ -2227,6 +2237,279 @@ describe("setSchedule / setScheduleDepth (scheduled-hybrid block)", () => {
     expect(stripped.position).toEqual(bSource[0].position);
     expect(stripped.position).not.toBe(bSource[0].position);
     expect(stripped.shear).not.toBe(bSource[0].shear);
+  });
+});
+
+/** A generic, contracting (scale 0.5) transform list for the Xaos tests
+ * below — real enough that `conjugateApart` (inside `appendXaosBlock`)
+ * actually moves something, unlike an identity-linear map. */
+function makeXaosTransforms(count: number): Transform[] {
+  return Array.from({ length: count }, (_, id) => ({
+    id,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [0.5, 0.5, 0.5],
+  }));
+}
+
+describe("detectXaosBlocks", () => {
+  it("reads an untouched system as one block", () => {
+    expect(detectXaosBlocks(makeXaosTransforms(4))).toEqual([[0, 1, 2, 3]]);
+  });
+
+  it("splits a block-diagonal system exactly along its chaos rows", () => {
+    const transforms = makeXaosTransforms(4).map((t, i): Transform => ({
+      ...t,
+      chaos: i < 2 ? [1, 1, 0, 0] : [0, 0, 1, 1],
+    }));
+    expect(detectXaosBlocks(transforms)).toEqual([
+      [0, 1],
+      [2, 3],
+    ]);
+  });
+
+  it("requires BOTH directions to read 1 before merging — an asymmetric edit stays split", () => {
+    const transforms = makeXaosTransforms(2).map((t, i): Transform => ({
+      ...t,
+      chaos: i === 0 ? [1, 1] : [0, 1],
+    }));
+    expect(detectXaosBlocks(transforms)).toEqual([[0], [1]]);
+  });
+
+  it("recovers the xaos reachability preset's own block structure", () => {
+    expect(detectXaosBlocks(fernSpongeIsolated())).toEqual([
+      [0, 1, 2, 3],
+      Array.from({ length: 20 }, (_, i) => i + 4),
+    ]);
+  });
+
+  it("a leak short of 1 does not merge the blocks it connects", () => {
+    expect(detectXaosBlocks(fernSpongeLeak())).toEqual([
+      [0, 1, 2, 3],
+      Array.from({ length: 20 }, (_, i) => i + 4),
+    ]);
+  });
+});
+
+describe("detectXaosLeaks", () => {
+  it("reads a uniform leak value between two blocks", () => {
+    const transforms = makeXaosTransforms(4).map((t, i): Transform => ({
+      ...t,
+      chaos: i < 2 ? [1, 1, 0.02, 0.02] : [0.02, 0.02, 1, 1],
+    }));
+    const blocks = detectXaosBlocks(transforms);
+    const leaks = detectXaosLeaks(transforms, blocks);
+    expect(leaks).toEqual([{ blockA: [0, 1], blockB: [2, 3], value: 0.02 }]);
+  });
+
+  it("reads null when a pair's cross entries are not uniform", () => {
+    const transforms = makeXaosTransforms(4).map((t, i): Transform => ({
+      ...t,
+      chaos:
+        i === 0
+          ? [1, 1, 0.02, 0.05] // one hand-edited entry differs
+          : i < 2
+            ? [1, 1, 0.02, 0.02]
+            : [0.02, 0.02, 1, 1],
+    }));
+    const blocks = detectXaosBlocks(transforms);
+    const leaks = detectXaosLeaks(transforms, blocks);
+    expect(leaks).toHaveLength(1);
+    expect(leaks[0].value).toBeNull();
+  });
+
+  it("reads the xaos reachability presets' own 0 and 1% leaks", () => {
+    const isoBlocks = detectXaosBlocks(fernSpongeIsolated());
+    expect(detectXaosLeaks(fernSpongeIsolated(), isoBlocks)[0].value).toBe(0);
+    const leakBlocks = detectXaosBlocks(fernSpongeLeak());
+    expect(detectXaosLeaks(fernSpongeLeak(), leakBlocks)[0].value).toBeCloseTo(
+      0.01,
+    );
+  });
+
+  it("returns nothing for fewer than two blocks", () => {
+    const transforms = makeXaosTransforms(3);
+    expect(detectXaosLeaks(transforms, detectXaosBlocks(transforms))).toEqual(
+      [],
+    );
+  });
+});
+
+describe("setChaosCell", () => {
+  it("materializes a row only on first touch, padding with 1s, leaving every other transform untouched", () => {
+    const state = { ...initialState(true), transforms: makeXaosTransforms(3) };
+    const next = setChaosCell(state, 0, 2, 0.4);
+    expect(next.transforms[0].chaos).toEqual([1, 1, 0.4]);
+    expect(next.transforms[1]).toBe(state.transforms[1]);
+    expect(next.transforms[2]).toBe(state.transforms[2]);
+  });
+
+  it("editing a row back to all-1s removes it — chaosRowIsNonTrivial is the one predicate", () => {
+    const state = { ...initialState(true), transforms: makeXaosTransforms(2) };
+    const touched = setChaosCell(state, 0, 1, 0.5);
+    expect(touched.transforms[0].chaos).toEqual([1, 0.5]);
+    const restored = setChaosCell(touched, 0, 1, 1);
+    expect(restored.transforms[0].chaos).toBeUndefined();
+  });
+
+  it("writing the classic value on an untouched system stays byte-identical", () => {
+    const state = { ...initialState(true), transforms: makeXaosTransforms(2) };
+    expect(setChaosCell(state, 0, 1, 1).transforms[0].chaos).toBeUndefined();
+  });
+
+  it("stores a raw out-of-domain value faithfully — the domain lives at resolveChaosEntry, not here", () => {
+    const state = { ...initialState(true), transforms: makeXaosTransforms(2) };
+    const next = setChaosCell(state, 0, 1, -3);
+    expect(next.transforms[0].chaos).toEqual([1, -3]);
+    expect(chaosRowIsNonTrivial(next.transforms[0].chaos, 2)).toBe(true);
+  });
+
+  it("no-ops on an out-of-range index", () => {
+    const state = { ...initialState(true), transforms: makeXaosTransforms(2) };
+    expect(setChaosCell(state, 5, 0, 0.5)).toBe(state);
+    expect(setChaosCell(state, 0, -1, 0.5)).toBe(state);
+  });
+});
+
+describe("setChaosLeak", () => {
+  it("writes both directions between two blocks, leaving within-block entries untouched", () => {
+    const state = {
+      ...initialState(true),
+      transforms: makeXaosTransforms(4).map((t, i): Transform => ({
+        ...t,
+        chaos: i < 2 ? [1, 1, 0, 0] : [0, 0, 1, 1],
+      })),
+    };
+    const next = setChaosLeak(state, [0, 1], [2, 3], 0.3);
+    expect(next.transforms[0].chaos).toEqual([1, 1, 0.3, 0.3]);
+    expect(next.transforms[1].chaos).toEqual([1, 1, 0.3, 0.3]);
+    expect(next.transforms[2].chaos).toEqual([0.3, 0.3, 1, 1]);
+    expect(next.transforms[3].chaos).toEqual([0.3, 0.3, 1, 1]);
+  });
+
+  it("dragging the leak to 1 (full merge) removes rows whose only asymmetry was the leak", () => {
+    const state = {
+      ...initialState(true),
+      transforms: makeXaosTransforms(2).map((t, i): Transform => ({
+        ...t,
+        chaos: i === 0 ? [1, 0] : [0, 1],
+      })),
+    };
+    const next = setChaosLeak(state, [0], [1], 1);
+    expect(next.transforms[0].chaos).toBeUndefined();
+    expect(next.transforms[1].chaos).toBeUndefined();
+  });
+
+  it("preserves finer structure nested inside a block being leaked against another", () => {
+    // Block A = {0}; block B is itself two sub-blocks, {1} and {2},
+    // isolated from each other.
+    const state = {
+      ...initialState(true),
+      transforms: makeXaosTransforms(3).map((t, i): Transform => ({
+        ...t,
+        chaos: [i === 0 ? 1 : 0, i === 1 ? 1 : 0, i === 2 ? 1 : 0],
+      })),
+    };
+    const next = setChaosLeak(state, [0], [1, 2], 0.2);
+    expect(next.transforms[0].chaos).toEqual([1, 0.2, 0.2]);
+    expect(next.transforms[1].chaos).toEqual([0.2, 1, 0]);
+    expect(next.transforms[2].chaos).toEqual([0.2, 0, 1]);
+  });
+});
+
+describe("computeXaosBlockOffset", () => {
+  it("is deterministic, finite, and positive for two real systems", () => {
+    const a = computeXaosBlockOffset(barnsleyFern(), mengerSponge());
+    const b = computeXaosBlockOffset(barnsleyFern(), mengerSponge());
+    expect(a).toBe(b);
+    expect(Number.isFinite(a)).toBe(true);
+    expect(a).toBeGreaterThan(0);
+  });
+});
+
+describe("appendXaosBlock", () => {
+  it("appends, seats the new block apart along x, and writes block-structured rows", () => {
+    const existing = makeXaosTransforms(2);
+    const incoming = makeXaosTransforms(2).map((t): Transform => ({
+      ...t,
+      id: t.id + 50,
+    }));
+    const result = appendXaosBlock(existing, incoming, 5, false);
+    if ("refused" in result) throw new Error("unexpectedly refused");
+    expect(result.transforms.map((t) => t.id)).toEqual([0, 1, 2, 3]);
+    expect(result.transforms[0].chaos).toEqual([1, 1, 0, 0]);
+    expect(result.transforms[1].chaos).toEqual([1, 1, 0, 0]);
+    expect(result.transforms[2].chaos).toEqual([0, 0, 1, 1]);
+    expect(result.transforms[3].chaos).toEqual([0, 0, 1, 1]);
+    // conjugateApart on a 0.5-scale identity-rotation map: position' =
+    // position + offset - 0.5*offset = 0 + 5 - 2.5 = 2.5.
+    expect(result.transforms[2].position[0]).toBe(2.5);
+    expect(result.transforms[3].position[0]).toBe(2.5);
+    // The pre-existing block's own positions are untouched.
+    expect(result.transforms[0].position).toEqual([0, 0, 0]);
+  });
+
+  it("preserves a source's own internal chaos structure, remapped rather than flattened", () => {
+    const existing = makeXaosTransforms(2);
+    const nestedIncoming = makeXaosTransforms(2).map((t, i): Transform => ({
+      ...t,
+      chaos: i === 0 ? [1, 0] : [0, 1],
+    }));
+    const result = appendXaosBlock(existing, nestedIncoming, 5, false);
+    if ("refused" in result) throw new Error("unexpectedly refused");
+    expect(detectXaosBlocks(result.transforms)).toEqual([[0, 1], [2], [3]]);
+  });
+
+  it("balances the incoming block's weights to the existing block's sum, uniformly", () => {
+    const existing = makeXaosTransforms(2).map(
+      (t, i): Transform => ({ ...t, weight: i === 0 ? 40 : 60 }), // sums to 100
+    );
+    const incoming = makeXaosTransforms(2).map(
+      (t): Transform => ({ ...t, weight: 1 }), // sums to 2 -> factor 50
+    );
+    const result = appendXaosBlock(existing, incoming, 5, true);
+    if ("refused" in result) throw new Error("unexpectedly refused");
+    expect(result.transforms[2].weight).toBe(50);
+    expect(result.transforms[3].weight).toBe(50);
+  });
+
+  it("leaves the incoming block's weights untouched when balancing is off", () => {
+    const existing = makeXaosTransforms(2);
+    const incoming = makeXaosTransforms(2);
+    const result = appendXaosBlock(existing, incoming, 5, false);
+    if ("refused" in result) throw new Error("unexpectedly refused");
+    expect(result.transforms[2].weight).toBeUndefined();
+  });
+
+  it("refuses an empty source", () => {
+    const result = appendXaosBlock(makeXaosTransforms(2), [], 5, false);
+    expect(result).toEqual({ refused: expect.any(String) });
+  });
+
+  it("refuses past MAX_TRANSFORMS with a stated reason, never truncating", () => {
+    const result = appendXaosBlock(
+      makeXaosTransforms(MAX_TRANSFORMS - 1),
+      makeXaosTransforms(2),
+      5,
+      false,
+    );
+    expect("refused" in result).toBe(true);
+    if ("refused" in result) {
+      expect(result.refused).toContain(String(MAX_TRANSFORMS));
+    }
+  });
+
+  it("end-to-end: appending mengerSponge onto barnsleyFern reproduces the reachability preset's block shape", () => {
+    const fern = barnsleyFern();
+    const sponge = mengerSponge();
+    const offsetX = computeXaosBlockOffset(fern, sponge);
+    const result = appendXaosBlock(fern, sponge, offsetX, false);
+    if ("refused" in result) throw new Error("unexpectedly refused");
+    expect(result.transforms).toHaveLength(24);
+    expect(detectXaosBlocks(result.transforms)).toEqual([
+      [0, 1, 2, 3],
+      Array.from({ length: 20 }, (_, i) => i + 4),
+    ]);
   });
 });
 

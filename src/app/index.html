@@ -546,6 +546,48 @@
           <div id="transformEditor"></div>
         </details>
 
+        <!-- Xaos: compose separate systems in one shared space (graph-
+             directed selection over Transform.chaos rows —
+             chaos-game.ts's systemHasChaos), or fine-tune which map
+             follows which. The construction gesture is the prominent
+             piece; the full n-by-n matrix is the fine-tuning surface
+             behind its own Advanced disclosure. Surface/escape/bulb
+             refuse a chi-carrying document — points/flame/solid render
+             it. -->
+        <details class="panel-section" id="xaosSection" name="panel-section">
+          <summary>Xaos</summary>
+          <label class="select-label">
+            Add system as isolated block
+            <select
+              id="xaosAddSource"
+              aria-label="Choose a system to add as an isolated block"
+            >
+              <option value="" selected>Choose a system…</option>
+              <option value="__duplicate">Duplicate current system</option>
+              <optgroup label="Presets" id="xaosAddSourcePresets"></optgroup>
+              <optgroup label="Saved scenes" id="xaosAddSourceSaved"></optgroup>
+            </select>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="xaosBalanceWeights" checked />
+            Balance weights so blocks render equally dense
+          </label>
+          <button
+            class="btn btn-blue"
+            id="xaosAddBtn"
+            type="button"
+            title="Append the chosen system's maps, seated apart and isolated by chaos rows"
+          >
+            + Add as block
+          </button>
+          <div id="xaosLeakRows" class="hidden"></div>
+          <details class="editor-group" id="xaosMatrixSection">
+            <summary class="editor-group-title">Advanced: chaos matrix</summary>
+            <p id="xaosMatrixNote" class="flame-note-info hidden"></p>
+            <div id="xaosMatrixContainer"></div>
+          </details>
+        </details>
+
         <details
           class="panel-section"
           id="presetSection"

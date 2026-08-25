@@ -4,6 +4,8 @@ import {
   derivedColorIndex,
   effectiveSymmetryOrder,
   MAX_TRANSFORMS,
+  prepareChaosGame,
+  resolveChaosEntry,
 } from "../fractal/chaos-game";
 import {
   colorModeUsesGamma,
@@ -75,9 +77,12 @@ import {
   MIN_W_POSITION,
   MIN_W_SCALE,
   MIN_W_SHEAR,
+  detectXaosBlocks,
+  detectXaosLeaks,
   resolveBalloonPalette,
   systemIsNonFlat,
 } from "./state";
+import type { XaosLeak } from "./state";
 import { formatIterationCount, SCALAR_CONTROLS } from "./control-spec";
 import type { ScalarControlSpec } from "./control-spec";
 import type { SurfaceRouteKind } from "./surface-eligibility";
@@ -162,6 +167,33 @@ export interface UiHandlers {
   /** The Hybrid schedule's depth slider moved: an integer 0..5, where 0
    * removes the block (the classic-removal rule). */
   onScheduleDepth: (depth: number) => void;
+  /**
+   * The Xaos section's "+ Add as block" button was clicked: `source` is
+   * `"__duplicate"` (clone the current system), `"preset:<key>"`, or
+   * `"saved:<id>"` — the Hybrid schedule picker's own vocabulary, read off
+   * the same select. `balanceWeights` is the checkbox's checked state. The
+   * app resolves the source, measures both systems' extent, and appends
+   * the block-structured result through `state.ts`'s `appendXaosBlock` —
+   * refusing (a toast, nothing appended) past the transform cap.
+   */
+  onXaosAddBlock: (source: string, balanceWeights: boolean) => void;
+  /** A Xaos matrix cell committed a new chi value — `fromIndex`/`toIndex`
+   * are transform indices (row = FROM map, column = TO map, matching
+   * `chaos-game.ts`'s `Transform.chaos` convention), `value` the raw typed
+   * number (already validated finite and non-negative; a bad edit never
+   * reaches here — the cell restores its previous display instead). */
+  onXaosCell: (fromIndex: number, toIndex: number, value: number) => void;
+  /** The Xaos leak dial for one block pair moved — `blockA`/`blockB` are
+   * the transform indices `detectXaosLeaks` grouped, `leak` the dial's
+   * value. `phase` mirrors {@link onScalarControl}'s: "input" fires on
+   * every drag tick (live, no matrix rebuild), "commit" once on release
+   * (when the matrix/leak rows resync). */
+  onXaosLeak: (
+    blockA: number[],
+    blockB: number[],
+    leak: number,
+    phase: "input" | "commit",
+  ) => void;
   /** "Surprise Me" was clicked: roll a fresh random IFS and load it like a preset. */
   onSurprise: () => void;
   /** "🧬 Mutate" was clicked: open the mutation-grid modal. The app builds
@@ -1212,6 +1244,15 @@ function scaleSummary(scale: Vec3): string {
   return `[${scale.map((v) => v.toFixed(2)).join(", ")}]`;
 }
 
+/** A Xaos leak dial's readout: a percentage, one decimal only where the
+ * whole-percent rounding would hide it (so the fern|sponge presets' own
+ * 1% leak reads as "1%", not "1.0%", while a 0.3% hand-tune still shows). */
+function formatXaosLeak(value: number): string {
+  const pct = value * 100;
+  const rounded = Math.round(pct * 10) / 10;
+  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}%`;
+}
+
 /**
  * The human-readable name for a palette id, read from the panel `<select>`
  * that picked it — index.html's option labels are the app's single source of
@@ -1828,6 +1869,20 @@ export class Ui {
   private readonly scheduleDepthSlider: HTMLInputElement;
   private readonly scheduleDepthLabel: HTMLElement;
   private readonly scheduleNote: HTMLElement;
+  /** The Xaos section's controls — see the UiHandlers Xaos trio for the
+   * contract each drives. `xaosAddSource` shares the schedule picker's
+   * exact vocabulary (its Presets group is cloned from the same
+   * `presetSelect`, one `"__duplicate"` sentinel added on top);
+   * `xaosLeakRows`/`xaosMatrixContainer` are rebuilt wholesale by
+   * {@link renderXaosSection} rather than diffed — the document (chi rows)
+   * drives them, like the transform list. */
+  private readonly xaosAddSource: HTMLSelectElement;
+  private readonly xaosAddSourceSaved: HTMLOptGroupElement;
+  private readonly xaosBalanceWeights: HTMLInputElement;
+  private readonly xaosAddBtn: HTMLButtonElement;
+  private readonly xaosLeakRows: HTMLElement;
+  private readonly xaosMatrixNote: HTMLElement;
+  private readonly xaosMatrixContainer: HTMLElement;
   private readonly finalTransformToggle: HTMLInputElement;
   private readonly transformEditor: HTMLElement;
 
@@ -2404,6 +2459,29 @@ export class Ui {
       clone.textContent = option.textContent;
       schedulePresetsGroup.appendChild(clone);
     }
+    this.xaosAddSource = this.byId("xaosAddSource");
+    this.xaosAddSourceSaved = this.byId("xaosAddSourceSaved");
+    this.xaosBalanceWeights = this.byId("xaosBalanceWeights");
+    this.xaosAddBtn = this.byId("xaosAddBtn");
+    this.xaosLeakRows = this.byId("xaosLeakRows");
+    this.xaosMatrixNote = this.byId("xaosMatrixNote");
+    this.xaosMatrixContainer = this.byId("xaosMatrixContainer");
+    // The Xaos picker's Presets group is the schedule picker's own clone
+    // loop, restated: index.html's option list stays the single source of
+    // preset display names, and the same value prefix (`preset:<key>`)
+    // lets main.ts share one resolver between both pickers.
+    const xaosPresetsGroup = this.byId<HTMLOptGroupElement>(
+      "xaosAddSourcePresets",
+    );
+    for (const option of Array.from(
+      this.presetSelect.querySelectorAll("option"),
+    )) {
+      if (!option.value) continue;
+      const clone = this.doc.createElement("option");
+      clone.value = `preset:${option.value}`;
+      clone.textContent = option.textContent;
+      xaosPresetsGroup.appendChild(clone);
+    }
     this.finalTransformToggle = this.byId("finalTransformToggle");
     this.transformEditor = this.byId("transformEditor");
     this.explorerControls = this.byId("explorerControls");
@@ -2703,6 +2781,16 @@ export class Ui {
     );
     this.scheduleDepthSlider.addEventListener("input", () => {
       handlers.onScheduleDepth(Number(this.scheduleDepthSlider.value));
+    });
+    // The Xaos "Add as block" button reads the picker + checkbox directly
+    // (no change listener on the select itself — unlike the schedule
+    // picker, a Xaos source choice is not applied until this click, so the
+    // gesture reads as "pick, then confirm" rather than "pick = apply").
+    this.xaosAddBtn.addEventListener("click", () => {
+      handlers.onXaosAddBlock(
+        this.xaosAddSource.value,
+        this.xaosBalanceWeights.checked,
+      );
     });
     this.surpriseBtn.addEventListener("click", () => handlers.onSurprise());
     this.driftBtn.addEventListener("click", () => handlers.onDriftToggle());
@@ -3869,6 +3957,31 @@ export class Ui {
       option.textContent = galleryTimestamp(entry.createdAt);
       this.scheduleSourceSaved.appendChild(option);
     }
+  }
+
+  /** {@link setScheduleSavedScenes}'s twin for the Xaos "Add system as
+   * isolated block" picker — same entries, same `saved:<id>` value shape,
+   * kept as a second call rather than one shared option list because the
+   * two pickers are independent DOM (a Xaos pick is read on button click,
+   * never applied on change). main.ts calls both from the one collection
+   * refresh. */
+  setXaosAddSourceSavedScenes(
+    entries: { id: string; createdAt: number }[],
+  ): void {
+    this.xaosAddSourceSaved.textContent = "";
+    for (const entry of entries) {
+      const option = this.doc.createElement("option");
+      option.value = `saved:${entry.id}`;
+      option.textContent = galleryTimestamp(entry.createdAt);
+      this.xaosAddSourceSaved.appendChild(option);
+    }
+  }
+
+  /** Snap the Xaos source picker back to its placeholder — called after a
+   * successful (or refused) "+ Add as block", the preset picker's own
+   * one-shot-action reset. */
+  resetXaosAddSource(): void {
+    this.xaosAddSource.value = "";
   }
 
   /** Reflect whether the ambient drift show is running on the Drift
@@ -5299,6 +5412,225 @@ export class Ui {
         }),
       );
     }
+  }
+
+  /**
+   * Rebuild the Xaos section's document-driven half — the leak-dial rows
+   * and the matrix table — from the current transform list. Called from
+   * `refreshUi()` (add/remove/preset/undo-redo/select — the discrete
+   * edits, exactly like {@link renderTransformList}), NEVER from
+   * `updateLabels()` alone: that runs on every scalar-slider "input" tick
+   * across the WHOLE panel (`onScalarControl`'s own doc), and rebuilding a
+   * 24-square matrix on every tick of an unrelated fog/glow/exposure drag
+   * would be wasted work on every one of them. Cell commits and leak-dial
+   * drags call this themselves (via `onXaosCell`/`onXaosLeak`'s main.ts
+   * wiring) exactly when a rebuild is safe — see the Advanced matrix's own
+   * `change`-not-`input` choice below.
+   */
+  renderXaosSection(transforms: Transform[]): void {
+    const blocks = detectXaosBlocks(transforms);
+    const leaks = detectXaosLeaks(transforms, blocks);
+    const palette = transformColors(
+      transforms.length,
+      transforms.map((t) => t.colorIndex),
+    );
+    this.renderXaosLeakRows(blocks, leaks, palette);
+    this.renderXaosMatrix(transforms, palette);
+  }
+
+  /** One small color-coded chip, `legend-spec.ts`'s swatch reused to key a
+   * matrix row/column or a leak-row block against the transform list's own
+   * accent colors ({@link transformColors}). */
+  private xaosChip(rgb: Vec3): HTMLElement {
+    const chip = this.doc.createElement("span");
+    chip.className = "legend-swatch xaos-chip";
+    chip.style.background = `rgb(${to255(rgb[0])}, ${to255(rgb[1])}, ${to255(rgb[2])})`;
+    return chip;
+  }
+
+  /**
+   * The leak-dial rows: one per block pair from {@link detectXaosLeaks},
+   * "the isolated → 1% → full-merge continuum as one slider before anyone
+   * opens the matrix" (fr-wo2j.6's design). Hidden entirely with fewer
+   * than two blocks (an untouched, or fully merged, system) — there is no
+   * pair to dial. A pair whose cross entries are not a single uniform
+   * value (`XaosLeak.value === null`, a hand edit) reads as "Customized"
+   * rather than guessing a slider position that isn't really there.
+   */
+  private renderXaosLeakRows(
+    blocks: number[][],
+    leaks: XaosLeak[],
+    palette: Vec3[],
+  ): void {
+    this.xaosLeakRows.replaceChildren();
+    if (blocks.length < 2) {
+      this.xaosLeakRows.classList.add("hidden");
+      return;
+    }
+    this.xaosLeakRows.classList.remove("hidden");
+    for (const leak of leaks) {
+      const row = this.doc.createElement("div");
+      row.className = "editor-row xaos-leak-row";
+
+      const label = this.doc.createElement("span");
+      label.className = "xaos-leak-label";
+      label.appendChild(this.xaosChip(palette[leak.blockA[0]]));
+      label.appendChild(this.doc.createTextNode("↔"));
+      label.appendChild(this.xaosChip(palette[leak.blockB[0]]));
+      row.appendChild(label);
+
+      if (leak.value === null) {
+        const note = this.doc.createElement("span");
+        note.className = "xaos-leak-note";
+        note.textContent = "Customized — edit the matrix below";
+        row.appendChild(note);
+      } else {
+        const slider = this.doc.createElement("input");
+        slider.type = "range";
+        slider.min = "0";
+        slider.max = "1";
+        slider.step = "0.01";
+        slider.value = String(Math.min(1, Math.max(0, leak.value)));
+        slider.setAttribute(
+          "aria-label",
+          `Leak between the block starting at transform ${leak.blockA[0] + 1} ` +
+            `and the block starting at transform ${leak.blockB[0] + 1}`,
+        );
+        const readout = this.doc.createElement("span");
+        readout.className = "value";
+        readout.textContent = formatXaosLeak(leak.value);
+        slider.addEventListener("input", () => {
+          const value = Number(slider.value);
+          readout.textContent = formatXaosLeak(value);
+          this.handlers?.onXaosLeak(leak.blockA, leak.blockB, value, "input");
+        });
+        slider.addEventListener("change", () => {
+          this.handlers?.onXaosLeak(
+            leak.blockA,
+            leak.blockB,
+            Number(slider.value),
+            "commit",
+          );
+        });
+        row.appendChild(slider);
+        row.appendChild(readout);
+      }
+      this.xaosLeakRows.appendChild(row);
+    }
+  }
+
+  /**
+   * The n×n chi matrix, behind the Advanced disclosure: rows = FROM map,
+   * columns = TO map (`chaos-game.ts`'s `Transform.chaos` convention),
+   * every cell a NUMERIC input rather than a slider — a grid of two dozen
+   * or more tiny range thumbs is exactly the tap-jump/pan hazard
+   * `slider-scroll-guard.ts` exists to police, and a plain number input
+   * sidesteps the question outright (fr-wo2j.6's own touch-hazard note).
+   * Cells commit on `change` (blur/Enter), not `input`: the matrix rebuilds
+   * itself on every commit (to refresh the leak rows and the degenerate-row
+   * warnings, which a single cell edit can change), and rebuilding on
+   * every keystroke would tear the focused input out from under the
+   * user's cursor. The diagonal (a map re-selecting itself) is a normal,
+   * editable cell — flam3 allows and uses self-transitions — with only a
+   * faint background as a reading aid for a big grid.
+   *
+   * Wrapped in its own horizontal-scroll container: usable at 24+ maps
+   * (the shipped fern|sponge presets' size) without pretending an n×n grid
+   * scales to the 256-transform cap.
+   */
+  private renderXaosMatrix(transforms: Transform[], palette: Vec3[]): void {
+    const n = transforms.length;
+    this.xaosMatrixContainer.replaceChildren();
+    if (n < 2) {
+      this.xaosMatrixNote.textContent =
+        "Add a second transform to author selection rows between maps.";
+      this.xaosMatrixNote.classList.remove("hidden");
+      return;
+    }
+    this.xaosMatrixNote.textContent = "";
+    this.xaosMatrixNote.classList.add("hidden");
+
+    // The engine's own degenerate-row table (chaosFallbackRows — an
+    // all-zero-after-weighting row silently falls back to the global pick
+    // table): read off a real prepareChaosGame rather than re-deriving the
+    // weighting here, so this warning can never drift from what actually
+    // renders.
+    const fallbackRows = new Set(
+      prepareChaosGame(transforms).chaosFallbackRows ?? [],
+    );
+
+    const scroll = this.doc.createElement("div");
+    scroll.className = "xaos-matrix-scroll";
+
+    const table = this.doc.createElement("table");
+    table.className = "xaos-matrix-table";
+    table.setAttribute(
+      "aria-label",
+      "Xaos matrix: rows are the map just applied, columns are the map picked next",
+    );
+
+    const thead = this.doc.createElement("thead");
+    const headRow = this.doc.createElement("tr");
+    headRow.appendChild(this.doc.createElement("th"));
+    for (let j = 0; j < n; j++) {
+      const th = this.doc.createElement("th");
+      th.className = "xaos-matrix-col-head";
+      th.appendChild(this.xaosChip(palette[j]));
+      th.appendChild(this.doc.createTextNode(String(j + 1)));
+      headRow.appendChild(th);
+    }
+    headRow.appendChild(this.doc.createElement("th"));
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = this.doc.createElement("tbody");
+    for (let i = 0; i < n; i++) {
+      const tr = this.doc.createElement("tr");
+      const rowHead = this.doc.createElement("th");
+      rowHead.className = "xaos-matrix-row-head";
+      rowHead.appendChild(this.xaosChip(palette[i]));
+      rowHead.appendChild(this.doc.createTextNode(String(i + 1)));
+      tr.appendChild(rowHead);
+
+      for (let j = 0; j < n; j++) {
+        const td = this.doc.createElement("td");
+        td.className =
+          i === j ? "xaos-matrix-cell diagonal" : "xaos-matrix-cell";
+        const input = this.doc.createElement("input");
+        input.type = "number";
+        input.className = "xaos-matrix-input";
+        input.min = "0";
+        input.max = "2";
+        input.step = "0.01";
+        const previous = resolveChaosEntry(transforms[i].chaos?.[j]);
+        input.value = String(previous);
+        input.setAttribute(
+          "aria-label",
+          `Chi from transform ${i + 1} to transform ${j + 1}`,
+        );
+        input.addEventListener("change", () => {
+          const raw = Number(input.value);
+          if (input.value === "" || !Number.isFinite(raw) || raw < 0) {
+            input.value = String(previous);
+            return;
+          }
+          this.handlers?.onXaosCell(i, j, raw);
+        });
+        td.appendChild(input);
+        tr.appendChild(td);
+      }
+
+      const warn = this.doc.createElement("td");
+      warn.className = "xaos-matrix-warn";
+      if (fallbackRows.has(i)) {
+        warn.textContent = "⚠ all-zero — falls back to the global table";
+      }
+      tr.appendChild(warn);
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    scroll.appendChild(table);
+    this.xaosMatrixContainer.appendChild(scroll);
   }
 
   private transformButton(options: TransformButtonOptions): HTMLButtonElement {
